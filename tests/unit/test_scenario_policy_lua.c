@@ -58,10 +58,10 @@
  * Every case drives the real call site: the win sweep, the death wait, a
  * build request, a tank driving onto a base, a player joining and a shell.
  *
- * A script says what it was asked by appending a line to this case's own
- * record file, which is also what tells a decision the script made from one
- * the host took without calling it. The names are per-case on purpose: CTest
- * runs cases as separate processes in one directory.
+ * A script says what it was asked by printing a marked line, which is also
+ * what tells a decision the script made from one the host took without
+ * calling it. A scenario state has no io, and the sandbox routes print to
+ * the server console, so the record is read off the sim's console callback.
  *
  * Reads the ServerSim, tank and lgm structs directly; the unittests profile
  * permits it.
@@ -115,13 +115,68 @@ static void plaScriptFor(const char *mapPath, char *out, size_t outLen) {
     snprintf(out, outLen, "%.*s%s", (int)n, mapPath, SCN_SCRIPT_SUFFIX);
 }
 
+/* A policy says what it was asked by printing a marked line. A scenario
+   state has no io, and its print goes to the server console, which the
+   watcher below catches. The mark is what tells a policy's line from the
+   host's own: both arrive on the same console. */
+#define PLA_NOTE_MARK "note:"
+
+static char   plaNote[8192];
+static size_t plaNoteLen;
+
+static void plaReset(void) {
+    plaNote[0] = '\0';
+    plaNoteLen = 0;
+}
+
+/* One console line, kept if a policy wrote it. A record past the buffer is
+   truncated rather than overrunning it. */
+static void plaNoteLine(const char *msg) {
+    size_t mark = strlen(PLA_NOTE_MARK);
+    size_t room;
+    size_t n;
+
+    if (msg == NULL || strncmp(msg, PLA_NOTE_MARK, mark) != 0) {
+        return;
+    }
+    n    = strlen(msg + mark);
+    room = sizeof(plaNote) - 1 - plaNoteLen;
+    if (n > room) {
+        n = room;
+    }
+    memcpy(plaNote + plaNoteLen, msg + mark, n);
+    plaNoteLen += n;
+    plaNote[plaNoteLen] = '\0';
+}
+
+/* Only consoleMessage is replaced, never the ctx beside it, which the sim's
+   other callbacks read. */
+static void (*plaConsolePrev)(void *ctx, char *msg) = NULL;
+
+static void plaConsoleCb(void *ctx, char *msg) {
+    if (plaConsolePrev != NULL) {
+        plaConsolePrev(ctx, msg);
+    }
+    plaNoteLine(msg);
+}
+
+static void plaWatchConsole(ServerSim *sim) {
+    plaConsolePrev = sim->sim.callbacks.consoleMessage;
+    sim->sim.callbacks.consoleMessage = plaConsoleCb;
+}
+
+static void plaUnwatchConsole(ServerSim *sim) {
+    sim->sim.callbacks.consoleMessage = plaConsolePrev;
+    plaConsolePrev = NULL;
+}
+
 /* The script, with the note() every case writes its record through in front
    of it. */
-static bool plaPut(const char *mapPath, const char *record, const char *body) {
+static bool plaPut(const char *mapPath, const char *body) {
     char  path[512];
     FILE *f;
 
-    remove(record);
+    plaReset();
     plaScriptFor(mapPath, path, sizeof(path));
     f = fopen(path, "wb");
     if (f == NULL) {
@@ -129,33 +184,23 @@ static bool plaPut(const char *mapPath, const char *record, const char *body) {
     }
     fprintf(f,
             "local function note(s)\n"
-            "  local f = io.open(\"%s\", \"a\")\n"
-            "  if f then f:write(s) f:close() end\n"
+            "  print(\"" PLA_NOTE_MARK "\" .. tostring(s))\n"
             "end\n"
-            "%s", record, body);
+            "%s", body);
     fclose(f);
     return true;
 }
 
-static void plaDrop(const char *mapPath, const char *record) {
+static void plaDrop(const char *mapPath) {
     char path[512];
     plaScriptFor(mapPath, path, sizeof(path));
     remove(path);
-    remove(record);
+    plaReset();
 }
 
 /* The record so far, or "" when no policy has written one. */
-static void plaRead(const char *record, char *out, size_t outLen) {
-    FILE  *f = fopen(record, "rb");
-    size_t n;
-
-    out[0] = '\0';
-    if (f == NULL) {
-        return;
-    }
-    n = fread(out, 1, outLen - 1, f);
-    fclose(f);
-    out[n] = '\0';
+static void plaRead(char *out, size_t outLen) {
+    snprintf(out, outLen, "%s", plaNote);
 }
 
 /* A round with the scenario attached and one player in slot 0. The host is
@@ -177,10 +222,14 @@ static ServerSim *plaSimOfType(const char *mapPath, ScenarioHost **host,
         return NULL;
     }
     serverSimSetLobbyEnabled(sim, false);
+    /* Before the attach: a script that prints at its top level prints while
+       the attach is still running. */
+    plaWatchConsole(sim);
     err[0] = '\0';
     *host = scenarioHostAttach(sim, mapPath, err, sizeof(err));
     if (*host == NULL) {
         fprintf(stderr, "the script was refused: %s\n", err);
+        plaUnwatchConsole(sim);
         serverSimDestroy(sim);
         return NULL;
     }
@@ -193,11 +242,11 @@ static ServerSim *plaSim(const char *mapPath, ScenarioHost **host) {
     return plaSimOfType(mapPath, host, gameOpen);
 }
 
-static void plaEnd(ServerSim *sim, ScenarioHost *host, const char *mapPath,
-                   const char *record) {
+static void plaEnd(ServerSim *sim, ScenarioHost *host, const char *mapPath) {
+    plaUnwatchConsole(sim);
     scenarioHostDetach(host);
     serverSimDestroy(sim);
-    plaDrop(mapPath, record);
+    plaDrop(mapPath);
 }
 
 /* Every base to one owner, held — the board the sweep is a win on. */
@@ -409,8 +458,7 @@ static void plaWatchText(ServerSim *sim, PlaText *c) {
  * directions at the site the sweep is decided at.
  * ================================================================ */
 int run_scenario_policy_lua_allow_base_win(void) {
-    static const char *const kMap    = "scnpol_lua_basewin.map";
-    static const char *const kRecord = "scnpol_lua_basewin.record";
+    static const char *const kMap = "scnpol_lua_basewin.map";
     static const char *const kBody =
         "scenario = { name = \"No Sweep\", api = 1 }\n"
         "function allow_base_win()\n"
@@ -422,7 +470,7 @@ int run_scenario_policy_lua_allow_base_win(void) {
     char          rec[256];
     int           i;
 
-    UT_ASSERT(plaPut(kMap, kRecord, kBody));
+    UT_ASSERT(plaPut(kMap, kBody));
     sim = plaSim(kMap, &h);
     UT_ASSERT(sim != NULL);
 
@@ -430,7 +478,7 @@ int run_scenario_policy_lua_allow_base_win(void) {
     UT_ASSERT_MSG(serverSimCheckGameWin(sim, FALSE) == FALSE,
                   "a swept board ended the round under a script that says "
                   "the sweep may not end it");
-    plaRead(kRecord, rec, sizeof(rec));
+    plaRead(rec, sizeof(rec));
     UT_ASSERT_MSG(strstr(rec, "base_win") != NULL,
                   "the sweep was refused without the script being asked, so "
                   "something other than the policy answered");
@@ -442,7 +490,7 @@ int run_scenario_policy_lua_allow_base_win(void) {
                   "the same board must be a win once the script allows the "
                   "sweep");
 
-    plaEnd(sim, h, kMap, kRecord);
+    plaEnd(sim, h, kMap);
     return 0;
 }
 
@@ -453,8 +501,7 @@ int run_scenario_policy_lua_allow_base_win(void) {
  * the question is put again next tick.
  * ================================================================ */
 int run_scenario_policy_lua_can_respawn(void) {
-    static const char *const kMap    = "scnpol_lua_respawn.map";
-    static const char *const kRecord = "scnpol_lua_respawn.record";
+    static const char *const kMap = "scnpol_lua_respawn.map";
     static const char *const kBody =
         "scenario = { name = \"Tickets\", api = 1 }\n"
         "asks = 0\n"
@@ -469,7 +516,7 @@ int run_scenario_policy_lua_can_respawn(void) {
     char          rec[4096];
     int           i;
 
-    UT_ASSERT(plaPut(kMap, kRecord, kBody));
+    UT_ASSERT(plaPut(kMap, kBody));
     sim = plaSim(kMap, &h);
     UT_ASSERT(sim != NULL);
     gs = &sim->sim;
@@ -485,7 +532,7 @@ int run_scenario_policy_lua_can_respawn(void) {
     UT_ASSERT_MSG(tankIsDestroyed(&gs->tanks[PLA_SELF]),
                   "the tank must still be dead after a hundred held ticks");
 
-    plaRead(kRecord, rec, sizeof(rec));
+    plaRead(rec, sizeof(rec));
     UT_ASSERT_MSG(strstr(rec, "respawn 0\n") != NULL,
                   "the question named a player the script did not write down: "
                   "%s", rec);
@@ -498,7 +545,7 @@ int run_scenario_policy_lua_can_respawn(void) {
     UT_ASSERT_MSG(!tankIsDestroyed(&gs->tanks[PLA_SELF]),
                   "the tank must be back");
 
-    plaEnd(sim, h, kMap, kRecord);
+    plaEnd(sim, h, kMap);
     return 0;
 }
 
@@ -510,8 +557,7 @@ int run_scenario_policy_lua_can_respawn(void) {
  * nothing at all where the tank carries none.
  * ================================================================ */
 int run_scenario_policy_lua_can_build(void) {
-    static const char *const kMap    = "scnpol_lua_build.map";
-    static const char *const kRecord = "scnpol_lua_build.record";
+    static const char *const kMap = "scnpol_lua_build.map";
     static const char *const kBody =
         "scenario = { name = \"Protected\", api = 1 }\n"
         "function can_build(p, action, x, y, n)\n"
@@ -527,7 +573,7 @@ int run_scenario_policy_lua_can_build(void) {
     BYTE          gx = 0, gy = 0, fx = 0, fy = 0;
     int           pillIdx;
 
-    UT_ASSERT(plaPut(kMap, kRecord, kBody));
+    UT_ASSERT(plaPut(kMap, kBody));
     sim = plaSim(kMap, &h);
     UT_ASSERT(sim != NULL);
     t = &sim->sim.tanks[PLA_SELF];
@@ -540,7 +586,7 @@ int run_scenario_policy_lua_can_build(void) {
                   "turns roads down");
     snprintf(want, sizeof(want), "build 0 road %u %u nil\n",
              (unsigned)gx, (unsigned)gy);
-    plaRead(kRecord, rec, sizeof(rec));
+    plaRead(rec, sizeof(rec));
     UT_ASSERT_MSG(strstr(rec, want) != NULL,
                   "the script was asked \"%s\", expected \"%s\"", rec, want);
 
@@ -558,11 +604,11 @@ int run_scenario_policy_lua_can_build(void) {
        script sees is the number it would use anywhere else. A tank carrying
        none names no pill at all, which must stay recognisable rather than
        becoming an index. */
-    remove(kRecord);
+    plaReset();
     plaAsk(sim, LGM_PILL_REQUEST, gx, gy);
     snprintf(want, sizeof(want), "build 0 pill %u %u nil\n",
              (unsigned)gx, (unsigned)gy);
-    plaRead(kRecord, rec, sizeof(rec));
+    plaRead(rec, sizeof(rec));
     UT_ASSERT_MSG(strstr(rec, want) != NULL,
                   "a tank carrying nothing was written down as \"%s\", "
                   "expected \"%s\"", rec, want);
@@ -570,16 +616,16 @@ int run_scenario_policy_lua_can_build(void) {
     pillIdx = plaFirstPill(sim);
     UT_ASSERT_MSG(pillIdx >= 0, "setup: the map must carry a pillbox");
     tankPutPill(&sim->sim, t, (BYTE)(pillIdx + 1));
-    remove(kRecord);
+    plaReset();
     plaAsk(sim, LGM_PILL_REQUEST, gx, gy);
     snprintf(want, sizeof(want), "build 0 pill %u %u %d\n",
              (unsigned)gx, (unsigned)gy, pillIdx + 1);
-    plaRead(kRecord, rec, sizeof(rec));
+    plaRead(rec, sizeof(rec));
     UT_ASSERT_MSG(strstr(rec, want) != NULL,
                   "the carried pill reached the script as \"%s\", expected "
                   "\"%s\"", rec, want);
 
-    plaEnd(sim, h, kMap, kRecord);
+    plaEnd(sim, h, kMap);
     return 0;
 }
 
@@ -593,7 +639,6 @@ int run_scenario_policy_lua_can_build(void) {
 int run_scenario_policy_lua_can_capture(void) {
     static const char *const kLockedMap  = "scnpol_lua_capture_no.map";
     static const char *const kOpenMap    = "scnpol_lua_capture_yes.map";
-    static const char *const kRecord     = "scnpol_lua_capture.record";
     static const char *const kLockedBody =
         "scenario = { name = \"Locked\", api = 1 }\n"
         "function can_capture(kind, n, p)\n"
@@ -613,7 +658,7 @@ int run_scenario_policy_lua_can_capture(void) {
     int           baseIdx;
     BYTE          bx, by;
 
-    UT_ASSERT(plaPut(kLockedMap, kRecord, kLockedBody));
+    UT_ASSERT(plaPut(kLockedMap, kLockedBody));
     sim = plaSim(kLockedMap, &h);
     UT_ASSERT(sim != NULL);
 
@@ -634,14 +679,14 @@ int run_scenario_policy_lua_can_capture(void) {
                   "a refused capture must not harm the tank");
 
     snprintf(want, sizeof(want), "capture base %d 0\n", baseIdx + 1);
-    plaRead(kRecord, rec, sizeof(rec));
+    plaRead(rec, sizeof(rec));
     UT_ASSERT_MSG(strstr(rec, want) != NULL,
                   "the script was asked \"%s\", expected \"%s\"", rec, want);
 
-    plaEnd(sim, h, kLockedMap, kRecord);
+    plaEnd(sim, h, kLockedMap);
 
     /* The same base, the same drive, a script that allows it. */
-    UT_ASSERT(plaPut(kOpenMap, kRecord, kOpenBody));
+    UT_ASSERT(plaPut(kOpenMap, kOpenBody));
     sim = plaSim(kOpenMap, &h);
     UT_ASSERT(sim != NULL);
 
@@ -655,7 +700,7 @@ int run_scenario_policy_lua_can_capture(void) {
                   "owner is %u",
                   (unsigned)(*sim->sim.bs).item[baseIdx].owner);
 
-    plaEnd(sim, h, kOpenMap, kRecord);
+    plaEnd(sim, h, kOpenMap);
     return 0;
 }
 
@@ -665,8 +710,7 @@ int run_scenario_policy_lua_can_capture(void) {
  * Both answers at one site, told apart by the subject the script is handed.
  * ================================================================ */
 int run_scenario_policy_lua_announce(void) {
-    static const char *const kMap    = "scnpol_lua_announce.map";
-    static const char *const kRecord = "scnpol_lua_announce.record";
+    static const char *const kMap = "scnpol_lua_announce.map";
     static const char *const kBody =
         "scenario = { name = \"Quiet\", api = 1 }\n"
         "function announce(kind, subject, actor)\n"
@@ -679,7 +723,7 @@ int run_scenario_policy_lua_announce(void) {
     PlaJoins      joins;
     char          rec[4096];
 
-    UT_ASSERT(plaPut(kMap, kRecord, kBody));
+    UT_ASSERT(plaPut(kMap, kBody));
     sim = plaSim(kMap, &h);
     UT_ASSERT(sim != NULL);
 
@@ -698,12 +742,12 @@ int run_scenario_policy_lua_announce(void) {
                   "a join the script holds back carried quiet %u, expected 1",
                   (unsigned)joins.quiet[2]);
 
-    plaRead(kRecord, rec, sizeof(rec));
+    plaRead(rec, sizeof(rec));
     UT_ASSERT_MSG(strstr(rec, "announce joined 2 2\n") != NULL,
                   "the script was asked \"%s\", expected a joined line for "
                   "slot 2", rec);
 
-    plaEnd(sim, h, kMap, kRecord);
+    plaEnd(sim, h, kMap);
     return 0;
 }
 
@@ -714,13 +758,23 @@ int run_scenario_policy_lua_announce(void) {
  * the script as the word a death cause takes.
  * ================================================================ */
 int run_scenario_policy_lua_can_die(void) {
-    static const char *const kMap    = "scnpol_lua_die.map";
-    static const char *const kRecord = "scnpol_lua_die.record";
+    static const char *const kMap = "scnpol_lua_die.map";
     static const char *const kBody =
         "scenario = { name = \"Shellproof\", api = 1 }\n"
+        /* The hundred shells below ask the same question a hundred times,
+           and what this case reads is the answer rather than the count — so
+           a line the same as the last one is not said again. A fixture that
+           repeated it would spend the tick's print allowance on ninety-nine
+           copies of the shell line, and the mine's line, which is the one
+           the second half of the case reads, would be the one dropped. */
+        "local last = nil\n"
         "function can_die(kind, n, killer, cause)\n"
-        "  note(\"die \" .. kind .. \" \" .. n .. \" \" .. killer .. \" \"\n"
-        "       .. tostring(cause) .. \"\\n\")\n"
+        "  local line = \"die \" .. kind .. \" \" .. n .. \" \" .. killer\n"
+        "               .. \" \" .. tostring(cause) .. \"\\n\"\n"
+        "  if line ~= last then\n"
+        "    last = line\n"
+        "    note(line)\n"
+        "  end\n"
         "  return cause ~= \"shell\"\n"
         "end\n";
     ServerSim    *sim;
@@ -728,7 +782,7 @@ int run_scenario_policy_lua_can_die(void) {
     char          rec[4096];
     int           i;
 
-    UT_ASSERT(plaPut(kMap, kRecord, kBody));
+    UT_ASSERT(plaPut(kMap, kBody));
     sim = plaSim(kMap, &h);
     UT_ASSERT(sim != NULL);
     serverSimAddPlayer(sim, PLA_OTHER, "Target", false);
@@ -744,26 +798,26 @@ int run_scenario_policy_lua_can_die(void) {
                   "a refused death leaves the tank at zero armour, is %u",
                   (unsigned)tankGetArmour(&sim->sim.tanks[PLA_OTHER]));
 
-    plaRead(kRecord, rec, sizeof(rec));
+    plaRead(rec, sizeof(rec));
     UT_ASSERT_MSG(strstr(rec, "die tank 1 0 shell\n") != NULL,
                   "the script was asked \"%s\", expected a tank death by "
                   "shell for slot 1 credited to slot 0", rec);
 
     /* A blow the script does not turn down, at the same site: the cause is
        what it reads, so a mine kills the tank a shell could not. */
-    remove(kRecord);
+    plaReset();
     tankMineDamage(&sim->sim, &sim->sim.tanks[PLA_OTHER],
                    tankGetMX(&sim->sim.tanks[PLA_OTHER]),
                    tankGetMY(&sim->sim.tanks[PLA_OTHER]), PLA_SELF);
     UT_ASSERT_MSG(tankIsDestroyed(&sim->sim.tanks[PLA_OTHER]),
                   "a mine must kill the tank the script only protects from "
                   "shells");
-    plaRead(kRecord, rec, sizeof(rec));
+    plaRead(rec, sizeof(rec));
     UT_ASSERT_MSG(strstr(rec, "die tank 1 0 mine\n") != NULL,
                   "the mine was put to the script as \"%s\", expected a "
                   "cause of mine", rec);
 
-    plaEnd(sim, h, kMap, kRecord);
+    plaEnd(sim, h, kMap);
     return 0;
 }
 
@@ -775,8 +829,7 @@ int run_scenario_policy_lua_can_die(void) {
  * scenario takes.
  * ================================================================ */
 int run_scenario_policy_lua_nil_is_classic(void) {
-    static const char *const kMap    = "scnpol_lua_nil.map";
-    static const char *const kRecord = "scnpol_lua_nil.record";
+    static const char *const kMap = "scnpol_lua_nil.map";
     static const char *const kBody =
         "scenario = { name = \"Silent\", api = 1 }\n"
         "function allow_base_win() note(\"base_win\\n\") return nil end\n"
@@ -793,7 +846,7 @@ int run_scenario_policy_lua_nil_is_classic(void) {
     int           baseIdx;
     int           i;
 
-    UT_ASSERT(plaPut(kMap, kRecord, kBody));
+    UT_ASSERT(plaPut(kMap, kBody));
     sim = plaSim(kMap, &h);
     UT_ASSERT(sim != NULL);
 
@@ -845,7 +898,7 @@ int run_scenario_policy_lua_nil_is_classic(void) {
 
     /* Every one of them was asked: nil is the script answering, not the host
        failing to find the function. */
-    plaRead(kRecord, rec, sizeof(rec));
+    plaRead(rec, sizeof(rec));
     UT_ASSERT_MSG(strstr(rec, "base_win") != NULL, "allow_base_win was never "
                                                    "asked: %s", rec);
     UT_ASSERT_MSG(strstr(rec, "respawn") != NULL, "can_respawn was never "
@@ -859,7 +912,7 @@ int run_scenario_policy_lua_nil_is_classic(void) {
     UT_ASSERT_MSG(strstr(rec, "die") != NULL, "can_die was never asked: %s",
                   rec);
 
-    plaEnd(sim, h, kMap, kRecord);
+    plaEnd(sim, h, kMap);
     return 0;
 }
 
@@ -871,8 +924,7 @@ int run_scenario_policy_lua_nil_is_classic(void) {
  * policy is what says the refusal was the policy and not the op.
  * ================================================================ */
 int run_scenario_policy_lua_op_in_policy(void) {
-    static const char *const kMap    = "scnpol_lua_inpolicy.map";
-    static const char *const kRecord = "scnpol_lua_inpolicy.record";
+    static const char *const kMap = "scnpol_lua_inpolicy.map";
     static const char *const kBody =
         "scenario = { name = \"Writes Back\", api = 1 }\n"
         "function can_respawn(p)\n"
@@ -889,27 +941,27 @@ int run_scenario_policy_lua_op_in_policy(void) {
     ScenarioHost *h;
     char          rec[4096];
 
-    UT_ASSERT(plaPut(kMap, kRecord, kBody));
+    UT_ASSERT(plaPut(kMap, kBody));
     sim = plaSim(kMap, &h);
     UT_ASSERT(sim != NULL);
 
     plaHoldAtDeathWait(sim);
     tankUpdate(&sim->sim, &sim->sim.tanks[PLA_SELF], TNONE, FALSE, FALSE);
 
-    plaRead(kRecord, rec, sizeof(rec));
+    plaRead(rec, sizeof(rec));
     UT_ASSERT_MSG(strstr(rec, "policy nil SCN_OP_IN_POLICY\n") != NULL,
                   "an op issued from inside a policy answered \"%s\", "
                   "expected nil and SCN_OP_IN_POLICY", rec);
 
     /* The same op from a tick, where no policy is on the stack. */
-    remove(kRecord);
+    plaReset();
     serverSimTick(sim);
-    plaRead(kRecord, rec, sizeof(rec));
+    plaRead(rec, sizeof(rec));
     UT_ASSERT_MSG(strstr(rec, "tick true\n") != NULL,
                   "the same op outside a policy answered \"%s\", expected "
                   "true", rec);
 
-    plaEnd(sim, h, kMap, kRecord);
+    plaEnd(sim, h, kMap);
     return 0;
 }
 
@@ -921,8 +973,7 @@ int run_scenario_policy_lua_op_in_policy(void) {
  * players — the same rule a hook that keeps raising meets.
  * ================================================================ */
 int run_scenario_policy_lua_error_counts(void) {
-    static const char *const kMap    = "scnpol_lua_raises.map";
-    static const char *const kRecord = "scnpol_lua_raises.record";
+    static const char *const kMap = "scnpol_lua_raises.map";
     static const char *const kBody =
         "scenario = { name = \"Boom\", api = 1 }\n"
         "function allow_base_win()\n"
@@ -935,7 +986,7 @@ int run_scenario_policy_lua_error_counts(void) {
     char          rec[4096];
     int           i;
 
-    UT_ASSERT(plaPut(kMap, kRecord, kBody));
+    UT_ASSERT(plaPut(kMap, kBody));
     sim = plaSim(kMap, &h);
     UT_ASSERT(sim != NULL);
 
@@ -946,7 +997,7 @@ int run_scenario_policy_lua_error_counts(void) {
     UT_ASSERT_MSG(serverSimCheckGameWin(sim, FALSE) == TRUE,
                   "a policy that raised must leave the classic sweep, which "
                   "a swept board is a win under");
-    plaRead(kRecord, rec, sizeof(rec));
+    plaRead(rec, sizeof(rec));
     UT_ASSERT_MSG(strstr(rec, "base_win") != NULL,
                   "the script was never asked, so nothing raised");
 
@@ -975,14 +1026,14 @@ int run_scenario_policy_lua_error_counts(void) {
 
     /* A switched-off round runs none of the script and still answers
        classic. */
-    remove(kRecord);
+    plaReset();
     UT_ASSERT_MSG(serverSimCheckGameWin(sim, FALSE) == TRUE,
                   "the switched-off round must leave the classic sweep");
-    plaRead(kRecord, rec, sizeof(rec));
+    plaRead(rec, sizeof(rec));
     UT_ASSERT_MSG(rec[0] == '\0',
                   "the switched-off round ran the script again: %s", rec);
 
-    plaEnd(sim, h, kMap, kRecord);
+    plaEnd(sim, h, kMap);
     return 0;
 }
 
@@ -1034,8 +1085,7 @@ static void plaKillAndRespawn(GameSim *gs, BYTE slot) {
  * the case and the script agree about which start without either being told.
  * ================================================================ */
 int run_scenario_policy_lua_choose_start(void) {
-    static const char *const kMap    = "scnpol_lua_start.map";
-    static const char *const kRecord = "scnpol_lua_start.record";
+    static const char *const kMap = "scnpol_lua_start.map";
     static const char *const kBody =
         "scenario = { name = \"One Start\", api = 1 }\n"
         "function on_choose_start(p)\n"
@@ -1049,7 +1099,7 @@ int run_scenario_policy_lua_choose_start(void) {
     BYTE          numStarts;
     BYTE          slot;
 
-    UT_ASSERT(plaPut(kMap, kRecord, kBody));
+    UT_ASSERT(plaPut(kMap, kBody));
     sim = plaSim(kMap, &h);
     UT_ASSERT(sim != NULL);
     gs = &sim->sim;
@@ -1080,12 +1130,12 @@ int run_scenario_policy_lua_choose_start(void) {
                       (unsigned)(numStarts - 1));
     }
 
-    plaRead(kRecord, rec, sizeof(rec));
+    plaRead(rec, sizeof(rec));
     UT_ASSERT_MSG(strstr(rec, "start 2\n") != NULL,
                   "the script was asked \"%s\", expected a placement for "
                   "slot 2", rec);
 
-    plaEnd(sim, h, kMap, kRecord);
+    plaEnd(sim, h, kMap);
     return 0;
 }
 
@@ -1096,8 +1146,7 @@ int run_scenario_policy_lua_choose_start(void) {
  * anything in a tank's stores came from the script.
  * ================================================================ */
 int run_scenario_policy_lua_spawn_loadout(void) {
-    static const char *const kMap    = "scnpol_lua_loadout.map";
-    static const char *const kRecord = "scnpol_lua_loadout.record";
+    static const char *const kMap = "scnpol_lua_loadout.map";
     static const char *const kBody =
         "scenario = { name = \"Armed\", api = 1 }\n"
         "function spawn_loadout(p)\n"
@@ -1110,7 +1159,7 @@ int run_scenario_policy_lua_spawn_loadout(void) {
     GameSim      *gs;
     char          rec[4096];
 
-    UT_ASSERT(plaPut(kMap, kRecord, kBody));
+    UT_ASSERT(plaPut(kMap, kBody));
     sim = plaSimOfType(kMap, &h, gameStrictTournament);
     UT_ASSERT(sim != NULL);
     gs = &sim->sim;
@@ -1147,12 +1196,12 @@ int run_scenario_policy_lua_spawn_loadout(void) {
                   (unsigned)tankGetArmour(&gs->tanks[PLA_OTHER]),
                   (unsigned)tankGetTrees(&gs->tanks[PLA_OTHER]));
 
-    plaRead(kRecord, rec, sizeof(rec));
+    plaRead(rec, sizeof(rec));
     UT_ASSERT_MSG(strstr(rec, "loadout 1\n") != NULL,
                   "the script was asked \"%s\", expected a loadout for slot 1",
                   rec);
 
-    plaEnd(sim, h, kMap, kRecord);
+    plaEnd(sim, h, kMap);
     return 0;
 }
 
@@ -1164,8 +1213,7 @@ int run_scenario_policy_lua_spawn_loadout(void) {
  * point of armour.
  * ================================================================ */
 int run_scenario_policy_lua_damage_scale(void) {
-    static const char *const kMap    = "scnpol_lua_scale.map";
-    static const char *const kRecord = "scnpol_lua_scale.record";
+    static const char *const kMap = "scnpol_lua_scale.map";
     static const char *const kBody =
         "scenario = { name = \"Boss\", api = 1 }\n"
         "function damage_scale(attacker, victim, cause)\n"
@@ -1181,7 +1229,7 @@ int run_scenario_policy_lua_damage_scale(void) {
     BYTE          base, halved, none, armourBefore;
     int           i;
 
-    UT_ASSERT(plaPut(kMap, kRecord, kBody));
+    UT_ASSERT(plaPut(kMap, kBody));
     sim = plaSim(kMap, &h);
     UT_ASSERT(sim != NULL);
     gs = &sim->sim;
@@ -1204,7 +1252,7 @@ int run_scenario_policy_lua_damage_scale(void) {
                   "a scale of zero priced a shell at %u, expected nothing",
                   (unsigned)none);
 
-    plaRead(kRecord, rec, sizeof(rec));
+    plaRead(rec, sizeof(rec));
     UT_ASSERT_MSG(strstr(rec, "scale 0 1 shell\n") != NULL,
                   "the script was asked \"%s\", expected a shell from slot 0 "
                   "against slot 1", rec);
@@ -1224,7 +1272,7 @@ int run_scenario_policy_lua_damage_scale(void) {
     UT_ASSERT_MSG(!tankIsDestroyed(&gs->tanks[2]),
                   "a tank taking no damage must still be alive");
 
-    plaEnd(sim, h, kMap, kRecord);
+    plaEnd(sim, h, kMap);
     return 0;
 }
 
@@ -1240,14 +1288,14 @@ int run_scenario_policy_lua_damage_scale(void) {
 /* One leg: a round under the script body given, with the three decisions
    read back. Zero when every one of them was classic and one otherwise, so
    the case below reads like the assertions it stands in for. */
-static int plaClassicLeg(const char *mapPath, const char *record,
-                         const char *body, const char *what) {
+static int plaClassicLeg(const char *mapPath, const char *body,
+                         const char *what) {
     ServerSim    *sim;
     ScenarioHost *h;
     GameSim      *gs;
     BYTE          base;
 
-    UT_ASSERT(plaPut(mapPath, record, body));
+    UT_ASSERT(plaPut(mapPath, body));
     sim = plaSimOfType(mapPath, &h, gameStrictTournament);
     UT_ASSERT(sim != NULL);
     gs = &sim->sim;
@@ -1280,7 +1328,7 @@ static int plaClassicLeg(const char *mapPath, const char *record,
                                              LAST_DEATH_BY_SHELL),
                   (unsigned)base);
 
-    plaEnd(sim, h, mapPath, record);
+    plaEnd(sim, h, mapPath);
     return 0;
 }
 
@@ -1306,29 +1354,26 @@ int run_scenario_policy_lua_value_classic(void) {
     char rec[4096];
     int  rc;
 
-    rc = plaClassicLeg("scnpol_lua_vnil.map", "scnpol_lua_vnil.record",
-                       kNilBody, "a nil answer");
+    rc = plaClassicLeg("scnpol_lua_vnil.map", kNilBody, "a nil answer");
     if (rc != 0) return rc;
-    rc = plaClassicLeg("scnpol_lua_vraise.map", "scnpol_lua_vraise.record",
-                       kRaiseBody, "a raise");
+    rc = plaClassicLeg("scnpol_lua_vraise.map", kRaiseBody, "a raise");
     if (rc != 0) return rc;
-    rc = plaClassicLeg("scnpol_lua_vbad.map", "scnpol_lua_vbad.record",
-                       kBadBody, "an answer the site cannot use");
+    rc = plaClassicLeg("scnpol_lua_vbad.map", kBadBody,
+                       "an answer the site cannot use");
     if (rc != 0) return rc;
 
     /* And with no function of any of the three names, which is the ordinary
        case and must reach the same place without the host looking anything
        up. */
-    rc = plaClassicLeg("scnpol_lua_vnone.map", "scnpol_lua_vnone.record",
-                       kNoneBody, "no function at all");
+    rc = plaClassicLeg("scnpol_lua_vnone.map", kNoneBody,
+                       "no function at all");
     if (rc != 0) return rc;
 
     /* The three that defined the functions really were asked; the fourth
        wrote no record because it defined none. */
-    plaRead("scnpol_lua_vnone.record", rec, sizeof(rec));
+    plaRead(rec, sizeof(rec));
     UT_ASSERT_MSG(rec[0] == '\0',
                   "a script defining none of the three wrote \"%s\"", rec);
-    remove("scnpol_lua_vnone.record");
     return 0;
 }
 
@@ -1340,8 +1385,7 @@ int run_scenario_policy_lua_value_classic(void) {
  * amount on its way to the limit.
  * ================================================================ */
 int run_scenario_policy_lua_value_error_counts(void) {
-    static const char *const kMap    = "scnpol_lua_vcount.map";
-    static const char *const kRecord = "scnpol_lua_vcount.record";
+    static const char *const kMap = "scnpol_lua_vcount.map";
     static const char *const kBody =
         "scenario = { name = \"Boom\", api = 1 }\n"
         "function damage_scale(a, v, c)\n"
@@ -1355,7 +1399,7 @@ int run_scenario_policy_lua_value_error_counts(void) {
     BYTE          base;
     int           i;
 
-    UT_ASSERT(plaPut(kMap, kRecord, kBody));
+    UT_ASSERT(plaPut(kMap, kBody));
     sim = plaSim(kMap, &h);
     UT_ASSERT(sim != NULL);
     gs = &sim->sim;
@@ -1390,7 +1434,7 @@ int run_scenario_policy_lua_value_error_counts(void) {
                   "the switched-off round priced a shell at anything but the "
                   "classic %u", (unsigned)base);
 
-    plaEnd(sim, h, kMap, kRecord);
+    plaEnd(sim, h, kMap);
     return 0;
 }
 
@@ -1398,8 +1442,7 @@ int run_scenario_policy_lua_value_error_counts(void) {
  * 15. An op issued from inside one of the three is refused.
  * ================================================================ */
 int run_scenario_policy_lua_value_in_policy(void) {
-    static const char *const kMap    = "scnpol_lua_vinpolicy.map";
-    static const char *const kRecord = "scnpol_lua_vinpolicy.record";
+    static const char *const kMap = "scnpol_lua_vinpolicy.map";
     static const char *const kBody =
         "scenario = { name = \"Writes Back\", api = 1 }\n"
         "function spawn_loadout(p)\n"
@@ -1412,15 +1455,15 @@ int run_scenario_policy_lua_value_in_policy(void) {
     ScenarioHost *h;
     char          rec[4096];
 
-    UT_ASSERT(plaPut(kMap, kRecord, kBody));
+    UT_ASSERT(plaPut(kMap, kBody));
     sim = plaSim(kMap, &h);
     UT_ASSERT(sim != NULL);
 
-    plaRead(kRecord, rec, sizeof(rec));
+    plaRead(rec, sizeof(rec));
     UT_ASSERT_MSG(strstr(rec, "policy nil SCN_OP_IN_POLICY\n") != NULL,
                   "an op issued from inside a loadout answered \"%s\", "
                   "expected nil and SCN_OP_IN_POLICY", rec);
 
-    plaEnd(sim, h, kMap, kRecord);
+    plaEnd(sim, h, kMap);
     return 0;
 }

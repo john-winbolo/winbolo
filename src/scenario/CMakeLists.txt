@@ -26,6 +26,7 @@ add_library(scenario_static STATIC
     scenario_host.c
     scenario_events.c
     scenario_lua.c
+    scenario_sandbox.c
     scenario_validate.c
 )
 

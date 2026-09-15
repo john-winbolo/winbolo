@@ -10,9 +10,9 @@
  * So every case here drives a real round and reads what the script wrote
  * down, because there is no event to publish and nothing else to watch.
  *
- * A script says what happened by appending a line to a file of its own. The
- * name carries the case's name, because ctest runs the cases as concurrent
- * processes in one working directory.
+ * A script says what happened by printing a marked line. A scenario state
+ * has no io, and the sandbox routes print to the server console, so the
+ * record is read off the sim's console callback.
  *
  * Squares are found by the property the case needs — a square a tank can be
  * put on — and a map with none says so rather than the case naming numbers
@@ -53,6 +53,8 @@
 
 #include "global.h"                /* the terrain codes and the map edges */
 #include "server_sim.h"
+#include "server_sim_internal.h"   /* sim->sim.callbacks, for the console
+                                    * watcher the records are read off */
 #include "server_sim_lifecycle.h"  /* SetLobbyEnabled, StartGame */
 #include "server_sim_scenario.h"   /* the op funnel, for the teleports */
 #include "control_event.h"
@@ -75,10 +77,69 @@ static void sdScriptFor(const char *mapPath, char *out, size_t outLen) {
     snprintf(out, outLen, "%.*s%s", (int)n, mapPath, SCN_SCRIPT_SUFFIX);
 }
 
+/* A hook says what it read by printing a marked line. A scenario state has
+ * no io, and its print goes to the server console, which the watcher below
+ * catches. The mark is what tells a hook's line from the host's own: both
+ * arrive on the same console. */
+#define SD_NOTE_MARK "note:"
+
+static char   sdNote[8192];
+static size_t sdNoteLen;
+
+static void sdReset(void) {
+    sdNote[0] = '\0';
+    sdNoteLen = 0;
+}
+
+/* One console line, kept if a hook wrote it, with the newline the record's
+   readers count whole lines by. A record past the buffer is truncated
+   rather than overrunning it. */
+static void sdNoteLine(const char *msg) {
+    size_t mark = strlen(SD_NOTE_MARK);
+    size_t room;
+    size_t n;
+
+    /* Two bytes short of the end is as far as a line can start: one for the
+       newline and one for the terminator. */
+    if (msg == NULL || strncmp(msg, SD_NOTE_MARK, mark) != 0 ||
+        sdNoteLen + 2 > sizeof(sdNote)) {
+        return;
+    }
+    n    = strlen(msg + mark);
+    room = sizeof(sdNote) - 2 - sdNoteLen;
+    if (n > room) {
+        n = room;
+    }
+    memcpy(sdNote + sdNoteLen, msg + mark, n);
+    sdNoteLen += n;
+    sdNote[sdNoteLen++] = '\n';
+    sdNote[sdNoteLen]   = '\0';
+}
+
+/* Only consoleMessage is replaced, never the ctx beside it, which the sim's
+   other callbacks read. */
+static void (*sdConsolePrev)(void *ctx, char *msg) = NULL;
+
+static void sdConsoleCb(void *ctx, char *msg) {
+    if (sdConsolePrev != NULL) {
+        sdConsolePrev(ctx, msg);
+    }
+    sdNoteLine(msg);
+}
+
+static void sdWatchConsole(ServerSim *sim) {
+    sdConsolePrev = sim->sim.callbacks.consoleMessage;
+    sim->sim.callbacks.consoleMessage = sdConsoleCb;
+}
+
+static void sdUnwatchConsole(ServerSim *sim) {
+    sim->sim.callbacks.consoleMessage = sdConsolePrev;
+    sdConsolePrev = NULL;
+}
+
 /* The script: the scenario table the case hands over, the note function
  * every hook writes its line with, and the case's own body. */
-static bool sdPut(const char *mapPath, const char *record, const char *table,
-                  const char *body) {
+static bool sdPut(const char *mapPath, const char *table, const char *body) {
     char  path[512];
     char  lua[16384];
     FILE *f;
@@ -86,10 +147,9 @@ static bool sdPut(const char *mapPath, const char *record, const char *table,
     snprintf(lua, sizeof(lua),
              "%s\n"
              "local function note(s)\n"
-             "  local f = io.open(\"%s\", \"a\")\n"
-             "  if f then f:write(s .. \"\\n\") f:close() end\n"
+             "  print(\"" SD_NOTE_MARK "\" .. tostring(s))\n"
              "end\n"
-             "%s", table, record, body);
+             "%s", table, body);
 
     sdScriptFor(mapPath, path, sizeof(path));
     f = fopen(path, "wb");
@@ -118,20 +178,15 @@ static ServerSim *sdSim(void) {
         return NULL;
     }
     serverSimSetLobbyEnabled(sim, false);
+    /* Watched from here, which is before every case's attach: a script that
+       prints at its top level prints while the attach is still running. */
+    sdWatchConsole(sim);
+    sdReset();
     return sim;
 }
 
-static void sdRead(const char *record, char *out, size_t outLen) {
-    FILE  *f = fopen(record, "rb");
-    size_t n;
-
-    out[0] = '\0';
-    if (f == NULL) {
-        return;
-    }
-    n = fread(out, 1, outLen - 1, f);
-    fclose(f);
-    out[n] = '\0';
+static void sdRead(char *out, size_t outLen) {
+    snprintf(out, outLen, "%s", sdNote);
 }
 
 /* How many whole lines the record has that begin with what was asked for.
@@ -281,12 +336,12 @@ static bool sdTankAt(ServerSim *sim, BYTE *mx, BYTE *my) {
 
 /* Tick until the record holds the line, or the limit runs out. Answers how
  * many ticks it took, or -1. */
-static int sdTickUntil(ServerSim *sim, const char *record, const char *line) {
+static int sdTickUntil(ServerSim *sim, const char *line) {
     char rec[4096];
     int  i;
 
     for (i = 0; i < SD_TICK_LIMIT; i++) {
-        sdRead(record, rec, sizeof(rec));
+        sdRead(rec, sizeof(rec));
         if (strstr(rec, line) != NULL) {
             return i;
         }
@@ -303,8 +358,7 @@ static int sdTickUntil(ServerSim *sim, const char *record, const char *line) {
  * the delay lands exactly on a tick a drain runs at: the two are the same
  * parity, which is why this is an equality rather than a window. */
 int run_scenario_derived_timer_fires_on_its_tick(void) {
-    static const char *const kMap    = "scnder_timer.map";
-    static const char *const kRecord = "scnder_timer.txt";
+    static const char *const kMap = "scnder_timer.map";
     static const char *const kBody =
         "function on_start()\n"
         "  note(\"set \"..game.tick())\n"
@@ -316,8 +370,8 @@ int run_scenario_derived_timer_fires_on_its_tick(void) {
     char          err[512];
     long          set, fired;
 
-    remove(kRecord);
-    UT_ASSERT(sdPut(kMap, kRecord, "scenario = { name = \"T\", api = 1 }",
+    sdReset();
+    UT_ASSERT(sdPut(kMap, "scenario = { name = \"T\", api = 1 }",
                     kBody));
     sim = sdSim();
     UT_ASSERT(sim != NULL);
@@ -326,10 +380,10 @@ int run_scenario_derived_timer_fires_on_its_tick(void) {
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
 
-    UT_ASSERT_MSG(sdTickUntil(sim, kRecord, "fired ") >= 0,
+    UT_ASSERT_MSG(sdTickUntil(sim, "fired ") >= 0,
                   "the timer never ran in %d ticks", SD_TICK_LIMIT);
 
-    sdRead(kRecord, rec, sizeof(rec));
+    sdRead(rec, sizeof(rec));
     set   = sdNumber(rec, "set ");
     fired = sdNumber(rec, "fired ");
     UT_ASSERT_MSG(set >= 0, "the start hook wrote no tick; the record "
@@ -344,9 +398,10 @@ int run_scenario_derived_timer_fires_on_its_tick(void) {
                   sdLines(rec, "fired "), rec);
 
     scenarioHostDetach(h);
+    sdUnwatchConsole(sim);
     serverSimDestroy(sim);
     sdDrop(kMap);
-    remove(kRecord);
+    sdReset();
     return 0;
 }
 
@@ -358,8 +413,7 @@ int run_scenario_derived_timer_fires_on_its_tick(void) {
  * finds nothing and says so rather than reaching whatever has since taken
  * the entry it used to sit in. */
 int run_scenario_derived_timer_cancelled_and_stale(void) {
-    static const char *const kMap    = "scnder_cancel.map";
-    static const char *const kRecord = "scnder_cancel.txt";
+    static const char *const kMap = "scnder_cancel.map";
     static const char *const kBody =
         "function on_start()\n"
         "  local a = game.timer(2, function() note(\"fired_a\") end)\n"
@@ -375,8 +429,8 @@ int run_scenario_derived_timer_cancelled_and_stale(void) {
     char          err[512];
     int           i;
 
-    remove(kRecord);
-    UT_ASSERT(sdPut(kMap, kRecord, "scenario = { name = \"C\", api = 1 }",
+    sdReset();
+    UT_ASSERT(sdPut(kMap, "scenario = { name = \"C\", api = 1 }",
                     kBody));
     sim = sdSim();
     UT_ASSERT(sim != NULL);
@@ -389,7 +443,7 @@ int run_scenario_derived_timer_cancelled_and_stale(void) {
     for (i = 0; i < 3 * GAME_NUMTOTALTICKS_SEC; i++) {
         serverSimTick(sim);
     }
-    sdRead(kRecord, rec, sizeof(rec));
+    sdRead(rec, sizeof(rec));
 
     UT_ASSERT_MSG(sdLines(rec, "cancel_a true\n") == 1,
                   "cancelling a waiting timer did not report it; the record "
@@ -404,9 +458,10 @@ int run_scenario_derived_timer_cancelled_and_stale(void) {
                   "false; the record was:\n%s", rec);
 
     scenarioHostDetach(h);
+    sdUnwatchConsole(sim);
     serverSimDestroy(sim);
     sdDrop(kMap);
-    remove(kRecord);
+    sdReset();
     return 0;
 }
 
@@ -417,8 +472,7 @@ int run_scenario_derived_timer_cancelled_and_stale(void) {
  * them comes due while the case is running: what is being counted is how
  * many may wait at once. */
 int run_scenario_derived_timer_limit_boundary(void) {
-    static const char *const kMap    = "scnder_limit.map";
-    static const char *const kRecord = "scnder_limit.txt";
+    static const char *const kMap = "scnder_limit.map";
     ServerSim    *sim;
     ScenarioHost *h;
     char          body[1024];
@@ -426,7 +480,7 @@ int run_scenario_derived_timer_limit_boundary(void) {
     char          err[512];
     char          want[64];
 
-    remove(kRecord);
+    sdReset();
     snprintf(body, sizeof(body),
              "function on_start()\n"
              "  local made = 0\n"
@@ -437,7 +491,7 @@ int run_scenario_derived_timer_limit_boundary(void) {
              "  note(\"made \"..made)\n"
              "  note(\"extra \"..tostring(id)..\" \"..tostring(code))\n"
              "end\n", SCN_TIMERS_MAX);
-    UT_ASSERT(sdPut(kMap, kRecord, "scenario = { name = \"L\", api = 1 }",
+    UT_ASSERT(sdPut(kMap, "scenario = { name = \"L\", api = 1 }",
                     body));
     sim = sdSim();
     UT_ASSERT(sim != NULL);
@@ -446,7 +500,7 @@ int run_scenario_derived_timer_limit_boundary(void) {
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
     serverSimTick(sim);
-    sdRead(kRecord, rec, sizeof(rec));
+    sdRead(rec, sizeof(rec));
 
     snprintf(want, sizeof(want), "made %d\n", SCN_TIMERS_MAX);
     UT_ASSERT_MSG(sdLines(rec, want) == 1,
@@ -458,9 +512,10 @@ int run_scenario_derived_timer_limit_boundary(void) {
                   "record was:\n%s", rec);
 
     scenarioHostDetach(h);
+    sdUnwatchConsole(sim);
     serverSimDestroy(sim);
     sdDrop(kMap);
-    remove(kRecord);
+    sdReset();
     return 0;
 }
 
@@ -473,8 +528,7 @@ int run_scenario_derived_timer_limit_boundary(void) {
  * not merely a stale call but a reference into a state that has been
  * closed. */
 int run_scenario_derived_timers_die_with_the_round(void) {
-    static const char *const kMap    = "scnder_round.map";
-    static const char *const kRecord = "scnder_round.txt";
+    static const char *const kMap = "scnder_round.map";
     static const char *const kBody =
         "function on_start()\n"
         "  note(\"start\")\n"
@@ -486,8 +540,8 @@ int run_scenario_derived_timers_die_with_the_round(void) {
     char          err[512];
     int           i;
 
-    remove(kRecord);
-    UT_ASSERT(sdPut(kMap, kRecord, "scenario = { name = \"R\", api = 1 }",
+    sdReset();
+    UT_ASSERT(sdPut(kMap, "scenario = { name = \"R\", api = 1 }",
                     kBody));
     sim = sdSim();
     UT_ASSERT(sim != NULL);
@@ -499,7 +553,7 @@ int run_scenario_derived_timers_die_with_the_round(void) {
     for (i = 0; i < 10; i++) {
         serverSimTick(sim);
     }
-    sdRead(kRecord, rec, sizeof(rec));
+    sdRead(rec, sizeof(rec));
     UT_ASSERT_MSG(sdLines(rec, "start\n") == 1,
                   "the first round did not start once; the record was:\n%s",
                   rec);
@@ -511,7 +565,7 @@ int run_scenario_derived_timers_die_with_the_round(void) {
     for (i = 0; i < 2 * GAME_NUMTOTALTICKS_SEC; i++) {
         serverSimTick(sim);
     }
-    sdRead(kRecord, rec, sizeof(rec));
+    sdRead(rec, sizeof(rec));
 
     UT_ASSERT_MSG(sdLines(rec, "start\n") == 2,
                   "two rounds were started and the start hook ran %d times; "
@@ -522,9 +576,10 @@ int run_scenario_derived_timers_die_with_the_round(void) {
                   "ended. The record was:\n%s", sdLines(rec, "fired\n"), rec);
 
     scenarioHostDetach(h);
+    sdUnwatchConsole(sim);
     serverSimDestroy(sim);
     sdDrop(kMap);
-    remove(kRecord);
+    sdReset();
     return 0;
 }
 
@@ -535,8 +590,7 @@ int run_scenario_derived_timers_die_with_the_round(void) {
  * two transitions and nothing else: standing still inside a region is not
  * entering it again. */
 int run_scenario_derived_region_enter_and_leave(void) {
-    static const char *const kMap    = "scnder_cross.map";
-    static const char *const kRecord = "scnder_cross.txt";
+    static const char *const kMap = "scnder_cross.map";
     static const char *const kBody =
         "function on_enter_region(p, name) note(\"enter \"..p..\" \"..name) end\n"
         "function on_leave_region(p, name) note(\"leave \"..p..\" \"..name) end\n";
@@ -549,7 +603,7 @@ int run_scenario_derived_region_enter_and_leave(void) {
     BYTE          tx, ty;
     int           i;
 
-    remove(kRecord);
+    sdReset();
     sim = sdSim();
     UT_ASSERT(sim != NULL);
     UT_ASSERT_MSG(sdTwoSquares(sim, &ax, &ay, &bx, &by),
@@ -559,7 +613,7 @@ int run_scenario_derived_region_enter_and_leave(void) {
              "scenario = { name = \"X\", api = 1,\n"
              "  regions = { keep = { x = %d, y = %d, w = 1, h = 1 } } }",
              (int)ax, (int)ay);
-    UT_ASSERT(sdPut(kMap, kRecord, table, kBody));
+    UT_ASSERT(sdPut(kMap, table, kBody));
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
@@ -576,11 +630,11 @@ int run_scenario_derived_region_enter_and_leave(void) {
        the scan on it. Only then is the record the case's own. */
     UT_ASSERT(sdTeleport(sim, 0, bx, by) == SCN_OP_OK);
     serverSimTick(sim);
-    remove(kRecord);
+    sdReset();
 
     UT_ASSERT(sdTeleport(sim, 0, ax, ay) == SCN_OP_OK);
     serverSimTick(sim);
-    sdRead(kRecord, rec, sizeof(rec));
+    sdRead(rec, sizeof(rec));
     UT_ASSERT_MSG(sdLines(rec, "enter 0 keep\n") == 1,
                   "the tank moved into the region and the enter hook ran %d "
                   "times; the record was:\n%s",
@@ -593,7 +647,7 @@ int run_scenario_derived_region_enter_and_leave(void) {
     for (i = 0; i < 5; i++) {
         serverSimTick(sim);
     }
-    sdRead(kRecord, rec, sizeof(rec));
+    sdRead(rec, sizeof(rec));
     UT_ASSERT_MSG(sdLines(rec, "enter 0 keep\n") == 1,
                   "the enter hook ran %d times for a tank that had not "
                   "moved; the record was:\n%s",
@@ -601,7 +655,7 @@ int run_scenario_derived_region_enter_and_leave(void) {
 
     UT_ASSERT(sdTeleport(sim, 0, bx, by) == SCN_OP_OK);
     serverSimTick(sim);
-    sdRead(kRecord, rec, sizeof(rec));
+    sdRead(rec, sizeof(rec));
     UT_ASSERT_MSG(sdLines(rec, "leave 0 keep\n") == 1,
                   "the tank moved out and the leave hook ran %d times; the "
                   "record was:\n%s", sdLines(rec, "leave 0 keep\n"), rec);
@@ -610,9 +664,10 @@ int run_scenario_derived_region_enter_and_leave(void) {
                   "was:\n%s", rec);
 
     scenarioHostDetach(h);
+    sdUnwatchConsole(sim);
     serverSimDestroy(sim);
     sdDrop(kMap);
-    remove(kRecord);
+    sdReset();
     return 0;
 }
 
@@ -627,8 +682,7 @@ int run_scenario_derived_region_enter_and_leave(void) {
  * The rectangles are the case's own numbers and nothing is assumed about
  * the map underneath them: a region is arithmetic on two coordinates. */
 int run_scenario_derived_define_region_adds_replaces_and_expires(void) {
-    static const char *const kMap    = "scnder_define.map";
-    static const char *const kRecord = "scnder_define.txt";
+    static const char *const kMap = "scnder_define.map";
     ServerSim    *sim;
     ScenarioHost *h;
     char          body[2048];
@@ -636,7 +690,7 @@ int run_scenario_derived_define_region_adds_replaces_and_expires(void) {
     char          err[512];
     char          want[64];
 
-    remove(kRecord);
+    sdReset();
     snprintf(body, sizeof(body),
              "function on_setup()\n"
              "  note(\"begin \"..#game.regions())\n"
@@ -658,7 +712,7 @@ int run_scenario_derived_define_region_adds_replaces_and_expires(void) {
              "game.define_region(\"keep\", 5, 5, 3, 3)))\n"
              "  note(\"total \"..#game.regions())\n"
              "end\n", SCN_REGIONS_MAX);
-    UT_ASSERT(sdPut(kMap, kRecord,
+    UT_ASSERT(sdPut(kMap,
                     "scenario = { name = \"D\", api = 1,\n"
                     "  regions = { keep = { x = 1, y = 1, w = 2, h = 2 } } }",
                     body));
@@ -668,7 +722,7 @@ int run_scenario_derived_define_region_adds_replaces_and_expires(void) {
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
-    sdRead(kRecord, rec, sizeof(rec));
+    sdRead(rec, sizeof(rec));
 
     UT_ASSERT_MSG(sdLines(rec, "begin 1\n") == 1,
                   "the round did not open with the one declared region; the "
@@ -708,18 +762,19 @@ int run_scenario_derived_define_region_adds_replaces_and_expires(void) {
 
     /* A second round reads the table again, so what the first defined is
        gone and only the declared one is there. */
-    remove(kRecord);
+    sdReset();
     serverSimStartGame(sim);
-    sdRead(kRecord, rec, sizeof(rec));
+    sdRead(rec, sizeof(rec));
     UT_ASSERT_MSG(sdLines(rec, "begin 1\n") == 1,
                   "the second round opened with something other than the one "
                   "declared region: a defined region outlived its round. The "
                   "record was:\n%s", rec);
 
     scenarioHostDetach(h);
+    sdUnwatchConsole(sim);
     serverSimDestroy(sim);
     sdDrop(kMap);
-    remove(kRecord);
+    sdReset();
     return 0;
 }
 
@@ -738,8 +793,7 @@ int run_scenario_derived_define_region_adds_replaces_and_expires(void) {
  * report both on the first tick, and one that looped until nothing changed
  * would not return at all. */
 int run_scenario_derived_region_loop_terminates(void) {
-    static const char *const kMap    = "scnder_loop.map";
-    static const char *const kRecord = "scnder_loop.txt";
+    static const char *const kMap = "scnder_loop.map";
     ServerSim    *sim;
     ScenarioHost *h;
     char          table[256];
@@ -750,7 +804,7 @@ int run_scenario_derived_region_loop_terminates(void) {
     BYTE          tx, ty;
     int           i;
 
-    remove(kRecord);
+    sdReset();
     sim = sdSim();
     UT_ASSERT(sim != NULL);
     UT_ASSERT_MSG(sdTwoSquares(sim, &ax, &ay, &bx, &by),
@@ -767,7 +821,7 @@ int run_scenario_derived_region_loop_terminates(void) {
              "end\n"
              "function on_leave_region(p, name) note(\"leave\") end\n",
              (int)bx, (int)by);
-    UT_ASSERT(sdPut(kMap, kRecord, table, body));
+    UT_ASSERT(sdPut(kMap, table, body));
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
@@ -782,13 +836,13 @@ int run_scenario_derived_region_loop_terminates(void) {
 
     UT_ASSERT(sdTeleport(sim, 0, bx, by) == SCN_OP_OK);
     serverSimTick(sim);
-    remove(kRecord);
+    sdReset();
 
     /* In. The next tick runs the enter hook, which puts it straight back
        out — and the leave for that is the tick after, not this one. */
     UT_ASSERT(sdTeleport(sim, 0, ax, ay) == SCN_OP_OK);
     serverSimTick(sim);
-    sdRead(kRecord, rec, sizeof(rec));
+    sdRead(rec, sizeof(rec));
     UT_ASSERT_MSG(sdLines(rec, "enter\n") == 1,
                   "the enter hook ran %d times on the tick the tank moved "
                   "in; the record was:\n%s", sdLines(rec, "enter\n"), rec);
@@ -798,7 +852,7 @@ int run_scenario_derived_region_loop_terminates(void) {
                   "run. The record was:\n%s", rec);
 
     serverSimTick(sim);
-    sdRead(kRecord, rec, sizeof(rec));
+    sdRead(rec, sizeof(rec));
     UT_ASSERT_MSG(sdLines(rec, "leave\n") == 1,
                   "the handler's move was not reported on the following "
                   "tick; the record was:\n%s", rec);
@@ -807,7 +861,7 @@ int run_scenario_derived_region_loop_terminates(void) {
     for (i = 0; i < 10; i++) {
         serverSimTick(sim);
     }
-    sdRead(kRecord, rec, sizeof(rec));
+    sdRead(rec, sizeof(rec));
     UT_ASSERT_MSG(sdLines(rec, "enter\n") == 1 &&
                   sdLines(rec, "leave\n") == 1,
                   "ten quiet ticks produced %d enters and %d leaves; the "
@@ -815,9 +869,10 @@ int run_scenario_derived_region_loop_terminates(void) {
                   sdLines(rec, "enter\n"), sdLines(rec, "leave\n"), rec);
 
     scenarioHostDetach(h);
+    sdUnwatchConsole(sim);
     serverSimDestroy(sim);
     sdDrop(kMap);
-    remove(kRecord);
+    sdReset();
     return 0;
 }
 
@@ -829,8 +884,7 @@ int run_scenario_derived_region_loop_terminates(void) {
  * and when the clock runs out the round is over. It defines no on_tick, and
  * the case asserts the round ended anyway. */
 int run_scenario_derived_fixture_wins_without_on_tick(void) {
-    static const char *const kMap    = "scnder_win.map";
-    static const char *const kRecord = "scnder_win.txt";
+    static const char *const kMap = "scnder_win.map";
     static const char *const kBody =
         "function on_enter_region(p, name)\n"
         "  if name == \"hill\" then\n"
@@ -850,7 +904,7 @@ int run_scenario_derived_fixture_wins_without_on_tick(void) {
     BYTE          tx, ty;
     int           i;
 
-    remove(kRecord);
+    sdReset();
     sim = sdSim();
     UT_ASSERT(sim != NULL);
     UT_ASSERT_MSG(sdTwoSquares(sim, &ax, &ay, &bx, &by),
@@ -860,7 +914,7 @@ int run_scenario_derived_fixture_wins_without_on_tick(void) {
              "scenario = { name = \"Hill\", api = 1,\n"
              "  regions = { hill = { x = %d, y = %d, w = 1, h = 1 } } }",
              (int)ax, (int)ay);
-    UT_ASSERT(sdPut(kMap, kRecord, table, kBody));
+    UT_ASSERT(sdPut(kMap, table, kBody));
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
@@ -886,7 +940,7 @@ int run_scenario_derived_fixture_wins_without_on_tick(void) {
         serverSimTick(sim);
     }
 
-    sdRead(kRecord, rec, sizeof(rec));
+    sdRead(rec, sizeof(rec));
     UT_ASSERT_MSG(sdLines(rec, "holding 0\n") == 1,
                   "the region hook did not see the tank arrive; the record "
                   "was:\n%s", rec);
@@ -898,8 +952,9 @@ int run_scenario_derived_fixture_wins_without_on_tick(void) {
                   "to do it from; the record was:\n%s", rec);
 
     scenarioHostDetach(h);
+    sdUnwatchConsole(sim);
     serverSimDestroy(sim);
     sdDrop(kMap);
-    remove(kRecord);
+    sdReset();
     return 0;
 }

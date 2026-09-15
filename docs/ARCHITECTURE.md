@@ -2245,10 +2245,12 @@ Two things the profile does not enforce, so review does. There is no
 include in `src/scenario/` fails the build today but nothing would go
 red if the profile were widened to admit it. And `scenario_static`
 publishes its own directory to whatever links it, so a frontend target
-that also links `lua_static` could include `scenario_lua.h` or
-`scenario_manifest.h`; those headers are the library's and the unit
-tests' by intent, and a frontend that reaches for one is reaching past
-`scenario_host.h` for a reason that wants a T1 accessor instead.
+that also links `lua_static` could include `scenario_lua.h`,
+`scenario_manifest.h` or `scenario_sandbox.h`; those headers are the
+library's and the unit tests' by intent — each names Lua types, which
+is the line `scenario_host.h` stays the other side of — and a frontend
+that reaches for one is reaching past `scenario_host.h` for a reason
+that wants a T1 accessor instead.
 
 ### Adding a new exception
 

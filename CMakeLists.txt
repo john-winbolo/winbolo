@@ -3420,6 +3420,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The binding table: the game table a script reads the sim through, the
     # three index rules and what an absent entity reads as.
     tests/unit/test_scenario_lua.c
+    # The state a scenario runs in: the names the whitelist takes and the
+    # ones it keeps, the precompiled chunk the loader refuses, where a
+    # script's print ends up, the memory cap it is refused at and the
+    # instruction budget one call is cut off at.
+    tests/unit/test_scenario_sandbox.c
     # The bus events the host queues and drains: the subscriber, the
     # fixed queue and the bounded drain at the end of each tick.
     tests/unit/test_scenario_events.c
@@ -5397,6 +5402,21 @@ set(_unit_test_names
     scenario_lua_teleport_start_refuses_bad_index
     scenario_lua_spawn_bot_refuses_bad_start
     scenario_lua_game_type_resolves_scripted
+    scenario_sandbox_removed_names_are_nil
+    scenario_sandbox_bytecode_chunk_refused
+    scenario_sandbox_collectgarbage_stop_refused
+    scenario_sandbox_print_reaches_the_console
+    scenario_sandbox_memory_cap_refuses
+    scenario_sandbox_state_survives_a_refusal
+    scenario_sandbox_instruction_budget_cuts_a_loop
+    scenario_sandbox_budget_is_per_call
+    scenario_sandbox_state_survives_the_budget
+    scenario_sandbox_budget_survives_a_nested_call
+    scenario_sandbox_budget_survives_a_pcall
+    scenario_sandbox_budget_survives_a_coroutine
+    scenario_sandbox_os_date_refuses_a_bad_format
+    scenario_sandbox_print_bounded_in_one_call
+    scenario_sandbox_print_allowance_returns
     scenario_events_queued_then_drained
     scenario_events_drain_reads_the_length_once
     scenario_events_queued_during_a_drain_waits

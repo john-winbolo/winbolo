@@ -79,7 +79,6 @@
 
 #include <lua.h>
 #include <lauxlib.h>
-#include <lualib.h>
 
 /* SDL_Mutex, SDL_ThreadID and SDL_GetCurrentThreadID, which the VM lock is
  * built from. server_sim.h brings SDL in as well; named here because this
@@ -96,6 +95,7 @@
 #include "scenario_manifest.h"
 #include "scenario_events.h"
 #include "scenario_lua.h"
+#include "scenario_sandbox.h"      /* the libraries a scenario state gets */
 #include "scenario_validate.h"     /* ScnParseReport, and the parse this file
                                     * shares with the validator */
 
@@ -540,8 +540,11 @@ static void scnSeedRandom(lua_State *L) {
 
     /* The two reads in this file that still run a metamethod, and the pair
        for which that costs nothing: this runs inside the boot, ahead of the
-       chunk, so math holds what luaL_openlibs put there a line ago and no
-       script has had a statement in which to touch it. */
+       chunk, so math holds what the whitelist opened a line ago and no
+       script has had a statement in which to touch it.
+       math.randomseed is one of the names the whitelist takes, which is why
+       the seal runs after this call rather than inside the open: the seed is
+       drawn here and the function is gone before the chunk can reach it. */
     lua_getglobal(L, "math");
     if (lua_istable(L, -1)) {
         lua_getfield(L, -1, "randomseed");
@@ -591,14 +594,23 @@ static int scnPanic(lua_State *L) {
 }
 
 lua_State *scnNewVm(void) {
-    lua_State *L = luaL_newstate();
+    lua_State *L = scnSandboxNewState();
     if (L == NULL) {
         return NULL;
     }
     lua_atpanic(L, scnPanic);
-    luaL_openlibs(L);
+    scnSandboxOpenLibs(L);
     scnSeedRandom(L);
+    scnSandboxSealRandom(L);
     return L;
+}
+
+/* The other end of it. A state carries its memory count beside it, so every
+ * close goes through here rather than through lua_close: the count is on the
+ * heap and a plain close would leave it behind. NULL is nothing to close,
+ * which is what lets the failure paths below close without asking. */
+void scnCloseVm(lua_State *L) {
+    scnSandboxCloseState(L);
 }
 
 /* A state with the script's own surface on it, ready for a chunk.
@@ -637,20 +649,34 @@ static const char *scnLuaError(lua_State *L) {
  *
  * chunkName carries the leading '@' that tells Lua the name is a file, so
  * an error reads as path:line: message — the same text a chunk loaded
- * straight from the file produces. */
+ * straight from the file produces.
+ *
+ * Text only. A precompiled chunk is a stream the VM trusts and does not
+ * check, so bytes that arrived inside a map file are refused at the load
+ * rather than read as instructions. Every state the host boots comes through
+ * here, the validator's included, so WinBoloDS -validate refuses one too. */
 bool scnRunChunk(lua_State *L, const char *src, size_t srcLen,
                  const char *chunkName, char *err, size_t errLen) {
-    if (luaL_loadbuffer(L, src, srcLen, chunkName) != 0) {
+    ScnSandboxCall saved;
+    bool           ok = false;
+
+    /* The chunk's top level is script code like any other, and the one place
+       a loop in it would show is here: an attach that never returns. Armed
+       across the load as well, which costs nothing — the parser is C and
+       executes no instructions to count — and leaves one disarm to reach
+       whichever way this goes. */
+    scnSandboxArmCall(L, &saved);
+    if (luaL_loadbufferx(L, src, srcLen, chunkName, "t") != 0) {
         scnFmt(err, errLen, "scenario: %s", scnLuaError(L));
         lua_pop(L, 1);
-        return false;
-    }
-    if (lua_pcall(L, 0, 0, 0) != 0) {
+    } else if (lua_pcall(L, 0, 0, 0) != 0) {
         scnFmt(err, errLen, "scenario: %s", scnLuaError(L));
         lua_pop(L, 1);
-        return false;
+    } else {
+        ok = true;
     }
-    return true;
+    scnSandboxDisarmCall(L, &saved);
+    return ok;
 }
 
 /* ── Reading the table ────────────────────────────────────────────── */
@@ -1132,7 +1158,13 @@ static bool scnHookBegin(ScenarioHost *h, ScnHookId id) {
  * raises carries the error count toward the limit and one that returns puts
  * it back to zero. */
 static void scnHookCall(ScenarioHost *h, ScnHookId id, int nargs) {
-    if (lua_pcall(h->L, nargs, 0, 0) != 0) {
+    ScnSandboxCall saved;
+    int            rc;
+
+    scnSandboxArmCall(h->L, &saved);
+    rc = lua_pcall(h->L, nargs, 0, 0);
+    scnSandboxDisarmCall(h->L, &saved);
+    if (rc != 0) {
         scnErrorRaised(h, kScnHookNames[id], scnLuaError(h->L));
         lua_pop(h->L, 1);
         return;
@@ -1679,9 +1711,11 @@ static void scnScanRegions(ScenarioHost *h) {
  * returned or raised, so a function that fails is still let go of: a timer
  * runs once. */
 static void scnRunTimers(ScenarioHost *h) {
+    ScnSandboxCall saved;
     int refs[SCN_TIMERS_MAX];
     int n;
     int i;
+    int rc;
 
     if (h->L == NULL) {
         return;
@@ -1693,7 +1727,10 @@ static void scnRunTimers(ScenarioHost *h) {
            handed back what the rest of the timers were holding. */
         if (!h->disabled) {
             lua_rawgeti(h->L, LUA_REGISTRYINDEX, refs[i]);
-            if (lua_pcall(h->L, 0, 0, 0) != 0) {
+            scnSandboxArmCall(h->L, &saved);
+            rc = lua_pcall(h->L, 0, 0, 0);
+            scnSandboxDisarmCall(h->L, &saved);
+            if (rc != 0) {
                 scnErrorRaised(h, "a timer", scnLuaError(h->L));
                 lua_pop(h->L, 1);
             } else {
@@ -1756,6 +1793,12 @@ static void scnTick(void *ctx) {
         return;
     }
     scnLockEnter(&h->lock);
+    /* First, inside the lock and before anything this tick runs: the console
+       lines print may put out are counted per tick as well as per call, and
+       this is the tick they are counted against. */
+    if (h->L != NULL) {
+        scnSandboxTickReset(h->L);
+    }
     if (h->startPending &&
         serverSimGetState(h->sim) == serverStateRunning) {
         h->startPending = false;
@@ -1872,9 +1915,14 @@ static bool scnPolicyBegin(ScenarioHost *h, const char *name) {
  * where the script answered nil. */
 static bool scnPolicyBool(ScenarioHost *h, const char *name, int nargs,
                           bool classic) {
-    bool answer = classic;
+    ScnSandboxCall saved;
+    bool           answer = classic;
+    int            rc;
 
-    if (lua_pcall(h->L, nargs, 1, 0) != 0) {
+    scnSandboxArmCall(h->L, &saved);
+    rc = lua_pcall(h->L, nargs, 1, 0);
+    scnSandboxDisarmCall(h->L, &saved);
+    if (rc != 0) {
         scnErrorRaised(h, name, scnLuaError(h->L));
         lua_pop(h->L, 1);
         return classic;
@@ -1902,7 +1950,13 @@ static bool scnPolicyBool(ScenarioHost *h, const char *name, int nargs,
  * answer, so a script answering with something unusable every time climbs
  * toward the limit rather than resetting itself on each call. */
 static bool scnPolicyAnswer(ScenarioHost *h, const char *name, int nargs) {
-    if (lua_pcall(h->L, nargs, 1, 0) != 0) {
+    ScnSandboxCall saved;
+    int            rc;
+
+    scnSandboxArmCall(h->L, &saved);
+    rc = lua_pcall(h->L, nargs, 1, 0);
+    scnSandboxDisarmCall(h->L, &saved);
+    if (rc != 0) {
         scnErrorRaised(h, name, scnLuaError(h->L));
         lua_pop(h->L, 1);
         return false;
@@ -2400,7 +2454,7 @@ static void scnRoundBootLocked(ScenarioHost *h) {
     if (!scnRunChunk(L, h->src, h->srcLen, h->chunkName, err, sizeof(err)) ||
         !scnReadManifest(L, &fresh, h->script, err, sizeof(err), &rep)) {
         scnSay(h->lastError, sizeof(h->lastError), "%s", err);
-        lua_close(L);
+        scnCloseVm(L);
         scnRoundWithoutScenario(h);
         return;
     }
@@ -2408,13 +2462,13 @@ static void scnRoundBootLocked(ScenarioHost *h) {
         scnSay(h->lastError, sizeof(h->lastError),
                "scenario: %s asks for api %d and this server is api %d",
                h->script, fresh.api, SCENARIO_API_VERSION);
-        lua_close(L);
+        scnCloseVm(L);
         scnRoundWithoutScenario(h);
         return;
     }
 
     if (h->L != NULL) {
-        lua_close(h->L);
+        scnCloseVm(h->L);
     }
     h->L        = L;
     /* The whole table, read from the script's bytes again — which is how a
@@ -2665,7 +2719,7 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     rep.sink    = NULL;
     if (!scnRunChunk(L, src, srcLen, chunkName, err, errLen) ||
         !scnReadManifest(L, &m, script, err, errLen, &rep)) {
-        lua_close(L);
+        scnCloseVm(L);
         scnLockDestroy(&h->lock);
         free(h);
         free(src);
@@ -2676,7 +2730,7 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
                "scenario: %s asks for api %d and this server is api %d — "
                "the server is too old to run it",
                script, m.api, SCENARIO_API_VERSION);
-        lua_close(L);
+        scnCloseVm(L);
         scnLockDestroy(&h->lock);
         free(h);
         free(src);
@@ -2861,7 +2915,7 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     rep.sink    = NULL;
     if (!scnRunChunk(L, src, srcLen, chunkName, err, errLen) ||
         !scnReadManifest(L, &m, name, err, errLen, &rep)) {
-        lua_close(L);
+        scnCloseVm(L);
         free(src);
         return false;
     }
@@ -2870,11 +2924,11 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
                "scenario: %s asks for api %d and this server is api %d — "
                "the server is too old to run it",
                name, m.api, SCENARIO_API_VERSION);
-        lua_close(L);
+        scnCloseVm(L);
         free(src);
         return false;
     }
-    lua_close(L);
+    scnCloseVm(L);
 
     /* The bytes are replaced and nothing else is. The VM and the table the
        round is running on stay as they are; the next round start builds
@@ -2971,7 +3025,7 @@ void scenarioHostDetach(ScenarioHost *h) {
        thread that owns the sim. */
     scenarioLuaTimersDrop(h->L, &h->timers);
     if (h->L != NULL) {
-        lua_close(h->L);
+        scnCloseVm(h->L);
     }
     scnLockDestroy(&h->lock);
     free(h->src);

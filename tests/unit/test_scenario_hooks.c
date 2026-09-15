@@ -8,9 +8,9 @@
  * names them the other way round, so a case that only counted calls would
  * pass with the arguments in the wrong order.
  *
- * A script says what it was handed by appending a line to a file of its
- * own. The name carries the case's name, because ctest runs the cases as
- * concurrent processes in one working directory.
+ * A script says what it was handed by printing a marked line. A scenario
+ * state has no io, and the sandbox routes print to the server console, so
+ * the record is read off the sim's console callback.
  *
  * Most cases raise the event at the sim rather than staging the world that
  * would produce it: serverSimAddEvent and serverSimPublishControl are the
@@ -50,6 +50,8 @@
 
 #include "global.h"
 #include "server_sim.h"
+#include "server_sim_internal.h"   /* sim->sim.callbacks, for the console
+                                    * watcher the records are read off */
 #include "server_sim_lifecycle.h"  /* SetLobbyEnabled, StartGame, bot config */
 #include "server_sim_scenario.h"   /* the op funnel */
 #include "control_event.h"
@@ -69,9 +71,69 @@ static void shkScriptFor(const char *mapPath, char *out, size_t outLen) {
     snprintf(out, outLen, "%.*s%s", (int)n, mapPath, SCN_SCRIPT_SUFFIX);
 }
 
+/* A hook says what it read by printing a marked line. A scenario state has
+ * no io, and its print goes to the server console, which the watcher below
+ * catches. The mark is what tells a hook's line from the host's own: both
+ * arrive on the same console. */
+#define SHK_NOTE_MARK "note:"
+
+static char   shkNote[8192];
+static size_t shkNoteLen;
+
+static void shkReset(void) {
+    shkNote[0] = '\0';
+    shkNoteLen = 0;
+}
+
+/* One console line, kept if a hook wrote it, with the newline the record's
+   readers count whole lines by. A record past the buffer is truncated
+   rather than overrunning it. */
+static void shkNoteLine(const char *msg) {
+    size_t mark = strlen(SHK_NOTE_MARK);
+    size_t room;
+    size_t n;
+
+    /* Two bytes short of the end is as far as a line can start: one for the
+       newline and one for the terminator. */
+    if (msg == NULL || strncmp(msg, SHK_NOTE_MARK, mark) != 0 ||
+        shkNoteLen + 2 > sizeof(shkNote)) {
+        return;
+    }
+    n    = strlen(msg + mark);
+    room = sizeof(shkNote) - 2 - shkNoteLen;
+    if (n > room) {
+        n = room;
+    }
+    memcpy(shkNote + shkNoteLen, msg + mark, n);
+    shkNoteLen += n;
+    shkNote[shkNoteLen++] = '\n';
+    shkNote[shkNoteLen]   = '\0';
+}
+
+/* Only consoleMessage is replaced, never the ctx beside it, which the sim's
+   other callbacks read. */
+static void (*shkConsolePrev)(void *ctx, char *msg) = NULL;
+
+static void shkConsoleCb(void *ctx, char *msg) {
+    if (shkConsolePrev != NULL) {
+        shkConsolePrev(ctx, msg);
+    }
+    shkNoteLine(msg);
+}
+
+static void shkWatchConsole(ServerSim *sim) {
+    shkConsolePrev = sim->sim.callbacks.consoleMessage;
+    sim->sim.callbacks.consoleMessage = shkConsoleCb;
+}
+
+static void shkUnwatchConsole(ServerSim *sim) {
+    sim->sim.callbacks.consoleMessage = shkConsolePrev;
+    shkConsolePrev = NULL;
+}
+
 /* The script: a scenario table, the note function every hook writes its
  * line with, and the hooks the case wants. */
-static bool shkPut(const char *mapPath, const char *record, const char *body) {
+static bool shkPut(const char *mapPath, const char *body) {
     char  path[512];
     char  lua[16384];
     FILE *f;
@@ -79,10 +141,9 @@ static bool shkPut(const char *mapPath, const char *record, const char *body) {
     snprintf(lua, sizeof(lua),
              "scenario = { name = \"Hooks\", api = 1 }\n"
              "local function note(s)\n"
-             "  local f = io.open(\"%s\", \"a\")\n"
-             "  if f then f:write(s .. \"\\n\") f:close() end\n"
+             "  print(\"" SHK_NOTE_MARK "\" .. tostring(s))\n"
              "end\n"
-             "%s", record, body);
+             "%s", body);
 
     shkScriptFor(mapPath, path, sizeof(path));
     f = fopen(path, "wb");
@@ -111,21 +172,16 @@ static ServerSim *shkSim(void) {
         return NULL;
     }
     serverSimSetLobbyEnabled(sim, false);
+    /* Watched from here, which is before every case's attach: a script that
+       prints at its top level prints while the attach is still running. */
+    shkWatchConsole(sim);
+    shkReset();
     return sim;
 }
 
 /* What the hooks have written so far, or "" when none has. */
-static void shkRead(const char *record, char *out, size_t outLen) {
-    FILE  *f = fopen(record, "rb");
-    size_t n;
-
-    out[0] = '\0';
-    if (f == NULL) {
-        return;
-    }
-    n = fread(out, 1, outLen - 1, f);
-    fclose(f);
-    out[n] = '\0';
+static void shkRead(char *out, size_t outLen) {
+    snprintf(out, outLen, "%s", shkNote);
 }
 
 /* How many whole lines the record has that begin with what was asked for.
@@ -156,9 +212,9 @@ static int shkLines(const char *text, const char *line) {
 /* The round start and the start's own publishes are the first thing in the
  * queue, and they are not what any of these cases is about. One tick takes
  * them, and the record goes with them. */
-static void shkFlush(ServerSim *sim, const char *record) {
+static void shkFlush(ServerSim *sim) {
     serverSimTick(sim);
-    remove(record);
+    shkReset();
 }
 
 /* ── Raising one fact ─────────────────────────────────────────────── */
@@ -354,8 +410,7 @@ static const ShkGameCase kShkGame[] = {
 };
 
 int run_scenario_hooks_every_hook_from_its_event(void) {
-    static const char *const kMap    = "scnhook_every.map";
-    static const char *const kRecord = "scnhook_every.txt";
+    static const char *const kMap = "scnhook_every.map";
     ServerSim    *sim;
     ScenarioHost *h;
     ControlEvent  evt;
@@ -363,15 +418,15 @@ int run_scenario_hooks_every_hook_from_its_event(void) {
     char          err[512];
     size_t        i;
 
-    remove(kRecord);
-    UT_ASSERT(shkPut(kMap, kRecord, kShkBody));
+    shkReset();
+    UT_ASSERT(shkPut(kMap, kShkBody));
     sim = shkSim();
     UT_ASSERT(sim != NULL);
 
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
-    shkFlush(sim, kRecord);
+    shkFlush(sim);
 
     for (i = 0; i < sizeof(kShkGame) / sizeof(kShkGame[0]); i++) {
         shkRaise(sim, kShkGame[i].type, kShkGame[i].data, kShkGame[i].len);
@@ -400,7 +455,7 @@ int run_scenario_hooks_every_hook_from_its_event(void) {
     serverSimPublishControl(sim, &evt);
 
     serverSimTick(sim);
-    shkRead(kRecord, rec, sizeof(rec));
+    shkRead(rec, sizeof(rec));
 
     for (i = 0; i < sizeof(kShkGame) / sizeof(kShkGame[0]); i++) {
         UT_ASSERT_MSG(shkLines(rec, kShkGame[i].want) == 1,
@@ -425,9 +480,10 @@ int run_scenario_hooks_every_hook_from_its_event(void) {
                   "was:\n%s", rec);
 
     scenarioHostDetach(h);
+    shkUnwatchConsole(sim);
     serverSimDestroy(sim);
     shkDrop(kMap);
-    remove(kRecord);
+    shkReset();
     return 0;
 }
 
@@ -439,8 +495,7 @@ int run_scenario_hooks_every_hook_from_its_event(void) {
  * empty when the publish returns, and the hook must have run by the end of
  * the next tick. */
 int run_scenario_hooks_fire_one_tick_later(void) {
-    static const char *const kMap    = "scnhook_later.map";
-    static const char *const kRecord = "scnhook_later.txt";
+    static const char *const kMap = "scnhook_later.map";
     /* [index, attacker]. The two are different numbers, and neither is the
        other's, so a hook that took them in the wrong order fails here
        rather than reading right by coincidence. Pillbox 2 on the event is
@@ -451,8 +506,8 @@ int run_scenario_hooks_fire_one_tick_later(void) {
     char          rec[2048];
     char          err[512];
 
-    remove(kRecord);
-    UT_ASSERT(shkPut(kMap, kRecord,
+    shkReset();
+    UT_ASSERT(shkPut(kMap,
                      "function on_pill_killed(n, by, s)"
                      " note(\"pill_killed \"..n..\" \"..by) end\n"));
     sim = shkSim();
@@ -461,26 +516,27 @@ int run_scenario_hooks_fire_one_tick_later(void) {
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
-    shkFlush(sim, kRecord);
+    shkFlush(sim);
 
     shkRaise(sim, EVENT_PILL_KILLED, kKilled, sizeof(kKilled));
 
-    shkRead(kRecord, rec, sizeof(rec));
+    shkRead(rec, sizeof(rec));
     UT_ASSERT_MSG(rec[0] == '\0',
                   "a hook ran inside the publish; the record was:\n%s", rec);
     UT_ASSERT_MSG(scenarioEventsWaiting(scenarioHostEventQueue(h)) >= 1,
                   "the event did not reach the queue");
 
     serverSimTick(sim);
-    shkRead(kRecord, rec, sizeof(rec));
+    shkRead(rec, sizeof(rec));
     UT_ASSERT_MSG(shkLines(rec, "pill_killed 3 7\n") == 1,
                   "the tick after the publish did not run the hook once; the "
                   "record was:\n%s", rec);
 
     scenarioHostDetach(h);
+    shkUnwatchConsole(sim);
     serverSimDestroy(sim);
     shkDrop(kMap);
-    remove(kRecord);
+    shkReset();
     return 0;
 }
 
@@ -507,8 +563,7 @@ static int shkFirstBase(ServerSim *sim, ServerSimBaseInfo *out) {
  * half alone would prove nothing: a mark that is always set and a mark that
  * is never set each pass one of them. */
 int run_scenario_hooks_scripted_both_ways(void) {
-    static const char *const kMap    = "scnhook_actor.map";
-    static const char *const kRecord = "scnhook_actor.txt";
+    static const char *const kMap = "scnhook_actor.map";
     ServerSim        *sim;
     ScenarioHost     *h;
     ServerSimBaseInfo base;
@@ -522,8 +577,8 @@ int run_scenario_hooks_scripted_both_ways(void) {
     BYTE              before;
     BYTE              owner;
 
-    remove(kRecord);
-    UT_ASSERT(shkPut(kMap, kRecord,
+    shkReset();
+    UT_ASSERT(shkPut(kMap,
                      "function on_base_captured(n, o, w, s)"
                      " note(\"base_captured \"..n..\" \"..o..\" \"..w"
                      "..\" \"..tostring(s)) end\n"));
@@ -534,7 +589,7 @@ int run_scenario_hooks_scripted_both_ways(void) {
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
     serverSimAddPlayer(sim, 0, "Human", false);
-    shkFlush(sim, kRecord);
+    shkFlush(sim);
 
     index = shkFirstBase(sim, &base);
     UT_ASSERT_MSG(index > 0, "the map has no base to hand over");
@@ -551,7 +606,7 @@ int run_scenario_hooks_scripted_both_ways(void) {
     UT_ASSERT_MSG(r == SCN_OP_OK, "the hand-over was refused: %d", (int)r);
 
     serverSimTick(sim);
-    shkRead(kRecord, rec, sizeof(rec));
+    shkRead(rec, sizeof(rec));
     snprintf(want, sizeof(want), "base_captured %d %d %d true\n", index,
              (int)before, (int)owner);
     UT_ASSERT_MSG(shkLines(rec, want) == 1,
@@ -568,7 +623,7 @@ int run_scenario_hooks_scripted_both_ways(void) {
     shkRaise(sim, EVENT_BASE_CAPTURED, data, sizeof(data));
 
     serverSimTick(sim);
-    shkRead(kRecord, rec, sizeof(rec));
+    shkRead(rec, sizeof(rec));
     snprintf(want, sizeof(want), "base_captured %d %d %d false\n", index,
              (int)before, (int)owner);
     UT_ASSERT_MSG(shkLines(rec, want) == 1,
@@ -577,9 +632,10 @@ int run_scenario_hooks_scripted_both_ways(void) {
                   (int)(strlen(want) - 1), want, rec);
 
     scenarioHostDetach(h);
+    shkUnwatchConsole(sim);
     serverSimDestroy(sim);
     shkDrop(kMap);
-    remove(kRecord);
+    shkReset();
     return 0;
 }
 
@@ -591,9 +647,8 @@ int run_scenario_hooks_scripted_both_ways(void) {
  * is still the script's doing, and this is the case that says the mark
  * covers the drain and not only the handler. */
 int run_scenario_hooks_spawn_drain_is_scripted(void) {
-    static const char *const kMap    = "scnhook_spawn.map";
-    static const char *const kRecord = "scnhook_spawn.txt";
-    static const char *const kBrain  = "test_scenario_hooks_brain.lua";
+    static const char *const kMap   = "scnhook_spawn.map";
+    static const char *const kBrain = "test_scenario_hooks_brain.lua";
     ServerSim    *sim;
     ScenarioHost *h;
     ScenarioOp    op;
@@ -605,13 +660,13 @@ int run_scenario_hooks_spawn_drain_is_scripted(void) {
     char          want[128];
     BYTE          seat;
 
-    remove(kRecord);
+    shkReset();
     bf = fopen(kBrain, "wb");
     UT_ASSERT(bf != NULL);
     fputs("-- fixture\n", bf);
     fclose(bf);
 
-    UT_ASSERT(shkPut(kMap, kRecord,
+    UT_ASSERT(shkPut(kMap,
                      "function on_player_join(p, s)"
                      " note(\"player_join \"..p..\" \"..tostring(s)) end\n"));
     sim = shkSim();
@@ -624,7 +679,7 @@ int run_scenario_hooks_spawn_drain_is_scripted(void) {
     serverSimSetBotAiType(sim, aiFull);
     serverSimSetBotBrainPath(sim, kBrain);
     ut_brain_stub_arm(true);
-    shkFlush(sim, kRecord);
+    shkFlush(sim);
 
     /* The seat is named rather than left to the handler, because this case
        has to say in an assertion which seat the bot joined in and an op
@@ -644,7 +699,7 @@ int run_scenario_hooks_spawn_drain_is_scripted(void) {
     UT_ASSERT_MSG(r == SCN_OP_QUEUED, "the spawn answered %d, expected queued",
                   (int)r);
 
-    shkRead(kRecord, rec, sizeof(rec));
+    shkRead(rec, sizeof(rec));
     UT_ASSERT_MSG(rec[0] == '\0',
                   "the seat landed inside the op; the record was:\n%s", rec);
 
@@ -657,7 +712,7 @@ int run_scenario_hooks_spawn_drain_is_scripted(void) {
                   "the queued spawn did not land in seat %d", (int)seat);
     serverSimTick(sim);
 
-    shkRead(kRecord, rec, sizeof(rec));
+    shkRead(rec, sizeof(rec));
     snprintf(want, sizeof(want), "player_join %d true\n", (int)seat);
     UT_ASSERT_MSG(shkLines(rec, want) == 1,
                   "the bot the script asked for did not join as the script's "
@@ -666,9 +721,10 @@ int run_scenario_hooks_spawn_drain_is_scripted(void) {
 
     ut_brain_stub_arm(false);
     scenarioHostDetach(h);
+    shkUnwatchConsole(sim);
     serverSimDestroy(sim);
     shkDrop(kMap);
-    remove(kRecord);
+    shkReset();
     remove(kBrain);
     return 0;
 }
@@ -680,15 +736,14 @@ int run_scenario_hooks_spawn_drain_is_scripted(void) {
  * one seat: the first moves it, the second says the same thing again. The
  * seat changed twice; the team changed once. */
 int run_scenario_hooks_team_changed_on_difference(void) {
-    static const char *const kMap    = "scnhook_team.map";
-    static const char *const kRecord = "scnhook_team.txt";
+    static const char *const kMap = "scnhook_team.map";
     ServerSim    *sim;
     ScenarioHost *h;
     char          rec[2048];
     char          err[512];
 
-    remove(kRecord);
-    UT_ASSERT(shkPut(kMap, kRecord,
+    shkReset();
+    UT_ASSERT(shkPut(kMap,
                      "function on_team_changed(p, t, s)"
                      " note(\"team_changed \"..p..\" \"..t) end\n"
                      "function on_lobby(p, s) note(\"lobby \"..p) end\n"));
@@ -698,13 +753,13 @@ int run_scenario_hooks_team_changed_on_difference(void) {
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
-    shkFlush(sim, kRecord);
+    shkFlush(sim);
 
     shkPublishSlot(sim, 4, 3);
     shkPublishSlot(sim, 4, 3);
     serverSimTick(sim);
 
-    shkRead(kRecord, rec, sizeof(rec));
+    shkRead(rec, sizeof(rec));
     UT_ASSERT_MSG(shkLines(rec, "lobby 4\n") == 2,
                   "the seat changed twice and the lobby hook ran %d times; "
                   "the record was:\n%s", shkLines(rec, "lobby 4\n"), rec);
@@ -715,15 +770,16 @@ int run_scenario_hooks_team_changed_on_difference(void) {
     /* And a third event moving it somewhere else is a change again. */
     shkPublishSlot(sim, 4, 5);
     serverSimTick(sim);
-    shkRead(kRecord, rec, sizeof(rec));
+    shkRead(rec, sizeof(rec));
     UT_ASSERT_MSG(shkLines(rec, "team_changed 4 5\n") == 1,
                   "moving the seat to another team did not report a change; "
                   "the record was:\n%s", rec);
 
     scenarioHostDetach(h);
+    shkUnwatchConsole(sim);
     serverSimDestroy(sim);
     shkDrop(kMap);
-    remove(kRecord);
+    shkReset();
     return 0;
 }
 
@@ -762,8 +818,7 @@ static uint32_t shkLastTick(const char *rec, bool *found) {
 }
 
 int run_scenario_hooks_tick_and_end(void) {
-    static const char *const kMap    = "scnhook_tick.map";
-    static const char *const kRecord = "scnhook_tick.txt";
+    static const char *const kMap = "scnhook_tick.map";
     ServerSim    *sim;
     ScenarioHost *h;
     char          rec[4096];
@@ -772,8 +827,8 @@ int run_scenario_hooks_tick_and_end(void) {
     bool          found;
     int           i;
 
-    remove(kRecord);
-    UT_ASSERT(shkPut(kMap, kRecord,
+    shkReset();
+    UT_ASSERT(shkPut(kMap,
                      "local n = 0\n"
                      "function on_tick(t)\n"
                      "  n = n + 1\n"
@@ -788,13 +843,13 @@ int run_scenario_hooks_tick_and_end(void) {
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
     serverSimAddPlayer(sim, 0, "Human", false);
-    remove(kRecord);
+    shkReset();
 
     /* Three running ticks. Each must have run on_tick with the tick the sim
        is on when the frame returns. */
     for (i = 0; i < 3; i++) {
         serverSimTick(sim);
-        shkRead(kRecord, rec, sizeof(rec));
+        shkRead(rec, sizeof(rec));
         saw = shkLastTick(rec, &found);
         UT_ASSERT_MSG(found, "on_tick did not run on running tick %d; the "
                              "record was:\n%s", i, rec);
@@ -806,7 +861,7 @@ int run_scenario_hooks_tick_and_end(void) {
 
     UT_ASSERT_MSG(serverSimGetState(sim) == serverStateGameOver,
                   "the third on_tick did not end the round");
-    shkRead(kRecord, rec, sizeof(rec));
+    shkRead(rec, sizeof(rec));
     UT_ASSERT_MSG(shkLines(rec, "end\n") == 1,
                   "on_end ran %d times on the tick the round ended; the "
                   "record was:\n%s", shkLines(rec, "end\n"), rec);
@@ -815,7 +870,7 @@ int run_scenario_hooks_tick_and_end(void) {
        over. */
     serverSimTick(sim);
     serverSimTick(sim);
-    shkRead(kRecord, rec, sizeof(rec));
+    shkRead(rec, sizeof(rec));
     UT_ASSERT_MSG(shkLines(rec, "end\n") == 1,
                   "on_end ran again after the round ended; the record "
                   "was:\n%s", rec);
@@ -824,9 +879,10 @@ int run_scenario_hooks_tick_and_end(void) {
                   "the record was:\n%s", shkLines(rec, "tick "), rec);
 
     scenarioHostDetach(h);
+    shkUnwatchConsole(sim);
     serverSimDestroy(sim);
     shkDrop(kMap);
-    remove(kRecord);
+    shkReset();
     return 0;
 }
 
@@ -839,8 +895,7 @@ int run_scenario_hooks_tick_and_end(void) {
  * that would have returned perfectly well — is there to show.
  */
 int run_scenario_hooks_error_counts_and_disables(void) {
-    static const char *const kMap    = "scnhook_errors.map";
-    static const char *const kRecord = "scnhook_errors.txt";
+    static const char *const kMap       = "scnhook_errors.map";
     static const uint8_t     kKilled[2] = { 1, 2 };
     static const uint8_t     kPlaced[4] = { 3, 4, 20, 21 };
     ServerSim    *sim;
@@ -850,8 +905,8 @@ int run_scenario_hooks_error_counts_and_disables(void) {
     char          err[512];
     int           i;
 
-    remove(kRecord);
-    UT_ASSERT(shkPut(kMap, kRecord,
+    shkReset();
+    UT_ASSERT(shkPut(kMap,
                      "function on_pill_killed(n, by, s)"
                      " error(\"no\") end\n"
                      "function on_pill_placed(n, p, s)"
@@ -863,7 +918,7 @@ int run_scenario_hooks_error_counts_and_disables(void) {
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     serverSimStartGame(sim);
     shkWatchText(sim, &text);
-    shkFlush(sim, kRecord);
+    shkFlush(sim);
     text.count = 0;
 
     /* One short of the limit. */
@@ -884,17 +939,18 @@ int run_scenario_hooks_error_counts_and_disables(void) {
                   "saying the scenario is off", SCN_ERROR_LIMIT, text.count);
 
     /* Off is off: a hook that would have run does not. */
-    remove(kRecord);
+    shkReset();
     shkRaise(sim, EVENT_PILL_PLACED, kPlaced, sizeof(kPlaced));
     serverSimTick(sim);
-    shkRead(kRecord, rec, sizeof(rec));
+    shkRead(rec, sizeof(rec));
     UT_ASSERT_MSG(rec[0] == '\0',
                   "a switched-off scenario still ran a hook; the record "
                   "was:\n%s", rec);
 
     scenarioHostDetach(h);
+    shkUnwatchConsole(sim);
     serverSimDestroy(sim);
     shkDrop(kMap);
-    remove(kRecord);
+    shkReset();
     return 0;
 }

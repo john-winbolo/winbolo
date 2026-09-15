@@ -63,12 +63,98 @@ start of every round, each time in a Lua state of its own. That means:
 
 The file may be up to 1 MiB.
 
-**A scenario is trusted the way a brain is.** The script runs with Lua's
-full standard library, with no time limit and no memory cap. A file beside a
-map is run by whoever hosts that map, so run only scripts you would run as a
-program. Every host that opens a map from a file looks beside it: the
-dedicated server, the desktop client hosting a single-player or LAN game, and
-the headless runner.
+**What a script is given.** The state a scenario runs in opens `string`,
+`table`, `math`, `os`, `coroutine` and a named list of base functions, and
+nothing else. The base list is `assert`, `collectgarbage`, `error`,
+`getmetatable`, `ipairs`, `next`, `pairs`, `pcall`, `print`, `rawequal`,
+`rawget`, `rawlen`, `rawset`, `select`, `setmetatable`, `tonumber`,
+`tostring`, `type`, `unpack` and `xpcall`, plus `_G` and `_VERSION` — a base
+function this list does not name is not there, whatever your host's Lua
+carries. `unpack` is 5.1's and `rawlen` is 5.2's, so a host has the one its
+own Lua has. `getfenv` and `setfenv` are not on the list, so do not go looking
+for them on a LuaJIT host.
+There is no `io`, so a script cannot read or write a file. There is no
+`package` and no `require`, so it cannot load another module. There is no
+`debug`, and on a LuaJIT host no `ffi`, no `jit` and no `bit`. `load`,
+`loadstring`, `dofile`, `loadfile` and `string.dump` are gone with them, and
+`os` keeps only `time`, `date`, `clock` and `difftime`. `os.date` takes the
+portable conversion characters — `%a %A %b %B %c %C %d %D %e %F %g %G %h %H
+%I %j %m %M %n %p %r %R %S %t %T %u %U %V %w %W %x %X %y %Y %z %Z %%`, with
+the leading `!` for UTC and `*t` for a table — and raises on anything else,
+naming the specifier it would not take: hosts do not agree on what their C
+library accepts, and one of them ends the process over a format it does not
+like rather than complaining about it. The `E` and `O` modifiers are among
+what it will not take, and a format may be 256 bytes at most. `math.random`
+works and is seeded for you; `math.randomseed` is not there to reseed it.
+`collectgarbage` answers every option but `"stop"`, which raises. `utf8` is
+present only on hosts built against PUC-Lua — a LuaJIT host has none, so a
+script that wants it must ask. Your file is loaded as text: a precompiled
+chunk is refused at the door, so ship the source. `print` goes to the server
+console rather than to the host's stdout, which is how a script says
+something to the operator. It joins its arguments with tabs as stock `print`
+does, and cuts the finished line at 1024 bytes — a line longer than that is
+shortened rather than dropped, so an operator still sees what it was about.
+
+How many lines it will take is bounded twice: 64 from any one call — a hook,
+a timer or a policy answer — and 64 across everything a single tick's calls
+print between them. Past either, lines are dropped, and the first one dropped
+says so, once, so an operator is not left wondering where the output went.
+Both allowances come back: the per-call one at the next call and the per-tick
+one at the next tick, so a script that says a line or two as things happen
+never meets them. What meets them is a script tracing every tick, and `print`
+is not for that — it is for telling an operator something. If you want to
+watch your script work, print at the moment that interests you rather than on
+the way past.
+
+**Your state holds at most 32 MB.** Every allocation it makes is counted, and
+the one that would take it past the cap is refused: Lua raises an
+out-of-memory error at the point that asked for it, exactly as it would raise
+any other. The hook or policy call it happened in fails, the server counts one
+error against the script, and the round carries on — a script that keeps
+failing is switched off for the rest of the round, as it is for any other
+repeated error. The state itself survives, so whatever the failed call had
+abandoned is collected and the next call starts with room again. 32 MB is far
+more than a scenario needs; if you are near it you are keeping something you
+meant to let go of.
+
+**One call may run for a million instructions.** Every hook, timer and policy
+answer is counted as it runs, and a call that passes the budget is stopped
+where it stands: Lua raises an error at that line, the call fails, the server
+counts one error against the script, and the round carries on — again, a
+script that keeps failing is switched off for the rest of the round.
+
+You cannot catch that error and carry on. `pcall`, `xpcall` and
+`coroutine.resume` raise it again rather than answering with it, so a `pcall`
+around slow work does not buy the work more instructions, and a loop that
+catches and tries again is stopped on the next turn rather than running on —
+the instructions are spent whether or not something caught the error. A
+coroutine is no way around it either: stopping what a `coroutine.resume` was
+running stops the call that resumed it. Errors of your own are unaffected; a
+catcher hands those back exactly as it always did.
+
+The budget is per call, not per round and not per tick. Each call starts again
+at zero, so nine hundred thousand instructions in this `on_tick` leaves the
+next one its own full million. What it rules out is looping inside a single
+call: `while true do` in a hook takes your scenario off the round and nothing
+else, but it does take it off. Work that cannot finish in one call belongs
+spread across `on_tick` calls, keeping its place in a local between them.
+
+A million is a great deal — an `on_tick` that reads a few dozen tanks and
+decides something spends a few thousand. If you are near it, you are looping
+over the map rather than over what changed.
+
+The count is taken by a Lua debug hook, and a state that carries one does not
+use LuaJIT's compiler, so **your script runs interpreted** on a LuaJIT host.
+That is worth knowing before you time anything: what you measure here is not
+what the same code would do in a brain.
+
+**A scenario is still trusted the way a brain is.** A file beside a map is run
+by whoever hosts that map, at the server's own privilege, so run only scripts
+you would run as a program — the library, the memory cap and the budget above
+narrow what a script can reach and how long it can hold the tick, not who is
+answerable for it. Every host that opens a map from a file looks beside it:
+the dedicated server, the desktop client hosting a single-player or LAN game,
+and the headless runner.
 
 **Switching scripts off.** Each of the three hosts can be told not to load
 one, and each spells it its own way:

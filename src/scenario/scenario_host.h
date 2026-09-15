@@ -97,6 +97,84 @@
  * boots a fresh VM and begins again at zero. */
 #define SCN_ERROR_LIMIT 20
 
+/* The most memory one scenario state may hold. Every allocation a state
+ * makes is counted against this, and the one that would take it past is
+ * refused — which Lua raises as an out-of-memory error rather than dying on,
+ * so the call that asked for it lands in the host's own lua_pcall, counts one
+ * toward SCN_ERROR_LIMIT and leaves the state to carry on: what the script
+ * had abandoned by then is collected and the round keeps playing.
+ *
+ * 32 MB is far more than a scenario has any use for — the reference script
+ * holds a few tables of numbers — and far less than a server can afford to
+ * lose to one map's script. A build whose Lua will not take an allocator at
+ * all counts nothing; scnSandboxMemoryCapped says which kind of build this
+ * is. */
+#define SCN_VM_MEMORY_MAX (32u * 1024u * 1024u)
+
+/* The most VM instructions one call into a script may run for. A hook, a
+ * timer or a policy answer that passes this is stopped where it stands with
+ * a Lua error, so the call lands in the host's own lua_pcall, counts one
+ * toward SCN_ERROR_LIMIT and leaves the round ticking: a script that loops
+ * without end costs the tick it was called on rather than the server.
+ *
+ * It bounds one call and not a round or a tick. Each call starts again at
+ * zero, so a script with real work to do spreads it across its on_tick calls
+ * rather than looping inside one of them.
+ *
+ * A million is far more than a hook answering a question needs and small
+ * enough that a runaway is stopped inside the tick that started it. What the
+ * boundary test shows is a bounded loop well past it cut off, the line
+ * naming the hook it was in, and the sim ticking afterwards. */
+#define SCN_BUDGET_CALL_INSTR 1000000u
+
+/* How often that count is taken, which is the count hook's own parameter.
+ * Small enough that a runaway is stopped within a thousandth of the budget,
+ * large enough that a script is not spending its time in the hook. */
+#define SCN_BUDGET_STEP_INSTR 1000u
+
+/* What a call that has already been stopped may still spend. The error raised
+ * at the budget unwinds through whatever the script had standing, and a
+ * metamethod running on the way out is Lua code like any other: cutting that
+ * off where it stands is not what the budget is for, so the count is put back
+ * to this far short of the budget rather than to zero and the unwind has room
+ * to finish.
+ *
+ * Twenty hook steps is room enough for an unwind and far too little to be
+ * worth catching the error for: a script that caught it and carried on
+ * anyway is stopped again within that, and again after that, rather than
+ * running on uncounted. */
+#define SCN_BUDGET_GRACE_INSTR 20000u
+
+/* The console lines one call into a script may print.
+ *
+ * print goes to the server console rather than to the host's stdout, which is
+ * what makes it worth bounding: a console line reaches the operator's message
+ * log where one is configured, and that file is opened, written and closed for
+ * every line. Two hundred thousand prints fit inside one call's instruction
+ * budget, so a script that prints in a loop costs the tick thread that many
+ * open and close cycles and grows the log without end.
+ *
+ * A line past this is dropped and the first drop says so, once, so an operator
+ * missing output knows why rather than wondering. Sixty-four is far more than
+ * a script telling an operator something needs and far too few to flood with.
+ * A starting value; a measurement may want it somewhere else. */
+#define SCN_PRINT_PER_CALL 64
+
+/* And the console lines all of one tick's calls may print between them. A
+ * script has an on_tick, the timers it set and whatever policies it answers
+ * within the same tick, so the per-call bound on its own would multiply by
+ * however many calls a script arranges to be made. Against the server's fifty
+ * ticks a second this works out to a ceiling of 3,200 lines a second.
+ *
+ * Counted against the sim's own tick rather than against a wall clock: the
+ * unit tests drive the sim as fast as the CPU allows, so a window measured in
+ * seconds would cut a fixture that prints once a tick and fail it for a reason
+ * that is not the one it is about. A tick is the same window on a live server
+ * as it is in a test.
+ *
+ * A starting value, as the per-call one is. */
+#define SCN_PRINT_PER_TICK 64
+
 /* How many events the host holds between one tick and the next, across
  * both of the server's channels. Each of the two subscriber callbacks
  * copies an event in and returns; the one drain at the end of the tick

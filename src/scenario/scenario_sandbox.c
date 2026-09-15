@@ -1,0 +1,893 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*********************************************************
+ *Name:          Scenario Sandbox
+ *Filename:      scenario_sandbox.c
+ *Author:        John Morrison
+ *Purpose:
+ *  The state a scenario script runs in, and what it is
+ *  given: base, coroutine, string, table, math, os and —
+ *  where the VM has one — utf8, each opened by hand rather
+ *  than the standard library being opened as a whole.
+ *
+ *  The state allocates through a counter of its own, so a
+ *  script that eats memory is refused at SCN_VM_MEMORY_MAX
+ *  and raises there instead of taking the server's process
+ *  with it, and it carries a count hook, so a script that
+ *  loops without end is stopped at SCN_BUDGET_CALL_INSTR
+ *  instructions and raises there too. Both land in the
+ *  lua_pcall the host makes every call through — and the
+ *  budget's error lands there whatever the script does with
+ *  it, because pcall, xpcall and coroutine.resume are given
+ *  to it wrapped in a closure that raises it again.
+ *
+ *  Opening them one at a time is what takes io, package,
+ *  debug and, under LuaJIT, ffi, jit and bit away: none of
+ *  them is ever created, so there is nothing to strip. What
+ *  is stripped is the rest — every global the openers left
+ *  that the whitelist does not name, the loaders among them,
+ *  the dump that turns a function into bytecode, and
+ *  everything in os but the clock.
+ *
+ *  print is replaced rather than removed, because a script
+ *  reporting what it did is worth having and stock print
+ *  writes to the host's stdout, which a dedicated server's
+ *  operator is not necessarily reading. Sending it to the
+ *  console is also what makes it worth counting: a console
+ *  line reaches the operator's message log, which is opened
+ *  and closed for each line written to it, so the lines one
+ *  call and one tick may print are bounded here too.
+ *
+ *  os.date is wrapped for a different reason: the format
+ *  reaches the host's own strftime, and the C libraries this
+ *  server is built against do not agree on what a valid
+ *  conversion character is — one of them ends the process
+ *  over an invalid one rather than complaining. So the
+ *  format is read here first.
+ *
+ *  This file compiles under the scenario_host profile: it
+ *  sees src/bolo/public/ and src/bolo/scenario_api/, and
+ *  nothing under src/bolo/internal/.
+ *********************************************************/
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include <lua.h>
+#include <lauxlib.h>
+#include <lualib.h>
+
+#include "server_sim.h"            /* serverSimConsoleMessage */
+
+#include "scenario_host.h"         /* SCN_VM_MEMORY_MAX */
+#include "scenario_sandbox.h"
+
+/* One console line a script's print can produce. A line past this is cut
+   rather than dropped, so an operator still sees what a long one was
+   about. */
+#define SCN_PRINT_LEN 1024
+
+/* The longest format os.date will take. A date written out in full needs a
+   fraction of this, and a long one is worth refusing on its own account:
+   LuaJIT sizes its buffer at thirty bytes for every % in the format and grows
+   it four times over if strftime writes nothing, so a format that is mostly
+   percent signs asks for an allocation far larger than it looks. The memory
+   cap catches that; saying no to it here is cheaper and reads better. */
+#define SCN_DATE_FMT_LEN 256
+
+/* ── What a state is counted with ─────────────────────────────────── */
+
+/* What one state is counted by: the memory it holds, the instructions the
+   call now running has spent, and the console lines print has put out — for
+   the call now running and for the tick it is part of. It outlives the call
+   that made the state, so it is on the heap rather than beside the caller.
+   used and cap sit idle on a build whose Lua would not take the allocator;
+   everything else is kept whatever the allocator turned out to be.
+
+   stopped is the hook's latch: it is raised there and put back by the arm and
+   the disarm, so nothing a script can reach clears it.
+
+   The two said flags are what keeps the notice a drop produces to one line a
+   window: the count alone would say it again on every line after the first,
+   which is the flood the bound is there to stop. */
+typedef struct {
+    size_t   used;
+    size_t   cap;
+    bool     armed;
+    bool     stopped;
+    uint32_t instr;
+    uint32_t printCall;
+    uint32_t printTick;
+    bool     printCallSaid;
+    bool     printTickSaid;
+} ScnSandboxState;
+
+/* Where they are kept, so the hook and the close can find them again.
+   lua_getallocf is not the way: on the uncounted build below it answers
+   Lua's own ud, which is neither ours to free nor ours to count in. A script
+   cannot reach the registry — debug is not among the libraries opened. */
+#define SCN_SANDBOX_STATE_KEY "winbolo.scenario.state"
+
+static ScnSandboxState *scnSandboxStateOf(lua_State *L) {
+    ScnSandboxState *s;
+
+    lua_getfield(L, LUA_REGISTRYINDEX, SCN_SANDBOX_STATE_KEY);
+    s = (ScnSandboxState *)lua_touserdata(L, -1);
+    lua_pop(L, 1);
+    return s;
+}
+
+/* True once a state has been made the ordinary way because this build's Lua
+   would not take an allocator. Written once, on the first boot, from the
+   thread that boots it. */
+static bool scnSandboxUncounted = false;
+
+/* The standard lua_Alloc, over realloc and free as Lua's own default
+ * allocator is, with the running total in front of it.
+ *
+ * osize is a size only when there is a block to have had one: with ptr NULL
+ * Lua passes the kind of object it is about to allocate there instead, and
+ * counting that number as bytes would make the total nonsense. So the old
+ * size is zero whenever ptr is NULL, and the comparison is made from that.
+ *
+ * Only growth is refused, and only growth past the cap. A shrink and a free
+ * always go through — a state at the cap has to be able to collect its way
+ * back under it, and a collection is made of frees. Refusing is returning
+ * NULL, which Lua turns into the out-of-memory error the caller's lua_pcall
+ * catches. */
+static void *scnSandboxAlloc(void *ud, void *ptr, size_t osize, size_t nsize) {
+    ScnSandboxState *m   = (ScnSandboxState *)ud;
+    size_t           old = (ptr == NULL) ? 0 : osize;
+    void            *out;
+
+    if (nsize == 0) {
+        free(ptr);
+        m->used -= old;
+        return NULL;
+    }
+    /* Written as room remaining rather than as used + growth, so nothing
+       here can overflow: used never passes cap, because this is the only
+       thing that raises it. */
+    if (nsize > old && (nsize - old) > (m->cap - m->used)) {
+        return NULL;
+    }
+    out = realloc(ptr, nsize);
+    if (out == NULL) {
+        return NULL;
+    }
+    m->used = m->used - old + nsize;
+    return out;
+}
+
+/* ── The instructions one call may spend ──────────────────────────── */
+
+/* Called every SCN_BUDGET_STEP_INSTR instructions the state executes, and
+ * counting only while a call into script code is running.
+ *
+ * The flag is what makes that true. Every piece of script code this host
+ * runs is inside one of the calls that arm below, but the host also reads
+ * the script's own table from C between them; a count left running could
+ * then raise with no lua_pcall between it and the state, which is the one
+ * error the host answers by ending the process. Armed-only puts that out of
+ * reach.
+ *
+ * The hook cannot see inside C, so a call that spends its time in one C
+ * function is not what this bounds — it bounds a script looping in Lua,
+ * which is what a runaway scenario looks like. */
+static void scnSandboxCountHook(lua_State *L, lua_Debug *ar) {
+    ScnSandboxState *s = scnSandboxStateOf(L);
+
+    (void)ar;
+    if (s == NULL || !s->armed) {
+        return;
+    }
+    s->instr += (uint32_t)SCN_BUDGET_STEP_INSTR;
+    if (s->instr <= (uint32_t)SCN_BUDGET_CALL_INSTR) {
+        return;
+    }
+    /* Latched rather than disarmed. Leaving the count off for the rest of the
+       call would hand a script that caught this error every instruction it
+       liked afterwards, and pcall, xpcall and coroutine.resume are all in the
+       library it is given — so the flag stays on and the latch below is what
+       those three read to know a failure they caught is not theirs to keep.
+       Only the arm and the disarm put it back, neither of which script code
+       can reach.
+
+       The count goes back to a grace short of the budget rather than to zero,
+       so the error has room to unwind through whatever the script had
+       standing: a metamethod running Lua on the way out would otherwise be
+       stopped here again, mid-unwind. Once that room is spent the hook raises
+       again, which is what bounds a script that caught the error and carried
+       on regardless. */
+    s->stopped = true;
+    s->instr   = (uint32_t)SCN_BUDGET_CALL_INSTR -
+                 (uint32_t)SCN_BUDGET_GRACE_INSTR;
+    luaL_error(L, "this call ran past the instruction budget of %d and was "
+                  "stopped; work that long belongs across several on_tick "
+                  "calls rather than inside one of them",
+               (int)SCN_BUDGET_CALL_INSTR);
+}
+
+/* Saved and put back rather than set and cleared, because these nest: a
+ * script's hook issues an op, the op asks a policy, and the policy is script
+ * code arriving on the same thread — the VM lock lets it through for exactly
+ * that reason. A disarm that only cleared the flag would leave the hook that
+ * is still running uncounted for the rest of its life, which is a script one
+ * nested call away from looping inside a tick for as long as it likes.
+ *
+ * Putting the outer call's own count back, rather than carrying the inner
+ * one's forward, is what the budget says it is: a million for each call.
+ * The outer one goes on climbing from where it had reached, so a script
+ * cannot start its budget again by nesting.
+ *
+ * The latch travels with the count for the same reason. An inner call begins
+ * with it clear, whatever the outer one has already run into, and leaves the
+ * outer one's answer behind it — a policy that was stopped does not make the
+ * hook that issued the op look stopped to the pcall it is standing in.
+ *
+ * The lines a call has printed travel with them, and for the same reason the
+ * instructions do: a per-call allowance an inner call could hand back fresh to
+ * the outer one would be no allowance at all. What a nested call prints is
+ * still counted against the tick, which is the bound that holds however the
+ * calls are arranged. */
+void scnSandboxArmCall(lua_State *L, ScnSandboxCall *saved) {
+    ScnSandboxState *s = scnSandboxStateOf(L);
+
+    if (saved != NULL) {
+        saved->armed     = (s != NULL) ? s->armed : false;
+        saved->stopped   = (s != NULL) ? s->stopped : false;
+        saved->instr     = (s != NULL) ? s->instr : 0;
+        saved->printed   = (s != NULL) ? s->printCall : 0;
+        saved->printSaid = (s != NULL) ? s->printCallSaid : false;
+    }
+    if (s != NULL) {
+        s->instr         = 0;
+        s->armed         = true;
+        s->stopped       = false;
+        s->printCall     = 0;
+        s->printCallSaid = false;
+    }
+}
+
+void scnSandboxDisarmCall(lua_State *L, const ScnSandboxCall *saved) {
+    ScnSandboxState *s = scnSandboxStateOf(L);
+
+    if (s == NULL) {
+        return;
+    }
+    if (saved != NULL) {
+        s->armed         = saved->armed;
+        s->stopped       = saved->stopped;
+        s->instr         = saved->instr;
+        s->printCall     = saved->printed;
+        s->printCallSaid = saved->printSaid;
+    } else {
+        s->armed         = false;
+        s->stopped       = false;
+        s->printCall     = 0;
+        s->printCallSaid = false;
+    }
+}
+
+/* The tick's own allowance, put back by whoever runs the tick.
+ *
+ * A tick is the window because the sim has one and a wall clock would not
+ * behave the same way in a test as on a live server: the tests drive the sim
+ * as fast as the CPU allows, so a window of a second would hold many more
+ * ticks there than the fifty a server runs and cut a fixture printing once a
+ * tick for a reason that has nothing to do with what it is testing.
+ *
+ * Nothing here is per call, so this leaves the call counters alone: a call
+ * that is running while this is reached — there is none, since the tick resets
+ * before it runs anything — keeps whatever it had spent. */
+void scnSandboxTickReset(lua_State *L) {
+    ScnSandboxState *s;
+
+    if (L == NULL) {
+        return;
+    }
+    s = scnSandboxStateOf(L);
+    if (s == NULL) {
+        return;
+    }
+    s->printTick     = 0;
+    s->printTickSaid = false;
+}
+
+/* ── Making and closing one ───────────────────────────────────────── */
+
+lua_State *scnSandboxNewState(void) {
+    ScnSandboxState *s = (ScnSandboxState *)malloc(sizeof(*s));
+    lua_State       *L;
+
+    if (s == NULL) {
+        return NULL;
+    }
+    s->used          = 0;
+    s->cap           = (size_t)SCN_VM_MEMORY_MAX;
+    s->armed         = false;
+    s->stopped       = false;
+    s->instr         = 0;
+    s->printCall     = 0;
+    s->printTick     = 0;
+    s->printCallSaid = false;
+    s->printTickSaid = false;
+
+    L = lua_newstate(scnSandboxAlloc, s);
+    if (L == NULL) {
+        /* The build's own answer, and the only one there is: LuaJIT refuses
+           a custom allocator on a 64-bit target that is not GC64, and says
+           so on stderr as it does. There is no flag a consumer can read to
+           ask first, so the state is made the ordinary way instead and the
+           operator is told once that this one is not bounded.
+
+           The struct stays either way. Only the memory half of it depends on
+           the allocator; the instruction count is the hook's and is kept on
+           every build. */
+        L = luaL_newstate();
+        if (L == NULL) {
+            free(s);
+            return NULL;
+        }
+        if (!scnSandboxUncounted) {
+            scnSandboxUncounted = true;
+            serverSimConsoleMessage(
+                "scenario: this build's Lua takes no allocator, so a "
+                "scenario script's memory is not capped");
+        }
+    }
+
+    /* Put beside the state at once, so every path that closes one can find
+       what to free however early it gives up, and so the hook below has
+       somewhere to count before anything runs. */
+    lua_pushlightuserdata(L, s);
+    lua_setfield(L, LUA_REGISTRYINDEX, SCN_SANDBOX_STATE_KEY);
+
+    /* Set once, here, and never cleared. Under LuaJIT lua_sethook reaches
+       into the compiler, and a state carrying a hook runs interpreted for as
+       long as it has one — so taking it off between calls would buy nothing
+       and cost a flush each time. Whether the count applies is the flag the
+       calls arm, not the presence of the hook. */
+    lua_sethook(L, scnSandboxCountHook, LUA_MASKCOUNT,
+                (int)SCN_BUDGET_STEP_INSTR);
+    return L;
+}
+
+void scnSandboxCloseState(lua_State *L) {
+    ScnSandboxState *s;
+
+    if (L == NULL) {
+        return;
+    }
+    /* Read before the close, because the registry goes with the state, and
+       freed after it, because closing hands every block the state holds back
+       through the allocator and the allocator reads this. */
+    lua_getfield(L, LUA_REGISTRYINDEX, SCN_SANDBOX_STATE_KEY);
+    s = (ScnSandboxState *)lua_touserdata(L, -1);
+    lua_pop(L, 1);
+    lua_close(L);
+    free(s);
+}
+
+bool scnSandboxMemoryCapped(void) {
+    return !scnSandboxUncounted;
+}
+
+/* ── Opening a library ────────────────────────────────────────────── */
+
+/* One standard library, opened by hand.
+ *
+ * luaL_requiref is the 5.4 way and LuaJIT has no such function, so this is
+ * written to the older shape that both accept: push the opener, push the
+ * name it is being opened under, call it. 5.1 and LuaJIT hand the name to
+ * the opener as its one argument and the opener sets the global itself;
+ * 5.4's openers build the table and leave the global to the caller, which is
+ * what the set below is for. Setting a global 5.1 has already set writes the
+ * same table over itself.
+ *
+ * An opener that answers with something other than a table has set whatever
+ * it means to set and left nothing to name — nothing here does, and the
+ * branch is what keeps a future one from writing a non-table global. */
+static void scnSandboxOpenOne(lua_State *L, const char *name,
+                              lua_CFunction opener) {
+    lua_pushcfunction(L, opener);
+    lua_pushstring(L, name);
+    lua_call(L, 1, 1);
+    if (lua_istable(L, -1)) {
+        lua_setglobal(L, name);
+    } else {
+        lua_pop(L, 1);
+    }
+}
+
+/* ── Taking a name back ───────────────────────────────────────────── */
+
+/* One field of a library table. The tables were built moments ago by their
+   own openers and carry no metatable, so the write is the plain one. */
+static void scnSandboxClearField(lua_State *L, const char *table,
+                                 const char *key) {
+    lua_getglobal(L, table);
+    if (lua_istable(L, -1)) {
+        lua_pushnil(L);
+        lua_setfield(L, -2, key);
+    }
+    lua_pop(L, 1);
+}
+
+/* Whether the key at idx is one of the four os keeps. */
+static bool scnSandboxOsKeeps(lua_State *L, int idx) {
+    static const char *const kKeep[] = { "time", "date", "clock",
+                                         "difftime" };
+    const char *key;
+    size_t      i;
+
+    /* Asked by type first: lua_tostring on a number key would convert it in
+       place, which is the one thing a traversal cannot survive. */
+    if (lua_type(L, idx) != LUA_TSTRING) {
+        return false;
+    }
+    key = lua_tostring(L, idx);
+    for (i = 0; i < sizeof(kKeep) / sizeof(kKeep[0]); i++) {
+        if (strcmp(key, kKeep[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* os cut to the clock: time, date, clock and difftime stay and every other
+ * field goes, execute, exit, getenv, remove, rename, setlocale and tmpname
+ * among them.
+ *
+ * Walked with a keep list rather than written as a kill list, so a field a
+ * later Lua adds to os is gone by default rather than the day somebody
+ * remembers to name it. Setting an existing field to nil in the middle of a
+ * traversal is allowed; adding one is not, and this adds none. */
+static void scnSandboxTrimOs(lua_State *L) {
+    lua_getglobal(L, LUA_OSLIBNAME);
+    if (lua_istable(L, -1)) {
+        lua_pushnil(L);
+        while (lua_next(L, -2) != 0) {
+            lua_pop(L, 1);              /* the value; the key stays */
+            if (!scnSandboxOsKeeps(L, -1)) {
+                lua_pushvalue(L, -1);   /* the key again, to write through */
+                lua_pushnil(L);
+                lua_rawset(L, -4);
+            }
+        }
+    }
+    lua_pop(L, 1);
+}
+
+/* Whether the key at idx is one of the globals a script is given.
+ *
+ * Naming one this VM does not have costs nothing, because this list only
+ * decides what is deleted and never creates anything: unpack is 5.1's and
+ * rawlen is 5.2's, so each VM keeps the one it has, and utf8 is only opened
+ * where there is an opener for it.
+ *
+ * collectgarbage, print, pcall and xpcall are here because what a script
+ * ends up calling under those names is written over further down, by the
+ * replacements and the wrappers. Take them away here and there is nothing
+ * left for those to close over. */
+static bool scnSandboxGlobalKeeps(lua_State *L, int idx) {
+    static const char *const kKeep[] = {
+        /* The libraries opened above, and the string naming the VM. */
+        "_G", "coroutine", "string", "table", "math", "os", "utf8",
+        "_VERSION",
+        /* The base functions a script is meant to have. */
+        "assert", "collectgarbage", "error", "getmetatable", "ipairs",
+        "next", "pairs", "pcall", "print", "rawequal", "rawget", "rawlen",
+        "rawset", "select", "setmetatable", "tonumber", "tostring", "type",
+        "unpack", "xpcall"
+    };
+    const char *key;
+    size_t      i;
+
+    /* By type first, for the reason os is: a number key handed to
+       lua_tostring is converted where it sits, and the traversal is over. */
+    if (lua_type(L, idx) != LUA_TSTRING) {
+        return false;
+    }
+    key = lua_tostring(L, idx);
+    for (i = 0; i < sizeof(kKeep) / sizeof(kKeep[0]); i++) {
+        if (strcmp(key, kKeep[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* The globals cut to that list. The loaders go with everything else it does
+ * not name: load, loadstring, dofile, loadfile, require, module and newproxy
+ * each bring code in from outside the chunk the host read, which is the one
+ * thing a state running a map file's script must not do. Which of them this
+ * VM had in the first place stopped mattering with the shape — the walk takes
+ * away what is there.
+ *
+ * Named the other way round, as the loaders to take away, this only ever
+ * removed what somebody had thought of, and three names nobody had decided on
+ * were still here: getfenv, setfenv and gcinfo. None of them is a way out
+ * today, with every loader gone, but setfenv(0, {}) replaces the environment
+ * the host looks its own hooks up in, and that is not a thing to be left
+ * behind by omission. A name a later Lua adds is now gone by default instead.
+ *
+ * This runs once every library is open, so the walk covers the library tables
+ * as well as base — which is why those are on the list themselves. The
+ * globals are reached through _G, which both VMs set from the base opener.
+ * Setting an existing global to nil in the middle of a traversal is allowed;
+ * adding one is not, and this adds none. */
+static void scnSandboxTrimGlobals(lua_State *L) {
+    lua_getglobal(L, "_G");
+    if (lua_istable(L, -1)) {
+        lua_pushnil(L);
+        while (lua_next(L, -2) != 0) {
+            lua_pop(L, 1);              /* the value; the key stays */
+            if (!scnSandboxGlobalKeeps(L, -1)) {
+                lua_pushvalue(L, -1);   /* the key again, to write through */
+                lua_pushnil(L);
+                lua_rawset(L, -4);
+            }
+        }
+    }
+    lua_pop(L, 1);
+}
+
+/* ── The calls that are replaced rather than removed ──────────────── */
+
+/* collectgarbage without the "stop" option. A script that could stop the
+ * collector could grow the state without bound while every allocation it
+ * made stayed legitimate. Every other option — a step, a count, a full
+ * collection — is forwarded to the original, which is upvalue 1, and answers
+ * exactly as it always did. */
+static int scnSandboxCollectGarbage(lua_State *L) {
+    int n = lua_gettop(L);
+
+    if (lua_type(L, 1) == LUA_TSTRING &&
+        strcmp(lua_tostring(L, 1), "stop") == 0) {
+        return luaL_error(L, "collectgarbage(\"stop\") is not available to a "
+                             "scenario script");
+    }
+    lua_pushvalue(L, lua_upvalueindex(1));
+    lua_insert(L, 1);
+    lua_call(L, n, LUA_MULTRET);
+    return lua_gettop(L);
+}
+
+/* Whether this line may go out, and the one notice a window that has run out
+ * produces.
+ *
+ * Both windows are asked, the call's first: a line the call has no room for
+ * never reaches the console, so it costs the tick nothing either and only the
+ * counter that refused it is the one an operator is told about. Neither count
+ * passes its bound, so neither can wrap however long a script prints for.
+ *
+ * The notice is written from here rather than counted as a line of its own.
+ * It is C, so nothing a script does can make it recurse, and the said flag
+ * beside each count is what keeps it to one line: an operator is told once
+ * where the output went and then left in silence until the window comes
+ * round again.
+ *
+ * A state with nothing to count by — there is none the host boots, but the
+ * registry lookup can answer nothing — prints as it always did rather than
+ * going quiet. */
+static bool scnSandboxPrintTake(ScnSandboxState *s) {
+    char said[SCN_PRINT_LEN];
+
+    if (s == NULL) {
+        return true;
+    }
+    if (s->printCall >= (uint32_t)SCN_PRINT_PER_CALL) {
+        if (!s->printCallSaid) {
+            s->printCallSaid = true;
+            snprintf(said, sizeof(said),
+                     "scenario: a script has printed the %d lines one call "
+                     "may print, and the rest of this call's output is "
+                     "dropped", (int)SCN_PRINT_PER_CALL);
+            serverSimConsoleMessage(said);
+        }
+        return false;
+    }
+    if (s->printTick >= (uint32_t)SCN_PRINT_PER_TICK) {
+        if (!s->printTickSaid) {
+            s->printTickSaid = true;
+            snprintf(said, sizeof(said),
+                     "scenario: a script has printed the %d lines one tick "
+                     "may print, and the rest of this tick's output is "
+                     "dropped", (int)SCN_PRINT_PER_TICK);
+            serverSimConsoleMessage(said);
+        }
+        return false;
+    }
+    s->printCall++;
+    s->printTick++;
+    return true;
+}
+
+/* print, to the server console instead of to stdout. The arguments are
+ * concatenated tab-separated and converted through __tostring where a value
+ * carries one, which is what stock print does.
+ *
+ * The allowance is asked for before the line is built, so a script past its
+ * bound is not paying for the concatenation of output nobody will see — and
+ * so a __tostring metamethod, which is script code, is not run for it
+ * either. */
+static int scnSandboxPrint(lua_State *L) {
+    char   line[SCN_PRINT_LEN];
+    size_t used = 0;
+    int    n    = lua_gettop(L);
+    int    i;
+
+    if (!scnSandboxPrintTake(scnSandboxStateOf(L))) {
+        return 0;
+    }
+    for (i = 1; i <= n; i++) {
+        const char *s;
+        size_t      len  = 0;
+        size_t      room;
+
+        if (i > 1 && used < sizeof(line) - 1) {
+            line[used++] = '\t';
+        }
+        s = luaL_tolstring(L, i, &len);
+        if (s != NULL) {
+            room = sizeof(line) - 1 - used;
+            if (len > room) {
+                len = room;
+            }
+            memcpy(line + used, s, len);
+            used += len;
+        }
+        lua_pop(L, 1);                  /* what luaL_tolstring pushed */
+    }
+    line[used] = '\0';
+    serverSimConsoleMessage(line);
+    return 0;
+}
+
+/* The conversion characters a format may carry. This is the set the MSVC CRT
+ * documents as valid, which is the narrowest of the libraries this server is
+ * built against and so the one every host is held to: a script written against
+ * a Linux server should run on a Windows one without the author finding out
+ * the hard way which of the two is fussier.
+ *
+ * POSIX's E and O modifiers and MSVC's # flag are left out on purpose. A
+ * scenario has no use for either, and %Ec is exactly the kind of thing one C
+ * library takes and another does not. */
+static const char kScnDateConv[] = "aAbBcCdDeFgGhHIjmMnprRStTuUVwWxXyYzZ%";
+
+static bool scnSandboxDateConv(char c) {
+    return c != '\0' && strchr(kScnDateConv, c) != NULL;
+}
+
+/* The specifier that was refused, written out for the author to read back.
+   A format is a string like any other and may hold any byte at all, so one
+   that is not printable is named by its number rather than sent to a console
+   line as itself. out holds six bytes at least, which is the longest of the
+   two shapes below with its terminator. */
+static void scnSandboxDateShow(char c, char *out) {
+    static const char kHex[] = "0123456789abcdef";
+    unsigned char     u      = (unsigned char)c;
+
+    out[0] = '%';
+    if (u >= 0x20 && u < 0x7f) {
+        out[1] = (char)u;
+        out[2] = '\0';
+        return;
+    }
+    out[1] = '\\';
+    out[2] = 'x';
+    out[3] = kHex[u >> 4];
+    out[4] = kHex[u & 0x0f];
+    out[5] = '\0';
+}
+
+/* os.date, over a format the host's C library is known to take.
+ *
+ * LuaJIT hands the format to strftime as it stands, checking none of it —
+ * PUC-Lua reads it first and refuses what it does not know, LuaJIT does not.
+ * On glibc that costs nothing, because an unknown conversion is copied through
+ * as the two characters it was written as. The MSVC CRT answers an invalid one
+ * by calling the invalid-parameter handler, which by default ends the process:
+ * a line beside a map could stop a Windows dedicated server. So the format is
+ * read here, and what reaches strftime is a format both libraries know.
+ *
+ * What goes straight through: no argument or a nil one, which LuaJIT defaults
+ * to "%c", and "*t" or "!*t", which ask for a table rather than a string and
+ * never reach strftime at all. Everything else is a format, optionally led by
+ * the ! that selects UTC. The original is upvalue 1, as collectgarbage's is. */
+static int scnSandboxDate(lua_State *L) {
+    const char *fmt;
+    size_t      len = 0;
+    size_t      i;
+    int         n;
+    char        shown[8];
+
+    if (!lua_isnoneornil(L, 1)) {
+        fmt = luaL_checklstring(L, 1, &len);
+        if (len > (size_t)SCN_DATE_FMT_LEN) {
+            return luaL_error(L, "os.date was given a format of %d bytes, and "
+                                 "%d is as long as one may be",
+                              (int)len, (int)SCN_DATE_FMT_LEN);
+        }
+        if (len > 0 && *fmt == '!') {
+            fmt++;                      /* UTC; the format is what follows */
+            len--;
+        }
+        /* Asked by length rather than by strcmp, because a Lua string may
+           carry a NUL of its own and the bytes past one still matter here. */
+        if (!(len == 2 && fmt[0] == '*' && fmt[1] == 't')) {
+            for (i = 0; i < len; i++) {
+                if (fmt[i] != '%') {
+                    continue;
+                }
+                i++;
+                if (i >= len) {
+                    return luaL_error(L, "os.date was given a format ending in "
+                                         "a %% with no conversion character "
+                                         "after it");
+                }
+                if (!scnSandboxDateConv(fmt[i])) {
+                    scnSandboxDateShow(fmt[i], shown);
+                    return luaL_error(L, "os.date was given %s, which is not "
+                                         "one of the conversion characters a "
+                                         "scenario may use: hosts do not agree "
+                                         "on what their C library takes, and "
+                                         "one of them ends the process over a "
+                                         "format it does not know",
+                                      shown);
+                }
+            }
+        }
+    }
+    n = lua_gettop(L);
+    lua_pushvalue(L, lua_upvalueindex(1));
+    lua_insert(L, 1);
+    lua_call(L, n, LUA_MULTRET);
+    return lua_gettop(L);
+}
+
+/* ── The one error a script may not keep ──────────────────────────── */
+
+/* pcall, xpcall and coroutine.resume, each over the original.
+ *
+ * These three are how script code is handed a failure rather than having it
+ * raised through it, and the error the budget raises is the one failure a
+ * call may not keep: a script that caught it would go on spending the
+ * instructions it has already been stopped for, and the hook alone cannot
+ * prevent that — a loop around a pcall would be cut off and catch it again
+ * for as long as it liked.
+ *
+ * So each asks the latch once the call it protected is over, and raises again
+ * where that call failed with the latch set. The inner error having been an
+ * ordinary one changes nothing: once the hook has latched, this call's budget
+ * is spent whatever the protected code failed at.
+ *
+ * coroutine.wrap needs none of this. The function it answers with raises into
+ * its caller rather than answering with a failure, so the error arrives at
+ * whichever of these three caught it — or at the host's own lua_pcall, where
+ * none did.
+ *
+ * All three answer the same shape, how it went and then what came of it, so
+ * one body serves them all. The original is upvalue 1, as collectgarbage's
+ * is. */
+static int scnSandboxGuardCall(lua_State *L) {
+    ScnSandboxState *s = scnSandboxStateOf(L);
+    int              n = lua_gettop(L);
+
+    lua_pushvalue(L, lua_upvalueindex(1));
+    lua_insert(L, 1);
+    lua_call(L, n, LUA_MULTRET);
+    if (s != NULL && s->stopped && lua_gettop(L) >= 1 &&
+        !lua_toboolean(L, 1)) {
+        return luaL_error(L, "this call ran past the instruction budget of %d "
+                             "and was stopped; catching that error does not "
+                             "give the call its instructions back, so it is "
+                             "raised again",
+                          (int)SCN_BUDGET_CALL_INSTR);
+    }
+    return lua_gettop(L);
+}
+
+/* One global, and one field of a library table, replaced by a closure over
+   what was there. A name that is not there is left alone rather than made:
+   these run after the libraries are open, so what is missing is missing
+   because this VM never had it. */
+static void scnSandboxGuardGlobal(lua_State *L, const char *name) {
+    lua_getglobal(L, name);
+    if (lua_isfunction(L, -1)) {
+        lua_pushcclosure(L, scnSandboxGuardCall, 1);
+        lua_setglobal(L, name);
+    } else {
+        lua_pop(L, 1);
+    }
+}
+
+static void scnSandboxGuardField(lua_State *L, const char *table,
+                                 const char *key) {
+    lua_getglobal(L, table);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        return;
+    }
+    lua_getfield(L, -1, key);
+    if (lua_isfunction(L, -1)) {
+        lua_pushcclosure(L, scnSandboxGuardCall, 1);
+        lua_setfield(L, -2, key);
+    } else {
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+}
+
+/* ── The whitelist ────────────────────────────────────────────────── */
+
+void scnSandboxOpenLibs(lua_State *L) {
+    /* base first: under 5.1 and LuaJIT it brings coroutine with it, which is
+       why the coroutine opener below is 5.4's alone. */
+    scnSandboxOpenOne(L, "_G", luaopen_base);
+#ifndef WINBOLO_LUAJIT
+    scnSandboxOpenOne(L, LUA_COLIBNAME, luaopen_coroutine);
+#endif
+    scnSandboxOpenOne(L, LUA_STRLIBNAME, luaopen_string);
+    scnSandboxOpenOne(L, LUA_TABLIBNAME, luaopen_table);
+    scnSandboxOpenOne(L, LUA_MATHLIBNAME, luaopen_math);
+    scnSandboxOpenOne(L, LUA_OSLIBNAME, luaopen_os);
+    /* utf8 is PUC-Lua's and LuaJIT has none, so a script that wants it has to
+       ask whether it is there. The asymmetry is in docs/SCENARIO_API.md. */
+#if !defined(WINBOLO_LUAJIT) && defined(LUA_UTF8LIBNAME)
+    scnSandboxOpenOne(L, LUA_UTF8LIBNAME, luaopen_utf8);
+#endif
+
+    scnSandboxTrimGlobals(L);
+
+    /* The other half of the loaders: dump turns a function back into
+       bytecode, which the chunk loader refuses to take. */
+    scnSandboxClearField(L, LUA_STRLIBNAME, "dump");
+
+    scnSandboxTrimOs(L);
+
+    lua_getglobal(L, "collectgarbage");
+    if (lua_isfunction(L, -1)) {
+        lua_pushcclosure(L, scnSandboxCollectGarbage, 1);
+        lua_setglobal(L, "collectgarbage");
+    } else {
+        lua_pop(L, 1);
+    }
+
+    lua_pushcfunction(L, scnSandboxPrint);
+    lua_setglobal(L, "print");
+
+    /* After the trims above, so this closes over the os.date that survived
+       them rather than over one that is about to be deleted. */
+    lua_getglobal(L, LUA_OSLIBNAME);
+    if (lua_istable(L, -1)) {
+        lua_getfield(L, -1, "date");
+        if (lua_isfunction(L, -1)) {
+            lua_pushcclosure(L, scnSandboxDate, 1);
+            lua_setfield(L, -2, "date");
+        } else {
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
+
+    /* Last, so each of these closes over the function its own opener
+       installed rather than over something replaced afterwards. coroutine is
+       base's under LuaJIT and its own library under 5.4, and either way it is
+       a global table by the time this reads it. */
+    scnSandboxGuardGlobal(L, "pcall");
+    scnSandboxGuardGlobal(L, "xpcall");
+    scnSandboxGuardField(L, LUA_COLIBNAME, "resume");
+}
+
+void scnSandboxSealRandom(lua_State *L) {
+    scnSandboxClearField(L, LUA_MATHLIBNAME, "randomseed");
+}
