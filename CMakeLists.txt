@@ -5414,6 +5414,7 @@ set(_unit_test_names
     scenario_sandbox_budget_survives_a_nested_call
     scenario_sandbox_budget_survives_a_pcall
     scenario_sandbox_budget_survives_a_coroutine
+    scenario_sandbox_os_date_refuses_a_bad_format
     scenario_events_queued_then_drained
     scenario_events_drain_reads_the_length_once
     scenario_events_queued_during_a_drain_waits

@@ -37,6 +37,13 @@
  *  writes to the host's stdout, which a dedicated server's
  *  operator is not necessarily reading.
  *
+ *  os.date is wrapped for a different reason: the format
+ *  reaches the host's own strftime, and the C libraries this
+ *  server is built against do not agree on what a valid
+ *  conversion character is — one of them ends the process
+ *  over an invalid one rather than complaining. So the
+ *  format is read here first.
+ *
  *  This file compiles under the scenario_host profile: it
  *  sees src/bolo/public/ and src/bolo/scenario_api/, and
  *  nothing under src/bolo/internal/.
@@ -61,6 +68,14 @@
    rather than dropped, so an operator still sees what a long one was
    about. */
 #define SCN_PRINT_LEN 1024
+
+/* The longest format os.date will take. A date written out in full needs a
+   fraction of this, and a long one is worth refusing on its own account:
+   LuaJIT sizes its buffer at thirty bytes for every % in the format and grows
+   it four times over if strftime writes nothing, so a format that is mostly
+   percent signs asks for an allocation far larger than it looks. The memory
+   cap catches that; saying no to it here is cheaper and reads better. */
+#define SCN_DATE_FMT_LEN 256
 
 /* ── What a state is counted with ─────────────────────────────────── */
 
@@ -468,7 +483,7 @@ static void scnSandboxTrimGlobals(lua_State *L) {
     lua_pop(L, 1);
 }
 
-/* ── The two calls that are replaced rather than removed ──────────── */
+/* ── The calls that are replaced rather than removed ──────────────── */
 
 /* collectgarbage without the "stop" option. A script that could stop the
  * collector could grow the state without bound while every allocation it
@@ -520,6 +535,108 @@ static int scnSandboxPrint(lua_State *L) {
     line[used] = '\0';
     serverSimConsoleMessage(line);
     return 0;
+}
+
+/* The conversion characters a format may carry. This is the set the MSVC CRT
+ * documents as valid, which is the narrowest of the libraries this server is
+ * built against and so the one every host is held to: a script written against
+ * a Linux server should run on a Windows one without the author finding out
+ * the hard way which of the two is fussier.
+ *
+ * POSIX's E and O modifiers and MSVC's # flag are left out on purpose. A
+ * scenario has no use for either, and %Ec is exactly the kind of thing one C
+ * library takes and another does not. */
+static const char kScnDateConv[] = "aAbBcCdDeFgGhHIjmMnprRStTuUVwWxXyYzZ%";
+
+static bool scnSandboxDateConv(char c) {
+    return c != '\0' && strchr(kScnDateConv, c) != NULL;
+}
+
+/* The specifier that was refused, written out for the author to read back.
+   A format is a string like any other and may hold any byte at all, so one
+   that is not printable is named by its number rather than sent to a console
+   line as itself. out holds six bytes at least, which is the longest of the
+   two shapes below with its terminator. */
+static void scnSandboxDateShow(char c, char *out) {
+    static const char kHex[] = "0123456789abcdef";
+    unsigned char     u      = (unsigned char)c;
+
+    out[0] = '%';
+    if (u >= 0x20 && u < 0x7f) {
+        out[1] = (char)u;
+        out[2] = '\0';
+        return;
+    }
+    out[1] = '\\';
+    out[2] = 'x';
+    out[3] = kHex[u >> 4];
+    out[4] = kHex[u & 0x0f];
+    out[5] = '\0';
+}
+
+/* os.date, over a format the host's C library is known to take.
+ *
+ * LuaJIT hands the format to strftime as it stands, checking none of it —
+ * PUC-Lua reads it first and refuses what it does not know, LuaJIT does not.
+ * On glibc that costs nothing, because an unknown conversion is copied through
+ * as the two characters it was written as. The MSVC CRT answers an invalid one
+ * by calling the invalid-parameter handler, which by default ends the process:
+ * a line beside a map could stop a Windows dedicated server. So the format is
+ * read here, and what reaches strftime is a format both libraries know.
+ *
+ * What goes straight through: no argument or a nil one, which LuaJIT defaults
+ * to "%c", and "*t" or "!*t", which ask for a table rather than a string and
+ * never reach strftime at all. Everything else is a format, optionally led by
+ * the ! that selects UTC. The original is upvalue 1, as collectgarbage's is. */
+static int scnSandboxDate(lua_State *L) {
+    const char *fmt;
+    size_t      len = 0;
+    size_t      i;
+    int         n;
+    char        shown[8];
+
+    if (!lua_isnoneornil(L, 1)) {
+        fmt = luaL_checklstring(L, 1, &len);
+        if (len > (size_t)SCN_DATE_FMT_LEN) {
+            return luaL_error(L, "os.date was given a format of %d bytes, and "
+                                 "%d is as long as one may be",
+                              (int)len, (int)SCN_DATE_FMT_LEN);
+        }
+        if (len > 0 && *fmt == '!') {
+            fmt++;                      /* UTC; the format is what follows */
+            len--;
+        }
+        /* Asked by length rather than by strcmp, because a Lua string may
+           carry a NUL of its own and the bytes past one still matter here. */
+        if (!(len == 2 && fmt[0] == '*' && fmt[1] == 't')) {
+            for (i = 0; i < len; i++) {
+                if (fmt[i] != '%') {
+                    continue;
+                }
+                i++;
+                if (i >= len) {
+                    return luaL_error(L, "os.date was given a format ending in "
+                                         "a %% with no conversion character "
+                                         "after it");
+                }
+                if (!scnSandboxDateConv(fmt[i])) {
+                    scnSandboxDateShow(fmt[i], shown);
+                    return luaL_error(L, "os.date was given %s, which is not "
+                                         "one of the conversion characters a "
+                                         "scenario may use: hosts do not agree "
+                                         "on what their C library takes, and "
+                                         "one of them ends the process over a "
+                                         "format it does not know",
+                                      shown);
+                }
+            }
+        }
+    }
+    n = lua_gettop(L);
+    lua_pushvalue(L, lua_upvalueindex(1));
+    lua_insert(L, 1);
+    lua_call(L, n, LUA_MULTRET);
+    return lua_gettop(L);
 }
 
 /* ── The one error a script may not keep ──────────────────────────── */
@@ -632,6 +749,20 @@ void scnSandboxOpenLibs(lua_State *L) {
 
     lua_pushcfunction(L, scnSandboxPrint);
     lua_setglobal(L, "print");
+
+    /* After the trims above, so this closes over the os.date that survived
+       them rather than over one that is about to be deleted. */
+    lua_getglobal(L, LUA_OSLIBNAME);
+    if (lua_istable(L, -1)) {
+        lua_getfield(L, -1, "date");
+        if (lua_isfunction(L, -1)) {
+            lua_pushcclosure(L, scnSandboxDate, 1);
+            lua_setfield(L, -2, "date");
+        } else {
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
 
     /* Last, so each of these closes over the function its own opener
        installed rather than over something replaced afterwards. coroutine is

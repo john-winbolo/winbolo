@@ -39,6 +39,9 @@
  *        again rather than carrying on
  * run_scenario_sandbox_budget_survives_a_coroutine
  *      — and the same through coroutine.resume
+ * run_scenario_sandbox_os_date_refuses_a_bad_format
+ *      — os.date takes the portable conversion characters and raises on the
+ *        rest, with the formats a script really writes still answering
  */
 
 #include <stdint.h>
@@ -975,6 +978,82 @@ int run_scenario_sandbox_budget_survives_a_coroutine(void) {
     UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
                   "the round is in state %d, expected it to still be running "
                   "after the call was cut off", (int)serverSimGetState(sim));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+    return 0;
+}
+
+/* ── 13. The format os.date is given ──────────────────────────────── */
+
+/* A format reaches the host's own strftime, and the C libraries this server is
+ * built against do not agree on what an invalid conversion character is worth:
+ * glibc copies one through, the MSVC CRT calls the invalid-parameter handler,
+ * which by default ends the process. So the sandbox reads the format first.
+ *
+ * Both directions are in the one case on purpose. A check that refused
+ * everything would be no better than what it replaced, so the formats a script
+ * really writes are asked for as well — the two that ask for a table among
+ * them, which never reach strftime at all, and a second argument, which says
+ * that what follows the format still arrives.
+ *
+ * Every call is made through the script's own pcall, so an attach that
+ * succeeds is also the assertion that this refusal is an ordinary error: the
+ * budget's is raised again by the pcall wrapper, and this one is not. */
+int run_scenario_sandbox_os_date_refuses_a_bad_format(void) {
+    static const char *const kMap = "scnsand_date.map";
+    static const char *const kLua =
+        "local leaks = {}\n"
+        "local function good(what, kind, ...)\n"
+        "  local ok, v = pcall(os.date, ...)\n"
+        "  if not ok then\n"
+        "    leaks[#leaks + 1] = what .. \" was refused: \" .. tostring(v)\n"
+        "  elseif type(v) ~= kind then\n"
+        "    leaks[#leaks + 1] = what .. \" answered a \" .. type(v)\n"
+        "  end\n"
+        "end\n"
+        "local function bad(what, fmt, names)\n"
+        "  local ok, e = pcall(os.date, fmt)\n"
+        "  if ok then\n"
+        "    leaks[#leaks + 1] = what .. \" was allowed\"\n"
+        "  elseif not string.find(tostring(e), names, 1, true) then\n"
+        "    leaks[#leaks + 1] = what .. \" was refused without naming \" ..\n"
+        "                        names .. \": \" .. tostring(e)\n"
+        "  end\n"
+        "end\n"
+        "good(\"os.date()\", \"string\")\n"
+        "good(\"os.date(nil)\", \"string\", nil)\n"
+        "good(\"%Y-%m-%d\", \"string\", \"%Y-%m-%d\")\n"
+        "good(\"!%H:%M:%S\", \"string\", \"!%H:%M:%S\")\n"
+        "good(\"*t\", \"table\", \"*t\")\n"
+        "good(\"!*t\", \"table\", \"!*t\")\n"
+        "good(\"a literal percent\", \"string\", \"100%% sure\")\n"
+        "local y = os.date(\"!%Y\", 0)\n"
+        "if y ~= \"1970\" then\n"
+        "  leaks[#leaks + 1] = \"!%Y at time 0 answered \" .. tostring(y)\n"
+        "end\n"
+        "bad(\"%Q\", \"%Q\", \"%Q\")\n"
+        "bad(\"%Ec\", \"%Ec\", \"%E\")\n"
+        "bad(\"%#c\", \"%#c\", \"%#\")\n"
+        "bad(\"a trailing percent\", \"the time is 20%\",\n"
+        "    \"no conversion character\")\n"
+        "bad(\"a 300-byte format\", string.rep(\"%Y\", 150), \"300\")\n"
+        "if #leaks > 0 then\n"
+        "  error(\"os.date: \" .. table.concat(leaks, \"; \"))\n"
+        "end\n"
+        "scenario = { name = \"Dater\", api = 1 }\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+
+    UT_ASSERT(sbPutText(kMap, kLua));
+    sim = sbSim();
+    UT_ASSERT(sim != NULL);
+
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script raised: %s", err);
 
     scenarioHostDetach(h);
     serverSimDestroy(sim);

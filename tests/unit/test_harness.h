@@ -2646,8 +2646,8 @@ int run_scenario_lua_game_type_resolves_scripted(void);
  * whitelist takes and the ones it keeps, the precompiled chunk the loader
  * refuses, collectgarbage without "stop", print on the server console, the
  * memory cap a script is refused at, the instruction budget one call is cut
- * off at, and the two catchers that are not allowed to keep the error it
- * raises. */
+ * off at, the two catchers that are not allowed to keep the error it raises,
+ * and the os.date format that is read before it reaches strftime. */
 int run_scenario_sandbox_removed_names_are_nil(void);
 int run_scenario_sandbox_bytecode_chunk_refused(void);
 int run_scenario_sandbox_collectgarbage_stop_refused(void);
@@ -2660,6 +2660,7 @@ int run_scenario_sandbox_state_survives_the_budget(void);
 int run_scenario_sandbox_budget_survives_a_nested_call(void);
 int run_scenario_sandbox_budget_survives_a_pcall(void);
 int run_scenario_sandbox_budget_survives_a_coroutine(void);
+int run_scenario_sandbox_os_date_refuses_a_bad_format(void);
 
 /* The bus events (test_scenario_events.c): the subscriber that only
  * queues, the bounded drain at the end of each tick, and what a full

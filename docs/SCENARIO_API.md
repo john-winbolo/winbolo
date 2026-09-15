@@ -77,8 +77,15 @@ There is no `io`, so a script cannot read or write a file. There is no
 `package` and no `require`, so it cannot load another module. There is no
 `debug`, and on a LuaJIT host no `ffi`, no `jit` and no `bit`. `load`,
 `loadstring`, `dofile`, `loadfile` and `string.dump` are gone with them, and
-`os` keeps only `time`, `date`, `clock` and `difftime`. `math.random` works
-and is seeded for you; `math.randomseed` is not there to reseed it.
+`os` keeps only `time`, `date`, `clock` and `difftime`. `os.date` takes the
+portable conversion characters — `%a %A %b %B %c %C %d %D %e %F %g %G %h %H
+%I %j %m %M %n %p %r %R %S %t %T %u %U %V %w %W %x %X %y %Y %z %Z %%`, with
+the leading `!` for UTC and `*t` for a table — and raises on anything else,
+naming the specifier it would not take: hosts do not agree on what their C
+library accepts, and one of them ends the process over a format it does not
+like rather than complaining about it. The `E` and `O` modifiers are among
+what it will not take, and a format may be 256 bytes at most. `math.random`
+works and is seeded for you; `math.randomseed` is not there to reseed it.
 `collectgarbage` answers every option but `"stop"`, which raises. `utf8` is
 present only on hosts built against PUC-Lua — a LuaJIT host has none, so a
 script that wants it must ask. Your file is loaded as text: a precompiled
