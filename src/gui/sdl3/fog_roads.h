@@ -14,21 +14,35 @@
 
 /*********************************************************
  * Name:          fog_roads.h
- * Purpose:       Which sides of a fogged road square get a
- *                band drawn inside them.
+ * Purpose:       Which sides of a fogged square get a band
+ *                drawn inside them, to show the fog line.
  *
  *   A road is 256 black pixels out of 256, so the Darker fog
  *   leaves it exactly as it was: the player can read the fog
  *   line over grass and cannot read it over road at all. The
- *   Darker + roads look answers that by drawing the road's
- *   own outline back in — a short grey band inside each edge
- *   of a fogged road square that faces something that is not
- *   road. The band fades out as it goes in, so the road keeps
- *   a soft edge rather than gaining a drawn border.
+ *   Darker + roads look answers that by drawing the fog line
+ *   itself back in where it runs over road — a faint lift
+ *   inside each edge of a fogged road square that faces a
+ *   square in plain sight. It is a little white mixed in, not
+ *   a grey stripe: the edge comes out dark grey rather than
+ *   pitch black, and fades back to the fog over three pixels,
+ *   so the fog keeps a soft edge rather than gaining a drawn
+ *   border.
  *
- *   Only the edges facing non-road are banded, so a wide road
- *   or a crossroads is outlined round the outside and not
- *   ruled into squares.
+ *   The band is on the fogged side of the line, and only on
+ *   the fogged side: the square in plain sight next to it is
+ *   drawn as itself and needs nothing. Road well inside the
+ *   fog gets no band either, because there is no fog line
+ *   there to show. Ground that is not road gets none, because
+ *   the darkening already shows the line over it.
+ *
+ *   A neighbour the caller cannot name — off the map, or off
+ *   the grid it is walking — counts as fogged, so no band is
+ *   drawn along the edge of the screen.
+ *
+ *   FOG_EDGE_ALL_TERRAIN turns the last rule off and bands
+ *   every fogged square at the fog line, road or not. It is a
+ *   build switch for comparing the two, not a setting.
  *
  *   Arithmetic only — no SDL, so it compiles into the unit
  *   test binary. The drawing half is fog_roads_draw.h.
@@ -47,20 +61,35 @@
 #define FOG_ROAD_EDGE_TOP    0x04
 #define FOG_ROAD_EDGE_BOTTOM 0x08
 
-/* How many bands the fade is cut into, and how strong the one at the very
- * edge is out of 255. Band i carries alpha FOG_ROAD_ALPHA * (BANDS - i) /
- * BANDS, so with three bands at 153 the fade runs 153, 102, 51 and is gone by
- * the fourth pixel in. Three bands at the classic tile size is three
- * pixels. */
+/* ---- The one place the band's look is set. Tune here. ----
+ *
+ * Andrew wants this subtle: a slight lifting of the fog, not a grey stripe
+ * ruled along it. So the band is white at a low alpha over ground that has
+ * just been taken to black, and the fade is short.
+ *
+ * How many bands the fade is cut into, and how strong the one at the very edge
+ * is out of 255. Band i carries alpha FOG_ROAD_ALPHA * (BANDS - i) / BANDS, so
+ * three bands at 40 run 40, 26, 13 — about 15%, 10% and 5% — and are gone by
+ * the fourth pixel in. Three bands at the classic tile size is three pixels.
+ *
+ * What that comes to on the screen: a fogged road is black, so its edge
+ * settles at about 40 out of 255, a dark grey that reads as an edge without
+ * reading as a line, and falls back to black over the three pixels. Fogged
+ * ground that is not black only lifts a touch, which is all that is wanted
+ * there — the darkening already shows the fog line over it.
+ *
+ * These live here rather than in fog_roads_draw.h because this is the half
+ * with no SDL in it, and the unit tests read them.
+ *
+ * Raise FOG_ROAD_ALPHA for a stronger edge; drop it towards 20 for one barely
+ * there. The colour is what the band is mixed in; white is the only thing
+ * that lifts a black square at all. */
 #define FOG_ROAD_BANDS 3
-#define FOG_ROAD_ALPHA 153
+#define FOG_ROAD_ALPHA 40
 
-/* The band's colour. Lighter than the fog's own grey: it is drawn over a
- * square that has just been taken to black, and it has three pixels to say
- * where the road is in. */
-#define FOG_ROAD_R 128
-#define FOG_ROAD_G 128
-#define FOG_ROAD_B 128
+#define FOG_ROAD_R 255
+#define FOG_ROAD_G 255
+#define FOG_ROAD_B 255
 
 /* The tile the band is cut out of, at the classic 16-pixel tile. A view
  * drawing bigger tiles scales this with them so the outline keeps its share
@@ -80,52 +109,72 @@ static inline int fogRoadIsRoadTile(unsigned char tile) {
     return tile >= (unsigned char)ROAD_HORZ && tile <= (unsigned char)ROAD_SIDE4;
 }
 
-/* The sides of one square that want a band: none at all unless the square
- * itself is road, and then one bit for each neighbour that is not.
+/* The build switch. 0, the default, bands fogged road only. 1 bands every
+ * fogged square at the fog line, so the two can be looked at side by side
+ * without the look itself changing. Not a setting and not in the dialog:
+ * define it on the compiler's command line to try it. */
+#ifndef FOG_EDGE_ALL_TERRAIN
+#define FOG_EDGE_ALL_TERRAIN 0
+#endif
+
+/* Whether a square of this terrain is one the band is wanted on at all. Road
+ * is the case the look exists for — a darkening cannot mark a black square —
+ * and the switch above takes in everything else as well. */
+static inline int fogEdgeTileWantsBand(unsigned char tile) {
+#if FOG_EDGE_ALL_TERRAIN
+    (void)tile;
+    return 1;
+#else
+    return fogRoadIsRoadTile(tile);
+#endif
+}
+
+/* The sides of one square that want a band. Three things have to hold: the
+ * square is fogged, its terrain is one the band is wanted on, and the side
+ * faces a square that is not fogged. So the band lands on the fogged side of
+ * the fog line and nowhere else.
  *
- * The neighbours are tile numbers, in the same numbering as `tile`. A caller
- * with no neighbour to offer — the square is at the edge of the map, or of
- * the grid it is walking — passes any non-road number, and the edge is banded
- * as if it faced open ground. */
-static inline unsigned char fogRoadEdges(unsigned char tile,
-                                         unsigned char left,
-                                         unsigned char right,
-                                         unsigned char up,
-                                         unsigned char down) {
+ * `fogged` and the four neighbour flags are true for a square the fog covers.
+ * A caller with no neighbour to offer — the square is at the edge of the map,
+ * or of the grid it is walking — passes it as fogged, and no band is drawn
+ * along that side. */
+static inline unsigned char fogEdges(unsigned char tile, int fogged,
+                                     int leftFogged, int rightFogged,
+                                     int upFogged, int downFogged) {
     unsigned char edges = 0;
-    if (!fogRoadIsRoadTile(tile)) return 0;
-    if (!fogRoadIsRoadTile(left))  edges |= FOG_ROAD_EDGE_LEFT;
-    if (!fogRoadIsRoadTile(right)) edges |= FOG_ROAD_EDGE_RIGHT;
-    if (!fogRoadIsRoadTile(up))    edges |= FOG_ROAD_EDGE_TOP;
-    if (!fogRoadIsRoadTile(down))  edges |= FOG_ROAD_EDGE_BOTTOM;
+    if (!fogged) return 0;
+    if (!fogEdgeTileWantsBand(tile)) return 0;
+    if (!leftFogged)  edges |= FOG_ROAD_EDGE_LEFT;
+    if (!rightFogged) edges |= FOG_ROAD_EDGE_RIGHT;
+    if (!upFogged)    edges |= FOG_ROAD_EDGE_TOP;
+    if (!downFogged)  edges |= FOG_ROAD_EDGE_BOTTOM;
     return edges;
 }
 
-/* The same answer for every square of a w by h grid of tile numbers, both
- * laid out row by row — tiles[y * w + x], and out the same. A square at the
- * grid's own edge is given open ground beyond it, which is what the classic
- * view wants: its grid is the back buffer, and a square outside that is off
- * the screen.
+/* The same answer for every square of a w by h grid, laid out row by row —
+ * tiles[y * w + x], fogged[y * w + x] non-zero for a fogged square, and out
+ * the same. A square at the grid's own edge is given fog beyond it, which is
+ * what both views want: a square outside the grid is off the screen, and the
+ * fog line does not run along the edge of the screen.
  *
  * Whole-grid rather than per-square so the one walk a caller makes is the one
  * this file is tested on. */
-static inline void fogRoadEdgeMasks(const unsigned char *tiles, int w, int h,
-                                    unsigned char *out) {
+static inline void fogEdgeMasks(const unsigned char *tiles,
+                                const unsigned char *fogged, int w, int h,
+                                unsigned char *out) {
     int x, y; /* Looping variables */
-    /* Any number outside the road run stands for "no neighbour"; 0 is the
-     * first tank frame and is never a terrain square. */
-    const unsigned char none = 0;
 
-    if (tiles == NULL || out == NULL) return;
+    if (tiles == NULL || fogged == NULL || out == NULL) return;
 
     for (y = 0; y < h; y++) {
         for (x = 0; x < w; x++) {
-            unsigned char tile  = tiles[y * w + x];
-            unsigned char left  = (x > 0)     ? tiles[y * w + (x - 1)] : none;
-            unsigned char right = (x < w - 1) ? tiles[y * w + (x + 1)] : none;
-            unsigned char up    = (y > 0)     ? tiles[(y - 1) * w + x] : none;
-            unsigned char down  = (y < h - 1) ? tiles[(y + 1) * w + x] : none;
-            out[y * w + x] = fogRoadEdges(tile, left, right, up, down);
+            int slot = y * w + x;
+            int lf = (x > 0)     ? (fogged[slot - 1] != 0) : 1;
+            int rf = (x < w - 1) ? (fogged[slot + 1] != 0) : 1;
+            int uf = (y > 0)     ? (fogged[slot - w] != 0) : 1;
+            int df = (y < h - 1) ? (fogged[slot + w] != 0) : 1;
+            out[slot] = fogEdges(tiles[slot], fogged[slot] != 0,
+                                 lf, rf, uf, df);
         }
     }
 }

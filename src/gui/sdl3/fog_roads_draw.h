@@ -14,8 +14,14 @@
 
 /*********************************************************
  * Name:          fog_roads_draw.h
- * Purpose:       Puts the road edge bands of fog_roads.h on
+ * Purpose:       Puts the fog edge bands of fog_roads.h on
  *                the screen, for both views that draw them.
+ *
+ *   The band's colour and its three alphas are set in one
+ *   place, at the top of fog_roads.h: FOG_ROAD_R/G/B,
+ *   FOG_ROAD_ALPHA and FOG_ROAD_BANDS. They are there rather
+ *   than here because that is the half with no SDL in it and
+ *   the unit tests read them. Tune the look there.
  *
  *   A painter rather than a function per square, because the
  *   bands come in FOG_ROAD_BANDS strengths and a renderer

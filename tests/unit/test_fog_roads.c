@@ -135,6 +135,10 @@ int run_fog_style_setting(void) {
 #define W ((unsigned char)DEEP_SEA_SOLID)
 #define R ((unsigned char)ROAD_SOLID)
 
+/* Fogged and in plain sight, for the flag arguments. */
+#define FOGD 1
+#define SEEN 0
+
 int run_fog_road_edges(void) {
     /* The run of tile numbers that counts as road, at both ends and just
      * outside each. */
@@ -154,35 +158,66 @@ int run_fog_road_edges(void) {
     UT_ASSERT_MSG(!fogRoadIsRoadTile((unsigned char)255),
                   "an unseen square was read as road");
 
-    /* A square that is not road is never banded, whatever is beside it. */
-    UT_ASSERT_MSG(fogRoadEdges(G, R, R, R, R) == 0,
-                  "grass surrounded by road was banded");
+    /* The case the look is drawn for: a fogged road square with the square to
+     * its east in plain sight is banded on its right hand side and nowhere
+     * else. The band is the fog line, so it is on the side that faces out. */
+    UT_ASSERT_MSG(fogEdges(R, FOGD, FOGD, SEEN, FOGD, FOGD) ==
+                      FOG_ROAD_EDGE_RIGHT,
+                  "a fogged road with the east square seen was banded %d, "
+                  "expected the right only",
+                  (int)fogEdges(R, FOGD, FOGD, SEEN, FOGD, FOGD));
 
-    /* A lone road square is banded on all four sides. */
-    UT_ASSERT_MSG(fogRoadEdges(R, G, G, G, G) ==
+    /* Road well inside the fog: there is no fog line at it, so no band. */
+    UT_ASSERT_MSG(fogEdges(R, FOGD, FOGD, FOGD, FOGD, FOGD) == 0,
+                  "road inside the fog was banded %d, expected none",
+                  (int)fogEdges(R, FOGD, FOGD, FOGD, FOGD, FOGD));
+
+    /* The same line seen from the other side: the road in plain sight next to
+     * fog is drawn as itself and takes no band. The band belongs to the
+     * fogged square. */
+    UT_ASSERT_MSG(fogEdges(R, SEEN, FOGD, FOGD, FOGD, FOGD) == 0,
+                  "a road in plain sight beside fog was banded %d",
+                  (int)fogEdges(R, SEEN, FOGD, FOGD, FOGD, FOGD));
+
+    /* A fogged road square with fog on none of its sides — an island of fog
+     * one square across — is banded all the way round. */
+    UT_ASSERT_MSG(fogEdges(R, FOGD, SEEN, SEEN, SEEN, SEEN) ==
                       (FOG_ROAD_EDGE_LEFT | FOG_ROAD_EDGE_RIGHT |
                        FOG_ROAD_EDGE_TOP | FOG_ROAD_EDGE_BOTTOM),
-                  "a lone road square was banded %d, expected all four sides",
-                  (int)fogRoadEdges(R, G, G, G, G));
+                  "a lone fogged road square was banded %d, expected all four",
+                  (int)fogEdges(R, FOGD, SEEN, SEEN, SEEN, SEEN));
 
-    /* A square in the middle of a wide road is not banded at all, so a road
-     * is outlined round the outside and not ruled into squares. */
-    UT_ASSERT_MSG(fogRoadEdges(R, R, R, R, R) == 0,
-                  "a square inside a road was banded %d, expected none",
-                  (int)fogRoadEdges(R, R, R, R, R));
+    /* The neighbour's own terrain does not come into it: what is beside a
+     * fogged road square only matters in as much as it is fogged or not. Road
+     * on both sides, both in plain sight, still bands both sides. */
+    UT_ASSERT_MSG(fogEdges(R, FOGD, SEEN, SEEN, FOGD, FOGD) ==
+                      (FOG_ROAD_EDGE_LEFT | FOG_ROAD_EDGE_RIGHT),
+                  "a fogged road seen on both sides was banded %d, expected "
+                  "left and right", (int)fogEdges(R, FOGD, SEEN, SEEN,
+                                                  FOGD, FOGD));
 
-    /* A square in a road running left to right is banded top and bottom
-     * only — the two sides that face something else. */
-    UT_ASSERT_MSG(fogRoadEdges(R, R, R, G, G) ==
-                      (FOG_ROAD_EDGE_TOP | FOG_ROAD_EDGE_BOTTOM),
-                  "a left-right road was banded %d, expected top and bottom",
-                  (int)fogRoadEdges(R, R, R, G, G));
+    /* Ground that is not road: the darkening already shows the fog line over
+     * it, so it is left alone — unless the build switch is on, and then it is
+     * banded by the same rule as road. */
+    UT_ASSERT_MSG(fogEdges(G, FOGD, FOGD, SEEN, FOGD, FOGD) ==
+                      (FOG_EDGE_ALL_TERRAIN ? FOG_ROAD_EDGE_RIGHT : 0),
+                  "fogged grass beside a seen square was banded %d, with "
+                  "FOG_EDGE_ALL_TERRAIN %d",
+                  (int)fogEdges(G, FOGD, FOGD, SEEN, FOGD, FOGD),
+                  (int)FOG_EDGE_ALL_TERRAIN);
+    UT_ASSERT_MSG(fogEdges(W, FOGD, SEEN, SEEN, SEEN, SEEN) ==
+                      (FOG_EDGE_ALL_TERRAIN
+                           ? (FOG_ROAD_EDGE_LEFT | FOG_ROAD_EDGE_RIGHT |
+                              FOG_ROAD_EDGE_TOP | FOG_ROAD_EDGE_BOTTOM)
+                           : 0),
+                  "fogged water with every neighbour seen was banded %d",
+                  (int)fogEdges(W, FOGD, SEEN, SEEN, SEEN, SEEN));
 
-    /* Water is not road either, so a road along a shore is banded on the
-     * water side. */
-    UT_ASSERT_MSG(fogRoadEdges(R, R, R, W, R) == FOG_ROAD_EDGE_TOP,
-                  "a road beside water was banded %d, expected the top only",
-                  (int)fogRoadEdges(R, R, R, W, R));
+    /* A square in plain sight is never banded, whatever its terrain and
+     * whatever the switch says. */
+    UT_ASSERT_MSG(fogEdges(R, SEEN, SEEN, SEEN, SEEN, SEEN) == 0 &&
+                      fogEdges(G, SEEN, SEEN, SEEN, SEEN, SEEN) == 0,
+                  "a square in plain sight was banded");
 
     return 0;
 }
@@ -206,55 +241,100 @@ int run_fog_road_edge_masks(void) {
         G, R, G, G,
         G, G, G, G
     };
+    /* The fog over it. Three squares are in plain sight — one above the road,
+     * one in the road itself, and one under the arm — so the fog line runs
+     * round each of them and the four sides are all put to work.
+     *
+     *   # . # #
+     *   # # . #
+     *   # # # #
+     *   # . # #
+     */
+    static const unsigned char fogged[16] = {
+        1, 0, 1, 1,
+        1, 1, 0, 1,
+        1, 1, 1, 1,
+        1, 0, 1, 1
+    };
     unsigned char out[16];
     int i; /* Looping variable */
 
     memset(out, 0xEE, sizeof(out));
-    fogRoadEdgeMasks(tiles, 4, 4, out);
+    fogEdgeMasks(tiles, fogged, 4, 4, out);
 
-    /* Nothing that is not road carries a band. */
+    /* Nothing that is not road carries a band, and nothing in plain sight
+     * does either — however the fog runs round it. */
     for (i = 0; i < 16; i++) {
-        if (fogRoadIsRoadTile(tiles[i])) continue;
+        if (fogged[i] == 0) {
+            UT_ASSERT_MSG(out[i] == 0,
+                          "square %d is in plain sight but was banded %d", i,
+                          (int)out[i]);
+            continue;
+        }
+        if (fogRoadIsRoadTile(tiles[i]) && !FOG_EDGE_ALL_TERRAIN) continue;
+        if (FOG_EDGE_ALL_TERRAIN) continue;
         UT_ASSERT_MSG(out[i] == 0, "square %d is not road but was banded %d",
                       i, (int)out[i]);
     }
 
-    /* The left end of the run: banded left, because the grid ends there and
-     * a square off the grid is open ground. Banded top too, and banded
-     * bottom because the arm is not under it. Not banded right — the road
-     * goes on. */
-    UT_ASSERT_MSG(out[4] == (FOG_ROAD_EDGE_LEFT | FOG_ROAD_EDGE_TOP |
-                             FOG_ROAD_EDGE_BOTTOM),
-                  "the left end of the run was banded %d", (int)out[4]);
+    /* The left end of the run. Fog all round it and the grid ending on its
+     * left, which counts as fog too, so nothing is banded: this is road
+     * inside the fog and there is no fog line at it. */
+    UT_ASSERT_MSG(out[4] == 0,
+                  "the left end of the run was banded %d, expected none",
+                  (int)out[4]);
 
-    /* The square the arm hangs from: road left, road right and road below,
-     * so only the top is banded. */
-    UT_ASSERT_MSG(out[5] == FOG_ROAD_EDGE_TOP,
-                  "the junction was banded %d, expected the top only",
-                  (int)out[5]);
+    /* The square with plain sight above it and to its right: banded on those
+     * two sides and no other. */
+    UT_ASSERT_MSG(out[5] == (FOG_ROAD_EDGE_TOP | FOG_ROAD_EDGE_RIGHT),
+                  "the square under the seen ground was banded %d, expected "
+                  "the top and the right", (int)out[5]);
 
-    /* The square beside it, over open ground: top and bottom. */
-    UT_ASSERT_MSG(out[6] == (FOG_ROAD_EDGE_TOP | FOG_ROAD_EDGE_BOTTOM),
-                  "the square beside the junction was banded %d", (int)out[6]);
+    /* The road square in plain sight itself: no band, though it is next to
+     * fog on three sides. The band is on the fogged side of the line. */
+    UT_ASSERT_MSG(out[6] == 0,
+                  "the road in plain sight was banded %d, expected none",
+                  (int)out[6]);
 
-    /* The right hand end, which runs off the grid: banded on the right for
-     * the same reason the left end is. */
-    UT_ASSERT_MSG(out[7] == (FOG_ROAD_EDGE_RIGHT | FOG_ROAD_EDGE_TOP |
-                             FOG_ROAD_EDGE_BOTTOM),
-                  "the right end of the run was banded %d", (int)out[7]);
+    /* The right hand end, which runs off the grid: banded on its left, where
+     * it faces the square in plain sight, and not on the right, where the
+     * grid ends and the fog is taken to go on. */
+    UT_ASSERT_MSG(out[7] == FOG_ROAD_EDGE_LEFT,
+                  "the right end of the run was banded %d, expected the left "
+                  "only", (int)out[7]);
 
-    /* The arm itself: road above it, open ground on the other three. */
-    UT_ASSERT_MSG(out[9] == (FOG_ROAD_EDGE_LEFT | FOG_ROAD_EDGE_RIGHT |
-                             FOG_ROAD_EDGE_BOTTOM),
-                  "the arm was banded %d, expected all but the top",
+    /* The arm, with the plain sight under it: banded on the bottom only. */
+    UT_ASSERT_MSG(out[9] == FOG_ROAD_EDGE_BOTTOM,
+                  "the arm was banded %d, expected the bottom only",
                   (int)out[9]);
 
-    /* A grid with no road in it writes zeroes and nothing else. */
+    /* The same grid with every square fogged: no fog line anywhere on it, so
+     * no band anywhere either. */
     {
+        static const unsigned char allFog[16] = {
+            1, 1, 1, 1,
+            1, 1, 1, 1,
+            1, 1, 1, 1,
+            1, 1, 1, 1
+        };
+        unsigned char deep[16];
+        memset(deep, 0xEE, sizeof(deep));
+        fogEdgeMasks(tiles, allFog, 4, 4, deep);
+        for (i = 0; i < 16; i++) {
+            UT_ASSERT_MSG(deep[i] == 0,
+                          "square %d was banded %d inside solid fog", i,
+                          (int)deep[i]);
+        }
+    }
+
+    /* A grid with no road in it writes zeroes and nothing else, whatever the
+     * fog does — with the switch off, which is how the game is built. */
+    if (!FOG_EDGE_ALL_TERRAIN) {
         static const unsigned char empty[4] = { G, G, W, W };
+        static const unsigned char half[4]  = { 1, 0, 1, 0 };
         unsigned char none[4];
         memset(none, 0xEE, sizeof(none));
-        fogRoadEdgeMasks(empty, 2, 2, none);
+        fogEdgeMasks(empty, half, 2, 2, none);
         UT_ASSERT_MSG(none[0] == 0 && none[1] == 0 && none[2] == 0 &&
                           none[3] == 0,
                       "a grid with no road was banded %d,%d,%d,%d",

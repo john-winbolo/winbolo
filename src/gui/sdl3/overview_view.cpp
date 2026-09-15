@@ -467,40 +467,39 @@ static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
                       tilePx * (float)MAP_ARRAY_SIZE };
     SDL_RenderTexture(r, v->fog, NULL, &dst);
 
-    /* The road outlines the Darker + roads look adds, over the blit that has
-     * just gone down. A second walk of the visible squares rather than a pass
-     * folded into the terrain loop: the mask the outlines are gated on is
-     * built here, and a square is only reached at all if the mask says it is
-     * fogged, which most of a zoomed-out map is not.
+    /* The fog line over road that the Darker + roads look draws back in, over
+     * the blit that has just gone down. A second walk of the visible squares
+     * rather than a pass folded into the terrain loop: the mask the bands are
+     * gated on is built here, and a square is only reached at all if the mask
+     * says it is fogged, which most of a zoomed-out map is not.
+     *
+     * The same mask says whether each neighbour is fogged, so the band lands
+     * on exactly the line the blit above draws, on its fogged side.
      *
      * Dropped outright once a square is too small to hold the fade, which is
-     * where the outline would be a line over the whole road rather than an
+     * where the band would be a line over the whole square rather than an
      * edge on it — and where there are the most squares to walk. */
     if (fogLookDrawsRoadEdges(style) &&
         tilePx >= (float)(FOG_ROAD_BANDS * 2)) {
+        const BYTE *mask = v->fogMask;
         FogRoadPainter painter;
         fogRoadPainterBegin(&painter, r);
         for (int mx = left; mx <= right; mx++) {
             for (int my = top; my <= bottom; my++) {
-                if (v->fogMask[(size_t)my * OVERVIEW_FOG_MASK_SIDE +
-                               (size_t)mx] == 0) {
-                    continue;
-                }
-                /* Off the map reads as never seen, which is not road. The map
-                 * border is deep sea in every map the game ships, so this is
-                 * a guard rather than a case that comes up. */
-                unsigned char tl = om->tile[mx][my];
-                unsigned char lt = (mx > 0) ? om->tile[mx - 1][my]
-                                            : (unsigned char)OVERVIEW_UNSEEN;
-                unsigned char rt = (mx < MAP_ARRAY_SIZE - 1)
-                                       ? om->tile[mx + 1][my]
-                                       : (unsigned char)OVERVIEW_UNSEEN;
-                unsigned char up = (my > 0) ? om->tile[mx][my - 1]
-                                            : (unsigned char)OVERVIEW_UNSEEN;
-                unsigned char dn = (my < MAP_ARRAY_SIZE - 1)
-                                       ? om->tile[mx][my + 1]
-                                       : (unsigned char)OVERVIEW_UNSEEN;
-                unsigned char edges = fogRoadEdges(tl, lt, rt, up, dn);
+                size_t here = (size_t)my * OVERVIEW_FOG_MASK_SIDE + (size_t)mx;
+                if (mask[here] == 0) continue;
+                /* Off the map counts as fogged, so no band is drawn along the
+                 * map border. The border is deep sea in every map the game
+                 * ships, so this is a guard rather than a case that comes
+                 * up. */
+                int lf = (mx > 0) ? (mask[here - 1] != 0) : 1;
+                int rf = (mx < MAP_ARRAY_SIZE - 1) ? (mask[here + 1] != 0) : 1;
+                int uf = (my > 0)
+                             ? (mask[here - OVERVIEW_FOG_MASK_SIDE] != 0) : 1;
+                int df = (my < MAP_ARRAY_SIZE - 1)
+                             ? (mask[here + OVERVIEW_FOG_MASK_SIDE] != 0) : 1;
+                unsigned char edges =
+                    fogEdges(om->tile[mx][my], 1, lf, rf, uf, df);
                 if (edges == 0) continue;
 
                 float ex = 0.0f, ey = 0.0f;

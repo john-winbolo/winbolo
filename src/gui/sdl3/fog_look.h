@@ -32,10 +32,12 @@
  *                     dimming was dropped.
  *     Darker          a blend towards black, which is the
  *                     dimming that came before the grey.
- *     Darker + roads  the same black, plus a short grey band
- *                     drawn inside the edge of every fogged
- *                     road square that faces something other
- *                     than road. See fog_roads.h.
+ *     Darker + roads  the same black, plus a faint lift drawn
+ *                     inside the edge of every fogged road
+ *                     square that faces a square in plain
+ *                     sight, which puts the fog line back
+ *                     where the black road swallowed it.
+ *                     See fog_roads.h.
  *     None            no wash. The terrain reads the same
  *                     fogged or not.
  *
@@ -51,8 +53,9 @@
  *
  *   The Darker + roads look is the answer for a player who
  *   wants the darker picture back and can live with the roads
- *   only if their edges are drawn in: the band is the one part
- *   of a fogged road square that a dimming cannot swallow.
+ *   only if the fog line still shows on them: the band is the
+ *   one mark on a fogged road square that a dimming cannot
+ *   swallow.
  *
  *   None hides nothing the other three show. The wash is a
  *   tint over terrain the player is remembering; which units

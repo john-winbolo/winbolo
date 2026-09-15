@@ -780,8 +780,8 @@ STR_DLGSKIN_FOGSTYLE_GREY=Grey
 STR_DLGSKIN_FOGSTYLE_GREY_TIP=Ground you cannot see into is washed towards grey, so it comes out lighter than ground in plain sight. This is the standard look.
 STR_DLGSKIN_FOGSTYLE_DARK=Darker
 STR_DLGSKIN_FOGSTYLE_DARK_TIP=Ground you cannot see into is taken towards black. Roads are already black, so a road under fog looks the same as a road in plain sight.
-STR_DLGSKIN_FOGSTYLE_DARKROADS=Darker with road edges
-STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP=Darker, with a soft grey line drawn inside the edge of each fogged road square. It gives back the road shape that the darkening swallows.
+STR_DLGSKIN_FOGSTYLE_DARKROADS=Darker with fog edge on roads
+STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP=Darker, with the fog line drawn faintly back in where it runs over a road. Roads are black, so the darkening alone cannot show where the fog starts on them.
 STR_DLGSKIN_FOGSTYLE_NONE=None
 STR_DLGSKIN_FOGSTYLE_NONE_TIP=The map is not shaded at all, so remembered ground looks the same as ground in plain sight. It hides nothing the other styles show: which tanks and shots are drawn is the server's rule, not this setting's.
 

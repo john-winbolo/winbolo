@@ -1484,15 +1484,15 @@ int run_overview_fog(void);
 
 /* Fog of war looks (test_fog_roads.c): each of the four styles washes towards
  * the colour it says it does, None washes at all, only Darker + roads draws
- * the road outline, the band fade falls to nothing, and the setting store
+ * the fog line band, the band fade falls to nothing, and the setting store
  * clamps a value from outside the enum back to Grey. */
 int run_fog_style_looks(void);
 int run_fog_style_setting(void);
 
-/* The road outline's edge mask (test_fog_roads.c): only road squares are
- * banded, only on the sides facing something that is not road, so a wide road
- * is outlined round the outside and not ruled into squares; a square at the
- * edge of the grid is banded as if open ground lay beyond it. */
+/* The fog line's edge mask (test_fog_roads.c): only a fogged road square is
+ * banded, only on the sides facing a square in plain sight, so the band marks
+ * the fog line on its fogged side; a square at the edge of the grid has fog
+ * beyond it and is not banded there. */
 int run_fog_road_edges(void);
 int run_fog_road_edge_masks(void);
 
