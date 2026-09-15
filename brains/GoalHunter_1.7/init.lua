@@ -102,165 +102,199 @@ local function _cfg_set(name, value, source)
   return true
 end
 
--- John's scenario host hands a spawned bot its `spawn_bot{ init = {...} }` table
--- as the global BRAIN_INIT (flat, string values). This brain reads tokens from
--- the string global BRAIN_INIT_ARG ("k=v;k=v"), so flatten the table into that
--- string here, before either parse block runs. Keys are sorted so every bot
--- builds the same string from the same table (determinism). A string already
--- in BRAIN_INIT_ARG (the command-line path) keeps its place; the table's
--- tokens are appended after it. Andrew, 2026-09-15: bots must take per-spawn
--- data from the scenario, so the horde and the survivalists can differ.
+-- John's scenario host hands a bot its `spawn_bot{ init = {...} }` table as the
+-- global BRAIN_INIT (flat, string values). This brain reads tokens from the
+-- string global BRAIN_INIT_ARG ("k=v;k=v"), so a table has to be flattened into
+-- that form before either parse block reads it. Keys are sorted so every bot
+-- builds the same string from the same table (determinism).
+--
+-- ONE flattener, two callers: the chunk-load block below (the spawn's table)
+-- and Brain.on_init (a table game.bot_init hands a bot that is already
+-- playing). Andrew, 2026-09-15: bots must take per-spawn data from the
+-- scenario, and then be able to be told something new while they run.
+--
+-- Answers the token string, or "" when the table names nothing.
+local function _flatten_init_table(t)
+  if type(t) ~= "table" then return "" end
+  local keys = {}
+  for k, v in pairs(t) do
+    if type(k) == "string" and k ~= "" and v ~= nil then keys[#keys + 1] = k end
+  end
+  table.sort(keys)
+  local toks = {}
+  for _, k in ipairs(keys) do
+    local v = t[k]
+    if type(v) ~= "boolean" then v = tostring(v) end
+    -- The tick-1 block matches bare flag tokens by exact name ("noblitz",
+    -- "suicider", "noclaimdead", ...), never as "noblitz=1". So a flag the
+    -- scenario writes as noblitz = true / "1" / "" becomes the bare word,
+    -- a flag written false / "0" is dropped (absent = off), and everything
+    -- else stays a k=v pair (difficulty=hard, portfolio=..., cfg=...).
+    if v == true or v == "1" or v == "" then
+      toks[#toks + 1] = k
+    elseif v == false or v == "0" then
+      -- off: no token
+    else
+      toks[#toks + 1] = k .. "=" .. v
+    end
+  end
+  return table.concat(toks, ";")
+end
+
 do
-  local t = rawget(_G, "BRAIN_INIT")
-  if type(t) == "table" then
-    local keys = {}
-    for k, v in pairs(t) do
-      if type(k) == "string" and k ~= "" and v ~= nil then keys[#keys + 1] = k end
-    end
-    table.sort(keys)
-    local toks = {}
-    for _, k in ipairs(keys) do
-      local v = t[k]
-      if type(v) ~= "boolean" then v = tostring(v) end
-      -- The tick-1 block matches bare flag tokens by exact name ("noblitz",
-      -- "suicider", "noclaimdead", ...), never as "noblitz=1". So a flag the
-      -- scenario writes as noblitz = true / "1" / "" becomes the bare word,
-      -- a flag written false / "0" is dropped (absent = off), and everything
-      -- else stays a k=v pair (difficulty=hard, portfolio=..., cfg=...).
-      if v == true or v == "1" or v == "" then
-        toks[#toks + 1] = k
-      elseif v == false or v == "0" then
-        -- off: no token
+  local flat = _flatten_init_table(rawget(_G, "BRAIN_INIT"))
+  if flat ~= "" then
+    -- A string already in BRAIN_INIT_ARG (the command-line path) keeps its
+    -- place; the table's tokens are appended after it.
+    local a = rawget(_G, "BRAIN_INIT_ARG")
+    if type(a) == "string" and a ~= "" then flat = a .. ";" .. flat end
+    rawset(_G, "BRAIN_INIT_ARG", flat)
+  end
+end
+
+-- The tokens that write CONSTANTS: preset=, cfg=NAME=VALUE, and the mode= /
+-- difficulty= pair that choose a bundle out of C.MODE_LEVELS.
+--
+-- ONE parser, two callers. At chunk load it reads the string the spawn's table
+-- and the command line built between them. At runtime Brain.on_init calls it
+-- again with the tokens game.bot_init just handed the bot, and `runtime` is
+-- what tells the two apart:
+--
+--   preset= and cfg=  apply either way. They write single values into C, and
+--                     every reader of C reads it live, so a write lands on the
+--                     next tick.
+--   mode= / difficulty=  do NOT apply at runtime. Each names a whole BUNDLE of
+--                     values out of C.MODE_LEVELS, and a bundle cannot be
+--                     unapplied: a second one would leave the first's keys
+--                     standing wherever it does not name them, so the bot
+--                     would end up on neither level. Logged as unsupported and
+--                     left, rather than half-applied.
+--
+-- `source` is the word that lands in the [cfg] log line beside each value, so
+-- a log says where an override came from.
+local function _apply_cfg_tokens(a, source, runtime)
+  if type(a) ~= "string" or a == "" then return end
+  -- Same token split as the tick-1 block: ',' or ';'. A scenario's
+  -- spawn_bot init string uses ';' and so must a command-line [..] suffix
+  -- (the CLI parser eats commas).
+  local presets, cfgs = {}, {}
+  for tok in a:gmatch("[^,;]+") do
+    tok = tok:gsub("%s", "")
+    local pname = tok:match("^preset=(.+)$")
+    local cname, cval = tok:match("^cfg=([%a_][%w_]*)=(.*)$")
+    local dname = tok:match("^difficulty=(.*)$")
+    local mname = tok:match("^mode=(.*)$")
+    if pname then
+      presets[#presets + 1] = pname
+    elseif cname then
+      cfgs[#cfgs + 1] = { cname, cval }
+    elseif mname then
+      -- "mode=<key>" -- the host's per-bot lobby choice of MODE, appended
+      -- to this arg by bot_manager.c at brain-create time. The key comes
+      -- from this brain's own modes.txt, so the vocabulary is whatever
+      -- that file lists ("default", "survival", ...) and this side only
+      -- checks the shape. Written into C.MODE RIGHT HERE (not queued into
+      -- cfgs) so the level bundle below can read the chosen mode; it is
+      -- type-checked and logged like every other override. Precedence:
+      -- level < preset < cfg (a later cfg=MODE= would still win).
+      mname = mname:lower()
+      if runtime then
+        _cfg_warn_add("[mode] '%s' is unsupported at runtime -- a mode names a whole level bundle and a second bundle cannot unset the first; IGNORED.", tok)
+      elseif mname:match("^[a-z0-9_]+$") then
+        _cfg_set("MODE", mname, "mode")
       else
-        toks[#toks + 1] = k .. "=" .. v
+        _cfg_warn_add("[mode] BAD TOKEN '%s' -- want mode=<key> of [a-z0-9_]; IGNORED.", tok)
       end
+    elseif dname then
+      -- "difficulty=<key>" -- the host's per-bot lobby choice of LEVEL
+      -- inside that mode, likewise appended by bot_manager.c. modes.txt
+      -- defines which keys a mode has, so any [a-z0-9_] key is accepted
+      -- here rather than the three the default mode happens to use.
+      -- Written into C.DIFFICULTY RIGHT HERE (not queued) so the level
+      -- bundle below reads it; MODE_LEVELS[C.MODE][C.DIFFICULTY] then
+      -- applies BEFORE any preset=. "normal" is the old name for medium;
+      -- the C side never sends it, but a hand-written arg might.
+      dname = dname:lower()
+      if dname == "normal" then dname = "medium" end
+      if runtime then
+        _cfg_warn_add("[difficulty] '%s' is unsupported at runtime -- a level names a whole bundle and a second bundle cannot unset the first; IGNORED.", tok)
+      elseif dname:match("^[a-z0-9_]+$") then
+        _cfg_set("DIFFICULTY", dname, "difficulty")
+      else
+        _cfg_warn_add("[difficulty] BAD TOKEN '%s' -- want difficulty=<key> of [a-z0-9_]; IGNORED.", tok)
+      end
+    elseif tok:sub(1, 4) == "cfg=" then
+      _cfg_warn_add("[cfg] BAD TOKEN '%s' -- want cfg=NAME=VALUE; IGNORED.", tok)
     end
-    if #toks > 0 then
-      local a = rawget(_G, "BRAIN_INIT_ARG")
-      local flat = table.concat(toks, ";")
-      if type(a) == "string" and a ~= "" then flat = a .. ";" .. flat end
-      rawset(_G, "BRAIN_INIT_ARG", flat)
+    -- Everything else is one of the tick-1 tokens; not our business.
+  end
+  -- LEVEL BUNDLE (lowest precedence, applied BEFORE presets): the per-(mode,
+  -- difficulty) scalar overrides from C.MODE_LEVELS, pushed through the same
+  -- _cfg_set path so its type/table refusals and logging apply with no new
+  -- validation. MODE and DIFFICULTY were resolved inline above. A missing
+  -- mode/difficulty key (or hard = {}) simply applies nothing.
+  --
+  -- The level is selected by the difficulty= (and mode=) TOKEN only. A later
+  -- cfg=DIFFICULTY= changes the label C.DIFFICULTY but does NOT apply a
+  -- different bundle -- the bundle was already chosen when this block ran.
+  -- That is intended: cfg= is a single-knob override, not a level selector,
+  -- so bench a level with difficulty=<level>, not cfg=DIFFICULTY=<level>.
+  -- Every bundle value is FIRST-PASS, to be benched preset=keel vs
+  -- difficulty=<level> per the approve-values rule; hard = {} is empty by
+  -- design so a default game is bit-for-bit today's brain.
+  do
+    local mode, diff = C.MODE, C.DIFFICULTY
+    local mtbl = (not runtime) and C.MODE_LEVELS and C.MODE_LEVELS[mode]
+    local ltbl = mtbl and mtbl[diff]
+    if type(ltbl) == "table" then
+      -- Sorted so the log reads the same on every run (see the preset loop).
+      local keys = {}
+      for k in pairs(ltbl) do keys[#keys + 1] = k end
+      table.sort(keys)
+      local n = 0
+      for _, k in ipairs(keys) do
+        if _cfg_set(k, ltbl[k], "level " .. tostring(mode) .. "/" .. tostring(diff)) then n = n + 1 end
+      end
+      _INIT_CFG_LOG[#_INIT_CFG_LOG + 1] =
+        string.format("[level] %s/%s applied (%d values)", tostring(mode), tostring(diff), n)
     end
+  end
+  -- Presets FIRST, so an explicit cfg= wins wherever it sits in the list.
+  for _, pname in ipairs(presets) do
+    local tbl = C.PRESETS and C.PRESETS[pname]
+    if type(tbl) ~= "table" then
+      local known = {}
+      if C.PRESETS then for k in pairs(C.PRESETS) do known[#known + 1] = k end end
+      table.sort(known)
+      _cfg_warn_add("[preset] UNKNOWN PRESET '%s' -- known: %s; IGNORED.",
+                    tostring(pname), table.concat(known, " "))
+    else
+      -- Sorted so the log reads the same on every run (pairs() order is not
+      -- reproducible, and these lines are compared between runs).
+      local keys = {}
+      for k in pairs(tbl) do keys[#keys + 1] = k end
+      table.sort(keys)
+      local n = 0
+      for _, k in ipairs(keys) do
+        if _cfg_set(k, tbl[k], "preset " .. pname) then n = n + 1 end
+      end
+      _INIT_CFG_LOG[#_INIT_CFG_LOG + 1] =
+        string.format("[preset] %s applied (%d values)", pname, n)
+    end
+  end
+  for _, kv in ipairs(cfgs) do
+    local name, raw = kv[1], kv[2]
+    local v
+    if raw == "true" then v = true
+    elseif raw == "false" then v = false
+    elseif tonumber(raw) then v = tonumber(raw)
+    else v = raw end
+    _cfg_set(name, v, source)
   end
 end
 
 do
-  local a = rawget(_G, "BRAIN_INIT_ARG")
-  if type(a) == "string" and a ~= "" then
-    -- Same token split as the tick-1 block: ',' or ';'. A scenario's
-    -- spawn_bot init string uses ';' and so must a command-line [..] suffix
-    -- (the CLI parser eats commas).
-    local presets, cfgs = {}, {}
-    for tok in a:gmatch("[^,;]+") do
-      tok = tok:gsub("%s", "")
-      local pname = tok:match("^preset=(.+)$")
-      local cname, cval = tok:match("^cfg=([%a_][%w_]*)=(.*)$")
-      local dname = tok:match("^difficulty=(.*)$")
-      local mname = tok:match("^mode=(.*)$")
-      if pname then
-        presets[#presets + 1] = pname
-      elseif cname then
-        cfgs[#cfgs + 1] = { cname, cval }
-      elseif mname then
-        -- "mode=<key>" -- the host's per-bot lobby choice of MODE, appended
-        -- to this arg by bot_manager.c at brain-create time. The key comes
-        -- from this brain's own modes.txt, so the vocabulary is whatever
-        -- that file lists ("default", "survival", ...) and this side only
-        -- checks the shape. Written into C.MODE RIGHT HERE (not queued into
-        -- cfgs) so the level bundle below can read the chosen mode; it is
-        -- type-checked and logged like every other override. Precedence:
-        -- level < preset < cfg (a later cfg=MODE= would still win).
-        mname = mname:lower()
-        if mname:match("^[a-z0-9_]+$") then
-          _cfg_set("MODE", mname, "mode")
-        else
-          _cfg_warn_add("[mode] BAD TOKEN '%s' -- want mode=<key> of [a-z0-9_]; IGNORED.", tok)
-        end
-      elseif dname then
-        -- "difficulty=<key>" -- the host's per-bot lobby choice of LEVEL
-        -- inside that mode, likewise appended by bot_manager.c. modes.txt
-        -- defines which keys a mode has, so any [a-z0-9_] key is accepted
-        -- here rather than the three the default mode happens to use.
-        -- Written into C.DIFFICULTY RIGHT HERE (not queued) so the level
-        -- bundle below reads it; MODE_LEVELS[C.MODE][C.DIFFICULTY] then
-        -- applies BEFORE any preset=. "normal" is the old name for medium;
-        -- the C side never sends it, but a hand-written arg might.
-        dname = dname:lower()
-        if dname == "normal" then dname = "medium" end
-        if dname:match("^[a-z0-9_]+$") then
-          _cfg_set("DIFFICULTY", dname, "difficulty")
-        else
-          _cfg_warn_add("[difficulty] BAD TOKEN '%s' -- want difficulty=<key> of [a-z0-9_]; IGNORED.", tok)
-        end
-      elseif tok:sub(1, 4) == "cfg=" then
-        _cfg_warn_add("[cfg] BAD TOKEN '%s' -- want cfg=NAME=VALUE; IGNORED.", tok)
-      end
-      -- Everything else is one of the tick-1 tokens; not our business.
-    end
-    -- LEVEL BUNDLE (lowest precedence, applied BEFORE presets): the per-(mode,
-    -- difficulty) scalar overrides from C.MODE_LEVELS, pushed through the same
-    -- _cfg_set path so its type/table refusals and logging apply with no new
-    -- validation. MODE and DIFFICULTY were resolved inline above. A missing
-    -- mode/difficulty key (or hard = {}) simply applies nothing.
-    --
-    -- The level is selected by the difficulty= (and mode=) TOKEN only. A later
-    -- cfg=DIFFICULTY= changes the label C.DIFFICULTY but does NOT apply a
-    -- different bundle -- the bundle was already chosen when this block ran.
-    -- That is intended: cfg= is a single-knob override, not a level selector,
-    -- so bench a level with difficulty=<level>, not cfg=DIFFICULTY=<level>.
-    -- Every bundle value is FIRST-PASS, to be benched preset=keel vs
-    -- difficulty=<level> per the approve-values rule; hard = {} is empty by
-    -- design so a default game is bit-for-bit today's brain.
-    do
-      local mode, diff = C.MODE, C.DIFFICULTY
-      local mtbl = C.MODE_LEVELS and C.MODE_LEVELS[mode]
-      local ltbl = mtbl and mtbl[diff]
-      if type(ltbl) == "table" then
-        -- Sorted so the log reads the same on every run (see the preset loop).
-        local keys = {}
-        for k in pairs(ltbl) do keys[#keys + 1] = k end
-        table.sort(keys)
-        local n = 0
-        for _, k in ipairs(keys) do
-          if _cfg_set(k, ltbl[k], "level " .. tostring(mode) .. "/" .. tostring(diff)) then n = n + 1 end
-        end
-        _INIT_CFG_LOG[#_INIT_CFG_LOG + 1] =
-          string.format("[level] %s/%s applied (%d values)", tostring(mode), tostring(diff), n)
-      end
-    end
-    -- Presets FIRST, so an explicit cfg= wins wherever it sits in the list.
-    for _, pname in ipairs(presets) do
-      local tbl = C.PRESETS and C.PRESETS[pname]
-      if type(tbl) ~= "table" then
-        local known = {}
-        if C.PRESETS then for k in pairs(C.PRESETS) do known[#known + 1] = k end end
-        table.sort(known)
-        _cfg_warn_add("[preset] UNKNOWN PRESET '%s' -- known: %s; IGNORED.",
-                      tostring(pname), table.concat(known, " "))
-      else
-        -- Sorted so the log reads the same on every run (pairs() order is not
-        -- reproducible, and these lines are compared between runs).
-        local keys = {}
-        for k in pairs(tbl) do keys[#keys + 1] = k end
-        table.sort(keys)
-        local n = 0
-        for _, k in ipairs(keys) do
-          if _cfg_set(k, tbl[k], "preset " .. pname) then n = n + 1 end
-        end
-        _INIT_CFG_LOG[#_INIT_CFG_LOG + 1] =
-          string.format("[preset] %s applied (%d values)", pname, n)
-      end
-    end
-    for _, kv in ipairs(cfgs) do
-      local name, raw = kv[1], kv[2]
-      local v
-      if raw == "true" then v = true
-      elseif raw == "false" then v = false
-      elseif tonumber(raw) then v = tonumber(raw)
-      else v = raw end
-      _cfg_set(name, v, "init_arg")
-    end
-  end
+  _apply_cfg_tokens(rawget(_G, "BRAIN_INIT_ARG"), "init_arg", false)
 end
 
 local TAG     = "[" .. C.BRAIN_NAME .. "]"
@@ -1224,6 +1258,177 @@ local function draw_shell_hitbox_viz(info)
 end
 
 -- =========================================================================
+-- INIT TOKENS
+-- =========================================================================
+
+-- The tokens that write STATE rather than constants: the bare flags and the
+-- k=v pairs that call a setter (PP.set_targets, squad.set_blitz_size,
+-- goals.set_refuel_mult). Lifted out of Brain.think's tick-1 block so the two
+-- ways a bot is told something read the same tokens through the same code:
+--
+--   tick 1        -- what the spawn's init table and the -bot-init suffix said
+--   Brain.on_init -- what game.bot_init has just handed a bot that is playing
+--
+-- A field on Brain rather than a file-local, because Brain.think calls it and
+-- think is at Lua's hard 60-upvalue limit: a new file-local read from inside
+-- think is a new upvalue and the brain then fails to load. `Brain` is already
+-- one of think's upvalues, so a field on it costs nothing.
+--
+-- `state` is a parameter rather than the file-local of the same name, so the
+-- function reads as what it does: write these tokens onto this bot's state.
+-- Every reader of the fields it writes reads them live, later in the same
+-- think, so a change is in force from the next tick with nothing to refresh.
+function Brain.apply_init_tokens(state, a)
+  if type(a) ~= "string" or a == "" then return 0 end
+  local n = 0
+  for _ in a:gmatch("[^,;]+") do n = n + 1 end
+    -- ';' or ',' separated. -bot-init splits its spec on ',' so the [arg]
+    -- passed on the command line must use ';' (e.g. [ammoless;deprive=100]).
+    for tok in a:gmatch("[^,;]+") do
+      tok = tok:gsub("%s", "")
+      if tok == "ammoless" or tok == "noammo" then
+        state.test_never_refuel = true
+      elseif tok == "normal" then
+        state.test_never_refuel = false
+      elseif tok == "suicider" then
+        state.force_pill_suicider = true
+      elseif tok == "nosuicider" then
+        state.force_pill_suicider = false
+      elseif tok == "noblitz" then
+        -- Solo bot: no calls opened, none joined, bsu designations ignored.
+        state.blitz_disabled = true
+      elseif tok == "noclaimdead" then
+        -- Sweeping wave: allies' claims on DEAD pills are ignored (pool 4),
+        -- so several bots race the same body and draw fire on the way in.
+        state.ally_claim_dead_off = true
+      elseif tok:sub(1, 10) == "portfolio=" then
+        -- Integer percents, '/' separated: B/F/A or B/F/A/U.
+        -- Complaints are LATCHED into state._cfg_warn, not printed here: this
+        -- runs on the bot's first think, a pre-game tick whose print2 output
+        -- never reaches the session's log file (same trap as TEST_ROLE). The
+        -- captured-tick window below re-emits them.
+        local nums, bad, extra = {}, false, false
+        for part in tok:sub(11):gmatch("[^/]+") do
+          if #nums >= 4 then extra = true
+          elseif part:match("^%d+$") then nums[#nums + 1] = tonumber(part)
+          else bad = true end
+        end
+        local b, f, ag, u = nums[1], nums[2], nums[3], nums[4]
+        if bad or extra or #nums < 3 then
+          state._cfg_warn = (state._cfg_warn or "") .. string.format(
+            "[portfolio] BAD TOKEN '%s' -- want portfolio=B/F/A[/U] as integer percents; IGNORED. ", tok)
+        elseif (b + f + ag) > 100 then
+          state._cfg_warn = (state._cfg_warn or "") .. string.format(
+            "[portfolio] BAD TOKEN '%s' -- back+front+aggro=%d > 100; IGNORED. ", tok, b + f + ag)
+        else
+          -- No explicit U -> it takes whatever is left (>=0 by the check above),
+          -- so the four always sum to exactly 100 in that form.
+          if not u then u = 100 - (b + f + ag) end
+          local sum = b + f + ag + u
+          if sum <= 0 then
+            state._cfg_warn = (state._cfg_warn or "") .. string.format(
+              "[portfolio] BAD TOKEN '%s' -- shares sum to 0; IGNORED. ", tok)
+          else
+            if sum ~= 100 then
+              state._cfg_warn = (state._cfg_warn or "") .. string.format(
+                "[portfolio] WARNING '%s' sums to %d, not 100 -- normalising proportionally. ", tok, sum)
+            end
+            PP.set_targets(b / sum, f / sum, ag / sum, u / sum, "init_arg")
+          end
+        end
+      elseif tok:sub(1, 6) == "blitz=" then
+        -- Party size in tanks INCLUDING the commander: MIN or MIN/MAX.
+        -- Complaints latch into state._cfg_warn for the same reason as above.
+        local nums, bad, extra = {}, false, false
+        for part in tok:sub(7):gmatch("[^/]+") do
+          if #nums >= 2 then extra = true
+          elseif part:match("^%d+$") then nums[#nums + 1] = tonumber(part)
+          else bad = true end
+        end
+        local mn, mx = nums[1], nums[2]
+        if bad or extra or #nums < 1 or mn < 1 then
+          state._cfg_warn = (state._cfg_warn or "") .. string.format(
+            "[blitz] BAD TOKEN '%s' -- want blitz=MIN[/MAX], integers >= 1; IGNORED. ", tok)
+        elseif mx and mx < mn then
+          state._cfg_warn = (state._cfg_warn or "") .. string.format(
+            "[blitz] BAD TOKEN '%s' -- MAX %d < MIN %d; IGNORED. ", tok, mx, mn)
+        else
+          squad.set_blitz_size(mn, mx, "init_arg")
+        end
+      elseif tok:sub(1, 7) == "refuel=" then
+        -- Float multiplier on the refuel GOAL_GROUP. Complaints latch, as above.
+        local x = tonumber(tok:sub(8))
+        if x and x > 0 then
+          goals.set_refuel_mult(x, "init_arg")
+        else
+          state._cfg_warn = (state._cfg_warn or "") .. string.format(
+            "[refuel] BAD TOKEN '%s' -- want refuel=X, a number > 0; IGNORED. ", tok)
+        end
+      elseif tok:sub(1, 15) == "blitzsuiciders=" then
+        -- Minimum suiciders per blitz. Complaints latch, as above.
+        local n = tok:match("^blitzsuiciders=(%d+)$")
+        if n then
+          squad.set_blitz_min_suiciders(tonumber(n), "init_arg")
+        else
+          state._cfg_warn = (state._cfg_warn or "") .. string.format(
+            "[blitz] BAD TOKEN '%s' -- want blitzsuiciders=N, integer >= 0; IGNORED. ", tok)
+        end
+      else
+        local n = tok:match("^deprive=(%d+)$")
+        if n then state.test_deprive_ticks = tonumber(n) end
+      end
+    end
+  return n
+end
+
+-- New data for a bot that is already playing.
+--
+-- The server calls this from game.bot_init(p, t): the bot's BRAIN_INIT global
+-- has just been rebuilt from `t`, and `t` is that same table. It runs on the
+-- producer thread between ticks, never inside a think, so writing state and
+-- constants here is safe.
+--
+-- Three things happen, in the order a later token has to beat an earlier one:
+-- the table is flattened into the token string the rest of this file reads,
+-- the constant tokens are applied (preset= and cfg= live; mode= and
+-- difficulty= refused as unsupported at runtime -- see _apply_cfg_tokens), and
+-- then the state tokens are applied through the same function tick 1 uses.
+--
+-- BRAIN_INIT_ARG is deliberately NOT rewritten. It is the record of what this
+-- brain was STARTED with, the tick-1 block has long since read it, and a fresh
+-- VM (a brain swap, the next round) is built from BRAIN_INIT, which the server
+-- has already replaced.
+--
+-- The team hears one line about it. A scenario handing a bot new orders is a
+-- thing a human on that side should be able to see happen, and it is the only
+-- way anything outside the bot can observe that the change landed.
+function Brain.on_init(t)
+  local flat = _flatten_init_table(t)
+  local nlog, nwarn = #_INIT_CFG_LOG, (_INIT_CFG_WARN or "")
+
+  _apply_cfg_tokens(flat, "on_init", true)
+  local n = Brain.apply_init_tokens(state, flat)
+
+  -- ORDER-style line, so a session log says what a bot was told and when.
+  print2(string.format("INIT_UPDATE t=%d %s", state.tick or 0, flat))
+  -- Whatever the constant parse latched, said here rather than left in the
+  -- chunk-load latches, which were emitted at startup and are never read
+  -- again.
+  -- One call per line, so the strip takes every one of them out of opt/ and
+  -- the production brain pays nothing for any of this.
+  for i = nlog + 1, #_INIT_CFG_LOG do
+    print2("INIT_UPDATE " .. _INIT_CFG_LOG[i])
+  end
+  local warn = _INIT_CFG_WARN or ""
+  if #warn > #nwarn then
+    print2("INIT_UPDATE " .. warn:sub(#nwarn + 1))
+  end
+
+  state.pending_init_msg =
+    string.format("%s: init updated: %d tokens", C.BRAIN_NAME, n)
+end
+
+-- =========================================================================
 -- THINK
 -- =========================================================================
 
@@ -1507,105 +1712,7 @@ function Brain.think(info)
     -- which modes and levels exist. Nothing reads either yet -- plumbing.
     state.mode = C.MODE
     state.difficulty = C.DIFFICULTY
-    local a = rawget(_G, "BRAIN_INIT_ARG")
-    if type(a) == "string" and a ~= "" then
-      -- ';' or ',' separated. -bot-init splits its spec on ',' so the [arg]
-      -- passed on the command line must use ';' (e.g. [ammoless;deprive=100]).
-      for tok in a:gmatch("[^,;]+") do
-        tok = tok:gsub("%s", "")
-        if tok == "ammoless" or tok == "noammo" then
-          state.test_never_refuel = true
-        elseif tok == "normal" then
-          state.test_never_refuel = false
-        elseif tok == "suicider" then
-          state.force_pill_suicider = true
-        elseif tok == "nosuicider" then
-          state.force_pill_suicider = false
-        elseif tok == "noblitz" then
-          -- Solo bot: no calls opened, none joined, bsu designations ignored.
-          state.blitz_disabled = true
-        elseif tok == "noclaimdead" then
-          -- Sweeping wave: allies' claims on DEAD pills are ignored (pool 4),
-          -- so several bots race the same body and draw fire on the way in.
-          state.ally_claim_dead_off = true
-        elseif tok:sub(1, 10) == "portfolio=" then
-          -- Integer percents, '/' separated: B/F/A or B/F/A/U.
-          -- Complaints are LATCHED into state._cfg_warn, not printed here: this
-          -- runs on the bot's first think, a pre-game tick whose print2 output
-          -- never reaches the session's log file (same trap as TEST_ROLE). The
-          -- captured-tick window below re-emits them.
-          local nums, bad, extra = {}, false, false
-          for part in tok:sub(11):gmatch("[^/]+") do
-            if #nums >= 4 then extra = true
-            elseif part:match("^%d+$") then nums[#nums + 1] = tonumber(part)
-            else bad = true end
-          end
-          local b, f, ag, u = nums[1], nums[2], nums[3], nums[4]
-          if bad or extra or #nums < 3 then
-            state._cfg_warn = (state._cfg_warn or "") .. string.format(
-              "[portfolio] BAD TOKEN '%s' -- want portfolio=B/F/A[/U] as integer percents; IGNORED. ", tok)
-          elseif (b + f + ag) > 100 then
-            state._cfg_warn = (state._cfg_warn or "") .. string.format(
-              "[portfolio] BAD TOKEN '%s' -- back+front+aggro=%d > 100; IGNORED. ", tok, b + f + ag)
-          else
-            -- No explicit U -> it takes whatever is left (>=0 by the check above),
-            -- so the four always sum to exactly 100 in that form.
-            if not u then u = 100 - (b + f + ag) end
-            local sum = b + f + ag + u
-            if sum <= 0 then
-              state._cfg_warn = (state._cfg_warn or "") .. string.format(
-                "[portfolio] BAD TOKEN '%s' -- shares sum to 0; IGNORED. ", tok)
-            else
-              if sum ~= 100 then
-                state._cfg_warn = (state._cfg_warn or "") .. string.format(
-                  "[portfolio] WARNING '%s' sums to %d, not 100 -- normalising proportionally. ", tok, sum)
-              end
-              PP.set_targets(b / sum, f / sum, ag / sum, u / sum, "init_arg")
-            end
-          end
-        elseif tok:sub(1, 6) == "blitz=" then
-          -- Party size in tanks INCLUDING the commander: MIN or MIN/MAX.
-          -- Complaints latch into state._cfg_warn for the same reason as above.
-          local nums, bad, extra = {}, false, false
-          for part in tok:sub(7):gmatch("[^/]+") do
-            if #nums >= 2 then extra = true
-            elseif part:match("^%d+$") then nums[#nums + 1] = tonumber(part)
-            else bad = true end
-          end
-          local mn, mx = nums[1], nums[2]
-          if bad or extra or #nums < 1 or mn < 1 then
-            state._cfg_warn = (state._cfg_warn or "") .. string.format(
-              "[blitz] BAD TOKEN '%s' -- want blitz=MIN[/MAX], integers >= 1; IGNORED. ", tok)
-          elseif mx and mx < mn then
-            state._cfg_warn = (state._cfg_warn or "") .. string.format(
-              "[blitz] BAD TOKEN '%s' -- MAX %d < MIN %d; IGNORED. ", tok, mx, mn)
-          else
-            squad.set_blitz_size(mn, mx, "init_arg")
-          end
-        elseif tok:sub(1, 7) == "refuel=" then
-          -- Float multiplier on the refuel GOAL_GROUP. Complaints latch, as above.
-          local x = tonumber(tok:sub(8))
-          if x and x > 0 then
-            goals.set_refuel_mult(x, "init_arg")
-          else
-            state._cfg_warn = (state._cfg_warn or "") .. string.format(
-              "[refuel] BAD TOKEN '%s' -- want refuel=X, a number > 0; IGNORED. ", tok)
-          end
-        elseif tok:sub(1, 15) == "blitzsuiciders=" then
-          -- Minimum suiciders per blitz. Complaints latch, as above.
-          local n = tok:match("^blitzsuiciders=(%d+)$")
-          if n then
-            squad.set_blitz_min_suiciders(tonumber(n), "init_arg")
-          else
-            state._cfg_warn = (state._cfg_warn or "") .. string.format(
-              "[blitz] BAD TOKEN '%s' -- want blitzsuiciders=N, integer >= 0; IGNORED. ", tok)
-          end
-        else
-          local n = tok:match("^deprive=(%d+)$")
-          if n then state.test_deprive_ticks = tonumber(n) end
-        end
-      end
-    end
+    Brain.apply_init_tokens(state, rawget(_G, "BRAIN_INIT_ARG"))
   end
 
   -- TEST AID: roll the never-refuel flag once per bot (see
@@ -10523,6 +10630,24 @@ function Brain.think(info)
       -- across ticks. A future ally join produces its own change.
       state.pending_human_goal_msg = nil
     end
+  end
+
+  -- Init-update line -- one team line saying a scenario just handed this bot
+  -- new data (Brain.on_init staged it). Outside the comms block above, so it
+  -- is not gated on whatever that block is gated on: this is a one-shot
+  -- announcement rather than part of the /info bus, and it has to go out.
+  --
+  -- The slate and the extras keep first dibs, as the human goal line does, so
+  -- a busy tick defers it rather than displacing traffic the squad needs.
+  -- Dropped once said, and dropped unheard when nobody is on our team: a
+  -- queue that grows across ticks is worse than a line nobody needed.
+  if not send_msg and state.pending_init_msg then
+    local allies = info.allies or 0
+    if allies ~= 0 then
+      send_msg = state.pending_init_msg
+      msg_dest = allies
+    end
+    state.pending_init_msg = nil
   end
 
   -- Capture outbound for the chat_log overlay (debug-only).
