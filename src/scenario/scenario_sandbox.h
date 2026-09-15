@@ -71,11 +71,18 @@ void scnSandboxCloseState(lua_State *L);
 
    stopped travels with the other two because it belongs to a call in the same
    way: it says that this call has already been stopped once, and an inner
-   call must neither see the outer one's answer nor leave its own behind. */
+   call must neither see the outer one's answer nor leave its own behind.
+
+   printed and printSaid are the console lines this call has put out and
+   whether it has already been told its allowance is spent. They travel for
+   the reason instr does: an inner call that handed the outer one a fresh
+   allowance would leave the per-call bound meaning nothing. */
 typedef struct {
     bool     armed;
     bool     stopped;
     uint32_t instr;
+    uint32_t printed;
+    bool     printSaid;
 } ScnSandboxCall;
 
 /*********************************************************
@@ -94,7 +101,9 @@ typedef struct {
  *  raised again rather than kept.
  *
  *  The budget is per call, so every call gets the whole of
- *  it however many the round has already made.
+ *  it however many the round has already made. The console
+ *  lines print may put out are counted the same way, against
+ *  SCN_PRINT_PER_CALL, and go back to zero here with it.
  *
  *  What was running is written into saved, for the disarm to
  *  put back. Calls nest — a script's hook issues an op, the
@@ -124,6 +133,23 @@ void scnSandboxArmCall(lua_State *L, ScnSandboxCall *saved);
  *  refused by.
  *********************************************************/
 void scnSandboxDisarmCall(lua_State *L, const ScnSandboxCall *saved);
+
+/*********************************************************
+ *NAME:          scnSandboxTickReset
+ *PURPOSE:
+ *  A new tick: the console lines print may put out across
+ *  everything this tick calls go back to SCN_PRINT_PER_TICK.
+ *
+ *  A tick runs a script's hooks, the timers it set and the
+ *  policies it answers, so the per-call bound alone would
+ *  multiply by however many of those a script arranges. This
+ *  is the bound that holds whatever the shape of them.
+ *
+ *  Called once per tick, before the tick runs anything, by
+ *  whoever drives the scenario's tick. NULL is a round with
+ *  no state and nothing to reset.
+ *********************************************************/
+void scnSandboxTickReset(lua_State *L);
 
 /*********************************************************
  *NAME:          scnSandboxMemoryCapped

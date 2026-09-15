@@ -145,6 +145,36 @@
  * running on uncounted. */
 #define SCN_BUDGET_GRACE_INSTR 20000u
 
+/* The console lines one call into a script may print.
+ *
+ * print goes to the server console rather than to the host's stdout, which is
+ * what makes it worth bounding: a console line reaches the operator's message
+ * log where one is configured, and that file is opened, written and closed for
+ * every line. Two hundred thousand prints fit inside one call's instruction
+ * budget, so a script that prints in a loop costs the tick thread that many
+ * open and close cycles and grows the log without end.
+ *
+ * A line past this is dropped and the first drop says so, once, so an operator
+ * missing output knows why rather than wondering. Sixty-four is far more than
+ * a script telling an operator something needs and far too few to flood with.
+ * A starting value; a measurement may want it somewhere else. */
+#define SCN_PRINT_PER_CALL 64
+
+/* And the console lines all of one tick's calls may print between them. A
+ * script has an on_tick, the timers it set and whatever policies it answers
+ * within the same tick, so the per-call bound on its own would multiply by
+ * however many calls a script arranges to be made. Against the server's fifty
+ * ticks a second this works out to a ceiling of 3,200 lines a second.
+ *
+ * Counted against the sim's own tick rather than against a wall clock: the
+ * unit tests drive the sim as fast as the CPU allows, so a window measured in
+ * seconds would cut a fixture that prints once a tick and fail it for a reason
+ * that is not the one it is about. A tick is the same window on a live server
+ * as it is in a test.
+ *
+ * A starting value, as the per-call one is. */
+#define SCN_PRINT_PER_TICK 64
+
 /* How many events the host holds between one tick and the next, across
  * both of the server's channels. Each of the two subscriber callbacks
  * copies an event in and returns; the one drain at the end of the tick

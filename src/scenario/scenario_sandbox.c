@@ -35,7 +35,11 @@
  *  print is replaced rather than removed, because a script
  *  reporting what it did is worth having and stock print
  *  writes to the host's stdout, which a dedicated server's
- *  operator is not necessarily reading.
+ *  operator is not necessarily reading. Sending it to the
+ *  console is also what makes it worth counting: a console
+ *  line reaches the operator's message log, which is opened
+ *  and closed for each line written to it, so the lines one
+ *  call and one tick may print are bounded here too.
  *
  *  os.date is wrapped for a different reason: the format
  *  reaches the host's own strftime, and the C libraries this
@@ -52,6 +56,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -79,20 +84,29 @@
 
 /* ── What a state is counted with ─────────────────────────────────── */
 
-/* The two counts one state carries: the memory it holds, and the
-   instructions the call now running has spent. It outlives the call that
-   made the state, so it is on the heap rather than beside the caller.
+/* What one state is counted by: the memory it holds, the instructions the
+   call now running has spent, and the console lines print has put out — for
+   the call now running and for the tick it is part of. It outlives the call
+   that made the state, so it is on the heap rather than beside the caller.
    used and cap sit idle on a build whose Lua would not take the allocator;
-   armed, instr and stopped are kept whatever the allocator turned out to be.
+   everything else is kept whatever the allocator turned out to be.
 
    stopped is the hook's latch: it is raised there and put back by the arm and
-   the disarm, so nothing a script can reach clears it. */
+   the disarm, so nothing a script can reach clears it.
+
+   The two said flags are what keeps the notice a drop produces to one line a
+   window: the count alone would say it again on every line after the first,
+   which is the flood the bound is there to stop. */
 typedef struct {
     size_t   used;
     size_t   cap;
     bool     armed;
     bool     stopped;
     uint32_t instr;
+    uint32_t printCall;
+    uint32_t printTick;
+    bool     printCallSaid;
+    bool     printTickSaid;
 } ScnSandboxState;
 
 /* Where they are kept, so the hook and the close can find them again.
@@ -216,19 +230,29 @@ static void scnSandboxCountHook(lua_State *L, lua_Debug *ar) {
  * The latch travels with the count for the same reason. An inner call begins
  * with it clear, whatever the outer one has already run into, and leaves the
  * outer one's answer behind it — a policy that was stopped does not make the
- * hook that issued the op look stopped to the pcall it is standing in. */
+ * hook that issued the op look stopped to the pcall it is standing in.
+ *
+ * The lines a call has printed travel with them, and for the same reason the
+ * instructions do: a per-call allowance an inner call could hand back fresh to
+ * the outer one would be no allowance at all. What a nested call prints is
+ * still counted against the tick, which is the bound that holds however the
+ * calls are arranged. */
 void scnSandboxArmCall(lua_State *L, ScnSandboxCall *saved) {
     ScnSandboxState *s = scnSandboxStateOf(L);
 
     if (saved != NULL) {
-        saved->armed   = (s != NULL) ? s->armed : false;
-        saved->stopped = (s != NULL) ? s->stopped : false;
-        saved->instr   = (s != NULL) ? s->instr : 0;
+        saved->armed     = (s != NULL) ? s->armed : false;
+        saved->stopped   = (s != NULL) ? s->stopped : false;
+        saved->instr     = (s != NULL) ? s->instr : 0;
+        saved->printed   = (s != NULL) ? s->printCall : 0;
+        saved->printSaid = (s != NULL) ? s->printCallSaid : false;
     }
     if (s != NULL) {
-        s->instr   = 0;
-        s->armed   = true;
-        s->stopped = false;
+        s->instr         = 0;
+        s->armed         = true;
+        s->stopped       = false;
+        s->printCall     = 0;
+        s->printCallSaid = false;
     }
 }
 
@@ -239,13 +263,42 @@ void scnSandboxDisarmCall(lua_State *L, const ScnSandboxCall *saved) {
         return;
     }
     if (saved != NULL) {
-        s->armed   = saved->armed;
-        s->stopped = saved->stopped;
-        s->instr   = saved->instr;
+        s->armed         = saved->armed;
+        s->stopped       = saved->stopped;
+        s->instr         = saved->instr;
+        s->printCall     = saved->printed;
+        s->printCallSaid = saved->printSaid;
     } else {
-        s->armed   = false;
-        s->stopped = false;
+        s->armed         = false;
+        s->stopped       = false;
+        s->printCall     = 0;
+        s->printCallSaid = false;
     }
+}
+
+/* The tick's own allowance, put back by whoever runs the tick.
+ *
+ * A tick is the window because the sim has one and a wall clock would not
+ * behave the same way in a test as on a live server: the tests drive the sim
+ * as fast as the CPU allows, so a window of a second would hold many more
+ * ticks there than the fifty a server runs and cut a fixture printing once a
+ * tick for a reason that has nothing to do with what it is testing.
+ *
+ * Nothing here is per call, so this leaves the call counters alone: a call
+ * that is running while this is reached — there is none, since the tick resets
+ * before it runs anything — keeps whatever it had spent. */
+void scnSandboxTickReset(lua_State *L) {
+    ScnSandboxState *s;
+
+    if (L == NULL) {
+        return;
+    }
+    s = scnSandboxStateOf(L);
+    if (s == NULL) {
+        return;
+    }
+    s->printTick     = 0;
+    s->printTickSaid = false;
 }
 
 /* ── Making and closing one ───────────────────────────────────────── */
@@ -257,11 +310,15 @@ lua_State *scnSandboxNewState(void) {
     if (s == NULL) {
         return NULL;
     }
-    s->used    = 0;
-    s->cap     = (size_t)SCN_VM_MEMORY_MAX;
-    s->armed   = false;
-    s->stopped = false;
-    s->instr   = 0;
+    s->used          = 0;
+    s->cap           = (size_t)SCN_VM_MEMORY_MAX;
+    s->armed         = false;
+    s->stopped       = false;
+    s->instr         = 0;
+    s->printCall     = 0;
+    s->printTick     = 0;
+    s->printCallSaid = false;
+    s->printTickSaid = false;
 
     L = lua_newstate(scnSandboxAlloc, s);
     if (L == NULL) {
@@ -504,15 +561,73 @@ static int scnSandboxCollectGarbage(lua_State *L) {
     return lua_gettop(L);
 }
 
+/* Whether this line may go out, and the one notice a window that has run out
+ * produces.
+ *
+ * Both windows are asked, the call's first: a line the call has no room for
+ * never reaches the console, so it costs the tick nothing either and only the
+ * counter that refused it is the one an operator is told about. Neither count
+ * passes its bound, so neither can wrap however long a script prints for.
+ *
+ * The notice is written from here rather than counted as a line of its own.
+ * It is C, so nothing a script does can make it recurse, and the said flag
+ * beside each count is what keeps it to one line: an operator is told once
+ * where the output went and then left in silence until the window comes
+ * round again.
+ *
+ * A state with nothing to count by — there is none the host boots, but the
+ * registry lookup can answer nothing — prints as it always did rather than
+ * going quiet. */
+static bool scnSandboxPrintTake(ScnSandboxState *s) {
+    char said[SCN_PRINT_LEN];
+
+    if (s == NULL) {
+        return true;
+    }
+    if (s->printCall >= (uint32_t)SCN_PRINT_PER_CALL) {
+        if (!s->printCallSaid) {
+            s->printCallSaid = true;
+            snprintf(said, sizeof(said),
+                     "scenario: a script has printed the %d lines one call "
+                     "may print, and the rest of this call's output is "
+                     "dropped", (int)SCN_PRINT_PER_CALL);
+            serverSimConsoleMessage(said);
+        }
+        return false;
+    }
+    if (s->printTick >= (uint32_t)SCN_PRINT_PER_TICK) {
+        if (!s->printTickSaid) {
+            s->printTickSaid = true;
+            snprintf(said, sizeof(said),
+                     "scenario: a script has printed the %d lines one tick "
+                     "may print, and the rest of this tick's output is "
+                     "dropped", (int)SCN_PRINT_PER_TICK);
+            serverSimConsoleMessage(said);
+        }
+        return false;
+    }
+    s->printCall++;
+    s->printTick++;
+    return true;
+}
+
 /* print, to the server console instead of to stdout. The arguments are
  * concatenated tab-separated and converted through __tostring where a value
- * carries one, which is what stock print does. */
+ * carries one, which is what stock print does.
+ *
+ * The allowance is asked for before the line is built, so a script past its
+ * bound is not paying for the concatenation of output nobody will see — and
+ * so a __tostring metamethod, which is script code, is not run for it
+ * either. */
 static int scnSandboxPrint(lua_State *L) {
     char   line[SCN_PRINT_LEN];
     size_t used = 0;
     int    n    = lua_gettop(L);
     int    i;
 
+    if (!scnSandboxPrintTake(scnSandboxStateOf(L))) {
+        return 0;
+    }
     for (i = 1; i <= n; i++) {
         const char *s;
         size_t      len  = 0;

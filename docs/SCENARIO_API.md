@@ -95,6 +95,17 @@ something to the operator. It joins its arguments with tabs as stock `print`
 does, and cuts the finished line at 1024 bytes — a line longer than that is
 shortened rather than dropped, so an operator still sees what it was about.
 
+How many lines it will take is bounded twice: 64 from any one call — a hook,
+a timer or a policy answer — and 64 across everything a single tick's calls
+print between them. Past either, lines are dropped, and the first one dropped
+says so, once, so an operator is not left wondering where the output went.
+Both allowances come back: the per-call one at the next call and the per-tick
+one at the next tick, so a script that says a line or two as things happen
+never meets them. What meets them is a script tracing every tick, and `print`
+is not for that — it is for telling an operator something. If you want to
+watch your script work, print at the moment that interests you rather than on
+the way past.
+
 **Your state holds at most 32 MB.** Every allocation it makes is counted, and
 the one that would take it past the cap is refused: Lua raises an
 out-of-memory error at the point that asked for it, exactly as it would raise

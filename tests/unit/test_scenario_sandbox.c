@@ -42,6 +42,12 @@
  * run_scenario_sandbox_os_date_refuses_a_bad_format
  *      — os.date takes the portable conversion characters and raises on the
  *        rest, with the formats a script really writes still answering
+ * run_scenario_sandbox_print_bounded_in_one_call
+ *      — a hook printing past the per-call bound has the rest dropped, with
+ *        one line saying so, and the round goes on
+ * run_scenario_sandbox_print_allowance_returns
+ *      — a hook printing modestly is never cut, over enough ticks that a
+ *        count climbing across the round would show
  */
 
 #include <stdint.h>
@@ -165,6 +171,20 @@ static void sbWatchConsole(ServerSim *sim) {
 static void sbUnwatchConsole(ServerSim *sim) {
     sim->sim.callbacks.consoleMessage = sbConsolePrev;
     sbConsolePrev = NULL;
+}
+
+/* How many times a line appears in what the console caught. The cases below
+   pass a needle carrying its own newline, so "said 6\n" is not found inside
+   "said 64". */
+static int sbCount(const char *needle) {
+    const char *p = sbLines;
+    int         n = 0;
+
+    while ((p = strstr(p, needle)) != NULL) {
+        n++;
+        p += strlen(needle);
+    }
+    return n;
 }
 
 /* ── 1. What the whitelist took, and what it kept ─────────────────── */
@@ -1054,6 +1074,158 @@ int run_scenario_sandbox_os_date_refuses_a_bad_format(void) {
     err[0] = '\0';
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
     UT_ASSERT_MSG(h != NULL, "the script raised: %s", err);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+    return 0;
+}
+
+/* ── 14. The lines one call may print ─────────────────────────────── */
+
+/* print goes to the server console, and a console line reaches the operator's
+ * message log where one is configured — a file opened, written and closed for
+ * each line. Two hundred thousand prints fit inside one call's instruction
+ * budget, so the lines are counted as well.
+ *
+ * The hook asks for four times the bound, numbering each line, so what came
+ * out is read off the numbers rather than off a total: the bound's own line is
+ * there, the one after it is not, and the notice saying where the rest went is
+ * there exactly once however many were dropped.
+ *
+ * The second tick's line is what says the round went on and the next call got
+ * its allowance back. The tick after, rather than the same one — on_start and
+ * on_tick run in the same tick, and the flood has spent that tick's allowance
+ * as well as its own call's. */
+int run_scenario_sandbox_print_bounded_in_one_call(void) {
+    static const char *const kMap = "scnsand_printcap.map";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          lua[512];
+    char          want[64];
+    char          err[512];
+    int           i;
+
+    snprintf(lua, sizeof(lua),
+             "scenario = { name = \"Flood\", api = 1 }\n"
+             "local ticks = 0\n"
+             "function on_start()\n"
+             "  for i = 1, %d do print(\"flood \" .. i) end\n"
+             "end\n"
+             "function on_tick()\n"
+             "  ticks = ticks + 1\n"
+             "  if ticks == 2 then print(\"flood still here\") end\n"
+             "end\n", SCN_PRINT_PER_CALL * 4);
+    UT_ASSERT(sbPutText(kMap, lua));
+    sim = sbSim();
+    UT_ASSERT(sim != NULL);
+
+    sbWatchConsole(sim);
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    serverSimStartGame(sim);
+    for (i = 0; i < 6; i++) {
+        serverSimTick(sim);
+    }
+    sbUnwatchConsole(sim);
+
+    UT_ASSERT_MSG(sbCount("flood 1\n") == 1,
+                  "the hook never printed, so nothing here was tested. The "
+                  "console holds:\n%s", sbLines);
+    snprintf(want, sizeof(want), "flood %d\n", SCN_PRINT_PER_CALL);
+    UT_ASSERT_MSG(sbCount(want) == 1,
+                  "the call printed fewer than the %d lines it is allowed. "
+                  "The console holds:\n%s", SCN_PRINT_PER_CALL, sbLines);
+    snprintf(want, sizeof(want), "flood %d\n", SCN_PRINT_PER_CALL + 1);
+    UT_ASSERT_MSG(sbCount(want) == 0,
+                  "the call printed past the %d lines it is allowed, so the "
+                  "bound is not being applied. The console holds:\n%s",
+                  SCN_PRINT_PER_CALL, sbLines);
+    UT_ASSERT_MSG(sbCount("one call may print") == 1,
+                  "the lines dropped were said to be dropped %d times, "
+                  "expected once: an operator is told where the output went "
+                  "and then left alone. The console holds:\n%s",
+                  sbCount("one call may print"), sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "flood still here") != NULL,
+                  "no later hook printed, so the round did not go on — or the "
+                  "allowance never came back. The console holds:\n%s",
+                  sbLines);
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "the round is in state %d, expected it to still be running "
+                  "after the lines were dropped",
+                  (int)serverSimGetState(sim));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+    return 0;
+}
+
+/* ── 15. And the allowance comes back ─────────────────────────────── */
+
+/* The bounds are per call and per tick and not for the life of the round. A
+ * hook printing an eighth of the per-call bound is modest by either count, and
+ * doing it every tick for long enough to put out four times the bound in total
+ * is what a counter that climbed instead of resetting would fail: the lines
+ * past the first bound's worth would be dropped, the notice would be said, and
+ * the last number the script reached would never arrive.
+ *
+ * The script numbers its lines across the whole round rather than within a
+ * tick, so the last number is every call before it having printed in full. */
+int run_scenario_sandbox_print_allowance_returns(void) {
+    static const char *const kMap = "scnsand_printback.map";
+    const int     perTick = SCN_PRINT_PER_CALL / 8;
+    const int     wanted  = SCN_PRINT_PER_CALL * 4;
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          lua[512];
+    char          want[64];
+    char          err[512];
+    int           i;
+
+    snprintf(lua, sizeof(lua),
+             "scenario = { name = \"Steady\", api = 1 }\n"
+             "local said = 0\n"
+             "function on_tick()\n"
+             "  for i = 1, %d do\n"
+             "    said = said + 1\n"
+             "    print(\"said \" .. said)\n"
+             "  end\n"
+             "end\n", perTick);
+    UT_ASSERT(sbPutText(kMap, lua));
+    sim = sbSim();
+    UT_ASSERT(sim != NULL);
+
+    sbWatchConsole(sim);
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    serverSimStartGame(sim);
+    /* Enough ticks for the wanted number with room to spare, so the case does
+       not turn on exactly which tick on_tick first ran in. */
+    for (i = 0; i < (wanted / perTick) + 8; i++) {
+        serverSimTick(sim);
+    }
+    sbUnwatchConsole(sim);
+
+    UT_ASSERT_MSG(sbCount("said 1\n") == 1,
+                  "the hook never printed, so nothing here was tested. The "
+                  "console holds:\n%s", sbLines);
+    snprintf(want, sizeof(want), "said %d\n", wanted);
+    UT_ASSERT_MSG(sbCount(want) == 1,
+                  "%d lines printed %d at a time did not all arrive, so an "
+                  "allowance is climbing across the round rather than coming "
+                  "back at each call and each tick. The console holds:\n%s",
+                  wanted, perTick, sbLines);
+    UT_ASSERT_MSG(sbCount("may print") == 0,
+                  "a hook well inside both bounds had lines dropped. The "
+                  "console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "raised") == NULL,
+                  "a call inside both bounds was counted as an error. The "
+                  "console holds:\n%s", sbLines);
 
     scenarioHostDetach(h);
     serverSimDestroy(sim);

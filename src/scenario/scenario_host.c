@@ -1793,6 +1793,12 @@ static void scnTick(void *ctx) {
         return;
     }
     scnLockEnter(&h->lock);
+    /* First, inside the lock and before anything this tick runs: the console
+       lines print may put out are counted per tick as well as per call, and
+       this is the tick they are counted against. */
+    if (h->L != NULL) {
+        scnSandboxTickReset(h->L);
+    }
     if (h->startPending &&
         serverSimGetState(h->sim) == serverStateRunning) {
         h->startPending = false;

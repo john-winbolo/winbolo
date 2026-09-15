@@ -761,9 +761,20 @@ int run_scenario_policy_lua_can_die(void) {
     static const char *const kMap = "scnpol_lua_die.map";
     static const char *const kBody =
         "scenario = { name = \"Shellproof\", api = 1 }\n"
+        /* The hundred shells below ask the same question a hundred times,
+           and what this case reads is the answer rather than the count — so
+           a line the same as the last one is not said again. A fixture that
+           repeated it would spend the tick's print allowance on ninety-nine
+           copies of the shell line, and the mine's line, which is the one
+           the second half of the case reads, would be the one dropped. */
+        "local last = nil\n"
         "function can_die(kind, n, killer, cause)\n"
-        "  note(\"die \" .. kind .. \" \" .. n .. \" \" .. killer .. \" \"\n"
-        "       .. tostring(cause) .. \"\\n\")\n"
+        "  local line = \"die \" .. kind .. \" \" .. n .. \" \" .. killer\n"
+        "               .. \" \" .. tostring(cause) .. \"\\n\"\n"
+        "  if line ~= last then\n"
+        "    last = line\n"
+        "    note(line)\n"
+        "  end\n"
         "  return cause ~= \"shell\"\n"
         "end\n";
     ServerSim    *sim;
