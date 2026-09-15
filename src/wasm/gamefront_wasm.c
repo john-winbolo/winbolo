@@ -991,7 +991,8 @@ void gameFrontSetVisibilityCustom(const VisibilitySettings *v) {
   gameFrontVisibilityCustomSaved = TRUE;
 }
 
-void gameFrontRememberVisibility(const VisibilitySettings *v) {
+void gameFrontRememberVisibility(const VisibilitySettings *v,
+                                 bool                      saveCustom) {
   VisibilityPreset p;
 
   if (v == NULL) return;
@@ -1007,7 +1008,7 @@ void gameFrontRememberVisibility(const VisibilitySettings *v) {
   gameFrontLineOfSight       = (int)v->lineOfSight;
   p = visibilityPresetMatch(v);
   gameFrontVisibilityPreset = (int)p;
-  if (p == visibilityPresetCustom) {
+  if (saveCustom && p == visibilityPresetCustom) {
     gameFrontSetVisibilityCustom(v);
   }
 }
