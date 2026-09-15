@@ -264,12 +264,100 @@ void serverSimShotOrderClear(ServerSim *sim, BYTE playerNum) {
     memset(&sim->shotOrder[playerNum], 0, sizeof(sim->shotOrder[playerNum]));
 }
 
-void serverSimShotOrderNote(ServerSim *sim, BYTE owner, WORLD wx, WORLD wy) {
+/* Did this player fire a shell on any tick from `lo` to `hi`, both ends
+ * counted? The log is small and unsorted, so it is read straight through. */
+static bool shotOrderFiredBetween(const ShotOrderRing *ring,
+                                  uint32_t lo, uint32_t hi) {
+    uint8_t i;
+    if (lo > hi) return false;
+    for (i = 0; i < ring->fireCount; i++) {
+        if (ring->fire[i] >= lo && ring->fire[i] <= hi) return true;
+    }
+    return false;
+}
+
+/* The quiet second AFTER the third shot: nothing fired from the tick after
+ * it up to and including SHOT_ORDER_QUIET_TICKS later. */
+static bool shotOrderAfterIsQuiet(const ShotOrderRing *ring) {
+    return !shotOrderFiredBetween(ring, ring->armFireTick + 1,
+                                  ring->armFireTick +
+                                      (uint32_t)SHOT_ORDER_QUIET_TICKS);
+}
+
+/* Put the order on the wire. The shooter's own tile goes in it so a bot can
+ * answer the one question the server cannot: whether the shooter could see
+ * it. The tile is read HERE, when the order is sent, which is the moment the
+ * range rule is about.
+ *
+ * The brains read this as a chat line. The leading "!" is the forced form
+ * their parser wants, which is also what keeps a bot's own chatter from
+ * being read as an order. The sender is the SHOOTER, so the brain's own team
+ * check (the sender's bit in info.allies) decides who obeys;
+ * botManagerDeliverInternalMessage hands it to the shooter's allied bots and
+ * skips the shooter's own slot.
+ *
+ * Deliver rather than Queue: this runs on the producer thread inside the sim
+ * tick, and the queue is drained per bot slot for messages a bot's own
+ * worker produced — a human shooter has no worker to drain it, so a queued
+ * line would sit there for ever. */
+static void shotOrderSend(ServerSim *sim, BYTE owner, BYTE mx, BYTE my) {
+    char  msg[48];
+    WORLD swx = 0, swy = 0;
+    BYTE  sx = mx, sy = my;
+
+    /* A shooter with no tank left is the one case with nowhere to read a
+     * view from; the ordered square stands in for it, so the bots near the
+     * square still take the order rather than none of them bidding. */
+    if (sim->sim.tanks[owner] != NULL) {
+        tankGetWorld(&sim->sim.tanks[owner], &swx, &swy);
+        sx = (BYTE)(swx >> TANK_SHIFT_MAPSIZE);
+        sy = (BYTE)(swy >> TANK_SHIFT_MAPSIZE);
+    }
+
+    snprintf(msg, sizeof(msg), "!goto %u %u %u %u",
+             (unsigned)mx, (unsigned)my, (unsigned)sx, (unsigned)sy);
+    botManagerDeliverInternalMessage(sim, owner, msg);
+    WB_LOG_INFO(WB_LOG_CAT_SERVER,
+                "three shots from p%u on (%u,%u) -> \"%s\"",
+                (unsigned)owner, (unsigned)mx, (unsigned)my, msg);
+}
+
+void serverSimShotOrderShotFired(ServerSim *sim, BYTE owner,
+                                 uint32_t fireTick) {
+    ShotOrderRing *ring;
+    uint8_t        i;
+
+    if (sim == NULL || owner >= MAX_TANKS) return;
+    ring = &sim->shotOrder[owner];
+
+    /* A shell is heard of once at most, but the log is cheap to check and a
+     * second copy of one fire tick would only waste a slot. */
+    for (i = 0; i < ring->fireCount; i++) {
+        if (ring->fire[i] == fireTick) return;
+    }
+
+    ring->fire[ring->fireNext] = fireTick;
+    ring->fireNext = (uint8_t)((ring->fireNext + 1) % SHOT_ORDER_FIRE_LOG);
+    if (ring->fireCount < SHOT_ORDER_FIRE_LOG) {
+        ring->fireCount++;
+    }
+
+    /* A shot inside the quiet second after the third takes the armed order
+     * away. The shot is not wasted: it lands like any other, so it can be
+     * the first of a fresh run. */
+    if (ring->armed && fireTick > ring->armFireTick &&
+        fireTick - ring->armFireTick <= (uint32_t)SHOT_ORDER_QUIET_TICKS) {
+        ring->armed = false;
+    }
+}
+
+void serverSimShotOrderNote(ServerSim *sim, BYTE owner, uint32_t fireTick,
+                            WORLD wx, WORLD wy) {
     GameSim       *gs;
     ShotOrderRing *ring;
     BYTE           mx, my;
+    uint32_t       first, third, lo;
     int            i;
-    char           msg[32];
 
     if (sim == NULL || owner >= MAX_TANKS) return;
     gs = &sim->sim;
@@ -290,7 +378,7 @@ void serverSimShotOrderNote(ServerSim *sim, BYTE owner, WORLD wx, WORLD wy) {
     }
     ring->mx[SHOT_ORDER_SHOTS - 1]   = mx;
     ring->my[SHOT_ORDER_SHOTS - 1]   = my;
-    ring->tick[SHOT_ORDER_SHOTS - 1] = sim->tick;
+    ring->tick[SHOT_ORDER_SHOTS - 1] = fireTick;
     if (ring->count < SHOT_ORDER_SHOTS) {
         ring->count++;
     }
@@ -302,30 +390,59 @@ void serverSimShotOrderNote(ServerSim *sim, BYTE owner, WORLD wx, WORLD wy) {
     for (i = 0; i < SHOT_ORDER_SHOTS - 1; i++) {
         if (ring->mx[i] != mx || ring->my[i] != my) return;
     }
-    /* ...and the oldest of them inside the window. sim->tick only goes up
-     * while a round runs, and the ring is cleared when it is reset. */
-    if (sim->tick - ring->tick[0] > (uint32_t)SHOT_ORDER_WINDOW_TICKS) return;
 
-    /* One order, then a clean slate: the next three shells start a fresh
-     * count rather than every further shell on the square re-ordering. */
-    serverSimShotOrderClear(sim, owner);
+    /* ...fired inside the window. The three are held oldest FIRST by
+     * landing, and a shell fired later can land earlier when the ranges
+     * differ, so a run whose fire ticks go backwards is not three shots at
+     * one square in a row and is left to the next landing to sort out. */
+    first = ring->tick[0];
+    third = ring->tick[SHOT_ORDER_SHOTS - 1];
+    if (third < first) return;
+    if (third - first > (uint32_t)SHOT_ORDER_WINDOW_TICKS) return;
 
-    /* The brains read this as a chat line. The leading "!" is the forced
-     * form their parser wants, which is also what keeps a bot's own
-     * chatter from being read as an order. The sender is the SHOOTER, so
-     * the brain's own team check (the sender's bit in info.allies) decides
-     * who obeys; botManagerDeliverInternalMessage hands it to the
-     * shooter's allied bots and skips the shooter's own slot.
-     *
-     * Deliver rather than Queue: this runs on the producer thread inside
-     * the sim tick, and the queue is drained per bot slot for messages a
-     * bot's own worker produced — a human shooter has no worker to drain
-     * it, so a queued line would sit there for ever. */
-    snprintf(msg, sizeof(msg), "!goto %u %u", (unsigned)mx, (unsigned)my);
-    botManagerDeliverInternalMessage(sim, owner, msg);
-    WB_LOG_INFO(WB_LOG_CAT_SERVER,
-                "three shots from p%u on (%u,%u) -> \"%s\"",
-                (unsigned)owner, (unsigned)mx, (unsigned)my, msg);
+    /* ...with a quiet second in front of the first of them. The player's own
+     * three are the only shells allowed anywhere near this burst. */
+    lo = (first > (uint32_t)SHOT_ORDER_QUIET_TICKS)
+             ? first - (uint32_t)SHOT_ORDER_QUIET_TICKS
+             : 0;
+    if (first > 0 && shotOrderFiredBetween(ring, lo, first - 1)) return;
+
+    /* The three are spent either way, so they cannot order twice; the fire
+     * log and any armed order stay, because the quiet second after this one
+     * is still being served. */
+    memset(ring->mx, 0, sizeof(ring->mx));
+    memset(ring->my, 0, sizeof(ring->my));
+    memset(ring->tick, 0, sizeof(ring->tick));
+    ring->count = 0;
+
+    /* ARMED, not sent. Whether the second after the third shot stays quiet
+     * cannot be known yet, so serverSimShotOrderTick sends it when that
+     * second is up and serverSimShotOrderShotFired takes it away if the
+     * player shoots again first. */
+    ring->armed       = true;
+    ring->armMx       = mx;
+    ring->armMy       = my;
+    ring->armFireTick = third;
+}
+
+void serverSimShotOrderTick(ServerSim *sim) {
+    BYTE p;
+
+    if (sim == NULL) return;
+    for (p = 0; p < MAX_TANKS; p++) {
+        ShotOrderRing *ring = &sim->shotOrder[p];
+        if (!ring->armed) continue;
+        /* The quiet second is measured from the FIRE, so a shell that was a
+         * long time in the air can leave the second already up when the
+         * order is armed. It then goes out on the next tick, which is what
+         * "as soon as the second is quiet" means. */
+        if (sim->tick < ring->armFireTick + (uint32_t)SHOT_ORDER_QUIET_TICKS) {
+            continue;
+        }
+        ring->armed = false;
+        if (!shotOrderAfterIsQuiet(ring)) continue;
+        shotOrderSend(sim, p, ring->armMx, ring->armMy);
+    }
 }
 
 /* A shell owned by `owner` ended (collision or expiry). Publish a
@@ -346,12 +463,19 @@ void serverSimCbShellDeath(void *ctx, uint32_t fireTick, BYTE owner,
     evt.u.shellDeath.outcome  = outcome;
     serverSimPublishControl(sim, &evt);
 
+    /* Every shell counts as a shot FIRED, whatever it hit: the quiet second
+     * either side of the three asks what the player pulled the trigger on,
+     * and a shell that struck a wall was still a trigger pull. This is the
+     * first the server hears of most shells, because a shell reports itself
+     * only when it dies. */
+    serverSimShotOrderShotFired(sim, owner, fireTick);
+
     /* Only a shell that ran its full range with nothing hit can be an
      * order. Every hit — pill, tank, base, wall, building, forest —
      * resolves in shellsCalcCollision and reports another outcome, which
      * is what keeps a normal firefight from ordering anybody about. */
     if (outcome == SHELL_OUTCOME_EXPIRED) {
-        serverSimShotOrderNote(sim, owner, impactWX, impactWY);
+        serverSimShotOrderNote(sim, owner, fireTick, impactWX, impactWY);
     }
 }
 

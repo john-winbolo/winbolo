@@ -2876,9 +2876,18 @@ static ScnOpResult scenarioOpShellExpired(ServerSim *sim,
     if (sim->state != serverStateRunning) {
         return SCN_OP_WRONG_STATE;
     }
+    /* The tick the shell left the gun, which is what the window and the two
+       quiet seconds are measured on. A script that says nothing gets the
+       current tick, which is a shot fired and landed in the same breath. */
+    uint32_t fireTick = p->haveFireTick ? p->fireTick : sim->tick;
+
+    /* The same two calls a real shell death makes, in the same order: the
+       shot is counted as fired whatever it hit, and then the landing is
+       offered to the detector. */
+    serverSimShotOrderShotFired(sim, p->slot, fireTick);
     /* The centre of the square, which is where a shell that died over it
        would have been. */
-    serverSimShotOrderNote(sim, p->slot,
+    serverSimShotOrderNote(sim, p->slot, fireTick,
                            (WORLD)(((WORLD)p->x << TANK_SHIFT_MAPSIZE) + 128),
                            (WORLD)(((WORLD)p->y << TANK_SHIFT_MAPSIZE) + 128));
     return SCN_OP_OK;

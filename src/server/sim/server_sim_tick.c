@@ -1136,6 +1136,12 @@ void serverSimTick(ServerSim *sim) {
         serverSimFlushPendingPings(sim);
         simRunHalfStep(sim);
         simRunHalfStep(sim);
+        /* THREE SHOTS = GO THERE, second half. The third shell only ARMS the
+         * order; it is sent here, a quiet second after that shell was fired,
+         * because a player who never shoots again has no other event left to
+         * hang it on. After the half-steps, so a shell that died in this
+         * frame is already counted. */
+        serverSimShotOrderTick(sim);
         /* Ahead of the shadow tick so terrain a scenario edits from here
          * lands in the same frame's map events instead of the next one's.
          * The half-steps drop the map-change callback on their way out, so

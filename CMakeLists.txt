@@ -5272,6 +5272,9 @@ set(_unit_test_names
     three_shot_order_ignores_closed_ground
     three_shot_order_needs_one_square
     three_shot_order_window_and_reset
+    three_shot_order_needs_quiet_before
+    three_shot_order_quiet_counts_hits
+    three_shot_order_needs_quiet_after
     scenario_comms_arm_records
     scenario_comms_decoder_dest_player
     scenario_comms_apply_non_zero_slot

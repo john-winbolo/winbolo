@@ -173,16 +173,30 @@ void serverSimFillMapSkipStateEvent(const ServerSim *sim, ControlEvent *evt);
 
 /* Defined in server_sim_callbacks.c — the three-shot order detector.
  *
- * One of `owner`'s shells ran its full range and died at (wx, wy) with
- * nothing hit. Three of them on the SAME open square inside
- * SHOT_ORDER_WINDOW_TICKS put one "!goto <mx> <my>" line into every allied
- * bot's inbox and clear the count. serverSimCbShellDeath calls it on the
- * expiry outcome, and the scenario funnel's shell_expired arm calls it so a
- * scripted round can post the three shells without aiming a gun. */
-void serverSimShotOrderNote(ServerSim *sim, BYTE owner, WORLD wx, WORLD wy);
+ * One of `owner`'s shells left the gun on tick `fireTick`. EVERY shell
+ * counts, whatever it went on to hit, because the two quiet seconds around
+ * the three shots ask what the player fired and not what it struck. It also
+ * cancels an armed order, which is the "no fourth shot" half of the rule.
+ * serverSimCbShellDeath calls it on every shell death. */
+void serverSimShotOrderShotFired(ServerSim *sim, BYTE owner, uint32_t fireTick);
 
-/* Forgets every shot a player has in flight toward an order. Called when a
- * player leaves and when a round starts. */
+/* One of `owner`'s shells, fired on `fireTick`, ran its full range and died
+ * at (wx, wy) with nothing hit. Three of them on the SAME open square, fired
+ * inside SHOT_ORDER_WINDOW_TICKS of each other and with a quiet second in
+ * front of the first, ARM an order; serverSimShotOrderTick sends it a quiet
+ * second after the third shot. serverSimCbShellDeath calls this on the expiry
+ * outcome, and the scenario funnel's shell_expired arm calls it so a scripted
+ * round can post the three shells without aiming a gun. */
+void serverSimShotOrderNote(ServerSim *sim, BYTE owner, uint32_t fireTick,
+                            WORLD wx, WORLD wy);
+
+/* Sends any armed order whose quiet second has run out, and drops any whose
+ * quiet second was broken. Called once per tick from serverSimTick. */
+void serverSimShotOrderTick(ServerSim *sim);
+
+/* Forgets every shot a player has in flight toward an order, and any order
+ * already armed. Called when a player joins or leaves and when a round
+ * starts. */
 void serverSimShotOrderClear(ServerSim *sim, BYTE playerNum);
 
 /* Defined in server_sim.c — the entries owned by the parent rather than by a

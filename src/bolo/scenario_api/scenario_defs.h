@@ -656,10 +656,17 @@ typedef struct {
  * expiring shell does, without a gun having to be aimed: a script cannot
  * make a seat shoot, and three full-range shells landing on one chosen
  * square is not something a round can be steered into. Nothing else happens
- * — no explosion, no sound, no shell is created or destroyed. */
+ * — no explosion, no sound, no shell is created or destroyed.
+ *
+ * fireTick is the tick the shell LEFT THE GUN, which is what every timing
+ * rule in the detector reads — the window the three have to share, and the
+ * quiet second either side of them. haveFireTick is false when the script
+ * did not say, and the shell then counts as fired on the current tick. */
 typedef struct {
-    BYTE slot;
-    BYTE x, y;
+    BYTE     slot;
+    BYTE     x, y;
+    bool     haveFireTick;
+    uint32_t fireTick;
 } ScnOpShellExpired;
 
 /* One op, tagged by type. */

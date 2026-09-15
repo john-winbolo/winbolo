@@ -76,22 +76,61 @@
  *
  * The detector keeps the last three expiry squares per player. SHOT_ORDER_
  * SHOTS is how many make an order, and SHOT_ORDER_WINDOW_TICKS is how long
- * the three have to arrive in: sim->tick counts 100 a second (the keys/game
+ * the three have to be FIRED in: ticks count 100 a second (the keys/game
  * half-step alternation), so 200 is the two seconds the design asks for.
- * A constant rather than a sim rule: the detector is server-side only, so
- * there is nothing for a client to agree with, and a rule would put a new
- * field on the wire for one number nobody tunes per round.
  *
- * Ticks are read from sim->tick alone, never from a clock, so a seeded run
+ * EVERY TIMING TEST IS ON THE FIRE TICK, NOT THE LANDING. A shell lands
+ * later than it was fired, and three shells fired in a burst can land in a
+ * different order than they left the gun when the ranges differ. The fire
+ * tick rides with the shell (shells.h fireTick) and the shell-death
+ * callback hands it back, so the detector reads the three shots the way the
+ * player fired them. The landing square is still what names the place.
+ *
+ * The order also has to be DELIBERATE, which is a quiet second either side:
+ * nothing of that player's fired in SHOT_ORDER_QUIET_TICKS before the first
+ * of the three, and nothing fired in the same stretch after the third. The
+ * second half cannot be known when the third shell lands, so the third shot
+ * only ARMS the order; the per-tick poll (serverSimShotOrderTick) sends it
+ * a quiet second after the third shot left the gun, and any shell fired in
+ * between takes the armed order away again — that shot may start a run of
+ * its own instead.
+ *
+ * SHOT_ORDER_FIRE_LOG is how many of a player's recent shells the quiet
+ * tests have to look back over. A gun reloads far slower than that, so the
+ * log covers both quiet seconds several times over.
+ *
+ * Constants rather than sim rules: the detector is server-side only, so
+ * there is nothing for a client to agree with, and a rule would put a new
+ * field on the wire for numbers nobody tunes per round.
+ *
+ * Ticks are read from the sim alone, never from a clock, so a seeded run
  * fires the order on the same tick every time. */
 #define SHOT_ORDER_SHOTS        3
 #define SHOT_ORDER_WINDOW_TICKS 200
+#define SHOT_ORDER_QUIET_TICKS  100
+#define SHOT_ORDER_FIRE_LOG     16
 
 typedef struct {
+    /* The last three full-range landings, oldest first. tick[] is the FIRE
+     * tick of each, which is what the window and the quiet second read. */
     BYTE     mx[SHOT_ORDER_SHOTS];    /* oldest first; [SHOTS-1] is the last */
     BYTE     my[SHOT_ORDER_SHOTS];
     uint32_t tick[SHOT_ORDER_SHOTS];
     uint8_t  count;                   /* filled slots, held at SHOT_ORDER_SHOTS */
+
+    /* Every shell of this player's the server has heard of, by fire tick —
+     * a shell that HIT something counts here, because the player still
+     * fired it. This is what the two quiet seconds are read off. */
+    uint32_t fire[SHOT_ORDER_FIRE_LOG];
+    uint8_t  fireCount;               /* filled slots, held at the cap */
+    uint8_t  fireNext;                /* where the next fire tick goes */
+
+    /* The order waiting out its quiet second. armFireTick is the fire tick
+     * of the third shot: the poll sends the order at armFireTick +
+     * SHOT_ORDER_QUIET_TICKS and a shell fired before then cancels it. */
+    bool     armed;
+    BYTE     armMx, armMy;
+    uint32_t armFireTick;
 } ShotOrderRing;
 
 /* One roster change waiting its turn. A spawn carries the whole payload

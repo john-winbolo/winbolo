@@ -2603,17 +2603,25 @@ static int scnLuaSetRule(lua_State *L) {
 
 /* ── Test hooks ────────────────────────────────────────────────────
  *
- * shell_expired(p, x, y): one of seat p's shells ran its full range and
- * died over square (x, y) with nothing hit. It exists because a script
- * cannot make a seat fire, and the three-shot order — three full-range
- * shells on one open square inside two seconds — has no other way of being
- * put to a round. Nothing is simulated but the notice itself.
+ * shell_expired(p, x, y [, fire_tick]): one of seat p's shells ran its full
+ * range and died over square (x, y) with nothing hit. It exists because a
+ * script cannot make a seat fire, and the three-shot order — three
+ * full-range shells on one open square inside two seconds, with a quiet
+ * second either side of them — has no other way of being put to a round.
+ * Nothing is simulated but the notice itself.
+ *
+ * fire_tick is the tick the shell LEFT THE GUN, and every timing rule in the
+ * detector is on that tick rather than on the landing. A real shell is in
+ * the air for about half a second, so a script that wants to place a shot
+ * inside or outside one of the quiet seconds has to say when it was fired.
+ * Left out, the shell counts as fired now.
  */
 static int scnLuaShellExpired(lua_State *L) {
     ScenarioOp  op;
-    lua_Integer p = scnArgInt(L, 1, "p");
-    lua_Integer x = scnArgInt(L, 2, "x");
-    lua_Integer y = scnArgInt(L, 3, "y");
+    lua_Integer p    = scnArgInt(L, 1, "p");
+    lua_Integer x    = scnArgInt(L, 2, "x");
+    lua_Integer y    = scnArgInt(L, 3, "y");
+    lua_Integer fire = scnOptInt(L, 4, "fire_tick", -1);
 
     if (!scnFitsByte(p)) {
         return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
@@ -2623,11 +2631,21 @@ static int scnLuaShellExpired(lua_State *L) {
         return scnRefused(L, SCN_OP_BAD_SQUARE, "square (%d, %d) is off the map",
                           (int)x, (int)y);
     }
+    if (fire < -1) {
+        return scnRefused(L, SCN_OP_RANGE, "fire_tick %d is before the round "
+                          "started", (int)fire);
+    }
     memset(&op, 0, sizeof(op));
-    op.type                 = SCN_OP_SHELL_EXPIRED;
-    op.u.shellExpired.slot  = (BYTE)p;
-    op.u.shellExpired.x     = (BYTE)x;
-    op.u.shellExpired.y     = (BYTE)y;
+    op.type                        = SCN_OP_SHELL_EXPIRED;
+    op.u.shellExpired.slot         = (BYTE)p;
+    op.u.shellExpired.x            = (BYTE)x;
+    op.u.shellExpired.y            = (BYTE)y;
+    op.u.shellExpired.haveFireTick = (fire >= 0);
+    op.u.shellExpired.fireTick     = (fire >= 0) ? (uint32_t)fire : 0u;
+    if (fire >= 0) {
+        return scnDone(L, &op, "player %d over (%d, %d), fired on %d",
+                       (int)p, (int)x, (int)y, (int)fire);
+    }
     return scnDone(L, &op, "player %d over (%d, %d)", (int)p, (int)x, (int)y);
 }
 
@@ -3122,10 +3140,13 @@ static const ScnLuaRow kScnLuaRows[] = {
       "spells no rule raises, and a value the table will not take is "
       "refused." },
     { "shell_expired", scnLuaShellExpired,
-      "shell_expired(p, x, y) — post one of seat p's shells as having run "
-      "its full range and died over square (x, y) with nothing hit; three "
-      "on one open square inside two seconds are the three-shot order the "
-      "bots read. A test hook: nothing else about the shell happens." },
+      "shell_expired(p, x, y [, fire_tick]) — post one of seat p's shells as "
+      "having run its full range and died over square (x, y) with nothing "
+      "hit; three on one open square inside two seconds, with a quiet second "
+      "either side, are the three-shot order the bots read. fire_tick is "
+      "when the shell left the gun, which is the tick every timing rule "
+      "reads; left out, it counts as fired now. A test hook: nothing else "
+      "about the shell happens." },
 };
 
 static const ScnLuaConst kScnLuaConsts[] = {
