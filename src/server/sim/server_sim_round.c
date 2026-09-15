@@ -209,14 +209,24 @@ void serverSimInformation(ServerSim *sim, bool locked) {
                there playing. Printed in the shape a bot slot gets rather than
                the one below it: the ping, the buffer depth and the address the
                other branch prints are for a real connection, and a held seat
-               has none, so they would read as a human sitting at 0ms. */
+               has none, so they would read as a human sitting at 0ms. The
+               marker also says whether the seat has a runner parked behind it,
+               because the two cost very different things: a seat with one
+               fields its bot by resuming, a seat without one has to build a
+               ClientSim and a brain VM at the moment a wave asks for it. */
             bool heldSeat = !isBotSlot && !sim->lobbyPlayers[count].fielded;
             if (isBotSlot || heldSeat) {
+                const char *seatMark = "";
+                if (heldSeat) {
+                    seatMark = botManagerHasRunner(sim, count)
+                                   ? " [off the field, runner ready]"
+                                   : " [off the field]";
+                }
                 fprintf(stdout, "%s - (P:%d B:%d)%s\n",
                         name,
                         pillsGetNumberOwnedByPlayer(&sim->sim.pb, count),
                         basesGetNumberOwnedByPlayer(&sim->sim.bs, count),
-                        heldSeat ? " [off the field]" : "");
+                        seatMark);
             } else {
                 /* Remote players carry their source ip:port; the in-process
                  * host has no UDP client, so the getter reports false and we
