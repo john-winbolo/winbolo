@@ -245,6 +245,68 @@ bool serverSimResolveNewBotConfig(const ServerSim *sim, int team,
     return true;
 }
 
+/* ── A scenario's own mode and difficulty ──────────────────────────────
+ *
+ * The keys a script writes, turned into the two indices the lobby carries.
+ * Everything this knows about a brain comes out of that brain's modes.txt,
+ * so a key is right or wrong by the same list the host's dropdown is filled
+ * from and the validator asks the same question the seating does. */
+BotConfigKeyResult serverSimResolveBotConfigKeys(const char *brainPath,
+                                                 const char *modeKey,
+                                                 const char *levelKey,
+                                                 uint8_t *ioMode,
+                                                 uint8_t *ioLevel) {
+    BrainModes modes;
+    int        mode;
+    int        level;
+    bool       modeAsked  = (modeKey  != NULL && modeKey[0]  != '\0');
+    bool       levelAsked = (levelKey != NULL && levelKey[0] != '\0');
+
+    if (ioMode == NULL || ioLevel == NULL) return BOT_CFG_KEYS_OK;
+    if (!modeAsked && !levelAsked) return BOT_CFG_KEYS_OK;
+    if (brainPath == NULL || brainPath[0] == '\0' ||
+        !brainListLoadModesForPath(brainPath, &modes)) {
+        return BOT_CFG_KEYS_NO_MANIFEST;
+    }
+
+    /* The pair as it stands, clamped into this brain's lists the way
+       serverSimResolveNewBotConfig clamps it. */
+    mode = (int)*ioMode;
+    if (mode >= modes.modeCount) mode = 0;
+    level = (int)*ioLevel;
+
+    if (modeAsked) {
+        int mi = brainModesFindMode(&modes, modeKey);
+        if (mi < 0) return BOT_CFG_KEYS_NO_MODE;
+        /* A level index means something inside ONE mode's list, so a move to
+           another mode drops the old index rather than carrying it across:
+           the new mode's own default is where a seat lands unless the script
+           names a level as well. */
+        if (mi != mode) level = modes.modes[mi].defaultLevel;
+        mode = mi;
+    }
+    if (level >= modes.modes[mode].levelCount) {
+        level = modes.modes[mode].defaultLevel;
+    }
+    if (levelAsked) {
+        int li = brainModeFindLevel(&modes.modes[mode], levelKey);
+        if (li < 0) return BOT_CFG_KEYS_NO_LEVEL;
+        level = li;
+    }
+
+    *ioMode  = (uint8_t)mode;
+    *ioLevel = (uint8_t)level;
+    return BOT_CFG_KEYS_OK;
+}
+
+void serverSimSetBotConfigQuiet(ServerSim *sim, BYTE slot,
+                                uint8_t mode, uint8_t difficulty) {
+    if (sim == NULL || slot >= MAX_TANKS) return;
+    sim->botConfigs[slot].mode       = mode;
+    sim->botConfigs[slot].difficulty = difficulty;
+    serverSimQueueBotConfigPublish(sim, slot);
+}
+
 void serverSimApplyNewBotDefaults(ServerSim *sim, BYTE slot, int team,
                                   const char *brainPath,
                                   bool honourManualPick) {

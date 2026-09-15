@@ -68,6 +68,14 @@
  * against each other where it can see both. */
 #define SCN_BRAIN_LEN 256
 
+/* A bot mode key or a level key, as a team template or a bot op names it.
+ * These are matched against the keys in the brain's own modes.txt, so the
+ * room is that file's: BRAIN_MODE_KEY_LEN in public/brain_list.h. Written
+ * out rather than included, because this header sits below that one and the
+ * dependency points the other way; scenario_defs.h holds the same number for
+ * the ops, and server_sim_lobby.c is where all three meet. */
+#define SCN_BOT_KEY_LEN 16
+
 /* Room for every rule the table can name. scenario_host.c checks this
  * covers the rule list, so a rule added to the list cannot overflow it. */
 #define SCN_MANIFEST_RULES_MAX 128

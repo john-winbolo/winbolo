@@ -2145,6 +2145,48 @@ bool serverSimResolveNewBotConfig(const ServerSim *sim, int team,
                                   bool honourManualPick,
                                   uint8_t *ioMode, uint8_t *ioLevel);
 
+/* ── A scenario's own mode and difficulty ──────────────────────────────
+ *
+ * A scenario names the two by KEY — the words in the brain's own modes.txt
+ * ("survival", "hard") — because a script cannot know what index a brain
+ * puts them at, and the two bytes the lobby carries are indices. This turns
+ * one pair of keys into that pair of indices.
+ *
+ * Both keys are optional and "" means "leave this one alone", which is what
+ * every scenario written before the two fields existed says. A mode key that
+ * moves the seat to a different mode takes that mode's own default level
+ * unless a level key names one, because a level index only means something
+ * inside one mode's list.
+ *
+ * Case-insensitive, as brainModesFindMode and brainModeFindLevel are. */
+typedef enum {
+    BOT_CFG_KEYS_OK = 0,      /* applied, or neither key was given */
+    BOT_CFG_KEYS_NO_MANIFEST, /* the brain ships no modes.txt to ask */
+    BOT_CFG_KEYS_NO_MODE,     /* the mode key names no mode of this brain */
+    BOT_CFG_KEYS_NO_LEVEL     /* the level key names no level of that mode */
+} BotConfigKeyResult;
+
+/* Resolve `modeKey` / `levelKey` against the brain at `brainPath`.
+ * *ioMode / *ioLevel carry the current pair in and the answer out, and are
+ * left untouched on any answer but BOT_CFG_KEYS_OK. Writes no config and
+ * publishes nothing — the caller does both, because the order matters: the
+ * config has to be in the slot BEFORE the brain is created. */
+BotConfigKeyResult serverSimResolveBotConfigKeys(const char *brainPath,
+                                                 const char *modeKey,
+                                                 const char *levelKey,
+                                                 uint8_t *ioMode,
+                                                 uint8_t *ioLevel);
+
+/* Write a slot's mode and difficulty and queue the bot-config event that
+ * shows them, without the publish-now, the rename and the auto-unready
+ * serverSimSetBotConfig carries. For a seat that does not exist yet: the
+ * two bytes have to be in botConfigs before the brain is created, and a
+ * publish to a slot no client has heard of yet describes nothing. Queue the
+ * publish again once the seat is connected — the flush drops the queued bit
+ * for a slot that is not. */
+void serverSimSetBotConfigQuiet(ServerSim *sim, BYTE slot,
+                                uint8_t mode, uint8_t difficulty);
+
 /* Give a lobby bot joining `team` its mode and difficulty — the lobby
  * default as the base, then serverSimResolveNewBotConfig — and queue the
  * bot-config event that shows it in the lobby. Safe before or after the

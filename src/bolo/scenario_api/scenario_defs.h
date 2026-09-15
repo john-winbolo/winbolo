@@ -49,6 +49,13 @@
 /* Buffer for a brain path or a "package:NAME" reference. */
 #define SCN_PATH_MAX 256
 
+/* A bot mode key or a level key, as a team template or a bot op names it,
+ * matched against the keys in the brain's own modes.txt. The same number
+ * BRAIN_MODE_KEY_LEN holds in public/brain_list.h and SCN_BOT_KEY_LEN holds
+ * on the host's side of the wall; server_sim_lobby.c is where all three
+ * meet, and it is the one file that sees every one of them. */
+#define SCN_BOT_KEY_MAX 16
+
 /* One team a scenario's lobby seats, as the sim reads it.
  *
  * bots is how many seats the engine creates when it seats the template;
@@ -57,6 +64,11 @@
  * seats without the bots — roster entries the start sequence skips until a
  * spawn names one. brain is the path those bots run, or "" for the server's
  * own.
+ *
+ * mode and difficulty name the brain mode these bots play in and the level
+ * inside it, by the keys the brain's modes.txt lists. "" for either leaves
+ * the seat's config as the lobby would have had it, which is what every
+ * template before these two fields said.
  *
  * init is the table the team's bots are built with, read once when a VM is
  * built, empty for none. It is what the countdown warms a held seat's runner
@@ -68,6 +80,8 @@ typedef struct {
     uint8_t  maxBots;
     bool     fielded;
     char     brain[SCN_PATH_MAX];
+    char     mode[SCN_BOT_KEY_MAX];        /* "" = leave the lobby's */
+    char     difficulty[SCN_BOT_KEY_MAX];  /* "" = leave the lobby's */
     ScnTable init;
 } ScnLobbyTeam;
 
@@ -386,6 +400,10 @@ typedef struct {
     BYTE     team;
     BYTE     start;                  /* 0xFF = let the engine choose */
     BYTE     loadout;                /* 0 = ask the policy */
+    /* The brain mode and the level inside it, by the keys the brain's
+     * modes.txt lists; "" leaves the seat's config alone. */
+    char     mode[SCN_BOT_KEY_MAX];
+    char     difficulty[SCN_BOT_KEY_MAX];
     ScnTable init;
 } ScnOpRosterSpawnBot;
 
@@ -415,6 +433,12 @@ typedef struct {
     char brain[SCN_PATH_MAX];
     BYTE team;
     bool fielded;
+    /* The brain mode and the level inside it, by the keys the brain's
+     * modes.txt lists; "" leaves the seat's config alone. A held seat takes
+     * them too — nothing loads a brain for it yet, and the spawn that fields
+     * it later reads the config off the seat. */
+    char mode[SCN_BOT_KEY_MAX];
+    char difficulty[SCN_BOT_KEY_MAX];
 } ScnOpLobbyAddBot;
 
 typedef struct {

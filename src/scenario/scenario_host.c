@@ -785,6 +785,14 @@ static void scnReadLobby(lua_State *L, int tbl, ScnManifestLobby *lob) {
                 team->maxBots = (uint8_t)scnReadInt(L, t, "max_bots", 0);
                 team->fielded = scnReadBool(L, t, "fielded", true);
                 scnReadStr(L, t, "brain", team->brain, sizeof(team->brain));
+                /* The brain mode this team's bots play in and the level
+                   inside it, by the keys the brain's own modes.txt lists.
+                   Taken as text here — what keys a brain has is a question
+                   only the server can answer, and this reader has no brain
+                   in hand. */
+                scnReadStr(L, t, "mode", team->mode, sizeof(team->mode));
+                scnReadStr(L, t, "difficulty", team->difficulty,
+                           sizeof(team->difficulty));
                 /* The table the team's bots are built with, through the one
                    reader spawn_bot's own init goes through, so a script
                    cannot find the two spelled differently. A pair that did
@@ -1880,6 +1888,8 @@ static void scnFillLobbyTemplate(const ScnManifestLobby *lob,
         dst->maxBots = src->maxBots;
         dst->fielded = src->fielded;
         SDL_strlcpy(dst->brain, src->brain, sizeof(dst->brain));
+        SDL_strlcpy(dst->mode, src->mode, sizeof(dst->mode));
+        SDL_strlcpy(dst->difficulty, src->difficulty, sizeof(dst->difficulty));
         dst->init    = src->init;
     }
 }

@@ -2276,6 +2276,21 @@ static int scnLuaSpawnBot(lua_State *L) {
                           (int)len,
                           (int)sizeof(op.u.rosterSpawnBot.brain) - 1);
     }
+    /* The brain mode and the level inside it, by the keys the brain's own
+       modes.txt lists. Taken as text and matched by the sim, which is the
+       side that has the brain and can say what keys it has. */
+    if (!scnFieldText(L, 1, "mode", op.u.rosterSpawnBot.mode,
+                      sizeof(op.u.rosterSpawnBot.mode), &len)) {
+        return scnRefused(L, SCN_OP_TOO_BIG, "mode is %d bytes, limit %d",
+                          (int)len,
+                          (int)sizeof(op.u.rosterSpawnBot.mode) - 1);
+    }
+    if (!scnFieldText(L, 1, "difficulty", op.u.rosterSpawnBot.difficulty,
+                      sizeof(op.u.rosterSpawnBot.difficulty), &len)) {
+        return scnRefused(L, SCN_OP_TOO_BIG,
+                          "difficulty is %d bytes, limit %d", (int)len,
+                          (int)sizeof(op.u.rosterSpawnBot.difficulty) - 1);
+    }
     team = scnFieldInt(L, 1, "team", 0);
     if (!scnFitsByte(team)) {
         return scnRefused(L, SCN_OP_RANGE, "team is %d", (int)team);
@@ -2433,6 +2448,18 @@ static int scnLuaLobbyAddBot(lua_State *L) {
                       sizeof(op.u.lobbyAddBot.brain), &len)) {
         return scnRefused(L, SCN_OP_TOO_BIG, "brain is %d bytes, limit %d",
                           (int)len, (int)sizeof(op.u.lobbyAddBot.brain) - 1);
+    }
+    /* The brain mode and the level inside it, as spawn_bot takes them. */
+    if (!scnFieldText(L, 1, "mode", op.u.lobbyAddBot.mode,
+                      sizeof(op.u.lobbyAddBot.mode), &len)) {
+        return scnRefused(L, SCN_OP_TOO_BIG, "mode is %d bytes, limit %d",
+                          (int)len, (int)sizeof(op.u.lobbyAddBot.mode) - 1);
+    }
+    if (!scnFieldText(L, 1, "difficulty", op.u.lobbyAddBot.difficulty,
+                      sizeof(op.u.lobbyAddBot.difficulty), &len)) {
+        return scnRefused(L, SCN_OP_TOO_BIG,
+                          "difficulty is %d bytes, limit %d", (int)len,
+                          (int)sizeof(op.u.lobbyAddBot.difficulty) - 1);
     }
     team = scnFieldInt(L, 1, "team", 0);
     if (!scnFitsByte(team)) {
@@ -3082,8 +3109,8 @@ static const ScnLuaRow kScnLuaRows[] = {
       "off." },
     { "spawn_bot", scnLuaSpawnBot,
       "spawn_bot(t) → p, \"queued\" — put a bot into the running round; t "
-      "takes name, brain, team, slot, start, loadout and a flat init "
-      "table, all of them optional." },
+      "takes name, brain, team, slot, start, loadout, mode, difficulty and "
+      "a flat init table, all of them optional." },
     { "remove_bot", scnLuaRemoveBot,
       "remove_bot(p) → true, \"queued\" — take a bot out of the running "
       "round; a human seat is refused." },
@@ -3095,7 +3122,8 @@ static const ScnLuaRow kScnLuaRows[] = {
       "about it." },
     { "lobby_add_bot", scnLuaLobbyAddBot,
       "lobby_add_bot(t) → p — seat a bot in the lobby and answer which seat "
-      "it took; t takes name, brain, team, slot and fielded." },
+      "it took; t takes name, brain, team, slot, fielded, mode and "
+      "difficulty." },
     { "lobby_remove_bot", scnLuaLobbyRemoveBot,
       "lobby_remove_bot(p) — take a bot out of the lobby; a human seat is "
       "refused." },

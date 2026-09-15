@@ -54,6 +54,16 @@
  * run_lobby_template_seat_carries_init  — a team's init table reaches the
  *                                         seats it makes, and a seat leaving
  *                                         takes it with it
+ * run_lobby_template_seat_carries_mode  — a team's mode and difficulty reach
+ *                                         every seat it makes, held or
+ *                                         fielded, and each asks to be
+ *                                         published
+ * run_lobby_template_mode_unknown_key_kept
+ *                                       — a key the brain does not list
+ *                                         costs the key, not the seat
+ * run_lobby_template_no_mode_leaves_config
+ *                                       — naming neither leaves both as the
+ *                                         lobby had them
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -103,6 +113,58 @@ static bool ltMakeBrainFile(const char *tag) {
 
 static void ltDropBrainFile(void) {
     remove(ltBrainPath);
+}
+
+/* A fixture brain that SHIPS A modes.txt, for the cases that name a mode and
+ * a difficulty on a team.
+ *
+ * It has to be a directory and not the bare file above: brain_list.c reads a
+ * brain's modes.txt by the name of the DIRECTORY holding init.lua, under
+ * brains/ or Brains/ of the working directory. The two modes and their three
+ * levels are written out here rather than borrowed from a shipped brain, so
+ * a case says what it expects and an edit to GoalHunter's own modes.txt
+ * cannot move it. */
+static char ltModesDir[160];
+static char ltModesBrain[224];
+
+static bool ltMakeModesBrain(const char *tag) {
+    char  path[288];
+    FILE *f;
+
+    SDL_snprintf(ltModesDir, sizeof(ltModesDir), "brains/ut_lt_%s", tag);
+    SDL_CreateDirectory("brains");
+    if (!SDL_CreateDirectory(ltModesDir)) return false;
+
+    SDL_snprintf(ltModesBrain, sizeof(ltModesBrain), "%s/init.lua",
+                 ltModesDir);
+    f = fopen(ltModesBrain, "wb");
+    if (f == NULL) return false;
+    fputs("-- fixture\n", f);
+    fclose(f);
+
+    SDL_snprintf(path, sizeof(path), "%s/modes.txt", ltModesDir);
+    f = fopen(path, "wb");
+    if (f == NULL) return false;
+    fputs("[default]\n"
+          "label = Default\n"
+          "levels = easy:Easy:1, medium:Medium:2, hard:Hard:3\n"
+          "default = hard\n"
+          "\n"
+          "[survival]\n"
+          "label = Survival\n"
+          "levels = easy:Easy:1, medium:Medium:2, hard:Hard:3\n"
+          "default = hard\n", f);
+    fclose(f);
+    return true;
+}
+
+static void ltDropModesBrain(void) {
+    char path[288];
+
+    SDL_snprintf(path, sizeof(path), "%s/modes.txt", ltModesDir);
+    remove(path);
+    remove(ltModesBrain);
+    SDL_RemovePath(ltModesDir);
 }
 
 /* A lobby taking part, with one human in slot 0 and a server that runs
@@ -953,6 +1015,212 @@ int run_lobby_template_seat_carries_init(void) {
                   "pairs", fielded, (unsigned)sim->seatInit[fielded].count);
 
     serverSimDestroy(sim);
+    ltDropBrainFile();
+    return 0;
+}
+
+/* ── The mode and the difficulty a team names ─────────────────────────
+ *
+ * A team may name the brain mode its bots play in and the level inside it,
+ * by the keys the brain's own modes.txt lists. The seating resolves them to
+ * the two indices a lobby seat carries and writes them into the seat's
+ * config BEFORE anything builds a brain with it — which is where
+ * botManagerStageInitArg reads the pair it turns into the brain's mode= and
+ * difficulty= tokens.
+ *
+ * The fixture brain's modes are default (mode 0) and survival (mode 1), each
+ * with easy / medium / hard (levels 0 / 1 / 2) and hard as the default.
+ *
+ * The queued bot-config event is asserted with them. It is the whole of the
+ * lobby-row half: nothing else ever publishes a scripted seat's config, and
+ * a client that is told nothing goes on showing the zero its own table was
+ * created with, which reads as Easy. */
+
+/* One team of held seats and one of fielded ones, both on the fixture brain
+ * that ships modes, with the mode and the level this case is about. */
+static void ltModesTemplate(ScnLobbyTemplate *t,
+                            const char *mode, const char *level) {
+    memset(t, 0, sizeof(*t));
+    t->numTeams = 2;
+    t->teams[0].id      = LT_RAIDER;
+    t->teams[0].bots    = 2;
+    t->teams[0].maxBots = 2;
+    t->teams[0].fielded = false;
+    t->teams[1].id      = LT_GUARD;
+    t->teams[1].bots    = 1;
+    t->teams[1].maxBots = 1;
+    t->teams[1].fielded = true;
+    SDL_strlcpy(t->teams[0].brain, ltModesBrain, sizeof(t->teams[0].brain));
+    SDL_strlcpy(t->teams[1].brain, ltModesBrain, sizeof(t->teams[1].brain));
+    if (mode != NULL) {
+        SDL_strlcpy(t->teams[0].mode, mode, sizeof(t->teams[0].mode));
+        SDL_strlcpy(t->teams[1].mode, mode, sizeof(t->teams[1].mode));
+    }
+    if (level != NULL) {
+        SDL_strlcpy(t->teams[0].difficulty, level,
+                    sizeof(t->teams[0].difficulty));
+        SDL_strlcpy(t->teams[1].difficulty, level,
+                    sizeof(t->teams[1].difficulty));
+    }
+}
+
+int run_lobby_template_seat_carries_mode(void) {
+    ServerSim       *sim;
+    ScnLobbyTemplate t;
+    int              held;
+    int              fielded;
+
+    UT_ASSERT(ltMakeBrainFile("seat_carries_mode"));
+    UT_ASSERT(ltMakeModesBrain("seat_carries_mode"));
+    ut_brain_stub_arm(true);
+    sim = ltLobbySim();
+    UT_ASSERT(sim != NULL);
+
+    ltModesTemplate(&t, "survival", "medium");
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    serverSimScenarioSeatLobby(sim);
+    ltHoldInLobby(sim);
+
+    held = ltFirstSeat(sim, LT_RAIDER);
+    UT_ASSERT_MSG(held >= 0, "the held team seated nothing");
+    fielded = ltFirstSeat(sim, LT_GUARD);
+    UT_ASSERT_MSG(fielded >= 0, "the fielded team seated nothing");
+
+    /* Both halves of the pair, on a seat that holds no bot yet. */
+    UT_ASSERT_MSG(sim->botConfigs[held].mode == 1,
+                  "held seat %d is in mode %u, expected survival (1)",
+                  held, (unsigned)sim->botConfigs[held].mode);
+    UT_ASSERT_MSG(sim->botConfigs[held].difficulty == 1,
+                  "held seat %d is at level %u, expected medium (1)",
+                  held, (unsigned)sim->botConfigs[held].difficulty);
+
+    /* And on one whose bot was built while the seating ran. */
+    UT_ASSERT_MSG(sim->botConfigs[fielded].mode == 1,
+                  "fielded seat %d is in mode %u, expected survival (1)",
+                  fielded, (unsigned)sim->botConfigs[fielded].mode);
+    UT_ASSERT_MSG(sim->botConfigs[fielded].difficulty == 1,
+                  "fielded seat %d is at level %u, expected medium (1)",
+                  fielded, (unsigned)sim->botConfigs[fielded].difficulty);
+
+    /* Every seat the template made asks to be published. */
+    UT_ASSERT_MSG((sim->botConfigPublishPending & (1u << held)) != 0,
+                  "held seat %d queued no bot-config event", held);
+    UT_ASSERT_MSG((sim->botConfigPublishPending & (1u << fielded)) != 0,
+                  "fielded seat %d queued no bot-config event", fielded);
+
+    serverSimDestroy(sim);
+    ltDropModesBrain();
+    ltDropBrainFile();
+    return 0;
+}
+
+/* A mode key the brain does not list costs the key and not the seat: the
+ * seating leaves the config as the lobby had it and says so in the log, and
+ * -validate is where the author is told. The same for a level key. */
+int run_lobby_template_mode_unknown_key_kept(void) {
+    ServerSim       *sim;
+    ScnLobbyTemplate t;
+    int              held;
+
+    UT_ASSERT(ltMakeBrainFile("mode_unknown"));
+    UT_ASSERT(ltMakeModesBrain("mode_unknown"));
+    ut_brain_stub_arm(true);
+    sim = ltLobbySim();
+    UT_ASSERT(sim != NULL);
+
+    ltModesTemplate(&t, "nosuchmode", "medium");
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    serverSimScenarioSeatLobby(sim);
+    ltHoldInLobby(sim);
+
+    held = ltFirstSeat(sim, LT_RAIDER);
+    UT_ASSERT_MSG(held >= 0, "the held team seated nothing");
+    UT_ASSERT_MSG(sim->botConfigs[held].mode == 0,
+                  "a mode nothing lists moved seat %d to mode %u",
+                  held, (unsigned)sim->botConfigs[held].mode);
+    UT_ASSERT_MSG(sim->botConfigs[held].difficulty == BOT_DIFFICULTY_HARD,
+                  "a mode nothing lists moved seat %d to level %u, expected "
+                  "the lobby's Hard", held,
+                  (unsigned)sim->botConfigs[held].difficulty);
+
+    serverSimDestroy(sim);
+    ltDropModesBrain();
+    ltDropBrainFile();
+
+    /* And the level key on its own, against a mode that does exist. */
+    UT_ASSERT(ltMakeBrainFile("level_unknown"));
+    UT_ASSERT(ltMakeModesBrain("level_unknown"));
+    ut_brain_stub_arm(true);
+    sim = ltLobbySim();
+    UT_ASSERT(sim != NULL);
+
+    ltModesTemplate(&t, "survival", "nosuchlevel");
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    serverSimScenarioSeatLobby(sim);
+    ltHoldInLobby(sim);
+
+    held = ltFirstSeat(sim, LT_RAIDER);
+    UT_ASSERT_MSG(held >= 0, "the held team seated nothing");
+    UT_ASSERT_MSG(sim->botConfigs[held].mode == 0,
+                  "a level nothing lists still moved seat %d to mode %u",
+                  held, (unsigned)sim->botConfigs[held].mode);
+    UT_ASSERT_MSG(sim->botConfigs[held].difficulty == BOT_DIFFICULTY_HARD,
+                  "a level nothing lists moved seat %d to level %u",
+                  held, (unsigned)sim->botConfigs[held].difficulty);
+
+    serverSimDestroy(sim);
+    ltDropModesBrain();
+    ltDropBrainFile();
+    return 0;
+}
+
+/* A template that names neither leaves both exactly as the lobby had them —
+ * which is every scenario written before the two fields existed. The event
+ * is queued all the same, because a seat nobody publishes for is the defect
+ * the two fields were added next to. */
+int run_lobby_template_no_mode_leaves_config(void) {
+    ServerSim       *sim;
+    ScnLobbyTemplate t;
+    int              held;
+    int              fielded;
+
+    UT_ASSERT(ltMakeBrainFile("no_mode"));
+    UT_ASSERT(ltMakeModesBrain("no_mode"));
+    ut_brain_stub_arm(true);
+    sim = ltLobbySim();
+    UT_ASSERT(sim != NULL);
+
+    ltModesTemplate(&t, NULL, NULL);
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    serverSimScenarioSeatLobby(sim);
+    ltHoldInLobby(sim);
+
+    held = ltFirstSeat(sim, LT_RAIDER);
+    UT_ASSERT_MSG(held >= 0, "the held team seated nothing");
+    fielded = ltFirstSeat(sim, LT_GUARD);
+    UT_ASSERT_MSG(fielded >= 0, "the fielded team seated nothing");
+
+    UT_ASSERT_MSG(sim->botConfigs[held].mode == 0,
+                  "seat %d moved to mode %u with no mode named",
+                  held, (unsigned)sim->botConfigs[held].mode);
+    UT_ASSERT_MSG(sim->botConfigs[held].difficulty == BOT_DIFFICULTY_HARD,
+                  "seat %d moved to level %u with no difficulty named",
+                  held, (unsigned)sim->botConfigs[held].difficulty);
+    UT_ASSERT_MSG(sim->botConfigs[fielded].mode == 0,
+                  "fielded seat %d moved to mode %u with no mode named",
+                  fielded, (unsigned)sim->botConfigs[fielded].mode);
+    UT_ASSERT_MSG(sim->botConfigs[fielded].difficulty == BOT_DIFFICULTY_HARD,
+                  "fielded seat %d moved to level %u with no difficulty "
+                  "named", fielded,
+                  (unsigned)sim->botConfigs[fielded].difficulty);
+
+    UT_ASSERT_MSG((sim->botConfigPublishPending & (1u << held)) != 0,
+                  "held seat %d queued no bot-config event", held);
+    UT_ASSERT_MSG((sim->botConfigPublishPending & (1u << fielded)) != 0,
+                  "fielded seat %d queued no bot-config event", fielded);
+
+    serverSimDestroy(sim);
+    ltDropModesBrain();
     ltDropBrainFile();
     return 0;
 }

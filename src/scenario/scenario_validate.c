@@ -294,7 +294,8 @@ static void scnCheckGame(const ScenarioManifest *m, ScnValidateResult *out) {
 /* The template the lobby is seated from: the human cap, and per team the
  * number it is, the bots it asks for, the brain it names them with and the
  * init table they are built with. */
-static void scnCheckLobby(const ScenarioManifest *m, ScnValidateResult *out) {
+static void scnCheckLobby(const ServerSim *sim, const ScenarioManifest *m,
+                          ScnValidateResult *out) {
     const ScnManifestLobby *lob = &m->lobby;
     char                    key[SCN_VALIDATE_KEY_LEN];
     uint8_t                 i;
@@ -348,6 +349,45 @@ static void scnCheckLobby(const ScenarioManifest *m, ScnValidateResult *out) {
                      (unsigned)(i + 1));
             scnIssueAdd(out, key, "'%s' names nothing after the colon",
                         t->brain);
+        }
+
+        /* The mode and the level the team's bots play at, asked of the brain
+           that will run them — the team's, or the server's when the team
+           named none. This is the same question the seating asks, through
+           the same resolver, so a template that validates is one the seating
+           will take. A brain with no modes.txt has no key to name, and that
+           reads here as the key naming nothing, which is what it does. */
+        if (t->mode[0] != '\0' || t->difficulty[0] != '\0') {
+            const char *brain = (t->brain[0] != '\0')
+                              ? t->brain
+                              : ((sim != NULL) ? serverSimGetBotBrainPath(sim)
+                                               : NULL);
+            uint8_t mode  = 0;
+            uint8_t level = 0;
+            BotConfigKeyResult kr =
+                serverSimResolveBotConfigKeys(brain, t->mode, t->difficulty,
+                                              &mode, &level);
+            if (kr == BOT_CFG_KEYS_NO_MODE) {
+                snprintf(key, sizeof(key), "lobby.teams[%u].mode",
+                         (unsigned)(i + 1));
+                scnIssueAdd(out, key, "'%s' is no mode of brain '%s'",
+                            t->mode, (brain != NULL) ? brain : "");
+            } else if (kr == BOT_CFG_KEYS_NO_LEVEL) {
+                snprintf(key, sizeof(key), "lobby.teams[%u].difficulty",
+                         (unsigned)(i + 1));
+                scnIssueAdd(out, key,
+                            "'%s' is no difficulty of mode '%s' of brain '%s'",
+                            t->difficulty,
+                            (t->mode[0] != '\0') ? t->mode : "default",
+                            (brain != NULL) ? brain : "");
+            } else if (kr == BOT_CFG_KEYS_NO_MANIFEST) {
+                snprintf(key, sizeof(key), "lobby.teams[%u].mode",
+                         (unsigned)(i + 1));
+                scnIssueAdd(out, key,
+                            "brain '%s' declares no modes, so it has neither "
+                            "a mode nor a difficulty to name",
+                            (brain != NULL) ? brain : "");
+            }
         }
 
         /* A pair of the init table the read could not take. The reader keeps
@@ -578,7 +618,7 @@ bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
 
     scnCheckApi(&out->manifest, out);
     scnCheckGame(&out->manifest, out);
-    scnCheckLobby(&out->manifest, out);
+    scnCheckLobby(sim, &out->manifest, out);
     /* The two that read a map. Without one the table can still be checked for
        everything it says about itself, which is what an editor holding a
        script and no map has to work from. */

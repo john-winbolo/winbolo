@@ -129,6 +129,12 @@ bool serverSimAddUnfieldedSeat(ServerSim *sim, BYTE playerNum,
     }
     basesRemoveTimer(&sim->sim, (int)playerNum);
     serverSimPublishLobbySlot(sim, playerNum);
+    /* And the seat's mode and difficulty, which the slot event does not
+       carry. Without this nothing ever publishes a held seat's config, and
+       every client goes on showing the zero its own table was created with
+       — Easy — whatever the server holds. Queued rather than published, so
+       ten seats cost two events a tick instead of ten in one. */
+    serverSimQueueBotConfigPublish(sim, playerNum);
     return true;
 }
 

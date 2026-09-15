@@ -337,7 +337,32 @@ Each team:
 | `max_bots` | number | The ceiling a host may raise `bots` to. 0 means no ceiling stated, which is not the same as no bots allowed. |
 | `fielded` | boolean | True (the default) puts a bot in the seat at the start of the round. False holds the seat without one: it is in the roster, it takes no tank, and no bot plays in it until a `spawn_bot` names it. Its runner is built ahead of the round, as the two paragraphs below this table describe. |
 | `brain` | string | The brain this team's bots run, as a path on the server's disk. Empty means the server's own. `package:NAME`, a brain carried inside the scenario, is reserved for packaged scenarios and is refused with `SCN_OP_NOT_FOUND` today. |
+| `mode` | string | The brain mode this team's bots play in, by the key the brain's own `modes.txt` lists — `"survival"`, say. Left out, the seats keep whatever mode the lobby would have given them. |
+| `difficulty` | string | The level inside that mode, by the key the same file lists — `"hard"`. Left out, the seats keep the lobby's level, except that a team naming a `mode` and no `difficulty` lands on that mode's own default level. |
 | `init` | table | A flat table of names to strings or numbers, handed to this team's bots when their VM is built. A `spawn_bot` that names one of these seats and carries no `init` of its own gets this one. |
+
+**`mode` and `difficulty` are the half the lobby reads.** They are matched
+against the brain's `modes.txt` — case does not matter — and written into the
+seat's own config, which is three things at once: the difficulty chips on the
+seat's row in the players list, the mode tag beside its name, and the `mode=`
+/ `difficulty=` tokens the server builds the brain's init string from. A seat
+whose team says nothing here carries whatever the lobby gave it, which is the
+behaviour every scenario written before these two fields had.
+
+A key neither file lists is a problem `-validate` reports by name. The seating
+does not refuse the seat over it: the seat is made and keeps the lobby's own
+mode and level, with a line in the server log saying which key was not
+recognised. The bot ops below are stricter, because there the refusal costs
+nothing: `spawn_bot` and `lobby_add_bot` answer `SCN_OP_NO_SUCH_ITEM` rather
+than seating a bot at a level nobody asked for.
+
+**The host's dropdown still works on these seats.** A host may change a
+scripted seat's mode and difficulty from the players list for as long as that
+lobby lasts, the same way the host may trim the seats the template asked for.
+The template's values are re-applied when the lobby is built from the map and
+again when a lobby comes back from a round — which is the rule `bots` and
+`max_bots` already follow: what a host does inside one lobby stands, and the
+template describes the lobby each round opens with.
 
 `max_bots` is a memory ceiling as well as a seating one. A seat keeps the runner
 behind it — one ClientSim and one brain VM — across the unfielding that takes
@@ -865,10 +890,27 @@ A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
 | `team` | The team to join. A held seat keeps the team it was seated with. |
 | `start` | The start to come in on, 1-based. Left out, the engine chooses. |
 | `loadout` | What this one bot comes in with: `"open"`, `"tournament"` or `"strict"` for that game type's amounts. A word that is none of the three stops the call the way any bad argument does. It outranks `spawn_loadout`, which is not asked about this tank at all, and it is spent on the tank the spawn builds — the bot's next life is fuelled the way every other tank's is. Left out, `spawn_loadout` answers, and failing that the round's own game type. |
+| `mode` | The brain mode this bot plays in, by the key the brain's own `modes.txt` lists. Left out, the seat's config stands — which for a seat the template made is what the template gave it. A key the brain does not list is refused with `SCN_OP_NO_SUCH_ITEM`. |
+| `difficulty` | The level inside that mode, by the key the same file lists. Left out with a `mode` named, the new mode's own default level is taken; left out with no `mode` named, the seat's level stands. A key the mode does not list is refused with `SCN_OP_NO_SUCH_ITEM`. |
 | `init` | A flat table of names to strings or numbers, handed to the brain at its first breath. Left out, the seat's own is used — the one its team was written with. |
 
-`lobby_add_bot` takes `name`, `brain`, `team`, `slot` and `fielded`, where
-`fielded = false` asks for the seat without the bot.
+`lobby_add_bot` takes `name`, `brain`, `team`, `slot`, `fielded`, `mode` and
+`difficulty`, where `fielded = false` asks for the seat without the bot. A
+held seat takes `mode` and `difficulty` too: no brain loads for it yet, but
+the seat's row shows them from the moment it appears and the spawn that
+fields it later reads them off the seat.
+
+**`mode` and `difficulty` land in the seat's config, not in the init table.**
+That is what puts them on the lobby row and what the server turns into the
+brain's `mode=` / `difficulty=` tokens. A scenario may also write the same
+pair into its `init` table, which reaches the brain by a different road: the
+brain flattens the table onto the end of the same token string and takes the
+last write. Writing both is not wrong and Survival does it, because the two
+roads serve different bots — the template's pair is what a seat the lobby
+shows carries, and the table's is what a bot spawned into a seat no template
+described gets. Two identical values are one value applied twice. Two
+different ones are not: the table's wins at the brain, and the lobby row
+still shows the seat's.
 
 **Changing a bot's orders while it plays.** `bot_init` takes the same table
 `spawn_bot`'s `init` field takes — flat, names to strings or numbers, at most

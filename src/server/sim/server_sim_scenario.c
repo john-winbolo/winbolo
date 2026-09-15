@@ -1594,6 +1594,80 @@ static ScnOpResult scenarioBrainPath(ServerSim *sim, const char *asked,
     return SCN_OP_OK;
 }
 
+/* ── The mode and the difficulty a scenario names ─────────────────────
+ *
+ * A script names both by KEY, out of the brain's own modes.txt, because the
+ * two bytes a seat carries are indices into lists only the brain knows. Both
+ * are optional and "" leaves that one as the lobby had it, so a template or
+ * an op written before these fields existed behaves exactly as it did.
+ *
+ * Asked BEFORE anything is seated: an op whose keys name nothing is refused
+ * rather than half-applied, which is the rule every other field of these ops
+ * follows. SCN_OP_NO_SUCH_ITEM is the answer, the same one a start or a
+ * region index that names nothing gets. */
+static ScnOpResult scenarioCheckBotConfigKeys(const char *brainPath,
+                                              const char *modeKey,
+                                              const char *levelKey) {
+    uint8_t mode  = 0;
+    uint8_t level = 0;
+
+    if ((modeKey == NULL || modeKey[0] == '\0') &&
+        (levelKey == NULL || levelKey[0] == '\0')) {
+        return SCN_OP_OK;
+    }
+    switch (serverSimResolveBotConfigKeys(brainPath, modeKey, levelKey,
+                                          &mode, &level)) {
+        case BOT_CFG_KEYS_OK:
+            return SCN_OP_OK;
+        case BOT_CFG_KEYS_NO_MANIFEST:
+            /* The brain ships no modes.txt, so it has no mode to name and
+               no level either. A path that named a brain and a brain that
+               names no modes are two different problems; the op hears the
+               one it can do something about. */
+            return SCN_OP_NO_SUCH_ITEM;
+        default:
+            return SCN_OP_NO_SUCH_ITEM;
+    }
+}
+
+/* Write what the keys resolve to into the seat's config, and queue the event
+ * that tells every client. Called BEFORE the brain is created, because
+ * botManagerStageInitArg reads botConfigs there to build the brain's
+ * "mode=" / "difficulty=" tokens; the queued publish is re-queued by the
+ * caller once the seat is connected, since the flush drops a bit for a slot
+ * no client has heard of.
+ *
+ * Keys that name nothing leave the config alone and say so in the log. The
+ * op arms refuse those before they get here, so this is the template's path:
+ * a seat is worth more than a key, and -validate is where an author is told. */
+static void scenarioApplyBotConfigKeys(ServerSim *sim, BYTE slot,
+                                       const char *brainPath,
+                                       const char *modeKey,
+                                       const char *levelKey) {
+    uint8_t mode;
+    uint8_t level;
+
+    if (slot >= MAX_TANKS) return;
+    if ((modeKey == NULL || modeKey[0] == '\0') &&
+        (levelKey == NULL || levelKey[0] == '\0')) {
+        return;
+    }
+    mode  = sim->botConfigs[slot].mode;
+    level = sim->botConfigs[slot].difficulty;
+    if (serverSimResolveBotConfigKeys(brainPath, modeKey, levelKey,
+                                      &mode, &level) != BOT_CFG_KEYS_OK) {
+        WB_LOG_WARN(WB_LOG_CAT_SIM,
+                    "scenario: seat %d asked for mode '%s' difficulty '%s', "
+                    "which brain '%s' does not list; the seat keeps what the "
+                    "lobby gave it",
+                    (int)slot, (modeKey != NULL) ? modeKey : "",
+                    (levelKey != NULL) ? levelKey : "",
+                    (brainPath != NULL) ? brainPath : "");
+        return;
+    }
+    serverSimSetBotConfigQuiet(sim, slot, mode, level);
+}
+
 /* The seat a spawn takes. 0xFF asks for the first free one, which is
  * chosen as the spawn lands and not as it is queued: ten spawns asked for
  * in one tick would otherwise every one of them name the same seat. */
@@ -1797,6 +1871,18 @@ static bool scenarioSeatOne(ServerSim *sim, const ScnLobbyTeam *team) {
         return false;
     }
 
+    /* The mode and the difficulty the template named, in the seat's config
+       before anything is built with it. A held seat takes them here too: it
+       loads no brain yet, but the spawn that fields it later reads the pair
+       off this config, and the lobby row shows it from the moment the seat
+       appears. */
+    {
+        const char *cfgBrain = (team->brain[0] != '\0')
+                             ? team->brain : serverSimGetBotBrainPath(sim);
+        scenarioApplyBotConfigKeys(sim, (BYTE)slot, cfgBrain,
+                                   team->mode, team->difficulty);
+    }
+
     if (!team->fielded) {
         if (!serverSimAddUnfieldedSeat(sim, (BYTE)slot, name, team->id)) {
             return false;
@@ -1824,6 +1910,13 @@ static bool scenarioSeatOne(ServerSim *sim, const ScnLobbyTeam *team) {
     SDL_strlcpy(sim->seatBrain[slot], team->brain,
                 sizeof(sim->seatBrain[slot]));
     sim->seatInit[slot] = team->init;
+    /* Now the seat is connected, ask for the bot-config event again: the
+       flush drops a queued bit for a slot no client has heard of, and the
+       write above happened before the seat existed. Queued whether or not
+       the template named a mode, because a seat NOBODY publishes for leaves
+       every client showing the zero its table was created with — which is
+       Easy, whatever the server actually holds. */
+    serverSimQueueBotConfigPublish(sim, (BYTE)slot);
     if (team->id > 0 && team->id < MAX_TANKS && !sim->teams[team->id].in_use) {
         sim->teams[team->id].in_use = 1;
         if (sim->teams[team->id].name[0] == '\0') {
@@ -1882,6 +1975,27 @@ void serverSimScenarioReconcileLobby(ServerSim *sim) {
         if (team->id == 0 || team->id >= MAX_TANKS) continue;
         if (team->maxBots == 0) continue;
         scenarioTrimTeamTo(sim, team->id, team->maxBots);
+    }
+
+    /* And the template's mode and difficulty over every seat it still holds.
+       The host's dropdown stays usable during a lobby — a round is where the
+       script's word is restored, which is the same rule bots and maxBots
+       follow just above: what a host did inside one lobby stands, and the
+       template describes the lobby each round opens with. */
+    for (t = 0; t < sim->scenarioLobby.numTeams; t++) {
+        const ScnLobbyTeam *team = &sim->scenarioLobby.teams[t];
+        if (team->id == 0 || team->id >= MAX_TANKS) continue;
+        if (team->mode[0] == '\0' && team->difficulty[0] == '\0') continue;
+        for (i = 0; i < MAX_TANKS; i++) {
+            const char *cfgBrain;
+            if (!scenarioSeatIsTemplates(sim, i)) continue;
+            if (sim->lobbyPlayers[i].teamNumber != team->id) continue;
+            cfgBrain = (sim->seatBrain[i][0] != '\0')
+                     ? sim->seatBrain[i] : serverSimGetBotBrainPath(sim);
+            scenarioApplyBotConfigKeys(sim, i, cfgBrain,
+                                       team->mode, team->difficulty);
+            serverSimQueueBotConfigPublish(sim, i);
+        }
     }
 }
 
@@ -2084,6 +2198,9 @@ static ScnOpResult scenarioOpRosterSpawnBot(ServerSim *sim,
     if (r != SCN_OP_OK) return r;
     r = scenarioBrainPath(sim, p->brain, slot, &brain);
     if (r != SCN_OP_OK) return r;
+    /* The mode and the level keys, against the brain this spawn will run. */
+    r = scenarioCheckBotConfigKeys(brain, p->mode, p->difficulty);
+    if (r != SCN_OP_OK) return r;
 
     memset(&entry, 0, sizeof(entry));
     entry.kind  = SCN_ROSTER_SPAWN;
@@ -2215,11 +2332,16 @@ static ScnOpResult scenarioOpLobbyAddBot(ServerSim *sim,
     r = scenarioBotName(p->name, 0, name, sizeof(name));
     if (r != SCN_OP_OK) return r;
     /* A seat held without a bot in it loads no brain, so there is no path to
-       resolve here: the spawn that fields the seat brings one. */
-    if (p->fielded) {
+       resolve here: the spawn that fields the seat brings one. A mode or a
+       difficulty names a key of one brain's modes.txt, though, so an add that
+       asks for either has to resolve the path whether it fields or not —
+       there is nothing else to ask what the key means. */
+    if (p->fielded || p->mode[0] != '\0' || p->difficulty[0] != '\0') {
         /* No seat yet, so no seat brain to prefer — the op's or the
            server's. */
         r = scenarioBrainPath(sim, p->brain, SCN_NONE, &brain);
+        if (r != SCN_OP_OK) return r;
+        r = scenarioCheckBotConfigKeys(brain, p->mode, p->difficulty);
         if (r != SCN_OP_OK) return r;
     }
     /* The seat the op names, or the first free one, by the rule the spawn
@@ -2229,6 +2351,11 @@ static ScnOpResult scenarioOpLobbyAddBot(ServerSim *sim,
     /* Again with the seat, because an op that named no name is given the
        lobby's default for the one it got. */
     (void)scenarioBotName(p->name, slot, name, sizeof(name));
+
+    /* Into the seat's config before the brain is built with it, as the
+       template's seating does. The keys were checked above, so this only
+       writes. */
+    scenarioApplyBotConfigKeys(sim, slot, brain, p->mode, p->difficulty);
 
     if (!p->fielded) {
         if (!serverSimAddUnfieldedSeat(sim, slot, name, p->team)) {
@@ -2247,6 +2374,7 @@ static ScnOpResult scenarioOpLobbyAddBot(ServerSim *sim,
         /* The path named a file and the file would not load as a brain. */
         return SCN_OP_NOT_FOUND;
     }
+    serverSimQueueBotConfigPublish(sim, slot);
     serverSimPublishLobbyBotBrain(sim, slot);
     lobbyAutoUnreadyOnChange(sim);
     if (out != NULL) {
@@ -2325,6 +2453,12 @@ static void scenarioRosterSpawnNow(ServerSim *sim,
     if (p->loadout != 0) {
         sim->sim.scenarioSpawnLoadout[slot] = p->loadout;
     }
+    /* The mode and the difficulty this spawn named, into the seat's config
+       before the brain is built: that is where botManagerStageInitArg reads
+       the pair it turns into the brain's mode= / difficulty= tokens. Asked
+       again here rather than trusted from the accept, like every other
+       question this drain re-asks — the brain may have changed since. */
+    scenarioApplyBotConfigKeys(sim, slot, brain, p->mode, p->difficulty);
     if (!scenarioAddBotInSeat(sim, slot, brain, name, p->team, &p->init)) {
         sim->sim.scenarioStartIdx[slot] = MAX_STARTS;
         sim->sim.scenarioSpawnLoadout[slot] = 0;

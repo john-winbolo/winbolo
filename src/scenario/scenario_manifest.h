@@ -53,6 +53,12 @@ typedef struct {
  * for, max_bots the ceiling a host may raise it to, fielded whether those
  * seats start with a tank or sit as roster entries.
  *
+ * mode and difficulty are the brain mode this team's bots play in and the
+ * level inside it, by the keys the brain's own modes.txt lists. "" for
+ * either leaves that one as the lobby would have had it. A key the brain
+ * does not list is refused: the validator names it, and the seating leaves
+ * the seat's config alone and says so in the server log.
+ *
  * init is the table the team's bots are built with, read once when a VM is
  * built, empty for none. initBadKey names the pair the read of it stopped on
  * and is "" when the whole table was taken: the pairs read before a bad one
@@ -65,6 +71,8 @@ typedef struct {
     bool     fielded;
     char     brain[SCN_BRAIN_LEN];   /* a path or "package:NAME"; "" = the
                                       * server's own */
+    char     mode[SCN_BOT_KEY_LEN];        /* "" = leave the lobby's */
+    char     difficulty[SCN_BOT_KEY_LEN];  /* "" = leave the lobby's */
     ScnTable init;
     char     initBadKey[SCN_TABLE_KEY_LEN];
 } ScnManifestTeam;

@@ -78,7 +78,14 @@ scenario = {
     teams = {
       { id = 1, bots = 0,  max_bots = 6 },
       { id = 2, bots = 10, max_bots = 10, fielded = false,
-        brain = "brains/GoalHunter_1.7/init.lua" },
+        brain = "brains/GoalHunter_1.7/init.lua",
+        -- The horde's mode and difficulty, named here as well as on every
+        -- wave spawn below. This is the half the LOBBY reads: without it a
+        -- held seat carries whatever the lobby happened to give it, every
+        -- client's row says Easy because nothing ever told it otherwise, and
+        -- the row wears no mode tag. Team 1 is left alone on purpose — the
+        -- defenders keep what the host picks.
+        mode = "survival", difficulty = "hard" },
     },
   },
 }
@@ -198,6 +205,14 @@ local SUICIDER_WAVES = {}
 -- everything else. Every wave bot is fielded by spawn_bot, so every one of
 -- them gets them. The defenders are not named here on purpose: their mode
 -- and their difficulty stay exactly as the lobby chose.
+--
+-- The SAME PAIR is on the team template above, which is what the lobby and
+-- the seat's config read. The two agree on purpose and neither is redundant:
+-- the template is what a lobby row shows and what the C side turns into the
+-- brain's mode= / difficulty= tokens, and these are what the init table
+-- carries to a bot the script spawns into a seat the template never held.
+-- Both land in the same BRAIN_INIT_ARG string and the brain takes the last
+-- write, so two identical values are one value applied twice.
 local WAVE_MODE       = "survival"
 local WAVE_DIFFICULTY = "hard"
 
