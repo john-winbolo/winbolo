@@ -43,8 +43,10 @@
 --   order away before it is ever sent, so the listener must not answer.
 --
 -- The answer is read off the chat ack a bot says when it TAKES an order:
--- a "take_cover" line from the listener is the order being obeyed, and it
--- is the only line in this round that can carry those words.
+-- a "goto" line from the listener is the order being obeyed, and it is the
+-- only line in this round that can carry that word.  (It said "take_cover"
+-- until Sep 15, when a place order stopped being a take_cover pinned to the
+-- square and became goto_tile, a hard lock outside the goal pools.)
 
 scenario = {
   name        = "ROOST three_shots_go_there",
@@ -237,13 +239,13 @@ function on_start()
   end
 end
 
--- A bot says one line when it TAKES an order, and "take_cover" is the goal
--- a "go there and hold" order runs. No other line in this round carries
--- those words, so this is the order being obeyed and nothing else.
+-- A bot says one line when it TAKES an order, and "goto" is the goal a "go
+-- there and hold" order runs. No other line in this round carries that word,
+-- so this is the order being obeyed and nothing else.
 function on_chat(p, text, scripted)
   if scripted or done or text:sub(1, 1) == "/" then return end
   if p ~= LISTENER or ack_at then return end
-  if text:find("take_cover", 1, true) then
+  if text:find("goto", 1, true) then
     ack_at = now
     game.log(string.format("three_shots_go_there: %s ack at %d (+%d)",
                            phase, now, now - (fired_at or now)))

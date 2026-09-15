@@ -15530,18 +15530,20 @@ function M.order_goal(state, world, info, ord)
       end
     end
     return nil   -- cannot see him; the order waits (the timer keeps running)
-  elseif k == "take_cover" then
-    -- "GO THERE AND HOLD" (a bot ping on open ground). REUSED MECHANISM:
-    -- take_cover with the PINGED tile substituted for find_cover_tile's pick.
-    -- take_cover already means "drive to this tile and stop there" and it
-    -- already has the ordered-retreat margin waiver, so nothing new is
-    -- needed. tkind "here" carries the tile on the order itself because
-    -- there is no pill or base to look it up from.
-    if ord.tkind == "here" and ord.mx then
-      return { kind = "take_cover", mx = ord.mx, my = ord.my,
+  elseif k == "goto_tile" then
+    -- "GO THERE AND HOLD". In normal play this never reaches the pool: the
+    -- order sets a command_goal and pick_goal answers that before goal
+    -- selection runs. It is here so the injected ORDER row still has a goal
+    -- to show if the lock is ever off while the slot is live.
+    if ord.mx then
+      return { kind = "goto_tile", mx = ord.mx, my = ord.my,
                wx = U.m2w(ord.mx), wy = U.m2w(ord.my), target_id = ord.tid or -1,
-               _tc_trigger = "order_here", _tc_margin = 0, _ordered = true }
+               _ordered = true }
     end
+    return nil
+  elseif k == "take_cover" then
+    -- A RETREAT. find_cover_tile picks the square; the ordered-retreat margin
+    -- waiver (see the take_cover pool) is what makes it bid at all.
     local tmx = bit.rshift(info.tankx, 8)
     local tmy = bit.rshift(info.tanky, 8)
     local _, best = M.find_cover_tile(state, world, info, tmx, tmy)
@@ -17706,13 +17708,27 @@ function M.pick_goal(state, world, info, quiet)
       -- Done when pill is dead or friendly
       local p = world.pills[cg.id]
       arrived = (not p) or (p.owner == "friendly") or (p.health == 0)
+    elseif cg.kind == "goto_tile" then
+      -- A PLACE ORDER ("go there and hold", from a ping on open ground or the
+      -- three-shot line).  ARRIVING DOES NOT END IT.  The job is to be on that
+      -- square, so the goal stands until the ORDER slot ends (expiry, cancel,
+      -- a steal, a newer order, a stuck give-up); orders.goto_lock clears the
+      -- command goal on that tick and this test then lets it go.  Clearing on
+      -- arrival instead would hand every other think back to the goal pools —
+      -- the lock is re-asserted each think — and the bot would drift off.
+      arrived = (state._order == nil) or (state._order.kind ~= "goto_tile")
     else
       arrived = U.mdist(tmx, tmy, cg.mx, cg.my) <= 1
     end
 
     if arrived then
-      state.command_reply = string.format(C.BRAIN_NAME .. ": arrived at %s #%d (%d,%d)",
-        cg.kind, cg.id, cg.mx, cg.my)
+      -- A place order says nothing here.  It is given by hand, the bot already
+      -- said "on my way" and put a marker on the square, and Andrew asked for
+      -- less chatter (Sep 15) — so the end of one is silent.
+      if cg.kind ~= "goto_tile" then
+        state.command_reply = string.format(C.BRAIN_NAME .. ": arrived at %s #%d (%d,%d)",
+          cg.kind, cg.id, cg.mx, cg.my)
+      end
       state.command_goal = nil
       -- Fall through to exploration (if enabled)
     else

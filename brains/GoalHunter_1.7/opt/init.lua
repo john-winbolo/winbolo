@@ -3626,6 +3626,11 @@ function Brain.think(info)
     -- kill_me_wait parks for the same reason: standing still on an advertised
     -- tile IS the goal, so the stuck detector must not read it as wedged.
     or state.goal.kind == "kill_me_wait"
+    -- goto_tile is a place order ("go there and hold"). Once the tank is on
+    -- the square it stands there until the order ends, so the hold must not
+    -- read as a wedge either.
+    or (state.goal.kind == "goto_tile"
+        and U.mdist(cur_mx, cur_my, state.goal.mx or -99, state.goal.my or -99) <= 1)
   local attack_at_standoff = intentionally_stationary
 
   -- Long-term desperation: track total ticks at the same tile.
@@ -3789,7 +3794,14 @@ function Brain.think(info)
             C.BRAIN_NAME .. ": STUCK trying to reach %s #%d at (%d,%d) -- giving up",
             state.command_goal.kind, state.command_goal.id,
             state.command_goal.mx, state.command_goal.my)
+          local was_goto = (state.command_goal.kind == "goto_tile")
           state.command_goal = nil
+          -- A PLACE ORDER that cannot be reached is OVER. The command goal is
+          -- re-asserted from the order slot every think, so dropping the goal
+          -- alone would put it straight back and the bot would grind here for
+          -- the whole 60 s. The give-up line above is said once; the release
+          -- is quiet so there is no second line.
+          if was_goto then ORD.release_held(state, info, nil, true) end
         end
         attack.clear_attack_goal(state, "stuck (nav)")
       end

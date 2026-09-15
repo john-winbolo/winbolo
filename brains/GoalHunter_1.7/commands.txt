@@ -160,6 +160,13 @@ The bot with the cheapest route drives there and holds, out of the bots that
 were on your screen when the order went out. A bot further away than that
 does not hear you.
 
+A place order is a hard one. The bot drops what it was doing, drives to the
+square and stands on it. It picks no goals of its own on the way or after it
+arrives -- no pills, no bases, no cover -- until the order runs out (60
+seconds), you cancel it with a caution ping or "cancel", or you give it
+something else to do. It still shoots an enemy tank that drives into its
+sights. A ping on open ground does the same thing as the three shells.
+
 Forest does not count, and a shell that stops on a wall, a building, a
 pillbox, a base or a tank does not count. If no bot is in range, nothing
 happens and no bot speaks.
@@ -202,8 +209,13 @@ WHAT THE BOTS SAY
 
   Got it! attack_pill #5        one bot took it. The wording changes with the
                                 bot's name theme.
-  Got it! take_cover            a retreat, or a "go there and hold", has no
-                                number to say: just the word.
+  Got it! take_cover            a retreat has no number to say: just the word.
+  Got it! goto                  a "go there and hold" (a ping on open ground,
+                                or three shells on one square). The bot drives
+                                to that square and stands on it until the
+                                order runs out or you cancel it. It picks no
+                                goals of its own while it is going: that is
+                                what the order means.
   3 on pill #5                  a group order, said once by one bot.
   Still on it. attack_pill #5   you asked for something it already holds.
   Leaving attack_pill #5 for capture_pill #7

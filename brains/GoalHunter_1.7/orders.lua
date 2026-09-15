@@ -514,15 +514,18 @@ function M.goal_kind(cmd, world, info)
   local t = cmd.target
   local v = cmd.verb
   if v == "retreat" then return "take_cover", false, nil end
-  -- "GO THERE AND HOLD" (a bot ping on open ground).  REUSED MECHANISM:
-  -- take_cover, with the pinged tile substituted for find_cover_tile's pick.
-  -- take_cover already means "drive to this tile and stop there", it already
-  -- has a margin waiver for an ordered retreat, and it is the only existing
-  -- goal that holds a position without owning a pill or a base.  The tile is
-  -- packed into the target id as mx * 256 + my so one number identifies it on
-  -- the wire and in the order id.
+  -- "GO THERE AND HOLD" (a bot ping on open ground, or the three-shot line).
+  -- IT RUNS AS goto_tile, WHICH IS A HARD LOCK — the old `!pill:N` / `!base:N`
+  -- behaviour: "don't do anything, just go there".  It used to be a take_cover
+  -- pinned to the square, which left it bidding inside the goal pools with
+  -- every reactive goal still competing, and bots drifted off the spot or
+  -- never reached it.  Andrew, Sep 15: a place order is an instruction, not a
+  -- suggestion, so it is a command_goal (see the goto_lock below) and goal
+  -- selection does not run at all while it stands.  The tile is packed into
+  -- the target id as mx * 256 + my so one number identifies it on the wire and
+  -- in the order id; the order itself also carries mx / my.
   if v == "goto" then
-    if t and t.kind == "here" then return "take_cover", false, t.id end
+    if t and t.kind == "here" then return "goto_tile", false, t.id end
     return nil, false, nil, "didn't understand"
   end
   if v == "cancel" then return nil, false, nil end
@@ -786,13 +789,16 @@ end
 
 -- HOW A GOAL IS NAMED IN A SPOKEN LINE.
 -- Every other order points at a numbered thing, so "attack_pill #5" reads
--- straight.  A TILE order does not: take_cover covers both `retreat` (no
--- target at all) and "go there and hold" (whose target id is the SQUARE,
--- packed as mx * 256 + my), so the same format said "take_cover #30325",
--- a number that means nothing to the human who typed the line.  Andrew,
--- Sep 14: say just the word.  Used by every line that prints the goal.
+-- straight.  A TILE order does not: `retreat` has no target at all, and "go
+-- there and hold" has the SQUARE for a target id (packed as mx * 256 + my),
+-- so the same format said "take_cover #30325", a number that means nothing to
+-- the human who typed the line.  Andrew, Sep 14: say just the word.  Used by
+-- every line that prints the goal.
+-- The word for a place order is "goto": that is what it does, and it stopped
+-- being take_cover when it became a hard lock (Sep 15).
 local function goal_label(kind, tid)
   if kind == "take_cover" then return "take_cover" end
+  if kind == "goto_tile"  then return "goto" end
   return string.format("%s #%s", tostring(kind), tostring(tid or ""))
 end
 M.goal_label = goal_label
@@ -802,6 +808,7 @@ M.goal_label = goal_label
 -- has no class either, so it falls back to the same bare word.
 local function group_label(kind, tkind, tid)
   if kind == "take_cover" then return "take_cover" end
+  if kind == "goto_tile"  then return "goto" end
   return string.format("%s #%s", tkind or "pill", tostring(tid or ""))
 end
 M.group_label = group_label
@@ -866,12 +873,62 @@ end
 -- CLAIM / RELEASE
 -- =========================================================================
 
+-- =========================================================================
+-- THE GO-THERE LOCK.
+--
+-- A place order ("go there and hold") is the one order that runs OUTSIDE the
+-- goal pools.  It is a command_goal — the same slot the old operator lines
+-- `!pill:N` and `!base:N` used — and goals.pick_goal answers a command_goal
+-- BEFORE goal selection runs, so while the order stands the bot does nothing
+-- but drive to the square and stand on it.  That is deliberate: Andrew, Sep
+-- 15, "don't do anything, just go there".  The steering layer still shoots an
+-- enemy tank that drives into its sights, because that is not a goal.
+--
+-- Called from three places, and it is the ONLY writer of a goto_tile command
+-- goal: when the order is taken, once every think from M.update, and from
+-- release_held when the slot empties.  Re-asserting every think is what makes
+-- the HOLD work: goals.pick_goal clears a command_goal when the tank arrives,
+-- and without this the bot would hand the tick back to the pools and wander.
+-- The slot ending (expiry, cancel, a steal, a newer order) is what clears it.
+-- BOTH SLOTS, the way the old operator commands did it.  A command goal
+-- SUPPRESSES the replan timer (init.lua: "not state.command_goal and
+-- timer_fire"), so pick_goal is not called again while the lock is on and
+-- setting state.command_goal alone would leave the bot driving to whatever
+-- goal it happened to hold when the order arrived.  commands.lua always wrote
+-- state.goal at the same time for exactly this reason; so does this.
+local function goto_lock(state)
+  local h = state.orders and state.orders.held
+  if h and h.kind == "goto_tile" and h.mx and h.my then
+    local cg, g = state.command_goal, state.goal
+    local cg_ok = cg and cg.kind == "goto_tile" and cg.mx == h.mx and cg.my == h.my
+    local g_ok  = g  and g.kind  == "goto_tile" and g.mx  == h.mx and g.my  == h.my
+    if cg_ok and g_ok then return end
+    state.command_goal = { kind = "goto_tile", id = 0,
+                           mx = h.mx, my = h.my,
+                           wx = U.m2w(h.mx), wy = U.m2w(h.my) }
+    state.goal = { kind = "goto_tile", mx = h.mx, my = h.my,
+                   wx = U.m2w(h.mx), wy = U.m2w(h.my) }
+    if state.pf then
+      state.pf.status = "idle"
+      state.pf_fail_logged = false
+    end
+    state.stuck_for = 0
+    print2(string.format("ORDER_GOTO_LOCK t=%d oid=%d tile=(%d,%d)",
+           state.tick or 0, h.oid or 0, h.mx, h.my))
+  elseif state.command_goal and state.command_goal.kind == "goto_tile" then
+    state.command_goal = nil
+    print2(string.format("ORDER_GOTO_UNLOCK t=%d", state.tick or 0))
+  end
+end
+M.goto_lock = goto_lock
+
 local function release_held(state, info, why, quiet)
   local o = S(state)
   local h = o.held
   if not h then return end
   o.held = nil
   state._order = nil
+  goto_lock(state)                      -- the hard lock goes with the order
   tx(state, string.format("/info obr %d", h.oid))
   if not quiet then
     say(state, why or "Released")
@@ -909,6 +966,8 @@ local function take_order(state, world, info, spec, cost, now, group, stolen)
     cost = cost or 0,
   }
   state._order = o.held
+  -- A place order takes hold on the tick it is taken, not on the next think.
+  goto_lock(state)
   local ic = math.floor(math.min(cost or 0, 999999))
   tx(state, string.format("/info obc %d %d", spec.oid, ic))
   o.gclaims[spec.oid] = o.gclaims[spec.oid] or {}
@@ -1941,9 +2000,11 @@ function M.update(state, world, info, now)
         done, why = true, string.format("Lost %s", player_name(info, h.tid))
       end
     end
-    -- defend_pill and take_cover (a retreat, and "go there and hold") are NOT
-    -- in this list on purpose.  Holding the spot IS the job, so they run to
-    -- the timer the way they always did.
+    -- defend_pill, take_cover (a retreat) and goto_tile ("go there and hold")
+    -- are NOT in this list on purpose.  Holding the spot IS the job, so they
+    -- run to the timer the way they always did.  goto_tile in particular must
+    -- not end on arrival: arriving is the START of the hold, not the end of
+    -- the order.
     if done then
       say(state, why)
       release_held(state, info, nil, true)
@@ -2005,6 +2066,12 @@ function M.update(state, world, info, now)
   state._order          = o.held
   state._focus          = o.focus
   state._repo_override  = o.repo_on
+
+  -- 7. THE GO-THERE LOCK, re-asserted every think.  This runs before goal
+  --    selection (init.lua calls ORD.update first), so a command goal cleared
+  --    by arrival last think is back before pick_goal looks at it, and the bot
+  --    stays on the square instead of handing the tick to the pools.
+  goto_lock(state)
 end
 
 -- One line for the goal panel / debug_info.
@@ -2012,6 +2079,15 @@ function M.panel_line(state, info)
   local h = state.orders and state.orders.held
   if not h then return "" end
   local left = math.max(0, (h.expiry or 0) - (state.tick or 0))
+  -- A PLACE ORDER IS A HARD LOCK, and the panel has to say so.  It runs as a
+  -- command goal, which pick_goal answers before goal selection, so the goal
+  -- POOLS are never evaluated while it stands and the pool panel sits empty.
+  -- Without this line that empty panel looks like a broken brain; with it the
+  -- reason is on screen, next to the square and the time left.
+  if h.kind == "goto_tile" then
+    return string.format(" ORDER goto (%d,%d) from %s, %d s left, hard",
+      h.mx or -1, h.my or -1, h.sender_name or "?", math.floor(left / 50))
+  end
   return string.format(" ORDER %s#%s from %s %ds left",
     h.kind, tostring(h.tid or "-"), h.sender_name or "?", math.floor(left / 50))
 end

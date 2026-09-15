@@ -966,22 +966,29 @@ ORD.update(st, w, inf, 500)
 check("a retreat runs to the timer", st.orders.held ~= nil, "released")
 
 -- =========================================================================
--- THE ACK FOR A TILE ORDER.  retreat and "go there and hold" both run as
--- take_cover, whose target id is the packed square (mx * 256 + my).  Printing
--- it said "take_cover #30325", a number that means nothing to the human who
--- typed the line.  Andrew, Sep 14: say just the word.
+-- THE ACK FOR A TILE ORDER.  `retreat` runs as take_cover and "go there and
+-- hold" as goto_tile, whose target id is the packed square (mx * 256 + my).
+-- Printing it said "take_cover #30325", a number that means nothing to the
+-- human who typed the line.  Andrew, Sep 14: say just the word.  Sep 15: the
+-- word for a place order is "goto", because that is now what it runs.
 -- =========================================================================
-print("orders.lua -- the take_cover ack carries no number")
+print("orders.lua -- the tile-order ack carries no number")
 
-check("goal_label: a tile order is the bare word",
+check("goal_label: a retreat is the bare word",
       ORD.goal_label("take_cover", 100 * 256 + 99) == "take_cover",
       ORD.goal_label("take_cover", 100 * 256 + 99))
+check("goal_label: a place order says goto",
+      ORD.goal_label("goto_tile", 100 * 256 + 99) == "goto",
+      ORD.goal_label("goto_tile", 100 * 256 + 99))
 check("goal_label: everything else keeps its number",
       ORD.goal_label("attack_pill", 5) == "attack_pill #5",
       ORD.goal_label("attack_pill", 5))
-check("group_label: a tile order is the bare word",
+check("group_label: a retreat is the bare word",
       ORD.group_label("take_cover", "here", 100 * 256 + 99) == "take_cover",
       ORD.group_label("take_cover", "here", 100 * 256 + 99))
+check("group_label: a place order says goto",
+      ORD.group_label("goto_tile", "here", 100 * 256 + 99) == "goto",
+      ORD.group_label("goto_tile", "here", 100 * 256 + 99))
 check("group_label: everything else names the target class",
       ORD.group_label("attack_pill", "pill", 5) == "pill #5",
       ORD.group_label("attack_pill", "pill", 5))
@@ -1000,19 +1007,93 @@ st, w, inf = ST(), W(), I({ allies = 0 })
 ORD.on_chat(st, w, inf, 0, "!goto 15 15", 100, true, false)
 ORD.update(st, w, inf, 101)
 check("setup: the go-there order is held",
-      (st.orders.held or {}).kind == "take_cover",
+      (st.orders.held or {}).kind == "goto_tile",
       tostring((st.orders.held or {}).kind))
 check("a go-there order acks with the bare word",
       st.orders.say[1] ~= nil
-      and st.orders.say[1]:sub(-#" take_cover") == " take_cover"
+      and st.orders.say[1]:sub(-#" goto") == " goto"
       and st.orders.say[1]:find("#", 1, true) == nil,
       tostring(st.orders.say[1]))
 st.orders.say = {}
 ORD.on_chat(st, w, inf, 0, "!goto 15 15", 100 + C.ORDER_REPEAT_ACK_TICKS,
             true, false)
 check("and the repeat line carries no number either",
-      st.orders.say[1] == "Still on it. take_cover",
+      st.orders.say[1] == "Still on it. goto",
       tostring(st.orders.say[1]))
+
+-- =========================================================================
+-- A PLACE ORDER IS A HARD LOCK.  It runs as a command_goal — the slot the old
+-- `!pill:N` / `!base:N` lines used — so goals.pick_goal answers it before goal
+-- selection runs and the bot does nothing else while it stands.  Andrew, Sep
+-- 15: "don't do anything, just go there".
+-- =========================================================================
+print("orders.lua -- a place order is a command goal")
+
+st, w, inf = ST(), W(), I({ allies = 0 })
+ORD.on_chat(st, w, inf, 0, "!goto 15 15", 100, true, false)
+ORD.update(st, w, inf, 101)            -- the auction settles and the bot takes it
+check("taking a here order sets a goto_tile command goal",
+      st.command_goal ~= nil and st.command_goal.kind == "goto_tile",
+      tostring(st.command_goal and st.command_goal.kind))
+check("the command goal carries the ordered square, in tiles and in world units",
+      st.command_goal.mx == 15 and st.command_goal.my == 15
+      and st.command_goal.wx == 15 * 256 + 128
+      and st.command_goal.wy == 15 * 256 + 128
+      and st.command_goal.id == 0,
+      string.format("(%s,%s) (%s,%s) id=%s",
+        tostring(st.command_goal.mx), tostring(st.command_goal.my),
+        tostring(st.command_goal.wx), tostring(st.command_goal.wy),
+        tostring(st.command_goal.id)))
+
+-- THE HOLD.  Arrival clears the command goal (goals.pick_goal does that for
+-- every command goal); the next think must put it straight back, or the bot
+-- hands the tick to the goal pools and drifts off the square.
+st.command_goal = nil
+ORD.update(st, w, inf, 200)
+check("a cleared command goal is re-asserted while the order stands",
+      st.command_goal ~= nil and st.command_goal.kind == "goto_tile"
+      and st.command_goal.mx == 15,
+      tostring(st.command_goal and st.command_goal.kind))
+
+-- AND THE END OF THE ORDER LETS GO.  The 60 s focus runs out, the slot
+-- empties, and the command goal goes with it.
+ORD.update(st, w, inf, 200 + (C.ORDER_FOCUS_TICKS or 3000))
+check("the order lapses",       st.orders.held == nil, "held")
+check("and the command goal is cleared with it",
+      st.command_goal == nil, tostring(st.command_goal and st.command_goal.kind))
+
+-- A CANCEL does the same, on the tick it is said.
+st, w, inf = ST(), W(), I({ allies = 0 })
+ORD.on_chat(st, w, inf, 0, "!goto 15 15", 100, true, false)
+ORD.update(st, w, inf, 101)
+check("setup: the lock is on", st.command_goal ~= nil, "nil")
+ORD.on_chat(st, w, inf, 0, "cancel", 150, true, false)
+check("cancel drops the order",   st.orders.held == nil, "held")
+check("cancel drops the lock too", st.command_goal == nil,
+      tostring(st.command_goal and st.command_goal.kind))
+
+-- A RETREAT is NOT a place order: it stays a take_cover in the goal pools,
+-- with no command goal, so the bot keeps defending itself.
+st, w, inf = ST(), W(), I({ allies = 0x17 })
+ORD.on_chat(st, w, inf, 0, "socrates retreat", 100, true, false)
+check("a retreat is still take_cover",
+      (st.orders.held or {}).kind == "take_cover",
+      tostring((st.orders.held or {}).kind))
+check("and a retreat sets no command goal", st.command_goal == nil,
+      tostring(st.command_goal and st.command_goal.kind))
+
+-- THE PANEL LINE.  While the lock is on the goal pools are never evaluated,
+-- so the panel has to say why it is empty.
+st, w, inf = ST(), W(), I({ allies = 0 })
+-- (14,13) is inside ORDER_NEARBY_TILES of this bot's tank at (10,10); a
+-- square further off than that is nobody's order and the slot stays empty.
+ORD.on_chat(st, w, inf, 0, "!goto 14 13", 100, true, false)
+ORD.update(st, w, inf, 101)
+st.tick = 600
+check("the panel line names the square, the sender and the lock",
+      ORD.panel_line(st, inf)
+        == " ORDER goto (14,13) from Andrew, 50 s left, hard",
+      ORD.panel_line(st, inf))
 
 print("orders.lua — the pings a bot places itself")
 
@@ -1049,7 +1130,7 @@ st, w, inf = ST(), W(), I({ allies = 0 })
 ORD.on_chat(st, w, inf, 0, "!goto 15 15", 100, true, false)
 ORD.update(st, w, inf, 101)
 check("setup: a go-there order is held",
-      (st.orders.held or {}).kind == "take_cover",
+      (st.orders.held or {}).kind == "goto_tile",
       tostring((st.orders.held or {}).kind))
 out = ORD.out_ping(st, {})
 check("taking an order places an ON MY WAY marker on the target",

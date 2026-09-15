@@ -394,6 +394,13 @@ local function intentionally_stationary(goal, info)
   -- flee_to_base is the same destination semantics (park on a base pad) — the
   -- critical-flee injection swaps refuel_at_base to flee_to_base at low armour,
   -- and both kinds dock via the same steering branch now.
+  -- A PLACE ORDER, once we are on (or beside) the ordered square: parked on
+  -- purpose, for as long as the order runs. Without this the stuck detector
+  -- reads the hold as a wedged tank and gives the order up.
+  if goal.kind == "goto_tile" and info and goal.mx then
+    local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
+    if U.mdist(tmx, tmy, goal.mx, goal.my) <= 1 then return true end
+  end
   if (goal.kind == "refuel_at_base" or goal.kind == "flee_to_base")
      and info and goal.mx then
     local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
@@ -3856,7 +3863,10 @@ local function steer_core(state, world, info, goal)
           -- kill_me_wait: the tile was advertised to the whole team as where
           -- we will be standing, so once we are on it we STAY on it. Same
           -- park as take_cover, for the same reason.
-          or goal.kind == "kill_me_wait")
+          or goal.kind == "kill_me_wait"
+          -- goto_tile: a person pointed at this square and said go there.
+          -- Standing on it IS the order, so park the same way.
+          or goal.kind == "goto_tile")
          and goal.mx == (bit.rshift(info.tankx, 8)) and goal.my == (bit.rshift(info.tanky, 8)) then
     -- ON the wait/cover spot: stand still. For wait_for_lgm, let the LGM
     -- finish whatever he's doing (farming, opportunistic build) before
