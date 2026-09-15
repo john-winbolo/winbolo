@@ -288,12 +288,11 @@ typedef struct {
 
 /* ── recording the run as a replay ───────────────────────────────────────── */
 
-/* Open a .wbv on the harness's own ServerSim. Called AFTER the client has
- * joined and the tank has been parked, because logStart writes the file's
- * header and its opening snapshot straight away: the map (the carved arena),
- * the pillbox, and one record per player slot. Started any earlier the header
- * would name an empty roster and the untouched island, and the viewer would
- * have nothing to put on screen until the first event caught it up.
+/* Open a .wbv on the harness's own ServerSim. Called after the arena is
+ * carved and BEFORE the client joins: logStart writes the header and the
+ * opening snapshot (the carved map and the pillbox) straight away, and the
+ * join is then recorded as a player-joined event, which is what the viewer
+ * needs to draw a tank at all.
  *
  * From here on every running-state server tick writes itself, because
  * serverSimTick already calls logWriteTick; the harness pump is what turns it.
@@ -378,6 +377,12 @@ static int luf_run(const LufConfig *cfg) {
         UT_FAIL("no base-free %dx%d rectangle on the map to build the arena in",
                 LUF_ARENA_W, LUF_ARENA_H);
     }
+    /* Record from here, BEFORE the client joins: the arena is already carved,
+     * so the opening snapshot is the right world, and the join that follows
+     * is written as a player-joined event. Started after the join, the file
+     * held no player record at all and the viewer drew an empty island. The
+     * tank's parking move below arrives as ordinary per-tick deltas. */
+    luf_record_start(&h, cfg, replayPath, sizeof(replayPath));
     if (loopbackHarnessPumpUntil(&h, LUF_CONNECT_MAX, luf_connected, NULL) < 0) {
         LUF_STOP();
         UT_FAIL("client never connected (%s)", cfg->label);
@@ -408,11 +413,6 @@ static int luf_run(const LufConfig *cfg) {
     fprintf(stderr, "  arena: pill at (%u,%u) tank starts at (%u,%u) slot %u\n",
             (unsigned)arena.pillX, (unsigned)arena.pillY,
             (unsigned)arena.tankX, (unsigned)arena.tankY, (unsigned)slot);
-
-    /* Record from here: the client is in, the arena is carved and the tank is
-     * standing where the script wants it, so the opening snapshot describes
-     * the world the move actually happens in. */
-    luf_record_start(&h, cfg, replayPath, sizeof(replayPath));
 
     /* Phase 0 — settle. Hands off the controls while the client syncs to the
      * moved tank and the server's ping measurement catches up with the link. */
