@@ -280,44 +280,38 @@ John's decides whether to honour the press — but the effect a host sees is the
 same, so this is a prelude entry and not a gap. It is listed here because the
 two are not identical and a reviewer should know which was chosen.
 
-### 4. A bot's `init` table never reaches a GoalHunter brain
+### 4. A bot's `init` table — CLOSED, brain-side
 
-**This is the gap that costs the most.** `spawn_bot{ init = { ... } }` is
-accepted, carried through the roster op, and handed to the new brain — as the
-`BRAIN_INIT` global, a table.
+This was the gap that cost the most, and it is fixed. `spawn_bot{ init = {...} }`
+is carried through the roster op and handed to the new brain as the
+`BRAIN_INIT` global, a table; the GoalHunter brains read `BRAIN_INIT_ARG`, a
+string of `k=v;k=v` tokens, and read nothing else. Every token a scenario
+meant for one bot arrived somewhere the brain never looked.
 
-The GoalHunter brains read `BRAIN_INIT_ARG`, a string of `k=v;k=v` tokens.
-They do not read `BRAIN_INIT` anywhere:
+**Closed by `202ea93d`**, in the brain rather than in the host:
+`brains/GoalHunter_1.7/init.lua` flattens the table into that string before
+either parse block runs. Keys sorted so every bot builds the same string from
+the same table; a value of `"1"` becomes the bare flag word the tick-1 parser
+matches (`noblitz`, `suicider`, `noclaimdead`); `"0"` is dropped, which is how
+a flag is switched off; everything else stays `k=v`. A string already in
+`BRAIN_INIT_ARG` — the command-line path — keeps its place and the table's
+tokens follow it.
 
-```
-$ grep -rn "BRAIN_INIT\b" brains/GoalHunter_1.7/
-(nothing — every hit is BRAIN_INIT_ARG)
-```
+Two things about the shape are worth knowing, because they are not obvious
+and the test arenas all hit them. A Lua table has one key named `cfg`, so it
+carries one `cfg=` pin; and a table value is 64 bytes, where a driver's pin
+set runs to three hundred. Both fall to the same observation: the brain
+**splits the flattened string on `;`** and ignores a token it does not
+recognise, so a value that opens with a `;` puts its own `key=` on one side of
+a split, where nothing reads it, and whole tokens on the other.
+`game.init_tokens(...)` in `tests/scenario/scenario_compat.lua` does that
+chunking, so an arena hands a bot its driver's token line unchanged.
 
-So every token a scenario means to hand one bot — Survival's `portfolio`,
-`blitz`, `blitzsuiciders`, `refuel`, `noblitz`, `noclaimdead`, `suicider`,
-`mode` and `difficulty`, and the `preset=` and `cfg=` tokens a dozen of our
-arenas use to run a control against one knob — arrives somewhere the brain
-never looks. The bot runs on its defaults and nothing says so.
-
-The old host did this the other way round: it staged the string with
-`luaBrainsSetNextInitArg` and the brain read it. The machinery for that is
-still here and still used — `servermain.c` does exactly this for `-bot-init`,
-`scnTableFormat` is the function that turns the table back into the string,
-and `botManagerStageInitArg` already starts from whatever was staged before
-appending its own mode tokens.
-
-**Smallest op that closes it:** none — this needs no new op at all. It is a
-few lines where the spawn lands: format the bot's `init` table with
-`scnTableFormat` and `luaBrainsSetNextInitArg` it before the brain is
-created, which is what `servermain.c:2793` already does for the command-line
-path. `botManagerAddBot` has the table in `bot->initTable` and
-`botManagerStageInitArg` runs a few lines later.
-
-**What the port does instead:** nothing. Survival plays with its horde on the
-brain's defaults, and every arena whose measurement depends on a token is
-marked `expect=fail` with this as the reason, so the day the staging lands
-they all turn green together and say so.
+**Still open, and Andrew's to decide:** there is no way to hand a RUNNING bot
+new data. `init` is spawn-time only. The planned op is
+`game.bot_init(p, table)` — update that bot's `BRAIN_INIT` table in its own
+Lua state and call `Brain.on_init(table)` where the brain defines one, with
+GoalHunter re-parsing its tokens on that call.
 
 ### 5. A pill that is hidden rather than removed
 
@@ -334,6 +328,34 @@ thirty and would not depend on slot allocation order.
 **What the port does instead:** the shim, with a `VERDICT` line from any
 sidecar whose slot forcing does not come back with the number it asked for, so
 a drift is a test failure rather than a silent wrong answer.
+
+### 6. Nothing can see a bot think
+
+This is what stops the arenas that stay skipped, and there are a dozen of
+them. The old python drivers read the brain's own printed reasoning — the
+goal pool for a tick with what each candidate was priced at, the builder
+pool's `BP_DISPATCH` and `BP_DENY <reason>` rows, `BLITZ_GO` and
+`BLITZ_CONTESTED`, `HEAT_PILL` / `HEAT_SHOT` / `HEAT_EXIT`, `SEA_RELEASE`,
+`REFUEL_P1`'s chips, `PLACE_PILL_GATE`'s forced flag. None of that reaches a
+scenario, and in most of those arenas the world ends up the same shape
+whichever way the brain decided — which is exactly why the arena was built
+around the reasoning rather than around the outcome.
+
+**Smallest op that would close most of it:** one read that answers a named
+bot's goal pool for the tick it is asked on — each candidate, its goal name
+and its final price. That one reading is what the refuel, place-pin, farm
+sectors, builder pool and blitz arenas all want. It is a read, not a write,
+and it is the brain's own state rather than the sim's, so it would have to be
+fetched from the bot's Lua state the way a bot hint would be pushed into it.
+
+Two smaller ones would close the rest: a `on_pill_placed` that carries the
+goal that ordered the placement (or a `can_build` told whether the order is
+the emergency one), which is all `place_pin_near` wants; and a way to tell
+which of two code paths repaired a pill.
+
+Whether any of this should exist is a real question — a scenario reading a
+brain's mind is a different thing from a scenario arranging a world — and it
+is Andrew's to answer.
 
 ---
 
