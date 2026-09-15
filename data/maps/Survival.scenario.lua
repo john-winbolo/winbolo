@@ -1,0 +1,1315 @@
+-- =========================================================================
+-- Survival — a scripted round on Survival.map.
+--
+-- Up to 6 human defenders hold the centre of a circular island against 5
+-- waves of 10 AI tanks. Humans play under tournament rules (scenario.game
+-- forces it whatever the lobby says); wave bots always come in on the full
+-- open loadout.
+--
+-- The map carries the geometry: 6 centre bases owned by slots 0..5 hugging
+-- the spawn puddle, 6 dead pills just beyond them (the defenders' starting
+-- pills — scoop, place, repair), and 8 horde bases ringing the shore at
+-- r=25 on eight of the ten 36-degree spokes.
+--
+-- The horde's own 10 pillboxes are not in the map file at all. Each is made
+-- (game.add_pill) as its attacker comes ashore and loaded straight into that
+-- tank, so a wave pill is never lying loose for the defenders to drive out
+-- and collect. See drop_pill_for.
+--
+-- One attacker owns the horde's whole estate for a wave: the first one
+-- ashore takes all eight shore bases and every free outer pill and keeps
+-- them until the wave leaves (stamp_wave_owner). Ownership changes hands
+-- once a wave instead of once an arrival. The ocean starts are still
+-- per-spoke, so the attackers come ashore spread evenly around the ring.
+--
+-- Round flow:
+--   * on_setup deals the centre bases and their pills round-robin to the
+--     defenders actually seated in slots 0..5, lays the island's shallow
+--     rim and its tree ring, and digs in every defender bot.
+--   * 30 s of grace to dig in, called out at the start and again with 10 s
+--     left, then wave 1. Every wave opens with the 8 shore bases back in
+--     the horde's hands.
+--   * A wave's attackers arrive one at a time, a second apart, and leave
+--     the same way. Ten brain loads in one tick stops the server long
+--     enough to knock remote players off their own tanks.
+--   * Wave bots respawn like ordinary play. A wave is 5 minutes of
+--     constant pressure, ended only by the clock. Survive all 5 and the
+--     defenders win — that is the only win, because allow_base_win turns
+--     the engine's all-bases sweep off. The only loss is the instant
+--     all-6-inner-bases check in on_tick.
+--
+-- PORTED (2026-09-15) from the old server-side host onto the scenario host
+-- on main. What changed, and why, is in PORT_MAP.md. The four differences
+-- that show in this file:
+--
+--   * The horde is TEN HELD SEATS, not ten lobby bots that have to be
+--     pulled off the field at the round's start. scenario.lobby asks for
+--     them with fielded = false, spawn_bot fields one and remove_bot hands
+--     it back. The whole staggered-removal machinery the old file needed is
+--     gone with it.
+--   * game.tick() counts 100 a second here where the old host counted 50,
+--     so every interval in this file is written in SECONDS and turned into
+--     ticks by secs().
+--   * There is no hide_pill/show_pill. Relocating a pill is game.move_pill,
+--     which is what that pair was standing in for.
+--   * There is no newswire_mute. The announce() policy answers false while
+--     the mute is up, which is the same silence a line at a time.
+--
+-- The API this is written against: docs/SCENARIO_API.md.
+-- =========================================================================
+
+scenario = {
+  name = "Survival",
+  description = "Co-op survival: hold the island's centre through 5 waves "
+    .. "of AI attackers storming in from the outer ring. Hold your bases, "
+    .. "grab the dead pillboxes, fort up in the forest.",
+  api  = 1,
+  game = "tournament",   -- humans farm; wave bots override per spawn below
+
+  -- The lobby, declared rather than built. Six human seats on the
+  -- defenders' team, ten seats HELD for the horde: they sit in the roster
+  -- where a host can see and trim them, they take no tank, and no brain
+  -- loads for one until a wave fields it.
+  --
+  -- max_bots = 10 on team 2 is the horde cap the old file enforced from a
+  -- roster hook. The lobby enforces it now, so there is nothing to undo.
+  lobby = {
+    max_players = 6,
+    teams = {
+      { id = 1, bots = 0,  max_bots = 6 },
+      { id = 2, bots = 10, max_bots = 10, fielded = false,
+        brain = "brains/GoalHunter_1.7/init.lua" },
+    },
+  },
+}
+
+-- ---------------------------------------------------------------------
+-- Clocks.
+--
+-- game.tick() counts 100 a second and the tick handed to on_tick goes up by
+-- 2 each frame. Every interval below is therefore written in seconds and run
+-- through secs(); nothing in this file holds a raw tick count.
+local TICKS_PER_SECOND = 100
+local function secs(s) return math.floor(s * TICKS_PER_SECOND) end
+
+local WAVES     = 5
+local WAVE_TEAM = 2        -- the horde is team 2
+local DEF_TEAM  = 1        -- the defenders are team 1
+
+local GRACE_S      = 30    -- prep before wave 1
+local BREATHER_S   = 30    -- prep between waves
+local WAVE_LIMIT_S = 300   -- 5 min: leftover attackers vanish at this mark
+
+-- Countdown warnings before a wave lands, in seconds-left order. The grace
+-- and the breather are both 30 s, so the 30 s mark would land on the very
+-- tick the countdown starts and is dropped — the "preparation for wave N"
+-- line has just said the same thing. See warn_gap.
+local WAVE_WARN_S = { 30, 10 }
+
+-- Wave bots arrive and leave one at a time, this far apart, instead of all
+-- ten inside a single tick.
+--
+-- Why: spawn_bot loads that bot's brain there and then, and one brain load
+-- takes about 75 ms. Ten in one tick stops the whole server for about three
+-- quarters of a second. The server then runs its catch-up loop, which goes
+-- out to clients as one burst; while that happens the stall-advance path
+-- invents inputs for any player whose real ones have not arrived, and the
+-- real ones then turn up too old to use and are dropped. A player on a slow
+-- link sees his tank freeze and drive itself at every wave. Clearing a wave
+-- is as bad: each removal tears down a brain and a client sim.
+local SPAWN_SPACING_S  = 1
+local VANISH_SPACING_S = 1
+
+-- Newswire mute window around wave churn. A wave arriving or leaving fires
+-- ten join or quit lines in a row and buries everything else, so the
+-- newswire is silenced for the whole of it. The wave WARNING still shows:
+-- game.message is server text and the mute only covers the engine's own
+-- newswire lines.
+local MUTE_LEAD_S = 2      -- silence before the churn
+local MUTE_TAIL_S = 2      -- silence after it
+
+-- ---------------------------------------------------------------------
+-- Map-file layout contracts (tests/generate_survival_map.py):
+local HORDE_BASES  = 8     -- bases 1..8: the horde's shore ring (r=25)
+local CENTER_FIRST = 9     -- bases 9..14 form the human centre, owners 0..5
+local CENTER_PILLS = 6     -- pill k (1..6) pairs centre base CENTER_FIRST-1+k
+local WAVE_PILLS   = 10    -- the ten the wave makes for itself
+
+-- A write may only name a square 21..235 on both axes: the outer twenty are
+-- the sea frame the map is drawn in and the host refuses a write there.
+local WRITE_MIN, WRITE_MAX = 21, 235
+local function writable(x, y)
+  return x >= WRITE_MIN and x <= WRITE_MAX and y >= WRITE_MIN and y <= WRITE_MAX
+end
+
+-- Terrain codes. game.TERRAIN names them, which is what a script should
+-- compare against; these locals are the same values under the names the rest
+-- of this file already used.
+local T_BUILDING     = game.TERRAIN.building
+local T_RIVER        = game.TERRAIN.river
+local T_ROAD         = game.TERRAIN.road
+local T_FOREST       = game.TERRAIN.forest
+local T_HALFBUILDING = game.TERRAIN.half_building
+local T_BOAT         = game.TERRAIN.boat
+local T_DEEP_SEA     = game.TERRAIN.deep_sea
+local T_MINE_START   = game.TERRAIN.mine_swamp   -- 10: the first mined code
+
+-- ---------------------------------------------------------------------
+-- Brain init tokens every wave bot is spawned with. They ride
+-- BRAIN_INIT_ARG and are parsed by brains/GoalHunter_1.7; a brain that does
+-- not know a token ignores it.
+--
+-- The host takes these as a flat table of at most 16 pairs and formats them
+-- back into the `k=v;k=v` string the brain reads, so a token that is a bare
+-- flag is written here as the value "1" — which is what the host's own
+-- parser makes of a bare flag too.
+local WAVE_PORTFOLIO = "0/25/75"  -- back/front/aggressive pill share
+local WAVE_BLITZ_MIN = 2          -- fewest tanks in a blitz, commander counted
+local WAVE_BLITZ_MAX = 4          -- most tanks one blitz accepts
+local WAVE_BLITZ_MIN_BY_WAVE = { [2] = 3, [4] = 3 }
+local WAVE_BLITZ_MIN_SUICIDERS = 1
+local WAVE_BLITZ_MIN_SUICIDERS_BY_WAVE = { [2] = 4, [4] = 4 }
+local WAVE_NOBLITZ = { [3] = true }          -- waves that never blitz
+local WAVE_NOCLAIM = { [1] = true, [2] = true }  -- ignore allies' dead-pill claims
+local WAVE_REFUEL_MULT = 1.2      -- attackers go back for supplies less readily
+local WAVE_REFUEL_MULT_BY_WAVE = { [2] = 100, [4] = 100 }
+
+-- Waves fielded entirely as pill suiciders. Empty on purpose: waves 2 and 4
+-- used to be, and it made those two rounds play as one long pill rush
+-- instead of a fight. The mechanism stays — put a wave number back and it
+-- fires again. Every wave still designates blitzsuiciders inside a blitz.
+local SUICIDER_WAVES = {}
+
+-- The horde's brain mode and difficulty. The old host asked a bot_mode hook
+-- for these; this host has no such hook, so they ride the same init table as
+-- everything else. Every wave bot is fielded by spawn_bot, so every one of
+-- them gets them.
+local WAVE_MODE       = "survival"
+local WAVE_DIFFICULTY = "hard"
+
+local function wave_init(w)
+  local t = {
+    mode        = WAVE_MODE,
+    difficulty  = WAVE_DIFFICULTY,
+    portfolio   = WAVE_PORTFOLIO,
+    blitz       = string.format("%d/%d",
+                    WAVE_BLITZ_MIN_BY_WAVE[w] or WAVE_BLITZ_MIN,
+                    WAVE_BLITZ_MAX),
+    blitzsuiciders = tostring(WAVE_BLITZ_MIN_SUICIDERS_BY_WAVE[w]
+                              or WAVE_BLITZ_MIN_SUICIDERS),
+    refuel      = tostring(WAVE_REFUEL_MULT_BY_WAVE[w] or WAVE_REFUEL_MULT),
+  }
+  if SUICIDER_WAVES[w] then t.suicider    = "1" end
+  if WAVE_NOBLITZ[w]   then t.noblitz     = "1" end
+  if WAVE_NOCLAIM[w]   then t.noclaimdead = "1" end
+  return t
+end
+
+-- Pill seizure: at the start of wave N (N >= 2) the horde seizes up to N of
+-- the defenders' pillboxes, picked at random and loaded into random
+-- attackers, but never leaving the defenders below the floor. A short roster
+-- is not topped up to the floor; the floor only caps what is taken.
+local SEIZE_MIN_LEFT = { [2] = 7, [3] = 6, [4] = 5, [5] = 4 }
+
+-- How far from the attacker a pill drop may look for ground. Three rings is
+-- plenty for a shoreline landing.
+local PILL_DROP_SEARCH = 3
+
+-- ---------------------------------------------------------------------
+-- Round state. Every one of these is set again when the chunk runs, which
+-- is once a round: globals do not survive a round on this host.
+
+local seats       = {}     -- the horde's held seats, in seat order
+local wave        = 0
+local wave_bots   = {}     -- seat -> true for a fielded wave member
+local next_wave_at = nil   -- tick the next wave lands (nil while one is live)
+local warn_gap    = nil    -- ticks the current countdown started with
+local warn_next   = 1      -- next WAVE_WARN_S entry still to say
+local ended       = false
+local wave_ends_at = nil
+local last_min_mark = nil
+local half_min_said = false
+
+-- The staggered arrival queue.
+local spawn_left     = 0
+local spawn_next_at  = nil
+local spawn_pill_next = false
+local pill_for_bot   = nil
+local spawn_index    = 0
+local spawned        = {}  -- seats this wave's spawns actually landed in
+local spawn_fail_said = false
+local wave_bases_restocked = 0
+local wave_pills_made = 0
+
+-- The staggered departure queue.
+local vanishing      = false
+local vanish_queue   = {}
+local vanish_next_at = nil
+local horde_estate   = nil
+
+-- The mute, and the rim the setup could not finish.
+local newswire_muted     = false
+local newswire_unmute_at = nil
+local rim_todo   = {}      -- coast squares still waiting to become river
+local rim_at     = 1
+local RIM_PER_TICK = 120   -- squares a tick, well under the frame's 256
+
+local dealt = false
+
+-- ---------------------------------------------------------------------
+-- Policies.
+
+-- The engine's classic all-bases sweep is off. Taking the horde's shore
+-- bases mid-wave must not end the round early — the win is outlasting all
+-- five waves and nothing else — and the loss is this script's own instant
+-- check on the six inner bases, which is far stricter than a full-map sweep
+-- anyway. The map carries 14 bases, so defenders holding their 6 and taking
+-- the horde's 8 during a breather would otherwise be an accidental win.
+function allow_base_win()
+  return false
+end
+
+-- Survival is strictly two-sided: defenders against the horde. This is the
+-- host's own question where the old file answered a show_add_team_button
+-- one; the effect a host sees is the same.
+function allow_extra_teams()
+  return false
+end
+
+-- The newswire mute, a line at a time. The old host had one switch that
+-- silenced the whole newswire; this host asks before every line, so the
+-- mute is a flag and this is the answer.
+function announce(kind, subject, actor)
+  if newswire_muted then return false end
+  return nil                       -- no opinion: the ordinary rule shows it
+end
+
+local function set_newswire_mute(on)
+  newswire_muted = on
+end
+
+-- Deterministic spawn pinning. Fires for every placement — first spawn and
+-- respawn alike. Map-file start order: 1..6 the centre-puddle defender
+-- starts, 7..16 the outer ocean.
+--
+-- Placement is keyed on the seat's TEAM, not its number: a horde seat can
+-- end up low, and a slot-numbered rule would drop an attacker into the
+-- middle of the human keep. The invariant is that the puddle is
+-- defender-only, and every horde branch below is arithmetic that always
+-- lands in 7..16.
+function on_choose_start(p)
+  local ls = game.lobby_slot(p)
+  local enemy
+  if ls ~= nil and ls.team ~= 0 then
+    enemy = (ls.team == WAVE_TEAM)
+  else
+    enemy = (p >= 6 and p <= 15)   -- no roster info: the slot heuristic
+  end
+  if enemy then
+    if p >= 6 and p <= 15 then
+      -- Each of the ten wave seats owns one ocean start, on its own
+      -- 36-degree spoke. Four of those spokes carry a horde base, so those
+      -- seats come ashore aimed at their own and the rest fight in.
+      return 22 - p
+    end
+    return 7 + (p % 10)
+  end
+  return 1 + (p % 6)               -- defenders: the puddle
+end
+
+-- ---------------------------------------------------------------------
+-- Bases and pills.
+
+-- game.set_base_owner drains a base whenever it moves it between two real
+-- owners — armour, shells and mines all to zero. That is the engine's
+-- capture rule and it does not care that the capture came from a script.
+-- This map re-deals ownership constantly, so every re-deal is followed by a
+-- restock or the round opens on empty bases.
+--
+-- BASE_FULL is past the engine's own 90 on purpose: set_base_stock holds
+-- each value at the real maximum, so "a big number" means "full" without
+-- this file tracking the engine's constant.
+local BASE_FULL = 255
+
+local function restock_quiet(first, last)
+  local n = 0
+  for b = first, last do
+    if game.set_base_stock(b, BASE_FULL, BASE_FULL, BASE_FULL) then
+      n = n + 1
+    end
+  end
+  return n
+end
+
+-- Read one base back rather than quoting BASE_FULL: the line then shows the
+-- engine's real ceiling instead of what we asked for.
+local function restock_report(probe, n, what)
+  local bi = game.base(probe)
+  game.message(string.format("[bases] %s restocked %d bases to %d/%d/%d",
+    what, n, bi and bi.armour or 0, bi and bi.shells or 0,
+    bi and bi.mines or 0))
+end
+
+local function restock(first, last, what)
+  restock_report(first, restock_quiet(first, last), what)
+end
+
+-- Shore-base owners at setup only. Slot 15-i owns the base on spoke i,
+-- which is also the seat whose ocean start sits on that spoke. From the
+-- first wave on, one seat owns the whole estate instead — see
+-- stamp_wave_owner. This survives for deal_center's pre-wave-1 pass, which
+-- needs the map-file owners back after the setup re-deal.
+local HORDE_BASE_SLOT = { 15, 14, 13, 12, 10, 9, 8, 7 }
+
+-- A wave pill this script may still stamp: not carried (it is wherever its
+-- tank is) and not flying defender colours (one the humans captured stays
+-- theirs). NEUTRAL counts as stampable, which is what the "> 5" catches.
+local function pill_stampable(pn)
+  local pi = game.pill(pn)
+  if pi == nil or pi.in_tank then return false end
+  local o = pi.owner
+  return o == nil or o > 5
+end
+
+-- The wave's owner. The first attacker ashore takes the horde's whole estate
+-- for the wave: all eight shore bases and every stampable outer pill, in one
+-- pass, on the tick it lands. Later arrivals stamp nothing.
+--
+-- One owner and one handover, rather than a share re-stamped as each of the
+-- ten files in. It bought nothing a player could see and it cost a handover
+-- an arrival, each of which drains the base. Order matters per base, so the
+-- top-up follows the stamp.
+local function stamp_wave_owner(s)
+  local n = 0
+  for k = 1, HORDE_BASES do
+    game.set_base_owner(k, s)
+    if restock_quiet(k, k) > 0 then n = n + 1 end
+  end
+  -- Bounded by what exists, not by a fixed 7..16: this runs on the first
+  -- attacker's tick, when the rest of the wave's pills are not made yet.
+  -- Each of those is stamped as it is made instead (drop_pill_for).
+  for pn = CENTER_PILLS + 1, game.num_pills() do
+    if pill_stampable(pn) then game.set_pill_owner(pn, s) end
+  end
+  wave_bases_restocked = n
+end
+
+-- Deal the centre bases and their paired pills round-robin to the defenders
+-- actually seated in slots 0..5, human or bot alike, so a host can stack
+-- their own team with bots for testing. False while nobody is seated yet.
+local function deal_center()
+  local defenders = {}
+  for p = 0, 5 do
+    if game.tank(p) ~= nil then defenders[#defenders + 1] = p end
+  end
+  if #defenders == 0 then return false end
+
+  local d = 1
+  for b = CENTER_FIRST, CENTER_FIRST + 5 do
+    local slot  = b - CENTER_FIRST
+    local pill  = b - CENTER_FIRST + 1
+    local owner = slot
+    local present = false
+    for _, p in ipairs(defenders) do
+      if p == slot then present = true end
+    end
+    if not present then
+      owner = defenders[d]
+      d = (d % #defenders) + 1
+    end
+    game.set_base_owner(b, owner)
+    game.set_pill_owner(pill, owner)
+  end
+  -- The deal drains every base it moved between two seated players, so the
+  -- defenders would open on empty bases — no armour to repair with, no
+  -- shells, no mines, on a map whose entire premise is digging in.
+  restock(CENTER_FIRST, CENTER_FIRST + 5, "center")
+
+  -- Deal the horde's eight to the horde now too. The waves re-deal them, but
+  -- until wave 1 lands the map-file owners rule, and the natural owners of
+  -- the low-slot bases are empty seats: red to both sides from tick 1.
+  for k = 1, HORDE_BASES do
+    game.set_base_owner(k, HORDE_BASE_SLOT[k])
+  end
+  restock(1, HORDE_BASES, "horde")
+  return true
+end
+
+-- ---------------------------------------------------------------------
+-- The wave's own pillboxes.
+
+-- Ground a dead pillbox may be dropped on. Water and structures refuse one,
+-- and a mined square is skipped so the drop cannot eat a mine someone laid.
+-- Road is fine, unlike for a tree: a pill standing on paving is normal.
+local function pill_droppable(t)
+  if t == nil or t == T_DEEP_SEA then return false end
+  if t == T_BUILDING or t == T_HALFBUILDING then return false end
+  if t == T_RIVER or t == T_BOAT then return false end
+  if t >= T_MINE_START then return false end
+  return true
+end
+
+-- A square the attacker's pill can sit on: its own first, then the rings
+-- around it, outward. nil when an attacker landed with no ground beside it.
+local function pill_drop_spot(x, y)
+  if writable(x, y) and pill_droppable(game.map_tile(x, y)) then return x, y end
+  for r = 1, PILL_DROP_SEARCH do
+    for dx = -r, r do
+      for dy = -r, r do
+        -- The ring only: the inner squares were covered by a smaller r, so
+        -- nearer ground always wins.
+        if dx == -r or dx == r or dy == -r or dy == r then
+          local nx, ny = x + dx, y + dy
+          if writable(nx, ny) and pill_droppable(game.map_tile(nx, ny)) then
+            return nx, ny
+          end
+        end
+      end
+    end
+  end
+  return nil
+end
+
+-- Make one of the wave's pillboxes and load it into the attacker that has
+-- just come ashore. False when nothing was made, so a caller looping over
+-- the roster knows to stop.
+--
+-- It is made where the attacker landed rather than on any remembered ring
+-- square: the ten ring pills are not in the map file, so there is no square
+-- to go back to, and making it where the attacker actually landed is what
+-- "the pill arrives with the bot" means. It stands on the ground only for
+-- the instant between add_pill and give_pill — both inside one tick, so no
+-- player ever sees it loose.
+--
+-- If give_pill refuses (the tank died between landing and this step) the
+-- pill already exists, so it is left standing and stamped to the wave's
+-- owner: stamp_wave_owner ran on the first attacker's tick and could not see
+-- a pill that did not exist yet, and a neutral pill shoots at everybody.
+local function drop_pill_for(p)
+  if p == nil then return false end
+  if wave_pills_made >= WAVE_PILLS then return false end
+  local t = game.tank(p)
+  if t == nil then return false end
+
+  local x, y = pill_drop_spot(t.mx, t.my)
+  if x == nil then return false end
+
+  local n = game.add_pill(x, y)
+  if not n then return false end
+  wave_pills_made = wave_pills_made + 1
+
+  if game.give_pill(p, n) then return true end
+
+  local owner = spawned[1]
+  if owner ~= nil then game.set_pill_owner(n, owner) end
+  return true
+end
+
+-- A wave pill this script may still move: dead on the ground (the scoopable
+-- state), not carried, and not flying defender colours. A built pill stays
+-- where it stands — it is a manned gun now, whoever's it is.
+local function wave_pill_free(pi)
+  if pi == nil or pi.in_tank then return false end
+  if pi.armour ~= 0 then return false end
+  local o = pi.owner
+  if o ~= nil and o <= 5 then return false end
+  return true
+end
+
+-- One claimable pill per attacker and not a crumb more.
+--
+--   * CLAIM — each attacker, in spawn order, takes the nearest free pill
+--     still on the table. It stays on the ground: the bot's own brain sees a
+--     dead pill under its nose and goes and gets it, which is the emergent
+--     field engineering this map wants.
+--   * DISTRIBUTE — everything left over after every attacker has one is
+--     loaded straight into the tanks, round-robin, off the ground and out of
+--     defender reach.
+--
+-- With more attackers than pills the claim pass runs dry and there is
+-- nothing to distribute.
+local function deal_wave_pills()
+  if #spawned == 0 then return end
+
+  -- Over the pills that actually exist above the centre six, not a fixed
+  -- 7..16: the wave's own are made as its attackers land.
+  local pool = {}
+  for n = CENTER_PILLS + 1, game.num_pills() do
+    local pi = game.pill(n)
+    if wave_pill_free(pi) then
+      pool[#pool + 1] = { n = n, x = pi.x, y = pi.y }
+    end
+  end
+
+  local claimed = 0
+  for _, p in ipairs(spawned) do
+    if #pool == 0 then break end
+    local t = game.tank(p)
+    if t ~= nil then
+      local best, best_d = nil, nil
+      for i, e in ipairs(pool) do
+        local dx, dy = e.x - t.mx, e.y - t.my
+        local d = dx * dx + dy * dy         -- squared: ordering is all we need
+        if best_d == nil or d < best_d then best, best_d = i, d end
+      end
+      table.remove(pool, best)
+      claimed = claimed + 1
+    end
+  end
+
+  local loaded, turn = 0, 0
+  for _, e in ipairs(pool) do
+    local p = spawned[(turn % #spawned) + 1]
+    turn = turn + 1                         -- advance even if the load is
+    if game.give_pill(p, e.n) then          -- refused, so the spread stays even
+      loaded = loaded + 1
+    end
+  end
+
+  game.message(string.format(
+    "[pills] wave %d: %d claimed on ground, %d loaded into tanks",
+    wave, claimed, loaded))
+end
+
+-- The defenders' pills on the map: the pool the seizure draws from. Dead or
+-- built alike — a placed gun is exactly what the horde wants back.
+local function defender_pills()
+  local out = {}
+  for n = 1, game.num_pills() do
+    local pi = game.pill(n)
+    if pi and not pi.in_tank and pi.owner ~= nil and pi.owner <= 5 then
+      out[#out + 1] = n
+    end
+  end
+  return out
+end
+
+-- Once the whole wave is ashore: seize up to `wave` defender pills,
+-- respecting the floor, and load each into a random attacker.
+local function seize_defender_pills()
+  if wave < 2 or #spawned == 0 then return end
+  local pool  = defender_pills()
+  local floor = SEIZE_MIN_LEFT[wave] or 0
+  local take  = math.min(wave, math.max(0, #pool - floor))
+  local seized = 0
+  for _ = 1, take do
+    if #pool == 0 then break end
+    local n = table.remove(pool, math.random(#pool))
+    -- Try attackers in random order until one accepts (a dead tank refuses).
+    local order = {}
+    for i, p in ipairs(spawned) do order[i] = p end
+    for i = #order, 2, -1 do
+      local j = math.random(i); order[i], order[j] = order[j], order[i]
+    end
+    for _, p in ipairs(order) do
+      if game.give_pill(p, n) then seized = seized + 1; break end
+    end
+  end
+  local left = #defender_pills()
+  if seized > 0 then
+    game.message(string.format(
+      "*** The horde seized %d of your pillboxes! You hold %d. ***",
+      seized, left))
+  else
+    game.message(string.format(
+      "*** The horde seized nothing: you hold %d (floor %d). ***",
+      left, floor))
+  end
+end
+
+-- ---------------------------------------------------------------------
+-- The arrival queue.
+
+local function finish_wave_spawn()
+  spawn_next_at = nil
+
+  -- The last attacker has landed: the newswire comes back MUTE_TAIL_S from
+  -- now, lifted at the top of on_tick.
+  newswire_unmute_at = game.tick() + secs(MUTE_TAIL_S)
+
+  restock_report(1, wave_bases_restocked, "horde")
+
+  -- Every attacker carries the pill it brought ashore, so none is lying
+  -- loose. A short roster has fewer attackers than WAVE_PILLS, so the
+  -- remainder are made here, one more to each attacker in turn. Any that
+  -- cannot be placed is simply never made, which is the point: these
+  -- pillboxes exist only where a bot puts them.
+  --
+  -- Round-robin rather than always from the front: there is no carry limit,
+  -- so restarting at spawned[1] every time would pile the whole surplus into
+  -- one tank, which is exactly the loaded-carrier death case.
+  local turn = 0
+  while wave_pills_made < WAVE_PILLS and #spawned > 0 do
+    local placed = false
+    for i = 1, #spawned do
+      local sp = spawned[((turn + i - 1) % #spawned) + 1]
+      if drop_pill_for(sp) then
+        placed = true
+        turn = turn + i
+        break
+      end
+    end
+    if not placed then break end
+  end
+  deal_wave_pills()
+  seize_defender_pills()
+end
+
+-- Bring at most one attacker ashore, no more often than SPAWN_SPACING_S.
+-- The first call for a wave happens on the wave's own tick, so wave 1 starts
+-- on time.
+local function pump_spawn_queue(tick)
+  if spawn_left <= 0 and not spawn_pill_next then return end
+  if spawn_next_at ~= nil and tick < spawn_next_at then return end
+
+  -- A PILL step: the attacker that landed a second ago drops the dead
+  -- pillbox it brought, and the next attacker follows a second after that.
+  -- The wave therefore fields one tank, one pill, one tank, instead of ten
+  -- pills appearing together with nobody there to guard them.
+  if spawn_pill_next then
+    spawn_pill_next = false
+    drop_pill_for(pill_for_bot)
+    pill_for_bot = nil
+    if spawn_left > 0 then
+      spawn_next_at = tick + secs(SPAWN_SPACING_S)
+    else
+      finish_wave_spawn()
+    end
+    return
+  end
+
+  spawn_index = spawn_index + 1
+  spawn_left  = spawn_left - 1
+
+  -- Field one of the horde's HELD seats. The seat carries the name and the
+  -- team it was seated with, so neither is restated; the loadout is forced
+  -- open whatever the round's tournament rules say, and the init table is
+  -- the wave's own brain tokens.
+  local seat = seats[spawn_index]
+  local p
+  if seat ~= nil then
+    p = game.spawn_bot{ slot = seat, start = 22 - seat,
+                        loadout = "open", init = wave_init(wave) }
+  end
+
+  if p then
+    wave_bots[p] = true
+    spawned[#spawned + 1] = p
+    -- The first attacker ashore takes the wave's whole estate and keeps it
+    -- until the wave leaves. Stamped here, once the bot exists — stamping
+    -- ahead of time would leave the bases owned by an empty seat, hostile to
+    -- both sides, for the seconds the arrival takes.
+    if #spawned == 1 then stamp_wave_owner(p) end
+    -- This attacker's pill lands on the next step of the queue, but only
+    -- while there are any left to make. Wave 1 makes all ten, so waves 2..5
+    -- have nothing to bring and field at the plain rhythm.
+    if wave_pills_made < WAVE_PILLS then
+      pill_for_bot    = p
+      spawn_pill_next = true
+    end
+  elseif not spawn_fail_said then
+    spawn_fail_said = true
+    game.message(string.format(
+      "[wave] wave %d: no free seat -- the wave lands short-handed.", wave))
+  end
+
+  -- A pill step still owed counts as queue work, so the wave is not finished
+  -- until the last attacker's pill is down.
+  if spawn_pill_next or spawn_left > 0 then
+    spawn_next_at = tick + secs(SPAWN_SPACING_S)
+  else
+    finish_wave_spawn()
+  end
+end
+
+-- Open a wave: do the bookkeeping and queue the arrivals. No bot is made
+-- here — pump_spawn_queue brings them in one at a time from on_tick.
+local function spawn_wave()
+  wave = wave + 1
+
+  spawned       = {}
+  spawn_index   = 0
+  spawn_left    = #seats
+  spawn_next_at = nil          -- the first attacker rides the wave's own tick
+  spawn_fail_said = false
+  spawn_pill_next = false
+  pill_for_bot  = nil
+  wave_bases_restocked = 0
+
+  wave_ends_at  = game.tick() + secs(WAVE_LIMIT_S)
+  last_min_mark = nil
+  half_min_said = false
+
+  -- Announced up front, on the wave's own tick, off the roster size: the
+  -- warning is what the players act on, and it would be useless arriving
+  -- nine seconds after the first tank came ashore.
+  game.message(string.format("*** Wave %d/%d: %d attackers inbound! ***",
+                             wave, WAVES, #seats))
+  game.log(string.format("Survival: wave %d/%d inbound, %d attacker(s)",
+                         wave, WAVES, #seats))
+end
+
+-- ---------------------------------------------------------------------
+-- The departure queue.
+
+-- Line every wave bot up to be removed, one per VANISH_SPACING_S. Returns
+-- how many are queued — the message that quotes it still goes out at once,
+-- so a player reads "the wave is over" the moment the clock runs out even
+-- though the tanks take a few seconds to clear off.
+--
+-- A wave that is still arriving must not race its own departure, so the
+-- arrival queue is dropped here first.
+local function vanish_wave(tick)
+  -- Record every base and pill the wave owns BEFORE any attacker leaves. The
+  -- engine migrates a leaving player's estate to a surviving teammate and
+  -- neutralises it when the last one goes; the horde's allegiances are put
+  -- back the moment the field is empty, so the breather is played against
+  -- the horde's guns rather than neutral ones. Only horde-owned entries are
+  -- recorded; whatever the defenders captured is left exactly as it is.
+  horde_estate = { bases = {}, pills = {} }
+  for k = 1, game.num_bases() do
+    local bi = game.base(k)
+    if bi and bi.owner ~= nil and wave_bots[bi.owner] then
+      horde_estate.bases[k] = bi.owner
+    end
+  end
+  for n = 1, game.num_pills() do
+    local pi = game.pill(n)
+    if pi and pi.owner ~= nil and wave_bots[pi.owner] then
+      horde_estate.pills[n] = pi.owner
+    end
+  end
+  spawn_left = 0
+  spawn_next_at = nil
+  spawn_pill_next = false
+  pill_for_bot = nil
+  vanish_queue = {}
+  for p in pairs(wave_bots) do
+    vanish_queue[#vanish_queue + 1] = p
+  end
+  -- pairs() order is not defined; sort so the same seed removes the same bot
+  -- first on every run.
+  table.sort(vanish_queue)
+  vanishing = true
+  -- The first removal waits out MUTE_LEAD_S so the newswire is already
+  -- silent before the first attacker disappears; the caller mutes on this
+  -- tick.
+  vanish_next_at = tick + secs(MUTE_LEAD_S)
+  return #vanish_queue
+end
+
+-- The last attacker is gone: put every base and pill the wave owned back in
+-- its recorded seat (an absent player can own things), unless the defenders
+-- captured it meanwhile or it is riding in a tank.
+local function restore_horde_estate()
+  if not horde_estate then return 0 end
+  local n = 0
+  for k, slot in pairs(horde_estate.bases) do
+    local bi = game.base(k)
+    if bi and (bi.owner == nil or bi.owner > 5) and bi.owner ~= slot then
+      game.set_base_owner(k, slot); n = n + 1
+    end
+  end
+  for pn, slot in pairs(horde_estate.pills) do
+    local pi = game.pill(pn)
+    if pi and not pi.in_tank and (pi.owner == nil or pi.owner > 5)
+       and pi.owner ~= slot then
+      game.set_pill_owner(pn, slot); n = n + 1
+    end
+  end
+  horde_estate = nil
+  return n
+end
+
+-- Pop at most one queued removal. True on the tick the last wave bot leaves
+-- the field (an empty queue counts as drained straight away), which is what
+-- the between-wave clock keys on.
+--
+-- remove_bot on a seat the lobby seated hands the seat back to being held
+-- rather than emptying it, so the next wave fields the same ten again.
+local function pump_vanish_queue(tick)
+  if not vanishing then return false end
+  if #vanish_queue > 0 then
+    if vanish_next_at ~= nil and tick < vanish_next_at then return false end
+    local p = table.remove(vanish_queue, 1)
+    game.remove_bot(p)
+    wave_bots[p] = nil
+    vanish_next_at = tick + secs(VANISH_SPACING_S)
+  end
+  if #vanish_queue > 0 then return false end
+  vanishing = false
+  vanish_next_at = nil
+  return true
+end
+
+-- Wave bots respawn like ordinary play — a dead one is merely between lives,
+-- so nobody is removed here. This prunes seats that vanished outside our
+-- control.
+local function prune_wave_bots()
+  for p in pairs(wave_bots) do
+    if game.tank(p) == nil and not vanishing then wave_bots[p] = nil end
+  end
+end
+
+-- Start the clock on the next wave, `gap` ticks from `tick`, and with it the
+-- countdown warnings that hang off it.
+local function arm_next_wave(tick, gap)
+  next_wave_at = tick + gap
+  warn_gap = gap
+  warn_next = 1
+end
+
+-- ---------------------------------------------------------------------
+-- The tree ring: the map's only forest replenishment. A one-square-thick
+-- circle at the radius of the six inner bases, re-seeded a few squares at a
+-- time forever. Trees come back exactly where the defenders are dug in —
+-- close enough to harvest under fire, far enough out that the fight for the
+-- centre decides whether they ever reach them.
+local TREE_RING_R      = 6     -- the circle the six win/loss bases sit on
+local TREE_RING_PERIOD_S = 30
+local TREE_RING_PICKS  = 6
+
+local tree_ring    = {}
+local next_ring_at = nil
+
+-- A rounded radius gives a closed, single-square-thick circle; a plain
+-- dx*dx+dy*dy == R*R test leaves gaps on the diagonals. The six inner bases
+-- sit on this circle and can never take a tree, so they are cut once here
+-- instead of being re-tested forever; everything else that blocks planting
+-- can move or be rebuilt, so it is checked live at plant time.
+local function build_tree_ring()
+  local blocked = {}
+  for b = CENTER_FIRST, CENTER_FIRST + 5 do
+    local bi = game.base(b)
+    if bi then blocked[bi.x * 256 + bi.y] = true end
+  end
+  tree_ring = {}
+  for x = 128 - TREE_RING_R, 128 + TREE_RING_R do
+    for y = 128 - TREE_RING_R, 128 + TREE_RING_R do
+      local dx, dy = x - 128, y - 128
+      if math.floor(math.sqrt(dx * dx + dy * dy) + 0.5) == TREE_RING_R
+         and not blocked[x * 256 + y] and writable(x, y) then
+        tree_ring[#tree_ring + 1] = { x = x, y = y }
+      end
+    end
+  end
+end
+
+-- Ground a tree will take. Walls and water refuse one; a mined square is
+-- skipped because planting over it would eat the mine someone laid, and road
+-- is skipped because paving the defenders laid themselves must never be
+-- overgrown by the script.
+local function ring_plantable(t)
+  if t == nil or t == T_DEEP_SEA then return false end
+  if t == T_BUILDING or t == T_HALFBUILDING then return false end
+  if t == T_RIVER or t == T_BOAT then return false end
+  if t == T_ROAD then return false end
+  if t >= T_MINE_START then return false end
+  return true
+end
+
+-- Draw TREE_RING_PICKS squares with replacement: a duplicate draw lands on
+-- the square the previous one just planted and counts as already-forest,
+-- which is cheaper than tracking picks and makes the per-tick yield honestly
+-- random rather than guaranteed.
+local function replenish_tree_ring()
+  local n = #tree_ring
+  if n == 0 then return end
+
+  -- Structures move: pills get scooped, carried and re-placed, so a base or
+  -- pill standing on a ring square is re-checked every time rather than
+  -- baked into the ring at setup.
+  local occupied = {}
+  for b = 1, game.num_bases() do
+    local bi = game.base(b)
+    if bi then occupied[bi.x * 256 + bi.y] = true end
+  end
+  for p = 1, game.num_pills() do
+    local pi = game.pill(p)
+    if pi and not pi.in_tank then occupied[pi.x * 256 + pi.y] = true end
+  end
+
+  for _ = 1, TREE_RING_PICKS do
+    local s = tree_ring[math.random(n)]
+    local t = game.map_tile(s.x, s.y)
+    if t ~= T_FOREST and not occupied[s.x * 256 + s.y] and ring_plantable(t) then
+      game.set_tile(s.x, s.y, T_FOREST)
+    end
+  end
+end
+
+-- ---------------------------------------------------------------------
+-- The shallow rim: one square of river all the way around the island's
+-- coast. Driving off the edge of a circular island is far too easy, and deep
+-- sea drowns a tank outright, which is a stupid way to lose a defender in
+-- the middle of a wave. A one-square shallow lip turns that mistake into a
+-- swim back ashore.
+--
+-- The rim is derived from square CONTENTS, never from the island's radius:
+-- every deep square that touches a non-deep one becomes river. The map file
+-- is hand-edited, so a hardcoded circle would drift off the real coastline
+-- the first time someone carves a bay.
+--
+-- EXCLUDED: the little deep puddle at the middle of the map. The six human
+-- starts sit in it on boats by design, and lining it with shallows would
+-- open a swimmable lane straight into the sanctuary. It is the only deep
+-- water within RIM_EXCLUDE_R of the centre, so a plain radius cut spares it.
+--
+-- The bot starts sit at r=33, three squares clear of the coast and touching
+-- no land at all, so they stay deep and the wave still arrives by boat.
+local RIM_EXCLUDE_R = 6
+
+-- Read the whole map once as a string rather than calling map_tile 65,536
+-- times: a hook has a million instructions and a square-at-a-time scan of
+-- the map spends most of them. Rows that are all deep sea are skipped with
+-- one C-level find, so the scan only really walks the island.
+--
+-- Two passes on purpose, and river never counts as coast. A converted square
+-- is no longer deep, so writing during the scan would let the rim seed
+-- itself one square further out at every step; collecting first keeps every
+-- test against the map as it stands.
+local function build_shallow_rim()
+  local ter = game.terrain()
+  if ter == nil then return end
+  local deep = string.char(T_DEEP_SEA)
+
+  local function at(x, y)
+    if x < 0 or x > 255 or y < 0 or y > 255 then return nil end
+    return string.byte(ter, y * 256 + x + 1)
+  end
+
+  local conv, seen = {}, {}
+  local excl2 = RIM_EXCLUDE_R * RIM_EXCLUDE_R
+  for y = 0, 255 do
+    local row = string.sub(ter, y * 256 + 1, y * 256 + 256)
+    local first = string.find(row, "[^" .. deep .. "]")
+    if first ~= nil then
+      local last = 256 - string.find(string.reverse(row),
+                                     "[^" .. deep .. "]") + 1
+      -- Walk out from the LAND rather than testing every ocean square's
+      -- neighbours: the same rim for a fraction of the lookups.
+      for x = first - 1, last - 1 do
+        local t = at(x, y)
+        if t ~= nil and t ~= T_DEEP_SEA and t ~= T_RIVER then
+          for ox = -1, 1 do
+            for oy = -1, 1 do
+              local nx, ny = x + ox, y + oy
+              local key = nx * 256 + ny
+              if not seen[key] and at(nx, ny) == T_DEEP_SEA then
+                seen[key] = true
+                local dx, dy = nx - 128, ny - 128
+                if dx * dx + dy * dy > excl2 and writable(nx, ny) then
+                  conv[#conv + 1] = { x = nx, y = ny }
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
+  -- A frame carries at most 256 map changes, and the setup also lays roads,
+  -- so the rim is drained a slice a tick from on_tick instead of written in
+  -- one go. Two ticks on the shipped map: forty milliseconds, and the beach
+  -- is there before anybody has driven anywhere.
+  rim_todo = conv
+  rim_at   = 1
+end
+
+local function drain_rim()
+  if rim_at > #rim_todo then return end
+  local stop = math.min(rim_at + RIM_PER_TICK - 1, #rim_todo)
+  for i = rim_at, stop do
+    local c = rim_todo[i]
+    game.set_tile(c.x, c.y, T_RIVER)
+  end
+  rim_at = stop + 1
+  if rim_at > #rim_todo then rim_todo = {} end
+end
+
+-- ---------------------------------------------------------------------
+-- Pre-built defender pills.
+--
+-- A bot cannot sensibly build a pill it is carrying — it just wanders with
+-- it in-tank — so a defender BOT would meet the wave with a dead pill on
+-- board and nothing built. For every defender seat that is a bot we take the
+-- pill nearest that seat's start, slide it out along its base-to-pill line to
+-- where that line meets the ring road, build it there at full armour, and
+-- road it back to the base, so the defence is spread around the ring and
+-- ready. Human defenders are skipped on purpose: a human carries the pill
+-- in-tank and builds it where they choose.
+--
+-- Only the six centre pills are considered, and at this point they are the
+-- only pills that exist.
+local BUILT_PILL_ARMOUR = 15
+
+-- Paint road along the straight line between two squares, skipping both ends
+-- and never stamping over deep sea or outside the writable frame.
+local function draw_road_line(x0, y0, x1, y1)
+  local dx, dy = math.abs(x1 - x0), math.abs(y1 - y0)
+  local sx = (x0 < x1) and 1 or -1
+  local sy = (y0 < y1) and 1 or -1
+  local err = dx - dy
+  local x, y = x0, y0
+  while true do
+    if not (x == x0 and y == y0) and not (x == x1 and y == y1)
+       and writable(x, y) then
+      local t = game.map_tile(x, y)
+      if t ~= nil and t ~= T_DEEP_SEA then
+        game.set_tile(x, y, T_ROAD)
+      end
+    end
+    if x == x1 and y == y1 then break end
+    local e2 = 2 * err
+    if e2 > -dy then err = err - dy; x = x + sx end
+    if e2 <  dx then err = err + dx; y = y + sy end
+  end
+end
+
+-- Where the line from the base through the pill first meets the ring road:
+-- march outward from the pill until a road square. That is where the pill is
+-- built, so the defence spreads onto the ring instead of bunching at the
+-- centre. nil if the ray never hits a road.
+local function ring_road_spot(bx, by, px, py)
+  local dx, dy = px - bx, py - by
+  if dx == 0 and dy == 0 then dx, dy = px - 128, py - 128 end
+  if dx == 0 and dy == 0 then return nil end
+  local len = math.sqrt(dx * dx + dy * dy)
+  local ux, uy = dx / len, dy / len
+  for step = 1, 120 do
+    local x = math.floor(px + ux * step + 0.5)
+    local y = math.floor(py + uy * step + 0.5)
+    if not writable(x, y) then break end
+    if game.map_tile(x, y) == T_ROAD then return x, y end
+  end
+  return nil
+end
+
+local function prebuild_bot_pills()
+  local used = {}
+  for p = 0, 5 do
+    local ls = game.lobby_slot(p)
+    if ls ~= nil and ls.bot and ls.fielded then
+      local si = game.start(1 + (p % 6))
+      if si ~= nil then
+        local best, bestd
+        for n = 1, CENTER_PILLS do
+          if not used[n] then
+            local pi = game.pill(n)
+            if pi ~= nil then
+              local ddx, ddy = pi.x - si.x, pi.y - si.y
+              local d = ddx * ddx + ddy * ddy
+              if bestd == nil or d < bestd then best, bestd = n, d end
+            end
+          end
+        end
+        if best ~= nil then
+          used[best] = true
+          local pi = game.pill(best)
+          local base = game.base(CENTER_FIRST - 1 + best)
+          local rx, ry
+          if base ~= nil then
+            rx, ry = ring_road_spot(base.x, base.y, pi.x, pi.y)
+          end
+          if rx == nil then rx, ry = pi.x, pi.y end
+          -- One op where the old host needed a hide and a show: move_pill is
+          -- what that pair was standing in for.
+          game.move_pill(best, rx, ry)
+          game.set_pill_owner(best, p)
+          game.set_pill_armour(best, BUILT_PILL_ARMOUR)
+          if base ~= nil then
+            draw_road_line(base.x, base.y, rx, ry)
+          end
+        end
+      end
+    end
+  end
+end
+
+-- ---------------------------------------------------------------------
+-- The round.
+
+-- The setup arranges the world the round begins in. It rides the opening
+-- snapshot's own base and pill lists and writes no newswire line, so the
+-- deal lands before any client sees the world and nothing changes alliance
+-- on the newswire at tick 0. Roster ops are refused here and none is needed:
+-- the horde's seats are HELD by the lobby, so there is nothing to pull off
+-- the field.
+function on_setup()
+  dealt = deal_center()
+  build_tree_ring()
+  build_shallow_rim()        -- collects; on_tick drains it
+  prebuild_bot_pills()
+end
+
+function on_start()
+  -- The horde's seats, read once. A seat a wave fields and hands back is the
+  -- same seat, so the list keeps for the whole round.
+  seats = {}
+  for p = 0, game.max_tanks() - 1 do
+    local ls = game.lobby_slot(p)
+    if ls and ls.bot and ls.team == WAVE_TEAM and not ls.fielded then
+      seats[#seats + 1] = p
+    end
+  end
+  game.message(string.format(
+    "*** SURVIVAL: dig in! First of %d waves in %d seconds. ***",
+    WAVES, GRACE_S))
+  -- The operator's own line. game.message reaches players and not the
+  -- console, so an operator watching a headless run sees the round open
+  -- here and nowhere else.
+  game.log(string.format("Survival: %d horde seat(s) held, grace %ds",
+                         #seats, GRACE_S))
+end
+
+function on_tick(tick)
+  if ended then return end
+
+  -- Late deal for a lobby-less harness, which joins players after ticking
+  -- starts.
+  if not dealt then dealt = deal_center() end
+
+  -- Finish the coast the setup started.
+  drain_rim()
+
+  -- Lift a pending newswire mute. Ahead of every early return below, and of
+  -- the loss check's end_round, so the mute always comes off on its own
+  -- clock whatever the round is doing.
+  if newswire_unmute_at ~= nil and tick >= newswire_unmute_at then
+    newswire_unmute_at = nil
+    set_newswire_mute(false)
+  end
+
+  -- INSTANT LOSS: the round is over the moment no inner base is in defender
+  -- hands — stolen or neutralised, the centre has fallen.
+  local held = 0
+  for b = CENTER_FIRST, CENTER_FIRST + 5 do
+    local bi = game.base(b)
+    if bi and bi.owner ~= nil and bi.owner >= 0 and bi.owner <= 5 then
+      held = held + 1
+    end
+  end
+  if held == 0 then
+    ended = true
+    newswire_unmute_at = nil
+    set_newswire_mute(false)
+    game.end_round(
+      "*** The centre has fallen -- the attackers take the island! ***",
+      WAVE_TEAM)
+    return
+  end
+
+  -- The tree ring, on its own steady clock. Ahead of every early return
+  -- below, so it keeps its cadence through the grace period, the live waves
+  -- and the breathers alike.
+  if next_ring_at == nil then
+    next_ring_at = tick + secs(TREE_RING_PERIOD_S)
+  elseif tick >= next_ring_at then
+    next_ring_at = tick + secs(TREE_RING_PERIOD_S)
+    replenish_tree_ring()
+  end
+
+  -- Arm wave 1 off the round's first running tick.
+  if wave == 0 and next_wave_at == nil then
+    arm_next_wave(tick, secs(GRACE_S))
+    return
+  end
+
+  if next_wave_at ~= nil then
+    -- Newswire off MUTE_LEAD_S before the wave lands, so the ten join lines
+    -- the staggered arrival would write never appear. The inbound warning
+    -- below is server text and shows regardless.
+    if tick >= next_wave_at - secs(MUTE_LEAD_S) then
+      newswire_unmute_at = nil
+      set_newswire_mute(true)
+    end
+    -- Countdown: every mark actually inside this countdown, in order. A tick
+    -- that skips past two marks at once says both, oldest first.
+    while warn_next <= #WAVE_WARN_S do
+      local w = secs(WAVE_WARN_S[warn_next])
+      if warn_gap ~= nil and w >= warn_gap then
+        warn_next = warn_next + 1       -- the countdown never had that long
+      elseif tick >= next_wave_at - w then
+        warn_next = warn_next + 1
+        game.message(string.format("*** Wave %d incoming in %d seconds! ***",
+                                   wave + 1, WAVE_WARN_S[warn_next - 1]))
+      else
+        break
+      end
+    end
+    if tick >= next_wave_at then
+      next_wave_at = nil
+      spawn_wave()
+      pump_spawn_queue(tick)    -- the first attacker lands on the wave tick
+    end
+    return
+  end
+
+  -- A wave is live: bring in whatever of it is still arriving, narrate the
+  -- clock, keep the roster pruned, and vanish every attacker once the wave
+  -- limit runs out. Deaths do not end a wave — the attackers respawn at
+  -- their outer starts, fully armed, and press until the clock says
+  -- otherwise.
+  pump_spawn_queue(tick)
+  prune_wave_bots()
+
+  if wave_ends_at ~= nil then
+    local remaining = wave_ends_at - tick
+    if remaining <= 0 then
+      wave_ends_at = nil
+      -- Mute FIRST; vanish_wave then holds its first removal for MUTE_LEAD_S,
+      -- so the newswire is already silent by the time the first attacker
+      -- disappears.
+      newswire_unmute_at = nil
+      set_newswire_mute(true)
+      local n = vanish_wave(tick)
+      game.message(string.format(
+        "*** Wave %d is over -- %d attacker(s) vanish! ***", wave, n))
+    elseif remaining <= secs(30) and not half_min_said then
+      half_min_said = true
+      game.message(string.format("*** 30 seconds left in wave %d! ***", wave))
+    else
+      local mins = math.floor((remaining + secs(60) - 1) / secs(60))
+      if remaining > secs(30)
+         and (last_min_mark == nil or mins < last_min_mark)
+         and mins * secs(60) < secs(WAVE_LIMIT_S) then
+        last_min_mark = mins
+        game.message(string.format(
+          "*** %d minute(s) left until wave %d finishes. ***", mins, wave))
+      end
+    end
+  end
+
+  -- One attacker leaves per VANISH_SPACING_S; the wave only counts as over
+  -- on the tick the last one is actually gone. The between-wave clock starts
+  -- from there rather than from the "wave is over" message, so the breather
+  -- is a full breather of empty field instead of one that starts while ten
+  -- tanks are still driving around.
+  if pump_vanish_queue(tick) then
+    restore_horde_estate()
+    newswire_unmute_at = tick + secs(MUTE_TAIL_S)
+    if wave >= WAVES then
+      ended = true
+      newswire_unmute_at = nil
+      set_newswire_mute(false)
+      game.end_round(string.format(
+        "*** All %d waves survived -- the defenders win! ***", WAVES),
+        DEF_TEAM)
+    else
+      -- The field is empty: start the breather. The wave's leftover dead
+      -- pills stay where they lie, and they are the horde's again either way
+      -- — restore_horde_estate just put every one the defenders did not
+      -- capture back in its recorded seat — so the breather is played
+      -- against the horde's guns, standing on the ground the last wave left
+      -- them on.
+      arm_next_wave(tick, secs(BREATHER_S))
+      game.message(string.format(
+        "*** Wave %d survived! %d seconds to prepare for wave %d. ***",
+        wave, BREATHER_S, wave + 1))
+      game.message(string.format(
+        "*** Wave %d opens with a seizure of up to %d of your pills. ***",
+        wave + 1, wave + 1))
+    end
+  end
+end
