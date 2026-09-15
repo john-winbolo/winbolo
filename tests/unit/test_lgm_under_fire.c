@@ -80,8 +80,16 @@
 #include "lgm.h"
 #include "shells.h"
 #include "threads.h"
+#include "log.h"
 #include "test_harness.h"
 #include "loopback_harness.h"
+
+/* Where the .wbv replay of each run is written. CMake points this at
+ * <build dir>/replays; the fallback resolves against the working directory,
+ * which for CTest and for a hand-run binary is the build directory anyway. */
+#ifndef WB_TEST_REPLAY_DIR
+#define WB_TEST_REPLAY_DIR "replays"
+#endif
 
 /* ── arena ──────────────────────────────────────────────────────────────── */
 
@@ -274,8 +282,56 @@ static void luf_restock(LoopbackHarness *h, BYTE slot) {
 typedef struct {
     const char *label;
     const char *impair;
+    const char *replayLeaf;   /* file name under WB_TEST_REPLAY_DIR */
     uint64_t    seed;
 } LufConfig;
+
+/* ── recording the run as a replay ───────────────────────────────────────── */
+
+/* Open a .wbv on the harness's own ServerSim. Called AFTER the client has
+ * joined and the tank has been parked, because logStart writes the file's
+ * header and its opening snapshot straight away: the map (the carved arena),
+ * the pillbox, and one record per player slot. Started any earlier the header
+ * would name an empty roster and the untouched island, and the viewer would
+ * have nothing to put on screen until the first event caught it up.
+ *
+ * From here on every running-state server tick writes itself, because
+ * serverSimTick already calls logWriteTick; the harness pump is what turns it.
+ * Lobby mode is switched off explicitly — it is a process-wide flag and a
+ * lobby log drops exactly the world events this replay is for. */
+static void luf_record_start(LoopbackHarness *h, const LufConfig *cfg,
+                             char *pathOut, size_t pathCap) {
+    snprintf(pathOut, pathCap, "%s/%s", WB_TEST_REPLAY_DIR, cfg->replayLeaf);
+    SDL_CreateDirectory(WB_TEST_REPLAY_DIR);   /* fine if it already exists */
+
+    logSetLobbyMode(FALSE);
+    if (logStart(pathOut, h->sim, 0, MAX_TANKS, FALSE) != TRUE) {
+        fprintf(stderr, "  replay: COULD NOT open %s — the run goes on "
+                        "unrecorded\n", pathOut);
+        pathOut[0] = '\0';
+        return;
+    }
+    fprintf(stderr, "  replay: recording to %s\n", pathOut);
+}
+
+/* Close the file: the terminator, the attribution track and the zip central
+ * directory all go in here, so a replay that skips this is unreadable. Every
+ * exit from luf_run runs it, the failing assertion paths included — that is
+ * what LUF_STOP below is for. Safe to call when no log is open. */
+static void luf_record_stop(const char *path) {
+    logStop();
+    if (path != NULL && path[0] != '\0') {
+        fprintf(stderr, "  replay written: %s\n", path);
+    }
+}
+
+/* Close the replay, then tear the harness down. Used on every path out of
+ * luf_run, including the ones that fail. */
+#define LUF_STOP()                                                          \
+    do {                                                                    \
+        luf_record_stop(replayPath);                                        \
+        loopbackHarnessStop(&h);                                            \
+    } while (0)
 
 static int luf_run(const LufConfig *cfg) {
     LoopbackHarness h;
@@ -283,6 +339,7 @@ static int luf_run(const LufConfig *cfg) {
     LufTrail  trail[LUF_TRAIL_MAX];
     LufImpact impacts[LUF_IMPACT_MAX];
     int       trailCount = 0, impactCount = 0;
+    char      replayPath[512];
     uint32_t  inTick = 0;
     BYTE      slot;
     GameSim  *gs;
@@ -306,6 +363,7 @@ static int luf_run(const LufConfig *cfg) {
     memset(&arena, 0, sizeof(arena));
     memset(trail, 0, sizeof(trail));
     memset(impacts, 0, sizeof(impacts));
+    replayPath[0] = '\0';
 
     fprintf(stderr, "\n  ==== %s (impair=%s seed=%llu) ====\n", cfg->label,
             (cfg->impair != NULL) ? cfg->impair : "clean",
@@ -316,12 +374,12 @@ static int luf_run(const LufConfig *cfg) {
                                                luf_build_arena, &arena),
                   "harness start failed (%s)", cfg->label);
     if (!arena.ok) {
-        loopbackHarnessStop(&h);
+        LUF_STOP();
         UT_FAIL("no base-free %dx%d rectangle on the map to build the arena in",
                 LUF_ARENA_W, LUF_ARENA_H);
     }
     if (loopbackHarnessPumpUntil(&h, LUF_CONNECT_MAX, luf_connected, NULL) < 0) {
-        loopbackHarnessStop(&h);
+        LUF_STOP();
         UT_FAIL("client never connected (%s)", cfg->label);
     }
 
@@ -334,7 +392,7 @@ static int luf_run(const LufConfig *cfg) {
     slot = clientSimGetMyPlayerNum(h.cs);
     gs   = &h.sim->sim;
     if (slot >= MAX_TANKS || gs->tanks[slot] == NULL) {
-        loopbackHarnessStop(&h);
+        LUF_STOP();
         UT_FAIL("no tank for the joined slot %u", (unsigned)slot);
     }
     man = &gs->lgmen[slot];
@@ -350,6 +408,11 @@ static int luf_run(const LufConfig *cfg) {
     fprintf(stderr, "  arena: pill at (%u,%u) tank starts at (%u,%u) slot %u\n",
             (unsigned)arena.pillX, (unsigned)arena.pillY,
             (unsigned)arena.tankX, (unsigned)arena.tankY, (unsigned)slot);
+
+    /* Record from here: the client is in, the arena is carved and the tank is
+     * standing where the script wants it, so the opening snapshot describes
+     * the world the move actually happens in. */
+    luf_record_start(&h, cfg, replayPath, sizeof(replayPath));
 
     /* Phase 0 — settle. Hands off the controls while the client syncs to the
      * moved tank and the server's ping measurement catches up with the link. */
@@ -390,7 +453,7 @@ static int luf_run(const LufConfig *cfg) {
             prevArmour = gs->pb->item[0].armour;
         }
         if (tankIsDestroyed(&gs->tanks[slot])) {
-            loopbackHarnessStop(&h);
+            LUF_STOP();
             UT_FAIL("%s: the tank died on the approach - the script never got "
                     "to the move it is about", cfg->label);
         }
@@ -410,7 +473,7 @@ static int luf_run(const LufConfig *cfg) {
             pillHits, (unsigned)tankGetMX(&gs->tanks[slot]),
             (unsigned)tankGetMY(&gs->tanks[slot]), shotsFired);
     if (pillArmour == 0) {
-        loopbackHarnessStop(&h);
+        LUF_STOP();
         UT_FAIL("%s: the pillbox was destroyed on the approach - nothing is "
                 "left to shoot at the man", cfg->label);
     }
@@ -452,7 +515,7 @@ static int luf_run(const LufConfig *cfg) {
      * read off the client's own view of its tank, which is what the player
      * aims with: one square back along the line to the pill, i.e. west. */
     if (!clientSimGetMyTankMapPos(h.cs, &dispatchCliMX, &dispatchCliMY)) {
-        loopbackHarnessStop(&h);
+        LUF_STOP();
         UT_FAIL("the client cannot see its own tank at dispatch (%s)",
                 cfg->label);
     }
@@ -590,7 +653,7 @@ static int luf_run(const LufConfig *cfg) {
                            "still out when the watch ran out"),
             wallBuilt ? "yes" : "no");
 
-    loopbackHarnessStop(&h);
+    LUF_STOP();
 
     UT_ASSERT_MSG(!manDied,
                   "%s: the builder was killed walling the square behind his own "
@@ -605,16 +668,18 @@ static int luf_run(const LufConfig *cfg) {
 
 int run_lgm_wall_behind_tank_under_fire_lagged(void) {
     LufConfig cfg;
-    cfg.label  = "lagged";
-    cfg.impair = "delay=80,jitter=20";
-    cfg.seed   = 4242u;
+    cfg.label      = "lagged";
+    cfg.impair     = "delay=80,jitter=20";
+    cfg.replayLeaf = "lgm_under_fire_lagged.wbv";
+    cfg.seed       = 4242u;
     return luf_run(&cfg);
 }
 
 int run_lgm_wall_behind_tank_under_fire_nolag(void) {
     LufConfig cfg;
-    cfg.label  = "no lag (control)";
-    cfg.impair = NULL;
-    cfg.seed   = 4242u;
+    cfg.label      = "no lag (control)";
+    cfg.impair     = NULL;
+    cfg.replayLeaf = "lgm_under_fire_nolag.wbv";
+    cfg.seed       = 4242u;
     return luf_run(&cfg);
 }

@@ -4149,6 +4149,10 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # path. scratch_dir.c adds a pid and the test name beneath it and sweeps
     # its own subtree at exit.
     WB_TEST_SCRATCH_DIR="${CMAKE_BINARY_DIR}/test-scratch"
+    # Where a test that records a .wbv replay of its own run puts the file.
+    # Unlike the scratch root above it is NOT swept at exit and carries no pid:
+    # the whole point is that a person can open the last run in the LogViewer.
+    WB_TEST_REPLAY_DIR="${CMAKE_BINARY_DIR}/replays"
     # Committed v1 .wbv fixture directory: the reader gate loads from here and
     # the on-demand capture (re)writes spectator_v1.wbv into it.
     WB_WBV_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/wbv"
