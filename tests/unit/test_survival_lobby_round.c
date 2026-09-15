@@ -5,22 +5,37 @@
  * the scenario's own template — ten HELD seats for the horde — and it seats
  * them from the first free slot upward, so the horde takes the LOW slots and
  * the defenders the host adds land above them. That is the opposite of a
- * headless run, where the -bots are seated first, and it is the whole of what
- * this case is here to hold: a script that reads a side off a slot number
+ * headless run, where the -bots are seated first, and it is the first of the
+ * two things these cases hold: a script that reads a side off a slot number
  * passes headless and deals the keep to the wrong people in a lobby.
  *
+ * The second is who ends up holding what. Every defender BOT is owed exactly
+ * one pill dug in, and a human is owed a dead one on the ground to place
+ * themselves. A pre-build that hands out the six centre pills by "nearest to
+ * my start" takes the human's out from under them, which is only visible
+ * once the keep is full — hence the second case.
+ *
  * run_survival_lobby_round
- *      — one human and two defender bots on team 1, started through
- *        serverSimLobbyCheckAllReady, then ticked past the grace:
- *          * the horde really does hold the low seats, so the case is
- *            testing what it says it is
- *          * every centre pill belongs to a seat on the defenders' team
- *          * each defender BOT's pill is built to full armour and stands on
- *            a road square
- *          * the human's pill is still dead on the ground, for them to place
- *          * the round opens with the "dig in" line
- *          * the first wave's line, and its first attacker, land 30 s in
- *            and not before
+ *      — one human and TWO defender bots, so three defenders share six
+ *        centre positions and each bot is dealt two pills: it digs in one of
+ *        them and the other stays dead. Started through the countdown, which
+ *        is the path a host with wire clients takes.
+ * run_survival_lobby_round_full
+ *      — one human and FIVE defender bots: a full keep, one position each.
+ *        Started in place, with no countdown, which is the path a host
+ *        playing on their own machine takes. This is the owner's own game.
+ *
+ * Both check the same facts:
+ *      * the horde really does hold the low seats, so the case is testing
+ *        what it says it is
+ *      * every centre pill belongs to a seat on the defenders' team
+ *      * each defender BOT has exactly one pill dug in, at full armour and
+ *        standing on the ring road
+ *      * the human still holds at least one pill and every one of them is
+ *        dead on the ground
+ *      * the round opens with the "dig in" line
+ *      * the first wave's line, and its first attacker, land 30 s in and not
+ *        before
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -47,12 +62,13 @@
 #define WB_DATA_MAPS_DIR "data/maps"
 #endif
 
-#define SLR_DEF_TEAM   1
-#define SLR_WAVE_TEAM  2
+#define SLR_DEF_TEAM     1
+#define SLR_WAVE_TEAM    2
 #define SLR_CENTER_PILLS 6
 #define SLR_BUILT_ARMOUR 15
 #define SLR_TERRAIN_ROAD ROAD       /* global.h: 4 */
-#define SLR_GRACE_TICKS  3000      /* 30 s at the 100-a-second tick */
+#define SLR_GRACE_TICKS  3000       /* 30 s at the 100-a-second tick */
+#define SLR_MAX_BOTS     5
 
 /* Every line the whole game was told, with the tick it was told on. The
    script's own announcements come down this channel (game.message is server
@@ -87,7 +103,10 @@ static BYTE slrTeam(ServerSim *sim, int slot) {
     return sim->playerConnected[slot] ? sim->lobbyPlayers[slot].teamNumber : 0;
 }
 
-int run_survival_lobby_round(void) {
+/* One round: `bots` defender bots beside the host, started down `inPlace`'s
+ * path. Everything both cases assert is in here; the two entry points below
+ * are the two shapes. */
+static int slrRound(int bots, bool inPlace) {
     char          mapPath[512];
     char          err[512];
     ServerSim    *sim;
@@ -96,9 +115,10 @@ int run_survival_lobby_round(void) {
     int           i;
     int           hordeLow  = 0;    /* horde seats below the first defender */
     int           humanSlot = 0;
-    int           botSlot[2];
+    int           botSlot[SLR_MAX_BOTS];
     int           built     = 0;
     BYTE          fieldedAtStart;
+    uint32_t      graceFrom;
 
     memset(&seen, 0, sizeof(seen));
     seen.digInTick = SLR_NO_TICK;
@@ -132,9 +152,9 @@ int run_survival_lobby_round(void) {
     /* The lobby the scenario asks for. */
     serverSimScenarioSeatLobby(sim);
 
-    /* Two defender bots, taking the seats a host's Add Bot would take. */
+    /* The defender bots, taking the seats a host's Add Bot would take. */
     ut_brain_stub_arm(true);
-    for (i = 0; i < 2; i++) {
+    for (i = 0; i < bots; i++) {
         int slot = serverSimFindFreeSlot(sim, true);
         if (slot < 0) UT_FAIL("no free slot for defender bot %d", i);
         if (!serverSimCreateBot(sim, (BYTE)slot,
@@ -155,27 +175,65 @@ int run_survival_lobby_round(void) {
     UT_ASSERT_MSG(hordeLow >= SLR_CENTER_PILLS,
                   "only %d horde seat(s) sit below the defenders; this case "
                   "is not exercising the lobby's seating order", hordeLow);
-    UT_ASSERT_MSG(botSlot[0] > 5 && botSlot[1] > 5,
-                  "the defender bots landed in slots %d and %d, inside the "
-                  "range the old rule read as the defenders",
-                  botSlot[0], botSlot[1]);
+    UT_ASSERT_MSG(botSlot[0] > 5,
+                  "the first defender bot landed in slot %d, inside the range "
+                  "the old rule read as the defenders", botSlot[0]);
 
     (void)serverSimRegisterSubscriber(sim, slrTextCb, NULL);
     slrSeen = &seen;
 
-    /* Start it the way the lobby does. */
+    /* Start it the way the lobby does. In place is the no-countdown path a
+       host on their own machine takes; the countdown is what anything
+       fanning over the wire takes. Both build every fielded seat's tank
+       before the scenario's setup call, which is what the pills below
+       depend on. */
+    sim->worldPreLoaded = inPlace ? TRUE : FALSE;
     serverSimLobbyCheckAllReady(sim);
     while (sim->state == serverStateCountdown) serverSimTick(sim);
     UT_ASSERT_MSG(sim->state == serverStateRunning,
                   "the round did not start: state %d", (int)sim->state);
 
+    /* The keep is arranged inside the round START, not on some later tick:
+       on_setup runs after the tank loop and before the round has ticked at
+       all, so the opening snapshot already carries the dug-in pills. Only
+       checkable on the in-place path — the countdown's last frame runs the
+       setup, on_start and the first on_tick together, so there is no moment
+       between them to look at. */
+    if (inPlace) {
+        int b;
+        for (b = 0; b < bots; b++) {
+            int n;
+            int mine = 0;
+            for (n = 0; n < SLR_CENTER_PILLS; n++) {
+                const pillbox *p = &(*sim->sim.pb).item[n];
+                if (p->owner == (BYTE)botSlot[b] && p->armour > 0) mine++;
+            }
+            UT_ASSERT_MSG(mine == 1,
+                          "before the round's first tick the bot in slot %d "
+                          "has %d pill(s) dug in, expected 1", botSlot[b],
+                          mine);
+        }
+    }
+
     /* One tick, which is the round's first running one: on_start runs there
-       and so does the first on_tick. */
+       and so does the first on_tick, which is where the grace is armed. The
+       tick the round started on is the earliest that arming can have been
+       measured from, so it is what the grace below is measured from too. */
+    graceFrom = sim->tick;
     serverSimTick(sim);
 
     UT_ASSERT_MSG(scenarioHostLastError(host)[0] == '\0',
                   "the round's setup complained: %s",
                   scenarioHostLastError(host));
+
+    /* Every defender bot is on the field by the setup, so the arrangement
+       has everybody it is arranging for. Asserted rather than assumed: it is
+       what tells a pill nobody dug in from a seat that was not there yet. */
+    for (i = 0; i < bots; i++) {
+        UT_ASSERT_MSG(sim->sim.tanks[botSlot[i]] != NULL,
+                      "the defender bot in slot %d had no tank on the round's "
+                      "first tick", botSlot[i]);
+    }
 
     /* (a) Every centre pill belongs to a seat on the defenders' team. */
     for (i = 1; i <= SLR_CENTER_PILLS; i++) {
@@ -190,9 +248,9 @@ int run_survival_lobby_round(void) {
 
     /* (b) Each defender BOT has exactly one pill dug in: at full armour and
            standing on the ring road, which is where the pre-build slides it.
-           Exactly one, because with three defenders sharing six positions a
-           bot is dealt two pills and is only meant to be manning one. */
-    for (i = 0; i < 2; i++) {
+           Exactly one, because a bot mans one station however many pills the
+           deal happened to give it. */
+    for (i = 0; i < bots; i++) {
         int n;
         int mineBuilt = -1;
         int mineCount = 0;
@@ -220,11 +278,12 @@ int run_survival_lobby_round(void) {
             built++;
         }
     }
-    UT_ASSERT(built == 2);
+    UT_ASSERT_MSG(built == bots,
+                  "%d pill(s) dug in for %d defender bot(s)", built, bots);
 
-    /* (c) Every pill the human was dealt is still dead on the ground: a
-           person carries it and builds it where they choose, and the
-           pre-build skips them on purpose. */
+    /* (c) The human still holds a pill, and every one they hold is dead on
+           the ground: a person carries it and builds it where they choose,
+           and the pre-build must never take the last one off them. */
     {
         int n;
         int mine = 0;
@@ -236,8 +295,51 @@ int run_survival_lobby_round(void) {
                           "pill %d, the human's, was built for them "
                           "(armour %d)", n + 1, (int)p->armour);
         }
-        UT_ASSERT_MSG(mine > 0, "the human in slot %d was dealt no centre pill",
+        UT_ASSERT_MSG(mine > 0,
+                      "the human in slot %d was left with no centre pill",
                       humanSlot);
+    }
+
+    /* (f) A defender bot that reaches the field AFTER the setup is caught
+           up. The pre-build used to run once, at the setup, and never again,
+           so a seat that was not there for it never dug in at all. Only
+           where there is a seat free and a pill to spare, which is the
+           two-bot shape: the full keep has neither. */
+    if (bots < SLR_MAX_BOTS) {
+        int late = serverSimFindFreeSlot(sim, true);
+        int n;
+        int lateBuilt = 0;
+        UT_ASSERT_MSG(late >= 0, "no free slot for a late defender bot");
+        if (!serverSimCreateBot(sim, (BYTE)late,
+                                "brains/GoalHunter_1.7/init.lua", "Late",
+                                serverSimGetBotAiType(sim), gameOpen,
+                                sim->sim.hiddenMines, SLR_DEF_TEAM, NULL)) {
+            UT_FAIL("the late defender bot was refused at slot %d", late);
+        }
+        UT_ASSERT_MSG(sim->sim.tanks[late] != NULL,
+                      "the late defender bot in slot %d got no tank", late);
+        for (i = 0; i < 20 && lateBuilt == 0; i++) {
+            serverSimTick(sim);
+            lateBuilt = 0;
+            for (n = 0; n < SLR_CENTER_PILLS; n++) {
+                const pillbox *p = &(*sim->sim.pb).item[n];
+                if (p->owner == (BYTE)late && p->armour > 0) lateBuilt++;
+            }
+        }
+        UT_ASSERT_MSG(lateBuilt == 1,
+                      "the late defender bot in slot %d has %d pill(s) dug in "
+                      "after 20 ticks, expected 1", late, lateBuilt);
+        /* And it was not taken off the human, who still has one to place. */
+        {
+            int spare = 0;
+            for (n = 0; n < SLR_CENTER_PILLS; n++) {
+                const pillbox *p = &(*sim->sim.pb).item[n];
+                if (p->owner == (BYTE)humanSlot && p->armour == 0) spare++;
+            }
+            UT_ASSERT_MSG(spare > 0,
+                          "catching the late bot up left the human with no "
+                          "dead pill of their own");
+        }
     }
 
     /* (e) The round opened with the line that tells the players to dig in. */
@@ -249,19 +351,24 @@ int run_survival_lobby_round(void) {
            so a wave that landed early is caught where it happened rather
            than at the end. */
     fieldedAtStart = serverSimGetNumFielded(sim);
-    while (sim->tick < SLR_GRACE_TICKS) {
-        serverSimTick(sim);
+    for (;;) {
+        /* The wave is due ON the tick the deadline names, so that tick ends
+           the loop rather than being asserted against. Everything before it
+           is inside the grace and must be quiet. */
+        if (sim->tick >= graceFrom + SLR_GRACE_TICKS) break;
         UT_ASSERT_MSG(seen.waveTick == SLR_NO_TICK,
-                      "wave 1 was called on tick %u, inside the 30 s grace",
-                      (unsigned)seen.waveTick);
+                      "wave 1 was called on tick %u, inside the 30 s grace "
+                      "that began on tick %u",
+                      (unsigned)seen.waveTick, (unsigned)graceFrom);
         UT_ASSERT_MSG(serverSimGetNumFielded(sim) == fieldedAtStart,
-                      "an attacker took the field on tick %u, inside the "
+                      "an attacker took the field by tick %u, inside the "
                       "30 s grace", (unsigned)sim->tick);
         UT_ASSERT_MSG(sim->state == serverStateRunning,
                       "the round ended on tick %u, inside the grace",
                       (unsigned)sim->tick);
+        serverSimTick(sim);
     }
-    while (sim->tick < SLR_GRACE_TICKS + 400 &&
+    while (sim->tick < graceFrom + SLR_GRACE_TICKS + 400 &&
            (seen.waveTick == SLR_NO_TICK ||
             serverSimGetNumFielded(sim) == fieldedAtStart)) {
         serverSimTick(sim);
@@ -269,15 +376,38 @@ int run_survival_lobby_round(void) {
     UT_ASSERT_MSG(seen.waveTick != SLR_NO_TICK,
                   "no wave was called by tick %u, 4 s past the grace",
                   (unsigned)sim->tick);
-    UT_ASSERT_MSG(seen.waveTick >= SLR_GRACE_TICKS,
-                  "wave 1 was called on tick %u, before the grace was out",
-                  (unsigned)seen.waveTick);
+    UT_ASSERT_MSG(seen.waveTick >= graceFrom + SLR_GRACE_TICKS,
+                  "wave 1 was called on tick %u, before the grace that began "
+                  "on tick %u was out",
+                  (unsigned)seen.waveTick, (unsigned)graceFrom);
     UT_ASSERT_MSG(serverSimGetNumFielded(sim) > fieldedAtStart,
                   "no attacker had taken the field by tick %u, 4 s past the "
                   "grace", (unsigned)sim->tick);
+
+    /* And the human's pill is still theirs at the end of the grace: the
+       catch-up pass runs every tick and must not come back for it. */
+    {
+        int n;
+        int mine = 0;
+        for (n = 0; n < SLR_CENTER_PILLS; n++) {
+            const pillbox *p = &(*sim->sim.pb).item[n];
+            if (p->owner == (BYTE)humanSlot && p->armour == 0) mine++;
+        }
+        UT_ASSERT_MSG(mine > 0,
+                      "the human's dead pill was taken from them during the "
+                      "grace");
+    }
 
     slrSeen = NULL;
     slrSim  = NULL;
     serverSimDestroy(sim);
     return 0;
+}
+
+int run_survival_lobby_round(void) {
+    return slrRound(2, false);
+}
+
+int run_survival_lobby_round_full(void) {
+    return slrRound(SLR_MAX_BOTS, true);
 }

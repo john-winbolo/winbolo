@@ -5226,6 +5226,7 @@ set(_unit_test_names
     scenario_roster_spawn_loadout_not_next_life
     lobby_template_map_commit_seats
     survival_lobby_round
+    survival_lobby_round_full
     lobby_template_return_reconciles
     lobby_template_return_unfields
     lobby_template_reset_reseats

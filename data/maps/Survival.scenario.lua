@@ -1192,45 +1192,129 @@ local function ring_road_spot(bx, by, px, py)
   return nil
 end
 
+-- Dig one seat in: slide its pill out to the ring road, build it there, and
+-- pave the line back to the base it pairs with.
+local function dig_in(p, n, pi)
+  local base = game.base(CENTER_FIRST - 1 + n)
+  local rx, ry
+  if base ~= nil then
+    rx, ry = ring_road_spot(base.x, base.y, pi.x, pi.y)
+  end
+  if rx == nil then rx, ry = pi.x, pi.y end
+  -- One op where the old host needed a hide and a show: move_pill is what
+  -- that pair was standing in for.
+  game.move_pill(n, rx, ry)
+  game.set_pill_owner(n, p)
+  game.set_pill_armour(n, BUILT_PILL_ARMOUR)
+  if base ~= nil then
+    draw_road_line(base.x, base.y, rx, ry)
+  end
+  return rx, ry
+end
+
+-- Which pills a seat may take, best first. The rank is the whole of the
+-- rule that keeps a person's pill on the ground:
+--
+--   1  its own — the deal already gave this seat this station, and with a
+--      full keep every bot matches here and nobody is robbed of anything
+--   2  nobody's
+--   3  a spare — its owner holds more than one of the six
+--   4  another BOT's only one, which is the last resort: that bot is still
+--      owed a pill and looks again on the same pass or the next tick
+--
+-- A HUMAN holding exactly one is not on the list at all. That single dead
+-- pill is the one they scoop and place themselves, and the pre-build must
+-- never take it.
+local function take_rank(p, o, holds)
+  if o == p then return 1 end
+  if o == nil then return 2 end
+  if (holds[o] or 0) > 1 then return 3 end
+  local ol = game.lobby_slot(o)
+  if ol ~= nil and ol.bot then return 4 end
+  return nil
+end
+
+-- Dig in every defender BOT that is not dug in yet, one pill each.
+--
+-- Read off the world rather than off a record of what was done, so this is
+-- idempotent: a pass with nothing owed reads six pills and the roster and
+-- writes nothing, which is what it does on all but a handful of ticks. It
+-- runs every tick because a seat can reach the field after the setup — a
+-- host adding a bot mid-round — and the pass that ran at the setup would
+-- otherwise be the only one there ever was.
 local function prebuild_bot_pills()
-  local used = {}
+  local pills = {}
+  local holds = {}      -- seat -> how many of the six it holds
+  local built = {}      -- seat -> true once one of them stands
+  local owed  = {}
+
+  for n = 1, CENTER_PILLS do
+    local pi = game.pill(n)
+    pills[n] = pi
+    if pi ~= nil and pi.owner ~= nil then
+      holds[pi.owner] = (holds[pi.owner] or 0) + 1
+      if pi.armour > 0 then built[pi.owner] = true end
+    end
+  end
+
   for _, p in ipairs(seats_on(DEF_TEAM)) do
     local ls = game.lobby_slot(p)
-    if ls ~= nil and ls.bot and ls.fielded then
-      local si = game.start(1 + (p % 6))
-      if si ~= nil then
-        local best, bestd
-        for n = 1, CENTER_PILLS do
-          if not used[n] then
-            local pi = game.pill(n)
-            if pi ~= nil then
-              local ddx, ddy = pi.x - si.x, pi.y - si.y
-              local d = ddx * ddx + ddy * ddy
-              if bestd == nil or d < bestd then best, bestd = n, d end
+    if ls ~= nil and ls.bot and ls.fielded and not built[p]
+       and game.tank(p) ~= nil then
+      owed[#owed + 1] = p
+    end
+  end
+  if #owed == 0 then return end
+
+  for _, p in ipairs(owed) do
+    local si = game.start(1 + (p % 6))
+    if si ~= nil then
+      local best, bestr, bestd
+      for n = 1, CENTER_PILLS do
+        local pi = pills[n]
+        if pi ~= nil and not pi.in_tank and pi.armour == 0 then
+          local r = take_rank(p, pi.owner, holds)
+          if r ~= nil then
+            local ddx, ddy = pi.x - si.x, pi.y - si.y
+            local d = ddx * ddx + ddy * ddy
+            if bestr == nil or r < bestr or (r == bestr and d < bestd) then
+              best, bestr, bestd = n, r, d
             end
           end
         end
-        if best ~= nil then
-          used[best] = true
-          local pi = game.pill(best)
-          local base = game.base(CENTER_FIRST - 1 + best)
-          local rx, ry
-          if base ~= nil then
-            rx, ry = ring_road_spot(base.x, base.y, pi.x, pi.y)
-          end
-          if rx == nil then rx, ry = pi.x, pi.y end
-          -- One op where the old host needed a hide and a show: move_pill is
-          -- what that pair was standing in for.
-          game.move_pill(best, rx, ry)
-          game.set_pill_owner(best, p)
-          game.set_pill_armour(best, BUILT_PILL_ARMOUR)
-          if base ~= nil then
-            draw_road_line(base.x, base.y, rx, ry)
-          end
-        end
+      end
+      if best ~= nil then
+        local pi   = pills[best]
+        local prev = pi.owner
+        local rx, ry = dig_in(p, best, pi)
+        -- The running counts, so two seats on this same pass cannot take the
+        -- same pill and a seat robbed of a spare is not robbed of it twice.
+        pills[best] = { x = rx, y = ry, owner = p,
+                        armour = BUILT_PILL_ARMOUR, in_tank = false }
+        if prev ~= nil then holds[prev] = (holds[prev] or 1) - 1 end
+        holds[p] = (holds[p] or 0) + 1
+        built[p] = true
       end
     end
   end
+end
+
+-- How long the arrangement waits for the whole defending side to reach the
+-- field before it goes ahead with whoever is there. A seat that never fields
+-- must not hold the keep undealt for the round.
+local ARRANGE_WAIT_S = 2
+local arrange_deadline = nil
+
+-- Defender BOT seats that are on the field in the roster but have no tank.
+local function defender_bots_pending()
+  local n = 0
+  for _, p in ipairs(seats_on(DEF_TEAM)) do
+    local ls = game.lobby_slot(p)
+    if ls ~= nil and ls.bot and ls.fielded and game.tank(p) == nil then
+      n = n + 1
+    end
+  end
+  return n
 end
 
 -- The deal and the pre-build are one step, and the pre-build is the second
@@ -1239,7 +1323,19 @@ end
 -- else's station. False while nobody is on the field yet — which is what a
 -- lobby-less harness looks like until it joins its players — and then tried
 -- again from on_tick until it takes.
+--
+-- The deal is the half that cannot be redone: set_base_owner drains a base
+-- it moves, so re-dealing the keep to a latecomer would empty six bases in
+-- the middle of a round. So the deal waits for the whole defending side,
+-- and ARRANGE_WAIT_S is the bound on that wait.
 local function arrange_defence()
+  local now = game.tick()
+  if arrange_deadline == nil then
+    arrange_deadline = now + secs(ARRANGE_WAIT_S)
+  end
+  if defender_bots_pending() > 0 and now < arrange_deadline then
+    return false
+  end
   if not deal_center() then return false end
   prebuild_bot_pills()
   return true
@@ -1287,7 +1383,15 @@ function on_tick(tick)
   -- starts. The pre-build rides with it: it is the half of the arrangement
   -- that used to run once at the setup and never again, so a round whose
   -- defenders were not on the field yet got no dug-in bots at all.
-  if not dealt then dealt = arrange_defence() end
+  --
+  -- Once the keep is dealt the pre-build keeps going as a catch-up: a seat
+  -- that reaches the field later still gets dug in, and a pass with nothing
+  -- owed reads the six pills and the roster and writes nothing.
+  if not dealt then
+    dealt = arrange_defence()
+  else
+    prebuild_bot_pills()
+  end
 
   -- Finish the coast the setup started.
   drain_rim()
