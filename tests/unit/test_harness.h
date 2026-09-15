@@ -1212,6 +1212,11 @@ int run_base_death_prediction_authority(void);
  * stored on the tank, so a hit greater than the armour remaining destroys it
  * while a hit that exactly empties the armour leaves it alive at zero. A
  * destroyed tank still reads as destroyed after a snapshot round trip. */
+/* A seat the roster holds with nobody on the field reports tankNone, so the
+ * status strip draws no tank for it, and reports what it always did once a
+ * wave fields it again. */
+int run_tank_alliance_unfielded_shows_no_tank(void);
+
 int run_tank_damage_exact_armour_survives(void);
 int run_tank_damage_overkill_destroys(void);
 int run_tank_damage_partial_survives(void);
