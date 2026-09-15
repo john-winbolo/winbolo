@@ -43,6 +43,9 @@
  *                                               and no seat off the roster
  * run_scenario_wave_cost_other_brain_rebuilds — a refield naming another brain
  *                                               cannot have the parked runner
+ * run_scenario_wave_cost_brain_case_rebuilds  — nor can one naming a file whose
+ *                                               path differs from the parked
+ *                                               runner's only in case
  * run_scenario_wave_cost_other_init_rebuilds  — nor can one carrying another
  *                                               init table
  * run_scenario_wave_cost_round_end_releases   — a parked runner does not cross
@@ -115,15 +118,36 @@ static char wcBrainPath[128];
  * not running. */
 static char wcOtherBrainPath[128];
 
-static bool wcWriteBrainFile(char *out, size_t outCap, const char *name) {
+/* One line of the caller's choosing in the file, so a case that writes two
+ * files can tell them apart by reading one back. */
+static bool wcWriteBrainFileLine(char *out, size_t outCap, const char *name,
+                                 const char *line) {
     FILE *f;
 
     SDL_strlcpy(out, name, outCap);
     f = fopen(out, "wb");
     if (f == NULL) return false;
-    fputs("-- fixture\n", f);
+    fprintf(f, "%s\n", line);
     fclose(f);
     return true;
+}
+
+static bool wcWriteBrainFile(char *out, size_t outCap, const char *name) {
+    return wcWriteBrainFileLine(out, outCap, name, "-- fixture");
+}
+
+/* Whether the file at `path` begins with `line`. */
+static bool wcFileStartsWith(const char *path, const char *line) {
+    char   buf[64];
+    FILE  *f;
+    size_t n;
+
+    f = fopen(path, "rb");
+    if (f == NULL) return false;
+    n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+    return strncmp(buf, line, strlen(line)) == 0;
 }
 
 static bool wcMakeBrainFile(const char *tag) {
@@ -602,6 +626,84 @@ int run_scenario_wave_cost_other_brain_rebuilds(void) {
                   "the refielded seat still reads as parked");
     UT_ASSERT_MSG(SDL_strcasecmp(sim->botMgr.bots[seat].brainPath,
                                  wcOtherBrainPath) == 0,
+                  "the refielded seat is running '%s', expected '%s'",
+                  sim->botMgr.bots[seat].brainPath, wcOtherBrainPath);
+    UT_ASSERT_MSG(sim->playerConnected[seat],
+                  "the rebuild emptied the seat");
+
+    serverSimDestroy(sim);
+    wcDropBrainFile();
+    return 0;
+}
+
+/* The same refield onto a second brain file, except that the second file's
+ * name differs from the first's only in case. The path names a file, and on
+ * the server's platforms those are two files, so the parked runner is running
+ * a script the refield did not ask for and cannot serve it.
+ *
+ * Both files are written for real, because the spawn arm refuses a path that
+ * names no file. That assumes a case-sensitive filesystem: on one that folds
+ * case the second write would land in the first file and there would be one
+ * script here rather than two, so the case reads the first file back and
+ * returns without asserting anything when it finds the second write's line in
+ * it. The build directory this runs in is on Linux ext4, where the two names
+ * stay apart. */
+int run_scenario_wave_cost_brain_case_rebuilds(void) {
+    ServerSim *sim;
+    ScenarioOp op;
+    const BYTE seat = WC_FIRST_SEAT;
+
+    UT_ASSERT(wcMakeBrainFile("case_rebuilds"));
+    /* Written straight into wcOtherBrainPath, which wcMakeBrainFile has just
+       cleared, so wcDropBrainFile takes this one too. */
+    UT_ASSERT(wcWriteBrainFileLine(wcOtherBrainPath, sizeof(wcOtherBrainPath),
+                                   "test_scenario_wave_cost_BRAIN_"
+                                   "case_rebuilds.lua",
+                                   "-- second fixture"));
+    if (!wcFileStartsWith(wcBrainPath, "-- fixture")) {
+        /* One file under both names: nothing here to tell apart. */
+        wcDropBrainFile();
+        return 0;
+    }
+
+    UT_ASSERT_MSG(SDL_strcasecmp(wcBrainPath, wcOtherBrainPath) == 0,
+                  "'%s' and '%s' must differ only in case, or this case is "
+                  "not exercising the exact compare",
+                  wcBrainPath, wcOtherBrainPath);
+    UT_ASSERT_MSG(strcmp(wcBrainPath, wcOtherBrainPath) != 0,
+                  "the two paths are the same string, so there is no case "
+                  "difference to compare");
+
+    ut_brain_stub_arm(true);
+    sim = wcParkedSeatSim(seat);
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].parked,
+                  "the seat should have come back with its runner parked");
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 1,
+                  "%d brains were made fielding the seat once, expected 1",
+                  ut_brain_stub_creates(seat));
+
+    /* The refield names the second file. */
+    wcSpawnOp(&op, seat);
+    SDL_strlcpy(op.u.rosterSpawnBot.brain, wcOtherBrainPath,
+                sizeof(op.u.rosterSpawnBot.brain));
+    UT_ASSERT(wcApplyOne(sim, &op));
+    UT_ASSERT_MSG(sim->lobbyPlayers[seat].fielded,
+                  "the refield did not field the seat");
+
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 2,
+                  "the seat has had %d brains made for it, expected 2 — a "
+                  "refield naming a path that differs only in case names "
+                  "another file, which the parked runner is not running",
+                  ut_brain_stub_creates(seat));
+    UT_ASSERT_MSG(ut_brain_stub_destroys() == 1,
+                  "%d brains were destroyed, expected 1 — the parked runner "
+                  "is released to make room for the new one",
+                  ut_brain_stub_destroys());
+    UT_ASSERT_MSG(!sim->botMgr.bots[seat].parked,
+                  "the refielded seat still reads as parked");
+    UT_ASSERT_MSG(strcmp(sim->botMgr.bots[seat].brainPath,
+                         wcOtherBrainPath) == 0,
                   "the refielded seat is running '%s', expected '%s'",
                   sim->botMgr.bots[seat].brainPath, wcOtherBrainPath);
     UT_ASSERT_MSG(sim->playerConnected[seat],

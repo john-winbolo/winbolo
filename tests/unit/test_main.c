@@ -1150,6 +1150,8 @@ static const UnitTestEntry s_tests[] = {
       run_scenario_wave_cost_horde_swap_counts                                               },
     { "scenario_wave_cost_other_brain_rebuilds",
       run_scenario_wave_cost_other_brain_rebuilds                                            },
+    { "scenario_wave_cost_brain_case_rebuilds",
+      run_scenario_wave_cost_brain_case_rebuilds                                             },
     { "scenario_wave_cost_other_init_rebuilds",
       run_scenario_wave_cost_other_init_rebuilds                                             },
     { "scenario_wave_cost_round_end_releases",

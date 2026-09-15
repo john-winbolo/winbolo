@@ -868,8 +868,9 @@ static bool botInitTablesSame(const ScnTable *a, const ScnTable *b) {
 /* Whether the runner parked in this context was built for the spawn now
  * asking for the seat. The brain path chooses the script the VM is running
  * and the init table was read at that VM's first breath, so a spawn naming
- * either differently needs a VM of its own. Compared case-insensitively, as
- * botManagerSetBrainIdx compares the same field.
+ * either differently needs a VM of its own. The path is compared exactly: it
+ * names a file, and on the platforms the server runs on two paths that differ
+ * only in case are two different files.
  *
  * Says which of the two differed, at WARN: a script varying its init table
  * by accident should read as a line in the log rather than as lag on the
@@ -882,7 +883,7 @@ static bool botParkedRunnerMatches(const BotContext *bot,
     const char *wanted = (brainPath != NULL) ? brainPath : "";
     ScnTable    none;
 
-    if (SDL_strcasecmp(bot->brainPath, wanted) != 0) {
+    if (strcmp(bot->brainPath, wanted) != 0) {
         WB_LOG_WARN(WB_LOG_CAT_SIM,
                 "botManager: bot %d parked on brain '%s' and refielded with "
                 "'%s'; building a fresh runner",

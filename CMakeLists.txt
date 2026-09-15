@@ -5262,6 +5262,7 @@ set(_unit_test_names
     scenario_wave_cost_refield_resumes
     scenario_wave_cost_horde_swap_counts
     scenario_wave_cost_other_brain_rebuilds
+    scenario_wave_cost_brain_case_rebuilds
     scenario_wave_cost_other_init_rebuilds
     scenario_wave_cost_round_end_releases
     scenario_wave_cost_horde_parked_releases
