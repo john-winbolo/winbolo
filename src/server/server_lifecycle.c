@@ -911,6 +911,10 @@ void serverInstanceTick(ServerSim *sim) {
      * GAME_OVER, so handleGameOver never stashed the in-flight round.
      * Do it here so the upload below picks it up. */
     roundLogStash();
+    /* Empty-reset bypasses serverSimReturnToLobby, so the release of the
+     * round's parked runners is this path's to make. A parked brain keeps
+     * its state table, and the round it remembers is the one ending here. */
+    botManagerReleaseParkedRunners(sim);
     serverSimResetGameWorld(sim);
     sim->state = serverStateLobby;
     sim->gameLength = sim->originalGameLength;

@@ -341,9 +341,14 @@ Each team:
 `max_bots` is a memory ceiling as well as a seating one. A seat keeps the runner
 behind it — one ClientSim and one brain VM — across the unfielding that takes
 its bot off the field, so the next wave is handed that runner rather than
-building another. What a round holds is therefore one runner for every seat that
-has been fielded in it, not one for every bot on the field at once, and the seat
-count is what bounds that. They are all released at the round boundary.
+building another.
+
+Those runners are built before the round is played: one a frame across the
+countdown, for every seat the template is holding. So a round holds one runner
+per held seat from the moment it begins, rather than from the first wave that
+needs one, and `max_bots` bounds that. A seat whose brain will not load is
+skipped, with a line in the server log, and the wave that fields it builds its
+runner then as it always did. Every runner is released when the round ends.
 
 ### `scenario.rules`
 

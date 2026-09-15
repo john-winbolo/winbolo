@@ -26,6 +26,8 @@
 
 #include <string.h>
 
+#include <SDL3/SDL.h>          /* SDL_GetPathInfo — the warm's brain-path test */
+
 #include "server_sim_internal.h"
 #include "server_sim_shared.h"  /* serverSimSetActive — the fielding path's tank build */
 #include "bot_manager.h"
@@ -34,6 +36,7 @@
 #include "server_sim_scenario.h"  /* serverSimAddUnfieldedSeat and
                                    * serverSimUnfieldBot, which are defined
                                    * here and declared for a scenario */
+#include "../../common/wb_log.h"  /* WB_LOG_WARN — the skipped-seat line */
 
 bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
                      const ServerSimBotConfig *cfg) {
@@ -147,9 +150,9 @@ void serverSimUnfieldBot(ServerSim *sim, BYTE playerNum) {
        the control subscription and the brain instance are parked in the bot
        pool and handed back to the next spawn that fields this seat, so a
        wave transition costs the tank and not a VM per seat. The parked
-       runner is released if the seat leaves the roster, at the next round
-       start, or if the refield names a different brain or a different init
-       table (bot_manager.c). */
+       runner is released when the round ends, if the seat leaves the roster,
+       or if the refield names a different brain or a different init table
+       (bot_manager.c). */
     if (botManagerIsBot(sim, playerNum)) {
         botManagerRemoveBotKeepSeat(sim, playerNum);
     }
@@ -185,6 +188,74 @@ void serverSimUnfieldBot(ServerSim *sim, BYTE playerNum) {
 
     sim->lobbyPlayers[playerNum].fielded = false;
     serverSimPublishLobbySlot(sim, playerNum);
+}
+
+/* The brain a held seat would run if something fielded it now: the one its
+   team was written with, falling back to the server's. Answers NULL when
+   neither resolves to a file on disk, which is the test the spawn arm makes
+   before it builds anything — a path that will not resolve there must not
+   resolve here either, or the warm would build a runner the spawn refuses. */
+static const char *warmSeatBrainPath(const ServerSim *sim, BYTE slot) {
+    const char *path;
+    SDL_PathInfo info;
+
+    path = (sim->seatBrain[slot][0] != '\0') ? sim->seatBrain[slot]
+                                             : serverSimGetBotBrainPath(sim);
+    if (path == NULL || path[0] == '\0') return NULL;
+    /* A brain carried inside the scenario, which nothing loads yet. */
+    if (SDL_strncmp(path, "package:", 8) == 0) return NULL;
+    if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE) {
+        return NULL;
+    }
+    return path;
+}
+
+bool serverSimWarmOneHeldSeat(ServerSim *sim) {
+    BYTE i;
+
+    if (sim == NULL) return false;
+    /* A server with no bot AI runs no brains, which is the same answer the
+       spawn arm gives a script on such a server. */
+    if (serverSimGetBotAiType(sim) == aiNone) return false;
+
+    for (i = 0; i < MAX_TANKS; i++) {
+        char        name[PLAYER_NAME_LEN];
+        const char *brain;
+
+        if (!sim->playerConnected[i]) continue;
+        if (!sim->lobbyPlayers[i].keepSeat) continue;
+        if (sim->lobbyPlayers[i].fielded) continue;
+        /* One this pass has already refused: the answer cannot change while
+           the countdown runs, and the line naming it has been written. */
+        if (sim->warmSkippedSlots & (uint16_t)(1u << i)) continue;
+        /* One that already has a runner — warmed on an earlier tick, or
+           parked by a fielding this round. */
+        if (botManagerHasRunner(sim, i)) continue;
+
+        brain = warmSeatBrainPath(sim, i);
+        if (brain == NULL) {
+            /* Skipped, and the seats after it are still warmed: a seat whose
+               brain has gone costs that seat's wave a build, not the round
+               its warm. */
+            sim->warmSkippedSlots |= (uint16_t)(1u << i);
+            WB_LOG_WARN(WB_LOG_CAT_SIM,
+                        "scenario: seat %d names no brain that loads; its "
+                        "runner is not being built ahead of the round",
+                        (int)i);
+            continue;
+        }
+        playersGetPlayerName(&sim->sim.plyrs, i, name, sizeof(name), TRUE);
+        if (botManagerWarmRunner(sim, i, brain, name,
+                                 serverSimGetBotAiType(sim))) {
+            return true;
+        }
+        /* The build itself failed and said so. Nothing else this tick — a
+           second seat would put two builds in one frame, which is the whole
+           thing this pass exists to avoid. */
+        sim->warmSkippedSlots |= (uint16_t)(1u << i);
+        return false;
+    }
+    return false;
 }
 
 void serverSimSetBotAiType(ServerSim *sim, aiType ai) {

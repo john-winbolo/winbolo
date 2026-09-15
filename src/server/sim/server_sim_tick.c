@@ -493,6 +493,15 @@ static void simRunHalfStep(ServerSim *sim) {
         sim->countdownTicks--;
         if (sim->countdownTicks <= 0) {
             serverSimStartGame(sim);
+        } else {
+            /* One held seat's runner, built and parked here so the round that
+             * follows fields it without building anything. This is the window
+             * for it: the countdown simulates nothing, so a frame that spends
+             * 200ms on a brain delays the countdown by 200ms and nothing
+             * else, where the same build during play is a frame every client
+             * feels. One a frame, so no frame carries two, and never on the
+             * frame that starts the round. */
+            serverSimWarmOneHeldSeat(sim);
         }
         logWriteTick();
         return;

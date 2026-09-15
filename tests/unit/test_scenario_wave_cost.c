@@ -26,6 +26,11 @@
  * op, which on a seat marked keepSeat reaches serverSimUnfieldBot instead of
  * emptying the seat.
  *
+ * A round's held seats do not wait for a wave to get their runners: the
+ * countdown builds one a frame for every seat the lobby is holding, so the
+ * first wave of the round resumes like every wave after it. The countdown
+ * simulates nothing, which is why the builds go there.
+ *
  * run_scenario_wave_cost_refield_resumes      — one seat fielded, unfielded and
  *                                               fielded again: one brain made,
  *                                               none destroyed, and the same
@@ -38,10 +43,20 @@
  *                                               cannot have the parked runner
  * run_scenario_wave_cost_other_init_rebuilds  — nor can one carrying another
  *                                               init table
- * run_scenario_wave_cost_round_start_releases — a parked runner does not cross
+ * run_scenario_wave_cost_round_end_releases   — a parked runner does not cross
  *                                               a round boundary
- * run_scenario_wave_cost_destroy_releases     — nor does it survive
+ * run_scenario_wave_cost_horde_parked_releases— and neither does a whole horde
+ *                                               of them, which is the shape no
+ *                                               active bot is left to carry
+ * run_scenario_wave_cost_destroy_releases     — nor does one survive
  *                                               botManagerDestroy
+ * run_scenario_wave_cost_countdown_warms_seats— the countdown leaves a parked
+ *                                               runner behind every held seat
+ * run_scenario_wave_cost_warmed_field_is_free — and the wave that fields one
+ *                                               builds nothing
+ * run_scenario_wave_cost_warm_skips_bad_brain — a seat whose brain will not
+ *                                               load is skipped, and the rest
+ *                                               are still warmed
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -56,10 +71,11 @@
 #include "server_sim.h"
 #include "server_sim_internal.h"   /* state, playerConnected, lobbyPlayers,
                                     * botMgr.bots[] */
-#include "server_sim_lifecycle.h"  /* serverSimSetBotAiType / BrainPath */
+#include "server_sim_lifecycle.h"  /* serverSimSetBotAiType / BrainPath,
+                                    * serverSimReturnToLobby — the round end */
 #include "server_sim_scenario.h"
 #include "bot_manager.h"           /* BotContext: the ClientSim and the sub,
-                                    * botManagerOnGameStart, botManagerDestroy */
+                                    * botManagerIsBot, botManagerDestroy */
 #include "scenario_table.h"        /* scnTableSet — the init table a spawn carries */
 #include "game_sim.h"
 #include "everard_map.h"
@@ -216,6 +232,36 @@ static bool wcUnfieldAll(ServerSim *sim) {
     }
     for (i = 0; i < WC_SEATS; i++) {
         if (sim->lobbyPlayers[WC_FIRST_SEAT + i].fielded) return false;
+    }
+    return true;
+}
+
+/* The countdown a lobby runs before a round, driven a frame at a time: the
+ * state and the tick count the all-ready check sets, and then the frames
+ * themselves. Each one builds one held seat's runner; the last starts the
+ * round. */
+static void wcRunCountdown(ServerSim *sim, int ticks) {
+    int i;
+
+    sim->state = serverStateCountdown;
+    sim->countdownTicks = ticks;
+    sim->warmSkippedSlots = 0;
+    for (i = 0; i < ticks; i++) {
+        serverSimTick(sim);
+    }
+}
+
+/* Seat the horde in a fresh lobby, named as the template names them. */
+static bool wcSeatHorde(ServerSim *sim) {
+    int i;
+
+    for (i = 0; i < WC_SEATS; i++) {
+        char name[PLAYER_NAME_LEN];
+        SDL_snprintf(name, sizeof(name), "Horde%d", i + 1);
+        if (!serverSimAddUnfieldedSeat(sim, (BYTE)(WC_FIRST_SEAT + i),
+                                       name, WC_TEAM)) {
+            return false;
+        }
     }
     return true;
 }
@@ -540,44 +586,43 @@ int run_scenario_wave_cost_other_init_rebuilds(void) {
 
 /* ── A parked runner outlives neither the round nor the pool ──────── */
 
-int run_scenario_wave_cost_round_start_releases(void) {
+int run_scenario_wave_cost_round_end_releases(void) {
     ServerSim *sim;
     const BYTE seat = WC_FIRST_SEAT;
 
-    UT_ASSERT(wcMakeBrainFile("round_start_releases"));
+    UT_ASSERT(wcMakeBrainFile("round_end_releases"));
     ut_brain_stub_arm(true);
     sim = wcParkedSeatSim(seat);
     UT_ASSERT(sim != NULL);
     UT_ASSERT_MSG(sim->botMgr.bots[seat].parked,
                   "the seat should have come back with its runner parked");
 
-    /* The round start's pass over the bot pool. A parked runner holds a
-       ClientSim built over the round that has just ended, so it does not
-       cross the boundary. */
-    botManagerOnGameStart(sim);
+    /* The round ending. A parked brain keeps its state table, so the round it
+       remembers is this one — it must not open the next. */
+    serverSimReturnToLobby(sim);
 
     UT_ASSERT_MSG(!sim->botMgr.bots[seat].parked,
-                  "the round start left the runner parked");
+                  "the round end left the runner parked");
     UT_ASSERT_MSG(sim->botMgr.bots[seat].cs == NULL,
-                  "the round start left the parked ClientSim behind");
+                  "the round end left the parked ClientSim behind");
     UT_ASSERT_MSG(sim->botMgr.bots[seat].controlSub ==
                       SUBSCRIBER_HANDLE_INVALID,
-                  "the round start left the parked control subscription "
+                  "the round end left the parked control subscription "
                   "registered");
     UT_ASSERT_MSG(ut_brain_stub_destroys() == 1,
-                  "%d brains were destroyed at the round start, expected the "
+                  "%d brains were destroyed at the round end, expected the "
                   "1 that was parked", ut_brain_stub_destroys());
     UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 1,
-                  "the round start made a brain for a seat that is not on the "
+                  "the round end made a brain for a seat that is not on the "
                   "field: %d made in all, expected 1",
                   ut_brain_stub_creates(seat));
 
-    /* The seat itself is untouched: a held seat enters the new round the way
-       it entered the last one, with nothing behind it. */
+    /* The seat itself is untouched: it goes back to the lobby held, the way
+       it was seated. */
     UT_ASSERT_MSG(sim->playerConnected[seat],
-                  "the round start emptied the seat");
+                  "the round end emptied the seat");
     UT_ASSERT_MSG(!sim->lobbyPlayers[seat].fielded,
-                  "the round start put the held seat on the field");
+                  "the round end put the held seat on the field");
     UT_ASSERT_MSG(serverSimGetNumBots(sim) == 0,
                   "the bot pool counts %u bots, expected 0",
                   (unsigned)serverSimGetNumBots(sim));
@@ -613,6 +658,224 @@ int run_scenario_wave_cost_destroy_releases(void) {
     UT_ASSERT_MSG(ut_brain_stub_destroys() == 1,
                   "%d brains were destroyed, expected the 1 that was parked",
                   ut_brain_stub_destroys());
+
+    serverSimDestroy(sim);
+    wcDropBrainFile();
+    return 0;
+}
+
+/* A whole horde parked and nothing active — the shape a Wave Defense round
+ * ends in, its last wave unfielded before the round is won. Nothing is left
+ * on the field to be walked over, so a release that only ever ran for an
+ * active bot never ran at all, and every one of those brains opened the next
+ * round still remembering this one. */
+int run_scenario_wave_cost_horde_parked_releases(void) {
+    ServerSim *sim;
+    int i;
+
+    UT_ASSERT(wcMakeBrainFile("horde_parked_releases"));
+    ut_brain_stub_arm(true);
+    sim = wcLobbySim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(wcSeatHorde(sim));
+    serverSimStartGame(sim);
+    UT_ASSERT(sim->state == serverStateRunning);
+
+    UT_ASSERT_MSG(wcFieldAll(sim), "the wave did not field all %d seats",
+                  WC_SEATS);
+    UT_ASSERT_MSG(wcUnfieldAll(sim),
+                  "the wave did not come off the field");
+    UT_ASSERT_MSG(wcHordeCreates() == WC_SEATS,
+                  "the wave made %d brains, expected %d",
+                  wcHordeCreates(), WC_SEATS);
+    UT_ASSERT_MSG(ut_brain_stub_destroys() == 0,
+                  "%d brains were destroyed taking the wave off the field, "
+                  "expected 0", ut_brain_stub_destroys());
+    for (i = 0; i < WC_SEATS; i++) {
+        UT_ASSERT_MSG(sim->botMgr.bots[WC_FIRST_SEAT + i].parked,
+                      "seat %d came off the field without parking its runner",
+                      WC_FIRST_SEAT + i);
+    }
+    /* The condition the round-start release could not see. */
+    UT_ASSERT_MSG(serverSimGetNumBots(sim) == 0,
+                  "the pool counts %u active bots with the whole horde parked, "
+                  "expected 0", (unsigned)serverSimGetNumBots(sim));
+
+    serverSimReturnToLobby(sim);
+
+    UT_ASSERT_MSG(ut_brain_stub_destroys() == WC_SEATS,
+                  "the round end destroyed %d brains, expected the %d that "
+                  "were parked", ut_brain_stub_destroys(), WC_SEATS);
+    for (i = 0; i < WC_SEATS; i++) {
+        const BYTE seat = (BYTE)(WC_FIRST_SEAT + i);
+        UT_ASSERT_MSG(!sim->botMgr.bots[seat].parked,
+                      "seat %d carried its parked runner across the boundary",
+                      (int)seat);
+        UT_ASSERT_MSG(sim->botMgr.bots[seat].cs == NULL,
+                      "seat %d kept its ClientSim across the boundary",
+                      (int)seat);
+        UT_ASSERT_MSG(sim->botMgr.bots[seat].controlSub ==
+                          SUBSCRIBER_HANDLE_INVALID,
+                      "seat %d kept its control subscription across the "
+                      "boundary", (int)seat);
+        UT_ASSERT_MSG(sim->playerConnected[seat],
+                      "the round end emptied seat %d", (int)seat);
+    }
+
+    serverSimDestroy(sim);
+    wcDropBrainFile();
+    return 0;
+}
+
+/* ── The countdown builds what the round will need ────────────────── */
+
+int run_scenario_wave_cost_countdown_warms_seats(void) {
+    ServerSim *sim;
+    int i;
+
+    UT_ASSERT(wcMakeBrainFile("countdown_warms_seats"));
+    ut_brain_stub_arm(true);
+    sim = wcLobbySim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(wcSeatHorde(sim));
+    UT_ASSERT_MSG(wcHordeCreates() == 0,
+                  "%d brains were made seating the horde, expected 0",
+                  wcHordeCreates());
+
+    /* One frame per seat, and one more for the frame that starts the round. */
+    wcRunCountdown(sim, WC_SEATS + 1);
+    UT_ASSERT_MSG(sim->state == serverStateRunning,
+                  "the countdown did not start the round, state %d",
+                  (int)sim->state);
+
+    UT_ASSERT_MSG(wcHordeCreates() == WC_SEATS,
+                  "the countdown made %d brains, expected one for each of the "
+                  "%d held seats", wcHordeCreates(), WC_SEATS);
+    UT_ASSERT_MSG(ut_brain_stub_destroys() == 0,
+                  "the countdown destroyed %d brains, expected 0",
+                  ut_brain_stub_destroys());
+
+    for (i = 0; i < WC_SEATS; i++) {
+        const BYTE seat = (BYTE)(WC_FIRST_SEAT + i);
+        UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 1,
+                      "seat %d had %d brains made for it, expected 1",
+                      (int)seat, ut_brain_stub_creates(seat));
+        UT_ASSERT_MSG(sim->botMgr.bots[seat].parked,
+                      "seat %d has no parked runner behind it", (int)seat);
+        UT_ASSERT_MSG(sim->botMgr.bots[seat].cs != NULL,
+                      "seat %d was warmed without a ClientSim", (int)seat);
+        UT_ASSERT_MSG(sim->botMgr.bots[seat].controlSub !=
+                          SUBSCRIBER_HANDLE_INVALID,
+                      "seat %d was warmed without a control subscription",
+                      (int)seat);
+        /* The roster is untouched: a warm fields nobody. */
+        UT_ASSERT_MSG(!sim->lobbyPlayers[seat].fielded,
+                      "the warm put seat %d on the field", (int)seat);
+        UT_ASSERT_MSG(sim->sim.tanks[seat] == NULL,
+                      "the warm built a tank for seat %d", (int)seat);
+    }
+    UT_ASSERT_MSG(serverSimGetNumBots(sim) == 0,
+                  "the pool counts %u active bots after the warm, expected 0",
+                  (unsigned)serverSimGetNumBots(sim));
+
+    serverSimDestroy(sim);
+    wcDropBrainFile();
+    return 0;
+}
+
+int run_scenario_wave_cost_warmed_field_is_free(void) {
+    ServerSim *sim;
+    ScenarioOp op;
+    const BYTE seat = WC_FIRST_SEAT;
+    ClientSim *warmCs;
+    SubscriberHandle warmSub;
+
+    UT_ASSERT(wcMakeBrainFile("warmed_field_is_free"));
+    ut_brain_stub_arm(true);
+    sim = wcLobbySim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(wcSeatHorde(sim));
+    wcRunCountdown(sim, WC_SEATS + 1);
+    UT_ASSERT(sim->state == serverStateRunning);
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].parked,
+                  "the countdown left seat %d without a runner", (int)seat);
+
+    warmCs  = sim->botMgr.bots[seat].cs;
+    warmSub = sim->botMgr.bots[seat].controlSub;
+
+    /* The first wave of the round. Nothing to build: the runner is here. */
+    wcSpawnOp(&op, seat);
+    UT_ASSERT(wcApplyOne(sim, &op));
+    UT_ASSERT_MSG(sim->lobbyPlayers[seat].fielded,
+                  "the wave did not field the warmed seat");
+
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 1,
+                  "fielding a warmed seat made %d brains for it in all, "
+                  "expected the 1 the warm made",
+                  ut_brain_stub_creates(seat));
+    UT_ASSERT_MSG(ut_brain_stub_destroys() == 0,
+                  "fielding a warmed seat destroyed %d brains, expected 0",
+                  ut_brain_stub_destroys());
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].cs == warmCs,
+                  "the fielded seat is running on a different ClientSim than "
+                  "the warm built");
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].controlSub == warmSub,
+                  "the fielded seat registered another control subscription");
+    UT_ASSERT_MSG(!sim->botMgr.bots[seat].parked,
+                  "the fielded seat still reads as parked");
+    UT_ASSERT_MSG(botManagerIsBot(sim, seat),
+                  "the fielded seat is not an active bot");
+    UT_ASSERT_MSG(sim->sim.tanks[seat] != NULL,
+                  "the fielding built no tank for the seat");
+
+    serverSimDestroy(sim);
+    wcDropBrainFile();
+    return 0;
+}
+
+int run_scenario_wave_cost_warm_skips_bad_brain(void) {
+    ServerSim *sim;
+    const BYTE bad = WC_FIRST_SEAT;
+    int i;
+
+    UT_ASSERT(wcMakeBrainFile("warm_skips_bad_brain"));
+    ut_brain_stub_arm(true);
+    sim = wcLobbySim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(wcSeatHorde(sim));
+
+    /* One seat written to run a brain that is not on disk. The others name
+       none of their own and fall back to the server's, which is. */
+    SDL_strlcpy(sim->seatBrain[bad], "test_scenario_wave_cost_no_such.lua",
+                sizeof(sim->seatBrain[bad]));
+
+    wcRunCountdown(sim, WC_SEATS + 1);
+    UT_ASSERT(sim->state == serverStateRunning);
+
+    UT_ASSERT_MSG(ut_brain_stub_creates(bad) == 0,
+                  "the seat naming a brain that will not load had %d made for "
+                  "it, expected 0", ut_brain_stub_creates(bad));
+    UT_ASSERT_MSG(!sim->botMgr.bots[bad].parked,
+                  "the skipped seat has a parked runner");
+    UT_ASSERT_MSG(sim->botMgr.bots[bad].cs == NULL,
+                  "the skipped seat has a ClientSim");
+    UT_ASSERT_MSG(sim->playerConnected[bad],
+                  "the skipped seat left the roster");
+
+    /* And the seats behind it were warmed all the same. */
+    for (i = 1; i < WC_SEATS; i++) {
+        const BYTE seat = (BYTE)(WC_FIRST_SEAT + i);
+        UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 1,
+                      "seat %d had %d brains made for it, expected 1 — one "
+                      "seat the warm cannot serve must not cost the rest "
+                      "theirs", (int)seat, ut_brain_stub_creates(seat));
+        UT_ASSERT_MSG(sim->botMgr.bots[seat].parked,
+                      "seat %d has no parked runner behind it", (int)seat);
+    }
+    UT_ASSERT_MSG(wcHordeCreates() == WC_SEATS - 1,
+                  "the countdown made %d brains, expected %d — one for every "
+                  "seat but the one it could not serve",
+                  wcHordeCreates(), WC_SEATS - 1);
 
     serverSimDestroy(sim);
     wcDropBrainFile();

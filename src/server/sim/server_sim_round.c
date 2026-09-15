@@ -728,6 +728,15 @@ void serverSimReturnToLobby(ServerSim *sim) {
        the next round starts where the last one did. */
     serverSimScenarioReconcileLobby(sim);
 
+    /* The round is over, so every parked runner goes. A parked brain keeps
+       its state table, which is what makes a resume worth having inside a
+       round and wrong across one: the brain would open the next round still
+       remembering this one's goal and owners. After the reconcile above and
+       not before it — that call takes a seat the script still had on the
+       field off it, which parks its runner, so a release before it would
+       leave exactly those behind. */
+    botManagerReleaseParkedRunners(sim);
+
     /* Reconcile the players table against the restored connection state:
      * clear any slot still marked inUse but no longer connected. The leave
      * path (serverSimRemovePlayer -> playersClearSlot) already does this per
@@ -900,6 +909,10 @@ void serverSimLobbyCheckAllReady(ServerSim *sim) {
         serverSimWbnLobbyUpdate(sim, TRUE);
         sim->state = serverStateCountdown;
         sim->countdownTicks = LOBBY_COUNTDOWN_TICKS;
+        /* The countdown is the window the held seats' runners are built in
+           (serverSimWarmOneHeldSeat). A seat it refuses is named once per
+           countdown, so the record of what it refused starts empty here. */
+        sim->warmSkippedSlots = 0;
         serverSimConsoleMessage("All players ready! Starting countdown...");
         {
             ControlEvent evt;
@@ -1620,6 +1633,12 @@ void serverSimMapRotateRound(ServerSim *sim) {
     /* Drop vote / map-skip state scoped to the round we're leaving. */
     serverSimGameVoteResetAll(sim);
     serverSimMapSkipVotesReset(sim);
+
+    /* And every parked runner, for the same reason and with the same rule as
+       the gameOver->lobby end: a parked brain carries its state table, and
+       the round it remembers is the one being left. This is the end of that
+       round — the start below is the next one's. */
+    botManagerReleaseParkedRunners(sim);
 
     /* serverSimChangeMap (reached via serverSimMapDirPickRandom) only runs
      * in lobby state, so drop into it for the pick. serverSimStartGame

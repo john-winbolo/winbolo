@@ -2404,17 +2404,22 @@ int run_unfielded_seat_spawn_keeps_alliances(void);
 int run_unfielded_seat_on_the_wire(void);
 
 /* What a wave costs (test_scenario_wave_cost.c): the brain, the ClientSim and
- * the control subscription behind a held seat, parked when the seat comes off
- * the field and handed back when it goes back on. Counted at the calls that
- * do it, for one seat and for a horde of six swapped twice, plus the two
- * refields a parked runner cannot serve and the two places it must not
- * survive. */
+ * the control subscription behind a held seat, built across the countdown
+ * before the round is played, parked when the seat comes off the field and
+ * handed back when it goes back on. Counted at the calls that do it, for one
+ * seat and for a horde of six swapped twice, plus the two refields a parked
+ * runner cannot serve, the three places it must not survive, and the warm
+ * itself — every seat, a free first fielding, and one seat it cannot serve. */
 int run_scenario_wave_cost_refield_resumes(void);
 int run_scenario_wave_cost_horde_swap_counts(void);
 int run_scenario_wave_cost_other_brain_rebuilds(void);
 int run_scenario_wave_cost_other_init_rebuilds(void);
-int run_scenario_wave_cost_round_start_releases(void);
+int run_scenario_wave_cost_round_end_releases(void);
+int run_scenario_wave_cost_horde_parked_releases(void);
 int run_scenario_wave_cost_destroy_releases(void);
+int run_scenario_wave_cost_countdown_warms_seats(void);
+int run_scenario_wave_cost_warmed_field_is_free(void);
+int run_scenario_wave_cost_warm_skips_bad_brain(void);
 
 /* The five comms ops (test_scenario_comms_arms.c). A line to the game, to a
  * team and to one player, with the destination filtered where the recipient
