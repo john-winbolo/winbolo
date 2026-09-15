@@ -688,7 +688,12 @@ local function pump_spawn_queue(tick)
   local seat = seats[spawn_index]
   local p
   if seat ~= nil then
-    p = game.spawn_bot{ slot = seat, start = 22 - seat,
+    -- Each of the ten wave seats owns one ocean start. A seat outside 6..15
+    -- has no spoke of its own, so the start is left to on_choose_start
+    -- rather than named as a number that is off the map.
+    local start = nil
+    if seat >= 6 and seat <= 15 then start = 22 - seat end
+    p = game.spawn_bot{ slot = seat, start = start,
                         loadout = "open", init = wave_init(wave) }
   end
 
@@ -747,6 +752,14 @@ local function spawn_wave()
                              wave, WAVES, #seats))
   game.log(string.format("Survival: wave %d/%d inbound, %d attacker(s)",
                          wave, WAVES, #seats))
+
+  -- A wave with no seats to field never reaches finish_wave_spawn, and that
+  -- is the only place the newswire comes back on. Lift it here instead, so a
+  -- round whose lobby seated no horde -- a harness, or a host who trimmed the
+  -- team to nothing -- does not play out in silence.
+  if #seats == 0 then
+    newswire_unmute_at = game.tick() + secs(MUTE_TAIL_S)
+  end
 end
 
 -- ---------------------------------------------------------------------
@@ -1015,6 +1028,7 @@ local function build_shallow_rim()
   -- is there before anybody has driven anywhere.
   rim_todo = conv
   rim_at   = 1
+  game.log(string.format("Survival: %d coast square(s) to shallow", #conv))
 end
 
 local function drain_rim()
