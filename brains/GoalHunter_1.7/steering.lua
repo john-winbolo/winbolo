@@ -369,7 +369,21 @@ local _pp_stationary = {
 }
 local _at_stationary = { engage=true, close=true, disengage=true }
 
-local function intentionally_stationary(goal, info)
+-- A GO-THERE ORDER IN ITS HOLD PHASE: the tank is parked by M.steer below,
+-- on purpose, for as long as the hold runs.  The stuck detector must read
+-- that as deliberate or it escalates and throws the order away.  The park
+-- kinds only (C.ORDER_HOLD_PARK_KINDS): a survival goal that works by moving
+-- still drives, and still counts as stuck if it cannot.
+local function order_hold_parked(state, goal)
+  if not (C.BOT_COMMANDS_ENABLED and state and goal) then return false end
+  local ord = state._order
+  return (ord and ord.hold and ord.kind == "goto_tile"
+          and (C.ORDER_HOLD_PARK_KINDS or {})[goal.kind]) and true or false
+end
+M.order_hold_parked = order_hold_parked
+
+local function intentionally_stationary(goal, info, state)
+  if order_hold_parked(state, goal) then return true end
   local s = goal.substate or ""
   if goal.kind == "attack_pill" and _ap_stationary[s] then return true end
   if goal.kind == "pill_place"  and _pp_stationary[s] then return true end
@@ -455,7 +469,7 @@ local function stuck_recovery(state, info, goal)
   -- state._lgm_paced: the LGM pacing throttle capped the tank last tick —
   -- the crawl is intentional, so don't count it as "no progress".
   if state.wall_clearing or state._lgm_paced
-     or intentionally_stationary(goal, info) then
+     or intentionally_stationary(goal, info, state) then
     state.stuck_progress = nil
     return
   end
@@ -6021,6 +6035,28 @@ function M.steer(state, world, info, goal)
                                state._cliff_sticky_my or -1))
         end
       end
+    end
+  end
+
+  -- ── A GO-THERE ORDER IN ITS HOLD PHASE: STAND STILL AND FIGHT ─────────
+  -- A person pointed at a square and the bot is standing on it.  From the
+  -- arrival tick the hard goal lock is off (goals.lua, "the hold phase of a
+  -- go-there order") so attack_tank and kill_lgm can win the pool -- but
+  -- winning must not turn into DRIVING, or the order stops meaning anything
+  -- the moment a tank shows up.  So the throttle is taken away HERE, at the
+  -- one point every key leaves this module: KEY_FASTER is cleared and the
+  -- tank brakes if it is still rolling.  Turn keys and taps (the gun) pass
+  -- through untouched, which is the whole point -- it aims and fires from the
+  -- spot.  Only the park kinds are held this way, so a critical-armour flee
+  -- or an escape from water still drives.
+  if order_hold_parked(state, goal) and keys then
+    local before = keys
+    keys = bit.band(keys, bit.bnot(KEY_FASTER))
+    if (info.speed or 0) > 0 then keys = bit.bor(keys, KEY_SLOWER) end
+    if BRAIN_DEBUG_MODE and before ~= keys then
+      print2(string.format("ORDER_HOLD_PARK t=%d goal=%s keys=%d->%d",
+                           state.tick or 0, tostring(goal and goal.kind),
+                           before, keys))
     end
   end
   return keys, taps

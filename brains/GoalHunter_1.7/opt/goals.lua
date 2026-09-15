@@ -15984,6 +15984,19 @@ local function goal_selection(state, world, info, quiet)
     -- think, we just stop rejecting rows for it now.
     if ordq.tkind == "pill" and ordq.tid and not world.pills[ordq.tid] then okq = false end
     if ordq.tkind == "base" and ordq.tid and not world.bases[ordq.tid] then okq = false end
+    -- A DEFEND ORDER ON A PILL THAT IS NO LONGER OURS is finished: there is
+    -- nothing left to guard.  orders.lua clears the slot on its next think
+    -- and says so; this stops the reject pass a tick earlier, so the bot
+    -- cannot spend even one think with every strategic row rejected for a
+    -- pill the enemy now owns.  That idle tick is what Andrew watched turn
+    -- into a bot sitting beside a captured pill doing nothing.
+    if ordq.kind == "defend_pill" and ordq.tid then
+      local dp = world.pills[ordq.tid]
+      if not dp or dp.owner ~= "friendly" or (dp.health or 0) == 0
+         or dp.in_tank then
+        okq = false
+      end
+    end
     -- Armour below the escape line PAUSES every order (a pause, not an exit:
     -- orders.lua keeps the 60 s timer running).
     if (info.armour or 0) <= C.ARMOUR_CRITICAL then okq = false end
@@ -16485,7 +16498,15 @@ local function goal_selection(state, world, info, quiet)
           break
         end
       end
-      if not held then
+      -- A GO-THERE ORDER IN ITS HOLD PHASE PUTS NO ROW IN THE POOL.  The
+      -- injected order row is priced at ORDER_INJECT_COST, which is cheap on
+      -- purpose so an ordered goal wins its pool -- and during a hold that
+      -- would beat attack_tank and kill_lgm every time, which is exactly the
+      -- fight the hold is supposed to allow.  There is nothing to bid for
+      -- anyway: the bot is already standing on the square, and pick_goal
+      -- hands back the hold goal itself when no reactive row wins.
+      local holding = ordr.kind == "goto_tile" and ordr.hold
+      if not held and not holding then
         local og = M.order_goal(state, world, info, ordr)
         if og then
           held = { cost = C.ORDER_INJECT_COST or 20,
@@ -17746,6 +17767,43 @@ function M.pick_goal(state, world, info, quiet)
       end
       return g
     end
+  end
+
+  -- ════════════════════════════════════════════════════════════════════
+  -- THE HOLD PHASE of a go-there order (Andrew, Sep 15).
+  --
+  -- Travel is the hard lock above: command_goal, nothing else runs.  The tick
+  -- the tank ARRIVES, orders.lua sets ord.hold and drops that lock, and we
+  -- land here instead.  The bot must keep fighting what comes to it -- turn
+  -- on a tank in range, shoot a man beside it -- without WALKING OFF the
+  -- square a person pointed at.
+  --
+  -- So goal selection runs in full: the order reject pass inside it stamps
+  -- every STRATEGIC row with the "order" chip exactly as before, and the
+  -- REACTIVE rows (C.ORDER_REACTIVE_KINDS -- attack_tank, kill_lgm, and the
+  -- flee/cover rows the critical-armour injection adds) compete for real.  A
+  -- reactive winner is returned as a real goal.  Anything else -- the
+  -- injected goto_tile row, "none", or no winner at all -- becomes the HOLD
+  -- GOAL: a goto_tile on the ordered square, which steering parks on.
+  --
+  -- The tank is kept in place by M.steer, not by the goal: while ord.hold is
+  -- set it drops the throttle for the C.ORDER_HOLD_PARK_KINDS goals, so
+  -- attack_tank aims and fires from the spot and kill_lgm shoots without
+  -- driving.  The builder queue is untouched by any of this.
+  -- ════════════════════════════════════════════════════════════════════
+  if C.BOT_COMMANDS_ENABLED and state._order and state._order.hold
+     and state._order.kind == "goto_tile" and state._order.mx then
+    local ord = state._order
+    local rk  = C.ORDER_REACTIVE_KINDS or {}
+    local g   = goal_selection(state, world, info, quiet)
+    if g and g.kind and g.kind ~= "none" and g.kind ~= "goto_tile" and rk[g.kind] then
+      if not quiet and BRAIN_DEBUG_MODE then
+      end
+      return g
+    end
+    return { kind = "goto_tile", mx = ord.mx, my = ord.my,
+             wx = U.m2w(ord.mx), wy = U.m2w(ord.my), target_id = -1,
+             _ordered = true, _order_hold = true }
   end
 
   -- Warmup gate: until the pools warm up (>= WARMUP_MIN_REAL_GOALS candidates

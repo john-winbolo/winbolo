@@ -1,3 +1,5 @@
+BOT COMMANDS ARE EXPERIMENTAL AND IN BETA. Expect rough edges and tell us what breaks.
+
 Allies can order GoalHunter bots:
 
 1) by "Bot Command" pings on a target or tile, or "Caution" on a target or bot to cancel and again to retreat.
@@ -126,10 +128,13 @@ depends on what is under the tile you ping:
   your own base             nothing at all
 
 TILE RULE
-  The exact tile wins first. If something stands on the tile you pinged, that
-  is the target, and the eight tiles around it are not searched. Only when the
-  exact tile is empty are the eight around it tried, and then the nearest one
-  wins.
+  A PILLBOX OR A BASE HAS TO BE PINGED EXACTLY. They never move, so put the
+  marker right on the tile. A ping one tile off a pillbox is not that pillbox:
+  it is open ground, which means "go there". That is how you send a bot to a
+  square beside a pill.
+  TANKS get the eight tiles around the ping as well, because a tank moves
+  while the ping is in flight. The exact tile still wins first, and when it is
+  empty the nearest tank in the eight around it wins.
 
 PING AGAIN TO ADD A BOT
   A second ping on the same target, or inside its 3x3, sends one MORE bot. The
@@ -141,8 +146,9 @@ SELECT BY PING
   whether you ping it, shoot it or type it, goes to all of them.
 
 CAUTION PING
-  The caution ping is the cancel. A caution ping in the 3x3 of a target
-  releases the bots working on it.
+  The caution ping is the cancel. A caution ping in the 3x3 of a place the
+  bots were sent to releases the bots working on it. With no order on that
+  place a caution does nothing.
   A caution ping on one of your own bots: if it holds an order, the first
   caution cancels the order and a second one makes it retreat. A bot with no
   order retreats on the first.
@@ -160,12 +166,20 @@ The bot with the cheapest route drives there and holds, out of the bots that
 were on your screen when the order went out. A bot further away than that
 does not hear you.
 
-A place order is a hard one. The bot drops what it was doing, drives to the
-square and stands on it. It picks no goals of its own on the way or after it
-arrives -- no pills, no bases, no cover -- until the order runs out (60
-seconds), you cancel it with a caution ping or "cancel", or you give it
-something else to do. It still shoots an enemy tank that drives into its
-sights. A ping on open ground does the same thing as the three shells.
+A place order is a hard one. The bot drops what it was doing and drives to the
+square. On the way it picks no goals of its own -- no pills, no bases, no
+cover. It has about 60 seconds to get there; an order that never arrives runs
+out on that.
+
+When it arrives it says "holding 10s" and stands on the square for ten
+seconds. During the hold it does not drive anywhere, but it does fight: it
+turns on an enemy tank in range and shoots it, and it shoots an enemy man
+beside it. Its own builder carries on as usual. After the ten seconds the
+order is over, without a word, and the bot picks its own goals again.
+
+You can end it earlier with a caution ping or "cancel", or by giving it
+something else to do. A ping on open ground does the same thing as the three
+shells.
 
 Forest does not count, and a shell that stops on a wall, a building, a
 pillbox, a base or a tank does not count. If no bot is in range, nothing
@@ -198,6 +212,15 @@ An order holds for about 60 seconds. Each new ping on the same target starts
 the clock again. A bot that runs out of shells on an order that needs them
 refuels at your nearest base and comes back; the clock keeps running.
 
+A "go there" order is the one exception: the 60 seconds is the time it has to
+GET there, and once it arrives it holds the square for ten seconds and then
+lets go. See THREE SHOTS = COME HERE above.
+
+An order ends the moment its job is gone. A defend order on one of your
+pillboxes ends as soon as that pillbox is not yours any more -- shot flat, or
+taken by the enemy. The bot says "lost pill #5" and goes back to its own
+goals, which may well be to go and take it back.
+
 BUSY BOTS
 A bot does not take a new order while its man is out of the tank, while it is
 finishing a pillbox capture, while it is moving a pillbox it voted to move,
@@ -211,11 +234,13 @@ WHAT THE BOTS SAY
                                 bot's name theme.
   Got it! take_cover            a retreat has no number to say: just the word.
   Got it! goto                  a "go there and hold" (a ping on open ground,
-                                or three shells on one square). The bot drives
-                                to that square and stands on it until the
-                                order runs out or you cancel it. It picks no
-                                goals of its own while it is going: that is
+                                or three shells on one square). The bot picks
+                                no goals of its own while it is going: that is
                                 what the order means.
+  holding 10s                   it got to the square. It now stands there for
+                                that many seconds, fighting what comes into
+                                range but driving nowhere. Nothing is said
+                                when the time is up.
   3 on pill #5                  a group order, said once by one bot.
   Still on it. attack_pill #5   you asked for something it already holds.
   Leaving attack_pill #5 for capture_pill #7
@@ -225,6 +250,9 @@ WHAT THE BOTS SAY
                                 the pill is yours, or is in somebody's tank,
                                 the order ends and the bot picks its own goal
                                 again.
+  lost pill #5                  the pillbox it was defending is not yours any
+                                more, so there is nothing left to defend. The
+                                order ends and the bot picks its own goals.
   Lost Hannibal                 the tank it was sent after died or has been
                                 out of sight for ten seconds.
   Busy (man_out)                it cannot take an order right now.

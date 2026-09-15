@@ -293,11 +293,29 @@ check("exact tile: an enemy tank",
       tostring((ORD.resolve_ping(st, w, inf, 14, 14) or {}).class))
 check("open ground resolves to nothing",
       ORD.resolve_ping(st, w, inf, 100, 100) == nil, "?")
-check("ring: a neighbour of the pill",
+-- THE RING IS FOR TANKS ONLY (Andrew, Sep 15).  He pinged one square off a
+-- pillbox to send a decoy to that square and the bot read it as defend_pill.
+-- A pill and a base never move and you can put the marker right on them, so
+-- beside one is not it: the ping falls through to open ground and means "go
+-- there".  A TANK moves while the ping is in flight, so its ring stays.
+check("ring: a neighbour of the pill is NOT the pill",
+      ORD.resolve_ping(st, w, inf, 21, 20) == nil,
+      tostring((ORD.resolve_ping(st, w, inf, 21, 20) or {}).class))
+check("ring: a neighbour of a base is NOT the base",
+      ORD.resolve_ping(st, w, inf, 31, 30) == nil,
+      tostring((ORD.resolve_ping(st, w, inf, 31, 30) or {}).class))
+check("ring: a neighbour of an ally bot IS that bot",
       (function()
-         local h = ORD.resolve_ping(st, w, inf, 21, 20)
-         return h and h.class == "pill" and h.id == 5 and h.exact == false
-       end)(), "?")
+         local h = ORD.resolve_ping(st, w, inf, 12, 11)
+         return h and h.class == "allybot" and h.pn == 2 and h.exact == false
+       end)(), tostring((ORD.resolve_ping(st, w, inf, 12, 11) or {}).class))
+check("ring: a neighbour of an enemy tank IS that tank",
+      (function()
+         local h = ORD.resolve_ping(st, w, inf, 15, 14)
+         return h and h.class == "enemytank" and h.pn == 7 and h.exact == false
+       end)(), tostring((ORD.resolve_ping(st, w, inf, 15, 14) or {}).class))
+check("exact still finds the pill",
+      (ORD.resolve_ping(st, w, inf, 20, 20) or {}).exact == true, "?")
 -- EXACT BEATS RING: p2's tank is at (12,12) and p1's at (10,10); a ping on
 -- (11,11) sits in BOTH rings, but a ping on (12,12) must pick p2 alone.
 check("exact beats ring: two tanks a tile apart",
@@ -336,6 +354,11 @@ check("our base -> nothing",         pv(50, 50) == "nil",             pv(50, 50)
 check("enemy tank -> attack",        pv(14, 14) == "attack:tank:7",   pv(14, 14))
 check("ally bot -> select",          pv(12, 12) == "select:2",        pv(12, 12))
 check("open ground -> go there",     pv(100, 99) == "goto:here:" .. (100 * 256 + 99), pv(100, 99))
+-- BESIDE a pill is open ground, which is the decoy Andrew was trying to send.
+check("beside a pill -> go there",   pv(21, 20) == "goto:here:" .. (21 * 256 + 20), pv(21, 20))
+check("beside a base -> go there",   pv(31, 30) == "goto:here:" .. (31 * 256 + 30), pv(31, 30))
+check("beside an ally bot -> select", pv(12, 11) == "select:2",       pv(12, 11))
+check("beside an enemy tank -> attack", pv(15, 14) == "attack:tank:7", pv(15, 14))
 
 print("orders.lua — ping events")
 -- The engine hands the brain [sender, kind, xHi, xLo, yHi, yLo] in WORLD
@@ -416,6 +439,18 @@ inf.events = { ping(1, 0, 21, 21) }
 ORD.on_events(st, w, inf, 130)
 check("caution near the target releases the order",
       st.orders.held == nil and st.orders.known[1] == nil, "?")
+
+-- A CAUTION BESIDE A PILL NOBODY WAS SENT TO DOES NOTHING.  The cancel is
+-- about the ORDER, not about what stands on the tile, so with no order on
+-- that place the caution starts nothing and says nothing.
+st, w, inf = ST(), W(), I()
+inf.allies = 0x17
+inf.events = { ping(1, 0, 21, 20) }
+ORD.on_events(st, w, inf, 100)
+check("caution beside a pill with no order does nothing",
+      st.orders == nil
+      or (st.orders.held == nil and #(st.orders.say or {}) == 0),
+      tostring(st.orders and st.orders.held and st.orders.held.kind))
 
 print("orders.lua — the speaking bot")
 check("speaker = the lowest bot player number",
@@ -1061,6 +1096,112 @@ ORD.update(st, w, inf, 200 + (C.ORDER_FOCUS_TICKS or 3000))
 check("the order lapses",       st.orders.held == nil, "held")
 check("and the command goal is cleared with it",
       st.command_goal == nil, tostring(st.command_goal and st.command_goal.kind))
+
+-- =========================================================================
+-- THE HOLD IS TEN SECONDS AFTER ARRIVAL (Andrew, Sep 15), not the rest of the
+-- 60 s focus.  The focus is the TRAVEL budget; arriving swaps the clock.
+-- =========================================================================
+print("orders.lua -- a go-there order holds ten seconds after it arrives")
+
+st, w, inf = ST(), W(), I({ allies = 0 })
+ORD.on_chat(st, w, inf, 0, "!goto 15 15", 100, true, false)
+ORD.update(st, w, inf, 101)
+check("travel: the slot is not holding yet",
+      st.orders.held ~= nil and st.orders.held.hold ~= true,
+      tostring(st.orders.held and st.orders.held.hold))
+check("travel: the hard lock is on", st.command_goal ~= nil, "nil")
+check("travel: the clock is still the 60 s focus",
+      st.orders.held.expiry >= 101 + (C.ORDER_FOCUS_TICKS or 3000) - 10,
+      tostring(st.orders.held.expiry))
+check("travel: the panel says hard",
+      (function() st.tick = 101
+         return ORD.panel_line(st, inf):sub(-4) == "hard" end)(),
+      ORD.panel_line(st, inf))
+
+-- ARRIVAL.  The tank is now on the square; the next think is the first one
+-- that sees it.
+inf.tankx, inf.tanky = 15 * 256 + 128, 15 * 256 + 128
+st.orders.say = {}
+ORD.update(st, w, inf, 300)
+check("arrival sets the hold flag", st.orders.held.hold == true,
+      tostring(st.orders.held.hold))
+check("arrival says the number, once",
+      #st.orders.say == 1 and st.orders.say[1] == "holding 10s",
+      tostring(st.orders.say[1]))
+check("arrival sets the clock to the hold knob",
+      st.orders.held.expiry == 300 + (C.ORDER_GOTO_HOLD_TICKS or 500),
+      tostring(st.orders.held.expiry))
+check("arrival drops the hard lock so the pools can fight",
+      st.command_goal == nil,
+      tostring(st.command_goal and st.command_goal.kind))
+check("the panel says holding",
+      (function() st.tick = 300
+         return ORD.panel_line(st, inf):sub(-7) == "holding" end)(),
+      ORD.panel_line(st, inf))
+
+-- The hold itself: quiet, no lock, and the order still stands.
+st.orders.say = {}
+ORD.update(st, w, inf, 400)
+check("the hold says nothing more", #st.orders.say == 0,
+      tostring(st.orders.say[1]))
+check("the lock stays off through the hold", st.command_goal == nil,
+      tostring(st.command_goal and st.command_goal.kind))
+check("the order still stands inside the ten seconds",
+      st.orders.held ~= nil and st.orders.held.hold == true, "?")
+
+ORD.update(st, w, inf, 300 + (C.ORDER_GOTO_HOLD_TICKS or 500))
+check("the hold runs out and the order ends", st.orders.held == nil, "held")
+check("and it ends in silence", #st.orders.say == 0,
+      tostring(st.orders.say[1]))
+
+-- AN ORDER THAT NEVER ARRIVES still lapses on the 60 s focus, as before, and
+-- that one DOES say so.
+st, w, inf = ST(), W(), I({ allies = 0 })
+ORD.on_chat(st, w, inf, 0, "!goto 15 15", 100, true, false)
+ORD.update(st, w, inf, 101)
+st.orders.say = {}
+ORD.update(st, w, inf, 101 + (C.ORDER_FOCUS_TICKS or 3000))
+check("a go-there that never arrives lapses on the focus",
+      st.orders.held == nil, "held")
+check("and that one says so", st.orders.say[1] == "order lapsed",
+      tostring(st.orders.say[1]))
+
+-- =========================================================================
+-- A DEFEND ORDER ENDS WITH THE PILL.  Andrew watched a bot ordered to defend
+-- a pill stay in defend_pill after the pill was shot flat and taken, and then
+-- do nothing: the order was still live, so every other strategic row was
+-- still being rejected for it.
+-- =========================================================================
+print("orders.lua -- a defend order ends when the pill is lost")
+
+st, w, inf = ST(), W(), I({ allies = 0x17 })
+ORD.on_chat(st, w, inf, 0, "socrates defend 9", 100, true, false)
+check("setup: a defend order is held",
+      (st.orders.held or {}).kind == "defend_pill"
+      and st.orders.held.tid == 9,
+      tostring((st.orders.held or {}).kind))
+st.orders.say = {}
+w.pills[9].owner = "hostile"          -- the enemy took it
+ORD.update(st, w, inf, 200)
+check("the enemy taking the pill ends the order",
+      st.orders.held == nil, "held")
+check("and the bot says which pill it lost",
+      st.orders.say[1] == "lost pill #9", tostring(st.orders.say[1]))
+
+-- The same when it is only shot flat: a dead pill of ours is not a pill to
+-- defend either, and the bot's own goals decide whether to go and sweep it.
+st, w, inf = ST(), W(), I({ allies = 0x17 })
+ORD.on_chat(st, w, inf, 0, "socrates defend 9", 100, true, false)
+st.orders.say = {}
+w.pills[9].health = 0
+ORD.update(st, w, inf, 200)
+check("a pill shot flat ends the defend order too",
+      st.orders.held == nil, "held")
+check("and it says so once",
+      #st.orders.say == 1 and st.orders.say[1] == "lost pill #9",
+      tostring(st.orders.say[1]))
+check("nothing is left holding the order slot",
+      st._order == nil, tostring(st._order))
 
 -- A CANCEL does the same, on the tick it is said.
 st, w, inf = ST(), W(), I({ allies = 0 })

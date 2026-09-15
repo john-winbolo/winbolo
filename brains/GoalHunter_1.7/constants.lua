@@ -4138,6 +4138,25 @@ M.BOT_COMMANDS_ENABLED  = true   -- keel false
 -- How long one order holds the bot before goal selection is free again.
 -- 3000 ticks = 60 s at 50 ticks/s.  A repeat of the same line refreshes it.
 M.ORDER_FOCUS_TICKS     = 3000   -- keel 3000 (moot; master off)
+-- A GO-THERE ORDER HOLDS FOR THIS LONG AFTER IT ARRIVES (Andrew, Sep 15).
+-- The 60 s focus above is the TRAVEL budget: it bounds the drive, and an
+-- order that never gets there lapses on it the way it always did.  The moment
+-- the tank is on (or beside) the square the clock is replaced by this one, so
+-- "go there" means about ten seconds of standing on the spot rather than
+-- whatever is left of a minute.  500 ticks = 10 s at 50 ticks/s.  The bot
+-- says the number when it arrives, so this knob is what it promises.
+M.ORDER_GOTO_HOLD_TICKS = 500    -- keel 500 (moot; master off)
+-- THE HOLD PHASE STILL FIGHTS.  While the hold runs the hard goto lock comes
+-- off and goal selection runs again, so attack_tank and kill_lgm can win --
+-- but the tank must not DRIVE anywhere: it was sent to that square.  These
+-- are the goal kinds M.steer parks on (no throttle, turning and shooting
+-- only) and the two stuck detectors read as deliberate.  A goal that only
+-- works by moving (take_cover, escape_water, a flee) is NOT in here, so
+-- survival still drives.  A table, so it is not a preset entry; the master
+-- switch already turns the whole feature off.
+M.ORDER_HOLD_PARK_KINDS = {
+  goto_tile = true, attack_tank = true, kill_lgm = true, none = true,
+}
 -- Auction window.  The design said 6 ticks; a brain thinks every 2 game
 -- ticks and a bid is seen on the ally's NEXT think, so 6 is tight -- 10
 -- gives every ally one full round trip.  The auction still ends EARLY the
@@ -4496,6 +4515,7 @@ M.PRESETS = {
     --   unread while the master is false.
     BOT_COMMANDS_ENABLED          = false,
     ORDER_FOCUS_TICKS             = 3000,
+    ORDER_GOTO_HOLD_TICKS         = 500,
     ORDER_AUCTION_TICKS           = 10,
     ORDER_STEAL_PCT               = 0.20,
     ORDER_STEAL_MIN_TILES         = 2,

@@ -3631,6 +3631,12 @@ function Brain.think(info)
     -- read as a wedge either.
     or (state.goal.kind == "goto_tile"
         and U.mdist(cur_mx, cur_my, state.goal.mx or -99, state.goal.my or -99) <= 1)
+    -- The HOLD phase of that same place order: the tank is parked by
+    -- steering.M.steer while it shoots whatever came to it, so standing still
+    -- with an attack_tank or a kill_lgm goal is deliberate too.
+    or (C.BOT_COMMANDS_ENABLED and state._order and state._order.hold
+        and state._order.kind == "goto_tile"
+        and (C.ORDER_HOLD_PARK_KINDS or {})[state.goal.kind] ~= nil)
   local attack_at_standoff = intentionally_stationary
 
   -- Long-term desperation: track total ticks at the same tile.

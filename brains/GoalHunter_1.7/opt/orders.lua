@@ -890,9 +890,18 @@ end
 -- setting state.command_goal alone would leave the bot driving to whatever
 -- goal it happened to hold when the order arrived.  commands.lua always wrote
 -- state.goal at the same time for exactly this reason; so does this.
+--
+-- THE LOCK IS THE TRAVEL PHASE ONLY (Andrew, Sep 15).  Once the tank has
+-- ARRIVED the slot goes into its hold (h.hold) and the hard lock comes OFF:
+-- goal selection runs again, the order reject pass still kills every
+-- strategic row, and the reactive rows -- attack_tank, kill_lgm -- can win,
+-- so a holding bot shoots the tank that drives up to it and kills the man
+-- that walks past.  It still does not GO anywhere: steering.lua parks the
+-- tank while the slot is holding (see M.steer, "a go-there order in its hold
+-- phase"), so the fight happens from the square it was sent to.
 local function goto_lock(state)
   local h = state.orders and state.orders.held
-  if h and h.kind == "goto_tile" and h.mx and h.my then
+  if h and h.kind == "goto_tile" and h.mx and h.my and not h.hold then
     local cg, g = state.command_goal, state.goal
     local cg_ok = cg and cg.kind == "goto_tile" and cg.mx == h.mx and cg.my == h.my
     local g_ok  = g  and g.kind  == "goto_tile" and g.mx  == h.mx and g.my  == h.my
@@ -1194,8 +1203,19 @@ end
 -- is NOT searched, so a second bot standing beside the pinged one is never
 -- triggered.  Only when the exact tile is empty does the 3x3 ring apply; two
 -- candidates in the ring -> the nearer one to the ping tile (an orthogonal
--- neighbour beats a diagonal), ties on player number (or, for a pill or a
--- base, on its id).
+-- neighbour beats a diagonal), ties on player number.
+--
+-- THE RING IS FOR TANKS ONLY (Andrew, 2026-09-15).  A pill or a base is a
+-- thing that never moves and you can put the marker right on it, so a ping
+-- one square off a pillbox is NOT that pillbox: Andrew pinged beside a pill
+-- to send a decoy to that square and got a defend_pill instead.  Beside a
+-- pill on open ground now means what it looks like -- "go there".  A tank
+-- moves while the ping is in flight, so the ring stays for tanks: an ally
+-- bot's tank (select, and the caution retreat) and an enemy tank (attack).
+local function ring_candidate(c)
+  return c and (c.class == "allybot" or c.class == "enemytank")
+end
+
 function M.resolve_ping(state, world, info, mx, my)
   local e = M.entity_at(state, world, info, mx, my)
   if e then e.exact = true return e end
@@ -1205,7 +1225,7 @@ function M.resolve_ping(state, world, info, mx, my)
     for dx = -ring, ring do
       if dx ~= 0 or dy ~= 0 then
         local c = M.entity_at(state, world, info, mx + dx, my + dy)
-        if c then
+        if ring_candidate(c) then
           local d = dx * dx + dy * dy
           local k = c.pn or c.id or 0
           if not best or d < bestd or (d == bestd and k < bestk) then
@@ -1682,6 +1702,10 @@ local function ping_caution(state, world, info, sender, mx, my, now)
   end
 
   -- ── otherwise: in the 3x3 of an order's TARGET -> release the group ────
+  -- This is about the ORDER, not about what stands on the tile, so the 3x3
+  -- stays: a caution near the place the bots are working on calls them off.
+  -- With no order on that place a caution does nothing at all -- a caution
+  -- beside a pill no bot was sent to is not a cancel of anything.
   local ring = C.ORDER_PING_RING or 1
   local tmx  = (hit and hit.mx) or mx
   local tmy  = (hit and hit.my) or my
@@ -1903,9 +1927,38 @@ function M.update(state, world, info, now)
   -- on the next tick.
   local h = o.held
   if h then
+    -- ARRIVAL STARTS THE HOLD.  A go-there order used to run on the 60 s
+    -- focus whether the bot got there in two seconds or fifty, which made
+    -- "go there" mean "and stand there for the rest of the minute".  Andrew,
+    -- Sep 15: the hold is about ten seconds AFTER ARRIVAL.  So the focus
+    -- bounds the TRAVEL (an order that never arrives still lapses on it), and
+    -- the first think the tank is within one square of the target swaps the
+    -- clock for ORDER_GOTO_HOLD_TICKS.  One line is said, with the number in
+    -- it, so the human knows how long the bot will be standing there.
+    if h.kind == "goto_tile" and h.mx and h.my and not h.arrived
+       and info.tankx and info.tanky then
+      local dx = tile_of(info.tankx) - h.mx
+      local dy = tile_of(info.tanky) - h.my
+      if dx < 0 then dx = -dx end
+      if dy < 0 then dy = -dy end
+      if dx <= 1 and dy <= 1 then
+        local hold = C.ORDER_GOTO_HOLD_TICKS or 500
+        h.arrived = now
+        h.hold    = true
+        h.expiry  = now + hold
+        say(state, string.format("holding %ds", math.floor(hold / 50)))
+        -- The hard lock goes the moment the hold starts, so goal selection is
+        -- free to answer an enemy tank from this same tick.
+        goto_lock(state)
+      end
+    end
     local done, why = false, nil
     if now >= h.expiry then
       done, why = true, "order lapsed"
+      -- A go-there order that ARRIVED ends in silence.  The bot already said
+      -- "holding 10s" and that number was the whole promise; saying "order
+      -- lapsed" ten seconds later is the same fact twice.
+      if h.kind == "goto_tile" and h.arrived then why = nil end
     elseif h.tkind == "pill" and h.tid then
       local p = world.pills[h.tid]
       if not p then
@@ -1937,6 +1990,23 @@ function M.update(state, world, info, now)
             done, why = true, string.format("%s #%d done", h.kind, h.tid)
           end
         end
+        -- DEFEND ENDS WITH THE PILL (Andrew, Sep 15).  A bot told to defend a
+        -- pill that was then shot flat and taken stayed in defend_pill and
+        -- did nothing at all: the goal was still "guard that square", and the
+        -- reject pass went on killing every other strategic row for it.
+        -- There is nothing to defend once the pill is not ours, so the order
+        -- is over.  The bot says one line and goes back to its own goals --
+        -- which may well decide to go and take the pill back, and that is a
+        -- decision for goal selection, not for a dead order.
+        --
+        -- defend was left out of these rules on purpose once, but that was
+        -- about the TIMER (holding the spot is the job, so it runs its clock
+        -- out) and not about the target going away.
+        if h.kind == "defend_pill" then
+          if p.owner ~= "friendly" or (p.health or 0) == 0 or p.in_tank then
+            done, why = true, string.format("lost pill #%d", h.tid)
+          end
+        end
       end
     elseif h.tkind == "base" and h.tid then
       local b = world.bases[h.tid]
@@ -1961,11 +2031,11 @@ function M.update(state, world, info, now)
     end
     -- defend_pill, take_cover (a retreat) and goto_tile ("go there and hold")
     -- are NOT in this list on purpose.  Holding the spot IS the job, so they
-    -- run to the timer the way they always did.  goto_tile in particular must
-    -- not end on arrival: arriving is the START of the hold, not the end of
-    -- the order.
+    -- run to a timer.  goto_tile in particular must not end on arrival:
+    -- arriving is the START of the hold (it sets the ten-second clock above),
+    -- not the end of the order.
     if done then
-      say(state, why)
+      if why then say(state, why) end
       release_held(state, info, nil, true)
       h = nil
     end
@@ -2043,9 +2113,12 @@ function M.panel_line(state, info)
   -- POOLS are never evaluated while it stands and the pool panel sits empty.
   -- Without this line that empty panel looks like a broken brain; with it the
   -- reason is on screen, next to the square and the time left.
+  -- Once it has arrived the lock is off and the pools are live again (only
+  -- the reactive rows can win), so the word changes with the phase.
   if h.kind == "goto_tile" then
-    return string.format(" ORDER goto (%d,%d) from %s, %d s left, hard",
-      h.mx or -1, h.my or -1, h.sender_name or "?", math.floor(left / 50))
+    return string.format(" ORDER goto (%d,%d) from %s, %d s left, %s",
+      h.mx or -1, h.my or -1, h.sender_name or "?", math.floor(left / 50),
+      h.hold and "holding" or "hard")
   end
   return string.format(" ORDER %s#%s from %s %ds left",
     h.kind, tostring(h.tid or "-"), h.sender_name or "?", math.floor(left / 50))
