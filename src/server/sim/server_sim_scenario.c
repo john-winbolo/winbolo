@@ -2004,6 +2004,10 @@ void serverSimScenarioReconcileLobby(ServerSim *sim) {
  * writes nothing when no template is attached, so the caller can tell that
  * apart from a team recorded at zero: a host who emptied a team on purpose
  * has to come back to an empty one. */
+bool serverSimScenarioHasLobbyTemplate(const ServerSim *sim) {
+    return sim != NULL && sim->scenarioLobbyValid;
+}
+
 bool serverSimScenarioSeatCounts(const ServerSim *sim, BYTE *out) {
     BYTE t;
     if (sim == NULL || out == NULL) return false;

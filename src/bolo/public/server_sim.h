@@ -1689,6 +1689,12 @@ bool serverSimIsScenarioActing(const ServerSim *sim);
  *********************************************************/
 void serverSimScenarioSeatLobby(ServerSim *sim);
 
+/* True when the map's script declared a lobby of its own, the one
+ * serverSimScenarioSeatLobby lays down. A host that would otherwise seed a
+ * bot of its own asks this first: a script that describes the lobby is the
+ * one that says who sits in it. */
+bool serverSimScenarioHasLobbyTemplate(const ServerSim *sim);
+
 /*********************************************************
  *NAME:          serverSimScenarioApplyLobbyRules
  *PURPOSE:
