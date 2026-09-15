@@ -102,6 +102,48 @@ local function _cfg_set(name, value, source)
   return true
 end
 
+-- John's scenario host hands a spawned bot its `spawn_bot{ init = {...} }` table
+-- as the global BRAIN_INIT (flat, string values). This brain reads tokens from
+-- the string global BRAIN_INIT_ARG ("k=v;k=v"), so flatten the table into that
+-- string here, before either parse block runs. Keys are sorted so every bot
+-- builds the same string from the same table (determinism). A string already
+-- in BRAIN_INIT_ARG (the command-line path) keeps its place; the table's
+-- tokens are appended after it. Andrew, 2026-09-15: bots must take per-spawn
+-- data from the scenario, so the horde and the survivalists can differ.
+do
+  local t = rawget(_G, "BRAIN_INIT")
+  if type(t) == "table" then
+    local keys = {}
+    for k, v in pairs(t) do
+      if type(k) == "string" and k ~= "" and v ~= nil then keys[#keys + 1] = k end
+    end
+    table.sort(keys)
+    local toks = {}
+    for _, k in ipairs(keys) do
+      local v = t[k]
+      if type(v) ~= "boolean" then v = tostring(v) end
+      -- The tick-1 block matches bare flag tokens by exact name ("noblitz",
+      -- "suicider", "noclaimdead", ...), never as "noblitz=1". So a flag the
+      -- scenario writes as noblitz = true / "1" / "" becomes the bare word,
+      -- a flag written false / "0" is dropped (absent = off), and everything
+      -- else stays a k=v pair (difficulty=hard, portfolio=..., cfg=...).
+      if v == true or v == "1" or v == "" then
+        toks[#toks + 1] = k
+      elseif v == false or v == "0" then
+        -- off: no token
+      else
+        toks[#toks + 1] = k .. "=" .. v
+      end
+    end
+    if #toks > 0 then
+      local a = rawget(_G, "BRAIN_INIT_ARG")
+      local flat = table.concat(toks, ";")
+      if type(a) == "string" and a ~= "" then flat = a .. ";" .. flat end
+      rawset(_G, "BRAIN_INIT_ARG", flat)
+    end
+  end
+end
+
 do
   local a = rawget(_G, "BRAIN_INIT_ARG")
   if type(a) == "string" and a ~= "" then
