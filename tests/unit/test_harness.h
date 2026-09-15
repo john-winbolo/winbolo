@@ -2403,6 +2403,13 @@ int run_unfielded_seat_unfield_keeps_sync(void);
 int run_unfielded_seat_spawn_keeps_alliances(void);
 int run_unfielded_seat_on_the_wire(void);
 
+/* What a wave costs (test_scenario_wave_cost.c): the brain, the ClientSim and
+ * the control subscription behind a held seat, destroyed when the seat comes
+ * off the field and built again when it goes back on. Counted at the calls
+ * that do it, for one seat and for a horde of six swapped twice. */
+int run_scenario_wave_cost_refield_rebuilds(void);
+int run_scenario_wave_cost_horde_swap_counts(void);
+
 /* The five comms ops (test_scenario_comms_arms.c). A line to the game, to a
  * team and to one player, with the destination filtered where the recipient
  * is; a sound at a square and a sound at no square; a console line. Plus the
@@ -2753,6 +2760,14 @@ const ScnTable *ut_brain_stub_init(int player_num);
 /* The team the slot held as its brain was made — the team serverSimAddBot
  * had already written and picked the slot's lobby start from. */
 int ut_brain_stub_team(int player_num);
+/* How many brains have been made for one slot, which is what tells a seat
+ * fielded once from a seat fielded, taken off the field and fielded again;
+ * 0 for a slot off the end. */
+int ut_brain_stub_creates(int player_num);
+/* How many brains have been destroyed, over every slot: the destroy call is
+ * handed an instance and no player number, so there is no slot to file them
+ * under. Both counts are reset by ut_brain_stub_arm. */
+int ut_brain_stub_destroys(void);
 
 #ifdef __cplusplus
 }

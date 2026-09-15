@@ -3478,6 +3478,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # the ranked and AI-policy settings a scenario does not go with.
     tests/unit/test_lobby_scenario_settings.c
     tests/unit/test_unfielded_seat.c
+    # What a wave costs: the brain, the ClientSim and the control subscription
+    # behind a held seat, destroyed when the seat comes off the field and built
+    # again when it goes back on, counted at the calls that do it.
+    tests/unit/test_scenario_wave_cost.c
     # The comms ops: the five arms, the refusals each one answers with, who
     # sees a line held to a team or to one player, the sound that reaches a
     # listener wherever they stand, and the records the three lines leave in a
@@ -5252,6 +5256,8 @@ set(_unit_test_names
     unfielded_seat_unfield_keeps_sync
     unfielded_seat_spawn_keeps_alliances
     unfielded_seat_on_the_wire
+    scenario_wave_cost_refield_rebuilds
+    scenario_wave_cost_horde_swap_counts
     scenario_comms_msg_all
     scenario_comms_msg_team
     scenario_comms_msg_player

@@ -63,12 +63,22 @@ static bool     s_brainStubArmed = false;
 static ScnTable s_brainStubInit[MAX_TANKS];
 static bool     s_brainStubMade[MAX_TANKS];
 static BYTE     s_brainStubTeam[MAX_TANKS];
+/* How many brains each slot has been asked for, and how many have been
+ * destroyed in all. s_brainStubMade answers whether a slot ever had one,
+ * which cannot tell a seat fielded once from a seat fielded, taken off the
+ * field and fielded again — the count can. The destroys are a total rather
+ * than per slot because luaBrainInstanceDestroy is handed an instance and no
+ * player number, so there is nothing to file them under. */
+static int      s_brainStubCreates[MAX_TANKS];
+static int      s_brainStubDestroys;
 
 void ut_brain_stub_arm(bool succeed) {
   s_brainStubArmed = succeed;
   memset(s_brainStubInit, 0, sizeof(s_brainStubInit));
   memset(s_brainStubMade, 0, sizeof(s_brainStubMade));
   memset(s_brainStubTeam, 0, sizeof(s_brainStubTeam));
+  memset(s_brainStubCreates, 0, sizeof(s_brainStubCreates));
+  s_brainStubDestroys = 0;
 }
 
 int ut_brain_stub_team(int player_num) {
@@ -87,6 +97,15 @@ const ScnTable *ut_brain_stub_init(int player_num) {
   return &s_brainStubInit[player_num];
 }
 
+int ut_brain_stub_creates(int player_num) {
+  if (player_num < 0 || player_num >= MAX_TANKS) return 0;
+  return s_brainStubCreates[player_num];
+}
+
+int ut_brain_stub_destroys(void) {
+  return s_brainStubDestroys;
+}
+
 bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             const char *name, struct ClientSim *cs,
                             aiType aiMode, bool debug_mode,
@@ -103,6 +122,7 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
   if (player_num >= 0 && player_num < MAX_TANKS) {
     struct ServerSim *sim = cs ? clientSimGetBoundServerSim(cs) : NULL;
     s_brainStubMade[player_num] = true;
+    s_brainStubCreates[player_num]++;
     if (init != NULL) {
       s_brainStubInit[player_num] = *init;
     } else {
@@ -125,8 +145,12 @@ bool luaBrainInstanceTick(LuaBrainInstance *inst) {
   return false;
 }
 
+/* Counted whether or not a brain was ever made for the instance.
+ * botTearDownRunner calls this for every runner it takes down, and the count
+ * is of the work the teardown asks for. */
 void luaBrainInstanceDestroy(LuaBrainInstance *inst) {
   (void)inst;
+  s_brainStubDestroys++;
 }
 
 /* Lua seeding (ec47fa43 / 73ba4e7a): the bot manager forwards -brain-lua-seed
