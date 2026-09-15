@@ -163,12 +163,18 @@ game.show_pill = function(n, x, y)
   local px = x or r.x
   local py = y or r.y
   -- Dead on the ground and nobody's, which is what the old show_pill did.
-  local got = game.add_pill(px, py, game.NEUTRAL, 0, r.speed)
+  local got, code, why = game.add_pill(px, py, game.NEUTRAL, 0, r.speed)
   for _, k in ipairs(placeholders) do
     game.remove_pill(k)              -- they were only holding their numbers
   end
   if got == nil then
-    return nil, "SCN_OP_FULL", "no room for pill " .. tostring(n)
+    -- Hand back add_pill's own refusal rather than a guess. The refusal
+    -- that actually turns up here is not a full map: it is a square that
+    -- already holds a pillbox, which this host does not allow and the old
+    -- one did. Collapsing that into SCN_OP_FULL sends a reader looking for
+    -- the wrong thing.
+    return nil, code or "SCN_OP_FULL",
+           why or ("no room for pill " .. tostring(n))
   end
   if got ~= n then
     game.log(string.format("compat: show_pill wanted slot %d, got %d", n, got))
@@ -191,6 +197,68 @@ end
 -- brains read BRAIN_INIT_ARG, the string. The tokens therefore do not reach
 -- the brain on main. PORT_MAP.md names it as a gap. Every sidecar that
 -- depends on a token is marked EXPECTED-FAIL for that reason.
+
+-- ── a driver's token string, packed into an init table ───────────────────
+-- The python drivers pinned a bot's knobs with one string:
+--
+--   -bot-init "0=<brain>[cfg=TANK_COMBAT_ENABLED=false;cfg=BUILDER_POOL_ENABLED=false]"
+--
+-- spawn_bot takes a TABLE instead, and the brain flattens that table back
+-- into the same string it always parsed: keys sorted, each pair written
+-- `key=value`, joined with `;`. Two things stop a driver's string going
+-- straight in. A Lua table has one key named `cfg`, so it can carry one
+-- `cfg=` pin; and a table value is 64 bytes, where a driver's pin set runs
+-- to two or three hundred.
+--
+-- Both are got round by the same observation: the brain SPLITS the flattened
+-- string on `;` and ignores any token it does not recognise. So a value that
+-- opens with a `;` puts its own `key=` on one side of a split, where nothing
+-- reads it, and leaves whole tokens on the other. Chunking a driver's string
+-- across `t01`, `t02` ... — which sort in order — therefore reproduces it
+-- exactly:
+--
+--   { t01 = ";cfg=A=false;cfg=B=false", t02 = ";preset=keel" }
+--     flattens to  "t01=;cfg=A=false;cfg=B=false;t02=;preset=keel"
+--     splits to    t01= | cfg=A=false | cfg=B=false | t02= | preset=keel
+--
+-- so an arena can paste its driver's TOKENS line in unchanged:
+--
+--   game.spawn_bot{ slot = 1, init = game.init_tokens(TOKENS) }
+--
+-- A pin that will not fit is reported rather than cut, because a pin cut in
+-- half is a knob quietly left at its default and a measurement that means
+-- nothing.
+local INIT_KEYS  = 16     -- the host takes 16 pairs
+local INIT_VALUE = 63     -- 64 bytes, one of them the leading ';'
+
+game.init_tokens = function(text)
+  local t = {}
+  if type(text) ~= "string" or text == "" then return t end
+  local n, cur = 0, ""
+  local function flush()
+    if cur == "" then return end
+    n = n + 1
+    if n > INIT_KEYS then
+      game.log("compat: init_tokens ran out of keys, pins dropped")
+      return
+    end
+    t[string.format("t%02d", n)] = cur
+    cur = ""
+  end
+  for tok in string.gmatch(text, "[^;,]+") do
+    tok = string.gsub(tok, "%s", "")
+    if tok ~= "" then
+      if #tok + 1 > INIT_VALUE then
+        game.log("compat: init token too long: " .. string.sub(tok, 1, 60))
+      else
+        if #cur + 1 + #tok > INIT_VALUE then flush() end
+        cur = cur .. ";" .. tok
+      end
+    end
+  end
+  flush()
+  return t
+end
 
 local raw_spawn_bot = game.spawn_bot
 
