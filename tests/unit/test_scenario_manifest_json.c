@@ -20,6 +20,12 @@
  * run_scenario_manifest_from_values
  *      — a struct with no JSON behind it goes out as text and comes back
  *        as the same struct
+ * run_scenario_manifest_json_team_init
+ *      — a team's init table: a number stored as the digits the Lua reader
+ *        would have stored, a value of the wrong type stopping the walk with
+ *        the pairs before it kept and the key named, a pair too long for the
+ *        table named the same way, and an init that is not an object left
+ *        empty with no pair named
  */
 
 #include <stdint.h>
@@ -28,6 +34,7 @@
 
 #include "scenario_lua.h" /* scenarioLuaRuleIndex */
 #include "scenario_manifest_json.h"
+#include "scenario_table.h" /* scnTableGet, scnTableSet */
 #include "test_harness.h"
 
 /* Every key of the schema, plus two this build has no use for: editor_notes
@@ -46,7 +53,8 @@ static const char kFullManifest[] =
     "    \"seating_hint\": \"clockwise\",\n"
     "    \"teams\": [\n"
     "      { \"id\": 2, \"bots\": 10, \"max_bots\": 12, \"fielded\": false,\n"
-    "        \"brain\": \"package:horde\" },\n"
+    "        \"brain\": \"package:horde\",\n"
+    "        \"init\": { \"stance\": \"hold\", \"deprive\": 100 } },\n"
     "      { \"id\": 3, \"bots\": 1, \"max_bots\": 4, \"fielded\": true,\n"
     "        \"brain\": \"\" }\n"
     "    ]\n"
@@ -62,6 +70,12 @@ static const char kFullManifest[] =
     "  \"brains\": [\"horde\"],\n"
     "  \"editor_notes\": \"kept by a build that does not read it\"\n"
     "}\n";
+
+/* Does the table hold this key with this value? */
+static bool mjInitIs(const ScnTable *t, const char *key, const char *want) {
+    const char *got = scnTableGet(t, key);
+    return got != NULL && strcmp(got, want) == 0;
+}
 
 static ScnManifestDoc *parseText(const char *text, ScnParseReport *rep,
                                  char *err, size_t errLen) {
@@ -121,11 +135,20 @@ static int fullManifestIsRight(const ScnManifestDoc *d) {
     UT_ASSERT(m->lobby.teams[0].maxBots == 12);
     UT_ASSERT(!m->lobby.teams[0].fielded);
     UT_ASSERT(strcmp(m->lobby.teams[0].brain, "package:horde") == 0);
+    UT_ASSERT_MSG(m->lobby.teams[0].init.count == 2, "team 0 holds %d pairs",
+                  (int)m->lobby.teams[0].init.count);
+    UT_ASSERT(mjInitIs(&m->lobby.teams[0].init, "stance", "hold"));
+    /* A JSON number reaches the table as the digits lua_tostring would have
+       given the same number written in the script. */
+    UT_ASSERT(mjInitIs(&m->lobby.teams[0].init, "deprive", "100"));
+    UT_ASSERT(m->lobby.teams[0].initBadKey[0] == '\0');
     UT_ASSERT(m->lobby.teams[1].id == 3);
     UT_ASSERT(m->lobby.teams[1].bots == 1);
     UT_ASSERT(m->lobby.teams[1].maxBots == 4);
     UT_ASSERT(m->lobby.teams[1].fielded);
     UT_ASSERT(m->lobby.teams[1].brain[0] == '\0');
+    UT_ASSERT_MSG(m->lobby.teams[1].init.count == 0, "team 1 holds %d pairs",
+                  (int)m->lobby.teams[1].init.count);
 
     UT_ASSERT_MSG(m->numRules == 2, "rule count is %d", (int)m->numRules);
     r = ruleAt(m, "tank_reload_ticks");
@@ -314,6 +337,8 @@ static void fillBase(ScenarioManifest *m) {
     m->lobby.teams[0].fielded = false;
     snprintf(m->lobby.teams[0].brain, sizeof(m->lobby.teams[0].brain),
              "package:horde");
+    scnTableSet(&m->lobby.teams[0].init, "stance", "hold");
+    scnTableSet(&m->lobby.teams[0].init, "deprive", "100");
     m->lobby.teams[1].id = 3;
     m->lobby.teams[1].bots = 1;
     m->lobby.teams[1].maxBots = 4;
@@ -386,6 +411,40 @@ int run_scenario_manifest_agrees(void) {
     UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
     UT_ASSERT_MSG(strcmp(key, "lobby.teams[0].brain") == 0,
                   "the key was '%s'", key);
+
+    /* An init table is keyed, so the order its pairs sit in is Lua's own
+       business and a reordered copy is the same table. */
+    fillBase(&b);
+    b.lobby.teams[0].init.kv[0] = a.lobby.teams[0].init.kv[1];
+    b.lobby.teams[0].init.kv[1] = a.lobby.teams[0].init.kv[0];
+    UT_ASSERT_MSG(scnManifestAgrees(&a, &b, key, sizeof(key), err,
+                                    sizeof(err)),
+                  "a reordered init was refused at %s: %s", key, err);
+
+    fillBase(&b);
+    scnTableSet(&b.lobby.teams[0].init, "deprive", "50");
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "lobby.teams[0].init.deprive") == 0,
+                  "the key was '%s'", key);
+
+    /* A pair one side holds and the other does not, named from either side. */
+    fillBase(&b);
+    scnTableSet(&b.lobby.teams[0].init, "extra", "1");
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "lobby.teams[0].init.extra") == 0,
+                  "the key was '%s'", key);
+    UT_ASSERT(!scnManifestAgrees(&b, &a, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "lobby.teams[0].init.extra") == 0,
+                  "the key was '%s'", key);
+
+    /* initBadKey says what a reader could not take rather than what the team
+       is, so the two forms stopping in different places is not a conflict. */
+    fillBase(&b);
+    snprintf(b.lobby.teams[0].initBadKey,
+             sizeof(b.lobby.teams[0].initBadKey), "toolong");
+    UT_ASSERT_MSG(scnManifestAgrees(&a, &b, key, sizeof(key), err,
+                                    sizeof(err)),
+                  "a named bad pair was refused at %s: %s", key, err);
 
     /* The teams array keeps its order, so swapping two teams is a conflict
      * even though the same two teams are named. */
@@ -461,4 +520,107 @@ int run_scenario_manifest_from_values(void) {
     scnManifestFree(back);
     scnManifestFree(made);
     return rc;
+}
+
+/* The one team of a manifest whose team carries this init text. The doc is
+ * freed here and the team handed back by value, so a case that fails leaves
+ * nothing behind. */
+static int readInit(const char *initText, ScnManifestTeam *out) {
+    char            text[1024];
+    char            err[256];
+    ScnManifestDoc *d;
+
+    snprintf(text, sizeof(text),
+             "{ \"manifest\": 1, \"api\": 1, \"name\": \"T\",\n"
+             "  \"lobby\": { \"teams\": [ { \"id\": 2, \"init\": %s } ] } }",
+             initText);
+    d = parseText(text, NULL, err, sizeof(err));
+    UT_ASSERT_MSG(d != NULL, "the manifest was refused: %s", err);
+    UT_ASSERT_MSG(scnManifestValues(d)->lobby.numTeams == 1,
+                  "the manifest named %d teams",
+                  (int)scnManifestValues(d)->lobby.numTeams);
+    *out = scnManifestValues(d)->lobby.teams[0];
+    scnManifestFree(d);
+    return 0;
+}
+
+int run_scenario_manifest_json_team_init(void) {
+    ScnManifestTeam t;
+    ScenarioManifest m;
+    ScnManifestDoc  *made;
+    char             err[256];
+    char             tooLong[SCN_TABLE_VALUE_LEN + 8];
+    char             text[256];
+    char            *out;
+    int              rc;
+    size_t           i;
+
+    /* A number is the digits the Lua reader would have stored for the same
+       number written in a script: a whole one with no point, and one that is
+       not whole as it reads. */
+    rc = readInit("{ \"deprive\": 100, \"rate\": 2.5 }", &t);
+    if (rc != 0) {
+        return rc;
+    }
+    UT_ASSERT_MSG(t.init.count == 2, "the team holds %d pairs",
+                  (int)t.init.count);
+    UT_ASSERT(mjInitIs(&t.init, "deprive", "100"));
+    UT_ASSERT(mjInitIs(&t.init, "rate", "2.5"));
+    UT_ASSERT_MSG(t.initBadKey[0] == '\0', "'%s' was named", t.initBadKey);
+
+    /* A value that is neither a string nor a number stops the walk where the
+       Lua reader stops on the same value. The pair before it stays, the pair
+       after it does not, and the key is named. */
+    rc = readInit("{ \"stance\": \"hold\", \"ready\": true, \"after\": \"x\" }",
+                  &t);
+    if (rc != 0) {
+        return rc;
+    }
+    UT_ASSERT_MSG(t.init.count == 1, "the team holds %d pairs",
+                  (int)t.init.count);
+    UT_ASSERT(mjInitIs(&t.init, "stance", "hold"));
+    UT_ASSERT(scnTableGet(&t.init, "after") == NULL);
+    UT_ASSERT_MSG(strcmp(t.initBadKey, "ready") == 0, "'%s' was named",
+                  t.initBadKey);
+
+    /* A value too long for the table is named the same way. */
+    for (i = 0; i < sizeof(tooLong) - 1; i++) {
+        tooLong[i] = 'a';
+    }
+    tooLong[sizeof(tooLong) - 1] = '\0';
+    snprintf(text, sizeof(text), "{ \"stance\": \"hold\", \"long\": \"%s\" }",
+             tooLong);
+    rc = readInit(text, &t);
+    if (rc != 0) {
+        return rc;
+    }
+    UT_ASSERT_MSG(t.init.count == 1, "the team holds %d pairs",
+                  (int)t.init.count);
+    UT_ASSERT_MSG(strcmp(t.initBadKey, "long") == 0, "'%s' was named",
+                  t.initBadKey);
+
+    /* An init that is not an object at all leaves the table empty and names
+       no pair, the way the Lua reader leaves a field of the wrong type. */
+    rc = readInit("5", &t);
+    if (rc != 0) {
+        return rc;
+    }
+    UT_ASSERT_MSG(t.init.count == 0, "the team holds %d pairs",
+                  (int)t.init.count);
+    UT_ASSERT_MSG(t.initBadKey[0] == '\0', "'%s' was named", t.initBadKey);
+
+    /* And a team with no pairs writes no init key at all. */
+    fillBase(&m);
+    scnTableClear(&m.lobby.teams[0].init);
+    made = scnManifestFromValues(&m, err, sizeof(err));
+    UT_ASSERT_MSG(made != NULL, "a doc could not be built: %s", err);
+    out = scnManifestWrite(made, err, sizeof(err));
+    scnManifestFree(made);
+    UT_ASSERT_MSG(out != NULL, "the manifest could not be written: %s", err);
+    if (strstr(out, "\"init\"") != NULL) {
+        free(out);
+        UT_FAIL("a team holding no init pairs wrote an init key");
+    }
+    free(out);
+    return 0;
 }

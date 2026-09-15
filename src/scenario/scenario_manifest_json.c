@@ -28,8 +28,9 @@
  *  from each form. Rules and regions are compared by rule
  *  and by name rather than by position: Lua traverses both
  *  of those tables with lua_next, whose order is its own
- *  business. lobby.teams is a Lua array, so it is compared
- *  in order and the index is part of the key.
+ *  business. A team's init table is keyed the same way and
+ *  is compared the same way. lobby.teams is a Lua array, so
+ *  it is compared in order and the index is part of the key.
  *********************************************************/
 
 #include <stdarg.h>
@@ -45,6 +46,7 @@
 #include "server_sim.h"   /* serverSimConsoleMessage, and the entity counts */
 #include "scenario_lua.h" /* scenarioLuaRuleIndex, scenarioLuaRuleName */
 #include "scenario_manifest_json.h"
+#include "scenario_table.h" /* scnTableClear, scnTableSet, scnTableGet */
 
 /* One report or refusal line. The same length the host gives its own. */
 #define MJ_LINE_LEN 512
@@ -140,7 +142,63 @@ static void mjString(const cJSON *obj, const char *key, char *dst,
     }
 }
 
+/* One pair of a team's init table, stored the way the Lua reader stores it.
+ * A string is itself; a number is its digits, because that is what
+ * lua_tostring makes of a script's number before it reaches the table. JSON
+ * has one number type and cannot say whether an author wrote 100 or 100.0,
+ * so a whole number is written whole — a table of amounts is made of those.
+ *
+ * False for a value that is neither, which is what the Lua reader refuses a
+ * value that is not a string or a number for, and for a pair that does not
+ * fit. The caller treats the two the same because the validator's sentence
+ * about them is the same one. */
+static bool mjInitPair(ScnTable *t, const char *key, const cJSON *v) {
+    char num[32];
+
+    if (cJSON_IsString(v) && v->valuestring != NULL) {
+        return scnTableSet(t, key, v->valuestring);
+    }
+    if (!cJSON_IsNumber(v)) {
+        return false;
+    }
+    if (v->valuedouble >= -9007199254740992.0 &&
+        v->valuedouble <= 9007199254740992.0 &&
+        v->valuedouble == (double)(long long)v->valuedouble) {
+        snprintf(num, sizeof(num), "%lld", (long long)v->valuedouble);
+    } else {
+        snprintf(num, sizeof(num), "%.14g", v->valuedouble);
+    }
+    return scnTableSet(t, key, num);
+}
+
 /* ── Decoding ─────────────────────────────────────────────────────── */
+
+/* The table this team's bots are built with. The walk stops at the first
+ * pair that does not fit, the pairs before it stay, and the key is named on
+ * the team — the shape scnReadLobby leaves behind, so one sentence in the
+ * validator reports a packaged manifest and a script's table alike. A field
+ * that is not an object leaves the table empty and names no pair, the way a
+ * field of the wrong type is left alone in the Lua reader. */
+static void mjDecodeInit(const cJSON *t, ScnManifestTeam *team) {
+    const cJSON *init = cJSON_GetObjectItemCaseSensitive(t, "init");
+    const cJSON *it;
+
+    scnTableClear(&team->init);
+    team->initBadKey[0] = '\0';
+    if (!cJSON_IsObject(init)) {
+        return;
+    }
+    cJSON_ArrayForEach(it, init) {
+        if (it->string == NULL) {
+            continue;
+        }
+        if (!mjInitPair(&team->init, it->string, it)) {
+            mjCopyStr(team->initBadKey, sizeof(team->initBadKey),
+                      it->string);
+            return;
+        }
+    }
+}
 
 static void mjDecodeLobby(const cJSON *root, ScnManifestLobby *lob,
                           ScnParseReport *rep) {
@@ -176,6 +234,7 @@ static void mjDecodeLobby(const cJSON *root, ScnManifestLobby *lob,
         team->maxBots = (uint8_t)mjNumber(t, "max_bots", 0);
         team->fielded = mjBool(t, "fielded", true);
         mjString(t, "brain", team->brain, sizeof(team->brain));
+        mjDecodeInit(t, team);
     }
 }
 
@@ -560,6 +619,30 @@ static cJSON *mjArrayFor(cJSON *parent, const char *key) {
     return it;
 }
 
+/* A team's init table as an object of names to text. What goes out is the
+ * table the decode built rather than the object it was read from: an init
+ * table is free-form, so every key in it is one this build reads and there
+ * is no unknown key here to keep. A number read as text goes back out as
+ * that text, which is the value the team's bots are built with. A team
+ * holding no pairs carries no init key at all. */
+static void mjEmitInit(cJSON *t, const ScnTable *init) {
+    cJSON *obj;
+    int    i;
+
+    if (init->count == 0) {
+        cJSON_DeleteItemFromObjectCaseSensitive(t, "init");
+        return;
+    }
+    obj = cJSON_CreateObject();
+    if (obj == NULL) {
+        return;
+    }
+    for (i = 0; i < (int)init->count; i++) {
+        cJSON_AddStringToObject(obj, init->kv[i].key, init->kv[i].value);
+    }
+    mjPut(t, "init", obj);
+}
+
 static void mjEmitTeams(cJSON *lobby, const ScnManifestLobby *lob) {
     cJSON *teams = mjArrayFor(lobby, "teams");
     int    i;
@@ -590,6 +673,7 @@ static void mjEmitTeams(cJSON *lobby, const ScnManifestLobby *lob) {
         mjPutNumber(t, "max_bots", lob->teams[i].maxBots);
         mjPutBool(t, "fielded", lob->teams[i].fielded);
         mjPutString(t, "brain", lob->teams[i].brain);
+        mjEmitInit(t, &lob->teams[i].init);
     }
     while (cJSON_GetArraySize(teams) > (int)lob->numTeams) {
         cJSON_DeleteItemFromArray(teams, cJSON_GetArraySize(teams) - 1);
@@ -795,6 +879,31 @@ static bool mjAgreeTagKind(const ScnManifestTags *a, const ScnManifestTags *b,
     return true;
 }
 
+/* The first init pair two forms of a team do not agree on, or NULL when they
+ * agree. Compared by key rather than by position: a script's init table is
+ * walked with lua_next, so the order its pairs land in the struct is Lua's
+ * business and only the set of pairs can be held against the manifest's. A
+ * key one side holds and the other does not is a disagreement about that key.
+ *
+ * initBadKey is not compared. It names what a reader could not take, which is
+ * something to tell an author about rather than a description of the team. */
+static const char *mjInitDiffers(const ScnTable *a, const ScnTable *b) {
+    int i;
+
+    for (i = 0; i < (int)a->count; i++) {
+        const char *v = scnTableGet(b, a->kv[i].key);
+        if (v == NULL || strcmp(v, a->kv[i].value) != 0) {
+            return a->kv[i].key;
+        }
+    }
+    for (i = 0; i < (int)b->count; i++) {
+        if (scnTableGet(a, b->kv[i].key) == NULL) {
+            return b->kv[i].key;
+        }
+    }
+    return NULL;
+}
+
 bool scnManifestAgrees(const ScenarioManifest *fromJson,
                        const ScenarioManifest *fromLua,
                        char *key, size_t keyLen,
@@ -869,6 +978,7 @@ bool scnManifestAgrees(const ScenarioManifest *fromJson,
     for (i = 0; i < (int)fromJson->lobby.numTeams; i++) {
         const ScnManifestTeam *a = &fromJson->lobby.teams[i];
         const ScnManifestTeam *b = &fromLua->lobby.teams[i];
+        const char            *bad;
 
         if (a->id != b->id) {
             snprintf(where, sizeof(where), "lobby.teams[%d].id", i);
@@ -903,6 +1013,13 @@ bool scnManifestAgrees(const ScenarioManifest *fromJson,
                             "scenario: the manifest gives this team brain '%s' "
                             "and the script's table gives it '%s'",
                             a->brain, b->brain);
+        }
+        bad = mjInitDiffers(&a->init, &b->init);
+        if (bad != NULL) {
+            snprintf(where, sizeof(where), "lobby.teams[%d].init.%s", i, bad);
+            return mjDiffer(key, keyLen, err, errLen, where,
+                            "scenario: the manifest and the script's table "
+                            "do not agree about this team's init '%s'", bad);
         }
     }
 

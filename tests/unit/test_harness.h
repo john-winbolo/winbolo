@@ -2752,12 +2752,14 @@ int run_scenario_package_two_open(void);
 
 /* manifest.json (test_scenario_manifest_json.c): the schema into the struct
  * and back out with the keys this build does not read kept, the refusals a
- * malformed manifest gets, and the comparison that holds a manifest against
- * the table a script declared. */
+ * malformed manifest gets, the comparison that holds a manifest against the
+ * table a script declared, and a team's init table read the way the Lua
+ * reader reads it. */
 int run_scenario_manifest_json_round_trip(void);
 int run_scenario_manifest_json_refusals(void);
 int run_scenario_manifest_agrees(void);
 int run_scenario_manifest_from_values(void);
+int run_scenario_manifest_json_team_init(void);
 
 /* Where a map file's map data ends (test_scenario_map_body.c): the measure
  * itself, the container found after it, the scripted tag it gives the

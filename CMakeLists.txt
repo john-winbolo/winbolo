@@ -5499,6 +5499,7 @@ set(_unit_test_names
     scenario_manifest_json_refusals
     scenario_manifest_agrees
     scenario_manifest_from_values
+    scenario_manifest_json_team_init
     scenario_map_body_length
     scenario_map_find_container
     scenario_map_has_script_chunk
