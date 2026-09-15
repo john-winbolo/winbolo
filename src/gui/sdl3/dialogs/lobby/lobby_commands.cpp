@@ -530,10 +530,10 @@ static void lobbySendAddBot(ClientSim *cs,
          * requires for the bot's side, then what the player last picked by
          * hand. Before this, single player's add wrote only the base and
          * skipped the map and the manual pick altogether — which is why a bot
-         * added to the Survival horde came up at the player's skill guess
-         * instead of Hard. The team is the header's when it named one (that
-         * is applied asynchronously below), else the one the add just gave
-         * the slot. The brain reloads from this config at round start, so
+         * added to the Survival team's seats came up at the player's skill
+         * guess instead of Hard. The team is the header's when it named one
+         * (that is applied asynchronously below), else the one the add just
+         * gave the slot. The brain reloads from this config at round start, so
          * setting it after the create is enough. */
         {
             const char *botBrain = (stickyBrainIdx != 0xFF)

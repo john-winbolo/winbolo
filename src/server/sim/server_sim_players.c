@@ -101,6 +101,7 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
     sim->lobbyPlayers[playerNum].fielded = TRUE;
     sim->lobbyPlayers[playerNum].keepSeat = FALSE;
     sim->seatBrain[playerNum][0] = '\0';
+    scnTableClear(&sim->seatInit[playerNum]);
     sim->soundSquares[playerNum] = false;
     /* A recycled slot must not inherit the previous occupant's ping mutes. */
     sim->pingMuteMask[playerNum] = 0;
@@ -596,6 +597,7 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->lobbyPlayers[playerNum].fielded = TRUE;
     sim->lobbyPlayers[playerNum].keepSeat = FALSE;
     sim->seatBrain[playerNum][0] = '\0';
+    scnTableClear(&sim->seatInit[playerNum]);
     sim->mapSkipVotes[playerNum] = false;
     sim->soundSquares[playerNum] = false;
     /* Smart-ping mutes, both directions, exactly as a voice mute is swept on

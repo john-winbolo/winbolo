@@ -2129,7 +2129,7 @@ void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks);
  *   1. the caller's base (the lobby default, or single player's own
  *      chosen level);
  *   2. what the map requires for the bot's side (the scenario's bot_mode
- *      hook) — on Survival, the horde is survival mode at Hard;
+ *      hook) — on Survival, the team's bots are survival mode at Hard;
  *   3. what the host last picked BY HAND, when the caller honours it —
  *      the difficulty only when step 2 fixed the mode, both otherwise.
  *

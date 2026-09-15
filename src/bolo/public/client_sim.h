@@ -1364,6 +1364,13 @@ void         clientSimManMoveToMap(ClientSim *cs, BYTE mapX, BYTE mapY, buildSel
  * through the standard order: Trees -> Road -> Building -> Pillbox -> Mine. */
 void         clientSimCycleBuildSelect(ClientSim *cs, int delta);
 
+/* True for a seat the roster holds with nobody on the field. Such a seat
+ * keeps its players-table identity, so the table still reads it as a live
+ * player; what it does not have is a tank. playerNum is 0-based here, as
+ * the players table and the lobby mirror both are. False when cs is NULL,
+ * when the slot is out of range, and for every seat that is on the field. */
+bool         clientSimSlotIsUnfielded(const ClientSim *cs, BYTE playerNum);
+
 /* Alliance accessors. playerNum is 1-based (legacy screen-facade
  * convention); the function converts to 0-based internally. */
 tankAlliance clientSimGetTankAlliance(ClientSim *cs, BYTE playerNum);

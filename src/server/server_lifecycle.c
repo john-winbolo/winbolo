@@ -112,6 +112,16 @@ static double s_lastTickMs = 0.0;
 static double s_tickMsEwma = 0.0;
 static const  double kTickAlpha = 0.1;
 
+/* The worst tick recorded since the last reset, and how many ticks cost at
+ * least the SERVER_TICK_LENGTH ms the loop has to serve one in. The EWMA
+ * above answers "is the server keeping up right now" and decays a spike by an
+ * order of magnitude in roughly 22 ticks, so a burst that lasts a handful of
+ * frames is back at baseline before an operator can type a console command.
+ * These two hold their values until serverLifecycleResetTickPeak clears them
+ * at the next round start, so the cost of a burst can be read afterwards. */
+static double       s_peakTickMs      = 0.0;
+static unsigned int s_ticksOverBudget = 0;
+
 /* Wall-clock cost (ms) of the two serverSimTick calls combined for the
  * most recent tick, plus its EWMA. Same seeding rule as above. */
 static double s_lastSimMs = 0.0;
@@ -124,11 +134,30 @@ void serverLifecycleRecordTickMs(double ms) {
   } else {
     s_tickMsEwma = kTickAlpha * ms + (1.0 - kTickAlpha) * s_tickMsEwma;
   }
+  if (ms > s_peakTickMs) {
+    s_peakTickMs = ms;
+  }
+  /* A tick that exactly spends its budget has nothing left for the next one,
+   * so the count is of ticks at or above it, not strictly over. */
+  if (ms >= (double)SERVER_TICK_LENGTH) {
+    s_ticksOverBudget++;
+  }
 }
 
 void serverLifecycleGetTickStats(double *outLastMs, double *outEwmaMs) {
   if (outLastMs)  *outLastMs  = s_lastTickMs;
   if (outEwmaMs)  *outEwmaMs  = s_tickMsEwma;
+}
+
+void serverLifecycleGetTickPeak(double *outPeakMs,
+                                unsigned int *outOverBudget) {
+  if (outPeakMs)     *outPeakMs     = s_peakTickMs;
+  if (outOverBudget) *outOverBudget = s_ticksOverBudget;
+}
+
+void serverLifecycleResetTickPeak(void) {
+  s_peakTickMs      = 0.0;
+  s_ticksOverBudget = 0;
 }
 
 static void serverLifecycleRecordSimMs(double ms) {
@@ -882,6 +911,10 @@ void serverInstanceTick(ServerSim *sim) {
      * GAME_OVER, so handleGameOver never stashed the in-flight round.
      * Do it here so the upload below picks it up. */
     roundLogStash();
+    /* Empty-reset bypasses serverSimReturnToLobby, so the release of the
+     * round's parked runners is this path's to make. A parked brain keeps
+     * its state table, and the round it remembers is the one ending here. */
+    botManagerReleaseParkedRunners(sim);
     serverSimResetGameWorld(sim);
     sim->state = serverStateLobby;
     sim->gameLength = sim->originalGameLength;

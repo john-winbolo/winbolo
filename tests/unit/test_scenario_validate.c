@@ -22,6 +22,9 @@
  * run_scenario_validate_lobby_shape      — the human cap, a team number used
  *                                          twice, bots above max_bots and a
  *                                          package brain naming nothing
+ * run_scenario_validate_team_init_reported
+ *                                        — a team's init pair that will not
+ *                                          fit, named under the team's key
  * run_scenario_validate_unknown_rule     — a key that names no rule
  * run_scenario_validate_rule_out_of_range— a value outside its row's bounds
  * run_scenario_validate_rule_pair        — two values that pass alone and
@@ -250,6 +253,61 @@ int run_scenario_validate_lobby_shape(void) {
     UT_ASSERT_MSG(svFind(&r, "lobby.teams[4].id") != NULL,
                   "team %d is above what the engine seats and was accepted: "
                   "%s", MAX_TANKS, seen);
+
+    serverSimDestroy(sim);
+    svDrop(kMap);
+    return 0;
+}
+
+/* ── 3b. An init pair a team could not keep ───────────────────────── */
+
+/* The read of a team's `init` keeps the pairs it can and names the one it
+ * stopped on, and this is where an author hears about it. The team's key is
+ * 1-based over the teams the file lists, as every other team key here is, so
+ * the first team in the file is `lobby.teams[1]`. */
+int run_scenario_validate_team_init_reported(void) {
+    static const char *const kMap = "scnval_team_init.map";
+    char                    lua[512];
+    char                    longValue[SCN_TABLE_VALUE_LEN + 8];
+    ServerSim              *sim;
+    ScnValidateResult       r;
+    const ScnValidateIssue *issue;
+    char                    seen[1024];
+
+    /* A value six bytes longer than the longest one that fits. */
+    memset(longValue, 'x', SCN_TABLE_VALUE_LEN + 6);
+    longValue[SCN_TABLE_VALUE_LEN + 6] = '\0';
+    snprintf(lua, sizeof(lua),
+             "scenario = {\n"
+             "  api = 1,\n"
+             "  lobby = {\n"
+             "    teams = { { id = 1, bots = 1,\n"
+             "                init = { toolong = \"%s\" } } },\n"
+             "  },\n"
+             "}\n", longValue);
+
+    UT_ASSERT(svPut(kMap, lua));
+    sim = svSim();
+    UT_ASSERT(sim != NULL);
+
+    UT_ASSERT_MSG(!scenarioValidateMap(sim, kMap, &r),
+                  "a team whose init pair did not fit was passed");
+    svList(&r, seen, sizeof(seen));
+    issue = svFind(&r, "lobby.teams[1].init");
+    UT_ASSERT_MSG(issue != NULL,
+                  "no issue under the first team's init key: %s", seen);
+    UT_ASSERT_MSG(strstr(issue->message, "toolong") != NULL,
+                  "the message does not name the pair: %s", issue->message);
+
+    /* And the table is still read: the team keeps whatever fitted, which
+       here is nothing, rather than the block being dropped. */
+    UT_ASSERT_MSG(r.haveManifest, "a script that parsed left no manifest");
+    UT_ASSERT_MSG(r.manifest.lobby.numTeams == 1,
+                  "%u teams read past the bad pair, expected 1",
+                  (unsigned)r.manifest.lobby.numTeams);
+    UT_ASSERT_MSG(r.manifest.lobby.teams[0].bots == 1,
+                  "the team past the bad pair reads %u bots, expected 1",
+                  (unsigned)r.manifest.lobby.teams[0].bots);
 
     serverSimDestroy(sim);
     svDrop(kMap);

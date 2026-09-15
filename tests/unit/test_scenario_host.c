@@ -22,6 +22,10 @@
  *                                       refused; equal and below are not
  * run_scenario_host_no_script        — no script is not an error
  * run_scenario_host_manifest_roundtrip— tags, regions and several teams
+ * run_scenario_host_team_init_read    — a team's init table reaches the
+ *                                       manifest and the sim's template, and
+ *                                       a pair that will not fit costs that
+ *                                       pair and is named on the team
  * run_scenario_host_seed_reproducible — math.random is seeded from the
  *                                       process PRNG state, reproducibly
  * run_scenario_host_edit_after_attach — the script is read once, so an
@@ -369,7 +373,7 @@ int run_scenario_host_metadata(void) {
         "    max_players = 6,\n"
         "    extra_teams = false,\n"
         "    teams = { { id = 2, bots = 10, max_bots = 12, fielded = false,\n"
-        "                brain = \"package:horde\" } },\n"
+        "                brain = \"package:raider\" } },\n"
         "  },\n"
         "}\n";
     ServerSim              *sim;
@@ -407,7 +411,7 @@ int run_scenario_host_metadata(void) {
     UT_ASSERT_MSG(m->lobby.teams[0].maxBots == 12, "max_bots read as %u",
                   (unsigned)m->lobby.teams[0].maxBots);
     UT_ASSERT_MSG(!m->lobby.teams[0].fielded, "fielded read as true");
-    UT_ASSERT_MSG(strcmp(m->lobby.teams[0].brain, "package:horde") == 0,
+    UT_ASSERT_MSG(strcmp(m->lobby.teams[0].brain, "package:raider") == 0,
                   "brain read as '%s'", m->lobby.teams[0].brain);
 
     scenarioHostDetach(h);
@@ -685,7 +689,7 @@ int run_scenario_host_manifest_roundtrip(void) {
         "    max_players = 8, extra_teams = true,\n"
         "    teams = {\n"
         "      { id = 2, bots = 3, max_bots = 5, fielded = false,\n"
-        "        brain = \"package:horde\" },\n"
+        "        brain = \"package:raider\" },\n"
         "      { id = 3, bots = 1, max_bots = 2, fielded = true,\n"
         "        brain = \"brains/idle.lua\" },\n"
         "    },\n"
@@ -777,6 +781,141 @@ int run_scenario_host_manifest_roundtrip(void) {
                       reg->h == 40,
                   "'moat' read as x %u y %u w %u h %u", (unsigned)reg->x,
                   (unsigned)reg->y, (unsigned)reg->w, (unsigned)reg->h);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* ── 7b. A team's init table ──────────────────────────────────────── */
+
+/* The team block's `init` is the table this team's bots are built with, and
+ * it is read through the one reader spawn_bot's own `init` goes through.
+ *
+ * Three teams: one whose table is taken whole, one asking for a seventeenth
+ * pair, and one whose only value is longer than a value may be. The last two
+ * are what says a bad pair costs that pair and no more — the pairs read
+ * before it stay and the team still has its init, the way a rules table
+ * survives a key that names no rule.
+ *
+ * Both arrays walked here are 0-based: team 1 in the file is lobby.teams[0]
+ * in the manifest and teams[0] in the sim's template. The pairs inside a
+ * table are looked up by name rather than by position, because the order a
+ * Lua table walks in is the table's business and not the script's; which pair
+ * a seventeen-pair table stops on is the same question, so the case asks that
+ * the key it stopped on is one the table does not hold rather than naming
+ * it. */
+int run_scenario_host_team_init_read(void) {
+    static const char *const kMap = "scnhost_team_init.map";
+    char                    lua[2048];
+    char                    pairs[512];
+    char                    longValue[SCN_TABLE_VALUE_LEN + 8];
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    const ScenarioManifest *m;
+    const ScnTable         *tbl;
+    const char             *v;
+    char                    err[512];
+    size_t                  at = 0;
+    int                     i;
+
+    /* One pair more than a table holds, named k01 up. */
+    pairs[0] = '\0';
+    for (i = 1; i <= SCN_TABLE_MAX + 1; i++) {
+        at += (size_t)snprintf(pairs + at, sizeof(pairs) - at,
+                               "k%02d = \"v\", ", i);
+    }
+    /* A value six bytes longer than the longest one that fits. */
+    memset(longValue, 'x', SCN_TABLE_VALUE_LEN + 6);
+    longValue[SCN_TABLE_VALUE_LEN + 6] = '\0';
+
+    snprintf(lua, sizeof(lua),
+             "scenario = {\n"
+             "  name = \"Init\", api = 1,\n"
+             "  lobby = {\n"
+             "    teams = {\n"
+             "      { id = 1, bots = 1, fielded = false,\n"
+             "        init = { role = \"guard\", tier = 3 } },\n"
+             "      { id = 2, bots = 1, fielded = false,\n"
+             "        init = { %s } },\n"
+             "      { id = 3, bots = 1, fielded = false,\n"
+             "        init = { toolong = \"%s\" } },\n"
+             "    },\n"
+             "  },\n"
+             "}\n", pairs, longValue);
+
+    UT_ASSERT(shPut(kMap, lua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->lobby.numTeams == 3, "%u teams read, expected 3",
+                  (unsigned)m->lobby.numTeams);
+
+    /* The first team, whole. A number is written out as the text of itself,
+       because that is what a brain reads, so tier is the string "3". */
+    tbl = &m->lobby.teams[0].init;
+    UT_ASSERT_MSG(tbl->count == 2,
+                  "the first team's init holds %u pairs, expected 2",
+                  (unsigned)tbl->count);
+    v = scnTableGet(tbl, "role");
+    UT_ASSERT_MSG(v != NULL && strcmp(v, "guard") == 0,
+                  "the first team's init has role '%s', expected 'guard'",
+                  (v != NULL) ? v : "(absent)");
+    v = scnTableGet(tbl, "tier");
+    UT_ASSERT_MSG(v != NULL && strcmp(v, "3") == 0,
+                  "the first team's init has tier '%s', expected the text "
+                  "'3'", (v != NULL) ? v : "(absent)");
+    UT_ASSERT_MSG(m->lobby.teams[0].initBadKey[0] == '\0',
+                  "a table that fits named '%s' as a pair that did not",
+                  m->lobby.teams[0].initBadKey);
+
+    /* And the same table on the sim, which is what the seating reads. */
+    UT_ASSERT_MSG(sim->scenarioLobbyValid,
+                  "the attach left the sim no lobby template");
+    UT_ASSERT_MSG(sim->scenarioLobby.numTeams == 3,
+                  "the sim's template holds %u teams, expected 3",
+                  (unsigned)sim->scenarioLobby.numTeams);
+    tbl = &sim->scenarioLobby.teams[0].init;
+    UT_ASSERT_MSG(tbl->count == 2,
+                  "the sim's first team holds %u init pairs, expected 2",
+                  (unsigned)tbl->count);
+    v = scnTableGet(tbl, "role");
+    UT_ASSERT_MSG(v != NULL && strcmp(v, "guard") == 0,
+                  "the sim's first team has role '%s', expected 'guard'",
+                  (v != NULL) ? v : "(absent)");
+    v = scnTableGet(tbl, "tier");
+    UT_ASSERT_MSG(v != NULL && strcmp(v, "3") == 0,
+                  "the sim's first team has tier '%s', expected the text '3'",
+                  (v != NULL) ? v : "(absent)");
+
+    /* The second team asked for one pair too many: the table holds as many as
+       it can and the pair that was left out is named. */
+    tbl = &m->lobby.teams[1].init;
+    UT_ASSERT_MSG(tbl->count == SCN_TABLE_MAX,
+                  "a table of %d pairs left %u of them, expected the %d a "
+                  "table holds", SCN_TABLE_MAX + 1, (unsigned)tbl->count,
+                  SCN_TABLE_MAX);
+    UT_ASSERT_MSG(m->lobby.teams[1].initBadKey[0] != '\0',
+                  "a table of %d pairs named none of them as the one that "
+                  "did not fit", SCN_TABLE_MAX + 1);
+    UT_ASSERT_MSG(scnTableGet(tbl, m->lobby.teams[1].initBadKey) == NULL,
+                  "'%s' is named as the pair that did not fit and is in the "
+                  "table all the same", m->lobby.teams[1].initBadKey);
+
+    /* The third asked for a value longer than a value may be, and it was its
+       only pair, so it is left with none. */
+    tbl = &m->lobby.teams[2].init;
+    UT_ASSERT_MSG(tbl->count == 0,
+                  "a %d-byte value was stored: the team holds %u pairs, "
+                  "expected 0", (int)strlen(longValue), (unsigned)tbl->count);
+    UT_ASSERT_MSG(strcmp(m->lobby.teams[2].initBadKey, "toolong") == 0,
+                  "the pair that did not fit is named '%s', expected "
+                  "'toolong'", m->lobby.teams[2].initBadKey);
 
     scenarioHostDetach(h);
     serverSimDestroy(sim);

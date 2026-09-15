@@ -493,6 +493,26 @@ static void simRunHalfStep(ServerSim *sim) {
         sim->countdownTicks--;
         if (sim->countdownTicks <= 0) {
             serverSimStartGame(sim);
+        } else {
+            /* One held seat's runner, built and parked here so the round that
+             * follows fields it without building anything. This is the window
+             * for it: the countdown simulates nothing and owes a snapshot to
+             * nobody, so a build here costs no client a slow frame the way the
+             * same build during play would.
+             *
+             * What it does cost is a stall. serverGameTimer reads the clock
+             * once a callback and then runs every tick the clock says is owed,
+             * back to back, so a callback that spends 200ms on a brain is
+             * followed by a burst of the ticks it held up, and each of those
+             * can build another seat. Six seats is not 1.2s added to the
+             * countdown; it is a stall of about 1.2s in which no client
+             * receives anything, after which the countdown count catches up in
+             * one burst and the number clients are shown jumps. Sixteen seats
+             * is about 3.2s, well inside CLIENT_TIMEOUT_TICKS.
+             *
+             * One build a tick, so the countdown count still moves between
+             * them, and never on the tick that starts the round. */
+            serverSimWarmOneHeldSeat(sim);
         }
         logWriteTick();
         return;

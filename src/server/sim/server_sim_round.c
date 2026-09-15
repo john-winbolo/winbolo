@@ -31,7 +31,7 @@
 
 #include "server_sim_shared.h"
 #include "server_sim_internal.h"
-#include "server_sim_lifecycle.h"   /* lobbyAutoUnreadyOnChange, and serverLifecycleGet*Stats via server_lifecycle.h */
+#include "server_sim_lifecycle.h"   /* lobbyAutoUnreadyOnChange, and the serverLifecycle tick timing (stats, peak, reset) via server_lifecycle.h */
 #include "treegrow.h"               /* treeGrowReset — the world reset's tree state */
 #include "sim_rules.h"              /* simRulesClassic — the table a round starts from */
 #include "start_sides.h"            /* START_SIDE_ANY — the per-team side table handed to startsAssignBatch */
@@ -203,11 +203,30 @@ void serverSimInformation(ServerSim *sim, bool locked) {
              * nobody reads network variance into it. */
             BotInfo bi;
             bool isBotSlot = botManagerGetBotInfo(sim, count, &bi);
-            if (isBotSlot) {
-                fprintf(stdout, "%s - (P:%d B:%d)\n",
+            /* A seat the roster is holding for a bot that is not on the field
+               — a held seat between waves. It owns nothing and has no tank,
+               and the marker is what tells it from a slot whose bot is out
+               there playing. Printed in the shape a bot slot gets rather than
+               the one below it: the ping, the buffer depth and the address the
+               other branch prints are for a real connection, and a held seat
+               has none, so they would read as a human sitting at 0ms. The
+               marker also says whether the seat has a runner parked behind it,
+               because the two cost very different things: a seat with one
+               fields its bot by resuming, a seat without one has to build a
+               ClientSim and a brain VM at the moment a wave asks for it. */
+            bool heldSeat = !isBotSlot && !sim->lobbyPlayers[count].fielded;
+            if (isBotSlot || heldSeat) {
+                const char *seatMark = "";
+                if (heldSeat) {
+                    seatMark = botManagerHasRunner(sim, count)
+                                   ? " [off the field, runner ready]"
+                                   : " [off the field]";
+                }
+                fprintf(stdout, "%s - (P:%d B:%d)%s\n",
                         name,
                         pillsGetNumberOwnedByPlayer(&sim->sim.pb, count),
-                        basesGetNumberOwnedByPlayer(&sim->sim.bs, count));
+                        basesGetNumberOwnedByPlayer(&sim->sim.bs, count),
+                        seatMark);
             } else {
                 /* Remote players carry their source ip:port; the in-process
                  * host has no UDP client, so the getter reports false and we
@@ -262,14 +281,23 @@ void serverSimInformation(ServerSim *sim, bool locked) {
         serverLifecycleGetTickStats(&tickLast, &tickEwma);
         double simLast = 0.0, simEwma = 0.0;
         serverLifecycleGetSimStats(&simLast, &simEwma);
+        double tickPeak = 0.0;
+        unsigned int tickOverBudget = 0;
+        serverLifecycleGetTickPeak(&tickPeak, &tickOverBudget);
 
         if (tickLast > 0.0 || simLast > 0.0) {
             fprintf(stdout, "Server timing:\n");
         }
+        /* peak= is the worst tick this round and "over budget" counts the
+         * ticks that reached 20ms (both reset at round start). The EWMA
+         * decays a spike away within about 22 ticks, so a handful of
+         * expensive frames — a wave transition, say — leaves no trace in
+         * last= or the average by the time this command is typed. */
         if (tickLast > 0.0) {
             fprintf(stdout,
-                    "  %-11s last=%.1fms  EWMA=%.1fms  (budget=20ms)\n",
-                    "Tick:", tickLast, tickEwma);
+                    "  %-11s last=%.1fms  EWMA=%.1fms  peak=%.1fms  "
+                    "over budget=%u (budget=20ms)\n",
+                    "Tick:", tickLast, tickEwma, tickPeak, tickOverBudget);
         }
         if (simLast > 0.0) {
             fprintf(stdout,
@@ -567,6 +595,12 @@ BYTE serverSimGetNumNeutralPills(ServerSim *sim) {
 }
 
 void serverSimAbortCountdown(ServerSim *sim) {
+    /* The runners this countdown built belong to the round it was leading to,
+     * and that round is not happening. Left parked they would sit in the lobby
+     * for as long as it lasts and then be handed to a later round, each brain
+     * having read the lobby as it stood at this countdown. The next countdown
+     * builds them again against the lobby as it stands then. */
+    botManagerReleaseParkedRunners(sim);
     sim->state = serverStateLobby;
     sim->countdownTicks = 0;
     /* Tell every subscriber the countdown is over — without this the
@@ -718,6 +752,15 @@ void serverSimReturnToLobby(ServerSim *sim) {
        the seats the script fielded during the round go back to being held so
        the next round starts where the last one did. */
     serverSimScenarioReconcileLobby(sim);
+
+    /* The round is over, so every parked runner goes. A parked brain keeps
+       its state table, which is what makes a resume worth having inside a
+       round and wrong across one: the brain would open the next round still
+       remembering this one's goal and owners. After the reconcile above and
+       not before it — that call takes a seat the script still had on the
+       field off it, which parks its runner, so a release before it would
+       leave exactly those behind. */
+    botManagerReleaseParkedRunners(sim);
 
     /* Reconcile the players table against the restored connection state:
      * clear any slot still marked inUse but no longer connected. The leave
@@ -891,6 +934,10 @@ void serverSimLobbyCheckAllReady(ServerSim *sim) {
         serverSimWbnLobbyUpdate(sim, TRUE);
         sim->state = serverStateCountdown;
         sim->countdownTicks = LOBBY_COUNTDOWN_TICKS;
+        /* The countdown is the window the held seats' runners are built in
+           (serverSimWarmOneHeldSeat). A seat it refuses is named once per
+           countdown, so the record of what it refused starts empty here. */
+        sim->warmSkippedSlots = 0;
         serverSimConsoleMessage("All players ready! Starting countdown...");
         {
             ControlEvent evt;
@@ -1306,6 +1353,11 @@ void serverSimStartGameInPlace(ServerSim *sim) {
      * once a human is seen this round. */
     sim->roundHadHuman = false;
 
+    /* The tick loop's peak and its over-budget count reset here for the same
+     * reason the per-bot ones do in botManagerOnGameStart: they describe the
+     * current game, not an accumulation across map rotations. Both of the
+     * authoritative starts do it — serverSimStartGame has the twin. */
+    serverLifecycleResetTickPeak();
 
     /* Flush any game-events queued during the lobby before the first
      * running snapshot goes out. The sim doesn't tick in the lobby, so the
@@ -1469,6 +1521,10 @@ void serverSimStartGame(ServerSim *sim) {
     /* Arms the last-human-left return-to-lobby check from a clean slate. */
     sim->roundHadHuman = false;
 
+    /* The twin of the reset in serverSimStartGameInPlace: the round's worst
+     * tick and its over-budget count start empty here too. */
+    serverLifecycleResetTickPeak();
+
     /* Reset the game world (map, world systems, queues, tick) */
     serverSimResetGameWorld(sim);
 
@@ -1602,6 +1658,12 @@ void serverSimMapRotateRound(ServerSim *sim) {
     /* Drop vote / map-skip state scoped to the round we're leaving. */
     serverSimGameVoteResetAll(sim);
     serverSimMapSkipVotesReset(sim);
+
+    /* And every parked runner, for the same reason and with the same rule as
+       the gameOver->lobby end: a parked brain carries its state table, and
+       the round it remembers is the one being left. This is the end of that
+       round — the start below is the next one's. */
+    botManagerReleaseParkedRunners(sim);
 
     /* serverSimChangeMap (reached via serverSimMapDirPickRandom) only runs
      * in lobby state, so drop into it for the pick. serverSimStartGame
