@@ -20,29 +20,29 @@
  *   A road is 256 black pixels out of 256, so the Darker fog
  *   leaves it exactly as it was: the player can read the fog
  *   line over grass and cannot read it over road at all. The
- *   Darker + roads look answers that by drawing the fog line
- *   itself back in where it runs over road — a faint lift
- *   inside each edge of a fogged road square that faces a
- *   square in plain sight. It is a little white mixed in, not
- *   a grey stripe: the edge comes out dark grey rather than
- *   pitch black, and fades back to the fog over three pixels,
- *   so the fog keeps a soft edge rather than gaining a drawn
- *   border.
+ *   Darker with fog edge look answers that by drawing the fog
+ *   line itself back in — a faint lift inside each edge of a
+ *   fogged square that faces a square in plain sight. It is a
+ *   little white mixed in, not a grey stripe: the edge comes
+ *   out dark grey rather than pitch black, and fades back to
+ *   the fog over three pixels, so the fog keeps a soft edge
+ *   rather than gaining a drawn border.
  *
  *   The band is on the fogged side of the line, and only on
  *   the fogged side: the square in plain sight next to it is
- *   drawn as itself and needs nothing. Road well inside the
+ *   drawn as itself and needs nothing. Ground well inside the
  *   fog gets no band either, because there is no fog line
- *   there to show. Ground that is not road gets none, because
- *   the darkening already shows the line over it.
+ *   there to show.
  *
  *   A neighbour the caller cannot name — off the map, or off
  *   the grid it is walking — counts as fogged, so no band is
  *   drawn along the edge of the screen.
  *
- *   FOG_EDGE_ALL_TERRAIN turns the last rule off and bands
- *   every fogged square at the fog line, road or not. It is a
- *   build switch for comparing the two, not a setting.
+ *   FOG_EDGE_ALL_TERRAIN says which terrain the band lands
+ *   on. Andrew chose all terrain on 15 Sep 2026, so it is 1
+ *   and every fogged square at the fog line is banded. Set it
+ *   to 0 to go back to banding road only, which is the case
+ *   the look was first written for.
  *
  *   Arithmetic only — no SDL, so it compiles into the unit
  *   test binary. The drawing half is fog_roads_draw.h.
@@ -76,7 +76,8 @@
  * settles at about 40 out of 255, a dark grey that reads as an edge without
  * reading as a line, and falls back to black over the three pixels. Fogged
  * ground that is not black only lifts a touch, which is all that is wanted
- * there — the darkening already shows the fog line over it.
+ * there — the darkening already shows the fog line over it, and the band is
+ * only firming up a line the player can read already.
  *
  * These live here rather than in fog_roads_draw.h because this is the half
  * with no SDL in it, and the unit tests read them.
@@ -109,12 +110,14 @@ static inline int fogRoadIsRoadTile(unsigned char tile) {
     return tile >= (unsigned char)ROAD_HORZ && tile <= (unsigned char)ROAD_SIDE4;
 }
 
-/* The build switch. 0, the default, bands fogged road only. 1 bands every
- * fogged square at the fog line, so the two can be looked at side by side
- * without the look itself changing. Not a setting and not in the dialog:
- * define it on the compiler's command line to try it. */
+/* Which terrain the band lands on. 1, the default, bands every fogged square
+ * at the fog line, whatever is on it: Andrew looked at both on 15 Sep 2026 and
+ * picked this one. 0 bands fogged road only, which is where the darkening
+ * cannot show the fog line at all. The constant is kept so roads only is one
+ * switch away. Not a setting and not in the dialog: define it on the
+ * compiler's command line to build the other way. */
 #ifndef FOG_EDGE_ALL_TERRAIN
-#define FOG_EDGE_ALL_TERRAIN 0
+#define FOG_EDGE_ALL_TERRAIN 1
 #endif
 
 /* Whether a square of this terrain is one the band is wanted on at all. Road

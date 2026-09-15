@@ -43,7 +43,7 @@
 
 #include "overview_view.h"
 #include "overview_fog.h"   /* overviewFogBuildMask and the fog's constants */
-#include "fog_roads_draw.h" /* the road outlines the Darker + roads look adds */
+#include "fog_roads_draw.h" /* the edge bands the Darker with fog edge look adds */
 #include "key_claims.h"     /* keyIsClaimedByGame */
 #include "build_cursor.h"   /* buildCursorSetTile */
 
@@ -467,8 +467,8 @@ static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
                       tilePx * (float)MAP_ARRAY_SIZE };
     SDL_RenderTexture(r, v->fog, NULL, &dst);
 
-    /* The fog line over road that the Darker + roads look draws back in, over
-     * the blit that has just gone down. A second walk of the visible squares
+    /* The fog line that the Darker with fog edge look draws back in, over the
+     * blit that has just gone down. A second walk of the visible squares
      * rather than a pass folded into the terrain loop: the mask the bands are
      * gated on is built here, and a square is only reached at all if the mask
      * says it is fogged, which most of a zoomed-out map is not.
@@ -479,7 +479,7 @@ static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
      * Dropped outright once a square is too small to hold the fade, which is
      * where the band would be a line over the whole square rather than an
      * edge on it — and where there are the most squares to walk. */
-    if (fogLookDrawsRoadEdges(style) &&
+    if (fogLookDrawsFogEdge(style) &&
         tilePx >= (float)(FOG_ROAD_BANDS * 2)) {
         const BYTE *mask = v->fogMask;
         FogRoadPainter painter;

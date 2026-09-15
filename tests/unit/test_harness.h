@@ -1483,16 +1483,17 @@ int run_overview_scroll(void);
 int run_overview_fog(void);
 
 /* Fog of war looks (test_fog_roads.c): each of the four styles washes towards
- * the colour it says it does, None washes at all, only Darker + roads draws
- * the fog line band, the band fade falls to nothing, and the setting store
- * clamps a value from outside the enum back to Grey. */
+ * the colour it says it does, None washes at all, only Darker with fog edge
+ * draws the fog line band, the band fade falls to nothing, and the setting
+ * store clamps a value from outside the enum back to Grey. */
 int run_fog_style_looks(void);
 int run_fog_style_setting(void);
 
-/* The fog line's edge mask (test_fog_roads.c): only a fogged road square is
- * banded, only on the sides facing a square in plain sight, so the band marks
- * the fog line on its fogged side; a square at the edge of the grid has fog
- * beyond it and is not banded there. */
+/* The fog line's edge mask (test_fog_roads.c): only a fogged square is banded,
+ * only on the sides facing a square in plain sight, so the band marks the fog
+ * line on its fogged side; a square at the edge of the grid has fog beyond it
+ * and is not banded there. Which terrain is banded is the build switch
+ * FOG_EDGE_ALL_TERRAIN, 1 in this build. */
 int run_fog_road_edges(void);
 int run_fog_road_edge_masks(void);
 

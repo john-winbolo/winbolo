@@ -3724,7 +3724,7 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     if (v < (int)GFX_FILTER_NEAREST || v > (int)GFX_FILTER_PIXELART) v = 0;
     gfxSetTextureFilter((GfxTextureFilter)v);
   }
-  /* Fog of war look: 0 Grey / 1 Darker / 2 Darker with road edges / 3 None.
+  /* Fog of war look: 0 Grey / 1 Darker / 2 Darker with fog edge / 3 None.
      Grey is what both views drew before the setting existed, so a prefs file
      without the key leaves the game looking exactly as it did. */
   prefsGetString("SETTINGS", "FogStyle", "0", buff, FILENAME_MAX);

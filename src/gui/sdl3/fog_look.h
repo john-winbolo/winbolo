@@ -32,12 +32,12 @@
  *                     dimming was dropped.
  *     Darker          a blend towards black, which is the
  *                     dimming that came before the grey.
- *     Darker + roads  the same black, plus a faint lift drawn
- *                     inside the edge of every fogged road
- *                     square that faces a square in plain
- *                     sight, which puts the fog line back
- *                     where the black road swallowed it.
- *                     See fog_roads.h.
+ *     Darker with     the same black, plus a faint lift drawn
+ *     fog edge        inside the edge of every fogged square
+ *                     that faces a square in plain sight,
+ *                     which puts the fog line back where the
+ *                     black road swallowed it. See
+ *                     fog_roads.h.
  *     None            no wash. The terrain reads the same
  *                     fogged or not.
  *
@@ -51,11 +51,14 @@
  *   therefore comes out lighter than lit ground rather than
  *   darker.
  *
- *   The Darker + roads look is the answer for a player who
- *   wants the darker picture back and can live with the roads
- *   only if the fog line still shows on them: the band is the
- *   one mark on a fogged road square that a dimming cannot
- *   swallow.
+ *   The Darker with fog edge look is the answer for a player
+ *   who wants the darker picture back and can live with the
+ *   roads only if the fog line still shows on them: the band
+ *   is the one mark on a fogged road square that a dimming
+ *   cannot swallow. It is drawn on every terrain at the fog
+ *   line, not on road alone, so the line reads as one line
+ *   all the way along rather than breaking where it leaves
+ *   the road.
  *
  *   None hides nothing the other three show. The wash is a
  *   tint over terrain the player is remembering; which units
@@ -87,10 +90,10 @@
  * append, never renumber. 0 is what the game drew before the setting
  * existed. */
 typedef enum FogStyle {
-    FOG_STYLE_GREY       = 0,
-    FOG_STYLE_DARK       = 1,
-    FOG_STYLE_DARK_ROADS = 2,
-    FOG_STYLE_NONE       = 3
+    FOG_STYLE_GREY      = 0,
+    FOG_STYLE_DARK      = 1,
+    FOG_STYLE_DARK_EDGE = 2,
+    FOG_STYLE_NONE      = 3
 } FogStyle;
 
 #define FOG_STYLE_COUNT 4
@@ -103,7 +106,7 @@ typedef enum FogStyle {
 static inline int fogLookColour(FogStyle style, unsigned char *r,
                                 unsigned char *g, unsigned char *b) {
     if (style == FOG_STYLE_NONE) return 0;
-    if (style == FOG_STYLE_DARK || style == FOG_STYLE_DARK_ROADS) {
+    if (style == FOG_STYLE_DARK || style == FOG_STYLE_DARK_EDGE) {
         /* Black, which is the dimming the grey replaced: a wash to black at
          * FOG_LOOK_ALPHA over a black clear leaves exactly what the old alpha
          * mod of 110/255 on the tile itself left. */
@@ -116,9 +119,9 @@ static inline int fogLookColour(FogStyle style, unsigned char *r,
     return 1;
 }
 
-/* Whether this look draws the road edge bands as well as the wash. */
-static inline int fogLookDrawsRoadEdges(FogStyle style) {
-    return style == FOG_STYLE_DARK_ROADS;
+/* Whether this look draws the fog edge bands as well as the wash. */
+static inline int fogLookDrawsFogEdge(FogStyle style) {
+    return style == FOG_STYLE_DARK_EDGE;
 }
 
 #endif /* FOG_LOOK_H */

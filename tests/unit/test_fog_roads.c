@@ -1,15 +1,22 @@
 /*
  * Tests for the fog of war look the player picks (fog_look.h), and for the
- * road outline the Darker + roads look draws (fog_roads.h).
+ * fog line band the Darker with fog edge look draws (fog_roads.h).
  *
  * Two pure pieces, no SDL and no renderer:
  *
  *   - the look table: which colour each of the four styles washes towards,
- *     which of them washes at all, which draws road edges, and that the
+ *     which of them washes at all, which draws the fog edge, and that the
  *     setting store clamps a value from outside the enum back to the
  *     default the game had before the setting existed;
- *   - the edge mask: which sides of a square get a band, given the tiles
- *     round it.
+ *   - the edge mask: which sides of a square get a band, given the fog and
+ *     the tiles round it.
+ *
+ * Which terrain is banded is the build switch FOG_EDGE_ALL_TERRAIN, not a
+ * value the test can set: it is read at compile time by an inline function.
+ * So the terrain cases below are written for both settings of it and the
+ * build decides which half runs. The game is built with 1 — every fogged
+ * square at the fog line is banded — and the 0 half is what keeps the roads
+ * only build honest for whoever flips the switch back.
  */
 
 #include <string.h>
@@ -47,13 +54,13 @@ int run_fog_style_looks(void) {
                   "Darker washes towards %d,%d,%d, expected black",
                   (int)r, (int)g, (int)b);
 
-    /* Darker + roads is the same wash. Only the outline is added. */
+    /* Darker with fog edge is the same wash. Only the band is added. */
     r = g = b = 200;
-    UT_ASSERT_MSG(fogLookColour(FOG_STYLE_DARK_ROADS, &r, &g, &b) != 0,
-                  "Darker + roads has to wash");
+    UT_ASSERT_MSG(fogLookColour(FOG_STYLE_DARK_EDGE, &r, &g, &b) != 0,
+                  "Darker with fog edge has to wash");
     UT_ASSERT_MSG(r == 0 && g == 0 && b == 0,
-                  "Darker + roads washes towards %d,%d,%d, expected black",
-                  (int)r, (int)g, (int)b);
+                  "Darker with fog edge washes towards %d,%d,%d, expected "
+                  "black", (int)r, (int)g, (int)b);
 
     /* None draws nothing, and leaves the caller's bytes where they were. */
     r = 11; g = 22; b = 33;
@@ -62,13 +69,13 @@ int run_fog_style_looks(void) {
     UT_ASSERT_MSG(r == 11 && g == 22 && b == 33,
                   "None wrote a colour: %d,%d,%d", (int)r, (int)g, (int)b);
 
-    /* Only the one look draws the outline. */
-    UT_ASSERT_MSG(fogLookDrawsRoadEdges(FOG_STYLE_DARK_ROADS) != 0,
-                  "Darker + roads has to draw the outline");
-    UT_ASSERT_MSG(fogLookDrawsRoadEdges(FOG_STYLE_GREY) == 0 &&
-                      fogLookDrawsRoadEdges(FOG_STYLE_DARK) == 0 &&
-                      fogLookDrawsRoadEdges(FOG_STYLE_NONE) == 0,
-                  "Only Darker + roads draws the outline");
+    /* Only the one look draws the band. */
+    UT_ASSERT_MSG(fogLookDrawsFogEdge(FOG_STYLE_DARK_EDGE) != 0,
+                  "Darker with fog edge has to draw the band");
+    UT_ASSERT_MSG(fogLookDrawsFogEdge(FOG_STYLE_GREY) == 0 &&
+                      fogLookDrawsFogEdge(FOG_STYLE_DARK) == 0 &&
+                      fogLookDrawsFogEdge(FOG_STYLE_NONE) == 0,
+                  "Only Darker with fog edge draws the band");
 
     /* The fade runs down to nothing and never back up. */
     {
@@ -196,9 +203,21 @@ int run_fog_road_edges(void) {
                   "left and right", (int)fogEdges(R, FOGD, SEEN, SEEN,
                                                   FOGD, FOGD));
 
-    /* Ground that is not road: the darkening already shows the fog line over
-     * it, so it is left alone — unless the build switch is on, and then it is
-     * banded by the same rule as road. */
+    /* Which terrain wants a band is the switch and nothing else, so the two
+     * have to say the same thing about a square that is not road. */
+    UT_ASSERT_MSG(fogEdgeTileWantsBand(R) != 0, "road has to want a band");
+    UT_ASSERT_MSG((fogEdgeTileWantsBand(G) != 0) == (FOG_EDGE_ALL_TERRAIN != 0)
+                      && (fogEdgeTileWantsBand(W) != 0) ==
+                             (FOG_EDGE_ALL_TERRAIN != 0),
+                  "grass and water want a band %d/%d, with "
+                  "FOG_EDGE_ALL_TERRAIN %d",
+                  fogEdgeTileWantsBand(G), fogEdgeTileWantsBand(W),
+                  (int)FOG_EDGE_ALL_TERRAIN);
+
+    /* Ground that is not road, at the fog line. With the switch on, which is
+     * how the game is built, it is banded by the same rule as road, so the
+     * fog line reads as one line all the way along. With the switch off it is
+     * left alone, because the darkening already shows the line over it. */
     UT_ASSERT_MSG(fogEdges(G, FOGD, FOGD, SEEN, FOGD, FOGD) ==
                       (FOG_EDGE_ALL_TERRAIN ? FOG_ROAD_EDGE_RIGHT : 0),
                   "fogged grass beside a seen square was banded %d, with "
@@ -262,19 +281,28 @@ int run_fog_road_edge_masks(void) {
     memset(out, 0xEE, sizeof(out));
     fogEdgeMasks(tiles, fogged, 4, 4, out);
 
-    /* Nothing that is not road carries a band, and nothing in plain sight
-     * does either — however the fog runs round it. */
+    /* Nothing in plain sight carries a band, however the fog runs round it.
+     * That holds whichever way the switch is set: the band is on the fogged
+     * side of the line and only there. */
     for (i = 0; i < 16; i++) {
         if (fogged[i] == 0) {
             UT_ASSERT_MSG(out[i] == 0,
                           "square %d is in plain sight but was banded %d", i,
                           (int)out[i]);
-            continue;
         }
-        if (fogRoadIsRoadTile(tiles[i]) && !FOG_EDGE_ALL_TERRAIN) continue;
-        if (FOG_EDGE_ALL_TERRAIN) continue;
-        UT_ASSERT_MSG(out[i] == 0, "square %d is not road but was banded %d",
-                      i, (int)out[i]);
+    }
+
+    /* With the switch off, a fogged square that is not road carries nothing
+     * either. With it on, the square's terrain does not come into the answer
+     * at all, which the grass cases further down check one by one. */
+    if (!FOG_EDGE_ALL_TERRAIN) {
+        for (i = 0; i < 16; i++) {
+            if (fogged[i] == 0) continue;
+            if (fogRoadIsRoadTile(tiles[i])) continue;
+            UT_ASSERT_MSG(out[i] == 0,
+                          "square %d is not road but was banded %d", i,
+                          (int)out[i]);
+        }
     }
 
     /* The left end of the run. Fog all round it and the grid ending on its
@@ -308,6 +336,36 @@ int run_fog_road_edge_masks(void) {
                   "the arm was banded %d, expected the bottom only",
                   (int)out[9]);
 
+    /* The grass in the same picture. With the switch on it is banded by the
+     * same rule as the road, so the fog line carries on across it instead of
+     * stopping where the road does; with the switch off it carries nothing.
+     * Every grass square in the grid is named, at the line and away from it,
+     * so the whole answer is written down rather than sampled. */
+    {
+        static const unsigned char grassSlot[9] = {
+            0, 2, 3, 8, 10, 11, 12, 14, 15
+        };
+        static const unsigned char grassBands[9] = {
+            FOG_ROAD_EDGE_RIGHT,                            /* 0  */
+            FOG_ROAD_EDGE_LEFT | FOG_ROAD_EDGE_BOTTOM,      /* 2  */
+            0,                                              /* 3  */
+            0,                                              /* 8  */
+            FOG_ROAD_EDGE_TOP,                              /* 10 */
+            0,                                              /* 11 */
+            FOG_ROAD_EDGE_RIGHT,                            /* 12 */
+            FOG_ROAD_EDGE_LEFT,                             /* 14 */
+            0                                               /* 15 */
+        };
+        for (i = 0; i < 9; i++) {
+            int slot = (int)grassSlot[i];
+            int want = FOG_EDGE_ALL_TERRAIN ? (int)grassBands[i] : 0;
+            UT_ASSERT_MSG((int)out[slot] == want,
+                          "grass square %d was banded %d, expected %d with "
+                          "FOG_EDGE_ALL_TERRAIN %d", slot, (int)out[slot],
+                          want, (int)FOG_EDGE_ALL_TERRAIN);
+        }
+    }
+
     /* The same grid with every square fogged: no fog line anywhere on it, so
      * no band anywhere either. */
     {
@@ -327,18 +385,24 @@ int run_fog_road_edge_masks(void) {
         }
     }
 
-    /* A grid with no road in it writes zeroes and nothing else, whatever the
-     * fog does — with the switch off, which is how the game is built. */
-    if (!FOG_EDGE_ALL_TERRAIN) {
+    /* A grid with no road in it. With the switch on, which is how the game is
+     * built, the two fogged squares are banded on the side facing the plain
+     * sight beside them and nowhere else; with the switch off the whole grid
+     * writes zeroes, which is the roads only build this case was written for
+     * and which the switch keeps one define away. */
+    {
         static const unsigned char empty[4] = { G, G, W, W };
         static const unsigned char half[4]  = { 1, 0, 1, 0 };
         unsigned char none[4];
+        int want = FOG_EDGE_ALL_TERRAIN ? FOG_ROAD_EDGE_RIGHT : 0;
         memset(none, 0xEE, sizeof(none));
         fogEdgeMasks(empty, half, 2, 2, none);
-        UT_ASSERT_MSG(none[0] == 0 && none[1] == 0 && none[2] == 0 &&
-                          none[3] == 0,
-                      "a grid with no road was banded %d,%d,%d,%d",
-                      (int)none[0], (int)none[1], (int)none[2], (int)none[3]);
+        UT_ASSERT_MSG((int)none[0] == want && none[1] == 0 &&
+                          (int)none[2] == want && none[3] == 0,
+                      "a grid with no road was banded %d,%d,%d,%d, expected "
+                      "%d,0,%d,0 with FOG_EDGE_ALL_TERRAIN %d",
+                      (int)none[0], (int)none[1], (int)none[2], (int)none[3],
+                      want, want, (int)FOG_EDGE_ALL_TERRAIN);
     }
 
     return 0;

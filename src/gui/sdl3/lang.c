@@ -2042,8 +2042,8 @@ static const LangEntry langTable[] = {
     {2207, "Ground you cannot see into is washed towards grey, so it comes out lighter than ground in plain sight. This is the standard look."},
     {2208, "Darker"},
     {2209, "Ground you cannot see into is taken towards black. Roads are already black, so a road under fog looks the same as a road in plain sight."},
-    {2210, "Darker with fog edge on roads"},
-    {2211, "Darker, with the fog line drawn faintly back in where it runs over a road. Roads are black, so the darkening alone cannot show where the fog starts on them."},
+    {2210, "Darker with fog edge"},
+    {2211, "Darker, with the fog line drawn faintly back in along it. The band sits on the fogged side of the line, on every terrain, so the line still shows over a road, which is black and which the darkening alone cannot mark."},
     {2212, "None"},
     {2213, "The map is not shaded at all, so remembered ground looks the same as ground in plain sight. It hides nothing the other styles show: which tanks and shots are drawn is the server's rule, not this setting's."},
 
