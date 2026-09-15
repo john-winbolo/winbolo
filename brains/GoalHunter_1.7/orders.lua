@@ -1396,7 +1396,7 @@ function M.on_chat(state, world, info, sender, text, now, from_ally, sender_is_b
   if type(text) ~= "string" or text == "" then return false end
   -- A bot ally's own acks are ordinary chat; only an explicit ! line from a
   -- bot (or from ourselves) is read as an order, which is also the shape a
-  -- sidecar test uses.
+  -- test script uses.
   if sender_is_bot and text:sub(1, 1) ~= "!" then return false end
 
   local roster = M.bot_roster(state, info)

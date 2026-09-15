@@ -9,7 +9,7 @@
 -- tank.
 --
 -- HOW A ROUND CAN SEE A SLOT CLEAR. Brain state is not readable from a
--- sidecar, so the round watches what reaches the outside:
+-- script, so the round watches what reaches the outside:
 --
 --   * THE LINE. Ending the order says the line it has always said,
 --     "capture_pill #N done". Only the release path prints it, so the line
