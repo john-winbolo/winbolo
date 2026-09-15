@@ -2369,6 +2369,7 @@ int run_lobby_scenario_nolobby_boot_seats_template(void);
  * comes back from a round against what the host did to it, and leaving a
  * preview and a plain map alone. */
 int run_lobby_template_map_commit_seats(void);
+int run_survival_lobby_round(void);
 int run_lobby_template_return_reconciles(void);
 int run_lobby_template_return_unfields(void);
 int run_lobby_template_reset_reseats(void);

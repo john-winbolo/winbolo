@@ -3470,6 +3470,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # commit, reconciling them when a round comes back, re-seating them when
     # an emptied lobby resets, and leaving a preview and a plain map alone.
     tests/unit/test_lobby_template.c
+    tests/unit/test_survival_lobby_round.c
     # The scripted game type: the fourth value resolving through the base game
     # a scenario declared, at the loadout and at the start, and that value
     # going when the template does.
@@ -4166,6 +4167,9 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # The maps the baseline runs play, and the scenario scripts that sit
     # beside them: the validator case reads one from here.
     WB_BASELINE_MAPS_DIR="${CMAKE_SOURCE_DIR}/tests/baseline/maps"
+    # The shipped maps and their scripts: the Survival lobby-round case
+    # starts a round on data/maps/Survival.map with the script beside it.
+    WB_DATA_MAPS_DIR="${CMAKE_SOURCE_DIR}/data/maps"
 )
 
 target_include_directories(WinBoloUnitTests PRIVATE
@@ -5221,6 +5225,7 @@ set(_unit_test_names
     scenario_roster_spawn_loadout_without_policy
     scenario_roster_spawn_loadout_not_next_life
     lobby_template_map_commit_seats
+    survival_lobby_round
     lobby_template_return_reconciles
     lobby_template_return_unfields
     lobby_template_reset_reseats

@@ -6,10 +6,12 @@
 -- forces it whatever the lobby says); wave bots always come in on the full
 -- open loadout.
 --
--- The map carries the geometry: 6 centre bases owned by slots 0..5 hugging
--- the spawn puddle, 6 dead pills just beyond them (the defenders' starting
--- pills — scoop, place, repair), and 8 horde bases ringing the shore at
--- r=25 on eight of the ten 36-degree spokes.
+-- The map carries the geometry: 6 centre bases hugging the spawn puddle, 6
+-- dead pills just beyond them (the defenders' starting pills — scoop, place,
+-- repair), and 8 horde bases ringing the shore at r=25 on eight of the ten
+-- 36-degree spokes. The owners the file names for those are slot numbers and
+-- mean nothing here: the round re-deals every one of them by TEAM at the
+-- setup, because the lobby decides which slots a side ends up in.
 --
 -- The horde's own 10 pillboxes are not in the map file at all. Each is made
 -- (game.add_pill) as its attacker comes ashore and loaded straight into that
@@ -24,8 +26,9 @@
 --
 -- Round flow:
 --   * on_setup deals the centre bases and their pills round-robin to the
---     defenders actually seated in slots 0..5, lays the island's shallow
---     rim and its tree ring, and digs in every defender bot.
+--     defenders actually on the field, whatever slots the lobby gave them,
+--     lays the island's shallow rim and its tree ring, and digs in every
+--     defender bot.
 --   * 30 s of grace to dig in, called out at the start and again with 10 s
 --     left, then wave 1. Every wave opens with the 8 shore bases back in
 --     the horde's hands.
@@ -138,7 +141,7 @@ local MUTE_TAIL_S = 2      -- silence after it
 -- ---------------------------------------------------------------------
 -- Map-file layout contracts (tests/generate_survival_map.py):
 local HORDE_BASES  = 8     -- bases 1..8: the horde's shore ring (r=25)
-local CENTER_FIRST = 9     -- bases 9..14 form the human centre, owners 0..5
+local CENTER_FIRST = 9     -- bases 9..14 form the human centre
 local CENTER_PILLS = 6     -- pill k (1..6) pairs centre base CENTER_FIRST-1+k
 local WAVE_PILLS   = 10    -- the ten the wave makes for itself
 
@@ -298,6 +301,42 @@ local RIM_PER_TICK = 120   -- squares a tick, well under the frame's 256
 local dealt = false
 
 -- ---------------------------------------------------------------------
+-- WHICH SIDE A SEAT IS ON.
+--
+-- A slot NUMBER says nothing about it, and nothing in this file may read a
+-- side off one.
+--
+-- The lobby seats a scenario's teams from the first free slot upward, so the
+-- horde's ten HELD seats take whatever numbers are going. A headless run
+-- seats its -bots first and the horde follows, which is where "defenders
+-- 0..5, horde 6..15" came from. A LOBBY-hosted round is the other way round:
+-- the host holds slot 0, the ten held seats are put down the moment the map
+-- is committed, and the defenders the host adds land at 11..15 — above the
+-- horde. Read as slot numbers, that round has one defender and five
+-- attackers in the keep.
+--
+-- on_choose_start has keyed on the team since the port and says why. These
+-- are the same question, for the rest of the file.
+local function seat_team(p)
+  if p == nil or p < 0 then return nil end
+  local ls = game.lobby_slot(p)
+  if ls == nil then return nil end
+  return ls.team
+end
+
+local function is_defender(p) return seat_team(p) == DEF_TEAM end
+
+-- Every seat on one side, in seat order. A held seat counts: the horde's are
+-- held for most of the round and are still the horde's.
+local function seats_on(team)
+  local out = {}
+  for p = 0, game.max_tanks() - 1 do
+    if seat_team(p) == team then out[#out + 1] = p end
+  end
+  return out
+end
+
+-- ---------------------------------------------------------------------
 -- Policies.
 
 -- The engine's classic all-bases sweep is off. Taking the horde's shore
@@ -395,21 +434,14 @@ local function restock(first, last, what)
   restock_report(first, restock_quiet(first, last), what)
 end
 
--- Shore-base owners at setup only. Slot 15-i owns the base on spoke i,
--- which is also the seat whose ocean start sits on that spoke. From the
--- first wave on, one seat owns the whole estate instead — see
--- stamp_wave_owner. This survives for deal_center's pre-wave-1 pass, which
--- needs the map-file owners back after the setup re-deal.
-local HORDE_BASE_SLOT = { 15, 14, 13, 12, 10, 9, 8, 7 }
-
 -- A wave pill this script may still stamp: not carried (it is wherever its
 -- tank is) and not flying defender colours (one the humans captured stays
--- theirs). NEUTRAL counts as stampable, which is what the "> 5" catches.
+-- theirs). NEUTRAL counts as stampable, which is what the nil owner catches.
 local function pill_stampable(pn)
   local pi = game.pill(pn)
   if pi == nil or pi.in_tank then return false end
   local o = pi.owner
-  return o == nil or o > 5
+  return o == nil or not is_defender(o)
 end
 
 -- The wave's owner. The first attacker ashore takes the horde's whole estate
@@ -435,31 +467,34 @@ local function stamp_wave_owner(s)
   wave_bases_restocked = n
 end
 
--- Deal the centre bases and their paired pills round-robin to the defenders
--- actually seated in slots 0..5, human or bot alike, so a host can stack
--- their own team with bots for testing. False while nobody is seated yet.
-local function deal_center()
-  local defenders = {}
-  for p = 0, 5 do
-    if game.tank(p) ~= nil then defenders[#defenders + 1] = p end
+-- The defenders actually on the field: on the defenders' team and holding a
+-- tank, human or bot alike, so a host can stack their own team with bots for
+-- testing. In seat order, which is the order the six centre positions are
+-- handed out in.
+local function fielded_defenders()
+  local out = {}
+  for _, p in ipairs(seats_on(DEF_TEAM)) do
+    if game.tank(p) ~= nil then out[#out + 1] = p end
   end
+  return out
+end
+
+-- Deal the centre bases and their paired pills round-robin to the defenders
+-- on the field. False while nobody is on it yet.
+local function deal_center()
+  local defenders = fielded_defenders()
   if #defenders == 0 then return false end
 
+  -- Round-robin over the seats that are there, in seat order: with six
+  -- defenders each takes one position, with one defender that player takes
+  -- all six. A base and its paired pill always go to the same seat, so the
+  -- keep is six matched stations however many people are holding it.
   local d = 1
-  for b = CENTER_FIRST, CENTER_FIRST + 5 do
-    local slot  = b - CENTER_FIRST
-    local pill  = b - CENTER_FIRST + 1
-    local owner = slot
-    local present = false
-    for _, p in ipairs(defenders) do
-      if p == slot then present = true end
-    end
-    if not present then
-      owner = defenders[d]
-      d = (d % #defenders) + 1
-    end
-    game.set_base_owner(b, owner)
-    game.set_pill_owner(pill, owner)
+  for k = 1, CENTER_PILLS do
+    local owner = defenders[d]
+    d = (d % #defenders) + 1
+    game.set_base_owner(CENTER_FIRST - 1 + k, owner)
+    game.set_pill_owner(k, owner)
   end
   -- The deal drains every base it moved between two seated players, so the
   -- defenders would open on empty bases — no armour to repair with, no
@@ -467,12 +502,17 @@ local function deal_center()
   restock(CENTER_FIRST, CENTER_FIRST + 5, "center")
 
   -- Deal the horde's eight to the horde now too. The waves re-deal them, but
-  -- until wave 1 lands the map-file owners rule, and the natural owners of
-  -- the low-slot bases are empty seats: red to both sides from tick 1.
-  for k = 1, HORDE_BASES do
-    game.set_base_owner(k, HORDE_BASE_SLOT[k])
+  -- until wave 1 lands the map-file owners rule, and what the map file names
+  -- is slot numbers — which in a lobby-hosted round are the defenders' own
+  -- seats. Round-robin over the horde's seats instead, so the shore ring is
+  -- red to the defenders from tick 1 and to nobody else.
+  local horde = seats_on(WAVE_TEAM)
+  if #horde > 0 then
+    for k = 1, HORDE_BASES do
+      game.set_base_owner(k, horde[((k - 1) % #horde) + 1])
+    end
+    restock(1, HORDE_BASES, "horde")
   end
-  restock(1, HORDE_BASES, "horde")
   return true
 end
 
@@ -553,7 +593,7 @@ local function wave_pill_free(pi)
   if pi == nil or pi.in_tank then return false end
   if pi.armour ~= 0 then return false end
   local o = pi.owner
-  if o ~= nil and o <= 5 then return false end
+  if o ~= nil and is_defender(o) then return false end
   return true
 end
 
@@ -618,7 +658,7 @@ local function defender_pills()
   local out = {}
   for n = 1, game.num_pills() do
     local pi = game.pill(n)
-    if pi and not pi.in_tank and pi.owner ~= nil and pi.owner <= 5 then
+    if pi and not pi.in_tank and pi.owner ~= nil and is_defender(pi.owner) then
       out[#out + 1] = n
     end
   end
@@ -864,13 +904,14 @@ local function restore_horde_estate()
   local n = 0
   for k, slot in pairs(horde_estate.bases) do
     local bi = game.base(k)
-    if bi and (bi.owner == nil or bi.owner > 5) and bi.owner ~= slot then
+    if bi and (bi.owner == nil or not is_defender(bi.owner))
+       and bi.owner ~= slot then
       game.set_base_owner(k, slot); n = n + 1
     end
   end
   for pn, slot in pairs(horde_estate.pills) do
     local pi = game.pill(pn)
-    if pi and not pi.in_tank and (pi.owner == nil or pi.owner > 5)
+    if pi and not pi.in_tank and (pi.owner == nil or not is_defender(pi.owner))
        and pi.owner ~= slot then
       game.set_pill_owner(pn, slot); n = n + 1
     end
@@ -1101,6 +1142,12 @@ end
 --
 -- Only the six centre pills are considered, and at this point they are the
 -- only pills that exist.
+--
+-- The seats are the DEFENDERS' TEAM's, not slots 0..5. A lobby-hosted round
+-- puts the horde's held seats in the low slots and the host's own bots above
+-- them, and this pass used to look only at 0..5: it found the host, who is
+-- not a bot, and five held horde seats, which are not fielded, so it built
+-- nothing and every bot met wave 1 with a dead pill in its tank.
 local BUILT_PILL_ARMOUR = 15
 
 -- Paint road along the straight line between two squares, skipping both ends
@@ -1147,7 +1194,7 @@ end
 
 local function prebuild_bot_pills()
   local used = {}
-  for p = 0, 5 do
+  for _, p in ipairs(seats_on(DEF_TEAM)) do
     local ls = game.lobby_slot(p)
     if ls ~= nil and ls.bot and ls.fielded then
       local si = game.start(1 + (p % 6))
@@ -1186,6 +1233,18 @@ local function prebuild_bot_pills()
   end
 end
 
+-- The deal and the pre-build are one step, and the pre-build is the second
+-- half of it: it re-owns and moves pills the deal has just handed out, so a
+-- pre-build run against an undealt keep would dig a bot in on somebody
+-- else's station. False while nobody is on the field yet — which is what a
+-- lobby-less harness looks like until it joins its players — and then tried
+-- again from on_tick until it takes.
+local function arrange_defence()
+  if not deal_center() then return false end
+  prebuild_bot_pills()
+  return true
+end
+
 -- ---------------------------------------------------------------------
 -- The round.
 
@@ -1196,10 +1255,9 @@ end
 -- the horde's seats are HELD by the lobby, so there is nothing to pull off
 -- the field.
 function on_setup()
-  dealt = deal_center()
+  dealt = arrange_defence()
   build_tree_ring()
   build_shallow_rim()        -- collects; on_tick drains it
-  prebuild_bot_pills()
 end
 
 function on_start()
@@ -1226,8 +1284,10 @@ function on_tick(tick)
   if ended then return end
 
   -- Late deal for a lobby-less harness, which joins players after ticking
-  -- starts.
-  if not dealt then dealt = deal_center() end
+  -- starts. The pre-build rides with it: it is the half of the arrangement
+  -- that used to run once at the setup and never again, so a round whose
+  -- defenders were not on the field yet got no dug-in bots at all.
+  if not dealt then dealt = arrange_defence() end
 
   -- Finish the coast the setup started.
   drain_rim()
@@ -1242,21 +1302,28 @@ function on_tick(tick)
 
   -- INSTANT LOSS: the round is over the moment no inner base is in defender
   -- hands — stolen or neutralised, the centre has fallen.
-  local held = 0
-  for b = CENTER_FIRST, CENTER_FIRST + 5 do
-    local bi = game.base(b)
-    if bi and bi.owner ~= nil and bi.owner >= 0 and bi.owner <= 5 then
-      held = held + 1
+  --
+  -- Only once the centre has actually been dealt. Before the deal the six
+  -- bases still carry the map file's owners, and those are slot numbers,
+  -- which name the horde's held seats in a lobby-hosted round: reading a
+  -- side off them would end the round on its first tick.
+  if dealt then
+    local held = 0
+    for b = CENTER_FIRST, CENTER_FIRST + 5 do
+      local bi = game.base(b)
+      if bi and bi.owner ~= nil and is_defender(bi.owner) then
+        held = held + 1
+      end
     end
-  end
-  if held == 0 then
-    ended = true
-    newswire_unmute_at = nil
-    set_newswire_mute(false)
-    game.end_round(
-      "*** The centre has fallen -- the attackers take the island! ***",
-      WAVE_TEAM)
-    return
+    if held == 0 then
+      ended = true
+      newswire_unmute_at = nil
+      set_newswire_mute(false)
+      game.end_round(
+        "*** The centre has fallen -- the attackers take the island! ***",
+        WAVE_TEAM)
+      return
+    end
   end
 
   -- The tree ring, on its own steady clock. Ahead of every early return
