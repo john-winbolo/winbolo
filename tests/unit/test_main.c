@@ -1166,6 +1166,8 @@ static const UnitTestEntry s_tests[] = {
       run_scenario_wave_cost_warmed_field_is_free                                            },
     { "scenario_wave_cost_warm_skips_bad_brain",
       run_scenario_wave_cost_warm_skips_bad_brain                                            },
+    { "scenario_wave_cost_failed_build_leaves_nothing",
+      run_scenario_wave_cost_failed_build_leaves_nothing                                     },
     { "scenario_wave_cost_abort_countdown_releases",
       run_scenario_wave_cost_abort_countdown_releases                                        },
     { "scenario_wave_cost_warmed_init_rebuilds",

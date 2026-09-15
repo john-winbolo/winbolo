@@ -1176,6 +1176,9 @@ static bool botBuildRunner(ServerSim *sim, BotContext *bot,
          * clientSimDestroy will tear it down via cs->transport. */
         clientSimDestroy(bot->cs);
         bot->cs = NULL;
+        /* clientSimDestroy freed the context through the ClientSim, so the
+         * copy here names memory that has gone. */
+        memset(&bot->transport, 0, sizeof(bot->transport));
         return false;
     }
 

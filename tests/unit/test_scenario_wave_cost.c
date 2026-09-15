@@ -68,6 +68,12 @@
  * run_scenario_wave_cost_warm_skips_bad_brain — a seat whose brain will not
  *                                               load is skipped, and the rest
  *                                               are still warmed
+ * run_scenario_wave_cost_failed_build_leaves_nothing
+ *                                             — and a seat whose build is
+ *                                               refused after it has started
+ *                                               is left holding nothing: no
+ *                                               ClientSim, no subscription,
+ *                                               and no transport either
  * run_scenario_wave_cost_abort_countdown_releases
  *                                             — a countdown given up on takes
  *                                               the runners it had built with
@@ -1156,6 +1162,150 @@ int run_scenario_wave_cost_warm_skips_bad_brain(void) {
                   "the countdown made %d brains, expected %d — one for every "
                   "seat but the one it could not serve",
                   wcHordeCreates(), WC_SEATS - 1);
+
+    serverSimDestroy(sim);
+    wcDropBrainFile();
+    return 0;
+}
+
+/* The other way a warm fails. The seat above named a brain that is not on
+ * disk, so the warm refused it before it built anything; here the path
+ * resolves and the build itself is refused, part way through, with the
+ * ClientSim and its transport already made. Whatever a half-built runner is
+ * taken back, the seat has to read afterwards as one that has never been
+ * built: no ClientSim, no subscription, and no transport — a transport left
+ * behind here names a context the ClientSim teardown has already freed.
+ *
+ * The fixture brain is put back to refusing for the countdown frames, so every
+ * build reaches the brain create and comes back false. */
+int run_scenario_wave_cost_failed_build_leaves_nothing(void) {
+    ServerSim *sim;
+    const BYTE seat  = WC_FIRST_SEAT;
+    /* Frames run, and so seats tried: the warm builds one seat a frame and a
+       frame whose build fails stops there, so three frames reach the first
+       three seats. Fewer than WC_SEATS, so there are seats left over for the
+       frame that builds again at the end. */
+    const int  tried = 3;
+    uint16_t   expectSkipped;
+    int        skipped = 0;
+    int        i;
+
+    UT_ASSERT(wcMakeBrainFile("failed_build_leaves_nothing"));
+    ut_brain_stub_arm(true);
+    sim = wcLobbySim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(wcSeatHorde(sim));
+
+    ut_brain_stub_arm(false);
+    wcRunCountdownFrames(sim, WC_SEATS + 1, tried);
+    UT_ASSERT_MSG(sim->state == serverStateCountdown,
+                  "the server is in state %d after %d countdown frames, "
+                  "expected it to still be counting down", (int)sim->state,
+                  tried);
+
+    /* The first seat tried, read field by field. */
+    UT_ASSERT_MSG(!botManagerHasRunner(sim, seat),
+                  "seat %d holds a runner after a build that failed",
+                  (int)seat);
+    UT_ASSERT_MSG(!sim->botMgr.bots[seat].parked,
+                  "seat %d reads as parked after a build that failed",
+                  (int)seat);
+    UT_ASSERT_MSG(!sim->botMgr.bots[seat].active,
+                  "seat %d reads as an active bot after a build that failed",
+                  (int)seat);
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].cs == NULL,
+                  "seat %d kept its ClientSim through a build that failed",
+                  (int)seat);
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].controlSub ==
+                      SUBSCRIBER_HANDLE_INVALID,
+                  "seat %d kept its control subscription through a build that "
+                  "failed", (int)seat);
+    /* The ClientSim owned the transport by the time the build was refused, so
+       its teardown freed the context; a pointer left here names memory that
+       has gone. */
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].transport.ctx == NULL,
+                  "seat %d kept a transport context through a build that "
+                  "failed, and the ClientSim teardown has freed it",
+                  (int)seat);
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].transport.recordInput == NULL &&
+                      sim->botMgr.bots[seat].transport.sendInput == NULL &&
+                      sim->botMgr.bots[seat].transport.tick == NULL &&
+                      sim->botMgr.bots[seat].transport.getSnapshot == NULL &&
+                      sim->botMgr.bots[seat].transport.drainSnapshots == NULL,
+                  "seat %d kept part of its transport through a build that "
+                  "failed", (int)seat);
+
+    /* The fixture brain counts the brains it has made, and one it refused is
+       not one of them, so the count stands at nothing made for the seat. What
+       says the build was reached at all is the skipped bit below: the warm
+       only sets it after the seat's path resolved to a file and the build came
+       back false. */
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 0,
+                  "the fixture brain reports %d made for seat %d, expected 0 "
+                  "— every create is being refused",
+                  ut_brain_stub_creates(seat), (int)seat);
+    UT_ASSERT_MSG(!ut_brain_stub_made(seat),
+                  "seat %d reads as having had a brain made for it",
+                  (int)seat);
+
+    /* The seat is the lobby's, exactly as it was seated: a build that fails
+       costs the seat its runner and nothing else. */
+    UT_ASSERT_MSG(sim->playerConnected[seat],
+                  "the failed build emptied seat %d", (int)seat);
+    UT_ASSERT_MSG(sim->lobbyPlayers[seat].keepSeat,
+                  "the failed build stopped seat %d being the scenario's",
+                  (int)seat);
+    UT_ASSERT_MSG(!sim->lobbyPlayers[seat].fielded,
+                  "the failed build put seat %d on the field", (int)seat);
+
+    /* The bit index is the player slot, so the seats the frames reached are
+       the `tried` bits from WC_FIRST_SEAT up. */
+    expectSkipped = (uint16_t)(((1u << tried) - 1u) << WC_FIRST_SEAT);
+    UT_ASSERT_MSG(sim->warmSkippedSlots == expectSkipped,
+                  "the countdown marked slots 0x%04x, expected 0x%04x — the "
+                  "%d seats from slot %d that its %d frames tried",
+                  (unsigned)sim->warmSkippedSlots, (unsigned)expectSkipped,
+                  tried, (int)WC_FIRST_SEAT, tried);
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (sim->warmSkippedSlots & (uint16_t)(1u << i)) skipped++;
+    }
+    UT_ASSERT_MSG(skipped == tried,
+                  "%d slots are marked skipped, expected %d — one a frame over "
+                  "%d frames", skipped, tried, tried);
+    for (i = tried; i < WC_SEATS; i++) {
+        const BYTE later = (BYTE)(WC_FIRST_SEAT + i);
+        UT_ASSERT_MSG(!botManagerHasRunner(sim, later),
+                      "seat %d holds a runner after %d frames that never "
+                      "reached it", (int)later, tried);
+    }
+
+    /* Builds succeed again from here. A marked seat is not tried a second
+       time while the countdown runs, and the frame goes to the next seat that
+       has not been marked. The arm resets the counts, so the one below is this
+       frame's. */
+    ut_brain_stub_arm(true);
+    serverSimTick(sim);
+    UT_ASSERT_MSG(sim->state == serverStateCountdown,
+                  "the server is in state %d after one more countdown frame, "
+                  "expected it to still be counting down", (int)sim->state);
+    for (i = 0; i < tried; i++) {
+        const BYTE marked = (BYTE)(WC_FIRST_SEAT + i);
+        UT_ASSERT_MSG(!botManagerHasRunner(sim, marked),
+                      "seat %d was built for a second time by a later frame; "
+                      "the countdown marked it once", (int)marked);
+    }
+    {
+        const BYTE next = (BYTE)(WC_FIRST_SEAT + tried);
+        UT_ASSERT_MSG(botManagerHasRunner(sim, next),
+                      "the frame after the marked seats built nothing for "
+                      "seat %d", (int)next);
+        UT_ASSERT_MSG(sim->botMgr.bots[next].parked,
+                      "seat %d holds a runner that does not read as parked",
+                      (int)next);
+        UT_ASSERT_MSG(ut_brain_stub_creates(next) == 1,
+                      "seat %d had %d brains made for it by that frame, "
+                      "expected 1", (int)next, ut_brain_stub_creates(next));
+    }
 
     serverSimDestroy(sim);
     wcDropBrainFile();
