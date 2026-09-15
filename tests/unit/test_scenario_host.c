@@ -143,6 +143,9 @@
 #include "starts.h"                /* startsGetNumStarts — where a tank landed */
 #include "tank.h"                  /* tankIsDestroyed, TANK_DEATH_WAIT */
 #include "everard_map.h"
+#include "server/sim/server_sim_shared.h" /* serverSimSetActive, which is
+                                           * what the console routes
+                                           * through */
 #include "scenario_host.h"
 #include "scenario_manifest.h"
 #include "test_harness.h"
@@ -186,6 +189,17 @@ static ServerSim *shSim(void) {
         return NULL;
     }
     serverSimSetLobbyEnabled(sim, false);
+    /* serverSimConsoleMessage writes through the active sim's callback and
+       falls back to stdout when there is none, and creating a sim does not
+       make it the active one — the round start and the tick do. The cases
+       here that watch the console for a line a hook printed need it said
+       before the attach, or the line goes to stdout and the watcher sees
+       nothing. Without this the file passes only when an earlier case in the
+       same run happens to have left a sim active, which is why
+       scenario_host_round_answers_its_own_start failed on its own and not in
+       a whole-suite run. sbSim in the sandbox cases says the same thing for
+       the same reason. */
+    serverSimSetActive(sim);
     return sim;
 }
 

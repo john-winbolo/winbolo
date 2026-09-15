@@ -79,7 +79,6 @@
 
 #include <lua.h>
 #include <lauxlib.h>
-#include <lualib.h>
 
 /* SDL_Mutex, SDL_ThreadID and SDL_GetCurrentThreadID, which the VM lock is
  * built from. server_sim.h brings SDL in as well; named here because this
