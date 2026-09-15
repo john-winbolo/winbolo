@@ -89,7 +89,9 @@
 #include "bolo_rand.h"             /* BoloRandState, bolo_rand_save */
 #include "server_sim.h"            /* ServerSim, serverSimConsoleMessage */
 #include "wire_limits.h"           /* LOBBY_MAP_UPLOAD_MAX_BYTES — how much of
-                                    * a map file the chunk test reads */
+                                    * a map file the chunk test reads — and
+                                    * LOBBY_PACKAGE_UPLOAD_MAX_BYTES, how much
+                                    * of one the attach reads */
 #include "scenario_defs.h"         /* SCN_RULE_LIST, ScenarioOp, ScnOpResult */
 #include "server_sim_scenario.h"   /* the funnel and the round-start hook-up */
 
@@ -97,6 +99,8 @@
 #include "scenario_manifest.h"
 #include "scenario_events.h"
 #include "scenario_lua.h"
+#include "scenario_manifest_json.h" /* a package's manifest, read and held
+                                     * against the table its script declares */
 #include "scenario_package.h"      /* scnPackageFindInMap — the second way a
                                     * map can carry a script */
 #include "scenario_sandbox.h"      /* the libraries a scenario state gets */
@@ -354,8 +358,26 @@ struct ScenarioHost {
     ScnLuaCtx        lua;
 
     char             script[SCN_SCRIPT_PATH_MAX];
+    /* The map the script was found for, kept because a reload decides where
+     * the script comes from all over again and both answers start here. */
+    char             mapPath[SCN_SCRIPT_PATH_MAX];
     char            *src;     /* the script's bytes, read once at attach */
     size_t           srcLen;
+
+    /* The script came out of the map's own container rather than off a file
+     * beside it. What it turns on: the manifest below is pushed as the
+     * scenario global before every chunk this host runs, and the table each
+     * chunk leaves behind is held against it. */
+    bool             fromPackage;
+
+    /* The container's manifest, decoded once at the attach and kept. Distinct
+     * from manifest above, which is the live table the game rows read and the
+     * round start reads over from whatever this round's chunk declared: this
+     * one is what the package says it is, does not change while the host is
+     * attached, and is what a round's table has to agree with. Untouched for
+     * a loose script, which has no manifest but its own. */
+    ScenarioManifest pkgManifest;
+
     char             chunkName[SCN_SCRIPT_PATH_MAX + 2];
     char             lastError[SCN_ERR_LEN];
     bool             active;
@@ -997,6 +1019,192 @@ bool scnReadManifest(lua_State *L, ScenarioManifest *m,
 
     lua_pop(L, 1);
     return true;
+}
+
+/* ── Writing the table ────────────────────────────────────────────── */
+
+/* The struct back out as the table a script would have written it as. The
+ * five builders below take one piece each and leave it on the stack;
+ * scnPushManifestGlobal at the end of them is the one the rest of this file
+ * calls, and carries what the whole thing is for. */
+static void scnPushTeams(lua_State *L, const ScnManifestLobby *lob) {
+    int teams;
+    int i;
+
+    lua_newtable(L);
+    teams = lua_gettop(L);
+    for (i = 0; i < (int)lob->numTeams; i++) {
+        const ScnManifestTeam *team = &lob->teams[i];
+        int                    e;
+
+        lua_newtable(L);
+        e = lua_gettop(L);
+        lua_pushinteger(L, (lua_Integer)team->id);
+        lua_setfield(L, e, "id");
+        lua_pushinteger(L, (lua_Integer)team->bots);
+        lua_setfield(L, e, "bots");
+        lua_pushinteger(L, (lua_Integer)team->maxBots);
+        lua_setfield(L, e, "max_bots");
+        lua_pushboolean(L, team->fielded ? 1 : 0);
+        lua_setfield(L, e, "fielded");
+        lua_pushstring(L, team->brain);
+        lua_setfield(L, e, "brain");
+        /* An array, as the file writes it, so position is part of what the
+           comparison holds the two forms to. */
+        lua_rawseti(L, teams, i + 1);
+    }
+}
+
+static void scnPushLobby(lua_State *L, const ScnManifestLobby *lob) {
+    int t;
+
+    lua_newtable(L);
+    t = lua_gettop(L);
+    lua_pushinteger(L, (lua_Integer)lob->maxPlayers);
+    lua_setfield(L, t, "max_players");
+    lua_pushboolean(L, lob->extraTeams ? 1 : 0);
+    lua_setfield(L, t, "extra_teams");
+    scnPushTeams(L, lob);
+    lua_setfield(L, t, "teams");
+}
+
+/* Keyed by the rule's own name, which is the key scnReadRules resolves back
+ * to the index. An index no name answers to is left out rather than written
+ * under an empty key. */
+static void scnPushRules(lua_State *L, const ScenarioManifest *m) {
+    int      t;
+    uint16_t i;
+
+    lua_newtable(L);
+    t = lua_gettop(L);
+    for (i = 0; i < m->numRules; i++) {
+        const char *name = scenarioLuaRuleName((int)m->rules[i].rule);
+        if (name == NULL || name[0] == '\0') {
+            continue;
+        }
+        lua_pushnumber(L, (lua_Number)m->rules[i].value);
+        lua_setfield(L, t, name);
+    }
+}
+
+/* One kind's tags, keyed by the 1-based entity index the array is held at.
+ * An entity with no tags is left out: an empty list and no list at all read
+ * back the same, and the table stays the size the map's tags make it. */
+static void scnPushTagKind(lua_State *L, const ScnManifestTags *arr,
+                           int maxEntity) {
+    int t;
+    int e;
+
+    lua_newtable(L);
+    t = lua_gettop(L);
+    for (e = 1; e <= maxEntity; e++) {
+        int i;
+        if (arr[e].count == 0) {
+            continue;
+        }
+        lua_newtable(L);
+        for (i = 0; i < (int)arr[e].count; i++) {
+            lua_pushstring(L, arr[e].tag[i]);
+            lua_rawseti(L, -2, i + 1);
+        }
+        lua_rawseti(L, t, e);
+    }
+}
+
+static void scnPushTags(lua_State *L, const ScenarioManifest *m) {
+    int t;
+
+    lua_newtable(L);
+    t = lua_gettop(L);
+    scnPushTagKind(L, m->pillTags, MAX_PILLS);
+    lua_setfield(L, t, "pills");
+    scnPushTagKind(L, m->baseTags, MAX_BASES);
+    lua_setfield(L, t, "bases");
+    scnPushTagKind(L, m->startTags, MAX_STARTS);
+    lua_setfield(L, t, "starts");
+}
+
+static void scnPushRegions(lua_State *L, const ScenarioManifest *m) {
+    int t;
+    int i;
+
+    lua_newtable(L);
+    t = lua_gettop(L);
+    for (i = 0; i < (int)m->numRegions; i++) {
+        const ScnManifestRegion *r = &m->regions[i];
+        int                      e;
+
+        lua_newtable(L);
+        e = lua_gettop(L);
+        lua_pushinteger(L, (lua_Integer)r->x);
+        lua_setfield(L, e, "x");
+        lua_pushinteger(L, (lua_Integer)r->y);
+        lua_setfield(L, e, "y");
+        lua_pushinteger(L, (lua_Integer)r->w);
+        lua_setfield(L, e, "w");
+        lua_pushinteger(L, (lua_Integer)r->h);
+        lua_setfield(L, e, "h");
+        lua_setfield(L, t, r->name);
+    }
+}
+
+/* A package's manifest as the scenario global, in the shape scnReadManifest
+ * above reads and Appendix G of the plan specifies. Put on the state before
+ * the chunk runs, and only for a script that came out of a container.
+ *
+ * What it buys: a packaged script may declare no scenario at all and still
+ * play, because what the chunk leaves behind is then this table; and one that
+ * restates the table for a reader of the source is held against the manifest
+ * afterwards rather than believed. A script that assigns nothing reads back
+ * exactly what went on, so that comparison has nothing to do. A loose script
+ * gets nothing pushed and declares its own table, as it always has.
+ *
+ * triggers is not built. Nothing reads it and the struct does not carry it.
+ *
+ * The value goes on through the globals table itself rather than through
+ * lua_setglobal, for the reason scnRawGlobal reads through it: a metatable on
+ * _G is the script's business and running one here is not. */
+static void scnPushManifestGlobal(lua_State *L, const ScenarioManifest *m) {
+    int t;
+
+    lua_newtable(L);
+    t = lua_gettop(L);
+
+    lua_pushstring(L, m->name);
+    lua_setfield(L, t, "name");
+    lua_pushstring(L, m->description);
+    lua_setfield(L, t, "description");
+    lua_pushinteger(L, (lua_Integer)m->api);
+    lua_setfield(L, t, "api");
+    lua_pushstring(L, m->game);
+    lua_setfield(L, t, "game");
+    lua_pushboolean(L, m->bound ? 1 : 0);
+    lua_setfield(L, t, "bound");
+
+    scnPushLobby(L, &m->lobby);
+    lua_setfield(L, t, "lobby");
+    scnPushRules(L, m);
+    lua_setfield(L, t, "rules");
+    scnPushTags(L, m);
+    lua_setfield(L, t, "tags");
+    scnPushRegions(L, m);
+    lua_setfield(L, t, "regions");
+
+    scnPushGlobals(L);
+    lua_pushstring(L, "scenario");
+    lua_pushvalue(L, t);
+    lua_rawset(L, -3);
+    lua_pop(L, 2);               /* the globals table, and the table itself */
+}
+
+/* What a package whose script restates the table and disagrees with it reads
+ * like. scnManifestAgrees writes the sentence saying what differs and the key
+ * separately; the key is the line of the table to go and look at, which the
+ * sentence does not name, so the three places that refuse a load over one say
+ * both and say them the same way. */
+static void scnDisagreed(char *out, size_t outLen, const char *why,
+                         const char *key) {
+    scnFmt(out, outLen, "%s — the key is '%s'", why, key);
 }
 
 /* ── Applying the rules ───────────────────────────────────────────── */
@@ -2426,6 +2634,8 @@ static void scnRoundBootLocked(ScenarioHost *h) {
     ScenarioManifest fresh;
     ScnParseReport   rep;
     char             err[SCN_ERR_LEN];
+    char             why[SCN_ERR_LEN];
+    char             key[SCN_VALIDATE_KEY_LEN];
 
     err[0] = '\0';
 
@@ -2455,8 +2665,26 @@ static void scnRoundBootLocked(ScenarioHost *h) {
     rep.soft    = h->lastError;
     rep.softLen = sizeof(h->lastError);
     rep.sink    = NULL;
+    /* A package's own table goes on before the chunk, exactly as it did at
+       the attach: a packaged script that declares no scenario of its own
+       would otherwise start every round short of one and play classic. */
+    if (h->fromPackage) {
+        scnPushManifestGlobal(L, &h->pkgManifest);
+    }
     if (!scnRunChunk(L, h->src, h->srcLen, h->chunkName, err, sizeof(err)) ||
         !scnReadManifest(L, &fresh, h->script, err, sizeof(err), &rep)) {
+        scnSay(h->lastError, sizeof(h->lastError), "%s", err);
+        scnCloseVm(L);
+        scnRoundWithoutScenario(h);
+        return;
+    }
+    /* And the table the chunk left behind is held against it afterwards. The
+       attach made this same test, so a round reaching it is one whose script
+       computes its table rather than writing it down. */
+    if (h->fromPackage &&
+        !scnManifestAgrees(&h->pkgManifest, &fresh, key, sizeof(key),
+                           why, sizeof(why))) {
+        scnDisagreed(err, sizeof(err), why, key);
         scnSay(h->lastError, sizeof(h->lastError), "%s", err);
         scnCloseVm(L);
         scnRoundWithoutScenario(h);
@@ -2683,17 +2911,254 @@ void scenarioHostRegisterMapScripted(ServerSim *sim) {
     serverSimSetScenarioMapScripted(sim, scnMapScriptedCb, NULL);
 }
 
+/* ── Where the script comes from ──────────────────────────────────── */
+
+/* A map's script and where it was found. The bytes are the caller's to free;
+ * everything else is a copy, so by the time one of these comes back the map
+ * file's bytes are freed and its container is closed. */
+typedef struct {
+    char            *src;        /* the script; the caller frees it */
+    size_t           srcLen;
+    bool             fromPackage;
+    /* The container's manifest, for a script that came out of one. Zero for a
+     * loose script, which has no manifest but the table it declares. */
+    ScenarioManifest manifest;
+    char             script[SCN_SCRIPT_PATH_MAX];   /* the file that was read */
+    char             entry[SCN_MANIFEST_ENTRY_LEN]; /* "" for a loose script */
+} ScnScriptSource;
+
+static void scnSourceDrop(ScnScriptSource *s) {
+    free(s->src);
+    s->src    = NULL;
+    s->srcLen = 0;
+}
+
+/* The name Lua puts at the front of every message the chunk raises. The
+ * leading '@' is what makes Lua call it a file; a packaged script names the
+ * entry after the map it came out of, so a line number belongs to something
+ * a reader can open.
+ *
+ * path rather than the source's own, because the two callers want different
+ * lengths of it: the console takes the whole path and a reload's single line
+ * back to whoever asked has room only for the file name. */
+static void scnChunkNameOf(const ScnScriptSource *s, const char *path,
+                           char *out, size_t outLen) {
+    if (s->entry[0] != '\0') {
+        snprintf(out, outLen, "@%s:%s", path, s->entry);
+    } else {
+        snprintf(out, outLen, "@%s", path);
+    }
+}
+
+/* The whole map file, for the container that may be appended to it. Bounded
+ * by LOBBY_PACKAGE_UPLOAD_MAX_BYTES rather than by the script cap, because
+ * what is being read is a map and everything the scenario ships with: the
+ * map itself is a couple of dozen KB at most, and the rest is a manifest, a
+ * script and whatever brain directories are in the container, all deflated.
+ * The heaviest brain in this tree deflates to about a megabyte, so a map
+ * shipping one comes to roughly that and the cap is room for several.
+ *
+ * It is the number an uploaded package is held to as well, so an operator
+ * cannot build a package that plays on their own server and can never be
+ * sent anywhere.
+ *
+ * A file that is not there leaves err empty and is not a fault, the way
+ * scnReadFile treats a script that is not there. */
+static bool scnReadMapBytes(const char *path, uint8_t **out, size_t *outLen,
+                            char *err, size_t errLen) {
+    FILE    *f;
+    long     size;
+    uint8_t *buf;
+    size_t   got;
+
+    *out    = NULL;
+    *outLen = 0;
+
+    f = fopen(path, "rb");
+    if (f == NULL) {
+        return false;
+    }
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        scnFmt(err, errLen, "scenario: %s could not be read", path);
+        return false;
+    }
+    size = ftell(f);
+    if (size < 0) {
+        fclose(f);
+        scnFmt(err, errLen, "scenario: %s could not be measured", path);
+        return false;
+    }
+    if (size > (long)LOBBY_PACKAGE_UPLOAD_MAX_BYTES) {
+        fclose(f);
+        scnFmt(err, errLen,
+               "scenario: %s is %ld bytes and the limit is %ld — too large to "
+               "look in for a scenario", path, size,
+               (long)LOBBY_PACKAGE_UPLOAD_MAX_BYTES);
+        return false;
+    }
+    rewind(f);
+
+    buf = (uint8_t *)malloc((size_t)size + 1);
+    if (buf == NULL) {
+        fclose(f);
+        scnFmt(err, errLen, "scenario: no memory to read %s", path);
+        return false;
+    }
+    got      = fread(buf, 1, (size_t)size, f);
+    buf[got] = 0;
+    fclose(f);
+
+    *out    = buf;
+    *outLen = got;
+    return true;
+}
+
+/* The container appended to a map file, read for the two entries that matter
+ * here: manifest.json, and the entry the manifest names the script in. Both
+ * are copied out — the manifest into the struct, the script into bytes of its
+ * own — so the archive is closed and the file's bytes are freed before this
+ * returns. Nothing else the container holds is read.
+ *
+ * False with err empty for a map that carries no container, which is the
+ * ordinary case and the one every plain map takes. False with err set for a
+ * map that carries one this cannot use: bad framing, no manifest, a manifest
+ * that will not parse, or the script entry missing. That is a refusal an
+ * operator should see, the way an unreadable loose script already is. */
+static bool scnPackagedScript(const char *mapPath, ScnScriptSource *out,
+                              char *err, size_t errLen) {
+    uint8_t                *file     = NULL;
+    size_t                  fileLen  = 0;
+    const uint8_t          *chunk    = NULL;
+    size_t                  chunkLen = 0;
+    ScnPackage             *p        = NULL;
+    uint8_t                *json      = NULL;
+    size_t                  jsonLen   = 0;
+    uint8_t                *luaBytes  = NULL;
+    size_t                  luaLen    = 0;
+    ScnManifestDoc         *doc       = NULL;
+    const char             *entry;
+    ScnParseReport          rep;
+    char                    soft[SCN_ERR_LEN];
+    bool                    ok = false;
+
+    if (!scnReadMapBytes(mapPath, &file, &fileLen, err, errLen)) {
+        return false;
+    }
+    if (!scnPackageFindInMap(file, fileLen, &chunk, &chunkLen)) {
+        free(file);
+        return false;            /* a plain map, and nothing to say about it */
+    }
+    p = scnPackageOpen(chunk, chunkLen, err, errLen);
+    if (p == NULL) {
+        free(file);
+        return false;
+    }
+
+    if (!scnPackageReadEntry(p, SCN_PACKAGE_MANIFEST_ENTRY, &json, &jsonLen)) {
+        scnFmt(err, errLen, "scenario: the container in %s has no %s in it",
+               mapPath, SCN_PACKAGE_MANIFEST_ENTRY);
+        goto done;
+    }
+    soft[0]     = '\0';
+    rep.soft    = soft;
+    rep.softLen = sizeof(soft);
+    rep.sink    = NULL;
+    doc = scnManifestParse(json, jsonLen, &rep, err, errLen);
+    if (doc == NULL) {
+        goto done;
+    }
+
+    entry = scnManifestScriptEntry(doc);
+    if (!scnPackageReadEntry(p, entry, &luaBytes, &luaLen)) {
+        scnFmt(err, errLen,
+               "scenario: the container in %s names its script '%s' and has "
+               "no such entry", mapPath, entry);
+        goto done;
+    }
+    /* The same cap a loose script is read under: what is inside a container
+       is hand-written Lua too, and a script above it is not one. */
+    if (luaLen > (size_t)SCN_SCRIPT_MAX_BYTES) {
+        scnFmt(err, errLen,
+               "scenario: '%s' in %s is %lu bytes and the limit is %ld — too "
+               "large to be a script", entry, mapPath, (unsigned long)luaLen,
+               (long)SCN_SCRIPT_MAX_BYTES);
+        goto done;
+    }
+
+    /* scnPackageReadEntry hands back a malloc'd buffer with a 0 past the
+       content, which is what the script's bytes are kept as either way. */
+    out->src         = (char *)luaBytes;
+    out->srcLen      = luaLen;
+    luaBytes         = NULL;
+    out->fromPackage = true;
+    out->manifest    = *scnManifestValues(doc);
+    snprintf(out->script, sizeof(out->script), "%s", mapPath);
+    snprintf(out->entry, sizeof(out->entry), "%s", entry);
+    ok = true;
+
+done:
+    free(luaBytes);
+    free(json);
+    scnManifestFree(doc);
+    scnPackageClose(p);
+    free(file);
+    return ok;
+}
+
+/* What script this map has, and where it came from. The attach and the
+ * reload both ask here, so the two cannot answer differently.
+ *
+ * In order:
+ *
+ *  1. A loose X.scenario.lua beside the map wins. That is the loop a script
+ *     is written in — edit the file, reload, play — and it does not ask the
+ *     author to re-pack the map between one round and the next. A map that
+ *     carries a container as well says so once on the console, because the
+ *     operator's own copy of the scenario is then not the one playing.
+ *  2. Otherwise the container appended to the map file itself.
+ *  3. Neither, and the map is a plain map: false, err empty, nothing said.
+ *
+ * A loose script that is there and cannot be read, and a container that is
+ * there and cannot be used, are both false with the reason in err. */
+static bool scnFindScript(const char *mapPath, ScnScriptSource *out,
+                          char *err, size_t errLen) {
+    char script[SCN_SCRIPT_PATH_MAX];
+
+    memset(out, 0, sizeof(*out));
+    if (!scnScriptPath(mapPath, script, sizeof(script))) {
+        return false;
+    }
+    if (scnReadFile(script, &out->src, &out->srcLen, err, errLen)) {
+        snprintf(out->script, sizeof(out->script), "%s", script);
+        if (scnMapHasChunk(mapPath)) {
+            scnSay(NULL, 0,
+                   "scenario: %s is what runs, and the scenario packed into "
+                   "%s is not", script, mapPath);
+        }
+        return true;
+    }
+    /* A script that is there and unusable has already said which; a script
+       that is not there at all leaves err empty, and the map's own container
+       is the next place to look. */
+    if (err != NULL && errLen > 0 && err[0] != '\0') {
+        return false;
+    }
+    return scnPackagedScript(mapPath, out, err, errLen);
+}
+
 ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
                                  char *err, size_t errLen) {
     char             script[SCN_SCRIPT_PATH_MAX];
     char             chunkName[SCN_SCRIPT_PATH_MAX + 2];
     char             soft[SCN_ERR_LEN];
+    char             why[SCN_ERR_LEN];
+    char             key[SCN_VALIDATE_KEY_LEN];
+    ScnScriptSource  from;
     ScenarioManifest m;
     ScnParseReport   rep;
     ScenarioHost    *h;
     lua_State       *L;
-    char            *src    = NULL;
-    size_t           srcLen = 0;
 
     if (err != NULL && errLen > 0) {
         err[0] = '\0';
@@ -2715,15 +3180,14 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
         }
         return NULL;
     }
-    /* The one read of the file. No script is the ordinary case: the map
-       plays as a plain map and the operator is told nothing, because there
-       is nothing to tell. A file that is there and cannot be used sets err
-       and is reported. */
-    if (!scnReadFile(script, &src, &srcLen, err, errLen)) {
+    /* The one read of the script, from beside the map or from inside it. No
+       script is the ordinary case: the map plays as a plain map and the
+       operator is told nothing, because there is nothing to tell. A script
+       that is there and cannot be used sets err and is reported. */
+    if (!scnFindScript(mapPath, &from, err, errLen)) {
         return NULL;
     }
-    /* The leading '@' is what makes Lua call this a file in its messages. */
-    snprintf(chunkName, sizeof(chunkName), "@%s", script);
+    scnChunkNameOf(&from, from.script, chunkName, sizeof(chunkName));
 
     /* The host is built before the state is, because the game table's rows
        read through a struct on it and the table goes on before the chunk
@@ -2733,13 +3197,13 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     h = (ScenarioHost *)calloc(1, sizeof(*h));
     if (h == NULL) {
         scnFmt(err, errLen, "scenario: out of memory");
-        free(src);
+        scnSourceDrop(&from);
         return NULL;
     }
     if (!scnLockCreate(&h->lock)) {
         scnFmt(err, errLen, "scenario: no mutex for the Lua state");
         free(h);
-        free(src);
+        scnSourceDrop(&from);
         return NULL;
     }
     h->sim           = sim;
@@ -2757,7 +3221,8 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     scnHooksForget(h);
     /* Neither of these is the zero calloc left: no subscriber is -1. */
     h->sub        = SUBSCRIBER_HANDLE_INVALID;
-    snprintf(h->script, sizeof(h->script), "%s", script);
+    snprintf(h->script, sizeof(h->script), "%s", from.script);
+    snprintf(h->mapPath, sizeof(h->mapPath), "%s", mapPath);
     snprintf(h->chunkName, sizeof(h->chunkName), "%s", chunkName);
 
     /* The one VM entry that takes no lock, because there is nothing yet to
@@ -2768,7 +3233,7 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
         scnFmt(err, errLen, "scenario: no memory for a Lua state");
         scnLockDestroy(&h->lock);
         free(h);
-        free(src);
+        scnSourceDrop(&from);
         return NULL;
     }
 
@@ -2776,31 +3241,55 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     rep.soft    = soft;
     rep.softLen = sizeof(soft);
     rep.sink    = NULL;
-    if (!scnRunChunk(L, src, srcLen, chunkName, err, errLen) ||
-        !scnReadManifest(L, &m, script, err, errLen, &rep)) {
+    /* A package's manifest is the truth about what it is, and it goes on as
+       the scenario global before the chunk runs. A script that came out of
+       one may therefore declare no table of its own; a loose script gets
+       nothing pushed and declares its own, as it always has. */
+    if (from.fromPackage) {
+        scnPushManifestGlobal(L, &from.manifest);
+    }
+    if (!scnRunChunk(L, from.src, from.srcLen, chunkName, err, errLen) ||
+        !scnReadManifest(L, &m, from.script, err, errLen, &rep)) {
         scnCloseVm(L);
         scnLockDestroy(&h->lock);
         free(h);
-        free(src);
+        scnSourceDrop(&from);
+        return NULL;
+    }
+    /* And the table the chunk left behind is held against the manifest. A
+       script that assigned nothing reads back what was pushed and passes with
+       nothing to do; one that restated the table and said something else is
+       refused here, by key, rather than playing a scenario the package does
+       not describe. */
+    if (from.fromPackage &&
+        !scnManifestAgrees(&from.manifest, &m, key, sizeof(key), why,
+                           sizeof(why))) {
+        scnDisagreed(err, errLen, why, key);
+        scnCloseVm(L);
+        scnLockDestroy(&h->lock);
+        free(h);
+        scnSourceDrop(&from);
         return NULL;
     }
     if (m.api > SCENARIO_API_VERSION) {
         scnFmt(err, errLen,
                "scenario: %s asks for api %d and this server is api %d — "
                "the server is too old to run it",
-               script, m.api, SCENARIO_API_VERSION);
+               from.script, m.api, SCENARIO_API_VERSION);
         scnCloseVm(L);
         scnLockDestroy(&h->lock);
         free(h);
-        free(src);
+        scnSourceDrop(&from);
         return NULL;
     }
 
-    h->L        = L;
-    h->manifest = m;
-    h->src      = src;
-    h->srcLen   = srcLen;
-    h->active   = true;
+    h->L           = L;
+    h->manifest    = m;
+    h->src         = from.src;
+    h->srcLen      = from.srcLen;
+    h->fromPackage = from.fromPackage;
+    h->pkgManifest = from.manifest;
+    h->active      = true;
     snprintf(h->lastError, sizeof(h->lastError), "%s", soft);
 
     /* Registered here rather than at the first round start: the lobby asks
@@ -2876,7 +3365,7 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
         !serverSimSetSubscriberEventDeliver(sim, h->sub, scnDeliverEvent)) {
         scnSay(h->lastError, sizeof(h->lastError),
                "scenario: no subscriber slot for %s, so it sees no events",
-               script);
+               h->script);
     }
     return h;
 }
@@ -2902,14 +3391,15 @@ static const char *scnFileName(const char *path) {
 
 bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     char             soft[SCN_ERR_LEN];
+    char             why[SCN_ERR_LEN];
+    char             key[SCN_VALIDATE_KEY_LEN];
     char             chunkName[SCN_SCRIPT_PATH_MAX + 2];
     const char      *name;
+    ScnScriptSource  from;
     ScenarioManifest m;
     ScnParseReport   rep;
     ScnLuaCtx        check;
     lua_State       *L;
-    char            *src    = NULL;
-    size_t           srcLen = 0;
 
     if (err != NULL && errLen > 0) {
         err[0] = '\0';
@@ -2917,19 +3407,22 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     if (h == NULL) {
         return false;
     }
-    name = scnFileName(h->script);
-    /* The leading '@' is what makes Lua call this a file in its messages. */
-    snprintf(chunkName, sizeof(chunkName), "@%s", name);
-
-    if (!scnReadFile(h->script, &src, &srcLen, err, errLen)) {
-        /* A file that has gone leaves err empty, because at attach that is
-           the ordinary case rather than a fault. Asked for by name it is a
-           fault, so it is stated here. */
+    /* Where the script comes from is asked again rather than remembered: a
+       loose script dropped beside a packed map is meant to take over at the
+       next reload, and one deleted from beside it is meant to hand the map
+       back to its own container. */
+    if (!scnFindScript(h->mapPath, &from, err, errLen)) {
+        /* A map with nothing to read leaves err empty, because at an attach
+           that is the ordinary case rather than a fault. Asked for by name it
+           is a fault, so it is stated here. */
         if (err != NULL && errLen > 0 && err[0] == '\0') {
-            scnFmt(err, errLen, "scenario: %s is no longer there", name);
+            scnFmt(err, errLen, "scenario: %s is no longer there",
+                   scnFileName(h->script));
         }
         return false;
     }
+    name = scnFileName(from.script);
+    scnChunkNameOf(&from, name, chunkName, sizeof(chunkName));
 
     /* Everything below happens in a Lua state of its own, and nothing the
        host holds is touched until all of it has passed. A file with an
@@ -2964,7 +3457,7 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     L = scnBootVmWith(&check);
     if (L == NULL) {
         scnFmt(err, errLen, "scenario: no memory for a Lua state");
-        free(src);
+        scnSourceDrop(&from);
         return false;
     }
 
@@ -2972,10 +3465,24 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     rep.soft    = soft;
     rep.softLen = sizeof(soft);
     rep.sink    = NULL;
-    if (!scnRunChunk(L, src, srcLen, chunkName, err, errLen) ||
+    /* The checking state gets the package's table the same way a round's
+       state does, so a packaged script that declares none is checked as it
+       will be run rather than turned down for a table it never writes. */
+    if (from.fromPackage) {
+        scnPushManifestGlobal(L, &from.manifest);
+    }
+    if (!scnRunChunk(L, from.src, from.srcLen, chunkName, err, errLen) ||
         !scnReadManifest(L, &m, name, err, errLen, &rep)) {
         scnCloseVm(L);
-        free(src);
+        scnSourceDrop(&from);
+        return false;
+    }
+    if (from.fromPackage &&
+        !scnManifestAgrees(&from.manifest, &m, key, sizeof(key), why,
+                           sizeof(why))) {
+        scnDisagreed(err, errLen, why, key);
+        scnCloseVm(L);
+        scnSourceDrop(&from);
         return false;
     }
     if (m.api > SCENARIO_API_VERSION) {
@@ -2984,24 +3491,33 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
                "the server is too old to run it",
                name, m.api, SCENARIO_API_VERSION);
         scnCloseVm(L);
-        free(src);
+        scnSourceDrop(&from);
         return false;
     }
     scnCloseVm(L);
 
-    /* The bytes are replaced and nothing else is. The VM and the table the
-       round is running on stay as they are; the next round start builds
-       both again from what is now here.
+    /* The bytes are replaced, and with them where they came from. The VM and
+       the table the round is running on stay as they are; the next round
+       start builds both again from what is now here.
 
-       Under the lock, because the round start reads these bytes under it and
+       Where they came from goes too, because the answer may have changed
+       since the attach: a loose script dropped beside a packed map is read
+       from a different file, runs under a different chunk name and stops
+       being held against the container's manifest.
+
+       Under the lock, because the round start reads all of this under it and
        a reload arrives on whichever thread the operator's command came in
        on. Only the swap: the reading and the checking above happen on a Lua
        state of their own, and holding the lock across a disk read would stop
        a tick for as long as the file took. */
     scnLockEnter(&h->lock);
     free(h->src);
-    h->src    = src;
-    h->srcLen = srcLen;
+    h->src         = from.src;
+    h->srcLen      = from.srcLen;
+    h->fromPackage = from.fromPackage;
+    h->pkgManifest = from.manifest;
+    snprintf(h->script, sizeof(h->script), "%s", from.script);
+    scnChunkNameOf(&from, from.script, h->chunkName, sizeof(h->chunkName));
     snprintf(h->lastError, sizeof(h->lastError), "%s", soft);
     scnLockLeave(&h->lock);
     return true;

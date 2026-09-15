@@ -3430,6 +3430,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # container found after one, the scripted tag a packed map gets, and the
     # lobby preview that stops at the end of the map.
     tests/unit/test_scenario_map_body.c
+    # A scenario carried inside the map file: the container's script run in
+    # place of a loose one, the loose script that overrides it, the manifest
+    # handed to a script that declares no table of its own, and the refusal
+    # one that restates it and disagrees gets.
+    tests/unit/test_scenario_packed_map.c
     # The binding table: the game table a script reads the sim through, the
     # three index rules and what an absent entity reads as.
     tests/unit/test_scenario_lua.c
@@ -5469,6 +5474,11 @@ set(_unit_test_names
     scenario_map_has_script_chunk
     scenario_map_preview_truncates
     scenario_map_preview_passes_plain_bytes
+    scenario_packed_map_script_runs
+    scenario_packed_map_loose_overrides
+    scenario_packed_map_script_omits_table
+    scenario_packed_map_table_disagrees
+    scenario_packed_map_round_start_keeps_it
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

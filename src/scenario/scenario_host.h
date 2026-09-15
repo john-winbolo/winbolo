@@ -261,10 +261,19 @@ void scenarioHostRegisterMapScripted(ServerSim *sim);
 /*********************************************************
  *NAME:          scenarioHostAttach
  *PURPOSE:
- *  Looks for a script beside mapPath, reads it, boots a VM,
- *  runs its chunk and reads its scenario table. Registers
- *  itself on the sim, so the round start that follows applies
- *  the scenario's rules.
+ *  Finds the map's script, reads it, boots a VM, runs its
+ *  chunk and reads its scenario table. Registers itself on the
+ *  sim, so the round start that follows applies the scenario's
+ *  rules.
+ *
+ *  Two places carry a script. A loose X.scenario.lua beside
+ *  the map wins, and a map that carries a container as well
+ *  says so on the console. Otherwise the container appended to
+ *  the map file itself is read: its manifest fills the
+ *  scenario global before the chunk runs, and the table the
+ *  chunk leaves behind is held against that manifest — so a
+ *  packaged script may omit the table or restate it, but one
+ *  that restates it and disagrees is refused by key.
  *
  *  The file is read once, here. The host keeps the bytes and
  *  every later round runs those, so editing the file while a
@@ -296,7 +305,13 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
  *  are usable, keeps them in place of the ones the host was
  *  holding. Usable means: inside SCN_SCRIPT_MAX_BYTES, the
  *  chunk loads and runs, a scenario table comes out of it,
- *  and its api is not above this server's.
+ *  its api is not above this server's, and where the script
+ *  came out of a package, the table agrees with the manifest.
+ *
+ *  Where the script comes from is decided again rather than
+ *  kept: a loose script dropped beside a packed map takes over
+ *  at the reload, which is what makes editing one a loop
+ *  rather than a re-pack.
  *
  *  Checked in a Lua state of its own before anything is
  *  swapped, so a bad edit changes nothing: on any failure

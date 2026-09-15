@@ -2729,6 +2729,17 @@ int run_scenario_map_has_script_chunk(void);
 int run_scenario_map_preview_truncates(void);
 int run_scenario_map_preview_passes_plain_bytes(void);
 
+/* A scenario carried inside the map file (test_scenario_packed_map.c): the
+ * container's script run in place of a loose one, the loose script that
+ * overrides it, the manifest handed to a script that declares no table, the
+ * refusal one that restates it and disagrees gets, and the round start that
+ * hands the table over again. */
+int run_scenario_packed_map_script_runs(void);
+int run_scenario_packed_map_loose_overrides(void);
+int run_scenario_packed_map_script_omits_table(void);
+int run_scenario_packed_map_table_disagrees(void);
+int run_scenario_packed_map_round_start_keeps_it(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */
