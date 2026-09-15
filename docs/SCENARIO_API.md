@@ -240,8 +240,8 @@ local wave, standing, seats, wave_timer, over = 0, 0, {}, nil, false
 
 **The lobby is declared, not built.** The `scenario` table asks for six seats
 on team 2 with `fielded = false`. The server puts them in the roster before
-anyone joins, where a host can see and trim them, and loads no brain for any
-of them until something fields one:
+anyone joins, where a host can see and trim them, and puts no bot on the
+field in any of them until something fields one:
 
 ```lua
 lobby = {
@@ -335,7 +335,7 @@ Each team:
 | `id` | number | The team number, 1 to 15. Two teams may not share one. |
 | `bots` | number | How many seats to seat for this team when the lobby is built. A host who trims them gets the trimmed number back next round: the point of seating them where a host can see them is that the host may change them. |
 | `max_bots` | number | The ceiling a host may raise `bots` to. 0 means no ceiling stated, which is not the same as no bots allowed. |
-| `fielded` | boolean | True (the default) puts a bot in the seat at the start of the round. False holds the seat without one: it is in the roster, it takes no tank, and no brain loads until a `spawn_bot` names it. |
+| `fielded` | boolean | True (the default) puts a bot in the seat at the start of the round. False holds the seat without one: it is in the roster, it takes no tank, and no bot plays in it until a `spawn_bot` names it. Its runner is built ahead of the round, as the two paragraphs below this table describe. |
 | `brain` | string | The brain this team's bots run, as a path on the server's disk. Empty means the server's own. `package:NAME`, a brain carried inside the scenario, is reserved for packaged scenarios and is refused with `SCN_OP_NOT_FOUND` today. |
 
 `max_bots` is a memory ceiling as well as a seating one. A seat keeps the runner
@@ -346,9 +346,17 @@ building another.
 Those runners are built before the round is played: one a frame across the
 countdown, for every seat the template is holding. So a round holds one runner
 per held seat from the moment it begins, rather than from the first wave that
-needs one, and `max_bots` bounds that. A seat whose brain will not load is
-skipped, with a line in the server log, and the wave that fields it builds its
-runner then as it always did. Every runner is released when the round ends.
+needs one, and `max_bots` bounds that. They are built ahead only for a round
+that starts from the lobby's countdown: a first single-player round, a server
+started without a lobby, and a map rotation each build a seat's runner at the
+first wave that fields it instead. A seat whose spawn carries an `init` table
+builds its runner at that spawn as well, because a runner built ahead carries
+no table and the table is read when the VM is built — give a seat its `init` on
+every spawn and its second wave onward is a resume. A seat whose brain will not
+load is skipped, with a line in the server log, and the wave that fields it
+builds its runner then as it always did. A countdown abandoned before the round
+starts releases the runners it had built, and every runner is released when the
+round ends.
 
 ### `scenario.rules`
 
@@ -867,10 +875,14 @@ removal has always done.
 Give a seat the same `brain` and the same `init` table every wave. The runner
 behind a held seat is kept across the unfielding, and it can only be handed to a
 spawn naming the brain it is already running and the configuration its VM read at
-its first breath. A spawn naming either differently gets a runner built for it
-instead, which is what a wave transition costs when it is paid, and a line in
-the server log saying which of the two differed. Orders that change from one
-wave to the next belong in a hint, not in the table the VM read once.
+its first breath. The brain's own state goes with it: a bot fielded for the
+second wave keeps whatever its script stored during the first, and is told the
+tank is new the way a respawn is. A spawn naming either differently gets a
+runner built for it instead, which is what a wave transition costs when it is
+paid, and a line in the server log saying which of the two differed. The `init`
+table is read once, when the VM is built, so it is not the place for orders that
+change from one wave to the next; a call that speaks to a bot's brain is not
+here yet.
 
 The roster ops are the six above, `set_team` and `lobby_set_team` included.
 All of them are refused inside `on_setup`: the round is still being built
