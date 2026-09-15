@@ -550,10 +550,25 @@ run_scenario_swap_udp() {
   # the swap this entry exists to exercise.
   local held="The keep held."
   local fielded="Wave 3 of 3: 6 raiders."
-  # The overflow disconnect is written through wb_log, which is silent unless
-  # WINBOLO_LOG names a category. Without this the check below would be
-  # reading a file that could never hold the line, and would always pass.
-  export WINBOLO_LOG="net=error"
+  # The overflow disconnect and the runner lines checked at the end are both
+  # written through wb_log, which is silent unless WINBOLO_LOG names a
+  # category. Without this those checks would be reading a file that could
+  # never hold their lines, and would always pass. net=error carries the
+  # overflow disconnect; sim=info carries what bot_manager.c says each time a
+  # wave takes a seat's parked runner back or builds it a new one. The spec is
+  # a comma-separated list of category=level pairs, applied left to right
+  # (apply_env_log_spec in src/common/wb_log.c).
+  #
+  # Saved and put back rather than unset: this file is also run by hand, and a
+  # developer who set WINBOLO_LOG for the rest of the run should still have
+  # their own value after this launch.
+  local had_log=0
+  local old_log=""
+  if [ -n "${WINBOLO_LOG+x}" ]; then
+    had_log=1
+    old_log="$WINBOLO_LOG"
+  fi
+  export WINBOLO_LOG="net=error,sim=info"
 
   ds_bin -map "$map" -port 0 -gametype open \
             -ai yesfull -brain "$brain" \
@@ -561,7 +576,11 @@ run_scenario_swap_udp() {
             -logfile "$ACTUAL/$name.dslog" \
             > "$ACTUAL/$name.ds.out" 2> "$ACTUAL/$name.ds.err" &
   local ds_pid=$!
-  unset WINBOLO_LOG
+  if [ "$had_log" -eq 1 ]; then
+    export WINBOLO_LOG="$old_log"
+  else
+    unset WINBOLO_LOG
+  fi
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
 
   port=$(await_ds_port "$ACTUAL/$name.ds.err" "$ds_pid") || return 1
@@ -620,6 +639,15 @@ run_scenario_swap_udp() {
     kill -INT "$ds_pid" 2>/dev/null || true
   fi
 
+  # Shorter than the 40s default, because this entry has already spent the
+  # wait above: 35s of waiting for the end line plus 40s of waiting for the
+  # client is more than the 60s CTest allows the whole entry, and a run killed
+  # by CTest takes the entry's own half-written line with it and prints no
+  # diagnostics at all. 12s is well past what a client needs to leave on the
+  # shutdown broadcast, and 35 + 12 plus the settle still fits inside 60.
+  # await_client reads this by name when it is called, so the caller's local
+  # is the value it uses.
+  local CLIENT_WAIT_LIMIT=12
   local rc=0
   await_client "$c_pid" "client" || rc=$?
 
@@ -678,7 +706,42 @@ run_scenario_swap_udp() {
     tail -10 "$ACTUAL/$name.err"
     return 1
   fi
-  echo "OK"
+
+  # Every fielding in this round has to take a seat's parked runner back
+  # rather than build a new one, which is the work this entry is here to
+  # watch. bot_manager.c writes one line per resume, at INFO in the sim
+  # category, which is what the sim=info above turns on.
+  #
+  # Twelve of them in a healthy run: Wave Defense fields 2 raiders on wave
+  # one, 4 on wave two and 6 on wave three (WAVES in the scenario, each
+  # clamped to the six seats the lobby template holds), and the countdown
+  # warms all six seats, so even a seat's first fielding finds a runner parked
+  # for it. Fewer than that means some fielding went another way.
+  local resume='botManager: bot [0-9]+ back on the field on its parked runner'
+  local resumes
+  resumes=$(grep -cE "$resume" "$ACTUAL/$name.ds.err" 2>/dev/null || true)
+  if [ "$resumes" -lt 12 ]; then
+    echo "NO RESUME"
+    echo "    $resumes fieldings took a parked runner back; expected 12"
+    grep -nE "$resume" "$ACTUAL/$name.ds.err" | head -5
+    tail -10 "$ACTUAL/$name.ds.err"
+    tail -10 "$ACTUAL/$name.err"
+    return 1
+  fi
+  # And none of them built a runner. A Wave Defense spawn names no brain and
+  # carries no init table, so every seat is fielded on exactly what its parked
+  # runner was built with; a build line here is a fielding paying for a Lua VM
+  # it did not need.
+  local rebuilt='building a fresh runner|building its runner now'
+  if grep -qE "$rebuilt" "$ACTUAL/$name.ds.err"; then
+    echo "REBUILT"
+    echo "    a fielding built a runner instead of taking the parked one"
+    grep -nE "$rebuilt" "$ACTUAL/$name.ds.err" | head -5
+    tail -10 "$ACTUAL/$name.ds.err"
+    tail -10 "$ACTUAL/$name.err"
+    return 1
+  fi
+  echo "OK ($resumes resumes)"
 }
 
 # WinBoloHeadless --server with --cmd-stdin, connected to a
@@ -1408,7 +1471,15 @@ dispatch_scenario() {
     #
     # End to end: about 3s for the client to ready, a 5s countdown, 14s of
     # scenario, and the shutdown round trip — roughly 27s, against a 60s CTest
-    # timeout and the helper's own 35s bound on the wait.
+    # timeout.
+    #
+    # The worst case matters as much as the healthy one, because a run CTest
+    # kills prints nothing: the entry's own line is half-written and still in
+    # the buffer. The helper's waits are the whole of it — a 0.5s settle after
+    # the server reports its port, then up to 35s for the round's end line,
+    # then up to 12s for the client to leave on the shutdown. That is 47.5s at
+    # the outside, so even a run that hits every bound reports its own failure
+    # with its logs before the 60s is up.
     #
     # The client's --ticks is a ceiling, not the exit. The headless alternates
     # a keys pass and a game pass at GAME_TICK_LENGTH 10ms, so its game-tick
