@@ -3325,6 +3325,7 @@ set(_baseline_udp
     centralize_events_chat_unicast_3client_udp
     centralize_events_chat_alliance_3client_udp
     watch_road_capture_2client_udp
+    wave_swap_udp
 )
 
 foreach(_name IN LISTS _baseline_fast)

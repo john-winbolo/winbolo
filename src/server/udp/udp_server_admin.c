@@ -60,6 +60,9 @@
 #include "bulk_transfer.h"   /* bulkSenderReset, bulkReceiverInit */
 #include "playername_validate.h" /* playerNameCompare */
 #include "log.h"             /* logAddEvent, log_BalanceApplied */
+#include "../server_lifecycle.h"  /* serverLifecycleGetTickStats and
+                                    serverLifecycleGetSimStats — the tick cost
+                                    the status output reports */
 #include "../threads.h"      /* threadsWaitForMutex, threadsReleaseMutex,
                               * threadsContextActive, threadsCurrentlyHoldsMutex */
 #include "../../common/wb_log.h"      /* WB_LOG_*, WB_LOG_CAT_NET */
@@ -781,6 +784,24 @@ void transportUdpServerPrintStatus(bool toFile) {
             fprintf(fp, "%s (slot %d, ping %dms)\n",
                     udpServer.clients[i].playerName, i,
                     udpServer.clients[i].pingMs);
+        }
+    }
+
+    /* What a server frame is costing. The lines above say who is connected;
+       this says whether the tick serving them is keeping up, which is the
+       thing to read either side of a change that adds work to a tick. Two
+       pairs because they answer different questions: the whole frame, and
+       the sim inside it. Both are zero until the first tick is recorded. */
+    {
+        double tickLast = 0.0, tickEwma = 0.0;
+        double simLast  = 0.0, simEwma  = 0.0;
+        serverLifecycleGetTickStats(&tickLast, &tickEwma);
+        serverLifecycleGetSimStats(&simLast, &simEwma);
+        fprintf(stdout, "tick %.2fms (avg %.2fms), sim %.2fms (avg %.2fms)\n",
+                tickLast, tickEwma, simLast, simEwma);
+        if (fp != NULL) {
+            fprintf(fp, "tick %.2fms (avg %.2fms), sim %.2fms (avg %.2fms)\n",
+                    tickLast, tickEwma, simLast, simEwma);
         }
     }
 
