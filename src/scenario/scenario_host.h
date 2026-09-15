@@ -132,6 +132,19 @@
  * large enough that a script is not spending its time in the hook. */
 #define SCN_BUDGET_STEP_INSTR 1000u
 
+/* What a call that has already been stopped may still spend. The error raised
+ * at the budget unwinds through whatever the script had standing, and a
+ * metamethod running on the way out is Lua code like any other: cutting that
+ * off where it stands is not what the budget is for, so the count is put back
+ * to this far short of the budget rather than to zero and the unwind has room
+ * to finish.
+ *
+ * Twenty hook steps is room enough for an unwind and far too little to be
+ * worth catching the error for: a script that caught it and carried on
+ * anyway is stopped again within that, and again after that, rather than
+ * running on uncounted. */
+#define SCN_BUDGET_GRACE_INSTR 20000u
+
 /* How many events the host holds between one tick and the next, across
  * both of the server's channels. Each of the two subscriber callbacks
  * copies an event in and returns; the one drain at the end of the tick

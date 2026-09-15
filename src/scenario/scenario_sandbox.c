@@ -19,7 +19,10 @@
  *  with it, and it carries a count hook, so a script that
  *  loops without end is stopped at SCN_BUDGET_CALL_INSTR
  *  instructions and raises there too. Both land in the
- *  lua_pcall the host makes every call through.
+ *  lua_pcall the host makes every call through — and the
+ *  budget's error lands there whatever the script does with
+ *  it, because pcall, xpcall and coroutine.resume are given
+ *  to it wrapped in a closure that raises it again.
  *
  *  Opening them one at a time is what takes io, package,
  *  debug and, under LuaJIT, ffi, jit and bit away: none of
@@ -64,11 +67,15 @@
    instructions the call now running has spent. It outlives the call that
    made the state, so it is on the heap rather than beside the caller.
    used and cap sit idle on a build whose Lua would not take the allocator;
-   armed and instr are kept whatever the allocator turned out to be. */
+   armed, instr and stopped are kept whatever the allocator turned out to be.
+
+   stopped is the hook's latch: it is raised there and put back by the arm and
+   the disarm, so nothing a script can reach clears it. */
 typedef struct {
     size_t   used;
     size_t   cap;
     bool     armed;
+    bool     stopped;
     uint32_t instr;
 } ScnSandboxState;
 
@@ -155,11 +162,23 @@ static void scnSandboxCountHook(lua_State *L, lua_Debug *ar) {
     if (s->instr <= (uint32_t)SCN_BUDGET_CALL_INSTR) {
         return;
     }
-    /* Cleared before the raise and not after it: the error unwinds through
-       whatever the script had standing, and a metamethod running Lua on the
-       way out would otherwise be stopped by this again. The call's own
-       disarm clears it a second time, which costs nothing. */
-    s->armed = false;
+    /* Latched rather than disarmed. Leaving the count off for the rest of the
+       call would hand a script that caught this error every instruction it
+       liked afterwards, and pcall, xpcall and coroutine.resume are all in the
+       library it is given — so the flag stays on and the latch below is what
+       those three read to know a failure they caught is not theirs to keep.
+       Only the arm and the disarm put it back, neither of which script code
+       can reach.
+
+       The count goes back to a grace short of the budget rather than to zero,
+       so the error has room to unwind through whatever the script had
+       standing: a metamethod running Lua on the way out would otherwise be
+       stopped here again, mid-unwind. Once that room is spent the hook raises
+       again, which is what bounds a script that caught the error and carried
+       on regardless. */
+    s->stopped = true;
+    s->instr   = (uint32_t)SCN_BUDGET_CALL_INSTR -
+                 (uint32_t)SCN_BUDGET_GRACE_INSTR;
     luaL_error(L, "this call ran past the instruction budget of %d and was "
                   "stopped; work that long belongs across several on_tick "
                   "calls rather than inside one of them",
@@ -176,17 +195,24 @@ static void scnSandboxCountHook(lua_State *L, lua_Debug *ar) {
  * Putting the outer call's own count back, rather than carrying the inner
  * one's forward, is what the budget says it is: a million for each call.
  * The outer one goes on climbing from where it had reached, so a script
- * cannot start its budget again by nesting. */
+ * cannot start its budget again by nesting.
+ *
+ * The latch travels with the count for the same reason. An inner call begins
+ * with it clear, whatever the outer one has already run into, and leaves the
+ * outer one's answer behind it — a policy that was stopped does not make the
+ * hook that issued the op look stopped to the pcall it is standing in. */
 void scnSandboxArmCall(lua_State *L, ScnSandboxCall *saved) {
     ScnSandboxState *s = scnSandboxStateOf(L);
 
     if (saved != NULL) {
-        saved->armed = (s != NULL) ? s->armed : false;
-        saved->instr = (s != NULL) ? s->instr : 0;
+        saved->armed   = (s != NULL) ? s->armed : false;
+        saved->stopped = (s != NULL) ? s->stopped : false;
+        saved->instr   = (s != NULL) ? s->instr : 0;
     }
     if (s != NULL) {
-        s->instr = 0;
-        s->armed = true;
+        s->instr   = 0;
+        s->armed   = true;
+        s->stopped = false;
     }
 }
 
@@ -197,10 +223,12 @@ void scnSandboxDisarmCall(lua_State *L, const ScnSandboxCall *saved) {
         return;
     }
     if (saved != NULL) {
-        s->armed = saved->armed;
-        s->instr = saved->instr;
+        s->armed   = saved->armed;
+        s->stopped = saved->stopped;
+        s->instr   = saved->instr;
     } else {
-        s->armed = false;
+        s->armed   = false;
+        s->stopped = false;
     }
 }
 
@@ -213,10 +241,11 @@ lua_State *scnSandboxNewState(void) {
     if (s == NULL) {
         return NULL;
     }
-    s->used  = 0;
-    s->cap   = (size_t)SCN_VM_MEMORY_MAX;
-    s->armed = false;
-    s->instr = 0;
+    s->used    = 0;
+    s->cap     = (size_t)SCN_VM_MEMORY_MAX;
+    s->armed   = false;
+    s->stopped = false;
+    s->instr   = 0;
 
     L = lua_newstate(scnSandboxAlloc, s);
     if (L == NULL) {
@@ -423,6 +452,79 @@ static int scnSandboxPrint(lua_State *L) {
     return 0;
 }
 
+/* ── The one error a script may not keep ──────────────────────────── */
+
+/* pcall, xpcall and coroutine.resume, each over the original.
+ *
+ * These three are how script code is handed a failure rather than having it
+ * raised through it, and the error the budget raises is the one failure a
+ * call may not keep: a script that caught it would go on spending the
+ * instructions it has already been stopped for, and the hook alone cannot
+ * prevent that — a loop around a pcall would be cut off and catch it again
+ * for as long as it liked.
+ *
+ * So each asks the latch once the call it protected is over, and raises again
+ * where that call failed with the latch set. The inner error having been an
+ * ordinary one changes nothing: once the hook has latched, this call's budget
+ * is spent whatever the protected code failed at.
+ *
+ * coroutine.wrap needs none of this. The function it answers with raises into
+ * its caller rather than answering with a failure, so the error arrives at
+ * whichever of these three caught it — or at the host's own lua_pcall, where
+ * none did.
+ *
+ * All three answer the same shape, how it went and then what came of it, so
+ * one body serves them all. The original is upvalue 1, as collectgarbage's
+ * is. */
+static int scnSandboxGuardCall(lua_State *L) {
+    ScnSandboxState *s = scnSandboxStateOf(L);
+    int              n = lua_gettop(L);
+
+    lua_pushvalue(L, lua_upvalueindex(1));
+    lua_insert(L, 1);
+    lua_call(L, n, LUA_MULTRET);
+    if (s != NULL && s->stopped && lua_gettop(L) >= 1 &&
+        !lua_toboolean(L, 1)) {
+        return luaL_error(L, "this call ran past the instruction budget of %d "
+                             "and was stopped; catching that error does not "
+                             "give the call its instructions back, so it is "
+                             "raised again",
+                          (int)SCN_BUDGET_CALL_INSTR);
+    }
+    return lua_gettop(L);
+}
+
+/* One global, and one field of a library table, replaced by a closure over
+   what was there. A name that is not there is left alone rather than made:
+   these run after the libraries are open, so what is missing is missing
+   because this VM never had it. */
+static void scnSandboxGuardGlobal(lua_State *L, const char *name) {
+    lua_getglobal(L, name);
+    if (lua_isfunction(L, -1)) {
+        lua_pushcclosure(L, scnSandboxGuardCall, 1);
+        lua_setglobal(L, name);
+    } else {
+        lua_pop(L, 1);
+    }
+}
+
+static void scnSandboxGuardField(lua_State *L, const char *table,
+                                 const char *key) {
+    lua_getglobal(L, table);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        return;
+    }
+    lua_getfield(L, -1, key);
+    if (lua_isfunction(L, -1)) {
+        lua_pushcclosure(L, scnSandboxGuardCall, 1);
+        lua_setfield(L, -2, key);
+    } else {
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+}
+
 /* ── The whitelist ────────────────────────────────────────────────── */
 
 void scnSandboxOpenLibs(lua_State *L) {
@@ -474,6 +576,14 @@ void scnSandboxOpenLibs(lua_State *L) {
 
     lua_pushcfunction(L, scnSandboxPrint);
     lua_setglobal(L, "print");
+
+    /* Last, so each of these closes over the function its own opener
+       installed rather than over something replaced afterwards. coroutine is
+       base's under LuaJIT and its own library under 5.4, and either way it is
+       a global table by the time this reads it. */
+    scnSandboxGuardGlobal(L, "pcall");
+    scnSandboxGuardGlobal(L, "xpcall");
+    scnSandboxGuardField(L, LUA_COLIBNAME, "resume");
 }
 
 void scnSandboxSealRandom(lua_State *L) {

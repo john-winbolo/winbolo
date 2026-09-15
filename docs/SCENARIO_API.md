@@ -95,6 +95,15 @@ where it stands: Lua raises an error at that line, the call fails, the server
 counts one error against the script, and the round carries on — again, a
 script that keeps failing is switched off for the rest of the round.
 
+You cannot catch that error and carry on. `pcall`, `xpcall` and
+`coroutine.resume` raise it again rather than answering with it, so a `pcall`
+around slow work does not buy the work more instructions, and a loop that
+catches and tries again is stopped on the next turn rather than running on —
+the instructions are spent whether or not something caught the error. A
+coroutine is no way around it either: stopping what a `coroutine.resume` was
+running stops the call that resumed it. Errors of your own are unaffected; a
+catcher hands those back exactly as it always did.
+
 The budget is per call, not per round and not per tick. Each call starts again
 at zero, so nine hundred thousand instructions in this `on_tick` leaves the
 next one its own full million. What it rules out is looping inside a single

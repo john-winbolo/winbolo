@@ -34,6 +34,11 @@
  *      — and a later hook still runs after one was cut off
  * run_scenario_sandbox_budget_survives_a_nested_call
  *      — a hook that triggers a policy is still counted afterwards
+ * run_scenario_sandbox_budget_survives_a_pcall
+ *      — a hook that catches the budget's error with pcall has it raised
+ *        again rather than carrying on
+ * run_scenario_sandbox_budget_survives_a_coroutine
+ *      — and the same through coroutine.resume
  */
 
 #include <stdint.h>
@@ -790,6 +795,164 @@ int run_scenario_sandbox_budget_survives_a_nested_call(void) {
     UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
                   "the round is in state %d, expected it to still be running",
                   (int)serverSimGetState(sim));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+    return 0;
+}
+
+/* ── 11. A hook that catches what stopped it ──────────────────────── */
+
+/* pcall is in the library a script is given, so the error the budget raises
+ * lands wherever a script chooses to put one. What this case is about is that
+ * putting one there buys nothing: the call was stopped, the latch says so,
+ * and pcall raises the error again rather than answering with it.
+ *
+ * The hook spins inside a pcall, says what it caught, and then spins again.
+ * Neither line after the pcall may be printed — the first would say the error
+ * had been handed back as a value, and the second that the rest of the hook
+ * ran on a budget that was already spent.
+ *
+ * Both loops are bounded for the reason the earlier budget cases give: a
+ * latch that has stopped working has to end this case with a failure rather
+ * than hold it until CTest kills it. Twenty million turns is forty times the
+ * budget, so either loop alone is enough to be stopped by it. */
+int run_scenario_sandbox_budget_survives_a_pcall(void) {
+    static const char *const kMap = "scnsand_pcall.map";
+    static const char *const kLua =
+        "scenario = { name = \"Catcher\", api = 1 }\n"
+        "function on_start()\n"
+        "  print(\"catcher begun\")\n"
+        "  local ok = pcall(function()\n"
+        "    local x = 0\n"
+        "    for i = 1, 20000000 do x = x + 1 end\n"
+        "  end)\n"
+        "  print(\"catcher caught \" .. tostring(ok))\n"
+        "  local y = 0\n"
+        "  for i = 1, 20000000 do y = y + 1 end\n"
+        "  print(\"catcher finished\")\n"
+        "end\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+    int           i;
+
+    UT_ASSERT(sbPutText(kMap, kLua));
+    sim = sbSim();
+    UT_ASSERT(sim != NULL);
+
+    sbWatchConsole(sim);
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    serverSimStartGame(sim);
+    serverSimTick(sim);              /* the first running tick: on_start */
+    for (i = 0; i < 5; i++) {
+        serverSimTick(sim);          /* and the round after it */
+    }
+    sbUnwatchConsole(sim);
+
+    UT_ASSERT_MSG(strstr(sbLines, "catcher begun") != NULL,
+                  "the hook never ran, so nothing here was tested. The "
+                  "console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "catcher caught") == NULL,
+                  "pcall answered with the error the budget raised rather "
+                  "than raising it again, so a script can catch being "
+                  "stopped. The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "catcher finished") == NULL,
+                  "the hook went on spinning after it caught being stopped. "
+                  "The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "on_start raised") != NULL,
+                  "the hook returned without the host counting an error "
+                  "against it, so a call that ran past its budget cost the "
+                  "script nothing. The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "instruction budget") != NULL,
+                  "the hook raised for some reason other than the budget. "
+                  "The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "the round is in state %d, expected it to still be running "
+                  "after the call was cut off", (int)serverSimGetState(sim));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+    return 0;
+}
+
+/* ── 12. And the same through a coroutine ─────────────────────────── */
+
+/* coroutine.resume is the other way script code is handed a failure rather
+ * than having it raised through it, and what is stopped there is a thread of
+ * the script's own making: the hook's error arrives at the resume as an
+ * ordinary false, from a call the hook itself never made.
+ *
+ * So the hook resumes a coroutine that spins, says what the resume answered,
+ * and spins again. As in the case above, neither line after it may be
+ * printed.
+ *
+ * coroutine.wrap has no case of its own. The function it answers with raises
+ * into its caller rather than answering with a failure, so it reaches
+ * whatever caught it — the pcall of the case above, or the host's own
+ * lua_pcall where nothing did. */
+int run_scenario_sandbox_budget_survives_a_coroutine(void) {
+    static const char *const kMap = "scnsand_coro.map";
+    static const char *const kLua =
+        "scenario = { name = \"Threader\", api = 1 }\n"
+        "function on_start()\n"
+        "  print(\"threader begun\")\n"
+        "  local co = coroutine.create(function()\n"
+        "    local x = 0\n"
+        "    for i = 1, 20000000 do x = x + 1 end\n"
+        "  end)\n"
+        "  local ok = coroutine.resume(co)\n"
+        "  print(\"threader resumed \" .. tostring(ok))\n"
+        "  local y = 0\n"
+        "  for i = 1, 20000000 do y = y + 1 end\n"
+        "  print(\"threader finished\")\n"
+        "end\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+    int           i;
+
+    UT_ASSERT(sbPutText(kMap, kLua));
+    sim = sbSim();
+    UT_ASSERT(sim != NULL);
+
+    sbWatchConsole(sim);
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    serverSimStartGame(sim);
+    serverSimTick(sim);              /* the first running tick: on_start */
+    for (i = 0; i < 5; i++) {
+        serverSimTick(sim);          /* and the round after it */
+    }
+    sbUnwatchConsole(sim);
+
+    UT_ASSERT_MSG(strstr(sbLines, "threader begun") != NULL,
+                  "the hook never ran, so nothing here was tested. The "
+                  "console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "threader resumed") == NULL,
+                  "coroutine.resume answered with the error the budget raised "
+                  "rather than raising it again, or the coroutine spun to its "
+                  "end uncounted. The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "threader finished") == NULL,
+                  "the hook went on spinning after the coroutine it resumed "
+                  "was stopped. The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "on_start raised") != NULL,
+                  "the hook returned without the host counting an error "
+                  "against it, so a call that ran past its budget cost the "
+                  "script nothing. The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "instruction budget") != NULL,
+                  "the hook raised for some reason other than the budget. "
+                  "The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "the round is in state %d, expected it to still be running "
+                  "after the call was cut off", (int)serverSimGetState(sim));
 
     scenarioHostDetach(h);
     serverSimDestroy(sim);

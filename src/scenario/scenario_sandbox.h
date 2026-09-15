@@ -67,9 +67,14 @@ void scnSandboxCloseState(lua_State *L);
 /* What a call into script code saves while it runs, so one made from inside
    another leaves the outer one's count as it found it. The caller keeps it
    on its own C stack, which is what makes the pair re-entrant without a
-   depth count of their own. */
+   depth count of their own.
+
+   stopped travels with the other two because it belongs to a call in the same
+   way: it says that this call has already been stopped once, and an inner
+   call must neither see the outer one's answer nor leave its own behind. */
 typedef struct {
     bool     armed;
+    bool     stopped;
     uint32_t instr;
 } ScnSandboxCall;
 
@@ -81,6 +86,12 @@ typedef struct {
  *  apply. A call that passes it is stopped with a Lua error
  *  where the script stands, which the caller's lua_pcall
  *  catches.
+ *
+ *  Being stopped is latched here as well, and only here and
+ *  in the disarm: pcall, xpcall and coroutine.resume are all
+ *  in the library a script is given, and the latch is what
+ *  says a failure one of them caught was the budget's and is
+ *  raised again rather than kept.
  *
  *  The budget is per call, so every call gets the whole of
  *  it however many the round has already made.
@@ -107,6 +118,10 @@ void scnSandboxArmCall(lua_State *L, ScnSandboxCall *saved);
  *  Called on the path where the call raised as well as the
  *  one where it returned, with the saved value its own arm
  *  wrote.
+ *
+ *  The stopped latch goes back with the count, so a call that
+ *  was stopped leaves nothing behind for the next one to be
+ *  refused by.
  *********************************************************/
 void scnSandboxDisarmCall(lua_State *L, const ScnSandboxCall *saved);
 
