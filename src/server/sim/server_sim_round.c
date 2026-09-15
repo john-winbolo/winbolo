@@ -31,7 +31,7 @@
 
 #include "server_sim_shared.h"
 #include "server_sim_internal.h"
-#include "server_sim_lifecycle.h"   /* lobbyAutoUnreadyOnChange, and serverLifecycleGet*Stats via server_lifecycle.h */
+#include "server_sim_lifecycle.h"   /* lobbyAutoUnreadyOnChange, and the serverLifecycle tick timing (stats, peak, reset) via server_lifecycle.h */
 #include "treegrow.h"               /* treeGrowReset — the world reset's tree state */
 #include "sim_rules.h"              /* simRulesClassic — the table a round starts from */
 #include "start_sides.h"            /* START_SIDE_ANY — the per-team side table handed to startsAssignBatch */
@@ -262,14 +262,23 @@ void serverSimInformation(ServerSim *sim, bool locked) {
         serverLifecycleGetTickStats(&tickLast, &tickEwma);
         double simLast = 0.0, simEwma = 0.0;
         serverLifecycleGetSimStats(&simLast, &simEwma);
+        double tickPeak = 0.0;
+        unsigned int tickOverBudget = 0;
+        serverLifecycleGetTickPeak(&tickPeak, &tickOverBudget);
 
         if (tickLast > 0.0 || simLast > 0.0) {
             fprintf(stdout, "Server timing:\n");
         }
+        /* peak= is the worst tick this round and "over budget" counts the
+         * ticks that reached 20ms (both reset at round start). The EWMA
+         * decays a spike away within about 22 ticks, so a handful of
+         * expensive frames — a wave transition, say — leaves no trace in
+         * last= or the average by the time this command is typed. */
         if (tickLast > 0.0) {
             fprintf(stdout,
-                    "  %-11s last=%.1fms  EWMA=%.1fms  (budget=20ms)\n",
-                    "Tick:", tickLast, tickEwma);
+                    "  %-11s last=%.1fms  EWMA=%.1fms  peak=%.1fms  "
+                    "over budget=%u (budget=20ms)\n",
+                    "Tick:", tickLast, tickEwma, tickPeak, tickOverBudget);
         }
         if (simLast > 0.0) {
             fprintf(stdout,
@@ -1306,6 +1315,11 @@ void serverSimStartGameInPlace(ServerSim *sim) {
      * once a human is seen this round. */
     sim->roundHadHuman = false;
 
+    /* The tick loop's peak and its over-budget count reset here for the same
+     * reason the per-bot ones do in botManagerOnGameStart: they describe the
+     * current game, not an accumulation across map rotations. Both of the
+     * authoritative starts do it — serverSimStartGame has the twin. */
+    serverLifecycleResetTickPeak();
 
     /* Flush any game-events queued during the lobby before the first
      * running snapshot goes out. The sim doesn't tick in the lobby, so the
@@ -1468,6 +1482,10 @@ void serverSimStartGame(ServerSim *sim) {
 
     /* Arms the last-human-left return-to-lobby check from a clean slate. */
     sim->roundHadHuman = false;
+
+    /* The twin of the reset in serverSimStartGameInPlace: the round's worst
+     * tick and its over-budget count start empty here too. */
+    serverLifecycleResetTickPeak();
 
     /* Reset the game world (map, world systems, queues, tick) */
     serverSimResetGameWorld(sim);

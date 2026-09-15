@@ -260,6 +260,21 @@ void serverLifecycleGetTickStats(double *outLastMs, double *outEwmaMs);
  * same locking rules as serverLifecycleGetTickStats. */
 void serverLifecycleGetSimStats(double *outLastMs, double *outEwmaMs);
 
+/* The worst tick recorded since the last reset, in ms, and how many ticks
+ * cost at least SERVER_TICK_LENGTH ms. Both 0 until the first tick has been
+ * recorded, and both describe the round in progress — the round start clears
+ * them. They survive where the EWMA does not: a few expensive frames decay
+ * out of the average long before anyone asks the server what happened, while
+ * these can be read once the round is over. Producer-thread only — same
+ * locking rules as serverLifecycleGetTickStats. */
+void serverLifecycleGetTickPeak(double *outPeakMs,
+                                unsigned int *outOverBudget);
+
+/* Drop the peak and the over-budget count so they describe the round that is
+ * starting rather than an accumulation across map rotations. Called from the
+ * two authoritative round starts. */
+void serverLifecycleResetTickPeak(void);
+
 /* Feed the EWMA with the wall-clock cost of the tick that just
  * completed. Producer-thread only — called from inside
  * serverInstanceTick after the final mutex release. */
