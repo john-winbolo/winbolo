@@ -94,6 +94,50 @@ Two other forms mark a debt, and each carries its reason:
 An arena marked `expect=fail` that starts passing is reported as `UPASS`, so a
 mark that has gone stale is noticed rather than hiding a fix.
 
+## Traps, all of them paid for once already
+
+**`io` is not in the sandbox**, and neither is `os.getenv`. Every arena that
+came across opened a trace file for its python driver to read; that raises on
+the first tick and the scenario is switched off after twenty errors, so the
+arena fails at the door. Keep what the driver wanted from the file in a local
+instead.
+
+**`spawn_bot` with no `slot` answers `true, "queued"`**, where the old host
+answered the seat. Name a slot, and remember `on_choose_start` fires during
+the spawn, so set anything that hook reads first.
+
+**`game.tick()` holds one parity for a whole round.** It steps by 2, so
+`tick % PERIOD == 0` with an even period fires on half the rounds and never on
+the rest. Count down to a due tick instead.
+
+**The hook clock doubled.** Any number inside an arena meant as a duration
+means half the time it used to. The drivers' own `-ticks` budgets were already
+in the same unit and did not need doubling.
+
+**Team 0 means no team.** Two bots on team 0 are not allies, so an arena
+measuring what they say to each other measures nothing.
+
+**`hide_pill` is a real `remove_pill`**, so `game.pill(n)` stops answering for
+a hidden pill where the old host still answered. An arena that resolves its
+pill list twice finds nothing the second time.
+
+**Two pillboxes may not share a square**, where the old host allowed it. An
+arena that refills a corpse onto an occupied square is refused.
+
+**A tank pockets a dead pillbox by driving over it**, goal or no goal. Pricing
+capture out of the goal pool only stops the bot routing to a corpse; the
+tracks still take it. An arena whose errand is a corpse wants `can_capture`
+answering `false`.
+
+**The console's `Bot N: brain init arg '...'` line does not show a scenario's
+init.** That line is the command-line string; a spawn's `init` table arrives
+separately as `BRAIN_INIT` and the brain flattens it in Lua afterwards.
+
+**A token whose value is `"0"` is dropped by the flattening**, which is right
+for a flag being switched off and wrong for a brain that wants a number of
+zero. Hand a bot its pins with `game.init_tokens("k=v;k=v")` rather than as a
+table of pairs and the question does not arise.
+
 ## Two things to know before writing one
 
 **The clock doubled.** The old host's `game.tick()` counted 50 a second. This

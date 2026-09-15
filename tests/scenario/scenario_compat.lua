@@ -228,6 +228,13 @@ end
 -- A pin that will not fit is reported rather than cut, because a pin cut in
 -- half is a knob quietly left at its default and a measurement that means
 -- nothing.
+--
+-- Use this rather than writing the pairs out as a table whenever a value
+-- might be "0". The flattening reads "0" as a flag switched OFF and drops the
+-- token, which is right for `noblitz = "0"` and wrong for a brain that takes
+-- a NUMBER of zero — `switch=0` on tests/brains/advert_capture.lua means
+-- "never switch" and has to arrive. Packed inside one value by this function
+-- it survives, because nothing here looks at what a token means.
 local INIT_KEYS  = 16     -- the host takes 16 pairs
 local INIT_VALUE = 63     -- 64 bytes, one of them the leading ';'
 
