@@ -155,54 +155,65 @@ local T_DEEP_SEA     = game.TERRAIN.deep_sea
 local T_MINE_START   = game.TERRAIN.mine_swamp   -- 10: the first mined code
 
 -- ---------------------------------------------------------------------
--- Brain init tokens every wave bot is spawned with. They ride
--- BRAIN_INIT_ARG and are parsed by brains/GoalHunter_1.7; a brain that does
--- not know a token ignores it.
+-- THE WAVE'S BRAIN TOKENS ARE GONE, AND WHAT REPLACED THEM.
 --
--- The host takes these as a flat table of at most 16 pairs and formats them
--- back into the `k=v;k=v` string the brain reads, so a token that is a bare
--- flag is written here as the value "1" — which is what the host's own
--- parser makes of a bare flag too.
-local WAVE_PORTFOLIO = "0/25/75"  -- back/front/aggressive pill share
-local WAVE_BLITZ_MIN = 2          -- fewest tanks in a blitz, commander counted
-local WAVE_BLITZ_MAX = 4          -- most tanks one blitz accepts
-local WAVE_BLITZ_MIN_BY_WAVE = { [2] = 3, [4] = 3 }
-local WAVE_BLITZ_MIN_SUICIDERS = 1
-local WAVE_BLITZ_MIN_SUICIDERS_BY_WAVE = { [2] = 4, [4] = 4 }
-local WAVE_NOBLITZ = { [3] = true }          -- waves that never blitz
-local WAVE_NOCLAIM = { [1] = true, [2] = true }  -- ignore allies' dead-pill claims
-local WAVE_REFUEL_MULT = 1.2      -- attackers go back for supplies less readily
-local WAVE_REFUEL_MULT_BY_WAVE = { [2] = 100, [4] = 100 }
+-- The old host handed each wave bot a string of tokens that
+-- brains/GoalHunter_1.7 parsed out of BRAIN_INIT_ARG. This host has a place
+-- to put them — spawn_bot's `init` table — but it hands that table to the
+-- brain as the BRAIN_INIT global, and the GoalHunter brains read
+-- BRAIN_INIT_ARG and nothing else. So a token written here would arrive
+-- somewhere the brain never looks, and a wave would play on its defaults
+-- while this file said otherwise.
+--
+-- Rather than pretend, the tokens are dropped. What each one did, and what
+-- stands in for it now:
+--
+--   refuel=1.2, and 100 on waves 2 and 4
+--     Multiplied the cost of the whole refuel goal group so an attacker
+--     went back for supplies less readily — at 100, effectively never.
+--     REPLACED, and better: spawn_loadout below hands every horde tank the
+--     full OPEN loadout on every life, first and respawn alike, while the
+--     round itself is played under tournament rules. An attacker that comes
+--     back with 40 shells, 40 mines, 40 armour and 40 trees has nothing to
+--     go back for, so the cost multiplier had nothing left to do.
+--
+--   portfolio=0/25/75
+--     The back/front/aggressive share of pillbox placements a wave bot
+--     aimed for. Now the brain's own default share.
+--
+--   blitz=MIN/MAX, blitzsuiciders=N
+--     The party size a blitz would accept, and how many of a party were
+--     designated pill suiciders at GO. Now the brain's defaults: a party of
+--     two to four, and nobody designated.
+--
+--   noblitz (wave 3), noclaimdead (waves 1 and 2)
+--     Wave 3 never blitzed; waves 1 and 2 ignored an ally's claim on a dead
+--     pill so several bots went for the same one and drew fire. Both are
+--     gone: every wave may blitz, and every claim is respected.
+--
+--   mode=survival, difficulty=hard
+--     The brain mode the horde came up in. Now whatever the lobby has for
+--     that seat, which a host can still set by hand in the gear popup.
+--
+--   suicider
+--     A whole wave fielded as pill suiciders. It was already switched off
+--     in the file this was ported from, and it stays off.
+--
+-- Nothing here needs a host op. The day BRAIN_INIT_ARG carries the init
+-- table — servermain.c already formats one for the command line — the
+-- tokens can come back exactly as they were.
 
--- Waves fielded entirely as pill suiciders. Empty on purpose: waves 2 and 4
--- used to be, and it made those two rounds play as one long pill rush
--- instead of a fight. The mechanism stays — put a wave number back and it
--- fires again. Every wave still designates blitzsuiciders inside a blitz.
-local SUICIDER_WAVES = {}
-
--- The horde's brain mode and difficulty. The old host asked a bot_mode hook
--- for these; this host has no such hook, so they ride the same init table as
--- everything else. Every wave bot is fielded by spawn_bot, so every one of
--- them gets them.
-local WAVE_MODE       = "survival"
-local WAVE_DIFFICULTY = "hard"
-
-local function wave_init(w)
-  local t = {
-    mode        = WAVE_MODE,
-    difficulty  = WAVE_DIFFICULTY,
-    portfolio   = WAVE_PORTFOLIO,
-    blitz       = string.format("%d/%d",
-                    WAVE_BLITZ_MIN_BY_WAVE[w] or WAVE_BLITZ_MIN,
-                    WAVE_BLITZ_MAX),
-    blitzsuiciders = tostring(WAVE_BLITZ_MIN_SUICIDERS_BY_WAVE[w]
-                              or WAVE_BLITZ_MIN_SUICIDERS),
-    refuel      = tostring(WAVE_REFUEL_MULT_BY_WAVE[w] or WAVE_REFUEL_MULT),
-  }
-  if SUICIDER_WAVES[w] then t.suicider    = "1" end
-  if WAVE_NOBLITZ[w]   then t.noblitz     = "1" end
-  if WAVE_NOCLAIM[w]   then t.noclaimdead = "1" end
-  return t
+-- Every horde tank comes in on the full open loadout, on its first life and
+-- on every respawn. The round is played under tournament rules, which is
+-- what makes the humans farm; this policy is what keeps the attackers from
+-- having to.
+--
+-- A defender is answered nil, which is no opinion: they take the round's own
+-- tournament loadout, as they always did.
+function spawn_loadout(p)
+  local ls = game.lobby_slot(p)
+  if ls ~= nil and ls.team == WAVE_TEAM then return "open" end
+  return nil
 end
 
 -- Pill seizure: at the start of wave N (N >= 2) the horde seizes up to N of
@@ -693,8 +704,11 @@ local function pump_spawn_queue(tick)
     -- rather than named as a number that is off the map.
     local start = nil
     if seat >= 6 and seat <= 15 then start = 22 - seat end
-    p = game.spawn_bot{ slot = seat, start = start,
-                        loadout = "open", init = wave_init(wave) }
+    -- The loadout is named here as well as answered by spawn_loadout. A
+    -- named one outranks the policy and is taken as it is read, so the
+    -- first life is full whatever else is going on; the policy carries
+    -- every life after it.
+    p = game.spawn_bot{ slot = seat, start = start, loadout = "open" }
   end
 
   if p then
