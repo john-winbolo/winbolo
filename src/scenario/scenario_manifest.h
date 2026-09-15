@@ -38,7 +38,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "scenario_host.h" /* the sizes below, and the entity counts */
+#include "scenario_host.h"  /* the sizes below, and the entity counts */
+#include "scenario_table.h" /* ScnTable — a team's init block below */
 
 /* One rule the table sets: which rule, and what it was set to. The value
  * is a double because sixteen of the rules are float-valued and the rest
@@ -50,14 +51,22 @@ typedef struct {
 
 /* One team the lobby template seats. bots is how many the template asks
  * for, max_bots the ceiling a host may raise it to, fielded whether those
- * seats start with a tank or sit as roster entries. */
+ * seats start with a tank or sit as roster entries.
+ *
+ * init is the table the team's bots are built with, read once when a VM is
+ * built, empty for none. initBadKey names the pair the read of it stopped on
+ * and is "" when the whole table was taken: the pairs read before a bad one
+ * stay in init, the way scnReadRules keeps the rest of a rules table past a
+ * key that names no rule, and the validator is what reports the key. */
 typedef struct {
-    uint8_t id;                     /* team number */
-    uint8_t bots;
-    uint8_t maxBots;
-    bool    fielded;
-    char    brain[SCN_BRAIN_LEN];   /* a path or "package:NAME"; "" = the
-                                     * server's own */
+    uint8_t  id;                     /* team number */
+    uint8_t  bots;
+    uint8_t  maxBots;
+    bool     fielded;
+    char     brain[SCN_BRAIN_LEN];   /* a path or "package:NAME"; "" = the
+                                      * server's own */
+    ScnTable init;
+    char     initBadKey[SCN_TABLE_KEY_LEN];
 } ScnManifestTeam;
 
 typedef struct {

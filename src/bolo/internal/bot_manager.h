@@ -78,12 +78,13 @@ typedef struct {
      * set. Cleared by the resume in botManagerAddBot and by
      * botManagerReleaseParkedRunner. */
     bool            parked;
-    /* Set by botManagerWarmRunner on a runner built ahead of the round with no
-     * init table, and cleared with parked by the resume in botManagerAddBot
-     * and by botManagerReleaseParkedRunner. It lets the match test tell a
-     * runner that never had an init table from one whose table changed: the
-     * first is the ordinary cost of a spawn carrying configuration, the second
-     * is a script handing the same seat two different tables. */
+    /* Set by botManagerWarmRunner on a runner built ahead of the round with
+     * the template's table, which may be empty, and cleared with parked by the
+     * resume in botManagerAddBot and by botManagerReleaseParkedRunner. It lets
+     * the match test tell a runner built before there was a table from one
+     * whose table changed: the first is the ordinary cost of a spawn carrying
+     * configuration the team did not, the second is a script handing the same
+     * seat two different tables. */
     bool            warmed;
     aiType          ai;
     /* Wall-clock duration of this bot's most recent brain.think call,
@@ -701,11 +702,16 @@ void botManagerReleaseParkedRunners(struct ServerSim *sim);
  *  counted and not announced — only the ClientSim, the
  *  control subscription and the brain come into being.
  *
- *  Built with an empty init table, so a spawn carrying one
- *  does not match and rebuilds, exactly as it does today.
- *  The context is marked warmed, so that rebuild is reported
- *  at INFO as the expected cost of the spawn's table rather
- *  than as a script handing the seat two different ones.
+ *  Built with the table the caller hands it, which is the
+ *  seat's — the one its team was written with. A spawn that
+ *  names the seat with that table, or with none of its own
+ *  and so with the seat's, matches this runner and resumes
+ *  it. A spawn carrying a different table does not match and
+ *  rebuilds. The context is marked warmed, so a rebuild
+ *  where the seat's table was empty and the spawn's is not
+ *  is reported at INFO as the expected cost of a spawn
+ *  carrying configuration its team did not, rather than as a
+ *  script handing the seat two different tables.
  *
  *  Returns false, having built nothing, when the slot
  *  already holds a runner (active or parked), when no brain
@@ -717,10 +723,12 @@ void botManagerReleaseParkedRunners(struct ServerSim *sim);
  *  brainPath - Path to the brain .lua the seat will run
  *  brainName - Display name for the bot (the seat's)
  *  ai        - AI advantage level
+ *  init      - The table to build it with; copied, and NULL
+ *              means no pairs
  *********************************************************/
 bool botManagerWarmRunner(struct ServerSim *sim, BYTE playerNum,
                           const char *brainPath, const char *brainName,
-                          aiType ai);
+                          aiType ai, const ScnTable *init);
 
 /*********************************************************
  *NAME:          botManagerDestroy

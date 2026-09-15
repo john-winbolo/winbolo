@@ -874,9 +874,12 @@ static bool botInitTablesSame(const ScnTable *a, const ScnTable *b) {
  *
  * Says which of the two differed, at WARN: a script varying its init table
  * by accident should read as a line in the log rather than as lag on the
- * wave that pays for the rebuild. The exception is a warmed runner, which
- * was built before the round with no init table at all: a spawn carrying one
- * has varied nothing, so that rebuild is reported at INFO. */
+ * wave that pays for the rebuild. The exception is a warmed runner, which was
+ * built before the round with the template's table, which may be empty: where
+ * it is empty and the spawn carries one, the script has varied nothing — the
+ * table was never on the team — so that rebuild is reported at INFO. A team
+ * that gives its seats an init has already had it warmed in, and a spawn
+ * naming that seat with the same table or with none matches. */
 static bool botParkedRunnerMatches(const BotContext *bot,
                                    const char *brainPath,
                                    const ScnTable *init) {
@@ -897,8 +900,8 @@ static bool botParkedRunnerMatches(const BotContext *bot,
     if (!botInitTablesSame(&bot->initTable, init)) {
         if (bot->warmed && bot->initTable.count == 0 && init->count != 0) {
             WB_LOG_INFO(WB_LOG_CAT_SIM,
-                    "botManager: seat %d was warmed with no init table and the "
-                    "spawn carries one; building its runner now",
+                    "botManager: seat %d was warmed without the table the "
+                    "spawn carries; building its runner now",
                     (int)bot->playerNum);
             return false;
         }
@@ -1209,7 +1212,7 @@ static bool botBuildRunner(ServerSim *sim, BotContext *bot,
 
 bool botManagerWarmRunner(ServerSim *sim, BYTE playerNum,
                           const char *brainPath, const char *brainName,
-                          aiType ai) {
+                          aiType ai, const ScnTable *init) {
     BotContext *bot;
 
     if (sim == NULL || playerNum >= MAX_TANKS) return false;
@@ -1219,10 +1222,11 @@ bool botManagerWarmRunner(ServerSim *sim, BYTE playerNum,
     /* Already has a runner, on the field or parked — nothing to build. */
     if (bot->active || bot->parked) return false;
 
-    /* No init table: a spawn that carries one does not match a runner built
-       without it and rebuilds, which is what a spawn carrying one costs
-       today. The warm it wasted is paid in a window nobody is playing in. */
-    botResetContextForBuild(sim, bot, playerNum, brainPath, ai, NULL);
+    /* Built with the seat's own table, which is the template's, so a spawn
+       naming this seat with that table or with none of its own matches and
+       resumes. A spawn carrying a different one still rebuilds, which is what
+       a script handing the same seat two tables costs. */
+    botResetContextForBuild(sim, bot, playerNum, brainPath, ai, init);
     if (!botBuildRunner(sim, bot, brainPath, brainName, ai)) {
         WB_LOG_WARN(WB_LOG_CAT_SIM,
                 "botManager: could not warm a runner for seat %d on brain '%s'",
@@ -1232,8 +1236,9 @@ bool botManagerWarmRunner(ServerSim *sim, BYTE playerNum,
 
     /* Parked exactly as an unfielded seat's runner is, so the fielding that
      * takes it back is the ordinary resume and not a case of its own. Marked
-     * warmed as well, so a spawn carrying an init table reads as this runner
-     * never having had one rather than as the seat's table changing. */
+     * warmed as well, so a spawn carrying an init table onto a seat whose
+     * template gave it none reads as this runner having been built before
+     * there was a table rather than as the seat's table changing. */
     bot->parked = true;
     bot->warmed = true;
     WB_LOG_INFO(WB_LOG_CAT_SIM,

@@ -51,6 +51,9 @@
  *                                         preview gives the map's file back
  * run_lobby_template_cancel_restores_path_random
  *                                       — and after a generated-map preview
+ * run_lobby_template_seat_carries_init  — a team's init table reaches the
+ *                                         seats it makes, and a seat leaving
+ *                                         takes it with it
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -69,6 +72,8 @@
                                     * and the template entry points */
 #include "server_sim_scenario.h"
 #include "server_sim_join.h"       /* serverSimFindFreeSlot */
+#include "bot_manager.h"           /* BotContext.initTable — what a fielded
+                                    * seat's bot was built with */
 #include "mapgen.h"                /* MapGenConfig, mapGenDefaultConfig — the
                                     * generated-map preview */
 #include "game_sim.h"
@@ -862,6 +867,90 @@ int run_lobby_template_cancel_restores_path_random(void) {
     UT_ASSERT_MSG(ltSeats(sim, LT_HORDE) == 2,
                   "the trim to two came back as %d",
                   ltSeats(sim, LT_HORDE));
+
+    serverSimDestroy(sim);
+    ltDropBrainFile();
+    return 0;
+}
+
+/* ── The init table the template's seats carry ────────────────────── */
+
+/* A team's `init` is what its bots are built with, and the seating is where
+ * it reaches a seat. A held seat keeps it on the sim, which is where the
+ * countdown's warm and a spawn carrying no table of its own both read it; a
+ * fielded team's bot was built with it and holds it on its own context. And a
+ * seat leaving the roster takes its copy with it, so the slot's next occupant
+ * does not inherit a team it was never on.
+ *
+ * ltTemplate's teams are 0-based over the template's own array: teams[0] is
+ * the unfielded team and teams[1] the fielded one. */
+int run_lobby_template_seat_carries_init(void) {
+    ServerSim       *sim;
+    ScnLobbyTemplate t;
+    int              held;
+    int              fielded;
+    const char      *v;
+
+    UT_ASSERT(ltMakeBrainFile("seat_carries_init"));
+    ut_brain_stub_arm(true);
+    sim = ltLobbySim();
+    UT_ASSERT(sim != NULL);
+
+    ltTemplate(&t, 2, 2, 1, 1);
+    UT_ASSERT(scnTableSet(&t.teams[0].init, "role", "raider"));
+    UT_ASSERT(scnTableSet(&t.teams[0].init, "tier", "3"));
+    UT_ASSERT(scnTableSet(&t.teams[1].init, "role", "guard"));
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    serverSimScenarioSeatLobby(sim);
+    ltHoldInLobby(sim);
+
+    held = ltFirstSeat(sim, LT_HORDE);
+    UT_ASSERT_MSG(held >= 0, "the unfielded team seated nothing");
+    fielded = ltFirstSeat(sim, LT_GUARD);
+    UT_ASSERT_MSG(fielded >= 0, "the fielded team seated nothing");
+
+    /* The held seat, which has no bot behind it yet. */
+    UT_ASSERT_MSG(sim->seatInit[held].count == 2,
+                  "held seat %d carries %u init pairs, expected the team's 2",
+                  held, (unsigned)sim->seatInit[held].count);
+    v = scnTableGet(&sim->seatInit[held], "role");
+    UT_ASSERT_MSG(v != NULL && strcmp(v, "raider") == 0,
+                  "held seat %d has role '%s', expected 'raider'", held,
+                  (v != NULL) ? v : "(absent)");
+    v = scnTableGet(&sim->seatInit[held], "tier");
+    UT_ASSERT_MSG(v != NULL && strcmp(v, "3") == 0,
+                  "held seat %d has tier '%s', expected '3'", held,
+                  (v != NULL) ? v : "(absent)");
+    UT_ASSERT_MSG(!sim->lobbyPlayers[held].fielded,
+                  "the unfielded team's seat %d is on the field", held);
+
+    /* The fielded seat, whose bot was built while the seating ran. */
+    UT_ASSERT_MSG(sim->seatInit[fielded].count == 1,
+                  "fielded seat %d carries %u init pairs, expected the team's "
+                  "1", fielded, (unsigned)sim->seatInit[fielded].count);
+    UT_ASSERT_MSG(serverSimIsBot(sim, (BYTE)fielded),
+                  "seat %d does not read as a bot", fielded);
+    UT_ASSERT_MSG(sim->botMgr.bots[fielded].initTable.count == 1,
+                  "the bot in seat %d was built with %u init pairs, expected "
+                  "the team's 1", fielded,
+                  (unsigned)sim->botMgr.bots[fielded].initTable.count);
+    v = scnTableGet(&sim->botMgr.bots[fielded].initTable, "role");
+    UT_ASSERT_MSG(v != NULL && strcmp(v, "guard") == 0,
+                  "the bot in seat %d was built with role '%s', expected "
+                  "'guard'", fielded, (v != NULL) ? v : "(absent)");
+
+    /* A seat leaving hands the slot back empty. */
+    serverSimRemoveBot(sim, (BYTE)held);
+    UT_ASSERT_MSG(!sim->playerConnected[held],
+                  "the removal left seat %d in the roster", held);
+    UT_ASSERT_MSG(sim->seatInit[held].count == 0,
+                  "seat %d left the roster still carrying %u init pairs",
+                  held, (unsigned)sim->seatInit[held].count);
+
+    serverSimRemoveBot(sim, (BYTE)fielded);
+    UT_ASSERT_MSG(sim->seatInit[fielded].count == 0,
+                  "fielded seat %d left the roster still carrying %u init "
+                  "pairs", fielded, (unsigned)sim->seatInit[fielded].count);
 
     serverSimDestroy(sim);
     ltDropBrainFile();

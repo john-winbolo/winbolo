@@ -5233,6 +5233,7 @@ set(_unit_test_names
     lobby_template_commit_keeps_new_lobby
     lobby_template_cancel_restores_path_inmem
     lobby_template_cancel_restores_path_random
+    lobby_template_seat_carries_init
     scripted_game_type_loadout_follows_base
     scripted_game_type_no_base_is_open
     scripted_game_type_strict_ignores_base
@@ -5277,6 +5278,7 @@ set(_unit_test_names
     scenario_wave_cost_failed_build_leaves_nothing
     scenario_wave_cost_abort_countdown_releases
     scenario_wave_cost_warmed_init_rebuilds
+    scenario_wave_cost_template_init_warms
     scenario_wave_cost_all_ready_clears_skips
     scenario_comms_msg_all
     scenario_comms_msg_team
@@ -5368,6 +5370,7 @@ set(_unit_test_names
     scenario_host_api_too_new
     scenario_host_no_script
     scenario_host_manifest_roundtrip
+    scenario_host_team_init_read
     scenario_host_seed_reproducible
     scenario_host_edit_after_attach
     scenario_host_reload_picks_up_edit
@@ -5398,6 +5401,7 @@ set(_unit_test_names
     scenario_validate_clean
     scenario_validate_api_too_new
     scenario_validate_lobby_shape
+    scenario_validate_team_init_reported
     scenario_validate_unknown_rule
     scenario_validate_rule_out_of_range
     scenario_validate_rule_pair

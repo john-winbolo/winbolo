@@ -1644,7 +1644,14 @@ static bool scenarioAddBotInSeat(ServerSim *sim, BYTE slot, const char *brain,
                                  const ScnTable *init) {
     /* A seat already held keeps the name and the team it was seated with: the
        add reads both off the roster rather than taking the op's, so a wave
-       spawning by seat number does not have to restate them. */
+       spawning by seat number does not have to restate them.
+
+       The init table goes the same way as the brain: a spawn that carries
+       none of its own is built with the seat's, which is what the countdown
+       warmed the seat's runner with, so the fielding is a resume. A spawn
+       that carries its own table still overrides it, and where that differs
+       from the seat's the bot manager says so in the log — the script has
+       given the one seat two tables. */
     const bool wasHeld = sim->playerConnected[slot] &&
                          !sim->lobbyPlayers[slot].fielded;
     char seatName[PLAYER_NAME_LEN];
@@ -1655,6 +1662,9 @@ static bool scenarioAddBotInSeat(ServerSim *sim, BYTE slot, const char *brain,
                              TRUE);
         name = seatName;
         team = sim->lobbyPlayers[slot].teamNumber;
+        if (init == NULL || init->count == 0) {
+            init = &sim->seatInit[slot];
+        }
     }
     if (!botManagerAddBot(sim, slot, brain, name,
                           serverSimGetBotAiType(sim),
@@ -1795,19 +1805,25 @@ static bool scenarioSeatOne(ServerSim *sim, const ScnLobbyTeam *team) {
         const char *brain = (team->brain[0] != '\0')
                           ? team->brain : serverSimGetBotBrainPath(sim);
         if (brain == NULL || brain[0] == '\0') return false;
+        /* A team that plays from the start is built with its own table, the
+           same one a held seat's spawn is handed below. */
         if (!serverSimCreateBot(sim, (BYTE)slot, brain, name,
                                 serverSimGetBotAiType(sim),
                                 gameTypeGet(&sim->sim.game),
-                                sim->sim.hiddenMines, team->id, NULL)) {
+                                sim->sim.hiddenMines, team->id,
+                                &team->init)) {
             return false;
         }
         sim->lobbyPlayers[slot].keepSeat = true;
     }
     /* Recorded whether the seat holds a bot yet or not: an unfielded seat is
-       fielded later by a spawn that names no brain of its own, and this is
-       where that spawn finds the one its team was written with. */
+       fielded later by a spawn that names no brain and carries no init table
+       of its own, and this is where that spawn finds the two its team was
+       written with. The countdown reads the table from here as well, so the
+       runner it warms is built with what the wave will spawn with. */
     SDL_strlcpy(sim->seatBrain[slot], team->brain,
                 sizeof(sim->seatBrain[slot]));
+    sim->seatInit[slot] = team->init;
     if (team->id > 0 && team->id < MAX_TANKS && !sim->teams[team->id].in_use) {
         sim->teams[team->id].in_use = 1;
         if (sim->teams[team->id].name[0] == '\0') {

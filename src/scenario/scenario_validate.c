@@ -292,7 +292,8 @@ static void scnCheckGame(const ScenarioManifest *m, ScnValidateResult *out) {
 }
 
 /* The template the lobby is seated from: the human cap, and per team the
- * number it is, the bots it asks for and the brain it names them with. */
+ * number it is, the bots it asks for, the brain it names them with and the
+ * init table they are built with. */
 static void scnCheckLobby(const ScenarioManifest *m, ScnValidateResult *out) {
     const ScnManifestLobby *lob = &m->lobby;
     char                    key[SCN_VALIDATE_KEY_LEN];
@@ -347,6 +348,22 @@ static void scnCheckLobby(const ScenarioManifest *m, ScnValidateResult *out) {
                      (unsigned)(i + 1));
             scnIssueAdd(out, key, "'%s' names nothing after the colon",
                         t->brain);
+        }
+
+        /* A pair of the init table the read could not take. The reader keeps
+           the pairs before it and names this one, so the team still has an
+           init and the author is told what fell out of it. The caps are
+           derived from the table's own, so the sentence cannot drift from
+           what the reader will accept. */
+        if (t->initBadKey[0] != '\0') {
+            snprintf(key, sizeof(key), "lobby.teams[%u].init",
+                     (unsigned)(i + 1));
+            scnIssueAdd(out, key,
+                        "'%s' does not fit: an init pair is a name of at most "
+                        "%d bytes with a string or number value of at most "
+                        "%d, and a team holds at most %d pairs",
+                        t->initBadKey, (int)SCN_TABLE_KEY_LEN - 1,
+                        (int)SCN_TABLE_VALUE_LEN - 1, SCN_TABLE_MAX);
         }
     }
 }

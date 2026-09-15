@@ -245,8 +245,11 @@ bool serverSimWarmOneHeldSeat(ServerSim *sim) {
             continue;
         }
         playersGetPlayerName(&sim->sim.plyrs, i, name, sizeof(name), TRUE);
+        /* The seat's own table, so the runner is built with what the wave
+           spawning this seat will carry and the fielding is a resume. */
         if (botManagerWarmRunner(sim, i, brain, name,
-                                 serverSimGetBotAiType(sim))) {
+                                 serverSimGetBotAiType(sim),
+                                 &sim->seatInit[i])) {
             return true;
         }
         /* The build itself failed and said so. Nothing else this tick — a

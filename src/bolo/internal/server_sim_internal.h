@@ -786,6 +786,12 @@ struct ServerSim {
      * still knows what to run when something fields it. Empty means the
      * server's own. */
     char                   seatBrain[MAX_TANKS][SCN_PATH_MAX];
+    /* The init table a seat was seeded with, so a seat held without a bot in
+     * it still knows what its bot is built with. The countdown warms the
+     * seat's runner with this, and a spawn that names the seat and carries no
+     * table of its own is built with it, the way such a spawn takes the
+     * seat's brain. No pairs means the same as no table. */
+    ScnTable               seatInit[MAX_TANKS];
 
     /* Seats the warm pass has refused during this countdown, one bit per
      * slot. The answer cannot change while a countdown runs, so the bit

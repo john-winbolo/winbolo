@@ -2384,6 +2384,7 @@ int run_lobby_template_cancel_chain_rolls_back(void);
 int run_lobby_template_commit_keeps_new_lobby(void);
 int run_lobby_template_cancel_restores_path_inmem(void);
 int run_lobby_template_cancel_restores_path_random(void);
+int run_lobby_template_seat_carries_init(void);
 
 /* The scripted game type (test_scripted_game_type.c): gameScripted resolving
  * through the base game the scenario declared, at the loadout and at the
@@ -2433,6 +2434,7 @@ int run_scenario_wave_cost_countdown_warms_seats(void);
 int run_scenario_wave_cost_warm_is_one_a_frame(void);
 int run_scenario_wave_cost_warmed_field_is_free(void);
 int run_scenario_wave_cost_warmed_init_rebuilds(void);
+int run_scenario_wave_cost_template_init_warms(void);
 int run_scenario_wave_cost_warm_skips_bad_brain(void);
 int run_scenario_wave_cost_failed_build_leaves_nothing(void);
 int run_scenario_wave_cost_abort_countdown_releases(void);
@@ -2596,6 +2598,7 @@ int run_scenario_host_unknown_rule_key(void);
 int run_scenario_host_api_too_new(void);
 int run_scenario_host_no_script(void);
 int run_scenario_host_manifest_roundtrip(void);
+int run_scenario_host_team_init_read(void);
 int run_scenario_host_seed_reproducible(void);
 int run_scenario_host_edit_after_attach(void);
 int run_scenario_host_reload_picks_up_edit(void);
@@ -2641,6 +2644,7 @@ int run_scenario_host_enabled_again(void);
 int run_scenario_validate_clean(void);
 int run_scenario_validate_api_too_new(void);
 int run_scenario_validate_lobby_shape(void);
+int run_scenario_validate_team_init_reported(void);
 int run_scenario_validate_unknown_rule(void);
 int run_scenario_validate_rule_out_of_range(void);
 int run_scenario_validate_rule_pair(void);

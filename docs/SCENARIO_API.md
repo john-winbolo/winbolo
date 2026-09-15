@@ -337,6 +337,7 @@ Each team:
 | `max_bots` | number | The ceiling a host may raise `bots` to. 0 means no ceiling stated, which is not the same as no bots allowed. |
 | `fielded` | boolean | True (the default) puts a bot in the seat at the start of the round. False holds the seat without one: it is in the roster, it takes no tank, and no bot plays in it until a `spawn_bot` names it. Its runner is built ahead of the round, as the two paragraphs below this table describe. |
 | `brain` | string | The brain this team's bots run, as a path on the server's disk. Empty means the server's own. `package:NAME`, a brain carried inside the scenario, is reserved for packaged scenarios and is refused with `SCN_OP_NOT_FOUND` today. |
+| `init` | table | A flat table of names to strings or numbers, handed to this team's bots when their VM is built. A `spawn_bot` that names one of these seats and carries no `init` of its own gets this one. |
 
 `max_bots` is a memory ceiling as well as a seating one. A seat keeps the runner
 behind it — one ClientSim and one brain VM — across the unfielding that takes
@@ -349,10 +350,11 @@ per held seat from the moment it begins, rather than from the first wave that
 needs one, and `max_bots` bounds that. They are built ahead only for a round
 that starts from the lobby's countdown: a first single-player round, a server
 started without a lobby, and a map rotation each build a seat's runner at the
-first wave that fields it instead. A seat whose spawn carries an `init` table
-builds its runner at that spawn as well, because a runner built ahead carries
-no table and the table is read when the VM is built — give a seat its `init` on
-every spawn and its second wave onward is a resume. A seat whose brain will not
+first wave that fields it instead. A seat whose team gives it an `init` here is
+warmed with that table, so a spawn naming the seat with no table of its own, or
+with the same one, is a resume from the first wave on. A spawn carrying a
+different table builds its runner then, because the table is read when the VM is
+built, and the server log says the two differed. A seat whose brain will not
 load is skipped, with a line in the server log, and the wave that fields it
 builds its runner then as it always did. A countdown abandoned before the round
 starts releases the runners it had built, and every runner is released when the
@@ -862,7 +864,7 @@ A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
 | `team` | The team to join. A held seat keeps the team it was seated with. |
 | `start` | The start to come in on, 1-based. Left out, the engine chooses. |
 | `loadout` | What this one bot comes in with: `"open"`, `"tournament"` or `"strict"` for that game type's amounts. A word that is none of the three stops the call the way any bad argument does. It outranks `spawn_loadout`, which is not asked about this tank at all, and it is spent on the tank the spawn builds — the bot's next life is fuelled the way every other tank's is. Left out, `spawn_loadout` answers, and failing that the round's own game type. |
-| `init` | A flat table of names to strings or numbers, handed to the brain at its first breath. |
+| `init` | A flat table of names to strings or numbers, handed to the brain at its first breath. Left out, the seat's own is used — the one its team was written with. |
 
 `lobby_add_bot` takes `name`, `brain`, `team`, `slot` and `fielded`, where
 `fielded = false` asks for the seat without the bot.
@@ -872,17 +874,19 @@ back to being held when `remove_bot` names it, rather than being emptied — so
 the next wave has it again. A seat that was not the template's is emptied, as a
 removal has always done.
 
-Give a seat the same `brain` and the same `init` table every wave. The runner
-behind a held seat is kept across the unfielding, and it can only be handed to a
-spawn naming the brain it is already running and the configuration its VM read at
-its first breath. The brain's own state goes with it: a bot fielded for the
-second wave keeps whatever its script stored during the first, and is told the
-tank is new the way a respawn is. A spawn naming either differently gets a
-runner built for it instead, which is what a wave transition costs when it is
-paid, and a line in the server log saying which of the two differed. The `init`
-table is read once, when the VM is built, so it is not the place for orders that
-change from one wave to the next; a call that speaks to a bot's brain is not
-here yet.
+Give a seat the same `brain` and the same `init` table every wave, and the
+`scenario` table's team block is the place to give it once rather than on every
+spawn: a seat whose team names a `brain` and an `init` there is seated with
+both, and a `spawn_bot` that leaves them out gets them. The runner behind a
+held seat is kept across the unfielding, and it can only be handed to a spawn
+naming the brain it is already running and the configuration its VM read at its
+first breath. The brain's own state goes with it: a bot fielded for the second
+wave keeps whatever its script stored during the first, and is told the tank is
+new the way a respawn is. A spawn naming either differently gets a runner built
+for it instead, which is what a wave transition costs when it is paid, and a
+line in the server log saying which of the two differed. The `init` table is
+read once, when the VM is built, so it is not the place for orders that change
+from one wave to the next; a call that speaks to a bot's brain is not here yet.
 
 The roster ops are the six above, `set_team` and `lobby_set_team` included.
 All of them are refused inside `on_setup`: the round is still being built
