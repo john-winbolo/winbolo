@@ -1398,7 +1398,7 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                 /* A seat held for a bot that is not on the field draws faded,
                  * so a host can tell the horde it has seated apart from the
                  * bots that are playing this round. */
-                bool unfielded = !clientSimGetLobbySlot(cs, (BYTE)(i))->fielded;
+                bool unfielded = clientSimSlotIsUnfielded(cs, (BYTE)(i));
                 bool isSelf = isMe;
                 bool isAlly = (myTeam != 0 && clientSimGetLobbySlot(cs, (BYTE)(i))->teamNumber == myTeam);
 
