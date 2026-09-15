@@ -264,8 +264,25 @@ void frontEndStatusPillbox(ClientSim *cs, BYTE pillNum, pillAlliance pb) {
   (void)cs; (void)pillNum; (void)pb;
 }
 
+/* What frontEndStatusTank was last handed. playersSetPlayer works out the
+   status tile for a join or a rename itself and hands it straight to the front
+   end, so this is the only place a test can read the answer it came to. The
+   player number is the 1-based one the call takes; -1 until the first call. */
+static int s_ut_statusTankPlayer   = -1;
+static int s_ut_statusTankAlliance = -1;
+
+int ut_status_tank_last_player(void) {
+  return s_ut_statusTankPlayer;
+}
+
+int ut_status_tank_last_alliance(void) {
+  return s_ut_statusTankAlliance;
+}
+
 void frontEndStatusTank(ClientSim *cs, BYTE tankNum, tankAlliance ts) {
-  (void)cs; (void)tankNum; (void)ts;
+  (void)cs;
+  s_ut_statusTankPlayer   = (int)tankNum;
+  s_ut_statusTankAlliance = (int)ts;
 }
 
 void frontEndStatusBase(ClientSim *cs, BYTE baseNum, baseAlliance bs) {

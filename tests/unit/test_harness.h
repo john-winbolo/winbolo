@@ -1216,6 +1216,9 @@ int run_base_death_prediction_authority(void);
  * status strip draws no tank for it, and reports what it always did once a
  * wave fields it again. */
 int run_tank_alliance_unfielded_shows_no_tank(void);
+/* And playersSetPlayer, which works the status tile out for itself on a join
+ * or a rename, blanks a held seat's tile the same way. */
+int run_tank_alliance_unfielded_status_tile(void);
 
 int run_tank_damage_exact_armour_survives(void);
 int run_tank_damage_overkill_destroys(void);
@@ -2423,13 +2426,17 @@ int run_scenario_wave_cost_brain_case_rebuilds(void);
 int run_scenario_wave_cost_other_init_rebuilds(void);
 int run_scenario_wave_cost_round_end_releases(void);
 int run_scenario_wave_cost_horde_parked_releases(void);
+int run_scenario_wave_cost_rotation_releases(void);
+int run_scenario_wave_cost_seat_leaving_releases(void);
 int run_scenario_wave_cost_destroy_releases(void);
 int run_scenario_wave_cost_countdown_warms_seats(void);
+int run_scenario_wave_cost_warm_is_one_a_frame(void);
 int run_scenario_wave_cost_warmed_field_is_free(void);
 int run_scenario_wave_cost_warmed_init_rebuilds(void);
 int run_scenario_wave_cost_warm_skips_bad_brain(void);
 int run_scenario_wave_cost_failed_build_leaves_nothing(void);
 int run_scenario_wave_cost_abort_countdown_releases(void);
+int run_scenario_wave_cost_all_ready_clears_skips(void);
 
 /* The five comms ops (test_scenario_comms_arms.c). A line to the game, to a
  * team and to one player, with the destination filtered where the recipient
@@ -2789,6 +2796,14 @@ int ut_brain_stub_creates(int player_num);
  * handed an instance and no player number, so there is no slot to file them
  * under. Both counts are reset by ut_brain_stub_arm. */
 int ut_brain_stub_destroys(void);
+
+/* The last status tile frontEndStatusTank was handed by the stub in
+ * test_stubs.c: the 1-based player number, and the tankAlliance as an int so
+ * the header does not have to pull screentank.h in. Both are -1 until the
+ * first call. playersSetPlayer computes the tile itself on a join or a rename,
+ * and this is the only way to read what it decided. */
+int ut_status_tank_last_player(void);
+int ut_status_tank_last_alliance(void);
 
 #ifdef __cplusplus
 }

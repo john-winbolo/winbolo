@@ -4700,6 +4700,7 @@ set(_unit_test_names
     base_death_prediction_replay_tick
     base_death_prediction_authority
     tank_alliance_unfielded_shows_no_tank
+    tank_alliance_unfielded_status_tile
     tank_damage_exact_armour_survives
     tank_damage_overkill_destroys
     tank_damage_partial_survives
@@ -5266,13 +5267,17 @@ set(_unit_test_names
     scenario_wave_cost_other_init_rebuilds
     scenario_wave_cost_round_end_releases
     scenario_wave_cost_horde_parked_releases
+    scenario_wave_cost_rotation_releases
+    scenario_wave_cost_seat_leaving_releases
     scenario_wave_cost_destroy_releases
     scenario_wave_cost_countdown_warms_seats
+    scenario_wave_cost_warm_is_one_a_frame
     scenario_wave_cost_warmed_field_is_free
     scenario_wave_cost_warm_skips_bad_brain
     scenario_wave_cost_failed_build_leaves_nothing
     scenario_wave_cost_abort_countdown_releases
     scenario_wave_cost_warmed_init_rebuilds
+    scenario_wave_cost_all_ready_clears_skips
     scenario_comms_msg_all
     scenario_comms_msg_team
     scenario_comms_msg_player

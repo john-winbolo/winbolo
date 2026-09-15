@@ -15,6 +15,13 @@
  *
  * The sprite blit itself is not testable here and is not tested; what is
  * pinned is the answer the blit is handed.
+ *
+ * run_tank_alliance_unfielded_shows_no_tank  — the accessor every per-frame
+ *                                              draw site reads
+ * run_tank_alliance_unfielded_status_tile    — and the tile playersSetPlayer
+ *                                              works out for itself on a join
+ *                                              or a rename, read off the
+ *                                              frontEndStatusTank stub
  */
 
 #include <stdint.h>
@@ -90,6 +97,72 @@ int run_tank_alliance_unfielded_shows_no_tank(void) {
        paths, where it must answer false and leave the tile alone. */
     UT_ASSERT_MSG(!clientSimSlotIsUnfielded(NULL, TA_RAIDER_SLOT),
                   "no ClientSim to ask means no seat is held");
+
+    clientSimDestroy(cs);
+    return 0;
+}
+
+/* The other route to the same rule. playersSetPlayer does not call the
+ * accessor above: it works the alliance out from the table with the
+ * selfPlayer it was handed, because a spectator arrives here with 0xFF and the
+ * self branch must not swallow a real slot-0 join. So the held-seat rule has
+ * to be applied on this route too, or a join or a rename writes the seat's old
+ * tile into the status strip and it stands until something else redraws.
+ *
+ * Registered the way a client registers a remote player — a real ClientSim and
+ * isServer FALSE — because the tile is only written on that branch. The case
+ * above covers the other one, where csParam is NULL and the predicate answers
+ * false. */
+int run_tank_alliance_unfielded_status_tile(void) {
+    ClientSim *cs = clientSimAlloc();
+    char selfName[] = "Host";
+    char raiderName[] = "Raider";
+
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+    clientSimSetPlayerNum(cs, TA_SELF_SLOT);
+
+    /* The local player, registered first so the table has an alliance list to
+       ask about when it works the raider's tile out. */
+    taRegister(cs, TA_SELF_SLOT, selfName);
+
+    /* A seat the roster holds with nobody on the field: the wave that fielded
+       it has ended. TA_RAIDER_SLOT is 0-based, as are the lobby mirror's index
+       and the playerNum playersSetPlayer takes. */
+    cs->lobbySlots[TA_RAIDER_SLOT].connected = true;
+    cs->lobbySlots[TA_RAIDER_SLOT].fielded   = false;
+
+    playersSetPlayer(cs, &clientSimGetGameSim(cs)->plyrs, TA_SELF_SLOT,
+                     TA_RAIDER_SLOT, raiderName, "XX", 0, 0, 0, 0, 0,
+                     FALSE, 0, NULL, FALSE);
+
+    /* frontEndStatusTank takes a 1-based player number, so the slot the tile
+       was written for reads TA_RAIDER_SLOT + 1. An off-by-one here would blank
+       the wrong seat's tile, which is what this assertion is placed to
+       catch. */
+    UT_ASSERT_MSG(ut_status_tank_last_player() == TA_RAIDER_SLOT + 1,
+                  "the status tile was written for player %d, expected %d — "
+                  "the 1-based number for 0-based slot %d",
+                  ut_status_tank_last_player(), TA_RAIDER_SLOT + 1,
+                  TA_RAIDER_SLOT);
+    UT_ASSERT_MSG(ut_status_tank_last_alliance() == (int)tankNone,
+                  "a held seat's status tile was written as %d, expected "
+                  "tankNone (%d) — the seat has no tank to draw",
+                  ut_status_tank_last_alliance(), (int)tankNone);
+
+    /* The next wave fields it and the tile is whatever the table says again. */
+    cs->lobbySlots[TA_RAIDER_SLOT].fielded = true;
+    playersSetPlayer(cs, &clientSimGetGameSim(cs)->plyrs, TA_SELF_SLOT,
+                     TA_RAIDER_SLOT, raiderName, "XX", 0, 0, 0, 0, 0,
+                     FALSE, 0, NULL, FALSE);
+
+    UT_ASSERT_MSG(ut_status_tank_last_player() == TA_RAIDER_SLOT + 1,
+                  "the second write went to player %d, expected %d",
+                  ut_status_tank_last_player(), TA_RAIDER_SLOT + 1);
+    UT_ASSERT_MSG(ut_status_tank_last_alliance() == (int)tankEvil,
+                  "a fielded enemy seat's status tile was written as %d, "
+                  "expected tankEvil (%d)", ut_status_tank_last_alliance(),
+                  (int)tankEvil);
 
     clientSimDestroy(cs);
     return 0;
