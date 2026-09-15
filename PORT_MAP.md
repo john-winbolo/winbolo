@@ -280,7 +280,46 @@ John's decides whether to honour the press — but the effect a host sees is the
 same, so this is a prelude entry and not a gap. It is listed here because the
 two are not identical and a reviewer should know which was chosen.
 
-### 4. A pill that is hidden rather than removed
+### 4. A bot's `init` table never reaches a GoalHunter brain
+
+**This is the gap that costs the most.** `spawn_bot{ init = { ... } }` is
+accepted, carried through the roster op, and handed to the new brain — as the
+`BRAIN_INIT` global, a table.
+
+The GoalHunter brains read `BRAIN_INIT_ARG`, a string of `k=v;k=v` tokens.
+They do not read `BRAIN_INIT` anywhere:
+
+```
+$ grep -rn "BRAIN_INIT\b" brains/GoalHunter_1.7/
+(nothing — every hit is BRAIN_INIT_ARG)
+```
+
+So every token a scenario means to hand one bot — Survival's `portfolio`,
+`blitz`, `blitzsuiciders`, `refuel`, `noblitz`, `noclaimdead`, `suicider`,
+`mode` and `difficulty`, and the `preset=` and `cfg=` tokens a dozen of our
+arenas use to run a control against one knob — arrives somewhere the brain
+never looks. The bot runs on its defaults and nothing says so.
+
+The old host did this the other way round: it staged the string with
+`luaBrainsSetNextInitArg` and the brain read it. The machinery for that is
+still here and still used — `servermain.c` does exactly this for `-bot-init`,
+`scnTableFormat` is the function that turns the table back into the string,
+and `botManagerStageInitArg` already starts from whatever was staged before
+appending its own mode tokens.
+
+**Smallest op that closes it:** none — this needs no new op at all. It is a
+few lines where the spawn lands: format the bot's `init` table with
+`scnTableFormat` and `luaBrainsSetNextInitArg` it before the brain is
+created, which is what `servermain.c:2793` already does for the command-line
+path. `botManagerAddBot` has the table in `bot->initTable` and
+`botManagerStageInitArg` runs a few lines later.
+
+**What the port does instead:** nothing. Survival plays with its horde on the
+brain's defaults, and every arena whose measurement depends on a token is
+marked `expect=fail` with this as the reason, so the day the staging lands
+they all turn green together and say so.
+
+### 5. A pill that is hidden rather than removed
 
 The `remove_pill` + slot-forcing `add_pill` shim above is exact for everything
 our sidecars do with `hide_pill`, but it is not free: it costs three ops where
