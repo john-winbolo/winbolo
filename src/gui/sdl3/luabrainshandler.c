@@ -204,17 +204,6 @@ void luaBrainsSetNextStartEngineTick(unsigned int tick) {
     s_next_start_engine_tick = tick;
 }
 
-/* The same value written onto a state that is already open. The staged one
- * above is read once, while the VM is being built, so a brain handed back to
- * a seat rather than rebuilt for it — bot_manager's parked runner — has no
- * creation left to read it at and is written here instead. */
-void luaBrainInstanceSetStartEngineTick(LuaBrainInstance *inst,
-                                        unsigned int tick) {
-    if (inst == NULL || inst->L == NULL) return;
-    lua_pushinteger(inst->L, (lua_Integer)tick);
-    lua_setglobal(inst->L, "BRAIN_START_ENGINE_TICK");
-}
-
 bool luaBrainsParseBotInitSpec(const char *spec, BotInitSlot *slots, int maxN) {
     const char *p = spec;
     while (*p) {

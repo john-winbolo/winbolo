@@ -935,15 +935,14 @@ static bool botParkedRunnerMatches(const BotContext *bot,
  *    branch. A round start gets this from clientSimApplyControl's
  *    CTRL_GAME_PHASE_LOBBY arm; a refield inside a round reaches neither
  *    that nor clientSimCreate.
- *  - re-seed the brain's start tick, so its tick numbers continue the session
- *    clock rather than the life that ended at the park.
+ *  - nothing to the brain's tick numbers. Its own state table survives the
+ *    park, so its tick counter and everything else it knows about the round
+ *    carry over, and nothing is re-seeded; the BRAIN_START_ENGINE_TICK global
+ *    is read only inside Brain.open, which a resumed VM does not run again.
  *  - flag isFirst. The tank genuinely is new, and the brain is handed
  *    newtank=TRUE for it the way a respawn is; without it a resumed raider
  *    would drive its new tank at the goal its previous life was chasing until
- *    it replanned.
- *
- * The brain's own state table is deliberately kept: a wave's bots remember
- * the round they are in. */
+ *    it replanned. */
 static bool botResumeParkedRunner(ServerSim *sim, BotContext *bot,
                                   const char *brainName, aiType ai,
                                   gameType game, bool hiddenMines, BYTE team) {
@@ -997,10 +996,6 @@ static bool botResumeParkedRunner(ServerSim *sim, BotContext *bot,
     bot->ai = ai;
     *clientSimGetAllowComputerTanks(bot->cs) = ai;
 
-    /* BRAIN_START_ENGINE_TICK is read out of the staged value at VM creation,
-       which this seat is not having, so the live state is written directly. */
-    luaBrainInstanceSetStartEngineTick(&bot->brain,
-                                       (unsigned int)serverSimGetTick(sim));
     bot->brain.isFirst = true;
 
     /* The think scratch belongs to a life, not to a runner: a bot parked

@@ -201,14 +201,6 @@ void luaBrainsSetNextStartEngineTick(unsigned int tick) {
   (void)tick;
 }
 
-/* The same value written onto an open state, which bot_manager does when it
- * resumes a parked runner instead of building one. The brain stub above
- * leaves the instance zeroed, so there is no state here either way. */
-void luaBrainInstanceSetStartEngineTick(LuaBrainInstance *inst,
-                                        unsigned int tick) {
-  (void)inst; (void)tick;
-}
-
 /* client_sim.c::netProcessedDnsLookup pairs clientMutexWaitFor with
  * clientMutexRelease around a player-location write. The tests never
  * exercise the DNS-lookup completion path, but the symbols still need

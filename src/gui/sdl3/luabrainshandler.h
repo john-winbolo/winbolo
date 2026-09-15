@@ -492,21 +492,6 @@ const char *luaBrainsPeekNextInitArg(void);
 *********************************************************/
 void luaBrainsSetNextStartEngineTick(unsigned int tick);
 
-/*********************************************************
-*NAME:          luaBrainInstanceSetStartEngineTick
-*PURPOSE:
-*  Writes BRAIN_START_ENGINE_TICK onto a state that is
-*  already open, for a brain that is being handed back to a
-*  seat rather than created for it — bot_manager parks a
-*  runner across an unfielding and resumes it on the next
-*  wave, and there is no create in that path for the staged
-*  value above to be read at.
-*
-*  No-op for a NULL instance or one with no state.
-*********************************************************/
-void luaBrainInstanceSetStartEngineTick(LuaBrainInstance *inst,
-                                        unsigned int tick);
-
 /* Buffer size for a BRAIN_INIT_ARG string — 127 usable bytes plus the NUL.
  * The staged buffer inside luabrainshandler.c and every BotInitSlot.arg use
  * this one size, so a token that fits one fits the other. */
