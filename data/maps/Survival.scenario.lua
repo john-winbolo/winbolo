@@ -530,10 +530,34 @@ local function pill_droppable(t)
   return true
 end
 
+-- A square with a base or a pillbox standing on it refuses a pill as the
+-- engine's own rule, whatever its terrain says. The shore bases stand on
+-- plain ground on the ring, so a spoke that meets the ring at a base used
+-- to name the base's own square, be refused, and leave its attacker
+-- empty-handed.
+local function square_taken(x, y)
+  for k = 1, game.num_bases() do
+    local b = game.base(k)
+    if b ~= nil and b.x == x and b.y == y then return true end
+  end
+  for n = 1, game.num_pills() do
+    local pi = game.pill(n)
+    if pi ~= nil and not pi.in_tank and pi.x == x and pi.y == y then
+      return true
+    end
+  end
+  return false
+end
+
+local function pill_square_ok(x, y)
+  return writable(x, y) and pill_droppable(game.map_tile(x, y))
+     and not square_taken(x, y)
+end
+
 -- A square the attacker's pill can sit on: its own first, then the rings
 -- around it, outward. nil when an attacker landed with no ground beside it.
 local function pill_drop_spot(x, y)
-  if writable(x, y) and pill_droppable(game.map_tile(x, y)) then return x, y end
+  if pill_square_ok(x, y) then return x, y end
   for r = 1, PILL_DROP_SEARCH do
     for dx = -r, r do
       for dy = -r, r do
@@ -541,7 +565,7 @@ local function pill_drop_spot(x, y)
         -- nearer ground always wins.
         if dx == -r or dx == r or dy == -r or dy == r then
           local nx, ny = x + dx, y + dy
-          if writable(nx, ny) and pill_droppable(game.map_tile(nx, ny)) then
+          if pill_square_ok(nx, ny) then
             return nx, ny
           end
         end
@@ -572,7 +596,23 @@ local function drop_pill_for(p)
   local t = game.tank(p)
   if t == nil then return false end
 
+  -- The square is a staging post, nothing more: the pill is in the tank
+  -- before this tick ends, and the engine refuses a pill on water, so it
+  -- is made on the first ground that answers. Beside the tank when there
+  -- is any, else beside one of the horde's shore bases, which always stand
+  -- on land. An attacker still over open water therefore lands with its
+  -- pill like every other, instead of empty-handed with its pill handed
+  -- to a team-mate by the top-up.
   local x, y = pill_drop_spot(t.mx, t.my)
+  if x == nil then
+    for k = 1, HORDE_BASES do
+      local b = game.base(k)
+      if b ~= nil then
+        x, y = pill_drop_spot(b.x, b.y)
+        if x ~= nil then break end
+      end
+    end
+  end
   if x == nil then return false end
 
   local n = game.add_pill(x, y)

@@ -462,6 +462,36 @@ static int slrRound(int bots, bool inPlace) {
                           "in the horde's colours (owner %d)",
                           n + 1, (int)p->x, (int)p->y, (int)p->owner);
         }
+
+        /* (i) The wave's pills are spread evenly over the attackers: a wave
+               has more pills than a short roster has attackers, so the
+               top-up hands the spares out one to each in turn, and no tank
+               may carry two while another carries none. The script stages
+               a wave pill on ground and loads it the same tick; an attacker
+               still over open water used to find no ground within reach,
+               land empty-handed, and have its pill handed to a team-mate.
+               The stub brains never build, so the count carried is the
+               count made for that seat. */
+        {
+            int least = -1, most = 0;
+            for (i = 0; i < MAX_TANKS; i++) {
+                int carried = 0;
+                if (slrTeam(sim, i) != SLR_WAVE_TEAM) continue;
+                if (!sim->lobbyPlayers[i].fielded) continue;
+                for (n = SLR_CENTER_PILLS; n < (int)(*sim->sim.pb).numPills; n++) {
+                    const pillbox *p = &(*sim->sim.pb).item[n];
+                    if (p->inTank && p->owner == i) carried++;
+                }
+                if (least < 0 || carried < least) least = carried;
+                if (carried > most) most = carried;
+            }
+            UT_ASSERT_MSG(least >= 1,
+                          "an attacker came ashore with no wave pill "
+                          "(fewest carried %d, most %d)", least, most);
+            UT_ASSERT_MSG(most - least <= 1,
+                          "the wave's pills are piled up: one attacker "
+                          "carries %d while another carries %d", most, least);
+        }
     }
 
     slrSeen = NULL;
