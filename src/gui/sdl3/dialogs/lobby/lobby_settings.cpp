@@ -43,6 +43,12 @@ extern "C" {
 #include "../../sdl3draw.h"    /* sdl3DrawGetRenderer — the summary's sprites */
 }
 
+/* Selection state for the Visibility dialog. Initialized when the dialog opens,
+ * tracked while open, and cleared when closed. Allows selecting "Custom" even
+ * when the custom values match a preset; on dialog close, if the values still
+ * match a preset, it automatically reverts to that preset. */
+static int s_visSelectedPreset = -1;
+
 /* ── Layout A — editable game settings panel ──────────────────────
  * Renders the four mockup setting groups (Game Type / AI / Other /
  * Time Limit). Locked settings render disabled with a lock badge.
@@ -582,12 +588,14 @@ static bool lobbyVisibilityRowPick(const char *name, bool sel, bool disabled,
     /* Never drawn as selected: the radio is what says which row is on, and
      * a filled cell behind a checked radio says it twice. DontClosePopups so
      * clicking a preset row keeps the dialog open until Close or Esc. */
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNavDefaultFocus, true);
     if (ImGui::Selectable("##row", false,
                           ImGuiSelectableFlags_DontClosePopups,
                           ImVec2(cellW, rowH))
         && !sel) {
         clicked = true;
     }
+    ImGui::PopItemFlag();
     /* Read before the radio and the name are drawn over it, and shown after
      * EndDisabled so a non-host still gets to read what the row does. */
     bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
@@ -605,30 +613,47 @@ static bool lobbyVisibilityRowPick(const char *name, bool sel, bool disabled,
     return clicked;
 }
 
-/* Column c of the Custom row: the live setting, editable, behind the same
- * sprite the preset rows above it carry so the column reads the same all
- * the way down. Each control is the one the panel has always used, one to
- * a cell now rather than a stack of rows. Classic mode holds every one of
- * them: while it is on the server refuses the edit, so the cell goes
- * disabled rather than letting the host click it for nothing. */
+/* If classic mode is on, an edit to any of the six settings is refused by
+ * the server, so turn it off before sending the setting. */
+static void lobbyVisibilityEnsureClassicOff(ClientSim *cs) {
+    if (clientSimGetClassicMode(cs)) {
+        uint8_t off = 0;
+        lobbySendSetting(cs, LST_CLASSIC_MODE, &off, 1);
+    }
+}
+
+/* Column c of the Custom row (or a row of the stacked form): editable,
+ * behind the same sprite the preset rows above it carry so the column
+ * reads the same all the way down.
+ *
+ * When customSettings is non-NULL (the table view's Custom row), the
+ * control displays and updates the remembered custom settings,
+ * persisting them and applying them to the lobby so any change lands on
+ * Custom without clobbering other custom settings.
+ *
+ * When customSettings is NULL (the stacked form), the control displays
+ * the live match setting and edits it directly. */
 static void lobbyVisibilityCustomCell(ClientSim *cs, int c, bool effectiveHost,
                                       float maxCtrlW, float s,
-                                      bool stackSeconds) {
+                                      bool stackSeconds,
+                                      VisibilitySettings *customSettings) {
     static const uint8_t viewLst[3] = {
         LST_PILL_VIEW, LST_BASE_VIEW, LST_ALLY_VIEW
     };
     const ImGuiStyle &st = ImGui::GetStyle();
     VisibilitySettings live;
+    const VisibilitySettings *src = customSettings;
     LobbyVisIcon icon;
-    bool classic = clientSimGetClassicMode(cs);
     bool locked  = (clientSimGetLobbyServerLocks(cs)
                     & kVisColumns[c].lockBit) != 0;
-    bool disable = !effectiveHost || locked || classic;
-    bool hovered = false;
+    bool disable = !effectiveHost || locked;
     float ctrlW;
 
-    lobbyVisibilityRead(cs, &live);
-    lobbyVisibilityCellValue(&live, c, &icon, NULL, NULL);
+    if (src == NULL) {
+        lobbyVisibilityRead(cs, &live);
+        src = &live;
+    }
+    lobbyVisibilityCellValue(src, c, &icon, NULL, NULL);
 
     ImGui::PushID(c);
     if (disable) ImGui::BeginDisabled();
@@ -655,15 +680,24 @@ static void lobbyVisibilityCustomCell(ClientSim *cs, int c, bool effectiveHost,
             langGetText(STR_DLGLOBBY_VIEW_DECAY),
             langGetText(STR_DLGLOBBY_VIEW_OFF),
         };
-        int policy = (int)live.policy[c];
-        int secs   = (int)live.decaySecs[c];
+        int policy = (int)src->policy[c];
+        int secs   = (int)src->decaySecs[c];
         if (secs < VIEW_DECAY_MIN_SECS) secs = VIEW_DECAY_DEFAULT_SECS;
 
         ImGui::SetNextItemWidth(ctrlW);
         if (ImGui::Combo("##mode", &policy, modes, 4)) {
-            lobbyVisibilitySendView(cs, viewLst[c], policy, secs);
+            s_visSelectedPreset = (int)visibilityPresetCustom;
+            if (customSettings != NULL) {
+                customSettings->policy[c]    = (uint8_t)policy;
+                customSettings->decaySecs[c] = (uint16_t)secs;
+                customSettings->classicMode  = false;
+                gameFrontSetVisibilityCustom(customSettings);
+                lobbyVisibilityApply(cs, customSettings);
+            } else {
+                lobbyVisibilityEnsureClassicOff(cs);
+                lobbyVisibilitySendView(cs, viewLst[c], policy, secs);
+            }
         }
-        hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
         /* The seconds show only while the cell is on Decay. In the table
          * they go on a second line inside the cell, because beside the
          * combo they would widen every column for a value the other three
@@ -693,7 +727,19 @@ static void lobbyVisibilityCustomCell(ClientSim *cs, int c, bool effectiveHost,
             if (ImGui::InputInt("##decay", &secs, oneLine ? 1 : 0,
                                 oneLine ? 5 : 0,
                                 ImGuiInputTextFlags_EnterReturnsTrue)) {
-                lobbyVisibilitySendView(cs, viewLst[c], policy, secs);
+                s_visSelectedPreset = (int)visibilityPresetCustom;
+                if (secs < VIEW_DECAY_MIN_SECS) secs = VIEW_DECAY_MIN_SECS;
+                if (secs > VIEW_DECAY_MAX_SECS) secs = VIEW_DECAY_MAX_SECS;
+                if (customSettings != NULL) {
+                    customSettings->policy[c]    = (uint8_t)policy;
+                    customSettings->decaySecs[c] = (uint16_t)secs;
+                    customSettings->classicMode  = false;
+                    gameFrontSetVisibilityCustom(customSettings);
+                    lobbyVisibilityApply(cs, customSettings);
+                } else {
+                    lobbyVisibilityEnsureClassicOff(cs);
+                    lobbyVisibilitySendView(cs, viewLst[c], policy, secs);
+                }
             }
             ImGui::SameLine(0, st.ItemInnerSpacing.x);
             ImGui::TextUnformatted(secsLbl);
@@ -702,11 +748,35 @@ static void lobbyVisibilityCustomCell(ClientSim *cs, int c, bool effectiveHost,
                  * line and the same size, so the cell reads as one control
                  * that has folded rather than two different ones. */
                 if (ImGui::Button("-", ImVec2(frame, frame))) {
-                    lobbyVisibilitySendView(cs, viewLst[c], policy, secs - 1);
+                    s_visSelectedPreset = (int)visibilityPresetCustom;
+                    int newSecs = secs - 1;
+                    if (newSecs < VIEW_DECAY_MIN_SECS) newSecs = VIEW_DECAY_MIN_SECS;
+                    if (customSettings != NULL) {
+                        customSettings->policy[c]    = (uint8_t)policy;
+                        customSettings->decaySecs[c] = (uint16_t)newSecs;
+                        customSettings->classicMode  = false;
+                        gameFrontSetVisibilityCustom(customSettings);
+                        lobbyVisibilityApply(cs, customSettings);
+                    } else {
+                        lobbyVisibilityEnsureClassicOff(cs);
+                        lobbyVisibilitySendView(cs, viewLst[c], policy, newSecs);
+                    }
                 }
                 ImGui::SameLine(0, st.ItemInnerSpacing.x);
                 if (ImGui::Button("+", ImVec2(frame, frame))) {
-                    lobbyVisibilitySendView(cs, viewLst[c], policy, secs + 1);
+                    s_visSelectedPreset = (int)visibilityPresetCustom;
+                    int newSecs = secs + 1;
+                    if (newSecs > VIEW_DECAY_MAX_SECS) newSecs = VIEW_DECAY_MAX_SECS;
+                    if (customSettings != NULL) {
+                        customSettings->policy[c]    = (uint8_t)policy;
+                        customSettings->decaySecs[c] = (uint16_t)newSecs;
+                        customSettings->classicMode  = false;
+                        gameFrontSetVisibilityCustom(customSettings);
+                        lobbyVisibilityApply(cs, customSettings);
+                    } else {
+                        lobbyVisibilityEnsureClassicOff(cs);
+                        lobbyVisibilitySendView(cs, viewLst[c], policy, newSecs);
+                    }
                 }
             }
         }
@@ -715,40 +785,66 @@ static void lobbyVisibilityCustomCell(ClientSim *cs, int c, bool effectiveHost,
             langGetText(STR_YES),
             langGetText(STR_NO),
         };
-        int sel = live.alliesInTrees ? 0 : 1;
+        int sel = src->alliesInTrees ? 0 : 1;
         ImGui::SetNextItemWidth(ctrlW);
         if (ImGui::Combo("##trees", &sel, yesNo, 2)) {
-            uint8_t v = (sel == 0) ? 1 : 0;
-            lobbySendSetting(cs, LST_ALLIES_IN_TREES, &v, 1);
+            s_visSelectedPreset = (int)visibilityPresetCustom;
+            if (customSettings != NULL) {
+                customSettings->alliesInTrees = (sel == 0);
+                customSettings->classicMode   = false;
+                gameFrontSetVisibilityCustom(customSettings);
+                lobbyVisibilityApply(cs, customSettings);
+            } else {
+                lobbyVisibilityEnsureClassicOff(cs);
+                uint8_t v = (sel == 0) ? 1 : 0;
+                lobbySendSetting(cs, LST_ALLIES_IN_TREES, &v, 1);
+            }
         }
-        hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
     } else if (c == 4) {
         const char *windows[] = {
             langGetText(STR_DLGLOBBY_WINDOW_EXPANDED),
             langGetText(STR_DLGLOBBY_WINDOW_CLASSIC),
             langGetText(STR_DLGLOBBY_WINDOW_NONE),
         };
-        int window = (int)live.overviewWindow;
+        int window = (int)src->overviewWindow;
         ImGui::SetNextItemWidth(ctrlW);
         if (ImGui::Combo("##window", &window, windows,
                          (int)OVERVIEW_WINDOW_COUNT)) {
-            uint8_t v = (uint8_t)window;
-            lobbySendSetting(cs, LST_OVERVIEW_WINDOW, &v, 1);
+            s_visSelectedPreset = (int)visibilityPresetCustom;
+            if (customSettings != NULL) {
+                customSettings->overviewWindow = (uint8_t)window;
+                customSettings->classicMode    = false;
+                gameFrontSetVisibilityCustom(customSettings);
+                lobbyVisibilityApply(cs, customSettings);
+            } else {
+                lobbyVisibilityEnsureClassicOff(cs);
+                uint8_t v = (uint8_t)window;
+                lobbySendSetting(cs, LST_OVERVIEW_WINDOW, &v, 1);
+            }
         }
-        hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
     } else {
         const char *yesNo[] = {
             langGetText(STR_YES),
             langGetText(STR_NO),
         };
-        int sel = (live.lineOfSight != (uint8_t)lineOfSightOff) ? 0 : 1;
+        int sel = (src->lineOfSight != (uint8_t)lineOfSightOff) ? 0 : 1;
         ImGui::SetNextItemWidth(ctrlW);
         if (ImGui::Combo("##sight", &sel, yesNo, 2)) {
-            uint8_t v = (sel == 0) ? (uint8_t)lineOfSightBuildingsAndTrees
-                                   : (uint8_t)lineOfSightOff;
-            lobbySendSetting(cs, LST_LINE_OF_SIGHT, &v, 1);
+            s_visSelectedPreset = (int)visibilityPresetCustom;
+            if (customSettings != NULL) {
+                customSettings->lineOfSight = (sel == 0)
+                                                  ? (uint8_t)lineOfSightBuildingsAndTrees
+                                                  : (uint8_t)lineOfSightOff;
+                customSettings->classicMode = false;
+                gameFrontSetVisibilityCustom(customSettings);
+                lobbyVisibilityApply(cs, customSettings);
+            } else {
+                lobbyVisibilityEnsureClassicOff(cs);
+                uint8_t v = (sel == 0) ? (uint8_t)lineOfSightBuildingsAndTrees
+                                       : (uint8_t)lineOfSightOff;
+                lobbySendSetting(cs, LST_LINE_OF_SIGHT, &v, 1);
+            }
         }
-        hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
     }
     /* The hover is read before the badge draws, so the tooltip belongs to
      * the control and not to the badge — which carries its own "locked by
@@ -756,13 +852,6 @@ static void lobbyVisibilityCustomCell(ClientSim *cs, int c, bool effectiveHost,
      * at full contrast rather than dimmed with the cell. */
     if (disable) ImGui::EndDisabled();
     if (locked) lobbyRenderLockBadge();
-    /* Classic mode gets no badge — a server lock and a classic-mode
-     * grey-out are different reasons for the same disabled cell, and only
-     * the lock is badged. Say why in a tooltip instead, when classic mode
-     * is the only thing holding it. */
-    if (hovered && classic && !locked && effectiveHost) {
-        ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_CLASSIC_MODE_TIP));
-    }
     ImGui::PopID();
 }
 
@@ -828,13 +917,22 @@ static void lobbyRenderVisibilityTooltip(const VisibilitySettings *v,
  * entry, which is what a caller with room to spare wants. */
 static void lobbyVisibilityPresetCombo(ClientSim *cs, const char *id,
                                        float width, bool disabled,
-                                       uint32_t visLocks, float s) {
+                                       uint32_t visLocks, float s,
+                                       int *dialogSelectedPreset = NULL) {
     const ImGuiStyle &st = ImGui::GetStyle();
     VisibilitySettings live;
 
     lobbyVisibilityRead(cs, &live);
     VisibilityPreset livePreset = visibilityPresetMatch(&live);
-    const char *preview = langGetText(visibilityPresetNameId(livePreset));
+    const char *preview;
+    if (dialogSelectedPreset != NULL && *dialogSelectedPreset == (int)visibilityPresetCustom) {
+        preview = langGetText(STR_DLGLOBBY_PRESET_CUSTOM);
+    } else if (dialogSelectedPreset != NULL && *dialogSelectedPreset >= 0 &&
+               *dialogSelectedPreset < (int)VISIBILITY_PRESET_COUNT) {
+        preview = langGetText(visibilityPresetNameId((VisibilityPreset)*dialogSelectedPreset));
+    } else {
+        preview = langGetText(visibilityPresetNameId(livePreset));
+    }
 
     if (width <= 0.0f) {
         width = ImGui::CalcTextSize(
@@ -860,10 +958,15 @@ static void lobbyVisibilityPresetCombo(ClientSim *cs, const char *id,
     if (comboOpen) {
         for (int p = 0; p < (int)VISIBILITY_PRESET_COUNT; p++) {
             VisibilityPreset preset = (VisibilityPreset)p;
-            bool sel = (livePreset == preset);
+            bool sel = (dialogSelectedPreset != NULL)
+                           ? (*dialogSelectedPreset == (int)preset)
+                           : (livePreset == preset);
             if (ImGui::Selectable(langGetText(visibilityPresetNameId(preset)),
                                   sel)
                 && !sel) {
+                if (dialogSelectedPreset != NULL) {
+                    *dialogSelectedPreset = (int)preset;
+                }
                 lobbyVisibilityApplyPreset(cs, preset);
             }
             if (ImGui::IsItemHovered()) {
@@ -874,10 +977,17 @@ static void lobbyVisibilityPresetCombo(ClientSim *cs, const char *id,
         /* Custom is listed whether or not the host has ever made a set - the
          * row the settings can land on must never be missing from the list -
          * but with none made it names nothing and picking it does nothing. */
-        bool customSel = (livePreset == visibilityPresetCustom);
+        bool customSel = (dialogSelectedPreset != NULL)
+                             ? (*dialogSelectedPreset == (int)visibilityPresetCustom)
+                             : (livePreset == visibilityPresetCustom);
         if (ImGui::Selectable(langGetText(STR_DLGLOBBY_PRESET_CUSTOM),
                               customSel)
-            && !customSel && gameFrontVisibilityCustomSaved) {
+            && !customSel) {
+            if (dialogSelectedPreset != NULL) {
+                *dialogSelectedPreset = (int)visibilityPresetCustom;
+            }
+            gameFrontVisibilityCustom.classicMode = false;
+            gameFrontSetVisibilityCustom(&gameFrontVisibilityCustom);
             lobbyVisibilityApply(cs, &gameFrontVisibilityCustom);
         }
         /* Custom has no fixed description - what it does is the set itself,
@@ -923,7 +1033,8 @@ static void lobbyRenderVisibilityStackedForm(ClientSim *cs, bool effectiveHost,
     int   c;
 
     lobbyVisibilityPresetCombo(cs, "##visformpreset", 0.0f,
-                               !effectiveHost || visLocks != 0, visLocks, s);
+                               !effectiveHost || visLocks != 0, visLocks, s,
+                               &s_visSelectedPreset);
     ImGui::Separator();
 
     /* One column of labels, so the controls beside them line up. */
@@ -947,7 +1058,7 @@ static void lobbyRenderVisibilityStackedForm(ClientSim *cs, bool effectiveHost,
         lobbyVisibilityCustomCell(cs, c, effectiveHost,
                                   lobbyVisibilityValueColumnMinWidth(s)
                                       + 60.0f * s,
-                                  s, false);
+                                  s, false, NULL);
     }
 }
 
@@ -986,8 +1097,10 @@ static ImVec2 lobbyVisibilityInitialWindowSize(float s) {
                       + ImGui::GetFrameHeight() * 2.0f
                       + tst.ItemSpacing.y * 3.0f);
     ImVec2 room = ImGui::GetMainViewport()->WorkSize;
+    float maxInitialW = room.x * 0.90f;
     room.x -= 40.0f * s;
     room.y -= 40.0f * s;
+    if (want.x > maxInitialW) want.x = maxInitialW;
     if (want.x > room.x) want.x = room.x;
     if (want.y > room.y) want.y = room.y;
     return want;
@@ -1508,11 +1621,26 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
         static float  s_visTargetH = 0.0f;
         static bool   s_visWinForceResize = false;
 
+        float enclosingW = ImGui::GetWindowWidth();
+        if (enclosingW <= 0.0f || enclosingW > ImGui::GetMainViewport()->WorkSize.x) {
+            enclosingW = ImGui::GetMainViewport()->WorkSize.x;
+        }
+        float maxW = enclosingW * 0.90f;
+        float minW = 320.0f * s;
+        if (minW > maxW) minW = maxW;
+
         if (s_visWinSize.x <= 0.0f) {
             ImGui::SetWindowFontScale(1.0f);
             s_visWinSize = lobbyVisibilityInitialWindowSize(s);
             ImGui::SetWindowFontScale(0.85f);
+            if (s_visWinSize.x > maxW) {
+                s_visWinSize.x = maxW;
+            }
             s_visTargetH = s_visWinSize.y;
+            s_visWinForceResize = true;
+        }
+        if (s_visWinSize.x > maxW) {
+            s_visWinSize.x = maxW;
             s_visWinForceResize = true;
         }
 
@@ -1523,17 +1651,36 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             ImGui::SetNextWindowSize(s_visWinSize, ImGuiCond_Appearing);
         }
         /* Lock vertical height to programmatic / auto sizing so the user
-         * cannot vertically drag the height. Horizontal width resizing
-         * remains free. */
+         * cannot vertically drag the height. Constrain width to at most 90%
+         * of the enclosing window width. */
         {
             float lockH = (s_visTargetH > 0.0f) ? s_visTargetH : -1.0f;
-            ImGui::SetNextWindowSizeConstraints(ImVec2(320.0f * s, lockH),
-                                                ImVec2(FLT_MAX,    lockH));
+            ImGui::SetNextWindowSizeConstraints(ImVec2(minW, lockH),
+                                                ImVec2(maxW, lockH));
         }
         /* Resizable on purpose: the table is six columns wide and a small
          * window cannot hold it, so the host is given the edge to drag
          * rather than a body that quietly hides its last two columns. */
         if (ImGui::BeginPopupModal(visTitle, &s_visOpen, 0)) {
+            /* Do not auto-focus the first cell with a nav outline when the
+             * dialog is first opened. */
+            if (ImGui::IsWindowAppearing()) {
+                ImGuiContext *g = ImGui::GetCurrentContext();
+                if (g) {
+                    g->NavInitRequest = false;
+                    g->NavInitResult.ID = 0;
+                    g->NavId = 0;
+                    g->NavCursorVisible = false;
+                }
+                ImGuiWindow *win = ImGui::GetCurrentWindow();
+                if (win) {
+                    win->NavLastIds[0] = 0;
+                    win->NavLastIds[1] = 0;
+                }
+                VisibilitySettings liveInit;
+                lobbyVisibilityRead(cs, &liveInit);
+                s_visSelectedPreset = (int)visibilityPresetMatch(&liveInit);
+            }
             /* One table: a row per way of playing, a column per setting,
              * and in each cell the value that row runs. A preset row
              * reads as words; the Custom row carries the controls
@@ -1546,9 +1693,20 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             VisibilitySettings live;
             lobbyVisibilityRead(cs, &live);
             VisibilityPreset livePreset = visibilityPresetMatch(&live);
+            if (s_visSelectedPreset < 0) {
+                s_visSelectedPreset = (int)livePreset;
+            }
             uint32_t visLocks =
                 clientSimGetLobbyServerLocks(cs) & kVisibilityLockMask;
             bool presetDisabled = !effectiveHost || visLocks != 0;
+            if (!gameFrontVisibilityCustomSaved) {
+                gameFrontVisibilityCustom.classicMode = false;
+                for (int ci = 0; ci < (int)VIEW_CATEGORY_COUNT; ci++) {
+                    if (gameFrontVisibilityCustom.decaySecs[ci] < VIEW_DECAY_MIN_SECS) {
+                        gameFrontVisibilityCustom.decaySecs[ci] = VIEW_DECAY_DEFAULT_SECS;
+                    }
+                }
+            }
 
             const ImGuiStyle &tst = ImGui::GetStyle();
             /* Every value column is the same width as every other, so the
@@ -1640,7 +1798,7 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                 for (int p = 0; p < (int)VISIBILITY_PRESET_COUNT; p++) {
                     VisibilityPreset preset = (VisibilityPreset)p;
                     VisibilitySettings row;
-                    bool sel = (livePreset == preset);
+                    bool sel = (s_visSelectedPreset == (int)preset);
 
                     if (!visibilityPresetSettings(preset, &row)) continue;
                     ImGui::PushID(p);
@@ -1650,6 +1808,7 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                             langGetText(visibilityPresetNameId(preset)), sel,
                             presetDisabled,
                             langGetText(visibilityPresetDescId(preset)))) {
+                        s_visSelectedPreset = (int)preset;
                         lobbyVisibilityApplyPreset(cs, preset);
                     }
                     for (c = 0; c < VIS_COLUMN_COUNT; c++) {
@@ -1665,12 +1824,11 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                 }
 
                 {
-                    bool sel = (livePreset == visibilityPresetCustom);
+                    bool sel = (s_visSelectedPreset == (int)visibilityPresetCustom);
                     /* A Custom row with no set behind it cannot be picked —
                      * there is nothing to go back to. Changing one of the
                      * controls along it is how the lobby lands here. */
-                    bool pickable = effectiveHost && visLocks == 0 &&
-                                    gameFrontVisibilityCustomSaved;
+                    bool pickable = effectiveHost && visLocks == 0;
                     char customRowLine[192];
                     customRowLine[0] = '\0';
                     if (gameFrontVisibilityCustomSaved) {
@@ -1691,6 +1849,9 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                             gameFrontVisibilityCustomSaved
                                 ? customRowLine
                                 : langGetText(STR_DLGLOBBY_PRESET_CUSTOM_DESC))) {
+                        s_visSelectedPreset = (int)visibilityPresetCustom;
+                        gameFrontVisibilityCustom.classicMode = false;
+                        gameFrontSetVisibilityCustom(&gameFrontVisibilityCustom);
                         lobbyVisibilityApply(cs, &gameFrontVisibilityCustom);
                     }
                     for (c = 0; c < VIS_COLUMN_COUNT; c++) {
@@ -1698,7 +1859,8 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                         /* No cap: a stretched cell hands its width to
                          * the control inside it. */
                         lobbyVisibilityCustomCell(cs, c, effectiveHost,
-                                                  0.0f, s, true);
+                                                  0.0f, s, true,
+                                                  &gameFrontVisibilityCustom);
                     }
                     ImGui::PopID();
                 }
@@ -1709,9 +1871,23 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             /* A real Close button, not just the title-bar X: ImGui's
              * NavCancel leaves modals open, so a controller needs
              * something focusable to leave by. */
+            bool wantClose = !s_visOpen;
             if (WBUI::DialogFooter(/*cancelLabel*/ NULL,
                                    /*confirmLabel*/ langGetText(STR_CLOSE))
                 != WBUI::FOOTER_NONE) {
+                wantClose = true;
+            }
+            if (wantClose) {
+                if (effectiveHost && visLocks == 0 &&
+                    s_visSelectedPreset == (int)visibilityPresetCustom) {
+                    VisibilitySettings cur;
+                    lobbyVisibilityRead(cs, &cur);
+                    VisibilityPreset match = visibilityPresetMatch(&cur);
+                    if (match != visibilityPresetCustom) {
+                        lobbyVisibilityApplyPreset(cs, match);
+                    }
+                }
+                s_visSelectedPreset = -1;
                 ImGui::CloseCurrentPopup();
             }
 
@@ -1735,9 +1911,11 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                 s_visTargetH = neededH;
 
                 float currentW = ImGui::GetWindowWidth();
+                if (currentW > maxW) currentW = maxW;
                 if (s_visWinSize.x > currentW && ImGui::IsWindowAppearing()) {
                     currentW = s_visWinSize.x;
                 }
+                if (currentW > maxW) currentW = maxW;
 
                 if (fabsf(neededH - currentH) > 1.0f) {
                     ImVec2 newSize(currentW, neededH);
