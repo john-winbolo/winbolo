@@ -373,7 +373,7 @@ int run_scenario_host_metadata(void) {
         "    max_players = 6,\n"
         "    extra_teams = false,\n"
         "    teams = { { id = 2, bots = 10, max_bots = 12, fielded = false,\n"
-        "                brain = \"package:horde\" } },\n"
+        "                brain = \"package:raider\" } },\n"
         "  },\n"
         "}\n";
     ServerSim              *sim;
@@ -411,7 +411,7 @@ int run_scenario_host_metadata(void) {
     UT_ASSERT_MSG(m->lobby.teams[0].maxBots == 12, "max_bots read as %u",
                   (unsigned)m->lobby.teams[0].maxBots);
     UT_ASSERT_MSG(!m->lobby.teams[0].fielded, "fielded read as true");
-    UT_ASSERT_MSG(strcmp(m->lobby.teams[0].brain, "package:horde") == 0,
+    UT_ASSERT_MSG(strcmp(m->lobby.teams[0].brain, "package:raider") == 0,
                   "brain read as '%s'", m->lobby.teams[0].brain);
 
     scenarioHostDetach(h);
@@ -689,7 +689,7 @@ int run_scenario_host_manifest_roundtrip(void) {
         "    max_players = 8, extra_teams = true,\n"
         "    teams = {\n"
         "      { id = 2, bots = 3, max_bots = 5, fielded = false,\n"
-        "        brain = \"package:horde\" },\n"
+        "        brain = \"package:raider\" },\n"
         "      { id = 3, bots = 1, max_bots = 2, fielded = true,\n"
         "        brain = \"brains/idle.lua\" },\n"
         "    },\n"

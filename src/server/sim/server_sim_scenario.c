@@ -1836,8 +1836,8 @@ static bool scenarioSeatOne(ServerSim *sim, const ScnLobbyTeam *team) {
 
 /* Build the lobby the attached scenario asks for, from whatever is there
  * now. Every seat the previous scenario left goes first, so committing a
- * plain map over a scenario one leaves no horde behind, and a scenario with
- * no template of its own leaves an ordinary lobby. */
+ * plain map over a scenario one leaves no held seats behind, and a scenario
+ * with no template of its own leaves an ordinary lobby. */
 void serverSimScenarioSeatLobby(ServerSim *sim) {
     BYTE t;
     if (sim == NULL) return;
@@ -1857,12 +1857,12 @@ void serverSimScenarioSeatLobby(ServerSim *sim) {
  * template, keeping what the host did to it in between.
  *
  * bots is how many the engine seeds and not a number it keeps re-imposing:
- * a host who trimmed a horde of ten to six gets six back, because the point
+ * a host who trimmed ten seats to six gets six back, because the point
  * of seating them where the host can see them is that the host may trim
  * them. maxBots is the one that still binds, so a host who added past it is
  * cut back to it. A team the host emptied altogether stays empty — that is
  * the same edit as the trim to six, only further, and a floor that appeared
- * only at zero would let a host reduce a horde to one but not to none.
+ * only at zero would let a host reduce the seats to one but not to none.
  *
  * Then the other half: a seat the script fielded during the round goes back
  * to being held, so the next round starts from the lobby the template

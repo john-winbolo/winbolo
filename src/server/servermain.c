@@ -2435,8 +2435,8 @@ int main(int argc, char **argv) {
      Before the operator's -bots, which take the seats above these.
 
      The headless makes the same call after its own player has joined: that
-     binary plays as well as hosts and its player has to hold slot 0, which a
-     horde seated first would take. Nobody plays from here — every
+     binary plays as well as hosts and its player has to hold slot 0, which
+     bots seated first would take. Nobody plays from here — every
      participant joins over the wire — so there is no slot to keep back.
 
      Not on a server that skipped the lobby: its round started inside the

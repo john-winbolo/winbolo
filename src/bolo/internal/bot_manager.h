@@ -686,7 +686,7 @@ void botManagerReleaseParkedRunner(struct ServerSim *sim, BYTE playerNum);
  *  abandoned (serverSimAbortCountdown), where the round the
  *  warm built them for never starts. Not at the round START:
  *  that path only runs when the pool holds an active bot, and
- *  a round whose whole horde was parked has none.
+ *  a round whose bots were all parked has none.
  *
  *ARGUMENTS:
  *  sim - The ServerSim

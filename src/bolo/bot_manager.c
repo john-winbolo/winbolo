@@ -1805,7 +1805,7 @@ void botManagerOnGameStart(ServerSim *sim) {
         /* A parked runner is not this function's to deal with. It is released
          * at the round END (serverSimReturnToLobby, the rotation and the
          * empty reset), not here: this runs only when the pool already holds
-         * an active bot, so a round whose whole horde was parked — every
+         * an active bot, so a round whose bots were all parked — every
          * Wave Defense round, which unfields its last wave before it ends —
          * would never reach it. */
         if (!bot->active) continue;

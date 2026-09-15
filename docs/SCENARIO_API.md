@@ -259,7 +259,7 @@ step, and the hooks the server calls report what happened:
 
 ```lua
 function on_start()
-  seats = horde_seats()
+  seats = held_seats()
   hand_over_the_keep(enlist_the_defenders())
   game.message("Wave Defense: hold the keep through 3 waves.")
   game.timer(2, next_wave)
@@ -714,7 +714,7 @@ starts comes due after about twice the seconds it asked for.
 | `game.lobby_slot(p)` | `{ connected, bot, team, name, ready, fielded, alive }`, or `nil` for an empty seat. **`fielded` is the field that tells a held seat from one on the field.** |
 
 A seat the lobby is holding for a bot reads as connected, a bot, on its team,
-and `fielded = false`. That is how Wave Defense finds its horde:
+and `fielded = false`. That is how Wave Defense finds its held seats:
 
 ```lua
 for p = 0, game.max_tanks() - 1 do

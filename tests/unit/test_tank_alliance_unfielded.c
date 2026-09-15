@@ -1,7 +1,7 @@
 /*
  * A seat with no tank shows no tank in the status strip.
  *
- * A horde seat between waves stays in the roster: unfielding keeps the
+ * A held seat between waves stays in the roster: unfielding keeps the
  * connection, the players-table identity and the name, so the table still
  * reads the seat as a live player. playersScreenAllience answers tankNone
  * only for a slot that is not inUse, so such a seat used to come back
@@ -36,7 +36,7 @@
 #include "test_harness.h"
 
 #define TA_SELF_SLOT   1  /* 0-based; the local player */
-#define TA_RAIDER_SLOT 5  /* 0-based; a horde seat */
+#define TA_RAIDER_SLOT 5  /* 0-based; a held seat */
 
 /* Register a slot in the players table so it reads as inUse, which is the
    whole of what playersScreenAllience looks at. Registered the way the

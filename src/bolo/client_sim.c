@@ -3948,7 +3948,7 @@ void clientSimCycleBuildSelect(ClientSim *cs, int delta) {
 
 /* Alliance accessors. */
 
-/* A seat the roster is holding with nobody on the field — a horde seat
+/* A seat the roster is holding with nobody on the field — a held seat
    between waves. Unfielding keeps everything the roster knows, the
    players-table identity included, so playersScreenAllience goes on
    reading the seat as a live player and answers tankEvil for it. It has

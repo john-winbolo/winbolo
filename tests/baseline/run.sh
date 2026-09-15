@@ -455,7 +455,7 @@ run_events_cmd_fast() {
 # The check is the round's own outcome rather than a recorded log. A scenario
 # says what happened when it ends the round, so the line is the result; a run
 # that stalls, or one whose waves never field, never says it. --bot-brain is
-# what the horde's seats load when a wave fields one — not --brain, which is
+# what the held seats load when a wave fields one — not --brain, which is
 # this process's own player and is left out here.
 run_scenario_fast() {
   local name="$1"
@@ -489,11 +489,11 @@ run_scenario_fast() {
 # Three things differ from every other UDP helper here, each for its own
 # reason.
 #
-# The lobby stays live. The horde is a team of held seats and the scenario's
+# The lobby stays live. The raiders are a team of held seats and the scenario's
 # lobby template is what seats them, so -nolobby would leave the waves with
 # nothing to field. The seats are taken before anyone joins and
-# serverSimFindFreeSlot hands out the first free slot, so the horde holds the
-# low slots and the one human lands above it.
+# serverSimFindFreeSlot hands out the first free slot, so the held seats take
+# the low slots and the one human lands above them.
 #
 # The client only readies. start_game is refused in --server mode, so the
 # round is started by the lobby's own all-ready check: one ready human plus
@@ -519,7 +519,7 @@ run_scenario_fast() {
 # -ai yesfull is what lets a wave field a seat at all: the spawn arm refuses
 # on a server that runs no bots, and the dedicated server's default is none.
 # -brain is the DS spelling of what run_scenario_fast passes as --bot-brain —
-# the scenario's lobby names no brain of its own, so the horde's seats fall
+# the scenario's lobby names no brain of its own, so the held seats fall
 # back to the server's.
 #
 # Arguments: name, map, client command file, bot brain, client tick budget.
@@ -532,7 +532,7 @@ run_scenario_swap_udp() {
   local port
   echo -n "  $name ... "
 
-  # A horde seat leaving the roster is a CTRL_LOBBY_SLOT for one of the low
+  # A held seat leaving the roster is a CTRL_LOBBY_SLOT for one of the low
   # slots carrying connected:false. The six seats hold 0-5, so the human's own
   # slot and the empty ones a join replay reports are outside this.
   local lost_seat='"playerNum":[0-5],"slot":[{]"connected":false'
@@ -540,7 +540,7 @@ run_scenario_swap_udp() {
   # for, and the line its last wave announces itself with, which is checked
   # after the run. Both are needed and neither covers the other.
   #
-  # The end line alone would pass on a round that never had a horde: next_wave
+  # The end line alone would pass on a round that never had seats: next_wave
   # clamps what it asks for to the number of seats it found, so with no seats
   # it fields nothing, times each wave out, and reaches the same end. The wave
   # line is the scenario's own count of what it actually put on the field —
@@ -677,7 +677,7 @@ run_scenario_swap_udp() {
   fi
   if grep -qE "$lost_seat" "$ACTUAL/$name.jsonl"; then
     echo "SEAT LOST"
-    echo "    a horde seat left the roster over the swap"
+    echo "    a held seat left the roster over the swap"
     grep -nE "$lost_seat" "$ACTUAL/$name.jsonl" | head -5
     tail -10 "$ACTUAL/$name.ds.err"
     tail -10 "$ACTUAL/$name.err"
@@ -697,10 +697,10 @@ run_scenario_swap_udp() {
     return 1
   fi
   if ! grep -qF "$fielded" "$ACTUAL/$name.jsonl"; then
-    echo "NO HORDE"
+    echo "NO WAVE"
     echo "    the round ended, but never said: $fielded"
     # What it did say, which names the wave it got to and how many it put on
-    # the field: none at all means the template seated no horde.
+    # the field: none at all means the template seated no bots.
     grep -o "Wave [0-9]* of [0-9]*: [0-9]* raiders." "$ACTUAL/$name.jsonl" | head -5
     tail -10 "$ACTUAL/$name.ds.err"
     tail -10 "$ACTUAL/$name.err"
@@ -1445,7 +1445,7 @@ dispatch_scenario() {
     # reaches its own end, or if the last wave did not field six raiders.
     #
     # The last two checks are both needed. The scenario ends the round the same
-    # way whether or not it ever had a horde — next_wave clamps what it asks
+    # way whether or not it ever had seats — next_wave clamps what it asks
     # for to the seats it found, so with none it fields nothing, times each
     # wave out and still reaches the end. So the end line alone would pass on a
     # run where the lobby template seated nothing, which is the one failure

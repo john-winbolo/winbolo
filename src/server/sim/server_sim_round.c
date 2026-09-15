@@ -204,7 +204,7 @@ void serverSimInformation(ServerSim *sim, bool locked) {
             BotInfo bi;
             bool isBotSlot = botManagerGetBotInfo(sim, count, &bi);
             /* A seat the roster is holding for a bot that is not on the field
-               — a horde seat between waves. It owns nothing and has no tank,
+               — a held seat between waves. It owns nothing and has no tank,
                and the marker is what tells it from a slot whose bot is out
                there playing. Printed in the shape a bot slot gets rather than
                the one below it: the ping, the buffer depth and the address the

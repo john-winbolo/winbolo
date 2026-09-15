@@ -5262,12 +5262,12 @@ set(_unit_test_names
     unfielded_seat_spawn_keeps_alliances
     unfielded_seat_on_the_wire
     scenario_wave_cost_refield_resumes
-    scenario_wave_cost_horde_swap_counts
+    scenario_wave_cost_seats_swap_counts
     scenario_wave_cost_other_brain_rebuilds
     scenario_wave_cost_brain_case_rebuilds
     scenario_wave_cost_other_init_rebuilds
     scenario_wave_cost_round_end_releases
-    scenario_wave_cost_horde_parked_releases
+    scenario_wave_cost_all_parked_releases
     scenario_wave_cost_rotation_releases
     scenario_wave_cost_seat_leaving_releases
     scenario_wave_cost_destroy_releases

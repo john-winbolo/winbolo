@@ -3104,7 +3104,7 @@ static void renderPlayersContent(ClientSim *cs) {
              * opaque, so a dimmed frame turns translucent and takes the
              * colour of the row behind it — which means the same disabled
              * slider is one grey on a striped row and another on a bare one.
-             * With every row a bot, as a horde game is, that reads as the
+             * With every row a bot, as an all-bot game is, that reads as the
              * zebra leaking into the controls. The frame is a control's
              * outline and should not move with the row it sits on; the grab
              * is what has to say the control is dead. */

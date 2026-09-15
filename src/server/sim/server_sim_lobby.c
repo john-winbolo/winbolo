@@ -160,10 +160,10 @@ static const char *slotBrainPath(const ServerSim *sim, BYTE slot) {
  *   1. the caller's base — the lobby default, or single player's own
  *      chosen level;
  *   2. what the map requires for the bot's side — the scenario's
- *      bot_mode(game, team) hook; on Survival the horde is survival mode at
- *      Hard;
+ *      bot_mode(game, team) hook; on Survival the team's bots are survival
+ *      mode at Hard;
  *   3. what the host last picked BY HAND, when the caller honours it — only
- *      the difficulty when step 2 fixed the mode (a horde bot stays in
+ *      the difficulty when step 2 fixed the mode (a bot on that team stays in
  *      survival mode, at the Medium the host chose), mode and difficulty
  *      both otherwise.
  *
@@ -255,7 +255,7 @@ void serverSimApplyNewBotDefaults(ServerSim *sim, BYTE slot, int team,
     /* The lobby default is the base, and it is written even when the brain
      * ships no manifest: botConfigs[slot] still holds whatever the slot's
      * PREVIOUS occupant had, and a new defender must not inherit a removed
-     * horde bot's survival mode. */
+     * bot's survival mode. */
     serverSimResolveNewBotConfig(sim, team, brainPath, honourManualPick,
                                  &mode, &level);
     sim->botConfigs[slot].mode       = mode;

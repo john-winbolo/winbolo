@@ -38,7 +38,7 @@
  *                                               throughout — carrying none of
  *                                               the previous life's prediction
  *                                               state or think telemetry
- * run_scenario_wave_cost_horde_swap_counts    — six seats swapped twice: six
+ * run_scenario_wave_cost_seats_swap_counts    — six seats swapped twice: six
  *                                               brains made, none destroyed,
  *                                               and no seat off the roster
  * run_scenario_wave_cost_other_brain_rebuilds — a refield naming another brain
@@ -50,7 +50,7 @@
  *                                               init table
  * run_scenario_wave_cost_round_end_releases   — a parked runner does not cross
  *                                               a round boundary
- * run_scenario_wave_cost_horde_parked_releases— and neither does a whole horde
+ * run_scenario_wave_cost_all_parked_releases  — and neither does a whole wave
  *                                               of them, which is the shape no
  *                                               active bot is left to carry
  * run_scenario_wave_cost_rotation_releases    — nor does one cross the other
@@ -125,7 +125,7 @@
 #include "everard_map.h"
 #include "test_harness.h"
 
-/* Slot 0 holds the human; the horde takes the six seats after it, all on one
+/* Slot 0 holds the human; the bots take the six seats after it, all on one
  * team, which is the Survival shape. The one-seat cases take the first of
  * them. */
 #define WC_TEAM        3
@@ -249,8 +249,8 @@ static int wcConnectedSeats(const ServerSim *sim) {
     return n;
 }
 
-/* The brains made for the horde's six seats, added up. */
-static int wcHordeCreates(void) {
+/* The brains made for the six held seats, added up. */
+static int wcSeatCreates(void) {
     int n = 0;
     int i;
     for (i = 0; i < WC_SEATS; i++) {
@@ -351,7 +351,7 @@ static bool wcSameTable(const ScnTable *a, const ScnTable *b) {
 }
 
 /* Seat the wave's seats from a lobby template, which is the only thing that
- * carries a team's init table: wcSeatHorde below goes straight to
+ * carries a team's init table: wcSeatTeam below goes straight to
  * serverSimAddUnfieldedSeat, and a seat made that way has no team behind it
  * to take a brain or a table from. One unfielded team of WC_SEATS, so the
  * seats land in the slots from WC_FIRST_SEAT up, above the human in slot 0. */
@@ -381,13 +381,13 @@ static bool wcSeatFromTemplate(ServerSim *sim, const ScnTable *init) {
     return true;
 }
 
-/* Seat the horde in a fresh lobby, named as the template names them. */
-static bool wcSeatHorde(ServerSim *sim) {
+/* Seat the team's seats in a fresh lobby, named as the template names them. */
+static bool wcSeatTeam(ServerSim *sim) {
     int i;
 
     for (i = 0; i < WC_SEATS; i++) {
         char name[PLAYER_NAME_LEN];
-        SDL_snprintf(name, sizeof(name), "Horde%d", i + 1);
+        SDL_snprintf(name, sizeof(name), "Raider%d", i + 1);
         if (!serverSimAddUnfieldedSeat(sim, (BYTE)(WC_FIRST_SEAT + i),
                                        name, WC_TEAM)) {
             return false;
@@ -403,7 +403,7 @@ static ServerSim *wcParkedSeatSim(BYTE seat) {
     ScenarioOp op;
 
     if (sim == NULL) return NULL;
-    if (!serverSimAddUnfieldedSeat(sim, seat, "Horde1", WC_TEAM)) {
+    if (!serverSimAddUnfieldedSeat(sim, seat, "Raider1", WC_TEAM)) {
         serverSimDestroy(sim);
         return NULL;
     }
@@ -435,7 +435,7 @@ int run_scenario_wave_cost_refield_resumes(void) {
     ut_brain_stub_arm(true);
     sim = wcLobbySim();
     UT_ASSERT(sim != NULL);
-    UT_ASSERT(serverSimAddUnfieldedSeat(sim, seat, "Horde1", WC_TEAM));
+    UT_ASSERT(serverSimAddUnfieldedSeat(sim, seat, "Raider1", WC_TEAM));
     serverSimStartGame(sim);
     UT_ASSERT(sim->state == serverStateRunning);
 
@@ -579,18 +579,18 @@ int run_scenario_wave_cost_refield_resumes(void) {
 
 /* ── Six seats, swapped twice ─────────────────────────────────────── */
 
-int run_scenario_wave_cost_horde_swap_counts(void) {
+int run_scenario_wave_cost_seats_swap_counts(void) {
     ServerSim *sim;
     int i;
 
-    UT_ASSERT(wcMakeBrainFile("horde_swap_counts"));
+    UT_ASSERT(wcMakeBrainFile("seats_swap_counts"));
     ut_brain_stub_arm(true);
     sim = wcLobbySim();
     UT_ASSERT(sim != NULL);
 
     for (i = 0; i < WC_SEATS; i++) {
         char name[PLAYER_NAME_LEN];
-        SDL_snprintf(name, sizeof(name), "Horde%d", i + 1);
+        SDL_snprintf(name, sizeof(name), "Raider%d", i + 1);
         UT_ASSERT_MSG(serverSimAddUnfieldedSeat(sim, (BYTE)(WC_FIRST_SEAT + i),
                                                 name, WC_TEAM),
                       "seat %d of the %d would not be seated",
@@ -603,16 +603,16 @@ int run_scenario_wave_cost_horde_swap_counts(void) {
                   "the roster holds %d seats before the first wave, expected "
                   "%d — one human and %d held seats",
                   wcConnectedSeats(sim), WC_CONNECTED, WC_SEATS);
-    UT_ASSERT_MSG(wcHordeCreates() == 0,
+    UT_ASSERT_MSG(wcSeatCreates() == 0,
                   "%d brains were made before the first wave, expected 0",
-                  wcHordeCreates());
+                  wcSeatCreates());
 
     /* The first wave. */
     UT_ASSERT_MSG(wcFieldAll(sim),
                   "the first wave did not field all %d seats", WC_SEATS);
-    UT_ASSERT_MSG(wcHordeCreates() == WC_SEATS,
+    UT_ASSERT_MSG(wcSeatCreates() == WC_SEATS,
                   "the first wave made %d brains, expected %d",
-                  wcHordeCreates(), WC_SEATS);
+                  wcSeatCreates(), WC_SEATS);
     UT_ASSERT_MSG(ut_brain_stub_destroys() == 0,
                   "the first wave destroyed %d brains, expected 0",
                   ut_brain_stub_destroys());
@@ -628,10 +628,10 @@ int run_scenario_wave_cost_horde_swap_counts(void) {
                   "taking the wave off the field destroyed %d brains, "
                   "expected 0 — every runner is parked for the next wave",
                   ut_brain_stub_destroys());
-    UT_ASSERT_MSG(wcHordeCreates() == WC_SEATS,
+    UT_ASSERT_MSG(wcSeatCreates() == WC_SEATS,
                   "%d brains had been made by the end of the transition, "
                   "expected the %d the first wave made",
-                  wcHordeCreates(), WC_SEATS);
+                  wcSeatCreates(), WC_SEATS);
     UT_ASSERT_MSG(wcConnectedSeats(sim) == WC_CONNECTED,
                   "the roster holds %d seats with the wave off the field, "
                   "expected %d", wcConnectedSeats(sim), WC_CONNECTED);
@@ -639,10 +639,10 @@ int run_scenario_wave_cost_horde_swap_counts(void) {
     /* The second wave, into the same six seats. */
     UT_ASSERT_MSG(wcFieldAll(sim),
                   "the second wave did not field all %d seats", WC_SEATS);
-    UT_ASSERT_MSG(wcHordeCreates() == WC_SEATS,
+    UT_ASSERT_MSG(wcSeatCreates() == WC_SEATS,
                   "two waves over %d held seats made %d brains, expected %d — "
                   "the runner behind each seat is handed back to the second "
-                  "wave", WC_SEATS, wcHordeCreates(), WC_SEATS);
+                  "wave", WC_SEATS, wcSeatCreates(), WC_SEATS);
     UT_ASSERT_MSG(ut_brain_stub_destroys() == 0,
                   "%d brains were destroyed over the two waves, expected 0",
                   ut_brain_stub_destroys());
@@ -799,7 +799,7 @@ int run_scenario_wave_cost_other_init_rebuilds(void) {
     ut_brain_stub_arm(true);
     sim = wcLobbySim();
     UT_ASSERT(sim != NULL);
-    UT_ASSERT(serverSimAddUnfieldedSeat(sim, seat, "Horde1", WC_TEAM));
+    UT_ASSERT(serverSimAddUnfieldedSeat(sim, seat, "Raider1", WC_TEAM));
     serverSimStartGame(sim);
     UT_ASSERT(sim->state == serverStateRunning);
 
@@ -927,20 +927,20 @@ int run_scenario_wave_cost_destroy_releases(void) {
     return 0;
 }
 
-/* A whole horde parked and nothing active — the shape a Wave Defense round
+/* A whole wave parked and nothing active — the shape a Wave Defense round
  * ends in, its last wave unfielded before the round is won. Nothing is left
  * on the field to be walked over, so a release that only ever ran for an
  * active bot never ran at all, and every one of those brains opened the next
  * round still remembering this one. */
-int run_scenario_wave_cost_horde_parked_releases(void) {
+int run_scenario_wave_cost_all_parked_releases(void) {
     ServerSim *sim;
     int i;
 
-    UT_ASSERT(wcMakeBrainFile("horde_parked_releases"));
+    UT_ASSERT(wcMakeBrainFile("all_parked_releases"));
     ut_brain_stub_arm(true);
     sim = wcLobbySim();
     UT_ASSERT(sim != NULL);
-    UT_ASSERT(wcSeatHorde(sim));
+    UT_ASSERT(wcSeatTeam(sim));
     serverSimStartGame(sim);
     UT_ASSERT(sim->state == serverStateRunning);
 
@@ -948,9 +948,9 @@ int run_scenario_wave_cost_horde_parked_releases(void) {
                   WC_SEATS);
     UT_ASSERT_MSG(wcUnfieldAll(sim),
                   "the wave did not come off the field");
-    UT_ASSERT_MSG(wcHordeCreates() == WC_SEATS,
+    UT_ASSERT_MSG(wcSeatCreates() == WC_SEATS,
                   "the wave made %d brains, expected %d",
-                  wcHordeCreates(), WC_SEATS);
+                  wcSeatCreates(), WC_SEATS);
     UT_ASSERT_MSG(ut_brain_stub_destroys() == 0,
                   "%d brains were destroyed taking the wave off the field, "
                   "expected 0", ut_brain_stub_destroys());
@@ -961,7 +961,7 @@ int run_scenario_wave_cost_horde_parked_releases(void) {
     }
     /* The condition the round-start release could not see. */
     UT_ASSERT_MSG(serverSimGetNumBots(sim) == 0,
-                  "the pool counts %u active bots with the whole horde parked, "
+                  "the pool counts %u active bots with every seat parked, "
                   "expected 0", (unsigned)serverSimGetNumBots(sim));
 
     serverSimReturnToLobby(sim);
@@ -1012,7 +1012,7 @@ int run_scenario_wave_cost_rotation_releases(void) {
     UT_ASSERT(sim != NULL);
     /* What makes this the kind of server that reaches the rotation at all. */
     serverSimSetMapRotate(sim, true);
-    UT_ASSERT(wcSeatHorde(sim));
+    UT_ASSERT(wcSeatTeam(sim));
     serverSimStartGame(sim);
     UT_ASSERT(sim->state == serverStateRunning);
 
@@ -1021,9 +1021,9 @@ int run_scenario_wave_cost_rotation_releases(void) {
     UT_ASSERT_MSG(wcFieldAll(sim), "the wave did not field all %d seats",
                   WC_SEATS);
     UT_ASSERT_MSG(wcUnfieldAll(sim), "the wave did not come off the field");
-    UT_ASSERT_MSG(wcHordeCreates() == WC_SEATS,
+    UT_ASSERT_MSG(wcSeatCreates() == WC_SEATS,
                   "the wave made %d brains, expected %d",
-                  wcHordeCreates(), WC_SEATS);
+                  wcSeatCreates(), WC_SEATS);
     UT_ASSERT_MSG(ut_brain_stub_destroys() == 0,
                   "%d brains were destroyed taking the wave off the field, "
                   "expected 0", ut_brain_stub_destroys());
@@ -1042,9 +1042,9 @@ int run_scenario_wave_cost_rotation_releases(void) {
     UT_ASSERT_MSG(ut_brain_stub_destroys() == WC_SEATS,
                   "the rotation destroyed %d brains, expected the %d that were "
                   "parked", ut_brain_stub_destroys(), WC_SEATS);
-    UT_ASSERT_MSG(wcHordeCreates() == WC_SEATS,
+    UT_ASSERT_MSG(wcSeatCreates() == WC_SEATS,
                   "%d brains had been made by the end of the rotation, "
-                  "expected the %d the wave made", wcHordeCreates(), WC_SEATS);
+                  "expected the %d the wave made", wcSeatCreates(), WC_SEATS);
     for (i = 0; i < WC_SEATS; i++) {
         const BYTE seat = (BYTE)(WC_FIRST_SEAT + i);
         UT_ASSERT_MSG(!botManagerHasRunner(sim, seat),
@@ -1122,10 +1122,10 @@ int run_scenario_wave_cost_countdown_warms_seats(void) {
     ut_brain_stub_arm(true);
     sim = wcLobbySim();
     UT_ASSERT(sim != NULL);
-    UT_ASSERT(wcSeatHorde(sim));
-    UT_ASSERT_MSG(wcHordeCreates() == 0,
-                  "%d brains were made seating the horde, expected 0",
-                  wcHordeCreates());
+    UT_ASSERT(wcSeatTeam(sim));
+    UT_ASSERT_MSG(wcSeatCreates() == 0,
+                  "%d brains were made seating the held seats, expected 0",
+                  wcSeatCreates());
 
     /* One frame per seat, and one more for the frame that starts the round. */
     wcRunCountdown(sim, WC_SEATS + 1);
@@ -1133,9 +1133,9 @@ int run_scenario_wave_cost_countdown_warms_seats(void) {
                   "the countdown did not start the round, state %d",
                   (int)sim->state);
 
-    UT_ASSERT_MSG(wcHordeCreates() == WC_SEATS,
+    UT_ASSERT_MSG(wcSeatCreates() == WC_SEATS,
                   "the countdown made %d brains, expected one for each of the "
-                  "%d held seats", wcHordeCreates(), WC_SEATS);
+                  "%d held seats", wcSeatCreates(), WC_SEATS);
     UT_ASSERT_MSG(ut_brain_stub_destroys() == 0,
                   "the countdown destroyed %d brains, expected 0",
                   ut_brain_stub_destroys());
@@ -1183,7 +1183,7 @@ int run_scenario_wave_cost_warm_is_one_a_frame(void) {
     ut_brain_stub_arm(true);
     sim = wcLobbySim();
     UT_ASSERT(sim != NULL);
-    UT_ASSERT(wcSeatHorde(sim));
+    UT_ASSERT(wcSeatTeam(sim));
 
     /* A countdown one frame longer than there are seats, with none of its
        frames run yet, so every frame below is a warming frame and none of them
@@ -1192,9 +1192,9 @@ int run_scenario_wave_cost_warm_is_one_a_frame(void) {
     UT_ASSERT_MSG(sim->state == serverStateCountdown,
                   "the server is in state %d before the first countdown "
                   "frame, expected it to be counting down", (int)sim->state);
-    UT_ASSERT_MSG(wcHordeCreates() == 0,
+    UT_ASSERT_MSG(wcSeatCreates() == 0,
                   "%d brains were made before the first countdown frame, "
-                  "expected 0", wcHordeCreates());
+                  "expected 0", wcSeatCreates());
 
     for (frame = 1; frame <= WC_SEATS; frame++) {
         int i;
@@ -1205,9 +1205,9 @@ int run_scenario_wave_cost_warm_is_one_a_frame(void) {
                       "the server is in state %d after %d countdown frames, "
                       "expected it to still be counting down",
                       (int)sim->state, frame);
-        UT_ASSERT_MSG(wcHordeCreates() == frame,
+        UT_ASSERT_MSG(wcSeatCreates() == frame,
                       "%d countdown frames have made %d brains, expected %d — "
-                      "one a frame", frame, wcHordeCreates(), frame);
+                      "one a frame", frame, wcSeatCreates(), frame);
         UT_ASSERT_MSG(ut_brain_stub_destroys() == 0,
                       "%d brains had been destroyed by frame %d, expected 0",
                       ut_brain_stub_destroys(), frame);
@@ -1248,9 +1248,9 @@ int run_scenario_wave_cost_warm_is_one_a_frame(void) {
     UT_ASSERT_MSG(sim->state == serverStateRunning,
                   "the countdown did not start the round, state %d",
                   (int)sim->state);
-    UT_ASSERT_MSG(wcHordeCreates() == WC_SEATS,
+    UT_ASSERT_MSG(wcSeatCreates() == WC_SEATS,
                   "the whole countdown made %d brains, expected one for each "
-                  "of the %d held seats", wcHordeCreates(), WC_SEATS);
+                  "of the %d held seats", wcSeatCreates(), WC_SEATS);
 
     serverSimDestroy(sim);
     wcDropBrainFile();
@@ -1268,7 +1268,7 @@ int run_scenario_wave_cost_warmed_field_is_free(void) {
     ut_brain_stub_arm(true);
     sim = wcLobbySim();
     UT_ASSERT(sim != NULL);
-    UT_ASSERT(wcSeatHorde(sim));
+    UT_ASSERT(wcSeatTeam(sim));
     wcRunCountdown(sim, WC_SEATS + 1);
     UT_ASSERT(sim->state == serverStateRunning);
     UT_ASSERT_MSG(sim->botMgr.bots[seat].parked,
@@ -1331,7 +1331,7 @@ int run_scenario_wave_cost_warmed_init_rebuilds(void) {
     ut_brain_stub_arm(true);
     sim = wcLobbySim();
     UT_ASSERT(sim != NULL);
-    UT_ASSERT(wcSeatHorde(sim));
+    UT_ASSERT(wcSeatTeam(sim));
     wcRunCountdown(sim, WC_SEATS + 1);
     UT_ASSERT_MSG(sim->state == serverStateRunning,
                   "the countdown did not start the round, state %d",
@@ -1446,9 +1446,9 @@ int run_scenario_wave_cost_template_init_warms(void) {
                   "seat %d carries %u init pairs, expected the team's %u",
                   (int)seat, (unsigned)sim->seatInit[seat].count,
                   (unsigned)want.count);
-    UT_ASSERT_MSG(wcHordeCreates() == 0,
+    UT_ASSERT_MSG(wcSeatCreates() == 0,
                   "%d brains were made seating the template, expected 0",
-                  wcHordeCreates());
+                  wcSeatCreates());
 
     wcRunCountdown(sim, WC_SEATS + 1);
     UT_ASSERT_MSG(sim->state == serverStateRunning,
@@ -1549,7 +1549,7 @@ int run_scenario_wave_cost_warm_skips_bad_brain(void) {
     ut_brain_stub_arm(true);
     sim = wcLobbySim();
     UT_ASSERT(sim != NULL);
-    UT_ASSERT(wcSeatHorde(sim));
+    UT_ASSERT(wcSeatTeam(sim));
 
     /* One seat written to run a brain that is not on disk. The others name
        none of their own and fall back to the server's, which is. */
@@ -1579,10 +1579,10 @@ int run_scenario_wave_cost_warm_skips_bad_brain(void) {
         UT_ASSERT_MSG(sim->botMgr.bots[seat].parked,
                       "seat %d has no parked runner behind it", (int)seat);
     }
-    UT_ASSERT_MSG(wcHordeCreates() == WC_SEATS - 1,
+    UT_ASSERT_MSG(wcSeatCreates() == WC_SEATS - 1,
                   "the countdown made %d brains, expected %d — one for every "
                   "seat but the one it could not serve",
-                  wcHordeCreates(), WC_SEATS - 1);
+                  wcSeatCreates(), WC_SEATS - 1);
 
     serverSimDestroy(sim);
     wcDropBrainFile();
@@ -1615,7 +1615,7 @@ int run_scenario_wave_cost_failed_build_leaves_nothing(void) {
     ut_brain_stub_arm(true);
     sim = wcLobbySim();
     UT_ASSERT(sim != NULL);
-    UT_ASSERT(wcSeatHorde(sim));
+    UT_ASSERT(wcSeatTeam(sim));
 
     ut_brain_stub_arm(false);
     wcRunCountdownFrames(sim, WC_SEATS + 1, tried);
@@ -1748,7 +1748,7 @@ int run_scenario_wave_cost_abort_countdown_releases(void) {
     ut_brain_stub_arm(true);
     sim = wcLobbySim();
     UT_ASSERT(sim != NULL);
-    UT_ASSERT(wcSeatHorde(sim));
+    UT_ASSERT(wcSeatTeam(sim));
 
     /* Three frames of a countdown long enough that none of them is the frame
        that starts the round: three of the six seats warmed. */
@@ -1757,9 +1757,9 @@ int run_scenario_wave_cost_abort_countdown_releases(void) {
                   "the server is in state %d after %d countdown frames, "
                   "expected it to still be counting down — there is nothing to "
                   "abandon otherwise", (int)sim->state, warmed);
-    UT_ASSERT_MSG(wcHordeCreates() == warmed,
+    UT_ASSERT_MSG(wcSeatCreates() == warmed,
                   "%d countdown frames made %d brains, expected %d",
-                  warmed, wcHordeCreates(), warmed);
+                  warmed, wcSeatCreates(), warmed);
     UT_ASSERT_MSG(ut_brain_stub_destroys() == 0,
                   "the countdown destroyed %d brains, expected 0",
                   ut_brain_stub_destroys());
@@ -1787,9 +1787,9 @@ int run_scenario_wave_cost_abort_countdown_releases(void) {
     UT_ASSERT_MSG(ut_brain_stub_destroys() == warmed,
                   "the abandoned countdown destroyed %d brains, expected the "
                   "%d it had built", ut_brain_stub_destroys(), warmed);
-    UT_ASSERT_MSG(wcHordeCreates() == warmed,
+    UT_ASSERT_MSG(wcSeatCreates() == warmed,
                   "%d brains had been made by the end of the abort, expected "
-                  "the %d the countdown made", wcHordeCreates(), warmed);
+                  "the %d the countdown made", wcSeatCreates(), warmed);
     for (i = 0; i < WC_SEATS; i++) {
         const BYTE seat = (BYTE)(WC_FIRST_SEAT + i);
         UT_ASSERT_MSG(!botManagerHasRunner(sim, seat),
@@ -1871,7 +1871,7 @@ int run_scenario_wave_cost_all_ready_clears_skips(void) {
     ut_brain_stub_arm(true);
     sim = wcLobbySim();
     UT_ASSERT(sim != NULL);
-    UT_ASSERT(wcSeatHorde(sim));
+    UT_ASSERT(wcSeatTeam(sim));
 
     /* The first round. The human in slot 0 is ready and the seats read ready
        as they are seated, so the check has everything it needs. */
@@ -1880,10 +1880,10 @@ int run_scenario_wave_cost_all_ready_clears_skips(void) {
     UT_ASSERT_MSG(sim->state == serverStateRunning,
                   "the first all-ready check left the server in state %d, "
                   "expected it to start the round in place", (int)sim->state);
-    UT_ASSERT_MSG(wcHordeCreates() == 0,
+    UT_ASSERT_MSG(wcSeatCreates() == 0,
                   "the round that started without a countdown made %d brains, "
                   "expected 0 — there was no countdown to warm in",
-                  wcHordeCreates());
+                  wcSeatCreates());
 
     /* Back to the lobby, which resets the world and so sends the next round
        through the countdown. */

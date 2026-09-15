@@ -81,7 +81,7 @@
 #include "test_harness.h"
 
 /* The two teams every case templates, unless it says otherwise. */
-#define LT_HORDE  3     /* unfielded, the Survival shape */
+#define LT_RAIDER 3     /* unfielded, the Survival shape */
 #define LT_GUARD  4     /* fielded */
 
 /* The human cap the three cases at the foot of this file work against. */
@@ -144,14 +144,14 @@ static void ltFillSeats(ServerSim *sim, BYTE n, bool bots) {
     }
 }
 
-/* One unfielded team of `horde` seats and one fielded team of `guard`. */
-static void ltTemplate(ScnLobbyTemplate *t, BYTE horde, BYTE hordeMax,
+/* One unfielded team of `raider` seats and one fielded team of `guard`. */
+static void ltTemplate(ScnLobbyTemplate *t, BYTE raider, BYTE raiderMax,
                        BYTE guard, BYTE guardMax) {
     memset(t, 0, sizeof(*t));
     t->numTeams = 2;
-    t->teams[0].id      = LT_HORDE;
-    t->teams[0].bots    = horde;
-    t->teams[0].maxBots = hordeMax;
+    t->teams[0].id      = LT_RAIDER;
+    t->teams[0].bots    = raider;
+    t->teams[0].maxBots = raiderMax;
     t->teams[0].fielded = false;
     t->teams[1].id      = LT_GUARD;
     t->teams[1].bots    = guard;
@@ -202,9 +202,9 @@ int run_lobby_template_map_commit_seats(void) {
        reconciled. */
     serverSimScenarioSeatLobby(sim);
 
-    UT_ASSERT_MSG(ltSeats(sim, LT_HORDE) == 4,
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 4,
                   "the unfielded team has %d seats, expected 4",
-                  ltSeats(sim, LT_HORDE));
+                  ltSeats(sim, LT_RAIDER));
     UT_ASSERT_MSG(ltSeats(sim, LT_GUARD) == 2,
                   "the fielded team has %d seats, expected 2",
                   ltSeats(sim, LT_GUARD));
@@ -216,11 +216,11 @@ int run_lobby_template_map_commit_seats(void) {
 
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i] || !sim->lobbyPlayers[i].keepSeat) continue;
-        if (sim->lobbyPlayers[i].teamNumber == LT_HORDE) {
+        if (sim->lobbyPlayers[i].teamNumber == LT_RAIDER) {
             UT_ASSERT_MSG(!sim->lobbyPlayers[i].fielded,
-                          "horde seat %d is on the field", i);
+                          "raider seat %d is on the field", i);
             UT_ASSERT_MSG(sim->sim.tanks[i] == NULL,
-                          "horde seat %d has a tank", i);
+                          "raider seat %d has a tank", i);
             unfielded++;
         } else {
             UT_ASSERT_MSG(sim->lobbyPlayers[i].fielded,
@@ -239,8 +239,8 @@ int run_lobby_template_map_commit_seats(void) {
                   (unsigned)serverSimGetNumFielded(sim));
 
     /* The template's teams are in use, so the lobby lists them. */
-    UT_ASSERT_MSG(sim->teams[LT_HORDE].in_use,
-                  "the horde's team is not in use");
+    UT_ASSERT_MSG(sim->teams[LT_RAIDER].in_use,
+                  "the raiders' team is not in use");
     UT_ASSERT_MSG(sim->teams[LT_GUARD].in_use,
                   "the guard's team is not in use");
 
@@ -265,24 +265,24 @@ int run_lobby_template_return_reconciles(void) {
     ltTemplate(&t, 10, 10, 1, 4);
     serverSimSetScenarioLobbyTemplate(sim, &t);
     serverSimScenarioSeatLobby(sim);
-    UT_ASSERT_MSG(ltSeats(sim, LT_HORDE) == 10,
-                  "seeded %d of the horde, expected 10",
-                  ltSeats(sim, LT_HORDE));
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 10,
+                  "seeded %d of the raiders, expected 10",
+                  ltSeats(sim, LT_RAIDER));
 
-    /* The host trims the horde to six, which is the whole point of seating
+    /* The host trims the raiders to six, which is the whole point of seating
        them where a host can see them. */
-    while (ltSeats(sim, LT_HORDE) > 6) {
-        slot = ltFirstSeat(sim, LT_HORDE);
+    while (ltSeats(sim, LT_RAIDER) > 6) {
+        slot = ltFirstSeat(sim, LT_RAIDER);
         UT_ASSERT(slot >= 0);
         serverSimRemoveBot(sim, (BYTE)slot);
     }
-    UT_ASSERT(ltSeats(sim, LT_HORDE) == 6);
+    UT_ASSERT(ltSeats(sim, LT_RAIDER) == 6);
 
     serverSimScenarioReconcileLobby(sim);
-    UT_ASSERT_MSG(ltSeats(sim, LT_HORDE) == 6,
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 6,
                   "the host's trim to six came back as %d — bots is how many "
                   "the engine seeds, not a floor it re-imposes",
-                  ltSeats(sim, LT_HORDE));
+                  ltSeats(sim, LT_RAIDER));
 
     /* The guard's ceiling is four and the host has gone past it. */
     while (ltSeats(sim, LT_GUARD) < 6) {
@@ -298,15 +298,15 @@ int run_lobby_template_return_reconciles(void) {
 
     /* A team the host emptied altogether stays empty: the same edit as the
        trim to six, only further. */
-    while (ltSeats(sim, LT_HORDE) > 0) {
-        slot = ltFirstSeat(sim, LT_HORDE);
+    while (ltSeats(sim, LT_RAIDER) > 0) {
+        slot = ltFirstSeat(sim, LT_RAIDER);
         UT_ASSERT(slot >= 0);
         serverSimRemoveBot(sim, (BYTE)slot);
     }
     serverSimScenarioReconcileLobby(sim);
-    UT_ASSERT_MSG(ltSeats(sim, LT_HORDE) == 0,
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 0,
                   "an emptied team came back with %d seats",
-                  ltSeats(sim, LT_HORDE));
+                  ltSeats(sim, LT_RAIDER));
 
     serverSimDestroy(sim);
     ltDropBrainFile();
@@ -331,7 +331,7 @@ int run_lobby_template_return_unfields(void) {
     serverSimSetScenarioLobbyTemplate(sim, &t);
     serverSimScenarioSeatLobby(sim);
 
-    slot = ltFirstSeat(sim, LT_HORDE);
+    slot = ltFirstSeat(sim, LT_RAIDER);
     UT_ASSERT(slot >= 0);
     playersGetPlayerName(&sim->sim.plyrs, (BYTE)slot, before, sizeof(before),
                          TRUE);
@@ -346,7 +346,7 @@ int run_lobby_template_return_unfields(void) {
         cfg.brainName  = before;
         cfg.ai         = aiFull;
         cfg.gameType   = gameOpen;
-        cfg.teamNumber = LT_HORDE;
+        cfg.teamNumber = LT_RAIDER;
         UT_ASSERT(serverSimAddBot(sim, (BYTE)slot, &cfg));
     }
     UT_ASSERT_MSG(sim->lobbyPlayers[slot].fielded,
@@ -360,10 +360,10 @@ int run_lobby_template_return_unfields(void) {
                   "the seat the script fielded is still on the field");
     UT_ASSERT_MSG(sim->lobbyPlayers[slot].keepSeat,
                   "the seat stopped being the scenario's");
-    UT_ASSERT_MSG(sim->lobbyPlayers[slot].teamNumber == LT_HORDE,
+    UT_ASSERT_MSG(sim->lobbyPlayers[slot].teamNumber == LT_RAIDER,
                   "the seat came back on team %u, expected %u",
                   (unsigned)sim->lobbyPlayers[slot].teamNumber,
-                  (unsigned)LT_HORDE);
+                  (unsigned)LT_RAIDER);
     playersGetPlayerName(&sim->sim.plyrs, (BYTE)slot, after, sizeof(after),
                          TRUE);
     UT_ASSERT_MSG(strcmp(before, after) == 0,
@@ -390,17 +390,17 @@ int run_lobby_template_reset_reseats(void) {
     ltTemplate(&t, 3, 3, 0, 0);
     serverSimSetScenarioLobbyTemplate(sim, &t);
     serverSimScenarioSeatLobby(sim);
-    UT_ASSERT(ltSeats(sim, LT_HORDE) == 3);
+    UT_ASSERT(ltSeats(sim, LT_RAIDER) == 3);
 
     /* The last human leaves, which is what reaches the reset. */
     serverSimRemovePlayer(sim, 0);
 
     UT_ASSERT_MSG(serverSimGetNumHumans(sim) == 0,
                   "the lobby should be humanless");
-    UT_ASSERT_MSG(ltSeats(sim, LT_HORDE) == 3,
-                  "the next joiner opens a lobby with %d of the horde, "
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 3,
+                  "the next joiner opens a lobby with %d of the raiders, "
                   "expected the template's three",
-                  ltSeats(sim, LT_HORDE));
+                  ltSeats(sim, LT_RAIDER));
 
     serverSimDestroy(sim);
     ltDropBrainFile();
@@ -425,7 +425,7 @@ int run_lobby_template_preview_is_inert(void) {
     ltTemplate(&t, 3, 3, 1, 1);
     serverSimSetScenarioLobbyTemplate(sim, &t);
     serverSimScenarioSeatLobby(sim);
-    UT_ASSERT(ltSeats(sim, LT_HORDE) == 3);
+    UT_ASSERT(ltSeats(sim, LT_RAIDER) == 3);
 
     memcpy(before, sim->lobbyPlayers, sizeof(before));
     memcpy(connBefore, sim->playerConnected, sizeof(connBefore));
@@ -443,7 +443,7 @@ int run_lobby_template_preview_is_inert(void) {
     UT_ASSERT_MSG(memcmp(connBefore, sim->playerConnected,
                          sizeof(connBefore)) == 0,
                   "a preview changed who is connected");
-    UT_ASSERT(ltSeats(sim, LT_HORDE) == 3);
+    UT_ASSERT(ltSeats(sim, LT_RAIDER) == 3);
     UT_ASSERT(ltSeats(sim, LT_GUARD) == 1);
 
     serverSimDestroy(sim);
@@ -465,7 +465,7 @@ int run_lobby_template_plain_map_clears(void) {
     ltTemplate(&t, 4, 4, 1, 1);
     serverSimSetScenarioLobbyTemplate(sim, &t);
     serverSimScenarioSeatLobby(sim);
-    UT_ASSERT(ltSeats(sim, LT_HORDE) == 4);
+    UT_ASSERT(ltSeats(sim, LT_RAIDER) == 4);
     UT_ASSERT(ltSeats(sim, LT_GUARD) == 1);
 
     /* A plain map is committed: whoever owns the scenario detaches and
@@ -473,9 +473,9 @@ int run_lobby_template_plain_map_clears(void) {
     serverSimSetScenarioLobbyTemplate(sim, NULL);
     serverSimScenarioSeatLobby(sim);
 
-    UT_ASSERT_MSG(ltSeats(sim, LT_HORDE) == 0,
-                  "%d of the previous scenario's horde survived a plain map",
-                  ltSeats(sim, LT_HORDE));
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 0,
+                  "%d of the previous scenario's raiders survived a plain map",
+                  ltSeats(sim, LT_RAIDER));
     UT_ASSERT_MSG(ltSeats(sim, LT_GUARD) == 0,
                   "%d of the previous scenario's guard survived a plain map",
                   ltSeats(sim, LT_GUARD));
@@ -502,11 +502,11 @@ int run_lobby_template_caps_humans_only(void) {
     sim = ltLobbySim();
     UT_ASSERT(sim != NULL);
 
-    /* Two humans, and a horde far larger than that. */
+    /* Two humans, and a raider team far larger than that. */
     memset(&t, 0, sizeof(t));
     t.maxPlayers = 2;
     t.numTeams   = 1;
-    t.teams[0].id      = LT_HORDE;
+    t.teams[0].id      = LT_RAIDER;
     t.teams[0].bots    = 8;
     t.teams[0].maxBots = 8;
     t.teams[0].fielded = false;
@@ -521,9 +521,9 @@ int run_lobby_template_caps_humans_only(void) {
 
     /* Bots seat above it all the same. */
     serverSimScenarioSeatLobby(sim);
-    UT_ASSERT_MSG(ltSeats(sim, LT_HORDE) == 8,
-                  "the horde seated %d of eight under a human cap of two",
-                  ltSeats(sim, LT_HORDE));
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 8,
+                  "the raiders seated %d of eight under a human cap of two",
+                  ltSeats(sim, LT_RAIDER));
     UT_ASSERT_MSG(serverSimFindFreeSlot(sim, false) < 0,
                   "the human cap stopped binding once bots seated");
 
@@ -534,7 +534,7 @@ int run_lobby_template_caps_humans_only(void) {
 
 /* ── The cap is a headcount, not a ceiling on the slot ────────────── */
 
-/* A horde seats before anybody joins, so it holds the lowest slots. Those
+/* The raiders seat before anybody joins, so they hold the lowest slots. Those
  * seats are bots and the cap is on people, so the first human to arrive is
  * owed a place above them — under the operator's cap and under a scenario's
  * alike. */
@@ -555,7 +555,7 @@ int run_lobby_template_cap_seats_human_above_bots(void) {
                   LT_CAP, LT_CAP, seat, LT_CAP);
 
     /* The same question of a scenario's own cap, which is where this shows
-       up: a lobby seats its horde before anyone has joined. */
+       up: a lobby seats its raiders before anyone has joined. */
     sim->maxPlayers = 0;
     memset(&t, 0, sizeof(t));
     t.maxPlayers = LT_CAP;
@@ -645,11 +645,11 @@ int run_lobby_template_cancel_keeps_trim(void) {
     serverSimSetScenarioLobbyTemplate(sim, &t);
     serverSimScenarioSeatLobby(sim);
     ltHoldInLobby(sim);
-    UT_ASSERT(ltSeats(sim, LT_HORDE) == 6);
+    UT_ASSERT(ltSeats(sim, LT_RAIDER) == 6);
 
     /* The host trims the six raider seats to three. */
-    ltTrimTo(sim, LT_HORDE, 3);
-    UT_ASSERT(ltSeats(sim, LT_HORDE) == 3);
+    ltTrimTo(sim, LT_RAIDER, 3);
+    UT_ASSERT(ltSeats(sim, LT_RAIDER) == 3);
     UT_ASSERT_MSG(serverSimGetState(sim) == serverStateLobby,
                   "the lobby started itself, so there is no preview to make");
 
@@ -658,9 +658,9 @@ int run_lobby_template_cancel_keeps_trim(void) {
                   "the map change left no preview to cancel");
 
     UT_ASSERT(serverSimRevertPreview(sim));
-    UT_ASSERT_MSG(ltSeats(sim, LT_HORDE) == 3,
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 3,
                   "the trim to three came back as %d after a cancel",
-                  ltSeats(sim, LT_HORDE));
+                  ltSeats(sim, LT_RAIDER));
     UT_ASSERT_MSG(ltSeats(sim, LT_GUARD) == 1,
                   "the untouched team came back at %d, expected 1",
                   ltSeats(sim, LT_GUARD));
@@ -687,18 +687,18 @@ int run_lobby_template_cancel_keeps_empty_team(void) {
     serverSimSetScenarioLobbyTemplate(sim, &t);
     serverSimScenarioSeatLobby(sim);
     ltHoldInLobby(sim);
-    UT_ASSERT(ltSeats(sim, LT_HORDE) == 4);
+    UT_ASSERT(ltSeats(sim, LT_RAIDER) == 4);
 
-    ltTrimTo(sim, LT_HORDE, 0);
-    UT_ASSERT(ltSeats(sim, LT_HORDE) == 0);
+    ltTrimTo(sim, LT_RAIDER, 0);
+    UT_ASSERT(ltSeats(sim, LT_RAIDER) == 0);
     UT_ASSERT(serverSimGetState(sim) == serverStateLobby);
 
     UT_ASSERT(ltPreview(sim, "Preview"));
     UT_ASSERT(serverSimRevertPreview(sim));
 
-    UT_ASSERT_MSG(ltSeats(sim, LT_HORDE) == 0,
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 0,
                   "an emptied team came back with %d seats after a cancel",
-                  ltSeats(sim, LT_HORDE));
+                  ltSeats(sim, LT_RAIDER));
     UT_ASSERT_MSG(ltSeats(sim, LT_GUARD) == 1,
                   "the untouched team came back at %d, expected 1",
                   ltSeats(sim, LT_GUARD));
@@ -723,23 +723,23 @@ int run_lobby_template_cancel_chain_rolls_back(void) {
     serverSimSetScenarioLobbyTemplate(sim, &t);
     serverSimScenarioSeatLobby(sim);
     ltHoldInLobby(sim);
-    ltTrimTo(sim, LT_HORDE, 2);
-    UT_ASSERT(ltSeats(sim, LT_HORDE) == 2);
+    ltTrimTo(sim, LT_RAIDER, 2);
+    UT_ASSERT(ltSeats(sim, LT_RAIDER) == 2);
     UT_ASSERT(serverSimGetState(sim) == serverStateLobby);
 
     UT_ASSERT(ltPreview(sim, "Preview one"));
     /* The first preview seated the five again; the host trims to four while
        looking at it, so four is the count in between. */
-    ltTrimTo(sim, LT_HORDE, 4);
-    UT_ASSERT(ltSeats(sim, LT_HORDE) == 4);
+    ltTrimTo(sim, LT_RAIDER, 4);
+    UT_ASSERT(ltSeats(sim, LT_RAIDER) == 4);
 
     UT_ASSERT(ltPreview(sim, "Preview two"));
     UT_ASSERT(serverSimRevertPreview(sim));
 
-    UT_ASSERT_MSG(ltSeats(sim, LT_HORDE) == 2,
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 2,
                   "one cancel over two previews gave back %d seats, expected "
                   "the two the host had before the first",
-                  ltSeats(sim, LT_HORDE));
+                  ltSeats(sim, LT_RAIDER));
 
     serverSimDestroy(sim);
     ltDropBrainFile();
@@ -761,27 +761,27 @@ int run_lobby_template_commit_keeps_new_lobby(void) {
     serverSimSetScenarioLobbyTemplate(sim, &t);
     serverSimScenarioSeatLobby(sim);
     ltHoldInLobby(sim);
-    ltTrimTo(sim, LT_HORDE, 1);
-    UT_ASSERT(ltSeats(sim, LT_HORDE) == 1);
+    ltTrimTo(sim, LT_RAIDER, 1);
+    UT_ASSERT(ltSeats(sim, LT_RAIDER) == 1);
     UT_ASSERT(serverSimGetState(sim) == serverStateLobby);
 
     UT_ASSERT(ltPreview(sim, "Preview"));
     serverSimCommitPreview(sim);
     UT_ASSERT_MSG(!serverSimHasPreviewMap(sim),
                   "the commit left a preview pending");
-    UT_ASSERT_MSG(ltSeats(sim, LT_HORDE) == 4,
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 4,
                   "the committed map's lobby holds %d seats, expected the "
                   "template's four",
-                  ltSeats(sim, LT_HORDE));
+                  ltSeats(sim, LT_RAIDER));
 
     /* And the old map's count is not waiting to be applied to a later
        cancel: previewing again and backing out returns the four that are
        there now. */
     UT_ASSERT(ltPreview(sim, "Preview again"));
     UT_ASSERT(serverSimRevertPreview(sim));
-    UT_ASSERT_MSG(ltSeats(sim, LT_HORDE) == 4,
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 4,
                   "a cancel after a commit gave back %d seats, expected 4",
-                  ltSeats(sim, LT_HORDE));
+                  ltSeats(sim, LT_RAIDER));
 
     serverSimDestroy(sim);
     ltDropBrainFile();
@@ -804,7 +804,7 @@ static void ltSeatOnFileMap(ServerSim *sim, ScnLobbyTemplate *t) {
     serverSimSetScenarioLobbyTemplate(sim, t);
     serverSimScenarioSeatLobby(sim);
     ltHoldInLobby(sim);
-    ltTrimTo(sim, LT_HORDE, 2);
+    ltTrimTo(sim, LT_RAIDER, 2);
 }
 
 /* An uploaded map previews from bytes, which leaves nothing to look beside
@@ -821,7 +821,7 @@ int run_lobby_template_cancel_restores_path_inmem(void) {
     UT_ASSERT(sim != NULL);
 
     ltSeatOnFileMap(sim, &t);
-    UT_ASSERT(ltSeats(sim, LT_HORDE) == 2);
+    UT_ASSERT(ltSeats(sim, LT_RAIDER) == 2);
     UT_ASSERT(serverSimGetState(sim) == serverStateLobby);
 
     UT_ASSERT(ltPreview(sim, "Uploaded"));
@@ -830,9 +830,9 @@ int run_lobby_template_cancel_restores_path_inmem(void) {
     UT_ASSERT_MSG(strcmp(sim->mapFilePath, LT_MAP_PATH) == 0,
                   "the cancel left the map file as '%s', expected '%s'",
                   sim->mapFilePath, LT_MAP_PATH);
-    UT_ASSERT_MSG(ltSeats(sim, LT_HORDE) == 2,
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 2,
                   "the trim to two came back as %d",
-                  ltSeats(sim, LT_HORDE));
+                  ltSeats(sim, LT_RAIDER));
 
     serverSimDestroy(sim);
     ltDropBrainFile();
@@ -852,7 +852,7 @@ int run_lobby_template_cancel_restores_path_random(void) {
     UT_ASSERT(sim != NULL);
 
     ltSeatOnFileMap(sim, &t);
-    UT_ASSERT(ltSeats(sim, LT_HORDE) == 2);
+    UT_ASSERT(ltSeats(sim, LT_RAIDER) == 2);
     UT_ASSERT(serverSimGetState(sim) == serverStateLobby);
 
     cfg = mapGenDefaultConfig(MAPGEN_TOURNAMENT);
@@ -864,9 +864,9 @@ int run_lobby_template_cancel_restores_path_random(void) {
     UT_ASSERT_MSG(strcmp(sim->mapFilePath, LT_MAP_PATH) == 0,
                   "the cancel left the map file as '%s', expected '%s'",
                   sim->mapFilePath, LT_MAP_PATH);
-    UT_ASSERT_MSG(ltSeats(sim, LT_HORDE) == 2,
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 2,
                   "the trim to two came back as %d",
-                  ltSeats(sim, LT_HORDE));
+                  ltSeats(sim, LT_RAIDER));
 
     serverSimDestroy(sim);
     ltDropBrainFile();
@@ -904,7 +904,7 @@ int run_lobby_template_seat_carries_init(void) {
     serverSimScenarioSeatLobby(sim);
     ltHoldInLobby(sim);
 
-    held = ltFirstSeat(sim, LT_HORDE);
+    held = ltFirstSeat(sim, LT_RAIDER);
     UT_ASSERT_MSG(held >= 0, "the unfielded team seated nothing");
     fielded = ltFirstSeat(sim, LT_GUARD);
     UT_ASSERT_MSG(fielded >= 0, "the fielded team seated nothing");
