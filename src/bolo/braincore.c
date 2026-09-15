@@ -118,6 +118,63 @@ void brainCoreSetInitTable(lua_State *L, const ScnTable *init) {
   lua_setglobal(L, "BRAIN_INIT");
 }
 
+/* The same table, handed to a brain that is already running.
+
+   Two steps, and the first of them always happens: BRAIN_INIT is rebuilt, so
+   a brain that reads the global anywhere reads the new pairs from here on.
+   Then, if the brain has written a Brain.on_init, it is called with that same
+   table, which is how a brain acts on the change rather than waiting to be
+   asked for the global again.
+
+   A brain without one is not a fault: the global is the contract and on_init
+   is the invitation. A brain whose on_init raises is not the caller's fault
+   either — the error is reported and the round carries on, because a scenario
+   handing a bot new orders must not be able to kill it.
+
+   Answers whether on_init ran to completion, which is what a caller that
+   wants to log the difference reads. Everything else — no state, no Brain
+   table, an on_init that is not a function — answers false with the global
+   written all the same. */
+bool brainCoreUpdateInitTable(lua_State *L, const ScnTable *init,
+                              char *why, size_t whyLen) {
+  int top;
+
+  if (why != NULL && whyLen > 0) why[0] = '\0';
+  if (L == NULL) return false;
+
+  brainCoreSetInitTable(L, init);
+
+  /* The brain's own table is the global 'brain', which the loader sets from
+     what the brain's chunk returned — the same global brainCoreCallThink
+     reads think off. A brain file usually calls its own table Brain; that
+     name is a local of the file and is not here. */
+  top = lua_gettop(L);
+  lua_getglobal(L, "brain");
+  if (!lua_istable(L, -1)) {
+    lua_settop(L, top);
+    return false;
+  }
+  lua_getfield(L, -1, "on_init");
+  if (!lua_isfunction(L, -1)) {
+    lua_settop(L, top);
+    return false;
+  }
+  /* The argument is the global just written rather than a second build of the
+     same pairs, so what the brain is handed and what it reads back off
+     BRAIN_INIT are one table. */
+  lua_getglobal(L, "BRAIN_INIT");
+  if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+    if (why != NULL && whyLen > 0) {
+      const char *msg = lua_tostring(L, -1);
+      snprintf(why, whyLen, "%s", msg != NULL ? msg : "unknown error");
+    }
+    lua_settop(L, top);
+    return false;
+  }
+  lua_settop(L, top);
+  return true;
+}
+
 /* ------------------------------------------------------------------ */
 /* Constant registration                                               */
 /* ------------------------------------------------------------------ */

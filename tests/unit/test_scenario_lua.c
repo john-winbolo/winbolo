@@ -435,6 +435,7 @@ static const char *const kSlEveryRow =
     "  spawn_bot   = function() return game.spawn_bot({team=2}) end,\n"
     "  remove_bot  = function() return game.remove_bot(9) end,\n"
     "  set_team    = function() return game.set_team(9, 2) end,\n"
+    "  bot_init    = function() return game.bot_init(9, {role=\"scout\"}) end,\n"
     "  lobby_add_bot = function() return game.lobby_add_bot({team=2}) end,\n"
     "  lobby_remove_bot = function() return game.lobby_remove_bot(9) end,\n"
     "  lobby_set_team = function() return game.lobby_set_team(9, 2) end,\n"

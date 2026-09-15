@@ -850,6 +850,7 @@ A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
 | `game.spawn_bot(t)` | Puts a bot into the running round. Answers the seat and `"queued"` when the call named a seat, and `true, "queued"` when the server is choosing one. |
 | `game.remove_bot(p)` | Takes a bot out of the running round. A human seat is refused with `SCN_OP_IS_HUMAN`. |
 | `game.set_team(p, t)` | Moves a seat to another team mid-round. |
+| `game.bot_init(p, t)` | Hands a bot already in the round a new init table. A human seat is refused with `SCN_OP_IS_HUMAN` and an empty one with `SCN_OP_NO_SUCH_PLAYER`. |
 | `game.lobby_add_bot(t)` | Seats a bot in the lobby and answers which seat it took. |
 | `game.lobby_remove_bot(p)` | Takes a bot out of the lobby. A human seat is refused. |
 | `game.lobby_set_team(p, t)` | Moves a lobby seat to another team. |
@@ -868,6 +869,44 @@ A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
 
 `lobby_add_bot` takes `name`, `brain`, `team`, `slot` and `fielded`, where
 `fielded = false` asks for the seat without the bot.
+
+**Changing a bot's orders while it plays.** `bot_init` takes the same table
+`spawn_bot`'s `init` field takes — flat, names to strings or numbers, at most
+16 pairs — and hands it to a bot that is already on the field:
+
+```lua
+game.bot_init(p, { noblitz = "1", cfg = "ORDER_NEARBY_TILES=3" })
+```
+
+The table **replaces** the bot's, whole. What the spawn's table said and this
+one does not say is gone, because the brain's table is rebuilt rather than
+merged into. Values are text and numbers, as a spawn's are, so a flag a brain
+reads as on or off is written `"1"` and `"0"` rather than `true` and `false`.
+
+What the bot does with it is the brain's business, and there are two levels
+to it:
+
+- **Every brain** gets its `BRAIN_INIT` global rebuilt from the table. A brain
+  that reads the global somewhere other than at its first breath reads the new
+  pairs from the next time it looks.
+- **A brain that has written a `Brain.on_init(t)`** is called with that same
+  table as well, which is how a brain acts on the change rather than waiting
+  to be asked. The call is made between ticks, never while the brain is
+  thinking. A brain whose `on_init` raises has the error logged on the server
+  and carries on playing — a scenario changing a bot's orders cannot kill it.
+
+GoalHunter, the brain that ships with the server, writes one: it re-reads the
+whole token string, so `cfg=NAME=VALUE` and `preset=` change its constants
+there and then, and the bare flags (`noblitz`, `suicider`, `nosuicider`,
+`noclaimdead`, `normal`, `ammoless`) change the bot's behaviour from the next
+tick. `difficulty=` and `mode=` are **not** applied at runtime — those choose a
+whole bundle of values at load and a second bundle cannot unset the first — so
+the brain logs them as unsupported and leaves them. It also says one line to
+its team, `init updated: <n> tokens`, so a human on the same side can see the
+change land.
+
+A bot whose brain is not running yet still keeps the table: the record is what
+its next brain is built from, so nothing the script asked for is lost.
 
 **The seat cycle.** A seat the `scenario` table seated and a wave fielded goes
 back to being held when `remove_bot` names it, rather than being emptied — so
@@ -891,7 +930,10 @@ from one wave to the next; a call that speaks to a bot's brain is not here yet.
 The roster ops are the six above, `set_team` and `lobby_set_team` included.
 All of them are refused inside `on_setup`: the round is still being built
 there, and a roster edit would re-enter the machinery that is building it.
-Field your first wave, and move seats between teams, from `on_start`.
+`bot_init` is refused there with them, for the other half of the same reason
+— inside a start the bots and their brains are still being built, so there is
+no settled brain to write into. Field your first wave, move seats between
+teams, and change a bot's orders from `on_start` onwards.
 
 ---
 
@@ -1189,7 +1231,7 @@ The `code` a refused write answers, as a string.
 | Regions | 64, declared and defined together; names 31 bytes |
 | Timers waiting at once | 64 |
 | A line of text | 128 bytes |
-| A bot's `init` table | 16 pairs |
+| A bot's `init` table | 16 pairs, whether it comes from `spawn_bot` or `bot_init` |
 | Events queued for one frame | 256 |
 | Roster changes outstanding at once | 32 |
 | Tiles a fill may change in one tick | 256 |
@@ -1199,9 +1241,9 @@ The `code` a refused write answers, as a string.
 | `scenario.game` | 23 bytes |
 | A team's `brain` | 255 bytes |
 
-Going past one of the counts is reported and refused. Spawns and removals
-share the one roster queue and the sim drains one a tick, so a script that
-asks for ten bots gets them over ten ticks; the one past the last is refused
+Going past one of the counts is reported and refused. Spawns, removals and
+`bot_init` share the one roster queue and the sim drains one a tick, so a
+script that asks for ten bots gets them over ten ticks; the one past the last is refused
 rather than displacing something already accepted. A rectangle bigger than a
 tick's tile budget applies what the budget allows and carries the rest on
 later ticks, one budget each — a whole-map fill takes 256 of them.

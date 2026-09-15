@@ -66,6 +66,8 @@ void           brainWorldSimSetMap(BrainWorldSim *sim, const BYTE *map);
  * marshal BrainInfo in/out. */
 void brainCoreRegisterConstants(struct lua_State *L);
 void brainCoreSetInitTable(struct lua_State *L, const ScnTable *init);
+bool brainCoreUpdateInitTable(struct lua_State *L, const ScnTable *init,
+                              char *why, size_t whyLen);
 void brainCoreRegisterGetTerrain(struct lua_State *L, const BYTE **worldPtr);
 void brainCoreRegisterPathfinder(struct lua_State *L, BrainPathfinder **pfPtr);
 /* Registry key brainCoreRegisterPathfinder parks the pathfinder under, and

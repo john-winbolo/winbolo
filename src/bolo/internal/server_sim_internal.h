@@ -69,11 +69,22 @@
 
 /* One roster change waiting its turn. A spawn carries the whole payload
  * because the seat, the brain and the init table are all read when it
- * lands rather than when it was asked for; a removal needs only the slot. */
+ * lands rather than when it was asked for; a removal needs only the slot;
+ * a new init table carries the table and the seat it is for.
+ *
+ * A kind rather than the one flag it began as: a third change would be a
+ * second flag, and two flags spell a state that is neither. */
+typedef enum {
+    SCN_ROSTER_SPAWN = 0,
+    SCN_ROSTER_REMOVE,
+    SCN_ROSTER_BOT_INIT
+} ScnRosterQueueKind;
+
 typedef struct {
-    bool                isSpawn;
-    ScnOpRosterSpawnBot spawn;        /* read when isSpawn */
-    BYTE                removeSlot;   /* read when it is not */
+    ScnRosterQueueKind  kind;
+    ScnOpRosterSpawnBot spawn;        /* read for SCN_ROSTER_SPAWN */
+    BYTE                removeSlot;   /* read for SCN_ROSTER_REMOVE */
+    ScnOpRosterBotInit  botInit;      /* read for SCN_ROSTER_BOT_INIT */
 } ScnRosterQueueEntry;
 
 struct ServerSim {

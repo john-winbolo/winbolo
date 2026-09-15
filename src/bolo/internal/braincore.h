@@ -65,6 +65,23 @@ void brainCoreRegisterConstants(lua_State *L);
 void brainCoreSetInitTable(lua_State *L, const ScnTable *init);
 
 /*********************************************************
+ *NAME:          brainCoreUpdateInitTable
+ *PURPOSE:
+ *  Hands a running brain a new init table: rebuilds the
+ *  BRAIN_INIT global from it, then calls the brain's
+ *  Brain.on_init(t) with it when the brain defines one.
+ *
+ *  The global is always written. on_init is optional, and
+ *  an on_init that raises is reported through why rather
+ *  than being fatal — a scenario changing a bot's orders
+ *  must not be able to kill the bot.
+ *
+ *  Returns true only when on_init ran to completion.
+ *********************************************************/
+bool brainCoreUpdateInitTable(lua_State *L, const ScnTable *init,
+                              char *why, size_t whyLen);
+
+/*********************************************************
  *NAME:          brainCoreRegisterGetTerrain
  *PURPOSE:
  *  Registers the get_terrain(x,y) C closure with a

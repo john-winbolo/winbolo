@@ -1423,6 +1423,9 @@ static const UnitTestEntry s_tests[] = {
     { "bot_init_table_two_bots_keep_own",        run_bot_init_table_two_bots_keep_own        },
     { "bot_init_table_empty_when_none",          run_bot_init_table_empty_when_none          },
     { "bot_init_arg_text_to_table",              run_bot_init_arg_text_to_table              },
+    { "scenario_bot_init_lands",                 run_scenario_bot_init_lands                 },
+    { "scenario_bot_init_refusals",              run_scenario_bot_init_refusals              },
+    { "brain_on_init_update",                    run_brain_on_init_update                    },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },

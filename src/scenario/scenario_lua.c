@@ -2358,6 +2358,58 @@ static int scnLuaSetTeam(lua_State *L) {
     return scnDone(L, &op, "player %d to team %d", (int)p, (int)t);
 }
 
+/* New data for a bot already in the round. The table is the one a spawn's
+ * init is: flat, names to text, and no larger than a spawn's, because it is
+ * the same table on the other side — the bot's BRAIN_INIT is rebuilt from
+ * it whole, so what is not in the table is not in the bot's any more.
+ *
+ * The seat has to hold a bot this server runs. A human is refused, an empty
+ * seat is refused, and both say so under the codes the removal row already
+ * answers with, because they are the same two questions asked of the same
+ * kind of seat.
+ *
+ * It rides the roster queue with the spawns and the removals, so the write
+ * into the brain's own Lua state happens where every other change to a bot
+ * happens: on the producer thread, between ticks, never while the brain is
+ * thinking. */
+static int scnLuaBotInit(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer p = scnArgInt(L, 1, "p");
+    char        badKey[SCN_TABLE_KEY_LEN + 1];
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    scnArgTable(L, 2, "t");
+    memset(&op, 0, sizeof(op));
+    op.type                 = SCN_OP_ROSTER_BOT_INIT;
+    op.u.rosterBotInit.slot = (BYTE)p;
+    badKey[0]               = '\0';
+    /* The reader takes a field of a table, so the argument is set as the
+       one field of a table made for it: the same walk, the same limits and
+       the same wording as spawn_bot's init field. */
+    {
+        char         why[SCN_TABLE_WHY_LEN];
+        ScnTableRead r;
+
+        lua_createtable(L, 0, 1);
+        lua_pushvalue(L, 2);
+        lua_setfield(L, -2, "t");
+        r = scenarioLuaReadTable(L, lua_gettop(L), "t",
+                                 &op.u.rosterBotInit.init, badKey,
+                                 sizeof(badKey), why, sizeof(why));
+        lua_pop(L, 1);
+        if (r == SCN_TABLE_READ_NO_ROOM) {
+            return scnTableTooBig(L, "init", badKey);
+        }
+        if (r != SCN_TABLE_READ_OK) {
+            luaL_argerror(L, 2, lua_pushfstring(L, "t%s", why));
+        }
+    }
+    return scnDone(L, &op, "player %d", (int)p);
+}
+
 static int scnLuaLobbyAddBot(lua_State *L) {
     ScenarioOp  op;
     ScnOpOut    out;
@@ -3037,6 +3089,10 @@ static const ScnLuaRow kScnLuaRows[] = {
       "round; a human seat is refused." },
     { "set_team", scnLuaSetTeam,
       "set_team(p, t) — move a seat to another team mid-round." },
+    { "bot_init", scnLuaBotInit,
+      "bot_init(p, t) — hand a bot already in the round a new init table; "
+      "it replaces the one the bot was spawned with and the brain is told "
+      "about it." },
     { "lobby_add_bot", scnLuaLobbyAddBot,
       "lobby_add_bot(t) → p — seat a bot in the lobby and answer which seat "
       "it took; t takes name, brain, team, slot and fielded." },

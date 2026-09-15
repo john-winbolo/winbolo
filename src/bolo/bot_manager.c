@@ -2328,6 +2328,68 @@ bool botManagerSetLuaGlobalString(ServerSim *sim, BYTE playerNum,
     return true;
 }
 
+/* Hand a bot that is already playing a new init table.
+ *
+ * Two things happen and both matter. The bot's own copy is replaced, so a
+ * brain swap later in the round builds its VM from the table the bot holds
+ * NOW rather than from the one it was spawned with. Then the running VM is
+ * told: BRAIN_INIT is rebuilt and the brain's Brain.on_init is called with
+ * it, which is what makes the change act rather than merely be readable.
+ *
+ * Called on the producer thread from the scenario's roster drain, which runs
+ * between ticks. Nothing here may be called while the worker threads are in
+ * the brain-think stage: the VM being written into is theirs for that
+ * window.
+ *
+ * A bot whose brain is not running keeps the table and is answered true: the
+ * record is what the next VM is built from, so the script's change is not
+ * lost. False means the seat holds no bot of ours, or the brain refused the
+ * call — its on_init raised — and the console carries the reason. */
+bool botManagerSetBotInitTable(ServerSim *sim, BYTE playerNum,
+                               const ScnTable *init) {
+    BotContext *bot;
+    char        why[256];
+
+    if (sim == NULL || playerNum >= MAX_TANKS) return false;
+    bot = &sim->botMgr.bots[playerNum];
+    if (!bot->active) return false;
+
+    if (init != NULL) {
+        bot->initTable = *init;
+    } else {
+        scnTableClear(&bot->initTable);
+    }
+
+    if (!bot->brain.running || bot->brain.L == NULL) {
+        return true;
+    }
+    if (brainCoreUpdateInitTable(bot->brain.L, &bot->initTable, why,
+                                 sizeof(why))) {
+        WB_LOG_INFO(WB_LOG_CAT_LUA,
+                    "brain %d: init table replaced, on_init ran",
+                    (int)playerNum);
+        return true;
+    }
+    if (why[0] != '\0') {
+        WB_LOG_WARN(WB_LOG_CAT_LUA,
+                    "brain %d: on_init raised: %s", (int)playerNum, why);
+        return false;
+    }
+    /* No on_init: the global is the whole contract for this brain, and it is
+       written. Worth a line either way, because "the brain was not told" is
+       the first thing anybody debugging a bot_init wants to know. */
+    WB_LOG_INFO(WB_LOG_CAT_LUA,
+                "brain %d: init table replaced, the brain has no on_init",
+                (int)playerNum);
+    return true;
+}
+
+const ScnTable *botManagerGetBotInitTable(ServerSim *sim, BYTE playerNum) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return NULL;
+    if (!sim->botMgr.bots[playerNum].active) return NULL;
+    return &sim->botMgr.bots[playerNum].initTable;
+}
+
 char *botManagerEvalLuaString(ServerSim *sim, BYTE playerNum, const char *src) {
     if (sim == NULL || playerNum >= MAX_TANKS) return NULL;
     if (!sim->botMgr.bots[playerNum].active) return NULL;

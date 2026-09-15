@@ -62,6 +62,7 @@ static const ScenarioOpType kAllOpTypes[] = {
     SCN_OP_ROSTER_SPAWN_BOT,
     SCN_OP_ROSTER_REMOVE_BOT,
     SCN_OP_ROSTER_SET_TEAM,
+    SCN_OP_ROSTER_BOT_INIT,
     SCN_OP_LOBBY_ADD_BOT,
     SCN_OP_LOBBY_REMOVE_BOT,
     SCN_OP_LOBBY_SET_TEAM,
@@ -146,6 +147,7 @@ static bool opArmHasLanded(ScenarioOpType t) {
            t == SCN_OP_ROSTER_SPAWN_BOT ||   /* test_scenario_roster_arms.c */
            t == SCN_OP_ROSTER_REMOVE_BOT ||
            t == SCN_OP_ROSTER_SET_TEAM ||
+           t == SCN_OP_ROSTER_BOT_INIT || /* test_scenario_bot_init.c */
            t == SCN_OP_LOBBY_ADD_BOT ||
            t == SCN_OP_LOBBY_REMOVE_BOT ||
            t == SCN_OP_LOBBY_SET_TEAM ||

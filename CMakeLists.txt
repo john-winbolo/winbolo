@@ -3535,6 +3535,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # empty one when the creator passed none, and the -bot-init [arg]
     # text that fills one.
     tests/unit/test_bot_init_table.c
+    # New data for a bot already playing: game.bot_init's op, its refusals,
+    # and the brain call that rebuilds BRAIN_INIT and rings Brain.on_init.
+    tests/unit/test_scenario_bot_init.c
     # The per-tank modifier set: the op that writes it, the snapshot group
     # under the ninth presence bit, and when the values are cleared.
     tests/unit/test_tank_modifiers.c

@@ -174,6 +174,7 @@ typedef enum {
     SCN_OP_ROSTER_SPAWN_BOT,
     SCN_OP_ROSTER_REMOVE_BOT,
     SCN_OP_ROSTER_SET_TEAM,
+    SCN_OP_ROSTER_BOT_INIT,
 
     /* Roster, lobby */
     SCN_OP_LOBBY_ADD_BOT,
@@ -396,6 +397,15 @@ typedef struct {
     BYTE slot;
     BYTE team;
 } ScnOpRosterSetTeam;
+
+/* New data for a bot that is already playing. The same flat table a spawn
+ * hands a bot at its first breath, handed to one in the middle of a round:
+ * the bot's BRAIN_INIT is rebuilt from it and the brain is told, so a script
+ * can change a bot's orders rather than only choose them once. */
+typedef struct {
+    BYTE     slot;
+    ScnTable init;
+} ScnOpRosterBotInit;
 
 /* ── Roster, lobby ─────────────────────────────────────────────── */
 
@@ -669,6 +679,7 @@ typedef struct {
         ScnOpRosterSpawnBot    rosterSpawnBot;
         ScnOpRosterRemoveBot   rosterRemoveBot;
         ScnOpRosterSetTeam     rosterSetTeam;
+        ScnOpRosterBotInit     rosterBotInit;
         ScnOpLobbyAddBot       lobbyAddBot;
         ScnOpLobbyRemoveBot    lobbyRemoveBot;
         ScnOpLobbySetTeam      lobbySetTeam;

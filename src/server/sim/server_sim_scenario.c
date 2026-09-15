@@ -2086,7 +2086,7 @@ static ScnOpResult scenarioOpRosterSpawnBot(ServerSim *sim,
     if (r != SCN_OP_OK) return r;
 
     memset(&entry, 0, sizeof(entry));
-    entry.isSpawn = true;
+    entry.kind  = SCN_ROSTER_SPAWN;
     entry.spawn = *p;
     r = scenarioRosterQueue(sim, &entry);
     if (r != SCN_OP_QUEUED) return r;
@@ -2112,8 +2112,51 @@ static ScnOpResult scenarioOpRosterRemoveBot(ServerSim *sim,
     if (r != SCN_OP_OK) return r;
 
     memset(&entry, 0, sizeof(entry));
-    entry.isSpawn = false;
+    entry.kind       = SCN_ROSTER_REMOVE;
     entry.removeSlot = p->slot;
+    return scenarioRosterQueue(sim, &entry);
+}
+
+/* Hand a bot already in the round a new init table.
+ *
+ * The payload is checked here, as the spawn's is, so a script hears about a
+ * table that will not fit or a seat that holds no bot of ours at the moment
+ * it asks. What the seat holds is asked again as the change lands, because
+ * by then the bot may have died, left or been taken off the field.
+ *
+ * It queues with the spawns and the removals rather than writing into the
+ * brain's Lua state where it stands. A script calls from inside a hook,
+ * which runs from the tick's event drain; the brain's state is the worker
+ * threads' during the think phase, and only the producer touches it between
+ * ticks. The queue is where that difference is already settled. */
+static ScnOpResult scenarioOpRosterBotInit(ServerSim *sim,
+                                           const ScnOpRosterBotInit *p) {
+    ScnRosterQueueEntry entry;
+    ScnOpResult         r;
+    BYTE                k;
+
+    r = scenarioRequireRunning(sim);
+    if (r != SCN_OP_OK) return r;
+    /* An empty seat and a human seat, under the same two codes the removal
+       row answers with: it is the same question about the same kind of
+       seat. */
+    r = scenarioRemovableBot(sim, p->slot);
+    if (r != SCN_OP_OK) return r;
+    /* The table reaches a Lua VM, so every string in it must end inside its
+       own field, as a spawn's must. */
+    if (p->init.count > SCN_TABLE_MAX) {
+        return SCN_OP_TOO_BIG;
+    }
+    for (k = 0; k < p->init.count; k++) {
+        if (!scenarioTextTerminated(p->init.kv[k].key, SCN_TABLE_KEY_LEN) ||
+            !scenarioTextTerminated(p->init.kv[k].value, SCN_TABLE_VALUE_LEN)) {
+            return SCN_OP_TOO_BIG;
+        }
+    }
+
+    memset(&entry, 0, sizeof(entry));
+    entry.kind    = SCN_ROSTER_BOT_INIT;
+    entry.botInit = *p;
     return scenarioRosterQueue(sim, &entry);
 }
 
@@ -2304,6 +2347,29 @@ static void scenarioRosterRemoveNow(ServerSim *sim, BYTE slot) {
     scenarioTakeBotOut(sim, slot);
 }
 
+/* Make a queued init table. The seat is asked about again — a bot that died,
+ * left or went back to being a held seat between the ask and the landing is
+ * no longer one to write into — and then the table goes to the bot manager,
+ * which is what owns the brain's Lua state.
+ *
+ * A bot whose brain is not running takes the table without the brain being
+ * told: the record is kept on the bot either way, so nothing about what the
+ * script asked for is lost. */
+static void scenarioRosterBotInitNow(ServerSim *sim,
+                                     const ScnOpRosterBotInit *p) {
+    if (scenarioRemovableBot(sim, p->slot) != SCN_OP_OK) {
+        WB_LOG_WARN(WB_LOG_CAT_SIM,
+                    "scenario: queued bot_init dropped, seat %d holds no bot "
+                    "of ours", (int)p->slot);
+        return;
+    }
+    if (!botManagerSetBotInitTable(sim, p->slot, &p->init)) {
+        WB_LOG_WARN(WB_LOG_CAT_SIM,
+                    "scenario: bot_init for seat %d would not apply",
+                    (int)p->slot);
+    }
+}
+
 void serverSimScenarioDrainRoster(ServerSim *sim) {
     ScnRosterQueueEntry entry;
     bool                was;
@@ -2331,10 +2397,16 @@ void serverSimScenarioDrainRoster(ServerSim *sim) {
        tank spawn it publishes on the way in are all the script's doing. */
     was                 = sim->scenarioActing;
     sim->scenarioActing = true;
-    if (entry.isSpawn) {
-        scenarioRosterSpawnNow(sim, &entry.spawn);
-    } else {
-        scenarioRosterRemoveNow(sim, entry.removeSlot);
+    switch (entry.kind) {
+        case SCN_ROSTER_SPAWN:
+            scenarioRosterSpawnNow(sim, &entry.spawn);
+            break;
+        case SCN_ROSTER_REMOVE:
+            scenarioRosterRemoveNow(sim, entry.removeSlot);
+            break;
+        case SCN_ROSTER_BOT_INIT:
+            scenarioRosterBotInitNow(sim, &entry.botInit);
+            break;
     }
     sim->scenarioActing = was;
 }
@@ -2868,16 +2940,24 @@ bool serverSimGetScenarioRule(const ServerSim *sim, uint16_t rule,
 
 #undef SCN_RULE_READ_CASE
 
-/* The six ops that change who is in the round. The start-in-progress guard
- * below exists for exactly these: a roster edit made from inside a start
+/* The ops the setup window does not admit, and the one place the set is
+ * written down.
+ *
+ * Six of them change who is in the round, and the start-in-progress guard
+ * below exists for exactly those: a roster edit made from inside a start
  * re-enters the all-ready detector with every player still ready, which
- * would begin a second round on top of the one being set up. They are
- * therefore the ops the setup window does not admit, and this is the one
- * place the set is written down. */
+ * would begin a second round on top of the one being set up.
+ *
+ * The seventh, bot_init, changes no membership. It is held here for the
+ * other half of the same reason: inside a start the bots and their brains
+ * are being built, so there is no settled Lua state to write a table into.
+ * It is also what a script author reads off the row's neighbours — the
+ * roster rows answer alike from a setup. */
 static bool scenarioOpIsRoster(ScenarioOpType t) {
     return t == SCN_OP_ROSTER_SPAWN_BOT ||
            t == SCN_OP_ROSTER_REMOVE_BOT ||
            t == SCN_OP_ROSTER_SET_TEAM ||
+           t == SCN_OP_ROSTER_BOT_INIT ||
            t == SCN_OP_LOBBY_ADD_BOT ||
            t == SCN_OP_LOBBY_REMOVE_BOT ||
            t == SCN_OP_LOBBY_SET_TEAM;
@@ -2980,6 +3060,8 @@ static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpRosterRemoveBot(sim, &op->u.rosterRemoveBot);
         case SCN_OP_ROSTER_SET_TEAM:
             return scenarioOpRosterSetTeam(sim, &op->u.rosterSetTeam);
+        case SCN_OP_ROSTER_BOT_INIT:
+            return scenarioOpRosterBotInit(sim, &op->u.rosterBotInit);
         case SCN_OP_LOBBY_ADD_BOT:
             return scenarioOpLobbyAddBot(sim, &op->u.lobbyAddBot, out);
         case SCN_OP_LOBBY_REMOVE_BOT:
