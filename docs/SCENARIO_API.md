@@ -91,7 +91,9 @@ present only on hosts built against PUC-Lua — a LuaJIT host has none, so a
 script that wants it must ask. Your file is loaded as text: a precompiled
 chunk is refused at the door, so ship the source. `print` goes to the server
 console rather than to the host's stdout, which is how a script says
-something to the operator.
+something to the operator. It joins its arguments with tabs as stock `print`
+does, and cuts the finished line at 1024 bytes — a line longer than that is
+shortened rather than dropped, so an operator still sees what it was about.
 
 **Your state holds at most 32 MB.** Every allocation it makes is counted, and
 the one that would take it past the cap is refused: Lua raises an
