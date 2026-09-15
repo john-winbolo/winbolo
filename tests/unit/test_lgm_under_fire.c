@@ -62,6 +62,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include <SDL3/SDL.h>
 
@@ -76,11 +77,13 @@
 #include "bolo_map.h"
 #include "pillbox.h"
 #include "bases.h"
+#include "starts.h"
 #include "tank.h"
 #include "lgm.h"
 #include "shells.h"
 #include "threads.h"
 #include "log.h"
+#include "brain_record.h"
 #include "test_harness.h"
 #include "loopback_harness.h"
 
@@ -91,12 +94,33 @@
 #define WB_TEST_REPLAY_DIR "replays"
 #endif
 
+/* Where the brain-debug session of each run is written: one dir per run under
+ * <build dir>/debug_sessions, which is the folder BrainTest's Load Session
+ * browser globs. Same fallback reasoning as the replay dir above. */
+#ifndef WB_TEST_DEBUG_SESSION_DIR
+#define WB_TEST_DEBUG_SESSION_DIR "debug_sessions"
+#endif
+
 /* ── arena ──────────────────────────────────────────────────────────────── */
 
 #define LUF_ARENA_W      30   /* carved grass, in map squares               */
 #define LUF_ARENA_H      11
-#define LUF_PILL_INSET    5   /* pill this far in from the arena's east end */
-#define LUF_APPROACH      8   /* tank starts this many squares west of it   */
+#define LUF_APPROACH      8   /* pill this many squares east of the tank    */
+
+/* The Log Viewer's opening view. It parks a fixed 30x30 box of map squares
+ * with its top-left corner at square 127 and never moves it: xOffset/yOffset
+ * are set to 127 in lv_screenSetup (src/logviewer/screen.c) and only the
+ * Options > Tank Centred item moves them, which is off by default
+ * (imgui_main_menu.cpp). lv_playersMakeScreenTanks (src/logviewer/players.c)
+ * then adds a tank to the draw list only when its square is inside that box.
+ *
+ * So a replay of a fight outside the box shows an island and no tank, which is
+ * exactly what the first recording of this test did: its arena was in open sea
+ * at square (45,29). The arena is therefore placed inside the box, with a
+ * square to spare on every side of the tank's drive. */
+#define LUF_VIEW_X0     127   /* the box's top-left map square              */
+#define LUF_VIEW_SIZE    30   /* and its width and height, in squares       */
+#define LUF_VIEW_MID    (LUF_VIEW_X0 + LUF_VIEW_SIZE / 2)
 
 /* Pumps. One pump is one 20ms server frame, so these are frame budgets. */
 #define LUF_CONNECT_MAX 4000  /* join + map download, lagged                */
@@ -114,6 +138,8 @@
 typedef struct {
     BYTE pillX, pillY;        /* the pillbox square                        */
     BYTE tankX, tankY;        /* where the tank is parked to start         */
+    BYTE startNum;            /* the map start it was built around, 1-based */
+    bool overBases;           /* the strip had to be cut across a base      */
     bool ok;
 } LufArena;
 
@@ -134,41 +160,124 @@ typedef struct {
 
 /* ── arena construction (runs before the client joins) ───────────────────── */
 
-/* A rectangle of the map with no base anywhere in it or in a one-square
- * border round it. Pills do not matter: the setup keeps exactly one and puts
- * it where it wants it. */
-static bool luf_find_clear_rect(GameSim *gs, BYTE *ox, BYTE *oy) {
-    int x, y, i, j;
-    for (y = 24; y + LUF_ARENA_H + 2 < 224; y++) {
-        for (x = 24; x + LUF_ARENA_W + 2 < 224; x++) {
-            bool clear = true;
-            for (j = -1; j <= LUF_ARENA_H && clear; j++) {
-                for (i = -1; i <= LUF_ARENA_W && clear; i++) {
-                    if (basesExistPos(&gs->bs, (BYTE)(x + i), (BYTE)(y + j))) {
-                        clear = false;
-                    }
-                }
-            }
-            if (clear) {
-                *ox = (BYTE)x;
-                *oy = (BYTE)y;
-                return true;
+/* No base anywhere in the rectangle or in a one-square border round it. Pills
+ * do not matter: the setup keeps exactly one and puts it where it wants it. */
+static bool luf_rect_base_free(GameSim *gs, int x0, int y0) {
+    int i, j;
+    for (j = -1; j <= LUF_ARENA_H; j++) {
+        for (i = -1; i <= LUF_ARENA_W; i++) {
+            if (basesExistPos(&gs->bs, (BYTE)(x0 + i), (BYTE)(y0 + j))) {
+                return false;
             }
         }
     }
-    return false;
+    return true;
+}
+
+/* The arena's west end IS a start square, so the tank spawns where the move
+ * begins and the parking below is a nudge rather than a jump across the sea.
+ * The strip runs east from the start and is centred on its row, so the origin
+ * is (startX, startY - height/2).
+ *
+ * An earlier version took the first base-free rectangle anywhere on the map.
+ * On Everard Island that is open sea at square (45,29), miles from every
+ * start: the tank had to be teleported there, and what the replay showed was
+ * an island with a tank that appeared and then went somewhere nobody could
+ * find. Building round a start fixes the picture as well as the test. */
+static bool luf_rect_fits(int x0, int y0) {
+    return x0 > 1 && y0 > 1 &&
+           x0 + LUF_ARENA_W + 1 < MAP_ARRAY_SIZE &&
+           y0 + LUF_ARENA_H + 1 < MAP_ARRAY_SIZE;
+}
+
+/* Is the whole fight — the tank's square, the pill's, and a square of margin
+ * round both — inside the Log Viewer's opening box? */
+static bool luf_start_on_screen(int startX, int startY) {
+    int lo = LUF_VIEW_X0 + 1;
+    int hi = LUF_VIEW_X0 + LUF_VIEW_SIZE - 1;
+    return startX >= lo && startX + LUF_APPROACH <= hi &&
+           startY >= lo && startY <= hi;
+}
+
+/* Pick the start to build on. Every start whose strip fits on the map is a
+ * candidate; they are then ordered by what matters, worst penalty first:
+ *
+ *   1. a strip that crosses a base            — the arena would swallow one
+ *   2. a fight outside the Log Viewer's box   — the replay would show no tank
+ *   3. distance from the middle of that box   — tie-break, keeps it central
+ *
+ * The test owns this map, so the penalties are preferences rather than
+ * refusals: a strip across a base still beats no arena at all, and the caller
+ * says so in the printout. Returns the 1-based start number, or 0 when the map
+ * has no start with room for the strip. */
+static BYTE luf_pick_start(GameSim *gs, BYTE *outX, BYTE *outY, bool *overBases) {
+    BYTE n = startsGetNumStarts(&gs->ss);
+    BYTE best = 0, bestX = 0, bestY = 0;
+    bool bestOverBases = false;
+    long bestScore = 0;
+    BYTE i;
+
+    for (i = 1; i <= n; i++) {
+        start s;
+        int  x0, y0, dx, dy;
+        bool crossesBase;
+        long score;
+
+        memset(&s, 0, sizeof(s));
+        startsGetStartStruct(&gs->ss, &s, i);
+        x0 = (int)s.x;
+        y0 = (int)s.y - LUF_ARENA_H / 2;
+        if (!luf_rect_fits(x0, y0)) {
+            continue;
+        }
+
+        crossesBase = !luf_rect_base_free(gs, x0, y0);
+        dx = (int)s.x - LUF_VIEW_MID;
+        dy = (int)s.y - LUF_VIEW_MID;
+        if (dx < 0) dx = -dx;
+        if (dy < 0) dy = -dy;
+        score = (crossesBase ? 1000000L : 0L)
+              + (luf_start_on_screen((int)s.x, (int)s.y) ? 0L : 1000L)
+              + (long)(dx > dy ? dx : dy);
+
+        if (best == 0 || score < bestScore) {
+            best          = i;
+            bestX         = s.x;
+            bestY         = s.y;
+            bestOverBases = crossesBase;
+            bestScore     = score;
+        }
+    }
+    if (best != 0) {
+        *outX = bestX;
+        *outY = bestY;
+        *overBases = bestOverBases;
+    }
+    return best;
 }
 
 static void luf_build_arena(LoopbackHarness *h, void *user) {
     LufArena *a = (LufArena *)user;
     GameSim  *gs = &h->sim->sim;
-    BYTE x0 = 0, y0 = 0;
-    int x, y;
+    BYTE startX = 0, startY = 0;
+    int x0, y0;
+    int x, y, i;
     pillbox p;
 
     a->ok = false;
-    if (!luf_find_clear_rect(gs, &x0, &y0)) {
+    a->startNum = luf_pick_start(gs, &startX, &startY, &a->overBases);
+    if (a->startNum == 0) {
         return;
+    }
+    x0 = (int)startX;
+    y0 = (int)startY - LUF_ARENA_H / 2;
+
+    /* Send every slot to that start, so the joiner spawns at the arena's west
+     * end instead of wherever the open-game placement scattered it. This is
+     * the same field a scenario's "start" op writes, and startsGetStart
+     * consumes it ahead of the placement policy. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        gs->scenarioStartIdx[i] = (BYTE)(a->startNum - 1);
     }
 
     /* Open grass, so nothing hides the tank from the pill and the man walks
@@ -180,10 +289,10 @@ static void luf_build_arena(LoopbackHarness *h, void *user) {
         }
     }
 
-    a->pillY = (BYTE)(y0 + LUF_ARENA_H / 2);
-    a->pillX = (BYTE)(x0 + LUF_ARENA_W - 1 - LUF_PILL_INSET);
-    a->tankY = a->pillY;
-    a->tankX = (BYTE)(a->pillX - LUF_APPROACH);
+    a->tankX = startX;              /* the start itself: the strip's west end */
+    a->tankY = startY;
+    a->pillY = startY;
+    a->pillX = (BYTE)(startX + LUF_APPROACH);
 
     /* One pillbox in the world, neutral (so it is hostile to everyone), at
      * full armour and the classic unangered fire rate. Dropping numPills to
@@ -218,8 +327,11 @@ static int luf_dist(int ax, int ay, int bx, int by) {
     return (int)(sqrt(dx * dx + dy * dy) + 0.5);
 }
 
+/* Runs after every pump of the connect loop, so it doubles as that phase's
+ * session recorder — loopbackHarnessPumpUntil has no other per-pump seam. */
 static bool luf_connected(LoopbackHarness *h, void *user) {
     (void)user;
+    brainRecordTick(h->sim);
     return clientSimGetConnectState(h->cs) == CLIENT_CONNECT_CONNECTED;
 }
 
@@ -282,9 +394,75 @@ static void luf_restock(LoopbackHarness *h, BYTE slot) {
 typedef struct {
     const char *label;
     const char *impair;
-    const char *replayLeaf;   /* file name under WB_TEST_REPLAY_DIR */
+    const char *replayLeaf;   /* file name under WB_TEST_REPLAY_DIR       */
+    const char *sessionTag;   /* leading part of the debug-session dir    */
     uint64_t    seed;
 } LufConfig;
+
+/* ── recording the run as a brain-debug session ──────────────────────────── */
+
+/* Open a BrainTest session for this run: debug_sessions/<tag>_<timestamp>/.
+ *
+ * There is no bot in this test and the recorder does not need one. It resolves
+ * its output dir from a bot's Lua DEBUG_SESSION_DIR only when no dir was set
+ * explicitly, and brainRecordSetSessionDir sets one, so the bot fallback never
+ * runs. Everything else it writes per frame is server-side world state — the
+ * god-view snapshot of tanks, shells, bases, pills and the terrain — and the
+ * per-bot block is simply written with a count of zero.
+ *
+ * The one thing the recorder does NOT get here is a caller: the only
+ * brainRecordTick() call in the tree is in botManagerTick, which the dedicated
+ * server runs only when the game has bots. So this test drives the recorder
+ * itself, once per pump, from luf_pump below. */
+static void luf_session_start(const LufConfig *cfg, char *dirOut, size_t cap) {
+    time_t    now = time(NULL);
+    struct tm tmv;
+    char      stamp[32];
+
+    dirOut[0] = '\0';
+#ifdef _WIN32
+    if (localtime_s(&tmv, &now) != 0) {
+        return;
+    }
+#else
+    if (localtime_r(&now, &tmv) == NULL) {
+        return;
+    }
+#endif
+    strftime(stamp, sizeof(stamp), "%Y%m%d_%H%M%S", &tmv);
+    snprintf(dirOut, cap, "%s/%s_%s", WB_TEST_DEBUG_SESSION_DIR,
+             cfg->sessionTag, stamp);
+
+    SDL_CreateDirectory(WB_TEST_DEBUG_SESSION_DIR);  /* fine if it exists */
+    if (!SDL_CreateDirectory(dirOut)) {
+        fprintf(stderr, "  session: COULD NOT create %s (%s) — the run goes "
+                        "on unrecorded\n", dirOut, SDL_GetError());
+        dirOut[0] = '\0';
+        return;
+    }
+    brainRecordSetSessionDir(dirOut);
+    brainRecordSetEnabled(true);
+    fprintf(stderr, "  session: recording to %s\n", dirOut);
+}
+
+/* Close the .btr and disarm. Disarming matters: the recorder is process-wide
+ * and every other test in this binary runs in the same process. */
+static void luf_session_stop(const char *dir) {
+    brainRecordEndGame();
+    brainRecordSetEnabled(false);
+    brainRecordSetSessionDir(NULL);
+    if (dir != NULL && dir[0] != '\0') {
+        fprintf(stderr, "  session written: %s  (BrainTest -> Load Session)\n",
+                dir);
+    }
+}
+
+/* One pump, and the frame of it that the session records. Every pump in the
+ * run goes through here so the recording has no holes. */
+static void luf_pump(LoopbackHarness *h) {
+    loopbackHarnessPump(h);
+    brainRecordTick(h->sim);
+}
 
 /* ── recording the run as a replay ───────────────────────────────────────── */
 
@@ -329,6 +507,7 @@ static void luf_record_stop(const char *path) {
 #define LUF_STOP()                                                          \
     do {                                                                    \
         luf_record_stop(replayPath);                                        \
+        luf_session_stop(sessionDir);                                        \
         loopbackHarnessStop(&h);                                            \
     } while (0)
 
@@ -339,6 +518,7 @@ static int luf_run(const LufConfig *cfg) {
     LufImpact impacts[LUF_IMPACT_MAX];
     int       trailCount = 0, impactCount = 0;
     char      replayPath[512];
+    char      sessionDir[512];
     uint32_t  inTick = 0;
     BYTE      slot;
     GameSim  *gs;
@@ -363,6 +543,7 @@ static int luf_run(const LufConfig *cfg) {
     memset(trail, 0, sizeof(trail));
     memset(impacts, 0, sizeof(impacts));
     replayPath[0] = '\0';
+    sessionDir[0] = '\0';
 
     fprintf(stderr, "\n  ==== %s (impair=%s seed=%llu) ====\n", cfg->label,
             (cfg->impair != NULL) ? cfg->impair : "clean",
@@ -374,7 +555,7 @@ static int luf_run(const LufConfig *cfg) {
                   "harness start failed (%s)", cfg->label);
     if (!arena.ok) {
         LUF_STOP();
-        UT_FAIL("no base-free %dx%d rectangle on the map to build the arena in",
+        UT_FAIL("no start on the map has room for a %dx%d strip beside it",
                 LUF_ARENA_W, LUF_ARENA_H);
     }
     /* Record from here, BEFORE the client joins: the arena is already carved,
@@ -383,6 +564,10 @@ static int luf_run(const LufConfig *cfg) {
      * held no player record at all and the viewer drew an empty island. The
      * tank's parking move below arrives as ordinary per-tick deltas. */
     luf_record_start(&h, cfg, replayPath, sizeof(replayPath));
+    /* And the BrainTest session, from the same moment and for the same reason:
+     * the world it records is already the carved one. luf_connected records a
+     * frame per pump so the join is in the session too. */
+    luf_session_start(cfg, sessionDir, sizeof(sessionDir));
     if (loopbackHarnessPumpUntil(&h, LUF_CONNECT_MAX, luf_connected, NULL) < 0) {
         LUF_STOP();
         UT_FAIL("client never connected (%s)", cfg->label);
@@ -402,23 +587,46 @@ static int luf_run(const LufConfig *cfg) {
     }
     man = &gs->lgmen[slot];
 
-    /* Park the tank at the west end of the arena facing the pill, and stock
-     * it. Fixture: the round's own spawn is wherever Everard Island put it. */
-    threadsWaitForMutex();
-    tankSetWorld(gs, &gs->tanks[slot], luf_world(arena.tankX),
-                 luf_world(arena.tankY), (TURNTYPE)BRADIANS_EAST, false);
-    threadsReleaseMutex();
-    luf_restock(&h, slot);
+    /* Face the tank at the pill, and stock it. The arena's west end is the
+     * start the tank spawned on, so this is a turn on the spot and at most a
+     * square or two of nudge if the spawn scatter moved it off the centre —
+     * not the cross-map teleport the old open-sea arena needed. */
+    {
+        BYTE spawnX = tankGetMX(&gs->tanks[slot]);
+        BYTE spawnY = tankGetMY(&gs->tanks[slot]);
+        bool onStart = (spawnX == arena.tankX && spawnY == arena.tankY);
 
-    fprintf(stderr, "  arena: pill at (%u,%u) tank starts at (%u,%u) slot %u\n",
-            (unsigned)arena.pillX, (unsigned)arena.pillY,
-            (unsigned)arena.tankX, (unsigned)arena.tankY, (unsigned)slot);
+        threadsWaitForMutex();
+        tankSetWorld(gs, &gs->tanks[slot], luf_world(arena.tankX),
+                     luf_world(arena.tankY), (TURNTYPE)BRADIANS_EAST, false);
+        threadsReleaseMutex();
+        luf_restock(&h, slot);
+
+        fprintf(stderr,
+                "  arena: built on map start %u; tank square (%u,%u), pill "
+                "(%u,%u)%s\n"
+                "  spawn: the tank came up on (%u,%u) — %s\n",
+                (unsigned)arena.startNum,
+                (unsigned)arena.tankX, (unsigned)arena.tankY,
+                (unsigned)arena.pillX, (unsigned)arena.pillY,
+                arena.overBases ? "  (the strip crosses a base: no start on "
+                                  "this map had a base-free strip)" : "",
+                (unsigned)spawnX, (unsigned)spawnY,
+                onStart ? "the start itself, so parking only turns it east"
+                        : "a scatter square beside the start, so parking "
+                          "moves it back");
+        fprintf(stderr, "  slot %u; the replay's view box is squares %d..%d "
+                        "both ways, so the fight is %s it\n",
+                (unsigned)slot, LUF_VIEW_X0, LUF_VIEW_X0 + LUF_VIEW_SIZE,
+                luf_start_on_screen((int)arena.tankX, (int)arena.tankY)
+                    ? "inside" : "OUTSIDE");
+    }
 
     /* Phase 0 — settle. Hands off the controls while the client syncs to the
      * moved tank and the server's ping measurement catches up with the link. */
     for (i = 0; i < LUF_SETTLE; i++) {
         luf_send_frame(&h, slot, &inTick, 0, 0, 0, 0, 0);
-        loopbackHarnessPump(&h);
+        luf_pump(&h);
         luf_restock(&h, slot);
     }
 
@@ -445,7 +653,7 @@ static int luf_run(const LufConfig *cfg) {
             shotsFired++;
         }
         luf_send_frame(&h, slot, &inTick, INPUT_BTN_ACCEL, actions, 0, 0, 0);
-        loopbackHarnessPump(&h);
+        luf_pump(&h);
         luf_restock(&h, slot);
 
         if (gs->pb->item[0].armour < prevArmour) {
@@ -485,7 +693,7 @@ static int luf_run(const LufConfig *cfg) {
     for (i = 0; i < LUF_SOAK; i++) {
         int gap;
         luf_send_frame(&h, slot, &inTick, INPUT_BTN_ACCEL, 0, 0, 0, 0);
-        loopbackHarnessPump(&h);
+        luf_pump(&h);
         luf_restock(&h, slot);
         if ((i % 20) == 0) {
             WORLD twx = 0, twy = 0;
@@ -540,7 +748,7 @@ static int luf_run(const LufConfig *cfg) {
     shellsDebugHitLogClear();
     luf_send_frame(&h, slot, &inTick, INPUT_BTN_ACCEL, 0,
                    (uint8_t)(LGM_BUILDING_REQUEST + 1), buildX, buildY);
-    loopbackHarnessPump(&h);
+    luf_pump(&h);
     luf_restock(&h, slot);
 
     /* Phase 4 — watch him. Every frame: where he is, and any shell that has
@@ -557,7 +765,7 @@ static int luf_run(const LufConfig *cfg) {
         int  preManY = (int)(*man)->y;
 
         luf_send_frame(&h, slot, &inTick, INPUT_BTN_ACCEL, 0, 0, 0, 0);
-        loopbackHarnessPump(&h);
+        luf_pump(&h);
         luf_restock(&h, slot);
 
         if (trailCount < LUF_TRAIL_MAX) {
@@ -671,6 +879,7 @@ int run_lgm_wall_behind_tank_under_fire_lagged(void) {
     cfg.label      = "lagged";
     cfg.impair     = "delay=80,jitter=20";
     cfg.replayLeaf = "lgm_under_fire_lagged.wbv";
+    cfg.sessionTag = "lgm_lagged";
     cfg.seed       = 4242u;
     return luf_run(&cfg);
 }
@@ -680,6 +889,7 @@ int run_lgm_wall_behind_tank_under_fire_nolag(void) {
     cfg.label      = "no lag (control)";
     cfg.impair     = NULL;
     cfg.replayLeaf = "lgm_under_fire_nolag.wbv";
+    cfg.sessionTag = "lgm_nolag";
     cfg.seed       = 4242u;
     return luf_run(&cfg);
 }

@@ -4153,6 +4153,12 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # Unlike the scratch root above it is NOT swept at exit and carries no pid:
     # the whole point is that a person can open the last run in the LogViewer.
     WB_TEST_REPLAY_DIR="${CMAKE_BINARY_DIR}/replays"
+    # Where a test that records a brain-debug session of its own run puts the
+    # session dir. BrainTest's Load Session browser globs "debug_sessions/*"
+    # relative to its working directory, and that is this same build dir, so a
+    # session written here is one the browser lists. Like the replay dir it is
+    # NOT swept at exit: the point is that a person can step through the run.
+    WB_TEST_DEBUG_SESSION_DIR="${CMAKE_BINARY_DIR}/debug_sessions"
     # Committed v1 .wbv fixture directory: the reader gate loads from here and
     # the on-demand capture (re)writes spectator_v1.wbv into it.
     WB_WBV_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures/wbv"
