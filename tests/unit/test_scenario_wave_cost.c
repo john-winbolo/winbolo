@@ -35,7 +35,9 @@
  *                                               fielded again: one brain made,
  *                                               none destroyed, and the same
  *                                               ClientSim and subscription
- *                                               throughout
+ *                                               throughout — carrying none of
+ *                                               the previous life's prediction
+ *                                               state or think telemetry
  * run_scenario_wave_cost_horde_swap_counts    — six seats swapped twice: six
  *                                               brains made, none destroyed,
  *                                               and no seat off the roster
@@ -76,6 +78,8 @@
 #include "server_sim_scenario.h"
 #include "bot_manager.h"           /* BotContext: the ClientSim and the sub,
                                     * botManagerIsBot, botManagerDestroy */
+#include "client_sim_internal.h"   /* ClientSim.clientState and the err offset —
+                                    * what the refield has to put back */
 #include "scenario_table.h"        /* scnTableSet — the init table a spawn carries */
 #include "game_sim.h"
 #include "everard_map.h"
@@ -335,6 +339,23 @@ int run_scenario_wave_cost_refield_resumes(void) {
     parkedCs  = sim->botMgr.bots[seat].cs;
     parkedSub = sim->botMgr.bots[seat].controlSub;
 
+    /* What a life of playing leaves on the ClientSim, planted by hand: this
+       binary delivers no snapshot to a bot, so nothing here would set the
+       predicted-tank latch, fill the input history or move the render-only
+       error offset on its own. The tick is a long way past anything the
+       refielded life will produce, which is the point — the replay loop
+       walks from the server's lastProcessedInput + 1 up to newestInput, and
+       the unfield zeroed the server's end of that. The think telemetry is
+       planted the same way, for the same reason. */
+    sim->botMgr.bots[seat].cs->clientState.hasPredictedTank = TRUE;
+    sim->botMgr.bots[seat].cs->clientState.newestInput      = 3001;
+    sim->botMgr.bots[seat].cs->errX     = 12.5f;
+    sim->botMgr.bots[seat].cs->errY     = -7.25f;
+    sim->botMgr.bots[seat].cs->errAngle = 3.5f;
+    sim->botMgr.bots[seat].overrunCount = 9;
+    sim->botMgr.bots[seat].thinkCount   = 40;
+    sim->botMgr.bots[seat].maxThinkMs   = 22.0;
+
     /* Off the field again: the seat stays, and so does everything behind it. */
     wcRemoveOp(&op, seat);
     UT_ASSERT(wcApplyOne(sim, &op));
@@ -386,6 +407,44 @@ int run_scenario_wave_cost_refield_resumes(void) {
                   "the refielded seat is not an active bot");
     UT_ASSERT_MSG(sim->sim.tanks[seat] != NULL,
                   "the refield built no tank for the seat");
+
+    /* And that tank is being predicted from nothing, on the same ClientSim
+       the asserts above just established this is. A latch still set here
+       sends the first snapshot into the reconcile branch, which would replay
+       the previous life's inputs — every tick from the server's zeroed
+       lastProcessedInput + 1 up to newestInput — onto a tank that never
+       drove them. */
+    UT_ASSERT_MSG(!sim->botMgr.bots[seat].cs->clientState.hasPredictedTank,
+                  "the refielded seat still has the predicted-tank latch set "
+                  "from the life that ended at the park");
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].cs->clientState.initialized,
+                  "the refielded seat's client state does not read as "
+                  "initialized");
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].cs->clientState.newestInput == 0,
+                  "the refielded seat's input history newest tick is %u, "
+                  "expected 0 — the previous life's inputs are still there to "
+                  "replay",
+                  (unsigned)sim->botMgr.bots[seat].cs->clientState.newestInput);
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].cs->errX == 0.0f &&
+                      sim->botMgr.bots[seat].cs->errY == 0.0f &&
+                      sim->botMgr.bots[seat].cs->errAngle == 0.0f,
+                  "the refielded seat carries the previous life's render error "
+                  "offset (%f, %f, angle %f), expected all zero",
+                  (double)sim->botMgr.bots[seat].cs->errX,
+                  (double)sim->botMgr.bots[seat].cs->errY,
+                  (double)sim->botMgr.bots[seat].cs->errAngle);
+
+    /* The think telemetry is one window, so the resume starts the next one
+       rather than adding this life's thinking to the last one's. */
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].overrunCount == 0,
+                  "the refielded seat counts %u overruns, expected 0",
+                  (unsigned)sim->botMgr.bots[seat].overrunCount);
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].thinkCount == 0,
+                  "the refielded seat counts %u thinks, expected 0",
+                  (unsigned)sim->botMgr.bots[seat].thinkCount);
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].maxThinkMs == 0.0,
+                  "the refielded seat holds a %f ms think peak, expected 0",
+                  sim->botMgr.bots[seat].maxThinkMs);
 
     serverSimDestroy(sim);
     wcDropBrainFile();

@@ -85,16 +85,17 @@ typedef struct {
     double          lastThinkMs;
     /* Number of ticks this bot's think exceeded targetMs * 1.5. Counts
      * every overrun; see lastOverrunWarnTick for the rate-limited log.
-     * Reset at each round start (botManagerOnGameStart). */
+     * Reset at each round start (botManagerOnGameStart) and when a parked
+     * runner is handed back to its seat (botResumeParkedRunner). */
     Uint32          overrunCount;
     /* Total brain.think calls timed this game. Denominator for the overrun
      * rate — lastThinkMs + overrunCount alone can't tell a spike-now from a
      * spike-an-hour-ago. Written by the worker next to lastThinkMs; reset
-     * with overrunCount/maxThinkMs at each round start (botManagerOnGameStart). */
+     * with overrunCount/maxThinkMs at both of those points. */
     Uint32          thinkCount;
     /* High-water mark of lastThinkMs this game (ms). The magnitude behind
      * overrunCount: the count says how often, this says how bad. Written by
-     * the worker next to lastThinkMs; reset at each round start. */
+     * the worker next to lastThinkMs; reset alongside the other two. */
     double          maxThinkMs;
     /* Last tick at which a budget-overrun warning was logged for this
      * bot. Limits the warning to at most one per ~50 ticks. */

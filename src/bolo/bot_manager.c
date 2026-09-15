@@ -914,6 +914,17 @@ static bool botParkedRunnerMatches(const BotContext *bot,
  *    and it is far cheaper than a VM.
  *  - destroy and recreate the bot's own tank on its ClientSim, as
  *    botManagerOnGameStart does for a round start.
+ *  - put the ClientSim's prediction state back the way a fresh one has it:
+ *    the predicted-tank latch off, the input history ring and its tick
+ *    counters cleared, and the render-only error offset zeroed. The park
+ *    left the latch set and newestInput holding the last tick of the life
+ *    that ended, and the unfield zeroed the server's lastProcessedInput for
+ *    the seat, so without this the first snapshot after a refield takes
+ *    clientApplySnapshot's reconcile branch and replays that dead life's
+ *    inputs onto the tank just built, instead of taking the first-snapshot
+ *    branch. A round start gets this from clientSimApplyControl's
+ *    CTRL_GAME_PHASE_LOBBY arm; a refield inside a round reaches neither
+ *    that nor clientSimCreate.
  *  - re-seed the brain's start tick, so its tick numbers continue the session
  *    clock rather than the life that ended at the park.
  *  - flag isFirst. The tank genuinely is new, and the brain is handed
@@ -960,6 +971,18 @@ static bool botResumeParkedRunner(ServerSim *sim, BotContext *bot,
     }
     tankCreate(clientSimGetGameSim(bot->cs), &MY_TANK(bot->cs));
 
+    /* Prediction state as a fresh ClientSim has it: hasPredictedTank FALSE,
+       the input history ring empty and its tick counters back to 0, so the
+       first snapshot on the new tank takes the first-snapshot branch rather
+       than reconciling against the life that ended at the park. */
+    clientStateCreate(&bot->cs->clientState);
+
+    /* The render-only error offset belongs to that life too — the corrections
+       it accumulated were measured against a tank that no longer exists. */
+    bot->cs->errX     = 0.0f;
+    bot->cs->errY     = 0.0f;
+    bot->cs->errAngle = 0.0f;
+
     bot->ai = ai;
     *clientSimGetAllowComputerTanks(bot->cs) = ai;
 
@@ -976,6 +999,14 @@ static bool botResumeParkedRunner(ServerSim *sim, BotContext *bot,
     bot->killSite[0]          = '\0';
     bot->wasKilled            = false;
     bot->consecutiveCrashes   = 0;
+
+    /* The think telemetry is one window: the overrun count, the calls it is a
+       rate over, and the peak behind it have to describe the same stretch of
+       thinking. botManagerOnGameStart resets the three together at a round
+       start; a resumed runner starts its next stretch here. */
+    bot->overrunCount         = 0;
+    bot->thinkCount           = 0;
+    bot->maxThinkMs           = 0.0;
 
     bot->parked = false;
     bot->active = true;
