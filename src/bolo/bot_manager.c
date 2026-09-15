@@ -1022,6 +1022,12 @@ static bool botResumeParkedRunner(ServerSim *sim, BotContext *bot,
     bot->active = true;
     sim->botMgr.numBots++;
 
+    /* The server's alliance matrix, for the same reason the fresh build
+       takes it below: a resume is a seat coming back onto the field mid-round
+       and its ClientSim's matrix is as old as the park. The seat may also
+       have changed sides while it was off. */
+    botManagerSyncClientAlliances(sim);
+
     WB_LOG_INFO(WB_LOG_CAT_SIM,
             "botManager: bot %d back on the field on its parked runner",
             (int)playerNum);
@@ -1305,6 +1311,30 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
 
     bot->active = true;
     sim->botMgr.numBots++;
+
+    /* The server's alliance matrix into the ClientSim this add just built.
+     *
+     * A bot decides who is an enemy from its OWN client-side players object,
+     * not from the server's, and the two only meet where something copies
+     * one into the other. At a round start that is
+     * serverSimReapplyTeamAlliances, which ends in this same call — but a
+     * bot born MID-ROUND (a scenario wave fielding a held seat, a host's Add
+     * Bot during play) is built long after the last one, and nothing else
+     * fills its matrix in.
+     *
+     * The subscriber replay does not: it hands the new ClientSim one
+     * CTRL_PLAYER_JOIN per player carrying that player's allies, and
+     * playersSetPlayer (players.c, the `iMyPlayerNum == iPlayerNum` branch)
+     * stores only the location for the client's OWN slot — the row a bot
+     * reads to answer "who is on my side" is the one row the replay cannot
+     * write. A wave attacker therefore came ashore believing it was allied
+     * with nobody, and shot its own team's tanks and the pillboxes they had
+     * built.
+     *
+     * Every active bot rather than this one alone, which is what the round
+     * start does too: the matrix is the server's either way, so a bot
+     * already holding it is written the same bits back. */
+    botManagerSyncClientAlliances(sim);
 
     /* A recording block may already be open (server_lifecycle publishes
      * DEBUG_SESSION_DIR to every bot when the block OPENS) — a bot born

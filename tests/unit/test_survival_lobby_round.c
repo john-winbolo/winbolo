@@ -55,6 +55,8 @@
 #include "control_event.h"
 #include "scenario_host.h"
 #include "game_sim.h"
+#include "players.h"
+#include "bot_manager.h"
 #include "test_harness.h"
 
 /* Where the shipped maps and their scripts live. */
@@ -396,6 +398,70 @@ static int slrRound(int bots, bool inPlace) {
         UT_ASSERT_MSG(mine > 0,
                       "the human's dead pill was taken from them during the "
                       "grace");
+    }
+
+    /* (g) The wave, once it is ashore. A wave attacker is a HELD seat the
+           script fields mid-round, long after the round start's alliance
+           pass, and it fights from its OWN ClientSim's matrix — not the
+           server's. Both are checked here, because the server's was always
+           right and the bot's own was always empty: an attacker that reads
+           its own row as zero has no allies at all, so it shoots its team's
+           tanks and the pillboxes they have built. */
+    if (bots == SLR_MAX_BOTS) {
+        int      n;
+        uint16_t horde = 0;     /* every seat on the horde's team */
+        int      ashore = 0;
+
+        while (sim->tick < graceFrom + SLR_GRACE_TICKS + 2500) {
+            serverSimTick(sim);
+        }
+
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (slrTeam(sim, i) == SLR_WAVE_TEAM) horde |= (uint16_t)(1u << i);
+        }
+        UT_ASSERT_MSG(horde != 0, "no horde seat is in the roster");
+
+        for (i = 0; i < MAX_TANKS; i++) {
+            uint16_t srv, own;
+            if (slrTeam(sim, i) != SLR_WAVE_TEAM) continue;
+            if (!sim->lobbyPlayers[i].fielded) continue;
+            ashore++;
+
+            /* The server's row: this attacker allied with every horde seat. */
+            srv = (uint16_t)playersGetAlliesBitMap(&sim->sim.plyrs, (BYTE)i);
+            UT_ASSERT_MSG((srv & horde) == horde,
+                          "the server has attacker %d allied with 0x%04x, "
+                          "which does not cover the horde's 0x%04x",
+                          i, (unsigned)srv, (unsigned)horde);
+            UT_ASSERT_MSG((srv & ~horde) == 0,
+                          "the server has attacker %d allied with 0x%04x, "
+                          "outside the horde's 0x%04x",
+                          i, (unsigned)srv, (unsigned)horde);
+
+            /* And the attacker's OWN copy of its own row, which is what its
+               brain answers "is that one of mine?" from. */
+            own = (uint16_t)botManagerGetClientAllieRow(sim, (BYTE)i, (BYTE)i);
+            UT_ASSERT_MSG(own == srv,
+                          "attacker %d's own client row is 0x%04x where the "
+                          "server says 0x%04x: it does not know its own side",
+                          i, (unsigned)own, (unsigned)srv);
+        }
+        UT_ASSERT_MSG(ashore > 0, "no attacker reached the field");
+
+        /* (h) Nothing of the horde's is lying loose for the defenders to
+               drive out and collect: every wave pill is in a tank, or has
+               been built, or has been captured by a defender. A dead one
+               standing on the ground in horde colours is the shape the
+               owner saw. */
+        for (n = SLR_CENTER_PILLS; n < (int)(*sim->sim.pb).numPills; n++) {
+            const pillbox *p = &(*sim->sim.pb).item[n];
+            if (p->inTank) continue;
+            if (p->armour > 0) continue;
+            UT_ASSERT_MSG(slrTeam(sim, p->owner) != SLR_WAVE_TEAM,
+                          "wave pill %d is lying dead on the ground at %d,%d "
+                          "in the horde's colours (owner %d)",
+                          n + 1, (int)p->x, (int)p->y, (int)p->owner);
+        }
     }
 
     slrSeen = NULL;
