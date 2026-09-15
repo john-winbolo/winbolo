@@ -2141,56 +2141,100 @@ static int scnFieldWord(lua_State *L, int idx, const char *key,
     return v;
 }
 
-/* The flat table a bot is handed at its first breath. Keys are names and
- * values are text, with a number written out as the text of itself, because
- * that is what a brain reads. False when a pair did not fit, with the key it
- * stopped on copied into badKey. */
-static bool scnFieldTable(lua_State *L, int idx, const char *key,
-                          ScnTable *out, char *badKey, size_t badCap) {
-    bool ok = true;
-    int  t;
+/* The key a walk stopped on, as text for a line about it. A name is itself, a
+ * number renders, and anything else has no text of its own and is named by its
+ * type. What is converted is a copy, so the key the walk is standing on is
+ * left exactly as it is and the next step still finds it. */
+static void scnTableBadKey(lua_State *L, char *out, size_t outCap) {
+    const char *s;
+
+    if (out == NULL || outCap == 0) return;
+    lua_pushvalue(L, -2);
+    s = lua_tostring(L, -1);
+    snprintf(out, outCap, "%s", (s != NULL) ? s : luaL_typename(L, -1));
+    lua_pop(L, 1);
+}
+
+ScnTableRead scenarioLuaReadTable(lua_State *L, int idx, const char *key,
+                                  ScnTable *out, char *badKey, size_t badCap,
+                                  char *why, size_t whyCap) {
+    ScnTableRead r = SCN_TABLE_READ_OK;
+    int          t;
 
     scnTableClear(out);
+    if (badKey != NULL && badCap > 0) badKey[0] = '\0';
+    if (why != NULL && whyCap > 0) why[0] = '\0';
+
     lua_getfield(L, idx, key);
     if (lua_isnil(L, -1)) {
         lua_pop(L, 1);
-        return true;
+        return SCN_TABLE_READ_OK;
     }
     if (!lua_istable(L, -1)) {
-        luaL_argerror(L, idx,
-                      lua_pushfstring(L, "t.%s must be a table, got %s", key,
-                                      luaL_typename(L, -1)));
+        if (why != NULL && whyCap > 0) {
+            snprintf(why, whyCap, " must be a table, got %s",
+                     luaL_typename(L, -1));
+        }
+        lua_pop(L, 1);
+        return SCN_TABLE_READ_NOT_TABLE;
     }
     t = lua_gettop(L);
 
     lua_pushnil(L);
-    while (ok && lua_next(L, t) != 0) {
+    while (r == SCN_TABLE_READ_OK && lua_next(L, t) != 0) {
         /* The key is tested rather than read as a string: lua_tostring on a
            number key would rewrite it in place and break the walk. The value
            is safe to convert, since the walk is past it. */
         if (lua_type(L, -2) != LUA_TSTRING) {
-            luaL_argerror(L, idx,
-                          lua_pushfstring(L, "t.%s has a key that is not a "
-                                             "name", key));
-        }
-        if (lua_type(L, -1) != LUA_TSTRING && lua_type(L, -1) != LUA_TNUMBER) {
-            luaL_argerror(L, idx,
-                          lua_pushfstring(L, "t.%s.%s must be a string or a "
-                                             "number, got %s", key,
-                                          lua_tostring(L, -2),
-                                          luaL_typename(L, -1)));
-        }
-        if (!scnTableSet(out, lua_tostring(L, -2), lua_tostring(L, -1))) {
-            snprintf(badKey, badCap, "%s", lua_tostring(L, -2));
-            ok = false;
+            scnTableBadKey(L, badKey, badCap);
+            if (why != NULL && whyCap > 0) {
+                snprintf(why, whyCap, " has a key that is not a name");
+            }
+            r = SCN_TABLE_READ_BAD_KEY;
+        } else if (lua_type(L, -1) != LUA_TSTRING &&
+                   lua_type(L, -1) != LUA_TNUMBER) {
+            if (badKey != NULL && badCap > 0) {
+                snprintf(badKey, badCap, "%s", lua_tostring(L, -2));
+            }
+            if (why != NULL && whyCap > 0) {
+                snprintf(why, whyCap,
+                         ".%s must be a string or a number, got %s",
+                         lua_tostring(L, -2), luaL_typename(L, -1));
+            }
+            r = SCN_TABLE_READ_BAD_VALUE;
+        } else if (!scnTableSet(out, lua_tostring(L, -2),
+                                lua_tostring(L, -1))) {
+            if (badKey != NULL && badCap > 0) {
+                snprintf(badKey, badCap, "%s", lua_tostring(L, -2));
+            }
+            if (why != NULL && whyCap > 0) {
+                snprintf(why, whyCap, ".%s does not fit", lua_tostring(L, -2));
+            }
+            r = SCN_TABLE_READ_NO_ROOM;
         }
         lua_pop(L, 1);   /* the value; the key stays for the next step */
     }
-    if (!ok) {
+    if (r != SCN_TABLE_READ_OK) {
         lua_pop(L, 1);   /* the key the walk stopped on */
     }
     lua_pop(L, 1);       /* the table */
-    return ok;
+    return r;
+}
+
+/* The same read as a Lua argument. What did not fit is answered false, with
+ * the key it stopped on in badKey, because the caller says how big a table a
+ * roster row takes; everything else is refused the way any bad argument is.
+ * Either way out holds the pairs read before the stop. */
+static bool scnFieldTable(lua_State *L, int idx, const char *key,
+                          ScnTable *out, char *badKey, size_t badCap) {
+    char         why[SCN_TABLE_WHY_LEN];
+    ScnTableRead r = scenarioLuaReadTable(L, idx, key, out, badKey, badCap,
+                                          why, sizeof(why));
+
+    if (r == SCN_TABLE_READ_OK) return true;
+    if (r == SCN_TABLE_READ_NO_ROOM) return false;
+    luaL_argerror(L, idx, lua_pushfstring(L, "t.%s%s", key, why));
+    return false;   /* luaL_argerror does not come back */
 }
 
 /* What every roster row says when a pair of the table would not fit. */

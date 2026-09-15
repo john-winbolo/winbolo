@@ -1212,6 +1212,14 @@ int run_base_death_prediction_authority(void);
  * stored on the tank, so a hit greater than the armour remaining destroys it
  * while a hit that exactly empties the armour leaves it alive at zero. A
  * destroyed tank still reads as destroyed after a snapshot round trip. */
+/* A seat the roster holds with nobody on the field reports tankNone, so the
+ * status strip draws no tank for it, and reports what it always did once a
+ * wave fields it again. */
+int run_tank_alliance_unfielded_shows_no_tank(void);
+/* And playersSetPlayer, which works the status tile out for itself on a join
+ * or a rename, blanks a held seat's tile the same way. */
+int run_tank_alliance_unfielded_status_tile(void);
+
 int run_tank_damage_exact_armour_survives(void);
 int run_tank_damage_overkill_destroys(void);
 int run_tank_damage_partial_survives(void);
@@ -2376,6 +2384,7 @@ int run_lobby_template_cancel_chain_rolls_back(void);
 int run_lobby_template_commit_keeps_new_lobby(void);
 int run_lobby_template_cancel_restores_path_inmem(void);
 int run_lobby_template_cancel_restores_path_random(void);
+int run_lobby_template_seat_carries_init(void);
 
 /* The scripted game type (test_scripted_game_type.c): gameScripted resolving
  * through the base game the scenario declared, at the loadout and at the
@@ -2402,6 +2411,34 @@ int run_unfielded_seat_unfield_is_quiet(void);
 int run_unfielded_seat_unfield_keeps_sync(void);
 int run_unfielded_seat_spawn_keeps_alliances(void);
 int run_unfielded_seat_on_the_wire(void);
+
+/* What a wave costs (test_scenario_wave_cost.c): the brain, the ClientSim and
+ * the control subscription behind a held seat, built across the countdown
+ * before the round is played, parked when the seat comes off the field and
+ * handed back when it goes back on. Counted at the calls that do it, for one
+ * seat and for six seats swapped twice, plus the four refields a parked
+ * runner cannot serve, the three places it must not survive, and the warm
+ * itself — every seat, a free first fielding, one seat it cannot serve, and a
+ * countdown given up on before the round it was building for. */
+int run_scenario_wave_cost_refield_resumes(void);
+int run_scenario_wave_cost_seats_swap_counts(void);
+int run_scenario_wave_cost_other_brain_rebuilds(void);
+int run_scenario_wave_cost_brain_case_rebuilds(void);
+int run_scenario_wave_cost_other_init_rebuilds(void);
+int run_scenario_wave_cost_round_end_releases(void);
+int run_scenario_wave_cost_all_parked_releases(void);
+int run_scenario_wave_cost_rotation_releases(void);
+int run_scenario_wave_cost_seat_leaving_releases(void);
+int run_scenario_wave_cost_destroy_releases(void);
+int run_scenario_wave_cost_countdown_warms_seats(void);
+int run_scenario_wave_cost_warm_is_one_a_frame(void);
+int run_scenario_wave_cost_warmed_field_is_free(void);
+int run_scenario_wave_cost_warmed_init_rebuilds(void);
+int run_scenario_wave_cost_template_init_warms(void);
+int run_scenario_wave_cost_warm_skips_bad_brain(void);
+int run_scenario_wave_cost_failed_build_leaves_nothing(void);
+int run_scenario_wave_cost_abort_countdown_releases(void);
+int run_scenario_wave_cost_all_ready_clears_skips(void);
 
 /* The five comms ops (test_scenario_comms_arms.c). A line to the game, to a
  * team and to one player, with the destination filtered where the recipient
@@ -2561,6 +2598,7 @@ int run_scenario_host_unknown_rule_key(void);
 int run_scenario_host_api_too_new(void);
 int run_scenario_host_no_script(void);
 int run_scenario_host_manifest_roundtrip(void);
+int run_scenario_host_team_init_read(void);
 int run_scenario_host_seed_reproducible(void);
 int run_scenario_host_edit_after_attach(void);
 int run_scenario_host_reload_picks_up_edit(void);
@@ -2606,6 +2644,7 @@ int run_scenario_host_enabled_again(void);
 int run_scenario_validate_clean(void);
 int run_scenario_validate_api_too_new(void);
 int run_scenario_validate_lobby_shape(void);
+int run_scenario_validate_team_init_reported(void);
 int run_scenario_validate_unknown_rule(void);
 int run_scenario_validate_rule_out_of_range(void);
 int run_scenario_validate_rule_pair(void);
@@ -2790,6 +2829,22 @@ const ScnTable *ut_brain_stub_init(int player_num);
 /* The team the slot held as its brain was made — the team serverSimAddBot
  * had already written and picked the slot's lobby start from. */
 int ut_brain_stub_team(int player_num);
+/* How many brains have been made for one slot, which is what tells a seat
+ * fielded once from a seat fielded, taken off the field and fielded again;
+ * 0 for a slot off the end. */
+int ut_brain_stub_creates(int player_num);
+/* How many brains have been destroyed, over every slot: the destroy call is
+ * handed an instance and no player number, so there is no slot to file them
+ * under. Both counts are reset by ut_brain_stub_arm. */
+int ut_brain_stub_destroys(void);
+
+/* The last status tile frontEndStatusTank was handed by the stub in
+ * test_stubs.c: the 1-based player number, and the tankAlliance as an int so
+ * the header does not have to pull screentank.h in. Both are -1 until the
+ * first call. playersSetPlayer computes the tile itself on a join or a rename,
+ * and this is the only way to read what it decided. */
+int ut_status_tank_last_player(void);
+int ut_status_tank_last_alliance(void);
 
 #ifdef __cplusplus
 }

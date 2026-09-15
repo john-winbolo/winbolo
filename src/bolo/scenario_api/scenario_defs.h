@@ -56,13 +56,19 @@
  * the two that binds again once the seats exist. fielded false asks for the
  * seats without the bots — roster entries the start sequence skips until a
  * spawn names one. brain is the path those bots run, or "" for the server's
- * own. */
+ * own.
+ *
+ * init is the table the team's bots are built with, read once when a VM is
+ * built, empty for none. It is what the countdown warms a held seat's runner
+ * with, so a spawn naming that seat with the same table — or with none of its
+ * own, which inherits this — is a resume rather than a build. */
 typedef struct {
-    uint8_t id;                   /* team number, 1-16 */
-    uint8_t bots;
-    uint8_t maxBots;
-    bool    fielded;
-    char    brain[SCN_PATH_MAX];
+    uint8_t  id;                   /* team number, 1-16 */
+    uint8_t  bots;
+    uint8_t  maxBots;
+    bool     fielded;
+    char     brain[SCN_PATH_MAX];
+    ScnTable init;
 } ScnLobbyTeam;
 
 /* The lobby a scenario asks for. The host reads this out of its manifest and

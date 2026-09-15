@@ -3947,7 +3947,29 @@ void clientSimCycleBuildSelect(ClientSim *cs, int delta) {
 }
 
 /* Alliance accessors. */
+
+/* A seat the roster is holding with nobody on the field — a held seat
+   between waves. Unfielding keeps everything the roster knows, the
+   players-table identity included, so playersScreenAllience goes on
+   reading the seat as a live player and answers tankEvil for it. It has
+   no tank, though, so the status strip must not draw one.
+
+   Both routes to that strip ask this one question: the accessor below,
+   which the per-frame draw sites call, and playersSetPlayer, which works
+   out its own alliance for the status tile on a join or a rename. */
+bool clientSimSlotIsUnfielded(const ClientSim *cs, BYTE playerNum) {
+  const ClientLobbySlot *slot;
+
+  if (cs == NULL) return false;
+  slot = clientSimGetLobbySlot(cs, playerNum);
+  return slot != NULL && slot->connected && !slot->fielded;
+}
+
 tankAlliance clientSimGetTankAlliance(ClientSim *cs, BYTE playerNum) {
+  /* 1-based in, 0-based through — for the held-seat test as much as for
+     the table lookup after it. A playerNum of 0 wraps to 255, which is out
+     of range for both and answers tankNone either way, as it did before. */
+  if (clientSimSlotIsUnfielded(cs, (BYTE) (playerNum - 1))) return tankNone;
   return playersScreenAllience(&clientSimGetGameSim(cs)->plyrs, clientSimGetMyPlayerNum(cs), (BYTE) (playerNum - 1));
 }
 

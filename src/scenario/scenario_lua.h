@@ -34,6 +34,7 @@
 #include <lua.h>
 
 #include "server_sim.h"       /* ServerSim, BYTE */
+#include "scenario_table.h"   /* ScnTable — what the reader below fills */
 #include "scenario_manifest.h"
 
 /* One timer a script is waiting on: the tick it comes due, the function to
@@ -333,6 +334,66 @@ const char *scenarioLuaAnnounceKindWord(int kind);
  *  host answers classic for.
  *********************************************************/
 bool scenarioLuaLoadoutFromWord(const char *word, int *out);
+
+/* ── The flat table a bot is built with ─────────────────────────────── */
+
+/* Why a read of one of these tables stopped. */
+typedef enum {
+    SCN_TABLE_READ_OK = 0,
+    SCN_TABLE_READ_NOT_TABLE,   /* the field is there and is not a table */
+    SCN_TABLE_READ_BAD_KEY,     /* a key that is not a name */
+    SCN_TABLE_READ_BAD_VALUE,   /* a value that is not a string or a number */
+    SCN_TABLE_READ_NO_ROOM      /* a 17th pair, or a key or value too long */
+} ScnTableRead;
+
+/* Room for the sentence a stopped read writes. */
+#define SCN_TABLE_WHY_LEN 128
+
+/*********************************************************
+ *NAME:          scenarioLuaReadTable
+ *PURPOSE:
+ *  Reads the flat key/value table under `key` off the Lua
+ *  table at `idx`. Keys are names and values are text, with
+ *  a number written out as the text of itself, because that
+ *  is what a brain reads.
+ *
+ *  The one walk, for the two things that read one of these
+ *  off Lua: spawn_bot's own init argument, and the team
+ *  block of the scenario table. spawn_bot refuses a bad
+ *  argument by raising; the manifest read runs outside a
+ *  protected call and cannot raise at all. So this answers
+ *  rather than raising, and each caller does what it has to
+ *  with the answer — which is what keeps one reader behind
+ *  both.
+ *
+ *  out is cleared first, so a missing field leaves an empty
+ *  table and SCN_TABLE_READ_OK. A read that stops leaves the
+ *  pairs taken before the stop in out; it never empties what
+ *  it had already read.
+ *
+ *  badKey, when given, is the pair the read stopped on, and
+ *  "" when nothing stopped it or the field was not a table
+ *  at all. A key that is not a name is written as its own
+ *  text where it has any, and as the name of its Lua type
+ *  where it has none.
+ *
+ *  why, when given, is the reason, written to follow the
+ *  field's own name: printing "t.%s%s" with the key and this
+ *  reads as one sentence. "" when nothing stopped the read.
+ *
+ *ARGUMENTS:
+ *  L      - The Lua state
+ *  idx    - Stack index of the table to read the field off
+ *  key    - The field's name
+ *  out    - The table to fill
+ *  badKey - Buffer for the pair that stopped it, or NULL
+ *  badCap - Its size
+ *  why    - Buffer for the reason, or NULL
+ *  whyCap - Its size
+ *********************************************************/
+ScnTableRead scenarioLuaReadTable(lua_State *L, int idx, const char *key,
+                                  ScnTable *out, char *badKey, size_t badCap,
+                                  char *why, size_t whyCap);
 
 /* ── The rule names ─────────────────────────────────────────────────── */
 

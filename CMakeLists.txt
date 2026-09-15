@@ -3325,6 +3325,7 @@ set(_baseline_udp
     centralize_events_chat_unicast_3client_udp
     centralize_events_chat_alliance_3client_udp
     watch_road_capture_2client_udp
+    wave_swap_udp
 )
 
 foreach(_name IN LISTS _baseline_fast)
@@ -3496,6 +3497,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # the ranked and AI-policy settings a scenario does not go with.
     tests/unit/test_lobby_scenario_settings.c
     tests/unit/test_unfielded_seat.c
+    # What a wave costs: the brain, the ClientSim and the control subscription
+    # behind a held seat, destroyed when the seat comes off the field and built
+    # again when it goes back on, counted at the calls that do it.
+    tests/unit/test_scenario_wave_cost.c
     # The comms ops: the five arms, the refusals each one answers with, who
     # sees a line held to a team or to one player, the sound that reaches a
     # listener wherever they stand, and the records the three lines leave in a
@@ -3657,6 +3662,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_base_stock_visibility.c
     tests/unit/test_base_half_tick.c
     tests/unit/test_base_death_prediction.c
+    tests/unit/test_tank_alliance_unfielded.c
     tests/unit/test_tank_death_state.c
     tests/unit/test_tank_status_wire.c
     tests/unit/test_voice_flags.c
@@ -4711,6 +4717,8 @@ set(_unit_test_names
     base_armour_reveal_in_range
     base_death_prediction_replay_tick
     base_death_prediction_authority
+    tank_alliance_unfielded_shows_no_tank
+    tank_alliance_unfielded_status_tile
     tank_damage_exact_armour_survives
     tank_damage_overkill_destroys
     tank_damage_partial_survives
@@ -5243,6 +5251,7 @@ set(_unit_test_names
     lobby_template_commit_keeps_new_lobby
     lobby_template_cancel_restores_path_inmem
     lobby_template_cancel_restores_path_random
+    lobby_template_seat_carries_init
     scripted_game_type_loadout_follows_base
     scripted_game_type_no_base_is_open
     scripted_game_type_strict_ignores_base
@@ -5270,6 +5279,25 @@ set(_unit_test_names
     unfielded_seat_unfield_keeps_sync
     unfielded_seat_spawn_keeps_alliances
     unfielded_seat_on_the_wire
+    scenario_wave_cost_refield_resumes
+    scenario_wave_cost_seats_swap_counts
+    scenario_wave_cost_other_brain_rebuilds
+    scenario_wave_cost_brain_case_rebuilds
+    scenario_wave_cost_other_init_rebuilds
+    scenario_wave_cost_round_end_releases
+    scenario_wave_cost_all_parked_releases
+    scenario_wave_cost_rotation_releases
+    scenario_wave_cost_seat_leaving_releases
+    scenario_wave_cost_destroy_releases
+    scenario_wave_cost_countdown_warms_seats
+    scenario_wave_cost_warm_is_one_a_frame
+    scenario_wave_cost_warmed_field_is_free
+    scenario_wave_cost_warm_skips_bad_brain
+    scenario_wave_cost_failed_build_leaves_nothing
+    scenario_wave_cost_abort_countdown_releases
+    scenario_wave_cost_warmed_init_rebuilds
+    scenario_wave_cost_template_init_warms
+    scenario_wave_cost_all_ready_clears_skips
     scenario_comms_msg_all
     scenario_comms_msg_team
     scenario_comms_msg_player
@@ -5360,6 +5388,7 @@ set(_unit_test_names
     scenario_host_api_too_new
     scenario_host_no_script
     scenario_host_manifest_roundtrip
+    scenario_host_team_init_read
     scenario_host_seed_reproducible
     scenario_host_edit_after_attach
     scenario_host_reload_picks_up_edit
@@ -5390,6 +5419,7 @@ set(_unit_test_names
     scenario_validate_clean
     scenario_validate_api_too_new
     scenario_validate_lobby_shape
+    scenario_validate_team_init_reported
     scenario_validate_unknown_rule
     scenario_validate_rule_out_of_range
     scenario_validate_rule_pair

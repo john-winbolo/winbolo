@@ -811,6 +811,17 @@ static void scnReadLobby(lua_State *L, int tbl, ScnManifestLobby *lob) {
                 team->maxBots = (uint8_t)scnReadInt(L, t, "max_bots", 0);
                 team->fielded = scnReadBool(L, t, "fielded", true);
                 scnReadStr(L, t, "brain", team->brain, sizeof(team->brain));
+                /* The table the team's bots are built with, through the one
+                   reader spawn_bot's own init goes through, so a script
+                   cannot find the two spelled differently. A pair that did
+                   not fit costs that pair and is named on the team; the ones
+                   read before it stay, the way scnReadRules keeps the rest of
+                   a rules table past a bad key. An init that is not a table
+                   at all is left alone with no pair named, as every other
+                   reader here leaves a field of the wrong type. */
+                (void)scenarioLuaReadTable(L, t, "init", &team->init,
+                                           team->initBadKey,
+                                           sizeof(team->initBadKey), NULL, 0);
             }
             lua_pop(L, 1);
         }
@@ -2052,9 +2063,13 @@ static const char *scnFileNameOf(const char *path) {
 }
 
 /* The lobby out of the manifest and into the shape the sim reads. A straight
- * copy of the four numbers and the brain, dropping the teams the sim has no
- * seat for: the manifest holds what the file said and this holds what the
- * roster can hold.
+ * copy of the four numbers, the brain and the init table, dropping the teams
+ * the sim has no seat for: the manifest holds what the file said and this
+ * holds what the roster can hold.
+ *
+ * initBadKey is not here. What a bad pair is called is something to tell an
+ * author about, which the validator does; the sim is handed the pairs that
+ * were taken and has nothing to do with the one that was not.
  *
  * extra_teams is not here — the sim asks that one through the policy, as a
  * question about what a host may do rather than a description of the lobby
@@ -2077,6 +2092,7 @@ static void scnFillLobbyTemplate(const ScnManifestLobby *lob,
         dst->maxBots = src->maxBots;
         dst->fielded = src->fielded;
         SDL_strlcpy(dst->brain, src->brain, sizeof(dst->brain));
+        dst->init    = src->init;
     }
 }
 

@@ -66,6 +66,26 @@ typedef struct {
     ScnTable        initTable;
     BYTE            playerNum;
     bool            active;
+    /* The runner is built and idle, with cs, transport, controlSub, brain,
+     * brainPath and initTable all holding, and the next fielding of the seat
+     * handed them instead of building them again. Two ways in:
+     * botManagerRemoveBotKeepSeat, which takes a seat off the field and keeps
+     * everything behind it, and botManagerWarmRunner, which builds one for a
+     * seat that has never been fielded. active stays false the whole time a
+     * context is parked, because
+     * a parked runner is not ticked, not counted, and not a bot as far as
+     * botManagerIsBot is concerned; every other field is the next life's to
+     * set. Cleared by the resume in botManagerAddBot and by
+     * botManagerReleaseParkedRunner. */
+    bool            parked;
+    /* Set by botManagerWarmRunner on a runner built ahead of the round with
+     * the template's table, which may be empty, and cleared with parked by the
+     * resume in botManagerAddBot and by botManagerReleaseParkedRunner. It lets
+     * the match test tell a runner built before there was a table from one
+     * whose table changed: the first is the ordinary cost of a spawn carrying
+     * configuration the team did not, the second is a script handing the same
+     * seat two different tables. */
+    bool            warmed;
     aiType          ai;
     /* Wall-clock duration of this bot's most recent brain.think call,
      * in milliseconds. Updated every botManagerTick. Surfaced via
@@ -73,16 +93,17 @@ typedef struct {
     double          lastThinkMs;
     /* Number of ticks this bot's think exceeded targetMs * 1.5. Counts
      * every overrun; see lastOverrunWarnTick for the rate-limited log.
-     * Reset at each round start (botManagerOnGameStart). */
+     * Reset at each round start (botManagerOnGameStart) and when a parked
+     * runner is handed back to its seat (botResumeParkedRunner). */
     Uint32          overrunCount;
     /* Total brain.think calls timed this game. Denominator for the overrun
      * rate — lastThinkMs + overrunCount alone can't tell a spike-now from a
      * spike-an-hour-ago. Written by the worker next to lastThinkMs; reset
-     * with overrunCount/maxThinkMs at each round start (botManagerOnGameStart). */
+     * with overrunCount/maxThinkMs at both of those points. */
     Uint32          thinkCount;
     /* High-water mark of lastThinkMs this game (ms). The magnitude behind
      * overrunCount: the count says how often, this says how bad. Written by
-     * the worker next to lastThinkMs; reset at each round start. */
+     * the worker next to lastThinkMs; reset alongside the other two. */
     double          maxThinkMs;
     /* Last tick at which a budget-overrun warning was logged for this
      * bot. Limits the warning to at most one per ~50 ticks. */
@@ -433,6 +454,14 @@ void botInitArgAppendModeTokens(char *arg, size_t argSz,
  *  brain map, and LuaBrainInstance. Registers the player
  *  in the ServerSim.
  *
+ *  A slot holding a runner parked by
+ *  botManagerRemoveBotKeepSeat takes it back instead, when
+ *  brainPath and init are the ones it was built with: the
+ *  seat is fielded, the map is reloaded and the tank is
+ *  rebuilt, and no ClientSim, subscription or brain VM is
+ *  made. A parked runner built on anything else is released
+ *  first and the full build below runs.
+ *
  *ARGUMENTS:
  *  sim         - The ServerSim to attach to
  *  playerNum   - Player slot (0..MAX_TANKS-1)
@@ -602,17 +631,104 @@ void botManagerRemoveBot(struct ServerSim *sim, BYTE playerNum);
 /*********************************************************
  *NAME:          botManagerRemoveBotKeepSeat
  *PURPOSE:
- *  Destroys a bot's brain, transport and ClientSim and
- *  frees its pool entry, leaving the player in the
- *  ServerSim. For a seat that is being taken off the field
- *  and kept: the roster entry, the team and the alliance
- *  are the caller's to keep.
+ *  Takes a bot off the field and parks its runner, leaving
+ *  the player in the ServerSim. For a seat that is being
+ *  taken off the field and kept: the roster entry, the team
+ *  and the alliance are the caller's to keep, and the
+ *  ClientSim, the control subscription and the brain wait
+ *  in the context for the next fielding of the seat.
+ *
+ *  The tank, the man and the base timer are NOT this call's
+ *  — the seat's owner takes those back, because the tank
+ *  leaves the world.
  *
  *ARGUMENTS:
  *  sim       - The ServerSim
- *  playerNum - Player slot whose bot goes
+ *  playerNum - Player slot whose bot comes off the field
  *********************************************************/
 void botManagerRemoveBotKeepSeat(struct ServerSim *sim, BYTE playerNum);
+
+/*********************************************************
+ *NAME:          botManagerReleaseParkedRunner
+ *PURPOSE:
+ *  Destroys a parked runner — brain, control subscription
+ *  and ClientSim — without touching the roster seat in
+ *  front of it. A no-op on a slot holding no parked runner,
+ *  so a caller can hand it any slot.
+ *
+ *  For the two places one slot's runner must go: the seat
+ *  itself leaving the roster (serverSimRemoveBot) and
+ *  botManagerDestroy. Use the plural below for a round
+ *  ending.
+ *
+ *ARGUMENTS:
+ *  sim       - The ServerSim
+ *  playerNum - Player slot to release
+ *********************************************************/
+void botManagerReleaseParkedRunner(struct ServerSim *sim, BYTE playerNum);
+
+/*********************************************************
+ *NAME:          botManagerReleaseParkedRunners
+ *PURPOSE:
+ *  The same for every slot: the round is over, so no parked
+ *  runner carries into the next one.
+ *
+ *  A parked brain keeps its state table — that is what
+ *  makes a resume worth having within a round, and what
+ *  makes one across a round boundary wrong: the brain would
+ *  open the new round still remembering the last one's
+ *  goal, owners and influence (see the round-start comment
+ *  in botManagerOnGameStart). The map does not come into
+ *  it; every resume reloads that.
+ *
+ *  Called at the three round ends — serverSimReturnToLobby,
+ *  the map rotation, and the empty reset — and at a countdown
+ *  abandoned (serverSimAbortCountdown), where the round the
+ *  warm built them for never starts. Not at the round START:
+ *  that path only runs when the pool holds an active bot, and
+ *  a round whose bots were all parked has none.
+ *
+ *ARGUMENTS:
+ *  sim - The ServerSim
+ *********************************************************/
+void botManagerReleaseParkedRunners(struct ServerSim *sim);
+
+/*********************************************************
+ *NAME:          botManagerWarmRunner
+ *PURPOSE:
+ *  Build a runner for a seat that has none and park it, so
+ *  the fielding that wants it is a resume rather than a
+ *  build. No roster change: the seat is not fielded, not
+ *  counted and not announced — only the ClientSim, the
+ *  control subscription and the brain come into being.
+ *
+ *  Built with the table the caller hands it, which is the
+ *  seat's — the one its team was written with. A spawn that
+ *  names the seat with that table, or with none of its own
+ *  and so with the seat's, matches this runner and resumes
+ *  it. A spawn carrying a different table does not match and
+ *  rebuilds. The context is marked warmed, so a rebuild
+ *  where the seat's table was empty and the spawn's is not
+ *  is reported at INFO as the expected cost of a spawn
+ *  carrying configuration its team did not, rather than as a
+ *  script handing the seat two different tables.
+ *
+ *  Returns false, having built nothing, when the slot
+ *  already holds a runner (active or parked), when no brain
+ *  path is given, or when the build fails.
+ *
+ *ARGUMENTS:
+ *  sim       - The ServerSim
+ *  playerNum - The seat to warm
+ *  brainPath - Path to the brain .lua the seat will run
+ *  brainName - Display name for the bot (the seat's)
+ *  ai        - AI advantage level
+ *  init      - The table to build it with; copied, and NULL
+ *              means no pairs
+ *********************************************************/
+bool botManagerWarmRunner(struct ServerSim *sim, BYTE playerNum,
+                          const char *brainPath, const char *brainName,
+                          aiType ai, const ScnTable *init);
 
 /*********************************************************
  *NAME:          botManagerDestroy
@@ -640,6 +756,21 @@ BYTE botManagerGetNumBots(const struct ServerSim *sim);
  *  playerNum - Player slot to check
  *********************************************************/
 bool botManagerIsBot(const struct ServerSim *sim, BYTE playerNum);
+
+/*********************************************************
+ *NAME:          botManagerHasRunner
+ *PURPOSE:
+ *  Whether the pool holds a runner for this slot at all —
+ *  an active bot's, or one parked behind a held seat.
+ *  Distinct from botManagerIsBot, which answers only for a
+ *  bot on the field; the warm pass needs the wider question
+ *  so it does not build a second runner for a seat that has
+ *  one waiting.
+ *
+ *ARGUMENTS:
+ *  playerNum - Player slot to check
+ *********************************************************/
+bool botManagerHasRunner(const struct ServerSim *sim, BYTE playerNum);
 
 /*********************************************************
  *NAME:          botManagerGetBrainPathfinder

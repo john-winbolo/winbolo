@@ -451,7 +451,23 @@ void playersSetPlayer(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE p
                         (*plrs)->item[playerNum].ping,
                         playersGetClientType(plrs, playerNum),
                         playersGetClientFlags(plrs, playerNum));
-      frontEndStatusTank(csParam, (BYTE) (playerNum+1), playersScreenAllience(plrs, selfPlayer, playerNum));
+      /* The status tile this seat shows. The alliance still comes from the
+         table with the selfPlayer this call was handed, not from
+         clientSimGetTankAlliance, which reads the local player off the
+         ClientSim instead: a spectator arrives here with 0xFF so the
+         self-branch cannot swallow a real slot-0 join, and that has to
+         survive. The held-seat rule is the part both routes have to agree
+         on, so that is what is asked for — a seat with no tank shows none,
+         here as in the per-frame accessor. playerNum is 0-based in this
+         function and the predicate takes it 0-based; the +1 above is
+         frontEndStatusTank's own 1-based convention. csParam is NULL on the
+         server paths, where the predicate answers false and the tile is
+         whatever the table said, as before. */
+      tankAlliance statusTank = playersScreenAllience(plrs, selfPlayer, playerNum);
+      if (clientSimSlotIsUnfielded(csParam, playerNum)) {
+        statusTank = tankNone;
+      }
+      frontEndStatusTank(csParam, (BYTE) (playerNum+1), statusTank);
       frontEndRedrawAll(csParam);
     }
   }

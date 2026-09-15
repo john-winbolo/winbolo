@@ -3104,7 +3104,7 @@ static void renderPlayersContent(ClientSim *cs) {
              * opaque, so a dimmed frame turns translucent and takes the
              * colour of the row behind it — which means the same disabled
              * slider is one grey on a striped row and another on a bare one.
-             * With every row a bot, as a horde game is, that reads as the
+             * With every row a bot, as an all-bot game is, that reads as the
              * zebra leaking into the controls. The frame is a control's
              * outline and should not move with the row it sits on; the grab
              * is what has to say the control is dead. */
@@ -3177,10 +3177,28 @@ static void renderPlayersContent(ClientSim *cs) {
         const float  nameTextY = rowTopScreenY +
                                  (rowH - ImGui::GetTextLineHeight()) * 0.5f -
                                  ImGui::GetFontSize() * 0.12f;
+        /* A seat that is in the roster with nobody on the field — a seat held
+         * between waves — is drawn at the lobby's own 45%, for the reason the
+         * lobby gives: so a player can tell the seats being held from the bots
+         * playing this round. The name only, as there. The counters beside it
+         * are this seat's score for the round and stay true while it is off
+         * the field, and the cells after them — the ping pin, the mic, the
+         * volume — are already dead on a bot row, which every held seat is.
+         *
+         * RenderTextClipped takes its colour through GetColorU32, so the
+         * pushed alpha reaches it. */
+        const bool rowUnfielded = clientSimSlotIsUnfielded(cs, (BYTE)i);
+        if (rowUnfielded) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                ImGui::GetStyle().Alpha * 0.45f);
+        }
         ImGui::RenderTextClipped(ImVec2(nameCell.x, nameTextY),
                                  ImVec2(nameCell.x + nameW,
                                         rowTopScreenY + rowH),
                                  label, NULL, NULL, ImVec2(0.0f, 0.0f));
+        if (rowUnfielded) {
+            ImGui::PopStyleVar();
+        }
         ImGui::Dummy(ImVec2(nameW, 1.0f));
 
         /* Live counters, centred in their columns under the marks that name
@@ -5070,9 +5088,22 @@ static void renderMenuBar(ClientSim *cs) {
                 /* Selectable player name (fills the slot between icons and ping). */
                 char selectLabel[64];
                 snprintf(selectLabel, sizeof(selectLabel), "%s##sel%d", label, i);
+                /* Off the field, and drawn at the same 45% the lobby and the
+                 * players panel use for it. Here the name is the item's own
+                 * label rather than text over it, so the row's hover tint
+                 * fades with the name — the row stays clickable, and ticking
+                 * a seat between waves still does what it did. */
+                const bool mUnfielded = clientSimSlotIsUnfielded(cs, (BYTE)i);
+                if (mUnfielded) {
+                    ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                        ImGui::GetStyle().Alpha * 0.45f);
+                }
                 if (ImGui::Selectable(selectLabel, false, ImGuiSelectableFlags_DontClosePopups,
                                       ImVec2(nameWidth, 0))) {
                     clientSimTogglePlayerCheckState(cs, (BYTE)i);
+                }
+                if (mUnfielded) {
+                    ImGui::PopStyleVar();
                 }
                 imguiHandOnHover();
 

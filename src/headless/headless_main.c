@@ -2370,9 +2370,9 @@ static bool fastModeSetupGame(bool withBotBrain) {
    * and stays there, so a reset seats it again as the first setup did.
    *
    * After the local player joins, not before: a seat is taken from the first
-   * free slot, so seating a horde first would put it in slot 0 and leave this
-   * process's own player somewhere above it. A map with no scenario has no
-   * template, and this seats nothing.
+   * free slot, so seating the bots first would put one in slot 0 and leave
+   * this process's own player somewhere above it. A map with no scenario has
+   * no template, and this seats nothing.
    *
    * Not on a run that skipped the lobby: its round started inside the startup
    * above, and the startup seated the template itself on the way in so the

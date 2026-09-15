@@ -455,7 +455,7 @@ run_events_cmd_fast() {
 # The check is the round's own outcome rather than a recorded log. A scenario
 # says what happened when it ends the round, so the line is the result; a run
 # that stalls, or one whose waves never field, never says it. --bot-brain is
-# what the horde's seats load when a wave fields one — not --brain, which is
+# what the held seats load when a wave fields one — not --brain, which is
 # this process's own player and is left out here.
 run_scenario_fast() {
   local name="$1"
@@ -481,6 +481,267 @@ run_scenario_fast() {
     tail -10 "$ACTUAL/$name.out"
     return 1
   fi
+}
+
+# The same scenario over the wire: one WinBoloHeadless --server against a
+# WinBoloDS running the scripted map, checked by grep rather than by diff.
+#
+# Three things differ from every other UDP helper here, each for its own
+# reason.
+#
+# The lobby stays live. The raiders are a team of held seats and the scenario's
+# lobby template is what seats them, so -nolobby would leave the waves with
+# nothing to field. The seats are taken before anyone joins and
+# serverSimFindFreeSlot hands out the first free slot, so the held seats take
+# the low slots and the one human lands above them.
+#
+# The client only readies. start_game is refused in --server mode, so the
+# round is started by the lobby's own all-ready check: one ready human plus
+# the template's seats, which are seated ready as every bot seat is.
+#
+# Nothing on a clock ends this run. The client will not: when the scenario
+# ends the round its net status goes back to lobby and its game-tick counter
+# stops, so --ticks is never reached and is only a ceiling that must not
+# truncate the round. A scheduled server command will not either, at any
+# value. The server's tick restarts at 0 when a round starts and again when
+# the round hands back to the lobby — serverSimReturnToLobby runs the same
+# world reset — while the command pump compares against that counter in every
+# state. So a tick at or below the round's own end fires mid-round and cuts it
+# short, and a tick above it is not reached until the returned lobby, which
+# starts again from 0 and counts at 50/s against the round's 100/s: idling
+# there for a number past the round's end costs more than the client wait
+# below allows.
+#
+# So the run ends on the round's own word. The helper watches the client's
+# event log for the line the scenario ends with, then interrupts the server,
+# which is the clean quit — it publishes the shutdown the client leaves on.
+#
+# -ai yesfull is what lets a wave field a seat at all: the spawn arm refuses
+# on a server that runs no bots, and the dedicated server's default is none.
+# -brain is the DS spelling of what run_scenario_fast passes as --bot-brain —
+# the scenario's lobby names no brain of its own, so the held seats fall
+# back to the server's.
+#
+# Arguments: name, map, client command file, bot brain, client tick budget.
+run_scenario_swap_udp() {
+  local name="$1"
+  local map="$2"
+  local client_cmd="$3"
+  local brain="$4"
+  local ticks="$5"
+  local port
+  echo -n "  $name ... "
+
+  # A held seat leaving the roster is a CTRL_LOBBY_SLOT for one of the low
+  # slots carrying connected:false. The six seats hold 0-5, so the human's own
+  # slot and the empty ones a join replay reports are outside this.
+  local lost_seat='"playerNum":[0-5],"slot":[{]"connected":false'
+  # The line the scenario ends the round with, which the wait below watches
+  # for, and the line its last wave announces itself with, which is checked
+  # after the run. Both are needed and neither covers the other.
+  #
+  # The end line alone would pass on a round that never had seats: next_wave
+  # clamps what it asks for to the number of seats it found, so with no seats
+  # it fields nothing, times each wave out, and reaches the same end. The wave
+  # line is the scenario's own count of what it actually put on the field —
+  # only spawns that returned true are counted — so the third wave naming six
+  # says the template seated six, that all three waves ran, and that the seats
+  # handed back after waves one and two came round again. That last part is
+  # the swap this entry exists to exercise.
+  local held="The keep held."
+  local fielded="Wave 3 of 3: 6 raiders."
+  # The overflow disconnect and the runner lines checked at the end are both
+  # written through wb_log, which is silent unless WINBOLO_LOG names a
+  # category. Without this those checks would be reading a file that could
+  # never hold their lines, and would always pass. net=error carries the
+  # overflow disconnect; sim=info carries what bot_manager.c says each time a
+  # wave takes a seat's parked runner back or builds it a new one. The spec is
+  # a comma-separated list of category=level pairs, applied left to right
+  # (apply_env_log_spec in src/common/wb_log.c).
+  #
+  # Saved and put back rather than unset: this file is also run by hand, and a
+  # developer who set WINBOLO_LOG for the rest of the run should still have
+  # their own value after this launch.
+  local had_log=0
+  local old_log=""
+  if [ -n "${WINBOLO_LOG+x}" ]; then
+    had_log=1
+    old_log="$WINBOLO_LOG"
+  fi
+  export WINBOLO_LOG="net=error,sim=info"
+
+  ds_bin -map "$map" -port 0 -gametype open \
+            -ai yesfull -brain "$brain" \
+            -nowinbolonet -quiet -threads 1 \
+            -logfile "$ACTUAL/$name.dslog" \
+            > "$ACTUAL/$name.ds.out" 2> "$ACTUAL/$name.ds.err" &
+  local ds_pid=$!
+  if [ "$had_log" -eq 1 ]; then
+    export WINBOLO_LOG="$old_log"
+  else
+    unset WINBOLO_LOG
+  fi
+  trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
+
+  port=$(await_ds_port "$ACTUAL/$name.ds.err" "$ds_pid") || return 1
+  sleep 0.5  # settle; see await_ds_port
+
+  headless_bin --server 127.0.0.1 --port "$port" \
+         --cmd-stdin "$client_cmd" \
+         --ticks "$ticks" --seed 42 \
+         --log-events "$ACTUAL/$name.jsonl" --quiet \
+         > "$ACTUAL/$name.out" 2> "$ACTUAL/$name.err" &
+  local c_pid=$!
+  trap 'kill "$ds_pid" "$c_pid" 2>/dev/null || true; \
+        wait "$ds_pid" "$c_pid" 2>/dev/null || true' EXIT
+
+  # Wait for the round to say it is over. The client flushes its event log
+  # after every event, so the line lands there as soon as it is delivered.
+  # Bounded, because a round that never ends must not sit here until CTest
+  # kills the tree: a healthy run reaches this in about twenty seconds.
+  local end_limit=35
+  local waited=0
+  local ended=0
+  local gone=0
+  while :; do
+    if grep -qF "$held" "$ACTUAL/$name.jsonl" 2>/dev/null; then
+      ended=1
+      break
+    fi
+    # The client going early is the other way out of this loop; await_client
+    # below reports it, as it reports any other way the client stops.
+    if ! kill -0 "$c_pid" 2>/dev/null; then
+      gone=1
+      break
+    fi
+    if [ "$waited" -ge "$end_limit" ]; then
+      break
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  if [ "$ended" -eq 0 ] && [ "$gone" -eq 0 ]; then
+    kill "$ds_pid" "$c_pid" 2>/dev/null || true
+    wait "$ds_pid" "$c_pid" 2>/dev/null || true
+    trap - EXIT
+    echo "NO END"
+    echo "    the round never said: $held"
+    tail -10 "$ACTUAL/$name.ds.err"
+    tail -10 "$ACTUAL/$name.err"
+    return 1
+  fi
+
+  if [ "$ended" -eq 1 ]; then
+    # The clean quit. SIGINT sets the interrupt the server's console loop
+    # breaks on, and the shutdown that follows publishes CTRL_SERVER_SHUTDOWN
+    # with its broadcast — which is what the client leaves on.
+    kill -INT "$ds_pid" 2>/dev/null || true
+  fi
+
+  # Shorter than the 40s default, because this entry has already spent the
+  # wait above: 35s of waiting for the end line plus 40s of waiting for the
+  # client is more than the 60s CTest allows the whole entry, and a run killed
+  # by CTest takes the entry's own half-written line with it and prints no
+  # diagnostics at all. 12s is well past what a client needs to leave on the
+  # shutdown broadcast, and 35 + 12 plus the settle still fits inside 60.
+  # await_client reads this by name when it is called, so the caller's local
+  # is the value it uses.
+  local CLIENT_WAIT_LIMIT=12
+  local rc=0
+  await_client "$c_pid" "client" || rc=$?
+
+  kill "$ds_pid" 2>/dev/null || true
+  wait "$ds_pid" 2>/dev/null || true
+  trap - EXIT
+
+  if [ "$rc" -ne 0 ]; then
+    echo "CRASH ($rc)"
+    tail -10 "$ACTUAL/$name.ds.err"
+    tail -10 "$ACTUAL/$name.err"
+    return 1
+  fi
+
+  # Only the branch that drops a client for a full control channel. Three
+  # other lines start the same way — the baseline and bulk resets sent around
+  # a join and a map transfer — and they fire nowhere near a wave transition,
+  # so matching them would fail this entry for something it does not measure.
+  local overflow='control channel overflow for slot [0-9]+, deferring disconnect'
+  if grep -qE "$overflow" "$ACTUAL/$name.ds.err"; then
+    echo "OVERFLOW"
+    echo "    the control channel filled and the server dropped a client"
+    grep -nE "$overflow" "$ACTUAL/$name.ds.err" | head -5
+    tail -10 "$ACTUAL/$name.ds.err"
+    tail -10 "$ACTUAL/$name.err"
+    return 1
+  fi
+  if grep -qE "$lost_seat" "$ACTUAL/$name.jsonl"; then
+    echo "SEAT LOST"
+    echo "    a held seat left the roster over the swap"
+    grep -nE "$lost_seat" "$ACTUAL/$name.jsonl" | head -5
+    tail -10 "$ACTUAL/$name.ds.err"
+    tail -10 "$ACTUAL/$name.err"
+    return 1
+  fi
+  # The poll is what waits for the end line, so there is no second grep for it
+  # on the ordinary path. This only catches the other way out of that loop: a
+  # client that stopped on its own before the round ended and stopped for a
+  # reason await_client reads as clean — a server that died under it, say.
+  # Without this the wave check below could pass on a run that got as far as
+  # the third wave and no further.
+  if [ "$ended" -eq 0 ]; then
+    echo "NO END"
+    echo "    the client stopped before the round said: $held"
+    tail -10 "$ACTUAL/$name.ds.err"
+    tail -10 "$ACTUAL/$name.err"
+    return 1
+  fi
+  if ! grep -qF "$fielded" "$ACTUAL/$name.jsonl"; then
+    echo "NO WAVE"
+    echo "    the round ended, but never said: $fielded"
+    # What it did say, which names the wave it got to and how many it put on
+    # the field: none at all means the template seated no bots.
+    grep -o "Wave [0-9]* of [0-9]*: [0-9]* raiders." "$ACTUAL/$name.jsonl" | head -5
+    tail -10 "$ACTUAL/$name.ds.err"
+    tail -10 "$ACTUAL/$name.err"
+    return 1
+  fi
+
+  # Every fielding in this round has to take a seat's parked runner back
+  # rather than build a new one, which is the work this entry is here to
+  # watch. bot_manager.c writes one line per resume, at INFO in the sim
+  # category, which is what the sim=info above turns on.
+  #
+  # Twelve of them in a healthy run: Wave Defense fields 2 raiders on wave
+  # one, 4 on wave two and 6 on wave three (WAVES in the scenario, each
+  # clamped to the six seats the lobby template holds), and the countdown
+  # warms all six seats, so even a seat's first fielding finds a runner parked
+  # for it. Fewer than that means some fielding went another way.
+  local resume='botManager: bot [0-9]+ back on the field on its parked runner'
+  local resumes
+  resumes=$(grep -cE "$resume" "$ACTUAL/$name.ds.err" 2>/dev/null || true)
+  if [ "$resumes" -lt 12 ]; then
+    echo "NO RESUME"
+    echo "    $resumes fieldings took a parked runner back; expected 12"
+    grep -nE "$resume" "$ACTUAL/$name.ds.err" | head -5
+    tail -10 "$ACTUAL/$name.ds.err"
+    tail -10 "$ACTUAL/$name.err"
+    return 1
+  fi
+  # And none of them built a runner. A Wave Defense spawn names no brain and
+  # carries no init table, so every seat is fielded on exactly what its parked
+  # runner was built with; a build line here is a fielding paying for a Lua VM
+  # it did not need.
+  local rebuilt='building a fresh runner|building its runner now'
+  if grep -qE "$rebuilt" "$ACTUAL/$name.ds.err"; then
+    echo "REBUILT"
+    echo "    a fielding built a runner instead of taking the parked one"
+    grep -nE "$rebuilt" "$ACTUAL/$name.ds.err" | head -5
+    tail -10 "$ACTUAL/$name.ds.err"
+    tail -10 "$ACTUAL/$name.err"
+    return 1
+  fi
+  echo "OK ($resumes resumes)"
 }
 
 # WinBoloHeadless --server with --cmd-stdin, connected to a
@@ -1176,6 +1437,59 @@ dispatch_scenario() {
                         "$COMMANDS/wave_defense.client.jsonl" \
                         "$BRAINS/idle.lua" 1800 "The keep held." ;;
 
+    # The same three waves over the wire, which is where a wave transition
+    # costs something a client can feel: each swap tears down six runners and
+    # builds six more inside consecutive ticks, and each add and removal fans
+    # control events out to every client. This entry fails if that drops a
+    # client for a full control channel, if a seat is lost, if the round never
+    # reaches its own end, or if the last wave did not field six raiders.
+    #
+    # The last two checks are both needed. The scenario ends the round the same
+    # way whether or not it ever had seats — next_wave clamps what it asks
+    # for to the seats it found, so with none it fields nothing, times each
+    # wave out and still reaches the end. So the end line alone would pass on a
+    # run where the lobby template seated nothing, which is the one failure
+    # that would make this entry worthless. The wave line is the scenario's own
+    # count of what it put on the field, and the third wave naming six says the
+    # seats were there, that all three waves ran, and that the seats given back
+    # after the first two came round again.
+    #
+    # Nothing here is on a clock, and that is deliberate. A server command
+    # scheduled on a tick cannot end this run at any value. The server's
+    # counter restarts at 0 when the round starts and again when the round
+    # hands back to the lobby — serverSimReturnToLobby runs the same world
+    # reset — and the command pump compares against it in every state. A tick
+    # low enough to be reached lands inside the round and cuts it short; one
+    # high enough to clear the round's own end is only reached in the returned
+    # lobby, which starts again from 0 and counts at 50/s where the round
+    # counted at 100/s, so waiting there costs more idle time than the client
+    # wait allows. Both were tried and both failed that way.
+    #
+    # So the helper waits for the line the scenario ends with and then
+    # interrupts the server, and the client leaves on the shutdown that
+    # follows. The round decides the length of the run.
+    #
+    # End to end: about 3s for the client to ready, a 5s countdown, 14s of
+    # scenario, and the shutdown round trip — roughly 27s, against a 60s CTest
+    # timeout.
+    #
+    # The worst case matters as much as the healthy one, because a run CTest
+    # kills prints nothing: the entry's own line is half-written and still in
+    # the buffer. The helper's waits are the whole of it — a 0.5s settle after
+    # the server reports its port, then up to 35s for the round's end line,
+    # then up to 12s for the client to leave on the shutdown. That is 47.5s at
+    # the outside, so even a run that hits every bound reports its own failure
+    # with its logs before the 60s is up.
+    #
+    # The client's --ticks is a ceiling, not the exit. The headless alternates
+    # a keys pass and a game pass at GAME_TICK_LENGTH 10ms, so its game-tick
+    # counter runs at 50/s and a 14s round is 700 of them. 2000 is 40s at that
+    # rate, far past the round, so it is never the thing that stops the run.
+    wave_swap_udp)
+      run_scenario_swap_udp "$name" "$WAVE_DEFENSE_MAP" \
+                        "$COMMANDS/wave_swap.client.jsonl" \
+                        "$BRAINS/idle.lua" 2000 ;;
+
     ds_4bot_melee)             run_ds "$name" 4 ""  ;;
     ds_2v2_team)               run_ds "$name" 4 "1" ;;
 
@@ -1315,6 +1629,7 @@ dispatch_scenario grass_flat_growth || fail=1
 
 echo "Wave Defense:"
 dispatch_scenario wave_defense_fast || fail=1
+dispatch_scenario wave_swap_udp    || fail=1
 
 echo "Dedicated server (Everard Island):"
 dispatch_scenario ds_4bot_melee || fail=1

@@ -786,6 +786,19 @@ struct ServerSim {
      * still knows what to run when something fields it. Empty means the
      * server's own. */
     char                   seatBrain[MAX_TANKS][SCN_PATH_MAX];
+    /* The init table a seat was seeded with, so a seat held without a bot in
+     * it still knows what its bot is built with. The countdown warms the
+     * seat's runner with this, and a spawn that names the seat and carries no
+     * table of its own is built with it, the way such a spawn takes the
+     * seat's brain. No pairs means the same as no table. */
+    ScnTable               seatInit[MAX_TANKS];
+
+    /* Seats the warm pass has refused during this countdown, one bit per
+     * slot. The answer cannot change while a countdown runs, so the bit
+     * keeps the line naming the reason to one rather than one for each of
+     * the 250 ticks that would otherwise reach the same seat again.
+     * Cleared when a countdown starts. */
+    uint16_t               warmSkippedSlots;
 
     /* What is left of a fill-rect that did not fit in one tick, and how
      * much of this tick's tile budget has been spent on one. The
@@ -869,6 +882,17 @@ void serverSimScenarioResetFill(ServerSim *sim);
  * stalling the ones behind it. Declared here rather than on the scenario
  * surface: the caller is the sim's own tick, not a scenario. */
 void serverSimScenarioDrainRoster(ServerSim *sim);
+
+/* Build a runner for one seat the lobby is holding, and park it. serverSimTick
+ * calls it once a countdown frame: the countdown simulates nothing and runs
+ * 250 frames against at most sixteen seats, so each build gets a frame to
+ * itself and the round that follows finds every held seat's runner already
+ * made — a wave fielding one resumes instead of building. Answers whether it
+ * built one, so the pass is testable; a seat whose brain will not resolve is
+ * skipped with a line and does not stop the seats after it. Declared here
+ * rather than on the scenario surface for the same reason as the drain above:
+ * the caller is the sim's own tick. */
+bool serverSimWarmOneHeldSeat(ServerSim *sim);
 
 /* Forget every queued roster change. The seats a queue names belong to the
  * round it was filled in, so a round that ends takes its queue with it
