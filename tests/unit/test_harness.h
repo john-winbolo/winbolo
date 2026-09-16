@@ -2793,6 +2793,7 @@ int run_scenario_manifest_json_refusals(void);
 int run_scenario_manifest_agrees(void);
 int run_scenario_manifest_from_values(void);
 int run_scenario_manifest_json_team_init(void);
+int run_scenario_manifest_json_number_range(void);
 
 /* Where a map file's map data ends (test_scenario_map_body.c): the measure
  * itself, the container found after it, the scripted tag it gives the

@@ -33,6 +33,7 @@
  *  it is compared in order and the index is part of the key.
  *********************************************************/
 
+#include <float.h>   /* DBL_MAX — what tells an infinity from a big number */
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -119,9 +120,59 @@ static void mjCopyStr(char *dst, size_t dstLen, const char *src) {
 
 /* ── Reading one field ────────────────────────────────────────────── */
 
-static double mjNumber(const cJSON *obj, const char *key, double dflt) {
+/* One number field, held to what the field it lands in can carry.
+ *
+ * cJSON keeps every number as a double, and casting one outside the
+ * destination's range to a uint8_t or an int is undefined behaviour rather
+ * than a big number — "max_players": 1e30 is not a large cap, it is whatever
+ * the compiler felt like. So the range is applied here, before the cast, and
+ * a value outside it is reported the way a rule outside its range is: the
+ * item still decodes, held at the end of the range it went past.
+ *
+ * NaN and infinity are not numbers this can hold at all, so they take the
+ * default rather than a bound — being told "0 used" is more use to an author
+ * than being told the value was clamped to 255.
+ *
+ * api is the one field that does not come through here: mjDecodeApi refuses
+ * rather than clamps, because that number decides whether this build
+ * understands the content at all.
+ *
+ * where is the dotted path the issue is reported under, and may be NULL for a
+ * caller with nothing to report through. */
+static double mjNumberIn(const cJSON *obj, const char *key, double dflt,
+                         double lo, double hi, const char *where,
+                         ScnParseReport *rep) {
     const cJSON *it = cJSON_GetObjectItemCaseSensitive(obj, key);
-    return cJSON_IsNumber(it) ? it->valuedouble : dflt;
+    double       v;
+
+    if (!cJSON_IsNumber(it)) {
+        return dflt;
+    }
+    v = it->valuedouble;
+    if (v != v) {                       /* the one value unequal to itself */
+        mjReport(rep, where != NULL ? where : key,
+                 "scenario: %s is not a number; %g used", key, dflt);
+        return dflt;
+    }
+    if (v > DBL_MAX || v < -DBL_MAX) {  /* an infinity */
+        mjReport(rep, where != NULL ? where : key,
+                 "scenario: %s has no value this can hold; %g used", key,
+                 dflt);
+        return dflt;
+    }
+    if (v < lo) {
+        mjReport(rep, where != NULL ? where : key,
+                 "scenario: %s is %g, and the range is %g to %g; %g used",
+                 key, v, lo, hi, lo);
+        return lo;
+    }
+    if (v > hi) {
+        mjReport(rep, where != NULL ? where : key,
+                 "scenario: %s is %g, and the range is %g to %g; %g used",
+                 key, v, lo, hi, hi);
+        return hi;
+    }
+    return v;
 }
 
 /* Only a real true or false counts, as lua_isboolean does in the Lua
@@ -209,7 +260,8 @@ static void mjDecodeLobby(const cJSON *root, ScnManifestLobby *lob,
     if (!cJSON_IsObject(lobby)) {
         return;
     }
-    lob->maxPlayers = (uint8_t)mjNumber(lobby, "max_players", 0);
+    lob->maxPlayers = (uint8_t)mjNumberIn(lobby, "max_players", 0, 0, 255,
+                                          "lobby.max_players", rep);
     lob->extraTeams = mjBool(lobby, "extra_teams", false);
 
     teams = cJSON_GetObjectItemCaseSensitive(lobby, "teams");
@@ -229,9 +281,16 @@ static void mjDecodeLobby(const cJSON *root, ScnManifestLobby *lob,
         }
         team = &lob->teams[lob->numTeams];
         lob->numTeams++;
-        team->id      = (uint8_t)mjNumber(t, "id", 0);
-        team->bots    = (uint8_t)mjNumber(t, "bots", 0);
-        team->maxBots = (uint8_t)mjNumber(t, "max_bots", 0);
+        {
+            char where[SCN_VALIDATE_KEY_LEN];
+            snprintf(where, sizeof(where), "lobby.teams[%u]",
+                     (unsigned)lob->numTeams);
+            team->id      = (uint8_t)mjNumberIn(t, "id", 0, 0, 255, where, rep);
+            team->bots    = (uint8_t)mjNumberIn(t, "bots", 0, 0, 255, where,
+                                                rep);
+            team->maxBots = (uint8_t)mjNumberIn(t, "max_bots", 0, 0, 255,
+                                                where, rep);
+        }
         team->fielded = mjBool(t, "fielded", true);
         mjString(t, "brain", team->brain, sizeof(team->brain));
         mjDecodeInit(t, team);
@@ -382,10 +441,14 @@ static void mjDecodeRegions(const cJSON *root, ScenarioManifest *m,
         reg = &m->regions[m->numRegions];
         m->numRegions++;
         mjCopyStr(reg->name, sizeof(reg->name), entry->string);
-        reg->x = (uint8_t)mjNumber(entry, "x", 0);
-        reg->y = (uint8_t)mjNumber(entry, "y", 0);
-        reg->w = (uint8_t)mjNumber(entry, "w", 0);
-        reg->h = (uint8_t)mjNumber(entry, "h", 0);
+        {
+            char where[SCN_VALIDATE_KEY_LEN];
+            snprintf(where, sizeof(where), "regions.%s", entry->string);
+            reg->x = (uint8_t)mjNumberIn(entry, "x", 0, 0, 255, where, rep);
+            reg->y = (uint8_t)mjNumberIn(entry, "y", 0, 0, 255, where, rep);
+            reg->w = (uint8_t)mjNumberIn(entry, "w", 0, 0, 255, where, rep);
+            reg->h = (uint8_t)mjNumberIn(entry, "h", 0, 0, 255, where, rep);
+        }
     }
 }
 
@@ -412,11 +475,52 @@ static void mjDecodeBrains(const cJSON *root, ScnManifestDoc *d,
     }
 }
 
+/* The api version the scenario was written against.
+ *
+ * Every other number in the manifest carries something a round can go on
+ * without, so one out of range is held at the end of its range and reported.
+ * This one is what decides whether this build understands the content at
+ * all — the attach turns a scenario down when its api is newer than the
+ * server's — so a value that cannot be read is a manifest that should not be
+ * run rather than one to guess at. A negative api guessed at as 0 would pass
+ * every server's check and run content written against nothing.
+ *
+ * Left out, the api is 1: version 1 of the schema is what this build reads,
+ * and a manifest that names none was written for it.
+ *
+ * Answers false with err set, naming the field and the value as it was
+ * read. */
+static bool mjDecodeApi(const cJSON *root, int *out, char *err, size_t errLen) {
+    const cJSON *it = cJSON_GetObjectItemCaseSensitive(root, "api");
+    double       v;
+
+    *out = 1;
+    if (!cJSON_IsNumber(it)) {
+        return true;
+    }
+    v = it->valuedouble;
+    /* NaN prints as nan and an infinity as inf, so one sentence names every
+       value this turns down as the reader saw it. */
+    if (v != v || v > DBL_MAX || v < -DBL_MAX ||
+        v < 0.0 || v > 2147483647.0) {
+        mjErr(err, errLen,
+              "scenario: api is %g, and an api is a whole number from 0 up",
+              v);
+        return false;
+    }
+    *out = (int)v;
+    return true;
+}
+
 /* Everything the schema names, out of the tree and into the struct.
  *
  * triggers is not read. Its schema is not settled, so nothing decodes it and
- * it rides along in the tree like any other key this build has no use for. */
-static void mjDecode(ScnManifestDoc *d, ScnParseReport *rep) {
+ * it rides along in the tree like any other key this build has no use for.
+ *
+ * False for a manifest that cannot be decoded at all, which today is an api
+ * this build cannot read. Everything else reports and carries on. */
+static bool mjDecode(ScnManifestDoc *d, ScnParseReport *rep,
+                     char *err, size_t errLen) {
     ScenarioManifest *m = &d->values;
 
     mjCopyStr(d->script, sizeof(d->script), SCN_MANIFEST_SCRIPT_DEFAULT);
@@ -428,7 +532,9 @@ static void mjDecode(ScnManifestDoc *d, ScnParseReport *rep) {
     mjString(d->root, "name", m->name, sizeof(m->name));
     mjString(d->root, "description", m->description, sizeof(m->description));
     mjString(d->root, "game", m->game, sizeof(m->game));
-    m->api        = (int)mjNumber(d->root, "api", 1);
+    if (!mjDecodeApi(d->root, &m->api, err, errLen)) {
+        return false;
+    }
     m->bound      = mjBool(d->root, "bound", true);
     m->fillToCaps = mjBool(d->root, "fill_to_caps", false);
 
@@ -437,6 +543,7 @@ static void mjDecode(ScnManifestDoc *d, ScnParseReport *rep) {
     mjDecodeTags(d->root, m, rep);
     mjDecodeRegions(d->root, m, rep);
     mjDecodeBrains(d->root, d, rep);
+    return true;
 }
 
 /* ── The doc ──────────────────────────────────────────────────────── */
@@ -505,7 +612,10 @@ ScnManifestDoc *scnManifestParse(const uint8_t *json, size_t len,
         return NULL;
     }
     d->schema = schema;
-    mjDecode(d, rep);
+    if (!mjDecode(d, rep, err, errLen)) {
+        scnManifestFree(d);
+        return NULL;
+    }
     return d;
 }
 

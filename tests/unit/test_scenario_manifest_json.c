@@ -26,6 +26,12 @@
  *        the pairs before it kept and the key named, a pair too long for the
  *        table named the same way, and an init that is not an object left
  *        empty with no pair named
+ * run_scenario_manifest_json_number_range
+ *      — a number past what its field can hold is held at the end of the
+ *        range rather than cast out of it, one with no finite value takes
+ *        the default, an api that is negative or has no finite value is
+ *        refused outright, and a manifest whose numbers are in range is
+ *        untouched
  */
 
 #include <stdint.h>
@@ -622,5 +628,146 @@ int run_scenario_manifest_json_team_init(void) {
         UT_FAIL("a team holding no init pairs wrote an init key");
     }
     free(out);
+    return 0;
+}
+
+/* ── Numbers a byte cannot hold ───────────────────────────────────── */
+
+/* cJSON keeps every number as a double, and casting one outside the
+ * destination's range to a uint8_t or an int is undefined behaviour rather
+ * than a large number — "max_players": 1e30 is whatever the compiler felt
+ * like that day. The reader holds each number to its field's range before the
+ * cast and reports what it did, and takes the default for a value that is no
+ * number at all.
+ *
+ * JSON has no literal for NaN or infinity, so a decoder cannot be handed one
+ * as text; what it can be handed is a number too large for a double to keep
+ * finite, which is where cJSON's own parse produces one. 1e999 is that. */
+int run_scenario_manifest_json_number_range(void) {
+    static const char kWide[] =
+        "{\n"
+        "  \"manifest\": 1,\n"
+        "  \"name\": \"Wide\",\n"
+        "  \"api\": 1,\n"
+        "  \"lobby\": {\n"
+        "    \"max_players\": 1e30,\n"
+        "    \"teams\": [ { \"id\": -5, \"bots\": 1e30, \"max_bots\": 2 } ]\n"
+        "  },\n"
+        "  \"regions\": { \"pit\": { \"x\": 300, \"y\": -1, \"w\": 4,\n"
+        "                            \"h\": 1e999 } }\n"
+        "}\n";
+
+    ScnManifestDoc         *d;
+    const ScenarioManifest *m;
+    char                    err[512];
+
+    err[0] = '\0';
+    d = parseText(kWide, NULL, err, sizeof(err));
+    UT_ASSERT_MSG(d != NULL,
+                  "a manifest with numbers out of range would not parse: %s",
+                  err);
+    m = scnManifestValues(d);
+    UT_ASSERT(m != NULL);
+
+    /* Each one held at the end of the range it went past, rather than
+       wrapped onto whatever the cast produced. */
+    UT_ASSERT_MSG(m->lobby.maxPlayers == 255,
+                  "max_players of 1e30 decoded as %u, expected the range's "
+                  "255", (unsigned)m->lobby.maxPlayers);
+    UT_ASSERT_MSG(m->lobby.numTeams == 1,
+                  "the lobby holds %u teams, expected 1",
+                  (unsigned)m->lobby.numTeams);
+    UT_ASSERT_MSG(m->lobby.teams[0].id == 0,
+                  "a team id of -5 decoded as %u, expected 0",
+                  (unsigned)m->lobby.teams[0].id);
+    UT_ASSERT_MSG(m->lobby.teams[0].bots == 255,
+                  "bots of 1e30 decoded as %u, expected 255",
+                  (unsigned)m->lobby.teams[0].bots);
+    UT_ASSERT_MSG(m->lobby.teams[0].maxBots == 2,
+                  "max_bots of 2 decoded as %u, and it is in range",
+                  (unsigned)m->lobby.teams[0].maxBots);
+
+    UT_ASSERT_MSG(m->numRegions == 1,
+                  "the manifest holds %u regions, expected 1",
+                  (unsigned)m->numRegions);
+    UT_ASSERT_MSG(m->regions[0].x == 255,
+                  "a region x of 300 decoded as %u, expected 255",
+                  (unsigned)m->regions[0].x);
+    UT_ASSERT_MSG(m->regions[0].y == 0,
+                  "a region y of -1 decoded as %u, expected 0",
+                  (unsigned)m->regions[0].y);
+    UT_ASSERT_MSG(m->regions[0].w == 4,
+                  "a region w of 4 decoded as %u, and it is in range",
+                  (unsigned)m->regions[0].w);
+    /* 1e999 has no finite value, so the field takes its default rather than
+       a bound: being told "0" is more use than being told "clamped to 255". */
+    UT_ASSERT_MSG(m->regions[0].h == 0,
+                  "a region h with no finite value decoded as %u, expected "
+                  "the default 0", (unsigned)m->regions[0].h);
+
+    scnManifestFree(d);
+
+    /* api is the one field a clamp is wrong for: it decides whether this
+       build understands the content at all, so a value it cannot read is a
+       refusal. A negative api held at 0 would pass every server's check and
+       run content written against nothing. */
+    {
+        static const char kNegative[] =
+            "{ \"manifest\": 1, \"name\": \"Back\", \"api\": -1 }\n";
+        static const char kWideApi[] =
+            "{ \"manifest\": 1, \"name\": \"Vast\", \"api\": 1e999 }\n";
+
+        err[0] = '\0';
+        d = parseText(kNegative, NULL, err, sizeof(err));
+        UT_ASSERT_MSG(d == NULL, "a manifest with api -1 was decoded");
+        UT_ASSERT_MSG(strstr(err, "api") != NULL,
+                      "the refusal does not name the field: %s", err);
+        UT_ASSERT_MSG(strstr(err, "-1") != NULL,
+                      "the refusal does not name the value: %s", err);
+
+        err[0] = '\0';
+        d = parseText(kWideApi, NULL, err, sizeof(err));
+        UT_ASSERT_MSG(d == NULL,
+                      "a manifest whose api has no finite value was decoded");
+        UT_ASSERT_MSG(strstr(err, "api") != NULL,
+                      "the refusal does not name the field: %s", err);
+        UT_ASSERT_MSG(strstr(err, "inf") != NULL,
+                      "the refusal does not name the value as it was read: %s",
+                      err);
+    }
+
+    /* And a manifest whose numbers are all in range is untouched by any of
+       it: the clamp is a bound, not a rewrite. */
+    {
+        static const char kFine[] =
+            "{\n"
+            "  \"manifest\": 1,\n"
+            "  \"name\": \"Fine\",\n"
+            "  \"api\": 2,\n"
+            "  \"lobby\": {\n"
+            "    \"max_players\": 8,\n"
+            "    \"teams\": [ { \"id\": 3, \"bots\": 2, \"max_bots\": 4 } ]\n"
+            "  }\n"
+            "}\n";
+
+        err[0] = '\0';
+        d = parseText(kFine, NULL, err, sizeof(err));
+        UT_ASSERT_MSG(d != NULL, "an ordinary manifest would not parse: %s",
+                      err);
+        m = scnManifestValues(d);
+        UT_ASSERT(m != NULL);
+        UT_ASSERT_MSG(m->api == 2, "api is %d, expected 2", m->api);
+        UT_ASSERT_MSG(m->lobby.maxPlayers == 8,
+                      "max_players is %u, expected 8",
+                      (unsigned)m->lobby.maxPlayers);
+        UT_ASSERT_MSG(m->lobby.teams[0].id == 3 &&
+                      m->lobby.teams[0].bots == 2 &&
+                      m->lobby.teams[0].maxBots == 4,
+                      "an in-range team decoded as %u/%u/%u",
+                      (unsigned)m->lobby.teams[0].id,
+                      (unsigned)m->lobby.teams[0].bots,
+                      (unsigned)m->lobby.teams[0].maxBots);
+        scnManifestFree(d);
+    }
     return 0;
 }
