@@ -1112,8 +1112,16 @@ void gameFrontSetVisibilityCustom(const VisibilitySettings *v);
 /* The seven visibility globals above as one set. */
 void gameFrontGetVisibilitySettings(VisibilitySettings *out);
 /* Records a set as the host's choice: the seven globals, which named set
- * it is, and — when it is none of them — the set itself. Call it wherever
- * a host changes visibility, rather than writing the three separately. */
-void gameFrontRememberVisibility(const VisibilitySettings *v);
+ * it is, and — when saveCustom is true and the set is none of the named
+ * ones — the set itself. Call it wherever a host changes visibility,
+ * rather than writing the three separately.
+ *
+ * saveCustom is false where the caller is only writing down what the
+ * settings are on right now. Applying a preset sends its settings one at
+ * a time, so the values pass through mixes that match no named set, and
+ * every one of those would otherwise be saved as the hand-made set. The
+ * lobby therefore passes false and writes the hand-made set itself, at
+ * the points where the player edited or picked something. */
+void gameFrontRememberVisibility(const VisibilitySettings *v, bool saveCustom);
 
 #endif
