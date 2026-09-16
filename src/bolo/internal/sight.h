@@ -25,9 +25,9 @@
  *  and nothing kept between calls, so everything that wants
  *  this answer asks here rather than working it out again.
  *
- *  Buildings are answered with angles. Every opaque square
- *  fills a wedge of the view as seen from the eye, and that
- *  wedge is the shadow it casts. The shadows are piled up
+ *  Buildings and pillboxes are answered with angles. Every
+ *  opaque square fills a wedge of the view as seen from the
+ *  eye, and that wedge is the shadow it casts. The shadows are piled up
  *  nearest square first, and a square is seen when some part
  *  of its own wedge is still bare once the shadows of every
  *  square nearer than it have been taken out of it. A square
@@ -44,6 +44,23 @@
  *  only at a corner, cast one shadow with no crack in it, so
  *  sight still does not slip between two buildings meeting
  *  corner to corner.
+ *
+ *  A pillbox standing on the map is one of those squares. It
+ *  is a building for this purpose and nothing else about it
+ *  matters: it shadows what is behind it, its own square is
+ *  seen the way a wall square is, and where it touches a wall
+ *  or another pill their shadows close the corner between
+ *  them. A pill being carried in a tank is not on the map and
+ *  stops nothing. Bases are not walls and never have been.
+ *
+ *  A dead pillbox on the ground blocks too. It is still a
+ *  structure standing on the square and it is drawn there, so
+ *  a player cannot see through it. The engine's own movement
+ *  takes the other view - mapGetSpeed lets a tank drive over
+ *  a dead pill to pick it up, where a live one is impassable
+ *  - and that is a fair argument for letting sight through a
+ *  dead one as well. Whoever wants that changes
+ *  sightPillBlocks in sight.c and nothing else.
  *
  *  Trees are not answered that way and have not changed.
  *  They stop a line by depth, counted as a run of consecutive
@@ -86,9 +103,10 @@
 #include "types.h"
 #include "overview_types.h" /* OverviewRect, OVERVIEW_TANK_HALF */
 
-/* Which terrain stops a line. This is the only place opacity is decided -
- * every test in the module goes through it - so a terrain is added or taken
- * away by changing this one line. */
+/* Which terrain stops a line. This is the only place terrain opacity is
+ * decided - every test in the module goes through it - so a terrain is added or
+ * taken away by changing this one line. A pillbox is not terrain and is decided
+ * in sightPillBlocks, the module's other one line on the subject. */
 #define SIGHT_OPAQUE(t) ((t) == BUILDING || (t) == HALFBUILDING)
 
 /* Which terrain counts towards the tree depth, how deep a run of it stops a
@@ -133,6 +151,9 @@
  * from the eye and 0 for one that cannot. The eye stands on square
  * (originX, originY), (offsetX, offsetY) inside it.
  *
+ * pb is the pill list the squares are checked against, and NULL says the
+ * caller has none, so no pill blocks anything.
+ *
  * vis is indexed by the block's own width, not the buffer's:
  *
  *   vis[(y - block->top) * (block->right - block->left + 1) + (x - block->left)]
@@ -158,8 +179,9 @@
  * shadows are one shadow with no crack in it, so sight does not slip through
  * the corner where two buildings meet; trees cast no shadow at all. Squares
  * off the map are never seen. */
-void sightBuildMask(map *mp, BYTE originX, BYTE originY, BYTE offsetX,
-                    BYTE offsetY, const OverviewRect *block, BYTE *vis);
+void sightBuildMask(map *mp, pillboxes *pb, BYTE originX, BYTE originY,
+                    BYTE offsetX, BYTE offsetY, const OverviewRect *block,
+                    BYTE *vis);
 
 /* The rule as it stood before the shadows: one line from the middle of the
  * origin square to the middle of every square of the block, and the square is
@@ -168,7 +190,8 @@ void sightBuildMask(map *mp, BYTE originX, BYTE originY, BYTE offsetX,
  * because a block further from the eye than the shadow pass is built to reach
  * is answered with it rather than with nothing. The trees rule is the same one
  * in both, so only the buildings answer differently. */
-void sightBuildMaskCentreLine(map *mp, BYTE originX, BYTE originY,
-                              const OverviewRect *block, BYTE *vis);
+void sightBuildMaskCentreLine(map *mp, pillboxes *pb, BYTE originX,
+                              BYTE originY, const OverviewRect *block,
+                              BYTE *vis);
 
 #endif /* SIGHT_H */

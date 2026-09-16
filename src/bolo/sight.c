@@ -20,11 +20,11 @@
  *  the player is standing - see sight.h for the rules it
  *  works to.
  *
- *  Buildings are done with angles. Every opaque square fills
- *  a wedge of the view as seen from the eye, and that wedge
- *  is the shadow it casts. The squares are taken nearest
- *  first and each one is asked its question against the pile
- *  of shadows built so far: if any part of its own wedge is
+ *  Buildings and pillboxes are done with angles. Every opaque
+ *  square fills a wedge of the view as seen from the eye, and
+ *  that wedge is the shadow it casts. The squares are taken
+ *  nearest first and each one is asked its question against
+ *  the pile of shadows built so far: if any part of its own wedge is
  *  still bare, some part of the square can be seen and it is
  *  seen. Then, if it is opaque itself, its wedge goes on the
  *  pile for the squares behind it.
@@ -58,6 +58,7 @@
 #include "global.h"
 #include "sight.h"
 #include "bolo_map.h"
+#include "pillbox.h"
 
 /* World units across one map square, which is what the eye's offset inside its
  * square is measured in - the same units the tank's own position is kept in,
@@ -138,16 +139,37 @@ static bool sightOnMap(int x, int y) {
   return (x >= 0 && x < MAP_ARRAY_SIZE && y >= 0 && y < MAP_ARRAY_SIZE);
 }
 
+/* Whether a pillbox is standing on the square. This is the module's whole
+ * opinion of pillboxes, so it is the one line to change to give them another.
+ *
+ * pillsExistPos answers for the map: a pill being carried in a tank is not on
+ * a square and is not counted, which is what leaves a carried pill blocking
+ * nothing. A dead pill on the ground is counted - it is still a structure
+ * standing there and it is drawn there. The engine's movement takes the other
+ * view, since mapGetSpeed lets a tank drive over a dead pill to pick it up, so
+ * a reader who wants sight to go through one adds the pillsDeadPos test here.
+ *
+ * A caller with no pill list passes NULL and no pill blocks anything. */
+static bool sightPillBlocks(pillboxes *pb, int x, int y) {
+  if (pb == NULL || *pb == NULL || sightOnMap(x, y) == FALSE) {
+    return FALSE;
+  }
+  return (pillsExistPos(pb, (BYTE)x, (BYTE)y) == TRUE) ? TRUE : FALSE;
+}
+
 /* Whether a square stops a line passing through it. Off the map counts: there
  * is nothing out there to see past. */
-static bool sightBlocks(map *mp, int x, int y) {
+static bool sightBlocks(map *mp, pillboxes *pb, int x, int y) {
   BYTE terrain; /* What is on the square */
 
   if (sightOnMap(x, y) == FALSE) {
     return TRUE;
   }
   terrain = mapGetPos(mp, (BYTE)x, (BYTE)y);
-  return (SIGHT_OPAQUE(terrain) ? TRUE : FALSE);
+  if (SIGHT_OPAQUE(terrain)) {
+    return TRUE;
+  }
+  return sightPillBlocks(pb, x, y);
 }
 
 /* Whether a square is one of the trees the depth count is kept over. Off the
@@ -195,8 +217,8 @@ static bool sightNearOrigin(int x0, int y0, int x, int y) {
  * of the rule as it was: neither end tested for a building, every square in
  * between tested, and the diagonal between two buildings that touch closed so
  * sight does not slip between them. */
-static bool sightLineReaches(map *mp, int x0, int y0, int x1, int y1,
-                             bool wallsStop) {
+static bool sightLineReaches(map *mp, pillboxes *pb, int x0, int y0, int x1,
+                             int y1, bool wallsStop) {
   int trees;     /* Forest squares passed through in a row */
   bool atTarget; /* Is the walk standing on the square being asked about */
   int dx;    /* Squares across, counted up */
@@ -238,8 +260,8 @@ static bool sightLineReaches(map *mp, int x0, int y0, int x1, int y1,
      * rule is about how far into a wood a player sees, and a pair of trees is
      * not a wall. */
     if (wallsStop == TRUE && stepX != 0 && stepY != 0 &&
-        sightBlocks(mp, x + stepX, y) == TRUE &&
-        sightBlocks(mp, x, y + stepY) == TRUE) {
+        sightBlocks(mp, pb, x + stepX, y) == TRUE &&
+        sightBlocks(mp, pb, x, y + stepY) == TRUE) {
       return FALSE;
     }
 
@@ -248,7 +270,7 @@ static bool sightLineReaches(map *mp, int x0, int y0, int x1, int y1,
     atTarget = (x == x1 && y == y1);
 
     if (wallsStop == TRUE && atTarget == FALSE &&
-        sightBlocks(mp, x, y) == TRUE) {
+        sightBlocks(mp, pb, x, y) == TRUE) {
       return FALSE;
     }
     if (sightIsTree(mp, x, y) == TRUE) {
@@ -558,8 +580,9 @@ static void sightSortKeys(uint64_t *keys, int count) {
   }
 }
 
-void sightBuildMaskCentreLine(map *mp, BYTE originX, BYTE originY,
-                              const OverviewRect *block, BYTE *vis) {
+void sightBuildMaskCentreLine(map *mp, pillboxes *pb, BYTE originX,
+                              BYTE originY, const OverviewRect *block,
+                              BYTE *vis) {
   int width;  /* Squares across the block, which is the mask's stride */
   int height; /* Squares down it */
   int ox;     /* The origin, as the walk counts */
@@ -590,15 +613,16 @@ void sightBuildMaskCentreLine(map *mp, BYTE originX, BYTE originY,
       } else if (x == ox && y == oy) {
         seen = TRUE;
       } else {
-        seen = sightLineReaches(mp, ox, oy, x, y, TRUE);
+        seen = sightLineReaches(mp, pb, ox, oy, x, y, TRUE);
       }
       row[x - block->left] = (BYTE)((seen == TRUE) ? 1 : 0);
     }
   }
 }
 
-void sightBuildMask(map *mp, BYTE originX, BYTE originY, BYTE offsetX,
-                    BYTE offsetY, const OverviewRect *block, BYTE *vis) {
+void sightBuildMask(map *mp, pillboxes *pb, BYTE originX, BYTE originY,
+                    BYTE offsetX, BYTE offsetY, const OverviewRect *block,
+                    BYTE *vis) {
   uint64_t keys[SIGHT_REGION_MAX]; /* The squares in the way, and the block's */
   sightShadows shadows;            /* What has been hidden so far */
   sightSpan span;                  /* The wedge the square in hand fills */
@@ -658,7 +682,7 @@ void sightBuildMask(map *mp, BYTE originX, BYTE originY, BYTE offsetX,
   }
   if (right - left + 1 > SIGHT_REGION_MAX_SIDE ||
       bottom - top + 1 > SIGHT_REGION_MAX_SIDE) {
-    sightBuildMaskCentreLine(mp, originX, originY, block, vis);
+    sightBuildMaskCentreLine(mp, pb, originX, originY, block, vis);
     return;
   }
 
@@ -690,7 +714,10 @@ void sightBuildMask(map *mp, BYTE originX, BYTE originY, BYTE offsetX,
         }
         continue;
       }
-      isWall = (SIGHT_OPAQUE(mapGetPos(mp, (BYTE)x, (BYTE)y)) ? TRUE : FALSE);
+      isWall = (SIGHT_OPAQUE(mapGetPos(mp, (BYTE)x, (BYTE)y)) ||
+                        sightPillBlocks(pb, x, y) == TRUE)
+                   ? TRUE
+                   : FALSE;
       if (isTarget == FALSE && isWall == FALSE) {
         continue;
       }
@@ -742,7 +769,7 @@ void sightBuildMask(map *mp, BYTE originX, BYTE originY, BYTE offsetX,
       if (row[x - block->left] == 0 || (x == ox && y == oy)) {
         continue;
       }
-      if (sightLineReaches(mp, ox, oy, x, y, FALSE) == FALSE) {
+      if (sightLineReaches(mp, pb, ox, oy, x, y, FALSE) == FALSE) {
         row[x - block->left] = 0;
       }
     }

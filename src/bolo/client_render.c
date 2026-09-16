@@ -187,8 +187,8 @@ static const ViewSight *clientRenderBuildSight(ClientSim *csPtr, ViewSight *out,
   out->block.right = out->block.left + MAIN_BACK_BUFFER_SIZE_X - 1;
   out->block.bottom = out->block.top + MAIN_BACK_BUFFER_SIZE_Y - 1;
   memset(vis, 1, SIGHT_MASK_BYTES);
-  sightBuildMask(&clientSimGetGameSim(csPtr)->mp, mx, my, sx, sy, &out->block,
-                 vis);
+  sightBuildMask(&clientSimGetGameSim(csPtr)->mp, &clientSimGetGameSim(csPtr)->pb,
+                 mx, my, sx, sy, &out->block, vis);
   out->vis = vis;
   return out;
 }

@@ -23,6 +23,7 @@
 #include "bolo_map.h"
 #include "client_mappreview.h"
 #include "everard_map.h"
+#include "pillbox.h"
 #include "sight.h"
 #include "test_harness.h"
 
@@ -41,6 +42,48 @@ static struct mapObj shadowMapObj;
 static map           shadowMap = &shadowMapObj;
 static BYTE          visNew[SIGHT_MASK_BYTES];
 static BYTE          visOld[SIGHT_MASK_BYTES];
+
+/* The pill list the cases that are about pillboxes build. It stays NULL for
+ * every other case, which is a caller that has no pills, so no pill blocks. */
+static pillboxes shadowPills = NULL;
+
+static pillboxes *shadowPillList(void) {
+    return (shadowPills == NULL) ? NULL : &shadowPills;
+}
+
+/* A pill list with nothing on it. Called again, it throws the last one away
+ * first, so a case never inherits another case's pills. */
+static void shadowPillsBegin(void) {
+    if (shadowPills != NULL) {
+        pillsDestroy(&shadowPills);
+        shadowPills = NULL;
+    }
+    pillsCreate(&shadowPills);
+}
+
+static void shadowPillsEnd(void) {
+    if (shadowPills != NULL) {
+        pillsDestroy(&shadowPills);
+        shadowPills = NULL;
+    }
+}
+
+/* One pillbox on the list. armour 0 is a dead one; inTank says it is being
+ * carried, which is the state that means it is on no square at all. */
+static bool shadowPillAdd(int x, int y, BYTE armour, bool inTank) {
+    pillbox item; /* The pill to add */
+    BYTE num;     /* Which pill number it came back as */
+
+    memset(&item, 0, sizeof(item));
+    item.x = (BYTE)x;
+    item.y = (BYTE)y;
+    item.owner = NEUTRAL;
+    item.armour = armour;
+    item.speed = PILLBOX_ATTACK_NORMAL;
+    item.reload = PILLBOX_ATTACK_NORMAL;
+    item.inTank = inTank;
+    return pillsAddItem(&shadowPills, &item, &num) == TRUE;
+}
 
 static void shadowMapFill(BYTE terrain) {
     memset(shadowMapObj.mapItem, terrain, sizeof(shadowMapObj.mapItem));
@@ -84,28 +127,38 @@ static bool shadowSeen(const BYTE *vis, const OverviewRect *block, int x,
 static void shadowRun(BYTE originX, BYTE originY, const OverviewRect *block) {
     memset(visNew, 0xFF, sizeof(visNew));
     memset(visOld, 0xFF, sizeof(visOld));
-    sightBuildMask(&shadowMap, originX, originY, SIGHT_SUB_CENTRE,
-                   SIGHT_SUB_CENTRE, block, visNew);
-    sightBuildMaskCentreLine(&shadowMap, originX, originY, block, visOld);
+    sightBuildMask(&shadowMap, shadowPillList(), originX, originY,
+                   SIGHT_SUB_CENTRE, SIGHT_SUB_CENTRE, block, visNew);
+    sightBuildMaskCentreLine(&shadowMap, shadowPillList(), originX, originY,
+                             block, visOld);
 }
 
 static void shadowRunAt(BYTE originX, BYTE originY, BYTE offsetX, BYTE offsetY,
                         const OverviewRect *block) {
     memset(visNew, 0xFF, sizeof(visNew));
-    sightBuildMask(&shadowMap, originX, originY, offsetX, offsetY, block,
-                   visNew);
+    sightBuildMask(&shadowMap, shadowPillList(), originX, originY, offsetX,
+                   offsetY, block, visNew);
 }
 
-/* Everard Island into the module's own map object, walls and all. */
-static bool shadowLoadEverard(void) {
+/* Everard Island into the module's own map object, walls and all. withPills
+ * takes the map's own pillboxes with it, which is what the main view really
+ * looks at; without them the pill list stays NULL and the case is about the
+ * terrain on its own. */
+static bool shadowLoadEverard(bool withPills) {
     BYTE emap[6000] = E_MAP;
     MapPreview *preview; /* The decompressed map, which is all that is wanted */
 
+    shadowPillsEnd();
     preview = clientMapPreviewLoadFromBuffer(emap, SHADOW_EMAP_LEN);
     if (preview == NULL) {
         return false;
     }
     memcpy(&shadowMapObj, clientMapPreviewMap(preview), sizeof(shadowMapObj));
+    if (withPills) {
+        pillsCreate(&shadowPills);
+        memcpy(shadowPills, clientMapPreviewPills(preview),
+               sizeof(struct pillsObj));
+    }
     clientMapPreviewDestroy(preview);
     return true;
 }
@@ -138,7 +191,8 @@ static int sight_shadow_matches_the_old_rule_without_walls(void) {
     int x; /* Looping variable */
     int y; /* Looping variable */
 
-    UT_ASSERT_MSG(shadowLoadEverard(), "Everard Island did not decompress");
+    UT_ASSERT_MSG(shadowLoadEverard(false),
+                  "Everard Island did not decompress");
     shadowFlattenWalls();
 
     for (i = 0; i < (int)(sizeof(kOrigins) / sizeof(kOrigins[0])); i++) {
@@ -386,6 +440,107 @@ static int sight_shadow_edges_and_origin(void) {
     return 0;
 }
 
+/* (g) A pillbox is a wall for this. One standing a square in front of the
+ * player hides the ground behind it, its own square is seen the way a wall
+ * square is, and the ground out to the side of its shadow is untouched. */
+static int sight_shadow_a_pill_blocks_like_a_wall(void) {
+    OverviewRect block = shadowBlock(96, 96, 110, 110);
+
+    shadowMapFill(GRASS);
+    shadowPillsBegin();
+    UT_ASSERT_MSG(shadowPillAdd(101, 100, 15, false),
+                  "the pillbox would not go on the list");
+    shadowRun(100, 100, &block);
+
+    UT_ASSERT_MSG(shadowSeen(visNew, &block, 101, 100),
+                  "the pillbox's own square is hidden, and a pillbox is drawn");
+    UT_ASSERT_MSG(!shadowSeen(visNew, &block, 102, 100),
+                  "the square right behind the pillbox is seen");
+    UT_ASSERT_MSG(!shadowSeen(visNew, &block, 105, 100),
+                  "the far ground behind the pillbox is seen");
+    UT_ASSERT_MSG(shadowSeen(visNew, &block, 101, 103),
+                  "ground out to the side of the pillbox's shadow is hidden");
+    UT_ASSERT_MSG(!shadowSeen(visOld, &block, 105, 100),
+                  "the old rule let the line through the pillbox, so the two "
+                  "rules do not agree about what a pillbox is");
+    shadowPillsEnd();
+    return 0;
+}
+
+/* (h) A dead pillbox blocks too. It is still a structure standing on the
+ * square and it is drawn there, so the player cannot see past it. The engine's
+ * movement disagrees - a tank drives over a dead pill to pick it up - and if
+ * that is ever taken as the last word, this case is the one to turn round. */
+static int sight_shadow_a_dead_pill_blocks_too(void) {
+    OverviewRect block = shadowBlock(96, 96, 110, 110);
+
+    shadowMapFill(GRASS);
+    shadowPillsBegin();
+    UT_ASSERT_MSG(shadowPillAdd(101, 100, 0, false),
+                  "the dead pillbox would not go on the list");
+    shadowRun(100, 100, &block);
+
+    UT_ASSERT_MSG(shadowSeen(visNew, &block, 101, 100),
+                  "the dead pillbox's own square is hidden");
+    UT_ASSERT_MSG(!shadowSeen(visNew, &block, 105, 100),
+                  "the ground behind a dead pillbox is seen");
+    shadowPillsEnd();
+    return 0;
+}
+
+/* (i) A pillbox being carried in a tank is on no square at all, so it blocks
+ * nothing - the ground it is remembered at is in plain view. */
+static int sight_shadow_a_carried_pill_blocks_nothing(void) {
+    OverviewRect block = shadowBlock(96, 96, 110, 110);
+
+    shadowMapFill(GRASS);
+    shadowPillsBegin();
+    UT_ASSERT_MSG(shadowPillAdd(101, 100, 15, true),
+                  "the carried pillbox would not go on the list");
+    shadowRun(100, 100, &block);
+
+    UT_ASSERT_MSG(shadowSeen(visNew, &block, 101, 100),
+                  "the square a carried pillbox came from is hidden");
+    UT_ASSERT_MSG(shadowSeen(visNew, &block, 105, 100),
+                  "a pillbox that is in a tank hid the ground behind the "
+                  "square it is remembered at");
+    shadowPillsEnd();
+    return 0;
+}
+
+/* (j) The case the whole change is for, with a real pillbox as the target: the
+ * wall beside it must not take it away, and neither must its own shadow. A
+ * square is never hidden by what is standing on it - the pillbox is the thing
+ * the player is looking at. */
+static int sight_shadow_a_pill_never_hides_itself(void) {
+    OverviewRect block = shadowBlock(96, 96, 120, 110);
+
+    shadowMapFill(GRASS);
+    shadowMapSet(103, 101, BUILDING);
+    shadowPillsBegin();
+    UT_ASSERT_MSG(shadowPillAdd(106, 101, 15, false),
+                  "the pillbox would not go on the list");
+    shadowRun(100, 100, &block);
+
+    UT_ASSERT_MSG(shadowSeen(visNew, &block, 106, 101),
+                  "the pillbox past the blocker is hidden, so either the wall "
+                  "took it or it shadowed itself");
+
+    /* The same pillbox with the wall taken away, so what is left is the
+     * pillbox's own shadow: it is still seen itself, and the ground squarely
+     * behind it is not. 112,102 is where the line through the pillbox has got
+     * to, far enough out that the pillbox fills the view of it. */
+    shadowMapFill(GRASS);
+    shadowRun(100, 100, &block);
+    UT_ASSERT_MSG(shadowSeen(visNew, &block, 106, 101),
+                  "the pillbox is hidden by its own shadow");
+    UT_ASSERT_MSG(!shadowSeen(visNew, &block, 112, 102),
+                  "the ground squarely behind the pillbox is seen, so the "
+                  "pillbox is casting no shadow of its own");
+    shadowPillsEnd();
+    return 0;
+}
+
 /* What the pass costs. The main view builds one of these a frame, over the
  * whole back buffer, from a tank standing on real ground with real walls round
  * it, so that is what is timed. The number is printed whether the case passes
@@ -401,7 +556,8 @@ static int sight_shadow_cost(void) {
     int i;           /* Looping variable */
     int run;         /* Looping variable */
 
-    UT_ASSERT_MSG(shadowLoadEverard(), "Everard Island did not decompress");
+    UT_ASSERT_MSG(shadowLoadEverard(true),
+                  "Everard Island did not decompress");
 
     started = clock();
     for (run = 0; run < SHADOW_COST_RUNS; run++) {
@@ -409,8 +565,9 @@ static int sight_shadow_cost(void) {
             OverviewRect block =
                 shadowBlockAround(kOrigins[i][0], kOrigins[i][1]);
 
-            sightBuildMask(&shadowMap, kOrigins[i][0], kOrigins[i][1],
-                           SIGHT_SUB_CENTRE, SIGHT_SUB_CENTRE, &block, visNew);
+            sightBuildMask(&shadowMap, shadowPillList(), kOrigins[i][0],
+                           kOrigins[i][1], SIGHT_SUB_CENTRE, SIGHT_SUB_CENTRE,
+                           &block, visNew);
         }
     }
     ms = ((double)(clock() - started) * 1000.0 / (double)CLOCKS_PER_SEC) /
@@ -432,6 +589,10 @@ int run_sight_shadow(void) {
     rc = sight_shadow_closes_a_corner();                    if (rc) return rc;
     rc = sight_shadow_trees_are_unchanged();                if (rc) return rc;
     rc = sight_shadow_edges_and_origin();                   if (rc) return rc;
+    rc = sight_shadow_a_pill_blocks_like_a_wall();          if (rc) return rc;
+    rc = sight_shadow_a_dead_pill_blocks_too();             if (rc) return rc;
+    rc = sight_shadow_a_carried_pill_blocks_nothing();      if (rc) return rc;
+    rc = sight_shadow_a_pill_never_hides_itself();          if (rc) return rc;
     return 0;
 }
 
