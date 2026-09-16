@@ -76,12 +76,6 @@
 #define SIGHT_REGION_MAX_SIDE 48
 #define SIGHT_REGION_MAX      (SIGHT_REGION_MAX_SIDE * SIGHT_REGION_MAX_SIDE)
 
-/* How many separate shadows the pile holds. Touching shadows are folded into
- * one as they go on, so this counts the gaps between them rather than the
- * walls on the map, and a view with five hundred separate cracks of daylight
- * in it is not a view anybody has. */
-#define SIGHT_SHADOW_MAX 512
-
 /* What a square in the rectangle is wanted for. A square can be both: a wall
  * inside the block is asked whether it is seen and then casts its shadow. */
 #define SIGHT_E_TARGET 1u
@@ -686,13 +680,29 @@ void sightBuildMask(map *mp, pillboxes *pb, BYTE originX, BYTE originY,
     return;
   }
 
-  /* The eye, kept off the edges of its own square. Standing exactly on an edge
-   * would put the eye on the line of another square's face, where the wedge
-   * that square fills is half a turn wide and the square is neither in front
-   * of nor behind anything; a world unit in from the edge is nearer the truth
-   * than that and costs the player nothing they could see. */
-  eyeX = (int32_t)ox * SIGHT_SUB_SIDE + (offsetX < 1 ? 1 : (int32_t)offsetX);
-  eyeY = (int32_t)oy * SIGHT_SUB_SIDE + (offsetY < 1 ? 1 : (int32_t)offsetY);
+  /* The eye, kept off the edges of its own square at both ends. Standing
+   * exactly on an edge would put the eye on the line of another square's face,
+   * where the wedge that square fills is half a turn wide and the square is
+   * neither in front of nor behind anything; a world unit in from the edge is
+   * nearer the truth than that and costs the player nothing they could see.
+   *
+   * Both ends matter, and for the same reason: everything below is worked out
+   * from an eye that is on no grid line. That is what leaves sightSquareSpan
+   * one first corner and one last one, rather than a pair lying in a straight
+   * line through the eye with nothing to choose between them, and it is what
+   * keeps the distance to the nearest point of a square strictly greater for a
+   * square further out, which is the order the pile is built in. The offsets
+   * are BYTEs and so cannot reach SIGHT_SUB_SIDE on their own, which is the
+   * only reason the low clamp has been enough so far; the high one is here so
+   * that widening the parameter one day does not quietly take the rule away. */
+  eyeX = (int32_t)ox * SIGHT_SUB_SIDE +
+         (offsetX < 1 ? 1
+                      : (offsetX > SIGHT_SUB_SIDE - 1 ? SIGHT_SUB_SIDE - 1
+                                                      : (int32_t)offsetX));
+  eyeY = (int32_t)oy * SIGHT_SUB_SIDE +
+         (offsetY < 1 ? 1
+                      : (offsetY > SIGHT_SUB_SIDE - 1 ? SIGHT_SUB_SIDE - 1
+                                                      : (int32_t)offsetY));
 
   /* Nothing is seen until something says it is, so a square of the block that
    * is off the map, or that the pass never reaches, stays hidden. */

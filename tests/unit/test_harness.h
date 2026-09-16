@@ -1514,6 +1514,13 @@ int run_sight_shadow(void);
  * and printed. */
 int run_sight_shadow_cost(void);
 
+/* The full-shadow-pile branch (test_sight_shadow_overflow.c): a second copy of
+ * the module built with the pile capped at two, so a row of four walls
+ * overruns it and the fold a full pile answers with is taken. What it pins is
+ * the direction - the capped mask hides every square the mask the module
+ * really builds hides, and some the other way round, never the reverse. */
+int run_sight_shadow_overflow(void);
+
 /* In-window overview HUD geometry (test_overview_hud_layout.cpp): the column
  * fits the height at 1080p and on the Steam Deck's 800 lines, its pieces stack
  * in the classic order without overlapping and stay inside their backing

@@ -343,8 +343,7 @@ static int sight_shadow_closes_a_corner(void) {
  * walk the old rule used, and this is what says so. */
 static int sight_shadow_trees_are_unchanged(void) {
     OverviewRect block = shadowBlock(96, 96, 114, 114);
-    int x;  /* Looping variable */
-    int rc; /* Result of the sweep over the whole block */
+    int x; /* Looping variable */
 
     shadowMapFill(GRASS);
     shadowMapSet(105, 100, FOREST);
@@ -374,7 +373,6 @@ static int sight_shadow_trees_are_unchanged(void) {
 
     /* Nothing on this map is a wall, so the whole block has to match the old
      * rule square for square as well. */
-    rc = 0;
     for (x = block.left; x <= block.right; x++) {
         int y; /* Looping variable */
 
@@ -388,7 +386,7 @@ static int sight_shadow_trees_are_unchanged(void) {
                           now ? "seen" : "hidden", before ? "seen" : "hidden");
         }
     }
-    return rc;
+    return 0;
 }
 
 /* (f) The two squares the rule answers without looking at any geometry: one off
@@ -577,6 +575,7 @@ static int sight_shadow_cost(void) {
     UT_ASSERT_MSG(ms < SHADOW_COST_MAX_MS,
                   "one %dx%d build cost %.4f ms, over the %.1f ms bar",
                   SIGHT_MAX_SIDE, SIGHT_MAX_SIDE, ms, SHADOW_COST_MAX_MS);
+    shadowPillsEnd();
     return 0;
 }
 

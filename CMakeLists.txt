@@ -3672,6 +3672,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_overview_hud_layout.cpp
     tests/unit/test_sight.c
     tests/unit/test_sight_shadow.c
+    tests/unit/test_sight_shadow_overflow.c
     tests/unit/test_overview_snapshot.c
     tests/unit/test_mapview_sprite_scale.c
     tests/unit/test_mapview_overlay.c
@@ -4779,6 +4780,7 @@ set(_unit_test_names
     sight
     sight_shadow
     sight_shadow_cost
+    sight_shadow_overflow
     overview_dead_tank
     overview_entities
     overview_removed_item_has_no_region

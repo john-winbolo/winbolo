@@ -722,6 +722,7 @@ static const UnitTestEntry s_tests[] = {
     { "sight",                                   run_sight                                   },
     { "sight_shadow",                            run_sight_shadow                            },
     { "sight_shadow_cost",                       run_sight_shadow_cost                       },
+    { "sight_shadow_overflow",                   run_sight_shadow_overflow                   },
     { "overview_hud_layout",                     run_overview_hud_layout                     },
     { "overview_dead_tank",                      run_overview_dead_tank                      },
     { "overview_entities",                       run_overview_entities                       },

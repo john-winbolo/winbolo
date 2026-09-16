@@ -138,6 +138,22 @@
 #define SIGHT_MAX_SIDE   (2 * SIGHT_MAX_HALF + 1)
 #define SIGHT_MASK_BYTES (SIGHT_MAX_SIDE * SIGHT_MAX_SIDE)
 
+/* How many separate shadows the pile holds. Touching shadows are folded into
+ * one as they go on, so this counts the gaps between them rather than the
+ * walls on the map, and a view with five hundred separate cracks of daylight
+ * in it is not a view anybody has.
+ *
+ * A pile that does fill up folds the shadow it cannot hold into the one beside
+ * it, over the gap between them, so it hides a little more than the geometry
+ * says rather than a little less. Nothing on a real map comes near the cap, so
+ * that branch is out of reach of any case built from terrain; the definition is
+ * left open for a build to set instead, and the one build that sets it is the
+ * overflow case in the tests, which compiles the module a second time with the
+ * cap turned right down. Nothing that ships ever passes it. */
+#ifndef SIGHT_SHADOW_MAX
+#define SIGHT_SHADOW_MAX 512
+#endif
+
 /* Where inside its square the eye is, in world units across the square, which
  * is what the tank's own position is kept in. A caller that has only a square
  * to give passes SIGHT_SUB_CENTRE and is answered from the middle of it.
