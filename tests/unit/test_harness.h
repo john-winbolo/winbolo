@@ -2442,6 +2442,7 @@ int run_scenario_wave_cost_destroy_releases(void);
 int run_scenario_wave_cost_countdown_warms_seats(void);
 int run_scenario_wave_cost_warm_is_one_a_frame(void);
 int run_scenario_wave_cost_warmed_field_is_free(void);
+int run_scenario_wave_cost_warmed_seat_takes_session_dir(void);
 int run_scenario_wave_cost_warmed_init_rebuilds(void);
 int run_scenario_wave_cost_bot_init_keeps_park(void);
 int run_scenario_wave_cost_template_init_warms(void);
@@ -2818,6 +2819,14 @@ int ut_brain_stub_creates(int player_num);
  * handed an instance and no player number, so there is no slot to file them
  * under. Both counts are reset by ut_brain_stub_arm. */
 int ut_brain_stub_destroys(void);
+/* Give every brain the stub makes from here on a real, bare lua_State, and
+ * mark it running, so a test can watch what the sim writes INTO a brain —
+ * a global published to it, a chunk run in it. Off by default and reset by
+ * ut_brain_stub_arm, because every other case wants the cheap stub whose
+ * instance has no VM at all and whose brain-facing paths are skipped. The
+ * state holds no brain: no libraries are opened and nothing is loaded into
+ * it, so a tick still does nothing. Destroyed with the instance. */
+void ut_brain_stub_lua(bool withState);
 
 /* The last status tile frontEndStatusTank was handed by the stub in
  * test_stubs.c: the 1-based player number, and the tankAlliance as an int so

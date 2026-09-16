@@ -1186,6 +1186,8 @@ static const UnitTestEntry s_tests[] = {
       run_scenario_wave_cost_warm_is_one_a_frame                                             },
     { "scenario_wave_cost_warmed_field_is_free",
       run_scenario_wave_cost_warmed_field_is_free                                            },
+    { "scenario_wave_cost_warmed_seat_takes_session_dir",
+      run_scenario_wave_cost_warmed_seat_takes_session_dir                                   },
     { "scenario_wave_cost_warm_skips_bad_brain",
       run_scenario_wave_cost_warm_skips_bad_brain                                            },
     { "scenario_wave_cost_failed_build_leaves_nothing",

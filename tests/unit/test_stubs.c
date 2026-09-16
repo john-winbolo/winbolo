@@ -10,6 +10,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <SDL3/SDL.h>
+#include <lua.h>
+#include <lauxlib.h>
 #include "global.h"
 #include "client_sim.h"
 #include "client_sim_internal.h"  /* clientSimGetBoundServerSim — the brain stub */
@@ -71,9 +73,17 @@ static BYTE     s_brainStubTeam[MAX_TANKS];
  * player number, so there is nothing to file them under. */
 static int      s_brainStubCreates[MAX_TANKS];
 static int      s_brainStubDestroys;
+/* Opt-in: hand each instance a real, bare lua_State. The cheap stub leaves
+ * the instance zeroed, so bot_manager skips every brain-facing path — which
+ * is what nearly every case wants and is why this is off by default. A case
+ * that has to watch what the sim writes INTO a brain needs a state to write
+ * into, and this is the smallest one that will do: no libraries, nothing
+ * loaded, so a tick is still the stub's no-op. */
+static bool     s_brainStubLua = false;
 
 void ut_brain_stub_arm(bool succeed) {
   s_brainStubArmed = succeed;
+  s_brainStubLua   = false;
   memset(s_brainStubInit, 0, sizeof(s_brainStubInit));
   memset(s_brainStubMade, 0, sizeof(s_brainStubMade));
   memset(s_brainStubTeam, 0, sizeof(s_brainStubTeam));
@@ -106,6 +116,10 @@ int ut_brain_stub_destroys(void) {
   return s_brainStubDestroys;
 }
 
+void ut_brain_stub_lua(bool withState) {
+  s_brainStubLua = withState;
+}
+
 bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
                             const char *name, struct ClientSim *cs,
                             aiType aiMode, bool debug_mode,
@@ -119,6 +133,10 @@ bool luaBrainInstanceCreate(LuaBrainInstance *inst, const char *path,
    * bot_manager reads L, pathfinder and worldsim straight after this and
    * skips each one when it is NULL. */
   memset(inst, 0, sizeof(*inst));
+  if (s_brainStubLua) {
+    inst->L = luaL_newstate();
+    inst->running = (inst->L != NULL);
+  }
   if (player_num >= 0 && player_num < MAX_TANKS) {
     struct ServerSim *sim = cs ? clientSimGetBoundServerSim(cs) : NULL;
     s_brainStubMade[player_num] = true;
@@ -149,7 +167,11 @@ bool luaBrainInstanceTick(LuaBrainInstance *inst) {
  * botTearDownRunner calls this for every runner it takes down, and the count
  * is of the work the teardown asks for. */
 void luaBrainInstanceDestroy(LuaBrainInstance *inst) {
-  (void)inst;
+  if (inst != NULL && inst->L != NULL) {
+    lua_close(inst->L);
+    inst->L = NULL;
+    inst->running = false;
+  }
   s_brainStubDestroys++;
 }
 

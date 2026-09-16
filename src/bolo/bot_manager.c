@@ -918,6 +918,39 @@ static bool botParkedRunnerMatches(const BotContext *bot,
     return true;
 }
 
+/* Hand one bot the recording block that is open now.
+ *
+ * A recording block publishes DEBUG_SESSION_DIR to every bot as it OPENS
+ * (server_lifecycle.c, serverLifecycleOpenBraindbgBlock). A bot that reaches
+ * the field after that publish missed it, and a brain with no session dir
+ * scatters its print2 and jsonl files into the cwd instead of the block,
+ * where BrainTest's session browser never finds them.
+ *
+ * Two kinds of bot miss it, and both come through here: one BUILT mid-round
+ * (a host's Add Bot, a scenario spawn onto an empty seat) and one RESUMED
+ * from a runner the countdown warmed. The warmed one missed the publish for
+ * a second reason as well — its runner was parked rather than active when
+ * the block opened — which is why the resume calls this and not only the
+ * build. Without it a lobby-hosted round with held seats recorded a block
+ * holding a .btr and a perf log and not one print2_bot*.log: every bot that
+ * took the field in that round was a resume. */
+static void botHandLiveSessionDir(ServerSim *sim, BotContext *bot,
+                                  BYTE playerNum) {
+    const char *sdir;
+
+    if (!brainRecordIsEnabled() || bot->brain.L == NULL) {
+        return;
+    }
+    sdir = brainRecordGetSessionDir();
+    if (sdir == NULL || sdir[0] == '\0') {
+        return;
+    }
+    botManagerSetLuaGlobalString(sim, playerNum, "DEBUG_SESSION_DIR", sdir);
+    botManagerExecLua(sim, playerNum,
+        "local ok,p=pcall(require,'print2'); "
+        "if ok and p.reset_log then p.reset_log() end");
+}
+
 /* Hand a parked runner back to the seat it belongs to. The ClientSim, the
  * passive transport, the control subscription and the brain instance are all
  * still here, so this is a tank spawn and a map reload rather than a build.
@@ -1031,6 +1064,11 @@ static bool botResumeParkedRunner(ServerSim *sim, BotContext *bot,
        and its ClientSim's matrix is as old as the park. The seat may also
        have changed sides while it was off. */
     botManagerSyncClientAlliances(sim);
+
+    /* And the recording block, for the same reason the fresh build takes it:
+       this VM was warmed before the block opened, so it has never been told
+       where the round's debug files go. */
+    botHandLiveSessionDir(sim, bot, playerNum);
 
     WB_LOG_INFO(WB_LOG_CAT_SIM,
             "botManager: bot %d back on the field on its parked runner",
@@ -1347,22 +1385,7 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
      * already holding it is written the same bits back. */
     botManagerSyncClientAlliances(sim);
 
-    /* A recording block may already be open (server_lifecycle publishes
-     * DEBUG_SESSION_DIR to every bot when the block OPENS) — a bot born
-     * mid-round (scenario spawn_bot waves, host mid-game adds) missed
-     * that publish and would scatter its print2/jsonl debug files into
-     * the cwd instead of the session dir, invisible to BrainTest's
-     * session browser. Hand the newborn the live session dir directly. */
-    if (brainRecordIsEnabled() && bot->brain.L != NULL) {
-        const char *sdir = brainRecordGetSessionDir();
-        if (sdir != NULL && sdir[0] != '\0') {
-            botManagerSetLuaGlobalString(sim, playerNum,
-                                         "DEBUG_SESSION_DIR", sdir);
-            botManagerExecLua(sim, playerNum,
-                "local ok,p=pcall(require,'print2'); "
-                "if ok and p.reset_log then p.reset_log() end");
-        }
-    }
+    botHandLiveSessionDir(sim, bot, playerNum);
 
     WB_LOG_INFO(WB_LOG_CAT_SIM, "botManager: bot %d started with brain '%s'",
             playerNum, brainName);
@@ -2340,7 +2363,15 @@ bool botManagerToggleAllBrainDebugMode(ServerSim *sim) {
 
 bool botManagerExecLua(ServerSim *sim, BYTE playerNum, const char *src) {
     if (sim == NULL || playerNum >= MAX_TANKS) return false;
-    if (!sim->botMgr.bots[playerNum].active) return false;
+    /* A PARKED runner counts. Its VM is as real as an active one — the park
+       keeps the whole Lua state so the next fielding can resume it — and the
+       one thing that reaches a bot between rounds is exactly this: the
+       recording block publishing DEBUG_SESSION_DIR to every seat as it
+       opens. Asking only for `active` dropped that publish on every seat the
+       countdown had warmed, and the round then recorded no print2 log for
+       any of them. The two lines below are what actually decide whether
+       there is a state to run in. */
+    if (!botManagerHasRunner(sim, playerNum)) return false;
     if (!sim->botMgr.bots[playerNum].brain.running) return false;
     lua_State *L = sim->botMgr.bots[playerNum].brain.L;
     if (!L || !src) return false;
@@ -2361,7 +2392,9 @@ bool botManagerExecLua(ServerSim *sim, BYTE playerNum, const char *src) {
 bool botManagerSetLuaGlobalString(ServerSim *sim, BYTE playerNum,
                                   const char *name, const char *value) {
     if (sim == NULL || playerNum >= MAX_TANKS) return false;
-    if (!sim->botMgr.bots[playerNum].active) return false;
+    /* Parked counts here too, and for the same reason: see botManagerExecLua
+       above. This is the call the session-dir publish actually goes through. */
+    if (!botManagerHasRunner(sim, playerNum)) return false;
     if (!sim->botMgr.bots[playerNum].brain.running) return false;
     lua_State *L = sim->botMgr.bots[playerNum].brain.L;
     if (!L || !name || !value) return false;

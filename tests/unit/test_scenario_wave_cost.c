@@ -120,6 +120,7 @@
                                     * botManagerIsBot, botManagerDestroy */
 #include "client_sim_internal.h"   /* ClientSim.clientState and the err offset —
                                     * what the refield has to put back */
+#include "brain_record.h"        /* the recording block a warmed seat must be told about */
 #include "scenario_table.h"        /* scnTableSet — the init table a spawn carries */
 #include "game_sim.h"
 #include "everard_map.h"
@@ -1302,6 +1303,100 @@ int run_scenario_wave_cost_warmed_field_is_free(void) {
     UT_ASSERT_MSG(sim->sim.tanks[seat] != NULL,
                   "the fielding built no tank for the seat");
 
+    serverSimDestroy(sim);
+    wcDropBrainFile();
+    return 0;
+}
+
+/* And the warmed seat is told where the round's debug files go.
+ *
+ * A -brain-debug run opens a recording block on the round's first running
+ * tick and publishes DEBUG_SESSION_DIR into every bot as it opens. Both
+ * halves of that missed a seat the COUNTDOWN had warmed:
+ *
+ *   * the publish goes through botManagerSetLuaGlobalString, which used to
+ *     refuse any seat that was not `active`. A warmed runner is parked, so
+ *     every held seat was silently skipped.
+ *   * and the mid-round hand-off that catches a bot born after the block
+ *     opened sat past the early return a resume takes, so the fielding did
+ *     not make up for it either.
+ *
+ * A lobby-hosted round therefore recorded a block with a .btr and a perf log
+ * in it and not one print2_bot*.log, because every bot that took the field
+ * in it came back on a warmed runner. Both halves are held here: the write
+ * lands in the parked VM, and the resume publishes the dir on its own.
+ *
+ * The fixture brain is given a real lua_State for this case — the cheap stub
+ * has none, and a global published into nothing cannot be read back. */
+int run_scenario_wave_cost_warmed_seat_takes_session_dir(void) {
+    ServerSim  *sim;
+    ScenarioOp  op;
+    const BYTE  seat = WC_FIRST_SEAT;
+    const char *dir  = "debug_sessions/ut_warmed_session_dir";
+    char       *got;
+    bool        wrote;
+
+    UT_ASSERT(wcMakeBrainFile("warmed_seat_takes_session_dir"));
+    ut_brain_stub_arm(true);
+    ut_brain_stub_lua(true);
+    sim = wcLobbySim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(wcSeatTeam(sim));
+    wcRunCountdown(sim, WC_SEATS + 1);
+    UT_ASSERT(sim->state == serverStateRunning);
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].parked,
+                  "the countdown left seat %d without a runner", (int)seat);
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].brain.L != NULL,
+                  "the fixture brain for seat %d has no Lua state, so this "
+                  "case cannot see what is written into it", (int)seat);
+
+    /* A recording block, as the lifecycle opens one. */
+    brainRecordSetEnabled(true);
+    brainRecordSetSessionDir(dir);
+
+    /* (a) THE PUBLISH REACHES A PARKED RUNNER. This is the call
+           serverLifecycleOpenBraindbgBlock makes for every bot seat as the
+           block opens, and a held seat is a bot seat. Written under a name
+           of this case's own so it cannot be confused with the hand-off
+           below, which writes the real one. */
+    wrote = serverSimBotSetLuaGlobalString(sim, seat, "WB_UT_BLOCK_OPEN",
+                                           "yes");
+    UT_ASSERT_MSG(wrote,
+                  "the block-open publish was refused for seat %d, which is "
+                  "parked on a warmed runner", (int)seat);
+
+    /* The wave fields it, which is a resume. Nothing has published
+       DEBUG_SESSION_DIR to this seat: the resume has to do it. */
+    wcSpawnOp(&op, seat);
+    UT_ASSERT(wcApplyOne(sim, &op));
+    UT_ASSERT_MSG(sim->lobbyPlayers[seat].fielded,
+                  "the wave did not field the warmed seat");
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 1,
+                  "the fielding made %d brain(s) for seat %d in all; this "
+                  "case is only about a RESUME", ut_brain_stub_creates(seat),
+                  (int)seat);
+
+    /* (a), read back out of the VM the resume carried over. */
+    got = serverSimBotEvalLuaString(sim, seat,
+                                    "return WB_UT_BLOCK_OPEN or ''");
+    UT_ASSERT_MSG(got != NULL && strcmp(got, "yes") == 0,
+                  "the block-open publish did not land in seat %d's brain: "
+                  "it reads '%s'", (int)seat, got != NULL ? got : "(nothing)");
+    free(got);
+
+    /* (b) AND THE RESUME HANDED OVER THE SESSION DIR ITSELF. */
+    got = serverSimBotEvalLuaString(sim, seat,
+                                    "return DEBUG_SESSION_DIR or ''");
+    UT_ASSERT_MSG(got != NULL && strcmp(got, dir) == 0,
+                  "seat %d came back on its warmed runner with "
+                  "DEBUG_SESSION_DIR '%s', expected '%s': its print2 log "
+                  "would land outside the recording block",
+                  (int)seat, got != NULL ? got : "(nothing)", dir);
+    free(got);
+
+    brainRecordSetSessionDir("");
+    brainRecordSetEnabled(false);
+    ut_brain_stub_lua(false);
     serverSimDestroy(sim);
     wcDropBrainFile();
     return 0;
