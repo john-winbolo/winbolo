@@ -21,12 +21,15 @@ local ROSTER = {
   { pn = 3, name = "Bruce Lee" },
   { pn = 4, name = "Plato" },
 }
+-- `ally` is what M.all_roster puts on a player on OUR side (it reads
+-- info.allies), and it is how the parser turns "attack <team mate>" down for
+-- a HUMAN ally: ROSTER holds allied BOTS only.
 local ALL = {
-  { pn = 0, name = "Andrew" },
-  { pn = 1, name = "Socrates" },
-  { pn = 2, name = "Seneca" },
-  { pn = 3, name = "Bruce Lee" },
-  { pn = 4, name = "Plato" },
+  { pn = 0, name = "Andrew", ally = true },   -- our own human
+  { pn = 1, name = "Socrates", ally = true },
+  { pn = 2, name = "Seneca", ally = true },
+  { pn = 3, name = "Bruce Lee", ally = true },
+  { pn = 4, name = "Plato", ally = true },
   { pn = 7, name = "Hannibal" },   -- an enemy tank, for `attack <tank name>`
 }
 
@@ -1346,6 +1349,503 @@ check("the same marker from a person still starts one",
 _G.EVENT_PING = nil
 _G.PING_KIND_BOT_COMMAND = nil
 _G.PING_KIND_CAUTION = nil
+
+-- =========================================================================
+-- THE PEER REVIEW, Sep 16.  Eight findings on the Lua side; each block below
+-- is one of them, and each one failed before the fix beside it.
+-- =========================================================================
+
+-- ── 1. THE OLD OPERATOR COMMANDS ARE READ FIRST ─────────────────────────
+-- "!start" and "!attack:5" never reached commands.lua: the order parser got
+-- there first, and its bare-name SELECT branch and its verb scan both claimed
+-- a line that was never theirs.  TARS is the name that made it visible --
+-- "start" is two letters from "tars", so a team with TARS on it turned
+-- "!start" into a selection of TARS.
+print("orders.lua -- the old operator commands are read BEFORE any order")
+
+local TARS_ROSTER = {
+  { pn = 1, name = "TARS" },
+  { pn = 2, name = "Socrates" },
+}
+local TARS_ALL = {
+  { pn = 0, name = "Andrew", ally = true },
+  { pn = 1, name = "TARS", ally = true },
+  { pn = 2, name = "Socrates", ally = true },
+}
+local function PT(text) return ORD.parse(text, TARS_ROSTER, TARS_ALL) end
+
+check("!start is not a selection of TARS", PT("!start") == nil, shape(PT("!start")))
+check("!start is still the operator command",
+      (CMDS.parse("!start") or {}).cmd == "start", "?")
+check("and the bare name still selects TARS",
+      shape(PT("tars")) == "select:1", shape(PT("tars")))
+check("!attack:5 is not an order on pill 5", PT("!attack:5") == nil,
+      shape(PT("!attack:5")))
+check("!attack:5 is still the operator command",
+      (function()
+         local c = CMDS.parse("!attack:5")
+         return c and c.cmd == "attack" and c.id == 5
+       end)(), "?")
+check("!cp:5 is still handed through",  PT("!cp:5") == nil,  shape(PT("!cp:5")))
+check("!pill:2 is still handed through", PT("!pill:2") == nil, shape(PT("!pill:2")))
+check("!cb:all is still handed through", PT("!cb:all") == nil, shape(PT("!cb:all")))
+-- And the ORDER that only looks like one of them is untouched: the space is
+-- the whole difference between "!attack:5" and "!attack 5".
+check("!attack 5 is still an order",
+      shape(PT("!attack 5")) == "attack who=auto tgt=pill:5", shape(PT("!attack 5")))
+check("!goto is not an operator command",
+      shape(PT("!goto 100 99")) == "goto who=ping tgt=here:" .. (100 * 256 + 99),
+      shape(PT("!goto 100 99")))
+
+-- At runtime: on_chat must say "not mine" so init.lua hands the line on.
+st, w, inf = ST(), W(), I({ allies = 0x17 })
+check("on_chat leaves !start to commands.lua",
+      ORD.on_chat(st, w, inf, 0, "!start", 100, true, false) == false, "took it")
+check("on_chat leaves !attack:5 to commands.lua",
+      ORD.on_chat(st, w, inf, 0, "!attack:5", 100, true, false) == false, "took it")
+check("and neither one started an order",
+      st.orders == nil or (st.orders.held == nil
+                           and next(st.orders.auctions) == nil), "?")
+
+-- ── 4. AN OPERATOR COMMAND IS ALLY-ONLY ─────────────────────────────────
+-- init.lua called cmds.parse from OUTSIDE the ally test that guards every
+-- other reader on that path, so "!stop" -- the hardest thing anybody can say
+-- to a bot -- was the one line the other team could say too.  The check is
+-- in the parser now, beside the parse it guards.
+print("commands.lua -- only an ally may give an operator command")
+
+check("an ally's !stop is a command",
+      (CMDS.parse("!stop", true) or {}).cmd == "stop", "?")
+check("an ENEMY's !stop is nothing at all",
+      CMDS.parse("!stop", false) == nil, "a command")
+check("an enemy's !start is nothing either",
+      CMDS.parse("!start", false) == nil, "a command")
+check("nor !cp:5, !cb:all or !pill:2", (function()
+  for _, line in ipairs({ "!cp:5", "!cb:all", "!pill:2", "!attack:5",
+                          "!base:1", "!bpc:4", "!pp:6", "!watch:7",
+                          "!status" }) do
+    if CMDS.parse(line, false) ~= nil then return false end
+    if CMDS.parse(line, true) == nil then return false end
+  end
+  return true
+end)(), "?")
+-- nil means "the caller has already checked", which is how orders.lua asks
+-- whether a line is one of these at all.
+check("no third argument means the caller checked",
+      (CMDS.parse("!stop") or {}).cmd == "stop", "?")
+
+-- ── 2 + 6. CANCEL STICKS, AND A RELEASE STILL RE-BIDS ───────────────────
+-- A two-bot rig.  Bot A (p1, Socrates) sits at (10,10) and bot B (p2,
+-- Seneca) at (50,50); pill 5 is at (20,20), so A always wins the auction.
+-- The order verbs are carried between them by hand, the way the message bus
+-- would.  The question every case asks is the same one: after the order is
+-- called off on A, does B pick it up?
+print("orders.lua -- a cancel is a cancel, a release is a hand-back")
+
+local function BOT(pn, mx, my)
+  local s = { player_number = pn, tick = 100, goal = {}, stuck_for = 0 }
+  local i = I({ allies = 0x17 })
+  i.player_number = pn
+  i.tankx, i.tanky = mx * 256 + 128, my * 256 + 128
+  return { pn = pn, st = s, inf = i, w = W() }
+end
+
+-- One tick of the message bus: everything each bot queued reaches the other.
+local function pump(a, b, tick)
+  local am, bm = {}, {}
+  for i, v in ipairs((a.st.orders or {}).out or {}) do am[i] = v end
+  for i, v in ipairs((b.st.orders or {}).out or {}) do bm[i] = v end
+  if a.st.orders then a.st.orders.out = {} end
+  if b.st.orders then b.st.orders.out = {} end
+  for _, m in ipairs(am) do ORD.rx(a.pn, m, tick, b.st) end
+  for _, m in ipairs(bm) do ORD.rx(b.pn, m, tick, a.st) end
+end
+
+-- Give both bots the same order and let it settle on A.  Answers A, B.
+local function ordered_pair()
+  local a, b = BOT(1, 10, 10), BOT(2, 50, 50)
+  ORD.on_chat(a.st, a.w, a.inf, 0, "attack 5", 100, true, false)
+  ORD.on_chat(b.st, b.w, b.inf, 0, "attack 5", 100, true, false)
+  pump(a, b, 100)                              -- the bids cross
+  ORD.update(a.st, a.w, a.inf, 101)            -- A wins and claims
+  ORD.update(b.st, b.w, b.inf, 101)
+  pump(a, b, 101)                              -- A's claim reaches B
+  ORD.update(a.st, a.w, a.inf, 102)
+  ORD.update(b.st, b.w, b.inf, 102)
+  return a, b
+end
+
+-- Did B pick the cancelled order up?  Two ways to see it from outside: a
+-- fresh bid on that id, or the id still sitting in B's known table where the
+-- next release, steal or repeat can revive it.
+local function b_rebid(a, b, oid, t)
+  b.st.orders.out = {}
+  pump(a, b, t)
+  ORD.update(b.st, b.w, b.inf, t + 1)
+  ORD.update(b.st, b.w, b.inf, t + 2)
+  for _, line in ipairs(b.st.orders.out) do
+    if line:match("^/info obd " .. oid .. " %d") then return true end
+  end
+  return b.st.orders.held ~= nil or b.st.orders.known[oid] ~= nil
+end
+
+local pa, pb = ordered_pair()
+check("setup: A holds the order and B knows who has it",
+      pa.st.orders.held ~= nil and pa.st.orders.held.tid == 5
+      and pb.st.orders.held == nil
+      and pb.st.orders.claims[pa.st.orders.held.oid] ~= nil,
+      tostring(pa.st.orders.held and pa.st.orders.held.tid))
+local cancel_oid = pa.st.orders.held.oid
+check("setup: B still remembers the order", pb.st.orders.known[cancel_oid] ~= nil, "?")
+
+-- (a) plain `cancel`
+pa, pb = ordered_pair()
+local plain_oid = pa.st.orders.held.oid
+ORD.on_chat(pa.st, pa.w, pa.inf, 0, "cancel", 200, true, false)
+ORD.on_chat(pb.st, pb.w, pb.inf, 0, "cancel", 200, true, false)
+check("plain cancel: A lets go", pa.st.orders.held == nil, "held")
+check("plain cancel: B does not pick it up",
+      b_rebid(pa, pb, plain_oid, 200) == false, "re-bid")
+
+-- (b) `cancel <bot>`
+pa, pb = ordered_pair()
+local named_oid = pa.st.orders.held.oid
+ORD.on_chat(pa.st, pa.w, pa.inf, 0, "cancel socrates", 200, true, false)
+ORD.on_chat(pb.st, pb.w, pb.inf, 0, "cancel socrates", 200, true, false)
+check("cancel <bot>: A lets go", pa.st.orders.held == nil, "held")
+check("cancel <bot>: B does not pick it up",
+      b_rebid(pa, pb, named_oid, 200) == false, "re-bid")
+
+-- (c) `last cancel`
+pa, pb = ordered_pair()
+local last_oid = pa.st.orders.held.oid
+ORD.on_chat(pa.st, pa.w, pa.inf, 0, "last cancel", 200, true, false)
+ORD.on_chat(pb.st, pb.w, pb.inf, 0, "last cancel", 200, true, false)
+check("last cancel: A lets go", pa.st.orders.held == nil, "held")
+check("last cancel: B does not pick it up",
+      b_rebid(pa, pb, last_oid, 200) == false, "re-bid")
+
+-- (d) `retreat`: the old order is cancelled, not handed round the team.
+pa, pb = ordered_pair()
+ORD.on_chat(pa.st, pa.w, pa.inf, 0, "socrates retreat", 200, true, false)
+ORD.on_chat(pb.st, pb.w, pb.inf, 0, "socrates retreat", 200, true, false)
+check("retreat: A is on take_cover now",
+      (pa.st.orders.held or {}).kind == "take_cover",
+      tostring((pa.st.orders.held or {}).kind))
+check("retreat: B does not pick the old order up",
+      (function()
+         pump(pa, pb, 200)
+         ORD.update(pb.st, pb.w, pb.inf, 201)
+         return pb.st.orders.auctions[cancel_oid] == nil
+                and pb.st.orders.known[cancel_oid] == nil
+       end)(), "re-bid")
+
+-- (e) a CAUTION ping on the holding bot
+_G.EVENT_PING = 13
+_G.PING_KIND_CAUTION = 1
+_G.PING_KIND_BOT_COMMAND = 5
+local function caution(sender, mx, my)
+  local wx, wy = mx * 256 + 128, my * 256 + 128
+  return { type = 13, data = { sender, 1,
+           math.floor(wx / 256), wx % 256, math.floor(wy / 256), wy % 256 } }
+end
+pa, pb = ordered_pair()
+local caut_oid = pa.st.orders.held.oid
+pa.inf.events = { caution(0, 10, 10) }         -- on A's own tank
+pb.inf.events = { caution(0, 10, 10) }
+ORD.on_events(pa.st, pa.w, pa.inf, 200)
+ORD.on_events(pb.st, pb.w, pb.inf, 200)
+pa.inf.events, pb.inf.events = {}, {}
+check("caution on a bot: A lets go", pa.st.orders.held == nil, "held")
+check("caution on a bot: B does not pick it up",
+      b_rebid(pa, pb, caut_oid, 200) == false, "re-bid")
+_G.EVENT_PING = nil
+_G.PING_KIND_CAUTION = nil
+_G.PING_KIND_BOT_COMMAND = nil
+
+-- (f) A GO-THERE ORDER THAT FINISHED ITS HOLD.  The job is done, so no
+-- second bot is sent to stand on the square after the first walked away.
+local ga, gb = BOT(1, 14, 14), BOT(2, 50, 50)
+ORD.on_chat(ga.st, ga.w, ga.inf, 0, "!goto 15 15", 100, true, false)
+ORD.on_chat(gb.st, gb.w, gb.inf, 0, "!goto 15 15", 100, true, false)
+pump(ga, gb, 100)
+ORD.update(ga.st, ga.w, ga.inf, 101)
+ORD.update(gb.st, gb.w, gb.inf, 101)
+pump(ga, gb, 101)
+ORD.update(gb.st, gb.w, gb.inf, 102)
+check("setup: A holds the go-there order",
+      (ga.st.orders.held or {}).kind == "goto_tile",
+      tostring((ga.st.orders.held or {}).kind))
+local goto_oid = ga.st.orders.held.oid
+ga.inf.tankx, ga.inf.tanky = 15 * 256 + 128, 15 * 256 + 128
+ORD.update(ga.st, ga.w, ga.inf, 200)           -- arrival: the hold starts
+check("setup: it arrived and is holding", ga.st.orders.held.hold == true,
+      tostring(ga.st.orders.held and ga.st.orders.held.hold))
+ORD.update(ga.st, ga.w, ga.inf, 200 + (C.ORDER_GOTO_HOLD_TICKS or 500))
+check("the hold runs out and A lets go", ga.st.orders.held == nil, "held")
+pump(ga, gb, 800)
+ORD.update(gb.st, gb.w, gb.inf, 801)
+check("a finished hold sends nobody else to the square",
+      gb.st.orders.auctions[goto_oid] == nil
+      and gb.st.orders.known[goto_oid] == nil
+      and gb.st.orders.held == nil, "a second bot was sent")
+
+-- A RELEASE IS STILL A HAND-BACK.  The other half of the same rule: a bot
+-- that got busy or died drops the order with obr, and the next cheapest bot
+-- has to go and do it.
+pa, pb = ordered_pair()
+local rel_oid = pa.st.orders.held.oid
+ORD.release_held(pa.st, pa.inf, nil, true)     -- no `cancelled`: a hand-back
+check("a hand-back puts obr on the wire",
+      pa.st.orders.out[#pa.st.orders.out] == "/info obr " .. rel_oid,
+      tostring(pa.st.orders.out[#pa.st.orders.out]))
+pb.st.orders.out = {}
+pump(pa, pb, 300)
+ORD.update(pb.st, pb.w, pb.inf, 301)
+check("and B bids for it", (function()
+  for _, line in ipairs(pb.st.orders.out) do
+    if line:match("^/info obd " .. rel_oid .. " %d") then return true end
+  end
+  return false
+end)(), table.concat(pb.st.orders.out, " | "))
+check("and B ends up holding it",
+      (pb.st.orders.held or {}).oid == rel_oid,
+      tostring((pb.st.orders.held or {}).oid))
+
+-- 6. gclaims IS CLEARED, so a bot that let an order go can win it back.
+-- It never was, and the settle excludes anybody gclaims still lists as a
+-- holder -- so the SAME order said again found "everybody already holds it"
+-- and nobody went.
+print("orders.lua -- a released bot can win its own order back")
+st, w, inf = ST(), W(), I({ allies = 0 })
+ORD.on_chat(st, w, inf, 0, "attack 5", 100, true, false)
+ORD.update(st, w, inf, 101)
+local back_oid = st.orders.held.oid
+check("setup: the order is held and gclaims names us",
+      st.orders.gclaims[back_oid] ~= nil and st.orders.gclaims[back_oid][1] ~= nil,
+      "?")
+ORD.release_held(st, inf, nil, true)           -- busy: hand it back
+check("letting go takes us out of gclaims",
+      (st.orders.gclaims[back_oid] or {})[1] == nil,
+      tostring((st.orders.gclaims[back_oid] or {})[1]))
+ORD.on_chat(st, w, inf, 0, "attack 5", 200, true, false)
+check("the same order again opens an auction we are in",
+      st.orders.auctions[back_oid] ~= nil
+      and type(st.orders.auctions[back_oid].bids[1]) == "number",
+      "no bid")
+ORD.update(st, w, inf, 201)
+check("and the released bot wins it back",
+      (st.orders.held or {}).oid == back_oid,
+      tostring((st.orders.held or {}).oid))
+
+-- PING AGAIN STILL ADDS THE NEXT CLOSEST BOT.  A holds the pinged order; the
+-- second ping grows it to two and B fills the new slot.
+_G.EVENT_PING = 13
+_G.PING_KIND_BOT_COMMAND = 5
+_G.PING_KIND_CAUTION = 1
+local function bping(sender, mx, my)
+  local wx, wy = mx * 256 + 128, my * 256 + 128
+  return { type = 13, data = { sender, 5,
+           math.floor(wx / 256), wx % 256, math.floor(wy / 256), wy % 256 } }
+end
+local qa, qb = BOT(1, 10, 10), BOT(2, 50, 50)
+qa.inf.events, qb.inf.events = { bping(0, 20, 20) }, { bping(0, 20, 20) }
+ORD.on_events(qa.st, qa.w, qa.inf, 100)
+ORD.on_events(qb.st, qb.w, qb.inf, 100)
+qa.inf.events, qb.inf.events = {}, {}
+pump(qa, qb, 100)
+ORD.update(qa.st, qa.w, qa.inf, 101)
+ORD.update(qb.st, qb.w, qb.inf, 101)
+pump(qa, qb, 101)
+ORD.update(qb.st, qb.w, qb.inf, 102)
+check("setup: the first ping puts A on it",
+      qa.st.orders.held ~= nil and qb.st.orders.held == nil,
+      tostring(qa.st.orders.held and qa.st.orders.held.tid))
+qa.inf.events, qb.inf.events = { bping(0, 21, 20) }, { bping(0, 21, 20) }
+ORD.on_events(qa.st, qa.w, qa.inf, 150)
+ORD.on_events(qb.st, qb.w, qb.inf, 150)
+qa.inf.events, qb.inf.events = {}, {}
+pump(qa, qb, 150)
+ORD.update(qa.st, qa.w, qa.inf, 151)
+ORD.update(qb.st, qb.w, qb.inf, 151)
+check("ping again adds the next closest bot",
+      qb.st.orders.held ~= nil and qb.st.orders.held.oid == qa.st.orders.held.oid,
+      tostring(qb.st.orders.held and qb.st.orders.held.oid))
+_G.EVENT_PING = nil
+_G.PING_KIND_BOT_COMMAND = nil
+_G.PING_KIND_CAUTION = nil
+
+-- ── 3. THE ORDER TABLES ARE WALKED IN oid ORDER ─────────────────────────
+-- pairs() over a hash is process-seeded, so two orders settling on one tick
+-- settled in a different order in two runs of one recorded game.  Every loop
+-- takes the keys, sorts them and walks the array.
+print("orders.lua -- two orders settling in one tick settle in oid order")
+
+check("sorted_keys sorts", (function()
+  local k = ORD.sorted_keys({ [9000] = 1, [11] = 1, [700] = 1 })
+  return #k == 3 and k[1] == 11 and k[2] == 700 and k[3] == 9000
+end)(), "?")
+check("sorted_keys of nothing is empty",
+      #ORD.sorted_keys(nil) == 0 and #ORD.sorted_keys({}) == 0, "?")
+
+-- Two live auctions this bot is the only bidder in.  The obc lines it puts on
+-- the wire as each settles are the settle order, read from outside.
+local function settle_oids(first_low)
+  local s, ww, ii = ST(), W(), I({ allies = 0 })
+  ORD.ping(s, 3, 1, 1)                       -- makes state.orders exist
+  s.orders.pings = {}
+  local lo = { oid = 111111, verb = "attack", kind = "attack_pill",
+               tkind = "pill", tid = 5, sender = 0, sender_name = "Andrew",
+               needs_shells = true }
+  local hi = { oid = 222222, verb = "defend", kind = "defend_pill",
+               tkind = "pill", tid = 9, sender = 0, sender_name = "Andrew",
+               needs_shells = true }
+  local a1, a2 = lo, hi
+  if not first_low then a1, a2 = hi, lo end   -- the other insertion order
+  for _, sp in ipairs({ a1, a2 }) do
+    s.orders.known[sp.oid]    = { spec = sp, tick = 100 }
+    s.orders.auctions[sp.oid] = { spec = sp, open = 0, want = 1,
+                                  bids = { [1] = 10 }, answered = { [1] = true } }
+  end
+  ORD.update(s, ww, ii, 200)
+  local seen = {}
+  for _, line in ipairs(s.orders.out) do
+    local id = line:match("^/info obc (%d+) ")
+    if id then seen[#seen + 1] = tonumber(id) end
+  end
+  return table.concat(seen, ",")
+end
+check("the lower oid settles first, whatever order the table was built in",
+      settle_oids(true) == "111111,222222", settle_oids(true))
+check("and the other insertion order settles exactly the same way",
+      settle_oids(false) == settle_oids(true), settle_oids(false))
+
+-- ── 5. A BOT THAT DIES LETS THE ORDER GO ────────────────────────────────
+-- init.lua's dead-tick block returns before ORD.update runs, so nothing
+-- cleared the slot: a bot killed mid-hold came back with hold still set and
+-- stood parked on its RESPAWN square for the rest of it.
+print("orders.lua -- a death hands the order back, and the park needs the tile")
+
+st, w, inf = ST(), W(), I({ allies = 0 })
+ORD.on_chat(st, w, inf, 0, "!goto 15 15", 100, true, false)
+ORD.update(st, w, inf, 101)
+inf.tankx, inf.tanky = 15 * 256 + 128, 15 * 256 + 128
+ORD.update(st, w, inf, 200)
+check("setup: the order is in its hold", st.orders.held.hold == true, "?")
+local death_oid = st.orders.held.oid
+st.orders.out = {}
+check("on_death lets the order go", ORD.on_death(st, inf) == true, "nothing held")
+check("the slot is empty after a death", st.orders.held == nil and st._order == nil, "held")
+check("and the hard lock went with it", st.command_goal == nil,
+      tostring(st.command_goal and st.command_goal.kind))
+check("a death is a HAND-BACK, so obr goes out",
+      st.orders.out[1] == "/info obr " .. death_oid, tostring(st.orders.out[1]))
+check("a death with no order does nothing", ORD.on_death(ST(), inf) == false, "?")
+
+-- THE PARK.  It used to ask only whether the slot said "holding".
+st, w, inf = ST(), W(), I({ allies = 0 })
+ORD.on_chat(st, w, inf, 0, "!goto 15 15", 100, true, false)
+ORD.update(st, w, inf, 101)
+check("travel: not parked yet", ORD.hold_parked(st, inf) == false, "parked")
+inf.tankx, inf.tanky = 15 * 256 + 128, 15 * 256 + 128
+ORD.update(st, w, inf, 200)
+check("standing on the square: parked", ORD.hold_parked(st, inf) == true, "not parked")
+check("one square off is still parked",
+      ORD.hold_parked(st, I({ tankx = 16 * 256 + 128,
+                              tanky = 14 * 256 + 128 })) == true, "not parked")
+check("respawned across the map: NOT parked",
+      ORD.hold_parked(st, I({ tankx = 90 * 256 + 128,
+                              tanky = 90 * 256 + 128 })) == false, "parked")
+check("no order at all: not parked", ORD.hold_parked(ST(), inf) == false, "parked")
+
+-- ── 7. ATTACK NEVER TAKES AN ALLY ───────────────────────────────────────
+-- "attack socrates" built a real attack_tank order on a team-mate, and the
+-- bot drove at it and idled there for ten seconds.
+print("orders.lua -- attack on an ally is refused")
+
+check("attack <ally bot> is refused",
+      shape(P("attack socrates")) == "reply:Socrates is on our side",
+      shape(P("attack socrates")))
+check("attack <ally human> is refused too",
+      shape(P("attack andrew")) == "reply:Andrew is on our side",
+      shape(P("attack andrew")))
+check("a prefix of an ally name is refused as well",
+      shape(P("attack plat")) == "reply:Plato is on our side",
+      shape(P("attack plat")))
+check("all attack <ally> is refused",
+      shape(P("all attack plato")) == "reply:Plato is on our side",
+      shape(P("all attack plato")))
+check("an ENEMY tank name is still an order",
+      shape(P("attack hannibal")) == "attack who=auto tgt=tank:7",
+      shape(P("attack hannibal")))
+check("cancel <bot> is untouched: it is aimed at an ally on purpose",
+      shape(P("cancel socrates")) == "cancel who=auto tgt=tank:1",
+      shape(P("cancel socrates")))
+-- At runtime the speaking bot says the line and nothing is ordered.
+st, w, inf = ST(), W(), I({ allies = 0x17 })
+ORD.on_chat(st, w, inf, 0, "attack seneca", 100, true, false)
+check("runtime: the bot says so and starts nothing",
+      st.orders.say[1] == "Seneca is on our side"
+      and st.orders.held == nil and next(st.orders.auctions) == nil,
+      tostring(st.orders.say[1]))
+
+-- ── 8. ORDINARY CHAT IS NEVER ANSWERED "didn't understand" ──────────────
+-- The gate matched the first word with the full three-tier matcher, and its
+-- edit-distance tier turned plain talk into an order shape.  With a bot
+-- called Case on the team, "cause we should push" was answered.
+print("orders.lua -- ordinary chat gets no answer")
+
+local CASE_ROSTER = {
+  { pn = 1, name = "Case" },
+  { pn = 2, name = "Socrates" },
+}
+local CASE_ALL = {
+  { pn = 0, name = "Andrew", ally = true },
+  { pn = 1, name = "Case", ally = true },
+  { pn = 2, name = "Socrates", ally = true },
+}
+local function PC(text) return ORD.parse(text, CASE_ROSTER, CASE_ALL) end
+
+check("'cause we should push' is ordinary chat",
+      PC("cause we should push") == nil, shape(PC("cause we should push")))
+check("'we should take the middle' is ordinary chat",
+      PC("we should take the middle") == nil, shape(PC("we should take the middle")))
+check("'nice shot' is ordinary chat", PC("nice shot") == nil, shape(PC("nice shot")))
+check("'cant believe that' is ordinary chat",
+      PC("cant believe that") == nil, shape(PC("cant believe that")))
+-- VERBS ARE EXACT.  A typo in the verb is not an order at all, so it is not
+-- answered either -- this is the rule commands.txt now states.
+check("a typo'd VERB is ordinary chat", PC("attak pill 5") == nil,
+      shape(PC("attak pill 5")))
+check("'sweeping the floor' is ordinary chat",
+      PC("sweeping the floor") == nil, shape(PC("sweeping the floor")))
+-- And everything that DOES address the bots still lands.
+check("the exact name still selects", shape(PC("case")) == "select:1", shape(PC("case")))
+check("a prefix of the name still selects", shape(PC("soc")) == "select:2", shape(PC("soc")))
+check("the exact name with a verb is still an order",
+      shape(PC("case attack 5")) == "attack who=names(1) tgt=pill:5",
+      shape(PC("case attack 5")))
+-- A TYPO'D NAME is still forgiven, but only inside a line that is already an
+-- order: there has to be a verb, and every word in front of it has to be a
+-- name or a who-word.
+check("a typo'd name in front of a verb is still an order",
+      shape(P("socrtes attack 5")) == "attack who=names(1) tgt=pill:5",
+      shape(P("socrtes attack 5")))
+check("a typo'd name with no verb behind it says nothing",
+      P("socrtes") == nil, shape(P("socrtes")))
+check("a typo'd name and a verb, with junk between, says nothing",
+      PC("cause we should attack it") == nil, shape(PC("cause we should attack it")))
+-- The "!" still forces a line through the gate, as it always did.
+check("!wibble is still answered", shape(PC("!wibble")) == "reply:didn't understand",
+      shape(PC("!wibble")))
+check("a bot's own ack is still ignored",
+      PC("Got it! attack_pill #5") == nil, shape(PC("Got it! attack_pill #5")))
+-- At runtime: no reply queued at all.
+st, w, inf = ST(), W(), I({ allies = 0x17 })
+check("runtime: ordinary chat is not even taken",
+      ORD.on_chat(st, w, inf, 0, "cause we should push", 100, true, false) == false,
+      "took it")
+check("runtime: and nothing is said", st.orders == nil, "?")
 
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

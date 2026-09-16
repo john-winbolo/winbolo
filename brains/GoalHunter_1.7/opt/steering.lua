@@ -27,6 +27,15 @@ local function attack_mod()
   if not _attack then _attack = require("attack") end
   return _attack
 end
+-- orders.lua owns the "is this tank standing on the square it was sent to"
+-- rule (ORD.hold_parked), so the park below and the order slot cannot drift
+-- apart. Required lazily for the same reason attack.lua is: a new top-level
+-- require changes the order modules are first loaded in.
+local _orders
+local function orders_mod()
+  if not _orders then _orders = require("orders") end
+  return _orders
+end
 
 local M = {}
 
@@ -342,16 +351,22 @@ local _at_stationary = { engage=true, close=true, disengage=true }
 -- that as deliberate or it escalates and throws the order away.  The park
 -- kinds only (C.ORDER_HOLD_PARK_KINDS): a survival goal that works by moving
 -- still drives, and still counts as stuck if it cannot.
-local function order_hold_parked(state, goal)
+--
+-- THE PARK NEEDS THE TANK TO BE ON THE SQUARE.  It used to ask only whether
+-- the slot said "holding", with no distance test at all, so a bot that died
+-- mid-hold and respawned across the map went on having its throttle taken
+-- away -- parked on a square nobody pointed at, for the rest of the hold
+-- (Andrew's peer review, Sep 16).  ORD.hold_parked adds the one-square test,
+-- the same radius that starts the hold.
+local function order_hold_parked(state, goal, info)
   if not (C.BOT_COMMANDS_ENABLED and state and goal) then return false end
-  local ord = state._order
-  return (ord and ord.hold and ord.kind == "goto_tile"
-          and (C.ORDER_HOLD_PARK_KINDS or {})[goal.kind]) and true or false
+  if not (C.ORDER_HOLD_PARK_KINDS or {})[goal.kind] then return false end
+  return orders_mod().hold_parked(state, info) and true or false
 end
 M.order_hold_parked = order_hold_parked
 
 local function intentionally_stationary(goal, info, state)
-  if order_hold_parked(state, goal) then return true end
+  if order_hold_parked(state, goal, info) then return true end
   local s = goal.substate or ""
   if goal.kind == "attack_pill" and _ap_stationary[s] then return true end
   if goal.kind == "pill_place"  and _pp_stationary[s] then return true end
@@ -5409,7 +5424,7 @@ function M.steer(state, world, info, goal)
   -- through untouched, which is the whole point -- it aims and fires from the
   -- spot.  Only the park kinds are held this way, so a critical-armour flee
   -- or an escape from water still drives.
-  if order_hold_parked(state, goal) and keys then
+  if order_hold_parked(state, goal, info) and keys then
     local before = keys
     keys = bit.band(keys, bit.bnot(KEY_FASTER))
     if (info.speed or 0) > 0 then keys = bit.bor(keys, KEY_SLOWER) end

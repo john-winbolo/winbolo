@@ -60,7 +60,8 @@ WHO WORDS
   a bot name  that bot, directly. Several names work: socrates plato attack 5.
 
 VERBS
-  attack      a live enemy pillbox, or a tank by name.
+  attack      a live enemy pillbox, or an ENEMY tank by name. A team mate's
+              name is turned down: "Socrates is on our side".
   capture     a dead pillbox, or an enemy or neutral base.
   sweep       the same as capture.
   defend      one of YOUR pillboxes. It takes a PILL NUMBER only.
@@ -76,6 +77,8 @@ TARGETS
   A tank is named, not numbered: "attack bruce".
 
 CANCEL
+  A cancelled order is OVER. No other bot picks it up, and neither does the
+  one you cancelled: say it again if you want it done.
   cancel            release the last order you gave.
   cancel all        clear every live order on the team.
   cancel <bot>      release that bot, as in "cancel socrates".
@@ -92,9 +95,15 @@ SELECT BY NAME
 
 NAME MATCHING
   Names are not case sensitive. A shortening works if it is not shared: "soc"
-  finds Socrates. A typo within two letters works: "sokrates". Any word of a
-  two-word name works: "bruce" finds Bruce Lee. If two bots both fit, the bot
-  asks "Socrates or Seneca?" and does nothing. It never guesses.
+  finds Socrates. Any word of a two-word name works: "bruce" finds Bruce Lee.
+  If two bots both fit, the bot asks "Socrates or Seneca?" and does nothing.
+  It never guesses.
+  A TYPO within two letters works too -- "sokrates attack 5" -- but only in a
+  line that is already an order: there has to be a verb in it, and every word
+  in front of that verb has to be a name or a who word. A typo'd name on its
+  own is ordinary talk and gets no answer, because otherwise a sentence like
+  "cause we should push" reads as an order to the bot called Case.
+  VERBS are matched exactly, never by typo. "attak pill 5" is ordinary talk.
 
 TEAM SETTINGS
   focus bases    every PILLBOX goal costs the team more, so bases win.
@@ -261,16 +270,20 @@ WHAT THE BOTS SAY
   Released                      the order was cancelled.
   Refuelling, coming back       a pause in the order, not the end of it.
   Socrates or Seneca?           two bots fit the name you typed.
+  X is on our side              you aimed attack at a team mate.
   didn't understand             the line looked like an order but was not one.
 
-Only lines that start with a verb, a who word or a bot name are read. Anything
-else is ordinary talk and gets no answer.
+Only lines that start with a verb, a who word, a setting word or a bot name
+spelled right are read. Anything else is ordinary talk and gets no answer.
 
 
 OLD OPERATOR COMMANDS
 
 These are the older debug commands. Every one of them now needs a leading "!",
-from players and bots alike, so an ordinary chat word can never freeze a team.
+from players and bots alike, so an ordinary chat word can never freeze a team,
+and only a team mate may give one: a line from the other side is ignored.
+They are read before any of the orders above, so "!attack:5" is this list's
+attack and "!attack 5" -- with a space -- is the order.
 
   !stop        pause the bots.
   !start       let them run again.

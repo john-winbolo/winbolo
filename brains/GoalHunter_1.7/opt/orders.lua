@@ -146,10 +146,16 @@ local function name_words(n)
 end
 
 -- roster: array of { pn = <player number>, name = <display name> }.
+-- no_fuzzy = true drops tier 3 (the edit-distance tier) and matches only an
+-- exact name, a word of one, or a prefix.  THE START OF A LINE IS MATCHED
+-- THAT WAY: a typo is a fine thing to forgive once a line is already an
+-- order, but "cause we should push" must not become "Case, ...?" and get
+-- answered "didn't understand" (Andrew's peer review, Sep 16).  See the gate
+-- in M.parse.
 -- Returns pn                       on a unique match
 --         nil, "unknown"           on no match
 --         nil, "ambiguous", {a, b} on two or more in the same tier
-function M.match_name(word, roster)
+function M.match_name(word, roster, no_fuzzy)
   if type(word) ~= "string" or word == "" or type(roster) ~= "table" then
     return nil, "unknown"
   end
@@ -171,7 +177,7 @@ function M.match_name(word, roster)
             if #w > 0 and ws[k]:sub(1, #w) == w then hit = 2 break end
           end
         end
-        if not hit and #w >= 3 then
+        if not hit and not no_fuzzy and #w >= 3 then
           if edist(w, nm, 2) <= 2 then
             hit = 3
           else
@@ -244,6 +250,20 @@ function M.parse(text, roster, all_roster)
     forced = true
     s = s:sub(2):match("^%s*(.-)%s*$")
   end
+
+  -- ── THE OLD OPERATOR COMMANDS COME FIRST ──────────────────────────────
+  -- "!stop", "!start", "!status", "!attack:5", "!cp:5", "!cb:all", "!goto"
+  -- is NOT one of them.  They belong to commands.lua and they are older than
+  -- every verb in this file, so a line that parser accepts is handed on
+  -- BEFORE any order parsing runs.  This test used to sit at the bottom of
+  -- the no-verb branch, which two shapes never reached: "!attack:5" splits
+  -- into the tokens "attack" and "5" and was read as a soft order on pill 5,
+  -- and "!start" was read as a bare-name SELECT of a bot called TARS (edit
+  -- distance 2).  Both were swallowed and commands.lua never saw them
+  -- (Andrew's peer review, Sep 16).  Precedence lives here, in one place, so
+  -- on_chat and every test see the same answer.
+  if forced and CMDS.parse(text) then return nil end
+
   s = s:lower()
   local toks = {}
   for w in s:gmatch("[%w%-']+") do toks[#toks + 1] = w end
@@ -299,17 +319,45 @@ function M.parse(text, roster, all_roster)
              forced = true }
   end
 
-  -- Only lines that START with a verb, a who-word, `!` or a bot name are
-  -- read; everything else is ordinary chat and is ignored in silence. Without
-  -- this a bot's own ack ("Got it! attack_pill #5") would be answered with
-  -- "didn't understand", because it happens to contain a verb word.
+  -- Only lines that START with a verb, a who-word, a setting word, `!` or a
+  -- bot NAME are read; everything else is ordinary chat and is ignored in
+  -- silence.  Without this a bot's own ack ("Got it! attack_pill #5") would
+  -- be answered with "didn't understand", because it happens to contain a
+  -- verb word.
+  --
+  -- A NAME AT THE START IS MATCHED EXACTLY, NOT FUZZILY.  The gate used to
+  -- take the full three-tier matcher, and its edit-distance tier turned plain
+  -- talk into an order shape: with a bot called Case on the team, "cause we
+  -- should push" started with a name, found no verb, and came back "didn't
+  -- understand" (reproduced, Andrew's peer review Sep 16).  So:
+  --   * VERBS are always EXACT -- "attak pill 5" is ordinary chat.
+  --   * a NAME at the start must be exact, a word of a name, or a prefix.
+  --   * a TYPO'd name is still read, but only inside a line that is already
+  --     an order: there has to be a verb in it, and every word in front of
+  --     that verb has to be a name or a who-word ("socrtes attack 5").
+  --   * a forced "!" line skips the gate entirely, as it always did.
   if not forced then
-    local p1, e1 = M.match_name(toks[1], roster)
-    if not VERBS[toks[1]] and not WHOWORDS[toks[1]] and not SETTINGWORDS[toks[1]]
-       and toks[1] ~= "nevermind" and toks[1] ~= "never"
-       and p1 == nil and e1 ~= "ambiguous" then
-      return nil
+    local ok1 = VERBS[toks[1]] or WHOWORDS[toks[1]] or SETTINGWORDS[toks[1]]
+                or toks[1] == "nevermind" or toks[1] == "never"
+    if not ok1 then
+      local p1, e1 = M.match_name(toks[1], roster, true)   -- no fuzzy tier
+      ok1 = (p1 ~= nil) or (e1 == "ambiguous")
     end
+    if not ok1 then
+      local vfz
+      for i = 1, #toks do if VERBS[toks[i]] then vfz = i break end end
+      if vfz and vfz > 1 then
+        ok1 = true
+        for i = 1, vfz - 1 do
+          local pn, err = M.match_name(toks[i], roster)
+          if pn == nil and err ~= "ambiguous" and not WHOWORDS[toks[i]] then
+            ok1 = false
+            break
+          end
+        end
+      end
+    end
+    if not ok1 then return nil end
   end
 
   -- ── Team-wide settings and help ───────────────────────────────────────
@@ -393,13 +441,12 @@ function M.parse(text, roster, all_roster)
       end
     end
     if ok and #pns > 0 then return { select = pns } end
-    -- The OLD operator commands ("!stop", "!status", "!cp:5", "!cb:all") now
-    -- carry the same "!" an order does, and they have no verb of ours. They
-    -- belong to commands.lua, so hand the line on in silence rather than
-    -- answering "didn't understand" and swallowing it.
-    if forced and CMDS.parse(text) then return nil end
-    -- A known shape with an unknown verb still deserves an answer.
-    local p1 = M.match_name(toks[1], roster)
+    -- A known shape with an unknown verb still deserves an answer.  The name
+    -- test is the STRICT one for the same reason the gate above is: a typo'd
+    -- name with no verb behind it is ordinary chat, not a broken order.
+    -- (The old operator commands were handed to commands.lua at the top of
+    -- this function, before any order parsing.)
+    local p1 = M.match_name(toks[1], roster, true)
     if forced or WHOWORDS[toks[1]] or p1 ~= nil then
       return { reply = "didn't understand" }
     end
@@ -459,6 +506,31 @@ function M.parse(text, roster, all_roster)
         pn, err, cands = M.match_name(tt[1], (verb == "cancel") and roster or all_roster)
       end
       if pn then
+        -- ATTACK NEVER TAKES AN ALLY.  "attack socrates" used to build a real
+        -- attack_tank order on a team-mate: the bot took it, drove at its own
+        -- ally and idled there for the ten seconds the goal needed to give up
+        -- (Andrew's peer review, Sep 16).  There is no order to build, so the
+        -- line is turned down with the name in it and nothing is started.
+        -- An ally is either a bot on our own roster or a player all_roster
+        -- flagged (M.all_roster reads info.allies); `cancel` is aimed at
+        -- allies on purpose and is not touched.
+        if verb == "attack" then
+          local ally_name = nil
+          for i = 1, #roster do
+            if roster[i].pn == pn then ally_name = roster[i].name break end
+          end
+          if not ally_name then
+            for i = 1, #all_roster do
+              if all_roster[i].pn == pn and all_roster[i].ally then
+                ally_name = all_roster[i].name
+                break
+              end
+            end
+          end
+          if ally_name then
+            return { reply = ally_name .. " is on our side" }
+          end
+        end
         tgt = { kind = "tank", pn = pn }
       elseif err == "ambiguous" then
         return { reply = cands[1] .. " or " .. cands[2] .. "?" }
@@ -645,6 +717,22 @@ local function S(state)
   return o
 end
 
+-- EVERY LOOP THAT ACTS ON AN ORDER TABLE WALKS IT IN oid ORDER.
+-- o.auctions, o.claims, o.known, o.announce and o.gclaims are hashes keyed by
+-- order id, and pairs() over a hash is process-seeded: two orders settling on
+-- one tick settled in a different order in two runs of the same recorded
+-- game, which is exactly what this file's own determinism note forbids
+-- (Andrew's peer review, Sep 16).  Take the keys, sort them, walk the array.
+-- The snapshot also makes it safe to clear entries inside the loop.
+local function sorted_keys(t)
+  local out = {}
+  if not t then return out end
+  for k in pairs(t) do out[#out + 1] = k end
+  table.sort(out)
+  return out
+end
+M.sorted_keys = sorted_keys
+
 local function tx(state, msg)
   local o = S(state)
   o.out[#o.out + 1] = msg
@@ -723,12 +811,21 @@ function M.bot_roster(state, info)
   return out
 end
 
+-- Every named player, with an `ally` flag on the ones on our own side (self
+-- included).  The flag is what lets the parser turn "attack <team mate>"
+-- down for a HUMAN ally too: M.bot_roster only holds allied BOTS.
 function M.all_roster(info)
   local out = {}
-  local names = info.player_names or {}
+  local names  = info.player_names or {}
+  local allies = info.allies or 0
+  local me     = info.player_number
   for pn = 0, 15 do
     local nm = names[pn + 1]
-    if nm and nm ~= "" then out[#out + 1] = { pn = pn, name = nm } end
+    if nm and nm ~= "" then
+      out[#out + 1] = { pn = pn, name = nm,
+                        ally = (pn == me)
+                               or bit.band(allies, bit.lshift(1, pn)) ~= 0 }
+    end
   end
   return out
 end
@@ -860,6 +957,16 @@ function M.rx(sender, text, tick, state)
     o.rx[#o.rx + 1] = { kind = "release", oid = tonumber(oid), from = sender, tick = tick }
     return true
   end
+  -- CANCEL, the other half of obr: this order is OVER and nobody may take it
+  -- up.  obr means "I am handing it back, somebody go"; obx means "forget it".
+  -- Without the two verbs every cancel came back one think later, because the
+  -- obr a cancel broadcast re-opened the auction on every other bot.
+  oid = text:match("^/info obx (%d+)$")
+  if oid then
+    local o = S(state)
+    o.rx[#o.rx + 1] = { kind = "cancel", oid = tonumber(oid), from = sender, tick = tick }
+    return true
+  end
   return false
 end
 
@@ -922,19 +1029,98 @@ local function goto_lock(state)
 end
 M.goto_lock = goto_lock
 
-local function release_held(state, info, why, quiet)
+-- FORGET AN ORDER ALTOGETHER.  Everything this bot remembers about one id
+-- goes: the job is over and nothing may start it again.  The wire twin is
+-- the obx verb below, which makes every other bot run this same function.
+local function forget_order(o, oid)
+  o.known[oid]    = nil
+  o.claims[oid]   = nil
+  o.auctions[oid] = nil
+  o.gclaims[oid]  = nil
+  o.announce[oid] = nil
+  o.anchors[oid]  = nil
+end
+M.forget_order = forget_order
+
+-- LETTING AN ORDER GO IS TWO DIFFERENT THINGS, and it used to be one.
+--
+--   RELEASED  (cancelled = false)  the job still stands, this bot cannot do
+--             it: it died, it got stuck, a newer order took its place.  It
+--             broadcasts obr, and the bot with the next cheapest route picks
+--             the job up.  That is the design.
+--
+--   CANCELLED (cancelled = true)   the job is OVER: a person cancelled it, a
+--             caution ping called it off, a retreat replaced it, or it is
+--             finished.  Nobody may pick it up.
+--
+-- release_held always broadcast obr, so every cancel was undone one think
+-- later: the order was still in every other bot's o.known, the obr re-opened
+-- the auction there, and the next bot went and did the job a person had just
+-- called off -- including driving a second bot to a go-there square after the
+-- first had finished holding it (Andrew's peer review, Sep 16).  A cancel now
+-- broadcasts obx instead, and obx makes every bot forget the id.
+--
+-- gclaims IS CLEARED EITHER WAY.  It is the "who already holds this" set the
+-- auction settle excludes, and nothing ever took a bot out of it, so a bot
+-- that let an order go could never win it back and "ping again to add a bot"
+-- stopped adding (the same review, item 6).
+local function release_held(state, info, why, quiet, cancelled)
   local o = S(state)
   local h = o.held
   if not h then return end
   o.held = nil
   state._order = nil
   goto_lock(state)                      -- the hard lock goes with the order
-  tx(state, string.format("/info obr %d", h.oid))
+  if o.gclaims[h.oid] then o.gclaims[h.oid][state.player_number] = nil end
+  if cancelled then
+    tx(state, string.format("/info obx %d", h.oid))
+    forget_order(o, h.oid)
+  else
+    tx(state, string.format("/info obr %d", h.oid))
+  end
   if not quiet then
     say(state, why or "Released")
   end
 end
 M.release_held = release_held
+
+-- A DEAD BOT HANDS ITS ORDER BACK.  init.lua's dead-tick block returns before
+-- ORD.update ever runs, so nothing cleared the slot: a bot killed while
+-- holding a go-there order came back with h.hold still set, parked on its
+-- respawn square, and stood there for the rest of the hold doing nothing
+-- (Andrew's peer review, Sep 16).  The job still stands -- somebody else
+-- should do it -- so this is a RELEASE, not a cancel: the obr goes out and
+-- the next cheapest bot takes it.  Quiet: a death is not a line the team
+-- needs.  Safe to call on every dead tick; it does nothing without a slot.
+function M.on_death(state, info)
+  local o = state and state.orders
+  if not (o and o.held) then
+    if state then state._order = nil end
+    return false
+  end
+  release_held(state, info, nil, true)
+  o.sel = nil
+  return true
+end
+
+-- THE HOLD PARK, with the distance test it never had.  steering.lua takes the
+-- throttle away while a go-there order is in its hold phase; the only tests
+-- were "the slot says hold" and "the goal is a park kind", so a bot that died
+-- and respawned across the map went on parking -- nowhere near the square a
+-- person pointed at.  The park is about STANDING ON THE TILE, so the tank has
+-- to be on it (the same one-square radius that starts the hold).
+function M.hold_parked(state, info)
+  local h = state and state._order
+  if not (h and h.hold and h.kind == "goto_tile" and h.mx and h.my) then
+    return false
+  end
+  if not (info and info.tankx and info.tanky) then return false end
+  local dx = bit.rshift(info.tankx, 8) - h.mx
+  local dy = bit.rshift(info.tanky, 8) - h.my
+  if dx < 0 then dx = -dx end
+  if dy < 0 then dy = -dy end
+  return dx <= 1 and dy <= 1
+end
 
 -- group = true when several bots take the SAME order (all / nearby / a
 -- selection).  Then nobody acks straight away: each taker broadcasts its obc
@@ -1469,34 +1655,45 @@ function M.on_chat(state, world, info, sender, text, now, from_ally, sender_is_b
   end
 
   -- ── cancel ────────────────────────────────────────────────────────────
+  -- EVERY CANCEL IS A CANCEL, not a hand-back (the `cancelled` argument).
+  -- `cancel all` was the only one that cleared o.known first, so it was the
+  -- only one that stuck: plain `cancel`, `cancel <bot>` and `last cancel` all
+  -- left the order in every bot's known table, and the obr release_held
+  -- broadcast re-opened the auction there one think later -- another bot went
+  -- and did the job a person had just called off.
   if cmd.verb == "cancel" then
     local t = cmd.target
     if t and t.kind == "all" then
-      if o.held then release_held(state, info, "released") end
+      if o.held then release_held(state, info, "released", false, true) end
       o.known = {}
       o.auctions = {}
       o.claims = {}
       o.gclaims = {}
       o.announce = {}
+      o.anchors = {}
       o.last_by = {}
     elseif t and t.kind == "tank" then
-      if o.held and t.pn == me then release_held(state, info, "released") end
+      if o.held and t.pn == me then release_held(state, info, "released", false, true) end
     elseif last_pns then
       -- "last cancel" releases exactly the bots that took the last order,
       -- and nobody else: a bot holding a DIFFERENT order keeps it.
       local mine = false
       for _, pn in ipairs(last_pns) do if pn == me then mine = true end end
-      if o.held and mine then release_held(state, info, "Released") end
+      if o.held and mine then release_held(state, info, "Released", false, true) end
     else
-      if o.held and o.held.sender == sender then release_held(state, info, "released") end
+      if o.held and o.held.sender == sender then
+        release_held(state, info, "released", false, true)
+      end
     end
     o.sel = nil
     return true
   end
 
   -- ── retreat with no target = cancel AND retreat at once ───────────────
+  -- The order it drops is CANCELLED: "come back" is not "somebody else go
+  -- and do it", and the obr made exactly that happen.
   if cmd.verb == "retreat" and o.held then
-    release_held(state, info, nil, true)
+    release_held(state, info, nil, true, true)
   end
 
   -- ── build the order spec ──────────────────────────────────────────────
@@ -1682,7 +1879,10 @@ local function ping_caution(state, world, info, sender, mx, my, now)
   if hit and hit.class == "allybot" then
     if hit.pn ~= me then return end
     if o.held then
-      release_held(state, info, "Released")
+      -- A caution on a bot is a CANCEL of what it holds, not a hand-back:
+      -- sending the next cheapest bot to finish the job a person just called
+      -- off is the opposite of what the gesture means.
+      release_held(state, info, "Released", false, true)
       return
     end
     local cmd  = { verb = "retreat", who = { mode = "names", pns = { me } } }
@@ -1709,16 +1909,20 @@ local function ping_caution(state, world, info, sender, mx, my, now)
   local ring = C.ORDER_PING_RING or 1
   local tmx  = (hit and hit.mx) or mx
   local tmy  = (hit and hit.my) or my
-  for oid, k in pairs(o.known) do
-    local ox, oy = M.target_tile(world, state, k.spec)
-    if ox and math.abs(ox - tmx) <= ring and math.abs(oy - tmy) <= ring then
-      if o.held and o.held.oid == oid then release_held(state, info, "Released") end
-      o.known[oid]    = nil
-      o.claims[oid]   = nil
-      o.auctions[oid] = nil
-      o.gclaims[oid]  = nil
-      o.announce[oid] = nil
-      o.anchors[oid]  = nil
+  for _, oid in ipairs(sorted_keys(o.known)) do
+    local k = o.known[oid]
+    local ox, oy
+    if k then ox, oy = M.target_tile(world, state, k.spec) end
+    if ox and oy and math.abs(ox - tmx) <= ring and math.abs(oy - tmy) <= ring then
+      -- A CAUTION IS A CANCEL, so it goes out as obx: the bots that are not
+      -- standing here (they never saw this ping's 3x3 the same way, and one
+      -- of them may be holding the order) must forget it too, and the old obr
+      -- would have sent the next cheapest one to do the very job a person
+      -- just called off.
+      if o.held and o.held.oid == oid then
+        release_held(state, info, "Released", false, true)
+      end
+      forget_order(o, oid)
     end
   end
 end
@@ -1805,8 +2009,22 @@ function M.update(state, world, info, now)
       set_repo(state, r.value == 1)
     elseif r.kind == "bpings" then
       set_bot_pings(state, r.value == 1)
+    elseif r.kind == "cancel" then
+      -- THE ORDER IS OVER.  Drop our own hold on it as well: the human who
+      -- cancelled it named one bot, and on a group order the rest have to let
+      -- go too.  Quiet and with no obx of our own -- the cancel is already on
+      -- the wire and a second one would bounce around the team.
+      if o.held and o.held.oid == r.oid then
+        o.held = nil
+        state._order = nil
+        goto_lock(state)
+      end
+      forget_order(o, r.oid)
     elseif r.kind == "release" then
       if o.claims[r.oid] and o.claims[r.oid].pn == r.from then o.claims[r.oid] = nil end
+      -- The releaser is not a holder any more, so the settle below must stop
+      -- counting it as one -- otherwise it can never win its own order back.
+      if o.gclaims[r.oid] then o.gclaims[r.oid][r.from] = nil end
       -- Re-bid it: the holder dropped it and the job is still standing.
       local k = o.known[r.oid]
       if k and not o.held and not o.auctions[r.oid]
@@ -1825,7 +2043,8 @@ function M.update(state, world, info, now)
 
   -- 2. Settle auctions.  Closed once every active ally has answered, or
   --    after ORDER_AUCTION_TICKS — whichever comes first.
-  for oid, a in pairs(o.auctions) do
+  for _, oid in ipairs(sorted_keys(o.auctions)) do
+    local a = o.auctions[oid]
     local n_allies, n_ans = 0, 0
     for apn in ally_state.iter_active(now, 1750) do
       if apn ~= me then
@@ -1871,8 +2090,9 @@ function M.update(state, world, info, now)
 
   -- 2b. Group order: ONE line, from the lowest player number that actually
   --     took it, once the claims have had a window to arrive.
-  for oid, an in pairs(o.announce) do
-    if now >= an.due then
+  for _, oid in ipairs(sorted_keys(o.announce)) do
+    local an = o.announce[oid]
+    if an and now >= an.due then
       local low, n = nil, 0
       for pn in pairs(o.gclaims[oid] or {}) do
         n = n + 1
@@ -1897,9 +2117,10 @@ function M.update(state, world, info, now)
   if not o.held then
     local busy = M.busy(state, info)
     if not busy then
-      for oid, cl in pairs(o.claims) do
-        local k = o.known[oid]
-        if k and cl.pn ~= me and (now - cl.tick) >= (C.ORDER_STEAL_HOLD_TICKS or 100)
+      for _, oid in ipairs(sorted_keys(o.claims)) do
+        local cl = o.claims[oid]
+        local k  = o.known[oid]
+        if cl and k and cl.pn ~= me and (now - cl.tick) >= (C.ORDER_STEAL_HOLD_TICKS or 100)
            and (now - k.tick) < (C.ORDER_FOCUS_TICKS or 3000) then
           local mine = M.travel_cost(state, world, info, k.spec)
           local margin = (C.ORDER_STEAL_MIN_TILES or 2) * (C.ORDER_TILE_COST or 4)
@@ -2036,7 +2257,13 @@ function M.update(state, world, info, now)
     -- not the end of the order.
     if done then
       if why then say(state, why) end
-      release_held(state, info, nil, true)
+      -- A FINISHED ORDER IS CANCELLED, NOT HANDED BACK.  Every reason above
+      -- is "there is nothing left to go and do": the pill is ours, the base
+      -- is ours, the tank is gone, the clock ran out, the hold is served.  An
+      -- obr here re-opened the auction on every other bot, and a second bot
+      -- was sent to a go-there square the first had already finished holding
+      -- (Andrew's peer review, Sep 16).
+      release_held(state, info, nil, true, true)
       h = nil
     end
   end
@@ -2053,14 +2280,10 @@ function M.update(state, world, info, now)
   end
 
   -- 5. Prune.
-  for oid, k in pairs(o.known) do
-    if (now - k.tick) > (C.ORDER_FOCUS_TICKS or 3000) then
-      o.known[oid] = nil
-      o.claims[oid] = nil
-      o.auctions[oid] = nil
-      o.gclaims[oid] = nil
-      o.announce[oid] = nil
-      o.anchors[oid] = nil
+  for _, oid in ipairs(sorted_keys(o.known)) do
+    local k = o.known[oid]
+    if k and (now - k.tick) > (C.ORDER_FOCUS_TICKS or 3000) then
+      forget_order(o, oid)
     end
   end
   if o.sel and now >= (o.sel.until_tick or 0) then

@@ -16,7 +16,20 @@ local M = {}
 -- there is no flee, no refuel and no survival exception behind them. A chat
 -- word like "stop" said in passing must not freeze a whole team of bots, so
 -- the "!" is what separates an order from ordinary talk.
-function M.parse(text)
+--
+-- AND ONLY AN ALLY MAY SAY ONE.  `from_ally` is the sender's team as the
+-- caller worked it out: false refuses the line outright.  init.lua used to
+-- call this from OUTSIDE the ally test that guards every other reader on that
+-- path -- orders.lua, comms.lua and the state slate all check it -- which
+-- left the hardest thing anybody can say to a bot as the one line the other
+-- team could say too (Andrew's peer review, Sep 16).  The check lives here,
+-- beside the parse, so there is one place to read it and one to test it.
+--
+-- nil means the caller has already checked (orders.lua asks this parser
+-- whether a line is a command at all, and it is only ever reached from
+-- on_chat, which turned every non-ally away before it).
+function M.parse(text, from_ally)
+  if from_ally == false then return nil end
   if not text then return nil end
   local lower = text:lower():match("^%s*(.-)%s*$")  -- trim + lowercase
   if lower:sub(1, 1) ~= "!" then return nil end

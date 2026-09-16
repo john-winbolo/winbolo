@@ -1912,6 +1912,16 @@ function Brain.think(info)
     -- block on purpose: the resets below wipe state.goal, and the whole point
     -- of the line is to name the goal we died pursuing.
     state.goal = { kind = "none", mx = 0, my = 0, wx = 0, wy = 0 }
+    -- HAND THE CHAT ORDER BACK.  This block returns before ORD.update is ever
+    -- reached, so nothing cleared the order slot on a death: a bot killed
+    -- while holding a "go there and hold" came back with the hold flag still
+    -- set and stood parked on its RESPAWN square for the rest of the hold,
+    -- doing nothing at all (Andrew's peer review, Sep 16). The job itself
+    -- still stands, so this is a release and not a cancel -- the obr goes out
+    -- with the first message slot after we respawn and the next cheapest bot
+    -- takes it. It also drops the goto lock, so the command goal cannot
+    -- survive the death either.
+    if C.BOT_COMMANDS_ENABLED then ORD.on_death(state, info) end
     -- Wipe EVERY blitz/squad coordination field (negotiation, offers, rejects,
     -- roster, watchdog, broadcast latches, and the call registry) so we respawn
     -- with a clean slate instead of resuming a dead life's blitz. The registry
@@ -3319,7 +3329,14 @@ function Brain.think(info)
                                            bit.lshift(1, (m.sender or 0))) ~= 0)
         end
 
-        local cmd = (not _ord_took) and cmds.parse(m.text) or nil
+        -- THE OLD OPERATOR COMMANDS ARE ALLY-ONLY TOO.  This call sat outside
+        -- the _from_ally test that guards everything else on this path, so an
+        -- ENEMY typing "!stop" in all chat would have frozen the whole team --
+        -- the one hard lock in the brain, handed to the other side (Andrew's
+        -- peer review, Sep 16).  An operator command is a harder order than a
+        -- chat order, so it gets the same team check, and the check itself
+        -- lives in cmds.parse beside the parse it guards.
+        local cmd = (not _ord_took) and cmds.parse(m.text, _from_ally) or nil
         if cmd then
           log.event("cmd_recv", m.text)
           local reply = cmds.execute(cmd, state, world)
@@ -3442,6 +3459,11 @@ function Brain.think(info)
     state.stuck_for = 0
     state._kw_send_query = true   -- re-acquire team's known world after respawn
     state._tank_track = nil   -- drop pre-death ghosts (fallback if info.dead was missed)
+    -- The order slot, for the same reason and as the same fallback: a death
+    -- whose info.dead tick we never ran (GC pause, a long think, a Lua error)
+    -- would otherwise leave a held order -- and a held "go there and hold" in
+    -- its hold phase -- pointing at a life that is over.
+    if C.BOT_COMMANDS_ENABLED then ORD.on_death(state, info) end
     -- Full blitz/squad wipe + registry re-discover. Fallback for when the
     -- info.dead death-tick reset was missed (GC pause / long think / Lua error):
     -- its distances are off the pre-death-rooted slate, so far calls look cheap
