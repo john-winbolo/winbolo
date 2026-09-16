@@ -31,6 +31,9 @@
 #include "client_sim.h"
 #include "client_command.h"   /* ViewStateKind — the viewport's view kinds */
 #include "client_sim_internal.h"
+#include "server_sim.h"        /* serverSimGetGameSim — the bound server's own
+                                * alliance matrix, which a hosted bot's inbox
+                                * filter reads instead of its local copy */
 #include "spectator_drain.h"   /* dep-free seam: logviewer host drains capture */
 #include "spectator_replay.h"          /* extract a seed's control-snapshot slice */
 #include "transport_control_codec.h"   /* decode the snapshot's lobby-settings event */
@@ -202,6 +205,9 @@ bool clientSimCreate(ClientSim *cs) {
   struct ServerSim *savedBoundServerSim = cs->boundServerSim;
   SubscriberHandle savedAutoSubHandle = cs->autoSubHandle;
   BrainList savedBrainList = cs->lobbyBrainList;
+  /* The per-brain lobby texts arrive with that list and are never resent,
+   * so they have to survive the memset for the same reason it does. */
+  struct ClientBrainTexts *savedBrainTexts = cs->lobbyBrainTexts;
   ControlObserverCb savedObserverCb  = cs->controlObserverCb;
   void             *savedObserverCtx = cs->controlObserverCtx;
   ControlObserverCb savedTransportObserverCb  = cs->transportObserverCb;
@@ -217,6 +223,7 @@ bool clientSimCreate(ClientSim *cs) {
   cs->boundServerSim     = savedBoundServerSim;
   cs->autoSubHandle      = savedAutoSubHandle;
   cs->lobbyBrainList     = savedBrainList;
+  cs->lobbyBrainTexts    = savedBrainTexts;
   cs->controlObserverCb  = savedObserverCb;
   cs->controlObserverCtx = savedObserverCtx;
   cs->transportObserverCb  = savedTransportObserverCb;
@@ -515,6 +522,11 @@ static void clientSimDestroyContents(ClientSim *cs) {
     cs->brainBuildInfo = NULL;
   }
 
+  if (cs->lobbyBrainTexts != NULL) {
+    free(cs->lobbyBrainTexts);
+    cs->lobbyBrainTexts = NULL;
+  }
+
   /* Free any captured-but-undrained spectator seed/records. */
   clientSimSpectatorFeedClear(cs);
 
@@ -688,7 +700,62 @@ void clientSimSyncFromSnapshot(ClientSim *cs, const SnapshotHeader *hdr,
                       pillSnaps, pillCount, events, eventCount, playerNum);
 }
 
-void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, char *messageStr) {
+/* May a line from `fromPlayer`, addressed to `destPlayer`, reach THIS
+ * ClientSim's brain inbox?
+ *
+ * Only a hosted bot is asked. A human's ClientSim keeps every line it is
+ * shown, because the inbox is also the "there is a new message" flag its HUD
+ * reads, and a human is entitled to read the room.
+ *
+ * A bot's inbox is not a HUD, it is the bot's orders. The wire already
+ * decided what this seat may SEE (the CTRL_CHAT arm's for_me test: a
+ * broadcast, a line to my slot, or a line to my team). Of those, the one a
+ * bot must not act on is an ENEMY's broadcast — "everyone fall back to base
+ * 3" from the other side is not an order, and GoalHunter only survives it
+ * because it re-checks the ally mask in Lua. A brain nobody here wrote will
+ * not. So a bot keeps its own team's chat and anything aimed at it, and
+ * drops the rest.
+ *
+ * WHICH ALLIANCE TABLE. The SERVER's, whenever this ClientSim is bound to one
+ * — which every hosted bot is. It must not be the bot's own client-side copy:
+ * a bot built mid-round (a scenario wave, or Add Bot during play) has an EMPTY
+ * own row in that copy, because the join replay never fills a client's row for
+ * itself, so reading it there would drop an ally's broadcast for exactly the
+ * bots a scripted round is made of. The server matrix is the authority and is
+ * filled the moment the bot is seated.
+ *
+ * The question is put the same way round as botManagerDeliverInternalMessage
+ * puts it — the SENDER's ally set, asked whether it holds this seat — so the
+ * ordinary chat channel and the bots' internal one cannot disagree even if a
+ * one-sided alliance is ever recorded.
+ *
+ * Unbound is the fallback, not the normal case: a ClientSim with no server
+ * behind it (a replay, a test fixture built by hand) has only its own table,
+ * and reading that is better than dropping every line. */
+static bool clientSimChatReachesInbox(ClientSim *cs, BYTE fromPlayer,
+                                      BYTE destPlayer) {
+  struct ServerSim *bound;
+  players          *plrs;
+  BYTE              myPN;
+
+  if (!clientSimIsBot(cs)) return TRUE;
+  /* Addressed to me or to my team — the CTRL_CHAT filter already proved it
+     is mine, and a line somebody aimed at this seat is meant for it. */
+  if (destPlayer != CHAT_DEST_BROADCAST) return TRUE;
+
+  myPN = clientSimGetMyPlayerNum(cs);
+  if (fromPlayer >= MAX_TANKS || myPN >= MAX_TANKS) return FALSE;
+  if (fromPlayer == myPN) return FALSE;
+
+  bound = clientSimGetBoundServerSim(cs);
+  plrs  = (bound != NULL) ? &serverSimGetGameSim(bound)->plyrs
+                          : &clientSimGetGameSim(cs)->plyrs;
+  return (playersGetAlliesBitMap(plrs, fromPlayer) &
+          ((PlayerBitMap)1u << myPN)) != 0;
+}
+
+void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, BYTE destPlayer,
+                              char *messageStr) {
   char topLine[FILENAME_MAX];
 
   topLine[0] = '\0';
@@ -696,7 +763,11 @@ void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, char *messageStr) {
 
   if (clientSimIsInLobby(cs) && playerNum < 16) {
     clientSimAppendLobbyChat(cs, clientSimGetLobbySlot(cs, playerNum)->playerName, messageStr);
-  } else {
+  } else if (clientSimChatReachesInbox(cs, playerNum, destPlayer)) {
+    /* clientMessageAdd draws the line AND pushes it into the brain inbox. A
+       bot draws nothing, so for a bot this call is the inbox push and
+       nothing else — which is why the test above stands in front of it
+       rather than inside the push. */
     clientMessageAdd(clientSimGetMessages(cs), (messageType) (playerNum + PLAYER_MESSAGE_OFFSET), topLine, messageStr);
   }
 }
@@ -1576,17 +1647,56 @@ void clientSimClearPendingAllianceRequest(ClientSim *cs) {
   cs->pendingAllianceRequestFrom = 0xFF;
 }
 
-void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *message) {
-  size_t histLen = strlen(cs->lobbyChatHistory);
-  size_t needed = strlen(name) + 2 + strlen(message) + 2; /* "name: message\n" */
-  if (histLen + needed < sizeof(cs->lobbyChatHistory)) {
-    if (histLen > 0) {
-      strcat(cs->lobbyChatHistory, "\n");
+/* THE shape of one line in a lobby chat log: "<name>: <message>".
+ *
+ * One function owns it because two sides have to agree on it. The appends
+ * below write the lines; the lobby's bot-announce poll (imgui_lobby.cpp)
+ * builds the same string and searches the history for it, to find out
+ * whether its append actually landed before it registers the docs behind
+ * that line. Written out twice, a change to one spelling would leave the
+ * search quietly never matching.
+ *
+ * Returns the length written, or -1 when the line would not fit `cap`. */
+int clientSimFormatLobbyChatLine(char *out, size_t cap, const char *name,
+                                 const char *message) {
+  size_t nLen, mLen;
+  if (out == NULL || cap == 0) return -1;
+  out[0] = '\0';
+  if (name == NULL) name = "";
+  if (message == NULL) message = "";
+  nLen = strlen(name);
+  mLen = strlen(message);
+  if (nLen + 2 + mLen + 1 > cap) return -1;
+  memcpy(out, name, nLen);
+  out[nLen]     = ':';
+  out[nLen + 1] = ' ';
+  memcpy(out + nLen + 2, message, mLen);
+  out[nLen + 2 + mLen] = '\0';
+  return (int)(nLen + 2 + mLen);
+}
+
+/* Append "<name>: <message>" to `history` (capacity `cap`), newline-separated
+ * from what is already there. Silently does nothing when the line would not
+ * fit — the caller that cares whether it landed searches the history for it. */
+static void clientSimAppendChatLine(char *history, size_t cap,
+                                    const char *name, const char *message) {
+  size_t histLen = strlen(history);
+  size_t needed  = strlen(name) + 2 + strlen(message) + 2; /* "name: message\n" */
+  if (histLen + needed < cap) {
+    char line[LOBBY_CHAT_LINE_MAX];
+    if (clientSimFormatLobbyChatLine(line, sizeof(line), name, message) < 0) {
+      return;
     }
-    strcat(cs->lobbyChatHistory, name);
-    strcat(cs->lobbyChatHistory, ": ");
-    strcat(cs->lobbyChatHistory, message);
+    if (histLen > 0) {
+      strcat(history, "\n");
+    }
+    strcat(history, line);
   }
+}
+
+void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *message) {
+  clientSimAppendChatLine(cs->lobbyChatHistory, sizeof(cs->lobbyChatHistory),
+                          name, message);
 }
 
 void clientSimClearLobbyChatHistory(ClientSim *cs) {
@@ -1595,16 +1705,8 @@ void clientSimClearLobbyChatHistory(ClientSim *cs) {
 }
 
 void clientSimAppendLobbyTeamChat(ClientSim *cs, const char *name, const char *message) {
-  size_t histLen = strlen(cs->lobbyTeamChatHistory);
-  size_t needed = strlen(name) + 2 + strlen(message) + 2; /* "name: message\n" */
-  if (histLen + needed < sizeof(cs->lobbyTeamChatHistory)) {
-    if (histLen > 0) {
-      strcat(cs->lobbyTeamChatHistory, "\n");
-    }
-    strcat(cs->lobbyTeamChatHistory, name);
-    strcat(cs->lobbyTeamChatHistory, ": ");
-    strcat(cs->lobbyTeamChatHistory, message);
-  }
+  clientSimAppendChatLine(cs->lobbyTeamChatHistory,
+                          sizeof(cs->lobbyTeamChatHistory), name, message);
 }
 
 /* Default chatSendFunc: route outbound chat through clientSimSubmitCommand
@@ -2683,6 +2785,22 @@ const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs) {
   return &cs->lobbyBrainList;
 }
 
+/* The brain's announce.txt / commands.txt as the server shipped them. Both
+ * return "" — never NULL — when the index is out of range, when no brain has
+ * sent any text yet, or when this particular brain ships no such file, so a
+ * caller can test the first byte instead of guarding two ways. */
+const char *clientSimGetLobbyBrainAnnounce(const ClientSim *cs, int brainIdx) {
+  if (cs == NULL || cs->lobbyBrainTexts == NULL) return "";
+  if (brainIdx < 0 || brainIdx >= BRAIN_LIST_MAX) return "";
+  return cs->lobbyBrainTexts->announce[brainIdx];
+}
+
+const char *clientSimGetLobbyBrainDocs(const ClientSim *cs, int brainIdx) {
+  if (cs == NULL || cs->lobbyBrainTexts == NULL) return "";
+  if (brainIdx < 0 || brainIdx >= BRAIN_LIST_MAX) return "";
+  return cs->lobbyBrainTexts->docs[brainIdx];
+}
+
 const RoundStatsSummary *clientSimGetLastRoundStats(const ClientSim *cs) {
   return cs->lastRoundStatsValid ? &cs->lastRoundStats : NULL;
 }
@@ -3199,6 +3317,15 @@ bool clientSimGetMyTankMapPosF(ClientSim *cs, float *mapX, float *mapY) {
   tankGetWorld(&MY_TANK(cs), &wx, &wy);
   if (mapX) *mapX = (float)wx / (float)(1 << TANK_SHIFT_MAPSIZE);
   if (mapY) *mapY = (float)wy / (float)(1 << TANK_SHIFT_MAPSIZE);
+  return true;
+}
+
+bool clientSimGetMyTankSubPos(ClientSim *cs, BYTE *subX, BYTE *subY) {
+  WORLD wx = 0, wy = 0;
+  if (!clientSimIsMyTankAlive(cs)) return false;
+  tankGetWorld(&MY_TANK(cs), &wx, &wy);
+  if (subX) *subX = (BYTE)(wx & ((1 << TANK_SHIFT_MAPSIZE) - 1));
+  if (subY) *subY = (BYTE)(wy & ((1 << TANK_SHIFT_MAPSIZE) - 1));
   return true;
 }
 

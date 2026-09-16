@@ -3527,6 +3527,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # decoder addresses a rebuilt line to every recipient, and the in-process
     # filter reads 0xFF as everyone at a client that is not slot 0.
     tests/unit/test_scenario_comms_arms.c
+    # Three shots = go there: the shell-expiry detector that turns three
+    # full-range shells on one open square into an order line in every
+    # allied bot's inbox — which squares count, the window, and the count
+    # that starts again after one.
+    tests/unit/test_three_shot_order.c
     # The flow ops: a scripted end to the round — its state, its reason, the
     # line it leaves the returning lobby and the WinBolo.net crediting it does
     # not do — and the game-time change, the four lengths it refuses, and the
@@ -3626,6 +3631,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_brain_list_scan.c
+    tests/unit/test_brain_list_texts.c
+    tests/unit/test_unit_test_registry.c
+    tests/unit/test_lobby_brain_docs_gate.c
     tests/unit/test_brain_modes.c
     tests/unit/test_brain_view_data.c
     tests/unit/test_bolo_rand.c
@@ -3656,6 +3664,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_net_impair.c
     tests/unit/test_lobby_runtime_fixes.c
     tests/unit/test_bot_chat_routing.c
+    tests/unit/test_bot_ping.c
     tests/unit/test_brain_internal_msg_routing.c
     tests/unit/test_subscriber_arm_orphans.c
     tests/unit/test_identity_survives_reset.c
@@ -3716,6 +3725,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_overview_fog.cpp
     tests/unit/test_overview_hud_layout.cpp
     tests/unit/test_sight.c
+    tests/unit/test_sight_shadow.c
+    tests/unit/test_sight_shadow_overflow.c
     tests/unit/test_overview_snapshot.c
     tests/unit/test_mapview_sprite_scale.c
     tests/unit/test_mapview_overlay.c
@@ -4209,6 +4220,10 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # The maps the baseline runs play, and the scenario scripts that sit
     # beside them: the validator case reads one from here.
     WB_BASELINE_MAPS_DIR="${CMAKE_SOURCE_DIR}/tests/baseline/maps"
+    # The repository root. unit_test_names_match_cmake reads THIS file and
+    # tests/unit/test_main.c out of it and compares the two test rosters, so a
+    # case added to one and not the other cannot go unnoticed.
+    WB_REPO_ROOT_DIR="${CMAKE_SOURCE_DIR}"
 )
 
 target_include_directories(WinBoloUnitTests PRIVATE
@@ -4306,6 +4321,12 @@ set(_unit_test_names
     lobby_bot_config_codec_and_apply
     lobby_bot_brain_codec_and_apply
     lobby_brain_list_codec_and_apply
+    lobby_brain_docs_chunk_codec_roundtrip
+    lobby_brain_docs_chunk_len_is_exact
+    lobby_brain_list_clears_stale_texts
+    lobby_chat_line_format_is_what_is_appended
+    lobby_brain_docs_stay_out_of_the_control_snapshot
+    lobby_brain_docs_reach_a_joining_subscriber
     lobby_sync_complete_codec_roundtrip
     lobby_rating_posted_codec_roundtrip
     command_codec_roundtrip_variants
@@ -4393,6 +4414,7 @@ set(_unit_test_names
     mine_kill_publishes_event
     mine_kill_on_boat_publishes_event
     mine_kill_own_mine_names_self
+    mine_blast_range
     awards_basic_winners
     awards_tiebreak
     awards_omission
@@ -4530,6 +4552,8 @@ set(_unit_test_names
     brain_inbox_legacy_drain_fifo
     brain_inbox_clear_resets
     brain_list_scan_path_resolves
+    brain_list_texts_read
+    unit_test_names_match_cmake
     brain_modes_manifest_parses
     brain_modes_missing_falls_back
     brain_modes_malformed_lines_skipped
@@ -4565,6 +4589,13 @@ set(_unit_test_names
     bot_chat_send_to_other_bot_lands_in_recipient_inbox
     bot_chat_receive_from_human_lands_in_bot_inbox
     bot_chat_receive_from_other_bot_via_broadcast
+    bot_chat_enemy_broadcast_is_not_an_order
+    bot_chat_enemy_unicast_still_lands
+    bot_chat_mid_round_bot_reads_server_alliances
+    bot_ping_queue_becomes_cmd_ping_from_bot_slot
+    bot_ping_rate_limit_drops_extras
+    bot_ping_ignores_bad_slot
+    bot_ping_ignores_a_slot_that_is_not_a_bot
     internal_msg_reaches_allied_bot
     internal_msg_skips_sender_self
     internal_msg_skips_non_allied_bot
@@ -4829,6 +4860,9 @@ set(_unit_test_names
     overview_fog
     overview_hud_layout
     sight
+    sight_shadow
+    sight_shadow_cost
+    sight_shadow_overflow
     overview_dead_tank
     overview_entities
     overview_removed_item_has_no_region
@@ -5161,6 +5195,7 @@ set(_unit_test_names
     tank_mod_dealt_kills_in_half_the_hits
     tank_mod_taken_takes_more_hits
     tank_mod_mine_damage_scales_with_layer
+    mine_damage_fatal_reduction
     tank_mod_neutral_owner_deals_classic
     tank_mod_boat_exit_at_half_speed
     tank_mod_pill_leads_half_speed_boat
@@ -5340,6 +5375,21 @@ set(_unit_test_names
     scenario_comms_msg_player
     scenario_comms_sound
     scenario_comms_log
+    scenario_comms_say
+    three_shot_order_orders_allied_bots
+    three_shot_order_ignores_closed_ground
+    three_shot_order_needs_one_square
+    three_shot_order_window_and_reset
+    three_shot_order_needs_quiet_before
+    three_shot_order_quiet_counts_hits
+    three_shot_order_needs_quiet_after
+    three_shot_order_quiet_after_sees_a_shell_still_flying
+    three_shot_order_quiet_before_sees_a_shell_still_flying
+    three_shot_order_uses_the_server_tick
+    three_shot_order_server_tick_quiet_after
+    three_shot_order_ignores_a_forged_fire_tick
+    three_shot_order_rejects_off_map_squares
+    three_shot_order_scenario_refuses_off_map
     scenario_comms_arm_records
     scenario_comms_decoder_dest_player
     scenario_comms_apply_non_zero_slot

@@ -198,6 +198,11 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
     case CTRL_LOBBY_BOT_CONFIG:
     case CTRL_LOBBY_BOT_BRAIN:
     case CTRL_LOBBY_BRAIN_LIST:
+    /* The brains' lobby texts, which index into the list above. A spectator
+     * reads the lobby's team chat, and a bot's announce line is a team-chat
+     * line whose docs open when it is clicked — without these it would see
+     * the line and find nothing behind it. */
+    case CTRL_LOBBY_BRAIN_DOCS_CHUNK:
     case CTRL_PLAYER_JOIN:
     case CTRL_BALANCE_PROPOSAL:
     case CTRL_MAP_SKIP_STATE:

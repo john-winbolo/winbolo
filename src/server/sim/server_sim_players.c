@@ -83,6 +83,9 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
     sim->statDroppedStaleInputs[playerNum] = 0;
     sim->statCatchupTicks[playerNum] = 0;
     sim->statLastRewindTicks[playerNum] = 0;
+    /* Nobody arrives mid-order: a seat starts with no shells counted toward
+     * a three-shot order. */
+    serverSimShotOrderClear(sim, playerNum);
 
     sim->playerConnected[playerNum] = TRUE;
     sim->hadPlayersEver = TRUE;
@@ -455,6 +458,9 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->statDroppedStaleInputs[playerNum] = 0;
     sim->statCatchupTicks[playerNum] = 0;
     sim->statLastRewindTicks[playerNum] = 0;
+    /* The shells this slot had in flight toward a three-shot order go with
+     * it, so whoever sits here next starts its count from nothing. */
+    serverSimShotOrderClear(sim, playerNum);
 
     /* Post-game stats: a mid-round leaver is dropped from the round summary as
      * if never present. Zero this slot's accumulator row, clear every other

@@ -768,6 +768,36 @@ void brainCoreExtractOutput(lua_State *L, BrainInfo *info) {
     }
   }
   lua_pop(L, 1);
+
+  /* ping_kind / ping_x / ping_y — one smart ping the brain wants on the
+   * map this think. All three must be integers for the request to count,
+   * which is why the pending flag is set here rather than derived from the
+   * kind: PING_KIND_STANDARD is 0, so a kind of zero is a real kind and
+   * cannot double as "no ping". ping_pending was cleared when the engine
+   * built this BrainInfo, so a brain that says nothing places nothing. */
+  {
+    lua_Integer pk = 0, px = 0, py = 0;
+    int haveKind, haveX, haveY;
+    lua_getfield(L, -1, "ping_kind");
+    haveKind = lua_isinteger(L, -1);
+    if (haveKind) pk = lua_tointeger(L, -1);
+    lua_pop(L, 1);
+    lua_getfield(L, -1, "ping_x");
+    haveX = lua_isinteger(L, -1);
+    if (haveX) px = lua_tointeger(L, -1);
+    lua_pop(L, 1);
+    lua_getfield(L, -1, "ping_y");
+    haveY = lua_isinteger(L, -1);
+    if (haveY) py = lua_tointeger(L, -1);
+    lua_pop(L, 1);
+    if (haveKind && haveX && haveY && pk >= 0 && pk < 256 &&
+        px >= 0 && px <= 0xFFFF && py >= 0 && py <= 0xFFFF) {
+      info->ping_pending = 1;
+      info->ping_kind    = (BYTE)pk;
+      info->ping_x       = (WORLD_X)px;
+      info->ping_y       = (WORLD_Y)py;
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ */

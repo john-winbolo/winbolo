@@ -151,7 +151,7 @@ int run_packet_type_names(void) {
         }
     }
 
-    /* 250 is not a defined PACKET_* (the ids in use top out at 224), so it
+    /* 250 is not a defined PACKET_* (the ids in use top out at 225), so it
      * resolves to the default case. */
     UT_ASSERT_MSG(strcmp(packetTypeName(250), "UNKNOWN") == 0,
                   "unmapped packet type should be UNKNOWN");

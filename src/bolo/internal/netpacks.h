@@ -754,7 +754,19 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               progress keeps what it started
                                               with. */
 
-#define PACKET_LOBBY_SCENARIO_LIST_REQ 222 /* client → server
+#define PACKET_LOBBY_BRAIN_DOCS_CHUNK  222  /* server → client: one fragment
+                                              of ONE brain's lobby texts.
+                                              { brainIdx 1, seq 1, count 1,
+                                                fragLen 2 BE, frag N }.
+                                              The reassembled blob is
+                                              { announceLen 2 BE, announce,
+                                                docsLen 2 BE, docs } — the
+                                              brain's announce.txt and
+                                              commands.txt. Sent beside the
+                                              brain list, once per brain that
+                                              ships the files. */
+
+#define PACKET_LOBBY_SCENARIO_LIST_REQ 223 /* client → server
                                               (no payload) what scenarios does
                                               this server offer on their own,
                                               independently of any map. The
@@ -762,7 +774,7 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               chooser's tree, so there is no
                                               path to ask about. */
 
-#define PACKET_LOBBY_SCENARIO_LIST_RSP 223 /* server → the one client that
+#define PACKET_LOBBY_SCENARIO_LIST_RSP 224 /* server → the one client that
                                               asked, chunked the way
                                               MAP_LIST_RSP is:
                                               { final 1, count 1, entries }
@@ -781,7 +793,7 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               cut rather than dropping the
                                               entry. */
 
-#define PACKET_LOBBY_SET_SCENARIO      224  /* client → server
+#define PACKET_LOBBY_SET_SCENARIO      225  /* client → server
                                               { pathLen 1, path N } the lobby
                                               host picking one of the
                                               scenarios above, by the file

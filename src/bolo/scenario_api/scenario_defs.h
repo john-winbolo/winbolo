@@ -229,6 +229,7 @@ typedef enum {
     SCN_OP_MSG_ALL,
     SCN_OP_MSG_TEAM,
     SCN_OP_MSG_PLAYER,
+    SCN_OP_MSG_SAY,
     SCN_OP_SOUND,
     SCN_OP_LOG,
 
@@ -243,7 +244,11 @@ typedef enum {
     SCN_OP_SET_GAME_TIME,
 
     /* Rules */
-    SCN_OP_SET_RULE
+    SCN_OP_SET_RULE,
+
+    /* Test hooks. Not part of the round a player plays: each one drives a
+     * server path a script has no other way to reach. */
+    SCN_OP_SHELL_EXPIRED
 } ScenarioOpType;
 
 /* A payload byte holding 0xFF means there is nothing there: no slot, no
@@ -482,6 +487,22 @@ typedef struct {
     char text[SCN_TEXT_MAX];
 } ScnOpMsgPlayer;
 
+/* A chat line said by a seat, not by the server. slot is who said it, and
+ * mode is who hears it: a player's three destinations are their own team,
+ * the whole game, and one other seat. A team other than the sender's own is
+ * not among them — the chat path refuses a line addressed to a team the
+ * sender is not on, whoever sends it. */
+#define SCN_SAY_TEAM   0    /* the sender's own team */
+#define SCN_SAY_ALL    1    /* everyone */
+#define SCN_SAY_PLAYER 2    /* one seat, named by target */
+
+typedef struct {
+    BYTE slot;
+    BYTE mode;
+    BYTE target;                /* the seat, under SCN_SAY_PLAYER */
+    char text[SCN_TEXT_MAX];
+} ScnOpMsgSay;
+
 typedef struct {
     BYTE sound;     /* an sndEffects value */
     BYTE x, y;      /* 0xFF, 0xFF = everywhere */
@@ -677,6 +698,28 @@ typedef struct {
     double   value;
 } ScnOpSetRule;
 
+/* ── Test hooks ────────────────────────────────────────────────── */
+
+/* One of `slot`'s shells ran its full range and died on square (x, y) with
+ * nothing hit. It fires the three-shot order detector exactly as a real
+ * expiring shell does, without a gun having to be aimed: a script cannot
+ * make a seat shoot, and three full-range shells landing on one chosen
+ * square is not something a round can be steered into. Nothing else happens
+ * — no explosion, no sound, no shell is created or destroyed.
+ *
+ * fireTick is the SERVER tick the shell LEFT THE GUN, which is what every
+ * timing rule in the detector reads — the window the three have to share,
+ * and the quiet second either side of them. haveFireTick is false when the
+ * script did not say, and the shell then counts as fired on the current
+ * tick. (x, y) must name a square the map really holds; anything outside
+ * the playable band is refused with SCN_OP_BAD_SQUARE. */
+typedef struct {
+    BYTE     slot;
+    BYTE     x, y;
+    bool     haveFireTick;
+    uint32_t fireTick;
+} ScnOpShellExpired;
+
 /* One op, tagged by type. */
 typedef struct {
     ScenarioOpType type;
@@ -719,6 +762,7 @@ typedef struct {
         ScnOpMsgAll            msgAll;
         ScnOpMsgTeam           msgTeam;
         ScnOpMsgPlayer         msgPlayer;
+        ScnOpMsgSay            msgSay;
         ScnOpSound             sound;
         ScnOpLog               log;
         ScnOpPanel             panel;
@@ -728,6 +772,7 @@ typedef struct {
         ScnOpEndRound          endRound;
         ScnOpSetGameTime       setGameTime;
         ScnOpSetRule           setRule;
+        ScnOpShellExpired      shellExpired;
     } u;
 } ScenarioOp;
 

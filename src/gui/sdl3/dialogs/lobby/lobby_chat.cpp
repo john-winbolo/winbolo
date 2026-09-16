@@ -25,6 +25,7 @@
  *                position into the chat box.
  *********************************************************/
 
+#include <cfloat>  /* FLT_MIN — the "fill the width" size for a child widget */
 #include <cstdio>  /* snprintf — formats the "@mm:ss " token */
 
 #include <SDL3/SDL.h>
@@ -32,6 +33,7 @@
 #include "imgui.h"
 #include "imgui_internal.h"  /* window DC.NavHideHighlightOneFrame, NavCursorVisible */
 #include "lobby_internal.h"
+#include "dialog_footer.h"  /* WBUI::DialogFooter — the docs dialog Close */
 extern "C" {
 #include "client_sim.h"
 #include "client_command.h"  /* CHAT_DEST_IS_TEAM */
@@ -75,6 +77,230 @@ ImVec2 *lobbyChatBlockMax(void) {
  * grab or a stale hole position into the next one. */
 void lobbyChatReset(void) {
     s_chat = LobbyChatState{};
+    lobbyChatDocsReset();
+}
+
+/* ----------------------------------------------------------------------
+ * A bot's announce line, and the docs behind it
+ *
+ * A brain may ship two texts (brain_list.h): announce.txt, which the lobby
+ * drops into TEAM chat as a line from the bot when one running that brain
+ * joins your team, and commands.txt, the long docs that line opens.
+ *
+ * The chat history is one flat, newline-separated blob with no per-line
+ * record, so there is nowhere to hang "this line is a link". Instead the
+ * inserter REGISTERS the exact text it appended and the renderer matches that
+ * text back out of the blob at a line boundary. An announce text has blank
+ * lines in it, so a registration covers a BLOCK of lines, not one line.
+ *
+ * Matching on the text rather than on a marker character keeps the blob
+ * ordinary: it still reaches the clipboard, the plain renderer and the mobile
+ * path as the words the player read.
+ * ------------------------------------------------------------------- */
+
+#define LOBBY_CHAT_DOCS_MAX   8      /* registered blocks in one lobby */
+#define LOBBY_CHAT_DOCS_TEXT  LOBBY_CHAT_DOCS_LINE_MAX
+#define LOBBY_CHAT_DOCS_NAME  64
+
+typedef struct LobbyChatDocsBlock {
+    char text[LOBBY_CHAT_DOCS_TEXT];   /* exactly what was appended */
+    int  len;
+    int  brainIdx;                     /* whose commands.txt it opens */
+    char brainName[LOBBY_CHAT_DOCS_NAME];  /* what the dialog is titled after */
+} LobbyChatDocsBlock;
+
+typedef struct LobbyChatDocsState {
+    LobbyChatDocsBlock blocks[LOBBY_CHAT_DOCS_MAX];
+    int                count;
+    /* A click lands inside the chat child window, and OpenPopup only
+     * reaches a modal begun at its own id scope, so the click sets a flag
+     * that lobbyChatDocsRenderModal consumes at the lobby's own scope.
+     * openIdx is -1 when no dialog is up. */
+    bool               wantOpen;
+    bool               open;     /* a dialog is up; openIdx names its brain */
+    int                openIdx;
+    char               openName[LOBBY_CHAT_DOCS_NAME];
+} LobbyChatDocsState;
+
+static LobbyChatDocsState s_docs = {};
+
+void lobbyChatDocsReset(void) {
+    s_docs = LobbyChatDocsState{};
+}
+
+int lobbyChatDocsCount(void) {
+    return s_docs.count;
+}
+
+/* Remember that `text` — the whole appended block, "<bot>: <announce>", with
+ * no trailing newline — is the clickable opener for brainIdx's docs. The same
+ * text registered twice is ignored, so a second bot on the same brain, or a
+ * re-entered lobby, cannot stack duplicates. */
+void lobbyChatDocsRegister(int brainIdx, const char *brainName,
+                           const char *text) {
+    LobbyChatDocsBlock *b;
+    size_t n;
+    int i;
+
+    if (text == NULL || text[0] == '\0') return;
+    n = SDL_strlen(text);
+    if (n >= LOBBY_CHAT_DOCS_TEXT) return;
+    for (i = 0; i < s_docs.count; i++) {
+        if (SDL_strcmp(s_docs.blocks[i].text, text) == 0) return;
+    }
+    if (s_docs.count >= LOBBY_CHAT_DOCS_MAX) return;
+
+    b = &s_docs.blocks[s_docs.count++];
+    SDL_strlcpy(b->text, text, sizeof(b->text));
+    b->len      = (int)n;
+    b->brainIdx = brainIdx;
+    SDL_strlcpy(b->brainName, brainName != NULL ? brainName : "",
+                sizeof(b->brainName));
+}
+
+/* Does a registered block start exactly at p? The match must end on a line
+ * boundary, so a block is never found inside a longer line somebody typed.
+ * Returns the block, with *outEnd one past its last character. */
+static const LobbyChatDocsBlock *lobbyChatDocsMatch(const char *p,
+                                                    const char **outEnd) {
+    int i;
+    for (i = 0; i < s_docs.count; i++) {
+        const LobbyChatDocsBlock *b = &s_docs.blocks[i];
+        if (SDL_strncmp(p, b->text, (size_t)b->len) != 0) continue;
+        if (p[b->len] != '\0' && p[b->len] != '\n') continue;
+        if (outEnd != NULL) *outEnd = p + b->len;
+        return b;
+    }
+    return NULL;
+}
+
+/* Draw one announce block as a link: link-coloured, wrapped text sitting on
+ * an invisible button that covers the whole wrapped rect.
+ *
+ * TextLink is not used here, though it is what the timestamp link below uses.
+ * TextLink lays a line out with SameLine and so never wraps, and an announce
+ * text runs to several hundred characters over two paragraphs. The hover
+ * affordance is therefore the hand cursor plus a brighter colour rather than
+ * an underline: a block wrapped over many rows has no one baseline to
+ * underline. The InvisibleButton also makes the block something a controller
+ * can move onto, which a plain text run would not be. */
+static void lobbyRenderChatDocsBlock(const char *begin, const char *end,
+                                     int lineIndex,
+                                     const LobbyChatDocsBlock *blk) {
+    float  wrapW = ImGui::GetContentRegionAvail().x;
+    ImVec2 pos   = ImGui::GetCursorScreenPos();
+    ImVec2 sz;
+    ImVec4 col;
+    bool   hovered;
+
+    if (wrapW < 32.0f) wrapW = 32.0f;
+    sz = ImGui::CalcTextSize(begin, end, false, wrapW);
+    if (sz.y < ImGui::GetTextLineHeight()) sz.y = ImGui::GetTextLineHeight();
+
+    ImGui::PushID(lineIndex);
+    if (ImGui::InvisibleButton("##botdocs", ImVec2(wrapW, sz.y))) {
+        s_docs.wantOpen = true;
+        s_docs.open     = true;
+        s_docs.openIdx  = blk->brainIdx;
+        SDL_strlcpy(s_docs.openName, blk->brainName, sizeof(s_docs.openName));
+    }
+    hovered = ImGui::IsItemHovered();
+    ImGui::PopID();
+
+    if (hovered) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    col = ImGui::GetStyleColorVec4(ImGuiCol_TextLink);
+    if (hovered) {
+        col.x += (1.0f - col.x) * 0.35f;
+        col.y += (1.0f - col.y) * 0.35f;
+        col.z += (1.0f - col.z) * 0.35f;
+    }
+    ImGui::GetWindowDrawList()->AddText(NULL, 0.0f, pos,
+                                        ImGui::GetColorU32(col),
+                                        begin, end, wrapW);
+}
+
+/* The docs dialog. Call it at the lobby window's own id scope, never inside
+ * the chat child: BeginPopupModal only finds a popup opened at the same
+ * scope. A viewport-relative modal, the docs in a read-only text box, and a
+ * DialogFooter so a controller has something focusable to leave by.
+ *
+ * THE BODY IS AN INPUT BOX, NOT A LABEL. It used to be a wrapped
+ * TextUnformatted, which a mouse cannot select: the one thing a player wants
+ * from a page of bot commands is to take a line out of it. A read-only
+ * InputTextMultiline selects and copies with the usual keys and gestures and
+ * still cannot be edited. InputTextMultiline has no word wrap, which is fine
+ * here — commands.txt ships wrapped at about 78 columns — and a line that
+ * does run long gets the horizontal scrollbar the widget brings with it.
+ * The Copy button beside Close puts the whole text on the clipboard at once. */
+void lobbyChatDocsRenderModal(ClientSim *cs) {
+    char        title[160];
+    MessageArgs args;
+    bool        open = true;
+    const ImGuiStyle *st;
+    const char *docs;
+    size_t      docsLen;
+    bool        escaped;
+    int         footer;
+    float       footerH;
+    ImVec2      vp;
+
+    if (s_docs.wantOpen) {
+        s_docs.wantOpen = false;
+        ImGui::OpenPopup("###botdocs");
+    }
+    if (!s_docs.open || s_docs.openIdx < 0) return;
+
+    memset(&args, 0, sizeof(args));
+    SDL_strlcpy(args.string1, s_docs.openName, sizeof(args.string1));
+    SDL_snprintf(title, sizeof(title), "%s###botdocs",
+                 langGetTextFmt(STR_DLGLOBBY_BOT_DOCS_TITLE, &args));
+
+    vp = ImGui::GetMainViewport()->Size;
+    ImGui::SetNextWindowSize(ImVec2(SDL_min(720.0f, vp.x * 0.85f),
+                                    SDL_min(540.0f, vp.y * 0.85f)),
+                             ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal(title, &open,
+                                ImGuiWindowFlags_NoCollapse |
+                                ImGuiWindowFlags_NoScrollbar |
+                                ImGuiWindowFlags_NoScrollWithMouse)) {
+        /* Not begun means it is closed — by the title-bar X, or by Escape
+         * reaching the popup itself. */
+        s_docs.open = false;
+        return;
+    }
+
+    st      = &ImGui::GetStyle();
+    footerH = st->ItemSpacing.y * 3.0f + 1.0f +
+              ImGui::GetFrameHeightWithSpacing();
+
+    docs    = clientSimGetLobbyBrainDocs(cs, s_docs.openIdx);
+    if (docs == NULL) docs = "";
+    docsLen = SDL_strlen(docs);
+    /* The cast is safe under ReadOnly: ImGui never writes back through the
+     * buffer, it only reads it to lay the text out and to feed the
+     * clipboard. The size still has to count the terminator. */
+    ImGui::InputTextMultiline("##body", const_cast<char *>(docs), docsLen + 1,
+                              ImVec2(-FLT_MIN, -footerH),
+                              ImGuiInputTextFlags_ReadOnly);
+
+    /* A real Close button, not only the title-bar X: Escape inside the body
+     * is eaten by ImGui's nav-cancel, so a controller (and a player who has
+     * scrolled the body) needs something to leave by.
+     *
+     * DialogFooter's LEFT slot is its cancel slot, and Escape returns
+     * FOOTER_CANCEL from it whether or not the button was clicked — so on its
+     * own a footer with Copy on the left would copy when the player pressed
+     * Escape. CancelKeyPressed is the same question DialogFooter asks itself,
+     * asked one call earlier, which tells the two apart. */
+    escaped = WBUI::CancelKeyPressed();
+    footer  = WBUI::DialogFooter(langGetText(STR_COPY), langGetText(STR_CLOSE));
+    if (footer == WBUI::FOOTER_CANCEL && !escaped) {
+        ImGui::SetClipboardText(docs);
+    } else if (footer != WBUI::FOOTER_NONE || !open) {
+        s_docs.open = false;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
 }
 
 /* ----------------------------------------------------------------------
@@ -205,12 +431,21 @@ static void lobbyRenderChatTimeLine(const char *begin, const char *end,
  * a single text block would. With no reel to seek there is nothing to link, so
  * every line takes the plain path. */
 void lobbyRenderChatHistory(const char *blob) {
+    /* Two things can make a line more than text: a reel timestamp to seek
+     * (desktop only, and only while the reel is embedded) and a bot's
+     * announce block, which is a link to that brain's docs. Either one puts
+     * the history on the per-line path; with neither it takes the single
+     * blob draw it always did. */
+    bool perLine = (lobbyChatDocsCount() > 0);
+#if !BOLO_MOBILE
+    if (lvEmbedIsActive()) perLine = true;
+#endif
+
     if (blob == NULL) {
         return;
     }
 
-#if !BOLO_MOBILE
-    if (lvEmbedIsActive()) {
+    if (perLine) {
         const ImGuiStyle &style     = ImGui::GetStyle();
         const char       *runBegin  = NULL;
         const char       *runEnd    = NULL;
@@ -221,17 +456,39 @@ void lobbyRenderChatHistory(const char *blob) {
                             ImVec2(style.ItemSpacing.x, 0.0f));
         for (;;) {
             const char *lineEnd = p;
-            while (*lineEnd != '\0' && *lineEnd != '\n') {
-                lineEnd++;
+            const char *blockEnd = NULL;
+            const LobbyChatDocsBlock *blk = lobbyChatDocsMatch(p, &blockEnd);
+            bool isTime;
+
+            if (blk != NULL) {
+                /* An announce block spans several lines, so its end, not this
+                 * line's end, is where the walk carries on from. */
+                lineEnd = blockEnd;
+            } else {
+                while (*lineEnd != '\0' && *lineEnd != '\n') {
+                    lineEnd++;
+                }
             }
-            if (lobbyChatLineHasTime(p, lineEnd)) {
+#if !BOLO_MOBILE
+            isTime = (blk == NULL) && lobbyChatLineHasTime(p, lineEnd);
+#else
+            isTime = false;
+#endif
+            if (blk != NULL || isTime) {
                 if (runBegin != NULL) {
                     ImGui::PushTextWrapPos(0.0f);
                     ImGui::TextUnformatted(runBegin, runEnd);
                     ImGui::PopTextWrapPos();
                     runBegin = NULL;
                 }
-                lobbyRenderChatTimeLine(p, lineEnd, lineIndex);
+                if (blk != NULL) {
+                    lobbyRenderChatDocsBlock(p, lineEnd, lineIndex, blk);
+                }
+#if !BOLO_MOBILE
+                else {
+                    lobbyRenderChatTimeLine(p, lineEnd, lineIndex);
+                }
+#endif
             } else {
                 if (runBegin == NULL) {
                     runBegin = p;
@@ -252,7 +509,6 @@ void lobbyRenderChatHistory(const char *blob) {
         ImGui::PopStyleVar();
         return;
     }
-#endif
 
     /* Wrap long lines at the child's right edge so a full-length (128-char)
      * message flows onto extra lines instead of running off the panel. */

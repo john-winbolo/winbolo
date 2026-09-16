@@ -439,11 +439,19 @@ static const char *const kSlEveryRow =
     "  lobby_remove_bot = function() return game.lobby_remove_bot(9) end,\n"
     "  lobby_set_team = function() return game.lobby_set_team(9, 2) end,\n"
     "  message     = function() return game.message(\"hello\") end,\n"
+    /* Seat 9 is empty, so the row is exercised and refused before the line
+       reaches the chat dispatcher, which this fixture has no round for. */
+    "  say         = function() return game.say(9, \"hello\") end,\n"
     "  sound       = function() return game.sound(\"shoot_self\") end,\n"
     "  log         = function() return game.log(\"hello\") end,\n"
     "  set_game_time = function() return game.set_game_time(1000) end,\n"
     "  add_game_time = function() return game.add_game_time(10) end,\n"
     "  set_rule    = function() return game.set_rule(\"tank_reload_ticks\", 12) end,\n"
+    /* The test hook. Seat 9 is empty, so the row is exercised and refused
+       before the three-shot detector is handed anything — which is what the
+       other write rows aimed at an empty seat do, and an answer is all this
+       case asks for. */
+    "  shell_expired = function() return game.shell_expired(9, 100, 100) end,\n"
     /* The calls run in whatever order the table iterates in, which is not
        the same order under the two Lua builds, so no row here leans on
        another having run. This one ends the round the rest are working in,

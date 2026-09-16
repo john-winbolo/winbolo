@@ -1036,6 +1036,64 @@ static EncodeResult encodeLobbyBotPoolChunkBody(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
+/* PACKET_LOBBY_BRAIN_DOCS_CHUNK wire format:
+ *   [header 8] [brainIdx 1] [seq 1] [count 1] [fragLen 2 BE] [frag fragLen]
+ * One slice of ONE brain's announce.txt + commands.txt blob. Worst case on
+ * the wire is 8 + 5 + 900 = 913 bytes, well inside MAX_CONTROL_PACKET: the
+ * fragment cap bounds the datagram, and the blob's own size only decides how
+ * MANY fragments there are (19 at the current caps). */
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeLobbyBrainDocsChunkBody(const ControlEvent *evt,
+                                                  const struct UdpServerClient *recipient,
+                                                  uint8_t *buf, size_t bufCap,
+                                                  size_t *outLen) {
+    (void)recipient;
+    uint16_t fl = evt->u.lobbyBrainDocsChunk.fragLen;
+    size_t pos = 0;
+    if (fl > LOBBY_BRAIN_DOCS_FRAG_MAX) return ENCODE_OVERFLOW;
+    if (evt->u.lobbyBrainDocsChunk.brainIdx >= BRAIN_LIST_MAX) return ENCODE_OVERFLOW;
+    if (bufCap < (size_t)(5 + fl)) return ENCODE_OVERFLOW;
+    buf[pos++] = evt->u.lobbyBrainDocsChunk.brainIdx;
+    buf[pos++] = evt->u.lobbyBrainDocsChunk.seq;
+    buf[pos++] = evt->u.lobbyBrainDocsChunk.count;
+    buf[pos++] = (uint8_t)((fl >> 8) & 0xFF);
+    buf[pos++] = (uint8_t)(fl & 0xFF);
+    if (fl > 0) { memcpy(buf + pos, evt->u.lobbyBrainDocsChunk.frag, fl); pos += fl; }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+static EncodeResult encodeLobbyBrainDocsChunk(const ControlEvent *evt,
+                                              const struct UdpServerClient *recipient,
+                                              uint8_t *buf, size_t bufCap,
+                                              size_t *outLen) {
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_LOBBY_BRAIN_DOCS_CHUNK, 0);
+    size_t bodyLen = 0;
+    EncodeResult r = encodeLobbyBrainDocsChunkBody(evt, recipient,
+                                                   buf + PACKET_HEADER_SIZE,
+                                                   bufCap - PACKET_HEADER_SIZE, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
+    return ENCODE_OK;
+}
+
+BOLO_STATIC_ASSERT(
+    PACKET_HEADER_SIZE + 5 + LOBBY_BRAIN_DOCS_FRAG_MAX <= MAX_CONTROL_PACKET,
+    brain_docs_chunk_fits_MAX_CONTROL_PACKET);
+
+/* The fragment cap above bounds ONE datagram; this one bounds how many of
+ * them a brain's whole blob needs. seq and count are single bytes, so the
+ * blob may not want more than 255 fragments:
+ *   (2 + 512 + 2 + 16384 + 899) / 900 = 19 today.
+ * Raising BRAIN_DOCS_MAX past about 229 KB breaks the build here rather than
+ * wrapping the seq byte and reassembling two brains' texts into one. */
+BOLO_STATIC_ASSERT(
+    (LOBBY_BRAIN_DOCS_WIRE_MAX + LOBBY_BRAIN_DOCS_FRAG_MAX - 1) /
+        LOBBY_BRAIN_DOCS_FRAG_MAX <= 255,
+    brain_docs_blob_fits_255_fragments);
+
 static EncodeResult encodeRoundStats(const ControlEvent *evt,
                                      const struct UdpServerClient *recipient,
                                      uint8_t *buf, size_t bufCap,
@@ -2495,6 +2553,27 @@ static bool decodeLobbyBotPoolChunkBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+static bool decodeLobbyBrainDocsChunkBody(const uint8_t *buf, size_t len,
+                                          ControlEvent *outEvt) {
+    /* Layout: [brainIdx 1][seq 1][count 1][fragLen 2 BE][frag fragLen]. */
+    if (len < 5) return false;
+    size_t pos = 0;
+    uint8_t brainIdx = buf[pos++];
+    if (brainIdx >= BRAIN_LIST_MAX) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
+    outEvt->u.lobbyBrainDocsChunk.brainIdx = brainIdx;
+    outEvt->u.lobbyBrainDocsChunk.seq      = buf[pos++];
+    outEvt->u.lobbyBrainDocsChunk.count    = buf[pos++];
+    uint16_t fl = (uint16_t)(((uint16_t)buf[pos] << 8) | buf[pos + 1]);
+    pos += 2;
+    if (fl > LOBBY_BRAIN_DOCS_FRAG_MAX) return false;
+    if (pos + fl > len) return false;
+    outEvt->u.lobbyBrainDocsChunk.fragLen = fl;
+    if (fl > 0) memcpy(outEvt->u.lobbyBrainDocsChunk.frag, buf + pos, fl);
+    return true;
+}
+
 static bool decodeLobbyMapChangeBody(const uint8_t *buf, size_t len,
                                      ControlEvent *outEvt) {
     (void)buf; (void)len;
@@ -2707,6 +2786,7 @@ static const ControlEncodeFn s_encoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_LOBBY_BOT_BRAIN]    = encodeLobbyBotBrain,
     [CTRL_LOBBY_BRAIN_LIST]   = encodeLobbyBrainList,
     [CTRL_LOBBY_BOT_POOL_CHUNK] = encodeLobbyBotPoolChunk,
+    [CTRL_LOBBY_BRAIN_DOCS_CHUNK] = encodeLobbyBrainDocsChunk,
     [CTRL_GAME_VOTE_STATE]    = encodeGameVoteState,
     [CTRL_SERVER_TEXT]        = encodeServerText,
     [CTRL_COMMAND_REJECTED]   = encodeCommandRejected,
@@ -2749,6 +2829,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_LOBBY_BOT_BRAIN]       = encodeLobbyBotBrainBody,
     [CTRL_LOBBY_BRAIN_LIST]      = encodeLobbyBrainListBody,
     [CTRL_LOBBY_BOT_POOL_CHUNK]  = encodeLobbyBotPoolChunkBody,
+    [CTRL_LOBBY_BRAIN_DOCS_CHUNK] = encodeLobbyBrainDocsChunkBody,
     [CTRL_GAME_VOTE_STATE]       = encodeGameVoteStateBody,
     [CTRL_SERVER_TEXT]           = encodeServerTextBody,
     [CTRL_COMMAND_REJECTED]      = encodeCommandRejectedBody,
@@ -2794,6 +2875,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_LOBBY_BOT_BRAIN]       = decodeLobbyBotBrainBody,
     [CTRL_LOBBY_BRAIN_LIST]      = decodeLobbyBrainListBody,
     [CTRL_LOBBY_BOT_POOL_CHUNK]  = decodeLobbyBotPoolChunkBody,
+    [CTRL_LOBBY_BRAIN_DOCS_CHUNK] = decodeLobbyBrainDocsChunkBody,
     [CTRL_GAME_VOTE_STATE]       = decodeGameVoteStateBody,
     [CTRL_SERVER_TEXT]           = decodeServerTextBody,
     [CTRL_COMMAND_REJECTED]      = decodeCommandRejectedBody,
@@ -2840,6 +2922,7 @@ ControlDecodeFn transportControlCodecDecoder(uint16_t packetType) {
         case PACKET_LOBBY_BOT_BRAIN_CHG:  return decodeLobbyBotBrainBody;
         case PACKET_LOBBY_BRAIN_LIST:     return decodeLobbyBrainListBody;
         case PACKET_LOBBY_BOT_POOL_CHUNK: return decodeLobbyBotPoolChunkBody;
+        case PACKET_LOBBY_BRAIN_DOCS_CHUNK: return decodeLobbyBrainDocsChunkBody;
         case PACKET_GAME_VOTE_STATE:      return decodeGameVoteStateBody;
         case PACKET_COMMAND_REJECTED:     return decodeCommandRejectedBody;
         case PACKET_BALANCE_FAILED:       return decodeBalanceFailedBody;

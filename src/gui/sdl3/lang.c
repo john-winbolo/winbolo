@@ -1369,6 +1369,13 @@ static const LangEntry langTable[] = {
     /* Bot AiConfig: the Mode dropdown's label. The mode names themselves
        come from the brain's own modes.txt, so they are data, not strings. */
     {2171, "Mode"},
+
+    /* Title of the docs dialog a bot's announce line in team chat opens.
+       {string1} is the brain's name, so "GoalHunter commands". */
+    {2214, "{string1} commands"},
+    /* A general Copy button: the docs dialog puts its whole body on the
+       clipboard with it. */
+    {2215, "Copy"},
     /* Balance from WBN */
     {1345, "Balance from WBN"},
     {1346, "Balance teams from WBN"},
@@ -2159,7 +2166,7 @@ static const LangEntry langTable[] = {
     {2211, "{number} bot seats"},
     {2212, "Mod: {string2} (on {string1})"},
     {2213, "Run scripts in uploaded maps"},
-    {2214, "Scenario Directory"},
+    {2216, "Scenario Directory"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

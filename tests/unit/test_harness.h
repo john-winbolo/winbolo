@@ -120,6 +120,19 @@ int run_lobby_team_meta_codec_and_apply(void);
 int run_lobby_bot_config_codec_and_apply(void);
 int run_lobby_bot_brain_codec_and_apply(void);
 int run_lobby_brain_list_codec_and_apply(void);
+int run_lobby_brain_docs_chunk_codec_roundtrip(void);
+int run_lobby_brain_docs_chunk_len_is_exact(void);
+
+/* The brains' lobby texts: cached once, sent to a joiner, kept out of the
+ * spectator ring's per-keyframe control snapshot, and dropped on the client
+ * when a new catalogue arrives. */
+int run_lobby_brain_list_clears_stale_texts(void);
+
+/* The "name: text" lobby chat line has ONE spelling, because the lobby's
+ * bot-announce poll searches the history for the line it just appended. */
+int run_lobby_chat_line_format_is_what_is_appended(void);
+int run_lobby_brain_docs_stay_out_of_the_control_snapshot(void);
+int run_lobby_brain_docs_reach_a_joining_subscriber(void);
 int run_lobby_sync_complete_codec_roundtrip(void);
 int run_lobby_rating_posted_codec_roundtrip(void);
 int run_command_codec_roundtrip_variants(void);
@@ -238,6 +251,7 @@ int run_round_stats_leaver_clears_mines(void);
 int run_mine_kill_publishes_event(void);
 int run_mine_kill_on_boat_publishes_event(void);
 int run_mine_kill_own_mine_names_self(void);
+int run_mine_blast_range(void);
 
 int run_awards_basic_winners(void);
 int run_awards_tiebreak(void);
@@ -442,6 +456,12 @@ int run_brain_inbox_overflow_drops_oldest(void);
 int run_brain_inbox_legacy_drain_fifo(void);
 int run_brain_inbox_clear_resets(void);
 int run_brain_list_scan_path_resolves(void);
+int run_brain_list_texts_read(void);
+
+/* The two test rosters — test_main.c's dispatch table and CMakeLists.txt's
+ * _unit_test_names — say the same thing, so a case added to one and not the
+ * other is found rather than silently never run. */
+int run_unit_test_names_match_cmake(void);
 
 /* A brain's mode manifest (test_brain_modes.c): brains/<brain>/modes.txt,
  * the API by which a brain tells the lobby which modes it has and which
@@ -677,6 +697,22 @@ int run_bot_chat_send_to_human_lands_in_human_inbox(void);
 int run_bot_chat_send_to_other_bot_lands_in_recipient_inbox(void);
 int run_bot_chat_receive_from_human_lands_in_bot_inbox(void);
 int run_bot_chat_receive_from_other_bot_via_broadcast(void);
+
+/* The delivery rule in front of a hosted bot's inbox: an enemy's broadcast is
+ * chatter, not an order, and a line aimed at the seat lands whoever sent it. */
+int run_bot_chat_enemy_broadcast_is_not_an_order(void);
+int run_bot_chat_enemy_unicast_still_lands(void);
+/* A bot seated mid-round has an empty own row in its client-side player
+ * table, so the rule reads the bound server's alliance matrix instead. */
+int run_bot_chat_mid_round_bot_reads_server_alliances(void);
+
+/* A bot placing its own smart ping (test_bot_ping.c) — a brain's ping
+ * request becomes a CMD_PING from the bot's own player slot, and the bot's
+ * own rate limit drops the extras. */
+int run_bot_ping_queue_becomes_cmd_ping_from_bot_slot(void);
+int run_bot_ping_rate_limit_drops_extras(void);
+int run_bot_ping_ignores_bad_slot(void);
+int run_bot_ping_ignores_a_slot_that_is_not_a_bot(void);
 
 /* Internal brain-message routing (test_brain_internal_msg_routing.c) —
  * pins botManagerDeliverInternalMessage: bot brains sending with
@@ -1509,6 +1545,29 @@ int run_overview_fog(void);
  * a line, and a block the origin is nowhere near is written at its own width. */
 int run_sight(void);
 
+/* The shadow rule (test_sight_shadow.c): with no wall on the map the mask is
+ * the one the old centre-line rule built, square for square, on Everard
+ * Island's own ground; a pillbox with a blocker up beside it is seen where the
+ * centre line called it hidden; a sliver of a square about a quarter wide is
+ * enough to see it and one more wall closes the sliver; two walls meeting at a
+ * corner leave no crack between their shadows and a square squarely behind a
+ * wall is hidden, from anywhere inside the square the player is standing on;
+ * the trees answer what they always answered; and off the map is never seen
+ * while the square the player is on always is. */
+int run_sight_shadow(void);
+
+/* What the shadow pass costs (test_sight_shadow.c): the widest block there is,
+ * built from real ground with real walls on it, timed over five hundred runs
+ * and printed. */
+int run_sight_shadow_cost(void);
+
+/* The full-shadow-pile branch (test_sight_shadow_overflow.c): a second copy of
+ * the module built with the pile capped at two, so a row of four walls
+ * overruns it and the fold a full pile answers with is taken. What it pins is
+ * the direction - the capped mask hides every square the mask the module
+ * really builds hides, and some the other way round, never the reverse. */
+int run_sight_shadow_overflow(void);
+
 /* In-window overview HUD geometry (test_overview_hud_layout.cpp): the column
  * fits the height at 1080p and on the Steam Deck's 800 lines, its pieces stack
  * in the classic order without overlapping and stay inside their backing
@@ -2210,6 +2269,7 @@ int run_tank_mod_reload_fires_twice_as_often(void);
 int run_tank_mod_dealt_kills_in_half_the_hits(void);
 int run_tank_mod_taken_takes_more_hits(void);
 int run_tank_mod_mine_damage_scales_with_layer(void);
+int run_mine_damage_fatal_reduction(void);
 int run_tank_mod_neutral_owner_deals_classic(void);
 int run_tank_mod_boat_exit_at_half_speed(void);
 int run_tank_mod_pill_leads_half_speed_boat(void);
@@ -2473,6 +2533,26 @@ int run_scenario_comms_msg_team(void);
 int run_scenario_comms_msg_player(void);
 int run_scenario_comms_sound(void);
 int run_scenario_comms_log(void);
+int run_scenario_comms_say(void);
+/* THREE SHOTS = GO THERE — the shell-expiry detector behind the order
+ * (tests/unit/test_three_shot_order.c). */
+int run_three_shot_order_orders_allied_bots(void);
+int run_three_shot_order_ignores_closed_ground(void);
+int run_three_shot_order_needs_one_square(void);
+int run_three_shot_order_window_and_reset(void);
+int run_three_shot_order_needs_quiet_before(void);
+int run_three_shot_order_quiet_counts_hits(void);
+int run_three_shot_order_needs_quiet_after(void);
+int run_three_shot_order_quiet_after_sees_a_shell_still_flying(void);
+int run_three_shot_order_quiet_before_sees_a_shell_still_flying(void);
+
+/* The detector's clock is the SERVER's tick, never the client input tick a
+ * shell also carries, and an order can only be dropped on a real square. */
+int run_three_shot_order_uses_the_server_tick(void);
+int run_three_shot_order_server_tick_quiet_after(void);
+int run_three_shot_order_ignores_a_forged_fire_tick(void);
+int run_three_shot_order_rejects_off_map_squares(void);
+int run_three_shot_order_scenario_refuses_off_map(void);
 int run_scenario_comms_arm_records(void);
 int run_scenario_comms_decoder_dest_player(void);
 int run_scenario_comms_apply_non_zero_slot(void);

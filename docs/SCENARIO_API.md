@@ -30,6 +30,7 @@ bug worth reporting.
 - [Bots and seats](#bots-and-seats)
 - [Talking to players, and ending the round](#talking-to-players-and-ending-the-round)
 - [Rules](#rules)
+- [Test hooks](#test-hooks)
 - [Constants](#constants)
 - [Terrain codes](#terrain-codes)
 - [Sounds](#sounds)
@@ -504,6 +505,7 @@ applied around it; one bad row does not cost a scenario its other rules.
 | `on_player_leave(p, scripted)` | |
 | `on_team_changed(p, team, scripted)` | `team` is the seat's new team. |
 | `on_chat(p, text, scripted)` | A player said something. |
+| `on_ping(p, kind, mx, my, scripted)` | Seat `p` put a smart ping on the map. `kind` is 0 standard, 1 caution, 2 assist, 3 attack, 4 on my way, 5 bot command; `mx`, `my` are the map square it landed on. A seated bot brain places its own pings through the same path, so this fires for a bot as it does for a person. The hook only watches: nothing it returns changes the marker, and there is no call that places one. |
 
 ### What happens in the round
 
@@ -961,11 +963,47 @@ Field your first wave, and move seats between teams, from `on_start`.
 | Call | What it does |
 |---|---|
 | `game.message(text[, target])` | A line to everyone, to one seat with a number, or to a team with `{ team = t }`. `nil` and `"all"` both mean everyone. |
+| `game.say(p, text[, target])` | A chat line seat `p` says, exactly as a player typing would: to its own team with no target, to everyone with `"all"`, or to one seat with a number. |
 | `game.sound(name[, x, y])` | Plays one of the server's sounds, at a square or everywhere. |
 | `game.log(text)` | Writes a line to the server's console. No player sees it. |
 | `game.end_round([text[, winner_team]])` | Ends the round now, with the line the lobby shows and the team that won it. |
 | `game.set_game_time(ticks)` | How long the round has left, in `game.tick()`'s own units: 100 a second, so a minute is 6000. |
 | `game.add_game_time(ticks)` | Adds to what the round has left, or takes away with a negative, in the same units. A round with no time limit has nothing to add to, so give it a length first. |
+
+`message` and `say` are two different voices, and the difference decides
+whether a bot hears the line at all.
+
+- **`message` is the server talking.** It writes a server line: the newswire
+  a player reads, with no sender beside it. A brain never sees it — a brain's
+  inbox is fed from chat alone — and `on_chat` does not fire for it.
+- **`say` is a seat talking.** It writes that seat's own chat, down the same
+  path a typed line takes, so it lands in the receiving brains' inboxes as
+  `info.messages` with `sender` set to `p`, and `on_chat(p, text, true)`
+  fires. This is how a scripted round hands a bot the order a human ally
+  would have typed.
+
+`say` has the three destinations a player has and no more. No target is the
+seat's own team, `"all"` is everyone, and a seat number is that seat. A team
+the sender is not on is not among them, because the chat path refuses a line
+addressed to one whoever sends it. A sender never receives its own line, so
+a scenario can tell one bot something without telling the one it spoke
+through.
+
+`say` is refused when `p`, or a named target, is a seat with nobody in it
+(`SCN_OP_NO_SUCH_PLAYER`), when a team line comes from a seat on no team and
+so has nobody to say it to (`SCN_OP_RANGE`), when the line is empty
+(`SCN_OP_BAD_CALL`, since every receiver drops a chat body of no length), and
+when the line is longer than a chat line can be (`SCN_OP_TOO_BIG`). A seat
+held without a bot in it — `fielded = false` — is a seat for this purpose, so
+a scenario can keep one back purely to speak from.
+
+One caution about team chat. A receiver decides whether a team line is for it
+from its own copy of the roster, which it builds from lobby-slot events. A
+round started with no lobby at all — `-nolobby`, which is how a headless test
+starts a round with no human to ready up — publishes none of those, so every
+seat's copy says team 0 and the team filter drops the line. The op is
+accepted, because the server's own roster does carry the team; it is the
+receiver that never sees it. Use `"all"` or a seat number there.
 
 `end_round` is how a scenario wins or loses a round. It stops play there and
 then, and the line it carries is shown in the lobby exactly as written — the
@@ -1018,7 +1056,7 @@ below the tables say which.
 | `tank_death_ticks` | 255 | 0 to 65535 |
 | `tank_water_ticks` | 15 | 1 to 255 |
 | `shell_damage` | 5 | 1 to 255 |
-| `mine_damage` | 10 | 1 to 255 |
+| `mine_damage` | 15 | 1 to 255; fatal tank hits use two-thirds of the modified damage, rounded up |
 | `just_fired_ticks` | 101 | 0 to 255 |
 | `gunsight_min` | 2 | 1 to 255 |
 | `gunsight_max` | 14 | 1 to 255 |
@@ -1165,6 +1203,51 @@ below the tables say which.
   at most 255, so the longest shot's life still fits its byte.
 
 The detail a refusal carries names both sides with their numbers.
+
+---
+
+## Test hooks
+
+One call, and it is here because a test needs a server path that a round
+cannot be steered into.
+
+| Call | What it does |
+|---|---|
+| `game.shell_expired(p, x, y [, fire_tick])` | Posts one of seat `p`'s shells as having run its full range and died over square `(x, y)` with nothing hit. `fire_tick` is the tick the shell LEFT THE GUN, which is the tick every timing rule in the three-shot detector reads; left out, the shell counts as fired now. Nothing else about the shell happens: no explosion, no sound, no shell. |
+
+**Three shots = go there.** Three full-range shells from one player that die
+on the SAME open square are an order to that player's bots: one of them goes
+there and holds, for the same sixty seconds every other order runs for. Open
+means grass, road, swamp, crater, rubble, river, shallow water or deep sea, a
+mined square counting as whatever is under the mine, and never forest, a
+wall, a building, a pillbox or a base.
+
+The three have to be FIRED inside two seconds of each other, and the burst
+has to stand alone: nothing of that player's fired in the second before the
+first of them, and nothing fired in the second after the third. The order is
+therefore not sent when the third shell lands. It is armed, and the server
+sends it one second after the third shot was fired; a shell fired inside that
+second takes it away again.
+
+Which bots hear it is the SHOOTER's own screen: the line carries the
+shooter's square as well as the target's, and only a bot within fourteen
+squares of the shooter, measured the way a screen is, bids for the job.
+
+A script cannot make a seat pull a trigger, and three full-range shells
+landing on a chosen square is not something a round arrives at by accident,
+so `shell_expired` is how a test gives that order. A real shell is about half
+a second in the air, so a test that cares about the quiet seconds says when
+each shell was fired:
+
+```lua
+game.shell_expired(SHOOTER, 40, 40, t)
+game.shell_expired(SHOOTER, 40, 40, t + 40)
+game.shell_expired(SHOOTER, 40, 40, t + 80)   -- the order goes out at t + 180
+```
+
+The op is refused with `SCN_OP_WRONG_STATE` outside a running round, with
+`SCN_OP_NO_SUCH_PLAYER` for a seat nobody is in, and with `SCN_OP_RANGE` for
+a negative `fire_tick`.
 
 ---
 
@@ -1324,7 +1407,9 @@ Named so you do not spend an afternoon looking for them:
   may put a seat on a team nobody is on is still decided by the
   `allow_extra_teams()` policy alone.
 - **Packaged brains.** `package:NAME` is refused wherever a brain is named.
-- **Bot hints.** There is no call that speaks to a bot's brain.
+- **Bot hints.** There is no call that hands a bot's brain a structured
+  hint. `say` reaches a brain through its chat inbox, which is the
+  channel a human ally has, and nothing beyond it.
 - **Presentation.** A panel, a score line, a newswire line and a map marker
   have no calls yet.
 - **Triggers.** A `scenario.triggers` table is not read, and a script that

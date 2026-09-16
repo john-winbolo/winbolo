@@ -256,7 +256,8 @@ static const BYTE *overviewFarewellMask(const OverviewMap *om,
     return NULL;
   }
   memset(vis, 1, SIGHT_MASK_BYTES);
-  sightBuildMask(&sim->mp, r->originX, r->originY, r, vis);
+  sightBuildMask(&sim->mp, &sim->pb, r->originX, r->originY, SIGHT_SUB_CENTRE,
+                 SIGHT_SUB_CENTRE, r, vis);
   return vis;
 }
 
@@ -874,7 +875,8 @@ void overviewMapUpdate(OverviewMap *om, struct GameSim *sim, BYTE myPlayerNum,
        * refuse for width: the static assertions at the top of this file pin
        * both halves inside SIGHT_MAX_SIDE. */
       memset(vis, 1, sizeof(vis));
-      sightBuildMask(&sim->mp, om->live[i].originX, om->live[i].originY,
+      sightBuildMask(&sim->mp, &sim->pb, om->live[i].originX,
+                     om->live[i].originY, SIGHT_SUB_CENTRE, SIGHT_SUB_CENTRE,
                      &om->live[i], vis);
       for (y = r->top; y <= r->bottom; y++) {
         for (x = r->left; x <= r->right; x++, pos++) {

@@ -473,6 +473,18 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
 /* chat */
 void lobbyChatReset(void);
 void lobbyRenderChatHistory(const char *blob);
+/* A bot's announce line in team chat, and the docs dialog behind it. The
+ * announce text is registered as the exact block that was appended to the
+ * chat blob; lobbyRenderChatHistory matches it back out and draws it as a
+ * link. The modal must be rendered at the lobby window's own id scope. */
+/* Longest announce block the chat can carry: a bot name, ": ", and the
+ * brain's whole announce.txt (BRAIN_ANNOUNCE_MAX). */
+#define LOBBY_CHAT_DOCS_LINE_MAX 640
+void lobbyChatDocsReset(void);
+int  lobbyChatDocsCount(void);
+void lobbyChatDocsRegister(int brainIdx, const char *brainName,
+                           const char *text);
+void lobbyChatDocsRenderModal(ClientSim *cs);
 void lobbyRenderChatInputAndSend(ClientSim *cs, char *chatInput,
                                  BYTE myPlayerNum, bool hasTransport,
                                  float s, BYTE destPlayer);

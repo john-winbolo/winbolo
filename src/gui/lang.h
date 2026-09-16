@@ -1533,6 +1533,15 @@
  * data (brains/<brain>/modes.txt), not strings, so this is the only one. */
 #define STR_DLGLOBBY_BOTCFG_MODE            2171
 
+/* Title of the dialog a bot's announce line in lobby team chat opens: the
+ * brain's own commands.txt. {string1} = the brain's name ("GoalHunter"). */
+#define STR_DLGLOBBY_BOT_DOCS_TITLE         2214
+
+/* A general "Copy" button label, for any dialog that puts its body on the
+ * clipboard. STR_LV_COPY is the same word but belongs to the log viewer's
+ * events panel; this one is not tied to a screen. */
+#define STR_COPY                            2215
+
 /* Lobby — Balance/Reject/Lock/RankedShape */
 /* Balance from WBN */
 #define STR_DLGLOBBY_BAL_BTN                1345
@@ -2353,7 +2362,7 @@
  * switch that decides whether a map a player uploaded may bring one, and the
  * directory of scenarios this host offers on their own. */
 #define STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS 2213
-#define STR_DLGSETTINGS_HOSTING_SCENARIODIR  2214
+#define STR_DLGSETTINGS_HOSTING_SCENARIODIR  2216
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

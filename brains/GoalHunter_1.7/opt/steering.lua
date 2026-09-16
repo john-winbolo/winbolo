@@ -27,6 +27,15 @@ local function attack_mod()
   if not _attack then _attack = require("attack") end
   return _attack
 end
+-- orders.lua owns the "is this tank standing on the square it was sent to"
+-- rule (ORD.hold_parked), so the park below and the order slot cannot drift
+-- apart. Required lazily for the same reason attack.lua is: a new top-level
+-- require changes the order modules are first loaded in.
+local _orders
+local function orders_mod()
+  if not _orders then _orders = require("orders") end
+  return _orders
+end
 
 local M = {}
 
@@ -337,7 +346,27 @@ local _pp_stationary = {
 }
 local _at_stationary = { engage=true, close=true, disengage=true }
 
-local function intentionally_stationary(goal, info)
+-- A GO-THERE ORDER IN ITS HOLD PHASE: the tank is parked by M.steer below,
+-- on purpose, for as long as the hold runs.  The stuck detector must read
+-- that as deliberate or it escalates and throws the order away.  The park
+-- kinds only (C.ORDER_HOLD_PARK_KINDS): a survival goal that works by moving
+-- still drives, and still counts as stuck if it cannot.
+--
+-- THE PARK NEEDS THE TANK TO BE ON THE SQUARE.  It used to ask only whether
+-- the slot said "holding", with no distance test at all, so a bot that died
+-- mid-hold and respawned across the map went on having its throttle taken
+-- away -- parked on a square nobody pointed at, for the rest of the hold
+-- (Andrew's peer review, Sep 16).  ORD.hold_parked adds the one-square test,
+-- the same radius that starts the hold.
+local function order_hold_parked(state, goal, info)
+  if not (C.BOT_COMMANDS_ENABLED and state and goal) then return false end
+  if not (C.ORDER_HOLD_PARK_KINDS or {})[goal.kind] then return false end
+  return orders_mod().hold_parked(state, info) and true or false
+end
+M.order_hold_parked = order_hold_parked
+
+local function intentionally_stationary(goal, info, state)
+  if order_hold_parked(state, goal, info) then return true end
   local s = goal.substate or ""
   if goal.kind == "attack_pill" and _ap_stationary[s] then return true end
   if goal.kind == "pill_place"  and _pp_stationary[s] then return true end
@@ -362,6 +391,13 @@ local function intentionally_stationary(goal, info)
   -- flee_to_base is the same destination semantics (park on a base pad) — the
   -- critical-flee injection swaps refuel_at_base to flee_to_base at low armour,
   -- and both kinds dock via the same steering branch now.
+  -- A PLACE ORDER, once we are on (or beside) the ordered square: parked on
+  -- purpose, for as long as the order runs. Without this the stuck detector
+  -- reads the hold as a wedged tank and gives the order up.
+  if goal.kind == "goto_tile" and info and goal.mx then
+    local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
+    if U.mdist(tmx, tmy, goal.mx, goal.my) <= 1 then return true end
+  end
   if (goal.kind == "refuel_at_base" or goal.kind == "flee_to_base")
      and info and goal.mx then
     local tmx, tmy = bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8)
@@ -416,7 +452,7 @@ local function stuck_recovery(state, info, goal)
   -- state._lgm_paced: the LGM pacing throttle capped the tank last tick —
   -- the crawl is intentional, so don't count it as "no progress".
   if state.wall_clearing or state._lgm_paced
-     or intentionally_stationary(goal, info) then
+     or intentionally_stationary(goal, info, state) then
     state.stuck_progress = nil
     return
   end
@@ -3512,7 +3548,10 @@ local function steer_core(state, world, info, goal)
           -- kill_me_wait: the tile was advertised to the whole team as where
           -- we will be standing, so once we are on it we STAY on it. Same
           -- park as take_cover, for the same reason.
-          or goal.kind == "kill_me_wait")
+          or goal.kind == "kill_me_wait"
+          -- goto_tile: a person pointed at this square and said go there.
+          -- Standing on it IS the order, so park the same way.
+          or goal.kind == "goto_tile")
          and goal.mx == (bit.rshift(info.tankx, 8)) and goal.my == (bit.rshift(info.tanky, 8)) then
     -- ON the wait/cover spot: stand still. For wait_for_lgm, let the LGM
     -- finish whatever he's doing (farming, opportunistic build) before
@@ -5372,6 +5411,23 @@ function M.steer(state, world, info, goal)
         state._cliff_sticky_left = nil
       end
     end
+  end
+
+  -- ── A GO-THERE ORDER IN ITS HOLD PHASE: STAND STILL AND FIGHT ─────────
+  -- A person pointed at a square and the bot is standing on it.  From the
+  -- arrival tick the hard goal lock is off (goals.lua, "the hold phase of a
+  -- go-there order") so attack_tank and kill_lgm can win the pool -- but
+  -- winning must not turn into DRIVING, or the order stops meaning anything
+  -- the moment a tank shows up.  So the throttle is taken away HERE, at the
+  -- one point every key leaves this module: KEY_FASTER is cleared and the
+  -- tank brakes if it is still rolling.  Turn keys and taps (the gun) pass
+  -- through untouched, which is the whole point -- it aims and fires from the
+  -- spot.  Only the park kinds are held this way, so a critical-armour flee
+  -- or an escape from water still drives.
+  if order_hold_parked(state, goal, info) and keys then
+    local before = keys
+    keys = bit.band(keys, bit.bnot(KEY_FASTER))
+    if (info.speed or 0) > 0 then keys = bit.bor(keys, KEY_SLOWER) end
   end
   return keys, taps
 end

@@ -366,6 +366,8 @@ int run_tank_mod_mine_damage_scales_with_layer(void) {
                   "a classic mine took %d armour, expected %d",
                   before - afterClassic, MINE_DAMAGE);
 
+    /* Keep this hit nonfatal so it tests scaling without the fatal-hit reduction. */
+    tankSetArmour(&sim->sim.tanks[1], TANK_FULL_ARMOUR);
     setMods(sim, 0, 0, 0, 0, 200, 0);
     UT_ASSERT_MSG(tankDamageAmount(&sim->sim, MINE_DAMAGE, 0, 1, LAST_DEATH_BY_MINES) == 2 * MINE_DAMAGE,
                   "a mine from a 200-dealt layer should do double");
@@ -378,6 +380,49 @@ int run_tank_mod_mine_damage_scales_with_layer(void) {
                   before - afterDoubled, 2 * MINE_DAMAGE);
 
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* A fatal mine is reduced from three hits to two, but can still kill. */
+int run_mine_damage_fatal_reduction(void) {
+    static const struct {
+        BYTE armour;
+        BYTE dealt;
+        BYTE remaining;
+        bool destroyed;
+    } cases[] = {
+        {40, 100, 25, FALSE},
+        {15, 100, 0, FALSE},
+        {14, 100, 4, FALSE},
+        {10, 100, 0, FALSE},
+        {9, 100, 0, TRUE},
+        {5, 100, 0, TRUE},
+        {0, 100, 0, TRUE},
+        {30, 200, 0, FALSE},
+        {25, 200, 5, FALSE},
+        {20, 200, 0, FALSE},
+        {19, 200, 0, TRUE},
+        /* 15 at 50% rounds to 8; its fatal-hit reduction rounds up to 6. */
+        {7, 50, 1, FALSE},
+        {6, 50, 0, FALSE},
+        {5, 50, 0, TRUE}
+    };
+    size_t i;
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        ServerSim *sim = makeTwoTankSim();
+        UT_ASSERT(sim != NULL && sim->sim.tanks[1] != NULL);
+        tankSetArmour(&sim->sim.tanks[1], cases[i].armour);
+        setMods(sim, 0, 0, 0, 0, cases[i].dealt, 0);
+        tankMineDamage(&sim->sim, &sim->sim.tanks[1],
+                       tankGetMX(&sim->sim.tanks[1]), tankGetMY(&sim->sim.tanks[1]), 0);
+        UT_ASSERT_MSG(tankGetArmour(&sim->sim.tanks[1]) == cases[i].remaining,
+                      "case %u: armour %u at %u%% damage left %u, expected %u",
+                      (unsigned)i, cases[i].armour, cases[i].dealt,
+                      tankGetArmour(&sim->sim.tanks[1]), cases[i].remaining);
+        UT_ASSERT_MSG(tankIsDestroyed(&sim->sim.tanks[1]) == cases[i].destroyed,
+                      "case %u: wrong survival result", (unsigned)i);
+        serverSimDestroy(sim);
+    }
     return 0;
 }
 

@@ -449,6 +449,131 @@ bool brainListLoadColor(const char *name, uint32_t *rgb) {
     return false;
 }
 
+/* ── announce.txt / commands.txt ─────────────────────────────────────
+ *
+ * Read out of a brain DIRECTORY rather than by catalogue name: the server
+ * already holds the disk path of every brain it found (brainPaths[]), and it
+ * is the server that ships these two texts to clients, so no parent search
+ * is wanted here. */
+
+/* Drop every CR from a NUL-terminated buffer, in place. A brain edited on
+ * Windows (or checked out with CRLF line endings) would otherwise put a
+ * stray carriage return in front of every newline the lobby draws. */
+static void brainListStripCR(char *s) {
+    char *src = s, *dst = s;
+    while (*src) {
+        if (*src != '\r') *dst++ = *src;
+        src++;
+    }
+    *dst = '\0';
+}
+
+/* Read "<dir>/<file>" whole into buf. Returns bytes kept (0 when the file is
+ * absent or empty); buf is always NUL-terminated. *over is set true when the
+ * file held MORE bytes than buf could take, so a caller can say the text was
+ * cut rather than shipping a silently shortened one. */
+static size_t brainListReadDirFile(const char *dir, const char *file,
+                                   char *buf, size_t bufSz, bool *over) {
+    char path[1024];
+    FILE *f;
+    size_t n;
+    if (over) *over = false;
+    if (!dir || !dir[0] || !buf || bufSz < 2) return 0;
+#if defined(_WIN32)
+    SDL_snprintf(path, sizeof(path), "%s\\%s", dir, file);
+#else
+    SDL_snprintf(path, sizeof(path), "%s/%s", dir, file);
+#endif
+    f = fopen(path, "rb");
+    if (!f) return 0;
+    n = fread(buf, 1, bufSz - 1, f);
+    buf[n] = '\0';
+    if (n == bufSz - 1) {
+        /* One byte past a full buffer is how we learn the file did not fit. */
+        char extra;
+        if (fread(&extra, 1, 1, f) == 1 && over) *over = true;
+    }
+    fclose(f);
+    brainListStripCR(buf);
+    return strlen(buf);
+}
+
+bool brainListLoadTexts(const char *brainDir,
+                        char *announce, size_t announceSz,
+                        char *docs, size_t docsSz,
+                        bool *truncated) {
+    bool overA = false, overD = false;
+    size_t a = 0, d = 0;
+    if (announce && announceSz) announce[0] = '\0';
+    if (docs && docsSz) docs[0] = '\0';
+    if (truncated) *truncated = false;
+    if (!brainDir || !brainDir[0]) return false;
+    if (announce && announceSz > 1) {
+        a = brainListReadDirFile(brainDir, "announce.txt",
+                                 announce, announceSz, &overA);
+    }
+    if (docs && docsSz > 1) {
+        d = brainListReadDirFile(brainDir, "commands.txt",
+                                 docs, docsSz, &overD);
+    }
+    if (truncated) *truncated = (overA || overD);
+    return (a > 0 || d > 0);
+}
+
+/* "<dir>/init.lua" -> "<dir>". False when the path carries no directory part
+ * or will not fit. The catalogue stores the init.lua (brainListScanParent),
+ * and the two texts sit beside it. */
+static bool brainListDirOfPath(const char *brainPath, char *dir, size_t dirSz) {
+    const char *fname;
+    size_t dirLen;
+    if (!brainPath || !brainPath[0]) return false;
+    fname = brainPath + strlen(brainPath);
+    while (fname > brainPath && fname[-1] != '/' && fname[-1] != '\\') {
+        fname--;
+    }
+    if (fname == brainPath) return false;      /* no directory part */
+    dirLen = (size_t)(fname - 1 - brainPath);  /* drop the separator */
+    if (dirLen == 0 || dirLen >= dirSz) return false;
+    memcpy(dir, brainPath, dirLen);
+    dir[dirLen] = '\0';
+    return true;
+}
+
+bool brainListLoadTextsForPath(const char *brainPath,
+                               char *announce, size_t announceSz,
+                               char *docs, size_t docsSz,
+                               bool *truncated) {
+    char dir[1024];
+    if (announce && announceSz) announce[0] = '\0';
+    if (docs && docsSz) docs[0] = '\0';
+    if (truncated) *truncated = false;
+    if (!brainListDirOfPath(brainPath, dir, sizeof(dir))) return false;
+    return brainListLoadTexts(dir, announce, announceSz, docs, docsSz,
+                              truncated);
+}
+
+int64_t brainListTextsMtimeForPath(const char *brainPath) {
+    char dir[1024];
+    char path[1024];
+    int64_t best = 0;
+    int i;
+    static const char *const names[2] = { "announce.txt", "commands.txt" };
+
+    if (!brainListDirOfPath(brainPath, dir, sizeof(dir))) return 0;
+    for (i = 0; i < 2; i++) {
+        SDL_PathInfo info;
+#if defined(_WIN32)
+        SDL_snprintf(path, sizeof(path), "%s\\%s", dir, names[i]);
+#else
+        SDL_snprintf(path, sizeof(path), "%s/%s", dir, names[i]);
+#endif
+        if (!SDL_GetPathInfo(path, &info)) continue;
+        if (info.type != SDL_PATHTYPE_FILE) continue;
+        if (info.modify_time > best) best = info.modify_time;
+    }
+    return best;
+}
+
 /* ── modes.txt: a brain's own list of modes and difficulty levels ──── */
 
 /* Trim spaces and tabs off both ends of `s`, in place. Returns the first
