@@ -2838,6 +2838,7 @@ int run_scenario_brain_op_resolves(void);
 int run_scenario_dir_lists_package(void);
 int run_scenario_dir_lists_loose_script(void);
 int run_scenario_dir_skips_junk(void);
+int run_scenario_dir_skips_subdirectory(void);
 int run_scenario_dir_entry_roundtrip(void);
 
 /* Which scenario plays when a map and a mod both have a claim

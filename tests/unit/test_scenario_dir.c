@@ -26,6 +26,9 @@
  * run_scenario_dir_skips_junk          — another extension, and a .lua that is
  *                                        no scenario, are both left out and the
  *                                        rest of the list is unaffected
+ * run_scenario_dir_skips_subdirectory  — a .lua one directory down is not in
+ *                                        the list, and no entry's file name
+ *                                        carries a separator
  * run_scenario_dir_entry_roundtrip     — a list encoded into the RSP shape
  *                                        matches committed golden bytes and
  *                                        decodes back to the same entries,
@@ -57,31 +60,65 @@
 
 /* ── The directory ────────────────────────────────────────────────── */
 
-#define SD_MAX_FILES 8
-
 static char sdDir[256];
-static char sdFiles[SD_MAX_FILES][128];
-static int  sdFileCount;
+
+/* Everything in path, and then path itself. One level down as well, because a
+ * case builds a subdirectory in here. */
+static void sdRemoveTree(const char *path) {
+    char **names;
+    int    count = 0;
+    int    i;
+
+    names = SDL_GlobDirectory(path, "*", 0, &count);
+    if (names != NULL) {
+        for (i = 0; i < count; i++) {
+            char child[512];
+
+            if (names[i] == NULL || names[i][0] == '\0') continue;
+            snprintf(child, sizeof(child), "%s/%s", path, names[i]);
+            if (remove(child) != 0) {
+                /* A directory rather than a file: empty it and take it. */
+                char **inner;
+                int    innerCount = 0;
+                int    j;
+
+                inner = SDL_GlobDirectory(child, "*", 0, &innerCount);
+                if (inner != NULL) {
+                    for (j = 0; j < innerCount; j++) {
+                        char grandchild[640];
+
+                        if (inner[j] == NULL || inner[j][0] == '\0') continue;
+                        snprintf(grandchild, sizeof(grandchild), "%s/%s", child,
+                                 inner[j]);
+                        remove(grandchild);
+                    }
+                    SDL_free(inner);
+                }
+                SDL_RemovePath(child);
+            }
+        }
+        SDL_free(names);
+    }
+    SDL_RemovePath(path);
+}
 
 static bool sdMakeDir(const char *tag) {
     snprintf(sdDir, sizeof(sdDir), "wbtest_scenario_dir_%s", tag);
-    sdFileCount = 0;
-    /* A directory left over from a run that was killed is not a failure: the
-       files below are written over whatever is in it, and the cleanup at the
-       end removes what this case put there. */
-    (void)SDL_RemovePath(sdDir);
+    /* Emptied rather than merely removed. A run that failed part way through
+       never reaches its own cleanup, and SDL_RemovePath will not take a
+       directory that still holds files — so without this a case that counts
+       what it listed counts the previous run's leftovers too. */
+    sdRemoveTree(sdDir);
     return SDL_CreateDirectory(sdDir);
 }
 
-/* One file in the directory, remembered so the cleanup can remove it. */
+/* One file in the directory. The cleanup takes whatever is in there rather
+ * than a list of what was put there, so nothing is recorded here. */
 static bool sdWrite(const char *name, const void *bytes, size_t len) {
     char  path[512];
     FILE *f;
     bool  ok;
 
-    if (sdFileCount >= SD_MAX_FILES) return false;
-    snprintf(sdFiles[sdFileCount], sizeof(sdFiles[0]), "%s", name);
-    sdFileCount++;
     snprintf(path, sizeof(path), "%s/%s", sdDir, name);
     f = fopen(path, "wb");
     if (f == NULL) return false;
@@ -95,15 +132,7 @@ static bool sdWriteText(const char *name, const char *text) {
 }
 
 static void sdCleanup(void) {
-    char path[512];
-    int  i;
-
-    for (i = 0; i < sdFileCount; i++) {
-        snprintf(path, sizeof(path), "%s/%s", sdDir, sdFiles[i]);
-        remove(path);
-    }
-    sdFileCount = 0;
-    SDL_RemovePath(sdDir);
+    sdRemoveTree(sdDir);
 }
 
 /* The entry with this file name, or NULL when the list does not hold one. */
@@ -309,7 +338,60 @@ int run_scenario_dir_skips_junk(void) {
     return 0;
 }
 
-/* ── 4. The chunk, byte for byte and back ─────────────────────────── */
+/* ── 4. A file one directory down ─────────────────────────────────── */
+
+/* SDL's match-everything walk descends into subdirectories and hands back what
+ * it finds there as "sub/x.lua". ScnDirEntry.file is a name in the scenarios
+ * directory and never a path, so such a file is not one this list offers. */
+int run_scenario_dir_skips_subdirectory(void) {
+    ScnDirEntry list[8];
+    char        seen[512];
+    char        subDir[512];
+    char        subFile[640];
+    FILE       *f;
+    int         n;
+    int         i;
+
+    UT_ASSERT(sdMakeDir("subdir"));
+    UT_ASSERT(sdWriteText("hold.lua", kSdLooseScript));
+
+    snprintf(subDir, sizeof(subDir), "%s/sub", sdDir);
+    UT_ASSERT_MSG(SDL_CreateDirectory(subDir),
+                  "the subdirectory fixture could not be made: %s",
+                  SDL_GetError());
+    snprintf(subFile, sizeof(subFile), "%s/buried.lua", subDir);
+    f = fopen(subFile, "wb");
+    UT_ASSERT_MSG(f != NULL, "the buried script could not be written");
+    fputs(kSdLooseScript, f);
+    fclose(f);
+
+    n = scnDirList(sdDir, list, 8);
+    sdNames(list, (n > 0) ? n : 0, seen, sizeof(seen));
+    UT_ASSERT_MSG(n == 1,
+                  "%d entries listed, expected the one file in the directory "
+                  "itself: %s", n, seen);
+    UT_ASSERT_MSG(sdFind(list, n, "hold.lua") != NULL,
+                  "the loose script fell out of the list: %s", seen);
+    UT_ASSERT_MSG(sdFind(list, n, "buried.lua") == NULL,
+                  "a script one directory down was listed: %s", seen);
+
+    /* And not under a path either, which is the shape it would arrive in. */
+    for (i = 0; i < n; i++) {
+        UT_ASSERT_MSG(strchr(list[i].file, '/') == NULL &&
+                      strchr(list[i].file, '\\') == NULL,
+                      "entry %d is \"%s\", which is a path and not a name in "
+                      "the directory", i, list[i].file);
+    }
+
+    sdCleanup();
+    return 0;
+}
+
+/* ── 5. The second read of a directory nothing moved ──────────────── */
+
+}
+
+/* ── 6. The chunk, byte for byte and back ─────────────────────────── */
 
 /* The two entries the golden bytes below describe. */
 #define SD_E0_FILE "alpha.scenario"

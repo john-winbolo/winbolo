@@ -5561,6 +5561,7 @@ set(_unit_test_names
     scenario_dir_lists_package
     scenario_dir_lists_loose_script
     scenario_dir_skips_junk
+    scenario_dir_skips_subdirectory
     scenario_dir_entry_roundtrip
     scenario_precedence_mod_over_map
     scenario_precedence_none_restores_map

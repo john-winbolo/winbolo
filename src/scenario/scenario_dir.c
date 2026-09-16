@@ -215,7 +215,14 @@ int scnDirList(const char *dir, ScnDirEntry *out, int max) {
     if (dir == NULL || dir[0] == '\0' || out == NULL || max <= 0) {
         return -1;
     }
-    files = SDL_GlobDirectory(dir, NULL, 0, &fileCount);
+    /* "*" rather than NULL. A NULL pattern puts SDL on its match-everything
+       walk, which descends into subdirectories and returns what it finds there
+       as "sub/x.lua" — a name with a separator in it, which is not what
+       ScnDirEntry.file is (scenario_defs.h: a name in the directory and never
+       a path). The pattern keeps the walk to this directory; the separator
+       test in the loop is the second half of the same contract, so a name that
+       arrives with one is left out and said rather than offered. */
+    files = SDL_GlobDirectory(dir, "*", 0, &fileCount);
     if (files == NULL) {
         return -1;
     }
@@ -236,6 +243,13 @@ int scnDirList(const char *dir, ScnDirEntry *out, int max) {
         bool         ok = false;
 
         if (name == NULL || name[0] == '\0' || name[0] == '.') {
+            continue;
+        }
+        if (strchr(name, '/') != NULL || strchr(name, '\\') != NULL) {
+            /* A file one directory down. What a host picks is a name in this
+               directory, so a path is no use to them however it got here. */
+            scnDirSay("scenarios: %s is below the scenarios directory and is "
+                      "not offered", name);
             continue;
         }
         if (strlen(name) >= SCN_DIR_FILE_LEN) {
