@@ -2372,8 +2372,12 @@ void gameFrontSetLineOfSight(int mode) {
  * the whole hand-made set, kept under its own keys so picking a preset
  * and picking Custom back again lands where the host left it.
  *
- * The custom set is only written while the host is actually on Custom, so
- * it survives a trip through the presets and through a restart. */
+ * The custom set is written only where the player made it by hand: the
+ * hosting settings dialog, and an edit or a Custom pick in the lobby. It
+ * is not written from what the settings happen to be on, because a preset
+ * arrives one setting at a time and the half-applied mixes on the way
+ * match no named set. That is what lets the set survive a trip through
+ * the presets, and a restart. */
 int                gameFrontVisibilityPreset = (int)visibilityPresetClassic;
 VisibilitySettings gameFrontVisibilityCustom;
 bool               gameFrontVisibilityCustomSaved = FALSE;
@@ -2455,13 +2459,23 @@ void gameFrontSetVisibilityCustom(const VisibilitySettings *v) {
  * per-setting keys, so a game hosted again in this same session starts
  * there without a restart; which named set it is, so a preset that is
  * later given a different value follows the choice rather than the
- * values; and, when it is none of them, the set itself.
+ * values; and, when saveCustom is true and it is none of them, the set
+ * itself.
  *
  * Called from every place a host changes visibility — the hosting
  * settings dialog, which edits these globals, and the lobby, which reads
  * the live settings off its own client. Each write only touches the INI
- * when the value moves, so calling it per frame costs a compare. */
-void gameFrontRememberVisibility(const VisibilitySettings *v) {
+ * when the value moves, so calling it per frame costs a compare.
+ *
+ * The lobby passes false for saveCustom. It calls this every frame, and a
+ * preset reaches the lobby one setting at a time, so the values it reads
+ * pass through mixes that match no named set on the way. Saving those
+ * would replace the player's hand-made set with a half-applied preset.
+ * The lobby writes that set itself instead, with
+ * gameFrontSetVisibilityCustom, when the player edits or picks something
+ * on this machine. The hosting settings dialog passes true: the seven
+ * controls there are edited by hand and nothing else writes them. */
+void gameFrontRememberVisibility(const VisibilitySettings *v, bool saveCustom) {
   VisibilitySettings cur;
   VisibilityPreset   p;
 
@@ -2474,7 +2488,7 @@ void gameFrontRememberVisibility(const VisibilitySettings *v) {
   if ((int)p != gameFrontVisibilityPreset) {
     gameFrontSetVisibilityPreset((int)p);
   }
-  if (p == visibilityPresetCustom &&
+  if (saveCustom && p == visibilityPresetCustom &&
       (!gameFrontVisibilityCustomSaved ||
        !visibilitySettingsEqual(v, &gameFrontVisibilityCustom))) {
     gameFrontSetVisibilityCustom(v);
