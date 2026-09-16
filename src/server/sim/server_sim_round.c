@@ -1057,6 +1057,10 @@ void serverSimResetGameWorld(ServerSim *sim) {
 
     /* 7. Reset tick */
     sim->tick = 0;
+    /* The three-shot order detector measures in sim->tick, so its shots go
+     * with it: a shell from the last round must not pair with one from this
+     * one. */
+    memset(sim->shotOrder, 0, sizeof(sim->shotOrder));
     /* Re-arm the latch with it: the next round's log segment starts wherever
      * its first written tick lands, not where the last one did. */
     sim->roundLogStartTick = ROUND_LOG_START_UNSET;

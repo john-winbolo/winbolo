@@ -67,6 +67,85 @@
  * plausible tick, so it doubles as the "not latched yet" flag. */
 #define ROUND_LOG_START_UNSET     0xFFFFFFFFu
 
+/* THREE SHOTS = GO THERE.
+ *
+ * Three of one player's shells that run their full range — no pill, tank,
+ * base, wall, building or forest in the way — and land on the SAME open
+ * square inside a short window are an order to the bots on that player's
+ * team: go to that square and hold there.
+ *
+ * The detector keeps the last three expiry squares per player. SHOT_ORDER_
+ * SHOTS is how many make an order, and SHOT_ORDER_WINDOW_TICKS is how long
+ * the three have to be FIRED in: ticks count 100 a second (the keys/game
+ * half-step alternation), so 200 is the two seconds the design asks for.
+ *
+ * EVERY TIMING TEST IS ON THE SERVER FIRE TICK, NOT THE LANDING. A shell
+ * lands later than it was fired — 104 server ticks later at full range, see
+ * shellsAddItem — and three shells fired in a burst can land in a different
+ * order than they left the gun when the ranges differ. The server's own
+ * tick at the moment the shell was created rides with the shell (shells.h
+ * serverFireTick) and the shell-death callback hands it back, so the
+ * detector reads the three shots the way the player fired them. The landing
+ * square is still what names the place.
+ *
+ * THE SERVER'S TICK, NOT THE CLIENT'S. A shell also carries the client
+ * input tick that fired it (shells.h fireTick), and that number belongs to
+ * the client: a player who joined mid-round has a counter starting near
+ * zero, so its burst would read as fired a thousand ticks ago and the quiet
+ * second after it would already be over; a modified client could send any
+ * tick it wanted and order the bots about at will. Bots stamp the server
+ * tick, which is why they never showed the fault. Nothing here reads the
+ * client's number.
+ *
+ * The order also has to be DELIBERATE, which is a quiet second either side:
+ * nothing of that player's fired in SHOT_ORDER_QUIET_TICKS before the first
+ * of the three, and nothing fired in the same stretch after the third. The
+ * second half cannot be known when the third shell lands, so the third shot
+ * only ARMS the order; the per-tick poll (serverSimShotOrderTick) sends it
+ * a quiet second after the third shot left the gun, and any shell fired in
+ * between takes the armed order away again — that shot may start a run of
+ * its own instead.
+ *
+ * SHOT_ORDER_FIRE_LOG is how many of a player's recent shells the quiet
+ * tests have to look back over. A gun reloads far slower than that, so the
+ * log covers both quiet seconds several times over.
+ *
+ * Constants rather than sim rules: the detector is server-side only, so
+ * there is nothing for a client to agree with, and a rule would put a new
+ * field on the wire for numbers nobody tunes per round.
+ *
+ * Ticks are read from the sim alone, never from a clock, so a seeded run
+ * fires the order on the same tick every time. */
+#define SHOT_ORDER_SHOTS        3
+#define SHOT_ORDER_WINDOW_TICKS 200
+#define SHOT_ORDER_QUIET_TICKS  100
+#define SHOT_ORDER_FIRE_LOG     16
+
+typedef struct {
+    /* The last three full-range landings, oldest first. tick[] is the
+     * SERVER fire tick of each, which is what the window and the quiet
+     * second read. */
+    BYTE     mx[SHOT_ORDER_SHOTS];    /* oldest first; [SHOTS-1] is the last */
+    BYTE     my[SHOT_ORDER_SHOTS];
+    uint32_t tick[SHOT_ORDER_SHOTS];
+    uint8_t  count;                   /* filled slots, held at SHOT_ORDER_SHOTS */
+
+    /* Every shell of this player's the server has heard of, by SERVER fire
+     * tick — a shell that HIT something counts here, because the player
+     * still fired it. This is what the two quiet seconds are read off. */
+    uint32_t fire[SHOT_ORDER_FIRE_LOG];
+    uint8_t  fireCount;               /* filled slots, held at the cap */
+    uint8_t  fireNext;                /* where the next fire tick goes */
+
+    /* The order waiting out its quiet second. armFireTick is the SERVER
+     * fire tick of the third shot: the poll sends the order at armFireTick +
+     * SHOT_ORDER_QUIET_TICKS and a shell fired before then cancels it. The
+     * poll compares it against sim->tick, so both sides are server ticks. */
+    bool     armed;
+    BYTE     armMx, armMy;
+    uint32_t armFireTick;
+} ShotOrderRing;
+
 /* One roster change waiting its turn. A spawn carries the whole payload
  * because the seat, the brain and the init table are all read when it
  * lands rather than when it was asked for; a removal needs only the slot. */
@@ -159,6 +238,12 @@ struct ServerSim {
 
     BotManager      botMgr;  /* per-sim bot manager — initialised by botManagerInitInSim */
 
+    /* The last three expired shells of each player, for the three-shot
+     * order above. Zeroed when the sim is built, when a round starts and
+     * when a player leaves, so a slot never inherits the shots of whoever
+     * sat in it before. */
+    ShotOrderRing   shotOrder[MAX_TANKS];
+
     /* Per-bot brain selection as an index into brainList. 0xFF means
      * "use the global botBrainPath" (the CLI-configured default). The
      * lobby AiConfig dropdown writes here via
@@ -176,6 +261,23 @@ struct ServerSim {
      * brainList.entries[i]). Kept off the public catalogue so the path
      * never appears on the public API or the wire. */
     char            brainPaths[BRAIN_LIST_MAX][BRAIN_LIST_PATH_LEN];
+
+    /* The brains' lobby texts, read off disk ONCE and kept as the wire blob
+     * the CTRL_LOBBY_BRAIN_DOCS_CHUNK fragments are cut from.
+     *
+     * These used to be read at the moment they were sent. The send is inside
+     * serverSimSyncSubscriber, which the delayed spectator ring's control
+     * snapshot also runs — and that snapshot is rebuilt on every lobby
+     * keyframe, for a WinBoloDS that defaults to 16 spectator slots. Two
+     * files per brain, nine brains, both multiplied by the ring's keyframe
+     * rate, on the tick thread.
+     *
+     * ~271 KB, so it is allocated on first fill and freed with the sim
+     * rather than sitting in every ServerSim that never hosts a lobby.
+     * serverSimRefreshBrainDocs fills it and re-reads a brain whose files
+     * have a newer mtime, so an operator editing a brain's announce.txt
+     * between rounds still sees the change without a restart. */
+    struct ServerBrainDocsCache *brainDocs;
 
     /* Layout A lobby flags — all persist across rounds. */
     bool     openHost;             /* anyone can edit when true */

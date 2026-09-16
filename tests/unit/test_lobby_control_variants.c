@@ -729,6 +729,174 @@ int run_lobby_brain_list_codec_and_apply(void) {
 }
 
 /* ================================================================
+ * CTRL_LOBBY_BRAIN_DOCS_CHUNK — one fragment of one brain's lobby
+ * texts. The fragment carries a brain index as well as the seq/count
+ * pair, because the server streams a separate run of fragments for
+ * each brain that ships announce.txt / commands.txt.
+ * ================================================================ */
+int run_lobby_brain_docs_chunk_codec_roundtrip(void) {
+    ControlEvent in, out;
+    int i;
+
+    /* A middle fragment at the maximum payload, with a byte pattern that
+     * would show up any off-by-one in the length field. */
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
+    in.u.lobbyBrainDocsChunk.brainIdx = BRAIN_LIST_MAX - 1;
+    in.u.lobbyBrainDocsChunk.seq      = 3;
+    in.u.lobbyBrainDocsChunk.count    = 19;
+    in.u.lobbyBrainDocsChunk.fragLen  = LOBBY_BRAIN_DOCS_FRAG_MAX;
+    for (i = 0; i < LOBBY_BRAIN_DOCS_FRAG_MAX; i++) {
+        in.u.lobbyBrainDocsChunk.frag[i] = (uint8_t)(i & 0xFF);
+    }
+    UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_BRAIN_DOCS_CHUNK, &in, &out) == 0,
+                  "codec_roundtrip failed (full fragment)");
+    UT_ASSERT(out.type == CTRL_LOBBY_BRAIN_DOCS_CHUNK);
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.brainIdx == BRAIN_LIST_MAX - 1);
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.seq   == 3);
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.count == 19);
+    UT_ASSERT_MSG(out.u.lobbyBrainDocsChunk.fragLen == LOBBY_BRAIN_DOCS_FRAG_MAX,
+                  "fragLen %u", (unsigned)out.u.lobbyBrainDocsChunk.fragLen);
+    UT_ASSERT(memcmp(out.u.lobbyBrainDocsChunk.frag,
+                     in.u.lobbyBrainDocsChunk.frag,
+                     LOBBY_BRAIN_DOCS_FRAG_MAX) == 0);
+
+    /* A single short fragment — the common case for a brain whose two
+     * texts together fit one datagram. */
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
+    in.u.lobbyBrainDocsChunk.brainIdx = 0;
+    in.u.lobbyBrainDocsChunk.seq      = 0;
+    in.u.lobbyBrainDocsChunk.count    = 1;
+    in.u.lobbyBrainDocsChunk.fragLen  = 5;
+    memcpy(in.u.lobbyBrainDocsChunk.frag, "hello", 5);
+    UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_BRAIN_DOCS_CHUNK, &in, &out) == 0,
+                  "codec_roundtrip failed (short fragment)");
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.fragLen == 5);
+    UT_ASSERT(memcmp(out.u.lobbyBrainDocsChunk.frag, "hello", 5) == 0);
+
+    /* APPLY: seq 0..count-1 of a hand-built blob must install both texts,
+     * and the accessors must hand them back whole. The blob layout is the
+     * server's: [announceLen 2 BE][announce][docsLen 2 BE][docs]. */
+    {
+        static const char kAnnounce[] =
+            "Line one." "\n\n" "Line two, after a gap.";
+        ClientSim *cs = fresh_client_sim();
+        uint8_t blob[LOBBY_BRAIN_DOCS_WIRE_MAX];
+        size_t aLen = strlen(kAnnounce);
+        size_t dLen = 1200;                 /* spans two fragments with the rest */
+        size_t blen = 0, off = 0;
+        int nChunks, ci;
+        UT_ASSERT(cs != NULL);
+
+        blob[blen++] = (uint8_t)((aLen >> 8) & 0xFF);
+        blob[blen++] = (uint8_t)(aLen & 0xFF);
+        memcpy(blob + blen, kAnnounce, aLen); blen += aLen;
+        blob[blen++] = (uint8_t)((dLen >> 8) & 0xFF);
+        blob[blen++] = (uint8_t)(dLen & 0xFF);
+        for (i = 0; i < (int)dLen; i++) blob[blen + i] = (uint8_t)('a' + (i % 26));
+        blen += dLen;
+
+        nChunks = (int)((blen + LOBBY_BRAIN_DOCS_FRAG_MAX - 1) /
+                        LOBBY_BRAIN_DOCS_FRAG_MAX);
+        UT_ASSERT_MSG(nChunks == 2, "expected 2 fragments, got %d", nChunks);
+        for (ci = 0; ci < nChunks; ci++) {
+            size_t fl = blen - off;
+            if (fl > LOBBY_BRAIN_DOCS_FRAG_MAX) fl = LOBBY_BRAIN_DOCS_FRAG_MAX;
+            memset(&in, 0, sizeof(in));
+            in.type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
+            in.u.lobbyBrainDocsChunk.brainIdx = 2;
+            in.u.lobbyBrainDocsChunk.seq      = (uint8_t)ci;
+            in.u.lobbyBrainDocsChunk.count    = (uint8_t)nChunks;
+            in.u.lobbyBrainDocsChunk.fragLen  = (uint16_t)fl;
+            memcpy(in.u.lobbyBrainDocsChunk.frag, blob + off, fl);
+            /* Through the real codec, so the apply path sees decoded bytes. */
+            UT_ASSERT(codec_roundtrip(CTRL_LOBBY_BRAIN_DOCS_CHUNK, &in, &out) == 0);
+            clientSimApplyControl(cs, &out);
+            off += fl;
+        }
+
+        UT_ASSERT_MSG(strcmp(clientSimGetLobbyBrainAnnounce(cs, 2),
+                             kAnnounce) == 0,
+                      "announce round-trip: got '%s'",
+                      clientSimGetLobbyBrainAnnounce(cs, 2));
+        UT_ASSERT_MSG(strlen(clientSimGetLobbyBrainDocs(cs, 2)) == dLen,
+                      "docs length %u, want %u",
+                      (unsigned)strlen(clientSimGetLobbyBrainDocs(cs, 2)),
+                      (unsigned)dLen);
+        /* A brain nobody sent texts for reads as empty, never NULL. */
+        UT_ASSERT(clientSimGetLobbyBrainAnnounce(cs, 0)[0] == '\0');
+        UT_ASSERT(clientSimGetLobbyBrainDocs(cs, BRAIN_LIST_MAX - 1)[0] == '\0');
+        /* Out of range is empty too, not a read past the table. */
+        UT_ASSERT(clientSimGetLobbyBrainAnnounce(cs, -1)[0] == '\0');
+        UT_ASSERT(clientSimGetLobbyBrainDocs(cs, BRAIN_LIST_MAX)[0] == '\0');
+        clientSimDestroy(cs);
+    }
+
+    /* THE WORST CASE, end to end. Both texts at their cap make the largest
+     * blob the wire ever carries: 2 + 512 + 2 + 16384 = 16900 bytes, which
+     * is 19 fragments of 900. The count has to land inside the single seq
+     * byte, every fragment has to survive the codec, and the reassembled
+     * docs string has to come back whole — a docs cap raised past what the
+     * client buffer or the seq byte can hold would fail right here. */
+    {
+        ClientSim *cs = fresh_client_sim();
+        /* static: 16900 bytes is more than belongs on a test's stack. */
+        static uint8_t blob[LOBBY_BRAIN_DOCS_WIRE_MAX];
+        size_t aLen = BRAIN_ANNOUNCE_MAX, dLen = BRAIN_DOCS_MAX;
+        size_t blen = 0, off = 0;
+        int nChunks, ci;
+        UT_ASSERT(cs != NULL);
+
+        blob[blen++] = (uint8_t)((aLen >> 8) & 0xFF);
+        blob[blen++] = (uint8_t)(aLen & 0xFF);
+        for (i = 0; i < (int)aLen; i++) blob[blen + i] = (uint8_t)('A' + (i % 26));
+        blen += aLen;
+        blob[blen++] = (uint8_t)((dLen >> 8) & 0xFF);
+        blob[blen++] = (uint8_t)(dLen & 0xFF);
+        for (i = 0; i < (int)dLen; i++) blob[blen + i] = (uint8_t)('a' + (i % 26));
+        blen += dLen;
+        UT_ASSERT_MSG(blen == (size_t)LOBBY_BRAIN_DOCS_WIRE_MAX,
+                      "worst-case blob is %u bytes, want %u",
+                      (unsigned)blen, (unsigned)LOBBY_BRAIN_DOCS_WIRE_MAX);
+
+        nChunks = (int)((blen + LOBBY_BRAIN_DOCS_FRAG_MAX - 1) /
+                        LOBBY_BRAIN_DOCS_FRAG_MAX);
+        UT_ASSERT_MSG(nChunks == 19, "expected 19 fragments, got %d", nChunks);
+        UT_ASSERT_MSG(nChunks <= 255, "fragment count %d does not fit a byte",
+                      nChunks);
+
+        for (ci = 0; ci < nChunks; ci++) {
+            size_t fl = blen - off;
+            if (fl > LOBBY_BRAIN_DOCS_FRAG_MAX) fl = LOBBY_BRAIN_DOCS_FRAG_MAX;
+            memset(&in, 0, sizeof(in));
+            in.type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
+            in.u.lobbyBrainDocsChunk.brainIdx = 1;
+            in.u.lobbyBrainDocsChunk.seq      = (uint8_t)ci;
+            in.u.lobbyBrainDocsChunk.count    = (uint8_t)nChunks;
+            in.u.lobbyBrainDocsChunk.fragLen  = (uint16_t)fl;
+            memcpy(in.u.lobbyBrainDocsChunk.frag, blob + off, fl);
+            UT_ASSERT(codec_roundtrip(CTRL_LOBBY_BRAIN_DOCS_CHUNK, &in, &out) == 0);
+            clientSimApplyControl(cs, &out);
+            off += fl;
+        }
+
+        UT_ASSERT_MSG(strlen(clientSimGetLobbyBrainAnnounce(cs, 1)) == aLen,
+                      "announce length %u, want %u",
+                      (unsigned)strlen(clientSimGetLobbyBrainAnnounce(cs, 1)),
+                      (unsigned)aLen);
+        UT_ASSERT_MSG(strlen(clientSimGetLobbyBrainDocs(cs, 1)) == dLen,
+                      "docs length %u, want %u",
+                      (unsigned)strlen(clientSimGetLobbyBrainDocs(cs, 1)),
+                      (unsigned)dLen);
+        UT_ASSERT(memcmp(clientSimGetLobbyBrainDocs(cs, 1),
+                         blob + 2 + aLen + 2, dLen) == 0);
+        clientSimDestroy(cs);
+    }
+    return 0;
+}
+
+/* ================================================================
  * CTRL_LOBBY_SYNC_COMPLETE — header-only marker the server delivers
  * as the final event of the join sync replay. No payload, so the
  * round-trip just confirms the type survives encode/decode.
@@ -797,5 +965,270 @@ int run_lobby_rating_posted_codec_roundtrip(void) {
     memset(&out, 0, sizeof(out));
     UT_ASSERT_MSG(!dec(buf, outLen - 1, &out),
                   "decoder must reject a short body");
+    return 0;
+}
+
+/* ================================================================
+ * CTRL_LOBBY_BRAIN_DOCS_CHUNK — the LENGTH the two encoders answer
+ * with.
+ *
+ * codec_roundtrip above proves the bytes survive the trip, but it
+ * reads the length back out of the same variable the encoder was
+ * asked to fill: an encoder that never writes *outLen leaves the
+ * caller's own number standing, and a caller that zeroed it first
+ * sends an empty datagram while every field still "round-trips".
+ * Nothing but the number is checked here, against the wire format
+ * the file's comment states:
+ *
+ *   body   = brainIdx 1 + seq 1 + count 1 + fragLen 2 + frag
+ *   packet = PACKET_HEADER_SIZE + body
+ *
+ * Both ends of the fragment range, because a zero-length fragment is
+ * the one case where a forgotten write and a correct one could agree.
+ * ================================================================ */
+int run_lobby_brain_docs_chunk_len_is_exact(void) {
+    ControlEncodeFn     enc = transportControlCodecEncoder(CTRL_LOBBY_BRAIN_DOCS_CHUNK);
+    ControlEncodeBodyFn bodyEnc =
+        transportControlCodecBodyEncoder(CTRL_LOBBY_BRAIN_DOCS_CHUNK);
+    ControlDecodeBodyFn bodyDec =
+        transportControlCodecBodyDecoder(CTRL_LOBBY_BRAIN_DOCS_CHUNK);
+    ControlEvent in, out;
+    uint8_t      buf[MAX_CONTROL_PACKET];
+    size_t       len;
+    int          i;
+
+    UT_ASSERT_MSG(enc != NULL, "no packet encoder");
+    UT_ASSERT_MSG(bodyEnc != NULL, "no body encoder");
+    UT_ASSERT_MSG(bodyDec != NULL, "no body decoder");
+
+    /* A full fragment — the largest datagram this packet ever sends. */
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
+    in.u.lobbyBrainDocsChunk.brainIdx = BRAIN_LIST_MAX - 1;
+    in.u.lobbyBrainDocsChunk.seq      = 18;
+    in.u.lobbyBrainDocsChunk.count    = 19;
+    in.u.lobbyBrainDocsChunk.fragLen  = LOBBY_BRAIN_DOCS_FRAG_MAX;
+    for (i = 0; i < LOBBY_BRAIN_DOCS_FRAG_MAX; i++) {
+        in.u.lobbyBrainDocsChunk.frag[i] = (uint8_t)((i * 7) & 0xFF);
+    }
+
+    /* The number the caller already held must be overwritten, not left. */
+    len = 12345;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT_MSG(len == (size_t)(PACKET_HEADER_SIZE + 5 +
+                                  LOBBY_BRAIN_DOCS_FRAG_MAX),
+                  "the packet encoder answered %zu bytes, expected %zu",
+                  len, (size_t)(PACKET_HEADER_SIZE + 5 +
+                                LOBBY_BRAIN_DOCS_FRAG_MAX));
+    UT_ASSERT_MSG(buf[2] == PACKET_LOBBY_BRAIN_DOCS_CHUNK,
+                  "the header names packet type %u", (unsigned)buf[2]);
+
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(bodyDec(buf + PACKET_HEADER_SIZE, len - PACKET_HEADER_SIZE,
+                          &out),
+                  "the body the packet encoder wrote would not decode");
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.brainIdx == BRAIN_LIST_MAX - 1);
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.seq   == 18);
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.count == 19);
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.fragLen == LOBBY_BRAIN_DOCS_FRAG_MAX);
+    UT_ASSERT(memcmp(out.u.lobbyBrainDocsChunk.frag,
+                     in.u.lobbyBrainDocsChunk.frag,
+                     LOBBY_BRAIN_DOCS_FRAG_MAX) == 0);
+
+    /* The body encoder on its own answers the body length alone. */
+    len = 12345;
+    UT_ASSERT(bodyEnc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT_MSG(len == (size_t)(5 + LOBBY_BRAIN_DOCS_FRAG_MAX),
+                  "the body encoder answered %zu bytes, expected %zu",
+                  len, (size_t)(5 + LOBBY_BRAIN_DOCS_FRAG_MAX));
+
+    /* A zero-length fragment: five bytes of body and nothing after it. */
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
+    in.u.lobbyBrainDocsChunk.brainIdx = 0;
+    in.u.lobbyBrainDocsChunk.seq      = 0;
+    in.u.lobbyBrainDocsChunk.count    = 1;
+    in.u.lobbyBrainDocsChunk.fragLen  = 0;
+
+    len = 12345;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT_MSG(len == (size_t)(PACKET_HEADER_SIZE + 5),
+                  "an empty fragment made a %zu-byte packet, expected %zu",
+                  len, (size_t)(PACKET_HEADER_SIZE + 5));
+
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT(bodyDec(buf + PACKET_HEADER_SIZE, len - PACKET_HEADER_SIZE,
+                      &out));
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.brainIdx == 0);
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.count    == 1);
+    UT_ASSERT_MSG(out.u.lobbyBrainDocsChunk.fragLen == 0,
+                  "fragLen came back %u",
+                  (unsigned)out.u.lobbyBrainDocsChunk.fragLen);
+
+    len = 12345;
+    UT_ASSERT(bodyEnc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT_MSG(len == 5, "an empty fragment made a %zu-byte body, "
+                  "expected 5", len);
+    return 0;
+}
+
+/* A NEW BRAIN LIST THROWS THE OLD TEXTS AWAY.
+ *
+ * The texts are held by catalogue INDEX, not by brain name: entry 2's
+ * announce line is "whatever brain 2 is". Reconnect to a different server and
+ * its entry 2 is a different brain — but the table still held the previous
+ * server's text, so the lobby showed one server's announce line under another
+ * server's brain name, and clicking it opened the wrong docs.
+ *
+ * CTRL_LOBBY_BRAIN_LIST is the event that makes the old indices meaningless,
+ * so it is where the table is dropped. The fragments for the new list follow
+ * it in the same sync replay, so nothing that is still wanted is lost.
+ *
+ * The partial-reassembly state goes with it: a docs stream cut off by the list
+ * change must not splice its tail onto the next server's first fragment. */
+int run_lobby_brain_list_clears_stale_texts(void) {
+    ControlEvent in, out;
+    ClientSim   *cs = fresh_client_sim();
+    uint8_t      blob[LOBBY_BRAIN_DOCS_WIRE_MAX];
+    static const char kAnnounce[] = "Server one's brain 2 speaking";
+    size_t       aLen = strlen(kAnnounce);
+    size_t       dLen = 40;
+    size_t       blen = 0;
+    int          i;
+
+    UT_ASSERT(cs != NULL);
+
+    /* One brain's texts, in one fragment. */
+    blob[blen++] = (uint8_t)((aLen >> 8) & 0xFF);
+    blob[blen++] = (uint8_t)(aLen & 0xFF);
+    memcpy(blob + blen, kAnnounce, aLen); blen += aLen;
+    blob[blen++] = (uint8_t)((dLen >> 8) & 0xFF);
+    blob[blen++] = (uint8_t)(dLen & 0xFF);
+    for (i = 0; i < (int)dLen; i++) blob[blen + i] = (uint8_t)('a' + (i % 26));
+    blen += dLen;
+
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
+    in.u.lobbyBrainDocsChunk.brainIdx = 2;
+    in.u.lobbyBrainDocsChunk.seq      = 0;
+    in.u.lobbyBrainDocsChunk.count    = 1;
+    in.u.lobbyBrainDocsChunk.fragLen  = (uint16_t)blen;
+    memcpy(in.u.lobbyBrainDocsChunk.frag, blob, blen);
+    UT_ASSERT(codec_roundtrip(CTRL_LOBBY_BRAIN_DOCS_CHUNK, &in, &out) == 0);
+    clientSimApplyControl(cs, &out);
+
+    UT_ASSERT_MSG(strcmp(clientSimGetLobbyBrainAnnounce(cs, 2), kAnnounce) == 0,
+                  "the fixture did not install the texts in the first place: "
+                  "'%s'", clientSimGetLobbyBrainAnnounce(cs, 2));
+
+    /* Now a different server's catalogue arrives. */
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_BRAIN_LIST;
+    in.u.lobbyBrainList.list.count = 3;
+    snprintf(in.u.lobbyBrainList.list.entries[0].name,
+             BRAIN_LIST_NAME_LEN, "%s", "OtherA");
+    snprintf(in.u.lobbyBrainList.list.entries[1].name,
+             BRAIN_LIST_NAME_LEN, "%s", "OtherB");
+    snprintf(in.u.lobbyBrainList.list.entries[2].name,
+             BRAIN_LIST_NAME_LEN, "%s", "OtherC");
+    UT_ASSERT(codec_roundtrip(CTRL_LOBBY_BRAIN_LIST, &in, &out) == 0);
+    clientSimApplyControl(cs, &out);
+
+    UT_ASSERT_MSG(clientSimGetLobbyBrainAnnounce(cs, 2)[0] == '\0',
+                  "the previous server's announce line survived a new brain "
+                  "list: '%s'. Index 2 is a different brain now",
+                  clientSimGetLobbyBrainAnnounce(cs, 2));
+    UT_ASSERT_MSG(clientSimGetLobbyBrainDocs(cs, 2)[0] == '\0',
+                  "the previous server's commands.txt survived a new brain "
+                  "list");
+
+    /* The new server's own fragments still install: the clear drops what is
+       stale, not the channel. */
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
+    in.u.lobbyBrainDocsChunk.brainIdx = 2;
+    in.u.lobbyBrainDocsChunk.seq      = 0;
+    in.u.lobbyBrainDocsChunk.count    = 1;
+    in.u.lobbyBrainDocsChunk.fragLen  = (uint16_t)blen;
+    memcpy(in.u.lobbyBrainDocsChunk.frag, blob, blen);
+    UT_ASSERT(codec_roundtrip(CTRL_LOBBY_BRAIN_DOCS_CHUNK, &in, &out) == 0);
+    clientSimApplyControl(cs, &out);
+    UT_ASSERT_MSG(strcmp(clientSimGetLobbyBrainAnnounce(cs, 2), kAnnounce) == 0,
+                  "texts sent after the new list did not install: '%s'",
+                  clientSimGetLobbyBrainAnnounce(cs, 2));
+
+    clientSimDestroy(cs);
+    return 0;
+}
+
+/* ONE FUNCTION OWNS THE "name: text" LINE.
+ *
+ * The lobby's bot-announce poll appends a line to team chat and then searches
+ * the history for it, because a chat buffer near full drops an append without
+ * a word and only what actually landed may have the brain's docs hung off it.
+ * That search only works while the searcher spells the line exactly as the
+ * append did — and the two used to build it separately, one with strcat in
+ * client_sim.c and one with an SDL_snprintf("%s: %s") in imgui_lobby.cpp.
+ * Nothing tied them together, so a change to either spelling would have
+ * turned the search into a permanent miss and no bot would ever have carried
+ * its docs again.
+ *
+ * clientSimFormatLobbyChatLine is now that one spelling. This case checks
+ * what both sides depend on: the formatter's output is what the append
+ * actually writes, so a search for the former finds the latter. */
+int run_lobby_chat_line_format_is_what_is_appended(void) {
+    ClientSim  *cs = fresh_client_sim();
+    char        line[LOBBY_CHAT_LINE_MAX];
+    const char *history;
+    int         n;
+
+    UT_ASSERT(cs != NULL);
+
+    n = clientSimFormatLobbyChatLine(line, sizeof(line), "Bot1",
+                                     "I fetch pills and hold ground");
+    UT_ASSERT_MSG(n > 0, "the formatter refused an ordinary line (%d)", n);
+    UT_ASSERT_MSG(strcmp(line, "Bot1: I fetch pills and hold ground") == 0,
+                  "the line reads \"%s\"", line);
+    UT_ASSERT_MSG(n == (int)strlen(line),
+                  "the formatter returned %d for a %d-character line",
+                  n, (int)strlen(line));
+
+    /* Team chat: exactly what the lobby's announce poll does. */
+    clientSimAppendLobbyTeamChat(cs, "Bot1", "I fetch pills and hold ground");
+    history = clientSimGetLobbyTeamChatHistory(cs);
+    UT_ASSERT_MSG(history != NULL && strstr(history, line) != NULL,
+                  "the appended team-chat line is not the formatted one: "
+                  "history \"%s\" does not contain \"%s\"",
+                  history ? history : "(null)", line);
+
+    /* And the broadcast log, which is the same shape. */
+    clientSimAppendLobbyChat(cs, "Bot1", "I fetch pills and hold ground");
+    history = clientSimGetLobbyChatHistory(cs);
+    UT_ASSERT_MSG(history != NULL && strstr(history, line) != NULL,
+                  "the appended broadcast line is not the formatted one");
+
+    /* A second line is newline-separated, so the search for the first still
+       matches and the two do not run together. */
+    clientSimAppendLobbyTeamChat(cs, "Bot2", "and I mine");
+    history = clientSimGetLobbyTeamChatHistory(cs);
+    UT_ASSERT_MSG(strstr(history, line) != NULL,
+                  "the first line stopped matching once a second was added");
+    UT_ASSERT_MSG(strstr(history, "\nBot2: and I mine") != NULL,
+                  "the second line did not start on a line of its own: "
+                  "\"%s\"", history);
+
+    /* No room means no line, and the caller is told so rather than being
+       handed a half-written one to search for. */
+    {
+        char tiny[8];
+        UT_ASSERT_MSG(clientSimFormatLobbyChatLine(tiny, sizeof(tiny),
+                                                   "AVeryLongBotName",
+                                                   "and a long announce") < 0,
+                      "a line that cannot fit was reported as written");
+        UT_ASSERT_MSG(tiny[0] == '\0',
+                      "a refused line left \"%s\" in the buffer", tiny);
+    }
+
+    clientSimDestroy(cs);
     return 0;
 }

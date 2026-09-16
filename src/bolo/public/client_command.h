@@ -205,6 +205,7 @@ typedef struct {
  * 0x80 aliases the 0xFF broadcast sentinel and would swallow broadcast
  * chat. Every routing site checks 0xFF (broadcast) first, then
  * CHAT_DEST_IS_TEAM, then slot unicast. */
+#define CHAT_DEST_BROADCAST  0xFF   /* everybody, the sentinel above */
 #define CHAT_DEST_TEAM_BASE 0x80
 #define CHAT_DEST_IS_TEAM(d) ((d) >= 0x81 && (d) <= 0x90)
 #define CHAT_DEST_TEAM_OF(d) ((uint8_t)((d) - CHAT_DEST_TEAM_BASE))

@@ -228,6 +228,11 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
      * them via PACKET_LOBBY_BRAIN_LIST. Cheap one-shot scan of the
      * brains/ tree. */
     brainListScan(&sim->brainList, sim->brainPaths);
+    /* ... and the announce.txt / commands.txt that go with them, read here
+     * ONCE. The send path used to open both files per brain every time it
+     * ran, and it runs inside the sync replay the spectator ring rebuilds on
+     * every lobby keyframe. */
+    serverSimRefreshBrainDocs(sim);
 
     sim->startDelay = startDelay;
     sim->gameLength = gameLen;
@@ -241,6 +246,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->snapshotTicks = 0;
     sim->tick = 0;
     sim->roundLogStartTick = ROUND_LOG_START_UNSET;
+    /* No shells in flight toward a three-shot order yet. */
+    memset(sim->shotOrder, 0, sizeof(sim->shotOrder));
     sim->state = serverStateLobby;
     sim->lobbyEnabled = TRUE;
     sim->countdownTicks = 0;
@@ -361,6 +368,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.explosion = serverSimCbExplosion;
     sim->sim.callbacks.tkExplosion = serverSimCbTkExplosion;
     sim->sim.callbacks.shellDeath = serverSimCbShellDeath;
+    sim->sim.callbacks.shellFired = serverSimCbShellFired;
     sim->sim.callbacks.recordDamage = serverSimCbRecordDamage;
     sim->sim.callbacks.recordPlayerAction = serverSimCbRecordPlayerAction;
     sim->sim.callbacks.recordPillPickup = serverSimCbRecordPillPickup;
@@ -656,6 +664,9 @@ void serverSimDestroy(ServerSim *sim) {
      * botManagerDestroy(sim) / serverSimDestroyBots(sim) before
      * this destroy walk an already-empty bots[] on this call. */
     botManagerDestroy(sim);
+
+    /* The brains' lobby texts (~271 KB), allocated on the first refresh. */
+    serverSimFreeBrainDocs(sim);
 
     for (count = 0; count < MAX_TANKS; count++) {
         if (sim->sim.tanks[count] != NULL) {

@@ -339,6 +339,7 @@ static const char *logEventsTypeName(int type) {
     case CTRL_LOBBY_BOT_CONFIG:      return "CTRL_LOBBY_BOT_CONFIG";
     case CTRL_LOBBY_BOT_BRAIN:       return "CTRL_LOBBY_BOT_BRAIN";
     case CTRL_LOBBY_BRAIN_LIST:      return "CTRL_LOBBY_BRAIN_LIST";
+    case CTRL_LOBBY_BRAIN_DOCS_CHUNK: return "CTRL_LOBBY_BRAIN_DOCS_CHUNK";
     case CTRL_GAME_VOTE_STATE:       return "CTRL_GAME_VOTE_STATE";
     case CTRL_SERVER_TEXT:           return "CTRL_SERVER_TEXT";
     case CTRL_COMMAND_REJECTED:      return "CTRL_COMMAND_REJECTED";
@@ -367,6 +368,11 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
    * fragment count tracks data/bot_names.json — so drop it from the captured
    * stream to keep the baselines stable and content-independent. */
   if (evt->type == CTRL_LOBBY_BOT_POOL_CHUNK) return;
+
+  /* Same story for the per-brain lobby texts (announce.txt/commands.txt):
+   * they are lobby display data whose fragment count depends on which
+   * brains exist on the machine the baseline runs on. */
+  if (evt->type == CTRL_LOBBY_BRAIN_DOCS_CHUNK) return;
 
   /* Tick numbers come from the ClientSim's last-server-tick counter,
    * which both modes agree on (set by snapshot ingestion in --fast
@@ -660,6 +666,10 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
     case CTRL_VOICE_TALKING:
       fprintf(f, ",\"talking\":%u",
               (unsigned)evt->u.voiceTalking.talking);
+      break;
+
+    case CTRL_LOBBY_BRAIN_DOCS_CHUNK:
+      /* Dropped above; never reaches the body writer. */
       break;
 
     case CTRL_EVENT_TYPE_COUNT:

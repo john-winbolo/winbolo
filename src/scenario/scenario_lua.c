@@ -2481,6 +2481,70 @@ static int scnLuaMessage(lua_State *L) {
     return scnDone(L, &op, "%d bytes to %d", (int)len, (int)to);
 }
 
+/* A line one seat says.
+ *
+ * The line game.message writes is the server's, and a server line never
+ * enters a brain's inbox: a brain reads chat. This is a seat's own chat
+ * line, so a scripted round can hand a bot exactly what a human ally typing
+ * would hand it, from a seat nobody is sitting in. It fires on_chat too,
+ * with the sender named and scripted true.
+ *
+ * Who hears it is the three a player has: their own team with no target,
+ * the whole game with "all", and one seat with a seat number. A team the
+ * sender is not on is not among them, because the chat path refuses a line
+ * addressed to one whoever sends it.
+ */
+static int scnLuaSay(lua_State *L) {
+    ScenarioOp  op;
+    size_t      len  = 0;
+    lua_Integer p    = scnArgInt(L, 1, "p");
+    const char *text = scnArgText(L, 2, "text", &len);
+    BYTE        mode = SCN_SAY_TEAM;
+    lua_Integer to   = 0;
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    if (len >= SCN_TEXT_MAX) {
+        return scnRefused(L, SCN_OP_TOO_BIG, "text is %d bytes, limit %d",
+                          (int)len, (int)SCN_TEXT_MAX - 1);
+    }
+    /* A line with nothing in it arrives nowhere: every receiver drops a chat
+       body of no length. Refused here rather than accepted and lost. */
+    if (len == 0) {
+        return scnRefused(L, SCN_OP_BAD_CALL, "the line is empty");
+    }
+    /* No target is the seat's own team, which is what a scenario handing a
+       bot an order almost always wants. */
+    if (!lua_isnoneornil(L, 3)) {
+        if (lua_type(L, 3) == LUA_TSTRING) {
+            const char *word = lua_tostring(L, 3);
+            if (strcmp(word, "all") != 0 && strcmp(word, "team") != 0) {
+                return scnRefused(L, SCN_OP_BAD_CALL,
+                                  "target is \"%s\", not \"all\" or \"team\"",
+                                  word);
+            }
+            mode = (strcmp(word, "all") == 0) ? SCN_SAY_ALL : SCN_SAY_TEAM;
+        } else {
+            to = scnArgInt(L, 3, "target");
+            if (!scnFitsByte(to)) {
+                return scnRefused(L, SCN_OP_NO_SUCH_PLAYER,
+                                  "target %d is not a seat", (int)to);
+            }
+            mode = SCN_SAY_PLAYER;
+        }
+    }
+    memset(&op, 0, sizeof(op));
+    op.type            = SCN_OP_MSG_SAY;
+    op.u.msgSay.slot   = (BYTE)p;
+    op.u.msgSay.mode   = mode;
+    op.u.msgSay.target = (BYTE)to;
+    memcpy(op.u.msgSay.text, text, len + 1);
+    return scnDone(L, &op, "%d bytes from player %d, mode %d", (int)len,
+                   (int)p, (int)mode);
+}
+
 static int scnLuaSound(lua_State *L) {
     ScenarioOp  op;
     int         sound = scnArgWord(L, 1, "name", &kScnSounds);
@@ -2579,6 +2643,55 @@ static int scnLuaSetRule(lua_State *L) {
        room for and what an integer rule ends up holding anyway. */
     return scnDone(L, &op, "rule '%s' to %d", name,
                    (int)scnWhole(lua_tonumber(L, 2)));
+}
+
+/* ── Test hooks ────────────────────────────────────────────────────
+ *
+ * shell_expired(p, x, y [, fire_tick]): one of seat p's shells ran its full
+ * range and died over square (x, y) with nothing hit. It exists because a
+ * script cannot make a seat fire, and the three-shot order — three
+ * full-range shells on one open square inside two seconds, with a quiet
+ * second either side of them — has no other way of being put to a round.
+ * Nothing is simulated but the notice itself.
+ *
+ * fire_tick is the SERVER tick the shell LEFT THE GUN, and every timing rule
+ * in the detector is on that tick rather than on the landing. A real
+ * full-range shell is 104 server ticks in the air (shells.c shellsAddItem
+ * works the number out), which is longer than either quiet second, so a
+ * script that wants to place a shot inside or outside one of them has to say
+ * when it was fired. Left out, the shell counts as fired now.
+ */
+static int scnLuaShellExpired(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer p    = scnArgInt(L, 1, "p");
+    lua_Integer x    = scnArgInt(L, 2, "x");
+    lua_Integer y    = scnArgInt(L, 3, "y");
+    lua_Integer fire = scnOptInt(L, 4, "fire_tick", -1);
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    if (!scnFitsByte(x) || !scnFitsByte(y)) {
+        return scnRefused(L, SCN_OP_BAD_SQUARE, "square (%d, %d) is off the map",
+                          (int)x, (int)y);
+    }
+    if (fire < -1) {
+        return scnRefused(L, SCN_OP_RANGE, "fire_tick %d is before the round "
+                          "started", (int)fire);
+    }
+    memset(&op, 0, sizeof(op));
+    op.type                        = SCN_OP_SHELL_EXPIRED;
+    op.u.shellExpired.slot         = (BYTE)p;
+    op.u.shellExpired.x            = (BYTE)x;
+    op.u.shellExpired.y            = (BYTE)y;
+    op.u.shellExpired.haveFireTick = (fire >= 0);
+    op.u.shellExpired.fireTick     = (fire >= 0) ? (uint32_t)fire : 0u;
+    if (fire >= 0) {
+        return scnDone(L, &op, "player %d over (%d, %d), fired on %d",
+                       (int)p, (int)x, (int)y, (int)fire);
+    }
+    return scnDone(L, &op, "player %d over (%d, %d)", (int)p, (int)x, (int)y);
 }
 
 /* ══ The rows that reach no op ════════════════════════════════════════
@@ -3048,6 +3161,11 @@ static const ScnLuaRow kScnLuaRows[] = {
     { "message", scnLuaMessage,
       "message(text[, target]) — a line to everyone, to one seat with a "
       "number, or to a team with { team = t }." },
+    { "say", scnLuaSay,
+      "say(p, text[, target]) — a chat line seat p says: to its own team "
+      "with no target, to everyone with \"all\", or to one seat with a "
+      "number. Unlike message, which is the server talking, this reaches a "
+      "bot's inbox and fires on_chat." },
     { "sound", scnLuaSound,
       "sound(name[, x, y]) — play one of the server's sounds, at a square "
       "or everywhere." },
@@ -3066,6 +3184,14 @@ static const ScnLuaRow kScnLuaRows[] = {
       "set_rule(name, value) — write one of the gameplay rules; a name that "
       "spells no rule raises, and a value the table will not take is "
       "refused." },
+    { "shell_expired", scnLuaShellExpired,
+      "shell_expired(p, x, y [, fire_tick]) — post one of seat p's shells as "
+      "having run its full range and died over square (x, y) with nothing "
+      "hit; three on one open square inside two seconds, with a quiet second "
+      "either side, are the three-shot order the bots read. fire_tick is "
+      "when the shell left the gun, which is the tick every timing rule "
+      "reads; left out, it counts as fired now. A test hook: nothing else "
+      "about the shell happens." },
 };
 
 static const ScnLuaConst kScnLuaConsts[] = {

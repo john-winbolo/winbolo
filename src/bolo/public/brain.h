@@ -379,6 +379,20 @@ typedef struct
 	// fields in front of it by offset, so nothing above may move.
 	BrainRules rules;
 
+	// A smart ping the brain asks the engine to put on the map this think.
+	// ping_pending is 0 on every think the engine builds, so a brain that
+	// says nothing places nothing; set it to non-zero and the other three
+	// fields are read. The engine turns the request into a CMD_PING from
+	// the brain's OWN player slot, so the marker is team-filtered, drawn
+	// and recorded exactly like a marker a person placed. ping_kind is a
+	// PING_KIND_* (input_packet.h); ping_x / ping_y are WORLD units, 256
+	// to a map square. The engine rate-limits bot pings, so a request can
+	// be dropped and the brain is not told.
+	BYTE    ping_pending;
+	BYTE    ping_kind;
+	WORLD_X ping_x;
+	WORLD_Y ping_y;
+
 	} BrainInfo;
 
 #pragma pack(pop)

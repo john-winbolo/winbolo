@@ -38,6 +38,7 @@
 
 local ally_state = require("ally_state")
 local lgm_registry = require("lgm_registry")
+local orders = require("orders")
 local print2 = require("print2")
 
 local M = {}
@@ -288,6 +289,14 @@ function M.process_message(sender, text, tick, state)
       print2(string.format("REPO_RX rvx from p%s pill=%s exec_t=%s t=%d", tostring(sender), pid, exec_tick, tick))
       return
     end
+  end
+
+  -- ── Bot-command ORDER verbs (obd bid / obc claim / obr release) ─────────
+  -- Their own verbs, like the reposition vote's: order traffic is bursty and
+  -- the /info state slate is already near the 124-byte batch budget. The
+  -- parser lives in orders.lua (M.rx), which stashes the record on state.
+  if state and text:sub(1, 8) == "/info ob" then
+    if orders.rx(sender, text, tick, state) then return end
   end
 
   -- ── attack_pill steal negotiation (one-shot events, stashed on state) ────

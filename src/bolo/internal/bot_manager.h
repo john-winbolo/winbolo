@@ -149,6 +149,12 @@ typedef struct {
      * binding cast lua_getextraspace(L) back to BotContext * to read
      * abort_flag and thinkDeadlineCounter without per-binding plumbing. */
     SubscriberHandle controlSub;
+    /* Sim tick of the last smart ping this bot was allowed to queue, plus
+     * one, so that zero can mean "never" — tick 0 is a real tick. Written
+     * and read only by this bot's own worker (botManagerQueuePing), so it
+     * needs no lock. The gap it enforces is BOT_PING_MIN_GAP_TICKS; the
+     * server's own ping rate limit still applies after it. */
+    uint32_t        lastPingTick;
 } BotContext;
 
 /* Per-bot scratch carried across the three within-tick stages
@@ -181,9 +187,9 @@ typedef struct {
      * worker pushes commands here from inside the brain-think stage,
      * and the producer drains the queue in Stage 3 (serial, already
      * under the mutex) via serverSimApplyCommand.  4 slots covers
-     * /info state + /info extra in a single tick plus a couple of
-     * future-proofing extras. */
-#define BOT_PENDING_CMD_MAX 4
+     * /info state + /info extra in a single tick, the bot's own smart
+     * pings, and a couple of future-proofing extras. */
+#define BOT_PENDING_CMD_MAX 6
     ClientCommand       pendingCmds[BOT_PENDING_CMD_MAX];
     int                 pendingCmdCount;
     /* Deferred internal (messagedest == 0) bot-to-bot messages.
@@ -609,6 +615,37 @@ void botManagerDeliverInternalMessage(struct ServerSim *sim,
 void botManagerQueueInternalMessage(struct ServerSim *sim,
                                     BYTE fromPlayer,
                                     const char *msg);
+
+/* Shortest gap, in sim ticks, between two smart pings from one bot. A bot
+ * thinks every tick and can decide to ping on any of them, so without a
+ * floor of its own a re-planning bot could put a marker on the team's map
+ * fifty times a second. Twenty-five ticks is half a second. Requests that
+ * arrive inside the gap are dropped and the brain is not told. */
+#define BOT_PING_MIN_GAP_TICKS 25
+
+/*********************************************************
+ *NAME:          botManagerQueuePing
+ *PURPOSE:
+ *  Queues a CMD_PING from a bot's own player slot, for the
+ *  producer thread to apply in Stage 3 of botManagerTick.
+ *  Called from brain_data.c when a brain's think returned a
+ *  ping request, which happens on a bot worker thread — the
+ *  same reason the bot's chat is queued rather than sent.
+ *
+ *  Rate-limited to one ping per bot per
+ *  BOT_PING_MIN_GAP_TICKS; extras are dropped in silence.
+ *  The command still passes the server's own ping gates when
+ *  it is applied, so a queued ping is not a granted one.
+ *
+ *ARGUMENTS:
+ *  sim        - The ServerSim hosting the bot manager
+ *  fromPlayer - Slot of the bot placing the ping
+ *  kind       - A PING_KIND_* value
+ *  worldX     - World X, 256 units to a map square
+ *  worldY     - World Y, 256 units to a map square
+ *********************************************************/
+void botManagerQueuePing(struct ServerSim *sim, BYTE fromPlayer,
+                         uint8_t kind, uint16_t worldX, uint16_t worldY);
 
 /* Bot-comms debug logger. Appends to "botmsg_debug.log" in the CWD, but ONLY
  * when bot debug mode is on (set via -braindebug / SetDefaultDebugMode) — a

@@ -1725,6 +1725,32 @@ void serverSimFillLobbyBotConfigEvent(ServerSim *sim, BYTE slot, struct ControlE
 void serverSimFillLobbyBotBrainEvent(const ServerSim *sim, BYTE slot, struct ControlEvent *evt);
 void serverSimFillLobbyBrainListEvent(const ServerSim *sim, struct ControlEvent *evt);
 
+/* Read every brain's LOBBY TEXTS (announce.txt + commands.txt) off disk into
+ * the sim's cache, skipping any brain whose two files have not changed since
+ * the last read. Called once where the brains are scanned, and again when a
+ * round hands the lobby back, which is the seam an operator would have edited
+ * a brain's texts across. Never on the tick path. */
+void serverSimRefreshBrainDocs(ServerSim *sim);
+
+/* Drops the cache serverSimRefreshBrainDocs built. serverSimDestroy calls it;
+ * nothing else needs to. */
+void serverSimFreeBrainDocs(ServerSim *sim);
+
+/* Stream every brain's LOBBY TEXTS as CTRL_LOBBY_BRAIN_DOCS_CHUNK events
+ * through `deliver`, out of the cache above — one stream per brain, and only
+ * for brains that ship at least one of the two files, so a server whose
+ * brains carry none emits nothing and a sim that never refreshed emits
+ * nothing either.
+ *
+ * Called beside the brain list, on the two paths where a real client is
+ * listening: a joiner's (or spectator's) sync replay, and the broadcast bus
+ * when a round hands the lobby back. NOT from the delayed spectator ring's
+ * control snapshot — that is rebuilt per keyframe and has a size cap these
+ * fragments would push it past. */
+void serverSimEmitBrainDocs(const ServerSim *sim,
+                            void (*deliver)(void *, const struct ControlEvent *),
+                            void *ctx);
+
 /*********************************************************
  * Read accessors.
  *

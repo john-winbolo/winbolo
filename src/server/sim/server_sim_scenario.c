@@ -52,6 +52,7 @@
 #include "gametype.h"      /* TANK_FULL_* — the stock caps */
 #include "sim_rules.h"     /* the table the rule arm writes, and its check */
 #include "log.h"           /* logAddEvent — the arm's record */
+#include "client_command.h" /* CMD_CHAT and the team destination the say arm builds */
 
 /* SCN_PANEL_MAX is written as a literal on the scenario surface, which
  * cannot see the channel sizes. This is where the two meet: one panel
@@ -2421,6 +2422,78 @@ static ScnOpResult scenarioOpMsgPlayer(ServerSim *sim,
     return SCN_OP_OK;
 }
 
+/* Say something as a seat says it.
+ *
+ * The three arms above are the server talking: they publish CTRL_SERVER_TEXT,
+ * which a client shows on its newswire and a bot brain never sees, because a
+ * brain's inbox is fed from chat alone. This one is a player talking. It is
+ * the op a test uses to hand a bot the line a human ally would type, from a
+ * seat with nobody in it.
+ *
+ * The line is handed to the dispatcher's own CMD_CHAT arm rather than
+ * published here, so it takes the path a typed line takes and no other: the
+ * same destination checks, the same CTRL_CHAT, the same log entry, and from
+ * there the same MessageState inbox every brain reads. Everything the arm
+ * would refuse is refused above it, so the dispatcher's answer is only ever
+ * OK.
+ *
+ * A seat with no team has nobody to say a team line to, which is a refusal
+ * rather than a line the whole game hears: SCN_SAY_ALL is the mode for that.
+ */
+static ScnOpResult scenarioOpMsgSay(ServerSim *sim, const ScnOpMsgSay *p) {
+    ClientCommand cmd;
+    size_t        len;
+
+    if (p->slot >= MAX_TANKS || !sim->playerConnected[p->slot]) {
+        return SCN_OP_NO_SUCH_PLAYER;
+    }
+    if (!scenarioTextTerminated(p->text, sizeof(p->text))) {
+        return SCN_OP_TOO_BIG;
+    }
+    len = strlen(p->text);
+    /* An empty line is no line: every receiver drops a chat body of no
+       length, so it would be accepted here and arrive nowhere. */
+    if (len == 0) {
+        return SCN_OP_BAD_CALL;
+    }
+    if (len > (size_t)PACKET_MAX_CHAT_MESSAGE) {
+        len = (size_t)PACKET_MAX_CHAT_MESSAGE;
+    }
+
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type = CMD_CHAT;
+    switch (p->mode) {
+        case SCN_SAY_ALL:
+            cmd.u.chat.destPlayer = 0xFF;
+            break;
+        case SCN_SAY_PLAYER:
+            if (p->target >= MAX_TANKS || !sim->playerConnected[p->target]) {
+                return SCN_OP_NO_SUCH_PLAYER;
+            }
+            cmd.u.chat.destPlayer = p->target;
+            break;
+        case SCN_SAY_TEAM:
+        default: {
+            /* Team 0 is unassigned, and the destination byte only reaches
+               team 16, one past the last team ServerSim.teams[] is keyed
+               by. */
+            BYTE team = sim->lobbyPlayers[p->slot].teamNumber;
+            if (team == 0 || team >= MAX_TANKS) {
+                return SCN_OP_RANGE;
+            }
+            cmd.u.chat.destPlayer = (BYTE)(CHAT_DEST_TEAM_BASE + team);
+            break;
+        }
+    }
+    cmd.u.chat.bodyLen = (uint16_t)len;
+    memcpy(cmd.u.chat.body, p->text, len);
+
+    if (serverSimApplyCommand(sim, (int)p->slot, &cmd) != CMD_OK) {
+        return SCN_OP_WRONG_STATE;
+    }
+    return SCN_OP_OK;
+}
+
 /* Play a sound, at a square or at everyone.
  *
  * 0xFF, 0xFF is the square that is nowhere: soundPickOffer hands it to every
@@ -2800,6 +2873,49 @@ static ScnOpResult scenarioOpSetRule(ServerSim *sim, const ScnOpSetRule *p) {
     return SCN_OP_OK;
 }
 
+/* ── Test hooks ────────────────────────────────────────────────── */
+
+/* Post one of a seat's shells as having run its full range and died on a
+ * square, and let the three-shot order detector read it. Three of these on
+ * one open square inside the detector's window put "!goto <mx> <my>" into
+ * every allied bot's inbox, which is the whole point: a script has no way
+ * to make a seat pull a trigger, and steering a round into three full-range
+ * shells landing on one chosen square is not a test anybody could read.
+ *
+ * Nothing else about the shell is simulated. No explosion, no sound and no
+ * shell object: the op names the one server path it is for. */
+static ScnOpResult scenarioOpShellExpired(ServerSim *sim,
+                                          const ScnOpShellExpired *p) {
+    if (p->slot >= MAX_TANKS || !sim->playerConnected[p->slot]) {
+        return SCN_OP_NO_SUCH_PLAYER;
+    }
+    if (sim->state != serverStateRunning) {
+        return SCN_OP_WRONG_STATE;
+    }
+    /* A square the map does not hold is not a landing. Both coordinates fit
+       in a BYTE, so the Lua arm's own check passes anything 0..255, and the
+       border outside the playable band reads back as deep sea — which the
+       detector's open-ground test would otherwise take for open water. */
+    if (!mapPosInBounds(p->x, p->y)) {
+        return SCN_OP_BAD_SQUARE;
+    }
+    /* The SERVER tick the shell left the gun, which is what the window and
+       the two quiet seconds are measured on. A script that says nothing gets
+       the current tick, which is a shot fired and landed in the same breath. */
+    uint32_t fireTick = p->haveFireTick ? p->fireTick : sim->tick;
+
+    /* The same two calls a real shell death makes, in the same order: the
+       shot is counted as fired whatever it hit, and then the landing is
+       offered to the detector. */
+    serverSimShotOrderShotFired(sim, p->slot, fireTick);
+    /* The centre of the square, which is where a shell that died over it
+       would have been. */
+    serverSimShotOrderNote(sim, p->slot, fireTick,
+                           (WORLD)(((WORLD)p->x << TANK_SHIFT_MAPSIZE) + 128),
+                           (WORLD)(((WORLD)p->y << TANK_SHIFT_MAPSIZE) + 128));
+    return SCN_OP_OK;
+}
+
 /* The same question the arm asks, without the answer landing anywhere. The
  * whole set is written into the copy before the check reads it, so a pair two
  * of the values break together is found although each of them passes alone —
@@ -2993,6 +3109,8 @@ static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpMsgTeam(sim, &op->u.msgTeam);
         case SCN_OP_MSG_PLAYER:
             return scenarioOpMsgPlayer(sim, &op->u.msgPlayer);
+        case SCN_OP_MSG_SAY:
+            return scenarioOpMsgSay(sim, &op->u.msgSay);
         case SCN_OP_SOUND:
             return scenarioOpSound(sim, &op->u.sound);
         case SCN_OP_LOG:
@@ -3007,6 +3125,8 @@ static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpSetGameTime(sim, &op->u.setGameTime);
         case SCN_OP_SET_RULE:
             return scenarioOpSetRule(sim, &op->u.setRule);
+        case SCN_OP_SHELL_EXPIRED:
+            return scenarioOpShellExpired(sim, &op->u.shellExpired);
     }
 
     /* A value that is not a member of the enum at all. */

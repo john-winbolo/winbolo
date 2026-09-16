@@ -56,7 +56,15 @@ local M = {}
 -- One place decides "is repositioning human-blocked right now", and it returns
 -- a number so the ballot line can say how many were seen. See
 -- util.human_ally_count for why the detection needs no join-lag grace.
-local function human_ally_block(info)
+-- `state` is optional: the chat command `reposition on` / `reposition off`
+-- (bot commands, stage 2) sets a team-wide flag on state._repo_override that
+-- overrides the constant for this game. nil there = no override.
+local function human_ally_block(info, state)
+  local ov = state and state._repo_override
+  if ov ~= nil then
+    if ov then return 0 end              -- "reposition on": never blocked
+    return U.human_ally_count(info)      -- "reposition off": blocked as usual
+  end
   if not C.REPOSITION_DISABLE_WITH_HUMAN_ALLIES then return 0 end
   return U.human_ally_count(info)
 end
@@ -261,7 +269,7 @@ local function evaluate_vote(state, world, info, now, prop)
   -- this check independently, so even if the proposer somehow opened a vote —
   -- stale info, a slot flagged late, the flag toggled mid-game — the ballots
   -- kill it. Belt-and-braces with the OPEN gate and eval_reposition_pill.
-  local humans = human_ally_block(info)
+  local humans = human_ally_block(info, state)
   if humans > 0 then
     return true, "human_allies", { humans = humans }
   end
@@ -712,7 +720,7 @@ function M.update(state, world, info, now)
     -- Human teammate on the roster: never open a vote at all
     -- (REPOSITION_DISABLE_WITH_HUMAN_ALLIES). eval_reposition_pill already
     -- refuses to build a candidate, so this is the second of three belts.
-    local humans_ok = human_ally_block(info) == 0
+    local humans_ok = human_ally_block(info, state) == 0
     if cand and won_pool and cand.can_carry and fail_ok and (mem_ok or urgent)
        and not guarded and humans_ok then
       tx(string.format("/info rvo %d %d %d %d", cand.pid, cand.mx, cand.my, math.floor(cand.score or 0)))

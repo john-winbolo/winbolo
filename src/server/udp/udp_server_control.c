@@ -68,6 +68,7 @@ const char *mpDiagCtrlName(int type) {
     case CTRL_LOBBY_BOT_CONFIG: return "LOBBY_BOT_CONFIG";
     case CTRL_LOBBY_BOT_BRAIN:  return "LOBBY_BOT_BRAIN";
     case CTRL_LOBBY_BRAIN_LIST: return "LOBBY_BRAIN_LIST";
+    case CTRL_LOBBY_BRAIN_DOCS_CHUNK: return "LOBBY_BRAIN_DOCS_CHUNK";
     case CTRL_GAME_VOTE_STATE:  return "GAME_VOTE_STATE";
     case CTRL_SERVER_TEXT:      return "SERVER_TEXT";
     case CTRL_SHELL_DEATH:      return "SHELL_DEATH";

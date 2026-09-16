@@ -418,6 +418,22 @@ void clientSimSetTransportControlObserver(ClientSim *cs, ControlObserverCb cb, v
 BYTE clientSimGetPendingAllianceRequest(const ClientSim *cs);
 void clientSimClearPendingAllianceRequest(ClientSim *cs);
 
+/* A buffer this big holds any one lobby chat line: a player name, ": ", and
+ * a whole chat body. */
+#define LOBBY_CHAT_LINE_MAX 640
+
+/* Write "<name>: <message>" into `out`, which is how EVERY line in a lobby
+ * chat log reads. Returns the length, or -1 when it would not fit.
+ *
+ * Exported because two sides must agree on the spelling: the appends below
+ * write the lines, and the lobby's bot-announce poll builds the same string
+ * to search the history for it — that search is how it learns whether its
+ * append landed (a full buffer drops one silently) before it hangs the
+ * brain's docs off that line. Two hand-written copies of "%s: %s" would let
+ * a change to one of them turn the search into a permanent miss. */
+int clientSimFormatLobbyChatLine(char *out, size_t cap, const char *name,
+                                 const char *message);
+
 /* Lobby chat helper — appends "name: message\n" to lobbyChatHistory */
 void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *message);
 /* Team lobby chat helper — appends "name: message\n" to lobbyTeamChatHistory */
@@ -429,8 +445,13 @@ void clientSimAppendLobbyTeamChat(ClientSim *cs, const char *name, const char *m
 void clientSimClearLobbyChatHistory(ClientSim *cs);
 
 /* Player-to-player chat delivery: routes to lobby chat or in-game inbox
-   depending on whether the client is still in the lobby. */
-void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, char *messageStr);
+   depending on whether the client is still in the lobby.
+   `destPlayer` is what the sender addressed the line to (CHAT_DEST_BROADCAST,
+   a slot, or CHAT_DEST_TEAM_BASE + team). The caller has already decided this
+   seat may SEE the line; the dest is here because a hosted BOT additionally
+   drops an enemy's broadcast, which is chatter and not an order. */
+void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, BYTE destPlayer,
+                              char *messageStr);
 
 /* Message functions (per-instance) */
 void clientSimMessageSendAllPlayers(ClientSim *cs, BYTE playerNum, char *message);
@@ -1031,6 +1052,17 @@ uint8_t     clientSimGetLobbyBotPersonality(const ClientSim *cs, BYTE slot);
 uint8_t     clientSimGetLobbyBotBrain(const ClientSim *cs, BYTE slot);
 
 const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs);
+
+/* A brain's LOBBY TEXTS, indexed the same way as the brain list above.
+ *   announce — the brain's announce.txt: the message the lobby drops into
+ *              team chat when a bot running this brain joins your team.
+ *   docs     — the brain's commands.txt: the long text that message opens.
+ * Both come from the server (CTRL_LOBBY_BRAIN_DOCS_CHUNK) rather than off the
+ * local disk, because the server picks the brain and this machine need not
+ * have it. Both always return a NUL-terminated string, "" when there is
+ * nothing, so a caller tests the first byte rather than for NULL. */
+const char *clientSimGetLobbyBrainAnnounce(const ClientSim *cs, int brainIdx);
+const char *clientSimGetLobbyBrainDocs(const ClientSim *cs, int brainIdx);
 
 /* Last finished round's scoreboard + awards, or NULL if none has been
  * received since the last countdown (round-only scope). */

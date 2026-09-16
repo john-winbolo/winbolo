@@ -16,6 +16,7 @@ local ally_state = require("ally_state")
 local cpf        = require("cpathfinder")
 local U          = require("util")
 local viz        = require("viz")
+local orders     = require("orders")
 local print2     = require("print2")
 
 local M = {}
@@ -531,12 +532,73 @@ end
 -- blitz its goal_selection would never actually pursue, which produced endless
 -- accept/commit/leave churn. The discount alone now decides whether a blitz
 -- pill is worth switching to; availability just confirms we made that switch.
+-- =========================================================================
+-- M.busy(state, info) -> busy, reason
+-- THE one "not interruptible" test, shared by the blitz availability gate
+-- below and by the chat-order auction (orders.lua).  Reasons:
+--   man_out        the LGM is out of the tank, for any reason
+--   capturing      capture_pill in its final phase (man dispatched)
+--   repositioning  a reposition move executing after its vote passed
+--   kill_me        the kill-me hand-off, while executing
+--   escaping       escape_water or a stuck escape in progress
+-- Everything else is interruptible: attack_pill on another pill, a topped-off
+-- refuel, explore, seek_trees.  Low armour and no ammo are NOT busy reasons
+-- (the refuel pause covers them) and there is no danger check.
+-- Blitz behaviour is unchanged by routing availability() through this: every
+-- case here already failed availability()'s own blitz-only rule.
+-- The rule itself lives in orders.lua so the order code and this gate cannot
+-- drift apart; this is the name the design doc asked for.
+function M.busy(state, info)
+  return orders.busy(state, info)
+end
+
+-- The rest of the bot-command questions goal selection has to ask, re-exported
+-- through this module for the same reason M.busy lives here: the rule itself
+-- stays in orders.lua, and goals.lua cannot take another top-level local --
+-- its main chunk is at Lua's 200-local cap.
+--   focus_mult(state, kind)          the `focus bases` / `focus pills` factor
+--   focus_label(state)               the one breakdown chip for it
+--   reposition_human_blocked(state)  `reposition on` / `off` vs the constant
+function M.focus_mult(state, kind)  return orders.focus_mult(state, kind) end
+function M.focus_label(state)       return orders.focus_label(state) end
+function M.reposition_human_blocked(state)
+  return orders.reposition_human_blocked(state)
+end
+
 function M.availability(state, info, help_target_id)
   -- Joining a blitz has NO armour floor (a 2+ tank take shares the incoming
   -- fire) — EXCEPT while carrying a pillbox: cautious mode, so a joiner needs
   -- commander-level armour before diving in and risking the pill it's holding.
   local ok, reason
-  if state.blitz_disabled or not C.BLITZ_ENABLED then
+  -- The shared "not interruptible" test (see M.busy above) runs first, but
+  -- only for the reasons that CANNOT be true at the same time as the
+  -- blitz-only rule at the bottom of this chain — otherwise routing this gate
+  -- through busy() would refuse joins the old chain allowed, and blitz
+  -- behaviour has to stay bit-for-bit.
+  --
+  -- Checked, reason by reason, against "g.kind == 'attack_pill' and
+  -- g.target_id == help_target_id":
+  --   capturing      IMPOSSIBLE. It needs g.kind == "capture_pill".
+  --   man_out        POSSIBLE. A commander on attack_pill for the help pill
+  --                  with its man out (building a blocker or a wall shield)
+  --                  answered YES before. Ignored.
+  --   kill_me        POSSIBLE. km.executing is set purely by an ally
+  --                  claimant's distance; it does not look at the goal.
+  --                  Ignored.
+  --   escaping       POSSIBLE. The stuck-escape counter does not look at the
+  --                  goal either. Ignored.
+  --   repositioning  POSSIBLE in a narrow window: the approved pill is one of
+  --                  OURS, and an enemy that takes it makes it an attack_pill
+  --                  target for a few ticks before the approval is cleared.
+  --                  Ignored, because "narrow" is not "never".
+  -- Only `capturing` is left, and it is a no-op by construction — so this
+  -- gate cannot change a single blitz answer. It stays in the chain so the
+  -- shared rule has ONE home and the SQUAD_AVAIL line names the busy state.
+  local _busy, _busy_reason = M.busy(state, info)
+  local _busy_blocks = _busy and _busy_reason == "capturing"
+  if _busy_blocks and C.BOT_COMMANDS_ENABLED then
+    ok, reason = false, "bz"
+  elseif state.blitz_disabled or not C.BLITZ_ENABLED then
     -- "noblitz" BRAIN_INIT_ARG (or BLITZ_ENABLED=false, e.g. Easy difficulty):
     -- this bot never joins anyone's blitz. Answered
     -- here (rather than at every call site) because availability() is the one

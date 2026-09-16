@@ -120,6 +120,19 @@ int run_lobby_team_meta_codec_and_apply(void);
 int run_lobby_bot_config_codec_and_apply(void);
 int run_lobby_bot_brain_codec_and_apply(void);
 int run_lobby_brain_list_codec_and_apply(void);
+int run_lobby_brain_docs_chunk_codec_roundtrip(void);
+int run_lobby_brain_docs_chunk_len_is_exact(void);
+
+/* The brains' lobby texts: cached once, sent to a joiner, kept out of the
+ * spectator ring's per-keyframe control snapshot, and dropped on the client
+ * when a new catalogue arrives. */
+int run_lobby_brain_list_clears_stale_texts(void);
+
+/* The "name: text" lobby chat line has ONE spelling, because the lobby's
+ * bot-announce poll searches the history for the line it just appended. */
+int run_lobby_chat_line_format_is_what_is_appended(void);
+int run_lobby_brain_docs_stay_out_of_the_control_snapshot(void);
+int run_lobby_brain_docs_reach_a_joining_subscriber(void);
 int run_lobby_sync_complete_codec_roundtrip(void);
 int run_lobby_rating_posted_codec_roundtrip(void);
 int run_command_codec_roundtrip_variants(void);
@@ -431,6 +444,12 @@ int run_brain_inbox_overflow_drops_oldest(void);
 int run_brain_inbox_legacy_drain_fifo(void);
 int run_brain_inbox_clear_resets(void);
 int run_brain_list_scan_path_resolves(void);
+int run_brain_list_texts_read(void);
+
+/* The two test rosters — test_main.c's dispatch table and CMakeLists.txt's
+ * _unit_test_names — say the same thing, so a case added to one and not the
+ * other is found rather than silently never run. */
+int run_unit_test_names_match_cmake(void);
 
 /* A brain's mode manifest (test_brain_modes.c): brains/<brain>/modes.txt,
  * the API by which a brain tells the lobby which modes it has and which
@@ -666,6 +685,22 @@ int run_bot_chat_send_to_human_lands_in_human_inbox(void);
 int run_bot_chat_send_to_other_bot_lands_in_recipient_inbox(void);
 int run_bot_chat_receive_from_human_lands_in_bot_inbox(void);
 int run_bot_chat_receive_from_other_bot_via_broadcast(void);
+
+/* The delivery rule in front of a hosted bot's inbox: an enemy's broadcast is
+ * chatter, not an order, and a line aimed at the seat lands whoever sent it. */
+int run_bot_chat_enemy_broadcast_is_not_an_order(void);
+int run_bot_chat_enemy_unicast_still_lands(void);
+/* A bot seated mid-round has an empty own row in its client-side player
+ * table, so the rule reads the bound server's alliance matrix instead. */
+int run_bot_chat_mid_round_bot_reads_server_alliances(void);
+
+/* A bot placing its own smart ping (test_bot_ping.c) — a brain's ping
+ * request becomes a CMD_PING from the bot's own player slot, and the bot's
+ * own rate limit drops the extras. */
+int run_bot_ping_queue_becomes_cmd_ping_from_bot_slot(void);
+int run_bot_ping_rate_limit_drops_extras(void);
+int run_bot_ping_ignores_bad_slot(void);
+int run_bot_ping_ignores_a_slot_that_is_not_a_bot(void);
 
 /* Internal brain-message routing (test_brain_internal_msg_routing.c) —
  * pins botManagerDeliverInternalMessage: bot brains sending with
@@ -2485,6 +2520,26 @@ int run_scenario_comms_msg_team(void);
 int run_scenario_comms_msg_player(void);
 int run_scenario_comms_sound(void);
 int run_scenario_comms_log(void);
+int run_scenario_comms_say(void);
+/* THREE SHOTS = GO THERE — the shell-expiry detector behind the order
+ * (tests/unit/test_three_shot_order.c). */
+int run_three_shot_order_orders_allied_bots(void);
+int run_three_shot_order_ignores_closed_ground(void);
+int run_three_shot_order_needs_one_square(void);
+int run_three_shot_order_window_and_reset(void);
+int run_three_shot_order_needs_quiet_before(void);
+int run_three_shot_order_quiet_counts_hits(void);
+int run_three_shot_order_needs_quiet_after(void);
+int run_three_shot_order_quiet_after_sees_a_shell_still_flying(void);
+int run_three_shot_order_quiet_before_sees_a_shell_still_flying(void);
+
+/* The detector's clock is the SERVER's tick, never the client input tick a
+ * shell also carries, and an order can only be dropped on a real square. */
+int run_three_shot_order_uses_the_server_tick(void);
+int run_three_shot_order_server_tick_quiet_after(void);
+int run_three_shot_order_ignores_a_forged_fire_tick(void);
+int run_three_shot_order_rejects_off_map_squares(void);
+int run_three_shot_order_scenario_refuses_off_map(void);
 int run_scenario_comms_arm_records(void);
 int run_scenario_comms_decoder_dest_player(void);
 int run_scenario_comms_apply_non_zero_slot(void);

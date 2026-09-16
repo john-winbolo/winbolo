@@ -1,0 +1,3 @@
+GoalHunter loaded. Bot commands are available, click this message to read more.
+
+Bot pillbox repositioning is disabled with human allies but can be turned on by saying "reposition on" in game.

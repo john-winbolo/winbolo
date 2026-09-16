@@ -102,7 +102,17 @@ struct shellsObj {
   uint32_t fireTick; /* Originating client input tick that fired this shell
                         (0 for pill / gap-fill / network-extracted shells).
                         Echoed in CTRL_SHELL_DEATH so the firing client can
-                        match the death to its predicted shell by fireTick. */
+                        match the death to its predicted shell by fireTick.
+                        A NUMBER THE CLIENT CHOSE: it starts near zero on a
+                        mid-round joiner and a modified client can send any
+                        value, so nothing on the server may be measured on
+                        it. That is what serverFireTick below is for. */
+  uint32_t serverFireTick; /* The SERVER's own tick at the moment this shell
+                        was created, handed back by the shellFired callback
+                        (0 on the client, which has no server tick and no
+                        such callback). Every server-side rule about when a
+                        shell left the gun — the three-shot order detector's
+                        window and its two quiet seconds — reads this one. */
   bool shellDead;   /* Used to over come the if shell dies straight away and
                        hasn't been sent it never does. So we mark it dead
                        and it doesn't get updated any more but exists till
