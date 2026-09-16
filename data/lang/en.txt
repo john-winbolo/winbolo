@@ -2174,12 +2174,12 @@ STR_DLGLOBBY_RELOAD_SCENARIO=Reload script
 STR_DLGLOBBY_REJECT_SCENARIO=That setting is fixed by the map's scenario
 STR_DLGLOBBY_REJECT_COOLDOWN=Too soon; try again in a moment
 STR_DLGLOBBY_CHOOSE_SCENARIO=Choose
-STR_DLGLOBBY_SCENARIO_TITLE=Choose a scenario
-STR_DLGLOBBY_SCENARIO_NONE=None — play the map's own scenario, or none at all
+STR_DLGLOBBY_SCENARIO_TITLE=Choose a mod
+STR_DLGLOBBY_SCENARIO_NONE=None — no mod. The map plays its own scenario if it has one.
 STR_DLGLOBBY_SCENARIO_WAITING=Asking the server...
-STR_DLGLOBBY_SCENARIO_EMPTY=This server offers no scenarios of its own.
-STR_DLGLOBBY_SCENARIO_BOUND=Belongs to its own map, and arrives with it
+STR_DLGLOBBY_SCENARIO_EMPTY=This server offers no mods.
+STR_DLGLOBBY_SCENARIO_BOUND=Built for one map, so it cannot be played as a mod
 STR_DLGLOBBY_SCENARIO_MAXPLAYERS=Up to {number} players
 STR_DLGLOBBY_SCENARIO_BOTS={number} bot seats
-STR_DLGLOBBY_SCENARIO_ON_MAP={string1} map, playing {string2}
+STR_DLGLOBBY_SCENARIO_ON_MAP=Mod: {string2} (on {string1})
 

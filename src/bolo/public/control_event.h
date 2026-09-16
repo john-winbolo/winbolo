@@ -228,9 +228,9 @@ typedef enum {
 /* Where the lobby's scenario came from. The values ride the wire, so they
  * are written out. None is 0, so a lobby with no scenario is the zeroed
  * event and writes no scenario bytes at all. A scenario read from beside
- * the map is lobbyScenarioMap; lobbyScenarioMod is a scenario the host
- * picked for itself, which nothing selects yet — it is named here so the
- * wire form does not move when something does. */
+ * the map is lobbyScenarioMap; lobbyScenarioMod is one the host picked from
+ * the server's scenarios directory, which plays over whichever map is
+ * committed and stands in place of that map's own scenario. */
 typedef enum {
     lobbyScenarioNone = 0,
     lobbyScenarioMap  = 1,
