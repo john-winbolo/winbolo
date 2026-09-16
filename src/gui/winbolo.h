@@ -577,19 +577,4 @@ void windowSetQuitting(void);
 *********************************************************/
 bool windowIsQuitting(void);
 
-/*********************************************************
-*NAME:          dialogSetQuitHandler
-*PURPOSE:
-* Tell the shared dialogs where a quit goes.  They are
-* linked into the standalone Log Viewer and Map Editor too,
-* which have no application loop of their own, so WinBolo
-* registers windowSetQuitting here at startup rather than
-* the dialogs calling it directly.  Defined in
-* dialogs/dialog_quit.cpp.
-*
-*ARGUMENTS:
-* handler - what a quit seen in a dialog should do
-*********************************************************/
-void dialogSetQuitHandler(void (*handler)(void));
-
 #endif

@@ -926,6 +926,7 @@ static const UnitTestEntry s_tests[] = {
     { "game_settings_blob",                      run_game_settings_blob                      },
     { "ping_network",                            run_ping_network                            },
     { "lang_name_table",                         run_lang_name_table                         },
+    { "dialog_quit",                             run_dialog_quit                             },
     { "bot_init_arg_difficulty_token",           run_bot_init_arg_difficulty_token           },
     { "bot_init_arg_mode_tokens",                run_bot_init_arg_mode_tokens                },
     { "bot_difficulty_names",                    run_bot_difficulty_names                    },

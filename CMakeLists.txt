@@ -3965,6 +3965,16 @@ set(WINBOLO_UNITTESTS_SOURCES
     # length, strict bsearch sort order, and name round-trips — pins the
     # off-by-one that crashed resolveName's bsearch on startup.
     tests/unit/test_lang_name_table.c
+    # What a quit inside a dialog means, and where it goes. The same
+    # decision is made in eleven dialog poll loops with nothing to check
+    # that a new one makes it; telling a real close request from the one
+    # the gamepad's B button forges is the difference between cancelling a
+    # dialog and ending the application under the player.
+    tests/unit/test_dialog_quit.c
+    # dialogQuitClassify and the handler registration, for the test above. A
+    # leaf under the "Linked GUI sources" rule in docs/ARCHITECTURE.md:
+    # plain SDL, no ImGui, and it opens no window, renderer or device.
+    src/gui/sdl3/dialogs/dialog_quit.cpp
     # Bot difficulty plumbing: the "difficulty=<word>" BRAIN_INIT_ARG token
     # assembly (whole-token-or-nothing when the buffer is tight) and the
     # difficulty <-> word round trip -difficulty and the preference share.
@@ -5085,6 +5095,7 @@ set(_unit_test_names
     game_settings_blob
     ping_network
     lang_name_table
+    dialog_quit
     screencalc_river_road_counts_as_water
     screencalc_river_arms_of_road_centred_cross
     screencalc_river_copies_agree

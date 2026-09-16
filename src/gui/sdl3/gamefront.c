@@ -1335,6 +1335,10 @@ static bool gameFrontDialogs(void) {
        * tear it down so the socket/transport is released before returning. */
       clientSimDisconnect(spectatorSim);
       clientSimDestroy(spectatorSim);
+      /* Same as the editor and the viewer above: spectatorRun owns the loop
+       * while it is up, so a quit taken there stops with it.  Asked after the
+       * disconnect so the socket is released either way. */
+      if (logViewerAppQuitRequested()) windowSetQuitting();
       dlgState = openWelcome;
       break;
     }

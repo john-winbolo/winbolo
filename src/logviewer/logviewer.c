@@ -1259,6 +1259,11 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
      * the live lobby on true and exits on false. */
     bool liveResumed = false;
 
+    /* A quit belongs to the run that saw it — never to the next one.  Same
+     * reset logViewerRun does: this loop can raise the flag too, and the
+     * caller reads it once we return. */
+    s_appQuitRequested = FALSE;
+
     if (lvHostSetup(window, renderer, /* fromMainMenu */ TRUE) == FALSE) {
         return false;
     }

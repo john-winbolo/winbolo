@@ -1671,15 +1671,17 @@ its own state struct, and its own refresh. They share the
 (`src/ios/`, `src/android/`) and the wasm build don't have a system
 menu bar; they ship only the ImGui in-window bar.
 
-## Standalone ImGui dialogs — controller navigation
+## Standalone ImGui dialogs — controller navigation and quit
 
 Every blocking dialog under `src/gui/sdl3/dialogs/` (welcome, lobby,
 settings, keysetup, onboarding, …) creates its **own** ImGui context and
-runs its **own** SDL event loop. Because the context is per-dialog,
-controller navigation is not inherited from the main game pump — each
-dialog must wire it up itself. Two separate controller paths have to be
-enabled, and missing either one silently breaks the pad on that dialog
-with no compile error:
+runs its **own** SDL event loop. Two things therefore have to be wired
+up per dialog rather than inherited: the controller, because the context
+is per-dialog, and the quit, because the event loop is. Missing any of
+them silently breaks that dialog with no compile error.
+
+Controller navigation needs two separate paths enabled, and missing
+either one breaks the pad on that dialog:
 
 - **Path B — native SDL gamepad** (non-Steam launches). The ImGui SDL3
   backend turns raw gamepad events into nav, but only when
@@ -1714,6 +1716,51 @@ them every frame.
 
 `src/gui/sdl3/dialogs/imgui_keysetup.cpp` is the canonical reference —
 copy its context setup and per-frame preamble when adding a dialog.
+
+### Contract — every standalone dialog must also end the application
+
+A quit reaches whichever loop is running and stops there. Read as
+"close me" — which is what every dialog did before — Cmd+Q in the game
+browser closed the browser and left the player on the menu. So the
+poll loop has to recognise one and end the loop:
+
+```c
+if (dialogHandleQuitEvent(window, &ev)) { /* dialog's own close path */ }
+```
+
+`dialogHandleQuitEvent` (`imgui_dialog_utils.h`) wraps
+`dialogQuitClassify` in `dialogs/dialog_quit.cpp`, which is where the
+decision actually lives. Three points it is easy to get wrong:
+
+- **A quit is not a cancel.** Cmd+Q, Alt+F4 and the window's close box
+  end the application. The gamepad's B button reaches the loop as a
+  close request `dialogHandleGamepadCancelEvent` forged, carrying
+  `DIALOG_CLOSE_IS_GAMEPAD_CANCEL` in `window.data1`, and only closes
+  the dialog. Call the gamepad helper **before** the quit check so the
+  marker is on the event by the time it is classified.
+- **The dialogs do not call `windowSetQuitting` themselves.** They are
+  linked into the standalone Log Viewer and Map Editor too, which have
+  no application loop, and the direct call breaks the `LogViewer` link.
+  The host registers what a quit means — `winbolo.c` calls
+  `dialogSetQuitHandler(windowSetQuitting)` at startup — and with
+  nothing registered a quit just closes the dialog.
+- **Closing a dialog is not the application ending.** A dialog closes
+  on a quit the same way it closes on Cancel, so the front end asks
+  `windowIsQuitting()` rather than reading the dialog's result.
+  `gameFrontDialogs()` asks once per turn of its state machine and
+  stops unwinding. `windowIsQuitting()` reads `quitRequested`, not
+  `winboloQuit`: the game loop sets `winboloQuit` TRUE on the way in as
+  its default answer, so it cannot say whether the player asked for
+  anything.
+
+A screen that owns the window for a while rather than being one of
+these dialogs — the embedded map editor, log viewer and spectator —
+runs its own loop and cannot see the host's flag. Each separates
+leaving from quitting and reports which happened
+(`mapEditorAppQuitRequested()`, `logViewerAppQuitRequested()`), and the
+`gameFrontDialogs()` case that ran it hands the answer to
+`windowSetQuitting()`. A run that can raise such a flag must clear it
+on entry, or the next caller to ask inherits someone else's quit.
 
 ## WinBolo.net subsystem
 
@@ -2066,12 +2113,13 @@ releases with nothing coming off means the review has stopped, and
 the grant needs re-arguing rather than extending.
 
 **Linked GUI sources.** A second, narrower exception rides on the
-same target, and it is not a T2 grant. Ten `src/gui/sdl3` files are
-compiled *into* `WinBoloUnitTests`, the only files from a renderer
-directory that are: `skin_source.c`, `tileloader.c`, `sdl_bmp.c`,
-`sound_variants.c`, `overview_camera.cpp`, `overview_fog.cpp`,
-`overview_hud_layout.cpp`, `sprite_positions.c`, `ring_band.c` and
-`gfx_settings.c`. Between them they hold skin lookup, the tile sheet
+same target, and it is not a T2 grant. Eleven `src/gui/sdl3` files
+are compiled *into* `WinBoloUnitTests`, the only files from a
+renderer directory that are: `skin_source.c`, `tileloader.c`,
+`sdl_bmp.c`, `sound_variants.c`, `overview_camera.cpp`,
+`overview_fog.cpp`, `overview_hud_layout.cpp`, `sprite_positions.c`,
+`ring_band.c`, `dialogs/dialog_quit.cpp` and `gfx_settings.c`.
+Between them they hold skin lookup, the tile sheet
 builder, the BMP sheet reader, the sound variant naming, the map
 overview's camera maths, its fog mask, its in-window HUD geometry
 and the sprite placement arithmetic behind `mapview.c`'s drawers.
@@ -2079,7 +2127,12 @@ and the sprite placement arithmetic behind `mapview.c`'s drawers.
 is and how solid after a given elapsed time — pure arithmetic, no
 renderer, and the one piece of the smart ping's arrival effect and
 the overview's respawn ring that a test can observe at all.
-The first nine are each called directly by a test beside them;
+`dialogs/dialog_quit.cpp` is the odd one by directory and not by
+rule: it is the only file under `dialogs/` that holds no ImGui, and
+it is there so that `dialogQuitClassify` — what a quit means to
+whichever dialog is up — can be driven from a test with hand-built
+events instead of a window (see "Standalone ImGui dialogs" below).
+The first ten are each called directly by a test beside them;
 `gfx_settings.c` is here because `tileloader.c` calls it, and is the
 one file on the list no test drives on its own.
 
@@ -2099,12 +2152,12 @@ The alternative, for the geometry files, was moving the maths into
 onto the sim purely to buy testability. Keeping them in the renderer
 and linking the leaf files is the smaller distortion of the two.
 
-**Rests on** each of the ten still meeting that rule, so it is
+**Rests on** each of the eleven still meeting that rule, so it is
 checked per file rather than for the group. One that gains an ImGui
 include, or that opens a renderer or a device of its own, has left
 the category, and the answer is to split the leaf back out — the
 link break is the signal, not a build problem to route around by
-widening the test binary. An eleventh file joins only on the same
+widening the test binary. A twelfth file joins only on the same
 test: callable with no display attached, or it does not go in.
 
 ### `src/bolo/scenario_api/`

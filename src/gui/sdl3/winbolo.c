@@ -80,6 +80,7 @@
 #include "../winbolo.h"
 #include "sdl3draw.h"
 #include "sdl3imgui.h"
+#include "dialogs/dialog_quit.h"
 #include "../tiles.h"
 #include "luabrainshandler.h"
 #include "bg_game.h"
@@ -870,8 +871,10 @@ int main(int argc, char *argv[]) {
     timerFrameID = 0;
 
     /* If returning to lobby after game-over, skip full teardown
-     * and loop back to show the lobby dialog again. */
-    if (returnToLobby) {
+     * and loop back to show the lobby dialog again.  Not if the player quit:
+     * the round can drain to the lobby in the same frame the quit arrives,
+     * and the line below would answer winboloQuit for them. */
+    if (returnToLobby && !windowIsQuitting()) {
       gameFrontSaveTankPrefs(cs);
       sdl3ImguiCleanup();
       winboloQuit = FALSE;

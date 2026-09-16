@@ -27,6 +27,7 @@
 #include <SDL3/SDL.h>
 #include "imgui.h"
 #include "imgui_nav_outline.h"
+#include "dialog_quit.h"
 #include "../../imgui_fonts.h"
 #include "../../../common/wb_log.h"
 #include "nanosvg.h"
@@ -922,12 +923,6 @@ static inline void dialogRestorePosition(SDL_Window *win) {
     }
 }
 
-/* A close request the B button forged carries this in window.data1, so
- * dialogHandleQuitEvent below can tell it apart from a real one.  Both
- * close the dialog; only the real one ends the application.  SDL leaves
- * data1 at zero on the close requests it sends itself. */
-#define DIALOG_CLOSE_IS_GAMEPAD_CANCEL 1
-
 /* Convert a gamepad B-button (EAST) press into a window-close request
  * for the given dialog window.  Lets controller users cancel any
  * standalone dialog with B, routing through the dialog's existing
@@ -967,19 +962,11 @@ static inline bool dialogHandleGamepadCancelEvent(SDL_Window *window, SDL_Event 
  * the front end shuts down instead of dropping back a screen.  A B press is
  * a cancel and is left alone: it arrives as the close request
  * dialogHandleGamepadCancelEvent forged, marked as its own. */
-extern "C" void dialogRequestQuit(void);  /* dialog_quit.cpp */
 static inline bool dialogHandleQuitEvent(SDL_Window *window, const SDL_Event *ev) {
-    if (!ev) return false;
-    if (ev->type == SDL_EVENT_QUIT) {
-        dialogRequestQuit();
-        return true;
-    }
-    if (ev->type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && window &&
-        ev->window.windowID == SDL_GetWindowID(window)) {
-        if (ev->window.data1 != DIALOG_CLOSE_IS_GAMEPAD_CANCEL) dialogRequestQuit();
-        return true;
-    }
-    return false;
+    const DialogQuitAction action =
+        dialogQuitClassify(ev, window ? SDL_GetWindowID(window) : 0);
+    if (action == DIALOG_QUIT_APPLICATION) dialogRequestQuit();
+    return action != DIALOG_QUIT_NONE;
 }
 
 /* Check an SDL event for a winbolo:// URL drop.
