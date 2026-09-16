@@ -59,6 +59,16 @@
 --   * There is no newswire_mute. The announce() policy answers false while
 --     the mute is up, which is the same silence a line at a time.
 --
+-- ROUND STATE. Everything below is a chunk local — dug_in, seen_fielded,
+-- arrange_deadline, dealt, the wave counters — and none of it is reset
+-- anywhere, because none of it has to be: the host builds a FRESH Lua state
+-- for every round and runs this file's bytes again in it (scnRoundBootLocked
+-- in src/scenario/scenario_host.c, called from both round-start paths). A
+-- second round on a rotation or a play-again therefore starts with every one
+-- of these at its written value, and nothing the last round left behind is
+-- reachable from this one. Do not add a reset in on_setup for them: it would
+-- read as though the state persisted and be dead code.
+--
 -- The API this is written against: docs/SCENARIO_API.md.
 -- =========================================================================
 

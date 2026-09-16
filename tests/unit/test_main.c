@@ -1136,6 +1136,8 @@ static const UnitTestEntry s_tests[] = {
       run_lobby_template_mode_unknown_key_kept                                               },
     { "lobby_template_no_mode_leaves_config",
       run_lobby_template_no_mode_leaves_config                                               },
+    { "lobby_template_add_bot_takes_template",
+      run_lobby_template_add_bot_takes_template                                              },
     { "scripted_game_type_loadout_follows_base",
       run_scripted_game_type_loadout_follows_base                                            },
     { "scripted_game_type_no_base_is_open",      run_scripted_game_type_no_base_is_open      },

@@ -2392,6 +2392,7 @@ int run_lobby_template_seat_carries_init(void);
 int run_lobby_template_seat_carries_mode(void);
 int run_lobby_template_mode_unknown_key_kept(void);
 int run_lobby_template_no_mode_leaves_config(void);
+int run_lobby_template_add_bot_takes_template(void);
 
 /* The scripted game type (test_scripted_game_type.c): gameScripted resolving
  * through the base game the scenario declared, at the loadout and at the

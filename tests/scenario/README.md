@@ -34,10 +34,38 @@ C:\Python310\python.exe tests/scenario/run_gate.py --only water_pills --jobs 1
 ```
 
 `--build <dir>` points it at a different build directory, `--jobs N` caps how
-many run at once, and `--port-base N` moves the private server ports if
-something else on the machine wants them. Per-arena logs land in
+many run at once, and `--port-base N` moves where the search for each arena's
+own UDP port starts. Each arena is its own private server on its own port. A
+port something else on the machine is holding is stepped over before the
+arena starts, and an arena whose server still lost the race — the port went
+between the check and the bind — is started again on another port and says
+`RETRY`. Per-arena logs land in
 `<build>/scenario_gate_logs/`. The runner exits 0 when everything that was
 meant to pass passed.
+
+### Playing Survival headless, outside the gate
+
+Not an arena — the shipped map and its script, run by hand to watch a whole
+round go past. From `build-own`:
+
+```
+WinBoloDS.exe -map ../data/maps/Survival.map -port 50290 -gametype open \
+  -nolobby -bots 4 -allybots 1 -brain ../brains/GoalHunter_1.7/init.lua \
+  -ai yes -seed 42 -ticks 6000 -asap -brain-no-budget-kill \
+  -brain-lua-seed 42 -nowinbolonet -threads 12
+```
+
+**`-allybots 1` is not optional.** `-nolobby` seats its `-bots` on no team at
+all, and team 0 is no team: the script's own test for a defender asks which
+team a seat is on, finds nobody on team 1, and the round opens with an empty
+keep — no pills dealt, no bot dug in, and the waves storming an island nobody
+is holding. `-allybots 1` puts all four on team 1, which is the team the
+script's lobby template calls the defenders'. A lobby run needs none of this:
+the host seats the template and the Add Bot button puts each bot on a team.
+
+The map and the script both have to be beside the binary, so copy them over
+after editing either: `data/maps/Survival.map` and
+`data/maps/Survival.scenario.lua` into `build-own/data/maps/`.
 
 ## How one arena runs
 

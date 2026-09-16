@@ -159,13 +159,14 @@ static const char *slotBrainPath(const ServerSim *sim, BYTE slot) {
  *
  *   1. the caller's base — the lobby default, or single player's own
  *      chosen level;
- *   2. what the map requires for the bot's side — the scenario's
- *      bot_mode(game, team) hook; on Survival the team's bots are survival
- *      mode at Hard;
- *   3. what the host last picked BY HAND, when the caller honours it — only
- *      the difficulty when step 2 fixed the mode (a bot on that team stays in
- *      survival mode, at the Medium the host chose), mode and difficulty
- *      both otherwise.
+ *   2. what the map requires for the bot's side — the attached scenario's
+ *      lobby template, read for that team; on Survival the horde's seats
+ *      are survival mode at Hard;
+ *   3. what a person last picked BY HAND, when the caller honours it — on a
+ *      team step 2 configured, the level last chosen on a seat of THAT team
+ *      and never the mode (a bot on the horde stays in survival mode, at the
+ *      Medium somebody chose for the horde); on every other team, the one
+ *      mode-and-level pair the lobby remembers.
  *
  * Bots that FIRST APPEAR — the scenario seed, single player's setup bots —
  * do not honour step 3, so they always come up at the map's default. The
@@ -175,6 +176,28 @@ static const char *slotBrainPath(const ServerSim *sim, BYTE slot) {
  * (serverSimRememberManualBotPick). It used to be recorded on EVERY config
  * write, so an automatic one — single player's add path writing its skill
  * guess — was remembered as though the host had chosen it. */
+
+/* The attached scenario's template entry for `team`, when that team has one
+ * AND it names a mode or a difficulty — the two fields that make a team's
+ * bots the MAP's to configure rather than the lobby's.
+ *
+ * NULL for every other team, which is every team of an ordinary lobby, a
+ * team the template does not list, and a template team that names neither
+ * key. The two callers below both ask this one question, so a team is
+ * "templated" in exactly one place. */
+static const ScnLobbyTeam *lobbyTemplateTeam(const ServerSim *sim, int team) {
+    int t;
+
+    if (sim == NULL || !sim->scenarioLobbyValid) return NULL;
+    if (team <= 0 || team >= MAX_TANKS) return NULL;
+    for (t = 0; t < (int)sim->scenarioLobby.numTeams && t < MAX_TANKS; t++) {
+        const ScnLobbyTeam *lt = &sim->scenarioLobby.teams[t];
+        if ((int)lt->id != team) continue;
+        if (lt->mode[0] == '\0' && lt->difficulty[0] == '\0') return NULL;
+        return lt;
+    }
+    return NULL;
+}
 
 void serverSimRememberManualBotPick(ServerSim *sim, BYTE slot) {
     BrainModes modes;
@@ -192,6 +215,19 @@ void serverSimRememberManualBotPick(ServerSim *sim, BYTE slot) {
     SDL_strlcpy(sim->lastBotModeKey, m->key, sizeof(sim->lastBotModeKey));
     SDL_strlcpy(sim->lastBotLevelKey, m->levels[bc->difficulty].key,
                 sizeof(sim->lastBotLevelKey));
+
+    /* And, on a team the map configures, the level alone against that team.
+     * The mode is deliberately not kept: the template owns it, and the next
+     * Add Bot on that team is put back into it however far the host moved
+     * this one seat. */
+    {
+        int team = (int)sim->lobbyPlayers[slot].teamNumber;
+        if (lobbyTemplateTeam(sim, team) != NULL) {
+            SDL_strlcpy(sim->lastTeamBotLevelKey[team],
+                        m->levels[bc->difficulty].key,
+                        sizeof(sim->lastTeamBotLevelKey[team]));
+        }
+    }
 }
 
 bool serverSimResolveNewBotConfig(const ServerSim *sim, int team,
@@ -201,7 +237,7 @@ bool serverSimResolveNewBotConfig(const ServerSim *sim, int team,
     BrainModes modes;
     int mode;
     int level;
-    bool mapFixedMode = false;
+    const ScnLobbyTeam *lt;
 
     if (sim == NULL || ioMode == NULL || ioLevel == NULL) return false;
     if (brainPath == NULL || brainPath[0] == '\0') return false;
@@ -218,25 +254,52 @@ bool serverSimResolveNewBotConfig(const ServerSim *sim, int team,
         level = modes.modes[mode].defaultLevel;
     }
 
-    /* Step 2 of this rule, "what the map requires for this side", has no
-     * meaning here: that step asks a map script which mode a team runs in, and
-     * this build has no script layer. mapFixedMode therefore stays false, and
-     * the host's pick below is free to set the mode as well as the level. */
+    /* 2. What the map requires for this side: the attached scenario's lobby
+     *    template, read for the team this bot is joining. The same two keys
+     *    the seating applies, resolved by the same call, so a seat the
+     *    template made and a seat Add Bot makes on that team land on the
+     *    same pair. A key this brain does not list is refused and costs the
+     *    seat nothing — as it does at the seating.
+     *
+     *    Naming a mode FIXES it: the host's pick below may then move the
+     *    level inside it and never the mode itself. That is what makes an
+     *    Add Bot on Survival's horde a survival bot whatever mode the host
+     *    left some other seat in. */
+    lt = lobbyTemplateTeam(sim, team);
+    if (lt != NULL) {
+        uint8_t m = (uint8_t)mode;
+        uint8_t l = (uint8_t)level;
+        if (serverSimResolveBotConfigKeys(brainPath, lt->mode, lt->difficulty,
+                                          &m, &l) == BOT_CFG_KEYS_OK) {
+            mode  = (int)m;
+            level = (int)l;
+        } else {
+            /* The template named a key this brain has never heard of, so
+             * this is not a team the map can configure after all and the
+             * ordinary rule is the right one. */
+            lt = NULL;
+        }
+    }
 
-    /* 3. What the host last picked by hand. */
-    if (honourManualPick && sim->lastBotLevelKey[0] != '\0') {
-        if (mapFixedMode) {
-            int li = brainModeFindLevel(&modes.modes[mode],
-                                        sim->lastBotLevelKey);
+    /* 3. What a person last picked by hand.
+     *
+     *    On a templated team that is the level last set on a seat of THAT
+     *    team, and the mode is left alone. On every other team it is the
+     *    one pair the lobby remembers, which may set both. */
+    if (honourManualPick && lt != NULL) {
+        const char *key = sim->lastTeamBotLevelKey[team];
+        if (key[0] != '\0') {
+            int li = brainModeFindLevel(&modes.modes[mode], key);
             if (li >= 0) level = li;
-        } else if (sim->lastBotModeKey[0] != '\0') {
-            int mi = brainModesFindMode(&modes, sim->lastBotModeKey);
-            if (mi >= 0) {
-                int li = brainModeFindLevel(&modes.modes[mi],
-                                            sim->lastBotLevelKey);
-                mode  = mi;
-                level = (li >= 0) ? li : modes.modes[mi].defaultLevel;
-            }
+        }
+    } else if (honourManualPick && sim->lastBotLevelKey[0] != '\0' &&
+               sim->lastBotModeKey[0] != '\0') {
+        int mi = brainModesFindMode(&modes, sim->lastBotModeKey);
+        if (mi >= 0) {
+            int li = brainModeFindLevel(&modes.modes[mi],
+                                        sim->lastBotLevelKey);
+            mode  = mi;
+            level = (li >= 0) ? li : modes.modes[mi].defaultLevel;
         }
     }
 

@@ -64,6 +64,12 @@
  * run_lobby_template_no_mode_leaves_config
  *                                       — naming neither leaves both as the
  *                                         lobby had them
+ * run_lobby_template_add_bot_takes_template
+ *                                       — Add Bot on a team the template
+ *                                         configures takes the template's
+ *                                         mode and that team's own last
+ *                                         hand-picked level, and a plain
+ *                                         team keeps the ordinary rule
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -1274,6 +1280,212 @@ int run_lobby_template_no_mode_leaves_config(void) {
                   "held seat %d queued no bot-config event", held);
     UT_ASSERT_MSG((sim->botConfigPublishPending & (1u << fielded)) != 0,
                   "fielded seat %d queued no bot-config event", fielded);
+
+    serverSimDestroy(sim);
+    ltDropModesBrain();
+    ltDropBrainFile();
+    return 0;
+}
+
+/* ── Add Bot on a team the template configures ─────────────────────────
+ *
+ * The owner's rule: "when someone hits Add Bot on horde, it needs to go
+ * through the scenario somehow to know to put them to Survival and whatever
+ * the latest difficulty was that was manually set by a human, or default to
+ * Hard."
+ *
+ * So a seat Add Bot makes on a templated team takes the template's MODE, and
+ * for the level takes the last difficulty a person set on a seat of THAT
+ * team, else the template's own, else the mode's default, else Hard. A team
+ * the template says nothing about keeps the ordinary lobby rule, where the
+ * last pair a person picked by hand sets the mode as well as the level.
+ *
+ * Both roads in resolve through serverSimApplyNewBotDefaults, so this is
+ * what the host's Add Bot over the wire and single player's own both do.
+ */
+
+/* One templated team and one plain one, both on the modes fixture brain. */
+static void ltAddBotTemplate(ScnLobbyTemplate *t,
+                             const char *mode, const char *level) {
+    memset(t, 0, sizeof(*t));
+    t->numTeams = 2;
+    /* The templated team — Survival's horde. No seats of its own: this case
+       is about the seats Add Bot makes, not the ones the seating makes. */
+    t->teams[0].id      = LT_GUARD;
+    t->teams[0].bots    = 0;
+    t->teams[0].maxBots = 8;
+    t->teams[0].fielded = true;
+    SDL_strlcpy(t->teams[0].brain, ltModesBrain, sizeof(t->teams[0].brain));
+    if (mode != NULL) {
+        SDL_strlcpy(t->teams[0].mode, mode, sizeof(t->teams[0].mode));
+    }
+    if (level != NULL) {
+        SDL_strlcpy(t->teams[0].difficulty, level,
+                    sizeof(t->teams[0].difficulty));
+    }
+    /* The plain team — Survival's defenders. Listed, and naming neither key,
+       which is the same as not being listed at all as far as this rule is
+       concerned. */
+    t->teams[1].id      = LT_RAIDER;
+    t->teams[1].bots    = 0;
+    t->teams[1].maxBots = 8;
+    t->teams[1].fielded = true;
+    SDL_strlcpy(t->teams[1].brain, ltModesBrain, sizeof(t->teams[1].brain));
+}
+
+/* The Add Bot button, server side: a bot in the first free seat, on the team
+   asked for, then the mode and difficulty every new lobby bot gets. The same
+   two calls, in the same order, as the CMD_LOBBY_ADD_BOT arm of
+   server_command_dispatch.c. Returns the seat. */
+static int ltAddBot(ServerSim *sim, BYTE team) {
+    int slot = serverSimFindFreeSlot(sim, true);
+    if (slot < 0) return -1;
+    if (!serverSimCreateBot(sim, (BYTE)slot, serverSimGetBotBrainPath(sim),
+                            "Added", (aiType)serverSimGetBotAiType(sim),
+                            gameOpen, sim->sim.hiddenMines, team, NULL)) {
+        return -1;
+    }
+    serverSimApplyNewBotDefaults(sim, (BYTE)slot, (int)team,
+                                 serverSimGetBotBrainPath(sim), TRUE);
+    return slot;
+}
+
+/* A person choosing a mode and a difficulty off the lobby's dropdown. The
+   same two calls, in the same order, as the CMD_LOBBY_BOT_CONFIG arm of
+   server_command_dispatch.c — the write, then the remember, and the remember
+   only because the pair really changed. */
+static void ltHostPicks(ServerSim *sim, int slot, uint8_t mode, uint8_t lvl) {
+    serverSimSetBotConfig(sim, (BYTE)slot, mode, lvl, 0, NULL);
+    serverSimRememberManualBotPick(sim, (BYTE)slot);
+}
+
+int run_lobby_template_add_bot_takes_template(void) {
+    ServerSim       *sim;
+    ScnLobbyTemplate t;
+    int              horde1;
+    int              horde2;
+    int              horde3;
+    int              plain1;
+    int              plain2;
+
+    UT_ASSERT(ltMakeBrainFile("add_bot_template"));
+    UT_ASSERT(ltMakeModesBrain("add_bot_template"));
+    ut_brain_stub_arm(true);
+    sim = ltLobbySim();
+    UT_ASSERT(sim != NULL);
+    /* The brain Add Bot runs. ltLobbySim names the bare fixture file, which
+       ships no modes.txt and so has no mode to resolve against. */
+    serverSimSetBotBrainPath(sim, ltModesBrain);
+
+    ltAddBotTemplate(&t, "survival", "hard");
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    serverSimScenarioSeatLobby(sim);
+    ltHoldInLobby(sim);
+
+    /* (a) Nobody has picked anything: the template's own pair. */
+    horde1 = ltAddBot(sim, LT_GUARD);
+    UT_ASSERT_MSG(horde1 >= 0, "Add Bot on the templated team was refused");
+    UT_ASSERT_MSG(sim->botConfigs[horde1].mode == 1,
+                  "the added horde bot in seat %d is in mode %u, expected "
+                  "survival (1)", horde1,
+                  (unsigned)sim->botConfigs[horde1].mode);
+    UT_ASSERT_MSG(sim->botConfigs[horde1].difficulty == BOT_DIFFICULTY_HARD,
+                  "the added horde bot in seat %d is at level %u, expected "
+                  "hard (%d)", horde1,
+                  (unsigned)sim->botConfigs[horde1].difficulty,
+                  BOT_DIFFICULTY_HARD);
+
+    /* And the plain team is untouched by any of it: the lobby's own default,
+       which is mode 0 at Hard. */
+    plain1 = ltAddBot(sim, LT_RAIDER);
+    UT_ASSERT_MSG(plain1 >= 0, "Add Bot on the plain team was refused");
+    UT_ASSERT_MSG(sim->botConfigs[plain1].mode == 0,
+                  "the added plain bot in seat %d is in mode %u, expected the "
+                  "lobby's own (0)", plain1,
+                  (unsigned)sim->botConfigs[plain1].mode);
+    UT_ASSERT_MSG(sim->botConfigs[plain1].difficulty == BOT_DIFFICULTY_HARD,
+                  "the added plain bot in seat %d is at level %u, expected "
+                  "hard (%d)", plain1,
+                  (unsigned)sim->botConfigs[plain1].difficulty,
+                  BOT_DIFFICULTY_HARD);
+
+    /* (b) A person turns one HORDE seat down to easy. The next Add Bot on
+           that team is survival at easy: the mode is still the template's,
+           and the level is the one a person chose. */
+    ltHostPicks(sim, horde1, 1 /* survival */, BOT_DIFFICULTY_EASY);
+    horde2 = ltAddBot(sim, LT_GUARD);
+    UT_ASSERT_MSG(horde2 >= 0, "the second Add Bot on the horde was refused");
+    UT_ASSERT_MSG(sim->botConfigs[horde2].mode == 1,
+                  "the second horde bot, seat %d, is in mode %u, expected "
+                  "survival (1)", horde2,
+                  (unsigned)sim->botConfigs[horde2].mode);
+    UT_ASSERT_MSG(sim->botConfigs[horde2].difficulty == BOT_DIFFICULTY_EASY,
+                  "the second horde bot, seat %d, is at level %u, expected "
+                  "easy (%d)", horde2,
+                  (unsigned)sim->botConfigs[horde2].difficulty,
+                  BOT_DIFFICULTY_EASY);
+
+    /* (c) A person now picks a pair on the PLAIN team — mode 0 at medium.
+           The plain team's next bot takes both, which is the rule that team
+           has always followed. */
+    ltHostPicks(sim, plain1, 0 /* default */, BOT_DIFFICULTY_MEDIUM);
+    plain2 = ltAddBot(sim, LT_RAIDER);
+    UT_ASSERT_MSG(plain2 >= 0,
+                  "the second Add Bot on the plain team was refused");
+    UT_ASSERT_MSG(sim->botConfigs[plain2].mode == 0,
+                  "the second plain bot, seat %d, is in mode %u, expected the "
+                  "host's own (0)", plain2,
+                  (unsigned)sim->botConfigs[plain2].mode);
+    UT_ASSERT_MSG(sim->botConfigs[plain2].difficulty == BOT_DIFFICULTY_MEDIUM,
+                  "the second plain bot, seat %d, is at level %u, expected "
+                  "medium (%d)", plain2,
+                  (unsigned)sim->botConfigs[plain2].difficulty,
+                  BOT_DIFFICULTY_MEDIUM);
+
+    /* And the horde has not heard a word of it. This is the half a single
+       remembered pair gets wrong: a difficulty chosen for the defenders
+       would walk onto the horde, and mode 0 with it. */
+    horde3 = ltAddBot(sim, LT_GUARD);
+    UT_ASSERT_MSG(horde3 >= 0, "the third Add Bot on the horde was refused");
+    UT_ASSERT_MSG(sim->botConfigs[horde3].mode == 1,
+                  "a pick made on another team moved the horde bot in seat %d "
+                  "to mode %u", horde3,
+                  (unsigned)sim->botConfigs[horde3].mode);
+    UT_ASSERT_MSG(sim->botConfigs[horde3].difficulty == BOT_DIFFICULTY_EASY,
+                  "a pick made on another team moved the horde bot in seat %d "
+                  "to level %u, expected easy (%d)", horde3,
+                  (unsigned)sim->botConfigs[horde3].difficulty,
+                  BOT_DIFFICULTY_EASY);
+
+    serverSimDestroy(sim);
+    ltDropModesBrain();
+    ltDropBrainFile();
+
+    /* (d) A team naming a mode and NO difficulty lands on that mode's own
+           default level, which for this fixture is hard — the "or default to
+           Hard" half of the rule, arrived at without anything saying hard. */
+    UT_ASSERT(ltMakeBrainFile("add_bot_mode_only"));
+    UT_ASSERT(ltMakeModesBrain("add_bot_mode_only"));
+    ut_brain_stub_arm(true);
+    sim = ltLobbySim();
+    UT_ASSERT(sim != NULL);
+    serverSimSetBotBrainPath(sim, ltModesBrain);
+
+    ltAddBotTemplate(&t, "survival", NULL);
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    serverSimScenarioSeatLobby(sim);
+    ltHoldInLobby(sim);
+
+    horde1 = ltAddBot(sim, LT_GUARD);
+    UT_ASSERT_MSG(horde1 >= 0, "Add Bot on the mode-only team was refused");
+    UT_ASSERT_MSG(sim->botConfigs[horde1].mode == 1,
+                  "seat %d is in mode %u, expected survival (1)", horde1,
+                  (unsigned)sim->botConfigs[horde1].mode);
+    UT_ASSERT_MSG(sim->botConfigs[horde1].difficulty == BOT_DIFFICULTY_HARD,
+                  "seat %d is at level %u, expected survival's own default, "
+                  "hard (%d)", horde1,
+                  (unsigned)sim->botConfigs[horde1].difficulty,
+                  BOT_DIFFICULTY_HARD);
 
     serverSimDestroy(sim);
     ltDropModesBrain();

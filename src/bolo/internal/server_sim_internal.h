@@ -162,6 +162,24 @@ struct ServerSim {
     char            lastBotModeKey[BRAIN_MODE_KEY_LEN];
     char            lastBotLevelKey[BRAIN_MODE_KEY_LEN];
 
+    /* The same memory again, but PER TEAM, and only the level: the last
+     * difficulty a person chose by hand for a seat on a team the attached
+     * scenario templates. Indexed by team number, so entry 0 is the seat
+     * with no team and is never read.
+     *
+     * A templated team owns its bots' MODE — the template names it and the
+     * host's dropdown may move one seat but never the next Add Bot — so the
+     * pair above is the wrong memory for those teams: it would carry the
+     * mode across as well, and it would carry a level chosen on the
+     * defenders' team onto the horde. Survival is the shape: the horde is
+     * survival mode at whatever difficulty a human last set on a HORDE
+     * seat, and the defenders are whatever the host picks for themselves.
+     *
+     * Written by the same one writer as the pair above, cleared in the same
+     * three places, and read only by serverSimResolveNewBotConfig, for a
+     * team the template names a mode or a difficulty on. */
+    char            lastTeamBotLevelKey[MAX_TANKS][BRAIN_MODE_KEY_LEN];
+
     /* One bit per slot: a CTRL_LOBBY_BOT_CONFIG still to publish. Set by
      * serverSimApplyNewBotDefaults, sent a couple per lobby tick by
      * serverSimFlushBotConfigPublishes, so a scenario seed's ten bots do not

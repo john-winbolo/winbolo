@@ -54,6 +54,7 @@ import argparse
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -140,10 +141,76 @@ def gate_options(name):
     return opts
 
 
+# ── Ports ────────────────────────────────────────────────────────────────
+#
+# Every arena is its own private server and wants its own UDP port. They are
+# numbered off --port-base, one each, so two arenas of one run never ask for
+# the same one — and that was never the flake.
+#
+# The flake is the REST of the machine. The default base sits inside Windows'
+# dynamic port range (49152-65535), so any program on the box may be holding
+# one of these for an outgoing socket at the moment an arena starts; a gate
+# run started while the last one is still shutting down can land on a port its
+# own server has not let go of yet. The server binds EXCLUSIVELY on purpose
+# (transport_udp_server.c asks for SO_EXCLUSIVEADDRUSE, so two hosts on one
+# machine cannot silently share a port and dispatch each other's packets), so
+# a port that is taken is not shared: the bind fails, the server exits, and
+# the arena reports "no verdict" with "[UDP SERVER] bind() failed" in its log.
+#
+# Two things are done about it here, and nothing is done to the server.
+# First, a port is probed the way the server will bind it and handed out only
+# if it is free, and it is handed out at the moment the arena STARTS rather
+# than when the run is planned, so the gap between the check and the bind is
+# as small as it can be made. Second, an arena that still lost the race is
+# started again on another port — see the retry in main(). The probe alone
+# cannot be enough: nothing can stop another process taking the port in
+# between, which is exactly what the one observed failure looked like.
+
+PORT_RETRIES = 2        # how many times one arena may be given another port
+PORT_SEARCH_MAX = 500   # ports probed before the run gives up
+
+
+def port_is_free(port):
+    """True when a server could bind `port` right now, asked exclusively."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            try:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            except OSError:
+                pass
+        s.bind(("", port))
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+class PortPool(object):
+    """Ports from --port-base upward, skipping the ones already taken."""
+
+    def __init__(self, base):
+        self.next = base
+
+    def take(self):
+        for _ in range(PORT_SEARCH_MAX):
+            p = self.next
+            self.next += 1
+            if p > 65000:
+                sys.exit("ran off the top of the port range from --port-base")
+            if port_is_free(p):
+                return p
+        sys.exit("no free UDP port in %d from %d upward"
+                 % (PORT_SEARCH_MAX, self.next - PORT_SEARCH_MAX))
+
+
 class Job(object):
-    def __init__(self, name, port, opts, head, tail, log_dir):
+    def __init__(self, name, opts, head, tail, log_dir):
         self.name = name
-        self.port = port
+        self.port = None
+        self.tries = 0
+        self.bind_failed = False
         self.opts = opts
         self.head = head
         self.tail = tail
@@ -202,8 +269,11 @@ class Job(object):
             cmd += ["-mines", str(o["mines"])]
         return cmd
 
-    def start(self, ds, build_dir):
+    def start(self, ds, build_dir, ports):
         self.prepare()
+        self.port = ports.take()
+        self.tries += 1
+        self.bind_failed = False
         self.log = open(self.log_path, "w", encoding="utf-8", errors="replace")
         cmd = self.command(ds)
         self.log.write("[gate] " + " ".join(cmd) + "\n")
@@ -232,14 +302,24 @@ class Job(object):
         return True
 
     def read_verdict(self):
+        self.bind_failed = False
         with open(self.log_path, encoding="utf-8", errors="replace") as f:
             for line in f:
-                m = VERDICT_RE.match(line.strip())
+                s = line.strip()
+                # Read before the verdict test: a server that never bound
+                # never played the round, so there is no verdict to find and
+                # the reason has to come off this line instead.
+                if "bind() failed on port" in s:
+                    self.bind_failed = True
+                m = VERDICT_RE.match(s)
                 if m:
                     self.verdict, _, self.why = m.group(1), m.group(2), m.group(3)
                     return
         self.verdict = None
-        self.why = "no verdict (rc=%s)" % self.rc
+        if self.bind_failed:
+            self.why = "the server could not bind port %d" % self.port
+        else:
+            self.why = "no verdict (rc=%s)" % self.rc
 
     def tail_lines(self, n=4):
         with open(self.log_path, encoding="utf-8", errors="replace") as f:
@@ -262,7 +342,9 @@ def main():
     ap.add_argument("--skip", nargs="*", default=[])
     ap.add_argument("--jobs", default="auto")
     ap.add_argument("--build", default="build-own")
-    ap.add_argument("--port-base", type=int, default=50300)
+    ap.add_argument("--port-base", type=int, default=50300,
+                    help="where the search for each arena's own UDP port "
+                         "starts; ports already taken are stepped over")
     ap.add_argument("--run-skipped", action="store_true",
                     help="run the arenas marked skip as well")
     args = ap.parse_args()
@@ -283,7 +365,7 @@ def main():
         os.makedirs(log_dir)
 
     pending, skipped, expected = [], [], {}
-    port = args.port_base
+    ports = PortPool(args.port_base)
     for name in arena_names(args.only, args.skip):
         opts = gate_options(name)
         if opts.get("skip") and not args.run_skipped:
@@ -291,8 +373,7 @@ def main():
             continue
         if opts.get("expect"):
             expected[name] = opts["expect"]
-        pending.append(Job(name, port, opts, head, tail, log_dir))
-        port += 1
+        pending.append(Job(name, opts, head, tail, log_dir))
 
     print("gate: %d arena(s), up to %d at once, %d skipped, logs in %s"
           % (len(pending), jobs_max, len(skipped), log_dir))
@@ -307,6 +388,15 @@ def main():
             if not j.poll():
                 continue
             running.remove(j)
+            # A server that never got its port did not play the arena, so
+            # this says nothing about the arena. Put it back for another
+            # port rather than reporting a failure the code did not cause.
+            if j.bind_failed and j.tries <= PORT_RETRIES:
+                print("  RETRY %-30s port %d was taken; another port"
+                      % (j.name, j.port))
+                sys.stdout.flush()
+                pending.insert(0, j)
+                continue
             done.append(j)
             expect = expected.get(j.name)
             if j.verdict == "PASS":
@@ -329,7 +419,7 @@ def main():
 
         while pending and len(running) < jobs_max:
             j = pending.pop(0)
-            j.start(ds, build_dir)
+            j.start(ds, build_dir, ports)
             running.append(j)
             print("  ....  %-30s port %d  running=%d"
                   % (j.name, j.port, len(running)))

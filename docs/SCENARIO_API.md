@@ -364,6 +364,30 @@ again when a lobby comes back from a round — which is the rule `bots` and
 `max_bots` already follow: what a host does inside one lobby stands, and the
 template describes the lobby each round opens with.
 
+**Add Bot on one of these teams reads the template too.** A seat the host
+adds to a team the template named a `mode` or a `difficulty` on is not a
+plain lobby bot: the server resolves it the same way the seating does, so
+Survival's horde grows in survival mode however the lobby's own default is
+set. The level is the first of these that exists:
+
+1. the most recent difficulty a **person** set on a seat of **that team**,
+   through the difficulty dropdown, this lobby session;
+2. the team's own `difficulty`;
+3. the default level of the mode the team named;
+4. Hard.
+
+The mode is always the template's — a host who moves one horde seat out of
+survival mode has moved that seat and nothing else, and the next Add Bot on
+that team is back in survival. A team the template does not name, or names
+neither key on, keeps the ordinary lobby rule, where the last pair a person
+chose by hand sets the mode as well as the level.
+
+The memory is per team and lasts one lobby session. It is cleared with every
+other lobby-session memory when a round ends and when the last person leaves,
+so the lobby a map opens with is the template's and not last round's. The
+resolution is done on the server for both roads in — the host's Add Bot over
+the wire, and single player's own — so the two always agree.
+
 `max_bots` is a memory ceiling as well as a seating one. A seat keeps the runner
 behind it — one ClientSim and one brain VM — across the unfielding that takes
 its bot off the field, so the next wave is handed that runner rather than
@@ -905,19 +929,27 @@ That is what puts them on the lobby row and what the server turns into the
 brain's `mode=` / `difficulty=` tokens. A scenario may also write the same
 pair into its `init` table, which reaches the brain by a different road: the
 brain flattens the table onto the end of the same token string and takes the
-last write. Writing both is not wrong and Survival does it, because the two
-roads serve different bots — the template's pair is what a seat the lobby
-shows carries, and the table's is what a bot spawned into a seat no template
-described gets. Two identical values are one value applied twice. Two
-different ones are not: the table's wins at the brain, and the lobby row
-still shows the seat's.
+last write. Writing both is not wrong — the two roads serve different bots,
+the template's pair being what a seat the lobby shows carries and the table's
+what a bot spawned into a seat no template described gets. Two identical
+values are one value applied twice. Two different ones are not: the table's
+wins at the brain, and the lobby row still shows the seat's.
+
+Survival writes them on the **template only**. Every seat it fields is one of
+the template's own held seats, so the seat's config already carries the pair
+by the time a VM is built for it, and a wave's table would be a second copy
+of a value nothing had changed. There is a stronger reason not to put them in
+a wave's table: a wave table goes to a brain through `bot_init`, which reaches
+a brain that is **already running**, and `mode=` and `difficulty=` are refused
+at runtime — so they would buy nothing and cost one "unsupported" line per bot
+per wave in the log.
 
 **Changing a bot's orders while it plays.** `bot_init` takes the same table
 `spawn_bot`'s `init` field takes — flat, names to strings or numbers, at most
 16 pairs — and hands it to a bot that is already on the field:
 
 ```lua
-game.bot_init(p, { noblitz = "1", cfg = "ORDER_NEARBY_TILES=3" })
+game.bot_init(p, { noblitz = "1", cfg = "PILL_REPOSITION_ENABLED=false" })
 ```
 
 The table **replaces** the bot's, whole. What the spawn's table said and this
