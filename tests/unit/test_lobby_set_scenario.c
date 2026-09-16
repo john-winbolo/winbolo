@@ -19,6 +19,10 @@
  *                                         drive letter are refused, as are a
  *                                         non-host sender, a running round
  *                                         and a server with no lobby
+ * run_lobby_set_scenario_refuses_bound  — an entry the directory holds but
+ *                                         which says it is bound to its own
+ *                                         map is refused, and the mod that
+ *                                         was selected survives it
  *
  * Nothing here checks what the selection does, because it does nothing yet:
  * applying it, and the settings event that says where the scenario in play
@@ -42,11 +46,13 @@
 #include "threads.h"
 #include "test_harness.h"
 
-/* The directory these cases offer, and how many times it was read. */
+/* The directory these cases offer, and how many times it was read. bound is
+ * per entry, as the real lister fills it from each manifest. */
 typedef struct {
     int         calls;
     int         count;
     const char *files[4];
+    bool        bound[4];
 } SsDir;
 
 static int ssList(void *ctx, const char *dir, ScnDirEntry *out, int max) {
@@ -59,6 +65,7 @@ static int ssList(void *ctx, const char *dir, ScnDirEntry *out, int max) {
         memset(&out[n], 0, sizeof(out[n]));
         snprintf(out[n].file, sizeof(out[n].file), "%s", d->files[n]);
         snprintf(out[n].name, sizeof(out[n].name), "Scenario %d", n);
+        out[n].bound = d->bound[n];
         n++;
     }
     return n;
@@ -273,6 +280,57 @@ int run_lobby_set_scenario_refuses_shape(void) {
     UT_ASSERT_MSG(strcmp(serverSimGetSelectedScenario(sim),
                          "wave.scenario") == 0,
                   "that refusal changed the selection");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── A scenario that belongs to its own map ───────────────────────── */
+
+/* A bound scenario is one written against a particular map — its tags, its
+ * regions and its entity indices are that map's — so it is no use as a mod
+ * over another map and a host cannot pick it. The entry is in the directory
+ * and the name is spelled right: what refuses it is the flag alone. */
+int run_lobby_set_scenario_refuses_bound(void) {
+    ServerSim *sim;
+    SsDir      d;
+    CmdResult  r;
+
+    sim = ssLobby(&d);
+    UT_ASSERT(sim != NULL);
+    /* A third entry beside the two mods, this one tied to its own map. */
+    d.count    = 3;
+    d.files[2] = "island.scenario";
+    d.bound[2] = true;
+
+    UT_ASSERT_MSG(ssApply(sim, 0, "wave.scenario") == CMD_OK,
+                  "setup: the mod the bound pick has to leave alone was "
+                  "refused");
+
+    r = ssApply(sim, 0, "island.scenario");
+    UT_ASSERT_MSG(r == CMD_REJECT_INVALID,
+                  "a bound scenario answered %d, wanted CMD_REJECT_INVALID "
+                  "(%d)", (int)r, (int)CMD_REJECT_INVALID);
+    UT_ASSERT_MSG(strcmp(serverSimGetSelectedScenario(sim),
+                         "wave.scenario") == 0,
+                  "the refused pick left \"%s\" selected, wanted the mod that "
+                  "was already picked", serverSimGetSelectedScenario(sim));
+
+    /* The same directory, and the entries that are not bound are still
+       picked: what was refused above is the flag and not the read. */
+    UT_ASSERT_MSG(ssApply(sim, 0, "fastreload.lua") == CMD_OK,
+                  "a mod in the same directory was refused after the bound "
+                  "one");
+    UT_ASSERT(strcmp(serverSimGetSelectedScenario(sim),
+                     "fastreload.lua") == 0);
+
+    /* And once more over that pick, so a refusal is shown to leave whichever
+       mod is selected rather than only the first one. */
+    UT_ASSERT(ssApply(sim, 0, "island.scenario") == CMD_REJECT_INVALID);
+    UT_ASSERT_MSG(strcmp(serverSimGetSelectedScenario(sim),
+                         "fastreload.lua") == 0,
+                  "the second refusal changed the selection to \"%s\"",
+                  serverSimGetSelectedScenario(sim));
 
     serverSimDestroy(sim);
     return 0;

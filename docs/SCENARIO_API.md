@@ -298,15 +298,16 @@ the name you gave the file rather than by the one you would have chosen.
 
 ```lua
 scenario = {
-  name        = "Wave Defense",
-  description = "Hold the four pillboxes at the centre of the map.",
-  api         = 1,
-  game        = "open",
-  bound       = true,
-  lobby       = { ... },
-  rules       = { ... },
-  tags        = { ... },
-  regions     = { ... },
+  name         = "Wave Defense",
+  description  = "Hold the four pillboxes at the centre of the map.",
+  api          = 1,
+  game         = "open",
+  bound        = true,
+  fill_to_caps = false,
+  lobby        = { ... },
+  rules        = { ... },
+  tags         = { ... },
+  regions      = { ... },
 }
 ```
 
@@ -316,7 +317,8 @@ scenario = {
 | `description` | string | One or two sentences for a host reading a list. |
 | `api` | number | The API version you wrote against. Defaults to 1. A server older than the version you name refuses the scenario rather than running it half-understood. |
 | `game` | string | The game type the scenario asks for: `"open"`, `"tournament"` or `"strict"`. The round plays under it — the lobby and both game finders read the type as Scripted, and every part of the engine that picks behaviour from the game type resolves that to the word named here. Left out, the round plays open. A word that is none of the three also plays open, and `-validate` reports it by name. |
-| `bound` | boolean | True (the default) when the scenario is tied to its map. A scenario that names tags or regions is tied to its map by definition, because tags and regions are the map's own squares and entities. |
+| `bound` | boolean | True (the default) when the scenario is tied to its map. A scenario that names tags or regions is tied to its map by definition, because tags and regions are the map's own squares and entities. A server can also offer scenarios of its own, which play over whichever map a host has committed; a scenario with `bound` true is not one of those and a host picking it is refused, because over another map its tags, its regions and its entity indices name items that are not there. |
+| `fill_to_caps` | boolean | False by default. True starts every pillbox and base on the map at the caps your `rules` table leaves in force rather than at the numbers the map file holds. A map file states a number for each pill's armour and each base's stocks and has no way of stating "full", so a scenario that raises `base_full_armour` or `pill_max_armour` would otherwise open with the map's own smaller numbers and climb to the new ones over the round. Raising only: anything already at or above a cap is left where it is, and anything above one is brought down by the rules themselves. A pill's firing rate is not touched. |
 
 ### `scenario.lobby`
 

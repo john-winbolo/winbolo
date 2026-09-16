@@ -12,8 +12,8 @@
  *
  *  The decode is the twin of scnReadManifest in
  *  scenario_host.c: the same fields, the same defaults —
- *  api 1, bound true, a team fielded unless it says
- *  otherwise — and the same soft reports through
+ *  api 1, bound true, fill_to_caps false, a team fielded
+ *  unless it says otherwise — and the same soft reports through
  *  ScnParseReport for the same shapes, so a rule name that
  *  names no rule reads the same whether an author wrote it
  *  in Lua or in JSON.
@@ -428,8 +428,9 @@ static void mjDecode(ScnManifestDoc *d, ScnParseReport *rep) {
     mjString(d->root, "name", m->name, sizeof(m->name));
     mjString(d->root, "description", m->description, sizeof(m->description));
     mjString(d->root, "game", m->game, sizeof(m->game));
-    m->api   = (int)mjNumber(d->root, "api", 1);
-    m->bound = mjBool(d->root, "bound", true);
+    m->api        = (int)mjNumber(d->root, "api", 1);
+    m->bound      = mjBool(d->root, "bound", true);
+    m->fillToCaps = mjBool(d->root, "fill_to_caps", false);
 
     mjDecodeLobby(d->root, &m->lobby, rep);
     mjDecodeRules(d->root, m, rep);
@@ -728,6 +729,7 @@ static void mjEmit(cJSON *root, const ScnManifestDoc *d) {
     mjPutString(root, "description", m->description);
     mjPutString(root, "game", m->game);
     mjPutBool(root, "bound", m->bound);
+    mjPutBool(root, "fill_to_caps", m->fillToCaps);
 
     lobby = mjObjectFor(root, "lobby");
     if (lobby != NULL) {
@@ -952,6 +954,13 @@ bool scnManifestAgrees(const ScenarioManifest *fromJson,
                         "script's table says %s",
                         fromJson->bound ? "true" : "false",
                         fromLua->bound ? "true" : "false");
+    }
+    if (fromJson->fillToCaps != fromLua->fillToCaps) {
+        return mjDiffer(key, keyLen, err, errLen, "fill_to_caps",
+                        "scenario: the manifest says fill_to_caps %s and the "
+                        "script's table says %s",
+                        fromJson->fillToCaps ? "true" : "false",
+                        fromLua->fillToCaps ? "true" : "false");
     }
 
     if (fromJson->lobby.maxPlayers != fromLua->lobby.maxPlayers) {

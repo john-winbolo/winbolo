@@ -143,6 +143,10 @@ static bool lobbySlotMayHoldStart(ServerSim *sim, BYTE slot, BYTE idx1) {
    directory belongs to the scenario library, which src/server/ does not
    name.
 
+   bound takes the matched entry's own flag, which is the other thing the
+   caller has to know about a name it found: a scenario that belongs to a map
+   is no use over a different one.
+
    The cap is the one the list packet and the client's chooser already share,
    so every scenario a host can see is one the server will accept. Its own
    function rather than part of the case below: the entry array runs to
@@ -150,17 +154,23 @@ static bool lobbySlotMayHoldStart(ServerSim *sim, BYTE slot, BYTE idx1) {
    this thread, and a frame that large belongs to the one call that needs it
    rather than to every command the dispatcher handles. */
 static bool lobbyScenarioDirHolds(const ServerSim *sim, const char *file,
-                                  char *out, size_t outLen) {
+                                  char *out, size_t outLen, bool *bound) {
     ScnDirEntry entries[LOBBY_SCENARIO_LIST_MAX];
     int got = serverSimScenarioListDir(sim, entries, LOBBY_SCENARIO_LIST_MAX);
     int i;
 
+    if (bound != NULL) {
+        *bound = false;
+    }
     for (i = 0; i < got; i++) {
         if (strcmp(entries[i].file, file) == 0) {
             /* The directory's spelling rather than the wire's, so what is
                recorded is what the lister reported. */
             if (out != NULL && outLen > 0) {
                 SDL_strlcpy(out, entries[i].file, outLen);
+            }
+            if (bound != NULL) {
+                *bound = entries[i].bound;
             }
             return true;
         }
@@ -917,7 +927,18 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         }
         if (!safe) return CMD_REJECT_INVALID;
         char picked[SCN_DIR_FILE_LEN];
-        if (!lobbyScenarioDirHolds(sim, relPath, picked, sizeof(picked))) {
+        bool pickedBound = false;
+        if (!lobbyScenarioDirHolds(sim, relPath, picked, sizeof(picked),
+                                   &pickedBound)) {
+            return CMD_REJECT_INVALID;
+        }
+        /* A scenario that says it is bound belongs to the map it was written
+           against: its tags, its regions and its entity indices are that
+           map's, so over another map they name items that are not there. It
+           arrives with its own map and plays when that map is committed,
+           which leaves nothing here for a host to pick. Refused rather than
+           accepted and quietly ignored, so the host is told. */
+        if (pickedBound) {
             return CMD_REJECT_INVALID;
         }
         serverSimSetSelectedScenario(sim, picked);

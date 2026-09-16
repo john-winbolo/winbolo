@@ -409,6 +409,7 @@ int run_lobby_set_scenario_selects(void);
 int run_lobby_set_scenario_none(void);
 int run_lobby_set_scenario_refuses_unknown(void);
 int run_lobby_set_scenario_refuses_shape(void);
+int run_lobby_set_scenario_refuses_bound(void);
 int run_lobby_map_search_chunked(void);
 int run_wbn_bearer_state(void);
 int run_wbn_rekey_codec(void);
@@ -2496,6 +2497,15 @@ int run_scenario_rule_refusals(void);
 int run_scenario_rule_arm_records(void);
 int run_scenario_rule_clamps_world(void);
 int run_scenario_rule_clamp_records(void);
+
+/* fill_to_caps (test_scenario_fill_caps.c). A mod that raises a cap and asks
+ * for the map to start at it, for a base stock and for a pill's armour; the
+ * same mod without the key, which raises the cap and moves nothing; and what
+ * the fill moved, read back out of a recording. */
+int run_scenario_fill_caps_raises_bases(void);
+int run_scenario_fill_caps_raises_pills(void);
+int run_scenario_fill_caps_off_changes_nothing(void);
+int run_scenario_fill_caps_records(void);
 
 /* The six lifecycle and lobby policy pointers
  * (test_scenario_policy_lifecycle.c). Where a tank starts, whether the base

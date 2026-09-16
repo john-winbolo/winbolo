@@ -1708,6 +1708,42 @@ void basesClampToRules(GameSim *sim, bases *value) {
   }
 }
 
+/*********************************************************
+*NAME:          basesFillToRules
+*PURPOSE:
+*  Brings every base up to the stock caps this sim runs on.
+*  The other direction from basesClampToRules above, for a
+*  scenario that raises a cap and asks for the map to start
+*  at it: a map file holds a number and has no way of saying
+*  "full", so without this a raised cap leaves every base
+*  where the file put it.
+*
+*  Idempotent, and a base already at a cap is left alone.
+*
+*ARGUMENTS:
+*  sim   - Pointer to the game sim
+*  value - Pointer to the bases structure
+*********************************************************/
+void basesFillToRules(GameSim *sim, bases *value) {
+  BYTE count;
+
+  if (sim == NULL || value == NULL || *value == NULL) {
+    return;
+  }
+  for (count = 0; count < (*value)->numBases; count++) {
+    base *item = &((*value)->item[count]);
+    if (item->armour < sim->rules.base_full_armour) {
+      item->armour = (BYTE) sim->rules.base_full_armour;
+    }
+    if (item->shells < sim->rules.base_full_shells) {
+      item->shells = (BYTE) sim->rules.base_full_shells;
+    }
+    if (item->mines < sim->rules.base_full_mines) {
+      item->mines = (BYTE) sim->rules.base_full_mines;
+    }
+  }
+}
+
 void basesSetBaseCompressData(bases *value, BYTE *buff, int dataLen) {
   memcpy(&(**value), buff, SIZEOF_BASES);
   /* The wire blob carries numBases in its trailing byte; a hostile map can

@@ -1840,6 +1840,39 @@ void pillsClampToRules(GameSim *sim, pillboxes *value) {
   }
 }
 
+/*********************************************************
+*NAME:          pillsFillToRules
+*PURPOSE:
+*  Brings every pillbox up to the armour cap this sim runs
+*  on. The other direction from pillsClampToRules above, for
+*  a scenario that raises the cap and asks for the map to
+*  start at it: a map file holds a number and has no way of
+*  saying "full", so without this a raised cap leaves every
+*  pillbox where the file put it.
+*
+*  Armour only. Speed is an attack interval rather than a
+*  stock, so filling it would leave every pillbox firing at
+*  the slowest rate the table allows. Idempotent, and a pill
+*  already at the cap is left alone.
+*
+*ARGUMENTS:
+*  sim   - Pointer to the game sim
+*  value - Pointer to the pillboxes structure
+*********************************************************/
+void pillsFillToRules(GameSim *sim, pillboxes *value) {
+  BYTE count;
+
+  if (sim == NULL || value == NULL || *value == NULL) {
+    return;
+  }
+  for (count = 0; count < (*value)->numPills; count++) {
+    pillbox *item = &((*value)->item[count]);
+    if (item->armour < sim->rules.pill_max_armour) {
+      item->armour = (BYTE) sim->rules.pill_max_armour;
+    }
+  }
+}
+
 void pillsSetPillCompressData(pillboxes *value, BYTE *buff, int dataLen) {
   memcpy(&(**value), buff, SIZEOF_PILLS);
   /* Clamp the wire-supplied count so a hostile map cannot drive out-of-bounds

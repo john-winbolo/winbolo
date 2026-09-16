@@ -3537,6 +3537,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # puts in a recording — its bytes on disk and both of the viewer's
     # readers over them.
     tests/unit/test_scenario_rule_arms.c
+    # fill_to_caps: a mod that raises a cap and asks for the map's pills and
+    # bases to start at it rather than at the numbers the map file holds — a
+    # base stock, a pill's armour, the same mod with the key left out, and
+    # what the fill moved read back out of a recording.
+    tests/unit/test_scenario_fill_caps.c
     # The six lifecycle and lobby policy pointers: the start a tank is given,
     # the base sweep, the team write in both lobby arms that make one, the
     # player cap, the loadout at all three places one is handed out, and the
@@ -4498,6 +4503,7 @@ set(_unit_test_names
     lobby_set_scenario_none
     lobby_set_scenario_refuses_unknown
     lobby_set_scenario_refuses_shape
+    lobby_set_scenario_refuses_bound
     lobby_map_search_chunked
     wbn_bearer_state
     wbn_rekey_codec
@@ -5346,6 +5352,10 @@ set(_unit_test_names
     scenario_rule_arm_records
     scenario_rule_clamps_world
     scenario_rule_clamp_records
+    scenario_fill_caps_raises_bases
+    scenario_fill_caps_raises_pills
+    scenario_fill_caps_off_changes_nothing
+    scenario_fill_caps_records
     scenario_policy_choose_start
     scenario_policy_choose_start_out_of_range
     scenario_policy_allow_base_win

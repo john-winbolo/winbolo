@@ -98,6 +98,13 @@ typedef struct {
     char game[SCN_GAME_NAME_LEN];   /* the game type it asks for; "" = none */
     bool bound;                     /* true = tied to its map; false = a mod */
 
+    /* Start the map's pills and bases at the caps this table sets rather
+     * than at the numbers the map file holds. A map file states a number
+     * and cannot state "full", so a scenario that raises a cap would
+     * otherwise leave every base short of it and every pill under it. Off
+     * unless the file asks for it, which leaves a map's own numbers alone. */
+    bool fillToCaps;
+
     ScnManifestLobby lobby;
 
     uint16_t        numRules;

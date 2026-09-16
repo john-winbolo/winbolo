@@ -2745,6 +2745,78 @@ static void scenarioClampWorldToRules(ServerSim *sim) {
     }
 }
 
+/* The same pass the other way round: every pill and base brought up to the
+ * caps in force rather than down to them.
+ *
+ * What it is for. A map file states a number for each pill's armour and each
+ * base's stocks, and has no way of stating "full" — BASE_FULL_ARMOUR is the
+ * number the classic table is seeded from and nothing reads it off a file — so
+ * a scenario that raises a cap gets a map still holding whatever its author
+ * wrote. A round meant to be played at the higher numbers would open below
+ * them and climb, which is a different game from the one the scenario asked
+ * for. The scenario says fill_to_caps and this is what answers it.
+ *
+ * Raising only. A pill or a base already at or above a cap is left where it
+ * is: the clamp above is what brings anything above one down, and running
+ * both over the same list is how each stays a single direction.
+ *
+ * The records are the clamp's, written the same way and for the same reason —
+ * read off either side of the walk, one record per item that moved, and
+ * nothing written for a walk that moved nothing. A pill's speed and cooldown
+ * are not touched at all: the attack interval is a rate rather than a stock,
+ * and filling it would leave every pill on the map firing at the slowest rate
+ * the table allows. */
+void serverSimScenarioFillWorldToRules(ServerSim *sim) {
+    BYTE    pillArmour[MAX_PILLS];
+    BYTE    baseArmour[MAX_BASES];
+    BYTE    baseShells[MAX_BASES];
+    BYTE    baseMines[MAX_BASES];
+    BYTE    numPills;
+    BYTE    numBases;
+    BYTE    i;
+    pillbox pill;
+    base    item;
+
+    if (sim == NULL) {
+        return;
+    }
+    numPills = pillsGetNumPills(&sim->sim.pb);
+    numBases = basesGetNumBases(&sim->sim.bs);
+
+    for (i = 0; i < numPills; i++) {
+        memset(&pill, 0, sizeof(pill));
+        pillsGetPill(&sim->sim.pb, &pill, (BYTE)(i + 1));
+        pillArmour[i] = pill.armour;
+    }
+    for (i = 0; i < numBases; i++) {
+        memset(&item, 0, sizeof(item));
+        basesGetBase(&sim->sim.bs, &item, (BYTE)(i + 1));
+        baseArmour[i] = item.armour;
+        baseShells[i] = item.shells;
+        baseMines[i]  = item.mines;
+    }
+
+    pillsFillToRules(&sim->sim, &sim->sim.pb);
+    basesFillToRules(&sim->sim, &sim->sim.bs);
+
+    for (i = 0; i < numPills; i++) {
+        memset(&pill, 0, sizeof(pill));
+        pillsGetPill(&sim->sim.pb, &pill, (BYTE)(i + 1));
+        if (pill.armour != pillArmour[i]) {
+            logAddEvent(log_PillSetHealth, i, pill.armour, 0, 0, 0, NULL);
+        }
+    }
+    for (i = 0; i < numBases; i++) {
+        memset(&item, 0, sizeof(item));
+        basesGetBase(&sim->sim.bs, &item, (BYTE)(i + 1));
+        if (item.armour != baseArmour[i] || item.shells != baseShells[i] ||
+            item.mines != baseMines[i]) {
+            logAddEvent(log_BaseSetStock, i, item.shells, item.mines,
+                        item.armour, 0, NULL);
+        }
+    }
+}
+
 /* Write one rule. The write lands in a copy of the sim's table, the copy is
  * checked whole, and only a copy that passes is committed: a refused op
  * leaves the sim's table byte for byte as it was rather than half-applied.

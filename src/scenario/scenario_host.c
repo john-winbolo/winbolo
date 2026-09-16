@@ -1033,8 +1033,9 @@ bool scnReadManifest(lua_State *L, ScenarioManifest *m,
     scnReadStr(L, tbl, "name", m->name, sizeof(m->name));
     scnReadStr(L, tbl, "description", m->description, sizeof(m->description));
     scnReadStr(L, tbl, "game", m->game, sizeof(m->game));
-    m->api   = scnReadInt(L, tbl, "api", 1);
-    m->bound = scnReadBool(L, tbl, "bound", true);
+    m->api        = scnReadInt(L, tbl, "api", 1);
+    m->bound      = scnReadBool(L, tbl, "bound", true);
+    m->fillToCaps = scnReadBool(L, tbl, "fill_to_caps", false);
 
     scnReadLobby(L, tbl, &m->lobby);
     scnReadRules(L, tbl, m, rep);
@@ -1204,6 +1205,8 @@ static void scnPushManifestGlobal(lua_State *L, const ScenarioManifest *m) {
     lua_setfield(L, t, "game");
     lua_pushboolean(L, m->bound ? 1 : 0);
     lua_setfield(L, t, "bound");
+    lua_pushboolean(L, m->fillToCaps ? 1 : 0);
+    lua_setfield(L, t, "fill_to_caps");
 
     scnPushLobby(L, &m->lobby);
     lua_setfield(L, t, "lobby");
@@ -2805,6 +2808,20 @@ static void scnRoundBootLocked(ScenarioHost *h) {
     memset(h->inRegion, 0, sizeof(h->inRegion));
 
     scnApplyRules(h);
+
+    /* And, for a file that asked for it, the map's pills and bases brought up
+       to the caps the table now holds. After the rules and nowhere else: this
+       is the one point in a round where the scenario's own table is in force
+       and no tank has been built yet, so a fill here is the world the round
+       opens on. Run ahead of the rules it would fill to the numbers they are
+       about to replace, and a map file cannot say "full" on its own, which is
+       the whole reason the key exists.
+
+       A scenario that did not ask changes nothing: the call is not made, and
+       the map plays at the numbers its own file holds. */
+    if (h->manifest.fillToCaps) {
+        serverSimScenarioFillWorldToRules(h->sim);
+    }
 }
 
 /* on_setup, with the VM lock already held.
@@ -3467,6 +3484,24 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
                "scenario: %s asks for api %d and this server is api %d — "
                "the server is too old to run it",
                from->script, m.api, SCENARIO_API_VERSION);
+        scnCloseVm(L);
+        scnLockDestroy(&h->lock);
+        free(h);
+        scnSourceDrop(from);
+        return NULL;
+    }
+    /* A scenario that says it is bound was written for its own map, and the
+       tags, regions and entity indices it uses are that map's. Played over
+       another map they name items that are not there, so it is refused as a
+       mod however it was asked for. The lobby pick refuses a bound entry
+       before it ever reaches an attach and is what a host is told; this is
+       the one place every other way in — a console, a startup flag, a test —
+       meets the same answer. A map's own scenario is untouched: it is bound
+       precisely because it belongs to the map it arrived with. */
+    if (source == lobbyScenarioMod && m.bound) {
+        scnFmt(err, errLen,
+               "scenario: %s is bound to its own map, so it cannot be played "
+               "over another one", from->script);
         scnCloseVm(L);
         scnLockDestroy(&h->lock);
         free(h);

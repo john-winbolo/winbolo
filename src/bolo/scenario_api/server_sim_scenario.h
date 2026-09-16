@@ -76,6 +76,31 @@ ScnOpResult serverSimCheckScenarioRules(const ServerSim *sim,
                                         char *why, size_t whyLen);
 
 /*********************************************************
+ *NAME:          serverSimScenarioFillWorldToRules
+ *PURPOSE:
+ *  Starts every pill and base at the caps the sim's table
+ *  holds, instead of at the numbers the map file holds.
+ *
+ *  A map states a number for each pill's armour and each
+ *  base's stocks and cannot state "full", so a scenario
+ *  that raises a cap gets a map still carrying its author's
+ *  numbers. This is what a scenario asking fill_to_caps is
+ *  answered with, and it is called once the scenario's own
+ *  rules are in the table: run before them it would fill to
+ *  the caps that are on their way out.
+ *
+ *  Raising only — anything at or above a cap is left alone,
+ *  and bringing what is above one down is the clamp every
+ *  rule change already runs. Idempotent. What moves is
+ *  recorded the way that clamp records it, so a replay
+ *  reads the world the round opened on.
+ *
+ *  A pill's firing rate is not touched: an attack interval
+ *  is a rate rather than a stock.
+ *********************************************************/
+void serverSimScenarioFillWorldToRules(ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimSetScenarioPolicy
  *PURPOSE:
  *  Registers the vtable the sim asks its scenario decisions
