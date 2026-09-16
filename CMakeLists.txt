@@ -5576,6 +5576,7 @@ set(_unit_test_names
     scenario_precedence_reload_reseats
     scenario_precedence_no_game_plays_strict
     scenario_precedence_open_game_plays_open
+    scenario_precedence_reload_refuses_bound
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

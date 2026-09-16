@@ -4008,6 +4008,18 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
         scnSourceDrop(&from);
         return false;
     }
+    /* The refusal the attach makes, made again: a mod is played over whatever
+       map is committed, and a mod edited on disk to say it is bound was
+       written for a map of its own. Without this a reload would seat over any
+       map a table the attach would have turned away. */
+    if (h->source == lobbyScenarioMod && m.bound) {
+        scnFmt(err, errLen,
+               "scenario: %s is bound to its own map, so it cannot be played "
+               "over another one", name);
+        scnCloseVm(L);
+        scnSourceDrop(&from);
+        return false;
+    }
     scnCloseVm(L);
 
     /* The bytes are replaced, and with them where they came from. The VM and

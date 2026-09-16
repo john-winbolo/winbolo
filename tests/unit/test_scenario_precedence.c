@@ -40,6 +40,10 @@
  * run_scenario_precedence_open_game_plays_open
  *                                         — and one that named open hands it
  *                                           the open amounts
+ * run_scenario_precedence_reload_refuses_bound
+ *                                         — a mod edited on disk to say it is
+ *                                           bound is refused at the reload,
+ *                                           and what was playing keeps playing
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -182,6 +186,20 @@ static const char kSpWaves[] =
     "  name = \"Waves\",\n"
     "  api = 1,\n"
     "  bound = false,\n"
+    "  game = \"tournament\",\n"
+    "  lobby = {\n"
+    "    teams = { { id = 3, bots = 3, max_bots = 3, fielded = false } },\n"
+    "  },\n"
+    "}\n";
+
+/* And the same mod edited on disk to claim it belongs to a map. A mod plays
+ * over whichever map is committed, so this is a table the attach refuses and
+ * the reload has to refuse too. */
+static const char kSpWavesBound[] =
+    "scenario = {\n"
+    "  name = \"Waves\",\n"
+    "  api = 1,\n"
+    "  bound = true,\n"
     "  game = \"tournament\",\n"
     "  lobby = {\n"
     "    teams = { { id = 3, bots = 3, max_bots = 3, fielded = false } },\n"
@@ -679,6 +697,52 @@ int run_scenario_precedence_open_game_plays_open(void) {
                   "a round from a mod that named open handed the host %u "
                   "shells, wanted the open game's %ld",
                   (unsigned)shells, (long)sim->sim.rules.tank_full_shells);
+
+    spDestroy(sim);
+    spDropDir();
+    return 0;
+}
+
+/* ── A mod edited on disk to say it is bound ──────────────────────── */
+
+/* A mod is played over whichever map is committed, so a table that says it is
+ * bound was written for a map of its own and the attach turns it away. The
+ * reload checked the manifest and the api and not that, so editing the file
+ * on disk and asking for a reload seated a bound scenario over any map.
+ *
+ * The pick is made while the file is still a mod, so what is being held to
+ * the refusal is the reload rather than the pick. */
+int run_scenario_precedence_reload_refuses_bound(void) {
+    ServerSim *sim;
+    char       err[512];
+
+    UT_ASSERT(spMakeDir("reload_refuses_bound"));
+    UT_ASSERT(spWriteMod("waves.lua", kSpWaves));
+    spDropMapScript(SP_PLAIN_MAP);
+    sim = spSim();
+    UT_ASSERT(sim != NULL);
+
+    spCommit(sim, SP_PLAIN_MAP);
+    UT_ASSERT(spSelect(sim, "waves.lua") == CMD_OK);
+    UT_ASSERT_MSG(spSeats(sim, 3) == 3,
+                  "the mod seated %d, wanted its three", spSeats(sim, 3));
+
+    /* The same file, edited to claim it belongs to a map. */
+    UT_ASSERT(spWriteMod("waves.lua", kSpWavesBound));
+    err[0] = '\0';
+    UT_ASSERT_MSG(!serverSimScenarioReload(sim, err, sizeof(err)),
+                  "a mod edited to say it is bound reloaded");
+    UT_ASSERT_MSG(strstr(err, "bound") != NULL,
+                  "the refusal does not say the scenario is bound: %s", err);
+
+    /* And what was playing is still playing: a reload that will not go
+       through changes nothing, so the lobby keeps the seats it had. */
+    UT_ASSERT_MSG(spSource(sim) == lobbyScenarioMod,
+                  "the refused reload left the source at %d, wanted mod (%d)",
+                  (int)spSource(sim), (int)lobbyScenarioMod);
+    UT_ASSERT_MSG(spSeats(sim, 3) == 3,
+                  "the refused reload left %d seats, wanted the three the mod "
+                  "had", spSeats(sim, 3));
 
     spDestroy(sim);
     spDropDir();

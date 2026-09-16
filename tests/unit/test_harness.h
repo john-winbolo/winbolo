@@ -2859,6 +2859,7 @@ int run_scenario_precedence_reset_reapplies(void);
 int run_scenario_precedence_reload_reseats(void);
 int run_scenario_precedence_no_game_plays_strict(void);
 int run_scenario_precedence_open_game_plays_open(void);
+int run_scenario_precedence_reload_refuses_bound(void);
 
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
