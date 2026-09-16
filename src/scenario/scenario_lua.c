@@ -68,7 +68,8 @@
 #include "gametype.h"             /* gameOpen and its siblings */
 #include "client_enums.h"         /* sndEffects — the sound row's words */
 #include "server_sim.h"           /* the accessors, and the rule read */
-#include "scenario_defs.h"        /* SCN_RULE_LIST, the op payloads */
+#include "scenario_defs.h"        /* the op payloads */
+#include "sim_rules_names.h"      /* simRulesRuleIndex — a rule by name */
 #include "server_sim_scenario.h"  /* serverSimApplyScenarioOp */
 
 #include "scenario_host.h"
@@ -85,42 +86,6 @@
  * entity list a map has, so an op built from it is refused rather than
  * naming an item that does exist. */
 #define SCN_LUA_NO_ITEM 255
-
-/* ── The rule names ───────────────────────────────────────────────── */
-
-/* A rule's name in a script is its name in the rule list, so the list is the
- * only place the spelling exists. A rule added there is resolvable here with
- * nothing to update. */
-static const char *const kScnRuleNames[] = {
-#define SCN_RULE_NAME_ROW(name) #name,
-    SCN_RULE_LIST(SCN_RULE_NAME_ROW)
-#undef SCN_RULE_NAME_ROW
-};
-
-BOLO_STATIC_ASSERT(
-    (int)(sizeof(kScnRuleNames) / sizeof(kScnRuleNames[0])) == (int)SCN_RULE_COUNT,
-    rule_name_table_is_the_whole_rule_list);
-
-int scenarioLuaRuleIndex(const char *name) {
-    int i;
-
-    if (name == NULL) {
-        return -1;
-    }
-    for (i = 0; i < (int)SCN_RULE_COUNT; i++) {
-        if (strcmp(kScnRuleNames[i], name) == 0) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-const char *scenarioLuaRuleName(int rule) {
-    if (rule < 0 || rule >= (int)SCN_RULE_COUNT) {
-        return "";
-    }
-    return kScnRuleNames[rule];
-}
 
 /* ── What an op answered ──────────────────────────────────────────── */
 
@@ -803,7 +768,7 @@ static int scnLuaLobbySlot(lua_State *L) {
 static int scnLuaRule(lua_State *L) {
     const ScnLuaCtx *c    = scnCtx(L);
     const char      *name = scnArgStr(L, 1, "name");
-    int              rule = scenarioLuaRuleIndex(name);
+    int              rule = simRulesRuleIndex(name);
     double           v    = 0.0;
 
     if (rule < 0) {
@@ -1812,7 +1777,7 @@ static int scnAdded(lua_State *L, ScenarioOp *op, const char *fmt, ...) {
  * without one takes. Read off the round's own table, so a scenario that
  * changed the rule adds pills at the rate it is playing with. */
 static BYTE scnRoundPillSpeed(lua_State *L) {
-    int    rule = scenarioLuaRuleIndex("pill_attack_ticks");
+    int    rule = simRulesRuleIndex("pill_attack_ticks");
     double v    = 0.0;
 
     if (rule >= 0 &&
@@ -2684,7 +2649,7 @@ static int scnLuaAddGameTime(lua_State *L) {
 static int scnLuaSetRule(lua_State *L) {
     ScenarioOp  op;
     const char *name = scnArgStr(L, 1, "name");
-    int         rule = scenarioLuaRuleIndex(name);
+    int         rule = simRulesRuleIndex(name);
 
     if (rule < 0) {
         return luaL_error(L, "no rule is named '%s'", name);

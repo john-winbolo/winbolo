@@ -38,7 +38,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "scenario_lua.h" /* scenarioLuaRuleIndex */
+#include "sim_rules_names.h" /* simRulesRuleIndex */
 #include "scenario_manifest_json.h"
 #include "scenario_table.h" /* scnTableGet, scnTableSet */
 #include "test_harness.h"
@@ -91,7 +91,7 @@ static ScnManifestDoc *parseText(const char *text, ScnParseReport *rep,
 
 /* Where the manifest sets one rule, or -1. */
 static int ruleAt(const ScenarioManifest *m, const char *name) {
-    int idx = scenarioLuaRuleIndex(name);
+    int idx = simRulesRuleIndex(name);
     int i;
 
     if (idx < 0) {
@@ -351,9 +351,9 @@ static void fillBase(ScenarioManifest *m) {
     m->lobby.teams[1].fielded = true;
 
     m->numRules = 2;
-    m->rules[0].rule = (uint16_t)scenarioLuaRuleIndex("tank_reload_ticks");
+    m->rules[0].rule = (uint16_t)simRulesRuleIndex("tank_reload_ticks");
     m->rules[0].value = 8.0;
-    m->rules[1].rule = (uint16_t)scenarioLuaRuleIndex("shell_damage");
+    m->rules[1].rule = (uint16_t)simRulesRuleIndex("shell_damage");
     m->rules[1].value = 2.5;
 
     m->pillTags[3].count = 1;

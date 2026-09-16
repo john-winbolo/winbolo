@@ -178,7 +178,7 @@ based on my testing.
 #define GUNSIGHT_MIN 2
 #define GUNSIGHT_MAX 14
 
-/* It takes 10 game ticks for the tank to reload */
+/* It takes 13 game ticks for the tank to reload */
 #define TANK_RELOAD_TIME 13
 
 /* Game ticks the `justFired` flag stays non-zero after firing a shell.

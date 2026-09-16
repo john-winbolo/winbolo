@@ -53,6 +53,7 @@
 #include "scenario_host.h"
 #include "scenario_manifest.h"
 #include "scenario_lua.h"
+#include "sim_rules_names.h"      /* simRulesRuleName — a rule in a reason */
 #include "scenario_validate.h"
 
 /* One line from the parse or from Lua, before it becomes an issue. Lua's own
@@ -402,7 +403,7 @@ static void scnCheckRules(const ServerSim *sim, const ScenarioManifest *m,
     ScnOpResult r;
 
     for (i = 0; i < m->numRules && i < SCN_MANIFEST_RULES_MAX; i++) {
-        const char *name = scenarioLuaRuleName((int)m->rules[i].rule);
+        const char *name = simRulesRuleName((int)m->rules[i].rule);
 
         rules[i]  = m->rules[i].rule;
         values[i] = m->rules[i].value;

@@ -2656,7 +2656,7 @@ BOLO_STATIC_ASSERT(sizeof(SimRules) == SCN_RULE_COUNT * sizeof(int32_t),
  * integer rule takes the whole part of it, a float rule takes the value — and
  * reading it straight back out says what the field ended up holding, which is
  * what is checked below and what the record carries. */
-#define SCN_RULE_WRITE_CASE(name)                                            \
+#define SCN_RULE_WRITE_CASE(name, kind, unit)                                \
     case SCN_RULE_##name:                                                    \
         copy->name = value;                                                  \
         *written   = (double)copy->name;                                     \
@@ -3040,7 +3040,7 @@ ScnOpResult serverSimCheckScenarioRules(const ServerSim *sim,
  * index a script sets a rule by and the index it reads the same rule by
  * cannot name different fields. Each field is converted to the double the op
  * carries, which holds every value any of them can. */
-#define SCN_RULE_READ_CASE(name)                                             \
+#define SCN_RULE_READ_CASE(name, kind, unit)                                 \
     case SCN_RULE_##name:                                                    \
         *out = (double)sim->sim.rules.name;                                  \
         return true;

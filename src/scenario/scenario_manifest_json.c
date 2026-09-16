@@ -45,7 +45,7 @@
 #include "cJSON.h"
 
 #include "server_sim.h"   /* serverSimConsoleMessage, and the entity counts */
-#include "scenario_lua.h" /* scenarioLuaRuleIndex, scenarioLuaRuleName */
+#include "sim_rules_names.h" /* simRulesRuleIndex, simRulesRuleName */
 #include "scenario_manifest_json.h"
 #include "scenario_table.h" /* scnTableClear, scnTableSet, scnTableGet */
 
@@ -312,7 +312,7 @@ static void mjDecodeRules(const cJSON *root, ScenarioManifest *m,
         if (item->string == NULL || !cJSON_IsNumber(item)) {
             continue;
         }
-        idx = scenarioLuaRuleIndex(item->string);
+        idx = simRulesRuleIndex(item->string);
         if (idx < 0) {
             char where[SCN_VALIDATE_KEY_LEN];
             snprintf(where, sizeof(where), "rules.%s", item->string);
@@ -851,7 +851,7 @@ static void mjEmit(cJSON *root, const ScnManifestDoc *d) {
     rules = mjObjectFor(root, "rules");
     if (rules != NULL) {
         for (i = 0; i < (int)m->numRules; i++) {
-            mjPutNumber(rules, scenarioLuaRuleName((int)m->rules[i].rule),
+            mjPutNumber(rules, simRulesRuleName((int)m->rules[i].rule),
                         m->rules[i].value);
         }
     }
@@ -1151,7 +1151,7 @@ bool scnManifestAgrees(const ScenarioManifest *fromJson,
     for (i = 0; i < (int)fromJson->numRules; i++) {
         int j = mjFindRule(fromLua, fromJson->rules[i].rule);
         snprintf(where, sizeof(where), "rules.%s",
-                 scenarioLuaRuleName((int)fromJson->rules[i].rule));
+                 simRulesRuleName((int)fromJson->rules[i].rule));
         if (j < 0) {
             return mjDiffer(key, keyLen, err, errLen, where,
                             "scenario: the manifest sets this rule and the "
@@ -1167,7 +1167,7 @@ bool scnManifestAgrees(const ScenarioManifest *fromJson,
     for (i = 0; i < (int)fromLua->numRules; i++) {
         if (mjFindRule(fromJson, fromLua->rules[i].rule) < 0) {
             snprintf(where, sizeof(where), "rules.%s",
-                     scenarioLuaRuleName((int)fromLua->rules[i].rule));
+                     simRulesRuleName((int)fromLua->rules[i].rule));
             return mjDiffer(key, keyLen, err, errLen, where,
                             "scenario: the script's table sets this rule and "
                             "the manifest does not");

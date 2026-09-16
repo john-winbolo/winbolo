@@ -2364,6 +2364,21 @@
 #define STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS 2213
 #define STR_DLGSETTINGS_HOSTING_SCENARIODIR  2216
 
+/* Rule change descriptions */
+
+/* What a simulation rule's value does to it, beside the number: the words
+ * simRulesPhrase renders a SimRuleChange as. {string1} rather than {number}
+ * because a multiple can be 2.6 and {number} is an integer. */
+#define STR_RULE_UNCHANGED                  2217
+#define STR_RULE_FASTER                     2218
+#define STR_RULE_SLOWER                     2219
+#define STR_RULE_MORE                       2220
+#define STR_RULE_FEWER                      2221
+#define STR_RULE_TWICE                      2222
+#define STR_RULE_HALF                       2223
+#define STR_RULE_ON                         2224
+#define STR_RULE_OFF                        2225
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

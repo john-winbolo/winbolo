@@ -408,24 +408,4 @@ ScnTableRead scenarioLuaReadTable(lua_State *L, int idx, const char *key,
  *********************************************************/
 const char *scenarioLuaResultName(int result);
 
-/*********************************************************
- *NAME:          scenarioLuaRuleIndex
- *PURPOSE:
- *  The index of the rule a name spells, or -1 for a name
- *  that spells none. A rule's name in a script is its name
- *  in the rule list, so the list is the only place the
- *  spelling exists: the script's rules table and the
- *  game.rule row resolve a name through this one lookup.
- *********************************************************/
-int scenarioLuaRuleIndex(const char *name);
-
-/*********************************************************
- *NAME:          scenarioLuaRuleName
- *PURPOSE:
- *  What a rule is called, for an operator line that has an
- *  index and needs to say which rule it was. "" for an
- *  index that names no rule.
- *********************************************************/
-const char *scenarioLuaRuleName(int rule);
-
 #endif /* SCENARIO_LUA_H */

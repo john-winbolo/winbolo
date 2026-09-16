@@ -128,8 +128,8 @@ typedef struct {
 } RaRuleField;
 
 static const RaRuleField kRaRuleFields[] = {
-#define RA_FIELD_ROW(name) { #name, offsetof(SimRules, name), \
-                             sizeof(((SimRules *)0)->name) },
+#define RA_FIELD_ROW(name, kind, unit)                                       \
+    { #name, offsetof(SimRules, name), sizeof(((SimRules *)0)->name) },
     SCN_RULE_LIST(RA_FIELD_ROW)
 #undef RA_FIELD_ROW
 };

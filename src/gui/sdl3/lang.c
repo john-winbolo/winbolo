@@ -2167,6 +2167,15 @@ static const LangEntry langTable[] = {
     {2212, "Mod: {string2} (on {string1})"},
     {2213, "Run scripts in uploaded maps"},
     {2216, "Scenario Directory"},
+    {2217, "unchanged"},
+    {2218, "{string1}x faster"},
+    {2219, "{string1}x slower"},
+    {2220, "{string1}x as many"},
+    {2221, "{string1}x fewer"},
+    {2222, "twice as many"},
+    {2223, "half as many"},
+    {2224, "on"},
+    {2225, "off"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

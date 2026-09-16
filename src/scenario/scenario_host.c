@@ -95,7 +95,8 @@
                                     * a map file the chunk test reads — and
                                     * LOBBY_PACKAGE_UPLOAD_MAX_BYTES, how much
                                     * of one the attach reads */
-#include "scenario_defs.h"         /* SCN_RULE_LIST, ScenarioOp, ScnOpResult */
+#include "scenario_defs.h"         /* SCN_RULE_COUNT, ScenarioOp, ScnOpResult */
+#include "sim_rules_names.h"       /* simRulesRuleIndex / simRulesRuleName */
 #include "server_sim_scenario.h"   /* the funnel and the round-start hook-up */
 
 #include "scenario_host.h"
@@ -865,7 +866,7 @@ static void scnReadRules(lua_State *L, int tbl, ScenarioManifest *m,
            and break the traversal. */
         if (lua_type(L, -2) == LUA_TSTRING && lua_type(L, -1) == LUA_TNUMBER) {
             const char *key = lua_tostring(L, -2);
-            int         idx = scenarioLuaRuleIndex(key);
+            int         idx = simRulesRuleIndex(key);
             if (idx < 0) {
                 char where[SCN_VALIDATE_KEY_LEN];
                 snprintf(where, sizeof(where), "rules.%s", key);
@@ -1126,7 +1127,7 @@ static void scnPushRules(lua_State *L, const ScenarioManifest *m) {
     lua_newtable(L);
     t = lua_gettop(L);
     for (i = 0; i < m->numRules; i++) {
-        const char *name = scenarioLuaRuleName((int)m->rules[i].rule);
+        const char *name = simRulesRuleName((int)m->rules[i].rule);
         if (name == NULL || name[0] == '\0') {
             continue;
         }
@@ -1278,7 +1279,7 @@ static void scnApplyRules(ScenarioHost *h) {
         if (r != SCN_OP_OK) {
             scnSay(h->lastError, sizeof(h->lastError),
                    "scenario: rule '%s' refused: %s",
-                   scenarioLuaRuleName((int)h->manifest.rules[i].rule),
+                   simRulesRuleName((int)h->manifest.rules[i].rule),
                    scnResultText(r));
         }
     }
