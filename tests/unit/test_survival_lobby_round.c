@@ -97,6 +97,7 @@ typedef struct {
     int      ashoreLines;   /* "[wave] attacker N ashore at ..." */
     uint32_t digInTick;
     uint32_t waveTick;
+    uint32_t wonTick;      /* the tick the script declared the defenders' win */
 } SlrText;
 
 static ServerSim *slrSim  = NULL;
@@ -115,6 +116,10 @@ static void slrTextCb(void *ctx, const ControlEvent *evt) {
     if (strstr(evt->u.serverText.text, "attackers inbound!") != NULL &&
         slrSeen->waveTick == SLR_NO_TICK) {
         slrSeen->waveTick = slrSim != NULL ? slrSim->tick : 0;
+    }
+    if (strstr(evt->u.serverText.text, "waves survived") != NULL &&
+        slrSeen->wonTick == SLR_NO_TICK) {
+        slrSeen->wonTick = slrSim != NULL ? slrSim->tick : 0;
     }
     if (strstr(evt->u.serverText.text, " ashore at ") != NULL) {
         slrSeen->ashoreLines++;
@@ -147,6 +152,7 @@ static int slrRound(int bots, bool inPlace) {
 
     memset(&seen, 0, sizeof(seen));
     seen.digInTick = SLR_NO_TICK;
+    seen.wonTick   = SLR_NO_TICK;
     seen.waveTick  = SLR_NO_TICK;
 
     snprintf(mapPath, sizeof(mapPath), "%s/Survival.map", WB_DATA_MAPS_DIR);
@@ -720,6 +726,42 @@ static int slrRound(int bots, bool inPlace) {
                           "%d attacker(s) are still on the field after wave "
                           "2's end and its departures", fielded);
         }
+
+        /* (m) The whole round: waves 3, 4 and 5 land and clear the same
+               way, and after the fifth's departures the script ends the
+               round with the defenders' win. Five waves of five minutes
+               plus their breathers is about 28 minutes of game, a few
+               seconds here. */
+        {
+            uint32_t cap = graceFrom + SLR_GRACE_TICKS +
+                           5u * (30000u + 200u + 10u * 100u + 3000u) + 5000u;
+            while (sim->tick < cap &&
+                   serverSimGetState(sim) == serverStateRunning) {
+                serverSimTick(sim);
+            }
+            /* end_round does not speak on the newswire: it stores the line
+               as the pending win message, names the winner and enters the
+               game-over state, and the lifecycle says the rest. So the win
+               is read where the arm wrote it. */
+            UT_ASSERT_MSG(serverSimGetState(sim) == serverStateGameOver,
+                          "the round did not end by tick %u (state %d)",
+                          (unsigned)sim->tick, (int)serverSimGetState(sim));
+            UT_ASSERT_MSG(sim->returnToLobbyReason == RETURN_REASON_SCENARIO,
+                          "the round ended for reason %d, not the script's",
+                          (int)sim->returnToLobbyReason);
+            UT_ASSERT_MSG(sim->returnToLobbyTeamId == SLR_DEF_TEAM,
+                          "the script named team %d the winner, expected the "
+                          "defenders' %d", (int)sim->returnToLobbyTeamId,
+                          SLR_DEF_TEAM);
+            UT_ASSERT_MSG(strstr(sim->pendingWinMessage, "waves survived") != NULL,
+                          "the win message is \"%s\"", sim->pendingWinMessage);
+            /* And it ended when the fifth wave's departures were done, not
+               before: five waves, four breathers. */
+            UT_ASSERT_MSG(sim->tick >= graceFrom + SLR_GRACE_TICKS +
+                                       5u * 30000u + 4u * 3000u,
+                          "the round ended early, at tick %u",
+                          (unsigned)sim->tick);
+        }
     }
 
     slrSeen = NULL;
@@ -776,6 +818,7 @@ int run_survival_lobby_round_ds_order(void) {
 
     memset(&seen, 0, sizeof(seen));
     seen.digInTick = SLR_NO_TICK;
+    seen.wonTick   = SLR_NO_TICK;
     seen.waveTick  = SLR_NO_TICK;
 
     snprintf(mapPath, sizeof(mapPath), "%s/Survival.map", WB_DATA_MAPS_DIR);
