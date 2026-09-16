@@ -32,6 +32,8 @@
 #ifndef BRAIN_LIST_H
 #define BRAIN_LIST_H
 
+#include <stdint.h>   /* int64_t — brainListTextsMtimeForPath */
+
 #include "global.h"
 
 #define BRAIN_LIST_MAX        16
@@ -106,6 +108,17 @@ bool brainListLoadTextsForPath(const char *brainPath,
                                char *announce, size_t announceSz,
                                char *docs, size_t docsSz,
                                bool *truncated);
+
+/* The newer of the two texts' modification times, as a plain number to
+ * compare against a number kept from an earlier read; 0 when the brain ships
+ * neither file. Same init.lua-path key as the read above.
+ *
+ * What a CACHE of these texts is kept honest with. The server reads each
+ * brain's files once and holds the wire blob, because re-reading them on
+ * every lobby keyframe opened up to two files per brain per tick; this is
+ * how a file the operator edited between rounds is still picked up without
+ * a restart. */
+int64_t brainListTextsMtimeForPath(const char *brainPath);
 
 
 /* ── Bot modes and their difficulty levels ────────────────────────────

@@ -558,6 +558,21 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
 
     case CTRL_LOBBY_BRAIN_LIST:
         cs->lobbyBrainList = evt->u.lobbyBrainList.list;
+        /* A NEW list means the old texts belong to nobody: they are held by
+         * catalogue INDEX, and the next server's index 3 is a different
+         * brain from this one's. Left standing, a reconnect to another
+         * server showed the previous server's announce line under the new
+         * server's brain name. The fragments that go with the new list
+         * follow this event, so clearing here costs nothing that arrives.
+         * The partial-reassembly state goes too — a stream cut off by the
+         * list change must not splice onto the next one. */
+        if (cs->lobbyBrainTexts != NULL) {
+            free(cs->lobbyBrainTexts);
+            cs->lobbyBrainTexts = NULL;
+        }
+        cs->lobbyBrainDocsExpected = 0;
+        cs->lobbyBrainDocsNextSeq  = 0;
+        cs->lobbyBrainDocsBlobLen  = 0;
         break;
 
     case CTRL_ROUND_STATS:
@@ -1114,7 +1129,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                 clientSimAppendLobbyTeamChat(
                     cs, clientSimGetLobbySlot(cs, fromPlayer)->playerName, msg);
             } else {
-                clientSimIncomingMessage(cs, fromPlayer, msg);
+                clientSimIncomingMessage(cs, fromPlayer, destPlayer, msg);
             }
             /* One play for both lobby sub-branches; in-game chat (not in
              * lobby) stays silent, and the join replay burst is gated out. */

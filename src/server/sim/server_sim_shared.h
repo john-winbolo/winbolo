@@ -41,10 +41,11 @@ void serverSimCbSoundDistShoot(void *ctx, BYTE mx, BYTE my, BYTE owner);
 void serverSimCbSoundDistTankHit(void *ctx, BYTE mx, BYTE my, BYTE hitPlayer);
 void serverSimCbMineVisible(void *ctx, BYTE mx, BYTE my, BYTE sourcePlayer);
 void serverSimCbExplosion(void *ctx, BYTE mx, BYTE my, BYTE px, BYTE py);
-void serverSimCbShellDeath(void *ctx, uint32_t fireTick, BYTE owner,
+void serverSimCbShellDeath(void *ctx, uint32_t fireTick,
+                           uint32_t serverFireTick, BYTE owner,
                            WORLD impactWX, WORLD impactWY,
                            uint8_t outcome);
-void serverSimCbShellFired(void *ctx, uint32_t fireTick, BYTE owner);
+uint32_t serverSimCbShellFired(void *ctx, BYTE owner);
 void serverSimCbTkExplosion(void *ctx, WORLD x, WORLD y,
                             TURNTYPE angle, BYTE length,
                             BYTE explodeType, BYTE creator);
@@ -174,25 +175,32 @@ void serverSimFillMapSkipStateEvent(const ServerSim *sim, ControlEvent *evt);
 
 /* Defined in server_sim_callbacks.c — the three-shot order detector.
  *
- * One of `owner`'s shells left the gun on tick `fireTick`. EVERY shell
- * counts, whatever it went on to hit, because the two quiet seconds around
- * the three shots ask what the player fired and not what it struck. It also
- * cancels an armed order, which is the "no fourth shot" half of the rule.
+ * One of `owner`'s shells left the gun on SERVER tick `fireTick`. EVERY
+ * shell counts, whatever it went on to hit, because the two quiet seconds
+ * around the three shots ask what the player fired and not what it struck.
+ * It also cancels an armed order, which is the "no fourth shot" half of the
+ * rule.
+ *
+ * A SERVER tick. Never the client input tick a shell also carries: that one
+ * is the client's own counter, it starts near zero on a mid-round joiner
+ * and a modified client can send any value at all.
  *
  * serverSimCbShellFired calls it the moment shellsAddItem creates the
- * shell, which is what keeps a shell that is still in the air out of
- * nobody's way. serverSimCbShellDeath calls it again on the death and the
- * scenario funnel's shell_expired arm calls it too; both are harmless
- * repeats, because a fire tick already in the log is ignored. */
+ * shell, with sim->tick, which is what keeps a shell that is still in the
+ * air out of nobody's way. serverSimCbShellDeath calls it again on the
+ * death with the shell's stamped serverFireTick, and the scenario funnel's
+ * shell_expired arm calls it too; both are harmless repeats, because a tick
+ * already in the log is ignored. */
 void serverSimShotOrderShotFired(ServerSim *sim, BYTE owner, uint32_t fireTick);
 
-/* One of `owner`'s shells, fired on `fireTick`, ran its full range and died
- * at (wx, wy) with nothing hit. Three of them on the SAME open square, fired
- * inside SHOT_ORDER_WINDOW_TICKS of each other and with a quiet second in
- * front of the first, ARM an order; serverSimShotOrderTick sends it a quiet
- * second after the third shot. serverSimCbShellDeath calls this on the expiry
- * outcome, and the scenario funnel's shell_expired arm calls it so a scripted
- * round can post the three shells without aiming a gun. */
+/* One of `owner`'s shells, fired on SERVER tick `fireTick`, ran its full
+ * range and died at (wx, wy) with nothing hit. Three of them on the SAME
+ * open square, fired inside SHOT_ORDER_WINDOW_TICKS of each other and with a
+ * quiet second in front of the first, ARM an order; serverSimShotOrderTick
+ * sends it a quiet second after the third shot. serverSimCbShellDeath calls
+ * this on the expiry outcome with the shell's serverFireTick, and the
+ * scenario funnel's shell_expired arm calls it so a scripted round can post
+ * the three shells without aiming a gun. */
 void serverSimShotOrderNote(ServerSim *sim, BYTE owner, uint32_t fireTick,
                             WORLD wx, WORLD wy);
 

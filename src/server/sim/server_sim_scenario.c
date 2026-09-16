@@ -2876,9 +2876,16 @@ static ScnOpResult scenarioOpShellExpired(ServerSim *sim,
     if (sim->state != serverStateRunning) {
         return SCN_OP_WRONG_STATE;
     }
-    /* The tick the shell left the gun, which is what the window and the two
-       quiet seconds are measured on. A script that says nothing gets the
-       current tick, which is a shot fired and landed in the same breath. */
+    /* A square the map does not hold is not a landing. Both coordinates fit
+       in a BYTE, so the Lua arm's own check passes anything 0..255, and the
+       border outside the playable band reads back as deep sea — which the
+       detector's open-ground test would otherwise take for open water. */
+    if (!mapPosInBounds(p->x, p->y)) {
+        return SCN_OP_BAD_SQUARE;
+    }
+    /* The SERVER tick the shell left the gun, which is what the window and
+       the two quiet seconds are measured on. A script that says nothing gets
+       the current tick, which is a shot fired and landed in the same breath. */
     uint32_t fireTick = p->haveFireTick ? p->fireTick : sim->tick;
 
     /* The same two calls a real shell death makes, in the same order: the

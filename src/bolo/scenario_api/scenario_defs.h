@@ -658,10 +658,12 @@ typedef struct {
  * square is not something a round can be steered into. Nothing else happens
  * — no explosion, no sound, no shell is created or destroyed.
  *
- * fireTick is the tick the shell LEFT THE GUN, which is what every timing
- * rule in the detector reads — the window the three have to share, and the
- * quiet second either side of them. haveFireTick is false when the script
- * did not say, and the shell then counts as fired on the current tick. */
+ * fireTick is the SERVER tick the shell LEFT THE GUN, which is what every
+ * timing rule in the detector reads — the window the three have to share,
+ * and the quiet second either side of them. haveFireTick is false when the
+ * script did not say, and the shell then counts as fired on the current
+ * tick. (x, y) must name a square the map really holds; anything outside
+ * the playable band is refused with SCN_OP_BAD_SQUARE. */
 typedef struct {
     BYTE     slot;
     BYTE     x, y;

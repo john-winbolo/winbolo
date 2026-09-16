@@ -2610,11 +2610,12 @@ static int scnLuaSetRule(lua_State *L) {
  * second either side of them — has no other way of being put to a round.
  * Nothing is simulated but the notice itself.
  *
- * fire_tick is the tick the shell LEFT THE GUN, and every timing rule in the
- * detector is on that tick rather than on the landing. A real shell is in
- * the air for about half a second, so a script that wants to place a shot
- * inside or outside one of the quiet seconds has to say when it was fired.
- * Left out, the shell counts as fired now.
+ * fire_tick is the SERVER tick the shell LEFT THE GUN, and every timing rule
+ * in the detector is on that tick rather than on the landing. A real
+ * full-range shell is 104 server ticks in the air (shells.c shellsAddItem
+ * works the number out), which is longer than either quiet second, so a
+ * script that wants to place a shot inside or outside one of them has to say
+ * when it was fired. Left out, the shell counts as fired now.
  */
 static int scnLuaShellExpired(lua_State *L) {
     ScenarioOp  op;

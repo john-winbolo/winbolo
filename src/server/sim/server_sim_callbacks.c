@@ -30,6 +30,7 @@
 #include <stdio.h>                /* snprintf — the three-shot order line */
 
 #include "server_sim_shared.h"
+#include "bolo_map.h"             /* mapGetPos / mapPosInBounds — the ordered square */
 #include "../../common/wb_log.h"  /* WB_LOG_INFO — the three-shot order trace */
 #include "server_sim_internal.h"
 #include "log.h"                  /* logAddEvent — the kill/death log entries */
@@ -236,7 +237,15 @@ void serverSimCbExplosion(void *ctx, BYTE mx, BYTE my, BYTE px, BYTE py) {
  * DEAD pillbox is flown over rather than hit, though, and an order on top
  * of one is not "open ground" in any sense a player means. */
 static bool shotOrderOpenSquare(GameSim *gs, BYTE mx, BYTE my) {
-    BYTE terrain = mapGetPos(&gs->mp, mx, my);
+    BYTE terrain;
+
+    /* Off the map FIRST. mapGetPos answers DEEP_SEA for a square the map
+     * does not hold, and deep sea is in the open list below — so without
+     * this the whole border reads as open ground and an order could be put
+     * on a square no tank can ever stand on. */
+    if (!mapPosInBounds(mx, my)) return false;
+
+    terrain = mapGetPos(&gs->mp, mx, my);
 
     if (terrain >= MINE_START && terrain <= MINE_END) {
         terrain = (BYTE)(terrain - MINE_SUBTRACT);
@@ -445,31 +454,47 @@ void serverSimShotOrderTick(ServerSim *sim) {
     }
 }
 
-/* A shell owned by `owner` LEFT THE GUN on `fireTick`. shellsAddItem calls
- * this the moment the shell is created, which is the moment the three-shot
- * detector's rules are all measured from.
+/* A shell owned by `owner` LEFT THE GUN. shellsAddItem calls this the moment
+ * the shell is created, which is the moment the three-shot detector's rules
+ * are all measured from, and takes back the tick it is recorded on.
  *
- * Before this the fire log was fed by serverSimCbShellDeath alone, so the
- * server heard of a shell only when it died — half a second late — and two
- * shells went missing from the log at exactly the wrong moment: one fired
- * inside the quiet second after the third shot but still in the air when
- * the poll sent the order, and one fired just before the first of the three
- * whose longer flight kept it out of the log when the third landed. Both
- * now count.
+ * THE SERVER'S OWN TICK, never the client's. The shell also carries the
+ * client's input-tick counter (shells.h fireTick), and that number is the
+ * client's to choose: a mid-round joiner's counter starts near zero, so its
+ * "three shots" would sit a thousand ticks behind the server and the quiet
+ * second either side would be read against ticks that have long gone by;
+ * a modified client could name any tick it liked. sim->tick is a number
+ * nobody outside the server writes, so it is the one every rule is on.
+ *
+ * Before the fire log was fed here it was fed by serverSimCbShellDeath
+ * alone, so the server heard of a shell only when it died — 104 ticks late
+ * — and two shells went missing from the log at exactly the wrong moment:
+ * one fired inside the quiet second after the third shot but still in the
+ * air when the poll sent the order, and one fired just before the first of
+ * the three whose longer flight kept it out of the log when the third
+ * landed. Both now count.
  *
  * A pillbox fires with owner NEUTRAL (0xFF), which
- * serverSimShotOrderShotFired drops on its own; the death-time call is
- * still made and is harmless, because the function dedupes on the fire
- * tick. */
-void serverSimCbShellFired(void *ctx, uint32_t fireTick, BYTE owner) {
-    serverSimShotOrderShotFired((ServerSim *)ctx, owner, fireTick);
+ * serverSimShotOrderShotFired drops on its own; the tick is still answered,
+ * so the pill's shell carries one like any other. */
+uint32_t serverSimCbShellFired(void *ctx, BYTE owner) {
+    ServerSim *sim = (ServerSim *)ctx;
+    if (sim == NULL) return 0;
+    serverSimShotOrderShotFired(sim, owner, sim->tick);
+    return sim->tick;
 }
 
 /* A shell owned by `owner` ended (collision or expiry). Publish a
  * unicast CTRL_SHELL_DEATH so the firing client can match fireTick to
  * its predicted shell, cull the ghost, and draw the impact at
- * (impactWX, impactWY). udpClientDeliverControl filters to the owner. */
-void serverSimCbShellDeath(void *ctx, uint32_t fireTick, BYTE owner,
+ * (impactWX, impactWY). udpClientDeliverControl filters to the owner.
+ *
+ * fireTick goes on the wire and nowhere else: it is the CLIENT's counter
+ * and only that client can match it. serverFireTick is the server's own
+ * tick at the moment the shell was created, which is the one the detector
+ * below is given — see serverSimCbShellFired. */
+void serverSimCbShellDeath(void *ctx, uint32_t fireTick,
+                           uint32_t serverFireTick, BYTE owner,
                            WORLD impactWX, WORLD impactWY,
                            uint8_t outcome) {
     ServerSim *sim = (ServerSim *)ctx;
@@ -485,17 +510,19 @@ void serverSimCbShellDeath(void *ctx, uint32_t fireTick, BYTE owner,
 
     /* Every shell counts as a shot FIRED, whatever it hit: the quiet second
      * either side of the three asks what the player pulled the trigger on,
-     * and a shell that struck a wall was still a trigger pull. This is the
-     * first the server hears of most shells, because a shell reports itself
-     * only when it dies. */
-    serverSimShotOrderShotFired(sim, owner, fireTick);
+     * and a shell that struck a wall was still a trigger pull. A repeat of
+     * the call serverSimCbShellFired already made at creation, which the
+     * fire log ignores because that server tick is in it already — it is
+     * kept so a shell that reached the world by some other road than
+     * shellsAddItem still counts. */
+    serverSimShotOrderShotFired(sim, owner, serverFireTick);
 
     /* Only a shell that ran its full range with nothing hit can be an
      * order. Every hit — pill, tank, base, wall, building, forest —
      * resolves in shellsCalcCollision and reports another outcome, which
      * is what keeps a normal firefight from ordering anybody about. */
     if (outcome == SHELL_OUTCOME_EXPIRED) {
-        serverSimShotOrderNote(sim, owner, fireTick, impactWX, impactWY);
+        serverSimShotOrderNote(sim, owner, serverFireTick, impactWX, impactWY);
     }
 }
 

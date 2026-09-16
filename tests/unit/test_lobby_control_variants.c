@@ -1071,3 +1071,164 @@ int run_lobby_brain_docs_chunk_len_is_exact(void) {
                   "expected 5", len);
     return 0;
 }
+
+/* A NEW BRAIN LIST THROWS THE OLD TEXTS AWAY.
+ *
+ * The texts are held by catalogue INDEX, not by brain name: entry 2's
+ * announce line is "whatever brain 2 is". Reconnect to a different server and
+ * its entry 2 is a different brain — but the table still held the previous
+ * server's text, so the lobby showed one server's announce line under another
+ * server's brain name, and clicking it opened the wrong docs.
+ *
+ * CTRL_LOBBY_BRAIN_LIST is the event that makes the old indices meaningless,
+ * so it is where the table is dropped. The fragments for the new list follow
+ * it in the same sync replay, so nothing that is still wanted is lost.
+ *
+ * The partial-reassembly state goes with it: a docs stream cut off by the list
+ * change must not splice its tail onto the next server's first fragment. */
+int run_lobby_brain_list_clears_stale_texts(void) {
+    ControlEvent in, out;
+    ClientSim   *cs = fresh_client_sim();
+    uint8_t      blob[LOBBY_BRAIN_DOCS_WIRE_MAX];
+    static const char kAnnounce[] = "Server one's brain 2 speaking";
+    size_t       aLen = strlen(kAnnounce);
+    size_t       dLen = 40;
+    size_t       blen = 0;
+    int          i;
+
+    UT_ASSERT(cs != NULL);
+
+    /* One brain's texts, in one fragment. */
+    blob[blen++] = (uint8_t)((aLen >> 8) & 0xFF);
+    blob[blen++] = (uint8_t)(aLen & 0xFF);
+    memcpy(blob + blen, kAnnounce, aLen); blen += aLen;
+    blob[blen++] = (uint8_t)((dLen >> 8) & 0xFF);
+    blob[blen++] = (uint8_t)(dLen & 0xFF);
+    for (i = 0; i < (int)dLen; i++) blob[blen + i] = (uint8_t)('a' + (i % 26));
+    blen += dLen;
+
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
+    in.u.lobbyBrainDocsChunk.brainIdx = 2;
+    in.u.lobbyBrainDocsChunk.seq      = 0;
+    in.u.lobbyBrainDocsChunk.count    = 1;
+    in.u.lobbyBrainDocsChunk.fragLen  = (uint16_t)blen;
+    memcpy(in.u.lobbyBrainDocsChunk.frag, blob, blen);
+    UT_ASSERT(codec_roundtrip(CTRL_LOBBY_BRAIN_DOCS_CHUNK, &in, &out) == 0);
+    clientSimApplyControl(cs, &out);
+
+    UT_ASSERT_MSG(strcmp(clientSimGetLobbyBrainAnnounce(cs, 2), kAnnounce) == 0,
+                  "the fixture did not install the texts in the first place: "
+                  "'%s'", clientSimGetLobbyBrainAnnounce(cs, 2));
+
+    /* Now a different server's catalogue arrives. */
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_BRAIN_LIST;
+    in.u.lobbyBrainList.list.count = 3;
+    snprintf(in.u.lobbyBrainList.list.entries[0].name,
+             BRAIN_LIST_NAME_LEN, "%s", "OtherA");
+    snprintf(in.u.lobbyBrainList.list.entries[1].name,
+             BRAIN_LIST_NAME_LEN, "%s", "OtherB");
+    snprintf(in.u.lobbyBrainList.list.entries[2].name,
+             BRAIN_LIST_NAME_LEN, "%s", "OtherC");
+    UT_ASSERT(codec_roundtrip(CTRL_LOBBY_BRAIN_LIST, &in, &out) == 0);
+    clientSimApplyControl(cs, &out);
+
+    UT_ASSERT_MSG(clientSimGetLobbyBrainAnnounce(cs, 2)[0] == '\0',
+                  "the previous server's announce line survived a new brain "
+                  "list: '%s'. Index 2 is a different brain now",
+                  clientSimGetLobbyBrainAnnounce(cs, 2));
+    UT_ASSERT_MSG(clientSimGetLobbyBrainDocs(cs, 2)[0] == '\0',
+                  "the previous server's commands.txt survived a new brain "
+                  "list");
+
+    /* The new server's own fragments still install: the clear drops what is
+       stale, not the channel. */
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
+    in.u.lobbyBrainDocsChunk.brainIdx = 2;
+    in.u.lobbyBrainDocsChunk.seq      = 0;
+    in.u.lobbyBrainDocsChunk.count    = 1;
+    in.u.lobbyBrainDocsChunk.fragLen  = (uint16_t)blen;
+    memcpy(in.u.lobbyBrainDocsChunk.frag, blob, blen);
+    UT_ASSERT(codec_roundtrip(CTRL_LOBBY_BRAIN_DOCS_CHUNK, &in, &out) == 0);
+    clientSimApplyControl(cs, &out);
+    UT_ASSERT_MSG(strcmp(clientSimGetLobbyBrainAnnounce(cs, 2), kAnnounce) == 0,
+                  "texts sent after the new list did not install: '%s'",
+                  clientSimGetLobbyBrainAnnounce(cs, 2));
+
+    clientSimDestroy(cs);
+    return 0;
+}
+
+/* ONE FUNCTION OWNS THE "name: text" LINE.
+ *
+ * The lobby's bot-announce poll appends a line to team chat and then searches
+ * the history for it, because a chat buffer near full drops an append without
+ * a word and only what actually landed may have the brain's docs hung off it.
+ * That search only works while the searcher spells the line exactly as the
+ * append did — and the two used to build it separately, one with strcat in
+ * client_sim.c and one with an SDL_snprintf("%s: %s") in imgui_lobby.cpp.
+ * Nothing tied them together, so a change to either spelling would have
+ * turned the search into a permanent miss and no bot would ever have carried
+ * its docs again.
+ *
+ * clientSimFormatLobbyChatLine is now that one spelling. This case checks
+ * what both sides depend on: the formatter's output is what the append
+ * actually writes, so a search for the former finds the latter. */
+int run_lobby_chat_line_format_is_what_is_appended(void) {
+    ClientSim  *cs = fresh_client_sim();
+    char        line[LOBBY_CHAT_LINE_MAX];
+    const char *history;
+    int         n;
+
+    UT_ASSERT(cs != NULL);
+
+    n = clientSimFormatLobbyChatLine(line, sizeof(line), "Bot1",
+                                     "I fetch pills and hold ground");
+    UT_ASSERT_MSG(n > 0, "the formatter refused an ordinary line (%d)", n);
+    UT_ASSERT_MSG(strcmp(line, "Bot1: I fetch pills and hold ground") == 0,
+                  "the line reads \"%s\"", line);
+    UT_ASSERT_MSG(n == (int)strlen(line),
+                  "the formatter returned %d for a %d-character line",
+                  n, (int)strlen(line));
+
+    /* Team chat: exactly what the lobby's announce poll does. */
+    clientSimAppendLobbyTeamChat(cs, "Bot1", "I fetch pills and hold ground");
+    history = clientSimGetLobbyTeamChatHistory(cs);
+    UT_ASSERT_MSG(history != NULL && strstr(history, line) != NULL,
+                  "the appended team-chat line is not the formatted one: "
+                  "history \"%s\" does not contain \"%s\"",
+                  history ? history : "(null)", line);
+
+    /* And the broadcast log, which is the same shape. */
+    clientSimAppendLobbyChat(cs, "Bot1", "I fetch pills and hold ground");
+    history = clientSimGetLobbyChatHistory(cs);
+    UT_ASSERT_MSG(history != NULL && strstr(history, line) != NULL,
+                  "the appended broadcast line is not the formatted one");
+
+    /* A second line is newline-separated, so the search for the first still
+       matches and the two do not run together. */
+    clientSimAppendLobbyTeamChat(cs, "Bot2", "and I mine");
+    history = clientSimGetLobbyTeamChatHistory(cs);
+    UT_ASSERT_MSG(strstr(history, line) != NULL,
+                  "the first line stopped matching once a second was added");
+    UT_ASSERT_MSG(strstr(history, "\nBot2: and I mine") != NULL,
+                  "the second line did not start on a line of its own: "
+                  "\"%s\"", history);
+
+    /* No room means no line, and the caller is told so rather than being
+       handed a half-written one to search for. */
+    {
+        char tiny[8];
+        UT_ASSERT_MSG(clientSimFormatLobbyChatLine(tiny, sizeof(tiny),
+                                                   "AVeryLongBotName",
+                                                   "and a long announce") < 0,
+                      "a line that cannot fit was reported as written");
+        UT_ASSERT_MSG(tiny[0] == '\0',
+                      "a refused line left \"%s\" in the buffer", tiny);
+    }
+
+    clientSimDestroy(cs);
+    return 0;
+}

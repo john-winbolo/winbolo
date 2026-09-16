@@ -788,7 +788,11 @@ void serverInstanceTick(ServerSim *sim) {
         serverSimFillLobbyBrainListEvent(sim, &evt);
         serverSimPublishControl(sim, &evt);
         /* ... and the brains' lobby texts that go with it, so the returning
-         * lobby can announce a bot's brain the same way a fresh join does. */
+         * lobby can announce a bot's brain the same way a fresh join does.
+         * The refresh first: this seam between rounds is where an operator
+         * would have edited a brain's announce.txt, and it is off the tick
+         * path, so a re-read costs nothing anybody feels. */
+        serverSimRefreshBrainDocs(sim);
         serverSimEmitBrainDocs(sim, serverSimPublishBrainDocsCb, sim);
       }
       /* Republish lobby state so every client's mirror reflects the

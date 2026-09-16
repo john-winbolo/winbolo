@@ -64,6 +64,7 @@
 #include "sounddist.h"             /* SDIST_NONE — the cull the far sound is past */
 #include "input_packet.h"          /* EVENT_SOUND, SOUND_TIER_NEAR, SOUND_DIR_CENTRE */
 #include "log.h"                   /* log_ServerText and the stream opcodes */
+#include "allience.h"              /* allienceAdd — the bot and the talker are allies */
 #include "players.h"                /* playersSetPlayer — the names a chat line formats with */
 #include "threads.h"                /* the mutex serverSimApplyCommand runs under */
 #include "replay_harness.h"
@@ -838,12 +839,21 @@ static ClientSim *ccBot(ServerSim *sim, BYTE slot, BYTE team,
                      TRUE);
     playersSetPlayer(cs, &cgs->plyrs, NEUTRAL, slot, (char *)"Bot1", "??",
                      0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
-
     *outHandle = serverSimRegisterClientSubscriber(sim, cs);
     if (*outHandle == SUBSCRIBER_HANDLE_INVALID) {
         clientSimDestroy(cs);
         return NULL;
     }
+
+    /* The talker and this bot are allies in the bot's own player table, set
+     * AFTER the sync replay, which rewrites that table.
+     *
+     * A hosted bot's inbox takes a BROADCAST only from an ally (client_sim.c
+     * clientSimChatReachesInbox), and the round's alliances are what it reads
+     * — a lobby team becomes an alliance at game start, and this fixture
+     * seats its players straight into a running sim. */
+    allienceAdd(&cgs->plyrs->item[CC_SLOT_TALKER].allie, slot);
+    allienceAdd(&cgs->plyrs->item[slot].allie, CC_SLOT_TALKER);
     return cs;
 }
 

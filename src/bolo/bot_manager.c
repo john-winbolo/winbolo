@@ -41,8 +41,8 @@
 #include "starts.h"
 #include "tank.h"
 #include "players.h"
-#include "messages.h"      /* messageInboxPush for botManagerDeliverInternalMessage */
-#include "util.h"          /* utilCtoPString for the inbox payload */
+#include "messages.h"      /* messageInboxPushLine for botManagerDeliverInternalMessage */
+#include "util.h"
 #include "allience.h"
 #include "mines.h"
 #include "client_sim.h"
@@ -1605,19 +1605,6 @@ void botManagerDeliverInternalMessage(ServerSim *sim, BYTE fromPlayer,
      * skip the self bit below. */
     PlayerBitMap allies = playersGetAlliesBitMap(&gs->plyrs, fromPlayer);
 
-    /* Pre-build the inbox payload once; messageInboxPush copies it
-     * into each receiver's ring slot. Clamp at the inbox buffer in
-     * case a brain ever sends past PACKET_MAX_CHAT_MESSAGE — the
-     * wire path enforces the same cap but this path skips that. */
-    char pbuf[BRAIN_INBOX_MSG_LEN];
-    size_t mlen = strlen(msg);
-    if (mlen > BRAIN_INBOX_MSG_LEN - 2) {
-        mlen = BRAIN_INBOX_MSG_LEN - 2;
-    }
-    pbuf[0] = (char)mlen;
-    memcpy(pbuf + 1, msg, mlen);
-    pbuf[mlen + 1] = '\0';
-
     int delivered = 0;
     for (BYTE i = 0; i < MAX_TANKS; i++) {
         if (i == fromPlayer) continue;
@@ -1630,7 +1617,10 @@ void botManagerDeliverInternalMessage(ServerSim *sim, BYTE fromPlayer,
         if (!bc->active || bc->cs == NULL) continue;
         MessageState *ms = clientSimGetMessages(bc->cs);
         if (ms == NULL) continue;
-        messageInboxPush(ms, fromPlayer, pbuf);
+        /* messageInboxPushLine does the Pascal-stringify and the clamp — the
+         * one producer messages.c and the server's stub file also call,
+         * rather than a fourth hand-written copy of it here. */
+        messageInboxPushLine(ms, fromPlayer, msg);
         delivered++;
     }
     /* Audit hook: shows whether the internal fan-out actually reached anyone.
@@ -1706,6 +1696,13 @@ void botManagerQueuePing(ServerSim *sim, BYTE fromPlayer,
     if (fromPlayer >= MAX_TANKS) return;
 
     bot = &sim->botMgr.bots[fromPlayer];
+    /* The slot has to BE a hosted bot. The brain API reaches this through a
+     * ClientSim, and a human running a local brain on a client-hosted game
+     * has a ClientSim of its own in a slot the bot manager never filled —
+     * without this test its ping would write lastPingTick and a pending
+     * command into another seat's bot-manager state, where nothing on the
+     * producer side is ever going to drain them. */
+    if (!bot->active) return;
     /* Reading the sim tick from a worker thread, which is safe for the same
      * reason runBotThinkJobImpl's own reads are (it stamps both InputPackets
      * with serverSimGetTick a few lines above its dispatch): sim->tick is

@@ -675,10 +675,15 @@ bool mapReadFromMemory(const BYTE *data, int len, map *value, pillboxes *pb, bas
 *  xValue - The x co-ordinate
 *  yValue - The y co-ordinate 
 *********************************************************/
+bool mapPosInBounds(BYTE xValue, BYTE yValue) {
+  return (xValue > MAP_MINE_EDGE_LEFT && xValue < MAP_MINE_EDGE_RIGHT &&
+          yValue > MAP_MINE_EDGE_TOP && yValue < MAP_MINE_EDGE_BOTTOM);
+}
+
 BYTE mapGetPos(map *value, BYTE xValue, BYTE yValue) {
   BYTE returnValue = DEEP_SEA; /* Value to return */
 
-  if (xValue > MAP_MINE_EDGE_LEFT && xValue < MAP_MINE_EDGE_RIGHT && yValue > MAP_MINE_EDGE_TOP && yValue < MAP_MINE_EDGE_BOTTOM) {
+  if (mapPosInBounds(xValue, yValue)) {
     returnValue = (*value)->mapItem[xValue][yValue];
   }
 

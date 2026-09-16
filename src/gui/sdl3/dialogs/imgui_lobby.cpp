@@ -359,26 +359,44 @@ static void lobbyBotAnnouncePoll(ClientSim *cs) {
             const char *announce = clientSimGetLobbyBrainAnnounce(cs, idx);
             const char *docs     = clientSimGetLobbyBrainDocs(cs, idx);
             char        base[BRAIN_LIST_NAME_LEN];
-            char        line[LOBBY_CHAT_DOCS_LINE_MAX];
+            char        line[LOBBY_CHAT_LINE_MAX];
             const char *history;
+            bool        landed;
 
             if (announce == NULL || announce[0] == '\0') continue;
-            s_announceBrain[idx] = true;
 
             /* The name on the line is the BOT's, so it reads like the bot
              * talking; the dialog is titled after the BRAIN, because the docs
              * belong to the brain and not to one bot. */
             brainListSplitVersion(bl->entries[idx].name, base, sizeof(base));
-            SDL_snprintf(line, sizeof(line), "%s: %s", s->playerName, announce);
+            if (clientSimFormatLobbyChatLine(line, sizeof(line),
+                                             s->playerName, announce) < 0) {
+                s_announceSeen[slot] = 0;               /* try again later */
+                continue;
+            }
 
             clientSimAppendLobbyTeamChat(cs, s->playerName, announce);
 
-            /* Register only what actually landed: a chat buffer near full
-             * drops the append silently, and a registration for text that is
-             * not in the blob would simply never match. */
+            /* Did it actually land? A chat buffer near full drops the append
+             * without a word. The line is built by the same function the
+             * append builds it with (client_sim.c), so the search cannot miss
+             * for want of agreeing on the format. */
             history = clientSimGetLobbyTeamChatHistory(cs);
-            if (history != NULL && SDL_strstr(history, line) != NULL &&
-                docs != NULL && docs[0] != '\0') {
+            landed  = (history != NULL && SDL_strstr(history, line) != NULL);
+
+            if (!landed) {
+                /* Nothing was said, so this brain has NOT spoken: leave the
+                 * latch alone and un-stamp the slot, and the next frame says
+                 * it again. Latching here was the bug — one dropped append
+                 * and the brain's announce was gone for the whole lobby. */
+                s_announceSeen[slot] = 0;
+                continue;
+            }
+            s_announceBrain[idx] = true;
+
+            /* Registering text that is not in the blob would simply never
+             * match, so this waits on the same answer. */
+            if (docs != NULL && docs[0] != '\0') {
                 lobbyChatDocsRegister((int)idx, base, line);
             }
         }

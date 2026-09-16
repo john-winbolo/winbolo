@@ -47,11 +47,20 @@
 #define BP_WORLD_X ((uint16_t)((70 << M_W_SHIFT_SIZE) + 128))
 #define BP_WORLD_Y ((uint16_t)((90 << M_W_SHIFT_SIZE) + 128))
 
-/* A running sim with a human in slot 0 and a bot in BP_BOT_SLOT. */
+/* A running sim with a human in slot 0 and a bot in BP_BOT_SLOT.
+ *
+ * The bot-manager slot is marked active by hand, the way
+ * test_brain_internal_msg_routing.c does: botManagerQueuePing writes into
+ * BotContext and BotJobCtx state that only the producer ever drains, so it
+ * refuses a slot the bot manager is not hosting — a human running a local
+ * brain has a ClientSim and no BotContext, and its ping would otherwise land
+ * in another seat's queue. botManagerAddBot would want a Lua VM and a brain,
+ * which this binary has neither of. */
 static ServerSim *bp_make_sim(void) {
     ServerSim *sim = ut_make_running_sim("Human");
     if (sim == NULL) return NULL;
     serverSimAddPlayer(sim, BP_BOT_SLOT, "Bot1", false);
+    sim->botMgr.bots[BP_BOT_SLOT].active = true;
     return sim;
 }
 
@@ -159,10 +168,18 @@ int run_bot_ping_rate_limit_drops_extras(void) {
     UT_ASSERT_MSG(sim->botMgr.jobs[BP_BOT_SLOT].pendingCmdCount == 1,
                   "a ping a full gap after the last one was refused");
 
-    /* The limit is per bot, not shared: another slot is untouched by it. */
-    botManagerQueuePing(sim, 0, PING_KIND_ATTACK, BP_WORLD_X, BP_WORLD_Y);
-    UT_ASSERT_MSG(sim->botMgr.jobs[0].pendingCmdCount == 1,
-                  "one bot's ping gap silenced another slot");
+    /* The limit is per bot, not shared: a SECOND hosted bot is untouched by
+       it. Slot 0 is the human and is refused for a different reason, so the
+       second bot is seated here rather than borrowing that slot. */
+    {
+        const BYTE otherBot = 3;
+        serverSimAddPlayer(sim, otherBot, "Bot2", false);
+        sim->botMgr.bots[otherBot].active = true;
+        botManagerQueuePing(sim, otherBot, PING_KIND_ATTACK,
+                            BP_WORLD_X, BP_WORLD_Y);
+        UT_ASSERT_MSG(sim->botMgr.jobs[otherBot].pendingCmdCount == 1,
+                      "one bot's ping gap silenced another bot");
+    }
 
     serverSimDestroy(sim);
     return 0;
@@ -180,6 +197,49 @@ int run_bot_ping_ignores_bad_slot(void) {
                         BP_WORLD_X, BP_WORLD_Y);
     UT_ASSERT_MSG(sim->botMgr.jobs[BP_BOT_SLOT].pendingCmdCount == 0,
                   "an out-of-range slot queued a ping anyway");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A SLOT THE BOT MANAGER IS NOT HOSTING.
+ *
+ * The brain API reaches this through a ClientSim, and not every ClientSim
+ * belongs to a hosted bot: a person playing a client-hosted game with a local
+ * brain has one, in a slot botMgr.bots[] never filled. Writing there sets
+ * that slot's lastPingTick and puts a ClientCommand in its pending queue —
+ * state only the producer's bot drain ever empties, and it does not drain a
+ * slot that is not a bot. The command would sit there for the rest of the
+ * round and then be handed to the dispatcher the moment a real bot took the
+ * seat.
+ *
+ * So the slot has to BE a bot. Slot 2 below is a connected player and nothing
+ * more. */
+int run_bot_ping_ignores_a_slot_that_is_not_a_bot(void) {
+    ServerSim *sim = bp_make_sim();
+    const BYTE human = 2;
+    UT_ASSERT_MSG(sim != NULL, "bp_make_sim returned NULL");
+    serverSimAddPlayer(sim, human, "Person", false);
+    UT_ASSERT_MSG(!sim->botMgr.bots[human].active,
+                  "the fixture made slot %d a hosted bot, so this case is not "
+                  "testing what it says", (int)human);
+
+    botManagerQueuePing(sim, human, PING_KIND_ATTACK,
+                        BP_WORLD_X, BP_WORLD_Y);
+
+    UT_ASSERT_MSG(sim->botMgr.jobs[human].pendingCmdCount == 0,
+                  "a slot the bot manager does not host queued %d command(s) "
+                  "into bot-manager state nothing will ever drain",
+                  sim->botMgr.jobs[human].pendingCmdCount);
+    UT_ASSERT_MSG(sim->botMgr.bots[human].lastPingTick == 0,
+                  "the rate-limit stamp was written into a non-bot slot");
+
+    /* The real bot beside it is untouched and still works. */
+    botManagerQueuePing(sim, BP_BOT_SLOT, PING_KIND_ATTACK,
+                        BP_WORLD_X, BP_WORLD_Y);
+    UT_ASSERT_MSG(sim->botMgr.jobs[BP_BOT_SLOT].pendingCmdCount == 1,
+                  "the hosted bot's own ping was dropped too: %d queued",
+                  sim->botMgr.jobs[BP_BOT_SLOT].pendingCmdCount);
 
     serverSimDestroy(sim);
     return 0;

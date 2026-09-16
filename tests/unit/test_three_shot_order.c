@@ -88,6 +88,7 @@
 #include "server_sim.h"
 #include "server_sim_internal.h"   /* struct ServerSim — tick, shotOrder, botMgr */
 #include "server/sim/server_sim_shared.h"  /* serverSimShotOrderNote */
+#include "server_sim_scenario.h"    /* serverSimApplyScenarioOp — the script hook */
 #include "test_harness.h"
 
 /* The seats: the shooter is the human, one allied bot hears the order and
@@ -105,6 +106,28 @@
 #define TS_TREE_Y   100
 #define TS_OTHER_X  108
 #define TS_OTHER_Y  100
+
+/* HOW LONG A FULL-RANGE SHELL IS IN THE AIR, in SERVER ticks — worked out
+ * rather than guessed, because the old "about half a second" was what hid a
+ * fourth shot from the quiet second after the three.
+ *
+ * A tank fires with len = sightLen / 2 and sightLen tops out at GUNSIGHT_MAX
+ * (14, tank.h), so len is at most 7 map squares. shellsAddItem sets the
+ * shell's life to shellLifeTicks(7, shell_life 8, shell_start_add 5) =
+ * 1 + 8*7 - 5 = 52, and shellsUpdate runs once per GAME tick, which is every
+ * SECOND server tick (server_sim_tick.c simRunHalfStep). 52 * 2 = 104 server
+ * ticks — LONGER than SHOT_ORDER_QUIET_TICKS (100). A fire log fed only by
+ * shell deaths therefore could not see a fourth shot at all. */
+#define TS_SHELL_MAX_LEN      7
+#define TS_SHELL_FLIGHT_TICKS 104
+
+/* And the SHORTEST shot, the same way. sightLen bottoms out at GUNSIGHT_MIN
+ * (2), so len is 1: shellLifeTicks(1, 8, 5) = 1 + 8 - 5 = 4 game ticks, 8
+ * server ticks in the air. A shell this short lands while the quiet second
+ * after the third shot is still running, which is the only window in which
+ * the poll can tell a server tick from a client's. */
+#define TS_SHELL_MIN_LEN            1
+#define TS_SHELL_SHORT_FLIGHT_TICKS 8
 
 typedef struct {
     ServerSim *sim;
@@ -188,8 +211,8 @@ static void tsShotAt(TsFixture *f, uint32_t now, uint32_t fireTick,
 }
 
 /* The short form: a shell fired and landed on the same tick. A real shell is
- * half a second in the air, but only the fire tick is read, so the two
- * numbers are separated only where a test is about that gap. */
+ * TS_SHELL_FLIGHT_TICKS in the air, but only the fire tick is read, so the
+ * two numbers are separated only where a test is about that gap. */
 static void tsShot(TsFixture *f, uint32_t tick, BYTE mx, BYTE my) {
     tsShotAt(f, tick, tick, mx, my);
 }
@@ -217,9 +240,45 @@ static void tsFireShell(TsFixture *f, uint32_t fireTick) {
     f->sim->tick = fireTick;
     serverSimGetTankState(f->sim, TS_SHOOTER, &wx, &wy);
     gs->fireInputTick = fireTick;
-    shellsAddItem(gs, &gs->shs, wx, wy, (TURNTYPE)0.0, (TURNTYPE)128.0,
+    shellsAddItem(gs, &gs->shs, wx, wy, (TURNTYPE)0.0,
+                  (TURNTYPE)TS_SHELL_MAX_LEN, TS_SHOOTER, FALSE);
+    gs->fireInputTick = 0;
+}
+
+/* The same, with the CLIENT's input tick said separately from the server tick
+ * the shell leaves the gun on — which is the whole point of these two. Returns
+ * the server fire tick the shell was stamped with, read back off the shell
+ * itself (shellsAddItem prepends, so the newest is at the head of the list).
+ *
+ * Nothing removes the shell afterwards. It never gets updated either, so it
+ * never moves, never lands and never reports itself; it just sits in the list
+ * for the rest of the case. */
+static uint32_t tsFireShellAs(TsFixture *f, uint32_t serverTick,
+                              uint32_t clientFireTick, int len) {
+    GameSim *gs = serverSimGetGameSim(f->sim);
+    WORLD    wx = 0, wy = 0;
+
+    f->sim->tick = serverTick;
+    serverSimGetTankState(f->sim, TS_SHOOTER, &wx, &wy);
+    gs->fireInputTick = clientFireTick;
+    shellsAddItem(gs, &gs->shs, wx, wy, (TURNTYPE)0.0, (TURNTYPE)len,
                   TS_SHOOTER, FALSE);
     gs->fireInputTick = 0;
+    return (gs->shs != NULL) ? gs->shs->serverFireTick : 0u;
+}
+
+/* That shell's death, over the centre of a square, through the REAL callback
+ * — so the test drives the same two arguments a landing hands the detector:
+ * the client's fireTick (which goes on the wire and nowhere else) and the
+ * server fire tick the shell was stamped with (which every rule reads). */
+static void tsLandShell(TsFixture *f, uint32_t landTick,
+                        uint32_t clientFireTick, uint32_t serverFireTick,
+                        BYTE mx, BYTE my) {
+    f->sim->tick = landTick;
+    serverSimCbShellDeath(f->sim, clientFireTick, serverFireTick, TS_SHOOTER,
+                          (WORLD)(((WORLD)mx << TANK_SHIFT_MAPSIZE) + 128),
+                          (WORLD)(((WORLD)my << TANK_SHIFT_MAPSIZE) + 128),
+                          SHELL_OUTCOME_EXPIRED);
 }
 
 /* The server's per-tick poll, with the sim standing at `tick`. This is what
@@ -493,8 +552,9 @@ int run_three_shot_order_quiet_after_sees_a_shell_still_flying(void) {
     tsShot(&f, 150, TS_OPEN_X, TS_OPEN_Y);
     tsShot(&f, 200, TS_OPEN_X, TS_OPEN_Y);
 
-    /* Fired on 290 — ten ticks before the quiet second is up — and half a
-       second from landing. */
+    /* Fired on 290 — ten ticks before the quiet second is up — and a whole
+       TS_SHELL_FLIGHT_TICKS from landing, which is 104 ticks and so lands on
+       394, long after the poll at 300. Nothing about its death can help. */
     tsFireShell(&f, 290);
 
     tsPollAt(&f, 200 + SHOT_ORDER_QUIET_TICKS);
@@ -505,9 +565,9 @@ int run_three_shot_order_quiet_after_sees_a_shell_still_flying(void) {
                   "recorded when the shell is created",
                   tsInbox(f.ally));
 
-    /* Its death, 130 ticks after the third shot, is the same fire tick over
-       again and must change nothing either way. */
-    tsHit(&f, 330, 290);
+    /* Its death, a full flight later, is the same fire tick over again and
+       must change nothing either way. */
+    tsHit(&f, 290 + TS_SHELL_FLIGHT_TICKS, 290);
     tsPollAt(&f, 200 + 4 * SHOT_ORDER_QUIET_TICKS);
     UT_ASSERT_MSG(tsInbox(f.ally) == 0,
                   "the cancelled order turned up once the fourth shell "
@@ -526,7 +586,8 @@ int run_three_shot_order_quiet_before_sees_a_shell_still_flying(void) {
     TsFixture f;
     if (tsSetup(&f) != 0) return 1;
 
-    /* Fired on 99, a long way to travel, nothing hit yet. */
+    /* Fired on 99, TS_SHELL_FLIGHT_TICKS to travel, so it is still 3 ticks
+       from landing when the third of the three dies on 200. */
     tsFireShell(&f, 99);
 
     tsShot(&f, 100, TS_OPEN_X, TS_OPEN_Y);
@@ -548,6 +609,259 @@ int run_three_shot_order_quiet_before_sees_a_shell_still_flying(void) {
     UT_ASSERT_MSG(tsInbox(f.ally) == 1,
                   "three shells with a clear second in front left %d "
                   "entries, expected 1", tsInbox(f.ally));
+
+    tsTeardown(&f);
+    return 0;
+}
+
+/* THE CLOCK IS THE SERVER'S. A MID-ROUND JOINER.
+ *
+ * A shell carries two ticks. The client's own input-tick counter rides with
+ * it so the firing client can match the death to its predicted shell, and
+ * that counter starts at zero when a client connects — a player who joins an
+ * hour into a round is on tick 1 while the server is on tick 360000.
+ *
+ * Read the detector's rules on THAT number and everything goes wrong at once:
+ * the burst looks like it happened at the dawn of the round, the poll's
+ * "sim->tick >= armFireTick + 100" is true on the very next tick, and the
+ * quiet second after the third shot is skipped entirely. The order fires at
+ * once, and a fourth shot inside that second cannot take it back because it
+ * has already gone.
+ *
+ * Bots never showed it: botManagerTick stamps their input packets with
+ * serverSimGetTick, so their counter IS the server's.
+ *
+ * Here the joiner's counter says 1, 2, 3 while the server is on 1000, 1050
+ * and 1100. The order must wait until 1100 + 100 and not a tick sooner. */
+int run_three_shot_order_uses_the_server_tick(void) {
+    TsFixture f;
+    uint32_t  sft[3];
+    int       i;
+
+    if (tsSetup(&f) != 0) return 1;
+
+    /* Three shells, fired on server ticks 1000/1050/1100 by a client whose
+       own counter is 1/2/3. Short-range shots, so each lands 8 ticks after it
+       was fired — WHILE the quiet second after the third is still running,
+       which is the only window in which the poll can tell the two clocks
+       apart. */
+    sft[0] = tsFireShellAs(&f, 1000, 1, TS_SHELL_MIN_LEN);
+    sft[1] = tsFireShellAs(&f, 1050, 2, TS_SHELL_MIN_LEN);
+    sft[2] = tsFireShellAs(&f, 1100, 3, TS_SHELL_MIN_LEN);
+
+    for (i = 0; i < 3; i++) {
+        UT_ASSERT_MSG(sft[i] == (uint32_t)(1000 + 50 * i),
+                      "shell %d was stamped with server fire tick %u, expected "
+                      "%u — shellsAddItem must take the tick from the server, "
+                      "not from the client's packet",
+                      i, (unsigned)sft[i], (unsigned)(1000 + 50 * i));
+    }
+
+    tsLandShell(&f, 1000 + TS_SHELL_SHORT_FLIGHT_TICKS, 1, sft[0],
+                TS_OPEN_X, TS_OPEN_Y);
+    tsLandShell(&f, 1050 + TS_SHELL_SHORT_FLIGHT_TICKS, 2, sft[1],
+                TS_OPEN_X, TS_OPEN_Y);
+    tsLandShell(&f, 1100 + TS_SHELL_SHORT_FLIGHT_TICKS, 3, sft[2],
+                TS_OPEN_X, TS_OPEN_Y);
+
+    /* Read on the client's counter the third shot was "fired" on tick 3, so
+       this poll — 92 ticks before the quiet second is up — would think it was
+       long over and send the order at once. */
+    tsPollAt(&f, 1100 + TS_SHELL_SHORT_FLIGHT_TICKS);
+    UT_ASSERT_MSG(tsInbox(f.ally) == 0,
+                  "the order went out the moment the third shell landed: %d "
+                  "entries. The detector is reading the client's tick counter, "
+                  "which for a mid-round joiner is a handful of ticks and puts "
+                  "the quiet second in the past", tsInbox(f.ally));
+
+    tsPollAt(&f, 1100 + SHOT_ORDER_QUIET_TICKS - 1);
+    UT_ASSERT_MSG(tsInbox(f.ally) == 0,
+                  "the order went out a tick early: %d entries",
+                  tsInbox(f.ally));
+
+    tsPollAt(&f, 1100 + SHOT_ORDER_QUIET_TICKS);
+    UT_ASSERT_MSG(tsInbox(f.ally) == 1,
+                  "a quiet second after the third shot LEFT THE GUN the inbox "
+                  "holds %d entries, expected 1", tsInbox(f.ally));
+
+    tsTeardown(&f);
+    return 0;
+}
+
+/* THE QUIET SECOND AFTER, FOR A MID-ROUND JOINER.
+ *
+ * Same three shots, and a fourth fired 50 server ticks after the third. On
+ * server ticks that is plainly inside the quiet second and takes the armed
+ * order away. Read on the client's counter the order would already have gone
+ * out on the tick after the third landed, and there would be nothing left to
+ * take. The test is that the order never goes out at all. */
+int run_three_shot_order_server_tick_quiet_after(void) {
+    TsFixture f;
+    uint32_t  sft[3], fourth;
+
+    if (tsSetup(&f) != 0) return 1;
+
+    sft[0] = tsFireShellAs(&f, 1000, 1, TS_SHELL_MIN_LEN);
+    sft[1] = tsFireShellAs(&f, 1050, 2, TS_SHELL_MIN_LEN);
+    sft[2] = tsFireShellAs(&f, 1100, 3, TS_SHELL_MIN_LEN);
+    tsLandShell(&f, 1000 + TS_SHELL_SHORT_FLIGHT_TICKS, 1, sft[0], TS_OPEN_X, TS_OPEN_Y);
+    tsLandShell(&f, 1050 + TS_SHELL_SHORT_FLIGHT_TICKS, 2, sft[1], TS_OPEN_X, TS_OPEN_Y);
+    tsLandShell(&f, 1100 + TS_SHELL_SHORT_FLIGHT_TICKS, 3, sft[2], TS_OPEN_X, TS_OPEN_Y);
+
+    /* The fourth: server tick 1150, the client's own counter 4, and a FULL
+       range so it is still in the air (until 1254) when the poll comes round
+       on 1200. The fire log has to have heard of it at the gun. */
+    fourth = tsFireShellAs(&f, 1150, 4, TS_SHELL_MAX_LEN);
+    UT_ASSERT_MSG(fourth == 1150,
+                  "the fourth shell was stamped %u, expected 1150",
+                  (unsigned)fourth);
+
+    tsPollAt(&f, 1100 + SHOT_ORDER_QUIET_TICKS);
+    UT_ASSERT_MSG(tsInbox(f.ally) == 0,
+                  "a fourth shot 50 server ticks after the third left the "
+                  "order standing: %d entries", tsInbox(f.ally));
+
+    tsPollAt(&f, 1100 + 4 * SHOT_ORDER_QUIET_TICKS);
+    UT_ASSERT_MSG(tsInbox(f.ally) == 0,
+                  "the cancelled order turned up later anyway: %d entries",
+                  tsInbox(f.ally));
+
+    tsTeardown(&f);
+    return 0;
+}
+
+/* A MODIFIED CLIENT CANNOT PICK ITS OWN TICK.
+ *
+ * Nothing stops a client putting any 32-bit number it likes in an
+ * InputPacket's tick field. A fireTick near the top of the range, read as a
+ * fire time, would make the quiet second in front of the burst unmeasurable
+ * (the lookback clamps to 0 and the whole log falls "before" it) and the
+ * poll's comparison against sim->tick never true.
+ *
+ * The three shots below carry 0xFFFFFFF0, 0xFFFFFFF1 and 0xFFFFFFF2 and are
+ * fired on ordinary server ticks 1000, 1050 and 1100. They must behave
+ * exactly like any other three: no order before 1200, one order on 1200. */
+int run_three_shot_order_ignores_a_forged_fire_tick(void) {
+    TsFixture f;
+    uint32_t  sft[3];
+    const uint32_t forged = 0xFFFFFFF0u;
+
+    if (tsSetup(&f) != 0) return 1;
+
+    sft[0] = tsFireShellAs(&f, 1000, forged,      TS_SHELL_MIN_LEN);
+    sft[1] = tsFireShellAs(&f, 1050, forged + 1u, TS_SHELL_MIN_LEN);
+    sft[2] = tsFireShellAs(&f, 1100, forged + 2u, TS_SHELL_MIN_LEN);
+
+    UT_ASSERT_MSG(sft[2] == 1100,
+                  "a shell whose packet said tick %u was stamped %u, expected "
+                  "the server's 1100 — nothing a client sends may become the "
+                  "tick a server rule is measured on",
+                  (unsigned)(forged + 2u), (unsigned)sft[2]);
+
+    tsLandShell(&f, 1000 + TS_SHELL_SHORT_FLIGHT_TICKS, forged,      sft[0],
+                TS_OPEN_X, TS_OPEN_Y);
+    tsLandShell(&f, 1050 + TS_SHELL_SHORT_FLIGHT_TICKS, forged + 1u, sft[1],
+                TS_OPEN_X, TS_OPEN_Y);
+    tsLandShell(&f, 1100 + TS_SHELL_SHORT_FLIGHT_TICKS, forged + 2u, sft[2],
+                TS_OPEN_X, TS_OPEN_Y);
+
+    /* Read on the forged number the arm would sit at 0xFFFFFFF2, which no
+       sim->tick ever reaches, and the order would never go out at all. */
+    tsPollAt(&f, 1100 + SHOT_ORDER_QUIET_TICKS - 1);
+    UT_ASSERT_MSG(tsInbox(f.ally) == 0,
+                  "a forged fire tick got the order out early: %d entries",
+                  tsInbox(f.ally));
+
+    tsPollAt(&f, 1100 + SHOT_ORDER_QUIET_TICKS);
+    UT_ASSERT_MSG(tsInbox(f.ally) == 1,
+                  "the three shots did not order at all: %d entries, expected "
+                  "1", tsInbox(f.ally));
+
+    tsTeardown(&f);
+    return 0;
+}
+
+/* OFF THE MAP IS NOT OPEN GROUND.
+ *
+ * mapGetPos answers DEEP_SEA for a square the map does not hold, and deep sea
+ * is open ground as far as a shell is concerned — so the whole border outside
+ * the playable band read as somewhere an order could be dropped. Nothing can
+ * ever stand there.
+ *
+ * Square (2, 2) is well outside MAP_MINE_EDGE_LEFT / MAP_MINE_EDGE_TOP (20).
+ * Three full-range shells on it must order nobody, and must not even count as
+ * landings. */
+int run_three_shot_order_rejects_off_map_squares(void) {
+    TsFixture f;
+    if (tsSetup(&f) != 0) return 1;
+
+    tsShot(&f, 100, 2, 2);
+    tsShot(&f, 150, 2, 2);
+    tsShot(&f, 200, 2, 2);
+    tsPollAt(&f, 200 + SHOT_ORDER_QUIET_TICKS);
+    UT_ASSERT_MSG(tsInbox(f.ally) == 0,
+                  "three shells on an off-map square ordered somebody: %d "
+                  "entries. mapGetPos calls it deep sea, which the open-ground "
+                  "test lets through", tsInbox(f.ally));
+
+    /* And they did not count as landings either: three on a real open square,
+       left a clear second after them, are still the first three. */
+    tsShot(&f, 700, TS_OPEN_X, TS_OPEN_Y);
+    tsShot(&f, 750, TS_OPEN_X, TS_OPEN_Y);
+    tsPollAt(&f, 750 + SHOT_ORDER_QUIET_TICKS);
+    UT_ASSERT_MSG(tsInbox(f.ally) == 0,
+                  "two shells on an open square ordered somebody after three "
+                  "off-map ones: %d entries — the off-map shells were counted",
+                  tsInbox(f.ally));
+    tsShot(&f, 800, TS_OPEN_X, TS_OPEN_Y);
+    tsPollAt(&f, 800 + SHOT_ORDER_QUIET_TICKS);
+    UT_ASSERT_MSG(tsInbox(f.ally) == 1,
+                  "three shells on an open square left %d entries, expected 1",
+                  tsInbox(f.ally));
+
+    tsTeardown(&f);
+    return 0;
+}
+
+/* THE SCENARIO HOOK REFUSES AN OFF-MAP SQUARE TOO.
+ *
+ * game.shell_expired(p, x, y) is the only way a script can put a full-range
+ * landing in front of the detector, and its two coordinates are BYTEs — the
+ * Lua arm's own check passes anything 0..255. Square (2, 2) is outside the
+ * playable band (MAP_MINE_EDGE_LEFT / _TOP are 20) and reads back as deep sea,
+ * so without a bounds test of its own the op would happily count three
+ * landings on a square no tank can ever reach.
+ *
+ * SCN_OP_BAD_SQUARE is the answer every other op with coordinates gives. */
+int run_three_shot_order_scenario_refuses_off_map(void) {
+    TsFixture   f;
+    ScenarioOp  op;
+    ScnOpResult r;
+
+    if (tsSetup(&f) != 0) return 1;
+
+    memset(&op, 0, sizeof(op));
+    op.type                        = SCN_OP_SHELL_EXPIRED;
+    op.u.shellExpired.slot         = TS_SHOOTER;
+    op.u.shellExpired.x            = 2;
+    op.u.shellExpired.y            = 2;
+    op.u.shellExpired.haveFireTick = true;
+    op.u.shellExpired.fireTick     = 100;
+
+    r = serverSimApplyScenarioOp(f.sim, &op, NULL);
+    UT_ASSERT_MSG(r == SCN_OP_BAD_SQUARE,
+                  "shell_expired on the off-map square (2, 2) answered %d, "
+                  "expected SCN_OP_BAD_SQUARE (%d)",
+                  (int)r, (int)SCN_OP_BAD_SQUARE);
+
+    /* A square the map really holds is still taken. */
+    op.u.shellExpired.x = TS_OPEN_X;
+    op.u.shellExpired.y = TS_OPEN_Y;
+    r = serverSimApplyScenarioOp(f.sim, &op, NULL);
+    UT_ASSERT_MSG(r == SCN_OP_OK,
+                  "shell_expired on an ordinary open square answered %d, "
+                  "expected SCN_OP_OK — the bounds test has taken too much",
+                  (int)r);
 
     tsTeardown(&f);
     return 0;

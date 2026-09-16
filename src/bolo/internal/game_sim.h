@@ -96,19 +96,31 @@ typedef struct GameSimCallbacks {
      * unicast CTRL_SHELL_DEATH so the firing client can match fireTick to
      * its predicted shell, cull the ghost, and draw the impact at
      * (impactWX, impactWY). NULL on the client (not authoritative over
-     * shell death). outcome is a SHELL_OUTCOME_* (shells.h). */
-    void (*shellDeath)(void *ctx, uint32_t fireTick, BYTE owner,
-                       WORLD impactWX, WORLD impactWY, uint8_t outcome);
-    /* Server-only: a shell owned by `owner` LEFT THE GUN on `fireTick`.
-     * NULL on the client. shellDeath above is the first the server would
-     * otherwise hear of a shell, and half a second in the air is long
-     * enough to matter to the three-shot order detector, whose every rule
-     * is on the fire tick: a shell still flying was simply absent from the
-     * fire log. This says so at the moment the shell is created, inside the
-     * sim tick, so the log is complete without waiting for a landing.
-     * Pillbox shells fire with owner NEUTRAL and are dropped by the
-     * handler. */
-    void (*shellFired)(void *ctx, uint32_t fireTick, BYTE owner);
+     * shell death). outcome is a SHELL_OUTCOME_* (shells.h).
+     *
+     * TWO ticks, and they are not the same number. fireTick is the CLIENT's
+     * own input-tick counter, which only the client it came from can make
+     * sense of — it goes straight back out on the wire and nothing else.
+     * serverFireTick is the server's tick at the moment the shell was
+     * created (shells.h serverFireTick), and it is the only one any
+     * server-side rule may be measured on. */
+    void (*shellDeath)(void *ctx, uint32_t fireTick, uint32_t serverFireTick,
+                       BYTE owner, WORLD impactWX, WORLD impactWY,
+                       uint8_t outcome);
+    /* Server-only: a shell owned by `owner` LEFT THE GUN. NULL on the
+     * client. shellDeath above is the first the server would otherwise hear
+     * of a shell, and a full-range shell is 104 server ticks in the air
+     * (shells.c shellsAddItem), which is longer than the three-shot order
+     * detector's quiet second: a shell still flying was simply absent from
+     * the fire log. This says so at the moment the shell is created, inside
+     * the sim tick, so the log is complete without waiting for a landing.
+     *
+     * RETURNS the SERVER tick the fire was recorded on. shellsAddItem
+     * stamps it on the shell as serverFireTick so the death-time call can
+     * name the same tick, and so no server-side rule ever has to read a
+     * number a client chose. Pillbox shells fire with owner NEUTRAL and are
+     * dropped by the handler, which still answers with the tick. */
+    uint32_t (*shellFired)(void *ctx, BYTE owner);
     /* Server-only stats attribution; NULL on the client (call sites null-check).
      * recordDamage: `attacker` dealt `dealt` effective armour damage to a target
      * of `targetKind` identified by `targetIndex` (the tank slot, or pill/base

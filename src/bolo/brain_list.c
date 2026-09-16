@@ -453,31 +453,58 @@ bool brainListLoadTexts(const char *brainDir,
     return (a > 0 || d > 0);
 }
 
+/* "<dir>/init.lua" -> "<dir>". False when the path carries no directory part
+ * or will not fit. The catalogue stores the init.lua (brainListScanParent),
+ * and the two texts sit beside it. */
+static bool brainListDirOfPath(const char *brainPath, char *dir, size_t dirSz) {
+    const char *fname;
+    size_t dirLen;
+    if (!brainPath || !brainPath[0]) return false;
+    fname = brainPath + strlen(brainPath);
+    while (fname > brainPath && fname[-1] != '/' && fname[-1] != '\\') {
+        fname--;
+    }
+    if (fname == brainPath) return false;      /* no directory part */
+    dirLen = (size_t)(fname - 1 - brainPath);  /* drop the separator */
+    if (dirLen == 0 || dirLen >= dirSz) return false;
+    memcpy(dir, brainPath, dirLen);
+    dir[dirLen] = '\0';
+    return true;
+}
+
 bool brainListLoadTextsForPath(const char *brainPath,
                                char *announce, size_t announceSz,
                                char *docs, size_t docsSz,
                                bool *truncated) {
-    /* The catalogue stores "<dir>/init.lua" (brainListScanParent), so back
-     * over the file name to get the directory the two texts sit in. */
     char dir[1024];
-    size_t dirLen = 0;
     if (announce && announceSz) announce[0] = '\0';
     if (docs && docsSz) docs[0] = '\0';
     if (truncated) *truncated = false;
-    if (!brainPath || !brainPath[0]) return false;
-    {
-        const char *fname = brainPath + strlen(brainPath);
-        while (fname > brainPath && fname[-1] != '/' && fname[-1] != '\\') {
-            fname--;
-        }
-        if (fname == brainPath) return false;      /* no directory part */
-        dirLen = (size_t)(fname - 1 - brainPath);  /* drop the separator */
-        if (dirLen == 0 || dirLen >= sizeof(dir)) return false;
-        memcpy(dir, brainPath, dirLen);
-        dir[dirLen] = '\0';
-    }
+    if (!brainListDirOfPath(brainPath, dir, sizeof(dir))) return false;
     return brainListLoadTexts(dir, announce, announceSz, docs, docsSz,
                               truncated);
+}
+
+int64_t brainListTextsMtimeForPath(const char *brainPath) {
+    char dir[1024];
+    char path[1024];
+    int64_t best = 0;
+    int i;
+    static const char *const names[2] = { "announce.txt", "commands.txt" };
+
+    if (!brainListDirOfPath(brainPath, dir, sizeof(dir))) return 0;
+    for (i = 0; i < 2; i++) {
+        SDL_PathInfo info;
+#if defined(_WIN32)
+        SDL_snprintf(path, sizeof(path), "%s\\%s", dir, names[i]);
+#else
+        SDL_snprintf(path, sizeof(path), "%s/%s", dir, names[i]);
+#endif
+        if (!SDL_GetPathInfo(path, &info)) continue;
+        if (info.type != SDL_PATHTYPE_FILE) continue;
+        if (info.modify_time > best) best = info.modify_time;
+    }
+    return best;
 }
 
 /* ── modes.txt: a brain's own list of modes and difficulty levels ──── */
