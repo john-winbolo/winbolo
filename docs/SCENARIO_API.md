@@ -490,6 +490,31 @@ applied around it; one bad row does not cost a scenario its other rules.
 `scripted` is true when the scenario's own op caused the event, so a handler
 that should ignore its own edits opens with `if scripted then return end`.
 
+> **`on_pill_placed` changed.** It used to be `on_pill_placed(n, p, scripted)`
+> and to fire only when a builder finished the job. A handler written against
+> that form needs two things. Take the new argument, or the third one it reads
+> as `scripted` is now a number:
+>
+> ```lua
+> function on_pill_placed(n, p, armour, scripted)
+> ```
+>
+> And decide what it means by the armour, because the hook now also fires for
+> every pillbox a corpse drops — a tank sunk or destroyed, a builder killed
+> holding one, a player quitting doing both, and a scenario's own `drop_pill`.
+> A handler that meant "somebody put a gun up" keeps that meaning with a guard:
+>
+> ```lua
+> function on_pill_placed(n, p, armour, scripted)
+>   if armour == 0 then return end   -- dropped, not built: it is dead
+>   ...
+> end
+> ```
+>
+> Without the guard it will fire on drops it never used to see. `p` is whoever
+> was carrying the pillbox, which on a quit is a slot on its way out of the
+> game, so it is not a safe stand-in for "the player who built this".
+
 ### Regions
 
 | Hook | Arguments |
