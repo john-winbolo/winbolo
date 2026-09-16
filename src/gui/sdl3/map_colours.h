@@ -75,14 +75,24 @@ MapColourItem mapColourItemKind(BYTE tile);
 *PURPOSE:
 *  The flat colour for a square's ground.
 *
-*  Callers hand in what a sprite pass would have drawn on the
-*  square, not raw map terrain. viewportCalcSquarePure turns
-*  ROAD, BUILDING, FOREST, RIVER, DEEP_SEA, BOAT and CRATER
-*  into their shape-variant ranges in tilenum.h and passes
-*  everything else through untouched, so the only raw
-*  terrains that arrive are SWAMP, RUBBLE, GRASS and
-*  HALFBUILDING. Pills and bases arrive as their own tiles,
-*  including the ones a fog memory is still holding.
+*  Either kind of number is accepted, because the two kinds
+*  of caller hold different ones and neither should have to
+*  convert.
+*
+*  A view drawing a live game hands in what a sprite pass
+*  would have drawn: viewportCalcSquarePure turns ROAD,
+*  BUILDING, FOREST, RIVER, DEEP_SEA, BOAT and CRATER into
+*  their shape-variant ranges in tilenum.h and passes
+*  everything else through, so from there the raw terrains
+*  that arrive are SWAMP, RUBBLE, GRASS and HALFBUILDING.
+*
+*  A caller reading a map file - the map choosers - hands in
+*  raw terrain throughout, including BUILDING, RIVER, ROAD,
+*  BOAT and DEEP_SEA, and may hand in a mined square, which
+*  answers with the ground under the mine. None of those
+*  numbers is also a drawn tile, so covering both kinds costs
+*  nothing in ambiguity, and a family's two numbers always
+*  answer with the same colour.
 *
 *  A pill or base square answers with the ground under it —
 *  grass and road respectively — because its marker is drawn

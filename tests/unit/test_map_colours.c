@@ -11,8 +11,10 @@
  * base tiles land on their own sides, and ordinary ground is nothing.
  *
  * terrain: each family answers across its whole tile range and not just at
- * its first member, an item square answers with the ground under it, and a
- * tile the table has no entry for is refused rather than given a colour.
+ * its first member, a family's raw terrain and its shape variant are the same
+ * colour, a mined square answers with the ground under the mine, an item
+ * square answers with the ground under it, and a number that is neither a
+ * drawn tile nor a raw terrain is refused rather than given a colour.
  *
  * markers: the three layers of a marker's stroke come back outermost first,
  * only the outline is translucent, and the stroke straddles the shape's edge
@@ -116,31 +118,66 @@ int run_map_colours_terrain(void) {
         }
     }
 
-    /* The plain terrains that carry no shape variant. */
+    /* Every raw terrain a map file can hold answers, because the map choosers
+     * read a map rather than a drawn view and hand these in throughout. A
+     * refusal here would leave a square drawing the fallback colour. */
     {
-        const BYTE plain[] = { SWAMP, RUBBLE, GRASS, HALFBUILDING,
-                               FOREST, CRATER };
-        for (int i = 0; i < ARRAY_LEN(plain); i++) {
+        const BYTE raw[] = { BUILDING, RIVER, SWAMP, CRATER, ROAD, FOREST,
+                             RUBBLE, GRASS, HALFBUILDING, BOAT, DEEP_SEA };
+        for (int i = 0; i < ARRAY_LEN(raw); i++) {
             SDL_Color got;
-            UT_ASSERT_MSG(mapColourTerrain(plain[i], &got),
-                          "tile %d has no colour", (int)plain[i]);
+            UT_ASSERT_MSG(mapColourTerrain(raw[i], &got),
+                          "raw terrain %d has no colour", (int)raw[i]);
         }
     }
 
-    /* The shape-variant forest and crater answer as the plain ones do: the
-     * two spellings of the same terrain cannot be different colours. */
+    /* A family reached by its raw terrain and by its shape variant is one
+     * colour. Otherwise the same map would be two different pictures in the
+     * chooser, which reads a map file, and in play, which reads drawn tiles. */
     {
-        SDL_Color plainForest, shapedForest, plainCrater, shapedCrater;
-        mapColourTerrain(FOREST, &plainForest);
-        mapColourTerrain(FOREST_SINGLE, &shapedForest);
-        mapColourTerrain(CRATER, &plainCrater);
-        mapColourTerrain(CRATER_SINGLE, &shapedCrater);
-        UT_ASSERT_MSG(rgbOf(plainForest) == rgbOf(shapedForest),
-                      "forest: plain is %06lx, shaped is %06lx",
-                      rgbOf(plainForest), rgbOf(shapedForest));
-        UT_ASSERT_MSG(rgbOf(plainCrater) == rgbOf(shapedCrater),
-                      "crater: plain is %06lx, shaped is %06lx",
-                      rgbOf(plainCrater), rgbOf(shapedCrater));
+        static const struct {
+            const char *name;
+            int         raw, shaped;
+        } kPairs[] = {
+            { "road",     ROAD,     ROAD_HORZ      },
+            { "building", BUILDING, BUILD_SINGLE   },
+            { "river",    RIVER,    RIVER_END1     },
+            { "deep sea", DEEP_SEA, DEEP_SEA_SOLID },
+            { "forest",   FOREST,   FOREST_SINGLE  },
+            { "crater",   CRATER,   CRATER_SINGLE  },
+            { "boat",     BOAT,     BOAT_0         },
+        };
+        for (int i = 0; i < ARRAY_LEN(kPairs); i++) {
+            SDL_Color rawC, shapedC;
+            UT_ASSERT_MSG(mapColourTerrain((BYTE)kPairs[i].raw, &rawC) &&
+                          mapColourTerrain((BYTE)kPairs[i].shaped, &shapedC),
+                          "%s: one of the two numbers has no colour",
+                          kPairs[i].name);
+            UT_ASSERT_MSG(rgbOf(rawC) == rgbOf(shapedC),
+                          "%s: raw is %06lx, shaped is %06lx",
+                          kPairs[i].name, rgbOf(rawC), rgbOf(shapedC));
+        }
+    }
+
+    /* A mined square is the ground with a mine drawn over it, so it answers
+     * with the ground: the caller marks the mine itself. */
+    {
+        static const struct {
+            int mined, plain;
+        } kMines[] = {
+            { MINE_SWAMP, SWAMP }, { MINE_CRATER, CRATER },
+            { MINE_ROAD, ROAD },   { MINE_FOREST, FOREST },
+            { MINE_RUBBLE, RUBBLE }, { MINE_GRASS, GRASS },
+        };
+        for (int i = 0; i < ARRAY_LEN(kMines); i++) {
+            SDL_Color minedC, plainC;
+            UT_ASSERT_MSG(mapColourTerrain((BYTE)kMines[i].mined, &minedC),
+                          "mined terrain %d has no colour", kMines[i].mined);
+            mapColourTerrain((BYTE)kMines[i].plain, &plainC);
+            UT_ASSERT_MSG(rgbOf(minedC) == rgbOf(plainC),
+                          "terrain %d mined is %06lx, plain is %06lx",
+                          kMines[i].plain, rgbOf(minedC), rgbOf(plainC));
+        }
     }
 
     /* An item square is the ground under it, so the marker drawn on top sits
@@ -168,17 +205,13 @@ int run_map_colours_terrain(void) {
                       "pill tile %d has no ground colour", t);
     }
 
-    /* The table answers for what a view actually hands it, and refuses the
-     * rest rather than inventing a colour: the caller falls back to the
-     * sprite sheet. BUILDING is the case to pin, because the raw terrain
-     * never reaches a drawer — viewportCalcSquarePure turns every building
-     * into one of the BUILD_* shapes first — so an answer here would mean
-     * the table had started returning colours for tile numbers no caller
-     * passes it. */
+    /* A number that is neither a drawn tile nor a raw terrain is refused
+     * rather than given a colour, and leaves the caller's colour alone. 16
+     * sits between the mine values and the first shape range. */
     {
         SDL_Color got = { 1, 2, 3, 4 };
-        UT_ASSERT_MSG(!mapColourTerrain(BUILDING, &got),
-                      "raw BUILDING was given a terrain colour");
+        UT_ASSERT_MSG(!mapColourTerrain((BYTE)(MINE_END + 1), &got),
+                      "tile %d was given a terrain colour", MINE_END + 1);
         UT_ASSERT_MSG(got.r == 1 && got.g == 2 && got.b == 3 && got.a == 4,
                       "a refused tile wrote to the colour anyway");
     }

@@ -2862,6 +2862,9 @@ set(MAPEDITOR_SOURCES
     src/bolo/transport_udp_client.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/minimap_render.c
+    # The editor's own drawing uses minimap_render.c above; map_colours.c is
+    # here for the map chooser it shares with the game (map_preview_view.cpp).
+    src/gui/sdl3/map_colours.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/gamefront_stubs.c
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/gfx_settings.c

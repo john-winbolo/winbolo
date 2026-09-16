@@ -43,6 +43,7 @@ extern "C" {
 #include "macos_pinch.h"
 #include "sprite_positions.h"
 #include "minimap_render.h"
+#include "map_colours.h"
 
 /* From tileloader.h */
 extern SDL_Surface *tileLoaderBuildSheet(int tileSize);
@@ -58,9 +59,9 @@ extern unsigned int sdl3DrawGetTilesGeneration(void);
 /* Discrete zoom ladder. Sub-1x steps map to specific tile pixel sizes
  * after ImGui's display-time downscale of the 1x sprite render:
  *   0.75x → ~12 px/tile (sprite mode)
- *   0.50x → ~ 8 px/tile (sprite mode)
- *   0.20x → minimap-colour mode (sprites at that scale are noise)
- *   0.10x → minimap-colour mode
+ *   0.50x → ~ 8 px/tile (map-colour mode)
+ *   0.20x → map-colour mode
+ *   0.10x → map-colour mode
  * Above 1x is integer multiples so pixel art stays crisp. */
 static const float kZoomSteps[] = {
     0.1f, 0.2f, 0.5f, 0.75f,
@@ -69,7 +70,12 @@ static const float kZoomSteps[] = {
 };
 #define ZOOM_STEP_COUNT 20
 #define ZOOM_STEP_1X    4     /* index of 1.0f */
-#define ZOOM_MINIMAP_MAX 0.33f /* < this: minimap-colour mode (catches 0.2, 0.1) */
+/* Below this the chooser gives up tile sprites for one map colour a square.
+   1.0 is the same floor the overview and the full screen map use
+   (OVERVIEW_SPRITE_MIN_ZOOM), so a map changes style at the same size
+   wherever it is drawn. It used to be 0.33, which left 0.75x and 0.5x on
+   sprites here while the same 12 px and 8 px squares were colours in play. */
+#define ZOOM_SPRITE_MIN 1.0f
 
 /* Boat sprite atlas coords for start position overlays. */
 static const int kBoatAtlasX[16] = {
@@ -261,7 +267,7 @@ static void boatStyleForOwner(const MapPreviewView *v, int startIdx1,
  * sub-pixel fraction. This was ((int)centre * tileSize) >> 8, which snapped
  * the camera onto whole atlas pixels — one atlas pixel is `zoom` screen
  * pixels, so at 16x the view could only move in 16-pixel jumps and panning
- * read as stepped. The minimap path (viewRenderMinimapToOffscreen) already
+ * read as stepped. The map-colour path (viewRenderMapColoursToOffscreen) already
  * did this in float; this brings the sprite path in line. */
 static inline float viewCamPixelsF(WORLD centre, int tileSize) {
     return (float)centre * (float)tileSize / VIEW_WORLD_PER_TILE;
@@ -450,14 +456,25 @@ extern "C" bool mapPreviewViewScreenToWorld(const MapPreviewView *v,
     return true;
 }
 
-/* Minimap-colour rendering — one coloured rect per map tile, sized to
- * whatever fits the current sub-0.5 zoom. Replaces tile-sprite drawing
- * for the far-zoomed-out view. Includes pill/base/start dots and the
- * border-zone darkening that minimapRenderPixels does. */
-static void viewRenderMinimapToOffscreen(MapPreviewView *v,
+/* Map-colour rendering — one coloured rect per map tile, sized to whatever
+ * fits the current sub-0.5 zoom. Replaces tile-sprite drawing for the
+ * far-zoomed-out view. Includes pill/base/start dots and the border-zone
+ * darkening that minimapRenderPixels does.
+ *
+ * The colours are map_colours.h's, the same ones the overview and the full
+ * screen map use below 1x, so a map looks the same in the chooser as it does
+ * once it is being played. That is not the player's choice to make: the
+ * Display setting decides whether a live view gives up its sprites, and a
+ * whole map in a thumbnail has no sprites to give up.
+ *
+ * minimapTerrainColor is still what the lobby's 256 px thumbnails and the map
+ * editor draw with. Those are pictures of a map on their own, not a smaller
+ * view of one being played, and its louder greens and greys are what tells
+ * terrains apart at that size. */
+static void viewRenderMapColoursToOffscreen(MapPreviewView *v,
                                          SDL_Renderer *renderer,
                                          int screenW, int screenH) {
-    /* Minimap mode doesn't draw starts, so any cached sprite-mode
+    /* Map-colour mode doesn't draw starts, so any cached sprite-mode
      * transform is stale here — invalidate it. */
     v->startsTransformValid = false;
     /* tilePx ≥ 1; at 0.0625× it's 1 (16 game px × 0.0625 = 1). */
@@ -493,8 +510,12 @@ static void viewRenderMinimapToOffscreen(MapPreviewView *v,
                 isMined = true;
                 terrain = (BYTE)(raw - MINE_SUBTRACT);
             }
-            uint8_t cr, cg, cb;
-            minimapTerrainColor(terrain, &cr, &cg, &cb);
+            /* Every terrain a map file can hold has an entry, so the
+               fallback is never reached; it keeps a hand-edited map with a
+               byte no terrain uses from drawing an uninitialised colour. */
+            SDL_Color tc = { 0, 0, 0, 255 };
+            mapColourTerrain(terrain, &tc);
+            uint8_t cr = tc.r, cg = tc.g, cb = tc.b;
             if (isMined) {
                 cr = (uint8_t)((float)cr * 0.8f);
                 cg = (uint8_t)((float)cg * 0.8f);
@@ -567,12 +588,12 @@ static void viewRenderMinimapToOffscreen(MapPreviewView *v,
             dim = (v->startOwners[k] & MINIMAP_OWNER_OFFSIDE) != 0;
         }
         if (dim) {
-            uint8_t tr, tg, tb;
-            minimapTerrainColor(clientMapPreviewGetTerrain(v->preview, sx, sy),
-                                &tr, &tg, &tb);
-            r = (Uint8)((r + tr) / 2);
-            g = (Uint8)((g + tg) / 2);
-            b = (Uint8)((b + tb) / 2);
+            SDL_Color tc = { 0, 0, 0, 255 };
+            mapColourTerrain(clientMapPreviewGetTerrain(v->preview, sx, sy),
+                             &tc);
+            r = (Uint8)((r + tc.r) / 2);
+            g = (Uint8)((g + tc.g) / 2);
+            b = (Uint8)((b + tc.b) / 2);
         }
         SDL_SetRenderDrawColor(renderer, r, g, b, 255);
         SDL_RenderFillRect(renderer, &dot);
@@ -619,7 +640,7 @@ static void viewRenderTilesToOffscreen(MapPreviewView *v,
      * blit is a literal copy. */
     if (v->mapAtlasScaled && v->mapAtlasScaledEdge > 0 &&
         v->zoomLevel < 1.0f &&
-        v->zoomLevel >= ZOOM_MINIMAP_MAX) {
+        v->zoomLevel >= ZOOM_SPRITE_MIN) {
         int scaledEdge = v->mapAtlasScaledEdge;
         /* Camera top-left in scaled-atlas pixel coords. camPXf was
          * computed above in native (16 px / tile) atlas pixels, so
@@ -1174,7 +1195,7 @@ extern "C" void mapPreviewViewRenderOffscreen(MapPreviewView *v,
      * doesn't exist yet (atlas not built or first frame after Load*)
      * we fall through to the old oversample-then-bilinear path. */
     bool subOneSprite = (v->zoomLevel < 1.0f &&
-                         v->zoomLevel >= ZOOM_MINIMAP_MAX);
+                         v->zoomLevel >= ZOOM_SPRITE_MIN);
     bool useScaledCache = (subOneSprite && v->mapAtlasScaled && v->mapAtlas);
 
     int ofsW = viewW, ofsH = viewH;
@@ -1269,12 +1290,11 @@ extern "C" void mapPreviewViewRenderOffscreen(MapPreviewView *v,
         SDL_SetRenderTarget(renderer, back);
         SDL_SetRenderDrawColor(renderer, 0, 0, 64, 255);
         SDL_RenderClear(renderer);
-        /* Below 0.33× game scale, switch to minimap-colour mode —
-         * tile sprites at < ~5 px per tile look like noise, so swap
-         * in the per-tile colour rep used by the dedicated 256×256
-         * minimap. Above that, fall through to the sprite renderer. */
-        if (v->zoomLevel < ZOOM_MINIMAP_MAX) {
-            viewRenderMinimapToOffscreen(v, renderer, ofsW, ofsH);
+        /* Below 1x, one map colour a square instead of tile sprites: the
+         * same switch the overview and the full screen map make, at the
+         * same size. Above it, the sprite renderer. */
+        if (v->zoomLevel < ZOOM_SPRITE_MIN) {
+            viewRenderMapColoursToOffscreen(v, renderer, ofsW, ofsH);
         } else {
             /* tileScale = "tile pixels in offscreen per game pixel".
              * Derived from the *actual* (post-clamp) ofsW so the
