@@ -914,8 +914,25 @@ void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
 
     if (!cs) return;
     if (len < PACKET_HEADER_SIZE + 2) return;
+    /* Nothing was asked for, so this answers nothing. There is no path in the
+       response to tell a stale chunk from a current one the way the map list
+       does, so the request being in flight is the whole of what makes a chunk
+       this client's: a chunk arriving after the final one — a duplicate, or
+       the tail of a request that has since timed out — is dropped rather than
+       appended to a finished list. */
+    if (!cs->lobbyScenarioListInFlight) return;
     finalFlag = buf[pos++];
     cnt       = buf[pos++];
+
+    /* The accumulator is emptied here rather than where the request is sent,
+       so the rows a response builds up are its own and a chunk delivered
+       twice cannot double them: the second copy of a first chunk clears and
+       refills, and a second copy of a later chunk is dropped above, the
+       final flag having taken the request out of flight. */
+    if (!cs->lobbyScenarioListStarted) {
+        cs->lobbyScenarioListCount   = 0;
+        cs->lobbyScenarioListStarted = true;
+    }
 
     for (i = 0; i < cnt; i++) {
         char file[LOBBY_SCENARIO_LIST_FILE_LEN];
@@ -3711,6 +3728,22 @@ static bool udpClientTick(void *ctx) {
         /* Drive in-flight lobby map upload (no-op when none active). */
         udpClientUploadPump(c, SDL_GetTicks());
 
+        /* A scenario-list request that was never answered. Nothing else ends
+           one — the response has no path to recognise it by and the server
+           may send several chunks — so without this a dropped answer leaves
+           the request in flight and every later chunk dropped, and the
+           chooser has no way to ask again. The list itself is left alone:
+           what times out is the asking. */
+        if (c->clientSim != NULL && c->clientSim->lobbyScenarioListInFlight) {
+            if (c->clientSim->lobbyScenarioListWaited <
+                LOBBY_SCENARIO_LIST_TIMEOUT_TICKS) {
+                c->clientSim->lobbyScenarioListWaited++;
+            } else {
+                c->clientSim->lobbyScenarioListInFlight = false;
+                c->clientSim->lobbyScenarioListStarted  = false;
+            }
+        }
+
         /* Retransmit head of the outbound command queue if the head
          * entry was sent more than 80ms ago and is still unacked. */
         if (c->outHeadSeq != c->outTailSeq) {
@@ -4752,9 +4785,15 @@ void transportUdpClientSendLobbyScenarioListRequest(Transport *t) {
     udpClientSendTo(c, buf, PACKET_HEADER_SIZE);
 
     if (c->clientSim) {
-        c->clientSim->lobbyScenarioListCount    = 0;
+        /* The rows the last response left are kept until this one's first
+           chunk lands, which is where they are cleared. A chooser reading
+           while the answer is on its way sees the old list rather than an
+           empty one, and a request that times out leaves the last good
+           listing in place. */
         c->clientSim->lobbyScenarioListReady    = false;
         c->clientSim->lobbyScenarioListInFlight = true;
+        c->clientSim->lobbyScenarioListStarted  = false;
+        c->clientSim->lobbyScenarioListWaited   = 0;
     }
 }
 

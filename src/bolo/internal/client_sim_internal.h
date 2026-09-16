@@ -599,6 +599,14 @@ struct ClientSim {
     bool     lobbyScenarioListBound[LOBBY_SCENARIO_LIST_MAX];
     bool     lobbyScenarioListReady;    /* true once a response arrives */
     bool     lobbyScenarioListInFlight; /* true after send, false on response */
+    /* False until the first chunk of the response in flight lands, which is
+       where the accumulator is cleared. Clearing at send time instead left a
+       list that a duplicated chunk could append to twice. */
+    bool     lobbyScenarioListStarted;
+    /* Client ticks since the request went out, while one is in flight. A
+       response that never comes would otherwise leave the request in flight
+       for good and the chooser with no way to ask again. */
+    uint16_t lobbyScenarioListWaited;
     /* Ticked on each completed response, so a chooser can re-read without
        polling the list itself, exactly as lobbyMapListSeq is used. */
     uint32_t lobbyScenarioListSeq;

@@ -39,6 +39,11 @@
  *                                        decodes back to the same entries,
  *                                        including one whose description fills
  *                                        its length byte
+ * run_scenario_dir_chunk_not_in_flight  — a final chunk delivered twice does
+ *                                        not double the list, a chunk with
+ *                                        nothing asked for is dropped, and a
+ *                                        response's first chunk is what clears
+ *                                        what the last one left
  *
  * Reads the ClientSim struct directly; the unittests profile permits it.
  */
@@ -592,12 +597,19 @@ static void sdFill(ScnDirEntry *e, const char *file, const char *name,
     e->bound      = bound;
 }
 
+/* A client with a scenario-list request in flight, which is what the
+ * accumulator needs before it will take a chunk at all: the response carries
+ * nothing to recognise a stale chunk by, so having asked is what makes a
+ * chunk this client's. A case that wants the other state clears the flag for
+ * itself. */
 static ClientSim *sdFreshClientSim(void) {
     ClientSim *cs = clientSimAlloc();
 
     if (cs == NULL) return NULL;
     clientSimCreate(cs);
     clientSimSetPlayerNum(cs, 0);
+    cs->lobbyScenarioListInFlight = true;
+    cs->lobbyScenarioListStarted  = false;
     return cs;
 }
 
@@ -632,7 +644,6 @@ int run_scenario_dir_entry_roundtrip(void) {
     /* ── And back through the client's accumulator ────────────────── */
     cs = sdFreshClientSim();
     UT_ASSERT(cs != NULL);
-    cs->lobbyScenarioListInFlight = true;
     udpClientHandleLobbyScenarioListRsp(cs, buf, len);
 
     UT_ASSERT_MSG(cs->lobbyScenarioListCount == 2,
@@ -722,7 +733,6 @@ int run_scenario_dir_entry_roundtrip(void) {
 
     cs = sdFreshClientSim();
     UT_ASSERT(cs != NULL);
-    cs->lobbyScenarioListInFlight = true;
     udpClientHandleLobbyScenarioListRsp(cs, buf, len);
     UT_ASSERT(cs->lobbyScenarioListCount == 0);
     UT_ASSERT_MSG(cs->lobbyScenarioListReady,
@@ -741,6 +751,96 @@ int run_scenario_dir_entry_roundtrip(void) {
     UT_ASSERT_MSG(cs->lobbyScenarioListCount == 1,
                   "a chunk one byte short read as %d entries, expected the "
                   "first alone", cs->lobbyScenarioListCount);
+    clientSimDestroy(cs);
+    return 0;
+}
+
+/* ── What the accumulator does with a chunk it did not ask for ────── */
+
+/* The response has no path in it to tell a stale chunk from a current one —
+ * the directory is flat, so there is nothing to ask about — which leaves the
+ * request being in flight as the whole of what makes a chunk this client's.
+ * Two things followed from not testing it: a chunk delivered twice appended
+ * its rows twice, and a chunk arriving with nothing asked for was taken.
+ *
+ * Both are driven here through the production encoder and the production
+ * accumulator, as the round trip above is. */
+int run_scenario_dir_chunk_not_in_flight(void) {
+    ScnDirEntry entries[2];
+    uint8_t     buf[UDP_MAX_PAYLOAD];
+    ClientSim  *cs;
+    int         len;
+    int         next = 0;
+
+    sdFill(&entries[0], SD_E0_FILE, SD_E0_NAME, SD_E0_DESC, 8, 3, false);
+    sdFill(&entries[1], SD_E1_FILE, SD_E1_NAME, SD_E1_DESC, 0, 0, true);
+
+    memset(buf, 0, sizeof(buf));
+    len = udpServerPackScenarioListChunk(buf, (int)sizeof(buf), entries, 2, 0,
+                                         &next);
+    UT_ASSERT(next == 2);
+
+    /* ── A final chunk delivered twice ────────────────────────────── */
+    cs = sdFreshClientSim();
+    UT_ASSERT(cs != NULL);
+    udpClientHandleLobbyScenarioListRsp(cs, buf, len);
+    UT_ASSERT_MSG(cs->lobbyScenarioListCount == 2,
+                  "the first copy read as %d entries",
+                  cs->lobbyScenarioListCount);
+    UT_ASSERT(!cs->lobbyScenarioListInFlight);
+
+    /* The same bytes again — a retransmit, or a duplicate off the wire. The
+       final flag took the request out of flight, so the second copy is
+       dropped rather than doubling the list. */
+    udpClientHandleLobbyScenarioListRsp(cs, buf, len);
+    UT_ASSERT_MSG(cs->lobbyScenarioListCount == 2,
+                  "a repeated final chunk left %d entries, wanted the two the "
+                  "response carried", cs->lobbyScenarioListCount);
+    UT_ASSERT_MSG(strcmp(cs->lobbyScenarioListFiles[0], SD_E0_FILE) == 0,
+                  "the repeated chunk rewrote the first row as \"%s\"",
+                  cs->lobbyScenarioListFiles[0]);
+    clientSimDestroy(cs);
+
+    /* ── A chunk with nothing asked for ───────────────────────────── */
+    cs = sdFreshClientSim();
+    UT_ASSERT(cs != NULL);
+    cs->lobbyScenarioListInFlight = false;
+    udpClientHandleLobbyScenarioListRsp(cs, buf, len);
+    UT_ASSERT_MSG(cs->lobbyScenarioListCount == 0,
+                  "a chunk arriving with no request in flight read as %d "
+                  "entries", cs->lobbyScenarioListCount);
+    UT_ASSERT_MSG(!cs->lobbyScenarioListReady,
+                  "a chunk arriving with no request in flight made the list "
+                  "ready");
+    clientSimDestroy(cs);
+
+    /* ── The first chunk of a response clears what the last left ──── */
+    /* Two responses in a row, the second carrying one entry. The accumulator
+       is emptied by that response's first chunk rather than where the request
+       was sent, so the second listing is its own rather than the first with
+       one more row on the end. */
+    cs = sdFreshClientSim();
+    UT_ASSERT(cs != NULL);
+    udpClientHandleLobbyScenarioListRsp(cs, buf, len);
+    UT_ASSERT(cs->lobbyScenarioListCount == 2);
+
+    /* The chooser asks again: in flight, and nothing of this response seen
+       yet — which is the state transportUdpClientSendLobbyScenarioListRequest
+       leaves behind. The rows from last time are still there. */
+    cs->lobbyScenarioListInFlight = true;
+    cs->lobbyScenarioListStarted  = false;
+    UT_ASSERT_MSG(cs->lobbyScenarioListCount == 2,
+                  "asking again emptied the list before the answer came");
+
+    memset(buf, 0, sizeof(buf));
+    next = 0;
+    len = udpServerPackScenarioListChunk(buf, (int)sizeof(buf), entries, 1, 0,
+                                         &next);
+    UT_ASSERT(next == 1);
+    udpClientHandleLobbyScenarioListRsp(cs, buf, len);
+    UT_ASSERT_MSG(cs->lobbyScenarioListCount == 1,
+                  "the second response read as %d entries, wanted the one it "
+                  "carried", cs->lobbyScenarioListCount);
     clientSimDestroy(cs);
     return 0;
 }

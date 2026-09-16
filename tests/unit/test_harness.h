@@ -2847,6 +2847,7 @@ int run_scenario_dir_skips_junk(void);
 int run_scenario_dir_skips_subdirectory(void);
 int run_scenario_dir_list_cached(void);
 int run_scenario_dir_entry_roundtrip(void);
+int run_scenario_dir_chunk_not_in_flight(void);
 
 /* Which scenario plays when a map and a mod both have a claim
  * (test_scenario_precedence.c): the three rules, the four points the

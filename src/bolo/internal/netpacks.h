@@ -945,6 +945,13 @@ static inline bool lobbyBotNameAcceptable(
 /* Ping interval in ticks (~0.4 seconds at the 50 Hz game-tick clock) */
 #define PING_INTERVAL_TICKS 20
 
+/* How long a scenario-list request stays in flight before the client gives up
+ * on it (~5 seconds at 50 ticks/sec). The response carries nothing to tell a
+ * stale chunk from a current one, so being in flight is what makes a chunk the
+ * client's; this is what ends that when the answer never arrives, so the
+ * chooser can ask again. */
+#define LOBBY_SCENARIO_LIST_TIMEOUT_TICKS 250
+
 #define INFOREQUESTHEADER { 'B','o','l','o', BOLO_VERSION_MAJOR, BOLO_VERSION_MINOR, BOLO_VERSION_REVISION, BOLOPACKET_INFOREQUEST }
 #define TOKENHEADER { 'B','o','l','o', BOLO_VERSION_MAJOR, BOLO_VERSION_MINOR, BOLO_VERSION_REVISION, BOLOPACKET_TOKEN }
 #define DATAHEADER { 'B','o','l','o', BOLO_VERSION_MAJOR, BOLO_VERSION_MINOR, BOLO_VERSION_REVISION, BOLOPACKET_DATA }

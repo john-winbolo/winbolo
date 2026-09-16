@@ -1471,6 +1471,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_dir_skips_subdirectory",                 run_scenario_dir_skips_subdirectory                 },
     { "scenario_dir_list_cached",                        run_scenario_dir_list_cached                        },
     { "scenario_dir_entry_roundtrip",                    run_scenario_dir_entry_roundtrip                    },
+    { "scenario_dir_chunk_not_in_flight",                run_scenario_dir_chunk_not_in_flight                },
     { "scenario_precedence_mod_over_map",                run_scenario_precedence_mod_over_map                },
     { "scenario_precedence_none_restores_map",           run_scenario_precedence_none_restores_map           },
     { "scenario_precedence_plain_map_keeps_mod",         run_scenario_precedence_plain_map_keeps_mod         },

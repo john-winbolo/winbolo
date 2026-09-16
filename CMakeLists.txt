@@ -5568,6 +5568,7 @@ set(_unit_test_names
     scenario_dir_skips_subdirectory
     scenario_dir_list_cached
     scenario_dir_entry_roundtrip
+    scenario_dir_chunk_not_in_flight
     scenario_precedence_mod_over_map
     scenario_precedence_none_restores_map
     scenario_precedence_plain_map_keeps_mod
