@@ -19,9 +19,16 @@
  *  zooms out past 1x as well. One table, so a square is the
  *  same colour wherever a player sees it small.
  *
- *  Plain SDL and the tile numbers, and nothing else — no
- *  ClientSim, no ImGui, no fonts — because the log viewer
- *  links this too and has none of those.
+ *  A skin may replace any of them through the [MapPalette]
+ *  section of its skin.ini; see docs/SKINS.md. Entry by
+ *  entry, so a skin that names three colours gets those
+ *  three and the built-in rest. Nothing has to be told when
+ *  a skin changes: the table notices for itself, by the
+ *  skin source's serial.
+ *
+ *  SDL, the tile numbers and skin_source.h, and nothing
+ *  else — no ClientSim, no ImGui, no fonts — because the log
+ *  viewer links this too and has none of those.
  *
  *  Why these colours and not minimapTerrainColor's: that set
  *  is the lobby's map preview, a whole map in 256 px where
@@ -115,8 +122,9 @@ MapColourItem mapColourItemKind(BYTE tile);
 *********************************************************/
 bool mapColourTerrain(BYTE tile, SDL_Color *out);
 
-/* The marker palette, by allegiance. Neutral bases are amber; a neutral
-   pill is nobody's, so it takes the evil colour rather than a fourth one. */
+/* The marker palette, by allegiance, after any skin override. Neutral bases
+   are amber; a neutral pill is nobody's, so it takes the evil colour rather
+   than a fourth one. */
 SDL_FColor mapColourMarkerGood(void);
 SDL_FColor mapColourMarkerEvil(void);
 SDL_FColor mapColourMarkerNeutral(void);

@@ -20,6 +20,7 @@
  *   skin, and enumerates the skins installed on disk.
  *********************************************************/
 
+#include <stddef.h>   /* offsetof */
 #include "skin_source.h"
 
 #include <SDL3/SDL.h>
@@ -617,8 +618,78 @@ bool skinSourceReadHead(SkinSource *src, const char *relName,
  * (SKIN_FILTER_NEAREST), so "the author did not say" has to be written in
  * rather than left to the zeroing. */
 static void skinInfoClear(SkinInfo *info) {
+    int32_t *c = (int32_t *)&info->mapPalette;
+    size_t   n = sizeof(info->mapPalette) / sizeof(int32_t);
+    size_t   i;
+
     SDL_memset(info, 0, sizeof(*info));
     info->recommendedFilter = SKIN_FILTER_NONE;
+    /* SkinMapPalette is int32_t throughout, so its entries clear in one walk
+       and adding a colour to it needs no edit here. */
+    for (i = 0; i < n; i++) c[i] = SKIN_COLOUR_NONE;
+}
+
+/* A colour from [MapPalette]: "#rrggbb", "rrggbb" or "0xrrggbb", six hex
+   digits either way. SKIN_COLOUR_NONE for anything else, including a short
+   or long run of digits, so a typo keeps the built-in colour rather than
+   drawing some other colour the author did not choose. */
+static int32_t parsePaletteColour(const char *v) {
+    uint32_t rgb = 0;
+    int      i;
+
+    if (v[0] == '#') {
+        v++;
+    } else if (v[0] == '0' && (v[1] == 'x' || v[1] == 'X')) {
+        v += 2;
+    }
+    for (i = 0; i < 6; i++) {
+        char c = v[i];
+        uint32_t digit;
+        if (c >= '0' && c <= '9')      digit = (uint32_t)(c - '0');
+        else if (c >= 'a' && c <= 'f') digit = (uint32_t)(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') digit = (uint32_t)(c - 'A' + 10);
+        else return SKIN_COLOUR_NONE;
+        rgb = (rgb << 4) | digit;
+    }
+    if (v[6] != '\0') return SKIN_COLOUR_NONE;
+    return (int32_t)rgb;
+}
+
+/* The [MapPalette] keys, and where each one lands. */
+static const struct {
+    const char *key;
+    size_t      offset;
+} kPaletteKeys[] = {
+    { "Grass",         offsetof(SkinMapPalette, grass)         },
+    { "Swamp",         offsetof(SkinMapPalette, swamp)         },
+    { "Rubble",        offsetof(SkinMapPalette, rubble)        },
+    { "Crater",        offsetof(SkinMapPalette, crater)        },
+    { "Forest",        offsetof(SkinMapPalette, forest)        },
+    { "Road",          offsetof(SkinMapPalette, road)          },
+    { "River",         offsetof(SkinMapPalette, river)         },
+    { "DeepSea",       offsetof(SkinMapPalette, deepSea)       },
+    { "Boat",          offsetof(SkinMapPalette, boat)          },
+    { "Building",      offsetof(SkinMapPalette, building)      },
+    { "HalfBuilding",  offsetof(SkinMapPalette, halfBuilding)  },
+    { "MarkerGood",    offsetof(SkinMapPalette, markerGood)    },
+    { "MarkerEvil",    offsetof(SkinMapPalette, markerEvil)    },
+    { "MarkerNeutral", offsetof(SkinMapPalette, markerNeutral) },
+};
+
+/* True when the key was one of ours, whatever the value parsed to: an
+   unreadable colour is still that key, and leaves its entry alone. */
+static bool applyPaletteKey(SkinMapPalette *out, const char *k, const char *v) {
+    size_t i;
+    for (i = 0; i < sizeof(kPaletteKeys) / sizeof(kPaletteKeys[0]); i++) {
+        if (SDL_strcasecmp(k, kPaletteKeys[i].key) == 0) {
+            int32_t rgb = parsePaletteColour(v);
+            if (rgb != SKIN_COLOUR_NONE) {
+                *(int32_t *)((char *)out + kPaletteKeys[i].offset) = rgb;
+            }
+            return true;
+        }
+    }
+    return false;
 }
 
 /* The value spellings RecommendedFilter accepts. "Pixel art" gets three
@@ -634,11 +705,18 @@ static int parseFilterName(const char *v) {
     return SKIN_FILTER_NONE;
 }
 
-/* One pass over the whole [Skin] section, picking up every key it carries.
+/* One pass over skin.ini, picking up every key the sections it knows carry.
  * Runs on the loaded buffer, which skinSourceRead leaves writable and
- * NUL-terminated. */
+ * NUL-terminated. A section it does not know is skipped whole, so a skin may
+ * carry sections for something else without them being read as ours. */
+typedef enum {
+    INI_SECTION_OTHER = 0,
+    INI_SECTION_SKIN,
+    INI_SECTION_MAP_PALETTE
+} IniSection;
+
 static void parseSkinIni(char *text, SkinInfo *out) {
-    bool inSection = false;
+    IniSection section = INI_SECTION_OTHER;
     char *p = text;
     while (p != NULL && *p != '\0') {
         char *line = p;
@@ -665,10 +743,16 @@ static void parseSkinIni(char *text, SkinInfo *out) {
         while (*line == ' ' || *line == '\t') line++;
 
         if (line[0] == '[') {
-            inSection = (SDL_strncasecmp(line, "[Skin]", 6) == 0);
+            if (SDL_strncasecmp(line, "[Skin]", 6) == 0) {
+                section = INI_SECTION_SKIN;
+            } else if (SDL_strncasecmp(line, "[MapPalette]", 12) == 0) {
+                section = INI_SECTION_MAP_PALETTE;
+            } else {
+                section = INI_SECTION_OTHER;
+            }
             continue;
         }
-        if (!inSection) continue;
+        if (section == INI_SECTION_OTHER) continue;
 
         eq = SDL_strchr(line, '=');
         if (!eq) continue;
@@ -683,7 +767,9 @@ static void parseSkinIni(char *text, SkinInfo *out) {
         vend = v + SDL_strlen(v);
         while (vend > v && (vend[-1] == ' ' || vend[-1] == '\t')) *--vend = '\0';
 
-        if (SDL_strcasecmp(k, "Name") == 0) {
+        if (section == INI_SECTION_MAP_PALETTE) {
+            applyPaletteKey(&out->mapPalette, k, v);
+        } else if (SDL_strcasecmp(k, "Name") == 0) {
             SDL_strlcpy(out->name, v, sizeof(out->name));
         } else if (SDL_strcasecmp(k, "Author") == 0) {
             SDL_strlcpy(out->author, v, sizeof(out->author));

@@ -974,6 +974,7 @@ static const UnitTestEntry s_tests[] = {
     { "skin_source_dir_and_zip",                 run_skin_source_dir_and_zip                 },
     { "skin_active_vs_requested",                run_skin_active_vs_requested                },
     { "skin_workshop_id_roundtrip",              run_skin_workshop_id_roundtrip              },
+    { "skin_map_palette",                        run_skin_map_palette                        },
     { "skin_density_scan",                       run_skin_density_scan                       },
     { "sheet_bleed_edges",                       run_sheet_bleed_edges                       },
     { "sheet_no_key_under_alpha",                run_sheet_no_key_under_alpha                },

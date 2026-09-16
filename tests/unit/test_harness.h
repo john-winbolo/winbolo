@@ -2224,6 +2224,11 @@ int run_skin_active_vs_requested(void);
  * (test_skin_source.c). */
 int run_skin_workshop_id_roundtrip(void);
 
+/* The [MapPalette] section of skin.ini: the three colour spellings, black
+ * surviving as a value rather than reading as absent, a bad value leaving its
+ * own entry alone, and a section the parser does not know being skipped. */
+int run_skin_map_palette(void);
+
 /* Which densities a skin serves, and what each Tile Detail mode picks
  * out of that (test_skin_density.c). */
 int run_skin_density_scan(void);

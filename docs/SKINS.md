@@ -86,6 +86,10 @@ WorkshopId=
 WorkshopAuthor=
 ```
 
+A second section, `[MapPalette]`, is described under
+[The map palette](#the-map-palette). Any other section is ignored, so a skin
+may carry its own without the game reading it.
+
 - **`MaxPixelDensity`** — the finest multiple your SVG art is meant to be drawn
   at. `0` or absent means unlimited, which is right for genuine vector art. Set
   it to `1` if your SVGs are pixel-art rectangle grids that should stay chunky.
@@ -147,6 +151,66 @@ around the play area. The stock one is 515 × 325 and it is drawn at that size
 times the zoom level. A larger image is scaled to fit without smoothing, so it
 only looks sharper at zoom 2 and above; at zoom 1 it is point-sampled down. The
 Texture filter setting does not apply to the background.
+
+### The map palette
+
+Once a map is drawn too small for its sprites, the game stops drawing them: each
+square becomes one flat colour, and tanks, pillboxes and bases become marker
+shapes — a triangle pointing the way a tank faces, a disc for a pillbox, a square
+for a base. That happens in the Map Overview and the full screen map below 1x
+(the player can turn it off under Settings → Display → Map view), and always in
+the map choosers, which draw a whole map in a thumbnail.
+
+Your art is not involved at those sizes, so a skin sets the colours instead, in
+a `[MapPalette]` section of `skin.ini`:
+
+```ini
+[MapPalette]
+; the ground, one key per terrain
+Grass=#002806
+Swamp=#003933
+Rubble=#303819
+Crater=#292911
+Forest=#045311
+Road=#000000
+River=#008c9c
+DeepSea=#008a9e
+Boat=#61848b
+Building=#785e41
+HalfBuilding=#56422c
+
+; the shapes standing on it, one colour per side
+MarkerGood=#58d858
+MarkerEvil=#ff5d5d
+MarkerNeutral=#f0b429
+```
+
+Those are the built-in values, so that block changes nothing — copy it and edit
+the lines you care about.
+
+- Every key is optional and stands on its own. Name three and you get those
+  three with the built-in rest; leave the section out and you get the built-in
+  set.
+- `#rrggbb`, `rrggbb` and `0xrrggbb` are all accepted, upper or lower case. Key
+  names are matched without regard to case.
+- Exactly six hex digits. Anything else — three digits, eight, a colour name,
+  an empty value — leaves that one key at its built-in colour and does not
+  disturb the others. Nothing is reported, so check your spelling.
+- `#000000` is black, not "unset". Setting a key to black is a thing you can
+  do.
+- One colour covers a whole terrain family, however the square is shaped: a
+  river bend and a river straight are both `River`.
+- `MarkerGood` and `MarkerEvil` colour a tank, a pillbox and a base alike, so a
+  friendly tank parked on a friendly base is one colour. `MarkerNeutral` is
+  bases only — a pillbox nobody owns takes `MarkerEvil`, because to everyone
+  who can see it that is what it is.
+- A pillbox draws the same whatever its health, and a square carrying a mine
+  draws as the ground under it.
+
+These colours are the map at a glance rather than the map in detail, so the
+built-in set keeps the ground dark and low contrast and lets the markers carry
+the eye. A set with loud ground will read as busy once pings, fog and markers
+are drawn over it.
 
 ### Sounds
 

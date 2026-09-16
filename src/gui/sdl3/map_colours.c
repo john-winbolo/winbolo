@@ -8,8 +8,9 @@
 
 #include "map_colours.h"
 
-#include "global.h"    /* the plain terrains, 0..8 */
-#include "tilenum.h"   /* the shape-variant ranges */
+#include "global.h"       /* the plain terrains, 0..8 */
+#include "tilenum.h"      /* the shape-variant ranges */
+#include "skin_source.h"  /* the active skin's [MapPalette] section */
 
 MapColourItem mapColourItemKind(BYTE tile) {
     if (tile == BASE_GOOD)    return MAP_COLOUR_ITEM_BASE_GOOD;
@@ -24,20 +25,110 @@ MapColourItem mapColourItemKind(BYTE tile) {
     return MAP_COLOUR_ITEM_NONE;
 }
 
-/* One entry per terrain family. Named, because a family is reachable by two
+/* One entry per colour this module hands out. A family is reachable by two
    different numbers - the raw terrain a map file holds, and the shape variant
-   a drawer picks for it - and the two have to be the same colour. */
-#define RGB_ROAD          0x000000u
-#define RGB_BUILDING      0x785e41u
-#define RGB_HALFBUILDING  0x56422cu
-#define RGB_RIVER         0x008c9cu
-#define RGB_DEEP_SEA      0x008a9eu
-#define RGB_BOAT          0x61848bu
-#define RGB_FOREST        0x045311u
-#define RGB_CRATER        0x292911u
-#define RGB_SWAMP         0x003933u
-#define RGB_RUBBLE        0x303819u
-#define RGB_GRASS         0x002806u
+   a drawer picks for it - and the entry is what makes the two the same
+   colour. */
+typedef enum {
+    COLOUR_ROAD = 0,
+    COLOUR_BUILDING,
+    COLOUR_HALFBUILDING,
+    COLOUR_RIVER,
+    COLOUR_DEEP_SEA,
+    COLOUR_BOAT,
+    COLOUR_FOREST,
+    COLOUR_CRATER,
+    COLOUR_SWAMP,
+    COLOUR_RUBBLE,
+    COLOUR_GRASS,
+    COLOUR_MARKER_GOOD,
+    COLOUR_MARKER_EVIL,
+    COLOUR_MARKER_NEUTRAL,
+    COLOUR_COUNT
+} MapColourSlot;
+
+static const Uint32 kBuiltIn[COLOUR_COUNT] = {
+    0x000000u,  /* road */
+    0x785e41u,  /* building */
+    0x56422cu,  /* half building */
+    0x008c9cu,  /* river */
+    0x008a9eu,  /* deep sea */
+    0x61848bu,  /* boat */
+    0x045311u,  /* forest */
+    0x292911u,  /* crater */
+    0x003933u,  /* swamp */
+    0x303819u,  /* rubble */
+    0x002806u,  /* grass */
+    0x58d858u,  /* marker: good */
+    0xff5d5du,  /* marker: evil */
+    0xf0b429u   /* marker: neutral */
+};
+
+/* The built-ins with the active skin's [MapPalette] entries laid over them,
+   and the skin that was read to build it.
+
+   Pulled rather than pushed. A skin becomes active in five places - startup
+   and four paths through the settings dialog - and a push would be five call
+   sites to keep in step, with a stale palette the price of missing one.
+   skinSourceSerial is never reused, so comparing it is enough to notice any
+   change, including a skin closed and another opened into the same block. */
+static Uint32   s_colour[COLOUR_COUNT];
+static uint64_t s_serial;
+static bool     s_haveColours;
+
+static void colourApply(MapColourSlot slot, int32_t rgb) {
+    if (rgb != SKIN_COLOUR_NONE) {
+        s_colour[slot] = (Uint32)rgb & 0xffffffu;
+    }
+}
+
+static Uint32 colourOf(MapColourSlot slot) {
+    SkinSource *src = skinGetActiveSource();
+    uint64_t    serial = (src != NULL) ? skinSourceSerial(src) : 0;
+
+    if (!s_haveColours || serial != s_serial) {
+        SkinInfo info;
+        int      i;
+
+        for (i = 0; i < COLOUR_COUNT; i++) s_colour[i] = kBuiltIn[i];
+
+        /* No skin is the built-in assets, and skinSourceReadIni on a source
+           with no ini answers with an empty SkinInfo, so both leave every
+           entry as it was. */
+        if (src != NULL) {
+            skinSourceReadIni(src, &info);
+            colourApply(COLOUR_ROAD,            info.mapPalette.road);
+            colourApply(COLOUR_BUILDING,        info.mapPalette.building);
+            colourApply(COLOUR_HALFBUILDING,    info.mapPalette.halfBuilding);
+            colourApply(COLOUR_RIVER,           info.mapPalette.river);
+            colourApply(COLOUR_DEEP_SEA,        info.mapPalette.deepSea);
+            colourApply(COLOUR_BOAT,            info.mapPalette.boat);
+            colourApply(COLOUR_FOREST,          info.mapPalette.forest);
+            colourApply(COLOUR_CRATER,          info.mapPalette.crater);
+            colourApply(COLOUR_SWAMP,           info.mapPalette.swamp);
+            colourApply(COLOUR_RUBBLE,          info.mapPalette.rubble);
+            colourApply(COLOUR_GRASS,           info.mapPalette.grass);
+            colourApply(COLOUR_MARKER_GOOD,     info.mapPalette.markerGood);
+            colourApply(COLOUR_MARKER_EVIL,     info.mapPalette.markerEvil);
+            colourApply(COLOUR_MARKER_NEUTRAL,  info.mapPalette.markerNeutral);
+        }
+
+        s_serial      = serial;
+        s_haveColours = true;
+    }
+    return s_colour[slot];
+}
+
+/* A slot as the float colour the marker drawers take. */
+static SDL_FColor markerColour(MapColourSlot slot) {
+    Uint32     rgb = colourOf(slot);
+    SDL_FColor c;
+    c.r = (float)((rgb >> 16) & 0xffu) / 255.0f;
+    c.g = (float)((rgb >> 8) & 0xffu) / 255.0f;
+    c.b = (float)(rgb & 0xffu) / 255.0f;
+    c.a = 1.0f;
+    return c;
+}
 
 bool mapColourTerrain(BYTE tile, SDL_Color *out) {
     Uint32 rgb;
@@ -57,40 +148,40 @@ bool mapColourTerrain(BYTE tile, SDL_Color *out) {
     /* An item square answers with the ground under it: road under a base,
        grass under a pill. The marker goes on top afterwards. */
     if (item >= MAP_COLOUR_ITEM_BASE_GOOD) {
-        rgb = RGB_ROAD;
+        rgb = colourOf(COLOUR_ROAD);
     } else if (item != MAP_COLOUR_ITEM_NONE) {
-        rgb = RGB_GRASS;
+        rgb = colourOf(COLOUR_GRASS);
     } else if (tile >= ROAD_HORZ && tile <= ROAD_SIDE4) {
-        rgb = RGB_ROAD;
+        rgb = colourOf(COLOUR_ROAD);
     } else if (tile >= BUILD_SINGLE && tile <= BUILD_MOST4) {
-        rgb = RGB_BUILDING;
+        rgb = colourOf(COLOUR_BUILDING);
     } else if (tile >= RIVER_END1 && tile <= RIVER_CORN4) {
-        rgb = RGB_RIVER;
+        rgb = colourOf(COLOUR_RIVER);
     } else if (tile >= DEEP_SEA_SOLID && tile <= DEEP_SEA_SIDE4) {
-        rgb = RGB_DEEP_SEA;
+        rgb = colourOf(COLOUR_DEEP_SEA);
     } else if (tile >= FOREST_SINGLE && tile <= FOREST_RIGHT) {
-        rgb = RGB_FOREST;
+        rgb = colourOf(COLOUR_FOREST);
     } else if (tile >= CRATER_SINGLE && tile <= CRATER_RIGHT) {
-        rgb = RGB_CRATER;
+        rgb = colourOf(COLOUR_CRATER);
     } else if (tile >= BOAT_0 && tile <= BOAT_8) {
-        rgb = RGB_BOAT;
+        rgb = colourOf(COLOUR_BOAT);
     } else {
         /* The raw terrains. Four of them reach a drawer as themselves; the
            rest only ever arrive from a caller reading a map file, which is
            what the map choosers do. None of these numbers is also a drawn
            tile, so covering both costs nothing in ambiguity. */
         switch (tile) {
-            case BUILDING:     rgb = RGB_BUILDING;     break;
-            case RIVER:        rgb = RGB_RIVER;        break;
-            case SWAMP:        rgb = RGB_SWAMP;        break;
-            case CRATER:       rgb = RGB_CRATER;       break;
-            case ROAD:         rgb = RGB_ROAD;         break;
-            case FOREST:       rgb = RGB_FOREST;       break;
-            case RUBBLE:       rgb = RGB_RUBBLE;       break;
-            case GRASS:        rgb = RGB_GRASS;        break;
-            case HALFBUILDING: rgb = RGB_HALFBUILDING; break;
-            case BOAT:         rgb = RGB_BOAT;         break;
-            case DEEP_SEA:     rgb = RGB_DEEP_SEA;     break;
+            case BUILDING:     rgb = colourOf(COLOUR_BUILDING);     break;
+            case RIVER:        rgb = colourOf(COLOUR_RIVER);        break;
+            case SWAMP:        rgb = colourOf(COLOUR_SWAMP);        break;
+            case CRATER:       rgb = colourOf(COLOUR_CRATER);       break;
+            case ROAD:         rgb = colourOf(COLOUR_ROAD);         break;
+            case FOREST:       rgb = colourOf(COLOUR_FOREST);       break;
+            case RUBBLE:       rgb = colourOf(COLOUR_RUBBLE);       break;
+            case GRASS:        rgb = colourOf(COLOUR_GRASS);        break;
+            case HALFBUILDING: rgb = colourOf(COLOUR_HALFBUILDING); break;
+            case BOAT:         rgb = colourOf(COLOUR_BOAT);         break;
+            case DEEP_SEA:     rgb = colourOf(COLOUR_DEEP_SEA);     break;
             default: return false;
         }
     }
@@ -103,18 +194,15 @@ bool mapColourTerrain(BYTE tile, SDL_Color *out) {
 }
 
 SDL_FColor mapColourMarkerGood(void) {
-    SDL_FColor c = { 88 / 255.0f, 216 / 255.0f, 88 / 255.0f, 1.0f };
-    return c;
+    return markerColour(COLOUR_MARKER_GOOD);
 }
 
 SDL_FColor mapColourMarkerEvil(void) {
-    SDL_FColor c = { 255 / 255.0f, 93 / 255.0f, 93 / 255.0f, 1.0f };
-    return c;
+    return markerColour(COLOUR_MARKER_EVIL);
 }
 
 SDL_FColor mapColourMarkerNeutral(void) {
-    SDL_FColor c = { 240 / 255.0f, 180 / 255.0f, 41 / 255.0f, 1.0f };
-    return c;
+    return markerColour(COLOUR_MARKER_NEUTRAL);
 }
 
 void mapColourMarkerShades(SDL_FColor fill, SDL_FColor out[3]) {

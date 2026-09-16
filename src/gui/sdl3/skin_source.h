@@ -50,8 +50,44 @@ typedef enum SkinKind {
 #define SKIN_FILTER_LINEAR     1
 #define SKIN_FILTER_PIXELART   2
 
+/* An absent colour in [MapPalette]. Each entry stands on its own: a skin that
+   names three colours gets those three and the built-in rest. */
+#define SKIN_COLOUR_NONE (-1)
+
+/* [MapPalette] section of skin.ini: what a map is drawn in once it is too
+   small for its sprites - the map overview and the full screen map below 1x,
+   and the map choosers at every zoomed-out rung. Each entry is 0xRRGGBB, or
+   SKIN_COLOUR_NONE.
+
+   "Palette" rather than "colours" because this name is written by skin
+   authors, and palette is spelled the same either side of the Atlantic. The
+   code behind it is map_colours, which follows the rest of this tree.
+
+   Parsed here because reading skin.ini is this module's job; what the entries
+   mean, and the built-in colours they replace, belong to map_colours.h. */
+typedef struct SkinMapPalette {
+    /* Ground, one per terrain family. */
+    int32_t grass;
+    int32_t swamp;
+    int32_t rubble;
+    int32_t crater;
+    int32_t forest;
+    int32_t road;
+    int32_t river;
+    int32_t deepSea;
+    int32_t boat;
+    int32_t building;
+    int32_t halfBuilding;
+    /* The shapes standing on it: the tank triangle, the pill disc and the
+       base square, which share one colour per allegiance. */
+    int32_t markerGood;
+    int32_t markerEvil;
+    int32_t markerNeutral;
+} SkinMapPalette;
+
 /* [Skin] section of skin.ini. Absent keys leave empty strings / zeros,
-   except recommendedFilter, whose "absent" is SKIN_FILTER_NONE. */
+   except recommendedFilter, whose "absent" is SKIN_FILTER_NONE, and
+   mapPalette, whose every entry is SKIN_COLOUR_NONE. */
 typedef struct SkinInfo {
     char     name[SKIN_NAME_MAX];
     char     author[SKIN_NAME_MAX];
@@ -61,6 +97,8 @@ typedef struct SkinInfo {
     int      maxPixelDensity; /* 0 = unlimited */
     int      inGameRotate;    /* 0 or 1 */
     int      recommendedFilter; /* SKIN_FILTER_*, SKIN_FILTER_NONE = not set */
+    SkinMapPalette mapPalette;  /* [MapPalette], every entry SKIN_COLOUR_NONE
+                                   when the section is absent */
 } SkinInfo;
 
 /* One skin found on disk. Fixed size: nothing to free. */
