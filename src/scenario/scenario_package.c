@@ -20,19 +20,12 @@
  *  An entry name is a path once a brain is written to disk,
  *  so a name that could climb out of the directory it is
  *  extracted into is refused while the container is being
- *  opened, before any caller can ask for it. That is the one
- *  check the extractor below leans on rather than repeating.
+ *  opened, before any caller can ask for it.
  *
  *  Nothing here parses an entry. manifest.json is checked
  *  for and then handed back as bytes; the rest of the entry
  *  list is passed through untouched so a caller can warn
  *  about names it does not recognise.
- *
- *  The brains are the exception to working in memory: the
- *  loader takes a path, so they are written out and a
- *  "package:NAME" is resolved against where they went. The
- *  writer and the resolver are both here so the layout is
- *  stated once.
  *********************************************************/
 
 #include <stdarg.h>
@@ -42,11 +35,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-/* SDL_CreateDirectory, SDL_IOFromFile and SDL_GetPathInfo — the extractor's
- * three calls on the filesystem, which is the only part of this file that
- * touches one. */
-#include <SDL3/SDL.h>
 
 #include "zlib.h"
 #include "unzip.h"
@@ -64,11 +52,6 @@
 
 /* What the entry-name array starts at and grows by doubling from. */
 #define PKG_ENTRIES_FIRST 16
-
-/* The longest path the extractor builds: the directory it was handed, an
- * entry name under it, and the separator between them. Well past what a map
- * directory and a brain's own layout come to together. */
-#define PKG_PATH_MAX 4096
 
 /* ------------------------------------------------------------------ */
 /* Error text                                                          */
@@ -520,133 +503,6 @@ bool scnPackageFindInMap(const uint8_t *file, size_t len,
     }
     *outChunk = file + body;
     *outChunkLen = len - body;
-    return true;
-}
-
-/* ------------------------------------------------------------------ */
-/* The brains, on to disk and back out as a path                       */
-/* ------------------------------------------------------------------ */
-
-/* Make the directory a file is about to be written into, and whatever is
- * missing above it. SDL_CreateDirectory makes the missing parents and reports
- * success for one that is already there, so a brain several directories deep
- * costs one call per file and no bookkeeping of its own. */
-static bool pkgMakeParent(const char *path) {
-    char   dir[PKG_PATH_MAX];
-    char  *slash;
-    size_t n = strlen(path);
-
-    if (n + 1 > sizeof(dir)) return false;
-    memcpy(dir, path, n + 1);
-    /* The separator this file joined with, which is the last one in the path:
-     * the entry names inside an archive use '/' whatever wrote them. */
-    slash = strrchr(dir, '/');
-    if (slash == NULL || slash == dir) return true;
-    *slash = '\0';
-    return SDL_CreateDirectory(dir);
-}
-
-static bool pkgWriteFile(const char *path, const uint8_t *bytes, size_t len) {
-    SDL_IOStream *io = SDL_IOFromFile(path, "wb");
-    bool          ok;
-
-    if (io == NULL) return false;
-    ok = (len == 0) || (SDL_WriteIO(io, bytes, len) == len);
-    if (!SDL_CloseIO(io)) ok = false;
-    return ok;
-}
-
-bool scnPackageExtractBrains(ScnPackage *p, const char *dir,
-                             char *err, size_t errLen) {
-    const size_t prefix = sizeof(SCN_PACKAGE_BRAIN_PREFIX) - 1;
-    int          i;
-
-    if (err != NULL && errLen > 0) err[0] = '\0';
-    if (p == NULL || dir == NULL || dir[0] == '\0') {
-        pkgErr(err, errLen, "there is no directory to extract the brains into");
-        return false;
-    }
-    if (!SDL_CreateDirectory(dir)) {
-        pkgErr(err, errLen, "%s could not be made: %s", dir, SDL_GetError());
-        return false;
-    }
-
-    for (i = 0; i < p->entryCount; i++) {
-        const char *name = p->entryNames[i];
-        const char *rel;
-        size_t      relLen;
-        char        path[PKG_PATH_MAX];
-        uint8_t    *bytes = NULL;
-        size_t      len   = 0;
-        int         n;
-
-        if (strncmp(name, SCN_PACKAGE_BRAIN_PREFIX, prefix) != 0) continue;
-        rel    = name + prefix;
-        relLen = strlen(rel);
-        /* An archive written by walking a directory carries an entry per
-           directory as well as per file. There is nothing to write for one,
-           and the files under it make the directories anyway. */
-        if (relLen == 0 || rel[relLen - 1] == '/' || rel[relLen - 1] == '\\') {
-            continue;
-        }
-
-        /* scnPackageOpen refused every name that could climb out of the
-           directory it is extracted into — a ".." segment, a leading
-           separator, a drive letter — so the join below is safe and the name
-           is not checked a second time. */
-        n = snprintf(path, sizeof(path), "%s/%s", dir, rel);
-        if (n < 0 || (size_t)n >= sizeof(path)) {
-            pkgErr(err, errLen, "the path for \"%s\" under %s is too long",
-                   name, dir);
-            return false;
-        }
-        if (!scnPackageReadEntry(p, name, &bytes, &len)) {
-            pkgErr(err, errLen, "entry \"%s\" could not be read", name);
-            return false;
-        }
-        if (!pkgMakeParent(path) || !pkgWriteFile(path, bytes, len)) {
-            free(bytes);
-            pkgErr(err, errLen, "%s could not be written: %s", path,
-                   SDL_GetError());
-            return false;
-        }
-        free(bytes);
-    }
-    return true;
-}
-
-bool scnPackageBrainPath(const char *root, const char *brain,
-                         char *out, size_t outLen) {
-    const size_t refLen = sizeof(SCN_PACKAGE_BRAIN_REF) - 1;
-    const char  *name;
-    SDL_PathInfo info;
-    int          n;
-
-    if (out == NULL || outLen == 0) return false;
-    out[0] = '\0';
-    if (root == NULL || root[0] == '\0' || brain == NULL) return false;
-    if (strncmp(brain, SCN_PACKAGE_BRAIN_REF, refLen) != 0) return false;
-
-    name = brain + refLen;
-    /* A brain's name is one directory under the root. Anything with a
-       separator in it is a path rather than a name, and is not something the
-       extractor above ever wrote. */
-    if (name[0] == '\0' || strchr(name, '/') != NULL ||
-        strchr(name, '\\') != NULL) {
-        return false;
-    }
-    n = snprintf(out, outLen, "%s/%s/%s", root, name, SCN_PACKAGE_BRAIN_ENTRY);
-    if (n < 0 || (size_t)n >= outLen) {
-        out[0] = '\0';
-        return false;
-    }
-    /* The file the loader will open being there is the whole of what says the
-       container carried this brain: a NAME nothing was extracted for, and one
-       whose directory holds no init.lua, both answer no here. */
-    if (!SDL_GetPathInfo(out, &info) || info.type != SDL_PATHTYPE_FILE) {
-        out[0] = '\0';
-        return false;
-    }
     return true;
 }
 

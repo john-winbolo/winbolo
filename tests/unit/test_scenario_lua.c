@@ -129,9 +129,6 @@ static lua_State *slVm(ScnLuaCtx *ctx, ServerSim *sim, ScenarioManifest *m) {
     ctx->timers    = &slTimers;
     /* Running the file, not checking it: the write rows apply. */
     ctx->checkOnly = false;
-    /* No package behind these states, so a "package:NAME" brain resolves to
-       nothing and reaches the funnel as the name it was written as. */
-    ctx->brains    = NULL;
     scenarioLuaInstall(L, ctx);
     return L;
 }

@@ -51,8 +51,6 @@
 #include "scenario_host.h"
 #include "scenario_manifest.h"
 #include "scenario_lua.h"
-#include "scenario_package.h"    /* the map's own container, for the one check
-                                  * that has to ask what a package carries */
 #include "scenario_validate.h"
 
 /* One line from the parse or from Lua, before it becomes an issue. Lua's own
@@ -293,28 +291,10 @@ static void scnCheckGame(const ScenarioManifest *m, ScnValidateResult *out) {
     }
 }
 
-/* Whether the container carries brains/NAME/. */
-static bool scnPackageCarries(const ScnPackage *p, const char *name) {
-    int i;
-
-    for (i = 0; i < scnPackageBrainCount(p); i++) {
-        if (strcmp(scnPackageBrainName(p, i), name) == 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
 /* The template the lobby is seated from: the human cap, and per team the
  * number it is, the bots it asks for, the brain it names them with and the
- * init table they are built with.
- *
- * pkg is the map's own container where the map has one and NULL where it has
- * none, which is what decides how much can be said about a "package:NAME"
- * brain: with a container the name can be held against what it carries, and
- * without one only the shape of the name can be checked. */
-static void scnCheckLobby(const ScenarioManifest *m, const ScnPackage *pkg,
-                          ScnValidateResult *out) {
+ * init table they are built with. */
+static void scnCheckLobby(const ScenarioManifest *m, ScnValidateResult *out) {
     const ScnManifestLobby *lob = &m->lobby;
     char                    key[SCN_VALIDATE_KEY_LEN];
     uint8_t                 i;
@@ -360,23 +340,14 @@ static void scnCheckLobby(const ScenarioManifest *m, const ScnPackage *pkg,
                         (unsigned)t->bots, MAX_TANKS);
         }
 
-        /* A packaged brain: the shape of the name always, and what it names
-           where the map carries a container to ask. A name with nothing after
-           the colon names no brain anywhere; one the container does not carry
-           will not resolve at the attach and the seat it was written for will
-           field nothing. */
-        if (strncmp(t->brain, "package:", 8) == 0) {
-            const char *name = t->brain + 8;
+        /* The shape of the name and nothing else. A packaged brain is inside
+           a file this check has not been handed, so whether the package holds
+           one is not a question that can be asked here. */
+        if (strncmp(t->brain, "package:", 8) == 0 && t->brain[8] == '\0') {
             snprintf(key, sizeof(key), "lobby.teams[%u].brain",
                      (unsigned)(i + 1));
-            if (name[0] == '\0') {
-                scnIssueAdd(out, key, "'%s' names nothing after the colon",
-                            t->brain);
-            } else if (pkg != NULL && !scnPackageCarries(pkg, name)) {
-                scnIssueAdd(out, key,
-                            "'%s' names a brain the map's own scenario does "
-                            "not carry", t->brain);
-            }
+            scnIssueAdd(out, key, "'%s' names nothing after the colon",
+                        t->brain);
         }
 
         /* A pair of the init table the read could not take. The reader keeps
@@ -538,36 +509,6 @@ static void scnCheckBound(const ScenarioManifest *m, ScnValidateResult *out) {
     }
 }
 
-/* The lobby check, with the map's own container open where there is one.
- *
- * A team naming "package:NAME" is a question about what that container
- * carries, and the map file is the only place the answer is. The validator
- * reads the loose script beside the map, so a map can perfectly well have both
- * — the author's working copy beside a map they have already packed — and this
- * is what lets the check say that the two have come apart.
- *
- * A file that cannot be read and a container that will not open are both
- * nothing to say here: the attach reports those, and this check falls back to
- * the shape of the name. */
-static void scnCheckLobbyOnMap(const char *mapPath, const ScenarioManifest *m,
-                               ScnValidateResult *out) {
-    uint8_t       *file     = NULL;
-    size_t         fileLen  = 0;
-    const uint8_t *chunk    = NULL;
-    size_t         chunkLen = 0;
-    ScnPackage    *p        = NULL;
-    char           err[SCN_VALIDATE_LINE_LEN];
-
-    err[0] = '\0';
-    if (scnReadMapBytes(mapPath, &file, &fileLen, err, sizeof(err)) &&
-        scnPackageFindInMap(file, fileLen, &chunk, &chunkLen)) {
-        p = scnPackageOpen(chunk, chunkLen, NULL, 0);
-    }
-    scnCheckLobby(m, p, out);
-    scnPackageClose(p);
-    free(file);
-}
-
 /* ── The whole check ──────────────────────────────────────────────── */
 
 bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
@@ -637,7 +578,7 @@ bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
 
     scnCheckApi(&out->manifest, out);
     scnCheckGame(&out->manifest, out);
-    scnCheckLobbyOnMap(mapPath, &out->manifest, out);
+    scnCheckLobby(&out->manifest, out);
     /* The two that read a map. Without one the table can still be checked for
        everything it says about itself, which is what an editor holding a
        script and no map has to work from. */
