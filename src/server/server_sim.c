@@ -363,6 +363,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.explosion = serverSimCbExplosion;
     sim->sim.callbacks.tkExplosion = serverSimCbTkExplosion;
     sim->sim.callbacks.shellDeath = serverSimCbShellDeath;
+    sim->sim.callbacks.shellFired = serverSimCbShellFired;
     sim->sim.callbacks.recordDamage = serverSimCbRecordDamage;
     sim->sim.callbacks.recordPlayerAction = serverSimCbRecordPlayerAction;
     sim->sim.callbacks.recordPillPickup = serverSimCbRecordPillPickup;

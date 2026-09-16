@@ -264,6 +264,16 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
   }
   *value = q;
 
+  /* Tell the server the trigger was pulled, now rather than when the shell
+   * dies. The three-shot order detector measures every one of its rules on
+   * the fire tick, and a shell is about half a second in the air, so a
+   * detector fed only by shellDeath cannot see a shell that is still
+   * flying. Server-only (NULL on the client), and inside the sim tick, so
+   * it stays deterministic. */
+  if (sim->callbacks.shellFired) {
+    sim->callbacks.shellFired(sim->callbacks.ctx, q->fireTick, owner);
+  }
+
   /* Play shoot sound at tank position (not offset shell position) */
   sim->callbacks.soundDistShoot(sim->callbacks.ctx, soundMX, soundMY, owner);
 

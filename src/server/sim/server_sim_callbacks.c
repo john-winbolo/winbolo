@@ -445,6 +445,26 @@ void serverSimShotOrderTick(ServerSim *sim) {
     }
 }
 
+/* A shell owned by `owner` LEFT THE GUN on `fireTick`. shellsAddItem calls
+ * this the moment the shell is created, which is the moment the three-shot
+ * detector's rules are all measured from.
+ *
+ * Before this the fire log was fed by serverSimCbShellDeath alone, so the
+ * server heard of a shell only when it died — half a second late — and two
+ * shells went missing from the log at exactly the wrong moment: one fired
+ * inside the quiet second after the third shot but still in the air when
+ * the poll sent the order, and one fired just before the first of the three
+ * whose longer flight kept it out of the log when the third landed. Both
+ * now count.
+ *
+ * A pillbox fires with owner NEUTRAL (0xFF), which
+ * serverSimShotOrderShotFired drops on its own; the death-time call is
+ * still made and is harmless, because the function dedupes on the fire
+ * tick. */
+void serverSimCbShellFired(void *ctx, uint32_t fireTick, BYTE owner) {
+    serverSimShotOrderShotFired((ServerSim *)ctx, owner, fireTick);
+}
+
 /* A shell owned by `owner` ended (collision or expiry). Publish a
  * unicast CTRL_SHELL_DEATH so the firing client can match fireTick to
  * its predicted shell, cull the ghost, and draw the impact at

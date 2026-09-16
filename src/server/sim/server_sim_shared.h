@@ -44,6 +44,7 @@ void serverSimCbExplosion(void *ctx, BYTE mx, BYTE my, BYTE px, BYTE py);
 void serverSimCbShellDeath(void *ctx, uint32_t fireTick, BYTE owner,
                            WORLD impactWX, WORLD impactWY,
                            uint8_t outcome);
+void serverSimCbShellFired(void *ctx, uint32_t fireTick, BYTE owner);
 void serverSimCbTkExplosion(void *ctx, WORLD x, WORLD y,
                             TURNTYPE angle, BYTE length,
                             BYTE explodeType, BYTE creator);
@@ -177,7 +178,12 @@ void serverSimFillMapSkipStateEvent(const ServerSim *sim, ControlEvent *evt);
  * counts, whatever it went on to hit, because the two quiet seconds around
  * the three shots ask what the player fired and not what it struck. It also
  * cancels an armed order, which is the "no fourth shot" half of the rule.
- * serverSimCbShellDeath calls it on every shell death. */
+ *
+ * serverSimCbShellFired calls it the moment shellsAddItem creates the
+ * shell, which is what keeps a shell that is still in the air out of
+ * nobody's way. serverSimCbShellDeath calls it again on the death and the
+ * scenario funnel's shell_expired arm calls it too; both are harmless
+ * repeats, because a fire tick already in the log is ignored. */
 void serverSimShotOrderShotFired(ServerSim *sim, BYTE owner, uint32_t fireTick);
 
 /* One of `owner`'s shells, fired on `fireTick`, ran its full range and died

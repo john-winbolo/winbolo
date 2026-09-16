@@ -47,11 +47,26 @@
  *       still a shot fired, and breaks the quiet second the same way
  *   three_shot_order_needs_quiet_after    — a fourth shot fired 50 ticks
  *       after the third takes the armed order away, for good
+ *   three_shot_order_quiet_after_sees_a_shell_still_flying
+ *                                         — and it takes it away at the
+ *       moment the gun went off, not when that shell lands: a fourth fired
+ *       90 ticks after the third and still in the air when the poll comes
+ *       round cancels the order all the same
+ *   three_shot_order_quiet_before_sees_a_shell_still_flying
+ *                                         — a shell fired one tick before
+ *       the first of the three and slower to land than it is not missing
+ *       from the log when the third lands, so the quiet second in front is
+ *       not read as clear
  *
- * The shots are posted through serverSimShotOrderShotFired and
+ * Most shots are posted through serverSimShotOrderShotFired and
  * serverSimShotOrderNote rather than by firing a gun: three full-range
  * shells landing on one chosen square is not a state a test could steer a
  * round into, and the expiry callback's own arm is the same two calls.
+ *
+ * The two "still flying" cases are the exception. They are about the moment
+ * the server hears of a shell at all, so they put a real shell in the air
+ * with shellsAddItem and never let it die — which is exactly the shell the
+ * detector used to know nothing about.
  */
 
 #include <stdint.h>
@@ -68,6 +83,7 @@
 #include "client_sim_internal.h"
 #include "game_sim.h"
 #include "internal/messages.h"     /* messageInboxCount/Peek, BRAIN_INBOX_MSG_LEN */
+#include "internal/shells.h"       /* shellsAddItem — a real shell leaving the gun */
 #include "players.h"               /* PLAYER_FLAG_BOT */
 #include "server_sim.h"
 #include "server_sim_internal.h"   /* struct ServerSim — tick, shotOrder, botMgr */
@@ -183,6 +199,27 @@ static void tsShot(TsFixture *f, uint32_t tick, BYTE mx, BYTE my) {
 static void tsHit(TsFixture *f, uint32_t tick, uint32_t fireTick) {
     f->sim->tick = tick;
     serverSimShotOrderShotFired(f->sim, TS_SHOOTER, fireTick);
+}
+
+/* A REAL shell of the shooter's, leaving the gun on `fireTick` and left in
+ * the air. Nothing else in this file fires a gun, and this one does for one
+ * reason: the fire log is what these two cases are about, and a shell that
+ * is still flying is the one the server used to know nothing of.
+ *
+ * shellsAddItem stamps the shell with sim->fireInputTick, which is what the
+ * server sets from the input packet it is applying, so the tick is set the
+ * same way here. The shell is never updated afterwards, so it never lands
+ * and never reports itself — which is the whole point. */
+static void tsFireShell(TsFixture *f, uint32_t fireTick) {
+    GameSim *gs = serverSimGetGameSim(f->sim);
+    WORLD    wx = 0, wy = 0;
+
+    f->sim->tick = fireTick;
+    serverSimGetTankState(f->sim, TS_SHOOTER, &wx, &wy);
+    gs->fireInputTick = fireTick;
+    shellsAddItem(gs, &gs->shs, wx, wy, (TURNTYPE)0.0, (TURNTYPE)128.0,
+                  TS_SHOOTER, FALSE);
+    gs->fireInputTick = 0;
 }
 
 /* The server's per-tick poll, with the sim standing at `tick`. This is what
@@ -439,6 +476,78 @@ int run_three_shot_order_needs_quiet_after(void) {
     UT_ASSERT_MSG(tsInbox(f.ally) == 0,
                   "the cancelled order turned up later anyway: %d entries",
                   tsInbox(f.ally));
+
+    tsTeardown(&f);
+    return 0;
+}
+
+/* THE QUIET SECOND AFTER, MEASURED AT THE GUN. The fourth shell is fired 90
+ * ticks after the third and is still in the air when the poll comes round on
+ * tick 300 — so nothing about its death can help. The order has to be gone
+ * by then, because the trigger was pulled inside the quiet second. */
+int run_three_shot_order_quiet_after_sees_a_shell_still_flying(void) {
+    TsFixture f;
+    if (tsSetup(&f) != 0) return 1;
+
+    tsShot(&f, 100, TS_OPEN_X, TS_OPEN_Y);
+    tsShot(&f, 150, TS_OPEN_X, TS_OPEN_Y);
+    tsShot(&f, 200, TS_OPEN_X, TS_OPEN_Y);
+
+    /* Fired on 290 — ten ticks before the quiet second is up — and half a
+       second from landing. */
+    tsFireShell(&f, 290);
+
+    tsPollAt(&f, 200 + SHOT_ORDER_QUIET_TICKS);
+    UT_ASSERT_MSG(tsInbox(f.ally) == 0,
+                  "a fourth shell fired 90 ticks after the third but not yet "
+                  "landed left the order standing: %d entries. The quiet "
+                  "second is measured at the gun, so the fire has to be "
+                  "recorded when the shell is created",
+                  tsInbox(f.ally));
+
+    /* Its death, 130 ticks after the third shot, is the same fire tick over
+       again and must change nothing either way. */
+    tsHit(&f, 330, 290);
+    tsPollAt(&f, 200 + 4 * SHOT_ORDER_QUIET_TICKS);
+    UT_ASSERT_MSG(tsInbox(f.ally) == 0,
+                  "the cancelled order turned up once the fourth shell "
+                  "landed: %d entries", tsInbox(f.ally));
+
+    tsTeardown(&f);
+    return 0;
+}
+
+/* THE QUIET SECOND IN FRONT, MEASURED AT THE GUN. A shell fired one tick
+ * before the first of the three takes longer to land than any of them, so
+ * when the third lands on tick 200 it has still not died. The run must be
+ * blocked all the same: the player pulled the trigger inside the quiet
+ * second in front, which is the only question the rule asks. */
+int run_three_shot_order_quiet_before_sees_a_shell_still_flying(void) {
+    TsFixture f;
+    if (tsSetup(&f) != 0) return 1;
+
+    /* Fired on 99, a long way to travel, nothing hit yet. */
+    tsFireShell(&f, 99);
+
+    tsShot(&f, 100, TS_OPEN_X, TS_OPEN_Y);
+    tsShot(&f, 150, TS_OPEN_X, TS_OPEN_Y);
+    tsShot(&f, 200, TS_OPEN_X, TS_OPEN_Y);
+
+    tsPollAt(&f, 200 + SHOT_ORDER_QUIET_TICKS);
+    UT_ASSERT_MSG(tsInbox(f.ally) == 0,
+                  "a shell fired one tick before the first of the three, and "
+                  "still in the air when the third landed, did not break the "
+                  "quiet second in front: %d entries", tsInbox(f.ally));
+
+    /* The same three with nothing in front of them DO order, so it was the
+       flying shell that stopped the first run and not the fixture. */
+    tsShot(&f, 700, TS_OPEN_X, TS_OPEN_Y);
+    tsShot(&f, 750, TS_OPEN_X, TS_OPEN_Y);
+    tsShot(&f, 800, TS_OPEN_X, TS_OPEN_Y);
+    tsPollAt(&f, 800 + SHOT_ORDER_QUIET_TICKS);
+    UT_ASSERT_MSG(tsInbox(f.ally) == 1,
+                  "three shells with a clear second in front left %d "
+                  "entries, expected 1", tsInbox(f.ally));
 
     tsTeardown(&f);
     return 0;

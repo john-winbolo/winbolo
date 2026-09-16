@@ -1706,6 +1706,14 @@ void botManagerQueuePing(ServerSim *sim, BYTE fromPlayer,
     if (fromPlayer >= MAX_TANKS) return;
 
     bot = &sim->botMgr.bots[fromPlayer];
+    /* Reading the sim tick from a worker thread, which is safe for the same
+     * reason runBotThinkJobImpl's own reads are (it stamps both InputPackets
+     * with serverSimGetTick a few lines above its dispatch): sim->tick is
+     * written only by the producer thread, in serverSimTick, and while the
+     * brains are thinking that thread is parked inside botWorkerPoolRun
+     * waiting for every worker to finish. Nothing advances the tick for the
+     * length of Stage 2, so every worker reads the same number the producer
+     * left there. */
     now = serverSimGetTick(sim);
     /* Stored as tick+1 so zero can mean "never": tick 0 is a real tick. */
     if (bot->lastPingTick != 0 &&

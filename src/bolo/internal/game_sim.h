@@ -99,6 +99,16 @@ typedef struct GameSimCallbacks {
      * shell death). outcome is a SHELL_OUTCOME_* (shells.h). */
     void (*shellDeath)(void *ctx, uint32_t fireTick, BYTE owner,
                        WORLD impactWX, WORLD impactWY, uint8_t outcome);
+    /* Server-only: a shell owned by `owner` LEFT THE GUN on `fireTick`.
+     * NULL on the client. shellDeath above is the first the server would
+     * otherwise hear of a shell, and half a second in the air is long
+     * enough to matter to the three-shot order detector, whose every rule
+     * is on the fire tick: a shell still flying was simply absent from the
+     * fire log. This says so at the moment the shell is created, inside the
+     * sim tick, so the log is complete without waiting for a landing.
+     * Pillbox shells fire with owner NEUTRAL and are dropped by the
+     * handler. */
+    void (*shellFired)(void *ctx, uint32_t fireTick, BYTE owner);
     /* Server-only stats attribution; NULL on the client (call sites null-check).
      * recordDamage: `attacker` dealt `dealt` effective armour damage to a target
      * of `targetKind` identified by `targetIndex` (the tank slot, or pill/base

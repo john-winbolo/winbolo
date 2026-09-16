@@ -4261,6 +4261,8 @@ set(_unit_test_names
     lobby_bot_config_codec_and_apply
     lobby_bot_brain_codec_and_apply
     lobby_brain_list_codec_and_apply
+    lobby_brain_docs_chunk_codec_roundtrip
+    lobby_brain_docs_chunk_len_is_exact
     lobby_sync_complete_codec_roundtrip
     lobby_rating_posted_codec_roundtrip
     command_codec_roundtrip_variants
@@ -5275,6 +5277,8 @@ set(_unit_test_names
     three_shot_order_needs_quiet_before
     three_shot_order_quiet_counts_hits
     three_shot_order_needs_quiet_after
+    three_shot_order_quiet_after_sees_a_shell_still_flying
+    three_shot_order_quiet_before_sees_a_shell_still_flying
     scenario_comms_arm_records
     scenario_comms_decoder_dest_player
     scenario_comms_apply_non_zero_slot

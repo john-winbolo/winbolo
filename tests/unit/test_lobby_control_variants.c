@@ -967,3 +967,107 @@ int run_lobby_rating_posted_codec_roundtrip(void) {
                   "decoder must reject a short body");
     return 0;
 }
+
+/* ================================================================
+ * CTRL_LOBBY_BRAIN_DOCS_CHUNK — the LENGTH the two encoders answer
+ * with.
+ *
+ * codec_roundtrip above proves the bytes survive the trip, but it
+ * reads the length back out of the same variable the encoder was
+ * asked to fill: an encoder that never writes *outLen leaves the
+ * caller's own number standing, and a caller that zeroed it first
+ * sends an empty datagram while every field still "round-trips".
+ * Nothing but the number is checked here, against the wire format
+ * the file's comment states:
+ *
+ *   body   = brainIdx 1 + seq 1 + count 1 + fragLen 2 + frag
+ *   packet = PACKET_HEADER_SIZE + body
+ *
+ * Both ends of the fragment range, because a zero-length fragment is
+ * the one case where a forgotten write and a correct one could agree.
+ * ================================================================ */
+int run_lobby_brain_docs_chunk_len_is_exact(void) {
+    ControlEncodeFn     enc = transportControlCodecEncoder(CTRL_LOBBY_BRAIN_DOCS_CHUNK);
+    ControlEncodeBodyFn bodyEnc =
+        transportControlCodecBodyEncoder(CTRL_LOBBY_BRAIN_DOCS_CHUNK);
+    ControlDecodeBodyFn bodyDec =
+        transportControlCodecBodyDecoder(CTRL_LOBBY_BRAIN_DOCS_CHUNK);
+    ControlEvent in, out;
+    uint8_t      buf[MAX_CONTROL_PACKET];
+    size_t       len;
+    int          i;
+
+    UT_ASSERT_MSG(enc != NULL, "no packet encoder");
+    UT_ASSERT_MSG(bodyEnc != NULL, "no body encoder");
+    UT_ASSERT_MSG(bodyDec != NULL, "no body decoder");
+
+    /* A full fragment — the largest datagram this packet ever sends. */
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
+    in.u.lobbyBrainDocsChunk.brainIdx = BRAIN_LIST_MAX - 1;
+    in.u.lobbyBrainDocsChunk.seq      = 18;
+    in.u.lobbyBrainDocsChunk.count    = 19;
+    in.u.lobbyBrainDocsChunk.fragLen  = LOBBY_BRAIN_DOCS_FRAG_MAX;
+    for (i = 0; i < LOBBY_BRAIN_DOCS_FRAG_MAX; i++) {
+        in.u.lobbyBrainDocsChunk.frag[i] = (uint8_t)((i * 7) & 0xFF);
+    }
+
+    /* The number the caller already held must be overwritten, not left. */
+    len = 12345;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT_MSG(len == (size_t)(PACKET_HEADER_SIZE + 5 +
+                                  LOBBY_BRAIN_DOCS_FRAG_MAX),
+                  "the packet encoder answered %zu bytes, expected %zu",
+                  len, (size_t)(PACKET_HEADER_SIZE + 5 +
+                                LOBBY_BRAIN_DOCS_FRAG_MAX));
+    UT_ASSERT_MSG(buf[2] == PACKET_LOBBY_BRAIN_DOCS_CHUNK,
+                  "the header names packet type %u", (unsigned)buf[2]);
+
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(bodyDec(buf + PACKET_HEADER_SIZE, len - PACKET_HEADER_SIZE,
+                          &out),
+                  "the body the packet encoder wrote would not decode");
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.brainIdx == BRAIN_LIST_MAX - 1);
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.seq   == 18);
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.count == 19);
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.fragLen == LOBBY_BRAIN_DOCS_FRAG_MAX);
+    UT_ASSERT(memcmp(out.u.lobbyBrainDocsChunk.frag,
+                     in.u.lobbyBrainDocsChunk.frag,
+                     LOBBY_BRAIN_DOCS_FRAG_MAX) == 0);
+
+    /* The body encoder on its own answers the body length alone. */
+    len = 12345;
+    UT_ASSERT(bodyEnc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT_MSG(len == (size_t)(5 + LOBBY_BRAIN_DOCS_FRAG_MAX),
+                  "the body encoder answered %zu bytes, expected %zu",
+                  len, (size_t)(5 + LOBBY_BRAIN_DOCS_FRAG_MAX));
+
+    /* A zero-length fragment: five bytes of body and nothing after it. */
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
+    in.u.lobbyBrainDocsChunk.brainIdx = 0;
+    in.u.lobbyBrainDocsChunk.seq      = 0;
+    in.u.lobbyBrainDocsChunk.count    = 1;
+    in.u.lobbyBrainDocsChunk.fragLen  = 0;
+
+    len = 12345;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT_MSG(len == (size_t)(PACKET_HEADER_SIZE + 5),
+                  "an empty fragment made a %zu-byte packet, expected %zu",
+                  len, (size_t)(PACKET_HEADER_SIZE + 5));
+
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT(bodyDec(buf + PACKET_HEADER_SIZE, len - PACKET_HEADER_SIZE,
+                      &out));
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.brainIdx == 0);
+    UT_ASSERT(out.u.lobbyBrainDocsChunk.count    == 1);
+    UT_ASSERT_MSG(out.u.lobbyBrainDocsChunk.fragLen == 0,
+                  "fragLen came back %u",
+                  (unsigned)out.u.lobbyBrainDocsChunk.fragLen);
+
+    len = 12345;
+    UT_ASSERT(bodyEnc(&in, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
+    UT_ASSERT_MSG(len == 5, "an empty fragment made a %zu-byte body, "
+                  "expected 5", len);
+    return 0;
+}
