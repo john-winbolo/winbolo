@@ -930,6 +930,11 @@ static void lobbyRenderVisibilityTooltip(const VisibilitySettings *v,
  * width is the item width to use. Pass 0 to have it sized to the widest
  * entry, which is what a caller with room to spare wants.
  *
+ * realHost says whether this machine is running the server, and decides
+ * whether the Custom entry can be pressed - see the entry itself below.
+ * The preset entries do not read it: a preset is the same set of values
+ * wherever it is picked from, so anybody the lobby lets edit may pick one.
+ *
  * dialogSelectedPreset is the Details dialog's chosen row, handed in so
  * the dropdown inside that dialog shows and moves the same row the table
  * would. The lobby's own Visibility row passes nothing and simply reads
@@ -937,6 +942,7 @@ static void lobbyRenderVisibilityTooltip(const VisibilitySettings *v,
 static void lobbyVisibilityPresetCombo(ClientSim *cs, const char *id,
                                        float width, bool disabled,
                                        uint32_t visLocks, float s,
+                                       bool realHost,
                                        int *dialogSelectedPreset = NULL) {
     const ImGuiStyle &st = ImGui::GetStyle();
     VisibilitySettings live;
@@ -995,11 +1001,23 @@ static void lobbyVisibilityPresetCombo(ClientSim *cs, const char *id,
         }
         /* Custom is listed whether or not a set has ever been made here -
          * the row the settings can land on must never be missing from the
-         * list. Picking it puts this machine's saved set on the lobby, and
-         * with none ever saved it puts whatever the hosting settings held. */
+         * list - but only the machine hosting the game can press it. What
+         * it puts on the lobby is this machine's own saved set, and that
+         * set belongs to the game this machine hosts, not to somebody
+         * else's lobby that this player happens to be an admin in. Picking
+         * it also writes that set back, which a machine that is not
+         * hosting has no business doing. Everybody else lands on Custom by
+         * editing one of the settings, which sends only what they changed.
+         * Same rule as the table's Custom row.
+         *
+         * Listed and disabled rather than left out: the entry still names
+         * the row the settings can be on, and still spells the set out on
+         * its hover, which is read with AllowWhenDisabled below so a
+         * non-host can read it too. */
         bool customSel = (dialogSelectedPreset != NULL)
                              ? (*dialogSelectedPreset == (int)visibilityPresetCustom)
                              : (livePreset == visibilityPresetCustom);
+        if (!realHost) ImGui::BeginDisabled();
         if (ImGui::Selectable(langGetText(STR_DLGLOBBY_PRESET_CUSTOM),
                               customSel)
             && !customSel) {
@@ -1010,11 +1028,14 @@ static void lobbyVisibilityPresetCombo(ClientSim *cs, const char *id,
             gameFrontSetVisibilityCustom(&gameFrontVisibilityCustom);
             lobbyVisibilityApply(cs, &gameFrontVisibilityCustom);
         }
+        bool customHovered =
+            ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled);
+        if (!realHost) ImGui::EndDisabled();
         /* Custom has no fixed description - what it does is the set itself,
          * so the hover is that set spelled out with the same rich tooltip as
          * the top server line. With none saved it says what the entry is for
          * instead. */
-        if (ImGui::IsItemHovered()) {
+        if (customHovered) {
             const VisibilitySettings *customSettings = NULL;
             if (gameFrontVisibilityCustomSaved) {
                 customSettings = &gameFrontVisibilityCustom;
@@ -1061,7 +1082,7 @@ static void lobbyRenderVisibilityStackedForm(ClientSim *cs, bool effectiveHost,
 
     lobbyVisibilityPresetCombo(cs, "##visformpreset", 0.0f,
                                !effectiveHost || visLocks != 0, visLocks, s,
-                               &s_visSelectedPreset);
+                               realHost, &s_visSelectedPreset);
     ImGui::Separator();
 
     /* One column of labels, so the controls beside them line up. */
@@ -1542,7 +1563,7 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             if (comboW > room) comboW = room;
 
             lobbyVisibilityPresetCombo(cs, "##vispreset", comboW, visDisabled,
-                                       visLocks, s);
+                                       visLocks, s, realHost);
 
             /* Details stays live under a lock: the settings are still
              * worth reading even when nobody here may change them. */
