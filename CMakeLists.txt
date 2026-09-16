@@ -5534,6 +5534,7 @@ set(_unit_test_names
     scenario_package_bad_framing
     scenario_package_entry_names
     scenario_package_two_open
+    scenario_package_entry_cap
     scenario_manifest_json_round_trip
     scenario_manifest_json_refusals
     scenario_manifest_agrees

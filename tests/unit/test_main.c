@@ -1435,6 +1435,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_package_bad_framing",                    run_scenario_package_bad_framing                    },
     { "scenario_package_entry_names",                    run_scenario_package_entry_names                    },
     { "scenario_package_two_open",                       run_scenario_package_two_open                       },
+    { "scenario_package_entry_cap",                      run_scenario_package_entry_cap                      },
     { "scenario_manifest_json_round_trip",               run_scenario_manifest_json_round_trip               },
     { "scenario_manifest_json_refusals",                 run_scenario_manifest_json_refusals                 },
     { "scenario_manifest_agrees",                        run_scenario_manifest_agrees                        },

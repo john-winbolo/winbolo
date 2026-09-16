@@ -25,6 +25,18 @@
  * run_scenario_package_two_open
  *      — two containers open at once, read turn about, each handle seeing
  *        only its own entries
+ * run_scenario_package_entry_cap
+ *      — an entry is measured against the caller's cap before it is read: at
+ *        the cap it comes back whole, a byte under it is refused and the
+ *        refusal names the entry and the figure, and nothing is handed back
+ *
+ * The cap's other case — an entry whose header understates what the archive
+ * holds — is not driven from here. scnPackageWrite takes the bytes and not a
+ * declared size; minizip writes the size it measured, so there is no way
+ * through this API to write a header that lies. What holds that case is in
+ * scnPackageReadEntry itself: the loop asks for no more than what is left of
+ * the declared size, and the CRC minizip checks as the entry closes is what
+ * turns the short read into a refusal.
  */
 
 #include <stdint.h>
@@ -43,14 +55,21 @@ static const char kScript[] =
     "return scenario\n";
 static const char kBrain[] = "return { name = 'raiders', tick = function() end }\n";
 
+/* The cap the reads below are made under. Well above every fixture here, so a
+ * read that refuses is refusing for the reason the case is about. */
+#define PKG_TEST_MAX (64u * 1024u)
+
 /* Read one entry and hold it against what was written. */
 static int entryMatches(ScnPackage *p, const char *name, const char *expect,
                         size_t expectLen) {
     uint8_t *bytes = NULL;
     size_t len = 0;
+    char err[256];
 
-    if (!scnPackageReadEntry(p, name, &bytes, &len)) {
-        UT_FAIL("%s did not read back", name);
+    err[0] = '\0';
+    if (!scnPackageReadEntry(p, name, PKG_TEST_MAX, &bytes, &len, err,
+                             sizeof(err))) {
+        UT_FAIL("%s did not read back: %s", name, err);
     }
     if (len != expectLen) {
         free(bytes);
@@ -404,4 +423,112 @@ int run_scenario_package_two_open(void) {
     free(packedA);
     free(packedB);
     return rc;
+}
+
+/* ── The cap on what one entry may inflate to ─────────────────────── */
+
+/* A container is ten bytes of framing over a ZIP archive, and a ZIP entry's
+ * uncompressed size is four bytes in its header that say whatever was written
+ * there. A reader that believes them allocates whatever a container asks for,
+ * so every read names the figure it is prepared to hold and the entry is
+ * measured against it before anything is allocated. */
+int run_scenario_package_entry_cap(void) {
+    enum { kBodyLen = 4096 };
+    ScnPackageEntry entries[2];
+    char           *body;
+    uint8_t        *packed = NULL;
+    uint8_t        *bytes  = NULL;
+    size_t          packedLen = 0;
+    size_t          len       = 0;
+    char            err[256];
+    ScnPackage     *p;
+
+    body = (char *)malloc(kBodyLen);
+    UT_ASSERT(body != NULL);
+    memset(body, 'x', kBodyLen);
+
+    memset(entries, 0, sizeof(entries));
+    entries[0].name  = "manifest.json";
+    entries[0].bytes = (const uint8_t *)kManifest;
+    entries[0].len   = sizeof(kManifest) - 1;
+    entries[1].name  = "main.lua";
+    entries[1].bytes = (const uint8_t *)body;
+    entries[1].len   = kBodyLen;
+    /* Deflated, so the entry on the wire is a few dozen bytes and the size the
+       reader is asked to trust is the header's rather than the archive's. */
+    entries[1].deflate = true;
+
+    err[0] = '\0';
+    if (!scnPackageWrite(entries, 2, &packed, &packedLen, err, sizeof(err))) {
+        free(body);
+        UT_FAIL("scnPackageWrite refused: %s", err);
+    }
+    UT_ASSERT_MSG(packedLen < (size_t)kBodyLen,
+                  "the container is %lu bytes and the entry declares %d: the "
+                  "fixture did not deflate", (unsigned long)packedLen,
+                  (int)kBodyLen);
+
+    p = scnPackageOpen(packed, packedLen, err, sizeof(err));
+    if (p == NULL) {
+        free(packed);
+        free(body);
+        UT_FAIL("open refused a container it just wrote: %s", err);
+    }
+
+    /* At the cap, the whole entry. */
+    err[0] = '\0';
+    UT_ASSERT_MSG(scnPackageReadEntry(p, "main.lua", (size_t)kBodyLen, &bytes,
+                                      &len, err, sizeof(err)),
+                  "an entry exactly at the cap was refused: %s", err);
+    UT_ASSERT_MSG(len == (size_t)kBodyLen, "the entry came back %lu bytes",
+                  (unsigned long)len);
+    UT_ASSERT(bytes != NULL && memcmp(bytes, body, kBodyLen) == 0);
+    free(bytes);
+    bytes = NULL;
+    len   = 0;
+
+    /* One byte under it, nothing at all — and the reason names both the entry
+       and the figure, so an operator holding a container they cannot read
+       knows which entry and how far over it is. */
+    err[0] = '\0';
+    UT_ASSERT_MSG(!scnPackageReadEntry(p, "main.lua", (size_t)kBodyLen - 1,
+                                       &bytes, &len, err, sizeof(err)),
+                  "an entry a byte over the cap was read anyway");
+    UT_ASSERT_MSG(bytes == NULL, "a refused read handed back a buffer");
+    UT_ASSERT_MSG(len == 0, "a refused read reported %lu bytes",
+                  (unsigned long)len);
+    UT_ASSERT_MSG(err[0] != '\0', "the refusal said nothing");
+    UT_ASSERT_MSG(strstr(err, "main.lua") != NULL,
+                  "the refusal does not name the entry: %s", err);
+    UT_ASSERT_MSG(strstr(err, "4095") != NULL,
+                  "the refusal does not name the cap: %s", err);
+
+    /* A cap of nothing refuses an entry that holds something. */
+    err[0] = '\0';
+    UT_ASSERT(!scnPackageReadEntry(p, "main.lua", 0, &bytes, &len, err,
+                                   sizeof(err)));
+    UT_ASSERT(err[0] != '\0');
+
+    /* The manifest beside it is well inside its own cap and still reads. */
+    err[0] = '\0';
+    UT_ASSERT_MSG(scnPackageReadEntry(p, "manifest.json",
+                                      SCN_PACKAGE_MANIFEST_MAX_BYTES, &bytes,
+                                      &len, err, sizeof(err)),
+                  "the manifest was refused under its own cap: %s", err);
+    UT_ASSERT(len == sizeof(kManifest) - 1);
+    free(bytes);
+    bytes = NULL;
+
+    /* An entry that is not in the container gives no reason, which is what
+       tells the callers apart from a refusal they should report. */
+    err[0] = '\0';
+    UT_ASSERT(!scnPackageReadEntry(p, "credits.txt", PKG_TEST_MAX, &bytes, &len,
+                                   err, sizeof(err)));
+    UT_ASSERT_MSG(err[0] == '\0',
+                  "an entry that is not there gave a reason: %s", err);
+
+    scnPackageClose(p);
+    free(packed);
+    free(body);
+    return 0;
 }

@@ -136,9 +136,16 @@ static bool scnDirReadPackage(const char *path, ScenarioManifest *out) {
         free(file);
         return false;
     }
-    if (!scnPackageReadEntry(p, SCN_PACKAGE_MANIFEST_ENTRY, &json, &jsonLen)) {
-        scnDirSay("scenarios: %s carries no %s", path,
-                  SCN_PACKAGE_MANIFEST_ENTRY);
+    err[0] = '\0';
+    if (!scnPackageReadEntry(p, SCN_PACKAGE_MANIFEST_ENTRY,
+                             SCN_PACKAGE_MANIFEST_MAX_BYTES, &json, &jsonLen,
+                             err, sizeof(err))) {
+        if (err[0] != '\0') {
+            scnDirSay("scenarios: %s: %s", path, err);
+        } else {
+            scnDirSay("scenarios: %s carries no %s", path,
+                      SCN_PACKAGE_MANIFEST_ENTRY);
+        }
         scnPackageClose(p);
         free(file);
         return false;

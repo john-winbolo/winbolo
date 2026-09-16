@@ -2772,12 +2772,14 @@ int run_scenario_derived_region_loop_terminates(void);
 int run_scenario_derived_fixture_wins_without_on_tick(void);
 
 /* The WBSC container (test_scenario_package.c): the framing round trip,
- * the refusals a malformed buffer gets, the entry and brain lists, and two
- * containers open at the same time. */
+ * the refusals a malformed buffer gets, the entry and brain lists, two
+ * containers open at the same time, and the cap an entry is measured against
+ * before it is read. */
 int run_scenario_package_round_trip(void);
 int run_scenario_package_bad_framing(void);
 int run_scenario_package_entry_names(void);
 int run_scenario_package_two_open(void);
+int run_scenario_package_entry_cap(void);
 
 /* manifest.json (test_scenario_manifest_json.c): the schema into the struct
  * and back out with the keys this build does not read kept, the refusals a

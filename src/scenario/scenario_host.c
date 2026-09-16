@@ -3139,11 +3139,24 @@ static bool scnScriptFromPackage(ScnPackage *p, const char *from,
     const char             *entry;
     ScnParseReport          rep;
     char                    soft[SCN_ERR_LEN];
+    /* The read's own reason, kept apart from err so the line an operator sees
+       can name the file the container came out of as well. */
+    char                    why[SCN_ERR_LEN];
     bool                    ok = false;
 
-    if (!scnPackageReadEntry(p, SCN_PACKAGE_MANIFEST_ENTRY, &json, &jsonLen)) {
-        scnFmt(err, errLen, "scenario: the container in %s has no %s in it",
-               from, SCN_PACKAGE_MANIFEST_ENTRY);
+    why[0] = '\0';
+    if (!scnPackageReadEntry(p, SCN_PACKAGE_MANIFEST_ENTRY,
+                             SCN_PACKAGE_MANIFEST_MAX_BYTES, &json, &jsonLen,
+                             why, sizeof(why))) {
+        /* An entry that is simply not there gives no reason, which is the line
+           below; a manifest above the cap or one that would not come back
+           whole has said which, and that reason is the useful one. */
+        if (why[0] != '\0') {
+            scnFmt(err, errLen, "scenario: the container in %s: %s", from, why);
+        } else {
+            scnFmt(err, errLen, "scenario: the container in %s has no %s in it",
+                   from, SCN_PACKAGE_MANIFEST_ENTRY);
+        }
         goto done;
     }
     soft[0]     = '\0';
@@ -3155,20 +3168,22 @@ static bool scnScriptFromPackage(ScnPackage *p, const char *from,
         goto done;
     }
 
-    entry = scnManifestScriptEntry(doc);
-    if (!scnPackageReadEntry(p, entry, &luaBytes, &luaLen)) {
-        scnFmt(err, errLen,
-               "scenario: the container in %s names its script '%s' and has "
-               "no such entry", from, entry);
-        goto done;
-    }
     /* The same cap a loose script is read under: what is inside a container
-       is hand-written Lua too, and a script above it is not one. */
-    if (luaLen > (size_t)SCN_SCRIPT_MAX_BYTES) {
-        scnFmt(err, errLen,
-               "scenario: '%s' in %s is %lu bytes and the limit is %ld — too "
-               "large to be a script", entry, from, (unsigned long)luaLen,
-               (long)SCN_SCRIPT_MAX_BYTES);
+       is hand-written Lua too, and a script above it is not one. Handed to
+       the read rather than applied to what comes back, so a container
+       declaring a script of any size at all is refused before the memory for
+       it is asked for. */
+    entry = scnManifestScriptEntry(doc);
+    why[0] = '\0';
+    if (!scnPackageReadEntry(p, entry, (size_t)SCN_SCRIPT_MAX_BYTES, &luaBytes,
+                             &luaLen, why, sizeof(why))) {
+        if (why[0] != '\0') {
+            scnFmt(err, errLen, "scenario: the container in %s: %s", from, why);
+        } else {
+            scnFmt(err, errLen,
+                   "scenario: the container in %s names its script '%s' and "
+                   "has no such entry", from, entry);
+        }
         goto done;
     }
 

@@ -398,14 +398,16 @@ void scnPackageClose(ScnPackage *p) {
     free(p);
 }
 
-bool scnPackageReadEntry(ScnPackage *p, const char *name,
-                         uint8_t **outBytes, size_t *outLen) {
+bool scnPackageReadEntry(ScnPackage *p, const char *name, size_t maxBytes,
+                         uint8_t **outBytes, size_t *outLen,
+                         char *err, size_t errLen) {
     unz_file_info info;
     uint8_t *buf;
     size_t want;
     size_t done = 0;
     bool ok = true;
 
+    if (err != NULL && errLen > 0) err[0] = '\0';
     if (outBytes != NULL) *outBytes = NULL;
     if (outLen != NULL) *outLen = 0;
     if (p == NULL || name == NULL || outBytes == NULL || outLen == NULL) {
@@ -419,9 +421,21 @@ bool scnPackageReadEntry(ScnPackage *p, const char *name,
         != UNZ_OK) {
         return false;
     }
+
+    /* Measured before the entry is opened and long before it is allocated for.
+     * The size is the archive's own claim about the entry and costs four bytes
+     * to write, so a container a few dozen bytes long can ask for as much
+     * memory as the field holds. */
+    want = (size_t)info.uncompressed_size;
+    if (want > maxBytes) {
+        pkgErr(err, errLen,
+               "entry \"%s\" says it holds %lu bytes and the limit is %lu",
+               name, (unsigned long)want, (unsigned long)maxBytes);
+        return false;
+    }
+
     if (unzOpenCurrentFile(p->zip) != UNZ_OK) return false;
 
-    want = (size_t)info.uncompressed_size;
     /* One byte past the content, set to 0 below: an empty entry still gets a
      * pointer, and a caller handing a script or a manifest to something that
      * wants a C string can use the buffer as it stands. The length reported
@@ -429,15 +443,20 @@ bool scnPackageReadEntry(ScnPackage *p, const char *name,
     buf = (uint8_t *)malloc(want + 1);
     if (buf == NULL) {
         unzCloseCurrentFile(p->zip);
+        pkgErr(err, errLen, "out of memory reading entry \"%s\"", name);
         return false;
     }
 
+    /* want is inside maxBytes and each pass asks for no more than what is left
+     * of it, so an entry whose header understates what the archive actually
+     * holds fills the buffer and stops there rather than running past it. The
+     * short read that leaves is caught by the CRC at the close below. */
     while (done < want) {
         size_t left = want - done;
         unsigned ask = left > PKG_IO_CHUNK ? PKG_IO_CHUNK
                                               : (unsigned)left;
         int got = unzReadCurrentFile(p->zip, buf + done, ask);
-        if (got <= 0) {
+        if (got <= 0 || (size_t)got > (size_t)ask) {
             ok = false;
             break;
         }
@@ -449,6 +468,7 @@ bool scnPackageReadEntry(ScnPackage *p, const char *name,
 
     if (!ok) {
         free(buf);
+        pkgErr(err, errLen, "entry \"%s\" did not come back whole", name);
         return false;
     }
     buf[want] = '\0';

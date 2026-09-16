@@ -237,8 +237,9 @@ int run_scenario_pack_writes_container(void) {
                   scnPackageBrainCount(p));
 
     /* The script went in as it is on disk, byte for byte. */
-    UT_ASSERT_MSG(scnPackageReadEntry(p, SCN_PACKAGE_SCRIPT_ENTRY, &lua,
-                                      &luaLen),
+    UT_ASSERT_MSG(scnPackageReadEntry(p, SCN_PACKAGE_SCRIPT_ENTRY,
+                                      (size_t)SCN_SCRIPT_MAX_BYTES, &lua,
+                                      &luaLen, NULL, 0),
                   "%s could not be read back", SCN_PACKAGE_SCRIPT_ENTRY);
     UT_ASSERT(spReadWhole(script, &onDisk, &onDiskLen));
     UT_ASSERT_MSG(luaLen == onDiskLen,
@@ -292,8 +293,9 @@ int run_scenario_pack_manifest_agrees(void) {
     UT_ASSERT(scnPackageFindInMap(file, fileLen, &chunk, &chunkLen));
     p = scnPackageOpen(chunk, chunkLen, err, sizeof(err));
     UT_ASSERT_MSG(p != NULL, "the container does not open: %s", err);
-    UT_ASSERT(scnPackageReadEntry(p, SCN_PACKAGE_MANIFEST_ENTRY, &json,
-                                  &jsonLen));
+    UT_ASSERT(scnPackageReadEntry(p, SCN_PACKAGE_MANIFEST_ENTRY,
+                                  SCN_PACKAGE_MANIFEST_MAX_BYTES, &json,
+                                  &jsonLen, NULL, 0));
 
     doc = scnManifestParse(json, jsonLen, NULL, err, sizeof(err));
     UT_ASSERT_MSG(doc != NULL, "the manifest that was written will not parse: "

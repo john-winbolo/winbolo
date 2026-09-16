@@ -51,6 +51,17 @@
 /* The prefix a brain's files live under: brains/NAME/... */
 #define SCN_PACKAGE_BRAIN_PREFIX "brains/"
 
+/* The most manifest.json may inflate to. Every read of a manifest is held to
+ * this, because a manifest is the one entry read before anything about the
+ * container is known and the entry every reader opens.
+ *
+ * It is JSON naming a scenario, its lobby teams, its rules, its tags and its
+ * regions; the reference manifests in this tree are a couple of kilobytes and
+ * the shapes the parser will accept are bounded well inside that. 64 KiB is
+ * far more than one can honestly need and small enough that a container
+ * declaring a gigabyte of manifest is refused rather than allocated for. */
+#define SCN_PACKAGE_MANIFEST_MAX_BYTES (64u * 1024u)
+
 typedef struct ScnPackage ScnPackage;
 
 /* Open a WBSC container held in memory. bytes must start at the magic.
@@ -59,11 +70,26 @@ ScnPackage *scnPackageOpen(const uint8_t *bytes, size_t len,
                            char *err, size_t errLen);
 void        scnPackageClose(ScnPackage *p);
 
-/* One entry's content. *outBytes is malloc'd and the caller frees it. It
-   carries a 0 byte past the content, which *outLen does not count, so text
-   entries can be read as C strings without a copy. */
-bool scnPackageReadEntry(ScnPackage *p, const char *name,
-                         uint8_t **outBytes, size_t *outLen);
+/* One entry's content, up to maxBytes of it. *outBytes is malloc'd and the
+   caller frees it. It carries a 0 byte past the content, which *outLen does
+   not count, so text entries can be read as C strings without a copy.
+
+   maxBytes is what the caller will do something with, and the entry is
+   measured against it before a byte is allocated: an archive is a handful of
+   bytes that can declare any size at all, so without the cap a container of
+   forty bytes asks for whatever its header says. The inflate is held to the
+   same figure, so a header that understates its entry cannot write past what
+   was allocated for it either.
+
+   False for an entry that is not there, that is above maxBytes, or whose data
+   does not come back whole — the CRC is checked as the entry is closed. err
+   carries the reason where there is one to give; it is left empty for an
+   entry that is simply not in the container, which several callers treat as
+   an ordinary answer rather than a fault. err may be NULL only when errLen
+   is 0. */
+bool scnPackageReadEntry(ScnPackage *p, const char *name, size_t maxBytes,
+                         uint8_t **outBytes, size_t *outLen,
+                         char *err, size_t errLen);
 bool scnPackageHasEntry(const ScnPackage *p, const char *name);
 
 /* Every entry the archive holds, in archive order, so a validator can
