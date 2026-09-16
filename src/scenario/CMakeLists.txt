@@ -40,10 +40,14 @@
 #                     what proves scenario_defs.h and server_sim_scenario.h
 #                     stand up against public/ alone.
 #
-#                     Linked by the binaries that host a ServerSim from a
-#                     map file on disk — WinBoloDS and WinBoloHeadless — and
-#                     by WinBoloUnitTests, which drives it directly. Not by
-#                     wasm, gym or braintest, none of which host.
+#                     Linked by the six binaries that host a ServerSim:
+#                     WinBoloDS and WinBoloHeadless, the three client builds
+#                     that host in process — WinBolo, WinBoloIOS and the
+#                     Android main — and WinBoloUnitTests, which drives it
+#                     directly. Each of those six is built from a CMake tree
+#                     that has to declare this library's own dependencies as
+#                     well: see the cJSON note at the foot of this file. Not
+#                     linked by wasm, gym or braintest, none of which host.
 
 add_library(scenario_static STATIC
     scenario_host.c
@@ -101,9 +105,16 @@ target_link_libraries(scenario_static PRIVATE minizip)
 # the directory is added here beside the link.
 #
 # PRIVATE for the same reason as the two above: scenario_manifest_json.h
-# names no cJSON type, the tree stays inside the library, and a static
-# library passes the link itself along, so the binaries resolve the symbols
-# either way.
+# names no cJSON type, so the tree stays inside the library and no includer
+# sees cJSON.h.
+#
+# What PRIVATE does not do is create the target. A build that links
+# scenario_static has to declare cjson for itself, the way it declares SDL3,
+# Lua, zlib and minizip — so every one of the six trees that links this
+# library fetches it: the root CMakeLists.txt for WinBolo, WinBoloIOS,
+# WinBoloDS, WinBoloHeadless and WinBoloUnitTests, and
+# android/app/CMakeLists.txt for the Android main. A seventh consumer adds a
+# seventh declaration.
 target_link_libraries(scenario_static PRIVATE cjson)
 target_include_directories(scenario_static PRIVATE ${cjson_SOURCE_DIR})
 
