@@ -98,10 +98,10 @@ extern "C" bool showBaseLabels;
 #define OVERVIEW_LABEL_MIN_ZOOM 1.0f
 
 /* Zoom below which the view stops drawing sprites: the ground goes to one
- * colour block a square and tanks, pills and bases to marker shapes, which
- * read at sizes where an 8 px tile is a smudge. Both passes take their
- * answer from overviewViewSimple, so the ground and the things on it cannot
- * switch style on different rungs. */
+ * map colour a square and tanks, pills and bases to marker shapes
+ * (map_colours.h), which read at sizes where an 8 px tile is a smudge. Both
+ * passes take their answer from overviewViewSimple, so the ground and the
+ * things on it cannot switch style on different rungs. */
 #define OVERVIEW_SPRITE_MIN_ZOOM 1.0f
 
 static inline bool overviewViewSimple(float zoomScale) {
@@ -307,50 +307,26 @@ static void overviewViewFillDisc(SDL_Renderer *r, float cx, float cy,
                  (Uint8)(c.b * 255.0f + 0.5f), alpha, alpha);
 }
 
-/* What a pill or base square gets as a marker below OVERVIEW_SPRITE_MIN_ZOOM.
- * The classifier is the one the item numbers use, so the number pass and the
- * marker pass cannot disagree about which squares hold an item. */
-typedef enum {
-    OVERVIEW_ITEM_NONE = 0,
-    OVERVIEW_ITEM_PILL_GOOD,
-    OVERVIEW_ITEM_PILL_EVIL,
-    OVERVIEW_ITEM_BASE_GOOD,
-    OVERVIEW_ITEM_BASE_EVIL,
-    OVERVIEW_ITEM_BASE_NEUTRAL
-} OverviewItemKind;
-
-static OverviewItemKind overviewViewItemKind(BYTE tile) {
-    if (mapViewTileIsBase(tile)) {
-        if (tile == BASE_GOOD) return OVERVIEW_ITEM_BASE_GOOD;
-        if (tile == BASE_NEUTRAL) return OVERVIEW_ITEM_BASE_NEUTRAL;
-        return OVERVIEW_ITEM_BASE_EVIL;
-    }
-    if (mapViewTileIsPill(tile)) {
-        return (tile >= PILL_GOOD_15 && tile <= PILL_GOOD_0)
-               ? OVERVIEW_ITEM_PILL_GOOD : OVERVIEW_ITEM_PILL_EVIL;
-    }
-    return OVERVIEW_ITEM_NONE;
-}
-
-/* renderer.js draw_bases / draw_pills: a square for a base, a disc for a
- * pill, at the same sizes, in the shared marker palette and stroke (see
- * mapview_overlay.h). Neutral bases are amber, neutral pills red; every pill
- * health state draws alike. */
+/* A pill or a base, for the zooms where its sprite is too small to read: a
+ * disc for a pill and a square for a base, the two told apart by shape rather
+ * than by size, in the shared marker palette and stroke (map_colours.h). A
+ * pill draws the same whatever its health — at these sizes there is no room
+ * to show it, and the number pass is off this far out too. */
 static void overviewViewDrawItem(SDL_Renderer *r, const SDL_FRect *dest,
-                                 OverviewItemKind kind) {
-    bool base = kind >= OVERVIEW_ITEM_BASE_GOOD;
-    SDL_FColor color = mapViewMarkerEvil();
-    if (kind == OVERVIEW_ITEM_PILL_GOOD || kind == OVERVIEW_ITEM_BASE_GOOD) {
-        color = mapViewMarkerGood();
-    } else if (kind == OVERVIEW_ITEM_BASE_NEUTRAL) {
-        color = mapViewMarkerNeutral();
+                                 MapColourItem kind) {
+    bool base = kind >= MAP_COLOUR_ITEM_BASE_GOOD;
+    SDL_FColor color = mapColourMarkerEvil();
+    if (kind == MAP_COLOUR_ITEM_PILL_GOOD || kind == MAP_COLOUR_ITEM_BASE_GOOD) {
+        color = mapColourMarkerGood();
+    } else if (kind == MAP_COLOUR_ITEM_BASE_NEUTRAL) {
+        color = mapColourMarkerNeutral();
     }
     float radius = base ? SDL_max(2.5f, dest->w * 0.42f) : SDL_max(2.0f, dest->w * 0.36f);
     float cx = dest->x + dest->w / 2, cy = dest->y + dest->h / 2;
     SDL_FColor shades[3];
-    mapViewMarkerShades(color, shades);
+    mapColourMarkerShades(color, shades);
     for (int i = 0; i < 3; i++) {
-        float size = radius + mapViewMarkerLayerGrow(i);
+        float size = radius + mapColourMarkerLayerGrow(i);
         if (base) {
             SDL_FRect rect = { cx - size, cy - size, size * 2, size * 2 };
             SDL_SetRenderDrawColorFloat(r, shades[i].r, shades[i].g, shades[i].b, shades[i].a);
@@ -361,63 +337,12 @@ static void overviewViewDrawItem(SDL_Renderer *r, const SDL_FRect *dest,
     }
 }
 
-/* The colour block for a square below OVERVIEW_SPRITE_MIN_ZOOM, or false for
- * a sprite the palette has no entry for (a tank frame, say), which is drawn
- * from the sheet as at any other zoom.
- *
- * The snapshot holds sprite IDs, not terrain: what screenCalc chose to draw
- * on the square, including the pill and base sprites the memory keeps. The
- * plain terrains (BUILDING, RIVER, SWAMP, ... HALFBUILDING, 0..8 in global.h)
- * come through as themselves — the sprite table's first entries are indexed
- * by the raw terrain value — and everything with a shape variant comes
- * through as a tilenum.h range. A pill or base is drawn as the ground under
- * it here and gets its marker afterwards.
- *
- * The palette is the replay viewer's (winbolo_parser/viewer/renderer.js
- * TERRAIN_COLORS), not minimapTerrainColor's: that one is the lobby's map
- * preview, a whole map in 256 px where every terrain has to be told apart
- * at a glance, so its greens and greys are loud. In play the same square is
- * eight pixels or more and sits under markers, pings and the fog, and the
- * viewer's darker set is the one those were drawn against. */
-static bool overviewViewTerrainColor(BYTE tile, SDL_Color *color) {
-    Uint32 rgb;
-    if (mapViewTileIsBase(tile)) {
-        rgb = 0x000000;
-    } else if (mapViewTileIsPill(tile)) {
-        rgb = 0x002806;
-    } else if (tile >= ROAD_HORZ && tile <= ROAD_SIDE4) {
-        rgb = 0x000000;
-    } else if (tile >= BUILD_SINGLE && tile <= BUILD_MOST4) {
-        rgb = 0x785e41;
-    } else if (tile >= RIVER_END1 && tile <= RIVER_CORN4) {
-        rgb = 0x008c9c;
-    } else if (tile >= DEEP_SEA_SOLID && tile <= DEEP_SEA_SIDE4) {
-        rgb = 0x008a9e;
-    } else if (tile == FOREST || (tile >= FOREST_SINGLE && tile <= FOREST_RIGHT)) {
-        rgb = 0x045311;
-    } else if (tile == CRATER || (tile >= CRATER_SINGLE && tile <= CRATER_RIGHT)) {
-        rgb = 0x292911;
-    } else if (tile >= BOAT_0 && tile <= BOAT_8) {
-        rgb = 0x61848b;
-    } else {
-        switch (tile) {
-            case SWAMP:        rgb = 0x003933; break;
-            case RUBBLE:       rgb = 0x303819; break;
-            case GRASS:        rgb = 0x002806; break;
-            case HALFBUILDING: rgb = 0x56422c; break;
-            default: return false;
-        }
-    }
-    *color = { (Uint8)(rgb >> 16), (Uint8)(rgb >> 8), (Uint8)rgb, 255 };
-    return true;
-}
-
 /* A pill or base square seen during the ground pass, held back so its marker
  * goes on after the ground: a marker's minimum size can run a fraction past
  * its square, and the next square's block would clip it. */
 typedef struct {
     int              mx, my;
-    OverviewItemKind kind;
+    MapColourItem kind;
 } OverviewItemHit;
 
 static void overviewViewDrawItems(SDL_Renderer *r, const OverviewItemHit *hits,
@@ -479,11 +404,11 @@ static void overviewViewDrawTerrain(SDL_Renderer *r, SDL_Texture *tiles, int ss,
             BYTE flags = om->flags[mx][my];
             SDL_FRect dest = { sx, originY + (float)my * tilePx, tilePx, tilePx };
             SDL_Color color;
-            if (simple && overviewViewTerrainColor(tile, &color)) {
+            if (simple && mapColourTerrain(tile, &color)) {
                 SDL_SetRenderDrawColor(r, color.r, color.g, color.b, color.a);
                 SDL_RenderFillRect(r, &dest);
-                OverviewItemKind kind = overviewViewItemKind(tile);
-                if (kind != OVERVIEW_ITEM_NONE) {
+                MapColourItem kind = mapColourItemKind(tile);
+                if (kind != MAP_COLOUR_ITEM_NONE) {
                     if (hitCount == (int)(MAX_PILLS + MAX_BASES)) {
                         overviewViewDrawItems(r, hits, hitCount, originX, originY, tilePx);
                         hitCount = 0;

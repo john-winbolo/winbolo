@@ -26,8 +26,9 @@
 #include "overview_camera.h"
 
 /* Discrete zoom ladder. 0.5x is the floor (8 px squares — a window smaller
- * than the 2048 px map pans rather than switching to colour blocks) and 4x
- * the ceiling (64 px squares). */
+ * than the 2048 px map pans rather than zooming out further) and 4x the
+ * ceiling (64 px squares). The two rungs under 1x are where the view stops
+ * drawing sprites and fills each square with its map colour instead. */
 static const float kOverviewZoomSteps[] = {
     0.5f, 0.75f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f
 };
