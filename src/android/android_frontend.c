@@ -95,6 +95,7 @@ void sdl3MessageHandler(const char *message, const char *title) {
 
 void windowReCreate(void)  { }
 void windowSetQuitting(void) { winboloQuit = TRUE; finishedLoop = TRUE; }
+bool windowIsQuitting(void)   { return winboloQuit; }
 
 void windowApplyMenuChecks(ClientSim *cs) {
   clientSimSetGunsight(cs, showGunsight);

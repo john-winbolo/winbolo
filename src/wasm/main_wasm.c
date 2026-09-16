@@ -582,6 +582,7 @@ int main(int argc, char *argv[]) {
 
 void windowReCreate(void)  { }
 void windowSetQuitting(void) { winboloQuit = TRUE; finishedLoop = TRUE; }
+bool windowIsQuitting(void)   { return winboloQuit; }
 
 /* Leave the game: navigate the hosting page back to the lobby landing. */
 void windowLeaveGame(void) { emscripten_run_script("window.location.href='/'"); }

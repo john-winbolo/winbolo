@@ -569,6 +569,7 @@ static void windowRunGameTick(ClientSim *cs) {
 void *windowWnd(void) { return NULL; }
 void windowReCreate(void) {}
 void windowSetQuitting(void) { winboloQuit = TRUE; finishedLoop = TRUE; }
+bool windowIsQuitting(void)   { return winboloQuit; }
 
 void windowApplyMenuChecks(ClientSim *cs) {
     clientSimSetGunsight(cs, showGunsight);

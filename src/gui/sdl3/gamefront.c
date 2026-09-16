@@ -1077,6 +1077,15 @@ static bool gameFrontDialogs(void) {
   }
 
   while (done == FALSE) {
+    /* A dialog closes on a quit the same way it closes on Cancel, and most
+     * of them steer back to the welcome screen as they go.  Asked here,
+     * once, so the unwinding stops at the first screen to notice rather
+     * than walking the player back up the menus one dialog at a time. */
+    if (windowIsQuitting()) {
+      done = TRUE;
+      userQuit = TRUE;
+      break;
+    }
     switch (dlgState) {
     case openStart:
       dlgState = openWelcome;

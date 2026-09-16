@@ -291,12 +291,7 @@ extern "C" int imguiWelcomeShow(void) {
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
             if (dialogHandleUrlDropEvent(&ev)) { result = (int)openInternetManual; running = false; continue; }
-            if (ev.type == SDL_EVENT_QUIT) {
-                result = RESULT_QUIT;
-                running = false;
-            }
-            if (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
-                ev.window.windowID == SDL_GetWindowID(window)) {
+            if (dialogHandleQuitEvent(window, &ev)) {
                 result = RESULT_QUIT;
                 running = false;
             }

@@ -922,6 +922,12 @@ static inline void dialogRestorePosition(SDL_Window *win) {
     }
 }
 
+/* A close request the B button forged carries this in window.data1, so
+ * dialogHandleQuitEvent below can tell it apart from a real one.  Both
+ * close the dialog; only the real one ends the application.  SDL leaves
+ * data1 at zero on the close requests it sends itself. */
+#define DIALOG_CLOSE_IS_GAMEPAD_CANCEL 1
+
 /* Convert a gamepad B-button (EAST) press into a window-close request
  * for the given dialog window.  Lets controller users cancel any
  * standalone dialog with B, routing through the dialog's existing
@@ -946,7 +952,34 @@ static inline bool dialogHandleGamepadCancelEvent(SDL_Window *window, SDL_Event 
     ev->type = SDL_EVENT_WINDOW_CLOSE_REQUESTED;
     ev->window.windowID = SDL_GetWindowID(window);
     ev->window.timestamp = SDL_GetTicksNS();
+    ev->window.data1 = DIALOG_CLOSE_IS_GAMEPAD_CANCEL;
     return true;
+}
+
+/* Every screen runs its own event loop, so a quit has to be recognised in
+ * each of them or it stops at whichever one is on top — which is what used
+ * to happen: Cmd+Q in the game browser closed the browser and left the
+ * player on the menu.  Call this from a dialog's poll loop and end the loop
+ * when it returns true.
+ *
+ * Cmd+Q (SDL_EVENT_QUIT), Alt+F4 and the window's close box all mean the
+ * application should end, so they are recorded with windowSetQuitting() and
+ * the front end shuts down instead of dropping back a screen.  A B press is
+ * a cancel and is left alone: it arrives as the close request
+ * dialogHandleGamepadCancelEvent forged, marked as its own. */
+extern "C" void windowSetQuitting(void);  /* winbolo.c */
+static inline bool dialogHandleQuitEvent(SDL_Window *window, const SDL_Event *ev) {
+    if (!ev) return false;
+    if (ev->type == SDL_EVENT_QUIT) {
+        windowSetQuitting();
+        return true;
+    }
+    if (ev->type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && window &&
+        ev->window.windowID == SDL_GetWindowID(window)) {
+        if (ev->window.data1 != DIALOG_CLOSE_IS_GAMEPAD_CANCEL) windowSetQuitting();
+        return true;
+    }
+    return false;
 }
 
 /* Check an SDL event for a winbolo:// URL drop.

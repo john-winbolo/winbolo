@@ -2767,11 +2767,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 ev.window.windowID == SDL_GetWindowID(window)) {
                 lobbySaveWindowGeometry(window);
             }
-            if (ev.type == SDL_EVENT_QUIT) {
-                running = false;
-            }
-            if (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
-                ev.window.windowID == SDL_GetWindowID(window)) {
+            if (dialogHandleQuitEvent(window, &ev)) {
                 running = false;
             }
         }
