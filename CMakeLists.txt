@@ -5230,6 +5230,7 @@ set(_unit_test_names
     lobby_template_map_commit_seats
     survival_lobby_round
     survival_lobby_round_full
+    survival_lobby_round_ds_order
     loopback_unfield_tank
     lobby_template_return_reconciles
     lobby_template_return_unfields

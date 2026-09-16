@@ -1104,6 +1104,7 @@ static const UnitTestEntry s_tests[] = {
     { "lobby_template_map_commit_seats",         run_lobby_template_map_commit_seats         },
     { "survival_lobby_round",                    run_survival_lobby_round                    },
     { "survival_lobby_round_full",               run_survival_lobby_round_full               },
+    { "survival_lobby_round_ds_order",           run_survival_lobby_round_ds_order           },
     { "loopback_unfield_tank",                   run_loopback_unfield_tank                   },
     { "lobby_template_return_reconciles",        run_lobby_template_return_reconciles        },
     { "lobby_template_return_unfields",          run_lobby_template_return_unfields          },

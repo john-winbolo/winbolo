@@ -298,6 +298,9 @@ local wave_bots   = {}     -- seat -> true for a fielded wave member
 local seen_fielded = {}   -- seat -> true once a prune pass saw it on the
                           -- field; reset when a wave launches (see the
                           -- prune for why a queued spawn must not count)
+local ashore_said  = {}   -- seat -> true once this wave's arrival line is out
+local spawn_start  = {}   -- seat -> the start number the spawn named, or nil
+                          -- when the placement was left to on_choose_start
 local next_wave_at = nil   -- tick the next wave lands (nil while one is live)
 local warn_gap    = nil    -- ticks the current countdown started with
 local warn_next   = 1      -- next WAVE_WARN_S entry still to say
@@ -368,6 +371,28 @@ local function seats_on(team)
   return out
 end
 
+-- Where a seat comes in its OWN side's list, counting from zero: the first
+-- seat on that team is 0, the next 1, and so on up the roster.
+--
+-- This is the number every placement below is built on. A slot number is a
+-- number the lobby handed out, and which numbers a side gets depends on who
+-- sat down first — a dedicated server seats the scenario's template into an
+-- empty roster and the horde takes 0..9, a host's own game seats him first
+-- and the horde starts at 1, a headless run seats its -bots first and the
+-- horde starts above them. A rank is the same whichever of those happened,
+-- so a rule written on it behaves the same in all three.
+--
+-- nil for a seat with no team, which is the one case a rank cannot be had.
+local function seat_rank(p)
+  local team = seat_team(p)
+  local rank = 0
+  if team == nil or team == 0 then return nil end
+  for q = 0, p - 1 do
+    if seat_team(q) == team then rank = rank + 1 end
+  end
+  return rank
+end
+
 -- ---------------------------------------------------------------------
 -- Policies.
 
@@ -411,6 +436,7 @@ end
 -- lands in 7..16.
 function on_choose_start(p)
   local ls = game.lobby_slot(p)
+  local rank = seat_rank(p)
   local enemy
   if ls ~= nil and ls.team ~= 0 then
     enemy = (ls.team == WAVE_TEAM)
@@ -418,15 +444,15 @@ function on_choose_start(p)
     enemy = (p >= 6 and p <= 15)   -- no roster info: the slot heuristic
   end
   if enemy then
-    if p >= 6 and p <= 15 then
-      -- Each of the ten wave seats owns one ocean start, on its own
-      -- 36-degree spoke. Four of those spokes carry a horde base, so those
-      -- seats come ashore aimed at their own and the rest fight in.
-      return 22 - p
-    end
-    return 7 + (p % 10)
+    -- Each wave seat owns one ocean start, on its own 36-degree spoke,
+    -- taken by its rank on the horde's side rather than by its slot
+    -- number. Four of those spokes carry a horde base, so those seats come
+    -- ashore aimed at their own and the rest fight in. A seat with no team
+    -- has no rank; its slot still lands in 7..16, which is ocean.
+    return 7 + ((rank or p) % 10)
   end
-  return 1 + (p % 6)               -- defenders: the puddle
+  -- Defenders: the puddle, one position per rank on their own side.
+  return 1 + ((rank or p) % 6)
 end
 
 -- ---------------------------------------------------------------------
@@ -840,12 +866,15 @@ local function pump_spawn_queue(tick)
   -- the wave's own brain tokens.
   local seat = seats[spawn_index]
   local p
+  local start
   if seat ~= nil then
-    -- Each of the ten wave seats owns one ocean start. A seat outside 6..15
-    -- has no spoke of its own, so the start is left to on_choose_start
-    -- rather than named as a number that is off the map.
-    local start = nil
-    if seat >= 6 and seat <= 15 then start = 22 - seat end
+    -- Each wave seat owns one ocean start, by its rank on the horde's side.
+    -- NAMED here for every seat rather than left to on_choose_start: a start
+    -- the spawn names is honoured by the tank's own resolver ahead of any
+    -- placement policy, so the wave lands on the ring whether or not the
+    -- policy is asked. The rank is the seat's position in this wave's own
+    -- list where the roster no longer answers for it.
+    start = 7 + ((seat_rank(seat) or (spawn_index - 1)) % 10)
     -- The loadout is named here as well as answered by spawn_loadout. A
     -- named one outranks the policy and is taken as it is read, so the
     -- first life is full whatever else is going on; the policy carries
@@ -862,6 +891,10 @@ local function pump_spawn_queue(tick)
   end
 
   if p then
+    -- What this seat was told, kept for the arrival line below: a recording
+    -- of a round otherwise carries no placement at all, and "where did the
+    -- attackers land" is the first question a wrong-looking wave raises.
+    spawn_start[p] = start
     -- The wave's orders, queued right behind the spawn. Both are roster ops
     -- and the sim drains one a tick, so this lands the tick after the bot
     -- does — by which time it is on the field, which is what bot_init needs.
@@ -914,6 +947,7 @@ local function spawn_wave()
   -- are the same ten every wave, and a mark left from the last wave would
   -- read this wave's queued spawn as a departure.
   seen_fielded = {}
+  ashore_said  = {}
   game.message(string.format("[wave] %d: clock started at tick %d, ends at tick %d (%d s)",
     wave, game.tick(), wave_ends_at, WAVE_LIMIT_S))
   last_min_mark = nil
@@ -1055,6 +1089,23 @@ local function prune_wave_bots()
     local ls = game.lobby_slot(p)
     if ls ~= nil and ls.fielded then
       seen_fielded[p] = true
+      -- Where this attacker actually came ashore, said once per seat per
+      -- wave. The seat reads as fielded a tick before its tank exists, so
+      -- the line waits for the tank rather than the roster.
+      if not ashore_said[p] then
+        local t = game.tank(p)
+        if t ~= nil then
+          local line = string.format(
+            "[wave] attacker %d ashore at (%d,%d) start=%s",
+            p, t.mx, t.my,
+            spawn_start[p] ~= nil and tostring(spawn_start[p]) or "chooser")
+          ashore_said[p] = true
+          -- The newswire, so a recording carries it, and the console, so an
+          -- operator watching a headless round reads it as it happens.
+          game.message(line)
+          game.log("Survival: " .. line)
+        end
+      end
     elseif not vanishing and (ls == nil or seen_fielded[p]) then
       game.message(string.format("[wave] seat %d left the wave list at tick %d (%s)",
         p, game.tick(), (ls == nil) and "gone from the roster" or "no longer fielded"))
@@ -1390,7 +1441,12 @@ local function prebuild_bot_pills()
   if #owed == 0 then return end
 
   for _, p in ipairs(owed) do
-    local si = game.start(1 + (p % 6))
+    -- The same rule on_choose_start places this seat by, so the pill it is
+    -- dealt is the one nearest the puddle position it actually stands on.
+    -- A tank on the field is better still: the rank is what put it there.
+    local t  = game.tank(p)
+    local si = t ~= nil and { x = t.mx, y = t.my }
+               or game.start(1 + ((seat_rank(p) or p) % 6))
     if si ~= nil then
       local best, bestr, bestd
       for n = 1, CENTER_PILLS do

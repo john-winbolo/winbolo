@@ -24,6 +24,16 @@
  *      — one human and FIVE defender bots: a full keep, one position each.
  *        Started in place, with no countdown, which is the path a host
  *        playing on their own machine takes. This is the owner's own game.
+ * run_survival_lobby_round_ds_order
+ *      — a DEDICATED server's order, which is neither of the above: the
+ *        template is seated into an empty roster so the horde holds 0..9,
+ *        the people join above it, the host browses away to a plain map and
+ *        back, and then trims the wave to five. The horde is left on the
+ *        very slot numbers the map file gives to the centre puddle, which
+ *        is where a slot-numbered placement puts it. Checks that the wave
+ *        still comes ashore on the outer ocean ring and the people are
+ *        still in the keep. Its own case rather than a third shape of
+ *        slrRound: it holds one fact and holds it in the order a DS makes.
  *
  * Both check the same facts:
  *      * the horde really does hold the low seats, so the case is testing
@@ -84,6 +94,7 @@
    text), so this is where the round's clock is read off. */
 typedef struct {
     int      count;
+    int      ashoreLines;   /* "[wave] attacker N ashore at ..." */
     uint32_t digInTick;
     uint32_t waveTick;
 } SlrText;
@@ -104,6 +115,9 @@ static void slrTextCb(void *ctx, const ControlEvent *evt) {
     if (strstr(evt->u.serverText.text, "attackers inbound!") != NULL &&
         slrSeen->waveTick == SLR_NO_TICK) {
         slrSeen->waveTick = slrSim != NULL ? slrSim->tick : 0;
+    }
+    if (strstr(evt->u.serverText.text, " ashore at ") != NULL) {
+        slrSeen->ashoreLines++;
     }
 }
 
@@ -707,6 +721,216 @@ static int slrRound(int bots, bool inPlace) {
                           "2's end and its departures", fielded);
         }
     }
+
+    slrSeen = NULL;
+    slrSim  = NULL;
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ------------------------------------------------------------------
+ * The dedicated server's own seating order, and where the horde lands.
+ *
+ * A DS boots with nobody in it, so the template is seated FIRST and the
+ * ten held horde seats take slots 0..9. The people join above them, and
+ * the host then trims the wave down in the lobby. That leaves the horde
+ * holding 0..5 — the very numbers the map file gives to the centre
+ * puddle — and a placement rule that reads a start off a slot number
+ * lands the whole wave inside the keep it is supposed to be attacking.
+ *
+ * The map's starts: 1..6 the centre puddle, 7..16 the outer ocean ring,
+ * one to each 36-degree spoke.
+ * ------------------------------------------------------------------ */
+
+#define SLR_MAP_MID     128   /* the island's middle */
+#define SLR_OCEAN_MIN_R  18   /* the ring sits at r~25; the puddle inside 8 */
+#define SLR_PUDDLE_MAX_R 10
+#define SLR_DS_HUMANS     2
+#define SLR_DS_KEPT       5   /* horde seats left after the host's trim */
+
+/* How far a fielded seat is from the middle, in map squares. */
+static int slrRadius(ServerSim *sim, int slot) {
+    WORLD wx = 0, wy = 0;
+    int   dx, dy;
+    tankGetWorld(&sim->sim.tanks[slot], &wx, &wy);
+    dx = (int)(wx >> TANK_SHIFT_MAPSIZE) - SLR_MAP_MID;
+    dy = (int)(wy >> TANK_SHIFT_MAPSIZE) - SLR_MAP_MID;
+    if (dx < 0) dx = -dx;
+    if (dy < 0) dy = -dy;
+    /* The spokes are diagonal as often as not, so the straight-line
+       distance is what the ring is round: an octagon test would pass a
+       tank sitting on the puddle's corner. */
+    return (int)(SDL_sqrt((double)(dx * dx + dy * dy)) + 0.5);
+}
+
+int run_survival_lobby_round_ds_order(void) {
+    char          mapPath[512];
+    char          err[512];
+    ServerSim    *sim;
+    ScenarioHost *host;
+    SlrText       seen;
+    int           i;
+    int           humanSlot[SLR_DS_HUMANS];
+    int           hordeSeen = 0;
+    uint32_t      graceFrom;
+
+    memset(&seen, 0, sizeof(seen));
+    seen.digInTick = SLR_NO_TICK;
+    seen.waveTick  = SLR_NO_TICK;
+
+    snprintf(mapPath, sizeof(mapPath), "%s/Survival.map", WB_DATA_MAPS_DIR);
+    sim = serverSimCreate(mapPath, gameOpen, false, 0, -1);
+    if (sim == NULL) UT_FAIL("the map is missing or will not load: %s", mapPath);
+    slrSim = sim;
+    serverSimSetLobbyEnabled(sim, true);
+    serverSimSetBotAiType(sim, aiFull);
+    serverSimSetBotBrainPath(sim, "brains/GoalHunter_1.7/init.lua");
+
+    err[0] = '\0';
+    host = scenarioHostAttach(sim, mapPath, err, sizeof(err));
+    if (host == NULL) {
+        serverSimDestroy(sim);
+        UT_FAIL("the script beside %s was refused: %s", mapPath, err);
+    }
+
+    /* The DS's order: the template goes down into an empty roster. */
+    ut_brain_stub_arm(true);
+    serverSimScenarioSeatLobby(sim);
+    for (i = 0; i < SLR_HORDE_SEATS; i++) {
+        UT_ASSERT_MSG(slrTeam(sim, i) == SLR_WAVE_TEAM,
+                      "slot %d is on team %d, not the horde's: the template "
+                      "did not take the low slots", i, (int)slrTeam(sim, i));
+    }
+
+    /* Then the people, above it. */
+    for (i = 0; i < SLR_DS_HUMANS; i++) {
+        int slot = serverSimFindFreeSlot(sim, false);
+        if (slot < 0) UT_FAIL("no free slot for human %d", i);
+        serverSimAddPlayer(sim, (BYTE)slot, "Def", false);
+        sim->lobbyPlayers[slot].ready      = true;
+        sim->lobbyPlayers[slot].teamNumber = SLR_DEF_TEAM;
+        humanSlot[i] = slot;
+    }
+
+    /* The host's map browse: away to a plain map and straight back. The
+       scenario goes with the map and comes back with it, and the template
+       re-seats into the slots it just gave up — 0..9 again, under the two
+       people. */
+    scenarioHostFollowMap(sim, &host);
+    /* Nobody is ready while the host is browsing maps — the lobby's own
+       auto-unready sees to that on every change, and a lobby that stayed
+       ready would start the round out from under him. */
+    for (i = 0; i < SLR_DS_HUMANS; i++) {
+        sim->lobbyPlayers[humanSlot[i]].ready = false;
+    }
+    {
+        char plain[512];
+        snprintf(plain, sizeof(plain), "%s/Everard Island.map",
+                 WB_DATA_MAPS_DIR);
+        UT_ASSERT_MSG(serverSimReloadMap(sim, plain),
+                      "the plain map would not load: %s", plain);
+        UT_ASSERT_MSG(serverSimReloadMap(sim, mapPath),
+                      "the scenario map would not load back: %s", mapPath);
+    }
+    UT_ASSERT_MSG(host != NULL,
+                  "the scenario did not come back with its map");
+    for (i = 0; i < SLR_HORDE_SEATS; i++) {
+        UT_ASSERT_MSG(slrTeam(sim, i) == SLR_WAVE_TEAM,
+                      "after the map came back slot %d is on team %d, not "
+                      "the horde's", i, (int)slrTeam(sim, i));
+    }
+    for (i = 0; i < SLR_DS_HUMANS; i++) {
+        sim->lobbyPlayers[humanSlot[i]].ready      = true;
+        sim->lobbyPlayers[humanSlot[i]].teamNumber = SLR_DEF_TEAM;
+    }
+
+    /* And the host's trim: four horde seats taken out in the lobby, which
+       leaves the wave holding 0..5. */
+    for (i = SLR_DS_KEPT; i < SLR_HORDE_SEATS; i++) {
+        serverSimRemoveBot(sim, (BYTE)i);
+    }
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (slrTeam(sim, i) == SLR_WAVE_TEAM) hordeSeen++;
+    }
+    UT_ASSERT_MSG(hordeSeen == SLR_DS_KEPT,
+                  "%d horde seat(s) are in the roster after the trim, "
+                  "expected %d", hordeSeen, SLR_DS_KEPT);
+
+    (void)serverSimRegisterSubscriber(sim, slrTextCb, NULL);
+    slrSeen = &seen;
+
+    sim->worldPreLoaded = FALSE;
+    serverSimLobbyCheckAllReady(sim);
+    while (sim->state == serverStateCountdown) serverSimTick(sim);
+    UT_ASSERT_MSG(sim->state == serverStateRunning,
+                  "the round did not start: state %d", (int)sim->state);
+    graceFrom = sim->tick;
+    serverSimTick(sim);
+    UT_ASSERT_MSG(scenarioHostLastError(host)[0] == '\0',
+                  "the round's setup complained: %s",
+                  scenarioHostLastError(host));
+
+    /* Out to wave 1, and 200 ticks past its landing so the whole wave is
+       ashore and settled. */
+    while (sim->tick < graceFrom + SLR_GRACE_TICKS + 400 &&
+           seen.waveTick == SLR_NO_TICK) {
+        serverSimTick(sim);
+    }
+    UT_ASSERT_MSG(seen.waveTick != SLR_NO_TICK,
+                  "no wave was called by tick %u", (unsigned)sim->tick);
+    for (i = 0; i < 200; i++) serverSimTick(sim);
+
+    /* The people are in the keep. */
+    for (i = 0; i < SLR_DS_HUMANS; i++) {
+        int r;
+        UT_ASSERT_MSG(sim->sim.tanks[humanSlot[i]] != NULL,
+                      "the human in slot %d has no tank", humanSlot[i]);
+        r = slrRadius(sim, humanSlot[i]);
+        UT_ASSERT_MSG(r <= SLR_PUDDLE_MAX_R,
+                      "the human in slot %d stands %d square(s) from the "
+                      "middle, outside the keep", humanSlot[i], r);
+    }
+
+    /* And every attacker is out on the ocean ring, not in the puddle with
+       them. */
+    {
+        int       ashore = 0;
+        uint16_t  horde  = 0;
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (slrTeam(sim, i) == SLR_WAVE_TEAM) horde |= (uint16_t)(1u << i);
+        }
+        UT_ASSERT_MSG(horde != 0, "no horde seat is in the roster");
+        for (i = 0; i < MAX_TANKS; i++) {
+            int      r;
+            uint16_t srv;
+            if (slrTeam(sim, i) != SLR_WAVE_TEAM) continue;
+            if (!sim->lobbyPlayers[i].fielded) continue;
+            UT_ASSERT_MSG(sim->sim.tanks[i] != NULL,
+                          "attacker %d is on the field with no tank", i);
+            ashore++;
+            r = slrRadius(sim, i);
+            UT_ASSERT_MSG(r >= SLR_OCEAN_MIN_R,
+                          "attacker %d came ashore %d square(s) from the "
+                          "middle: it was put in the keep with the "
+                          "defenders, not on the ocean ring", i, r);
+            srv = (uint16_t)playersGetAlliesBitMap(&sim->sim.plyrs, (BYTE)i);
+            UT_ASSERT_MSG((srv & horde) == horde && (srv & ~horde) == 0,
+                          "the server has attacker %d allied with 0x%04x, "
+                          "which is not exactly the horde's 0x%04x",
+                          i, (unsigned)srv, (unsigned)horde);
+        }
+        UT_ASSERT_MSG(ashore == SLR_DS_KEPT,
+                      "%d attacker(s) reached the field, expected %d",
+                      ashore, SLR_DS_KEPT);
+    }
+
+    /* And the round SAID where each of them landed. A recording of the
+       owner's own server carried no position at all, so a wave that came
+       ashore in the wrong place could only be argued about; one line per
+       attacker per wave is what turns that into a fact. */
+    UT_ASSERT_MSG(seen.ashoreLines == SLR_DS_KEPT,
+                  "the round put out %d arrival line(s) for %d attacker(s)",
+                  seen.ashoreLines, SLR_DS_KEPT);
 
     slrSeen = NULL;
     slrSim  = NULL;
