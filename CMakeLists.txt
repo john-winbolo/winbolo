@@ -3471,6 +3471,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # an emptied lobby resets, and leaving a preview and a plain map alone.
     tests/unit/test_lobby_template.c
     tests/unit/test_survival_lobby_round.c
+    # What a real client draws when a held seat is taken off the field: the
+    # tank has to go with it, though the roster row stays.
+    tests/unit/test_loopback_unfield_tank.c
     # The scripted game type: the fourth value resolving through the base game
     # a scenario declared, at the loadout and at the start, and that value
     # going when the template does.
@@ -5227,6 +5230,7 @@ set(_unit_test_names
     lobby_template_map_commit_seats
     survival_lobby_round
     survival_lobby_round_full
+    loopback_unfield_tank
     lobby_template_return_reconciles
     lobby_template_return_unfields
     lobby_template_reset_reseats

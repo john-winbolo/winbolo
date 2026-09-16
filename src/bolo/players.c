@@ -1081,7 +1081,21 @@ void playersMakeScreenTanks(ClientSim *cs, GameSim *sim, players *plrs, screenTa
   }
 
   for (count=0;count<MAX_TANKS;count++) {
-    if ((*plrs)->item[count].inUse == TRUE && count != clientSimGetMyPlayerNum(cs)) {
+    /* A seat the roster HOLDS with nobody on the field has no tank to draw.
+       Its players-table row stays in use — the name, the team and the
+       alliance are the seat's and outlive the bot that was on it — and the
+       row still carries wherever that bot last was, so without this test the
+       tank goes on being drawn at the spot it was taken off the field at:
+       frozen, and with nothing behind it on the server, so shells pass
+       through it. That is what a wave's departures left on the screen.
+
+       The same question the status strip asks (playersSetPlayer and
+       clientSimGetTankAlliance both ask it), so the world and the strip
+       agree about what a held seat is. csParam is NULL on the server paths,
+       where the predicate answers false and every in-use row is drawn as
+       before. */
+    if ((*plrs)->item[count].inUse == TRUE && count != clientSimGetMyPlayerNum(cs)
+        && !clientSimSlotIsUnfielded(cs, count)) {
       playerName[0] = EMPTY_CHAR;
       /* Extract fixed map co-ordinates */
       conv = (*plrs)->item[count].mapX;
