@@ -180,9 +180,29 @@ Building=#785e41
 HalfBuilding=#56422c
 
 ; the shapes standing on it, one colour per side
+MarkerSelf=#b4b4b4
 MarkerGood=#58d858
 MarkerEvil=#ff5d5d
 MarkerNeutral=#f0b429
+
+; the seventeen colours a player can be assigned
+TeamGrey=#6f6f6f
+TeamKhaki=#c8df00
+TeamGreen=#18b510
+TeamPink=#fd77ff
+TeamYellow=#ffff31
+TeamLightBlue=#008f9f
+TeamOrange=#ffce00
+TeamLightPurple=#bf00bf
+TeamAqua=#00ffff
+TeamLightGreen=#31ce31
+TeamLightGrey=#a5a5a5
+TeamRed=#bf0000
+TeamBlue=#0000bd
+TeamBrown=#808000
+TeamLightPink=#ffc0c0
+TeamPaleGreen=#96ff96
+TeamPurple=#60127a
 ```
 
 Those are the built-in values, so that block changes nothing — copy it and edit
@@ -204,6 +224,21 @@ the lines you care about.
   friendly tank parked on a friendly base is one colour. `MarkerNeutral` is
   bases only — a pillbox nobody owns takes `MarkerEvil`, because to everyone
   who can see it that is what it is.
+- `MarkerSelf` is the viewer's own tank, where a view tells it apart from its
+  allies. The game does not — in play your own tank is `MarkerGood` like every
+  other friendly one — so this only shows up in the log viewer's ally-colour
+  mode.
+- The seventeen `Team*` keys are the colours a player can be assigned, named as
+  the log viewer's Team Colours dialog names them. **The name says which slot,
+  not what you have to put in it** — `TeamGrey` is the first slot, and setting
+  it to blue is allowed, if confusing for anyone reading your file.
+
+  Their built-in values are read off `tanks.bmp`, one per row, so a marker
+  drawn in one of them is the colour of the tank it stands for. **If you
+  repaint the tanks, set these to match**, or a player's marker and their tank
+  will be different colours. If you leave the tank art alone, leave these
+  alone. `TeamGrey` is the one to watch: grey is also the structural colour
+  every tank shares, so that row has no colour of its own to read.
 - A pillbox draws the same whatever its health, and a square carrying a mine
   draws as the ground under it.
 

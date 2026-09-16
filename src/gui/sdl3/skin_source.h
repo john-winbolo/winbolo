@@ -54,6 +54,10 @@ typedef enum SkinKind {
    names three colours gets those three and the built-in rest. */
 #define SKIN_COLOUR_NONE (-1)
 
+/* Colours a player can be assigned. Matches the log viewer's Team Colours
+   dialog, which offers exactly these. */
+#define SKIN_TEAM_COLOUR_COUNT 17
+
 /* [MapPalette] section of skin.ini: what a map is drawn in once it is too
    small for its sprites - the map overview and the full screen map below 1x,
    and the map choosers at every zoomed-out rung. Each entry is 0xRRGGBB, or
@@ -79,10 +83,20 @@ typedef struct SkinMapPalette {
     int32_t building;
     int32_t halfBuilding;
     /* The shapes standing on it: the tank triangle, the pill disc and the
-       base square, which share one colour per allegiance. */
+       base square, which share one colour per allegiance. markerSelf is the
+       viewer's own tank where a view tells it apart from its allies; the game
+       does not, and draws it markerGood. */
+    int32_t markerSelf;
     int32_t markerGood;
     int32_t markerEvil;
     int32_t markerNeutral;
+    /* The seventeen colours a player can be assigned, in the order the log
+       viewer's Team Colours dialog lists them - Grey, Khaki, Green, Pink,
+       Yellow, LightBlue, Orange, LightPurple, Aqua, LightGreen, LightGrey,
+       Red, Blue, Brown, LightPink, PaleGreen, Purple. An array rather than
+       seventeen named fields: they are one list, and every consumer indexes
+       it by the player's assigned slot. */
+    int32_t team[SKIN_TEAM_COLOUR_COUNT];
 } SkinMapPalette;
 
 /* [Skin] section of skin.ini. Absent keys leave empty strings / zeros,

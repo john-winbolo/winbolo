@@ -22,6 +22,7 @@
 
 #include <stddef.h>   /* offsetof */
 #include "skin_source.h"
+#include "platform_types.h"   /* BOLO_STATIC_ASSERT */
 
 #include <SDL3/SDL.h>
 
@@ -671,10 +672,37 @@ static const struct {
     { "Boat",          offsetof(SkinMapPalette, boat)          },
     { "Building",      offsetof(SkinMapPalette, building)      },
     { "HalfBuilding",  offsetof(SkinMapPalette, halfBuilding)  },
+    { "MarkerSelf",    offsetof(SkinMapPalette, markerSelf)    },
     { "MarkerGood",    offsetof(SkinMapPalette, markerGood)    },
     { "MarkerEvil",    offsetof(SkinMapPalette, markerEvil)    },
     { "MarkerNeutral", offsetof(SkinMapPalette, markerNeutral) },
+    /* The assignable player colours, named as the Team Colours dialog names
+       them. A skin may rename nothing: the key says which slot, not what
+       colour an author has to put in it. */
+    { "TeamGrey",        offsetof(SkinMapPalette, team[0])  },
+    { "TeamKhaki",       offsetof(SkinMapPalette, team[1])  },
+    { "TeamGreen",       offsetof(SkinMapPalette, team[2])  },
+    { "TeamPink",        offsetof(SkinMapPalette, team[3])  },
+    { "TeamYellow",      offsetof(SkinMapPalette, team[4])  },
+    { "TeamLightBlue",   offsetof(SkinMapPalette, team[5])  },
+    { "TeamOrange",      offsetof(SkinMapPalette, team[6])  },
+    { "TeamLightPurple", offsetof(SkinMapPalette, team[7])  },
+    { "TeamAqua",        offsetof(SkinMapPalette, team[8])  },
+    { "TeamLightGreen",  offsetof(SkinMapPalette, team[9])  },
+    { "TeamLightGrey",   offsetof(SkinMapPalette, team[10]) },
+    { "TeamRed",         offsetof(SkinMapPalette, team[11]) },
+    { "TeamBlue",        offsetof(SkinMapPalette, team[12]) },
+    { "TeamBrown",       offsetof(SkinMapPalette, team[13]) },
+    { "TeamLightPink",   offsetof(SkinMapPalette, team[14]) },
+    { "TeamPaleGreen",   offsetof(SkinMapPalette, team[15]) },
+    { "TeamPurple",      offsetof(SkinMapPalette, team[16]) },
 };
+
+/* One key per entry, and no entry without a key: a field added to
+   SkinMapPalette with no row above it would silently never be settable. */
+BOLO_STATIC_ASSERT(sizeof(kPaletteKeys) / sizeof(kPaletteKeys[0]) ==
+                       sizeof(SkinMapPalette) / sizeof(int32_t),
+                   skin_palette_keys_cover_every_entry);
 
 /* True when the key was one of ours, whatever the value parsed to: an
    unreadable colour is still that key, and leaves its entry alone. */

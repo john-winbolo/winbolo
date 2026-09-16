@@ -1658,6 +1658,7 @@ int run_map_colours_item_kind(void);
 int run_map_colours_terrain(void);
 int run_map_colours_markers(void);
 int run_map_colours_palette_key(void);
+int run_map_colours_team(void);
 
 int run_stall_advances_processed_tick(void);
 int run_stall_mine_late_lays_once(void);

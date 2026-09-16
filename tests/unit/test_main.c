@@ -778,6 +778,7 @@ static const UnitTestEntry s_tests[] = {
     { "map_colours_terrain",                     run_map_colours_terrain                     },
     { "map_colours_markers",                     run_map_colours_markers                     },
     { "map_colours_palette_key",                 run_map_colours_palette_key                 },
+    { "map_colours_team",                        run_map_colours_team                        },
     { "stall_advances_processed_tick",           run_stall_advances_processed_tick           },
     { "stall_mine_late_lays_once",               run_stall_mine_late_lays_once               },
     { "stall_mine_duplicate_not_relaid",         run_stall_mine_duplicate_not_relaid         },

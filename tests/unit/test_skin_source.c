@@ -714,6 +714,9 @@ int run_skin_map_palette(void) {
         "Road=0xFF0000\n"          /* 0x, and upper case */
         "deepsea=#000000\n"        /* key case is not significant; 0 is a colour */
         "MarkerGood=#00ff00\n"
+        "MarkerSelf=#010203\n"
+        "TeamGrey=#111111\n"          /* the first of the seventeen */
+        "teampurple=#222222\n"        /* the last, key case ignored */
         "Rubble=#12345\n"          /* five digits: not a colour */
         "Crater=#1234567\n"        /* seven: not a colour either */
         "Forest=green\n"           /* not hex at all */
@@ -794,6 +797,25 @@ int run_skin_map_palette(void) {
     UT_ASSERT_MSG(info.mapPalette.boat == SKIN_COLOUR_NONE,
                   "Boat is %d: an empty value was taken as a colour",
                   info.mapPalette.boat);
+
+    /* markerSelf and the seventeen assignable colours are settable, and an
+     * unnamed one of the seventeen is left alone rather than dragged along
+     * with its neighbours. */
+    UT_ASSERT_MSG(info.mapPalette.markerSelf == 0x010203,
+                  "MarkerSelf is %d, want 010203", info.mapPalette.markerSelf);
+    UT_ASSERT_MSG(info.mapPalette.team[0] == 0x111111,
+                  "TeamGrey is %d, want 111111", info.mapPalette.team[0]);
+    UT_ASSERT_MSG(info.mapPalette.team[SKIN_TEAM_COLOUR_COUNT - 1] == 0x222222,
+                  "teampurple is %d, want 222222",
+                  info.mapPalette.team[SKIN_TEAM_COLOUR_COUNT - 1]);
+    {
+        int i;
+        for (i = 1; i < SKIN_TEAM_COLOUR_COUNT - 1; i++) {
+            UT_ASSERT_MSG(info.mapPalette.team[i] == SKIN_COLOUR_NONE,
+                          "team[%d] is %d, but the ini named neither it nor "
+                          "anything next to it", i, info.mapPalette.team[i]);
+        }
+    }
 
     /* Keys the ini never named. */
     UT_ASSERT_MSG(info.mapPalette.building == SKIN_COLOUR_NONE &&

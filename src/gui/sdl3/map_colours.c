@@ -10,7 +10,8 @@
 
 #include "global.h"       /* the plain terrains, 0..8 */
 #include "tilenum.h"      /* the shape-variant ranges */
-#include "skin_source.h"  /* the active skin's [MapPalette] section */
+#include "skin_source.h"     /* the active skin's [MapPalette] section */
+#include "platform_types.h"  /* BOLO_STATIC_ASSERT */
 
 MapColourItem mapColourItemKind(BYTE tile) {
     if (tile == BASE_GOOD)    return MAP_COLOUR_ITEM_BASE_GOOD;
@@ -41,10 +42,14 @@ typedef enum {
     COLOUR_SWAMP,
     COLOUR_RUBBLE,
     COLOUR_GRASS,
+    COLOUR_MARKER_SELF,
     COLOUR_MARKER_GOOD,
     COLOUR_MARKER_EVIL,
     COLOUR_MARKER_NEUTRAL,
-    COLOUR_COUNT
+    /* The seventeen assignable player colours, contiguous so a slot is
+       COLOUR_TEAM_FIRST + index. */
+    COLOUR_TEAM_FIRST,
+    COLOUR_COUNT = COLOUR_TEAM_FIRST + MAP_COLOUR_TEAM_COUNT
 } MapColourSlot;
 
 static const Uint32 kBuiltIn[COLOUR_COUNT] = {
@@ -59,10 +64,38 @@ static const Uint32 kBuiltIn[COLOUR_COUNT] = {
     0x003933u,  /* swamp */
     0x303819u,  /* rubble */
     0x002806u,  /* grass */
+    0xb4b4b4u,  /* marker: self */
     0x58d858u,  /* marker: good */
     0xff5d5du,  /* marker: evil */
-    0xf0b429u   /* marker: neutral */
+    0xf0b429u,  /* marker: neutral */
+    /* The assignable player colours, read out of the 24 pixels that differ
+       between the rows of data/tanks.bmp - so a marker drawn in one of these
+       is the colour of the tank it stands for. Grey is the exception: its row
+       has no distinct pixels because grey is also the structural colour every
+       tank shares, so it takes that. */
+    0x6f6f6fu,  /* grey */
+    0xc8df00u,  /* khaki */
+    0x18b510u,  /* green */
+    0xfd77ffu,  /* pink */
+    0xffff31u,  /* yellow */
+    0x008f9fu,  /* light blue */
+    0xffce00u,  /* orange */
+    0xbf00bfu,  /* light purple */
+    0x00ffffu,  /* aqua */
+    0x31ce31u,  /* light green */
+    0xa5a5a5u,  /* light grey */
+    0xbf0000u,  /* red */
+    0x0000bdu,  /* blue */
+    0x808000u,  /* brown */
+    0xffc0c0u,  /* light pink */
+    0x96ff96u,  /* pale green */
+    0x60127au   /* purple */
 };
+
+/* kBuiltIn covers every slot: a slot added without a colour beside it would
+   read past the end of the table. */
+BOLO_STATIC_ASSERT(sizeof(kBuiltIn) / sizeof(kBuiltIn[0]) == COLOUR_COUNT,
+                   map_colours_builtin_covers_every_slot);
 
 /* The built-ins with the active skin's [MapPalette] entries laid over them,
    and the skin that was read to build it.
@@ -108,9 +141,14 @@ static Uint32 colourOf(MapColourSlot slot) {
             colourApply(COLOUR_SWAMP,           info.mapPalette.swamp);
             colourApply(COLOUR_RUBBLE,          info.mapPalette.rubble);
             colourApply(COLOUR_GRASS,           info.mapPalette.grass);
+            colourApply(COLOUR_MARKER_SELF,     info.mapPalette.markerSelf);
             colourApply(COLOUR_MARKER_GOOD,     info.mapPalette.markerGood);
             colourApply(COLOUR_MARKER_EVIL,     info.mapPalette.markerEvil);
             colourApply(COLOUR_MARKER_NEUTRAL,  info.mapPalette.markerNeutral);
+            for (i = 0; i < MAP_COLOUR_TEAM_COUNT; i++) {
+                colourApply((MapColourSlot)(COLOUR_TEAM_FIRST + i),
+                            info.mapPalette.team[i]);
+            }
         }
 
         s_serial      = serial;
@@ -203,6 +241,16 @@ SDL_FColor mapColourMarkerEvil(void) {
 
 SDL_FColor mapColourMarkerNeutral(void) {
     return markerColour(COLOUR_MARKER_NEUTRAL);
+}
+
+SDL_FColor mapColourMarkerSelf(void) {
+    return markerColour(COLOUR_MARKER_SELF);
+}
+
+SDL_FColor mapColourTeam(int index) {
+    if (index < 0) index = 0;
+    if (index >= MAP_COLOUR_TEAM_COUNT) index = MAP_COLOUR_TEAM_COUNT - 1;
+    return markerColour((MapColourSlot)(COLOUR_TEAM_FIRST + index));
 }
 
 void mapColourMarkerShades(SDL_FColor fill, SDL_FColor out[3]) {

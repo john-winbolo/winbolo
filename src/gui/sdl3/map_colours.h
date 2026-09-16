@@ -125,10 +125,41 @@ bool mapColourTerrain(BYTE tile, SDL_Color *out);
 
 /* The marker palette, by allegiance, after any skin override. Neutral bases
    are amber; a neutral pill is nobody's, so it takes the evil colour rather
-   than a fourth one. */
+   than a fourth one.
+
+   mapColourMarkerSelf is for a view that tells the viewer's own tank apart
+   from its allies - the log viewer's ally-colour mode does, the game does not
+   and draws its own tank markerGood. */
 SDL_FColor mapColourMarkerGood(void);
 SDL_FColor mapColourMarkerEvil(void);
 SDL_FColor mapColourMarkerNeutral(void);
+SDL_FColor mapColourMarkerSelf(void);
+
+/* Colours a player can be assigned, in the order the log viewer's Team
+   Colours dialog lists them: Grey, Khaki, Green, Pink, Yellow, LightBlue,
+   Orange, LightPurple, Aqua, LightGreen, LightGrey, Red, Blue, Brown,
+   LightPink, PaleGreen, Purple.
+
+   The built-in values are read off data/tanks.bmp, one per row, so a marker
+   drawn in one of these is the colour of the tank it stands for. A skin that
+   repaints the tanks will want to set them; one that does not should leave
+   them alone. */
+#define MAP_COLOUR_TEAM_COUNT 17
+
+/*********************************************************
+*NAME:          mapColourTeam
+*PURPOSE:
+*  The colour of an assigned player slot.
+*
+*ARGUMENTS:
+*  index - 0 to MAP_COLOUR_TEAM_COUNT - 1; outside that it
+*          clamps, so a slot read from a preferences file
+*          cannot walk off the table
+*
+*RETURNS:
+*  the colour, after any skin override
+*********************************************************/
+SDL_FColor mapColourTeam(int index);
 
 /* Every marker is drawn as three stacked layers, largest first, so a shape
    on a dark square and a shape on a light one are both outlined the same

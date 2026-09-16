@@ -4897,6 +4897,7 @@ set(_unit_test_names
     map_colours_terrain
     map_colours_markers
     map_colours_palette_key
+    map_colours_team
     stall_advances_processed_tick
     stall_mine_late_lays_once
     stall_mine_duplicate_not_relaid

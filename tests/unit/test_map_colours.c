@@ -326,3 +326,65 @@ int run_map_colours_palette_key(void) {
                   "reached it", (unsigned long long)first);
     return 0;
 }
+
+int run_map_colours_team(void) {
+    const float kExact = 1.0e-4f;
+    SDL_FColor seen[MAP_COLOUR_TEAM_COUNT];
+    int i, j;
+
+    /* Seventeen distinct colours. They exist to tell one player from another,
+     * so two slots sharing a colour would make two players look like one. */
+    for (i = 0; i < MAP_COLOUR_TEAM_COUNT; i++) {
+        seen[i] = mapColourTeam(i);
+        UT_ASSERT_MSG(seen[i].a == 1.0f,
+                      "team %d is not opaque (alpha %.3f)", i,
+                      (double)seen[i].a);
+    }
+    for (i = 0; i < MAP_COLOUR_TEAM_COUNT; i++) {
+        for (j = i + 1; j < MAP_COLOUR_TEAM_COUNT; j++) {
+            UT_ASSERT_MSG(fabsf(seen[i].r - seen[j].r) > kExact ||
+                          fabsf(seen[i].g - seen[j].g) > kExact ||
+                          fabsf(seen[i].b - seen[j].b) > kExact,
+                          "teams %d and %d are the same colour", i, j);
+        }
+    }
+
+    /* An index out of range clamps rather than reading off the table. A
+     * player's slot comes out of a preferences file, so it can be anything. */
+    {
+        SDL_FColor low  = mapColourTeam(-1);
+        SDL_FColor high = mapColourTeam(MAP_COLOUR_TEAM_COUNT + 99);
+        UT_ASSERT_MSG(fabsf(low.r - seen[0].r) < kExact &&
+                      fabsf(low.g - seen[0].g) < kExact &&
+                      fabsf(low.b - seen[0].b) < kExact,
+                      "a negative index did not clamp to the first colour");
+        UT_ASSERT_MSG(fabsf(high.r - seen[MAP_COLOUR_TEAM_COUNT - 1].r) < kExact &&
+                      fabsf(high.g - seen[MAP_COLOUR_TEAM_COUNT - 1].g) < kExact &&
+                      fabsf(high.b - seen[MAP_COLOUR_TEAM_COUNT - 1].b) < kExact,
+                      "an index past the end did not clamp to the last colour");
+    }
+
+    /* The three the log viewer's ally mode uses are rows 0, 2 and 11 of
+     * data/tanks.bmp, so the built-ins have to still be those rows' colours:
+     * grey, green and red. */
+    UT_ASSERT_MSG(seen[0].r == seen[0].g && seen[0].g == seen[0].b,
+                  "team 0 is not a grey");
+    UT_ASSERT_MSG(seen[2].g > seen[2].r && seen[2].g > seen[2].b,
+                  "team 2 is not a green");
+    UT_ASSERT_MSG(seen[11].r > seen[11].g && seen[11].r > seen[11].b,
+                  "team 11 is not a red");
+
+    /* markerSelf is its own entry, not one of the three allegiance colours. */
+    {
+        SDL_FColor self = mapColourMarkerSelf();
+        SDL_FColor good = mapColourMarkerGood();
+        SDL_FColor evil = mapColourMarkerEvil();
+        SDL_FColor neut = mapColourMarkerNeutral();
+        UT_ASSERT_MSG(self.a == 1.0f, "markerSelf is not opaque");
+        UT_ASSERT_MSG((fabsf(self.r - good.r) > kExact || fabsf(self.g - good.g) > kExact) &&
+                      (fabsf(self.r - evil.r) > kExact || fabsf(self.g - evil.g) > kExact) &&
+                      (fabsf(self.r - neut.r) > kExact || fabsf(self.g - neut.g) > kExact),
+                      "markerSelf matches one of the allegiance colours");
+    }
+    return 0;
+}
