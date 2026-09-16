@@ -2364,6 +2364,14 @@
 #define STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS 2213
 #define STR_DLGSETTINGS_HOSTING_SCENARIODIR  2216
 
+/* The simplified view: its own heading on the Display tab, the switch, and
+ * the sub-option that holds it to the Map Overview window. */
+#define STR_DLGSETTINGS_MAPVIEW             2217
+#define STR_DLGSETTINGS_SIMPLEZOOM          2218
+#define STR_DLGSETTINGS_SIMPLEZOOM_TIP      2219
+#define STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW 2220
+#define STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW_TIP 2221
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

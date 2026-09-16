@@ -2186,4 +2186,9 @@ STR_DLGLOBBY_SCENARIO_BOTS={number} bot seats
 STR_DLGLOBBY_SCENARIO_ON_MAP=Mod: {string2} (on {string1})
 STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Run scripts in uploaded maps
 STR_DLGSETTINGS_HOSTING_SCENARIODIR=Scenario Directory
+STR_DLGSETTINGS_MAPVIEW=Map view
+STR_DLGSETTINGS_SIMPLEZOOM=Use simplified view when zoomed out
+STR_DLGSETTINGS_SIMPLEZOOM_TIP=Zoomed out past 1x, draw each square as one colour with simple markers for tanks, pillboxes and bases, instead of shrinking the sprites down to a smudge.
+STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW=Only map overview
+STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW_TIP=Keep the simplified view to the Map Overview window. The full screen map draws its sprites at every zoom.
 
