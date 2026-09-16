@@ -5547,6 +5547,8 @@ set(_unit_test_names
     scenario_map_has_script_chunk
     scenario_map_preview_truncates
     scenario_map_preview_passes_plain_bytes
+    scenario_map_body_use_local_compare
+    scenario_map_has_script_cached
     scenario_packed_map_script_runs
     scenario_packed_map_loose_overrides
     scenario_packed_map_script_omits_table

@@ -28,6 +28,9 @@
  * run_scenario_map_preview_passes_plain_bytes
  *      — and a file that is not a map at all is still read for the caller
  *        when it is inside the upload cap, and still refused when it is not
+ * run_scenario_map_body_use_local_compare
+ *        length and hash the client now reports are the length and hash the
+ *        server reads back, and the whole-file figures are not
  */
 
 #include <stdint.h>
@@ -46,6 +49,7 @@
 #include "wire_limits.h"           /* LOBBY_MAP_UPLOAD_MAX_BYTES */
 #include "scenario_host.h"         /* scenarioHostMapHasScript, the suffix */
 #include "scenario_package.h"
+#include "common/md5.h"    /* md5Compute — what the use-local check compares */
 #include "test_harness.h"
 
 /* Where mbRunMap's first run header starts: the twelve-byte preamble, then
@@ -501,3 +505,138 @@ int run_scenario_map_preview_passes_plain_bytes(void) {
     remove(smallPath);
     return rc;
 }
+
+/* ── The use-local comparison, on a packed map ────────────────────── */
+
+/* PACKET_LOBBY_MAP_USE_LOCAL is the client saying "I have this map; if your
+ * copy is the same, use yours instead of taking my upload". The server
+ * answers it from serverSimReadMapFile, which trims a packed map at its
+ * terminator, so what the two sides compare has to be the map body: a client
+ * that measured and hashed the whole file missed on every packed map both
+ * sides already had, and uploaded one that did not need uploading.
+ *
+ * The client's half of that is transportUdpClientStartLobbyMapUploadFromPath,
+ * which needs a connected transport to reach. What it now computes is
+ * boloMapBodyLength over the file it loaded, then the hash over that much;
+ * this case does the same arithmetic against the same file and holds it
+ * against what the server answers, which is the comparison the handler makes.
+ * The whole-file figures are checked too, so the case fails if the two ever
+ * become the same thing and it stops proving anything. */
+int run_scenario_map_body_use_local_compare(void) {
+    char       dir[1024];
+    char       mapPath[1024];
+    uint8_t    plain[128];
+    uint8_t   *container = NULL;
+    uint8_t   *whole = NULL;
+    uint8_t   *got = NULL;
+    size_t     mapLen;
+    size_t     containerLen = 0;
+    size_t     wholeLen = 0;
+    size_t     gotLen = 0;
+    size_t     bodyLen = 0;
+    BYTE       emap[6000] = E_MAP;
+    ServerSim *sim;
+    uint8_t    clientMd5[16];
+    uint8_t    serverMd5[16];
+    uint8_t    wholeMd5[16];
+    int        rc = 0;
+
+    UT_ASSERT(utScratchPath(dir, sizeof(dir), NULL));
+    UT_ASSERT(utScratchPath(mapPath, sizeof(mapPath), "uselocal.map"));
+
+    mapLen = mbRunMap(plain);
+    UT_ASSERT_MSG(mbContainer(&container, &containerLen),
+                  "the fixture container could not be written");
+    UT_ASSERT(mbWriteFile(mapPath, plain, mapLen, container, containerLen));
+
+    /* The file as the client loads it: map plus container. */
+    whole = (uint8_t *)malloc(mapLen + containerLen);
+    UT_ASSERT(whole != NULL);
+    memcpy(whole, plain, mapLen);
+    memcpy(whole + mapLen, container, containerLen);
+    wholeLen = mapLen + containerLen;
+    UT_ASSERT_MSG(wholeLen > mapLen,
+                  "the fixture's container is empty, so this case cannot tell "
+                  "a whole-file compare from a body compare");
+
+    /* What the client now measures and hashes. */
+    UT_ASSERT_MSG(boloMapBodyLength(whole, wholeLen, &bodyLen),
+                  "the packed file would not measure as a map");
+    UT_ASSERT_MSG(bodyLen == mapLen,
+                  "the client measured %u bytes of map in a %u byte file; "
+                  "the map is %u", (unsigned)bodyLen, (unsigned)wholeLen,
+                  (unsigned)mapLen);
+    md5Compute(whole, bodyLen, clientMd5);
+    md5Compute(whole, wholeLen, wholeMd5);
+
+    sim = serverSimCreateCompressed(emap, 5097, "Everard Island", gameOpen,
+                                    false, 0, -1);
+    UT_ASSERT(sim != NULL);
+    serverSimSetUploadPersistDir(sim, dir);
+
+    if (!serverSimReadMapFile(sim, "Uploads/uselocal.map", &got, &gotLen)) {
+        fprintf(stderr, "FAIL %s:%d: the packed map would not read\n",
+                __FILE__, __LINE__);
+        rc = 1;
+    } else {
+        md5Compute(got, gotLen, serverMd5);
+        /* The length the client reports and the length the server measures:
+           the handler rejects outright when these differ. */
+        if (gotLen != bodyLen) {
+            fprintf(stderr,
+                    "FAIL %s:%d: the client reports %u bytes and the server "
+                    "reads %u\n", __FILE__, __LINE__, (unsigned)bodyLen,
+                    (unsigned)gotLen);
+            rc = 1;
+        } else if (memcmp(clientMd5, serverMd5, 16) != 0) {
+            fprintf(stderr,
+                    "FAIL %s:%d: the two sides hash the same map body "
+                    "differently\n", __FILE__, __LINE__);
+            rc = 1;
+        } else if (gotLen == wholeLen ||
+                   memcmp(wholeMd5, serverMd5, 16) == 0) {
+            fprintf(stderr,
+                    "FAIL %s:%d: the whole file and the map body compare the "
+                    "same, so this case cannot tell them apart\n",
+                    __FILE__, __LINE__);
+            rc = 1;
+        }
+        free(got);
+    }
+
+    /* And a plain map is unchanged by any of it: body and file are one. */
+    if (rc == 0) {
+        char plainPath[1024];
+        if (utScratchPath(plainPath, sizeof(plainPath), "uselocal_plain.map") &&
+            mbWriteFile(plainPath, plain, mapLen, NULL, 0)) {
+            size_t plainBody = 0;
+            if (!boloMapBodyLength(plain, mapLen, &plainBody) ||
+                plainBody != mapLen) {
+                fprintf(stderr,
+                        "FAIL %s:%d: a plain map measured %u of its %u bytes\n",
+                        __FILE__, __LINE__, (unsigned)plainBody,
+                        (unsigned)mapLen);
+                rc = 1;
+            } else if (serverSimReadMapFile(sim, "Uploads/uselocal_plain.map",
+                                            &got, &gotLen)) {
+                if (gotLen != mapLen) {
+                    fprintf(stderr,
+                            "FAIL %s:%d: a plain map read back %u of %u\n",
+                            __FILE__, __LINE__, (unsigned)gotLen,
+                            (unsigned)mapLen);
+                    rc = 1;
+                }
+                free(got);
+            }
+            remove(plainPath);
+        }
+    }
+
+    serverSimDestroy(sim);
+    free(whole);
+    free(container);
+    remove(mapPath);
+    return rc;
+}
+
+/* ── The map-script answer is kept ────────────────────────────────── */

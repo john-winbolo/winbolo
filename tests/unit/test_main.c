@@ -1449,6 +1449,8 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_map_preview_truncates",                  run_scenario_map_preview_truncates                  },
     { "scenario_map_preview_passes_plain_bytes",
       run_scenario_map_preview_passes_plain_bytes                                                            },
+    { "scenario_map_body_use_local_compare",             run_scenario_map_body_use_local_compare             },
+    { "scenario_map_has_script_cached",                  run_scenario_map_has_script_cached                  },
     { "scenario_packed_map_script_runs",                 run_scenario_packed_map_script_runs                 },
     { "scenario_packed_map_loose_overrides",             run_scenario_packed_map_loose_overrides             },
     { "scenario_packed_map_script_omits_table",          run_scenario_packed_map_script_omits_table          },

@@ -4992,11 +4992,18 @@ static void udpClientUploadCleanup(TransportUdpClientCtx *c) {
 /* Shared kick: stash the bytes on the transport, optionally try
  * USE_LOCAL first when the caller derived a data/maps-relative path,
  * else announce via BEGIN. `buf` is copied; caller retains ownership. */
+/* useLocalLen is what the USE_LOCAL pre-check reports and hashes over, which
+ * for a packed map is its map body rather than the whole file: the server
+ * answers that check from serverSimReadMapFile, which trims a map at its
+ * terminator, so comparing whole files would NACK every packed map both
+ * sides already have. len stays the whole file — that is what a fallback
+ * upload sends, container and all. */
 static bool udpClientUploadStart(TransportUdpClientCtx *c,
                                   const uint8_t *buf, size_t len,
                                   const char *name,
                                   const char *relPath, /* nullable */
-                                  const char *md5Hex   /* 32 hex chars + NUL, required iff relPath */) {
+                                  const char *md5Hex,  /* 32 hex chars + NUL, required iff relPath */
+                                  size_t useLocalLen   /* bytes the pre-check names; 0 for len */) {
     if (c == NULL || buf == NULL || name == NULL || name[0] == '\0') {
         return false;
     }
@@ -5028,7 +5035,10 @@ static bool udpClientUploadStart(TransportUdpClientCtx *c,
     }
 
     if (relPath != NULL && relPath[0] != '\0' && md5Hex != NULL) {
-        udpClientUploadSendUseLocal(c, c->uploadTotal, c->uploadName,
+        if (useLocalLen == 0 || useLocalLen > len) {
+            useLocalLen = len;
+        }
+        udpClientUploadSendUseLocal(c, (uint32_t)useLocalLen, c->uploadName,
                                      relPath, md5Hex);
         c->uploadUseLocalPending = true;
         c->uploadBeginSent       = false;
@@ -5176,13 +5186,15 @@ bool transportUdpClientStartLobbyMapUploadFromBytes(Transport *t,
                                                      const char *mapName) {
     return udpClientUploadStart((TransportUdpClientCtx *)t->ctx,
                                  buf, len, mapName,
-                                 /*relPath=*/NULL, /*md5=*/NULL);
+                                 /*relPath=*/NULL, /*md5=*/NULL,
+                                 /*useLocalLen=*/0);
 }
 
 bool transportUdpClientStartLobbyMapUploadFromPath(Transport *t,
                                                     const char *localFilePath) {
     TransportUdpClientCtx *c;
     size_t fileLen = 0;
+    size_t bodyLen = 0;
     void *fileData = NULL;
     char nameBuf[128];
     char relPath[256];
@@ -5240,14 +5252,29 @@ bool transportUdpClientStartLobbyMapUploadFromPath(Transport *t,
         }
     }
     haveRelPath = (relPath[0] != '\0');
+    /* What the pre-check asks about is the map, not the file. A packed map
+       carries a scenario container after its terminator, and the server
+       answers from serverSimReadMapFile, which trims there — so a whole-file
+       hash and length would miss on every packed map both sides already have
+       and the client would upload one it did not need to. A file with no map
+       in it keeps its whole length, which is what the check has always
+       compared. */
+    bodyLen = fileLen;
     if (haveRelPath) {
-        md5Compute(fileData, fileLen, md5);
+        size_t trimmed = 0;
+        if (boloMapBodyLength((const unsigned char *)fileData, fileLen,
+                              &trimmed) &&
+            trimmed > 0 && trimmed <= fileLen) {
+            bodyLen = trimmed;
+        }
+        md5Compute(fileData, bodyLen, md5);
         md5ToHex(md5, md5Hex);
     }
 
     ok = udpClientUploadStart(c, (const uint8_t *)fileData, fileLen, nameBuf,
                                haveRelPath ? relPath : NULL,
-                               haveRelPath ? md5Hex  : NULL);
+                               haveRelPath ? md5Hex  : NULL,
+                               haveRelPath ? bodyLen : 0);
     SDL_free(fileData);
     return ok;
 }

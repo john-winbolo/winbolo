@@ -2802,6 +2802,8 @@ int run_scenario_map_find_container(void);
 int run_scenario_map_has_script_chunk(void);
 int run_scenario_map_preview_truncates(void);
 int run_scenario_map_preview_passes_plain_bytes(void);
+int run_scenario_map_body_use_local_compare(void);
+int run_scenario_map_has_script_cached(void);
 
 /* A scenario carried inside the map file (test_scenario_packed_map.c): the
  * container's script run in place of a loose one, the loose script that
