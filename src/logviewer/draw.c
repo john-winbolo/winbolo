@@ -918,16 +918,11 @@ void lv_drawTanks(screenTanks *tks) {
         x = mx * (zoomFactor * TILE_SIZE_X) + (zoomFactor * px);
         y = my * (zoomFactor * TILE_SIZE_Y) + (zoomFactor * py);
 
-        if (lv->allyColours) {
+        if (lv->allyColours || !lv->useTeamColours) {
             srcX = zoomFactor * TILE_SIZE_X * dir;
             srcY = zoomFactor * TILE_SIZE_Y * lv_drawTankAllyRow(frame);
             drawRenderTexture(onBoat ? textureBoats : textureTanks, srcX, srcY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, x, y);
-        } else if (lv->useTeamColours) {
-            srcX = zoomFactor * TILE_SIZE_X * dir;
-            srcY = zoomFactor * TILE_SIZE_Y * lv->tc[team];
-            drawRenderTexture(onBoat ? textureBoats : textureTanks, srcX, srcY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, x, y);
         } else {
-            /* Simplified: use direction-based sprite selection for non-team mode */
             srcX = zoomFactor * TILE_SIZE_X * dir;
             srcY = zoomFactor * TILE_SIZE_Y * lv->tc[team];
             drawRenderTexture(onBoat ? textureBoats : textureTanks, srcX, srcY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, x, y);

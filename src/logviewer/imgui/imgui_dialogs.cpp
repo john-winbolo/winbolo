@@ -245,11 +245,11 @@ static void render_team_colours_dialog(void) {
         ImGui::TextUnformatted(langGetText(STR_LV_ASSIGN_COLOURS_HINT));
         ImGui::Separator();
 
-        /* Player team colours */
+        /* Colours belong to reusable alliance team slots, not player numbers. */
         for (int i = 0; i < MAX_PLAYERS; i++) {
             MessageArgs lblArgs = {};
             lblArgs.number = i + 1;
-            ImGui::TextUnformatted(langGetTextFmt(STR_LV_PLAYER_LBL, &lblArgs));
+            ImGui::TextUnformatted(langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &lblArgs));
             ImGui::SameLine(100);
 
             char combo_id[32];
