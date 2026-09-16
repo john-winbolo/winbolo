@@ -238,6 +238,7 @@ int run_round_stats_leaver_clears_mines(void);
 int run_mine_kill_publishes_event(void);
 int run_mine_kill_on_boat_publishes_event(void);
 int run_mine_kill_own_mine_names_self(void);
+int run_mine_blast_range(void);
 
 int run_awards_basic_winners(void);
 int run_awards_tiebreak(void);

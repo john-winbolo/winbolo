@@ -1303,7 +1303,7 @@ dispatch_scenario() {
     road_spit_shell_tournament)
       run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/park_in_pill_range.lua" tournament 720 "" ;;
     road_spit_mine_open)
-      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/lay_mine_and_drive_over.lua" open 340 "" ;;
+      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/lay_mine_and_drive_over.lua" open 450 "" ;;
     road_spit_drown_open)
       run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/drive_into_deep_sea.lua" open 280 "" ;;
 

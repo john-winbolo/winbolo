@@ -3003,7 +3003,8 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my, BYTE owner) {
   }
 
 
-  if (diffX < 384 && diffY < 384 && !(*value)->destroyed) {
+  /* Mac Bolo: less than one map square from the mine centre on each axis. */
+  if (diffX < 256 && diffY < 256 && !(*value)->destroyed) {
     BYTE armourBefore = (*value)->armour;
     BYTE amount = tankDamageAmount(sim, (BYTE) sim->rules.mine_damage, owner, gameSimGetTankPlayer(sim, value), LAST_DEATH_BY_MINES);
     /* Mac Bolo: three hits unless fatal, then two (which may still kill).

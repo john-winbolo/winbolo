@@ -4348,6 +4348,7 @@ set(_unit_test_names
     mine_kill_publishes_event
     mine_kill_on_boat_publishes_event
     mine_kill_own_mine_names_self
+    mine_blast_range
     awards_basic_winners
     awards_tiebreak
     awards_omission
