@@ -948,8 +948,8 @@ local function spawn_wave()
   -- read this wave's queued spawn as a departure.
   seen_fielded = {}
   ashore_said  = {}
-  game.message(string.format("[wave] %d: clock started at tick %d, ends at tick %d (%d s)",
-    wave, game.tick(), wave_ends_at, WAVE_LIMIT_S))
+  game.message(string.format("[wave] %d: clock started at tick %d, ends at tick %d (%d s) at %s",
+    wave, game.tick(), wave_ends_at, WAVE_LIMIT_S, os.date("%H:%M:%S")))
   last_min_mark = nil
   half_min_said = false
 
@@ -1066,7 +1066,8 @@ local function pump_vanish_queue(tick)
   if #vanish_queue > 0 then return false end
   vanishing = false
   vanish_next_at = nil
-  game.message(string.format("[wave] departures done at tick %d", tick))
+  game.message(string.format("[wave] departures done at tick %d at %s", tick,
+    os.date("%H:%M:%S")))
   return true
 end
 
@@ -1667,7 +1668,8 @@ function on_tick(tick)
   if wave_ends_at ~= nil then
     local remaining = wave_ends_at - tick
     if remaining <= 0 then
-      game.message(string.format("[wave] %d clock ran out at tick %d", wave, tick))
+      game.message(string.format("[wave] %d clock ran out at tick %d at %s", wave, tick,
+        os.date("%H:%M:%S")))
       wave_ends_at = nil
       -- Mute FIRST; vanish_wave then holds its first removal for MUTE_LEAD_S,
       -- so the newswire is already silent by the time the first attacker
