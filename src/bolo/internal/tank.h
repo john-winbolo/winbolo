@@ -204,8 +204,8 @@ based on my testing.
 /* Shells + mines must be greater then 20 for a big explosion */
 #define TANK_BIG_EXPLOSION_THRESHOLD 20
 
-/* Amount of damage a mine does to the tank */
-#define MINE_DAMAGE 10
+/* Normal mine damage; a fatal hit is reduced to two-thirds in tankMineDamage. */
+#define MINE_DAMAGE 15
 
 /* Number of map squares around the tank postion that a mine can hurt a tank */
 #define MINE_DAMAGE_DISTANCE_LEFT 0 /* was -1 */

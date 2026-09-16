@@ -22,8 +22,8 @@
  * land: the mine is under the tank and was laid by another player, so the kill
  *       names that player as the killer and the dead tank as the victim, with
  *       LAST_DEATH_BY_MINES as the cause.
- * boat: the tank is in its boat and the mine goes off on the next square, one
- *       map square away and so inside the blast — the case where the tank is
+ * boat: the tank is in its boat and the mine goes off on the next square, just
+ *       under one map square away and inside the blast — the case where the tank is
  *       still on the water when the charge reaches it. The kill is published
  *       the same way and the tank loses the boat.
  * self: a tank on its own mine names itself, the shape the drown arm uses for
@@ -183,11 +183,14 @@ int run_mine_kill_on_boat_publishes_event(void) {
     mx = tankGetMX(&gs->tanks[0]);
     my = tankGetMY(&gs->tanks[0]);
 
-    /* One square east of the tank: the blast reaches anything within 384 world
-     * units of the mine's centre and a square is 256, so a tank sitting in the
-     * middle of its own square is inside it. */
+    /* The mine is one square east. Move the boat one world unit east of its
+     * own tile centre, putting it 255 units from the mine, just inside reach. */
     mk_lay_mine(gs, (BYTE)(mx + 1), my, 1);
     mk_arm_victim(gs, TRUE);
+    tankSetLocationData(&gs->tanks[0],
+                        (WORLD)((mx << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE + 1),
+                        (WORLD)((my << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE),
+                        0, 0, TRUE);
     UT_ASSERT_MSG(tankIsOnBoat(&gs->tanks[0]) == TRUE,
                   "the victim did not take the boat");
 
@@ -218,6 +221,45 @@ int run_mine_kill_on_boat_publishes_event(void) {
                   (unsigned)LAST_DEATH_BY_MINES);
 
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* The blast is an open square, measured from the mine's tile centre.
+ * Check both signs of each axis, the exact edge, the old extra reach, and
+ * diagonals (which still hit inside the square even outside a circle). */
+int run_mine_blast_range(void) {
+    static const int directions[][2] = {
+        {1, 0}, {-1, 0}, {0, 1}, {0, -1},
+        {1, 1}, {-1, 1}, {1, -1}, {-1, -1}
+    };
+    static const int distances[] = {0, 255, 256, 383, 384};
+    size_t d, r;
+    for (d = 0; d < sizeof(directions) / sizeof(directions[0]); d++) {
+        for (r = 0; r < sizeof(distances) / sizeof(distances[0]); r++) {
+            ServerSim *sim = mk_sim_two_players();
+            GameSim *gs;
+            bool hit = distances[r] < 256;
+            UT_ASSERT(sim != NULL);
+            gs = serverSimGetGameSim(sim);
+            UT_ASSERT(gs != NULL && gs->tanks[0] != NULL);
+            tankSetDestroyed(&gs->tanks[0], FALSE);
+            tankSetArmour(&gs->tanks[0], 40);
+            tankSetLocationData(&gs->tanks[0],
+                                (WORLD)(100 * 256 + 128 + directions[d][0] * distances[r]),
+                                (WORLD)(100 * 256 + 128 + directions[d][1] * distances[r]),
+                                0, 0, TRUE);
+            mk_lay_mine(gs, 100, 100, 1);
+            mk_detonate(sim, gs, 100, 100);
+            UT_ASSERT_MSG(tankGetArmour(&gs->tanks[0]) == (hit ? 25 : 40),
+                          "direction %u, distance %d: wrong armour %u",
+                          (unsigned)d, distances[r], tankGetArmour(&gs->tanks[0]));
+            UT_ASSERT_MSG(tankIsOnBoat(&gs->tanks[0]) == !hit,
+                          "direction %u, distance %d: wrong boat state",
+                          (unsigned)d, distances[r]);
+            UT_ASSERT(!tankIsDestroyed(&gs->tanks[0]));
+            serverSimDestroy(sim);
+        }
+    }
     return 0;
 }
 

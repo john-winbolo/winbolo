@@ -1020,7 +1020,7 @@ below the tables say which.
 | `tank_death_ticks` | 255 | 0 to 65535 |
 | `tank_water_ticks` | 15 | 1 to 255 |
 | `shell_damage` | 5 | 1 to 255 |
-| `mine_damage` | 10 | 1 to 255 |
+| `mine_damage` | 15 | 1 to 255; fatal tank hits use two-thirds of the modified damage, rounded up |
 | `just_fired_ticks` | 101 | 0 to 255 |
 | `gunsight_min` | 2 | 1 to 255 |
 | `gunsight_max` | 14 | 1 to 255 |

@@ -6,7 +6,7 @@
 -- east, road runs east from square 120 along row 126, neutral bases sit on
 -- squares 124 and 130, the road is mined on square 127, and a base owned
 -- by a player who is not in the game sits on square 134. The run takes the
--- two neutral bases in passing and loses ten armour to the mine on the way
+-- two neutral bases in passing and loses fifteen armour to the mine on the way
 -- through: a neutral base is never solid and costs nothing to take, which
 -- is the opposite of what waits at the end.
 --

@@ -241,7 +241,7 @@ def base_yard():
     runs east from there to 137. Everything stands on that one row:
 
         (124, 126) base    neutral, full, driven onto and taken
-        (127, 126) mined road          ten armour off whatever passes
+        (127, 126) mined road          fifteen armour off a healthy tank
         (130, 126) base    neutral, full armour, three shells, full mines
         (134, 126) base    player 1's, twenty armour, full shells and mines
 
@@ -255,8 +255,8 @@ def base_yard():
 
     The mined square is what makes the armour refuel visible. A tank starts
     on full armour under every game type, so a base with armour to give has
-    nothing to give it until something has taken some off, and ten off one
-    mine is two gives worth. It sits east of the first base, so a run that
+    nothing to give it until something has taken some off, and fifteen off one
+    mine is three gives worth. It sits east of the first base, so a run that
     stops on that base never reaches it.
 
     The middle base's three shells are what brings its mines into reach. A

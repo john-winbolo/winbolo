@@ -3003,9 +3003,16 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my, BYTE owner) {
   }
 
 
-  if (diffX < 384 && diffY < 384 && !(*value)->destroyed) {
+  /* Mac Bolo: less than one map square from the mine centre on each axis. */
+  if (diffX < 256 && diffY < 256 && !(*value)->destroyed) {
     BYTE armourBefore = (*value)->armour;
     BYTE amount = tankDamageAmount(sim, (BYTE) sim->rules.mine_damage, owner, gameSimGetTankPlayer(sim, value), LAST_DEATH_BY_MINES);
+    /* Mac Bolo: three hits unless fatal, then two (which may still kill).
+     * Apply this after modifiers, rounding up to preserve nonzero damage.
+     * Exactly emptying the armour is survivable, hence the strict check. */
+    if (amount > armourBefore) {
+      amount -= amount / 3;
+    }
     bool wasDestroyed = tankApplyDamage(sim, value, amount, owner, LAST_DEATH_BY_MINES);
     if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {
       uint16_t eff = (armourBefore >= amount) ? amount : armourBefore;

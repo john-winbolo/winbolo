@@ -128,6 +128,13 @@ COMMANDS="$DIR/commands"
 #                 runner's platform isn't a regression target.
 NORMALIZE_EVENTS_SED='s/"tick":[0-9]+,//; s/"pingMs":[0-9]+/"pingMs":0/; s/"countryCode":"[^"]*"/"countryCode":"??"/g; s/"country":"[^"]*"/"country":"??"/g; s/"clientType":[0-9]+/"clientType":2/g'
 
+# Windows text streams write CRLF; committed fixtures use LF. Compare all
+# other bytes as before. JSON strings encode carriage returns as escapes.
+diff_text() {
+  local mode="$1"
+  diff "$mode" <(tr -d '\r' < "$2") <(tr -d '\r' < "$3")
+}
+
 # Diff two JSONL files after the field normalization above, with a
 # lexical sort. sort -u collapses duplicate (untickled) lines because
 # lobby-mode scenarios broadcast the lobby state on a wall-clock
@@ -276,11 +283,11 @@ run() {
       --ticks 500 --seed 42 \
       --log-state "$ACTUAL/$name.json" --quiet \
       > "$ACTUAL/$name.stdout" 2>&1 || { echo "CRASH"; return 1; }
-  if diff -q "$EXPECTED/$name.json" "$ACTUAL/$name.json" >/dev/null 2>&1; then
+  if diff_text -q "$EXPECTED/$name.json" "$ACTUAL/$name.json" >/dev/null 2>&1; then
     echo "OK"
   else
     echo "DIFF"
-    diff -u "$EXPECTED/$name.json" "$ACTUAL/$name.json" 2>&1 | head -40
+    diff_text -u "$EXPECTED/$name.json" "$ACTUAL/$name.json" 2>&1 | head -40
     return 1
   fi
 }
@@ -312,11 +319,11 @@ run_changes() {
   fi
   headless_bin "${args[@]}" \
       > "$ACTUAL/$name.stdout" 2>&1 || { echo "CRASH"; return 1; }
-  if diff -q "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" >/dev/null 2>&1; then
+  if diff_text -q "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" >/dev/null 2>&1; then
     echo "OK"
   else
     echo "DIFF"
-    diff -u "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" 2>&1 | head -40
+    diff_text -u "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" 2>&1 | head -40
     return 1
   fi
 }
@@ -338,11 +345,11 @@ run_ds() {
   ds_bin "${args[@]}" \
       > "$ACTUAL/$name.out" 2> "$ACTUAL/$name.err" || {
         echo "CRASH"; return 1; }
-  if diff -q "$EXPECTED/$name.out" "$ACTUAL/$name.out" >/dev/null 2>&1; then
+  if diff_text -q "$EXPECTED/$name.out" "$ACTUAL/$name.out" >/dev/null 2>&1; then
     echo "OK"
   else
     echo "DIFF"
-    diff -u "$EXPECTED/$name.out" "$ACTUAL/$name.out" 2>&1 | head -40
+    diff_text -u "$EXPECTED/$name.out" "$ACTUAL/$name.out" 2>&1 | head -40
     return 1
   fi
 }
@@ -1229,12 +1236,12 @@ run_captures_udp_two_clients() {
 
   local fail=0
   for which in c1 c2; do
-    if diff -q "$EXPECTED/${name}_${which}.out" \
+    if diff_text -q "$EXPECTED/${name}_${which}.out" \
                "$ACTUAL/${name}_${which}.out" >/dev/null 2>&1; then
       :
     else
       [ "$fail" -eq 0 ] && echo "DIFF"
-      diff -u "$EXPECTED/${name}_${which}.out" \
+      diff_text -u "$EXPECTED/${name}_${which}.out" \
               "$ACTUAL/${name}_${which}.out" 2>&1 | head -40
       fail=1
     fi
@@ -1296,7 +1303,7 @@ dispatch_scenario() {
     road_spit_shell_tournament)
       run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/park_in_pill_range.lua" tournament 720 "" ;;
     road_spit_mine_open)
-      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/lay_mine_and_drive_over.lua" open 340 "" ;;
+      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/lay_mine_and_drive_over.lua" open 450 "" ;;
     road_spit_drown_open)
       run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/drive_into_deep_sea.lua" open 280 "" ;;
 
@@ -1387,7 +1394,7 @@ dispatch_scenario() {
     base_yard_capture)
       run_changes "$name" "$BASE_YARD_MAP" "$BRAINS/drive_onto_neutral_base.lua" open 125 "" ;;
     base_yard_refuel)
-      run_changes "$name" "$BASE_YARD_MAP" "$BRAINS/refuel_on_neutral_base.lua" strict 222 "" terrain ;;
+      run_changes "$name" "$BASE_YARD_MAP" "$BRAINS/refuel_on_neutral_base.lua" strict 245 "" terrain ;;
     base_yard_steal)
       run_changes "$name" "$BASE_YARD_MAP" "$BRAINS/shell_and_take_enemy_base.lua" open 215 "" terrain ;;
 
