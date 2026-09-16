@@ -19,8 +19,12 @@
 #include "bot_manager.h"              /* botManagerSetBrainIdx, botManagerAddBot */
 #include "brain_list.h"               /* BRAIN_MODES_MAX, BRAIN_LEVELS_MAX */
 #include "client_command.h"
+#include "client_sim_internal.h"  /* LOBBY_SCENARIO_LIST_MAX — the cap the
+                                   * scenario list packet and the client's
+                                   * chooser share */
 #include "control_event.h"            /* ControlEvent, CTRL_CHAT, CTRL_ALLIANCE_REQUEST */
-#include "server_sim_scenario.h"      /* serverSimScenarioReload */
+#include "server_sim_scenario.h"      /* serverSimScenarioReload,
+                                        serverSimScenarioListDir, ScnDirEntry */
 #include "log.h"
 #include "mapgen.h"                   /* MapGenConfig, mapGenSeedToConfig */
 #include "netpacks.h"                 /* lobbyBotNameAcceptable */
@@ -130,6 +134,38 @@ static bool lobbySlotMayHoldStart(ServerSim *sim, BYTE slot, BYTE idx1) {
     return startSideEligible(serverSimLobbyStartSideMask(sim, idx1),
                              lobbySlotStartSide(sim, slot),
                              serverSimLobbyClosedMaskFor(sim, slot));
+}
+
+/* Does the scenarios directory hold this file name, and under what spelling?
+   The list the server would send a chooser is the answer: a name it does not
+   carry is not one a host could have picked. Asking the sim's registered
+   lister is the whole of this command's filesystem work — reading the
+   directory belongs to the scenario library, which src/server/ does not
+   name.
+
+   The cap is the one the list packet and the client's chooser already share,
+   so every scenario a host can see is one the server will accept. Its own
+   function rather than part of the case below: the entry array runs to
+   ~58 KB, the size the list handler in udp_server_dispatch.c already puts on
+   this thread, and a frame that large belongs to the one call that needs it
+   rather than to every command the dispatcher handles. */
+static bool lobbyScenarioDirHolds(const ServerSim *sim, const char *file,
+                                  char *out, size_t outLen) {
+    ScnDirEntry entries[LOBBY_SCENARIO_LIST_MAX];
+    int got = serverSimScenarioListDir(sim, entries, LOBBY_SCENARIO_LIST_MAX);
+    int i;
+
+    for (i = 0; i < got; i++) {
+        if (strcmp(entries[i].file, file) == 0) {
+            /* The directory's spelling rather than the wire's, so what is
+               recorded is what the lister reported. */
+            if (out != NULL && outLen > 0) {
+                SDL_strlcpy(out, entries[i].file, outLen);
+            }
+            return true;
+        }
+    }
+    return false;
 }
 
 static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
@@ -814,6 +850,55 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         SDL_snprintf(fullPath, sizeof(fullPath), "%s/%s",
                      serverSimGetMapDirRoot(sim), relPath);
         if (!serverSimReloadMap(sim, fullPath)) return CMD_REJECT_INVALID;
+        return CMD_OK;
+    }
+    case CMD_LOBBY_SET_SCENARIO: {
+        /* Lobby-only and host-only, like the map change above it: which
+           scenario a round plays by is the operator's choice and not a
+           joiner's. No LOBBY_LOCK_MAP test, for the same reason — the map
+           command this copies has none either. The lock hides the chooser on
+           the client; the commands that test it server-side are the preview
+           pair and the skip vote.
+
+           Recording the pick is all this does. Nothing is applied and
+           nothing is published: what the round plays by, and the settings
+           event that says where its scenario came from, come later. */
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        const CmdLobbySetScenario *p = &cmd->u.lobbySetScenario;
+        /* An empty path is the one value that is always good: it selects no
+           scenario, so there is no name to check the shape of or look up. */
+        if (p->relPathLen == 0) {
+            serverSimSetSelectedScenario(sim, NULL);
+            return CMD_OK;
+        }
+        char relPath[256];
+        memcpy(relPath, p->relPath, p->relPathLen);
+        relPath[p->relPathLen] = '\0';
+        /* The three shapes the map command refuses, refused the same way:
+           an absolute path, a Windows drive letter, and a ".." segment. */
+        bool safe = true;
+        if (relPath[0] == '/' || relPath[0] == '\\') safe = false;
+        else if (relPath[0] != '\0' && relPath[1] == ':') safe = false;
+        else {
+            for (const char *s = relPath; *s;) {
+                if (s[0] == '.' && s[1] == '.' &&
+                    (s[2] == '\0' || s[2] == '/' || s[2] == '\\')) {
+                    safe = false; break;
+                }
+                while (*s && *s != '/' && *s != '\\') s++;
+                while (*s == '/' || *s == '\\') s++;
+            }
+        }
+        if (!safe) return CMD_REJECT_INVALID;
+        char picked[SCN_DIR_FILE_LEN];
+        if (!lobbyScenarioDirHolds(sim, relPath, picked, sizeof(picked))) {
+            return CMD_REJECT_INVALID;
+        }
+        serverSimSetSelectedScenario(sim, picked);
         return CMD_OK;
     }
     case CMD_LOBBY_RELOAD_SCENARIO: {

@@ -401,6 +401,14 @@ int run_lobby_reload_scenario_needs_lobby(void);
 int run_lobby_reload_scenario_no_scenario(void);
 int run_lobby_reload_scenario_calls_back(void);
 int run_lobby_reload_scenario_cooldown(void);
+
+/* The lobby's scenario pick (test_lobby_set_scenario.c): who may pick, when,
+ * which names are accepted, and that a refusal leaves the previous pick
+ * alone. */
+int run_lobby_set_scenario_selects(void);
+int run_lobby_set_scenario_none(void);
+int run_lobby_set_scenario_refuses_unknown(void);
+int run_lobby_set_scenario_refuses_shape(void);
 int run_lobby_map_search_chunked(void);
 int run_wbn_bearer_state(void);
 int run_wbn_rekey_codec(void);

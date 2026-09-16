@@ -3602,6 +3602,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The lobby's reload request: who may ask, when, and what a lobby with
     # no scenario answers.
     tests/unit/test_lobby_reload_scenario.c
+    # The lobby's scenario pick: who may pick, when, and which names the
+    # scenarios directory makes good.
+    tests/unit/test_lobby_set_scenario.c
     tests/unit/test_wbn_bearer_state.c
     tests/unit/test_wbn_rekey_codec.c
     tests/unit/test_wbn_news_parse.cpp
@@ -4487,6 +4490,10 @@ set(_unit_test_names
     lobby_reload_scenario_no_scenario
     lobby_reload_scenario_calls_back
     lobby_reload_scenario_cooldown
+    lobby_set_scenario_selects
+    lobby_set_scenario_none
+    lobby_set_scenario_refuses_unknown
+    lobby_set_scenario_refuses_shape
     lobby_map_search_chunked
     wbn_bearer_state
     wbn_rekey_codec

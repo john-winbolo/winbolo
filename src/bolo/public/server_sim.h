@@ -758,6 +758,33 @@ void        serverSimSetScenarioDir(ServerSim *sim, const char *dir);
 const char *serverSimGetScenarioDir(const ServerSim *sim);
 
 /*********************************************************
+ *NAME:          serverSimSetSelectedScenario
+ *               serverSimGetSelectedScenario
+ *PURPOSE:
+ *  Which scenario from that directory the lobby host has
+ *  picked, by the file name the directory listing gave.
+ *  Empty, or NULL to the setter, is none — the ordinary
+ *  state of a server whose host has picked nothing.
+ *
+ *  The getter never answers NULL: a sim with no selection
+ *  answers "", so a caller can print or compare it without
+ *  a guard. There is no fallback the way the directory has
+ *  one; no selection is a state, not a missing setting.
+ *
+ *  Recording the pick is all this does. Nothing applies the
+ *  scenario, and no event says the selection changed — both
+ *  come later, and until they do the field is written and
+ *  read back and otherwise unused.
+ *
+ *ARGUMENTS:
+ *  sim  - Pointer to the ServerSim
+ *  file - The file name in the scenarios directory, or NULL
+ *         or "" for none
+ *********************************************************/
+void        serverSimSetSelectedScenario(ServerSim *sim, const char *file);
+const char *serverSimGetSelectedScenario(const ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimSetQuitOnWin
  *PURPOSE:
  *  Configures whether the server should quit after

@@ -781,6 +781,16 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               cut rather than dropping the
                                               entry. */
 
+#define PACKET_LOBBY_SET_SCENARIO      224  /* client → server
+                                              { pathLen 1, path N } the lobby
+                                              host picking one of the
+                                              scenarios above, by the file
+                                              name the list gave. pathLen 0
+                                              is the message that selects
+                                              none, so unlike SET_MAP an
+                                              empty path is carried rather
+                                              than refused. */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2

@@ -312,6 +312,21 @@ const char *serverSimGetScenarioDir(const ServerSim *sim) {
     return "data/scenarios";
 }
 
+void serverSimSetSelectedScenario(ServerSim *sim, const char *file) {
+    if (sim == NULL) return;
+    if (file != NULL) {
+        SDL_strlcpy(sim->scenarioSelectedFile, file,
+                    sizeof(sim->scenarioSelectedFile));
+    } else {
+        sim->scenarioSelectedFile[0] = '\0';
+    }
+}
+
+const char *serverSimGetSelectedScenario(const ServerSim *sim) {
+    if (sim == NULL) return "";
+    return sim->scenarioSelectedFile;
+}
+
 void serverSimSetUploadPersistDir(ServerSim *sim, const char *dir) {
     if (sim == NULL) return;
     if (dir != NULL) {

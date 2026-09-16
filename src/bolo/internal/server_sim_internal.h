@@ -643,6 +643,15 @@ struct ServerSim {
      * means the server offers no scenarios of its own. Read by the lobby
      * scenario-list handler, which hands it to scnDirList. */
     char         scenarioDirPath[FILENAME_MAX];
+    /* Which of the scenarios in that directory the host has picked, by the
+       file name the lister reported; empty means none. Written by the
+       CMD_LOBBY_SET_SCENARIO case and read back through
+       serverSimGetSelectedScenario. Nothing reads it to decide what plays
+       yet: applying the selection, and the settings event that says where
+       the scenario in play came from, are still to come. SCN_DIR_FILE_LEN
+       because that is the width of the ScnDirEntry.file it is copied
+       from. */
+    char         scenarioSelectedFile[SCN_DIR_FILE_LEN];
 
     /* Random map generation (for -randommap mode) */
     bool         randomMapEnabled;       /* true when using -randommap */

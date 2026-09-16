@@ -183,6 +183,14 @@ void clientSimNetSendLobbySetBotBrain(ClientSim *cs, BYTE slot,
  * Windows drive letters before opening the file. */
 void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath);
 
+/* Host (or openHost / admin) only — pick one of the scenarios the server
+ * offers on its own. relPath is the file name the scenario list gave, and
+ * "" selects none; NULL is a no-op. The server rejects "..", absolute
+ * paths, Windows drive letters and a name its scenarios directory does not
+ * hold. Picking is a commit, not a preview, but nothing is applied yet:
+ * the server records the selection and publishes nothing. */
+void clientSimNetSendLobbySetScenario(ClientSim *cs, const char *relPath);
+
 /* Lobby preview cycle. SET_MAP and a completed upload auto-stash
  * the previous committed map; these two close the loop:
  *   - Cancel: roll back to the stashed map (server re-broadcasts).

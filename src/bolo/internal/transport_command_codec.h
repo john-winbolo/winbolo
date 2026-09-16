@@ -37,9 +37,10 @@
 #include "client_command.h"
 
 /* Stack-allocation upper bound for any single ClientCommand's wire
- * encoding. Largest variants are CMD_LOBBY_SET_MAP (header + 1 +
- * 256 = 265) and CMD_CHAT (header + 1 + 128 = 137). 512 leaves
- * comfortable headroom below the UDP datagram cap. */
+ * encoding. Largest variants are CMD_LOBBY_SET_MAP and
+ * CMD_LOBBY_SET_SCENARIO (header + 1 + 256 = 265) and CMD_CHAT
+ * (header + 1 + 128 = 137). 512 leaves comfortable headroom below
+ * the UDP datagram cap. */
 #define COMMAND_MAX_WIRE_BYTES 512
 
 /* Encode a ClientCommand into a complete wire packet (header +
