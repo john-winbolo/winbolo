@@ -7903,6 +7903,10 @@ bool sdl3ImguiPlayerIsAlly(unsigned char playerNum) {
     return s_playerIsAlly[playerNum];
 }
 
+bool sdl3ImguiTankLabelsLong(void) {
+    return labelTank == lblLong;
+}
+
 bool sdl3ImguiPlayerIsBot(unsigned char playerNum) {
     if (playerNum >= MAX_PLAYERS) return false;
     return (s_playerFlags[playerNum] & PLAYER_FLAG_BOT) != 0;
