@@ -78,6 +78,7 @@
 #include "server_sim_internal.h"  /* sim->clientKnownMap, serverSimGetPillsForSlot,
                                    * serverSimGetCompressedMapFor — sim co-owner */
 #include "server_sim_lifecycle.h" /* serverSimGetMapDirRoot */
+#include "../sim/server_sim_shared.h" /* serverSimResolveMapPath */
 #include "server_sim_scenario.h"  /* serverSimScenarioListDir, ScnDirEntry —
                                    * the scenarios this server offers, read
                                    * through the lister registered on the sim */
@@ -838,9 +839,12 @@ static void handleLobbyMapUseLocal(ServerSim *sim, uint8_t *buf, int len,
      * in-memory upload model. */
     free(bytes);  /* serverSimReloadMap re-reads it via its own path */
 
+    /* The same resolve serverSimReadMapFile made when it checked the MD5
+       above, so the file that is previewed is the file that was compared: a
+       map under the virtual Uploads folder lives in the persist directory
+       when one is configured, not under the map root. */
     char localPath[FILENAME_MAX];
-    SDL_snprintf(localPath, sizeof(localPath), "%s/%s",
-                 serverSimGetMapDirRoot(sim), relBuf);
+    serverSimResolveMapPath(sim, relBuf, localPath, sizeof(localPath));
     bool previewed = false;
     if (serverSimReloadMap(sim, localPath)) {
         /* Display name: the announce name without ".map". */

@@ -938,9 +938,15 @@ static bool relPathIsSafe(const char *p) {
  * virtual "Uploads" folder (and "Uploads/<name>") redirects to the configured
  * persist directory when the sim has one set; every other path — and the unset
  * case — resolves under the map-dir root as before. relPath must already have
- * passed relPathIsSafe. out holds at least FILENAME_MAX bytes. */
-static void serverSimResolveMapPath(const ServerSim *sim, const char *relPath,
-                                     char *out, size_t outSize) {
+ * passed relPathIsSafe. out holds at least FILENAME_MAX bytes.
+ *
+ * Not static: the lobby's set-map command and the upload preview's use-local
+ * path name a map by the same relPath a listing gave, and each used to build
+ * "<map root>/<relPath>" for itself. With a persist directory configured that
+ * opens a different file from the one the client picked, so both come through
+ * here instead. Declared in server_sim_shared.h. */
+void serverSimResolveMapPath(const ServerSim *sim, const char *relPath,
+                             char *out, size_t outSize) {
     const char *persist =
         (sim && sim->uploadPersistDir[0] != '\0') ? sim->uploadPersistDir : NULL;
     if (persist != NULL && relPath != NULL) {

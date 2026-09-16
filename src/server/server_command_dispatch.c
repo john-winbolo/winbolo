@@ -35,6 +35,7 @@
 #include "server_sim.h"
 #include "server_sim_internal.h"      /* serverSimGameVoteToggle */
 #include "server_sim_join.h"          /* serverSimAssignLobbyStartOnJoin, serverSimLobbyStartSideMask, serverSimLobbyClosedMaskFor; serverSimFindFreeSlot */
+#include "sim/server_sim_shared.h"    /* serverSimResolveMapPath */
 #include "server_sim_lifecycle.h"     /* serverSimSetTeam, lobbyAutoUnreadyOnChange */
 #include "lobby_shared_starts.h"      /* lobbySharedStartsEnabled — several players per start */
 #include "start_sides.h"              /* startSideEligible — the claim command's side check */
@@ -886,9 +887,13 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             }
         }
         if (!safe) return CMD_REJECT_INVALID;
+        /* Through the resolve rather than "<map root>/<relPath>": the host
+           picked this name off a listing, and with a persist directory
+           configured the virtual Uploads folder lives somewhere else, so
+           building the path here would commit a different file from the one
+           that was listed. */
         char fullPath[FILENAME_MAX];
-        SDL_snprintf(fullPath, sizeof(fullPath), "%s/%s",
-                     serverSimGetMapDirRoot(sim), relPath);
+        serverSimResolveMapPath(sim, relPath, fullPath, sizeof(fullPath));
         if (!serverSimReloadMap(sim, fullPath)) return CMD_REJECT_INVALID;
         return CMD_OK;
     }

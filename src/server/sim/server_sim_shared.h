@@ -143,6 +143,17 @@ BYTE serverSimWinningOwner(ServerSim *sim);
  * path in server_sim_maps.c, and by serverSimChangeMap alongside it. */
 void serverSimCacheMapMd5FromFile(ServerSim *sim, const char *path);
 
+/* Defined in server_sim_maps.c — turns a client-facing map relPath into the
+ * file it names, redirecting the virtual "Uploads" folder to the configured
+ * persist directory. The listing, the search and serverSimReadMapFile go
+ * through it; so do the lobby's set-map command in server_command_dispatch.c
+ * and the upload preview's use-local path in udp_server_dispatch.c, which
+ * would otherwise open a different file from the one the client picked.
+ * relPath must already have passed the caller's path-safety check, and out
+ * holds at least FILENAME_MAX bytes. */
+void serverSimResolveMapPath(const ServerSim *sim, const char *relPath,
+                             char *out, size_t outSize);
+
 /* Defined in server_sim_vote.c — the two publish helpers that were file-local
  * to server_sim.c until their definitions moved out. Each still has a caller
  * left behind there. */
