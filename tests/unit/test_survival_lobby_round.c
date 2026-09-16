@@ -34,8 +34,13 @@
  *      * the human still holds at least one pill and every one of them is
  *        dead on the ground
  *      * the round opens with the "dig in" line
- *      * the first wave's line, and its first attacker, land 30 s in and not
- *        before
+ *      * the first wave's line, and its first attacker, land after the grace
+ *        (GRACE_S = 15) and not before, and the whole wave is ashore inside
+ *        a second of the tick it was called on
+ *      * the wave's spawns RESUME the runners behind the held seats instead
+ *        of building Lua VMs: zero builds at wave 1 where the countdown
+ *        warmed them, and zero at wave 2 where wave 1 parked them
+ *      * each attacker holds the WAVE's init table, not the team block's
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -69,8 +74,9 @@
 #define SLR_CENTER_PILLS 6
 #define SLR_BUILT_ARMOUR 15
 #define SLR_TERRAIN_ROAD ROAD       /* global.h: 4 */
-#define SLR_GRACE_TICKS  3000       /* 30 s at the 100-a-second tick */
+#define SLR_GRACE_TICKS  1500       /* GRACE_S = 15, at the 100-a-second tick */
 #define SLR_MAX_BOTS     5
+#define SLR_HORDE_SEATS  10   /* scenario.lobby team 2: ten seats HELD */
 
 /* Every line the whole game was told, with the tick it was told on. The
    script's own announcements come down this channel (game.message is server
@@ -121,6 +127,8 @@ static int slrRound(int bots, bool inPlace) {
     int           built     = 0;
     BYTE          fieldedAtStart;
     uint32_t      graceFrom;
+    uint32_t      buildsAtStart;
+    uint32_t      buildsBeforeWave;
 
     memset(&seen, 0, sizeof(seen));
     seen.digInTick = SLR_NO_TICK;
@@ -221,7 +229,8 @@ static int slrRound(int bots, bool inPlace) {
        and so does the first on_tick, which is where the grace is armed. The
        tick the round started on is the earliest that arming can have been
        measured from, so it is what the grace below is measured from too. */
-    graceFrom = sim->tick;
+    graceFrom     = sim->tick;
+    buildsAtStart = botManagerRunnerBuildCount(sim);
     serverSimTick(sim);
 
     UT_ASSERT_MSG(scenarioHostLastError(host)[0] == '\0',
@@ -352,14 +361,15 @@ static int slrRound(int bots, bool inPlace) {
            wave line before it, and both just after. Ticked in two stretches
            so a wave that landed early is caught where it happened rather
            than at the end. */
-    fieldedAtStart = serverSimGetNumFielded(sim);
+    fieldedAtStart   = serverSimGetNumFielded(sim);
+    buildsBeforeWave = botManagerRunnerBuildCount(sim);
     for (;;) {
         /* The wave is due ON the tick the deadline names, so that tick ends
            the loop rather than being asserted against. Everything before it
            is inside the grace and must be quiet. */
         if (sim->tick >= graceFrom + SLR_GRACE_TICKS) break;
         UT_ASSERT_MSG(seen.waveTick == SLR_NO_TICK,
-                      "wave 1 was called on tick %u, inside the 30 s grace "
+                      "wave 1 was called on tick %u, inside the grace "
                       "that began on tick %u",
                       (unsigned)seen.waveTick, (unsigned)graceFrom);
         UT_ASSERT_MSG(serverSimGetNumFielded(sim) == fieldedAtStart,
@@ -386,6 +396,27 @@ static int slrRound(int bots, bool inPlace) {
                   "no attacker had taken the field by tick %u, 4 s past the "
                   "grace", (unsigned)sim->tick);
 
+    /* THE WARMED RUNNERS WERE USED. A round started through the countdown
+       builds one held seat's runner per countdown tick, so by the time wave
+       1 is called all ten are parked and waiting. Every spawn must resume
+       one: a wave that builds here is a wave paying ~75 ms a head for VMs
+       the countdown already bought, which is what a spawn carrying its own
+       init table used to cost. Only on this path — the in-place start has no
+       countdown and so warms nothing, and its own proof is wave 2 below. */
+    if (!inPlace) {
+        UT_ASSERT_MSG(buildsAtStart >= (uint32_t)(bots + SLR_HORDE_SEATS),
+                      "only %u runner(s) existed when the round started; the "
+                      "countdown did not warm the held seats, so this case "
+                      "cannot say whether the wave reused them",
+                      (unsigned)buildsAtStart);
+        UT_ASSERT_MSG(botManagerRunnerBuildCount(sim) == buildsBeforeWave,
+                      "wave 1 built %u fresh runner(s) over the %u already "
+                      "standing when it was called",
+                      (unsigned)(botManagerRunnerBuildCount(sim) -
+                                 buildsBeforeWave),
+                      (unsigned)buildsBeforeWave);
+    }
+
     /* And the human's pill is still theirs at the end of the grace: the
        catch-up pass runs every tick and must not come back for it. */
     {
@@ -411,9 +442,99 @@ static int slrRound(int bots, bool inPlace) {
         int      n;
         uint16_t horde = 0;     /* every seat on the horde's team */
         int      ashore = 0;
+        uint32_t buildsAfterW1;
+        uint32_t ashoreBy;
+
+        /* The whole wave is ashore inside a second of the tick it was called
+           on: the spacing is gone and the roster queue's one-op-a-tick is
+           the only pacing left. Ten attackers and their ten init tables is
+           twenty ops, and a frame is two ticks. */
+        while (serverSimGetNumFielded(sim) < (BYTE)(1 + bots + SLR_HORDE_SEATS) &&
+               sim->tick < seen.waveTick + 100) {
+            serverSimTick(sim);
+        }
+        ashoreBy = sim->tick;
+        UT_ASSERT_MSG(serverSimGetNumFielded(sim) ==
+                          (BYTE)(1 + bots + SLR_HORDE_SEATS),
+                      "only %u of the %d seats were on the field a second "
+                      "after wave 1 was called",
+                      (unsigned)serverSimGetNumFielded(sim),
+                      1 + bots + SLR_HORDE_SEATS);
+        UT_ASSERT_MSG(ashoreBy <= seen.waveTick + 100,
+                      "the wave took %u ticks to land, more than the second "
+                      "the queue needs", (unsigned)(ashoreBy - seen.waveTick));
 
         while (sim->tick < graceFrom + SLR_GRACE_TICKS + 2500) {
             serverSimTick(sim);
+        }
+        buildsAfterW1 = botManagerRunnerBuildCount(sim);
+
+        /* THE WAVE COST NO LUA VMs. This round was started in place, so no
+           countdown warmed its held seats and wave 1 had to build all ten.
+           Wave 2 is the one that must be free: the wave-1 runners were
+           parked when their attackers were taken off the field, and a spawn
+           that carries no init table of its own matches the table each was
+           BUILT with and resumes it.
+
+           The park used to be keyed on the LIVE init table, which
+           game.bot_init replaces the tick after every spawn, so the next
+           wave never matched its own runners and paid ~75 ms a head to
+           rebuild what it already had. */
+        {
+            uint32_t buildsAtW2;
+            uint32_t w2From;
+            /* Out to the far side of the wave, its staggered departures and
+               the breather: the wave limit, ten seconds of vanishing and the
+               30 s breather, with room to spare. */
+            seen.waveTick = SLR_NO_TICK;
+            while (seen.waveTick == SLR_NO_TICK &&
+                   sim->tick < graceFrom + SLR_GRACE_TICKS + 40000) {
+                serverSimTick(sim);
+            }
+            UT_ASSERT_MSG(seen.waveTick != SLR_NO_TICK,
+                          "wave 2 never arrived by tick %u",
+                          (unsigned)sim->tick);
+            w2From     = seen.waveTick;
+            buildsAtW2 = botManagerRunnerBuildCount(sim);
+            UT_ASSERT_MSG(buildsAtW2 == buildsAfterW1,
+                          "%u runner(s) were built between the waves; the "
+                          "breather should build none",
+                          (unsigned)(buildsAtW2 - buildsAfterW1));
+            while (sim->tick < w2From + 200) {
+                serverSimTick(sim);
+            }
+            UT_ASSERT_MSG(botManagerRunnerBuildCount(sim) == buildsAtW2,
+                          "wave 2 built %u fresh runner(s); every one of its "
+                          "spawns should have resumed the one its seat was "
+                          "parked on",
+                          (unsigned)(botManagerRunnerBuildCount(sim) -
+                                     buildsAtW2));
+        }
+
+        /* (i) THE WAVE'S OWN ORDERS LANDED. The spawn carries no table — that
+               is what makes it a resume — so the wave's values reach the bot
+               through game.bot_init, queued right behind it. What that leaves
+               in the seat is the LIVE table, and it must be the wave's, not
+               the team block's: the template names blitz 2/4 and no flags,
+               while wave 1 is a noclaimdead wave.
+
+               This is the script's half of the flag contract. The table is
+               the whole statement of the bot's orders, so the brain can
+               clear the bare flags it owns before applying one and a flag
+               left out is a flag turned off rather than one left standing
+               from the wave before. */
+        for (i = 0; i < MAX_TANKS; i++) {
+            const ScnTable *live;
+            if (slrTeam(sim, i) != SLR_WAVE_TEAM) continue;
+            if (!sim->lobbyPlayers[i].fielded) continue;
+            live = &sim->botMgr.bots[i].initTable;
+            UT_ASSERT_MSG(scnTableGet(live, "noclaimdead") != NULL,
+                          "attacker %d was not told wave 1's noclaimdead", i);
+            UT_ASSERT_MSG(scnTableGet(live, "noblitz") == NULL,
+                          "attacker %d was told noblitz, which is wave 3's", i);
+            UT_ASSERT_MSG(scnTableGet(live, "mode") == NULL,
+                          "attacker %d's wave table carries mode=, which is "
+                          "refused at runtime and rides the seat config", i);
         }
 
         for (i = 0; i < MAX_TANKS; i++) {

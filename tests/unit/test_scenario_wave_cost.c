@@ -1935,3 +1935,98 @@ int run_scenario_wave_cost_all_ready_clears_skips(void) {
     wcDropBrainFile();
     return 0;
 }
+
+/* ── A seat told new orders keeps its runner ──────────────────────── */
+
+/* The shape Survival's waves have: a team gives its held seats an init table,
+ * the countdown warms a runner per seat with it, and each wave fields a seat
+ * with a spawn that carries NO table of its own — which matches the seat's and
+ * resumes — then hands that bot the wave's own values through game.bot_init.
+ *
+ * The question this case asks is what the NEXT wave costs. bot_init replaces
+ * the live init table, and the live table used to be what a park was keyed on,
+ * so the next wave's spawn was measured against wave 1's orders rather than
+ * against what the VM was built reading: it missed, every attacker paid for a
+ * fresh brain, and the ten runners the countdown bought were thrown away one a
+ * wave. The park is keyed on builtInit now, which nothing but a build writes.
+ *
+ * Three brains would say the bug is back: the warm's, wave 1's and wave 2's.
+ * One says every fielding after the warm was a resume. */
+int run_scenario_wave_cost_bot_init_keeps_park(void) {
+    ServerSim *sim;
+    ScenarioOp op;
+    ScnTable   team;
+    ScnTable   wave;
+    const BYTE seat = WC_FIRST_SEAT;
+
+    UT_ASSERT(wcMakeBrainFile("bot_init_keeps_park"));
+    ut_brain_stub_arm(true);
+    sim = wcLobbySim();
+    UT_ASSERT(sim != NULL);
+
+    /* A team that gives its seats a table, as the horde's does. */
+    memset(&team, 0, sizeof(team));
+    UT_ASSERT(scnTableSet(&team, "blitz", "2/4"));
+    UT_ASSERT(wcSeatFromTemplate(sim, &team));
+    wcRunCountdown(sim, WC_SEATS + 1);
+    UT_ASSERT_MSG(sim->state == serverStateRunning,
+                  "the countdown did not start the round, state %d",
+                  (int)sim->state);
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].parked,
+                  "the countdown left seat %d without a runner", (int)seat);
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 1,
+                  "the warm made %d brains for seat %d, expected 1",
+                  ut_brain_stub_creates(seat), (int)seat);
+
+    /* Wave 1 fields it with no table of its own, which is the team's. */
+    wcSpawnOp(&op, seat);
+    UT_ASSERT(wcApplyOne(sim, &op));
+    UT_ASSERT_MSG(sim->lobbyPlayers[seat].fielded,
+                  "the first wave's spawn did not field the seat");
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 1,
+                  "the seat has had %d brains made for it, expected 1 — a "
+                  "spawn carrying no table of its own is the seat's own table "
+                  "and resumes the warm", ut_brain_stub_creates(seat));
+
+    /* And is then told the wave's own orders. */
+    memset(&wave, 0, sizeof(wave));
+    UT_ASSERT(scnTableSet(&wave, "blitz", "3/4"));
+    UT_ASSERT(scnTableSet(&wave, "noblitz", "1"));
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_ROSTER_BOT_INIT;
+    op.u.rosterBotInit.slot = seat;
+    op.u.rosterBotInit.init = wave;
+    UT_ASSERT(wcApplyOne(sim, &op));
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].initTable.count == 2,
+                  "the bot's live table holds %u entries after bot_init, "
+                  "expected the wave's 2",
+                  (unsigned)sim->botMgr.bots[seat].initTable.count);
+
+    /* The wave ends: the seat comes off the field and its runner parks. */
+    wcRemoveOp(&op, seat);
+    UT_ASSERT(wcApplyOne(sim, &op));
+    UT_ASSERT_MSG(!sim->lobbyPlayers[seat].fielded,
+                  "the removal left the seat on the field");
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].parked,
+                  "the removal did not park seat %d's runner", (int)seat);
+
+    /* Wave 2, the same spawn. It must resume the runner wave 1 parked,
+       whatever wave 1 told that bot afterwards. */
+    wcSpawnOp(&op, seat);
+    UT_ASSERT(wcApplyOne(sim, &op));
+    UT_ASSERT_MSG(sim->lobbyPlayers[seat].fielded,
+                  "the second wave's spawn did not field the seat");
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 1,
+                  "the seat has had %d brains made for it, expected 1 — the "
+                  "orders wave 1 gave it must not cost wave 2 a new one",
+                  ut_brain_stub_creates(seat));
+    UT_ASSERT_MSG(ut_brain_stub_destroys() == 0,
+                  "%d brains were destroyed, expected 0",
+                  ut_brain_stub_destroys());
+    UT_ASSERT_MSG(!sim->botMgr.bots[seat].parked,
+                  "the refielded seat still reads as parked");
+
+    serverSimDestroy(sim);
+    wcDropBrainFile();
+    return 0;
+}

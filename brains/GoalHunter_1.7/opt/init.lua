@@ -1396,6 +1396,25 @@ function Brain.on_init(t)
   local flat = _flatten_init_table(t)
   local nlog, nwarn = #_INIT_CFG_LOG, (_INIT_CFG_WARN or "")
 
+  -- The bare flags this file owns, back to their defaults before the table is
+  -- applied, so the table is the WHOLE statement of what this bot is now.
+  --
+  -- A bare flag only ever sets: apply_init_tokens has no "off" word for
+  -- noblitz or noclaimdead, because at a VM's first breath there is nothing
+  -- to turn off. A RESUMED runner breaks that assumption — its state table
+  -- survives the park, so the last life's flags are still standing when the
+  -- next one is told its orders. Survival is the case: wave 3 is the noblitz
+  -- wave and wave 4 is not, wave 2 is a noclaimdead wave and wave 3 is not,
+  -- and without this the bot goes on fighting wave 4 with wave 3's orders.
+  --
+  -- state.test_never_refuel is deliberately NOT in this list. nil there means
+  -- "roll it once for this bot" (the TEST_NEVER_REFUEL_CHANCE aid on the
+  -- first think), so clearing it on every bot_init would quietly overrule a
+  -- roll the arena runs read; and nothing sends ammoless at runtime anyway.
+  state.blitz_disabled      = false
+  state.ally_claim_dead_off = false
+  state.force_pill_suicider = false
+
   _apply_cfg_tokens(flat, "on_init", true)
   local n = Brain.apply_init_tokens(state, flat)
 

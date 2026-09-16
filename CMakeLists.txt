@@ -5287,6 +5287,7 @@ set(_unit_test_names
     scenario_wave_cost_failed_build_leaves_nothing
     scenario_wave_cost_abort_countdown_releases
     scenario_wave_cost_warmed_init_rebuilds
+    scenario_wave_cost_bot_init_keeps_park
     scenario_wave_cost_template_init_warms
     scenario_wave_cost_all_ready_clears_skips
     scenario_comms_msg_all

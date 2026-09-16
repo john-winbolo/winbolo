@@ -1190,6 +1190,8 @@ static const UnitTestEntry s_tests[] = {
       run_scenario_wave_cost_abort_countdown_releases                                        },
     { "scenario_wave_cost_warmed_init_rebuilds",
       run_scenario_wave_cost_warmed_init_rebuilds                                            },
+    { "scenario_wave_cost_bot_init_keeps_park",
+      run_scenario_wave_cost_bot_init_keeps_park                                             },
     { "scenario_wave_cost_template_init_warms",
       run_scenario_wave_cost_template_init_warms                                             },
     { "scenario_wave_cost_all_ready_clears_skips",

@@ -29,12 +29,13 @@
 --     defenders actually on the field, whatever slots the lobby gave them,
 --     lays the island's shallow rim and its tree ring, and digs in every
 --     defender bot.
---   * 30 s of grace to dig in, called out at the start and again with 10 s
---     left, then wave 1. Every wave opens with the 8 shore bases back in
---     the horde's hands.
---   * A wave's attackers arrive one at a time, a second apart, and leave
---     the same way. Ten brain loads in one tick stops the server long
---     enough to knock remote players off their own tanks.
+--   * 15 s of grace to dig in, called out at the start and again with 10 s
+--     left, then wave 1. The breather between waves is still 30 s. Every
+--     wave opens with the 8 shore bases back in the horde's hands.
+--   * A wave's attackers arrive as fast as the roster queue drains — one op
+--     a tick, two ops an attacker, so the whole wave is ashore inside half a
+--     second. They leave one a second, because a departure still tears a
+--     brain down where an arrival only resumes one.
 --   * Wave bots respawn like ordinary play. A wave is 5 minutes of
 --     constant pressure, ended only by the clock. Survive all 5 and the
 --     defenders win — that is the only win, because allow_base_win turns
@@ -106,7 +107,7 @@ local WAVES     = 5
 local WAVE_TEAM = 2        -- the horde is team 2
 local DEF_TEAM  = 1        -- the defenders are team 1
 
-local GRACE_S      = 30    -- prep before wave 1
+local GRACE_S      = 15    -- prep before wave 1
 local BREATHER_S   = 30    -- prep between waves
 local WAVE_LIMIT_S = 300   -- 5 min: leftover attackers vanish at this mark
 
@@ -116,18 +117,21 @@ local WAVE_LIMIT_S = 300   -- 5 min: leftover attackers vanish at this mark
 -- line has just said the same thing. See warn_gap.
 local WAVE_WARN_S = { 30, 10 }
 
--- Wave bots arrive and leave one at a time, this far apart, instead of all
--- ten inside a single tick.
+-- Wave bots arrive one at a time and leave one at a time, this far apart.
 --
--- Why: spawn_bot loads that bot's brain there and then, and one brain load
--- takes about 75 ms. Ten in one tick stops the whole server for about three
--- quarters of a second. The server then runs its catch-up loop, which goes
--- out to clients as one burst; while that happens the stall-advance path
--- invents inputs for any player whose real ones have not arrived, and the
--- real ones then turn up too old to use and are dropped. A player on a slow
--- link sees his tank freeze and drive itself at every wave. Clearing a wave
--- is as bad: each removal tears down a brain and a client sim.
-local SPAWN_SPACING_S  = 1
+-- ARRIVALS ARE FREE NOW, so the spacing on them is zero and a whole wave
+-- lands inside half a second. What the second used to be buying: spawn_bot
+-- built that bot's Lua VM there and then, about 75 ms of it, and ten in one
+-- tick stopped the server long enough that its catch-up burst knocked
+-- players on a slow link off their own tanks. It does not build one any
+-- more — every held seat's runner is warmed before the round and the spawn
+-- RESUMES it (see pump_spawn_queue), so an arrival is a tank and a map
+-- reload. The roster queue still paces the ops one to a tick, which is the
+-- real floor: ten attackers and their ten init tables land in twenty ticks.
+--
+-- DEPARTURES still pay: a removal tears down a brain and a client sim, and
+-- nothing warms those back up, so they keep their second apiece.
+local SPAWN_SPACING_S  = 0
 local VANISH_SPACING_S = 1
 
 -- Newswire mute window around wave churn. A wave arriving or leaving fires
@@ -203,26 +207,39 @@ local WAVE_NOCLAIM = { [1] = true, [2] = true }  -- ignore allies' dead-pill cla
 -- fires again. Every wave still designates blitzsuiciders inside a blitz.
 local SUICIDER_WAVES = {}
 
--- The horde's brain mode and difficulty. The old host asked a bot_mode hook
--- for these; this host has no such hook, so they ride the init table with
--- everything else. Every wave bot is fielded by spawn_bot, so every one of
--- them gets them. The defenders are not named here on purpose: their mode
--- and their difficulty stay exactly as the lobby chose.
---
--- The SAME PAIR is on the team template above, which is what the lobby and
--- the seat's config read. The two agree on purpose and neither is redundant:
--- the template is what a lobby row shows and what the C side turns into the
--- brain's mode= / difficulty= tokens, and these are what the init table
--- carries to a bot the script spawns into a seat the template never held.
--- Both land in the same BRAIN_INIT_ARG string and the brain takes the last
--- write, so two identical values are one value applied twice.
-local WAVE_MODE       = "survival"
-local WAVE_DIFFICULTY = "hard"
+-- The horde's brain mode and difficulty ride the SEAT's config, not the init
+-- table: the team block above names them, the C side turns them into the
+-- brain's mode= / difficulty= tokens, and every seat this script fields gets
+-- them at its VM's first breath whether the spawn carries a table or not.
+-- They are not in wave_init below, and must not be: a wave's table is handed
+-- to a brain that is ALREADY RUNNING, and mode= and difficulty= are refused
+-- at runtime (_apply_cfg_tokens says so, once per bot per wave, in a log
+-- nobody wants that line in). The defenders are left alone either way —
+-- their mode and difficulty stay exactly as the lobby chose.
 
+-- The wave-invariant half of the horde's orders, written onto the team block
+-- rather than inline in the scenario table at the top of this file, because
+-- that table is read at the end of the chunk and these constants are not
+-- defined until here. One source of truth either way.
+--
+-- Why the team block carries them at all: it is what each HELD seat's runner
+-- is WARMED with before the round, and a spawn that carries no table of its
+-- own is matched against it. Match, and the wave resumes ten runners that
+-- are already built; differ, and every attacker pays for a fresh Lua VM as
+-- it lands. See the spawn in pump_spawn_queue.
+scenario.lobby.teams[2].init = {
+  portfolio      = WAVE_PORTFOLIO,
+  blitz          = string.format("%d/%d", WAVE_BLITZ_MIN, WAVE_BLITZ_MAX),
+  blitzsuiciders = tostring(WAVE_BLITZ_MIN_SUICIDERS),
+}
+
+-- The orders for one wave, handed to an attacker through game.bot_init the
+-- tick after it lands. Every wave sends the WHOLE set, the bare flags
+-- included by their absence: the brain resets the ones it owns before it
+-- applies a runtime table, so a flag left out here is a flag turned off
+-- rather than one left standing from the last wave.
 local function wave_init(w)
   local t = {
-    mode        = WAVE_MODE,
-    difficulty  = WAVE_DIFFICULTY,
     portfolio   = WAVE_PORTFOLIO,
     blitz       = string.format("%d/%d",
                     WAVE_BLITZ_MIN_BY_WAVE[w] or WAVE_BLITZ_MIN,
@@ -818,11 +835,22 @@ local function pump_spawn_queue(tick)
     -- named one outranks the policy and is taken as it is read, so the
     -- first life is full whatever else is going on; the policy carries
     -- every life after it.
-    p = game.spawn_bot{ slot = seat, start = start, loadout = "open",
-                        init = wave_init(wave) }
+    --
+    -- NO init table. That is what makes this a RESUME: the seat's warmed
+    -- runner was built with the team block's table, a spawn carrying none is
+    -- matched against that same table, and the seat comes back on the field
+    -- without a Lua VM being built for it. Carrying the wave's own table
+    -- here instead — which is what this line used to do — missed on every
+    -- spawn and threw away all ten warmed runners at about 75 ms each. The
+    -- wave's own orders follow on the next line.
+    p = game.spawn_bot{ slot = seat, start = start, loadout = "open" }
   end
 
   if p then
+    -- The wave's orders, queued right behind the spawn. Both are roster ops
+    -- and the sim drains one a tick, so this lands the tick after the bot
+    -- does — by which time it is on the field, which is what bot_init needs.
+    game.bot_init(p, wave_init(wave))
     wave_bots[p] = true
     spawned[#spawned + 1] = p
     -- The first attacker ashore takes the wave's whole estate and keeps it

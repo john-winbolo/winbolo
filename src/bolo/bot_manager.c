@@ -897,8 +897,12 @@ static bool botParkedRunnerMatches(const BotContext *bot,
         memset(&none, 0, sizeof(none));
         init = &none;
     }
-    if (!botInitTablesSame(&bot->initTable, init)) {
-        if (bot->warmed && bot->initTable.count == 0 && init->count != 0) {
+    /* Against the table the VM was BUILT with, not the one it was last told.
+       game.bot_init replaces the live record mid-life — which is the whole
+       point of it — and a script that tunes a seat each time it fields it
+       would otherwise never match its own warmed runner again. */
+    if (!botInitTablesSame(&bot->builtInit, init)) {
+        if (bot->warmed && bot->builtInit.count == 0 && init->count != 0) {
             WB_LOG_INFO(WB_LOG_CAT_SIM,
                     "botManager: seat %d was warmed without the table the "
                     "spawn carries; building its runner now",
@@ -1213,6 +1217,13 @@ static bool botBuildRunner(ServerSim *sim, BotContext *bot,
     if (bot->brain.worldsim != NULL) {
         brainWorldSimSetAbortFlag(bot->brain.worldsim, &bot->abort_flag);
     }
+
+    /* The table this VM came into the world reading, kept apart from the
+       live one so a later game.bot_init cannot move the park key out from
+       under the next fielding of the same seat. Written here because this is
+       the one place a VM is created, and read only by the park test. */
+    bot->builtInit = bot->initTable;
+    sim->botMgr.runnerBuilds++;
     return true;
 }
 
@@ -2133,6 +2144,11 @@ bool botManagerHasAnyBot(const ServerSim *sim) {
  * reads item[count].allie of cs->sim.plyrs), NOT the server matrix — so
  * the allies-rendered-red bug needs both sides watched. Returns 0 for
  * missing bot / row out of range. */
+uint32_t botManagerRunnerBuildCount(const ServerSim *sim) {
+    if (sim == NULL) return 0;
+    return sim->botMgr.runnerBuilds;
+}
+
 uint32_t botManagerGetClientAllieRow(const ServerSim *sim, BYTE botPlayer, BYTE row) {
     if (sim == NULL || botPlayer >= MAX_TANKS || row >= MAX_TANKS) return 0;
     const BotContext *bot = &sim->botMgr.bots[botPlayer];

@@ -2440,6 +2440,7 @@ int run_scenario_wave_cost_countdown_warms_seats(void);
 int run_scenario_wave_cost_warm_is_one_a_frame(void);
 int run_scenario_wave_cost_warmed_field_is_free(void);
 int run_scenario_wave_cost_warmed_init_rebuilds(void);
+int run_scenario_wave_cost_bot_init_keeps_park(void);
 int run_scenario_wave_cost_template_init_warms(void);
 int run_scenario_wave_cost_warm_skips_bad_brain(void);
 int run_scenario_wave_cost_failed_build_leaves_nothing(void);
