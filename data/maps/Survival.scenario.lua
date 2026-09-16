@@ -129,10 +129,12 @@ local WAVE_WARN_S = { 30, 10 }
 -- reload. The roster queue still paces the ops one to a tick, which is the
 -- real floor: ten attackers and their ten init tables land in twenty ticks.
 --
--- DEPARTURES still pay: a removal tears down a brain and a client sim, and
--- nothing warms those back up, so they keep their second apiece.
+-- DEPARTURES are the same story since the host parks a held seat's runner
+-- across the unfield instead of tearing it down: nothing is destroyed, so
+-- they go out at the queue's own pace too. Either number is seconds and may
+-- be a fraction; at 0 the roster queue still hands out one op a tick.
 local SPAWN_SPACING_S  = 0
-local VANISH_SPACING_S = 1
+local VANISH_SPACING_S = 0
 
 -- Newswire mute window around wave churn. A wave arriving or leaving fires
 -- ten join or quit lines in a row and buries everything else, so the
