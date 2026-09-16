@@ -1447,12 +1447,14 @@ static void scnGameEventHook(ScenarioHost *h, const ScnQueuedEvent *e,
             return;
 
         case EVENT_PILL_PLACED:
-            /* [player, index, mx, my, armour], and the hook names the pillbox
-               first: the two are the other way round from the event. The
-               armour follows the player because it is what a script has to
-               read to know which kind of placing this was — a builder
-               finishing the job leaves it at the sim's cap, and a tank
-               sinking, a builder dying or a player leaving leaves it at 0. */
+            /* [player, index, mx, my] and the armour behind the wire at
+               data[4], which this file reads as freely as it reads the mine's
+               layer. The hook names the pillbox first: the two are the other
+               way round from the event. The armour follows the player because
+               it is what a script has to read to know which kind of placing
+               this was — a builder finishing the job leaves it at the sim's
+               cap, and a tank sinking, a builder dying or a player leaving
+               leaves it at 0. */
             if (!scnHookBegin(h, SCN_HOOK_PILL_PLACED)) return;
             lua_pushinteger(h->L, scenarioLuaIndexToScript((int)e->data[1]));
             lua_pushinteger(h->L, (lua_Integer)e->data[0]);

@@ -465,9 +465,10 @@ void serverSimCbPillPlaced(void *ctx, BYTE player, BYTE index, BYTE mapX,
     ev.data[1] = index;
     ev.data[2] = mapX;
     ev.data[3] = mapY;
-    /* On the wire, unlike the trailing bytes the capture events keep to
-       themselves: it is the only thing separating a pillbox a builder put up
-       from one a corpse dropped, and every audience needs that. */
+    /* Past gameEventDataSize(), so it never goes on the wire — the same place
+       the capture events keep their class and square. It is the only thing
+       separating a pillbox a builder put up from one a corpse dropped, and the
+       readers that need that are all server-side. */
     ev.data[4] = armour;
     serverSimAddEvent(sim, &ev);
 }

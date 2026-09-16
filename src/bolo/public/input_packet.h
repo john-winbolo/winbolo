@@ -289,16 +289,22 @@ typedef struct {
 #define EVENT_PING         20  /* data: [senderPlayer, kind, xHi, xLo, yHi, yLo] — map ping, world coords, team-only */
 #define EVENT_TANK_SPAWNED   21 /* data: [player, mx, my, respawn] — respawn 0 for a first spawn */
 #define EVENT_LGM_LANDED     22 /* data: [player, mx, my] — builder finished his flight back */
-#define EVENT_PILL_PLACED    23 /* data: [player, index, mx, my, armour] — a carried pill put down.
-                                 * Every way a carried pillbox reaches the map raises this, not
-                                 * only a builder finishing the job, so `armour` is what tells the
-                                 * two apart: a built pillbox lands at the sim's cap and every
-                                 * other route lands it dead at 0. The dead ones are the tank
-                                 * sinking or being destroyed, the builder dying with it in his
-                                 * hands, and either of those happening because the player left.
-                                 * `player` is who was carrying it, which on a leave is a slot
-                                 * that is on its way out. Read armour, not the player, to decide
-                                 * whether a live gun just appeared. */
+#define EVENT_PILL_PLACED    23 /* data: [player, index, mx, my] — a carried pill put down.
+                                 * The pillbox's armour follows at data[4], past the wire size
+                                 * and kept to the server, the way the capture events keep their
+                                 * class and square. Every way a carried pillbox reaches the map
+                                 * raises this, not only a builder finishing the job, and armour
+                                 * is what tells those apart: a built pillbox lands at the sim's
+                                 * cap and every other route — the tank sinking or being
+                                 * destroyed, the builder dying with it in his hands, either of
+                                 * those because the player left, a scenario putting one down —
+                                 * lands it dead at 0. `player` is whoever was carrying it, which
+                                 * on a leave is a slot on its way out, so a server-side listener
+                                 * reads the armour rather than the player to decide whether a
+                                 * live gun just appeared. It stays behind the wire because no
+                                 * client reads this event at all; a client learns a pill's armour
+                                 * from EVENT_PILL_UPDATE, which the per-tick diff raises for the
+                                 * same pillbox on the tick it lands. */
 #define EVENT_PILL_PICKED_UP 24 /* data: [player, index] — a dead pill scooped into a tank */
 #define EVENT_PILL_KILLED    25 /* data: [index, attacker] — attacker NEUTRAL when nobody is named */
 #define EVENT_BUILT          26 /* data: [player, action, mx, my] — see BUILT action below */
@@ -481,7 +487,7 @@ static inline int gameEventDataSize(uint8_t type) {
     case EVENT_MINE_PLACED:    return 3;
     case EVENT_TANK_SPAWNED:   return 4;
     case EVENT_LGM_LANDED:     return 3;
-    case EVENT_PILL_PLACED:    return 5;   /* armour rides the wire — see the event's note */
+    case EVENT_PILL_PLACED:    return 4;   /* the armour stays behind the wire */
     case EVENT_PILL_PICKED_UP: return 2;
     case EVENT_PILL_KILLED:    return 2;
     case EVENT_BUILT:          return 4;
