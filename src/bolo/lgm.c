@@ -1244,11 +1244,15 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
             frontEndStatusPillbox(clientSimFromSim(sim), (*lgman)->numPills, (pillsGetAllianceNum(sim, pb, (*lgman)->numPills)));
           }
           /* numPills is the pillbox number, counted from one, and is about to
-             be cleared; the event carries the 0-based item[] slot. */
+             be cleared; the event carries the 0-based item[] slot. The armour
+             is read back off the square rather than from addPill: pillsSetPill
+             clamps what it is handed to the sim's cap, and the event has to
+             say what the pillbox actually has on it. */
           if (isServer && sim->callbacks.pillPlaced &&
               (*lgman)->numPills > 0) {
             sim->callbacks.pillPlaced(sim->callbacks.ctx, (*lgman)->playerNum,
-                                      (BYTE)((*lgman)->numPills - 1), bmx, bmy);
+                                      (BYTE)((*lgman)->numPills - 1), bmx, bmy,
+                                      pillsGetArmourPos(pb, bmx, bmy));
           }
           (*lgman)->numPills = LGM_NO_PILL;
           if (sim->callbacks.recordPlayerAction) sim->callbacks.recordPlayerAction(sim->callbacks.ctx, (*lgman)->playerNum, PLAYER_ACTION_BUILD, bmx, bmy);
@@ -1587,6 +1591,15 @@ void lgmDropCarriedPill(GameSim *sim, lgm *lgman) {
     item.inTank = FALSE;
     item.justSeen = FALSE;
     pillsSetPill(sim, pb, &item, (*lgman)->numPills);
+    /* Same event a builder finishing the job raises, because it is the same
+       fact: a pillbox that was in somebody's hands is on the map again. The
+       armour byte is what says this one is dead rather than built. numPills
+       is counted from one and the event carries the 0-based item[] slot. */
+    if (sim->callbacks.pillPlaced && (*lgman)->numPills > 0) {
+      sim->callbacks.pillPlaced(sim->callbacks.ctx, (*lgman)->playerNum,
+                                (BYTE)((*lgman)->numPills - 1), item.x, item.y,
+                                pillsGetArmourPos(pb, item.x, item.y));
+    }
   }
   (*lgman)->numPills = LGM_NO_PILL;
   if (sim->isServer == FALSE) { clientSimRecalc((struct ClientSim *)sim); }

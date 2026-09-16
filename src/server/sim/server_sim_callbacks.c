@@ -456,7 +456,7 @@ void serverSimCbLgmLanded(void *ctx, BYTE player, BYTE mapX, BYTE mapY) {
 }
 
 void serverSimCbPillPlaced(void *ctx, BYTE player, BYTE index, BYTE mapX,
-                           BYTE mapY) {
+                           BYTE mapY, BYTE armour) {
     ServerSim *sim = (ServerSim *)ctx;
     GameEvent ev;
     ev.type = EVENT_PILL_PLACED;
@@ -465,6 +465,10 @@ void serverSimCbPillPlaced(void *ctx, BYTE player, BYTE index, BYTE mapX,
     ev.data[1] = index;
     ev.data[2] = mapX;
     ev.data[3] = mapY;
+    /* On the wire, unlike the trailing bytes the capture events keep to
+       themselves: it is the only thing separating a pillbox a builder put up
+       from one a corpse dropped, and every audience needs that. */
+    ev.data[4] = armour;
     serverSimAddEvent(sim, &ev);
 }
 

@@ -4810,6 +4810,7 @@ set(_unit_test_names
     lgm_request_valid
     lgm_request_quiet
     lgm_quit_drops_carried_pill
+    lgm_unfield_drops_carried_pill
     jitter_buffer_grow
     shell_projection
     sim_rules_classic_defaults
