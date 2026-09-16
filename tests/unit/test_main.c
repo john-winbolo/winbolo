@@ -1541,6 +1541,10 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_precedence_open_game_plays_open",        run_scenario_precedence_open_game_plays_open        },
     { "bot_init_table_two_bots_keep_own",        run_bot_init_table_two_bots_keep_own        },
     { "scenario_precedence_reload_refuses_bound",        run_scenario_precedence_reload_refuses_bound        },
+    { "scenario_panel_parses_each_primitive",            run_scenario_panel_parses_each_primitive            },
+    { "scenario_panel_refuses_malformed",                run_scenario_panel_refuses_malformed                },
+    { "scenario_panel_boundaries",                       run_scenario_panel_boundaries                       },
+    { "scenario_panel_roundtrip",                        run_scenario_panel_roundtrip                        },
     { "bot_init_table_empty_when_none",          run_bot_init_table_empty_when_none          },
     { "bot_init_arg_text_to_table",              run_bot_init_arg_text_to_table              },
 #ifdef WB_NETDEBUG

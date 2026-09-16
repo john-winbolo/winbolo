@@ -2959,6 +2959,15 @@ int run_scenario_precedence_no_game_plays_strict(void);
 int run_scenario_precedence_open_game_plays_open(void);
 int run_scenario_precedence_reload_refuses_bound(void);
 
+/* The panel's display list (test_scenario_panel.c): the byte layout
+ * decoded from a hand-written list, the refusal each malformed list
+ * gets, the caps at their edges, and a decoded list written back out
+ * and parsed again. */
+int run_scenario_panel_parses_each_primitive(void);
+int run_scenario_panel_refuses_malformed(void);
+int run_scenario_panel_boundaries(void);
+int run_scenario_panel_roundtrip(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */

@@ -3462,6 +3462,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Which scenario plays when a map and a mod both have a claim, and the
     # points the template is applied at.
     tests/unit/test_scenario_precedence.c
+    # The panel's display list: the byte layout decoded from a hand-written
+    # list, the refusal each malformed list gets, the caps at their edges,
+    # and a decoded list written back out and parsed again.
+    tests/unit/test_scenario_panel.c
     # The binding table: the game table a script reads the sim through, the
     # three index rules and what an absent entity reads as.
     tests/unit/test_scenario_lua.c
@@ -5650,6 +5654,10 @@ set(_unit_test_names
     scenario_precedence_no_game_plays_strict
     scenario_precedence_open_game_plays_open
     scenario_precedence_reload_refuses_bound
+    scenario_panel_parses_each_primitive
+    scenario_panel_refuses_malformed
+    scenario_panel_boundaries
+    scenario_panel_roundtrip
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table
