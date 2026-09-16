@@ -283,6 +283,9 @@ local PILL_DROP_SEARCH = 3
 local seats       = {}     -- the horde's held seats, in seat order
 local wave        = 0
 local wave_bots   = {}     -- seat -> true for a fielded wave member
+local seen_fielded = {}   -- seat -> true once a prune pass saw it on the
+                          -- field; reset when a wave launches (see the
+                          -- prune for why a queued spawn must not count)
 local next_wave_at = nil   -- tick the next wave lands (nil while one is live)
 local warn_gap    = nil    -- ticks the current countdown started with
 local warn_next   = 1      -- next WAVE_WARN_S entry still to say
@@ -895,6 +898,10 @@ local function spawn_wave()
   wave_bases_restocked = 0
 
   wave_ends_at  = game.tick() + secs(WAVE_LIMIT_S)
+  -- A fresh wave, a fresh memory of who has been on the field: the seats
+  -- are the same ten every wave, and a mark left from the last wave would
+  -- read this wave's queued spawn as a departure.
+  seen_fielded = {}
   game.message(string.format("[wave] %d: clock started at tick %d, ends at tick %d (%d s)",
     wave, game.tick(), wave_ends_at, WAVE_LIMIT_S))
   last_min_mark = nil
@@ -1031,8 +1038,6 @@ end
 -- already seen on the field can be pruned for leaving it. The wave's end
 -- then takes every attacker off, instead of the one that happened to be
 -- listed, and the next wave lands with all ten seats free.
-local seen_fielded = {}   -- seat -> true once a pass saw it on the field
-
 local function prune_wave_bots()
   for p in pairs(wave_bots) do
     local ls = game.lobby_slot(p)

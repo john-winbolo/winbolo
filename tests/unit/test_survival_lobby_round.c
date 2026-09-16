@@ -687,6 +687,25 @@ static int slrRound(int bots, bool inPlace) {
                           pill + 1, px, py, (int)(*sim->sim.pb).item[pill].x,
                           (int)(*sim->sim.pb).item[pill].y);
         }
+
+        /* (l) And wave 2 clears at its end as wave 1 did. The script's
+               memory of who had been on the field carried over from wave
+               1, so wave 2's queued spawns read as departures and were
+               forgotten on arrival; its end then removed nobody. Last,
+               because it runs the round out past wave 2's departures. */
+        if (seen.waveTick != SLR_NO_TICK) {
+            int fielded = 0;
+            while (sim->tick < seen.waveTick + 30000 + 200 + 10 * 100 + 500) {
+                serverSimTick(sim);
+            }
+            for (i = 0; i < MAX_TANKS; i++) {
+                if (slrTeam(sim, i) == SLR_WAVE_TEAM &&
+                    sim->lobbyPlayers[i].fielded) fielded++;
+            }
+            UT_ASSERT_MSG(fielded == 0,
+                          "%d attacker(s) are still on the field after wave "
+                          "2's end and its departures", fielded);
+        }
     }
 
     slrSeen = NULL;
