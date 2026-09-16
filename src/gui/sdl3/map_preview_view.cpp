@@ -44,6 +44,7 @@ extern "C" {
 #include "sprite_positions.h"
 #include "minimap_render.h"
 #include "map_colours.h"
+#include "map_markers.h"
 
 /* From tileloader.h */
 extern SDL_Surface *tileLoaderBuildSheet(int tileSize);
@@ -548,32 +549,54 @@ static void viewRenderMapColoursToOffscreen(MapPreviewView *v,
         }
     }
 
-    /* Object dots — pill (red), base (white), start (yellow). Size
-     * scales with tilePx so they stay legible. */
+    /* Object marks. Size scales with tilePx so they stay legible. */
     int dotSize = tilePx;
     if (dotSize < 2) dotSize = 2;
     if (dotSize > 4 && tilePx <= 4) dotSize = 4;
+
+    /* Pillboxes and bases take the shapes and colours the game gives them
+     * (map_markers.h), so a map reads the same here as in play: a disc for a
+     * pillbox, a square for a base. A map file records no owner for either,
+     * and the palette's rule for an unowned one is markerEvil for a pillbox —
+     * to anyone who can see it that is what it is — and markerNeutral for a
+     * base.
+     *
+     * Sized off the old dot rather than off the square: at these zooms a
+     * square is between one and three pixels, so a marker scaled to it would
+     * vanish. That also means the shapes carry less than they do in play —
+     * at 0.1x everything is a few pixels and the colour does the work. The
+     * marks are centred on their square now; the dots sat in the top-left
+     * corner of it.
+     *
+     * The outline layer is translucent, so the blend mode is set once round
+     * the lot and put back. */
+    float markRadius = SDL_max(1.5f, (float)dotSize * 0.5f);
+    SDL_BlendMode oldMarkBlend = SDL_BLENDMODE_NONE;
+    SDL_GetRenderDrawBlendMode(renderer, &oldMarkBlend);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
     BYTE numPills = clientMapPreviewGetPillCount(v->preview);
     for (BYTE i = 1; i <= numPills; i++) {
         BYTE px, py;
         if (!clientMapPreviewGetPill(v->preview, i, &px, &py, NULL, NULL)) continue;
-        float dx = (float)px * tilePxF - camPxF;
-        float dy = (float)py * tilePxF - camPyF;
-        SDL_FRect dot = { dx, dy, (float)dotSize, (float)dotSize };
-        SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
-        SDL_RenderFillRect(renderer, &dot);
+        float dx = (float)px * tilePxF - camPxF + tilePxF * 0.5f;
+        float dy = (float)py * tilePxF - camPyF + tilePxF * 0.5f;
+        mapMarkerPill(renderer, dx, dy, markRadius, mapColourMarkerEvil());
     }
     BYTE numBases = clientMapPreviewGetBaseCount(v->preview);
     for (BYTE i = 1; i <= numBases; i++) {
         BYTE bx, by;
         if (!clientMapPreviewGetBase(v->preview, i, &bx, &by, NULL)) continue;
-        float dx = (float)bx * tilePxF - camPxF;
-        float dy = (float)by * tilePxF - camPyF;
-        SDL_FRect dot = { dx, dy, (float)dotSize, (float)dotSize };
-        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-        SDL_RenderFillRect(renderer, &dot);
+        float dx = (float)bx * tilePxF - camPxF + tilePxF * 0.5f;
+        float dy = (float)by * tilePxF - camPyF + tilePxF * 0.5f;
+        mapMarkerBase(renderer, dx, dy, markRadius, mapColourMarkerNeutral());
     }
+    SDL_SetRenderDrawBlendMode(renderer, oldMarkBlend);
+
+    /* Starts keep their rectangle and their own colours. They are not one of
+     * the three things the marker palette describes - they are lobby state,
+     * saying who has claimed which starting position, and self/ally/enemy/free
+     * is a distinction the palette has no way to make. */
     BYTE numStarts = clientMapPreviewGetStartCount(v->preview);
     for (BYTE i = 1; i <= numStarts; i++) {
         BYTE sx, sy;
