@@ -325,8 +325,8 @@ static const char *const kShkBody =
     " note(\"base_neutralized \"..n..\" \"..o..\" \"..tostring(s)) end\n"
     "function on_pill_captured(n, o, w, s)"
     " note(\"pill_captured \"..n..\" \"..o..\" \"..w..\" \"..tostring(s)) end\n"
-    "function on_pill_placed(n, p, s)"
-    " note(\"pill_placed \"..n..\" \"..p..\" \"..tostring(s)) end\n"
+    "function on_pill_placed(n, p, a, s)"
+    " note(\"pill_placed \"..n..\" \"..p..\" \"..a..\" \"..tostring(s)) end\n"
     "function on_pill_picked_up(n, p, s)"
     " note(\"pill_picked_up \"..n..\" \"..p..\" \"..tostring(s)) end\n"
     "function on_pill_killed(n, by, s)"
@@ -384,9 +384,11 @@ static const ShkGameCase kShkGame[] = {
       "base_neutralized 5 11 false\n" },
     { EVENT_PILL_CAPTURED, { 12, 13, 5, 0, CAPTURE_CLASS_ENEMY, 56, 57 }, 7,
       "pill_captured 6 13 12 false\n" },
-    /* [player, index, mx, my] — the hook names the pillbox first. */
-    { EVENT_PILL_PLACED,   { 14, 6, 58, 59 }, 4,
-      "pill_placed 7 14 false\n" },
+    /* [player, index, mx, my, armour] — the hook names the pillbox first, and
+       the armour behind the player is what separates a pillbox a builder put
+       up from one a corpse dropped. */
+    { EVENT_PILL_PLACED,   { 14, 6, 58, 59, 15 }, 5,
+      "pill_placed 7 14 15 false\n" },
     /* [player, index] — the same swap. */
     { EVENT_PILL_PICKED_UP,{ 1, 7 }, 2,
       "pill_picked_up 8 1 false\n" },

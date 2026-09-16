@@ -2480,6 +2480,17 @@ bool tankDropPillAt(GameSim *sim, tank *value, BYTE pillNum, BYTE mx, BYTE my) {
   item.justSeen = FALSE;
   if (isServer) {
     pillsSetPill(sim, pb,&item,pillNum);
+    /* The same event a builder finishing the job raises: a pillbox that was
+       being carried is on the map again. Every caller reaching here is a
+       drop rather than a build — the tank sinking, the tank destroyed, the
+       player leaving, or a scenario putting one down — so the armour byte
+       this carries is 0 and that is what tells a listener it is not a live
+       gun. pillNum counts from one; the event carries the 0-based slot. */
+    if (sim->callbacks.pillPlaced && pillNum > 0) {
+      sim->callbacks.pillPlaced(sim->callbacks.ctx, item.owner,
+                                (BYTE)(pillNum - 1), mx, my,
+                                pillsGetArmourPos(pb, mx, my));
+    }
   }
   if (!isServer) {
     frontEndStatusPillbox(clientSimFromSim(sim), pillNum, (pillsGetAllianceNum(sim, pb, pillNum)));

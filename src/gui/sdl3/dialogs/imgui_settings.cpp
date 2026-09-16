@@ -2231,10 +2231,14 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
         /* The seven controls above are the lobby's Custom row in another
          * shape, so the choice behind them is recorded the same way. Left
          * out, a set made here would be overwritten on the next start by
-         * whatever preset was remembered before it. */
+         * whatever preset was remembered before it.
+         *
+         * saveCustom is true: everything these controls hold was typed in
+         * here by hand, so a set that matches no preset is a set the
+         * player made and is worth keeping. */
         VisibilitySettings chosen;
         gameFrontGetVisibilitySettings(&chosen);
-        gameFrontRememberVisibility(&chosen);
+        gameFrontRememberVisibility(&chosen, true);
     }
 
     ImGui::Spacing();

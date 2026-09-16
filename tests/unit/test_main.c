@@ -753,6 +753,8 @@ static const UnitTestEntry s_tests[] = {
     { "build_harvest_busy_queues",               run_build_harvest_busy_queues               },
     { "lgm_request_valid",                       run_lgm_request_valid                       },
     { "lgm_request_quiet",                       run_lgm_request_quiet                       },
+    { "lgm_quit_drops_carried_pill",             run_lgm_quit_drops_carried_pill             },
+    { "lgm_unfield_drops_carried_pill",          run_lgm_unfield_drops_carried_pill          },
     { "jitter_buffer_grow",                      run_jitter_buffer_grow                      },
     { "shell_projection",                        run_shell_projection                        },
     { "screen_bullets_build",                    run_screen_bullets_build                    },

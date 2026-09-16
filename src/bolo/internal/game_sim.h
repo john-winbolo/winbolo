@@ -147,7 +147,14 @@ typedef struct GameSimCallbacks {
      * back from a death.
      * lgmLanded: `player`'s builder finished the flight back and is standing
      * at mapX/mapY — the square he actually reached, not the one he left.
-     * pillPlaced: `player`'s builder put a carried pill down as pill `index`.
+     * pillPlaced: a carried pillbox `index` reached the map at mapX/mapY,
+     * carried there by `player`, with `armour` on it. Every route raises it,
+     * not only a builder finishing the job: the tank sinking or being
+     * destroyed puts its cargo down, the builder dying puts the one in his
+     * hands down, and a player leaving does both. `armour` is what separates
+     * them — a built pillbox lands at the sim's cap, every other route lands
+     * it dead at 0 — so it is read, rather than the player, to tell whether a
+     * live gun just appeared.
      * pillKilled: pill `index` lost its last armour. attacker is the slot
      * credited, or NEUTRAL where the blow names nobody.
      * built: `player`'s builder finished a job. action is the builder's own
@@ -160,7 +167,7 @@ typedef struct GameSimCallbacks {
                         bool respawn);
     void (*lgmLanded)(void *ctx, BYTE player, BYTE mapX, BYTE mapY);
     void (*pillPlaced)(void *ctx, BYTE player, BYTE index, BYTE mapX,
-                       BYTE mapY);
+                       BYTE mapY, BYTE armour);
     void (*pillKilled)(void *ctx, BYTE index, BYTE attacker);
     void (*built)(void *ctx, BYTE player, BYTE action, BYTE mapX, BYTE mapY);
     void (*mineLaid)(void *ctx, BYTE player, BYTE mapX, BYTE mapY);

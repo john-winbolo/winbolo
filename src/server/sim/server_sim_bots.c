@@ -164,6 +164,18 @@ void serverSimUnfieldBot(ServerSim *sim, BYTE playerNum) {
         sim->sim.tanks[playerNum] = NULL;
     }
     if (sim->sim.lgmen[playerNum] != NULL) {
+        /* Put down the pillbox he was carrying before he goes, the same as
+           the leave path does (issue #340). tankDestroy above drops the
+           tank's own cargo, but a pillbox handed to the man has already left
+           that list — it exists only in his hands, and deleting him without
+           this loses it for the rest of the round: the record stays marked as
+           carried, so it is neither on the map nor anyone's to pick up. It
+           matters more here than on a leave, because a leave migrates what
+           the slot owned and this deliberately does not — a pill stranded
+           here would stay under the name of a seat that is off the field. It
+           lands owned by the seat, which is what "nothing the seat owns
+           changes hands" means for a pillbox. */
+        lgmDropCarriedPill(&sim->sim, &sim->sim.lgmen[playerNum]);
         lgmDestroy(&sim->sim.lgmen[playerNum]);
         sim->sim.lgmen[playerNum] = NULL;
     }

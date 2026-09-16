@@ -456,7 +456,7 @@ void serverSimCbLgmLanded(void *ctx, BYTE player, BYTE mapX, BYTE mapY) {
 }
 
 void serverSimCbPillPlaced(void *ctx, BYTE player, BYTE index, BYTE mapX,
-                           BYTE mapY) {
+                           BYTE mapY, BYTE armour) {
     ServerSim *sim = (ServerSim *)ctx;
     GameEvent ev;
     ev.type = EVENT_PILL_PLACED;
@@ -465,6 +465,11 @@ void serverSimCbPillPlaced(void *ctx, BYTE player, BYTE index, BYTE mapX,
     ev.data[1] = index;
     ev.data[2] = mapX;
     ev.data[3] = mapY;
+    /* Past gameEventDataSize(), so it never goes on the wire — the same place
+       the capture events keep their class and square. It is the only thing
+       separating a pillbox a builder put up from one a corpse dropped, and the
+       readers that need that are all server-side. */
+    ev.data[4] = armour;
     serverSimAddEvent(sim, &ev);
 }
 
