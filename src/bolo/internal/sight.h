@@ -45,22 +45,25 @@
  *  sight still does not slip between two buildings meeting
  *  corner to corner.
  *
- *  A pillbox standing on the map is one of those squares. It
- *  is a building for this purpose and nothing else about it
- *  matters: it shadows what is behind it, its own square is
- *  seen the way a wall square is, and where it touches a wall
- *  or another pill their shadows close the corner between
- *  them. A pill being carried in a tank is not on the map and
- *  stops nothing. Bases are not walls and never have been.
+ *  A live pillbox standing on the map is one of those
+ *  squares. It is a building for this purpose: it shadows
+ *  what is behind it, its own square is seen the way a wall
+ *  square is, and where it touches a wall or another pill
+ *  their shadows close the corner between them. A pill being
+ *  carried in a tank is not on the map and stops nothing.
+ *  Bases are not walls and never have been.
  *
- *  A dead pillbox on the ground blocks too. It is still a
- *  structure standing on the square and it is drawn there, so
- *  a player cannot see through it. The engine's own movement
- *  takes the other view - mapGetSpeed lets a tank drive over
- *  a dead pill to pick it up, where a live one is impassable
- *  - and that is a fair argument for letting sight through a
- *  dead one as well. Whoever wants that changes
- *  sightPillBlocks in sight.c and nothing else.
+ *  A dead pillbox on the ground stops nothing either. It is a
+ *  structure standing on the square and it is drawn there,
+ *  which is the argument for saying it should, but the
+ *  engine's own movement has already answered the question
+ *  the other way: mapGetSpeed lets a tank drive straight over
+ *  a dead pill to pick it up, where a live one is impassable.
+ *  A thing the world lets you drive through is not a thing
+ *  that hides what is behind it, so sight agrees with the
+ *  movement rather than with the drawing. Armour is the whole
+ *  of the difference, and whoever wants the other answer
+ *  changes sightPillBlocks in sight.c and nothing else.
  *
  *  Trees are not answered that way and have not changed.
  *  They stop a line by depth, counted as a run of consecutive
@@ -106,7 +109,7 @@
 /* Which terrain stops a line. This is the only place terrain opacity is
  * decided - every test in the module goes through it - so a terrain is added or
  * taken away by changing this one line. A pillbox is not terrain and is decided
- * in sightPillBlocks, the module's other one line on the subject. */
+ * in sightPillBlocks, the module's other say on the subject. */
 #define SIGHT_OPAQUE(t) ((t) == BUILDING || (t) == HALFBUILDING)
 
 /* Which terrain counts towards the tree depth, how deep a run of it stops a

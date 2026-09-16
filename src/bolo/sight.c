@@ -133,22 +133,33 @@ static bool sightOnMap(int x, int y) {
   return (x >= 0 && x < MAP_ARRAY_SIZE && y >= 0 && y < MAP_ARRAY_SIZE);
 }
 
-/* Whether a pillbox is standing on the square. This is the module's whole
- * opinion of pillboxes, so it is the one line to change to give them another.
+/* Whether a pillbox that stops a line is standing on the square. This is the
+ * module's whole opinion of pillboxes, so it is the one place to change to give
+ * them another.
  *
- * pillsExistPos answers for the map: a pill being carried in a tank is not on
- * a square and is not counted, which is what leaves a carried pill blocking
- * nothing. A dead pill on the ground is counted - it is still a structure
- * standing there and it is drawn there. The engine's movement takes the other
- * view, since mapGetSpeed lets a tank drive over a dead pill to pick it up, so
- * a reader who wants sight to go through one adds the pillsDeadPos test here.
+ * pillsExistPos answers for the map rather than for the list: a pill being
+ * carried in a tank is on no square and is not counted, which is what leaves a
+ * carried pill blocking nothing, and a pill whose square the client has not
+ * been told is current is not counted either.
+ *
+ * pillsDeadPos then takes the dead ones back out. A dead pill is a structure
+ * standing there and it is drawn there, which is the argument for letting it
+ * block, but the engine's own movement has already answered the question the
+ * other way: mapGetSpeed lets a tank drive straight over a dead pill to pick it
+ * up, where a live one is impassable. A thing the world lets you drive through
+ * is not a thing that hides what is behind it. Armour is the whole of the
+ * difference, and dropping this second test is all it costs to put dead pills
+ * back to blocking.
  *
  * A caller with no pill list passes NULL and no pill blocks anything. */
 static bool sightPillBlocks(pillboxes *pb, int x, int y) {
   if (pb == NULL || *pb == NULL || sightOnMap(x, y) == FALSE) {
     return FALSE;
   }
-  return (pillsExistPos(pb, (BYTE)x, (BYTE)y) == TRUE) ? TRUE : FALSE;
+  if (pillsExistPos(pb, (BYTE)x, (BYTE)y) == FALSE) {
+    return FALSE;
+  }
+  return (pillsDeadPos(pb, (BYTE)x, (BYTE)y) == TRUE) ? FALSE : TRUE;
 }
 
 /* Whether a square stops a line passing through it. Off the map counts: there

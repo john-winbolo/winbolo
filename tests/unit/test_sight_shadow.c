@@ -465,11 +465,13 @@ static int sight_shadow_a_pill_blocks_like_a_wall(void) {
     return 0;
 }
 
-/* (h) A dead pillbox blocks too. It is still a structure standing on the
- * square and it is drawn there, so the player cannot see past it. The engine's
- * movement disagrees - a tank drives over a dead pill to pick it up - and if
- * that is ever taken as the last word, this case is the one to turn round. */
-static int sight_shadow_a_dead_pill_blocks_too(void) {
+/* (h) A dead pillbox blocks nothing. It is drawn on its square, which is the
+ * argument for letting it block, but a tank drives straight over a dead pill to
+ * pick it up where a live one is impassable, so sight follows the movement
+ * rather than the drawing. The live pill in (g) stands on the very same square
+ * and hides the very same ground, so the two cases together are what say the
+ * armour is the whole of the difference. */
+static int sight_shadow_a_dead_pill_blocks_nothing(void) {
     OverviewRect block = shadowBlock(96, 96, 110, 110);
 
     shadowMapFill(GRASS);
@@ -480,8 +482,9 @@ static int sight_shadow_a_dead_pill_blocks_too(void) {
 
     UT_ASSERT_MSG(shadowSeen(visNew, &block, 101, 100),
                   "the dead pillbox's own square is hidden");
-    UT_ASSERT_MSG(!shadowSeen(visNew, &block, 105, 100),
-                  "the ground behind a dead pillbox is seen");
+    UT_ASSERT_MSG(shadowSeen(visNew, &block, 105, 100),
+                  "a dead pillbox hid the ground behind it, and a tank can "
+                  "drive straight over one to pick it up");
     shadowPillsEnd();
     return 0;
 }
@@ -589,7 +592,7 @@ int run_sight_shadow(void) {
     rc = sight_shadow_trees_are_unchanged();                if (rc) return rc;
     rc = sight_shadow_edges_and_origin();                   if (rc) return rc;
     rc = sight_shadow_a_pill_blocks_like_a_wall();          if (rc) return rc;
-    rc = sight_shadow_a_dead_pill_blocks_too();             if (rc) return rc;
+    rc = sight_shadow_a_dead_pill_blocks_nothing();         if (rc) return rc;
     rc = sight_shadow_a_carried_pill_blocks_nothing();      if (rc) return rc;
     rc = sight_shadow_a_pill_never_hides_itself();          if (rc) return rc;
     return 0;
