@@ -3161,6 +3161,15 @@ bool clientSimGetMyTankMapPosF(ClientSim *cs, float *mapX, float *mapY) {
   return true;
 }
 
+bool clientSimGetMyTankSubPos(ClientSim *cs, BYTE *subX, BYTE *subY) {
+  WORLD wx = 0, wy = 0;
+  if (!clientSimIsMyTankAlive(cs)) return false;
+  tankGetWorld(&MY_TANK(cs), &wx, &wy);
+  if (subX) *subX = (BYTE)(wx & ((1 << TANK_SHIFT_MAPSIZE) - 1));
+  if (subY) *subY = (BYTE)(wy & ((1 << TANK_SHIFT_MAPSIZE) - 1));
+  return true;
+}
+
 bool clientSimIsMyTankAlive(const ClientSim *cs) {
   if (!cs || MY_TANK((ClientSim *)cs) == NULL) return false;
   /* The destroyed state the tank carries, the same test viewportCenterOnTank

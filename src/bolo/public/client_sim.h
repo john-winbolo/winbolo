@@ -1250,6 +1250,14 @@ bool         clientSimGetMyTankMapPos(ClientSim *cs, BYTE *mapX, BYTE *mapY);
  * BYTE version; the map overview's follow camera glides on this where the
  * whole-square read would step a square at a time. */
 bool         clientSimGetMyTankMapPosF(ClientSim *cs, float *mapX, float *mapY);
+
+/* Where inside its square the local tank is standing, in world units across
+ * the square - the fraction the F version returns, as the whole number it is
+ * really kept as. Same false cases as the other two, and it leaves *subX /
+ * *subY alone when it fails, so a caller keeps whatever it seeded them with.
+ * Line of sight wants this: which corner of a wall the player can see round
+ * turns on where in the square they are, not just on which square it is. */
+bool         clientSimGetMyTankSubPos(ClientSim *cs, BYTE *subX, BYTE *subY);
 bool         clientSimGetGunsightTile(ClientSim *cs, BYTE *mapX, BYTE *mapY);
 
 /* The gunsight's map square and the pixel offset inside it, for a caller that

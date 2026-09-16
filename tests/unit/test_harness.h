@@ -1498,6 +1498,29 @@ int run_overview_fog(void);
  * a line, and a block the origin is nowhere near is written at its own width. */
 int run_sight(void);
 
+/* The shadow rule (test_sight_shadow.c): with no wall on the map the mask is
+ * the one the old centre-line rule built, square for square, on Everard
+ * Island's own ground; a pillbox with a blocker up beside it is seen where the
+ * centre line called it hidden; a sliver of a square about a quarter wide is
+ * enough to see it and one more wall closes the sliver; two walls meeting at a
+ * corner leave no crack between their shadows and a square squarely behind a
+ * wall is hidden, from anywhere inside the square the player is standing on;
+ * the trees answer what they always answered; and off the map is never seen
+ * while the square the player is on always is. */
+int run_sight_shadow(void);
+
+/* What the shadow pass costs (test_sight_shadow.c): the widest block there is,
+ * built from real ground with real walls on it, timed over five hundred runs
+ * and printed. */
+int run_sight_shadow_cost(void);
+
+/* The full-shadow-pile branch (test_sight_shadow_overflow.c): a second copy of
+ * the module built with the pile capped at two, so a row of four walls
+ * overruns it and the fold a full pile answers with is taken. What it pins is
+ * the direction - the capped mask hides every square the mask the module
+ * really builds hides, and some the other way round, never the reverse. */
+int run_sight_shadow_overflow(void);
+
 /* In-window overview HUD geometry (test_overview_hud_layout.cpp): the column
  * fits the height at 1080p and on the Steam Deck's 800 lines, its pieces stack
  * in the classic order without overlapping and stay inside their backing
