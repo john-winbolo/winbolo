@@ -150,6 +150,23 @@ bool scnReadFile(const char *path, char **out, size_t *outLen,
                  char *err, size_t errLen);
 
 /*********************************************************
+ *NAME:          scnReadMapBytes
+ *PURPOSE:
+ *  The whole map file, for the container that may be
+ *  appended to it. Bounded by the package upload limit
+ *  rather than by the script cap, because what is being read
+ *  is the map and everything the scenario ships with. The
+ *  buffer is the caller's to free and carries a 0 past the
+ *  last byte, which *outLen does not count.
+ *
+ *  False with err empty for a file that is not there, which
+ *  is not a fault, and false with err set for one that is
+ *  there and cannot be used.
+ *********************************************************/
+bool scnReadMapBytes(const char *path, uint8_t **out, size_t *outLen,
+                     char *err, size_t errLen);
+
+/*********************************************************
  *NAME:          scnNewVm
  *PURPOSE:
  *  A Lua state opened on the sandbox's own library rather

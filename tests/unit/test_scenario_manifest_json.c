@@ -53,7 +53,7 @@ static const char kFullManifest[] =
     "    \"seating_hint\": \"clockwise\",\n"
     "    \"teams\": [\n"
     "      { \"id\": 2, \"bots\": 10, \"max_bots\": 12, \"fielded\": false,\n"
-    "        \"brain\": \"package:horde\",\n"
+    "        \"brain\": \"package:raiders\",\n"
     "        \"init\": { \"stance\": \"hold\", \"deprive\": 100 } },\n"
     "      { \"id\": 3, \"bots\": 1, \"max_bots\": 4, \"fielded\": true,\n"
     "        \"brain\": \"\" }\n"
@@ -67,7 +67,7 @@ static const char kFullManifest[] =
     "                 \"outer\": { \"x\": 4, \"y\": 5, \"w\": 6, \"h\": 7 } },\n"
     "  \"triggers\": [],\n"
     "  \"script\": \"main.lua\",\n"
-    "  \"brains\": [\"horde\"],\n"
+    "  \"brains\": [\"raiders\"],\n"
     "  \"editor_notes\": \"kept by a build that does not read it\"\n"
     "}\n";
 
@@ -134,7 +134,7 @@ static int fullManifestIsRight(const ScnManifestDoc *d) {
     UT_ASSERT(m->lobby.teams[0].bots == 10);
     UT_ASSERT(m->lobby.teams[0].maxBots == 12);
     UT_ASSERT(!m->lobby.teams[0].fielded);
-    UT_ASSERT(strcmp(m->lobby.teams[0].brain, "package:horde") == 0);
+    UT_ASSERT(strcmp(m->lobby.teams[0].brain, "package:raiders") == 0);
     UT_ASSERT_MSG(m->lobby.teams[0].init.count == 2, "team 0 holds %d pairs",
                   (int)m->lobby.teams[0].init.count);
     UT_ASSERT(mjInitIs(&m->lobby.teams[0].init, "stance", "hold"));
@@ -183,7 +183,7 @@ static int fullManifestIsRight(const ScnManifestDoc *d) {
     UT_ASSERT(strcmp(scnManifestScriptEntry(d), "main.lua") == 0);
     UT_ASSERT_MSG(scnManifestBrainCount(d) == 1, "brain count is %d",
                   scnManifestBrainCount(d));
-    UT_ASSERT(strcmp(scnManifestBrainName(d, 0), "horde") == 0);
+    UT_ASSERT(strcmp(scnManifestBrainName(d, 0), "raiders") == 0);
     UT_ASSERT(scnManifestBrainName(d, 1) == NULL);
     return 0;
 }
@@ -336,7 +336,7 @@ static void fillBase(ScenarioManifest *m) {
     m->lobby.teams[0].maxBots = 12;
     m->lobby.teams[0].fielded = false;
     snprintf(m->lobby.teams[0].brain, sizeof(m->lobby.teams[0].brain),
-             "package:horde");
+             "package:raiders");
     scnTableSet(&m->lobby.teams[0].init, "stance", "hold");
     scnTableSet(&m->lobby.teams[0].init, "deprive", "100");
     m->lobby.teams[1].id = 3;

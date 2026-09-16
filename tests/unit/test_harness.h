@@ -2781,6 +2781,15 @@ int run_scenario_packed_map_script_omits_table(void);
 int run_scenario_packed_map_table_disagrees(void);
 int run_scenario_packed_map_round_start_keeps_it(void);
 
+/* A brain carried inside the container (test_scenario_brains.c): the
+ * extraction beside the map keyed by the map file's hash, the second attach
+ * that writes nothing, the team brain that reaches a seat as a path the warm
+ * can build from, and the name the container does not carry. */
+int run_scenario_brains_extracted(void);
+int run_scenario_brains_same_md5_skips(void);
+int run_scenario_brains_template_resolved(void);
+int run_scenario_brains_unknown_name_refused(void);
+
 /* Writing a map's scenario into the map (test_scenario_pack.c): the container
  * a loose script packs into, the manifest that comes out of the script's own
  * table, the second pack that replaces the first rather than following it,

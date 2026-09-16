@@ -3440,6 +3440,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # manifest derived from the script's own table, the second pack that
     # replaces the first, and the map with nothing to pack.
     tests/unit/test_scenario_pack.c
+    # A brain the container carries: the extraction beside the map keyed by
+    # the map file's hash, the attach that finds it already there, the team
+    # brain that reaches a seat as a path, and the name nothing carries.
+    tests/unit/test_scenario_brains.c
     # The binding table: the game table a script reads the sim through, the
     # three index rules and what an absent entity reads as.
     tests/unit/test_scenario_lua.c
@@ -5518,6 +5522,10 @@ set(_unit_test_names
     scenario_pack_manifest_agrees
     scenario_pack_replaces_trailer
     scenario_pack_refuses_unscripted
+    scenario_brains_extracted
+    scenario_brains_same_md5_skips
+    scenario_brains_template_resolved
+    scenario_brains_unknown_name_refused
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

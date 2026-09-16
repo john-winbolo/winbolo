@@ -70,6 +70,8 @@
 
 #include "scenario_host.h"
 #include "scenario_manifest.h"
+#include "scenario_package.h"     /* scnPackageBrainPath — what a
+                                   * "package:NAME" brain resolves to */
 #include "scenario_lua.h"
 
 /* The window an argument is read in. A number outside it cannot be
@@ -2246,6 +2248,44 @@ static int scnTableTooBig(lua_State *L, const char *field, const char *key) {
                       (int)SCN_TABLE_VALUE_LEN - 1);
 }
 
+/* A "package:NAME" brain, turned into the path of the file the loader opens.
+ *
+ * Nothing on the sim opens a container, so the funnel refuses a name it is
+ * handed; the host that unpacked the scenario is what resolves one, and this
+ * is where an op's own brain goes through that. Both rows that carry a brain
+ * come here, so a script may write "package:NAME" wherever it writes a brain.
+ *
+ * A name that resolves to nothing is left exactly as it was, so what the
+ * script hears is the funnel's own refusal, and the operator is told once.
+ *
+ * A packaged brain runs with the privileges a brain on disk has: it is Lua
+ * the bot manager loads by path like any other, and nothing here gives it a
+ * state with less in it than one the operator installed themselves. */
+static void scnResolvePackagedBrain(lua_State *L, char *brain,
+                                    size_t brainLen) {
+    const ScnLuaCtx *ctx = scnCtx(L);
+    char             path[SCN_PATH_MAX];
+
+    if (strncmp(brain, SCN_PACKAGE_BRAIN_REF,
+                sizeof(SCN_PACKAGE_BRAIN_REF) - 1) != 0) {
+        return;
+    }
+    if (ctx == NULL || ctx->brains == NULL) {
+        return;
+    }
+    if (scnPackageBrainPath(ctx->brains->root, brain, path, sizeof(path))) {
+        snprintf(brain, brainLen, "%s", path);
+        return;
+    }
+    if (!ctx->brains->said) {
+        char line[SCN_PATH_MAX + 64];
+        ctx->brains->said = true;
+        snprintf(line, sizeof(line),
+                 "scenario: '%s' names no brain this scenario carries", brain);
+        serverSimConsoleMessage(line);
+    }
+}
+
 static int scnLuaSpawnBot(lua_State *L) {
     ScenarioOp  op;
     ScnOpOut    out;
@@ -2276,6 +2316,8 @@ static int scnLuaSpawnBot(lua_State *L) {
                           (int)len,
                           (int)sizeof(op.u.rosterSpawnBot.brain) - 1);
     }
+    scnResolvePackagedBrain(L, op.u.rosterSpawnBot.brain,
+                            sizeof(op.u.rosterSpawnBot.brain));
     team = scnFieldInt(L, 1, "team", 0);
     if (!scnFitsByte(team)) {
         return scnRefused(L, SCN_OP_RANGE, "team is %d", (int)team);
@@ -2382,6 +2424,8 @@ static int scnLuaLobbyAddBot(lua_State *L) {
         return scnRefused(L, SCN_OP_TOO_BIG, "brain is %d bytes, limit %d",
                           (int)len, (int)sizeof(op.u.lobbyAddBot.brain) - 1);
     }
+    scnResolvePackagedBrain(L, op.u.lobbyAddBot.brain,
+                            sizeof(op.u.lobbyAddBot.brain));
     team = scnFieldInt(L, 1, "team", 0);
     if (!scnFitsByte(team)) {
         return scnRefused(L, SCN_OP_RANGE, "team is %d", (int)team);

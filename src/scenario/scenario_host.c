@@ -85,6 +85,10 @@
  * file uses it directly. */
 #include <SDL3/SDL.h>
 
+#include "../common/md5.h"         /* md5Compute, md5ToHex — the map file's
+                                    * hash, which keys the directory a
+                                    * container's brains are extracted into */
+
 #include "platform_types.h"        /* BOLO_STATIC_ASSERT */
 #include "bolo_rand.h"             /* BoloRandState, bolo_rand_save */
 #include "server_sim.h"            /* ServerSim, serverSimConsoleMessage */
@@ -102,7 +106,8 @@
 #include "scenario_manifest_json.h" /* a package's manifest, read and held
                                      * against the table its script declares */
 #include "scenario_package.h"      /* scnPackageFindInMap — the second way a
-                                    * map can carry a script */
+                                    * map can carry a script — and the brain
+                                    * directories that come out of one */
 #include "scenario_sandbox.h"      /* the libraries a scenario state gets */
 #include "scenario_validate.h"     /* ScnParseReport, and the parse this file
                                     * shares with the validator */
@@ -377,6 +382,13 @@ struct ScenarioHost {
      * attached, and is what a round's table has to agree with. Untouched for
      * a loose script, which has no manifest but its own. */
     ScenarioManifest pkgManifest;
+
+    /* Where the container's brains were extracted, and whether the operator
+     * has already been told about a name that is not among them. Handed to
+     * every VM this host boots through h->lua above, and read by the lobby
+     * template below, which is the other place a "package:NAME" becomes a
+     * path. Empty for a loose script and for a package carrying no brains. */
+    ScnBrainStore    brains;
 
     char             chunkName[SCN_SCRIPT_PATH_MAX + 2];
     char             lastError[SCN_ERR_LEN];
@@ -2067,6 +2079,18 @@ static const char *scnFileNameOf(const char *path) {
  * the sim has no seat for: the manifest holds what the file said and this
  * holds what the roster can hold.
  *
+ * A team's brain is the one field that is not copied as it stands. A
+ * "package:NAME" is turned into the path of the file the loader opens here,
+ * because the sim writes this brain onto the seat and both of the things that
+ * read it back — the countdown's warm and a spawn that fields the seat — take
+ * a path and refuse a name. Resolving it once here is what makes both of them
+ * work with no change of their own, and what keeps the string the same for
+ * the whole round so a parked runner goes on matching it.
+ *
+ * A name the container does not carry is left as it was, so the seat's brain
+ * is a name nothing will load and the two refusals answer. The operator hears
+ * about it once here, since nothing else would say which team it was.
+ *
  * initBadKey is not here. What a bad pair is called is something to tell an
  * author about, which the validator does; the sim is handed the pairs that
  * were taken and has nothing to do with the one that was not.
@@ -2075,6 +2099,7 @@ static const char *scnFileNameOf(const char *path) {
  * question about what a host may do rather than a description of the lobby
  * to build. */
 static void scnFillLobbyTemplate(const ScnManifestLobby *lob,
+                                 ScnBrainStore *brains,
                                  ScnLobbyTemplate *out) {
     uint8_t i;
 
@@ -2084,6 +2109,7 @@ static void scnFillLobbyTemplate(const ScnManifestLobby *lob,
     for (i = 0; i < lob->numTeams && out->numTeams < MAX_TANKS; i++) {
         const ScnManifestTeam *src = &lob->teams[i];
         ScnLobbyTeam          *dst;
+        char                   path[SCN_PATH_MAX];
         if (src->id == 0 || src->id >= MAX_TANKS) continue;
         dst = &out->teams[out->numTeams];
         out->numTeams++;
@@ -2091,7 +2117,21 @@ static void scnFillLobbyTemplate(const ScnManifestLobby *lob,
         dst->bots    = src->bots;
         dst->maxBots = src->maxBots;
         dst->fielded = src->fielded;
-        SDL_strlcpy(dst->brain, src->brain, sizeof(dst->brain));
+        if (brains != NULL &&
+            scnPackageBrainPath(brains->root, src->brain, path,
+                                sizeof(path))) {
+            SDL_strlcpy(dst->brain, path, sizeof(dst->brain));
+        } else {
+            SDL_strlcpy(dst->brain, src->brain, sizeof(dst->brain));
+            if (brains != NULL && !brains->said &&
+                SDL_strncmp(src->brain, SCN_PACKAGE_BRAIN_REF,
+                            sizeof(SCN_PACKAGE_BRAIN_REF) - 1) == 0) {
+                brains->said = true;
+                scnSay(NULL, 0,
+                       "scenario: team %u asks for '%s' and this scenario "
+                       "carries no such brain", (unsigned)src->id, src->brain);
+            }
+        }
         dst->init    = src->init;
     }
 }
@@ -2941,6 +2981,9 @@ typedef struct {
     ScenarioManifest manifest;
     char             script[SCN_SCRIPT_PATH_MAX];   /* the file that was read */
     char             entry[SCN_MANIFEST_ENTRY_LEN]; /* "" for a loose script */
+    /* Where the container's brain directories were written, "" for a loose
+     * script and for a container carrying no brains. */
+    char             brainRoot[SCN_SCRIPT_PATH_MAX];
 } ScnScriptSource;
 
 static void scnSourceDrop(ScnScriptSource *s) {
@@ -2980,8 +3023,8 @@ static void scnChunkNameOf(const ScnScriptSource *s, const char *path,
  *
  * A file that is not there leaves err empty and is not a fault, the way
  * scnReadFile treats a script that is not there. */
-static bool scnReadMapBytes(const char *path, uint8_t **out, size_t *outLen,
-                            char *err, size_t errLen) {
+bool scnReadMapBytes(const char *path, uint8_t **out, size_t *outLen,
+                     char *err, size_t errLen) {
     FILE    *f;
     long     size;
     uint8_t *buf;
@@ -3028,6 +3071,95 @@ static bool scnReadMapBytes(const char *path, uint8_t **out, size_t *outLen,
     *out    = buf;
     *outLen = got;
     return true;
+}
+
+/* ── The brains a container carries ───────────────────────────────── */
+
+/* The directory a map's packaged brains are written into, beside the map: one
+ * fixed name next to the .map file, with the map file's MD5 as a directory
+ * under that.
+ *
+ * The hash is of the whole file rather than of the map body. What has to be
+ * noticed is a changed brain, and a brain lives in the chunk appended after
+ * the body — a body-only hash would be the same for a map whose brains had
+ * been rewritten from top to bottom. It is computed here rather than read off
+ * the sim: sim->mapMd5 is filled only on the upload path, for matching against
+ * WinBolo.net's library, and is not valid at all for a map loaded from a file.
+ *
+ * Keying by the hash is what makes the resolved path steady: the same map
+ * file gives the same directory at every attach, so the brain path a seat was
+ * written with is the same string for the whole round and a parked runner
+ * goes on matching it. A map file that changes is a different directory, which
+ * is what re-extraction amounts to in practice; the old one is left where it
+ * is. */
+#define SCN_BRAIN_DIR_NAME ".scenario-brains"
+
+static bool scnBrainDirOf(const char *mapPath, const uint8_t *file,
+                          size_t fileLen, char *out, size_t outLen) {
+    uint8_t     digest[16];
+    char        hex[33];
+    const char *slash = NULL;
+    const char *p;
+    int         n;
+
+    for (p = mapPath; *p != '\0'; p++) {
+        if (*p == '/' || *p == '\\') slash = p;
+    }
+    md5Compute(file, fileLen, digest);
+    md5ToHex(digest, hex);
+
+    if (slash == NULL) {
+        n = snprintf(out, outLen, "%s/%s", SCN_BRAIN_DIR_NAME, hex);
+    } else {
+        n = snprintf(out, outLen, "%.*s/%s/%s", (int)(slash - mapPath),
+                     mapPath, SCN_BRAIN_DIR_NAME, hex);
+    }
+    if (n < 0 || (size_t)n >= outLen) {
+        out[0] = '\0';
+        return false;
+    }
+    return true;
+}
+
+/* Put the container's brains on disk beside the map and say where they went.
+ *
+ * A directory already there for this hash holds this map file's brains
+ * already, so the extraction is skipped: the files cannot have come from
+ * anything else, and re-writing them every attach would cost a map with a
+ * heavy brain a rewrite per round rotation.
+ *
+ * A container whose brains cannot be written leaves the root empty and says
+ * one line. The map still plays — the rules, the hooks and the policy all
+ * work — and every "package:NAME" in it then fails to resolve and is refused
+ * where a brain is asked for, which is the same answer as a brain that is not
+ * there. Refusing the whole map over it would take a playable round away for
+ * a directory that is read-only. */
+static void scnExtractPackagedBrains(const char *mapPath, const uint8_t *file,
+                                     size_t fileLen, ScnPackage *p,
+                                     char *root, size_t rootLen) {
+    char         why[SCN_ERR_LEN];
+    SDL_PathInfo info;
+
+    root[0] = '\0';
+    if (scnPackageBrainCount(p) == 0) {
+        return;
+    }
+    if (!scnBrainDirOf(mapPath, file, fileLen, root, rootLen)) {
+        scnSay(NULL, 0,
+               "scenario: %s sits too deep to extract its brains beside",
+               mapPath);
+        root[0] = '\0';
+        return;
+    }
+    if (SDL_GetPathInfo(root, &info) && info.type == SDL_PATHTYPE_DIRECTORY) {
+        return;
+    }
+    if (!scnPackageExtractBrains(p, root, why, sizeof(why))) {
+        scnSay(NULL, 0,
+               "scenario: the brains in %s could not be unpacked: %s", mapPath,
+               why);
+        root[0] = '\0';
+    }
 }
 
 /* The container appended to a map file, read for the two entries that matter
@@ -3101,6 +3233,14 @@ static bool scnPackagedScript(const char *mapPath, ScnScriptSource *out,
                (long)SCN_SCRIPT_MAX_BYTES);
         goto done;
     }
+
+    /* And the brains, which are the one thing in a container that has to be
+       on disk: the bot manager loads a brain by path. Done here, while the
+       archive is still open and the file's bytes are still in hand, and done
+       before the lobby template is built, so the countdown's warm finds a
+       real path on every packaged seat rather than skipping it. */
+    scnExtractPackagedBrains(mapPath, file, fileLen, p, out->brainRoot,
+                             sizeof(out->brainRoot));
 
     /* scnPackageReadEntry hands back a malloc'd buffer with a 0 past the
        content, which is what the script's bytes are kept as either way. */
@@ -3226,6 +3366,9 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     h->lua.sim       = sim;
     h->lua.manifest  = &h->manifest;
     h->lua.timers    = &h->timers;
+    /* The extraction root, so a spawn op's own "package:NAME" resolves
+       through the same directory the lobby template does. */
+    h->lua.brains    = &h->brains;
     /* Every state this host boots runs the scenario rather than checking it;
        the reload is the one that checks. */
     h->lua.checkOnly = false;
@@ -3240,6 +3383,9 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     snprintf(h->script, sizeof(h->script), "%s", from.script);
     snprintf(h->mapPath, sizeof(h->mapPath), "%s", mapPath);
     snprintf(h->chunkName, sizeof(h->chunkName), "%s", chunkName);
+    /* Before the state is booted, because a chunk's own top level can reach a
+       row that carries a brain. */
+    snprintf(h->brains.root, sizeof(h->brains.root), "%s", from.brainRoot);
 
     /* The one VM entry that takes no lock, because there is nothing yet to
        take one on: until the host below is registered no other thread can
@@ -3343,7 +3489,7 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     {
         ScnLobbyTemplate t;
         int              base = 0;
-        scnFillLobbyTemplate(&m.lobby, &t);
+        scnFillLobbyTemplate(&m.lobby, &h->brains, &t);
         /* The game type the manifest names, read by the same words a spawn
            op's loadout takes so one table answers both. A manifest naming
            none, or a word that table does not hold, leaves it 0 and the
@@ -3470,6 +3616,9 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     check.manifest  = &m;
     check.timers    = NULL;
     check.checkOnly = true;
+    /* No root: every row that carries a brain refuses while the check runs,
+       so there is nothing here for a name to resolve for. */
+    check.brains    = NULL;
     L = scnBootVmWith(&check);
     if (L == NULL) {
         scnFmt(err, errLen, "scenario: no memory for a Lua state");
@@ -3532,6 +3681,13 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     h->srcLen      = from.srcLen;
     h->fromPackage = from.fromPackage;
     h->pkgManifest = from.manifest;
+    /* And where its brains are, which moves with the source: a loose script
+       dropped beside a packed map has none, and a re-packed map that changed
+       has them somewhere new. What this changes is what a spawn op's own
+       "package:NAME" resolves through from here on. The lobby template the
+       sim holds was built at the attach and a reload rebuilds none of it, so
+       the seats keep the paths they were written with. */
+    snprintf(h->brains.root, sizeof(h->brains.root), "%s", from.brainRoot);
     snprintf(h->script, sizeof(h->script), "%s", from.script);
     scnChunkNameOf(&from, from.script, h->chunkName, sizeof(h->chunkName));
     snprintf(h->lastError, sizeof(h->lastError), "%s", soft);

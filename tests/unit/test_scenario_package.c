@@ -34,14 +34,14 @@
 #include "scenario_package.h"
 #include "test_harness.h"
 
-static const char kManifest[] = "{\"manifest\":1,\"name\":\"Horde\"}";
+static const char kManifest[] = "{\"manifest\":1,\"name\":\"Raiders\"}";
 static const char kScript[] =
     "-- main.lua\n"
-    "local scenario = { api = 1, name = 'Horde' }\n"
-    "local scenario = { api = 1, name = 'Horde' }\n"
-    "local scenario = { api = 1, name = 'Horde' }\n"
+    "local scenario = { api = 1, name = 'Raiders' }\n"
+    "local scenario = { api = 1, name = 'Raiders' }\n"
+    "local scenario = { api = 1, name = 'Raiders' }\n"
     "return scenario\n";
-static const char kBrain[] = "return { name = 'horde', tick = function() end }\n";
+static const char kBrain[] = "return { name = 'raiders', tick = function() end }\n";
 
 /* Read one entry and hold it against what was written. */
 static int entryMatches(ScnPackage *p, const char *name, const char *expect,
@@ -83,7 +83,7 @@ int run_scenario_package_round_trip(void) {
     entries[1].bytes = (const uint8_t *)kScript;
     entries[1].len = sizeof(kScript) - 1;
     entries[1].deflate = true;
-    entries[2].name = "brains/horde/init.lua";
+    entries[2].name = "brains/raiders/init.lua";
     entries[2].bytes = (const uint8_t *)kBrain;
     entries[2].len = sizeof(kBrain) - 1;
     entries[2].deflate = true;
@@ -112,7 +112,7 @@ int run_scenario_package_round_trip(void) {
                   scnPackageEntryCount(p));
     UT_ASSERT(strcmp(scnPackageEntryName(p, 0), "manifest.json") == 0);
     UT_ASSERT(strcmp(scnPackageEntryName(p, 1), "main.lua") == 0);
-    UT_ASSERT(strcmp(scnPackageEntryName(p, 2), "brains/horde/init.lua") == 0);
+    UT_ASSERT(strcmp(scnPackageEntryName(p, 2), "brains/raiders/init.lua") == 0);
     UT_ASSERT(scnPackageEntryName(p, 3) == NULL);
     UT_ASSERT(scnPackageHasEntry(p, "manifest.json"));
     UT_ASSERT(!scnPackageHasEntry(p, "credits.txt"));
@@ -121,12 +121,12 @@ int run_scenario_package_round_trip(void) {
     if (rc != 0) { scnPackageClose(p); free(packed); return rc; }
     rc = entryMatches(p, "main.lua", kScript, sizeof(kScript) - 1);
     if (rc != 0) { scnPackageClose(p); free(packed); return rc; }
-    rc = entryMatches(p, "brains/horde/init.lua", kBrain, sizeof(kBrain) - 1);
+    rc = entryMatches(p, "brains/raiders/init.lua", kBrain, sizeof(kBrain) - 1);
     if (rc != 0) { scnPackageClose(p); free(packed); return rc; }
 
     UT_ASSERT_MSG(scnPackageBrainCount(p) == 1, "brain count is %d",
                   scnPackageBrainCount(p));
-    UT_ASSERT(strcmp(scnPackageBrainName(p, 0), "horde") == 0);
+    UT_ASSERT(strcmp(scnPackageBrainName(p, 0), "raiders") == 0);
 
     scnPackageClose(p);
     free(packed);

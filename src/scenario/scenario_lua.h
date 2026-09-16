@@ -61,6 +61,22 @@ typedef struct {
     uint32_t nextId;
 } ScnTimerSet;
 
+/* Where a "package:NAME" brain resolves to: the directory the map's container
+ * had its brains extracted into, "" for a scenario carrying none.
+ *
+ * The host owns one of these for as long as it is attached, and the root does
+ * not change while it is, so a name resolves to the same string every time it
+ * is asked. That is what lets a parked runner go on matching the brain path
+ * it was built with across a wave.
+ *
+ * said is the one operator line a name the container does not carry is worth.
+ * A script asking for the same missing brain every wave should say it once
+ * and then be quiet; the op itself is refused every time either way. */
+typedef struct {
+    char root[SCN_SCRIPT_PATH_MAX];
+    bool said;
+} ScnBrainStore;
+
 /* What a row reads. The host holds one of these for as long as the VM it
  * installed the table on, and every row reads through it rather than
  * through a copy, so a round start that reads a new manifest into the same
@@ -80,12 +96,18 @@ typedef struct {
  * round that is playing, against the one thing a reload promises — that
  * nothing changes until the next round start. Every row that reaches the op
  * funnel refuses while it is set, and the rows that read answer as they
- * always do, which is what the check is for. */
+ * always do, which is what the check is for.
+ *
+ * brains may be NULL, which leaves a state where no "package:NAME" resolves:
+ * the name reaches the funnel as it was written and is refused there. The
+ * reload's checking state is the one that passes NULL — it applies nothing,
+ * so it has nothing to resolve for. */
 typedef struct {
     ServerSim        *sim;
     ScenarioManifest *manifest;
     ScnTimerSet      *timers;
     bool              checkOnly;
+    ScnBrainStore    *brains;
 } ScnLuaCtx;
 
 /* One script-visible function: what it is called, what runs it, and the one

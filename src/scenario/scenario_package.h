@@ -24,6 +24,13 @@
  *  is present; main.lua and the brain entries are the same.
  *  The whole entry list comes back so a caller can say
  *  which names it did not recognise.
+ *
+ *  The brains are the one thing that leaves memory. The bot
+ *  manager loads a brain by path, so a container's brain
+ *  directories are written to disk before anything can run
+ *  one, and the two halves of that — where the files go and
+ *  what a "package:NAME" therefore resolves to — are both
+ *  here, so the layout is written and read in one file.
  *********************************************************/
 
 #ifndef SCENARIO_PACKAGE_H
@@ -51,6 +58,12 @@
 /* The prefix a brain's files live under: brains/NAME/... */
 #define SCN_PACKAGE_BRAIN_PREFIX "brains/"
 
+/* How a team's brain and a spawn op's brain name one of those brains, and
+ * the file the bot manager opens inside a brain's directory. A name is
+ * turned into a path by scnPackageBrainPath below. */
+#define SCN_PACKAGE_BRAIN_REF   "package:"
+#define SCN_PACKAGE_BRAIN_ENTRY "init.lua"
+
 typedef struct ScnPackage ScnPackage;
 
 /* Open a WBSC container held in memory. bytes must start at the magic.
@@ -74,6 +87,24 @@ const char *scnPackageEntryName(const ScnPackage *p, int i);
 /* The distinct NAME in brains/NAME/, deduplicated, in first-seen order. */
 int         scnPackageBrainCount(const ScnPackage *p);
 const char *scnPackageBrainName(const ScnPackage *p, int i);
+
+/* Write every brains/NAME/... entry in the container out under dir, as
+   dir/NAME/....  Existing files are overwritten. False with err set on the
+   first entry that cannot be written. */
+bool scnPackageExtractBrains(ScnPackage *p, const char *dir,
+                             char *err, size_t errLen);
+
+/* The path a "package:NAME" brain names, once a container's brains have been
+   extracted under root: root/NAME/init.lua, which is the file the bot manager
+   opens and the same shape a -brain on the command line takes.
+
+   False, with out emptied, for a brain that is not a package name at all, an
+   empty root, a NAME carrying a separator, a path that will not fit, and a
+   NAME with no init.lua under it. Those are the cases a caller leaves the
+   brain string as it found it, so the refusal the sim already makes is what
+   answers. */
+bool scnPackageBrainPath(const char *root, const char *brain,
+                         char *out, size_t outLen);
 
 typedef struct {
     const char    *name;
