@@ -1048,9 +1048,18 @@ int run_brainrec_version_rejects_old(void);
  * still decode), a not-in-use slot, the log_TankSetStock record, and an unknown
  * record type skipped by its framed length. */
 int run_lv_tank_stocks_from_snapshot(void);
-int run_lv_team_colours_from_snapshot(void);
 int run_lv_tank_stocks_snapshot_without_tail(void);
 int run_lv_tank_stocks_from_record(void);
+
+/* Viewer palette slots follow alliance groups (same file). from_snapshot:
+ * mutual allies listed as forward references in a snapshot share a slot, and
+ * keyframes that split and restore the groups without alliance events keep the
+ * slots stable. events: players who joined solo hold slot-order colours, the
+ * round's first world snapshot deals the merged groups compact colours (two
+ * teams are Team 1 and Team 2 wherever they sat), and later merges and splits
+ * leave everyone who didn't move alone. */
+int run_lv_team_colours_from_snapshot(void);
+int run_lv_team_colours_events(void);
 
 /* The viewer reading a recording it cannot trust (test_lv_hostile_records.c):
  * hand-built bytes through lv_specSeedLoad / lv_specRecordPump. A count byte

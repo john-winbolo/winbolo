@@ -211,6 +211,52 @@ int run_lv_team_colours_from_snapshot(void) {
   return 0;
 }
 
+/* Players who joined solo hold slot-order colours. A merge before the round
+ * keeps the lower one, the round's first world snapshot deals compact colours
+ * to the groups, and later merges and splits leave everyone who didn't move
+ * alone. */
+int run_lv_team_colours_events(void) {
+  LogViewerState *lv = lv_decoderCreate(false);
+  char location[1] = "";
+  BYTE slot;
+  UT_ASSERT(lv != NULL);
+
+  for (slot = 0; slot < 4; slot++) {
+    char name[8];
+    snprintf(name, sizeof(name), "P%d", slot);
+    lv_playersSetPlayer(slot, name, location, 0, 0, 0, 0, 0, FALSE, 0, NULL, FALSE, FALSE, 0);
+    UT_ASSERT(lv_playersGetTeamId(slot) == slot);
+  }
+
+  /* Lobby pairing, 0+1 against 2+3: each pair keeps its lower colour. */
+  lv_playersAcceptAlliance(0, 1);
+  lv_playersAcceptAlliance(2, 3);
+  UT_ASSERT(lv_playersGetTeamId(0) == 0 && lv_playersGetTeamId(1) == 0);
+  UT_ASSERT(lv_playersGetTeamId(2) == 2 && lv_playersGetTeamId(3) == 2);
+
+  /* Round start: two teams are Team 1 and Team 2. */
+  lv_playersRebuildTeams(FALSE);
+  UT_ASSERT(lv_playersGetTeamId(0) == 0 && lv_playersGetTeamId(1) == 0);
+  UT_ASSERT(lv_playersGetTeamId(2) == 1 && lv_playersGetTeamId(3) == 1);
+
+  /* The leaver takes the lowest free colour; the group it left keeps its own. */
+  lv_playersLeaveAlliance(3);
+  UT_ASSERT(lv_playersGetTeamId(0) == 0 && lv_playersGetTeamId(1) == 0);
+  UT_ASSERT(lv_playersGetTeamId(2) == 1 && lv_playersGetTeamId(3) == 2);
+
+  /* Rejoining adopts the group's colour and frees the old one. */
+  lv_playersAcceptAlliance(2, 3);
+  UT_ASSERT(lv_playersGetTeamId(2) == 1 && lv_playersGetTeamId(3) == 1);
+
+  /* A keeping rebuild, as every later snapshot runs, changes nothing. */
+  lv_playersRebuildTeams(TRUE);
+  UT_ASSERT(lv_playersGetTeamId(0) == 0 && lv_playersGetTeamId(1) == 0);
+  UT_ASSERT(lv_playersGetTeamId(2) == 1 && lv_playersGetTeamId(3) == 1);
+
+  lv_decoderDestroy(lv);
+  return 0;
+}
+
 /* A snapshot's four stock bytes reach the slot they belong to, and a slot that
  * is not in use reads as no stocks at all. */
 int run_lv_tank_stocks_from_snapshot(void) {

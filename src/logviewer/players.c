@@ -812,7 +812,6 @@ void lv_playersLeaveAlliance(BYTE playerNum) {
 
   lv_allienceDestroy(&(plrs.item[playerNum].allie));
   plrs.item[playerNum].allie = lv_allienceCreate();
-  plrs.item[playerNum].team = lv_playersGetUnusedTeam(playerNum);
   count = 0;
   while (count < MAX_TANKS) {
     if (plrs.item[count].inUse == TRUE && count != playerNum) {
@@ -820,8 +819,12 @@ void lv_playersLeaveAlliance(BYTE playerNum) {
     }
     count++;
   }
- 
-  
+  /* The leaver gives up the group's colour and takes the lowest free one; the
+   * group it left keeps its colour. */
+  plrs.item[playerNum].team = NO_TEAM_SET;
+  lv_playersRebuildTeams(TRUE);
+
+
   /* Update the screen */
   total = lv_screenNumBases();
   for (count=1;count<=total;count++) {
@@ -893,8 +896,6 @@ void lv_playersAcceptAlliance(BYTE acceptedBy, BYTE newMember) {
   allyA = lv_playersGetAlliesBitMap(acceptedBy);
   allyB = lv_playersGetAlliesBitMap(newMember);
 
-  // plrs.item[acceptedBy].team = plrs.item[newMember].team;
-
   count = 0;
   // For all possible tanks..
   while (count < MAX_TANKS) {
@@ -915,8 +916,6 @@ void lv_playersAcceptAlliance(BYTE acceptedBy, BYTE newMember) {
           if (test2) {
 						// Add an alliance between count and count2.
             lv_allienceAdd(&(plrs.item[count].allie), count2);
-						// So, put all allies of the 'accepter', on the team of the 'requester'.
-						plrs.item[count].team = plrs.item[count2].team;
           }
           count2++;
         }
@@ -940,9 +939,11 @@ void lv_playersAcceptAlliance(BYTE acceptedBy, BYTE newMember) {
     }
     count++;
   }
-      
-      
- 
+
+  /* The merged group takes the colour of its lowest-numbered member; nobody
+   * outside it is touched. */
+  lv_playersRebuildTeams(TRUE);
+
   /* Update the screen */
   total = lv_screenNumBases();
   for (count=1;count<=total;count++) {
@@ -1095,10 +1096,19 @@ BYTE lv_playersGetTeamForOwner(BYTE owner) {
   return NEUTRAL_TEAM;
 }
 
-/* Snapshots carry alliances, not palette slots. Reconcile after every player
- * has loaded, so allies later in the snapshot are available too. Preserve
- * existing colours where possible, including colours restored for seeking. */
-void lv_playersRebuildTeams(void) {
+/* Give every alliance group one palette slot. Groups are found from the
+ * mutual ally lists, so this runs after a whole snapshot has loaded (allies
+ * later in the snapshot count too) and after each alliance event.
+ *
+ * keep TRUE:  a group keeps the colour its lowest-numbered member already
+ *             holds, so a mid-game merge, split, or seek never recolours
+ *             anyone who didn't move. Only groups with no usable colour get
+ *             the lowest free one.
+ * keep FALSE: colours are dealt afresh, lowest free first in slot order, so
+ *             two teams are always Team 1 and Team 2 however the players sat
+ *             in the lobby. Used at the round's first world snapshot, where
+ *             the join-order colours handed out in the lobby mean nothing. */
+void lv_playersRebuildTeams(bool keep) {
   BYTE groups[MAX_TANKS];
   BYTE colours[MAX_TANKS];
   bool used[MAX_TANKS] = {FALSE};
@@ -1123,7 +1133,7 @@ void lv_playersRebuildTeams(void) {
     }
   }
   /* Reserve surviving colours before allocating any new ones. */
-  for (i = 0; i < MAX_TANKS; i++) {
+  for (i = 0; keep && i < MAX_TANKS; i++) {
     BYTE team = plrs.item[i].team;
     if (plrs.item[i].inUse && colours[groups[i]] == NO_TEAM_SET &&
         team < MAX_TANKS && !used[team]) {

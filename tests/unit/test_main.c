@@ -526,6 +526,7 @@ static const UnitTestEntry s_tests[] = {
     { "brainrec_version_rejects_old",            run_brainrec_version_rejects_old            },
     { "lv_tank_stocks_from_snapshot",            run_lv_tank_stocks_from_snapshot            },
     { "lv_team_colours_from_snapshot",           run_lv_team_colours_from_snapshot           },
+    { "lv_team_colours_events",                  run_lv_team_colours_events                  },
     { "lv_tank_stocks_snapshot_without_tail",    run_lv_tank_stocks_snapshot_without_tail    },
     { "lv_tank_stocks_from_record",              run_lv_tank_stocks_from_record              },
     { "lv_hostile_item_counts",                  run_lv_hostile_item_counts                  },
