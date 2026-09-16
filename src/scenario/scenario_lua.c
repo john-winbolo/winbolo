@@ -61,6 +61,9 @@
 #include <lauxlib.h>
 
 #include "platform_types.h"       /* BOLO_STATIC_ASSERT */
+#include "brain_list.h"           /* brainListResolve — the brain a roster row
+                                   * names, against this server's own brains
+                                   * directory */
 #include "global.h"               /* the terrain codes, NEUTRAL, MAX_TANKS */
 #include "gametype.h"             /* gameOpen and its siblings */
 #include "client_enums.h"         /* sndEffects — the sound row's words */
@@ -2246,6 +2249,41 @@ static int scnTableTooBig(lua_State *L, const char *field, const char *key) {
                       (int)SCN_TABLE_VALUE_LEN - 1);
 }
 
+/* The brain a roster row names, turned into the path the bot loader opens.
+ *
+ * A scenario names a brain — the directory under the server's own brains/ —
+ * rather than pathing to one, because a scenario shared with a server does not
+ * know that server's layout. Both rows that carry a brain come here, so a
+ * script writes a name wherever it writes a brain.
+ *
+ * A value with a path separator in it is refused, and told what to write
+ * instead, so an author who wrote the old form learns it here rather than from
+ * a seat that fields nothing. A name this server does not have is left as the
+ * script wrote it and reaches the funnel, which refuses it SCN_OP_NOT_FOUND
+ * like any brain it cannot open — one answer for a brain that will not load,
+ * however it was written. An empty brain is the seat's own, or failing that
+ * the server's, and is left alone.
+ *
+ * Answers 0 for a row that should carry on, and otherwise the number of values
+ * the refusal pushed, which is the row's own answer to the script. */
+static int scnResolveOpBrain(lua_State *L, char *brain, size_t brainLen) {
+    char path[SCN_PATH_MAX];
+
+    if (brain[0] == '\0') {
+        return 0;
+    }
+    if (strpbrk(brain, "/\\") != NULL) {
+        return scnRefused(L, SCN_OP_NOT_FOUND,
+                          "brain '%s' is a path; a scenario names a brain, "
+                          "which is the directory under the server's brains/ "
+                          "— 'GoalHunter_1.7', not a path to it", brain);
+    }
+    if (brainListResolve(brain, path, sizeof(path))) {
+        snprintf(brain, brainLen, "%s", path);
+    }
+    return 0;
+}
+
 static int scnLuaSpawnBot(lua_State *L) {
     ScenarioOp  op;
     ScnOpOut    out;
@@ -2256,6 +2294,7 @@ static int scnLuaSpawnBot(lua_State *L) {
     lua_Number  n;
     lua_Integer team, slot;
     int         loadout;
+    int         refused;
 
     if (scnCheckingOnly(L)) {
         return scnCheckOnlyRefusal(L);
@@ -2275,6 +2314,11 @@ static int scnLuaSpawnBot(lua_State *L) {
         return scnRefused(L, SCN_OP_TOO_BIG, "brain is %d bytes, limit %d",
                           (int)len,
                           (int)sizeof(op.u.rosterSpawnBot.brain) - 1);
+    }
+    refused = scnResolveOpBrain(L, op.u.rosterSpawnBot.brain,
+                                sizeof(op.u.rosterSpawnBot.brain));
+    if (refused != 0) {
+        return refused;
     }
     team = scnFieldInt(L, 1, "team", 0);
     if (!scnFitsByte(team)) {
@@ -2364,6 +2408,7 @@ static int scnLuaLobbyAddBot(lua_State *L) {
     ScnOpResult r;
     size_t      len = 0;
     lua_Integer team, slot;
+    int         refused;
 
     if (scnCheckingOnly(L)) {
         return scnCheckOnlyRefusal(L);
@@ -2381,6 +2426,11 @@ static int scnLuaLobbyAddBot(lua_State *L) {
                       sizeof(op.u.lobbyAddBot.brain), &len)) {
         return scnRefused(L, SCN_OP_TOO_BIG, "brain is %d bytes, limit %d",
                           (int)len, (int)sizeof(op.u.lobbyAddBot.brain) - 1);
+    }
+    refused = scnResolveOpBrain(L, op.u.lobbyAddBot.brain,
+                                sizeof(op.u.lobbyAddBot.brain));
+    if (refused != 0) {
+        return refused;
     }
     team = scnFieldInt(L, 1, "team", 0);
     if (!scnFitsByte(team)) {

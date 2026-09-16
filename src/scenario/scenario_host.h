@@ -63,9 +63,10 @@
  * as the text the file gave. */
 #define SCN_GAME_NAME_LEN 24
 
-/* A brain named by a lobby team, as a path or a "package:NAME". The same
- * length the spawn op carries a brain in; scenario_host.c holds the two
- * against each other where it can see both. */
+/* A brain named by a lobby team: the directory under the server's own
+ * brains/, as the file wrote it. The same length the spawn op carries a brain
+ * in, because that op carries the path this name resolves to; scenario_host.c
+ * holds the two against each other where it can see both. */
 #define SCN_BRAIN_LEN 256
 
 /* Room for every rule the table can name. scenario_host.c checks this

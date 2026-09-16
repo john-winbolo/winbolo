@@ -202,7 +202,10 @@ static const char *warmSeatBrainPath(const ServerSim *sim, BYTE slot) {
     path = (sim->seatBrain[slot][0] != '\0') ? sim->seatBrain[slot]
                                              : serverSimGetBotBrainPath(sim);
     if (path == NULL || path[0] == '\0') return NULL;
-    /* A brain carried inside the scenario, which nothing loads yet. */
+    /* A brain carried inside a scenario's package, which nothing loads. A
+       scenario names a brain and the scenario runtime resolves that name to a
+       path before the seat is written, so nothing writes this form today; the
+       check is what says so if something ever does. */
     if (SDL_strncmp(path, "package:", 8) == 0) return NULL;
     if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE) {
         return NULL;

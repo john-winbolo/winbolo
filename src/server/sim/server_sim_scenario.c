@@ -1557,11 +1557,16 @@ static ScnOpResult scenarioBotName(const char *asked, BYTE slot,
  * seat was written with, which is how a seat held for a team gets that
  * team's brain when something fields it; and failing both the server's own.
  *
+ * What reaches here is a path. A scenario names a brain — a directory under
+ * the server's own brains/ — and the scenario runtime resolves that name to
+ * the file the loader opens before the op is submitted, so the sim has one
+ * kind of value to handle and opens it like any other brain.
+ *
  * A "package:NAME" brain is one carried by a scenario's package. Nothing on
  * the sim opens a package, so the name is refused here rather than handed to
  * the loader as a path — a file called "package:NAME" is not what the script
- * meant. The host that unpacks a scenario is what resolves these, and it
- * will resolve the name to a path before the op reaches this funnel. */
+ * meant. Nothing writes that form today; the check is what says so if
+ * something ever does. */
 static ScnOpResult scenarioBrainPath(ServerSim *sim, const char *asked,
                                      BYTE slot, const char **out) {
     const char *path;

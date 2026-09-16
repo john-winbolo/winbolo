@@ -25,9 +25,11 @@
 
 #if defined(_WIN32)
 #  include <windows.h>
+#  define BRAIN_LIST_SEP '\\'
 #else
 #  include <dirent.h>
 #  include <unistd.h>
+#  define BRAIN_LIST_SEP '/'
 #endif
 
 /* Walk one brain's directory and accumulate the maximum mtime over
@@ -275,27 +277,79 @@ static size_t brainListReadSidecar(const char *parent, const char *name,
     return n;
 }
 
-/* Read "<name>/<file>" from the first brains parent that has it (working
- * directory brains/ and Brains/, then the ones beside the executable).
- * Every brain ships with its own about.txt / modes.txt, so this is a local
- * read on each machine — none of it goes over the wire. */
+/* The directories a brain is looked for under, in search order: the working
+ * directory's brains/ and Brains/, then the same two beside the executable,
+ * which covers an installed build whose exe lives somewhere other than the
+ * brains tree.
+ *
+ * One list, read by the per-brain file reads below and by brainListResolve, so
+ * a brain whose about.txt one of them finds is a brain the other resolves.
+ * Fills out[] and returns how many parents it wrote. */
+#define BRAIN_LIST_PARENT_MAX 4
+#define BRAIN_LIST_PARENT_LEN 1024
+
+static int brainListParents(char (*out)[BRAIN_LIST_PARENT_LEN]) {
+    const char *base;
+    int         n = 0;
+
+    SDL_strlcpy(out[n++], "brains", BRAIN_LIST_PARENT_LEN);
+    SDL_strlcpy(out[n++], "Brains", BRAIN_LIST_PARENT_LEN);
+    base = SDL_GetBasePath();
+    if (base) {
+        SDL_snprintf(out[n++], BRAIN_LIST_PARENT_LEN, "%sbrains", base);
+        SDL_snprintf(out[n++], BRAIN_LIST_PARENT_LEN, "%sBrains", base);
+    }
+    return n;
+}
+
+/* Read "<name>/<file>" from the first brains parent that has it. Every brain
+ * ships with its own about.txt / modes.txt, so this is a local read on each
+ * machine — none of it goes over the wire. */
 static size_t brainListReadSidecarAny(const char *name, const char *file,
                                       char *blob, size_t blobSz) {
-    size_t got = brainListReadSidecar("brains", name, file, blob, blobSz);
-    if (!got) got = brainListReadSidecar("Brains", name, file, blob, blobSz);
-    if (!got) {
-        const char *base = SDL_GetBasePath();
-        if (base) {
-            char p[1024];
-            SDL_snprintf(p, sizeof(p), "%sbrains", base);
-            got = brainListReadSidecar(p, name, file, blob, blobSz);
-            if (!got) {
-                SDL_snprintf(p, sizeof(p), "%sBrains", base);
-                got = brainListReadSidecar(p, name, file, blob, blobSz);
-            }
-        }
+    char   parents[BRAIN_LIST_PARENT_MAX][BRAIN_LIST_PARENT_LEN];
+    int    count = brainListParents(parents);
+    size_t got   = 0;
+    int    i;
+
+    for (i = 0; i < count && got == 0; i++) {
+        got = brainListReadSidecar(parents[i], name, file, blob, blobSz);
     }
     return got;
+}
+
+bool brainListResolve(const char *name, char *outPath, size_t outLen) {
+    char parents[BRAIN_LIST_PARENT_MAX][BRAIN_LIST_PARENT_LEN];
+    int  count;
+    int  i;
+
+    if (outPath == NULL || outLen == 0) return false;
+    outPath[0] = '\0';
+    if (name == NULL || name[0] == '\0') return false;
+    /* One directory under a brains parent, and never the parent itself: a
+       value that paths anywhere, and one that opens with a dot, are not names
+       the scan would have catalogued either. */
+    if (strpbrk(name, "/\\") != NULL || name[0] == '.') return false;
+
+    count = brainListParents(parents);
+    for (i = 0; i < count; i++) {
+        char dir[BRAIN_LIST_PARENT_LEN];
+        int  n;
+
+        SDL_snprintf(dir, sizeof(dir), "%s%c%s", parents[i], BRAIN_LIST_SEP,
+                     name);
+        if (!brainListHasInit(dir)) continue;
+        n = SDL_snprintf(outPath, outLen, "%s%cinit.lua", dir,
+                         BRAIN_LIST_SEP);
+        /* A path that did not fit is no answer: half of one opens nothing,
+           and a caller told false falls back to the server's own brain. */
+        if (n < 0 || (size_t)n >= outLen) {
+            outPath[0] = '\0';
+            return false;
+        }
+        return true;
+    }
+    return false;
 }
 
 static size_t brainListReadAboutAny(const char *name, char *blob, size_t blobSz) {

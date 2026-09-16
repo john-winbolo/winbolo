@@ -63,8 +63,8 @@ typedef struct {
     uint8_t  bots;
     uint8_t  maxBots;
     bool     fielded;
-    char     brain[SCN_BRAIN_LEN];   /* a path or "package:NAME"; "" = the
-                                      * server's own */
+    char     brain[SCN_BRAIN_LEN];   /* the brain's name, as the file wrote
+                                      * it; "" = the server's own */
     ScnTable init;
     char     initBadKey[SCN_TABLE_KEY_LEN];
 } ScnManifestTeam;

@@ -21,7 +21,7 @@
  * run_scenario_validate_api_too_new      — an api above this server's
  * run_scenario_validate_lobby_shape      — the human cap, a team number used
  *                                          twice, bots above max_bots and a
- *                                          package brain naming nothing
+ *                                          brain this server has not got
  * run_scenario_validate_team_init_reported
  *                                        — a team's init pair that will not
  *                                          fit, named under the team's key
@@ -246,7 +246,7 @@ int run_scenario_validate_lobby_shape(void) {
     UT_ASSERT_MSG(svFind(&r, "lobby.teams[2].id") != NULL,
                   "a team number used twice was accepted: %s", seen);
     UT_ASSERT_MSG(svFind(&r, "lobby.teams[2].brain") != NULL,
-                  "a package brain naming nothing was accepted: %s", seen);
+                  "a brain no server has was accepted: %s", seen);
     UT_ASSERT_MSG(svFind(&r, "lobby.teams[3].id") == NULL,
                   "team %d is one the engine seats and was refused: %s",
                   MAX_TANKS - 1, seen);

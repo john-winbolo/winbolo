@@ -336,8 +336,17 @@ Each team:
 | `bots` | number | How many seats to seat for this team when the lobby is built. A host who trims them gets the trimmed number back next round: the point of seating them where a host can see them is that the host may change them. |
 | `max_bots` | number | The ceiling a host may raise `bots` to. 0 means no ceiling stated, which is not the same as no bots allowed. |
 | `fielded` | boolean | True (the default) puts a bot in the seat at the start of the round. False holds the seat without one: it is in the roster, it takes no tank, and no bot plays in it until a `spawn_bot` names it. Its runner is built ahead of the round, as the two paragraphs below this table describe. |
-| `brain` | string | The brain this team's bots run, as a path on the server's disk. Empty means the server's own. `package:NAME`, a brain carried inside the scenario, is reserved for packaged scenarios and is refused with `SCN_OP_NOT_FOUND` today. |
+| `brain` | string | The brain this team's bots run, **named**: the directory under the server's `brains/`, such as `GoalHunter_1.7`. Empty means the server's own. A name this server does not have leaves the team's seats on the server's own brain, says one line on the console, and is reported by `-validate` before a round is ever started. A value with `/` or `\` in it is a path, not a name, and is refused as such — a scenario shared with a server knows nothing of that server's layout, which is why it names the brain and lets the server find it. `package:NAME`, a brain carried inside the scenario, is still refused with `SCN_OP_NOT_FOUND`. |
 | `init` | table | A flat table of names to strings or numbers, handed to this team's bots when their VM is built. A `spawn_bot` that names one of these seats and carries no `init` of its own gets this one. |
+
+The server's own `-brain` switch is still a path, and deliberately: that is an
+operator naming a file on their own machine, where the layout is theirs to know.
+A `brain` in a scenario is content that travels with the map to servers that
+have never seen it, so it names what it wants and the server resolves the name
+against its own `brains/` — the same directories the lobby's bot list is built
+from. Ship a scenario that needs `GoalHunter_1.7` and every server that has
+`GoalHunter_1.7` runs it; one that does not gets a reported problem and a
+playable round.
 
 `max_bots` is a memory ceiling as well as a seating one. A seat keeps the runner
 behind it — one ClientSim and one brain VM — across the unfielding that takes
@@ -860,7 +869,7 @@ A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
 |---|---|
 | `slot` | The seat to take. Left out, the first free seat is taken, and which one that is is decided as the spawn lands rather than as it is queued. A seat held for a bot that is not on the field is the one occupied seat a spawn may name — fielding it is what the seat is for. A seat that already has somebody on the field is refused with `SCN_OP_ALREADY`. |
 | `name` | The bot's name. A seat that is already held keeps the name it was seated with, whatever this says. |
-| `brain` | The brain to run, as a path on the server's disk. Left out, the seat's own brain is used — the one its team was written with — and failing that the server's. `package:NAME` is refused with `SCN_OP_NOT_FOUND` today. |
+| `brain` | The brain to run, named the way a team's is: the directory under the server's `brains/`, such as `GoalHunter_1.7`. Left out, the seat's own brain is used — the one its team was written with — and failing that the server's. A name this server does not have, a value with `/` or `\` in it, and `package:NAME` are each refused with `SCN_OP_NOT_FOUND`. |
 | `team` | The team to join. A held seat keeps the team it was seated with. |
 | `start` | The start to come in on, 1-based. Left out, the engine chooses. |
 | `loadout` | What this one bot comes in with: `"open"`, `"tournament"` or `"strict"` for that game type's amounts. A word that is none of the three stops the call the way any bad argument does. It outranks `spawn_loadout`, which is not asked about this tank at all, and it is spent on the tank the spawn builds — the bot's next life is fuelled the way every other tank's is. Left out, `spawn_loadout` answers, and failing that the round's own game type. |
@@ -1173,7 +1182,7 @@ The `code` a refused write answers, as a string.
 | `SCN_OP_ALREADY` | An add of something already there, a give of a carried pillbox, a spawn into a seat already on the field. |
 | `SCN_OP_TOO_BIG` | A list or a line past its buffer. |
 | `SCN_OP_RATE` | A budget for the tick is spent, or a second `fill_rect` was asked for while one is still landing. |
-| `SCN_OP_NOT_FOUND` | A brain path or a package name that does not resolve. |
+| `SCN_OP_NOT_FOUND` | A brain that does not resolve: a name this server does not have, a path written where a name belongs, or a `package:NAME`. |
 | `SCN_OP_NO_STOCK` | A builder order the tank cannot pay for. |
 | `SCN_OP_BAD_CALL` | The call itself is malformed. |
 
@@ -1197,7 +1206,7 @@ The `code` a refused write answers, as a string.
 | `scenario.name` | 63 bytes |
 | `scenario.description` | 255 bytes |
 | `scenario.game` | 23 bytes |
-| A team's `brain` | 255 bytes |
+| A team's `brain` name | 255 bytes |
 
 Going past one of the counts is reported and refused. Spawns and removals
 share the one roster queue and the sim drains one a tick, so a script that
@@ -1234,6 +1243,12 @@ for one that is not. Problems the parse itself finds — a rule name that
 spells nothing, a tag past what the map holds — are also written to standard
 output as the server would log them, so a run that captures one stream sees
 half the report. The map has to load before the script is looked at.
+
+The brains a scenario's teams name are checked against the ones this server
+has, so `-validate` on the server you are about to run is what tells you a map
+wants `GoalHunter_1.7` and this machine has not got it. That is a problem
+rather than a refusal: the map still plays, with those seats on the server's
+own brain.
 
 No round is run and no bot loads, but the file's top level does run, the same
 way it would at a round start — so a file you would not run is a file you

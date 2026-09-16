@@ -3440,6 +3440,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # manifest derived from the script's own table, the second pack that
     # replaces the first, and the map with nothing to pack.
     tests/unit/test_scenario_pack.c
+    # The brain a scenario names: the name a team writes reaching the seat as
+    # that brain's init.lua, the name this server has not got falling back to
+    # the server's own brain, the path refused where a name belongs, and the
+    # two roster ops that resolve a name of their own.
+    tests/unit/test_scenario_brain_name.c
     # The binding table: the game table a script reads the sim through, the
     # three index rules and what an absent entity reads as.
     tests/unit/test_scenario_lua.c
@@ -5518,6 +5523,10 @@ set(_unit_test_names
     scenario_pack_manifest_agrees
     scenario_pack_replaces_trailer
     scenario_pack_refuses_unscripted
+    scenario_brain_name_resolves
+    scenario_brain_name_missing
+    scenario_brain_name_rejects_path
+    scenario_brain_op_resolves
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

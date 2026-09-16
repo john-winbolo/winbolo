@@ -87,6 +87,9 @@
 
 #include "platform_types.h"        /* BOLO_STATIC_ASSERT */
 #include "bolo_rand.h"             /* BoloRandState, bolo_rand_save */
+#include "brain_list.h"            /* brainListResolve — the brain a team
+                                    * names, against this server's own
+                                    * brains directory */
 #include "server_sim.h"            /* ServerSim, serverSimConsoleMessage */
 #include "wire_limits.h"           /* LOBBY_MAP_UPLOAD_MAX_BYTES — how much of
                                     * a map file the chunk test reads — and
@@ -116,8 +119,9 @@
 BOLO_STATIC_ASSERT(SCN_MANIFEST_RULES_MAX >= (int)SCN_RULE_COUNT,
                    manifest_holds_every_rule_at_once);
 
-/* A team's brain is the same text a spawn carries, and the manifest sizes
- * it without seeing the op. Held against the op's own length here. */
+/* A team's brain becomes the path a spawn carries, and the manifest sizes the
+ * name without seeing the op. Held against the op's own length here, because
+ * the template below writes the resolved path into a field of that width. */
 BOLO_STATIC_ASSERT(SCN_BRAIN_LEN == SCN_PATH_MAX,
                    manifest_brain_matches_the_op_path_length);
 
@@ -2062,10 +2066,50 @@ static const char *scnFileNameOf(const char *path) {
     return last;
 }
 
+/* The path of the brain a team names, which is what the sim writes onto the
+ * seat.
+ *
+ * A scenario names a brain rather than pathing to one: the name is a directory
+ * under the server's own brains/, and a scenario shared with a server does not
+ * know that server's layout. The name becomes a path once, here, because both
+ * of the things that read a seat's brain back — the countdown's warm in
+ * warmSeatBrainPath and a spawn that fields the seat in scenarioBrainPath —
+ * open it as a file. Once here also keeps the string the same for the whole
+ * round, so a parked runner goes on matching the brain it was built with.
+ *
+ * A name this server does not have leaves the field empty, which is the seat
+ * on the server's own brain, and says one line naming the team and the name.
+ * The round still plays. An operator who would rather know before starting one
+ * hears the same thing from -validate, which reports the name against the
+ * team's own key. An empty brain is the server's own and is left alone. */
+static void scnTeamBrainPath(const ScnManifestTeam *team, char *out,
+                             size_t outLen) {
+    out[0] = '\0';
+    if (team->brain[0] == '\0') {
+        return;
+    }
+    if (brainListResolve(team->brain, out, outLen)) {
+        return;
+    }
+    out[0] = '\0';
+    if (strpbrk(team->brain, "/\\") != NULL) {
+        scnSay(NULL, 0,
+               "scenario: team %u writes the brain '%s' as a path, and a "
+               "scenario names a brain — the directory under this server's "
+               "brains/; its seats take the server's own",
+               (unsigned)team->id, team->brain);
+        return;
+    }
+    scnSay(NULL, 0,
+           "scenario: team %u asks for the brain '%s', which this server does "
+           "not have; its seats take the server's own",
+           (unsigned)team->id, team->brain);
+}
+
 /* The lobby out of the manifest and into the shape the sim reads. A straight
- * copy of the four numbers, the brain and the init table, dropping the teams
- * the sim has no seat for: the manifest holds what the file said and this
- * holds what the roster can hold.
+ * copy of the four numbers and the init table, with the brain resolved above,
+ * dropping the teams the sim has no seat for: the manifest holds what the file
+ * said and this holds what the roster can hold.
  *
  * initBadKey is not here. What a bad pair is called is something to tell an
  * author about, which the validator does; the sim is handed the pairs that
@@ -2091,7 +2135,7 @@ static void scnFillLobbyTemplate(const ScnManifestLobby *lob,
         dst->bots    = src->bots;
         dst->maxBots = src->maxBots;
         dst->fielded = src->fielded;
-        SDL_strlcpy(dst->brain, src->brain, sizeof(dst->brain));
+        scnTeamBrainPath(src, dst->brain, sizeof(dst->brain));
         dst->init    = src->init;
     }
 }

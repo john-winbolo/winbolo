@@ -2790,6 +2790,16 @@ int run_scenario_pack_manifest_agrees(void);
 int run_scenario_pack_replaces_trailer(void);
 int run_scenario_pack_refuses_unscripted(void);
 
+/* The brain a scenario names (test_scenario_brain_name.c): the name a team
+ * writes reaching the seat as that brain's init.lua, the name this server has
+ * not got falling back to the server's own brain and being reported, the path
+ * written where a name belongs being refused, and the two roster ops that
+ * resolve a name of their own. */
+int run_scenario_brain_name_resolves(void);
+int run_scenario_brain_name_missing(void);
+int run_scenario_brain_name_rejects_path(void);
+int run_scenario_brain_op_resolves(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */
