@@ -242,9 +242,22 @@ typedef enum {
  * and chosen to match them: the name and the description are the manifest's,
  * and the file name is a name rather than a path, so a server's disk layout
  * does not travel. Longer text is truncated where the sim is told, not on
- * the wire. */
+ * the wire.
+ *
+ * The file length is the scenarios directory's own (SCN_DIR_FILE_LEN, 128),
+ * so a file name that a listing shows in full is the same name this event
+ * carries in full rather than one cut to fit. It costs no wire bytes to hold
+ * the wider figure: the tail is written only when a scenario is attached, and
+ * each of the three strings is a length byte and that many bytes, so a
+ * 20-character file name travels as 21 bytes either way.
+ *
+ * transport_udp_client.c is where the three file lengths — this one, the
+ * client list accumulator's LOBBY_SCENARIO_LIST_FILE_LEN and the public
+ * SERVER_SCENARIO_FILE_LEN the directory entry is copied through — are held
+ * against each other, because it is the translation unit that sees all
+ * three. */
 #define LOBBY_SCENARIO_NAME_LEN 64
-#define LOBBY_SCENARIO_FILE_LEN 64
+#define LOBBY_SCENARIO_FILE_LEN 128
 #define LOBBY_SCENARIO_DESC_LEN 256
 
 /* Which rules CTRL_SIM_RULES carries, and how wide each one goes.

@@ -882,6 +882,29 @@ static bool udpClientReadLenStr(const uint8_t *buf, int len, int *pos,
  *
  * Declared in transport_udp.h so unit tests can drive the accumulator
  * directly, as the map list's is. */
+
+/* The three buffers a scenario's file name passes through are the same width,
+ * and this is the one translation unit that can see all three names:
+ *
+ *   SERVER_SCENARIO_FILE_LEN  (server_sim.h)        what the server's own
+ *                                                   enumeration hands a
+ *                                                   frontend, pinned against
+ *                                                   SCN_DIR_FILE_LEN in
+ *                                                   server_sim_maps.c
+ *   LOBBY_SCENARIO_LIST_FILE_LEN (client_sim_internal.h)  the row this
+ *                                                   accumulator fills
+ *   LOBBY_SCENARIO_FILE_LEN   (control_event.h)     the name of the scenario
+ *                                                   in play on the settings
+ *                                                   event
+ *
+ * Holding them together here means a name that a listing shows in full is a
+ * name the chooser can send back and the settings event can carry back, with
+ * no site along the way cutting it. */
+BOLO_STATIC_ASSERT(LOBBY_SCENARIO_LIST_FILE_LEN == SERVER_SCENARIO_FILE_LEN,
+                   scenario_list_file_matches_the_server_entry);
+BOLO_STATIC_ASSERT(LOBBY_SCENARIO_LIST_FILE_LEN == LOBBY_SCENARIO_FILE_LEN,
+                   scenario_list_file_matches_the_settings_event);
+
 void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
                                          const uint8_t *buf, int len) {
     int     pos = PACKET_HEADER_SIZE;
@@ -895,7 +918,7 @@ void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
     cnt       = buf[pos++];
 
     for (i = 0; i < cnt; i++) {
-        char file[LOBBY_SCENARIO_FILE_LEN];
+        char file[LOBBY_SCENARIO_LIST_FILE_LEN];
         char name[LOBBY_SCENARIO_NAME_LEN];
         char desc[LOBBY_SCENARIO_DESC_LEN];
         int  idx;
@@ -915,7 +938,7 @@ void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
         }
         idx = cs->lobbyScenarioListCount++;
         SDL_strlcpy(cs->lobbyScenarioListFiles[idx], file,
-                    LOBBY_SCENARIO_FILE_LEN);
+                    LOBBY_SCENARIO_LIST_FILE_LEN);
         SDL_strlcpy(cs->lobbyScenarioListNames[idx], name,
                     LOBBY_SCENARIO_NAME_LEN);
         SDL_strlcpy(cs->lobbyScenarioListDescs[idx], desc,
