@@ -5109,6 +5109,7 @@ set(_unit_test_names
     tank_mod_dealt_kills_in_half_the_hits
     tank_mod_taken_takes_more_hits
     tank_mod_mine_damage_scales_with_layer
+    mine_damage_fatal_reduction
     tank_mod_neutral_owner_deals_classic
     tank_mod_boat_exit_at_half_speed
     tank_mod_pill_leads_half_speed_boat

@@ -967,6 +967,7 @@ static const UnitTestEntry s_tests[] = {
     { "tank_mod_dealt_kills_in_half_the_hits",   run_tank_mod_dealt_kills_in_half_the_hits   },
     { "tank_mod_taken_takes_more_hits",          run_tank_mod_taken_takes_more_hits          },
     { "tank_mod_mine_damage_scales_with_layer",  run_tank_mod_mine_damage_scales_with_layer  },
+    { "mine_damage_fatal_reduction",             run_mine_damage_fatal_reduction             },
     { "tank_mod_neutral_owner_deals_classic",    run_tank_mod_neutral_owner_deals_classic    },
     { "tank_mod_boat_exit_at_half_speed",        run_tank_mod_boat_exit_at_half_speed        },
     { "tank_mod_pill_leads_half_speed_boat",     run_tank_mod_pill_leads_half_speed_boat     },
