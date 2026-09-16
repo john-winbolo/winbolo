@@ -26,10 +26,14 @@
  *                a button opens this and nothing is added
  *                to that row.
  *
- *                The rows are not cached here. The list
- *                lives on the ClientSim, filled by the
- *                server's response, and this reads it back
- *                each frame through the accessors.
+ *                Two sources, one for each place a server
+ *                can be, as the map chooser has: a server in
+ *                this process is read straight off its
+ *                scenarios directory when the dialog opens,
+ *                and a remote one is asked over the wire and
+ *                read back off the ClientSim each frame.
+ *                Both fill the same row shape and there is
+ *                one render path below them.
  *********************************************************/
 
 #include <cfloat>   /* FLT_MAX — no upper bound on how large the host may drag it */
@@ -42,26 +46,55 @@
 extern "C" {
 #include "client_sim.h"     /* the lobby scenario list accessors */
 #include "client_net.h"     /* clientSimNetSendLobbyScenarioListRequest / SetScenario */
+#include "server_sim.h"     /* ServerScenarioEntry / serverSimEnumerateScenarioDir — the in-process read */
 #include "../../../lang.h"
+#include "../../../gamefront.h"  /* gameFrontGetServerSim — whether the server is in this process */
 }
 
 /* The window's ID. The caption before ### is translated and the ID after it
  * is not, so a language change cannot hand ImGui a different window. */
 #define LOBBY_SCENARIO_WINDOW_ID "###lobbyScenarioChooser"
 
+/* How many rows a listing may hold. This is the wire list's own cap, which
+ * lives in client_sim_internal.h and a gui translation unit cannot reach, so
+ * it is stated here: both sources are held to the same number and a host sees
+ * as many scenarios whether the server is in this process or not. */
+#define LOBBY_SCENARIO_CHOOSER_MAX 128
+
 /* One opening's worth of state. open is whether the dialog is up, which the
  * lobby reads so Esc and its controller tab cycle stand aside; asked is
- * whether this opening's list request has gone out; focusedOnce raises the
- * dialog over the lobby on the frame it appears and not on every frame
- * after, which would take focus back from anything clicked behind it. */
+ * whether this opening's listing has been obtained, by request or by reading
+ * the directory; focusedOnce raises the dialog over the lobby on the frame it
+ * appears and not on every frame after, which would take focus back from
+ * anything clicked behind it. */
 static bool s_open        = false;
 static bool s_asked       = false;
 static bool s_focusedOnce = false;
+
+/* This opening's listing, for a server in this process. Held here because the
+ * read is ours and nothing else keeps it — a remote client's listing lives on
+ * the ClientSim and is not copied here. */
+static ServerScenarioEntry s_localRows[LOBBY_SCENARIO_CHOOSER_MAX];
+static int                 s_localCount = 0;
+
+/* One row, whichever source filled it. The strings point into the listing
+ * being drawn — the ClientSim's buffers or the array above, both of which
+ * outlive the frame — so the two sources meet here and the drawing below
+ * reads one shape. */
+struct LobbyScenarioRow {
+    const char *file;
+    const char *name;
+    const char *description;
+    int         maxPlayers;
+    int         bots;
+    bool        bound;
+};
 
 void lobbyScenarioChooserReset(void) {
     s_open        = false;
     s_asked       = false;
     s_focusedOnce = false;
+    s_localCount  = 0;
 }
 
 bool lobbyScenarioChooserIsOpen(void) {
@@ -72,6 +105,7 @@ void lobbyScenarioChooserOpen(void) {
     s_open        = true;
     s_asked       = false;
     s_focusedOnce = false;
+    s_localCount  = 0;
 }
 
 /* The numbers under a row: the human cap the scenario asks for and the seats
@@ -114,12 +148,20 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
         return;
     }
 
-    /* One request per opening, sent from here rather than from the button so
-       a dialog opened again after the server's directory changed asks again.
-       The send does nothing without a UDP transport, which is what leaves the
-       list empty for a lobby whose server is in this process. */
+    ServerSim *sim = gameFrontGetServerSim();
+
+    /* One listing per opening, obtained from here rather than from the button
+       so a dialog opened again after the directory changed reads it again.
+       A server in this process is read directly: the list request is a UDP
+       packet and a lobby hosted here has no UDP transport to send it on, so
+       asking would leave the list empty. A remote server is asked. */
     if (!s_asked) {
-        clientSimNetSendLobbyScenarioListRequest(cs);
+        if (sim != NULL) {
+            s_localCount = serverSimEnumerateScenarioDir(
+                sim, s_localRows, LOBBY_SCENARIO_CHOOSER_MAX);
+        } else {
+            clientSimNetSendLobbyScenarioListRequest(cs);
+        }
         s_asked = true;
     }
 
@@ -156,9 +198,46 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
     if (ImGui::Begin(title, &stay,
                      ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoCollapse)) {
-        int  count    = clientSimGetLobbyScenarioListCount(cs);
-        bool ready    = clientSimGetLobbyScenarioListReady(cs);
-        bool inFlight = clientSimGetLobbyScenarioListInFlight(cs);
+        /* Both sources into the one shape, before anything is drawn. A
+           directory read is finished by the time its rows are shown, so an
+           in-process listing is ready and never in flight — the waiting line
+           below belongs to a remote client alone. */
+        LobbyScenarioRow rows[LOBBY_SCENARIO_CHOOSER_MAX];
+        int  count    = 0;
+        bool ready    = true;
+        bool inFlight = false;
+
+        if (sim != NULL) {
+            count = s_localCount;
+            if (count > LOBBY_SCENARIO_CHOOSER_MAX) {
+                count = LOBBY_SCENARIO_CHOOSER_MAX;
+            }
+            for (int i = 0; i < count; i++) {
+                rows[i].file        = s_localRows[i].file;
+                rows[i].name        = s_localRows[i].name;
+                rows[i].description = s_localRows[i].description;
+                rows[i].maxPlayers  = s_localRows[i].maxPlayers;
+                rows[i].bots        = s_localRows[i].bots;
+                rows[i].bound       = s_localRows[i].bound;
+            }
+        } else {
+            ready    = clientSimGetLobbyScenarioListReady(cs);
+            inFlight = clientSimGetLobbyScenarioListInFlight(cs);
+            count    = clientSimGetLobbyScenarioListCount(cs);
+            if (count > LOBBY_SCENARIO_CHOOSER_MAX) {
+                count = LOBBY_SCENARIO_CHOOSER_MAX;
+            }
+            for (int i = 0; i < count; i++) {
+                rows[i].file = clientSimGetLobbyScenarioListFile(cs, i);
+                rows[i].name = clientSimGetLobbyScenarioListName(cs, i);
+                rows[i].description =
+                    clientSimGetLobbyScenarioListDescription(cs, i);
+                rows[i].maxPlayers =
+                    clientSimGetLobbyScenarioListMaxPlayers(cs, i);
+                rows[i].bots  = clientSimGetLobbyScenarioListBots(cs, i);
+                rows[i].bound = clientSimGetLobbyScenarioListBound(cs, i);
+            }
+        }
 
         /* The rows scroll and the Close row below them does not, so a server
            with a full directory cannot push the way out of the dialog off the
@@ -191,11 +270,10 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
             lobbyScenarioRowNote(langGetText(STR_DLGLOBBY_SCENARIO_EMPTY));
         } else {
             for (int i = 0; i < count; i++) {
-                const char *file = clientSimGetLobbyScenarioListFile(cs, i);
-                const char *name = clientSimGetLobbyScenarioListName(cs, i);
-                const char *desc =
-                    clientSimGetLobbyScenarioListDescription(cs, i);
-                bool bound = clientSimGetLobbyScenarioListBound(cs, i);
+                const char *file = rows[i].file;
+                const char *name = rows[i].name;
+                const char *desc = rows[i].description;
+                bool bound = rows[i].bound;
 
                 /* A manifest that named nothing still came from a file. */
                 if (name[0] == '\0') name = file;
@@ -215,9 +293,7 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
                 if (desc[0] != '\0') {
                     lobbyScenarioRowNote(desc);
                 }
-                lobbyScenarioRowCaps(
-                    clientSimGetLobbyScenarioListMaxPlayers(cs, i),
-                    clientSimGetLobbyScenarioListBots(cs, i));
+                lobbyScenarioRowCaps(rows[i].maxPlayers, rows[i].bots);
                 if (bound) {
                     lobbyScenarioRowNote(
                         langGetText(STR_DLGLOBBY_SCENARIO_BOUND));

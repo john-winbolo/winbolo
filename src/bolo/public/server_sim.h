@@ -2004,6 +2004,47 @@ int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
 bool serverSimReadMapFile(ServerSim *sim, const char *relPath,
                            uint8_t **outBytes, size_t *outLen);
 
+/* ── Server-side scenario directory enumeration ─────────────────────
+ *
+ * The scenarios this server offers on their own, read out of the
+ * directory serverSimSetScenarioDir named. Here for the reason
+ * serverSimEnumerateMapDir is here: the lobby's scenario chooser is a
+ * gui translation unit, which sees public/ only, and the scenario
+ * surface that does this work is in scenario_api/.
+ *
+ * entries:    Caller-allocated output array.
+ * maxEntries: Capacity of entries[]; the function writes at most this
+ *             many; if the directory holds more, the extras are
+ *             dropped and the function returns maxEntries.
+ *
+ * Returns the number of entries written. 0 for a server with no
+ * scenarios directory, nothing in it, or no scenario library in this
+ * build — none of the three is a fault, so none is told apart, and
+ * there is no failure return. File-name order, case-insensitive.
+ *
+ * The three lengths below mirror SCN_DIR_FILE_LEN / _NAME_LEN /
+ * _DESC_LEN in src/bolo/scenario_api/scenario_defs.h, which this
+ * header does not include because a gui translation unit reads this
+ * one and cannot reach that one. The implementation sees both and
+ * holds each pair against the other, so the two cannot drift and a
+ * copy into this shape cannot cut a name or a description short. */
+#define SERVER_SCENARIO_FILE_LEN 128
+#define SERVER_SCENARIO_NAME_LEN 64
+#define SERVER_SCENARIO_DESC_LEN 256
+typedef struct {
+    char    file[SERVER_SCENARIO_FILE_LEN];  /* the name in the scenarios
+                                                directory */
+    char    name[SERVER_SCENARIO_NAME_LEN];  /* the manifest's, or "" */
+    char    description[SERVER_SCENARIO_DESC_LEN];
+    uint8_t maxPlayers;  /* 0 = the server's own cap */
+    uint8_t bots;        /* seats the template asks for */
+    bool    bound;       /* belongs to one map; not selectable as a mod */
+} ServerScenarioEntry;
+
+int serverSimEnumerateScenarioDir(ServerSim *sim,
+                                  ServerScenarioEntry *entries,
+                                  int maxEntries);
+
 /* autoLockOnGameStart — when true, sets allowNewPlayers=false the
  * moment the lobby transitions out of serverStateLobby. */
 bool        serverSimGetAutoLockOnGameStart(const ServerSim *sim);

@@ -32,6 +32,7 @@
 #include "server_sim_internal.h"
 #include "server_sim_lifecycle.h"   /* lobbyAutoUnreadyOnChange */
 #include "server_sim_join.h"        /* serverSimAssignLobbyStartOnJoin — start reconcile after a map change */
+#include "server_sim_scenario.h"    /* serverSimScenarioListDir — what the public scenario enumeration copies from */
 #include "bolo_rand.h"              /* bolo_rand_below — the rotation's random pick */
 #include "bolo_map_validate.h"      /* boloMapBodyLength — where the preview's read stops */
 #include "client_sim.h"             /* clientSimGetGameSim — the in-process client map reload */
@@ -1021,6 +1022,47 @@ int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
     }
 
     return count;
+}
+
+/* The public entry and the scenario library's hold the same three lengths.
+   They are stated twice because a gui translation unit reads public/ and
+   cannot reach scenario_api/; this file sees both, and is where a change to
+   one without the other fails to build. */
+BOLO_STATIC_ASSERT(SERVER_SCENARIO_FILE_LEN == SCN_DIR_FILE_LEN,
+                   server_scenario_file_matches_the_directory_entry);
+BOLO_STATIC_ASSERT(SERVER_SCENARIO_NAME_LEN == SCN_DIR_NAME_LEN,
+                   server_scenario_name_matches_the_directory_entry);
+BOLO_STATIC_ASSERT(SERVER_SCENARIO_DESC_LEN == SCN_DIR_DESC_LEN,
+                   server_scenario_description_matches_the_directory_entry);
+
+int serverSimEnumerateScenarioDir(ServerSim *sim,
+                                  ServerScenarioEntry *entries,
+                                  int maxEntries) {
+    ScnDirEntry *dirRows;
+    int          got;
+    int          i;
+
+    if (entries == NULL || maxEntries <= 0) return 0;
+
+    /* Read into heap rather than a stack array: an entry carries a
+       description, so a full listing runs to tens of kilobytes and this is
+       called from a UI thread as readily as a server one. */
+    dirRows = (ScnDirEntry *)calloc((size_t)maxEntries, sizeof(*dirRows));
+    if (dirRows == NULL) return 0;
+
+    got = serverSimScenarioListDir(sim, dirRows, maxEntries);
+    for (i = 0; i < got; i++) {
+        ServerScenarioEntry *e = &entries[i];
+        SDL_strlcpy(e->file, dirRows[i].file, sizeof(e->file));
+        SDL_strlcpy(e->name, dirRows[i].name, sizeof(e->name));
+        SDL_strlcpy(e->description, dirRows[i].description,
+                    sizeof(e->description));
+        e->maxPlayers = dirRows[i].maxPlayers;
+        e->bots       = dirRows[i].bots;
+        e->bound      = dirRows[i].bound;
+    }
+    free(dirRows);
+    return got;
 }
 
 static void searchDirRecursive(const char *fullRoot,
