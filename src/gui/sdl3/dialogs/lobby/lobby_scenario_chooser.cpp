@@ -49,6 +49,7 @@ extern "C" {
 #include "server_sim.h"     /* ServerScenarioEntry / serverSimEnumerateScenarioDir — the in-process read */
 #include "../../../lang.h"
 #include "../../../gamefront.h"  /* gameFrontGetServerSim — whether the server is in this process */
+#include "../../../../server/threads.h"  /* threadsWaitForMutex / Release — the in-process read runs on the render thread */
 }
 
 /* The window's ID. The caption before ### is translated and the ID after it
@@ -157,8 +158,13 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
        asking would leave the list empty. A remote server is asked. */
     if (!s_asked) {
         if (sim != NULL) {
+            /* Under the sim mutex: this runs on the render thread and the
+               host timer is ticking the same sim, as the map chooser's
+               in-process branch does for serverSimReloadMap. */
+            threadsWaitForMutex();
             s_localCount = serverSimEnumerateScenarioDir(
                 sim, s_localRows, LOBBY_SCENARIO_CHOOSER_MAX);
+            threadsReleaseMutex();
         } else {
             clientSimNetSendLobbyScenarioListRequest(cs);
         }
