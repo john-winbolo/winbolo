@@ -489,7 +489,7 @@ applied around it; one bad row does not cost a scenario its other rules.
 | `on_base_captured(n, old, new, scripted)` | |
 | `on_base_neutralized(n, old, scripted)` | A base that changed to nobody's. |
 | `on_pill_captured(n, old, new, scripted)` | Every change of a pillbox's owner, with `game.NEUTRAL` as `new` where nobody took it. |
-| `on_pill_placed(n, p, scripted)` | The pillbox first, then who placed it. |
+| `on_pill_placed(n, p, armour, scripted)` | The pillbox first, then who placed it. Fires for every way a carried pillbox reaches the map, not only a builder finishing the job: a tank sinking or being destroyed puts its cargo down, a builder dying puts the one in his hands down, and a player leaving does both. `armour` is what tells them apart — a built pillbox arrives at the sim's cap, every other route arrives dead at `0` — so test it, not `p`, before treating one as a live gun. `p` is whoever was carrying it, which on a leave is a slot on its way out. |
 | `on_pill_picked_up(n, p, scripted)` | The same order. |
 | `on_pill_killed(n, by, scripted)` | |
 | `on_built(p, action, x, y, scripted)` | `action` is `"trees"`, `"road"`, `"building"`, `"repair"`, `"mine"` or `"boat"`. A build of kind pill on this hook is always a repair — a new pillbox going down is `on_pill_placed`. |
@@ -498,6 +498,31 @@ applied around it; one bad row does not cost a scenario its other rules.
 
 `scripted` is true when the scenario's own op caused the event, so a handler
 that should ignore its own edits opens with `if scripted then return end`.
+
+> **`on_pill_placed` changed.** It used to be `on_pill_placed(n, p, scripted)`
+> and to fire only when a builder finished the job. A handler written against
+> that form needs two things. Take the new argument, or the third one it reads
+> as `scripted` is now a number:
+>
+> ```lua
+> function on_pill_placed(n, p, armour, scripted)
+> ```
+>
+> And decide what it means by the armour, because the hook now also fires for
+> every pillbox a corpse drops — a tank sunk or destroyed, a builder killed
+> holding one, a player quitting doing both, and a scenario's own `drop_pill`.
+> A handler that meant "somebody put a gun up" keeps that meaning with a guard:
+>
+> ```lua
+> function on_pill_placed(n, p, armour, scripted)
+>   if armour == 0 then return end   -- dropped, not built: it is dead
+>   ...
+> end
+> ```
+>
+> Without the guard it will fire on drops it never used to see. `p` is whoever
+> was carrying the pillbox, which on a quit is a slot on its way out of the
+> game, so it is not a safe stand-in for "the player who built this".
 
 ### Regions
 
