@@ -411,6 +411,7 @@ int run_lobby_set_scenario_refuses_unknown(void);
 int run_lobby_set_scenario_refuses_shape(void);
 int run_lobby_set_scenario_refuses_bound(void);
 int run_lobby_set_scenario_cooldown(void);
+int run_lobby_set_scenario_unreadies(void);
 int run_lobby_map_search_chunked(void);
 int run_wbn_bearer_state(void);
 int run_wbn_rekey_codec(void);

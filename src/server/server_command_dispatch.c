@@ -207,6 +207,12 @@ static void lobbyScenarioReselect(ServerSim *sim) {
     serverSimScenarioOnMapChanged(sim, sim->mapFilePath);
     serverSimScenarioApplyLobbyRules(sim);
     serverSimPublishLobbySettings(sim);
+    /* And everyone who was ready is ready no longer, as a map commit does it
+       at the end of the same sequence. A pick changes the rules the round
+       runs, the seats the lobby holds and the game it is played by, so a
+       lobby that was all-ready would otherwise start on a scenario nobody
+       agreed to. */
+    lobbyAutoUnreadyOnChange(sim);
 }
 
 static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,

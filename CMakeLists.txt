@@ -4507,6 +4507,7 @@ set(_unit_test_names
     lobby_set_scenario_refuses_shape
     lobby_set_scenario_refuses_bound
     lobby_set_scenario_cooldown
+    lobby_set_scenario_unreadies
     lobby_map_search_chunked
     wbn_bearer_state
     wbn_rekey_codec

@@ -27,6 +27,9 @@
  *                                         refused before the directory is
  *                                         read, and the pick after the gap
  *                                         goes through
+ * run_lobby_set_scenario_unreadies      — a pick, and selecting none, put
+ *                                         every ready human back to not
+ *                                         ready, as a map commit does
  *
  * A pick reads the whole scenarios directory to find out whether the name is
  * one the server offers, so it is held to the same one-a-second tick gap a
@@ -410,6 +413,58 @@ int run_lobby_set_scenario_cooldown(void) {
                   d.calls);
     UT_ASSERT(strcmp(serverSimGetSelectedScenario(sim),
                      "fastreload.lua") == 0);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── A pick puts everyone back to not ready ───────────────────────── */
+
+/* A pick changes the rules the round runs by, the seats the lobby holds and
+ * the game it is played as, so it ends the readiness the way a map commit
+ * does — an all-ready lobby would otherwise start on a scenario nobody who
+ * pressed Ready had seen.
+ *
+ * Both humans are made ready, and both are checked afterwards: the host who
+ * made the pick and the player who did not. */
+int run_lobby_set_scenario_unreadies(void) {
+    ServerSim         *sim;
+    SsDir              d;
+    const LobbyPlayer *lp;
+
+    sim = ssLobby(&d);
+    UT_ASSERT(sim != NULL);
+
+    threadsWaitForMutex();
+    serverSimSetReady(sim, 0, true);
+    serverSimSetReady(sim, 1, true);
+    threadsReleaseMutex();
+
+    lp = serverSimGetLobbyPlayer(sim, 0);
+    UT_ASSERT_MSG(lp != NULL && lp->ready, "setup: the host is not ready");
+    lp = serverSimGetLobbyPlayer(sim, 1);
+    UT_ASSERT_MSG(lp != NULL && lp->ready, "setup: the joiner is not ready");
+
+    UT_ASSERT_MSG(ssApply(sim, 0, "fastreload.lua") == CMD_OK,
+                  "the pick was refused");
+
+    lp = serverSimGetLobbyPlayer(sim, 0);
+    UT_ASSERT_MSG(lp != NULL && !lp->ready,
+                  "the host who made the pick is still ready after it");
+    lp = serverSimGetLobbyPlayer(sim, 1);
+    UT_ASSERT_MSG(lp != NULL && !lp->ready,
+                  "the joiner is still ready after a pick they did not make");
+
+    /* And selecting none is the same kind of change, so it does the same. */
+    threadsWaitForMutex();
+    serverSimSetReady(sim, 1, true);
+    threadsReleaseMutex();
+    ssPastCooldown(sim);
+    UT_ASSERT_MSG(ssApply(sim, 0, NULL) == CMD_OK,
+                  "selecting none was refused");
+    lp = serverSimGetLobbyPlayer(sim, 1);
+    UT_ASSERT_MSG(lp != NULL && !lp->ready,
+                  "selecting none left the joiner ready");
 
     serverSimDestroy(sim);
     return 0;

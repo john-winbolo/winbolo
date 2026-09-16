@@ -333,6 +333,7 @@ static const UnitTestEntry s_tests[] = {
     { "lobby_set_scenario_refuses_bound",        run_lobby_set_scenario_refuses_bound        },
     { "lobby_set_scenario_cooldown",             run_lobby_set_scenario_cooldown             },
     { "lobby_map_search_chunked",                run_lobby_map_search_chunked                },
+    { "lobby_set_scenario_unreadies",            run_lobby_set_scenario_unreadies            },
     { "wbn_bearer_state",                        run_wbn_bearer_state                        },
     { "wbn_rekey_codec",                         run_wbn_rekey_codec                         },
     { "wbn_news_parse",                          run_wbn_news_parse                          },
