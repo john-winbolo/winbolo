@@ -51,6 +51,10 @@ void mapEditorImguiNewFrame(void);
 /* Menu action flags returned from the menu bar each frame. */
 typedef struct {
     bool wantExit;
+    /* The player asked for the application to end rather than to leave the
+     * editor.  Only Quit sets it — "Return to Menu" sets wantExit alone —
+     * and it survives the unsaved-changes modal with the exit it started. */
+    bool wantQuitApp;
     bool wantNew;
     bool wantOpen;
     bool wantOpenWbn;   /* File > Open from WinBolo.net (WinBolo client build only) */

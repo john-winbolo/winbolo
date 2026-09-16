@@ -2379,6 +2379,11 @@
 #define STR_RULE_ON                         2224
 #define STR_RULE_OFF                        2225
 
+/* The log viewer's own "back to WinBolo" wording, which is not the map
+ * editor's STR_MAPEDIT_MENU_RETURN ("Return to Menu"): embedded, the viewer
+ * returns to the main menu and the editor to the screen that opened it. */
+#define STR_LV_RETURN_MAIN_MENU             2226
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

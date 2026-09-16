@@ -2197,4 +2197,5 @@ STR_RULE_TWICE=twice as many
 STR_RULE_HALF=half as many
 STR_RULE_ON=on
 STR_RULE_OFF=off
+STR_LV_RETURN_MAIN_MENU=Return to main menu
 
