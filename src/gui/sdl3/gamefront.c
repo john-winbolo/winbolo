@@ -254,6 +254,7 @@ bool gameFrontUseNatTraversal = TRUE;
 unsigned short gameFrontHostingPort            = DEFAULT_UDP_PORT;
 bool           gameFrontHostingAllowSpec       = TRUE;
 bool           gameFrontHostingScripts         = TRUE;
+bool           gameFrontHostingUploadScripts   = TRUE;
 int            gameFrontHostingMaxSpec         = 16;
 int            gameFrontHostingUploadPolicy    = UPLOAD_POLICY_ALLOW;
 int            gameFrontHostingUploadMaxFiles  = 64;
@@ -265,6 +266,9 @@ bool           gameFrontHostingLogging         = TRUE;
 /* Round-log dir. Empty until gameFrontGetPrefs seeds the default
  * (the prefs path) or the user picks one. */
 char           gameFrontHostingLogDir[FILENAME_MAX] = "";
+/* The scenarios this host offers on their own, independently of any map.
+ * Empty until gameFrontGetPrefs seeds the default (<prefs path>scenarios). */
+char           gameFrontHostingScenarioDir[FILENAME_MAX] = "";
 bool           gameFrontHostingServeReplays   = TRUE;
 /* How the hosted server handles the voice its clients send it. Holds a
  * ServerVoiceMode; serverVoiceOn is what a client host did before this
@@ -1709,11 +1713,19 @@ bool gameFrontSetDlgState(openingStates newState) {
              ways, because unlike a command-line switch this can be turned
              back on without restarting. */
           scenarioHostSetEnabled(gameFrontHostingScripts);
+          /* And the narrower one beside it, applied at the same point: a map
+             this host took as an upload plays plainly with it off. */
+          scenarioHostSetUploadScriptsEnabled(gameFrontHostingUploadScripts);
           /* And the question the map chooser's server list asks of each map,
              registered beside the switch rather than at the attach: an attach
              answers NULL for a map with no script, so hosting a plain map
              would report every scripted map in the directory as plain. */
           scenarioHostRegisterMapScripted(spServerSim);
+          /* And the read of this host's scenarios directory, registered
+             beside it for the same reason: what the list holds has nothing to
+             do with whichever map is being hosted. */
+          serverSimSetScenarioDir(spServerSim, gameFrontHostingScenarioDir);
+          scenarioHostRegisterScenarioLister(spServerSim);
           if (strncmp(fileName, "randommap:", 10) != 0 && fileName[0] != '\0') {
             char scenarioErr[512];
             spScenarioHost = scenarioHostAttach(spServerSim, fileName,
@@ -2202,6 +2214,16 @@ void gameFrontSetHostingScripts(bool allow) {
   scenarioHostSetEnabled(allow);
 }
 
+void gameFrontSetHostingUploadScripts(bool allow) {
+  gameFrontHostingUploadScripts = allow;
+  prefsSetString("HOSTING", "Run Upload Scripts", TRUEFALSE_TO_STR(allow));
+  /* And the library, for the reason the switch above sets it here: the
+     preference is true of the process the moment it moves rather than from
+     the next hosted game, and the map chooser's scripted tag reads it too,
+     so an uploaded map stops being tagged as soon as this goes off. */
+  scenarioHostSetUploadScriptsEnabled(allow);
+}
+
 void gameFrontSetHostingMaxSpec(int maxSpec) {
   gameFrontHostingMaxSpec = maxSpec;
   char buf[16];
@@ -2246,6 +2268,15 @@ void gameFrontSetHostingLogDir(const char *dir) {
   SDL_strlcpy(gameFrontHostingLogDir, dir ? dir : "",
               sizeof(gameFrontHostingLogDir));
   prefsSetString("HOSTING", "Log Dir", gameFrontHostingLogDir);
+}
+
+/* The scenarios directory is read at the two hosting-start paths, which pass
+   it to serverSimSetScenarioDir, so a change made here is picked up by the
+   next hosted game rather than by the one already running. */
+void gameFrontSetHostingScenarioDir(const char *dir) {
+  SDL_strlcpy(gameFrontHostingScenarioDir, dir ? dir : "",
+              sizeof(gameFrontHostingScenarioDir));
+  prefsSetString("HOSTING", "Scenario Dir", gameFrontHostingScenarioDir);
 }
 
 void gameFrontSetHostingServeReplays(bool serve) {
@@ -3180,7 +3211,10 @@ bool gameFrontSetupServer(void) {
   /* A scenario script beside the map, as on the single-player path, and the
      same host preference deciding whether it runs at all. */
   scenarioHostSetEnabled(gameFrontHostingScripts);
+  scenarioHostSetUploadScriptsEnabled(gameFrontHostingUploadScripts);
   scenarioHostRegisterMapScripted(spServerSim);
+  serverSimSetScenarioDir(spServerSim, gameFrontHostingScenarioDir);
+  scenarioHostRegisterScenarioLister(spServerSim);
   if (strncmp(fileName, "randommap:", 10) != 0 && fileName[0] != '\0') {
     char scenarioErr[512];
     spScenarioHost = scenarioHostAttach(spServerSim, fileName,
@@ -3445,6 +3479,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   gameFrontHostingAllowSpec = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("HOSTING", "Run Map Scripts", "Yes", buff, FILENAME_MAX);
   gameFrontHostingScripts = YESNO_TO_TRUEFALSE(buff[0]);
+  prefsGetString("HOSTING", "Run Upload Scripts", "Yes", buff, FILENAME_MAX);
+  gameFrontHostingUploadScripts = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("HOSTING", "Max Spectators", "16", buff, FILENAME_MAX);
   {
     int m = atoi(buff);
@@ -3487,6 +3523,23 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     }
     prefsGetString("HOSTING", "Upload Dir", def, gameFrontHostingUploadDir,
                    FILENAME_MAX);
+  }
+  /* The scenarios directory, defaulted under the writable prefs path for the
+   * reason the upload dir is: the app's own data directory is inside the
+   * read-only bundle, and this is a place a player drops files into.
+   * SDL_GetPrefPath returns a trailing separator, so append "scenarios"
+   * directly. A directory that is not there is not an error — it means this
+   * host offers no scenarios of its own. */
+  {
+    const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (prefDir) {
+      snprintf(def, FILENAME_MAX, "%sscenarios", prefDir);
+      SDL_free((void *)prefDir);
+    } else {
+      snprintf(def, FILENAME_MAX, "%s", "scenarios");
+    }
+    prefsGetString("HOSTING", "Scenario Dir", def,
+                   gameFrontHostingScenarioDir, FILENAME_MAX);
   }
   prefsGetString("HOSTING", "Logging", "Yes", buff, FILENAME_MAX);
   gameFrontHostingLogging = YESNO_TO_TRUEFALSE(buff[0]);
@@ -4269,6 +4322,8 @@ void gameFrontPutPrefs(keyItems *keys) {
                             TRUEFALSE_TO_STR(gameFrontHostingAllowSpec));
   prefsSetString("HOSTING", "Run Map Scripts",
                             TRUEFALSE_TO_STR(gameFrontHostingScripts));
+  prefsSetString("HOSTING", "Run Upload Scripts",
+                            TRUEFALSE_TO_STR(gameFrontHostingUploadScripts));
   intToStr(gameFrontHostingMaxSpec, buff, sizeof(buff));
   prefsSetString("HOSTING", "Max Spectators", buff);
   prefsSetString("HOSTING", "Upload Policy",
@@ -4280,6 +4335,7 @@ void gameFrontPutPrefs(keyItems *keys) {
   intToStr(gameFrontHostingUploadMaxStorage, buff, sizeof(buff));
   prefsSetString("HOSTING", "Upload Max Storage", buff);
   prefsSetString("HOSTING", "Upload Dir", gameFrontHostingUploadDir);
+  prefsSetString("HOSTING", "Scenario Dir", gameFrontHostingScenarioDir);
   prefsSetString("HOSTING", "Logging",
                             TRUEFALSE_TO_STR(gameFrontHostingLogging));
   prefsSetString("HOSTING", "Log Dir", gameFrontHostingLogDir);

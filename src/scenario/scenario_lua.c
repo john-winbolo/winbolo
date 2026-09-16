@@ -61,6 +61,9 @@
 #include <lauxlib.h>
 
 #include "platform_types.h"       /* BOLO_STATIC_ASSERT */
+#include "brain_list.h"           /* brainListResolve — the brain a roster row
+                                   * names, against this server's own brains
+                                   * directory */
 #include "global.h"               /* the terrain codes, NEUTRAL, MAX_TANKS */
 #include "gametype.h"             /* gameOpen and its siblings */
 #include "client_enums.h"         /* sndEffects — the sound row's words */
@@ -363,12 +366,12 @@ static const char *scnGameTypeWord(gameType g) {
         case gameTournament:       return "tournament";
         case gameStrictTournament: return "strict";
         /* The one caller resolves gameScripted before it gets here, so this
-           arm is only what keeps the switch covering the enumeration. A
-           scripted round plays under the base game it declared, and "open"
+           case is only what keeps the switch covering the enumeration. A
+           scripted round plays under the base game it declared, and "strict"
            is what an undeclared one plays. */
-        case gameScripted:         return "open";
+        case gameScripted:         return "strict";
     }
-    return "open";
+    return "strict";
 }
 
 static const char *scnBuilderStateWord(BuilderState s) {
@@ -531,11 +534,18 @@ static int scnLuaTeamSize(lua_State *L) {
  * other site resolves it. The resolve is what keeps "scripted" off this row:
  * a scripted round's own game type is gameScripted, and the word a script
  * wants back is the base game it plays — the same three words the loadout
- * table in a spawn_bot call holds. */
+ * table in a spawn_bot call holds.
+ *
+ * The table's word is checked against that same set before it is handed
+ * back, because a word the set does not hold never reached the lobby
+ * template: the round plays strict, and this row says strict rather than
+ * repeating what the author typed. */
 static int scnLuaGameType(lua_State *L) {
     const ScnLuaCtx *c = scnCtx(L);
+    int              declared = 0;
 
-    if (c->manifest != NULL && c->manifest->game[0] != '\0') {
+    if (c->manifest != NULL && c->manifest->game[0] != '\0' &&
+        scenarioLuaLoadoutFromWord(c->manifest->game, &declared)) {
         lua_pushstring(L, c->manifest->game);
         return 1;
     }
@@ -2246,6 +2256,43 @@ static int scnTableTooBig(lua_State *L, const char *field, const char *key) {
                       (int)SCN_TABLE_VALUE_LEN - 1);
 }
 
+/* The brain a roster row names, turned into the path the bot loader opens.
+ *
+ * A scenario names a brain — the directory under the server's own brains/ —
+ * rather than pathing to one, because a scenario shared with a server does not
+ * know that server's layout. Both rows that carry a brain come here, so a
+ * script writes a name wherever it writes a brain.
+ *
+ * A value with a path separator in it is refused, and told what to write
+ * instead, so an author who wrote the old form learns it here rather than from
+ * a seat that fields nothing. A name this server does not have is refused too:
+ * left as the script wrote it, it reaches the sim as a path relative to
+ * wherever the server was started, so spawn_bot{brain="init.lua"} would open
+ * whatever file that name happens to hit. An empty brain is the seat's own, or
+ * failing that the server's, and is left alone.
+ *
+ * Answers 0 for a row that should carry on, and otherwise the number of values
+ * the refusal pushed, which is the row's own answer to the script. */
+static int scnResolveOpBrain(lua_State *L, char *brain, size_t brainLen) {
+    char path[SCN_PATH_MAX];
+
+    if (brain[0] == '\0') {
+        return 0;
+    }
+    if (strpbrk(brain, "/\\") != NULL) {
+        return scnRefused(L, SCN_OP_NOT_FOUND,
+                          "brain '%s' is a path; a scenario names a brain, "
+                          "which is the directory under the server's brains/ "
+                          "— 'GoalHunter_1.7', not a path to it", brain);
+    }
+    if (!brainListResolve(brain, path, sizeof(path))) {
+        return scnRefused(L, SCN_OP_NOT_FOUND,
+                          "brain '%s' names no brain this server has", brain);
+    }
+    snprintf(brain, brainLen, "%s", path);
+    return 0;
+}
+
 static int scnLuaSpawnBot(lua_State *L) {
     ScenarioOp  op;
     ScnOpOut    out;
@@ -2256,6 +2303,7 @@ static int scnLuaSpawnBot(lua_State *L) {
     lua_Number  n;
     lua_Integer team, slot;
     int         loadout;
+    int         refused;
 
     if (scnCheckingOnly(L)) {
         return scnCheckOnlyRefusal(L);
@@ -2275,6 +2323,11 @@ static int scnLuaSpawnBot(lua_State *L) {
         return scnRefused(L, SCN_OP_TOO_BIG, "brain is %d bytes, limit %d",
                           (int)len,
                           (int)sizeof(op.u.rosterSpawnBot.brain) - 1);
+    }
+    refused = scnResolveOpBrain(L, op.u.rosterSpawnBot.brain,
+                                sizeof(op.u.rosterSpawnBot.brain));
+    if (refused != 0) {
+        return refused;
     }
     team = scnFieldInt(L, 1, "team", 0);
     if (!scnFitsByte(team)) {
@@ -2364,6 +2417,7 @@ static int scnLuaLobbyAddBot(lua_State *L) {
     ScnOpResult r;
     size_t      len = 0;
     lua_Integer team, slot;
+    int         refused;
 
     if (scnCheckingOnly(L)) {
         return scnCheckOnlyRefusal(L);
@@ -2381,6 +2435,11 @@ static int scnLuaLobbyAddBot(lua_State *L) {
                       sizeof(op.u.lobbyAddBot.brain), &len)) {
         return scnRefused(L, SCN_OP_TOO_BIG, "brain is %d bytes, limit %d",
                           (int)len, (int)sizeof(op.u.lobbyAddBot.brain) - 1);
+    }
+    refused = scnResolveOpBrain(L, op.u.lobbyAddBot.brain,
+                                sizeof(op.u.lobbyAddBot.brain));
+    if (refused != 0) {
+        return refused;
     }
     team = scnFieldInt(L, 1, "team", 0);
     if (!scnFitsByte(team)) {

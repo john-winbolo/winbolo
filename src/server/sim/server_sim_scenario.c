@@ -1558,11 +1558,16 @@ static ScnOpResult scenarioBotName(const char *asked, BYTE slot,
  * seat was written with, which is how a seat held for a team gets that
  * team's brain when something fields it; and failing both the server's own.
  *
+ * What reaches here is a path. A scenario names a brain — a directory under
+ * the server's own brains/ — and the scenario runtime resolves that name to
+ * the file the loader opens before the op is submitted, so the sim has one
+ * kind of value to handle and opens it like any other brain.
+ *
  * A "package:NAME" brain is one carried by a scenario's package. Nothing on
  * the sim opens a package, so the name is refused here rather than handed to
  * the loader as a path — a file called "package:NAME" is not what the script
- * meant. The host that unpacks a scenario is what resolves these, and it
- * will resolve the name to a path before the op reaches this funnel. */
+ * meant. Nothing writes that form today; the check is what says so if
+ * something ever does. */
 static ScnOpResult scenarioBrainPath(ServerSim *sim, const char *asked,
                                      BYTE slot, const char **out) {
     const char *path;
@@ -2813,6 +2818,78 @@ static void scenarioClampWorldToRules(ServerSim *sim) {
     }
 }
 
+/* The same pass the other way round: every pill and base brought up to the
+ * caps in force rather than down to them.
+ *
+ * What it is for. A map file states a number for each pill's armour and each
+ * base's stocks, and has no way of stating "full" — BASE_FULL_ARMOUR is the
+ * number the classic table is seeded from and nothing reads it off a file — so
+ * a scenario that raises a cap gets a map still holding whatever its author
+ * wrote. A round meant to be played at the higher numbers would open below
+ * them and climb, which is a different game from the one the scenario asked
+ * for. The scenario says fill_to_caps and this is what answers it.
+ *
+ * Raising only. A pill or a base already at or above a cap is left where it
+ * is: the clamp above is what brings anything above one down, and running
+ * both over the same list is how each stays a single direction.
+ *
+ * The records are the clamp's, written the same way and for the same reason —
+ * read off either side of the walk, one record per item that moved, and
+ * nothing written for a walk that moved nothing. A pill's speed and cooldown
+ * are not touched at all: the attack interval is a rate rather than a stock,
+ * and filling it would leave every pill on the map firing at the slowest rate
+ * the table allows. */
+void serverSimScenarioFillWorldToRules(ServerSim *sim) {
+    BYTE    pillArmour[MAX_PILLS];
+    BYTE    baseArmour[MAX_BASES];
+    BYTE    baseShells[MAX_BASES];
+    BYTE    baseMines[MAX_BASES];
+    BYTE    numPills;
+    BYTE    numBases;
+    BYTE    i;
+    pillbox pill;
+    base    item;
+
+    if (sim == NULL) {
+        return;
+    }
+    numPills = pillsGetNumPills(&sim->sim.pb);
+    numBases = basesGetNumBases(&sim->sim.bs);
+
+    for (i = 0; i < numPills; i++) {
+        memset(&pill, 0, sizeof(pill));
+        pillsGetPill(&sim->sim.pb, &pill, (BYTE)(i + 1));
+        pillArmour[i] = pill.armour;
+    }
+    for (i = 0; i < numBases; i++) {
+        memset(&item, 0, sizeof(item));
+        basesGetBase(&sim->sim.bs, &item, (BYTE)(i + 1));
+        baseArmour[i] = item.armour;
+        baseShells[i] = item.shells;
+        baseMines[i]  = item.mines;
+    }
+
+    pillsFillToRules(&sim->sim, &sim->sim.pb);
+    basesFillToRules(&sim->sim, &sim->sim.bs);
+
+    for (i = 0; i < numPills; i++) {
+        memset(&pill, 0, sizeof(pill));
+        pillsGetPill(&sim->sim.pb, &pill, (BYTE)(i + 1));
+        if (pill.armour != pillArmour[i]) {
+            logAddEvent(log_PillSetHealth, i, pill.armour, 0, 0, 0, NULL);
+        }
+    }
+    for (i = 0; i < numBases; i++) {
+        memset(&item, 0, sizeof(item));
+        basesGetBase(&sim->sim.bs, &item, (BYTE)(i + 1));
+        if (item.armour != baseArmour[i] || item.shells != baseShells[i] ||
+            item.mines != baseMines[i]) {
+            logAddEvent(log_BaseSetStock, i, item.shells, item.mines,
+                        item.armour, 0, NULL);
+        }
+    }
+}
+
 /* Write one rule. The write lands in a copy of the sim's table, the copy is
  * checked whole, and only a copy that passes is committed: a refused op
  * leaves the sim's table byte for byte as it was rather than half-applied.
@@ -3230,6 +3307,35 @@ bool serverSimScenarioMapIsScripted(const ServerSim *sim, const char *mapPath) {
         return false;
     }
     return sim->scenarioMapScripted(sim->scenarioMapScriptedCtx, mapPath);
+}
+
+void serverSimSetScenarioLister(ServerSim *sim,
+                                int (*list)(void *ctx, const char *dir,
+                                            ScnDirEntry *out, int max),
+                                void *ctx) {
+    if (sim == NULL) return;
+    sim->scenarioLister = list;
+    sim->scenarioListerCtx = ctx;
+}
+
+int serverSimScenarioListDir(const ServerSim *sim, ScnDirEntry *out, int max) {
+    if (sim == NULL || out == NULL || max <= 0) {
+        return 0;
+    }
+    if (sim->scenarioLister == NULL) {
+        /* Nothing registered: no scenario library in this build, so there is
+           nothing to offer. An empty list, not a failure — the same answer a
+           directory that is not there gives. */
+        return 0;
+    }
+    {
+        int n = sim->scenarioLister(sim->scenarioListerCtx,
+                                    serverSimGetScenarioDir(sim), out, max);
+        /* A directory that cannot be read answers -1, which is nothing to
+           offer rather than something to report: a server with no scenarios
+           directory is the ordinary case. */
+        return (n < 0) ? 0 : n;
+    }
 }
 
 void serverSimSetScenarioMapChanged(ServerSim *sim,

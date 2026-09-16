@@ -52,6 +52,19 @@ FetchContent_Declare(
     URL      https://github.com/maxmind/libmaxminddb/archive/refs/tags/1.12.2.tar.gz
     SYSTEM
 )
+# cJSON, for the scenario manifest. scenario_static links it PRIVATE, which
+# passes the link along to whatever links scenario_static but does not create
+# the target — so the build that links main has to declare it, exactly as the
+# root CMakeLists.txt does for the five desktop binaries. Same repository and
+# tag as that one.
+FetchContent_Declare(
+    cjson
+    GIT_REPOSITORY https://github.com/DaveGamble/cJSON.git
+    GIT_TAG        v1.7.18
+    GIT_SHALLOW    TRUE
+    SYSTEM
+    EXCLUDE_FROM_ALL
+)
 
 # libmaxminddb: static, no tests/binaries
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
@@ -94,7 +107,15 @@ endif()
 ")
 list(INSERT CMAKE_MODULE_PATH 0 "${CMAKE_BINARY_DIR}/cmake-modules")
 
-FetchContent_MakeAvailable(sdl3 sdl3_ttf imgui lua zlib libmaxminddb)
+# cJSON: static, and none of its own tests or install rules. BUILD_SHARED_LIBS
+# is already OFF above; these are the switches cJSON reads for itself, and the
+# same ones the root CMakeLists.txt sets around its own MakeAvailable.
+set(CJSON_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(ENABLE_CJSON_TEST OFF CACHE BOOL "" FORCE)
+set(ENABLE_CJSON_INSTALL OFF CACHE BOOL "" FORCE)
+set(ENABLE_CJSON_UNINSTALL OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(sdl3 sdl3_ttf imgui lua zlib libmaxminddb cjson)
 
 # ---------------------------------------------------------------------------
 # minizip (from zlib contrib)
@@ -212,6 +233,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_recap.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_settings.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_keysetup.cpp
@@ -303,6 +325,9 @@ target_link_libraries(main PRIVATE
     lua_static
     zlibstatic
     maxminddb
+    # scenario_static reads manifest.json through cJSON and links it PRIVATE,
+    # so the symbols land here the way minizip's and Lua's do.
+    cjson
     m
     log
     android

@@ -76,6 +76,31 @@ ScnOpResult serverSimCheckScenarioRules(const ServerSim *sim,
                                         char *why, size_t whyLen);
 
 /*********************************************************
+ *NAME:          serverSimScenarioFillWorldToRules
+ *PURPOSE:
+ *  Starts every pill and base at the caps the sim's table
+ *  holds, instead of at the numbers the map file holds.
+ *
+ *  A map states a number for each pill's armour and each
+ *  base's stocks and cannot state "full", so a scenario
+ *  that raises a cap gets a map still carrying its author's
+ *  numbers. This is what a scenario asking fill_to_caps is
+ *  answered with, and it is called once the scenario's own
+ *  rules are in the table: run before them it would fill to
+ *  the caps that are on their way out.
+ *
+ *  Raising only — anything at or above a cap is left alone,
+ *  and bringing what is above one down is the clamp every
+ *  rule change already runs. Idempotent. What moves is
+ *  recorded the way that clamp records it, so a replay
+ *  reads the world the round opened on.
+ *
+ *  A pill's firing rate is not touched: an attack interval
+ *  is a rate rather than a stock.
+ *********************************************************/
+void serverSimScenarioFillWorldToRules(ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimSetScenarioPolicy
  *PURPOSE:
  *  Registers the vtable the sim asks its scenario decisions
@@ -185,6 +210,55 @@ void serverSimSetScenarioMapScripted(ServerSim *sim,
                                      bool (*mapScripted)(void *ctx,
                                                          const char *mapPath),
                                      void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimSetScenarioLister
+ *PURPOSE:
+ *  Registers the read of the server's scenarios directory:
+ *  what a client is told is on offer when it asks for the
+ *  list. The lister answers how many entries it wrote, or
+ *  -1 for a directory it could not read.
+ *
+ *  A callback rather than a call, for the reason the map
+ *  question above is one: reading a package and running a
+ *  script's top level are the scenario library's to do and
+ *  the sim is below it. src/server/ names nothing under
+ *  src/scenario/, and the link order is what says so — the
+ *  scenario library is listed ahead of the server group
+ *  because it calls into the group, so a call the other way
+ *  would not resolve.
+ *
+ *  NULL clears it, and with nothing registered the directory
+ *  reads empty — which is what a build with no scenario
+ *  library offers, exactly as every map reads unscripted
+ *  above.
+ *
+ *  Registered once, where the process decides whether it
+ *  runs scripts at all, not where a scenario attaches: the
+ *  list is what a server offers instead of the map's own
+ *  scenario, so a server with no scenario attached is
+ *  precisely the one that needs it answered.
+ *
+ *  dir is the directory to read, which the sim holds and
+ *  hands over per call (serverSimGetScenarioDir), so the
+ *  lister keeps no path of its own.
+ *********************************************************/
+void serverSimSetScenarioLister(ServerSim *sim,
+                                int (*list)(void *ctx, const char *dir,
+                                            ScnDirEntry *out, int max),
+                                void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimScenarioListDir
+ *PURPOSE:
+ *  The scenarios this server offers, read through whatever
+ *  was registered above and against the directory the sim
+ *  holds. Answers how many entries were written, and 0 for
+ *  a server with no lister, no directory, or nothing in it
+ *  — all three of which are the ordinary case rather than a
+ *  fault, so none of them is told apart here.
+ *********************************************************/
+int serverSimScenarioListDir(const ServerSim *sim, ScnDirEntry *out, int max);
 
 /*********************************************************
  *NAME:          serverSimSetScenarioLobbyTemplate

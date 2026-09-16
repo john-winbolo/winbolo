@@ -2156,6 +2156,17 @@ static const LangEntry langTable[] = {
     {2200, "Reload script"},
     {2201, "That setting is fixed by the map's scenario"},
     {2202, "Too soon; try again in a moment"},
+    {2204, "Choose"},
+    {2205, "Choose a mod"},
+    {2206, "None — no mod. The map plays its own scenario if it has one."},
+    {2207, "Asking the server..."},
+    {2208, "This server offers no mods."},
+    {2209, "Built for one map, so it cannot be played as a mod"},
+    {2210, "Up to {number} players"},
+    {2211, "{number} bot seats"},
+    {2212, "Mod: {string2} (on {string1})"},
+    {2213, "Run scripts in uploaded maps"},
+    {2216, "Scenario Directory"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

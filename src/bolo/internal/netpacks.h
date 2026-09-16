@@ -766,6 +766,43 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               brain list, once per brain that
                                               ships the files. */
 
+#define PACKET_LOBBY_SCENARIO_LIST_REQ 223 /* client → server
+                                              (no payload) what scenarios does
+                                              this server offer on their own,
+                                              independently of any map. The
+                                              directory is flat, unlike the map
+                                              chooser's tree, so there is no
+                                              path to ask about. */
+
+#define PACKET_LOBBY_SCENARIO_LIST_RSP 224 /* server → the one client that
+                                              asked, chunked the way
+                                              MAP_LIST_RSP is:
+                                              { final 1, count 1, entries }
+                                              each entry
+                                              { fileLen 1, file M,
+                                                nameLen 1, name N,
+                                                descLen 1, desc D,
+                                                maxPlayers 1, bots 1,
+                                                bound 1 }
+                                              Entries are packed until the next
+                                              will not fit in UDP_MAX_PAYLOAD;
+                                              the last chunk sets final, and an
+                                              empty directory is one chunk with
+                                              count 0 and final 1. A string
+                                              longer than its length byte is
+                                              cut rather than dropping the
+                                              entry. */
+
+#define PACKET_LOBBY_SET_SCENARIO      225  /* client → server
+                                              { pathLen 1, path N } the lobby
+                                              host picking one of the
+                                              scenarios above, by the file
+                                              name the list gave. pathLen 0
+                                              is the message that selects
+                                              none, so unlike SET_MAP an
+                                              empty path is carried rather
+                                              than refused. */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2
@@ -919,6 +956,13 @@ static inline bool lobbyBotNameAcceptable(
 
 /* Ping interval in ticks (~0.4 seconds at the 50 Hz game-tick clock) */
 #define PING_INTERVAL_TICKS 20
+
+/* How long a scenario-list request stays in flight before the client gives up
+ * on it (~5 seconds at 50 ticks/sec). The response carries nothing to tell a
+ * stale chunk from a current one, so being in flight is what makes a chunk the
+ * client's; this is what ends that when the answer never arrives, so the
+ * chooser can ask again. */
+#define LOBBY_SCENARIO_LIST_TIMEOUT_TICKS 250
 
 #define INFOREQUESTHEADER { 'B','o','l','o', BOLO_VERSION_MAJOR, BOLO_VERSION_MINOR, BOLO_VERSION_REVISION, BOLOPACKET_INFOREQUEST }
 #define TOKENHEADER { 'B','o','l','o', BOLO_VERSION_MAJOR, BOLO_VERSION_MINOR, BOLO_VERSION_REVISION, BOLOPACKET_TOKEN }

@@ -2342,6 +2342,28 @@
 #define STR_DLGLOBBY_REJECT_SCENARIO        2201
 #define STR_DLGLOBBY_REJECT_COOLDOWN        2202
 
+/* The lobby's scenario chooser: the button on the scenario line that opens
+ * it, the dialog's own title, the row that picks none, the two states the
+ * list can be in before it has rows, the reason an entry tied to its own map
+ * cannot be picked, and the two numbers a row carries. ON_MAP is the line
+ * that names the committed map and the scenario a host picked to play over
+ * it, rather than naming the scenario alone. */
+#define STR_DLGLOBBY_CHOOSE_SCENARIO        2204
+#define STR_DLGLOBBY_SCENARIO_TITLE         2205
+#define STR_DLGLOBBY_SCENARIO_NONE          2206
+#define STR_DLGLOBBY_SCENARIO_WAITING       2207
+#define STR_DLGLOBBY_SCENARIO_EMPTY         2208
+#define STR_DLGLOBBY_SCENARIO_BOUND         2209
+#define STR_DLGLOBBY_SCENARIO_MAXPLAYERS    2210
+#define STR_DLGLOBBY_SCENARIO_BOTS          2211
+#define STR_DLGLOBBY_SCENARIO_ON_MAP        2212
+
+/* The two hosting settings that go with a scenario carried inside a map: the
+ * switch that decides whether a map a player uploaded may bring one, and the
+ * directory of scenarios this host offers on their own. */
+#define STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS 2213
+#define STR_DLGSETTINGS_HOSTING_SCENARIODIR  2216
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

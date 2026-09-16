@@ -689,6 +689,7 @@ else()
         src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
         src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
         src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
         src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
         src/gui/sdl3/wbn_map_source.cpp
         PROPERTIES COMPILE_OPTIONS "-Werror=undef;${LOBBY_MISSING_DECL_OPTION}"
@@ -935,6 +936,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/lobby/lobby_recap.cpp
     src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
     src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
     src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     src/gui/sdl3/dialogs/imgui_settings.cpp
     src/gui/sdl3/dialogs/imgui_keysetup.cpp
@@ -1543,7 +1545,7 @@ set(CLIENT_SOURCES
     src/client_frontend/client_frontend_connect.c
     src/client_frontend/client_frontend_tick.c
     src/client_frontend/client_frontend_common.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/lobby_start_list.cpp
@@ -3418,6 +3420,41 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The validator: a script read in a stub VM and checked against the map,
     # the lobby template and the rule catalogue, without a round being run.
     tests/unit/test_scenario_validate.c
+    # The WBSC container: a container written and read back through minizip's
+    # memory I/O, the refusals a malformed buffer gets, the entry and brain
+    # lists, and two containers open at the same time.
+    tests/unit/test_scenario_package.c
+    # manifest.json: the version 1 schema decoded into the same struct the
+    # Lua reader fills, written back out with the keys this build does not
+    # read still in it, and the comparison that holds a package's manifest
+    # against the table its script declared.
+    tests/unit/test_scenario_manifest_json.c
+    # Where a map file's map data ends: the measure over synthetic BMAPs, the
+    # container found after one, the scripted tag a packed map gets, and the
+    # lobby preview that stops at the end of the map.
+    tests/unit/test_scenario_map_body.c
+    # A scenario carried inside the map file: the container's script run in
+    # place of a loose one, the loose script that overrides it, the manifest
+    # handed to a script that declares no table of its own, and the refusal
+    # one that restates it and disagrees gets.
+    tests/unit/test_scenario_packed_map.c
+    # A map's scenario written into the map: what the container holds, the
+    # manifest derived from the script's own table, the second pack that
+    # replaces the first, and the map with nothing to pack.
+    tests/unit/test_scenario_pack.c
+    # The brain a scenario names: the name a team writes reaching the seat as
+    # that brain's init.lua, the name this server has not got falling back to
+    # the server's own brain, the path refused where a name belongs, and the
+    # two roster ops that resolve a name of their own.
+    tests/unit/test_scenario_brain_name.c
+    # The scenarios directory: a .scenario package listed from its manifest
+    # with no Lua run, a loose .lua listed through the validator's stub VM,
+    # what is skipped, and the list encoded into the SCENARIO_LIST_RSP shape
+    # against committed golden bytes and decoded back.
+    tests/unit/test_scenario_dir.c
+    # Which scenario plays when a map and a mod both have a claim, and the
+    # points the template is applied at.
+    tests/unit/test_scenario_precedence.c
     # The binding table: the game table a script reads the sim through, the
     # three index rules and what an absent entity reads as.
     tests/unit/test_scenario_lua.c
@@ -3507,6 +3544,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # puts in a recording — its bytes on disk and both of the viewer's
     # readers over them.
     tests/unit/test_scenario_rule_arms.c
+    # fill_to_caps: a mod that raises a cap and asks for the map's pills and
+    # bases to start at it rather than at the numbers the map file holds — a
+    # base stock, a pill's armour, the same mod with the key left out, and
+    # what the fill moved read back out of a recording.
+    tests/unit/test_scenario_fill_caps.c
     # The six lifecycle and lobby policy pointers: the start a tank is given,
     # the base sweep, the team write in both lobby arms that make one, the
     # player cap, the loadout at all three places one is handed out, and the
@@ -3575,6 +3617,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The lobby's reload request: who may ask, when, and what a lobby with
     # no scenario answers.
     tests/unit/test_lobby_reload_scenario.c
+    # The lobby's scenario pick: who may pick, when, and which names the
+    # scenarios directory makes good.
+    tests/unit/test_lobby_set_scenario.c
     tests/unit/test_wbn_bearer_state.c
     tests/unit/test_wbn_rekey_codec.c
     tests/unit/test_wbn_news_parse.cpp
@@ -4478,6 +4523,13 @@ set(_unit_test_names
     lobby_reload_scenario_no_scenario
     lobby_reload_scenario_calls_back
     lobby_reload_scenario_cooldown
+    lobby_set_scenario_selects
+    lobby_set_scenario_none
+    lobby_set_scenario_refuses_unknown
+    lobby_set_scenario_refuses_shape
+    lobby_set_scenario_refuses_bound
+    lobby_set_scenario_cooldown
+    lobby_set_scenario_unreadies
     lobby_map_search_chunked
     wbn_bearer_state
     wbn_rekey_codec
@@ -5273,7 +5325,7 @@ set(_unit_test_names
     lobby_template_cancel_restores_path_random
     lobby_template_seat_carries_init
     scripted_game_type_loadout_follows_base
-    scripted_game_type_no_base_is_open
+    scripted_game_type_no_base_is_strict
     scripted_game_type_strict_ignores_base
     scripted_game_type_start_follows_base
     scripted_game_type_plain_map_clears_base
@@ -5354,6 +5406,10 @@ set(_unit_test_names
     scenario_rule_arm_records
     scenario_rule_clamps_world
     scenario_rule_clamp_records
+    scenario_fill_caps_raises_bases
+    scenario_fill_caps_raises_pills
+    scenario_fill_caps_off_changes_nothing
+    scenario_fill_caps_records
     scenario_policy_choose_start
     scenario_policy_choose_start_out_of_range
     scenario_policy_allow_base_win
@@ -5526,6 +5582,56 @@ set(_unit_test_names
     scenario_derived_define_region_adds_replaces_and_expires
     scenario_derived_region_loop_terminates
     scenario_derived_fixture_wins_without_on_tick
+    scenario_package_round_trip
+    scenario_package_bad_framing
+    scenario_package_entry_names
+    scenario_package_two_open
+    scenario_package_entry_cap
+    scenario_manifest_json_round_trip
+    scenario_manifest_json_refusals
+    scenario_manifest_agrees
+    scenario_manifest_from_values
+    scenario_manifest_json_team_init
+    scenario_manifest_json_number_range
+    scenario_map_body_length
+    scenario_map_find_container
+    scenario_map_has_script_chunk
+    scenario_map_preview_truncates
+    scenario_map_preview_passes_plain_bytes
+    scenario_map_body_use_local_compare
+    scenario_map_has_script_cached
+    scenario_packed_map_script_runs
+    scenario_packed_map_loose_overrides
+    scenario_packed_map_script_omits_table
+    scenario_packed_map_table_disagrees
+    scenario_packed_map_round_start_keeps_it
+    scenario_packed_map_upload_switch
+    scenario_packed_map_team_init
+    scenario_pack_writes_container
+    scenario_pack_manifest_agrees
+    scenario_pack_replaces_trailer
+    scenario_pack_refuses_unscripted
+    scenario_brain_name_resolves
+    scenario_brain_name_missing
+    scenario_brain_name_rejects_path
+    scenario_brain_op_resolves
+    scenario_brain_name_op_missing_refused
+    scenario_dir_lists_package
+    scenario_dir_lists_loose_script
+    scenario_dir_skips_junk
+    scenario_dir_skips_subdirectory
+    scenario_dir_list_cached
+    scenario_dir_entry_roundtrip
+    scenario_dir_chunk_not_in_flight
+    scenario_precedence_mod_over_map
+    scenario_precedence_none_restores_map
+    scenario_precedence_plain_map_keeps_mod
+    scenario_precedence_template_seats
+    scenario_precedence_reset_reapplies
+    scenario_precedence_reload_reseats
+    scenario_precedence_no_game_plays_strict
+    scenario_precedence_open_game_plays_open
+    scenario_precedence_reload_refuses_bound
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

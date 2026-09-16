@@ -2126,3 +2126,23 @@ STR_PING_MOUSE_RIGHT=Правая кнопка мыши
 STR_PING_MOUSE_X1=Мышь 4
 STR_PING_MOUSE_X2=Мышь 5
 STR_DLGKEYSETUP_PING_ALT2=Умный пинг — альтернативные клавиши 2
+
+# Выбор сценария в лобби
+STR_DLGGAMEINFO_SCRIPTED=Скриптовая
+STR_DLGSETTINGS_HOSTING_SCRIPTS=Запускать скрипты карты при хостинге
+STR_DLGLOBBY_SCENARIO_LBL=Сценарий:
+STR_DLGLOBBY_SCRIPTS_OFF=Скрипты выключены
+STR_DLGLOBBY_RELOAD_SCENARIO=Перечитать скрипт
+STR_DLGLOBBY_REJECT_SCENARIO=Этот параметр задаётся сценарием карты
+STR_DLGLOBBY_REJECT_COOLDOWN=Слишком рано, попробуйте ещё раз через мгновение
+STR_DLGLOBBY_CHOOSE_SCENARIO=Выбрать
+STR_DLGLOBBY_SCENARIO_TITLE=Выбрать мод
+STR_DLGLOBBY_SCENARIO_NONE=Нет — без мода. Карта играет свой сценарий, если он есть.
+STR_DLGLOBBY_SCENARIO_WAITING=Запрос к серверу...
+STR_DLGLOBBY_SCENARIO_EMPTY=Этот сервер не предлагает модов.
+STR_DLGLOBBY_SCENARIO_BOUND=Создан для одной карты, поэтому не может использоваться как мод
+STR_DLGLOBBY_SCENARIO_MAXPLAYERS=Игроков: до {number}
+STR_DLGLOBBY_SCENARIO_BOTS=Мест для ботов: {number}
+STR_DLGLOBBY_SCENARIO_ON_MAP=Мод: {string2} (на {string1})
+STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Запускать скрипты в загруженных картах
+STR_DLGSETTINGS_HOSTING_SCENARIODIR=Папка сценариев

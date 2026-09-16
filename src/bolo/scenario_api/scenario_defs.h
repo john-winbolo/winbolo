@@ -46,7 +46,9 @@
  * it can see and this header cannot. */
 #define SCN_PANEL_MAX 1017
 
-/* Buffer for a brain path or a "package:NAME" reference. */
+/* Buffer for a brain: the name a scenario writes — a directory under the
+ * server's own brains/, such as "GoalHunter_1.7" — and the path that name is
+ * resolved to before the sim is handed it. */
 #define SCN_PATH_MAX 256
 
 /* One team a scenario's lobby seats, as the sim reads it.
@@ -56,7 +58,8 @@
  * the two that binds again once the seats exist. fielded false asks for the
  * seats without the bots — roster entries the start sequence skips until a
  * spawn names one. brain is the path those bots run, or "" for the server's
- * own.
+ * own; the scenario names a brain and the host resolves that name to this
+ * path, so what reaches the sim is always a file to open.
  *
  * init is the table the team's bots are built with, read once when a VM is
  * built, empty for none. It is what the countdown warms a held seat's runner
@@ -82,13 +85,52 @@ typedef struct {
  * baseGameType is the game type the scenario declared, by the same words a
  * spawn op's loadout takes. It is the host's one-way hand-over of that
  * value: the sim keeps it where the spawn and start paths can read it when
- * the round is gameScripted. 0 means none declared, which plays open. */
+ * the round is gameScripted. 0 means none declared, which plays strict
+ * tournament. */
 typedef struct {
     uint8_t      maxPlayers;
     uint8_t      numTeams;
     uint8_t      baseGameType;   /* a gameType value, 0 for none */
     ScnLobbyTeam teams[MAX_TANKS];
 } ScnLobbyTemplate;
+
+/* What a scenario is called and what it asks for, as the sim reads it.
+ *
+ * The name and description lengths are SCN_SCENARIO_NAME_LEN and
+ * SCN_SCENARIO_DESC_LEN in src/scenario/scenario_host.h, stated again here
+ * under names of their own: that header is the one a frontend includes and
+ * this one is not, so a gui or runtime_only translation unit can reach it and
+ * not this. scenario_dir.c sees both and holds each pair against the other,
+ * so the two cannot drift.
+ *
+ * The file name is a name in the directory and never a path: the directory is
+ * flat, and where it is on disk is the server's own business. */
+#define SCN_DIR_FILE_LEN 128
+#define SCN_DIR_NAME_LEN 64
+#define SCN_DIR_DESC_LEN 256
+
+/* One scenario a server offers on its own, independently of any map: a
+ * .scenario package or a loose .lua in the scenarios directory, read into the
+ * few fields a chooser needs to show it.
+ *
+ * The sim holds no notion of what is in either file. It is handed a filled
+ * array by the lister registered on it (serverSimSetScenarioLister), which is
+ * the scenario library's to implement, and it passes the entries to the wire
+ * layer — the dependency points one way, as it does for the lobby template.
+ *
+ * maxPlayers is the cap the scenario asks for, 0 leaving the server's own.
+ * bots is the seats its lobby template asks for, summed over its teams and
+ * held at 255 because it travels in one byte. bound true says the scenario is
+ * tied to the map it was written against, which is what makes it no use as a
+ * mod. */
+typedef struct {
+    char    file[SCN_DIR_FILE_LEN];  /* the name in the directory */
+    char    name[SCN_DIR_NAME_LEN];  /* the manifest's */
+    char    description[SCN_DIR_DESC_LEN];
+    uint8_t maxPlayers;
+    uint8_t bots;
+    bool    bound;
+} ScnDirEntry;
 
 /* How many roster changes may be outstanding at once. Spawns and
  * removals share one first-in first-out queue and the sim drains one of
@@ -386,7 +428,8 @@ typedef struct {
 typedef struct {
     BYTE     slot;                   /* 0xFF = first free seat above the cap */
     char     name[PLAYER_NAME_LEN];
-    char     brain[SCN_PATH_MAX];    /* a path or "package:NAME" */
+    char     brain[SCN_PATH_MAX];    /* the brain the script named, resolved
+                                      * to a path before the op is submitted */
     BYTE     team;
     BYTE     start;                  /* 0xFF = let the engine choose */
     BYTE     loadout;                /* 0 = ask the policy */
@@ -407,7 +450,7 @@ typedef struct {
 typedef struct {
     BYTE slot;
     char name[PLAYER_NAME_LEN];
-    char brain[SCN_PATH_MAX];
+    char brain[SCN_PATH_MAX];   /* resolved the same way a spawn's is */
     BYTE team;
     bool fielded;
 } ScnOpLobbyAddBot;
@@ -752,7 +795,7 @@ typedef enum {
     SCN_OP_ALREADY,         /* add of an active item, give of a carried pill, spawn of a fielded seat */
     SCN_OP_TOO_BIG,         /* a list or text exceeds its buffer */
     SCN_OP_RATE,            /* a second panel update in one tick, or a budget */
-    SCN_OP_NOT_FOUND,       /* brain path or package name that does not resolve */
+    SCN_OP_NOT_FOUND,       /* a brain that does not resolve: a name this server does not have, a path where a name belongs, or a "package:" the funnel refuses */
     SCN_OP_NO_STOCK,        /* a builder order the tank cannot pay for */
     SCN_OP_BAD_CALL         /* no sim or no op: the call itself is malformed */
 } ScnOpResult;

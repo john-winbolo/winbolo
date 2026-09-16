@@ -28,6 +28,7 @@
 #include "lang_message.h"   /* langid — the localized server->client sends */
 #include "platform_net.h"   /* SOCKET, struct sockaddr_in */
 #include "netpacks.h"       /* MAP_DOWNLOAD_MAX_SIZE, PACKET_MAX_PLAYER_NAME */
+#include "scenario_defs.h"  /* ScnDirEntry — the scenario list chunk's input */
 #include "transport_udp.h"  /* UdpServerClient, MAX_SPECTATORS, SubscriberHandle */
 #include "transport_udp_internal.h" /* ClientEventQueue, UDP_MAX_PAYLOAD */
 #include "channel_mux.h"    /* ChannelMux */
@@ -581,6 +582,25 @@ void serverServiceMapTransfer(struct ServerSim *sim, int slot);
 void udpServerClearClientUploadState(int idx);
 void udpServerExpireUploads(uint64_t now_ms);
 void udpServerResetMapReaskLimit(int idx);
+
+/* One PACKET_LOBBY_SCENARIO_LIST_RSP chunk, written into the caller's buffer.
+ * Owned by src/server/udp/udp_server_dispatch.c, where the request handler
+ * calls it in a loop and sends what it returns.
+ *
+ * Packs entries from `first` until the next will not fit in bufLen, stamps the
+ * count and the final flag, and leaves *next at the first entry it did not
+ * write — equal to count when this was the last chunk. Returns the chunk's
+ * length in bytes, or 0 for a buffer too small to hold even an empty chunk.
+ * A count of 0 is a whole answer: one chunk, final set, no entries.
+ *
+ * Non-static, and takes a buffer rather than a socket, so the unit tests can
+ * hold what the server would send against committed golden bytes and feed the
+ * same bytes back through the client's accumulator. The map list's encoder is
+ * inline in its handler and needs a socket, which is why
+ * test_lobby_map_list_chunked.c has to hand-roll the bytes it checks. */
+int udpServerPackScenarioListChunk(uint8_t *buf, int bufLen,
+                                   const ScnDirEntry *entries, int count,
+                                   int first, int *next);
 
 /* Tankless spectator support. Owned by
  * src/server/udp/udp_server_spectator.c.

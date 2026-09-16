@@ -209,7 +209,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     }
 
     /* No scenario has declared a base game type yet, so a round that turns
-       out to be scripted plays open until a lobby template says otherwise. */
+       out to be scripted plays strict tournament until a lobby template says
+       otherwise. */
     sim->sim.scenarioBaseGame = (gameType)0;
 
     /* "No tutorial progress yet" — memset would leave 0, which (being below

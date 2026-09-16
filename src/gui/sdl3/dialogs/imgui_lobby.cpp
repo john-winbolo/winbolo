@@ -224,6 +224,7 @@ extern "C" void imguiLobbyFrameReset(void) {
     mapPreviewPopupDestroy();
 
     lobbyChooserReset();
+    lobbyScenarioChooserReset();
 
     lobbyChatReset();
 
@@ -816,7 +817,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 }
             }
             if (leaveClicked ||
-                (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !mapPreviewPopupIsOpen() && !lobbyChooser()->open && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
+                (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !mapPreviewPopupIsOpen() && !lobbyChooser()->open && !lobbyScenarioChooserIsOpen() && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
                   (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
 #ifdef __APPLE__
                   || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
@@ -955,7 +956,10 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             /* The recap tab exists only while a stored end-of-round
              * summary does (set at game over, cleared on countdown). */
             const bool haveLastRound = lobbyShowLastRound;
-            if (!lobbyChooser()->open) {
+            /* Also stood down while the scenario chooser is up. That dialog is
+               drawn from the Map tab's own body, so a cycle away from that tab
+               would leave it open with nothing drawing it and no way back. */
+            if (!lobbyChooser()->open && !lobbyScenarioChooserIsOpen()) {
                 const ClientLobbySlot *myTabSlot =
                     clientSimGetLobbySlot(cs, myPlayerNum);
                 bool onTeam = !spectator && myTabSlot && myTabSlot->teamNumber != 0;
@@ -1510,7 +1514,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 ImGui::SameLine(0, 20);
                 glyphInline(SI_ACTION_MENU_CANCEL);   /* B glyph left of Leave */
                 if (ImGui::Button(langGetText(STR_DLGLOBBY_LEAVE), ImVec2(100 * s, 0)) ||
-                    (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !mapPreviewPopupIsOpen() && !lobbyChooser()->open && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
+                    (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !mapPreviewPopupIsOpen() && !lobbyChooser()->open && !lobbyScenarioChooserIsOpen() && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
                       (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
 #ifdef __APPLE__
                       || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
@@ -2424,6 +2428,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
          * SDL_GetWindowSize) — screenW/screenH is cached at lobby
          * entry and doesn't track OS-window resizes. */
         lobbyChooseMapRenderWindow(cs, renderer, s, winW, winH);
+
+        /* The scenario chooser, drawn here for the same reason and from the
+         * same live winW/winH. Opened by the Choose button on the scenario
+         * line, which sits inside the Map tab — drawing the dialog from
+         * there would lose it the moment the player changed tab. */
+        lobbyScenarioChooserRenderWindow(cs, s, winW, winH);
 
 #if !BOLO_MOBILE
     /* The reel outlives any single body render. Once the summary is gone (the

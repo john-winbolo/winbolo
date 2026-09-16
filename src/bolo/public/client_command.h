@@ -61,6 +61,7 @@ typedef enum {
     CMD_LOCK_TOGGLE,
     CMD_LOBBY_ADD_BOT,
     CMD_LOBBY_SET_MAP,
+    CMD_LOBBY_SET_SCENARIO,
     CMD_LOBBY_PREVIEW_CANCEL,
     CMD_LOBBY_PREVIEW_COMMIT,
     CMD_LOBBY_PREVIEW_RANDOM,
@@ -288,6 +289,15 @@ typedef struct {
     char    relPath[256];
 } CmdLobbySetMap;
 
+/* CMD_LOBBY_SET_SCENARIO — the host picking a scenario. relPath is
+ * relative to the scenarios directory; an empty one selects none. The
+ * case rejects absolute paths, drive letters and ".." segments, and a
+ * name the scenarios directory does not hold. */
+typedef struct {
+    uint8_t relPathLen;
+    char    relPath[256];
+} CmdLobbySetScenario;
+
 typedef struct {
     uint8_t _unused;
 } CmdLobbyPreviewCancel;
@@ -477,6 +487,7 @@ typedef struct ClientCommand {
         CmdLockToggle          lockToggle;
         CmdLobbyAddBot         lobbyAddBot;
         CmdLobbySetMap         lobbySetMap;
+        CmdLobbySetScenario    lobbySetScenario;
         CmdLobbyPreviewCancel  lobbyPreviewCancel;
         CmdLobbyReloadScenario lobbyReloadScenario;
         CmdLobbyPreviewCommit  lobbyPreviewCommit;

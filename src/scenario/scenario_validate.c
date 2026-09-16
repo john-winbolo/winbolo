@@ -44,9 +44,11 @@
 #include <lua.h>
 #include <lauxlib.h>
 
+#include "brain_list.h"          /* brainListResolve — whether this server has
+                                  * the brain a team names */
 #include "server_sim.h"          /* the entity counts, MAX_TANKS,
                                   * MAP_ARRAY_SIZE */
-#include "server_sim_scenario.h" /* serverSimCheckScenarioRules */
+#include "server_sim_scenario.h" /* serverSimCheckScenarioRules, SCN_PATH_MAX */
 
 #include "scenario_host.h"
 #include "scenario_manifest.h"
@@ -275,8 +277,9 @@ static void scnCheckApi(const ScenarioManifest *m, ScnValidateResult *out) {
 
 /* The game type the table asks for. The attach reads it through the same
  * word set a spawn op's loadout takes, and a word that set does not hold is
- * dropped there without a sound — the round plays open and the author is
- * never told the line did nothing. */
+ * dropped there without a sound — the round plays strict tournament, as a
+ * round naming no game does, and the author is never told the line did
+ * nothing. */
 static void scnCheckGame(const ScenarioManifest *m, ScnValidateResult *out) {
     int base;
 
@@ -286,7 +289,7 @@ static void scnCheckGame(const ScenarioManifest *m, ScnValidateResult *out) {
     if (!scenarioLuaLoadoutFromWord(m->game, &base)) {
         scnIssueAdd(out, "game",
                     "game is '%s', and the game types are 'open', "
-                    "'tournament' and 'strict'",
+                    "'tournament' and 'strict'; the round plays strict",
                     m->game);
     }
 }
@@ -340,14 +343,31 @@ static void scnCheckLobby(const ScenarioManifest *m, ScnValidateResult *out) {
                         (unsigned)t->bots, MAX_TANKS);
         }
 
-        /* The shape of the name and nothing else. A packaged brain is inside
-           a file this check has not been handed, so whether the package holds
-           one is not a question that can be asked here. */
-        if (strncmp(t->brain, "package:", 8) == 0 && t->brain[8] == '\0') {
+        /* The brain the team names, held against the brains this server has.
+           Neither of these refuses the scenario: the map still loads and the
+           team's seats fall back to the server's own brain. What they are for
+           is telling an operator they need GoalHunter_1.7 before a round is
+           started, rather than leaving them to find it out from a wave that
+           seats bots which field nothing.
+
+           A "package:NAME" carries no separator, so it arrives here as a name
+           like any other and is reported as a brain this server does not have,
+           which is what it is. */
+        if (t->brain[0] != '\0') {
+            char path[SCN_PATH_MAX];
+
             snprintf(key, sizeof(key), "lobby.teams[%u].brain",
                      (unsigned)(i + 1));
-            scnIssueAdd(out, key, "'%s' names nothing after the colon",
-                        t->brain);
+            if (strpbrk(t->brain, "/\\") != NULL) {
+                scnIssueAdd(out, key,
+                            "'%s' is a path; a scenario names a brain, which "
+                            "is the directory under the server's brains/ — "
+                            "'GoalHunter_1.7', not a path to it", t->brain);
+            } else if (!brainListResolve(t->brain, path, sizeof(path))) {
+                scnIssueAdd(out, key,
+                            "'%s' names no brain this server has; the team's "
+                            "seats take the server's own brain", t->brain);
+            }
         }
 
         /* A pair of the init table the read could not take. The reader keeps
@@ -511,26 +531,18 @@ static void scnCheckBound(const ScenarioManifest *m, ScnValidateResult *out) {
 
 /* ── The whole check ──────────────────────────────────────────────── */
 
-bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
-                         ScnValidateResult *out) {
-    char           script[SCN_SCRIPT_PATH_MAX];
+/* The checks themselves, against a script that has already been named and an
+ * out the caller has cleared. Both entry points below come through here, so a
+ * script checked beside a map and one named directly are read the same way and
+ * report the same things. */
+static bool scnValidateFile(const ServerSim *sim, const char *script,
+                            ScnValidateResult *out) {
     char           chunkName[SCN_SCRIPT_PATH_MAX + 2];
     char           err[SCN_VALIDATE_LINE_LEN];
     char          *src    = NULL;
     size_t         srcLen = 0;
     lua_State     *L;
     ScnParseReport rep;
-
-    if (out == NULL || mapPath == NULL) {
-        return false;
-    }
-    memset(out, 0, sizeof(*out));
-
-    if (!scnScriptPath(mapPath, script, sizeof(script))) {
-        scnIssueAdd(out, "", "%s leaves no room for a script name beside it",
-                    mapPath);
-        return false;
-    }
 
     /* No file at all is the ordinary case: a plain map, and nothing to check
        about it. */
@@ -594,4 +606,30 @@ bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
     scnCloseVm(L);
     free(src);
     return out->count == 0;
+}
+
+bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
+                         ScnValidateResult *out) {
+    char script[SCN_SCRIPT_PATH_MAX];
+
+    if (out == NULL || mapPath == NULL) {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+
+    if (!scnScriptPath(mapPath, script, sizeof(script))) {
+        scnIssueAdd(out, "", "%s leaves no room for a script name beside it",
+                    mapPath);
+        return false;
+    }
+    return scnValidateFile(sim, script, out);
+}
+
+bool scenarioValidateScript(const ServerSim *sim, const char *scriptPath,
+                            ScnValidateResult *out) {
+    if (out == NULL || scriptPath == NULL) {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+    return scnValidateFile(sim, scriptPath, out);
 }

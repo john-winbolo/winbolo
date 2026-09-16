@@ -1999,8 +1999,9 @@ int run_scenario_lua_spawn_bot_refuses_bad_start(void) {
 /* A scripted round's own game type is gameScripted, and a script that feeds
    game.game_type() into a spawn's loadout would have that word refused: the
    loadout table holds "open", "tournament" and "strict" and nothing else. So
-   the row resolves, and a round that declared no base game reads "open".
-   With a base game declared the row reads that instead. */
+   the row resolves, and a round that declared no base game reads "strict",
+   which is what such a round plays. With a base game declared the row reads
+   that instead. */
 int run_scenario_lua_game_type_resolves_scripted(void) {
     ServerSim       *sim = ut_make_running_sim("Seat0");
     ScenarioManifest m;
@@ -2018,7 +2019,7 @@ int run_scenario_lua_game_type_resolves_scripted(void) {
     UT_ASSERT_MSG(slRun(L, "word = game.game_type()\n", err, sizeof(err)),
                   "the fixture would not run: %s", err);
     slGlobalStr(L, "word", word, sizeof(word));
-    UT_ASSERT_MSG(strcmp(word, "open") == 0,
+    UT_ASSERT_MSG(strcmp(word, "strict") == 0,
                   "a scripted round declaring no game read '%s'", word);
 
     /* The base game the lobby template carried reaches the row the same way

@@ -55,7 +55,14 @@
 
 /* The text fields of the scenario table. The name is what a lobby row
  * shows and the description what a tooltip or an info line shows, so they
- * are sized for a line rather than for prose. */
+ * are sized for a line rather than for prose.
+ *
+ * SCN_DIR_NAME_LEN and SCN_DIR_DESC_LEN in scenario_api/scenario_defs.h are
+ * the same two lengths on the sim's side of the fence, where a scenario the
+ * server offers is described. They are stated twice because this header is
+ * what a frontend includes and that one is not — a gui or runtime_only
+ * translation unit sees public/ alone. scenario_dir.c sees both and holds
+ * them against each other. */
 #define SCN_SCENARIO_NAME_LEN 64
 #define SCN_SCENARIO_DESC_LEN 256
 
@@ -63,9 +70,10 @@
  * as the text the file gave. */
 #define SCN_GAME_NAME_LEN 24
 
-/* A brain named by a lobby team, as a path or a "package:NAME". The same
- * length the spawn op carries a brain in; scenario_host.c holds the two
- * against each other where it can see both. */
+/* A brain named by a lobby team: the directory under the server's own
+ * brains/, as the file wrote it. The same length the spawn op carries a brain
+ * in, because that op carries the path this name resolves to; scenario_host.c
+ * holds the two against each other where it can see both. */
 #define SCN_BRAIN_LEN 256
 
 /* Room for every rule the table can name. scenario_host.c checks this
@@ -216,6 +224,32 @@ typedef struct ScenarioHost ScenarioHost;
 void scenarioHostSetEnabled(bool enabled);
 
 /*********************************************************
+ *NAME:          scenarioHostSetUploadScriptsEnabled
+ *PURPOSE:
+ *  Whether a map a client uploaded to this server may bring
+ *  a script with it. Enabled by default, so a server that
+ *  says nothing behaves as it always did.
+ *
+ *  A .map file can carry a scenario container appended to
+ *  it, and the upload path writes the bytes it was sent
+ *  whole, container and all. Off, a map whose file sits in
+ *  the server's uploads directory attaches neither that
+ *  container nor a loose script beside it, and one console
+ *  line names the file so the operator can see which upload
+ *  was turned down. Every other map is unaffected: the
+ *  operator's own map directory is the operator's own.
+ *
+ *  Narrower than scenarioHostSetEnabled, which turns every
+ *  script off wherever the map came from. Both apply: with
+ *  scripts off altogether this one is never reached.
+ *
+ *  Set it before the first attach, beside the switch above:
+ *  it is one answer for the process, and a map committed
+ *  later reads whatever it last said.
+ *********************************************************/
+void scenarioHostSetUploadScriptsEnabled(bool enabled);
+
+/*********************************************************
  *NAME:          scenarioHostMapHasScript
  *PURPOSE:
  *  Whether picking the map at mapPath here would run a
@@ -235,6 +269,19 @@ void scenarioHostSetEnabled(bool enabled);
  *  mapPath - Full path to the .map file
  *********************************************************/
 bool scenarioHostMapHasScript(const char *mapPath);
+
+/*********************************************************
+ *NAME:          scenarioHostMapScriptOpens
+ *PURPOSE:
+ *  How many map files the question above has opened since
+ *  the process started. The answer is kept per path, keyed
+ *  on the file's size and modify time, so a second listing
+ *  of an unchanged directory opens nothing; this is how a
+ *  test says so, and it is of no use to a frontend.
+ *
+ *  Only ever rises.
+ *********************************************************/
+unsigned long scenarioHostMapScriptOpens(void);
 
 /*********************************************************
  *NAME:          scenarioHostRegisterMapScripted
@@ -259,12 +306,43 @@ bool scenarioHostMapHasScript(const char *mapPath);
 void scenarioHostRegisterMapScripted(ServerSim *sim);
 
 /*********************************************************
+ *NAME:          scenarioHostRegisterScenarioLister
+ *PURPOSE:
+ *  Hands the sim the read of its scenarios directory, so a
+ *  client asking what this server offers is answered.
+ *
+ *  Call it once, in the same place and for the same reason
+ *  as the registration above: the list is what a server
+ *  offers instead of a map's own scenario, so the server
+ *  that needs it answered is exactly the one with nothing
+ *  attached.
+ *
+ *  What is read is scnDirList; where it is read is the
+ *  directory the sim holds, which an operator sets with
+ *  -scenariodir or the "Scenario Dir" preference. A server
+ *  that registers nothing offers an empty list.
+ *
+ *ARGUMENTS:
+ *  sim - The sim being told where to send the question
+ *********************************************************/
+void scenarioHostRegisterScenarioLister(ServerSim *sim);
+
+/*********************************************************
  *NAME:          scenarioHostAttach
  *PURPOSE:
- *  Looks for a script beside mapPath, reads it, boots a VM,
- *  runs its chunk and reads its scenario table. Registers
- *  itself on the sim, so the round start that follows applies
- *  the scenario's rules.
+ *  Finds the map's script, reads it, boots a VM, runs its
+ *  chunk and reads its scenario table. Registers itself on the
+ *  sim, so the round start that follows applies the scenario's
+ *  rules.
+ *
+ *  Two places carry a script. A loose X.scenario.lua beside
+ *  the map wins, and a map that carries a container as well
+ *  says so on the console. Otherwise the container appended to
+ *  the map file itself is read: its manifest fills the
+ *  scenario global before the chunk runs, and the table the
+ *  chunk leaves behind is held against that manifest — so a
+ *  packaged script may omit the table or restate it, but one
+ *  that restates it and disagrees is refused by key.
  *
  *  The file is read once, here. The host keeps the bytes and
  *  every later round runs those, so editing the file while a
@@ -290,13 +368,53 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
                                  char *err, size_t errLen);
 
 /*********************************************************
+ *NAME:          scenarioHostAttachMod
+ *PURPOSE:
+ *  The same attach, for a scenario the server offers on its
+ *  own rather than one a map carries: a .scenario package or
+ *  a loose .lua in the scenarios directory, named by the file
+ *  the host picked. Everything past where the script came
+ *  from is what scenarioHostAttach does — the same VM, the
+ *  same manifest read, the same check of a package's table
+ *  against its manifest, the same registrations.
+ *
+ *  It has no map. A mod plays on whichever map is committed,
+ *  so nothing here reads one and the map may even be one that
+ *  came from bytes rather than a file. The lobby is told
+ *  lobbyScenarioMod, and the file name it carries is the
+ *  mod's own.
+ *
+ *  Returns NULL with the reason in err for a file that is not
+ *  there, is neither a package nor a script by its name, or
+ *  cannot be used — and, unlike a map with no script, a
+ *  missing file is a fault here: the host asked for this one
+ *  by name.
+ *
+ *ARGUMENTS:
+ *  sim    - The sim to attach to
+ *  dir    - The scenarios directory
+ *  file   - The file name in it, not a path
+ *  err    - Where the reason goes
+ *  errLen - Its size; err may be NULL only when this is 0
+ *********************************************************/
+ScenarioHost *scenarioHostAttachMod(ServerSim *sim, const char *dir,
+                                    const char *file,
+                                    char *err, size_t errLen);
+
+/*********************************************************
  *NAME:          scenarioHostReload
  *PURPOSE:
  *  Reads the script from disk again and, if the new bytes
  *  are usable, keeps them in place of the ones the host was
  *  holding. Usable means: inside SCN_SCRIPT_MAX_BYTES, the
  *  chunk loads and runs, a scenario table comes out of it,
- *  and its api is not above this server's.
+ *  its api is not above this server's, and where the script
+ *  came out of a package, the table agrees with the manifest.
+ *
+ *  Where the script comes from is decided again rather than
+ *  kept: a loose script dropped beside a packed map takes over
+ *  at the reload, which is what makes editing one a loop
+ *  rather than a re-pack.
  *
  *  Checked in a Lua state of its own before anything is
  *  swapped, so a bad edit changes nothing: on any failure

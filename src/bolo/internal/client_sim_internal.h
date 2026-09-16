@@ -595,6 +595,59 @@ struct ClientSim {
      * differ, instead of re-enumerating on every frame. */
     uint32_t lobbyMapListSeq;
 
+    /* The scenarios the server offers on their own, independently of any map
+     * — populated from PACKET_LOBBY_SCENARIO_LIST_RSP after the client sends a
+     * PACKET_LOBBY_SCENARIO_LIST_REQ. The directory is flat, unlike the map
+     * chooser's tree, so there is no path to echo and so nothing to recognise
+     * a stale response by: a response is for the request that is in flight.
+     *
+     * The row lengths mirror SCN_DIR_FILE_LEN / _NAME_LEN / _DESC_LEN in
+     * src/bolo/scenario_api/scenario_defs.h, which this header does not
+     * include because a client build need not see the scenario contract. They
+     * are the receiving buffers, so a string longer than one arrives cut
+     * rather than overrunning it.
+     *
+     * Only the file length is declared here, under a name of its own. The
+     * other two are LOBBY_SCENARIO_NAME_LEN and LOBBY_SCENARIO_DESC_LEN from
+     * control_event.h, which this header includes and which already hold the
+     * same figures; declaring them again here would be two spellings of one
+     * length waiting to drift. The file length gets the LIST_ name because it
+     * is a different length from the settings event's for as long as anybody
+     * wants it to be: this one sizes a row of the directory listing, that one
+     * sizes the name of the scenario in play. transport_udp_client.c holds
+     * the two against each other.
+     *
+     * Per-ClientSim cost at 128: ~58 KB. A quarter of the map list's count for
+     * about the same memory — an entry here carries a description, so it runs
+     * to ~450 bytes against a map entry's ~150. */
+#define LOBBY_SCENARIO_LIST_MAX      128
+#define LOBBY_SCENARIO_LIST_FILE_LEN 128
+    int      lobbyScenarioListCount;
+    char     lobbyScenarioListFiles[LOBBY_SCENARIO_LIST_MAX]
+                                   [LOBBY_SCENARIO_LIST_FILE_LEN];
+    char     lobbyScenarioListNames[LOBBY_SCENARIO_LIST_MAX]
+                                   [LOBBY_SCENARIO_NAME_LEN];
+    char     lobbyScenarioListDescs[LOBBY_SCENARIO_LIST_MAX]
+                                   [LOBBY_SCENARIO_DESC_LEN];
+    uint8_t  lobbyScenarioListMaxPlayers[LOBBY_SCENARIO_LIST_MAX];
+    uint8_t  lobbyScenarioListBots[LOBBY_SCENARIO_LIST_MAX];
+    /* Tied to the map it was written against, so no use as a mod. Carried so
+       a chooser can say why a scenario it can see is not one it may pick. */
+    bool     lobbyScenarioListBound[LOBBY_SCENARIO_LIST_MAX];
+    bool     lobbyScenarioListReady;    /* true once a response arrives */
+    bool     lobbyScenarioListInFlight; /* true after send, false on response */
+    /* False until the first chunk of the response in flight lands, which is
+       where the accumulator is cleared. Clearing at send time instead left a
+       list that a duplicated chunk could append to twice. */
+    bool     lobbyScenarioListStarted;
+    /* Client ticks since the request went out, while one is in flight. A
+       response that never comes would otherwise leave the request in flight
+       for good and the chooser with no way to ask again. */
+    uint16_t lobbyScenarioListWaited;
+    /* Ticked on each completed response, so a chooser can re-read without
+       polling the list itself, exactly as lobbyMapListSeq is used. */
+    uint32_t lobbyScenarioListSeq;
+
     /* Monotonic counter incremented whenever the client receives a
      * PACKET_LOBBY_MAP_CHANGE (i.e. the server told us to invalidate
      * and re-download the map). UI poll-and-compare against a cached

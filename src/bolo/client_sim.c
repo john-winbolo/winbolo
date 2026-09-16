@@ -266,8 +266,8 @@ bool clientSimCreate(ClientSim *cs) {
 
   /* A client is never handed a lobby template; the game a scenario declared
      reaches it on the settings tail instead. Until a settings event lands
-     this is 0, and a scripted round resolves as gameOpen through the same
-     code the server runs. */
+     this is 0, and a scripted round resolves as gameStrictTournament through
+     the same code the server runs. */
   cs->sim.scenarioBaseGame = (gameType)0;
 
   /* Initialize GameSim identity and callbacks */
@@ -2846,6 +2846,47 @@ uint32_t clientSimGetLobbyMapListSeq(const ClientSim *cs) {
 }
 uint32_t clientSimGetLobbyMapChangeSeq(const ClientSim *cs) {
   return cs ? cs->lobbyMapChangeSeq : 0;
+}
+
+/* The scenarios the server offers on their own. Every one of these tolerates
+ * a NULL cs and an index out of range: the list is read by UI code a frame at
+ * a time, and a response landing between two reads must not cost a crash. */
+int clientSimGetLobbyScenarioListCount(const ClientSim *cs) {
+  return cs ? cs->lobbyScenarioListCount : 0;
+}
+const char *clientSimGetLobbyScenarioListFile(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return "";
+  return cs->lobbyScenarioListFiles[idx];
+}
+const char *clientSimGetLobbyScenarioListName(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return "";
+  return cs->lobbyScenarioListNames[idx];
+}
+const char *clientSimGetLobbyScenarioListDescription(const ClientSim *cs,
+                                                     int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return "";
+  return cs->lobbyScenarioListDescs[idx];
+}
+int clientSimGetLobbyScenarioListMaxPlayers(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return 0;
+  return (int)cs->lobbyScenarioListMaxPlayers[idx];
+}
+int clientSimGetLobbyScenarioListBots(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return 0;
+  return (int)cs->lobbyScenarioListBots[idx];
+}
+bool clientSimGetLobbyScenarioListBound(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return false;
+  return cs->lobbyScenarioListBound[idx];
+}
+bool clientSimGetLobbyScenarioListReady(const ClientSim *cs) {
+  return cs ? cs->lobbyScenarioListReady : false;
+}
+bool clientSimGetLobbyScenarioListInFlight(const ClientSim *cs) {
+  return cs ? cs->lobbyScenarioListInFlight : false;
+}
+uint32_t clientSimGetLobbyScenarioListSeq(const ClientSim *cs) {
+  return cs ? cs->lobbyScenarioListSeq : 0;
 }
 
 const char *clientSimGetLobbyMapSearchPath(const ClientSim *cs) {

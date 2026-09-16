@@ -170,6 +170,28 @@ With any of them off a map that has a script beside it plays plainly, the
 operator is told which script was skipped, and the map chooser does not tag
 the map as scripted.
 
+**Switching off only the scripts inside uploaded maps.** A `.map` a player
+uploads to a server can have a scenario packed into the file, and the server
+keeps the bytes it was sent whole, so committing that map later runs the
+script that came with it. An uploaded map's script runs under exactly the
+same sandbox as one on the operator's own disk — the same library, the same
+memory cap, the same instruction budget — and, as above, at the server's own
+privilege. A server that would rather not take a script from a player has a
+narrower switch than turning scripts off altogether:
+
+- `-nouploadscripts` on the dedicated server. One dash.
+- `--nouploadscripts` on the headless runner. Two.
+- **Run scripts in uploaded maps**, the desktop client's hosting preference,
+  under the one above. On by default, and it takes effect the moment it
+  changes.
+
+With it off, a map whose file sits in the server's uploads directory attaches
+neither a packed scenario nor a loose script beside it, the console names the
+upload that was turned down, and the map chooser does not tag it as scripted.
+Every other map is unaffected. With it on, one console line names each
+uploaded map whose packed scenario is what runs, so the operator can see when
+a round is being played by a script a player sent.
+
 **Reloading after an edit.** Two ways in. On a dedicated server the console
 command `reload` reads the file again; in a lobby, the host has a **Reload
 script** button beside the scenario's name. The button is the host's alone
@@ -195,7 +217,10 @@ change from the script.
 **The game type reads Scripted.** In the lobby and in both game finders, a
 round with a scenario attached shows its type as Scripted rather than as the
 game the scenario declared. `scenario.game` is what the round is actually
-played by; Scripted is what the round is called.
+played by; Scripted is what the round is called. A scenario that declares no
+`game`, or one the server has no behaviour for, is played as strict
+tournament — the lobby does not keep the type it was on, so a mod that came
+to change one rule and named no game still moves the round to strict.
 
 **The scenario names itself under the map.** The lobby draws the scenario's
 name below the map lines, and the description under that in a dimmer shade.
@@ -299,15 +324,16 @@ the name you gave the file rather than by the one you would have chosen.
 
 ```lua
 scenario = {
-  name        = "Wave Defense",
-  description = "Hold the four pillboxes at the centre of the map.",
-  api         = 1,
-  game        = "open",
-  bound       = true,
-  lobby       = { ... },
-  rules       = { ... },
-  tags        = { ... },
-  regions     = { ... },
+  name         = "Wave Defense",
+  description  = "Hold the four pillboxes at the centre of the map.",
+  api          = 1,
+  game         = "open",
+  bound        = true,
+  fill_to_caps = false,
+  lobby        = { ... },
+  rules        = { ... },
+  tags         = { ... },
+  regions      = { ... },
 }
 ```
 
@@ -316,8 +342,9 @@ scenario = {
 | `name` | string | What the scenario is called. |
 | `description` | string | One or two sentences for a host reading a list. |
 | `api` | number | The API version you wrote against. Defaults to 1. A server older than the version you name refuses the scenario rather than running it half-understood. |
-| `game` | string | The game type the scenario asks for: `"open"`, `"tournament"` or `"strict"`. The round plays under it — the lobby and both game finders read the type as Scripted, and every part of the engine that picks behaviour from the game type resolves that to the word named here. Left out, the round plays open. A word that is none of the three also plays open, and `-validate` reports it by name. |
-| `bound` | boolean | True (the default) when the scenario is tied to its map. A scenario that names tags or regions is tied to its map by definition, because tags and regions are the map's own squares and entities. |
+| `game` | string | The game type the scenario asks for: `"open"`, `"tournament"` or `"strict"`. The round plays under it — the lobby and both game finders read the type as Scripted, and every part of the engine that picks behaviour from the game type resolves that to the word named here. Left out, the round plays strict tournament. A word that is none of the three also plays strict tournament, and `-validate` reports it by name. Write `game = "open"` for an open round: a scenario that says nothing is not read as asking for one. |
+| `bound` | boolean | True (the default) when the scenario is tied to its map. A scenario that names tags or regions is tied to its map by definition, because tags and regions are the map's own squares and entities. A server can also offer scenarios of its own, which play over whichever map a host has committed; a scenario with `bound` true is not one of those and a host picking it is refused, because over another map its tags, its regions and its entity indices name items that are not there. |
+| `fill_to_caps` | boolean | False by default. True starts every pillbox and base on the map at the caps your `rules` table leaves in force rather than at the numbers the map file holds. A map file states a number for each pill's armour and each base's stocks and has no way of stating "full", so a scenario that raises `base_full_armour` or `pill_max_armour` would otherwise open with the map's own smaller numbers and climb to the new ones over the round. Raising only: anything already at or above a cap is left where it is, and anything above one is brought down by the rules themselves. A pill's firing rate is not touched. |
 
 ### `scenario.lobby`
 
@@ -337,8 +364,17 @@ Each team:
 | `bots` | number | How many seats to seat for this team when the lobby is built. A host who trims them gets the trimmed number back next round: the point of seating them where a host can see them is that the host may change them. |
 | `max_bots` | number | The ceiling a host may raise `bots` to. 0 means no ceiling stated, which is not the same as no bots allowed. |
 | `fielded` | boolean | True (the default) puts a bot in the seat at the start of the round. False holds the seat without one: it is in the roster, it takes no tank, and no bot plays in it until a `spawn_bot` names it. Its runner is built ahead of the round, as the two paragraphs below this table describe. |
-| `brain` | string | The brain this team's bots run, as a path on the server's disk. Empty means the server's own. `package:NAME`, a brain carried inside the scenario, is reserved for packaged scenarios and is refused with `SCN_OP_NOT_FOUND` today. |
+| `brain` | string | The brain this team's bots run, **named**: the directory under the server's `brains/`, such as `GoalHunter_1.7`. Empty means the server's own. A name this server does not have leaves the team's seats on the server's own brain, says one line on the console, and is reported by `-validate` before a round is ever started. A value with `/` or `\` in it is a path, not a name, and is refused as such — a scenario shared with a server knows nothing of that server's layout, which is why it names the brain and lets the server find it. `package:NAME`, a brain carried inside the scenario, is still refused with `SCN_OP_NOT_FOUND`. |
 | `init` | table | A flat table of names to strings or numbers, handed to this team's bots when their VM is built. A `spawn_bot` that names one of these seats and carries no `init` of its own gets this one. |
+
+The server's own `-brain` switch is still a path, and deliberately: that is an
+operator naming a file on their own machine, where the layout is theirs to know.
+A `brain` in a scenario is content that travels with the map to servers that
+have never seen it, so it names what it wants and the server resolves the name
+against its own `brains/` — the same directories the lobby's bot list is built
+from. Ship a scenario that needs `GoalHunter_1.7` and every server that has
+`GoalHunter_1.7` runs it; one that does not gets a reported problem and a
+playable round.
 
 `max_bots` is a memory ceiling as well as a seating one. A seat keeps the runner
 behind it — one ClientSim and one brain VM — across the unfielding that takes
@@ -642,7 +678,7 @@ far as the server is concerned.
 | `game.num_players()` | How many seats are playing the round, bots included. |
 | `game.num_humans()` | How many of those are people. |
 | `game.team_size(t)` | How many seats sit on team `t`, playing the round or not. |
-| `game.game_type()` | `"open"`, `"tournament"` or `"strict"` — the game the round is being played by. It answers `scenario.game` when the table sets one, and the game the round resolves to otherwise. It never answers `"scripted"`: that is what the lobby calls the round, not a set of rules anything plays by. |
+| `game.game_type()` | `"open"`, `"tournament"` or `"strict"` — the game the round is being played by. It answers `scenario.game` when the table sets one of those three, and the game the round resolves to otherwise, so a table that named no game or a word the server has no behaviour for reads `"strict"`. It never answers `"scripted"`: that is what the lobby calls the round, not a set of rules anything plays by. |
 
 ### Three clocks
 
@@ -887,7 +923,7 @@ A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
 |---|---|
 | `slot` | The seat to take. Left out, the first free seat is taken, and which one that is is decided as the spawn lands rather than as it is queued. A seat held for a bot that is not on the field is the one occupied seat a spawn may name — fielding it is what the seat is for. A seat that already has somebody on the field is refused with `SCN_OP_ALREADY`. |
 | `name` | The bot's name. A seat that is already held keeps the name it was seated with, whatever this says. |
-| `brain` | The brain to run, as a path on the server's disk. Left out, the seat's own brain is used — the one its team was written with — and failing that the server's. `package:NAME` is refused with `SCN_OP_NOT_FOUND` today. |
+| `brain` | The brain to run, named the way a team's is: the directory under the server's `brains/`, such as `GoalHunter_1.7`. Left out, the seat's own brain is used — the one its team was written with — and failing that the server's. A name this server does not have, a value with `/` or `\` in it, and `package:NAME` are each refused with `SCN_OP_NOT_FOUND`. |
 | `team` | The team to join. A held seat keeps the team it was seated with. |
 | `start` | The start to come in on, 1-based. Left out, the engine chooses. |
 | `loadout` | What this one bot comes in with: `"open"`, `"tournament"` or `"strict"` for that game type's amounts. A word that is none of the three stops the call the way any bad argument does. It outranks `spawn_loadout`, which is not asked about this tank at all, and it is spent on the tank the spawn builds — the bot's next life is fuelled the way every other tank's is. Left out, `spawn_loadout` answers, and failing that the round's own game type. |
@@ -1281,7 +1317,7 @@ The `code` a refused write answers, as a string.
 | `SCN_OP_ALREADY` | An add of something already there, a give of a carried pillbox, a spawn into a seat already on the field. |
 | `SCN_OP_TOO_BIG` | A list or a line past its buffer. |
 | `SCN_OP_RATE` | A budget for the tick is spent, or a second `fill_rect` was asked for while one is still landing. |
-| `SCN_OP_NOT_FOUND` | A brain path or a package name that does not resolve. |
+| `SCN_OP_NOT_FOUND` | A brain that does not resolve: a name this server does not have, a path written where a name belongs, or a `package:NAME`. |
 | `SCN_OP_NO_STOCK` | A builder order the tank cannot pay for. |
 | `SCN_OP_BAD_CALL` | The call itself is malformed. |
 
@@ -1305,7 +1341,7 @@ The `code` a refused write answers, as a string.
 | `scenario.name` | 63 bytes |
 | `scenario.description` | 255 bytes |
 | `scenario.game` | 23 bytes |
-| A team's `brain` | 255 bytes |
+| A team's `brain` name | 255 bytes |
 
 Going past one of the counts is reported and refused. Spawns and removals
 share the one roster queue and the sim drains one a tick, so a script that
@@ -1342,6 +1378,12 @@ for one that is not. Problems the parse itself finds — a rule name that
 spells nothing, a tag past what the map holds — are also written to standard
 output as the server would log them, so a run that captures one stream sees
 half the report. The map has to load before the script is looked at.
+
+The brains a scenario's teams name are checked against the ones this server
+has, so `-validate` on the server you are about to run is what tells you a map
+wants `GoalHunter_1.7` and this machine has not got it. That is a problem
+rather than a refusal: the map still plays, with those seats on the server's
+own brain.
 
 No round is run and no bot loads, but the file's top level does run, the same
 way it would at a round start — so a file you would not run is a file you

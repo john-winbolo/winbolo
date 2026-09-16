@@ -738,6 +738,23 @@ struct ServerSim {
      * PERSIST-policy uploads. Empty → "<mapDirPath>/Uploads". Set from
      * ServerInstanceConfig.uploadPersistDir at startup. */
     char         uploadPersistDir[FILENAME_MAX];
+    /* The scenarios this server offers on their own, independently of any
+     * map: the -scenariodir CLI arg on the dedicated server and the
+     * "Scenario Dir" preference on a desktop host. Empty → the built-in
+     * "data/scenarios". A directory that is not there is not an error — it
+     * means the server offers no scenarios of its own. Read by the lobby
+     * scenario-list handler, which hands it to scnDirList. */
+    char         scenarioDirPath[FILENAME_MAX];
+    /* Which of the scenarios in that directory the host has picked, by the
+       file name the lister reported; empty means none. Written by the
+       CMD_LOBBY_SET_SCENARIO case and read back through
+       serverSimGetSelectedScenario, which is what whoever owns the scenario
+       asks when it decides what plays: a pick here beats the committed map's
+       own script, and empty hands the map its own back. Survives a lobby
+       reset, so the scenario the host chose is still the one playing when
+       the next player arrives. SCN_DIR_FILE_LEN because that is the width of
+       the ScnDirEntry.file it is copied from. */
+    char         scenarioSelectedFile[SCN_DIR_FILE_LEN];
 
     /* Random map generation (for -randommap mode) */
     bool         randomMapEnabled;       /* true when using -randommap */
@@ -832,6 +849,12 @@ struct ServerSim {
        scripted. NULL means nothing registered and every map reads plain. */
     bool                 (*scenarioMapScripted)(void *ctx, const char *mapPath);
     void                  *scenarioMapScriptedCtx;
+    /* Reads the scenarios directory into the list a client is told about.
+       NULL means nothing registered and the directory reads empty, which is
+       what a build with no scenario library offers. */
+    int                  (*scenarioLister)(void *ctx, const char *dir,
+                                           ScnDirEntry *out, int max);
+    void                  *scenarioListerCtx;
     /* What a lobby host's reload request runs. NULL means no scenario is
        attached and a request answers so. */
     bool                 (*scenarioReload)(void *ctx, char *err, size_t errLen);
@@ -847,6 +870,16 @@ struct ServerSim {
        commands, costs one read of the script a second. Ticks, not wall
        clock, and the lobby advances them like any other state. */
     uint32_t               scenarioReloadTick;
+    /* The same for a pick. Written and read exactly as the reload's is, and
+       held to the same gap, because what a pick costs is the same work: it
+       reads the scenarios directory to find out whether the name is one the
+       server offers, and reading that directory means opening every file in
+       it and running the top level of every loose script. Counted apart from
+       the reload rather than sharing one tick, so a host who re-reads a script
+       and then picks a different one is not told the second is too soon after
+       the first — they are different requests and neither makes the other's
+       work cheaper. */
+    uint32_t               scenarioPickTick;
     void                 (*scenarioMapChanged)(void *ctx, ServerSim *sim,
                                                const char *mapPath);
     void                  *scenarioMapChangedCtx;

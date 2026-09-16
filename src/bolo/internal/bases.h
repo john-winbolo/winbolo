@@ -1028,6 +1028,11 @@ void basesValidate(bases *value);
 /* Clamps every base's stocks against the sim's gameplay caps. Called by
  * mapClampToRules once a sim owns the records; see bolo_map.h. */
 void basesClampToRules(struct GameSim *sim, bases *value);
+/* Raises every base's stocks to the sim's caps — the same walk the other way
+ * round, for a scenario that raises a cap and asks for the map to start at
+ * it. Called by serverSimScenarioFillWorldToRules, which writes the
+ * records. */
+void basesFillToRules(struct GameSim *sim, bases *value);
 
 
 #endif /* BASES_H */
