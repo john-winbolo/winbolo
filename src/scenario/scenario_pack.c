@@ -37,6 +37,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+/* MoveFileExA, which is how the packed map is put in place there. */
+#include <windows.h>
+#endif
+
 #include "bolo_map_validate.h" /* boloMapBodyLength — where a map file ends */
 #include "server_sim.h"        /* serverSimCreate / serverSimDestroy */
 
@@ -105,8 +110,10 @@ static bool packReadWhole(const char *path, uint8_t **out, size_t *outLen,
 }
 
 /* The map's body and the container after it, written to a file beside the
- * target and renamed over it. A pack cut off before the rename leaves that
- * file rather than a map with half a container on the end of it. */
+ * target and moved over it. A pack cut off before the move leaves that file
+ * rather than a map with half a container on the end of it, and a move that
+ * will not go through leaves it too — the map at the target is untouched
+ * either way, and the written bytes are still there to look at. */
 static bool packWriteMap(const char *path, const uint8_t *body, size_t bodyLen,
                          const uint8_t *container, size_t containerLen,
                          char *err, size_t errLen) {
@@ -143,15 +150,25 @@ static bool packWriteMap(const char *path, const uint8_t *body, size_t bodyLen,
     }
 
 #ifdef _WIN32
-    /* Windows will not rename over a file that is there. */
-    remove(path);
-#endif
-    if (rename(tmp, path) != 0) {
-        remove(tmp);
+    /* MoveFileExA replaces the destination in one step. The removing rename
+       this used to do could lose both copies: a sharing violation on the
+       rename left the map already deleted and then deleted the temporary
+       file as well, so a map that was open in another program came back as
+       nothing at all. */
+    if (!MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING)) {
         packErr(err, errLen, "%s: the packed map could not be put in place",
                 path);
         return false;
     }
+#else
+    /* rename replaces the destination here, so there is nothing to remove
+       first and nothing to lose if it fails. */
+    if (rename(tmp, path) != 0) {
+        packErr(err, errLen, "%s: the packed map could not be put in place",
+                path);
+        return false;
+    }
+#endif
     return true;
 }
 
