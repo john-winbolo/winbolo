@@ -29,7 +29,7 @@
 --     defenders actually on the field, whatever slots the lobby gave them,
 --     lays the island's shallow rim and its tree ring, and digs in every
 --     defender bot.
---   * 15 s of grace to dig in, called out at the start and again with 10 s
+--   * 10 s of grace to dig in, called out at the start and again with 10 s
 --     left, then wave 1. The breather between waves is still 30 s. Every
 --     wave opens with the 8 shore bases back in the horde's hands.
 --   * A wave's attackers arrive as fast as the roster queue drains — one op
@@ -107,7 +107,7 @@ local WAVES     = 5
 local WAVE_TEAM = 2        -- the horde is team 2
 local DEF_TEAM  = 1        -- the defenders are team 1
 
-local GRACE_S      = 15    -- prep before wave 1
+local GRACE_S      = 10    -- prep before wave 1
 local BREATHER_S   = 30    -- prep between waves
 local WAVE_LIMIT_S = 300   -- 5 min: leftover attackers vanish at this mark
 
@@ -1304,12 +1304,21 @@ end
 
 -- Dig in every defender BOT that is not dug in yet, one pill each.
 --
--- Read off the world rather than off a record of what was done, so this is
--- idempotent: a pass with nothing owed reads six pills and the roster and
--- writes nothing, which is what it does on all but a handful of ticks. It
--- runs every tick because a seat can reach the field after the setup — a
--- host adding a bot mid-round — and the pass that ran at the setup would
--- otherwise be the only one there ever was.
+-- Once per seat per round, and only until the first wave lands. A seat is
+-- owed a pill because it reached the field before the fight, not because
+-- its pill is dead: a pill that has been shot down stays down where it
+-- fell, for its owner to repair or the horde to take. Without the record
+-- this pass read "dead pill, bot with no pill standing" as "owed", and a
+-- defender's pill that reached zero jumped back onto the ring road at full
+-- armour the same tick. Reading the world is still what decides who is
+-- owed among the seats not yet served, so the pass is idempotent: with
+-- nobody left to serve it reads six pills and the roster and writes
+-- nothing. It runs every tick before the first wave because a seat can
+-- reach the field after the setup — a host adding a bot in the lobby's
+-- last seconds — and the pass that ran at the setup would otherwise be
+-- the only one there ever was.
+local dug_in = {}       -- seat -> true once this round has served it
+
 local function prebuild_bot_pills()
   local pills = {}
   local holds = {}      -- seat -> how many of the six it holds
@@ -1328,7 +1337,7 @@ local function prebuild_bot_pills()
   for _, p in ipairs(seats_on(DEF_TEAM)) do
     local ls = game.lobby_slot(p)
     if ls ~= nil and ls.bot and ls.fielded and not built[p]
-       and game.tank(p) ~= nil then
+       and not dug_in[p] and game.tank(p) ~= nil then
       owed[#owed + 1] = p
     end
   end
@@ -1362,6 +1371,7 @@ local function prebuild_bot_pills()
         if prev ~= nil then holds[prev] = (holds[prev] or 1) - 1 end
         holds[p] = (holds[p] or 0) + 1
         built[p] = true
+        dug_in[p] = true
       end
     end
   end
@@ -1457,7 +1467,7 @@ function on_tick(tick)
   -- owed reads the six pills and the roster and writes nothing.
   if not dealt then
     dealt = arrange_defence()
-  else
+  elseif wave == 0 then
     prebuild_bot_pills()
   end
 

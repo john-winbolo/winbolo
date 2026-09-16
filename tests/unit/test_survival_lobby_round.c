@@ -35,7 +35,7 @@
  *        dead on the ground
  *      * the round opens with the "dig in" line
  *      * the first wave's line, and its first attacker, land after the grace
- *        (GRACE_S = 15) and not before, and the whole wave is ashore inside
+ *        (GRACE_S = 10) and not before, and the whole wave is ashore inside
  *        a second of the tick it was called on
  *      * the wave's spawns RESUME the runners behind the held seats instead
  *        of building Lua VMs: zero builds at wave 1 where the countdown
@@ -74,7 +74,7 @@
 #define SLR_CENTER_PILLS 6
 #define SLR_BUILT_ARMOUR 15
 #define SLR_TERRAIN_ROAD ROAD       /* global.h: 4 */
-#define SLR_GRACE_TICKS  1500       /* GRACE_S = 15, at the 100-a-second tick */
+#define SLR_GRACE_TICKS  1000       /* GRACE_S = 10, at the 100-a-second tick */
 #define SLR_MAX_BOTS     5
 #define SLR_HORDE_SEATS  10   /* scenario.lobby team 2: ten seats HELD */
 
@@ -612,6 +612,38 @@ static int slrRound(int bots, bool inPlace) {
             UT_ASSERT_MSG(most - least <= 1,
                           "the wave's pills are piled up: one attacker "
                           "carries %d while another carries %d", most, least);
+        }
+
+        /* (j) A defender bot's built pill that is shot to nothing stays
+               down where it fell. The prebuild's catch-up used to read a
+               dead pill beside a bot with nothing standing as a seat still
+               owed one, and re-dug it on the ring road at full armour the
+               same tick: the owner saw his pillbox vanish at zero and come
+               back a tile west, fully built. */
+        {
+            int seat = -1, pill = -1, px = 0, py = 0, ticks;
+            for (i = 0; i < MAX_TANKS && seat < 0; i++) {
+                if (slrTeam(sim, i) != SLR_DEF_TEAM) continue;
+                if (!sim->lobbyPlayers[i].isBot) continue;
+                for (n = 0; n < SLR_CENTER_PILLS; n++) {
+                    const pillbox *p = &(*sim->sim.pb).item[n];
+                    if (!p->inTank && p->owner == i && p->armour > 0) {
+                        seat = i; pill = n; px = p->x; py = p->y;
+                        break;
+                    }
+                }
+            }
+            UT_ASSERT_MSG(seat >= 0, "no defender bot has a built pill to shoot");
+            (*sim->sim.pb).item[pill].armour = 0;
+            for (ticks = 0; ticks < 200; ticks++) serverSimTick(sim);
+            UT_ASSERT_MSG((*sim->sim.pb).item[pill].armour == 0,
+                          "pill %d shot to zero is back at armour %d",
+                          pill + 1, (int)(*sim->sim.pb).item[pill].armour);
+            UT_ASSERT_MSG((*sim->sim.pb).item[pill].x == px &&
+                          (*sim->sim.pb).item[pill].y == py,
+                          "pill %d shot to zero moved from %d,%d to %d,%d",
+                          pill + 1, px, py, (int)(*sim->sim.pb).item[pill].x,
+                          (int)(*sim->sim.pb).item[pill].y);
         }
     }
 
