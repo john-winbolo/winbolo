@@ -3476,9 +3476,10 @@ static bool scnModScript(const char *path, ScnScriptSource *out,
  * The game type the manifest names is read by the same words a spawn op's
  * loadout takes, so one table answers both. A manifest naming none, or a
  * word that table does not hold, leaves it 0 — and 0 is no game type at all
- * rather than gameOpen, which is 1. The lobby then keeps whatever type it
- * was already on, which is what a rules-only mod wants: it came to change a
- * rule, not to decide how the round is played. */
+ * rather than gameOpen, which is 1. The lobby does not keep the type it was
+ * on: serverSimScenarioApplyLobbyRules moves it to gameScripted either way,
+ * and gameTypeResolve reads the 0 as gameStrictTournament, so a scenario
+ * that named no game plays strict. */
 static void scnHandLobbyOver(ServerSim *sim, const ScenarioManifest *m,
                              LobbyScenarioSource source,
                              const char *fileName) {

@@ -2412,7 +2412,7 @@ int run_lobby_template_seat_carries_init(void);
  * start, the value going with the template when a plain map is committed,
  * and a client resolving it off the settings tail. */
 int run_scripted_game_type_loadout_follows_base(void);
-int run_scripted_game_type_no_base_is_open(void);
+int run_scripted_game_type_no_base_is_strict(void);
 int run_scripted_game_type_strict_ignores_base(void);
 int run_scripted_game_type_start_follows_base(void);
 int run_scripted_game_type_plain_map_clears_base(void);
@@ -2846,14 +2846,16 @@ int run_scenario_dir_list_cached(void);
 int run_scenario_dir_entry_roundtrip(void);
 
 /* Which scenario plays when a map and a mod both have a claim
- * (test_scenario_precedence.c): the three rules, and the four points the
- * template is applied at. */
+ * (test_scenario_precedence.c): the three rules, the four points the
+ * template is applied at, and the game a round is played by. */
 int run_scenario_precedence_mod_over_map(void);
 int run_scenario_precedence_none_restores_map(void);
 int run_scenario_precedence_plain_map_keeps_mod(void);
 int run_scenario_precedence_template_seats(void);
 int run_scenario_precedence_reset_reapplies(void);
 int run_scenario_precedence_reload_reseats(void);
+int run_scenario_precedence_no_game_plays_strict(void);
+int run_scenario_precedence_open_game_plays_open(void);
 
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init

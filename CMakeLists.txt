@@ -5289,7 +5289,7 @@ set(_unit_test_names
     lobby_template_cancel_restores_path_random
     lobby_template_seat_carries_init
     scripted_game_type_loadout_follows_base
-    scripted_game_type_no_base_is_open
+    scripted_game_type_no_base_is_strict
     scripted_game_type_strict_ignores_base
     scripted_game_type_start_follows_base
     scripted_game_type_plain_map_clears_base
@@ -5571,6 +5571,8 @@ set(_unit_test_names
     scenario_precedence_template_seats
     scenario_precedence_reset_reapplies
     scenario_precedence_reload_reseats
+    scenario_precedence_no_game_plays_strict
+    scenario_precedence_open_game_plays_open
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

@@ -33,6 +33,13 @@
  *                                           agreeing with it
  * run_scenario_precedence_reload_reseats  — a reload after the lobby block
  *                                           changed re-seats
+ * run_scenario_precedence_no_game_plays_strict
+ *                                         — a round from a mod that named no
+ *                                           game hands a tank the strict
+ *                                           amounts, on a lobby that was open
+ * run_scenario_precedence_open_game_plays_open
+ *                                         — and one that named open hands it
+ *                                           the open amounts
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -50,9 +57,11 @@
 #include "server_sim.h"
 #include "server_sim_internal.h"   /* scenarioIdentity, lobbyPlayers, the
                                     * settings snapshot the reset restores */
-#include "server_sim_lifecycle.h"  /* SetLobbyEnabled, the template paths */
+#include "server_sim_lifecycle.h"  /* SetLobbyEnabled, the template paths,
+                                    * serverSimStartGame */
 #include "server_sim_scenario.h"   /* serverSimScenarioReload */
 #include "game_sim.h"             /* gameTypeGet, scenarioBaseGame */
+#include "tank.h"                 /* tankGetShells — what the round paid out */
 #include "scenario_host.h"
 #include "everard_map.h"
 #include "threads.h"
@@ -144,14 +153,26 @@ static void spDropMapScript(const char *mapPath) {
 /* ── The scenarios these cases pick between ───────────────────────── */
 
 /* A mod that changes a rule and nothing else: no game type, no teams. What
- * it proves is the manifest with no game in it — the lobby keeps whatever
- * type it was on rather than being moved to open. */
+ * it proves is the manifest with no game in it — the round plays strict
+ * tournament, because an author who wants an open round names one. */
 static const char kSpRulesOnly[] =
     "scenario = {\n"
     "  name = \"Fast Reload\",\n"
     "  description = \"Shells come back quicker\",\n"
     "  api = 1,\n"
     "  bound = false,\n"
+    "}\n";
+
+/* The same mod with the game it plays named. Beside the one above it is what
+ * tells the two answers apart: a declared "open" is an open round, and only a
+ * mod that declared nothing falls to strict. */
+static const char kSpRulesOnlyOpen[] =
+    "scenario = {\n"
+    "  name = \"Fast Reload Open\",\n"
+    "  description = \"Shells come back quicker\",\n"
+    "  api = 1,\n"
+    "  bound = false,\n"
+    "  game = \"open\",\n"
     "}\n";
 
 /* A mod with a lobby of its own: three held seats on team 3, and a game type
@@ -351,10 +372,10 @@ int run_scenario_precedence_mod_over_map(void) {
     UT_ASSERT_MSG(spSeats(sim, 2) == 0,
                   "the bound map's %d seats outlived its scenario",
                   spSeats(sim, 2));
-    /* A manifest with no game in it leaves the lobby its own type. The
-       scenario still puts the round on gameScripted — that is the rules
-       being in force — and what a mod naming none does not do is decide the
-       game underneath it. */
+    /* A manifest with no game in it declares no base game, so the template
+       carries 0. The lobby still moves to gameScripted — that is the rules
+       being in force — and 0 is what gameTypeResolve reads as strict
+       tournament when the round is played. */
     UT_ASSERT_MSG(sim->sim.scenarioBaseGame == (gameType)0,
                   "a manifest naming no game set the base game to %d",
                   (int)sim->sim.scenarioBaseGame);
@@ -577,6 +598,87 @@ int run_scenario_precedence_reload_reseats(void) {
                   (int)spSource(sim), (int)lobbyScenarioMod);
     UT_ASSERT_MSG(strcmp(spFile(sim), "waves.lua") == 0,
                   "the reload left the file name as \"%s\"", spFile(sim));
+
+    spDestroy(sim);
+    spDropDir();
+    return 0;
+}
+
+/* ── What a round from a mod that named no game is played by ──────── */
+
+/* The two cases below go past the lobby and start the round, because the
+ * template alone does not say what is played: it carries the declared game,
+ * and 0 for a mod that declared none. gameTypeResolve is what turns that 0
+ * into a game, and the tank the host takes the field in is where the answer
+ * is spent. Shells tell the two apart — strict tournament hands a tank none
+ * and open hands it the rule's full load.
+ *
+ * Both start from a lobby on gameOpen, so a mod that was simply leaving the
+ * lobby's own type alone would give the open amount either way. */
+static bool spStartAndReadShells(ServerSim *sim, BYTE *shells) {
+    serverSimStartGame(sim);
+    if (sim->sim.tanks[0] == NULL) {
+        return false;
+    }
+    *shells = tankGetShells(&sim->sim.tanks[0]);
+    return true;
+}
+
+int run_scenario_precedence_no_game_plays_strict(void) {
+    ServerSim *sim;
+    BYTE       shells = 0;
+
+    UT_ASSERT(spMakeDir("no_game_plays_strict"));
+    UT_ASSERT(spWriteMod("fastreload.lua", kSpRulesOnly));
+    spDropMapScript(SP_PLAIN_MAP);
+    sim = spSim();
+    UT_ASSERT(sim != NULL);
+
+    spCommit(sim, SP_PLAIN_MAP);
+    UT_ASSERT_MSG(gameTypeGet(&sim->sim.game) == gameOpen,
+                  "setup: the lobby is on game type %d, wanted open (%d)",
+                  (int)gameTypeGet(&sim->sim.game), (int)gameOpen);
+    UT_ASSERT_MSG(spSelect(sim, "fastreload.lua") == CMD_OK,
+                  "the mod was refused");
+    UT_ASSERT_MSG(sim->sim.scenarioBaseGame == (gameType)0,
+                  "a mod naming no game declared base game %d",
+                  (int)sim->sim.scenarioBaseGame);
+
+    UT_ASSERT_MSG(spStartAndReadShells(sim, &shells),
+                  "the round started with no tank in slot 0");
+    UT_ASSERT_MSG(shells == 0,
+                  "a round from a mod that named no game handed the host %u "
+                  "shells; strict tournament hands out none",
+                  (unsigned)shells);
+
+    spDestroy(sim);
+    spDropDir();
+    return 0;
+}
+
+int run_scenario_precedence_open_game_plays_open(void) {
+    ServerSim *sim;
+    BYTE       shells = 0;
+
+    UT_ASSERT(spMakeDir("open_game_plays_open"));
+    UT_ASSERT(spWriteMod("fastreloadopen.lua", kSpRulesOnlyOpen));
+    spDropMapScript(SP_PLAIN_MAP);
+    sim = spSim();
+    UT_ASSERT(sim != NULL);
+
+    spCommit(sim, SP_PLAIN_MAP);
+    UT_ASSERT_MSG(spSelect(sim, "fastreloadopen.lua") == CMD_OK,
+                  "the mod was refused");
+    UT_ASSERT_MSG(sim->sim.scenarioBaseGame == gameOpen,
+                  "a mod naming open declared base game %d, wanted open (%d)",
+                  (int)sim->sim.scenarioBaseGame, (int)gameOpen);
+
+    UT_ASSERT_MSG(spStartAndReadShells(sim, &shells),
+                  "the round started with no tank in slot 0");
+    UT_ASSERT_MSG(shells == (BYTE)sim->sim.rules.tank_full_shells,
+                  "a round from a mod that named open handed the host %u "
+                  "shells, wanted the open game's %ld",
+                  (unsigned)shells, (long)sim->sim.rules.tank_full_shells);
 
     spDestroy(sim);
     spDropDir();

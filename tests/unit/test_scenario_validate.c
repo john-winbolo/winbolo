@@ -670,9 +670,9 @@ int run_scenario_validate_wave_defense(void) {
 /* ── 14. A game type the engine has no word for ───────────────────── */
 
 /* The attach reads scenario.game through the word set a spawn op's loadout
-   takes and drops anything that set does not hold, so a typo plays open with
-   nothing said. The check has to name the word and the three that work, and
-   has to stay quiet for a word that does work. */
+   takes and drops anything that set does not hold, so a typo plays strict
+   tournament with nothing said. The check has to name the word and the three
+   that work, and has to stay quiet for a word that does work. */
 int run_scenario_validate_unknown_game(void) {
     static const char *const kBad  = "scnval_game_bad.map";
     static const char *const kGood = "scnval_game_good.map";

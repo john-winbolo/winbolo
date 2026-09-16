@@ -366,12 +366,12 @@ static const char *scnGameTypeWord(gameType g) {
         case gameTournament:       return "tournament";
         case gameStrictTournament: return "strict";
         /* The one caller resolves gameScripted before it gets here, so this
-           arm is only what keeps the switch covering the enumeration. A
-           scripted round plays under the base game it declared, and "open"
+           case is only what keeps the switch covering the enumeration. A
+           scripted round plays under the base game it declared, and "strict"
            is what an undeclared one plays. */
-        case gameScripted:         return "open";
+        case gameScripted:         return "strict";
     }
-    return "open";
+    return "strict";
 }
 
 static const char *scnBuilderStateWord(BuilderState s) {
@@ -534,11 +534,18 @@ static int scnLuaTeamSize(lua_State *L) {
  * other site resolves it. The resolve is what keeps "scripted" off this row:
  * a scripted round's own game type is gameScripted, and the word a script
  * wants back is the base game it plays — the same three words the loadout
- * table in a spawn_bot call holds. */
+ * table in a spawn_bot call holds.
+ *
+ * The table's word is checked against that same set before it is handed
+ * back, because a word the set does not hold never reached the lobby
+ * template: the round plays strict, and this row says strict rather than
+ * repeating what the author typed. */
 static int scnLuaGameType(lua_State *L) {
     const ScnLuaCtx *c = scnCtx(L);
+    int              declared = 0;
 
-    if (c->manifest != NULL && c->manifest->game[0] != '\0') {
+    if (c->manifest != NULL && c->manifest->game[0] != '\0' &&
+        scenarioLuaLoadoutFromWord(c->manifest->game, &declared)) {
         lua_pushstring(L, c->manifest->game);
         return 1;
     }

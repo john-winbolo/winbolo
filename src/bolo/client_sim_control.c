@@ -425,7 +425,9 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * because that is where gameTypeResolve reads it — the loadout this
          * client predicts its first life with, the start it predicts, and
          * the tournament stat block at game over all go through there. A
-         * plain lobby leaves 0, which resolves as open. */
+         * plain lobby leaves 0, and 0 is read only while the lobby type says
+         * scripted: a scripted round whose scenario declared no game plays
+         * strict tournament, the same answer the server resolves. */
         cs->sim.scenarioBaseGame =
             (gameType)evt->u.lobbySettings.scenarioBaseGame;
         cs->uploadPolicy             = evt->u.lobbySettings.uploadPolicy;

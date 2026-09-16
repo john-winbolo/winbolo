@@ -277,8 +277,9 @@ static void scnCheckApi(const ScenarioManifest *m, ScnValidateResult *out) {
 
 /* The game type the table asks for. The attach reads it through the same
  * word set a spawn op's loadout takes, and a word that set does not hold is
- * dropped there without a sound — the round plays open and the author is
- * never told the line did nothing. */
+ * dropped there without a sound — the round plays strict tournament, as a
+ * round naming no game does, and the author is never told the line did
+ * nothing. */
 static void scnCheckGame(const ScenarioManifest *m, ScnValidateResult *out) {
     int base;
 
@@ -288,7 +289,7 @@ static void scnCheckGame(const ScenarioManifest *m, ScnValidateResult *out) {
     if (!scenarioLuaLoadoutFromWord(m->game, &base)) {
         scnIssueAdd(out, "game",
                     "game is '%s', and the game types are 'open', "
-                    "'tournament' and 'strict'",
+                    "'tournament' and 'strict'; the round plays strict",
                     m->game);
     }
 }

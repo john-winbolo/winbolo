@@ -85,7 +85,8 @@ typedef struct {
  * baseGameType is the game type the scenario declared, by the same words a
  * spawn op's loadout takes. It is the host's one-way hand-over of that
  * value: the sim keeps it where the spawn and start paths can read it when
- * the round is gameScripted. 0 means none declared, which plays open. */
+ * the round is gameScripted. 0 means none declared, which plays strict
+ * tournament. */
 typedef struct {
     uint8_t      maxPlayers;
     uint8_t      numTeams;

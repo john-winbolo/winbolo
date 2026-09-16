@@ -259,8 +259,8 @@ bool clientSimCreate(ClientSim *cs) {
 
   /* A client is never handed a lobby template; the game a scenario declared
      reaches it on the settings tail instead. Until a settings event lands
-     this is 0, and a scripted round resolves as gameOpen through the same
-     code the server runs. */
+     this is 0, and a scripted round resolves as gameStrictTournament through
+     the same code the server runs. */
   cs->sim.scenarioBaseGame = (gameType)0;
 
   /* Initialize GameSim identity and callbacks */
