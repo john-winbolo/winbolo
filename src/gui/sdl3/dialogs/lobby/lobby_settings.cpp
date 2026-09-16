@@ -53,6 +53,20 @@ extern "C" {
  * match. Nothing is put back on the lobby when the dialog closes. */
 static int s_visSelectedPreset = -1;
 
+/* Whether the machine hosting the game put the lobby on Custom itself,
+ * by picking that row or by editing one of the settings along it. That is
+ * the one case where the chosen row stops following the live match, so it
+ * has to be remembered rather than read back out of the settings.
+ *
+ * Reading it back is what it replaces, and the reason is the round trip.
+ * The host joins its own server over loopback UDP, so a pick sends its
+ * settings and they come back one at a time; on the frames in between,
+ * the live values are a mix that matches no named set, which is to say
+ * they match Custom. Inferring the pick from that would latch the row on
+ * Custom the first time a preset was applied and never let it go, and the
+ * dialog would sit on Custom while the lobby was on Max view. */
+static bool s_visHostPickedCustom = false;
+
 /* ── Layout A — editable game settings panel ──────────────────────
  * Renders the four mockup setting groups (Game Type / AI / Other /
  * Time Limit). Locked settings render disabled with a lock badge.
@@ -208,6 +222,12 @@ static void lobbyVisibilityCommitEdit(ClientSim *cs,
                                       bool saveCustom,
                                       VisibilitySettings *edited) {
     s_visSelectedPreset = (int)visibilityPresetCustom;
+    /* An edit puts the lobby on Custom deliberately, so on the hosting
+     * machine it sticks the same way a pick of that row does - otherwise
+     * the chosen row would drop back to whatever the lobby still reads as
+     * until this edit came back round the loopback. The two hosting cases
+     * above are the ones that count; case C is not this machine's game. */
+    if (customSettings != NULL || saveCustom) s_visHostPickedCustom = true;
     edited->classicMode = false;
     if (customSettings != NULL) {
         *customSettings = *edited;
@@ -991,6 +1011,7 @@ static void lobbyVisibilityPresetCombo(ClientSim *cs, const char *id,
                 && !sel) {
                 if (dialogSelectedPreset != NULL) {
                     *dialogSelectedPreset = (int)preset;
+                    s_visHostPickedCustom = false;
                 }
                 lobbyVisibilityApplyPreset(cs, preset);
             }
@@ -1023,6 +1044,7 @@ static void lobbyVisibilityPresetCombo(ClientSim *cs, const char *id,
             && !customSel) {
             if (dialogSelectedPreset != NULL) {
                 *dialogSelectedPreset = (int)visibilityPresetCustom;
+                s_visHostPickedCustom = true;
             }
             gameFrontVisibilityCustom.classicMode = false;
             gameFrontSetVisibilityCustom(&gameFrontVisibilityCustom);
@@ -1724,6 +1746,7 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                 VisibilitySettings liveInit;
                 lobbyVisibilityRead(cs, &liveInit);
                 s_visSelectedPreset = (int)visibilityPresetMatch(&liveInit);
+                s_visHostPickedCustom = false;
             }
             /* One table: a row per way of playing, a column per setting,
              * and in each cell the value that row runs. A preset row
@@ -1757,9 +1780,15 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             /* The chosen row follows the live match, because the lobby is
              * what the dialog is showing. The one exception is the real
              * host sitting on Custom on purpose: the set behind that row
-             * can match a preset, and the pick has to stick anyway. */
-            if (!realHost ||
-                s_visSelectedPreset != (int)visibilityPresetCustom) {
+             * can match a preset, and the pick has to stick anyway.
+             *
+             * Which is why the exception asks whether this machine made
+             * that pick, and not whether the row currently reads Custom.
+             * The settings come back from the server one at a time, so on
+             * the way to any preset they spend frames matching no named
+             * set - and reading the row back would take one of those for a
+             * pick and never follow the lobby again. */
+            if (!realHost || !s_visHostPickedCustom) {
                 s_visSelectedPreset = (int)livePreset;
             }
             /* With no set ever saved, the globals hold the hosting
@@ -1877,7 +1906,8 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                             langGetText(visibilityPresetNameId(preset)), sel,
                             presetDisabled,
                             langGetText(visibilityPresetDescId(preset)))) {
-                        s_visSelectedPreset = (int)preset;
+                        s_visSelectedPreset   = (int)preset;
+                        s_visHostPickedCustom = false;
                         lobbyVisibilityApplyPreset(cs, preset);
                     }
                     for (c = 0; c < VIS_COLUMN_COUNT; c++) {
@@ -1929,7 +1959,8 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                             rowSet != NULL
                                 ? customRowLine
                                 : langGetText(STR_DLGLOBBY_PRESET_CUSTOM_DESC))) {
-                        s_visSelectedPreset = (int)visibilityPresetCustom;
+                        s_visSelectedPreset   = (int)visibilityPresetCustom;
+                        s_visHostPickedCustom = true;
                         gameFrontVisibilityCustom.classicMode = false;
                         gameFrontSetVisibilityCustom(&gameFrontVisibilityCustom);
                         lobbyVisibilityApply(cs, &gameFrontVisibilityCustom);
