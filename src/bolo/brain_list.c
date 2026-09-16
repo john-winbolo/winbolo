@@ -280,16 +280,21 @@ static size_t brainListReadSidecar(const char *parent, const char *name,
 /* The directories a brain is looked for under, in search order: the working
  * directory's brains/ and Brains/, then the same two beside the executable,
  * which covers an installed build whose exe lives somewhere other than the
- * brains tree.
+ * brains tree, and last the writable prefs path's Brains/, which is where a
+ * player drops brains of their own on a platform whose app directory is
+ * read-only.
  *
- * One list, read by the per-brain file reads below and by brainListResolve, so
- * a brain whose about.txt one of them finds is a brain the other resolves.
+ * One list, read by the per-brain file reads below, by brainListResolve and
+ * by brainListScan, so a brain one of them finds is a brain the others find.
+ * The prefs path used to be the scan's alone, which listed a brain installed
+ * only there in the lobby and then failed to resolve it for a scenario.
  * Fills out[] and returns how many parents it wrote. */
-#define BRAIN_LIST_PARENT_MAX 4
+#define BRAIN_LIST_PARENT_MAX 5
 #define BRAIN_LIST_PARENT_LEN 1024
 
 static int brainListParents(char (*out)[BRAIN_LIST_PARENT_LEN]) {
     const char *base;
+    char       *pref;
     int         n = 0;
 
     SDL_strlcpy(out[n++], "brains", BRAIN_LIST_PARENT_LEN);
@@ -298,6 +303,14 @@ static int brainListParents(char (*out)[BRAIN_LIST_PARENT_LEN]) {
     if (base) {
         SDL_snprintf(out[n++], BRAIN_LIST_PARENT_LEN, "%sbrains", base);
         SDL_snprintf(out[n++], BRAIN_LIST_PARENT_LEN, "%sBrains", base);
+    }
+    /* SDL_GetPrefPath returns a trailing separator and a string the caller
+       frees. ~/Library/Application Support/WinBolo/WinBolo/Brains on macOS,
+       where the app bundle is read-only and code-signed. */
+    pref = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (pref) {
+        SDL_snprintf(out[n++], BRAIN_LIST_PARENT_LEN, "%sBrains", pref);
+        SDL_free(pref);
     }
     return n;
 }
@@ -702,32 +715,19 @@ void brainListScan(BrainList *out, char (*paths)[BRAIN_LIST_PATH_LEN]) {
     memset(out, 0, sizeof(*out));
     if (paths) memset(paths, 0, sizeof(paths[0]) * BRAIN_LIST_MAX);
 
-    /* Working directory's brains/ — covers running from the repo. */
-    brainListScanParent(out, paths, "brains");
-    brainListScanParent(out, paths, "Brains");
+    /* The same parents brainListResolve and the per-brain file reads walk, in
+     * the same order, so a brain this listing shows is a brain a scenario
+     * that names it can resolve. The scan used to keep its own copy of the
+     * list with the prefs path on the end of it, which listed a brain
+     * installed only there and then could not resolve it. */
+    {
+        char parents[BRAIN_LIST_PARENT_MAX][BRAIN_LIST_PARENT_LEN];
+        int  count = brainListParents(parents);
+        int  i;
 
-    /* SDL_GetBasePath()/brains — covers installed builds where the
-     * exe lives somewhere other than the brains tree. */
-    const char *base = SDL_GetBasePath();
-    if (base) {
-        char p[1024];
-        SDL_snprintf(p, sizeof(p), "%sbrains", base);
-        brainListScanParent(out, paths, p);
-        SDL_snprintf(p, sizeof(p), "%sBrains", base);
-        brainListScanParent(out, paths, p);
-    }
-
-    /* SDL_GetPrefPath("WinBolo","WinBolo")/Brains —
-     * ~/Library/Application Support/WinBolo/WinBolo/Brains on macOS. The app
-     * bundle is read-only/code-signed, so this is the writable location where
-     * players drop their own brains. Mirrors luaBrainLoadBrains() in the GUI
-     * client so user brains appear in the lobby bot list too. */
-    char *pref = SDL_GetPrefPath("WinBolo", "WinBolo");
-    if (pref) {
-        char p[1024];
-        SDL_snprintf(p, sizeof(p), "%sBrains", pref);
-        brainListScanParent(out, paths, p);
-        SDL_free(pref);
+        for (i = 0; i < count; i++) {
+            brainListScanParent(out, paths, parents[i]);
+        }
     }
 
     if (out->count > 1) {
