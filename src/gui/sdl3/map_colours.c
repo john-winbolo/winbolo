@@ -223,3 +223,21 @@ float mapColourMarkerLayerGrow(int layer) {
     if (layer > 2) layer = 2;
     return MAP_COLOUR_STROKE_PX * 0.5f * (float)(1 - layer);
 }
+
+uint64_t mapColourPaletteKey(void) {
+    /* FNV-1a over the resolved entries. colourOf on the first re-reads the
+       skin if it has changed, and the rest come out of the same table, so the
+       key describes the palette the next draw will actually use. */
+    uint64_t h = 1469598103934665603ULL;
+    int      i;
+
+    for (i = 0; i < COLOUR_COUNT; i++) {
+        Uint32 rgb = colourOf((MapColourSlot)i);
+        int    b;
+        for (b = 0; b < 4; b++) {
+            h ^= (uint64_t)((rgb >> (b * 8)) & 0xffu);
+            h *= 1099511628211ULL;
+        }
+    }
+    return h;
+}

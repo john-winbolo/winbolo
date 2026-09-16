@@ -294,3 +294,35 @@ int run_map_colours_markers(void) {
                   "an out-of-range layer did not clamp");
     return 0;
 }
+
+int run_map_colours_palette_key(void) {
+    uint64_t first = mapColourPaletteKey();
+    SDL_Color ignored;
+    int i;
+
+    /* Stable while nothing changes. The map chooser mixes this into the file
+     * name of a thumbnail cached on disk, so a key that moved on its own
+     * would have the chooser re-render and rewrite every PNG it has, every
+     * time it looked at one. */
+    for (i = 0; i < 4; i++) {
+        UT_ASSERT_MSG(mapColourPaletteKey() == first,
+                      "call %d gave %llx, the first gave %llx", i + 2,
+                      (unsigned long long)mapColourPaletteKey(),
+                      (unsigned long long)first);
+    }
+
+    /* Reading colours does not disturb it either. */
+    mapColourTerrain(GRASS, &ignored);
+    mapColourMarkerGood();
+    mapColourMarkerNeutral();
+    UT_ASSERT_MSG(mapColourPaletteKey() == first,
+                  "reading the palette changed its key: %llx, was %llx",
+                  (unsigned long long)mapColourPaletteKey(),
+                  (unsigned long long)first);
+
+    /* Not a constant the hash never touched. */
+    UT_ASSERT_MSG(first != 0 && first != 1469598103934665603ULL,
+                  "the key is %llx, which is the empty hash - no colour "
+                  "reached it", (unsigned long long)first);
+    return 0;
+}

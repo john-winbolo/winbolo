@@ -44,6 +44,7 @@
 
 #include <SDL3/SDL.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "platform_types.h"  /* BYTE */
 
@@ -174,6 +175,29 @@ void mapColourMarkerShades(SDL_FColor fill, SDL_FColor out[3]);
 *  negative for the innermost
 *********************************************************/
 float mapColourMarkerLayerGrow(int layer);
+
+/*********************************************************
+*NAME:          mapColourPaletteKey
+*PURPOSE:
+*  A value that stands for the palette in use now: the same
+*  for the same set of colours, different once a skin
+*  changes any of them.
+*
+*  For callers that keep a picture drawn in these colours
+*  past the moment they drew it. The map chooser caches its
+*  thumbnails on disk as PNGs, keyed on the map file and its
+*  modification time; without this in the key, a skin change
+*  would leave every cached thumbnail in the old colours
+*  until the map file itself changed, which for a map that
+*  shipped with the game is never.
+*
+*ARGUMENTS:
+*  none
+*
+*RETURNS:
+*  the key; no meaning beyond comparing and mixing it
+*********************************************************/
+uint64_t mapColourPaletteKey(void);
 
 #ifdef __cplusplus
 }
