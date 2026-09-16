@@ -2187,3 +2187,14 @@ STR_DLGLOBBY_SCENARIO_ON_MAP=Mod: {string2} (on {string1})
 STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Run scripts in uploaded maps
 STR_DLGSETTINGS_HOSTING_SCENARIODIR=Scenario Directory
 
+# Rule change descriptions
+STR_RULE_UNCHANGED=unchanged
+STR_RULE_FASTER={string1}x faster
+STR_RULE_SLOWER={string1}x slower
+STR_RULE_MORE={string1}x as many
+STR_RULE_FEWER={string1}x fewer
+STR_RULE_TWICE=twice as many
+STR_RULE_HALF=half as many
+STR_RULE_ON=on
+STR_RULE_OFF=off
+

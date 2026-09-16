@@ -19,11 +19,14 @@
 
 #include "sim_rules.h"
 
+#include <math.h>     /* floor / fabs — the ratio a change is snapped to */
 #include <stddef.h>   /* offsetof — which rules CTRL_SIM_RULES carries */
 #include <stdio.h>
 #include <string.h>   /* memcmp — the comparison against the classic table */
 
 #include "control_event.h"  /* CTRL_SIM_RULES_ALL_FIELDS */
+#include "platform_types.h"  /* BOLO_STATIC_ASSERT */
+#include "sim_rules_names.h" /* SIM_RULE_LIST and the describe kinds */
 #include "global.h"      /* DAMAGE */
 #include "gametype.h"    /* TANK_FULL_* */
 #include "tank.h"        /* the tank timings, rates and MINE_DAMAGE */
@@ -187,9 +190,9 @@ int simRulesFirstDifference(const SimRules *rules) {
     }
 
     /* Which one. Walked as four-byte words rather than by name: the fields
-       are all four bytes and the list that names them is the scenario's,
-       which sits above this file. The index is that list's own index, so a
-       caller holding SCN_RULE_LIST can turn it into the rule's name. */
+       are all four bytes and SIM_RULE_LIST names them in this order. The
+       index is that list's own index, so simRulesRuleName turns it into the
+       rule's name. */
     a = (const int32_t *) (const void *) rules;
     b = (const int32_t *) (const void *) &classic;
     for (i = 0; i < fields; i++) {
@@ -635,4 +638,201 @@ SimRulesFault simRulesCheckCarried(const SimRules *rules, char *why,
 /* For the callers that only want to know whether the table is usable. */
 bool simRulesValidate(const SimRules *rules, char *why, size_t whyLen) {
     return simRulesCheck(rules, why, whyLen) == SIM_RULES_OK;
+}
+
+/* ---- The rules by index --------------------------------------------------
+ *
+ * Name, unit and value kind come straight off SIM_RULE_LIST, so the three
+ * tables are three readings of the one list and cannot fall out of step with
+ * each other or with the enum.
+ *
+ * A value is read out of a filled classic table as a four-byte word rather
+ * than by name: every field is four bytes and the list's order is the
+ * struct's, which is what simRulesFirstDifference already relies on. The
+ * assertion below is what keeps that true — a field added to SimRules
+ * without a row in the list makes the sizes disagree and does not compile. */
+
+BOLO_STATIC_ASSERT(sizeof(SimRules) == (size_t)SIM_RULE_COUNT * 4,
+                   sim_rules_struct_is_the_whole_rule_list);
+
+#define SIM_RULE_NAME_ROW(name, kind, unit) #name,
+static const char *const simRuleNames[] = {
+    SIM_RULE_LIST(SIM_RULE_NAME_ROW)
+};
+#undef SIM_RULE_NAME_ROW
+
+#define SIM_RULE_UNIT_ROW(name, kind, unit) unit,
+static const SimRuleUnit simRuleUnits[] = {
+    SIM_RULE_LIST(SIM_RULE_UNIT_ROW)
+};
+#undef SIM_RULE_UNIT_ROW
+
+#define SIM_RULE_KIND_ROW(name, kind, unit) kind,
+static const SimRuleValueKind simRuleValueKinds[] = {
+    SIM_RULE_LIST(SIM_RULE_KIND_ROW)
+};
+#undef SIM_RULE_KIND_ROW
+
+/* Whether an index names a rule at all. Every accessor asks this first: a
+ * caller holding a rule number off a wire or out of a manifest has one that
+ * may name nothing, and each of them answers that case rather than reading
+ * past the end of a table. */
+static bool simRulesIndexInRange(int rule) {
+    return rule >= 0 && rule < (int)SIM_RULE_COUNT;
+}
+
+int simRulesRuleCount(void) {
+    return (int)SIM_RULE_COUNT;
+}
+
+const char *simRulesRuleName(int rule) {
+    if (!simRulesIndexInRange(rule)) {
+        return "";
+    }
+    return simRuleNames[rule];
+}
+
+int simRulesRuleIndex(const char *name) {
+    int i;
+
+    if (name == NULL) {
+        return -1;
+    }
+    for (i = 0; i < (int)SIM_RULE_COUNT; i++) {
+        if (strcmp(simRuleNames[i], name) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+SimRuleUnit simRulesRuleUnit(int rule) {
+    if (!simRulesIndexInRange(rule)) {
+        return SIM_RULE_UNIT_COUNT;
+    }
+    return simRuleUnits[rule];
+}
+
+SimRuleValueKind simRulesRuleValueKind(int rule) {
+    if (!simRulesIndexInRange(rule)) {
+        return SIM_RULE_VALUE_INT;
+    }
+    return simRuleValueKinds[rule];
+}
+
+double simRulesClassicValue(int rule) {
+    SimRules       classic;
+    const int32_t *words;
+
+    if (!simRulesIndexInRange(rule)) {
+        return 0.0;
+    }
+    simRulesClassic(&classic);
+    words = (const int32_t *) (const void *) &classic;
+    if (simRuleValueKinds[rule] == SIM_RULE_VALUE_FLOAT) {
+        float rate;
+        /* Copied rather than cast through a pointer: the word is an int32_t
+           here and the field a float, and only a copy reads the bits as the
+           type the field holds without depending on how the two alias. */
+        memcpy(&rate, &words[rule], sizeof(rate));
+        return (double) rate;
+    }
+    return (double) words[rule];
+}
+
+/* ---- What a value does to a rule -----------------------------------------
+ *
+ * A kind and a number, never a string: the frontends that ask this question
+ * each have their own way of drawing it and their own language, and this
+ * file is below both. src/gui/sim_rules_phrase.h renders the pair.
+ *
+ * A ratio is only offered where it says something true. Below 1.5x a
+ * difference is the clearer answer — "+2" rather than "1.2x as many" — and a
+ * default or a value at or below zero has no ratio to take at all, which is
+ * what keeps a weighted-draw entry from being described as a multiple of
+ * itself. Above that the ratio snaps to a whole number when it lands within
+ * five percent of one, so a rate that works out at 2.02 reads as twice
+ * rather than as 2.0, and otherwise keeps one decimal. */
+
+#define SIM_RULE_RATIO_MIN   1.5   /* below this a difference says more */
+#define SIM_RULE_SNAP_BAND   0.05  /* how near a whole multiple has to be */
+
+SimRuleChange simRulesDescribeValue(SimRuleUnit unit, double classic,
+                                    double value) {
+    SimRuleChange out;
+    double        ratio;
+    double        whole;
+
+    out.kind   = SIM_RULE_CHANGE_UNCHANGED;
+    out.number = 0.0;
+
+    if (value == classic) {
+        return out;
+    }
+    if (unit == SIM_RULE_UNIT_FLAG) {
+        out.kind = (value != 0.0) ? SIM_RULE_CHANGE_ON : SIM_RULE_CHANGE_OFF;
+        return out;
+    }
+    if (unit == SIM_RULE_UNIT_CONSTANT_BY_DESIGN) {
+        out.kind   = SIM_RULE_CHANGE_RAW;
+        out.number = value;
+        return out;
+    }
+    if (classic <= 0.0 || value <= 0.0) {
+        out.kind   = SIM_RULE_CHANGE_DELTA;
+        out.number = value - classic;
+        return out;
+    }
+
+    ratio = (value > classic) ? value / classic : classic / value;
+    if (ratio < SIM_RULE_RATIO_MIN) {
+        out.kind   = SIM_RULE_CHANGE_DELTA;
+        out.number = value - classic;
+        return out;
+    }
+
+    whole = floor(ratio + 0.5);
+    if (whole >= 2.0 && fabs(ratio - whole) <= whole * SIM_RULE_SNAP_BAND) {
+        ratio = whole;
+    } else {
+        ratio = floor(ratio * 10.0 + 0.5) / 10.0;
+    }
+
+    switch (unit) {
+        case SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER:
+            out.kind = (value < classic) ? SIM_RULE_CHANGE_FASTER
+                                         : SIM_RULE_CHANGE_SLOWER;
+            break;
+        case SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER:
+            out.kind = (value > classic) ? SIM_RULE_CHANGE_FASTER
+                                         : SIM_RULE_CHANGE_SLOWER;
+            break;
+        case SIM_RULE_UNIT_COUNT:
+        case SIM_RULE_UNIT_PERCENT:
+        default:
+            out.kind = (value > classic) ? SIM_RULE_CHANGE_MORE
+                                         : SIM_RULE_CHANGE_FEWER;
+            break;
+    }
+    out.number = ratio;
+    return out;
+}
+
+SimRuleChange simRulesDescribeChange(int rule, double value) {
+    SimRuleChange out;
+
+    if (!simRulesIndexInRange(rule)) {
+        /* No rule, so nothing has changed about one. */
+        out.kind   = SIM_RULE_CHANGE_UNCHANGED;
+        out.number = 0.0;
+        return out;
+    }
+    if (simRuleValueKinds[rule] == SIM_RULE_VALUE_FLOAT) {
+        /* What the field would hold, not what was typed: the field is a
+           float and the classic value is read out of one, so a value that
+           only differs past float precision is the same value. */
+        value = (double) (float) value;
+    }
+    return simRulesDescribeValue(simRuleUnits[rule], simRulesClassicValue(rule),
+                                 value);
 }

@@ -864,6 +864,7 @@ set(IOS_BOLO_SOURCES
 # minimal feature set.
 add_subdirectory(src/bolo)
 add_subdirectory(src/server)
+add_subdirectory(src/scenario_io)
 add_subdirectory(src/scenario)
 add_subdirectory(brains)
 
@@ -896,6 +897,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/sound.c
     src/gui/sdl3/sound_variants.c
     src/gui/sdl3/lang.c
+    src/gui/sdl3/sim_rules_phrase.c
     src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/bg_game.c
     src/gui/sdl3/minimap_render.c
@@ -1465,6 +1467,7 @@ endif()
 
 add_subdirectory(src/bolo)
 add_subdirectory(src/server)
+add_subdirectory(src/scenario_io)
 add_subdirectory(src/scenario)
 add_subdirectory(brains)
 
@@ -1571,7 +1574,8 @@ set(CLIENT_SOURCES
     # spectator_input_stub.c instead.
     src/gui/sdl3/spectator_input.c
     src/gui/sdl3/tutorial_text.c
-    src/gui/sdl3/lang.c src/gui/sdl3/sound.c src/gui/sdl3/sound_variants.c
+    src/gui/sdl3/lang.c src/gui/sdl3/sim_rules_phrase.c
+    src/gui/sdl3/sound.c src/gui/sdl3/sound_variants.c
     src/client_frontend/voice_core.c
     src/client_frontend/voice_client.c
     src/gui/sdl3/voice.c
@@ -2356,6 +2360,8 @@ add_executable(LogViewer
     # spectates, so these resolve the seam symbols here.
     src/logviewer/spectator_input_stub.c
     src/gui/sdl3/lang.c
+    # Not sim_rules_phrase.c beside it: the phrase calls
+    # simRulesDescribeChange in bolo_static, which this target does not link.
     src/gui/sdl3/gamefront_stubs.c
     # The replay draws the same smart-ping glyphs the game does, out of the
     # same loose files.
@@ -2862,6 +2868,7 @@ set(MAPEDITOR_SOURCES
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/minimap_render.c
     src/gui/sdl3/lang.c
+    src/gui/sdl3/sim_rules_phrase.c
     src/gui/sdl3/gamefront_stubs.c
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/gfx_settings.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
@@ -3737,6 +3744,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
     tests/unit/test_sim_rules.c
+    # The rule list a frontend reads: the names, the classic value behind
+    # each one, and what a value does to a rule against that default. The
+    # phrase file renders that answer through langGetText, which
+    # test_stubs.c provides here, so it compiles in without lang.c.
+    tests/unit/test_sim_rules_describe.c
+    src/gui/sdl3/sim_rules_phrase.c
     tests/unit/test_screen_bullets_build.c
     tests/unit/test_ping_smoother.c
     tests/unit/test_client_timing.c
@@ -4918,6 +4931,11 @@ set(_unit_test_names
     sim_rules_worldsim_pill_follows
     sim_rules_boat_speed_follows
     sim_rules_obs_reload_follows
+    sim_rules_describe_names
+    sim_rules_describe_reload
+    sim_rules_describe_ratios
+    sim_rules_describe_units
+    sim_rules_phrase
     screen_bullets_build
     ping_smoother
     client_timing

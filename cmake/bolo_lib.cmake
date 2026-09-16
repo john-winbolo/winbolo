@@ -81,8 +81,12 @@
 #                  GUI translation unit is the asymmetric-runtime bug class
 #                  this rule protects against.
 #   runtime_only - headless / server-only / logviewer runtime binaries that
-#                  ship parts of the sim but no desktop GUI. Sees public/
-#                  only. Same rationale as gui.
+#                  ship parts of the sim but no desktop GUI, and
+#                  scenario_io_static, the file half of a scenario — the
+#                  WBSC container, manifest.json and the chunk written on to
+#                  a map — which has no Lua and reads no sim state, so a map
+#                  editor or a log viewer can link it without the scenario
+#                  runtime. Sees public/ only. Same rationale as gui.
 #
 # This file is the single point of policy for the include-rule lockdown.
 # gui and runtime_only targets see only public/; the five privileged

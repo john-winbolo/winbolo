@@ -67,7 +67,7 @@
 #include "wire_limits.h"
 #include "../scenario/scenario_host.h"
 #include "../scenario/scenario_pack.h"
-#include "../scenario/scenario_package.h"
+#include "../scenario_io/scenario_package.h"
 #include "../scenario/scenario_validate.h"
 #include "cJSON.h"
 

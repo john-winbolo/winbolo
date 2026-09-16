@@ -34,51 +34,16 @@
  * than this is refused rather than half-understood. */
 #define SCENARIO_API_VERSION 1
 
-/* Tags and regions, at the sizes the scenario table is specified with. A
- * tag names a pill, base or start; a region names a rectangle of map
- * squares. Both are read into the manifest here and mean nothing to the
- * engine yet. */
-#define SCN_TAG_LEN          32
-#define SCN_TAGS_PER_ENTITY   4
-#define SCN_REGIONS_MAX      64
-#define SCN_REGION_NAME_LEN  32
-
 /* How many timers a round may have waiting at once. A timer holds a Lua
  * function across ticks, so the count is what bounds both the table the host
  * walks each tick and the functions a round can keep from collection. The
  * one past the last is refused rather than displacing one already set: a
  * script handed an id has been promised that call.
  *
- * Declared and defined regions share SCN_REGIONS_MAX above — the sixty-four
- * are the round's, however many of them the file wrote down. */
+ * Declared and defined regions share SCN_REGIONS_MAX (scenario_manifest.h)
+ * — the sixty-four are the round's, however many of them the file wrote
+ * down. */
 #define SCN_TIMERS_MAX       64
-
-/* The text fields of the scenario table. The name is what a lobby row
- * shows and the description what a tooltip or an info line shows, so they
- * are sized for a line rather than for prose.
- *
- * SCN_DIR_NAME_LEN and SCN_DIR_DESC_LEN in scenario_api/scenario_defs.h are
- * the same two lengths on the sim's side of the fence, where a scenario the
- * server offers is described. They are stated twice because this header is
- * what a frontend includes and that one is not — a gui or runtime_only
- * translation unit sees public/ alone. scenario_dir.c sees both and holds
- * them against each other. */
-#define SCN_SCENARIO_NAME_LEN 64
-#define SCN_SCENARIO_DESC_LEN 256
-
-/* scenario.game names a game type ("open", "tournament", "strict"), kept
- * as the text the file gave. */
-#define SCN_GAME_NAME_LEN 24
-
-/* A brain named by a lobby team: the directory under the server's own
- * brains/, as the file wrote it. The same length the spawn op carries a brain
- * in, because that op carries the path this name resolves to; scenario_host.c
- * holds the two against each other where it can see both. */
-#define SCN_BRAIN_LEN 256
-
-/* Room for every rule the table can name. scenario_host.c checks this
- * covers the rule list, so a rule added to the list cannot overflow it. */
-#define SCN_MANIFEST_RULES_MAX 128
 
 /* A map path plus the script suffix. Map paths reach the server from a
  * command line, so this matches what those buffers hold. */

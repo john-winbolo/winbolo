@@ -19,19 +19,13 @@
 #                     the server group and a call the other way would not
 #                     resolve.
 #
-#                     And it reads and writes the WBSC container a scenario
-#                     ships in — the framing, and the ZIP archive behind it
-#                     holding the manifest, the script and any brain
-#                     directories — from a byte buffer rather than a path, so
-#                     the chunk appended to a map, a package file and a blob
-#                     off the network are all read the same way. The
-#                     manifest inside that container is read into and written
-#                     out of the same struct the Lua reader fills, keeping
-#                     the keys this build has no use for, and the two forms
-#                     are held against each other so a package whose script
-#                     restates its table cannot disagree with it. Writing that
-#                     container on to a map file is here too, manifest and
-#                     all, which is what the server's -pack flag calls.
+#                     The files a scenario is made of — the WBSC container,
+#                     manifest.json, the chunk written on to a map — are
+#                     scenario_io_static's under src/scenario_io/, which this
+#                     library links PUBLIC. What is left here is the half
+#                     that needs a VM or a sim: the server's -pack flag lands
+#                     on scenario_pack.c, which validates the script and then
+#                     hands the manifest and the source over to be written.
 #
 #                     Built under the scenario_host include profile: it sees
 #                     src/bolo/public/ and src/bolo/scenario_api/, and
@@ -54,9 +48,7 @@ add_library(scenario_static STATIC
     scenario_dir.c
     scenario_events.c
     scenario_lua.c
-    scenario_manifest_json.c
     scenario_pack.c
-    scenario_package.c
     scenario_sandbox.c
     scenario_validate.c
 )
@@ -78,6 +70,13 @@ target_include_directories(scenario_static PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # includes the host header, as it does for the other bolo libraries.
 target_link_libraries(scenario_static PUBLIC SDL3::SDL3)
 
+# The file half of a scenario. PUBLIC because the headers that come with it
+# are part of what this library hands its includers — scenario_validate.h
+# names ScnValidateResult and scenario_lua.h names ScenarioManifest, both
+# declared over there — so the six binaries that link scenario_static
+# resolve those headers and those symbols without naming the library.
+target_link_libraries(scenario_static PUBLIC scenario_io_static)
+
 # lua_static is the stable name for whichever Lua the tree picked — LuaJIT
 # where it builds, PUC-Lua 5.4 otherwise. It carries the headers, the
 # WINBOLO_LUAJIT define and the 5.4-to-5.1 shim's force-include with it, so
@@ -90,33 +89,12 @@ target_link_libraries(scenario_static PUBLIC SDL3::SDL3)
 # tests — links lua_static for itself.
 target_link_libraries(scenario_static PRIVATE lua_static)
 
-# minizip carries zip.h, unzip.h and ioapi.h, and the zlib behind them, for
-# the WBSC container's archive.
-#
-# PRIVATE for the same reason as lua_static: scenario_package.h names no
-# minizip type, so an includer has no business seeing those headers, and a
-# static library still passes the link itself along, so the binaries resolve
-# the symbols either way. Every binary that links scenario_static already
-# names minizip itself, so this line is what a new one would rely on.
-target_link_libraries(scenario_static PRIVATE minizip)
-
-# cJSON, for manifest.json. It carries no include directory of its own —
-# nothing in the tree links it without naming ${cjson_SOURCE_DIR} too — so
-# the directory is added here beside the link.
-#
-# PRIVATE for the same reason as the two above: scenario_manifest_json.h
-# names no cJSON type, so the tree stays inside the library and no includer
-# sees cJSON.h.
-#
-# What PRIVATE does not do is create the target. A build that links
-# scenario_static has to declare cjson for itself, the way it declares SDL3,
-# Lua, zlib and minizip — so every one of the six trees that links this
-# library fetches it: the root CMakeLists.txt for WinBolo, WinBoloIOS,
-# WinBoloDS, WinBoloHeadless and WinBoloUnitTests, and
-# android/app/CMakeLists.txt for the Android main. A seventh consumer adds a
-# seventh declaration.
-target_link_libraries(scenario_static PRIVATE cjson)
-target_include_directories(scenario_static PRIVATE ${cjson_SOURCE_DIR})
+# minizip and cJSON are scenario_io_static's, which links both PRIVATE: no
+# file left here includes zip.h, unzip.h, ioapi.h or cJSON.h. A static
+# library passes the link itself along, so a tree that links scenario_static
+# still resolves the symbols — and still has to declare both targets for
+# itself, the way it declares SDL3 and Lua. See the cJSON note in
+# src/scenario_io/CMakeLists.txt.
 
 if(NOT MSVC)
     target_compile_options(scenario_static PRIVATE -fcommon)
