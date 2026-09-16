@@ -3436,6 +3436,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # handed to a script that declares no table of its own, and the refusal
     # one that restates it and disagrees gets.
     tests/unit/test_scenario_packed_map.c
+    # A map's scenario written into the map: what the container holds, the
+    # manifest derived from the script's own table, the second pack that
+    # replaces the first, and the map with nothing to pack.
+    tests/unit/test_scenario_pack.c
     # The binding table: the game table a script reads the sim through, the
     # three index rules and what an absent entity reads as.
     tests/unit/test_scenario_lua.c
@@ -5510,6 +5514,10 @@ set(_unit_test_names
     scenario_packed_map_script_omits_table
     scenario_packed_map_table_disagrees
     scenario_packed_map_round_start_keeps_it
+    scenario_pack_writes_container
+    scenario_pack_manifest_agrees
+    scenario_pack_replaces_trailer
+    scenario_pack_refuses_unscripted
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

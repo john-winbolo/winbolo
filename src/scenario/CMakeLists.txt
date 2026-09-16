@@ -20,7 +20,9 @@
 #                     out of the same struct the Lua reader fills, keeping
 #                     the keys this build has no use for, and the two forms
 #                     are held against each other so a package whose script
-#                     restates its table cannot disagree with it.
+#                     restates its table cannot disagree with it. Writing that
+#                     container on to a map file is here too, manifest and
+#                     all, which is what the server's -pack flag calls.
 #
 #                     Built under the scenario_host include profile: it sees
 #                     src/bolo/public/ and src/bolo/scenario_api/, and
@@ -39,6 +41,7 @@ add_library(scenario_static STATIC
     scenario_events.c
     scenario_lua.c
     scenario_manifest_json.c
+    scenario_pack.c
     scenario_package.c
     scenario_sandbox.c
     scenario_validate.c

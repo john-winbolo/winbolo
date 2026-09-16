@@ -2781,6 +2781,15 @@ int run_scenario_packed_map_script_omits_table(void);
 int run_scenario_packed_map_table_disagrees(void);
 int run_scenario_packed_map_round_start_keeps_it(void);
 
+/* Writing a map's scenario into the map (test_scenario_pack.c): the container
+ * a loose script packs into, the manifest that comes out of the script's own
+ * table, the second pack that replaces the first rather than following it,
+ * and the map with nothing to pack that is left alone. */
+int run_scenario_pack_writes_container(void);
+int run_scenario_pack_manifest_agrees(void);
+int run_scenario_pack_replaces_trailer(void);
+int run_scenario_pack_refuses_unscripted(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */
