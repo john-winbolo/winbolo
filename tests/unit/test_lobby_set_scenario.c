@@ -23,6 +23,15 @@
  *                                         which says it is bound to its own
  *                                         map is refused, and the mod that
  *                                         was selected survives it
+ * run_lobby_set_scenario_cooldown       — a second pick inside the tick gap is
+ *                                         refused before the directory is
+ *                                         read, and the pick after the gap
+ *                                         goes through
+ *
+ * A pick reads the whole scenarios directory to find out whether the name is
+ * one the server offers, so it is held to the same one-a-second tick gap a
+ * reload is. Every case below that picks twice moves the sim's clock between
+ * the two, the way test_lobby_reload_scenario.c does.
  *
  * Nothing here checks what the selection does, because it does nothing yet:
  * applying it, and the settings event that says where the scenario in play
@@ -41,6 +50,8 @@
 #include "everard_map.h"
 #include "scenario_defs.h"         /* ScnDirEntry — what the lister fills */
 #include "server_sim.h"
+#include "server_sim_internal.h"   /* sim->tick and SCENARIO_RELOAD_GAP_TICKS,
+                                    * which the pick's tick gap is measured in */
 #include "server_sim_lifecycle.h"  /* serverSimSetLobbyEnabled */
 #include "server_sim_scenario.h"   /* serverSimSetScenarioLister */
 #include "threads.h"
@@ -91,6 +102,13 @@ static ServerSim *ssLobby(SsDir *d) {
     return sim;
 }
 
+/* Past the pick's tick gap. The lobby advances ticks like any other state, so
+ * a host waiting a second is exactly this many of them; a case that wants to
+ * pick twice moves the clock rather than sleeping. */
+static void ssPastCooldown(ServerSim *sim) {
+    sim->tick += SCENARIO_RELOAD_GAP_TICKS;
+}
+
 static CmdResult ssApply(ServerSim *sim, int senderSlot, const char *relPath) {
     ClientCommand cmd;
     CmdResult     r;
@@ -129,6 +147,7 @@ int run_lobby_set_scenario_selects(void) {
 
     /* The other one, over the top of the first: picking is a commit, so the
        second replaces the first rather than adding to it. */
+    ssPastCooldown(sim);
     UT_ASSERT_MSG(ssApply(sim, 0, "fastreload.lua") == CMD_OK,
                   "a second pick was refused");
     UT_ASSERT_MSG(strcmp(serverSimGetSelectedScenario(sim),
@@ -183,6 +202,7 @@ int run_lobby_set_scenario_refuses_unknown(void) {
     UT_ASSERT(sim != NULL);
     UT_ASSERT(ssApply(sim, 0, "wave.scenario") == CMD_OK);
 
+    ssPastCooldown(sim);
     r = ssApply(sim, 0, "nosuch.scenario");
     UT_ASSERT_MSG(r == CMD_REJECT_INVALID,
                   "a name the directory does not hold answered %d, wanted "
@@ -195,6 +215,7 @@ int run_lobby_set_scenario_refuses_unknown(void) {
     /* A server with no lister offers nothing, so every name is unknown —
        which is what a build with no scenario library answers. */
     serverSimSetScenarioLister(sim, NULL, NULL);
+    ssPastCooldown(sim);
     UT_ASSERT_MSG(ssApply(sim, 0, "wave.scenario") == CMD_REJECT_INVALID,
                   "a server offering no scenarios accepted one");
     UT_ASSERT_MSG(strcmp(serverSimGetSelectedScenario(sim),
@@ -307,6 +328,7 @@ int run_lobby_set_scenario_refuses_bound(void) {
                   "setup: the mod the bound pick has to leave alone was "
                   "refused");
 
+    ssPastCooldown(sim);
     r = ssApply(sim, 0, "island.scenario");
     UT_ASSERT_MSG(r == CMD_REJECT_INVALID,
                   "a bound scenario answered %d, wanted CMD_REJECT_INVALID "
@@ -318,6 +340,7 @@ int run_lobby_set_scenario_refuses_bound(void) {
 
     /* The same directory, and the entries that are not bound are still
        picked: what was refused above is the flag and not the read. */
+    ssPastCooldown(sim);
     UT_ASSERT_MSG(ssApply(sim, 0, "fastreload.lua") == CMD_OK,
                   "a mod in the same directory was refused after the bound "
                   "one");
@@ -326,11 +349,67 @@ int run_lobby_set_scenario_refuses_bound(void) {
 
     /* And once more over that pick, so a refusal is shown to leave whichever
        mod is selected rather than only the first one. */
+    ssPastCooldown(sim);
     UT_ASSERT(ssApply(sim, 0, "island.scenario") == CMD_REJECT_INVALID);
     UT_ASSERT_MSG(strcmp(serverSimGetSelectedScenario(sim),
                          "fastreload.lua") == 0,
                   "the second refusal changed the selection to \"%s\"",
                   serverSimGetSelectedScenario(sim));
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── One pick a second ────────────────────────────────────────────── */
+
+/* Finding out whether a name is one the server offers means listing the
+ * scenarios directory, which opens every file in it and runs the top level of
+ * every loose script. That happens on the thread the command arrived on, and
+ * on a server with openHost set every connected player may ask for it — so a
+ * pick is held to the same tick gap a reload is, and the refusal comes before
+ * the directory is touched. */
+int run_lobby_set_scenario_cooldown(void) {
+    ServerSim *sim;
+    SsDir      d;
+    CmdResult  r;
+
+    sim = ssLobby(&d);
+    UT_ASSERT(sim != NULL);
+
+    UT_ASSERT_MSG(ssApply(sim, 0, "wave.scenario") == CMD_OK,
+                  "the first pick was refused");
+    UT_ASSERT_MSG(d.calls == 1, "the first pick read the directory %d times",
+                  d.calls);
+
+    /* Straight away, with no ticks in between. */
+    r = ssApply(sim, 0, "fastreload.lua");
+    UT_ASSERT_MSG(r == CMD_REJECT_COOLDOWN,
+                  "a second pick inside the gap answered %d, wanted "
+                  "CMD_REJECT_COOLDOWN (%d)", (int)r, (int)CMD_REJECT_COOLDOWN);
+    UT_ASSERT_MSG(d.calls == 1,
+                  "the refused pick read the directory: %d reads, wanted the "
+                  "one from the pick before it", d.calls);
+    UT_ASSERT_MSG(strcmp(serverSimGetSelectedScenario(sim),
+                         "wave.scenario") == 0,
+                  "the refused pick left \"%s\" selected",
+                  serverSimGetSelectedScenario(sim));
+
+    /* Selecting none reads nothing, so the gap does not hold it off. */
+    UT_ASSERT_MSG(ssApply(sim, 0, "") == CMD_OK,
+                  "selecting none was refused for the gap, and it reads no "
+                  "directory");
+    UT_ASSERT(serverSimGetSelectedScenario(sim)[0] == '\0');
+    UT_ASSERT_MSG(d.calls == 1, "selecting none read the directory");
+
+    /* And a second past it, the pick goes through. */
+    ssPastCooldown(sim);
+    UT_ASSERT_MSG(ssApply(sim, 0, "fastreload.lua") == CMD_OK,
+                  "the pick after the gap was refused");
+    UT_ASSERT_MSG(d.calls == 2,
+                  "the pick after the gap made %d reads in all, wanted 2",
+                  d.calls);
+    UT_ASSERT(strcmp(serverSimGetSelectedScenario(sim),
+                     "fastreload.lua") == 0);
 
     serverSimDestroy(sim);
     return 0;

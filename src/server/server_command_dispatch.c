@@ -14,6 +14,7 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "bot_manager.h"              /* botManagerSetBrainIdx, botManagerAddBot */
@@ -148,20 +149,30 @@ static bool lobbySlotMayHoldStart(ServerSim *sim, BYTE slot, BYTE idx1) {
    is no use over a different one.
 
    The cap is the one the list packet and the client's chooser already share,
-   so every scenario a host can see is one the server will accept. Its own
-   function rather than part of the case below: the entry array runs to
-   ~58 KB, the size the list handler in udp_server_dispatch.c already puts on
-   this thread, and a frame that large belongs to the one call that needs it
-   rather than to every command the dispatcher handles. */
+   so every scenario a host can see is one the server will accept.
+
+   The entries are read into the heap rather than onto this thread's stack, the
+   way serverSimEnumerateScenarioDir reads them: an entry carries a
+   description, so a full listing runs to ~58 KB, and this is a command
+   handler that a client's datagram reaches. A listing there is no memory to
+   read is no listing, which answers the same as a name the directory does not
+   hold. */
 static bool lobbyScenarioDirHolds(const ServerSim *sim, const char *file,
                                   char *out, size_t outLen, bool *bound) {
-    ScnDirEntry entries[LOBBY_SCENARIO_LIST_MAX];
-    int got = serverSimScenarioListDir(sim, entries, LOBBY_SCENARIO_LIST_MAX);
-    int i;
+    ScnDirEntry *entries;
+    int          got;
+    int          i;
+    bool         found = false;
 
     if (bound != NULL) {
         *bound = false;
     }
+    entries = (ScnDirEntry *)calloc((size_t)LOBBY_SCENARIO_LIST_MAX,
+                                    sizeof(*entries));
+    if (entries == NULL) {
+        return false;
+    }
+    got = serverSimScenarioListDir(sim, entries, LOBBY_SCENARIO_LIST_MAX);
     for (i = 0; i < got; i++) {
         if (strcmp(entries[i].file, file) == 0) {
             /* The directory's spelling rather than the wire's, so what is
@@ -172,10 +183,12 @@ static bool lobbyScenarioDirHolds(const ServerSim *sim, const char *file,
             if (bound != NULL) {
                 *bound = entries[i].bound;
             }
-            return true;
+            found = true;
+            break;
         }
     }
-    return false;
+    free(entries);
+    return found;
 }
 
 /* The selection changed, so which scenario plays is decided again. The same
@@ -926,6 +939,20 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             }
         }
         if (!safe) return CMD_REJECT_INVALID;
+        /* One pick a second, per sim, before the directory is read: finding
+           out whether this name is one the server offers means listing the
+           scenarios directory, which opens every file in it and runs the top
+           level of every loose script on this thread. Any connected player is
+           the host on a server with openHost set, and a datagram may carry
+           several commands, so without this a client can ask for that work as
+           fast as it can send. The same gap a reload takes, for the same
+           reason. The sender is told by the toast, which is why this returns
+           rather than sending a line. */
+        if (sim->scenarioPickTick != 0 &&
+            sim->tick + 1 - sim->scenarioPickTick < SCENARIO_RELOAD_GAP_TICKS) {
+            return CMD_REJECT_COOLDOWN;
+        }
+        sim->scenarioPickTick = sim->tick + 1;
         char picked[SCN_DIR_FILE_LEN];
         bool pickedBound = false;
         if (!lobbyScenarioDirHolds(sim, relPath, picked, sizeof(picked),

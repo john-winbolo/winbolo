@@ -4506,6 +4506,7 @@ set(_unit_test_names
     lobby_set_scenario_refuses_unknown
     lobby_set_scenario_refuses_shape
     lobby_set_scenario_refuses_bound
+    lobby_set_scenario_cooldown
     lobby_map_search_chunked
     wbn_bearer_state
     wbn_rekey_codec
@@ -5562,6 +5563,7 @@ set(_unit_test_names
     scenario_dir_lists_loose_script
     scenario_dir_skips_junk
     scenario_dir_skips_subdirectory
+    scenario_dir_list_cached
     scenario_dir_entry_roundtrip
     scenario_precedence_mod_over_map
     scenario_precedence_none_restores_map

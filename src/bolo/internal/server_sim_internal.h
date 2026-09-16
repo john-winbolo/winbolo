@@ -768,6 +768,16 @@ struct ServerSim {
        commands, costs one read of the script a second. Ticks, not wall
        clock, and the lobby advances them like any other state. */
     uint32_t               scenarioReloadTick;
+    /* The same for a pick. Written and read exactly as the reload's is, and
+       held to the same gap, because what a pick costs is the same work: it
+       reads the scenarios directory to find out whether the name is one the
+       server offers, and reading that directory means opening every file in
+       it and running the top level of every loose script. Counted apart from
+       the reload rather than sharing one tick, so a host who re-reads a script
+       and then picks a different one is not told the second is too soon after
+       the first — they are different requests and neither makes the other's
+       work cheaper. */
+    uint32_t               scenarioPickTick;
     void                 (*scenarioMapChanged)(void *ctx, ServerSim *sim,
                                                const char *mapPath);
     void                  *scenarioMapChangedCtx;

@@ -3004,16 +3004,133 @@ void scenarioHostRegisterMapScripted(ServerSim *sim) {
     serverSimSetScenarioMapScripted(sim, scnMapScriptedCb, NULL);
 }
 
+/* The last read of the scenarios directory, kept so the next one need not be
+ * made.
+ *
+ * What a read costs is the reason it is kept. scnDirList opens every file in
+ * the directory, inflates each .scenario to reach its manifest, and boots a
+ * Lua state per loose .lua to run that script's top level. A client's list
+ * request and a host's pick both reach it on the thread that ticks the sim, so
+ * a directory of twenty scenarios is twenty VM boots inside one tick, once per
+ * request.
+ *
+ * Invalidation: the cache answers only when the directory is the same path as
+ * last time and SDL_GetPathInfo reports the same modify time on it. A file
+ * added to the directory, removed from it or renamed in it moves that time, so
+ * the next read is a fresh one. A file edited in place does not — the
+ * directory itself is untouched — so a scenario whose text changed keeps the
+ * row it had until something else in the directory moves or the server is
+ * restarted. That is the bargain the attach already makes with a script: read
+ * once, and read again when something asks.
+ *
+ * The stamp is as fine as the kernel writes it, which is a few milliseconds on
+ * an ordinary Linux filesystem rather than a nanosecond. A file that lands
+ * inside the same tick as the read that kept the listing therefore leaves the
+ * stamp alone and is not seen until the next change — an operator dropping a
+ * scenario in cannot be that close to a read they did not make, and the file
+ * after it, or the next thing to touch the directory, puts it right.
+ *
+ * A read that filled the caller's array is not kept. It may have stopped short
+ * of the directory, and part of a directory is no answer to hand the next
+ * caller with room for the rest.
+ *
+ * One cache for the process, as the scripts switch above is one answer for the
+ * process: the directory is the server's, and a build hosting two sims would
+ * have them read the same one. It is held under a lock because the read is not
+ * the tick thread's alone — a client hosting in process reads it from the UI
+ * thread through serverSimEnumerateScenarioDir. The lock and the rows live as
+ * long as the process; there is nothing to free them at, and nothing that
+ * would grow them past one directory's worth. */
+typedef struct {
+    ScnVmLock    lock;      /* m is NULL until the lister is registered */
+    bool         valid;
+    char         dir[SCN_SCRIPT_PATH_MAX];
+    SDL_Time     modified;
+    ScnDirEntry *rows;
+    int          count;
+} ScnDirCache;
+
+static ScnDirCache scnDirCache;
+
+static void scnDirCacheDrop(void) {
+    free(scnDirCache.rows);
+    scnDirCache.rows   = NULL;
+    scnDirCache.count  = 0;
+    scnDirCache.valid  = false;
+    scnDirCache.dir[0] = '\0';
+}
+
+/* scnDirList, with the last answer kept under the rule above. */
+static int scnDirListCached(const char *dir, ScnDirEntry *out, int max) {
+    SDL_PathInfo info;
+    int          n;
+
+    /* Nothing to key a cache on, or nothing worth keying it to: the read still
+       answers, including the refusals it makes for itself. */
+    if (scnDirCache.lock.m == NULL || dir == NULL || dir[0] == '\0' ||
+        out == NULL || max <= 0 || strlen(dir) >= sizeof(scnDirCache.dir) ||
+        !SDL_GetPathInfo(dir, &info) ||
+        info.type != SDL_PATHTYPE_DIRECTORY) {
+        return scnDirList(dir, out, max);
+    }
+
+    scnLockEnter(&scnDirCache.lock);
+    if (scnDirCache.valid && scnDirCache.count <= max &&
+        scnDirCache.modified == info.modify_time &&
+        strcmp(scnDirCache.dir, dir) == 0) {
+        n = scnDirCache.count;
+        if (n > 0) {
+            memcpy(out, scnDirCache.rows, (size_t)n * sizeof(out[0]));
+        }
+        scnLockLeave(&scnDirCache.lock);
+        return n;
+    }
+
+    n = scnDirList(dir, out, max);
+    scnDirCacheDrop();
+    if (n >= 0 && n < max) {
+        bool kept = true;
+        if (n > 0) {
+            scnDirCache.rows =
+                (ScnDirEntry *)malloc((size_t)n * sizeof(out[0]));
+            kept = scnDirCache.rows != NULL;
+            if (kept) {
+                memcpy(scnDirCache.rows, out, (size_t)n * sizeof(out[0]));
+            }
+        }
+        if (kept) {
+            snprintf(scnDirCache.dir, sizeof(scnDirCache.dir), "%s", dir);
+            /* The time as it stood before the read rather than after it: a
+               file that landed while the read was running leaves the directory
+               newer than this, so the next call reads again rather than
+               keeping an answer that missed it. */
+            scnDirCache.modified = info.modify_time;
+            scnDirCache.count    = n;
+            scnDirCache.valid    = true;
+        }
+    }
+    scnLockLeave(&scnDirCache.lock);
+    return n;
+}
+
 /* The directory read, in the shape the sim's setter takes. No context, for
    the same reason the map question carries none: what is in a directory is a
    fact about that directory and about nothing else. */
 static int scnDirListCb(void *ctx, const char *dir, ScnDirEntry *out,
                         int max) {
     (void)ctx;
-    return scnDirList(dir, out, max);
+    return scnDirListCached(dir, out, max);
 }
 
 void scenarioHostRegisterScenarioLister(ServerSim *sim) {
+    /* The one place the cache's lock is made. Registering happens once where a
+       process decides whether it runs scripts at all, before any sim can be
+       asked for a listing, so a lister call always finds the lock built. A
+       second registration finds it built too. A build where the mutex cannot
+       be made lists without the cache rather than not at all. */
+    if (scnDirCache.lock.m == NULL) {
+        (void)scnLockCreate(&scnDirCache.lock);
+    }
     serverSimSetScenarioLister(sim, scnDirListCb, NULL);
 }
 

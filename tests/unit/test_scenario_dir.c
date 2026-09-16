@@ -29,6 +29,11 @@
  * run_scenario_dir_skips_subdirectory  — a .lua one directory down is not in
  *                                        the list, and no entry's file name
  *                                        carries a separator
+ * run_scenario_dir_list_cached         — read through the lister the host
+ *                                        registers, an unchanged directory is
+ *                                        answered from the last result without
+ *                                        booting a Lua state, and a file added
+ *                                        to it makes the next read a fresh one
  * run_scenario_dir_entry_roundtrip     — a list encoded into the RSP shape
  *                                        matches committed golden bytes and
  *                                        decodes back to the same entries,
@@ -50,11 +55,18 @@
 #include "client_sim.h"
 #include "client_sim_internal.h"        /* the scenario list accumulator */
 #include "netpacks.h"                   /* PACKET_LOBBY_SCENARIO_LIST_RSP */
+#include "server_sim_internal.h"        /* the console callback the cache case
+                                         * watches for a VM boot */
+#include "server_sim_scenario.h"        /* serverSimScenarioListDir — the read
+                                         * that goes through the lister */
+#include "server/sim/server_sim_shared.h" /* serverSimSetActive, which is what
+                                           * the console routes through */
 #include "transport_udp.h"              /* udpClientHandleLobbyScenarioListRsp */
 #include "transport_udp_internal.h"     /* PACKET_HEADER_SIZE, UDP_MAX_PAYLOAD */
 #include "transport_udp_server_internal.h" /* udpServerPackScenarioListChunk */
 #include "scenario_defs.h"              /* ScnDirEntry */
 #include "scenario_dir.h"
+#include "scenario_host.h"              /* scenarioHostRegisterScenarioLister */
 #include "scenario_package.h"
 #include "test_harness.h"
 
@@ -389,6 +401,153 @@ int run_scenario_dir_skips_subdirectory(void) {
 
 /* ── 5. The second read of a directory nothing moved ──────────────── */
 
+/* A mark the script prints from its top level. The listing runs that top level
+ * in a Lua state of its own, so the mark on the console is the VM boot: a read
+ * that produces it did the work, and one that does not was answered from what
+ * the last read left behind. */
+#define SD_MARK "scenario-dir:ran"
+
+static const char kSdMarkedScript[] =
+    "print(\"" SD_MARK "\")\n"
+    "scenario = { name = \"Marked\", api = 1 }\n";
+
+static void (*sdConsolePrev)(void *ctx, char *msg) = NULL;
+static char sdSaid[8192];
+
+static void sdConsoleCb(void *ctx, char *msg) {
+    size_t have;
+    size_t room;
+    size_t n;
+
+    if (sdConsolePrev != NULL) {
+        sdConsolePrev(ctx, msg);
+    }
+    if (msg == NULL) {
+        return;
+    }
+    have = strlen(sdSaid);
+    room = sizeof(sdSaid) - 1 - have;
+    n    = strlen(msg);
+    if (n > room) {
+        n = room;
+    }
+    memcpy(sdSaid + have, msg, n);
+    sdSaid[have + n] = '\0';
+}
+
+/* Only consoleMessage is replaced, never the ctx beside it, which the sim's
+   other callbacks read. */
+static void sdWatchConsole(ServerSim *sim) {
+    sdSaid[0]     = '\0';
+    sdConsolePrev = sim->sim.callbacks.consoleMessage;
+    sim->sim.callbacks.consoleMessage = sdConsoleCb;
+}
+
+static void sdUnwatchConsole(ServerSim *sim) {
+    sim->sim.callbacks.consoleMessage = sdConsolePrev;
+    sdConsolePrev = NULL;
+}
+
+/* Touch the scenarios directory until its modify time reads something other
+ * than was, and answer whether it did.
+ *
+ * A directory's modify time comes from a coarse kernel clock — around four
+ * milliseconds on the filesystem these tests run from — so a file created
+ * inside the same tick as the read that cached the listing leaves the stamp
+ * where it was. An operator dropping a scenario in never lands inside that
+ * window; a case that adds one microseconds after reading does, every other
+ * run. So it waits for the stamp before asserting on what the stamp decides.
+ *
+ * The touch file is created and removed inside one pass, so no listing ever
+ * sees it, and its name is not one the list would offer anyway. */
+static bool sdWaitForDirChange(SDL_Time was) {
+    char scratch[512];
+    int  i;
+
+    snprintf(scratch, sizeof(scratch), "%s/touch.tmp", sdDir);
+    for (i = 0; i < 1000; i++) {
+        SDL_PathInfo info;
+        FILE        *f;
+
+        if (SDL_GetPathInfo(sdDir, &info) && info.modify_time != was) {
+            return true;
+        }
+        f = fopen(scratch, "wb");
+        if (f != NULL) {
+            fclose(f);
+            remove(scratch);
+        }
+        SDL_Delay(1);
+    }
+    return false;
+}
+
+int run_scenario_dir_list_cached(void) {
+    ScnDirEntry  list[8];
+    ServerSim   *sim;
+    SDL_PathInfo cached;
+    int          n;
+
+    UT_ASSERT(sdMakeDir("cached"));
+    UT_ASSERT(sdWriteText("marked.lua", kSdMarkedScript));
+
+    sim = ut_make_running_sim("Host");
+    UT_ASSERT(sim != NULL);
+    /* serverSimConsoleMessage writes through the active sim's callback, and
+       what the script prints is what this case reads. */
+    serverSimSetActive(sim);
+    serverSimSetScenarioDir(sim, sdDir);
+    /* Through the lister the host registers, which is where the cache is —
+       scnDirList on its own reads the directory every time it is called. */
+    scenarioHostRegisterScenarioLister(sim);
+    sdWatchConsole(sim);
+
+    /* Nothing touches the directory between here and the read below, so this
+       is the stamp the cache is about to keep. */
+    UT_ASSERT(SDL_GetPathInfo(sdDir, &cached));
+
+    n = serverSimScenarioListDir(sim, list, 8);
+    UT_ASSERT_MSG(n == 1, "%d entries on the first read, expected 1", n);
+    UT_ASSERT_MSG(strcmp(list[0].file, "marked.lua") == 0,
+                  "the first read listed \"%s\"", list[0].file);
+    UT_ASSERT_MSG(strcmp(list[0].name, "Marked") == 0,
+                  "the first read named it '%s'", list[0].name);
+    UT_ASSERT_MSG(strstr(sdSaid, SD_MARK) != NULL,
+                  "the first read never ran the script's top level, so this "
+                  "case cannot tell a fresh read from a cached one");
+
+    /* Again, with nothing in the directory moved. */
+    sdSaid[0] = '\0';
+    memset(list, 0, sizeof(list));
+    n = serverSimScenarioListDir(sim, list, 8);
+    UT_ASSERT_MSG(n == 1, "%d entries on the second read, expected 1", n);
+    UT_ASSERT_MSG(strcmp(list[0].file, "marked.lua") == 0,
+                  "the second read listed \"%s\"", list[0].file);
+    UT_ASSERT_MSG(strcmp(list[0].name, "Marked") == 0,
+                  "the second read named it '%s', so the rows it handed back "
+                  "are not the ones the first read found", list[0].name);
+    UT_ASSERT_MSG(strstr(sdSaid, SD_MARK) == NULL,
+                  "the second read booted a Lua state and ran the script "
+                  "again: the listing was not answered from the last one");
+
+    /* A file added moves the directory's own modify time, which is what the
+       cache is keyed to, so the read after it is a fresh one. */
+    sdSaid[0] = '\0';
+    UT_ASSERT(sdWriteText("hold.lua", kSdLooseScript));
+    UT_ASSERT_MSG(sdWaitForDirChange(cached.modify_time),
+                  "the directory's modify time never moved off the one the "
+                  "first read kept, so there is nothing here to invalidate "
+                  "the cache with");
+    n = serverSimScenarioListDir(sim, list, 8);
+    UT_ASSERT_MSG(n == 2, "%d entries after a file was added, expected 2", n);
+    UT_ASSERT_MSG(strstr(sdSaid, SD_MARK) != NULL,
+                  "a directory that gained a file was still answered from the "
+                  "cache");
+
+    sdUnwatchConsole(sim);
+    serverSimDestroy(sim);
+    sdCleanup();
+    return 0;
 }
 
 /* ── 6. The chunk, byte for byte and back ─────────────────────────── */

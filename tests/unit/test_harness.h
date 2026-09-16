@@ -403,13 +403,14 @@ int run_lobby_reload_scenario_calls_back(void);
 int run_lobby_reload_scenario_cooldown(void);
 
 /* The lobby's scenario pick (test_lobby_set_scenario.c): who may pick, when,
- * which names are accepted, and that a refusal leaves the previous pick
- * alone. */
+ * which names are accepted, that a refusal leaves the previous pick alone,
+ * and the tick gap between one pick and the next. */
 int run_lobby_set_scenario_selects(void);
 int run_lobby_set_scenario_none(void);
 int run_lobby_set_scenario_refuses_unknown(void);
 int run_lobby_set_scenario_refuses_shape(void);
 int run_lobby_set_scenario_refuses_bound(void);
+int run_lobby_set_scenario_cooldown(void);
 int run_lobby_map_search_chunked(void);
 int run_wbn_bearer_state(void);
 int run_wbn_rekey_codec(void);
@@ -2833,12 +2834,15 @@ int run_scenario_brain_op_resolves(void);
 
 /* The scenarios directory (test_scenario_dir.c): a .scenario package listed
  * from its manifest with no Lua run, a loose .lua listed through the
- * validator's stub VM, what is skipped, and the list encoded into the
- * SCENARIO_LIST_RSP shape against committed golden bytes and decoded back. */
+ * validator's stub VM, what is skipped, a file one directory down left out,
+ * the second reading of an unchanged directory answered from the cache
+ * without booting a VM, and the list encoded into the SCENARIO_LIST_RSP shape
+ * against committed golden bytes and decoded back. */
 int run_scenario_dir_lists_package(void);
 int run_scenario_dir_lists_loose_script(void);
 int run_scenario_dir_skips_junk(void);
 int run_scenario_dir_skips_subdirectory(void);
+int run_scenario_dir_list_cached(void);
 int run_scenario_dir_entry_roundtrip(void);
 
 /* Which scenario plays when a map and a mod both have a claim
