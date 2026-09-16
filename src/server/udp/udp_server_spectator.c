@@ -234,6 +234,30 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
          * playerNum. */
         allow = (evt->u.chat.destPlayer == 0xFF);
         break;
+    /* A scenario's presentation, for the three that carry a recipient
+     * pair: a viewer sees what is addressed to everyone and nothing
+     * narrower. A spectator belongs to no team and holds no slot, so a
+     * team- or player-addressed one never qualifies — the same reasoning
+     * the CTRL_CHAT arm above uses, and the same answer the per-client
+     * filter in udpClientDeliverControl reaches by comparing. */
+    case CTRL_SCN_PANEL:
+        allow = (evt->u.scnPanel.destTeam == 0 &&
+                 evt->u.scnPanel.destPlayer == 0xFF);
+        break;
+    case CTRL_SCN_ANNOUNCE:
+        allow = (evt->u.scnAnnounce.destTeam == 0 &&
+                 evt->u.scnAnnounce.destPlayer == 0xFF);
+        break;
+    case CTRL_SCN_MARKER:
+        allow = (evt->u.scnMarker.destTeam == 0 &&
+                 evt->u.scnMarker.destPlayer == 0xFF);
+        break;
+    /* Scores are broadcast — a viewer reading a scenario's panel and
+     * markers with a blank scoreboard beside them looks broken, the
+     * same reason CTRL_STATS_SEED is allowed above. */
+    case CTRL_SCN_SCORE:
+        allow = true;
+        break;
     default:
         allow = false;
         break;

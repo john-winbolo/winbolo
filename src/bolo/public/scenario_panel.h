@@ -50,6 +50,22 @@ extern "C" {
 #define SCN_PANEL_TEXT_MAX   48    /* bytes of one text primitive's string */
 #define SCN_PANEL_ITEMS_MAX  128   /* most primitives one list may hold */
 #define SCN_PANEL_COLOURS    16    /* the palette's size */
+#define SCN_MARKERS_MAX      16    /* marker ids 0..15, kept by id */
+
+/* Byte capacity of one panel display list. The list rides a single
+ * control segment, which carries CHANNEL_CONTROL_SEG (1024) bytes
+ * (channel_mux.h) and rejects a message larger than that. Of those,
+ * the channel frame spends type(1) + bodyLen(2), and the panel event's
+ * own header spends target(1) + panel(1) + len(2):
+ *   1024 - 1 - 2 - 1 - 1 - 2 = 1017
+ * server_sim_scenario.c pins this against CHANNEL_CONTROL_SEG, which
+ * it can see and this header cannot.
+ *
+ * It lives here rather than beside the op payloads because both the op
+ * that carries a list and the control event that delivers one are
+ * measured against it, and control_event.h is public: it cannot read
+ * scenario_api/. One number, so the two cannot drift apart. */
+#define SCN_PANEL_MAX 1017
 
 /* The primitives. These values travel, so a recording written today
  * reads the same tomorrow: a number here is never reused or shifted. */
@@ -96,6 +112,22 @@ typedef enum {
     SCN_PANEL_TIMER_DOWN = 0,
     SCN_PANEL_TIMER_UP   = 1
 } ScnPanelTimerMode;
+
+/* A map marker's shape. SQUARE marks a map square, FOLLOW rides a
+ * player slot, and CLEAR removes the id the event names. These sit
+ * beside the panel's own enums because a frontend draws both from the
+ * same public header and neither needs the sim. */
+typedef enum {
+    SCN_MARKER_KIND_SQUARE = 0,
+    SCN_MARKER_KIND_FOLLOW = 1,
+    SCN_MARKER_KIND_CLEAR  = 2
+} ScnMarkerKind;
+
+/* Whose score a scenario score row is: one player's, or one team's. */
+typedef enum {
+    SCN_SCORE_KIND_PLAYER = 0,
+    SCN_SCORE_KIND_TEAM   = 1
+} ScnScoreKind;
 
 /* The byte layout.
  *

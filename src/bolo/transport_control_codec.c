@@ -2754,6 +2754,194 @@ static bool decodeChannelResetBody(const uint8_t *buf, size_t len,
 }
 
 /* ================================================================
+ * The four a scenario presents with. Each is body-only on
+ * CHANNEL_CONTROL, as CTRL_ENTITY_SYNC and CTRL_SIM_RULES are: no
+ * full-packet wrapper, no PACKET_* type, so each registers in the
+ * body tables and not in s_encoders.
+ *
+ * destTeam and destPlayer do not travel. They are recipient filters
+ * read by udpClientDeliverControl before the encoder is reached, so
+ * an event that arrives at a client is one addressed to it; every
+ * decoder here sets destPlayer = 0xFF for the same reason
+ * decodeServerTextBody does — 0 is a real slot, and a field a decoder
+ * leaves alone is a zero on every wire client.
+ * ================================================================ */
+
+/* CTRL_SCN_PANEL body: [panel 1][len 2 BE][bytes × len]. */
+
+/* recipient: safe — ignored. The list is the same for everyone it
+ * reaches; who reaches it is settled before the encoder is called. */
+static EncodeResult encodeScnPanelBody(const ControlEvent *evt,
+                                       const struct UdpServerClient *recipient,
+                                       uint8_t *buf, size_t bufCap,
+                                       size_t *outLen) {
+    size_t len;
+    size_t needed;
+    (void)recipient;
+    len = evt->u.scnPanel.len;
+    if (len > SCN_PANEL_MAX) return ENCODE_OVERFLOW;
+    needed = 3 + len;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.scnPanel.panel;
+    packU16(buf + 1, (uint16_t)len);
+    if (len > 0) {
+        memcpy(buf + 3, evt->u.scnPanel.bytes, len);
+    }
+    *outLen = needed;
+    return ENCODE_OK;
+}
+
+static bool decodeScnPanelBody(const uint8_t *buf, size_t len,
+                               ControlEvent *outEvt) {
+    size_t listLen;
+    if (buf == NULL || outEvt == NULL) return false;
+    if (len < 3) return false;
+    listLen = unpackU16(buf + 1);
+    if (listLen > SCN_PANEL_MAX) return false;
+    /* The declared length has to be exactly what follows it: a body
+     * that says more than it carries would read past the buffer, and
+     * one that says less is not the list that was sent. */
+    if (len != 3 + listLen) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_SCN_PANEL;
+    outEvt->u.scnPanel.destPlayer = 0xFF;
+    outEvt->u.scnPanel.panel = buf[0];
+    outEvt->u.scnPanel.len = (uint16_t)listLen;
+    if (listLen > 0) {
+        memcpy(outEvt->u.scnPanel.bytes, buf + 3, listLen);
+    }
+    return true;
+}
+
+/* CTRL_SCN_SCORE body: [kind 1][target 1][score 4 BE signed][labelLen 1]
+ * [label × labelLen]. */
+
+/* recipient: safe — ignored. A scenario's scores are public. */
+static EncodeResult encodeScnScoreBody(const ControlEvent *evt,
+                                       const struct UdpServerClient *recipient,
+                                       uint8_t *buf, size_t bufCap,
+                                       size_t *outLen) {
+    size_t labelLen;
+    size_t needed;
+    (void)recipient;
+    labelLen = strnlen(evt->u.scnScore.label, sizeof(evt->u.scnScore.label));
+    needed = 7 + labelLen;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.scnScore.kind;
+    buf[1] = evt->u.scnScore.target;
+    packU32(buf + 2, (uint32_t)evt->u.scnScore.score);
+    buf[6] = (uint8_t)labelLen;
+    if (labelLen > 0) {
+        memcpy(buf + 7, evt->u.scnScore.label, labelLen);
+    }
+    *outLen = needed;
+    return ENCODE_OK;
+}
+
+static bool decodeScnScoreBody(const uint8_t *buf, size_t len,
+                               ControlEvent *outEvt) {
+    size_t labelLen;
+    if (buf == NULL || outEvt == NULL) return false;
+    if (len < 7) return false;
+    labelLen = buf[6];
+    /* label[] has no room for a terminator past its last byte, so a
+     * length that fills it exactly is already one too many. */
+    if (labelLen >= sizeof(outEvt->u.scnScore.label)) return false;
+    if (len != 7 + labelLen) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_SCN_SCORE;
+    outEvt->u.scnScore.kind = buf[0];
+    outEvt->u.scnScore.target = buf[1];
+    outEvt->u.scnScore.score = (int32_t)unpackU32(buf + 2);
+    if (labelLen > 0) {
+        memcpy(outEvt->u.scnScore.label, buf + 7, labelLen);
+    }
+    outEvt->u.scnScore.label[labelLen] = '\0';
+    return true;
+}
+
+/* CTRL_SCN_ANNOUNCE body: [ticks 2 BE][text, the rest of the body].
+ * The text carries no terminator on the wire, the way the chat bodies
+ * do it; the decoder terminates what it stores. */
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeScnAnnounceBody(const ControlEvent *evt,
+                                          const struct UdpServerClient *recipient,
+                                          uint8_t *buf, size_t bufCap,
+                                          size_t *outLen) {
+    size_t textLen;
+    size_t needed;
+    (void)recipient;
+    textLen = strnlen(evt->u.scnAnnounce.text, sizeof(evt->u.scnAnnounce.text));
+    if (textLen > PACKET_MAX_CHAT_MESSAGE) textLen = PACKET_MAX_CHAT_MESSAGE;
+    needed = 2 + textLen;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    packU16(buf, evt->u.scnAnnounce.ticks);
+    if (textLen > 0) {
+        memcpy(buf + 2, evt->u.scnAnnounce.text, textLen);
+    }
+    *outLen = needed;
+    return ENCODE_OK;
+}
+
+static bool decodeScnAnnounceBody(const uint8_t *buf, size_t len,
+                                  ControlEvent *outEvt) {
+    size_t textLen;
+    if (buf == NULL || outEvt == NULL) return false;
+    if (len < 2) return false;
+    textLen = len - 2;
+    /* A body longer than the field is refused rather than truncated: a
+     * cut announcement is a different line from the one the scenario
+     * wrote, and the sender had the same cap to measure against. */
+    if (textLen >= sizeof(outEvt->u.scnAnnounce.text)) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_SCN_ANNOUNCE;
+    outEvt->u.scnAnnounce.destPlayer = 0xFF;
+    outEvt->u.scnAnnounce.ticks = unpackU16(buf);
+    if (textLen > 0) {
+        memcpy(outEvt->u.scnAnnounce.text, buf + 2, textLen);
+    }
+    outEvt->u.scnAnnounce.text[textLen] = '\0';
+    return true;
+}
+
+/* CTRL_SCN_MARKER body: [id 1][kind 1][x 1][y 1][slot 1][colour 1]. */
+#define SCN_MARKER_BODY_LEN 6
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeScnMarkerBody(const ControlEvent *evt,
+                                        const struct UdpServerClient *recipient,
+                                        uint8_t *buf, size_t bufCap,
+                                        size_t *outLen) {
+    (void)recipient;
+    if (bufCap < SCN_MARKER_BODY_LEN) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.scnMarker.id;
+    buf[1] = evt->u.scnMarker.kind;
+    buf[2] = evt->u.scnMarker.x;
+    buf[3] = evt->u.scnMarker.y;
+    buf[4] = evt->u.scnMarker.slot;
+    buf[5] = evt->u.scnMarker.colour;
+    *outLen = SCN_MARKER_BODY_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeScnMarkerBody(const uint8_t *buf, size_t len,
+                                ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL) return false;
+    if (len != SCN_MARKER_BODY_LEN) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_SCN_MARKER;
+    outEvt->u.scnMarker.destPlayer = 0xFF;
+    outEvt->u.scnMarker.id = buf[0];
+    outEvt->u.scnMarker.kind = buf[1];
+    outEvt->u.scnMarker.x = buf[2];
+    outEvt->u.scnMarker.y = buf[3];
+    outEvt->u.scnMarker.slot = buf[4];
+    outEvt->u.scnMarker.colour = buf[5];
+    return true;
+}
+
+/* ================================================================
  * Encoder lookup — indexed by ControlEventType. Variants without
  * a wire form leave NULL slots (CTRL_MAP_DOWNLOAD_COMPLETE is
  * client-internal — published by the client on its own bus when
@@ -2847,6 +3035,10 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_ENTITY_CHANGE]         = encodeEntityChangeBody,
     [CTRL_ENTITY_SYNC]           = encodeEntitySyncBody,
     [CTRL_SIM_RULES]             = encodeSimRulesBody,
+    [CTRL_SCN_PANEL]             = encodeScnPanelBody,
+    [CTRL_SCN_SCORE]             = encodeScnScoreBody,
+    [CTRL_SCN_ANNOUNCE]          = encodeScnAnnounceBody,
+    [CTRL_SCN_MARKER]            = encodeScnMarkerBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -2893,6 +3085,10 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_ENTITY_CHANGE]         = decodeEntityChangeBody,
     [CTRL_ENTITY_SYNC]           = decodeEntitySyncBody,
     [CTRL_SIM_RULES]             = decodeSimRulesBody,
+    [CTRL_SCN_PANEL]             = decodeScnPanelBody,
+    [CTRL_SCN_SCORE]             = decodeScnScoreBody,
+    [CTRL_SCN_ANNOUNCE]          = decodeScnAnnounceBody,
+    [CTRL_SCN_MARKER]            = decodeScnMarkerBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {

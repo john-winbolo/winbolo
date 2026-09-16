@@ -50,6 +50,39 @@
 #include "../common/wb_log.h"
 #include "../common/mp_diag_log.h"
 
+/* The recipient test the three targeted CTRL_SCN_* events share with
+ * CTRL_SERVER_TEXT: destTeam 0 means everyone, destPlayer 0xFF means
+ * everyone. In-process subscribers (SP-host, bots) receive every
+ * publish, so the comparison has to happen here; the wire path was
+ * already filtered by udpClientDeliverControl and arrives addressed to
+ * this client. 0 is a real slot, which is why 0xFF rather than 0 is
+ * what means "everybody". */
+static bool clientSimScnAddressedToMe(const ClientSim *cs, uint8_t destTeam,
+                                      uint8_t destPlayer) {
+    BYTE myPN = clientSimGetMyPlayerNum(cs);
+    if (destTeam != 0) {
+        const ClientLobbySlot *ms = clientSimGetLobbySlot(cs, myPN);
+        if (ms == NULL || ms->teamNumber != destTeam) return false;
+    }
+    if (destPlayer != 0xFF && myPN != destPlayer) return false;
+    return true;
+}
+
+/* Drop everything a scenario was presenting. Called from the
+ * CTRL_GAME_PHASE_LOBBY arm, beside the rest of that reset: a panel,
+ * announcement, marker or score belongs to the round it was sent in. */
+static void clientSimScnClearPresentation(ClientSim *cs) {
+    memset(cs->scnPanels, 0, sizeof(cs->scnPanels));
+    memset(cs->scnPanelValid, 0, sizeof(cs->scnPanelValid));
+    cs->scnPanelRejects = 0;
+    cs->scnAnnounceText[0] = '\0';
+    cs->scnAnnounceTicks = 0;
+    cs->scnAnnounceArrivedTick = 0;
+    memset(cs->scnMarkers, 0, sizeof(cs->scnMarkers));
+    memset(cs->scnPlayerScores, 0, sizeof(cs->scnPlayerScores));
+    memset(cs->scnTeamScores, 0, sizeof(cs->scnTeamScores));
+}
+
 /* Localized lobby team label: the host-assigned team name, or "Team N"
  * when the team is unnamed (matching the lobby roster header). */
 static void clientSimLobbyTeamLabel(const ClientSim *cs, BYTE team,
@@ -887,6 +920,10 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * CTRL_LOBBY_MAP_CHANGE path, not here. Runs identically on SP,
          * host, and remote clients since it hangs off this one event. */
         clientSimResetWorld(cs);
+        /* And whatever the scenario was presenting over it: a panel,
+         * announcement, marker or score belongs to the round that has
+         * just ended, and the next one states its own. */
+        clientSimScnClearPresentation(cs);
         break;
     case CTRL_GAME_PHASE_COUNTDOWN:
         cs->netStat = netLobbyCountdown;
@@ -1359,6 +1396,89 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
            is the same question asked the other way round, and it is
            idempotent, so records already inside the new caps are untouched. */
         mapClampToRules(&cs->sim);
+        break;
+    }
+
+    case CTRL_SCN_PANEL: {
+        uint8_t panel = evt->u.scnPanel.panel;
+        if (!clientSimScnAddressedToMe(cs, evt->u.scnPanel.destTeam,
+                                       evt->u.scnPanel.destPlayer)) {
+            break;
+        }
+        if (panel >= SCN_PANEL_IDS) break;
+        /* Parsed straight into the stored list: scnPanelParse writes its
+           output only when it takes a list whole, so a list this client
+           cannot read leaves the panel showing exactly what it had. The
+           refusal is counted rather than logged per event — a scenario
+           sending a bad list usually sends it every time it updates. */
+        if (scnPanelParse(evt->u.scnPanel.bytes, evt->u.scnPanel.len,
+                          &cs->scnPanels[panel]) != SCN_PANEL_OK) {
+            cs->scnPanelRejects++;
+            break;
+        }
+        cs->scnPanelValid[panel] = true;
+        break;
+    }
+
+    case CTRL_SCN_SCORE: {
+        /* Broadcast, so no recipient test: target says whose score this
+           is, not who is meant to see it. */
+        ClientScnScore *row;
+        if (evt->u.scnScore.target >= MAX_TANKS) break;
+        if (evt->u.scnScore.kind == SCN_SCORE_KIND_PLAYER) {
+            row = &cs->scnPlayerScores[evt->u.scnScore.target];
+        } else if (evt->u.scnScore.kind == SCN_SCORE_KIND_TEAM) {
+            row = &cs->scnTeamScores[evt->u.scnScore.target];
+        } else {
+            break;   /* a kind this build does not keep a row for */
+        }
+        row->valid = true;
+        row->score = evt->u.scnScore.score;
+        memcpy(row->label, evt->u.scnScore.label, sizeof(row->label));
+        row->label[sizeof(row->label) - 1] = '\0';
+        break;
+    }
+
+    case CTRL_SCN_ANNOUNCE:
+        if (!clientSimScnAddressedToMe(cs, evt->u.scnAnnounce.destTeam,
+                                       evt->u.scnAnnounce.destPlayer)) {
+            break;
+        }
+        SDL_strlcpy(cs->scnAnnounceText, evt->u.scnAnnounce.text,
+                    sizeof(cs->scnAnnounceText));
+        cs->scnAnnounceTicks = evt->u.scnAnnounce.ticks;
+        /* The tick this client was last told about, so the drawer counts
+           the line down against the clock the scenario set it by rather
+           than against wall time. */
+        cs->scnAnnounceArrivedTick = cs->lastServerTick;
+        break;
+
+    case CTRL_SCN_MARKER: {
+        ClientScnMarker *m;
+        if (!clientSimScnAddressedToMe(cs, evt->u.scnMarker.destTeam,
+                                       evt->u.scnMarker.destPlayer)) {
+            break;
+        }
+        if (evt->u.scnMarker.id >= SCN_MARKERS_MAX) break;
+        m = &cs->scnMarkers[evt->u.scnMarker.id];
+        if (evt->u.scnMarker.kind == SCN_MARKER_KIND_CLEAR) {
+            memset(m, 0, sizeof(*m));   /* active false: the id is gone */
+            break;
+        }
+        if (evt->u.scnMarker.kind != SCN_MARKER_KIND_SQUARE &&
+            evt->u.scnMarker.kind != SCN_MARKER_KIND_FOLLOW) {
+            break;   /* a kind this build has no way to draw */
+        }
+        if (evt->u.scnMarker.kind == SCN_MARKER_KIND_FOLLOW &&
+            evt->u.scnMarker.slot >= MAX_TANKS) {
+            break;   /* nothing to follow */
+        }
+        m->active = true;
+        m->kind   = evt->u.scnMarker.kind;
+        m->x      = evt->u.scnMarker.x;
+        m->y      = evt->u.scnMarker.y;
+        m->slot   = evt->u.scnMarker.slot;
+        m->colour = evt->u.scnMarker.colour;
         break;
     }
     }

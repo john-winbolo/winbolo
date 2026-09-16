@@ -1545,6 +1545,10 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_panel_refuses_malformed",                run_scenario_panel_refuses_malformed                },
     { "scenario_panel_boundaries",                       run_scenario_panel_boundaries                       },
     { "scenario_panel_roundtrip",                        run_scenario_panel_roundtrip                        },
+    { "scn_presentation_codec_bodies",                   run_scn_presentation_codec_bodies                   },
+    { "scn_presentation_codec_refuses_short",            run_scn_presentation_codec_refuses_short            },
+    { "scn_presentation_decoder_sets_broadcast",         run_scn_presentation_decoder_sets_broadcast         },
+    { "scn_presentation_client_filters",                 run_scn_presentation_client_filters                 },
     { "bot_init_table_empty_when_none",          run_bot_init_table_empty_when_none          },
     { "bot_init_arg_text_to_table",              run_bot_init_arg_text_to_table              },
 #ifdef WB_NETDEBUG

@@ -353,6 +353,10 @@ static const char *logEventsTypeName(int type) {
     case CTRL_ENTITY_CHANGE:         return "CTRL_ENTITY_CHANGE";
     case CTRL_ENTITY_SYNC:           return "CTRL_ENTITY_SYNC";
     case CTRL_SIM_RULES:             return "CTRL_SIM_RULES";
+    case CTRL_SCN_PANEL:             return "CTRL_SCN_PANEL";
+    case CTRL_SCN_SCORE:             return "CTRL_SCN_SCORE";
+    case CTRL_SCN_ANNOUNCE:          return "CTRL_SCN_ANNOUNCE";
+    case CTRL_SCN_MARKER:            return "CTRL_SCN_MARKER";
     default:                         return NULL;
   }
 }

@@ -2202,6 +2202,39 @@ const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_
   return &cs->spectatorSlots[idx];
 }
 
+const ScnPanelList *clientSimGetScnPanel(const ClientSim *cs, uint8_t id) {
+  if (cs == NULL || id >= SCN_PANEL_IDS) return NULL;
+  if (!cs->scnPanelValid[id]) return NULL;
+  return &cs->scnPanels[id];
+}
+
+uint32_t clientSimGetScnPanelRejectCount(const ClientSim *cs) {
+  return cs ? cs->scnPanelRejects : 0;
+}
+
+const char *clientSimGetScnAnnounce(const ClientSim *cs, uint16_t *outTicks,
+                                    uint32_t *outArrivedTick) {
+  if (cs == NULL || cs->scnAnnounceText[0] == '\0') return NULL;
+  if (outTicks != NULL) *outTicks = cs->scnAnnounceTicks;
+  if (outArrivedTick != NULL) *outArrivedTick = cs->scnAnnounceArrivedTick;
+  return cs->scnAnnounceText;
+}
+
+const ClientScnMarker *clientSimGetScnMarker(const ClientSim *cs, uint8_t id) {
+  if (cs == NULL || id >= SCN_MARKERS_MAX) return NULL;
+  return &cs->scnMarkers[id];
+}
+
+const ClientScnScore *clientSimGetScnPlayerScore(const ClientSim *cs, BYTE slot) {
+  if (cs == NULL || slot >= MAX_TANKS) return NULL;
+  return &cs->scnPlayerScores[slot];
+}
+
+const ClientScnScore *clientSimGetScnTeamScore(const ClientSim *cs, BYTE team) {
+  if (cs == NULL || team >= MAX_TANKS) return NULL;
+  return &cs->scnTeamScores[team];
+}
+
 BYTE clientSimGetLobbyNumConnected(const ClientSim *cs) {
   if (cs == NULL) return 0;
   BYTE count = 0;

@@ -36,6 +36,7 @@
 #include "upload_policy.h" /* UploadPolicy in lobbySettings */
 #include "view_policy.h"   /* ViewPolicy / VIEW_CATEGORY_COUNT in lobbySettings */
 #include "server_voice_mode.h" /* ServerVoiceMode in lobbySettings */
+#include "scenario_panel.h" /* SCN_PANEL_MAX for the panel event's byte list */
 
 #ifndef LOBBY_TEAM_NAME_LEN
 #define LOBBY_TEAM_NAME_LEN 32
@@ -211,6 +212,24 @@ typedef enum {
      * transport_control_codec.c are indexed by it, so a new type goes
      * last rather than shifting the ones already there. */
     CTRL_LOBBY_BRAIN_DOCS_CHUNK,
+    /* The four a scenario presents with. Each is body-only on
+     * CHANNEL_CONTROL, as CTRL_ENTITY_SYNC and CTRL_SIM_RULES are:
+     * there is no full-packet wrapper and no PACKET_* type.
+     *
+     * The codecs are recipient-agnostic. Three of the four carry a
+     * destTeam/destPlayer pair that never travels; udpClientDeliverControl
+     * filters on it the way it filters CTRL_SERVER_TEXT, and
+     * client_sim_control.c applies the same test for in-process
+     * subscribers. CTRL_SCN_SCORE has no pair: it is broadcast, and its
+     * target says whose score it is, not who receives it.
+     *
+     * Appended at the END, like CTRL_LOBBY_BRAIN_DOCS_CHUNK above: the
+     * tables in transport_control_codec.c are indexed by this enum, so
+     * a new type goes last rather than shifting the ones already there. */
+    CTRL_SCN_PANEL,
+    CTRL_SCN_SCORE,
+    CTRL_SCN_ANNOUNCE,
+    CTRL_SCN_MARKER,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -815,6 +834,51 @@ typedef struct ControlEvent {
             CTRL_SIM_RULES_U32_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
             CTRL_SIM_RULES_F32_FIELDS(CTRL_SIM_RULES_FLT_MEMBER)
         } simRules;
+
+        /* CTRL_SCN_PANEL — one panel's display list, replacing whatever
+         * that panel held. An empty list clears it. The bytes are the
+         * primitives scenario_panel.h describes; nothing on this path
+         * parses them, because the arm validates a list on the way out
+         * and the drawer does on the way in. */
+        struct {
+            uint8_t  panel;      /* 0..3 */
+            uint16_t len;
+            uint8_t  bytes[SCN_PANEL_MAX];
+            uint8_t  destTeam;   /* 0 = everyone; 1..15 = only that team. Server-side
+                                    recipient filter; not sent on the wire. */
+            uint8_t  destPlayer; /* 0xFF = everyone; otherwise only that slot. Same,
+                                    and 0 is a real slot, so every producer — the
+                                    publishers and the body decoder — sets 0xFF. */
+        } scnPanel;
+
+        /* CTRL_SCN_SCORE — a scenario's own score for one slot or one
+         * team. Broadcast: target is whose score it is, not who
+         * receives it, so this variant carries no recipient pair. */
+        struct {
+            uint8_t kind;        /* a slot's score, or a team's */
+            uint8_t target;      /* the slot, or the team */
+            int32_t score;
+            char    label[16];
+        } scnScore;
+
+        /* CTRL_SCN_ANNOUNCE — a line drawn across the centre of the screen. */
+        struct {
+            char     text[PACKET_MAX_CHAT_MESSAGE + 1];
+            uint16_t ticks;      /* how long it stays up */
+            uint8_t  destTeam;
+            uint8_t  destPlayer;
+        } scnAnnounce;
+
+        /* CTRL_SCN_MARKER — a mark on the map, kept by id. */
+        struct {
+            uint8_t id;
+            uint8_t kind;        /* square, follow a player, or clear */
+            uint8_t x, y;        /* square kind */
+            uint8_t slot;        /* follow-player kind */
+            uint8_t colour;
+            uint8_t destTeam;
+            uint8_t destPlayer;
+        } scnMarker;
     } u;
 } ControlEvent;
 

@@ -2968,6 +2968,15 @@ int run_scenario_panel_refuses_malformed(void);
 int run_scenario_panel_boundaries(void);
 int run_scenario_panel_roundtrip(void);
 
+/* The four presentation control events (test_scenario_presentation_codec.c):
+ * their body codecs against hand-written bytes, the refusals a short or
+ * overrunning body gets, the broadcast recipient pair every decoder sets,
+ * and the in-process filter the client applies before it stores. */
+int run_scn_presentation_codec_bodies(void);
+int run_scn_presentation_codec_refuses_short(void);
+int run_scn_presentation_decoder_sets_broadcast(void);
+int run_scn_presentation_client_filters(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */

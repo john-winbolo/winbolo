@@ -1,0 +1,447 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*
+ * The four control events a scenario presents with: their body codecs
+ * and what a client keeps when one arrives.
+ *
+ * All four are delivered body-only (no full-packet wrapper, no PACKET_*
+ * type), so the functions are resolved through the body tables the live
+ * control path uses, the way CTRL_SIM_RULES is.
+ *
+ *   scn_presentation_codec_bodies — each body encoded from a filled
+ *       event and compared against bytes written out by hand, then
+ *       decoded from those same hand-written bytes and checked field by
+ *       field. The bytes are composed here rather than taken from the
+ *       encoder: a fixture that reads its own output back through the
+ *       codec under test passes whenever the two drift together.
+ *   scn_presentation_codec_refuses_short — a body one byte short of each
+ *       fixed part, a panel whose declared length overruns, an announce
+ *       longer than the field, and a score whose label length overruns.
+ *   scn_presentation_decoder_sets_broadcast — after each decode the
+ *       recipient pair reads as everyone, so a wire client is never
+ *       accidentally unicast to slot 0.
+ *   scn_presentation_client_filters — the in-process path: an event for
+ *       another team, and one for another slot, are not stored; the same
+ *       event addressed to everyone is.
+ */
+
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "global.h"
+#include "client_sim.h"
+#include "client_sim_control.h"
+#include "control_event.h"
+#include "scenario_panel.h"
+#include "transport_control_codec.h"
+#include "test_harness.h"
+
+/* ── Hand-written bodies ──────────────────────────────────────────── */
+
+/* CTRL_SCN_PANEL: [panel 1][len 2 BE][bytes × len].
+ * The list is one sprite primitive (opcode 5, x, y, tile) — four bytes,
+ * so the whole body is seven. */
+static const uint8_t kPanelBody[] = {
+    0x02,              /* panel 2 */
+    0x00, 0x04,        /* len 4, big-endian */
+    0x05, 0x0A, 0x0B, 0x20   /* sprite x=10 y=11 tile=32 */
+};
+
+/* CTRL_SCN_SCORE: [kind 1][target 1][score 4 BE signed][labelLen 1]
+ * [label × labelLen]. score is -2 as two's complement: 0xFFFFFFFE. */
+static const uint8_t kScoreBody[] = {
+    0x01,                          /* kind: team */
+    0x03,                          /* target: team 3 */
+    0xFF, 0xFF, 0xFF, 0xFE,        /* score -2 */
+    0x05,                          /* labelLen */
+    'W', 'a', 'v', 'e', 's'
+};
+
+/* CTRL_SCN_ANNOUNCE: [ticks 2 BE][text, the rest of the body].
+ * No terminator travels; the decoder terminates what it stores. */
+static const uint8_t kAnnounceBody[] = {
+    0x01, 0x2C,                    /* ticks 300 */
+    'G', 'o', '!'
+};
+
+/* CTRL_SCN_MARKER: [id 1][kind 1][x 1][y 1][slot 1][colour 1]. */
+static const uint8_t kMarkerBody[] = {
+    0x07,   /* id */
+    0x01,   /* kind: follow */
+    0x14,   /* x */
+    0x15,   /* y */
+    0x09,   /* slot */
+    0x05    /* colour: red */
+};
+
+/* Encode one event's body through the live body table and compare it
+ * against `want`. 0 on success, 1 on failure — callers return it. */
+static int encodesTo(const char *what, const ControlEvent *evt,
+                     const uint8_t *want, size_t wantLen) {
+    ControlEncodeBodyFn enc = transportControlCodecBodyEncoder(evt->type);
+    uint8_t buf[SCN_PANEL_MAX + 16];
+    size_t outLen = 0;
+
+    UT_ASSERT_MSG(enc != NULL, "%s: no body encoder registered", what);
+    memset(buf, 0xCD, sizeof(buf));
+    UT_ASSERT_MSG(enc(evt, NULL, buf, sizeof(buf), &outLen) == ENCODE_OK,
+                  "%s: encode refused", what);
+    UT_ASSERT_MSG(outLen == wantLen, "%s: wrote %u bytes, wanted %u", what,
+                  (unsigned)outLen, (unsigned)wantLen);
+    UT_ASSERT_MSG(memcmp(buf, want, wantLen) == 0, "%s: bytes differ", what);
+    return 0;
+}
+
+/* Decode a body through the live body table. */
+static bool decodeBody(ControlEventType type, const uint8_t *body, size_t len,
+                       ControlEvent *out) {
+    ControlDecodeBodyFn dec = transportControlCodecBodyDecoder(type);
+    if (dec == NULL) return false;
+    return dec(body, len, out);
+}
+
+int run_scn_presentation_codec_bodies(void) {
+    ControlEvent evt;
+    ControlEvent back;
+
+    /* ── panel ── */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SCN_PANEL;
+    evt.u.scnPanel.panel = 2;
+    evt.u.scnPanel.len = 4;
+    evt.u.scnPanel.bytes[0] = SCN_PANEL_OP_SPRITE;
+    evt.u.scnPanel.bytes[1] = 10;
+    evt.u.scnPanel.bytes[2] = 11;
+    evt.u.scnPanel.bytes[3] = 32;
+    /* Set on the event and deliberately absent from the bytes below:
+     * the recipient pair is a server-side filter and does not travel. */
+    evt.u.scnPanel.destTeam = 3;
+    evt.u.scnPanel.destPlayer = 5;
+    if (encodesTo("panel", &evt, kPanelBody, sizeof(kPanelBody))) return 1;
+
+    UT_ASSERT(decodeBody(CTRL_SCN_PANEL, kPanelBody, sizeof(kPanelBody), &back));
+    UT_ASSERT(back.type == CTRL_SCN_PANEL);
+    UT_ASSERT(back.u.scnPanel.panel == 2);
+    UT_ASSERT(back.u.scnPanel.len == 4);
+    UT_ASSERT(back.u.scnPanel.bytes[0] == SCN_PANEL_OP_SPRITE);
+    UT_ASSERT(back.u.scnPanel.bytes[1] == 10);
+    UT_ASSERT(back.u.scnPanel.bytes[2] == 11);
+    UT_ASSERT(back.u.scnPanel.bytes[3] == 32);
+
+    /* ── score ── */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SCN_SCORE;
+    evt.u.scnScore.kind = SCN_SCORE_KIND_TEAM;
+    evt.u.scnScore.target = 3;
+    evt.u.scnScore.score = -2;
+    memcpy(evt.u.scnScore.label, "Waves", 6);
+    if (encodesTo("score", &evt, kScoreBody, sizeof(kScoreBody))) return 1;
+
+    UT_ASSERT(decodeBody(CTRL_SCN_SCORE, kScoreBody, sizeof(kScoreBody), &back));
+    UT_ASSERT(back.type == CTRL_SCN_SCORE);
+    UT_ASSERT(back.u.scnScore.kind == SCN_SCORE_KIND_TEAM);
+    UT_ASSERT(back.u.scnScore.target == 3);
+    UT_ASSERT(back.u.scnScore.score == -2);
+    UT_ASSERT(strcmp(back.u.scnScore.label, "Waves") == 0);
+
+    /* ── announce ── */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SCN_ANNOUNCE;
+    evt.u.scnAnnounce.ticks = 300;
+    memcpy(evt.u.scnAnnounce.text, "Go!", 4);
+    evt.u.scnAnnounce.destTeam = 1;
+    evt.u.scnAnnounce.destPlayer = 2;
+    if (encodesTo("announce", &evt, kAnnounceBody, sizeof(kAnnounceBody))) return 1;
+
+    UT_ASSERT(decodeBody(CTRL_SCN_ANNOUNCE, kAnnounceBody,
+                         sizeof(kAnnounceBody), &back));
+    UT_ASSERT(back.type == CTRL_SCN_ANNOUNCE);
+    UT_ASSERT(back.u.scnAnnounce.ticks == 300);
+    UT_ASSERT(strcmp(back.u.scnAnnounce.text, "Go!") == 0);
+
+    /* ── marker ── */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SCN_MARKER;
+    evt.u.scnMarker.id = 7;
+    evt.u.scnMarker.kind = SCN_MARKER_KIND_FOLLOW;
+    evt.u.scnMarker.x = 20;
+    evt.u.scnMarker.y = 21;
+    evt.u.scnMarker.slot = 9;
+    evt.u.scnMarker.colour = SCN_PANEL_COLOUR_RED;
+    evt.u.scnMarker.destTeam = 4;
+    evt.u.scnMarker.destPlayer = 6;
+    if (encodesTo("marker", &evt, kMarkerBody, sizeof(kMarkerBody))) return 1;
+
+    UT_ASSERT(decodeBody(CTRL_SCN_MARKER, kMarkerBody, sizeof(kMarkerBody),
+                         &back));
+    UT_ASSERT(back.type == CTRL_SCN_MARKER);
+    UT_ASSERT(back.u.scnMarker.id == 7);
+    UT_ASSERT(back.u.scnMarker.kind == SCN_MARKER_KIND_FOLLOW);
+    UT_ASSERT(back.u.scnMarker.x == 20);
+    UT_ASSERT(back.u.scnMarker.y == 21);
+    UT_ASSERT(back.u.scnMarker.slot == 9);
+    UT_ASSERT(back.u.scnMarker.colour == SCN_PANEL_COLOUR_RED);
+
+    /* None of the four has a full-packet encoder: they ride
+     * CHANNEL_CONTROL body-only, as CTRL_SIM_RULES does. */
+    UT_ASSERT(transportControlCodecEncoder(CTRL_SCN_PANEL) == NULL);
+    UT_ASSERT(transportControlCodecEncoder(CTRL_SCN_SCORE) == NULL);
+    UT_ASSERT(transportControlCodecEncoder(CTRL_SCN_ANNOUNCE) == NULL);
+    UT_ASSERT(transportControlCodecEncoder(CTRL_SCN_MARKER) == NULL);
+
+    return 0;
+}
+
+/* A body the decoder must refuse. The event is pre-filled with a
+ * sentinel and checked afterwards: a refusal writes nothing. */
+static int refusesBody(const char *what, ControlEventType type,
+                       const uint8_t *body, size_t len) {
+    ControlEvent evt;
+    memset(&evt, 0xAB, sizeof(evt));
+    UT_ASSERT_MSG(!decodeBody(type, body, len, &evt), "%s: was accepted", what);
+    UT_ASSERT_MSG(evt.u.scnPanel.panel == 0xAB,
+                  "%s: refusal wrote into the event", what);
+    return 0;
+}
+
+int run_scn_presentation_codec_refuses_short(void) {
+    uint8_t buf[SCN_PANEL_MAX + 16];
+    size_t i;
+
+    /* One byte short of each fixed part. */
+    if (refusesBody("panel short header", CTRL_SCN_PANEL, kPanelBody, 2)) return 1;
+    if (refusesBody("score short header", CTRL_SCN_SCORE, kScoreBody, 6)) return 1;
+    if (refusesBody("announce short header", CTRL_SCN_ANNOUNCE,
+                    kAnnounceBody, 1)) return 1;
+    if (refusesBody("marker short body", CTRL_SCN_MARKER, kMarkerBody,
+                    sizeof(kMarkerBody) - 1)) return 1;
+    /* And a marker one byte long, which is fixed-length both ways. */
+    if (refusesBody("marker long body", CTRL_SCN_MARKER, kMarkerBody,
+                    sizeof(kMarkerBody) + 1)) return 1;
+
+    /* A panel declaring more bytes than follow it. */
+    memcpy(buf, kPanelBody, sizeof(kPanelBody));
+    buf[1] = 0x00;
+    buf[2] = 0x40;   /* says 64 bytes; four follow */
+    if (refusesBody("panel len overruns", CTRL_SCN_PANEL, buf,
+                    sizeof(kPanelBody))) return 1;
+
+    /* And one declaring more than a list may ever hold. */
+    buf[1] = 0xFF;
+    buf[2] = 0xFF;
+    if (refusesBody("panel len past the cap", CTRL_SCN_PANEL, buf,
+                    sizeof(kPanelBody))) return 1;
+
+    /* An announce whose text fills the field exactly has no room left
+     * for the terminator the decoder adds, so it is one too many. */
+    buf[0] = 0x00;
+    buf[1] = 0x01;
+    for (i = 0; i < (size_t)PACKET_MAX_CHAT_MESSAGE + 1; i++) {
+        buf[2 + i] = 'x';
+    }
+    if (refusesBody("announce text past the field", CTRL_SCN_ANNOUNCE, buf,
+                    2 + (size_t)PACKET_MAX_CHAT_MESSAGE + 1)) return 1;
+
+    /* A score label longer than label[] holds. */
+    memcpy(buf, kScoreBody, 7);
+    buf[6] = 16;   /* label[] is 16 bytes, so 16 leaves no terminator */
+    for (i = 0; i < 16; i++) {
+        buf[7 + i] = 'y';
+    }
+    if (refusesBody("score label past the field", CTRL_SCN_SCORE, buf, 7 + 16))
+        return 1;
+
+    /* A score whose declared label length disagrees with the body. */
+    buf[6] = 5;
+    if (refusesBody("score label disagrees", CTRL_SCN_SCORE, buf, 7 + 16))
+        return 1;
+
+    return 0;
+}
+
+int run_scn_presentation_decoder_sets_broadcast(void) {
+    ControlEvent evt;
+
+    /* 0 is a real slot and 0 is a real team, so a decoder that left the
+     * pair alone would hand every wire client an event addressed to
+     * slot 0. Each decoder sets 0xFF for the same reason
+     * decodeServerTextBody does. */
+    memset(&evt, 0xAB, sizeof(evt));
+    UT_ASSERT(decodeBody(CTRL_SCN_PANEL, kPanelBody, sizeof(kPanelBody), &evt));
+    UT_ASSERT(evt.u.scnPanel.destPlayer == 0xFF);
+    UT_ASSERT(evt.u.scnPanel.destTeam == 0);
+
+    memset(&evt, 0xAB, sizeof(evt));
+    UT_ASSERT(decodeBody(CTRL_SCN_ANNOUNCE, kAnnounceBody,
+                         sizeof(kAnnounceBody), &evt));
+    UT_ASSERT(evt.u.scnAnnounce.destPlayer == 0xFF);
+    UT_ASSERT(evt.u.scnAnnounce.destTeam == 0);
+
+    memset(&evt, 0xAB, sizeof(evt));
+    UT_ASSERT(decodeBody(CTRL_SCN_MARKER, kMarkerBody, sizeof(kMarkerBody),
+                         &evt));
+    UT_ASSERT(evt.u.scnMarker.destPlayer == 0xFF);
+    UT_ASSERT(evt.u.scnMarker.destTeam == 0);
+
+    /* CTRL_SCN_SCORE carries no pair at all — it is broadcast, and its
+     * target says whose score it is rather than who receives it. */
+    memset(&evt, 0xAB, sizeof(evt));
+    UT_ASSERT(decodeBody(CTRL_SCN_SCORE, kScoreBody, sizeof(kScoreBody), &evt));
+    UT_ASSERT(evt.u.scnScore.target == 3);
+
+    return 0;
+}
+
+/* ── The in-process filter ────────────────────────────────────────── */
+
+/* A ClientSim holding slot `me` on team `team`. The filter reads the
+ * team off the lobby slot mirror, so the slot is set the way the server
+ * would set it. */
+static ClientSim *scnClientOnTeam(BYTE me, uint8_t team) {
+    ControlEvent evt;
+    ClientSim *cs = clientSimAlloc();
+    if (cs == NULL) return NULL;
+    clientSimCreate(cs);
+    clientSimSetPlayerNum(cs, me);
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_LOBBY_SLOT;
+    evt.u.lobbySlot.playerNum = me;
+    evt.u.lobbySlot.slot.connected = true;
+    evt.u.lobbySlot.slot.teamNumber = team;
+    clientSimApplyControl(cs, &evt);
+    return cs;
+}
+
+/* A panel event for panel 0 holding one sprite, addressed as asked. */
+static void scnPanelEventFor(ControlEvent *evt, uint8_t destTeam,
+                             uint8_t destPlayer) {
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_SCN_PANEL;
+    evt->u.scnPanel.panel = 0;
+    evt->u.scnPanel.len = 4;
+    evt->u.scnPanel.bytes[0] = SCN_PANEL_OP_SPRITE;
+    evt->u.scnPanel.bytes[1] = 1;
+    evt->u.scnPanel.bytes[2] = 2;
+    evt->u.scnPanel.bytes[3] = 3;
+    evt->u.scnPanel.destTeam = destTeam;
+    evt->u.scnPanel.destPlayer = destPlayer;
+}
+
+int run_scn_presentation_client_filters(void) {
+    ControlEvent evt;
+    ClientSim *cs;
+
+    /* This client is slot 2 on team 1. */
+    cs = scnClientOnTeam(2, 1);
+    UT_ASSERT(cs != NULL);
+    UT_ASSERT(clientSimGetScnPanel(cs, 0) == NULL);
+
+    /* Addressed to another team: not stored. The stored list is what is
+     * read, not a queue depth — nothing drains it. */
+    scnPanelEventFor(&evt, 2, 0xFF);
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT_MSG(clientSimGetScnPanel(cs, 0) == NULL,
+                  "a panel for another team was stored");
+
+    /* Addressed to another slot: not stored. */
+    scnPanelEventFor(&evt, 0, 5);
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT_MSG(clientSimGetScnPanel(cs, 0) == NULL,
+                  "a panel for another slot was stored");
+
+    /* Addressed to everyone: stored. */
+    scnPanelEventFor(&evt, 0, 0xFF);
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT_MSG(clientSimGetScnPanel(cs, 0) != NULL,
+                  "a panel for everyone was dropped");
+    UT_ASSERT(clientSimGetScnPanel(cs, 0)->count == 1);
+    UT_ASSERT(clientSimGetScnPanel(cs, 0)->items[0].op == SCN_PANEL_OP_SPRITE);
+    UT_ASSERT(clientSimGetScnPanel(cs, 0)->items[0].u.sprite.tile == 3);
+
+    /* Addressed to this client's own team and own slot: also stored. */
+    scnPanelEventFor(&evt, 1, 2);
+    evt.u.scnPanel.bytes[3] = 4;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnPanel(cs, 0) != NULL);
+    UT_ASSERT(clientSimGetScnPanel(cs, 0)->items[0].u.sprite.tile == 4);
+
+    /* A list the parser refuses is dropped and counted; the panel keeps
+     * what it was showing. Opcode 0 is not a primitive. */
+    UT_ASSERT(clientSimGetScnPanelRejectCount(cs) == 0);
+    scnPanelEventFor(&evt, 0, 0xFF);
+    evt.u.scnPanel.bytes[0] = 0;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnPanelRejectCount(cs) == 1);
+    UT_ASSERT(clientSimGetScnPanel(cs, 0) != NULL);
+    UT_ASSERT(clientSimGetScnPanel(cs, 0)->items[0].u.sprite.tile == 4);
+
+    /* An announcement and a marker take the same test. */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SCN_ANNOUNCE;
+    evt.u.scnAnnounce.ticks = 100;
+    memcpy(evt.u.scnAnnounce.text, "hidden", 7);
+    evt.u.scnAnnounce.destTeam = 2;      /* not this client's team */
+    evt.u.scnAnnounce.destPlayer = 0xFF;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnAnnounce(cs, NULL, NULL) == NULL);
+
+    evt.u.scnAnnounce.destTeam = 0;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnAnnounce(cs, NULL, NULL) != NULL);
+    UT_ASSERT(strcmp(clientSimGetScnAnnounce(cs, NULL, NULL), "hidden") == 0);
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SCN_MARKER;
+    evt.u.scnMarker.id = 3;
+    evt.u.scnMarker.kind = SCN_MARKER_KIND_SQUARE;
+    evt.u.scnMarker.x = 8;
+    evt.u.scnMarker.y = 9;
+    evt.u.scnMarker.destTeam = 0;
+    evt.u.scnMarker.destPlayer = 7;      /* not this client's slot */
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnMarker(cs, 3) != NULL);
+    UT_ASSERT(!clientSimGetScnMarker(cs, 3)->active);
+
+    evt.u.scnMarker.destPlayer = 0xFF;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnMarker(cs, 3)->active);
+    UT_ASSERT(clientSimGetScnMarker(cs, 3)->x == 8);
+    UT_ASSERT(clientSimGetScnMarker(cs, 3)->y == 9);
+
+    /* CLEAR removes the id rather than storing a third kind. */
+    evt.u.scnMarker.kind = SCN_MARKER_KIND_CLEAR;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(!clientSimGetScnMarker(cs, 3)->active);
+
+    /* A score is broadcast: it is kept whatever team this client is on. */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SCN_SCORE;
+    evt.u.scnScore.kind = SCN_SCORE_KIND_TEAM;
+    evt.u.scnScore.target = 2;           /* not this client's team */
+    evt.u.scnScore.score = 42;
+    memcpy(evt.u.scnScore.label, "Kills", 6);
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnTeamScore(cs, 2) != NULL);
+    UT_ASSERT(clientSimGetScnTeamScore(cs, 2)->valid);
+    UT_ASSERT(clientSimGetScnTeamScore(cs, 2)->score == 42);
+    UT_ASSERT(strcmp(clientSimGetScnTeamScore(cs, 2)->label, "Kills") == 0);
+    UT_ASSERT(!clientSimGetScnPlayerScore(cs, 2)->valid);
+
+    /* The return to lobby drops all of it. */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_GAME_PHASE_LOBBY;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT(clientSimGetScnPanel(cs, 0) == NULL);
+    UT_ASSERT(clientSimGetScnAnnounce(cs, NULL, NULL) == NULL);
+    UT_ASSERT(!clientSimGetScnMarker(cs, 3)->active);
+    UT_ASSERT(!clientSimGetScnTeamScore(cs, 2)->valid);
+    UT_ASSERT(clientSimGetScnPanelRejectCount(cs) == 0);
+
+    clientSimDestroy(cs);
+    return 0;
+}
