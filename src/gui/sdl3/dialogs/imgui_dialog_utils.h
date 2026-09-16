@@ -963,20 +963,20 @@ static inline bool dialogHandleGamepadCancelEvent(SDL_Window *window, SDL_Event 
  * when it returns true.
  *
  * Cmd+Q (SDL_EVENT_QUIT), Alt+F4 and the window's close box all mean the
- * application should end, so they are recorded with windowSetQuitting() and
+ * application should end, so they are handed to the host's quit handler and
  * the front end shuts down instead of dropping back a screen.  A B press is
  * a cancel and is left alone: it arrives as the close request
  * dialogHandleGamepadCancelEvent forged, marked as its own. */
-extern "C" void windowSetQuitting(void);  /* winbolo.c */
+extern "C" void dialogRequestQuit(void);  /* dialog_quit.cpp */
 static inline bool dialogHandleQuitEvent(SDL_Window *window, const SDL_Event *ev) {
     if (!ev) return false;
     if (ev->type == SDL_EVENT_QUIT) {
-        windowSetQuitting();
+        dialogRequestQuit();
         return true;
     }
     if (ev->type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && window &&
         ev->window.windowID == SDL_GetWindowID(window)) {
-        if (ev->window.data1 != DIALOG_CLOSE_IS_GAMEPAD_CANCEL) windowSetQuitting();
+        if (ev->window.data1 != DIALOG_CLOSE_IS_GAMEPAD_CANCEL) dialogRequestQuit();
         return true;
     }
     return false;

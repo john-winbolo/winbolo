@@ -102,6 +102,7 @@ void logViewerRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   const char *logPath, bool fromMainMenu);
 void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *renderer,
                             uint8_t *zipData, size_t zipLen, bool fromMainMenu);
+bool logViewerAppQuitRequested(void);
 bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   void *cs, const char *serverHost, uint16_t serverPort);
 
@@ -1218,6 +1219,10 @@ static bool gameFrontDialogs(void) {
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
     case openMapEditor:
       mapEditorRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), NULL, true);
+      /* The editor runs its own loop in WinBolo's window, so a quit taken
+       * there stops with it.  Leaving the editor comes back to the welcome
+       * screen; quitting carries on out. */
+      if (mapEditorAppQuitRequested()) windowSetQuitting();
       dlgState = openWelcome;
       break;
     case openLogViewer: {
@@ -1241,6 +1246,8 @@ static bool gameFrontDialogs(void) {
       default:
         break;
       }
+      /* Same as the editor above: the viewer owns the loop while it is up. */
+      if (logViewerAppQuitRequested()) windowSetQuitting();
       dlgState = openWelcome;
       break;
     }

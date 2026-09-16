@@ -1006,8 +1006,29 @@ static void lvHostRenderFrame(const char *overlay) {
  * Takes ownership of the event loop until the user exits.
  * Window and renderer are borrowed, not owned.
  * -------------------------------------------------------------------------- */
+/* The viewer ends its loop on SDL_EVENT_QUIT, and both "Return to main menu"
+ * and Quit raise one — the first means go back to WinBolo, the second means
+ * the application is finished.  Quit says so here on its way past, and the
+ * caller reads it with logViewerAppQuitRequested() once the run returns. */
+static bool s_appQuitRequested = FALSE;
+
+void logViewerRequestAppQuit(void) {
+    SDL_Event quitEvent;
+    s_appQuitRequested = TRUE;
+    SDL_zero(quitEvent);
+    quitEvent.type = SDL_EVENT_QUIT;
+    SDL_PushEvent(&quitEvent);
+}
+
+bool logViewerAppQuitRequested(void) {
+    return s_appQuitRequested;
+}
+
 void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
                   const char *logPath, bool fromMainMenu) {
+    /* A quit belongs to the run that saw it — never to the next one. */
+    s_appQuitRequested = FALSE;
+
     /* Bring up the decoder, platform layer, draw/ImGui/sound and preferences,
      * and size the screen to the window (shared with spectatorRun). */
     if (lvHostSetup(window, renderer, fromMainMenu) == FALSE) {
@@ -1081,6 +1102,12 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
                         lv_drawZoomOut(mx, my);
                     }
                 }
+            }
+            /* Embedded, this is WinBolo's window the viewer is drawing into;
+             * a close request meant for anything else is not ours. */
+            if (sdlEvent.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
+                sdlEvent.window.windowID == SDL_GetWindowID(g_lv->window)) {
+                logViewerRequestAppQuit();
             }
             if (sdlEvent.type == SDL_EVENT_QUIT) {
                 g_lv->quit = TRUE;
@@ -1263,6 +1290,12 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
             lv_imgui_context_handle_event(&sdlEvent);
             /* Esc is the back affordance: leave the spectator view (including
              * a stalled "connection lost" overlay) and return to the caller. */
+            /* Embedded, this is WinBolo's window the viewer is drawing into;
+             * a close request meant for anything else is not ours. */
+            if (sdlEvent.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
+                sdlEvent.window.windowID == SDL_GetWindowID(g_lv->window)) {
+                logViewerRequestAppQuit();
+            }
             if (sdlEvent.type == SDL_EVENT_QUIT ||
                 (sdlEvent.type == SDL_EVENT_KEY_DOWN &&
                  sdlEvent.key.key == SDLK_ESCAPE)) {
@@ -1446,6 +1479,12 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
              * controller B-button arms it through the same entry point. The
              * game-view key handler above leaves Esc unconsumed, so it falls
              * through here. */
+            /* Embedded, this is WinBolo's window the viewer is drawing into;
+             * a close request meant for anything else is not ours. */
+            if (sdlEvent.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
+                sdlEvent.window.windowID == SDL_GetWindowID(g_lv->window)) {
+                logViewerRequestAppQuit();
+            }
             if (sdlEvent.type == SDL_EVENT_QUIT) {
                 g_lv->quit = TRUE;
                 break;

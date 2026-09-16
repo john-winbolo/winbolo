@@ -209,6 +209,15 @@ typedef struct LogViewerState {
 void logViewerRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   const char *logPath, bool fromMainMenu);
 
+/* Ask for the whole application to end, not just this viewer, and break the
+ * loop that is running.  Wired to Quit; "Return to main menu" pushes the
+ * plain quit event instead, which only ends the viewer. */
+void logViewerRequestAppQuit(void);
+
+/* Did the run that just returned end because the player quit?  Only the
+ * embedded caller asks; it hands the answer to windowSetQuitting(). */
+bool logViewerAppQuitRequested(void);
+
 /* Entry point for loading from an in-memory zip buffer (mobile).
  * Takes ownership of zipData. */
 void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *renderer,

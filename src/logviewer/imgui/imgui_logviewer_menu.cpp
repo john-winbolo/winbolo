@@ -141,7 +141,7 @@ void lvMenuRender(struct LogViewerState *lv) {
             }
         } else {
             if (ImGui::Button("Exit", btnSize)) {
-                push_quit();
+                logViewerRequestAppQuit();
                 ImGui::CloseCurrentPopup();
                 s_open = false;
             }

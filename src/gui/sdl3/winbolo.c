@@ -355,6 +355,12 @@ int main(int argc, char *argv[]) {
    * Process exit reclaims it; no matching cleanup needed. */
   bolo_net_init();
 
+  /* Every dialog runs its own event loop; this is what a quit seen in one of
+   * them does.  Registered rather than called directly because the same
+   * dialogs are linked into the standalone Log Viewer and Map Editor, which
+   * have no main loop to end. */
+  dialogSetQuitHandler(windowSetQuitting);
+
   /* Steam launches a "join game" / "connect to server" as a fresh process
    * with the rich-presence connect string on the command line:
    *     winbolo +connect host:port
