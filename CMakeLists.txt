@@ -864,6 +864,7 @@ set(IOS_BOLO_SOURCES
 # minimal feature set.
 add_subdirectory(src/bolo)
 add_subdirectory(src/server)
+add_subdirectory(src/scenario_io)
 add_subdirectory(src/scenario)
 add_subdirectory(brains)
 
@@ -1466,6 +1467,7 @@ endif()
 
 add_subdirectory(src/bolo)
 add_subdirectory(src/server)
+add_subdirectory(src/scenario_io)
 add_subdirectory(src/scenario)
 add_subdirectory(brains)
 

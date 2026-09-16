@@ -1,5 +1,5 @@
 /*
- * manifest.json (src/scenario/scenario_manifest_json.c): the schema decoded
+ * manifest.json (src/scenario_io/scenario_manifest_json.c): the schema decoded
  * into ScenarioManifest, written back out with the keys this build does not
  * read still in it, and the comparison that holds a package's manifest
  * against the table its script declared.

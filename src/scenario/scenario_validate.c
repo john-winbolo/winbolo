@@ -33,7 +33,6 @@
  *  the same list as everything below.
  *********************************************************/
 
-#include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -60,34 +59,6 @@
  * messages carry the file path and the line ahead of the text, so this is
  * longer than the message field it is copied into. */
 #define SCN_VALIDATE_LINE_LEN 512
-
-/* ── The list ─────────────────────────────────────────────────────── */
-
-void scnIssueAdd(ScnValidateResult *out, const char *key,
-                 const char *fmt, ...) {
-    ScnValidateIssue *issue;
-    va_list           ap;
-
-    if (out == NULL) {
-        return;
-    }
-    if (out->count >= SCN_VALIDATE_ISSUES_MAX) {
-        /* A count that cannot wrap. Past the list's end the number is all
-           there is left to say about the rest of them. */
-        if (out->dropped < UINT16_MAX) {
-            out->dropped++;
-        }
-        return;
-    }
-
-    issue = &out->issues[out->count];
-    out->count++;
-    memset(issue, 0, sizeof(*issue));
-    snprintf(issue->key, sizeof(issue->key), "%s", (key != NULL) ? key : "");
-    va_start(ap, fmt);
-    vsnprintf(issue->message, sizeof(issue->message), fmt, ap);
-    va_end(ap);
-}
 
 /* ── The stub table ───────────────────────────────────────────────── */
 

@@ -39,7 +39,7 @@
 #include <stdint.h>
 
 #include "scenario_manifest.h" /* ScenarioManifest */
-#include "scenario_validate.h" /* ScnParseReport */
+#include "scenario_issues.h"   /* ScnParseReport */
 
 /* The schema version this build writes and the only one it reads. The
  * "manifest" key, which moves independently of "api". */

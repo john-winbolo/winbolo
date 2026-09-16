@@ -98,7 +98,7 @@ typedef struct {
 /* What a scenario is called and what it asks for, as the sim reads it.
  *
  * The name and description lengths are SCN_SCENARIO_NAME_LEN and
- * SCN_SCENARIO_DESC_LEN in src/scenario/scenario_host.h, stated again here
+ * SCN_SCENARIO_DESC_LEN in src/scenario_io/scenario_manifest.h, stated again
  * under names of their own: that header is the one a frontend includes and
  * this one is not, so a gui or runtime_only translation unit can reach it and
  * not this. scenario_dir.c sees both and holds each pair against the other,

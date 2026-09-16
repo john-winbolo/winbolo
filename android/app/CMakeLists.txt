@@ -189,6 +189,7 @@ target_link_libraries(imgui_backends PUBLIC SDL3::SDL3)
 include(${PROJ_ROOT}/cmake/bolo_version.cmake)
 add_subdirectory(${PROJ_ROOT}/src/bolo ${CMAKE_BINARY_DIR}/bolo_static)
 add_subdirectory(${PROJ_ROOT}/src/server ${CMAKE_BINARY_DIR}/server_static)
+add_subdirectory(${PROJ_ROOT}/src/scenario_io ${CMAKE_BINARY_DIR}/scenario_io_static)
 add_subdirectory(${PROJ_ROOT}/src/scenario ${CMAKE_BINARY_DIR}/scenario_static)
 add_subdirectory(${PROJ_ROOT}/brains ${CMAKE_BINARY_DIR}/bot_brains_static)
 

@@ -35,6 +35,7 @@
 
 #include "server_sim.h"       /* ServerSim, BYTE */
 #include "scenario_table.h"   /* ScnTable — what the reader below fills */
+#include "scenario_host.h"     /* SCN_TIMERS_MAX — the timer table below */
 #include "scenario_manifest.h"
 
 /* One timer a script is waiting on: the tick it comes due, the function to
