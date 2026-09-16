@@ -41,6 +41,8 @@
 #include "../gui/sdl3/sdl_bmp.h"
 #include "../gui/sdl3/sprite_positions.h"
 #include "../gui/sdl3/tileloader.h"
+#include "../gui/sdl3/map_colours.h"   /* the zoomed-out ground colours */
+#include "../gui/sdl3/gfx_settings.h"  /* the simplified view setting */
 #include "../third_party/stb/stb_image.h"
 
 /* Must be included after global.h to avoid bool type conflict */
@@ -88,6 +90,13 @@ static const float g_zoomSteps[] = {
 
 static int   g_zoomStepIndex = ZOOM_STEP_1X;
 static float g_zoomLevel     = 1.0f;
+
+/* Whether the last frame drew map colours instead of tile sprites. The
+ * per-square cache below keys on the tile number alone, so a square whose
+ * tile has not changed is left alone - which would leave half the map in the
+ * old style when the answer flips. A zoom change already asks for a full
+ * redraw; this covers any other way the answer can change. */
+static bool  g_lastSimple    = false;
 
 /* Embed mode: a host that already owns an ImGui frame draws the world
  * texture itself, so the two framebuffer blits must not run, the viewer's
@@ -754,6 +763,23 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
     }
 
     zoomFactor = lv_windowGetZoomFactor();
+
+    /* The simplified view. Tiles are drawn at their native 16 px into the
+       target and the blit downscales the lot, so below 1x a square lands on
+       the window as eight to fourteen pixels and the sprite in it is a
+       smudge; one flat map colour reads instead. The setting is the game's,
+       out of the prefs document both apps share (loadPreferences).
+
+       Only the ground. Tanks, pillboxes and bases keep their sprites,
+       because this viewer colours them by team and the game's marker palette
+       has two sides and a neutral - it cannot say which of sixteen teams
+       owns a pillbox, which is most of what a recording is watched for. */
+    bool simple = gfxGetSimplifiedZoomOut() && g_zoomLevel < 1.0f;
+    if (simple != g_lastSimple) {
+        g_lastSimple = simple;
+        lv_drawDirtyScreen();
+    }
+
     /* Save the caller's target rather than assuming the framebuffer: the
      * embedded host calls this from inside its own frame, which may already
      * be rendering to a target of its own. */
@@ -788,10 +814,27 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
                 drawRenderTexture(textureItems, 16 * zoomFactor * TILE_SIZE_X, lv->tc[itc] * zoomFactor * TILE_SIZE_Y,
                     zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
             } else {
-                outputX = mapViewPosX[pos];
-                outputY = mapViewPosY[pos];
-                drawRenderTexture(textureTiles, outputX, outputY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y,
-                    zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
+                /* mapColourItemKind keeps a pillbox or base square out of
+                   this: its colour is the ground under it, which would paint
+                   the item away rather than simplify it. */
+                SDL_Color ground;
+                if (simple && mapColourItemKind(pos) == MAP_COLOUR_ITEM_NONE &&
+                    mapColourTerrain(pos, &ground)) {
+                    SDL_FRect square = {
+                        (float)(zoomFactor * (x * TILE_SIZE_X)),
+                        (float)(zoomFactor * (y * TILE_SIZE_Y)),
+                        (float)(zoomFactor * TILE_SIZE_X),
+                        (float)(zoomFactor * TILE_SIZE_Y)
+                    };
+                    SDL_SetRenderDrawColor(sdlRenderer, ground.r, ground.g,
+                                           ground.b, ground.a);
+                    SDL_RenderFillRect(sdlRenderer, &square);
+                } else {
+                    outputX = mapViewPosX[pos];
+                    outputY = mapViewPosY[pos];
+                    drawRenderTexture(textureTiles, outputX, outputY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y,
+                        zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
+                }
             }
             
             if (lv_screenIsMine(mineView, x, y)) {
