@@ -36,6 +36,9 @@
  *      — a packed map sitting where this server's uploads land attaches with
  *        scripts in uploaded maps on and attaches nothing with them off,
  *        while the same bytes outside that directory attach either way
+ * run_scenario_packed_map_team_init
+ *      — a container whose team declares an init, in a package whose script
+ *        declares no table, attaches, and the init reaches the template
  */
 
 #include <stdint.h>
@@ -56,6 +59,7 @@
                                            * the console routes through */
 #include "scenario_host.h"
 #include "scenario_manifest.h"
+#include "scenario_table.h"        /* scnTableGet — the team's init pairs */
 #include "scenario_package.h"
 #include "test_harness.h"
 
@@ -623,5 +627,95 @@ int run_scenario_packed_map_upload_switch(void) {
     remove(mapPath);
     remove(outside);
     (void)SDL_RemovePath(uploads);
+    return 0;
+}
+
+/* ── 7. A manifest team with an init, and a script with no table ──── */
+
+/* The host pushes the container's manifest into the state as a `scenario`
+ * global before the chunk runs, so a packaged script that declares no table
+ * of its own is checked against what was pushed. Everything a team carries
+ * went over except its init, which meant a manifest declaring one was held
+ * to disagree with the script at every load: the read-back table had no init
+ * and the container's had one, and mjInitDiffers named the first key.
+ *
+ * The script here declares nothing, which is the whole point — the manifest
+ * is the only place the init is written, and the load has to survive it. */
+int run_scenario_packed_map_team_init(void) {
+    static const char kInitManifest[] =
+        "{\n"
+        "  \"manifest\": 1,\n"
+        "  \"name\": \"" PM_NAME "\",\n"
+        "  \"description\": \"" PM_DESC "\",\n"
+        "  \"api\": 1,\n"
+        "  \"bound\": true,\n"
+        "  \"script\": \"main.lua\",\n"
+        "  \"lobby\": {\n"
+        "    \"teams\": [\n"
+        "      { \"id\": 2, \"bots\": 1, \"max_bots\": 1, \"fielded\": false,\n"
+        "        \"init\": { \"waves\": \"3\", \"style\": \"rush\" } }\n"
+        "    ]\n"
+        "  }\n"
+        "}\n";
+
+    char                    mapPath[1024];
+    char                    loose[1024];
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    char                    err[512];
+
+    UT_ASSERT(utScratchPath(mapPath, sizeof(mapPath), "packed_init.map"));
+    pmLoosePath(mapPath, loose, sizeof(loose));
+    remove(loose);                  /* the container is the only script */
+    UT_ASSERT_MSG(pmWritePacked(mapPath, kInitManifest, kPmSilent),
+                  "the packed map fixture could not be written");
+
+    sim = pmSim();
+    UT_ASSERT(sim != NULL);
+
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, mapPath, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL,
+                  "a container whose team declares an init was refused: %s",
+                  err);
+    UT_ASSERT_MSG(scenarioHostIsActive(h), "the host reports no scenario");
+    UT_ASSERT_MSG(strcmp(scenarioHostName(h), PM_NAME) == 0,
+                  "the scenario is called '%s', expected the package's '%s'",
+                  scenarioHostName(h), PM_NAME);
+    /* Nothing was reported about the team's init, which is what the refusal
+       used to say. */
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "init") == NULL,
+                  "the load complained about an init: %s",
+                  scenarioHostLastError(h));
+
+    /* And the init reached the seat the team holds, so what went over was the
+       table rather than an empty stand-in that merely agreed. */
+    {
+        bool seen = false;
+        int  i;
+
+        UT_ASSERT_MSG(sim->scenarioLobbyValid,
+                      "the container's lobby never reached the sim");
+        for (i = 0; i < (int)sim->scenarioLobby.numTeams; i++) {
+            const ScnTable *init = &sim->scenarioLobby.teams[i].init;
+
+            if (sim->scenarioLobby.teams[i].id != 2) continue;
+            seen = true;
+            UT_ASSERT_MSG(init->count == 2,
+                          "the team's init reached the template with %u pairs, "
+                          "expected 2", (unsigned)init->count);
+            UT_ASSERT_MSG(scnTableGet(init, "waves") != NULL &&
+                          strcmp(scnTableGet(init, "waves"), "3") == 0,
+                          "the team's init lost 'waves'");
+            UT_ASSERT_MSG(scnTableGet(init, "style") != NULL &&
+                          strcmp(scnTableGet(init, "style"), "rush") == 0,
+                          "the team's init lost 'style'");
+        }
+        UT_ASSERT_MSG(seen, "the manifest's team never reached the template");
+    }
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    remove(mapPath);
     return 0;
 }

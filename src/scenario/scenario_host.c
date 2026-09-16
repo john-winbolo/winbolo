@@ -1074,6 +1074,28 @@ static void scnPushTeams(lua_State *L, const ScnManifestLobby *lob) {
         lua_setfield(L, e, "fielded");
         lua_pushstring(L, team->brain);
         lua_setfield(L, e, "brain");
+        /* And the init the team's bots are built with, which was missing
+           here: a packaged manifest that declares one, in a package whose
+           script leaves the table to the manifest, would be read back with
+           no init at all and the two forms held to disagree about it at
+           every load.
+
+           Every value goes over as a string, which is how the table reader
+           stores one whatever the script wrote, so what comes back out of
+           this is what went in. An empty table is left out entirely, no
+           pairs meaning the same as no table. */
+        if (team->init.count > 0) {
+            int ini;
+            int k;
+
+            lua_newtable(L);
+            ini = lua_gettop(L);
+            for (k = 0; k < (int)team->init.count; k++) {
+                lua_pushstring(L, team->init.kv[k].value);
+                lua_setfield(L, ini, team->init.kv[k].key);
+            }
+            lua_setfield(L, e, "init");
+        }
         /* An array, as the file writes it, so position is part of what the
            comparison holds the two forms to. */
         lua_rawseti(L, teams, i + 1);

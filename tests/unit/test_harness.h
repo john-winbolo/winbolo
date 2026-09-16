@@ -2816,6 +2816,7 @@ int run_scenario_packed_map_script_omits_table(void);
 int run_scenario_packed_map_table_disagrees(void);
 int run_scenario_packed_map_round_start_keeps_it(void);
 int run_scenario_packed_map_upload_switch(void);
+int run_scenario_packed_map_team_init(void);
 
 /* Writing a map's scenario into the map (test_scenario_pack.c): the container
  * a loose script packs into, the manifest that comes out of the script's own
