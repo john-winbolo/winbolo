@@ -2370,8 +2370,10 @@ add_executable(LogViewer
     src/gui/sdl3/skin_source.c
     src/gui/sdl3/gfx_settings.c
     # The zoomed-out ground colours, which draw.c fills a square with below
-    # 1x. Plain SDL and the tile numbers, so it links here as it stands.
+    # 1x, and the shapes it draws on top of them. Plain SDL, the tile numbers
+    # and ring_band.c, all of which this target already has.
     src/gui/sdl3/map_colours.c
+    src/gui/sdl3/map_markers.c
     src/gui/ui_mode.c
     src/steam/steam_wrapper_stub.c
 )

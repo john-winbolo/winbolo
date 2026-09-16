@@ -43,6 +43,7 @@
 #include "../gui/sdl3/tileloader.h"
 #include "../gui/sdl3/map_colours.h"   /* the zoomed-out ground colours */
 #include "../gui/sdl3/gfx_settings.h"  /* the simplified view setting */
+#include "../gui/sdl3/map_markers.h"   /* the shapes a thing becomes when small */
 #include "../third_party/stb/stb_image.h"
 
 /* Must be included after global.h to avoid bool type conflict */
@@ -97,6 +98,51 @@ static float g_zoomLevel     = 1.0f;
  * old style when the answer flips. A zoom change already asks for a full
  * redraw; this covers any other way the answer can change. */
 static bool  g_lastSimple    = false;
+
+/* The simplified view. Tiles are drawn at their native 16 px into the render
+ * target and the blit downscales the lot, so below 1x a square lands on the
+ * window as eight to fourteen pixels and the sprite in it is a smudge: the
+ * ground goes to one map colour a square and the things standing on it to
+ * marker shapes. The setting is the game's, out of the prefs document both
+ * apps share (loadPreferences).
+ *
+ * Asked here by the ground pass and the tank pass alike, so the two cannot
+ * end up in different styles on the same frame. */
+static bool lvSimpleView(void) {
+    return gfxGetSimplifiedZoomOut() && g_zoomLevel < 1.0f;
+}
+
+/* A pillbox or base met during the ground pass, held back so its marker goes
+ * on after the ground: a marker runs a little past its square, and the next
+ * square's fill would clip it. The map holds at most MAX_PILLS + MAX_BASES of
+ * them and the viewport shows a window onto that, so the list cannot fill -
+ * but it is flushed and restarted if it ever does rather than trusted. */
+typedef struct {
+    int        mx, my;
+    bool       isBase;
+    SDL_FColor colour;
+} LvItemMarker;
+
+#define LV_ITEM_MARKER_MAX 32
+
+static void lvDrawItemMarkers(const LvItemMarker *hits, int count,
+                              BYTE zoomFactor) {
+    int i;
+    for (i = 0; i < count; i++) {
+        float side = (float)(zoomFactor * TILE_SIZE_X);
+        float cx = (float)(zoomFactor * (hits[i].mx * TILE_SIZE_X)) + side / 2.0f;
+        float cy = (float)(zoomFactor * (hits[i].my * TILE_SIZE_Y)) + side / 2.0f;
+        /* The same fractions of a square the overview uses, so an item is the
+           same size relative to its square in both. */
+        if (hits[i].isBase) {
+            mapMarkerBase(sdlRenderer, cx, cy,
+                          SDL_max(2.5f, side * 0.42f), hits[i].colour);
+        } else {
+            mapMarkerPill(sdlRenderer, cx, cy,
+                          SDL_max(2.0f, side * 0.36f), hits[i].colour);
+        }
+    }
+}
 
 /* Embed mode: a host that already owns an ImGui frame draws the world
  * texture itself, so the two framebuffer blits must not run, the viewer's
@@ -774,7 +820,10 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
        because this viewer colours them by team and the game's marker palette
        has two sides and a neutral - it cannot say which of sixteen teams
        owns a pillbox, which is most of what a recording is watched for. */
-    bool simple = gfxGetSimplifiedZoomOut() && g_zoomLevel < 1.0f;
+    bool simple = lvSimpleView();
+    LvItemMarker itemHits[LV_ITEM_MARKER_MAX];
+    int          itemHitCount = 0;
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
     if (simple != g_lastSimple) {
         g_lastSimple = simple;
         lv_drawDirtyScreen();
@@ -805,21 +854,12 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
                 lv_drawLast[x][y] = 10000;
             }
             
-            if (isPill && lv->useTeamColours) {
-                itc = lv_screenGetPillTeam(x, y, &pillHealth);
-                drawRenderTexture(textureItems, pillHealth * zoomFactor * TILE_SIZE_X, lv->tc[itc] * zoomFactor * TILE_SIZE_Y,
-                    zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
-            } else if (isBase && lv->useTeamColours) {
-                itc = lv_screenGetBaseTeam(x, y);
-                drawRenderTexture(textureItems, 16 * zoomFactor * TILE_SIZE_X, lv->tc[itc] * zoomFactor * TILE_SIZE_Y,
-                    zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
-            } else {
-                /* mapColourItemKind keeps a pillbox or base square out of
-                   this: its colour is the ground under it, which would paint
-                   the item away rather than simplify it. */
+            if (simple) {
+                /* The ground under everything, an item square included: a
+                   pillbox or base answers with the ground beneath it, and its
+                   marker goes on after the pass. */
                 SDL_Color ground;
-                if (simple && mapColourItemKind(pos) == MAP_COLOUR_ITEM_NONE &&
-                    mapColourTerrain(pos, &ground)) {
+                if (mapColourTerrain(pos, &ground)) {
                     SDL_FRect square = {
                         (float)(zoomFactor * (x * TILE_SIZE_X)),
                         (float)(zoomFactor * (y * TILE_SIZE_Y)),
@@ -835,6 +875,48 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
                     drawRenderTexture(textureTiles, outputX, outputY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y,
                         zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
                 }
+
+                if (isPill || isBase) {
+                    if (itemHitCount == LV_ITEM_MARKER_MAX) {
+                        lvDrawItemMarkers(itemHits, itemHitCount, zoomFactor);
+                        itemHitCount = 0;
+                    }
+                    itemHits[itemHitCount].mx     = x;
+                    itemHits[itemHitCount].my     = y;
+                    itemHits[itemHitCount].isBase = (isBase != FALSE);
+                    /* Team colours name the owner, which is what a recording
+                       is watched for; without them the tile itself says which
+                       side holds it, the way the game's markers do. */
+                    if (lv->useTeamColours) {
+                        itc = isBase ? lv_screenGetBaseTeam(x, y)
+                                     : lv_screenGetPillTeam(x, y, &pillHealth);
+                        itemHits[itemHitCount].colour = mapColourTeam(lv->tc[itc]);
+                    } else {
+                        MapColourItem kind = mapColourItemKind(pos);
+                        if (kind == MAP_COLOUR_ITEM_PILL_GOOD ||
+                            kind == MAP_COLOUR_ITEM_BASE_GOOD) {
+                            itemHits[itemHitCount].colour = mapColourMarkerGood();
+                        } else if (kind == MAP_COLOUR_ITEM_BASE_NEUTRAL) {
+                            itemHits[itemHitCount].colour = mapColourMarkerNeutral();
+                        } else {
+                            itemHits[itemHitCount].colour = mapColourMarkerEvil();
+                        }
+                    }
+                    itemHitCount++;
+                }
+            } else if (isPill && lv->useTeamColours) {
+                itc = lv_screenGetPillTeam(x, y, &pillHealth);
+                drawRenderTexture(textureItems, pillHealth * zoomFactor * TILE_SIZE_X, lv->tc[itc] * zoomFactor * TILE_SIZE_Y,
+                    zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
+            } else if (isBase && lv->useTeamColours) {
+                itc = lv_screenGetBaseTeam(x, y);
+                drawRenderTexture(textureItems, 16 * zoomFactor * TILE_SIZE_X, lv->tc[itc] * zoomFactor * TILE_SIZE_Y,
+                    zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
+            } else {
+                outputX = mapViewPosX[pos];
+                outputY = mapViewPosY[pos];
+                drawRenderTexture(textureTiles, outputX, outputY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y,
+                    zoomFactor * (x * TILE_SIZE_X), zoomFactor * (y * TILE_SIZE_Y));
             }
             
             if (lv_screenIsMine(mineView, x, y)) {
@@ -850,6 +932,15 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
         if (++x > lv_screenGetSizeX()) { x = 0; y++; if (y > lv_screenGetSizeY()) done = TRUE; }
     }
     
+    /* The markers, on top of the finished ground. The outline layer is
+       translucent, so the blend mode is set once round the lot and put back. */
+    if (simple && itemHitCount > 0) {
+        SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
+        SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
+        lvDrawItemMarkers(itemHits, itemHitCount, zoomFactor);
+        SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
+    }
+
     lv_drawShells(sBullets);
     lv_drawTanks(tks);
     lv_drawLGMs(lgms);
@@ -948,12 +1039,21 @@ static BYTE lv_drawTankAllyRow(BYTE frame) {
 void lv_drawTanks(screenTanks *tks) {
     int x, y, srcX, srcY;
     BYTE count, total, px, py, mx, my, team, zoomFactor, dir, frame;
-    bool onBoat;
+    bool onBoat, simple;
     char playerName[PLAYER_NAME_LEN];
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
     LogViewerState *lv = lv_screenGetState();
 
     total = lv_screenTanksGetNumEntries(tks);
     zoomFactor = lv_windowGetZoomFactor();
+
+    /* The same answer the ground pass used this frame, so the tanks and the
+       squares under them cannot end up in different styles. */
+    simple = lvSimpleView();
+    if (simple) {
+        SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
+        SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
+    }
 
     for (count = 1; count <= total; count++) {
         lv_screenTanksGetItem(tks, count, &mx, &my, &px, &py, &frame, &team, &dir, &onBoat, playerName);
@@ -961,7 +1061,28 @@ void lv_drawTanks(screenTanks *tks) {
         x = mx * (zoomFactor * TILE_SIZE_X) + (zoomFactor * px);
         y = my * (zoomFactor * TILE_SIZE_Y) + (zoomFactor * py);
 
-        if (lv->allyColours) {
+        if (simple) {
+            /* A triangle pointing the way it faces. Ally colours are the
+               three the game's markers use, with the viewer's own tank told
+               apart; otherwise the player's assigned colour, which is the
+               one thing the game's two-sided palette cannot say. A tank on a
+               boat is still a tank. */
+            SDL_FColor colour;
+            if (lv->allyColours) {
+                BYTE row = lv_drawTankAllyRow(frame);
+                colour = (row == TANK_ROW_SELF) ? mapColourMarkerSelf()
+                       : (row == TANK_ROW_GOOD) ? mapColourMarkerGood()
+                                                : mapColourMarkerEvil();
+            } else {
+                colour = mapColourTeam(lv->tc[team]);
+            }
+            {
+                float side = (float)(zoomFactor * TILE_SIZE_X);
+                mapMarkerTank(sdlRenderer,
+                              (float)x + side / 2.0f, (float)y + side / 2.0f,
+                              SDL_max(3.0f, side * 0.45f), (int)dir, colour);
+            }
+        } else if (lv->allyColours) {
             srcX = zoomFactor * TILE_SIZE_X * dir;
             srcY = zoomFactor * TILE_SIZE_Y * lv_drawTankAllyRow(frame);
             drawRenderTexture(onBoat ? textureBoats : textureTanks, srcX, srcY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, x, y);
@@ -978,6 +1099,8 @@ void lv_drawTanks(screenTanks *tks) {
         lv_drawTankLabel(playerName, mx, my, px, py);
         lv_drawMarkRedraw(mx, my, px, py, 0);
     }
+
+    if (simple) SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
 }
 
 void lv_drawLGMs(screenLgm *lgms) {
