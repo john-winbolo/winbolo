@@ -1037,6 +1037,7 @@ int run_brainrec_version_rejects_old(void);
  * still decode), a not-in-use slot, the log_TankSetStock record, and an unknown
  * record type skipped by its framed length. */
 int run_lv_tank_stocks_from_snapshot(void);
+int run_lv_team_colours_from_snapshot(void);
 int run_lv_tank_stocks_snapshot_without_tail(void);
 int run_lv_tank_stocks_from_record(void);
 
