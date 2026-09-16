@@ -66,6 +66,7 @@ extern "C" {
 #include "mapview_overlay.h" /* mapViewDrawOverlay — the whole entity layer */
 #include "../ping_kinds.h"   /* pingDisplayAlpha */
 #include "gfx_settings.h"   /* the simplified view setting */
+#include "map_markers.h"    /* the pill disc and the base square */
 #include "ping_marker.h"     /* pingMarkerDraw — the on-map ping pass */
 #include "ping_overlay.h"    /* pingOverlayIsMenuOpen — the wheel's gate */
 #include "ring_band.h"       /* the respawn ring's band, sides and curve */
@@ -306,21 +307,11 @@ static bool overviewViewEnsureTarget(OverviewView *v, SDL_Renderer *r,
     return true;
 }
 
-/* A filled disc, as ring_band.h's band with no hole. */
-static void overviewViewFillDisc(SDL_Renderer *r, float cx, float cy,
-                                 float radius, SDL_FColor c) {
-    Uint8 alpha = (Uint8)(c.a * 255.0f + 0.5f);
-    ringBandDraw(r, cx, cy, 0.0f, radius, ringBandSegments(radius),
-                 (Uint8)(c.r * 255.0f + 0.5f),
-                 (Uint8)(c.g * 255.0f + 0.5f),
-                 (Uint8)(c.b * 255.0f + 0.5f), alpha, alpha);
-}
-
-/* A pill or a base, for the zooms where its sprite is too small to read: a
- * disc for a pill and a square for a base, the two told apart by shape rather
- * than by size, in the shared marker palette and stroke (map_colours.h). A
- * pill draws the same whatever its health — at these sizes there is no room
- * to show it, and the number pass is off this far out too. */
+/* A pill or a base, for the zooms where its sprite is too small to read: the
+ * shapes are map_markers.h's, and what is on the square decides which shape
+ * and which allegiance colour. A pill draws the same whatever its health — at
+ * these sizes there is no room to show it, and the number pass is off this
+ * far out too. */
 static void overviewViewDrawItem(SDL_Renderer *r, const SDL_FRect *dest,
                                  MapColourItem kind) {
     bool base = kind >= MAP_COLOUR_ITEM_BASE_GOOD;
@@ -332,17 +323,10 @@ static void overviewViewDrawItem(SDL_Renderer *r, const SDL_FRect *dest,
     }
     float radius = base ? SDL_max(2.5f, dest->w * 0.42f) : SDL_max(2.0f, dest->w * 0.36f);
     float cx = dest->x + dest->w / 2, cy = dest->y + dest->h / 2;
-    SDL_FColor shades[3];
-    mapColourMarkerShades(color, shades);
-    for (int i = 0; i < 3; i++) {
-        float size = radius + mapColourMarkerLayerGrow(i);
-        if (base) {
-            SDL_FRect rect = { cx - size, cy - size, size * 2, size * 2 };
-            SDL_SetRenderDrawColorFloat(r, shades[i].r, shades[i].g, shades[i].b, shades[i].a);
-            SDL_RenderFillRect(r, &rect);
-        } else {
-            overviewViewFillDisc(r, cx, cy, size, shades[i]);
-        }
+    if (base) {
+        mapMarkerBase(r, cx, cy, radius, color);
+    } else {
+        mapMarkerPill(r, cx, cy, radius, color);
     }
 }
 

@@ -24,6 +24,7 @@
 #include "mapview_overlay.h"
 #include "gfx_settings.h"
 #include "tilenum.h"   /* the tank and boat frames the marker pass reads */
+#include "map_markers.h" /* the triangle a tank becomes */
 #include "../tiles.h"     /* MOUSE_SQUARE_X / Y, TILE_SIZE_X / Y */
 
 #include <math.h>
@@ -52,35 +53,13 @@ static void overlayDrawTankMarkers(MapViewCtx *ctx, screenTanks *tks,
                                                        ctx->sheetScale, mx, px, wx);
     float cy = baseY + tileH / 2 + spritePositionOffset(mode, ctx->scale,
                                                        ctx->sheetScale, my, py, wy);
-    /* Frame 0 faces north, and the sixteen frames run clockwise. */
-    float turn = (float)(frame % 16) * (2.0f * SDL_PI_F) / 16.0f;
-    float cosine = SDL_cosf(turn), sine = SDL_sinf(turn);
     float radius = SDL_max(3.0f, tileW * 0.45f);
     SDL_FColor color = { 1, 1, 1, 1 };
     if (frame >= TANK_EVIL_0) color = mapColourMarkerEvil();
     else if (frame >= TANK_GOOD_0) color = mapColourMarkerGood();
-    SDL_FPoint points[3] = { { 0, -radius * 1.2f },
-                             { radius * 0.85f, radius }, { -radius * 0.85f, radius } };
-    /* Scaling about the incentre — the centre of the inscribed circle, which
-       is the one point every edge is the same distance from — offsets all
-       three edges equally, so the stroke keeps an even width round the
-       triangle. Scaling about the centroid instead would push the sharp nose
-       out further than the flat base and thicken the tip. */
-    float inradius = radius * (0.85f * 2.2f) / (0.85f + SDL_sqrtf(0.85f * 0.85f + 2.2f * 2.2f));
-    float incenterY = radius - inradius;
-    SDL_FColor shades[3];
-    mapColourMarkerShades(color, shades);
-    for (int layer = 0; layer < 3; layer++) {
-      float factor = 1 + mapColourMarkerLayerGrow(layer) / inradius;
-      SDL_Vertex vertices[3];
-      for (int i = 0; i < 3; i++) {
-        float x = points[i].x * factor;
-        float y = incenterY + (points[i].y - incenterY) * factor;
-        vertices[i] = (SDL_Vertex){ { cx + x * cosine - y * sine,
-                                      cy + x * sine + y * cosine }, shades[layer], { 0, 0 } };
-      }
-      SDL_RenderGeometry(ctx->renderer, NULL, vertices, 3, NULL, 0);
-    }
+    /* The frame carries the allegiance offset as well as the heading;
+       mapMarkerTank wraps, so it takes the frame as it stands. */
+    mapMarkerTank(ctx->renderer, cx, cy, radius, (int)frame, color);
   }
   SDL_SetRenderDrawBlendMode(ctx->renderer, oldBlend);
 }
