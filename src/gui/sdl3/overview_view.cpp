@@ -65,6 +65,7 @@ extern "C" {
 #include "mapview.h"         /* MapViewCtx */
 #include "mapview_overlay.h" /* mapViewDrawOverlay — the whole entity layer */
 #include "../ping_kinds.h"   /* pingDisplayAlpha */
+#include "gfx_settings.h"   /* the simplified view setting */
 #include "ping_marker.h"     /* pingMarkerDraw — the on-map ping pass */
 #include "ping_overlay.h"    /* pingOverlayIsMenuOpen — the wheel's gate */
 #include "ring_band.h"       /* the respawn ring's band, sides and curve */
@@ -99,13 +100,21 @@ extern "C" bool showBaseLabels;
 
 /* Zoom below which the view stops drawing sprites: the ground goes to one
  * map colour a square and tanks, pills and bases to marker shapes
- * (map_colours.h), which read at sizes where an 8 px tile is a smudge. Both
- * passes take their answer from overviewViewSimple, so the ground and the
- * things on it cannot switch style on different rungs. */
+ * (map_colours.h), which read at sizes where an 8 px tile is a smudge. */
 #define OVERVIEW_SPRITE_MIN_ZOOM 1.0f
 
-static inline bool overviewViewSimple(float zoomScale) {
-    return zoomScale < OVERVIEW_SPRITE_MIN_ZOOM;
+/* Whether this frame draws the simplified view: the zoom is under the floor,
+ * the player has the setting on, and the sub-option is not holding it to the
+ * Map Overview window. ownsWindow is true for the full screen map, which is
+ * the surface that sub-option excludes.
+ *
+ * Asked once a frame and handed to both passes, so the ground and the things
+ * standing on it cannot end up in different styles - including on the frame
+ * the player clicks the tick, where asking twice could straddle the change. */
+static inline bool overviewViewSimple(float zoomScale, bool ownsWindow) {
+    if (zoomScale >= OVERVIEW_SPRITE_MIN_ZOOM) return false;
+    if (!gfxGetSimplifiedZoomOut()) return false;
+    return !(ownsWindow && gfxGetSimplifiedOverviewOnly());
 }
 
 /* The death blackout, drawn over the whole view from the tick the sim says a
@@ -363,14 +372,14 @@ static void overviewViewDrawTerrain(SDL_Renderer *r, SDL_Texture *tiles, int ss,
                                     const OverviewCamera *cam,
                                     int viewW, int viewH,
                                     const OverviewMap *om,
-                                    int left, int top, int right, int bottom) {
+                                    int left, int top, int right, int bottom,
+                                    bool simple) {
     /* The in-window overview draws from the main window's tile sheet, which
      * the classic view mods for its own purposes. */
     SDL_SetTextureColorMod(tiles, 255, 255, 255);
 
     float zoomScale = overviewCameraZoomScale(cam);
     float tilePx = (float)OVERVIEW_TILE_PX * zoomScale;
-    bool simple = overviewViewSimple(zoomScale);
     SDL_FRect mineSrc = mapViewAtlasSrc(MINE_X, MINE_Y,
                                         TILE_SIZE_X, TILE_SIZE_Y, ss);
 
@@ -842,7 +851,8 @@ static void overviewViewDrawEntities(OverviewView *v,
                                      SDL_Texture *crosshair,
                                      const OverviewCamera *cam,
                                      int viewW, int viewH,
-                                     const OverviewSnapshot *snap) {
+                                     const OverviewSnapshot *snap,
+                                     bool simple) {
     MapViewCtx        ctx;
     MapViewOverlay    ov;
     OverviewItemLabel items[MAX_PILLS + MAX_BASES];
@@ -888,7 +898,7 @@ static void overviewViewDrawEntities(OverviewView *v,
     ctx.sprites    = NULL;
 
     SDL_memset(&ov, 0, sizeof(ov));
-    ov.simpleTanks = overviewViewSimple(zoomScale);
+    ov.simpleTanks = simple;
 
     /* Where a build will land, from the same mouse_square sprite the main view
      * draws. Solid while cursor mode is on or the pointer is over the map (the
@@ -1143,11 +1153,16 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
             overviewCameraFollowTick(&v->cam, w, h, tankX, tankY);
         }
 
+        /* After the camera work above, which is what can change the zoom this
+         * frame, and before either pass reads it. */
+        bool simple = overviewViewSimple(overviewCameraZoomScale(&v->cam),
+                                         ownsWindow);
+
         int left = 0, top = 0, right = 0, bottom = 0;
         if (overviewCameraVisibleRange(&v->cam, w, h,
                                        &left, &top, &right, &bottom)) {
             overviewViewDrawTerrain(r, tiles, sheetScale, &v->cam, w, h, om,
-                                    left, top, right, bottom);
+                                    left, top, right, bottom, simple);
             overviewViewDrawFog(v, r, &v->cam, w, h, om);
         }
 
@@ -1206,7 +1221,7 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
          * the build cursor and the gunsight are the player's own marks, so
          * neither wants dimming. */
         overviewViewDrawEntities(v, r, tiles, sheetScale, crosshair, &v->cam,
-                                 w, h, snap);
+                                 w, h, snap, simple);
     }
 
     /* Only where this view has replaced the classic one: beside the pop-out
