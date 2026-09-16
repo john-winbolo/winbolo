@@ -1001,6 +1001,7 @@ local function pump_vanish_queue(tick)
     local p = table.remove(vanish_queue, 1)
     game.remove_bot(p)
     wave_bots[p] = nil
+    seen_fielded[p] = nil
     vanish_next_at = tick + secs(VANISH_SPACING_S)
   end
   if #vanish_queue > 0 then return false end
@@ -1011,10 +1012,29 @@ end
 
 -- Wave bots respawn like ordinary play — a dead one is merely between lives,
 -- so nobody is removed here. This prunes seats that vanished outside our
--- control.
+-- control: a seat that was on the field and no longer is, or is gone from
+-- the roster.
+--
+-- Two things it must not read as "gone". A spawn is queued, not done:
+-- spawn_bot answers the seat and the sim fields it a tick or more later,
+-- so a seat just asked for is not fielded yet, and a prune that read that
+-- as departure forgot nine of ten attackers on the tick they were called.
+-- And a dead tank waiting to respawn answers no tank at all, so game.tank
+-- is no test either. The seat is asked, and only a seat this pass has
+-- already seen on the field can be pruned for leaving it. The wave's end
+-- then takes every attacker off, instead of the one that happened to be
+-- listed, and the next wave lands with all ten seats free.
+local seen_fielded = {}   -- seat -> true once a pass saw it on the field
+
 local function prune_wave_bots()
   for p in pairs(wave_bots) do
-    if game.tank(p) == nil and not vanishing then wave_bots[p] = nil end
+    local ls = game.lobby_slot(p)
+    if ls ~= nil and ls.fielded then
+      seen_fielded[p] = true
+    elseif not vanishing and (ls == nil or seen_fielded[p]) then
+      wave_bots[p] = nil
+      seen_fielded[p] = nil
+    end
   end
 end
 

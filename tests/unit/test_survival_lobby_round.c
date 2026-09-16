@@ -57,6 +57,7 @@
 #include "server_sim_internal.h"   /* state, lobbyPlayers, the pill list */
 #include "server_sim_lifecycle.h"  /* StartGame / the ready check / bot config */
 #include "server_sim_scenario.h"   /* serverSimScenarioSeatLobby */
+#include "tank.h"                 /* tankKillNow: an attacker dies mid-wave */
 #include "control_event.h"
 #include "scenario_host.h"
 #include "game_sim.h"
@@ -483,6 +484,39 @@ static int slrRound(int bots, bool inPlace) {
         {
             uint32_t buildsAtW2;
             uint32_t w2From;
+            int      killed = -1, fielded;
+
+            /* (k) An attacker dies mid-wave, as most of them do in a real
+                   round. The wave's end must still take every attacker off
+                   the field: the script's prune used to forget a seat whose
+                   tank read as absent, and a dead tank waiting to respawn
+                   does, so the owner saw one attacker vanish and nine stay
+                   out for the rest of the round. */
+            for (i = 0; i < MAX_TANKS && killed < 0; i++) {
+                if (slrTeam(sim, i) != SLR_WAVE_TEAM) continue;
+                if (!sim->lobbyPlayers[i].fielded) continue;
+                if (sim->sim.tanks[i] == NULL) continue;
+                tankKillNow(&sim->sim, &sim->sim.tanks[i], (BYTE)i, 0);
+                killed = i;
+            }
+            UT_ASSERT_MSG(killed >= 0, "no attacker on the field to kill");
+            for (i = 0; i < 300; i++) serverSimTick(sim);
+
+            /* Past the wave limit, the mute lead and ten one-second
+               departures: nobody of the horde is on the field. */
+            while (sim->tick < graceFrom + SLR_GRACE_TICKS + 30000 + 200 +
+                                 10 * 100 + 500) {
+                serverSimTick(sim);
+            }
+            fielded = 0;
+            for (i = 0; i < MAX_TANKS; i++) {
+                if (slrTeam(sim, i) == SLR_WAVE_TEAM &&
+                    sim->lobbyPlayers[i].fielded) fielded++;
+            }
+            UT_ASSERT_MSG(fielded == 0,
+                          "%d attacker(s) are still on the field after the "
+                          "wave's end and its departures", fielded);
+
             /* Out to the far side of the wave, its staggered departures and
                the breather: the wave limit, ten seconds of vanishing and the
                30 s breather, with room to spare. */
@@ -503,6 +537,14 @@ static int slrRound(int bots, bool inPlace) {
             while (sim->tick < w2From + 200) {
                 serverSimTick(sim);
             }
+            fielded = 0;
+            for (i = 0; i < MAX_TANKS; i++) {
+                if (slrTeam(sim, i) == SLR_WAVE_TEAM &&
+                    sim->lobbyPlayers[i].fielded) fielded++;
+            }
+            UT_ASSERT_MSG(fielded == SLR_HORDE_SEATS,
+                          "wave 2 fielded %d attacker(s), expected all %d "
+                          "seats back", fielded, SLR_HORDE_SEATS);
             UT_ASSERT_MSG(botManagerRunnerBuildCount(sim) == buildsAtW2,
                           "wave 2 built %u fresh runner(s); every one of its "
                           "spawns should have resumed the one its seat was "
