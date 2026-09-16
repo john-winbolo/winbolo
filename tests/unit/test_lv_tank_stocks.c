@@ -35,6 +35,7 @@
 #include "backend.h"
 #include "logviewer.h"
 #include "lv_log.h"
+#include "lv_players.h"
 #include "test_harness.h"
 
 /* Read a slot's stocks the way lv_gameViewGetInventory does. That accessor
@@ -151,6 +152,63 @@ static bool loadSnapshotBody(const uint8_t *body, size_t bodyLen) {
   loaded = lv_specSeedLoad(NULL, seed, seedLen);
   free(seed);
   return loaded;
+}
+
+/* Non-adjacent allies exercise forward references in the snapshot. Later
+ * keyframes split and restore the teams without any alliance events. */
+int run_lv_team_colours_from_snapshot(void) {
+  uint8_t body[1024], seed[1032];
+  BYTE initialTeams[4];
+  LogViewerState *lv = lv_decoderCreate(false);
+  int pass;
+  UT_ASSERT(lv != NULL);
+  lv_screenSetSizeX(30);
+  lv_screenSetSizeY(30);
+
+  for (pass = 0; pass < 4; pass++) {
+    BYTE slot;
+    size_t pos;
+    buildSnapshotBody(body, FALSE, 0, 0, 0, 0);
+    pos = 18; /* Empty world header, before the first player block. */
+    for (slot = 0; slot < MAX_TANKS; slot++) {
+      size_t start = pos;
+      pos = appendPlayerBlock(body, pos, slot, slot < 4, FALSE, 0, 0, 0, 0);
+      if (slot < 4) {
+        body[pos - 1] = (pass == 2) ? 1 : 2;
+        body[pos++] = slot;
+        if (pass != 2) body[pos++] = slot ^ 2;
+        body[start] = (uint8_t)(pos - start - 1);
+      }
+    }
+    if (pass == 0) {
+      UT_ASSERT(loadSnapshotBody(body, pos));
+    } else {
+      packU32BE(seed, (uint32_t)pos);
+      memcpy(seed + 4, body, pos);
+      packU32BE(seed + 4 + pos, 0);
+      UT_ASSERT(lv_specRecordPump(TRUE, seed, pos + 8));
+    }
+    if (pass == 2) {
+      for (slot = 0; slot < 4; slot++) {
+        BYTE other;
+        for (other = 0; other < slot; other++) {
+          UT_ASSERT(lv_playersGetTeamId(slot) != lv_playersGetTeamId(other));
+        }
+      }
+    } else {
+      UT_ASSERT(lv_playersGetTeamId(0) == lv_playersGetTeamId(2));
+      UT_ASSERT(lv_playersGetTeamId(1) == lv_playersGetTeamId(3));
+      UT_ASSERT(lv_playersGetTeamId(0) != lv_playersGetTeamId(1));
+      for (slot = 0; slot < 4; slot++) {
+        UT_ASSERT(lv_playersGetTeamForOwner(slot) == lv_playersGetTeamId(slot));
+        if (pass == 0) initialTeams[slot] = lv_playersGetTeamId(slot);
+        else UT_ASSERT(lv_playersGetTeamId(slot) == initialTeams[slot]);
+      }
+    }
+  }
+  lv_specSeedControlClear();
+  lv_decoderDestroy(lv);
+  return 0;
 }
 
 /* A snapshot's four stock bytes reach the slot they belong to, and a slot that

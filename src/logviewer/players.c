@@ -1095,6 +1095,57 @@ BYTE lv_playersGetTeamForOwner(BYTE owner) {
   return NEUTRAL_TEAM;
 }
 
+/* Snapshots carry alliances, not palette slots. Reconcile after every player
+ * has loaded, so allies later in the snapshot are available too. Preserve
+ * existing colours where possible, including colours restored for seeking. */
+void lv_playersRebuildTeams(void) {
+  BYTE groups[MAX_TANKS];
+  BYTE colours[MAX_TANKS];
+  bool used[MAX_TANKS] = {FALSE};
+  BYTE i, j, k;
+
+  for (i = 0; i < MAX_TANKS; i++) {
+    groups[i] = i;
+    colours[i] = NO_TEAM_SET;
+  }
+  for (i = 0; i < MAX_TANKS; i++) {
+    if (!plrs.item[i].inUse) continue;
+    for (j = 0; j < i; j++) {
+      if (plrs.item[j].inUse &&
+          lv_allienceExist(&plrs.item[i].allie, j) &&
+          lv_allienceExist(&plrs.item[j].allie, i)) {
+        BYTE from = groups[i];
+        BYTE to = groups[j];
+        for (k = 0; k < MAX_TANKS; k++) {
+          if (groups[k] == from) groups[k] = to;
+        }
+      }
+    }
+  }
+  /* Reserve surviving colours before allocating any new ones. */
+  for (i = 0; i < MAX_TANKS; i++) {
+    BYTE team = plrs.item[i].team;
+    if (plrs.item[i].inUse && colours[groups[i]] == NO_TEAM_SET &&
+        team < MAX_TANKS && !used[team]) {
+      colours[groups[i]] = team;
+      used[team] = TRUE;
+    }
+  }
+  for (i = 0; i < MAX_TANKS; i++) {
+    if (!plrs.item[i].inUse) continue;
+    if (colours[groups[i]] == NO_TEAM_SET) {
+      for (j = 0; j < MAX_TANKS; j++) {
+        if (!used[j]) {
+          colours[groups[i]] = j;
+          used[j] = TRUE;
+          break;
+        }
+      }
+    }
+    plrs.item[i].team = colours[groups[i]];
+  }
+}
+
 void lv_playersSetTeams(BYTE *pTeams) {
   BYTE count = 0;
 

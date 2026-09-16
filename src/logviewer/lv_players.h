@@ -467,6 +467,7 @@ BYTE lv_playersGetTeamId(BYTE playerNum);
 BYTE lv_playersGetUnusedTeam(BYTE playerNum);
 BYTE lv_playersGetTeamForOwner(BYTE owner);
 void lv_playersSetTeams(BYTE *pTeams);
+void lv_playersRebuildTeams(void);
 void lv_playersCopyPTeams(BYTE *dest);
 
 #endif /* _PLAYERS_H */

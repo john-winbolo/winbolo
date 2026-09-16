@@ -1831,6 +1831,9 @@ bool lv_processSnapshot() {
     count++;
   }
 
+  if (returnValue == TRUE) {
+    lv_playersRebuildTeams();
+  }
   return returnValue;
 }
 
