@@ -156,15 +156,26 @@ static const ViewSight *clientRenderBuildSight(ClientSim *csPtr, ViewSight *out,
                                                BYTE *vis) {
   BYTE mx; /* The square the view is looked out of */
   BYTE my;
+  BYTE sx; /* Where inside that square the eye is */
+  BYTE sy;
 
   if (clientSimGetLineOfSight(csPtr) == (uint8_t)lineOfSightOff) {
     return NULL;
   }
+  /* The middle of the square until something better is known. An item view has
+   * nothing better - a pillbox or a base sits on its square and nowhere else
+   * in it - and the tank does: which corner of a wall the player can see round
+   * turns on where in the square the tank is, so the view is built from where
+   * it really is and the picture moves as the tank crosses the square. */
+  sx = SIGHT_SUB_CENTRE;
+  sy = SIGHT_SUB_CENTRE;
   if (clientSimIsInItemView(csPtr) == TRUE) {
     mx = clientSimGetPillViewX(csPtr);
     my = clientSimGetPillViewY(csPtr);
   } else if (clientSimGetMyTankMapPos(csPtr, &mx, &my) == FALSE) {
     return NULL;
+  } else {
+    clientSimGetMyTankSubPos(csPtr, &sx, &sy);
   }
   memset(out, 0, sizeof(*out));
   out->memory = clientSimGetOverviewMap(csPtr);
@@ -176,7 +187,8 @@ static const ViewSight *clientRenderBuildSight(ClientSim *csPtr, ViewSight *out,
   out->block.right = out->block.left + MAIN_BACK_BUFFER_SIZE_X - 1;
   out->block.bottom = out->block.top + MAIN_BACK_BUFFER_SIZE_Y - 1;
   memset(vis, 1, SIGHT_MASK_BYTES);
-  sightBuildMask(&clientSimGetGameSim(csPtr)->mp, mx, my, &out->block, vis);
+  sightBuildMask(&clientSimGetGameSim(csPtr)->mp, mx, my, sx, sy, &out->block,
+                 vis);
   out->vis = vis;
   return out;
 }

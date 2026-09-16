@@ -16,20 +16,41 @@
  *Name:          Sight
  *Filename:      sight.h
  *Purpose:
- *  Which squares of a block can be seen from one square of
- *  the map. A straight line is drawn from that square to
- *  every square of the block, and the square is seen when
- *  the line arrives without passing through anything that
- *  stops it.
+ *  Which squares of a block can be seen from where the
+ *  player is standing. A square is seen when any part of it
+ *  can be seen - one corner, one sliver down the side of a
+ *  wall - and not only when its middle can.
  *
  *  Terrain and geometry, nothing else: no regions, no fog,
  *  and nothing kept between calls, so everything that wants
  *  this answer asks here rather than working it out again.
  *
- *  Buildings stop a line outright. Trees stop one by depth,
- *  counted as a run of consecutive forest squares along the
- *  line: a single row of trees is seen through and a wood two
- *  or more deep is not. Forest, grass, forest is two one-deep
+ *  Buildings are answered with angles. Every opaque square
+ *  fills a wedge of the view as seen from the eye, and that
+ *  wedge is the shadow it casts. The shadows are piled up
+ *  nearest square first, and a square is seen when some part
+ *  of its own wedge is still bare once the shadows of every
+ *  square nearer than it have been taken out of it. A square
+ *  at the same distance as another never shadows it - two
+ *  walls side by side are both in plain view - and the eye's
+ *  own square shadows nothing.
+ *
+ *  So the sliver counts. A pillbox with a wall run up beside
+ *  it is seen as long as a hair of it shows past the wall,
+ *  which is what a player looking at it sees, and what an
+ *  attacker needs of the pillbox they are shooting at. The
+ *  gaps that are not seen through are the ones with no width
+ *  at all: two opaque squares that touch, along an edge or
+ *  only at a corner, cast one shadow with no crack in it, so
+ *  sight still does not slip between two buildings meeting
+ *  corner to corner.
+ *
+ *  Trees are not answered that way and have not changed.
+ *  They stop a line by depth, counted as a run of consecutive
+ *  forest squares along the one line from the middle of the
+ *  eye's square to the middle of the square asked about: a
+ *  single row of trees is seen through and a wood two or more
+ *  deep is not. Forest, grass, forest is two one-deep
  *  runs and stops nothing; any square that is not forest puts
  *  the count back to zero. The other reading - every tree on
  *  the line added up however far apart they are - would blind
@@ -52,6 +73,10 @@
  *  beside you: the server sends it and the fog does not cover
  *  it. Buildings have no such exemption - a wall is a wall at
  *  any range.
+ *
+ *  A square has to get past both rules to be seen: the wood
+ *  hides what is behind it whatever the walls say, and the
+ *  walls hide what is behind them whatever the trees say.
  *********************************************************/
 
 #ifndef SIGHT_H
@@ -95,8 +120,18 @@
 #define SIGHT_MAX_SIDE   (2 * SIGHT_MAX_HALF + 1)
 #define SIGHT_MASK_BYTES (SIGHT_MAX_SIDE * SIGHT_MAX_SIDE)
 
+/* Where inside its square the eye is, in world units across the square, which
+ * is what the tank's own position is kept in. A caller that has only a square
+ * to give passes SIGHT_SUB_CENTRE and is answered from the middle of it.
+ *
+ * Which corner of a wall a player can see round turns on where in the square
+ * they are standing, so the main view hands over the tank's real position and
+ * the map, which knows only squares, hands over the middle. */
+#define SIGHT_SUB_CENTRE (1 << (TANK_SHIFT_MAPSIZE - 1))
+
 /* Writes one byte per square of the block: 1 for a square that can be seen
- * from (originX, originY) and 0 for one that cannot.
+ * from the eye and 0 for one that cannot. The eye stands on square
+ * (originX, originY), (offsetX, offsetY) inside it.
  *
  * vis is indexed by the block's own width, not the buffer's:
  *
@@ -108,21 +143,32 @@
  * is left as it was.
  *
  * The origin square is always seen, whatever is standing on it, and never
- * stops its own lines, so a tank sitting in a wood is not blinded by the
- * square it is on. Every other square is seen when the line to it arrives
- * without passing through an opaque square and without the run of forest
- * reaching SIGHT_TREE_BLOCK_RUN.
+ * casts a shadow, so a tank sitting in a building is not blinded by the square
+ * it is on. Every other square is seen when some part of it is left bare by
+ * the shadows of the opaque squares nearer to the eye than it is, and when the
+ * run of forest on the line to it does not reach SIGHT_TREE_BLOCK_RUN.
  *
- * The two ends are treated differently on purpose. A building at the far end
- * is not tested, so a wall is seen and the ground behind it is not. A tree at
- * the far end is counted, so the square that takes the run to its limit is the
- * first one hidden and the wood is stopped at rather than seen into. Within
- * SIGHT_TREE_NEAR squares of the origin on both axes the run hides nothing.
+ * An opaque square casts its shadow and is seen in it: a wall is drawn and the
+ * ground behind it is not. A tree at the far end is counted, so the square
+ * that takes the run to its limit is the first one hidden and the wood is
+ * stopped at rather than seen into. Within SIGHT_TREE_NEAR squares of the
+ * origin on both axes the run hides nothing.
  *
- * Where two opaque squares touch along an edge the diagonal between them is
- * closed, so sight does not slip through the corner where two buildings meet;
- * trees never close a corner. Squares off the map are never seen. */
-void sightBuildMask(map *mp, BYTE originX, BYTE originY,
-                    const OverviewRect *block, BYTE *vis);
+ * Where two opaque squares touch - along an edge or only at a corner - their
+ * shadows are one shadow with no crack in it, so sight does not slip through
+ * the corner where two buildings meet; trees cast no shadow at all. Squares
+ * off the map are never seen. */
+void sightBuildMask(map *mp, BYTE originX, BYTE originY, BYTE offsetX,
+                    BYTE offsetY, const OverviewRect *block, BYTE *vis);
+
+/* The rule as it stood before the shadows: one line from the middle of the
+ * origin square to the middle of every square of the block, and the square is
+ * seen when the line arrives. It is kept because the tests pin what the change
+ * did - a corner that the centre line misses and the shadows find - and
+ * because a block further from the eye than the shadow pass is built to reach
+ * is answered with it rather than with nothing. The trees rule is the same one
+ * in both, so only the buildings answer differently. */
+void sightBuildMaskCentreLine(map *mp, BYTE originX, BYTE originY,
+                              const OverviewRect *block, BYTE *vis);
 
 #endif /* SIGHT_H */
