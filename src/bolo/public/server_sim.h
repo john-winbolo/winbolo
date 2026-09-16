@@ -785,33 +785,30 @@ void        serverSimGetUploadsDir(const ServerSim *sim, char *out,
                                    size_t outLen);
 
 /*********************************************************
- *NAME:          serverSimSetSelectedScenario
- *               serverSimGetSelectedScenario
+ *NAME:          serverSimGetSelectedScenario
  *PURPOSE:
  *  Which scenario from that directory the lobby host has
  *  picked, by the file name the directory listing gave.
- *  Empty, or NULL to the setter, is none — the ordinary
- *  state of a server whose host has picked nothing.
+ *  Empty is none — the ordinary state of a server whose host
+ *  has picked nothing.
  *
- *  The getter never answers NULL: a sim with no selection
- *  answers "", so a caller can print or compare it without
- *  a guard. There is no fallback the way the directory has
- *  one; no selection is a state, not a missing setting.
+ *  Never answers NULL: a sim with no selection answers "",
+ *  so a caller can print or compare it without a guard.
+ *  There is no fallback the way the directory has one; no
+ *  selection is a state, not a missing setting.
  *
- *  Recording the pick is all this does by itself. What plays
- *  is decided by whoever owns the scenario, which reads this
- *  back: a pick here beats the committed map's own script,
- *  and none hands the map its own back. The caller that
- *  changes the selection asks for that decision again and
- *  publishes the result — the CMD_LOBBY_SET_SCENARIO case is
- *  the worked example.
+ *  Public because the scenario library reads it back to
+ *  decide what plays: a pick beats the committed map's own
+ *  script, and none hands the map its own back. Changing it
+ *  is the sim's own business and lives on
+ *  server_sim_lifecycle.h — a frontend that wants a
+ *  different scenario sends CMD_LOBBY_SET_SCENARIO, which is
+ *  what asks for that decision again and publishes the
+ *  result.
  *
  *ARGUMENTS:
  *  sim  - Pointer to the ServerSim
- *  file - The file name in the scenarios directory, or NULL
- *         or "" for none
  *********************************************************/
-void        serverSimSetSelectedScenario(ServerSim *sim, const char *file);
 const char *serverSimGetSelectedScenario(const ServerSim *sim);
 
 /*********************************************************
