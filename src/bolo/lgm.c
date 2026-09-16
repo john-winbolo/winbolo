@@ -1513,6 +1513,86 @@ void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lg
 }
 
 /*********************************************************
+*NAME:          lgmDropCarriedPill
+*AUTHOR:        John Morrison
+*CREATION DATE: 16/09/26
+*LAST MODIFIED: 16/09/26
+*PURPOSE:
+*  Puts the pillbox the man is carrying down on the map and
+*  leaves him carrying nothing. It lands on the first square
+*  at or below his feet that will hold one, dead, owned by
+*  him. Does nothing if he is carrying no pillbox.
+*
+*  Dying does this — lgmKill calls it — and so must his
+*  player leaving while he is out on the errand. A pillbox in
+*  his hands is in no tank's carry list, so the tank teardown
+*  that drops the rest of a leaver's cargo never sees it.
+*  Left undone, its record survives still marked as carried
+*  by a man who no longer exists: off the map, nobody's to
+*  pick up, gone for the rest of the round.
+*
+*ARGUMENTS:
+*  sim    - The game the man belongs to
+*  lgman  - Pointer to the lgm pointer
+*********************************************************/
+void lgmDropCarriedPill(GameSim *sim, lgm *lgman) {
+  map *mp = &sim->mp;
+  pillboxes *pb = &sim->pb;
+  bases *bs = &sim->bs;
+  pillbox item;           /* Item to write back into the pillbox list */
+  BYTE lgmMapX;           /* The square he is standing on */
+  BYTE lgmMapY;
+  BYTE pos;
+  bool finishedPillPlace; /* Used to place pills properly */
+  BYTE pillPlaceX;
+  BYTE pillPlaceY;
+  BYTE count;
+  WORLD conv;
+
+  if (*lgman == NULL || (*lgman)->numPills == LGM_NO_PILL) {
+    return;
+  }
+
+  conv = (*lgman)->x;
+  conv >>= 8;
+  lgmMapX = (BYTE) conv;
+  lgmMapY = (BYTE) ((unsigned int) ((*lgman)->y) >> 8);
+
+  if (sim->isServer == TRUE) {
+    finishedPillPlace = FALSE;
+    count = 0;
+    pillPlaceX = lgmMapX;
+    pillPlaceY = lgmMapY;
+    while (finishedPillPlace == FALSE) {
+      item.x = pillPlaceX;
+      item.y = pillPlaceY+count;
+      if (item.x > MAP_MINE_EDGE_LEFT && item.x < MAP_MINE_EDGE_RIGHT && item.y > MAP_MINE_EDGE_TOP && item.y < MAP_MINE_EDGE_BOTTOM) {
+        pos = mapGetPos(mp, item.x, item.y);
+        if (pillsExistPos(pb, item.x, item.y) == FALSE && basesExistPos(bs, item.x, item.y) == FALSE && pos != BUILDING && pos != HALFBUILDING && pos != BOAT) {
+          finishedPillPlace = TRUE;
+        }
+      }
+      count++;
+      if (count == 10 && finishedPillPlace == FALSE) {
+        count = 0;
+        item.y = pillPlaceY;
+        pillPlaceX++;
+      }
+    }
+    item.armour = 0;
+    item.owner = (*lgman)->playerNum;
+    item.speed = (BYTE) sim->rules.pill_attack_ticks;
+    item.reload = (BYTE) sim->rules.pill_attack_ticks;
+    item.coolDown = 0;
+    item.inTank = FALSE;
+    item.justSeen = FALSE;
+    pillsSetPill(sim, pb, &item, (*lgman)->numPills);
+  }
+  (*lgman)->numPills = LGM_NO_PILL;
+  if (sim->isServer == FALSE) { clientSimRecalc((struct ClientSim *)sim); }
+}
+
+/*********************************************************
 *NAME:          lgmKill
 *AUTHOR:        John Morrison
 *CREATION DATE: 11/09/26
@@ -1536,9 +1616,6 @@ void lgmDeathCheckAtPosition(GameSim *sim, lgm *lgman, WORLD lgmWorldX, WORLD lg
 *           death nobody caused, as a mine is)
 *********************************************************/
 void lgmKill(GameSim *sim, lgm *lgman, tank *tnk, BYTE owner) {
-  map *mp = &sim->mp;
-  pillboxes *pb = &sim->pb;
-  bases *bs = &sim->bs;
   bool isServer = sim->isServer;
   starts *sts = &sim->ss;
   BYTE lgmMapX;                     /* LGM X Map co-ordinate (from real position) */
@@ -1546,12 +1623,6 @@ void lgmKill(GameSim *sim, lgm *lgman, tank *tnk, BYTE owner) {
   BYTE deathMY;
   BYTE lgmMapY;                     /* LGM Y Map co-ordinate (from real position) */
   TURNTYPE dummy;                   /* Dummy variable used for paremeter passing */
-  pillbox item;   /* Item to add to the pillbox */
-  BYTE pos;
-  bool finishedPillPlace; /* Used to place pills properly */
-  BYTE pillPlaceX;
-  BYTE pillPlaceY;
-  BYTE count;
   WORLD conv;
 
   /* Map coords from real position — used for pill drop, sound, etc.
@@ -1572,44 +1643,7 @@ void lgmKill(GameSim *sim, lgm *lgman, tank *tnk, BYTE owner) {
   (*lgman)->numTrees = 0;
   (*lgman)->numMines = 0;
   (*lgman)->nextAction = LGM_IDLE;
-  if ((*lgman)->numPills != LGM_NO_PILL) {
-    /* Drop Pill */
-    if (isServer == TRUE) {
-      finishedPillPlace = FALSE;
-      count = 0;
-      pillPlaceX = lgmMapX;
-      pillPlaceY = lgmMapY;
-      while (finishedPillPlace == FALSE) {
-        item.x = pillPlaceX;
-        item.y = pillPlaceY+count;
-        if (item.x > MAP_MINE_EDGE_LEFT && item.x < MAP_MINE_EDGE_RIGHT && item.y > MAP_MINE_EDGE_TOP && item.y < MAP_MINE_EDGE_BOTTOM) {
-          pos = mapGetPos(mp, item.x, item.y);
-          if (pillsExistPos(pb, item.x, item.y) == FALSE && basesExistPos(bs, item.x, item.y) == FALSE && pos != BUILDING && pos != HALFBUILDING && pos != BOAT) {
-            finishedPillPlace = TRUE;
-          }
-        }
-        count++;
-        if (count == 10 && finishedPillPlace == FALSE) {
-          count = 0;
-          item.y = pillPlaceY;
-          pillPlaceX++;
-        }
-      }
-      item.armour = 0;
-      item.owner = (*lgman)->playerNum;
-      item.speed = (BYTE) sim->rules.pill_attack_ticks;
-      item.reload = (BYTE) sim->rules.pill_attack_ticks;
-      item.coolDown = 0;
-      item.inTank = FALSE;
-      item.justSeen = FALSE;
-      pillsSetPill(sim, pb,&item,(*lgman)->numPills);
-      if (isServer == FALSE) {
-        frontEndStatusPillbox(clientSimFromSim(sim), (*lgman)->numPills, (pillsGetAllianceNum(sim, pb, (*lgman)->numPills)));
-      }
-    }
-    (*lgman)->numPills = LGM_NO_PILL;
-    if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
-  }
+  lgmDropCarriedPill(sim, lgman);
   if (tnk != NULL && *tnk != NULL) {
     tankGetWorld(tnk, &((*lgman)->destX), &((*lgman)->destY));
   } else {
