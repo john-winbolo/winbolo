@@ -34,6 +34,11 @@
  *                                        resolve a name, so neither reaches
  *                                        the funnel's refusal for a brain it
  *                                        cannot open
+ * run_scenario_brain_name_op_missing_refused
+ *                                      — a spawn naming a brain no parent
+ *                                        holds is refused SCN_OP_NOT_FOUND
+ *                                        and seats nothing, so the raw name
+ *                                        never reaches the sim as a path
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -635,6 +640,89 @@ int run_scenario_brain_op_resolves(void) {
     ut_brain_stub_arm(false);
     bnDrop(kAddMap);
     bnDrop(kSpawnMap);
+    bnRemoveBrain();
+    return 0;
+}
+
+/* ── 5. A spawn naming a brain this server has not got ────────────── */
+
+/* A name the brains parents do not hold used to be left as the script wrote
+ * it and handed on, where the sim reads it as a path relative to wherever the
+ * server was started: spawn_bot{ brain = "init.lua" } opened ./init.lua. The
+ * name is refused at the row now, so the raw value never reaches the sim.
+ *
+ * No brain is installed here at all, and the name the script writes is one
+ * nothing could resolve. The server's own brain is set, so a bot that did
+ * land would have had one to run — the roster being empty afterwards is the
+ * refusal and not a missing fixture. */
+int run_scenario_brain_name_op_missing_refused(void) {
+    static const char *const kOpMap = "wbtest_brain_op_missing.map";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+    int           bots;
+    int           i;
+
+    /* A brain for the server itself, so the only thing missing is the one the
+       script names. */
+    UT_ASSERT(bnInstallBrain("op_missing"));
+    ut_brain_stub_arm(true);
+
+    UT_ASSERT(bnPut(kOpMap,
+        "scenario = { name = \"Ops\", api = 1 }\n"
+        "local done = false\n"
+        "function on_tick(t)\n"
+        "  if done then return end\n"
+        "  done = true\n"
+        "  local slot, why, detail = game.spawn_bot{ brain = \"init.lua\",\n"
+        "                                            team = 1 }\n"
+        "  if slot then print(\"brain:spawned\")\n"
+        "  else print(\"brain:refused \" .. tostring(why) .. \" \" ..\n"
+        "             tostring(detail)) end\n"
+        "end\n"));
+
+    sim = bnRoundSim();
+    UT_ASSERT(sim != NULL);
+    serverSimSetBotBrainPath(sim, bnPath);
+    bnWatchConsole(sim);
+
+    h = scenarioHostAttach(sim, kOpMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the op script was refused: %s", err);
+    serverSimStartGame(sim);
+    /* Three, as the path case runs: the spawn is made on the first running
+       tick, and one that had been accepted would be queued and taken up on
+       the tick after. */
+    serverSimTick(sim);
+    serverSimTick(sim);
+    serverSimTick(sim);
+
+    UT_ASSERT_MSG(strstr(bnSaid, "brain:refused") != NULL,
+                  "a spawn naming a brain this server has not got was not "
+                  "refused; the console heard: %s", bnSaid);
+    UT_ASSERT_MSG(strstr(bnSaid, "SCN_OP_NOT_FOUND") != NULL,
+                  "the refusal was not SCN_OP_NOT_FOUND: %s", bnSaid);
+    UT_ASSERT_MSG(strstr(bnSaid, "names no brain") != NULL,
+                  "the refusal did not say the name resolves to nothing: %s",
+                  bnSaid);
+
+    /* And nothing was seated, which is the half the refusal is for: a bot
+       built on the raw name would have run whatever ./init.lua happened to
+       be. */
+    bots = 0;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (serverSimIsBot(sim, (BYTE)i)) {
+            bots++;
+        }
+    }
+    UT_ASSERT_MSG(bots == 0,
+                  "%d bots in the round after a refused spawn, expected none",
+                  bots);
+
+    bnUnwatchConsole(sim);
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    ut_brain_stub_arm(false);
+    bnDrop(kOpMap);
     bnRemoveBrain();
     return 0;
 }

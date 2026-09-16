@@ -5560,6 +5560,7 @@ set(_unit_test_names
     scenario_brain_name_missing
     scenario_brain_name_rejects_path
     scenario_brain_op_resolves
+    scenario_brain_name_op_missing_refused
     scenario_dir_lists_package
     scenario_dir_lists_loose_script
     scenario_dir_skips_junk

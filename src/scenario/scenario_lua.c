@@ -2265,11 +2265,11 @@ static int scnTableTooBig(lua_State *L, const char *field, const char *key) {
  *
  * A value with a path separator in it is refused, and told what to write
  * instead, so an author who wrote the old form learns it here rather than from
- * a seat that fields nothing. A name this server does not have is left as the
- * script wrote it and reaches the funnel, which refuses it SCN_OP_NOT_FOUND
- * like any brain it cannot open — one answer for a brain that will not load,
- * however it was written. An empty brain is the seat's own, or failing that
- * the server's, and is left alone.
+ * a seat that fields nothing. A name this server does not have is refused too:
+ * left as the script wrote it, it reaches the sim as a path relative to
+ * wherever the server was started, so spawn_bot{brain="init.lua"} would open
+ * whatever file that name happens to hit. An empty brain is the seat's own, or
+ * failing that the server's, and is left alone.
  *
  * Answers 0 for a row that should carry on, and otherwise the number of values
  * the refusal pushed, which is the row's own answer to the script. */
@@ -2285,9 +2285,11 @@ static int scnResolveOpBrain(lua_State *L, char *brain, size_t brainLen) {
                           "which is the directory under the server's brains/ "
                           "— 'GoalHunter_1.7', not a path to it", brain);
     }
-    if (brainListResolve(brain, path, sizeof(path))) {
-        snprintf(brain, brainLen, "%s", path);
+    if (!brainListResolve(brain, path, sizeof(path))) {
+        return scnRefused(L, SCN_OP_NOT_FOUND,
+                          "brain '%s' names no brain this server has", brain);
     }
+    snprintf(brain, brainLen, "%s", path);
     return 0;
 }
 
