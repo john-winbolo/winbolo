@@ -2095,7 +2095,15 @@ static void scnTick(void *ctx) {
 
 /* The file name out of a path. What the lobby says a scenario came from is a
  * name; where the server keeps its maps is not something clients are told.
- * Both separators, because a Windows server holds the other one. */
+ * Both separators, because a Windows server holds the other one.
+ *
+ * A reload's message uses it for a second reason: what a reload says goes to
+ * whoever asked for it as a single 128-byte line, and Lua puts the chunk's
+ * name at the front of every message it raises, so a script under a deep map
+ * directory would spend the whole line on a path the asker cannot see and
+ * leave no room for the line number and the error itself. The round boot
+ * keeps the full path — that one goes to the operator's console, where the
+ * path is the useful part. */
 static const char *scnFileNameOf(const char *path) {
     const char *last = path;
     const char *p;
@@ -3892,25 +3900,6 @@ ScenarioHost *scenarioHostAttachMod(ServerSim *sim, const char *dir,
     return scnAttachFrom(sim, &from, "", lobbyScenarioMod, err, errLen);
 }
 
-/* The file name at the end of a path. What a reload says goes to whoever
-   asked for it as a single 128-byte line, and Lua puts the chunk's name at
-   the front of every message it raises — so a script under a deep map
-   directory would spend the whole line on a path the asker cannot see
-   anyway, leaving no room for the line number and the error itself. The
-   round boot keeps the full path: that one goes to the operator's console,
-   where the path is the useful part. */
-static const char *scnFileName(const char *path) {
-    const char *base = path;
-    const char *p;
-
-    for (p = path; *p != '\0'; p++) {
-        if (*p == '/' || *p == '\\') {
-            base = p + 1;
-        }
-    }
-    return base;
-}
-
 bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     char             soft[SCN_ERR_LEN];
     char             why[SCN_ERR_LEN];
@@ -3953,11 +3942,11 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
            is a fault, so it is stated here. */
         if (err != NULL && errLen > 0 && err[0] == '\0') {
             scnFmt(err, errLen, "scenario: %s is no longer there",
-                   scnFileName(h->script));
+                   scnFileNameOf(h->script));
         }
         return false;
     }
-    name = scnFileName(from.script);
+    name = scnFileNameOf(from.script);
     scnChunkNameOf(&from, name, chunkName, sizeof(chunkName));
 
     /* Everything below happens in a Lua state of its own, and nothing the
@@ -4080,7 +4069,7 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
        the table it started with, and the round start reads the new one from
        the bytes swapped above. What changes here is what the lobby is told,
        which is not the running round's to keep. */
-    scnHandLobbyOver(h->sim, &m, h->source, scnFileName(from.script));
+    scnHandLobbyOver(h->sim, &m, h->source, scnFileNameOf(from.script));
     /* Seated only from the lobby. The template is data either way and goes
        over above whatever the server is doing, but building the seats and
        moving the game type onto a round already running would change a game

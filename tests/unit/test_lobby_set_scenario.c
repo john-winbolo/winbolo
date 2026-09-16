@@ -36,9 +36,11 @@
  * reload is. Every case below that picks twice moves the sim's clock between
  * the two, the way test_lobby_reload_scenario.c does.
  *
- * Nothing here checks what the selection does, because it does nothing yet:
- * applying it, and the settings event that says where the scenario in play
- * came from, are still to come.
+ * What the selection then does — which scenario plays, the seats it asks for
+ * and the settings event that says where the scenario in play came from — is
+ * covered by test_scenario_precedence.c, which drives the same command
+ * against a real scenarios directory. These cases are about the command
+ * itself: who may send it, what shapes it refuses, and how often.
  *
  * Drives serverSimApplyCommand directly, holding the threads mutex the
  * dispatcher asserts.
