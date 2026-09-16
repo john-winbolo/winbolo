@@ -2050,6 +2050,22 @@ void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
         sim->scenarioMapChanged(sim->scenarioMapChangedCtx, sim,
                                 mapPath != NULL ? mapPath : "");
     }
+    /* A map whose script lays out the lobby starts from that lobby. Every
+       bot the previous map had goes first: a single-player game opens on
+       the default map with one seeded enemy, and a host may have added
+       bots to a plain map before choosing a scripted one. Left in, such a
+       bot sits ahead of the script's seats on a side the script never
+       meant, an eleventh attacker where Survival fields ten. People stay
+       where they are; the seating below only ever takes the first free
+       slots. */
+    if (sim->scenarioLobbyValid) {
+        BYTE i;
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (serverSimIsBot(sim, i)) {
+                serverSimRemoveBot(sim, i);
+            }
+        }
+    }
     serverSimScenarioSeatLobby(sim);
 }
 

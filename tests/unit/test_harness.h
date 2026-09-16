@@ -2376,6 +2376,7 @@ int run_lobby_template_return_unfields(void);
 int run_lobby_template_reset_reseats(void);
 int run_lobby_template_preview_is_inert(void);
 int run_lobby_template_plain_map_clears(void);
+int run_lobby_template_map_commit_drops_prior_bots(void);
 int run_lobby_template_caps_humans_only(void);
 int run_lobby_template_cap_seats_human_above_bots(void);
 int run_lobby_template_cap_refuses_extra_human(void);

@@ -1109,6 +1109,7 @@ static const UnitTestEntry s_tests[] = {
     { "lobby_template_reset_reseats",            run_lobby_template_reset_reseats            },
     { "lobby_template_preview_is_inert",         run_lobby_template_preview_is_inert         },
     { "lobby_template_plain_map_clears",         run_lobby_template_plain_map_clears         },
+    { "lobby_template_map_commit_drops_prior_bots", run_lobby_template_map_commit_drops_prior_bots },
     { "lobby_template_caps_humans_only",         run_lobby_template_caps_humans_only         },
     { "lobby_template_cap_seats_human_above_bots",
       run_lobby_template_cap_seats_human_above_bots                                          },

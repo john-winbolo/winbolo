@@ -311,6 +311,62 @@ int run_lobby_template_map_commit_seats(void) {
     return 0;
 }
 
+/* ── A committed scripted map takes the previous map's bots off ──── */
+
+int run_lobby_template_map_commit_drops_prior_bots(void) {
+    ServerSim       *sim;
+    ScnLobbyTemplate t;
+    int              i, bots = 0;
+
+    UT_ASSERT(ltMakeBrainFile("map_commit_drops"));
+    ut_brain_stub_arm(true);
+    sim = ltLobbySim();
+    UT_ASSERT(sim != NULL);
+
+    /* The lobby as a single-player game opens it: the human at 0 and one
+       seeded enemy at 1, on a team the script knows nothing about. */
+    {
+        ServerSimBotConfig cfg;
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.brainPath  = ltBrainPath;
+        cfg.brainName  = "Bot 1";
+        cfg.ai         = aiFull;
+        cfg.gameType   = gameOpen;
+        cfg.teamNumber = 2;
+        UT_ASSERT(serverSimAddBot(sim, 1, &cfg));
+    }
+    UT_ASSERT(serverSimIsBot(sim, 1));
+
+    /* Then a scripted map is chosen. */
+    ltTemplate(&t, 4, 4, 2, 2);
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    serverSimScenarioOnMapChanged(sim, "");
+
+    /* The seeded bot is gone, the human stays, and the roster is the
+       human plus the template's six and nothing else. */
+    UT_ASSERT(sim->playerConnected[0]);
+    UT_ASSERT_MSG(!sim->lobbyPlayers[0].keepSeat,
+                  "the human's seat was taken for the template");
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!serverSimIsBot(sim, (BYTE)i)) continue;
+        bots++;
+        UT_ASSERT_MSG(sim->lobbyPlayers[i].keepSeat,
+                      "bot in slot %d is not one of the template's", i);
+        UT_ASSERT_MSG(sim->lobbyPlayers[i].teamNumber == LT_RAIDER ||
+                      sim->lobbyPlayers[i].teamNumber == LT_GUARD,
+                      "bot in slot %d is on team %d, not the template's",
+                      i, (int)sim->lobbyPlayers[i].teamNumber);
+    }
+    UT_ASSERT_MSG(bots == 6, "%d bots in the lobby, expected the template's 6",
+                  bots);
+    UT_ASSERT_MSG(serverSimGetNumPlayers(sim) == 7, "roster %u, expected 7",
+                  (unsigned)serverSimGetNumPlayers(sim));
+
+    serverSimDestroy(sim);
+    ltDropBrainFile();
+    return 0;
+}
+
 /* ── A returning lobby reconciles ─────────────────────────────────── */
 
 int run_lobby_template_return_reconciles(void) {
