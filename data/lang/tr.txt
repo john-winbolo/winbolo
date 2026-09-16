@@ -2128,3 +2128,21 @@ STR_PING_MOUSE_RIGHT=Sağ Fare Tuşu
 STR_PING_MOUSE_X1=Fare 4
 STR_PING_MOUSE_X2=Fare 5
 STR_DLGKEYSETUP_PING_ALT2=Akıllı Ping – Alternatif Tuşlar 2
+
+# Lobide senaryo seçimi
+STR_DLGGAMEINFO_SCRIPTED=Senaryolu
+STR_DLGSETTINGS_HOSTING_SCRIPTS=Sunucu açarken harita betiklerini çalıştır
+STR_DLGLOBBY_SCENARIO_LBL=Senaryo:
+STR_DLGLOBBY_SCRIPTS_OFF=Betikler kapalı
+STR_DLGLOBBY_RELOAD_SCENARIO=Betiği Yenile
+STR_DLGLOBBY_REJECT_SCENARIO=Bu ayarı haritanın senaryosu belirliyor
+STR_DLGLOBBY_REJECT_COOLDOWN=Çok erken, birazdan tekrar deneyin
+STR_DLGLOBBY_CHOOSE_SCENARIO=Seç
+STR_DLGLOBBY_SCENARIO_TITLE=Senaryo Seç
+STR_DLGLOBBY_SCENARIO_NONE=Hiçbiri — haritanın kendi senaryosu varsa oynanır, yoksa senaryosuz oynanır
+STR_DLGLOBBY_SCENARIO_WAITING=Sunucuya soruluyor...
+STR_DLGLOBBY_SCENARIO_EMPTY=Bu sunucu kendi senaryolarını sunmuyor.
+STR_DLGLOBBY_SCENARIO_BOUND=Kendi haritasına bağlıdır ve onunla birlikte gelir
+STR_DLGLOBBY_SCENARIO_MAXPLAYERS=En fazla {number} oyuncu
+STR_DLGLOBBY_SCENARIO_BOTS={number} bot yeri
+STR_DLGLOBBY_SCENARIO_ON_MAP=Harita {string1}, senaryo {string2}

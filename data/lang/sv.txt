@@ -2128,3 +2128,21 @@ STR_PING_MOUSE_RIGHT=Höger musknapp
 STR_PING_MOUSE_X1=Mus 4
 STR_PING_MOUSE_X2=Mus 5
 STR_DLGKEYSETUP_PING_ALT2=Smart ping – alternativa tangenter 2
+
+# Scenarioval i lobbyn
+STR_DLGGAMEINFO_SCRIPTED=Skriptad
+STR_DLGSETTINGS_HOSTING_SCRIPTS=Kör kartskript när du hostar
+STR_DLGLOBBY_SCENARIO_LBL=Scenario:
+STR_DLGLOBBY_SCRIPTS_OFF=Skript av
+STR_DLGLOBBY_RELOAD_SCENARIO=Ladda om skript
+STR_DLGLOBBY_REJECT_SCENARIO=Den inställningen bestäms av kartans scenario
+STR_DLGLOBBY_REJECT_COOLDOWN=För tidigt; försök igen om en liten stund
+STR_DLGLOBBY_CHOOSE_SCENARIO=Välj
+STR_DLGLOBBY_SCENARIO_TITLE=Välj scenario
+STR_DLGLOBBY_SCENARIO_NONE=Inget — kartans eget scenario spelas, om det finns, annars inget alls
+STR_DLGLOBBY_SCENARIO_WAITING=Frågar servern...
+STR_DLGLOBBY_SCENARIO_EMPTY=Den här servern erbjuder inga egna scenarier.
+STR_DLGLOBBY_SCENARIO_BOUND=Hör till sin egen karta och kommer med den
+STR_DLGLOBBY_SCENARIO_MAXPLAYERS=Upp till {number} spelare
+STR_DLGLOBBY_SCENARIO_BOTS={number} bot-platser
+STR_DLGLOBBY_SCENARIO_ON_MAP=Karta {string1}, scenario {string2}

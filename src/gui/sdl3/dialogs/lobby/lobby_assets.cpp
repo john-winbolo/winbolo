@@ -29,6 +29,7 @@
 
 #include "lobby_internal.h"
 extern "C" {
+#include "control_event.h"       /* lobbyScenarioMod — which of the two is playing */
 #include "../../../lang.h"
 #include "../../../gamefront.h"  /* gameFrontHostingScripts / gameFrontGetServerSim */
 }
@@ -43,28 +44,62 @@ const char *lobbyGameTypeStr(gameType gt) {
     }
 }
 
-/* The scenario the lobby's map is running, under the map's own lines in
- * both lobby layouts. It belongs to the map — the script file sits beside
- * it — and the description is prose, so it goes on lines of its own rather
+/* Whether this client may change which scenario plays: the host, and not a
+ * spectator. The test the reload button has always made, now shared with the
+ * Choose button beside it. */
+static bool lobbyScenarioMayChoose(ClientSim *cs) {
+    return clientSimGetLobbyHostSlot(cs) == clientSimGetMyPlayerNum(cs) &&
+           !clientSimIsSpectator(cs);
+}
+
+/* The scenario the lobby is running, under the map's own lines in both lobby
+ * layouts. The description is prose, so it goes on lines of its own rather
  * than onto the single settings row, which is built from SameLine and ends
  * with a right-aligned badge.
  *
- * The source is 0 when the round has no scenario, which covers a map with
- * no script file and a map whose script this host declined alike: the
- * server answers the same either way. So when this client is the one
- * hosting and has the preference switched off, the line says that instead
- * of nothing, rather than leaving a player wondering where the scenario
- * went. Nothing is drawn for a joiner on a plain map. */
+ * Two shapes, because there are two ways a scenario comes to be playing. One
+ * that came with the map names itself and nothing else: the map is already
+ * named on the line above. One the host picked plays over whichever map is
+ * committed, and may be standing in front of that map's own script, so it
+ * names both — the map, and what is playing on it.
+ *
+ * The source is 0 when the round has no scenario, which covers a map with no
+ * script file and a map whose script this host declined alike: the server
+ * answers the same either way. So when this client is the one hosting and has
+ * the preference switched off, the line says that instead of nothing, rather
+ * than leaving a player wondering where the scenario went.
+ *
+ * A host sees the Choose button in every one of these states except that one,
+ * including on a plain map with nothing playing — that is the state a host is
+ * in when they go looking for a scenario, so it is the last place the way in
+ * should be missing. A joiner sees no button at all.
+ *
+ * The button only asks for the dialog. The dialog itself is drawn from the
+ * lobby's own frame, beside the map chooser's window, because this line is
+ * drawn inside the Map tab and a dialog that stopped being drawn when the
+ * player changed tab would be open with no way back to it. */
 void lobbyRenderScenarioLine(ClientSim *cs) {
     if (cs == NULL) return;
 
-    if (clientSimGetLobbyScenarioSource(cs) != 0) {
+    bool    mayChoose = lobbyScenarioMayChoose(cs);
+    uint8_t source    = clientSimGetLobbyScenarioSource(cs);
+
+    if (source != 0) {
         const char *name = clientSimGetLobbyScenarioName(cs);
         const char *desc = clientSimGetLobbyScenarioDescription(cs);
         /* A scenario that named itself nothing still came from a file. */
         if (name[0] == '\0') name = clientSimGetLobbyScenarioFileName(cs);
-        ImGui::TextWrapped("%s %s",
-                           langGetText(STR_DLGLOBBY_SCENARIO_LBL), name);
+        if (source == lobbyScenarioMod) {
+            MessageArgs args = {};
+            SDL_snprintf(args.string1, sizeof(args.string1), "%s",
+                         clientSimGetMapName(cs));
+            SDL_snprintf(args.string2, sizeof(args.string2), "%s", name);
+            ImGui::TextWrapped("%s",
+                langGetTextFmt(STR_DLGLOBBY_SCENARIO_ON_MAP, &args));
+        } else {
+            ImGui::TextWrapped("%s %s",
+                               langGetText(STR_DLGLOBBY_SCENARIO_LBL), name);
+        }
         if (desc[0] != '\0') {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
             ImGui::TextWrapped("%s", desc);
@@ -74,19 +109,31 @@ void lobbyRenderScenarioLine(ClientSim *cs) {
            the machine the server is running on. The server answers with a
            line addressed to whoever asked, including what a reload that
            failed says, so nothing is reported from here. */
-        if (clientSimGetLobbyHostSlot(cs) == clientSimGetMyPlayerNum(cs) &&
-            !clientSimIsSpectator(cs)) {
+        if (mayChoose) {
             if (ImGui::SmallButton(
                     langGetText(STR_DLGLOBBY_RELOAD_SCENARIO))) {
                 clientSimNetSendLobbyReloadScenario(cs);
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton(
+                    langGetText(STR_DLGLOBBY_CHOOSE_SCENARIO))) {
+                lobbyScenarioChooserOpen();
             }
         }
         return;
     }
     if (!gameFrontHostingScripts && gameFrontGetServerSim() != NULL) {
+        /* This machine's own server runs no scripts, so there is nothing for
+           a chooser to pick that could play. Say why, and offer no button. */
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_SCRIPTS_OFF));
         ImGui::PopStyleColor();
+        return;
+    }
+    if (mayChoose) {
+        if (ImGui::SmallButton(langGetText(STR_DLGLOBBY_CHOOSE_SCENARIO))) {
+            lobbyScenarioChooserOpen();
+        }
     }
 }
 

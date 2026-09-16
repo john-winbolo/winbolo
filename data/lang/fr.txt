@@ -2128,3 +2128,21 @@ STR_PING_MOUSE_RIGHT=Clic droit
 STR_PING_MOUSE_X1=Souris 4
 STR_PING_MOUSE_X2=Souris 5
 STR_DLGKEYSETUP_PING_ALT2=Ping intelligent – touches alternatives 2
+
+# Sélection de scénario dans le salon
+STR_DLGGAMEINFO_SCRIPTED=Scripté
+STR_DLGSETTINGS_HOSTING_SCRIPTS=Exécuter les scripts de la carte en tant qu'hôte
+STR_DLGLOBBY_SCENARIO_LBL=Scénario :
+STR_DLGLOBBY_SCRIPTS_OFF=Scripts désactivés
+STR_DLGLOBBY_RELOAD_SCENARIO=Actualiser le script
+STR_DLGLOBBY_REJECT_SCENARIO=Ce paramètre est fixé par le scénario de la carte
+STR_DLGLOBBY_REJECT_COOLDOWN=Trop tôt ; réessayez dans un instant
+STR_DLGLOBBY_CHOOSE_SCENARIO=Choisir
+STR_DLGLOBBY_SCENARIO_TITLE=Choisir un scénario
+STR_DLGLOBBY_SCENARIO_NONE=Aucun — la carte joue son propre scénario, ou rien du tout
+STR_DLGLOBBY_SCENARIO_WAITING=Demande au serveur...
+STR_DLGLOBBY_SCENARIO_EMPTY=Ce serveur ne propose aucun scénario qui lui soit propre.
+STR_DLGLOBBY_SCENARIO_BOUND=Appartient à sa propre carte, et arrive avec elle
+STR_DLGLOBBY_SCENARIO_MAXPLAYERS=Jusqu'à {number} joueurs
+STR_DLGLOBBY_SCENARIO_BOTS={number} places pour bots
+STR_DLGLOBBY_SCENARIO_ON_MAP=Carte {string1}, scénario {string2}

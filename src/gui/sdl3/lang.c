@@ -2149,6 +2149,15 @@ static const LangEntry langTable[] = {
     {2200, "Reload script"},
     {2201, "That setting is fixed by the map's scenario"},
     {2202, "Too soon; try again in a moment"},
+    {2204, "Choose"},
+    {2205, "Choose a scenario"},
+    {2206, "None — play the map's own scenario, or none at all"},
+    {2207, "Asking the server..."},
+    {2208, "This server offers no scenarios of its own."},
+    {2209, "Belongs to its own map, and arrives with it"},
+    {2210, "Up to {number} players"},
+    {2211, "{number} bot seats"},
+    {2212, "{string1} map, playing {string2}"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

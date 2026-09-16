@@ -2129,3 +2129,21 @@ STR_PING_MOUSE_RIGHT=Botón derecho
 STR_PING_MOUSE_X1=Ratón 4
 STR_PING_MOUSE_X2=Ratón 5
 STR_DLGKEYSETUP_PING_ALT2=Ping inteligente: teclas alternativas 2
+
+# Selección de escenario en la sala de partida
+STR_DLGGAMEINFO_SCRIPTED=Con script
+STR_DLGSETTINGS_HOSTING_SCRIPTS=Ejecutar los scripts del mapa al ser anfitrión
+STR_DLGLOBBY_SCENARIO_LBL=Escenario:
+STR_DLGLOBBY_SCRIPTS_OFF=Scripts desactivados
+STR_DLGLOBBY_RELOAD_SCENARIO=Actualizar script
+STR_DLGLOBBY_REJECT_SCENARIO=Ese ajuste lo fija el escenario del mapa
+STR_DLGLOBBY_REJECT_COOLDOWN=Demasiado pronto; inténtalo de nuevo en un momento
+STR_DLGLOBBY_CHOOSE_SCENARIO=Elegir
+STR_DLGLOBBY_SCENARIO_TITLE=Elegir un escenario
+STR_DLGLOBBY_SCENARIO_NONE=Ninguno — el mapa juega su propio escenario, o ninguno en absoluto
+STR_DLGLOBBY_SCENARIO_WAITING=Solicitando al servidor...
+STR_DLGLOBBY_SCENARIO_EMPTY=Este servidor no ofrece escenarios propios.
+STR_DLGLOBBY_SCENARIO_BOUND=Pertenece a su propio mapa, y llega con él
+STR_DLGLOBBY_SCENARIO_MAXPLAYERS=Hasta {number} jugadores
+STR_DLGLOBBY_SCENARIO_BOTS={number} plazas para bots
+STR_DLGLOBBY_SCENARIO_ON_MAP=Mapa {string1}, escenario {string2}

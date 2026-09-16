@@ -2128,3 +2128,21 @@ STR_PING_MOUSE_RIGHT=Rechtermuisknop
 STR_PING_MOUSE_X1=Muis 4
 STR_PING_MOUSE_X2=Muis 5
 STR_DLGKEYSETUP_PING_ALT2=Slimme ping – alternatieve toetsen 2
+
+# Scenariokeuze in de lobby
+STR_DLGGAMEINFO_SCRIPTED=Gescript
+STR_DLGSETTINGS_HOSTING_SCRIPTS=Kaartscripts uitvoeren bij het hosten
+STR_DLGLOBBY_SCENARIO_LBL=Scenario:
+STR_DLGLOBBY_SCRIPTS_OFF=Scripts uit
+STR_DLGLOBBY_RELOAD_SCENARIO=Script herladen
+STR_DLGLOBBY_REJECT_SCENARIO=Deze instelling wordt bepaald door het scenario van de kaart
+STR_DLGLOBBY_REJECT_COOLDOWN=Te snel; probeer het over een moment opnieuw
+STR_DLGLOBBY_CHOOSE_SCENARIO=Kies
+STR_DLGLOBBY_SCENARIO_TITLE=Kies scenario
+STR_DLGLOBBY_SCENARIO_NONE=Geen — het eigen scenario van de kaart wordt gespeeld, indien aanwezig, anders geen
+STR_DLGLOBBY_SCENARIO_WAITING=Server raadplegen...
+STR_DLGLOBBY_SCENARIO_EMPTY=Deze server biedt geen eigen scenario's aan.
+STR_DLGLOBBY_SCENARIO_BOUND=Hoort bij zijn eigen kaart en wordt er samen mee geleverd
+STR_DLGLOBBY_SCENARIO_MAXPLAYERS=Tot {number} spelers
+STR_DLGLOBBY_SCENARIO_BOTS={number} bot-plekken
+STR_DLGLOBBY_SCENARIO_ON_MAP=Kaart {string1}, scenario {string2}

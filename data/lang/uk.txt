@@ -2128,3 +2128,21 @@ STR_PING_MOUSE_RIGHT=Права кнопка миші
 STR_PING_MOUSE_X1=Миша 4
 STR_PING_MOUSE_X2=Миша 5
 STR_DLGKEYSETUP_PING_ALT2=Розумний пінг — альтернативні клавіші 2
+
+# Вибір сценарію в лобі
+STR_DLGGAMEINFO_SCRIPTED=Скриптована
+STR_DLGSETTINGS_HOSTING_SCRIPTS=Запускати скрипти карти під час хостингу
+STR_DLGLOBBY_SCENARIO_LBL=Сценарій:
+STR_DLGLOBBY_SCRIPTS_OFF=Скрипти вимкнено
+STR_DLGLOBBY_RELOAD_SCENARIO=Перечитати скрипт
+STR_DLGLOBBY_REJECT_SCENARIO=Цей параметр визначається сценарієм карти
+STR_DLGLOBBY_REJECT_COOLDOWN=Зарано, спробуйте ще раз за мить
+STR_DLGLOBBY_CHOOSE_SCENARIO=Вибрати
+STR_DLGLOBBY_SCENARIO_TITLE=Вибрати сценарій
+STR_DLGLOBBY_SCENARIO_NONE=Жодного — грати за сценарієм карти, якщо він є, або взагалі без сценарію
+STR_DLGLOBBY_SCENARIO_WAITING=Запит до сервера...
+STR_DLGLOBBY_SCENARIO_EMPTY=Цей сервер не пропонує власних сценаріїв.
+STR_DLGLOBBY_SCENARIO_BOUND=Прив'язаний до своєї карти і надходить разом із нею
+STR_DLGLOBBY_SCENARIO_MAXPLAYERS=Гравців: до {number}
+STR_DLGLOBBY_SCENARIO_BOTS=Місць для ботів: {number}
+STR_DLGLOBBY_SCENARIO_ON_MAP=Карта {string1}, сценарій {string2}

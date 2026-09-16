@@ -455,6 +455,21 @@ void lobbyChooseMapOpen(ClientSim *cs, SDL_Renderer *renderer);
 void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                                 float s, int screenW, int screenH);
 
+/* scenariochooser — the dialog behind the Choose button on the scenario
+ * line: what the server offers on its own, and the host's pick.
+ *
+ * Open is what the button calls. The window is drawn from the lobby's own
+ * frame, beside the map chooser's, rather than from the scenario line that
+ * opens it: the line is drawn inside the Map tab, and a dialog that stopped
+ * being drawn when the player changed tab would be open with no way back to
+ * it. IsOpen is what the lobby reads so its Esc and its controller tab cycle
+ * stand aside while the dialog is up. */
+void lobbyScenarioChooserReset(void);
+void lobbyScenarioChooserOpen(void);
+bool lobbyScenarioChooserIsOpen(void);
+void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
+                                      int screenW, int screenH);
+
 /* chat */
 void lobbyChatReset(void);
 void lobbyRenderChatHistory(const char *blob);
@@ -507,9 +522,12 @@ SDL_Texture *lobbyBuildMapPreview(SDL_Renderer *renderer,
 
 /* assets */
 const char *lobbyGameTypeStr(gameType gt);
-/* The map's scenario — its name and its description — or, for a host who
- * has the scripts preference switched off, a line saying so. Draws nothing
- * for a joiner on a map with no scenario. */
+/* What scenario is playing — its name and its description, or the map's name
+ * and the mod playing over it — plus, for a host, the reload and Choose
+ * buttons. For a host who has the scripts preference switched off, a line
+ * saying so instead. Draws nothing for a joiner on a map with no scenario.
+ * The Choose button asks for the chooser dialog; the lobby's own frame is
+ * what draws it. */
 void lobbyRenderScenarioLine(ClientSim *cs);
 const char *lobbyAiTypeStr(uint8_t ai);
 void lobbyFormatTimeLimit(int32_t ticks, char *buf, int bufSize);

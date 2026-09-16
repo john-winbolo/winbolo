@@ -2128,3 +2128,21 @@ STR_PING_MOUSE_RIGHT=Rechte Maustaste
 STR_PING_MOUSE_X1=Maus 4
 STR_PING_MOUSE_X2=Maus 5
 STR_DLGKEYSETUP_PING_ALT2=Smart Ping – Alternative Tasten 2
+
+# Szenario-Auswahl in der Lobby
+STR_DLGGAMEINFO_SCRIPTED=Skriptgesteuert
+STR_DLGSETTINGS_HOSTING_SCRIPTS=Kartenskripte beim Hosten ausführen
+STR_DLGLOBBY_SCENARIO_LBL=Szenario:
+STR_DLGLOBBY_SCRIPTS_OFF=Skripte aus
+STR_DLGLOBBY_RELOAD_SCENARIO=Skript neu laden
+STR_DLGLOBBY_REJECT_SCENARIO=Diese Einstellung ist durch das Szenario der Karte festgelegt
+STR_DLGLOBBY_REJECT_COOLDOWN=Zu früh; bitte in Kürze erneut versuchen
+STR_DLGLOBBY_CHOOSE_SCENARIO=Wählen
+STR_DLGLOBBY_SCENARIO_TITLE=Szenario wählen
+STR_DLGLOBBY_SCENARIO_NONE=Kein Szenario — es wird das eigene Szenario der Karte gespielt, falls vorhanden, sonst keines
+STR_DLGLOBBY_SCENARIO_WAITING=Server wird angefragt...
+STR_DLGLOBBY_SCENARIO_EMPTY=Dieser Server bietet keine eigenen Szenarien an.
+STR_DLGLOBBY_SCENARIO_BOUND=Gehört zu seiner eigenen Karte und kommt mit ihr
+STR_DLGLOBBY_SCENARIO_MAXPLAYERS=Bis zu {number} Spieler
+STR_DLGLOBBY_SCENARIO_BOTS={number} Bot-Plätze
+STR_DLGLOBBY_SCENARIO_ON_MAP=Karte {string1}, Szenario {string2}
