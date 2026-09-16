@@ -3014,6 +3014,28 @@ static bool scnScriptExists(const char *path) {
     return info.type == SDL_PATHTYPE_FILE;
 }
 
+/* How many map files have been opened to answer the map-script question, for
+ * the case that holds a second listing to opening none. Written under the
+ * cache's lock below, and read through scenarioHostMapScriptOpens. */
+static unsigned long scnMapScriptOpens;
+
+/* A copy of a string on the heap, which the cache below owns. Written out
+ * rather than calling strdup, which is not C99. */
+static char *scnStrDup(const char *src) {
+    size_t n;
+    char  *out;
+
+    if (src == NULL) {
+        return NULL;
+    }
+    n   = strlen(src) + 1;
+    out = (char *)malloc(n);
+    if (out != NULL) {
+        memcpy(out, src, n);
+    }
+    return out;
+}
+
 /* How much of a map file is read when looking for a chunk in it: a whole map
  * body, plus the bytes the chunk header needs to be recognised. A map has to
  * fit inside that cap to reach a client at all, so this much of the front
@@ -3025,6 +3047,7 @@ static bool scnScriptExists(const char *path) {
    attach's business, so nothing here opens it. */
 static bool scnMapHasChunk(const char *mapPath) {
     FILE          *f;
+    unsigned long  opens;
     long           size;
     size_t         want;
     uint8_t       *buf;
@@ -3037,6 +3060,11 @@ static bool scnMapHasChunk(const char *mapPath) {
     if (f == NULL) {
         return false;
     }
+    /* One more map file opened, for the case that proves the cache above
+       answers without coming back here. Counted after the open succeeds, so
+       what it counts is reads rather than attempts. */
+    opens = scnMapScriptOpens + 1;
+    scnMapScriptOpens = opens;
     /* Read the smaller of the file and the head bound: the lister asks this
        once per map in a directory, and a plain map should cost its own size
        rather than the bound's. */
@@ -3066,8 +3094,67 @@ static bool scnMapHasChunk(const char *mapPath) {
     return found;
 }
 
-bool scenarioHostMapHasScript(const char *mapPath) {
+/* The answer for one map, worked out rather than remembered. */
+static bool scnMapHasScriptUncached(const char *mapPath) {
     char script[SCN_SCRIPT_PATH_MAX];
+
+    /* A loose script beside the map is the cheaper of the two tests — a stat
+       against a read — so it goes first. */
+    if (scnScriptPath(mapPath, script, sizeof(script)) &&
+        scnScriptExists(script)) {
+        return true;
+    }
+    return scnMapHasChunk(mapPath);
+}
+
+/* What the last answers were, so a listing need not work them out again.
+ *
+ * The question used to be two stats. It is a stat and a read of the map's
+ * head now, because a script can be packed into the file, and it is asked
+ * once per map on every listing and from the map chooser's render thread —
+ * so a directory of two hundred maps opened two hundred files each time the
+ * list was drawn.
+ *
+ * A row is keyed on everything the answer is a function of: the map file's
+ * size and modify time, and whether there is a loose X.scenario.lua beside it
+ * and when that was last written. Both halves are stats, which is what the
+ * question cost before a script could be packed into a map at all; what the
+ * cache is here to avoid is the open-and-read of the map's head. So a map
+ * that is repacked, replaced or edited is worked out again, and so is one an
+ * author drops a loose script next to or takes one away from — the tag on the
+ * next listing is what it would have been with no cache at all.
+ *
+ * Round-robin replacement over a fixed set of rows, which is enough for the
+ * directories a listing walks and costs nothing to keep. One cache for the
+ * process, as the directory cache above is, and under a lock for the same
+ * reason: the render thread and the tick thread both ask. */
+#define SCN_MAP_SCRIPT_CACHE_MAX 256
+
+typedef struct {
+    char    *path;          /* owned; NULL for a row nothing is in */
+    SDL_Time modified;      /* the map file's */
+    Sint64   size;          /* the map file's */
+    bool     looseSeen;     /* is an X.scenario.lua beside it */
+    SDL_Time looseModified; /* and when it was last written; 0 for none */
+    bool     scripted;
+} ScnMapScriptRow;
+
+typedef struct {
+    ScnVmLock       lock;   /* m is NULL until the lister is registered */
+    ScnMapScriptRow rows[SCN_MAP_SCRIPT_CACHE_MAX];
+    int             next;   /* the row the next answer replaces */
+} ScnMapScriptCache;
+
+static ScnMapScriptCache scnMapScriptCache;
+
+bool scenarioHostMapHasScript(const char *mapPath) {
+    char         script[SCN_SCRIPT_PATH_MAX];
+    SDL_PathInfo info;
+    SDL_PathInfo looseInfo;
+    bool         looseSeen;
+    SDL_Time     looseModified = 0;
+    int          i;
+    bool         answer;
 
     if (mapPath == NULL || mapPath[0] == '\0') {
         return false;
@@ -3079,13 +3166,71 @@ bool scenarioHostMapHasScript(const char *mapPath) {
     if (!scnEnabled) {
         return false;
     }
-    /* A loose script beside the map is the cheaper of the two tests — a stat
-       against a read — so it goes first. */
-    if (scnScriptPath(mapPath, script, sizeof(script)) &&
-        scnScriptExists(script)) {
-        return true;
+    /* Nothing to key a row on, or nowhere to keep it: the question is
+       answered, just not remembered. */
+    if (scnMapScriptCache.lock.m == NULL ||
+        !SDL_GetPathInfo(mapPath, &info) ||
+        info.type != SDL_PATHTYPE_FILE) {
+        return scnMapHasScriptUncached(mapPath);
     }
-    return scnMapHasChunk(mapPath);
+    /* The other half of the key, and the first half of the answer: a loose
+       script beside the map outranks anything packed into it, and it is a
+       stat either way. Taken before the row is looked for, so a script
+       dropped next to a map the cache has already seen misses the row rather
+       than being answered from it. */
+    looseSeen = scnScriptPath(mapPath, script, sizeof(script)) &&
+                SDL_GetPathInfo(script, &looseInfo) &&
+                looseInfo.type == SDL_PATHTYPE_FILE;
+    if (looseSeen) {
+        looseModified = looseInfo.modify_time;
+    }
+
+    scnLockEnter(&scnMapScriptCache.lock);
+    for (i = 0; i < SCN_MAP_SCRIPT_CACHE_MAX; i++) {
+        ScnMapScriptRow *row = &scnMapScriptCache.rows[i];
+        if (row->path != NULL && row->modified == info.modify_time &&
+            row->size == info.size && row->looseSeen == looseSeen &&
+            row->looseModified == looseModified &&
+            strcmp(row->path, mapPath) == 0) {
+            answer = row->scripted;
+            scnLockLeave(&scnMapScriptCache.lock);
+            return answer;
+        }
+    }
+    /* Worked out under the lock, so the open this counts is counted once and
+       two threads asking about the same new map do not both read it. The
+       loose script has already been stated, so a map that has one is answered
+       without the map file being opened at all. */
+    answer = looseSeen ? true : scnMapHasChunk(mapPath);
+    {
+        ScnMapScriptRow *row = &scnMapScriptCache.rows[scnMapScriptCache.next];
+        char            *copy = scnStrDup(mapPath);
+        if (copy != NULL) {
+            free(row->path);
+            row->path          = copy;
+            row->modified      = info.modify_time;
+            row->size          = info.size;
+            row->looseSeen     = looseSeen;
+            row->looseModified = looseModified;
+            row->scripted      = answer;
+            scnMapScriptCache.next =
+                (scnMapScriptCache.next + 1) % SCN_MAP_SCRIPT_CACHE_MAX;
+        }
+    }
+    scnLockLeave(&scnMapScriptCache.lock);
+    return answer;
+}
+
+unsigned long scenarioHostMapScriptOpens(void) {
+    unsigned long n;
+
+    if (scnMapScriptCache.lock.m == NULL) {
+        return scnMapScriptOpens;
+    }
+    scnLockEnter(&scnMapScriptCache.lock);
+    n = scnMapScriptOpens;
+    scnLockLeave(&scnMapScriptCache.lock);
+    return n;
 }
 
 /* The lister's question, in the shape the sim's setter takes. The context is
@@ -3104,6 +3249,14 @@ static bool scnMapScriptedCb(void *ctx, const char *mapPath) {
 }
 
 void scenarioHostRegisterMapScripted(ServerSim *sim) {
+    /* The one place the map-script cache's lock is made, as the directory
+       cache's is made where its lister is registered: registering happens
+       once where a process decides whether it runs scripts at all, before
+       any sim can be asked. A build where the mutex cannot be made answers
+       the question every time rather than not at all. */
+    if (scnMapScriptCache.lock.m == NULL) {
+        (void)scnLockCreate(&scnMapScriptCache.lock);
+    }
     serverSimSetScenarioMapScripted(sim, scnMapScriptedCb, sim);
 }
 

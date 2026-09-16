@@ -271,6 +271,19 @@ void scenarioHostSetUploadScriptsEnabled(bool enabled);
 bool scenarioHostMapHasScript(const char *mapPath);
 
 /*********************************************************
+ *NAME:          scenarioHostMapScriptOpens
+ *PURPOSE:
+ *  How many map files the question above has opened since
+ *  the process started. The answer is kept per path, keyed
+ *  on the file's size and modify time, so a second listing
+ *  of an unchanged directory opens nothing; this is how a
+ *  test says so, and it is of no use to a frontend.
+ *
+ *  Only ever rises.
+ *********************************************************/
+unsigned long scenarioHostMapScriptOpens(void);
+
+/*********************************************************
  *NAME:          scenarioHostRegisterMapScripted
  *PURPOSE:
  *  Hands the sim's map lister the question above, so every

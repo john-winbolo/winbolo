@@ -29,8 +29,14 @@
  *      — and a file that is not a map at all is still read for the caller
  *        when it is inside the upload cap, and still refused when it is not
  * run_scenario_map_body_use_local_compare
+ *      — the two halves of the use-local check agree on a packed map: the
  *        length and hash the client now reports are the length and hash the
  *        server reads back, and the whole-file figures are not
+ * run_scenario_map_has_script_cached
+ *      — asking about the same maps twice opens a file the first round and
+ *        none the second; a loose script dropped beside an unchanged map is
+ *        seen on the next ask and taking it away is too; and a map whose own
+ *        file changed is read again
  */
 
 #include <stdint.h>
@@ -640,3 +646,133 @@ int run_scenario_map_body_use_local_compare(void) {
 }
 
 /* ── The map-script answer is kept ────────────────────────────────── */
+
+/* scenarioHostMapHasScript used to be two stats. A script can be packed into
+ * the map file now, so it stats the name beside the map and then reads the
+ * map's own head — and it is asked once per map on every listing, and from
+ * the map chooser's render thread, so a directory of maps opened a file each
+ * for every draw.
+ *
+ * The answer is kept per path, keyed on the file's size and modify time. This
+ * case asks about the same maps twice and holds the second round to opening
+ * nothing, through the counter the library keeps for exactly that; then it
+ * rewrites one of the files and asks again, which has to come back to the
+ * disk because the key moved. */
+int run_scenario_map_has_script_cached(void) {
+    char          packedPath[1024];
+    char          plainPath[1024];
+    char          loose[1024];
+    uint8_t       plain[128];
+    uint8_t      *container = NULL;
+    size_t        mapLen;
+    size_t        containerLen = 0;
+    BYTE          emap[6000] = E_MAP;
+    ServerSim    *sim;
+    unsigned long before;
+    unsigned long afterFirst;
+    unsigned long afterSecond;
+    unsigned long afterLooseAdded;
+    unsigned long afterLooseGone;
+    unsigned long afterRewrite;
+    FILE         *f;
+    int           rc = 0;
+
+    UT_ASSERT(utScratchPath(packedPath, sizeof(packedPath), "cached_packed.map"));
+    UT_ASSERT(utScratchPath(plainPath, sizeof(plainPath), "cached_plain.map"));
+    /* Nothing beside either map, so the answer comes from the file itself and
+       the read is what is being counted. */
+    UT_ASSERT(utScratchPath(loose, sizeof(loose),
+                            "cached_packed" SCN_SCRIPT_SUFFIX));
+    remove(loose);
+    UT_ASSERT(utScratchPath(loose, sizeof(loose),
+                            "cached_plain" SCN_SCRIPT_SUFFIX));
+    remove(loose);
+
+    mapLen = mbRunMap(plain);
+    UT_ASSERT_MSG(mbContainer(&container, &containerLen),
+                  "the fixture container could not be written");
+    UT_ASSERT(mbWriteFile(packedPath, plain, mapLen, container, containerLen));
+    UT_ASSERT(mbWriteFile(plainPath, plain, mapLen, NULL, 0));
+
+    /* The cache's lock is made where the lister's question is registered, as
+       the scenarios directory cache's is, so this is what turns it on. */
+    sim = serverSimCreateCompressed(emap, 5097, "Everard Island", gameOpen,
+                                    false, 0, -1);
+    UT_ASSERT(sim != NULL);
+    scenarioHostRegisterMapScripted(sim);
+
+    before = scenarioHostMapScriptOpens();
+    UT_ASSERT_MSG(scenarioHostMapHasScript(packedPath),
+                  "the packed map read as plain");
+    UT_ASSERT_MSG(!scenarioHostMapHasScript(plainPath),
+                  "the plain map read as scripted");
+    afterFirst = scenarioHostMapScriptOpens();
+    UT_ASSERT_MSG(afterFirst > before,
+                  "the first listing opened no file at all (%lu), so this case "
+                  "cannot tell a cached answer from a fresh one",
+                  afterFirst - before);
+
+    /* The same two again, which is the second listing. */
+    UT_ASSERT_MSG(scenarioHostMapHasScript(packedPath),
+                  "the packed map read as plain the second time");
+    UT_ASSERT_MSG(!scenarioHostMapHasScript(plainPath),
+                  "the plain map read as scripted the second time");
+    afterSecond = scenarioHostMapScriptOpens();
+    UT_ASSERT_MSG(afterSecond == afterFirst,
+                  "the second listing opened %lu files, expected none",
+                  afterSecond - afterFirst);
+
+    /* A loose script dropped beside the plain map, which leaves the map file
+       itself alone. It is part of the key, so the next ask is a fresh one and
+       the map reads as scripted — the answer it would have had with no cache
+       at all. No file is opened for it: a loose script is a stat, and it
+       outranks anything packed into the map. */
+    UT_ASSERT(utScratchPath(loose, sizeof(loose),
+                            "cached_plain" SCN_SCRIPT_SUFFIX));
+    f = fopen(loose, "wb");
+    UT_ASSERT_MSG(f != NULL, "the loose script could not be written");
+    fputs("scenario = { api = 1 }\n", f);
+    fclose(f);
+
+    UT_ASSERT_MSG(scenarioHostMapHasScript(plainPath),
+                  "a map with a loose script dropped beside it still reads as "
+                  "plain, so the cache is holding a stale row");
+    afterLooseAdded = scenarioHostMapScriptOpens();
+    UT_ASSERT_MSG(afterLooseAdded == afterSecond,
+                  "answering a map with a loose script beside it opened %lu "
+                  "files, expected none",
+                  afterLooseAdded - afterSecond);
+
+    /* And taking it away again puts the map back to plain. No read for that
+       either, and for a different reason: the key is a value rather than a
+       generation count, so a map back in a state the cache has already seen
+       finds the row it kept then — the one from before the script was
+       dropped, which is still held. */
+    remove(loose);
+    UT_ASSERT_MSG(!scenarioHostMapHasScript(plainPath),
+                  "a map whose loose script was removed still reads as "
+                  "scripted");
+    afterLooseGone = scenarioHostMapScriptOpens();
+    UT_ASSERT_MSG(afterLooseGone == afterLooseAdded,
+                  "a map back in a state the cache had already seen opened "
+                  "%lu files, expected none",
+                  afterLooseGone - afterLooseAdded);
+
+    /* And the map file is in the key too: the plain map becomes a packed one,
+       and the answer is worked out again. SDL_GetPathInfo's modify time can
+       be as coarse as a second, so the size is what moves here — the
+       container makes the file longer. */
+    UT_ASSERT(mbWriteFile(plainPath, plain, mapLen, container, containerLen));
+    UT_ASSERT_MSG(scenarioHostMapHasScript(plainPath),
+                  "a map that was repacked still reads as plain");
+    afterRewrite = scenarioHostMapScriptOpens();
+    UT_ASSERT_MSG(afterRewrite > afterLooseGone,
+                  "a repacked map was answered from the old row without "
+                  "opening the file");
+
+    serverSimDestroy(sim);
+    free(container);
+    remove(packedPath);
+    remove(plainPath);
+    return rc;
+}
