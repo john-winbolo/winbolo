@@ -207,6 +207,14 @@ void clientSimNetSendLobbyPreviewRandom(ClientSim *cs, const char *seedStr);
 void clientSimNetSendLobbyMapListRequest(ClientSim *cs,
                                          const char *relPath);
 
+/* Ask what scenarios the server offers on their own, independently of any
+ * map. No path: the scenarios directory is flat, unlike the map chooser's
+ * tree. The response arrives async via PACKET_LOBBY_SCENARIO_LIST_RSP and is
+ * stored on the ClientSim; read it back through the
+ * clientSimGetLobbyScenario* accessors in client_sim.h. Any lobby client may
+ * ask — read-only. No-op without a UDP transport. */
+void clientSimNetSendLobbyScenarioListRequest(ClientSim *cs);
+
 /* Recursive search variant. Response stored on lobbyMapSearch*. */
 void clientSimNetSendLobbyMapSearchRequest(ClientSim *cs,
                                            const char *relPath,

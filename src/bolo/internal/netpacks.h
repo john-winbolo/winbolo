@@ -754,6 +754,33 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               progress keeps what it started
                                               with. */
 
+#define PACKET_LOBBY_SCENARIO_LIST_REQ 222 /* client → server
+                                              (no payload) what scenarios does
+                                              this server offer on their own,
+                                              independently of any map. The
+                                              directory is flat, unlike the map
+                                              chooser's tree, so there is no
+                                              path to ask about. */
+
+#define PACKET_LOBBY_SCENARIO_LIST_RSP 223 /* server → the one client that
+                                              asked, chunked the way
+                                              MAP_LIST_RSP is:
+                                              { final 1, count 1, entries }
+                                              each entry
+                                              { fileLen 1, file M,
+                                                nameLen 1, name N,
+                                                descLen 1, desc D,
+                                                maxPlayers 1, bots 1,
+                                                bound 1 }
+                                              Entries are packed until the next
+                                              will not fit in UDP_MAX_PAYLOAD;
+                                              the last chunk sets final, and an
+                                              empty directory is one chunk with
+                                              count 0 and final 1. A string
+                                              longer than its length byte is
+                                              cut rather than dropping the
+                                              entry. */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2

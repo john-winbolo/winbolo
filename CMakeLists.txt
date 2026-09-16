@@ -3445,6 +3445,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # the server's own brain, the path refused where a name belongs, and the
     # two roster ops that resolve a name of their own.
     tests/unit/test_scenario_brain_name.c
+    # The scenarios directory: a .scenario package listed from its manifest
+    # with no Lua run, a loose .lua listed through the validator's stub VM,
+    # what is skipped, and the list encoded into the SCENARIO_LIST_RSP shape
+    # against committed golden bytes and decoded back.
+    tests/unit/test_scenario_dir.c
     # The binding table: the game table a script reads the sim through, the
     # three index rules and what an absent entity reads as.
     tests/unit/test_scenario_lua.c
@@ -5527,6 +5532,10 @@ set(_unit_test_names
     scenario_brain_name_missing
     scenario_brain_name_rejects_path
     scenario_brain_op_resolves
+    scenario_dir_lists_package
+    scenario_dir_lists_loose_script
+    scenario_dir_skips_junk
+    scenario_dir_entry_roundtrip
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

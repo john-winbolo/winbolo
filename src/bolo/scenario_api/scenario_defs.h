@@ -93,6 +93,44 @@ typedef struct {
     ScnLobbyTeam teams[MAX_TANKS];
 } ScnLobbyTemplate;
 
+/* What a scenario is called and what it asks for, as the sim reads it.
+ *
+ * The name and description lengths are SCN_SCENARIO_NAME_LEN and
+ * SCN_SCENARIO_DESC_LEN in src/scenario/scenario_host.h, stated again here
+ * under names of their own: that header is the one a frontend includes and
+ * this one is not, so a gui or runtime_only translation unit can reach it and
+ * not this. scenario_dir.c sees both and holds each pair against the other,
+ * so the two cannot drift.
+ *
+ * The file name is a name in the directory and never a path: the directory is
+ * flat, and where it is on disk is the server's own business. */
+#define SCN_DIR_FILE_LEN 128
+#define SCN_DIR_NAME_LEN 64
+#define SCN_DIR_DESC_LEN 256
+
+/* One scenario a server offers on its own, independently of any map: a
+ * .scenario package or a loose .lua in the scenarios directory, read into the
+ * few fields a chooser needs to show it.
+ *
+ * The sim holds no notion of what is in either file. It is handed a filled
+ * array by the lister registered on it (serverSimSetScenarioLister), which is
+ * the scenario library's to implement, and it passes the entries to the wire
+ * layer — the dependency points one way, as it does for the lobby template.
+ *
+ * maxPlayers is the cap the scenario asks for, 0 leaving the server's own.
+ * bots is the seats its lobby template asks for, summed over its teams and
+ * held at 255 because it travels in one byte. bound true says the scenario is
+ * tied to the map it was written against, which is what makes it no use as a
+ * mod. */
+typedef struct {
+    char    file[SCN_DIR_FILE_LEN];  /* the name in the directory */
+    char    name[SCN_DIR_NAME_LEN];  /* the manifest's */
+    char    description[SCN_DIR_DESC_LEN];
+    uint8_t maxPlayers;
+    uint8_t bots;
+    bool    bound;
+} ScnDirEntry;
+
 /* How many roster changes may be outstanding at once. Spawns and
  * removals share one first-in first-out queue and the sim drains one of
  * them a tick, so a script that asks for ten bots gets them over ten

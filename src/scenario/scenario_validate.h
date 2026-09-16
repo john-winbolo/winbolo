@@ -100,6 +100,22 @@ bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
                          ScnValidateResult *out);
 
 /*********************************************************
+ *NAME:          scenarioValidateScript
+ *PURPOSE:
+ *  The same checks, against a script named directly rather
+ *  than found beside a map. A NULL sim leaves out the two
+ *  that read a map, as above.
+ *
+ *  scenarioValidateMap derives the script's name and calls
+ *  this, so there is one body and the two report the same
+ *  things. This is the entry a scenario directory uses: a
+ *  loose Fast Reload.lua is the script, and deriving a name
+ *  beside it would ask for Fast Reload.lua.scenario.lua.
+ *********************************************************/
+bool scenarioValidateScript(const ServerSim *sim, const char *scriptPath,
+                            ScnValidateResult *out);
+
+/*********************************************************
  *NAME:          scnIssueAdd
  *PURPOSE:
  *  Appends one problem to the list, with line 0 for the

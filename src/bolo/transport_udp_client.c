@@ -848,6 +848,90 @@ void udpClientHandleLobbyMapListRsp(ClientSim *cs,
     }
 }
 
+/* One length-prefixed string into a fixed buffer, cut to fit it. False when
+ * the packet runs out before the string does, which stops the entry rather
+ * than reading past the buffer. The out buffer is always NUL-terminated. */
+static bool udpClientReadLenStr(const uint8_t *buf, int len, int *pos,
+                                char *out, size_t outSz) {
+    uint8_t n;
+    size_t  keep;
+
+    if (*pos + 1 > len) return false;
+    n = buf[(*pos)++];
+    if (*pos + (int)n > len) return false;
+    keep = n;
+    if (keep >= outSz) keep = outSz - 1;
+    memset(out, 0, outSz);
+    if (keep > 0) {
+        memcpy(out, buf + *pos, keep);
+    }
+    *pos += (int)n;
+    return true;
+}
+
+/* Apply one PACKET_LOBBY_SCENARIO_LIST_RSP chunk to the client's accumulator.
+ * Wire format:
+ *   [header 8] [final 1] [count 1]
+ *   per entry: [fileLen 1][file M][nameLen 1][name N][descLen 1][desc D]
+ *              [maxPlayers 1][bots 1][bound 1]
+ *
+ * No path, unlike the map list: the scenarios directory is flat, so there is
+ * nothing to ask about and nothing to recognise a stale response by. The
+ * server may emit several chunks per request — entries append and only the
+ * final chunk flips Ready/InFlight.
+ *
+ * Declared in transport_udp.h so unit tests can drive the accumulator
+ * directly, as the map list's is. */
+void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
+                                         const uint8_t *buf, int len) {
+    int     pos = PACKET_HEADER_SIZE;
+    uint8_t finalFlag;
+    uint8_t cnt;
+    int     i;
+
+    if (!cs) return;
+    if (len < PACKET_HEADER_SIZE + 2) return;
+    finalFlag = buf[pos++];
+    cnt       = buf[pos++];
+
+    for (i = 0; i < cnt; i++) {
+        char file[LOBBY_SCENARIO_FILE_LEN];
+        char name[LOBBY_SCENARIO_NAME_LEN];
+        char desc[LOBBY_SCENARIO_DESC_LEN];
+        int  idx;
+
+        if (!udpClientReadLenStr(buf, len, &pos, file, sizeof(file)) ||
+            !udpClientReadLenStr(buf, len, &pos, name, sizeof(name)) ||
+            !udpClientReadLenStr(buf, len, &pos, desc, sizeof(desc))) {
+            break;
+        }
+        if (pos + 3 > len) break;
+        /* Read into locals first, so a chunk that arrives past the cap is
+           still walked to its end rather than leaving the position stranded
+           mid-entry. */
+        if (cs->lobbyScenarioListCount >= LOBBY_SCENARIO_LIST_MAX) {
+            pos += 3;
+            continue;
+        }
+        idx = cs->lobbyScenarioListCount++;
+        SDL_strlcpy(cs->lobbyScenarioListFiles[idx], file,
+                    LOBBY_SCENARIO_FILE_LEN);
+        SDL_strlcpy(cs->lobbyScenarioListNames[idx], name,
+                    LOBBY_SCENARIO_NAME_LEN);
+        SDL_strlcpy(cs->lobbyScenarioListDescs[idx], desc,
+                    LOBBY_SCENARIO_DESC_LEN);
+        cs->lobbyScenarioListMaxPlayers[idx] = buf[pos++];
+        cs->lobbyScenarioListBots[idx]       = buf[pos++];
+        cs->lobbyScenarioListBound[idx]      = buf[pos++] ? true : false;
+    }
+
+    if (finalFlag) {
+        cs->lobbyScenarioListReady    = true;
+        cs->lobbyScenarioListInFlight = false;
+        cs->lobbyScenarioListSeq++;
+    }
+}
+
 /* Unified bulk-receiver sink for CHANNEL_BULK. onBegin dispatches the parsed
  * stream header by kind (preview / join download / live resync) to the matching
  * receive buffer; onComplete finalises that kind. Defined after the resync
@@ -3075,6 +3159,10 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         udpClientHandleLobbyMapSearchRsp(c->clientSim, buf, len);
         break;
 
+    case PACKET_LOBBY_SCENARIO_LIST_RSP:
+        udpClientHandleLobbyScenarioListRsp(c->clientSim, buf, len);
+        break;
+
     case PACKET_LOBBY_MAP_PREVIEW_ERR:
         udpClientHandleLobbyMapPreviewErr(c->clientSim, buf, len);
         break;
@@ -4624,6 +4712,26 @@ void transportUdpClientSendLobbyMapListRequest(Transport *t,
         c->clientSim->lobbyMapListCount = 0;
         c->clientSim->lobbyMapListReady = false;
         c->clientSim->lobbyMapListInFlight = true;
+    }
+}
+
+/* Ask what scenarios the server offers on their own. The request carries
+ * nothing but its header — the directory is flat, so there is no path to ask
+ * about — and the accumulator is cleared here so the response appends to an
+ * empty list, as the map list's does. */
+void transportUdpClientSendLobbyScenarioListRequest(Transport *t) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE];
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+
+    packHeader(buf, PACKET_LOBBY_SCENARIO_LIST_REQ, c->outSequence++);
+    udpClientSendTo(c, buf, PACKET_HEADER_SIZE);
+
+    if (c->clientSim) {
+        c->clientSim->lobbyScenarioListCount    = 0;
+        c->clientSim->lobbyScenarioListReady    = false;
+        c->clientSim->lobbyScenarioListInFlight = true;
     }
 }
 

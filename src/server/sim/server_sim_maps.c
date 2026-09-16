@@ -296,6 +296,22 @@ const char *serverSimGetMapDirRoot(const ServerSim *sim) {
     return "data/maps";
 }
 
+void serverSimSetScenarioDir(ServerSim *sim, const char *dir) {
+    if (sim == NULL) return;
+    if (dir != NULL) {
+        SDL_strlcpy(sim->scenarioDirPath, dir, sizeof(sim->scenarioDirPath));
+    } else {
+        sim->scenarioDirPath[0] = '\0';
+    }
+}
+
+const char *serverSimGetScenarioDir(const ServerSim *sim) {
+    if (sim != NULL && sim->scenarioDirPath[0] != '\0') {
+        return sim->scenarioDirPath;
+    }
+    return "data/scenarios";
+}
+
 void serverSimSetUploadPersistDir(ServerSim *sim, const char *dir) {
     if (sim == NULL) return;
     if (dir != NULL) {

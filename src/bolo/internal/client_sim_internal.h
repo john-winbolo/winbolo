@@ -558,6 +558,43 @@ struct ClientSim {
      * differ, instead of re-enumerating on every frame. */
     uint32_t lobbyMapListSeq;
 
+    /* The scenarios the server offers on their own, independently of any map
+     * — populated from PACKET_LOBBY_SCENARIO_LIST_RSP after the client sends a
+     * PACKET_LOBBY_SCENARIO_LIST_REQ. The directory is flat, unlike the map
+     * chooser's tree, so there is no path to echo and so nothing to recognise
+     * a stale response by: a response is for the request that is in flight.
+     *
+     * The three lengths mirror SCN_DIR_FILE_LEN / _NAME_LEN / _DESC_LEN in
+     * src/bolo/scenario_api/scenario_defs.h, which this header does not
+     * include because a client build need not see the scenario contract. They
+     * are the receiving buffers, so a string longer than one arrives cut
+     * rather than overrunning it.
+     *
+     * Per-ClientSim cost at 128: ~58 KB. A quarter of the map list's count for
+     * about the same memory — an entry here carries a description, so it runs
+     * to ~450 bytes against a map entry's ~150. */
+#define LOBBY_SCENARIO_LIST_MAX 128
+#define LOBBY_SCENARIO_FILE_LEN 128
+#define LOBBY_SCENARIO_NAME_LEN 64
+#define LOBBY_SCENARIO_DESC_LEN 256
+    int      lobbyScenarioListCount;
+    char     lobbyScenarioListFiles[LOBBY_SCENARIO_LIST_MAX]
+                                   [LOBBY_SCENARIO_FILE_LEN];
+    char     lobbyScenarioListNames[LOBBY_SCENARIO_LIST_MAX]
+                                   [LOBBY_SCENARIO_NAME_LEN];
+    char     lobbyScenarioListDescs[LOBBY_SCENARIO_LIST_MAX]
+                                   [LOBBY_SCENARIO_DESC_LEN];
+    uint8_t  lobbyScenarioListMaxPlayers[LOBBY_SCENARIO_LIST_MAX];
+    uint8_t  lobbyScenarioListBots[LOBBY_SCENARIO_LIST_MAX];
+    /* Tied to the map it was written against, so no use as a mod. Carried so
+       a chooser can say why a scenario it can see is not one it may pick. */
+    bool     lobbyScenarioListBound[LOBBY_SCENARIO_LIST_MAX];
+    bool     lobbyScenarioListReady;    /* true once a response arrives */
+    bool     lobbyScenarioListInFlight; /* true after send, false on response */
+    /* Ticked on each completed response, so a chooser can re-read without
+       polling the list itself, exactly as lobbyMapListSeq is used. */
+    uint32_t lobbyScenarioListSeq;
+
     /* Monotonic counter incremented whenever the client receives a
      * PACKET_LOBBY_MAP_CHANGE (i.e. the server told us to invalidate
      * and re-download the map). UI poll-and-compare against a cached

@@ -55,7 +55,14 @@
 
 /* The text fields of the scenario table. The name is what a lobby row
  * shows and the description what a tooltip or an info line shows, so they
- * are sized for a line rather than for prose. */
+ * are sized for a line rather than for prose.
+ *
+ * SCN_DIR_NAME_LEN and SCN_DIR_DESC_LEN in scenario_api/scenario_defs.h are
+ * the same two lengths on the sim's side of the fence, where a scenario the
+ * server offers is described. They are stated twice because this header is
+ * what a frontend includes and that one is not — a gui or runtime_only
+ * translation unit sees public/ alone. scenario_dir.c sees both and holds
+ * them against each other. */
 #define SCN_SCENARIO_NAME_LEN 64
 #define SCN_SCENARIO_DESC_LEN 256
 
@@ -258,6 +265,28 @@ bool scenarioHostMapHasScript(const char *mapPath);
  *  sim - The sim whose lister is being told
  *********************************************************/
 void scenarioHostRegisterMapScripted(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          scenarioHostRegisterScenarioLister
+ *PURPOSE:
+ *  Hands the sim the read of its scenarios directory, so a
+ *  client asking what this server offers is answered.
+ *
+ *  Call it once, in the same place and for the same reason
+ *  as the registration above: the list is what a server
+ *  offers instead of a map's own scenario, so the server
+ *  that needs it answered is exactly the one with nothing
+ *  attached.
+ *
+ *  What is read is scnDirList; where it is read is the
+ *  directory the sim holds, which an operator sets with
+ *  -scenariodir or the "Scenario Dir" preference. A server
+ *  that registers nothing offers an empty list.
+ *
+ *ARGUMENTS:
+ *  sim - The sim being told where to send the question
+ *********************************************************/
+void scenarioHostRegisterScenarioLister(ServerSim *sim);
 
 /*********************************************************
  *NAME:          scenarioHostAttach

@@ -530,26 +530,18 @@ static void scnCheckBound(const ScenarioManifest *m, ScnValidateResult *out) {
 
 /* ── The whole check ──────────────────────────────────────────────── */
 
-bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
-                         ScnValidateResult *out) {
-    char           script[SCN_SCRIPT_PATH_MAX];
+/* The checks themselves, against a script that has already been named and an
+ * out the caller has cleared. Both entry points below come through here, so a
+ * script checked beside a map and one named directly are read the same way and
+ * report the same things. */
+static bool scnValidateFile(const ServerSim *sim, const char *script,
+                            ScnValidateResult *out) {
     char           chunkName[SCN_SCRIPT_PATH_MAX + 2];
     char           err[SCN_VALIDATE_LINE_LEN];
     char          *src    = NULL;
     size_t         srcLen = 0;
     lua_State     *L;
     ScnParseReport rep;
-
-    if (out == NULL || mapPath == NULL) {
-        return false;
-    }
-    memset(out, 0, sizeof(*out));
-
-    if (!scnScriptPath(mapPath, script, sizeof(script))) {
-        scnIssueAdd(out, "", "%s leaves no room for a script name beside it",
-                    mapPath);
-        return false;
-    }
 
     /* No file at all is the ordinary case: a plain map, and nothing to check
        about it. */
@@ -613,4 +605,30 @@ bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
     scnCloseVm(L);
     free(src);
     return out->count == 0;
+}
+
+bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
+                         ScnValidateResult *out) {
+    char script[SCN_SCRIPT_PATH_MAX];
+
+    if (out == NULL || mapPath == NULL) {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+
+    if (!scnScriptPath(mapPath, script, sizeof(script))) {
+        scnIssueAdd(out, "", "%s leaves no room for a script name beside it",
+                    mapPath);
+        return false;
+    }
+    return scnValidateFile(sim, script, out);
+}
+
+bool scenarioValidateScript(const ServerSim *sim, const char *scriptPath,
+                            ScnValidateResult *out) {
+    if (out == NULL || scriptPath == NULL) {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+    return scnValidateFile(sim, scriptPath, out);
 }

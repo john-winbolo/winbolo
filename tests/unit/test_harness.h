@@ -2800,6 +2800,15 @@ int run_scenario_brain_name_missing(void);
 int run_scenario_brain_name_rejects_path(void);
 int run_scenario_brain_op_resolves(void);
 
+/* The scenarios directory (test_scenario_dir.c): a .scenario package listed
+ * from its manifest with no Lua run, a loose .lua listed through the
+ * validator's stub VM, what is skipped, and the list encoded into the
+ * SCENARIO_LIST_RSP shape against committed golden bytes and decoded back. */
+int run_scenario_dir_lists_package(void);
+int run_scenario_dir_lists_loose_script(void);
+int run_scenario_dir_skips_junk(void);
+int run_scenario_dir_entry_roundtrip(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */

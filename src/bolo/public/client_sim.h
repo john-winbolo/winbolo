@@ -1066,6 +1066,35 @@ bool        clientSimGetLobbyMapListInFlight(const ClientSim *cs);
  * caches when the two differ; only movement matters. 0 for a NULL cs. */
 uint32_t    clientSimGetLobbyMapListSeq(const ClientSim *cs);
 
+/* The scenarios the server offers on their own, independently of any map —
+ * populated asynchronously by PACKET_LOBBY_SCENARIO_LIST_RSP after the client
+ * sends a SCENARIO_LIST_REQ (clientSimNetSendLobbyScenarioListRequest).
+ *
+ * No path triple, unlike the map list above: the directory is flat, so there
+ * is only "we asked, waiting" and "have a listing". File is the name in the
+ * server's directory, which is what identifies a scenario; Name and
+ * Description are what its manifest says. MaxPlayers is the human cap the
+ * scenario asks for, 0 leaving the server's own. Bots is the seats its lobby
+ * template asks for. Bound says it is tied to the map it was written against,
+ * so a chooser can say why one it can see is not one it may pick.
+ *
+ * Nothing selects a scenario yet; this is what is on offer. "" / 0 / false
+ * for a NULL cs or an index out of range. */
+int         clientSimGetLobbyScenarioListCount(const ClientSim *cs);
+const char *clientSimGetLobbyScenarioListFile(const ClientSim *cs, int idx);
+const char *clientSimGetLobbyScenarioListName(const ClientSim *cs, int idx);
+const char *clientSimGetLobbyScenarioListDescription(const ClientSim *cs,
+                                                     int idx);
+int         clientSimGetLobbyScenarioListMaxPlayers(const ClientSim *cs,
+                                                    int idx);
+int         clientSimGetLobbyScenarioListBots(const ClientSim *cs, int idx);
+bool        clientSimGetLobbyScenarioListBound(const ClientSim *cs, int idx);
+bool        clientSimGetLobbyScenarioListReady(const ClientSim *cs);
+bool        clientSimGetLobbyScenarioListInFlight(const ClientSim *cs);
+/* Ticked on each completed response, so a caller holding its own last-seen
+ * value re-reads the list when the two differ. 0 for a NULL cs. */
+uint32_t    clientSimGetLobbyScenarioListSeq(const ClientSim *cs);
+
 /* Monotonic counter, ticked on every PACKET_LOBBY_MAP_CHANGE the
  * client receives. UI code can cache the last-seen value to detect
  * map changes even when the download cycle completes inside a single

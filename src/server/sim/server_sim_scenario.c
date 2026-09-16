@@ -3117,6 +3117,35 @@ bool serverSimScenarioMapIsScripted(const ServerSim *sim, const char *mapPath) {
     return sim->scenarioMapScripted(sim->scenarioMapScriptedCtx, mapPath);
 }
 
+void serverSimSetScenarioLister(ServerSim *sim,
+                                int (*list)(void *ctx, const char *dir,
+                                            ScnDirEntry *out, int max),
+                                void *ctx) {
+    if (sim == NULL) return;
+    sim->scenarioLister = list;
+    sim->scenarioListerCtx = ctx;
+}
+
+int serverSimScenarioListDir(const ServerSim *sim, ScnDirEntry *out, int max) {
+    if (sim == NULL || out == NULL || max <= 0) {
+        return 0;
+    }
+    if (sim->scenarioLister == NULL) {
+        /* Nothing registered: no scenario library in this build, so there is
+           nothing to offer. An empty list, not a failure — the same answer a
+           directory that is not there gives. */
+        return 0;
+    }
+    {
+        int n = sim->scenarioLister(sim->scenarioListerCtx,
+                                    serverSimGetScenarioDir(sim), out, max);
+        /* A directory that cannot be read answers -1, which is nothing to
+           offer rather than something to report: a server with no scenarios
+           directory is the ordinary case. */
+        return (n < 0) ? 0 : n;
+    }
+}
+
 void serverSimSetScenarioMapChanged(ServerSim *sim,
                                     void (*mapChanged)(void *ctx,
                                                        ServerSim *sim,

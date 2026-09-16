@@ -99,6 +99,8 @@
 #include "server_sim_scenario.h"   /* the funnel and the round-start hook-up */
 
 #include "scenario_host.h"
+#include "scenario_dir.h"          /* scnDirList — what the sim's scenario
+                                    * lister is pointed at */
 #include "scenario_manifest.h"
 #include "scenario_events.h"
 #include "scenario_lua.h"
@@ -2969,6 +2971,19 @@ static bool scnMapScriptedCb(void *ctx, const char *mapPath) {
 
 void scenarioHostRegisterMapScripted(ServerSim *sim) {
     serverSimSetScenarioMapScripted(sim, scnMapScriptedCb, NULL);
+}
+
+/* The directory read, in the shape the sim's setter takes. No context, for
+   the same reason the map question carries none: what is in a directory is a
+   fact about that directory and about nothing else. */
+static int scnDirListCb(void *ctx, const char *dir, ScnDirEntry *out,
+                        int max) {
+    (void)ctx;
+    return scnDirList(dir, out, max);
+}
+
+void scenarioHostRegisterScenarioLister(ServerSim *sim) {
+    serverSimSetScenarioLister(sim, scnDirListCb, NULL);
 }
 
 /* ── Where the script comes from ──────────────────────────────────── */

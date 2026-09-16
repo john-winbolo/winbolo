@@ -187,6 +187,55 @@ void serverSimSetScenarioMapScripted(ServerSim *sim,
                                      void *ctx);
 
 /*********************************************************
+ *NAME:          serverSimSetScenarioLister
+ *PURPOSE:
+ *  Registers the read of the server's scenarios directory:
+ *  what a client is told is on offer when it asks for the
+ *  list. The lister answers how many entries it wrote, or
+ *  -1 for a directory it could not read.
+ *
+ *  A callback rather than a call, for the reason the map
+ *  question above is one: reading a package and running a
+ *  script's top level are the scenario library's to do and
+ *  the sim is below it. src/server/ names nothing under
+ *  src/scenario/, and the link order is what says so — the
+ *  scenario library is listed ahead of the server group
+ *  because it calls into the group, so a call the other way
+ *  would not resolve.
+ *
+ *  NULL clears it, and with nothing registered the directory
+ *  reads empty — which is what a build with no scenario
+ *  library offers, exactly as every map reads unscripted
+ *  above.
+ *
+ *  Registered once, where the process decides whether it
+ *  runs scripts at all, not where a scenario attaches: the
+ *  list is what a server offers instead of the map's own
+ *  scenario, so a server with no scenario attached is
+ *  precisely the one that needs it answered.
+ *
+ *  dir is the directory to read, which the sim holds and
+ *  hands over per call (serverSimGetScenarioDir), so the
+ *  lister keeps no path of its own.
+ *********************************************************/
+void serverSimSetScenarioLister(ServerSim *sim,
+                                int (*list)(void *ctx, const char *dir,
+                                            ScnDirEntry *out, int max),
+                                void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimScenarioListDir
+ *PURPOSE:
+ *  The scenarios this server offers, read through whatever
+ *  was registered above and against the directory the sim
+ *  holds. Answers how many entries were written, and 0 for
+ *  a server with no lister, no directory, or nothing in it
+ *  — all three of which are the ordinary case rather than a
+ *  fault, so none of them is told apart here.
+ *********************************************************/
+int serverSimScenarioListDir(const ServerSim *sim, ScnDirEntry *out, int max);
+
+/*********************************************************
  *NAME:          serverSimSetScenarioLobbyTemplate
  *PURPOSE:
  *  Hands the sim the lobby a scenario asks for. The sim

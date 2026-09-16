@@ -636,6 +636,13 @@ struct ServerSim {
      * PERSIST-policy uploads. Empty → "<mapDirPath>/Uploads". Set from
      * ServerInstanceConfig.uploadPersistDir at startup. */
     char         uploadPersistDir[FILENAME_MAX];
+    /* The scenarios this server offers on their own, independently of any
+     * map: the -scenariodir CLI arg on the dedicated server and the
+     * "Scenario Dir" preference on a desktop host. Empty → the built-in
+     * "data/scenarios". A directory that is not there is not an error — it
+     * means the server offers no scenarios of its own. Read by the lobby
+     * scenario-list handler, which hands it to scnDirList. */
+    char         scenarioDirPath[FILENAME_MAX];
 
     /* Random map generation (for -randommap mode) */
     bool         randomMapEnabled;       /* true when using -randommap */
@@ -730,6 +737,12 @@ struct ServerSim {
        scripted. NULL means nothing registered and every map reads plain. */
     bool                 (*scenarioMapScripted)(void *ctx, const char *mapPath);
     void                  *scenarioMapScriptedCtx;
+    /* Reads the scenarios directory into the list a client is told about.
+       NULL means nothing registered and the directory reads empty, which is
+       what a build with no scenario library offers. */
+    int                  (*scenarioLister)(void *ctx, const char *dir,
+                                           ScnDirEntry *out, int max);
+    void                  *scenarioListerCtx;
     /* What a lobby host's reload request runs. NULL means no scenario is
        attached and a request answers so. */
     bool                 (*scenarioReload)(void *ctx, char *err, size_t errLen);

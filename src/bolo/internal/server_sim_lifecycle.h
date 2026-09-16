@@ -147,6 +147,10 @@ LobbyPlayer     *serverSimGetLobbyPlayerMut(ServerSim *sim, BYTE n);
  * concatenate with "/<rel>". */
 const char *serverSimGetMapDirRoot(const ServerSim *sim);
 
+/* serverSimSetScenarioDir / serverSimGetScenarioDir: moved to
+ * public/server_sim.h — unlike the map root, a desktop host sets this one
+ * from its own preferences, and a GUI translation unit sees public/ only. */
+
 /* Absolute directory backing the virtual "Uploads/" folder for
  * PERSIST-policy uploads. Pass NULL or "" to leave it unset (uploads then
  * resolve under "<mapDirRoot>/Uploads"). The enumerate/search/read resolvers

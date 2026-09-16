@@ -10,6 +10,15 @@
 #                     without running one: the same parse against a stub game
 #                     table, reported as a list of keys, lines and messages.
 #
+#                     It also reads the server's scenarios directory — the
+#                     .scenario packages and loose .lua scripts a server
+#                     offers independently of any map — into the list the
+#                     lobby sends a client. The sim reaches that read through
+#                     a callback registered on it, not by calling in here:
+#                     this library calls the funnel, so it is linked ahead of
+#                     the server group and a call the other way would not
+#                     resolve.
+#
 #                     And it reads and writes the WBSC container a scenario
 #                     ships in — the framing, and the ZIP archive behind it
 #                     holding the manifest, the script and any brain
@@ -38,6 +47,7 @@
 
 add_library(scenario_static STATIC
     scenario_host.c
+    scenario_dir.c
     scenario_events.c
     scenario_lua.c
     scenario_manifest_json.c

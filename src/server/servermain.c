@@ -642,6 +642,10 @@ void printArgs() {
   fprintf(stderr, "                -randommap <seed> — reproduce a specific map from its seed.\n");
   fprintf(stderr, "                -randommap tournament <seed> — type with specific seed.\n");
   fprintf(stderr, "                Map name shown as 'rand_<seed>' in server info.\n");
+  fprintf(stderr, "-scenariodir <Dir> - Directory of scenarios this server offers on their own,\n");
+  fprintf(stderr, "                independently of any map: .scenario packages and loose .lua\n");
+  fprintf(stderr, "                scripts (default: data/scenarios). A directory that is not\n");
+  fprintf(stderr, "                there means the server offers none, which is not an error.\n");
   fprintf(stderr, "-noscenarios  - Do not load the scenario script beside a map. Every map,\n");
   fprintf(stderr, "                including one committed later, plays plainly. A map that\n");
   fprintf(stderr, "                has a script says which one was not loaded.\n");
@@ -1821,6 +1825,22 @@ int main(int argc, char **argv) {
      script, so a server whose own map is plain would report every scripted
      map in its directory as plain. */
   scenarioHostRegisterMapScripted(serverSim);
+  /* And the read of the scenarios directory, so a client asking what this
+     server offers on its own is answered. Registered in the same place and
+     for the same reason: what the list holds has nothing to do with whichever
+     map is loaded.
+
+     -scenariodir names that directory; without it the sim's own default,
+     data/scenarios, stands. A directory that is not there is not an error —
+     it means this server offers no scenarios of its own, which is the
+     ordinary case. */
+  {
+    int argNum = findArg(argc, argv, "scenariodir");
+    if (argNum != ARG_NOT_FOUND) {
+      serverSimSetScenarioDir(serverSim, argv[argNum]);
+    }
+  }
+  scenarioHostRegisterScenarioLister(serverSim);
 
   /* A scenario script beside the map, when the map came from a file and one
      is there. No script is the ordinary case and says nothing; a script

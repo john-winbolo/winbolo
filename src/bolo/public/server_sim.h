@@ -727,6 +727,37 @@ void serverSimSetMessageLogFile(ServerSim *sim, const char *path);
 void serverSimSetQuiet(ServerSim *sim, bool quiet);
 
 /*********************************************************
+ *NAME:          serverSimSetScenarioDir
+ *               serverSimGetScenarioDir
+ *PURPOSE:
+ *  The directory of scenarios this server offers on their
+ *  own, independently of any map: -scenariodir on the
+ *  dedicated server, the "Scenario Dir" preference on a
+ *  desktop host. The getter falls back to the built-in
+ *  "data/scenarios" the way the map root falls back to
+ *  "data/maps"; NULL or "" to the setter goes back to that
+ *  default. No trailing slash.
+ *
+ *  Public rather than beside the map root in
+ *  server_sim_lifecycle.h: a desktop host sets this one from
+ *  its own preferences, and a GUI translation unit sees
+ *  public/ only.
+ *
+ *  Setting it reads nothing. The directory is read when a
+ *  client asks for the list, through the lister registered
+ *  with serverSimSetScenarioLister, and a directory that is
+ *  not there answers an empty list rather than an error —
+ *  a server offering no scenarios of its own is the
+ *  ordinary case.
+ *
+ *ARGUMENTS:
+ *  sim - Pointer to the ServerSim
+ *  dir - The directory, or NULL for the built-in default
+ *********************************************************/
+void        serverSimSetScenarioDir(ServerSim *sim, const char *dir);
+const char *serverSimGetScenarioDir(const ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimSetQuitOnWin
  *PURPOSE:
  *  Configures whether the server should quit after

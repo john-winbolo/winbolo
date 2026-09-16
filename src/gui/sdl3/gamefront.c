@@ -265,6 +265,9 @@ bool           gameFrontHostingLogging         = TRUE;
 /* Round-log dir. Empty until gameFrontGetPrefs seeds the default
  * (the prefs path) or the user picks one. */
 char           gameFrontHostingLogDir[FILENAME_MAX] = "";
+/* The scenarios this host offers on their own, independently of any map.
+ * Empty until gameFrontGetPrefs seeds the default (<prefs path>scenarios). */
+char           gameFrontHostingScenarioDir[FILENAME_MAX] = "";
 bool           gameFrontHostingServeReplays   = TRUE;
 /* How the hosted server handles the voice its clients send it. Holds a
  * ServerVoiceMode; serverVoiceOn is what a client host did before this
@@ -1714,6 +1717,11 @@ bool gameFrontSetDlgState(openingStates newState) {
              answers NULL for a map with no script, so hosting a plain map
              would report every scripted map in the directory as plain. */
           scenarioHostRegisterMapScripted(spServerSim);
+          /* And the read of this host's scenarios directory, registered
+             beside it for the same reason: what the list holds has nothing to
+             do with whichever map is being hosted. */
+          serverSimSetScenarioDir(spServerSim, gameFrontHostingScenarioDir);
+          scenarioHostRegisterScenarioLister(spServerSim);
           if (strncmp(fileName, "randommap:", 10) != 0 && fileName[0] != '\0') {
             char scenarioErr[512];
             spScenarioHost = scenarioHostAttach(spServerSim, fileName,
@@ -3167,6 +3175,8 @@ bool gameFrontSetupServer(void) {
      same host preference deciding whether it runs at all. */
   scenarioHostSetEnabled(gameFrontHostingScripts);
   scenarioHostRegisterMapScripted(spServerSim);
+  serverSimSetScenarioDir(spServerSim, gameFrontHostingScenarioDir);
+  scenarioHostRegisterScenarioLister(spServerSim);
   if (strncmp(fileName, "randommap:", 10) != 0 && fileName[0] != '\0') {
     char scenarioErr[512];
     spScenarioHost = scenarioHostAttach(spServerSim, fileName,
@@ -3473,6 +3483,23 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     }
     prefsGetString("HOSTING", "Upload Dir", def, gameFrontHostingUploadDir,
                    FILENAME_MAX);
+  }
+  /* The scenarios directory, defaulted under the writable prefs path for the
+   * reason the upload dir is: the app's own data directory is inside the
+   * read-only bundle, and this is a place a player drops files into.
+   * SDL_GetPrefPath returns a trailing separator, so append "scenarios"
+   * directly. A directory that is not there is not an error — it means this
+   * host offers no scenarios of its own. */
+  {
+    const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (prefDir) {
+      snprintf(def, FILENAME_MAX, "%sscenarios", prefDir);
+      SDL_free((void *)prefDir);
+    } else {
+      snprintf(def, FILENAME_MAX, "%s", "scenarios");
+    }
+    prefsGetString("HOSTING", "Scenario Dir", def,
+                   gameFrontHostingScenarioDir, FILENAME_MAX);
   }
   prefsGetString("HOSTING", "Logging", "Yes", buff, FILENAME_MAX);
   gameFrontHostingLogging = YESNO_TO_TRUEFALSE(buff[0]);

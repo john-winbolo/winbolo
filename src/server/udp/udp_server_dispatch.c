@@ -78,6 +78,9 @@
 #include "server_sim_internal.h"  /* sim->clientKnownMap, serverSimGetPillsForSlot,
                                    * serverSimGetCompressedMapFor — sim co-owner */
 #include "server_sim_lifecycle.h" /* serverSimGetMapDirRoot */
+#include "server_sim_scenario.h"  /* serverSimScenarioListDir, ScnDirEntry —
+                                   * the scenarios this server offers, read
+                                   * through the lister registered on the sim */
 #include "client_sim_internal.h"  /* LOBBY_MAP_LIST_MAX cap shared with the wire */
 #include "../server_lifecycle.h"  /* serverInstanceRecordProbeReply */
 #include "../../common/md5.h"     /* md5Compute, md5ToHex */
@@ -609,6 +612,113 @@ static void handleLobbyMapListReq(ServerSim *sim, uint8_t *buf, int len,
         rsp[finalPos] = (i >= got) ? 1 : 0;
         srvSendTo(rsp, rpos, fromAddr);
     } while (i < got);
+}
+
+/* One byte of length ahead of each string, so a string longer than 255 would
+ * be unsendable. They are cut to fit rather than costing the entry: a list is
+ * for choosing from, and a description that ends early still names the thing.
+ * The file name is what a later selection will send back, so it is the one
+ * that must survive whole — SCN_DIR_FILE_LEN is 128, well inside the
+ * byte, and an entry whose name would not fit is left out by the lister. */
+static int scnListPackStr(uint8_t *buf, int pos, const char *s) {
+    size_t n = (s != NULL) ? strlen(s) : 0;
+
+    if (n > 255) n = 255;
+    buf[pos++] = (uint8_t)n;
+    if (n > 0) {
+        memcpy(buf + pos, s, n);
+        pos += (int)n;
+    }
+    return pos;
+}
+
+int udpServerPackScenarioListChunk(uint8_t *buf, int bufLen,
+                                   const ScnDirEntry *entries, int count,
+                                   int first, int *next) {
+    int pos = PACKET_HEADER_SIZE;
+    int finalPos;
+    int countPos;
+    int written = 0;
+    int i;
+
+    if (buf == NULL || next == NULL || bufLen < PACKET_HEADER_SIZE + 2) {
+        if (next != NULL) *next = first;
+        return 0;
+    }
+    packHeader(buf, PACKET_LOBBY_SCENARIO_LIST_RSP, 0);
+    finalPos = pos;
+    buf[pos++] = 0;
+    countPos = pos;
+    buf[pos++] = 0;
+
+    for (i = first; i < count && written < 255; i++) {
+        const ScnDirEntry *e = &entries[i];
+        size_t fileLen = strlen(e->file);
+        size_t nameLen = strlen(e->name);
+        size_t descLen = strlen(e->description);
+        int    need;
+
+        if (fileLen > 255) fileLen = 255;
+        if (nameLen > 255) nameLen = 255;
+        if (descLen > 255) descLen = 255;
+        need = 1 + (int)fileLen + 1 + (int)nameLen + 1 + (int)descLen + 3;
+        if (pos + need > bufLen) break;
+
+        pos = scnListPackStr(buf, pos, e->file);
+        pos = scnListPackStr(buf, pos, e->name);
+        pos = scnListPackStr(buf, pos, e->description);
+        buf[pos++] = e->maxPlayers;
+        buf[pos++] = e->bots;
+        buf[pos++] = e->bound ? 1 : 0;
+        written++;
+    }
+
+    buf[countPos] = (uint8_t)written;
+    *next = i;
+    buf[finalPos] = (i >= count) ? 1 : 0;
+    return pos;
+}
+
+static void handleLobbyScenarioListReq(ServerSim *sim, uint8_t *buf, int len,
+                                       struct sockaddr_in *fromAddr) {
+    /* [header 8] and nothing else — the scenarios directory is flat, so there
+     * is no path to ask about. Any lobby client may ask, and the response goes
+     * back to the requester only (wire-only handshake per ARCHITECTURE.md
+     * §"Load-bearing wire-only exceptions"), exactly as the map list is. */
+    int clientIdx = serverFindClient(fromAddr);
+    (void)buf;
+
+    if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+        serverSimGetState(sim) != serverStateLobby ||
+        len < PACKET_HEADER_SIZE) return;
+    if (udpServer.clientReqCooldownTicks[clientIdx] > 0) return;
+    udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
+
+    {
+        /* Cap matches LOBBY_SCENARIO_LIST_MAX on the client so a directory's
+         * full content survives end-to-end. Stack-resident; each ScnDirEntry
+         * is ~451 bytes → ~58 KB, in line with the map list's ~76 KB. */
+        ScnDirEntry entries[LOBBY_SCENARIO_LIST_MAX];
+        uint8_t     rsp[UDP_MAX_PAYLOAD];
+        int         got = serverSimScenarioListDir(sim, entries,
+                                                   LOBBY_SCENARIO_LIST_MAX);
+        int         i   = 0;
+
+        if (got < 0) got = 0;
+        do {
+            int nextIdx = i;
+            int rlen = udpServerPackScenarioListChunk(rsp, (int)sizeof(rsp),
+                                                      entries, got, i,
+                                                      &nextIdx);
+            if (rlen <= 0) break;
+            srvSendTo(rsp, rlen, fromAddr);
+            /* An entry that fits in no chunk would spin this loop. One cannot
+               — the widest is 451 bytes against UDP_MAX_PAYLOAD — so this is
+               the check that says so rather than a case that happens. */
+            if (nextIdx == i) break;
+            i = nextIdx;
+        } while (i < got);
+    }
 }
 
 static void handleLobbyMapUseLocal(ServerSim *sim, uint8_t *buf, int len,
@@ -1264,6 +1374,9 @@ void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         case PACKET_LOBBY_MAP_LIST_REQ:
             handleLobbyMapListReq(sim, buf, len, fromAddr);
+            break;
+        case PACKET_LOBBY_SCENARIO_LIST_REQ:
+            handleLobbyScenarioListReq(sim, buf, len, fromAddr);
             break;
         case PACKET_LOBBY_MAP_USE_LOCAL:
             handleLobbyMapUseLocal(sim, buf, len, fromAddr);

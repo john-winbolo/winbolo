@@ -2464,6 +2464,11 @@ static int runFastMode(void) {
      run on a plain map would report every scripted map in the directory as
      plain. */
   scenarioHostRegisterMapScripted(fastServerSim);
+  /* And the read of the scenarios directory, for the same reason: what a
+     server offers on its own has nothing to do with the map it is running.
+     The headless run takes the built-in default, having no switch of its
+     own. */
+  scenarioHostRegisterScenarioLister(fastServerSim);
   {
     char scenarioErr[512];
     scenarioHost = scenarioHostAttach(fastServerSim, optMap,
