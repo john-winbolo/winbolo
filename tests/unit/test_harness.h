@@ -1612,6 +1612,17 @@ int run_build_harvest_busy_queues(void);
 int run_lgm_request_valid(void);
 int run_lgm_request_quiet(void);
 
+/* A quit with a pillbox in the man's hands (test_lgm_quit_pill.c): the pill is
+ * on no tank's carry list while he holds it, so the leave path has to put it
+ * down itself or it is lost — still flagged as carried, by a man who no longer
+ * exists. Issue #340. */
+int run_lgm_quit_drops_carried_pill(void);
+/* The same pill, the other teardown that deletes a man mid-round:
+ * serverSimUnfieldBot, which takes a held seat off the field between waves.
+ * No ownership migration runs there, so a stranded pill stayed under the name
+ * of a seat that was not on the field. */
+int run_lgm_unfield_drops_carried_pill(void);
+
 /* Adaptive jitter buffer (test_jitter_buffer_grow.c): queue drains under
  * jitter deepen jitterTarget toward MAX, a steadily full queue shrinks it
  * back to MIN, and it never exceeds MAX. Always built (no WB_NETDEBUG gate). */

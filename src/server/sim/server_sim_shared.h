@@ -73,7 +73,7 @@ void serverSimCbTankSpawned(void *ctx, BYTE player, BYTE mapX, BYTE mapY,
                             bool respawn);
 void serverSimCbLgmLanded(void *ctx, BYTE player, BYTE mapX, BYTE mapY);
 void serverSimCbPillPlaced(void *ctx, BYTE player, BYTE index, BYTE mapX,
-                           BYTE mapY);
+                           BYTE mapY, BYTE armour);
 void serverSimCbPillKilled(void *ctx, BYTE index, BYTE attacker);
 void serverSimCbBuilt(void *ctx, BYTE player, BYTE action, BYTE mapX,
                       BYTE mapY);
