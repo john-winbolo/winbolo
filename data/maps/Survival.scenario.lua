@@ -895,6 +895,8 @@ local function spawn_wave()
   wave_bases_restocked = 0
 
   wave_ends_at  = game.tick() + secs(WAVE_LIMIT_S)
+  game.message(string.format("[wave] %d: clock started at tick %d, ends at tick %d (%d s)",
+    wave, game.tick(), wave_ends_at, WAVE_LIMIT_S))
   last_min_mark = nil
   half_min_said = false
 
@@ -956,6 +958,8 @@ local function vanish_wave(tick)
   -- pairs() order is not defined; sort so the same seed removes the same bot
   -- first on every run.
   table.sort(vanish_queue)
+  game.message(string.format("[wave] %d over at tick %d: %d of %d spawned queued to leave: %s",
+    wave, tick, #vanish_queue, #spawned, table.concat(vanish_queue, " ")))
   vanishing = true
   -- The first removal waits out MUTE_LEAD_S so the newswire is already
   -- silent before the first attacker disappears; the caller mutes on this
@@ -999,7 +1003,9 @@ local function pump_vanish_queue(tick)
   if #vanish_queue > 0 then
     if vanish_next_at ~= nil and tick < vanish_next_at then return false end
     local p = table.remove(vanish_queue, 1)
-    game.remove_bot(p)
+    local ok, why = game.remove_bot(p)
+    game.message(string.format("[wave] remove_bot %d at tick %d -> %s%s", p, tick,
+      tostring(ok), why and (" " .. tostring(why)) or ""))
     wave_bots[p] = nil
     seen_fielded[p] = nil
     vanish_next_at = tick + secs(VANISH_SPACING_S)
@@ -1007,6 +1013,7 @@ local function pump_vanish_queue(tick)
   if #vanish_queue > 0 then return false end
   vanishing = false
   vanish_next_at = nil
+  game.message(string.format("[wave] departures done at tick %d", tick))
   return true
 end
 
@@ -1032,6 +1039,8 @@ local function prune_wave_bots()
     if ls ~= nil and ls.fielded then
       seen_fielded[p] = true
     elseif not vanishing and (ls == nil or seen_fielded[p]) then
+      game.message(string.format("[wave] seat %d left the wave list at tick %d (%s)",
+        p, game.tick(), (ls == nil) and "gone from the roster" or "no longer fielded"))
       wave_bots[p] = nil
       seen_fielded[p] = nil
     end
@@ -1585,6 +1594,7 @@ function on_tick(tick)
   if wave_ends_at ~= nil then
     local remaining = wave_ends_at - tick
     if remaining <= 0 then
+      game.message(string.format("[wave] %d clock ran out at tick %d", wave, tick))
       wave_ends_at = nil
       -- Mute FIRST; vanish_wave then holds its first removal for MUTE_LEAD_S,
       -- so the newswire is already silent by the time the first attacker
