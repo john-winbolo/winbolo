@@ -174,17 +174,24 @@ void minimapDrawObjects(uint8_t *pixels,
     const struct startsObj *ss = clientMapPreviewStarts(view);
 
     if (pillColor && pb) {
+        /* A pill the map file hands to player 0 is the host's from the
+           first tick, so it reads as the viewer's own here as it will on
+           the field: green. A scripted map that starts its players with
+           pills in hand (Survival's centre) says so in the preview, and a
+           plain map, whose pills are all neutral, is drawn as before. */
+        static const uint8_t ownCol[3] = {0, 200, 0};
         for (i = 0; i < pb->numPills; i++) {
             int px = pb->item[i].x;
             int py = pb->item[i].y;
+            const uint8_t *col = (pb->item[i].owner == 0) ? ownCol : pillColor;
             for (dy = -1; dy <= 1; dy++) {
                 for (dx = -1; dx <= 1; dx++) {
                     int nx = px + dx, ny = py + dy;
                     if (nx >= 0 && nx < MINIMAP_SIZE && ny >= 0 && ny < MINIMAP_SIZE) {
                         int idx = (ny * MINIMAP_SIZE + nx) * 4;
-                        pixels[idx]   = pillColor[0];
-                        pixels[idx+1] = pillColor[1];
-                        pixels[idx+2] = pillColor[2];
+                        pixels[idx]   = col[0];
+                        pixels[idx+1] = col[1];
+                        pixels[idx+2] = col[2];
                         pixels[idx+3] = 255;
                     }
                 }
