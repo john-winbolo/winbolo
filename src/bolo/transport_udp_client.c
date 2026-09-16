@@ -419,6 +419,10 @@ typedef struct {
                                        * a witness for the no-progress timer,
                                        * never the source of the percentage   */
 
+#if WB_ENABLE_NETIMPAIR
+    uint8_t test_drop_upload_packet;
+#endif
+
 #ifdef __EMSCRIPTEN__
     /* WS↔UDP relay metadata frame (type 0x01). The relay sends exactly one
      * as the first datagram, before any game traffic. Consumed once at the
@@ -523,7 +527,7 @@ static void udpClientSendWbnReauth(TransportUdpClientCtx *c) {
 
 /* Forward decl: defined alongside the upload state machine below;
  * called from the connected-state branch of udpClientTick. */
-static void udpClientUploadPump(TransportUdpClientCtx *c);
+static void udpClientUploadPump(TransportUdpClientCtx *c, uint64_t now);
 
 /* connId rides the wire as two 32-bit halves through the existing packU32
  * helpers — low half first, then high. Server send/read must agree with these. */
@@ -781,7 +785,8 @@ static bool decodeLocalizedPayload(const uint8_t *buf, int len, int startPos,
 /* Apply one PACKET_LOBBY_MAP_LIST_RSP chunk to the client's accumulator.
  * Wire format:
  *   [header 8] [pathLen 1] [path N] [final 1] [count 1]
- *   per entry: [nameLen 1][name M][isFolder 1][modTime 8 BE].
+ *   per entry: [nameLen 1][name M][isFolder 1][modTime 8 BE]
+ *              [scripted 1].
  * Server may emit multiple chunks per request — append entries and only
  * flip Ready/InFlight on the final chunk. Stale chunks (path mismatched
  * against the in-flight request) are silently dropped.
@@ -817,9 +822,9 @@ void udpClientHandleLobbyMapListRsp(ClientSim *cs,
         if (pos + 1 > len) break;
         uint8_t nameLen = buf[pos++];
         if (nameLen >= LOBBY_MAP_LIST_NAME_LEN ||
-            pos + nameLen + 1 + 8 > len) break;
+            pos + nameLen + 1 + 8 + 1 > len) break;
         if (cs->lobbyMapListCount >= LOBBY_MAP_LIST_MAX) {
-            pos += nameLen + 1 + 8;
+            pos += nameLen + 1 + 8 + 1;
             continue;
         }
         int idx = cs->lobbyMapListCount++;
@@ -834,10 +839,136 @@ void udpClientHandleLobbyMapListRsp(ClientSim *cs,
             mt = (mt << 8) | buf[pos++];
         }
         cs->lobbyMapListModTime[idx] = (int64_t)mt;
+        cs->lobbyMapListScripted[idx] = buf[pos++] ? true : false;
     }
     if (finalFlag) {
         cs->lobbyMapListReady = true;
         cs->lobbyMapListInFlight = false;
+        cs->lobbyMapListSeq++;
+    }
+}
+
+/* One length-prefixed string into a fixed buffer, cut to fit it. False when
+ * the packet runs out before the string does, which stops the entry rather
+ * than reading past the buffer. The out buffer is always NUL-terminated. */
+static bool udpClientReadLenStr(const uint8_t *buf, int len, int *pos,
+                                char *out, size_t outSz) {
+    uint8_t n;
+    size_t  keep;
+
+    if (*pos + 1 > len) return false;
+    n = buf[(*pos)++];
+    if (*pos + (int)n > len) return false;
+    keep = n;
+    if (keep >= outSz) keep = outSz - 1;
+    memset(out, 0, outSz);
+    if (keep > 0) {
+        memcpy(out, buf + *pos, keep);
+    }
+    *pos += (int)n;
+    return true;
+}
+
+/* Apply one PACKET_LOBBY_SCENARIO_LIST_RSP chunk to the client's accumulator.
+ * Wire format:
+ *   [header 8] [final 1] [count 1]
+ *   per entry: [fileLen 1][file M][nameLen 1][name N][descLen 1][desc D]
+ *              [maxPlayers 1][bots 1][bound 1]
+ *
+ * No path, unlike the map list: the scenarios directory is flat, so there is
+ * nothing to ask about and nothing to recognise a stale response by. The
+ * server may emit several chunks per request — entries append and only the
+ * final chunk flips Ready/InFlight.
+ *
+ * Declared in transport_udp.h so unit tests can drive the accumulator
+ * directly, as the map list's is. */
+
+/* The three buffers a scenario's file name passes through are the same width,
+ * and this is the one translation unit that can see all three names:
+ *
+ *   SERVER_SCENARIO_FILE_LEN  (server_sim.h)        what the server's own
+ *                                                   enumeration hands a
+ *                                                   frontend, pinned against
+ *                                                   SCN_DIR_FILE_LEN in
+ *                                                   server_sim_maps.c
+ *   LOBBY_SCENARIO_LIST_FILE_LEN (client_sim_internal.h)  the row this
+ *                                                   accumulator fills
+ *   LOBBY_SCENARIO_FILE_LEN   (control_event.h)     the name of the scenario
+ *                                                   in play on the settings
+ *                                                   event
+ *
+ * Holding them together here means a name that a listing shows in full is a
+ * name the chooser can send back and the settings event can carry back, with
+ * no site along the way cutting it. */
+BOLO_STATIC_ASSERT(LOBBY_SCENARIO_LIST_FILE_LEN == SERVER_SCENARIO_FILE_LEN,
+                   scenario_list_file_matches_the_server_entry);
+BOLO_STATIC_ASSERT(LOBBY_SCENARIO_LIST_FILE_LEN == LOBBY_SCENARIO_FILE_LEN,
+                   scenario_list_file_matches_the_settings_event);
+
+void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
+                                         const uint8_t *buf, int len) {
+    int     pos = PACKET_HEADER_SIZE;
+    uint8_t finalFlag;
+    uint8_t cnt;
+    int     i;
+
+    if (!cs) return;
+    if (len < PACKET_HEADER_SIZE + 2) return;
+    /* Nothing was asked for, so this answers nothing. There is no path in the
+       response to tell a stale chunk from a current one the way the map list
+       does, so the request being in flight is the whole of what makes a chunk
+       this client's: a chunk arriving after the final one — a duplicate, or
+       the tail of a request that has since timed out — is dropped rather than
+       appended to a finished list. */
+    if (!cs->lobbyScenarioListInFlight) return;
+    finalFlag = buf[pos++];
+    cnt       = buf[pos++];
+
+    /* The accumulator is emptied here rather than where the request is sent,
+       so the rows a response builds up are its own and a chunk delivered
+       twice cannot double them: the second copy of a first chunk clears and
+       refills, and a second copy of a later chunk is dropped above, the
+       final flag having taken the request out of flight. */
+    if (!cs->lobbyScenarioListStarted) {
+        cs->lobbyScenarioListCount   = 0;
+        cs->lobbyScenarioListStarted = true;
+    }
+
+    for (i = 0; i < cnt; i++) {
+        char file[LOBBY_SCENARIO_LIST_FILE_LEN];
+        char name[LOBBY_SCENARIO_NAME_LEN];
+        char desc[LOBBY_SCENARIO_DESC_LEN];
+        int  idx;
+
+        if (!udpClientReadLenStr(buf, len, &pos, file, sizeof(file)) ||
+            !udpClientReadLenStr(buf, len, &pos, name, sizeof(name)) ||
+            !udpClientReadLenStr(buf, len, &pos, desc, sizeof(desc))) {
+            break;
+        }
+        if (pos + 3 > len) break;
+        /* Read into locals first, so a chunk that arrives past the cap is
+           still walked to its end rather than leaving the position stranded
+           mid-entry. */
+        if (cs->lobbyScenarioListCount >= LOBBY_SCENARIO_LIST_MAX) {
+            pos += 3;
+            continue;
+        }
+        idx = cs->lobbyScenarioListCount++;
+        SDL_strlcpy(cs->lobbyScenarioListFiles[idx], file,
+                    LOBBY_SCENARIO_LIST_FILE_LEN);
+        SDL_strlcpy(cs->lobbyScenarioListNames[idx], name,
+                    LOBBY_SCENARIO_NAME_LEN);
+        SDL_strlcpy(cs->lobbyScenarioListDescs[idx], desc,
+                    LOBBY_SCENARIO_DESC_LEN);
+        cs->lobbyScenarioListMaxPlayers[idx] = buf[pos++];
+        cs->lobbyScenarioListBots[idx]       = buf[pos++];
+        cs->lobbyScenarioListBound[idx]      = buf[pos++] ? true : false;
+    }
+
+    if (finalFlag) {
+        cs->lobbyScenarioListReady    = true;
+        cs->lobbyScenarioListInFlight = false;
+        cs->lobbyScenarioListSeq++;
     }
 }
 
@@ -1000,6 +1131,7 @@ void udpClientHandleLobbyMapSearchRsp(ClientSim *cs,
     if (finalFlag) {
         cs->lobbyMapSearchReady = true;
         cs->lobbyMapSearchInFlight = false;
+        cs->lobbyMapListSeq++;
     }
 }
 
@@ -1030,6 +1162,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_LOBBY_BOT_CONFIG: return "LOBBY_BOT_CONFIG";
     case CTRL_LOBBY_BOT_BRAIN:  return "LOBBY_BOT_BRAIN";
     case CTRL_LOBBY_BRAIN_LIST: return "LOBBY_BRAIN_LIST";
+    case CTRL_LOBBY_BRAIN_DOCS_CHUNK: return "LOBBY_BRAIN_DOCS_CHUNK";
     case CTRL_GAME_VOTE_STATE:  return "GAME_VOTE_STATE";
     case CTRL_SERVER_TEXT:      return "SERVER_TEXT";
     case CTRL_COMMAND_REJECTED: return "COMMAND_REJECTED";
@@ -1871,6 +2004,10 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     }
 #endif
     uint8_t pktType = getPacketType(buf, len);
+
+#if WB_ENABLE_NETIMPAIR
+    if (pktType != 0 && pktType == c->test_drop_upload_packet) return;
+#endif
 
     c->packetsRecvThisSec++;
     c->bytesRecvThisSec += len;
@@ -3043,7 +3180,8 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     case PACKET_LOBBY_TEAM_META_CHG:
     case PACKET_LOBBY_BOT_CONFIG_CHG:
     case PACKET_LOBBY_BRAIN_LIST:
-    case PACKET_LOBBY_BOT_POOL_CHUNK: {
+    case PACKET_LOBBY_BOT_POOL_CHUNK:
+    case PACKET_LOBBY_BRAIN_DOCS_CHUNK: {
         ControlDecodeFn dec = transportControlCodecDecoder(pktType);
         if (dec != NULL) {
             ControlEvent evt;
@@ -3063,6 +3201,10 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         udpClientHandleLobbyMapSearchRsp(c->clientSim, buf, len);
         break;
 
+    case PACKET_LOBBY_SCENARIO_LIST_RSP:
+        udpClientHandleLobbyScenarioListRsp(c->clientSim, buf, len);
+        break;
+
     case PACKET_LOBBY_MAP_PREVIEW_ERR:
         udpClientHandleLobbyMapPreviewErr(c->clientSim, buf, len);
         break;
@@ -3079,6 +3221,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     case PACKET_LOBBY_MAP_UPLOAD_ACK: {
         /* [header 8] [status 1]. 0 = ok, non-zero = reject. */
         if (!c->clientSim || len < PACKET_HEADER_SIZE + 1) break;
+        if (c->clientSim->lobbyMapUploadStatus != 1) break;
         uint8_t status = buf[PACKET_HEADER_SIZE];
         if (status == 0) {
             c->clientSim->lobbyMapUploadStatus = 2;
@@ -3094,6 +3237,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          * matching local file. Caller should fall back to a regular
          * UPLOAD_BEGIN. UI pump notices the flag next frame. */
         if (!c->clientSim || len < PACKET_HEADER_SIZE + 1) break;
+        if (c->clientSim->lobbyMapUploadStatus != 1) break;
         /* nameLen + name bytes are informational here (echoes the
          * client's announce), we just flip the fallback flag. */
         c->clientSim->lobbyMapUseLocalNeedsFallback = true;
@@ -3103,6 +3247,8 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     case PACKET_LOBBY_MAP_UPLOAD_DONE: {
         /* [header 8] [status 1] [pathLen 1] [path N] */
         if (!c->clientSim || len < PACKET_HEADER_SIZE + 2) break;
+        if (c->clientSim->lobbyMapUploadStatus != 1 &&
+            c->clientSim->lobbyMapUploadStatus != 2) break;
         uint8_t status = buf[PACKET_HEADER_SIZE];
         uint8_t plen   = buf[PACKET_HEADER_SIZE + 1];
         if (len < PACKET_HEADER_SIZE + 2 + plen) break;
@@ -3114,6 +3260,12 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                        buf + PACKET_HEADER_SIZE + 2, plen);
             }
             c->clientSim->lobbyMapUploadStatus = 3;
+            /* The server's map directory just gained a file, so whatever
+             * listing the chooser has cached is now short by one. Drop the
+             * ready flag so the next enumerate re-asks, and tick the
+             * counter the chooser watches so an enumerate happens. */
+            c->clientSim->lobbyMapListReady = false;
+            c->clientSim->lobbyMapListSeq++;
         } else {
             c->clientSim->lobbyMapUploadStatus = 4;
             c->clientSim->lobbyMapUploadRejectCode = status;
@@ -3576,7 +3728,23 @@ static bool udpClientTick(void *ctx) {
         }
 
         /* Drive in-flight lobby map upload (no-op when none active). */
-        udpClientUploadPump(c);
+        udpClientUploadPump(c, SDL_GetTicks());
+
+        /* A scenario-list request that was never answered. Nothing else ends
+           one — the response has no path to recognise it by and the server
+           may send several chunks — so without this a dropped answer leaves
+           the request in flight and every later chunk dropped, and the
+           chooser has no way to ask again. The list itself is left alone:
+           what times out is the asking. */
+        if (c->clientSim != NULL && c->clientSim->lobbyScenarioListInFlight) {
+            if (c->clientSim->lobbyScenarioListWaited <
+                LOBBY_SCENARIO_LIST_TIMEOUT_TICKS) {
+                c->clientSim->lobbyScenarioListWaited++;
+            } else {
+                c->clientSim->lobbyScenarioListInFlight = false;
+                c->clientSim->lobbyScenarioListStarted  = false;
+            }
+        }
 
         /* Retransmit head of the outbound command queue if the head
          * entry was sent more than 80ms ago and is still unacked. */
@@ -4605,6 +4773,32 @@ void transportUdpClientSendLobbyMapListRequest(Transport *t,
     }
 }
 
+/* Ask what scenarios the server offers on their own. The request carries
+ * nothing but its header — the directory is flat, so there is no path to ask
+ * about — and the accumulator is cleared here so the response appends to an
+ * empty list, as the map list's does. */
+void transportUdpClientSendLobbyScenarioListRequest(Transport *t) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint8_t buf[PACKET_HEADER_SIZE];
+
+    if (c->joinState != UDP_CLIENT_CONNECTED) return;
+
+    packHeader(buf, PACKET_LOBBY_SCENARIO_LIST_REQ, c->outSequence++);
+    udpClientSendTo(c, buf, PACKET_HEADER_SIZE);
+
+    if (c->clientSim) {
+        /* The rows the last response left are kept until this one's first
+           chunk lands, which is where they are cleared. A chooser reading
+           while the answer is on its way sees the old list rather than an
+           empty one, and a request that times out leaves the last good
+           listing in place. */
+        c->clientSim->lobbyScenarioListReady    = false;
+        c->clientSim->lobbyScenarioListInFlight = true;
+        c->clientSim->lobbyScenarioListStarted  = false;
+        c->clientSim->lobbyScenarioListWaited   = 0;
+    }
+}
+
 void transportUdpClientSendLobbyMapPreviewRequest(Transport *t,
                                                   const char *relPath) {
     TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
@@ -4687,7 +4881,7 @@ void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
 static void udpClientUploadSendBegin(TransportUdpClientCtx *c,
                                       uint32_t totalLen,
                                       const char *name) {
-    uint8_t buf[PACKET_HEADER_SIZE + 4 + 1 + 255];
+    uint8_t buf[PACKET_HEADER_SIZE + 4 + 1 + 255 + 4];
     int nameLen, len;
 
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
@@ -4703,6 +4897,10 @@ static void udpClientUploadSendBegin(TransportUdpClientCtx *c,
     buf[PACKET_HEADER_SIZE + 4] = (uint8_t)nameLen;
     if (nameLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 5, name, nameLen);
     len = PACKET_HEADER_SIZE + 5 + nameLen;
+    /* Drop any abandoned upload tail without reusing its sequence numbers.
+     * The receiver adopts this boundary before acknowledging BEGIN. */
+    packU32(buf + len, channelResetSend(&c->channelMux, CHANNEL_BULK));
+    len += 4;
     udpClientSendTo(c, buf, len);
 
     if (c->clientSim) {
@@ -4796,11 +4994,18 @@ static void udpClientUploadCleanup(TransportUdpClientCtx *c) {
 /* Shared kick: stash the bytes on the transport, optionally try
  * USE_LOCAL first when the caller derived a data/maps-relative path,
  * else announce via BEGIN. `buf` is copied; caller retains ownership. */
+/* useLocalLen is what the USE_LOCAL pre-check reports and hashes over, which
+ * for a packed map is its map body rather than the whole file: the server
+ * answers that check from serverSimReadMapFile, which trims a map at its
+ * terminator, so comparing whole files would NACK every packed map both
+ * sides already have. len stays the whole file — that is what a fallback
+ * upload sends, container and all. */
 static bool udpClientUploadStart(TransportUdpClientCtx *c,
                                   const uint8_t *buf, size_t len,
                                   const char *name,
                                   const char *relPath, /* nullable */
-                                  const char *md5Hex   /* 32 hex chars + NUL, required iff relPath */) {
+                                  const char *md5Hex,  /* 32 hex chars + NUL, required iff relPath */
+                                  size_t useLocalLen   /* bytes the pre-check names; 0 for len */) {
     if (c == NULL || buf == NULL || name == NULL || name[0] == '\0') {
         return false;
     }
@@ -4832,7 +5037,10 @@ static bool udpClientUploadStart(TransportUdpClientCtx *c,
     }
 
     if (relPath != NULL && relPath[0] != '\0' && md5Hex != NULL) {
-        udpClientUploadSendUseLocal(c, c->uploadTotal, c->uploadName,
+        if (useLocalLen == 0 || useLocalLen > len) {
+            useLocalLen = len;
+        }
+        udpClientUploadSendUseLocal(c, (uint32_t)useLocalLen, c->uploadName,
                                      relPath, md5Hex);
         c->uploadUseLocalPending = true;
         c->uploadBeginSent       = false;
@@ -4846,9 +5054,9 @@ static bool udpClientUploadStart(TransportUdpClientCtx *c,
 
 /* Per-tick pump. Drives the upload through the USE_LOCAL → BEGIN →
  * bulk-stream → DONE/REJECT lifecycle. */
-static void udpClientUploadPump(TransportUdpClientCtx *c) {
+static void udpClientUploadPump(TransportUdpClientCtx *c, uint64_t now) {
     uint8_t st;
-    uint64_t now, sinceProgress, sinceStart;
+    uint64_t sinceProgress, sinceStart;
     bool advanced, timedOut;
 
     if (!c->uploadActive) return;
@@ -4872,7 +5080,6 @@ static void udpClientUploadPump(TransportUdpClientCtx *c) {
      * channel as one final forward-progress event: thereafter we only wait
      * for MAP_UPLOAD_DONE, and the stall timer must not count against a
      * server merely slow to load + reply. */
-    now = SDL_GetTicks();
     {
         uint32_t acked = c->channelMux.ch[CHANNEL_BULK].ackedSeq;
         advanced = (c->uploadPrevStatus != st) ||
@@ -4904,6 +5111,11 @@ static void udpClientUploadPump(TransportUdpClientCtx *c) {
         timedOut = true;
     }
     if (timedOut) {
+        c->clientSim->lobbyMapUploadStatus = 4;
+        c->clientSim->lobbyMapUploadRejectCode = LOBBY_REJECT_INVALID;
+        c->clientSim->lobbyMapUploadFinalPath[0] = '\0';
+        c->clientSim->lobbyMapUseLocalNeedsFallback = false;
+        channelResetSend(&c->channelMux, CHANNEL_BULK);
         udpClientUploadCleanup(c);
         return;
     }
@@ -4953,19 +5165,38 @@ static void udpClientUploadPump(TransportUdpClientCtx *c) {
     }
 }
 
+#if WB_ENABLE_NETIMPAIR
+/* Drive the production watchdog without sleeping, and drop only the chosen
+ * upload reply so tests can keep connection liveness traffic flowing. */
+void transportUdpClientTestUploadTimeout(Transport *t) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    uint64_t now_ms = SDL_GetTicks();
+    udpClientUploadPump(c, now_ms);
+    udpClientUploadPump(c, now_ms);
+    udpClientUploadPump(c, now_ms + UPLOAD_STALL_TIMEOUT_MS + 1);
+}
+
+void transportUdpClientTestDropUploadReply(Transport *t, uint8_t packet_type) {
+    TransportUdpClientCtx *c = (TransportUdpClientCtx *)t->ctx;
+    c->test_drop_upload_packet = packet_type;
+}
+#endif
+
 bool transportUdpClientStartLobbyMapUploadFromBytes(Transport *t,
                                                      const uint8_t *buf,
                                                      size_t len,
                                                      const char *mapName) {
     return udpClientUploadStart((TransportUdpClientCtx *)t->ctx,
                                  buf, len, mapName,
-                                 /*relPath=*/NULL, /*md5=*/NULL);
+                                 /*relPath=*/NULL, /*md5=*/NULL,
+                                 /*useLocalLen=*/0);
 }
 
 bool transportUdpClientStartLobbyMapUploadFromPath(Transport *t,
                                                     const char *localFilePath) {
     TransportUdpClientCtx *c;
     size_t fileLen = 0;
+    size_t bodyLen = 0;
     void *fileData = NULL;
     char nameBuf[128];
     char relPath[256];
@@ -5023,14 +5254,29 @@ bool transportUdpClientStartLobbyMapUploadFromPath(Transport *t,
         }
     }
     haveRelPath = (relPath[0] != '\0');
+    /* What the pre-check asks about is the map, not the file. A packed map
+       carries a scenario container after its terminator, and the server
+       answers from serverSimReadMapFile, which trims there — so a whole-file
+       hash and length would miss on every packed map both sides already have
+       and the client would upload one it did not need to. A file with no map
+       in it keeps its whole length, which is what the check has always
+       compared. */
+    bodyLen = fileLen;
     if (haveRelPath) {
-        md5Compute(fileData, fileLen, md5);
+        size_t trimmed = 0;
+        if (boloMapBodyLength((const unsigned char *)fileData, fileLen,
+                              &trimmed) &&
+            trimmed > 0 && trimmed <= fileLen) {
+            bodyLen = trimmed;
+        }
+        md5Compute(fileData, bodyLen, md5);
         md5ToHex(md5, md5Hex);
     }
 
     ok = udpClientUploadStart(c, (const uint8_t *)fileData, fileLen, nameBuf,
                                haveRelPath ? relPath : NULL,
-                               haveRelPath ? md5Hex  : NULL);
+                               haveRelPath ? md5Hex  : NULL,
+                               haveRelPath ? bodyLen : 0);
     SDL_free(fileData);
     return ok;
 }

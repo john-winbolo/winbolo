@@ -31,11 +31,12 @@
  *********************************************************/
 
 #include <cstdio>   /* snprintf — "Bot N" fallback name */
-#include <cstring>  /* strncmp — Easy./Hard. tagline token */
+#include <cstring>  /* strncmp — Easy./Medium./Hard. tagline token */
 
 #include <SDL3/SDL.h>
 
 #include "imgui.h"
+#include "../../wb_theme.h"  /* g_theme — the BOT pill's colours, the name tag's fallback */
 #include "lobby_internal.h"
 extern "C" {
 #include "client_sim.h"      /* ClientSim + lobby getters; MAX_TANKS, ClientLobbySlot, aiType */
@@ -48,7 +49,7 @@ extern "C" {
 #include "../../../../server/threads.h"  /* threadsWaitForMutex / Release — SP-host server calls */
 #include "../../../../common/mp_diag_log.h"  /* mpDiagLog — settings dispatch trace */
 #include "../../../sound.h"      /* soundPlayEffect — the local ready cue */
-#include "../../../gamefront.h"  /* gameFrontGetChosenBotBrain / GetSinglePlayerServerSim */
+#include "../../../gamefront.h"  /* gameFrontGetSinglePlayerServerSim */
 #include "../../../lang.h"       /* langGetText / langGetTextFmt / MessageArgs / STR_DLGLOBBY_* */
 }
 
@@ -131,20 +132,14 @@ void lobbySendReadyToggle(ClientSim *cs, bool ready) {
     soundPlayEffect(ready ? lobbyReady : lobbyUnready);
 }
 
-/* Catalogue index of the default add-bot brain — prefer "GoalHunter_1.6", else
- * the first entry (the catalogue is sorted newest-version-first). -1 if empty. */
+/* The brain a new bot gets. Only one brain ships, so this is normally its
+ * single entry; the name match survives for a dev tree that has frozen a
+ * second one alongside it. What the player picks per bot is the DIFFICULTY,
+ * not the brain — see lobbyBotDifficulty* below. */
 static int lobbyDefaultBrainIdx(const BrainList *bl) {
     if (!bl || bl->count <= 0) return -1;
-    /* The player's explicit persisted choice (wrench dropdown) is gospel. */
-    char chosen[64];
-    gameFrontGetChosenBotBrain(chosen, sizeof(chosen));
-    if (chosen[0] != '\0') {
-        for (int i = 0; i < bl->count; i++) {
-            if (SDL_strcasecmp(bl->entries[i].name, chosen) == 0) return i;
-        }
-    }
     for (int i = 0; i < bl->count; i++) {
-        if (SDL_strcasecmp(bl->entries[i].name, "GoalHunter_1.6") == 0) return i;
+        if (SDL_strcasecmp(bl->entries[i].name, "GoalHunter_1.7") == 0) return i;
     }
     return 0;  /* sorted newest-first → entry 0 is the newest GoalHunter */
 }
@@ -185,47 +180,243 @@ const LobbyBrainMeta *lobbyBrainMetaFor(const char *name) {
     SDL_strlcpy(m->name, name, sizeof(m->name));
     brainListLoadMeta(name, m->tagline, sizeof(m->tagline),
                       m->desc, sizeof(m->desc));
+    /* The brain's modes.txt, read once here alongside about.txt. A brain
+     * that ships no manifest gets the synthesized single "default" mode,
+     * so every caller below can treat the list as always present. */
+    brainListLoadModes(name, &m->modes);
+    /* The bot's tag colour, decided once per catalogue entry:
+     *   1. the brain's own "color: #RRGGBB" line in about.txt (wins, and is
+     *      the same on every machine that has the brain files);
+     *   2. else the colour this machine remembered for the bot's base name
+     *      ("GoalHunter", version dropped, so a new version keeps it);
+     *   3. else one derived from that name — a hue hashed from the letters
+     *      at a fixed, readable saturation and brightness — and written to
+     *      the prefs so it is remembered from then on. */
+    char base[BRAIN_LIST_NAME_LEN];
+    brainListSplitVersion(name, base, sizeof(base));
+    uint32_t rgb = 0;
+    if (!brainListLoadColor(name, &rgb) && !gameFrontGetBotTagColor(base, &rgb)) {
+        uint32_t h = 2166136261u;                     /* FNV-1a over the name */
+        for (const char *c = base; *c; c++) {
+            h ^= (uint32_t)SDL_tolower((unsigned char)*c);
+            h *= 16777619u;
+        }
+        float hue = (float)(h % 360u);                /* 0..359 degrees */
+        float sat = 0.55f, val = 0.85f;
+        float r, g, b;
+        ImGui::ColorConvertHSVtoRGB(hue / 360.0f, sat, val, r, g, b);
+        rgb = ((uint32_t)(r * 255.0f + 0.5f) << 16) |
+              ((uint32_t)(g * 255.0f + 0.5f) << 8)  |
+               (uint32_t)(b * 255.0f + 0.5f);
+        gameFrontSetBotTagColor(base, rgb);
+    }
+    m->color = rgb;
     return m;
 }
 
-/* Render a one-line tagline, colouring a leading "Easy." / "Hard." token
- * (green / red) so the difficulty reads at a glance. wrapPosX > 0 wraps the
- * remainder at that window-local x. */
-void lobbyDrawTagline(const char *tag, float wrapPosX) {
+void lobbyBotBrainTagColors(ClientSim *cs, int slot,
+                            ImU32 *bg, ImU32 *fg, ImU32 *border) {
+    /* Fall back to the BOT pill's colours when the catalogue has nothing. */
+    ImU32 oBg = g_theme->botTagBg, oFg = g_theme->botTagText, oBd = g_theme->botTagBorder;
+    const BrainList *bl = clientSimGetLobbyBrainList(cs);
+    if (bl && bl->count > 0) {
+        uint8_t cur = clientSimGetLobbyBotBrain(cs, (BYTE)slot);
+        if (cur == 0xFF || cur >= bl->count) cur = 0;
+        const LobbyBrainMeta *m = lobbyBrainMetaFor(bl->entries[cur].name);
+        if (m) {
+            /* Border is the colour itself, dimmed a little; the text is the
+             * same colour lifted toward white so it reads on the dark pill;
+             * the pill background matches the other row badges. */
+            int r = (int)((m->color >> 16) & 0xFF);
+            int g = (int)((m->color >> 8) & 0xFF);
+            int b = (int)(m->color & 0xFF);
+            oBd = IM_COL32(r * 72 / 100, g * 72 / 100, b * 72 / 100, 255);
+            oFg = IM_COL32(r + (255 - r) * 45 / 100,
+                           g + (255 - g) * 45 / 100,
+                           b + (255 - b) * 45 / 100, 255);
+        }
+    }
+    if (bg) *bg = oBg;
+    if (fg) *fg = oFg;
+    if (border) *border = oBd;
+}
+
+/* ── Bot modes ───────────────────────────────────────────────────────
+ * Which modes a bot can be run in, and which difficulty levels each mode
+ * offers, is the BRAIN's answer, not the lobby's: it comes from the
+ * brain's modes.txt, which ships with the brain and is therefore readable
+ * on every client before the game starts. The lobby only picks an index
+ * into that list and sends it.
+ *
+ * A slot still on the 0xFF "server default" brain resolves to catalogue
+ * entry 0, the same rule the row's brain name uses. */
+const BrainModes *lobbyBotModesFor(ClientSim *cs, int slot) {
+    const BrainList *bl = clientSimGetLobbyBrainList(cs);
+    if (!bl || bl->count <= 0) return NULL;
+    uint8_t cur = clientSimGetLobbyBotBrain(cs, (BYTE)slot);
+    if (cur == 0xFF || cur >= bl->count) cur = 0;
+    const LobbyBrainMeta *m = lobbyBrainMetaFor(bl->entries[cur].name);
+    return m ? &m->modes : NULL;
+}
+
+void lobbyBotModeAndLevel(ClientSim *cs, int slot,
+                          int *outMode, int *outLevel) {
+    int mode = clientSimGetLobbyBotMode(cs, (BYTE)slot);
+    int level = clientSimGetLobbyBotDifficulty(cs, (BYTE)slot);
+    const BrainModes *modes = lobbyBotModesFor(cs, slot);
+    if (modes) {
+        if (mode < 0 || mode >= modes->modeCount) mode = 0;
+        const BrainMode *m = &modes->modes[mode];
+        if (level < 0 || level >= m->levelCount) level = m->defaultLevel;
+    } else {
+        /* No catalogue yet: fall back to the pre-manifest shape so the row
+         * still renders something honest rather than an empty tag. */
+        if (mode != 0) mode = 0;
+        if (level < 0 || level > BOT_DIFFICULTY_MAX) level = BOT_DIFFICULTY_HARD;
+    }
+    if (outMode)  *outMode  = mode;
+    if (outLevel) *outLevel = level;
+}
+
+/* Is this the brain's DEFAULT mode — the one every ordinary game uses, and
+ * the only one whose three levels have hand-written lang strings? Judged by
+ * the mode's key rather than its index so a brain whose first section is
+ * named something else does not borrow the Easy/Medium/Hard wording. */
+bool lobbyBotModeIsDefault(const BrainModes *modes, int mode) {
+    if (!modes || mode < 0 || mode >= modes->modeCount) return true;
+    return SDL_strcasecmp(modes->modes[mode].key, "default") == 0;
+}
+
+/* May this mode's levels be WORDED from the lang strings? Only when it is
+ * the default mode AND its levels are still exactly easy / medium / hard in
+ * that order — the three STR_BOT_DIFF_* blurbs describe those and nothing
+ * else. A modes.txt that renames or extends the default mode's levels gets
+ * its own labels shown instead of three strings that would quietly lie. */
+bool lobbyBotModeUsesLangLevels(const BrainModes *modes, int mode) {
+    if (!lobbyBotModeIsDefault(modes, mode)) return false;
+    if (!modes || mode < 0 || mode >= modes->modeCount) return true;
+    const BrainMode *m = &modes->modes[mode];
+    if (m->levelCount != BOT_DIFFICULTY_MAX + 1) return false;
+    for (int i = 0; i <= BOT_DIFFICULTY_MAX; i++) {
+        if (SDL_strcasecmp(m->levels[i].key, botDifficultyName((uint8_t)i)) != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* ── Bot difficulty presentation ─────────────────────────────────────
+ * One brain plays every difficulty, so the difficulty owns the wording
+ * (lang.h STR_BOT_DIFF_*) and the brain's about.txt only describes the
+ * brain. Out-of-range difficulties read as Hard, matching
+ * botDifficultyName. These lang strings describe the DEFAULT mode's three
+ * levels only; a manifest-defined mode's levels are data and show their
+ * own label. */
+
+unsigned int lobbyBotDifficultyLabelId(uint8_t difficulty) {
+    switch (difficulty) {
+        case BOT_DIFFICULTY_EASY:   return STR_DLGLOBBY_BOTCFG_EASY;
+        case BOT_DIFFICULTY_MEDIUM: return STR_DLGLOBBY_BOTCFG_MEDIUM;
+        default:                    return STR_DLGLOBBY_BOTCFG_HARD;
+    }
+}
+
+unsigned int lobbyBotDifficultyTaglineId(uint8_t difficulty) {
+    switch (difficulty) {
+        case BOT_DIFFICULTY_EASY:   return STR_BOT_DIFF_TAG_EASY;
+        case BOT_DIFFICULTY_MEDIUM: return STR_BOT_DIFF_TAG_MEDIUM;
+        default:                    return STR_BOT_DIFF_TAG_HARD;
+    }
+}
+
+unsigned int lobbyBotDifficultyDescId(uint8_t difficulty) {
+    switch (difficulty) {
+        case BOT_DIFFICULTY_EASY:   return STR_BOT_DIFF_DESC_EASY;
+        case BOT_DIFFICULTY_MEDIUM: return STR_BOT_DIFF_DESC_MEDIUM;
+        default:                    return STR_BOT_DIFF_DESC_HARD;
+    }
+}
+
+/* The bot's brain name without its version suffix — "GoalHunter_1.7" reads
+ * as "GoalHunter" on a lobby row, because the version is a build detail and
+ * the row has no space for it. A slot still on the 0xFF "server default"
+ * sentinel is shown as the catalogue's first (newest) entry, which is what
+ * the server default resolves to in every shipping build. Writes "" when
+ * there is no catalogue yet (a client whose brain list hasn't arrived). */
+void lobbyBotBrainBaseName(ClientSim *cs, int slot, char *out, size_t outSz) {
+    if (!out || outSz == 0) return;
+    out[0] = '\0';
+    const BrainList *bl = clientSimGetLobbyBrainList(cs);
+    if (!bl || bl->count <= 0) return;
+    uint8_t cur = clientSimGetLobbyBotBrain(cs, (BYTE)slot);
+    if (cur == 0xFF || cur >= bl->count) cur = 0;
+    brainListSplitVersion(bl->entries[cur].name, out, outSz);
+}
+
+/* Render a one-line tagline. When `difficulty` is a BOT_DIFFICULTY_*
+ * value, the leading token (up to and including the first full stop) is
+ * coloured green / amber / red for that difficulty; the colour comes from
+ * the index, never from the words, so a translated tagline keeps it. Pass
+ * -1 for a free-form tagline (a brain's about.txt) to draw it flat.
+ * wrapPosX > 0 wraps the remainder at that window-local x. */
+void lobbyDrawTagline(const char *tag, float wrapPosX, int difficulty) {
     if (!tag || !tag[0]) return;
     const char *rest = tag;
-    if (strncmp(tag, "Easy.", 5) == 0) {
-        ImGui::TextColored(ImVec4(0.40f, 0.82f, 0.45f, 1.0f), "Easy.");
-        ImGui::SameLine(0.0f, 4.0f);
-        rest = tag + 5;
-        while (*rest == ' ') rest++;
-    } else if (strncmp(tag, "Hard.", 5) == 0) {
-        ImGui::TextColored(ImVec4(0.95f, 0.52f, 0.38f, 1.0f), "Hard.");
-        ImGui::SameLine(0.0f, 4.0f);
-        rest = tag + 5;
-        while (*rest == ' ') rest++;
+    if (difficulty >= 0) {
+        ImVec4 col;
+        switch (difficulty) {
+            case BOT_DIFFICULTY_EASY:   col = ImVec4(0.40f, 0.82f, 0.45f, 1.0f); break;
+            case BOT_DIFFICULTY_MEDIUM: col = ImVec4(0.93f, 0.75f, 0.35f, 1.0f); break;
+            default:                    col = ImVec4(0.95f, 0.52f, 0.38f, 1.0f); break;
+        }
+        const char *dot = strchr(tag, '.');
+        if (dot != NULL && dot != tag) {
+            ImGui::TextColored(col, "%.*s", (int)(dot + 1 - tag), tag);
+            ImGui::SameLine(0.0f, 4.0f);
+            rest = dot + 1;
+            while (*rest == ' ') rest++;
+        }
     }
     if (wrapPosX > 0.0f) ImGui::PushTextWrapPos(wrapPosX);
     ImGui::TextUnformatted(rest);
     if (wrapPosX > 0.0f) ImGui::PopTextWrapPos();
 }
 
-/* Gear hover tooltip: "Configure" plus a "Currently:" line naming the bot's
- * selected brain (its versioned code name) and that version's short tagline,
- * with the Easy./Hard. difficulty token coloured. */
+/* Gear hover tooltip: "Configure" plus a "Currently:" line naming the bot,
+ * its mode when that is not the default one, and its difficulty
+ * ("GoalHunter · Survival Scenario · Hard"). The default mode adds that
+ * difficulty's short tagline underneath with the Easy./Medium./Hard. token
+ * coloured; another mode's levels have no such blurb (they are data), so
+ * the line above says it all. */
 void lobbyGearTooltip(ClientSim *cs, int slot, float s) {
     ImGui::BeginTooltip();
     ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_TOOLTIP_CONFIG));
-    const BrainList *bl = clientSimGetLobbyBrainList(cs);
-    uint8_t cur = clientSimGetLobbyBotBrain(cs, (BYTE)slot);
-    if (bl && cur != 0xFF && cur < bl->count) {
-        const BrainListEntry *e = &bl->entries[cur];
-        const LobbyBrainMeta *m = lobbyBrainMetaFor(e->name);
+    char brainName[BRAIN_LIST_NAME_LEN];
+    lobbyBotBrainBaseName(cs, slot, brainName, sizeof(brainName));
+    if (brainName[0]) {
+        const BrainModes *modes = lobbyBotModesFor(cs, slot);
+        int mode = 0, level = 0;
+        lobbyBotModeAndLevel(cs, slot, &mode, &level);
+        bool isDefaultMode = lobbyBotModeIsDefault(modes, mode);
+        bool langLevels = (modes == NULL) || lobbyBotModeUsesLangLevels(modes, mode);
+        const char *levelText = langLevels
+            ? langGetText(lobbyBotDifficultyLabelId((uint8_t)level))
+            : modes->modes[mode].levels[level].label;
         ImGui::Separator();
         MessageArgs cargs = {};
-        SDL_snprintf(cargs.string1, sizeof(cargs.string1), "%s", e->name);
+        if (isDefaultMode || !modes) {
+            SDL_snprintf(cargs.string1, sizeof(cargs.string1), "%s \xC2\xB7 %s",
+                         brainName, levelText);
+        } else {
+            SDL_snprintf(cargs.string1, sizeof(cargs.string1),
+                         "%s \xC2\xB7 %s \xC2\xB7 %s",
+                         brainName, modes->modes[mode].label, levelText);
+        }
         ImGui::Text("%s", langGetTextFmt(STR_DLGLOBBY_BOTCFG_CURRENTLY, &cargs));
-        if (m && m->tagline[0]) lobbyDrawTagline(m->tagline, 320.0f * s);
+        if (langLevels) {
+            lobbyDrawTagline(langGetText(lobbyBotDifficultyTaglineId((uint8_t)level)),
+                             320.0f * s, level);
+        }
     }
     ImGui::EndTooltip();
 }
@@ -244,7 +435,7 @@ static void lobbySendAddBot(ClientSim *cs,
     /* Validate the sticky brain pick against the current catalogue:
      * an out-of-range sticky (e.g. catalogue shrunk between picks)
      * falls back to the server-default sentinel. */
-    /* First add: default to GoalHunter_1.6 (newest), not the server CLI default;
+    /* First add: default to GoalHunter_1.7 (newest), not the server CLI default;
      * then stay sticky (the per-bot Bot Code dropdown updates
      * s_brains.lastChosenBrainIdx). */
     if (s_brains.lastChosenBrainIdx == 0xFF && cs) {
@@ -306,6 +497,19 @@ static void lobbySendAddBot(ClientSim *cs,
          * mutex the lobby heartbeat in serverInstanceTick can re-enter
          * publishControl while this thread is mid-publish. */
         threadsWaitForMutex();
+        /* Difficulty first: it has to be in the slot's config before the
+         * bot's brain is created, because that is where bot_manager reads it
+         * to build the brain's difficulty= token. Single-player uses the
+         * player's own chosen difficulty (or the skill guess), the same rule
+         * the auto-seeded bots follow, so a bot the player adds by hand is
+         * no harder than one the game gave them. */
+        {
+          const char *spBrain = serverSimGetBotBrainPath(sim);
+          uint8_t spMode = gameFrontSpBotMode(spBrain);
+          serverSimSetBotConfig(sim, slot, spMode,
+                                gameFrontSpBotLevel(spBrain, spMode),
+                                0 /* personality: normal */, NULL);
+        }
         serverSimCreateBot(sim, slot, serverSimGetBotBrainPath(sim), botName,
                            (aiType)serverSimGetBotAiType(sim),
                            (gameType)clientSimGetLobbyGameType(cs),
@@ -319,6 +523,34 @@ static void lobbySendAddBot(ClientSim *cs,
             serverSimSwitchBotBrain(sim, slot, stickyBrainIdx);
         } else {
             serverSimSetBotBrainIdxFor(sim, slot, 0xFF);
+        }
+        /* Now the bot exists and runs its final brain, give it the mode and
+         * difficulty every new lobby bot gets (serverSimResolveNewBotConfig):
+         * the player's own chosen level as the base, then what the map
+         * requires for the bot's side, then what the player last picked by
+         * hand. Before this, single player's add wrote only the base and
+         * skipped the map and the manual pick altogether — which is why a bot
+         * added to the Survival team's seats came up at the player's skill
+         * guess instead of Hard. The team is the header's when it named one
+         * (that is applied asynchronously below), else the one the add just
+         * gave the slot. The brain reloads from this config at round start, so
+         * setting it after the create is enough. */
+        {
+            const char *botBrain = (stickyBrainIdx != 0xFF)
+                ? serverSimGetBrainPathForIdx(sim, stickyBrainIdx)
+                : serverSimGetBotBrainPath(sim);
+            const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, slot);
+            int team = (teamNumber > 0 && teamNumber < MAX_TANKS)
+                ? (int)teamNumber : (lp ? (int)lp->teamNumber : 0);
+            if (botBrain != NULL && botBrain[0] != '\0') {
+                uint8_t mode  = gameFrontSpBotMode(botBrain);
+                uint8_t level = gameFrontSpBotLevel(botBrain, mode);
+                if (serverSimResolveNewBotConfig(sim, team, botBrain, true,
+                                                 &mode, &level)) {
+                    serverSimSetBotConfig(sim, slot, mode, level,
+                                          0 /* personality: normal */, NULL);
+                }
+            }
         }
         /* Publish the slot's new state. serverSimSetBotBrainIdxFor
          * (called via either branch above) publishes the bot-brain
@@ -450,7 +682,8 @@ void lobbySendTeamSet(ClientSim *cs,
  * validate-and-apply path for SP-host. */
 void lobbySendBotConfig(ClientSim *cs,
                                uint8_t slot,
-                               uint8_t difficulty, uint8_t personality,
+                               uint8_t mode, uint8_t difficulty,
+                               uint8_t personality,
                                const char *name) {
     /* Pre-send validation for the bot name.  Empty name is the
      * legitimate "leave name unchanged; difficulty/personality still
@@ -480,7 +713,8 @@ void lobbySendBotConfig(ClientSim *cs,
         effectiveName = validated;
     }
 
-    clientSimNetSendLobbyBotConfig(cs, slot, difficulty, personality, effectiveName);
+    clientSimNetSendLobbyBotConfig(cs, slot, mode, difficulty, personality,
+                                   effectiveName);
 }
 
 /* Change which Lua brain script a lobby bot uses. SP path mutates the
@@ -560,6 +794,7 @@ void lobbySendTeamPool(ClientSim *cs,
             lobbyBotPoolPick(namingPool, usedNames, usedCount,
                              pickBuf, sizeof(pickBuf));
             lobbySendBotConfig(cs, (uint8_t)slot,
+                               clientSimGetLobbyBotMode(cs, (BYTE)(slot)),
                                clientSimGetLobbyBotDifficulty(cs, (BYTE)(slot)),
                                clientSimGetLobbyBotPersonality(cs, (BYTE)(slot)),
                                pickBuf);
@@ -617,6 +852,7 @@ void lobbySendTeamPool(ClientSim *cs,
             lobbyBotPoolPick(namingPool, usedNames, usedCount,
                              assigned[slot], sizeof(assigned[slot]));
             clientSimNetSendLobbyBotConfig(cs, (uint8_t)slot,
+                clientSimGetLobbyBotMode(cs, (BYTE)(slot)),
                 clientSimGetLobbyBotDifficulty(cs, (BYTE)(slot)),
                 clientSimGetLobbyBotPersonality(cs, (BYTE)(slot)),
                 assigned[slot]);

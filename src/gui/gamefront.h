@@ -33,6 +33,7 @@
 #include "server_sim.h"
 #include "input.h"
 #include "winbolo.h"
+#include "visibility_presets.h"  /* VisibilitySettings / VisibilityPreset */
 #include "../winbolonet/winbolonet_client.h"  /* WbnStats */
 
 
@@ -683,11 +684,47 @@ bool gameFrontPreferencesExist(void);
 bool gameFrontOnboardingComplete(void);
 void gameFrontSetOnboardingComplete(void);
 
-/* Player's explicitly-chosen bot brain (lobby wrench dropdown). Persisted as
- * the difficulty preference; overrides the single-player skill guess. Empty
- * string until the player first chooses one. */
-void gameFrontSetChosenBotBrain(const char *name);
-void gameFrontGetChosenBotBrain(char *out, size_t outLen);
+/* Player's explicitly-chosen bot difficulty (lobby wrench dropdown), a
+ * BOT_DIFFICULTY_* value persisted by name under BOT / "Chosen Difficulty".
+ * It overrides the single-player skill guess from then on. The getter
+ * returns false (leaving *out alone) until the player first chooses one; it
+ * also migrates the older BOT / "Chosen Brain" pref, where the one gentle
+ * brain meant Easy and any other meant Hard. */
+void gameFrontSetChosenBotDifficulty(uint8_t difficulty);
+bool gameFrontGetChosenBotDifficulty(uint8_t *out);
+
+/* Player's explicitly-chosen bot MODE + level, as the brain's own manifest
+ * keys (brains/<brain>/modes.txt). Stored under BOT / "Chosen Mode" and
+ * BOT / "Chosen Difficulty"; for the default mode the level keys are the
+ * same easy/medium/hard words the difficulty-only preference always held,
+ * so an existing prefs file is honoured unchanged. Both getters return
+ * false (and write "") when nothing has been chosen yet. */
+void gameFrontSetChosenBotModeAndLevel(const char *modeKey,
+                                       const char *levelKey);
+bool gameFrontGetChosenBotModeKey(char *out, size_t outSz);
+bool gameFrontGetChosenBotLevelKey(char *out, size_t outSz);
+
+/* The colour the lobby paints a bot's name tag with, remembered per bot name
+ * ("GoalHunter") in the prefs as "#RRGGBB" so a bot that declares no colour
+ * of its own still looks the same every launch. Get returns false when none
+ * is remembered yet. */
+bool gameFrontGetBotTagColor(const char *botName, uint32_t *rgb);
+void gameFrontSetBotTagColor(const char *botName, uint32_t rgb);
+
+/* The difficulty a single-player bot should be created with: the player's
+ * own chosen difficulty when they have picked one, else the skill guess —
+ * Hard when signed in to WinBolo.net with more than 5 games on record, Easy
+ * for everybody else. One place so the auto-seeded bots and the lobby's
+ * Add Bot agree. Returns a BOT_DIFFICULTY_* value. */
+uint8_t gameFrontSpBotDifficulty(void);
+
+/* The same answer widened to modes: which of the brain's declared modes an
+ * SP bot runs in (the player's chosen mode when that brain still has it,
+ * else 0 — the default mode), and the level index inside it (the skill
+ * guess for mode 0, the player's chosen level key otherwise, falling back
+ * to the mode's own default). brainPath is the bot's init.lua path. */
+uint8_t gameFrontSpBotMode(const char *brainPath);
+uint8_t gameFrontSpBotLevel(const char *brainPath, uint8_t mode);
 
 /*********************************************************
 *NAME:          gameFrontSetWinbolonetToken
@@ -982,6 +1019,18 @@ extern bool gameFrontUseNatTraversal;
  * gameFrontHostingUploadPolicy holds an UploadPolicy value. */
 extern unsigned short gameFrontHostingPort;            /* default 27500 */
 extern bool           gameFrontHostingAllowSpec;       /* default Yes   */
+extern bool           gameFrontHostingScripts;          /* default Yes   */
+                              /* Run the script beside a hosted map. Off
+                               * hosts the map plainly, so a player with a
+                               * map pack can decline its script without
+                               * deleting the file. Set on the scenario
+                               * library before either attach site runs. */
+extern bool           gameFrontHostingUploadScripts;    /* default Yes   */
+                              /* Run a script carried by a map a player
+                               * uploaded to this host. Off plays those maps
+                               * plainly and leaves every other map alone.
+                               * Set on the scenario library beside the
+                               * switch above. */
 extern int            gameFrontHostingMaxSpec;         /* 1-32,  default 16 */
 extern int            gameFrontHostingUploadPolicy;    /* default ALLOW (0) */
 extern int            gameFrontHostingUploadMaxFiles;  /* 1-255, default 64 */
@@ -991,6 +1040,10 @@ extern char           gameFrontHostingUploadDir[FILENAME_MAX];
 extern bool           gameFrontHostingLogging;         /* default Yes   */
 extern char           gameFrontHostingLogDir[FILENAME_MAX];
                               /* Round-log dir; default <prefs path> */
+extern char           gameFrontHostingScenarioDir[FILENAME_MAX];
+                              /* The scenarios this host offers on their own,
+                               * independently of any map; default
+                               * <prefs path>scenarios */
 extern bool           gameFrontHostingServeReplays;    /* default Yes   */
                               /* Hand a finished round's log to players who
                                * ask for it. Yes leaves the serve policy at
@@ -1004,6 +1057,8 @@ extern int            gameFrontHostingVoiceMode;       /* default ON (0) */
 
 void gameFrontSetHostingPort(unsigned short port);
 void gameFrontSetHostingAllowSpec(bool allow);
+void gameFrontSetHostingScripts(bool allow);
+void gameFrontSetHostingUploadScripts(bool allow);
 void gameFrontSetHostingMaxSpec(int maxSpec);
 void gameFrontSetHostingUploadPolicy(int policy);
 void gameFrontSetHostingUploadMaxFiles(int maxFiles);
@@ -1011,6 +1066,7 @@ void gameFrontSetHostingUploadMaxStorage(int maxStorageMb);
 void gameFrontSetHostingUploadDir(const char *dir);
 void gameFrontSetHostingLogging(bool logging);
 void gameFrontSetHostingLogDir(const char *dir);
+void gameFrontSetHostingScenarioDir(const char *dir);
 void gameFrontSetHostingServeReplays(bool serve);
 void gameFrontSetHostingVoiceMode(int mode);
 
@@ -1051,5 +1107,33 @@ void gameFrontSetClassicMode(bool on);
 void gameFrontSetAlliesInTrees(bool on);
 void gameFrontSetOverviewWindow(int window);
 void gameFrontSetLineOfSight(int mode);
+
+/* Which named visibility set the host last chose, and the hand-made set
+ * to go back to when that choice is Custom. The globals above hold the
+ * values a hosted game starts with; these two hold the choice behind
+ * them, so picking a preset and picking Custom again lands the host back
+ * where they were. gameFrontVisibilityCustomSaved is false until a custom
+ * set has been written at least once — the lobby leaves its Custom row
+ * blank rather than offering a set nobody made. */
+extern int                gameFrontVisibilityPreset; /* VisibilityPreset */
+extern VisibilitySettings gameFrontVisibilityCustom;
+extern bool               gameFrontVisibilityCustomSaved;
+
+void gameFrontSetVisibilityPreset(int preset);
+void gameFrontSetVisibilityCustom(const VisibilitySettings *v);
+/* The seven visibility globals above as one set. */
+void gameFrontGetVisibilitySettings(VisibilitySettings *out);
+/* Records a set as the host's choice: the seven globals, which named set
+ * it is, and — when saveCustom is true and the set is none of the named
+ * ones — the set itself. Call it wherever a host changes visibility,
+ * rather than writing the three separately.
+ *
+ * saveCustom is false where the caller is only writing down what the
+ * settings are on right now. Applying a preset sends its settings one at
+ * a time, so the values pass through mixes that match no named set, and
+ * every one of those would otherwise be saved as the hand-made set. The
+ * lobby therefore passes false and writes the hand-made set itself, at
+ * the points where the player edited or picked something. */
+void gameFrontRememberVisibility(const VisibilitySettings *v, bool saveCustom);
 
 #endif

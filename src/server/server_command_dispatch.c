@@ -14,11 +14,18 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "bot_manager.h"              /* botManagerSetBrainIdx, botManagerAddBot */
+#include "brain_list.h"               /* BRAIN_MODES_MAX, BRAIN_LEVELS_MAX */
 #include "client_command.h"
+#include "client_sim_internal.h"  /* LOBBY_SCENARIO_LIST_MAX — the cap the
+                                   * scenario list packet and the client's
+                                   * chooser share */
 #include "control_event.h"            /* ControlEvent, CTRL_CHAT, CTRL_ALLIANCE_REQUEST */
+#include "server_sim_scenario.h"      /* serverSimScenarioReload,
+                                        serverSimScenarioListDir, ScnDirEntry */
 #include "log.h"
 #include "mapgen.h"                   /* MapGenConfig, mapGenSeedToConfig */
 #include "netpacks.h"                 /* lobbyBotNameAcceptable */
@@ -27,7 +34,8 @@
 #include "playername_validate.h"      /* playerNameValidate, playerNameCompare */
 #include "server_sim.h"
 #include "server_sim_internal.h"      /* serverSimGameVoteToggle */
-#include "server_sim_join.h"          /* serverSimAssignLobbyStartOnJoin, serverSimLobbyStartSideMask, serverSimLobbyClosedMaskFor */
+#include "server_sim_join.h"          /* serverSimAssignLobbyStartOnJoin, serverSimLobbyStartSideMask, serverSimLobbyClosedMaskFor; serverSimFindFreeSlot */
+#include "sim/server_sim_shared.h"    /* serverSimResolveMapPath */
 #include "server_sim_lifecycle.h"     /* serverSimSetTeam, lobbyAutoUnreadyOnChange */
 #include "lobby_shared_starts.h"      /* lobbySharedStartsEnabled — several players per start */
 #include "start_sides.h"              /* startSideEligible — the claim command's side check */
@@ -128,6 +136,83 @@ static bool lobbySlotMayHoldStart(ServerSim *sim, BYTE slot, BYTE idx1) {
     return startSideEligible(serverSimLobbyStartSideMask(sim, idx1),
                              lobbySlotStartSide(sim, slot),
                              serverSimLobbyClosedMaskFor(sim, slot));
+}
+
+/* Does the scenarios directory hold this file name, and under what spelling?
+   The list the server would send a chooser is the answer: a name it does not
+   carry is not one a host could have picked. Asking the sim's registered
+   lister is the whole of this command's filesystem work — reading the
+   directory belongs to the scenario library, which src/server/ does not
+   name.
+
+   bound takes the matched entry's own flag, which is the other thing the
+   caller has to know about a name it found: a scenario that belongs to a map
+   is no use over a different one.
+
+   The cap is the one the list packet and the client's chooser already share,
+   so every scenario a host can see is one the server will accept.
+
+   The entries are read into the heap rather than onto this thread's stack, the
+   way serverSimEnumerateScenarioDir reads them: an entry carries a
+   description, so a full listing runs to ~58 KB, and this is a command
+   handler that a client's datagram reaches. A listing there is no memory to
+   read is no listing, which answers the same as a name the directory does not
+   hold. */
+static bool lobbyScenarioDirHolds(const ServerSim *sim, const char *file,
+                                  char *out, size_t outLen, bool *bound) {
+    ScnDirEntry *entries;
+    int          got;
+    int          i;
+    bool         found = false;
+
+    if (bound != NULL) {
+        *bound = false;
+    }
+    entries = (ScnDirEntry *)calloc((size_t)LOBBY_SCENARIO_LIST_MAX,
+                                    sizeof(*entries));
+    if (entries == NULL) {
+        return false;
+    }
+    got = serverSimScenarioListDir(sim, entries, LOBBY_SCENARIO_LIST_MAX);
+    for (i = 0; i < got; i++) {
+        if (strcmp(entries[i].file, file) == 0) {
+            /* The directory's spelling rather than the wire's, so what is
+               recorded is what the lister reported. */
+            if (out != NULL && outLen > 0) {
+                SDL_strlcpy(out, entries[i].file, outLen);
+            }
+            if (bound != NULL) {
+                *bound = entries[i].bound;
+            }
+            found = true;
+            break;
+        }
+    }
+    free(entries);
+    return found;
+}
+
+/* The selection changed, so which scenario plays is decided again. The same
+   three calls a map commit makes, in the same order: whoever owns the
+   scenario is asked first and swaps what is attached, the seats it asks for
+   are built, the lobby's own settings are brought into line with it, and the
+   result goes out.
+
+   The map path is handed over unchanged because the map has not changed —
+   what the decision weighs is the pick against the committed map's own
+   script, and it needs both. Nothing here reaches into the scenario library:
+   serverSimScenarioOnMapChanged calls whatever registered itself, which is
+   the only direction that links. */
+static void lobbyScenarioReselect(ServerSim *sim) {
+    serverSimScenarioOnMapChanged(sim, sim->mapFilePath);
+    serverSimScenarioApplyLobbyRules(sim);
+    serverSimPublishLobbySettings(sim);
+    /* And everyone who was ready is ready no longer, as a map commit does it
+       at the end of the same sequence. A pick changes the rules the round
+       runs, the seats the lobby holds and the game it is played by, so a
+       lobby that was all-ready would otherwise start on a scenario nobody
+       agreed to. */
+    lobbyAutoUnreadyOnChange(sim);
 }
 
 static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
@@ -276,7 +361,13 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         }
         if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
         const CmdLobbyBotConfig *p = &cmd->u.lobbyBotConfig;
-        if (p->slot >= MAX_TANKS || p->difficulty > 2 || p->personality > 3 ||
+        /* mode indexes the brain's own mode list and difficulty that mode's
+         * level list, so the bounds are the manifest maxima rather than the
+         * old fixed 0..2 — the server does not read the client's brain
+         * files, and bot_manager clamps both against the real list when it
+         * builds the init tokens. */
+        if (p->slot >= MAX_TANKS || p->mode >= BRAIN_MODES_MAX ||
+            p->difficulty >= BRAIN_LEVELS_MAX || p->personality > 3 ||
             p->nameLen > 31 || !serverSimIsBot(sim, p->slot)) {
             return CMD_REJECT_INVALID;
         }
@@ -293,8 +384,20 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             }
             transportUdpServerSetBotName(p->slot, validatedName);
         }
-        serverSimSetBotConfig(sim, p->slot, p->difficulty, p->personality,
-                              p->nameLen > 0 ? validatedName : NULL);
+        {
+            /* The gear popup sends this command for a rename or a
+             * personality edit too, carrying the bot's unchanged mode and
+             * difficulty. Only a real change is the host choosing a
+             * difficulty, so only that is remembered for the next Add Bot. */
+            uint8_t prevMode  = sim->botConfigs[p->slot].mode;
+            uint8_t prevLevel = sim->botConfigs[p->slot].difficulty;
+            serverSimSetBotConfig(sim, p->slot, p->mode, p->difficulty,
+                                  p->personality,
+                                  p->nameLen > 0 ? validatedName : NULL);
+            if (p->mode != prevMode || p->difficulty != prevLevel) {
+                serverSimRememberManualBotPick(sim, p->slot);
+            }
+        }
         return CMD_OK;
     }
     case CMD_LOBBY_TEAM_META: {
@@ -343,11 +446,11 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             (serverSimGetServerLocks(sim) & lockBit) != 0u) {
             return CMD_REJECT_LOCKED;
         }
-        if (!serverSimApplyLobbySetting(sim, p->settingType, p->value,
-                                        p->valueLen)) {
-            return CMD_REJECT_INVALID;
-        }
-        return CMD_OK;
+        /* The Result form, so a setting the map's scenario fixes comes back
+           as that rather than as a bare invalid: those three were the host's
+           to set a map ago and the toast has to say what took them away. */
+        return serverSimApplyLobbySettingResult(sim, p->settingType, p->value,
+                                                p->valueLen);
     }
     case CMD_CHAT: {
         const CmdChat *p = &cmd->u.chat;
@@ -748,6 +851,18 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             scenarioAllowsExtraTeams(sim, slot, p->teamNumber)) {
             serverSimSetTeam(sim, slot, p->teamNumber);
         }
+        /* The new bot's brain mode and difficulty (serverSimResolveNewBotConfig):
+         * the lobby default, then what the map requires for this side, then
+         * what the host last picked by hand. Applied now the team is final —
+         * a plain Add Bot only learns its team inside the add — and the lobby
+         * brain reloads from this config at round start. Shown in the lobby
+         * by a queued bot-config event, not one sent inside the command. */
+        {
+            const LobbyPlayer *lp = serverSimGetLobbyPlayer(sim, slot);
+            serverSimApplyNewBotDefaults(sim, slot,
+                                         lp ? (int)lp->teamNumber : 0,
+                                         serverSimGetBotBrainPath(sim), TRUE);
+        }
         serverSimPublishLobbySlot(sim, slot);
         serverSimPublishLobbyBotBrain(sim, slot);
         lobbyAutoUnreadyOnChange(sim);
@@ -778,10 +893,151 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             }
         }
         if (!safe) return CMD_REJECT_INVALID;
+        /* Through the resolve rather than "<map root>/<relPath>": the host
+           picked this name off a listing, and with a persist directory
+           configured the virtual Uploads folder lives somewhere else, so
+           building the path here would commit a different file from the one
+           that was listed. */
         char fullPath[FILENAME_MAX];
-        SDL_snprintf(fullPath, sizeof(fullPath), "%s/%s",
-                     serverSimGetMapDirRoot(sim), relPath);
+        serverSimResolveMapPath(sim, relPath, fullPath, sizeof(fullPath));
         if (!serverSimReloadMap(sim, fullPath)) return CMD_REJECT_INVALID;
+        return CMD_OK;
+    }
+    case CMD_LOBBY_SET_SCENARIO: {
+        /* Lobby-only and host-only, like the map change above it: which
+           scenario a round plays by is the operator's choice and not a
+           joiner's. No LOBBY_LOCK_MAP test, for the same reason — the map
+           command this copies has none either. The lock hides the chooser on
+           the client; the commands that test it server-side are the preview
+           pair and the skip vote.
+
+           Recording the pick is not all this does: the selection decides
+           which scenario plays, so it is made again the moment it changes.
+           serverSimScenarioOnMapChanged is what asks — whoever owns the
+           scenario weighs the pick against the committed map's own script
+           and attaches the winner — and the seating, the lobby rules and
+           the settings event follow it exactly as they do on a map
+           commit. */
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        const CmdLobbySetScenario *p = &cmd->u.lobbySetScenario;
+        /* An empty path is the one value that is always good: it selects no
+           scenario, so there is no name to check the shape of or look up. */
+        if (p->relPathLen == 0) {
+            serverSimSetSelectedScenario(sim, NULL);
+            lobbyScenarioReselect(sim);
+            return CMD_OK;
+        }
+        char relPath[256];
+        memcpy(relPath, p->relPath, p->relPathLen);
+        relPath[p->relPathLen] = '\0';
+        /* The three shapes the map command refuses, refused the same way:
+           an absolute path, a Windows drive letter, and a ".." segment. */
+        bool safe = true;
+        if (relPath[0] == '/' || relPath[0] == '\\') safe = false;
+        else if (relPath[0] != '\0' && relPath[1] == ':') safe = false;
+        else {
+            for (const char *s = relPath; *s;) {
+                if (s[0] == '.' && s[1] == '.' &&
+                    (s[2] == '\0' || s[2] == '/' || s[2] == '\\')) {
+                    safe = false; break;
+                }
+                while (*s && *s != '/' && *s != '\\') s++;
+                while (*s == '/' || *s == '\\') s++;
+            }
+        }
+        if (!safe) return CMD_REJECT_INVALID;
+        /* One pick a second, per sim, before the directory is read: finding
+           out whether this name is one the server offers means listing the
+           scenarios directory, which opens every file in it and runs the top
+           level of every loose script on this thread. Any connected player is
+           the host on a server with openHost set, and a datagram may carry
+           several commands, so without this a client can ask for that work as
+           fast as it can send. The same gap a reload takes, for the same
+           reason. The sender is told by the toast, which is why this returns
+           rather than sending a line. */
+        if (sim->scenarioPickTick != 0 &&
+            sim->tick + 1 - sim->scenarioPickTick < SCENARIO_RELOAD_GAP_TICKS) {
+            return CMD_REJECT_COOLDOWN;
+        }
+        sim->scenarioPickTick = sim->tick + 1;
+        char picked[SCN_DIR_FILE_LEN];
+        bool pickedBound = false;
+        if (!lobbyScenarioDirHolds(sim, relPath, picked, sizeof(picked),
+                                   &pickedBound)) {
+            return CMD_REJECT_INVALID;
+        }
+        /* A scenario that says it is bound belongs to the map it was written
+           against: its tags, its regions and its entity indices are that
+           map's, so over another map they name items that are not there. It
+           arrives with its own map and plays when that map is committed,
+           which leaves nothing here for a host to pick. Refused rather than
+           accepted and quietly ignored, so the host is told. */
+        if (pickedBound) {
+            return CMD_REJECT_INVALID;
+        }
+        serverSimSetSelectedScenario(sim, picked);
+        lobbyScenarioReselect(sim);
+        return CMD_OK;
+    }
+    case CMD_LOBBY_RELOAD_SCENARIO: {
+        /* The edit-reload-play loop the dedicated server's console already
+           has, for a host with no console. Lobby-only and host-only, like
+           the map change beside it: re-reading the script changes what the
+           next round plays by, which is not a joiner's to decide. */
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        /* One reload a second, per sim, before the file is opened: the read
+           and the check behind it are disk and Lua work on this thread, and
+           a datagram may carry several commands. The sender is told by the
+           toast, which is why this returns rather than sending a line. */
+        if (sim->scenarioReloadTick != 0 &&
+            sim->tick + 1 - sim->scenarioReloadTick <
+                SCENARIO_RELOAD_GAP_TICKS) {
+            return CMD_REJECT_COOLDOWN;
+        }
+        sim->scenarioReloadTick = sim->tick + 1;
+        {
+            char err[512];
+            char line[672];
+            ControlEvent evt;
+            bool ok = serverSimScenarioReload(sim, err, sizeof(err));
+
+            /* Addressed to whoever asked. A reload says what happened even
+               when it worked, because what it changed is not visible until
+               the next round starts.
+               What a reload changes and what it does not: the script's bytes
+               are swapped and nothing else is, so a round starting later
+               boots the new rules and hooks, while the lobby the template
+               seats, the scenario's name and description and the game type
+               it declares are the map commit's and only change when the map
+               is committed again. Kept inside the 128 bytes the text event
+               carries, so the whole of it reaches the sender. */
+            if (ok) {
+                SDL_snprintf(line, sizeof(line),
+                             "Scenario re-read: the next round boots its new "
+                             "rules and hooks. Seats, name and game type "
+                             "change on a map commit.");
+            } else {
+                SDL_snprintf(line, sizeof(line), "%s", err);
+            }
+            memset(&evt, 0, sizeof(evt));
+            evt.type = CTRL_SERVER_TEXT;
+            SDL_strlcpy(evt.u.serverText.text, line,
+                        sizeof(evt.u.serverText.text));
+            evt.u.serverText.destPlayer = (BYTE)senderSlot;
+            serverSimPublishControl(sim, &evt);
+        }
+        /* Including a reload that failed: the line above went to whoever
+           asked and carries the reason, and a reject code on top of it would
+           add a second, contentless toast saying only that something was
+           wrong. */
         return CMD_OK;
     }
     case CMD_LOBBY_PREVIEW_CANCEL: {
@@ -971,6 +1227,18 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         BYTE slot = (BYTE)senderSlot;
         uint32_t now = sim->tick;
         if (serverSimGetState(sim) != serverStateRunning) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        /* The host can switch smart pings off for the whole server from the
+         * lobby. Enforced here rather than only hidden in the sending
+         * client's UI, so a modified client gains nothing by ignoring the
+         * setting. Ahead of the rate limiting below on purpose: a ping the
+         * server was never going to accept must not consume the sender's
+         * budget, or turning pings back on would leave them throttled by
+         * attempts that never drew anything. CMD_REJECT_BAD_STATE is the
+         * same answer the two tests around it give — "this server is not
+         * taking pings right now". */
+        if (serverSimGetSmartPingsOff(sim)) {
             return CMD_REJECT_BAD_STATE;
         }
         if (!playersIsInUse(&sim->sim.plyrs, slot)) {

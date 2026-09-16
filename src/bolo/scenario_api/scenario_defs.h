@@ -46,8 +46,91 @@
  * it can see and this header cannot. */
 #define SCN_PANEL_MAX 1017
 
-/* Buffer for a brain path or a "package:NAME" reference. */
+/* Buffer for a brain: the name a scenario writes — a directory under the
+ * server's own brains/, such as "GoalHunter_1.7" — and the path that name is
+ * resolved to before the sim is handed it. */
 #define SCN_PATH_MAX 256
+
+/* One team a scenario's lobby seats, as the sim reads it.
+ *
+ * bots is how many seats the engine creates when it seats the template;
+ * maxBots is the most a host may leave on the team, which is the only one of
+ * the two that binds again once the seats exist. fielded false asks for the
+ * seats without the bots — roster entries the start sequence skips until a
+ * spawn names one. brain is the path those bots run, or "" for the server's
+ * own; the scenario names a brain and the host resolves that name to this
+ * path, so what reaches the sim is always a file to open.
+ *
+ * init is the table the team's bots are built with, read once when a VM is
+ * built, empty for none. It is what the countdown warms a held seat's runner
+ * with, so a spawn naming that seat with the same table — or with none of its
+ * own, which inherits this — is a resume rather than a build. */
+typedef struct {
+    uint8_t  id;                   /* team number, 1-16 */
+    uint8_t  bots;
+    uint8_t  maxBots;
+    bool     fielded;
+    char     brain[SCN_PATH_MAX];
+    ScnTable init;
+} ScnLobbyTeam;
+
+/* The lobby a scenario asks for. The host reads this out of its manifest and
+ * hands the sim a copy, so the engine seats and reconciles it without calling
+ * back into the host — the dependency points one way and the sim needs no
+ * notion of a manifest, a script or Lua.
+ *
+ * maxPlayers is a cap on humans only; bots seat above it. 0 leaves the
+ * server's own cap alone.
+ *
+ * baseGameType is the game type the scenario declared, by the same words a
+ * spawn op's loadout takes. It is the host's one-way hand-over of that
+ * value: the sim keeps it where the spawn and start paths can read it when
+ * the round is gameScripted. 0 means none declared, which plays strict
+ * tournament. */
+typedef struct {
+    uint8_t      maxPlayers;
+    uint8_t      numTeams;
+    uint8_t      baseGameType;   /* a gameType value, 0 for none */
+    ScnLobbyTeam teams[MAX_TANKS];
+} ScnLobbyTemplate;
+
+/* What a scenario is called and what it asks for, as the sim reads it.
+ *
+ * The name and description lengths are SCN_SCENARIO_NAME_LEN and
+ * SCN_SCENARIO_DESC_LEN in src/scenario/scenario_host.h, stated again here
+ * under names of their own: that header is the one a frontend includes and
+ * this one is not, so a gui or runtime_only translation unit can reach it and
+ * not this. scenario_dir.c sees both and holds each pair against the other,
+ * so the two cannot drift.
+ *
+ * The file name is a name in the directory and never a path: the directory is
+ * flat, and where it is on disk is the server's own business. */
+#define SCN_DIR_FILE_LEN 128
+#define SCN_DIR_NAME_LEN 64
+#define SCN_DIR_DESC_LEN 256
+
+/* One scenario a server offers on its own, independently of any map: a
+ * .scenario package or a loose .lua in the scenarios directory, read into the
+ * few fields a chooser needs to show it.
+ *
+ * The sim holds no notion of what is in either file. It is handed a filled
+ * array by the lister registered on it (serverSimSetScenarioLister), which is
+ * the scenario library's to implement, and it passes the entries to the wire
+ * layer — the dependency points one way, as it does for the lobby template.
+ *
+ * maxPlayers is the cap the scenario asks for, 0 leaving the server's own.
+ * bots is the seats its lobby template asks for, summed over its teams and
+ * held at 255 because it travels in one byte. bound true says the scenario is
+ * tied to the map it was written against, which is what makes it no use as a
+ * mod. */
+typedef struct {
+    char    file[SCN_DIR_FILE_LEN];  /* the name in the directory */
+    char    name[SCN_DIR_NAME_LEN];  /* the manifest's */
+    char    description[SCN_DIR_DESC_LEN];
+    uint8_t maxPlayers;
+    uint8_t bots;
+    bool    bound;
+} ScnDirEntry;
 
 /* How many roster changes may be outstanding at once. Spawns and
  * removals share one first-in first-out queue and the sim drains one of
@@ -146,6 +229,7 @@ typedef enum {
     SCN_OP_MSG_ALL,
     SCN_OP_MSG_TEAM,
     SCN_OP_MSG_PLAYER,
+    SCN_OP_MSG_SAY,
     SCN_OP_SOUND,
     SCN_OP_LOG,
 
@@ -160,7 +244,11 @@ typedef enum {
     SCN_OP_SET_GAME_TIME,
 
     /* Rules */
-    SCN_OP_SET_RULE
+    SCN_OP_SET_RULE,
+
+    /* Test hooks. Not part of the round a player plays: each one drives a
+     * server path a script has no other way to reach. */
+    SCN_OP_SHELL_EXPIRED
 } ScenarioOpType;
 
 /* A payload byte holding 0xFF means there is nothing there: no slot, no
@@ -340,7 +428,8 @@ typedef struct {
 typedef struct {
     BYTE     slot;                   /* 0xFF = first free seat above the cap */
     char     name[PLAYER_NAME_LEN];
-    char     brain[SCN_PATH_MAX];    /* a path or "package:NAME" */
+    char     brain[SCN_PATH_MAX];    /* the brain the script named, resolved
+                                      * to a path before the op is submitted */
     BYTE     team;
     BYTE     start;                  /* 0xFF = let the engine choose */
     BYTE     loadout;                /* 0 = ask the policy */
@@ -361,7 +450,7 @@ typedef struct {
 typedef struct {
     BYTE slot;
     char name[PLAYER_NAME_LEN];
-    char brain[SCN_PATH_MAX];
+    char brain[SCN_PATH_MAX];   /* resolved the same way a spawn's is */
     BYTE team;
     bool fielded;
 } ScnOpLobbyAddBot;
@@ -397,6 +486,22 @@ typedef struct {
     BYTE slot;
     char text[SCN_TEXT_MAX];
 } ScnOpMsgPlayer;
+
+/* A chat line said by a seat, not by the server. slot is who said it, and
+ * mode is who hears it: a player's three destinations are their own team,
+ * the whole game, and one other seat. A team other than the sender's own is
+ * not among them — the chat path refuses a line addressed to a team the
+ * sender is not on, whoever sends it. */
+#define SCN_SAY_TEAM   0    /* the sender's own team */
+#define SCN_SAY_ALL    1    /* everyone */
+#define SCN_SAY_PLAYER 2    /* one seat, named by target */
+
+typedef struct {
+    BYTE slot;
+    BYTE mode;
+    BYTE target;                /* the seat, under SCN_SAY_PLAYER */
+    char text[SCN_TEXT_MAX];
+} ScnOpMsgSay;
 
 typedef struct {
     BYTE sound;     /* an sndEffects value */
@@ -593,6 +698,28 @@ typedef struct {
     double   value;
 } ScnOpSetRule;
 
+/* ── Test hooks ────────────────────────────────────────────────── */
+
+/* One of `slot`'s shells ran its full range and died on square (x, y) with
+ * nothing hit. It fires the three-shot order detector exactly as a real
+ * expiring shell does, without a gun having to be aimed: a script cannot
+ * make a seat shoot, and three full-range shells landing on one chosen
+ * square is not something a round can be steered into. Nothing else happens
+ * — no explosion, no sound, no shell is created or destroyed.
+ *
+ * fireTick is the SERVER tick the shell LEFT THE GUN, which is what every
+ * timing rule in the detector reads — the window the three have to share,
+ * and the quiet second either side of them. haveFireTick is false when the
+ * script did not say, and the shell then counts as fired on the current
+ * tick. (x, y) must name a square the map really holds; anything outside
+ * the playable band is refused with SCN_OP_BAD_SQUARE. */
+typedef struct {
+    BYTE     slot;
+    BYTE     x, y;
+    bool     haveFireTick;
+    uint32_t fireTick;
+} ScnOpShellExpired;
+
 /* One op, tagged by type. */
 typedef struct {
     ScenarioOpType type;
@@ -635,6 +762,7 @@ typedef struct {
         ScnOpMsgAll            msgAll;
         ScnOpMsgTeam           msgTeam;
         ScnOpMsgPlayer         msgPlayer;
+        ScnOpMsgSay            msgSay;
         ScnOpSound             sound;
         ScnOpLog               log;
         ScnOpPanel             panel;
@@ -644,6 +772,7 @@ typedef struct {
         ScnOpEndRound          endRound;
         ScnOpSetGameTime       setGameTime;
         ScnOpSetRule           setRule;
+        ScnOpShellExpired      shellExpired;
     } u;
 } ScenarioOp;
 
@@ -666,7 +795,7 @@ typedef enum {
     SCN_OP_ALREADY,         /* add of an active item, give of a carried pill, spawn of a fielded seat */
     SCN_OP_TOO_BIG,         /* a list or text exceeds its buffer */
     SCN_OP_RATE,            /* a second panel update in one tick, or a budget */
-    SCN_OP_NOT_FOUND,       /* brain path or package name that does not resolve */
+    SCN_OP_NOT_FOUND,       /* a brain that does not resolve: a name this server does not have, a path where a name belongs, or a "package:" the funnel refuses */
     SCN_OP_NO_STOCK,        /* a builder order the tank cannot pay for */
     SCN_OP_BAD_CALL         /* no sim or no op: the call itself is malformed */
 } ScnOpResult;
@@ -676,6 +805,25 @@ typedef struct {
     BYTE index;
     BYTE slot;
 } ScnOpOut;
+
+/* canDie kind — what the blow would destroy. index is the tank slot for a
+ * tank and for the builder riding in it, and the pill index for a pill. */
+#define DIE_KIND_TANK    0
+#define DIE_KIND_BUILDER 1
+#define DIE_KIND_PILL    2
+
+/* canCapture kind — what is being taken, with index the pill or base. */
+#define CAPTURE_KIND_PILL 0
+#define CAPTURE_KIND_BASE 1
+
+/* What inflicted a hit. Mirrors ATTR_SRC_* on-disk. The stats funnel records
+ * one of these with every blow, and canDie is handed one as the cause of a
+ * builder's or a pill's death — a tank's cause is a LAST_DEATH_BY_* instead.
+ * Here rather than beside DMG_TARGET_* in game_sim.h because the policy
+ * surface hands them out and the host cannot see internal/. */
+#define DMG_SRC_UNKNOWN 0
+#define DMG_SRC_SHELL   1
+#define DMG_SRC_MINE    2
 
 /* announce kind — which newswire-worthy fact is being put to the policy.
  * The values are the policy's own vocabulary and never reach the wire; what

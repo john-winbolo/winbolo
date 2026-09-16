@@ -54,6 +54,7 @@ static int parse_full_entry(void) {
         "\"alliesintrees\":true,"
         "\"overviewwindow\":1,"
         "\"lineofsight\":1,"
+        "\"smartpingsoff\":true,"
         "\"pillviewdecay\":45,"
         "\"baseviewdecay\":90,"
         "\"allyviewdecay\":15,"
@@ -99,6 +100,8 @@ static int parse_full_entry(void) {
                       s->allyViewDecay == 15,
                   "decay secs=%d/%d/%d", s->pillViewDecay, s->baseViewDecay,
                   s->allyViewDecay);
+    /* Negative sense: true means the host banned smart pings. */
+    UT_ASSERT_MSG(s->smartPingsOff, "smartpingsoff should be true");
 
     wbnServerListFree(&list);
     return 0;
@@ -143,6 +146,11 @@ static int parse_defaults(void) {
                   "absent view policies=%d/%d/%d, want 0/3/0",
                   s->pillView, s->baseView, s->allyView);
     UT_ASSERT_MSG(!s->alliesInTrees, "absent alliesintrees should be false");
+    /* Absent "smartpingsoff" is false, which means smart pings are ALLOWED —
+     * what every server and tracker that predates the field reports. */
+    UT_ASSERT_MSG(!s->smartPingsOff,
+                  "absent smartpingsoff should be false, meaning pings "
+                  "are allowed");
     /* Absent overview window and line of sight are the expanded window
      * with nothing blocking sight, which is what the server ran before
      * the fields existed. */

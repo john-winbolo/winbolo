@@ -37,7 +37,7 @@ void strlower(char *s) {
 }
 
 void serverConsolePrintHelp(void) {
-  fprintf(stderr, "Help:\n Lock - Locks the server and stops new players from joining.\n Unlock - Unlocks the server and allows new players to join.\n savemap <map file> - Save the map file to path and file <map file>\n Say <text> - Sends this message to all players in the game unless they have turned off server messages.\n Quit - Exits the server.\n Info - Provide information about the current game\n Kick - Kicks a player. Case insensitive, prefix a * for WBN players.\n Host - Transfers the host role to a player. Case insensitive.\n Status - Returns list of players who aren't locked.\n");
+  fprintf(stderr, "Help:\n Lock - Locks the server and stops new players from joining.\n Unlock - Unlocks the server and allows new players to join.\n savemap <map file> - Save the map file to path and file <map file>\n Say <text> - Sends this message to all players in the game unless they have turned off server messages.\n Quit - Exits the server.\n Info - Provide information about the current game\n Kick - Kicks a player. Case insensitive, prefix a * for WBN players.\n Host - Transfers the host role to a player. Case insensitive.\n Status - Returns list of players who aren't locked.\n Reload - Re-reads the scenario file beside the map. Takes effect at the next round.\n");
 }
 
 /* savemap <file>: step over the command word and any whitespace, append
@@ -112,6 +112,18 @@ void serverConsoleDispatch(const ServerConsoleOps *ops, char *keyBuff,
     ops->info();
   } else if (strncmp(keyBuff, "savemap", 7) == 0) {
     serverConsoleSaveMap(ops, saveBuff);
+  } else if (strncmp(keyBuff, "reload", 6) == 0) {
+    /* The line is built by the implementation, which is the only side that
+       knows what a scenario is; this prints it and picks the stream. */
+    char msg[SERVER_CONSOLE_LINE * 2];
+    msg[0] = '\0';
+    if (ops->reloadScenario == NULL) {
+      fprintf(stderr, "Scenario reload is not available on this server\n");
+    } else if (ops->reloadScenario(msg, sizeof(msg))) {
+      printf("%s\n", msg);
+    } else {
+      fprintf(stderr, "%s\n", msg);
+    }
   } else if (strncmp(keyBuff, "say ", 4) == 0) {
     /* Read the message out of saveBuff, not keyBuff: keyBuff has been
      * lower-cased so the command word can be matched, and players were

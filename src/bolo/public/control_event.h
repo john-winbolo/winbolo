@@ -201,6 +201,16 @@ typedef enum {
      * and replayed into a joining client's sync so it arrives with the
      * table the round is already using. */
     CTRL_SIM_RULES,
+    /* CTRL_LOBBY_BRAIN_DOCS_CHUNK — one fragment of ONE brain's lobby
+     * texts: its announce.txt line and its commands.txt docs. Sent per
+     * BRAIN, not per bot, alongside the brain list, and only for the
+     * brains that ship the files. The client reassembles fragments
+     * seq 0..count-1 for brainIdx, then installs both strings.
+     *
+     * Appended at the END of this enum on purpose: the tables in
+     * transport_control_codec.c are indexed by it, so a new type goes
+     * last rather than shifting the ones already there. */
+    CTRL_LOBBY_BRAIN_DOCS_CHUNK,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -216,6 +226,17 @@ typedef enum {
  * ceil(65536/900) ≈ 73 fragments (< 255, the seq/count cap). */
 #define LOBBY_BOT_POOL_CHUNK_FRAG_MAX 900
 
+/* Per-fragment payload cap for CTRL_LOBBY_BRAIN_DOCS_CHUNK, and the size
+ * of one brain's whole text blob on the wire:
+ *   [announceLen 2 BE][announce][docsLen 2 BE][docs]
+ * The blob is at most 2 + 512 + 2 + 16384 = 16900 bytes, so at 900 bytes a
+ * fragment the worst case is ceil(16900/900) = 19 fragments per brain and
+ * the seq/count byte is never near its limit. The fragment cap itself does
+ * NOT move with BRAIN_DOCS_MAX: it is what makes one fragment plus its
+ * header fit a single control datagram. */
+#define LOBBY_BRAIN_DOCS_FRAG_MAX 900
+#define LOBBY_BRAIN_DOCS_WIRE_MAX (2 + BRAIN_ANNOUNCE_MAX + 2 + BRAIN_DOCS_MAX)
+
 /* Which of the three item lists a CTRL_ENTITY_CHANGE names. The values
  * ride the wire, so they are written out rather than left to the order
  * of the members. */
@@ -224,6 +245,41 @@ typedef enum {
     ENTITY_KIND_BASE  = 1,
     ENTITY_KIND_START = 2
 } EntityKind;
+
+/* Where the lobby's scenario came from. The values ride the wire, so they
+ * are written out. None is 0, so a lobby with no scenario is the zeroed
+ * event and writes no scenario bytes at all. A scenario read from beside
+ * the map is lobbyScenarioMap; lobbyScenarioMod is one the host picked from
+ * the server's scenarios directory, which plays over whichever map is
+ * committed and stands in place of that map's own scenario. */
+typedef enum {
+    lobbyScenarioNone = 0,
+    lobbyScenarioMap  = 1,
+    lobbyScenarioMod  = 2
+} LobbyScenarioSource;
+
+/* What CTRL_LOBBY_SETTINGS carries of a scenario's identity. Independent of
+ * the scenario host's own caps (which a public header must not reach for)
+ * and chosen to match them: the name and the description are the manifest's,
+ * and the file name is a name rather than a path, so a server's disk layout
+ * does not travel. Longer text is truncated where the sim is told, not on
+ * the wire.
+ *
+ * The file length is the scenarios directory's own (SCN_DIR_FILE_LEN, 128),
+ * so a file name that a listing shows in full is the same name this event
+ * carries in full rather than one cut to fit. It costs no wire bytes to hold
+ * the wider figure: the tail is written only when a scenario is attached, and
+ * each of the three strings is a length byte and that many bytes, so a
+ * 20-character file name travels as 21 bytes either way.
+ *
+ * transport_udp_client.c is where the three file lengths — this one, the
+ * client list accumulator's LOBBY_SCENARIO_LIST_FILE_LEN and the public
+ * SERVER_SCENARIO_FILE_LEN the directory entry is copied through — are held
+ * against each other, because it is the translation unit that sees all
+ * three. */
+#define LOBBY_SCENARIO_NAME_LEN 64
+#define LOBBY_SCENARIO_FILE_LEN 128
+#define LOBBY_SCENARIO_DESC_LEN 256
 
 /* Which rules CTRL_SIM_RULES carries, and how wide each one goes.
  *
@@ -431,6 +487,30 @@ typedef struct ControlEvent {
                                          * send voice, so it captures none. */
             uint8_t  lobbyOverviewWindow;  /* OverviewWindow */
             uint8_t  lobbyLineOfSight;     /* LineOfSightMode */
+            bool     lobbySmartPingsOff;   /* server refuses CMD_PING. Held in
+                                            * the negative sense so the zero a
+                                            * decoder leaves for an absent byte
+                                            * reads as "pings allowed" — what
+                                            * every server did before the field
+                                            * existed. */
+            /* The scenario this lobby is running, if any. scenarioSource
+             * none means there is none and the five fields below are empty:
+             * a lobby with no scenario writes none of these bytes, so a
+             * plain map's settings body is the length it always was. */
+            LobbyScenarioSource scenarioSource;
+            char     scenarioName[LOBBY_SCENARIO_NAME_LEN];
+            char     scenarioFileName[LOBBY_SCENARIO_FILE_LEN];
+            char     scenarioDescription[LOBBY_SCENARIO_DESC_LEN];
+            bool     scenarioExtraTeams;  /* the manifest's extra_teams: may a
+                                           * host add teams beyond the
+                                           * scenario's own */
+            /* The game type the scenario declared, as a gameType value, 0 for
+             * none. lobbyGameType reads gameScripted for the whole of a
+             * scripted round, and this is the game underneath it — what every
+             * site that picks behaviour from the game type resolves to. A
+             * client needs it to predict its first life's loadout and its
+             * start before the first snapshot lands. */
+            uint8_t  scenarioBaseGame;
         } lobbySettings;
 
         /* CTRL_LOBBY_MAP_CHANGE — no payload fields needed */
@@ -494,14 +574,17 @@ typedef struct ControlEvent {
             char    name[LOBBY_TEAM_NAME_LEN];
         } lobbyTeamMeta;
 
-        /* CTRL_LOBBY_BOT_CONFIG — per-bot difficulty/personality +
+        /* CTRL_LOBBY_BOT_CONFIG — per-bot mode/difficulty/personality +
          * the display name pulled from the players table at fill
          * time. (Name is informational here — players.c remains the
-         * source of truth via CTRL_PLAYER_NAME / lobbySlot.) */
+         * source of truth via CTRL_PLAYER_NAME / lobbySlot.)
+         * mode indexes the brain's own mode list and difficulty indexes
+         * that mode's level list — see brain_list.h. */
         struct {
             uint8_t slot;
             uint8_t difficulty;
             uint8_t personality;
+            uint8_t mode;
             char    name[PACKET_MAX_PLAYER_NAME];
         } lobbyBotConfig;
 
@@ -528,6 +611,18 @@ typedef struct ControlEvent {
             uint16_t fragLen;
             uint8_t  frag[LOBBY_BOT_POOL_CHUNK_FRAG_MAX];
         } lobbyBotPoolChunk;
+
+        /* CTRL_LOBBY_BRAIN_DOCS_CHUNK — fragment `seq` of `count` of the
+         * lobby texts belonging to brain `brainIdx` (an index into the
+         * brain catalogue CTRL_LOBBY_BRAIN_LIST carries). fragLen bytes
+         * live in frag[]. */
+        struct {
+            uint8_t  brainIdx;
+            uint8_t  seq;
+            uint8_t  count;
+            uint16_t fragLen;
+            uint8_t  frag[LOBBY_BRAIN_DOCS_FRAG_MAX];
+        } lobbyBrainDocsChunk;
 
         /* CTRL_SERVER_TEXT — server-originated chat broadcast.
          * Mirrors what UDP clients receive as

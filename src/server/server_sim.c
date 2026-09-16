@@ -204,7 +204,14 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     for (count = 0; count < MAX_TANKS; count++) {
         sim->sim.pendingStartIdx[count] = MAX_STARTS;
         sim->sim.scenarioStartIdx[count] = MAX_STARTS;
+        /* No spawn has named a loadout, so every seat asks the policy. */
+        sim->sim.scenarioSpawnLoadout[count] = 0;
     }
+
+    /* No scenario has declared a base game type yet, so a round that turns
+       out to be scripted plays strict tournament until a lobby template says
+       otherwise. */
+    sim->sim.scenarioBaseGame = (gameType)0;
 
     /* "No tutorial progress yet" — memset would leave 0, which (being below
      * every stop row) would disable all tutorial stops. */
@@ -222,6 +229,11 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
      * them via PACKET_LOBBY_BRAIN_LIST. Cheap one-shot scan of the
      * brains/ tree. */
     brainListScan(&sim->brainList, sim->brainPaths);
+    /* ... and the announce.txt / commands.txt that go with them, read here
+     * ONCE. The send path used to open both files per brain every time it
+     * ran, and it runs inside the sync replay the spectator ring rebuilds on
+     * every lobby keyframe. */
+    serverSimRefreshBrainDocs(sim);
 
     sim->startDelay = startDelay;
     sim->gameLength = gameLen;
@@ -230,8 +242,13 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->ticksRun = 0;
     sim->gameTickLimit = 0;
     sim->gameTicksRun = 0;
+    sim->snapshotCb = NULL;
+    sim->snapshotInterval = 0;
+    sim->snapshotTicks = 0;
     sim->tick = 0;
     sim->roundLogStartTick = ROUND_LOG_START_UNSET;
+    /* No shells in flight toward a three-shot order yet. */
+    memset(sim->shotOrder, 0, sizeof(sim->shotOrder));
     sim->state = serverStateLobby;
     sim->lobbyEnabled = TRUE;
     sim->countdownTicks = 0;
@@ -265,9 +282,15 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
 
     /* ── Layout A lobby state — initial defaults ─────────────────
      * teams[] zeroed by the memset above (in_use=0 → renders with
-     * defaults). Same for botConfigs[] (difficulty=easy=0,
-     * personality=normal=0). serverLocks defaults to 0 — bolod
-     * --lock-* CLI flags set bits at server startup. */
+     * defaults). botConfigs[] is zeroed too (personality=normal=0) but
+     * difficulty is set explicitly below: zero is Easy, and a bot that
+     * says Easy on its lobby row while playing exactly like Hard —
+     * which every difficulty does today — is a lie. serverLocks
+     * defaults to 0 — bolod --lock-* CLI flags set bits at server
+     * startup. */
+    for (count = 0; count < MAX_TANKS; count++) {
+        sim->botConfigs[count].difficulty = BOT_DIFFICULTY_HARD;
+    }
 
     /* Layout A — guarantee at least two teams always exist so the
      * lobby UI never shows fewer than 2. teams[1] gets the host
@@ -306,11 +329,17 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
      * later change to it must not quietly stop applying here. */
     sim->overviewWindow = (uint8_t)OVERVIEW_WINDOW_STOCK;
     sim->lineOfSight    = (uint8_t)LINE_OF_SIGHT_STOCK;
+    /* Smart pings are allowed until a host says otherwise. Written out
+     * rather than left to the memset for the same reason the two above
+     * are: the field is stored in the negative sense, so the line has to
+     * say which way round "false" reads. */
+    sim->smartPingsOff  = FALSE;
     sim->maxPlayers          = MAX_TANKS;
     sim->maxSpectators       = 0;
     sim->specDelayTicks      = 0;
     sim->specRosterEnum      = NULL;
     sim->specRosterEnumCtx   = NULL;
+    sim->startInProgress     = FALSE;
     sim->worldPreLoaded      = TRUE;
 
     /* Mirror gameType + hiddenMines + time fields so the lobby change
@@ -340,6 +369,7 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     sim->sim.callbacks.explosion = serverSimCbExplosion;
     sim->sim.callbacks.tkExplosion = serverSimCbTkExplosion;
     sim->sim.callbacks.shellDeath = serverSimCbShellDeath;
+    sim->sim.callbacks.shellFired = serverSimCbShellFired;
     sim->sim.callbacks.recordDamage = serverSimCbRecordDamage;
     sim->sim.callbacks.recordPlayerAction = serverSimCbRecordPlayerAction;
     sim->sim.callbacks.recordPillPickup = serverSimCbRecordPillPickup;
@@ -435,6 +465,10 @@ ServerSim *serverSimCreate(char *mapFileName, gameType game, bool hiddenMines, i
         return NULL;
     }
     serverSimInit(sim, game, hiddenMines, startDelay, gameLen);
+    /* The file the live map came from, kept so a scenario can be looked for
+       beside it. Every other loader either sets this or clears it. */
+    SDL_strlcpy(sim->mapFilePath, mapFileName ? mapFileName : "",
+                sizeof(sim->mapFilePath));
 
     if (mapRead(mapFileName, &sim->sim.mp, &sim->sim.pb, &sim->sim.bs, &sim->sim.ss) == FALSE) {
         WB_LOG_ERROR(WB_LOG_CAT_SERVER,
@@ -632,6 +666,9 @@ void serverSimDestroy(ServerSim *sim) {
      * this destroy walk an already-empty bots[] on this call. */
     botManagerDestroy(sim);
 
+    /* The brains' lobby texts (~271 KB), allocated on the first refresh. */
+    serverSimFreeBrainDocs(sim);
+
     for (count = 0; count < MAX_TANKS; count++) {
         if (sim->sim.tanks[count] != NULL) {
             tankDestroy(&sim->sim, &sim->sim.tanks[count]);
@@ -693,6 +730,11 @@ void serverSimDestroy(ServerSim *sim) {
     free(sim);
 }
 
+uint16_t serverSimGetPlayerKills(const ServerSim *sim, BYTE slot) {
+    if (sim == NULL || slot >= MAX_TANKS) return 0;
+    return (uint16_t)sim->roundStats[slot].kills;
+}
+
 const PlayerRoundStats *serverSimGetRoundStats(const ServerSim *sim, BYTE slot) {
     if (slot >= MAX_TANKS) return NULL;
     return &sim->roundStats[slot];
@@ -715,7 +757,7 @@ void serverSimBuildRoundStatsSummary(ServerSim *sim, RoundStatsSummary *out) {
 
     bool isBot[MAX_TANKS];
     for (int slot = 0; slot < MAX_TANKS; slot++) {
-        isBot[slot] = botManagerIsBot(sim, (BYTE)slot);
+        isBot[slot] = serverSimIsBot(sim, (BYTE)slot);
     }
 
     /* One curated scoreboard row per connected slot. Leavers were zeroed

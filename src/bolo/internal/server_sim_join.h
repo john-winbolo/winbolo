@@ -35,6 +35,15 @@ void setClientTypeFlagsInternal(ServerSim *sim, BYTE slot,
                                 uint8_t clientType, uint8_t clientFlags);
 void fillAndPublishPlayerJoin(ServerSim *sim, BYTE slot);
 
+/* Gives the lobby host role to a person who has just joined, when
+ * -firstjoinhost is on and the slot holding the role holds a bot or holds
+ * nobody. Call it from a human join path once the slot's name, flags and
+ * CTRL_PLAYER_JOIN are out: a bot is not a bot to serverSimIsBot until its
+ * own add path has marked it one, so this must not sit in the four
+ * step-internals above. Publishes the lobby settings when the role moves.
+ * Defined in server_sim_players.c. */
+void serverSimPromoteHostOnJoin(ServerSim *sim, BYTE slot);
+
 /* Reserves a free lobby start for one slot, clustered near its teammates
  * and kept to the slot's team side. Called from the join path, the bot-add
  * path, the team change, the map-change reconcile and the claim command,

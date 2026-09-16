@@ -31,12 +31,14 @@
 #include "server_sim_internal.h"
 #include "round_stats_derive.h"     /* roundStatsApplyRecord — serverSimAddEvent's per-round stats funnel */
 #include "lobby_bot_pools.h"        /* lobbyBotPoolsSerialize — the bot-pool catalog streamed during sync */
+#include "brain_list.h"            /* brainListLoadTextsForPath — the brains' lobby texts */
 #include "client_sim_control.h"     /* clientSimApplyControl — the in-process subscriber's deliver */
 #include "transport_control_codec.h"   /* the body encoders the ring keyframe's control snapshot writes */
 #include "log_internal.h"           /* serverSimSerializeControlSnapshot prototype */
 #include "../../winbolonet/winbolonet_core.h"     /* winbolonetIsRunning — the lobby-settings WBN availability flag */
 #include "../../winbolonet/winbolonet_server.h"   /* winbolonetServerRequestBalance — the WBN team-balance request */
 #include "../../common/mp_diag_log.h"
+#include "../../common/wb_log.h"   /* WB_LOG_INFO — the newswire-mute flip trace */
 
 /* A ping is a team signal. The sender always sees its own (its client draws
  * nothing until the server echoes it back, so this is the only copy it gets);
@@ -81,8 +83,17 @@ void serverSimSetPingMute(ServerSim *sim, BYTE muterSlot, BYTE targetPlayer,
 void serverSimAddEvent(ServerSim *sim, const GameEvent *event) {
     /* Per-round stats funnel. Runs before the snapshot-event buffering below
      * so a full event buffer never drops a stat. Only during a running game,
-     * so any state-load/replay re-emit can't double-count. */
-    if (sim->state == serverStateRunning) {
+     * so any state-load/replay re-emit can't double-count.
+     *
+     * And never while the scenario setup window is open. The state already
+     * reads running when the round start makes its calls into the scenario,
+     * so sixteen bases dealt at setup would otherwise credit a seat with
+     * sixteen captures at tick 0 and put sixteen lines on the round's
+     * timeline. What a script arranges before the round is nobody's doing.
+     * The boot call is inside the window too, which is the same case. The
+     * event still lands in the frame buffer below, where the start's own
+     * truncation takes it back out. */
+    if (sim->state == serverStateRunning && !sim->scenarioSetupWindow) {
         const uint8_t *d = event->data;
         switch (event->type) {
         case EVENT_TANK_KILLED: {
@@ -289,6 +300,26 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.voiceMode = sim->voiceMode;
     evt->u.lobbySettings.lobbyOverviewWindow = sim->overviewWindow;
     evt->u.lobbySettings.lobbyLineOfSight    = sim->lineOfSight;
+    evt->u.lobbySettings.lobbySmartPingsOff  = sim->smartPingsOff;
+    /* What the lobby's scenario is, straight off what whoever attached it
+       told the sim. A lobby with none leaves the source at lobbyScenarioNone
+       and the strings empty, which is what keeps those bytes off the wire. */
+    evt->u.lobbySettings.scenarioSource     = sim->scenarioIdentity.source;
+    evt->u.lobbySettings.scenarioExtraTeams = sim->scenarioIdentity.extraTeams;
+    snprintf(evt->u.lobbySettings.scenarioName,
+             sizeof(evt->u.lobbySettings.scenarioName), "%s",
+             sim->scenarioIdentity.name);
+    snprintf(evt->u.lobbySettings.scenarioFileName,
+             sizeof(evt->u.lobbySettings.scenarioFileName), "%s",
+             sim->scenarioIdentity.fileName);
+    snprintf(evt->u.lobbySettings.scenarioDescription,
+             sizeof(evt->u.lobbySettings.scenarioDescription), "%s",
+             sim->scenarioIdentity.description);
+    /* The game underneath a scripted round, from where the spawn and start
+       paths read it. lobbyGameType above says gameScripted for the whole of
+       such a round, and a client that only had that would predict its first
+       life as open. */
+    evt->u.lobbySettings.scenarioBaseGame = (uint8_t)sim->sim.scenarioBaseGame;
 }
 
 void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
@@ -303,6 +334,7 @@ void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
         slot.ready      = sim->lobbyPlayers[i].ready;
         slot.isBot      = sim->lobbyPlayers[i].isBot;
         slot.startIdx   = sim->lobbyPlayers[i].startIdx;
+        slot.fielded    = sim->lobbyPlayers[i].fielded;
         /* sim->playerPing[i] is only refreshed by queueInput; in lobby
          * no inputs flow, so it sits at 0 the whole time. The PING/PONG
          * handler keeps udpServer.clients[i].pingMs live across every
@@ -386,10 +418,12 @@ void serverSimFillLobbyBotConfigEvent(ServerSim *sim, BYTE slot, ControlEvent *e
     evt->u.lobbyBotConfig.slot = slot;
     memset(evt->u.lobbyBotConfig.name, 0, PACKET_MAX_PLAYER_NAME);
     if (slot >= MAX_TANKS) {
+        evt->u.lobbyBotConfig.mode        = 0;
         evt->u.lobbyBotConfig.difficulty  = 0;
         evt->u.lobbyBotConfig.personality = 0;
         return;
     }
+    evt->u.lobbyBotConfig.mode        = sim->botConfigs[slot].mode;
     evt->u.lobbyBotConfig.difficulty  = sim->botConfigs[slot].difficulty;
     evt->u.lobbyBotConfig.personality = sim->botConfigs[slot].personality;
     if (sim->playerConnected[slot]) {
@@ -410,6 +444,155 @@ void serverSimFillLobbyBotBrainEvent(const ServerSim *sim, BYTE slot, ControlEve
 void serverSimFillLobbyBrainListEvent(const ServerSim *sim, ControlEvent *evt) {
     evt->type = CTRL_LOBBY_BRAIN_LIST;
     evt->u.lobbyBrainList.list = sim->brainList;
+}
+
+/* ── The brains' lobby texts ─────────────────────────────────────────
+ *
+ * Unlike about.txt these DO travel: the server chooses the brain, so a client
+ * that does not have it installed would otherwise have nothing to show.
+ * Only brains that actually ship a file are sent, so the usual cost is one
+ * brain's handful of fragments (19 at the very most), not sixteen brains'
+ * worth.
+ *
+ * READ ONCE, NOT PER SEND. They used to be read off disk inside
+ * serverSimEmitBrainDocs, at the moment they were sent, on the grounds that
+ * the send happens twice in a lobby's life. It does not: the send sits inside
+ * serverSimSyncSubscriber, and the delayed spectator ring rebuilds a whole
+ * control snapshot through that same function on every lobby keyframe — with
+ * WinBoloDS defaulting to 16 spectator slots and the log writer running in
+ * lobby state, that is up to two file opens per brain per keyframe on the
+ * tick thread, and the extra events pushed the snapshot past
+ * LOG_CONTROL_SNAPSHOT_MAX so the keyframe was silently dropped.
+ *
+ * So the texts are read where the brains are scanned and kept as the finished
+ * wire blob. serverSimRefreshBrainDocs re-reads a brain whose files have a
+ * newer mtime, which keeps the "operator edits a brain between rounds" case
+ * the old shape had. The cache is ~271 KB, so it is allocated on the first
+ * refresh rather than in every ServerSim. */
+struct ServerBrainDocsEntry {
+    bool     read;       /* this entry has been built at least once */
+    bool     have;       /* this brain ships at least one of the two files */
+    int64_t  mtime;      /* newest of the two when the blob was built; 0 = none */
+    uint16_t blobLen;
+    uint8_t  blob[LOBBY_BRAIN_DOCS_WIRE_MAX];
+};
+
+struct ServerBrainDocsCache {
+    struct ServerBrainDocsEntry entry[BRAIN_LIST_MAX];
+};
+
+/* Build brain `i`'s blob into `e` from disk. Leaves e->have false when the
+ * brain ships neither file. */
+static void serverSimBuildBrainDocsEntry(const ServerSim *sim, int i,
+                                         struct ServerBrainDocsEntry *e,
+                                         char *announce, char *docs) {
+    bool   truncated = false;
+    size_t aLen, dLen, blen;
+
+    e->read    = true;
+    e->have    = false;
+    e->blobLen = 0;
+    e->mtime   = brainListTextsMtimeForPath(sim->brainPaths[i]);
+
+    if (!brainListLoadTextsForPath(sim->brainPaths[i],
+                                   announce, (size_t)BRAIN_ANNOUNCE_MAX + 1,
+                                   docs, (size_t)BRAIN_DOCS_MAX + 1,
+                                   &truncated)) {
+        return;                            /* this brain ships neither file */
+    }
+    if (truncated) {
+        WB_LOG_WARN(WB_LOG_CAT_SERVER,
+                       "brain '%s': announce.txt/commands.txt is longer "
+                       "than the wire allows (%d / %d bytes) and was cut",
+                       sim->brainList.entries[i].name,
+                       BRAIN_ANNOUNCE_MAX, BRAIN_DOCS_MAX);
+    }
+    aLen = strlen(announce);
+    dLen = strlen(docs);
+    blen = 0;
+    e->blob[blen++] = (uint8_t)((aLen >> 8) & 0xFF);
+    e->blob[blen++] = (uint8_t)(aLen & 0xFF);
+    memcpy(e->blob + blen, announce, aLen); blen += aLen;
+    e->blob[blen++] = (uint8_t)((dLen >> 8) & 0xFF);
+    e->blob[blen++] = (uint8_t)(dLen & 0xFF);
+    memcpy(e->blob + blen, docs, dLen); blen += dLen;
+
+    e->blobLen = (uint16_t)blen;
+    e->have    = true;
+}
+
+void serverSimRefreshBrainDocs(ServerSim *sim) {
+    char *announce = NULL, *docs = NULL;
+    int   i;
+
+    if (sim == NULL || sim->brainList.count <= 0) return;
+    if (sim->brainDocs == NULL) {
+        sim->brainDocs = (struct ServerBrainDocsCache *)
+            calloc(1, sizeof(*sim->brainDocs));
+        if (sim->brainDocs == NULL) return;
+    }
+
+    announce = (char *)malloc(BRAIN_ANNOUNCE_MAX + 1);
+    docs     = (char *)malloc(BRAIN_DOCS_MAX + 1);
+    if (announce == NULL || docs == NULL) {
+        free(announce); free(docs);
+        return;
+    }
+
+    for (i = 0; i < sim->brainList.count && i < BRAIN_LIST_MAX; i++) {
+        struct ServerBrainDocsEntry *e = &sim->brainDocs->entry[i];
+        int64_t now = brainListTextsMtimeForPath(sim->brainPaths[i]);
+        /* A brain already read whose files have not moved is left alone. A
+         * mtime of 0 means "ships neither file", and asking for that costs
+         * two path probes rather than two whole file reads. */
+        if (e->read && e->mtime == now) continue;
+        serverSimBuildBrainDocsEntry(sim, i, e, announce, docs);
+    }
+
+    free(announce);
+    free(docs);
+}
+
+void serverSimFreeBrainDocs(ServerSim *sim) {
+    if (sim == NULL) return;
+    free(sim->brainDocs);
+    sim->brainDocs = NULL;
+}
+
+void serverSimEmitBrainDocs(const ServerSim *sim,
+                            void (*deliver)(void *, const struct ControlEvent *),
+                            void *ctx) {
+    int i;
+    if (sim == NULL || deliver == NULL) return;
+    if (sim->brainList.count <= 0 || sim->brainDocs == NULL) return;
+
+    for (i = 0; i < sim->brainList.count && i < BRAIN_LIST_MAX; i++) {
+        const struct ServerBrainDocsEntry *e = &sim->brainDocs->entry[i];
+        size_t blen = e->blobLen;
+        int    nChunks, ci;
+        size_t off;
+
+        if (!e->have || blen == 0) continue;
+
+        nChunks = (int)((blen + LOBBY_BRAIN_DOCS_FRAG_MAX - 1) /
+                        LOBBY_BRAIN_DOCS_FRAG_MAX);
+        if (nChunks <= 0 || nChunks > 255) continue;
+        off = 0;
+        for (ci = 0; ci < nChunks; ci++) {
+            ControlEvent evt;
+            size_t fl = blen - off;
+            if (fl > LOBBY_BRAIN_DOCS_FRAG_MAX) fl = LOBBY_BRAIN_DOCS_FRAG_MAX;
+            memset(&evt, 0, sizeof(evt));
+            evt.type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
+            evt.u.lobbyBrainDocsChunk.brainIdx = (uint8_t)i;
+            evt.u.lobbyBrainDocsChunk.seq      = (uint8_t)ci;
+            evt.u.lobbyBrainDocsChunk.count    = (uint8_t)nChunks;
+            evt.u.lobbyBrainDocsChunk.fragLen  = (uint16_t)fl;
+            memcpy(evt.u.lobbyBrainDocsChunk.frag, e->blob + off, fl);
+            deliver(ctx, &evt);
+            off += fl;
+        }
+    }
 }
 
 /* Fill a CTRL_GAME_VOTE_STATE event for the given vote kind. Returns false
@@ -562,10 +745,17 @@ static void serverSimSyncOrderingDeliver(void *ctx,
     check->inner(check->innerCtx, evt);
 }
 
+/* `withBrainDocs` says whether the brains' lobby texts belong in this
+ * replay. TRUE for a real client's (or spectator's) join sync, which is a
+ * one-off. FALSE for the delayed spectator ring's control snapshot, which is
+ * rebuilt on every keyframe: reading the texts there put file opens on the
+ * tick thread, and the fragments themselves overran LOG_CONTROL_SNAPSHOT_MAX
+ * so the whole keyframe was dropped without a word. */
 static void serverSimSyncSubscriber(
     ServerSim *sim,
     void (*deliver)(void *, const struct ControlEvent *),
-    void *ctx) {
+    void *ctx,
+    bool withBrainDocs) {
     ControlEvent evt;
     BYTE i;
     SyncOrderingCheck check;
@@ -620,6 +810,14 @@ static void serverSimSyncSubscriber(
         memset(&evt, 0, sizeof(evt));
         serverSimFillLobbyBrainListEvent(sim, &evt);
         deliver(ctx, &evt);
+
+        /* The brains' own lobby texts, straight after the list they index
+         * into: the lobby turns a bot's announce line into team chat and
+         * hangs its commands docs off it. Same lobby-only gate, plus the
+         * ring-snapshot gate above. */
+        if (withBrainDocs) {
+            serverSimEmitBrainDocs(sim, deliver, ctx);
+        }
 
         /* Bot-pool catalog: the server's themed naming pools (loaded from
          * -botnames / data/bot_names.json), zlib-compressed and streamed
@@ -837,7 +1035,7 @@ int serverSimSerializeControlSnapshot(ServerSim *sim, BYTE *out, int cap) {
     sink.cap      = cap;
     sink.len      = 0;
     sink.overflow = false;
-    serverSimSyncSubscriber(sim, serverSimControlSnapshotDeliver, &sink);
+    serverSimSyncSubscriber(sim, serverSimControlSnapshotDeliver, &sink, false);
     return sink.overflow ? -1 : sink.len;
 }
 
@@ -898,7 +1096,7 @@ SubscriberHandle serverSimRegisterSubscriber(
      * this point — for the wire transport that means
      * udpServer.clients[slot] is fully populated before the caller
      * invokes serverSimRegisterSubscriber. */
-    serverSimSyncSubscriber(sim, deliver, ctx);
+    serverSimSyncSubscriber(sim, deliver, ctx, true);
 
     sim->subscribers[slot].deliver      = deliver;
     /* Control events only until the caller asks for the second channel. */

@@ -28,6 +28,7 @@
 #include "lang_message.h"   /* langid — the localized server->client sends */
 #include "platform_net.h"   /* SOCKET, struct sockaddr_in */
 #include "netpacks.h"       /* MAP_DOWNLOAD_MAX_SIZE, PACKET_MAX_PLAYER_NAME */
+#include "scenario_defs.h"  /* ScnDirEntry — the scenario list chunk's input */
 #include "transport_udp.h"  /* UdpServerClient, MAX_SPECTATORS, SubscriberHandle */
 #include "transport_udp_internal.h" /* ClientEventQueue, UDP_MAX_PAYLOAD */
 #include "channel_mux.h"    /* ChannelMux */
@@ -39,6 +40,7 @@
 #define RECV_QUEUE_SIZE 1024
 
 #define LOBBY_REQ_COOLDOWN_TICKS 25  /* ~0.5s at 50 Hz */
+#define SERVER_UPLOAD_IDLE_TIMEOUT_MS 15000 /* outlasts both client watchdogs (5s BEGIN-ACK, 10s bulk stall) */
 
 /* Anonymous-fallback ceiling for a deferred WBN PLAYER_JOIN: how long
  * we wait for the joiner's rekey->reauth round-trip (two network hops
@@ -202,6 +204,12 @@ typedef struct {
 /* Server-side global state */
 typedef struct UdpServerState {
     SOCKET sock;
+    /* The port bind() actually gave us, read back with getsockname(). Equal
+     * to the requested port in the normal case; with a requested port of 0
+     * it is the one the OS picked, which is the only place the real port
+     * exists. Anything that advertises where the server can be reached
+     * (mDNS, the tracker, WBN) must use this and not the request. */
+    unsigned short boundPort;
     bool running;
     UdpServerClient clients[MAX_TANKS];
     SpectatorConn   spectators[MAX_SPECTATORS];
@@ -317,6 +325,7 @@ typedef struct UdpServerState {
      * UPLOAD_MAX_BYTES the bulk receiver reassembles into. */
     bool     clientUploadActive[MAX_TANKS];
     uint32_t clientUploadTotal[MAX_TANKS];
+    uint64_t upload_last_progress_ms[MAX_TANKS];
     uint8_t  clientUploadBuf[MAX_TANKS][UPLOAD_MAX_BYTES];
     char     clientUploadName[MAX_TANKS][128];
     uint8_t  clientReqCooldownTicks[MAX_TANKS];
@@ -571,7 +580,27 @@ void serverInitMapDownload(int slot);
 void serverRebaseBulkAndRearmDownload(int i);
 void serverServiceMapTransfer(struct ServerSim *sim, int slot);
 void udpServerClearClientUploadState(int idx);
+void udpServerExpireUploads(uint64_t now_ms);
 void udpServerResetMapReaskLimit(int idx);
+
+/* One PACKET_LOBBY_SCENARIO_LIST_RSP chunk, written into the caller's buffer.
+ * Owned by src/server/udp/udp_server_dispatch.c, where the request handler
+ * calls it in a loop and sends what it returns.
+ *
+ * Packs entries from `first` until the next will not fit in bufLen, stamps the
+ * count and the final flag, and leaves *next at the first entry it did not
+ * write — equal to count when this was the last chunk. Returns the chunk's
+ * length in bytes, or 0 for a buffer too small to hold even an empty chunk.
+ * A count of 0 is a whole answer: one chunk, final set, no entries.
+ *
+ * Non-static, and takes a buffer rather than a socket, so the unit tests can
+ * hold what the server would send against committed golden bytes and feed the
+ * same bytes back through the client's accumulator. The map list's encoder is
+ * inline in its handler and needs a socket, which is why
+ * test_lobby_map_list_chunked.c has to hand-roll the bytes it checks. */
+int udpServerPackScenarioListChunk(uint8_t *buf, int bufLen,
+                                   const ScnDirEntry *entries, int count,
+                                   int first, int *next);
 
 /* Tankless spectator support. Owned by
  * src/server/udp/udp_server_spectator.c.

@@ -14,7 +14,7 @@ document is the stable reference for the rules themselves.
 | **T1 — Sim runtime (public API)** | The official front door to the simulation. Opaque handles; no direct struct access. | `server_sim.h`, `client_sim.h`, `client_net.h`, `client_enums.h`, `bolo_map_validate.h` |
 | **T2 — Sim internals** | Implementation details of the sim: state structs, wire protocol, sub-systems. | `tank.h`, `players.h`, `game_sim.h`, `allience.h`, `client_sim_internal.h`, `server_sim_internal.h`, `client_sim_control.h`, `bot_manager.h`, `shells.h`, `mines.h`, `lgm.h`, `viewport.h`, `bolo_packets.h`, `netpacks.h`, `transport_udp.h`, `bolo_map.h`, `starts.h`, `pillbox.h`, `bases.h` |
 | **T3 — Presentation data** | Read-only per-frame views the sim publishes for the renderer. | `viewport_types.h`, `client_render.h`, `client_ui_events.h`, `screentank.h`, `screenbullet.h`, `screenlgm.h`, `screencalc.h`, `frontend.h` |
-| **T4 — Shared leaves** | Plain types and constants with no dependencies. | `types.h`, `global.h`, `tilenum.h`, `gametype.h`, `platform_types.h` |
+| **T4 — Shared leaves** | Plain types and constants, and the handful of resolvers over an opaque `GameSim` that sit beside them. | `types.h`, `global.h`, `tilenum.h`, `gametype.h`, `platform_types.h` |
 
 ## Who may include what
 
@@ -22,13 +22,14 @@ document is the stable reference for the rules themselves.
 |---|---|---|
 | `src/bolo/` | T1 + T2 + T3 + T4 | Owns T2; contributes to all tiers. |
 | `src/bolo/scenario_api/` | T1 + T4 | A third header directory beside `public/` and `internal/`. Holds the scenario write funnel (`serverSimApplyScenarioOp`), the policy vtable and tick registrations, and the POD types those calls take. Read by the `scenario_host` profile (the scenario runtime), by `sim_owner` to implement the funnel, and by `unittests` to drive it; nothing else sees it. Not in `public/` because these are server-authoritative entry points on the same footing as the lifecycle start functions — a frontend that wants to change the world sends a command, and a scenario is the one caller whose intent is applied to the sim directly. See "Privileged exceptions". |
+| `src/scenario/` | T1 + T4 + `scenario_api/` | The scenario runtime, `scenario_static`, the one target built under the `scenario_host` profile. Finds the Lua file beside a map, boots the VM, parses the `scenario` table, marshals `game.*` calls onto the funnel and T1 reads, queues bus events and drains them into hooks, and checks a script for `-validate`. Sees `public/` plus `scenario_api/` and nothing in `internal/` or `src/server/`; a binding that needs sim state it cannot read gets a T1 accessor, never an include. Links `lua_static` PRIVATE. Frontends see only `scenario_host.h` (attach, detach, follow the map, is-active, name, description, script path, reload, last error, the scripts switch `scenarioHostSetEnabled` and the narrower `scenarioHostSetUploadScriptsEnabled` beside it, the map-has-script question `scenarioHostMapHasScript`, and `scenarioHostRegisterMapScripted`, which hands that question to a sim so its map lister can ask it), which includes `server_sim.h` alone and names no `scenario_api/` type, so a `gui`-profile file can include it. Both of those are the rule a call added here has to satisfy, not just a description of the calls there now: `server_sim.h` and the C standard headers are the whole of what this header may include, and every parameter and return type has to be a plain type or `ServerSim` / `ScenarioHost`. A call that would need a `scenario_api/` type in its signature belongs behind the funnel instead. Linked into every binary that hosts a `ServerSim` from a map file: WinBoloDS, WinBoloHeadless, WinBolo, WinBoloIOS, Android `main`, WinBoloUnitTests. Not wasm (never hosts), gym, braintest, mapeditor or the log viewer. |
 | `src/gui/` | T1 + T3 + T4 | The desktop renderer. Cannot reach into sim internals. |
 | `src/mapeditor/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — full T2 access for map-data editing. |
 | `src/braintest/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — dev visualisation tool, not shipped to players. |
 | `src/gym/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — ML training harness, not shipped in player builds. |
 | `brains/` | T1 + T2 + T3 + T4 | Builds `bot_brains_static` (bot brain implementations — GoalHunter, ONNX backends). Compiles under the `sim_owner` profile because brain evaluation reads sim state directly. Not a frontend; every binary that ships bots links the same `bot_brains_static`, so the asymmetric-runtime bug class doesn't apply. |
 | `src/server/` | T1 + T2 + T3 + T4 | Co-owner of the sim alongside `src/bolo/`. Most files compile via three libraries: `server_sim_static` (sim core: `server_sim.c`, `server_command_dispatch.c` and `servermessages.c` in this directory, plus the per-concern translation units under `src/server/sim/` that `server_sim.c` has been split into); `server_static` (dedicated-server runtime on top of it: `transport_udp_server.c`, `server_lifecycle.c`, `geolookup.c`, `server_dedicated_log.c`, `server_dedicated_log_path.c`, plus the per-concern translation units under `src/server/udp/` that `transport_udp_server.c` has been split into, plus `threads_static` PUBLIC-linked); and `threads_static` (the SDL-mutex thread manager — `threads.c` on every platform except Emscripten, where `threads_wasm.c` substitutes single-threaded no-ops with the same symbol surface). `threads_static` is consumed by every binary that ticks a sim, not only the dedicated server: in-process single-player builds (WinBoloIOS, android main, wasm winbolo, WinBoloUnitTests) link it directly; the four dedicated-server binaries get it transitively through `server_static`. Two more files are per-target sim runtime that ship inside WinBoloDS with T2 access via `bolo_grant_internal_source_access`: `servermain.c` (owns the dedicated-server `main()` and module globals) and `server_frontend_stubs.c` (stubs the T2 callbacks bolo's sim TUs expect when there is no UI). The replay-log subscriber `server_dedicated_log.c` (with its `server_dedicated_log_path.c` name helper) is a member of `server_static` above — built under the `sim_owner` profile, so it keeps its T2 access at the target level rather than through a per-file grant. It carries private state instead of reaching servermain globals, and is installed against the ServerSim bus by each host: `servermain.c` for WinBoloDS and `gameFrontSetupServer` for client-hosted games (the SDL3 client links `server_static` to host). See "Per-file T2 grants" below for the mechanism. |
-| `src/headless/` | T1 + T3 + T4 | Same as server. |
+| `src/headless/` | T1 + T3 + T4 | The headless runner. Not the same access as `src/server/` above: WinBoloHeadless is built under the `runtime_only` profile (`cmake/bolo_lib.cmake`), which puts `src/bolo/public/` on the include path and nothing else, so this directory has the desktop client's reach rather than the server's T2. Two things sit outside that. The target's one per-file T2 grant is for `src/bolo/transport_udp_client.c`, which is bolo's own translation unit compiled per-target rather than anything in this directory. And `headless_main.c` includes `../bolo/internal/server_sim_lifecycle.h` by relative path, which include directories cannot stop; a new reach into `internal/` from here wants a T1 accessor instead. |
 | `src/wasm/` | T1 + T3 + T4 | Web build of the desktop client — shares the `src/gui/sdl3/` ImGui UI and the shared sim-driving cores, forking only the single-threaded driver (emscripten main loop in place of the SDL timer thread). See "Platform variants: share the logic, fork only the driver". |
 | `src/android/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
 | `src/ios/` | T1 + T3 + T4 | Mobile renderer; uses T3 like `src/gui/`. |
@@ -63,9 +64,16 @@ exception to the rule above.
    by calling a function on the sim handle, not by reading a struct
    field.
 
-3. **Use T4 freely.** `types.h`, `global.h`, etc. have no dependencies
-   and exist precisely so every subdirectory can share basic
-   primitives without coupling.
+3. **Use T4 freely.** `types.h`, `global.h` and their neighbours exist
+   precisely so every subdirectory can share basic primitives without
+   coupling. Most of them have no dependencies at all. `gametype.h` is
+   the one that is more than that: beside the loadout constants and the
+   `gameType` enum it declares `gameTypeGetItems` and `gameTypeResolve`,
+   which both take a `struct GameSim *` through a forward declaration —
+   so the header itself still includes nothing but `global.h`, and the
+   type stays opaque to anyone reading it. A caller that already holds a
+   `GameSim` from `server_sim.h` or `client_sim.h` may call the two;
+   nobody gains a way to reach sim state they did not already have.
 
 4. **In the desktop renderer (`src/gui/`), treat T3 as read-only.**
    `viewport`, `screentank`, `screenbullet`, `screenlgm`, and friends
@@ -1275,6 +1283,24 @@ dismisses when the rejected command's effect was undone by a later
 successful submit — "most recent reject wins" is wrong because
 rejects can land after newer state mutations.
 
+Each `CMD_REJECT_*` code renders its own toast line, so the code a
+dispatcher arm picks is what the sender reads. `CMD_REJECT_SCENARIO`
+says the setting is fixed by the map's scenario, and is what the
+lobby-setting path answers for the three a scenario holds: any game-type
+change, ranked on, and the no-bots AI policy. `CMD_REJECT_COOLDOWN` says
+to try again in a moment, and is what a per-sim rate limit answers —
+the lobby scenario reload allows one a second.
+
+A command that has already told the sender why returns `CMD_OK` instead
+of a reject, so the sender is not told twice. The reload arm in
+`src/server/server_command_dispatch.c` is the worked example: it sends a
+`CTRL_SERVER_TEXT` addressed to the asking slot either way — saying what
+a reload changed when it worked, and carrying the error with the file and
+line when it did not — and then returns `CMD_OK`, because a reject code
+on top would add a second toast saying only that something was wrong. Its
+rate limit is the one place it does return a reject, and that one has
+nothing else to say.
+
 ### Recipe — adding a new command
 
 1. **Define the variant.** Add `CMD_<NAME>` to `ClientCommandType` in
@@ -1284,14 +1310,24 @@ rejects can land after newer state mutations.
 2. **Add the codec pair.** In `src/bolo/transport_command_codec.c`,
    add `commandEncode<Name>` and `commandDecode<Name>` next to the
    existing variants, then register in the `commandCodecEncode` /
-   `commandCodecDecode` dispatch tables. Reuse an existing
-   `PACKET_*` packet number as the inner-entry tag.
-3. **Add the dispatcher arm.** New `case CMD_<NAME>:` in
+   `commandCodecDecode` dispatch tables. The encoder stamps a
+   `PACKET_*` number as the inner-entry tag, and every variant carries
+   its own: no number is shared between two commands, so a new command
+   normally means a new number rather than reusing one.
+3. **Register the packet number.** The new `PACKET_*` goes in
+   `src/bolo/internal/netpacks.h` beside the others in its block, then
+   into `PACKET_NAME_TABLE` in `src/bolo/transport_udp_common.c` so the
+   diagnostic logs name it instead of printing `UNKNOWN`, then into the
+   independent copy of that table at the top of
+   `tests/unit/test_packet_type_names.c`. The test holds the two copies
+   against each other, so a number added to the production table and
+   left out of the test's copy fails `packet_type_names`.
+4. **Add the dispatcher arm.** New `case CMD_<NAME>:` in
    `applyCommandInner` (`src/server/server_command_dispatch.c`).
    Owns state guards, authority checks (`lobbyClientMayEdit`, slot
    bounds), mutation, downstream publishes (`serverSimPublish*`),
    logging. Returns `CMD_OK` or a `CMD_REJECT_*` code.
-4. **Add the send wrapper.** New `clientSimNetSend<Name>` in
+5. **Add the send wrapper.** New `clientSimNetSend<Name>` in
    `src/bolo/client_net.c` — five lines: NULL/transport guard, build
    `ClientCommand`, fill `u.<name>`, call `clientSimSubmitCommand`.
    Public declaration in `client_net.h`. The wrapper has no
@@ -2004,7 +2040,10 @@ structs (`game_sim.h`, `players.h`, `tank.h`, `pillbox.h`,
 `server_sim_*` helper headers), the wire and transport layer
 (`transport.h`, `transport_udp.h`, `transport_udp_internal.h`,
 `channel_mux.h`, `bulk_transfer.h`, `netpacks.h`, `wire_codec.h`,
-`wire_messages.h`, the control and command codecs), the client's
+`wire_messages.h`, the control and command codecs;
+`transport_udp_server_internal.h` for the per-slot upload reservation
+and its expiry, which the loopback upload timeout tests drive with a
+synthetic clock and which no T1 call reports), the client's
 view and render internals (`viewport.h`, `overview_map.h`,
 `interpolation.h`, `scroll.h`, `messages.h`), and the bot and
 brain headers (`bot_manager.h`, `braincore.h`,
@@ -2026,16 +2065,20 @@ releases with nothing coming off means the review has stopped, and
 the grant needs re-arguing rather than extending.
 
 **Linked GUI sources.** A second, narrower exception rides on the
-same target, and it is not a T2 grant. Nine `src/gui/sdl3` files are
+same target, and it is not a T2 grant. Ten `src/gui/sdl3` files are
 compiled *into* `WinBoloUnitTests`, the only files from a renderer
 directory that are: `skin_source.c`, `tileloader.c`, `sdl_bmp.c`,
 `sound_variants.c`, `overview_camera.cpp`, `overview_fog.cpp`,
-`overview_hud_layout.cpp`, `sprite_positions.c` and
+`overview_hud_layout.cpp`, `sprite_positions.c`, `ring_band.c` and
 `gfx_settings.c`. Between them they hold skin lookup, the tile sheet
 builder, the BMP sheet reader, the sound variant naming, the map
 overview's camera maths, its fog mask, its in-window HUD geometry
 and the sprite placement arithmetic behind `mapview.c`'s drawers.
-The first eight are each called directly by a test beside them;
+`ring_band.c` is here for `ringAnimAt`, which is where a closing ring
+is and how solid after a given elapsed time — pure arithmetic, no
+renderer, and the one piece of the smart ping's arrival effect and
+the overview's respawn ring that a test can observe at all.
+The first nine are each called directly by a test beside them;
 `gfx_settings.c` is here because `tileloader.c` calls it, and is the
 one file on the list no test drives on its own.
 
@@ -2055,13 +2098,13 @@ The alternative, for the geometry files, was moving the maths into
 onto the sim purely to buy testability. Keeping them in the renderer
 and linking the leaf files is the smaller distortion of the two.
 
-**Rests on** each of the nine still meeting that rule, so it is
+**Rests on** each of the ten still meeting that rule, so it is
 checked per file rather than for the group. One that gains an ImGui
 include, or that opens a renderer or a device of its own, has left
 the category, and the answer is to split the leaf back out — the
 link break is the signal, not a build problem to route around by
-widening the test binary. A tenth file joins only on the same test:
-callable with no display attached, or it does not go in.
+widening the test binary. An eleventh file joins only on the same
+test: callable with no display attached, or it does not go in.
 
 ### `src/bolo/scenario_api/`
 
@@ -2100,6 +2143,127 @@ second kind of caller needs the funnel, or a call in here becomes
 something a frontend legitimately makes — at that point the calls
 that qualify move to `public/` under the ordinary T1 rule and the
 directory keeps only what is left.
+
+**The consumer: `src/scenario/`.** `scenario_static` is the one
+target under the `scenario_host` profile and the proof that the two
+headers build against `public/` alone. Its shape follows from the
+profile: every read a binding makes is a T1 accessor on
+`server_sim.h`; every write goes through `serverSimApplyScenarioOp`;
+events arrive through the ordinary subscriber bus; and the sim
+reaches back into the host only through registered pointers
+(`serverSimSetScenarioTick`, `serverSimSetScenarioRoundBoot`,
+`serverSimSetScenarioRoundStart`, `serverSimSetScenarioMapChanged`,
+`serverSimSetScenarioReload`, `serverSimSetScenarioMapScripted`, and
+the policy vtable), because the sim library cannot link the scenario
+library. Two things go the other way as data instead, so the sim can
+act on them with the host gone. The host hands over a
+`ScnLobbyTemplate` by value and the sim seats and reconciles it
+without calling out; it hands over the scenario's identity — the
+source, the name, the file name, the description and the extra-teams
+flag — through `serverSimSetScenarioIdentity`. The two are kept apart
+because they have different lives: the template is re-read every time
+a lobby is seated or reconciled, and the identity is only copied onto
+the lobby-settings event. The frontend-facing header is
+`scenario_host.h`, which includes `server_sim.h` and nothing from this
+directory, so the dedicated server, the desktop host and the headless
+runner attach a scenario without seeing the funnel.
+
+**How a round start reaches the scenario.** A start makes exactly two
+calls into it, both through `serverSimScenarioStartCall` in
+`src/server/sim/server_sim_round.c`: the boot, before the start batch
+picks a square or a tank is built, and the round-start call once the
+world, the tanks and the roster are built and the state already reads
+running. `src/scenario/scenario_host.c` answers them with
+`scnRoundBootLocked` — a fresh Lua state, the chunk run again in it,
+the table read again, then the rules — and `scnRoundSetupLocked`,
+which is `on_setup`. Four things hold across both calls, and a fifth is
+settled before either of them runs:
+
+- The setup window is open. The funnel refuses every op while a start
+  is in progress, and the window is what lets the ops through; the six
+  roster ops are the exception and keep their refusal either way,
+  because what that guard exists for is a roster edit re-entering the
+  all-ready detector.
+- The frame's game-event buffer is put back to what it held on entry.
+  What a scenario arranges is the world the round begins in rather than
+  something that happened in it, so it rides the opening snapshot's own
+  tank, base and pill lists: sixteen bases dealt at setup arrive as
+  sixteen owners with no captures in front of them.
+- The map-change callback is installed. Only a running tick installs it
+  otherwise, and a start is not one, so without this every terrain
+  square a scenario writes would reach the server's own map and no
+  client's.
+- The stats funnel in `serverSimAddEvent` is skipped. The state reads
+  running by the time the round-start call is made, so without this the
+  same sixteen bases would be sixteen captures on a seat's record and
+  sixteen lines on the round's timeline at tick 0.
+- The round has already been put on the classic rules table. Both
+  starts write it at the top, before the boot call, so a scenario's own
+  rules go over a known table rather than over the last script's, and a
+  round with none of its own to write — the round after a scripted
+  round, and a round whose scenario failed to boot — plays classic.
+
+**What a scenario looks like from the lobby side.** None of it comes
+through `server_sim.h`. The identity and the base game type ride the
+scenario tail of `CTRL_LOBBY_SETTINGS`, which the codec writes only
+when a scenario is attached, so a lobby with none puts exactly the
+bytes on the wire it always did; a client reads them back through five
+accessors on `client_sim.h` — `clientSimGetLobbyScenarioSource`,
+`Name`, `FileName`, `Description` and `ExtraTeams` — while the base
+game goes onto the client's own `GameSim`, where `gameTypeResolve`
+reads it.
+
+Two T1 calls on `server_sim.h` are the other half:
+`serverSimScenarioSeatLobby` and `serverSimScenarioApplyLobbyRules`.
+The sim reaches them itself at three points — a map being committed, a
+lobby resetting once the last player leaves, and a startup that skips
+the lobby. A boot that opens a lobby is none of the three, so a process
+booting onto a scripted map makes the calls for itself, and all three
+hosts follow the same rule.
+
+The rules are applied before a startup that will start the round: the
+round is built inside `serverInstanceStartup`, and a game type set after
+it would never be asked for. A startup that skips the lobby then seats
+the template itself, inside `serverSimApplyInstanceConfig`, between
+writing the bot brain path and AI level the seating reads and starting
+the round that builds a tank for each fielded seat. So the hosts seat
+only on their lobby paths, and apply the rules on both: seating a second
+time runs `serverSimScenarioClearSeats` first, which would empty those
+seats and rebuild them inside a round already running, leaving them with
+no tanks.
+
+The scripts switch is process-wide and is set at every site that can
+attach — `-noscenarios` on the dedicated server, `--noscenarios` on the
+headless runner — and again whenever the desktop preference "Run map
+scripts when hosting" changes, rather than once at startup, so the
+preference is true of the process from the moment it moves rather than
+from the next hosted game.
+
+`scenarioHostSetUploadScriptsEnabled` is the narrower one beside it,
+set the same way at the same sites (`-nouploadscripts`,
+`--nouploadscripts`, and the desktop preference "Run scripts in
+uploaded maps"), and it decides whether a map a client uploaded may
+bring a script. What tells an uploaded map from an operator's own is
+its path and nothing else: the upload path writes the bytes it was
+sent under their final name and stamps nothing on the file, so the
+library asks `serverSimGetUploadsDir` — a T1 accessor answering what
+the virtual `Uploads` folder resolves to — and compares that prefix.
+The comparison levels separators and drops case, which can only call a
+map an upload that is not one; the mistake the other way would run a
+script the operator switched off.
+
+Two things the profile does not enforce, so review does. There is no
+`include_rules` CTest entry proving `scenario_host` cannot see
+`internal/` — only the `gui` direction is proved — so a stray internal
+include in `src/scenario/` fails the build today but nothing would go
+red if the profile were widened to admit it. And `scenario_static`
+publishes its own directory to whatever links it, so a frontend target
+that also links `lua_static` could include `scenario_lua.h`,
+`scenario_manifest.h` or `scenario_sandbox.h`; those headers are the
+library's and the unit tests' by intent — each names Lua types, which
+is the line `scenario_host.h` stays the other side of — and a frontend
+that reaches for one is reaching past `scenario_host.h` for a reason
+that wants a T1 accessor instead.
 
 ### Adding a new exception
 
@@ -2197,6 +2361,8 @@ src/bolo/public/       — T1 + T3 + T4 headers
 src/bolo/internal/     — T2 headers
 src/bolo/scenario_api/ — the scenario write and policy surface
 src/bolo/              — sim .c files only (no headers)
+src/scenario/          — the scenario runtime; public/ + scenario_api/
+                         on its path, nothing in internal/
 ```
 
 External targets get `src/bolo/public/` on their include path —
@@ -2215,8 +2381,8 @@ not `#include "internal/tank.h"`).
 The single point of policy for include paths is
 `cmake/bolo_lib.cmake`'s `bolo_apply_include_rules(target, profile)`
 helper. Every target in the tree — desktop, iOS, Android, wasm,
-server, headless, logviewer, gym, braintest, mapeditor — is wired
-through it.
+server, headless, logviewer, gym, braintest, mapeditor, the scenario
+runtime — is wired through it.
 
 ## Enforcement
 

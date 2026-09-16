@@ -32,7 +32,9 @@
 #include "server_sim_internal.h"
 #include "server_sim_lifecycle.h"   /* lobbyAutoUnreadyOnChange */
 #include "server_sim_join.h"        /* serverSimAssignLobbyStartOnJoin — start reconcile after a map change */
+#include "server_sim_scenario.h"    /* serverSimScenarioListDir — what the public scenario enumeration copies from */
 #include "bolo_rand.h"              /* bolo_rand_below — the rotation's random pick */
+#include "bolo_map_validate.h"      /* boloMapBodyLength — where the preview's read stops */
 #include "client_sim.h"             /* clientSimGetGameSim — the in-process client map reload */
 #include "../../common/md5.h"       /* the compressed-map hash the preview paths compare */
 #include "../../common/mp_diag_log.h"
@@ -122,6 +124,9 @@ bool serverSimRandomMapRegenerate(ServerSim *sim) {
 
     snprintf(msg, sizeof(msg), "Random map regenerated, seed: %s", seedStr);
     serverSimConsoleMessage(msg);
+
+    /* Generated, not read — nothing to look beside. */
+    sim->mapFilePath[0] = '\0';
 
     serverSimApplyMapChange(sim);
     return TRUE;
@@ -292,6 +297,37 @@ const char *serverSimGetMapDirRoot(const ServerSim *sim) {
     return "data/maps";
 }
 
+void serverSimSetScenarioDir(ServerSim *sim, const char *dir) {
+    if (sim == NULL) return;
+    if (dir != NULL) {
+        SDL_strlcpy(sim->scenarioDirPath, dir, sizeof(sim->scenarioDirPath));
+    } else {
+        sim->scenarioDirPath[0] = '\0';
+    }
+}
+
+const char *serverSimGetScenarioDir(const ServerSim *sim) {
+    if (sim != NULL && sim->scenarioDirPath[0] != '\0') {
+        return sim->scenarioDirPath;
+    }
+    return "data/scenarios";
+}
+
+void serverSimSetSelectedScenario(ServerSim *sim, const char *file) {
+    if (sim == NULL) return;
+    if (file != NULL) {
+        SDL_strlcpy(sim->scenarioSelectedFile, file,
+                    sizeof(sim->scenarioSelectedFile));
+    } else {
+        sim->scenarioSelectedFile[0] = '\0';
+    }
+}
+
+const char *serverSimGetSelectedScenario(const ServerSim *sim) {
+    if (sim == NULL) return "";
+    return sim->scenarioSelectedFile;
+}
+
 void serverSimSetUploadPersistDir(ServerSim *sim, const char *dir) {
     if (sim == NULL) return;
     if (dir != NULL) {
@@ -430,6 +466,37 @@ static bool serverSimApplyRandomMapConfig(ServerSim *sim,
     return TRUE;
 }
 
+/* Stash the currently-committed map as the "previous" snapshot before a
+ * preview touches the sim. Keep the ORIGINAL committed map across a chain of
+ * previews so one Cancel rolls all the way back to where the user started —
+ * that is what the outer test is for, and a second preview must not displace
+ * the first one's snapshot.
+ *
+ * Everything a Cancel needs goes in together: the bytes, the display name,
+ * the file the map was read from so a script can be found beside it again,
+ * and the template seats each team holds, because the cancel re-seats the
+ * template from scratch and the host's trim would otherwise go with it.
+ * previousSeatsValid comes from serverSimScenarioSeatCounts, which answers
+ * false when no template is attached — that is what keeps "no template" apart
+ * from a team the host emptied on purpose.
+ *
+ * Every field is written only once the bytes are held, so a failed malloc
+ * leaves no preview to cancel rather than half a snapshot. Every preview
+ * entry point calls this and none keeps a copy of it: the path was missing
+ * from two of the copies for as long as there were three. */
+static void stashCommittedMap(ServerSim *sim) {
+    if (sim->previousMapData != NULL || sim->cachedMapData == NULL) return;
+    sim->previousMapData = (BYTE *)malloc(sim->cachedMapDataLen);
+    if (sim->previousMapData == NULL) return;
+    memcpy(sim->previousMapData, sim->cachedMapData, sim->cachedMapDataLen);
+    sim->previousMapDataLen = sim->cachedMapDataLen;
+    memcpy(sim->previousMapName, sim->mapName, sizeof(sim->previousMapName));
+    memcpy(sim->previousMapPath, sim->mapFilePath,
+           sizeof(sim->previousMapPath));
+    sim->previousSeatsValid =
+        serverSimScenarioSeatCounts(sim, sim->previousSeats);
+}
+
 bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
     BYTE tempBuf[MAP_COMPRESSED_MAX_SIZE];
     int len;
@@ -449,20 +516,7 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
         return FALSE;
     }
 
-    /* Stash the currently-committed map as the "previous" snapshot
-     * before we touch the sim. Keep the ORIGINAL committed map
-     * across a chain of previews so one Cancel rolls all the way
-     * back to where the user started. */
-    if (sim->previousMapData == NULL && sim->cachedMapData != NULL) {
-        sim->previousMapData = (BYTE *)malloc(sim->cachedMapDataLen);
-        if (sim->previousMapData) {
-            memcpy(sim->previousMapData, sim->cachedMapData,
-                   sim->cachedMapDataLen);
-            sim->previousMapDataLen = sim->cachedMapDataLen;
-            memcpy(sim->previousMapName, sim->mapName,
-                   sizeof(sim->previousMapName));
-        }
-    }
+    stashCommittedMap(sim);
 
     /* Wipe the existing map/pill/base/start contents before mapRead
      * touches them. mapRead's RLE-decoder only writes cells encoded
@@ -559,6 +613,10 @@ bool serverSimReloadMap(ServerSim *sim, const char *mapFileName) {
         "serverSimReloadMap: now '%s' (%d compressed bytes)",
         sim->mapName, sim->cachedMapDataLen);
 
+    /* Kept because a scenario is discovered beside its .map and the display
+       name cannot find the file again. */
+    SDL_strlcpy(sim->mapFilePath, mapFileName, sizeof(sim->mapFilePath));
+
     serverSimApplyMapChange(sim);
     return TRUE;
 }
@@ -586,20 +644,7 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
         return FALSE;
     }
 
-    /* Stash the currently-committed map as the "previous" snapshot
-     * before we touch the sim. Keep the ORIGINAL committed map
-     * across a chain of previews so one Cancel rolls all the way
-     * back to where the user started. */
-    if (sim->previousMapData == NULL && sim->cachedMapData != NULL) {
-        sim->previousMapData = (BYTE *)malloc(sim->cachedMapDataLen);
-        if (sim->previousMapData) {
-            memcpy(sim->previousMapData, sim->cachedMapData,
-                   sim->cachedMapDataLen);
-            sim->previousMapDataLen = sim->cachedMapDataLen;
-            memcpy(sim->previousMapName, sim->mapName,
-                   sizeof(sim->previousMapName));
-        }
-    }
+    stashCommittedMap(sim);
 
     /* Wipe the existing map/pill/base/start contents before the
      * decoder touches them. mapLoadCompressedMap's RLE-decoder only
@@ -710,6 +755,9 @@ bool serverSimReloadCompressedInMemory(ServerSim *sim,
         "serverSimReloadCompressedInMemory: now '%s' (%d compressed bytes)",
         sim->mapName, sim->cachedMapDataLen);
 
+    /* Bytes, not a file — nothing to look beside. */
+    sim->mapFilePath[0] = '\0';
+
     serverSimApplyMapChange(sim);
     return TRUE;
 }
@@ -753,16 +801,7 @@ bool serverSimReloadRandomMap(ServerSim *sim, const MapGenConfig *cfg) {
         return FALSE;
     }
 
-    if (sim->previousMapData == NULL && sim->cachedMapData != NULL) {
-        sim->previousMapData = (BYTE *)malloc(sim->cachedMapDataLen);
-        if (sim->previousMapData) {
-            memcpy(sim->previousMapData, sim->cachedMapData,
-                   sim->cachedMapDataLen);
-            sim->previousMapDataLen = sim->cachedMapDataLen;
-            memcpy(sim->previousMapName, sim->mapName,
-                   sizeof(sim->previousMapName));
-        }
-    }
+    stashCommittedMap(sim);
 
     if (!serverSimApplyRandomMapConfig(sim, cfg)) return FALSE;
 
@@ -832,14 +871,31 @@ bool serverSimRevertPreview(ServerSim *sim) {
         sim->cachedMapDataLen = 0;
     }
 
+    /* The map that was displaced is back, so the file it was read from is
+       the live one again and a scenario can be found beside it. Empty when
+       that map came from bytes, which is the same answer as before. */
+    SDL_strlcpy(sim->mapFilePath, sim->previousMapPath,
+                sizeof(sim->mapFilePath));
+
     free(sim->previousMapData);
     sim->previousMapData = NULL;
     sim->previousMapDataLen = 0;
     sim->previousMapName[0] = '\0';
+    sim->previousMapPath[0] = '\0';
 
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "serverSimRevertPreview: rolled back to '%s'", sim->mapName);
     serverSimApplyMapChange(sim);
+
+    /* The map change above seated the template from scratch, which is what a
+       map the host commits wants and not what one they backed out of wants:
+       the seats are back at the template's counts and the host's trim is
+       gone. Put their counts back. */
+    if (sim->previousSeatsValid) {
+        serverSimScenarioTrimSeatsTo(sim, sim->previousSeats);
+    }
+    sim->previousSeatsValid = false;
+    memset(sim->previousSeats, 0, sizeof(sim->previousSeats));
     return TRUE;
 }
 
@@ -849,6 +905,11 @@ void serverSimCommitPreview(ServerSim *sim) {
     sim->previousMapData = NULL;
     sim->previousMapDataLen = 0;
     sim->previousMapName[0] = '\0';
+    sim->previousMapPath[0] = '\0';
+    /* The host keeps the previewed map, so the lobby the old one had is gone
+       for good and there is nothing left to put back. */
+    sim->previousSeatsValid = false;
+    memset(sim->previousSeats, 0, sizeof(sim->previousSeats));
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "serverSimCommitPreview: committed '%s'", sim->mapName);
 }
@@ -877,9 +938,15 @@ static bool relPathIsSafe(const char *p) {
  * virtual "Uploads" folder (and "Uploads/<name>") redirects to the configured
  * persist directory when the sim has one set; every other path — and the unset
  * case — resolves under the map-dir root as before. relPath must already have
- * passed relPathIsSafe. out holds at least FILENAME_MAX bytes. */
-static void serverSimResolveMapPath(const ServerSim *sim, const char *relPath,
-                                     char *out, size_t outSize) {
+ * passed relPathIsSafe. out holds at least FILENAME_MAX bytes.
+ *
+ * Not static: the lobby's set-map command and the upload preview's use-local
+ * path name a map by the same relPath a listing gave, and each used to build
+ * "<map root>/<relPath>" for itself. With a persist directory configured that
+ * opens a different file from the one the client picked, so both come through
+ * here instead. Declared in server_sim_shared.h. */
+void serverSimResolveMapPath(const ServerSim *sim, const char *relPath,
+                             char *out, size_t outSize) {
     const char *persist =
         (sim && sim->uploadPersistDir[0] != '\0') ? sim->uploadPersistDir : NULL;
     if (persist != NULL && relPath != NULL) {
@@ -898,6 +965,20 @@ static void serverSimResolveMapPath(const ServerSim *sim, const char *relPath,
     } else {
         SDL_snprintf(out, outSize, "%s/%s", root, relPath);
     }
+}
+
+void serverSimGetUploadsDir(const ServerSim *sim, char *out, size_t outLen) {
+    if (out == NULL || outLen == 0) {
+        return;
+    }
+    out[0] = '\0';
+    if (sim == NULL) {
+        return;
+    }
+    /* The virtual folder's own name, resolved the way any map path under it
+       is, so the prefix a caller compares against is the one the resolve
+       would have produced. */
+    serverSimResolveMapPath(sim, "Uploads", out, outLen);
 }
 
 int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
@@ -937,6 +1018,10 @@ int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
         e->isFolder = isDir;
         e->modTime  = (int64_t)info.modify_time;
         e->size     = isDir ? 0 : (int64_t)info.size;
+        /* A folder is never scripted; the question is about a map file, and
+           `child` is the full path the answer needs. */
+        e->scripted = isDir ? false
+                            : serverSimScenarioMapIsScripted(sim, child);
     }
     SDL_free(list);
 
@@ -957,6 +1042,47 @@ int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
     }
 
     return count;
+}
+
+/* The public entry and the scenario library's hold the same three lengths.
+   They are stated twice because a gui translation unit reads public/ and
+   cannot reach scenario_api/; this file sees both, and is where a change to
+   one without the other fails to build. */
+BOLO_STATIC_ASSERT(SERVER_SCENARIO_FILE_LEN == SCN_DIR_FILE_LEN,
+                   server_scenario_file_matches_the_directory_entry);
+BOLO_STATIC_ASSERT(SERVER_SCENARIO_NAME_LEN == SCN_DIR_NAME_LEN,
+                   server_scenario_name_matches_the_directory_entry);
+BOLO_STATIC_ASSERT(SERVER_SCENARIO_DESC_LEN == SCN_DIR_DESC_LEN,
+                   server_scenario_description_matches_the_directory_entry);
+
+int serverSimEnumerateScenarioDir(ServerSim *sim,
+                                  ServerScenarioEntry *entries,
+                                  int maxEntries) {
+    ScnDirEntry *dirRows;
+    int          got;
+    int          i;
+
+    if (entries == NULL || maxEntries <= 0) return 0;
+
+    /* Read into heap rather than a stack array: an entry carries a
+       description, so a full listing runs to tens of kilobytes and this is
+       called from a UI thread as readily as a server one. */
+    dirRows = (ScnDirEntry *)calloc((size_t)maxEntries, sizeof(*dirRows));
+    if (dirRows == NULL) return 0;
+
+    got = serverSimScenarioListDir(sim, dirRows, maxEntries);
+    for (i = 0; i < got; i++) {
+        ServerScenarioEntry *e = &entries[i];
+        SDL_strlcpy(e->file, dirRows[i].file, sizeof(e->file));
+        SDL_strlcpy(e->name, dirRows[i].name, sizeof(e->name));
+        SDL_strlcpy(e->description, dirRows[i].description,
+                    sizeof(e->description));
+        e->maxPlayers = dirRows[i].maxPlayers;
+        e->bots       = dirRows[i].bots;
+        e->bound      = dirRows[i].bound;
+    }
+    free(dirRows);
+    return got;
 }
 
 static void searchDirRecursive(const char *fullRoot,
@@ -1029,6 +1155,9 @@ static void searchDirRecursive(const char *fullRoot,
         e->isFolder = false;
         e->modTime  = (int64_t)info.modify_time;
         e->size     = (int64_t)info.size;
+        /* Written rather than left alone: the caller's array is not zeroed,
+           and the search's own results do not carry the flag. */
+        e->scripted = false;
     }
     SDL_free(list);
 }
@@ -1136,6 +1265,20 @@ static void serverSimApplyMapChange(ServerSim *sim) {
         }
     }
 
+    /* The map is loaded and the starts are reconciled, so this is the first
+       point a seat can be given one on the new map. Whoever owns the
+       scenario is told about the file first and the seating reads whatever
+       template they leave; the settings publish below then carries a lobby
+       that is already the new map's. */
+    serverSimScenarioOnMapChanged(sim, sim->mapFilePath);
+
+    /* Whoever owns the scenario has just attached the new map's or let the
+       previous one go, so the identity above is the new map's and this is
+       the point the lobby's own settings follow it. A server booting straight
+       onto a scripted map makes the same call for itself, having had no
+       commit to reach it through. */
+    serverSimScenarioApplyLobbyRules(sim);
+
     transportUdpServerOnLobbyMapChange(sim);
     {
         ControlEvent evt;
@@ -1166,14 +1309,46 @@ bool serverSimReadMapFile(ServerSim *sim, const char *relPath,
     if (!fp) return false;
     if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); return false; }
     long sz = ftell(fp);
-    if (sz <= 0 || (size_t)sz > LOBBY_MAP_UPLOAD_MAX_BYTES) { fclose(fp); return false; }
+    if (sz <= 0) { fclose(fp); return false; }
     if (fseek(fp, 0, SEEK_SET) != 0) { fclose(fp); return false; }
-    uint8_t *buf = (uint8_t *)malloc((size_t)sz);
+
+    /* A file inside the cap is read whole; one over it is read as a prefix
+       that large. A whole plain map fits inside the cap, so the front of an
+       over-cap file still holds its map however large whatever follows it
+       is — which is how a map with a scenario chunk appended gets read at
+       all, where sizing the read off the file would refuse it outright. */
+    bool   overCap = (size_t)sz > LOBBY_MAP_UPLOAD_MAX_BYTES;
+    size_t want    = overCap ? (size_t)LOBBY_MAP_UPLOAD_MAX_BYTES : (size_t)sz;
+
+    uint8_t *buf = (uint8_t *)malloc(want);
     if (!buf) { fclose(fp); return false; }
-    size_t got = fread(buf, 1, (size_t)sz, fp);
+    size_t got = fread(buf, 1, want, fp);
     fclose(fp);
-    if (got != (size_t)sz) { free(buf); return false; }
+    if (got != want) { free(buf); return false; }
+
+    /* Where the map stops is where this read stops: a chunk appended after a
+       map is the server's business rather than a client's, and the preview
+       only ever wants the map.
+
+       What is not a map is handed back as it was read. This function reads
+       bytes for a caller and does not judge them, and a file that does not
+       parse is a file with no chunk in it to keep back. The one exception is
+       the over-cap file, which only ever got this far because its front
+       might have been a map: with no map in it there is nothing to trim it
+       to, so it is refused, as an over-cap file always has been. */
+    size_t bodyLen = 0;
+    if (boloMapBodyLength(buf, got, &bodyLen)) {
+        if (bodyLen < got) {
+            uint8_t *trimmed = (uint8_t *)realloc(buf, bodyLen);
+            if (trimmed != NULL) buf = trimmed;
+        }
+        got = bodyLen;
+    } else if (overCap) {
+        free(buf);
+        return false;
+    }
+
     *outBytes = buf;
-    *outLen   = (size_t)sz;
+    *outLen   = got;
     return true;
 }

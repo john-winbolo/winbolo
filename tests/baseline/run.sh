@@ -34,11 +34,78 @@ case "$(basename "$BIN")" in
   *)               BIN_DS_DEFAULT="$(dirname "$BIN")/WinBoloDS" ;;
 esac
 BIN_DS="${2:-$BIN_DS_DEFAULT}"
+
+# ── Launching the binaries ─────────────────────────────────────────
+# Start every DS and headless through these two, never through "$BIN_DS"
+# or "$BIN" directly, so the -nocrashreporting below cannot be forgotten
+# at a new call site.
+#
+# Without it, sentryInit (src/common/sentry_integration.c) opens a crash
+# database at SDL_GetPrefPath("WinBolo","WinBolo")/.sentry-native whenever
+# the build carries a SENTRY_DSN. That is ONE directory per user, shared by
+# the DS and every client of every scenario at once, and shared again with
+# every other worktree and every concurrent run on the machine — the one
+# piece of machine-global state the harness still touched after the ports
+# went ephemeral. It also costs a crash-handler install per process and, on
+# a crash, network I/O inside the scenario's 60 s budget.
+#
+# sentryInit scans argv for the flag itself, before either binary parses its
+# arguments. WinBoloDS ignores an argument it does not recognise; WinBoloHeadless
+# rejects one, so its parser accepts -nocrashreporting and does nothing with it
+# (headless_main.c). Inert on a build with no DSN, harmless everywhere else.
+#
+# Both wrappers exec once they are already running in a child of the script,
+# which is where `ds_bin ... &` puts them. Without that, the pid a launch
+# records is the wrapper's own subshell and not the game process. The subshell
+# lives exactly as long as its child, so waiting on it still returns the right
+# status and nothing looks wrong — but every kill in this file then lands on
+# the wrapper and leaves the server or client it meant to stop running. A
+# scenario whose DS does not stop itself leaks one per run, which a suite
+# multiplies into a machine full of servers holding ports: the opposite of
+# what the rest of this work is for.
+#
+# $BASH_SUBSHELL is 0 at the top level of the script and greater than 0 in
+# any subshell, which includes a backgrounded `ds_bin ... &`. So this execs for
+# every backgrounded launch and runs the binary as an ordinary child for the
+# foreground ones, where exec would replace the harness itself.
+#
+# Not $BASHPID: that variable arrived in bash 4.0, and macOS ships 3.2 as
+# /bin/bash, which is what `bash run.sh` under ctest resolves to there. On 3.2
+# it expands to nothing, the test is always true, and every foreground launch
+# execs the harness away — the scenario then "passes" with whatever status
+# the binary exits with, no diff ever runs, and the DS a single-client UDP
+# scenario started is orphaned. $BASH_SUBSHELL has been in bash since 3.0.
+ds_bin() {
+  if [ "${BASH_SUBSHELL:-0}" -gt 0 ]; then exec "$BIN_DS" "$@" -nocrashreporting; fi
+  "$BIN_DS" "$@" -nocrashreporting
+}
+headless_bin() {
+  if [ "${BASH_SUBSHELL:-0}" -gt 0 ]; then exec "$BIN" "$@" -nocrashreporting; fi
+  "$BIN" "$@" -nocrashreporting
+}
+
 DIR="$(cd "$(dirname "$0")" && pwd)"
 BRAINS="$(cd "$DIR/../brains" && pwd)"
 MAPS="$DIR/maps"
 EXPECTED="$DIR/expected"
-ACTUAL="$DIR/actual"
+# Captures go to a private directory, not straight to tests/baseline/actual.
+# Two runs of this suite at once — a second ctest, or a developer running
+# alongside CI — otherwise write the same $name.jsonl and $name.ds.err and
+# overwrite each other's output mid-diff, which fails scenarios in both runs
+# for no reason connected to the code. Per-run ports fixed the servers
+# colliding; this fixes their output colliding.
+#
+# The directory is copied to tests/baseline/actual/ on the way out, so the
+# post-mortem convention still holds. Last writer wins there, which costs
+# nothing: every diff has already been taken against the private copy.
+ACTUAL_PUBLISH="$DIR/actual"
+ACTUAL="$(mktemp -d "${TMPDIR:-/tmp}/wb-baseline.XXXXXX")"
+
+publish_actual() {
+  mkdir -p "$ACTUAL_PUBLISH"
+  cp -Rf "$ACTUAL"/. "$ACTUAL_PUBLISH"/ 2>/dev/null || true
+  rm -rf "$ACTUAL"
+}
 
 mkdir -p "$ACTUAL"
 
@@ -60,6 +127,13 @@ COMMANDS="$DIR/commands"
 #                 built. The fixtures were recorded on Linux (=2); the
 #                 runner's platform isn't a regression target.
 NORMALIZE_EVENTS_SED='s/"tick":[0-9]+,//; s/"pingMs":[0-9]+/"pingMs":0/; s/"countryCode":"[^"]*"/"countryCode":"??"/g; s/"country":"[^"]*"/"country":"??"/g; s/"clientType":[0-9]+/"clientType":2/g'
+
+# Windows text streams write CRLF; committed fixtures use LF. Compare all
+# other bytes as before. JSON strings encode carriage returns as escapes.
+diff_text() {
+  local mode="$1"
+  diff "$mode" <(tr -d '\r' < "$2") <(tr -d '\r' < "$3")
+}
 
 # Diff two JSONL files after the field normalization above, with a
 # lexical sort. sort -u collapses duplicate (untickled) lines because
@@ -118,48 +192,86 @@ diff_sorted_lobby() {
     <(sed -E "$NORMALIZE_EVENTS_SED" "$actual"   | sed -E "$LOBBY_TEARDOWN_SED" | sort -u)
 }
 
-# ── Fixed-port hygiene ─────────────────────────────────────────────
-# Every UDP scenario binds a hardcoded port (the CTest RESOURCE_LOCK groups in
-# CMakeLists.txt pair the scenarios to ports). The DS's listen socket is
-# exclusive on every platform — createUdpSocket(true) in
-# src/bolo/transport_udp_common.c skips SO_REUSEADDR/SO_REUSEPORT for the
-# server case — so a stale WinBoloDS still holding one of these ports makes the
-# DS we launch here fail bind() and exit immediately, while the headless
-# clients connect to that OLDER server instead. The resulting captures differ
-# from the fixtures in ways that read as a code regression rather than as a
-# squatted port, so both ends of that are handled explicitly below.
+# ── Server port ────────────────────────────────────────────────────
+# Every UDP scenario launches its DS with `-port 0` and reads back the port
+# the OS actually gave it, which the DS prints on stderr as
+# "[UDP SERVER] listening on UDP port N" (transport_udp_server.c).
 #
-# Strays outlive a run because the EXIT trap in each helper cannot fire when
-# the harness is SIGKILLed — a CTest TIMEOUT, or an IDE stopping the run.
+# This is why there is no fixed-port bookkeeping here any more. Fixed ports
+# meant two copies of the suite contended for the same nine numbers, an
+# interrupted run left a DS squatting one (its EXIT trap never fires when
+# the harness is SIGKILLed), and a unit test's loopback harness binding
+# 127.0.0.1:0 could be handed one out from under a scenario about to start.
+# All three were the same bug — a port this harness does not control — and
+# a port nobody else can name cannot be taken by any of them. The reaper
+# that used to kill stale DSs by name-plus-port, and the RESOURCE_LOCK
+# groups in CMakeLists.txt that serialised scenarios sharing a port, both
+# went with it.
 
-# Kill any leftover DS still holding this scenario's port. The pattern is
-# scoped to the DS binary name plus this exact -port argument, so a real server
-# on some other port is never touched. pkill -f is present on both macOS (BSD)
-# and Linux (procps); lsof and fuser are not portable enough to rely on here.
-reap_stale_ds() {
-  local port="$1"
-  local ds_name
-  ds_name="$(basename "$BIN_DS")"
-  if pkill -f "$ds_name .*-port $port( |\$)" 2>/dev/null; then
-    echo "reaped a stale $ds_name holding port $port" >&2
-    # SIGTERM is asynchronous; give the old process time to close its socket
-    # before we try to bind it.
-    sleep 0.5
-  fi
+# Wait for a just-launched DS to report the port it bound, and echo it.
+# $1 = the DS's captured stderr, $2 = its pid.
+#
+# This doubles as the readiness check: the line is printed after bind(), so
+# seeing it means the socket is up and there is no need to sleep and hope.
+# Fails if the DS dies or never prints one, which is what a bad map, a
+# missing brain or any other startup failure looks like from here.
+#
+# Readiness is not the whole story, though, which is why every caller still
+# sleeps a beat after this returns. The port line is printed from bind(),
+# which is early: the spectator ring, the upload config and the rest of
+# serverInstanceStartup still follow it. These captures are event-ordered and
+# were recorded against a client that connected a beat after the server
+# settled, so keep that beat. Without it the alliance scenarios pick up an
+# extra CTRL_ALLIANCE_LEAVE.
+await_ds_port() {
+  local errfile="$1"
+  local ds_pid="$2"
+  local waited=0
+  local p=""
+  while [ "$waited" -lt 200 ]; do
+    p=$(sed -n 's/.*listening on UDP port \([0-9][0-9]*\).*/\1/p' \
+            "$errfile" 2>/dev/null | head -1)
+    if [ -n "$p" ]; then
+      echo "$p"
+      return 0
+    fi
+    kill -0 "$ds_pid" 2>/dev/null || break
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+  echo "DS FAILED TO START (never reported a listening port)" >&2
+  return 1
 }
 
-# Verify the DS just launched actually owns its port. Its own bind() failure
-# message is the signal to test: the DS is an unwaited background child, so it
-# becomes a zombie on exit and `kill -0` still succeeds against it on both
-# macOS and Linux. $1 = port, $2 = the DS's captured stderr.
-require_ds_up() {
-  local port="$1"
-  local errfile="$2"
-  if grep -q "bind() failed" "$errfile" 2>/dev/null; then
-    echo "DS FAILED TO BIND (port $port already in use)"
-    return 1
-  fi
-  return 0
+# How long a scenario waits on one of its clients before calling it hung. Only
+# has to be shorter than the CTest timeout (60s); a healthy client finishes in
+# a few seconds. Override for a quicker check.
+CLIENT_WAIT_LIMIT="${CLIENT_WAIT_LIMIT:-40}"
+
+# Wait for a scenario client to exit, but not forever.
+#
+# A client that stops making progress otherwise parks the scenario in `wait`
+# until CTest's timeout kills the whole tree, and that failure arrives with no
+# output whatsoever: the scenario name has been echoed without a newline, so
+# the partial line dies in the buffer, and the log says neither which process
+# stopped nor where. Kill it at the deadline and name it instead. Returns 124,
+# the usual timed-out status, so the caller's CRASH line carries it.
+await_client() {
+  local pid="$1"
+  local label="$2"
+  local waited=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$waited" -ge "$CLIENT_WAIT_LIMIT" ]; then
+      echo
+      echo "  HUNG: $label did not exit within ${CLIENT_WAIT_LIMIT}s; killing it"
+      kill -9 "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      return 124
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  wait "$pid"
 }
 
 run() {
@@ -167,15 +279,15 @@ run() {
   local map="$2"
   local brain="$3"
   echo -n "  $name ... "
-  "$BIN" --fast --map "$map" --brain "$brain" \
+  headless_bin --fast --map "$map" --brain "$brain" \
       --ticks 500 --seed 42 \
       --log-state "$ACTUAL/$name.json" --quiet \
       > "$ACTUAL/$name.stdout" 2>&1 || { echo "CRASH"; return 1; }
-  if diff -q "$EXPECTED/$name.json" "$ACTUAL/$name.json" >/dev/null 2>&1; then
+  if diff_text -q "$EXPECTED/$name.json" "$ACTUAL/$name.json" >/dev/null 2>&1; then
     echo "OK"
   else
     echo "DIFF"
-    diff -u "$EXPECTED/$name.json" "$ACTUAL/$name.json" 2>&1 | head -40
+    diff_text -u "$EXPECTED/$name.json" "$ACTUAL/$name.json" 2>&1 | head -40
     return 1
   fi
 }
@@ -205,13 +317,13 @@ run_changes() {
   if [ -n "$terrain" ]; then
     args+=( --log-terrain )
   fi
-  "$BIN" "${args[@]}" \
+  headless_bin "${args[@]}" \
       > "$ACTUAL/$name.stdout" 2>&1 || { echo "CRASH"; return 1; }
-  if diff -q "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" >/dev/null 2>&1; then
+  if diff_text -q "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" >/dev/null 2>&1; then
     echo "OK"
   else
     echo "DIFF"
-    diff -u "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" 2>&1 | head -40
+    diff_text -u "$EXPECTED/$name.jsonl" "$ACTUAL/$name.jsonl" 2>&1 | head -40
     return 1
   fi
 }
@@ -221,7 +333,7 @@ run_ds() {
   local bots="$2"
   local ally="$3"
   echo -n "  $name ... "
-  local args=( -map "$MAPS/Everard Island.map" -port 50001 -nolobby
+  local args=( -map "$MAPS/Everard Island.map" -port 0 -nolobby
                -gametype open
                -bots "$bots" -brain "$BRAINS/sit_and_log.lua"
                -seed 42 -ticks 500
@@ -230,16 +342,14 @@ run_ds() {
   if [ -n "$ally" ]; then
     args+=( -allybots "$ally" )
   fi
-  reap_stale_ds 50001
-  "$BIN_DS" "${args[@]}" \
+  ds_bin "${args[@]}" \
       > "$ACTUAL/$name.out" 2> "$ACTUAL/$name.err" || {
-        require_ds_up 50001 "$ACTUAL/$name.err" || return 1
         echo "CRASH"; return 1; }
-  if diff -q "$EXPECTED/$name.out" "$ACTUAL/$name.out" >/dev/null 2>&1; then
+  if diff_text -q "$EXPECTED/$name.out" "$ACTUAL/$name.out" >/dev/null 2>&1; then
     echo "OK"
   else
     echo "DIFF"
-    diff -u "$EXPECTED/$name.out" "$ACTUAL/$name.out" 2>&1 | head -40
+    diff_text -u "$EXPECTED/$name.out" "$ACTUAL/$name.out" 2>&1 | head -40
     return 1
   fi
 }
@@ -250,7 +360,7 @@ run_events_fast() {
   local map="$2"
   local brain="$3"
   echo -n "  $name ... "
-  "$BIN" --fast --map "$map" --brain "$brain" \
+  headless_bin --fast --map "$map" --brain "$brain" \
       --ticks 500 --seed 42 \
       --log-events "$ACTUAL/$name.jsonl" --quiet \
       > "$ACTUAL/$name.out" 2> "$ACTUAL/$name.err" || { echo "CRASH"; return 1; }
@@ -266,16 +376,15 @@ run_events_fast() {
 # Run WinBoloDS in the background and connect WinBoloHeadless --server to it,
 # capturing the headless's --log-events stream. The DS is unlimited (-ticks
 # omitted) and torn down via an EXIT trap so a crash in the headless still
-# leaves no orphaned server. Port 50002 is chosen to avoid the run_ds 50001.
+# leaves no orphaned server. The port is whatever the OS gave the DS (await_ds_port).
 run_events_udp() {
   local name="$1"
   local map="$2"
   local brain="$3"
-  local port=50002
+  local port
   echo -n "  $name ... "
 
-  reap_stale_ds "$port"
-  "$BIN_DS" -map "$map" -port "$port" -nolobby \
+  ds_bin -map "$map" -port 0 -nolobby \
             -gametype open \
             -bots 1 -brain "$brain" \
             -seed 42 \
@@ -288,14 +397,11 @@ run_events_udp() {
   # below where we trap - EXIT before returning.
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
 
-  # Brief sleep for the UDP socket to bind. The headless's join retry
-  # tolerates a slower startup, but a short delay avoids the first packet
-  # going to an unbound port.
-  sleep 0.5
-  require_ds_up "$port" "$ACTUAL/$name.ds.err" || return 1
+  port=$(await_ds_port "$ACTUAL/$name.ds.err" "$ds_pid") || return 1
+  sleep 0.5  # settle; see await_ds_port
 
   local rc=0
-  "$BIN" --server 127.0.0.1 --port "$port" --brain "$brain" \
+  headless_bin --server 127.0.0.1 --port "$port" --brain "$brain" \
          --ticks 500 --seed 42 \
          --log-events "$ACTUAL/$name.jsonl" --quiet \
          > "$ACTUAL/$name.out" 2> "$ACTUAL/$name.err" || rc=$?
@@ -336,7 +442,7 @@ run_events_cmd_fast() {
   local map="$2"
   local cmd_file="$3"
   echo -n "  $name ... "
-  "$BIN" --fast --map "$map" --cmd-stdin "$cmd_file" \
+  headless_bin --fast --map "$map" --cmd-stdin "$cmd_file" \
       --ticks 500 --seed 42 \
       --log-events "$ACTUAL/$name.jsonl" --quiet \
       > "$ACTUAL/$name.out" 2> "$ACTUAL/$name.err" || { echo "CRASH"; return 1; }
@@ -349,6 +455,302 @@ run_events_cmd_fast() {
   fi
 }
 
+# Run WinBoloHeadless --fast with a command stream and a scenario script
+# beside the map, and look for the line the scenario ends the round with.
+# Arguments: name, map, command file, bot brain, ticks, the line to find.
+#
+# The check is the round's own outcome rather than a recorded log. A scenario
+# says what happened when it ends the round, so the line is the result; a run
+# that stalls, or one whose waves never field, never says it. --bot-brain is
+# what the held seats load when a wave fields one — not --brain, which is
+# this process's own player and is left out here.
+run_scenario_fast() {
+  local name="$1"
+  local map="$2"
+  local cmd_file="$3"
+  local brain="$4"
+  local ticks="$5"
+  local want="$6"
+  echo -n "  $name ... "
+  headless_bin --fast --map "$map" --cmd-stdin "$cmd_file" \
+      --bot-brain "$brain" \
+      --ticks "$ticks" --seed 42 \
+      --log-events "$ACTUAL/$name.jsonl" --quiet \
+      > "$ACTUAL/$name.out" 2> "$ACTUAL/$name.err" || { echo "CRASH"; return 1; }
+  if grep -qF "$want" "$ACTUAL/$name.jsonl"; then
+    echo "OK"
+  else
+    echo "NO END"
+    echo "    the round never said: $want"
+    # The attach line and any complaint about the script go to stderr; the
+    # scenario's own console lines go to stdout.
+    tail -10 "$ACTUAL/$name.err"
+    tail -10 "$ACTUAL/$name.out"
+    return 1
+  fi
+}
+
+# The same scenario over the wire: one WinBoloHeadless --server against a
+# WinBoloDS running the scripted map, checked by grep rather than by diff.
+#
+# Three things differ from every other UDP helper here, each for its own
+# reason.
+#
+# The lobby stays live. The raiders are a team of held seats and the scenario's
+# lobby template is what seats them, so -nolobby would leave the waves with
+# nothing to field. The seats are taken before anyone joins and
+# serverSimFindFreeSlot hands out the first free slot, so the held seats take
+# the low slots and the one human lands above them.
+#
+# The client only readies. start_game is refused in --server mode, so the
+# round is started by the lobby's own all-ready check: one ready human plus
+# the template's seats, which are seated ready as every bot seat is.
+#
+# Nothing on a clock ends this run. The client will not: when the scenario
+# ends the round its net status goes back to lobby and its game-tick counter
+# stops, so --ticks is never reached and is only a ceiling that must not
+# truncate the round. A scheduled server command will not either, at any
+# value. The server's tick restarts at 0 when a round starts and again when
+# the round hands back to the lobby — serverSimReturnToLobby runs the same
+# world reset — while the command pump compares against that counter in every
+# state. So a tick at or below the round's own end fires mid-round and cuts it
+# short, and a tick above it is not reached until the returned lobby, which
+# starts again from 0 and counts at 50/s against the round's 100/s: idling
+# there for a number past the round's end costs more than the client wait
+# below allows.
+#
+# So the run ends on the round's own word. The helper watches the client's
+# event log for the line the scenario ends with, then interrupts the server,
+# which is the clean quit — it publishes the shutdown the client leaves on.
+#
+# -ai yesfull is what lets a wave field a seat at all: the spawn arm refuses
+# on a server that runs no bots, and the dedicated server's default is none.
+# -brain is the DS spelling of what run_scenario_fast passes as --bot-brain —
+# the scenario's lobby names no brain of its own, so the held seats fall
+# back to the server's.
+#
+# Arguments: name, map, client command file, bot brain, client tick budget.
+run_scenario_swap_udp() {
+  local name="$1"
+  local map="$2"
+  local client_cmd="$3"
+  local brain="$4"
+  local ticks="$5"
+  local port
+  echo -n "  $name ... "
+
+  # A held seat leaving the roster is a CTRL_LOBBY_SLOT for one of the low
+  # slots carrying connected:false. The six seats hold 0-5, so the human's own
+  # slot and the empty ones a join replay reports are outside this.
+  local lost_seat='"playerNum":[0-5],"slot":[{]"connected":false'
+  # The line the scenario ends the round with, which the wait below watches
+  # for, and the line its last wave announces itself with, which is checked
+  # after the run. Both are needed and neither covers the other.
+  #
+  # The end line alone would pass on a round that never had seats: next_wave
+  # clamps what it asks for to the number of seats it found, so with no seats
+  # it fields nothing, times each wave out, and reaches the same end. The wave
+  # line is the scenario's own count of what it actually put on the field —
+  # only spawns that returned true are counted — so the third wave naming six
+  # says the template seated six, that all three waves ran, and that the seats
+  # handed back after waves one and two came round again. That last part is
+  # the swap this entry exists to exercise.
+  local held="The keep held."
+  local fielded="Wave 3 of 3: 6 raiders."
+  # The overflow disconnect and the runner lines checked at the end are both
+  # written through wb_log, which is silent unless WINBOLO_LOG names a
+  # category. Without this those checks would be reading a file that could
+  # never hold their lines, and would always pass. net=error carries the
+  # overflow disconnect; sim=info carries what bot_manager.c says each time a
+  # wave takes a seat's parked runner back or builds it a new one. The spec is
+  # a comma-separated list of category=level pairs, applied left to right
+  # (apply_env_log_spec in src/common/wb_log.c).
+  #
+  # Saved and put back rather than unset: this file is also run by hand, and a
+  # developer who set WINBOLO_LOG for the rest of the run should still have
+  # their own value after this launch.
+  local had_log=0
+  local old_log=""
+  if [ -n "${WINBOLO_LOG+x}" ]; then
+    had_log=1
+    old_log="$WINBOLO_LOG"
+  fi
+  export WINBOLO_LOG="net=error,sim=info"
+
+  ds_bin -map "$map" -port 0 -gametype open \
+            -ai yesfull -brain "$brain" \
+            -nowinbolonet -quiet -threads 1 \
+            -logfile "$ACTUAL/$name.dslog" \
+            > "$ACTUAL/$name.ds.out" 2> "$ACTUAL/$name.ds.err" &
+  local ds_pid=$!
+  if [ "$had_log" -eq 1 ]; then
+    export WINBOLO_LOG="$old_log"
+  else
+    unset WINBOLO_LOG
+  fi
+  trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
+
+  port=$(await_ds_port "$ACTUAL/$name.ds.err" "$ds_pid") || return 1
+  sleep 0.5  # settle; see await_ds_port
+
+  headless_bin --server 127.0.0.1 --port "$port" \
+         --cmd-stdin "$client_cmd" \
+         --ticks "$ticks" --seed 42 \
+         --log-events "$ACTUAL/$name.jsonl" --quiet \
+         > "$ACTUAL/$name.out" 2> "$ACTUAL/$name.err" &
+  local c_pid=$!
+  trap 'kill "$ds_pid" "$c_pid" 2>/dev/null || true; \
+        wait "$ds_pid" "$c_pid" 2>/dev/null || true' EXIT
+
+  # Wait for the round to say it is over. The client flushes its event log
+  # after every event, so the line lands there as soon as it is delivered.
+  # Bounded, because a round that never ends must not sit here until CTest
+  # kills the tree: a healthy run reaches this in about twenty seconds.
+  local end_limit=35
+  local waited=0
+  local ended=0
+  local gone=0
+  while :; do
+    if grep -qF "$held" "$ACTUAL/$name.jsonl" 2>/dev/null; then
+      ended=1
+      break
+    fi
+    # The client going early is the other way out of this loop; await_client
+    # below reports it, as it reports any other way the client stops.
+    if ! kill -0 "$c_pid" 2>/dev/null; then
+      gone=1
+      break
+    fi
+    if [ "$waited" -ge "$end_limit" ]; then
+      break
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  if [ "$ended" -eq 0 ] && [ "$gone" -eq 0 ]; then
+    kill "$ds_pid" "$c_pid" 2>/dev/null || true
+    wait "$ds_pid" "$c_pid" 2>/dev/null || true
+    trap - EXIT
+    echo "NO END"
+    echo "    the round never said: $held"
+    tail -10 "$ACTUAL/$name.ds.err"
+    tail -10 "$ACTUAL/$name.err"
+    return 1
+  fi
+
+  if [ "$ended" -eq 1 ]; then
+    # The clean quit. SIGINT sets the interrupt the server's console loop
+    # breaks on, and the shutdown that follows publishes CTRL_SERVER_SHUTDOWN
+    # with its broadcast — which is what the client leaves on.
+    kill -INT "$ds_pid" 2>/dev/null || true
+  fi
+
+  # Shorter than the 40s default, because this entry has already spent the
+  # wait above: 35s of waiting for the end line plus 40s of waiting for the
+  # client is more than the 60s CTest allows the whole entry, and a run killed
+  # by CTest takes the entry's own half-written line with it and prints no
+  # diagnostics at all. 12s is well past what a client needs to leave on the
+  # shutdown broadcast, and 35 + 12 plus the settle still fits inside 60.
+  # await_client reads this by name when it is called, so the caller's local
+  # is the value it uses.
+  local CLIENT_WAIT_LIMIT=12
+  local rc=0
+  await_client "$c_pid" "client" || rc=$?
+
+  kill "$ds_pid" 2>/dev/null || true
+  wait "$ds_pid" 2>/dev/null || true
+  trap - EXIT
+
+  if [ "$rc" -ne 0 ]; then
+    echo "CRASH ($rc)"
+    tail -10 "$ACTUAL/$name.ds.err"
+    tail -10 "$ACTUAL/$name.err"
+    return 1
+  fi
+
+  # Only the branch that drops a client for a full control channel. Three
+  # other lines start the same way — the baseline and bulk resets sent around
+  # a join and a map transfer — and they fire nowhere near a wave transition,
+  # so matching them would fail this entry for something it does not measure.
+  local overflow='control channel overflow for slot [0-9]+, deferring disconnect'
+  if grep -qE "$overflow" "$ACTUAL/$name.ds.err"; then
+    echo "OVERFLOW"
+    echo "    the control channel filled and the server dropped a client"
+    grep -nE "$overflow" "$ACTUAL/$name.ds.err" | head -5
+    tail -10 "$ACTUAL/$name.ds.err"
+    tail -10 "$ACTUAL/$name.err"
+    return 1
+  fi
+  if grep -qE "$lost_seat" "$ACTUAL/$name.jsonl"; then
+    echo "SEAT LOST"
+    echo "    a held seat left the roster over the swap"
+    grep -nE "$lost_seat" "$ACTUAL/$name.jsonl" | head -5
+    tail -10 "$ACTUAL/$name.ds.err"
+    tail -10 "$ACTUAL/$name.err"
+    return 1
+  fi
+  # The poll is what waits for the end line, so there is no second grep for it
+  # on the ordinary path. This only catches the other way out of that loop: a
+  # client that stopped on its own before the round ended and stopped for a
+  # reason await_client reads as clean — a server that died under it, say.
+  # Without this the wave check below could pass on a run that got as far as
+  # the third wave and no further.
+  if [ "$ended" -eq 0 ]; then
+    echo "NO END"
+    echo "    the client stopped before the round said: $held"
+    tail -10 "$ACTUAL/$name.ds.err"
+    tail -10 "$ACTUAL/$name.err"
+    return 1
+  fi
+  if ! grep -qF "$fielded" "$ACTUAL/$name.jsonl"; then
+    echo "NO WAVE"
+    echo "    the round ended, but never said: $fielded"
+    # What it did say, which names the wave it got to and how many it put on
+    # the field: none at all means the template seated no bots.
+    grep -o "Wave [0-9]* of [0-9]*: [0-9]* raiders." "$ACTUAL/$name.jsonl" | head -5
+    tail -10 "$ACTUAL/$name.ds.err"
+    tail -10 "$ACTUAL/$name.err"
+    return 1
+  fi
+
+  # Every fielding in this round has to take a seat's parked runner back
+  # rather than build a new one, which is the work this entry is here to
+  # watch. bot_manager.c writes one line per resume, at INFO in the sim
+  # category, which is what the sim=info above turns on.
+  #
+  # Twelve of them in a healthy run: Wave Defense fields 2 raiders on wave
+  # one, 4 on wave two and 6 on wave three (WAVES in the scenario, each
+  # clamped to the six seats the lobby template holds), and the countdown
+  # warms all six seats, so even a seat's first fielding finds a runner parked
+  # for it. Fewer than that means some fielding went another way.
+  local resume='botManager: bot [0-9]+ back on the field on its parked runner'
+  local resumes
+  resumes=$(grep -cE "$resume" "$ACTUAL/$name.ds.err" 2>/dev/null || true)
+  if [ "$resumes" -lt 12 ]; then
+    echo "NO RESUME"
+    echo "    $resumes fieldings took a parked runner back; expected 12"
+    grep -nE "$resume" "$ACTUAL/$name.ds.err" | head -5
+    tail -10 "$ACTUAL/$name.ds.err"
+    tail -10 "$ACTUAL/$name.err"
+    return 1
+  fi
+  # And none of them built a runner. A Wave Defense spawn names no brain and
+  # carries no init table, so every seat is fielded on exactly what its parked
+  # runner was built with; a build line here is a fielding paying for a Lua VM
+  # it did not need.
+  local rebuilt='building a fresh runner|building its runner now'
+  if grep -qE "$rebuilt" "$ACTUAL/$name.ds.err"; then
+    echo "REBUILT"
+    echo "    a fielding built a runner instead of taking the parked one"
+    grep -nE "$rebuilt" "$ACTUAL/$name.ds.err" | head -5
+    tail -10 "$ACTUAL/$name.ds.err"
+    tail -10 "$ACTUAL/$name.err"
+    return 1
+  fi
+  echo "OK ($resumes resumes)"
+}
+
 # WinBoloHeadless --server with --cmd-stdin, connected to a
 # WinBoloDS instance. The server side may optionally take its
 # own -cmd-stdin file (4th arg, "" for none). Compares sorted to
@@ -358,10 +760,10 @@ run_events_cmd_udp() {
   local map="$2"
   local client_cmd="$3"
   local server_cmd="${4:-}"
-  local port=50003
+  local port
   echo -n "  $name ... "
 
-  local ds_args=( -map "$map" -port "$port" -gametype open
+  local ds_args=( -map "$map" -port 0 -gametype open
                   -nowinbolonet -quiet -threads 1
                   -logfile "$ACTUAL/$name.dslog" )
   if [ -n "$server_cmd" ]; then
@@ -370,17 +772,16 @@ run_events_cmd_udp() {
     ds_args+=( -nolobby )
   fi
 
-  reap_stale_ds "$port"
-  "$BIN_DS" "${ds_args[@]}" \
+  ds_bin "${ds_args[@]}" \
             > "$ACTUAL/$name.ds.out" 2> "$ACTUAL/$name.ds.err" &
   local ds_pid=$!
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
 
-  sleep 0.5
-  require_ds_up "$port" "$ACTUAL/$name.ds.err" || return 1
+  port=$(await_ds_port "$ACTUAL/$name.ds.err" "$ds_pid") || return 1
+  sleep 0.5  # settle; see await_ds_port
 
   local rc=0
-  "$BIN" --server 127.0.0.1 --port "$port" \
+  headless_bin --server 127.0.0.1 --port "$port" \
          --cmd-stdin "$client_cmd" \
          --ticks 500 --seed 42 \
          --log-events "$ACTUAL/$name.jsonl" --quiet \
@@ -412,11 +813,10 @@ run_events_cmd_udp_server_only() {
   local name="$1"
   local map="$2"
   local server_cmd="$3"
-  local port=50004
+  local port
   echo -n "  $name ... "
 
-  reap_stale_ds "$port"
-  "$BIN_DS" -map "$map" -port "$port" -gametype open \
+  ds_bin -map "$map" -port 0 -gametype open \
             -nolobby \
             -cmd-stdin "$server_cmd" \
             -nowinbolonet -quiet -threads 1 \
@@ -425,11 +825,11 @@ run_events_cmd_udp_server_only() {
   local ds_pid=$!
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
 
-  sleep 0.5
-  require_ds_up "$port" "$ACTUAL/$name.ds.err" || return 1
+  port=$(await_ds_port "$ACTUAL/$name.ds.err" "$ds_pid") || return 1
+  sleep 0.5  # settle; see await_ds_port
 
   local rc=0
-  "$BIN" --server 127.0.0.1 --port "$port" \
+  headless_bin --server 127.0.0.1 --port "$port" \
          --ticks 500 --seed 42 \
          --log-events "$ACTUAL/$name.jsonl" --quiet \
          > "$ACTUAL/$name.out" 2> "$ACTUAL/$name.err" || rc=$?
@@ -464,31 +864,30 @@ run_events_cmd_udp_two_clients() {
   local map="$2"
   local c1_cmd="$3"
   local c2_cmd="$4"
-  local port=50005
+  local port
   echo -n "  $name ... "
 
-  reap_stale_ds "$port"
-  "$BIN_DS" -map "$map" -port "$port" -gametype open -nolobby \
+  ds_bin -map "$map" -port 0 -gametype open -nolobby \
             -nowinbolonet -quiet -threads 1 \
             -logfile "$ACTUAL/$name.dslog" \
             > "$ACTUAL/$name.ds.out" 2> "$ACTUAL/$name.ds.err" &
   local ds_pid=$!
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
 
-  sleep 0.5
-  require_ds_up "$port" "$ACTUAL/$name.ds.err" || return 1
+  port=$(await_ds_port "$ACTUAL/$name.ds.err" "$ds_pid") || return 1
+  sleep 0.5  # settle; see await_ds_port
 
   # Client 1 first, then a brief delay so it lands in slot 0
   # deterministically before client 2 joins into slot 1. Distinct
   # --name args so the server doesn't reject c2 as a duplicate.
-  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
+  headless_bin --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
          --cmd-stdin "$c1_cmd" \
          --ticks 500 --seed 42 \
          --log-events "$ACTUAL/${name}_c1.jsonl" --quiet \
          > "$ACTUAL/${name}_c1.out" 2> "$ACTUAL/${name}_c1.err" &
   local c1_pid=$!
   sleep 0.3
-  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
+  headless_bin --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
          --cmd-stdin "$c2_cmd" \
          --ticks 500 --seed 43 \
          --log-events "$ACTUAL/${name}_c2.jsonl" --quiet \
@@ -499,8 +898,8 @@ run_events_cmd_udp_two_clients() {
         wait "$ds_pid" "$c1_pid" "$c2_pid" 2>/dev/null || true' EXIT
 
   local c1_rc=0 c2_rc=0
-  wait "$c1_pid" || c1_rc=$?
-  wait "$c2_pid" || c2_rc=$?
+  await_client "$c1_pid" "client 1" || c1_rc=$?
+  await_client "$c2_pid" "client 2" || c2_rc=$?
 
   kill "$ds_pid" 2>/dev/null || true
   wait "$ds_pid" 2>/dev/null || true
@@ -543,31 +942,30 @@ run_events_cmd_udp_two_clients_lobby() {
   local map="$2"
   local c1_cmd="$3"
   local c2_cmd="$4"
-  local port=50007
+  local port
   echo -n "  $name ... "
 
-  reap_stale_ds "$port"
-  "$BIN_DS" -map "$map" -port "$port" -gametype open \
+  ds_bin -map "$map" -port 0 -gametype open \
             -nowinbolonet -quiet -threads 1 \
             -logfile "$ACTUAL/$name.dslog" \
             > "$ACTUAL/$name.ds.out" 2> "$ACTUAL/$name.ds.err" &
   local ds_pid=$!
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
 
-  sleep 0.5
-  require_ds_up "$port" "$ACTUAL/$name.ds.err" || return 1
+  port=$(await_ds_port "$ACTUAL/$name.ds.err" "$ds_pid") || return 1
+  sleep 0.5  # settle; see await_ds_port
 
   # Client 1 first, then a brief delay so it lands in slot 0
   # deterministically before client 2 joins into slot 1. Distinct
   # --name args so the server doesn't reject c2 as a duplicate.
-  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
+  headless_bin --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
          --cmd-stdin "$c1_cmd" \
          --ticks 500 --seed 42 \
          --log-events "$ACTUAL/${name}_c1.jsonl" --quiet \
          > "$ACTUAL/${name}_c1.out" 2> "$ACTUAL/${name}_c1.err" &
   local c1_pid=$!
   sleep 0.3
-  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
+  headless_bin --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
          --cmd-stdin "$c2_cmd" \
          --ticks 500 --seed 43 \
          --log-events "$ACTUAL/${name}_c2.jsonl" --quiet \
@@ -578,8 +976,8 @@ run_events_cmd_udp_two_clients_lobby() {
         wait "$ds_pid" "$c1_pid" "$c2_pid" 2>/dev/null || true' EXIT
 
   local c1_rc=0 c2_rc=0
-  wait "$c1_pid" || c1_rc=$?
-  wait "$c2_pid" || c2_rc=$?
+  await_client "$c1_pid" "client 1" || c1_rc=$?
+  await_client "$c2_pid" "client 2" || c2_rc=$?
 
   kill "$ds_pid" 2>/dev/null || true
   wait "$ds_pid" 2>/dev/null || true
@@ -622,38 +1020,37 @@ run_events_cmd_udp_three_clients() {
   local c1_cmd="$3"
   local c2_cmd="$4"
   local c3_cmd="$5"
-  local port=50008
+  local port
   echo -n "  $name ... "
 
-  reap_stale_ds "$port"
-  "$BIN_DS" -map "$map" -port "$port" -gametype open -nolobby \
+  ds_bin -map "$map" -port 0 -gametype open -nolobby \
             -nowinbolonet -quiet -threads 1 \
             -logfile "$ACTUAL/$name.dslog" \
             > "$ACTUAL/$name.ds.out" 2> "$ACTUAL/$name.ds.err" &
   local ds_pid=$!
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
 
-  sleep 0.5
-  require_ds_up "$port" "$ACTUAL/$name.ds.err" || return 1
+  port=$(await_ds_port "$ACTUAL/$name.ds.err" "$ds_pid") || return 1
+  sleep 0.5  # settle; see await_ds_port
 
   # Stagger joins by 0.3s each so slot assignment is deterministic
   # (c1→0, c2→1, c3→2). Distinct --name args so the server doesn't
   # reject a duplicate.
-  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
+  headless_bin --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
          --cmd-stdin "$c1_cmd" \
          --ticks 500 --seed 42 \
          --log-events "$ACTUAL/${name}_c1.jsonl" --quiet \
          > "$ACTUAL/${name}_c1.out" 2> "$ACTUAL/${name}_c1.err" &
   local c1_pid=$!
   sleep 0.3
-  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
+  headless_bin --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
          --cmd-stdin "$c2_cmd" \
          --ticks 500 --seed 43 \
          --log-events "$ACTUAL/${name}_c2.jsonl" --quiet \
          > "$ACTUAL/${name}_c2.out" 2> "$ACTUAL/${name}_c2.err" &
   local c2_pid=$!
   sleep 0.3
-  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot3 \
+  headless_bin --server 127.0.0.1 --port "$port" --name HeadlessBot3 \
          --cmd-stdin "$c3_cmd" \
          --ticks 500 --seed 44 \
          --log-events "$ACTUAL/${name}_c3.jsonl" --quiet \
@@ -664,9 +1061,9 @@ run_events_cmd_udp_three_clients() {
         wait "$ds_pid" "$c1_pid" "$c2_pid" "$c3_pid" 2>/dev/null || true' EXIT
 
   local c1_rc=0 c2_rc=0 c3_rc=0
-  wait "$c1_pid" || c1_rc=$?
-  wait "$c2_pid" || c2_rc=$?
-  wait "$c3_pid" || c3_rc=$?
+  await_client "$c1_pid" "client 1" || c1_rc=$?
+  await_client "$c2_pid" "client 2" || c2_rc=$?
+  await_client "$c3_pid" "client 3" || c3_rc=$?
 
   kill "$ds_pid" 2>/dev/null || true
   wait "$ds_pid" 2>/dev/null || true
@@ -707,11 +1104,10 @@ run_events_udp_two_clients_ticklimit() {
   local map="$2"
   local brain="$3"
   local ticklimit="$4"
-  local port=50006
+  local port
   echo -n "  $name ... "
 
-  reap_stale_ds "$port"
-  "$BIN_DS" -map "$map" -port "$port" -gametype open -nolobby \
+  ds_bin -map "$map" -port 0 -gametype open -nolobby \
             -ticklimit "$ticklimit" \
             -nowinbolonet -quiet -threads 1 \
             -logfile "$ACTUAL/$name.dslog" \
@@ -719,17 +1115,17 @@ run_events_udp_two_clients_ticklimit() {
   local ds_pid=$!
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
 
-  sleep 0.5
-  require_ds_up "$port" "$ACTUAL/$name.ds.err" || return 1
+  port=$(await_ds_port "$ACTUAL/$name.ds.err" "$ds_pid") || return 1
+  sleep 0.5  # settle; see await_ds_port
 
-  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
+  headless_bin --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
          --brain "$brain" \
          --ticks 500 --seed 42 \
          --log-events "$ACTUAL/${name}_c1.jsonl" --quiet \
          > "$ACTUAL/${name}_c1.out" 2> "$ACTUAL/${name}_c1.err" &
   local c1_pid=$!
   sleep 0.3
-  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
+  headless_bin --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
          --brain "$brain" \
          --ticks 500 --seed 43 \
          --log-events "$ACTUAL/${name}_c2.jsonl" --quiet \
@@ -740,8 +1136,8 @@ run_events_udp_two_clients_ticklimit() {
         wait "$ds_pid" "$c1_pid" "$c2_pid" 2>/dev/null || true' EXIT
 
   local c1_rc=0 c2_rc=0
-  wait "$c1_pid" || c1_rc=$?
-  wait "$c2_pid" || c2_rc=$?
+  await_client "$c1_pid" "client 1" || c1_rc=$?
+  await_client "$c2_pid" "client 2" || c2_rc=$?
 
   kill "$ds_pid" 2>/dev/null || true
   wait "$ds_pid" 2>/dev/null || true
@@ -793,11 +1189,10 @@ run_captures_udp_two_clients() {
   local map="$2"
   local brain="$3"
   local ticks="$4"
-  local port=50009
+  local port
   echo -n "  $name ... "
 
-  reap_stale_ds "$port"
-  "$BIN_DS" -map "$map" -port "$port" -gametype open -nolobby \
+  ds_bin -map "$map" -port 0 -gametype open -nolobby \
             -seed 42 \
             -nowinbolonet -quiet -threads 1 \
             -logfile "$ACTUAL/$name.dslog" \
@@ -805,19 +1200,19 @@ run_captures_udp_two_clients() {
   local ds_pid=$!
   trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
 
-  sleep 0.5
-  require_ds_up "$port" "$ACTUAL/$name.ds.err" || return 1
+  port=$(await_ds_port "$ACTUAL/$name.ds.err" "$ds_pid") || return 1
+  sleep 0.5  # settle; see await_ds_port
 
   # Client 1 first, then a brief delay so it lands in slot 0 deterministically
   # before client 2 joins into slot 1. Distinct --name args so the server
   # doesn't reject c2 as a duplicate.
-  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
+  headless_bin --server 127.0.0.1 --port "$port" --name HeadlessBot1 \
          --brain "$brain" \
          --ticks "$ticks" --seed 42 --quiet \
          > "$ACTUAL/${name}_c1.out" 2> "$ACTUAL/${name}_c1.err" &
   local c1_pid=$!
   sleep 0.3
-  "$BIN" --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
+  headless_bin --server 127.0.0.1 --port "$port" --name HeadlessBot2 \
          --brain "$brain" \
          --ticks "$ticks" --seed 43 --quiet \
          > "$ACTUAL/${name}_c2.out" 2> "$ACTUAL/${name}_c2.err" &
@@ -827,8 +1222,8 @@ run_captures_udp_two_clients() {
         wait "$ds_pid" "$c1_pid" "$c2_pid" 2>/dev/null || true' EXIT
 
   local c1_rc=0 c2_rc=0
-  wait "$c1_pid" || c1_rc=$?
-  wait "$c2_pid" || c2_rc=$?
+  await_client "$c1_pid" "client 1" || c1_rc=$?
+  await_client "$c2_pid" "client 2" || c2_rc=$?
 
   kill "$ds_pid" 2>/dev/null || true
   wait "$ds_pid" 2>/dev/null || true
@@ -841,12 +1236,12 @@ run_captures_udp_two_clients() {
 
   local fail=0
   for which in c1 c2; do
-    if diff -q "$EXPECTED/${name}_${which}.out" \
+    if diff_text -q "$EXPECTED/${name}_${which}.out" \
                "$ACTUAL/${name}_${which}.out" >/dev/null 2>&1; then
       :
     else
       [ "$fail" -eq 0 ] && echo "DIFF"
-      diff -u "$EXPECTED/${name}_${which}.out" \
+      diff_text -u "$EXPECTED/${name}_${which}.out" \
               "$ACTUAL/${name}_${which}.out" 2>&1 | head -40
       fail=1
     fi
@@ -870,6 +1265,10 @@ BASE_YARD_MAP="$MAPS/Base Yard.map"
 PILL_YARD_MAP="$MAPS/Pill Yard.map"
 GRASS_FLAT_MAP="$MAPS/Grass Flat.map"
 WATCH_ROAD_MAP="$MAPS/Watch Road.map"
+# A copy of Slugfest IV with a scenario script beside it. The copy is what
+# keeps the script off the Slugfest cases: a scenario is found by the map's
+# own file name.
+WAVE_DEFENSE_MAP="$MAPS/Wave Defense.map"
 
 dispatch_scenario() {
   local name="$1"
@@ -904,7 +1303,7 @@ dispatch_scenario() {
     road_spit_shell_tournament)
       run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/park_in_pill_range.lua" tournament 720 "" ;;
     road_spit_mine_open)
-      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/lay_mine_and_drive_over.lua" open 340 "" ;;
+      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/lay_mine_and_drive_over.lua" open 450 "" ;;
     road_spit_drown_open)
       run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/drive_into_deep_sea.lua" open 280 "" ;;
 
@@ -995,7 +1394,7 @@ dispatch_scenario() {
     base_yard_capture)
       run_changes "$name" "$BASE_YARD_MAP" "$BRAINS/drive_onto_neutral_base.lua" open 125 "" ;;
     base_yard_refuel)
-      run_changes "$name" "$BASE_YARD_MAP" "$BRAINS/refuel_on_neutral_base.lua" strict 222 "" terrain ;;
+      run_changes "$name" "$BASE_YARD_MAP" "$BRAINS/refuel_on_neutral_base.lua" strict 245 "" terrain ;;
     base_yard_steal)
       run_changes "$name" "$BASE_YARD_MAP" "$BRAINS/shell_and_take_enemy_base.lua" open 215 "" terrain ;;
 
@@ -1028,6 +1427,75 @@ dispatch_scenario() {
     # count beside it only says how many there are.
     grass_flat_growth)
       run_changes "$name" "$GRASS_FLAT_MAP" "$BRAINS/idle.lua" open 1520 "" terrain ;;
+
+    # The scenario beside Wave Defense.map, played to the end it writes for
+    # itself. The lobby holds six seats for the raiders, the command stream
+    # readies the one human and starts the round, and three waves go in on
+    # timers. The raiders run the idle brain, so a wave ends on its own time
+    # rather than on anything a bot does, which is what makes the run the same
+    # every time.
+    #
+    # The scenario's timers add up to fourteen seconds, which is 1400 of the
+    # simulation's ticks. The budget here is counted in game ticks, and the
+    # loop runs a server frame on its keys pass as well as its game pass, so
+    # it buys at least that many again.
+    wave_defense_fast)
+      run_scenario_fast "$name" "$WAVE_DEFENSE_MAP" \
+                        "$COMMANDS/wave_defense.client.jsonl" \
+                        "$BRAINS/idle.lua" 1800 "The keep held." ;;
+
+    # The same three waves over the wire, which is where a wave transition
+    # costs something a client can feel: each swap tears down six runners and
+    # builds six more inside consecutive ticks, and each add and removal fans
+    # control events out to every client. This entry fails if that drops a
+    # client for a full control channel, if a seat is lost, if the round never
+    # reaches its own end, or if the last wave did not field six raiders.
+    #
+    # The last two checks are both needed. The scenario ends the round the same
+    # way whether or not it ever had seats — next_wave clamps what it asks
+    # for to the seats it found, so with none it fields nothing, times each
+    # wave out and still reaches the end. So the end line alone would pass on a
+    # run where the lobby template seated nothing, which is the one failure
+    # that would make this entry worthless. The wave line is the scenario's own
+    # count of what it put on the field, and the third wave naming six says the
+    # seats were there, that all three waves ran, and that the seats given back
+    # after the first two came round again.
+    #
+    # Nothing here is on a clock, and that is deliberate. A server command
+    # scheduled on a tick cannot end this run at any value. The server's
+    # counter restarts at 0 when the round starts and again when the round
+    # hands back to the lobby — serverSimReturnToLobby runs the same world
+    # reset — and the command pump compares against it in every state. A tick
+    # low enough to be reached lands inside the round and cuts it short; one
+    # high enough to clear the round's own end is only reached in the returned
+    # lobby, which starts again from 0 and counts at 50/s where the round
+    # counted at 100/s, so waiting there costs more idle time than the client
+    # wait allows. Both were tried and both failed that way.
+    #
+    # So the helper waits for the line the scenario ends with and then
+    # interrupts the server, and the client leaves on the shutdown that
+    # follows. The round decides the length of the run.
+    #
+    # End to end: about 3s for the client to ready, a 5s countdown, 14s of
+    # scenario, and the shutdown round trip — roughly 27s, against a 60s CTest
+    # timeout.
+    #
+    # The worst case matters as much as the healthy one, because a run CTest
+    # kills prints nothing: the entry's own line is half-written and still in
+    # the buffer. The helper's waits are the whole of it — a 0.5s settle after
+    # the server reports its port, then up to 35s for the round's end line,
+    # then up to 12s for the client to leave on the shutdown. That is 47.5s at
+    # the outside, so even a run that hits every bound reports its own failure
+    # with its logs before the 60s is up.
+    #
+    # The client's --ticks is a ceiling, not the exit. The headless alternates
+    # a keys pass and a game pass at GAME_TICK_LENGTH 10ms, so its game-tick
+    # counter runs at 50/s and a 14s round is 700 of them. 2000 is 40s at that
+    # rate, far past the round, so it is never the thing that stops the run.
+    wave_swap_udp)
+      run_scenario_swap_udp "$name" "$WAVE_DEFENSE_MAP" \
+                        "$COMMANDS/wave_swap.client.jsonl" \
+                        "$BRAINS/idle.lua" 2000 ;;
 
     ds_4bot_melee)             run_ds "$name" 4 ""  ;;
     ds_2v2_team)               run_ds "$name" 4 "1" ;;
@@ -1105,6 +1573,7 @@ dispatch_scenario() {
 if [ -n "$SCENARIO" ]; then
   rc=0
   dispatch_scenario "$SCENARIO" || rc=$?
+  publish_actual
   exit $rc
 fi
 
@@ -1165,6 +1634,10 @@ done
 echo "Grass Flat:"
 dispatch_scenario grass_flat_growth || fail=1
 
+echo "Wave Defense:"
+dispatch_scenario wave_defense_fast || fail=1
+dispatch_scenario wave_swap_udp    || fail=1
+
 echo "Dedicated server (Everard Island):"
 dispatch_scenario ds_4bot_melee || fail=1
 dispatch_scenario ds_2v2_team   || fail=1
@@ -1194,4 +1667,5 @@ done
 echo "Capture over the wire (Watch Road):"
 dispatch_scenario watch_road_capture_2client_udp || fail=1
 
+publish_actual
 exit $fail

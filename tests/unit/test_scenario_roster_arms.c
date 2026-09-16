@@ -22,6 +22,22 @@
  * run_scenario_roster_spawn_paced     — ten asked for at once, one a tick
  * run_scenario_roster_team_during_add — the team is in place as the add
  *                                       picks the slot's start
+ * run_scenario_roster_spawn_allies_team
+ *                                     — the bot is allied with its whole
+ *                                       team, on one accept and no reset
+ * run_scenario_roster_spawn_ally_is_quiet
+ *                                     — and that accept draws no line
+ * run_scenario_roster_spawn_no_team_allies_nothing
+ *                                     — a spawn onto no team allies nothing
+ * run_scenario_roster_spawn_loadout_named
+ *                                     — a named loadout fuels the tank the
+ *                                       spawn builds, ahead of the policy;
+ *                                       naming none leaves it to the policy
+ * run_scenario_roster_spawn_loadout_without_policy
+ *                                     — and is answered with no policy there
+ * run_scenario_roster_spawn_loadout_not_next_life
+ *                                     — it is spent on that tank, not held
+ *                                       for the seat's next life
  * run_scenario_roster_remove_bot      — humans refused, the removal paced
  * run_scenario_roster_set_team        — the write, and a team off the end
  * run_scenario_lobby_add_bot          — the lobby add and its refusals
@@ -44,6 +60,7 @@
 #include "server_sim_scenario.h"
 #include "server_sim_join.h"       /* serverSimFindFreeSlot */
 #include "game_sim.h"
+#include "players.h"               /* playersIsAllie — the team's alliance */
 #include "tank.h"                  /* tankGetWorld */
 #include "starts.h"                /* startsGetNumStarts */
 #include "everard_map.h"
@@ -549,11 +566,8 @@ int run_scenario_lobby_add_bot(void) {
     sim = raLobbySim();
     UT_ASSERT(sim != NULL);
 
-    /* A seat with nobody fielded in it has no entry point on the sim, so it
-       is refused rather than quietly given a fielded bot instead. */
-    raLobbyAddOp(&op, 0, false, NULL, NULL);
-    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_RANGE);
-
+    /* An add asking for the seat without the bot in it is
+       test_unfielded_seat.c's; this case is about the fielded add. */
     raLobbyAddOp(&op, MAX_TANKS, true, NULL, NULL);
     UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_RANGE);
 
@@ -763,9 +777,16 @@ int run_scenario_roster_spawn_named_start(void) {
     UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_RANGE,
                   "a start past the end was not refused");
     op.u.rosterSpawnBot.start = (BYTE)(numStarts - 1);
-    op.u.rosterSpawnBot.loadout = 1;
+    /* A loadout names one of the three game types the spawn's loadout words
+       hold. A game type past them, and a byte that is no game type at all,
+       are both refused where the op is made. */
+    op.u.rosterSpawnBot.loadout = (BYTE)gameScripted;
     UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_RANGE,
-                  "a loadout override was accepted before one exists");
+                  "a loadout naming a game type the words cannot say was "
+                  "accepted");
+    op.u.rosterSpawnBot.loadout = 0xFF;
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_RANGE,
+                  "a loadout of 0xFF was accepted");
     op.u.rosterSpawnBot.loadout = 0;
     UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_QUEUED);
     serverSimTick(sim);
@@ -793,6 +814,424 @@ int run_scenario_roster_spawn_named_start(void) {
     UT_ASSERT_MSG(gs->scenarioStartIdx[slot] == MAX_STARTS,
                   "the spawn left its start slot set");
 
+    serverSimDestroy(sim);
+    raDropBrainFile();
+    return 0;
+}
+
+/* ── The loadout a spawn names ───────────────────────────────────── */
+
+/* The four amounts the policy below hands out, picked so no amount is one
+   either game type in these cases gives: a strict round hands out nothing
+   and an open one everything the rules allow. */
+#define RA_POLICY_SHELLS 7
+#define RA_POLICY_MINES  6
+#define RA_POLICY_ARMOUR 33
+#define RA_POLICY_TREES  5
+
+typedef struct {
+    int  asks;
+    BYTE lastPlayer;
+} RaLoadoutCtx;
+
+static bool raPolicySpawnLoadout(void *ctx, BYTE player, ScnLoadout *out) {
+    RaLoadoutCtx *c = (RaLoadoutCtx *)ctx;
+
+    c->asks++;
+    c->lastPlayer = player;
+    memset(out, 0, sizeof(*out));
+    out->shells = RA_POLICY_SHELLS;
+    out->mines  = RA_POLICY_MINES;
+    out->armour = RA_POLICY_ARMOUR;
+    out->trees  = RA_POLICY_TREES;
+    return true;
+}
+
+/* A strict-tournament round, where a tank is handed nothing unless something
+   says otherwise — so an "open" loadout on one bot is unmistakable. */
+static ServerSim *raStrictSim(void) {
+    ServerSim *sim = raRunningSim();
+    if (sim == NULL) return NULL;
+    serverSimSetGameType(sim, gameStrictTournament);
+    return sim;
+}
+
+/* The first bot slot, or SCN_NONE. skip and skip2 are slots to walk past,
+ * so each spawn of a case can be told from the ones before it. */
+static BYTE raFirstBotSlot(ServerSim *sim, BYTE skip, BYTE skip2) {
+    BYTE i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (i == skip || i == skip2) continue;
+        if (serverSimIsBot(sim, i)) return i;
+    }
+    return SCN_NONE;
+}
+
+/* Queue one spawn and let the drain make it. Answers the seat it took,
+ * walking past a seat an earlier spawn in the same case is holding. */
+static BYTE raSpawnAndDrain(ServerSim *sim, ScenarioOp *op, BYTE skip) {
+    if (serverSimApplyScenarioOp(sim, op, NULL) != SCN_OP_QUEUED) {
+        return SCN_NONE;
+    }
+    serverSimTick(sim);
+    return raFirstBotSlot(sim, skip, SCN_NONE);
+}
+
+/* A spawn that names a loadout builds its tank with that game type's
+ * amounts, ahead of a spawn-loadout policy that would answer differently;
+ * one that names none is left to the policy. */
+int run_scenario_roster_spawn_loadout_named(void) {
+    ServerSim     *sim;
+    ScenarioOp     op;
+    ScenarioPolicy pol;
+    RaLoadoutCtx   pc;
+    GameSim       *gs;
+    BYTE           slot;
+
+    UT_ASSERT(raMakeBrainFile("scenario_roster_spawn_loadout_named"));
+    ut_brain_stub_arm(true);
+    sim = raStrictSim();
+    UT_ASSERT(sim != NULL);
+    gs = &sim->sim;
+
+    memset(&pol, 0, sizeof(pol));
+    memset(&pc, 0, sizeof(pc));
+    pol.spawnLoadout = raPolicySpawnLoadout;
+    pol.ctx          = &pc;
+    serverSimSetScenarioPolicy(sim, &pol);
+
+    raSpawnOp(&op, SCN_NONE, 2, "Armed", NULL);
+    op.u.rosterSpawnBot.loadout = (BYTE)gameOpen;
+    slot = raSpawnAndDrain(sim, &op, SCN_NONE);
+    UT_ASSERT_MSG(slot != SCN_NONE, "the spawn naming a loadout did not land");
+    UT_ASSERT(gs->tanks[slot] != NULL);
+
+    UT_ASSERT_MSG(tankGetShells(&gs->tanks[slot]) ==
+                      (BYTE)gs->rules.tank_full_shells &&
+                  tankGetMines(&gs->tanks[slot]) ==
+                      (BYTE)gs->rules.tank_full_mines &&
+                  tankGetTrees(&gs->tanks[slot]) ==
+                      (BYTE)gs->rules.tank_full_trees,
+                  "an open loadout should have handed the bot %ld/%ld/%ld "
+                  "(shells/mines/trees) in a strict round, handed it %u/%u/%u",
+                  (long)gs->rules.tank_full_shells,
+                  (long)gs->rules.tank_full_mines,
+                  (long)gs->rules.tank_full_trees,
+                  (unsigned)tankGetShells(&gs->tanks[slot]),
+                  (unsigned)tankGetMines(&gs->tanks[slot]),
+                  (unsigned)tankGetTrees(&gs->tanks[slot]));
+    UT_ASSERT_MSG(pc.asks == 0,
+                  "the spawn-loadout policy was asked %d times for a spawn "
+                  "that named its own loadout", pc.asks);
+    UT_ASSERT_MSG(gs->scenarioSpawnLoadout[slot] == 0,
+                  "the spawn left its loadout slot set to %u",
+                  (unsigned)gs->scenarioSpawnLoadout[slot]);
+
+    /* The same spawn with no loadout on it is the policy's. */
+    raSpawnOp(&op, SCN_NONE, 2, "Asked", NULL);
+    {
+        BYTE second = raSpawnAndDrain(sim, &op, slot);
+        UT_ASSERT_MSG(second != SCN_NONE, "the second spawn did not land");
+        UT_ASSERT(gs->tanks[second] != NULL);
+        UT_ASSERT_MSG(pc.asks == 1,
+                      "the policy was asked %d times for the spawn that named "
+                      "no loadout, wanted once", pc.asks);
+        UT_ASSERT_MSG(pc.lastPlayer == second,
+                      "the policy was asked about seat %u, wanted %u",
+                      (unsigned)pc.lastPlayer, (unsigned)second);
+        UT_ASSERT_MSG(tankGetShells(&gs->tanks[second]) == RA_POLICY_SHELLS &&
+                      tankGetMines(&gs->tanks[second])  == RA_POLICY_MINES &&
+                      tankGetArmour(&gs->tanks[second]) == RA_POLICY_ARMOUR &&
+                      tankGetTrees(&gs->tanks[second])  == RA_POLICY_TREES,
+                      "the policy's four amounts should have fuelled the "
+                      "second bot, it holds %u/%u/%u/%u",
+                      (unsigned)tankGetShells(&gs->tanks[second]),
+                      (unsigned)tankGetMines(&gs->tanks[second]),
+                      (unsigned)tankGetArmour(&gs->tanks[second]),
+                      (unsigned)tankGetTrees(&gs->tanks[second]));
+    }
+
+    serverSimDestroy(sim);
+    raDropBrainFile();
+    return 0;
+}
+
+/* A scenario that names a loadout and writes no spawn_loadout function is
+ * the ordinary case, so the named loadout is answered with no policy
+ * registered at all. */
+int run_scenario_roster_spawn_loadout_without_policy(void) {
+    ServerSim *sim;
+    ScenarioOp op;
+    GameSim   *gs;
+    BYTE       slot;
+
+    UT_ASSERT(raMakeBrainFile("scenario_roster_spawn_loadout_without_policy"));
+    ut_brain_stub_arm(true);
+    sim = raStrictSim();
+    UT_ASSERT(sim != NULL);
+    gs = &sim->sim;
+    UT_ASSERT_MSG(sim->scenarioPolicy == NULL,
+                  "setup: this case wants a sim with no policy on it");
+
+    raSpawnOp(&op, SCN_NONE, 2, "Alone", NULL);
+    op.u.rosterSpawnBot.loadout = (BYTE)gameOpen;
+    slot = raSpawnAndDrain(sim, &op, SCN_NONE);
+    UT_ASSERT_MSG(slot != SCN_NONE, "the spawn did not land");
+    UT_ASSERT(gs->tanks[slot] != NULL);
+    UT_ASSERT_MSG(tankGetShells(&gs->tanks[slot]) ==
+                      (BYTE)gs->rules.tank_full_shells,
+                  "with no policy registered an open loadout should still "
+                  "have handed the bot %ld shells, handed it %u",
+                  (long)gs->rules.tank_full_shells,
+                  (unsigned)tankGetShells(&gs->tanks[slot]));
+
+    serverSimDestroy(sim);
+    raDropBrainFile();
+    return 0;
+}
+
+/* The loadout is for the tank the spawn builds. The bot's next life is
+ * fuelled the way every other tank in the round is. */
+int run_scenario_roster_spawn_loadout_not_next_life(void) {
+    ServerSim *sim;
+    ScenarioOp op;
+    GameSim   *gs;
+    BYTE       slot;
+
+    UT_ASSERT(raMakeBrainFile("scenario_roster_spawn_loadout_not_next_life"));
+    ut_brain_stub_arm(true);
+    sim = raStrictSim();
+    UT_ASSERT(sim != NULL);
+    gs = &sim->sim;
+
+    raSpawnOp(&op, SCN_NONE, 2, "Once", NULL);
+    op.u.rosterSpawnBot.loadout = (BYTE)gameOpen;
+    slot = raSpawnAndDrain(sim, &op, SCN_NONE);
+    UT_ASSERT_MSG(slot != SCN_NONE, "the spawn did not land");
+    UT_ASSERT(gs->tanks[slot] != NULL);
+    UT_ASSERT_MSG(tankGetShells(&gs->tanks[slot]) ==
+                      (BYTE)gs->rules.tank_full_shells,
+                  "setup: the first life should carry the named loadout's "
+                  "%ld shells, carries %u",
+                  (long)gs->rules.tank_full_shells,
+                  (unsigned)tankGetShells(&gs->tanks[slot]));
+
+    /* Killed and back again: the round is a strict tournament, which hands
+       a tank nothing. */
+    tankSetArmour(&gs->tanks[slot], 0);
+    tankSetDestroyed(&gs->tanks[slot], TRUE);
+    tankDeath(gs, &gs->tanks[slot]);
+    UT_ASSERT(gs->tanks[slot] != NULL);
+    UT_ASSERT_MSG(tankGetShells(&gs->tanks[slot]) == 0,
+                  "the named loadout reached the bot's next life: it came "
+                  "back with %u shells in a strict round",
+                  (unsigned)tankGetShells(&gs->tanks[slot]));
+    UT_ASSERT_MSG(gs->scenarioSpawnLoadout[slot] == 0,
+                  "the loadout slot still holds %u after the spawn spent it",
+                  (unsigned)gs->scenarioSpawnLoadout[slot]);
+
+    serverSimDestroy(sim);
+    raDropBrainFile();
+    return 0;
+}
+
+/* ── The team's alliance ─────────────────────────────────────────── */
+
+/* The two alliance events a spawn could publish, and who the last accept
+ * named. A reset carries the whole matrix and is what the spawn must never
+ * send: every receiver applies one by dropping all sixteen slots' alliances
+ * and taking them back. */
+typedef struct {
+    int  accepts;
+    int  resets;
+    BYTE lastAccepter;
+    BYTE lastNewMember;
+    BYTE lastQuiet;
+} RaAllyEvents;
+
+static void raCountAllyEvents(void *ctx, const ControlEvent *evt) {
+    RaAllyEvents *c = (RaAllyEvents *)ctx;
+    if (evt->type == CTRL_ALLIANCE_ACCEPT) {
+        c->accepts++;
+        c->lastAccepter  = evt->u.allianceAccept.acceptedBy;
+        c->lastNewMember = evt->u.allianceAccept.newMember;
+        c->lastQuiet     = evt->u.allianceAccept.quiet;
+    } else if (evt->type == CTRL_ALLIANCE_RESET) {
+        c->resets++;
+    }
+}
+
+int run_scenario_roster_spawn_allies_team(void) {
+    ServerSim *sim;
+    ScenarioOp op;
+    RaAllyEvents ev;
+    SubscriberHandle h;
+    BYTE team;
+    BYTE first = SCN_NONE;
+    BYTE second = SCN_NONE;
+    BYTE third = SCN_NONE;
+
+    UT_ASSERT(raMakeBrainFile("scenario_roster_spawn_allies_team"));
+    ut_brain_stub_arm(true);
+    sim = raRunningSim();
+    UT_ASSERT(sim != NULL);
+
+    /* The human's own team, read off the roster rather than assumed, so the
+       spawn below asks for the team somebody is already on. */
+    team = sim->lobbyPlayers[0].teamNumber;
+    UT_ASSERT_MSG(team > 0, "the human in slot 0 is on no team");
+
+    memset(&ev, 0, sizeof(ev));
+    h = serverSimRegisterSubscriber(sim, raCountAllyEvents, &ev);
+    UT_ASSERT(h != SUBSCRIBER_HANDLE_INVALID);
+    /* Registering replays the state of the game to the new subscriber; the
+       counts start from the spawn. */
+    memset(&ev, 0, sizeof(ev));
+
+    raSpawnOp(&op, SCN_NONE, team, "Ally1", NULL);
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_QUEUED);
+    serverSimTick(sim);
+    first = raFirstBotSlot(sim, SCN_NONE, SCN_NONE);
+    UT_ASSERT_MSG(first != SCN_NONE, "the spawn never landed");
+
+    UT_ASSERT_MSG(playersIsAllie(&sim->sim.plyrs, 0, first),
+                  "the spawned bot in slot %u is not allied with the human on "
+                  "its own team %u", (unsigned)first, (unsigned)team);
+    UT_ASSERT_MSG(ev.accepts == 1,
+                  "the spawn published %d alliance accepts, expected 1",
+                  ev.accepts);
+    UT_ASSERT_MSG(ev.lastAccepter == 0 && ev.lastNewMember == first,
+                  "the accept named %u and %u, expected 0 and %u",
+                  (unsigned)ev.lastAccepter, (unsigned)ev.lastNewMember,
+                  (unsigned)first);
+    UT_ASSERT_MSG(ev.resets == 0,
+                  "the spawn published %d alliance resets", ev.resets);
+
+    /* A second bot onto a team of two: still one accept, and all three read
+       as allied. The accept the spawn published names one member, and the
+       merge inside it brings the rest. */
+    memset(&ev, 0, sizeof(ev));
+    raSpawnOp(&op, SCN_NONE, team, "Ally2", NULL);
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_QUEUED);
+    serverSimTick(sim);
+    second = raFirstBotSlot(sim, first, SCN_NONE);
+    UT_ASSERT_MSG(second != SCN_NONE, "the second spawn never landed");
+
+    UT_ASSERT_MSG(ev.accepts == 1,
+                  "the second spawn published %d alliance accepts, expected 1",
+                  ev.accepts);
+    UT_ASSERT_MSG(ev.resets == 0,
+                  "the second spawn published %d alliance resets", ev.resets);
+    UT_ASSERT_MSG(playersIsAllie(&sim->sim.plyrs, 0, second),
+                  "the second bot is not allied with the human");
+    UT_ASSERT_MSG(playersIsAllie(&sim->sim.plyrs, first, second),
+                  "the two bots on one team are not allied with each other");
+
+    /* And a third onto a team of three, which is the one that would show a
+       per-member loop: one accept, and the new seat allied with all three. */
+    memset(&ev, 0, sizeof(ev));
+    raSpawnOp(&op, SCN_NONE, team, "Ally3", NULL);
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_QUEUED);
+    serverSimTick(sim);
+    third = raFirstBotSlot(sim, first, second);
+    UT_ASSERT_MSG(third != SCN_NONE, "the third spawn never landed");
+
+    UT_ASSERT_MSG(ev.accepts == 1,
+                  "a spawn onto a team of three published %d alliance "
+                  "accepts, expected 1", ev.accepts);
+    UT_ASSERT_MSG(ev.resets == 0,
+                  "the third spawn published %d alliance resets", ev.resets);
+    UT_ASSERT_MSG(playersIsAllie(&sim->sim.plyrs, 0, third),
+                  "the third bot is not allied with the human");
+    UT_ASSERT_MSG(playersIsAllie(&sim->sim.plyrs, first, third),
+                  "the third bot is not allied with the first");
+    UT_ASSERT_MSG(playersIsAllie(&sim->sim.plyrs, second, third),
+                  "the third bot is not allied with the second");
+
+    serverSimUnregisterSubscriber(sim, h);
+    serverSimDestroy(sim);
+    raDropBrainFile();
+    return 0;
+}
+
+/* The accept a spawn publishes draws no newswire line. Seating a bot on its
+ * team is setup: the lobby path allies the same bots with a rebake, which
+ * announces nothing, and a script with something to say has its own message
+ * call. */
+int run_scenario_roster_spawn_ally_is_quiet(void) {
+    ServerSim *sim;
+    ScenarioOp op;
+    RaAllyEvents ev;
+    SubscriberHandle h;
+    BYTE team;
+    BYTE slot;
+
+    UT_ASSERT(raMakeBrainFile("scenario_roster_spawn_ally_is_quiet"));
+    ut_brain_stub_arm(true);
+    sim = raRunningSim();
+    UT_ASSERT(sim != NULL);
+
+    team = sim->lobbyPlayers[0].teamNumber;
+    UT_ASSERT_MSG(team > 0, "the human in slot 0 is on no team");
+
+    memset(&ev, 0, sizeof(ev));
+    h = serverSimRegisterSubscriber(sim, raCountAllyEvents, &ev);
+    UT_ASSERT(h != SUBSCRIBER_HANDLE_INVALID);
+    memset(&ev, 0, sizeof(ev));
+
+    raSpawnOp(&op, SCN_NONE, team, "Quiet1", NULL);
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_QUEUED);
+    serverSimTick(sim);
+    slot = raFirstBotSlot(sim, SCN_NONE, SCN_NONE);
+    UT_ASSERT_MSG(slot != SCN_NONE, "the spawn never landed");
+
+    UT_ASSERT_MSG(ev.accepts == 1,
+                  "the spawn published %d alliance accepts, expected 1",
+                  ev.accepts);
+    UT_ASSERT_MSG(ev.lastQuiet == 1,
+                  "the accept went out with quiet=%u, expected 1",
+                  (unsigned)ev.lastQuiet);
+
+    serverSimUnregisterSubscriber(sim, h);
+    serverSimDestroy(sim);
+    raDropBrainFile();
+    return 0;
+}
+
+int run_scenario_roster_spawn_no_team_allies_nothing(void) {
+    ServerSim *sim;
+    ScenarioOp op;
+    RaAllyEvents ev;
+    SubscriberHandle h;
+    BYTE slot;
+
+    UT_ASSERT(raMakeBrainFile("scenario_roster_spawn_no_team"));
+    ut_brain_stub_arm(true);
+    sim = raRunningSim();
+    UT_ASSERT(sim != NULL);
+
+    memset(&ev, 0, sizeof(ev));
+    h = serverSimRegisterSubscriber(sim, raCountAllyEvents, &ev);
+    UT_ASSERT(h != SUBSCRIBER_HANDLE_INVALID);
+    memset(&ev, 0, sizeof(ev));
+
+    /* No team asked for, so there is nobody to be allied with. */
+    raSpawnOp(&op, SCN_NONE, 0, "Loner", NULL);
+    UT_ASSERT(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_QUEUED);
+    serverSimTick(sim);
+    slot = raFirstBotSlot(sim, SCN_NONE, SCN_NONE);
+    UT_ASSERT_MSG(slot != SCN_NONE, "the spawn never landed");
+
+    UT_ASSERT_MSG(ev.accepts == 0,
+                  "a spawn with no team published %d alliance accepts",
+                  ev.accepts);
+    UT_ASSERT_MSG(ev.resets == 0,
+                  "a spawn with no team published %d alliance resets",
+                  ev.resets);
+    UT_ASSERT_MSG(!playersIsAllie(&sim->sim.plyrs, 0, slot),
+                  "a bot spawned onto no team is allied with the human");
+
+    serverSimUnregisterSubscriber(sim, h);
     serverSimDestroy(sim);
     raDropBrainFile();
     return 0;

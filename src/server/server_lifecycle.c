@@ -51,6 +51,12 @@
  * serverLifecycleSetRoundLogHooks. NULL on every other binary that
  * links server_static, so the lifecycle's stash/flush calls become
  * no-ops there. */
+/* Adapter: serverSimEmitBrainDocs hands each fragment to a deliver
+ * callback; the return-to-lobby path wants them on the broadcast bus. */
+static void serverSimPublishBrainDocsCb(void *ctx, const ControlEvent *evt) {
+  serverSimPublishControl((ServerSim *)ctx, evt);
+}
+
 static void (*s_roundLogStash)(void) = NULL;
 static void (*s_roundLogFlush)(void) = NULL;
 
@@ -112,6 +118,16 @@ static double s_lastTickMs = 0.0;
 static double s_tickMsEwma = 0.0;
 static const  double kTickAlpha = 0.1;
 
+/* The worst tick recorded since the last reset, and how many ticks cost at
+ * least the SERVER_TICK_LENGTH ms the loop has to serve one in. The EWMA
+ * above answers "is the server keeping up right now" and decays a spike by an
+ * order of magnitude in roughly 22 ticks, so a burst that lasts a handful of
+ * frames is back at baseline before an operator can type a console command.
+ * These two hold their values until serverLifecycleResetTickPeak clears them
+ * at the next round start, so the cost of a burst can be read afterwards. */
+static double       s_peakTickMs      = 0.0;
+static unsigned int s_ticksOverBudget = 0;
+
 /* Wall-clock cost (ms) of the two serverSimTick calls combined for the
  * most recent tick, plus its EWMA. Same seeding rule as above. */
 static double s_lastSimMs = 0.0;
@@ -124,11 +140,30 @@ void serverLifecycleRecordTickMs(double ms) {
   } else {
     s_tickMsEwma = kTickAlpha * ms + (1.0 - kTickAlpha) * s_tickMsEwma;
   }
+  if (ms > s_peakTickMs) {
+    s_peakTickMs = ms;
+  }
+  /* A tick that exactly spends its budget has nothing left for the next one,
+   * so the count is of ticks at or above it, not strictly over. */
+  if (ms >= (double)SERVER_TICK_LENGTH) {
+    s_ticksOverBudget++;
+  }
 }
 
 void serverLifecycleGetTickStats(double *outLastMs, double *outEwmaMs) {
   if (outLastMs)  *outLastMs  = s_lastTickMs;
   if (outEwmaMs)  *outEwmaMs  = s_tickMsEwma;
+}
+
+void serverLifecycleGetTickPeak(double *outPeakMs,
+                                unsigned int *outOverBudget) {
+  if (outPeakMs)     *outPeakMs     = s_peakTickMs;
+  if (outOverBudget) *outOverBudget = s_ticksOverBudget;
+}
+
+void serverLifecycleResetTickPeak(void) {
+  s_peakTickMs      = 0.0;
+  s_ticksOverBudget = 0;
 }
 
 static void serverLifecycleRecordSimMs(double ms) {
@@ -197,6 +232,7 @@ SpectatorRing *serverInstanceGetSpectatorRing(void) {
 bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   const char *bindAddr = (cfg->bindAddr != NULL) ? cfg->bindAddr : "";
   const char *password = (cfg->password != NULL) ? cfg->password : "";
+  unsigned short boundPort = cfg->udpPort;
 
   instanceAcceptRemoteClients = cfg->acceptRemoteClients;
 
@@ -215,6 +251,10 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
                                  password) == FALSE) {
       return FALSE;
     }
+    /* From here on the port that matters is the one the socket actually got,
+       not the one that was asked for: a requested 0 means the OS chose, and
+       everything below advertises where clients should connect. */
+    boundPort = transportUdpServerGetBoundPort();
     transportUdpServerSetUploadConfig(cfg->uploadPolicy,
                                       cfg->uploadMaxFiles,
                                       cfg->uploadMaxStorageBytes,
@@ -227,7 +267,7 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
      * not implemented, so it forwards like on. */
     transportUdpServerSetVoiceEnabled(cfg->voiceMode != serverVoiceOff);
     if (cfg->mdnsAdvertise) {
-      transportUdpServerStartMdnsAdvertiser(cfg->udpPort);
+      transportUdpServerStartMdnsAdvertiser(boundPort);
     }
   }
 
@@ -245,7 +285,7 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
     /* Populate the WBN lobby snapshot so register carries the
      * extended settings + human/bot counts on the first POST. */
     serverSimRefreshWbnLobbyInfo(sim);
-    winbolonetCreateServer(sim->mapName, cfg->udpPort,
+    winbolonetCreateServer(sim->mapName, boundPort,
                            (BYTE)gameTypeGet(&sim->sim.game),
                            cfg->compTanks,
                            (BYTE)sim->sim.hiddenMines,
@@ -276,7 +316,7 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
     instanceTrackerPort = 0;
     instanceUseNatKeepalive = FALSE;
   }
-  instanceUdpPort = cfg->udpPort;
+  instanceUdpPort = boundPort;
 
   trackerTime = 5500;
   wbnTime = 0;
@@ -296,7 +336,7 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
   manualProbeState     = MANUAL_PROBE_IDLE;
   manualProbeWaitTicks = 0;
   if (instanceUseNatPortmap) {
-    natPortMapRequest(cfg->udpPort, &instancePortMap);
+    natPortMapRequest(boundPort, &instancePortMap);
   }
   return TRUE;
 }
@@ -674,6 +714,13 @@ void serverInstanceTick(ServerSim *sim) {
         if (serverSimGetNumBots(sim) > 0) {
           botManagerOnGameStart(sim);
         }
+        /* Re-assert team alliances now that (a) the reliable queues were
+         * reset above — discarding the CTRL_ALLIANCE_RESET the start
+         * sequence published, which left remote clients rendering their
+         * own teammates as enemies — and (b) botManagerOnGameStart just
+         * rebuilt the bot ClientSims, whose alliance matrices start
+         * empty. One republish + direct bot sync fixes both sides. */
+        serverSimReapplyTeamAlliances(sim);
         /* Notify WBN that we are now in-game */
         winbolonetSendLobbyStatus(FALSE);
         /* Send EVENT_PLAYER_JOIN for each connected WBN player */
@@ -769,6 +816,13 @@ void serverInstanceTick(ServerSim *sim) {
         memset(&evt, 0, sizeof(evt));
         serverSimFillLobbyBrainListEvent(sim, &evt);
         serverSimPublishControl(sim, &evt);
+        /* ... and the brains' lobby texts that go with it, so the returning
+         * lobby can announce a bot's brain the same way a fresh join does.
+         * The refresh first: this seam between rounds is where an operator
+         * would have edited a brain's announce.txt, and it is off the tick
+         * path, so a re-read costs nothing anybody feels. */
+        serverSimRefreshBrainDocs(sim);
+        serverSimEmitBrainDocs(sim, serverSimPublishBrainDocsCb, sim);
       }
       /* Republish lobby state so every client's mirror reflects the
        * fresh lobby. serverSimReturnToLobby's contract says the caller
@@ -819,6 +873,18 @@ void serverInstanceTick(ServerSim *sim) {
       }
     }
 
+    /* Bot-config events queued by serverSimApplyNewBotDefaults — a freshly
+     * added or seeded bot's mode and difficulty — sent a couple per tick
+     * instead of inside the add. A scenario seeds ten bots in one call stack
+     * while no client ack can be read; ten more events there would grow the
+     * burst that once overran a client's 64-event reliable window and
+     * dropped the host. Runs for single player too: its timer drives this
+     * same function. */
+    if (sim->state == serverStateLobby ||
+        sim->state == serverStateCountdown) {
+      serverSimFlushBotConfigPublishes(sim);
+    }
+
     /* Timeout check — not called via transportUdpServerSend() during lobby */
     transportUdpServerCheckTimeouts(sim);
   }
@@ -858,6 +924,10 @@ void serverInstanceTick(ServerSim *sim) {
      * GAME_OVER, so handleGameOver never stashed the in-flight round.
      * Do it here so the upload below picks it up. */
     roundLogStash();
+    /* Empty-reset bypasses serverSimReturnToLobby, so the release of the
+     * round's parked runners is this path's to make. A parked brain keeps
+     * its state table, and the round it remembers is the one ending here. */
+    botManagerReleaseParkedRunners(sim);
     serverSimResetGameWorld(sim);
     sim->state = serverStateLobby;
     sim->gameLength = sim->originalGameLength;

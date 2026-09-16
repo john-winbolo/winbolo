@@ -304,6 +304,9 @@ void transportUdpClientSubmitCommand(Transport *t,
 
 /* ── Layout A lobby commands — Client → Server ───────────────────── */
 void transportUdpClientSendLobbyMapListRequest(Transport *t, const char *relPath);
+/* No argument: the scenarios directory is flat, so there is no path to ask
+ * about. */
+void transportUdpClientSendLobbyScenarioListRequest(Transport *t);
 void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
                                                  const char *relPath,
                                                  const char *query);
@@ -358,6 +361,12 @@ void udpClientHandleLobbyMapListRsp(struct ClientSim *cs,
                                     const uint8_t *buf, int len);
 void udpClientHandleLobbyMapSearchRsp(struct ClientSim *cs,
                                       const uint8_t *buf, int len);
+
+/* The same, for the chunked SCENARIO_LIST_RSP. No path in this one: the
+ * scenarios directory is flat, so a response belongs to the request that is
+ * in flight and there is nothing to recognise a stale one by. */
+void udpClientHandleLobbyScenarioListRsp(struct ClientSim *cs,
+                                         const uint8_t *buf, int len);
 /* Client-side handler for a failed MAP_PREVIEW request. The map bytes
  * themselves now arrive over CHANNEL_BULK and are reassembled by the
  * transport's bulk receiver; ERR flags the request failed. `buf` includes
@@ -531,6 +540,11 @@ typedef struct UdpServerClient {
                                   * to this client.  SUBSCRIBER_HANDLE_INVALID
                                   * when no subscription is active. */
 } UdpServerClient;
+
+/* The port the server's socket is actually bound to, valid once
+ * transportUdpServerCreate has returned true. With a requested port of 0
+ * this is the OS-assigned one; otherwise it is the requested port. */
+unsigned short transportUdpServerGetBoundPort(void);
 
 /* Creates a server-side UDP transport.
  * Binds to the given port and starts accepting connections.
@@ -943,6 +957,10 @@ bool transportUdpClientTestFinalizeResync(Transport *t, const BYTE *buf, int len
  * consecutive-mismatch streak that gates a new request. */
 void transportUdpClientTestResyncState(Transport *t, bool *resyncActive,
                                        uint32_t *mismatchStreak);
+#if WB_ENABLE_NETIMPAIR
+void transportUdpClientTestUploadTimeout(Transport *t);
+void transportUdpClientTestDropUploadReply(Transport *t, uint8_t packet_type);
+#endif
 /* Read a connected spectator's armed seed blob (the spectator-owned copy of the
  * delayed ring keyframe). Returns the blob pointer with *outLen set to its
  * length and *outKind to the in-flight BulkSender kind (BULK_KIND_SPEC_SEED once

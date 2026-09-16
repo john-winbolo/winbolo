@@ -250,6 +250,7 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
   q->creator = sim->viewPlayer;
   q->owner = owner;
   q->fireTick = sim->fireInputTick;  /* originating input tick, 0 when not a player fire */
+  q->serverFireTick = 0;             /* filled from the shellFired callback below */
   q->packSent = FALSE;
   q->shellDead = FALSE;
   q->compensationTicks = sim->lagCompTicks;
@@ -263,6 +264,27 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
     (*value)->prev = q;
   }
   *value = q;
+
+  /* Tell the server the trigger was pulled, now rather than when the shell
+   * dies, and take back the SERVER tick it was recorded on.
+   *
+   * HOW LONG A SHELL IS IN THE AIR, measured rather than guessed. A tank
+   * fires with len = sightLen / 2, and sightLen tops out at GUNSIGHT_MAX
+   * (14, tank.h), so len is at most 7 map squares. q->length above is
+   * shellLifeTicks(7, shell_life 8, shell_start_add 5) = 1 + 8*7 - 5 = 52,
+   * and shellsUpdate runs once per GAME tick, which is every second server
+   * tick (server_sim_tick.c simRunHalfStep). A full-range shell is
+   * therefore 52 * 2 = 104 SERVER ticks in the air — longer than the
+   * detector's 100-tick quiet second, which is why a fire log fed only by
+   * shellDeath could not see a fourth shot at all.
+   *
+   * The returned tick is stamped on the shell so the death-time call can
+   * name the same number; the client's own fireTick above never takes part
+   * in a server-side rule. Server-only (NULL on the client), and inside the
+   * sim tick, so it stays deterministic. */
+  if (sim->callbacks.shellFired) {
+    q->serverFireTick = sim->callbacks.shellFired(sim->callbacks.ctx, owner);
+  }
 
   /* Play shoot sound at tank position (not offset shell position) */
   sim->callbacks.soundDistShoot(sim->callbacks.ctx, soundMX, soundMY, owner);
@@ -306,6 +328,26 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 
 	position = *value;
 
+	/* --- near-shell memory, observation only -------------------------------
+	 * Age every tank's "a shell was near me" countdown by one game tick.
+	 * shellsUpdate is called exactly once per game tick from
+	 * serverSimTick's world-systems block, so this is the tick clock -- no
+	 * wall clock, no allocation, and the loop order is the caller's compacted
+	 * tank array, so it is order-independent (each tank only touches its own
+	 * counter).  Server only: the client never reads the counter, and its
+	 * prediction re-runs ticks, which would age it more than once.
+	 *
+	 * The drowning site in tankUpdate reads this to split
+	 * DEATH_CAUSE_DROWNED from DEATH_CAUSE_DROWNED_UNFORCED.  Nothing else
+	 * in the sim reads it. */
+	if (sim->isServer) {
+		for (count = 0; count < numTanks; count++) {
+			if (tk[count] != NULL && tk[count]->shellNearFrames > 0) {
+				tk[count]->shellNearFrames--;
+			}
+		}
+	}
+
 	/* In the old dual-context architecture, single-player ran game logic
 	 * on the client side so isServer was forced FALSE.  In the new
 	 * server-authoritative architecture the server sim passes isServer=TRUE
@@ -331,6 +373,34 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 			shellAdvance1Tick(&newX, &newY,
 			                  &position->xAcc, &position->yAcc,
 			                  position->xStep, position->yStep);
+			/* Observation only: re-arm the near-shell memory of every tank
+			 * this shell passed close to.  Done before the collision test so
+			 * a shell that is about to impact still counts.  A tank's OWN
+			 * shell is skipped -- a bot fires constantly and its outgoing
+			 * shell sits inside the ring for the first few frames, which
+			 * would mark every self-inflicted drowning as "forced".  An
+			 * ally's shell is left counting: erring towards "forced" makes
+			 * DEATH_CAUSE_DROWNED_UNFORCED a conservative lower bound on
+			 * drownings the bot caused itself. */
+			if (sim->isServer) {
+				for (count = 0; count < numTanks; count++) {
+					int32_t nearDX;
+					int32_t nearDY;
+					if (tk[count] == NULL) {
+						continue;
+					}
+					if (gameSimGetTankPlayer(sim, &tk[count]) == position->owner) {
+						continue;
+					}
+					nearDX = (int32_t)newX - (int32_t)tk[count]->x;
+					nearDY = (int32_t)newY - (int32_t)tk[count]->y;
+					if (nearDX > -TANK_SHELL_NEAR_WU && nearDX < TANK_SHELL_NEAR_WU &&
+					    nearDY > -TANK_SHELL_NEAR_WU && nearDY < TANK_SHELL_NEAR_WU &&
+					    (nearDX * nearDX + nearDY * nearDY) < TANK_SHELL_NEAR_WU_SQUARED) {
+						tk[count]->shellNearFrames = TANK_SHELL_NEAR_MEMORY_FRAMES;
+					}
+				}
+			}
 			/* Check for colision */
 			uint8_t shellOutcome = SHELL_OUTCOME_IMPACT;
 			if ((shellsCalcCollision(sim, tk, &newX, &newY, position->angle, position->owner, position->onBoat, numTanks, position->compensationTicks, &shellOutcome)) == TRUE)
@@ -365,7 +435,7 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 				 * firing client can cull its predicted ghost and draw the impact
 				 * at the true position. Reached once per shell (collision path);
 				 * NULL on the client, which is not authoritative over shell death. */
-				if (sim->callbacks.shellDeath) sim->callbacks.shellDeath(sim->callbacks.ctx, position->fireTick, position->owner, newX, newY, shellOutcome);
+				if (sim->callbacks.shellDeath) sim->callbacks.shellDeath(sim->callbacks.ctx, position->fireTick, position->serverFireTick, position->owner, newX, newY, shellOutcome);
 				minesExpAddItem(sim, &sim->minesExplosions, mp, bmx, bmy);
 				count = 0;
 				while (count < numTanks) {
@@ -449,7 +519,7 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 			/* Server-only: shell reached end of life without a collision.
 			 * Reached once per shell (expiry path); same owner-closure as the
 			 * collision branch but with the shell's own end-of-life position. */
-			if (sim->callbacks.shellDeath) sim->callbacks.shellDeath(sim->callbacks.ctx, position->fireTick, position->owner, position->x, position->y, SHELL_OUTCOME_EXPIRED);
+			if (sim->callbacks.shellDeath) sim->callbacks.shellDeath(sim->callbacks.ctx, position->fireTick, position->serverFireTick, position->owner, position->x, position->y, SHELL_OUTCOME_EXPIRED);
 			minesExpAddItem(sim, &sim->minesExplosions, mp, bmx, bmy);
 			count = 0;
 			while (count < numTanks) {

@@ -1037,6 +1037,10 @@ void pillsValidate(pillboxes *value);
 /* Clamps every pillbox against the sim's gameplay caps. Called by
    mapClampToRules once a sim owns the records; see bolo_map.h. */
 void pillsClampToRules(struct GameSim *sim, pillboxes *value);
+/* Raises every pillbox to the sim's armour cap — the same walk the other way
+   round, for a scenario that raises the cap and asks for the map to start at
+   it. Called by serverSimScenarioFillWorldToRules, which writes the records. */
+void pillsFillToRules(struct GameSim *sim, pillboxes *value);
 
 
 #endif /* PILLBOX_H */

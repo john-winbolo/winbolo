@@ -27,6 +27,7 @@
 
 #include "global.h"
 #include "client_enums.h"  /* aiType, gameType */
+#include "brain_list.h"      /* BrainModes — the mode/level token pair */
 #include "brain_pathfinder.h"
 #include "brain_overlay.h"
 #include "server_sim.h"    /* BotInfo, BotPoolStats, BRAIN_GOAL_MAX_CANDIDATES, SubscriberHandle */
@@ -35,6 +36,7 @@
 #include "input_packet.h"  /* SnapshotHeader, TankSnapshot, ... MAX_SNAPSHOT_* */
 #include "control_event.h"
 #include "client_command.h"  /* ClientCommand — per-bot pending command queue */
+#include "messages.h"        /* BRAIN_INBOX_MSG_LEN — deferred internal-message queue */
 #include "../gui/sdl3/luabrainshandler.h"  /* LuaBrainInstance */
 
 /* Forward declarations */
@@ -64,6 +66,26 @@ typedef struct {
     ScnTable        initTable;
     BYTE            playerNum;
     bool            active;
+    /* The runner is built and idle, with cs, transport, controlSub, brain,
+     * brainPath and initTable all holding, and the next fielding of the seat
+     * handed them instead of building them again. Two ways in:
+     * botManagerRemoveBotKeepSeat, which takes a seat off the field and keeps
+     * everything behind it, and botManagerWarmRunner, which builds one for a
+     * seat that has never been fielded. active stays false the whole time a
+     * context is parked, because
+     * a parked runner is not ticked, not counted, and not a bot as far as
+     * botManagerIsBot is concerned; every other field is the next life's to
+     * set. Cleared by the resume in botManagerAddBot and by
+     * botManagerReleaseParkedRunner. */
+    bool            parked;
+    /* Set by botManagerWarmRunner on a runner built ahead of the round with
+     * the template's table, which may be empty, and cleared with parked by the
+     * resume in botManagerAddBot and by botManagerReleaseParkedRunner. It lets
+     * the match test tell a runner built before there was a table from one
+     * whose table changed: the first is the ordinary cost of a spawn carrying
+     * configuration the team did not, the second is a script handing the same
+     * seat two different tables. */
+    bool            warmed;
     aiType          ai;
     /* Wall-clock duration of this bot's most recent brain.think call,
      * in milliseconds. Updated every botManagerTick. Surfaced via
@@ -71,16 +93,17 @@ typedef struct {
     double          lastThinkMs;
     /* Number of ticks this bot's think exceeded targetMs * 1.5. Counts
      * every overrun; see lastOverrunWarnTick for the rate-limited log.
-     * Reset at each round start (botManagerOnGameStart). */
+     * Reset at each round start (botManagerOnGameStart) and when a parked
+     * runner is handed back to its seat (botResumeParkedRunner). */
     Uint32          overrunCount;
     /* Total brain.think calls timed this game. Denominator for the overrun
      * rate — lastThinkMs + overrunCount alone can't tell a spike-now from a
      * spike-an-hour-ago. Written by the worker next to lastThinkMs; reset
-     * with overrunCount/maxThinkMs at each round start (botManagerOnGameStart). */
+     * with overrunCount/maxThinkMs at both of those points. */
     Uint32          thinkCount;
     /* High-water mark of lastThinkMs this game (ms). The magnitude behind
      * overrunCount: the count says how often, this says how bad. Written by
-     * the worker next to lastThinkMs; reset at each round start. */
+     * the worker next to lastThinkMs; reset alongside the other two. */
     double          maxThinkMs;
     /* Last tick at which a budget-overrun warning was logged for this
      * bot. Limits the warning to at most one per ~50 ticks. */
@@ -99,6 +122,15 @@ typedef struct {
      * t0 + sim->botMgr.lastTargetMs * SDL_GetPerformanceFrequency() / 1000
      * so the count hook does one cheap compare against `now`. */
     Uint64          thinkDeadlineCounter;
+    /* Where in Lua the budget ran out, as "<short_src>:<line>", captured
+     * allocation-free by brainBudgetHook immediately before it raises
+     * tick_budget_exceeded. Read by braincore.c's killed branch (to label
+     * the partial print2 flush) via botManagerLastKillSite(), and by
+     * botLogKill() for the killbot.log line. Rewritten on every kill, so
+     * it always describes the most recent one; "" before the first kill.
+     * Written by the worker thread, read by the producer under the same
+     * done-semaphore visibility model as lastThinkMs. */
+    char            killSite[128];
     /* One-tick edge signal set by the producer when the previous tick
      * was aborted by the budget hook. Surfaced to the brain via
      * brain.wasKilled; reset to false immediately after being passed,
@@ -117,6 +149,12 @@ typedef struct {
      * binding cast lua_getextraspace(L) back to BotContext * to read
      * abort_flag and thinkDeadlineCounter without per-binding plumbing. */
     SubscriberHandle controlSub;
+    /* Sim tick of the last smart ping this bot was allowed to queue, plus
+     * one, so that zero can mean "never" — tick 0 is a real tick. Written
+     * and read only by this bot's own worker (botManagerQueuePing), so it
+     * needs no lock. The gap it enforces is BOT_PING_MIN_GAP_TICKS; the
+     * server's own ping rate limit still applies after it. */
+    uint32_t        lastPingTick;
 } BotContext;
 
 /* Per-bot scratch carried across the three within-tick stages
@@ -149,11 +187,45 @@ typedef struct {
      * worker pushes commands here from inside the brain-think stage,
      * and the producer drains the queue in Stage 3 (serial, already
      * under the mutex) via serverSimApplyCommand.  4 slots covers
-     * /info state + /info extra in a single tick plus a couple of
-     * future-proofing extras. */
-#define BOT_PENDING_CMD_MAX 4
+     * /info state + /info extra in a single tick, the bot's own smart
+     * pings, and a couple of future-proofing extras. */
+#define BOT_PENDING_CMD_MAX 6
     ClientCommand       pendingCmds[BOT_PENDING_CMD_MAX];
     int                 pendingCmdCount;
+    /* Deferred internal (messagedest == 0) bot-to-bot messages.
+     *
+     * These used to be delivered straight from the worker thread:
+     * brainDataExtractInfo called botManagerDeliverInternalMessage, which
+     * pushes into EVERY allied bot's MessageState inbox. That is a write into
+     * another bot's ClientSim from inside the parallel brain-think stage,
+     * while that bot's own worker may be counting, peeking and clearing the
+     * same ring (messageInboxPush / messageInboxClear in messages.c take no
+     * lock). So whether a message landed before or after the receiver read
+     * its inbox was decided by thread interleaving.
+     *
+     * The worker now only writes into its OWN job slot here, and Stage 3
+     * (serial, producer thread) delivers in ascending jobIndices order.
+     *
+     * SEMANTIC CHANGE, deliberate: every internal message now arrives on the
+     * NEXT tick for EVERY receiver. Before this, with jobs run serially
+     * (-threads 1), a receiver with a HIGHER slot number than the sender saw
+     * the message on the SAME tick and a lower-numbered one saw it next tick;
+     * with -threads > 1 which of those happened was a race. Uniform next-tick
+     * delivery is deterministic and independent of thread count, but it is
+     * NOT byte-identical to the old -threads 1 behaviour, so same-seed
+     * reference baselines shift once when this lands.
+     *
+     * Sizing: a brain can only emit ONE internal message per think — the
+     * sendmessage buffer is a single slot that brain_data.c clears after
+     * extraction, and the brain batches several /info lines into it. The
+     * array is headroom for future multi-send paths; on overflow the OLDEST
+     * queued message is dropped (with a debug line) so the freshest state
+     * still gets through, matching what messageInboxPush does when a
+     * receiver's ring fills. */
+#define BOT_PENDING_INTERNAL_MSG_MAX 4
+    char                pendingInternalMsg[BOT_PENDING_INTERNAL_MSG_MAX]
+                                          [BRAIN_INBOX_MSG_LEN];
+    int                 pendingInternalMsgCount;
     /* worker → producer: pool-breakdown JSON prefetched in parallel on the
      * bot's own worker right after its think (see runBotThinkJob). Producer
      * hands ownership to brain_record (brainRecordStashPoolJson) in Stage 3
@@ -167,6 +239,14 @@ typedef struct BotManager {
 
     BotContext   bots[MAX_TANKS];
     int          numBots;
+
+    /* Slot+1 of the bot currently mid-teardown in botManagerRemoveBot
+     * (0 = none). The teardown deactivates the context BEFORE calling
+     * serverSimRemovePlayer, so botManagerIsBot alone would misread the
+     * departing bot as a human — which used to trip the last-human-left
+     * lobby reset on every seeded-bot removal (and with scenario
+     * re-seeding, loop the server to death). */
+    BYTE         removingBotSlot;
 
     /* Total concurrent brain-tick runners including the producer thread.
      * Saved by botManagerInit after validation; read by the budget formula
@@ -297,12 +377,96 @@ int  botManagerGetThreads(const struct ServerSim *sim);
  *********************************************************/
 int  botManagerGetPendingThreads(const struct ServerSim *sim);
 
+/* ── Bot mode and difficulty ─────────────────────────────────────
+ * LobbyBotConfig carries a mode index and a difficulty index (server_sim.h),
+ * both into the brain's own modes.txt manifest (brain_list.h). At brain
+ * create time bot_manager turns the pair into the two BRAIN_INIT_ARG tokens
+ * "mode=<modekey>;difficulty=<levelkey>" using the KEYS from that manifest.
+ *
+ * botDifficultyName / botDifficultyFromName below stay the 0/1/2 <-> word
+ * mapping for the DEFAULT mode only — the dedicated server's -difficulty
+ * flag, the "Chosen Difficulty" preference and the single-player skill
+ * guess. Every mode and difficulty currently runs the same brain code —
+ * the tokens are plumbing, so the brain can start honouring them without
+ * another protocol change. */
+
+/* botDifficultyName / botDifficultyFromName are declared on
+ * public/server_sim.h — the GUI and the dedicated server's argument parse
+ * both need them, and they are implemented in bot_manager.c alongside the
+ * token assembly below. */
+
+/*********************************************************
+ *NAME:          botInitArgAppendToken
+ *PURPOSE:
+ *  Appends one ';'-separated token to a BRAIN_INIT_ARG string
+ *  (no separator when the buffer is empty). Whole-token or
+ *  nothing: if the token would not fit in argSz it is dropped
+ *  and false is returned, because half a token is a silently
+ *  different bot, not a shorter one.
+ *
+ *ARGUMENTS:
+ *  arg   - NUL-terminated buffer holding the arg so far
+ *  argSz - full size of that buffer (BRAIN_INIT_ARG_MAX)
+ *  token - token to append, e.g. "difficulty=hard"
+ *********************************************************/
+bool botInitArgAppendToken(char *arg, size_t argSz, const char *token);
+
+/* True when the ';'/','-separated init arg already carries a token that
+ * starts with `key` ("mode=", "difficulty="). Matched at token starts only,
+ * so a "cfg=DIFFICULTY=..." write is not mistaken for a difficulty token.
+ * botInitArgAppendModeTokens uses it to let an explicit token win over the
+ * lobby config. */
+bool botInitArgHasKey(const char *arg, const char *key);
+
+/*********************************************************
+ *NAME:          botInitArgAppendModeTokens
+ *PURPOSE:
+ *  Appends the pair "mode=<modekey>;difficulty=<levelkey>"
+ *  to a BRAIN_INIT_ARG string, using the KEYS out of the
+ *  brain's own mode manifest (brain_list.h). The indices are
+ *  clamped against that manifest first, so a stale index can
+ *  never name a mode or level the brain never declared: an
+ *  out-of-range mode falls back to mode 0 and an out-of-range
+ *  level to that mode's own default.
+ *
+ *  Each token is appended independently under the whole-token-
+ *  or-nothing rule of botInitArgAppendToken, mode first, so an
+ *  arg with room for only one keeps the mode and logs the
+ *  dropped difficulty. A token whose key the arg already
+ *  carries ("difficulty=medium" from a bench or a scenario) is
+ *  not appended: the explicit one wins.
+ *
+ *  botManagerStageInitArg calls this only for a brain that
+ *  SHIPS a modes.txt; a brain without one keeps its init arg
+ *  untouched (it may parse the whole string as one value).
+ *
+ *ARGUMENTS:
+ *  arg              - NUL-terminated buffer holding the arg so far
+ *  argSz            - full size of that buffer (BRAIN_INIT_ARG_MAX)
+ *  modes            - the brain's mode list; must hold >= 1 mode
+ *  modeIdx          - LobbyBotConfig.mode for this slot
+ *  levelIdx         - LobbyBotConfig.difficulty for this slot
+ *  playerNumForLog  - slot number, used only in the drop warning
+ *********************************************************/
+void botInitArgAppendModeTokens(char *arg, size_t argSz,
+                                const BrainModes *modes,
+                                uint8_t modeIdx, uint8_t levelIdx,
+                                int playerNumForLog);
+
 /*********************************************************
  *NAME:          botManagerAddBot
  *PURPOSE:
  *  Creates a bot with its own ClientSim, passive transport,
  *  brain map, and LuaBrainInstance. Registers the player
  *  in the ServerSim.
+ *
+ *  A slot holding a runner parked by
+ *  botManagerRemoveBotKeepSeat takes it back instead, when
+ *  brainPath and init are the ones it was built with: the
+ *  seat is fielded, the map is reloaded and the tank is
+ *  rebuilt, and no ClientSim, subscription or brain VM is
+ *  made. A parked runner built on anything else is released
+ *  first and the full build below runs.
  *
  *ARGUMENTS:
  *  sim         - The ServerSim to attach to
@@ -363,9 +527,13 @@ void botManagerSetPreThinkHook(struct ServerSim *sim,
 /*********************************************************
  *NAME:          botManagerOnGameStart
  *PURPOSE:
- *  Called when a new round starts (countdown→running).
- *  Reloads each bot's map from the server, recreates
- *  tanks, and resets brain state for the new round.
+ *  Called when a new round starts (countdown→running, and the
+ *  no-lobby map-rotate / in-place start paths). Reloads each
+ *  bot's map from the server, recreates its tank, and gives it
+ *  a FRESH Lua brain: the old lua_State is closed (Brain.close)
+ *  and a new one opened, so nothing the brain remembered from
+ *  the previous round or the lobby survives. A bot whose brain
+ *  fails to reload is removed.
  *
  *ARGUMENTS:
  *  sim - The ServerSim
@@ -418,6 +586,67 @@ void botManagerDeliverInternalMessage(struct ServerSim *sim,
                                       BYTE fromPlayer,
                                       const char *msg);
 
+/*********************************************************
+ *NAME:          botManagerQueueInternalMessage
+ *PURPOSE:
+ *  Thread-safe front end to botManagerDeliverInternalMessage
+ *  for callers running on a bot worker thread (i.e. anything
+ *  reached from brain.think). Copies the message into the
+ *  SENDING bot's own BotJobCtx slot — which only that bot's
+ *  worker touches — instead of writing into every allied
+ *  bot's inbox from inside the parallel stage. Stage 3 of
+ *  botManagerTick then performs the real fan-out serially,
+ *  in ascending jobIndices order.
+ *
+ *  Use this from worker context. Call the Deliver function
+ *  directly only from the producer thread.
+ *
+ *  See the BotJobCtx pendingInternalMsg comment for the
+ *  deliberate semantic change: messages now always arrive on
+ *  the following tick, for every receiver.
+ *
+ *ARGUMENTS:
+ *  sim        - The ServerSim hosting the bot manager
+ *  fromPlayer - Slot of the bot that produced the message
+ *  msg        - C string (no length prefix). Truncated to the
+ *               inbox slot size; on queue overflow the oldest
+ *               pending message is dropped.
+ *********************************************************/
+void botManagerQueueInternalMessage(struct ServerSim *sim,
+                                    BYTE fromPlayer,
+                                    const char *msg);
+
+/* Shortest gap, in sim ticks, between two smart pings from one bot. A bot
+ * thinks every tick and can decide to ping on any of them, so without a
+ * floor of its own a re-planning bot could put a marker on the team's map
+ * fifty times a second. Twenty-five ticks is half a second. Requests that
+ * arrive inside the gap are dropped and the brain is not told. */
+#define BOT_PING_MIN_GAP_TICKS 25
+
+/*********************************************************
+ *NAME:          botManagerQueuePing
+ *PURPOSE:
+ *  Queues a CMD_PING from a bot's own player slot, for the
+ *  producer thread to apply in Stage 3 of botManagerTick.
+ *  Called from brain_data.c when a brain's think returned a
+ *  ping request, which happens on a bot worker thread — the
+ *  same reason the bot's chat is queued rather than sent.
+ *
+ *  Rate-limited to one ping per bot per
+ *  BOT_PING_MIN_GAP_TICKS; extras are dropped in silence.
+ *  The command still passes the server's own ping gates when
+ *  it is applied, so a queued ping is not a granted one.
+ *
+ *ARGUMENTS:
+ *  sim        - The ServerSim hosting the bot manager
+ *  fromPlayer - Slot of the bot placing the ping
+ *  kind       - A PING_KIND_* value
+ *  worldX     - World X, 256 units to a map square
+ *  worldY     - World Y, 256 units to a map square
+ *********************************************************/
+void botManagerQueuePing(struct ServerSim *sim, BYTE fromPlayer,
+                         uint8_t kind, uint16_t worldX, uint16_t worldY);
+
 /* Bot-comms debug logger. Appends to "botmsg_debug.log" in the CWD, but ONLY
  * when bot debug mode is on (set via -braindebug / SetDefaultDebugMode) — a
  * no-op otherwise. Used to audit the internal message bus on a dedicated server
@@ -435,6 +664,108 @@ void botMsgDebugLog(const char *fmt, ...);
  *  playerNum - Player slot to remove
  *********************************************************/
 void botManagerRemoveBot(struct ServerSim *sim, BYTE playerNum);
+
+/*********************************************************
+ *NAME:          botManagerRemoveBotKeepSeat
+ *PURPOSE:
+ *  Takes a bot off the field and parks its runner, leaving
+ *  the player in the ServerSim. For a seat that is being
+ *  taken off the field and kept: the roster entry, the team
+ *  and the alliance are the caller's to keep, and the
+ *  ClientSim, the control subscription and the brain wait
+ *  in the context for the next fielding of the seat.
+ *
+ *  The tank, the man and the base timer are NOT this call's
+ *  — the seat's owner takes those back, because the tank
+ *  leaves the world.
+ *
+ *ARGUMENTS:
+ *  sim       - The ServerSim
+ *  playerNum - Player slot whose bot comes off the field
+ *********************************************************/
+void botManagerRemoveBotKeepSeat(struct ServerSim *sim, BYTE playerNum);
+
+/*********************************************************
+ *NAME:          botManagerReleaseParkedRunner
+ *PURPOSE:
+ *  Destroys a parked runner — brain, control subscription
+ *  and ClientSim — without touching the roster seat in
+ *  front of it. A no-op on a slot holding no parked runner,
+ *  so a caller can hand it any slot.
+ *
+ *  For the two places one slot's runner must go: the seat
+ *  itself leaving the roster (serverSimRemoveBot) and
+ *  botManagerDestroy. Use the plural below for a round
+ *  ending.
+ *
+ *ARGUMENTS:
+ *  sim       - The ServerSim
+ *  playerNum - Player slot to release
+ *********************************************************/
+void botManagerReleaseParkedRunner(struct ServerSim *sim, BYTE playerNum);
+
+/*********************************************************
+ *NAME:          botManagerReleaseParkedRunners
+ *PURPOSE:
+ *  The same for every slot: the round is over, so no parked
+ *  runner carries into the next one.
+ *
+ *  A parked brain keeps its state table — that is what
+ *  makes a resume worth having within a round, and what
+ *  makes one across a round boundary wrong: the brain would
+ *  open the new round still remembering the last one's
+ *  goal, owners and influence (see the round-start comment
+ *  in botManagerOnGameStart). The map does not come into
+ *  it; every resume reloads that.
+ *
+ *  Called at the three round ends — serverSimReturnToLobby,
+ *  the map rotation, and the empty reset — and at a countdown
+ *  abandoned (serverSimAbortCountdown), where the round the
+ *  warm built them for never starts. Not at the round START:
+ *  that path only runs when the pool holds an active bot, and
+ *  a round whose bots were all parked has none.
+ *
+ *ARGUMENTS:
+ *  sim - The ServerSim
+ *********************************************************/
+void botManagerReleaseParkedRunners(struct ServerSim *sim);
+
+/*********************************************************
+ *NAME:          botManagerWarmRunner
+ *PURPOSE:
+ *  Build a runner for a seat that has none and park it, so
+ *  the fielding that wants it is a resume rather than a
+ *  build. No roster change: the seat is not fielded, not
+ *  counted and not announced — only the ClientSim, the
+ *  control subscription and the brain come into being.
+ *
+ *  Built with the table the caller hands it, which is the
+ *  seat's — the one its team was written with. A spawn that
+ *  names the seat with that table, or with none of its own
+ *  and so with the seat's, matches this runner and resumes
+ *  it. A spawn carrying a different table does not match and
+ *  rebuilds. The context is marked warmed, so a rebuild
+ *  where the seat's table was empty and the spawn's is not
+ *  is reported at INFO as the expected cost of a spawn
+ *  carrying configuration its team did not, rather than as a
+ *  script handing the seat two different tables.
+ *
+ *  Returns false, having built nothing, when the slot
+ *  already holds a runner (active or parked), when no brain
+ *  path is given, or when the build fails.
+ *
+ *ARGUMENTS:
+ *  sim       - The ServerSim
+ *  playerNum - The seat to warm
+ *  brainPath - Path to the brain .lua the seat will run
+ *  brainName - Display name for the bot (the seat's)
+ *  ai        - AI advantage level
+ *  init      - The table to build it with; copied, and NULL
+ *              means no pairs
+ *********************************************************/
+bool botManagerWarmRunner(struct ServerSim *sim, BYTE playerNum,
+                          const char *brainPath, const char *brainName,
+                          aiType ai, const ScnTable *init);
 
 /*********************************************************
  *NAME:          botManagerDestroy
@@ -462,6 +793,21 @@ BYTE botManagerGetNumBots(const struct ServerSim *sim);
  *  playerNum - Player slot to check
  *********************************************************/
 bool botManagerIsBot(const struct ServerSim *sim, BYTE playerNum);
+
+/*********************************************************
+ *NAME:          botManagerHasRunner
+ *PURPOSE:
+ *  Whether the pool holds a runner for this slot at all —
+ *  an active bot's, or one parked behind a held seat.
+ *  Distinct from botManagerIsBot, which answers only for a
+ *  bot on the field; the warm pass needs the wider question
+ *  so it does not build a second runner for a seat that has
+ *  one waiting.
+ *
+ *ARGUMENTS:
+ *  playerNum - Player slot to check
+ *********************************************************/
+bool botManagerHasRunner(const struct ServerSim *sim, BYTE playerNum);
 
 /*********************************************************
  *NAME:          botManagerGetBrainPathfinder
@@ -538,10 +884,48 @@ double botManagerComputePerBotTargetMs(const struct ServerSim *sim,
  *  matching wall-clock slowdown is paced by the host's tick
  *  scheduler, not here.
  *
+ *  ALSO suppresses the consecutive-crash kick, so a brain that
+ *  crashes every tick is not removed from the game.
+ *
  *  Process-global (a debug toggle, not per-sim game state).
  *********************************************************/
 void botManagerSetSlowMoDebug(int on);
 int  botManagerGetSlowMoDebug(void);
+
+/*********************************************************
+ *NAME:          botManagerSetBrainTierOverride
+ *PURPOSE:
+ *  Pin every brain's capacity tier to `tier` (1..10); 0 restores
+ *  the dynamic controller. For A/B measurement runs.
+ *
+ *  The tier is normally derived from lastThinkMs / targetMs, both
+ *  wall-clock quantities, so the same seed yields different tiers
+ *  on different runs -- and a different tier is a different brain.
+ *  Pinning it makes brain decisions reproducible while leaving all
+ *  timing telemetry reporting real measured values.
+ *
+ *  Process-global (a debug toggle, not per-sim game state).
+ *********************************************************/
+void botManagerSetBrainTierOverride(int tier);
+int  botManagerGetBrainTierOverride(void);
+
+/*********************************************************
+ *NAME:          botManagerSetBrainLuaSeed
+ *PURPOSE:
+ *  Seed each brain's Lua math.random deterministically; 0 leaves
+ *  the VM default. The per-bot seed is this value combined with the
+ *  bot's player number, so bots still differ from each other but
+ *  identically across runs.
+ *
+ *  PUC-Lua 5.4 auto-seeds its generator per process, and the brain
+ *  draws from it for decisions that persist (replan_offset staggers
+ *  a bot's entire replan cadence), so runs otherwise diverge from
+ *  the first tick.
+ *
+ *  Process-global (a debug toggle, not per-sim game state).
+ *********************************************************/
+void botManagerSetBrainLuaSeed(long seed);
+long botManagerGetBrainLuaSeed(void);
 
 /*********************************************************
  *NAME:          botManagerFlushBrainLogs
@@ -686,6 +1070,23 @@ int botManagerGetActiveBotCount(const struct ServerSim *sim);
 int botManagerActiveBotCountForLua(struct lua_State *L);
 
 /*********************************************************
+ *NAME:          botManagerSetLuaGlobalString
+ *PURPOSE:
+ *  Set a string-valued global in the bot's Lua state by
+ *  pushing the value on the stack. Use this instead of
+ *  building `_G.name="value"` source text, which breaks on
+ *  any value holding a backslash or a quote (Windows
+ *  paths). Returns false when the bot is inactive.
+ *
+ *ARGUMENTS:
+ *  playerNum - Player slot
+ *  name      - Global name
+ *  value     - String value
+ *********************************************************/
+bool botManagerSetLuaGlobalString(struct ServerSim *sim, BYTE playerNum,
+                                  const char *name, const char *value);
+
+/*********************************************************
  *NAME:          botManagerEvalLuaString
  *PURPOSE:
  *  Compile + run a Lua chunk in the bot's state and return
@@ -749,6 +1150,19 @@ bool botManagerToggleAllBrainDebugMode(struct ServerSim *sim);
  *  outside the worker pool stay unbounded.
  *********************************************************/
 bool botManagerShouldAbort(struct lua_State *L);
+
+/*********************************************************
+ *NAME:          botManagerLastKillSite
+ *PURPOSE:
+ *  Returns the "<short_src>:<line>" captured by the count
+ *  hook the last time it killed this bot's think, or "" if
+ *  the lua_State has no associated bot / has never been
+ *  killed. Never returns NULL. Points at BotContext storage
+ *  that outlives the call within the tick — braincore.c uses
+ *  it to label the partial print2 flush it performs on the
+ *  kill path.
+ *********************************************************/
+const char *botManagerLastKillSite(struct lua_State *L);
 
 /*********************************************************
  *NAME:          botManagerGetGoalInfo

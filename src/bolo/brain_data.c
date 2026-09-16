@@ -94,30 +94,52 @@
 *  bottomPos - bottom position on the map to get data from
 *********************************************************/
 void brainDataMakeViewData(ClientSim *cs, BYTE *buff, BYTE leftPos, BYTE rightPos, BYTE topPos, BYTE bottomPos) {
-  BYTE count1; /* Looping variable */
-  BYTE count2; /* Looping variable */
-  BYTE pos;    /* Upto position    */
+  int count1;  /* Looping variable */
+  int count2;  /* Looping variable */
+  int pos;     /* Upto position    */
   GameSim *gs = clientSimGetGameSim(cs);
 
+  /* The counters are int because both bounds are inclusive and a rect that
+   * reaches the map edge arrives here as 255: brainDataMakeInfo clamps the
+   * 29x29 window's origin to 227, so a tank on map row 241 or below is passed
+   * bottomPos == 255, and a BYTE counter tested `<= 255` holds for every value
+   * it can take — the loop never ended. The far column did the same to the
+   * inner loop.
+   *
+   * Play never puts a tank out there; the reachable part of a map stops well
+   * short of the edge. What reaches it is the brain's FIRST pass, which runs
+   * before the tank has an authoritative position. A client that creates its
+   * tank before its map has arrived has no starts list, startsGetStart returns
+   * without writing, and tankCreate places the tank on the uninitialised
+   * locals it passed in. That is leftover stack, so which square it names
+   * depends on what ran before: about one join in eight was out at the edge
+   * under the baseline harness, every join under a debugger. A client that
+   * drew one spun at 100% of a core inside brainsHandlerStart rather than
+   * reaching its game loop, socket unread, deaf to the server leaving.
+   *
+   * pos is an int for a duller reason: the rect is view_width by view_height
+   * squares, 841 of them for the tank window, and a BYTE index wrapped at 256
+   * so five sixths of the buffer kept the zeros memset put there while the
+   * first 256 bytes were overwritten three times over. */
   pos = 0;
-  for (count1=topPos;count1<=bottomPos;count1++) {
-    for (count2=leftPos;count2<=rightPos;count2++) {
-      if (basesExistPos(&gs->bs, count2, count1) == TRUE) {
+  for (count1 = topPos; count1 <= bottomPos; count1++) {
+    for (count2 = leftPos; count2 <= rightPos; count2++) {
+      if (basesExistPos(&gs->bs, (BYTE)count2, (BYTE)count1) == TRUE) {
         buff[pos] = BREFBASE_T;
-      } else if (pillsViewExistPos(&gs->pb, count2, count1) == TRUE) {
+      } else if (pillsViewExistPos(&gs->pb, (BYTE)count2, (BYTE)count1) == TRUE) {
         /* The brain's view of the map is the bot's screen, so it shows a pill
          * at the square it was last seen on, exactly as a human's does. The
          * bot's movement still asks pillsExistPos through mapGetSpeed and
          * friends, so it is no more blocked by one than a human is. */
         buff[pos] = BPILLBOX_T;
       } else {
-        buff[pos] = mapGetPos(&gs->mp, count2, count1);
+        buff[pos] = mapGetPos(&gs->mp, (BYTE)count2, (BYTE)count1);
         if (buff[pos] == DEEP_SEA) {
           buff[pos] = BDEEPSEA;
         } else if (buff[pos] >= MINE_START && buff[pos] <= MINE_END) {
           buff[pos] = buff[pos] - MINE_SUBTRACT;
         }
-        if (minesExistPos(&gs->mns, &gs->mp, count2, count1) == TRUE) {
+        if (minesExistPos(&gs->mns, &gs->mp, (BYTE)count2, (BYTE)count1) == TRUE) {
           buff[pos] |= TERRAIN_MINE;
         }
       }
@@ -125,6 +147,31 @@ void brainDataMakeViewData(ClientSim *cs, BYTE *buff, BYTE leftPos, BYTE rightPo
     }
   }
 }
+/* Combined brain view rects: [0] is the tank-centered 29x29 window, then
+ * one 15x15 (+/-7 — Bolo's pill-view size) per DEPLOYED team pillbox (own
+ * or allied). Brains at EVERY ai level get the pill rects, as if watching
+ * all their pill views simultaneously. Consumed by the brain event filter,
+ * the pill-view object sweep, and the bot shell mirror in
+ * brainDataMakeInfo. Terrain viewdata stays tank-centered. */
+typedef struct {
+  BYTE left;
+  BYTE right;
+  BYTE top;
+  BYTE bottom;
+} BrainViewRect;
+#define BRAIN_VIEW_MAX_RECTS (MAX_PILLS + 1)
+
+static bool brainViewRectsContain(const BrainViewRect *rects, int numRects, BYTE mx, BYTE my) {
+  int i;
+  for (i = 0; i < numRects; i++) {
+    if (mx >= rects[i].left && mx <= rects[i].right
+        && my >= rects[i].top && my <= rects[i].bottom) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
 /*********************************************************
 *NAME:          brainDataMakeInfo
 *AUTHOR:        John Morrison
@@ -143,6 +190,8 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
   BYTE ty;
   BYTE closeBase; /* The closest base to our current position */
   GameSim *gs = clientSimGetGameSim(csPtr);
+  BrainViewRect viewRects[BRAIN_VIEW_MAX_RECTS];
+  int numViewRects;
 
 
   if (MY_TANK(csPtr) == NULL) {
@@ -151,6 +200,34 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
 
   tx = tankGetMX(&MY_TANK(csPtr));
   ty = tankGetMY(&MY_TANK(csPtr));
+
+  /* Build the view-rect list: tank window first, then every deployed team
+   * pill's view. Clamped at map edges (BYTE wrap would invert the rect). */
+  numViewRects = 0;
+  viewRects[numViewRects].left   = (BYTE)((tx >= 14) ? tx - 14 : 0);
+  viewRects[numViewRects].right  = (BYTE)((tx <= 241) ? tx + 14 : 255);
+  viewRects[numViewRects].top    = (BYTE)((ty >= 14) ? ty - 14 : 0);
+  viewRects[numViewRects].bottom = (BYTE)((ty <= 241) ? ty + 14 : 255);
+  numViewRects++;
+  {
+    BYTE myPN  = clientSimGetMyPlayerNum(csPtr);
+    BYTE numPb = pillsGetNumPills(&gs->pb);
+    BYTE pi;
+    for (pi = 0; pi < numPb && numViewRects < BRAIN_VIEW_MAX_RECTS; pi++) {
+      if ((*gs->pb).item[pi].inTank == FALSE
+          && (*gs->pb).item[pi].owner < MAX_TANKS
+          && ((*gs->pb).item[pi].owner == myPN
+              || playersIsAllie(&gs->plyrs, myPN, (*gs->pb).item[pi].owner) == TRUE)) {
+        BYTE px = (*gs->pb).item[pi].x;
+        BYTE py = (*gs->pb).item[pi].y;
+        viewRects[numViewRects].left   = (BYTE)((px >= 7) ? px - 7 : 0);
+        viewRects[numViewRects].right  = (BYTE)((px <= 248) ? px + 7 : 255);
+        viewRects[numViewRects].top    = (BYTE)((py >= 7) ? py - 7 : 0);
+        viewRects[numViewRects].bottom = (BYTE)((py <= 248) ? py + 7 : 255);
+        numViewRects++;
+      }
+    }
+  }
 
   /* Dead-tick hook: TRUE while the tank is waiting to respawn. The think is
    * still invoked (so the brain can reset its own state for a clean respawn)
@@ -304,10 +381,11 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
         if (aiMode == aiYesAdvantage || aiMode == aiFull) {
           buf[filtered++] = *e;
         } else {
-          /* Only include if pill is within view rect */
+          /* Only include if pill is within the tank view rect OR any team
+           * pill's view rect. (A team pill trivially contains itself, so
+           * "our pill is being hurt" events always reach the brain.) */
           BYTE px = e->data[1], py = e->data[2];
-          if (px >= value->view_left && px <= value->view_left + value->view_width &&
-              py >= value->view_top && py <= value->view_top + value->view_height) {
+          if (brainViewRectsContain(viewRects, numViewRects, px, py)) {
             buf[filtered++] = *e;
           }
         }
@@ -317,13 +395,12 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
         if (aiMode == aiYesAdvantage || aiMode == aiFull) {
           buf[filtered++] = *e;
         } else {
-          /* Look up base position and check view rect */
+          /* Look up base position and check the tank + team pill rects */
           BYTE idx = e->data[0];
           if (idx < MAX_BASES && gs->bs != NULL) {
             BYTE bx = (*gs->bs).item[idx].x;
             BYTE by = (*gs->bs).item[idx].y;
-            if (bx >= value->view_left && bx <= value->view_left + value->view_width &&
-                by >= value->view_top && by <= value->view_top + value->view_height) {
+            if (brainViewRectsContain(viewRects, numViewRects, bx, by)) {
               buf[filtered++] = *e;
             }
           }
@@ -375,15 +452,53 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
     value->view_top = clientSimGetPillViewY(csPtr)-7;
     value->view_height = 15;
   } else {
+    /* Keep the 29x29 tank-centred window on the map.
+     *
+     * BUG THIS FIXES: view_left/view_top are MAP_X (uint8_t). With tx < 14 the
+     * old `tx-14` wrapped to 242..255, and the right edge passed below
+     * (view_left+view_width) wrapped back round to 15..28. That made
+     * leftPos > rightPos, so brainDataMakeViewData's inclusive
+     * `count2 <= rightPos` loop never ran for ANY row and the malloc'd buffer
+     * was handed to the brain completely unwritten — 900 bytes of raw heap
+     * read as terrain. Heap contents vary with allocation history, so on a
+     * threaded bot host this was also a source of run-to-run divergence.
+     *
+     * SHIFT the origin rather than shrinking the window: shifting keeps every
+     * row full, keeps view_width / view_height at their long-standing 29, and
+     * still contains the tank (which is at most 14 tiles from an edge).
+     * Behaviour for a tank away from the edges is bit-for-bit unchanged. */
     *(value->pillview) = 0x8000;
-    value->view_left = tx-14;
+    {
+      BYTE vleft = (tx > 14) ? (BYTE)(tx - 14) : 0;
+      BYTE vtop  = (ty > 14) ? (BYTE)(ty - 14) : 0;
+      /* 255 - 28 = 227: the largest origin whose inclusive right/bottom edge
+       * (origin + view_width - 1) still fits in a BYTE without wrapping. */
+      if (vleft > 227) vleft = 227;
+      if (vtop  > 227) vtop  = 227;
+      value->view_left = vleft;
+      value->view_top  = vtop;
+    }
     value->view_width = 29;
-    value->view_top = ty-14;
     value->view_height = 29;
   }
-  //value->viewdata = malloc((value->view_width+1) * (value->view_height+1));
+  /* The buffer is the largest window any branch above asks for; the fill
+   * writes view_width * view_height of it and braincore hands the brain
+   * exactly that many bytes, which is the length brain.h documents. The far
+   * edges below are inclusive, hence the -1: passing view_left + view_width
+   * described a 30-square row for a 29-square window, so the rows the brain
+   * read were a square out of step with the ones written, and the last row
+   * ran off the end of what it was given. */
   value->viewdata = malloc(30 * 30);
-  brainDataMakeViewData(csPtr, value->viewdata, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height));
+  /* Belt-and-braces: no path may ever hand the brain uninitialised heap as
+   * terrain, even if some future view rect comes out empty. */
+  if (value->viewdata != NULL) {
+    memset(value->viewdata, 0, 30 * 30);
+  }
+  brainDataMakeViewData(csPtr, value->viewdata,
+                        value->view_left,
+                        (BYTE) (value->view_left + value->view_width - 1),
+                        value->view_top,
+                        (BYTE) (value->view_top + value->view_height - 1));
 
   /* From Bolo Version History:
   Added option to give Brains an advantage to make them more
@@ -413,6 +528,30 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
     playersGetBrainTanksInRect(csPtr, &gs->plyrs, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height), value->tankx, value->tanky);
     playersGetBrainLgmsInRect(csPtr, &gs->plyrs, value->view_left, (BYTE) (value->view_left+value->view_width), value->view_top, (BYTE) (value->view_top+value->view_height));
   }
+
+  /* Team pill view sweep: pull objects from every deployed team pill's
+   * 15x15 view rect, at EVERY ai level — brains effectively watch all
+   * their pill views simultaneously. brainDataAddObject dedups by
+   * type+id, so an entity inside the tank rect AND a pill rect (or two
+   * overlapping pill rects) is added exactly once. Bases/pills are
+   * already delivered map-wide in advantage/full mode, so only aiYes
+   * needs them per pill rect. Shells for bots come from the snapshot
+   * mirror below, which tests the whole rect union in one pass. */
+  {
+    int ri;
+    for (ri = 1; ri < numViewRects; ri++) {
+      BYTE pl  = viewRects[ri].left;
+      BYTE pr  = viewRects[ri].right;
+      BYTE pt  = viewRects[ri].top;
+      BYTE pbt = viewRects[ri].bottom;
+      if (aiMode == aiYes) {
+        basesGetBrainBaseInRect(csPtr, gs, pl, pr, pt, pbt);
+        pillsGetBrainPillsInRect(csPtr, gs, &gs->pb, pl, pr, pt, pbt);
+      }
+      playersGetBrainTanksInRect(csPtr, &gs->plyrs, pl, pr, pt, pbt, value->tankx, value->tanky);
+      playersGetBrainLgmsInRect(csPtr, &gs->plyrs, pl, pr, pt, pbt);
+    }
+  }
   /* Bots have no client-side prediction layer that fills sim.shs, so
    * shellsGetBrainShellsInRect above adds nothing for bot players.
    * Mirror the snapshot shells (now retained for bots — see
@@ -420,10 +559,6 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
    * info.objects actually contains type=OBJECT_SHOT entries the
    * brain (and BrainTest's shell-hitbox overlay) can render. */
   if (clientSimIsBot(csPtr)) {
-    BYTE leftPos   = value->view_left;
-    BYTE rightPos  = (BYTE)(value->view_left  + value->view_width);
-    BYTE topPos    = value->view_top;
-    BYTE bottomPos = (BYTE)(value->view_top   + value->view_height);
     BYTE myPN      = clientSimGetMyPlayerNum(csPtr);
     int shellCount = clientSimGetServerShellCount(csPtr);
     const ShellSnapshot *shellSnaps = clientSimGetServerShellSnaps(csPtr);
@@ -431,7 +566,8 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
       const ShellSnapshot *s = &shellSnaps[i];
       BYTE smx = (BYTE)(s->worldX >> TANK_SHIFT_MAPSIZE);
       BYTE smy = (BYTE)(s->worldY >> TANK_SHIFT_MAPSIZE);
-      if (smx < leftPos || smx > rightPos || smy < topPos || smy > bottomPos)
+      /* Union of the tank view rect + every team pill's view rect */
+      if (!brainViewRectsContain(viewRects, numViewRects, smx, smy))
         continue;
       BYTE owner;
       if (s->owner == NEUTRAL) owner = SHELLS_BRAIN_NEUTRAL;
@@ -439,10 +575,36 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
         owner = SHELLS_BRAIN_FRIENDLY;
       else
         owner = SHELLS_BRAIN_HOSTILE;
+      /* THE THREE SHELL FACTS THE CLASSIC ObjectInfo HAS NO ROOM FOR.
+       *
+       * ObjectInfo (public/brain.h) is the 1998 brain API: object / x / y /
+       * idnum / direction / info / speed. For a shell `direction` is the
+       * utilGet16Dir SNAP of the true angle — 16 compass points, so up to
+       * +-11.25 degrees of error, which over a shell's full 2016-WU flight is
+       * ~400 WU (a tile and a half) of lateral drift. `idnum` and `speed` are
+       * both dead for a shell (0 and 0). The snapshot the server sent us
+       * (ShellSnapshot, input_packet.h) carries all three of the things the
+       * struct drops: the exact 8-bit angle, the owner's player number, and
+       * `length`, the shell's REMAINING LIFE in engine ticks.
+       *
+       * So carry them on the two dead fields and leave `direction` exactly as
+       * it has always been — nothing that reads it changes behaviour:
+       *
+       *   idnum = (exact angle << 8) | owner player number  (NEUTRAL = 0xFF)
+       *   speed = remaining life, engine ticks (0..63)
+       *
+       * braincore.c unpacks these into ob.angle / ob.owner / ob.life on the
+       * Lua object table, which is where a brain should read them.
+       *
+       * The shell idnum is no longer always 0, but shells are still exempt
+       * from brainDataAddObject's identity dedup (it is keyed on the object
+       * TYPE), so two shells from the same pill still both arrive. */
       brainDataAddObject(csPtr, SHELLS_BRAIN_OBJECT_TYPE,
-                         s->worldX, s->worldY, 0,
+                         s->worldX, s->worldY,
+                         (unsigned short)(((unsigned short)s->angle << 8)
+                                          | (unsigned short)s->owner),
                          utilGet16Dir((TURNTYPE)s->angle),
-                         owner, 0);
+                         owner, s->length);
     }
   }
 
@@ -499,6 +661,13 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
   //FIXME!!!!
   *clientSimGetBrainsWantAllies(csPtr) = *(value->allies);
   value->wantallies = clientSimGetBrainsWantAllies(csPtr);
+
+  /* Smart ping request. Cleared on every think, so a brain that returns no
+   * ping fields places nothing and last think's request cannot fire twice. */
+  value->ping_pending = 0;
+  value->ping_kind = 0;
+  value->ping_x = 0;
+  value->ping_y = 0;
 
   /* Message Sending */
   value->messagedest = clientSimGetBrainsMessageDest(csPtr);
@@ -581,7 +750,18 @@ void brainDataExtractInfo(ClientSim *csPtr, BrainInfo *value) {
     value->num_messages = 0;
   }
 
-  /* Controling the tank */
+  /* Controling the tank.
+   *
+   * NOTE these two lines are self-assignments and have been for a long time:
+   * brainDataMakeInfo points value->holdkeys AT clientSimGetBrainHoldKeys(cs)
+   * (see :517), so this copies *&cs->brainHoldKeys onto itself. The write that
+   * actually drives the tank happens earlier, when the Lua result table is
+   * read in extract_brain_output(), straight through that alias.
+   *
+   * Kept because the legacy brain API shape (a BrainInfo full of pointers the
+   * brain writes through) is what other frontends still expect, but do not
+   * add conditions here expecting them to gate anything -- the dead-tank gate
+   * lives in extract_brain_output, where the real write is. */
   *clientSimGetBrainHoldKeys(csPtr) = *(value->holdkeys);
   *clientSimGetBrainTapKeys(csPtr) = *(value->tapkeys);
 
@@ -633,14 +813,42 @@ void brainDataExtractInfo(ClientSim *csPtr, BrainInfo *value) {
       } else {
         botMsgDebugLog("BOTMSG p%d send dest=0 (internal): %.48s",
                        (int)clientSimGetMyPlayerNum(csPtr), msg);
-        botManagerDeliverInternalMessage(bound,
-                                         clientSimGetMyPlayerNum(csPtr), msg);
+        /* QUEUE, don't deliver. This runs on the bot's worker thread inside
+         * the parallel brain-think stage; delivering here would push into
+         * every allied bot's MessageState inbox while those bots' own
+         * workers may be reading and clearing the same unlocked ring, so
+         * whether a message arrived before or after the receiver looked was
+         * decided by thread interleaving. Queueing writes only into this
+         * bot's own job slot; Stage 3 of botManagerTick fans it out
+         * serially. Consequence: internal messages now always arrive on the
+         * NEXT tick for every receiver (previously same-tick for
+         * higher-numbered slots under -threads 1). */
+        botManagerQueueInternalMessage(bound,
+                                       clientSimGetMyPlayerNum(csPtr), msg);
       }
     } else {
       /* Send this message to the appropriate players */
       playersSendAiMessage(csPtr, gs, &gs->plyrs, *(value->messagedest), msg);
     }
     clientSimGetBrainsMessage(csPtr)[0] = '\0';
+  }
+
+  /* Smart ping. The brain asks; the engine places it from the brain's own
+   * player slot, so allies see it on the map, the team filter is the one
+   * every ping goes through, and a replay keeps it. Queued rather than
+   * applied: this runs on a bot worker thread during the parallel think
+   * stage, and serverSimApplyCommand belongs to the producer thread, which
+   * drains the queue in Stage 3 of botManagerTick. Same deferral the bot's
+   * chat takes, for the same reason. A local brain in a human's Brains menu
+   * has no bound ServerSim and no player slot of its own to ping from, so
+   * its request is dropped. */
+  if (value->ping_pending != 0) {
+    struct ServerSim *bound = clientSimGetBoundServerSim(csPtr);
+    if (bound != NULL) {
+      botManagerQueuePing(bound, clientSimGetMyPlayerNum(csPtr),
+                          value->ping_kind, value->ping_x, value->ping_y);
+    }
+    value->ping_pending = 0;
   }
 }
 /*********************************************************
@@ -665,6 +873,25 @@ void brainDataAddObject(ClientSim *cs, unsigned short object, WORLD wx, WORLD wy
 
   numObjects = clientSimGetBrainsNumObjects(cs);
   objects = clientSimGetBrainObjects(cs);
+  /* Capacity guard — brainObjects is a fixed 1024-slot array
+   * (client_sim_internal.h) that historically had no overflow check. */
+  if (*numObjects >= 1024) {
+    return;
+  }
+  /* Dedup identifiable objects (tanks / LGMs / pills / bases): with the
+   * team-pill-view sweep the same entity can sit inside the tank view
+   * rect AND one or more pill view rects — add it exactly once. Shells
+   * are exempt: their idnum is not an identity (for a snapshot shell it
+   * packs angle+owner, see the bot branch of brainDataGetInfo) and each
+   * shell source runs a single pass per tick. */
+  if (object != SHELLS_BRAIN_OBJECT_TYPE) {
+    unsigned short i;
+    for (i = 0; i < *numObjects; i++) {
+      if (objects[i].object == object && objects[i].idnum == idNum) {
+        return;
+      }
+    }
+  }
   objects[*numObjects].object = object;
   objects[*numObjects].x = wx;
   objects[*numObjects].y = wy;

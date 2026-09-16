@@ -165,7 +165,11 @@ void clientSimNetSendAddBotConfigured(ClientSim *cs, BYTE teamNumber,
                                       uint8_t brainIdx,
                                       const char *botName);
 void clientSimNetSendRemoveBot(ClientSim *cs, BYTE playerNum);
+/* mode indexes the brain's own mode list (brain_list.h) and difficulty
+ * indexes THAT mode's level list — mode 0 with 0/1/2 is the pre-manifest
+ * easy / medium / hard. */
 void clientSimNetSendLobbyBotConfig(ClientSim *cs, BYTE slot,
+                                    uint8_t mode,
                                     uint8_t difficulty,
                                     uint8_t personality,
                                     const char *name);
@@ -179,12 +183,25 @@ void clientSimNetSendLobbySetBotBrain(ClientSim *cs, BYTE slot,
  * Windows drive letters before opening the file. */
 void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath);
 
+/* Host (or openHost / admin) only — pick one of the scenarios the server
+ * offers on its own. relPath is the file name the scenario list gave, and
+ * "" selects none; NULL is a no-op. The server rejects "..", absolute
+ * paths, Windows drive letters and a name its scenarios directory does not
+ * hold. Picking is a commit and not a preview: the scenario it names takes
+ * effect at once, over the committed map's own script if that map has one,
+ * and the lobby settings event says which is playing. */
+void clientSimNetSendLobbySetScenario(ClientSim *cs, const char *relPath);
+
 /* Lobby preview cycle. SET_MAP and a completed upload auto-stash
  * the previous committed map; these two close the loop:
  *   - Cancel: roll back to the stashed map (server re-broadcasts).
  *   - Commit: free the stash; the sim already shows the previewed
  *             map, so no further broadcast is needed. */
 void clientSimNetSendLobbyPreviewCancel(ClientSim *cs);
+/* Ask the server to read the map's script again. Host-only and lobby-only
+ * at the server; what it changes takes effect at the next round. The server
+ * answers with a line addressed to the sender, whether it worked or not. */
+void clientSimNetSendLobbyReloadScenario(ClientSim *cs);
 void clientSimNetSendLobbyPreviewCommit(ClientSim *cs);
 
 /* Procedural-map preview. seedStr is a mapGenConfigToSeed-encoded
@@ -198,6 +215,14 @@ void clientSimNetSendLobbyPreviewRandom(ClientSim *cs, const char *seedStr);
  * (lobbyMapList* fields). Any lobby client may request — read-only. */
 void clientSimNetSendLobbyMapListRequest(ClientSim *cs,
                                          const char *relPath);
+
+/* Ask what scenarios the server offers on their own, independently of any
+ * map. No path: the scenarios directory is flat, unlike the map chooser's
+ * tree. The response arrives async via PACKET_LOBBY_SCENARIO_LIST_RSP and is
+ * stored on the ClientSim; read it back through the
+ * clientSimGetLobbyScenario* accessors in client_sim.h. Any lobby client may
+ * ask — read-only. No-op without a UDP transport. */
+void clientSimNetSendLobbyScenarioListRequest(ClientSim *cs);
 
 /* Recursive search variant. Response stored on lobbyMapSearch*. */
 void clientSimNetSendLobbyMapSearchRequest(ClientSim *cs,

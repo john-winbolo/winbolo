@@ -80,6 +80,19 @@ struct WbTheme {
     ImU32 botTagBg;
     ImU32 botTagBorder;
     ImU32 botTagText;
+    /* (The bot NAME tag's colour is the brain's own — see
+     * lobbyBotBrainTagColors — so it has no theme slot.) */
+    /* Bot DIFFICULTY tag — one colour per level, matching the Easy./Medium./
+     * Hard. tagline tokens (green / amber / red) so the two readings agree. */
+    ImU32 diffEasyTagBg;
+    ImU32 diffEasyTagBorder;
+    ImU32 diffEasyTagText;
+    ImU32 diffMediumTagBg;
+    ImU32 diffMediumTagBorder;
+    ImU32 diffMediumTagText;
+    ImU32 diffHardTagBg;
+    ImU32 diffHardTagBorder;
+    ImU32 diffHardTagText;
 };
 
 /* Single global theme pointer. Swapped on theme change. */

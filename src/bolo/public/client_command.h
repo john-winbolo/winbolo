@@ -61,6 +61,7 @@ typedef enum {
     CMD_LOCK_TOGGLE,
     CMD_LOBBY_ADD_BOT,
     CMD_LOBBY_SET_MAP,
+    CMD_LOBBY_SET_SCENARIO,
     CMD_LOBBY_PREVIEW_CANCEL,
     CMD_LOBBY_PREVIEW_COMMIT,
     CMD_LOBBY_PREVIEW_RANDOM,
@@ -78,7 +79,8 @@ typedef enum {
     CMD_PLAYER_MUTE,
     CMD_VOICE_STATE,
     CMD_PING,
-    CMD_PLAYER_PING_MUTE
+    CMD_PLAYER_PING_MUTE,
+    CMD_LOBBY_RELOAD_SCENARIO
 } ClientCommandType;
 
 /* Reject codes returned by serverSimApplyCommand. The dispatcher
@@ -110,7 +112,13 @@ typedef enum {
      * already reached. Surfaced to the host via the reject toast as a
      * dedicated "bot limit reached" line rather than the generic
      * CMD_REJECT_INVALID. */
-    CMD_REJECT_BOT_LIMIT
+    CMD_REJECT_BOT_LIMIT,
+    /* A lobby setting the map's scenario fixes: the game type, ranked,
+     * and the AI policy that would take every bot off the roster. The
+     * toast says the scenario decides it rather than the generic
+     * "invalid", which tells a host nothing about a setting that was
+     * theirs a map ago. Appended: the values ride the wire. */
+    CMD_REJECT_SCENARIO
 } CmdResult;
 
 /* CMD_TEAM_SET — set the team number for a lobby slot. Sender must
@@ -142,8 +150,10 @@ typedef struct {
     bool ready;
 } CmdReady;
 
-/* CMD_LOBBY_BOT_CONFIG — update difficulty/personality (+ optional
+/* CMD_LOBBY_BOT_CONFIG — update mode/difficulty/personality (+ optional
  * rename) for a bot slot. nameLen == 0 means "keep current name".
+ * mode indexes the brain's own mode list (brain_list.h) and difficulty
+ * indexes that mode's level list.
  * Bot-config validation runs against the connected-player table
  * via transportUdpServerGetPlayerName; the stub for non-server
  * binaries returns NULL (no collision) on every slot. */
@@ -151,6 +161,7 @@ typedef struct {
     uint8_t slot;
     uint8_t difficulty;
     uint8_t personality;
+    uint8_t mode;
     uint8_t nameLen;
     char    name[PACKET_MAX_PLAYER_NAME];
 } CmdLobbyBotConfig;
@@ -195,6 +206,7 @@ typedef struct {
  * 0x80 aliases the 0xFF broadcast sentinel and would swallow broadcast
  * chat. Every routing site checks 0xFF (broadcast) first, then
  * CHAT_DEST_IS_TEAM, then slot unicast. */
+#define CHAT_DEST_BROADCAST  0xFF   /* everybody, the sentinel above */
 #define CHAT_DEST_TEAM_BASE 0x80
 #define CHAT_DEST_IS_TEAM(d) ((d) >= 0x81 && (d) <= 0x90)
 #define CHAT_DEST_TEAM_OF(d) ((uint8_t)((d) - CHAT_DEST_TEAM_BASE))
@@ -277,9 +289,25 @@ typedef struct {
     char    relPath[256];
 } CmdLobbySetMap;
 
+/* CMD_LOBBY_SET_SCENARIO — the host picking a scenario. relPath is
+ * relative to the scenarios directory; an empty one selects none. The
+ * case rejects absolute paths, drive letters and ".." segments, and a
+ * name the scenarios directory does not hold. */
+typedef struct {
+    uint8_t relPathLen;
+    char    relPath[256];
+} CmdLobbySetScenario;
+
 typedef struct {
     uint8_t _unused;
 } CmdLobbyPreviewCancel;
+
+/* The lobby host asking the server to read its map's script again. Nothing
+ * to carry: which script is the server's own business, and the answer comes
+ * back as a line addressed to whoever asked. */
+typedef struct {
+    uint8_t _unused;
+} CmdLobbyReloadScenario;
 
 typedef struct {
     uint8_t _unused;
@@ -459,7 +487,9 @@ typedef struct ClientCommand {
         CmdLockToggle          lockToggle;
         CmdLobbyAddBot         lobbyAddBot;
         CmdLobbySetMap         lobbySetMap;
+        CmdLobbySetScenario    lobbySetScenario;
         CmdLobbyPreviewCancel  lobbyPreviewCancel;
+        CmdLobbyReloadScenario lobbyReloadScenario;
         CmdLobbyPreviewCommit  lobbyPreviewCommit;
         CmdLobbyPreviewRandom  lobbyPreviewRandom;
         CmdLobbyKick           lobbyKick;

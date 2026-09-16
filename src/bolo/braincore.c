@@ -50,6 +50,10 @@
 #include "util.h"
 #include "braincore.h"
 #include "brain_pathfinder.h"
+/* botManagerLastKillSite() — the budget hook's captured "<src>:<line>",
+ * used to label the partial print2 flush on the kill path below. Same
+ * static lib (bolo_static), so no new link dependency. */
+#include "bot_manager.h"
 #include "tank.h"  /* tankModPct. The movement rates themselves arrive on
                     * the pathfinder each think, so the stop predictor and
                     * the engine cannot drift apart */
@@ -531,6 +535,30 @@ void brainCorePushInfo(lua_State *L, const BrainInfo *info) {
       lua_pushinteger(L, info->objects[i].direction); lua_setfield(L, -2, "direction");
       lua_pushinteger(L, info->objects[i].info);      lua_setfield(L, -2, "info");
       lua_pushinteger(L, info->objects[i].speed);     lua_setfield(L, -2, "speed");
+      /* Shell extras. brain_data.c packs the three facts ObjectInfo has no
+       * field for onto idnum/speed (which are both dead for a shell), so the
+       * classic fields keep their historical values and a brain reads the
+       * good ones by name:
+       *   angle — the EXACT 8-bit bradian the shell flies on, not the
+       *           16-compass-point `direction` snap (+-11.25 deg);
+       *   owner — the firing player's number, NEUTRAL (0xFF) for a pillbox;
+       *   life  — remaining flight in ENGINE ticks (shells.h `length`); at
+       *           SHELL_SPEED 32 WU/tick that is 32 x life WU of flight left.
+       * Written for every object (0 on non-shells) because the element tables
+       * are reused across ticks — a stale `life` on a slot that now holds a
+       * tank would be a lie. */
+      if (info->objects[i].object == OBJECT_SHOT) {
+        lua_pushinteger(L, (info->objects[i].idnum >> 8) & 0xFF);
+        lua_setfield(L, -2, "angle");
+        lua_pushinteger(L, info->objects[i].idnum & 0xFF);
+        lua_setfield(L, -2, "owner");
+        lua_pushinteger(L, info->objects[i].speed);
+        lua_setfield(L, -2, "life");
+      } else {
+        lua_pushinteger(L, 0); lua_setfield(L, -2, "angle");
+        lua_pushinteger(L, 0); lua_setfield(L, -2, "owner");
+        lua_pushinteger(L, 0); lua_setfield(L, -2, "life");
+      }
       lua_pop(L, 1);
     }
     for (i = n; i < old_n; i++) {
@@ -740,6 +768,36 @@ void brainCoreExtractOutput(lua_State *L, BrainInfo *info) {
     }
   }
   lua_pop(L, 1);
+
+  /* ping_kind / ping_x / ping_y — one smart ping the brain wants on the
+   * map this think. All three must be integers for the request to count,
+   * which is why the pending flag is set here rather than derived from the
+   * kind: PING_KIND_STANDARD is 0, so a kind of zero is a real kind and
+   * cannot double as "no ping". ping_pending was cleared when the engine
+   * built this BrainInfo, so a brain that says nothing places nothing. */
+  {
+    lua_Integer pk = 0, px = 0, py = 0;
+    int haveKind, haveX, haveY;
+    lua_getfield(L, -1, "ping_kind");
+    haveKind = lua_isinteger(L, -1);
+    if (haveKind) pk = lua_tointeger(L, -1);
+    lua_pop(L, 1);
+    lua_getfield(L, -1, "ping_x");
+    haveX = lua_isinteger(L, -1);
+    if (haveX) px = lua_tointeger(L, -1);
+    lua_pop(L, 1);
+    lua_getfield(L, -1, "ping_y");
+    haveY = lua_isinteger(L, -1);
+    if (haveY) py = lua_tointeger(L, -1);
+    lua_pop(L, 1);
+    if (haveKind && haveX && haveY && pk >= 0 && pk < 256 &&
+        px >= 0 && px <= 0xFFFF && py >= 0 && py <= 0xFFFF) {
+      info->ping_pending = 1;
+      info->ping_kind    = (BYTE)pk;
+      info->ping_x       = (WORLD_X)px;
+      info->ping_y       = (WORLD_Y)py;
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -870,11 +928,23 @@ static bool brc_should_suppress_crash_file(lua_State *L, time_t now) {
  * "think" / "init" / whatever — used in the banner and filename. Not
  * static so the unit test in tests/unit/test_brain_crash_log.c can
  * invoke it directly without standing up a full BrainInfo. */
+/* Set by the host once the brain C bindings are registered; see
+ * brainCoreSetLogFlushHook. NULL in binaries that don't link them. */
+static void (*s_log_flush_hook)(void) = NULL;
+
+void brainCoreSetLogFlushHook(void (*fn)(void)) { s_log_flush_hook = fn; }
+
 void brc_write_crash_log(lua_State *L,
                          const char *method,
                          const char *err_or_traceback) {
   if (err_or_traceback == NULL) err_or_traceback = "(no error message)";
   if (method == NULL) method = "?";
+
+  /* Push the brain's own buffered log output to disk BEFORE writing the crash
+   * report. The threaded writer batches roughly a second of print2 at a time,
+   * so without this the lines that explain the crash can still be sitting in
+   * the queue when the process goes down right after this function. */
+  if (s_log_flush_hook) s_log_flush_hook();
 
   /* Timestamps: UTC (for filenames + cross-host comparison) and local
    * (for at-a-glance reading next to other session logs). */
@@ -1069,6 +1139,32 @@ bool brainCoreCallThink(lua_State *L, BrainInfo *info, bool *out_killed) {
                    strstr(errMsg, "tick_budget_exceeded") != NULL);
     if (killed) {
       *out_killed = true;
+      /* The budget hook is STILL ARMED here: bot_manager.c's
+       * runBotThinkJob() uninstalls it only after this function returns
+       * (its "single uninstall point" sits after runBotThinkJobImpl).
+       * Running any more Lua with a hook whose deadline is already in the
+       * past would re-fire and kill us mid-flush, so disarm first. The
+       * wrapper's own lua_sethook(L, NULL, 0, 0) then runs as a harmless
+       * idempotent repeat, and states without a hook (BrainTest's
+       * singleton brain) are unaffected. */
+      lua_sethook(L, NULL, 0, 0);
+      lua_settop(L, top);
+      /* Flush the killed tick's buffered print2 lines. Without this the
+       * whole tick's log — exactly the lines needed to see WHY it blew
+       * the budget — is discarded by the next tick's print2.set_tick().
+       * The brain publishes _G.brain_flush_killed in Brain.open; it's a
+       * no-op when the buffer is empty, so opt/ and non-debug runs cost
+       * one global lookup. Errors here are swallowed: a broken flush must
+       * never turn a recoverable budget kill into a crash. */
+      lua_getglobal(L, "brain_flush_killed");
+      if (lua_isfunction(L, -1)) {
+        lua_pushstring(L, botManagerLastKillSite(L));
+        if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+          lua_pop(L, 1); /* discard the error object */
+        }
+      } else {
+        lua_pop(L, 1);
+      }
       lua_settop(L, top);
       return false;
     }
@@ -1343,6 +1439,62 @@ static int l_cpf_influence_at(lua_State *L) {
   return 1;
 }
 
+static int l_cpf_clear_neutral_zones(lua_State *L) {
+  CPF_GET(L);
+  brainPathfinderClearNeutralZones(pf);
+  return 0;
+}
+
+static int l_cpf_stamp_neutral_zone(lua_State *L) {
+  CPF_GET(L);
+  brainPathfinderStampNeutralZone(pf, (int)luaL_checkinteger(L, 1),
+                                  (int)luaL_checkinteger(L, 2),
+                                  (int)luaL_checkinteger(L, 3));
+  return 0;
+}
+
+static int l_cpf_rebuild_influence_tail(lua_State *L) {
+  CPF_GET(L);
+  brainPathfinderRebuildInfluenceTail(pf, (int)luaL_checkinteger(L, 1),
+                                      (int)luaL_checkinteger(L, 2),
+                                      (int)luaL_checkinteger(L, 3),
+                                      (int)luaL_checkinteger(L, 4),
+                                      (int)luaL_checkinteger(L, 5),
+                                      /* deep_margin: optional, so brains that
+                                       * predate it (GoalHunter 1.6 and older,
+                                       * which must stay bit-for-bit) keep the
+                                       * old no-margin behaviour. */
+                                      (int)luaL_optinteger(L, 6, 0),
+                                      /* enemy_tail: optional and defaults to 1
+                                       * (both sides grow) for the same reason
+                                       * -- a brain that does not pass it keeps
+                                       * the old behaviour. */
+                                      (int)luaL_optinteger(L, 7, 1));
+  return 0;
+}
+
+static int l_cpf_merge_influence_tail(lua_State *L) {
+  CPF_GET(L);
+  brainPathfinderMergeInfluenceTail(pf);
+  return 0;
+}
+
+static int l_cpf_influence_tail_stats(lua_State *L) {
+  CPF_GET(L);
+  int s[7] = {0,0,0,0,0,0,0};
+  int i;
+  brainPathfinderInfluenceTailStats(pf, s);
+  for (i = 0; i < 7; i++) lua_pushinteger(L, s[i]);
+  return 7;
+}
+
+static int l_cpf_influence_tail_at(lua_State *L) {
+  CPF_GET(L);
+  lua_pushinteger(L, (int)brainPathfinderInfluenceTailAt(pf, (int)luaL_checkinteger(L, 1),
+                                                         (int)luaL_checkinteger(L, 2)));
+  return 1;
+}
+
 static int l_cpf_path_to(lua_State *L) {
   int next_x = -1, next_y = -1;
   int status;
@@ -1589,9 +1741,13 @@ static int l_cpf_dijkstra_lookup_subtract_by_kind(lua_State *L) {
   return 1;
 }
 
-/* cpf_dijkstra_next_step(kind, sx, sy, dx, dy [, obstacles, penalty]) → nx, ny or nil
+/* cpf_dijkstra_next_step(kind, sx, sy, dx, dy [, obstacles, penalty, in_boat])
+ * → nx, ny or nil
  * obstacles: optional flat array of packed tile keys (y*256+x) to dodge at trace
- * time; penalty: extra cost added to those tiles (default large). */
+ * time; penalty: extra cost added to those tiles (default large).
+ * in_boat: the tank's LIVE boat state (0/1) for the on-foot deep-sea rule;
+ * omit it (or pass nil) when the caller does not know and the slate's own seed
+ * state should be used instead. */
 #define CPF_MAX_OBSTACLES 64
 static int l_cpf_dijkstra_next_step(lua_State *L) {
   CPF_GET(L);
@@ -1603,6 +1759,15 @@ static int l_cpf_dijkstra_next_step(lua_State *L) {
   int obstacles[CPF_MAX_OBSTACLES];
   int n_obs = 0;
   float penalty = (float)luaL_optnumber(L, 7, 1.0e6);
+  /* -1 = "caller does not know". Both a boolean and a 0/1 number are accepted:
+   * lua_toboolean alone would read the NUMBER 0 as true (only false and nil
+   * are falsy in Lua), which would silently tell the rule every tank is
+   * afloat. */
+  int in_boat = -1;
+  if (!lua_isnoneornil(L, 8)) {
+    in_boat = lua_isboolean(L, 8) ? (lua_toboolean(L, 8) ? 1 : 0)
+                                  : ((lua_tointeger(L, 8) != 0) ? 1 : 0);
+  }
   if (lua_istable(L, 6)) {
     int len = (int)lua_rawlen(L, 6);
     if (len > CPF_MAX_OBSTACLES) len = CPF_MAX_OBSTACLES;
@@ -1615,13 +1780,34 @@ static int l_cpf_dijkstra_next_step(lua_State *L) {
   int nx = -1, ny = -1;
   if (brainPathfinderDijkstraNextStep(pf, kind, sx, sy, dx, dy,
                                       n_obs > 0 ? obstacles : NULL, n_obs, penalty,
-                                      &nx, &ny)) {
+                                      in_boat, &nx, &ny)) {
     lua_pushinteger(L, nx);
     lua_pushinteger(L, ny);
     return 2;
   }
   lua_pushnil(L);
   return 1;
+}
+
+/* cpf_sea_veto() → seq, from_x, from_y, rej_x, rej_y, pick_x, pick_y
+ *
+ * Debug read-out for the on-foot deep-sea rule in cpf_dijkstra_next_step
+ * (config key "nextstep_foot_sea_rule"). seq counts vetoes since the
+ * pathfinder was created, so the caller tells a fresh veto from a stale
+ * record by comparing it with the last seq it saw. pick is (-1,-1) when the
+ * rule left nothing legal to step to. Observation only. */
+static int l_cpf_sea_veto(lua_State *L) {
+  CPF_GET(L);
+  int fx = -1, fy = -1, rx = -1, ry = -1, px = -1, py = -1;
+  uint32_t seq = brainPathfinderGetSeaVeto(pf, &fx, &fy, &rx, &ry, &px, &py);
+  lua_pushinteger(L, (lua_Integer)seq);
+  lua_pushinteger(L, fx);
+  lua_pushinteger(L, fy);
+  lua_pushinteger(L, rx);
+  lua_pushinteger(L, ry);
+  lua_pushinteger(L, px);
+  lua_pushinteger(L, py);
+  return 7;
 }
 
 /* cpf_dijkstra_trace_path(kind, dx, dy) → flat array {x1,y1,x2,y2,...} or nil */
@@ -1995,6 +2181,44 @@ static int l_cpf_lgm_travel_ticks_map(lua_State *L) {
   return 1;
 }
 
+/* cpf_lgm_walk_path(smx, smy, dmx, dmy, blessX, blessY, maxTicks, stuckTicks,
+ *                   out) -> n
+ *
+ * The LGM walk sim again, but handing back WHERE the man is on each of the
+ * first `maxTicks` ticks rather than only how long the trip takes. `out` is a
+ * caller-owned table the results are written into as a FLAT pair list —
+ * out[2i-1] = world x, out[2i] = world y after tick i — and n is how many
+ * pairs were written. The caller reuses one table, so a gate that runs every
+ * tick allocates nothing.
+ *
+ * Same walk as cpf_lgm_travel_ticks_map: the positions are the ones behind
+ * that call's tick count, not a second, differently-behaved simulation. */
+static int l_cpf_lgm_walk_path(lua_State *L) {
+  CPF_GET(L);
+  BYTE smx = (BYTE)luaL_checkinteger(L, 1);
+  BYTE smy = (BYTE)luaL_checkinteger(L, 2);
+  BYTE dmx = (BYTE)luaL_checkinteger(L, 3);
+  BYTE dmy = (BYTE)luaL_checkinteger(L, 4);
+  BYTE blessX = (BYTE)luaL_checkinteger(L, 5);
+  BYTE blessY = (BYTE)luaL_checkinteger(L, 6);
+  int maxTicks = (int)luaL_checkinteger(L, 7);
+  int stuckTicks = (int)luaL_checkinteger(L, 8);
+  WORLD px[BRAIN_LGM_WALK_PATH_MAX];
+  WORLD py[BRAIN_LGM_WALK_PATH_MAX];
+  int n, i;
+  luaL_checktype(L, 9, LUA_TTABLE);
+  if (maxTicks < 0) maxTicks = 0;
+  if (maxTicks > BRAIN_LGM_WALK_PATH_MAX) maxTicks = BRAIN_LGM_WALK_PATH_MAX;
+  n = brainPathfinderLgmWalkPathMap(pf, smx, smy, dmx, dmy, blessX, blessY,
+                                     maxTicks, stuckTicks, px, py, maxTicks);
+  for (i = 0; i < n; i++) {
+    lua_pushinteger(L, px[i]); lua_rawseti(L, 9, i * 2 + 1);
+    lua_pushinteger(L, py[i]); lua_rawseti(L, 9, i * 2 + 2);
+  }
+  lua_pushinteger(L, n);
+  return 1;
+}
+
 /* cpf_set_lgm_blocked(tiles) — tiles is an array of { mx, my } pairs (each a
  * 2-element table). Clears the LGM-impassable overlay, then marks each tile so
  * the LGM travel sim treats it as a wall. The bot's brain map is PURE TERRAIN
@@ -2194,6 +2418,12 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_clear_influence",   l_cpf_clear_influence },
     { "cpf_stamp_influence",   l_cpf_stamp_influence },
     { "cpf_influence_at",      l_cpf_influence_at },
+    { "cpf_clear_neutral_zones",    l_cpf_clear_neutral_zones },
+    { "cpf_stamp_neutral_zone",     l_cpf_stamp_neutral_zone },
+    { "cpf_rebuild_influence_tail", l_cpf_rebuild_influence_tail },
+    { "cpf_merge_influence_tail",   l_cpf_merge_influence_tail },
+    { "cpf_influence_tail_at",      l_cpf_influence_tail_at },
+    { "cpf_influence_tail_stats",   l_cpf_influence_tail_stats },
     { "cpf_path_to",           l_cpf_path_to },
     { "cpf_cost_to",           l_cpf_cost_to },
     { "cpf_cost_to_reset",     l_cpf_cost_to_reset },
@@ -2205,6 +2435,7 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_dijkstra_lookup_by_kind", l_cpf_dijkstra_lookup_by_kind },
     { "cpf_dijkstra_lookup_subtract_by_kind", l_cpf_dijkstra_lookup_subtract_by_kind },
     { "cpf_dijkstra_next_step",     l_cpf_dijkstra_next_step },
+    { "cpf_sea_veto",               l_cpf_sea_veto },
     { "cpf_dijkstra_trace_path",    l_cpf_dijkstra_trace_path },
     { "cpf_dijkstra_trace_path_by_kind", l_cpf_dijkstra_trace_path_by_kind },
     { "cpf_dijkstra_pick_reuse_slate", l_cpf_dijkstra_pick_reuse_slate },
@@ -2220,6 +2451,7 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     { "cpf_danger_at",             l_cpf_danger_at },
     { "cpf_lgm_travel_ticks",      l_cpf_lgm_travel_ticks },
     { "cpf_lgm_travel_ticks_map",  l_cpf_lgm_travel_ticks_map },
+    { "cpf_lgm_walk_path",         l_cpf_lgm_walk_path },
     { "cpf_set_lgm_blocked",       l_cpf_set_lgm_blocked },
     { "cpf_estimate_tank_travel_ticks", l_cpf_estimate_tank_travel_ticks },
     { "cpf_dijkstra_shells_at",    l_cpf_dijkstra_shells_at },
@@ -2238,6 +2470,22 @@ void brainCoreRegisterPathfinder(lua_State *L, BrainPathfinder **pfPtr) {
     lua_pushcclosure(L, funcs[i].func, 1);
     lua_setglobal(L, funcs[i].name);
   }
+  /* Same pointer-to-pointer in the registry, for C the brains link in
+   * alongside this file (brains/<brain>/c). Those modules register their
+   * own Lua functions, so they have no cpf_* upvalue to read, and the
+   * pathfinder is what the shot and movement rules hang off. Kept in
+   * step with the upvalue because it IS the upvalue: one pfPtr, stored
+   * twice. */
+  lua_pushlightuserdata(L, (void *)pfPtr);
+  lua_setfield(L, LUA_REGISTRYINDEX, BRAINCORE_PATHFINDER_REGKEY);
+}
+
+BrainPathfinder *brainCoreGetPathfinder(lua_State *L) {
+  BrainPathfinder **ppf;
+  lua_getfield(L, LUA_REGISTRYINDEX, BRAINCORE_PATHFINDER_REGKEY);
+  ppf = (BrainPathfinder **)lua_touserdata(L, -1);
+  lua_pop(L, 1);
+  return (ppf != NULL) ? *ppf : NULL;
 }
 
 /* ------------------------------------------------------------------ */
@@ -2328,6 +2576,16 @@ static int l_wsim_set_lgm(lua_State *L) {
   return 0;
 }
 
+/* wsim_set_dwell(ticks) — keep simulating for `ticks` after the tank
+ * reaches the end of its path, standing still on the destination tile.
+ * 0 (the default, restored by wsim_clear) = stop on arrival. */
+static int l_wsim_set_dwell(lua_State *L) {
+  WSIM_GET(L);
+  int dwell_ticks = (int)luaL_optinteger(L, 1, 0);
+  brainWorldSimSetDwell(ws, dwell_ticks);
+  return 0;
+}
+
 static int l_wsim_run(lua_State *L) {
   WSimResult r;
   int i;
@@ -2345,6 +2603,11 @@ static int l_wsim_run(lua_State *L) {
   lua_pushinteger(L, r.damage_taken);
   lua_setfield(L, -2, "damage");
 
+  /* Subset of `damage` taken while parked at the destination, so Lua can
+   * tell drive damage from dwell damage. 0 when no dwell was requested. */
+  lua_pushinteger(L, r.damage_during_dwell);
+  lua_setfield(L, -2, "dwell_damage");
+
   lua_pushinteger(L, r.ticks_simulated);
   lua_setfield(L, -2, "ticks");
 
@@ -2353,6 +2616,11 @@ static int l_wsim_run(lua_State *L) {
 
   lua_pushboolean(L, r.killed);
   lua_setfield(L, -2, "killed");
+
+  /* Ran out of ticks rather than reaching a natural end. A truncated run
+   * is UNKNOWN, not SAFE — a low `damage` here proves nothing. */
+  lua_pushboolean(L, r.truncated);
+  lua_setfield(L, -2, "truncated");
 
   /* LGM fields: only present if LGM was dispatched */
   if (r.lgm_survived > 0) {
@@ -2415,6 +2683,7 @@ void brainCoreRegisterWorldSim(lua_State *L, BrainWorldSim **wsPtr) {
     { "wsim_set_path",          l_wsim_set_path },
     { "wsim_set_attack_target", l_wsim_set_attack_target },
     { "wsim_set_lgm",           l_wsim_set_lgm },
+    { "wsim_set_dwell",         l_wsim_set_dwell },
     { "wsim_run",               l_wsim_run },
     { NULL, NULL }
   };

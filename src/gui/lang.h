@@ -1510,8 +1510,37 @@
 #define STR_DLGLOBBY_BOTCFG_DEFENSIVE       1342
 #define STR_DLGLOBBY_BOTCFG_SNIPER          1343
 #define STR_DLGLOBBY_BOTCFG_DONE            1344
-/* Gear-hover tooltip: "Currently: <brain code name>" ({string1} = name). */
+/* Gear-hover tooltip: "Currently: <bot name> . <difficulty>" ({string1}). */
 #define STR_DLGLOBBY_BOTCFG_CURRENTLY       1847
+
+/* Middle bot difficulty (wire value 1; Easy / Hard reuse 1337 / 1339).
+ * 2172, not 2164: main's #323 claimed 2164 for STR_DLGPLAYERS_SELECT while
+ * this branch was out, and the two defines live far enough apart in this
+ * file that the merge kept both without a conflict. langGetText linear-scans
+ * and returns the first hit, so the collision would have drawn the Players
+ * panel's "Select:" as "Medium". The already-merged id keeps 2164. */
+#define STR_DLGLOBBY_BOTCFG_MEDIUM          2172
+
+/* Bot difficulty blurbs: tagline (leading token coloured) + description. */
+#define STR_BOT_DIFF_TAG_EASY               2165
+#define STR_BOT_DIFF_TAG_MEDIUM             2166
+#define STR_BOT_DIFF_TAG_HARD               2167
+#define STR_BOT_DIFF_DESC_EASY              2168
+#define STR_BOT_DIFF_DESC_MEDIUM            2169
+#define STR_BOT_DIFF_DESC_HARD              2170
+
+/* Bot AiConfig: the Mode dropdown's label. The mode NAMES themselves are
+ * data (brains/<brain>/modes.txt), not strings, so this is the only one. */
+#define STR_DLGLOBBY_BOTCFG_MODE            2171
+
+/* Title of the dialog a bot's announce line in lobby team chat opens: the
+ * brain's own commands.txt. {string1} = the brain's name ("GoalHunter"). */
+#define STR_DLGLOBBY_BOT_DOCS_TITLE         2214
+
+/* A general "Copy" button label, for any dialog that puts its body on the
+ * clipboard. STR_LV_COPY is the same word but belongs to the log viewer's
+ * events panel; this one is not tied to a screen. */
+#define STR_COPY                            2215
 
 /* Lobby — Balance/Reject/Lock/RankedShape */
 /* Balance from WBN */
@@ -1585,6 +1614,45 @@
 #define STR_DLGLOBBY_LINE_OF_SIGHT_TIP      2157
 #define STR_DLGLOBBY_WINDOW_EXPANDED        2158
 #define STR_DLGLOBBY_WINDOW_CLASSIC         2159
+/* Visibility presets: the named sets the lobby dropdown offers, the row
+ * each one draws in the Details table, and the words the row that is not
+ * a preset needs. */
+#define STR_DLGLOBBY_PRESET_CLASSIC              2173
+#define STR_DLGLOBBY_PRESET_CLASSIC_DESC         2174
+#define STR_DLGLOBBY_PRESET_CLASSIC_OVERVIEW     2175
+#define STR_DLGLOBBY_PRESET_CLASSIC_OVERVIEW_DESC 2176
+#define STR_DLGLOBBY_PRESET_EXPANDED             2177
+#define STR_DLGLOBBY_PRESET_EXPANDED_DESC        2178
+#define STR_DLGLOBBY_PRESET_MAXVIEW              2179
+#define STR_DLGLOBBY_PRESET_MAXVIEW_DESC         2180
+#define STR_DLGLOBBY_PRESET_SIGHT                2181
+#define STR_DLGLOBBY_PRESET_SIGHT_DESC           2182
+#define STR_DLGLOBBY_PRESET_CUSTOM               2183
+#define STR_DLGLOBBY_PRESET_CUSTOM_DESC          2184
+#define STR_DLGLOBBY_VIS_DETAILS_BTN             2185
+#define STR_DLGLOBBY_VIS_DETAILS_TIP             2186
+#define STR_DLGLOBBY_VIS_PRESET_LOCKED_TIP       2187
+#define STR_DLGLOBBY_VIS_SHORT_PILLS             2188
+#define STR_DLGLOBBY_VIS_SHORT_BASES             2189
+#define STR_DLGLOBBY_VIS_SHORT_ALLIES            2190
+#define STR_DLGLOBBY_VIS_SHORT_OVERVIEW          2191
+#define STR_DLGLOBBY_VIEW_POLICY_TIP             2192
+/* The third overview window: no map overview and no full screen map. Its
+ * own id rather than a shared "None", the way every other value word here
+ * belongs to the setting it names. */
+#define STR_DLGLOBBY_WINDOW_NONE                 2193
+/* What a server browser row says when the game never advertised its
+ * visibility rules at all - an old server, or a tracker that has not
+ * learned the fields. Such a game is named Classic, which is what it
+ * plays like, and this says why there is nothing behind the name. */
+#define STR_DLGBROWSER_VIEWS_UNKNOWN             2194
+/* The Expanded overview window spelled out in full, for the one column
+ * cell that has room to say what the mode gives you. One whole sentence
+ * rather than the Expanded word plus a suffix, so a translator can put
+ * the parts in whatever order the language wants. */
+#define STR_DLGLOBBY_WINDOW_EXPANDED_LONG        2195
+/* Lobby "Other" column — the host switch for smart pings */
+#define STR_DLGLOBBY_SMART_PINGS_CB              2203
 /* Settings > Display & Sound > Full Screen */
 #define STR_DLGSETTINGS_FULLSCREEN          2013
 #define STR_DLGSETTINGS_NEWS_TRANSPARENCY   2014
@@ -1750,6 +1818,11 @@
    voice/chat mute above) */
 #define STR_PLAYER_TIP_PING_SHOWN               2162
 #define STR_PLAYER_TIP_PING_MUTED               2163
+
+/* Players panel — the label in front of the All/None/Allies/Nearby row.
+   Carries its own colon: a language that does not use one, or that puts a
+   space before it, has nowhere to say so if the colon is added in code. */
+#define STR_DLGPLAYERS_SELECT                   2164
 
 /* Players panel — per-player playback volume slider */
 #define STR_PLAYER_TIP_VOICE_VOLUME             2090
@@ -2248,6 +2321,48 @@
 #define STR_PING_MOUSE_X1                   2150
 #define STR_PING_MOUSE_X2                   2151
 #define STR_DLGKEYSETUP_PING_ALT2           2152
+
+/* The fourth game type, beside STR_DLGGAMEINFO_OPEN / _TOURN / _STRICT:
+ * what a round whose rules come from a scenario is called. */
+#define STR_DLGGAMEINFO_SCRIPTED            2196
+
+/* The host's scripts preference, and the two lines the lobby draws about
+ * the map's scenario: the one that names it, and the one that stands in
+ * its place when the host has the preference switched off. */
+#define STR_DLGSETTINGS_HOSTING_SCRIPTS     2197
+#define STR_DLGLOBBY_SCENARIO_LBL           2198
+#define STR_DLGLOBBY_SCRIPTS_OFF            2199
+
+/* The lobby's reload button, for a host editing its map's script. */
+#define STR_DLGLOBBY_RELOAD_SCENARIO        2200
+
+/* Two more lines for the reject toast, beside the STR_DLGLOBBY_REJECT_*
+ * group above: a setting the map's scenario decides, and a command sent
+ * again before the server will take another. */
+#define STR_DLGLOBBY_REJECT_SCENARIO        2201
+#define STR_DLGLOBBY_REJECT_COOLDOWN        2202
+
+/* The lobby's scenario chooser: the button on the scenario line that opens
+ * it, the dialog's own title, the row that picks none, the two states the
+ * list can be in before it has rows, the reason an entry tied to its own map
+ * cannot be picked, and the two numbers a row carries. ON_MAP is the line
+ * that names the committed map and the scenario a host picked to play over
+ * it, rather than naming the scenario alone. */
+#define STR_DLGLOBBY_CHOOSE_SCENARIO        2204
+#define STR_DLGLOBBY_SCENARIO_TITLE         2205
+#define STR_DLGLOBBY_SCENARIO_NONE          2206
+#define STR_DLGLOBBY_SCENARIO_WAITING       2207
+#define STR_DLGLOBBY_SCENARIO_EMPTY         2208
+#define STR_DLGLOBBY_SCENARIO_BOUND         2209
+#define STR_DLGLOBBY_SCENARIO_MAXPLAYERS    2210
+#define STR_DLGLOBBY_SCENARIO_BOTS          2211
+#define STR_DLGLOBBY_SCENARIO_ON_MAP        2212
+
+/* The two hosting settings that go with a scenario carried inside a map: the
+ * switch that decides whether a map a player uploaded may bring one, and the
+ * directory of scenarios this host offers on their own. */
+#define STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS 2213
+#define STR_DLGSETTINGS_HOSTING_SCENARIODIR  2216
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

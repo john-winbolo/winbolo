@@ -2122,3 +2122,23 @@ STR_PING_MOUSE_RIGHT=Prawy przycisk myszy
 STR_PING_MOUSE_X1=Mysz 4
 STR_PING_MOUSE_X2=Mysz 5
 STR_DLGKEYSETUP_PING_ALT2=Inteligentny ping – klawisze alternatywne 2
+
+# Wybór scenariusza w lobby
+STR_DLGGAMEINFO_SCRIPTED=Skryptowa
+STR_DLGSETTINGS_HOSTING_SCRIPTS=Uruchamiaj skrypty mapy podczas hostowania
+STR_DLGLOBBY_SCENARIO_LBL=Scenariusz:
+STR_DLGLOBBY_SCRIPTS_OFF=Skrypty wyłączone
+STR_DLGLOBBY_RELOAD_SCENARIO=Przeładuj skrypt
+STR_DLGLOBBY_REJECT_SCENARIO=To ustawienie jest ustalone przez scenariusz mapy
+STR_DLGLOBBY_REJECT_COOLDOWN=Za wcześnie, spróbuj ponownie za chwilę
+STR_DLGLOBBY_CHOOSE_SCENARIO=Wybierz
+STR_DLGLOBBY_SCENARIO_TITLE=Wybierz mod
+STR_DLGLOBBY_SCENARIO_NONE=Brak — żaden mod. Mapa gra własnym scenariuszem, jeśli go ma.
+STR_DLGLOBBY_SCENARIO_WAITING=Odpytywanie serwera...
+STR_DLGLOBBY_SCENARIO_EMPTY=Ten serwer nie oferuje żadnych modów.
+STR_DLGLOBBY_SCENARIO_BOUND=Zbudowany dla jednej mapy, więc nie może być grany jako mod
+STR_DLGLOBBY_SCENARIO_MAXPLAYERS=Graczy: do {number}
+STR_DLGLOBBY_SCENARIO_BOTS=Miejsc dla botów: {number}
+STR_DLGLOBBY_SCENARIO_ON_MAP=Mod: {string2} (na {string1})
+STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Uruchamiaj skrypty w wysłanych mapach
+STR_DLGSETTINGS_HOSTING_SCENARIODIR=Katalog scenariuszy

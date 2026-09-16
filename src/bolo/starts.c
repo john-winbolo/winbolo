@@ -1910,6 +1910,17 @@ void startsGetStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir
   BYTE named = MAX_STARTS; /* A start the host named, MAX_STARTS for none */
 
   if (*value == NULL || (*value)->numStarts == 0) {
+    /* Nothing to pick from. Every other exit below writes all three
+     * out-params and every caller uses them unconditionally, so write a
+     * defined square rather than leaving whatever the caller had on its
+     * stack. A client asks in this state once per join — it creates its tank
+     * before its map arrives — and tankCreate's locals were uninitialised, so
+     * the tank was placed on a random map square until the first snapshot
+     * corrected it. That square is what handed the brain's opening pass a
+     * rect at the map edge. */
+    *x = 0;
+    *y = 0;
+    *dir = (TURNTYPE)0;
     return;
   }
 
@@ -2000,7 +2011,7 @@ void startsGetStart(GameSim *sim, starts *value, BYTE *x, BYTE *y, TURNTYPE *dir
     return;
   }
 
-  if (sim->game == gameOpen) {
+  if (gameTypeResolve(sim, sim->game) == gameOpen) {
     startsGetStartOpen(sim, value, x, y, dir, playerNum);
   } else {
     startsGetStartTournament(sim, value, x, y, dir, playerNum);

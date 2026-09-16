@@ -14,6 +14,7 @@
 
 #include "../ping_kinds.h"
 #include "ping_icons.h"
+#include "ring_band.h"   /* the arrival ring: its band, sides and curve */
 
 /* MSVC only defines M_PI under _USE_MATH_DEFINES. */
 #ifndef M_PI
@@ -123,17 +124,91 @@ static void pmDrawName(SDL_Renderer *renderer, const PingMarkerLabel *label,
                              scale, alpha, (Uint8)PING_NAME_GREY);
 }
 
+/* The arrival flourish: a ring in the ping's colour closing onto the square,
+   once, as the ping lands. See the PING_RING_* block in ping_kinds.h for the
+   shape and why it is over before the first flash is.
+
+   Driven by the ping's age alone, so it is neither on a wall clock nor on the
+   blink's phase: the caller's `alpha` is the blink, and this is deliberately
+   not multiplied by it. What ends the ring is its own two stages running out,
+   which ringAnimAt reports. */
+static void pmDrawArrivalRing(SDL_Renderer *renderer,
+                              const PingKindStyle *style,
+                              float cx, float cy, float tileW,
+                              unsigned int ageMs) {
+    const RingAnim ring = { PING_RING_START_SQ, PING_RING_END_SQ,
+                            PING_RING_PULSE_SQ, PING_RING_MS,
+                            PING_RING_PULSE_MS };
+    float radiusSq = 0.0f;
+    float fade     = 0.0f;
+    float radiusPx;
+    float weight;
+    Uint8 ringAlpha;
+
+    if (tileW <= 0.0f) return;
+    if (!ringAnimAt(&ring, (Uint64)ageMs, &radiusSq, &fade)) return;
+
+    /* Squares to pixels, on this view's own tile size — the whole reason the
+       constants are in squares. The weight comes across the same way, with a
+       floor so a zoomed-out ring is still a ring and not a hairline. */
+    radiusPx = radiusSq * tileW;
+    weight   = PING_RING_WEIGHT_SQ * tileW;
+    if (weight < PING_RING_WEIGHT_MIN_PX) weight = PING_RING_WEIGHT_MIN_PX;
+    if (radiusPx < 1.0f) return;
+
+    ringAlpha = pmAlpha(fade * PING_RING_ALPHA);
+    if (ringAlpha == 0) return;
+
+    /* One alpha across the band, so it fades flat. ringBandDraw sets no blend
+       mode of its own. */
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    ringBandDraw(renderer, cx, cy,
+                 radiusPx - weight * 0.5f, radiusPx + weight * 0.5f,
+                 ringBandSegments(radiusPx),
+                 style->r, style->g, style->b, ringAlpha, ringAlpha);
+}
+
 void pingMarkerDraw(SDL_Renderer *renderer, unsigned char kind,
                     float cx, float cy, float tileW, float tileH,
-                    unsigned int ageMs, float alpha,
+                    unsigned int ageMs,
                     const PingMarkerLabel *label) {
     const PingKindStyle *style = pingKindStyle(kind);
     float hx = tileW * 0.5f, hy = tileH * 0.5f;
     int   line = (tileW >= 24.0f) ? 2 : 1;
+    /* Both alphas are worked out HERE, from the age the caller passed, and
+       not handed in. Every caller of this function is drawing the world
+       marker -- the game view, the full screen map and the replay -- so they
+       must all blink alike; when each picked its own alpha, one of them was
+       changed and two were not, and a ping stopped blinking the moment the
+       map came up. One place to decide means they cannot drift again.
+
+       The two are not the same curve. The marker blinks and stops at three
+       seconds; the name is steady for the ping's whole life. That is also
+       why a caller must NOT skip this function when the blink is dark -- the
+       name still has to be drawn. Callers skip on the ping being expired,
+       which is pingDisplayAlpha reaching zero. */
+    const float alpha = pingWorldMarkerAlpha((int)ageMs);
+    const float nameAlpha = pingDisplayAlpha((int)ageMs) * PING_NAME_ALPHA;
     float a = alpha * PING_MARKER_ALPHA;
     SDL_Texture *tex;
 
-    if (renderer == NULL || alpha <= 0.0f) return;
+    if (renderer == NULL) return;
+
+    /* Before the blink's own gate below: the ring is the arrival, not one of
+       the flashes, and a marker whose flash has not ramped up yet still has a
+       ring to draw. */
+    pmDrawArrivalRing(renderer, style, cx, cy, tileW, ageMs);
+
+    /* The name, before the blink's gate and on its OWN alpha, so it stays up
+       for the ping's whole life while the marker under it flashes three times
+       and stops. pingDisplayAlpha, not the caller's blinked alpha: steady,
+       with the same end-of-life fade every other steady marker gets. Held at
+       PING_NAME_ALPHA so a label that never leaves does not shout over the
+       marker it belongs to. */
+    pmDrawName(renderer, label, cx, cy, tileH,
+               nameAlpha);
+
+    if (alpha <= 0.0f) return;
 
     /* The pulse: a ring that grows out of the square and fades over a second,
        then starts again, so the eye is drawn to it without it ever being
@@ -178,9 +253,4 @@ void pingMarkerDraw(SDL_Renderer *renderer, unsigned char kind,
                      style->r, style->g, style->b, pmAlpha(a));
     }
 
-    /* The name at the marker's own fade rather than the dimmed PING_MARKER_ALPHA
-       the square and the icon are drawn at: a name is only worth putting on
-       the map if it can be read, and it is text over its own shadow, not a
-       wash of colour over the ground. */
-    pmDrawName(renderer, label, cx, cy, tileH, alpha);
 }

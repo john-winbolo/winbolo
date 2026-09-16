@@ -493,6 +493,26 @@ static void simRunHalfStep(ServerSim *sim) {
         sim->countdownTicks--;
         if (sim->countdownTicks <= 0) {
             serverSimStartGame(sim);
+        } else {
+            /* One held seat's runner, built and parked here so the round that
+             * follows fields it without building anything. This is the window
+             * for it: the countdown simulates nothing and owes a snapshot to
+             * nobody, so a build here costs no client a slow frame the way the
+             * same build during play would.
+             *
+             * What it does cost is a stall. serverGameTimer reads the clock
+             * once a callback and then runs every tick the clock says is owed,
+             * back to back, so a callback that spends 200ms on a brain is
+             * followed by a burst of the ticks it held up, and each of those
+             * can build another seat. Six seats is not 1.2s added to the
+             * countdown; it is a stall of about 1.2s in which no client
+             * receives anything, after which the countdown count catches up in
+             * one burst and the number clients are shown jumps. Sixteen seats
+             * is about 3.2s, well inside CLIENT_TIMEOUT_TICKS.
+             *
+             * One build a tick, so the countdown count still moves between
+             * them, and never on the tick that starts the round. */
+            serverSimWarmOneHeldSeat(sim);
         }
         logWriteTick();
         return;
@@ -516,6 +536,18 @@ static void simRunHalfStep(ServerSim *sim) {
         sim->tick++;
         mapSetChangeCallback(NULL);
         return;
+    }
+
+    /* Periodic state snapshot (-snapjson). Counted over exactly the same
+     * running half-steps as ticksRun below — placed ahead of the limit
+     * checks on purpose, so the last interval boundary still fires on the
+     * tick that then trips the tick limit and returns. Runs before this
+     * half-step touches anything, i.e. on fully settled state. */
+    if (sim->snapshotInterval > 0 && sim->snapshotCb != NULL) {
+        sim->snapshotTicks++;
+        if ((sim->snapshotTicks % sim->snapshotInterval) == 0) {
+            sim->snapshotCb(sim);
+        }
     }
 
     if (sim->gameLength > 0) {
@@ -928,7 +960,18 @@ static void simRunHalfStep(ServerSim *sim) {
             if (pillsIsActive(&sim->sim.pb, (BYTE)(p + 1)) == FALSE) {
                 continue;
             }
-            if (memcmp(&currentPills[p], &sim->prevPills[p], sizeof(PillSnapshot)) != 0) {
+            /* An index at or above prevPillCount is one the previous tick did
+             * not have at all: a scenario created a pill (game.add_pill).
+             * prevPills[] is zeroed only at sim create, so in round 2 those
+             * slots still hold LAST round's final records — and an attacker
+             * landing on the same shoreline tile and being handed its pill by
+             * the same Lua call produces an identical 4-byte record. memcmp
+             * then reports "unchanged" and the creation is never sent, leaving
+             * every client a pill short until the next full sync. Count a new
+             * index as changed rather than trust a compare against data from
+             * another round. */
+            if (p >= (int)sim->prevPillCount ||
+                memcmp(&currentPills[p], &sim->prevPills[p], sizeof(PillSnapshot)) != 0) {
                 GameEvent ev;
                 ev.type = EVENT_PILL_UPDATE;
                 memset(ev.data, 0, sizeof(ev.data));
@@ -1113,6 +1156,12 @@ void serverSimTick(ServerSim *sim) {
         serverSimFlushPendingPings(sim);
         simRunHalfStep(sim);
         simRunHalfStep(sim);
+        /* THREE SHOTS = GO THERE, second half. The third shell only ARMS the
+         * order; it is sent here, a quiet second after that shell was fired,
+         * because a player who never shoots again has no other event left to
+         * hang it on. After the half-steps, so a shell that died in this
+         * frame is already counted. */
+        serverSimShotOrderTick(sim);
         /* Ahead of the shadow tick so terrain a scenario edits from here
          * lands in the same frame's map events instead of the next one's.
          * The half-steps drop the map-change callback on their way out, so
@@ -1146,14 +1195,33 @@ void serverSimTick(ServerSim *sim) {
            it does on a running frame. */
         sim->mapEventCount = 0;
         simRunHalfStep(sim);
+        /* The half-step above is where a countdown runs out, so the state can
+         * read running from here on and the rest of this frame is the round's
+         * first. Terrain the hook or the fill writes then belongs to the round
+         * and is recorded the way a running frame records it. The states that
+         * are still not running publish no map events — a lobby client is
+         * handed the whole map on download and again at the start — so the
+         * callback stays off for them. */
+        if (sim->state == serverStateRunning) {
+            mapSetChangeCallback(simMapChangeCallback);
+        }
         if (sim->scenarioTick != NULL) {
             sim->scenarioTick(sim->scenarioTickCtx);
         }
-        /* The non-running states run no simulation and publish no map
-         * events — a lobby client is handed the whole map on download and
-         * again at the start — so the callback stays off here and a fill is
-         * paced only so one frame's work stays one frame's work. */
+        /* A fill is paced here only so one frame's work stays one frame's
+         * work. */
         serverSimScenarioDrainFill(sim);
+        mapSetChangeCallback(NULL);
+        if (sim->state == serverStateRunning) {
+            /* The round started in this frame, so each slot's copy of the
+             * terrain takes the frame's changes here, as it does at the end of
+             * a running frame. The caller sends the same events straight
+             * after this returns, and the next frame's clear above is what
+             * would otherwise take them: a square sent to a client with no
+             * copy advanced for it reads back as a checksum that never
+             * settles. */
+            serverSimShadowTick(sim);
+        }
     }
 }
 

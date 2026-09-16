@@ -123,22 +123,26 @@ static bool commandDecodeReady(const uint8_t *buf, size_t len,
 }
 
 /* CMD_LOBBY_BOT_CONFIG — PACKET_LOBBY_BOT_CONFIG
- * Wire: [header 8] [slot 1] [difficulty 1] [personality 1]
- *       [nameLen 1] [name N] */
+ * Wire: [header 8] [slot 1] [difficulty 1] [personality 1] [mode 1]
+ *       [nameLen 1] [name N]
+ * mode sits after personality so the older fields kept their offsets;
+ * nameLen stays the last fixed byte. Same order as the control-event
+ * body in transport_control_codec.c. */
 static bool commandEncodeLobbyBotConfig(const ClientCommand *cmd,
                                         uint8_t *buf, size_t bufCap,
                                         size_t *outLen) {
     uint8_t nameLen = cmd->u.lobbyBotConfig.nameLen;
     if (nameLen >= PACKET_MAX_PLAYER_NAME) nameLen = PACKET_MAX_PLAYER_NAME - 1;
-    const size_t needed = CMD_PACKET_BODY_OFFSET + 4 + nameLen;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 5 + nameLen;
     if (bufCap < needed) return false;
     packHeader(buf, PACKET_LOBBY_BOT_CONFIG, 0);
     buf[CMD_PACKET_BODY_OFFSET + 0] = cmd->u.lobbyBotConfig.slot;
     buf[CMD_PACKET_BODY_OFFSET + 1] = cmd->u.lobbyBotConfig.difficulty;
     buf[CMD_PACKET_BODY_OFFSET + 2] = cmd->u.lobbyBotConfig.personality;
-    buf[CMD_PACKET_BODY_OFFSET + 3] = nameLen;
+    buf[CMD_PACKET_BODY_OFFSET + 3] = cmd->u.lobbyBotConfig.mode;
+    buf[CMD_PACKET_BODY_OFFSET + 4] = nameLen;
     if (nameLen > 0) {
-        memcpy(buf + CMD_PACKET_BODY_OFFSET + 4, cmd->u.lobbyBotConfig.name, nameLen);
+        memcpy(buf + CMD_PACKET_BODY_OFFSET + 5, cmd->u.lobbyBotConfig.name, nameLen);
     }
     *outLen = needed;
     return true;
@@ -146,20 +150,21 @@ static bool commandEncodeLobbyBotConfig(const ClientCommand *cmd,
 
 static bool commandDecodeLobbyBotConfig(const uint8_t *buf, size_t len,
                                         ClientCommand *cmd) {
-    if (len < CMD_PACKET_BODY_OFFSET + 4) return false;
-    uint8_t nameLen = buf[CMD_PACKET_BODY_OFFSET + 3];
+    if (len < CMD_PACKET_BODY_OFFSET + 5) return false;
+    uint8_t nameLen = buf[CMD_PACKET_BODY_OFFSET + 4];
     if (nameLen >= PACKET_MAX_PLAYER_NAME ||
-        len < (size_t)CMD_PACKET_BODY_OFFSET + 4 + nameLen) {
+        len < (size_t)CMD_PACKET_BODY_OFFSET + 5 + nameLen) {
         return false;
     }
     cmd->type = CMD_LOBBY_BOT_CONFIG;
     cmd->u.lobbyBotConfig.slot        = buf[CMD_PACKET_BODY_OFFSET + 0];
     cmd->u.lobbyBotConfig.difficulty  = buf[CMD_PACKET_BODY_OFFSET + 1];
     cmd->u.lobbyBotConfig.personality = buf[CMD_PACKET_BODY_OFFSET + 2];
+    cmd->u.lobbyBotConfig.mode        = buf[CMD_PACKET_BODY_OFFSET + 3];
     cmd->u.lobbyBotConfig.nameLen     = nameLen;
     if (nameLen > 0) {
         memcpy(cmd->u.lobbyBotConfig.name,
-               buf + CMD_PACKET_BODY_OFFSET + 4, nameLen);
+               buf + CMD_PACKET_BODY_OFFSET + 5, nameLen);
     }
     return true;
 }
@@ -621,6 +626,41 @@ static bool commandDecodeLobbySetMap(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CMD_LOBBY_SET_SCENARIO — PACKET_LOBBY_SET_SCENARIO
+ * Wire: [header 8] [pathLen 1] [path N]
+ * The shape CMD_LOBBY_SET_MAP uses, with one difference: pathLen 0 is
+ * carried rather than refused, because an empty path is the message
+ * that selects no scenario. */
+static bool commandEncodeLobbySetScenario(const ClientCommand *cmd,
+                                          uint8_t *buf, size_t bufCap,
+                                          size_t *outLen) {
+    uint8_t pathLen = cmd->u.lobbySetScenario.relPathLen;
+    const size_t needed = CMD_PACKET_BODY_OFFSET + 1 + pathLen;
+    if (bufCap < needed) return false;
+    packHeader(buf, PACKET_LOBBY_SET_SCENARIO, 0);
+    buf[CMD_PACKET_BODY_OFFSET] = pathLen;
+    if (pathLen > 0) {
+        memcpy(buf + CMD_PACKET_BODY_OFFSET + 1,
+               cmd->u.lobbySetScenario.relPath, pathLen);
+    }
+    *outLen = needed;
+    return true;
+}
+
+static bool commandDecodeLobbySetScenario(const uint8_t *buf, size_t len,
+                                          ClientCommand *cmd) {
+    if (len < CMD_PACKET_BODY_OFFSET + 1) return false;
+    uint8_t pathLen = buf[CMD_PACKET_BODY_OFFSET];
+    if (len < (size_t)CMD_PACKET_BODY_OFFSET + 1 + pathLen) return false;
+    cmd->type = CMD_LOBBY_SET_SCENARIO;
+    cmd->u.lobbySetScenario.relPathLen = pathLen;
+    if (pathLen > 0) {
+        memcpy(cmd->u.lobbySetScenario.relPath,
+               buf + CMD_PACKET_BODY_OFFSET + 1, pathLen);
+    }
+    return true;
+}
+
 /* CMD_LOBBY_PREVIEW_CANCEL — PACKET_LOBBY_PREVIEW_CANCEL
  * Wire: [header 8] (no body) */
 static bool commandEncodeLobbyPreviewCancel(const ClientCommand *cmd,
@@ -639,6 +679,27 @@ static bool commandDecodeLobbyPreviewCancel(const uint8_t *buf, size_t len,
     if (len < CMD_PACKET_BODY_OFFSET) return false;
     cmd->type = CMD_LOBBY_PREVIEW_CANCEL;
     cmd->u.lobbyPreviewCancel._unused = 0;
+    return true;
+}
+
+/* CMD_LOBBY_RELOAD_SCENARIO — PACKET_LOBBY_RELOAD_SCENARIO
+ * Wire: [header 8] (no body) */
+static bool commandEncodeLobbyReloadScenario(const ClientCommand *cmd,
+                                             uint8_t *buf, size_t bufCap,
+                                             size_t *outLen) {
+    (void)cmd;
+    if (bufCap < CMD_PACKET_BODY_OFFSET) return false;
+    packHeader(buf, PACKET_LOBBY_RELOAD_SCENARIO, 0);
+    *outLen = CMD_PACKET_BODY_OFFSET;
+    return true;
+}
+
+static bool commandDecodeLobbyReloadScenario(const uint8_t *buf, size_t len,
+                                             ClientCommand *cmd) {
+    (void)buf;
+    if (len < CMD_PACKET_BODY_OFFSET) return false;
+    cmd->type = CMD_LOBBY_RELOAD_SCENARIO;
+    cmd->u.lobbyReloadScenario._unused = 0;
     return true;
 }
 
@@ -1079,7 +1140,9 @@ bool commandCodecEncode(const ClientCommand *cmd,
         case CMD_LOCK_TOGGLE:           ok = commandEncodeLockToggle(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_ADD_BOT:         ok = commandEncodeLobbyAddBot(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_SET_MAP:         ok = commandEncodeLobbySetMap(cmd, buf, bufCap, outLen); break;
+        case CMD_LOBBY_SET_SCENARIO:    ok = commandEncodeLobbySetScenario(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_PREVIEW_CANCEL:  ok = commandEncodeLobbyPreviewCancel(cmd, buf, bufCap, outLen); break;
+        case CMD_LOBBY_RELOAD_SCENARIO: ok = commandEncodeLobbyReloadScenario(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_PREVIEW_COMMIT:  ok = commandEncodeLobbyPreviewCommit(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_PREVIEW_RANDOM:  ok = commandEncodeLobbyPreviewRandom(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_KICK:            ok = commandEncodeLobbyKick(cmd, buf, bufCap, outLen); break;
@@ -1131,7 +1194,9 @@ bool commandCodecDecode(const uint8_t *buf, size_t len,
         case PACKET_LOCK_TOGGLE:           return commandDecodeLockToggle(buf, len, cmd);
         case PACKET_LOBBY_ADD_BOT:         return commandDecodeLobbyAddBot(buf, len, cmd);
         case PACKET_LOBBY_SET_MAP:         return commandDecodeLobbySetMap(buf, len, cmd);
+        case PACKET_LOBBY_SET_SCENARIO:    return commandDecodeLobbySetScenario(buf, len, cmd);
         case PACKET_LOBBY_PREVIEW_CANCEL:  return commandDecodeLobbyPreviewCancel(buf, len, cmd);
+        case PACKET_LOBBY_RELOAD_SCENARIO: return commandDecodeLobbyReloadScenario(buf, len, cmd);
         case PACKET_LOBBY_PREVIEW_COMMIT:  return commandDecodeLobbyPreviewCommit(buf, len, cmd);
         case PACKET_LOBBY_PREVIEW_RANDOM:  return commandDecodeLobbyPreviewRandom(buf, len, cmd);
         case PACKET_LOBBY_KICK:            return commandDecodeLobbyKick(buf, len, cmd);

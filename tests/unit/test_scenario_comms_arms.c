@@ -20,6 +20,8 @@
  *   run_scenario_comms_msg_player   — a line to one player, and who sees it
  *   run_scenario_comms_sound        — a sound at a square and a sound nowhere
  *   run_scenario_comms_log          — a line to the console and nowhere else
+ *   run_scenario_comms_say          — a seat's own chat line, and the bot
+ *       inbox it lands in that a server line never reaches
  *   run_scenario_comms_arm_records  — the three lines survive a recording
  *
  * plus the two cases that make the destination safe rather than testing an
@@ -62,6 +64,9 @@
 #include "sounddist.h"             /* SDIST_NONE — the cull the far sound is past */
 #include "input_packet.h"          /* EVENT_SOUND, SOUND_TIER_NEAR, SOUND_DIR_CENTRE */
 #include "log.h"                   /* log_ServerText and the stream opcodes */
+#include "allience.h"              /* allienceAdd — the bot and the talker are allies */
+#include "players.h"                /* playersSetPlayer — the names a chat line formats with */
+#include "threads.h"                /* the mutex serverSimApplyCommand runs under */
 #include "replay_harness.h"
 #include "test_harness.h"
 
@@ -797,5 +802,192 @@ int run_scenario_comms_apply_non_zero_slot(void) {
                   "(newswire %d -> %d)", before, ccLines(cs));
 
     clientSimDestroy(cs);
+    return 0;
+}
+
+/* ================================================================
+ * 9. game.say: a chat line said by a seat.
+ *
+ *    The four ops above are the server talking, and a server line never
+ *    enters a brain's inbox — a brain reads chat. say is a seat talking, so
+ *    the line goes down the CMD_CHAT path and lands in every allied brain's
+ *    inbox, which is what a scenario needs to hand a bot an order.
+ *
+ *    Proven at the inbox itself: messageInboxCount + messageInboxPeek is
+ *    what brainDataMakeInfo reads to build BrainInfo.messages, so an entry
+ *    there is exactly what the brain sees as info.messages.
+ * ================================================================ */
+
+/* The bot this case talks to: a ClientSim in `slot` on `team`, registered as
+ * a subscriber so a published CTRL_CHAT reaches it, with the two seats named
+ * in its own player table because the chat arm formats a sender name. */
+static ClientSim *ccBot(ServerSim *sim, BYTE slot, BYTE team,
+                        SubscriberHandle *outHandle) {
+    ClientSim *cs = clientSimAlloc();
+    GameSim   *cgs;
+
+    if (cs == NULL) return NULL;
+    clientSimCreate(cs);
+    clientSimSetPlayerNum(cs, slot);
+    clientSimSetIsBot(cs, true);
+    cs->lobbySlots[slot].connected  = true;
+    cs->lobbySlots[slot].teamNumber = team;
+
+    cgs = clientSimGetGameSim(cs);
+    playersSetPlayer(cs, &cgs->plyrs, NEUTRAL, CC_SLOT_TALKER,
+                     (char *)"Talker", "??", 0, 0, 0, 0, 0, FALSE, 0, NULL,
+                     TRUE);
+    playersSetPlayer(cs, &cgs->plyrs, NEUTRAL, slot, (char *)"Bot1", "??",
+                     0, 0, 0, 0, 0, FALSE, 0, NULL, TRUE);
+    *outHandle = serverSimRegisterClientSubscriber(sim, cs);
+    if (*outHandle == SUBSCRIBER_HANDLE_INVALID) {
+        clientSimDestroy(cs);
+        return NULL;
+    }
+
+    /* The talker and this bot are allies in the bot's own player table, set
+     * AFTER the sync replay, which rewrites that table.
+     *
+     * A hosted bot's inbox takes a BROADCAST only from an ally (client_sim.c
+     * clientSimChatReachesInbox), and the round's alliances are what it reads
+     * — a lobby team becomes an alliance at game start, and this fixture
+     * seats its players straight into a running sim. */
+    allienceAdd(&cgs->plyrs->item[CC_SLOT_TALKER].allie, slot);
+    allienceAdd(&cgs->plyrs->item[slot].allie, CC_SLOT_TALKER);
+    return cs;
+}
+
+static ScnOpResult ccSayTo(ServerSim *sim, BYTE slot, BYTE mode, BYTE target,
+                           const char *text) {
+    ScenarioOp  op;
+    ScnOpResult r;
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_MSG_SAY;
+    op.u.msgSay.slot   = slot;
+    op.u.msgSay.mode   = mode;
+    op.u.msgSay.target = target;
+    SDL_strlcpy(op.u.msgSay.text, text, sizeof(op.u.msgSay.text));
+    /* The arm runs the dispatcher's CMD_CHAT arm, which every caller reaches
+       holding the sim mutex. */
+    threadsWaitForMutex();
+    r = serverSimApplyScenarioOp(sim, &op, NULL);
+    threadsReleaseMutex();
+    return r;
+}
+
+static ScnOpResult ccSay(ServerSim *sim, BYTE slot, const char *text) {
+    return ccSayTo(sim, slot, SCN_SAY_TEAM, 0, text);
+}
+
+int run_scenario_comms_say(void) {
+    ServerSim       *sim;
+    ClientSim       *bot = NULL;
+    SubscriberHandle hBot = SUBSCRIBER_HANDLE_INVALID;
+    ScenarioOp       op;
+    char             pbuf[BRAIN_INBOX_MSG_LEN];
+    char             body[BRAIN_INBOX_MSG_LEN];
+    size_t           plen;
+    BYTE             from;
+
+    UT_ASSERT_MSG(threadsCreate(TRUE), "threadsCreate failed");
+    sim = ut_make_running_sim("Talker");
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+    serverSimAddPlayer(sim, CC_SLOT_TARGET, "Bot1", false);
+
+    /* Both seats on one team: team chat is what say writes, so the two have
+       to share a team for the line to be addressed at all. */
+    sim->lobbyPlayers[CC_SLOT_TALKER].teamNumber = CC_TEAM_IN;
+    sim->lobbyPlayers[CC_SLOT_TARGET].teamNumber = CC_TEAM_IN;
+
+    bot = ccBot(sim, CC_SLOT_TARGET, CC_TEAM_IN, &hBot);
+    UT_ASSERT_MSG(bot != NULL, "the bot ClientSim would not register");
+
+    /* A server line first, to show the difference the op exists for: it is
+       published, and the brain's inbox does not grow by it. */
+    UT_ASSERT_MSG(ccMsgTeam(sim, CC_TEAM_IN, "server line") == SCN_OP_OK,
+                  "a line to team %d must be accepted", CC_TEAM_IN);
+    UT_ASSERT_MSG(messageInboxCount(clientSimGetMessages(bot)) == 0,
+                  "a server line put %d entries in the brain inbox; a brain "
+                  "reads chat, and game.message is not chat",
+                  messageInboxCount(clientSimGetMessages(bot)));
+
+    /* And now the seat's own line. */
+    UT_ASSERT_MSG(ccSay(sim, CC_SLOT_TALKER, "status") == SCN_OP_OK,
+                  "say from a seated player on a team must be accepted");
+    UT_ASSERT_MSG(messageInboxCount(clientSimGetMessages(bot)) == 1,
+                  "the brain inbox holds %d entries after one say, expected 1",
+                  messageInboxCount(clientSimGetMessages(bot)));
+
+    from = messageInboxPeek(clientSimGetMessages(bot), 0, pbuf);
+    UT_ASSERT_MSG(from == CC_SLOT_TALKER,
+                  "the inbox entry is from slot %u, expected %d — the sender "
+                  "is the seat say named, not the server",
+                  (unsigned)from, CC_SLOT_TALKER);
+    plen = (size_t)(unsigned char)pbuf[0];
+    if (plen >= sizeof(body)) plen = sizeof(body) - 1;
+    memcpy(body, pbuf + 1, plen);
+    body[plen] = '\0';
+    UT_ASSERT_MSG(strcmp(body, "status") == 0,
+                  "the inbox entry reads \"%s\", expected \"status\"", body);
+
+    /* The other two destinations a player has. Everyone: no team filter to
+       pass, which is what a round with no lobby behind it needs. */
+    UT_ASSERT_MSG(ccSayTo(sim, CC_SLOT_TALKER, SCN_SAY_ALL, 0, "all of you")
+                      == SCN_OP_OK,
+                  "a broadcast say must be accepted");
+    UT_ASSERT_MSG(messageInboxCount(clientSimGetMessages(bot)) == 2,
+                  "a broadcast say left %d inbox entries, expected 2",
+                  messageInboxCount(clientSimGetMessages(bot)));
+
+    /* And one seat by name. */
+    UT_ASSERT_MSG(ccSayTo(sim, CC_SLOT_TALKER, SCN_SAY_PLAYER, CC_SLOT_TARGET,
+                          "just you") == SCN_OP_OK,
+                  "a say to one seat must be accepted");
+    UT_ASSERT_MSG(messageInboxCount(clientSimGetMessages(bot)) == 3,
+                  "a say to the bot's own seat left %d inbox entries, "
+                  "expected 3",
+                  messageInboxCount(clientSimGetMessages(bot)));
+
+    /* Refusal: a seat with nobody in it, as the sender and as the target. */
+    UT_ASSERT_MSG(ccSay(sim, CC_SLOT_EMPTY, "nobody") == SCN_OP_NO_SUCH_PLAYER,
+                  "say from an empty seat must be refused "
+                  "SCN_OP_NO_SUCH_PLAYER");
+    UT_ASSERT_MSG(ccSayTo(sim, CC_SLOT_TALKER, SCN_SAY_PLAYER, CC_SLOT_EMPTY,
+                          "nobody") == SCN_OP_NO_SUCH_PLAYER,
+                  "say to an empty seat must be refused "
+                  "SCN_OP_NO_SUCH_PLAYER");
+
+    /* Refusal: a seat on no team has nobody to say it to. game.message is
+       the call for a line the whole game hears. */
+    sim->lobbyPlayers[CC_SLOT_TALKER].teamNumber = 0;
+    UT_ASSERT_MSG(ccSay(sim, CC_SLOT_TALKER, "teamless") == SCN_OP_RANGE,
+                  "say from a seat on no team must be refused SCN_OP_RANGE");
+    sim->lobbyPlayers[CC_SLOT_TALKER].teamNumber = CC_TEAM_IN;
+
+    /* Refusal: an empty line, which every receiver would drop. */
+    UT_ASSERT_MSG(ccSay(sim, CC_SLOT_TALKER, "") == SCN_OP_BAD_CALL,
+                  "an empty line must be refused SCN_OP_BAD_CALL");
+
+    /* Refusal: a field with no terminator. */
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_MSG_SAY;
+    op.u.msgSay.slot = CC_SLOT_TALKER;
+    ccFillUnterminated(op.u.msgSay.text, sizeof(op.u.msgSay.text));
+    threadsWaitForMutex();
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_TOO_BIG,
+                  "an unterminated line must be refused SCN_OP_TOO_BIG");
+    threadsReleaseMutex();
+
+    /* Nothing refused above reached the inbox: the three accepted lines are
+       all that is in it. */
+    UT_ASSERT_MSG(messageInboxCount(clientSimGetMessages(bot)) == 3,
+                  "the refused lines put %d entries in the inbox, expected "
+                  "the 3 the accepted says left",
+                  messageInboxCount(clientSimGetMessages(bot)));
+
+    serverSimUnregisterSubscriber(sim, hBot);
+    clientSimDestroy(bot);
+    serverSimDestroy(sim);
+    threadsDestroy();
     return 0;
 }

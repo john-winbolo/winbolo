@@ -48,6 +48,22 @@
  * upload_cap_enforced. */
 #define LOBBY_MAP_UPLOAD_MAX_BYTES (64u * 1024u)
 
+/* Maximum bytes accepted for a scenario package: a .scenario file, or a
+ * .map with a WBSC container appended to it. The cap above stays the one
+ * a plain map is held to — a package is bigger because it carries a
+ * manifest, a script and whatever brain directories the scenario ships
+ * with, all deflated inside the container.
+ *
+ * 4 MiB, the same as ROUND_LOG_MAX_BYTES. The heaviest brain in this tree
+ * is GoalHunter, 5.8 MB of Lua on disk and about 1 MB deflated, so a map
+ * shipping one comes to roughly a megabyte and this leaves room for
+ * several. Nothing sends a package yet, so nothing on the wire enforces
+ * this; what reads against it today is the scenario host, which reads a
+ * map file from the operator's own disk looking for a container in it.
+ * One number for both, so a package an operator can play on their own
+ * server is one they will be able to upload. */
+#define LOBBY_PACKAGE_UPLOAD_MAX_BYTES (4u * 1024u * 1024u)
+
 /* Maximum bytes the server will serve for the last completed round's
  * replay log (PACKET_ROUND_LOG_REQ, carried as BULK_KIND_ROUND_LOG).
  * A busy full lobby records about 2.3 KB/s, so 4 MiB is roughly half
@@ -81,6 +97,7 @@
 #define LOBBY_LOCK_ALLIES_IN_TREES   (1u << 13)
 #define LOBBY_LOCK_OVERVIEW_WINDOW   (1u << 14)
 #define LOBBY_LOCK_LINE_OF_SIGHT     (1u << 15)
+#define LOBBY_LOCK_SMART_PINGS       (1u << 16)
 
 /* LST_TIME_MINUTES accepted range. Surfaced publicly so the lobby
  * UI can validate the user's value before sending. Authoritative
@@ -128,10 +145,17 @@ typedef enum {
                                  * round the player's own tank. Classic
                                  * mode forces the narrow window and
                                  * refuses an edit while it stays on. */
-    LST_LINE_OF_SIGHT     = 14  /* 1 byte LineOfSightMode. What stops the
+    LST_LINE_OF_SIGHT     = 14, /* 1 byte LineOfSightMode. What stops the
                                  * player seeing inside that block.
                                  * Classic mode forces it off and refuses
                                  * an edit while it stays on. */
+    LST_SMART_PINGS_OFF   = 15  /* 1 byte bool, carried in the NEGATIVE
+                                 * sense: non-zero means the server refuses
+                                 * smart pings. Allowing them is the legacy
+                                 * behaviour, and every optional field on
+                                 * this wire reads as zero when the sender
+                                 * never learned it, so refusing them is the
+                                 * value that has to cost a byte to say. */
 } LobbySettingType;
 
 #endif /* WIRE_LIMITS_H */

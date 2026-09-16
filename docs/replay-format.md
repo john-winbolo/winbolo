@@ -36,7 +36,7 @@ by the first `LOG_EVENT_SNAPSHOT` record.
 | Map name | 1 + N | Length byte + UTF-8 name                                        |
 | Game type | 1 | From `gameTypeGet()`                                            |
 | Allow hidden mines | 1 | Boolean                                                         |
-| AI type | 1 | AI difficulty                                                   |
+| AI type | 1 | `aiType` — whether brains are allowed, not a bot difficulty     |
 | Password | 1 | Boolean (game is password-protected)                            |
 | Max players | 1 | 1–16                                                            |
 | Version major / minor / revision | 3 | `BOLO_VERSION_*`                                                |
@@ -105,8 +105,10 @@ Selected event types (see the `logitem` enum for the complete list):
 
 The blob is a Pascal form like the name payloads — a 1-byte length followed by
 that many bytes — but the bytes are binary and may contain `0x00`. The length is
-14 today and the layout is append-only, so a reader takes the fields it knows
-and skips the rest by the framed length.
+17 today and the layout is append-only, so a reader takes the fields it knows
+and skips the rest by the framed length. A shorter payload is an older writer:
+a reader takes what is there and treats the bytes past the end as zero, which
+is the value each later field had before it was recorded.
 
 | Bytes | Field | Notes |
 |---|---|---|
@@ -118,21 +120,26 @@ and skips the rest by the framed length.
 | 8 | AI policy | `aiType` — 0 `aiNone`, 1 `aiYes`, 2 `aiYesAdvantage`, 3 `aiFull` |
 | 9 | Flags | bit0 hidden mines, bit1 time limit on, bit2 auto-lock on game start, bit3 ranked, bit4 password set, bit5 allow new players, bit6 overview window is classic, bit7 line of sight is not off |
 | 10–11 | Time minutes | Big-endian; meaningless when the time-limit bit is clear |
-| 12–13 | Lobby locks | Big-endian — the **low 16 bits** of the `LOBBY_LOCK_*` mask (`src/bolo/public/wire_limits.h`), which settings the host was allowed to change |
+| 12–13 | Lobby locks, low half | Big-endian — bits 0–15 of the `LOBBY_LOCK_*` mask (`src/bolo/public/wire_limits.h`), which settings the host was allowed to change |
+| 14–15 | Lobby locks, high half | Big-endian — bits 16–31 of the same mask. Absent in a recording older than the field, where it reads as zero |
+| 16 | Settings flags | bit0 smart pings banned. Absent in a recording older than the byte, where it reads as zero — smart pings allowed, which is what those servers did |
 
 Bit 4 of the flags says only that a password is set; the password itself is
 never recorded.
 
-The flags byte is **full**. Bits 6 and 7 are one bit each because the overview
-window and the line-of-sight mode have two values apiece today
+The flags byte at offset 9 is **full**. Bits 6 and 7 are one bit each because
+the overview window and the line-of-sight mode have two values apiece today
 (`OverviewWindow` and `LineOfSightMode` in `src/bolo/public/view_policy.h`); a
-third value in either setting, or any new flag, needs the blob to grow rather
-than another bit in this byte.
+third value in either setting has nowhere to go in that byte. Byte 16 is where
+a new flag belongs: it was added for smart pings and has seven bits free.
 
-The lock mask is a **16-bit truncation**: `sim->serverLocks` is a `uint32_t` and
-the blob writes only its low two bytes. `LOBBY_LOCK_LINE_OF_SIGHT` (`1u << 15`)
-is the last bit that fits. Whoever defines lock 17 must grow the blob at the same
-time, or that lock will silently read as clear in every recording.
+The lock mask is carried **whole**, as a `uint32_t`, but in two pieces: bytes
+12–13 hold its low half and bytes 14–15 its high half. The split is not a
+layout choice so much as the history — the low half is as old as the event and
+the high half was appended when `LOBBY_LOCK_SMART_PINGS` (`1u << 16`) became
+the first lock above bit 15. Folding the mask into four contiguous bytes would
+have made every reader written before that change misread a new recording, so
+the old two bytes stay where they are and still mean what they always did.
 
 The event is written by `src/server/server_dedicated_log.c` when the lobby opens,
 when the round starts, and when a lobby edit changes any of these values, so a

@@ -1,0 +1,514 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*********************************************************
+ *Name:          Scenario Host
+ *Filename:      scenario_host.h
+ *Author:        John Morrison
+ *Purpose:
+ *  What a frontend sees of a scenario: attach one to a sim
+ *  from a map path, detach it, ask whether one is active
+ *  and what it calls itself.
+ *
+ *  This header is included by binaries that compile under
+ *  gui and runtime_only, which see src/bolo/public/ and
+ *  nothing else, so it includes only public headers and
+ *  names no type from src/bolo/scenario_api/. The write
+ *  funnel, the op types and the manifest the host parses
+ *  are the library's own business and stay inside it.
+ *********************************************************/
+
+#ifndef SCENARIO_HOST_H
+#define SCENARIO_HOST_H
+
+#include <stdbool.h>
+#include <stddef.h>
+
+#include "server_sim.h" /* ServerSim, and MAX_TANKS / MAX_PILLS / MAX_BASES /
+                         * MAX_STARTS through global.h and types.h */
+
+/* The API version this server implements. A script states the version it
+ * was written against as scenario.api; one written against a newer server
+ * than this is refused rather than half-understood. */
+#define SCENARIO_API_VERSION 1
+
+/* Tags and regions, at the sizes the scenario table is specified with. A
+ * tag names a pill, base or start; a region names a rectangle of map
+ * squares. Both are read into the manifest here and mean nothing to the
+ * engine yet. */
+#define SCN_TAG_LEN          32
+#define SCN_TAGS_PER_ENTITY   4
+#define SCN_REGIONS_MAX      64
+#define SCN_REGION_NAME_LEN  32
+
+/* How many timers a round may have waiting at once. A timer holds a Lua
+ * function across ticks, so the count is what bounds both the table the host
+ * walks each tick and the functions a round can keep from collection. The
+ * one past the last is refused rather than displacing one already set: a
+ * script handed an id has been promised that call.
+ *
+ * Declared and defined regions share SCN_REGIONS_MAX above — the sixty-four
+ * are the round's, however many of them the file wrote down. */
+#define SCN_TIMERS_MAX       64
+
+/* The text fields of the scenario table. The name is what a lobby row
+ * shows and the description what a tooltip or an info line shows, so they
+ * are sized for a line rather than for prose.
+ *
+ * SCN_DIR_NAME_LEN and SCN_DIR_DESC_LEN in scenario_api/scenario_defs.h are
+ * the same two lengths on the sim's side of the fence, where a scenario the
+ * server offers is described. They are stated twice because this header is
+ * what a frontend includes and that one is not — a gui or runtime_only
+ * translation unit sees public/ alone. scenario_dir.c sees both and holds
+ * them against each other. */
+#define SCN_SCENARIO_NAME_LEN 64
+#define SCN_SCENARIO_DESC_LEN 256
+
+/* scenario.game names a game type ("open", "tournament", "strict"), kept
+ * as the text the file gave. */
+#define SCN_GAME_NAME_LEN 24
+
+/* A brain named by a lobby team: the directory under the server's own
+ * brains/, as the file wrote it. The same length the spawn op carries a brain
+ * in, because that op carries the path this name resolves to; scenario_host.c
+ * holds the two against each other where it can see both. */
+#define SCN_BRAIN_LEN 256
+
+/* Room for every rule the table can name. scenario_host.c checks this
+ * covers the rule list, so a rule added to the list cannot overflow it. */
+#define SCN_MANIFEST_RULES_MAX 128
+
+/* A map path plus the script suffix. Map paths reach the server from a
+ * command line, so this matches what those buffers hold. */
+#define SCN_SCRIPT_PATH_MAX 2304
+
+/* The script a map is looked for beside: X.map is accompanied by
+ * X.scenario.lua. */
+#define SCN_SCRIPT_SUFFIX ".scenario.lua"
+
+/* The most a script may hold. It is hand-written Lua, so a megabyte is far
+ * more than one ever needs and still well inside the four a whole packaged
+ * scenario is allowed on the wire. A file above it is refused rather than
+ * read, because at that size it is not a script. */
+#define SCN_SCRIPT_MAX_BYTES (1024 * 1024)
+
+/* How many hook or policy calls may raise in a row before the scenario is
+ * switched off for the rest of the round. Any call that returns normally
+ * puts the count back to zero, so this counts a script that is failing
+ * every time rather than one that fails now and then.
+ *
+ * A round the scenario is off for runs no more of its Lua: hooks are
+ * skipped, policies answer the classic rule, and the players are told once.
+ * It is off for the round and not for the attachment — the next round start
+ * boots a fresh VM and begins again at zero. */
+#define SCN_ERROR_LIMIT 20
+
+/* The most memory one scenario state may hold. Every allocation a state
+ * makes is counted against this, and the one that would take it past is
+ * refused — which Lua raises as an out-of-memory error rather than dying on,
+ * so the call that asked for it lands in the host's own lua_pcall, counts one
+ * toward SCN_ERROR_LIMIT and leaves the state to carry on: what the script
+ * had abandoned by then is collected and the round keeps playing.
+ *
+ * 32 MB is far more than a scenario has any use for — the reference script
+ * holds a few tables of numbers — and far less than a server can afford to
+ * lose to one map's script. A build whose Lua will not take an allocator at
+ * all counts nothing; scnSandboxMemoryCapped says which kind of build this
+ * is. */
+#define SCN_VM_MEMORY_MAX (32u * 1024u * 1024u)
+
+/* The most VM instructions one call into a script may run for. A hook, a
+ * timer or a policy answer that passes this is stopped where it stands with
+ * a Lua error, so the call lands in the host's own lua_pcall, counts one
+ * toward SCN_ERROR_LIMIT and leaves the round ticking: a script that loops
+ * without end costs the tick it was called on rather than the server.
+ *
+ * It bounds one call and not a round or a tick. Each call starts again at
+ * zero, so a script with real work to do spreads it across its on_tick calls
+ * rather than looping inside one of them.
+ *
+ * A million is far more than a hook answering a question needs and small
+ * enough that a runaway is stopped inside the tick that started it. What the
+ * boundary test shows is a bounded loop well past it cut off, the line
+ * naming the hook it was in, and the sim ticking afterwards. */
+#define SCN_BUDGET_CALL_INSTR 1000000u
+
+/* How often that count is taken, which is the count hook's own parameter.
+ * Small enough that a runaway is stopped within a thousandth of the budget,
+ * large enough that a script is not spending its time in the hook. */
+#define SCN_BUDGET_STEP_INSTR 1000u
+
+/* What a call that has already been stopped may still spend. The error raised
+ * at the budget unwinds through whatever the script had standing, and a
+ * metamethod running on the way out is Lua code like any other: cutting that
+ * off where it stands is not what the budget is for, so the count is put back
+ * to this far short of the budget rather than to zero and the unwind has room
+ * to finish.
+ *
+ * Twenty hook steps is room enough for an unwind and far too little to be
+ * worth catching the error for: a script that caught it and carried on
+ * anyway is stopped again within that, and again after that, rather than
+ * running on uncounted. */
+#define SCN_BUDGET_GRACE_INSTR 20000u
+
+/* The console lines one call into a script may print.
+ *
+ * print goes to the server console rather than to the host's stdout, which is
+ * what makes it worth bounding: a console line reaches the operator's message
+ * log where one is configured, and that file is opened, written and closed for
+ * every line. Two hundred thousand prints fit inside one call's instruction
+ * budget, so a script that prints in a loop costs the tick thread that many
+ * open and close cycles and grows the log without end.
+ *
+ * A line past this is dropped and the first drop says so, once, so an operator
+ * missing output knows why rather than wondering. Sixty-four is far more than
+ * a script telling an operator something needs and far too few to flood with.
+ * A starting value; a measurement may want it somewhere else. */
+#define SCN_PRINT_PER_CALL 64
+
+/* And the console lines all of one tick's calls may print between them. A
+ * script has an on_tick, the timers it set and whatever policies it answers
+ * within the same tick, so the per-call bound on its own would multiply by
+ * however many calls a script arranges to be made. Against the server's fifty
+ * ticks a second this works out to a ceiling of 3,200 lines a second.
+ *
+ * Counted against the sim's own tick rather than against a wall clock: the
+ * unit tests drive the sim as fast as the CPU allows, so a window measured in
+ * seconds would cut a fixture that prints once a tick and fail it for a reason
+ * that is not the one it is about. A tick is the same window on a live server
+ * as it is in a test.
+ *
+ * A starting value, as the per-call one is. */
+#define SCN_PRINT_PER_TICK 64
+
+/* How many events the host holds between one tick and the next, across
+ * both of the server's channels. Each of the two subscriber callbacks
+ * copies an event in and returns; the one drain at the end of the tick
+ * empties exactly what was waiting when it started.
+ *
+ * An event that arrives with the queue full is dropped rather than
+ * overwriting one, and the tick that lost them says how many and counts one
+ * error: a round that produces more events in one tick than this is
+ * producing them faster than a script can answer them, and the numbers say
+ * so rather than the oldest of them going quietly. A tick counts once
+ * however many it lost, so a round that keeps overflowing reaches
+ * SCN_ERROR_LIMIT over SCN_ERROR_LIMIT ticks rather than in one. */
+#define SCN_EVENT_QUEUE_MAX 256
+
+typedef struct ScenarioHost ScenarioHost;
+
+/*********************************************************
+ *NAME:          scenarioHostSetEnabled
+ *PURPOSE:
+ *  Whether scenarioHostAttach may load a script at all.
+ *  Enabled by default, so a server that says nothing runs
+ *  the scripts it always ran.
+ *
+ *  Off, every attach answers NULL before it reads anything
+ *  and every host in the process plays plain maps — the
+ *  dedicated server, the headless runner and the desktop
+ *  client's single-player host, none of which tests this
+ *  for itself.
+ *
+ *  A map that does have a script beside it is named through
+ *  the attach's err buffer, so a caller that already prints
+ *  a failed attach prints the refusal too. A map with no
+ *  script beside it says nothing.
+ *
+ *  Set it before the first attach: it is one answer for the
+ *  process, and a map committed later reads whatever it
+ *  last said.
+ *********************************************************/
+void scenarioHostSetEnabled(bool enabled);
+
+/*********************************************************
+ *NAME:          scenarioHostSetUploadScriptsEnabled
+ *PURPOSE:
+ *  Whether a map a client uploaded to this server may bring
+ *  a script with it. Enabled by default, so a server that
+ *  says nothing behaves as it always did.
+ *
+ *  A .map file can carry a scenario container appended to
+ *  it, and the upload path writes the bytes it was sent
+ *  whole, container and all. Off, a map whose file sits in
+ *  the server's uploads directory attaches neither that
+ *  container nor a loose script beside it, and one console
+ *  line names the file so the operator can see which upload
+ *  was turned down. Every other map is unaffected: the
+ *  operator's own map directory is the operator's own.
+ *
+ *  Narrower than scenarioHostSetEnabled, which turns every
+ *  script off wherever the map came from. Both apply: with
+ *  scripts off altogether this one is never reached.
+ *
+ *  Set it before the first attach, beside the switch above:
+ *  it is one answer for the process, and a map committed
+ *  later reads whatever it last said.
+ *********************************************************/
+void scenarioHostSetUploadScriptsEnabled(bool enabled);
+
+/*********************************************************
+ *NAME:          scenarioHostMapHasScript
+ *PURPOSE:
+ *  Whether picking the map at mapPath here would run a
+ *  script: one is beside it on disk AND this process runs
+ *  scripts. Asked without reading, parsing or running a byte
+ *  of the file. This is the one question a lister asks to tag
+ *  a map before anyone picks it, and the one place that knows
+ *  how a script is found, so a later way of carrying one
+ *  changes here and every caller follows.
+ *
+ *  False for every map while scripts are switched off. That
+ *  is what the tag has to say then: the attach would refuse
+ *  the file and the map would play plain, so tagging it
+ *  scripted would promise a round nobody gets.
+ *
+ *ARGUMENTS:
+ *  mapPath - Full path to the .map file
+ *********************************************************/
+bool scenarioHostMapHasScript(const char *mapPath);
+
+/*********************************************************
+ *NAME:          scenarioHostMapScriptOpens
+ *PURPOSE:
+ *  How many map files the question above has opened since
+ *  the process started. The answer is kept per path, keyed
+ *  on the file's size and modify time, so a second listing
+ *  of an unchanged directory opens nothing; this is how a
+ *  test says so, and it is of no use to a frontend.
+ *
+ *  Only ever rises.
+ *********************************************************/
+unsigned long scenarioHostMapScriptOpens(void);
+
+/*********************************************************
+ *NAME:          scenarioHostRegisterMapScripted
+ *PURPOSE:
+ *  Hands the sim's map lister the question above, so every
+ *  entry it returns says whether that map is scripted.
+ *
+ *  Call it once where the process decides whether it runs
+ *  scripts at all, beside scenarioHostSetEnabled — not at an
+ *  attach. An attach answers NULL for a map with no script,
+ *  so registering there would leave a server whose own map is
+ *  plain reporting every scripted map in its directory as
+ *  plain, and nothing would say so.
+ *
+ *  Registering is independent of the scripts switch, but what
+ *  the question answers is not: with scripts off every entry
+ *  reads plain, which is what those maps will play as here.
+ *
+ *ARGUMENTS:
+ *  sim - The sim whose lister is being told
+ *********************************************************/
+void scenarioHostRegisterMapScripted(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          scenarioHostRegisterScenarioLister
+ *PURPOSE:
+ *  Hands the sim the read of its scenarios directory, so a
+ *  client asking what this server offers is answered.
+ *
+ *  Call it once, in the same place and for the same reason
+ *  as the registration above: the list is what a server
+ *  offers instead of a map's own scenario, so the server
+ *  that needs it answered is exactly the one with nothing
+ *  attached.
+ *
+ *  What is read is scnDirList; where it is read is the
+ *  directory the sim holds, which an operator sets with
+ *  -scenariodir or the "Scenario Dir" preference. A server
+ *  that registers nothing offers an empty list.
+ *
+ *ARGUMENTS:
+ *  sim - The sim being told where to send the question
+ *********************************************************/
+void scenarioHostRegisterScenarioLister(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          scenarioHostAttach
+ *PURPOSE:
+ *  Finds the map's script, reads it, boots a VM, runs its
+ *  chunk and reads its scenario table. Registers itself on the
+ *  sim, so the round start that follows applies the scenario's
+ *  rules.
+ *
+ *  Two places carry a script. A loose X.scenario.lua beside
+ *  the map wins, and a map that carries a container as well
+ *  says so on the console. Otherwise the container appended to
+ *  the map file itself is read: its manifest fills the
+ *  scenario global before the chunk runs, and the table the
+ *  chunk leaves behind is held against that manifest — so a
+ *  packaged script may omit the table or restate it, but one
+ *  that restates it and disagrees is refused by key.
+ *
+ *  The file is read once, here. The host keeps the bytes and
+ *  every later round runs those, so editing the file while a
+ *  server is up changes nothing until something asks the host
+ *  to read it again.
+ *
+ *  Returns NULL when there is no script, which is the
+ *  ordinary case and not an error: err is left empty and the
+ *  server runs a plain map. Returns NULL on a script that
+ *  cannot be used — one too large to be a script, a syntax
+ *  error, an error raised by the chunk, no scenario table, or
+ *  an api newer than this server — and writes one operator
+ *  line to err saying which, with the file and the line where
+ *  Lua has one.
+ *
+ *  Returns NULL without reading the file when scripts are
+ *  off, writing a line to err naming the script the map has
+ *  and nothing at all for a map that has none.
+ *
+ *  err may be NULL only when errLen is 0.
+ *********************************************************/
+ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
+                                 char *err, size_t errLen);
+
+/*********************************************************
+ *NAME:          scenarioHostAttachMod
+ *PURPOSE:
+ *  The same attach, for a scenario the server offers on its
+ *  own rather than one a map carries: a .scenario package or
+ *  a loose .lua in the scenarios directory, named by the file
+ *  the host picked. Everything past where the script came
+ *  from is what scenarioHostAttach does — the same VM, the
+ *  same manifest read, the same check of a package's table
+ *  against its manifest, the same registrations.
+ *
+ *  It has no map. A mod plays on whichever map is committed,
+ *  so nothing here reads one and the map may even be one that
+ *  came from bytes rather than a file. The lobby is told
+ *  lobbyScenarioMod, and the file name it carries is the
+ *  mod's own.
+ *
+ *  Returns NULL with the reason in err for a file that is not
+ *  there, is neither a package nor a script by its name, or
+ *  cannot be used — and, unlike a map with no script, a
+ *  missing file is a fault here: the host asked for this one
+ *  by name.
+ *
+ *ARGUMENTS:
+ *  sim    - The sim to attach to
+ *  dir    - The scenarios directory
+ *  file   - The file name in it, not a path
+ *  err    - Where the reason goes
+ *  errLen - Its size; err may be NULL only when this is 0
+ *********************************************************/
+ScenarioHost *scenarioHostAttachMod(ServerSim *sim, const char *dir,
+                                    const char *file,
+                                    char *err, size_t errLen);
+
+/*********************************************************
+ *NAME:          scenarioHostReload
+ *PURPOSE:
+ *  Reads the script from disk again and, if the new bytes
+ *  are usable, keeps them in place of the ones the host was
+ *  holding. Usable means: inside SCN_SCRIPT_MAX_BYTES, the
+ *  chunk loads and runs, a scenario table comes out of it,
+ *  its api is not above this server's, and where the script
+ *  came out of a package, the table agrees with the manifest.
+ *
+ *  Where the script comes from is decided again rather than
+ *  kept: a loose script dropped beside a packed map takes over
+ *  at the reload, which is what makes editing one a loop
+ *  rather than a re-pack.
+ *
+ *  Checked in a Lua state of its own before anything is
+ *  swapped, so a bad edit changes nothing: on any failure
+ *  this returns false, writes one operator line to err, and
+ *  leaves the running scenario exactly as it was.
+ *
+ *  On success the new bytes take effect at the next round
+ *  start. The round in progress keeps the table it began
+ *  with, so a caller telling an operator what happened
+ *  should say so.
+ *********************************************************/
+bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen);
+
+/*********************************************************
+ *NAME:          scenarioHostDetach
+ *PURPOSE:
+ *  Takes the host off the sim, closes its VM, drops the
+ *  script's bytes it was holding and frees it.
+ *  NULL is a no-op, so a caller that attached nothing can
+ *  detach unconditionally on the way out.
+ *********************************************************/
+void scenarioHostDetach(ScenarioHost *h);
+
+/*********************************************************
+ *NAME:          scenarioHostFollowMap
+ *PURPOSE:
+ *  Keeps *slot pointing at whichever scenario the sim's
+ *  committed map has. Each time a map is committed the sim
+ *  calls in here: the scenario the previous map had is
+ *  detached, a script beside the new file is looked for,
+ *  and *slot is set to the result or to NULL when the map
+ *  has none. The lobby the new scenario asks for is handed
+ *  to the sim as part of that, and the sim seats it.
+ *
+ *  slot is the caller's own pointer and must outlive the
+ *  sim — it is read and written from inside the map change,
+ *  which is why it cannot be the scenario itself. Call it
+ *  once, after the first attach; pass a NULL slot to stop.
+ *
+ *  Each commit says what it did: the scenario it attached
+ *  and the file it came from, the script it refused because
+ *  scripts are off, or the one it could not use. All three
+ *  are logged rather than returned, because there is nobody
+ *  to answer at the point a map is committed and a bad
+ *  script still leaves a playable map. A map with no script
+ *  beside it says nothing, so a rotation over plain maps is
+ *  as quiet as it was.
+ *********************************************************/
+void scenarioHostFollowMap(ServerSim *sim, ScenarioHost **slot);
+
+/*********************************************************
+ *NAME:          scenarioHostIsActive
+ *PURPOSE:
+ *  Whether a scenario is attached and running. False for a
+ *  NULL host, so a caller need not test both.
+ *********************************************************/
+bool scenarioHostIsActive(const ScenarioHost *h);
+
+/*********************************************************
+ *NAME:          scenarioHostName
+ *PURPOSE:
+ *  The scenario's name, as the lobby shows it. "" when no
+ *  scenario is attached; never NULL.
+ *********************************************************/
+const char *scenarioHostName(const ScenarioHost *h);
+
+/*********************************************************
+ *NAME:          scenarioHostDescription
+ *PURPOSE:
+ *  The scenario's description line. "" when no scenario is
+ *  attached; never NULL.
+ *********************************************************/
+const char *scenarioHostDescription(const ScenarioHost *h);
+
+/*********************************************************
+ *NAME:          scenarioHostScriptPath
+ *PURPOSE:
+ *  The script file the host read, for an operator asking
+ *  which file is in play. "" when no scenario is attached;
+ *  never NULL.
+ *********************************************************/
+const char *scenarioHostScriptPath(const ScenarioHost *h);
+
+/*********************************************************
+ *NAME:          scenarioHostLastError
+ *PURPOSE:
+ *  The most recent operator line the host produced after
+ *  attach — a rule the funnel refused, a key that names no
+ *  rule, a round start the cached chunk failed on.
+ *  "" when the scenario has had nothing to say; never NULL.
+ *
+ *  Attach reports through its own err buffer rather than
+ *  here, because a failed attach returns no host to ask.
+ *********************************************************/
+const char *scenarioHostLastError(const ScenarioHost *h);
+
+#endif /* SCENARIO_HOST_H */

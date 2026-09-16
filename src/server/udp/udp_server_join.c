@@ -46,7 +46,8 @@
                                   * serverSimShadowSeedRoundStart,
                                   * serverSimGetCompressedMapFor — sim co-owner */
 #include "server_sim_join.h" /* serverSimFindFreeSlot, addPlayerInternal,
-                              * setClientTypeFlagsInternal, fillAndPublishPlayerJoin */
+                              * setClientTypeFlagsInternal, fillAndPublishPlayerJoin,
+                              * serverSimPromoteHostOnJoin */
 #include "server_sim_lifecycle.h" /* lobbyAutoUnreadyOnChange */
 #include "control_event.h"   /* ControlEvent, CTRL_BALANCE_PROPOSAL */
 #include "channel_mux.h"     /* channelMuxInit */
@@ -1201,6 +1202,9 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
                           udpServer.clients[slot].wantRejoin);
         setClientTypeFlagsInternal(sim, (BYTE)slot, clientType, flags);
         fillAndPublishPlayerJoin(sim, (BYTE)slot);
+        /* Before the subscriber registers below, so the replay this client
+         * gets already names the slot holding the host role. */
+        serverSimPromoteHostOnJoin(sim, (BYTE)slot);
     }
     WB_LOG_INFO(WB_LOG_CAT_NET,
                 "join accept: slot=%d clientType=%u clientHints=0x%02x",

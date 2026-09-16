@@ -62,6 +62,13 @@ typedef struct {
   bool hasRichInfo;  /* true when the rich INFO (flags/counts/md5) was
                       * received; false for legacy 76-byte servers — consumers
                       * hide the rich fields when false. */
+  /* Whether the sender said anything at all about its visibility rules.
+   * The fields above always hold something, because a packet that stops
+   * short of them is read as the back-compatibility set; this says
+   * whether that reading is a real answer or a stand-in, so a caller
+   * naming the rules can say "not reported" rather than name a set the
+   * server never chose. */
+  bool hasViewInfo;
   /* Server visibility rules. A server whose INFO predates the
    * view_policies byte reports the defaults (pill always, base off,
    * ally always) with classic mode and allies in trees both off, and one
@@ -115,6 +122,13 @@ typedef struct {
   bool           hasRichInfo;     /* true when the rich INFO (flags/counts/md5)
                                    * was received; false for legacy 76-byte servers
                                    * — consumers hide the rich fields when false. */
+  /* Whether the sender said anything at all about its visibility rules.
+   * The fields above always hold something, because a packet that stops
+   * short of them is read as the back-compatibility set; this says
+   * whether that reading is a real answer or a stand-in, so a caller
+   * naming the rules can say "not reported" rather than name a set the
+   * server never chose. */
+  bool hasViewInfo;
   /* Server visibility rules. A server whose INFO predates the
    * view_policies byte reports the defaults (pill always, base off,
    * ally always) with classic mode and allies in trees both off, and one
@@ -130,6 +144,11 @@ typedef struct {
   /* Voice the server forwards. A server whose INFO predates the flag bits
    * reports serverVoiceOn, which is what it does. */
   ServerVoiceMode voiceMode;
+  /* Host banned smart pings. Carried by the mDNS record only ("spingoff");
+   * the broadcast INFO packet has no room for it and leaves this false.
+   * Negative sense, so false — what both an old record and a server that
+   * never mentions it give — means smart pings are ALLOWED. */
+  bool           smartPingsOff;
 } DiscoveryServer;
 
 /* Callback delivered for each LAN server that responds to a broadcast

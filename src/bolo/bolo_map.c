@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include "global.h"
 #include "bolo_map.h"
+#include "../common/wb_log.h"
 #include "crc.h"
 #include "pillbox.h"
 #include "starts.h"
@@ -591,16 +592,25 @@ static bool mapReadStream(MapReader *r, map *value, pillboxes *pb, bases *bs, st
     }
   }
 
-  /* Fix terrain under pillboxes — replace impassable terrain with ROAD */
+  /* Fix terrain under pillboxes — replace impassable terrain with ROAD and clear mines */
   if (returnValue == TRUE) {
     BYTE numPills = pillsGetNumPills(pb);
     BYTE pi;
     for (pi = 0; pi < numPills; pi++) {
       BYTE t;
       if (pillsIsActive(pb, (BYTE)(pi + 1)) == FALSE) continue;
+      /* A carried pill's x/y is the square it was picked up from, not a square
+       * it is on: pillsSetPillCompressData marks every pill in a blob active,
+       * while inTank rides in from the wire. Writing terrain there would stomp
+       * ground that legitimately holds a mine the server still knows about,
+       * and mapCalcChecksum masks mines away, so the divergence would never
+       * resync. */
+      if ((*pb)->item[pi].inTank != FALSE) continue;
       t = (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y];
       if (t == RIVER || t == DEEP_SEA || t == BUILDING || t == HALFBUILDING) {
         (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y] = ROAD;
+      } else if (t >= MINE_START && t <= MINE_END) {
+        (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y] = t - MINE_SUBTRACT;
       }
     }
   }
@@ -665,10 +675,15 @@ bool mapReadFromMemory(const BYTE *data, int len, map *value, pillboxes *pb, bas
 *  xValue - The x co-ordinate
 *  yValue - The y co-ordinate 
 *********************************************************/
+bool mapPosInBounds(BYTE xValue, BYTE yValue) {
+  return (xValue > MAP_MINE_EDGE_LEFT && xValue < MAP_MINE_EDGE_RIGHT &&
+          yValue > MAP_MINE_EDGE_TOP && yValue < MAP_MINE_EDGE_BOTTOM);
+}
+
 BYTE mapGetPos(map *value, BYTE xValue, BYTE yValue) {
   BYTE returnValue = DEEP_SEA; /* Value to return */
 
-  if (xValue > MAP_MINE_EDGE_LEFT && xValue < MAP_MINE_EDGE_RIGHT && yValue > MAP_MINE_EDGE_TOP && yValue < MAP_MINE_EDGE_BOTTOM) {
+  if (mapPosInBounds(xValue, yValue)) {
     returnValue = (*value)->mapItem[xValue][yValue];
   }
 
@@ -1600,9 +1615,15 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
 
   /* Each of the four world structures arrives as a pointer to its handle, so
    * either level can be NULL when the game is torn down under a caller that is
-   * still holding it. Nothing below checks: the three compress setters and the
-   * (*value)->mapItem reads all dereference straight away. Refuse instead, so
-   * the caller gets its FALSE rather than a crash inside the loader. */
+   * still holding it, or when a caller races a teardown and hands over a
+   * destroyed sim's world. Nothing below checks: the three compress setters and
+   * the (*value)->mapItem reads all dereference straight away. Refuse instead,
+   * so the caller gets its FALSE rather than a crash inside the loader.
+   *
+   * Both levels are checked, and the outer pointers are the only ones logged. A
+   * caller handing over a NULL GameSim produces handle pointers that are its
+   * small field offsets (0/8/16/24) — non-null but garbage — and dereferencing
+   * those to log them is how the first version of this guard itself crashed. */
   if (value == NULL || *value == NULL ||
       pb == NULL || *pb == NULL ||
       bs == NULL || *bs == NULL ||
@@ -1668,16 +1689,25 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
     }
   }
 
-  /* Fix terrain under pillboxes — replace impassable terrain with ROAD */
+  /* Fix terrain under pillboxes — replace impassable terrain with ROAD and clear mines */
   if (returnValue == TRUE) {
     BYTE numPills = pillsGetNumPills(pb);
     BYTE pi;
     for (pi = 0; pi < numPills; pi++) {
       BYTE t;
       if (pillsIsActive(pb, (BYTE)(pi + 1)) == FALSE) continue;
+      /* A carried pill's x/y is the square it was picked up from, not a square
+       * it is on: pillsSetPillCompressData marks every pill in a blob active,
+       * while inTank rides in from the wire. Writing terrain there would stomp
+       * ground that legitimately holds a mine the server still knows about,
+       * and mapCalcChecksum masks mines away, so the divergence would never
+       * resync. */
+      if ((*pb)->item[pi].inTank != FALSE) continue;
       t = (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y];
       if (t == RIVER || t == DEEP_SEA || t == BUILDING || t == HALFBUILDING) {
         (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y] = ROAD;
+      } else if (t >= MINE_START && t <= MINE_END) {
+        (*value)->mapItem[(*pb)->item[pi].x][(*pb)->item[pi].y] = t - MINE_SUBTRACT;
       }
     }
   }
@@ -1940,5 +1970,87 @@ bool boloMapValidate(const char *path, char *outMapName, size_t outMapNameSize) 
   mapDestroy(&scratchMap);
 
   return ok;
+}
+
+/* Step the cursor over n bytes, or say there are not n bytes left. Every
+ * move through the map below goes through here, so nothing is read that the
+ * buffer does not hold. */
+static bool mapBodyTake(size_t len, size_t *pos, size_t n) {
+  if (*pos > len || n > len - *pos) {
+    return false;
+  }
+  *pos += n;
+  return true;
+}
+
+bool boloMapBodyLength(const unsigned char *data, size_t len, size_t *outLen) {
+  size_t pos;
+  BYTE   numPills;
+  BYTE   numBases;
+  BYTE   numStarts;
+
+  if (outLen == NULL) {
+    return false;
+  }
+  *outLen = 0;
+  if (data == NULL) {
+    return false;
+  }
+
+  /* The preamble: the id, the version byte and the three counts. */
+  pos = 0;
+  if (!mapBodyTake(len, &pos, LENGTH_ID + 4)) {
+    return false;
+  }
+  if (memcmp(data, MAP_HEADER, LENGTH_ID) != 0) {
+    return false;
+  }
+  if (data[LENGTH_ID] != CURRENT_MAP_VERSION) {
+    return false;
+  }
+  numPills  = data[LENGTH_ID + 1];
+  numBases  = data[LENGTH_ID + 2];
+  numStarts = data[LENGTH_ID + 3];
+  /* The same counts mapReadStream refuses a file for. */
+  if (numPills > MAX_PILLS || numBases > MAX_BASES || numStarts > MAX_STARTS) {
+    return false;
+  }
+
+  if (!mapBodyTake(len, &pos, (size_t)numPills * SIZEOFBMAP_PILL_INFO) ||
+      !mapBodyTake(len, &pos, (size_t)numBases * SIZEOFBAMP_BASE_INFO) ||
+      !mapBodyTake(len, &pos, (size_t)numStarts * SIZEOFBMAP_START_INFO)) {
+    return false;
+  }
+
+  /* The runs, until the one that says there are no more. datalen counts its
+   * own four-byte header, so a run's data is datalen - 4 bytes. */
+  for (;;) {
+    BYTE datalen;
+    BYTE y;
+    BYTE startx;
+    BYTE endx;
+    size_t header = pos;
+
+    if (!mapBodyTake(len, &pos, SIZEOFBMAP_RUN_HEADER)) {
+      return false;
+    }
+    datalen = data[header];
+    y       = data[header + 1];
+    startx  = data[header + 2];
+    endx    = data[header + 3];
+
+    if (datalen == SIZEOFBMAP_RUN_HEADER && y == MAP_ARRAY_LAST &&
+        startx == MAP_ARRAY_LAST && endx == MAP_ARRAY_LAST) {
+      *outLen = pos;
+      return true;
+    }
+    if (datalen < SIZEOFBMAP_RUN_HEADER || startx > endx) {
+      return false;
+    }
+    if (!mapBodyTake(len, &pos,
+                     (size_t)(datalen - SIZEOFBMAP_RUN_HEADER))) {
+      return false;
+    }
+  }
 }
 

@@ -26,6 +26,7 @@
 #include "netpacks.h"
 #include "view_policy.h"
 #include "server_voice_mode.h"
+#include "visibility_presets.h"
 #include "test_harness.h"
 
 int run_info_packet_view_policy_layout(void) {
@@ -288,12 +289,21 @@ int run_info_packet_view_policy_length_tier(void) {
                   (unsigned)window);
     UT_ASSERT_MSG(sight == (uint8_t)lineOfSightOff,
                   "an unnamed sight value read back as %u", (unsigned)sight);
-    pkt.view_policies2 = 0x06;   /* window unnamed, sight buildings and trees */
+    pkt.view_policies2 = 0x07;   /* window unnamed, sight buildings and trees */
     infoPacketReadViewPolicies2(&pkt, sizeof(pkt), &window, &sight);
     UT_ASSERT_MSG(window == (uint8_t)overviewWindowExpanded,
                   "an unnamed window value read back as %u", (unsigned)window);
     UT_ASSERT_MSG(sight == (uint8_t)lineOfSightBuildingsAndTrees,
                   "an unnamed window value moved sight to %u", (unsigned)sight);
+    /* Two is the third window, not an unnamed value, and the two bits it
+     * rides in were always wide enough for it. Pinned here because it is on
+     * the wire: a browser row has to read None back as None. */
+    pkt.view_policies2 = 0x06;   /* window none, sight buildings and trees */
+    infoPacketReadViewPolicies2(&pkt, sizeof(pkt), &window, &sight);
+    UT_ASSERT_MSG(window == (uint8_t)overviewWindowNone,
+                  "the none window read back as %u", (unsigned)window);
+    UT_ASSERT_MSG(sight == (uint8_t)lineOfSightBuildingsAndTrees,
+                  "the none window moved sight to %u", (unsigned)sight);
     pkt.view_policies2 = infoPacketPackViewPolicies2(
         (uint8_t)overviewWindowClassic,
         (uint8_t)lineOfSightBuildingsAndTrees);
@@ -330,6 +340,141 @@ int run_info_packet_view_policy_length_tier(void) {
                     }
                 }
             }
+        }
+    }
+    return 0;
+}
+
+/* ── The name a browser row puts on a listed game ─────────────────
+ * The server browser reads a game's rules out of the INFO packet and runs
+ * them through the same preset table the lobby's dropdown uses, so a game
+ * is named the same before you join it as after. That only holds if every
+ * field the match needs survives the packet, which is what this pins: each
+ * preset is packed into the two view bytes, read back out, and matched.
+ *
+ * The decay seconds are not in the packet and take no part in the match,
+ * so the round trip is exact without them. */
+static void packPreset(INFO_PACKET *pkt, const VisibilitySettings *v) {
+    memset(pkt, 0, sizeof(*pkt));
+    pkt->view_policies = infoPacketPackViewPolicies(
+        (ViewPolicy)v->policy[viewCategoryPill],
+        (ViewPolicy)v->policy[viewCategoryBase],
+        (ViewPolicy)v->policy[viewCategoryAlly],
+        v->classicMode, v->alliesInTrees);
+    pkt->view_policies2 = infoPacketPackViewPolicies2(v->overviewWindow,
+                                                      v->lineOfSight);
+}
+
+static VisibilitySettings readPacket2(const INFO_PACKET *pkt, size_t len) {
+    VisibilitySettings out;
+    ViewPolicy pill, base, ally;
+    bool classic, trees;
+    uint8_t window, sight;
+
+    memset(&out, 0, sizeof(out));
+    infoPacketReadViewPolicies(pkt, len, &pill, &base, &ally,
+                               &classic, &trees);
+    infoPacketReadViewPolicies2(pkt, len, &window, &sight);
+    out.policy[viewCategoryPill] = (uint8_t)pill;
+    out.policy[viewCategoryBase] = (uint8_t)base;
+    out.policy[viewCategoryAlly] = (uint8_t)ally;
+    out.classicMode    = classic;
+    out.alliesInTrees  = trees;
+    out.overviewWindow = window;
+    out.lineOfSight    = sight;
+    return out;
+}
+
+static VisibilitySettings readPacket(const INFO_PACKET *pkt) {
+    return readPacket2(pkt, sizeof(*pkt));
+}
+
+int run_info_packet_preset_round_trip(void) {
+    INFO_PACKET pkt;
+    VisibilitySettings want;
+    VisibilitySettings got;
+    int p;
+
+    for (p = 0; p < (int)VISIBILITY_PRESET_COUNT; p++) {
+        UT_ASSERT(visibilityPresetSettings((VisibilityPreset)p, &want));
+        packPreset(&pkt, &want);
+        got = readPacket(&pkt);
+        UT_ASSERT_MSG(visibilityPresetMatch(&got) == (VisibilityPreset)p,
+                      "preset %d came back off the wire as %d", p,
+                      (int)visibilityPresetMatch(&got));
+    }
+
+    /* And a set that is none of them still reads as Custom rather than
+     * being rounded to the nearest preset by a field the packet dropped. */
+    UT_ASSERT(visibilityPresetSettings(visibilityPresetMaxView, &want));
+    want.policy[viewCategoryBase] = (uint8_t)viewPolicyOff;
+    packPreset(&pkt, &want);
+    got = readPacket(&pkt);
+    UT_ASSERT_MSG(visibilityPresetMatch(&got) == visibilityPresetCustom,
+                  "a hand-made set came back off the wire as %d",
+                  (int)visibilityPresetMatch(&got));
+
+    /* Allies in trees is the field most easily lost - it is a single bit
+     * beside classic mode rather than a value of its own - so it is shown
+     * to survive on its own account: Max view with it off is Custom. */
+    UT_ASSERT(visibilityPresetSettings(visibilityPresetMaxView, &want));
+    want.alliesInTrees = false;
+    packPreset(&pkt, &want);
+    got = readPacket(&pkt);
+    UT_ASSERT(visibilityPresetMatch(&got) == visibilityPresetCustom);
+
+    return 0;
+}
+
+/* ── A listing that advertised nothing reads as Classic ───────────
+ * The browser names a game by running its advertised rules through the
+ * preset table, but an old server sends no rules at all and the decoder
+ * fills the back-compatibility set in their place. That set matches no
+ * preset, so naming it by the match would call such a server "Custom" —
+ * a word that reads as a host having chosen something. The browser names
+ * it Classic instead, which is what it plays like, and asks hasViewInfo
+ * rather than the values to tell the two apart.
+ *
+ * This pins the two halves of that: the back-compatibility set really
+ * does match nothing (so the fallback is load-bearing, not decoration),
+ * and the length that decides hasViewInfo is the one the view byte needs.
+ */
+int run_info_packet_absent_views_read_classic(void) {
+    INFO_PACKET pkt;
+    VisibilitySettings got;
+
+    /* A packet too short for the view byte. Both readers hand back their
+     * back-compatibility answers. */
+    memset(&pkt, 0, sizeof(pkt));
+    got = readPacket2(&pkt, (size_t)INFO_PACKET_PRE_VIEWS_SIZE);
+    UT_ASSERT_MSG(got.policy[viewCategoryPill] == (uint8_t)viewPolicyAlways &&
+                  got.policy[viewCategoryBase] == (uint8_t)viewPolicyOff &&
+                  got.policy[viewCategoryAlly] == (uint8_t)viewPolicyAlways &&
+                  !got.classicMode && !got.alliesInTrees &&
+                  got.overviewWindow == (uint8_t)overviewWindowExpanded &&
+                  got.lineOfSight == (uint8_t)lineOfSightOff,
+                  "the back-compatibility reading moved");
+    UT_ASSERT_MSG(visibilityPresetMatch(&got) == visibilityPresetCustom,
+                  "the back-compatibility set matched preset %d, so the "
+                  "browser's Classic fallback would never be reached",
+                  (int)visibilityPresetMatch(&got));
+
+    /* One byte short of the view byte is still nothing advertised; the
+     * full length is the first that carries an answer. */
+    UT_ASSERT(INFO_PACKET_PRE_VIEWS2_SIZE > INFO_PACKET_PRE_VIEWS_SIZE);
+
+    /* And with the bytes present the label comes from the match, not from
+     * the fallback: every preset survives the round trip. */
+    {
+        VisibilitySettings want;
+        int p;
+        for (p = 0; p < (int)VISIBILITY_PRESET_COUNT; p++) {
+            UT_ASSERT(visibilityPresetSettings((VisibilityPreset)p, &want));
+            packPreset(&pkt, &want);
+            got = readPacket2(&pkt, sizeof(pkt));
+            UT_ASSERT_MSG(visibilityPresetMatch(&got) == (VisibilityPreset)p,
+                          "preset %d with the bytes present read as %d", p,
+                          (int)visibilityPresetMatch(&got));
         }
     }
     return 0;

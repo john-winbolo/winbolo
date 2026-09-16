@@ -468,6 +468,104 @@ int run_map_resync_base_crater_converges(void) {
     return 0;
 }
 
+/* Stamp liveTerrain on the square pillbox 1's record points at, mark the pill
+ * carried or not, round-trip the world through the compressed codec and hand
+ * back the raw terrain byte the decoded map holds there. mapItem is read
+ * directly rather than through mapGetPos because a mine has to stay
+ * distinguishable from the ground under it. Returns FALSE if the codec
+ * refused, or if a base shares the square (the base fixup would force ROAD
+ * there and the answer would say nothing about the pill fixup). */
+static bool pill_tile_after_roundtrip(BYTE liveTerrain, bool carried, BYTE *out) {
+    static BYTE emap[6000] = E_MAP;
+    static BYTE blob[131072];
+    map mp = NULL; pillboxes pb = NULL; bases bs = NULL; starts ss = NULL;
+    map mp2 = NULL; pillboxes pb2 = NULL; bases bs2 = NULL; starts ss2 = NULL;
+    bool ok = FALSE;
+    BYTE px, py;
+    int n;
+
+    mapCreate(&mp); pillsCreate(&pb); basesCreate(&bs); startsCreate(&ss);
+    if (mapLoadCompressedMap(&mp, &pb, &bs, &ss, emap, EMAP_LEN) &&
+        pillsGetNumPills(&pb) > 0) {
+        px = pb->item[0].x;
+        py = pb->item[0].y;
+        if (basesExistPos(&bs, px, py) == FALSE) {
+            /* pillsSetPillCompressData has already marked every pill in the
+             * blob active, so only the carried flag is set here. */
+            pb->item[0].inTank = carried ? TRUE : FALSE;
+            mp->mapItem[px][py] = liveTerrain;
+            n = mapSaveCompressedMap(&mp, &pb, &bs, &ss, blob, (int)sizeof(blob));
+            if (n > 0) {
+                mapCreate(&mp2); pillsCreate(&pb2); basesCreate(&bs2); startsCreate(&ss2);
+                if (mapLoadCompressedMap(&mp2, &pb2, &bs2, &ss2, blob, n)) {
+                    *out = mp2->mapItem[px][py];
+                    ok = TRUE;
+                }
+                mapDestroy(&mp2); pillsDestroy(&pb2); basesDestroy(&bs2); startsDestroy(&ss2);
+            }
+        }
+    }
+    mapDestroy(&mp); pillsDestroy(&pb); basesDestroy(&bs); startsDestroy(&ss);
+    return ok;
+}
+
+/* A pillbox standing on a mined square hides the mine: nothing can drive onto
+ * the square to set it off, and a pill killed there would hand the ground back
+ * with a mine nobody laid. The load-time fixup therefore strips a mine under a
+ * pill back to the terrain it was laid on, the same pass that turns impassable
+ * ground under a pill into ROAD. This pins that on the resync-blob path. */
+int run_map_pill_mine_cleared_on_load(void) {
+    BYTE decoded = 0;
+
+    UT_ASSERT_MSG(pill_tile_after_roundtrip(MINE_GRASS, false, &decoded),
+                  "codec refused the mined-pill world");
+    UT_ASSERT_MSG(decoded == GRASS,
+                  "mine under a pill survived the load: tile = %u, expected GRASS(%u)",
+                  (unsigned)decoded, (unsigned)GRASS);
+
+    /* The older half of the same fixup: impassable ground under a pill becomes
+     * ROAD, so a pill killed on it does not leave a square nothing can cross. */
+    UT_ASSERT_MSG(pill_tile_after_roundtrip(RIVER, false, &decoded),
+                  "codec refused the river-pill world");
+    UT_ASSERT_MSG(decoded == ROAD,
+                  "river under a pill was not normalised: tile = %u, expected ROAD(%u)",
+                  (unsigned)decoded, (unsigned)ROAD);
+    return 0;
+}
+
+/* Regression: the fixup must leave a carried pill's old square alone.
+ *
+ * A pill riding in a tank keeps the x/y of the square it was picked up from,
+ * and pillsSetPillCompressData marks every pill in a blob active, so the only
+ * thing telling the fixup that square is empty is the inTank flag that rides
+ * in from the wire. The square is empty as far as the rest of the game is
+ * concerned — pillsExistPos is FALSE there, so the server happily lets a tank
+ * mine it. A client that rewrote the square on join would then clear a mine
+ * the server still holds, and mapCalcChecksum masks mines out of the CRC, so
+ * the two would never resync: the client drives over ground it believes is
+ * clear and is blown up by a mine it was never told about. */
+int run_map_carried_pill_keeps_terrain(void) {
+    BYTE decoded = 0;
+
+    UT_ASSERT_MSG(pill_tile_after_roundtrip(MINE_GRASS, true, &decoded),
+                  "codec refused the carried-pill world");
+    UT_ASSERT_MSG(decoded == MINE_GRASS,
+                  "a carried pill's stale square lost its mine: tile = %u, "
+                  "expected MINE_GRASS(%u)",
+                  (unsigned)decoded, (unsigned)MINE_GRASS);
+
+    /* The ROAD half of the fixup has the same defect and the same fix: the
+     * square a pill was picked up from is ordinary ground now, and a river
+     * that flooded it since is real terrain the server still has. */
+    UT_ASSERT_MSG(pill_tile_after_roundtrip(RIVER, true, &decoded),
+                  "codec refused the carried-pill river world");
+    UT_ASSERT_MSG(decoded == RIVER,
+                  "a carried pill's stale square was paved: tile = %u, "
+                  "expected RIVER(%u)",
+                  (unsigned)decoded, (unsigned)RIVER);
+    return 0;
+}
+
 /* The bound MAP_COMPRESSED_MAX_SIZE states has to be the encoder's actual
  * worst case, not a guess, because every buffer in the tree is sized to it.
  *

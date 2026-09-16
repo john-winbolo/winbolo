@@ -410,7 +410,7 @@ int run_log_roundtrip_basic(void) {
        are not checked for sense — the policy byte sets classic mode alongside
        policies the server would override, which is exactly the sort of value
        a byte-for-byte round trip has to carry unchanged. */
-    static const uint8_t wantSettings[14] = {
+    static const uint8_t wantSettings[17] = {
         0xF6,               /* pill decay, base key, ally off, classic, trees */
         0x00, 0x2D,         /* pill decay 45s */
         0x01, 0x2C,         /* base decay 300s */
@@ -419,9 +419,11 @@ int run_log_roundtrip_basic(void) {
         0x02,               /* aiYesAdvantage */
         0x2A,               /* time limit + ranked + allow new players */
         0x00, 0x1E,         /* 30 minutes */
-        0x0A, 0x41          /* lock mask, bits 0/6/9/11 */
+        0x0A, 0x41,         /* lock mask low half, bits 0/6/9/11 */
+        0x80, 0x01,         /* lock mask high half, bits 16 and 31 */
+        0x01                /* settings flags: smart pings banned */
     };
-    char settingsBlob[15];
+    char settingsBlob[18];
 
     settingsBlob[0] = (char)sizeof(wantSettings);
     memcpy(settingsBlob + 1, wantSettings, sizeof(wantSettings));
@@ -491,7 +493,7 @@ int run_log_roundtrip_basic(void) {
     UT_ASSERT(got[7] == log_GameSettings);
 
     /* The settings blob is binary and full of 0x00 bytes, so framing alone
-       is not enough — the fourteen bytes have to come back untouched. */
+       is not enough — all seventeen bytes have to come back untouched. */
     UT_ASSERT_MSG(settings.len == (int)sizeof(wantSettings) + 1,
                   "settings payload len = %d (want %d)",
                   settings.len, (int)sizeof(wantSettings) + 1);

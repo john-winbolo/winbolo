@@ -52,6 +52,19 @@ FetchContent_Declare(
     URL      https://github.com/maxmind/libmaxminddb/archive/refs/tags/1.12.2.tar.gz
     SYSTEM
 )
+# cJSON, for the scenario manifest. scenario_static links it PRIVATE, which
+# passes the link along to whatever links scenario_static but does not create
+# the target — so the build that links main has to declare it, exactly as the
+# root CMakeLists.txt does for the five desktop binaries. Same repository and
+# tag as that one.
+FetchContent_Declare(
+    cjson
+    GIT_REPOSITORY https://github.com/DaveGamble/cJSON.git
+    GIT_TAG        v1.7.18
+    GIT_SHALLOW    TRUE
+    SYSTEM
+    EXCLUDE_FROM_ALL
+)
 
 # libmaxminddb: static, no tests/binaries
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
@@ -94,7 +107,15 @@ endif()
 ")
 list(INSERT CMAKE_MODULE_PATH 0 "${CMAKE_BINARY_DIR}/cmake-modules")
 
-FetchContent_MakeAvailable(sdl3 sdl3_ttf imgui lua zlib libmaxminddb)
+# cJSON: static, and none of its own tests or install rules. BUILD_SHARED_LIBS
+# is already OFF above; these are the switches cJSON reads for itself, and the
+# same ones the root CMakeLists.txt sets around its own MakeAvailable.
+set(CJSON_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(ENABLE_CJSON_TEST OFF CACHE BOOL "" FORCE)
+set(ENABLE_CJSON_INSTALL OFF CACHE BOOL "" FORCE)
+set(ENABLE_CJSON_UNINSTALL OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(sdl3 sdl3_ttf imgui lua zlib libmaxminddb cjson)
 
 # ---------------------------------------------------------------------------
 # minizip (from zlib contrib)
@@ -168,6 +189,7 @@ target_link_libraries(imgui_backends PUBLIC SDL3::SDL3)
 include(${PROJ_ROOT}/cmake/bolo_version.cmake)
 add_subdirectory(${PROJ_ROOT}/src/bolo ${CMAKE_BINARY_DIR}/bolo_static)
 add_subdirectory(${PROJ_ROOT}/src/server ${CMAKE_BINARY_DIR}/server_static)
+add_subdirectory(${PROJ_ROOT}/src/scenario ${CMAKE_BINARY_DIR}/scenario_static)
 add_subdirectory(${PROJ_ROOT}/brains ${CMAKE_BINARY_DIR}/bot_brains_static)
 
 set(ANDROID_SOURCES
@@ -189,6 +211,7 @@ set(ANDROID_SOURCES
 
     # SDL3 GUI (rendering, sound, input, etc.)
     ${PROJ_ROOT}/src/gui/ui_mode.c
+    ${PROJ_ROOT}/src/gui/visibility_presets.c
     ${PROJ_ROOT}/src/gui/sdl3/clientmutex.c
     ${PROJ_ROOT}/src/gui/sdl3/sdl3imgui.cpp
     ${PROJ_ROOT}/src/gui/sdl3/imgui_steam_nav.cpp
@@ -210,6 +233,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_recap.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_settings.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_keysetup.cpp
@@ -254,6 +278,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/ping_overlay.cpp
     ${PROJ_ROOT}/src/gui/sdl3/ping_icons.c
     ${PROJ_ROOT}/src/gui/sdl3/ping_marker.c
+    ${PROJ_ROOT}/src/gui/sdl3/ring_band.c
     ${PROJ_ROOT}/src/gui/sdl3/build_cursor.c
     ${PROJ_ROOT}/src/gui/sdl3/tutorial_text.c
     ${PROJ_ROOT}/src/gui/sdl3/lang.c
@@ -288,7 +313,7 @@ bolo_apply_include_rules(main gui)
 bolo_grant_internal_source_access(main
     ${PROJ_ROOT}/src/bolo/transport_udp_client.c)
 
-target_link_libraries(main PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
+target_link_libraries(main PRIVATE bolo_static scenario_static server_sim_static bot_brains_static threads_static)
 target_link_libraries(main PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
@@ -300,6 +325,9 @@ target_link_libraries(main PRIVATE
     lua_static
     zlibstatic
     maxminddb
+    # scenario_static reads manifest.json through cJSON and links it PRIVATE,
+    # so the symbols land here the way minizip's and Lua's do.
+    cjson
     m
     log
     android

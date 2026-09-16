@@ -355,7 +355,7 @@ static EncodeResult encodePlayerName(const ControlEvent *evt,
  *   If connected:
  *     [nameLen 1] [name nameLen bytes] [teamNumber 1] [ready 1]
  *     [isBot 1] [pingMs 2 BE] [cc 2] [clientType 1] [clientFlags 1]
- *     [startIdx 1] */
+ *     [startIdx 1] [fielded 1] */
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbySlotBody(const ControlEvent *evt,
@@ -369,7 +369,7 @@ static EncodeResult encodeLobbySlotBody(const ControlEvent *evt,
         nameLen = strnlen(slot->playerName, PACKET_MAX_PLAYER_NAME - 1);
     }
     const size_t needed = 1 + 1
-                          + (slot->connected ? (1 + nameLen + 1 + 1 + 1 + 2 + 2 + 1 + 1 + 1) : 0);
+                          + (slot->connected ? (1 + nameLen + 1 + 1 + 1 + 2 + 2 + 1 + 1 + 1 + 1) : 0);
     if (bufCap < needed) return ENCODE_OVERFLOW;
     size_t pos = 0;
     buf[pos++] = evt->u.lobbySlot.playerNum;
@@ -390,6 +390,7 @@ static EncodeResult encodeLobbySlotBody(const ControlEvent *evt,
         buf[pos++] = slot->clientType;
         buf[pos++] = slot->clientFlags;
         buf[pos++] = slot->startIdx;
+        buf[pos++] = slot->fielded ? 1 : 0;
     }
     *outLen = pos;
     return ENCODE_OK;
@@ -487,7 +488,7 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  *   [pillView 1] [baseView 1] [allyView 1]
  *   [pillDecay 2 BE] [baseDecay 2 BE] [allyDecay 2 BE]
  *   [classicMode 1] [alliesInTrees 1] [voiceMode 1]
- *   [overviewWindow 1] [lineOfSight 1]
+ *   [overviewWindow 1] [lineOfSight 1] [smartPingsOff 1]
  *
  * The trailing bytes are appended after the base layout so the
  * existing fields keep their offsets. The decoder reads each one
@@ -500,9 +501,23 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
 /* Trailing optional tail: ranked(1) + allowNewPlayers(1) + wbnAvailable(1)
  * + uploadPolicy(1) + lobbyStartDelay(4) + hostSlot(1) + three view
  * policies(3) + three view decay seconds(6) + classicMode(1)
- * + alliesInTrees(1) + voiceMode(1) + overviewWindow(1) + lineOfSight(1). */
+ * + alliesInTrees(1) + voiceMode(1) + overviewWindow(1) + lineOfSight(1)
+ * + smartPingsOff(1). */
 #define LOBBY_SETTINGS_WIRE_PAYLOAD \
-    (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4 + 1 + 3 + 6 + 1 + 1 + 1 + 1 + 1)
+    (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4 + 1 + 3 + 6 + 1 + 1 + 1 + 1 + 1 + 1)
+
+/* The scenario tail, written only when the lobby has one. A lobby with no
+ * scenario writes exactly LOBBY_SETTINGS_WIRE_PAYLOAD bytes and nothing
+ * more, which is what keeps a plain map's body the length it has always
+ * been. source(1) + extraTeams(1), then the three strings, each a one-byte
+ * length and that many bytes with no terminator — the same shape the team
+ * name and the bot name use in this file — and last the base game type(1),
+ * appended behind the strings so none of the offsets ahead of it move. */
+#define LOBBY_SETTINGS_WIRE_SCENARIO_MAX                                   \
+    (1 + 1 + (1 + (LOBBY_SCENARIO_NAME_LEN - 1))                           \
+           + (1 + (LOBBY_SCENARIO_FILE_LEN - 1))                           \
+           + (1 + (LOBBY_SCENARIO_DESC_LEN - 1))                           \
+           + 1)
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
@@ -510,7 +525,20 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
                                             uint8_t *buf, size_t bufCap,
                                             size_t *outLen) {
     (void)recipient;
-    const size_t needed = LOBBY_SETTINGS_WIRE_PAYLOAD;
+    const bool hasScenario =
+        evt->u.lobbySettings.scenarioSource != lobbyScenarioNone;
+    const size_t scnNameLen = hasScenario
+        ? strnlen(evt->u.lobbySettings.scenarioName,
+                  LOBBY_SCENARIO_NAME_LEN - 1) : 0;
+    const size_t scnFileLen = hasScenario
+        ? strnlen(evt->u.lobbySettings.scenarioFileName,
+                  LOBBY_SCENARIO_FILE_LEN - 1) : 0;
+    const size_t scnDescLen = hasScenario
+        ? strnlen(evt->u.lobbySettings.scenarioDescription,
+                  LOBBY_SCENARIO_DESC_LEN - 1) : 0;
+    const size_t needed = LOBBY_SETTINGS_WIRE_PAYLOAD
+        + (hasScenario ? (2 + 3 + 1 + scnNameLen + scnFileLen + scnDescLen)
+                       : 0);
     if (bufCap < needed) return ENCODE_OVERFLOW;
     size_t pos = 0;
     memset(buf + pos, 0, MAP_STR_SIZE);
@@ -553,9 +581,49 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
     buf[pos++] = (uint8_t)evt->u.lobbySettings.voiceMode;
     buf[pos++] = evt->u.lobbySettings.lobbyOverviewWindow;
     buf[pos++] = evt->u.lobbySettings.lobbyLineOfSight;
+    /* Negative sense on the wire: 1 bans smart pings, 0 allows them. The
+     * tail is append-only and a decoder leaves zero for a byte the sender
+     * never wrote, so allowing them has to be the zero. */
+    buf[pos++] = evt->u.lobbySettings.lobbySmartPingsOff ? 1 : 0;
+    /* Nothing past here for a lobby with no scenario. */
+    if (hasScenario) {
+        buf[pos++] = (uint8_t)evt->u.lobbySettings.scenarioSource;
+        buf[pos++] = evt->u.lobbySettings.scenarioExtraTeams ? 1 : 0;
+        buf[pos++] = (uint8_t)scnNameLen;
+        if (scnNameLen > 0) {
+            memcpy(buf + pos, evt->u.lobbySettings.scenarioName, scnNameLen);
+            pos += scnNameLen;
+        }
+        buf[pos++] = (uint8_t)scnFileLen;
+        if (scnFileLen > 0) {
+            memcpy(buf + pos, evt->u.lobbySettings.scenarioFileName, scnFileLen);
+            pos += scnFileLen;
+        }
+        buf[pos++] = (uint8_t)scnDescLen;
+        if (scnDescLen > 0) {
+            memcpy(buf + pos, evt->u.lobbySettings.scenarioDescription,
+                   scnDescLen);
+            pos += scnDescLen;
+        }
+        /* Behind the strings, so the offsets above keep the places they
+           already had. The game underneath a scripted round: a client
+           resolves gameScripted through this to know what its first life is
+           handed before any snapshot arrives. */
+        buf[pos++] = evt->u.lobbySettings.scenarioBaseGame;
+    }
     *outLen = pos;
     return ENCODE_OK;
 }
+
+/* Compile-time guarantee that the lobby-settings worst case — every optional
+ * field written and a full-length scenario tail behind them — fits
+ * MAX_CONTROL_PACKET, which keeps the runtime ENCODE_OVERFLOW path in the
+ * body encoder unreachable as long as the three scenario strings keep their
+ * lengths. */
+BOLO_STATIC_ASSERT(
+    PACKET_HEADER_SIZE + LOBBY_SETTINGS_WIRE_PAYLOAD +
+        LOBBY_SETTINGS_WIRE_SCENARIO_MAX <= MAX_CONTROL_PACKET,
+    lobby_settings_worst_case_fits_MAX_CONTROL_PACKET);
 
 static EncodeResult encodeLobbySettings(const ControlEvent *evt,
                                         const struct UdpServerClient *recipient,
@@ -627,10 +695,12 @@ static EncodeResult encodeLobbyTeamMeta(const ControlEvent *evt,
     return ENCODE_OK;
 }
 
-/* PACKET_LOBBY_BOT_CONFIG_CHG wire format (ported verbatim from
- * branch's transportUdpServerBroadcastLobbyBotConfigChg):
- *   [header 8] [slot 1] [difficulty 1] [personality 1] [nameLen 1]
- *   [name nameLen] */
+/* PACKET_LOBBY_BOT_CONFIG_CHG wire format:
+ *   [header 8] [slot 1] [difficulty 1] [personality 1] [mode 1]
+ *   [nameLen 1] [name nameLen]
+ * mode was appended after personality (rather than beside difficulty,
+ * which it selects the meaning of) so the three older fields kept their
+ * offsets; nameLen stays the last fixed byte with the name after it. */
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbyBotConfigBody(const ControlEvent *evt,
@@ -641,12 +711,13 @@ static EncodeResult encodeLobbyBotConfigBody(const ControlEvent *evt,
     if (evt->u.lobbyBotConfig.slot >= MAX_TANKS) return ENCODE_SKIP;
     size_t nameLen = strnlen(evt->u.lobbyBotConfig.name,
                              PACKET_MAX_PLAYER_NAME - 1);
-    const size_t needed = 4 + nameLen;
+    const size_t needed = 5 + nameLen;
     if (bufCap < needed) return ENCODE_OVERFLOW;
     size_t pos = 0;
     buf[pos++] = evt->u.lobbyBotConfig.slot;
     buf[pos++] = evt->u.lobbyBotConfig.difficulty;
     buf[pos++] = evt->u.lobbyBotConfig.personality;
+    buf[pos++] = evt->u.lobbyBotConfig.mode;
     buf[pos++] = (uint8_t)nameLen;
     if (nameLen > 0) {
         memcpy(buf + pos, evt->u.lobbyBotConfig.name, nameLen);
@@ -964,6 +1035,64 @@ static EncodeResult encodeLobbyBotPoolChunkBody(const ControlEvent *evt,
     *outLen = pos;
     return ENCODE_OK;
 }
+
+/* PACKET_LOBBY_BRAIN_DOCS_CHUNK wire format:
+ *   [header 8] [brainIdx 1] [seq 1] [count 1] [fragLen 2 BE] [frag fragLen]
+ * One slice of ONE brain's announce.txt + commands.txt blob. Worst case on
+ * the wire is 8 + 5 + 900 = 913 bytes, well inside MAX_CONTROL_PACKET: the
+ * fragment cap bounds the datagram, and the blob's own size only decides how
+ * MANY fragments there are (19 at the current caps). */
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeLobbyBrainDocsChunkBody(const ControlEvent *evt,
+                                                  const struct UdpServerClient *recipient,
+                                                  uint8_t *buf, size_t bufCap,
+                                                  size_t *outLen) {
+    (void)recipient;
+    uint16_t fl = evt->u.lobbyBrainDocsChunk.fragLen;
+    size_t pos = 0;
+    if (fl > LOBBY_BRAIN_DOCS_FRAG_MAX) return ENCODE_OVERFLOW;
+    if (evt->u.lobbyBrainDocsChunk.brainIdx >= BRAIN_LIST_MAX) return ENCODE_OVERFLOW;
+    if (bufCap < (size_t)(5 + fl)) return ENCODE_OVERFLOW;
+    buf[pos++] = evt->u.lobbyBrainDocsChunk.brainIdx;
+    buf[pos++] = evt->u.lobbyBrainDocsChunk.seq;
+    buf[pos++] = evt->u.lobbyBrainDocsChunk.count;
+    buf[pos++] = (uint8_t)((fl >> 8) & 0xFF);
+    buf[pos++] = (uint8_t)(fl & 0xFF);
+    if (fl > 0) { memcpy(buf + pos, evt->u.lobbyBrainDocsChunk.frag, fl); pos += fl; }
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+static EncodeResult encodeLobbyBrainDocsChunk(const ControlEvent *evt,
+                                              const struct UdpServerClient *recipient,
+                                              uint8_t *buf, size_t bufCap,
+                                              size_t *outLen) {
+    if (bufCap < PACKET_HEADER_SIZE) return ENCODE_OVERFLOW;
+    packHeader(buf, PACKET_LOBBY_BRAIN_DOCS_CHUNK, 0);
+    size_t bodyLen = 0;
+    EncodeResult r = encodeLobbyBrainDocsChunkBody(evt, recipient,
+                                                   buf + PACKET_HEADER_SIZE,
+                                                   bufCap - PACKET_HEADER_SIZE, &bodyLen);
+    if (r != ENCODE_OK) return r;
+    *outLen = PACKET_HEADER_SIZE + bodyLen;
+    return ENCODE_OK;
+}
+
+BOLO_STATIC_ASSERT(
+    PACKET_HEADER_SIZE + 5 + LOBBY_BRAIN_DOCS_FRAG_MAX <= MAX_CONTROL_PACKET,
+    brain_docs_chunk_fits_MAX_CONTROL_PACKET);
+
+/* The fragment cap above bounds ONE datagram; this one bounds how many of
+ * them a brain's whole blob needs. seq and count are single bytes, so the
+ * blob may not want more than 255 fragments:
+ *   (2 + 512 + 2 + 16384 + 899) / 900 = 19 today.
+ * Raising BRAIN_DOCS_MAX past about 229 KB breaks the build here rather than
+ * wrapping the seq byte and reassembling two brains' texts into one. */
+BOLO_STATIC_ASSERT(
+    (LOBBY_BRAIN_DOCS_WIRE_MAX + LOBBY_BRAIN_DOCS_FRAG_MAX - 1) /
+        LOBBY_BRAIN_DOCS_FRAG_MAX <= 255,
+    brain_docs_blob_fits_255_fragments);
 
 static EncodeResult encodeRoundStats(const ControlEvent *evt,
                                      const struct UdpServerClient *recipient,
@@ -2101,7 +2230,7 @@ static bool decodeLobbySlotBody(const uint8_t *buf, size_t len,
         if (pos + 1 > len) return false;
         uint8_t nameLen = buf[pos++];
         if (nameLen > PACKET_MAX_PLAYER_NAME - 1) return false;
-        if (pos + nameLen + 10 > len) return false;
+        if (pos + nameLen + 11 > len) return false;
         if (nameLen > 0) memcpy(slot->playerName, buf + pos, nameLen);
         slot->playerName[nameLen] = '\0';
         pos += nameLen;
@@ -2118,6 +2247,7 @@ static bool decodeLobbySlotBody(const uint8_t *buf, size_t len,
         if (slot->clientType >= CLIENT_TYPE_COUNT)
             slot->clientType = CLIENT_TYPE_UNKNOWN;
         slot->startIdx = buf[pos++];
+        slot->fielded  = buf[pos++] ? true : false;
     }
     return true;
 }
@@ -2253,6 +2383,56 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.lobbyLineOfSight = buf[pos++];
     }
+    /* Absent means the sender predates the setting, and every such server
+     * accepted smart pings — so the zero this arm leaves in place is the
+     * right answer, not a guess. */
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.lobbySmartPingsOff = buf[pos++] ? true : false;
+    }
+    /* The scenario tail. A body that stops here came from a lobby with no
+     * scenario, and the memset above has already left every field of it
+     * empty with the source reading as lobbyScenarioNone. */
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.scenarioSource =
+            (LobbyScenarioSource)buf[pos++];
+    }
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.scenarioExtraTeams = buf[pos++] ? true : false;
+    }
+    if (len >= pos + 1) {
+        uint8_t nameLen = buf[pos++];
+        if (nameLen > LOBBY_SCENARIO_NAME_LEN - 1) return false;
+        if (len < pos + nameLen) return false;
+        if (nameLen > 0) {
+            memcpy(outEvt->u.lobbySettings.scenarioName, buf + pos, nameLen);
+            pos += nameLen;
+        }
+        outEvt->u.lobbySettings.scenarioName[nameLen] = '\0';
+    }
+    if (len >= pos + 1) {
+        uint8_t fileLen = buf[pos++];
+        if (fileLen > LOBBY_SCENARIO_FILE_LEN - 1) return false;
+        if (len < pos + fileLen) return false;
+        if (fileLen > 0) {
+            memcpy(outEvt->u.lobbySettings.scenarioFileName, buf + pos, fileLen);
+            pos += fileLen;
+        }
+        outEvt->u.lobbySettings.scenarioFileName[fileLen] = '\0';
+    }
+    if (len >= pos + 1) {
+        uint8_t descLen = buf[pos++];
+        if (descLen > LOBBY_SCENARIO_DESC_LEN - 1) return false;
+        if (len < pos + descLen) return false;
+        if (descLen > 0) {
+            memcpy(outEvt->u.lobbySettings.scenarioDescription, buf + pos,
+                   descLen);
+            pos += descLen;
+        }
+        outEvt->u.lobbySettings.scenarioDescription[descLen] = '\0';
+    }
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.scenarioBaseGame = buf[pos++];
+    }
     return true;
 }
 
@@ -2288,21 +2468,23 @@ static bool decodeLobbyTeamMetaBody(const uint8_t *buf, size_t len,
 static bool decodeLobbyBotConfigBody(const uint8_t *buf, size_t len,
                                      ControlEvent *outEvt) {
     /* Layout matches encodeLobbyBotConfigBody. */
-    if (len < 4) return false;
+    if (len < 5) return false;
     uint8_t slot    = buf[0];
     uint8_t diff    = buf[1];
     uint8_t pers    = buf[2];
-    uint8_t nameLen = buf[3];
+    uint8_t mode    = buf[3];
+    uint8_t nameLen = buf[4];
     if (slot >= MAX_TANKS) return false;
     if (nameLen > PACKET_MAX_PLAYER_NAME - 1) return false;
-    if (len < (size_t)(4 + nameLen)) return false;
+    if (len < (size_t)(5 + nameLen)) return false;
     memset(outEvt, 0, sizeof(*outEvt));
     outEvt->type = CTRL_LOBBY_BOT_CONFIG;
     outEvt->u.lobbyBotConfig.slot        = slot;
     outEvt->u.lobbyBotConfig.difficulty  = diff;
     outEvt->u.lobbyBotConfig.personality = pers;
+    outEvt->u.lobbyBotConfig.mode        = mode;
     if (nameLen > 0) {
-        memcpy(outEvt->u.lobbyBotConfig.name, buf + 4, nameLen);
+        memcpy(outEvt->u.lobbyBotConfig.name, buf + 5, nameLen);
     }
     outEvt->u.lobbyBotConfig.name[nameLen] = '\0';
     return true;
@@ -2368,6 +2550,27 @@ static bool decodeLobbyBotPoolChunkBody(const uint8_t *buf, size_t len,
     if (pos + fl > len) return false;
     outEvt->u.lobbyBotPoolChunk.fragLen = fl;
     if (fl > 0) memcpy(outEvt->u.lobbyBotPoolChunk.frag, buf + pos, fl);
+    return true;
+}
+
+static bool decodeLobbyBrainDocsChunkBody(const uint8_t *buf, size_t len,
+                                          ControlEvent *outEvt) {
+    /* Layout: [brainIdx 1][seq 1][count 1][fragLen 2 BE][frag fragLen]. */
+    if (len < 5) return false;
+    size_t pos = 0;
+    uint8_t brainIdx = buf[pos++];
+    if (brainIdx >= BRAIN_LIST_MAX) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
+    outEvt->u.lobbyBrainDocsChunk.brainIdx = brainIdx;
+    outEvt->u.lobbyBrainDocsChunk.seq      = buf[pos++];
+    outEvt->u.lobbyBrainDocsChunk.count    = buf[pos++];
+    uint16_t fl = (uint16_t)(((uint16_t)buf[pos] << 8) | buf[pos + 1]);
+    pos += 2;
+    if (fl > LOBBY_BRAIN_DOCS_FRAG_MAX) return false;
+    if (pos + fl > len) return false;
+    outEvt->u.lobbyBrainDocsChunk.fragLen = fl;
+    if (fl > 0) memcpy(outEvt->u.lobbyBrainDocsChunk.frag, buf + pos, fl);
     return true;
 }
 
@@ -2583,6 +2786,7 @@ static const ControlEncodeFn s_encoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_LOBBY_BOT_BRAIN]    = encodeLobbyBotBrain,
     [CTRL_LOBBY_BRAIN_LIST]   = encodeLobbyBrainList,
     [CTRL_LOBBY_BOT_POOL_CHUNK] = encodeLobbyBotPoolChunk,
+    [CTRL_LOBBY_BRAIN_DOCS_CHUNK] = encodeLobbyBrainDocsChunk,
     [CTRL_GAME_VOTE_STATE]    = encodeGameVoteState,
     [CTRL_SERVER_TEXT]        = encodeServerText,
     [CTRL_COMMAND_REJECTED]   = encodeCommandRejected,
@@ -2625,6 +2829,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_LOBBY_BOT_BRAIN]       = encodeLobbyBotBrainBody,
     [CTRL_LOBBY_BRAIN_LIST]      = encodeLobbyBrainListBody,
     [CTRL_LOBBY_BOT_POOL_CHUNK]  = encodeLobbyBotPoolChunkBody,
+    [CTRL_LOBBY_BRAIN_DOCS_CHUNK] = encodeLobbyBrainDocsChunkBody,
     [CTRL_GAME_VOTE_STATE]       = encodeGameVoteStateBody,
     [CTRL_SERVER_TEXT]           = encodeServerTextBody,
     [CTRL_COMMAND_REJECTED]      = encodeCommandRejectedBody,
@@ -2670,6 +2875,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_LOBBY_BOT_BRAIN]       = decodeLobbyBotBrainBody,
     [CTRL_LOBBY_BRAIN_LIST]      = decodeLobbyBrainListBody,
     [CTRL_LOBBY_BOT_POOL_CHUNK]  = decodeLobbyBotPoolChunkBody,
+    [CTRL_LOBBY_BRAIN_DOCS_CHUNK] = decodeLobbyBrainDocsChunkBody,
     [CTRL_GAME_VOTE_STATE]       = decodeGameVoteStateBody,
     [CTRL_SERVER_TEXT]           = decodeServerTextBody,
     [CTRL_COMMAND_REJECTED]      = decodeCommandRejectedBody,
@@ -2716,6 +2922,7 @@ ControlDecodeFn transportControlCodecDecoder(uint16_t packetType) {
         case PACKET_LOBBY_BOT_BRAIN_CHG:  return decodeLobbyBotBrainBody;
         case PACKET_LOBBY_BRAIN_LIST:     return decodeLobbyBrainListBody;
         case PACKET_LOBBY_BOT_POOL_CHUNK: return decodeLobbyBotPoolChunkBody;
+        case PACKET_LOBBY_BRAIN_DOCS_CHUNK: return decodeLobbyBrainDocsChunkBody;
         case PACKET_GAME_VOTE_STATE:      return decodeGameVoteStateBody;
         case PACKET_COMMAND_REJECTED:     return decodeCommandRejectedBody;
         case PACKET_BALANCE_FAILED:       return decodeBalanceFailedBody;

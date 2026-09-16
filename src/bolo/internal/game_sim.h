@@ -60,29 +60,23 @@ typedef struct GameSim GameSim;
 #include "util.h"
 #include "position_history.h"
 #include "sim_rules.h"
+#include "scenario_defs.h"
 #include "../../gui/lang.h"
+
+/* DIE_KIND_*, CAPTURE_KIND_* and DMG_SRC_* come in with scenario_defs.h
+ * above: they are the vocabulary the policy questions at the bottom of this
+ * file are asked in, and the host that answers them cannot see this
+ * directory. */
 
 /* recordDamage targetKind */
 #define DMG_TARGET_TANK 0
 #define DMG_TARGET_PILL 1
 #define DMG_TARGET_BASE 2
-/* recordDamage source — what inflicted the hit. Mirrors ATTR_SRC_* on-disk. */
-#define DMG_SRC_UNKNOWN 0
-#define DMG_SRC_SHELL   1
-#define DMG_SRC_MINE    2
 /* recordPlayerAction actionKind */
 #define PLAYER_ACTION_FARM  0
 #define PLAYER_ACTION_BUILD 1
 #define PLAYER_ACTION_MINE  2
 #define PLAYER_ACTION_SHELL 3
-/* canDie kind — what the blow would destroy. index is the tank slot for a
- * tank and for the builder riding in it, and the pill index for a pill. */
-#define DIE_KIND_TANK    0
-#define DIE_KIND_BUILDER 1
-#define DIE_KIND_PILL    2
-/* canCapture kind — what is being taken, with index the pill or base. */
-#define CAPTURE_KIND_PILL 0
-#define CAPTURE_KIND_BASE 1
 
 typedef struct GameSimCallbacks {
     void (*messageAdd)(void *ctx, messageType msgType,
@@ -102,9 +96,31 @@ typedef struct GameSimCallbacks {
      * unicast CTRL_SHELL_DEATH so the firing client can match fireTick to
      * its predicted shell, cull the ghost, and draw the impact at
      * (impactWX, impactWY). NULL on the client (not authoritative over
-     * shell death). outcome is a SHELL_OUTCOME_* (shells.h). */
-    void (*shellDeath)(void *ctx, uint32_t fireTick, BYTE owner,
-                       WORLD impactWX, WORLD impactWY, uint8_t outcome);
+     * shell death). outcome is a SHELL_OUTCOME_* (shells.h).
+     *
+     * TWO ticks, and they are not the same number. fireTick is the CLIENT's
+     * own input-tick counter, which only the client it came from can make
+     * sense of — it goes straight back out on the wire and nothing else.
+     * serverFireTick is the server's tick at the moment the shell was
+     * created (shells.h serverFireTick), and it is the only one any
+     * server-side rule may be measured on. */
+    void (*shellDeath)(void *ctx, uint32_t fireTick, uint32_t serverFireTick,
+                       BYTE owner, WORLD impactWX, WORLD impactWY,
+                       uint8_t outcome);
+    /* Server-only: a shell owned by `owner` LEFT THE GUN. NULL on the
+     * client. shellDeath above is the first the server would otherwise hear
+     * of a shell, and a full-range shell is 104 server ticks in the air
+     * (shells.c shellsAddItem), which is longer than the three-shot order
+     * detector's quiet second: a shell still flying was simply absent from
+     * the fire log. This says so at the moment the shell is created, inside
+     * the sim tick, so the log is complete without waiting for a landing.
+     *
+     * RETURNS the SERVER tick the fire was recorded on. shellsAddItem
+     * stamps it on the shell as serverFireTick so the death-time call can
+     * name the same tick, and so no server-side rule ever has to read a
+     * number a client chose. Pillbox shells fire with owner NEUTRAL and are
+     * dropped by the handler, which still answers with the tick. */
+    uint32_t (*shellFired)(void *ctx, BYTE owner);
     /* Server-only stats attribution; NULL on the client (call sites null-check).
      * recordDamage: `attacker` dealt `dealt` effective armour damage to a target
      * of `targetKind` identified by `targetIndex` (the tank slot, or pill/base
@@ -153,7 +169,14 @@ typedef struct GameSimCallbacks {
      * back from a death.
      * lgmLanded: `player`'s builder finished the flight back and is standing
      * at mapX/mapY — the square he actually reached, not the one he left.
-     * pillPlaced: `player`'s builder put a carried pill down as pill `index`.
+     * pillPlaced: a carried pillbox `index` reached the map at mapX/mapY,
+     * carried there by `player`, with `armour` on it. Every route raises it,
+     * not only a builder finishing the job: the tank sinking or being
+     * destroyed puts its cargo down, the builder dying puts the one in his
+     * hands down, and a player leaving does both. `armour` is what separates
+     * them — a built pillbox lands at the sim's cap, every other route lands
+     * it dead at 0 — so it is read, rather than the player, to tell whether a
+     * live gun just appeared.
      * pillKilled: pill `index` lost its last armour. attacker is the slot
      * credited, or NEUTRAL where the blow names nobody.
      * built: `player`'s builder finished a job. action is the builder's own
@@ -166,7 +189,7 @@ typedef struct GameSimCallbacks {
                         bool respawn);
     void (*lgmLanded)(void *ctx, BYTE player, BYTE mapX, BYTE mapY);
     void (*pillPlaced)(void *ctx, BYTE player, BYTE index, BYTE mapX,
-                       BYTE mapY);
+                       BYTE mapY, BYTE armour);
     void (*pillKilled)(void *ctx, BYTE index, BYTE attacker);
     void (*built)(void *ctx, BYTE player, BYTE action, BYTE mapX, BYTE mapY);
     void (*mineLaid)(void *ctx, BYTE player, BYTE mapX, BYTE mapY);
@@ -338,6 +361,14 @@ struct GameSim {
     /* Tank explosion update throttle (per-sim so server/client don't share) */
     BYTE        tkExpUpdateTime;
 
+    /* Per-player death-cause tally, indexed [player][DEATH_CAUSE_*]. Written
+     * only on the server (tankDeath's isServer branch, alongside numDeaths++)
+     * and read only by the -finaljson / -snapjson writer. Nothing in the sim
+     * ever branches on it, so it cannot affect determinism. Zero-initialised
+     * by the sim-create memset; a player's row is re-zeroed in tankCreate,
+     * which is also where numDeaths goes back to 0. */
+    uint32_t    deathCauseCount[MAX_TANKS][DEATH_CAUSE_NUM];
+
     /* Lag compensation (server-only, zeroed on client) */
     uint8_t lagCompTicks;                    /* Set before each player's tankUpdate */
     uint8_t perPlayerCompTicks[MAX_TANKS];   /* Per-player comp ticks for pill shells */
@@ -356,6 +387,19 @@ struct GameSim {
        by startsGetStart ahead of the placement policy and consumed there; the
        batch slot above is the engine choosing and stays below the policy. */
     BYTE        scenarioStartIdx[MAX_TANKS];
+    /* The game type a scenario op named for the one tank a spawn is about to
+       build, 0 for none. serverSimCbSpawnLoadout reads it ahead of the
+       spawn-loadout policy and clears it as it reads, so it is spent on the
+       tank that spawn builds and never reaches the seat's next life. */
+    BYTE        scenarioSpawnLoadout[MAX_TANKS];
+    /* The base game type a scenario declared, 0 for no scenario or none
+       declared. game being gameScripted sends every site that picks
+       behaviour from the game type here instead, through gameTypeResolve,
+       and 0 there reads as gameStrictTournament. The server writes it from
+       the lobby template the host hands over; a client is handed no template
+       and writes it from the scenario tail of the lobby settings instead, so
+       both resolve a scripted round the same way. */
+    gameType    scenarioBaseGame;
     /* Tutorial respawn start index. While sim->isTutorial, startsGetStart
        returns this fixed start (not the open-game algorithm). The GUI raises
        it from 0 (sea) to 1 (far bank) once the player passes the boat step.

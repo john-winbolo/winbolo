@@ -487,6 +487,59 @@ int run_ping_dispatch_spam_30s_window(void) {
     return 0;
 }
 
+/* The host switch. serverSimSetSmartPingsOff turns CMD_PING away for the whole
+ * server, and it has to do so without charging the sender for the attempt:
+ * the arm's own comment says the check sits ahead of the rate limiting for
+ * that reason, and the reason only holds if nothing below it runs. A refused
+ * ping that spent a slot of the 5s allowance would leave a player throttled
+ * the moment the host turned pings back on, by attempts that never put a
+ * marker on anyone's screen. */
+int run_ping_dispatch_smart_pings_off(void) {
+    ServerSim *sim = ut_make_running_sim("Pinger");
+    int i;
+    UT_ASSERT(sim != NULL);
+    pd_clear_events(sim);
+
+    serverSimSetSmartPingsOff(sim, true);
+    UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD, PD_WORLD_X, PD_WORLD_Y)
+                      == CMD_REJECT_BAD_STATE,
+                  "a ping must be refused while the host has them off");
+    UT_ASSERT_MSG(!pd_has_pending(sim, 0),
+                  "a refused ping was recorded as pending");
+    UT_ASSERT_MSG(pd_last_ping(sim) == NULL, "a refused ping emitted an event");
+
+    /* More attempts than the allowance would ever cover, packed onto
+     * consecutive ticks so the minimum gap would refuse them too if the
+     * budget were being touched. Every one is the same bad-state answer. */
+    for (i = 0; i < PING_SPAM_MAX_30S + PING_SPAM_MAX_5S + 1; i++) {
+        UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD,
+                              PD_WORLD_X, PD_WORLD_Y) == CMD_REJECT_BAD_STATE,
+                      "attempt %d was answered as something other than "
+                      "bad state", i);
+        pd_clear_events(sim);
+    }
+
+    /* Nothing was written to the limiter behind those attempts. */
+    UT_ASSERT_MSG(sim->pingLastTick[0] == 0,
+                  "a refused ping stamped the minimum-gap clock");
+    for (i = 0; i < PING_SPAM_RING; i++) {
+        UT_ASSERT_MSG(sim->pingBurstTicks[0][i] == 0,
+                      "a refused ping left a stamp in the burst ring at %d", i);
+    }
+
+    /* Pings back on, on the very next tick: the first one lands. */
+    serverSimSetSmartPingsOff(sim, false);
+    UT_ASSERT_MSG(pd_send(sim, 0, PING_KIND_STANDARD, PD_WORLD_X, PD_WORLD_Y)
+                      == CMD_OK,
+                  "the first ping after the host turned them back on was "
+                  "refused: the refusals spent the rate-limit budget");
+    UT_ASSERT_MSG(pd_has_pending(sim, 0),
+                  "the accepted ping left no pending record");
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
 int run_ping_reaches_team_only(void) {
     ServerSim *sim = ut_make_running_sim("Pinger");
     UT_ASSERT(sim != NULL);

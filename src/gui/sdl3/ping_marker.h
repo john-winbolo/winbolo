@@ -8,8 +8,9 @@
  * Purpose:       The smart-ping marker as it appears on the
  *                map: one map square outlined in the ping's
  *                colour, its icon inside at tile size, a ring
- *                pulsing out of it and the sender's name
- *                underneath. Drawn with the
+ *                pulsing out of it, a second ring closing onto
+ *                it once as the ping lands, and the sender's
+ *                name underneath. Drawn with the
  *                SDL_Renderer as part of the game frame,
  *                between the terrain and the sprites, so the
  *                tanks, shells and builders it points at stay
@@ -57,16 +58,32 @@ typedef struct {
     float           scale;   /* on the font's own pixel size; 1 for none */
 } PingMarkerLabel;
 
-/* Draw one marker. (cx, cy) is the centre of the map square the ping landed
-   in, in the renderer's current coordinates; tileW/tileH the square's size
-   there; ageMs how long ago the ping arrived (drives the pulse); alpha the
-   fade from pingDisplayAlpha, 1 while fresh and falling to 0 at expiry; label
-   the sender's name or NULL for none.
+/* Draw one world marker. (cx, cy) is the centre of the map square the ping
+   landed in, in the renderer's current coordinates; tileW/tileH the square's
+   size there; ageMs how long ago the ping arrived; label the sender's name
+   or NULL for none.
+
+   NO alpha argument, deliberately. Every caller draws the same thing — the
+   world marker, over live map — in the game view, the full screen map and
+   the replay, so all three have to blink alike. They each used to choose an
+   alpha and pass it in; one was changed and two were not, and a ping stopped
+   blinking as soon as the full screen map came up. The curves are chosen
+   here now, from ageMs, and cannot drift: pingWorldMarkerAlpha for the
+   marker, pingDisplayAlpha for the name and the arrival ring.
+
+   A caller must NOT skip this while the blink is dark. The name is steady
+   for the ping's whole life and is drawn in the gaps; skip only once the
+   ping has expired, which is pingDisplayAlpha reaching zero.
+
+   The arrival ring (PING_RING_* in ping_kinds.h) closes onto the square once
+   as the ping lands, off ageMs alone, so it is drawn once per ping and not
+   once per flash.
+
    Needs the icons loaded on this renderer (pingIconsInit); without one the
    icon falls back to a filled dot. */
 void pingMarkerDraw(SDL_Renderer *renderer, unsigned char kind,
                     float cx, float cy, float tileW, float tileH,
-                    unsigned int ageMs, float alpha,
+                    unsigned int ageMs,
                     const PingMarkerLabel *label);
 
 #ifdef __cplusplus

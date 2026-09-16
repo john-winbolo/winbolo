@@ -218,6 +218,11 @@ bool discoveryMdnsFillServer(const DiscoveryMdnsResolved *r, DiscoveryServer *ou
       SDL_strlcpy(out->mapMd5, val, sizeof(out->mapMd5));
     } else if (strcmp(key, "newp") == 0) {
       out->allowNewPlayers = (atoi(val) != 0);
+    } else if (strcmp(key, "spingoff") == 0) {
+      /* No key means a responder that predates the setting, and every one
+       * of those accepted smart pings — which is the false the memset
+       * above already left here. */
+      out->smartPingsOff = (atoi(val) != 0);
     } else if (strcmp(key, "spec") == 0) {
       out->allowSpectators = (atoi(val) != 0);
     } else if (strcmp(key, "nspec") == 0) {
@@ -252,6 +257,9 @@ bool discoveryMdnsFillServer(const DiscoveryMdnsResolved *r, DiscoveryServer *ou
                                    &out->alliesInTrees);
         infoPacketReadViewPolicies2(&viewBytes, sizeof(viewBytes),
                                     &out->overviewWindow, &out->lineOfSight);
+        /* A record carrying the key at all is a record that says what its
+         * rules are; one without it said nothing and kept the stand-in. */
+        out->hasViewInfo = true;
       }
     }
   }

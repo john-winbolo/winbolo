@@ -22,10 +22,15 @@ import glob
 import subprocess
 from pathlib import Path
 
+# -asap by default: ticks run back-to-back instead of one per 20 ms of wall
+# clock. Same seed -> byte-identical game, just faster. --no-asap (or
+# WINBOLO_ASAP=0) puts this run back on the 20 ms live-game pacing.
+from asap import asap_args, pacing_line, take_asap_flag  # noqa: E402
+
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 DEFAULT_BUILD = REPO / "build"
-BRAIN = REPO / "brains" / "GoalHunter_1.6" / "init.lua"
+BRAIN = REPO / "brains" / "GoalHunter_1.7" / "init.lua"
 MAP = HERE / "boat_diagonal.map"
 
 
@@ -76,7 +81,7 @@ def run(ticks, build_dir):
            # only avoids mines it can see (mine_penalty on the TERRAIN_MINE bit),
            # so the channel-forcing mines must be visible or it can't route round.
            "-mines", "no",
-           "-nowinbolonet", "-quiet", "-threads", "1"]
+           "-nowinbolonet", "-quiet", "-threads", "1"] + asap_args()
     subprocess.run(cmd, cwd=str(build_dir), env=env,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -127,6 +132,8 @@ def main():
     ticks = 4000
     build = DEFAULT_BUILD
     args = sys.argv[1:]
+    take_asap_flag(args)      # consumes --asap / --no-asap
+    print(pacing_line(""))
     i = 0
     while i < len(args):
         if args[i] == "--ticks":

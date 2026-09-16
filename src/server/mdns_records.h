@@ -41,12 +41,12 @@
  *   map=<name> ver=<maj.min.rev> players=<n> bases=<n> pills=<n>
  *   pass=<0|1> mines=<0|1> game=<gameType int> ai=<aiType int>
  *   lobby=<0|1> locked=<0|1>
- *   md5=<32 hex chars|empty> newp=<0|1> spec=<0|1> nspec=<n>
- *   ranked=<0|1> rnd=<0|1> tlim=<game length, 0 if none>
+ *   md5=<32 hex chars|empty> newp=<0|1> spingoff=<0|1> spec=<0|1>
+ *   nspec=<n> ranked=<0|1> rnd=<0|1> tlim=<game length, 0 if none>
  *   humans=<n> bots=<n> max=<n> view=<4 hex chars>
  * Count is fixed at MDNS_WINBOLO_TXT_COUNT; with PTR + SRV + A that is
  * MDNS_WINBOLO_RECORD_COUNT records total. */
-#define MDNS_WINBOLO_TXT_COUNT 22
+#define MDNS_WINBOLO_TXT_COUNT 23
 #define MDNS_WINBOLO_RECORD_COUNT (3 + MDNS_WINBOLO_TXT_COUNT)
 
 /* Plain-data snapshot of the server state advertised in one answer. The
@@ -70,6 +70,9 @@ typedef struct {
   bool           locked;   /* server locked / not accepting joins   */
   char           mapMd5Hex[33]; /* 32 hex chars + NUL; "" when random/unknown */
   bool           allowNewPlayers;
+  bool           smartPingsOff;   /* host banned smart pings. Negative sense,
+                                     so the zeroed POD and a record with no
+                                     such key both read as "allowed" */
   bool           allowSpectators; /* future work — false for now */
   BYTE           spectatorCount;  /* future work — 0 for now */
   bool           ranked;

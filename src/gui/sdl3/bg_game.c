@@ -50,16 +50,20 @@ BgGame *bgGameGetShared(void) { return sharedBg; }
 #define BG_MIN_BOTS 2
 #define BG_MAX_BOTS 16
 
+/* User zoom range, in whole zoom factors (16px tiles * zf). */
+#define BG_MIN_ZOOM 1
+#define BG_MAX_ZOOM 8
+
 /* Brain script path */
-#define BG_BRAIN_PATH "Brains/GoalHunter_1.6/init.lua"
+#define BG_BRAIN_PATH "Brains/GoalHunter_1.7/init.lua"
 
 /* Find the brain script — try several paths.
  * Uses SDL_IOFromFile so it works with Android APK assets. */
 static bool findBrainPath(char *out, size_t outLen) {
     const char *candidates[] = {
-        "Brains/GoalHunter_1.6/init.lua",
-        "brains/GoalHunter_1.6/init.lua",
-        "data/Brains/GoalHunter_1.6/init.lua",
+        "Brains/GoalHunter_1.7/init.lua",
+        "brains/GoalHunter_1.7/init.lua",
+        "data/Brains/GoalHunter_1.7/init.lua",
     };
     for (int i = 0; i < (int)(sizeof(candidates)/sizeof(candidates[0])); i++) {
         SDL_IOStream *io = SDL_IOFromFile(candidates[i], "r");
@@ -312,6 +316,60 @@ void bgGameTick(BgGame *bg) {
     }
 }
 
+/* Follow the next tank, wrapping past the last one back to the first.
+ * Walks slots rather than counting to numBots: a bot whose create failed
+ * leaves a gap, and serverSimGetTankRender is false for an empty slot, so
+ * the search steps over both. cameraPlayer is also what bgGameRender
+ * passes as selfPlayer, so the newly followed tank takes the self colour
+ * too — the cycle is visible even on a tank sitting still. */
+void bgGameCycleCamera(BgGame *bg) {
+    if (!bg || !bg->valid) return;
+
+    /* The same mutex contract bgGameTick honours: the bot pool runs the
+     * brains inside it, so the tank array is only read with it held. */
+    threadsWaitForMutex();
+    for (BYTE step = 1; step <= MAX_TANKS; step++) {
+        BYTE slot = (BYTE)((bg->cameraPlayer + step) % MAX_TANKS);
+        TankRenderInfo info;
+        if (!serverSimGetTankRender(bg->sim, slot, &info)) continue;
+        bg->cameraPlayer = slot;
+        /* Snap rather than let bgGameTick's 1/8 lerp glide there: across
+         * a full map that is a second of flying over open ocean. */
+        bg->viewCenterX = info.world_x;
+        bg->viewCenterY = info.world_y;
+        WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[BgGame] Camera now following slot %d",
+                     (int)slot);
+        break;
+    }
+    threadsReleaseMutex();
+}
+
+/* Step the background zoom. delta is in whole zoom factors, the same
+ * units bgGameRender's fit produces, and the first step starts from the
+ * fit the last render used — so + always means "one closer than what I am
+ * looking at", whatever map got picked.
+ *
+ * Below the fit the map no longer fills the screen and the ocean around
+ * the content shows; that is a fair thing to want to see, so BG_MIN_ZOOM
+ * is 1 rather than the fit. */
+void bgGameAdjustZoom(BgGame *bg, int delta) {
+    if (!bg || !bg->valid || delta == 0) return;
+    int base = (bg->zoomUser > 0) ? bg->zoomUser
+             : (bg->lastZoom > 0) ? bg->lastZoom
+             : 1;
+    int want = base + delta;
+    if (want < BG_MIN_ZOOM) want = BG_MIN_ZOOM;
+    if (want > BG_MAX_ZOOM) want = BG_MAX_ZOOM;
+    bg->zoomUser = want;
+    WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[BgGame] Zoom now %dx", want);
+}
+
+/* Drop the user zoom and go back to the fit-to-screen factor. */
+void bgGameResetZoom(BgGame *bg) {
+    if (!bg) return;
+    bg->zoomUser = 0;
+}
+
 #define MAP_NAME_DISPLAY_MS  10000  /* Show map name for 10 seconds */
 #define MAP_NAME_FADE_MS      2000  /* Fade out over last 2 seconds */
 #define MAP_NAME_SCALE           1  /* 1x scale for debug text (8px tall) */
@@ -484,6 +542,12 @@ void bgGameRender(BgGame *bg, SDL_Renderer *renderer, int screenW, int screenH) 
     int zfH = (mapTilesH > 0) ? (screenH + mapTilesH * 16 - 1) / (mapTilesH * 16) : 1;
     int zf = zfW < zfH ? zfW : zfH;
     if (zf < 1) zf = 1;
+    /* A user zoom replaces the fit, so the +/- keys keep their step on a
+     * window resize instead of snapping back to whatever fits now. The
+     * fit stays the starting point: it is what zoomUser is seeded from
+     * on the first press, through lastZoom below. */
+    if (bg->zoomUser > 0) zf = bg->zoomUser;
+    bg->lastZoom = zf;
 
     if (bg->tilesTex != NULL) {
         MapViewCtx ctx = { renderer, bg->tilesTex, zf, 1, (float)zf };

@@ -53,7 +53,7 @@ extern "C" {
 #include "../../lobby_start_markers.h"  /* lobbyStartHolderSlot; lobbyTeamSide, lobbySideNameId / CompassId, lobbyClosedMaskForTeam */
 #include "../../../../bolo/public/wire_limits.h"  /* LOBBY_LOCK_* / LST_* */
 #include "../../../lang.h"   /* langGetText / MessageArgs / STR_*; PLAYER_FLAG_* */
-#include "../../../gamefront.h"  /* gameFrontSetChosenBotBrain */
+#include "../../../gamefront.h"  /* gameFrontSetChosenBotDifficulty */
 #include "../../../ui_mode.h"    /* uiShouldUseControllerMode */
 #include "../../sdl3draw.h"      /* sdl3DrawGetRenderer */
 #include "../../sdl3imgui.h"     /* renderPlayerName / drawCountryFlagWithTip */
@@ -331,7 +331,14 @@ void lobbyRenderAllowNewPlayersRow(ClientSim *cs,
         LobbyRankedEligibility re = lobbyComputeRankedEligibility(cs);
 
         bool rankedLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_RANKED) != 0;
-        bool canToggle = effectiveHost && !botsBlock && !rankedLocked;
+        /* A scripted round is not a measured one, so the server refuses
+           ranked while a scenario is attached — and the commit that attached
+           one already took ranked off, so the only move left from here is
+           the refused one. Greyed on the same test the server applies rather
+           than letting the box be ticked and snap back. */
+        bool scenarioBlock = clientSimGetLobbyScenarioSource(cs) != 0;
+        bool canToggle = effectiveHost && !botsBlock && !rankedLocked &&
+                         !scenarioBlock;
         if (!canToggle) ImGui::BeginDisabled();
         char rankedId[64];
         SDL_snprintf(rankedId, sizeof(rankedId), "%s##ranked", langGetText(STR_DLGLOBBY_RANKED));
@@ -346,6 +353,8 @@ void lobbyRenderAllowNewPlayersRow(ClientSim *cs,
                 ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RANKED_LOCKED));
             } else if (!effectiveHost) {
                 ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RANKED_NOTHOST));
+            } else if (scenarioBlock) {
+                ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_REJECT_SCENARIO));
             } else if (botsBlock) {
                 ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_TOOLTIP_RANKED_BOTS));
             } else if (rankedV && !re.sizesEligible) {
@@ -790,6 +799,27 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
      * next (a one-frame lag is invisible for a near-static lobby). */
     static float s_startComboCenterX = 0.0f;
     static float s_startComboReadyLeft = 0.0f;  /* Ready cell left edge (last frame) */
+    /* Screen X the local player's VOICE gear last drew at, and the ImGui frame
+     * it drew on. A bot's config gear lines up with it, so the two sit in one
+     * column down the list instead of each landing where its own badge run
+     * ended — a bot row's run is one badge, a human's is four or five.
+     *
+     * Deriving the X from the column's width instead does NOT work: the column
+     * reserves room for a flag and every badge, and a real row usually draws
+     * fewer than that, so the voice gear sits left of the reserved slot. That
+     * put the bot gear about five to ten pixels right of it.
+     *
+     * The frame stamp is what keeps a tracked value honest. The gear draws only
+     * on the local player's own row, only in a voice build — so it can stop
+     * drawing at any time, when that row scrolls out of view or voice is turned
+     * off. An undated static would then hold a position from an older, wider
+     * layout, and since the table is NoClip the bot gear would draw on top of
+     * the player name. Accepting it only while it is at most one frame old
+     * makes it self-heal: rows above the local player's use last frame's value,
+     * rows below use this frame's, and two quiet frames drop us to the
+     * fallback. */
+    static float s_voiceGearX = 0.0f;
+    static int   s_voiceGearFrame = -1000;
     const float  appliedStartCenterX = s_startComboCenterX;
     const float  appliedReadyLeft    = s_startComboReadyLeft;
     float startColNameMaxRight = 0.0f;  /* widest name(+tag) right edge */
@@ -1234,6 +1264,16 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
          * divider dragged left does, and scaled by s throughout so it lands
          * the same at any DPI. */
         const float kColTankW    = 60.0f * s;
+        /* The gear's own width. BOTH gears live in the icons column — a bot's
+         * config gear beside its bot-cpu badge, and (in a voice build) the
+         * local player's voice gear after the mic — so this is needed in
+         * either build. Sized for the form that will actually draw, which is
+         * known here: the SmallButton in controller mode, the font-sized icon
+         * otherwise. */
+        const float kColGearW    = uiShouldUseControllerMode()
+                                 ? ImGui::CalcTextSize(">").x
+                                   + ImGui::GetStyle().FramePadding.x * 2.0f
+                                 : ImGui::GetFontSize();
 #if defined(WINBOLO_VOICE)
         /* The microphone cell follows the badge run, so the icons column
          * carries one more LOBBY_WBN_ICON_SIZE icon plus the spacing before
@@ -1247,16 +1287,17 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
          *
          * Sized for the form that will draw, which is known here: the
          * SmallButton in controller mode, the font-sized icon otherwise. */
-        const float kColGearW    = uiShouldUseControllerMode()
-                                 ? ImGui::CalcTextSize(">").x
-                                   + ImGui::GetStyle().FramePadding.x * 2.0f
-                                 : ImGui::GetFontSize();
         const float kColIconsW   = 96.0f * s + (float)LOBBY_WBN_ICON_SIZE * s
                                  + ImGui::GetStyle().ItemSpacing.x
                                  + kColGearW
                                  + ImGui::GetStyle().ItemSpacing.x;
 #else
-        const float kColIconsW   = 96.0f * s;
+        /* No voice build, but a BOT row still puts its config gear in this
+         * column beside the bot-cpu badge, so the gear's width is kept here
+         * either way. */
+        const float kColIconsW   = 96.0f * s
+                                 + ImGui::GetStyle().ItemSpacing.x
+                                 + kColGearW;
 #endif
         const float kColPingW    = 50.0f * s;
         const float kColReadyW   = 80.0f * s;
@@ -1284,6 +1325,10 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
         const bool showPingCol   = contentW >= needPingCol;
         const bool showStartCol  = contentW >= needStartCol;
         const bool showIconsCol  = contentW >= needIconsCol;
+        /* A bot's name / mode / difficulty pills go at the same width the
+         * start column goes: the row is shedding detail by then, and those
+         * three are detail. The BOT pill itself stays with the name tags. */
+        const bool showBotDetailTags = showNameTags && showStartCol;
 #if defined(WINBOLO_VOICE)
         /* Who is producing voice right now, read once for the whole list
          * rather than per row. */
@@ -1350,6 +1395,10 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
 
                 bool isMe   = (!spectator && i == myPlayerNum);
                 bool isBot  = clientSimGetLobbySlot(cs, (BYTE)(i))->isBot;
+                /* A seat held for a bot that is not on the field draws faded,
+                 * so a host can tell the seats it is holding apart from the
+                 * bots that are playing this round. */
+                bool unfielded = clientSimSlotIsUnfielded(cs, (BYTE)(i));
                 bool isSelf = isMe;
                 bool isAlly = (myTeam != 0 && clientSimGetLobbySlot(cs, (BYTE)(i))->teamNumber == myTeam);
 
@@ -1504,9 +1553,152 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                     }
                 }
 
+                /* A bot's mode and difficulty, resolved once for the whole row.
+                 *
+                 * Computed HERE, above the icons column, because the difficulty
+                 * is drawn there now as chips beside the tank icon. It used to
+                 * be a tag beside the name, which is why this used to sit
+                 * further down.
+                 *
+                 * All of it comes from lobby state the server already syncs to
+                 * every client: the brain catalogue and index, and
+                 * LobbyBotConfig's mode and difficulty indices, resolved against
+                 * the brain's own modes.txt. So a joiner sees what the host
+                 * sees. */
+                const char *botModeTag = "";
+                const char *botDiffTag = "";
+                int botLevel = BOT_DIFFICULTY_HARD;
+                int botMode  = 0;
+                /* How many of the three chips are lit, 1..3 — or 0 when the
+                 * brain declares no levels for this mode. 0 means "no
+                 * difficulty": the row shows the single badge it always had,
+                 * with no extra chips, no hover and nothing to cycle. */
+                int botDiffChips = 0;
+                const BrainModes *botModes = NULL;
+                if (isBot) {
+                    botModes = lobbyBotModesFor(cs, i);
+                    lobbyBotModeAndLevel(cs, i, &botMode, &botLevel);
+                    const int botLevelCount =
+                        (botModes != NULL) ? botModes->modes[botMode].levelCount
+                                           : 3;
+                    if (botLevelCount > 0) {
+                        if (botModes == NULL ||
+                            lobbyBotModeUsesLangLevels(botModes, botMode)) {
+                            botDiffTag =
+                                langGetText(lobbyBotDifficultyLabelId((uint8_t)botLevel));
+                        } else {
+                            botDiffTag =
+                                botModes->modes[botMode].levels[botLevel].label;
+                        }
+                        /* DECLARED by the brain, per level — not inferred from
+                         * the level's position in the list. The index fallback
+                         * covers the synthesized default mode a brain with no
+                         * manifest is given. */
+                        if (botModes != NULL && botLevel >= 0 &&
+                            botLevel < botLevelCount) {
+                            botDiffChips =
+                                botModes->modes[botMode].levels[botLevel].chips;
+                        } else if (botLevel == BOT_DIFFICULTY_EASY) {
+                            botDiffChips = 1;
+                        } else if (botLevel == BOT_DIFFICULTY_MEDIUM) {
+                            botDiffChips = 2;
+                        } else {
+                            botDiffChips = 3;
+                        }
+                        if (botDiffChips < 1) botDiffChips = 1;
+                        if (botDiffChips > 3) botDiffChips = 3;
+                    }
+                    if (botModes != NULL &&
+                        !lobbyBotModeIsDefault(botModes, botMode)) {
+                        /* Name the mode too, so a row in the survival scenario
+                         * says so on the row itself. */
+                        botModeTag = botModes->modes[botMode].label;
+                    }
+                }
+
+                /* The bot's config gear, drawn wherever the cursor already is.
+                 *
+                 * In a lambda because it has TWO homes. Its own is the icons
+                 * column, beside the bot badge and lined up with the human
+                 * rows' voice gear. But the icons column carries the LARGEST
+                 * shed threshold of any column, so it is the first to go as the
+                 * panel narrows — and when it goes the gear would go with it,
+                 * leaving a band of panel widths where the rest of the row is
+                 * still fully drawn and yet the host cannot open any bot's
+                 * config, because nothing else writes expandedBotSlot. The ping
+                 * column takes it back for that band, which is where it lived
+                 * before this move.
+                 *
+                 * Shown only to a client with lobby-edit authority (host /
+                 * openHost / admin); anyone else gets no control rather than a
+                 * dead one. Controller mode draws the visible ">"/"v" toggle
+                 * instead of the invisible icon button, so it is reachable by
+                 * gamepad and shows a focus ring — A expands the AiConfig
+                 * sub-row, whose widgets (name, Codebase, mode, difficulty)
+                 * then navigate like any other dialog control.
+                 *
+                 * The CALLER positions X before calling this; the lambda only
+                 * ever draws at the current cursor. The two sites differ: the
+                 * icons-column one lines the gear up with the human rows' voice
+                 * gear, and the ping-column one draws at that cell's own
+                 * cursor, which is where the gear used to sit. */
+                auto drawBotGear = [&]() {
+                    if (lobbyIcons()->settings && !uiShouldUseControllerMode()) {
+                        float iconSize = ImGui::GetFontSize();
+                        cyAbs(iconSize);
+                        /* settings.svg renders 5px above / 2px below with pure
+                         * geometric centering — the gear sits slightly low in
+                         * the row. Nudge up ~12% of font size (about 1.5px) so
+                         * it matches the optical center the text and tank
+                         * widgets use. */
+                        ImGui::SetCursorPosY(ImGui::GetCursorPosY()
+                                             - ImGui::GetFontSize() * 0.12f);
+                        ImVec2 iconStart = ImGui::GetCursorScreenPos();
+                        char btnId[24];
+                        SDL_snprintf(btnId, sizeof(btnId), "##cfg%d", i);
+                        bool clicked = ImGui::InvisibleButton(btnId,
+                                                              ImVec2(iconSize, iconSize));
+                        /* Grey so it reads as a secondary action — the primary
+                         * focus is the name and status badges — and full white
+                         * on hover so it lights up. */
+                        ImU32 gearTint = ImGui::IsItemHovered()
+                            ? IM_COL32_WHITE
+                            : IM_COL32(180, 180, 180, 200);
+                        ImGui::GetWindowDrawList()->AddImage(
+                            (ImTextureID)lobbyIcons()->settings,
+                            iconStart,
+                            ImVec2(iconStart.x + iconSize, iconStart.y + iconSize),
+                            ImVec2(0, 0), ImVec2(1, 1), gearTint);
+                        if (clicked) {
+                            s_players.expandedBotSlot =
+                                (s_players.expandedBotSlot == i) ? -1 : i;
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            lobbyGearTooltip(cs, i, s);
+                        }
+                    } else {
+                        cyAbs(ImGui::GetFrameHeight());
+                        char fallId[24];
+                        SDL_snprintf(fallId, sizeof(fallId), "%s##cfg%d",
+                                     s_players.expandedBotSlot == i ? "v" : ">", i);
+                        if (ImGui::SmallButton(fallId)) {
+                            s_players.expandedBotSlot =
+                                (s_players.expandedBotSlot == i) ? -1 : i;
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            lobbyGearTooltip(cs, i, s);
+                        }
+                    }
+                };
+
                 /* ── Column 1: identity icons (flag/platform/bot) ── */
                 ImGui::TableSetColumnIndex(1);
                 rowTopY = ImGui::GetCursorPosY();
+                /* This cell's right edge, read before anything is drawn into
+                 * it. The bot gear falls back to it when no voice gear has been
+                 * seen to align with. */
+                const float iconsCellRightX = ImGui::GetCursorScreenPos().x +
+                                              ImGui::GetContentRegionAvail().x;
                 if (isBot && showIconsCol) {
                     /* Green for bots on the local player's team (incl.
                      * the local player's own bots), red for bots on
@@ -1517,13 +1709,178 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                     SDL_Texture *botTex = isAlly ? lobbyIcons()->botCpuGreen
                                                  : lobbyIcons()->botCpuRed;
                     if (botTex) {
+                        /* THREE CHIPS, immediately right of the tank icon. The
+                         * first is the bot badge that has always been here; the
+                         * other two are the difficulty, moved off the name tags
+                         * (Andrew: "moving the chips from the tag mode to be now
+                         * on the left side just to the right of the tank icon").
+                         *
+                         * A lit chip is the TEAM's colour — green for an ally,
+                         * red for anyone else — so a run is all green or all red
+                         * and never a mix. An unlit chip is the greyscale art.
+                         * The difficulty therefore reads as how many of the
+                         * three are coloured, and the colour itself still says
+                         * which side the bot is on.
+                         *
+                         * A brain that declares no levels draws ONE chip. There
+                         * is no difficulty to show, so the run is the plain
+                         * badge it has always been. */
+                        SDL_Texture *dimTex = lobbyIcons()->botCpuGrey;
+                        const int   chipN   = (botDiffChips > 0) ? 3 : 1;
+                        const float chipGap = 2.0f * s;
+                        const float runW    = tankSz * (float)chipN
+                                            + chipGap * (float)(chipN - 1);
                         cyAbs(tankSz);
-                        /* Visible pixel mass in the bot-cpu PNGs
-                         * needs a small upward nudge to land
-                         * vertically centered on the row. */
+                        /* Visible pixel mass in the bot-cpu art needs a small
+                         * upward nudge to land centred on the row. */
                         ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 2.0f);
-                        ImGui::Image((ImTextureID)botTex,
-                                     ImVec2(tankSz, tankSz));
+                        ImVec2 runStart = ImGui::GetCursorScreenPos();
+                        ImDrawList *chipDl = ImGui::GetWindowDrawList();
+                        for (int c = 0; c < chipN; c++) {
+                            SDL_Texture *t = (c < botDiffChips || chipN == 1)
+                                           ? botTex : dimTex;
+                            if (t == NULL) t = botTex;
+                            ImVec2 a(runStart.x + (tankSz + chipGap) * (float)c,
+                                     runStart.y);
+                            chipDl->AddImage((ImTextureID)t, a,
+                                             ImVec2(a.x + tankSz, a.y + tankSz),
+                                             ImVec2(0, 0), ImVec2(1, 1),
+                                             IM_COL32_WHITE);
+                        }
+                        /* ONE item over the whole run: it carries the hover that
+                         * names the difficulty and the click that cycles it. A
+                         * client that may not edit gets a Dummy instead — same
+                         * size, still hoverable, but not a control it cannot
+                         * use. */
+                        bool chipClicked = false;
+                        if (effectiveHost && botDiffChips > 0) {
+                            char chipId[24];
+                            SDL_snprintf(chipId, sizeof(chipId), "##diffchip%d", i);
+                            chipClicked = ImGui::InvisibleButton(
+                                chipId, ImVec2(runW, tankSz));
+                            if (ImGui::IsItemHovered()) {
+                                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                            }
+                        } else {
+                            ImGui::Dummy(ImVec2(runW, tankSz));
+                        }
+                        if (botDiffTag[0] && ImGui::IsItemHovered()) {
+                            char chipTip[96];
+                            SDL_snprintf(chipTip, sizeof(chipTip), "%s: %s",
+                                         langGetText(STR_DLGLOBBY_BOTCFG_DIFFICULTY),
+                                         botDiffTag);
+                            ImGui::SetTooltip("%s", chipTip);
+                        }
+                        /* A click cycles to the next level of THIS mode and
+                         * wraps; the mode decides how many there are. Sent
+                         * through the same lobbySendBotConfig the gear's
+                         * dropdown uses, and remembered as the standing
+                         * preference the same way, so the two routes cannot
+                         * disagree about what was picked. */
+                        if (chipClicked && botModes != NULL) {
+                            const BrainMode *lvlMode = &botModes->modes[botMode];
+                            if (lvlMode->levelCount > 0) {
+                                int next = (botLevel + 1) % lvlMode->levelCount;
+                                lobbySendBotConfig(
+                                    cs, (uint8_t)i, (uint8_t)botMode,
+                                    (uint8_t)next,
+                                    clientSimGetLobbyBotPersonality(cs, (BYTE)i),
+                                    clientSimGetLobbySlot(cs, (BYTE)i)->playerName);
+                                gameFrontSetChosenBotModeAndLevel(
+                                    lvlMode->key, lvlMode->levels[next].key);
+                            }
+                        }
+                    }
+                    /* The config gear, right after the bot badge — the same
+                     * column and the same place in the run that a human row
+                     * puts the local player's voice gear (Andrew: "we might as
+                     * well match the bot positions with that"). It used to sit
+                     * in the ping column, a long way right of the human one,
+                     * which made two gears on adjacent rows read as unrelated
+                     * controls.
+                     *
+                     * Shown only to a client with lobby-edit authority (host /
+                     * openHost / admin); anyone else gets no control rather
+                     * than a dead one. Controller mode draws the visible
+                     * ">"/"v" toggle instead of the invisible icon button, so
+                     * it is reachable by gamepad and shows a focus ring — A
+                     * expands the AiConfig sub-row, whose widgets (name,
+                     * Codebase, mode, difficulty) then navigate like any other
+                     * dialog control. */
+                    if (effectiveHost) {
+                        if (botTex) {
+                            ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x);
+                        }
+                        /* Put it in the SAME column as the human rows' voice
+                         * gear, rather than wherever this row's badge run
+                         * happened to end — a bot row's run is one badge long
+                         * and a human's is four or five, so without this the
+                         * two gears stagger down the list.
+                         *
+                         * The voice gear's X is DERIVED from this cell, not
+                         * observed from the row that drew it. Observing it meant
+                         * keeping last frame's reading in a static, and that
+                         * reading goes stale in every case where the local
+                         * player's row is not drawn this frame — scrolled out of
+                         * the list, voice switched off, the splitter dragged
+                         * meanwhile. A stale X from a wider layout sits right of
+                         * this cell, and the table is NoClip, so the gear and its
+                         * button would land on top of the player name. Deriving
+                         * it cannot go stale and has no one-frame lag.
+                         *
+                         * Where the voice gear sits: kColIconsW ends with
+                         * [mic][ItemSpacing][gear][ItemSpacing] in a voice build
+                         * and [ItemSpacing][gear] without one, so the gear's left
+                         * edge is the cell's right edge back by one gear, and by
+                         * one more spacing when voice is compiled in.
+                         *
+                         * Never pulled left of where the badge ended, so a narrow
+                         * column degrades to "straight after the badge" instead
+                         * of drawing the gear on top of it. */
+                        {
+                            /* Prefer the REAL voice gear position, observed on
+                             * the local player's row. Deriving it from the
+                             * column's width instead lands about five to ten
+                             * pixels right of it: the column reserves room for
+                             * a flag and every badge, and a real row usually
+                             * draws fewer than that, so the voice gear sits
+                             * left of the reserved slot.
+                             *
+                             * Taken only while it is at most ONE frame old.
+                             * Rows above the local player's read last frame's
+                             * value, rows below read this frame's. Two frames
+                             * with no voice gear — that row scrolled out of the
+                             * list, or voice was switched off — and we fall
+                             * back rather than trust a stale position. */
+                            const int gearAge =
+                                ImGui::GetFrameCount() - s_voiceGearFrame;
+                            float gearX;
+                            if (s_voiceGearX > 0.0f && gearAge <= 1) {
+                                gearX = s_voiceGearX;
+                            } else {
+#if defined(WINBOLO_VOICE)
+                                gearX = iconsCellRightX
+                                      - ImGui::GetStyle().ItemSpacing.x
+                                      - kColGearW;
+#else
+                                gearX = iconsCellRightX - kColGearW;
+#endif
+                            }
+                            /* Never past this cell's right edge: the table is
+                             * NoClip, so a position carried over from a wider
+                             * layout would draw the gear, and its button, on
+                             * top of the player name. And never left of where
+                             * the badge run ended, so a narrow column degrades
+                             * to "straight after the badge" instead of drawing
+                             * over it. */
+                            const float gearMaxX = iconsCellRightX - kColGearW;
+                            if (gearX > gearMaxX) gearX = gearMaxX;
+                            float afterBadgeX = ImGui::GetCursorScreenPos().x;
+                            if (gearX < afterBadgeX) gearX = afterBadgeX;
+                            ImGui::SetCursorScreenPos(
+                                ImVec2(gearX, ImGui::GetCursorScreenPos().y));
+                        }
+                        drawBotGear();
                     }
                 } else if (!isBot && showIconsCol) {
                     /* Same 2px upward nudge applied to text / tank /
@@ -1600,6 +1957,9 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                                 ImGui::SetCursorPosY(ImGui::GetCursorPosY()
                                                      - ImGui::GetFontSize() * 0.12f);
                                 ImVec2 iconStart = ImGui::GetCursorScreenPos();
+                                /* The column every bot gear lines up with. */
+                                s_voiceGearX     = iconStart.x;
+                                s_voiceGearFrame = ImGui::GetFrameCount();
                                 bool clicked = ImGui::InvisibleButton(
                                     "##voicecfg", ImVec2(iconSize, iconSize));
                                 /* Grey so the gear reads as a secondary
@@ -1623,6 +1983,8 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                                 }
                             } else {
                                 cyAbs(ImGui::GetFrameHeight());
+                                s_voiceGearX     = ImGui::GetCursorScreenPos().x;
+                                s_voiceGearFrame = ImGui::GetFrameCount();
                                 if (ImGui::SmallButton(s_players.voiceRowExpanded
                                                        ? "v##voicecfg"
                                                        : ">##voicecfg")) {
@@ -1638,6 +2000,18 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                     }
                 }
 
+                /* A bot's extra name tags: which bot it is, which mode it
+                 * is in when that is not the default one, and how hard it
+                 * plays. All of it comes from lobby state the server already
+                 * syncs to every client (the brain catalogue + index, and
+                 * LobbyBotConfig's mode + difficulty indices, resolved
+                 * against the brain's own modes.txt), so joiners see the
+                 * same run of tags the host does. Computed before the name
+                 * is truncated because the truncation has to reserve room
+                 * for them. */
+                /* The mode and the difficulty are resolved higher up now, above
+                 * the icons column, because the difficulty chips draw there. */
+
                 /* ── Column 2: name + inline tags ────────────────── */
                 ImGui::TableSetColumnIndex(2);
                 rowTopY = ImGui::GetCursorPosY();
@@ -1652,9 +2026,32 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                                      & PLAYER_FLAG_ADMIN)));
                     float nameAvail  = ImGui::GetContentRegionAvail().x;
                     float tagReserve = rowHasTag ? kNameTagW : 0.0f;
+                    /* A bot row carries three tags, not one — four in a
+                     * non-default mode: BOT, the bot's name ("GoalHunter"),
+                     * the mode and its difficulty. Reserve what they
+                     * actually measure so the name gives up the room
+                     * instead of the tags spilling into the start dropdown.
+                     * Same recipe drawNameTag uses below: 70% font, 6px pad
+                     * each side, 6px gap before each pill. */
+                    if (showBotDetailTags && isBot && botModeTag[0]) {
+                        /* The MODE tag is the only extra a bot row carries here
+                         * now. The codebase tag and the difficulty tag are both
+                         * gone: the difficulty moved to the chips in the icons
+                         * column, and the codebase is in the gear form. Reserve
+                         * only what is still drawn, or the name gives up
+                         * characters for tags that no longer exist. Recipe
+                         * matches drawNameTag: 70% font, 6px pad each side, 6px
+                         * gap before the pill. */
+                        tagReserve += ImGui::CalcTextSize(botModeTag).x * 0.70f
+                                    + 12.0f * s + 6.0f * s;
+                    }
                     char nameBuf[64];
                     lobbyTruncateName(clientSimGetLobbySlot(cs, (BYTE)(i))->playerName,
                                       nameAvail - tagReserve, nameBuf, sizeof(nameBuf));
+                    if (unfielded) {
+                        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                            ImGui::GetStyle().Alpha * 0.45f);
+                    }
                     if (isBot) {
                         ImGui::PushStyleColor(ImGuiCol_Text,
                                               wbThemeColor(g_theme->botBadge));
@@ -1664,6 +2061,9 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                         ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.4f, 1.0f), "%s", nameBuf);
                     } else {
                         ImGui::Text("%s", nameBuf);
+                    }
+                    if (unfielded) {
+                        ImGui::PopStyleVar();
                     }
                     lobbyNameJumpToPlayer(cs, i);
                 }
@@ -1708,6 +2108,18 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                                 fg, lbl);
                     ImGui::Dummy(ImVec2(pillW, pillH));
                 };
+                /* A tag's hover: an ordinary tooltip. The row's bot tags are
+                 * abbreviations — "GH", three chips, a one-word mode — so the
+                 * hover spells them out ("Codebase: GoalHunter").
+                 *
+                 * This used to draw the hover as a PILL in the tag's own
+                 * colours. It read badly (Andrew: "the tag of 'Difficulty:
+                 * Easy' looks weird"), so it is now the same plain tooltip
+                 * every other control in the lobby uses. Call it straight after
+                 * the tag, while that tag is still the current item. */
+                auto tagTooltip = [&](const char *lbl) {
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", lbl);
+                };
                 if (showNameTags && i == clientSimGetLobbyHostSlot(cs)) {
                     /* Badge follows the current host slot. Themable bg /
                      * border / text triple lives in wb_theme.cpp. */
@@ -1730,6 +2142,42 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                                 g_theme->botTagBg,
                                 g_theme->botTagText,
                                 g_theme->botTagBorder);
+                    /* Which bot, then how hard. Both wear the BOT tag's
+                     * themed colours so the run reads as one group; the
+                     * difficulty is the one that changes, so it goes last
+                     * where the eye lands after the name. */
+                    char tagTip[BRAIN_LIST_NAME_LEN + 48];
+                    /* No codebase tag any more. "GH" beside every bot said
+                     * little once every bot was a GoalHunter, and the gear
+                     * form's Codebase dropdown is the honest place for it. */
+                    if (showBotDetailTags && botModeTag[0]) {
+                        /* The mode, when it is not the default one — one word
+                         * ("Survival"). Its own indigo, NOT the difficulty's
+                         * amber set it used to borrow: the difficulty tag sits
+                         * immediately beside it and is amber at Medium, so the
+                         * two ran together (Andrew: "the mode tag orangey is
+                         * the same as the medium tag orangey which looks bad").
+                         * Indigo is taken by nothing else in the run — host is
+                         * yellow, admin teal, BOT blue-grey, difficulty
+                         * green/amber/red. The brain's own tag is drawn
+                         * immediately before this one and is the only colour
+                         * that could collide, but it takes botTagBg as its
+                         * fill, so the risk is low. A literal triple, the way
+                         * the ADMIN badge above does it — both would be better
+                         * as WbTheme fields, since g_theme is swappable and a
+                         * literal survives a theme change. */
+                        const ImU32 kModeBg     = IM_COL32( 64,  72, 120, 255);
+                        const ImU32 kModeText   = IM_COL32(198, 206, 255, 255);
+                        const ImU32 kModeBorder = IM_COL32(104, 116, 190, 255);
+                        drawNameTag(botModeTag, kModeBg, kModeText, kModeBorder);
+                        SDL_snprintf(tagTip, sizeof(tagTip), "%s: %s",
+                                     langGetText(STR_DLGLOBBY_BOTCFG_MODE),
+                                     botModeTag);
+                        tagTooltip(tagTip);
+                    }
+                    /* No difficulty tag any more either. It is the three chips
+                     * beside the tank icon now, in the icons column, where it
+                     * carries its own hover and its own click-to-cycle. */
                 }
                 /* Track the rightmost name/tag edge across all rows so the
                  * start dropdowns can line up in a shared column. The last
@@ -1737,68 +2185,14 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                 startColNameMaxRight = ImMax(startColNameMaxRight,
                                              ImGui::GetItemRectMax().x);
 
-                /* ── Column 3: gear (bots) or ping (humans) ──────── */
+                /* ── Column 3: ping (humans only) ────────────────────
+                 * The bot's config gear used to live here. It now sits in the
+                 * icons column beside the bot-cpu badge, where a human row puts
+                 * the voice gear, so the two line up. A bot row leaves this
+                 * cell empty. */
                 ImGui::TableSetColumnIndex(3);
                 rowTopY = ImGui::GetCursorPosY();
-                /* Gear visibility: always shown for bots when this
-                 * client has lobby-edit authority (host / openHost /
-                 * admin). Hidden entirely for non-permitted clients
-                 * so they don't see a non-functional control.
-                 * Controller mode renders the visible ">"/"v" toggle
-                 * (the SmallButton path below) instead of the invisible
-                 * icon button, so it's reachable by gamepad nav and shows
-                 * a focus ring — A expands the AiConfig sub-row, whose
-                 * widgets (name, Bot Code combo, difficulty) are then
-                 * navigable like any other dialog control. */
-                if (showPingCol && isBot && effectiveHost) {
-                    if (lobbyIcons()->settings && !uiShouldUseControllerMode()) {
-                        float iconSize = ImGui::GetFontSize();
-                        cyAbs(iconSize);
-                        /* settings.svg renders 5px above / 2px below
-                         * with pure geometric centering — the gear
-                         * sits slightly low in the row. Nudge up
-                         * ~12% of font size (about 1.5px) so it
-                         * matches the optical center used by the
-                         * text and tank widgets. */
-                        ImGui::SetCursorPosY(ImGui::GetCursorPosY()
-                                             - ImGui::GetFontSize() * 0.12f);
-                        ImVec2 iconStart = ImGui::GetCursorScreenPos();
-                        char btnId[24];
-                        SDL_snprintf(btnId, sizeof(btnId), "##cfg%d", i);
-                        bool clicked = ImGui::InvisibleButton(btnId,
-                                                              ImVec2(iconSize, iconSize));
-                        /* Tint the gear toward grey so it reads as a
-                         * secondary action — the primary visual focus
-                         * is the player name and status badges. Full
-                         * white on hover so it lights up under the
-                         * mouse. */
-                        ImU32 gearTint = ImGui::IsItemHovered()
-                            ? IM_COL32_WHITE
-                            : IM_COL32(180, 180, 180, 200);
-                        ImGui::GetWindowDrawList()->AddImage(
-                            (ImTextureID)lobbyIcons()->settings,
-                            iconStart,
-                            ImVec2(iconStart.x + iconSize, iconStart.y + iconSize),
-                            ImVec2(0, 0), ImVec2(1, 1), gearTint);
-                        if (clicked) {
-                            s_players.expandedBotSlot = (s_players.expandedBotSlot == i) ? -1 : i;
-                        }
-                        if (ImGui::IsItemHovered()) {
-                            lobbyGearTooltip(cs, i, s);
-                        }
-                    } else {
-                        cyAbs(ImGui::GetFrameHeight());
-                        char fallId[24];
-                        SDL_snprintf(fallId, sizeof(fallId), "%s##cfg%d",
-                                     s_players.expandedBotSlot == i ? "v" : ">", i);
-                        if (ImGui::SmallButton(fallId)) {
-                            s_players.expandedBotSlot = (s_players.expandedBotSlot == i) ? -1 : i;
-                        }
-                        if (ImGui::IsItemHovered()) {
-                            lobbyGearTooltip(cs, i, s);
-                        }
-                    }
-                } else if (showPingCol && !isBot) {
+                if (showPingCol && !isBot) {
                     if (clientSimGetLobbySlot(cs, (BYTE)(i))->pingMs > 0) {
                         cyTextAbs();
                         ImVec4 pingColor;
@@ -1809,6 +2203,14 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                         }
                         ImGui::TextColored(pingColor, "%dms", (int)clientSimGetLobbySlot(cs, (BYTE)(i))->pingMs);
                     }
+                } else if (showPingCol && isBot && effectiveHost && !showIconsCol) {
+                    /* The icons column has been shed, so the gear's own home is
+                     * gone — but the row is otherwise intact and the host still
+                     * has to be able to configure this bot. Draw it here, where
+                     * it lived before it moved. Nothing else sets
+                     * expandedBotSlot, so without this the config is
+                     * unreachable at these widths. */
+                    drawBotGear();
                 }
 
                 /* ── Column 4: reserved map start, shown as the compass
@@ -2418,7 +2820,8 @@ static void renderBotAiConfig(ClientSim *cs,
      * 50px row indent so the form spans the full team width.) */
     ImGui::PushID(slot);
 
-    /* Two side-by-side groups: Name on the left, Bot Code on the right.
+    /* Side-by-side groups (Name, Bot Code, Mode, Difficulty), wrapping
+     * onto further rows when the team panel is too narrow for them.
      * BeginGroup + SameLine works inside the outer table cell (which is
      * NoClip-enabled), unlike a nested BeginTable which gets clipped to
      * the parent's narrow column width and squashes the controls. */
@@ -2438,7 +2841,7 @@ static void renderBotAiConfig(ClientSim *cs,
      * the FrameBorderSize when ItemAdd commits it. An explicit
      * anchor sidesteps that entirely. */
     ImVec2 formAnchor = ImGui::GetCursorScreenPos();
-    /* Nudge all three sub-groups 2px down (purely cosmetic — the
+    /* Nudge the whole form 2px down (purely cosmetic — the
      * AiConfig content felt visually crowded against the bot row
      * above). The end-of-function SetCursorScreenPos subtracts the
      * same nudge so the parent container's total height is
@@ -2446,11 +2849,70 @@ static void renderBotAiConfig(ClientSim *cs,
     const float kFormNudgeY = 2.0f;
     formAnchor.y += kFormNudgeY;
 
+    /* ── Flow layout ──────────────────────────────────────────────────
+     * The groups (Name, Bot Code, Mode, Difficulty) run left to right
+     * along a row while they fit, and wrap onto a further row when they
+     * do not. Each one is measured BEFORE it is placed, so a group that
+     * has no room starts a new row instead of being drawn under the Done
+     * button or off the right of the team panel.
+     *
+     * The right edge is worked out once and used by every row: the panel's
+     * right edge, less the room the Done button keeps for itself and the
+     * window's own padding. The button only sits on the top row, but a row
+     * that stopped short of it and one that ran past it would not line up,
+     * and the reserve is small enough not to cost a row anything. */
+    const ImGuiStyle &fst = ImGui::GetStyle();
+    const float kGroupGapX   =  24.0f * s;  /* between groups on a row */
+    const float kRowGapY     =   8.0f * s;  /* between wrapped rows */
+    const float kDoneReserve = 100.0f * s;  /* room kept for Done */
+    const float winRightX =
+        ImGui::GetWindowPos().x + ImGui::GetWindowSize().x;
+    const float flowRightX = winRightX - kDoneReserve - fst.WindowPadding.x;
+
+    float flowX       = formAnchor.x;  /* where the next group starts */
+    float flowY       = formAnchor.y;
+    float rowBottomY  = formAnchor.y;  /* lowest point on the current row */
+    float formBottomY = formAnchor.y;  /* lowest point over every row */
+    bool  rowHasGroup = false;
+
+    /* Where a group of this width goes: beside the previous one, or at the
+     * start of a new row when it would cross the right edge. The first
+     * group on a row is placed however wide it is — there is nowhere
+     * narrower to send it, and wrapping it would leave an empty row. */
+    auto flowPlace = [&](float groupW) -> ImVec2 {
+        if (rowHasGroup && flowX + groupW > flowRightX) {
+            flowY = rowBottomY + kRowGapY;
+            flowX = formAnchor.x;
+            rowBottomY = flowY;
+            rowHasGroup = false;
+        }
+        return ImVec2(flowX, flowY);
+    };
+    /* Called straight after the group's EndGroup, while it is still the
+     * current item, so the cursor moves on by what the group really
+     * measured — the width handed to flowPlace is only a forecast, and the
+     * difficulty group's wrapped description makes it wider than its
+     * combo. Also feeds the row's and the form's bottom. */
+    auto flowPlaced = [&]() {
+        const ImVec2 rmax = ImGui::GetItemRectMax();
+        if (rmax.y > rowBottomY)  rowBottomY  = rmax.y;
+        if (rmax.y > formBottomY) formBottomY = rmax.y;
+        flowX = rmax.x + kGroupGapX;
+        rowHasGroup = true;
+    };
+
     /* Name group. */
-    ImGui::SetCursorScreenPos(formAnchor);
+    const float kNameInputW = 180.0f * s;
+    const float diceBtnW =
+        ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_BOTCFG_REROLL)).x
+        + fst.FramePadding.x * 2.0f;
+    const float nameGroupW = ImMax(
+        ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_BOTCFG_NAME)).x,
+        kNameInputW + fst.ItemSpacing.x + diceBtnW);
+    ImGui::SetCursorScreenPos(flowPlace(nameGroupW));
     ImGui::BeginGroup();
     ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_NAME));
-    ImGui::SetNextItemWidth(180.0f * s);
+    ImGui::SetNextItemWidth(kNameInputW);
     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
     nameChanged = ImGui::InputText("##botname", nameBuf, sizeof(nameBuf),
                                    ImGuiInputTextFlags_EnterReturnsTrue);
@@ -2461,15 +2923,24 @@ static void renderBotAiConfig(ClientSim *cs,
         ImGui::SetTooltip("%s", langGetText(STR_DLGLOBBY_BOTCFG_REROLL_TIP));
     }
     ImGui::EndGroup();
-    float nameGroupRightX = ImGui::GetItemRectMax().x;
-    float nameGroupBottomY = ImGui::GetItemRectMax().y;
+    flowPlaced();
 
-    /* Bot Code group, right of the Name group at the same anchor Y. */
+    /* Codebase group, next in the flow after the Name group.
+     *
+     * Always shown, even when the catalogue holds a single brain. It used to
+     * hide itself at one entry, on the reasoning that a one-entry dropdown
+     * invites "what else is there?" — but players are going to be able to add
+     * their own brains, and a control that appears only once a second one is
+     * installed is a control nobody knows to look for. Andrew: "we need a
+     * Codebase dropdown, even if it's only GoalHunter right now (we will
+     * allow users to add their own later)". */
     bool  botCodeShown  = (bl->count > 0);
     const float comboW  = 240.0f * s;
     if (botCodeShown) {
-        float bcX = nameGroupRightX + 24.0f * s;
-        ImGui::SetCursorScreenPos(ImVec2(bcX, formAnchor.y));
+        const float bcGroupW = ImMax(
+            ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_BOTCFG_CODE)).x,
+            comboW);
+        ImGui::SetCursorScreenPos(flowPlace(bcGroupW));
         ImGui::BeginGroup();
         ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_CODE));
         uint8_t curIdx = clientSimGetLobbyBotBrain(cs, (BYTE)(slot));
@@ -2505,7 +2976,7 @@ static void renderBotAiConfig(ClientSim *cs,
                 const LobbyBrainMeta *m = lobbyBrainMetaFor(e->name);
                 if (m && m->tagline[0] && ImGui::IsItemHovered()) {
                     ImGui::BeginTooltip();
-                    lobbyDrawTagline(m->tagline, 320.0f * s);
+                    lobbyDrawTagline(m->tagline, 320.0f * s, -1);
                     ImGui::EndTooltip();
                 }
                 if (sel) ImGui::SetItemDefaultFocus();
@@ -2513,6 +2984,116 @@ static void renderBotAiConfig(ClientSim *cs,
             ImGui::EndCombo();
         }
         ImGui::EndGroup();
+        flowPlaced();
+    }
+
+    /* ── Mode and Difficulty groups ─────────────────────────────────────────
+     * The brain says which modes it has and which difficulty levels each
+     * of those modes offers (brains/<brain>/modes.txt, read locally on
+     * every client — see lobbyBotModesFor). The lobby only picks indices:
+     * Mode indexes the brain's mode list, Difficulty indexes the SELECTED
+     * mode's level list, so switching mode re-fills the level dropdown.
+     * For the default mode that list is Easy / Medium / Hard and the
+     * indices are the same 0/1/2 the wire has always carried.
+     *
+     * Every mode and every level plays the same way for now; only the
+     * wording and the tokens handed to the brain differ. */
+    const BrainModes *modes = lobbyBotModesFor(cs, slot);
+    int curMode = 0, curLevel = 0;
+    lobbyBotModeAndLevel(cs, slot, &curMode, &curLevel);
+    const BrainMode *modeSel = (modes != NULL) ? &modes->modes[curMode] : NULL;
+    const uint8_t curPers = clientSimGetLobbyBotPersonality(cs, (BYTE)(slot));
+
+    const float kModeComboW = 160.0f * s;
+    if (modes != NULL) {
+        const float mdGroupW = ImMax(
+            ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_BOTCFG_MODE)).x,
+            kModeComboW);
+        ImGui::SetCursorScreenPos(flowPlace(mdGroupW));
+        ImGui::BeginGroup();
+        ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_MODE));
+        const char *modeItems[BRAIN_MODES_MAX];
+        for (int m = 0; m < modes->modeCount; m++) {
+            modeItems[m] = modes->modes[m].label;
+        }
+        int mode = curMode;
+        ImGui::SetNextItemWidth(kModeComboW);
+        if (ImGui::Combo("##botmode", &mode, modeItems, modes->modeCount) &&
+            mode >= 0 && mode < modes->modeCount) {
+            /* A mode change carries the new mode's own default level: the
+             * old index means something different (or nothing) in the new
+             * mode's list, so keeping it would show a level the player
+             * never picked. */
+            const BrainMode *nm = &modes->modes[mode];
+            uint8_t lvl = (uint8_t)nm->defaultLevel;
+            lobbySendBotConfig(cs, (uint8_t)slot, (uint8_t)mode, lvl, curPers,
+                               clientSimGetLobbySlot(cs, (BYTE)(slot))->playerName);
+            gameFrontSetChosenBotModeAndLevel(nm->key, nm->levels[lvl].key);
+        }
+        ImGui::EndGroup();
+        flowPlaced();
+    }
+
+    const float kDiffComboW = 110.0f * s;
+    /* No Difficulty group at all when the mode declares no levels: the brain
+     * has one way of playing, so there is nothing to choose. The row's chip
+     * tag is suppressed the same way. */
+    if (modeSel != NULL && modeSel->levelCount > 0) {
+        /* The description below the combo wraps to this group's own width,
+         * so the combo alone decides where the group goes. */
+        const float dfGroupW = ImMax(
+            ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_BOTCFG_DIFFICULTY)).x,
+            kDiffComboW);
+        const ImVec2 dfPos = flowPlace(dfGroupW);
+        ImGui::SetCursorScreenPos(dfPos);
+        ImGui::BeginGroup();
+        ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_DIFFICULTY));
+        /* The default mode's easy / medium / hard keep their translated
+         * names; any other mode's levels are data and show their own label,
+         * because there are no lang strings for something a brain invented. */
+        const bool langLevels = lobbyBotModeUsesLangLevels(modes, curMode);
+        const char *levelItems[BRAIN_LEVELS_MAX];
+        for (int l = 0; l < modeSel->levelCount; l++) {
+            levelItems[l] = langLevels
+                ? langGetText(lobbyBotDifficultyLabelId((uint8_t)l))
+                : modeSel->levels[l].label;
+        }
+        int diff = curLevel;
+        ImGui::SetNextItemWidth(kDiffComboW);
+        if (ImGui::Combo("##diff", &diff, levelItems, modeSel->levelCount) &&
+            diff >= 0 && diff < modeSel->levelCount) {
+            lobbySendBotConfig(cs, (uint8_t)slot, (uint8_t)curMode,
+                (uint8_t)diff, curPers,
+                clientSimGetLobbySlot(cs, (BYTE)(slot))->playerName);
+            /* An explicit pick here is the player's standing preference —
+             * persist it so it becomes the default on every future launch
+             * (gospel; overrides the single-player skill guess). This is the
+             * role the Bot Code dropdown used to play. */
+            gameFrontSetChosenBotModeAndLevel(modeSel->key,
+                                              modeSel->levels[diff].key);
+        }
+        /* Description of the CURRENT difficulty. Wrapped to whatever is
+         * left between this group and the right edge of the row it landed
+         * on — a group that wrapped onto a row of its own has the full
+         * width. Capped so it doesn't turn into one very long line on a
+         * wide window and floored so a narrow one still gets a readable
+         * column (the text goes taller instead, which the row height
+         * follows). */
+        float descWrapW = flowRightX - dfPos.x;
+        if (descWrapW > 300.0f * s) descWrapW = 300.0f * s;
+        if (descWrapW < 140.0f * s) descWrapW = 140.0f * s;
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + descWrapW);
+        if (langLevels) {
+            ImGui::TextDisabled("%s",
+                langGetText(lobbyBotDifficultyDescId((uint8_t)diff)));
+        } else {
+            /* No blurb exists for a manifest-defined level, so its label is
+             * the honest thing to show. */
+            ImGui::TextDisabled("%s", modeSel->levels[diff].label);
+        }
+        ImGui::PopTextWrapPos();
+        ImGui::EndGroup();
+        flowPlaced();
     }
 
     if (diceClicked) {
@@ -2522,85 +3103,72 @@ static void renderBotAiConfig(ClientSim *cs,
         int pool = (teamId > 0 && teamId < 16) ? clientSimGetLobbyTeamPool(cs, (BYTE)(teamId)) : 0;
         char pickBuf[32];
         lobbyBotPoolPick(pool, usedNames, usedCount, pickBuf, sizeof(pickBuf));
-        lobbySendBotConfig(cs, (uint8_t)slot,
-            clientSimGetLobbyBotDifficulty(cs, (BYTE)(slot)), clientSimGetLobbyBotPersonality(cs, (BYTE)(slot)), pickBuf);
+        lobbySendBotConfig(cs, (uint8_t)slot, (uint8_t)curMode,
+            (uint8_t)curLevel, curPers, pickBuf);
         if (slot < MAX_TANKS) lobbyCommandBotNameOverridden()[slot] = false;
     }
     if (nameChanged) {
         /* Manual edit — pin the name so a later pool change doesn't
          * overwrite it. */
-        lobbySendBotConfig(cs, (uint8_t)slot,
-            clientSimGetLobbyBotDifficulty(cs, (BYTE)(slot)), clientSimGetLobbyBotPersonality(cs, (BYTE)(slot)), nameBuf);
+        lobbySendBotConfig(cs, (uint8_t)slot, (uint8_t)curMode,
+            (uint8_t)curLevel, curPers, nameBuf);
         if (slot < MAX_TANKS) lobbyCommandBotNameOverridden()[slot] = true;
     }
     if (pendingBrainPick >= 0 && pendingBrainPick < bl->count) {
         /* Stash as the sticky default so subsequent Add Bot clicks inherit
-         * this choice. A manual pick from the wrench dropdown is also the
-         * player's explicit difficulty preference — persist it so it becomes
-         * the default on every future launch (gospel; overrides the SP skill
-         * guess). Empty until the player first chooses here. */
+         * this choice. Only reachable on a dev tree with more than one brain
+         * (the combo is hidden otherwise); the persisted player preference is
+         * the DIFFICULTY, written by the dropdown above, not the brain. */
         *lobbyBrainLastChosenIdx() = (uint8_t)pendingBrainPick;
-        gameFrontSetChosenBotBrain(bl->entries[pendingBrainPick].name);
         lobbySendSetBotBrain(cs, (uint8_t)slot,
                              (uint8_t)pendingBrainPick);
     }
 
-    /* Difficulty / Personality dropdowns are hidden for now — the
-     * brain doesn't yet honor either field. Kept in the code (and
-     * still wired through lobbySendBotConfig) so flipping this
-     * flag to true is the only thing needed to re-enable the UI
-     * once the brain consumes the values. */
+    /* The Personality dropdown stays hidden — nothing consumes the field
+     * yet. Kept in the code (and still wired through lobbySendBotConfig)
+     * so flipping this flag to true is the only thing needed to show it
+     * once the brain honours it. Difficulty graduated out of here: it is
+     * its own group above. */
     const bool kShowAiOptions = false;
 
-    /* ── Difficulty dropdown ──────────────────────────────────── */
+    /* ── Personality dropdown ─────────────────────────────────────
+     * Joins the same flow as the other groups if it is ever turned on,
+     * so it wraps with them rather than shoving them off the row. */
     if (kShowAiOptions) {
-        ImGui::SameLine(0.0f, 16.0f * s);
-        ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_DIFFICULTY));
-        ImGui::SameLine();
-        const char *diffItems[] = { langGetText(STR_DLGLOBBY_BOTCFG_EASY),
-                                    langGetText(STR_DLGLOBBY_BOTCFG_NORMAL),
-                                    langGetText(STR_DLGLOBBY_BOTCFG_HARD) };
-        int diff = clientSimGetLobbyBotDifficulty(cs, (BYTE)(slot));
-        if (diff < 0 || diff > 2) diff = 1;
-        ImGui::SetNextItemWidth(90.0f * s);
-        if (ImGui::Combo("##diff", &diff, diffItems, 3)) {
-            lobbySendBotConfig(cs, (uint8_t)slot,
-                (uint8_t)diff, clientSimGetLobbyBotPersonality(cs, (BYTE)(slot)),
-                clientSimGetLobbySlot(cs, (BYTE)(slot))->playerName);
-        }
-    }
-
-    /* ── Personality dropdown ─────────────────────────────────── */
-    if (kShowAiOptions) {
-        ImGui::SameLine(0.0f, 16.0f * s);
+        const float kPersComboW = 110.0f * s;
+        const float persGroupW = ImMax(
+            ImGui::CalcTextSize(
+                langGetText(STR_DLGLOBBY_BOTCFG_PERSONALITY)).x,
+            kPersComboW);
+        ImGui::SetCursorScreenPos(flowPlace(persGroupW));
+        ImGui::BeginGroup();
         ImGui::TextDisabled("%s", langGetText(STR_DLGLOBBY_BOTCFG_PERSONALITY));
-        ImGui::SameLine();
         const char *persItems[] = { langGetText(STR_DLGLOBBY_BOTCFG_NORMAL),
                                     langGetText(STR_DLGLOBBY_BOTCFG_AGGRESSIVE),
                                     langGetText(STR_DLGLOBBY_BOTCFG_DEFENSIVE),
                                     langGetText(STR_DLGLOBBY_BOTCFG_SNIPER) };
         int pers = clientSimGetLobbyBotPersonality(cs, (BYTE)(slot));
         if (pers < 0 || pers > 3) pers = 0;
-        ImGui::SetNextItemWidth(110.0f * s);
+        ImGui::SetNextItemWidth(kPersComboW);
         if (ImGui::Combo("##pers", &pers, persItems, 4)) {
-            lobbySendBotConfig(cs, (uint8_t)slot,
-                clientSimGetLobbyBotDifficulty(cs, (BYTE)(slot)), (uint8_t)pers,
+            lobbySendBotConfig(cs, (uint8_t)slot, (uint8_t)curMode,
+                (uint8_t)curLevel, (uint8_t)pers,
                 clientSimGetLobbySlot(cs, (BYTE)(slot))->playerName);
         }
+        ImGui::EndGroup();
+        flowPlaced();
     }
 
-    /* ── Done group — anchored to formAnchor.y so all three sub-
-     * groups (Name / Bot Code / Done) sit on the same top Y. The
-     * "Hello" spacer above the button is a temporary debug label;
+    /* ── Done group — anchored to formAnchor.y so it sits on the same
+     * top Y as the form's first row, wherever the groups below it wrap
+     * to. The "Hello" spacer above the button is a temporary debug label;
      * change back to a blank string once alignment is confirmed. */
     {
         const char *doneLbl = langGetText(STR_DLGLOBBY_BOTCFG_DONE);
         float doneW = ImGui::CalcTextSize(doneLbl).x
-                    + ImGui::GetStyle().FramePadding.x * 2.0f;
-        ImVec2 winPos  = ImGui::GetWindowPos();
-        float winRight = winPos.x + ImGui::GetWindowSize().x;
+                    + fst.FramePadding.x * 2.0f;
         float padR     = 20.0f * s;
-        float targetScreenX = winRight - doneW - padR;
+        float targetScreenX = winRightX - doneW - padR;
         ImGui::SetCursorScreenPos(ImVec2(targetScreenX, formAnchor.y));
         ImGui::BeginGroup();
         /* Invisible spacer that advances the cursor exactly the
@@ -2617,16 +3185,17 @@ static void renderBotAiConfig(ClientSim *cs,
         ImGui::EndGroup();
     }
 
-    /* Restore the cursor below all three groups so any subsequent
-     * widgets in the AiConfig sub-row land underneath. Subtract
-     * kFormNudgeY from the final Y so the 2px we shifted the
-     * contents down doesn't grow the parent container. */
-    float bottomY = nameGroupBottomY;
-    float curBotBottom = ImGui::GetItemRectMax().y;
-    if (curBotBottom > bottomY) bottomY = curBotBottom;
+    /* Restore the cursor below every row the flow produced so any
+     * subsequent widgets in the AiConfig sub-row land underneath, and the
+     * table row grows to hold two or three rows exactly as it already grew
+     * for the wrapped difficulty description. Subtract kFormNudgeY from
+     * the final Y so the 2px we shifted the contents down doesn't grow the
+     * parent container. */
+    float bottomY = formBottomY;
+    float doneBottomY = ImGui::GetItemRectMax().y;  /* the Done group */
+    if (doneBottomY > bottomY) bottomY = doneBottomY;
     ImGui::SetCursorScreenPos(
-        ImVec2(formAnchor.x,
-               bottomY - kFormNudgeY + ImGui::GetStyle().ItemSpacing.y));
+        ImVec2(formAnchor.x, bottomY - kFormNudgeY + fst.ItemSpacing.y));
 
     ImGui::PopID();
     ImGui::Spacing();

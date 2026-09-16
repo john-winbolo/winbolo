@@ -3016,6 +3016,9 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
         int nPings = clientSimGetPings(cs, nowMs, pings, MAX_CLIENT_PINGS);
         int pi;
         for (pi = 0; pi < nPings; pi++) {
+          /* Expiry only. The blink and the name's own fade are decided inside
+             pingMarkerDraw, which every world-marker view shares; skipping on
+             the blink here would take the steady name with it. */
           float alpha = pingDisplayAlpha((int)(nowMs - pings[pi].recvMs));
           float cx, cy;
           if (alpha <= 0.0f) continue;
@@ -3036,9 +3039,12 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
           label.name  = pings[pi].senderName;
           label.slot  = pings[pi].sender;
           label.scale = 1.0f;
+          /* With the arrival ring: this is the world marker, and the ring is
+             the one cue that says the ping landed just now rather than four
+             seconds ago. */
           pingMarkerDraw(gRenderer, pings[pi].kind, cx, cy,
                          (float)tileW, (float)tileH,
-                         nowMs - pings[pi].recvMs, alpha, &label);
+                         nowMs - pings[pi].recvMs, &label);
         }
       }
 

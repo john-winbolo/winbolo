@@ -290,6 +290,23 @@ BYTE lgmRequestRefusal(struct GameSim *sim, lgm *lgman, tank *tnk, BYTE mapX, BY
 void lgmRecall(struct GameSim *sim, lgm *lgman);
 
 /*********************************************************
+*NAME:          lgmDropCarriedPill
+*PURPOSE:
+*  Puts the pillbox the man is carrying down on the map and
+*  leaves him carrying nothing — on the first square at or
+*  below his feet that will hold one, dead and owned by him.
+*  Does nothing if he is carrying no pillbox. Dying does this
+*  (lgmKill calls it), and so must his player leaving while
+*  he is out: a pillbox in his hands is in no tank's carry
+*  list, so nothing else would ever put it back on the map.
+*
+*ARGUMENTS:
+*  sim    - The game the man belongs to
+*  lgman  - Pointer to the lgm structure
+*********************************************************/
+void lgmDropCarriedPill(struct GameSim *sim, lgm *lgman);
+
+/*********************************************************
 *NAME:          lgmKill
 *PURPOSE:
 *  Kills the man where he stands: plays the dying sound,

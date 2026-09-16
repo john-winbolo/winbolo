@@ -85,6 +85,9 @@ typedef struct {
     uint8_t clientFlags;   /* PLAYER_FLAG_* bits */
     uint8_t clientType;    /* ClientType enum */
     uint8_t startIdx;      /* reserved map start, 1-based; 0xFF = none */
+    bool fielded;          /* On the field this round. False for a seat held
+                              in the roster with no tank behind it — the
+                              roster draws those dimmed. */
 } ClientLobbySlot;
 
 /* Client-side mirror of a server spectator roster slot. Spectators
@@ -415,6 +418,22 @@ void clientSimSetTransportControlObserver(ClientSim *cs, ControlObserverCb cb, v
 BYTE clientSimGetPendingAllianceRequest(const ClientSim *cs);
 void clientSimClearPendingAllianceRequest(ClientSim *cs);
 
+/* A buffer this big holds any one lobby chat line: a player name, ": ", and
+ * a whole chat body. */
+#define LOBBY_CHAT_LINE_MAX 640
+
+/* Write "<name>: <message>" into `out`, which is how EVERY line in a lobby
+ * chat log reads. Returns the length, or -1 when it would not fit.
+ *
+ * Exported because two sides must agree on the spelling: the appends below
+ * write the lines, and the lobby's bot-announce poll builds the same string
+ * to search the history for it — that search is how it learns whether its
+ * append landed (a full buffer drops one silently) before it hangs the
+ * brain's docs off that line. Two hand-written copies of "%s: %s" would let
+ * a change to one of them turn the search into a permanent miss. */
+int clientSimFormatLobbyChatLine(char *out, size_t cap, const char *name,
+                                 const char *message);
+
 /* Lobby chat helper — appends "name: message\n" to lobbyChatHistory */
 void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *message);
 /* Team lobby chat helper — appends "name: message\n" to lobbyTeamChatHistory */
@@ -426,8 +445,13 @@ void clientSimAppendLobbyTeamChat(ClientSim *cs, const char *name, const char *m
 void clientSimClearLobbyChatHistory(ClientSim *cs);
 
 /* Player-to-player chat delivery: routes to lobby chat or in-game inbox
-   depending on whether the client is still in the lobby. */
-void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, char *messageStr);
+   depending on whether the client is still in the lobby.
+   `destPlayer` is what the sender addressed the line to (CHAT_DEST_BROADCAST,
+   a slot, or CHAT_DEST_TEAM_BASE + team). The caller has already decided this
+   seat may SEE the line; the dest is here because a hosted BOT additionally
+   drops an enemy's broadcast, which is chatter and not an order. */
+void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, BYTE destPlayer,
+                              char *messageStr);
 
 /* Message functions (per-instance) */
 void clientSimMessageSendAllPlayers(ClientSim *cs, BYTE playerNum, char *message);
@@ -583,6 +607,12 @@ bool         clientSimIsMapSkipAvailable(const ClientSim *cs);
 bool         clientSimIsLobbyAvailable(const ClientSim *cs);
 bool         clientSimIsMapSkipMyVote(const ClientSim *cs);
 bool         clientSimIsLobbyHiddenMines(const ClientSim *cs);
+/* Whether the server accepts smart pings. Positive on purpose: the value
+ * is stored and sent in the negative sense (see lobbySmartPingsOff) so a
+ * server that predates the setting reads as allowed, and this accessor is
+ * where that flips back so no UI code has to think in negatives. Answers
+ * true for a NULL sim and until the first lobby-settings event lands. */
+bool         clientSimIsLobbyAllowSmartPings(const ClientSim *cs);
 bool         clientSimIsBalanceProposalActive(const ClientSim *cs);
 /* SDL_GetTicks() at the most recent non-empty CTRL_BALANCE_PROPOSAL
  * arrival — used by the lobby's "Teams balanced" status label so the
@@ -943,6 +973,18 @@ bool        clientSimGetLobbyAllowNewPlayers(const ClientSim *cs);
 bool        clientSimGetLobbyWbnAvailable(const ClientSim *cs);
 uint32_t    clientSimGetLobbyServerLocks(const ClientSim *cs);
 
+/* The scenario the lobby's map is running, mirrored via
+ * CTRL_LOBBY_SETTINGS. The source is 0 when there is no scenario, and
+ * non-zero values follow the LobbyScenarioSource enum in control_event.h
+ * (1=beside the map, 2=one the host picked). The three strings are empty
+ * whenever the source is 0, and never NULL. extraTeams is what the
+ * scenario says about a host adding teams of its own. */
+uint8_t     clientSimGetLobbyScenarioSource(const ClientSim *cs);
+const char *clientSimGetLobbyScenarioName(const ClientSim *cs);
+const char *clientSimGetLobbyScenarioFileName(const ClientSim *cs);
+const char *clientSimGetLobbyScenarioDescription(const ClientSim *cs);
+bool        clientSimGetLobbyScenarioExtraTeams(const ClientSim *cs);
+
 /* Server map-upload policy as last broadcast in the lobby-settings event.
  * Defaults to UPLOAD_POLICY_ALLOW until the first event arrives. */
 UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs);
@@ -995,6 +1037,11 @@ uint8_t     clientSimGetLobbyTeamPool(const ClientSim *cs, BYTE teamId);
 uint8_t     clientSimGetLobbyTeamStartSide(const ClientSim *cs, BYTE teamId);
 const char *clientSimGetLobbyTeamName(const ClientSim *cs, BYTE teamId);
 
+/* Which of the brain's declared modes this bot runs in — an index into
+ * brainListLoadModes(<the slot's brain>)'s list, 0 being the default mode
+ * every ordinary game uses. clientSimGetLobbyBotDifficulty is then an index
+ * into THAT mode's level list. */
+uint8_t     clientSimGetLobbyBotMode(const ClientSim *cs, BYTE slot);
 uint8_t     clientSimGetLobbyBotDifficulty(const ClientSim *cs, BYTE slot);
 uint8_t     clientSimGetLobbyBotPersonality(const ClientSim *cs, BYTE slot);
 /* Returns the catalogue index of the brain assigned to a lobby bot slot.
@@ -1005,6 +1052,17 @@ uint8_t     clientSimGetLobbyBotPersonality(const ClientSim *cs, BYTE slot);
 uint8_t     clientSimGetLobbyBotBrain(const ClientSim *cs, BYTE slot);
 
 const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs);
+
+/* A brain's LOBBY TEXTS, indexed the same way as the brain list above.
+ *   announce — the brain's announce.txt: the message the lobby drops into
+ *              team chat when a bot running this brain joins your team.
+ *   docs     — the brain's commands.txt: the long text that message opens.
+ * Both come from the server (CTRL_LOBBY_BRAIN_DOCS_CHUNK) rather than off the
+ * local disk, because the server picks the brain and this machine need not
+ * have it. Both always return a NUL-terminated string, "" when there is
+ * nothing, so a caller tests the first byte rather than for NULL. */
+const char *clientSimGetLobbyBrainAnnounce(const ClientSim *cs, int brainIdx);
+const char *clientSimGetLobbyBrainDocs(const ClientSim *cs, int brainIdx);
 
 /* Last finished round's scoreboard + awards, or NULL if none has been
  * received since the last countdown (round-only scope). */
@@ -1026,9 +1084,48 @@ int         clientSimGetLobbyMapListCount(const ClientSim *cs);
 const char *clientSimGetLobbyMapListName(const ClientSim *cs, int idx);
 bool        clientSimGetLobbyMapListIsFolder(const ClientSim *cs, int idx);
 int64_t     clientSimGetLobbyMapListModTime(const ClientSim *cs, int idx);
+/* Whether the server said this map has a script beside it. False for a
+ * folder, for an index out of range, and for every entry from a server
+ * that runs no scenario library. */
+bool        clientSimGetLobbyMapListScripted(const ClientSim *cs, int idx);
 bool        clientSimGetLobbyMapListReady(const ClientSim *cs);
 const char *clientSimGetLobbyMapListReqPath(const ClientSim *cs);
 bool        clientSimGetLobbyMapListInFlight(const ClientSim *cs);
+/* Monotonic counter, ticked whenever the server's map directory changes
+ * under the client: a completed MAP_LIST_RSP, a completed MAP_SEARCH_RSP,
+ * or a finished upload (which invalidates the cached listing as well as
+ * bumping this). A caller holding its own last-seen value re-reads the
+ * caches when the two differ; only movement matters. 0 for a NULL cs. */
+uint32_t    clientSimGetLobbyMapListSeq(const ClientSim *cs);
+
+/* The scenarios the server offers on their own, independently of any map —
+ * populated asynchronously by PACKET_LOBBY_SCENARIO_LIST_RSP after the client
+ * sends a SCENARIO_LIST_REQ (clientSimNetSendLobbyScenarioListRequest).
+ *
+ * No path triple, unlike the map list above: the directory is flat, so there
+ * is only "we asked, waiting" and "have a listing". File is the name in the
+ * server's directory, which is what identifies a scenario; Name and
+ * Description are what its manifest says. MaxPlayers is the human cap the
+ * scenario asks for, 0 leaving the server's own. Bots is the seats its lobby
+ * template asks for. Bound says it is tied to the map it was written against,
+ * so a chooser can say why one it can see is not one it may pick.
+ *
+ * Nothing selects a scenario yet; this is what is on offer. "" / 0 / false
+ * for a NULL cs or an index out of range. */
+int         clientSimGetLobbyScenarioListCount(const ClientSim *cs);
+const char *clientSimGetLobbyScenarioListFile(const ClientSim *cs, int idx);
+const char *clientSimGetLobbyScenarioListName(const ClientSim *cs, int idx);
+const char *clientSimGetLobbyScenarioListDescription(const ClientSim *cs,
+                                                     int idx);
+int         clientSimGetLobbyScenarioListMaxPlayers(const ClientSim *cs,
+                                                    int idx);
+int         clientSimGetLobbyScenarioListBots(const ClientSim *cs, int idx);
+bool        clientSimGetLobbyScenarioListBound(const ClientSim *cs, int idx);
+bool        clientSimGetLobbyScenarioListReady(const ClientSim *cs);
+bool        clientSimGetLobbyScenarioListInFlight(const ClientSim *cs);
+/* Ticked on each completed response, so a caller holding its own last-seen
+ * value re-reads the list when the two differ. 0 for a NULL cs. */
+uint32_t    clientSimGetLobbyScenarioListSeq(const ClientSim *cs);
 
 /* Monotonic counter, ticked on every PACKET_LOBBY_MAP_CHANGE the
  * client receives. UI code can cache the last-seen value to detect
@@ -1214,6 +1311,14 @@ bool         clientSimGetMyTankMapPos(ClientSim *cs, BYTE *mapX, BYTE *mapY);
  * BYTE version; the map overview's follow camera glides on this where the
  * whole-square read would step a square at a time. */
 bool         clientSimGetMyTankMapPosF(ClientSim *cs, float *mapX, float *mapY);
+
+/* Where inside its square the local tank is standing, in world units across
+ * the square - the fraction the F version returns, as the whole number it is
+ * really kept as. Same false cases as the other two, and it leaves *subX /
+ * *subY alone when it fails, so a caller keeps whatever it seeded them with.
+ * Line of sight wants this: which corner of a wall the player can see round
+ * turns on where in the square they are, not just on which square it is. */
+bool         clientSimGetMyTankSubPos(ClientSim *cs, BYTE *subX, BYTE *subY);
 bool         clientSimGetGunsightTile(ClientSim *cs, BYTE *mapX, BYTE *mapY);
 
 /* The gunsight's map square and the pixel offset inside it, for a caller that
@@ -1327,6 +1432,13 @@ void         clientSimManMoveToMap(ClientSim *cs, BYTE mapX, BYTE mapY, buildSel
 /* Cycle the current build selection by `delta` (positive or negative)
  * through the standard order: Trees -> Road -> Building -> Pillbox -> Mine. */
 void         clientSimCycleBuildSelect(ClientSim *cs, int delta);
+
+/* True for a seat the roster holds with nobody on the field. Such a seat
+ * keeps its players-table identity, so the table still reads it as a live
+ * player; what it does not have is a tank. playerNum is 0-based here, as
+ * the players table and the lobby mirror both are. False when cs is NULL,
+ * when the slot is out of range, and for every seat that is on the field. */
+bool         clientSimSlotIsUnfielded(const ClientSim *cs, BYTE playerNum);
 
 /* Alliance accessors. playerNum is 1-based (legacy screen-facade
  * convention); the function converts to 0-based internally. */

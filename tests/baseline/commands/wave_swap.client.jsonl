@@ -1,0 +1,21 @@
+# wave_swap_udp — the one human, over the wire.
+#
+# Ready only. start_game is refused in --server mode, so what starts the round
+# here is the lobby's own all-ready check: this ready plus the held seats,
+# which are seated ready as every bot seat is. Everything after that is the
+# scenario beside the map, which fields a wave into the seats its lobby is
+# holding, hands them back between waves, and ends the round itself.
+#
+# The slot is 6, not 0. The scenario's lobby template seats its six raiders
+# before anybody joins and the free-slot rule hands out the first slot nobody
+# is in, so the seats hold 0-5 and this client lands in 6. set_ready in
+# --server mode refuses any slot but the client's own and exits 2, so a
+# template that seated a different number would fail here rather than quietly
+# readying the wrong seat.
+#
+# The tick is the client's own pump counter, about a millisecond an iteration
+# while the server tick is still 0, so this is roughly three seconds in — well
+# past the join and the map download.
+#
+# No exit op: the run ends on the server's shutdown, not on anything here.
+{"tick": 3000, "op": "set_ready", "slot": 6, "ready": true}

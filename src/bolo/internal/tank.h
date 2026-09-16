@@ -102,6 +102,27 @@ struct GameSim;
 #define TANK_HIT_RADIUS         112   /* one-tile mid-radius (128) − 16 wu (1 game unit) */
 #define TANK_HIT_RADIUS_SQUARED (TANK_HIT_RADIUS * TANK_HIT_RADIUS)
 
+/* "A shell came near me" ring, used ONLY to sub-classify a drowning as
+ * forced or unforced (DEATH_CAUSE_DROWNED_UNFORCED).  Nothing in the sim
+ * branches on it.
+ *
+ * The radius is the brain's own near-shell notion: GoalHunter's
+ * SWERVE_SHELL_NEAR_WU (brains/GoalHunter_1.7/constants.lua:724) is 400 world
+ * units — 400/256 = 1.56 tiles, i.e. a bit over three tank hit radii
+ * (TANK_HIT_RADIUS 112).  That is the distance at which the brain already
+ * considers a shell close enough to swerve for, so a drowning with no shell
+ * inside it is a drowning the brain itself would not have called "under
+ * fire".
+ *
+ * The memory is one second.  shellsUpdate runs once per GAME tick
+ * (server_sim_tick.c gates the world systems on sim->tick % 2 == 0, and
+ * sim->tick advances every GAME_TICK_LENGTH = 10 ms), so game ticks are the
+ * 20 ms frames the brain thinks on: GAME_NUMGAMETICKS_SEC = 50 of them per
+ * second.  Fits a BYTE. */
+#define TANK_SHELL_NEAR_WU            400
+#define TANK_SHELL_NEAR_WU_SQUARED    (TANK_SHELL_NEAR_WU * TANK_SHELL_NEAR_WU)
+#define TANK_SHELL_NEAR_MEMORY_FRAMES 50
+
 /*
 Wharf-Rat explains Acceleration
 
@@ -183,8 +204,8 @@ based on my testing.
 /* Shells + mines must be greater then 20 for a big explosion */
 #define TANK_BIG_EXPLOSION_THRESHOLD 20
 
-/* Amount of damage a mine does to the tank */
-#define MINE_DAMAGE 10
+/* Normal mine damage; a fatal hit is reduced to two-thirds in tankMineDamage. */
+#define MINE_DAMAGE 15
 
 /* Number of map squares around the tank postion that a mine can hurt a tank */
 #define MINE_DAMAGE_DISTANCE_LEFT 0 /* was -1 */

@@ -217,6 +217,7 @@ bool gameFrontUseNatTraversal = FALSE;
  * the desktop build would. */
 unsigned short gameFrontHostingPort             = 27500;
 bool           gameFrontHostingAllowSpec        = TRUE;
+bool           gameFrontHostingScripts          = TRUE;
 int            gameFrontHostingMaxSpec          = 16;
 int            gameFrontHostingUploadPolicy     = UPLOAD_POLICY_ALLOW;
 int            gameFrontHostingUploadMaxFiles   = 64;
@@ -900,14 +901,48 @@ bool gameFrontHasLocalServer(void)            { return FALSE; }
  * returns (NULL for a netUdp lobby — the player is not the host). */
 ServerSim *gameFrontGetSinglePlayerServerSim(void) { return wasmServerSim; }
 void gameFrontTickSteamPresenceLobby(ClientSim *cs)  { (void)cs; }
-void gameFrontGetChosenBotBrain(char *out, size_t outLen) { if (out && outLen) out[0] = '\0'; }
-void gameFrontSetChosenBotBrain(const char *name)    { (void)name; }
+/* No prefs file in the browser, so the player never has a stored bot
+ * difficulty: the getter always reports "not chosen" and the lobby /
+ * skill-guess callers fall back to their own default. */
+bool gameFrontGetChosenBotDifficulty(uint8_t *out) { (void)out; return false; }
+void gameFrontSetChosenBotDifficulty(uint8_t difficulty) { (void)difficulty; }
+/* Same for the mode preference: nothing is stored, so a bot always runs in
+ * the brain's first (default) mode at that mode's own default level. */
+void gameFrontSetChosenBotModeAndLevel(const char *modeKey, const char *levelKey) {
+  (void)modeKey; (void)levelKey;
+}
+bool gameFrontGetChosenBotModeKey(char *out, size_t outSz) {
+  if (out && outSz) out[0] = '\0';
+  return false;
+}
+bool gameFrontGetChosenBotLevelKey(char *out, size_t outSz) {
+  if (out && outSz) out[0] = '\0';
+  return false;
+}
+uint8_t gameFrontSpBotMode(const char *brainPath) { (void)brainPath; return 0; }
+/* No prefs in the browser: a bot's tag colour is never remembered, so the
+ * lobby re-derives it from the name each session (same result every time). */
+bool gameFrontGetBotTagColor(const char *botName, uint32_t *rgb) { (void)botName; (void)rgb; return false; }
+void gameFrontSetBotTagColor(const char *botName, uint32_t rgb) { (void)botName; (void)rgb; }
+/* No WinBolo.net stats plumbing here either, so the skill guess has nothing
+ * to go on: the browser build gets the same Hard every difficulty currently
+ * plays like. */
+uint8_t gameFrontSpBotDifficulty(void) { return BOT_DIFFICULTY_HARD; }
+uint8_t gameFrontSpBotLevel(const char *brainPath, uint8_t mode) {
+  (void)brainPath; (void)mode; return BOT_DIFFICULTY_HARD;
+}
 
 /* Client-hosting write-through setters. The desktop build persists each key
  * into [HOSTING] as it changes; there is no prefs file in the browser, so
- * these only hold the value for the session the dialogs read it back in. */
+ * these only hold the value for the session the dialogs read it back in.
+ *
+ * The desktop's scripts setter also passes the answer to the scenario
+ * library, which is what decides whether an attach loads a script. This
+ * build links no scenario library — the browser never hosts — so there is
+ * nothing here to tell and the value is held for the dialogs alone. */
 void gameFrontSetHostingPort(unsigned short port)    { gameFrontHostingPort = port; }
 void gameFrontSetHostingAllowSpec(bool allow)        { gameFrontHostingAllowSpec = allow; }
+void gameFrontSetHostingScripts(bool allow)          { gameFrontHostingScripts = allow; }
 void gameFrontSetHostingMaxSpec(int maxSpec)         { gameFrontHostingMaxSpec = maxSpec; }
 void gameFrontSetHostingUploadPolicy(int policy)     { gameFrontHostingUploadPolicy = policy; }
 void gameFrontSetHostingUploadMaxFiles(int maxFiles) { gameFrontHostingUploadMaxFiles = maxFiles; }
@@ -939,6 +974,59 @@ void gameFrontSetClassicMode(bool on)        { gameFrontClassicMode = on; }
 void gameFrontSetAlliesInTrees(bool on)      { gameFrontAlliesInTrees = on; }
 void gameFrontSetOverviewWindow(int window)  { gameFrontOverviewWindow = window; }
 void gameFrontSetLineOfSight(int mode)       { gameFrontLineOfSight = mode; }
+
+/* Visibility preset and the remembered custom set. Nothing persists in a
+ * browser tab, so these hold the choice for the session and no further. */
+int                gameFrontVisibilityPreset = (int)visibilityPresetClassic;
+VisibilitySettings gameFrontVisibilityCustom;
+bool               gameFrontVisibilityCustomSaved = FALSE;
+
+void gameFrontSetVisibilityPreset(int preset) {
+  gameFrontVisibilityPreset = preset;
+}
+
+void gameFrontSetVisibilityCustom(const VisibilitySettings *v) {
+  if (v == NULL) return;
+  gameFrontVisibilityCustom      = *v;
+  gameFrontVisibilityCustomSaved = TRUE;
+}
+
+void gameFrontRememberVisibility(const VisibilitySettings *v,
+                                 bool                      saveCustom) {
+  VisibilityPreset p;
+
+  if (v == NULL) return;
+  gameFrontViewPillPolicy    = (int)v->policy[viewCategoryPill];
+  gameFrontViewBasePolicy    = (int)v->policy[viewCategoryBase];
+  gameFrontViewAllyPolicy    = (int)v->policy[viewCategoryAlly];
+  gameFrontViewPillDecaySecs = (int)v->decaySecs[viewCategoryPill];
+  gameFrontViewBaseDecaySecs = (int)v->decaySecs[viewCategoryBase];
+  gameFrontViewAllyDecaySecs = (int)v->decaySecs[viewCategoryAlly];
+  gameFrontClassicMode       = v->classicMode;
+  gameFrontAlliesInTrees     = v->alliesInTrees;
+  gameFrontOverviewWindow    = (int)v->overviewWindow;
+  gameFrontLineOfSight       = (int)v->lineOfSight;
+  p = visibilityPresetMatch(v);
+  gameFrontVisibilityPreset = (int)p;
+  if (saveCustom && p == visibilityPresetCustom) {
+    gameFrontSetVisibilityCustom(v);
+  }
+}
+
+void gameFrontGetVisibilitySettings(VisibilitySettings *out) {
+  if (out == NULL) return;
+  memset(out, 0, sizeof(*out));
+  out->policy[viewCategoryPill]    = (uint8_t)gameFrontViewPillPolicy;
+  out->policy[viewCategoryBase]    = (uint8_t)gameFrontViewBasePolicy;
+  out->policy[viewCategoryAlly]    = (uint8_t)gameFrontViewAllyPolicy;
+  out->decaySecs[viewCategoryPill] = (uint16_t)gameFrontViewPillDecaySecs;
+  out->decaySecs[viewCategoryBase] = (uint16_t)gameFrontViewBaseDecaySecs;
+  out->decaySecs[viewCategoryAlly] = (uint16_t)gameFrontViewAllyDecaySecs;
+  out->classicMode                 = gameFrontClassicMode;
+  out->overviewWindow              = (uint8_t)gameFrontOverviewWindow;
+  out->lineOfSight                 = (uint8_t)gameFrontLineOfSight;
+  out->alliesInTrees               = gameFrontAlliesInTrees;
+}
 
 /* Steam rich presence — there is no Steam client behind a browser tab. */
 void gameFrontSetSteamPresenceMenu(void)           { }

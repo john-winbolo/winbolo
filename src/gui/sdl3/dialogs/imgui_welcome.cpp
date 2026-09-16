@@ -245,6 +245,48 @@ extern "C" int imguiWelcomeShow(void) {
             }
 #endif
             ImGui_ImplSDL3_ProcessEvent(&ev);
+            /* C cycles the background game's camera to the next tank.
+             * Only this dialog takes it: the other pre-game dialogs that
+             * draw the same background carry text fields and the key
+             * capture in key setup, where a bare letter belongs to them.
+             *
+             * The test is WantTextInput, not WantCaptureKeyboard: with
+             * NavEnableKeyboard on, this dialog's own buttons leave a
+             * window nav-focused and latch WantCaptureKeyboard true for
+             * good, so testing it swallows every press (the same latch
+             * sdl3ImguiRenderMenuBar works around for in-game keys).
+             * WantTextInput is true only while a field holds the caret,
+             * which is exactly when a bare letter is not ours. */
+            if (hasBg && ev.type == SDL_EVENT_KEY_DOWN &&
+                !ImGui::GetIO().WantTextInput) {
+                /* +/- zoom the background in and out, 0 back to the
+                 * fit-to-screen default. Auto-repeat is allowed here (a
+                 * held key should keep zooming) but not on C, where it
+                 * would race through the roster. */
+                switch (ev.key.key) {
+                    case SDLK_C:
+                        if (!ev.key.repeat) bgGameCycleCamera(bg);
+                        break;
+                    /* = and KP+ as well as +: on most layouts + is
+                     * shifted =, and a viewer who does not hold shift
+                     * still means "zoom in". */
+                    case SDLK_PLUS:
+                    case SDLK_EQUALS:
+                    case SDLK_KP_PLUS:
+                        bgGameAdjustZoom(bg, +1);
+                        break;
+                    case SDLK_MINUS:
+                    case SDLK_KP_MINUS:
+                        bgGameAdjustZoom(bg, -1);
+                        break;
+                    case SDLK_0:
+                    case SDLK_KP_0:
+                        bgGameResetZoom(bg);
+                        break;
+                    default:
+                        break;
+                }
+            }
             dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);

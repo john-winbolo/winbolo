@@ -81,6 +81,11 @@ extern "C" {
 #include "glyphs.h"
 #include "ping_overlay.h"
 #include "dialogs/imgui_keycap.h"
+/* The lobby's visibility value renderer and the preset table, so the
+ * in-game info panel names a server's rules in the same words and
+ * shapes the lobby does. At file scope: it pulls in imgui.h, whose
+ * templates do not compile with C linkage. */
+#include "dialogs/lobby/lobby_internal.h"
 
 extern "C" {
 #include "client_net.h"
@@ -293,6 +298,10 @@ static bool s_showNetInfo  = false;
 static bool s_showGameInfo = false;
 static bool s_showSendMsg  = false;
 static bool s_showPlayersPanel = false;
+/* Defined next to sdl3ImguiShowPlayersPanel, which it belongs with;
+ * declared here because the Players menu asks it thousands of lines
+ * earlier. */
+static bool playersPanelShown(void);
 /* Width one players-panel row needs, measured from the rows drawn last frame
    and used as the panel's resize minimum. 0 until the panel has drawn once. */
 static float s_playersPanelNeedW = 0.0f;
@@ -347,21 +356,54 @@ static uint8_t  s_playerFlags[MAX_PLAYERS] = {};
  * there is no s_iconWbnVerified — the Mac menubar loads its own copy of
  * shield.svg for native Cocoa drawing. */
 static SDL_Texture *s_iconSteam[ICON_SLOT_COUNT] = {};
-static SDL_Texture *s_iconBrain[ICON_SLOT_COUNT] = {};
-/* Large brain rasterization used for tank-label overlays, kept as a surface
- * because the label caches texture it per renderer (main window, pop-out
- * overview). The small s_iconBrain is rasterized at WBN_ICON_SIZE for the
+/* The chip that marks a computer player, wherever one is named: the players
+ * panel, the in-game player menu, the lobby list, the recap, and the tank
+ * label on the map. It replaced a brain, which said the same thing in a
+ * second symbol — the lobby already marked its bot rows with this glyph
+ * (lobby_assets.cpp), so the game had two. data/ui/brain.svg is no longer
+ * drawn anywhere. */
+static SDL_Texture *s_iconBotChipGreen[ICON_SLOT_COUNT] = {};
+static SDL_Texture *s_iconBotChipRed[ICON_SLOT_COUNT]   = {};
+/* Large chip rasterization used for tank-label overlays, kept as a surface
+ * because the label textures it per renderer (main window, pop-out
+ * overview). The small s_iconBotChip is rasterized at WBN_ICON_SIZE for the
  * player-popup / renderPlayerName paths; sized up to a tank-label height
  * (~16-48 px depending on zoom) the small one looks soft because the SVG's
  * vector edges were already baked into a 14-px bitmap.
  * WBN_ICON_TANK_LABEL_SIZE rasterizes the same SVG at a height that covers
  * the realistic zoom range so the label-side blit is a (sharp) downscale
  * rather than an upscale. */
-static SDL_Surface *s_iconBrainSurf = nullptr;
+static SDL_Surface *s_iconBotChipSurfGreen = nullptr;
+static SDL_Surface *s_iconBotChipSurfRed   = nullptr;
+
+/* Who this client is allied with, mirrored per frame so code with no
+ * ClientSim can ask. tank_label.c is the reason: it draws a bot's chip on the
+ * map and has to pick the green one or the red one, but it is handed a player
+ * number and a font and nothing else. Refreshed in sdl3ImguiPumpAndRender,
+ * which does get a sim, the way s_playerFlags mirrors the flags.
+ *
+ * Written on the main thread, read on the render thread, unsynchronised —
+ * the same shape s_playerFlags already has (tank_label.c reads that one the
+ * same way). Safe in practice for the same reasons: plain bools, so no torn
+ * value, and the worst a race costs is a label one frame behind on whose
+ * side a bot is. Do not widen this to anything that has to be read as a
+ * set. */
+static bool s_playerIsAlly[MAX_PLAYERS] = {};
 /* Skull for the players panel's death counter columns. Its own copy of
  * data/ui/skull.svg rather than the lobby's — that one lives in the lobby's
  * icon cache behind lobbyIcons(), which is lobby-internal. */
 static SDL_Texture *s_iconSkull[ICON_SLOT_COUNT] = {};
+/* The smart-ping mute toggle's two states, for the players panel. The plain
+ * pin the centre of the ping pie sends, and that same pin slashed. Outside
+ * the voice test below for the reason the skull is: hiding a player's pings
+ * is not a voice feature and ships in -DWINBOLO_VOICE=OFF builds too.
+ *
+ * Loaded here as white alpha masks through imguiLoadSvgIconWhite, not through
+ * pingIconTexture: that cache rasterises for the map at the view's own scale
+ * and hands back the kind table's colour, where this cell needs one icon at
+ * WBN_ICON_SIZE that it tints itself, dim or red, from the mute state. */
+static SDL_Texture *s_iconPing[ICON_SLOT_COUNT]      = {};
+static SDL_Texture *s_iconPingMuted[ICON_SLOT_COUNT] = {};
 #if defined(WINBOLO_VOICE)
 /* Voice state icons for the players panel. Which shape is drawn says which
  * end the state belongs to: a speaker for the states about playback here —
@@ -421,10 +463,30 @@ static void ensureWbnIconsLoaded(void) {
     s_wbnIconsLoaded[slot] = true;
     SDL_Renderer *r = activeRenderer();
     s_iconSteam[slot]   = imguiLoadSvgIconWhite(r, "data/ui/steam.svg", WBN_ICON_SIZE);
-    s_iconBrain[slot]   = imguiLoadSvgIconWhite(r, "data/ui/brain.svg", WBN_ICON_SIZE);
+    /* The bot badge in a player row: the same two chips the lobby marks its
+     * bot rows with (lobby_assets.cpp loads the same pair), so one game does
+     * not say "computer player" with a chip in one list and a brain in
+     * another.
+     *
+     * Through imguiLoadSvgIcon, which KEEPS the artwork's own colours —
+     * unlike every other badge here, which goes through the ...White variant
+     * and arrives as a flat alpha mask to be tinted. These two are not flat:
+     * each is gold pins around a dark body with a coloured die in the middle.
+     * Forced white, all of that collapses into one silhouette, and tinting
+     * the silhouette green or red gives a solid blob rather than the chip
+     * the lobby draws. Two files, drawn as authored, is what the art is for.  */
+    s_iconBotChipGreen[slot] = imguiLoadSvgIcon(r, "data/ui/bot-cpu-green.svg",
+                                                WBN_ICON_SIZE);
+    s_iconBotChipRed[slot]   = imguiLoadSvgIcon(r, "data/ui/bot-cpu-red.svg",
+                                                WBN_ICON_SIZE);
     /* Outside the voice test below: the counter columns that draw this are
      * not a voice feature and ship in -DWINBOLO_VOICE=OFF builds too. */
     s_iconSkull[slot]   = imguiLoadSvgIconWhite(r, "data/ui/skull.svg", WBN_ICON_SIZE);
+    /* Ping-mute toggle, outside the voice test with the skull. */
+    s_iconPing[slot]      = imguiLoadSvgIconWhite(r, "data/ui/ping/standard.svg",
+                                                  WBN_ICON_SIZE);
+    s_iconPingMuted[slot] = imguiLoadSvgIconWhite(r, "data/ui/ping/standard-muted.svg",
+                                                  WBN_ICON_SIZE);
 #if defined(WINBOLO_VOICE)
     s_iconMic[slot]          = imguiLoadSvgIconWhite(r, "data/ui/mic.svg",           WBN_ICON_SIZE);
     s_iconMicMuted[slot]     = imguiLoadSvgIconWhite(r, "data/ui/mic-muted.svg",     WBN_ICON_SIZE);
@@ -434,24 +496,41 @@ static void ensureWbnIconsLoaded(void) {
 #endif
     /* Renderer-free, so they are loaded once for every slot rather than
      * rasterized again per renderer. */
-    if (!s_iconBrainSurf) {
-        s_iconBrainSurf = imguiLoadSvgIconWhiteSurface("data/ui/brain.svg",
+    /* Colour-keeping, unlike every other surface here: the tank label only
+     * alpha-mods its icon and never colour-mods it — which is why a country
+     * flag keeps its colours out on the map — so a chip loaded as a white
+     * mask would draw white there while the flag beside it did not. */
+    if (!s_iconBotChipSurfGreen) {
+        s_iconBotChipSurfGreen = imguiLoadSvgIconSurface("data/ui/bot-cpu-green.svg",
+                                                         WBN_ICON_TANK_LABEL_SIZE);
+    }
+    if (!s_iconBotChipSurfRed) {
+        s_iconBotChipSurfRed = imguiLoadSvgIconSurface("data/ui/bot-cpu-red.svg",
                                                        WBN_ICON_TANK_LABEL_SIZE);
     }
-    WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] slot=%d steam=%p brain=%p brainSurf=%p renderer=%p s_renderer=%p drawRenderer=%p",
+    WB_LOG_DEBUG(WB_LOG_CAT_GUI, "[WBN ICONS] slot=%d steam=%p chip=%p chipSurf=%p renderer=%p s_renderer=%p drawRenderer=%p",
             slot, (void *)s_iconSteam[slot],
-            (void *)s_iconBrain[slot], (void *)s_iconBrainSurf,
+            (void *)s_iconBotChipRed[slot], (void *)s_iconBotChipSurfRed,
             (void *)r, (void *)s_renderer, (void *)sdl3DrawGetRenderer());
 }
 
-/* Skull for the players panel's death counter columns, drawn square at
- * text height and tinted to the text colour so it sits with the other header
- * art rather than shouting. Returns false when the asset is missing, which is
- * the caller's cue to fall back to the column's written label. */
-static bool playersPanelDrawSkull(void) {
+/* How much of a full-height skull the builder-deaths header's second sprite
+ * takes. That header is a builder with a skull after it, and at full height
+ * the pair is wide enough that the column reads as two columns with a number
+ * under only one of them. Drawn small the skull marks the builder rather than
+ * standing beside it as an equal. */
+#define PLAYERS_SKULL_BADGE_SCALE 0.6f
+
+/* Skull for the players panel's death counter columns, drawn square and
+ * tinted to the text colour so it sits with the other header art rather than
+ * shouting. `scale` is a fraction of text height: 1.0 for the deaths column,
+ * which stands alone, and PLAYERS_SKULL_BADGE_SCALE where it only marks the
+ * builder beside it. Returns false when the asset is missing, which is the
+ * caller's cue to fall back to the column's written label. */
+static bool playersPanelDrawSkull(float scale = 1.0f) {
     SDL_Texture *skull = s_iconSkull[activeIconSlot()];
     if (!skull) return false;
-    float sz = ImGui::GetTextLineHeight();
+    float sz = ImGui::GetTextLineHeight() * scale;
     ImGui::ImageWithBg((ImTextureID)skull, ImVec2(sz, sz),
                        ImVec2(0, 0), ImVec2(1, 1),
                        ImVec4(0, 0, 0, 0),
@@ -517,27 +596,81 @@ static SDL_Texture *activeTilesTexture(void) {
     return s_tilesPopOut;
 }
 
-/* imguiDrawAtlasIcon against a sheet the caller names. Same inline sprite at
- * text height, keeping the source aspect so a sprite that is not square (the
- * 3x4 LGM) is not stretched; the shared helper reads the game window's sheet
- * directly, which is the one thing a pop-out cannot do. Source coords and
- * extents are in 1x units, normalised against the 1x reference size, so the
- * game's sheet and the pop-out's are addressed the same way whatever scale
- * each was assembled at.
+/* The size one of those sprites is drawn at. Shared with the column-width
+ * arithmetic, which has to reserve exactly what the draw will take.
  *
- * The nearest-sampling bracket is the shared helper's, for the same two
- * reasons: the icons are pixel art at text height, and the game's live sheet
- * would otherwise keep whatever sampler the backend last bound it with. */
+ * Two rules, and the second is the one that is easy to miss.
+ *
+ * FIRST: these are pixel art off the map's tile sheet, so the scale is a
+ * WHOLE multiple of the source and never a fraction. Stretching a sprite to
+ * the text line height, which is what this did, resamples it unevenly — some
+ * source rows land on one destination pixel and their neighbours on two, so a
+ * symmetric sprite comes out lopsided and a sprite only three pixels wide
+ * loses a third of itself to the rounding. Whole multiples give every source
+ * pixel the same size.
+ *
+ * SECOND: one multiple for the whole sheet, derived from the TILE, not a
+ * separate multiple per sprite off the line height. A per-sprite multiple
+ * looks right at one UI scale and falls apart at the next, because the two
+ * sprites divide the line differently: at scale 1.0 the line is 18 px, and
+ * floor(18/16) leaves a tile at 16 while floor(18/4) takes the 3x4 builder to
+ * 24 — the little man drawn half again as tall as a pillbox. Sizing every
+ * sprite against the tile's own multiple instead keeps them in the proportion
+ * the map draws them in, at every scale.
+ *
+ * So: pick k from the tile, then give each sprite the whole multiple that
+ * best fills that same height. A 16 px tile and a 3x4 builder both come out
+ * one tile tall, and both scale together when the UI scale changes.
+ *
+ * "Whole multiple" is of the LOGICAL tile — 16 units as tiles.h numbers the
+ * sheet — not of the sheet's texels: the sheet itself is rasterised at
+ * gSheetScale (sdl3draw.c), so at some zooms one does not divide the other
+ * and the blit resamples anyway. This removes the fractional scaling that is
+ * ours to remove; it does not promise a texel-exact blit.
+ *
+ * Note the font is 18 * uiScale (see imguiLoadBoloFont), so the line is 18 px
+ * at scale 1.0 and a tile is drawn slightly SHORTER than the text beside it.
+ * That is the honest trade: a 16 px sprite in an 18 px line, rather than a
+ * 1.125x stretch that duplicates two rows out of sixteen. */
+static ImVec2 atlasIconSizeFor(int srcW, int srcH) {
+    const float h = ImGui::GetTextLineHeight();
+    if (srcW <= 0 || srcH <= 0) return ImVec2(h, h);
+    /* The tile's multiple sets the target height for everything on the sheet. */
+    float kTile = ImFloor(h / (float)TILE_SIZE_Y);
+    if (kTile < 1.0f) kTile = 1.0f;
+    const float targetH = kTile * (float)TILE_SIZE_Y;
+    /* ...and each sprite takes the whole multiple that best fills it. */
+    float k = ImFloor(targetH / (float)srcH);
+    if (k < 1.0f) k = 1.0f;
+    return ImVec2((float)srcW * k, (float)srcH * k);
+}
+
+/* imguiDrawAtlasIcon against a sheet the caller names: the shared helper
+ * reads the game window's sheet directly, which is the one thing a pop-out
+ * cannot do. Source coords and extents are in 1x units, normalised against
+ * the 1x reference size, so the game's sheet and the pop-out's are addressed
+ * the same way whatever scale each was assembled at.
+ *
+ * Sizing is atlasIconSizeFor's, above — whole multiples off the tile, not the
+ * stretch-to-text-height this helper used to do. The nearest-sampling bracket
+ * is the shared helper's, for the same two reasons: the icons are pixel art,
+ * and the game's live sheet would otherwise keep whatever sampler the backend
+ * last bound it with. */
 static void drawAtlasIconFrom(SDL_Texture *tex, int srcX, int srcY,
                               int srcW, int srcH) {
     if (!tex || srcW <= 0 || srcH <= 0) return;
-    float h = ImGui::GetTextLineHeight();
-    float w = h * (float)srcW / (float)srcH;
+    const ImVec2 sz = atlasIconSizeFor(srcW, srcH);
+    /* Start the sprite on a whole pixel as well as size it in whole pixels.
+     * The column arithmetic places these at fractional x, and a whole-multiple
+     * sprite started half a pixel along is sampled off the grid again — which
+     * is the same ragged edge, just moved. */
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImGui::SetCursorScreenPos(ImVec2(IM_TRUNC(at.x), IM_TRUNC(at.y)));
     ImVec2 uv0((float)srcX / TILE_FILE_X, (float)srcY / TILE_FILE_Y);
     ImVec2 uv1((float)(srcX + srcW) / TILE_FILE_X,
                (float)(srcY + srcH) / TILE_FILE_Y);
     imguiPushNearestSampling();
-    ImGui::Image((ImTextureID)tex, ImVec2(w, h), uv0, uv1);
+    ImGui::Image((ImTextureID)tex, sz, uv0, uv1);
     imguiPopNearestSampling();
 }
 
@@ -566,8 +699,14 @@ static void ensurePlatformIconsLoaded(void) {
  * Must run while that renderer is still alive. */
 static void destroyIconSlot(int slot) {
     if (s_iconSteam[slot]) { SDL_DestroyTexture(s_iconSteam[slot]); s_iconSteam[slot] = nullptr; }
-    if (s_iconBrain[slot]) { SDL_DestroyTexture(s_iconBrain[slot]); s_iconBrain[slot] = nullptr; }
+    if (s_iconBotChipGreen[slot]) { SDL_DestroyTexture(s_iconBotChipGreen[slot]); s_iconBotChipGreen[slot] = nullptr; }
+    if (s_iconBotChipRed[slot]) { SDL_DestroyTexture(s_iconBotChipRed[slot]); s_iconBotChipRed[slot] = nullptr; }
     if (s_iconSkull[slot]) { SDL_DestroyTexture(s_iconSkull[slot]); s_iconSkull[slot] = nullptr; }
+    /* Outside the voice guard with the skull: the ping-mute toggle is not a
+     * voice feature and is loaded in every build, so it has to be freed in
+     * every build too. */
+    if (s_iconPing[slot]) { SDL_DestroyTexture(s_iconPing[slot]); s_iconPing[slot] = nullptr; }
+    if (s_iconPingMuted[slot]) { SDL_DestroyTexture(s_iconPingMuted[slot]); s_iconPingMuted[slot] = nullptr; }
 #if defined(WINBOLO_VOICE)
     if (s_iconMic[slot]) { SDL_DestroyTexture(s_iconMic[slot]); s_iconMic[slot] = nullptr; }
     if (s_iconMicMuted[slot]) { SDL_DestroyTexture(s_iconMicMuted[slot]); s_iconMicMuted[slot] = nullptr; }
@@ -679,6 +818,39 @@ bool sdl3ImguiAllianceReqInCooldown(void) {
 
 void sdl3ImguiNoteAllianceRequested(void) {
     s_allianceReqCooldownEnd = SDL_GetTicks() + ALLIANCE_REQ_WAIT_MS;
+}
+
+/* Whether each of the two alliance actions can be used right now.
+ *
+ * One answer for every surface that offers the pair — the players panel, the
+ * Players menu and the WinBolo menu. Each of those used to work it out for
+ * itself, and they did not agree: the WinBolo menu greyed Request on a ranked
+ * game only, ignoring whether anyone was selected or a request was still in
+ * its cooldown, and it never greyed Leave at all. So the same action could be
+ * live in one menu and dead in another at the same moment, and clicking the
+ * live one did nothing. Three callers, one rule.
+ *
+ * Cheap enough to call per frame per surface: one pass over MAX_PLAYERS. */
+typedef struct {
+    bool canRequest;  /* someone ticked, none in flight, and alliances allowed */
+    bool canLeave;    /* you are in an alliance to leave */
+    bool rankedGame;  /* alliances off entirely — also drives the explanation */
+} AllianceActionState;
+
+static AllianceActionState allianceActionState(ClientSim *cs) {
+    AllianceActionState st = {};
+    BYTE self   = clientSimGetMyPlayerNum(cs);
+    bool picked = false;
+    st.rankedGame = clientSimGetLobbyRanked(cs);
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (!s_playerEnabled[i] || i == (int)self) continue;
+        /* An ally cannot also be a request target, which is why this is an
+         * else: ticking someone you are already allied with is not a request. */
+        if (clientSimIsPlayerAlly(cs, self, (BYTE)i)) st.canLeave = true;
+        else if (s_playerChecked[i])                  picked     = true;
+    }
+    st.canRequest = picked && !sdl3ImguiAllianceReqInCooldown() && !st.rankedGame;
+    return st;
 }
 
 /* -------------------------------------------------------
@@ -996,14 +1168,20 @@ static void togglePopOut(PopOutWindow *pw, const char *title, int w, int h, Uint
     }
 }
 
-/* Classic mode as last seen from the connected server, refreshed once a
- * frame in sdl3ImguiPumpAndRender. A file static rather than a ClientSim
- * read at each site because the two suppression points below are reached
- * from callers that have no ClientSim in hand. Spectators are exempt: they
- * are on the delayed god-view stream and are not competing. */
-static bool s_classicMode = false;
+/* Whether the server is withholding the map overview and the full screen
+ * map, as last seen from the connected server and refreshed once a frame in
+ * sdl3ImguiPumpAndRender. A file static rather than a ClientSim read at each
+ * site because the suppression points below are reached from callers that
+ * have no ClientSim in hand. Spectators are exempt: they are on the delayed
+ * god-view stream and are not competing.
+ *
+ * Two things turn it on. The overview window set to None says so directly,
+ * which is what a current server sends. Classic mode is read as well,
+ * because a server built before None existed answers classic mode with the
+ * Classic window and would otherwise hand the overview straight back. */
+static bool s_noOverview = false;
 
-static bool classicModeActive(void) { return s_classicMode; }
+static bool overviewSuppressed(void) { return s_noOverview; }
 
 /* The overview is the one pop-out whose geometry is remembered, so every
  * place that opens it comes through here rather than calling popOutCreate
@@ -1027,11 +1205,11 @@ static void mapOverviewOpen(void) {
        alone: a player who had the pop-out flagged to reopen gets it back the
        moment they are back in classic mode. */
     if (gameFrontFullScreen) return;
-    /* The server is holding the player in the classic framed view, so the
-       pop-out does not open while that lasts. gameFrontShowMapOverview is
+    /* The server is not offering the overview, so the pop-out does not
+       open while that lasts. gameFrontShowMapOverview is
        left alone for the same reason as above: it is the player's own
        preference and it hands the pop-out back on the next server. */
-    if (classicModeActive()) return;
+    if (overviewSuppressed()) return;
     bool firstCreate = (s_popMapOverview.window == nullptr);
     int w = gameFrontOverviewW;
     int h = gameFrontOverviewH;
@@ -1108,11 +1286,12 @@ static void overviewInWindowSet(bool on) {
  * first because overviewInWindowSet reads it — turning the mode off in game
  * has to clear it before the call or the window never leaves full screen. */
 static void overviewInWindowChoose(bool on) {
-    /* Classic mode refuses entry only. Leaving still has to work, or a
-       player already in the map view when they joined would be stuck in it.
+    /* A server withholding the overview refuses entry only. Leaving still
+       has to work, or a player already in the map view when they joined
+       would be stuck in it.
        Ahead of the assignment below on purpose: gameFrontFullScreen is the
-       player's own preference and must survive a classic-mode server. */
-    if (on && classicModeActive()) return;
+       player's own preference and must survive such a server. */
+    if (on && overviewSuppressed()) return;
     gameFrontFullScreen = on;
     overviewInWindowSet(on);
     /* The two views of the map never share the screen, so the pop-out swaps
@@ -1582,6 +1761,7 @@ static void renderGameInfoContent(ClientSim *cs) {
     langid gtStr = STR_DLGGAMEINFO_STRICT;
     if      (gt == gameOpen)       gtStr = STR_DLGGAMEINFO_OPEN;
     else if (gt == gameTournament) gtStr = STR_DLGGAMEINFO_TOURN;
+    else if (gt == gameScripted)   gtStr = STR_DLGGAMEINFO_SCRIPTED;
     ImGui::Text("%s%s", langGetText(STR_DLGGAMEINFO_GAMETYPE), langGetText(gtStr));
 
     ImGui::Text("%s%s", langGetText(STR_DLGGAMEINFO_HIDDENMINES),
@@ -1608,60 +1788,54 @@ static void renderGameInfoContent(ClientSim *cs) {
         ImGui::TextUnformatted(langGetTextFmt(STR_DLGGAMEINFO_TIMEREMAINING, &args));
     }
 
-    /* Server visibility rules, one row per category. Read-only mirror of
-     * the lobby's pill / base / ally rows, shown so a player can check
-     * them without opening the lobby. The row labels come from the lobby
-     * form and carry no punctuation, so the colon is supplied here. */
+    /* The server's visibility rules: the name of the set they add up to,
+     * then the six settings behind it, each drawn by the same helper the
+     * lobby's header line and its Details table use. Read-only, and shown
+     * here so a player can check them without opening the lobby. The row
+     * labels come from the lobby form and carry no punctuation, so the
+     * colon is supplied here. */
     {
-        static const struct {
-            langid       label;
-            ViewCategory cat;
-        } viewRows[] = {
-            { STR_DLGLOBBY_VIEW_PILL, viewCategoryPill },
-            { STR_DLGLOBBY_VIEW_BASE, viewCategoryBase },
-            { STR_DLGLOBBY_VIEW_ALLY, viewCategoryAlly },
-        };
-        const char *modes[] = {
-            langGetText(STR_DLGLOBBY_VIEW_ALWAYS),
-            langGetText(STR_DLGLOBBY_VIEW_KEY),
-            langGetText(STR_DLGLOBBY_VIEW_DECAY),
-            langGetText(STR_DLGLOBBY_VIEW_OFF),
-        };
-        for (int r = 0; r < 3; r++) {
+        VisibilitySettings vis;
+        memset(&vis, 0, sizeof(vis));
+        for (int c = 0; c < (int)VIEW_CATEGORY_COUNT; c++) {
             /* The lobby-settings decoder mirrors the policy byte as it
              * arrives, so a value outside the enum can reach here. Fall
-             * back to the wire default rather than index past modes[]. */
-            int policy = (int)clientSimGetViewPolicy(cs, viewRows[r].cat);
+             * back to the wire default rather than name a mode this build
+             * has no word for. */
+            int policy = (int)clientSimGetViewPolicy(cs, (ViewCategory)c);
             if (policy < (int)viewPolicyAlways || policy > (int)viewPolicyOff) {
                 policy = (int)viewPolicyAlways;
             }
-            const char *label = langGetText(viewRows[r].label);
-            if (policy == (int)viewPolicyDecay) {
-                int secs = (int)clientSimGetViewDecaySecs(cs, viewRows[r].cat);
-                ImGui::Text("%s: %s %d %s", label, modes[policy], secs,
-                            langGetText(STR_DLGLOBBY_VIEW_DECAY_SECS));
+            vis.policy[c]    = (uint8_t)policy;
+            vis.decaySecs[c] = clientSimGetViewDecaySecs(cs, (ViewCategory)c);
+        }
+        vis.classicMode    = clientSimGetClassicMode(cs);
+        vis.overviewWindow = clientSimGetOverviewWindow(cs);
+        vis.lineOfSight    = clientSimGetLineOfSight(cs);
+        vis.alliesInTrees  = clientSimGetAlliesInTrees(cs);
+
+        VisibilityPreset preset = visibilityPresetMatch(&vis);
+        ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_VISIBILITY_LBL),
+                    langGetText(visibilityPresetNameId(preset)));
+        /* What the name means, the same sentence the lobby's dropdown puts
+         * on its entry for that set. A set that is none of them has no
+         * sentence to give, so it is described by what it holds. */
+        if (ImGui::IsItemHovered()) {
+            if (preset != visibilityPresetCustom) {
+                ImGui::SetTooltip("%s",
+                                  langGetText(visibilityPresetDescId(preset)));
             } else {
-                ImGui::Text("%s: %s", label, modes[policy]);
+                char line[192];
+                lobbyVisibilityDetailsLine(&vis, line, sizeof(line));
+                ImGui::SetTooltip("%s", line);
             }
         }
+        for (int vc = 0; vc < LOBBY_VIS_COLUMN_COUNT; vc++) {
+            ImGui::Text("%s:", langGetText(lobbyVisibilityColumnLabelId(vc)));
+            ImGui::SameLine();
+            lobbyRenderVisibilityColumn(&vis, vc, s_uiScale);
+        }
     }
-
-    /* Classic mode, the allies-in-trees rule, what the map overview keeps
-     * live round the tank and what blocks sight inside it — read-only
-     * mirrors of the lobby's visibility dialog. */
-    ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_CLASSIC_MODE_CB),
-                clientSimGetClassicMode(cs) ? langGetText(STR_YES) : langGetText(STR_NO));
-    ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_ALLIES_TREES_CB),
-                clientSimGetAlliesInTrees(cs) ? langGetText(STR_YES) : langGetText(STR_NO));
-    ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_OVERVIEW_WINDOW),
-                langGetText(clientSimGetOverviewWindow(cs) ==
-                                    (uint8_t)overviewWindowClassic
-                                ? STR_DLGLOBBY_WINDOW_CLASSIC
-                                : STR_DLGLOBBY_WINDOW_EXPANDED));
-    ImGui::Text("%s: %s", langGetText(STR_DLGLOBBY_LINE_OF_SIGHT_CB),
-                langGetText(clientSimGetLineOfSight(cs) !=
-                                    (uint8_t)lineOfSightOff
-                                ? STR_YES : STR_NO));
 }
 
 static void renderGameInfoPanel(ClientSim *cs) {
@@ -2015,8 +2189,16 @@ static void renderMapOverviewContent(ClientSim *cs) {
        pointer, and an active item would swallow the click. */
     ImGui::SetCursorScreenPos(imgMin);
     ImGui::SetNextItemAllowOverlap();
+    /* NoNav, or the pop-out hands the item keyboard focus: it is the only
+       nav-able thing in that window, so ImGui hands it NavId the moment the
+       window is focused, and Space — the nav activate key, and the usual
+       Shoot binding — makes it the active item. The pan above keys off the
+       item being active, so holding fire while the pointer crosses the
+       overview dragged the map about. */
+    ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
     ImGui::InvisibleButton("##OverviewPan", ImVec2((float)texW, (float)texH),
                            ImGuiButtonFlags_MouseButtonRight);
+    ImGui::PopItemFlag();
     /* The live bindings, so a key the player has bound to an in-game action
        drives the tank and does nothing to the overview. Fetched each frame —
        Key Setup can change them while the pop-out is open. */
@@ -2128,8 +2310,12 @@ static void renderOverviewInWindow(ClientSim *cs) {
            right-drag pans, and leaves the left one unclaimed so a click still
            reaches the overview's build path. */
         ImGui::SetNextItemAllowOverlap();
+        /* NoNav for the reason the pop-out's item carries it: a keyboard
+           activation of the pan item turns Shoot into a map drag. */
+        ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
         ImGui::InvisibleButton("##OverviewInWindowPan", ImVec2(rw, rh),
                                ImGuiButtonFlags_MouseButtonRight);
+        ImGui::PopItemFlag();
         bool hovered = ImGui::IsItemHovered();
 
         /* The HUD is blitted over the map by sdl3draw.c rather than submitted
@@ -2256,7 +2442,17 @@ static bool localCanAnswerGameVote(ClientSim *cs,
  * ------------------------------------------------------- */
 
 static void renderPlayersContent(ClientSim *cs) {
-    /* Selection helpers */
+    /* Selection helpers. The label says what the four buttons act on, which
+     * their own words do not: "All" and "None" alone read as a filter over
+     * the list rather than as what they are, a change to who is ticked.
+     *
+     * AlignTextToFramePadding because a button is a frame and a label is
+     * not: without it the text sits on the line's top and the buttons hang
+     * below it. The colon lives in the string, not here, so a language that
+     * punctuates a label differently can say so. */
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(langGetText(STR_DLGPLAYERS_SELECT));
+    ImGui::SameLine();
     if (ImGui::Button(langGetText(STR_DLGPLAYERS_ALL)))    clientSimCheckAllNonePlayers(cs, true);
     imguiHandOnHover();
     ImGui::SameLine();
@@ -2271,16 +2467,14 @@ static void renderPlayersContent(ClientSim *cs) {
 
     ImGui::Separator();
 
-    /* Pre-compute alliance state */
+    /* Who we are allied with, for the per-row indicator. Whether the two
+     * alliance buttons are live is allianceActionState's answer, not this
+     * loop's — see the block further down that asks it. */
     BYTE self = clientSimGetMyPlayerNum(cs);
-    bool hasAllies  = false;
-    bool canRequest = false;
     bool isAlly[MAX_PLAYERS] = {};
     for (int i = 0; i < MAX_PLAYERS; i++) {
         if (s_playerEnabled[i] && i != self) {
             isAlly[i] = clientSimIsPlayerAlly(cs, self, (BYTE)i);
-            if (isAlly[i]) hasAllies = true;
-            else if (s_playerChecked[i]) canRequest = true;
         }
     }
 
@@ -2376,19 +2570,59 @@ static void renderPlayersContent(ClientSim *cs) {
     /* Column widths, computed once for the whole panel rather than per row,
      * which is what makes the numbers line up down it: each column is as
      * wide as the widest number it will actually print this round or its
-     * header sprite, whichever is more. Sprites are text-height tall and
-     * keep their source aspect, so this follows the UI scale without a
-     * hard-coded pixel anywhere. */
+     * header sprite, whichever is more.
+     *
+     * Every sprite size below comes from atlasIconSizeFor, the same helper
+     * the draw uses, rather than from the aspect arithmetic this used to
+     * repeat. The sprites are snapped to whole multiples of their source, so
+     * reserving a stretched-to-the-line width here would no longer match what
+     * is drawn in the column. */
     const ImGuiStyle &sty = ImGui::GetStyle();
     const float iconH = ImGui::GetTextLineHeight();
-    const float lgmW  = iconH * (float)LGM_WIDTH / (float)LGM_HEIGHT;
+    const ImVec2 tileSz = atlasIconSizeFor(TILE_SIZE_X, TILE_SIZE_Y);
+    const float lgmW  = atlasIconSizeFor(LGM_WIDTH, LGM_HEIGHT).x;
+    /* The header line's height. Text, not sprite: atlasIconSizeFor floors its
+     * multiple against the line, so no sprite on this sheet is ever taller
+     * than the line and the text always sets it. Kept as a name rather than
+     * spelled iconH at the use site so the header reads as "one line tall"
+     * and not as an unexplained reuse of the icon height. */
+    const float headerH = iconH;
+    /* The builder-deaths header sets the whole block's column width, so the
+     * gap inside its pair is held here rather than taken from ItemInnerSpacing
+     * — a full inner spacing between the man and his skull would widen all six
+     * columns to buy nothing. Quarter of a text line keeps the two touching
+     * without merging them. */
+    const float kSkullBadgeGap = ImTrunc(iconH * 0.25f);
+    /* The builder-deaths pair sits this far right of where centring alone
+     * puts it. Centring measures the pair as one block, man plus gap plus
+     * skull, so its midpoint falls in the gap between them rather than on
+     * either sprite — which reads as the pair leaning left of the column.
+     * Nudging the block right puts the man nearer the middle and lets the
+     * small skull overhang, which is what a badge should do.
+     *
+     * A fraction of the line, not a flat pixel count. It was 4 px flat, which
+     * is a correction sized for one UI scale only: everything it corrects —
+     * the man, the badge, the gap between them — grows with the scale, so at
+     * 1.5 and 2.0 a flat 4 left the mark drifting further and further left of
+     * the number under it. Two ninths of a line is that same 4 px at scale
+     * 1.0 and stays right at every other. */
+    const float kBuilderDeathsNudgeX = ImTrunc(iconH * (2.0f / 9.0f));
     const float statIconW[6] = {
-        iconH, iconH, iconH, iconH, lgmW,
-        /* LGM deaths heads with the man and the skull side by side. */
-        lgmW + sty.ItemInnerSpacing.x + iconH,
+        /* tank, then the skull — a map tile and an SVG, so two widths. */
+        tileSz.x, iconH, tileSz.x, tileSz.x, lgmW,
+        /* LGM deaths heads with the man and a small skull after him. */
+        lgmW + kSkullBadgeGap + iconH * PLAYERS_SKULL_BADGE_SCALE,
     };
-    float statW[6], statOffX[6];
-    float statTotal = 0.0f;
+    /* One width for all six, not a width each. The columns used to be sized
+     * one by one, which left the builder-deaths column — the only one with two
+     * sprites over it — half again as wide as its neighbours and reading as
+     * two columns. Every column now takes the widest column's width, so the
+     * block is a grid and the numbers in it line up down and across.
+     *
+     * The widest is normally builder deaths, which is what sets the common
+     * width; the max below is still over everything, because a counter that
+     * reaches three figures has to have room whichever column it lands in. */
+    float statColW = 0.0f;
     for (int c = 0; c < 6; c++) {
         unsigned widest = 0;
         for (int r = 0; r < panelRowCount; r++) {
@@ -2400,12 +2634,18 @@ static void renderPlayersContent(ClientSim *cs) {
         SDL_snprintf(buf, sizeof(buf), "%u", widest);
         float w = ImGui::CalcTextSize(buf).x;
         if (statIconW[c] > w) w = statIconW[c];
-        /* One pixel of slop on top of the padding: a sprite sized to
-         * exactly fill the column would otherwise be at the mercy of
-         * rounding at the edge. */
-        statW[c] = w + sty.CellPadding.x * 2.0f + 1.0f;
+        if (w > statColW) statColW = w;
+    }
+    /* One pixel of slop on top of the padding: a sprite sized to exactly
+     * fill the column would otherwise be at the mercy of rounding at the
+     * edge. */
+    statColW += sty.CellPadding.x * 2.0f + 1.0f;
+    float statW[6], statOffX[6];
+    float statTotal = 0.0f;
+    for (int c = 0; c < 6; c++) {
+        statW[c] = statColW;
         statOffX[c] = statTotal;
-        statTotal += statW[c];
+        statTotal += statColW;
     }
 
     /* Widest ping the panel will print. The ping itself stays right-aligned
@@ -2424,20 +2664,79 @@ static void renderPlayersContent(ClientSim *cs) {
         if (w > pingColW) pingColW = w;
     }
 
+    /* ── The list's colours ───────────────────────────────────────────
+     * Taken from the same tokens the lobby's player table uses, so the two
+     * player lists in the game are one table drawn twice rather than two
+     * tables that happen to both have rows. Previously this panel had its
+     * own recipe — a black well with a white overlay stripe — reached by a
+     * different route to a similar look, which is two things to keep in
+     * step and two places to change.
+     *
+     * Zebra: ImGuiCol_TableRowBg and TableRowBgAlt, exactly as
+     * lobby_players.cpp reads them. The theme sets neither, so they are
+     * ImGui's own: the first fully transparent, the second white at six
+     * percent. One row painted, one bare.
+     *
+     * Your own row: ImGuiCol_TableRowBg1's part in the lobby is played by
+     * black at 64, painted OVER the stripe rather than in place of it, the
+     * way the lobby's TableSetBgColor(RowBg1, ...) layers on RowBg0.
+     *
+     * Header: ImGuiCol_Header behind the counter marks — the theme's blue
+     * accent at 70 percent, standing in for the lobby's team-coloured header
+     * strip. A lobby panel heads its table with the team's own colour at low
+     * alpha; this panel has no team, so it takes the palette's accent and
+     * heads the table the same way. Not ImGuiCol_TableHeaderBg: the theme
+     * leaves that at ImGui's grey, which reads as another row rather than as
+     * the top of the table.
+     *
+     * Border: ImGuiCol_Border, which the theme DOES set, drawn round the
+     * list the way ImGuiChildFlags_Borders draws round each lobby team
+     * panel. */
+    const ImU32 kRowStripe = ImGui::GetColorU32(ImGuiCol_TableRowBgAlt);
+    const ImU32 kSelfRowBg = IM_COL32(0, 0, 0, 64);
+    const ImU32 kHeaderBg  = ImGui::GetColorU32(ImGuiCol_Header);
+    const ImU32 kListBorder = ImGui::GetColorU32(ImGuiCol_Border);
+    /* The line between one row and the next, which is what gives a lobby row
+     * its outline: ImGuiTableFlags_BordersInnerH draws one under every row,
+     * so a painted row ends up with a line above it and below it and reads
+     * as enclosed. This list is not a table and gets none for free, so the
+     * same line is drawn by hand in the same colour ImGui would use. */
+    const ImU32 kRowDivider = ImGui::GetColorU32(ImGuiCol_TableBorderLight);
+
+    /* How far the rows are held off the list background's edges, and how
+     * far that background bleeds out past the window's content box. Taken
+     * from the window padding so it follows the UI scale: ScaleAllSizes
+     * scales WindowPadding, and nothing here is a raw pixel count. */
+    const float listPad = sty.WindowPadding.x * 0.5f;
+
     /* SameLine() offsets are measured from the window's left edge, while
      * GetContentRegionAvail() inside the row is measured from the cursor —
      * which by then has moved past the alliance mark and the flag, by a
      * different amount on every row. Read one window-relative right edge
      * here, at the start of a line, so the columns and the ping land on the
-     * same x in every row. */
+     * same x in every row. Less the list's right inset: the rows are pushed
+     * in from the left with an Indent below, and this is the other half of
+     * that, so the block of rows sits centred in its background. */
     const float rowRightX =
-        ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+        ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - listPad;
     const float statRightX = rowRightX - pingColW - sty.ItemSpacing.x;
 
-    /* x at which content of width w sits right-aligned in column c. */
-    auto statContentX = [&](int c, float w) -> float {
-        return statRightX - statTotal + statOffX[c] + statW[c] -
-               sty.CellPadding.x - w;
+    /* x at which content of width w sits centred in column c. Both the header
+     * marks and the counters under them use this, so a column is one centred
+     * stack from its mark down.
+     *
+     * The counters were right-aligned, on the reasoning that digits line up
+     * under each other as a count reaches two and three figures. Centred is
+     * the call here: every column is now one width, so the marks and the
+     * numbers share a midline, and a block of six centred columns reads as a
+     * grid where a mix of centred marks over right-aligned numbers did not.
+     *
+     * Trunc so a sprite still starts on a whole pixel — the halving here is
+     * exactly what would otherwise leave the pixel art half a pixel off the
+     * grid that atlasIconSizeFor just put it on. */
+    auto statCentreX = [&](int c, float w) -> float {
+        return IM_TRUNC(statRightX - statTotal + statOffX[c] +
+                        (statW[c] - w) * 0.5f);
     };
 
     /* An absolute SameLine offset behind the cursor moves the cursor
@@ -2467,8 +2766,211 @@ static void renderPlayersContent(ClientSim *cs) {
     float widestNameX = 0.0f;
     float widestNameW = 0.0f;
 
+    /* ── The rect a row's background is painted in ────────────────────
+     * Not the cursor rect. ImGui grows a Selectable past it so a column of
+     * them tiles with no click-gap (imgui_widgets.cpp, Selectable): up and
+     * left by IM_TRUNC(half the item spacing), down and right by whatever
+     * is left of it. That grown rect is what the hover highlight is drawn
+     * in, so it is the only rect a stripe can be painted in and still land
+     * on the highlight exactly — which is why this is read back off the
+     * item rather than worked out from the cursor and a hand-written
+     * offset. The offset is not even a constant: it is the truncated half
+     * of ItemSpacing, which imgui_theme.h sets to (8, 6) and ScaleAllSizes
+     * then scales.
+     *
+     * Published out of renderPlayerRow the way widestNameX is. */
+    ImVec2 rowBandMin(0.0f, 0.0f);
+    ImVec2 rowBandMax(0.0f, 0.0f);
+    /* Whether the pointer is over that band, worked out here rather than
+     * asked of the row Selectable — ImGui will not report an AllowOverlap
+     * item hovered while a widget drawn over it holds the hovered id, which
+     * is every cell in the row. Tested against the band rect so the highlight
+     * covers exactly what the stripe covers. */
+    bool rowHovered = false;
+    /* Gate on the window so a popup or a drag over the panel cannot light a
+     * row underneath it: IsMouseHoveringRect alone does no window-order test,
+     * it only compares coordinates. */
+    const bool panelHovered =
+        ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+
+    /* The same growth, for the blank rows a departed player leaves behind:
+     * they draw a Dummy and have no Selectable to read it off. Kept as one
+     * lambda beside the reading above so the two cannot drift apart. */
+    auto expandToBandRect = [&](ImVec2 mn, ImVec2 mx) {
+        const float spacingL = IM_TRUNC(sty.ItemSpacing.x * 0.5f);
+        const float spacingU = IM_TRUNC(sty.ItemSpacing.y * 0.5f);
+        rowBandMin = ImVec2(mn.x - spacingL, mn.y - spacingU);
+        rowBandMax = ImVec2(mx.x + (sty.ItemSpacing.x - spacingL),
+                            mx.y + (sty.ItemSpacing.y - spacingU));
+    };
+
+    /* ── One height for every row ─────────────────────────────────────
+     * A row is a run of widgets of four different heights, and ImGui lays a
+     * run out with their tops on the line rather than their middles. So the
+     * row is given one height here — the tallest thing that can appear in
+     * one — and every cell is then placed at its own y inside that box.
+     *
+     * The candidates, each read from the code that draws it:
+     *   checkbox                ImGui draws it GetFrameHeight() square
+     *   platform / WBN / Steam / brain icons, the mic cell, and the
+     *   smart-ping mute cell    WBN_ICON_SIZE, 14 — the ping cell draws an
+     *                           ImageButton of exactly the size this panel
+     *                           hands renderPlayerPingMuteCell
+     *   country flag            FLAG_HEIGHT, 11 (flags.h; drawn at 7131)
+     *   volume slider           GetTextLineHeight() — it is pushed with
+     *                           zero FramePadding, so it is a frame with
+     *                           its padding taken out, and an empty label
+     *                           measures one font size tall
+     *   alliance mark, name, counters, ping
+     *                           GetTextLineHeight()
+     * The flag is never the tallest, 11 being under 14, and a frame with no
+     * padding is never taller than one with it, so the max is over the other
+     * three. Computed once for the panel rather than per row: nothing in it
+     * depends on which player the row is for, and the blank rows the desktop
+     * list draws for departed players have to come out the same height. */
+    const float panelRowH = ImMax(ImGui::GetFrameHeight(),
+                                  ImMax((float)WBN_ICON_SIZE,
+                                        ImGui::GetTextLineHeight()));
+
     /* Render a single player row */
     auto renderPlayerRow = [&](int i) {
+        const float rowTopY       = ImGui::GetCursorPosY();
+        const float rowTopScreenY = ImGui::GetCursorScreenPos().y;
+        const float rowStartX     = ImGui::GetCursorPosX();
+        /* Less the list's right inset — the Indent around the list holds
+         * the left one, and this is the matching one on the right. */
+        const float rowWidth      = ImGui::GetContentRegionAvail().x - listPad;
+        const float rowH          = panelRowH;
+        const float checkW        = ImGui::GetFrameHeight();  /* square */
+
+        /* ImGui nudges text down the line by DC.CurrLineTextBaseOffset, and
+         * that stops being zero the moment a framed widget — the checkbox,
+         * either icon button, the slider — has been on the line. Every cell
+         * in this row places itself, so the offset has nothing left to do
+         * and would only drag the later labels off the midline: clear it
+         * before each cell. Read through imgui_internal.h, which this file
+         * already includes. */
+        auto clearTextBase = []() {
+            ImGui::GetCurrentWindow()->DC.CurrLineTextBaseOffset = 0.0f;
+        };
+        /* Put the next widget's top where a widget h tall comes out centred
+         * on the row's midline. The same pair of helpers the lobby's player
+         * list uses — dialogs/lobby/lobby_players.cpp, cyAbs / cyTextAbs. */
+        auto cyAbs = [&](float h) {
+            clearTextBase();
+            float y = rowTopY + (rowH - h) * 0.5f;
+            if (y < rowTopY) y = rowTopY;
+            ImGui::SetCursorPosY(y);
+        };
+        /* Text needs a bias on top of that: ImGui's line box carries empty
+         * space above the cap line and an almost-empty descender below it,
+         * so centring the box leaves the visible glyphs sitting low. Lift by
+         * 12% of the font size, the value the lobby list settled on. */
+        auto cyTextAbs = [&]() {
+            clearTextBase();
+            float h    = ImGui::GetTextLineHeight();
+            float bias = ImGui::GetFontSize() * 0.12f;
+            float y    = rowTopY + (rowH - h) * 0.5f - bias;
+            if (y < rowTopY) y = rowTopY;
+            ImGui::SetCursorPosY(y);
+        };
+
+        /* ── Full-row hit box ─────────────────────────────────────────
+         * One Selectable the size of the whole row, drawn FIRST so every
+         * cell below lands on top of it: the row highlights along its full
+         * width and height on hover, and a click anywhere in it toggles that
+         * player's check state. AllowOverlap is what leaves the widgets
+         * drawn over it — the checkbox, the two icon buttons, the volume
+         * slider — hoverable and clickable in their own right; coming after
+         * it in draw order is the other half of that, so nothing that takes
+         * a click may be moved in front of it. DontClosePopups because this
+         * panel is also rendered inside a popup, which would close on every
+         * click without it.
+         *
+         * The label is id-only. The name is drawn as text further along the
+         * row, where a Selectable spanning the row cannot put it.
+         *
+         * YOUR OWN ROW gets a plain Dummy instead. There is nothing to select
+         * on it — you cannot ally with yourself, and the click was already
+         * guarded to do nothing — so a row that lit up under the pointer and
+         * then ignored the click was offering something it would not give.
+         * The Dummy is the same size, so the row still occupies the same
+         * space and still reports a rect for its background. */
+        if (i == self) {
+            ImGui::Dummy(ImVec2(rowWidth, rowH));
+        } else {
+            char selectLabel[64];
+            snprintf(selectLabel, sizeof(selectLabel), "##psel%d", i);
+            /* The Selectable's OWN highlight is pushed transparent and the
+             * band is painted by the caller instead — see rowHovered below.
+             * ImGui will not light an AllowOverlap item unless it held the
+             * hovered id on the previous frame (ItemHoverable), and the cells
+             * drawn over this one take that id as the pointer crosses them.
+             * Left to ImGui the row therefore lights over the name and the
+             * gaps, goes dark over the checkbox, the ping pin and the volume
+             * slider, and lights again after — a row that flickers as you
+             * track along it. The Selectable stays for the click, the focus
+             * stop and the selected state. Only its HOVER painting is taken
+             * over: a CHECKED row is still filled by ImGui with
+             * ImGuiCol_Header, on the content channel above the band, so a
+             * ticked row shows that fill rather than the hover tint. */
+            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0, 0, 0, 0));
+            ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0, 0, 0, 0));
+            if (ImGui::Selectable(selectLabel, s_playerChecked[i],
+                                  ImGuiSelectableFlags_AllowOverlap |
+                                  ImGuiSelectableFlags_DontClosePopups,
+                                  ImVec2(rowWidth, rowH))) {
+                clientSimTogglePlayerCheckState(cs, (BYTE)i);
+            }
+            ImGui::PopStyleColor(2);
+            imguiHandOnHover();
+        }
+        /* The rect ImGui just drew the highlight in, for the caller to paint
+         * the row's background in. Read here, before anything else is
+         * submitted, because it is the last item's rect.
+         *
+         * A Selectable's rect is already the band: ImGui grows its bb past
+         * the cursor rect by half the item spacing before it draws. A Dummy
+         * gets no such growth, so the own row — and the blank rows, which
+         * also draw a Dummy — has to be grown by hand with the same numbers,
+         * or its black background comes out smaller than the stripes around
+         * it and sits a couple of pixels low. */
+        if (i == self) {
+            expandToBandRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+        } else {
+            rowBandMin = ImGui::GetItemRectMin();
+            rowBandMax = ImGui::GetItemRectMax();
+        }
+        /* Your own row never lights: there is nothing on it to select. */
+        rowHovered = (i != self) && panelHovered &&
+                     ImGui::IsMouseHoveringRect(rowBandMin, rowBandMax, false);
+
+        /* Back to the row's left edge, still on the row's own line. SameLine
+         * rather than a bare SetCursorPos: it leaves ImGui measuring the
+         * line from the Selectable's top, which is what keeps the row
+         * exactly rowH tall — and so the zebra bands below exactly one row
+         * apart — however the cells inside it are placed. */
+        ImGui::SameLine(0.0f, 0.0f);
+        ImGui::SetCursorPosX(rowStartX);
+
+        /* ── Checkbox, first column ───────────────────────────────────
+         * Only another player's row has one — there is nothing to select on
+         * your own — so the own row holds the same width with a blank, the
+         * way the ping-mute, mic and volume cells already do. Without it
+         * every cell on that one row would sit at a different x. */
+        cyAbs(checkW);
+        if (i != self) {
+            char checkLabel[64];
+            snprintf(checkLabel, sizeof(checkLabel), "##chk%d", i);
+            bool checked = s_playerChecked[i];
+            if (ImGui::Checkbox(checkLabel, &checked)) {
+                clientSimTogglePlayerCheckState(cs, (BYTE)i);
+            }
+        } else {
+            ImGui::Dummy(ImVec2(checkW, checkW));
+        }
+        ImGui::SameLine();
+
         /* Alliance indicator */
         if (i != self) {
             if (isAlly[i]) {
@@ -2476,6 +2978,7 @@ static void renderPlayersContent(ClientSim *cs) {
             } else {
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.0f, 0.0f, 1.0f));
             }
+            cyTextAbs();
             ImGui::TextUnformatted("*");
             ImGui::PopStyleColor();
             ImGui::SameLine();
@@ -2484,13 +2987,26 @@ static void renderPlayersContent(ClientSim *cs) {
         /* Flag icon — skipped for bots (no real country; renderPlayerName
          * below shows a brain icon in the platform-icon slot instead). */
         if (!(s_playerFlags[i] & PLAYER_FLAG_BOT) && s_playerCountry[i][0] != '\0') {
+            cyAbs((float)FLAG_HEIGHT);
             if (drawCountryFlagWithTip(s_playerCountry[i])) {
                 ImGui::SameLine();
             }
         }
 
-        /* Platform / WBN / Steam icons (brain icon for bots) */
-        renderPlayerName(NULL, s_playerFlags[i], s_playerClientType[i], "", false);
+        /* Platform / WBN / Steam icons (brain icon for bots). Every icon in
+         * that run is WBN_ICON_SIZE tall, so one placement covers the run:
+         * keepIconY holds the y this call starts at across the run's own
+         * SameLine calls, which would otherwise drop icons two and three
+         * back onto the line's top.
+         *
+         * A bot's chip is the green one or the red one to match the alliance
+         * mark in front of the name, so the row says whose side it is on
+         * twice over rather than showing a neutral glyph beside a coloured
+         * star. Your own row can hold no bot, so the self case never arises. */
+        cyAbs((float)WBN_ICON_SIZE);
+        RenderPlayerNameOpts nameOpts = { isAlly[i], true };
+        renderPlayerNameEx(NULL, s_playerFlags[i], s_playerClientType[i], "",
+                           false, &nameOpts);
 
         const char *label = s_playerName[i][0] ? s_playerName[i] : nullptr;
         char defLabel[16];
@@ -2506,68 +3022,72 @@ static void renderPlayersContent(ClientSim *cs) {
         else
             snprintf(pingStr, sizeof(pingStr), "---");
 
-        float fullWidth = ImGui::GetContentRegionAvail().x;
         float pingWidth = ImGui::CalcTextSize(pingStr).x;
         float spacing = ImGui::GetStyle().ItemSpacing.x;
-        /* Width the smart-ping mute cell takes out of the row, cell plus its
-         * trailing spacing. Independent of voice, so reserved outside the
-         * voice block below; a blank is drawn on the local row so the name
-         * still starts at the same x there. */
-        float pingMuteWidth  = ImGui::GetFrameHeight();
-        float pingMuteColumn = pingMuteWidth + spacing;
+        /* Width of the smart-ping mute cell. Independent of voice, so sized
+         * outside the voice block below; a blank of the same size is drawn
+         * on the local row so the name still starts at the same x there. */
+        /* One icon square, the size the mic cell beside it takes and the size
+         * the lobby already passes this helper. It was GetFrameHeight() while
+         * the cell was a lettered button, which is larger; the SVG rasterises
+         * at WBN_ICON_SIZE, so drawing it at a frame height would upscale a
+         * 14 px mask and blur it. */
+        float pingMuteWidth  = (float)WBN_ICON_SIZE;
 #if defined(WINBOLO_VOICE)
-        /* Width the mic icon takes out of the row, icon plus its trailing
-         * spacing, so the name Selectable gives it room the same way it
-         * already does for the checkbox. */
+        /* The mic cell is one icon square. */
         float micWidth = (float)WBN_ICON_SIZE;
-        float micColumn = micWidth + spacing;
-        /* Room the per-player volume slider takes, slider plus its trailing
-         * spacing. Reserved separately from the mic rather than folded into
-         * it: they are two cells with two widths, and the subtraction below
-         * reads as the list of things in front of the name. Reserved on the
-         * local player's row too, which draws a blank there, or the name
-         * would start at a different x on that one row. */
+        /* Room the per-player volume slider takes. Held on the local
+         * player's row too, which draws a blank there, or the name would
+         * start at a different x on that one row. Read before the zero
+         * FramePadding is pushed below: the width is three full frames
+         * whatever the slider's own frame ends up being. */
         float volWidth  = ImGui::GetFrameHeight() * 3.0f;
-        float volColumn = volWidth + spacing;
-#else
-        const float micColumn = 0.0f;
-        const float volColumn = 0.0f;
 #endif
         /* Room the counter columns take out of the row, block plus the gap
          * that separates it from the name — reserved the same way the ping
-         * and the mic are. The ping is reserved at the width of the widest
-         * one in the panel, not this row's, so the block starts at a fixed
-         * x while the ping stays hard right on its own width. */
+         * is. The ping is reserved at the width of the widest one in the
+         * panel, not this row's, so the block starts at a fixed x while the
+         * ping stays hard right on its own width. */
         float statBlock   = showStats ? statTotal + spacing : 0.0f;
         float pingReserve = showStats ? pingColW : pingWidth;
 
-        /* Checkbox + selectable name */
-        if (i != self) {
-            char checkLabel[64];
-            snprintf(checkLabel, sizeof(checkLabel), "##chk%d", i);
-            bool checked = s_playerChecked[i];
-            if (ImGui::Checkbox(checkLabel, &checked)) {
-                clientSimTogglePlayerCheckState(cs, (BYTE)i);
-            }
-            ImGui::SameLine();
-        }
-
         /* Smart-ping mute toggle, beside the voice cell. Independent of voice,
          * so drawn for every build; a blank on the local player's own row. */
+        cyAbs(pingMuteWidth);
         renderPlayerPingMuteCell(cs, i, i == self, pingMuteWidth);
         ImGui::SameLine();
 
 #if defined(WINBOLO_VOICE)
-        /* Voice state, between the checkbox and the name. */
+        /* Voice state, between the platform icons and the name. */
+        cyAbs(micWidth);
         renderPlayerMicCell(cs, i, s_playerFlags[i], talkingMap,
                             i == self, micWidth, false);
         ImGui::SameLine();
 
         /* How loud that player is played here, beside their speaker. Local
          * playback only: nothing is sent, and it lasts until they leave. */
-        if (i == self) {
-            /* Nothing to set for yourself, but the width is held all the
-             * same so every name starts at the same x. */
+        /* Both branches are one text line tall: the slider's label is empty
+         * and its FramePadding is zeroed below, which leaves its frame at
+         * exactly one font size, and the blank matches it. */
+        cyAbs(ImGui::GetTextLineHeight());
+        /* Who has a volume worth setting. Nothing arrives from a bot, from a
+         * player with no microphone, or from one who has muted their own, so
+         * a slider on those rows is a control that can change nothing. They
+         * hold the width with a blank instead — the cell still has to be
+         * there, or the name and every column after it shift on those rows.
+         *
+         * Note what this hides in a RUNNING game and not in the lobby: the
+         * server strips the microphone bits for players this client is not
+         * allied with (server_sim_snapshot.c), mirroring where voice is
+         * actually routed, so an enemy reads as having no microphone and
+         * their slider goes with it. That matches the mic cell beside it,
+         * which already draws nothing for those players for that reason. */
+        const bool volHasMic  = (s_playerFlags[i] & PLAYER_FLAG_HAS_MIC) != 0;
+        const bool volSelfMut = (s_playerFlags[i] & PLAYER_FLAG_VOICE_MUTED) != 0;
+        const bool volIsBot   = (s_playerFlags[i] & PLAYER_FLAG_BOT) != 0;
+        if (i == self || volIsBot || !volHasMic || volSelfMut) {
+            /* Nothing to set here, but the width is held all the same so
+             * every name starts at the same x. */
             ImGui::Dummy(ImVec2(volWidth, ImGui::GetTextLineHeight()));
         } else {
             char volLabel[64];
@@ -2575,9 +3095,28 @@ static void renderPlayersContent(ClientSim *cs) {
             float gain = voiceGetPlayerVolume(i);
             /* A bot sends no audio, so there is no volume to set on it. The
              * slider is still drawn, at the width every other row's takes,
-             * but greyed and not draggable. */
+             * but greyed and not draggable.
+             *
+             * DisabledAlpha is pinned to 1.0 for it, and the grab is greyed
+             * by hand instead. BeginDisabled otherwise multiplies the global
+             * alpha by DisabledAlpha, which is 0.60, and that dims the
+             * slider's FRAME as well as its grab. The theme's FrameBg is
+             * opaque, so a dimmed frame turns translucent and takes the
+             * colour of the row behind it — which means the same disabled
+             * slider is one grey on a striped row and another on a bare one.
+             * With every row a bot, as an all-bot game is, that reads as the
+             * zebra leaking into the controls. The frame is a control's
+             * outline and should not move with the row it sits on; the grab
+             * is what has to say the control is dead. */
             bool botRow = (s_playerFlags[i] & PLAYER_FLAG_BOT) != 0;
-            if (botRow) ImGui::BeginDisabled();
+            if (botRow) {
+                ImGui::PushStyleVar(ImGuiStyleVar_DisabledAlpha, 1.0f);
+                ImGui::BeginDisabled();
+                ImGui::PushStyleColor(ImGuiCol_SliderGrab,
+                                      ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                ImGui::PushStyleColor(ImGuiCol_SliderGrabActive,
+                                      ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            }
             ImGui::SetNextItemWidth(volWidth);
             /* Zero FramePadding for the reason the mic button has it: the
              * default padding would make this taller than the Selectable
@@ -2591,46 +3130,85 @@ static void renderPlayersContent(ClientSim *cs) {
             }
             ImGui::PopStyleVar();
             imguiHelpTooltip(langGetText(STR_PLAYER_TIP_VOICE_VOLUME));
-            if (botRow) ImGui::EndDisabled();
+            if (botRow) {
+                ImGui::PopStyleColor(2);
+                ImGui::EndDisabled();
+                ImGui::PopStyleVar();
+            }
         }
         ImGui::SameLine();
 #endif
 
-        char selectLabel[64];
-        snprintf(selectLabel, sizeof(selectLabel), "%s##psel%d", label, i);
-        float nameW = fullWidth - pingReserve - spacing - statBlock - micColumn -
-                      volColumn - pingMuteColumn -
-                      (i != self ? ImGui::GetFrameHeight() + spacing : 0);
-        /* A Selectable given zero or less collapses and the row loses its
-         * name. Four characters is enough to tell two players apart; the
-         * columns after it are pushed right by the clamp above rather than
-         * drawn over it. */
+        /* Back to the row's top for the name column — cyAbs of the row's own
+         * height lands there — so the box the name is drawn in and the blank
+         * that holds the column both start from the same y the rest of the
+         * row is measured against.
+         *
+         * What is left for the name is then read from the cursor rather than
+         * added up from the widths of the cells in front of it, which is what
+         * this used to do: the cursor is at the name, so the checkbox, the
+         * alliance mark, the flag, the icons, the voice cells and the volume
+         * slider are already out of the reading, each at the width it really
+         * drew at. */
+        cyAbs(rowH);
+        float nameW = ImGui::GetContentRegionAvail().x - listPad - pingReserve -
+                      spacing - statBlock;
+        /* A name column of zero or less loses the name altogether. Four
+         * characters is enough to tell two players apart; the columns after
+         * it are pushed right by the clamp rather than drawn over it. */
         float nameMin = ImGui::CalcTextSize("MMMM").x;
         if (nameW < nameMin) nameW = nameMin;
 
-        /* What this row wants, for the panel's minimum width. The cursor is
-         * at the name now, so its x carries the alliance mark, the flag, the
-         * icons, the checkbox, the voice cell and the volume slider — and
-         * the window's left padding with them. */
+        /* What this row wants, for the panel's minimum width. */
         float nameStartX = ImGui::GetCursorPosX();
         float nameTextW  = ImGui::CalcTextSize(label).x;
         if (nameStartX > widestNameX) widestNameX = nameStartX;
         if (nameTextW  > widestNameW) widestNameW = nameTextW;
 
-        if (ImGui::Selectable(selectLabel, s_playerChecked[i],
-                              ImGuiSelectableFlags_DontClosePopups,
-                              ImVec2(nameW, 0))) {
-            if (i != self) clientSimTogglePlayerCheckState(cs, (BYTE)i);
+        /* Name, drawn as text over the full-row Selectable rather than as
+         * its label: that Selectable spans the row, so a label on it would
+         * sit at the row's left edge instead of in the name column.
+         * RenderTextClipped is what the Selectable used to do with it — cut
+         * at the column's right edge rather than printed over the counters.
+         * It draws without adding an item, so the Dummy after it is what
+         * holds the column: sameLineNoBack places the counters off
+         * GetItemRectMax(), which has to be the column and not the name. */
+        const ImVec2 nameCell = ImGui::GetCursorScreenPos();
+        const float  nameTextY = rowTopScreenY +
+                                 (rowH - ImGui::GetTextLineHeight()) * 0.5f -
+                                 ImGui::GetFontSize() * 0.12f;
+        /* A seat that is in the roster with nobody on the field — a seat held
+         * between waves — is drawn at the lobby's own 45%, for the reason the
+         * lobby gives: so a player can tell the seats being held from the bots
+         * playing this round. The name only, as there. The counters beside it
+         * are this seat's score for the round and stay true while it is off
+         * the field, and the cells after them — the ping pin, the mic, the
+         * volume — are already dead on a bot row, which every held seat is.
+         *
+         * RenderTextClipped takes its colour through GetColorU32, so the
+         * pushed alpha reaches it. */
+        const bool rowUnfielded = clientSimSlotIsUnfielded(cs, (BYTE)i);
+        if (rowUnfielded) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                ImGui::GetStyle().Alpha * 0.45f);
         }
-        imguiHandOnHover();
+        ImGui::RenderTextClipped(ImVec2(nameCell.x, nameTextY),
+                                 ImVec2(nameCell.x + nameW,
+                                        rowTopScreenY + rowH),
+                                 label, NULL, NULL, ImVec2(0.0f, 0.0f));
+        if (rowUnfielded) {
+            ImGui::PopStyleVar();
+        }
+        ImGui::Dummy(ImVec2(nameW, 1.0f));
 
-        /* Live counters, right-aligned in their columns so the digits line
-         * up as counts reach two figures. */
+        /* Live counters, centred in their columns under the marks that name
+         * them, so each column reads as one stack. */
         if (showStats) {
             for (int c = 0; c < 6; c++) {
                 char numBuf[16];
                 SDL_snprintf(numBuf, sizeof(numBuf), "%u", slotStatValue(i, c));
-                sameLineNoBack(statContentX(c, ImGui::CalcTextSize(numBuf).x));
+                sameLineNoBack(statCentreX(c, ImGui::CalcTextSize(numBuf).x));
+                cyTextAbs();
                 ImGui::TextUnformatted(numBuf);
             }
         }
@@ -2638,8 +3216,12 @@ static void renderPlayersContent(ClientSim *cs) {
         /* Right-aligned ping. The single-column path measures from the
          * window-relative right edge so the ping does not shift row to row
          * with the width of the icons in front of the name — the counter
-         * columns beside it would shift with it. */
-        sameLineNoBack((showStats ? rowRightX : fullWidth) - pingWidth);
+         * columns beside it would shift with it. The two-column tablet path
+         * draws inside a table cell, where a SameLine offset is measured
+         * from the cell and not from the window, so it uses the row's own
+         * width: the same distance, counted from the cell's left edge. */
+        sameLineNoBack((showStats ? rowRightX : rowWidth) - pingWidth);
+        cyTextAbs();
         ImVec4 pingColor = imguiPingBandColor(
             cs ? clientSimGetPlayerPingBand(cs, (BYTE)i)
                : pingBandClassify(s_playerPing[i]));
@@ -2647,6 +3229,37 @@ static void renderPlayersContent(ClientSim *cs) {
         ImGui::TextUnformatted(pingStr);
         ImGui::PopStyleColor();
     };
+
+    /* ── Open the list ────────────────────────────────────────────────
+     * Everything from here to the matching close is one block on one
+     * background: the counter-column header as well as the rows, so the
+     * two read as a single table rather than a header floating over a
+     * shaded list.
+     *
+     * Three draw channels, merged in order, because the background's
+     * height is only known once the rows have been drawn and it still has
+     * to come out underneath them: 0 the list background, 1 the per-row
+     * bands, 2 everything the rows themselves submit. The Selectable's own
+     * hover and selected highlight goes to channel 2 with the rest of the
+     * row, so it lands over a band and over the black own-row background
+     * rather than under them.
+     *
+     * The x span is read here, at the start of a line and before the
+     * Indent, so it is the window's whole content width plus the bleed. */
+    const float listX0   = ImGui::GetCursorScreenPos().x - listPad;
+    const float listX1   = listX0 + ImGui::GetContentRegionAvail().x +
+                           listPad * 2.0f;
+    const float listTopY = ImGui::GetCursorScreenPos().y;
+    ImDrawList        *listDL = ImGui::GetWindowDrawList();
+    ImDrawListSplitter listSplit;
+    listSplit.Split(listDL, 3);
+    listSplit.SetCurrentChannel(listDL, 2);
+
+    /* The rows' left inset; rowRightX above already carries the right one.
+     * A Dummy for the top inset — measured, not bled, so the first band can
+     * never reach the background's rounded corner. */
+    ImGui::Indent(listPad);
+    ImGui::Dummy(ImVec2(1.0f, listPad));
 
     /* Header line for the counter columns: the map's own art for what each
      * one counts, drawn at the same x offsets the rows use so every sprite
@@ -2661,10 +3274,30 @@ static void renderPlayersContent(ClientSim *cs) {
          * and words. */
         SDL_Texture *headerTiles = activeTilesTexture();
         const bool headerAsText = (headerTiles == nullptr);
-        ImGui::Dummy(ImVec2(1.0f, iconH));
+        /* Opens the header line. Its height is the text's: atlasIconSizeFor
+         * floors each sprite's multiple against the line, so no mark on this
+         * sheet is ever taller than the line it sits on. */
+        const float headerTopY = ImGui::GetCursorScreenPos().y;
+        ImGui::Dummy(ImVec2(1.0f, headerH));
+        /* The header's own background, standing in for the team-coloured
+         * strip a lobby team panel puts behind its header row — this panel
+         * has no team to colour it with, so it takes the table header colour
+         * instead. Painted on the background channel, the full width of the
+         * list, so the marks sit on it rather than beside it. */
+        listSplit.SetCurrentChannel(listDL, 0);
+        listDL->AddRectFilled(
+            ImVec2(listX0, headerTopY - sty.ItemSpacing.y * 0.5f),
+            ImVec2(listX1, ImGui::GetCursorScreenPos().y - sty.ItemSpacing.y * 0.5f),
+            kHeaderBg);
+        listSplit.SetCurrentChannel(listDL, 2);
         for (int c = 0; c < 6; c++) {
             const char *label = langGetText(statColStr[c]);
-            sameLineNoBack(statContentX(c, statIconW[c]));
+            float headX = statCentreX(c, statIconW[c]);
+            /* Builder deaths only — the one header that is two sprites, and
+             * the one whose centre lands between them. Shifting the start
+             * moves the man and his skull together. */
+            if (c == 5) headX += kBuilderDeathsNudgeX;
+            sameLineNoBack(headX);
             if (headerAsText) {
                 ImGui::TextUnformatted(label);
                 imguiHelpTooltip(label);
@@ -2695,12 +3328,19 @@ static void renderPlayersContent(ClientSim *cs) {
                     /* Man then skull — the pair reads as "little men lost",
                      * against the previous column's bare man for the ones
                      * you killed. Without the skull the pair is ambiguous,
-                     * so that case falls back to the written label. */
+                     * so that case falls back to the written label.
+                     *
+                     * The skull is drawn small and tight against the man,
+                     * not at his height with a full gap. Two full-height
+                     * sprites made this column half again as wide as any
+                     * other, and a wide column with two marks over it and
+                     * one number under it reads as two columns, the left one
+                     * empty. Small, it marks the man instead. */
                     drawAtlasIconFrom(headerTiles, LGM0_X, LGM0_Y,
                                       LGM_WIDTH, LGM_HEIGHT);
                     imguiHelpTooltip(label);
-                    ImGui::SameLine(0.0f, sty.ItemInnerSpacing.x);
-                    drewIcon = playersPanelDrawSkull();
+                    ImGui::SameLine(0.0f, kSkullBadgeGap);
+                    drewIcon = playersPanelDrawSkull(PLAYERS_SKULL_BADGE_SCALE);
                     break;
             }
             /* No sprite means no column marker at all, so the written name
@@ -2723,16 +3363,122 @@ static void renderPlayersContent(ClientSim *cs) {
             ImGui::EndTable();
         }
     } else {
+        /* Zebra rows, and the local player's own row in flat black. This
+         * list is not a table — a row is a run of widgets on one line — so
+         * there is no RowBg to set and a row's background is painted by
+         * hand, on the splitter's band channel so it comes out under the
+         * row's widgets and under the Selectable's own highlight.
+         *
+         * Painted in the rect renderPlayerRow read back off that
+         * Selectable, never one worked out from the cursor: that rect IS
+         * the hover highlight, so a band drawn in it agrees with the
+         * highlight on all four edges by construction. The two differ —
+         * ImGui grows a Selectable by half the item spacing on every side —
+         * and a cursor-derived band sat a couple of pixels low and a couple
+         * of pixels wide against it.
+         *
+         * Consecutive rows tile with no gap: a row's rect ends at
+         *   rowTop + rowH + (ItemSpacing.y - trunc(ItemSpacing.y/2))
+         * and the next row's begins at
+         *   trunc(rowTop + rowH + ItemSpacing.y) - trunc(ItemSpacing.y/2),
+         * the same number whenever the row pitch is whole, whatever the
+         * spacing and whether it is odd or even. Where the pitch is not
+         * whole — a fractional row height at some UI scales — ImGui's own
+         * truncation of the cursor leaves the next rect starting up to a
+         * pixel EARLY, so rows overlap rather than part. That is ImGui's
+         * behaviour for a column of Selectables and not something to correct
+         * here: correcting it would move the band off the highlight, which
+         * is the one thing it has to sit on. Two stripes are never adjacent
+         * anyway — they alternate — so it can only show where the black own
+         * row meets a stripe, and there the opaque black wins the pixel. */
         for (int r = 0; r < panelRowCount; r++) {
             if (panelRowBlank[r]) {
                 /* Slot whose player left mid-round: an empty line the height
-                 * of a row, so the lines below it stay where they were. */
-                ImGui::Dummy(ImVec2(1.0f, ImGui::GetFrameHeight()));
+                 * of a row, so the lines below it stay where they were — the
+                 * row's own height, or its band would come out shorter than
+                 * the bands around it. Given the row's full width as well,
+                 * so growing its item rect below lands on the same four
+                 * edges a real row's Selectable does. */
+                ImGui::Dummy(ImVec2(ImGui::GetContentRegionAvail().x - listPad,
+                                    panelRowH));
+                expandToBandRect(ImGui::GetItemRectMin(),
+                                 ImGui::GetItemRectMax());
+                rowHovered = false;   /* nobody there to point at */
             } else {
                 renderPlayerRow(panelRows[r]);
             }
+            /* Blank rows are striped with the rest, and so is the own row:
+             * passing over either would shift the pattern for every row
+             * below it.
+             *
+             * The own row's black goes ON TOP of whatever stripe that row
+             * already has, not instead of it, which is how the lobby layers
+             * its own — TableSetBgColor(RowBg1) over RowBg0. So your row is
+             * darker than a bare row and darker again than a striped one,
+             * and the zebra still runs through it. */
+            const ImU32 rowBg   = (r & 1) ? kRowStripe : 0;
+            const bool  rowSelf = !panelRowBlank[r] && panelRows[r] == (int)self;
+            if (rowBg != 0 || rowSelf || rowHovered) {
+                listSplit.SetCurrentChannel(listDL, 1);
+                if (rowBg != 0) {
+                    listDL->AddRectFilled(rowBandMin, rowBandMax, rowBg);
+                }
+                if (rowSelf) {
+                    listDL->AddRectFilled(rowBandMin, rowBandMax, kSelfRowBg);
+                }
+                /* The hover highlight, over the row's own background rather
+                 * than instead of it, and drawn here rather than left to the
+                 * Selectable — see the row's own note. Same rect as the
+                 * stripe, so the two coincide on all four edges, and the
+                 * theme's own colour so it matches every other hover in the
+                 * game. */
+                if (rowHovered) {
+                    listDL->AddRectFilled(rowBandMin, rowBandMax,
+                                          ImGui::GetColorU32(ImGuiCol_HeaderHovered));
+                }
+                listSplit.SetCurrentChannel(listDL, 2);
+            }
+            /* The divider under the row, drawn for every row and not only a
+             * painted one: a line under the painted rows alone would draw a
+             * box round each of those and leave the bare ones open, where
+             * BordersInnerH gives a lobby row a line above AND below by
+             * putting one under all of them. The last row's line is the one
+             * the list's own border already draws, so it is skipped. */
+            if (r + 1 < panelRowCount) {
+                listSplit.SetCurrentChannel(listDL, 1);
+                listDL->AddLine(ImVec2(rowBandMin.x, rowBandMax.y - 1.0f),
+                                ImVec2(rowBandMax.x, rowBandMax.y - 1.0f),
+                                kRowDivider, 1.0f);
+                listSplit.SetCurrentChannel(listDL, 2);
+            }
         }
     }
+
+    /* ── Close the list ───────────────────────────────────────────────
+     * The bottom inset, then the background under everything since the
+     * Indent. Measured from the cursor, which is in screen space and has
+     * scrolled with the rows, so a scrolled list keeps its background. */
+    ImGui::Dummy(ImVec2(1.0f, listPad));
+    const float listBotY = ImGui::GetCursorScreenPos().y - sty.ItemSpacing.y;
+    ImGui::Unindent(listPad);
+
+    listSplit.SetCurrentChannel(listDL, 0);
+    /* A border round the list and no fill behind it, which is what a lobby
+     * team panel is: BeginChild with ImGuiChildFlags_Borders over a ChildBg
+     * the theme leaves at alpha zero. Drawn here rather than by an actual
+     * child window because a child re-bases every coordinate inside it, and
+     * the column arithmetic in this function — rowRightX, statRightX,
+     * sameLineNoBack, widestNameX — is all measured against the window.
+     *
+     * Nothing in the list, nothing to draw round: a panel with no rows would
+     * otherwise show an empty box. */
+    if (panelRowCount > 0) {
+        listDL->AddRect(ImVec2(listX0, listTopY),
+                        ImVec2(listX1, listBotY),
+                        kListBorder, sty.FrameRounding, 0,
+                        sty.ChildBorderSize > 0.0f ? sty.ChildBorderSize : 1.0f);
+    }
+    listSplit.Merge(listDL);
 
     /* What one row actually needs, measured rather than guessed: everything
      * in front of the name is a fixed width, so the widest name start plus
@@ -2742,43 +3488,59 @@ static void renderPlayersContent(ClientSim *cs) {
      * drawing into a pop-out, whose width has nothing to say about the
      * docked panel's. */
     if (!s_popOutRenderer) {
-        /* The left padding is already inside the recorded cursor x, so only
-         * the right one is added here — plus the scrollbar, so a list long
-         * enough to scroll does not lose a column to the bar. */
+        /* The left padding is already inside the recorded cursor x, and so is
+         * the list's left inset — GetCursorPosX carries the Indent — so only
+         * the right ones are added here, the list's inset and the window's
+         * padding, plus the scrollbar so a list long enough to scroll does
+         * not lose a column to the bar. */
         s_playersPanelNeedW = widestNameX + widestNameW + sty.ItemSpacing.x +
                               (showStats ? statTotal + sty.ItemSpacing.x : 0.0f) +
-                              pingColW + sty.WindowPadding.x + sty.ScrollbarSize;
+                              pingColW + listPad + sty.WindowPadding.x +
+                              sty.ScrollbarSize;
     }
 
-    /* Alliance actions */
-    ImGui::Separator();
+    /* Alliance actions. BOTH buttons are always drawn, and the one that does
+     * not apply right now is disabled rather than taken away — the same way
+     * the WinBolo menu lists the pair. This used to show one or the other,
+     * which left the panel with a single button whose meaning changed under
+     * you, and nothing to tell you the other action existed at all. A control
+     * that greys out is easier to find than one that is not there. */
+    /* No rule between the list and these: the list draws its own border now,
+     * so a separator right under it would be a second line a few pixels
+     * below the first. The rules further down, between the alliance buttons
+     * and the votes and again before the server toggle, still earn their
+     * place — those groups are bare stacks of full-width buttons with
+     * nothing else to part them. */
     {
-        bool rankedGame   = clientSimGetLobbyRanked(cs);
-        bool inCooldown = (s_allianceReqCooldownEnd != 0 &&
-                           SDL_GetTicks() < s_allianceReqCooldownEnd);
-        if (hasAllies) {
-            if (ImGui::Button(langGetText(STR_LEAVE_ALLIANCE), ImVec2(-1, 0)))
-                clientSimLeaveAllianceSelf(cs);
-                imguiHandOnHover();
-        } else {
-            bool disabled = !canRequest || inCooldown || rankedGame;
-            if (disabled) ImGui::BeginDisabled();
-            if (ImGui::Button(langGetText(STR_REQUEST_ALLIANCE), ImVec2(-1, 0))) {
-                clientSimRequestAllianceSelected(cs);
-                s_allianceReqCooldownEnd = SDL_GetTicks() + ALLIANCE_REQ_WAIT_MS;
-            }
-            imguiHandOnHover();
-            if (disabled) ImGui::EndDisabled();
-            if (rankedGame && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("%s", langGetText(STR_ALLIANCE_RANKED_DISABLED));
-            }
-            /* Controller users can't hover for the tooltip — show the reason
-               as a greyed caption under the disabled button. */
-            if (rankedGame && uiShouldUseControllerMode()) {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-                ImGui::TextWrapped("%s", langGetText(STR_ALLIANCE_RANKED_DISABLED));
-                ImGui::PopStyleColor();
-            }
+        /* The same rule the Players menu and the WinBolo menu use. */
+        AllianceActionState al = allianceActionState(cs);
+        bool rankedGame = al.rankedGame;
+
+        if (!al.canRequest) ImGui::BeginDisabled();
+        if (ImGui::Button(langGetText(STR_REQUEST_ALLIANCE), ImVec2(-1, 0))) {
+            clientSimRequestAllianceSelected(cs);
+            sdl3ImguiNoteAllianceRequested();
+        }
+        imguiHandOnHover();
+        if (!al.canRequest) ImGui::EndDisabled();
+        if (rankedGame && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip("%s", langGetText(STR_ALLIANCE_RANKED_DISABLED));
+        }
+
+        /* Leave only means anything while you are in an alliance. */
+        if (!al.canLeave) ImGui::BeginDisabled();
+        if (ImGui::Button(langGetText(STR_LEAVE_ALLIANCE), ImVec2(-1, 0))) {
+            clientSimLeaveAllianceSelf(cs);
+        }
+        imguiHandOnHover();
+        if (!al.canLeave) ImGui::EndDisabled();
+
+        /* Controller users can't hover for the tooltip — show the reason
+           as a greyed caption under the disabled button. */
+        if (rankedGame && uiShouldUseControllerMode()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::TextWrapped("%s", langGetText(STR_ALLIANCE_RANKED_DISABLED));
+            ImGui::PopStyleColor();
         }
     }
 
@@ -2809,8 +3571,16 @@ static void renderPlayersContent(ClientSim *cs) {
 
     /* In-game vote actions — siblings of Request Alliance, only during
      * the running game phase and only on lobby-enabled servers (votes
-     * return to the lobby; the server rejects them when there is none). */
+     * return to the lobby; the server rejects them when there is none).
+     *
+     * Ruled off from the alliance buttons above. They are all full-width
+     * buttons in one stack, so without a line the two groups read as one
+     * list and "Surrender" sits directly under "Leave Alliance" as though it
+     * belonged with it. The rule goes inside this test, not before it, so a
+     * game with no votes to offer does not show a line with nothing under
+     * it. */
     if (clientSimGetNetStatus(cs) == netRunning && clientSimIsLobbyAvailable(cs)) {
+        ImGui::Separator();
         /* Count active teams (distinct teamNumber across connected
          * humans) for the surrender precondition. */
         bool teamSeen[17] = {0};
@@ -2893,7 +3663,12 @@ static void renderPlayersContent(ClientSim *cs) {
         }
     }
 
-    /* Allow new players toggle */
+    /* Allow new players toggle. Ruled off from the votes above: it is a
+     * server setting that stands on its own, not another action in that
+     * stack, and it is the last thing in the panel. Unconditional, unlike
+     * the rule before the votes — this toggle always draws, so the line
+     * always has something under it. */
+    ImGui::Separator();
     {
         bool anp = (bool)allowNewPlayers;
         if (ImGui::Checkbox(langGetText(STR_ALLOW_NEW_PLAYERS), &anp))
@@ -4002,19 +4777,19 @@ static void renderMenuBar(ClientSim *cs) {
                Classic mode greys both out as well, and that is the one
                reason worth a tooltip: waiting for a game to start explains
                itself, a server rule does not. */
-            const bool classicMenu = classicModeActive();
+            const bool noOverviewMenu = overviewSuppressed();
             if (ImGui::MenuItem(langGetText(STR_MENU_MAP_OVERVIEW), KMOD_PRIMARY_LABEL "O", s_popMapOverview.open,
-                                cs != nullptr && clientSimIsRunning(cs) && !gameFrontFullScreen && !classicMenu)) {
+                                cs != nullptr && clientSimIsRunning(cs) && !gameFrontFullScreen && !noOverviewMenu)) {
                 if (s_popMapOverview.open) mapOverviewClose(); else mapOverviewOpen();
             }
-            if (classicMenu && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            if (noOverviewMenu && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip("%s", langGetText(STR_MENU_CLASSIC_MODE_TIP));
             if (ImGui::MenuItem(langGetText(STR_MENU_OVERVIEW_IN_WINDOW), "Alt+Enter",
                                 sdl3DrawIsOverviewInWindow(),
-                                cs != nullptr && clientSimIsRunning(cs) && !classicMenu)) {
+                                cs != nullptr && clientSimIsRunning(cs) && !noOverviewMenu)) {
                 overviewInWindowChoose(!sdl3DrawIsOverviewInWindow());
             }
-            if (classicMenu && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            if (noOverviewMenu && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip("%s", langGetText(STR_MENU_CLASSIC_MODE_TIP));
         } else {
 #endif
@@ -4147,13 +4922,17 @@ static void renderMenuBar(ClientSim *cs) {
         if (ImGui::MenuItem(langGetText(STR_MENU_NETDEBUG_MSGS),   nullptr, (bool)showNetworkDebugMessages))  windowMenuNetworkDebug_toggle(cs);
         ImGui::Separator();
         {
-            bool rankedGame = clientSimGetLobbyRanked(cs);
-            if (ImGui::MenuItem(langGetText(STR_REQUEST_ALLIANCE),     KMOD_PRIMARY_LABEL "R", false, !rankedGame))
+            /* Same rule the players panel and the Players menu use. */
+            AllianceActionState al = allianceActionState(cs);
+            if (ImGui::MenuItem(langGetText(STR_REQUEST_ALLIANCE),     KMOD_PRIMARY_LABEL "R", false, al.canRequest)) {
                 clientSimRequestAllianceSelected(cs);
-            if (rankedGame && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                sdl3ImguiNoteAllianceRequested();
+            }
+            if (al.rankedGame && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                 ImGui::SetTooltip("%s", langGetText(STR_ALLIANCE_RANKED_DISABLED));
             }
-            if (ImGui::MenuItem(langGetText(STR_LEAVE_ALLIANCE)))                                             clientSimLeaveAllianceSelf(cs);
+            if (ImGui::MenuItem(langGetText(STR_LEAVE_ALLIANCE), nullptr, false, al.canLeave))
+                clientSimLeaveAllianceSelf(cs);
         }
 
         ImGui::Separator();
@@ -4198,17 +4977,34 @@ static void renderMenuBar(ClientSim *cs) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         }
 #endif
-        /* Show-and-raise, never a toggle, matching the native item in
-           mac_menubar.mm; checked while the desktop pop-out is up. */
+        /* A checked item that turns the panel off again. It used to show and
+           raise only, so the tick appeared but clicking it once it was ticked
+           did nothing — a checkbox that will not come unchecked.
+
+           The show-and-raise rule still holds for the KEYBOARD shortcut, and
+           for the same reason sdl3ImguiSendMsgShortcut gives: that key press
+           lands on the main window, so a toggle would close the pop-out the
+           player was asking to bring forward. Clicking a ticked menu item is
+           not that — it is an explicit "put it away".
+
+           Both states are tested: the desktop pop-out and the in-window
+           panel. A desktop build in controller mode uses the in-window one
+           (see sdl3ImguiShowPlayersPanel), so reading only s_popPlayers would
+           leave the item unticked with the panel plainly on screen.
+
+           The macOS native item is the same checked toggle, driven by
+           MacMenuState.playersPanelShown, so the two bars agree. */
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         if (!uiModeIsTablet()) {
+            const bool panelShown = playersPanelShown();
             if (ImGui::MenuItem(langGetText(STR_MENU_PLAYERS_PANEL), KMOD_PRIMARY_LABEL "Shift+P",
-                                s_popPlayers.open))
-                sdl3ImguiShowPlayersPanel(true);
+                                panelShown))
+                sdl3ImguiShowPlayersPanel(!panelShown);
         } else {
 #endif
-            if (ImGui::MenuItem(langGetText(STR_MENU_PLAYERS_PANEL), KMOD_PRIMARY_LABEL "Shift+P"))
-                sdl3ImguiShowPlayersPanel(true);
+            if (ImGui::MenuItem(langGetText(STR_MENU_PLAYERS_PANEL), KMOD_PRIMARY_LABEL "Shift+P",
+                                playersPanelShown()))
+                sdl3ImguiShowPlayersPanel(!playersPanelShown());
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
         }
 #endif
@@ -4217,19 +5013,14 @@ static void renderMenuBar(ClientSim *cs) {
         if (ImGui::Selectable(langGetText(STR_MENU_SELECT_NONE),   false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckAllNonePlayers(cs, false);
         if (ImGui::Selectable(langGetText(STR_MENU_SELECT_ALLIES), false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckAlliedPlayers(cs);
         if (ImGui::Selectable(langGetText(STR_MENU_SELECT_NEARBY), false, ImGuiSelectableFlags_DontClosePopups))   clientSimCheckNearbyPlayers(cs);
-        /* Pre-compute alliance state for each player */
+        /* Who we are allied with, for the coloured indicator and the bot chip
+         * on each roster row below. The Request / Leave items further down ask
+         * allianceActionState instead, so this loop decides nothing. */
         BYTE self = clientSimGetMyPlayerNum(cs);
-        bool hasAllies  = false;
-        bool canRequest = false;
         bool isAlly[MAX_PLAYERS] = {};
         for (int i = 0; i < MAX_PLAYERS; i++) {
             if (s_playerEnabled[i] && i != self) {
                 isAlly[i] = clientSimIsPlayerAlly(cs, self, (BYTE)i);
-                if (isAlly[i]) {
-                    hasAllies = true;
-                } else if (s_playerChecked[i]) {
-                    canRequest = true;
-                }
             }
         }
 
@@ -4269,7 +5060,10 @@ static void renderMenuBar(ClientSim *cs) {
                 ensurePlatformIconsLoaded();
                 uint8_t pflags = s_playerFlags[i];
                 uint8_t pct    = s_playerClientType[i];
-                renderPlayerName(NULL, pflags, pct, "", false);
+                /* Same chip the panel gives it. This row starts its icon run
+                 * on the line's top, so it does not ask to keep the y. */
+                RenderPlayerNameOpts nameOpts = { isAlly[i], false };
+                renderPlayerNameEx(NULL, pflags, pct, "", false, &nameOpts);
 
                 ImGuiContext &g = *GImGui;
                 float checkSz = g.FontSize * 0.866f;
@@ -4294,9 +5088,22 @@ static void renderMenuBar(ClientSim *cs) {
                 /* Selectable player name (fills the slot between icons and ping). */
                 char selectLabel[64];
                 snprintf(selectLabel, sizeof(selectLabel), "%s##sel%d", label, i);
+                /* Off the field, and drawn at the same 45% the lobby and the
+                 * players panel use for it. Here the name is the item's own
+                 * label rather than text over it, so the row's hover tint
+                 * fades with the name — the row stays clickable, and ticking
+                 * a seat between waves still does what it did. */
+                const bool mUnfielded = clientSimSlotIsUnfielded(cs, (BYTE)i);
+                if (mUnfielded) {
+                    ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                        ImGui::GetStyle().Alpha * 0.45f);
+                }
                 if (ImGui::Selectable(selectLabel, false, ImGuiSelectableFlags_DontClosePopups,
                                       ImVec2(nameWidth, 0))) {
                     clientSimTogglePlayerCheckState(cs, (BYTE)i);
+                }
+                if (mUnfielded) {
+                    ImGui::PopStyleVar();
                 }
                 imguiHandOnHover();
 
@@ -4323,20 +5130,23 @@ static void renderMenuBar(ClientSim *cs) {
         }
         ImGui::Separator();
         {
-            bool inCooldown = (s_allianceReqCooldownEnd != 0 &&
-                               SDL_GetTicks() < s_allianceReqCooldownEnd);
-            if (hasAllies) {
-                /* Already in an alliance — show Leave */
-                if (ImGui::MenuItem(langGetText(STR_LEAVE_ALLIANCE)))
-                    clientSimLeaveAllianceSelf(cs);
-            } else {
-                /* Not in an alliance — show Request */
-                if (!canRequest || inCooldown) ImGui::BeginDisabled();
-                if (ImGui::MenuItem(langGetText(STR_REQUEST_ALLIANCE))) {
-                    clientSimRequestAllianceSelected(cs);
-                    s_allianceReqCooldownEnd = SDL_GetTicks() + ALLIANCE_REQ_WAIT_MS;
-                }
-                if (!canRequest || inCooldown) ImGui::EndDisabled();
+            /* Both entries, always, with the one that does not apply greyed —
+             * the pair reads the same here, in the players panel and in the
+             * WinBolo menu, instead of each surface showing a different one
+             * of the two depending on the moment. All three ask
+             * allianceActionState, so they cannot drift apart again. */
+            AllianceActionState al = allianceActionState(cs);
+            if (ImGui::MenuItem(langGetText(STR_REQUEST_ALLIANCE), nullptr,
+                                false, al.canRequest)) {
+                clientSimRequestAllianceSelected(cs);
+                sdl3ImguiNoteAllianceRequested();
+            }
+            if (al.rankedGame && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("%s", langGetText(STR_ALLIANCE_RANKED_DISABLED));
+            }
+            if (ImGui::MenuItem(langGetText(STR_LEAVE_ALLIANCE), nullptr,
+                                false, al.canLeave)) {
+                clientSimLeaveAllianceSelf(cs);
             }
         }
         /* In-game vote menu — only on lobby-enabled servers (the server
@@ -5691,12 +6501,17 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
     s->netInfoOpen     = sdl3ImguiIsNetInfoOpen();
     s->gameInfoOpen    = sdl3ImguiIsGameInfoOpen();
     s->sendMsgOpen     = sdl3ImguiIsSendMsgOpen();
+    /* Both of the panel's forms count, for the reason the in-window item's
+     * comment gives: a desktop build in controller mode shows the in-window
+     * panel, so reading the pop-out alone would leave the native item
+     * unticked with the panel plainly on screen. */
+    s->playersPanelShown = playersPanelShown();
     s->mapOverviewOpen    = sdl3ImguiIsMapOverviewOpen();
     s->mapOverviewEnabled = (cs != nullptr && clientSimIsRunning(cs) &&
-                             !gameFrontFullScreen && !classicModeActive());
+                             !gameFrontFullScreen && !overviewSuppressed());
     s->overviewInWindow        = sdl3ImguiIsOverviewInWindowOpen();
     s->overviewInWindowEnabled = (cs != nullptr && clientSimIsRunning(cs) &&
-                                  !classicModeActive());
+                                  !overviewSuppressed());
     s->fullScreenOn            = gameFrontFullScreen;
 
     int dispW = 99999, dispH = 99999;
@@ -5713,23 +6528,15 @@ static void populateMacMenuState(MacMenuState *s, ClientSim *cs) {
     s->fit3x = (3 * SDL3_SCREEN_W <= dispW) && (3 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
     s->fit4x = (4 * SDL3_SCREEN_W <= dispW) && (4 * SDL3_SCREEN_H + MENU_BAR_HEIGHT <= dispH);
 
-    /* Alliance gating — mirrors the in-window Players menu pre-compute
-     * at line ~2157. NULL cs leaves both predicates false, so the native
-     * Request/Leave Alliance items render disabled during bring-up. */
-    bool hasAllies = false, canRequest = false;
-    if (cs) {
-        BYTE self = clientSimGetMyPlayerNum(cs);
-        for (int i = 0; i < MAX_PLAYERS; i++) {
-            if (s_playerEnabled[i] && i != self) {
-                bool ally = clientSimIsPlayerAlly(cs, self, (BYTE)i);
-                if (ally) hasAllies = true;
-                else if (s_playerChecked[i]) canRequest = true;
-            }
-        }
-    }
-    s->hasAllies  = hasAllies;
-    s->canRequest = canRequest;
-    s->inCooldown = sdl3ImguiAllianceReqInCooldown();
+    /* Alliance items — the same answer the in-window bars act on, so the two
+     * surfaces cannot disagree about whether a click will do anything. The
+     * native refresh copies these straight onto the items. allianceActionState
+     * dereferences cs, so a NULL one skips the call and leaves both false,
+     * which renders Request and Leave disabled during bring-up. */
+    AllianceActionState mac = {};
+    if (cs) mac = allianceActionState(cs);
+    s->canRequest = mac.canRequest;
+    s->canLeave   = mac.canLeave;
 
     /* Vote gating — same pre-compute as the in-window Players menu vote
      * block (count active human teams, check our own team assignment).
@@ -5850,8 +6657,29 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     /* One read a frame, ahead of the menu bars and the suppression points
        below. A frame of staleness costs nothing: the setting is lobby-only
        and cannot change while a game runs. */
-    s_classicMode = (cs != nullptr && !clientSimIsSpectator(cs) &&
-                     clientSimGetClassicMode(cs));
+    s_noOverview = (cs != nullptr && !clientSimIsSpectator(cs) &&
+                    (clientSimGetClassicMode(cs) ||
+                     clientSimGetOverviewWindow(cs) ==
+                         (uint8_t)overviewWindowNone));
+
+    /* Mirror who we are allied with, for code that draws a player and has no
+     * sim to ask — the tank labels on the map, which pick a bot's chip by it.
+     * One read a frame, like the line above: an alliance forms or breaks on a
+     * packet, and a frame of staleness on a map label is not worth a callback.
+     * Cleared when there is no sim so a label cannot carry last game's sides
+     * into the next one. */
+    {
+        /* A spectator is allied with nobody: they hold a slot number that is
+         * not a playing tank, and asking the alliance of a slot that is not
+         * in use is a question with no answer worth trusting. Guarded the
+         * same way s_classicMode is two lines above. */
+        const bool allyKnown = (cs != nullptr && !clientSimIsSpectator(cs));
+        const BYTE allySelf  = allyKnown ? clientSimGetMyPlayerNum(cs) : 0;
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+            s_playerIsAlly[i] = (allyKnown && i != (int)allySelf &&
+                                 clientSimIsPlayerAlly(cs, allySelf, (BYTE)i));
+        }
+    }
 
 #if defined(WINBOLO_VOICE)
     /* Which slot is ours, for the drawers that have no ClientSim of their own
@@ -6811,7 +7639,31 @@ extern "C" void sdl3ImguiShowBrainSettings(void) {
     s_closeMenuPopups    = true;
 }
 
+/* Is the players panel on screen in ANY of its forms? The desktop pop-out
+ * and the in-window panel are separate states, and which one a Show() call
+ * drives depends on the UI mode — so a caller that tests only one of them is
+ * right until the mode changes under it. The menu item and the keyboard
+ * shortcut both ask this, so they cannot disagree about what to toggle. */
+static bool playersPanelShown(void) {
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+    if (s_popPlayers.open) return true;
+#endif
+    return s_showPlayersPanel;
+}
+
 void sdl3ImguiShowPlayersPanel(bool open) {
+    /* Closing closes BOTH forms, whatever mode we are in. Opening still picks
+     * one by mode below, but a close that picked one could strand the other:
+     * a pop-out opened in mouse mode is still up after a switch to controller
+     * mode, where the close path writes only s_showPlayersPanel and returns,
+     * leaving a window the menu says is shut. "Put it away" means all of it. */
+    if (!open) {
+        s_showPlayersPanel = false;
+#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
+        if (s_popPlayers.open) popOutHide(&s_popPlayers);
+#endif
+        return;
+    }
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
     /* Mouse/keyboard desktop: the draggable pop-out window.  Controller mode
        stays on the in-window panel — the pop-out has its own ImGui context and
@@ -6852,13 +7704,7 @@ void sdl3ImguiShowPlayersPanel(bool open) {
 }
 
 void sdl3ImguiTogglePlayersPanel(void) {
-#if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
-    if (!uiModeIsTablet() && !uiShouldUseControllerMode()) {
-        sdl3ImguiShowPlayersPanel(!s_popPlayers.open);
-        return;
-    }
-#endif
-    sdl3ImguiShowPlayersPanel(!s_showPlayersPanel);
+    sdl3ImguiShowPlayersPanel(!playersPanelShown());
 }
 
 bool sdl3ImguiGameInputWindowHasFocus(void) {
@@ -7006,14 +7852,14 @@ SDL_Texture *sdl3ImguiGetSteamIcon(void) {
     return s_iconSteam[activeIconSlot()];
 }
 
-SDL_Surface *sdl3ImguiGetBrainIconSurface(void) {
+SDL_Surface *sdl3ImguiGetBotIconSurface(bool isAlly) {
     /* Returns the larger rasterization — the only consumer is the
      * tank-label drawer (tank_label.c), which textures it per renderer
      * and scales it to the TTF label height; the 14-px popup texture
      * would alias badly at that size. renderPlayerName / the in-game
-     * player menu read s_iconBrain directly. */
+     * player menu read the s_iconBotChip* textures directly. */
     ensureWbnIconsLoaded();
-    return s_iconBrainSurf;
+    return isAlly ? s_iconBotChipSurfGreen : s_iconBotChipSurfRed;
 }
 
 #if defined(WINBOLO_VOICE)
@@ -7051,6 +7897,11 @@ bool sdl3ImguiPlayerIsSelf(unsigned char playerNum) {
     return playerNum == s_selfPlayerNum;
 }
 #endif
+
+bool sdl3ImguiPlayerIsAlly(unsigned char playerNum) {
+    if (playerNum >= MAX_PLAYERS) return false;
+    return s_playerIsAlly[playerNum];
+}
 
 bool sdl3ImguiPlayerIsBot(unsigned char playerNum) {
     if (playerNum >= MAX_PLAYERS) return false;
@@ -7100,17 +7951,54 @@ bool drawCountryFlagWithTip(const char *countryCode) {
     return true;
 }
 
+/* The plain form: every choice at its default, which is what the lobby, the
+ * recap and the spectator list all want. */
 void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                       const char *countryCode, bool showCountry) {
+    renderPlayerNameEx(name, flags, clientType, countryCode, showCountry, NULL);
+}
+
+void renderPlayerNameEx(const char *name, uint8_t flags, uint8_t clientType,
+                        const char *countryCode, bool showCountry,
+                        const RenderPlayerNameOpts *opts) {
     ensurePlatformIconsLoaded();
     ensureWbnIconsLoaded();
     const int iconSlot = activeIconSlot();
-    if ((flags & PLAYER_FLAG_BOT) && s_iconBrain[iconSlot]) {
-        /* Bot slot: brain icon stands in for the platform badge and the
-         * WBN/Steam badges are skipped — a bot can never be either. */
-        ImGui::Image((ImTextureID)s_iconBrain[iconSlot], ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
-        imguiHelpTooltip(langGetText(STR_PLAYER_TIP_AI));
+    /* opts is optional, so read both choices once here and let the rest of
+     * the function work from plain locals. */
+    const bool botIsAlly = opts && opts->botIsAlly;
+    const bool keepY     = opts && opts->keepIconY;
+    /* SameLine puts the cursor back on the LINE's top. That is right for
+     * every caller that starts its run there, which is all of them but one:
+     * the players panel centres the run inside a row taller than the icons,
+     * and on the line's top the first icon sits on the row's midline while
+     * the rest snap above it.
+     *
+     * Asked for per call rather than made the rule, because the rule is not
+     * free: restoring the caller's y also moves the icons for the lobby, the
+     * recap and the mobile list, all of which share this function. Those are
+     * not this change's to move. Only the panel asks. */
+    const float iconY  = ImGui::GetCursorPosY();
+    auto sameLineKeepY = [keepY, iconY]() {
         ImGui::SameLine();
+        if (keepY) ImGui::SetCursorPosY(iconY);
+    };
+    /* The red chip is the default because it is what a caller that knows
+     * nothing about alliances should show. */
+    SDL_Texture *botChip = botIsAlly ? s_iconBotChipGreen[iconSlot]
+                                     : s_iconBotChipRed[iconSlot];
+    if ((flags & PLAYER_FLAG_BOT) && botChip) {
+        /* Bot slot: the chip stands in for the platform badge — a computer
+         * player runs on no platform worth naming — and the WBN/Steam badges
+         * are skipped, a bot being neither. The chip and not a brain: the
+         * lobby already marks its bot rows with this same glyph, and one
+         * game should not have two symbols for the same thing. */
+        /* Drawn as authored, with no tint: these two files carry their own
+         * colours and the green and red ones are separate artwork, not one
+         * shape recoloured. */
+        ImGui::Image((ImTextureID)botChip, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+        imguiHelpTooltip(langGetText(STR_PLAYER_TIP_AI));
+        sameLineKeepY();
     } else {
         SDL_Texture *platTex = sdl3ImguiGetPlatformIcon(clientType);
         if (platTex) {
@@ -7131,7 +8019,7 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
                     ImGui::SetTooltip("%s", plat);
                 }
             }
-            ImGui::SameLine();
+            sameLineKeepY();
         }
 
         if (flags & PLAYER_FLAG_WBN_VERIFIED) {
@@ -7140,7 +8028,7 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
             ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
             imguiShieldBadge(WBN_ICON_SIZE, ImGui::GetColorU32(tint));
             imguiHelpTooltip(langGetText(STR_PLAYER_TIP_WBN_VERIFIED));
-            ImGui::SameLine();
+            sameLineKeepY();
         }
         if ((flags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam[iconSlot]) {
             ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
@@ -7151,7 +8039,7 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
             imguiHelpTooltip(langGetText((flags & PLAYER_FLAG_WBN_STEAM_LINKED)
                                          ? STR_PLAYER_TIP_STEAM_LINKED
                                          : STR_PLAYER_TIP_STEAM_BUILD));
-            ImGui::SameLine();
+            sameLineKeepY();
         }
     }
     /* Icon-only mode: a NULL/empty name skips the text and trailing
@@ -7162,7 +8050,8 @@ void renderPlayerName(const char *name, uint8_t flags, uint8_t clientType,
     if (name && name[0] != '\0') {
         ImGui::TextUnformatted(name);
         if (showCountry && countryCode && countryCode[0] != '\0' &&
-            !(countryCode[0] == 'X' && countryCode[1] == 'X') &&
+            !(countryCode[0] == 'X' && countryCode[1] == 'X' &&
+              countryCode[2] == '\0') &&
             flagsGetTextureFor(activeRenderer(), countryCode)) {
             ImGui::SameLine();
             drawCountryFlagWithTip(countryCode);
@@ -7405,9 +8294,14 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
  * own pings and the server rejects a ping-mute against yourself — so the name
  * still starts at the same x on that row.
  *
- * Drawn as a tinted "P" rather than an SVG: the ping icon set lives in the
- * render files an in-flight PR owns, so a glyph is used here for now — dim
- * when pings are shown, red when muted, with a tooltip naming the state. */
+ * The shape is the ping pie's own centre marker, data/ui/ping/standard.svg —
+ * the pin a plain ping puts on the map — so the cell is read against what it
+ * silences rather than against a letter. Muted draws standard-muted.svg, the
+ * same pin slashed the way mic-muted.svg slashes the microphone, so the two
+ * muted states in one row say it the same way. Colour carries it as well as
+ * shape, dim when pings are shown and red when they are not, because at
+ * WBN_ICON_SIZE a diagonal bar is a few pixels and should not be the only
+ * thing separating the two. A tooltip names the state either way. */
 void renderPlayerPingMuteCell(struct ClientSim *cs, int playerNum, bool isSelf,
                               float size) {
     if (isSelf) {
@@ -7415,19 +8309,34 @@ void renderPlayerPingMuteCell(struct ClientSim *cs, int playerNum, bool isSelf,
         return;
     }
 
+    ensureWbnIconsLoaded();
     bool muted = clientSimIsPingMuted(cs, playerNum);
+    SDL_Texture *pingTex = muted ? s_iconPingMuted[activeIconSlot()]
+                                 : s_iconPing[activeIconSlot()];
+    if (!pingTex) {
+        /* An SVG that would not load must still hold the column, or the
+         * name and the ping column shift between rows. */
+        ImGui::Dummy(ImVec2(size, size));
+        return;
+    }
+    const ImVec4 pingTint = muted ? ImVec4(0.95f, 0.35f, 0.35f, 1.0f)
+                                  : ImVec4(0.70f, 0.70f, 0.70f, 1.0f);
     char label[32];
-    snprintf(label, sizeof(label), "P##ping%d", playerNum);
+    snprintf(label, sizeof(label), "##ping%d", playerNum);
 
+    /* Zero FramePadding so the button is exactly the icon: the default
+     * padding would make this cell taller than the row's other cells and
+     * leave a dead strip down the row. The same three transparent button
+     * colours the mic cell pushes, so the two sit alike. */
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1, 1, 1, 0.08f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1, 1, 1, 0.15f));
-    ImGui::PushStyleColor(ImGuiCol_Text,
-                          muted ? ImVec4(0.95f, 0.35f, 0.35f, 1.0f)
-                                : ImVec4(0.70f, 0.70f, 0.70f, 1.0f));
-    bool clicked = ImGui::Button(label, ImVec2(size, size));
-    ImGui::PopStyleColor(4);
+    bool clicked = ImGui::ImageButton(label, (ImTextureID)pingTex,
+                                      ImVec2(size, size),
+                                      ImVec2(0, 0), ImVec2(1, 1),
+                                      ImVec4(0, 0, 0, 0), pingTint);
+    ImGui::PopStyleColor(3);
     ImGui::PopStyleVar();
     imguiHelpTooltip(langGetText(muted ? STR_PLAYER_TIP_PING_MUTED
                                        : STR_PLAYER_TIP_PING_SHOWN));
@@ -7499,7 +8408,8 @@ void sdl3ImguiCleanup(void) {
     for (int i = 0; i < POPOUT_COUNT; i++) popOutDestroy(s_popOuts[i]);
     destroyIconSlot(ICON_SLOT_MAIN);
     /* Renderer-free, so they outlive both slots and are freed once here. */
-    if (s_iconBrainSurf) { SDL_DestroySurface(s_iconBrainSurf); s_iconBrainSurf = nullptr; }
+    if (s_iconBotChipSurfGreen) { SDL_DestroySurface(s_iconBotChipSurfGreen); s_iconBotChipSurfGreen = nullptr; }
+    if (s_iconBotChipSurfRed) { SDL_DestroySurface(s_iconBotChipSurfRed); s_iconBotChipSurfRed = nullptr; }
     luaBrainFreeSettings(s_brainSettings);
     s_brainSettings      = nullptr;
     s_brainSettingsCount = 0;

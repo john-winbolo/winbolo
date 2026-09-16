@@ -29,7 +29,9 @@
 
 #include "lobby_internal.h"
 extern "C" {
+#include "control_event.h"       /* lobbyScenarioMod — which of the two is playing */
 #include "../../../lang.h"
+#include "../../../gamefront.h"  /* gameFrontHostingScripts / gameFrontGetServerSim */
 }
 
 const char *lobbyGameTypeStr(gameType gt) {
@@ -37,7 +39,101 @@ const char *lobbyGameTypeStr(gameType gt) {
         case gameOpen:             return langGetText(STR_DLGGAMEINFO_OPEN);
         case gameTournament:       return langGetText(STR_DLGGAMEINFO_TOURN);
         case gameStrictTournament: return langGetText(STR_DLGGAMEINFO_STRICT);
+        case gameScripted:         return langGetText(STR_DLGGAMEINFO_SCRIPTED);
         default:                   return langGetText(STR_UNKNOWN);
+    }
+}
+
+/* Whether this client may change which scenario plays: the host, and not a
+ * spectator. The test the reload button has always made, now shared with the
+ * Choose button beside it. */
+static bool lobbyScenarioMayChoose(ClientSim *cs) {
+    return clientSimGetLobbyHostSlot(cs) == clientSimGetMyPlayerNum(cs) &&
+           !clientSimIsSpectator(cs);
+}
+
+/* The scenario the lobby is running, under the map's own lines in both lobby
+ * layouts. The description is prose, so it goes on lines of its own rather
+ * than onto the single settings row, which is built from SameLine and ends
+ * with a right-aligned badge.
+ *
+ * Two shapes, because there are two ways a scenario comes to be playing. One
+ * that came with the map names itself and nothing else: the map is already
+ * named on the line above. One the host picked plays over whichever map is
+ * committed, and may be standing in front of that map's own script, so it
+ * names both — the map, and what is playing on it.
+ *
+ * The source is 0 when the round has no scenario, which covers a map with no
+ * script file and a map whose script this host declined alike: the server
+ * answers the same either way. So when this client is the one hosting and has
+ * the preference switched off, the line says that instead of nothing, rather
+ * than leaving a player wondering where the scenario went.
+ *
+ * A host sees the Choose button in every one of these states except that one,
+ * including on a plain map with nothing playing — that is the state a host is
+ * in when they go looking for a scenario, so it is the last place the way in
+ * should be missing. A joiner sees no button at all.
+ *
+ * The button only asks for the dialog. The dialog itself is drawn from the
+ * lobby's own frame, beside the map chooser's window, because this line is
+ * drawn inside the Map tab and a dialog that stopped being drawn when the
+ * player changed tab would be open with no way back to it. */
+void lobbyRenderScenarioLine(ClientSim *cs) {
+    if (cs == NULL) return;
+
+    bool    mayChoose = lobbyScenarioMayChoose(cs);
+    uint8_t source    = clientSimGetLobbyScenarioSource(cs);
+
+    if (source != 0) {
+        const char *name = clientSimGetLobbyScenarioName(cs);
+        const char *desc = clientSimGetLobbyScenarioDescription(cs);
+        /* A scenario that named itself nothing still came from a file. */
+        if (name[0] == '\0') name = clientSimGetLobbyScenarioFileName(cs);
+        if (source == lobbyScenarioMod) {
+            MessageArgs args = {};
+            SDL_snprintf(args.string1, sizeof(args.string1), "%s",
+                         clientSimGetMapName(cs));
+            SDL_snprintf(args.string2, sizeof(args.string2), "%s", name);
+            ImGui::TextWrapped("%s",
+                langGetTextFmt(STR_DLGLOBBY_SCENARIO_ON_MAP, &args));
+        } else {
+            ImGui::TextWrapped("%s %s",
+                               langGetText(STR_DLGLOBBY_SCENARIO_LBL), name);
+        }
+        if (desc[0] != '\0') {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+            ImGui::TextWrapped("%s", desc);
+            ImGui::PopStyleColor();
+        }
+        /* The edit-reload-play loop, for the host who has the script file on
+           the machine the server is running on. The server answers with a
+           line addressed to whoever asked, including what a reload that
+           failed says, so nothing is reported from here. */
+        if (mayChoose) {
+            if (ImGui::SmallButton(
+                    langGetText(STR_DLGLOBBY_RELOAD_SCENARIO))) {
+                clientSimNetSendLobbyReloadScenario(cs);
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton(
+                    langGetText(STR_DLGLOBBY_CHOOSE_SCENARIO))) {
+                lobbyScenarioChooserOpen();
+            }
+        }
+        return;
+    }
+    if (!gameFrontHostingScripts && gameFrontGetServerSim() != NULL) {
+        /* This machine's own server runs no scripts, so there is nothing for
+           a chooser to pick that could play. Say why, and offer no button. */
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+        ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_SCRIPTS_OFF));
+        ImGui::PopStyleColor();
+        return;
+    }
+    if (mayChoose) {
+        if (ImGui::SmallButton(langGetText(STR_DLGLOBBY_CHOOSE_SCENARIO))) {
+            lobbyScenarioChooserOpen();
+        }
     }
 }
 
@@ -220,6 +316,24 @@ static SDL_Texture *loadWhiteIcon(SDL_Renderer *renderer, const char *relPath,
     return tex;
 }
 
+/* The default ping marker — the icon half of the header summary's
+ * smart-ping entry. An authored white alpha mask (see PingKindStyle in
+ * src/gui/ping_kinds.h: every drawer tints it), so it loads through
+ * loadWhiteIcon rather than loadLobbyPng.
+ *
+ * Rasterised at a fixed 32 px because the lazy getters take no scale: the
+ * summary draws it at 16 logical px, so 32 still reads on a 2x display and
+ * scales down cleanly below that. */
+SDL_Texture *lobbyGetPingStandardTexture(SDL_Renderer *renderer) {
+    if (s_icons.pingStandardAttempted) return s_icons.pingStandard;
+    s_icons.pingStandardAttempted = true;
+    s_icons.pingStandard = loadWhiteIcon(renderer, "data/ui/ping/standard.svg", 32);
+    if (s_icons.pingStandard) {
+        SDL_SetTextureScaleMode(s_icons.pingStandard, SDL_SCALEMODE_LINEAR);
+    }
+    return s_icons.pingStandard;
+}
+
 void lobbyLoadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
     /* If we've loaded against this exact renderer already, nothing
      * to do. If the renderer pointer differs (game→lobby may have
@@ -235,6 +349,7 @@ void lobbyLoadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
         if (s_icons.settings)    { SDL_DestroyTexture(s_icons.settings);    s_icons.settings    = nullptr; }
         if (s_icons.botCpuGreen) { SDL_DestroyTexture(s_icons.botCpuGreen); s_icons.botCpuGreen = nullptr; }
         if (s_icons.botCpuRed)   { SDL_DestroyTexture(s_icons.botCpuRed);   s_icons.botCpuRed   = nullptr; }
+        if (s_icons.botCpuGrey)  { SDL_DestroyTexture(s_icons.botCpuGrey);  s_icons.botCpuGrey  = nullptr; }
         if (s_icons.locked)      { SDL_DestroyTexture(s_icons.locked);      s_icons.locked      = nullptr; }
         if (s_icons.skull)       { SDL_DestroyTexture(s_icons.skull);       s_icons.skull       = nullptr; }
         if (s_icons.picture)     { SDL_DestroyTexture(s_icons.picture);     s_icons.picture     = nullptr; }
@@ -246,12 +361,14 @@ void lobbyLoadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
         if (s_icons.pillbox15)   { SDL_DestroyTexture(s_icons.pillbox15);   s_icons.pillbox15   = nullptr; }
         if (s_icons.baseGood)    { SDL_DestroyTexture(s_icons.baseGood);    s_icons.baseGood    = nullptr; }
         if (s_icons.forest)      { SDL_DestroyTexture(s_icons.forest);      s_icons.forest      = nullptr; }
+        if (s_icons.pingStandard){ SDL_DestroyTexture(s_icons.pingStandard);s_icons.pingStandard= nullptr; }
         s_icons.tankSelfAttempted  = false;
         s_icons.tankEvilAttempted  = false;
         s_icons.tankGoodAttempted  = false;
         s_icons.pillbox15Attempted = false;
         s_icons.baseGoodAttempted  = false;
         s_icons.forestAttempted    = false;
+        s_icons.pingStandardAttempted = false;
     }
     s_icons.attempted = true;
     s_icons.renderer  = renderer;
@@ -269,6 +386,7 @@ void lobbyLoadStatusIconsOnce(SDL_Renderer *renderer, float scale) {
         { &s_icons.settings, "data/ui/settings.svg" },
         { &s_icons.botCpuGreen, "data/ui/bot-cpu-green.svg" },
         { &s_icons.botCpuRed,   "data/ui/bot-cpu-red.svg" },
+        { &s_icons.botCpuGrey,  "data/ui/bot-cpu-grey.svg" },
     };
 
     for (int i = 0; i < (int)(sizeof(icons) / sizeof(icons[0])); i++) {

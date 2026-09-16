@@ -2126,3 +2126,23 @@ STR_PING_MOUSE_RIGHT=Botão direito
 STR_PING_MOUSE_X1=Mouse 4
 STR_PING_MOUSE_X2=Mouse 5
 STR_DLGKEYSETUP_PING_ALT2=Ping inteligente: teclas alternativas 2
+
+# Seleção de cenário na sala de espera
+STR_DLGGAMEINFO_SCRIPTED=Roteirizado
+STR_DLGSETTINGS_HOSTING_SCRIPTS=Executar os scripts do mapa ao hospedar
+STR_DLGLOBBY_SCENARIO_LBL=Cenário:
+STR_DLGLOBBY_SCRIPTS_OFF=Scripts desativados
+STR_DLGLOBBY_RELOAD_SCENARIO=Atualizar script
+STR_DLGLOBBY_REJECT_SCENARIO=Essa configuração é definida pelo cenário do mapa
+STR_DLGLOBBY_REJECT_COOLDOWN=Muito cedo; tente novamente em instantes
+STR_DLGLOBBY_CHOOSE_SCENARIO=Escolher
+STR_DLGLOBBY_SCENARIO_TITLE=Escolher um mod
+STR_DLGLOBBY_SCENARIO_NONE=Nenhum — sem mod. O mapa joga seu próprio cenário, se houver um.
+STR_DLGLOBBY_SCENARIO_WAITING=Solicitando ao servidor...
+STR_DLGLOBBY_SCENARIO_EMPTY=Este servidor não oferece mods.
+STR_DLGLOBBY_SCENARIO_BOUND=Criado para um único mapa, por isso não pode ser jogado como mod
+STR_DLGLOBBY_SCENARIO_MAXPLAYERS=Até {number} jogadores
+STR_DLGLOBBY_SCENARIO_BOTS={number} vagas para bots
+STR_DLGLOBBY_SCENARIO_ON_MAP=Mod: {string2} (em {string1})
+STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Executar os scripts dos mapas enviados
+STR_DLGSETTINGS_HOSTING_SCENARIODIR=Diretório de cenários

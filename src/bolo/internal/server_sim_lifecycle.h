@@ -19,6 +19,40 @@ void serverSimReturnToLobby(ServerSim *sim);
 void serverSimEnterGameOver(ServerSim *sim);
 void serverSimLobbyCheckAllReady(ServerSim *sim);
 
+/* The lobby template, applied by the engine. Defined in
+ * server_sim_scenario.c; called from the three points a lobby is built or
+ * rebuilt. The sim owns all of this — none of it calls back into whoever
+ * read the scenario off disk.
+ *
+ * ReconcileLobby is the softer one a returning round gets: it keeps what the
+ * host did between rounds, cuts a team back to maxBots, and returns the
+ * seats a script fielded to being held. ClearSeats is the first half of
+ * serverSimScenarioSeatLobby on its own. OnMapChanged tells whoever owns the
+ * scenario about the new map and then seats what they leave behind.
+ *
+ * serverSimScenarioSeatLobby and serverSimScenarioApplyLobbyRules are on
+ * server_sim.h instead: a process booting onto a scripted map makes both
+ * calls itself, and the dedicated server, the headless runner and the
+ * desktop host see only the public header. */
+void serverSimScenarioClearSeats(ServerSim *sim);
+void serverSimScenarioReconcileLobby(ServerSim *sim);
+void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath);
+
+/* Whether the map at mapPath has a script beside it, asked through whatever
+ * the process registered with serverSimSetScenarioMapScripted. False with
+ * nothing registered, which is what a build carrying no scenario library
+ * answers for every map. */
+bool serverSimScenarioMapIsScripted(const ServerSim *sim, const char *mapPath);
+
+/* The pair a preview and its cancel use. SeatCounts reads the template seats
+ * each team holds into out[], indexed by team id and MAX_TANKS long, and
+ * answers false without writing when no template is attached. TrimSeatsTo
+ * takes each of the template's teams back down to the matching count, the
+ * way ReconcileLobby cuts one back to maxBots; a team below its count is
+ * left alone, because this never seats upward. */
+bool serverSimScenarioSeatCounts(const ServerSim *sim, BYTE *out);
+void serverSimScenarioTrimSeatsTo(ServerSim *sim, const BYTE *counts);
+
 /* Per-slot lobby state setter. Driven by UDP PACKET_LOBBY_READY handlers
  * and by client_net.c's local-transport branches. */
 void serverSimSetReady(ServerSim *sim, BYTE playerNum, bool ready);
@@ -113,6 +147,19 @@ LobbyPlayer     *serverSimGetLobbyPlayerMut(ServerSim *sim, BYTE n);
  * concatenate with "/<rel>". */
 const char *serverSimGetMapDirRoot(const ServerSim *sim);
 
+/* serverSimSetScenarioDir / serverSimGetScenarioDir: moved to
+ * public/server_sim.h — unlike the map root, a desktop host sets this one
+ * from its own preferences, and a GUI translation unit sees public/ only. */
+
+/* Records which scenario from that directory the lobby host has picked, by
+ * the file name the directory listing gave; NULL or "" is none. Recording the
+ * pick is all it does — the caller asks for the decision about what plays
+ * again afterwards and publishes the result, as the CMD_LOBBY_SET_SCENARIO
+ * case does. Its callers are that case and the tests, so it stays here while
+ * serverSimGetSelectedScenario is public: the scenario library reads the pick
+ * back, and a frontend that wants a different one sends the command. */
+void serverSimSetSelectedScenario(ServerSim *sim, const char *file);
+
 /* Absolute directory backing the virtual "Uploads/" folder for
  * PERSIST-policy uploads. Pass NULL or "" to leave it unset (uploads then
  * resolve under "<mapDirRoot>/Uploads"). The enumerate/search/read resolvers
@@ -131,21 +178,24 @@ void lobbyAutoUnreadyOnChange(ServerSim *sim);
  * humans' ready state before returning true. Returns false on
  * malformed payload, out-of-range value, or cross-setting invariant
  * rejection (e.g. ranked forbids gameOpen / non-aiNone / autoLock
- * off). */
+ * off, or the map's scenario fixes the value).
+ *
+ * The Result form is that same call saying why it refused, so the
+ * sender can be told: CMD_REJECT_SCENARIO for one of the three the
+ * attached scenario fixes — the game type, ranked, and the AI policy
+ * that runs no bots — and CMD_REJECT_INVALID for everything else. The
+ * command dispatcher calls that one; the bool is the same answer with
+ * the reason dropped. */
+CmdResult serverSimApplyLobbySettingResult(ServerSim *sim,
+                                           uint8_t lst,
+                                           const uint8_t *value, size_t len);
 bool serverSimApplyLobbySetting(ServerSim *sim,
                                 uint8_t lst,
                                 const uint8_t *value, size_t len);
 
-/* Apply a bot-config change atomically — write difficulty / personality
- * to the slot, optionally rename the bot (when validatedName is
- * non-NULL and non-empty), publish CTRL_LOBBY_BOT_CONFIG +
- * CTRL_LOBBY_SLOT, and clear humans' ready state. Callers (UDP
- * PACKET_LOBBY_BOT_CONFIG handler, SP-host clientSimNetSendLobbyBotConfig)
- * must validate the name beforehand — see lobbyBotNameAcceptable.
- * Pass NULL or an empty string to leave the name unchanged. */
-void serverSimSetBotConfig(ServerSim *sim, BYTE slot,
-                            uint8_t difficulty, uint8_t personality,
-                            const char *validatedName);
+/* serverSimSetBotConfig lives on public/server_sim.h — the SP-host GUI
+ * (gamefront.c) writes a bot's difficulty through it before creating the
+ * bot, and the GUI only sees public/. */
 
 /* Apply a team-metadata change atomically — write color, naming pool
  * (with the in-use-pool rewrite when another team owns the requested

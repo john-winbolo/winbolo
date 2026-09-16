@@ -2128,3 +2128,23 @@ STR_PING_MOUSE_RIGHT=Clic droit
 STR_PING_MOUSE_X1=Souris 4
 STR_PING_MOUSE_X2=Souris 5
 STR_DLGKEYSETUP_PING_ALT2=Ping intelligent – touches alternatives 2
+
+# Sélection de scénario dans le salon
+STR_DLGGAMEINFO_SCRIPTED=Scripté
+STR_DLGSETTINGS_HOSTING_SCRIPTS=Exécuter les scripts de la carte en tant qu'hôte
+STR_DLGLOBBY_SCENARIO_LBL=Scénario :
+STR_DLGLOBBY_SCRIPTS_OFF=Scripts désactivés
+STR_DLGLOBBY_RELOAD_SCENARIO=Actualiser le script
+STR_DLGLOBBY_REJECT_SCENARIO=Ce paramètre est fixé par le scénario de la carte
+STR_DLGLOBBY_REJECT_COOLDOWN=Trop tôt ; réessayez dans un instant
+STR_DLGLOBBY_CHOOSE_SCENARIO=Choisir
+STR_DLGLOBBY_SCENARIO_TITLE=Choisir un mod
+STR_DLGLOBBY_SCENARIO_NONE=Aucun — pas de mod. La carte joue son propre scénario, si elle en a un.
+STR_DLGLOBBY_SCENARIO_WAITING=Demande au serveur...
+STR_DLGLOBBY_SCENARIO_EMPTY=Ce serveur ne propose aucun mod.
+STR_DLGLOBBY_SCENARIO_BOUND=Conçu pour une seule carte, il ne peut donc pas être joué comme mod
+STR_DLGLOBBY_SCENARIO_MAXPLAYERS=Jusqu'à {number} joueurs
+STR_DLGLOBBY_SCENARIO_BOTS={number} places pour bots
+STR_DLGLOBBY_SCENARIO_ON_MAP=Mod : {string2} (sur {string1})
+STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Exécuter les scripts des cartes envoyées
+STR_DLGSETTINGS_HOSTING_SCENARIODIR=Dossier des scénarios

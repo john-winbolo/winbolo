@@ -37,6 +37,13 @@ extern "C" {
  * 250+ subfolder collections; local-filesystem tabs use far fewer. */
 #define MAP_CHOOSER_MAX_MAPS 512
 
+/* Whether the map at mapPath has a script beside it, so the chooser can tag
+ * it before anyone picks it. A seam rather than a direct call: the chooser
+ * is also built into the standalone map editor, which does not carry the
+ * scenario library and answers false for every map through
+ * gamefront_stubs.c. The client's own body asks the library. */
+bool mapChooserMapHasScript(const char *mapPath);
+
 /* Special selectedIdx value for "Random Map" */
 #define MAP_CHOOSER_IDX_RANDOM -2
 
@@ -46,6 +53,11 @@ typedef struct {
     bool    isFolder;            /* true: directory the user can navigate into */
     bool    isParentUp;          /* true: synthetic ".." entry that pops one level */
     int64_t modTime;             /* file mtime, ns since UNIX epoch (SDL_Time); 0 = unknown */
+    bool    scripted;            /* the map has a script beside it, so a round
+                                  * on it plays by that script. Never true for
+                                  * a folder. A local map answers from disk; a
+                                  * map on a server answers from what the
+                                  * server's list said. */
     char    tooltipFolder[128];  /* Optional: shown on hover as "in <tooltipFolder>".
                                   * Used by the WBN tab to surface the catalogue
                                   * folder a search result lives in, with no impact

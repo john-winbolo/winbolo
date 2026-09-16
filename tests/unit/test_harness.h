@@ -46,6 +46,48 @@
 extern "C" {
 #endif
 
+/* The name of the test currently running, as test_main.c's table spells it
+ * ("none" outside a test). For a test that needs a FIXTURE ON DISK.
+ *
+ * CTest gives each entry its own process (`WinBoloUnitTests --test <name>`)
+ * and `ctest -j` runs several of those at once, all sharing one working
+ * directory. A fixture at a path baked in at compile time is therefore
+ * shared by every test in its file: they create it, read it and delete it
+ * under each other, and the failures land on whichever test lost the race.
+ * A mutex fixes nothing — the contention is between processes, not threads.
+ *
+ * So build the path from this, and two tests can never collide. It is the
+ * test name rather than the process id on purpose: the path is then the
+ * SAME on every run, so a test that removes its own fixture on the way in
+ * also clears the wreckage a previously crashed run left behind. A pid
+ * would make every crash leak a directory nothing ever cleans up.
+ *
+ * The one case this does not cover is two concurrent runs of the same test.
+ * CTest never does that within one invocation, but two invocations do it all
+ * the time — a developer alongside an agent, or two worktrees on one
+ * machine — and a name that is the same every run is exactly what makes
+ * them collide. utScratchPath below is the answer to that; prefer it for
+ * anything that lands on disk, and reach for this only to label something.
+ *
+ * Do not use it to vary what a test ASSERTS — only where it keeps its
+ * scratch files. */
+const char *utCurrentTestName(void);
+
+/* Build a path to `leaf` inside a directory private to this process and
+ * this test, creating the directory on first use. Pass NULL or "" for the
+ * directory itself. False means the directory could not be created and
+ * nothing was written to `out`.
+ *
+ * The layout is <build dir>/test-scratch/<pid>/<test name>/<leaf>, which
+ * keeps two worktrees, two runs and two tests apart at once; scratch_dir.c
+ * carries the reasoning and the measurement behind it. The process removes
+ * its own subtree at exit.
+ *
+ * Use it for every file a test writes. An absolute path under /tmp is the
+ * worst case — it puts every checkout on the machine on one file — but a
+ * name baked in at compile time is only better by degree. */
+bool utScratchPath(char *out, size_t outSz, const char *leaf);
+
 int run_transport_local_passive_threads(void);
 int run_sp_subscriber_delivery(void);
 int run_active_sim_armed_on_lobby_tick(void);
@@ -71,10 +113,26 @@ int run_prefs_api_adopt_server(void);
 int run_prefs_api_mark_synced(void);
 int run_join_running_phase_not_lobby(void);
 int run_lobby_settings_codec_and_apply(void);
+/* The scenario the settings event names, onto the ClientSim and back out
+ * through the accessors — with a scenario and then without one. */
+int run_lobby_settings_scenario_apply(void);
 int run_lobby_team_meta_codec_and_apply(void);
 int run_lobby_bot_config_codec_and_apply(void);
 int run_lobby_bot_brain_codec_and_apply(void);
 int run_lobby_brain_list_codec_and_apply(void);
+int run_lobby_brain_docs_chunk_codec_roundtrip(void);
+int run_lobby_brain_docs_chunk_len_is_exact(void);
+
+/* The brains' lobby texts: cached once, sent to a joiner, kept out of the
+ * spectator ring's per-keyframe control snapshot, and dropped on the client
+ * when a new catalogue arrives. */
+int run_lobby_brain_list_clears_stale_texts(void);
+
+/* The "name: text" lobby chat line has ONE spelling, because the lobby's
+ * bot-announce poll searches the history for the line it just appended. */
+int run_lobby_chat_line_format_is_what_is_appended(void);
+int run_lobby_brain_docs_stay_out_of_the_control_snapshot(void);
+int run_lobby_brain_docs_reach_a_joining_subscriber(void);
 int run_lobby_sync_complete_codec_roundtrip(void);
 int run_lobby_rating_posted_codec_roundtrip(void);
 int run_command_codec_roundtrip_variants(void);
@@ -109,6 +167,12 @@ int run_live_stats_cleared_on_running_phase(void);
 int run_shell_death_codec_roundtrip(void);
 int run_shell_death_culls_matching_predicted_shell(void);
 int run_shell_death_rejected_culls_without_impact(void);
+int run_lobby_bot_config_memory_applies(void);
+int run_lobby_bot_config_memory_empty_is_noop(void);
+int run_lobby_bot_config_memory_unknown_key_ignored(void);
+int run_lobby_bot_config_memory_not_honoured(void);
+int run_lobby_bot_config_memory_manual_only(void);
+int run_lobby_bot_config_memory_cleared_on_return_to_lobby(void);
 int run_lobby_add_bot_rejects_empty_brain_path(void);
 int run_lobby_add_bot_rejects_ai_none(void);
 int run_lobby_add_bot_rejects_not_in_lobby(void);
@@ -122,6 +186,9 @@ int run_transfer_host_openhost_does_not_grant(void);
 int run_transfer_host_rejects_self(void);
 int run_transfer_host_rejects_unconnected(void);
 int run_transfer_host_rejects_bot_target(void);
+int run_firstjoinhost_promotes_over_bot(void);
+int run_firstjoinhost_off_leaves_host_alone(void);
+int run_firstjoinhost_second_joiner_does_not_displace(void);
 int run_command_queue_first_submit_drains(void);
 int run_command_queue_second_submit_does_not_drain(void);
 int run_command_queue_ack_drains_pending_tail(void);
@@ -184,6 +251,7 @@ int run_round_stats_leaver_clears_mines(void);
 int run_mine_kill_publishes_event(void);
 int run_mine_kill_on_boat_publishes_event(void);
 int run_mine_kill_own_mine_names_self(void);
+int run_mine_blast_range(void);
 
 int run_awards_basic_winners(void);
 int run_awards_tiebreak(void);
@@ -274,7 +342,13 @@ int run_fog_settings_classic_mode_preset(void);
 int run_fog_settings_lock_implied(void);
 int run_fog_settings_lobby_edits(void);
 int run_fog_settings_lobby_reset(void);
+int run_visibility_preset_round_trip(void);
+int run_visibility_preset_custom(void);
+int run_visibility_preset_ignores_decay(void);
+int run_visibility_preset_pref_words(void);
 int run_info_packet_view_policy_layout(void);
+int run_info_packet_preset_round_trip(void);
+int run_info_packet_absent_views_read_classic(void);
 int run_info_packet_view_policy_length_tier(void);
 int run_upload_cap_enforced(void);
 int run_map_field_clamps_evil(void);
@@ -291,7 +365,12 @@ int run_map_read_memory_matches_file(void);
 int run_map_read_memory_handbuilt(void);
 int run_map_convert_file_to_compressed(void);
 int run_map_read_memory_rejects_garbage(void);
+int run_map_read_clears_mine_under_pill(void);
 int run_upload_busy_predicate(void);
+int run_upload_lost_ack_retry(void);
+int run_upload_timeout_releases_other_player(void);
+int run_upload_lost_done_retry(void);
+int run_upload_partial_timeout_retry(void);
 int run_upload_filename_safe(void);
 int run_lobby_time_minutes_valid(void);
 int run_lobby_bot_name_rejects_reserved_prefix(void);
@@ -324,6 +403,29 @@ int run_await_join_lobby_latch(void);
 int run_await_join_timeout_and_error(void);
 int run_bot_pool_wire_chunk_transport(void);
 int run_lobby_map_list_chunked(void);
+/* The scripted byte on a map-list entry: the layout by hand-written bytes,
+ * and a list carrying a mix of scripted and plain maps. */
+int run_lobby_map_list_scripted_golden(void);
+int run_lobby_map_list_scripted_mixed(void);
+
+/* The lobby's reload request (test_lobby_reload_scenario.c): who may ask,
+ * when, how often, and what a lobby with no scenario answers. */
+int run_lobby_reload_scenario_needs_host(void);
+int run_lobby_reload_scenario_needs_lobby(void);
+int run_lobby_reload_scenario_no_scenario(void);
+int run_lobby_reload_scenario_calls_back(void);
+int run_lobby_reload_scenario_cooldown(void);
+
+/* The lobby's scenario pick (test_lobby_set_scenario.c): who may pick, when,
+ * which names are accepted, that a refusal leaves the previous pick alone,
+ * and the tick gap between one pick and the next. */
+int run_lobby_set_scenario_selects(void);
+int run_lobby_set_scenario_none(void);
+int run_lobby_set_scenario_refuses_unknown(void);
+int run_lobby_set_scenario_refuses_shape(void);
+int run_lobby_set_scenario_refuses_bound(void);
+int run_lobby_set_scenario_cooldown(void);
+int run_lobby_set_scenario_unreadies(void);
 int run_lobby_map_search_chunked(void);
 int run_wbn_bearer_state(void);
 int run_wbn_rekey_codec(void);
@@ -354,6 +456,28 @@ int run_brain_inbox_overflow_drops_oldest(void);
 int run_brain_inbox_legacy_drain_fifo(void);
 int run_brain_inbox_clear_resets(void);
 int run_brain_list_scan_path_resolves(void);
+int run_brain_list_texts_read(void);
+
+/* The two test rosters — test_main.c's dispatch table and CMakeLists.txt's
+ * _unit_test_names — say the same thing, so a case added to one and not the
+ * other is found rather than silently never run. */
+int run_unit_test_names_match_cmake(void);
+
+/* A brain's mode manifest (test_brain_modes.c): brains/<brain>/modes.txt,
+ * the API by which a brain tells the lobby which modes it has and which
+ * difficulty levels each of them offers. Happy path, the synthesized
+ * fallback when there is no manifest, malformed lines being skipped rather
+ * than fatal, and the two fixed-size caps. */
+int run_brain_modes_manifest_parses(void);
+int run_brain_modes_missing_falls_back(void);
+int run_brain_modes_malformed_lines_skipped(void);
+int run_brain_modes_counts_clamped(void);
+
+/* The brain's terrain window at the map edge (test_brain_view_data.c): the
+ * rect brainDataMakeInfo builds is inclusive, so a tank on row or column 240
+ * and beyond is described out to 255. BYTE loop counters never finished such a
+ * fill, which left a joining client spinning inside its first brain pass. */
+int run_brain_view_data_edge_rect(void);
 int run_bolo_rand_golden_sequence(void);
 
 /* Pathfinder diagonal corner-cut rule (test_pf_corner_cut.c): the nav
@@ -366,6 +490,24 @@ int run_bolo_rand_golden_sequence(void);
 int run_pf_dijkstra_no_solid_corner_cut(void);
 int run_pf_astar_no_solid_corner_cut(void);
 int run_pf_costto_no_solid_corner_cut(void);
+int run_pf_tail_reaches_radius_and_stops(void);
+int run_pf_tail_blocked_by_wall_and_sea(void);
+int run_pf_tail_neutral_zone_slows(void);
+int run_pf_tail_meeting_cancels_tie_to_hostile(void);
+int run_pf_tail_never_overwrites_a_stamp(void);
+int run_pf_tail_deep_margin_keeps_off_the_shore(void);
+int run_pf_tail_contact_makes_a_front_line(void);
+
+int run_loadbrowser_segment_walks_parts(void);
+int run_loadbrowser_segment_crosses_blocks(void);
+int run_loadbrowser_segment_no_neighbour(void);
+int run_loadbrowser_segment_path_forms(void);
+int run_loadbrowser_segment_labels(void);
+
+int run_loadbrowser_rename_splits_names(void);
+int run_loadbrowser_rename_family_plan(void);
+int run_loadbrowser_rename_rejections(void);
+int run_loadbrowser_rename_applies(void);
 
 int run_net_impair(void);
 
@@ -555,6 +697,22 @@ int run_bot_chat_send_to_human_lands_in_human_inbox(void);
 int run_bot_chat_send_to_other_bot_lands_in_recipient_inbox(void);
 int run_bot_chat_receive_from_human_lands_in_bot_inbox(void);
 int run_bot_chat_receive_from_other_bot_via_broadcast(void);
+
+/* The delivery rule in front of a hosted bot's inbox: an enemy's broadcast is
+ * chatter, not an order, and a line aimed at the seat lands whoever sent it. */
+int run_bot_chat_enemy_broadcast_is_not_an_order(void);
+int run_bot_chat_enemy_unicast_still_lands(void);
+/* A bot seated mid-round has an empty own row in its client-side player
+ * table, so the rule reads the bound server's alliance matrix instead. */
+int run_bot_chat_mid_round_bot_reads_server_alliances(void);
+
+/* A bot placing its own smart ping (test_bot_ping.c) — a brain's ping
+ * request becomes a CMD_PING from the bot's own player slot, and the bot's
+ * own rate limit drops the extras. */
+int run_bot_ping_queue_becomes_cmd_ping_from_bot_slot(void);
+int run_bot_ping_rate_limit_drops_extras(void);
+int run_bot_ping_ignores_bad_slot(void);
+int run_bot_ping_ignores_a_slot_that_is_not_a_bot(void);
 
 /* Internal brain-message routing (test_brain_internal_msg_routing.c) —
  * pins botManagerDeliverInternalMessage: bot brains sending with
@@ -826,6 +984,10 @@ int run_alliance_reset_apply_rebuilds_alliances(void);
  * start, on both start paths (bot re-arm before vs after the reapply). */
 int run_alliance_reset_bots_synced_after_inplace_start(void);
 int run_alliance_reset_bots_synced_after_countdown_start(void);
+/* Applying a reset moves no pillbox and no base owner — ownership changes
+ * hands on a departure, which arrives as CTRL_PLAYER_LEAVE. */
+int run_alliance_reset_apply_keeps_owners(void);
+int run_alliance_reset_changed_matrix_keeps_owners(void);
 
 /* Log replay round-trip (test_log_roundtrip.c). */
 int run_log_roundtrip_basic(void);
@@ -854,6 +1016,8 @@ int run_replay_roundtrip_world(void);
 /* Same fixture: a base moved by basesMigrate (its owner left the game) is on
  * the same base, with the same new owner, after replay. */
 int run_replay_roundtrip_base_migrate(void);
+int run_replay_roundtrip_base_damage(void);
+int run_replay_roundtrip_base_capture_stock(void);
 /* Same fixture: a pillbox's armour and square change together, so the health
  * record has two more records behind it in the same stream. A viewer that
  * takes the wrong number of bytes for the health record reads the ones after
@@ -1095,6 +1259,14 @@ int run_base_death_prediction_authority(void);
  * stored on the tank, so a hit greater than the armour remaining destroys it
  * while a hit that exactly empties the armour leaves it alive at zero. A
  * destroyed tank still reads as destroyed after a snapshot round trip. */
+/* A seat the roster holds with nobody on the field reports tankNone, so the
+ * status strip draws no tank for it, and reports what it always did once a
+ * wave fields it again. */
+int run_tank_alliance_unfielded_shows_no_tank(void);
+/* And playersSetPlayer, which works the status tile out for itself on a join
+ * or a rename, blanks a held seat's tile the same way. */
+int run_tank_alliance_unfielded_status_tile(void);
+
 int run_tank_damage_exact_armour_survives(void);
 int run_tank_damage_overkill_destroys(void);
 int run_tank_damage_partial_survives(void);
@@ -1373,6 +1545,29 @@ int run_overview_fog(void);
  * a line, and a block the origin is nowhere near is written at its own width. */
 int run_sight(void);
 
+/* The shadow rule (test_sight_shadow.c): with no wall on the map the mask is
+ * the one the old centre-line rule built, square for square, on Everard
+ * Island's own ground; a pillbox with a blocker up beside it is seen where the
+ * centre line called it hidden; a sliver of a square about a quarter wide is
+ * enough to see it and one more wall closes the sliver; two walls meeting at a
+ * corner leave no crack between their shadows and a square squarely behind a
+ * wall is hidden, from anywhere inside the square the player is standing on;
+ * the trees answer what they always answered; and off the map is never seen
+ * while the square the player is on always is. */
+int run_sight_shadow(void);
+
+/* What the shadow pass costs (test_sight_shadow.c): the widest block there is,
+ * built from real ground with real walls on it, timed over five hundred runs
+ * and printed. */
+int run_sight_shadow_cost(void);
+
+/* The full-shadow-pile branch (test_sight_shadow_overflow.c): a second copy of
+ * the module built with the pile capped at two, so a row of four walls
+ * overruns it and the fold a full pile answers with is taken. What it pins is
+ * the direction - the capped mask hides every square the mask the module
+ * really builds hides, and some the other way round, never the reverse. */
+int run_sight_shadow_overflow(void);
+
 /* In-window overview HUD geometry (test_overview_hud_layout.cpp): the column
  * fits the height at 1080p and on the Steam Deck's 800 lines, its pieces stack
  * in the classic order without overlapping and stay inside their backing
@@ -1486,6 +1681,17 @@ int run_build_harvest_busy_queues(void);
  * without dispatching, spending or messaging the player. */
 int run_lgm_request_valid(void);
 int run_lgm_request_quiet(void);
+
+/* A quit with a pillbox in the man's hands (test_lgm_quit_pill.c): the pill is
+ * on no tank's carry list while he holds it, so the leave path has to put it
+ * down itself or it is lost — still flagged as carried, by a man who no longer
+ * exists. Issue #340. */
+int run_lgm_quit_drops_carried_pill(void);
+/* The same pill, the other teardown that deletes a man mid-round:
+ * serverSimUnfieldBot, which takes a held seat off the field between waves.
+ * No ownership migration runs there, so a stranded pill stayed under the name
+ * of a seat that was not on the field. */
+int run_lgm_unfield_drops_carried_pill(void);
 
 /* Adaptive jitter buffer (test_jitter_buffer_grow.c): queue drains under
  * jitter deepen jitterTarget toward MAX, a steadily full queue shrinks it
@@ -1663,6 +1869,8 @@ int run_map_compress_roundtrip_mutated(void);
 int run_map_compress_rejects_null_handles(void);
 int run_map_checksum_ignores_mines(void);
 int run_map_resync_base_crater_converges(void);
+int run_map_pill_mine_cleared_on_load(void);
+int run_map_carried_pill_keeps_terrain(void);
 
 /* Per-client copies of the terrain (test_map_shadow.c): each slot's
  * clientKnownMap follows the live map across frames of scattered terrain
@@ -1814,10 +2022,25 @@ int run_ping_dispatch_rejects_bad_kind(void);
 int run_ping_dispatch_rate_limit(void);
 int run_ping_dispatch_spam_30s_window(void);
 int run_ping_dispatch_new_round_clears_rate_limit(void);
+int run_ping_dispatch_smart_pings_off(void);
 int run_ping_reaches_team_only(void);
 int run_ping_mute_relay_skip(void);
 int run_ping_mute_client_mirror_cleared_on_leave(void);
 int run_ping_sender_name_empty_for_unused_slot(void);
+
+/* The two curves behind the smart ping's world marker
+ * (test_ping_marker_anim.c): the three-flash blink pingWorldMarkerAlpha
+ * draws it with, and the arrival ring's close and pulse from ringAnimAt.
+ * Both are pure functions of the ping's age, so a recording replays what
+ * was shown live — which is the property these pin. */
+int run_ping_world_marker_alpha(void);
+int run_ring_anim_at(void);
+
+/* The log_GameSettings blob (test_game_settings_blob.c): the real writer
+ * and the log viewer's real decode over the same bytes, including the
+ * offsets an older reader still indexes by and a short payload from a
+ * writer that predates the last two fields. */
+int run_game_settings_blob(void);
 
 /* Smart ping across the wire (test_ping_network.c): the full client -> server
  * -> client path over the real loopback UDP transport, driven through
@@ -1831,6 +2054,16 @@ int run_ping_network(void);
  * the table is strictly sorted for bsearch, and every name round-trips —
  * guards the off-by-one that walked resolveName()'s bsearch off the end. */
 int run_lang_name_table(void);
+
+/* Bot difficulty plumbing (test_bot_init_arg.c): the "difficulty=<word>"
+ * BRAIN_INIT_ARG token is appended after any existing tokens with a ';',
+ * takes an exact fit, and is dropped WHOLE (buffer untouched) when it would
+ * not fit — a truncated token would silently run the bot at a difficulty
+ * nobody asked for. Plus the difficulty <-> word round trip the CLI's
+ * -difficulty flag and the "Chosen Difficulty" preference share. */
+int run_bot_init_arg_difficulty_token(void);
+int run_bot_init_arg_mode_tokens(void);
+int run_bot_difficulty_names(void);
 
 /* mDNS LAN discovery (test_mdns_discovery.c): unicast-loopback round-trip of
  * the advertiser builder + browser parse path, asserting the SRV port, the
@@ -2036,6 +2269,7 @@ int run_tank_mod_reload_fires_twice_as_often(void);
 int run_tank_mod_dealt_kills_in_half_the_hits(void);
 int run_tank_mod_taken_takes_more_hits(void);
 int run_tank_mod_mine_damage_scales_with_layer(void);
+int run_mine_damage_fatal_reduction(void);
 int run_tank_mod_neutral_owner_deals_classic(void);
 int run_tank_mod_boat_exit_at_half_speed(void);
 int run_tank_mod_pill_leads_half_speed_boat(void);
@@ -2057,6 +2291,18 @@ int run_scenario_tick_called_both_branches(void);
 int run_scenario_start_flag_set_during_start(void);
 int run_scenario_start_guard_blocks_reentry(void);
 int run_scenario_start_flag_cleared_after_start(void);
+int run_scenario_round_start_called_both_starts(void);
+int run_scenario_setup_window_admits_ops(void);
+int run_scenario_setup_window_roster_refused(void);
+int run_scenario_setup_window_shut_refuses_all(void);
+int run_scenario_setup_window_no_callback(void);
+int run_scenario_setup_window_holds_publish(void);
+int run_scenario_round_boot_before_tanks(void);
+int run_scenario_round_boot_publishes_rules_once(void);
+int run_scenario_setup_events_off_the_wire(void);
+int run_scenario_setup_terrain_raises_map_events(void);
+int run_scenario_setup_terrain_reaches_shadow(void);
+int run_scenario_round_start_clears_seat_holders(void);
 
 int run_scenario_read_roster_slot(void);
 int run_scenario_read_pill_info(void);
@@ -2074,6 +2320,7 @@ int run_scenario_tank_set_boat(void);
 int run_scenario_tank_give_pill(void);
 int run_scenario_tank_drop_pill(void);
 int run_scenario_tank_arm_records(void);
+int run_scenario_tank_death_ticks_respawn(void);
 
 int run_scenario_lgm_dispatch(void);
 int run_scenario_lgm_recall(void);
@@ -2116,6 +2363,12 @@ int run_pill_armour_scale_client_caps(void);
  * (test_loopback_entity_change.c): the client's list follows the server's. */
 int run_loopback_entity_change(void);
 
+/* A scenario's changeover over the real loopback transport
+ * (test_loopback_scenario_seat.c): the pillbox a human holds keeps its owner
+ * while a held seat is fielded and taken off again, with no full sync in the
+ * middle to cover a migration. */
+int run_loopback_scenario_seat_keeps_pills(void);
+
 /* The rules table over the real loopback transport
  * (test_loopback_sim_rules.c): a mid-round change reaching a connected
  * client, a joiner arriving on the changed table, a server-only rule
@@ -2154,6 +2407,12 @@ int run_scenario_roster_spawn_refusals(void);
 int run_scenario_roster_spawn_lands(void);
 int run_scenario_roster_spawn_paced(void);
 int run_scenario_roster_team_during_add(void);
+/* A spawn allies the new bot with its team on one CTRL_ALLIANCE_ACCEPT,
+ * never the batched matrix, and with no newswire line; a spawn onto no team
+ * publishes neither event. */
+int run_scenario_roster_spawn_allies_team(void);
+int run_scenario_roster_spawn_ally_is_quiet(void);
+int run_scenario_roster_spawn_no_team_allies_nothing(void);
 int run_scenario_roster_remove_bot(void);
 int run_scenario_roster_set_team(void);
 int run_scenario_lobby_add_bot(void);
@@ -2161,6 +2420,107 @@ int run_scenario_lobby_remove_bot(void);
 int run_scenario_lobby_set_team(void);
 int run_scenario_roster_bots_seat_past_the_human_cap(void);
 int run_scenario_roster_spawn_named_start(void);
+
+/* The loadout a spawn names for the one bot it builds: it fuels that tank
+ * ahead of the spawn-loadout policy, it is answered with no policy there at
+ * all, and it is spent on that tank rather than held for the seat. */
+int run_scenario_roster_spawn_loadout_named(void);
+int run_scenario_roster_spawn_loadout_without_policy(void);
+int run_scenario_roster_spawn_loadout_not_next_life(void);
+
+/* What the lobby says about its scenario (test_lobby_scenario_settings.c):
+ * the settings body with and without one, byte for byte; the scripted game
+ * type a commit sets and gives back, the same type on a server that booted
+ * onto the map with no commit to set it, and the same again on a lobby the
+ * last player has left; the settings a scenario does not go with; and the
+ * control characters that never reach the event. */
+int run_lobby_scenario_settings_plain_bytes(void);
+int run_lobby_scenario_settings_scripted_bytes(void);
+int run_lobby_scenario_settings_roundtrip(void);
+int run_lobby_scenario_commit_sets_type(void);
+int run_lobby_scenario_reset_keeps_rules(void);
+int run_lobby_scenario_refuses_ranked(void);
+int run_lobby_scenario_refuses_ai_none(void);
+int run_lobby_scenario_refuses_game_type(void);
+int run_lobby_scenario_boot_sets_type(void);
+int run_lobby_scenario_identity_strips_controls(void);
+int run_lobby_scenario_nolobby_boot_seats_template(void);
+
+/* The lobby template (test_lobby_template.c): the engine seating a
+ * scenario's teams where a lobby is built or rebuilt, reconciling one that
+ * comes back from a round against what the host did to it, and leaving a
+ * preview and a plain map alone. */
+int run_lobby_template_map_commit_seats(void);
+int run_lobby_template_return_reconciles(void);
+int run_lobby_template_return_unfields(void);
+int run_lobby_template_reset_reseats(void);
+int run_lobby_template_preview_is_inert(void);
+int run_lobby_template_plain_map_clears(void);
+int run_lobby_template_caps_humans_only(void);
+int run_lobby_template_cap_seats_human_above_bots(void);
+int run_lobby_template_cap_refuses_extra_human(void);
+int run_lobby_template_cap_never_binds_bots(void);
+int run_lobby_template_cancel_keeps_trim(void);
+int run_lobby_template_cancel_keeps_empty_team(void);
+int run_lobby_template_cancel_chain_rolls_back(void);
+int run_lobby_template_commit_keeps_new_lobby(void);
+int run_lobby_template_cancel_restores_path_inmem(void);
+int run_lobby_template_cancel_restores_path_random(void);
+int run_lobby_template_seat_carries_init(void);
+
+/* The scripted game type (test_scripted_game_type.c): gameScripted resolving
+ * through the base game the scenario declared, at the loadout and at the
+ * start, the value going with the template when a plain map is committed,
+ * and a client resolving it off the settings tail. */
+int run_scripted_game_type_loadout_follows_base(void);
+int run_scripted_game_type_no_base_is_strict(void);
+int run_scripted_game_type_strict_ignores_base(void);
+int run_scripted_game_type_start_follows_base(void);
+int run_scripted_game_type_plain_map_clears_base(void);
+int run_scripted_game_type_client_follows_settings(void);
+
+/* The unfielded seat (test_unfielded_seat.c): a seat a bot holds with no
+ * bot manager entry, no ClientSim and no tank behind it. What it counts for,
+ * what the start sequence does with it, the two ops that field and unfield
+ * it, and the byte that carries it to clients. */
+int run_unfielded_seat_counts(void);
+int run_unfielded_seat_is_empty(void);
+int run_unfielded_seat_all_ready(void);
+int run_unfielded_seat_start_skips_it(void);
+int run_unfielded_seat_spawn_fields_it(void);
+int run_unfielded_seat_survives_remove(void);
+int run_unfielded_seat_unfield_is_quiet(void);
+int run_unfielded_seat_unfield_keeps_sync(void);
+int run_unfielded_seat_spawn_keeps_alliances(void);
+int run_unfielded_seat_on_the_wire(void);
+
+/* What a wave costs (test_scenario_wave_cost.c): the brain, the ClientSim and
+ * the control subscription behind a held seat, built across the countdown
+ * before the round is played, parked when the seat comes off the field and
+ * handed back when it goes back on. Counted at the calls that do it, for one
+ * seat and for six seats swapped twice, plus the four refields a parked
+ * runner cannot serve, the three places it must not survive, and the warm
+ * itself — every seat, a free first fielding, one seat it cannot serve, and a
+ * countdown given up on before the round it was building for. */
+int run_scenario_wave_cost_refield_resumes(void);
+int run_scenario_wave_cost_seats_swap_counts(void);
+int run_scenario_wave_cost_other_brain_rebuilds(void);
+int run_scenario_wave_cost_brain_case_rebuilds(void);
+int run_scenario_wave_cost_other_init_rebuilds(void);
+int run_scenario_wave_cost_round_end_releases(void);
+int run_scenario_wave_cost_all_parked_releases(void);
+int run_scenario_wave_cost_rotation_releases(void);
+int run_scenario_wave_cost_seat_leaving_releases(void);
+int run_scenario_wave_cost_destroy_releases(void);
+int run_scenario_wave_cost_countdown_warms_seats(void);
+int run_scenario_wave_cost_warm_is_one_a_frame(void);
+int run_scenario_wave_cost_warmed_field_is_free(void);
+int run_scenario_wave_cost_warmed_init_rebuilds(void);
+int run_scenario_wave_cost_template_init_warms(void);
+int run_scenario_wave_cost_warm_skips_bad_brain(void);
+int run_scenario_wave_cost_failed_build_leaves_nothing(void);
+int run_scenario_wave_cost_abort_countdown_releases(void);
+int run_scenario_wave_cost_all_ready_clears_skips(void);
 
 /* The five comms ops (test_scenario_comms_arms.c). A line to the game, to a
  * team and to one player, with the destination filtered where the recipient
@@ -2173,6 +2533,26 @@ int run_scenario_comms_msg_team(void);
 int run_scenario_comms_msg_player(void);
 int run_scenario_comms_sound(void);
 int run_scenario_comms_log(void);
+int run_scenario_comms_say(void);
+/* THREE SHOTS = GO THERE — the shell-expiry detector behind the order
+ * (tests/unit/test_three_shot_order.c). */
+int run_three_shot_order_orders_allied_bots(void);
+int run_three_shot_order_ignores_closed_ground(void);
+int run_three_shot_order_needs_one_square(void);
+int run_three_shot_order_window_and_reset(void);
+int run_three_shot_order_needs_quiet_before(void);
+int run_three_shot_order_quiet_counts_hits(void);
+int run_three_shot_order_needs_quiet_after(void);
+int run_three_shot_order_quiet_after_sees_a_shell_still_flying(void);
+int run_three_shot_order_quiet_before_sees_a_shell_still_flying(void);
+
+/* The detector's clock is the SERVER's tick, never the client input tick a
+ * shell also carries, and an order can only be dropped on a real square. */
+int run_three_shot_order_uses_the_server_tick(void);
+int run_three_shot_order_server_tick_quiet_after(void);
+int run_three_shot_order_ignores_a_forged_fire_tick(void);
+int run_three_shot_order_rejects_off_map_squares(void);
+int run_three_shot_order_scenario_refuses_off_map(void);
 int run_scenario_comms_arm_records(void);
 int run_scenario_comms_decoder_dest_player(void);
 int run_scenario_comms_apply_non_zero_slot(void);
@@ -2199,6 +2579,15 @@ int run_scenario_rule_refusals(void);
 int run_scenario_rule_arm_records(void);
 int run_scenario_rule_clamps_world(void);
 int run_scenario_rule_clamp_records(void);
+
+/* fill_to_caps (test_scenario_fill_caps.c). A mod that raises a cap and asks
+ * for the map to start at it, for a base stock and for a pill's armour; the
+ * same mod without the key, which raises the cap and moves nothing; and what
+ * the fill moved, read back out of a recording. */
+int run_scenario_fill_caps_raises_bases(void);
+int run_scenario_fill_caps_raises_pills(void);
+int run_scenario_fill_caps_off_changes_nothing(void);
+int run_scenario_fill_caps_records(void);
 
 /* The six lifecycle and lobby policy pointers
  * (test_scenario_policy_lifecycle.c). Where a tank starts, whether the base
@@ -2231,6 +2620,33 @@ int run_scenario_policy_can_build(void);
 int run_scenario_policy_can_capture(void);
 int run_scenario_policy_kill_ops_ignore_can_die(void);
 int run_scenario_policy_combat_null_is_classic(void);
+
+/* The same rows answered from a script rather than from a vtable a case wrote
+ * (test_scenario_policy_lua.c): the host's lookup, the arguments a script is
+ * handed at each site, what a script that answers nil gets, the op a policy
+ * may not issue while it is answering, and the raise that counts toward the
+ * error limit. */
+int run_scenario_policy_lua_allow_base_win(void);
+int run_scenario_policy_lua_can_respawn(void);
+int run_scenario_policy_lua_can_build(void);
+int run_scenario_policy_lua_can_capture(void);
+int run_scenario_policy_lua_announce(void);
+int run_scenario_policy_lua_can_die(void);
+int run_scenario_policy_lua_nil_is_classic(void);
+int run_scenario_policy_lua_op_in_policy(void);
+int run_scenario_policy_lua_error_counts(void);
+
+/* And the three that carry a value out rather than answering a bool: the
+ * start a script names, the loadout in both of its shapes, and the percent a
+ * blow is priced at — each at its site, with nil, a raise, an answer the site
+ * cannot use and no function at all reaching that policy's own classic
+ * answer, which for damage_scale is a hundred and not a zero. */
+int run_scenario_policy_lua_choose_start(void);
+int run_scenario_policy_lua_spawn_loadout(void);
+int run_scenario_policy_lua_damage_scale(void);
+int run_scenario_policy_lua_value_classic(void);
+int run_scenario_policy_lua_value_error_counts(void);
+int run_scenario_policy_lua_value_in_policy(void);
 
 /* The in-process game-event channel (test_game_event_channel.c): a subscriber
  * that asks for it hears the captures and the builder death on it rather than
@@ -2286,6 +2702,250 @@ int run_scenario_announce_pill_line_written_once(void);
 int run_scenario_announce_vote_line_held(void);
 int run_scenario_announce_loopback_quiet_draws_no_line(void);
 
+int run_scenario_host_metadata(void);
+int run_scenario_host_rules_change_round(void);
+int run_scenario_host_syntax_error_line(void);
+int run_scenario_host_unknown_rule_key(void);
+int run_scenario_host_api_too_new(void);
+int run_scenario_host_no_script(void);
+int run_scenario_host_manifest_roundtrip(void);
+int run_scenario_host_team_init_read(void);
+int run_scenario_host_seed_reproducible(void);
+int run_scenario_host_edit_after_attach(void);
+int run_scenario_host_reload_picks_up_edit(void);
+int run_scenario_host_reload_bad_syntax(void);
+int run_scenario_host_reload_bad_api(void);
+int run_scenario_host_reload_applies_nothing(void);
+
+/* The round's lifecycle (test_scenario_host.c): the two lifecycle
+ * calls, a fresh set of globals per round, the error limit at its
+ * boundary, the recursion-aware VM lock from one thread and from two,
+ * and the roster audit. */
+int run_scenario_host_fresh_globals_per_round(void);
+int run_scenario_host_setup_in_window(void);
+int run_scenario_host_start_on_first_running_tick(void);
+int run_scenario_host_error_limit_boundary(void);
+int run_scenario_host_disabled_stops_hooks(void);
+int run_scenario_host_vm_lock_same_thread(void);
+int run_scenario_host_vm_lock_second_thread(void);
+int run_scenario_host_audit_human_lost(void);
+int run_scenario_host_failed_start_drops_manifest(void);
+int run_scenario_host_round_answers_its_own_start(void);
+int run_scenario_host_opening_tank_under_rules(void);
+int run_scenario_host_boot_failure_still_starts(void);
+int run_scenario_host_round_after_scenario_is_classic(void);
+int run_scenario_host_tag_follows_switch(void);
+int run_scenario_host_chunk_events_reach_hooks(void);
+
+/* A metatable on the script's own tables (test_scenario_host.c): what the
+   host's reads of the declared data do and do not run. */
+int run_scenario_host_metatable_raises(void);
+int run_scenario_host_metatable_not_read(void);
+int run_scenario_host_hook_via_global_metatable(void);
+
+/* The scripts-off switch (test_scenario_host.c): what an attach does with
+   it off, with and without a script beside the map, and with it back on. */
+int run_scenario_host_disabled_refuses_script(void);
+int run_scenario_host_disabled_plain_map(void);
+int run_scenario_host_enabled_again(void);
+
+/* The validator (test_scenario_validate.c): a script read in a stub VM and
+ * checked against the map, the lobby template and the rule catalogue, each
+ * problem carrying the key it is against and the line it is on. */
+int run_scenario_validate_clean(void);
+int run_scenario_validate_api_too_new(void);
+int run_scenario_validate_lobby_shape(void);
+int run_scenario_validate_team_init_reported(void);
+int run_scenario_validate_unknown_rule(void);
+int run_scenario_validate_rule_out_of_range(void);
+int run_scenario_validate_rule_pair(void);
+int run_scenario_validate_tag_past_map(void);
+int run_scenario_validate_fifth_tag(void);
+int run_scenario_validate_region_off_map(void);
+int run_scenario_validate_bound_false_with_tags(void);
+int run_scenario_validate_syntax_error_line(void);
+int run_scenario_validate_lines_point_at_the_key(void);
+int run_scenario_validate_wave_defense(void);
+int run_scenario_validate_unknown_game(void);
+
+/* The binding table (test_scenario_lua.c): every row of the registry
+ * called once, the three index rules, the nils an absent entity reads
+ * as, the whole-map string, a shape error against the error limit, and
+ * the rules, tags and regions a script declares read back. */
+int run_scenario_lua_every_row_answers(void);
+int run_scenario_lua_read_index_passes_through(void);
+int run_scenario_lua_op_index_subtracts_one(void);
+int run_scenario_lua_script_index_adds_one(void);
+int run_scenario_lua_absent_reads_are_nil(void);
+int run_scenario_lua_terrain_is_the_whole_map(void);
+int run_scenario_lua_shape_error_counts(void);
+int run_scenario_lua_rule_reads_the_table(void);
+int run_scenario_lua_tags_and_regions(void);
+int run_scenario_lua_refusals_in_round(void);
+int run_scenario_lua_refusals_in_lobby(void);
+int run_scenario_lua_op_index_reaches_the_payload(void);
+int run_scenario_lua_add_answers_its_index(void);
+int run_scenario_lua_queued_answers_queued(void);
+int run_scenario_lua_shape_raises_refusal_does_not(void);
+int run_scenario_lua_detail_carries_the_number(void);
+int run_scenario_lua_teleport_start_refuses_bad_index(void);
+int run_scenario_lua_spawn_bot_refuses_bad_start(void);
+int run_scenario_lua_game_type_resolves_scripted(void);
+
+/* The state a scenario runs in (test_scenario_sandbox.c): the names the
+ * whitelist takes and the ones it keeps, the precompiled chunk the loader
+ * refuses, collectgarbage without "stop", print on the server console, the
+ * memory cap a script is refused at, the instruction budget one call is cut
+ * off at, the two catchers that are not allowed to keep the error it raises,
+ * the os.date format that is read before it reaches strftime, and the console
+ * lines one call may print. */
+int run_scenario_sandbox_removed_names_are_nil(void);
+int run_scenario_sandbox_bytecode_chunk_refused(void);
+int run_scenario_sandbox_collectgarbage_stop_refused(void);
+int run_scenario_sandbox_print_reaches_the_console(void);
+int run_scenario_sandbox_memory_cap_refuses(void);
+int run_scenario_sandbox_state_survives_a_refusal(void);
+int run_scenario_sandbox_instruction_budget_cuts_a_loop(void);
+int run_scenario_sandbox_budget_is_per_call(void);
+int run_scenario_sandbox_state_survives_the_budget(void);
+int run_scenario_sandbox_budget_survives_a_nested_call(void);
+int run_scenario_sandbox_budget_survives_a_pcall(void);
+int run_scenario_sandbox_budget_survives_a_coroutine(void);
+int run_scenario_sandbox_os_date_refuses_a_bad_format(void);
+int run_scenario_sandbox_print_bounded_in_one_call(void);
+int run_scenario_sandbox_print_allowance_returns(void);
+
+/* The bus events (test_scenario_events.c): the subscriber that only
+ * queues, the bounded drain at the end of each tick, and what a full
+ * queue does with the event that finds no room. */
+int run_scenario_events_queued_then_drained(void);
+int run_scenario_events_drain_reads_the_length_once(void);
+int run_scenario_events_queued_during_a_drain_waits(void);
+int run_scenario_events_overflow_boundary(void);
+int run_scenario_events_overflow_counts_errors(void);
+int run_scenario_events_no_scenario_delivers_nothing(void);
+int run_scenario_events_lobby_tick_drains(void);
+int run_scenario_events_control_reaches_the_queue(void);
+int run_scenario_events_both_channels_in_publish_order(void);
+int run_scenario_events_channel_says_which(void);
+int run_scenario_events_overflow_covers_both(void);
+
+/* The hooks (test_scenario_hooks.c): what a drained event becomes, the
+ * payload each hook is handed, the mark that says whether the scenario
+ * caused the fact, and the two lifecycle calls the drain makes. */
+int run_scenario_hooks_every_hook_from_its_event(void);
+int run_scenario_hooks_fire_one_tick_later(void);
+int run_scenario_hooks_scripted_both_ways(void);
+int run_scenario_hooks_spawn_drain_is_scripted(void);
+int run_scenario_hooks_team_changed_on_difference(void);
+int run_scenario_hooks_tick_and_end(void);
+int run_scenario_hooks_error_counts_and_disables(void);
+
+/* What the host derives rather than hears (test_scenario_derived.c): the
+ * timers a script sets, the regions it names, and the enter and leave hooks
+ * that come from watching where the tanks are. */
+int run_scenario_derived_timer_fires_on_its_tick(void);
+int run_scenario_derived_timer_cancelled_and_stale(void);
+int run_scenario_derived_timer_limit_boundary(void);
+int run_scenario_derived_timers_die_with_the_round(void);
+int run_scenario_derived_region_enter_and_leave(void);
+int run_scenario_derived_define_region_adds_replaces_and_expires(void);
+int run_scenario_derived_region_loop_terminates(void);
+int run_scenario_derived_fixture_wins_without_on_tick(void);
+
+/* The WBSC container (test_scenario_package.c): the framing round trip,
+ * the refusals a malformed buffer gets, the entry and brain lists, two
+ * containers open at the same time, and the cap an entry is measured against
+ * before it is read. */
+int run_scenario_package_round_trip(void);
+int run_scenario_package_bad_framing(void);
+int run_scenario_package_entry_names(void);
+int run_scenario_package_two_open(void);
+int run_scenario_package_entry_cap(void);
+
+/* manifest.json (test_scenario_manifest_json.c): the schema into the struct
+ * and back out with the keys this build does not read kept, the refusals a
+ * malformed manifest gets, the comparison that holds a manifest against the
+ * table a script declared, and a team's init table read the way the Lua
+ * reader reads it. */
+int run_scenario_manifest_json_round_trip(void);
+int run_scenario_manifest_json_refusals(void);
+int run_scenario_manifest_agrees(void);
+int run_scenario_manifest_from_values(void);
+int run_scenario_manifest_json_team_init(void);
+int run_scenario_manifest_json_number_range(void);
+
+/* Where a map file's map data ends (test_scenario_map_body.c): the measure
+ * itself, the container found after it, the scripted tag it gives the
+ * chooser, and the preview that stops at it. */
+int run_scenario_map_body_length(void);
+int run_scenario_map_find_container(void);
+int run_scenario_map_has_script_chunk(void);
+int run_scenario_map_preview_truncates(void);
+int run_scenario_map_preview_passes_plain_bytes(void);
+int run_scenario_map_body_use_local_compare(void);
+int run_scenario_map_has_script_cached(void);
+
+/* A scenario carried inside the map file (test_scenario_packed_map.c): the
+ * container's script run in place of a loose one, the loose script that
+ * overrides it, the manifest handed to a script that declares no table, the
+ * refusal one that restates it and disagrees gets, and the round start that
+ * hands the table over again. */
+int run_scenario_packed_map_script_runs(void);
+int run_scenario_packed_map_loose_overrides(void);
+int run_scenario_packed_map_script_omits_table(void);
+int run_scenario_packed_map_table_disagrees(void);
+int run_scenario_packed_map_round_start_keeps_it(void);
+int run_scenario_packed_map_upload_switch(void);
+int run_scenario_packed_map_team_init(void);
+
+/* Writing a map's scenario into the map (test_scenario_pack.c): the container
+ * a loose script packs into, the manifest that comes out of the script's own
+ * table, the second pack that replaces the first rather than following it,
+ * and the map with nothing to pack that is left alone. */
+int run_scenario_pack_writes_container(void);
+int run_scenario_pack_manifest_agrees(void);
+int run_scenario_pack_replaces_trailer(void);
+int run_scenario_pack_refuses_unscripted(void);
+
+/* The brain a scenario names (test_scenario_brain_name.c): the name a team
+ * writes reaching the seat as that brain's init.lua, the name this server has
+ * not got falling back to the server's own brain and being reported, the path
+ * written where a name belongs being refused, and the two roster ops that
+ * resolve a name of their own. */
+int run_scenario_brain_name_resolves(void);
+int run_scenario_brain_name_missing(void);
+int run_scenario_brain_name_rejects_path(void);
+int run_scenario_brain_op_resolves(void);
+int run_scenario_brain_name_op_missing_refused(void);
+
+/* The scenarios directory (test_scenario_dir.c): a .scenario package listed
+ * from its manifest with no Lua run, a loose .lua listed through the
+ * validator's stub VM, what is skipped, a file one directory down left out,
+ * the second reading of an unchanged directory answered from the cache
+ * without booting a VM, and the list encoded into the SCENARIO_LIST_RSP shape
+ * against committed golden bytes and decoded back. */
+int run_scenario_dir_lists_package(void);
+int run_scenario_dir_lists_loose_script(void);
+int run_scenario_dir_skips_junk(void);
+int run_scenario_dir_skips_subdirectory(void);
+int run_scenario_dir_list_cached(void);
+int run_scenario_dir_entry_roundtrip(void);
+int run_scenario_dir_chunk_not_in_flight(void);
+
+/* Which scenario plays when a map and a mod both have a claim
+ * (test_scenario_precedence.c): the three rules, the four points the
+ * template is applied at, and the game a round is played by. */
+int run_scenario_precedence_mod_over_map(void);
+int run_scenario_precedence_none_restores_map(void);
+int run_scenario_precedence_plain_map_keeps_mod(void);
+int run_scenario_precedence_template_seats(void);
+int run_scenario_precedence_reset_reapplies(void);
+int run_scenario_precedence_reload_reseats(void);
+int run_scenario_precedence_no_game_plays_strict(void);
+int run_scenario_precedence_open_game_plays_open(void);
+int run_scenario_precedence_reload_refuses_bound(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */
@@ -2336,6 +2996,22 @@ const ScnTable *ut_brain_stub_init(int player_num);
 /* The team the slot held as its brain was made — the team serverSimAddBot
  * had already written and picked the slot's lobby start from. */
 int ut_brain_stub_team(int player_num);
+/* How many brains have been made for one slot, which is what tells a seat
+ * fielded once from a seat fielded, taken off the field and fielded again;
+ * 0 for a slot off the end. */
+int ut_brain_stub_creates(int player_num);
+/* How many brains have been destroyed, over every slot: the destroy call is
+ * handed an instance and no player number, so there is no slot to file them
+ * under. Both counts are reset by ut_brain_stub_arm. */
+int ut_brain_stub_destroys(void);
+
+/* The last status tile frontEndStatusTank was handed by the stub in
+ * test_stubs.c: the 1-based player number, and the tankAlliance as an int so
+ * the header does not have to pull screentank.h in. Both are -1 until the
+ * first call. playersSetPlayer computes the tile itself on a join or a rename,
+ * and this is the only way to read what it decided. */
+int ut_status_tank_last_player(void);
+int ut_status_tank_last_alliance(void);
 
 #ifdef __cplusplus
 }

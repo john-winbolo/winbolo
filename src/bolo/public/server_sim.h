@@ -132,6 +132,17 @@ typedef struct {
   bool ready;
   bool isBot;          /* Managed by bot system, not by player packets */
   uint8_t startIdx;    /* reserved map start, 1-based; 0xFF = none */
+  /* On the field. A seat can be held without being played: an unfielded seat
+     is a connected bot seat with no bot manager entry, no ClientSim and no
+     tank, which shows in the roster and is skipped by the start sequence
+     until something fields it. Every other way of taking a seat sets this
+     true. */
+  bool fielded;
+  /* The seat outlives the bot in it. Taking the bot out of a seat marked
+     this way returns the seat to unfielded rather than emptying it, so the
+     next wave has somewhere to land. Set when the seat is seeded unfielded;
+     survives being fielded. */
+  bool keepSeat;
 } LobbyPlayer;
 
 /* Per-team metadata — used by the Layout A lobby UI for color tinting,
@@ -150,12 +161,29 @@ typedef struct {
   char    name[LOBBY_TEAM_NAME_LEN];
 } TeamMetadata;
 
-/* Per-bot config — extends bot identity with difficulty + personality
- * the Layout A AiConfig sub-panel writes. Brain consumption is deferred
- * (GoalHunter accepts the values via brain.set_config but ignores
- * them in v1). Indexed by slot (matches bot's playerNum). */
+/* Bot difficulty in the DEFAULT mode, as it has always been carried on the
+ * wire (CTRL_/PACKET_LOBBY_BOT_CONFIG) and shown in the lobby. The values
+ * are frozen: 1 was labelled "normal" before it was labelled "Medium".
+ * botDifficultyName (bot_manager.h) turns one of these into a word.
+ *
+ * Since modes arrived the byte is really an INDEX into the selected mode's
+ * level list (brain_list.h). The default mode's levels are easy / medium /
+ * hard in that order, so these three constants still name the right slots
+ * and every pre-mode caller keeps working unchanged. */
+#define BOT_DIFFICULTY_EASY    0
+#define BOT_DIFFICULTY_MEDIUM  1
+#define BOT_DIFFICULTY_HARD    2
+#define BOT_DIFFICULTY_MAX     2
+
+/* Per-bot config — extends bot identity with mode + difficulty +
+ * personality the Layout A AiConfig sub-panel writes. mode and difficulty
+ * reach the brain as BRAIN_INIT_ARG tokens at bot-brain creation
+ * (bot_manager.c); the brain stores them and behaves the same at every
+ * setting for now. personality is still unconsumed. Indexed by slot
+ * (matches bot's playerNum). */
 typedef struct {
-  uint8_t difficulty;   /* 0=easy, 1=normal, 2=hard */
+  uint8_t mode;         /* index into the brain's mode list; 0 = default */
+  uint8_t difficulty;   /* index into that mode's level list (0=easy...) */
   uint8_t personality;  /* 0=normal, 1=aggressive, 2=defensive, 3=sniper */
 } LobbyBotConfig;
 
@@ -553,6 +581,9 @@ bool              serverSimBotExecLua(ServerSim *sim, BYTE playerNum,
                                       const char *src);
 char             *serverSimBotEvalLuaString(ServerSim *sim, BYTE playerNum,
                                             const char *src);
+bool              serverSimBotSetLuaGlobalString(ServerSim *sim, BYTE playerNum,
+                                                 const char *name,
+                                                 const char *value);
 
 /* serverSimSetTeam: moved to internal/server_sim_lifecycle.h —
  * applied by UDP PACKET_LOBBY_TEAM_SET / PACKET_LOBBY_ADD_BOT
@@ -696,6 +727,91 @@ void serverSimSetMessageLogFile(ServerSim *sim, const char *path);
 void serverSimSetQuiet(ServerSim *sim, bool quiet);
 
 /*********************************************************
+ *NAME:          serverSimSetScenarioDir
+ *               serverSimGetScenarioDir
+ *PURPOSE:
+ *  The directory of scenarios this server offers on their
+ *  own, independently of any map: -scenariodir on the
+ *  dedicated server, the "Scenario Dir" preference on a
+ *  desktop host. The getter falls back to the built-in
+ *  "data/scenarios" the way the map root falls back to
+ *  "data/maps"; NULL or "" to the setter goes back to that
+ *  default. No trailing slash.
+ *
+ *  Public rather than beside the map root in
+ *  server_sim_lifecycle.h: a desktop host sets this one from
+ *  its own preferences, and a GUI translation unit sees
+ *  public/ only.
+ *
+ *  Setting it reads nothing. The directory is read when a
+ *  client asks for the list, through the lister registered
+ *  with serverSimSetScenarioLister, and a directory that is
+ *  not there answers an empty list rather than an error —
+ *  a server offering no scenarios of its own is the
+ *  ordinary case.
+ *
+ *ARGUMENTS:
+ *  sim - Pointer to the ServerSim
+ *  dir - The directory, or NULL for the built-in default
+ *********************************************************/
+void        serverSimSetScenarioDir(ServerSim *sim, const char *dir);
+const char *serverSimGetScenarioDir(const ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimGetUploadsDir
+ *PURPOSE:
+ *  Where an uploaded map lands on disk: the configured
+ *  persist directory, or "<map root>/Uploads" when none is
+ *  configured. This is the same answer the virtual
+ *  "Uploads" folder resolves to, so a map file sitting
+ *  under it is a map a client sent this server.
+ *
+ *  Public because the scenario library asks it. A map's
+ *  path is the only record that it arrived as an upload —
+ *  the bytes are written straight to their final name and
+ *  nothing is stamped on the file — so the switch that
+ *  decides whether an uploaded map's script may run has
+ *  this prefix to compare against and nothing else.
+ *
+ *  out is left empty when sim is NULL.
+ *
+ *ARGUMENTS:
+ *  sim    - Pointer to the ServerSim
+ *  out    - Buffer the directory is written to, no
+ *           trailing slash
+ *  outLen - Size of out; FILENAME_MAX holds every answer
+ *********************************************************/
+void        serverSimGetUploadsDir(const ServerSim *sim, char *out,
+                                   size_t outLen);
+
+/*********************************************************
+ *NAME:          serverSimGetSelectedScenario
+ *PURPOSE:
+ *  Which scenario from that directory the lobby host has
+ *  picked, by the file name the directory listing gave.
+ *  Empty is none — the ordinary state of a server whose host
+ *  has picked nothing.
+ *
+ *  Never answers NULL: a sim with no selection answers "",
+ *  so a caller can print or compare it without a guard.
+ *  There is no fallback the way the directory has one; no
+ *  selection is a state, not a missing setting.
+ *
+ *  Public because the scenario library reads it back to
+ *  decide what plays: a pick beats the committed map's own
+ *  script, and none hands the map its own back. Changing it
+ *  is the sim's own business and lives on
+ *  server_sim_lifecycle.h — a frontend that wants a
+ *  different scenario sends CMD_LOBBY_SET_SCENARIO, which is
+ *  what asks for that decision again and publishes the
+ *  result.
+ *
+ *ARGUMENTS:
+ *  sim  - Pointer to the ServerSim
+ *********************************************************/
+const char *serverSimGetSelectedScenario(const ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimSetQuitOnWin
  *PURPOSE:
  *  Configures whether the server should quit after
@@ -731,6 +847,65 @@ void serverSimSetTickLimit(ServerSim *sim, int32_t ticks);
  *  Resets after firing.
  *********************************************************/
 void serverSimSetGameTickLimit(ServerSim *sim, int32_t ticks);
+
+/*********************************************************
+ *NAME:          serverSimSetSnapshotHook
+ *PURPOSE:
+ *  Registers a periodic observer that is invoked every
+ *  intervalTicks running ticks (the same ticks
+ *  serverSimSetTickLimit counts), from inside the sim step
+ *  before that step does any work — so the callback always
+ *  sees fully settled state and never a half-applied tick.
+ *  It runs on whatever thread drives the sim (the dedicated
+ *  server's game timer), under that driver's tick lock.
+ *
+ *  The callback must only read the sim. intervalTicks of 0,
+ *  or a NULL cb, disables the hook. Follows the same
+ *  register-a-callback pattern as mapSetChangeCallback.
+ *
+ *  Used by WinBoloDS -snapjson/-snapinterval to build a
+ *  JSONL time series of global game state.
+ *********************************************************/
+void serverSimSetSnapshotHook(ServerSim *sim, void (*cb)(ServerSim *sim),
+                              int32_t intervalTicks);
+
+/*********************************************************
+ *NAME:          serverSimGetPlayerKills
+ *PURPOSE:
+ *  The server's authoritative kill count for a slot in the
+ *  current round (roundStats[slot].kills, credited in the
+ *  shell-death path).
+ *
+ *  Not the same number as TankInfo.kills: that reads
+ *  tank->numKills, which only tankAddKill writes, and
+ *  tankAddKill is called solely from the client snapshot
+ *  path for the local player. On a dedicated server nothing
+ *  ever calls it, so TankInfo.kills is permanently 0 —
+ *  server-side readers want this instead. Returns 0 for an
+ *  out-of-range slot.
+ *********************************************************/
+uint16_t serverSimGetPlayerKills(const ServerSim *sim, BYTE slot);
+
+/*********************************************************
+ *NAME:          serverSimGetDeathCauses
+ *PURPOSE:
+ *  Copies the slot's per-cause death tally into out,
+ *  indexed by DEATH_CAUSE_* (out must hold DEATH_CAUSE_NUM
+ *  entries). Zeroes out and returns false for an
+ *  out-of-range slot.
+ *
+ *  DEATH_CAUSE_DROWNED_UNFORCED is a sub-classification of
+ *  a drowning, not a sixth independent cause, so the sum
+ *  that equals the slot's death count is
+ *  OTHER + DROWNED + DROWNED_UNFORCED + SHELL_TANK +
+ *  SHELL_PILL + MINE -- i.e. every entry, with the two
+ *  drowning slots being mutually exclusive.
+ *
+ *  Observation only: the counters are written next to
+ *  numDeaths++ in tankDeath and read nowhere inside the sim.
+ *********************************************************/
+bool serverSimGetDeathCauses(const ServerSim *sim, BYTE slot,
+                             uint32_t out[DEATH_CAUSE_NUM]);
 
 /*********************************************************
  *NAME:          serverSimSetUserLogFileName
@@ -900,11 +1075,18 @@ BYTE serverSimGetNumHumans(ServerSim *sim);
  *  are playing the round rather than sitting it out. This
  *  is the count "how many players are there" wants, not
  *  the length of the roster: a seat can hold a place in
- *  the lobby without being on the field. Every connected
- *  seat is on the field today, so this matches
- *  serverSimGetNumPlayers.
+ *  the lobby without being on the field, and an unfielded
+ *  seat is one of those.
  *********************************************************/
 BYTE serverSimGetNumFielded(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimIsSeatFielded
+ *PURPOSE:
+ *  Whether seat playerNum is on the field. False for an
+ *  empty seat and for a seat held without a bot in it.
+ *********************************************************/
+bool serverSimIsSeatFielded(const ServerSim *sim, BYTE playerNum);
 
 /*********************************************************
  *NAME:          serverSimRefreshWbnLobbyInfo
@@ -1010,6 +1192,26 @@ void serverSimClearBalanceProposal(ServerSim *sim);
  *  will let the external call site go away.
  *********************************************************/
 void serverSimReapplyTeamAlliances(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimReassignStarts
+ *PURPOSE:
+ *  Re-runs the batch start placement over the currently
+ *  connected players and re-creates their tanks at the new
+ *  positions. No-op unless the sim is running.
+ *
+ *  TECH DEBT: the twin of serverSimReapplyTeamAlliances
+ *  above, and there for the same reason. -nolobby (and the
+ *  SP-host flow) call serverSimStartGame before the bots
+ *  have been added and their team numbers set, so the batch
+ *  pass inside it sees an empty roster; every bot added
+ *  afterwards then falls back to the team-blind per-player
+ *  pick, which put two rivals two squares apart in the same
+ *  corner. Call this once the roster and teams are final.
+ *  It goes away with the alliance pass when players are
+ *  added before serverSimStartGame is called.
+ *********************************************************/
+void serverSimReassignStarts(ServerSim *sim);
 
 /*********************************************************
  *NAME:          serverSimResetGameWorld
@@ -1425,6 +1627,18 @@ void serverSimLeaveAlliance(ServerSim *sim, BYTE playerNum);
 void serverSimSetPlayerName(ServerSim *sim, BYTE playerNum, const char *name);
 
 /*********************************************************
+ *NAME:          serverSimAcceptAllianceQuiet
+ *PURPOSE:
+ *  The same alliance accept, with the newswire line off.
+ *  For seating rather than for something somebody did: a
+ *  bot put on its team is setup, and the lobby path that
+ *  does the same job with a rebake draws nothing either.
+ *  The replay log and the tracker still record it.
+ *********************************************************/
+void serverSimAcceptAllianceQuiet(ServerSim *sim, BYTE accepter,
+                                  BYTE newMember);
+
+/*********************************************************
  *NAME:          serverSimFillGamePhaseEvent
  *               serverSimFillLobbySettingsEvent
  *               serverSimFillLobbySlotEvent
@@ -1488,12 +1702,139 @@ void serverSimFillSimRulesEvent(const ServerSim *sim, struct ControlEvent *evt);
  *********************************************************/
 void serverSimPublishSimRules(ServerSim *sim);
 
+/*********************************************************
+ *NAME:          serverSimGetScenarioRule
+ *PURPOSE:
+ *  What one rule of the simulation's table is set to, as the
+ *  double the set-rule op carries a value in. The double is
+ *  exact for every integer rule in the table and for every
+ *  value a float rule can hold, so this reads back what a
+ *  write put there rather than an approximation of it.
+ *
+ *  rule is an index into the rule list scenario_defs.h
+ *  builds, carried as a plain uint16_t so this call names
+ *  nothing a frontend cannot see. An index that names no
+ *  rule returns false and leaves *out alone.
+ *
+ *ARGUMENTS:
+ *  sim  - The sim whose table is being read
+ *  rule - Which rule, by its index in the list
+ *  out  - Filled with the rule's value
+ *********************************************************/
+bool serverSimGetScenarioRule(const ServerSim *sim, uint16_t rule,
+                              double *out);
+
+/*********************************************************
+ *NAME:          serverSimIsScenarioActing
+ *PURPOSE:
+ *  Whether what the engine is doing right now is a
+ *  scenario's doing. True for the duration of an op handler
+ *  and of the per-tick roster drain, which is where a bot a
+ *  script asked for actually lands — a tick after the op
+ *  that asked for it, and so outside the handler.
+ *
+ *  Neither event channel carries an actor, and neither needs
+ *  to: a remote client runs no hooks. This is what a host
+ *  reads as it queues an event, so the hook it later runs
+ *  can say whether the fact was the script's own doing. A
+ *  handler that ignores its own edits tests that.
+ *
+ *  False for a NULL sim and for a sim with no scenario.
+ *
+ *ARGUMENTS:
+ *  sim - The sim being asked
+ *********************************************************/
+bool serverSimIsScenarioActing(const ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimScenarioSeatLobby
+ *PURPOSE:
+ *  Empties the seats the attached scenario put in the lobby
+ *  and seats its lobby template again from scratch, so the
+ *  lobby holds the teams and bot counts the scenario asks
+ *  for.
+ *
+ *  A map commit reaches this through the map change. A
+ *  process that boots straight onto a scripted map makes no
+ *  commit, so it calls this itself — after the bot pool is
+ *  up and the server's brain path is set, because a team the
+ *  template fields with no brain of its own falls back to
+ *  the server's and builds its bot through the manager.
+ *
+ *  A seat takes the first slot nobody is in, so a caller
+ *  that wants a particular slot held — its own player's, or
+ *  one a bot it adds by number is going into — puts that
+ *  player or bot in first.
+ *
+ *  Safe with no scenario attached: there is then no template
+ *  and this seats nothing.
+ *
+ *ARGUMENTS:
+ *  sim - The sim whose lobby is being seated
+ *********************************************************/
+void serverSimScenarioSeatLobby(ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimScenarioApplyLobbyRules
+ *PURPOSE:
+ *  Brings the lobby's own settings into line with the
+ *  scenario attached now — the game type, the ranked flag
+ *  and the AI policy. A scripted map puts the lobby on
+ *  gameScripted, takes ranked off and moves an AI policy
+ *  that allows no bots up to one that does; the three
+ *  settings it displaced are remembered, and a map with no
+ *  scenario gives them back.
+ *
+ *  A map commit reaches this straight after the seating
+ *  above. A process that boots straight onto a scripted map
+ *  has no commit to reach either through and calls both
+ *  itself; without this the round plays the operator's game
+ *  type, so the game the scenario declares is never asked
+ *  for. A boot whose round starts inside serverInstanceStartup
+ *  calls this before that startup — the rules have to be in
+ *  force before the first tank is built.
+ *
+ *  Safe with no scenario attached: a lobby that never had one
+ *  is left exactly as it is.
+ *
+ *ARGUMENTS:
+ *  sim - The sim whose lobby settings are being brought into
+ *        line
+ *********************************************************/
+void serverSimScenarioApplyLobbyRules(ServerSim *sim);
+
 /* Layout A — per-team / per-bot / brain-list events. The matching
  * client-side handlers live in clientSimApplyControl. */
 void serverSimFillLobbyTeamMetaEvent(const ServerSim *sim, BYTE teamId, struct ControlEvent *evt);
 void serverSimFillLobbyBotConfigEvent(ServerSim *sim, BYTE slot, struct ControlEvent *evt);
 void serverSimFillLobbyBotBrainEvent(const ServerSim *sim, BYTE slot, struct ControlEvent *evt);
 void serverSimFillLobbyBrainListEvent(const ServerSim *sim, struct ControlEvent *evt);
+
+/* Read every brain's LOBBY TEXTS (announce.txt + commands.txt) off disk into
+ * the sim's cache, skipping any brain whose two files have not changed since
+ * the last read. Called once where the brains are scanned, and again when a
+ * round hands the lobby back, which is the seam an operator would have edited
+ * a brain's texts across. Never on the tick path. */
+void serverSimRefreshBrainDocs(ServerSim *sim);
+
+/* Drops the cache serverSimRefreshBrainDocs built. serverSimDestroy calls it;
+ * nothing else needs to. */
+void serverSimFreeBrainDocs(ServerSim *sim);
+
+/* Stream every brain's LOBBY TEXTS as CTRL_LOBBY_BRAIN_DOCS_CHUNK events
+ * through `deliver`, out of the cache above — one stream per brain, and only
+ * for brains that ship at least one of the two files, so a server whose
+ * brains carry none emits nothing and a sim that never refreshed emits
+ * nothing either.
+ *
+ * Called beside the brain list, on the two paths where a real client is
+ * listening: a joiner's (or spectator's) sync replay, and the broadcast bus
+ * when a round hands the lobby back. NOT from the delayed spectator ring's
+ * control snapshot — that is rebuilt per keyframe and has a size cap these
+ * fragments would push it past. */
+void serverSimEmitBrainDocs(const ServerSim *sim,
+                            void (*deliver)(void *, const struct ControlEvent *),
+                            void *ctx);
 
 /*********************************************************
  * Read accessors.
@@ -1577,8 +1918,8 @@ typedef struct ServerSimRosterSlot {
     char    name[PLAYER_NAME_LEN]; /* NUL-terminated player name */
     bool    ready;      /* Has said it is ready to start */
     bool    fielded;    /* Playing the round rather than sitting it out.
-                           Every connected seat plays today, so this is
-                           true whenever the call succeeds. */
+                           False for a seat held in the roster with no bot,
+                           no ClientSim and no tank behind it. */
     bool    alive;      /* Has a tank in the world and is not in death-wait */
 } ServerSimRosterSlot;
 
@@ -1607,6 +1948,39 @@ GameSim *serverSimGetGameSim(ServerSim *sim);
  * brain". Set via PACKET_LOBBY_SET_BOT_BRAIN. */
 void        serverSimSetBotBrainIdxFor(ServerSim *sim, BYTE slot,
                                        uint8_t brainIdx);
+
+/* Apply a bot-config change atomically — write mode / difficulty /
+ * personality to the slot, optionally rename the bot (when validatedName is
+ * non-NULL and non-empty), publish CTRL_LOBBY_BOT_CONFIG +
+ * CTRL_LOBBY_SLOT, and clear humans' ready state. Callers (UDP
+ * PACKET_LOBBY_BOT_CONFIG handler, SP-host clientSimNetSendLobbyBotConfig)
+ * must validate the name beforehand — see lobbyBotNameAcceptable.
+ * Pass NULL or an empty string to leave the name unchanged.
+ *
+ * mode indexes the brain's mode list and difficulty indexes THAT mode's
+ * level list (brain_list.h); mode 0 with 0/1/2 is the pre-manifest
+ * easy/medium/hard.
+ *
+ * Safe to call on a slot with no bot in it yet, and the SP-host and the
+ * dedicated server both do: both bytes have to be in the slot's config
+ * BEFORE the bot's brain is created, because that is where bot_manager
+ * reads them to build the brain's "mode=" / "difficulty=" init tokens. */
+void        serverSimSetBotConfig(ServerSim *sim, BYTE slot,
+                                  uint8_t mode, uint8_t difficulty,
+                                  uint8_t personality,
+                                  const char *validatedName);
+
+/* Default-mode difficulty <-> word. "easy" / "medium" / "hard" is what
+ * -difficulty accepts on the dedicated server's command line and what the
+ * "Chosen Difficulty" preference stores for the default mode. (What the
+ * brain is handed is the level KEY from the brain's own modes.txt, which
+ * for the default mode is these same three words.) botDifficultyName never
+ * returns NULL: an out-of-range value reads as "hard". botDifficultyFromName
+ * is case-insensitive, takes "normal" as an alias for "medium" (its former
+ * label), and returns false without touching *out on anything else.
+ * Implemented in bot_manager.c. */
+const char *botDifficultyName(uint8_t difficulty);
+bool        botDifficultyFromName(const char *name, uint8_t *out);
 
 /* Resolve a catalogue index back to its disk path. Returns the
  * CLI-configured default path for brainIdx == 0xFF, NULL when the
@@ -1644,6 +2018,13 @@ typedef struct {
                           mtime so the table sort still reads sensibly
                           for them. */
     int64_t size;      /* file size in bytes; 0 for folders. */
+    bool    scripted;  /* a round on this map here plays by a script: one is
+                          beside it and this server runs scripts. Always
+                          false for a folder, and false throughout when
+                          nothing has registered the question with
+                          serverSimSetScenarioMapScripted — a build with no
+                          scenario library reports every map plain, and so
+                          does a server with scripts switched off. */
 } ServerMapEntry;
 
 int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
@@ -1672,6 +2053,47 @@ int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
  * uses for the Upload tab. */
 bool serverSimReadMapFile(ServerSim *sim, const char *relPath,
                            uint8_t **outBytes, size_t *outLen);
+
+/* ── Server-side scenario directory enumeration ─────────────────────
+ *
+ * The scenarios this server offers on their own, read out of the
+ * directory serverSimSetScenarioDir named. Here for the reason
+ * serverSimEnumerateMapDir is here: the lobby's scenario chooser is a
+ * gui translation unit, which sees public/ only, and the scenario
+ * surface that does this work is in scenario_api/.
+ *
+ * entries:    Caller-allocated output array.
+ * maxEntries: Capacity of entries[]; the function writes at most this
+ *             many; if the directory holds more, the extras are
+ *             dropped and the function returns maxEntries.
+ *
+ * Returns the number of entries written. 0 for a server with no
+ * scenarios directory, nothing in it, or no scenario library in this
+ * build — none of the three is a fault, so none is told apart, and
+ * there is no failure return. File-name order, case-insensitive.
+ *
+ * The three lengths below mirror SCN_DIR_FILE_LEN / _NAME_LEN /
+ * _DESC_LEN in src/bolo/scenario_api/scenario_defs.h, which this
+ * header does not include because a gui translation unit reads this
+ * one and cannot reach that one. The implementation sees both and
+ * holds each pair against the other, so the two cannot drift and a
+ * copy into this shape cannot cut a name or a description short. */
+#define SERVER_SCENARIO_FILE_LEN 128
+#define SERVER_SCENARIO_NAME_LEN 64
+#define SERVER_SCENARIO_DESC_LEN 256
+typedef struct {
+    char    file[SERVER_SCENARIO_FILE_LEN];  /* the name in the scenarios
+                                                directory */
+    char    name[SERVER_SCENARIO_NAME_LEN];  /* the manifest's, or "" */
+    char    description[SERVER_SCENARIO_DESC_LEN];
+    uint8_t maxPlayers;  /* 0 = the server's own cap */
+    uint8_t bots;        /* seats the template asks for */
+    bool    bound;       /* belongs to one map; not selectable as a mod */
+} ServerScenarioEntry;
+
+int serverSimEnumerateScenarioDir(ServerSim *sim,
+                                  ServerScenarioEntry *entries,
+                                  int maxEntries);
 
 /* autoLockOnGameStart — when true, sets allowNewPlayers=false the
  * moment the lobby transitions out of serverStateLobby. */
@@ -1758,6 +2180,19 @@ uint8_t     serverSimGetOverviewWindow(const ServerSim *sim);
 void        serverSimSetLineOfSight(ServerSim *sim, uint8_t mode);
 uint8_t     serverSimGetLineOfSight(const ServerSim *sim);
 
+/* Smart pings — whether a client may drop a ping marker on the map. The
+ * host owns it from the lobby (LST_SMART_PINGS_OFF), and the server
+ * refuses CMD_PING outright while it is set, so a modified client gains
+ * nothing by ignoring the setting.
+ *
+ * Named and stored in the negative sense on purpose: false means pings
+ * are ALLOWED. That is what every build before the setting existed did,
+ * and it is what a zeroed sim, an absent wire byte and a NULL sim all
+ * read as. The lobby UI reads it through the positive accessor
+ * clientSimIsLobbyAllowSmartPings, so no display code deals in negatives. */
+void        serverSimSetSmartPingsOff(ServerSim *sim, bool off);
+bool        serverSimGetSmartPingsOff(const ServerSim *sim);
+
 /* Voice mode — how the server handles the voice its clients send it.
  * serverVoiceOff forwards nothing; serverVoiceProximity is not
  * implemented and forwards like serverVoiceOn. Set once from
@@ -1836,6 +2271,56 @@ void serverSimSetGameType(ServerSim *sim, gameType gt);
 void serverSimSetHiddenMines(ServerSim *sim, bool hiddenMines);
 void serverSimSetState(ServerSim *sim, ServerState s);
 void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks);
+
+/* ── A newly added bot's brain mode and difficulty ─────────────────────
+ *
+ * Every bot a lobby gains — the host's Add Bot, a scenario's own seed,
+ * single player's add and setup paths — resolves its mode and difficulty
+ * through serverSimResolveNewBotConfig, in this order:
+ *
+ *   1. the caller's base (the lobby default, or single player's own
+ *      chosen level);
+ *   2. what the map requires for the bot's side (the scenario's bot_mode
+ *      hook) — on Survival, the team's bots are survival mode at Hard;
+ *   3. what the host last picked BY HAND, when the caller honours it —
+ *      the difficulty only when step 2 fixed the mode, both otherwise.
+ *
+ * Bots that first appear on a map (the seed, single player's setup bots)
+ * do not honour step 3; the Add Bot button does. See server_sim_lobby.c. */
+
+/* Resolve a new bot's mode and difficulty for `team` on the brain at
+ * `brainPath`. *ioMode / *ioLevel carry the caller's base in and the answer
+ * out. Returns false, leaving both untouched, when the brain ships no
+ * modes.txt. Writes no config and publishes nothing. */
+bool serverSimResolveNewBotConfig(const ServerSim *sim, int team,
+                                  const char *brainPath,
+                                  bool honourManualPick,
+                                  uint8_t *ioMode, uint8_t *ioLevel);
+
+/* Give a lobby bot joining `team` its mode and difficulty — the lobby
+ * default as the base, then serverSimResolveNewBotConfig — and queue the
+ * bot-config event that shows it in the lobby. Safe before or after the
+ * add: pass the brain the bot runs, since before the add the slot has
+ * none. A lobby brain reloads from this config at round start. */
+void serverSimApplyNewBotDefaults(ServerSim *sim, BYTE slot, int team,
+                                  const char *brainPath,
+                                  bool honourManualPick);
+
+/* Record the slot's current mode and difficulty as the host's manual pick.
+ * Call it only where a person chose them: CMD_LOBBY_BOT_CONFIG, and only
+ * when that command actually changed the mode or difficulty — the gear
+ * popup sends the same command for renames and personality edits. An
+ * automatic config write must never call it, or the game's own defaults
+ * pass for the host's choice. */
+void serverSimRememberManualBotPick(ServerSim *sim, BYTE slot);
+
+/* Bot-config events waiting to be published, a couple per lobby tick. A
+ * scenario seeds its ten bots in one call stack while no client ack can be
+ * read, and the reliable control channel holds 64 unacked events; queuing
+ * those ten events for the lobby tick keeps the seed's burst exactly as
+ * large as it was. Flush skips slots that are no longer bots. */
+void serverSimQueueBotConfigPublish(ServerSim *sim, BYTE slot);
+void serverSimFlushBotConfigPublishes(ServerSim *sim);
 
 /* Switch a lobby bot to a new brain script. Updates both the
  * per-slot brain-index mirror (serverSimSetBotBrainIdxFor) and the
