@@ -1549,6 +1549,12 @@ static const UnitTestEntry s_tests[] = {
     { "scn_presentation_codec_refuses_short",            run_scn_presentation_codec_refuses_short            },
     { "scn_presentation_decoder_sets_broadcast",         run_scn_presentation_decoder_sets_broadcast         },
     { "scn_presentation_client_filters",                 run_scn_presentation_client_filters                 },
+    { "scn_arm_panel_publishes_and_records",             run_scn_arm_panel_publishes_and_records             },
+    { "scn_arm_panel_refusals",                          run_scn_arm_panel_refusals                          },
+    { "scn_arm_panel_one_update_per_tick",               run_scn_arm_panel_one_update_per_tick               },
+    { "scn_arm_panel_replayed_to_joiner",                run_scn_arm_panel_replayed_to_joiner                },
+    { "scn_arm_panel_snapshot_bounded",                  run_scn_arm_panel_snapshot_bounded                  },
+    { "scn_arm_score_announce_marker",                   run_scn_arm_score_announce_marker                   },
     { "bot_init_table_empty_when_none",          run_bot_init_table_empty_when_none          },
     { "bot_init_arg_text_to_table",              run_bot_init_arg_text_to_table              },
 #ifdef WB_NETDEBUG

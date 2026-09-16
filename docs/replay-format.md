@@ -100,6 +100,10 @@ Selected event types (see the `logitem` enum for the complete list):
 | 59 | `log_ServerText` | A server line a scenario wrote: `destTeam:u8` (0 = everyone), `destPlayer:u8` (0xFF = everyone), Pascal text |
 | 60 | `log_GameTimeSet` | The round's game time after a scenario changed it: `ticks:i32` big-endian |
 | 61 | `log_RuleSet` | One simulation rule a scenario changed (below) |
+| 62 | `log_ScnPanel` | One scenario panel's display list (below) |
+| 63 | `log_ScnScore` | A scenario's score for one player or one team (below) |
+| 64 | `log_ScnAnnounce` | A centre-screen line a scenario put up (below) |
+| 65 | `log_ScnMarker` | A scenario map marker (below) |
 
 ### `log_GameSettings` payload
 
@@ -290,6 +294,106 @@ Written by the scenario funnel's set-rule arm
 (`src/server/sim/server_sim_scenario.c`). The viewer consumes the record to
 keep its place in the stream and does not yet show it; showing a rule needs
 the recording's rules manifest, which states the table a round opened with.
+
+### `log_ScnPanel` payload
+
+One scenario panel's display list, as the panel op published it. Every update
+replaces the whole list, so a record states a panel's entire contents and a
+reader needs no history:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0 | Panel id | 0–3. Id 0 is the in-game square and id 1 the block in the lobby's map-info area; 2 and 3 are reserved |
+| 1 | `destTeam` | 0 = everyone, otherwise the team number the list was held to. Teams run 1–15 |
+| 2 | `destPlayer` | 0xFF = everyone, otherwise the 0-based player slot the list was held to |
+| 3–4 | List length | Big-endian; 0 for a list that cleared the panel |
+| 5… | List | That many bytes of display-list primitives |
+
+The length is a big-endian `u16` rather than a Pascal string's single byte
+because a list runs to `SCN_PANEL_MAX` (1017) bytes, well past what one byte
+counts. This is the longest record the format carries, and the constant every
+single-event buffer is sized by (`LOG_EVENT_MAX_BYTES`,
+`src/bolo/public/log.h`) is worked out from it.
+
+The list's own bytes are the drawing primitives described in
+`src/bolo/public/scenario_panel.h` — rectangles, lines, text, a player's name,
+a sprite, a bar and a timer, each an opcode byte followed by fixed operands
+with multi-byte fields big-endian. A reader hands them to `scnPanelParse`,
+which is the one function every frontend validates a list with, so a malformed
+list is refused identically wherever it arrives.
+
+Written by the scenario funnel's panel arm
+(`src/server/sim/server_sim_scenario.c`), which parses a list before it
+publishes one, so a list in a recording is one that parses. The viewer
+consumes the record to keep its place in the stream and does not yet draw it.
+
+### `log_ScnScore` payload
+
+A scenario's own score for one player or one team. Two header bytes, then the
+number and its label:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0 | Kind | 0 = a player's score, 1 = a team's (`ScnScoreKind`) |
+| 1 | Target | Under the player kind, the 0-based player slot; under the team kind, the team number, which runs 1–15 |
+| 2–5 | Score | Big-endian signed `int32` |
+| 6 | Label length | 0–15 |
+| 7… | Label | That many bytes, the label the scenario gave the row |
+
+The label is capped one below its sixteen-byte field so that what is recorded
+and what the control event's body carries are the same string: the field has
+no room for a terminator past its last byte.
+
+The record is broadcast in the same sense the control event is — the target
+says whose score it is, not who was meant to see it — so there is no
+destination pair here.
+
+Written by the scenario funnel's score arm. The viewer consumes the record and
+does not yet show it.
+
+### `log_ScnAnnounce` payload
+
+A line a scenario put across the centre of the screen. Four header bytes,
+then the line as a Pascal string:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0 | `destTeam` | 0 = everyone, otherwise the team number the line was held to. Teams run 1–15 |
+| 1 | `destPlayer` | 0xFF = everyone, otherwise the 0-based player slot |
+| 2–3 | Ticks | Big-endian; how long the line stays up |
+| 4 | Text length | 0–128 |
+| 5… | Text | That many bytes |
+
+A text length of 0 is the clear: the scenario took the line down, and the
+ticks alongside it were not read. A line with something in it is never
+recorded with a tick count of 0 — the arm refuses that rather than putting a
+line up for no time.
+
+Written by the scenario funnel's announce arm. The viewer consumes the record
+and does not yet show it.
+
+### `log_ScnMarker` payload
+
+One scenario map marker, kept by id. Four header bytes, then the placement as
+a Pascal form: a 1-byte length followed by that many binary bytes:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0 | Marker id | 0–15 |
+| 1 | Kind | 0 = a map square, 1 = follow a player, 2 = clear the id (`ScnMarkerKind`) |
+| 2 | `destTeam` | 0 = everyone, otherwise the team number. Teams run 1–15 |
+| 3 | `destPlayer` | 0xFF = everyone, otherwise the 0-based player slot |
+| 4 | Placement length | Always 4 |
+| 5 | x | Map square, under the square kind |
+| 6 | y | Map square, under the square kind |
+| 7 | Slot | The 0-based player slot, under the follow kind |
+| 8 | Colour | A palette index, 0–15 (`ScnPanelColour`) |
+
+The clear kind reads none of the four placement bytes; they are written
+whatever the kind so that every marker record is the same length.
+
+Written by the scenario funnel's marker arm. The viewer consumes the record
+and does not yet draw it.
 
 ## Snapshot body
 

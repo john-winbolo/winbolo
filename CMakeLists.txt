@@ -3470,6 +3470,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # hand-written bytes, the refusals a malformed body gets, and the
     # recipient filter the in-process subscriber applies before storing.
     tests/unit/test_scenario_presentation_codec.c
+    # The four presentation ops: the panel list published, recorded, replayed
+    # to a joiner and pared back to the everyone-addressed lists in the
+    # spectator ring's snapshot, the one-update-per-tick key, every refusal,
+    # and the score, announcement and marker arms.
+    tests/unit/test_scenario_presentation_arms.c
     # The binding table: the game table a script reads the sim through, the
     # three index rules and what an absent entity reads as.
     tests/unit/test_scenario_lua.c
@@ -5666,6 +5671,12 @@ set(_unit_test_names
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast
     scn_presentation_client_filters
+    scn_arm_panel_publishes_and_records
+    scn_arm_panel_refusals
+    scn_arm_panel_one_update_per_tick
+    scn_arm_panel_replayed_to_joiner
+    scn_arm_panel_snapshot_bounded
+    scn_arm_score_announce_marker
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

@@ -155,6 +155,29 @@ typedef struct {
     BYTE                removeSlot;   /* read when it is not */
 } ScnRosterQueueEntry;
 
+/* The destinations a presentation event can be addressed to, as one flat
+ * index: 0 is everyone, 1..MAX_TANKS-1 is that team number, and
+ * MAX_TANKS + slot is that 0-based player slot. Thirty-two in all. */
+#define SCN_PANEL_TARGETS (2 * MAX_TANKS)
+
+/* One panel's last list for one destination. bytes sits last and the three
+ * fields ahead of it total seven, so the struct is exactly 1024 bytes and
+ * the array of them carries no padding between entries. */
+typedef struct {
+    uint32_t tick;                  /* the sim tick the list was stored at */
+    uint16_t len;                   /* bytes of the list, 0 for a cleared panel */
+    bool     valid;                 /* a list has been stored for this key */
+    uint8_t  bytes[SCN_PANEL_MAX];
+} ScnPanelStore;
+
+/* One score row. valid tells a reader a scenario set this row apart from a
+ * row that still reads zero because nothing has. */
+typedef struct {
+    bool    valid;
+    int32_t score;
+    char    label[16];
+} ScnScoreRow;
+
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */
 
@@ -964,6 +987,34 @@ struct ServerSim {
     uint8_t                scenarioRosterHead;   /* the next one to drain */
     uint8_t                scenarioRosterCount;
 
+    /* The last display list each panel was sent, per destination, so a
+     * subscriber registering mid-round is given what the panels already
+     * hold. Every update replaces the whole list, so one list per key is
+     * the whole of the state.
+     *
+     * The key is the pair (panel id, destination), because a scenario
+     * giving each of sixteen players its own panel is ordinary and the two
+     * of them must not overwrite each other. tick is the sim tick the list
+     * was stored at, which is what refuses a second update for the same
+     * pair in the same tick; valid says a list has been stored at all, so
+     * a cleared store admits an update at tick 0. */
+    ScnPanelStore          scenarioPanels[SCN_PANEL_IDS][SCN_PANEL_TARGETS];
+
+    /* Where the panel arm decodes an arriving list to find out whether it
+     * decodes. It lives here to keep 7.7 KB off the funnel's frame, and
+     * because a sim's working space belongs to the sim: nothing reads it
+     * once the parse has answered, and two sims in one process each have
+     * their own. */
+    ScnPanelList           scenarioPanelScratch;
+
+    /* A scenario's own score for each player slot and each team, as the
+     * score op last set it. Nothing reads these yet: the lobby's round
+     * stats are what will. Player rows are keyed by a 0-based slot, team
+     * rows by the team number, which runs 1..MAX_TANKS-1, so row 0 of the
+     * team array names no team and is never written. */
+    ScnScoreRow            scenarioPlayerScores[MAX_TANKS];
+    ScnScoreRow            scenarioTeamScores[MAX_TANKS];
+
     /* Spectator roster enumerator (registered by the transport layer). Invoked
      * during sync-replay to emit one CTRL_SPECTATOR_SLOT per connected
      * spectator; NULL when no enumerator is registered. */
@@ -1034,6 +1085,35 @@ bool serverSimWarmOneHeldSeat(ServerSim *sim);
  * rather than spawning into the next one. Called at the game starts in
  * server_sim_round.c, beside the fill reset. */
 void serverSimScenarioResetRoster(ServerSim *sim);
+
+/* Forget every stored panel list and every score row. What a scenario was
+ * presenting belongs to the round and the scenario that put it up, so both
+ * the return to lobby and a detach drop the lot; a joiner arriving after
+ * either is given nothing rather than the last round's panels. Called from
+ * serverSimResetGameWorld, beside the fill and roster resets, and from the
+ * detach arm of serverSimSetScenarioIdentity. */
+void serverSimScenarioResetPresentation(ServerSim *sim);
+
+/* Hand the stored panel lists to a joining subscriber's callback, as the
+ * events that published them. The recipient filters run on the delivery side
+ * for a replayed event exactly as they do for a live one, so with
+ * withTargeted this replays every list and lets the filter decide which of
+ * them the joiner keeps.
+ *
+ * withTargeted false replays the everyone-addressed list of each panel and
+ * nothing else. That is what the delayed spectator ring's control snapshot
+ * asks for: a spectator belongs to no team and holds no slot, so the lists
+ * held to one of either reach nobody down that path, and leaving them out
+ * keeps the keyframe inside LOG_CONTROL_SNAPSHOT_MAX.
+ *
+ * Called from the sync replay in server_sim_control.c; declared here rather
+ * than on the scenario surface because the caller is the sim's own join
+ * path, not a scenario. */
+void serverSimScenarioReplayPanels(
+    ServerSim *sim,
+    void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx,
+    bool withTargeted);
 
 BOLO_STATIC_ASSERT(MAX_TANKS <= 16, shadowCulledSlots_holds_one_bit_per_slot);
 

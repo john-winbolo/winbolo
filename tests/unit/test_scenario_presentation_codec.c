@@ -17,6 +17,9 @@
  *       field. The bytes are composed here rather than taken from the
  *       encoder: a fixture that reads its own output back through the
  *       codec under test passes whenever the two drift together.
+ *       The same case also encodes a score label that fills its field and
+ *       decodes the encoder's own body back, so the encoder cannot emit a
+ *       label length its decoder refuses.
  *   scn_presentation_codec_refuses_short — a body one byte short of each
  *       fixed part, a panel whose declared length overruns, an announce
  *       longer than the field, and a score whose label length overruns.
@@ -185,6 +188,39 @@ int run_scn_presentation_codec_bodies(void) {
     UT_ASSERT(back.u.scnMarker.y == 21);
     UT_ASSERT(back.u.scnMarker.slot == 9);
     UT_ASSERT(back.u.scnMarker.colour == SCN_PANEL_COLOUR_RED);
+
+    /* ── a label that fills its field ──
+     * label[] is sixteen bytes with no room for a terminator past the last
+     * one, so the decoder refuses a declared length of sixteen. An encoder
+     * that measured a sixteen-byte unterminated label at its full width
+     * would put a body on the wire that its own decoder throws away, so the
+     * encoder caps at fifteen and what comes back is those fifteen bytes. */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SCN_SCORE;
+    evt.u.scnScore.kind = SCN_SCORE_KIND_PLAYER;
+    evt.u.scnScore.target = 2;
+    evt.u.scnScore.score = 7;
+    memset(evt.u.scnScore.label, 'L', sizeof(evt.u.scnScore.label));
+    {
+        ControlEncodeBodyFn enc = transportControlCodecBodyEncoder(CTRL_SCN_SCORE);
+        uint8_t body[32];
+        size_t  bodyLen = 0;
+
+        UT_ASSERT(enc != NULL);
+        UT_ASSERT(enc(&evt, NULL, body, sizeof(body), &bodyLen) == ENCODE_OK);
+        UT_ASSERT_MSG(bodyLen == 7 + sizeof(evt.u.scnScore.label) - 1,
+                      "a full-width label encoded to %u body bytes",
+                      (unsigned)bodyLen);
+        UT_ASSERT_MSG(body[6] == (uint8_t)(sizeof(evt.u.scnScore.label) - 1),
+                      "the encoder declared a label length of %u",
+                      (unsigned)body[6]);
+        UT_ASSERT_MSG(decodeBody(CTRL_SCN_SCORE, body, bodyLen, &back),
+                      "the decoder refused the encoder's own body");
+        UT_ASSERT(back.u.scnScore.kind == SCN_SCORE_KIND_PLAYER);
+        UT_ASSERT(back.u.scnScore.target == 2);
+        UT_ASSERT(back.u.scnScore.score == 7);
+        UT_ASSERT(strcmp(back.u.scnScore.label, "LLLLLLLLLLLLLLL") == 0);
+    }
 
     /* None of the four has a full-packet encoder: they ride
      * CHANNEL_CONTROL body-only, as CTRL_SIM_RULES does. */

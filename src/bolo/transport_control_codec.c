@@ -2825,6 +2825,14 @@ static EncodeResult encodeScnScoreBody(const ControlEvent *evt,
     size_t needed;
     (void)recipient;
     labelLen = strnlen(evt->u.scnScore.label, sizeof(evt->u.scnScore.label));
+    /* One below the field, because that is what the decoder takes: label[]
+     * has no room for a terminator past its last byte, so a label filling
+     * all sixteen decodes as one byte too long and the body is refused.
+     * Capped here so the encoder cannot put a body on the wire its own
+     * decoder throws away. */
+    if (labelLen > sizeof(evt->u.scnScore.label) - 1) {
+        labelLen = sizeof(evt->u.scnScore.label) - 1;
+    }
     needed = 7 + labelLen;
     if (bufCap < needed) return ENCODE_OVERFLOW;
     buf[0] = evt->u.scnScore.kind;

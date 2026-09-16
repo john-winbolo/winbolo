@@ -49,12 +49,19 @@
  * The serverSimSyncSubscriber replay it wraps is bounded: one game-phase, one
  * lobby-settings, one brain-list, up to MAX_TANKS lobby slots, up to
  * MAX_TANKS-1 team metas, up to 2*MAX_TANKS bot config+brain, up to two vote
- * states, one balance, one map-skip, one stats seed, one entity sync and up
- * to MAX_TANKS player-joins — at most (8 + 5*MAX_TANKS) events. Each record
- * is a 4-byte [u16 type][u16 bodyLen] header plus a body no larger than
- * MAX_CONTROL_PACKET. */
+ * states, one balance, one map-skip, one stats seed, one entity sync, up to
+ * SCN_PANEL_IDS scenario panels and up to MAX_TANKS player-joins — at most
+ * (8 + SCN_PANEL_IDS + 5*MAX_TANKS) events. Each record is a 4-byte
+ * [u16 type][u16 bodyLen] header plus a body no larger than
+ * MAX_CONTROL_PACKET.
+ *
+ * One panel each and not one per destination: this replay runs with
+ * serverSimSyncSubscriber's fullReplay false, which takes each panel's
+ * everyone-addressed list and leaves the ones held to a team or a slot,
+ * because a spectator is on neither and serverSpectatorDeliverControl would
+ * drop them. */
 #define LOG_CONTROL_SNAPSHOT_MAX                                                \
-  ((8 + 5 * MAX_TANKS) * (MAX_CONTROL_PACKET + 4))
+  ((8 + SCN_PANEL_IDS + 5 * MAX_TANKS) * (MAX_CONTROL_PACKET + 4))
 
 /* Register a spectator ring fed by the log writer. While a ring is
  * registered, each logWriteTick records one ring tick for the registered

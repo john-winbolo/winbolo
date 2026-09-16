@@ -2977,6 +2977,17 @@ int run_scn_presentation_codec_refuses_short(void);
 int run_scn_presentation_decoder_sets_broadcast(void);
 int run_scn_presentation_client_filters(void);
 
+/* The four presentation ops (test_scenario_presentation_arms.c): the panel
+ * list published, recorded, replayed to a joiner and pared back to the
+ * everyone-addressed lists in the spectator ring's snapshot, the coalescing
+ * key, every refusal, and the score, announcement and marker arms. */
+int run_scn_arm_panel_publishes_and_records(void);
+int run_scn_arm_panel_refusals(void);
+int run_scn_arm_panel_one_update_per_tick(void);
+int run_scn_arm_panel_replayed_to_joiner(void);
+int run_scn_arm_panel_snapshot_bounded(void);
+int run_scn_arm_score_announce_marker(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */

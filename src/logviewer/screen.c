@@ -991,6 +991,68 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
       break;
+    case log_ScnPanel:
+      /* One scenario panel's display list: the panel id, the two destination
+         bytes, then the list's own length as a big-endian u16 and that many
+         bytes. Read and dropped. There is no panel drawer in the viewer yet,
+         so what this case has to do is consume the record's bytes — the
+         longest any record carries — so everything after it is still read
+         from the right byte. */
+      logReadBytes(&opt1, 1);
+      logReadBytes(&opt2, 1);
+      logReadBytes(&opt3, 1);
+      {
+        BYTE     lenHi, lenLo;
+        unsigned left;
+        logReadBytes(&lenHi, 1);
+        logReadBytes(&lenLo, 1);
+        left = ((unsigned)lenHi << 8) | (unsigned)lenLo;
+        /* Read a bufferful at a time rather than in one go: what the length
+           says is what has to come off the stream, whatever it says, so a
+           length past the buffer still leaves the cursor on the next
+           record. */
+        while (left > 0) {
+          unsigned want = (left > sizeof(mem)) ? (unsigned)sizeof(mem) : left;
+          if (logReadBytes((BYTE *)mem, (int)want) != (int)want) break;
+          left -= want;
+        }
+      }
+      break;
+    case log_ScnScore:
+      /* A scenario's score row: the kind and the target, then the score as a
+         big-endian int32 and the label as a pascal string. Read and dropped:
+         the scoreboard the row belongs on is not in the viewer yet. */
+      logReadBytes(&opt1, 1);
+      logReadBytes(&opt2, 1);
+      {
+        BYTE score[4];
+        logReadBytes(score, 4);
+      }
+      logReadBytes((BYTE *)mem, 1);
+      logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
+      break;
+    case log_ScnAnnounce:
+      /* A centre-screen line: the destination, how long it stays up as a
+         big-endian u16 of ticks, then the line. Read and dropped — the
+         viewer has nowhere to put an announcement yet. */
+      logReadBytes(&opt1, 1);
+      logReadBytes(&opt2, 1);
+      logReadBytes(&opt3, 1);
+      logReadBytes(&opt4, 1);
+      logReadBytes((BYTE *)mem, 1);
+      logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
+      break;
+    case log_ScnMarker:
+      /* A scenario map marker: its id, its kind and the destination, then x,
+         y, slot and colour as a four-byte blob. Read and dropped — the map
+         draw that would show a marker is not in the viewer yet. */
+      logReadBytes(&opt1, 1);
+      logReadBytes(&opt2, 1);
+      logReadBytes(&opt3, 1);
+      logReadBytes(&opt4, 1);
+      logReadBytes((BYTE *)mem, 1);
+      logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
+      break;
     case log_BaseSetOwner:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
@@ -1981,6 +2043,47 @@ static int walkSkipEventBody(BYTE code) {
       { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;
         if (rc != lenByte) return -1; }
       return 4 + lenByte;
+    case log_ScnAnnounce:
+    case log_ScnMarker:
+      /* 4 opt bytes + pascal string. The announcement's pair of them is its
+         destination and the two bytes of its tick count, the marker's is its
+         id, its kind and its own destination, and the marker's blob is always
+         the four bytes of a placement; both are walked the way a text
+         record's are. Only a v2 log can carry either; the v1 walker is given
+         the cases anyway, for the reason it is given one for log_Ping. */
+      { BYTE b[4]; if (logReadBytes(b, 4) != 4) return -1; }
+      if (logReadBytes(&lenByte, 1) != 1) return -1;
+      { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;
+        if (rc != lenByte) return -1; }
+      return 5 + lenByte;
+    case log_ScnScore:
+      /* kind + target + the score as four big-endian bytes, then the label as
+         a pascal string. */
+      { BYTE b[6]; if (logReadBytes(b, 6) != 6) return -1; }
+      if (logReadBytes(&lenByte, 1) != 1) return -1;
+      { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;
+        if (rc != lenByte) return -1; }
+      return 7 + lenByte;
+    case log_ScnPanel: {
+      /* panel id + the two destination bytes + the list's length as a
+         big-endian u16, then the list. The length is two bytes rather than a
+         pascal string's one because a display list runs past what one byte
+         counts, so this is the one record the walker cannot size with
+         lenByte. Skipped a bufferful at a time for the same reason. */
+      BYTE     hdr[5];
+      unsigned listLen;
+      unsigned left;
+      if (logReadBytes(hdr, 5) != 5) return -1;
+      listLen = ((unsigned)hdr[3] << 8) | (unsigned)hdr[4];
+      left = listLen;
+      while (left > 0) {
+        BYTE buf[256];
+        int  want = (left > sizeof(buf)) ? (int)sizeof(buf) : (int)left;
+        if (logReadBytes(buf, want) != want) return -1;
+        left -= (unsigned)want;
+      }
+      return 5 + (int)listLen;
+    }
     case log_MessageServer:
     case log_MapSkipApplied:
       /* pascal string only */
