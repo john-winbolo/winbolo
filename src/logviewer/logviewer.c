@@ -128,9 +128,14 @@ static size_t   s_pendingZipLen  = 0;
 
 /* --------------------------------------------------------------------------
  * Helper: default team colour value for index
+ *
+ * Palette rows, in the order the colour dialog lists them. Team 1 green and
+ * Team 2 red, the game's own ally / enemy reading, since a two-team round
+ * lands on exactly those two slots (lv_playersRebuildTeams). Blue and yellow
+ * next for the four-team case; the rest keep their old order.
  * -------------------------------------------------------------------------- */
 static void getDef(char *dest, int index) {
-    static const int defaults[] = { 11, 12, 2, 4, 16, 13, 8, 3, 6, 1, 5, 7, 9, 14, 15, 0 };
+    static const int defaults[] = { 2, 11, 12, 4, 16, 13, 8, 3, 6, 1, 5, 7, 9, 14, 15, 0 };
     int val = (index >= 0 && index < 16) ? defaults[index] : 0;
     snprintf(dest, 12, "%d", val);
 }
