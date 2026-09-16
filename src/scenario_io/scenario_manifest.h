@@ -160,20 +160,9 @@ typedef struct {
     ScnManifestRegion regions[SCN_REGIONS_MAX];
 } ScenarioManifest;
 
-/*********************************************************
- *NAME:          scenarioHostManifest
- *PURPOSE:
- *  The table the host last read, for the library's own code
- *  and for the tests that check the parse. NULL for a NULL
- *  host.
- *
- *  Defined in scenario_host.c, which is the library above
- *  this one. The host is named rather than included: nothing
- *  else here needs scenario_host.h, and this file is on the
- *  include path of targets that link no scenario runtime.
- *********************************************************/
-struct ScenarioHost;
-
-const ScenarioManifest *scenarioHostManifest(const struct ScenarioHost *h);
+/* Nothing here reaches up into the runtime. The table a host last read is
+ * scenarioHostManifest, declared in src/scenario/scenario_validate.h with
+ * the rest of what the host and the validator share: a target that links
+ * this library alone has no host to ask. */
 
 #endif /* SCENARIO_MANIFEST_H */

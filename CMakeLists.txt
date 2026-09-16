@@ -2121,7 +2121,6 @@ bolo_grant_internal_source_access(WinBoloDS
 if(WIN32)
     target_sources(WinBoloDS PRIVATE
         src/gui/sdl3/lang.c
-        src/gui/sdl3/sim_rules_phrase.c
         src/res/winbolods.rc
     )
     target_link_libraries(WinBoloDS PRIVATE ws2_32 winmm)
@@ -2132,7 +2131,6 @@ if(WIN32)
 else()
     target_sources(WinBoloDS PRIVATE
         src/gui/sdl3/lang.c
-        src/gui/sdl3/sim_rules_phrase.c
     )
     target_link_libraries(WinBoloDS PRIVATE ${MATH_LIB} pthread)
     target_compile_options(WinBoloDS PRIVATE -fcommon)
@@ -2484,7 +2482,6 @@ set(HEADLESS_SOURCES
     src/bolo/nat_portmap.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/lang.c
-    src/gui/sdl3/sim_rules_phrase.c
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_main.c src/headless/headless_frontend.c
     src/headless/cmd_stdin.c
@@ -2600,7 +2597,6 @@ set(GYM_SOURCES
     src/bolo/nat_portmap.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/lang.c
-    src/gui/sdl3/sim_rules_phrase.c
     src/gui/sdl3/dns_lookups.c
     src/headless/headless_frontend.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
@@ -2729,7 +2725,6 @@ set(BRAINTEST_SOURCES
     src/bolo/transport_udp_client.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/lang.c
-    src/gui/sdl3/sim_rules_phrase.c
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/gfx_settings.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_stubs.c
@@ -3750,8 +3745,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_shell_projection.c
     tests/unit/test_sim_rules.c
     # The rule list a frontend reads: the names, the classic value behind
-    # each one, and what a value does to a rule against that default.
+    # each one, and what a value does to a rule against that default. The
+    # phrase file renders that answer through langGetText, which
+    # test_stubs.c provides here, so it compiles in without lang.c.
     tests/unit/test_sim_rules_describe.c
+    src/gui/sdl3/sim_rules_phrase.c
     tests/unit/test_screen_bullets_build.c
     tests/unit/test_ping_smoother.c
     tests/unit/test_client_timing.c
@@ -4937,6 +4935,7 @@ set(_unit_test_names
     sim_rules_describe_reload
     sim_rules_describe_ratios
     sim_rules_describe_units
+    sim_rules_phrase
     screen_bullets_build
     ping_smoother
     client_timing

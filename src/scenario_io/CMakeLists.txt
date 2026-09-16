@@ -82,7 +82,3 @@ target_link_libraries(scenario_io_static PRIVATE minizip)
 # declaration.
 target_link_libraries(scenario_io_static PRIVATE cjson)
 target_include_directories(scenario_io_static PRIVATE ${cjson_SOURCE_DIR})
-
-if(NOT MSVC)
-    target_compile_options(scenario_io_static PRIVATE -fcommon)
-endif()

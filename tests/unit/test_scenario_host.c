@@ -152,6 +152,7 @@
                                            * through */
 #include "scenario_host.h"
 #include "scenario_manifest.h"
+#include "scenario_validate.h"    /* scenarioHostManifest */
 #include "test_harness.h"
 
 /* ── Fixtures ─────────────────────────────────────────────────────── */

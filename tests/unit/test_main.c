@@ -820,6 +820,7 @@ static const UnitTestEntry s_tests[] = {
     { "sim_rules_describe_reload",               run_sim_rules_describe_reload               },
     { "sim_rules_describe_ratios",               run_sim_rules_describe_ratios               },
     { "sim_rules_describe_units",                run_sim_rules_describe_units                },
+    { "sim_rules_phrase",                        run_sim_rules_phrase                        },
     { "snapshot_compaction",                     run_snapshot_compaction                     },
     { "error_smoothing",                         run_error_smoothing                         },
     { "loopback_join",                           run_loopback_join                           },

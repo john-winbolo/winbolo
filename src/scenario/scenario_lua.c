@@ -1777,11 +1777,10 @@ static int scnAdded(lua_State *L, ScenarioOp *op, const char *fmt, ...) {
  * without one takes. Read off the round's own table, so a scenario that
  * changed the rule adds pills at the rate it is playing with. */
 static BYTE scnRoundPillSpeed(lua_State *L) {
-    int    rule = simRulesRuleIndex("pill_attack_ticks");
-    double v    = 0.0;
+    double v = 0.0;
 
-    if (rule >= 0 &&
-        serverSimGetScenarioRule(scnCtx(L)->sim, (uint16_t)rule, &v) &&
+    if (serverSimGetScenarioRule(scnCtx(L)->sim,
+                                 (uint16_t)SCN_RULE_pill_attack_ticks, &v) &&
         v >= 0.0 && v <= 255.0) {
         return (BYTE)v;
     }

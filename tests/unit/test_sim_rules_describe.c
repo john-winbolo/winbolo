@@ -45,6 +45,7 @@
 #include "global.h"
 #include "sim_rules.h"
 #include "sim_rules_names.h"
+#include "sim_rules_phrase.h" /* simRulesPhrase — src/gui/ is on this target's path */
 #include "test_harness.h"
 
 /* Doubles that came out of the same arithmetic compare exactly here — a
@@ -294,6 +295,81 @@ int run_sim_rules_describe_units(void) {
                       "%s at its own default answered %s",
                       simRulesRuleName(i), srdKindName(c.kind));
     }
+
+    return 0;
+}
+
+/* ── 5. The words a change is drawn as ─────────────────────────────────── */
+
+/* The lang table is not linked here: test_stubs.c answers "?" for every id,
+ * so a phrase that went to the table reads "?" and the cases below check the
+ * arms that write the number themselves — the difference and the raw value —
+ * and what an index that names no rule leaves behind. */
+int run_sim_rules_phrase(void) {
+    const double shells = simRulesClassicValue(SIM_RULE_tank_full_shells);
+    const double river  = simRulesClassicValue(SIM_RULE_turn_river);
+    char         out[64];
+
+    UT_ASSERT_MSG(srdSame(river, 0.25),
+                  "turn_river is %.4f, not the 0.25 these cases read", river);
+
+    /* A count's difference: one place, the ".0" gone, the plus kept. */
+    simRulesPhrase(SIM_RULE_tank_full_shells, shells + 4.0, out, sizeof(out));
+    UT_ASSERT_MSG(strcmp(out, "+4") == 0,
+                  "a count four higher reads '%s', expected '+4'", out);
+    simRulesPhrase(SIM_RULE_tank_full_shells, shells - 4.0, out, sizeof(out));
+    UT_ASSERT_MSG(strcmp(out, "-4") == 0,
+                  "a count four lower reads '%s', expected '-4'", out);
+
+    /* A rate moves by hundredths, so its difference keeps two places: the
+       "+0" one place gives is not an answer. Trailing zeros still go, and
+       the point with them. */
+    simRulesPhrase(SIM_RULE_turn_river, 0.27, out, sizeof(out));
+    UT_ASSERT_MSG(strcmp(out, "+0.02") == 0,
+                  "a turn rate raised by 0.02 reads '%s', expected '+0.02'",
+                  out);
+    simRulesPhrase(SIM_RULE_turn_river, 0.2, out, sizeof(out));
+    UT_ASSERT_MSG(strcmp(out, "-0.05") == 0,
+                  "a turn rate lowered by 0.05 reads '%s', expected '-0.05'",
+                  out);
+    simRulesPhrase(SIM_RULE_turn_river, 0.35, out, sizeof(out));
+    UT_ASSERT_MSG(strcmp(out, "+0.1") == 0,
+                  "a turn rate raised by 0.1 reads '%s', expected '+0.1'",
+                  out);
+
+    /* A rate typed past the field's precision is the field's own value. */
+    SRD_EXPECT(simRulesDescribeChange(SIM_RULE_turn_river, 0.25 + 1e-9),
+               SIM_RULE_CHANGE_UNCHANGED, 0.0,
+               "a turn rate a billionth off its default");
+
+    /* A weight in the tree draw is its raw number, no sign added. */
+    simRulesPhrase(SIM_RULE_tree_weight_road, -200.0, out, sizeof(out));
+    UT_ASSERT_MSG(strcmp(out, "-200") == 0,
+                  "a weight of -200 reads '%s', expected '-200'", out);
+
+    /* The arms that go to the lang table come back as the stub's
+       placeholder, which is the proof they went there rather than writing a
+       number of their own. */
+    simRulesPhrase(SIM_RULE_tank_full_shells, shells * 2.0, out, sizeof(out));
+    UT_ASSERT_MSG(strcmp(out, "?") == 0,
+                  "a count doubled reads '%s', expected the lang stub's '?'",
+                  out);
+    simRulesPhrase(SIM_RULE_tank_full_shells, shells, out, sizeof(out));
+    UT_ASSERT_MSG(strcmp(out, "?") == 0,
+                  "a count at its default reads '%s', expected the lang "
+                  "stub's '?'", out);
+
+    /* No rule, nothing beside it; and no room, nothing touched. */
+    strcpy(out, "stale");
+    simRulesPhrase(-1, 5.0, out, sizeof(out));
+    UT_ASSERT_MSG(out[0] == '\0', "index -1 wrote '%s'", out);
+    strcpy(out, "stale");
+    simRulesPhrase((int)SIM_RULE_COUNT, 5.0, out, sizeof(out));
+    UT_ASSERT_MSG(out[0] == '\0', "one past the last rule wrote '%s'", out);
+    strcpy(out, "kept");
+    simRulesPhrase(SIM_RULE_tank_full_shells, shells + 4.0, out, 0);
+    UT_ASSERT_MSG(strcmp(out, "kept") == 0,
+                  "a zero-length buffer was written: '%s'", out);
 
     return 0;
 }

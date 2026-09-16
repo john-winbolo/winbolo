@@ -37,6 +37,7 @@
 #include <stdint.h>
 
 #include "server_sim.h"        /* ServerSim, and the entity counts */
+#include "scenario_host.h"     /* ScenarioHost — scenarioHostManifest below */
 #include "scenario_manifest.h" /* ScenarioManifest */
 #include "scenario_issues.h"   /* ScnValidateIssue, ScnValidateResult,
                                 * scnIssueAdd, ScnParseReport */
@@ -95,6 +96,17 @@ bool scenarioValidateScript(const ServerSim *sim, const char *scriptPath,
                             ScnValidateResult *out);
 
 /* ── The parse, which the host and the validator share ──────────────── */
+
+/*********************************************************
+ *NAME:          scenarioHostManifest
+ *PURPOSE:
+ *  The table the host last read, for the library's own code
+ *  and for the tests that check the parse. NULL for a NULL
+ *  host. Defined in scenario_host.c; declared here rather
+ *  than on scenario_host.h because it answers a
+ *  scenario_io type, and that header names none.
+ *********************************************************/
+const ScenarioManifest *scenarioHostManifest(const ScenarioHost *h);
 
 /* Named rather than included: nothing else on this header names a Lua type,
  * and a frontend reading the result of a validation has no Lua headers on its

@@ -1769,6 +1769,10 @@ int run_sim_rules_describe_names(void);
 int run_sim_rules_describe_reload(void);
 int run_sim_rules_describe_ratios(void);
 int run_sim_rules_describe_units(void);
+/* The words a change is drawn as (src/gui/sdl3/sim_rules_phrase.c): the
+ * number's sign, places and trimming, and nothing for an index that names
+ * no rule. The lang arms come back as test_stubs.c's placeholder. */
+int run_sim_rules_phrase(void);
 
 int run_snapshot_compaction(void);
 

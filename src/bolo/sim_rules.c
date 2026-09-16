@@ -190,9 +190,9 @@ int simRulesFirstDifference(const SimRules *rules) {
     }
 
     /* Which one. Walked as four-byte words rather than by name: the fields
-       are all four bytes and the list that names them is the scenario's,
-       which sits above this file. The index is that list's own index, so a
-       caller holding SCN_RULE_LIST can turn it into the rule's name. */
+       are all four bytes and SIM_RULE_LIST names them in this order. The
+       index is that list's own index, so simRulesRuleName turns it into the
+       rule's name. */
     a = (const int32_t *) (const void *) rules;
     b = (const int32_t *) (const void *) &classic;
     for (i = 0; i < fields; i++) {
@@ -826,6 +826,12 @@ SimRuleChange simRulesDescribeChange(int rule, double value) {
         out.kind   = SIM_RULE_CHANGE_UNCHANGED;
         out.number = 0.0;
         return out;
+    }
+    if (simRuleValueKinds[rule] == SIM_RULE_VALUE_FLOAT) {
+        /* What the field would hold, not what was typed: the field is a
+           float and the classic value is read out of one, so a value that
+           only differs past float precision is the same value. */
+        value = (double) (float) value;
     }
     return simRulesDescribeValue(simRuleUnits[rule], simRulesClassicValue(rule),
                                  value);

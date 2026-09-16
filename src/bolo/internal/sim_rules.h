@@ -197,10 +197,9 @@ bool simRulesAreClassic(const SimRules *rules);
  *  table is classic. A NULL table answers 0.
  *
  *  The index counts fields from the front of the struct, so
- *  it is the same index the scenario surface names a rule by
- *  and a caller holding SCN_RULE_LIST can turn it into that
- *  rule's name. This file cannot: the name list is the
- *  scenario's and sits above it.
+ *  it is the same index the scenario surface names a rule by,
+ *  and simRulesRuleName (public/sim_rules_names.h) turns it
+ *  into that rule's name.
  *
  *  A refusal that has to tell an operator what is wrong
  *  wants this rather than the bool — "the rules are not

@@ -27,21 +27,28 @@
 #include "../lang.h"
 #include "../sim_rules_phrase.h"
 
-/* A number with one decimal, the trailing ".0" trimmed, so a whole multiple
- * reads "5x faster" rather than "5.0x faster". sign true puts a "+" on a
- * positive number, which is what a difference wants and a multiple does
- * not. The minus is the ASCII one: it sits beside digits the same font
- * draws, and a lang file is free to write the Unicode minus in its own
- * wording if it wants one. */
-static void simRulesPhraseNumber(double number, bool sign, char *buf,
-                                 size_t bufLen) {
+/* A number to at most `decimals` places, the trailing zeros and then the
+ * point trimmed, so a whole multiple reads "5x faster" rather than "5.0x
+ * faster" and a rate's difference reads "+0.02" rather than "+0.0". sign
+ * true puts a "+" on a positive number, which is what a difference wants
+ * and a multiple does not. The minus is the ASCII one: it sits beside
+ * digits the same font draws, and a lang file is free to write the Unicode
+ * minus in its own wording if it wants one. */
+static void simRulesPhraseNumber(double number, bool sign, int decimals,
+                                 char *buf, size_t bufLen) {
     size_t len;
 
-    SDL_snprintf(buf, bufLen, (sign && number > 0.0) ? "+%.1f" : "%.1f",
-                 number);
+    SDL_snprintf(buf, bufLen, (sign && number > 0.0) ? "+%.*f" : "%.*f",
+                 decimals, number);
+    if (SDL_strchr(buf, '.') == NULL) {
+        return;
+    }
     len = SDL_strlen(buf);
-    if (len > 2 && buf[len - 2] == '.' && buf[len - 1] == '0') {
-        buf[len - 2] = '\0';
+    while (len > 0 && buf[len - 1] == '0') {
+        buf[--len] = '\0';
+    }
+    if (len > 0 && buf[len - 1] == '.') {
+        buf[--len] = '\0';
     }
 }
 
@@ -54,6 +61,10 @@ void simRulesPhrase(int rule, double value, char *out, size_t outLen) {
         return;
     }
     out[0] = '\0';
+    if (rule < 0 || rule >= simRulesRuleCount()) {
+        /* No rule, so nothing to say beside it. */
+        return;
+    }
 
     change = simRulesDescribeChange(rule, value);
     SDL_memset(&args, 0, sizeof(args));
@@ -70,11 +81,15 @@ void simRulesPhrase(int rule, double value, char *out, size_t outLen) {
             return;
         case SIM_RULE_CHANGE_DELTA:
             /* The number is the whole answer, so there is nothing to
-               translate: "+20", "-3". */
-            simRulesPhraseNumber(change.number, true, out, outLen);
+               translate: "+20", "-3". A rate row moves by hundredths, so it
+               gets two places where a count gets one. */
+            simRulesPhraseNumber(
+                change.number, true,
+                (simRulesRuleValueKind(rule) == SIM_RULE_VALUE_FLOAT) ? 2 : 1,
+                out, outLen);
             return;
         case SIM_RULE_CHANGE_RAW:
-            simRulesPhraseNumber(change.number, false, out, outLen);
+            simRulesPhraseNumber(change.number, false, 1, out, outLen);
             return;
         case SIM_RULE_CHANGE_FASTER:
             id = STR_RULE_FASTER;
@@ -95,7 +110,7 @@ void simRulesPhrase(int rule, double value, char *out, size_t outLen) {
             return;
     }
 
-    simRulesPhraseNumber(change.number, false, args.string1,
+    simRulesPhraseNumber(change.number, false, 1, args.string1,
                          sizeof(args.string1));
     SDL_strlcpy(out, langGetTextFmt(id, &args), outLen);
 }
