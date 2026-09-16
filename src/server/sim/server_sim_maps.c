@@ -967,6 +967,20 @@ void serverSimResolveMapPath(const ServerSim *sim, const char *relPath,
     }
 }
 
+void serverSimGetUploadsDir(const ServerSim *sim, char *out, size_t outLen) {
+    if (out == NULL || outLen == 0) {
+        return;
+    }
+    out[0] = '\0';
+    if (sim == NULL) {
+        return;
+    }
+    /* The virtual folder's own name, resolved the way any map path under it
+       is, so the prefix a caller compares against is the one the resolve
+       would have produced. */
+    serverSimResolveMapPath(sim, "Uploads", out, outLen);
+}
+
 int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
                               ServerMapEntry *entries, int maxEntries) {
     if (!entries || maxEntries <= 0) return -1;

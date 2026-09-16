@@ -2140,3 +2140,5 @@ STR_DLGLOBBY_SCENARIO_BOUND=Zbudowany dla jednej mapy, więc nie może być gran
 STR_DLGLOBBY_SCENARIO_MAXPLAYERS=Graczy: do {number}
 STR_DLGLOBBY_SCENARIO_BOTS=Miejsc dla botów: {number}
 STR_DLGLOBBY_SCENARIO_ON_MAP=Mod: {string2} (na {string1})
+STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Uruchamiaj skrypty w wysłanych mapach
+STR_DLGSETTINGS_HOSTING_SCENARIODIR=Katalog scenariuszy

@@ -2144,3 +2144,5 @@ STR_DLGLOBBY_SCENARIO_BOUND=Vytvořen pro jednu mapu, takže ho nelze hrát jako
 STR_DLGLOBBY_SCENARIO_MAXPLAYERS=Až {number} hráčů
 STR_DLGLOBBY_SCENARIO_BOTS={number} míst pro boty
 STR_DLGLOBBY_SCENARIO_ON_MAP=Mod: {string2} (na {string1})
+STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Spouštět skripty v nahraných mapách
+STR_DLGSETTINGS_HOSTING_SCENARIODIR=Adresář scénářů

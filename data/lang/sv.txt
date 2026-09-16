@@ -2146,3 +2146,5 @@ STR_DLGLOBBY_SCENARIO_BOUND=Byggt för en karta, så det kan inte spelas som mod
 STR_DLGLOBBY_SCENARIO_MAXPLAYERS=Upp till {number} spelare
 STR_DLGLOBBY_SCENARIO_BOTS={number} bot-platser
 STR_DLGLOBBY_SCENARIO_ON_MAP=Modd: {string2} (på {string1})
+STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Kör skript i uppladdade banor
+STR_DLGSETTINGS_HOSTING_SCENARIODIR=Scenariomapp

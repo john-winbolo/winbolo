@@ -649,6 +649,10 @@ void printArgs() {
   fprintf(stderr, "-noscenarios  - Do not load the scenario script beside a map. Every map,\n");
   fprintf(stderr, "                including one committed later, plays plainly. A map that\n");
   fprintf(stderr, "                has a script says which one was not loaded.\n");
+  fprintf(stderr, "-nouploadscripts - Do not run a script carried by a map a client uploaded.\n");
+  fprintf(stderr, "                Maps in the uploads directory play plainly, whether the\n");
+  fprintf(stderr, "                script is packed into the file or sits beside it; every\n");
+  fprintf(stderr, "                other map is unaffected. Each upload turned down is named.\n");
   fprintf(stderr, "-validate <File> - Check the scenario script beside a map and exit without\n");
   fprintf(stderr, "                starting a server. Each problem is printed as\n");
   fprintf(stderr, "                file:line: key: message. Exits 0 when the map is\n");
@@ -1818,6 +1822,12 @@ int main(int argc, char **argv) {
      it as well. */
   if (argExist(argc, argv, "noscenarios") == TRUE) {
     scenarioHostSetEnabled(false);
+  }
+  /* -nouploadscripts: the narrower one. A map a client sent plays plainly
+     whatever it carries, and the operator's own maps are untouched. Set in
+     the same place and before the first attach for the same reason. */
+  if (argExist(argc, argv, "nouploadscripts") == TRUE) {
+    scenarioHostSetUploadScriptsEnabled(false);
   }
   /* And the question the map lister asks of every map it finds, so the list
      a player picks from says which maps are scripted. Registered here rather

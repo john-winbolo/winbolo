@@ -2146,3 +2146,5 @@ STR_DLGLOBBY_SCENARIO_BOUND=Nur für eine Karte gebaut, kann daher nicht als Mod
 STR_DLGLOBBY_SCENARIO_MAXPLAYERS=Bis zu {number} Spieler
 STR_DLGLOBBY_SCENARIO_BOTS={number} Bot-Plätze
 STR_DLGLOBBY_SCENARIO_ON_MAP=Mod: {string2} (auf {string1})
+STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Skripte in hochgeladenen Karten ausführen
+STR_DLGSETTINGS_HOSTING_SCENARIODIR=Szenario-Verzeichnis

@@ -2905,6 +2905,71 @@ void scenarioHostSetEnabled(bool enabled) {
     scnEnabled = enabled;
 }
 
+/* The narrower switch beside it: whether a map a client uploaded may bring a
+ * script. One answer for the process for the same reasons the one above is,
+ * and read at the same points. */
+static bool scnUploadScripts = true;
+
+void scenarioHostSetUploadScriptsEnabled(bool enabled) {
+    scnUploadScripts = enabled;
+}
+
+/* One character of a path, for the comparison below: separators levelled and
+ * case dropped. */
+static char scnPathChar(char c) {
+    if (c == '\\') {
+        c = '/';
+    }
+    if (c >= 'A' && c <= 'Z') {
+        c = (char)(c + 32);
+    }
+    return c;
+}
+
+/* Whether this map file sits in the server's uploads directory, and so
+ * arrived from a client rather than out of the operator's own map directory.
+ *
+ * The path is the only signal there is. serverFinishUpload writes the bytes
+ * it was sent under their final name and stamps nothing on the file, and the
+ * in-memory preview path has no file at all, so a map is an upload exactly
+ * when its file is the one an upload would have written.
+ *
+ * Separators are levelled and case is dropped, because the two strings are
+ * built by different code — the uploads directory out of an operator's
+ * configuration or a desktop preference, the map path out of a listing — and
+ * on Windows either may spell a separator the other way. Dropping case can
+ * only call a map an upload that is not one, which turns a script down; the
+ * mistake the other way would run one the operator switched off. */
+static bool scnMapIsUpload(const ServerSim *sim, const char *mapPath) {
+    char   uploads[SCN_SCRIPT_PATH_MAX];
+    size_t n;
+    size_t i;
+
+    if (sim == NULL || mapPath == NULL || mapPath[0] == '\0') {
+        return false;
+    }
+    uploads[0] = '\0';
+    serverSimGetUploadsDir(sim, uploads, sizeof(uploads));
+    n = strlen(uploads);
+    /* A trailing separator off the end, so "<dir>/" and "<dir>" are one
+       directory. */
+    while (n > 0 && (uploads[n - 1] == '/' || uploads[n - 1] == '\\')) {
+        n--;
+    }
+    if (n == 0) {
+        return false;
+    }
+    for (i = 0; i < n; i++) {
+        if (mapPath[i] == '\0' ||
+            scnPathChar(mapPath[i]) != scnPathChar(uploads[i])) {
+            return false;
+        }
+    }
+    /* A separator has to follow, so a sibling directory whose name starts
+       with the uploads directory's is not inside it. */
+    return mapPath[n] == '/' || mapPath[n] == '\\';
+}
+
 /* Whether a regular file is there, without opening it. The map lister asks
  * this once per entry on its way through a directory, so it is a stat and
  * not an open. A directory carrying the script's name is not a script:
@@ -2993,15 +3058,23 @@ bool scenarioHostMapHasScript(const char *mapPath) {
     return scnMapHasChunk(mapPath);
 }
 
-/* The lister's question, in the shape the sim's setter takes. No context:
-   finding a script is a fact about a path and about nothing else. */
+/* The lister's question, in the shape the sim's setter takes. The context is
+   the sim whose lister asked, because one part of the answer is not a fact
+   about the path alone: whether the map came out of that server's uploads
+   directory, which with uploaded scripts off makes it plain here however
+   the file was built. Without this the chooser would tag an uploaded map
+   Scripted and the attach would then refuse it. */
 static bool scnMapScriptedCb(void *ctx, const char *mapPath) {
-    (void)ctx;
+    const ServerSim *sim = (const ServerSim *)ctx;
+
+    if (!scnUploadScripts && scnMapIsUpload(sim, mapPath)) {
+        return false;
+    }
     return scenarioHostMapHasScript(mapPath);
 }
 
 void scenarioHostRegisterMapScripted(ServerSim *sim) {
-    serverSimSetScenarioMapScripted(sim, scnMapScriptedCb, NULL);
+    serverSimSetScenarioMapScripted(sim, scnMapScriptedCb, sim);
 }
 
 /* The last read of the scenarios directory, kept so the next one need not be
@@ -3732,12 +3805,38 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
         }
         return NULL;
     }
+    /* A map out of this server's uploads directory, with scripts in uploaded
+       maps off. Neither the container inside the file nor a loose script
+       beside it is loaded. Said on the console rather than only in err,
+       because the operator turned this off deliberately and the file that
+       was turned down is the thing they want named; said only for a map that
+       had something to run, the way the switch above is, so an uploaded
+       plain map is as quiet as any other. The question reads the file's head
+       and stats the name beside it, and parses neither. */
+    if (!scnUploadScripts && scnMapIsUpload(sim, mapPath)) {
+        if (scenarioHostMapHasScript(mapPath)) {
+            scnSay(err, errLen,
+                   "scenario: %s came from an upload and scripts in uploaded "
+                   "maps are off; its script was not loaded", mapPath);
+        }
+        return NULL;
+    }
     /* The one read of the script, from beside the map or from inside it. No
        script is the ordinary case: the map plays as a plain map and the
        operator is told nothing, because there is nothing to tell. A script
        that is there and cannot be used sets err and is reported. */
     if (!scnFindScript(mapPath, &from, err, errLen)) {
         return NULL;
+    }
+    /* An uploaded map's own scenario, about to run. Said whenever it happens
+       and not only when something is wrong: this is the one case where the
+       script a round plays by came from a client rather than out of the
+       operator's own map directory, and an operator who would rather it did
+       not has scenarioHostSetUploadScriptsEnabled to say so. */
+    if (from.fromPackage && scnMapIsUpload(sim, mapPath)) {
+        scnSay(NULL, 0,
+               "scenario: %s came from an upload and carries a scenario; that "
+               "is what runs", mapPath);
     }
     return scnAttachFrom(sim, &from, mapPath, lobbyScenarioMap, err, errLen);
 }
@@ -3818,6 +3917,14 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
         if (!scnModScript(h->script, &from, err, errLen)) {
             return false;
         }
+    } else if (!scnUploadScripts && scnMapIsUpload(h->sim, h->mapPath)) {
+        /* The same refusal the attach makes, because a reload reads the file
+           again: without it a scenario the switch turned down at the commit
+           would come back the moment anyone asked for a reload. */
+        scnFmt(err, errLen,
+               "scenario: %s came from an upload and scripts in uploaded maps "
+               "are off", h->mapPath);
+        return false;
     } else if (!scnFindScript(h->mapPath, &from, err, errLen)) {
         /* A map with nothing to read leaves err empty, because at an attach
            that is the ordinary case rather than a fault. Asked for by name it

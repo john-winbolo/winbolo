@@ -1025,6 +1025,12 @@ extern bool           gameFrontHostingScripts;          /* default Yes   */
                                * map pack can decline its script without
                                * deleting the file. Set on the scenario
                                * library before either attach site runs. */
+extern bool           gameFrontHostingUploadScripts;    /* default Yes   */
+                              /* Run a script carried by a map a player
+                               * uploaded to this host. Off plays those maps
+                               * plainly and leaves every other map alone.
+                               * Set on the scenario library beside the
+                               * switch above. */
 extern int            gameFrontHostingMaxSpec;         /* 1-32,  default 16 */
 extern int            gameFrontHostingUploadPolicy;    /* default ALLOW (0) */
 extern int            gameFrontHostingUploadMaxFiles;  /* 1-255, default 64 */
@@ -1034,6 +1040,10 @@ extern char           gameFrontHostingUploadDir[FILENAME_MAX];
 extern bool           gameFrontHostingLogging;         /* default Yes   */
 extern char           gameFrontHostingLogDir[FILENAME_MAX];
                               /* Round-log dir; default <prefs path> */
+extern char           gameFrontHostingScenarioDir[FILENAME_MAX];
+                              /* The scenarios this host offers on their own,
+                               * independently of any map; default
+                               * <prefs path>scenarios */
 extern bool           gameFrontHostingServeReplays;    /* default Yes   */
                               /* Hand a finished round's log to players who
                                * ask for it. Yes leaves the serve policy at
@@ -1048,6 +1058,7 @@ extern int            gameFrontHostingVoiceMode;       /* default ON (0) */
 void gameFrontSetHostingPort(unsigned short port);
 void gameFrontSetHostingAllowSpec(bool allow);
 void gameFrontSetHostingScripts(bool allow);
+void gameFrontSetHostingUploadScripts(bool allow);
 void gameFrontSetHostingMaxSpec(int maxSpec);
 void gameFrontSetHostingUploadPolicy(int policy);
 void gameFrontSetHostingUploadMaxFiles(int maxFiles);
@@ -1055,6 +1066,7 @@ void gameFrontSetHostingUploadMaxStorage(int maxStorageMb);
 void gameFrontSetHostingUploadDir(const char *dir);
 void gameFrontSetHostingLogging(bool logging);
 void gameFrontSetHostingLogDir(const char *dir);
+void gameFrontSetHostingScenarioDir(const char *dir);
 void gameFrontSetHostingServeReplays(bool serve);
 void gameFrontSetHostingVoiceMode(int mode);
 

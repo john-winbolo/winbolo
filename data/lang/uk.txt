@@ -2146,3 +2146,5 @@ STR_DLGLOBBY_SCENARIO_BOUND=Створений для однієї карти, �
 STR_DLGLOBBY_SCENARIO_MAXPLAYERS=Гравців: до {number}
 STR_DLGLOBBY_SCENARIO_BOTS=Місць для ботів: {number}
 STR_DLGLOBBY_SCENARIO_ON_MAP=Мод: {string2} (на {string1})
+STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Запускати скрипти у завантажених картах
+STR_DLGSETTINGS_HOSTING_SCENARIODIR=Папка сценаріїв

@@ -1454,6 +1454,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_packed_map_table_disagrees",             run_scenario_packed_map_table_disagrees             },
     { "scenario_packed_map_round_start_keeps_it",
       run_scenario_packed_map_round_start_keeps_it                                                           },
+    { "scenario_packed_map_upload_switch",               run_scenario_packed_map_upload_switch               },
     { "scenario_pack_writes_container",                  run_scenario_pack_writes_container                  },
     { "scenario_pack_manifest_agrees",                   run_scenario_pack_manifest_agrees                   },
     { "scenario_pack_replaces_trailer",                  run_scenario_pack_replaces_trailer                  },

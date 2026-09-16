@@ -2144,3 +2144,5 @@ STR_DLGLOBBY_SCENARIO_BOUND=Criado para um único mapa, por isso não pode ser j
 STR_DLGLOBBY_SCENARIO_MAXPLAYERS=Até {number} jogadores
 STR_DLGLOBBY_SCENARIO_BOTS={number} vagas para bots
 STR_DLGLOBBY_SCENARIO_ON_MAP=Mod: {string2} (em {string1})
+STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Executar os scripts dos mapas enviados
+STR_DLGSETTINGS_HOSTING_SCENARIODIR=Diretório de cenários

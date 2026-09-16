@@ -254,6 +254,7 @@ bool gameFrontUseNatTraversal = TRUE;
 unsigned short gameFrontHostingPort            = DEFAULT_UDP_PORT;
 bool           gameFrontHostingAllowSpec       = TRUE;
 bool           gameFrontHostingScripts         = TRUE;
+bool           gameFrontHostingUploadScripts   = TRUE;
 int            gameFrontHostingMaxSpec         = 16;
 int            gameFrontHostingUploadPolicy    = UPLOAD_POLICY_ALLOW;
 int            gameFrontHostingUploadMaxFiles  = 64;
@@ -1712,6 +1713,9 @@ bool gameFrontSetDlgState(openingStates newState) {
              ways, because unlike a command-line switch this can be turned
              back on without restarting. */
           scenarioHostSetEnabled(gameFrontHostingScripts);
+          /* And the narrower one beside it, applied at the same point: a map
+             this host took as an upload plays plainly with it off. */
+          scenarioHostSetUploadScriptsEnabled(gameFrontHostingUploadScripts);
           /* And the question the map chooser's server list asks of each map,
              registered beside the switch rather than at the attach: an attach
              answers NULL for a map with no script, so hosting a plain map
@@ -2210,6 +2214,16 @@ void gameFrontSetHostingScripts(bool allow) {
   scenarioHostSetEnabled(allow);
 }
 
+void gameFrontSetHostingUploadScripts(bool allow) {
+  gameFrontHostingUploadScripts = allow;
+  prefsSetString("HOSTING", "Run Upload Scripts", TRUEFALSE_TO_STR(allow));
+  /* And the library, for the reason the switch above sets it here: the
+     preference is true of the process the moment it moves rather than from
+     the next hosted game, and the map chooser's scripted tag reads it too,
+     so an uploaded map stops being tagged as soon as this goes off. */
+  scenarioHostSetUploadScriptsEnabled(allow);
+}
+
 void gameFrontSetHostingMaxSpec(int maxSpec) {
   gameFrontHostingMaxSpec = maxSpec;
   char buf[16];
@@ -2254,6 +2268,15 @@ void gameFrontSetHostingLogDir(const char *dir) {
   SDL_strlcpy(gameFrontHostingLogDir, dir ? dir : "",
               sizeof(gameFrontHostingLogDir));
   prefsSetString("HOSTING", "Log Dir", gameFrontHostingLogDir);
+}
+
+/* The scenarios directory is read at the two hosting-start paths, which pass
+   it to serverSimSetScenarioDir, so a change made here is picked up by the
+   next hosted game rather than by the one already running. */
+void gameFrontSetHostingScenarioDir(const char *dir) {
+  SDL_strlcpy(gameFrontHostingScenarioDir, dir ? dir : "",
+              sizeof(gameFrontHostingScenarioDir));
+  prefsSetString("HOSTING", "Scenario Dir", gameFrontHostingScenarioDir);
 }
 
 void gameFrontSetHostingServeReplays(bool serve) {
@@ -3188,6 +3211,7 @@ bool gameFrontSetupServer(void) {
   /* A scenario script beside the map, as on the single-player path, and the
      same host preference deciding whether it runs at all. */
   scenarioHostSetEnabled(gameFrontHostingScripts);
+  scenarioHostSetUploadScriptsEnabled(gameFrontHostingUploadScripts);
   scenarioHostRegisterMapScripted(spServerSim);
   serverSimSetScenarioDir(spServerSim, gameFrontHostingScenarioDir);
   scenarioHostRegisterScenarioLister(spServerSim);
@@ -3455,6 +3479,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   gameFrontHostingAllowSpec = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("HOSTING", "Run Map Scripts", "Yes", buff, FILENAME_MAX);
   gameFrontHostingScripts = YESNO_TO_TRUEFALSE(buff[0]);
+  prefsGetString("HOSTING", "Run Upload Scripts", "Yes", buff, FILENAME_MAX);
+  gameFrontHostingUploadScripts = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("HOSTING", "Max Spectators", "16", buff, FILENAME_MAX);
   {
     int m = atoi(buff);
@@ -4296,6 +4322,8 @@ void gameFrontPutPrefs(keyItems *keys) {
                             TRUEFALSE_TO_STR(gameFrontHostingAllowSpec));
   prefsSetString("HOSTING", "Run Map Scripts",
                             TRUEFALSE_TO_STR(gameFrontHostingScripts));
+  prefsSetString("HOSTING", "Run Upload Scripts",
+                            TRUEFALSE_TO_STR(gameFrontHostingUploadScripts));
   intToStr(gameFrontHostingMaxSpec, buff, sizeof(buff));
   prefsSetString("HOSTING", "Max Spectators", buff);
   prefsSetString("HOSTING", "Upload Policy",
@@ -4307,6 +4335,7 @@ void gameFrontPutPrefs(keyItems *keys) {
   intToStr(gameFrontHostingUploadMaxStorage, buff, sizeof(buff));
   prefsSetString("HOSTING", "Upload Max Storage", buff);
   prefsSetString("HOSTING", "Upload Dir", gameFrontHostingUploadDir);
+  prefsSetString("HOSTING", "Scenario Dir", gameFrontHostingScenarioDir);
   prefsSetString("HOSTING", "Logging",
                             TRUEFALSE_TO_STR(gameFrontHostingLogging));
   prefsSetString("HOSTING", "Log Dir", gameFrontHostingLogDir);

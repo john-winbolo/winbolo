@@ -758,6 +758,33 @@ void        serverSimSetScenarioDir(ServerSim *sim, const char *dir);
 const char *serverSimGetScenarioDir(const ServerSim *sim);
 
 /*********************************************************
+ *NAME:          serverSimGetUploadsDir
+ *PURPOSE:
+ *  Where an uploaded map lands on disk: the configured
+ *  persist directory, or "<map root>/Uploads" when none is
+ *  configured. This is the same answer the virtual
+ *  "Uploads" folder resolves to, so a map file sitting
+ *  under it is a map a client sent this server.
+ *
+ *  Public because the scenario library asks it. A map's
+ *  path is the only record that it arrived as an upload —
+ *  the bytes are written straight to their final name and
+ *  nothing is stamped on the file — so the switch that
+ *  decides whether an uploaded map's script may run has
+ *  this prefix to compare against and nothing else.
+ *
+ *  out is left empty when sim is NULL.
+ *
+ *ARGUMENTS:
+ *  sim    - Pointer to the ServerSim
+ *  out    - Buffer the directory is written to, no
+ *           trailing slash
+ *  outLen - Size of out; FILENAME_MAX holds every answer
+ *********************************************************/
+void        serverSimGetUploadsDir(const ServerSim *sim, char *out,
+                                   size_t outLen);
+
+/*********************************************************
  *NAME:          serverSimSetSelectedScenario
  *               serverSimGetSelectedScenario
  *PURPOSE:

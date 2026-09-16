@@ -22,7 +22,7 @@ document is the stable reference for the rules themselves.
 |---|---|---|
 | `src/bolo/` | T1 + T2 + T3 + T4 | Owns T2; contributes to all tiers. |
 | `src/bolo/scenario_api/` | T1 + T4 | A third header directory beside `public/` and `internal/`. Holds the scenario write funnel (`serverSimApplyScenarioOp`), the policy vtable and tick registrations, and the POD types those calls take. Read by the `scenario_host` profile (the scenario runtime), by `sim_owner` to implement the funnel, and by `unittests` to drive it; nothing else sees it. Not in `public/` because these are server-authoritative entry points on the same footing as the lifecycle start functions — a frontend that wants to change the world sends a command, and a scenario is the one caller whose intent is applied to the sim directly. See "Privileged exceptions". |
-| `src/scenario/` | T1 + T4 + `scenario_api/` | The scenario runtime, `scenario_static`, the one target built under the `scenario_host` profile. Finds the Lua file beside a map, boots the VM, parses the `scenario` table, marshals `game.*` calls onto the funnel and T1 reads, queues bus events and drains them into hooks, and checks a script for `-validate`. Sees `public/` plus `scenario_api/` and nothing in `internal/` or `src/server/`; a binding that needs sim state it cannot read gets a T1 accessor, never an include. Links `lua_static` PRIVATE. Frontends see only `scenario_host.h` (attach, detach, follow the map, is-active, name, description, script path, reload, last error, the scripts switch `scenarioHostSetEnabled`, the map-has-script question `scenarioHostMapHasScript`, and `scenarioHostRegisterMapScripted`, which hands that question to a sim so its map lister can ask it), which includes `server_sim.h` alone and names no `scenario_api/` type, so a `gui`-profile file can include it. Both of those are the rule a call added here has to satisfy, not just a description of the calls there now: `server_sim.h` and the C standard headers are the whole of what this header may include, and every parameter and return type has to be a plain type or `ServerSim` / `ScenarioHost`. A call that would need a `scenario_api/` type in its signature belongs behind the funnel instead. Linked into every binary that hosts a `ServerSim` from a map file: WinBoloDS, WinBoloHeadless, WinBolo, WinBoloIOS, Android `main`, WinBoloUnitTests. Not wasm (never hosts), gym, braintest, mapeditor or the log viewer. |
+| `src/scenario/` | T1 + T4 + `scenario_api/` | The scenario runtime, `scenario_static`, the one target built under the `scenario_host` profile. Finds the Lua file beside a map, boots the VM, parses the `scenario` table, marshals `game.*` calls onto the funnel and T1 reads, queues bus events and drains them into hooks, and checks a script for `-validate`. Sees `public/` plus `scenario_api/` and nothing in `internal/` or `src/server/`; a binding that needs sim state it cannot read gets a T1 accessor, never an include. Links `lua_static` PRIVATE. Frontends see only `scenario_host.h` (attach, detach, follow the map, is-active, name, description, script path, reload, last error, the scripts switch `scenarioHostSetEnabled` and the narrower `scenarioHostSetUploadScriptsEnabled` beside it, the map-has-script question `scenarioHostMapHasScript`, and `scenarioHostRegisterMapScripted`, which hands that question to a sim so its map lister can ask it), which includes `server_sim.h` alone and names no `scenario_api/` type, so a `gui`-profile file can include it. Both of those are the rule a call added here has to satisfy, not just a description of the calls there now: `server_sim.h` and the C standard headers are the whole of what this header may include, and every parameter and return type has to be a plain type or `ServerSim` / `ScenarioHost`. A call that would need a `scenario_api/` type in its signature belongs behind the funnel instead. Linked into every binary that hosts a `ServerSim` from a map file: WinBoloDS, WinBoloHeadless, WinBolo, WinBoloIOS, Android `main`, WinBoloUnitTests. Not wasm (never hosts), gym, braintest, mapeditor or the log viewer. |
 | `src/gui/` | T1 + T3 + T4 | The desktop renderer. Cannot reach into sim internals. |
 | `src/mapeditor/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — full T2 access for map-data editing. |
 | `src/braintest/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — dev visualisation tool, not shipped to players. |
@@ -2238,6 +2238,19 @@ headless runner — and again whenever the desktop preference "Run map
 scripts when hosting" changes, rather than once at startup, so the
 preference is true of the process from the moment it moves rather than
 from the next hosted game.
+
+`scenarioHostSetUploadScriptsEnabled` is the narrower one beside it,
+set the same way at the same sites (`-nouploadscripts`,
+`--nouploadscripts`, and the desktop preference "Run scripts in
+uploaded maps"), and it decides whether a map a client uploaded may
+bring a script. What tells an uploaded map from an operator's own is
+its path and nothing else: the upload path writes the bytes it was
+sent under their final name and stamps nothing on the file, so the
+library asks `serverSimGetUploadsDir` — a T1 accessor answering what
+the virtual `Uploads` folder resolves to — and compares that prefix.
+The comparison levels separators and drops case, which can only call a
+map an upload that is not one; the mistake the other way would run a
+script the operator switched off.
 
 Two things the profile does not enforce, so review does. There is no
 `include_rules` CTest entry proving `scenario_host` cannot see

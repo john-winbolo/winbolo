@@ -32,6 +32,10 @@
  *      — a round started on a packed map whose script omits the table still
  *        gets it in the round's own VM: the round runs and plays under the
  *        package's rule
+ * run_scenario_packed_map_upload_switch
+ *      — a packed map sitting where this server's uploads land attaches with
+ *        scripts in uploaded maps on and attaches nothing with them off,
+ *        while the same bytes outside that directory attach either way
  */
 
 #include <stdint.h>
@@ -509,5 +513,115 @@ int run_scenario_packed_map_round_start_keeps_it(void) {
     scenarioHostDetach(h);
     serverSimDestroy(sim);
     remove(mapPath);
+    return 0;
+}
+
+/* ── 6. The switch for scripts inside uploaded maps ───────────────── */
+
+/* A map a client uploads is written to the server's persist directory under
+ * its own name and nothing is stamped on the file, so the path it sits at is
+ * the only record of where it came from. This case builds that artefact
+ * directly — serverFinishUpload's write, which is a fopen of
+ * "<persist dir>/<name>.map" — because the receiving half of the upload is
+ * driven by the UDP server's own state and has no seam a unit case can reach.
+ *
+ * Three attaches off one map: the switch on, the switch off, and the switch
+ * off with the same bytes sitting outside the uploads directory, which is
+ * what says the refusal is about where the file is and not about the file. */
+int run_scenario_packed_map_upload_switch(void) {
+    char          uploads[1024];
+    char          mapPath[1024];
+    char          outside[1024];
+    char          loose[1024];
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+
+    UT_ASSERT(utScratchPath(uploads, sizeof(uploads), "uploads"));
+    (void)SDL_RemovePath(uploads);
+    UT_ASSERT_MSG(SDL_CreateDirectory(uploads),
+                  "the uploads directory could not be made: %s",
+                  SDL_GetError());
+    snprintf(mapPath, sizeof(mapPath), "%s/packed_upload.map", uploads);
+    UT_ASSERT(utScratchPath(outside, sizeof(outside), "packed_own.map"));
+
+    pmLoosePath(mapPath, loose, sizeof(loose));
+    remove(loose);
+    UT_ASSERT_MSG(pmWritePacked(mapPath, kPmManifest, kPmRestates),
+                  "the uploaded packed map could not be written");
+    pmLoosePath(outside, loose, sizeof(loose));
+    remove(loose);
+    UT_ASSERT_MSG(pmWritePacked(outside, kPmManifest, kPmRestates),
+                  "the operator's own packed map could not be written");
+
+    sim = pmSim();
+    UT_ASSERT(sim != NULL);
+    /* Where this server's uploads land, which is what the switch measures a
+       map path against. */
+    serverSimSetUploadPersistDir(sim, uploads);
+    /* And the lister's question, so the tag the map chooser draws can be held
+       against what the attach does with the same file. */
+    scenarioHostRegisterMapScripted(sim);
+    pmWatchConsole(sim);
+
+    /* On, which is the default: the uploaded map's own scenario runs, and
+       the console says the round is being played by a script that came from
+       an upload. */
+    scenarioHostSetUploadScriptsEnabled(true);
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, mapPath, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL,
+                  "an uploaded packed map was refused with uploaded scripts "
+                  "on: %s", err);
+    UT_ASSERT_MSG(strcmp(scenarioHostName(h), PM_NAME) == 0,
+                  "the uploaded map's scenario is called '%s', expected '%s'",
+                  scenarioHostName(h), PM_NAME);
+    UT_ASSERT_MSG(strstr(pmSaid, "came from an upload") != NULL,
+                  "nothing on the console said the scenario came from an "
+                  "upload; it heard: %s", pmSaid);
+    UT_ASSERT_MSG(strstr(pmSaid, "packed_upload.map") != NULL,
+                  "the console line did not name the file: %s", pmSaid);
+    scenarioHostDetach(h);
+
+    /* And the map chooser agrees with the attach while it is on. */
+    UT_ASSERT_MSG(serverSimScenarioMapIsScripted(sim, mapPath),
+                  "the lister calls an uploaded packed map plain with "
+                  "uploaded scripts on");
+
+    /* Off: nothing attaches, and the file that was turned down is named. */
+    pmSaid[0] = '\0';
+    scenarioHostSetUploadScriptsEnabled(false);
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, mapPath, err, sizeof(err));
+    UT_ASSERT_MSG(h == NULL,
+                  "an uploaded packed map attached '%s' with uploaded scripts "
+                  "off", h != NULL ? scenarioHostName(h) : "");
+    UT_ASSERT_MSG(strstr(pmSaid, "packed_upload.map") != NULL,
+                  "the refusal did not name the upload on the console: %s",
+                  pmSaid);
+    UT_ASSERT_MSG(serverSimScenarioMapIsScripted(sim, mapPath) == false,
+                  "the lister still tags an uploaded packed map scripted with "
+                  "uploaded scripts off");
+
+    /* The same bytes outside the uploads directory are the operator's own
+       map and are unaffected. */
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, outside, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL,
+                  "a packed map outside the uploads directory was refused "
+                  "with uploaded scripts off: %s", err);
+    UT_ASSERT_MSG(strcmp(scenarioHostName(h), PM_NAME) == 0,
+                  "the operator's own packed map is called '%s', expected "
+                  "'%s'", scenarioHostName(h), PM_NAME);
+    scenarioHostDetach(h);
+
+    /* Back to the default, because the switch is one answer for the whole
+       process and the cases run in sequence. */
+    scenarioHostSetUploadScriptsEnabled(true);
+    pmUnwatchConsole(sim);
+    serverSimDestroy(sim);
+    remove(mapPath);
+    remove(outside);
+    (void)SDL_RemovePath(uploads);
     return 0;
 }

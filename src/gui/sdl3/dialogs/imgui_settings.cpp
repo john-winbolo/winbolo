@@ -1889,6 +1889,22 @@ static void SDLCALL hostingUploadDirDialogCallback(void *userdata,
 static char s_hostingLogPickedDir[FILENAME_MAX];
 static bool s_hostingLogDirPicked = false;
 
+/* And again for the Scenario Directory field, on statics of its own for the
+ * same reason. */
+static char s_hostingScnPickedDir[FILENAME_MAX];
+static bool s_hostingScnDirPicked = false;
+
+static void SDLCALL hostingScenarioDirDialogCallback(void *userdata,
+                                                     const char *const *filelist,
+                                                     int filter) {
+    (void)userdata;
+    (void)filter;
+    if (filelist && filelist[0]) {
+        SDL_strlcpy(s_hostingScnPickedDir, filelist[0], FILENAME_MAX);
+        s_hostingScnDirPicked = true;
+    }
+}
+
 static void SDLCALL hostingLogDirDialogCallback(void *userdata,
                                                 const char *const *filelist,
                                                 int filter) {
@@ -1979,6 +1995,53 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
                             &runScripts)) {
             gameFrontSetHostingScripts(runScripts);
         }
+        /* The narrower switch under it: a map a player uploaded here may
+         * carry a scenario inside the .map file, and this is what decides
+         * whether it runs. Greyed while scripts are off altogether, which
+         * already turns it down; the value is kept so switching scripts back
+         * on restores what the host chose. */
+        ImGui::BeginDisabled(!runScripts);
+        bool uploadScripts = gameFrontHostingUploadScripts;
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS),
+                            &uploadScripts)) {
+            gameFrontSetHostingUploadScripts(uploadScripts);
+        }
+        ImGui::EndDisabled();
+
+        /* The scenarios this host offers on their own, independently of any
+         * map — what the lobby's mod chooser lists. Same shape as the Upload
+         * Directory field below: an editable field that is the primary input
+         * and the fallback where there is no native folder dialog, with
+         * Browse filling it in. */
+        static char scnDirBuf[FILENAME_MAX];
+        static bool scnDirEditing = false;
+        if (s_hostingScnDirPicked) {
+            gameFrontSetHostingScenarioDir(s_hostingScnPickedDir);
+            s_hostingScnDirPicked = false;
+        }
+        if (!scnDirEditing) {
+            SDL_strlcpy(scnDirBuf, gameFrontHostingScenarioDir,
+                        sizeof(scnDirBuf));
+        }
+        bool scnCommit = ImGui::InputText(
+            langGetText(STR_DLGSETTINGS_HOSTING_SCENARIODIR),
+            scnDirBuf, sizeof(scnDirBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+        scnDirEditing = ImGui::IsItemActive();
+        if (scnCommit || ImGui::IsItemDeactivatedAfterEdit()) {
+            gameFrontSetHostingScenarioDir(scnDirBuf);
+        }
+        /* Distinct ID from the Upload Directory and Log Directory Browse
+         * buttons, which share the same label and can be on screen at the
+         * same time. */
+        ImGui::PushID("hostingscenariodir");
+        if (ImGui::Button(langGetText(STR_MAPEDIT_BROWSE))) {
+            SDL_Window *win = sdl3DrawGetWindow();
+            const char *loc = gameFrontHostingScenarioDir[0]
+                                  ? gameFrontHostingScenarioDir : NULL;
+            SDL_ShowOpenFolderDialog(hostingScenarioDirDialogCallback, NULL,
+                                     win, loc, false);
+        }
+        ImGui::PopID();
     }
 
     /* ---- Map uploads ---- */

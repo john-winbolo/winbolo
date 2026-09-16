@@ -143,6 +143,8 @@ static char optMap[512] = "";
 static bool optStdin = FALSE;
 /* Run the map plainly, whatever script sits beside it. */
 static bool optNoScenarios = false;
+/* Run a map that came from an upload plainly, whatever it carries. */
+static bool optNoUploadScripts = false;
 static bool optLogBinary = FALSE;
 static uint64_t optSeed = 0;
 static bool optSeedSet = FALSE;
@@ -2003,6 +2005,10 @@ static void printUsage(const char *prog) {
     "  --noscenarios     Do not load the scenario script beside the map. Every\n"
     "                    map, including one committed later, plays plainly. A map\n"
     "                    that has a script says which one was not loaded\n"
+    "  --nouploadscripts Do not run a script carried by a map a client uploaded.\n"
+    "                    Maps in the uploads directory play plainly, whether the\n"
+    "                    script is packed into the file or sits beside it; every\n"
+    "                    other map is unaffected\n"
     "\n"
     "Visibility options (apply to the fast-mode server sim):\n"
     "  --pillview MODE   Pillbox visibility: always, key (default), decay, off\n"
@@ -2154,6 +2160,8 @@ static bool parseArgs(int argc, char **argv) {
       optClassicMode = true;
     } else if (strcmp(argv[i], "--noscenarios") == 0) {
       optNoScenarios = true;
+    } else if (strcmp(argv[i], "--nouploadscripts") == 0) {
+      optNoUploadScripts = true;
     } else if (strcmp(argv[i], "--map") == 0 && i + 1 < argc) {
       strncpy(optMap, argv[++i], sizeof(optMap) - 1);
     } else if (strcmp(argv[i], "-nocrashreporting") == 0) {
@@ -2458,6 +2466,11 @@ static int runFastMode(void) {
      the map commits that follow answer to it as well. */
   if (optNoScenarios) {
     scenarioHostSetEnabled(false);
+  }
+  /* --nouploadscripts: the narrower one. A map a client sent plays plainly
+     whatever it carries, and the operator's own maps are untouched. */
+  if (optNoUploadScripts) {
+    scenarioHostSetUploadScriptsEnabled(false);
   }
   /* And the question the map lister asks, registered here rather than at the
      attach below: an attach answers nothing for a map with no script, so a

@@ -2349,6 +2349,12 @@
 #define STR_DLGLOBBY_SCENARIO_BOTS          2211
 #define STR_DLGLOBBY_SCENARIO_ON_MAP        2212
 
+/* The two hosting settings that go with a scenario carried inside a map: the
+ * switch that decides whether a map a player uploaded may bring one, and the
+ * directory of scenarios this host offers on their own. */
+#define STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS 2213
+#define STR_DLGSETTINGS_HOSTING_SCENARIODIR  2214
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

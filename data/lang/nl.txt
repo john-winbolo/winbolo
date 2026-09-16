@@ -2146,3 +2146,5 @@ STR_DLGLOBBY_SCENARIO_BOUND=Gemaakt voor één kaart, en kan daarom niet als mod
 STR_DLGLOBBY_SCENARIO_MAXPLAYERS=Tot {number} spelers
 STR_DLGLOBBY_SCENARIO_BOTS={number} bot-plekken
 STR_DLGLOBBY_SCENARIO_ON_MAP=Mod: {string2} (op {string1})
+STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Scripts in geüploade kaarten uitvoeren
+STR_DLGSETTINGS_HOSTING_SCENARIODIR=Scenariomap

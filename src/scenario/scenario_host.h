@@ -224,6 +224,32 @@ typedef struct ScenarioHost ScenarioHost;
 void scenarioHostSetEnabled(bool enabled);
 
 /*********************************************************
+ *NAME:          scenarioHostSetUploadScriptsEnabled
+ *PURPOSE:
+ *  Whether a map a client uploaded to this server may bring
+ *  a script with it. Enabled by default, so a server that
+ *  says nothing behaves as it always did.
+ *
+ *  A .map file can carry a scenario container appended to
+ *  it, and the upload path writes the bytes it was sent
+ *  whole, container and all. Off, a map whose file sits in
+ *  the server's uploads directory attaches neither that
+ *  container nor a loose script beside it, and one console
+ *  line names the file so the operator can see which upload
+ *  was turned down. Every other map is unaffected: the
+ *  operator's own map directory is the operator's own.
+ *
+ *  Narrower than scenarioHostSetEnabled, which turns every
+ *  script off wherever the map came from. Both apply: with
+ *  scripts off altogether this one is never reached.
+ *
+ *  Set it before the first attach, beside the switch above:
+ *  it is one answer for the process, and a map committed
+ *  later reads whatever it last said.
+ *********************************************************/
+void scenarioHostSetUploadScriptsEnabled(bool enabled);
+
+/*********************************************************
  *NAME:          scenarioHostMapHasScript
  *PURPOSE:
  *  Whether picking the map at mapPath here would run a

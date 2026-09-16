@@ -2182,4 +2182,6 @@ STR_DLGLOBBY_SCENARIO_BOUND=Built for one map, so it cannot be played as a mod
 STR_DLGLOBBY_SCENARIO_MAXPLAYERS=Up to {number} players
 STR_DLGLOBBY_SCENARIO_BOTS={number} bot seats
 STR_DLGLOBBY_SCENARIO_ON_MAP=Mod: {string2} (on {string1})
+STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Run scripts in uploaded maps
+STR_DLGSETTINGS_HOSTING_SCENARIODIR=Scenario Directory
 

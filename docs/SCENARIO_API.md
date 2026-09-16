@@ -169,6 +169,28 @@ With any of them off a map that has a script beside it plays plainly, the
 operator is told which script was skipped, and the map chooser does not tag
 the map as scripted.
 
+**Switching off only the scripts inside uploaded maps.** A `.map` a player
+uploads to a server can have a scenario packed into the file, and the server
+keeps the bytes it was sent whole, so committing that map later runs the
+script that came with it. An uploaded map's script runs under exactly the
+same sandbox as one on the operator's own disk — the same library, the same
+memory cap, the same instruction budget — and, as above, at the server's own
+privilege. A server that would rather not take a script from a player has a
+narrower switch than turning scripts off altogether:
+
+- `-nouploadscripts` on the dedicated server. One dash.
+- `--nouploadscripts` on the headless runner. Two.
+- **Run scripts in uploaded maps**, the desktop client's hosting preference,
+  under the one above. On by default, and it takes effect the moment it
+  changes.
+
+With it off, a map whose file sits in the server's uploads directory attaches
+neither a packed scenario nor a loose script beside it, the console names the
+upload that was turned down, and the map chooser does not tag it as scripted.
+Every other map is unaffected. With it on, one console line names each
+uploaded map whose packed scenario is what runs, so the operator can see when
+a round is being played by a script a player sent.
+
 **Reloading after an edit.** Two ways in. On a dedicated server the console
 command `reload` reads the file again; in a lobby, the host has a **Reload
 script** button beside the scenario's name. The button is the host's alone

@@ -5551,6 +5551,7 @@ set(_unit_test_names
     scenario_packed_map_script_omits_table
     scenario_packed_map_table_disagrees
     scenario_packed_map_round_start_keeps_it
+    scenario_packed_map_upload_switch
     scenario_pack_writes_container
     scenario_pack_manifest_agrees
     scenario_pack_replaces_trailer
