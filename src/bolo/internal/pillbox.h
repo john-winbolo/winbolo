@@ -90,11 +90,8 @@ static inline bool    pillPosCurrentFromByte(uint8_t b) {
 /* Pillbox not found return Value */
 #define PILL_NOT_FOUND 254
 
-/* A pillbox has to be within 9 squares of a base to get angry if it is shot */
-#define PILL_BASE_HIT_LEFT -9
-#define PILL_BASE_HIT_RIGHT 9
-#define PILL_BASE_HIT_TOP -9
-#define PILL_BASE_HIT_BOTTOM 9
+/* A pillbox must be strictly less than 7 map squares from a shot base. */
+#define PILL_BASE_HIT_RADIUS 7
 
 /* Amount of damage each tree unit repairs */
 #define PILL_REPAIR_AMOUNT 4

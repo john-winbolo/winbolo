@@ -3740,6 +3740,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_sim_rules_client_check.c
     # The sixteen pillbox pictures against a pill armour cap above 15.
     tests/unit/test_pill_armour_scale.c
+    tests/unit/test_pill_base_anger.c
     tests/unit/test_loopback_map_cull.c
     tests/unit/test_sound_delivery_wire.c
     tests/unit/test_view_ally_loopback.c
@@ -5217,6 +5218,7 @@ set(_unit_test_names
     loopback_entity_change
     loopback_scenario_seat_keeps_pills
     pill_armour_scale_classic_cap
+    pill_base_anger_radius
     pill_armour_scale_raised_cap
     pill_armour_scale_client_caps
     sim_rules_client_check_every_carried_field

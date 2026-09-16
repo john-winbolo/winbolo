@@ -1072,6 +1072,7 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_entity_change",                  run_loopback_entity_change                  },
     { "loopback_scenario_seat_keeps_pills",      run_loopback_scenario_seat_keeps_pills      },
     { "pill_armour_scale_classic_cap",           run_pill_armour_scale_classic_cap           },
+    { "pill_base_anger_radius",                 run_pill_base_anger_radius                 },
     { "pill_armour_scale_raised_cap",            run_pill_armour_scale_raised_cap            },
     { "pill_armour_scale_client_caps",           run_pill_armour_scale_client_caps           },
     { "sim_rules_client_check_every_carried_field", run_sim_rules_client_check_every_carried_field },

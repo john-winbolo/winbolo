@@ -1729,7 +1729,7 @@ void pillsBaseHit(GameSim *sim, pillboxes *value, BYTE mx, BYTE my, BYTE baseOwn
   for (count=0;count<(*value)->numPills;count++) {
     xDist = ((*value)->item[count].x) - mx;
     yDist = ((*value)->item[count].y) - my;
-    if ((*value)->active[count] != FALSE && xDist >= PILL_BASE_HIT_LEFT && xDist <= PILL_BASE_HIT_RIGHT && yDist >= PILL_BASE_HIT_TOP && yDist <= PILL_BASE_HIT_BOTTOM && (*value)->item[count].owner != NEUTRAL && (playersIsAllie(&sim->plyrs, baseOwner, (*value)->item[count].owner) == TRUE) && (*value)->item[count].armour > 0) {
+    if ((*value)->active[count] != FALSE && xDist * xDist + yDist * yDist < PILL_BASE_HIT_RADIUS * PILL_BASE_HIT_RADIUS && (*value)->item[count].owner != NEUTRAL && (playersIsAllie(&sim->plyrs, baseOwner, (*value)->item[count].owner) == TRUE) && (*value)->item[count].armour > 0) {
       /* It is in range make it angry */
       (*value)->item[count].coolDown = (BYTE) sim->rules.pill_cooldown_ticks;
       if ((*value)->item[count].speed > sim->rules.pill_attack_min_ticks) {
