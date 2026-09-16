@@ -1952,6 +1952,16 @@ static void hostingViewRow(const char *id, langid label, int *policy,
     ImGui::PopID();
 }
 
+/* The label to the left of a value field, as the Display tab draws its
+ * rows: text first, then the widget on the same line under a hidden "##"
+ * label. ImGui's own label goes to the right of a widget, which is where a
+ * checkbox keeps it and where a number, a path or a choice should not. */
+static void hostingLabel(langid label) {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(langGetText(label));
+    ImGui::SameLine();
+}
+
 /* -------------------------------------------------------
  * Hosting tab — settings for the server the client spins up
  * when hosting from the game finder.  Shared by the pre-game
@@ -1963,7 +1973,8 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
     /* ---- Port ---- */
     {
         int port = gameFrontHostingPort;
-        if (ImGui::InputInt(langGetText(STR_DLGSETTINGS_HOSTING_PORT), &port)) {
+        hostingLabel(STR_DLGSETTINGS_HOSTING_PORT);
+        if (ImGui::InputInt("##hostingport", &port)) {
             if (port < 1024)  port = 1024;
             if (port > 65535) port = 65535;
             gameFrontSetHostingPort((unsigned short)port);
@@ -1980,7 +1991,8 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
          * preserved so toggling back on restores the previous number. */
         ImGui::BeginDisabled(!allow);
         int maxSpec = gameFrontHostingMaxSpec;
-        if (ImGui::InputInt(langGetText(STR_DLGSETTINGS_HOSTING_MAXSPEC), &maxSpec)) {
+        hostingLabel(STR_DLGSETTINGS_HOSTING_MAXSPEC);
+        if (ImGui::InputInt("##hostingmaxspec", &maxSpec)) {
             if (maxSpec < 1)  maxSpec = 1;
             if (maxSpec > 32) maxSpec = 32;
             gameFrontSetHostingMaxSpec(maxSpec);
@@ -2023,8 +2035,9 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
             SDL_strlcpy(scnDirBuf, gameFrontHostingScenarioDir,
                         sizeof(scnDirBuf));
         }
+        hostingLabel(STR_DLGSETTINGS_HOSTING_SCENARIODIR);
         bool scnCommit = ImGui::InputText(
-            langGetText(STR_DLGSETTINGS_HOSTING_SCENARIODIR),
+            "##hostingscenariodirfield",
             scnDirBuf, sizeof(scnDirBuf), ImGuiInputTextFlags_EnterReturnsTrue);
         scnDirEditing = ImGui::IsItemActive();
         if (scnCommit || ImGui::IsItemDeactivatedAfterEdit()) {
@@ -2060,8 +2073,8 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
         for (int i = 0; i < 3; ++i) {
             if (kPolicyByIndex[i] == gameFrontHostingUploadPolicy) { idx = i; break; }
         }
-        if (ImGui::Combo(langGetText(STR_DLGSETTINGS_HOSTING_MAPUPLOADS),
-                         &idx, policyItems, 3)) {
+        hostingLabel(STR_DLGSETTINGS_HOSTING_MAPUPLOADS);
+        if (ImGui::Combo("##hostingmapuploads", &idx, policyItems, 3)) {
             gameFrontSetHostingUploadPolicy(kPolicyByIndex[idx]);
         }
 
@@ -2083,8 +2096,9 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
             if (!dirEditing) {
                 SDL_strlcpy(dirBuf, gameFrontHostingUploadDir, sizeof(dirBuf));
             }
+            hostingLabel(STR_DLGSETTINGS_HOSTING_UPLOADDIR);
             bool commit = ImGui::InputText(
-                langGetText(STR_DLGSETTINGS_HOSTING_UPLOADDIR),
+                "##hostinguploaddirfield",
                 dirBuf, sizeof(dirBuf), ImGuiInputTextFlags_EnterReturnsTrue);
             dirEditing = ImGui::IsItemActive();
             if (commit || ImGui::IsItemDeactivatedAfterEdit()) {
@@ -2099,15 +2113,15 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
             }
 
             int maxFiles = gameFrontHostingUploadMaxFiles;
-            if (ImGui::InputInt(langGetText(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXFILES),
-                                &maxFiles)) {
+            hostingLabel(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXFILES);
+            if (ImGui::InputInt("##hostinguploadmaxfiles", &maxFiles)) {
                 if (maxFiles < 1)   maxFiles = 1;
                 if (maxFiles > 255) maxFiles = 255;
                 gameFrontSetHostingUploadMaxFiles(maxFiles);
             }
             int maxStorage = gameFrontHostingUploadMaxStorage;
-            if (ImGui::InputInt(langGetText(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXSTORAGE),
-                                &maxStorage)) {
+            hostingLabel(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXSTORAGE);
+            if (ImGui::InputInt("##hostinguploadmaxstorage", &maxStorage)) {
                 if (maxStorage < 1)    maxStorage = 1;
                 if (maxStorage > 4095) maxStorage = 4095;
                 gameFrontSetHostingUploadMaxStorage(maxStorage);
@@ -2139,8 +2153,9 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
             if (!logDirEditing) {
                 SDL_strlcpy(logDirBuf, gameFrontHostingLogDir, sizeof(logDirBuf));
             }
+            hostingLabel(STR_DLGSETTINGS_HOSTING_LOGDIR);
             bool commit = ImGui::InputText(
-                langGetText(STR_DLGSETTINGS_HOSTING_LOGDIR),
+                "##hostinglogdirfield",
                 logDirBuf, sizeof(logDirBuf), ImGuiInputTextFlags_EnterReturnsTrue);
             logDirEditing = ImGui::IsItemActive();
             if (commit || ImGui::IsItemDeactivatedAfterEdit()) {
@@ -2189,8 +2204,8 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
         for (int i = 0; i < 3; ++i) {
             if (kVoiceByIndex[i] == gameFrontHostingVoiceMode) { idx = i; break; }
         }
-        if (ImGui::Combo(langGetText(STR_DLGSETTINGS_HOSTING_VOICE),
-                         &idx, voiceItems, 3)) {
+        hostingLabel(STR_DLGSETTINGS_HOSTING_VOICE);
+        if (ImGui::Combo("##hostingvoice", &idx, voiceItems, 3)) {
             gameFrontSetHostingVoiceMode(kVoiceByIndex[idx]);
         }
         /* Proximity is stored and sent but nothing acts on it yet, so say so
