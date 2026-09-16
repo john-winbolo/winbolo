@@ -365,8 +365,15 @@ struct ScenarioHost {
 
     char             script[SCN_SCRIPT_PATH_MAX];
     /* The map the script was found for, kept because a reload decides where
-     * the script comes from all over again and both answers start here. */
+     * the script comes from all over again and both answers start here.
+     * Empty for a mod, which has no map: that one reloads from script
+     * above, which is its own file in the scenarios directory. */
     char             mapPath[SCN_SCRIPT_PATH_MAX];
+    /* Where this scenario came from: the committed map, or a file in the
+     * server's scenarios directory the host picked. A reload reads the same
+     * way the attach did, and this is what says which; it is also what the
+     * lobby is told, so the settings event names a mod as a mod. */
+    LobbyScenarioSource source;
     char            *src;     /* the script's bytes, read once at attach */
     size_t           srcLen;
 
@@ -3096,24 +3103,17 @@ static bool scnReadMapBytes(const char *path, uint8_t **out, size_t *outLen,
     return true;
 }
 
-/* The container appended to a map file, read for the two entries that matter
- * here: manifest.json, and the entry the manifest names the script in. Both
- * are copied out — the manifest into the struct, the script into bytes of its
- * own — so the archive is closed and the file's bytes are freed before this
- * returns. Nothing else the container holds is read.
+/* The manifest and the script out of a container already open, whichever
+ * file the container came from: a map with one appended to it, or a
+ * .scenario file that is nothing else. Only the two entries named here are
+ * read, and both are copied out, so the caller closes the archive and frees
+ * the file's bytes as soon as this returns.
  *
- * False with err empty for a map that carries no container, which is the
- * ordinary case and the one every plain map takes. False with err set for a
- * map that carries one this cannot use: bad framing, no manifest, a manifest
- * that will not parse, or the script entry missing. That is a refusal an
- * operator should see, the way an unreadable loose script already is. */
-static bool scnPackagedScript(const char *mapPath, ScnScriptSource *out,
-                              char *err, size_t errLen) {
-    uint8_t                *file     = NULL;
-    size_t                  fileLen  = 0;
-    const uint8_t          *chunk    = NULL;
-    size_t                  chunkLen = 0;
-    ScnPackage             *p        = NULL;
+ * from names the file in anything said and is what out->script is set to: an
+ * entry inside a container has no path of its own. */
+static bool scnScriptFromPackage(ScnPackage *p, const char *from,
+                                 ScnScriptSource *out,
+                                 char *err, size_t errLen) {
     uint8_t                *json      = NULL;
     size_t                  jsonLen   = 0;
     uint8_t                *luaBytes  = NULL;
@@ -3124,22 +3124,9 @@ static bool scnPackagedScript(const char *mapPath, ScnScriptSource *out,
     char                    soft[SCN_ERR_LEN];
     bool                    ok = false;
 
-    if (!scnReadMapBytes(mapPath, &file, &fileLen, err, errLen)) {
-        return false;
-    }
-    if (!scnPackageFindInMap(file, fileLen, &chunk, &chunkLen)) {
-        free(file);
-        return false;            /* a plain map, and nothing to say about it */
-    }
-    p = scnPackageOpen(chunk, chunkLen, err, errLen);
-    if (p == NULL) {
-        free(file);
-        return false;
-    }
-
     if (!scnPackageReadEntry(p, SCN_PACKAGE_MANIFEST_ENTRY, &json, &jsonLen)) {
         scnFmt(err, errLen, "scenario: the container in %s has no %s in it",
-               mapPath, SCN_PACKAGE_MANIFEST_ENTRY);
+               from, SCN_PACKAGE_MANIFEST_ENTRY);
         goto done;
     }
     soft[0]     = '\0';
@@ -3155,7 +3142,7 @@ static bool scnPackagedScript(const char *mapPath, ScnScriptSource *out,
     if (!scnPackageReadEntry(p, entry, &luaBytes, &luaLen)) {
         scnFmt(err, errLen,
                "scenario: the container in %s names its script '%s' and has "
-               "no such entry", mapPath, entry);
+               "no such entry", from, entry);
         goto done;
     }
     /* The same cap a loose script is read under: what is inside a container
@@ -3163,7 +3150,7 @@ static bool scnPackagedScript(const char *mapPath, ScnScriptSource *out,
     if (luaLen > (size_t)SCN_SCRIPT_MAX_BYTES) {
         scnFmt(err, errLen,
                "scenario: '%s' in %s is %lu bytes and the limit is %ld — too "
-               "large to be a script", entry, mapPath, (unsigned long)luaLen,
+               "large to be a script", entry, from, (unsigned long)luaLen,
                (long)SCN_SCRIPT_MAX_BYTES);
         goto done;
     }
@@ -3175,7 +3162,7 @@ static bool scnPackagedScript(const char *mapPath, ScnScriptSource *out,
     luaBytes         = NULL;
     out->fromPackage = true;
     out->manifest    = *scnManifestValues(doc);
-    snprintf(out->script, sizeof(out->script), "%s", mapPath);
+    snprintf(out->script, sizeof(out->script), "%s", from);
     snprintf(out->entry, sizeof(out->entry), "%s", entry);
     ok = true;
 
@@ -3183,6 +3170,40 @@ done:
     free(luaBytes);
     free(json);
     scnManifestFree(doc);
+    return ok;
+}
+
+/* The container appended to a map file, found and opened, and the manifest
+ * and script read out of it above. The file's bytes are freed before this
+ * returns; nothing else the container holds is read.
+ *
+ * False with err empty for a map that carries no container, which is the
+ * ordinary case and the one every plain map takes. False with err set for a
+ * map that carries one this cannot use: bad framing, no manifest, a manifest
+ * that will not parse, or the script entry missing. That is a refusal an
+ * operator should see, the way an unreadable loose script already is. */
+static bool scnPackagedScript(const char *mapPath, ScnScriptSource *out,
+                              char *err, size_t errLen) {
+    uint8_t                *file     = NULL;
+    size_t                  fileLen  = 0;
+    const uint8_t          *chunk    = NULL;
+    size_t                  chunkLen = 0;
+    ScnPackage             *p        = NULL;
+    bool                    ok;
+
+    if (!scnReadMapBytes(mapPath, &file, &fileLen, err, errLen)) {
+        return false;
+    }
+    if (!scnPackageFindInMap(file, fileLen, &chunk, &chunkLen)) {
+        free(file);
+        return false;            /* a plain map, and nothing to say about it */
+    }
+    p = scnPackageOpen(chunk, chunkLen, err, errLen);
+    if (p == NULL) {
+        free(file);
+        return false;
+    }
+    ok = scnScriptFromPackage(p, mapPath, out, err, errLen);
     scnPackageClose(p);
     free(file);
     return ok;
@@ -3229,47 +3250,133 @@ static bool scnFindScript(const char *mapPath, ScnScriptSource *out,
     return scnPackagedScript(mapPath, out, err, errLen);
 }
 
-ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
-                                 char *err, size_t errLen) {
-    char             script[SCN_SCRIPT_PATH_MAX];
+/* Does name end with ext, ignoring case? The directory listing asks the same
+   question of the same two extensions; this is the copy on the side that
+   reads the file rather than the side that lists it. */
+static bool scnHasExt(const char *name, const char *ext) {
+    size_t n = strlen(name);
+    size_t e = strlen(ext);
+
+    if (n <= e) {
+        return false;
+    }
+    return SDL_strcasecmp(name + n - e, ext) == 0;
+}
+
+/* A scenario the server offers on its own, read from the file the host
+ * picked. Nothing here looks at a map: a mod is a file in the scenarios
+ * directory and plays on whatever map is committed.
+ *
+ * A .scenario is a container and nothing else, so scnPackageOpen takes the
+ * whole file — the hunt for a trailer is only for maps. A loose .lua is read
+ * as a script and declares its own table, the way a script beside a map
+ * does. Anything else is refused by name rather than guessed at.
+ *
+ * Unlike a map's own script, a file that is not there is a fault: the host
+ * asked for this one by name, and the directory listing had it a moment ago.
+ *
+ * scnReadMapBytes is what reads a package file whole. It is named for the
+ * map it was written for, but the cap it applies is the one every package is
+ * held to, which is the right one here. */
+static bool scnModScript(const char *path, ScnScriptSource *out,
+                         char *err, size_t errLen) {
+    uint8_t    *file    = NULL;
+    size_t      fileLen = 0;
+    ScnPackage *p;
+    bool        ok;
+
+    memset(out, 0, sizeof(*out));
+    if (scnHasExt(path, SCN_SCENARIO_SCRIPT_EXT)) {
+        if (!scnReadFile(path, &out->src, &out->srcLen, err, errLen)) {
+            if (err != NULL && errLen > 0 && err[0] == '\0') {
+                scnFmt(err, errLen, "scenario: %s is not there", path);
+            }
+            return false;
+        }
+        snprintf(out->script, sizeof(out->script), "%s", path);
+        return true;
+    }
+    if (!scnHasExt(path, SCN_SCENARIO_PACKAGE_EXT)) {
+        scnFmt(err, errLen,
+               "scenario: %s is neither a %s package nor a %s script", path,
+               SCN_SCENARIO_PACKAGE_EXT, SCN_SCENARIO_SCRIPT_EXT);
+        return false;
+    }
+    if (!scnReadMapBytes(path, &file, &fileLen, err, errLen)) {
+        if (err != NULL && errLen > 0 && err[0] == '\0') {
+            scnFmt(err, errLen, "scenario: %s is not there", path);
+        }
+        return false;
+    }
+    p = scnPackageOpen(file, fileLen, err, errLen);
+    if (p == NULL) {
+        free(file);
+        return false;
+    }
+    ok = scnScriptFromPackage(p, path, out, err, errLen);
+    scnPackageClose(p);
+    free(file);
+    return ok;
+}
+
+/* What the lobby is told about a scenario: the seats its template asks for,
+ * and the name it goes by. The attach hands both over and so does a reload,
+ * so a host who edits a script's lobby block sees the change without having
+ * to commit a map.
+ *
+ * The game type the manifest names is read by the same words a spawn op's
+ * loadout takes, so one table answers both. A manifest naming none, or a
+ * word that table does not hold, leaves it 0 — and 0 is no game type at all
+ * rather than gameOpen, which is 1. The lobby then keeps whatever type it
+ * was already on, which is what a rules-only mod wants: it came to change a
+ * rule, not to decide how the round is played. */
+static void scnHandLobbyOver(ServerSim *sim, const ScenarioManifest *m,
+                             LobbyScenarioSource source,
+                             const char *fileName) {
+    ScnLobbyTemplate t;
+    int              base = 0;
+
+    scnFillLobbyTemplate(&m->lobby, &t);
+    if (m->game[0] != '\0' && scenarioLuaLoadoutFromWord(m->game, &base)) {
+        t.baseGameType = (uint8_t)base;
+    }
+    /* The lobby goes over as data rather than as another callback: the sim
+       seats and reconciles it at every point a lobby is built, and a question
+       asked from inside the sim's own map change would otherwise have to
+       reach back into a host that is being replaced at that moment. */
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    /* And what it is called, which the lobby says out loud. A scenario read
+       from beside a map names that file, and a mod names its own; the path
+       either was found at is the server's own business and does not go
+       over. */
+    serverSimSetScenarioIdentity(sim, source, m->name, fileName,
+                                 m->description, m->lobby.extraTeams);
+}
+
+/* Everything an attach does once the script's bytes are in hand, whichever
+ * file they came out of. The two entry points below differ only in where
+ * they look; from here down a mod and a map's own scenario are the same
+ * thing.
+ *
+ * Takes over from->src either way: a path out of here frees it.
+ *
+ * mapPath is the map the script was found for, and "" for a mod, which was
+ * not found for any map. source is what the lobby is told, and is the one
+ * other thing the two entry points disagree about. */
+static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
+                                   const char *mapPath,
+                                   LobbyScenarioSource source,
+                                   char *err, size_t errLen) {
     char             chunkName[SCN_SCRIPT_PATH_MAX + 2];
     char             soft[SCN_ERR_LEN];
     char             why[SCN_ERR_LEN];
     char             key[SCN_VALIDATE_KEY_LEN];
-    ScnScriptSource  from;
     ScenarioManifest m;
     ScnParseReport   rep;
     ScenarioHost    *h;
     lua_State       *L;
 
-    if (err != NULL && errLen > 0) {
-        err[0] = '\0';
-    }
-    if (sim == NULL || mapPath == NULL) {
-        return NULL;
-    }
-    if (!scnScriptPath(mapPath, script, sizeof(script))) {
-        return NULL;
-    }
-    /* Off, and the file is not read, parsed or run. The name above is string
-       work on the map path and touches no disk; the one question asked here
-       is whether there is a file, which is what tells a map that lost a
-       script apart from a map that never had one. */
-    if (!scnEnabled) {
-        if (scnScriptExists(script)) {
-            scnFmt(err, errLen,
-                   "scenario: scripts are off; %s was not loaded", script);
-        }
-        return NULL;
-    }
-    /* The one read of the script, from beside the map or from inside it. No
-       script is the ordinary case: the map plays as a plain map and the
-       operator is told nothing, because there is nothing to tell. A script
-       that is there and cannot be used sets err and is reported. */
-    if (!scnFindScript(mapPath, &from, err, errLen)) {
-        return NULL;
-    }
-    scnChunkNameOf(&from, from.script, chunkName, sizeof(chunkName));
+    scnChunkNameOf(from, from->script, chunkName, sizeof(chunkName));
 
     /* The host is built before the state is, because the game table's rows
        read through a struct on it and the table goes on before the chunk
@@ -3279,13 +3386,13 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     h = (ScenarioHost *)calloc(1, sizeof(*h));
     if (h == NULL) {
         scnFmt(err, errLen, "scenario: out of memory");
-        scnSourceDrop(&from);
+        scnSourceDrop(from);
         return NULL;
     }
     if (!scnLockCreate(&h->lock)) {
         scnFmt(err, errLen, "scenario: no mutex for the Lua state");
         free(h);
-        scnSourceDrop(&from);
+        scnSourceDrop(from);
         return NULL;
     }
     h->sim           = sim;
@@ -3303,8 +3410,10 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
     scnHooksForget(h);
     /* Neither of these is the zero calloc left: no subscriber is -1. */
     h->sub        = SUBSCRIBER_HANDLE_INVALID;
-    snprintf(h->script, sizeof(h->script), "%s", from.script);
-    snprintf(h->mapPath, sizeof(h->mapPath), "%s", mapPath);
+    snprintf(h->script, sizeof(h->script), "%s", from->script);
+    snprintf(h->mapPath, sizeof(h->mapPath), "%s",
+             mapPath != NULL ? mapPath : "");
+    h->source = source;
     snprintf(h->chunkName, sizeof(h->chunkName), "%s", chunkName);
 
     /* The one VM entry that takes no lock, because there is nothing yet to
@@ -3315,7 +3424,7 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
         scnFmt(err, errLen, "scenario: no memory for a Lua state");
         scnLockDestroy(&h->lock);
         free(h);
-        scnSourceDrop(&from);
+        scnSourceDrop(from);
         return NULL;
     }
 
@@ -3327,15 +3436,15 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
        the scenario global before the chunk runs. A script that came out of
        one may therefore declare no table of its own; a loose script gets
        nothing pushed and declares its own, as it always has. */
-    if (from.fromPackage) {
-        scnPushManifestGlobal(L, &from.manifest);
+    if (from->fromPackage) {
+        scnPushManifestGlobal(L, &from->manifest);
     }
-    if (!scnRunChunk(L, from.src, from.srcLen, chunkName, err, errLen) ||
-        !scnReadManifest(L, &m, from.script, err, errLen, &rep)) {
+    if (!scnRunChunk(L, from->src, from->srcLen, chunkName, err, errLen) ||
+        !scnReadManifest(L, &m, from->script, err, errLen, &rep)) {
         scnCloseVm(L);
         scnLockDestroy(&h->lock);
         free(h);
-        scnSourceDrop(&from);
+        scnSourceDrop(from);
         return NULL;
     }
     /* And the table the chunk left behind is held against the manifest. A
@@ -3343,34 +3452,34 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
        nothing to do; one that restated the table and said something else is
        refused here, by key, rather than playing a scenario the package does
        not describe. */
-    if (from.fromPackage &&
-        !scnManifestAgrees(&from.manifest, &m, key, sizeof(key), why,
+    if (from->fromPackage &&
+        !scnManifestAgrees(&from->manifest, &m, key, sizeof(key), why,
                            sizeof(why))) {
         scnDisagreed(err, errLen, why, key);
         scnCloseVm(L);
         scnLockDestroy(&h->lock);
         free(h);
-        scnSourceDrop(&from);
+        scnSourceDrop(from);
         return NULL;
     }
     if (m.api > SCENARIO_API_VERSION) {
         scnFmt(err, errLen,
                "scenario: %s asks for api %d and this server is api %d — "
                "the server is too old to run it",
-               from.script, m.api, SCENARIO_API_VERSION);
+               from->script, m.api, SCENARIO_API_VERSION);
         scnCloseVm(L);
         scnLockDestroy(&h->lock);
         free(h);
-        scnSourceDrop(&from);
+        scnSourceDrop(from);
         return NULL;
     }
 
     h->L           = L;
     h->manifest    = m;
-    h->src         = from.src;
-    h->srcLen      = from.srcLen;
-    h->fromPackage = from.fromPackage;
-    h->pkgManifest = from.manifest;
+    h->src         = from->src;
+    h->srcLen      = from->srcLen;
+    h->fromPackage = from->fromPackage;
+    h->pkgManifest = from->manifest;
     h->active      = true;
     snprintf(h->lastError, sizeof(h->lastError), "%s", soft);
 
@@ -3402,29 +3511,7 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
        script has the loop the server console already has. */
     serverSimSetScenarioReload(sim, scnReloadCb, h);
     serverSimSetScenarioPolicy(sim, &h->policy);
-    /* The lobby goes over as data rather than as another callback: the sim
-       seats and reconciles it at every point a lobby is built, and a question
-       asked from inside the sim's own map change would otherwise have to
-       reach back into a host that is being replaced at that moment. */
-    {
-        ScnLobbyTemplate t;
-        int              base = 0;
-        scnFillLobbyTemplate(&m.lobby, &t);
-        /* The game type the manifest names, read by the same words a spawn
-           op's loadout takes so one table answers both. A manifest naming
-           none, or a word that table does not hold, leaves it 0 and the
-           round plays open. */
-        if (m.game[0] != '\0' && scenarioLuaLoadoutFromWord(m.game, &base)) {
-            t.baseGameType = (uint8_t)base;
-        }
-        serverSimSetScenarioLobbyTemplate(sim, &t);
-    }
-    /* And what it is called, which the lobby says out loud. A scenario read
-       from beside a map names that file; the path it was found at is the
-       server's own business and does not go over. */
-    serverSimSetScenarioIdentity(sim, lobbyScenarioMap, m.name,
-                                 scnFileNameOf(h->script), m.description,
-                                 m.lobby.extraTeams);
+    scnHandLobbyOver(sim, &m, source, scnFileNameOf(h->script));
 
     /* The bus, in three steps and in this order. Registration hands the new
        subscriber the whole of the current server state through the control
@@ -3450,6 +3537,70 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
                h->script);
     }
     return h;
+}
+
+ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
+                                 char *err, size_t errLen) {
+    char            script[SCN_SCRIPT_PATH_MAX];
+    ScnScriptSource from;
+
+    if (err != NULL && errLen > 0) {
+        err[0] = '\0';
+    }
+    if (sim == NULL || mapPath == NULL) {
+        return NULL;
+    }
+    if (!scnScriptPath(mapPath, script, sizeof(script))) {
+        return NULL;
+    }
+    /* Off, and the file is not read, parsed or run. The name above is string
+       work on the map path and touches no disk; the one question asked here
+       is whether there is a file, which is what tells a map that lost a
+       script apart from a map that never had one. */
+    if (!scnEnabled) {
+        if (scnScriptExists(script)) {
+            scnFmt(err, errLen,
+                   "scenario: scripts are off; %s was not loaded", script);
+        }
+        return NULL;
+    }
+    /* The one read of the script, from beside the map or from inside it. No
+       script is the ordinary case: the map plays as a plain map and the
+       operator is told nothing, because there is nothing to tell. A script
+       that is there and cannot be used sets err and is reported. */
+    if (!scnFindScript(mapPath, &from, err, errLen)) {
+        return NULL;
+    }
+    return scnAttachFrom(sim, &from, mapPath, lobbyScenarioMap, err, errLen);
+}
+
+ScenarioHost *scenarioHostAttachMod(ServerSim *sim, const char *dir,
+                                    const char *file,
+                                    char *err, size_t errLen) {
+    char            path[SCN_SCRIPT_PATH_MAX];
+    ScnScriptSource from;
+
+    if (err != NULL && errLen > 0) {
+        err[0] = '\0';
+    }
+    if (sim == NULL || dir == NULL || file == NULL || file[0] == '\0') {
+        return NULL;
+    }
+    /* Off, and the file is not read either. Said rather than silent, unlike
+       a map with no script: a host who picked this one is owed the reason it
+       is not playing. */
+    if (!scnEnabled) {
+        scnFmt(err, errLen, "scenario: scripts are off; %s was not loaded",
+               file);
+        return NULL;
+    }
+    snprintf(path, sizeof(path), "%s/%s", dir, file);
+    if (!scnModScript(path, &from, err, errLen)) {
+        return NULL;
+    }
+    /* No map path: this scenario was not found for any map and plays on
+       whichever one is committed. */
+    return scnAttachFrom(sim, &from, "", lobbyScenarioMod, err, errLen);
 }
 
 /* The file name at the end of a path. What a reload says goes to whoever
@@ -3489,11 +3640,17 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     if (h == NULL) {
         return false;
     }
-    /* Where the script comes from is asked again rather than remembered: a
-       loose script dropped beside a packed map is meant to take over at the
-       next reload, and one deleted from beside it is meant to hand the map
-       back to its own container. */
-    if (!scnFindScript(h->mapPath, &from, err, errLen)) {
+    /* Read from wherever this scenario came from. A mod is its own file in
+       the scenarios directory and is re-read straight from it; for a map's
+       own scenario, where the script comes from is asked again rather than
+       remembered, because a loose script dropped beside a packed map is
+       meant to take over at the next reload and one deleted from beside it
+       is meant to hand the map back to its own container. */
+    if (h->source == lobbyScenarioMod) {
+        if (!scnModScript(h->script, &from, err, errLen)) {
+            return false;
+        }
+    } else if (!scnFindScript(h->mapPath, &from, err, errLen)) {
         /* A map with nothing to read leaves err empty, because at an attach
            that is the ordinary case rather than a fault. Asked for by name it
            is a fault, so it is stated here. */
@@ -3602,38 +3759,97 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     scnChunkNameOf(&from, from.script, h->chunkName, sizeof(h->chunkName));
     snprintf(h->lastError, sizeof(h->lastError), "%s", soft);
     scnLockLeave(&h->lock);
+
+    /* The seats as well as the rules. Until now a reload swapped the bytes
+       the next round boots from and stopped there, so a host who edited the
+       script's lobby block saw the same lobby until a map was committed. The
+       template and the name go over again from the manifest this reload just
+       checked, and the lobby is seated from them, so what was edited is what
+       the lobby shows.
+
+       h->manifest is left alone on purpose: the round that is running keeps
+       the table it started with, and the round start reads the new one from
+       the bytes swapped above. What changes here is what the lobby is told,
+       which is not the running round's to keep. */
+    scnHandLobbyOver(h->sim, &m, h->source, scnFileName(from.script));
+    /* Seated only from the lobby. The template is data either way and goes
+       over above whatever the server is doing, but building the seats and
+       moving the game type onto a round already running would change a game
+       in progress — and the round that is running keeps what it started
+       with, which is the whole of what a reload promises. A reload from the
+       server console mid-round therefore lands its seats at the next return
+       to the lobby, where the reconcile reads the template this just set. */
+    if (serverSimGetState(h->sim) == serverStateLobby) {
+        serverSimScenarioSeatLobby(h->sim);
+        serverSimScenarioApplyLobbyRules(h->sim);
+        serverSimPublishLobbySettings(h->sim);
+    }
     return true;
 }
 
-/* The sim's map change, answered. The caller's own pointer is the context
- * because the host it names is the one being replaced here. */
-static void scnMapChanged(void *ctx, ServerSim *sim, const char *mapPath) {
-    ScenarioHost **slot = (ScenarioHost **)ctx;
-    char           err[512];
+/* Which scenario this lobby plays, decided in one place because more than
+ * one thing changes the answer: a map commit and the host picking a mod both
+ * come through here.
+ *
+ * In order:
+ *
+ *  1. A mod the host selected. It plays on whatever map is committed, so a
+ *     bound map's own scenario gives way to it. The host who picked it is
+ *     the one who decided, and the settings event says a mod is what is
+ *     playing, so nobody has to guess why the map's own is not.
+ *  2. Otherwise the committed map's own, from beside the file or inside it.
+ *  3. Otherwise none, and the map plays plainly.
+ *
+ * Selecting none is therefore not the same as playing nothing: it is rule 2,
+ * so a bound map picks its own scenario back up and a plain map is left
+ * plain. That is the host's call to make either way.
+ *
+ * A mod that will not load plays nothing rather than falling back to the
+ * map's own. The host asked for one scenario, and a lobby that quietly ran a
+ * different one would be worse than a lobby that runs none; the reason is
+ * said on the console.
+ *
+ * The caller's own pointer is the context because the host it names is the
+ * one being replaced here. */
+static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
+                              const char *mapPath) {
+    const char *mod;
+    char        err[512];
 
     if (slot == NULL) return;
     scenarioHostDetach(*slot);
     *slot = NULL;
-    /* A map that came from bytes rather than a file has nothing beside it to
-       read, so the map is played plainly and the detach above is the whole
-       of the work. */
-    if (sim == NULL || mapPath == NULL || mapPath[0] == '\0') return;
+    if (sim == NULL) return;
 
     err[0] = '\0';
-    *slot = scenarioHostAttach(sim, mapPath, err, sizeof(err));
+    mod = serverSimGetSelectedScenario(sim);
+    if (mod != NULL && mod[0] != '\0') {
+        *slot = scenarioHostAttachMod(sim, serverSimGetScenarioDir(sim), mod,
+                                      err, sizeof(err));
+    } else if (mapPath != NULL && mapPath[0] != '\0') {
+        /* A map that came from bytes rather than a file has nothing beside
+           it to read, so with no mod selected it is played plainly. */
+        *slot = scenarioHostAttach(sim, mapPath, err, sizeof(err));
+    }
     /* Said rather than returned: a map commit has nobody to answer, and
-       until this line an operator rotating through a directory had no way
-       of telling which rounds ran a script. The attach names both the
+       without this line an operator rotating through a directory would have
+       no way of telling which rounds ran a script. The attach names both the
        scenario and the file it came from; a refusal and a file that cannot
-       be used arrive in err already said. A map with no script beside it
-       sets neither and stays quiet, which is what keeps a rotation over
-       plain maps as silent as it was. */
+       be used arrive in err already said. A map with no script beside it and
+       no mod selected sets neither and stays quiet, which is what keeps a
+       rotation over plain maps as silent as it was. */
     if (*slot != NULL) {
         scnSay(NULL, 0, "scenario: %s loaded from %s",
                scenarioHostName(*slot), scenarioHostScriptPath(*slot));
     } else if (err[0] != '\0') {
         scnSay(NULL, 0, "%s", err);
     }
+}
+
+/* The sim's map change, answered — and the host's scenario pick, which
+ * arrives the same way because the question it asks is the same one. */
+static void scnMapChanged(void *ctx, ServerSim *sim, const char *mapPath) {
+    scnDecideScenario(sim, (ScenarioHost **)ctx, mapPath);
 }
 
 void scenarioHostFollowMap(ServerSim *sim, ScenarioHost **slot) {

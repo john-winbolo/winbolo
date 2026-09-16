@@ -646,11 +646,12 @@ struct ServerSim {
     /* Which of the scenarios in that directory the host has picked, by the
        file name the lister reported; empty means none. Written by the
        CMD_LOBBY_SET_SCENARIO case and read back through
-       serverSimGetSelectedScenario. Nothing reads it to decide what plays
-       yet: applying the selection, and the settings event that says where
-       the scenario in play came from, are still to come. SCN_DIR_FILE_LEN
-       because that is the width of the ScnDirEntry.file it is copied
-       from. */
+       serverSimGetSelectedScenario, which is what whoever owns the scenario
+       asks when it decides what plays: a pick here beats the committed map's
+       own script, and empty hands the map its own back. Survives a lobby
+       reset, so the scenario the host chose is still the one playing when
+       the next player arrives. SCN_DIR_FILE_LEN because that is the width of
+       the ScnDirEntry.file it is copied from. */
     char         scenarioSelectedFile[SCN_DIR_FILE_LEN];
 
     /* Random map generation (for -randommap mode) */

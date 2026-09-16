@@ -2828,6 +2828,16 @@ int run_scenario_dir_lists_loose_script(void);
 int run_scenario_dir_skips_junk(void);
 int run_scenario_dir_entry_roundtrip(void);
 
+/* Which scenario plays when a map and a mod both have a claim
+ * (test_scenario_precedence.c): the three rules, and the four points the
+ * template is applied at. */
+int run_scenario_precedence_mod_over_map(void);
+int run_scenario_precedence_none_restores_map(void);
+int run_scenario_precedence_plain_map_keeps_mod(void);
+int run_scenario_precedence_template_seats(void);
+int run_scenario_precedence_reset_reapplies(void);
+int run_scenario_precedence_reload_reseats(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */

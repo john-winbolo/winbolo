@@ -168,6 +168,23 @@ static bool lobbyScenarioDirHolds(const ServerSim *sim, const char *file,
     return false;
 }
 
+/* The selection changed, so which scenario plays is decided again. The same
+   three calls a map commit makes, in the same order: whoever owns the
+   scenario is asked first and swaps what is attached, the seats it asks for
+   are built, the lobby's own settings are brought into line with it, and the
+   result goes out.
+
+   The map path is handed over unchanged because the map has not changed —
+   what the decision weighs is the pick against the committed map's own
+   script, and it needs both. Nothing here reaches into the scenario library:
+   serverSimScenarioOnMapChanged calls whatever registered itself, which is
+   the only direction that links. */
+static void lobbyScenarioReselect(ServerSim *sim) {
+    serverSimScenarioOnMapChanged(sim, sim->mapFilePath);
+    serverSimScenarioApplyLobbyRules(sim);
+    serverSimPublishLobbySettings(sim);
+}
+
 static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
                                    const ClientCommand *cmd) {
     switch (cmd->type) {
@@ -860,9 +877,13 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
            the client; the commands that test it server-side are the preview
            pair and the skip vote.
 
-           Recording the pick is all this does. Nothing is applied and
-           nothing is published: what the round plays by, and the settings
-           event that says where its scenario came from, come later. */
+           Recording the pick is not all this does: the selection decides
+           which scenario plays, so it is made again the moment it changes.
+           serverSimScenarioOnMapChanged is what asks — whoever owns the
+           scenario weighs the pick against the committed map's own script
+           and attaches the winner — and the seating, the lobby rules and
+           the settings event follow it exactly as they do on a map
+           commit. */
         if (!serverSimIsLobbyEnabled(sim) ||
             serverSimGetState(sim) != serverStateLobby) {
             return CMD_REJECT_BAD_STATE;
@@ -873,6 +894,7 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
            scenario, so there is no name to check the shape of or look up. */
         if (p->relPathLen == 0) {
             serverSimSetSelectedScenario(sim, NULL);
+            lobbyScenarioReselect(sim);
             return CMD_OK;
         }
         char relPath[256];
@@ -899,6 +921,7 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             return CMD_REJECT_INVALID;
         }
         serverSimSetSelectedScenario(sim, picked);
+        lobbyScenarioReselect(sim);
         return CMD_OK;
     }
     case CMD_LOBBY_RELOAD_SCENARIO: {

@@ -187,8 +187,9 @@ void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath);
  * offers on its own. relPath is the file name the scenario list gave, and
  * "" selects none; NULL is a no-op. The server rejects "..", absolute
  * paths, Windows drive letters and a name its scenarios directory does not
- * hold. Picking is a commit, not a preview, but nothing is applied yet:
- * the server records the selection and publishes nothing. */
+ * hold. Picking is a commit and not a preview: the scenario it names takes
+ * effect at once, over the committed map's own script if that map has one,
+ * and the lobby settings event says which is playing. */
 void clientSimNetSendLobbySetScenario(ClientSim *cs, const char *relPath);
 
 /* Lobby preview cycle. SET_MAP and a completed upload auto-stash

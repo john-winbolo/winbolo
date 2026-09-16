@@ -3450,6 +3450,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # what is skipped, and the list encoded into the SCENARIO_LIST_RSP shape
     # against committed golden bytes and decoded back.
     tests/unit/test_scenario_dir.c
+    # Which scenario plays when a map and a mod both have a claim, and the
+    # points the template is applied at.
+    tests/unit/test_scenario_precedence.c
     # The binding table: the game table a script reads the sim through, the
     # three index rules and what an absent entity reads as.
     tests/unit/test_scenario_lua.c
@@ -5546,6 +5549,12 @@ set(_unit_test_names
     scenario_dir_lists_loose_script
     scenario_dir_skips_junk
     scenario_dir_entry_roundtrip
+    scenario_precedence_mod_over_map
+    scenario_precedence_none_restores_map
+    scenario_precedence_plain_map_keeps_mod
+    scenario_precedence_template_seats
+    scenario_precedence_reset_reapplies
+    scenario_precedence_reload_reseats
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

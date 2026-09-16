@@ -771,10 +771,13 @@ const char *serverSimGetScenarioDir(const ServerSim *sim);
  *  a guard. There is no fallback the way the directory has
  *  one; no selection is a state, not a missing setting.
  *
- *  Recording the pick is all this does. Nothing applies the
- *  scenario, and no event says the selection changed — both
- *  come later, and until they do the field is written and
- *  read back and otherwise unused.
+ *  Recording the pick is all this does by itself. What plays
+ *  is decided by whoever owns the scenario, which reads this
+ *  back: a pick here beats the committed map's own script,
+ *  and none hands the map its own back. The caller that
+ *  changes the selection asks for that decision again and
+ *  publishes the result — the CMD_LOBBY_SET_SCENARIO case is
+ *  the worked example.
  *
  *ARGUMENTS:
  *  sim  - Pointer to the ServerSim

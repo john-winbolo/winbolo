@@ -329,6 +329,40 @@ ScenarioHost *scenarioHostAttach(ServerSim *sim, const char *mapPath,
                                  char *err, size_t errLen);
 
 /*********************************************************
+ *NAME:          scenarioHostAttachMod
+ *PURPOSE:
+ *  The same attach, for a scenario the server offers on its
+ *  own rather than one a map carries: a .scenario package or
+ *  a loose .lua in the scenarios directory, named by the file
+ *  the host picked. Everything past where the script came
+ *  from is what scenarioHostAttach does — the same VM, the
+ *  same manifest read, the same check of a package's table
+ *  against its manifest, the same registrations.
+ *
+ *  It has no map. A mod plays on whichever map is committed,
+ *  so nothing here reads one and the map may even be one that
+ *  came from bytes rather than a file. The lobby is told
+ *  lobbyScenarioMod, and the file name it carries is the
+ *  mod's own.
+ *
+ *  Returns NULL with the reason in err for a file that is not
+ *  there, is neither a package nor a script by its name, or
+ *  cannot be used — and, unlike a map with no script, a
+ *  missing file is a fault here: the host asked for this one
+ *  by name.
+ *
+ *ARGUMENTS:
+ *  sim    - The sim to attach to
+ *  dir    - The scenarios directory
+ *  file   - The file name in it, not a path
+ *  err    - Where the reason goes
+ *  errLen - Its size; err may be NULL only when this is 0
+ *********************************************************/
+ScenarioHost *scenarioHostAttachMod(ServerSim *sim, const char *dir,
+                                    const char *file,
+                                    char *err, size_t errLen);
+
+/*********************************************************
  *NAME:          scenarioHostReload
  *PURPOSE:
  *  Reads the script from disk again and, if the new bytes
