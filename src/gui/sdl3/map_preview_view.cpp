@@ -648,7 +648,7 @@ static void viewRenderTilesToOffscreen(MapPreviewView *v,
         float camScaledX = camPXf * v->zoomLevel;
         float camScaledY = camPYf * v->zoomLevel;
 
-        SDL_SetRenderDrawColor(renderer, 0, 0, 64, 255);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
 
         float clipL = (camScaledX < 0.0f) ? -camScaledX : 0.0f;
@@ -694,9 +694,12 @@ static void viewRenderTilesToOffscreen(MapPreviewView *v,
         float srcW = (float)screenW / tileScale;
         float srcH = (float)screenH / tileScale;
 
-        /* Clear with sea colour so off-map regions read like deep
-         * sea even when the camera's been panned past the edge. */
-        SDL_SetRenderDrawColor(renderer, 0, 0, 64, 255);
+        /* Black off the map, the way the overview leaves a square it has
+           never seen. This used to be a dark navy picked to pass for deep
+           sea, which worked while minimapTerrainColor drew the sea navy too;
+           map_colours.h draws it teal, so the navy matched nothing and only
+           read as a second, wrong sea. */
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
 
         /* Compute the in-atlas intersection and the matching dst
@@ -875,7 +878,7 @@ static void viewEnsureMapAtlas(MapPreviewView *v, SDL_Renderer *renderer) {
 
     SDL_SetTextureScaleMode(v->tilesTex, SDL_SCALEMODE_NEAREST);
     SDL_SetRenderTarget(renderer, v->mapAtlas);
-    SDL_SetRenderDrawColor(renderer, 0, 0, 64, 255);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
 
     /* Terrain pass. */
@@ -1229,7 +1232,7 @@ extern "C" void mapPreviewViewRenderOffscreen(MapPreviewView *v,
             v->mapAtlasScaledEdge != scaledEdge) {
             SDL_SetTextureScaleMode(v->mapAtlas, SDL_SCALEMODE_LINEAR);
             SDL_SetRenderTarget(renderer, v->mapAtlasScaled);
-            SDL_SetRenderDrawColor(renderer, 0, 0, 64, 255);
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
             SDL_RenderClear(renderer);
             SDL_FRect dst = { 0.0f, 0.0f,
                               (float)scaledEdge, (float)scaledEdge };
@@ -1288,7 +1291,7 @@ extern "C" void mapPreviewViewRenderOffscreen(MapPreviewView *v,
         }
 
         SDL_SetRenderTarget(renderer, back);
-        SDL_SetRenderDrawColor(renderer, 0, 0, 64, 255);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
         /* Below 1x, one map colour a square instead of tile sprites: the
          * same switch the overview and the full screen map make, at the
