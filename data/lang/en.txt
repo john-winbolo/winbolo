@@ -2297,4 +2297,7 @@ STR_MAPEDIT_SCENARIO_REGION_H=H
 STR_MAPEDIT_SCENARIO_REGIONS_ON_MAP=Regions are drawn on the map while this view is open
 STR_MAPEDIT_SCENARIO_MOD_DROPS=Save as Mod leaves out {number} tags and {number2} regions: a mod plays over maps it has never seen
 STR_MAPEDIT_SCENARIO_RELOAD_TIP=Reads the script beside the map again, including one written since the map was opened. Unsaved edits in the pane are lost.
+STR_MAPEDIT_SCENARIO_CHECK_STALE=Edited since this check ran, so these lines may have moved
+STR_MAPEDIT_SCENARIO_TEAM_ID_RANGE=Team numbers run 1 to {number}
+STR_MAPEDIT_SCENARIO_TEAM_ID_TAKEN=Another team in this template has this number
 

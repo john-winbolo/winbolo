@@ -37,6 +37,10 @@
  *                               reads: clear on an empty form, set by a rule, a
  *                               team, a tag and a region alike, and clear again
  *                               after the reset a map change does
+ * run_editor_form_team_ids    — what the lobby form draws under a team's
+ *                               number: nothing for the numbers Add Team hands
+ *                               out, a duplicate against the later of two teams
+ *                               sharing one, and out of range at either end
  */
 
 #include <math.h>
@@ -511,6 +515,54 @@ int run_editor_form_dirty_flag(void) {
 
     meScenarioFormReset(&f);
     UT_ASSERT(!meScenarioFormDirty(&f));
+
+    return 0;
+}
+
+int run_editor_form_team_ids(void) {
+    MEScenarioForm f;
+    uint8_t        first;
+
+    /* The lobby form's id field takes any byte, and the validator refuses
+     * three of them when the scenario is packed: 0, MAX_TANKS and above, and a
+     * number another team already holds. This is what the form says under the
+     * field so the author reads it while typing rather than at the pack. */
+    meScenarioFormInit(&f);
+
+    UT_ASSERT(meScenarioFormAddTeam(&f));
+    UT_ASSERT(meScenarioFormAddTeam(&f));
+    UT_ASSERT_MSG(f.manifest.lobby.numTeams == 2, "numTeams is %u",
+                  (unsigned)f.manifest.lobby.numTeams);
+
+    /* Add Team hands out numbers in range that nobody else holds, so neither
+     * team is reported. */
+    UT_ASSERT(meScenarioFormTeamIdProblem(&f, 0) == ME_SCENARIO_TEAM_ID_OK);
+    UT_ASSERT(meScenarioFormTeamIdProblem(&f, 1) == ME_SCENARIO_TEAM_ID_OK);
+
+    /* The second team typed on to the first's number. The report goes against
+     * the later of the two, the way scenario_validate.c reports it, so the
+     * first still reads clean and one shared number draws one hint. */
+    first                        = f.manifest.lobby.teams[0].id;
+    f.manifest.lobby.teams[1].id = first;
+    UT_ASSERT(meScenarioFormTeamIdProblem(&f, 1) == ME_SCENARIO_TEAM_ID_TAKEN);
+    UT_ASSERT(meScenarioFormTeamIdProblem(&f, 0) == ME_SCENARIO_TEAM_ID_OK);
+
+    /* Either end of the range a game seats. */
+    f.manifest.lobby.teams[1].id = 0;
+    UT_ASSERT(meScenarioFormTeamIdProblem(&f, 1) == ME_SCENARIO_TEAM_ID_RANGE);
+    f.manifest.lobby.teams[1].id = MAX_TANKS;
+    UT_ASSERT(meScenarioFormTeamIdProblem(&f, 1) == ME_SCENARIO_TEAM_ID_RANGE);
+
+    /* And back on to a number in range that the other team does not hold. Add
+     * Team seats the first team as team 1, so one above it is both. */
+    f.manifest.lobby.teams[1].id = (uint8_t)(first + 1);
+    UT_ASSERT_MSG(meScenarioFormTeamIdProblem(&f, 1) == ME_SCENARIO_TEAM_ID_OK,
+                  "team number %u reported",
+                  (unsigned)f.manifest.lobby.teams[1].id);
+
+    /* A row the template does not seat has nothing said about it. */
+    UT_ASSERT(meScenarioFormTeamIdProblem(&f, 2) == ME_SCENARIO_TEAM_ID_OK);
+    UT_ASSERT(meScenarioFormTeamIdProblem(&f, -1) == ME_SCENARIO_TEAM_ID_OK);
 
     return 0;
 }

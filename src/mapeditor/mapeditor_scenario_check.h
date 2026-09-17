@@ -45,6 +45,13 @@ typedef struct MEScenarioCheck {
                                      * looked at" */
     bool              pushToWidget; /* the view must re-apply its markers, the
                                      * way MEScenarioState re-seeds its text */
+    bool              stale;        /* the script has been edited since the
+                                     * check ran, so the lines the issues name
+                                     * are the lines the text had then. Set by
+                                     * the view, which is where an edit is
+                                     * seen; the issues themselves are kept,
+                                     * because a problem the author has not
+                                     * reached yet is still a problem. */
 } MEScenarioCheck;
 
 /* An empty check that has not run. */

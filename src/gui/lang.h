@@ -2520,6 +2520,19 @@
  * map was opened is read by pressing it. */
 #define STR_MAPEDIT_SCENARIO_RELOAD_TIP       2323
 
+/* The issues list read against text that has moved on. The check keeps what it
+ * found while the author types, because the other problems are still worth
+ * reading, so this line says the numbers beside them were the numbers in the
+ * script as it stood when the check ran. */
+#define STR_MAPEDIT_SCENARIO_CHECK_STALE      2324
+
+/* A team number the lobby form will hold and the scenario cannot use: one
+ * outside 1 to MAX_TANKS - 1, or one another team in the template already has.
+ * The validator reports both when the scenario is packed; these two say it
+ * under the field while the number is being typed. */
+#define STR_MAPEDIT_SCENARIO_TEAM_ID_RANGE    2325
+#define STR_MAPEDIT_SCENARIO_TEAM_ID_TAKEN    2326
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

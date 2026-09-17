@@ -77,6 +77,23 @@ bool meScenarioFormAddTeam(MEScenarioForm *f);
 /* Drops the team at index, keeping the rest of teams[] packed. */
 void meScenarioFormRemoveTeam(MEScenarioForm *f, int index);
 
+/* What is wrong with a team's number, since the form lets the author type any
+ * byte into it. */
+typedef enum {
+    ME_SCENARIO_TEAM_ID_OK = 0,
+    ME_SCENARIO_TEAM_ID_RANGE, /* outside 1 to MAX_TANKS - 1 */
+    ME_SCENARIO_TEAM_ID_TAKEN  /* a number a team above it already holds */
+} MEScenarioTeamIdProblem;
+
+/* Which of those the team at index has, so the lobby form can say it under the
+ * field rather than leaving it to the validator at pack time. The two problems
+ * are the ones scenario_validate.c reports for lobby.teams[].id, and a shared
+ * number is reported the way it reports one: against the later of the two
+ * teams, so one pair of numbers draws one hint. ME_SCENARIO_TEAM_ID_OK for an
+ * index the template does not seat. */
+MEScenarioTeamIdProblem meScenarioFormTeamIdProblem(const MEScenarioForm *f,
+                                                    int index);
+
 /* Which of the three entity lists a tag is on. The manifest holds one array
  * per kind and the panel draws them in this order. */
 typedef enum {

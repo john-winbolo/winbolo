@@ -2274,6 +2274,9 @@ static const LangEntry langTable[] = {
     {2321, "Regions are drawn on the map while this view is open"},
     {2322, "Save as Mod leaves out {number} tags and {number2} regions: a mod plays over maps it has never seen"},
     {2323, "Reads the script beside the map again, including one written since the map was opened. Unsaved edits in the pane are lost."},
+    {2324, "Edited since this check ran, so these lines may have moved"},
+    {2325, "Team numbers run 1 to {number}"},
+    {2326, "Another team in this template has this number"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

@@ -199,11 +199,24 @@ static void meScnApplyMarkers(TextEditor *editor, const MEScenarioCheck *chk) {
 /* What the last check found, under the editor. A row with a line moves the
  * caret to it and brings it into view; a row without one — a problem the
  * source does not spell in any one place — is still listed, because it is
- * still wrong. */
+ * still wrong.
+ *
+ * stale says whether to draw the line about the text having moved. It is
+ * passed in rather than read off the check because the space that line takes
+ * is reserved before the widget draws, and the widget is where an edit is
+ * seen: drawing from the same answer the reservation used keeps the two in
+ * step. */
 static void meScnIssuesList(TextEditor *editor, const MEScenarioCheck *chk,
-                            float height) {
+                            float height, bool stale) {
     char     row[SCN_VALIDATE_KEY_LEN + SCN_VALIDATE_MSG_LEN + 32];
     uint16_t i;
+
+    /* The text has moved since these were found, so a row's line number is
+       where the problem was rather than where it is now. The list is left
+       standing: an author fixing one issue is still reading the others. */
+    if (stale) {
+        meScnHint(langGetText(STR_MAPEDIT_SCENARIO_CHECK_STALE));
+    }
 
     ImGui::Text("%s (%u)", langGetText(STR_MAPEDIT_SCENARIO_ISSUES),
                 (unsigned)chk->result.count);
@@ -242,9 +255,22 @@ static void meScnIssuesList(TextEditor *editor, const MEScenarioCheck *chk,
     ImGui::EndChild();
 }
 
+/* The widget's text becomes the buffer's, and the last check is marked as
+ * standing on text that has moved. Both ways the text changes — a typed edit
+ * the undo index catches and the completion popup's insert — come through
+ * here, so the issues list says so however it happened. */
+static void meScnTextEdited(MEScenarioState *st, MEScenarioCheck *chk,
+                            const char *text, size_t len) {
+    meScenarioSetText(st, text, len);
+    if (chk != NULL) {
+        chk->stale = true;
+    }
+}
+
 /* The game.* calls a script may make, from the binding registry itself. The
  * row is the name; the line under the list is what that row does. */
-static void meScnCallsPopup(TextEditor *editor, MEScenarioState *st) {
+static void meScnCallsPopup(TextEditor *editor, MEScenarioState *st,
+                            MEScenarioCheck *chk) {
     static char s_filter[64] = "";
     /* Which row the line under the list is describing. It survives a frame the
      * mouse is between rows, so the line does not blink out. */
@@ -284,7 +310,7 @@ static void meScnCallsPopup(TextEditor *editor, MEScenarioState *st) {
                    back here instead; without this the buffer keeps what it
                    held before the insert and a save writes that. */
                 const std::string text = editor->GetText();
-                meScenarioSetText(st, text.c_str(), text.size());
+                meScnTextEdited(st, chk, text.c_str(), text.size());
                 ImGui::CloseCurrentPopup();
             }
             if (ImGui::IsItemHovered()) {
@@ -385,7 +411,7 @@ static void meScnScriptBody(MEScenarioState *st, MEScenarioCheck *chk,
     if (ImGui::Button(langGetText(STR_MAPEDIT_SCENARIO_CALLS))) {
         ImGui::OpenPopup("##scenarioCalls");
     }
-    meScnCallsPopup(&s_editor, st);
+    meScnCallsPopup(&s_editor, st, chk);
 
     /* A check that found nothing says so here rather than opening a list with
      * nothing in it. */
@@ -428,25 +454,37 @@ static void meScnScriptBody(MEScenarioState *st, MEScenarioCheck *chk,
      * it started; the editor's frame hook does the starting. */
     s_scriptViewDrew = true;
 
+    /* Whether the list says the text has moved since the check ran, answered
+     * before the widget draws because the line it takes comes out of the
+     * editor's height. An edit made this frame is read back below, so it is
+     * the frame after it that says so. */
+    const bool staleLine = (haveIssues && chk->stale);
+
+    /* What the list takes below the editor: the box, the line naming it, and
+     * that line when there is one. */
+    float belowHeight = 0.0f;
+    if (haveIssues) {
+        belowHeight = issuesHeight + ImGui::GetTextLineHeightWithSpacing();
+        if (staleLine) {
+            belowHeight += ImGui::GetTextLineHeightWithSpacing();
+        }
+    }
+
     /* The rest of the window is the editor, less whatever the list takes. */
     s_editor.Render("##scenarioScript", false,
-                    ImVec2(0.0f, haveIssues
-                                     ? -(issuesHeight +
-                                         ImGui::GetTextLineHeightWithSpacing())
-                                     : 0.0f),
-                    false);
+                    ImVec2(0.0f, haveIssues ? -belowHeight : 0.0f), false);
 
     /* Read the text back only when the widget has moved on from what the
      * buffer holds. */
     const int undoIndex = s_editor.GetUndoIndex();
     if (undoIndex != s_seenUndoIndex) {
         const std::string text = s_editor.GetText();
-        meScenarioSetText(st, text.c_str(), text.size());
+        meScnTextEdited(st, chk, text.c_str(), text.size());
         s_seenUndoIndex = undoIndex;
     }
 
     if (haveIssues) {
-        meScnIssuesList(&s_editor, chk, issuesHeight);
+        meScnIssuesList(&s_editor, chk, issuesHeight, staleLine);
     }
 }
 
@@ -705,6 +743,22 @@ static void meScnLobbyBody(MEScenarioForm *f) {
         }
 
         meScnByteField(f, "id", STR_MAPEDIT_SCENARIO_TEAM_ID, &t->id, 120.0f);
+        /* A team number the scenario cannot be packed with, said here rather
+         * than at the end of a pack that writes nothing. */
+        switch (meScenarioFormTeamIdProblem(f, i)) {
+            case ME_SCENARIO_TEAM_ID_RANGE: {
+                MessageArgs args = {};
+                args.number      = MAX_TANKS - 1;
+                meScnHint(langGetTextFmt(STR_MAPEDIT_SCENARIO_TEAM_ID_RANGE,
+                                         &args));
+                break;
+            }
+            case ME_SCENARIO_TEAM_ID_TAKEN:
+                meScnHint(langGetText(STR_MAPEDIT_SCENARIO_TEAM_ID_TAKEN));
+                break;
+            default:
+                break;
+        }
         meScnByteField(f, "bots", STR_MAPEDIT_SCENARIO_TEAM_BOTS, &t->bots,
                        120.0f);
         meScnByteField(f, "maxbots", STR_MAPEDIT_SCENARIO_TEAM_MAX_BOTS,

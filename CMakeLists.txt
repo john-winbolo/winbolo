@@ -5777,6 +5777,7 @@ set(_unit_test_names
     editor_form_tags
     editor_form_regions
     editor_form_dirty_flag
+    editor_form_team_ids
     editor_pack_mod_round_trip
     editor_pack_map_round_trip
     editor_pack_twice_identical

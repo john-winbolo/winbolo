@@ -34,6 +34,7 @@ void meScenarioCheckInit(MEScenarioCheck *c) {
     /* Set, not cleared: an empty result still has to reach the widget, or the
        markers of the run before it stay on the lines. */
     c->pushToWidget = true;
+    c->stale        = false;
 }
 
 void meScenarioCheckClear(MEScenarioCheck *c) {
@@ -49,6 +50,9 @@ void meScenarioCheckRun(MEScenarioCheck *c, const char *text, size_t len,
     memset(&c->result, 0, sizeof(c->result));
     c->hasRun       = true;
     c->pushToWidget = true;
+    /* What follows was found in the text handed in here, so the issues stand
+       on the script as it is until the next edit. */
+    c->stale        = false;
 
     if (name == NULL || name[0] == '\0') {
         name = ME_SCENARIO_CHECK_UNNAMED;

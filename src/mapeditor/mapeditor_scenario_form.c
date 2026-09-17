@@ -165,6 +165,37 @@ void meScenarioFormRemoveTeam(MEScenarioForm *f, int index) {
     f->dirty = true;
 }
 
+MEScenarioTeamIdProblem meScenarioFormTeamIdProblem(const MEScenarioForm *f,
+                                                    int index) {
+    const ScnManifestLobby *lob;
+    uint8_t                 id;
+    int                     i;
+
+    if (f == NULL) {
+        return ME_SCENARIO_TEAM_ID_OK;
+    }
+    lob = &f->manifest.lobby;
+    if (index < 0 || index >= (int)lob->numTeams) {
+        return ME_SCENARIO_TEAM_ID_OK;
+    }
+    id = lob->teams[index].id;
+
+    /* The range Add Team picks from, and the one scenario_validate.c holds an
+       id to. Add Team never leaves this range; the field the author types into
+       takes any byte, which is what these two answers are for. */
+    if (id < 1 || id >= MAX_TANKS) {
+        return ME_SCENARIO_TEAM_ID_RANGE;
+    }
+    /* Only the teams above it, so a shared number marks the later of the two
+       rows — the same team the validator names it against. */
+    for (i = 0; i < index; i++) {
+        if (lob->teams[i].id == id) {
+            return ME_SCENARIO_TEAM_ID_TAKEN;
+        }
+    }
+    return ME_SCENARIO_TEAM_ID_OK;
+}
+
 /* ── Tags ─────────────────────────────────────────────────────────── */
 
 int meScenarioFormEntityCap(MEScenarioTagKind kind) {
