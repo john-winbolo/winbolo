@@ -141,7 +141,10 @@ static bool esPathAgrees(const char *mapPath, char *out, size_t outLen) {
 int run_editor_script_path(void) {
     char out[64];
     char ref[64];
-    char small[8];
+    /* NOT `small`: rpcndr.h, which arrives with the Windows headers, has
+     * `#define small char`, so `char small[8]` compiles as `char char[8]`
+     * under MSVC and this file did not build at all. */
+    char tiny[8];
 
     /* A trailing .map goes, whatever its case, and the suffix takes its
      * place. */
@@ -168,8 +171,8 @@ int run_editor_script_path(void) {
     UT_ASSERT_MSG(strcmp(out, ".scenario.lua") == 0, "got '%s'", out);
 
     /* No room for the result: refused, and refused by both. */
-    UT_ASSERT(esPathAgrees("maps/foo.map", small, sizeof(small)));
-    UT_ASSERT(!meScenarioScriptPathForMap("maps/foo.map", small, sizeof(small)));
+    UT_ASSERT(esPathAgrees("maps/foo.map", tiny, sizeof(tiny)));
+    UT_ASSERT(!meScenarioScriptPathForMap("maps/foo.map", tiny, sizeof(tiny)));
 
     /* No path at all is the one place the two part company, and deliberately:
      * the server resolves it to a bare suffix, and the editor refuses it,
