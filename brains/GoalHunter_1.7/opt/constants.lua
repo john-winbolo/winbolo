@@ -2817,6 +2817,28 @@ M.HARASSER_TRAVEL_MULT = 0.2
 -- the map file's BASENAME with no directory and no ".map" extension
 -- (server_sim.c strips both), e.g. "data/maps/Survival.map" -> "Survival".
 M.PILL_SUICIDER_MAPS = { ["Survival"] = true }
+-- A HUMAN TEAM-MATE CLOSE BY MAKES THE BOT A SUICIDER FOR THIS PILL.
+--
+-- The lobby docs promise it in one line: "Bots <= 7 tiles from a human will
+-- suicide when attacking a pill (no wall blockers built, for brevity)". The
+-- reason is what a person sees, not what the bot scores: building a wall
+-- shield takes trees, a gather detour and a slow shielded creep, and a human
+-- standing next to the bot is watching it do nothing for half a minute. Close
+-- to a person the bot goes straight in.
+--
+-- WHAT IT ACTUALLY DOES is exactly what state.is_pill_suicider already does
+-- to a take: it forces _is_ppt off, so the shield scan, the gather_trees
+-- pre-flight and the build_walls substate are all skipped and the take runs
+-- down the plain standoff/charge path. It does NOT make the bot a suicider
+-- anywhere else -- no goal-cost surcharge, no armour gate waiver, no swerve
+-- change -- because the promise is about blockers, not about the bot's life.
+--
+-- It applies to an ORDERED attack and one the bot chose itself, because the
+-- decision point is shared (attack.update_attack_substate).
+--
+-- Chebyshev tiles from the BOT's own tank, measured against allied tanks the
+-- bot can SEE (util.human_ally_near). 0 turns the rule off.
+M.ORDER_HUMAN_NEAR_SUICIDE_TILES = 7   -- keel 0 (off)
 -- Suicider goal-cost surcharge. User's spec, verbatim: "instead of doing
 -- attack_pill 0.33, do everything but refuel 3x cost" ??? plus the addendum
 -- "defend_pill specifically is x6, not x3". Applied at ONE choke point
@@ -4272,6 +4294,14 @@ M.ORDER_LATCH_REBROADCAST_TICKS = 1500   -- keel 1500 (moot; master off) 30 s
 -- this switch.  That one answers a person who just gave the order, so it is
 -- always sent.
 M.BOT_PINGS_DEFAULT      = false  -- keel false
+-- DO THE BOTS SPEAK THEIR GOAL CONFIRMATIONS?  The team setting is "bot chat
+-- on" / "bot chat off"; this is the value a game starts at, and it is TRUE
+-- because speaking is what the bots have always done.  Off silences the goal
+-- lines only -- the ack, the group ack, "Still on it.", "holding 10s",
+-- "Released", "Refuelling, coming back".  An answer a person is owed for a
+-- line they just typed (help, "didn't understand", "Busy", the setting
+-- confirmations) is never silenced: see sayg in orders.lua.
+M.BOT_CHAT_DEFAULT       = true   -- keel true (moot; master off)
 -- Shortest gap between two ATTACK markers from the SAME bot about the SAME
 -- target.  A bot re-plans the same goal often, and without this every replan
 -- would put another marker on the same pill.  1500 ticks is 30 s.
@@ -4533,6 +4563,12 @@ M.PRESETS = {
     ORDER_PING_MATCH_TICKS        = 3000,
     ORDER_LATCH_REBROADCAST_TICKS = 1500,
     BOT_PINGS_DEFAULT             = false,
+    BOT_CHAT_DEFAULT              = true,
+    --   2026-09-17: a bot attacking a pill with a HUMAN team-mate within 7
+    --   tiles now skips the wall shield and goes straight in (the lobby docs
+    --   promise it). KEEL never looked at where the humans were: 0 = off, so
+    --   only a designated pill_suicider skips the blockers, as before.
+    ORDER_HUMAN_NEAR_SUICIDE_TILES = 0,
     ORDER_PING_REPEAT_TICKS       = 1500,
     --   FOCUS_OTHER_COST_MULT is the one stage-2 knob that is NOT covered by
     --   the master switch: the focus multiplier sits inside the cost

@@ -451,6 +451,46 @@ function M.human_ally_count(info)
   return n
 end
 
+-- IS A HUMAN TEAM-MATE STANDING CLOSE TO US?
+--
+-- M.human_ally_count above answers "are there humans on the team", which is a
+-- lobby question. This answers "is one of them RIGHT HERE", which is a map
+-- question, and the two have different sources: a count comes off the two
+-- bitmaps, a distance has to come off the engine's object scan.
+--
+-- The join is ob.idnum: an allied tank object carries the owner's PLAYER
+-- NUMBER, so the same player_bots bitmap that names the humans on the team
+-- also names which of the visible allied tanks belongs to one. A tank we
+-- cannot see is not near us as far as any behaviour is concerned, so an
+-- invisible human is simply absent here — no ghosting, no last-known guess.
+--
+-- Distance is CHEBYSHEV (the larger of the two axes), the way a screen is
+-- measured and the way every other "within N tiles of me" rule in this brain
+-- reads. Returns the distance to the NEAREST such human, or nil for none.
+-- `tiles` is a cap: a human further off than that is not reported at all.
+function M.human_ally_near(info, mx, my, tiles)
+  if not info or not mx or not tiles or tiles <= 0 then return nil end
+  local allies = info.allies or 0
+  local bots   = info.player_bots or 0
+  local me     = info.player_number
+  local OT     = _G.OBJECT_TANK
+  local OH     = _G.OBJECT_HOSTILE or 0
+  local best
+  for _, ob in ipairs(info.objects or {}) do
+    local pn = ob.idnum or -1
+    if ob.type == OT and pn >= 0 and pn ~= me
+       and bit.band(ob.info or 0, OH) == 0
+       and bit.band(allies, bit.lshift(1, pn)) ~= 0
+       and bit.band(bots, bit.lshift(1, pn)) == 0 then
+      local dx = math.abs(bit.rshift(ob.x or 0, 8) - mx)
+      local dy = math.abs(bit.rshift(ob.y or 0, 8) - my)
+      local d  = (dx > dy) and dx or dy
+      if d <= tiles and (not best or d < best) then best = d end
+    end
+  end
+  return best
+end
+
 -- ── DIFFICULTY (Stage 3 Pass B) — deterministic aim/fire handicaps ─────────
 -- Both helpers are exact no-ops at their default (0) argument: they return
 -- BEFORE touching any float / hash / state, so Hard (all difficulty knobs 0)
