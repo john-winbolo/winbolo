@@ -476,12 +476,14 @@ extern "C" bool mapPreviewViewScreenToWorld(const MapPreviewView *v,
  * screen map use below 1x, so a map looks the same in the chooser as it does
  * once it is being played. That is not the player's choice to make: the
  * Display setting decides whether a live view gives up its sprites, and a
- * whole map in a thumbnail has no sprites to give up.
+ * whole map in a thumbnail has no sprites to give up. The lobby's 256 px
+ * thumbnails draw in them too, through minimapRenderPixels.
  *
- * minimapTerrainColor is still what the lobby's 256 px thumbnails and the map
- * editor draw with. Those are pictures of a map on their own, not a smaller
- * view of one being played, and its louder greens and greys are what tells
- * terrains apart at that size. */
+ * minimapTerrainColor is now the map editor's alone, asked for by name with
+ * MINIMAP_EDIT_PALETTE. That panel is a diagram of the map being built, where
+ * every terrain wants its own colour, rather than a small picture of one being
+ * played, and its louder greens and greys are what tells terrains apart while
+ * you draw them. */
 static void viewRenderMapColoursToOffscreen(MapPreviewView *v,
                                          SDL_Renderer *renderer,
                                          int screenW, int screenH) {
@@ -1326,9 +1328,12 @@ extern "C" void mapPreviewViewRenderOffscreen(MapPreviewView *v,
         SDL_SetRenderTarget(renderer, back);
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
-        /* Below 1x, one map colour a square instead of tile sprites: the
-         * same switch the overview and the full screen map make, at the
-         * same size. Above it, the sprite renderer. */
+        /* Below ZOOM_SPRITE_MIN, one map colour a square instead of tile
+         * sprites; above it, the sprite renderer. The same colours the
+         * overview and the full screen map use, but not at the same rung:
+         * those give up their sprites below 1x and this holds on to 0.25x,
+         * because the rungs between are where a player works and the
+         * map-colour pass draws no start positions. See ZOOM_SPRITE_MIN. */
         if (v->zoomLevel < ZOOM_SPRITE_MIN) {
             viewRenderMapColoursToOffscreen(v, renderer, ofsW, ofsH);
         } else {

@@ -4075,7 +4075,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/gui/sdl3/overview_hud_layout.cpp
     src/gui/sdl3/sprite_positions.c
     # map_colours.c qualifies on the same footing: its includes are SDL3 for
-    # the colour types, tilenum.h and global.h, and its functions are a tile
+    # the colour types, tilenum.h and global.h for the tile numbers, and
+    # skin_source.h to read a skin's [MapPalette] — whose skin_source.c this
+    # target already builds for its own tests — and its functions are a tile
     # number in and a colour out. test_map_colours.c drives it directly.
     src/gui/sdl3/map_colours.c
     # The threaded news fetcher itself (not just the pure parser): the
