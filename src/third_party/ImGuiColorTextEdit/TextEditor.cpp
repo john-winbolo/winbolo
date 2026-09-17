@@ -33,7 +33,7 @@ TextEditor::~TextEditor()
 void TextEditor::SetPalette(PaletteId aValue)
 {
 	mPaletteId = aValue;
-	const Palette* palletteBase;
+	const Palette* palletteBase = &(GetDarkPalette());
 	switch (mPaletteId)
 	{
 	case PaletteId::Dark:
