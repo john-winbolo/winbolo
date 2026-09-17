@@ -22,8 +22,8 @@ document is the stable reference for the rules themselves.
 |---|---|---|
 | `src/bolo/` | T1 + T2 + T3 + T4 | Owns T2; contributes to all tiers. |
 | `src/bolo/scenario_api/` | T1 + T4 | A third header directory beside `public/` and `internal/`. Holds the scenario write funnel (`serverSimApplyScenarioOp`), the policy vtable and tick registrations, and the POD types those calls take. Read by the `scenario_host` profile (the scenario runtime), by `sim_owner` to implement the funnel, and by `unittests` to drive it; nothing else sees it. Not in `public/` because these are server-authoritative entry points on the same footing as the lifecycle start functions — a frontend that wants to change the world sends a command, and a scenario is the one caller whose intent is applied to the sim directly. See "Privileged exceptions". |
-| `src/scenario/` | T1 + T4 + `scenario_api/` | The scenario runtime, `scenario_static`, the one target built under the `scenario_host` profile. Finds the Lua file beside a map, boots the VM, parses the `scenario` table, marshals `game.*` calls onto the funnel and T1 reads, queues bus events and drains them into hooks, and checks a script for `-validate`. Sees `public/` plus `scenario_api/` and nothing in `internal/` or `src/server/`; a binding that needs sim state it cannot read gets a T1 accessor, never an include. Links `lua_static` PRIVATE. Frontends see only `scenario_host.h` (attach, detach, follow the map, is-active, name, description, script path, reload, last error, the scripts switch `scenarioHostSetEnabled` and the narrower `scenarioHostSetUploadScriptsEnabled` beside it, the map-has-script question `scenarioHostMapHasScript`, and `scenarioHostRegisterMapScripted`, which hands that question to a sim so its map lister can ask it), which includes `server_sim.h` alone and names no `scenario_api/` type, so a `gui`-profile file can include it. Both of those are the rule a call added here has to satisfy, not just a description of the calls there now: `server_sim.h` and the C standard headers are the whole of what this header may include, and every parameter and return type has to be a plain type or `ServerSim` / `ScenarioHost`. A call that would need a `scenario_api/` type in its signature belongs behind the funnel instead. Links `scenario_io_static` PUBLIC and holds no file format of its own: the container, `manifest.json` and the chunk written on to a map are that library's, and `scenario_pack.c` here is the half that has to validate a script first. Linked into every binary that hosts a `ServerSim` from a map file: WinBoloDS, WinBoloHeadless, WinBolo, WinBoloIOS, Android `main`, WinBoloUnitTests. Not wasm (never hosts), gym, braintest, mapeditor or the log viewer. |
-| `src/scenario_io/` | T1 only | A scenario's files, `scenario_io_static`, built under the `runtime_only` profile. Reads and writes the WBSC container a scenario ships in and the `manifest.json` inside it, from a byte buffer rather than a path, and writes that container on to a map file. Holds the shape the two halves share: `ScenarioManifest` and the issue list a check fills. No Lua, no `scenario_api/`, no `internal/` — it sees `public/` and nothing else, and it reads no sim state, so nothing here can depend on a round being in progress. `scenario_static` links it PUBLIC, so the six binaries that host a `ServerSim` get it without naming it. The map editor and the log viewer are expected to link it directly and nothing else from `src/scenario/`: both read and write a scenario's files and neither starts a round. |
+| `src/scenario/` | T1 + T4 + `scenario_api/` | The scenario runtime, `scenario_static`, the one target built under the `scenario_host` profile. Finds the Lua file beside a map, boots the VM, parses the `scenario` table, marshals `game.*` calls onto the funnel and T1 reads, queues bus events and drains them into hooks, and checks a script for `-validate`. Sees `public/` plus `scenario_api/` and nothing in `internal/` or `src/server/`; a binding that needs sim state it cannot read gets a T1 accessor, never an include. Links `lua_static` PRIVATE. Frontends see only `scenario_host.h` (attach, detach, follow the map, is-active, name, description, script path, reload, last error, the scripts switch `scenarioHostSetEnabled` and the narrower `scenarioHostSetUploadScriptsEnabled` beside it, the map-has-script question `scenarioHostMapHasScript`, and `scenarioHostRegisterMapScripted`, which hands that question to a sim so its map lister can ask it), which includes `server_sim.h` alone and names no `scenario_api/` type, so a `gui`-profile file can include it. Both of those are the rule a call added here has to satisfy, not just a description of the calls there now: `server_sim.h` and the C standard headers are the whole of what this header may include, and every parameter and return type has to be a plain type or `ServerSim` / `ScenarioHost`. A call that would need a `scenario_api/` type in its signature belongs behind the funnel instead. Links `scenario_io_static` PUBLIC and holds no file format of its own: the container, `manifest.json` and the chunk written on to a map are that library's, and `scenario_pack.c` here is the half that has to validate a script first. Linked into every binary that hosts a `ServerSim` from a map file: WinBoloDS, WinBoloHeadless, WinBolo, WinBoloIOS, Android `main`, WinBoloUnitTests. Not wasm (never hosts), gym, braintest or the log viewer. MapEditor links it too, and is the one binary that links it without hosting anything: the scenario panel calls `scenarioValidateSource` to check the script in its pane, `scenarioLuaRows` to build the `game.*` completion list and `scnScriptPath` for where a script sits beside a map, and nothing else in this library. It creates no `ServerSim`, attaches no host and ticks nothing — the check loads a script's top level once in a Lua state of its own against a stub `game` table, and is handed a NULL sim, which leaves out the two checks that read a map. On MapEditor's link line it sits ahead of the server group for the same reason it does everywhere else. |
+| `src/scenario_io/` | T1 only | A scenario's files, `scenario_io_static`, built under the `runtime_only` profile. Reads and writes the WBSC container a scenario ships in and the `manifest.json` inside it, from a byte buffer rather than a path, and writes that container on to a map file. Holds the shape the two halves share: `ScenarioManifest` and the issue list a check fills. No Lua, no `scenario_api/`, no `internal/` — it sees `public/` and nothing else, and it reads no sim state, so nothing here can depend on a round being in progress. `scenario_static` links it PUBLIC, so the six binaries that host a `ServerSim` get it without naming it. The log viewer is expected to link it directly and nothing else from `src/scenario/`: it reads a scenario's files and never starts a round. The map editor reads and writes those files on the same footing, and also links `scenario_static` for the three calls named in the row above — still without starting a round. |
 | `src/gui/` | T1 + T3 + T4 | The desktop renderer. Cannot reach into sim internals. |
 | `src/mapeditor/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — full T2 access for map-data editing. |
 | `src/braintest/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — dev visualisation tool, not shipped to players. |
@@ -1671,15 +1671,17 @@ its own state struct, and its own refresh. They share the
 (`src/ios/`, `src/android/`) and the wasm build don't have a system
 menu bar; they ship only the ImGui in-window bar.
 
-## Standalone ImGui dialogs — controller navigation
+## Standalone ImGui dialogs — controller navigation and quit
 
 Every blocking dialog under `src/gui/sdl3/dialogs/` (welcome, lobby,
 settings, keysetup, onboarding, …) creates its **own** ImGui context and
-runs its **own** SDL event loop. Because the context is per-dialog,
-controller navigation is not inherited from the main game pump — each
-dialog must wire it up itself. Two separate controller paths have to be
-enabled, and missing either one silently breaks the pad on that dialog
-with no compile error:
+runs its **own** SDL event loop. Two things therefore have to be wired
+up per dialog rather than inherited: the controller, because the context
+is per-dialog, and the quit, because the event loop is. Missing any of
+them silently breaks that dialog with no compile error.
+
+Controller navigation needs two separate paths enabled, and missing
+either one breaks the pad on that dialog:
 
 - **Path B — native SDL gamepad** (non-Steam launches). The ImGui SDL3
   backend turns raw gamepad events into nav, but only when
@@ -1714,6 +1716,51 @@ them every frame.
 
 `src/gui/sdl3/dialogs/imgui_keysetup.cpp` is the canonical reference —
 copy its context setup and per-frame preamble when adding a dialog.
+
+### Contract — every standalone dialog must also end the application
+
+A quit reaches whichever loop is running and stops there. Read as
+"close me" — which is what every dialog did before — Cmd+Q in the game
+browser closed the browser and left the player on the menu. So the
+poll loop has to recognise one and end the loop:
+
+```c
+if (dialogHandleQuitEvent(window, &ev)) { /* dialog's own close path */ }
+```
+
+`dialogHandleQuitEvent` (`imgui_dialog_utils.h`) wraps
+`dialogQuitClassify` in `dialogs/dialog_quit.cpp`, which is where the
+decision actually lives. Three points it is easy to get wrong:
+
+- **A quit is not a cancel.** Cmd+Q, Alt+F4 and the window's close box
+  end the application. The gamepad's B button reaches the loop as a
+  close request `dialogHandleGamepadCancelEvent` forged, carrying
+  `DIALOG_CLOSE_IS_GAMEPAD_CANCEL` in `window.data1`, and only closes
+  the dialog. Call the gamepad helper **before** the quit check so the
+  marker is on the event by the time it is classified.
+- **The dialogs do not call `windowSetQuitting` themselves.** They are
+  linked into the standalone Log Viewer and Map Editor too, which have
+  no application loop, and the direct call breaks the `LogViewer` link.
+  The host registers what a quit means — `winbolo.c` calls
+  `dialogSetQuitHandler(windowSetQuitting)` at startup — and with
+  nothing registered a quit just closes the dialog.
+- **Closing a dialog is not the application ending.** A dialog closes
+  on a quit the same way it closes on Cancel, so the front end asks
+  `windowIsQuitting()` rather than reading the dialog's result.
+  `gameFrontDialogs()` asks once per turn of its state machine and
+  stops unwinding. `windowIsQuitting()` reads `quitRequested`, not
+  `winboloQuit`: the game loop sets `winboloQuit` TRUE on the way in as
+  its default answer, so it cannot say whether the player asked for
+  anything.
+
+A screen that owns the window for a while rather than being one of
+these dialogs — the embedded map editor, log viewer and spectator —
+runs its own loop and cannot see the host's flag. Each separates
+leaving from quitting and reports which happened
+(`mapEditorAppQuitRequested()`, `logViewerAppQuitRequested()`), and the
+`gameFrontDialogs()` case that ran it hands the answer to
+`windowSetQuitting()`. A run that can raise such a flag must clear it
+on entry, or the next caller to ask inherits someone else's quit.
 
 ## WinBolo.net subsystem
 
@@ -1987,6 +2034,15 @@ running sim, or any other path that runs the sim from the editor:
 at that point mapeditor joins the T1+T3+T4 group and the map-data
 access moves behind T1 accessors.
 
+The editor links `scenario_static` to check the script in its
+scenario panel and to list the `game.*` calls for completion, and
+that does not disturb any of the above. The check makes no
+`ServerSim`: it is handed NULL where one would go, which is why
+the two checks that read a map do not run in the editor and the
+panel says so. A check that wanted those two would have to build
+a sim, and that is the in-editor playtest this exception is
+written against — so it is not a thing to add quietly here.
+
 ### `src/braintest/`
 
 BrainTest is a dev visualisation tool for inspecting bot brain
@@ -2066,12 +2122,13 @@ releases with nothing coming off means the review has stopped, and
 the grant needs re-arguing rather than extending.
 
 **Linked GUI sources.** A second, narrower exception rides on the
-same target, and it is not a T2 grant. Ten `src/gui/sdl3` files are
-compiled *into* `WinBoloUnitTests`, the only files from a renderer
-directory that are: `skin_source.c`, `tileloader.c`, `sdl_bmp.c`,
-`sound_variants.c`, `overview_camera.cpp`, `overview_fog.cpp`,
-`overview_hud_layout.cpp`, `sprite_positions.c`, `ring_band.c` and
-`gfx_settings.c`. Between them they hold skin lookup, the tile sheet
+same target, and it is not a T2 grant. Eleven `src/gui/sdl3` files
+are compiled *into* `WinBoloUnitTests`, the only files from a
+renderer directory that are: `skin_source.c`, `tileloader.c`,
+`sdl_bmp.c`, `sound_variants.c`, `overview_camera.cpp`,
+`overview_fog.cpp`, `overview_hud_layout.cpp`, `sprite_positions.c`,
+`ring_band.c`, `dialogs/dialog_quit.cpp` and `gfx_settings.c`.
+Between them they hold skin lookup, the tile sheet
 builder, the BMP sheet reader, the sound variant naming, the map
 overview's camera maths, its fog mask, its in-window HUD geometry
 and the sprite placement arithmetic behind `mapview.c`'s drawers.
@@ -2079,7 +2136,12 @@ and the sprite placement arithmetic behind `mapview.c`'s drawers.
 is and how solid after a given elapsed time — pure arithmetic, no
 renderer, and the one piece of the smart ping's arrival effect and
 the overview's respawn ring that a test can observe at all.
-The first nine are each called directly by a test beside them;
+`dialogs/dialog_quit.cpp` is the odd one by directory and not by
+rule: it is the only file under `dialogs/` that holds no ImGui, and
+it is there so that `dialogQuitClassify` — what a quit means to
+whichever dialog is up — can be driven from a test with hand-built
+events instead of a window (see "Standalone ImGui dialogs" below).
+The first ten are each called directly by a test beside them;
 `gfx_settings.c` is here because `tileloader.c` calls it, and is the
 one file on the list no test drives on its own.
 
@@ -2099,12 +2161,12 @@ The alternative, for the geometry files, was moving the maths into
 onto the sim purely to buy testability. Keeping them in the renderer
 and linking the leaf files is the smaller distortion of the two.
 
-**Rests on** each of the ten still meeting that rule, so it is
+**Rests on** each of the eleven still meeting that rule, so it is
 checked per file rather than for the group. One that gains an ImGui
 include, or that opens a renderer or a device of its own, has left
 the category, and the answer is to split the leaf back out — the
 link break is the signal, not a build problem to route around by
-widening the test binary. An eleventh file joins only on the same
+widening the test binary. A twelfth file joins only on the same
 test: callable with no display attached, or it does not go in.
 
 ### `src/bolo/scenario_api/`

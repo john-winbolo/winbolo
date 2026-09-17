@@ -1053,6 +1053,16 @@ int run_lv_tank_stocks_from_snapshot(void);
 int run_lv_tank_stocks_snapshot_without_tail(void);
 int run_lv_tank_stocks_from_record(void);
 
+/* Viewer palette slots follow alliance groups (same file). from_snapshot:
+ * mutual allies listed as forward references in a snapshot share a slot, and
+ * keyframes that split and restore the groups without alliance events keep the
+ * slots stable. events: players who joined solo hold slot-order colours, the
+ * round's first world snapshot deals the merged groups compact colours (two
+ * teams are Team 1 and Team 2 wherever they sat), and later merges and splits
+ * leave everyone who didn't move alone. */
+int run_lv_team_colours_from_snapshot(void);
+int run_lv_team_colours_events(void);
+
 /* The viewer reading a recording it cannot trust (test_lv_hostile_records.c):
  * hand-built bytes through lv_specSeedLoad / lv_specRecordPump. A count byte
  * past the item arrays or past the block's length is clamped before it is
@@ -1653,6 +1663,15 @@ int run_mapview_overlay_tank_label(void);
 int run_mapview_overlay_cursor(void);
 int run_mapview_overlay_item_labels(void);
 
+/* The shared map colours: what a tile number says is standing on a square,
+ * the flat colour its ground gets when the square is drawn too small for its
+ * sprite, and the three layers a marker's stroke is built from. */
+int run_map_colours_item_kind(void);
+int run_map_colours_terrain(void);
+int run_map_colours_markers(void);
+int run_map_colours_palette_key(void);
+int run_map_colours_team(void);
+
 int run_stall_advances_processed_tick(void);
 int run_stall_mine_late_lays_once(void);
 int run_stall_mine_duplicate_not_relaid(void);
@@ -2070,6 +2089,15 @@ int run_ping_network(void);
  * guards the off-by-one that walked resolveName()'s bsearch off the end. */
 int run_lang_name_table(void);
 
+/* What a quit inside a dialog means (test_dialog_quit.c): Cmd+Q, Alt+F4 and
+ * the close box end the application; the close request the gamepad's B
+ * button forges only closes the dialog; another window's close request and a
+ * windowless dialog claim neither. Plus where the quit goes — the host
+ * registers a handler, and with none registered a quit must not crash the
+ * standalone Log Viewer and Map Editor, which link these dialogs but have no
+ * application loop to end. */
+int run_dialog_quit(void);
+
 /* Bot difficulty plumbing (test_bot_init_arg.c): the "difficulty=<word>"
  * BRAIN_INIT_ARG token is appended after any existing tokens with a ';',
  * takes an exact fit, and is dropped WHOLE (buffer untouched) when it would
@@ -2231,6 +2259,11 @@ int run_skin_active_vs_requested(void);
 /* Writing a Workshop id into a directory skin and into an archive
  * (test_skin_source.c). */
 int run_skin_workshop_id_roundtrip(void);
+
+/* The [MapPalette] section of skin.ini: the three colour spellings, black
+ * surviving as a value rather than reading as absent, a bad value leaving its
+ * own entry alone, and a section the parser does not know being skipped. */
+int run_skin_map_palette(void);
 
 /* Which densities a skin serves, and what each Tile Detail mode picks
  * out of that (test_skin_density.c). */
@@ -2782,6 +2815,11 @@ int run_scenario_validate_syntax_error_line(void);
 int run_scenario_validate_lines_point_at_the_key(void);
 int run_scenario_validate_wave_defense(void);
 int run_scenario_validate_unknown_game(void);
+int run_scenario_validate_source_syntax_error(void);
+int run_scenario_validate_source_bad_key(void);
+int run_scenario_validate_source_matches_file(void);
+int run_scenario_validate_source_pushed_manifest(void);
+int run_scenario_validate_source_pushed_conflict(void);
 
 /* The binding table (test_scenario_lua.c): every row of the registry
  * called once, the three index rules, the nils an absent entity reads
@@ -3077,6 +3115,52 @@ int ut_brain_stub_creates(int player_num);
  * handed an instance and no player number, so there is no slot to file them
  * under. Both counts are reset by ut_brain_stub_arm. */
 int ut_brain_stub_destroys(void);
+
+/* The map editor's scenario script file (test_editor_script_file.c): where a
+ * script sits beside a map, the round trip Save and re-opening the map make,
+ * and the map that has no script beside it. The path rule mirrors
+ * scnScriptPath, which the editor cannot call. The over-cap case holds the
+ * script that is there but will not open, which the editor shows as an empty
+ * buffer and must not write that buffer back over. The last case saves a map
+ * under a new name: an unedited script is written beside that name so the
+ * copy plays as the original did, and a buffer with no file read behind it
+ * takes the new path without writing anything there. */
+int run_editor_script_path(void);
+int run_editor_script_round_trip(void);
+int run_editor_script_missing(void);
+int run_editor_script_over_cap(void);
+int run_editor_script_follows_save_as(void);
+
+/* The manifest behind the scenario panel's metadata, lobby, rules and tags
+ * forms (test_editor_scenario_form.c): the empty manifest a new map starts
+ * from, the rule list that updates a row rather than growing a second one for
+ * the same rule, the team numbers the template hands out, both bounds, the
+ * change a rules row describes beside a value, and the tags and regions the
+ * tags view edits. The index case is the one that matters most: the editor
+ * counts entities from 0 and the manifest's arrays are 1-based, and it asserts
+ * that sum at both ends of every range. */
+int run_editor_form_init(void);
+int run_editor_form_rules(void);
+int run_editor_form_rules_full(void);
+int run_editor_form_teams(void);
+int run_editor_form_rule_change(void);
+int run_editor_form_tag_indices(void);
+int run_editor_form_tags(void);
+int run_editor_form_regions(void);
+int run_editor_form_dirty_flag(void);
+int run_editor_form_team_ids(void);
+
+/* The editor writing a scenario out (test_editor_scenario_pack.c): the chunk
+ * on to the map and the standalone .scenario a mod is, both read back through
+ * the container reader the server uses. A mod loses the bound flag, the tags
+ * and the regions whatever the form held; a map form refuses a manifest that
+ * is not built for its map; and a map that has been packed twice is the same
+ * bytes as one packed once and still reads as a map. */
+int run_editor_pack_mod_round_trip(void);
+int run_editor_pack_map_round_trip(void);
+int run_editor_pack_twice_identical(void);
+int run_editor_pack_refuses_unbound(void);
+int run_editor_pack_survives_map_save(void);
 
 /* The last status tile frontEndStatusTank was handed by the stub in
  * test_stubs.c: the 1-based player number, and the tankAlliance as an int so

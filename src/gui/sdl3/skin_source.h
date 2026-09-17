@@ -50,8 +50,58 @@ typedef enum SkinKind {
 #define SKIN_FILTER_LINEAR     1
 #define SKIN_FILTER_PIXELART   2
 
+/* An absent colour in [MapPalette]. Each entry stands on its own: a skin that
+   names three colours gets those three and the built-in rest. */
+#define SKIN_COLOUR_NONE (-1)
+
+/* Colours a player can be assigned. Matches the log viewer's Team Colours
+   dialog, which offers exactly these. */
+#define SKIN_TEAM_COLOUR_COUNT 17
+
+/* [MapPalette] section of skin.ini: what a map is drawn in once it is too
+   small for its sprites - the map overview and the full screen map below 1x,
+   and the map choosers at every zoomed-out rung. Each entry is 0xRRGGBB, or
+   SKIN_COLOUR_NONE.
+
+   "Palette" rather than "colours" because this name is written by skin
+   authors, and palette is spelled the same either side of the Atlantic. The
+   code behind it is map_colours, which follows the rest of this tree.
+
+   Parsed here because reading skin.ini is this module's job; what the entries
+   mean, and the built-in colours they replace, belong to map_colours.h. */
+typedef struct SkinMapPalette {
+    /* Ground, one per terrain family. */
+    int32_t grass;
+    int32_t swamp;
+    int32_t rubble;
+    int32_t crater;
+    int32_t forest;
+    int32_t road;
+    int32_t river;
+    int32_t deepSea;
+    int32_t boat;
+    int32_t building;
+    int32_t halfBuilding;
+    /* The shapes standing on it: the tank triangle, the pill disc and the
+       base square, which share one colour per allegiance. markerSelf is the
+       viewer's own tank where a view tells it apart from its allies; the game
+       does not, and draws it markerGood. */
+    int32_t markerSelf;
+    int32_t markerGood;
+    int32_t markerEvil;
+    int32_t markerNeutral;
+    /* The seventeen colours a player can be assigned, in the order the log
+       viewer's Team Colours dialog lists them - Grey, Khaki, Green, Pink,
+       Yellow, LightBlue, Orange, LightPurple, Aqua, LightGreen, LightGrey,
+       Red, Blue, Brown, LightPink, PaleGreen, Purple. An array rather than
+       seventeen named fields: they are one list, and every consumer indexes
+       it by the player's assigned slot. */
+    int32_t team[SKIN_TEAM_COLOUR_COUNT];
+} SkinMapPalette;
+
 /* [Skin] section of skin.ini. Absent keys leave empty strings / zeros,
-   except recommendedFilter, whose "absent" is SKIN_FILTER_NONE. */
+   except recommendedFilter, whose "absent" is SKIN_FILTER_NONE, and
+   mapPalette, whose every entry is SKIN_COLOUR_NONE. */
 typedef struct SkinInfo {
     char     name[SKIN_NAME_MAX];
     char     author[SKIN_NAME_MAX];
@@ -61,6 +111,8 @@ typedef struct SkinInfo {
     int      maxPixelDensity; /* 0 = unlimited */
     int      inGameRotate;    /* 0 or 1 */
     int      recommendedFilter; /* SKIN_FILTER_*, SKIN_FILTER_NONE = not set */
+    SkinMapPalette mapPalette;  /* [MapPalette], every entry SKIN_COLOUR_NONE
+                                   when the section is absent */
 } SkinInfo;
 
 /* One skin found on disk. Fixed size: nothing to free. */
@@ -243,6 +295,25 @@ const char  *skinGetRequested(void);          /* "" = built-in assets */
  *   Owned by the registry; do not close it.
  *********************************************************/
 SkinSource  *skinGetActiveSource(void);       /* NULL when none */
+
+/*********************************************************
+ * NAME:          skinSourceLock / skinSourceUnlock
+ * PURPOSE:
+ *   Hold the module's lock across more than one call.
+ *
+ *   The individual calls take it for themselves, so most
+ *   callers need neither. This is for a caller that asks
+ *   skinGetActiveSource for a pointer and then uses it:
+ *   skinSetActive closes and frees the active source, so
+ *   the pointer is only good for as long as the lock is
+ *   held. map_colours does this to read [MapPalette] from
+ *   the map chooser's preview worker thread.
+ *
+ *   Reentrant, so the calls made while it is held may take
+ *   it again. Do not hold it across anything slow.
+ *********************************************************/
+void         skinSourceLock(void);
+void         skinSourceUnlock(void);
 
 /*********************************************************
  * NAME:          skinSourceSerial

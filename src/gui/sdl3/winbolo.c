@@ -80,6 +80,7 @@
 #include "../winbolo.h"
 #include "sdl3draw.h"
 #include "sdl3imgui.h"
+#include "dialogs/dialog_quit.h"
 #include "../tiles.h"
 #include "luabrainshandler.h"
 #include "bg_game.h"
@@ -193,6 +194,8 @@ static bool doingTutorial = FALSE;
 
 /* Time to quit */
 static bool winboloQuit = FALSE;
+/* Raised only by windowSetQuitting — see windowIsQuitting below. */
+static bool quitRequested = FALSE;
 static bool finishedLoop = FALSE;
 
 /* Set on SDL_EVENT_WILL_ENTER_BACKGROUND, cleared by
@@ -352,6 +355,12 @@ int main(int argc, char *argv[]) {
    * baseline keeps the count >= 1 so per-call pairs only ever go 2<->1.
    * Process exit reclaims it; no matching cleanup needed. */
   bolo_net_init();
+
+  /* Every dialog runs its own event loop; this is what a quit seen in one of
+   * them does.  Registered rather than called directly because the same
+   * dialogs are linked into the standalone Log Viewer and Map Editor, which
+   * have no main loop to end. */
+  dialogSetQuitHandler(windowSetQuitting);
 
   /* Steam launches a "join game" / "connect to server" as a fresh process
    * with the rich-presence connect string on the command line:
@@ -551,6 +560,14 @@ int main(int argc, char *argv[]) {
       const DialogBackend *db = dialogBackendGet();
       int lobbyResult = db->lobbyShow(cs);
       if (lobbyResult == 0) {
+        /* The lobby closes the same way whether the player left the game or
+         * quit the application, so ask which it was before the line below
+         * overwrites the answer.  A quit skips the restart and tears the
+         * session down for good. */
+        if (windowIsQuitting()) {
+          gameFrontEnd(&keys, FALSE, TRUE);
+          break;
+        }
         /* Player chose to leave — fall through to normal cleanup.
          * gamePlayed=FALSE because no tank exists during lobby. */
         winboloQuit = FALSE;  /* Signal that we want to return to menu */
@@ -854,8 +871,10 @@ int main(int argc, char *argv[]) {
     timerFrameID = 0;
 
     /* If returning to lobby after game-over, skip full teardown
-     * and loop back to show the lobby dialog again. */
-    if (returnToLobby) {
+     * and loop back to show the lobby dialog again.  Not if the player quit:
+     * the round can drain to the lobby in the same frame the quit arrives,
+     * and the line below would answer winboloQuit for them. */
+    if (returnToLobby && !windowIsQuitting()) {
       gameFrontSaveTankPrefs(cs);
       sdl3ImguiCleanup();
       winboloQuit = FALSE;
@@ -975,7 +994,9 @@ static void windowRunGameTick(ClientSim *cs) {
                                "Returning to menu.",
                       IMGUI_MSG_ERROR, IMGUI_MSG_OK);
     finishedLoop = TRUE;
-    winboloQuit = FALSE;
+    /* The message box above runs a loop of its own, so the player can quit
+     * from it.  Returning to the menu is only the answer if they didn't. */
+    if (!quitRequested) winboloQuit = FALSE;
     return;
   }
 
@@ -1065,8 +1086,22 @@ void *windowWnd(void) {
  * windowSetQuitting — signal the main loop to exit
  * ------------------------------------------------------- */
 void windowSetQuitting(void) {
+  quitRequested = TRUE;
   winboloQuit = TRUE;
   finishedLoop = TRUE;
+}
+
+/* -------------------------------------------------------
+ * windowIsQuitting — did the player ask to quit?
+ *
+ * Not the same question as winboloQuit, which the game loop
+ * sets TRUE on the way in as its default answer: a loop that
+ * ends with nobody saying otherwise ends the application.
+ * quitRequested is only ever raised by windowSetQuitting, so
+ * it still means what it says while a game is running.
+ * ------------------------------------------------------- */
+bool windowIsQuitting(void) {
+  return quitRequested;
 }
 
 /* -------------------------------------------------------
@@ -1123,7 +1158,7 @@ void windowResumeForeground(ClientSim *cs) {
                       "Returning to menu.",
                       IMGUI_MSG_ERROR, IMGUI_MSG_OK);
     finishedLoop = TRUE;
-    winboloQuit = FALSE;
+    if (!quitRequested) winboloQuit = FALSE;
   } else {
     /* Single-player / tutorial / main menu: reset the catchup-loop
        wallclock baseline so the while ((ttick - oldTick) > GAME_TICK_LENGTH)

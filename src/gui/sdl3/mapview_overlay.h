@@ -35,7 +35,7 @@
 #include <SDL3_ttf/SDL_ttf.h>
 #include <stdbool.h>
 #include "global.h"
-#include "tilenum.h"      /* the pill and base tile ranges */
+#include "map_colours.h"  /* the pill and base tile ranges, and the marker palette */
 #include "client_sim.h"   /* OverviewItemLabel */
 #include "mapview.h"
 #include "tank_label.h"
@@ -80,6 +80,10 @@ void itemLabelCacheFlush(ItemLabelCache *c);
 /* Squares and game pixels here are in the sprite lists' frame: the classic
    view's 17x17 buffer squares, the overview's absolute map squares. */
 typedef struct MapViewOverlay {
+  /* Draw each tank as a triangle pointing the way it faces, in the shared
+     marker palette (map_colours.h), instead of its sprite. The overview
+     asks for this at the zooms where a tank sprite is a smudge. */
+  bool             simpleTanks;
   /* Build cursor, drawn under the sprites. Faint is the locked target with
      build mode off; solid is build mode on or the pointer over the map. */
   bool             cursorShown;
@@ -120,15 +124,16 @@ typedef struct MapViewOverlay {
 } MapViewOverlay;
 
 /* Whether the tile drawn on a square is a pillbox or a base: the test both
-   views make before putting a number on the square. */
+   views make before putting a number on the square. The ranges themselves
+   live in map_colours.h, which the marker passes classify squares with, so
+   the numbers and the markers cannot disagree about what is on a square. */
 static inline bool mapViewTileIsPill(BYTE tile) {
-  return tile == PILL_EVIL_15 ||
-         (tile >= PILL_EVIL_14 && tile <= PILL_EVIL_0) ||
-         (tile >= PILL_GOOD_15 && tile <= PILL_GOOD_0);
+  MapColourItem kind = mapColourItemKind(tile);
+  return kind == MAP_COLOUR_ITEM_PILL_GOOD || kind == MAP_COLOUR_ITEM_PILL_EVIL;
 }
 
 static inline bool mapViewTileIsBase(BYTE tile) {
-  return tile == BASE_GOOD || tile == BASE_NEUTRAL || tile == BASE_EVIL;
+  return mapColourItemKind(tile) >= MAP_COLOUR_ITEM_BASE_GOOD;
 }
 
 /* Draws the whole layer: the cursor, then mapViewDrawShells and

@@ -470,9 +470,7 @@ extern "C" int imguiMessageBoxEx(const char *title, const char *message,
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
             dialogHandleGamepadCancelEvent(window, &ev);
-            if (ev.type == SDL_EVENT_QUIT ||
-                (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
-                 ev.window.windowID == SDL_GetWindowID(window))) {
+            if (dialogHandleQuitEvent(window, &ev)) {
                 result = (buttons == IMGUI_MSG_YES_NO_CANCEL) ?
                          IMGUI_MSG_RESULT_CANCEL : IMGUI_MSG_RESULT_OK;
             } else if (ev.type == SDL_EVENT_KEY_DOWN) {
@@ -670,9 +668,7 @@ extern "C" int imguiMessageBoxRich(const char *title,
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
             dialogHandleGamepadCancelEvent(window, &ev);
-            if (ev.type == SDL_EVENT_QUIT ||
-                (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
-                 ev.window.windowID == SDL_GetWindowID(window))) {
+            if (dialogHandleQuitEvent(window, &ev)) {
                 result = (buttons == IMGUI_MSG_YES_NO_CANCEL) ?
                          IMGUI_MSG_RESULT_CANCEL : IMGUI_MSG_RESULT_OK;
             } else if (ev.type == SDL_EVENT_KEY_DOWN) {

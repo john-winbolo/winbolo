@@ -102,6 +102,7 @@ void logViewerRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   const char *logPath, bool fromMainMenu);
 void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *renderer,
                             uint8_t *zipData, size_t zipLen, bool fromMainMenu);
+bool logViewerAppQuitRequested(void);
 bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   void *cs, const char *serverHost, uint16_t serverPort);
 
@@ -1079,6 +1080,15 @@ static bool gameFrontDialogs(void) {
   }
 
   while (done == FALSE) {
+    /* A dialog closes on a quit the same way it closes on Cancel, and most
+     * of them steer back to the welcome screen as they go.  Asked here,
+     * once, so the unwinding stops at the first screen to notice rather
+     * than walking the player back up the menus one dialog at a time. */
+    if (windowIsQuitting()) {
+      done = TRUE;
+      userQuit = TRUE;
+      break;
+    }
     switch (dlgState) {
     case openStart:
       dlgState = openWelcome;
@@ -1211,6 +1221,10 @@ static bool gameFrontDialogs(void) {
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
     case openMapEditor:
       mapEditorRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), NULL, true);
+      /* The editor runs its own loop in WinBolo's window, so a quit taken
+       * there stops with it.  Leaving the editor comes back to the welcome
+       * screen; quitting carries on out. */
+      if (mapEditorAppQuitRequested()) windowSetQuitting();
       dlgState = openWelcome;
       break;
     case openLogViewer: {
@@ -1234,6 +1248,8 @@ static bool gameFrontDialogs(void) {
       default:
         break;
       }
+      /* Same as the editor above: the viewer owns the loop while it is up. */
+      if (logViewerAppQuitRequested()) windowSetQuitting();
       dlgState = openWelcome;
       break;
     }
@@ -1321,6 +1337,10 @@ static bool gameFrontDialogs(void) {
        * tear it down so the socket/transport is released before returning. */
       clientSimDisconnect(spectatorSim);
       clientSimDestroy(spectatorSim);
+      /* Same as the editor and the viewer above: spectatorRun owns the loop
+       * while it is up, so a quit taken there stops with it.  Asked after the
+       * disconnect so the socket is released either way. */
+      if (logViewerAppQuitRequested()) windowSetQuitting();
       dlgState = openWelcome;
       break;
     }
@@ -3793,6 +3813,14 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     if (v < (int)GFX_FILTER_NEAREST || v > (int)GFX_FILTER_PIXELART) v = 0;
     gfxSetTextureFilter((GfxTextureFilter)v);
   }
+  /* The simplified view, and whether it is held to the Map Overview window.
+     On by default, since that is how the zoomed-out map is meant to look;
+     the sub-option off, so it applies to the full screen map as well.  The
+     log viewer reads these same two keys out of the same prefs document. */
+  prefsGetString("SETTINGS", "SimplifiedZoomOut", "Yes", buff, FILENAME_MAX);
+  gfxSetSimplifiedZoomOut(YESNO_TO_TRUEFALSE(buff[0]));
+  prefsGetString("SETTINGS", "SimplifiedOverviewOnly", "No", buff, FILENAME_MAX);
+  gfxSetSimplifiedOverviewOnly(YESNO_TO_TRUEFALSE(buff[0]));
 
   /* Gamepad — Path B rebindable action table.  Start from defaults so
      missing prefs keys leave each action at its historical mapping;
@@ -4472,7 +4500,7 @@ void gameFrontPutPrefs(keyItems *keys) {
      what loaded: a skin that cannot be read right now stays saved. */
   prefsSetString("SETTINGS", "Skin", skinGetRequested());
 
-  /* Graphics settings.  Same four keys the loader reads. */
+  /* Graphics settings.  Same keys the loader reads. */
   intToStr((int)gfxGetTileDetail(), buff, sizeof(buff));
   prefsSetString("SETTINGS", "TileDetail", buff);
   intToStr((int)gfxGetAnimSmoothness(), buff, sizeof(buff));
@@ -4480,6 +4508,10 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("SETTINGS", "SmoothShells", TRUEFALSE_TO_STR(gfxGetSmoothShells()));
   intToStr((int)gfxGetTextureFilter(), buff, sizeof(buff));
   prefsSetString("SETTINGS", "TextureFilter", buff);
+  prefsSetString("SETTINGS", "SimplifiedZoomOut",
+                 TRUEFALSE_TO_STR(gfxGetSimplifiedZoomOut()));
+  prefsSetString("SETTINGS", "SimplifiedOverviewOnly",
+                 TRUEFALSE_TO_STR(gfxGetSimplifiedOverviewOnly()));
 
   /* Gamepad — Path B rebindable action table.  Four keys per action:
      gpb_<name>_pri_{kind,code} and gpb_<name>_sec_{kind,code} where

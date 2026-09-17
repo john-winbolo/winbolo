@@ -39,8 +39,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "server_sim.h"     /* MAX_TANKS / MAX_PILLS / MAX_BASES / MAX_STARTS
-                            * through global.h and types.h */
+/* The four counts the arrays below are sized by, taken from the headers that
+ * define them rather than through server_sim.h. That header declares a bot
+ * config whose gameType member is named after its own type, which a C++
+ * translation unit refuses to compile, and the map editor's forms read this
+ * manifest from C++. Nothing here names a ServerSim type. */
+#include "global.h"         /* MAX_TANKS */
+#include "types.h"          /* MAX_PILLS / MAX_BASES / MAX_STARTS */
 #include "scenario_table.h" /* ScnTable — a team's init block below */
 
 /* Tags and regions, at the sizes the scenario table is specified with. A

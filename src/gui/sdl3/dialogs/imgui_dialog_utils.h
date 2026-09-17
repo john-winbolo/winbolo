@@ -27,6 +27,7 @@
 #include <SDL3/SDL.h>
 #include "imgui.h"
 #include "imgui_nav_outline.h"
+#include "dialog_quit.h"
 #include "../../imgui_fonts.h"
 #include "../../../common/wb_log.h"
 #include "nanosvg.h"
@@ -946,7 +947,26 @@ static inline bool dialogHandleGamepadCancelEvent(SDL_Window *window, SDL_Event 
     ev->type = SDL_EVENT_WINDOW_CLOSE_REQUESTED;
     ev->window.windowID = SDL_GetWindowID(window);
     ev->window.timestamp = SDL_GetTicksNS();
+    ev->window.data1 = DIALOG_CLOSE_IS_GAMEPAD_CANCEL;
     return true;
+}
+
+/* Every screen runs its own event loop, so a quit has to be recognised in
+ * each of them or it stops at whichever one is on top — which is what used
+ * to happen: Cmd+Q in the game browser closed the browser and left the
+ * player on the menu.  Call this from a dialog's poll loop and end the loop
+ * when it returns true.
+ *
+ * Cmd+Q (SDL_EVENT_QUIT), Alt+F4 and the window's close box all mean the
+ * application should end, so they are handed to the host's quit handler and
+ * the front end shuts down instead of dropping back a screen.  A B press is
+ * a cancel and is left alone: it arrives as the close request
+ * dialogHandleGamepadCancelEvent forged, marked as its own. */
+static inline bool dialogHandleQuitEvent(SDL_Window *window, const SDL_Event *ev) {
+    const DialogQuitAction action =
+        dialogQuitClassify(ev, window ? SDL_GetWindowID(window) : 0);
+    if (action == DIALOG_QUIT_APPLICATION) dialogRequestQuit();
+    return action != DIALOG_QUIT_NONE;
 }
 
 /* Check an SDL event for a winbolo:// URL drop.

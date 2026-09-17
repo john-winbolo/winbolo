@@ -892,6 +892,8 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/tank_label.c
     src/gui/sdl3/mapview.c
     src/gui/sdl3/mapview_overlay.c
+    src/gui/sdl3/map_colours.c
+    src/gui/sdl3/map_markers.c
     src/gui/sdl3/sprite_positions.c
     src/gui/sdl3/tileloader.c
     src/gui/sdl3/skin_source.c
@@ -956,6 +958,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/imgui_about.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
+    src/gui/sdl3/dialogs/dialog_quit.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/lobby_start_list.cpp
     src/gui/sdl3/map_preview_view.cpp
@@ -1561,7 +1564,7 @@ set(CLIENT_SOURCES
     src/client_frontend/client_frontend_connect.c
     src/client_frontend/client_frontend_tick.c
     src/client_frontend/client_frontend_common.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_rules.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_rules.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/lobby_start_list.cpp
@@ -1580,7 +1583,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/ping_marker.c
     src/gui/sdl3/ring_band.c
     src/gui/sdl3/minimap_render.c
-    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/mapview_overlay.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
+    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/mapview_overlay.c src/gui/sdl3/map_colours.c src/gui/sdl3/map_markers.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
     # Real bodies for the spectator_input.h seam: the embedded LogViewer's
     # spectatorRun reads the controller through it for overview pan/zoom. Reads
     # the singleton gamepad input_gamepad.c owns. The standalone LogViewer links
@@ -1593,6 +1596,14 @@ set(CLIENT_SOURCES
     src/client_frontend/voice_client.c
     src/gui/sdl3/voice.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
+    # The scenario panel: the script buffer and the file handling in C, the
+    # manifest its metadata, lobby and rules forms edit, the container that
+    # manifest is read from and written back to, the panel that draws all four
+    # views, and the vendored text editor widget the script view draws with.
+    # LanguageDefinitions.cpp is where that widget keeps its Lua highlighting.
+    src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_form.c src/mapeditor/mapeditor_scenario_check.c src/mapeditor/mapeditor_scenario_pack.c src/mapeditor/mapeditor_scenario_imgui.cpp
+    src/third_party/ImGuiColorTextEdit/TextEditor.cpp
+    src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
     # Embedded editor's "Open from WinBolo.net" dialog — client only, it
     # sits on the chooser + wbn_map_source stack the standalone MapEditor
     # doesn't link (see MAPEDITOR_WBN_OPEN below).
@@ -1742,6 +1753,8 @@ target_include_directories(WinBolo PRIVATE
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
     src/third_party/imgui_markdown
+    # TextEditor.h for the map editor's scenario script pane.
+    src/third_party/ImGuiColorTextEdit
 )
 bolo_apply_include_rules(WinBolo gui)
 # bg_game.c: dev-mode lobby-background animation that assigns bot
@@ -1768,6 +1781,11 @@ if(WIN32)
         # Suppress warnings in third-party sources that MSVC treats as errors
         set_source_files_properties(src/third_party/tweetnacl/tweetnacl.c
             PROPERTIES COMPILE_FLAGS "/wd4132 /wd4146 /wd4018 /wd4295")
+        # The text editor widget counts in int and measures in size_t, so it
+        # trips the conversion and signed/unsigned warnings throughout.
+        set_source_files_properties(src/third_party/ImGuiColorTextEdit/TextEditor.cpp
+            src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
+            PROPERTIES COMPILE_FLAGS "/wd4018 /wd4244 /wd4245 /wd4267 /wd4389")
         # Suppress C4505 (unreferenced static function) in mapgen_imgui.cpp
         set_source_files_properties(src/mapeditor/mapgen_imgui.cpp
             PROPERTIES COMPILE_FLAGS "/wd4505")
@@ -2314,6 +2332,7 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
+    src/gui/sdl3/dialogs/dialog_quit.cpp
     src/gui/sdl3/mapview.c
     src/gui/sdl3/sdl3draw_status.c
     src/gui/sdl3/tank_label.c
@@ -2330,6 +2349,7 @@ set(LOGVIEWER_WBN_BROWSER_SOURCES
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
+    src/gui/sdl3/dialogs/dialog_quit.cpp
     src/gui/sdl3/dialogs/imgui_keyboard.cpp
     src/logviewer/imgui/imgui_lv_browser_stubs.cpp
 )
@@ -2386,6 +2406,11 @@ add_executable(LogViewer
     src/gui/sdl3/tileloader.c
     src/gui/sdl3/skin_source.c
     src/gui/sdl3/gfx_settings.c
+    # The zoomed-out ground colours, which draw.c fills a square with below
+    # 1x, and the shapes it draws on top of them. Plain SDL, the tile numbers
+    # and ring_band.c, all of which this target already has.
+    src/gui/sdl3/map_colours.c
+    src/gui/sdl3/map_markers.c
     src/gui/ui_mode.c
     src/steam/steam_wrapper_stub.c
 )
@@ -2880,6 +2905,13 @@ set(MAPEDITOR_SOURCES
     src/bolo/transport_udp_client.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/minimap_render.c
+    # The editor's own drawing uses minimap_render.c above; these three are
+    # here for the map chooser it shares with the game (map_preview_view.cpp),
+    # which draws pillbox and base marks. ring_band.c is what a disc is built
+    # from.
+    src/gui/sdl3/map_colours.c
+    src/gui/sdl3/map_markers.c
+    src/gui/sdl3/ring_band.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/sim_rules_phrase.c
     src/gui/sdl3/gamefront_stubs.c
@@ -2887,8 +2919,17 @@ set(MAPEDITOR_SOURCES
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_stubs.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
+    # The scenario panel: the script buffer and the file handling in C, the
+    # manifest its metadata, lobby and rules forms edit, the container that
+    # manifest is read from and written back to, the panel that draws all four
+    # views, and the vendored text editor widget the script view draws with.
+    # LanguageDefinitions.cpp is where that widget keeps its Lua highlighting.
+    src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_form.c src/mapeditor/mapeditor_scenario_check.c src/mapeditor/mapeditor_scenario_pack.c src/mapeditor/mapeditor_scenario_imgui.cpp
+    src/third_party/ImGuiColorTextEdit/TextEditor.cpp
+    src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
+    src/gui/sdl3/dialogs/dialog_quit.cpp
     src/third_party/stb/stb_image_write_impl.c
     src/mapeditor/mapeditor_main.c
     src/braintest/braintest_frontend.c
@@ -2939,6 +2980,8 @@ target_include_directories(MapEditor PRIVATE
     src/server
     src/mapeditor
     ${cjson_SOURCE_DIR}
+    # TextEditor.h for the scenario script pane.
+    src/third_party/ImGuiColorTextEdit
 )
 bolo_apply_include_rules(MapEditor mapeditor)
 
@@ -2946,12 +2989,26 @@ if(WIN32)
     target_sources(MapEditor PRIVATE src/res/mapeditor.rc)
     target_link_libraries(MapEditor PRIVATE ws2_32 winmm user32)
     target_compile_options(MapEditor PRIVATE -fcommon)
+    if(MSVC)
+        # Suppress warnings in third-party sources that MSVC treats as errors.
+        # The text editor widget counts in int and measures in size_t, so it
+        # trips the conversion and signed/unsigned warnings throughout.
+        set_source_files_properties(src/third_party/ImGuiColorTextEdit/TextEditor.cpp
+            src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
+            PROPERTIES COMPILE_FLAGS "/wd4018 /wd4244 /wd4245 /wd4267 /wd4389")
+    endif()
 else()
     target_link_libraries(MapEditor PRIVATE ${MATH_LIB} pthread)
     target_compile_options(MapEditor PRIVATE -fcommon)
 endif()
 
-target_link_libraries(MapEditor PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
+target_link_libraries(MapEditor PRIVATE
+    bolo_static
+    # Ahead of the server group: scenario_static calls the funnel and the
+    # round-start registration, which the group provides. The editor links it
+    # to check a script and to list game.* for completion; it boots no host.
+    scenario_static
+    server_sim_static bot_brains_static threads_static)
 target_link_libraries(MapEditor PRIVATE
     winbolonet_core winbolonet_client
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static
@@ -3631,6 +3688,25 @@ set(WINBOLO_UNITTESTS_SOURCES
     # empty one when the creator passed none, and the -bot-init [arg]
     # text that fills one.
     tests/unit/test_bot_init_table.c
+    # The map editor's scenario script file: the path a script takes beside a
+    # map, which has to stay the path the server looks for, and the read and
+    # write behind the pane's Save and Reload. The module under test is plain
+    # C and draws nothing, so it is compiled in here directly.
+    tests/unit/test_editor_script_file.c
+    src/mapeditor/mapeditor_scenario.c
+    # The manifest behind the scenario panel's metadata, lobby, rules and tags
+    # forms: the rule list that never holds one rule twice, the team numbers
+    # the template hands out, both bounds, and the tag accessors that turn the
+    # editor's 0-based entity index into the manifest's 1-based entry. Plain C
+    # that draws nothing, so it is compiled in here the same way.
+    tests/unit/test_editor_scenario_form.c
+    src/mapeditor/mapeditor_scenario_form.c
+    # The editor writing a scenario out: the chunk on to the map and the
+    # standalone .scenario a mod is, both read back through the container
+    # reader the server uses. Plain C over scenario_io, which this target
+    # already links, so the module is compiled in here too.
+    tests/unit/test_editor_scenario_pack.c
+    src/mapeditor/mapeditor_scenario_pack.c
     # The per-tank modifier set: the op that writes it, the snapshot group
     # under the ninth presence bit, and when the values are cleared.
     tests/unit/test_tank_modifiers.c
@@ -3779,6 +3855,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_overview_snapshot.c
     tests/unit/test_mapview_sprite_scale.c
     tests/unit/test_mapview_overlay.c
+    tests/unit/test_map_colours.c
     tests/unit/test_input_catchup.c
     tests/unit/test_build_harvest_stale.c
     tests/unit/test_lgm_request_valid.c
@@ -4003,6 +4080,16 @@ set(WINBOLO_UNITTESTS_SOURCES
     # length, strict bsearch sort order, and name round-trips — pins the
     # off-by-one that crashed resolveName's bsearch on startup.
     tests/unit/test_lang_name_table.c
+    # What a quit inside a dialog means, and where it goes. The same
+    # decision is made in eleven dialog poll loops with nothing to check
+    # that a new one makes it; telling a real close request from the one
+    # the gamepad's B button forges is the difference between cancelling a
+    # dialog and ending the application under the player.
+    tests/unit/test_dialog_quit.c
+    # dialogQuitClassify and the handler registration, for the test above. A
+    # leaf under the "Linked GUI sources" rule in docs/ARCHITECTURE.md:
+    # plain SDL, no ImGui, and it opens no window, renderer or device.
+    src/gui/sdl3/dialogs/dialog_quit.cpp
     # Bot difficulty plumbing: the "difficulty=<word>" BRAIN_INIT_ARG token
     # assembly (whole-token-or-nothing when the buffer is tight) and the
     # difficulty <-> word round trip -difficulty and the preference share.
@@ -4087,6 +4174,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/gui/sdl3/overview_fog.cpp
     src/gui/sdl3/overview_hud_layout.cpp
     src/gui/sdl3/sprite_positions.c
+    # map_colours.c qualifies on the same footing: its includes are SDL3 for
+    # the colour types, tilenum.h and global.h for the tile numbers, and
+    # skin_source.h to read a skin's [MapPalette] — whose skin_source.c this
+    # target already builds for its own tests — and its functions are a tile
+    # number in and a colour out. test_map_colours.c drives it directly.
+    src/gui/sdl3/map_colours.c
     # The threaded news fetcher itself (not just the pure parser): the
     # free-during-fetch lifetime test drives its real worker thread. Its
     # network GET is reached through a test seam, so no libcurl is pulled in
@@ -4298,6 +4391,9 @@ target_include_directories(WinBoloUnitTests PRIVATE
     # braintest_loadbrowser.h for the Load Session segment-walk test (the
     # finder TU compiled above); no other braintest source is linked here.
     src/braintest
+    # mapeditor_scenario.h for the editor's script-file test (that one TU is
+    # compiled above); no other mapeditor source is linked here.
+    src/mapeditor
     ${CMAKE_SOURCE_DIR}/tests/unit
     ${cjson_SOURCE_DIR}
 )
@@ -4711,6 +4807,8 @@ set(_unit_test_names
     replay_v1_pill_health_nibble
     brainrec_version_rejects_old
     lv_tank_stocks_from_snapshot
+    lv_team_colours_from_snapshot
+    lv_team_colours_events
     lv_tank_stocks_snapshot_without_tail
     lv_tank_stocks_from_record
     lv_hostile_item_counts
@@ -4938,6 +5036,11 @@ set(_unit_test_names
     mapview_overlay_tank_label
     mapview_overlay_cursor
     mapview_overlay_item_labels
+    map_colours_item_kind
+    map_colours_terrain
+    map_colours_markers
+    map_colours_palette_key
+    map_colours_team
     stall_advances_processed_tick
     stall_mine_late_lays_once
     stall_mine_duplicate_not_relaid
@@ -5125,6 +5228,7 @@ set(_unit_test_names
     game_settings_blob
     ping_network
     lang_name_table
+    dialog_quit
     screencalc_river_road_counts_as_water
     screencalc_river_arms_of_road_centred_cross
     screencalc_river_copies_agree
@@ -5225,6 +5329,7 @@ set(_unit_test_names
     skin_source_dir_and_zip
     skin_active_vs_requested
     skin_workshop_id_roundtrip
+    skin_map_palette
     skin_density_scan
     sheet_bleed_edges
     sheet_no_key_under_alpha
@@ -5584,6 +5689,11 @@ set(_unit_test_names
     scenario_validate_lines_point_at_the_key
     scenario_validate_wave_defense
     scenario_validate_unknown_game
+    scenario_validate_source_syntax_error
+    scenario_validate_source_bad_key
+    scenario_validate_source_matches_file
+    scenario_validate_source_pushed_manifest
+    scenario_validate_source_pushed_conflict
     scenario_lua_every_row_answers
     scenario_lua_read_index_passes_through
     scenario_lua_op_index_subtracts_one
@@ -5724,6 +5834,26 @@ set(_unit_test_names
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table
+    editor_script_path
+    editor_script_round_trip
+    editor_script_missing
+    editor_script_over_cap
+    editor_script_follows_save_as
+    editor_form_init
+    editor_form_rules
+    editor_form_rules_full
+    editor_form_teams
+    editor_form_rule_change
+    editor_form_tag_indices
+    editor_form_tags
+    editor_form_regions
+    editor_form_dirty_flag
+    editor_form_team_ids
+    editor_pack_mod_round_trip
+    editor_pack_map_round_trip
+    editor_pack_twice_identical
+    editor_pack_refuses_unbound
+    editor_pack_survives_map_save
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via
