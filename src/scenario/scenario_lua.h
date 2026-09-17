@@ -252,7 +252,9 @@ typedef struct {
  * A policy is looked up by name at each call rather than resolved once, so
  * unlike a hook it has no enum and no index — the name in the row is the
  * whole of what the host needs, and the string at the call site is the same
- * string this list holds.
+ * string this list holds. The id column is the name in upper case and names
+ * nothing but the tables an expansion of this list generates, which is why
+ * it can carry the on_ a hook id drops.
  *
  * The last column is what the answer means. Every policy also answers
  * nothing, by not being declared or by returning nil, and that is the
@@ -277,7 +279,7 @@ typedef struct {
     X(CAN_DIE,           "can_die",                                          \
       SCN_FN_ARGS4("kind", "n", "killer", "cause"),                          \
       "false to leave what the blow landed on standing")                     \
-    X(CHOOSE_START,      "on_choose_start",   SCN_FN_ARGS1("p"),             \
+    X(ON_CHOOSE_START,   "on_choose_start",   SCN_FN_ARGS1("p"),             \
       "a start number, counted from 1 as game.start counts")                 \
     X(SPAWN_LOADOUT,     "spawn_loadout",     SCN_FN_ARGS1("p"),             \
       "a loadout word, or a table of shells, mines, armour and trees")       \

@@ -2931,6 +2931,11 @@ int run_scenario_derived_fixture_wins_without_on_tick(void);
 int run_scenario_functions_table(void);
 int run_scenario_functions_match_dispatch(void);
 
+/* The line beside each function (test_scenario_fndesc.c): a description for
+ * every catalogue row and none for anything else, and the lang ids behind
+ * them. */
+int run_scenario_fndesc_table(void);
+
 /* The WBSC container (test_scenario_package.c): the framing round trip,
  * the refusals a malformed buffer gets, the entry and brain lists, two
  * containers open at the same time, and the cap an entry is measured against

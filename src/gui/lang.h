@@ -2667,6 +2667,55 @@
 #define STR_RULE_RANGE_FROM                      2427
 #define STR_RULE_RANGE_CAPPED                    2428
 
+/* Scenario function descriptions */
+
+/* One line per function a scenario author writes, for the list the editor
+ * shows them in: the 25 hooks, then the 10 policies, in the order
+ * SCN_HOOK_LIST and SCN_POLICY_LIST hold them.
+ *
+ * The tail of each symbol is the catalogue's own id column rather than the
+ * function's name, because that is the token the description table pastes
+ * onto. For a hook the id is the name without its on_ prefix, so
+ * STR_SCNFN_DESC_TANK_KILLED is on_tank_killed's; for a policy it is the
+ * name in upper case. The names themselves are in SCN_HOOK_LIST and
+ * SCN_POLICY_LIST in scenario_lua.h, and docs/SCENARIO_API.md is where each
+ * one is set out at length. */
+#define STR_SCNFN_DESC_SETUP                 2435
+#define STR_SCNFN_DESC_START                 2436
+#define STR_SCNFN_DESC_TICK                  2437
+#define STR_SCNFN_DESC_END                   2438
+#define STR_SCNFN_DESC_LOBBY                 2439
+#define STR_SCNFN_DESC_PLAYER_JOIN           2440
+#define STR_SCNFN_DESC_PLAYER_LEAVE          2441
+#define STR_SCNFN_DESC_TEAM_CHANGED          2442
+#define STR_SCNFN_DESC_CHAT                  2443
+#define STR_SCNFN_DESC_PING                  2444
+#define STR_SCNFN_DESC_TANK_SPAWNED          2445
+#define STR_SCNFN_DESC_TANK_KILLED           2446
+#define STR_SCNFN_DESC_LGM_DIED              2447
+#define STR_SCNFN_DESC_LGM_LANDED            2448
+#define STR_SCNFN_DESC_BASE_CAPTURED         2449
+#define STR_SCNFN_DESC_BASE_NEUTRALIZED      2450
+#define STR_SCNFN_DESC_PILL_CAPTURED         2451
+#define STR_SCNFN_DESC_PILL_PLACED           2452
+#define STR_SCNFN_DESC_PILL_PICKED_UP        2453
+#define STR_SCNFN_DESC_PILL_KILLED           2454
+#define STR_SCNFN_DESC_BUILT                 2455
+#define STR_SCNFN_DESC_MINE_LAID             2456
+#define STR_SCNFN_DESC_MINE_EXPLOSION        2457
+#define STR_SCNFN_DESC_ENTER_REGION          2458
+#define STR_SCNFN_DESC_LEAVE_REGION          2459
+#define STR_SCNFN_DESC_ALLOW_EXTRA_TEAMS     2460
+#define STR_SCNFN_DESC_ALLOW_BASE_WIN        2461
+#define STR_SCNFN_DESC_CAN_RESPAWN           2462
+#define STR_SCNFN_DESC_CAN_BUILD             2463
+#define STR_SCNFN_DESC_CAN_CAPTURE           2464
+#define STR_SCNFN_DESC_ANNOUNCE              2465
+#define STR_SCNFN_DESC_CAN_DIE               2466
+#define STR_SCNFN_DESC_ON_CHOOSE_START       2467
+#define STR_SCNFN_DESC_SPAWN_LOADOUT         2468
+#define STR_SCNFN_DESC_DAMAGE_SCALE          2469
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

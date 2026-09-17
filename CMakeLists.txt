@@ -1602,6 +1602,7 @@ set(CLIENT_SOURCES
     # views, and the vendored text editor widget the script view draws with.
     # LanguageDefinitions.cpp is where that widget keeps its Lua highlighting.
     src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_form.c src/mapeditor/mapeditor_scenario_check.c src/mapeditor/mapeditor_scenario_pack.c src/mapeditor/mapeditor_scenario_imgui.cpp
+    src/mapeditor/mapeditor_scenario_fndesc.c
     src/third_party/ImGuiColorTextEdit/TextEditor.cpp
     src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
     # Embedded editor's "Open from WinBolo.net" dialog — client only, it
@@ -2925,6 +2926,7 @@ set(MAPEDITOR_SOURCES
     # views, and the vendored text editor widget the script view draws with.
     # LanguageDefinitions.cpp is where that widget keeps its Lua highlighting.
     src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_form.c src/mapeditor/mapeditor_scenario_check.c src/mapeditor/mapeditor_scenario_pack.c src/mapeditor/mapeditor_scenario_imgui.cpp
+    src/mapeditor/mapeditor_scenario_fndesc.c
     src/third_party/ImGuiColorTextEdit/TextEditor.cpp
     src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
@@ -3584,6 +3586,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # writes, and the parameter list each row claims held against the
     # arguments the host pushes at the dispatch site.
     tests/unit/test_scenario_functions.c
+    # The line the editor shows beside each of those functions. The table
+    # renders through langGetText, which test_stubs.c provides here, so the
+    # module compiles in without lang.c.
+    tests/unit/test_scenario_fndesc.c
+    src/mapeditor/mapeditor_scenario_fndesc.c
     # The scenario read surface: the roster, pill, base, start, tank and
     # builder accessors, the whole-map terrain copy and the fielded count.
     tests/unit/test_scenario_reads.c
@@ -5775,6 +5782,7 @@ set(_unit_test_names
     scenario_derived_fixture_wins_without_on_tick
     scenario_functions_table
     scenario_functions_match_dispatch
+    scenario_fndesc_table
     scenario_package_round_trip
     scenario_package_bad_framing
     scenario_package_entry_names
