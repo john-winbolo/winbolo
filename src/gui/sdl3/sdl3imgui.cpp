@@ -1331,6 +1331,40 @@ static void overviewInWindowChoose(bool on) {
        next game reads. */
     if (on) mapOverviewHide();
     else if (gameFrontShowMapOverview && s_overviewWasRunning) mapOverviewOpen();
+    /* The other five — Send Message, Players, and the three Session Info
+     * panels — each have TWO forms, and which one is real depends on the mode
+     * this call just changed. In classic mode each is a pop-out, a separate OS
+     * window; while the overview owns the window each is drawn in-window
+     * instead, because a pop-out would land behind a map that is now full
+     * screen. Nothing was closing the form the player is leaving behind, and
+     * the two forms do not coexist — each panel refuses to draw in-window
+     * while its own pop-out is open (renderSendMsgPanel and its four
+     * siblings).
+     *
+     * So a pop-out opened in classic mode and still open at the switch left
+     * the panel unable to draw AND the pop-out unreachable behind the full
+     * screen window: Send Message could not be brought back by the shortcut or
+     * by Players > Send Message, and neither could the other four. The
+     * mirror leaves an in-window panel drawn over the classic view that the
+     * menu reports as closed, since there it reads the pop-out's flag.
+     *
+     * Closing the outgoing form settles both. The panel belongs to the mode it
+     * was opened in and does not follow the player across; asking for it again
+     * in the new mode opens the form that mode actually uses. The map overview
+     * above is the one that DOES follow, because it is the mode. */
+    if (on) {
+        if (s_popSysInfo.open)  popOutHide(&s_popSysInfo);
+        if (s_popNetInfo.open)  popOutHide(&s_popNetInfo);
+        if (s_popGameInfo.open) popOutHide(&s_popGameInfo);
+        if (s_popSendMsg.open)  popOutHide(&s_popSendMsg);
+        if (s_popPlayers.open)  popOutHide(&s_popPlayers);
+    } else {
+        s_showSysInfo      = false;
+        s_showNetInfo      = false;
+        s_showGameInfo     = false;
+        s_showSendMsg      = false;
+        s_showPlayersPanel = false;
+    }
     /* The player's own choice, so it survives the run — the same save
        windowFullScreenChoose makes for the same flag on the screens outside
        a game. The auto-exit and the cleanup path call overviewInWindowSet
@@ -8688,6 +8722,20 @@ void sdl3ImguiCleanup(void) {
        Left latched, the second game of a session came up windowed-view inside
        a still-full-screen window, and the pop-out did not come back either. */
     s_overviewWasRunning = false;
+    /* The five two-form panels go with the game as well. popOutDestroy below
+       clears the pop-out half, but the in-window half is a plain flag that
+       nothing here was resetting, and this path reaches overviewInWindowSet
+       directly rather than through overviewInWindowChoose, which is where the
+       mode switch clears them. Left set, a game played full screen with Send
+       Message open came back to the NEXT game — classic mode by then — with
+       the in-window panel drawn over the classic view and Players > Send
+       Message reporting it closed, because in classic mode the menu reads the
+       pop-out's flag. */
+    s_showSysInfo      = false;
+    s_showNetInfo      = false;
+    s_showGameInfo     = false;
+    s_showSendMsg      = false;
+    s_showPlayersPanel = false;
     inputGamepadShutdown();
     /* Before the loop: all of these were made on the Map Overview pop-out's
        renderer, which popOutDestroy tears down. */
