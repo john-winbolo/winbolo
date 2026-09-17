@@ -91,6 +91,7 @@ typedef struct {
     bool wantToggleOverview;
     bool wantToggleStats;
     bool wantToggleStampLibrary;
+    bool wantToggleScenario;
     int  zoomSetIndex;      /* target zoom step when wantZoomSet is true */
     int  openRecentIndex;   /* -1 = none, else index into recent files */
 } MapEditorMenuAction;
@@ -109,7 +110,7 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
                            bool *showTerrain, bool *showTools,
                            bool *showInspector, bool *showObjects,
                            bool *showOverview, bool *showStats,
-                           bool *showStampLibrary,
+                           bool *showStampLibrary, bool *showScenario,
                            bool fromMainMenu,
                            int zoomStepIndex, int zoomStepCount,
                            const float *zoomStepValues);
@@ -309,6 +310,18 @@ bool mapEditorImguiTextDialog(bool *open, TextConfig *cfg,
  * wantRefresh: set to true if user clicked "Refresh Spatial". */
 #include "mapeditor_stats.h"
 void mapEditorImguiStatsPanel(const MapStats *stats, bool *p_open, bool *wantRefresh);
+
+/* Render the scenario script pane.
+ * st: the script buffer and where it came from.
+ * mapPath: the map the script belongs to ("" when the map has no file yet,
+ *          which disables Save — a script is stored beside a map).
+ * p_open: pointer to show/hide flag.
+ * wantSave: set to true when the user clicks Save.
+ * wantReload: set to true when the user clicks Reload.
+ * The pane never touches the filesystem; mapeditor.c acts on the two flags. */
+#include "mapeditor_scenario.h"
+void mapEditorImguiScenarioScript(MEScenarioState *st, const char *mapPath,
+                                  bool *p_open, bool *wantSave, bool *wantReload);
 
 /* Render the Image Import dialog.
  * open: pointer to the open flag (set to false when dialog closes).

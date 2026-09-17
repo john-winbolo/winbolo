@@ -2176,6 +2176,18 @@ static const LangEntry langTable[] = {
     {2223, "half as many"},
     {2224, "on"},
     {2225, "off"},
+    {2226, "Scenario Script"},
+    {2227, "Save the map first — a script is kept beside its map"},
+    {2228, "Save Script"},
+    {2229, "Reload"},
+    {2230, "unsaved changes"},
+    {2231, "Script loaded"},
+    {2232, "No script beside this map yet"},
+    {2233, "Script saved"},
+    {2234, "The script could not be read"},
+    {2235, "The script could not be written"},
+    {2236, "The script is larger than 1 MB and was not opened"},
+    {2237, "The script on disk was not opened, so it will not be overwritten"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

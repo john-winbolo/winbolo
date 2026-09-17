@@ -3018,6 +3018,17 @@ int ut_brain_stub_creates(int player_num);
  * under. Both counts are reset by ut_brain_stub_arm. */
 int ut_brain_stub_destroys(void);
 
+/* The map editor's scenario script file (test_editor_script_file.c): where a
+ * script sits beside a map, the round trip Save and re-opening the map make,
+ * and the map that has no script beside it. The path rule mirrors
+ * scnScriptPath, which the editor cannot call. The last case holds the
+ * script that is there but will not open, which the editor shows as an empty
+ * buffer and must not write that buffer back over. */
+int run_editor_script_path(void);
+int run_editor_script_round_trip(void);
+int run_editor_script_missing(void);
+int run_editor_script_over_cap(void);
+
 /* The last status tile frontEndStatusTank was handed by the stub in
  * test_stubs.c: the 1-based player number, and the tankAlliance as an int so
  * the header does not have to pull screentank.h in. Both are -1 until the

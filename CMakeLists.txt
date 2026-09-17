@@ -1580,6 +1580,12 @@ set(CLIENT_SOURCES
     src/client_frontend/voice_client.c
     src/gui/sdl3/voice.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
+    # The scenario script pane: the buffer and the file handling in C, the
+    # pane that draws it, and the vendored text editor widget it draws with.
+    # LanguageDefinitions.cpp is where that widget keeps its Lua highlighting.
+    src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_imgui.cpp
+    src/third_party/ImGuiColorTextEdit/TextEditor.cpp
+    src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
     # Embedded editor's "Open from WinBolo.net" dialog — client only, it
     # sits on the chooser + wbn_map_source stack the standalone MapEditor
     # doesn't link (see MAPEDITOR_WBN_OPEN below).
@@ -1729,6 +1735,8 @@ target_include_directories(WinBolo PRIVATE
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
     src/third_party/imgui_markdown
+    # TextEditor.h for the map editor's scenario script pane.
+    src/third_party/ImGuiColorTextEdit
 )
 bolo_apply_include_rules(WinBolo gui)
 # bg_game.c: dev-mode lobby-background animation that assigns bot
@@ -1755,6 +1763,11 @@ if(WIN32)
         # Suppress warnings in third-party sources that MSVC treats as errors
         set_source_files_properties(src/third_party/tweetnacl/tweetnacl.c
             PROPERTIES COMPILE_FLAGS "/wd4132 /wd4146 /wd4018 /wd4295")
+        # The text editor widget counts in int and measures in size_t, so it
+        # trips the conversion and signed/unsigned warnings throughout.
+        set_source_files_properties(src/third_party/ImGuiColorTextEdit/TextEditor.cpp
+            src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
+            PROPERTIES COMPILE_FLAGS "/wd4018 /wd4244 /wd4245 /wd4267 /wd4389")
         # Suppress C4505 (unreferenced static function) in mapgen_imgui.cpp
         set_source_files_properties(src/mapeditor/mapgen_imgui.cpp
             PROPERTIES COMPILE_FLAGS "/wd4505")
@@ -2874,6 +2887,12 @@ set(MAPEDITOR_SOURCES
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_stubs.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
+    # The scenario script pane: the buffer and the file handling in C, the
+    # pane that draws it, and the vendored text editor widget it draws with.
+    # LanguageDefinitions.cpp is where that widget keeps its Lua highlighting.
+    src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_imgui.cpp
+    src/third_party/ImGuiColorTextEdit/TextEditor.cpp
+    src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
     src/third_party/stb/stb_image_write_impl.c
@@ -2926,6 +2945,8 @@ target_include_directories(MapEditor PRIVATE
     src/server
     src/mapeditor
     ${cjson_SOURCE_DIR}
+    # TextEditor.h for the scenario script pane.
+    src/third_party/ImGuiColorTextEdit
 )
 bolo_apply_include_rules(MapEditor mapeditor)
 
@@ -2933,6 +2954,14 @@ if(WIN32)
     target_sources(MapEditor PRIVATE src/res/mapeditor.rc)
     target_link_libraries(MapEditor PRIVATE ws2_32 winmm user32)
     target_compile_options(MapEditor PRIVATE -fcommon)
+    if(MSVC)
+        # Suppress warnings in third-party sources that MSVC treats as errors.
+        # The text editor widget counts in int and measures in size_t, so it
+        # trips the conversion and signed/unsigned warnings throughout.
+        set_source_files_properties(src/third_party/ImGuiColorTextEdit/TextEditor.cpp
+            src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
+            PROPERTIES COMPILE_FLAGS "/wd4018 /wd4244 /wd4245 /wd4267 /wd4389")
+    endif()
 else()
     target_link_libraries(MapEditor PRIVATE ${MATH_LIB} pthread)
     target_compile_options(MapEditor PRIVATE -fcommon)
@@ -3589,6 +3618,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     # empty one when the creator passed none, and the -bot-init [arg]
     # text that fills one.
     tests/unit/test_bot_init_table.c
+    # The map editor's scenario script file: the path a script takes beside a
+    # map, which has to stay the path the server looks for, and the read and
+    # write behind the pane's Save and Reload. The module under test is plain
+    # C and draws nothing, so it is compiled in here directly.
+    tests/unit/test_editor_script_file.c
+    src/mapeditor/mapeditor_scenario.c
     # The per-tank modifier set: the op that writes it, the snapshot group
     # under the ninth presence bit, and when the values are cleared.
     tests/unit/test_tank_modifiers.c
@@ -4256,6 +4291,9 @@ target_include_directories(WinBoloUnitTests PRIVATE
     # braintest_loadbrowser.h for the Load Session segment-walk test (the
     # finder TU compiled above); no other braintest source is linked here.
     src/braintest
+    # mapeditor_scenario.h for the editor's script-file test (that one TU is
+    # compiled above); no other mapeditor source is linked here.
+    src/mapeditor
     ${CMAKE_SOURCE_DIR}/tests/unit
     ${cjson_SOURCE_DIR}
 )
@@ -5653,6 +5691,10 @@ set(_unit_test_names
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table
+    editor_script_path
+    editor_script_round_trip
+    editor_script_missing
+    editor_script_over_cap
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

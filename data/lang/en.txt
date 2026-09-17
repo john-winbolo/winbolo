@@ -2197,4 +2197,16 @@ STR_RULE_TWICE=twice as many
 STR_RULE_HALF=half as many
 STR_RULE_ON=on
 STR_RULE_OFF=off
+STR_MAPEDIT_SCENARIO_TITLE=Scenario Script
+STR_MAPEDIT_SCENARIO_NO_MAP=Save the map first — a script is kept beside its map
+STR_MAPEDIT_SCENARIO_SAVE=Save Script
+STR_MAPEDIT_SCENARIO_RELOAD=Reload
+STR_MAPEDIT_SCENARIO_UNSAVED=unsaved changes
+STR_MAPEDIT_SCENARIO_LOADED=Script loaded
+STR_MAPEDIT_SCENARIO_NO_SCRIPT=No script beside this map yet
+STR_MAPEDIT_SCENARIO_SAVED=Script saved
+STR_MAPEDIT_SCENARIO_READ_FAILED=The script could not be read
+STR_MAPEDIT_SCENARIO_WRITE_FAILED=The script could not be written
+STR_MAPEDIT_SCENARIO_TOO_BIG=The script is larger than 1 MB and was not opened
+STR_MAPEDIT_SCENARIO_SAVE_REFUSED=The script on disk was not opened, so it will not be overwritten
 

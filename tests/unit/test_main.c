@@ -1543,6 +1543,10 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_precedence_reload_refuses_bound",        run_scenario_precedence_reload_refuses_bound        },
     { "bot_init_table_empty_when_none",          run_bot_init_table_empty_when_none          },
     { "bot_init_arg_text_to_table",              run_bot_init_arg_text_to_table              },
+    { "editor_script_path",                      run_editor_script_path                      },
+    { "editor_script_round_trip",                run_editor_script_round_trip                },
+    { "editor_script_missing",                   run_editor_script_missing                   },
+    { "editor_script_over_cap",                  run_editor_script_over_cap                  },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },

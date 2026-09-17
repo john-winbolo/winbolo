@@ -2379,6 +2379,23 @@
 #define STR_RULE_ON                         2224
 #define STR_RULE_OFF                        2225
 
+/* The map editor's scenario script pane: the window and its Window-menu
+ * entry, the toolbar above the text, and the line the pane shows for
+ * whatever the last read or write did. A script is a loose X.scenario.lua
+ * beside X.map, so a map with no file yet has nowhere to keep one. */
+#define STR_MAPEDIT_SCENARIO_TITLE          2226
+#define STR_MAPEDIT_SCENARIO_NO_MAP         2227
+#define STR_MAPEDIT_SCENARIO_SAVE           2228
+#define STR_MAPEDIT_SCENARIO_RELOAD         2229
+#define STR_MAPEDIT_SCENARIO_UNSAVED        2230
+#define STR_MAPEDIT_SCENARIO_LOADED         2231
+#define STR_MAPEDIT_SCENARIO_NO_SCRIPT      2232
+#define STR_MAPEDIT_SCENARIO_SAVED          2233
+#define STR_MAPEDIT_SCENARIO_READ_FAILED    2234
+#define STR_MAPEDIT_SCENARIO_WRITE_FAILED   2235
+#define STR_MAPEDIT_SCENARIO_TOO_BIG        2236
+#define STR_MAPEDIT_SCENARIO_SAVE_REFUSED   2237
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

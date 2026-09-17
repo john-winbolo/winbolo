@@ -285,6 +285,10 @@ typedef struct {
     bool showStatsPanel;
     bool statsDirty;
 
+    /* --- Scenario script pane --- */
+    MEScenarioState scn;
+    bool showScenario;
+
     /* --- Text tool --- */
     bool showTextDialog;
     TextConfig textConfig;
@@ -2245,6 +2249,22 @@ static bool meSaveToPath(MapEditorState *ed, const char *path) {
     ed->undoStack.savedCommandIndex = ed->undoStack.count;
     meAddRecentFile(ed, path);
     meUpdateWindowTitle(ed);
+
+    /* The script lives beside the map, so an edited one is written with it.
+     * The map is on disk by now, so a script that will not write is shown
+     * the way any other editor error is and the save still counts as done.
+     * With the script untouched there is nothing to write, but the state
+     * still follows the map to the name it was saved under. */
+    if (meScenarioDirty(&ed->scn)) {
+        if (!meScenarioSaveForMap(&ed->scn, path)) {
+            /* The state says what stopped it — a write that failed, or a
+             * refusal to write over a script it could not open. */
+            snprintf(ed->errorMessage, sizeof(ed->errorMessage), "%s\n%s",
+                     ed->scn.status, ed->scn.scriptPath);
+        }
+    } else {
+        meScenarioAdoptPath(&ed->scn, path);
+    }
     return true;
 }
 
@@ -2290,6 +2310,8 @@ static bool meLoadFromPath(MapEditorState *ed, const char *path) {
     ed->statsDirty = true;
     ed->tabCycleIndex = 0;
     meAddRecentFile(ed, path);
+    /* The script beside the new map replaces whatever was being edited. */
+    meScenarioSetMap(&ed->scn, path);
     meUpdateWindowTitle(ed);
     return true;
 }
@@ -2339,6 +2361,9 @@ static bool meLoadFromMemory(MapEditorState *ed, const unsigned char *bytes,
     ed->minimapDirty = true;
     ed->statsDirty = true;
     ed->tabCycleIndex = 0;
+    /* A download has no file behind it, so there is nowhere for a script to
+     * sit beside it until the map is saved. */
+    meScenarioSetMap(&ed->scn, "");
     meUpdateWindowTitle(ed);
     return true;
 }
@@ -2361,6 +2386,8 @@ static void meDoNew(MapEditorState *ed) {
     ed->minimapDirty = true;
     ed->statsDirty = true;
     ed->tabCycleIndex = 0;
+    /* A blank map has no file yet, so it has no script either. */
+    meScenarioSetMap(&ed->scn, "");
     meUpdateWindowTitle(ed);
 }
 
@@ -2798,7 +2825,7 @@ static void meDeleteSelectedObj(MapEditorState *ed) {
 
 /* Begin "New" — checks dirty flag, may open modal. */
 static void meActionNew(MapEditorState *ed) {
-    if (ed->dirty) {
+    if (ed->dirty || meScenarioDirty(&ed->scn)) {
         ed->deferredAction = FILE_OP_SAVE_THEN_NEW;
         /* The modal will be opened by the main loop via OpenPopup */
     } else {
@@ -2809,7 +2836,7 @@ static void meActionNew(MapEditorState *ed) {
 /* Begin "Open" — checks dirty flag, may open modal. */
 static void meActionOpen(MapEditorState *ed) {
     ed->pendingOpenPath[0] = '\0';
-    if (ed->dirty) {
+    if (ed->dirty || meScenarioDirty(&ed->scn)) {
         ed->deferredAction = FILE_OP_SAVE_THEN_OPEN;
     } else {
         meShowOpenDialog(ed, FILE_OP_OPEN);
@@ -2820,7 +2847,7 @@ static void meActionOpen(MapEditorState *ed) {
 /* Begin "Open from WinBolo.net" — checks dirty flag, may open modal. */
 static void meActionOpenWbn(MapEditorState *ed) {
     ed->pendingOpenPath[0] = '\0';
-    if (ed->dirty) {
+    if (ed->dirty || meScenarioDirty(&ed->scn)) {
         ed->deferredAction = FILE_OP_SAVE_THEN_OPEN_WBN;
     } else {
         meWbnOpenShow();
@@ -2844,7 +2871,7 @@ static void meActionSaveAs(MapEditorState *ed) {
 
 /* Begin "Exit" — checks dirty flag, may open modal. */
 static void meActionExit(MapEditorState *ed) {
-    if (ed->dirty) {
+    if (ed->dirty || meScenarioDirty(&ed->scn)) {
         ed->deferredAction = FILE_OP_SAVE_THEN_EXIT;
     } else {
         ed->quit = true;
@@ -3200,6 +3227,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     ed->exportCfg.showMines = true;
     ed->exportCfg.showGrid = false;
     ed->brushSeen = calloc(256 * 256, sizeof(bool));
+    meScenarioInit(&ed->scn);
 
     /* Stamp library */
     {
@@ -3258,6 +3286,9 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     } else {
         meCreateBlankMap(ed);
     }
+    /* Whatever the editor opened with, the script that goes with it. A blank
+     * map leaves currentFilePath empty, which clears the pane. */
+    meScenarioSetMap(&ed->scn, ed->currentFilePath);
     meUpdateWindowTitle(ed);
 
     /* Create minimap texture */
@@ -3310,7 +3341,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
 
             switch (ev.type) {
             case SDL_EVENT_QUIT:
-                if (ed->dirty) {
+                if (ed->dirty || meScenarioDirty(&ed->scn)) {
                     ed->deferredAction = FILE_OP_SAVE_THEN_EXIT;
                     openUnsavedModal = true;
                 } else {
@@ -3398,7 +3429,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                             if (ed->deferredAction) openUnsavedModal = true;
                         }
                         break;
-                    /* Ctrl+1-7 = toggle panel visibility */
+                    /* Ctrl+1-8 = toggle panel visibility */
                     case SDLK_1: ed->showTerrain    = !ed->showTerrain;    break;
                     case SDLK_2: ed->showTools      = !ed->showTools;      break;
                     case SDLK_3: ed->showInspector  = !ed->showInspector;  break;
@@ -3406,6 +3437,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                     case SDLK_5: ed->showOverview     = !ed->showOverview;     break;
                     case SDLK_6: ed->showStampLibrary = !ed->showStampLibrary; break;
                     case SDLK_7: ed->showStatsPanel   = !ed->showStatsPanel;   break;
+                    case SDLK_8: ed->showScenario     = !ed->showScenario;     break;
                     default:
                         break;
                     }
@@ -3948,7 +3980,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             case SDL_EVENT_DROP_FILE: {
                 const char *dropPath = ev.drop.data;
                 if (dropPath) {
-                    if (ed->dirty) {
+                    if (ed->dirty || meScenarioDirty(&ed->scn)) {
                         SDL_strlcpy(ed->pendingOpenPath, dropPath, ME_PATH_MAX);
                         ed->deferredAction = FILE_OP_SAVE_THEN_OPEN;
                         openUnsavedModal = true;
@@ -4164,6 +4196,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             mes.showOverview     = ed->showOverview;
             mes.showStats        = ed->showStatsPanel;
             mes.showStampLibrary = ed->showStampLibrary;
+            mes.showScenario     = ed->showScenario;
             int nRecent = ed->numRecentFiles;
             if (nRecent > (int)(sizeof(mes.recentFiles) / sizeof(mes.recentFiles[0]))) {
                 nRecent = (int)(sizeof(mes.recentFiles) / sizeof(mes.recentFiles[0]));
@@ -4187,7 +4220,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                               &ed->showTerrain, &ed->showTools,
                               &ed->showInspector, &ed->showObjects,
                               &ed->showOverview, &ed->showStatsPanel,
-                              &ed->showStampLibrary,
+                              &ed->showStampLibrary, &ed->showScenario,
                               ed->fromMainMenu,
                               ed->zoomStepIndex, (int)ZOOM_STEP_COUNT,
                               zoomSteps);
@@ -4272,6 +4305,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         if (menuAction.wantToggleOverview)     ed->showOverview     = !ed->showOverview;
         if (menuAction.wantToggleStats)        ed->showStatsPanel   = !ed->showStatsPanel;
         if (menuAction.wantToggleStampLibrary) ed->showStampLibrary = !ed->showStampLibrary;
+        if (menuAction.wantToggleScenario)     ed->showScenario     = !ed->showScenario;
         if (menuAction.wantZoomIn) {
             if (ed->zoomStepIndex < (int)ZOOM_STEP_COUNT - 1) ed->zoomStepIndex++;
             ed->zoomLevel = zoomSteps[ed->zoomStepIndex];
@@ -4349,7 +4383,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         }
         if (menuAction.openRecentIndex >= 0 && menuAction.openRecentIndex < ed->numRecentFiles) {
             const char *recentPath = ed->recentFiles[menuAction.openRecentIndex];
-            if (ed->dirty) {
+            if (ed->dirty || meScenarioDirty(&ed->scn)) {
                 SDL_strlcpy(ed->pendingOpenPath, recentPath, ME_PATH_MAX);
                 ed->deferredAction = FILE_OP_SAVE_THEN_OPEN;
                 openUnsavedModal = true;
@@ -4711,6 +4745,22 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             }
         }
 
+        /* Scenario script pane. The pane reports what was clicked; reading
+         * and writing the file happens here. */
+        if (ed->showScenario) {
+            bool wantScriptSave = false;
+            bool wantScriptReload = false;
+            mapEditorImguiScenarioScript(&ed->scn, ed->currentFilePath,
+                                         &ed->showScenario, &wantScriptSave,
+                                         &wantScriptReload);
+            if (wantScriptSave && ed->currentFilePath[0]) {
+                meScenarioSaveForMap(&ed->scn, ed->currentFilePath);
+            }
+            if (wantScriptReload) {
+                meScenarioReload(&ed->scn);
+            }
+        }
+
         /* Stamp library panel */
         if (ed->showStampLibrary) {
             bool wantSave = false;
@@ -4830,6 +4880,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
 
     /* Cleanup */
     stampLibraryFree(&ed->stampLib);
+    meScenarioFree(&ed->scn);
     imageImportFree(&ed->imageImportCfg);
     validateResultFree(&ed->lastValidation);
     macOSPinchZoomDestroy();

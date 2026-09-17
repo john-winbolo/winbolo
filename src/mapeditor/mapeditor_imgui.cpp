@@ -134,7 +134,7 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
                            bool *showTerrain, bool *showTools,
                            bool *showInspector, bool *showObjects,
                            bool *showOverview, bool *showStats,
-                           bool *showStampLibrary,
+                           bool *showStampLibrary, bool *showScenario,
                            bool fromMainMenu,
                            int zoomStepIndex, int zoomStepCount,
                            const float *zoomStepValues) {
@@ -150,7 +150,7 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
     (void)canUndo; (void)canRedo; (void)hasSelection;
     (void)showTerrain; (void)showTools; (void)showInspector;
     (void)showObjects; (void)showOverview; (void)showStats;
-    (void)showStampLibrary; (void)fromMainMenu;
+    (void)showStampLibrary; (void)showScenario; (void)fromMainMenu;
     (void)zoomStepIndex; (void)zoomStepCount; (void)zoomStepValues;
     return;
 #else
@@ -326,6 +326,7 @@ void mapEditorImguiMenuBar(MapEditorMenuAction *action,
             ImGui::MenuItem(langGetText(STR_MAPEDIT_WIN_OVERVIEW),  "Ctrl+5", showOverview);
             ImGui::MenuItem(langGetText(STR_MAPEDIT_WIN_STATS), "Ctrl+7", showStats);
             ImGui::MenuItem(langGetText(STR_MAPEDIT_WIN_STAMP_LIB), "Ctrl+6", showStampLibrary);
+            ImGui::MenuItem(langGetText(STR_MAPEDIT_SCENARIO_TITLE), "Ctrl+8", showScenario);
             ImGui::EndMenu();
         }
         ImGui::EndMainMenuBar();
