@@ -375,6 +375,20 @@ static void scnCheckLobby(const ScenarioManifest *m, ScnValidateResult *out) {
     }
 }
 
+/* What a set of rules would do, asked of the round where there is one and of
+ * the classic table where there is not. A rule's bounds belong to the field
+ * it is declared in rather than to a game, so the answer an editor gets with
+ * no sim is the answer the server gives with one. */
+static ScnOpResult scnCheckRuleSet(const ServerSim *sim, const uint16_t *rules,
+                                   const double *values, uint16_t count,
+                                   char *why, size_t whyLen) {
+    if (sim == NULL) {
+        return scenarioCheckRulesFromClassic(rules, values, count, why,
+                                             whyLen);
+    }
+    return serverSimCheckScenarioRules(sim, rules, values, count, why, whyLen);
+}
+
 /* Every rule the table sets, one at a time and then all at once. One at a
  * time says which rule an author has to move; all at once is what finds a
  * pair two of them break between them, where each on its own stands up. */
@@ -395,8 +409,7 @@ static void scnCheckRules(const ServerSim *sim, const ScenarioManifest *m,
         values[i] = m->rules[i].value;
 
         snprintf(key, sizeof(key), "rules.%s", name);
-        r = serverSimCheckScenarioRules(sim, &rules[i], &values[i], 1, why,
-                                        sizeof(why));
+        r = scnCheckRuleSet(sim, &rules[i], &values[i], 1, why, sizeof(why));
         if (r == SCN_OP_RANGE || r == SCN_OP_PAIR) {
             if (why[0] != '\0') {
                 scnIssueAdd(out, key, "%s", why);
@@ -415,7 +428,7 @@ static void scnCheckRules(const ServerSim *sim, const ScenarioManifest *m,
     if (i == 0) {
         return;
     }
-    r = serverSimCheckScenarioRules(sim, rules, values, i, why, sizeof(why));
+    r = scnCheckRuleSet(sim, rules, values, i, why, sizeof(why));
     /* Only a pair, and only one the pass above did not already name. A range
        is stated against the rule that carries it, and saying it again here
        under the whole table would be the same fault twice. */
@@ -577,11 +590,14 @@ static bool scnValidateSource(const ServerSim *sim, const char *src,
     scnCheckApi(&out->manifest, out);
     scnCheckGame(&out->manifest, out);
     scnCheckLobby(&out->manifest, out);
-    /* The two that read a map. Without one the table can still be checked for
-       everything it says about itself, which is what an editor holding a
-       script and no map has to work from. */
+    /* The rules are checked whether or not there is a map: a rule's bounds
+       and the pairs it sits in are the table's own, so the classic table
+       stands in for a round's. The tags are the check that genuinely reads
+       one — it asks how many pills and bases this map carries — so an editor
+       holding a script and no map is told about its rules and left to find
+       out about its tags when the script meets a map. */
+    scnCheckRules(sim, &out->manifest, out);
     if (sim != NULL) {
-        scnCheckRules(sim, &out->manifest, out);
         scnCheckTags(sim, &out->manifest, out);
     }
     scnCheckRegions(&out->manifest, out);

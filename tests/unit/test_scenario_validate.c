@@ -64,6 +64,9 @@
  *                                        — a script that declares its own
  *                                          table overwrites the pushed one, so
  *                                          the two still disagree by key
+ * run_scenario_validate_source_rule_range— a value outside its row's bounds is
+ *                                          refused with no sim to check it
+ *                                          against, and an in-range one passes
  */
 
 #include <stdint.h>
@@ -997,5 +1000,58 @@ int run_scenario_validate_source_pushed_conflict(void) {
                   "a script naming itself '%s' agreed with a manifest naming "
                   "it '%s'", r.manifest.name, pushed.name);
     UT_ASSERT_MSG(strcmp(key, "name") == 0, "the key named is '%s'", key);
+    return 0;
+}
+
+/* ── 20. A rule out of range with no sim ──────────────────────────── */
+
+/* The bounds a rule carries belong to the table the field is declared in, not
+   to a game, so the check needs no sim to make it. An editor holds a script
+   and no map; without this it was handed a table nobody had read the rules
+   of, and a value the server would refuse looked clean until the map was
+   hosted. */
+int run_scenario_validate_source_rule_range(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    /* 0..255 is the row's range, and the classic table is what it is stated
+       against. */
+    static const char *const kOver =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  rules = { tank_reload_ticks = 999 },\n"
+        "}\n";
+    static const char *const kIn =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  rules = { tank_reload_ticks = 20 },\n"
+        "}\n";
+    ScnValidateResult       r;
+    const ScnValidateIssue *issue;
+    char                    seen[1024];
+
+    UT_ASSERT_MSG(
+        !scenarioValidateSource(NULL, kOver, strlen(kOver), kName, NULL, &r),
+        "a value past the rule's range was accepted with no sim");
+    svList(&r, seen, sizeof(seen));
+    issue = svFind(&r, "rules.tank_reload_ticks");
+    UT_ASSERT_MSG(issue != NULL, "no issue under the rule's key: %s", seen);
+    UT_ASSERT_MSG(strstr(issue->message, "tank_reload_ticks") != NULL,
+                  "the message does not name the rule: %s", issue->message);
+    UT_ASSERT_MSG(strstr(issue->message, "0..255") != NULL,
+                  "the message does not carry the bounds: %s", issue->message);
+
+    /* Said once, against the rule that carries it, as it is with a sim. */
+    UT_ASSERT_MSG(svFind(&r, "rules") == NULL,
+                  "the range was reported against the whole table as well");
+    UT_ASSERT_MSG(r.count == 1, "%u issues against one rule out of range: %s",
+                  (unsigned)r.count, seen);
+
+    /* And a table the same shape with a value the row holds is clean, so what
+       the check refuses is the value rather than the missing sim. */
+    if (!scenarioValidateSource(NULL, kIn, strlen(kIn), kName, NULL, &r)) {
+        svList(&r, seen, sizeof(seen));
+        UT_FAIL("a rule inside its range was refused: %s", seen);
+    }
+    UT_ASSERT_MSG(r.count == 0, "%u issues against a table with nothing "
+                  "wrong: %s", (unsigned)r.count, seen);
     return 0;
 }

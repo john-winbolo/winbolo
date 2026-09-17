@@ -5723,6 +5723,7 @@ set(_unit_test_names
     scenario_validate_source_matches_file
     scenario_validate_source_pushed_manifest
     scenario_validate_source_pushed_conflict
+    scenario_validate_source_rule_range
     scenario_lua_every_row_answers
     scenario_lua_read_index_passes_through
     scenario_lua_op_index_subtracts_one

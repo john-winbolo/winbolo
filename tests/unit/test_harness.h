@@ -2834,6 +2834,7 @@ int run_scenario_validate_source_bad_key(void);
 int run_scenario_validate_source_matches_file(void);
 int run_scenario_validate_source_pushed_manifest(void);
 int run_scenario_validate_source_pushed_conflict(void);
+int run_scenario_validate_source_rule_range(void);
 
 /* The binding table (test_scenario_lua.c): every row of the registry
  * called once, the three index rules, the nils an absent entity reads
