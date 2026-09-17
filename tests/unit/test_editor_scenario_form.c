@@ -33,6 +33,10 @@
  * run_editor_form_regions     — add, edit and remove keeping the array packed,
  *                               the rectangle clamped on to the map, and the
  *                               SCN_REGIONS_MAX bound
+ * run_editor_form_dirty_flag  — the flag the editor's unsaved-changes prompt
+ *                               reads: clear on an empty form, set by a rule, a
+ *                               team, a tag and a region alike, and clear again
+ *                               after the reset a map change does
  */
 
 #include <math.h>
@@ -465,6 +469,48 @@ int run_editor_form_regions(void) {
     UT_ASSERT(meScenarioFormAddTag(&f, ME_SCENARIO_TAG_START, 2, "c"));
     UT_ASSERT_MSG(meScenarioFormTagCount(&f) == 3, "%d tags counted",
                   meScenarioFormTagCount(&f));
+
+    return 0;
+}
+
+int run_editor_form_dirty_flag(void) {
+    MEScenarioForm f;
+
+    /* The editor asks this flag whether a New, an Open or an Exit would throw
+     * the forms away, so an empty form has to answer no and every kind of edit
+     * has to answer yes. Each one is checked from a form of its own, so a set
+     * flag is the edit above it and not one left over. */
+    meScenarioFormInit(&f);
+    UT_ASSERT(!meScenarioFormDirty(&f));
+
+    /* A rule, from the rules form. */
+    UT_ASSERT(meScenarioFormSetRule(&f, SIM_RULE_tank_reload_ticks, 2.0));
+    UT_ASSERT(meScenarioFormDirty(&f));
+
+    /* The reset a map change does puts it back. */
+    meScenarioFormReset(&f);
+    UT_ASSERT(!meScenarioFormDirty(&f));
+
+    /* A team, from the lobby form. */
+    UT_ASSERT(meScenarioFormAddTeam(&f));
+    UT_ASSERT(meScenarioFormDirty(&f));
+
+    meScenarioFormReset(&f);
+    UT_ASSERT(!meScenarioFormDirty(&f));
+
+    /* A tag, from the tags view. */
+    UT_ASSERT(meScenarioFormAddTag(&f, ME_SCENARIO_TAG_PILL, 0, "spawn"));
+    UT_ASSERT(meScenarioFormDirty(&f));
+
+    meScenarioFormReset(&f);
+    UT_ASSERT(!meScenarioFormDirty(&f));
+
+    /* And a region, from the same view. */
+    UT_ASSERT(meScenarioFormAddRegion(&f, "north", 10, 10, 4, 4));
+    UT_ASSERT(meScenarioFormDirty(&f));
+
+    meScenarioFormReset(&f);
+    UT_ASSERT(!meScenarioFormDirty(&f));
 
     return 0;
 }

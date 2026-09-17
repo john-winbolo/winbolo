@@ -3083,6 +3083,7 @@ int run_editor_form_rule_change(void);
 int run_editor_form_tag_indices(void);
 int run_editor_form_tags(void);
 int run_editor_form_regions(void);
+int run_editor_form_dirty_flag(void);
 
 /* The editor writing a scenario out (test_editor_scenario_pack.c): the chunk
  * on to the map and the standalone .scenario a mod is, both read back through

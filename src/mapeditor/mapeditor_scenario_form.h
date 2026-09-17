@@ -13,12 +13,10 @@
  *   mapeditor_scenario_imgui.cpp is a view over it the way
  *   the script pane is a view over MEScenarioState.
  *
- *   Nothing here reads or writes anything. There is no
- *   container to put a manifest in yet, so the form is
- *   emptied whenever the map changes and is deliberately
- *   left out of the editor's unsaved-changes checks:
- *   prompting to save what cannot be saved is worse than
- *   not prompting at all.
+ *   Nothing here reads or writes anything. Pack into Map
+ *   is what puts the manifest in a container, so the form
+ *   is emptied whenever the map changes and its dirty flag
+ *   counts as unsaved work until that pack has run.
  *
  *   The manifest records what the author set and nothing
  *   else. A rule typed back to its classic value stays in

@@ -292,9 +292,10 @@ typedef struct {
 
     /* --- Scenario panel --- */
     MEScenarioState scn;
-    /* The manifest the panel's metadata, lobby and rules forms edit. There is
-     * nowhere to write it yet, so it is emptied whenever the map changes and
-     * is deliberately not part of any unsaved-changes check. */
+    /* The manifest the panel's metadata, lobby and rules forms edit. Pack into
+     * Map is where it goes, so edits in it are unsaved work like any other and
+     * count towards the unsaved-changes prompt. Emptied whenever the map
+     * changes. */
     MEScenarioForm scnForm;
     /* What the validator last said about the script in the pane. Emptied
      * whenever the map changes or the script is re-read, so the markers never
@@ -3029,9 +3030,18 @@ static void meDeleteSelectedObj(MapEditorState *ed) {
  * after an unsaved-changes modal resolves.
  * ------------------------------------------------------- */
 
+/* Everything a New, an Open or an Exit would throw away: the map itself, the
+ * script in the pane and the manifest behind the metadata, lobby and rules
+ * forms. Every site that asks whether to prompt asks this, so all of them
+ * count the same three. */
+static bool meAnythingDirty(const MapEditorState *ed) {
+    return ed->dirty || meScenarioDirty(&ed->scn) ||
+           meScenarioFormDirty(&ed->scnForm);
+}
+
 /* Begin "New" — checks dirty flag, may open modal. */
 static void meActionNew(MapEditorState *ed) {
-    if (ed->dirty || meScenarioDirty(&ed->scn)) {
+    if (meAnythingDirty(ed)) {
         ed->deferredAction = FILE_OP_SAVE_THEN_NEW;
         /* The modal will be opened by the main loop via OpenPopup */
     } else {
@@ -3042,7 +3052,7 @@ static void meActionNew(MapEditorState *ed) {
 /* Begin "Open" — checks dirty flag, may open modal. */
 static void meActionOpen(MapEditorState *ed) {
     ed->pendingOpenPath[0] = '\0';
-    if (ed->dirty || meScenarioDirty(&ed->scn)) {
+    if (meAnythingDirty(ed)) {
         ed->deferredAction = FILE_OP_SAVE_THEN_OPEN;
     } else {
         meShowOpenDialog(ed, FILE_OP_OPEN);
@@ -3053,7 +3063,7 @@ static void meActionOpen(MapEditorState *ed) {
 /* Begin "Open from WinBolo.net" — checks dirty flag, may open modal. */
 static void meActionOpenWbn(MapEditorState *ed) {
     ed->pendingOpenPath[0] = '\0';
-    if (ed->dirty || meScenarioDirty(&ed->scn)) {
+    if (meAnythingDirty(ed)) {
         ed->deferredAction = FILE_OP_SAVE_THEN_OPEN_WBN;
     } else {
         meWbnOpenShow();
@@ -3077,7 +3087,7 @@ static void meActionSaveAs(MapEditorState *ed) {
 
 /* Begin "Exit" — checks dirty flag, may open modal. */
 static void meActionExit(MapEditorState *ed) {
-    if (ed->dirty || meScenarioDirty(&ed->scn)) {
+    if (meAnythingDirty(ed)) {
         ed->deferredAction = FILE_OP_SAVE_THEN_EXIT;
     } else {
         ed->quit = true;
@@ -3230,6 +3240,30 @@ static void meWriteScenario(MapEditorState *ed, const char *modPath) {
     }
 }
 
+/* The save behind the unsaved-changes prompt's Yes: the map to path, and then
+ * the forms' manifest on to it when the author has edits in them.
+ *
+ * The pack runs after meSaveToPath has returned rather than inside it, because
+ * mapWrite truncates the file and meScenarioPackedRestore then puts the
+ * container the map came with back on the end; a pack from inside would be the
+ * one written over. meWriteScenario says on the panel's status line what it did
+ * and clears the form only when the write went through, so a form still dirty
+ * afterwards is a refusal. That is a save that did not finish: the caller drops
+ * the New, Open or Exit it was saving for, and the reason goes to the error
+ * popup the way a script that would not write does. */
+static bool meSaveAndPackForm(MapEditorState *ed, const char *path) {
+    if (!meSaveToPath(ed, path)) return false;
+    if (!meScenarioFormDirty(&ed->scnForm)) return true;
+
+    meWriteScenario(ed, NULL);
+    if (meScenarioFormDirty(&ed->scnForm)) {
+        snprintf(ed->errorMessage, sizeof(ed->errorMessage), "%s\n%s",
+                 ed->scn.status, path);
+        return false;
+    }
+    return true;
+}
+
 /* Process a completed file dialog result. */
 static void meHandleFileDialogResult(MapEditorState *ed) {
     ed->fileDialogGotResult = false;
@@ -3250,24 +3284,24 @@ static void meHandleFileDialogResult(MapEditorState *ed) {
         meSaveToPath(ed, path);
         break;
     case FILE_OP_SAVE_THEN_NEW:
-        if (meSaveToPath(ed, path)) {
+        if (meSaveAndPackForm(ed, path)) {
             meDoNew(ed);
         }
         break;
     case FILE_OP_SAVE_THEN_OPEN:
-        if (meSaveToPath(ed, path)) {
+        if (meSaveAndPackForm(ed, path)) {
             meShowOpenDialog(ed, FILE_OP_OPEN);
         }
         break;
 #ifdef MAPEDITOR_WBN_OPEN
     case FILE_OP_SAVE_THEN_OPEN_WBN:
-        if (meSaveToPath(ed, path)) {
+        if (meSaveAndPackForm(ed, path)) {
             meWbnOpenShow();
         }
         break;
 #endif
     case FILE_OP_SAVE_THEN_EXIT:
-        if (meSaveToPath(ed, path)) {
+        if (meSaveAndPackForm(ed, path)) {
             ed->quit = true;
         }
         break;
@@ -3297,7 +3331,8 @@ static void meHandleUnsavedChoice(MapEditorState *ed, int choice) {
     if (choice == 1) {
         /* Yes — save first */
         if (ed->currentFilePath[0]) {
-            if (!meSaveToPath(ed, ed->currentFilePath)) return;
+            /* The map and, when the forms hold edits, the manifest with it. */
+            if (!meSaveAndPackForm(ed, ed->currentFilePath)) return;
             /* Save succeeded, now do the deferred action */
         } else {
             /* No current path — need Save As dialog, keep deferred action */
@@ -3721,7 +3756,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                  * application, embedded as well as standalone — the way back
                  * to WinBolo is File > Return to Menu, or Escape. */
                 ed->exitIsAppQuit = true;
-                if (ed->dirty || meScenarioDirty(&ed->scn)) {
+                if (meAnythingDirty(ed)) {
                     ed->deferredAction = FILE_OP_SAVE_THEN_EXIT;
                     openUnsavedModal = true;
                 } else {
@@ -4362,7 +4397,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             case SDL_EVENT_DROP_FILE: {
                 const char *dropPath = ev.drop.data;
                 if (dropPath) {
-                    if (ed->dirty || meScenarioDirty(&ed->scn)) {
+                    if (meAnythingDirty(ed)) {
                         SDL_strlcpy(ed->pendingOpenPath, dropPath, ME_PATH_MAX);
                         ed->deferredAction = FILE_OP_SAVE_THEN_OPEN;
                         openUnsavedModal = true;
@@ -4767,7 +4802,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         }
         if (menuAction.openRecentIndex >= 0 && menuAction.openRecentIndex < ed->numRecentFiles) {
             const char *recentPath = ed->recentFiles[menuAction.openRecentIndex];
-            if (ed->dirty || meScenarioDirty(&ed->scn)) {
+            if (meAnythingDirty(ed)) {
                 SDL_strlcpy(ed->pendingOpenPath, recentPath, ME_PATH_MAX);
                 ed->deferredAction = FILE_OP_SAVE_THEN_OPEN;
                 openUnsavedModal = true;
