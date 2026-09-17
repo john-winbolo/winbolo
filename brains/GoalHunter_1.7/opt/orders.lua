@@ -225,11 +225,17 @@ local VERBS = {
 local WHOWORDS = { all = true, nearby = true, last = true }
 local PILLWORDS = { pill = true, pills = true, pillbox = true, pillboxes = true }
 local BASEWORDS = { base = true, bases = true }
+-- THE TARGET WORD `closest`: the pill nearest the PERSON WHO TYPED THE LINE,
+-- not the pill nearest any bot.  "attack closest" is the shortest way to say
+-- "the one in front of me" and it is the only target word that needs the
+-- sender's own position, so it is resolved in on_chat (M.closest_pill) rather
+-- than here -- the parser only marks the line.
+local CLOSESTWORDS = { closest = true, nearest = true }
 -- Team-wide SETTINGS, not orders: no target, no auction and no 60 s timer,
 -- and `cancel all` does not touch them.  `take` is the focus alias.
 local SETTINGWORDS = {
   focus = true, take = true, reposition = true, repositioning = true,
-  help = true, bot = true, botpings = true,
+  help = true, bot = true, botpings = true, botchat = true,
 }
 
 -- roster = ally BOTS (for `who` and for `cancel <bot name>`)
@@ -336,9 +342,15 @@ function M.parse(text, roster, all_roster)
   --     an order: there has to be a verb in it, and every word in front of
   --     that verb has to be a name or a who-word ("socrtes attack 5").
   --   * a forced "!" line skips the gate entirely, as it always did.
+  --
+  -- A LEADING NUMBER opens the gate only when a VERB follows it immediately:
+  -- "4 attack 5" is the count who-word, and "5 more shells please" is chat.
+  -- The count is read as a who-word further down, where a bot NAMED with
+  -- digits still wins over it.
   if not forced then
     local ok1 = VERBS[toks[1]] or WHOWORDS[toks[1]] or SETTINGWORDS[toks[1]]
                 or toks[1] == "nevermind" or toks[1] == "never"
+                or (toks[1]:match("^%d+$") ~= nil and VERBS[toks[2] or ""] ~= nil)
     if not ok1 then
       local p1, e1 = M.match_name(toks[1], roster, true)   -- no fuzzy tier
       ok1 = (p1 ~= nil) or (e1 == "ambiguous")
@@ -380,7 +392,7 @@ function M.parse(text, roster, all_roster)
   for i = 2, #toks do
     if toks[i] == "focus" or toks[i] == "reposition"
        or toks[i] == "repositioning" or toks[i] == "bot"
-       or toks[i] == "botpings" then
+       or toks[i] == "botpings" or toks[i] == "botchat" then
       local subject_ok = true
       for j = 1, i - 1 do
         if not WHOWORDS[toks[j]] and M.match_name(toks[j], roster) == nil then
@@ -415,6 +427,19 @@ function M.parse(text, roster, all_roster)
     local w = (toks[si] == "botpings") and toks[si + 1] or toks[si + 2]
     if w == "on"  then return { setting = "bot_pings", value = true  } end
     if w == "off" then return { setting = "bot_pings", value = false } end
+    return { reply = "didn't understand" }
+  end
+  -- "bot chat on|off" — the second latch, written the same two ways.  It is
+  -- about the bots' SPOKEN goal confirmations ("Got it! attack_pill #5", the
+  -- group ack, "Still on it.", "holding 10s"); the answers a person is owed
+  -- for a line they just typed (help, "didn't understand", "Busy", the
+  -- setting confirmations themselves) are never silenced, or turning chat off
+  -- would look exactly like the bots going deaf.
+  if toks[si] == "botchat"
+     or (toks[si] == "bot" and toks[si + 1] == "chat") then
+    local w = (toks[si] == "botchat") and toks[si + 1] or toks[si + 2]
+    if w == "on"  then return { setting = "bot_chat", value = true  } end
+    if w == "off" then return { setting = "bot_chat", value = false } end
     return { reply = "didn't understand" }
   end
 
@@ -466,6 +491,17 @@ function M.parse(text, roster, all_roster)
     end
     if vi == 2 and WHOWORDS[toks[1]] then
       who = { mode = toks[1] }
+    -- ── A COUNT is the fourth who-word: "4 attack 5" ────────────────────
+    -- N bots, and which N is decided by the auction that is already there:
+    -- it ranks every free bot by travel price to the TARGET, so the N
+    -- cheapest are the N closest and `want` is simply set to N.  A bot whose
+    -- NAME is digits still wins the slot -- the name test runs first -- so a
+    -- team with a bot called "4" behaves as it always did.
+    elseif vi == 2 and toks[1]:match("^%d+$")
+           and M.match_name(toks[1], roster, true) == nil then
+      local n = tonumber(toks[1])
+      if not n or n < 1 or n > 16 then return { reply = "didn't understand" } end
+      who = { mode = "count", n = math.floor(n) }
     else
       local pns = {}
       for i = 1, vi - 1 do
@@ -487,7 +523,21 @@ function M.parse(text, roster, all_roster)
   for i = vi + 1, #toks do tt[#tt + 1] = toks[i] end
   local tgt = nil
   if #tt > 0 then
-    if PILLWORDS[tt[1]] then
+    -- ── "closest" — THE PILL NEAREST THE SENDER ─────────────────────────
+    -- "attack closest", "attack closest pill" and "attack pill closest" are
+    -- one thing.  It is always a PILL: a base has a number on the map the
+    -- same way a pill does and "closest base" would have to guess which
+    -- kind of base, so it is turned down in words rather than redirected.
+    -- The pill itself is picked in on_chat, where the sender is known.
+    if CLOSESTWORDS[tt[1]] and (#tt == 1 or PILLWORDS[tt[2]]) then
+      tgt = { kind = "pill", closest = true }
+    elseif PILLWORDS[tt[1]] and CLOSESTWORDS[tt[2]] then
+      tgt = { kind = "pill", closest = true }
+    elseif CLOSESTWORDS[tt[1]] and BASEWORDS[tt[2]] then
+      return { reply = "closest takes a pill" }
+    elseif BASEWORDS[tt[1]] and CLOSESTWORDS[tt[2]] then
+      return { reply = "closest takes a pill" }
+    elseif PILLWORDS[tt[1]] then
       local id = tonumber(tt[2])
       if not id then return { reply = "didn't understand" } end
       tgt = { kind = "pill", id = id }
@@ -566,6 +616,11 @@ end
 function M.order_id(sender, cmd)
   local w = cmd.who or {}
   local wk = w.mode or "auto"
+  -- A COUNT IS AN AUCTION WITH A BIGGER `want`, NOT A DIFFERENT JOB.  "attack
+  -- 5" and "4 attack 5" name one job on pill 5, so they share an id: the
+  -- second line grows the first order the way a repeat ping does, instead of
+  -- opening a rival order the holders would announce they were leaving for.
+  if wk == "count" then wk = "auto" end
   if w.pns then
     local c = {}
     for i = 1, #w.pns do c[i] = w.pns[i] end
@@ -702,6 +757,15 @@ local function S(state)
           -- "bot pings on|off".  nil = nobody has said either, so the game
           -- runs on C.BOT_PINGS_DEFAULT.  Read through M.bot_pings_on.
           bot_pings = nil,
+          -- "bot chat on|off".  Same shape, over C.BOT_CHAT_DEFAULT, and read
+          -- through M.bot_chat_on.  It gates the SPOKEN goal confirmations
+          -- only (sayg below); a reply a person is owed still goes out.
+          bot_chat = nil,
+          -- seen[pn] = { mx, my, tick }: where an allied HUMAN's tank was the
+          -- last time this bot could see it.  Filled once per think from
+          -- info.objects, and read only by M.closest_pill, which needs the
+          -- tile of the person who typed "attack closest".
+          seen = {},
           -- Smart pings this bot wants the engine to place, oldest first.
           -- init.lua drains ONE per think into the think output, which is
           -- all the engine accepts; the engine drops extras anyway, so the
@@ -748,6 +812,91 @@ local function say(state, line)
   o.say[#o.say + 1] = line
   while #o.say > 6 do table.remove(o.say, 1) end
 end
+
+-- A GOAL CONFIRMATION — the bot saying what it is doing about a job.  These
+-- are the lines "bot chat off" silences, and the only ones: an answer a
+-- person is owed for the line they just typed goes through plain say().
+-- The latch is read here, at the one choke point, so a new confirmation
+-- anywhere in this file obeys it by using sayg instead of say.
+local function sayg(state, line)
+  if not M.bot_chat_on(state) then return end
+  say(state, line)
+end
+
+-- =========================================================================
+-- "closest" — THE PILL NEAREST THE PERSON WHO TYPED THE LINE
+--
+-- The sender's tile comes from the engine's object scan (an allied tank
+-- carries its player number in ob.idnum), and from o.seen when the sender is
+-- out of this bot's sight -- a human who ducked behind a forest between
+-- typing and the think should still get an answer.  With neither, the bot
+-- cannot know what "closest" means and says so once, through the speaker.
+--
+-- WHICH PILLS COUNT depends on the verb, because the other reading is always
+-- wrong: "attack closest" standing on our own pillbox must not order an
+-- attack on it, and "defend closest" must not pick an enemy one.  So attack
+-- and capture look at pills that are NOT ours, defend looks at ours.
+--
+-- TIES BREAK ON THE LOWEST PILL NUMBER so two bots that see the sender on the
+-- same tile always name the same pill, and with it the same order id.
+function M.sender_tile(state, info, sender)
+  local o = S(state)
+  if sender == state.player_number and info.tankx then
+    return bit.rshift(info.tankx, 8), bit.rshift(info.tanky or 0, 8)
+  end
+  local OT = _G.OBJECT_TANK
+  local OH = _G.OBJECT_HOSTILE or 0
+  for _, ob in ipairs(info.objects or {}) do
+    if ob.type == OT and ob.idnum == sender
+       and bit.band(ob.info or 0, OH) == 0 then
+      return bit.rshift(ob.x or 0, 8), bit.rshift(ob.y or 0, 8)
+    end
+  end
+  local s = o.seen[sender]
+  if s then return s.mx, s.my end
+  return nil, nil
+end
+
+-- Refresh o.seen for every allied tank this bot can see.  One pass over the
+-- object list per think; the list is short and this is the only place the
+-- sender's position can be remembered from.
+function M.note_seen(state, info, now)
+  local OT = _G.OBJECT_TANK
+  local OH = _G.OBJECT_HOSTILE or 0
+  local allies = info.allies or 0
+  local o = S(state)
+  for _, ob in ipairs(info.objects or {}) do
+    local pn = ob.idnum or -1
+    if ob.type == OT and pn >= 0 and bit.band(ob.info or 0, OH) == 0
+       and bit.band(allies, bit.lshift(1, pn)) ~= 0 then
+      o.seen[pn] = { mx = bit.rshift(ob.x or 0, 8),
+                     my = bit.rshift(ob.y or 0, 8), tick = now }
+    end
+  end
+end
+
+-- Returns pill id, or nil plus the line to say.
+function M.closest_pill(state, world, info, sender, verb)
+  local smx, smy = M.sender_tile(state, info, sender)
+  if not smx then return nil, "can't see you" end
+  local want_ours = (verb == "defend")
+  local best, bestd
+  for id, p in pairs(world.pills or {}) do
+    local ours = (p.owner == "friendly")
+    if ours == want_ours and p.mx then
+      local dx, dy = p.mx - smx, p.my - smy
+      local d = dx * dx + dy * dy
+      if not best or d < bestd or (d == bestd and id < best) then
+        best, bestd = id, d
+      end
+    end
+  end
+  if not best then
+    return nil, want_ours and "no pill of ours known" or "no pill to take known"
+  end
+  return best
+end
+
 
 -- =========================================================================
 -- SMART PINGS THE BOT PLACES ITSELF
@@ -951,6 +1100,12 @@ function M.rx(sender, text, tick, state)
     o.rx[#o.rx + 1] = { kind = "bpings", value = tonumber(g), from = sender, tick = tick }
     return true
   end
+  local h = text:match("^/info obh (%d)$")
+  if h then
+    local o = S(state)
+    o.rx[#o.rx + 1] = { kind = "bchat", value = tonumber(h), from = sender, tick = tick }
+    return true
+  end
   oid = text:match("^/info obr (%d+)$")
   if oid then
     local o = S(state)
@@ -1079,7 +1234,7 @@ local function release_held(state, info, why, quiet, cancelled)
     tx(state, string.format("/info obr %d", h.oid))
   end
   if not quiet then
-    say(state, why or "Released")
+    sayg(state, why or "Released")
   end
 end
 M.release_held = release_held
@@ -1132,7 +1287,7 @@ local function take_order(state, world, info, spec, cost, now, group, stolen)
   if o.held and o.held.oid ~= spec.oid then
     -- Latest order wins.  Say what we are leaving so the human can follow it.
     local old = o.held
-    say(state, string.format("Leaving %s for %s",
+    sayg(state, string.format("Leaving %s for %s",
         goal_label(old.kind, old.tid), goal_label(spec.kind, spec.tid)))
     release_held(state, info, nil, true)
   end
@@ -1160,7 +1315,7 @@ local function take_order(state, world, info, spec, cost, now, group, stolen)
   if group then
     o.announce[spec.oid] = { due = now + (C.ORDER_AUCTION_TICKS or 10), spec = spec }
   else
-    say(state, string.format("%s %s", M.ack_for(my_name(state, info)),
+    sayg(state, string.format("%s %s", M.ack_for(my_name(state, info)),
         goal_label(spec.kind, spec.tid)))
   end
   -- "ON MY WAY" — one marker on the place the order names, at the moment the
@@ -1199,10 +1354,10 @@ local function repeat_ack(state, info, oid, now)
   end
   if n > 1 then
     if low ~= me then return end
-    say(state, string.format("Still on it. %d on %s", n,
+    sayg(state, string.format("Still on it. %d on %s", n,
                              group_label(h.kind, h.tkind, h.tid)))
   else
-    say(state, string.format("Still on it. %s", goal_label(h.kind, h.tid)))
+    sayg(state, string.format("Still on it. %s", goal_label(h.kind, h.tid)))
   end
   o.rack = now
 end
@@ -1224,9 +1379,12 @@ end
 -- Chat max on the wire is PACKET_MAX_CHAT_MESSAGE = 128 bytes
 -- (src/bolo/public/wire_limits.h) and both help lines are longer than that,
 -- so each is split at a comma.  Four chunks, one per tick.
+-- `N` is the count who-word and `closest` the sender-relative target; `decoy`
+-- came out of line 1 to make room, because it is the one verb that is not
+-- built yet and answers "decoy: not yet" when it is asked for.
 M.HELP = {
-  "Orders: [all|nearby|last|bot name, default nearest] attack|capture|sweep|decoy <pill#|base#|tank name>, defend <pill#>,",
-  "retreat, cancel [all|bot name], focus bases|pills|off, reposition on|off, bot pings on|off",
+  "Orders: [all|nearby|last|N|bot name, default nearest] attack|capture|sweep <pill#|base#|closest|tank name>, defend <pill#>,",
+  "retreat, cancel [all|bot name], focus bases|pills|off, reposition on|off, bot pings on|off, bot chat on|off",
   "Ping a tile: nearest bot goes, ping again adds one. Ping bots to select them,",
   "then order. Caution ping cancels; caution on a bot retreats it. 3 shots on a tile: come here.",
 }
@@ -1256,6 +1414,10 @@ local function set_bot_pings(state, on)
   local o = S(state)
   o.bot_pings = on
 end
+local function set_bot_chat(state, on)
+  local o = S(state)
+  o.bot_chat = on
+end
 
 -- Is the team taking bot ATTACK markers?  Nobody has said either way until
 -- o.bot_pings is set, and then the game runs on the knob.
@@ -1263,6 +1425,16 @@ function M.bot_pings_on(state)
   local o = state and state.orders
   if o and o.bot_pings ~= nil then return o.bot_pings end
   return C.BOT_PINGS_DEFAULT and true or false
+end
+
+-- Are the bots SPEAKING their goal confirmations?  On until somebody says
+-- "bot chat off", which is what the game has always done, so the knob's
+-- default is true.  Read through sayg, never directly.
+function M.bot_chat_on(state)
+  local o = state and state.orders
+  if o and o.bot_chat ~= nil then return o.bot_chat end
+  if C.BOT_CHAT_DEFAULT == nil then return true end
+  return C.BOT_CHAT_DEFAULT and true or false
 end
 
 -- ATTACK MARKER, on every goal change to an attack.  init.lua calls this at
@@ -1609,6 +1781,19 @@ function M.on_chat(state, world, info, sender, text, now, from_ally, sender_is_b
     end
     return true
   end
+  -- "bot chat on|off".  The confirmation of this one goes out through plain
+  -- say(): a person who has just turned the chat off is owed the word that it
+  -- IS off, and silencing that line would be indistinguishable from the bots
+  -- never hearing it.  The latch is set before the line is queued, so "off"
+  -- is the last thing said and "on" is the first.
+  if cmd.setting == "bot_chat" then
+    set_bot_chat(state, cmd.value)
+    if M.speaker(state, info) == me then
+      say(state, cmd.value and "Bot chat on." or "Bot chat off.")
+      tx(state, string.format("/info obh %d", cmd.value and 1 or 0))
+    end
+    return true
+  end
 
   if cmd.reply then
     -- One bot answers, not all of them: the lowest player number among the
@@ -1696,6 +1881,18 @@ function M.on_chat(state, world, info, sender, text, now, from_ally, sender_is_b
     release_held(state, info, nil, true, true)
   end
 
+  -- ── "closest" becomes a pill NUMBER before anything else reads it ─────
+  -- The order id, the auction and every ack are built from the resolved
+  -- number, so from here on a closest order is an ordinary pill order.
+  if cmd.target and cmd.target.closest then
+    local id, why = M.closest_pill(state, world, info, sender, cmd.verb)
+    if not id then
+      if M.speaker(state, info) == me then say(state, why) end
+      return true
+    end
+    cmd.target = { kind = "pill", id = id }
+  end
+
   -- ── build the order spec ──────────────────────────────────────────────
   local kind, needs_shells, tid, err = M.goal_kind(cmd, world, info)
   if err then
@@ -1736,14 +1933,28 @@ function M.on_chat(state, world, info, sender, text, now, from_ally, sender_is_b
   o.known[spec.oid] = { spec = spec, tick = now }
   note_last(o, sender, spec.oid)
 
+  -- HOW MANY BOTS THE LINE IS FOR.  One, unless a count who-word said more.
+  local want = 1
+  if who.mode == "count" then want = who.n or 1 end
+
   -- Repeat of a live order we already hold = refresh the 60 s focus.
+  -- A COUNT LINE IS NOT JUST A REPEAT: "4 attack 5" said to a bot that
+  -- already holds the order on pill 5 has to re-open the auction for the
+  -- three slots still empty, exactly as a repeat ping does.  The bots that
+  -- hold it are excluded at settle time, so this only fills what is open.
   if o.held and o.held.oid == spec.oid then
     o.held.expiry = now + (C.ORDER_FOCUS_TICKS or 3000)
-    repeat_ack(state, info, spec.oid, now)
+    if want <= 1 then
+      repeat_ack(state, info, spec.oid, now)
+      return true
+    end
+    start_order(state, world, info, spec, who, now, want)
+    local au = o.auctions[spec.oid]
+    if au then au.repeated = true end
     return true
   end
 
-  return start_order(state, world, info, spec, who, now)
+  return start_order(state, world, info, spec, who, now, want)
 end
 
 -- =========================================================================
@@ -1982,6 +2193,11 @@ function M.update(state, world, info, now)
   local o = S(state)
   local me = state.player_number
 
+  -- 0. Remember where the allied tanks are, so "attack closest" has a tile
+  --    to measure from even when the person who typed it has just driven out
+  --    of sight.  One short pass; see M.note_seen.
+  M.note_seen(state, info, now)
+
   -- 1. Drain the inbound verbs.
   for _, r in ipairs(o.rx) do
     if r.kind == "bid" then
@@ -2009,6 +2225,8 @@ function M.update(state, world, info, now)
       set_repo(state, r.value == 1)
     elseif r.kind == "bpings" then
       set_bot_pings(state, r.value == 1)
+    elseif r.kind == "bchat" then
+      set_bot_chat(state, r.value == 1)
     elseif r.kind == "cancel" then
       -- THE ORDER IS OVER.  Drop our own hold on it as well: the human who
       -- cancelled it named one bot, and on a group order the rest have to let
@@ -2100,10 +2318,10 @@ function M.update(state, world, info, now)
       end
       if low == me and n > 0 and o.held and o.held.oid == oid then
         if n > 1 then
-          say(state, string.format("%d on %s", n,
+          sayg(state, string.format("%d on %s", n,
               group_label(an.spec.kind, an.spec.tkind, an.spec.tid)))
         else
-          say(state, string.format("%s %s", M.ack_for(my_name(state, info)),
+          sayg(state, string.format("%s %s", M.ack_for(my_name(state, info)),
               goal_label(an.spec.kind, an.spec.tid)))
         end
       end
@@ -2167,7 +2385,7 @@ function M.update(state, world, info, now)
         h.arrived = now
         h.hold    = true
         h.expiry  = now + hold
-        say(state, string.format("holding %ds", math.floor(hold / 50)))
+        sayg(state, string.format("holding %ds", math.floor(hold / 50)))
         -- The hard lock goes the moment the hold starts, so goal selection is
         -- free to answer an enemy tank from this same tick.
         goto_lock(state)
@@ -2256,7 +2474,7 @@ function M.update(state, world, info, now)
     -- arriving is the START of the hold (it sets the ten-second clock above),
     -- not the end of the order.
     if done then
-      if why then say(state, why) end
+      if why then sayg(state, why) end
       -- A FINISHED ORDER IS CANCELLED, NOT HANDED BACK.  Every reason above
       -- is "there is nothing left to go and do": the pill is ours, the base
       -- is ours, the tank is gone, the clock ran out, the hold is served.  An
@@ -2273,7 +2491,7 @@ function M.update(state, world, info, now)
     local low = (info.shells or 0) < (C.SHELLS_LOW or 20)
     if low and not h.refuel_said then
       h.refuel_said = true
-      say(state, "Refuelling, coming back")
+      sayg(state, "Refuelling, coming back")
     elseif not low then
       h.refuel_said = nil
     end
@@ -2302,7 +2520,7 @@ function M.update(state, world, info, now)
     -- Re-broadcast the team settings so a bot that joined or respawned late
     -- latches the same values. They ride their own verbs rather than the
     -- /info state slate, which is already close to the 124-byte batch budget.
-    if (o.focus or o.repo_on ~= nil or o.bot_pings ~= nil)
+    if (o.focus or o.repo_on ~= nil or o.bot_pings ~= nil or o.bot_chat ~= nil)
        and now >= (o.latch_tx or 0) then
       o.latch_tx = now + (C.ORDER_LATCH_REBROADCAST_TICKS or 1500)
       tx(state, string.format("/info obf %d", FOCUS_CODE[o.focus or "off"] or 0))
@@ -2311,6 +2529,9 @@ function M.update(state, world, info, now)
       end
       if o.bot_pings ~= nil then
         tx(state, string.format("/info obg %d", o.bot_pings and 1 or 0))
+      end
+      if o.bot_chat ~= nil then
+        tx(state, string.format("/info obh %d", o.bot_chat and 1 or 0))
       end
     end
   end
