@@ -207,9 +207,21 @@ based on my testing.
 /* Normal mine damage; a fatal hit is reduced to two-thirds in tankMineDamage. */
 #define MINE_DAMAGE 15
 
-/* Number of map squares around the tank postion that a mine can hurt a tank */
-#define MINE_DAMAGE_DISTANCE_LEFT 0 /* was -1 */
-#define MINE_DAMAGE_DISTANCE_RIGHT 0 /* Was 1 */
+/* How far from a mine's centre, on each axis in world units, a tank is
+   still hurt by it. Mac Bolo: less than one map square. Replaces the two
+   MINE_DAMAGE_DISTANCE_* constants, which nothing read - the test was a
+   bare 256 in tankMineDamage. */
+#define MINE_DAMAGE_RANGE 256
+
+/* What a fatal mine hit is divided down by. Mac Bolo: three hits unless
+   fatal, then two, so a blow bigger than the armour left has a third of
+   itself taken off. One leaves a fatal hit at full strength. */
+#define MINE_FATAL_DIVISOR 3
+
+/* What a tank loses to the water each time it has been wading for
+   TANK_WATER_TIME. */
+#define TANK_WATER_LOSS_SHELLS 1
+#define TANK_WATER_LOSS_MINES 1
 
 /* Tank slows down a speed unit if it hits a wall */
 #define TANK_WALL_SLOW_DOWN 1

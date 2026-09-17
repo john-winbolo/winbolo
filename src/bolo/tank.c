@@ -1517,13 +1517,26 @@ void tankInWater(GameSim *sim, tank *value) {
     return;
   }
 
+  /* Ask whether the water takes more than is left rather than subtracting
+     into a BYTE and reading the wrap: what a tank loses is a rule now and
+     may be more than it is carrying. */
   modsMade = FALSE;
-  if ((*value)->shells > 0) {
-    (*value)->shells--;
+  if ((*value)->shells > 0 && sim->rules.water_loss_shells > 0) {
+    if (sim->rules.water_loss_shells >= (*value)->shells) {
+      (*value)->shells = 0;
+    } else {
+      (*value)->shells =
+          (BYTE) ((*value)->shells - sim->rules.water_loss_shells);
+    }
     modsMade = TRUE;
   }
-  if ((*value)->mines > 0) {
-    (*value)->mines--;
+  if ((*value)->mines > 0 && sim->rules.water_loss_mines > 0) {
+    if (sim->rules.water_loss_mines >= (*value)->mines) {
+      (*value)->mines = 0;
+    } else {
+      (*value)->mines =
+          (BYTE) ((*value)->mines - sim->rules.water_loss_mines);
+    }
     modsMade = TRUE;
   }
 
@@ -3004,14 +3017,15 @@ void tankMineDamage(GameSim *sim, tank *value, BYTE mx, BYTE my, BYTE owner) {
 
 
   /* Mac Bolo: less than one map square from the mine centre on each axis. */
-  if (diffX < 256 && diffY < 256 && !(*value)->destroyed) {
+  if (diffX < sim->rules.mine_damage_range &&
+      diffY < sim->rules.mine_damage_range && !(*value)->destroyed) {
     BYTE armourBefore = (*value)->armour;
     BYTE amount = tankDamageAmount(sim, (BYTE) sim->rules.mine_damage, owner, gameSimGetTankPlayer(sim, value), LAST_DEATH_BY_MINES);
     /* Mac Bolo: three hits unless fatal, then two (which may still kill).
      * Apply this after modifiers, rounding up to preserve nonzero damage.
      * Exactly emptying the armour is survivable, hence the strict check. */
     if (amount > armourBefore) {
-      amount -= amount / 3;
+      amount -= (BYTE) (amount / sim->rules.mine_fatal_divisor);
     }
     bool wasDestroyed = tankApplyDamage(sim, value, amount, owner, LAST_DEATH_BY_MINES);
     if (sim->callbacks.recordDamage && owner != gameSimGetTankPlayer(sim, value)) {

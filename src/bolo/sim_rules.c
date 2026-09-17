@@ -58,6 +58,10 @@ void simRulesClassic(SimRules *out) {
     out->tank_water_ticks    = TANK_WATER_TIME;
     out->shell_damage        = DAMAGE;
     out->mine_damage         = MINE_DAMAGE;
+    out->mine_damage_range   = MINE_DAMAGE_RANGE;
+    out->mine_fatal_divisor  = MINE_FATAL_DIVISOR;
+    out->water_loss_shells   = TANK_WATER_LOSS_SHELLS;
+    out->water_loss_mines    = TANK_WATER_LOSS_MINES;
     out->just_fired_ticks    = JUST_FIRED_TICKS;
     out->tree_hide_distance  = MIN_TREEHIDE_DIST;
     out->gunsight_min        = GUNSIGHT_MIN;
@@ -369,6 +373,13 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
     RULE_INT(tank_water_ticks, 1, 255)
     RULE_INT(shell_damage, 1, 255)
     RULE_INT(mine_damage, 1, 255)
+    /* Zero is a mine that only hurts a tank standing exactly on its
+       centre, which is a table worth being able to write. */
+    RULE_INT(mine_damage_range, 0, 65535)
+    /* One leaves a fatal hit at full strength. */
+    RULE_INT(mine_fatal_divisor, 1, 255)
+    RULE_INT(water_loss_shells, 0, 255)
+    RULE_INT(water_loss_mines, 0, 255)
     RULE_INT(just_fired_ticks, 0, 255)
     /* Zero is a wood that hides nothing, which is a coherent table. */
     RULE_INT(tree_hide_distance, 0, 65535)

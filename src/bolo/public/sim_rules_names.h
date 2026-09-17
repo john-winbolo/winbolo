@@ -88,6 +88,10 @@ typedef enum {
       SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
     X(shell_damage, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)                 \
     X(mine_damage, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)                  \
+    X(mine_damage_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)            \
+    X(mine_fatal_divisor, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)           \
+    X(water_loss_shells, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)            \
+    X(water_loss_mines, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
     X(just_fired_ticks, SIM_RULE_VALUE_INT,                                  \
       SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
     X(tree_hide_distance, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)           \

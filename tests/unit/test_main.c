@@ -818,6 +818,7 @@ static const UnitTestEntry s_tests[] = {
     { "sim_rules_pill_shell_damage_follows", run_sim_rules_pill_shell_damage_follows },
     { "sim_rules_pill_angry_divisor_follows", run_sim_rules_pill_angry_divisor_follows },
     { "sim_rules_tank_explosion_follows", run_sim_rules_tank_explosion_follows },
+    { "sim_rules_water_loss_follows", run_sim_rules_water_loss_follows },
     { "sim_rules_pairs",                         run_sim_rules_pairs                         },
     { "sim_rules_capture_threshold_moves",       run_sim_rules_capture_threshold_moves       },
     { "sim_rules_builder_cost_follows",          run_sim_rules_builder_cost_follows          },

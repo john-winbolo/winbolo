@@ -364,6 +364,7 @@ typedef enum {
     F(tank_reload_ticks) F(tank_full_shells) F(tank_full_mines)              \
     F(tank_full_trees) F(tank_full_armour) F(tank_water_ticks)               \
     F(shell_damage) F(mine_damage) F(just_fired_ticks)                       \
+    F(mine_fatal_divisor) F(water_loss_shells) F(water_loss_mines)           \
     F(gunsight_min) F(gunsight_max) F(tank_min_move)                         \
     F(speed_road) F(speed_grass) F(speed_forest) F(speed_river)              \
     F(speed_swamp) F(speed_crater) F(speed_rubble) F(speed_boat)             \
@@ -375,7 +376,7 @@ typedef enum {
     F(base_capture_armour) F(base_hit_armour)
 
 #define CTRL_SIM_RULES_U16_FIELDS(F)                                         \
-    F(tank_death_ticks) F(tree_hide_distance)
+    F(tank_death_ticks) F(mine_damage_range) F(tree_hide_distance)
 
 #define CTRL_SIM_RULES_U32_FIELDS(F)                                         \
     F(shell_start_add) F(base_regen_ticks) F(tree_grow_initial_ticks)

@@ -162,6 +162,10 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(tank_water_ticks, TANK_WATER_TIME);
     SR_EQ(shell_damage, DAMAGE);
     SR_EQ(mine_damage, MINE_DAMAGE);
+    SR_EQ(mine_damage_range, MINE_DAMAGE_RANGE);
+    SR_EQ(mine_fatal_divisor, MINE_FATAL_DIVISOR);
+    SR_EQ(water_loss_shells, TANK_WATER_LOSS_SHELLS);
+    SR_EQ(water_loss_mines, TANK_WATER_LOSS_MINES);
     SR_EQ(just_fired_ticks, JUST_FIRED_TICKS);
     SR_EQ(tree_hide_distance, MIN_TREEHIDE_DIST);
     SR_EQ(gunsight_min, GUNSIGHT_MIN);
@@ -1170,6 +1174,71 @@ int run_sim_rules_tank_explosion_follows(void) {
     UT_ASSERT_MSG(gs->pb->item[0].armour == 10,
                   "a splash of 0 moved the pill to %u, expected 10",
                   (unsigned) gs->pb->item[0].armour);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* What the water takes off a wading tank. tank_water_ticks says how often
+ * tankInWater runs; what it takes each time was a pair of decrements, so the
+ * interval could be moved and the loss could not. Driven through tankInWater
+ * directly, which is the call the wading test in tankUpdate makes. */
+int run_sim_rules_water_loss_follows(void) {
+    ServerSim *sim = ut_make_running_sim("Wader");
+    GameSim *gs;
+    tank *tnk;
+    BYTE shells, mines, armour, trees;
+
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    tnk = &gs->tanks[0];
+    UT_ASSERT(tnk != NULL && *tnk != NULL);
+
+    UT_ASSERT_MSG(gs->rules.water_loss_shells == TANK_WATER_LOSS_SHELLS &&
+                      gs->rules.water_loss_mines == TANK_WATER_LOSS_MINES,
+                  "a running sim starts at %ld/%ld, expected %d/%d",
+                  (long) gs->rules.water_loss_shells,
+                  (long) gs->rules.water_loss_mines,
+                  TANK_WATER_LOSS_SHELLS, TANK_WATER_LOSS_MINES);
+
+    /* Classic: one of each. */
+    tankSetStats(tnk, 20, 20, 20, 20);
+    tankInWater(gs, tnk);
+    tankGetStats(tnk, &shells, &mines, &armour, &trees);
+    UT_ASSERT_MSG(shells == 19 && mines == 19,
+                  "a classic ducking left %u shells and %u mines, expected 19 "
+                  "and 19", (unsigned) shells, (unsigned) mines);
+
+    /* Moved, and the water takes the rule rather than one. */
+    gs->rules.water_loss_shells = 5;
+    gs->rules.water_loss_mines  = 3;
+    tankSetStats(tnk, 20, 20, 20, 20);
+    tankInWater(gs, tnk);
+    tankGetStats(tnk, &shells, &mines, &armour, &trees);
+    UT_ASSERT_MSG(shells == 15 && mines == 17,
+                  "a ducking taking 5 and 3 left %u shells and %u mines, "
+                  "expected 15 and 17", (unsigned) shells, (unsigned) mines);
+
+    /* Less carried than the water takes: empty, not a wrap. */
+    tankSetStats(tnk, 2, 1, 20, 20);
+    tankInWater(gs, tnk);
+    tankGetStats(tnk, &shells, &mines, &armour, &trees);
+    UT_ASSERT_MSG(shells == 0 && mines == 0,
+                  "a tank carrying less than the water takes read back %u "
+                  "shells and %u mines, expected 0 and 0",
+                  (unsigned) shells, (unsigned) mines);
+
+    /* Zero is water that takes nothing, which the range check allows and
+       which has to leave the tank alone rather than empty it. */
+    gs->rules.water_loss_shells = 0;
+    gs->rules.water_loss_mines  = 0;
+    tankSetStats(tnk, 20, 20, 20, 20);
+    tankInWater(gs, tnk);
+    tankGetStats(tnk, &shells, &mines, &armour, &trees);
+    UT_ASSERT_MSG(shells == 20 && mines == 20,
+                  "a ducking taking nothing left %u shells and %u mines, "
+                  "expected 20 and 20", (unsigned) shells, (unsigned) mines);
 
     serverSimDestroy(sim);
     return 0;

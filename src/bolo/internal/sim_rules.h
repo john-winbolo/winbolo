@@ -51,6 +51,10 @@ typedef struct SimRules {
     int32_t tank_water_ticks;    /* ticks per unit of drowning drain */
     int32_t shell_damage;
     int32_t mine_damage;
+    int32_t mine_damage_range;   /* world units off centre a mine still hurts */
+    int32_t mine_fatal_divisor;  /* what a blow bigger than the armour left is cut by */
+    int32_t water_loss_shells;   /* what a wading tank loses each interval */
+    int32_t water_loss_mines;
     int32_t just_fired_ticks;    /* how long a shot keeps a tank out of the trees */
     int32_t tree_hide_distance;  /* how far off a tank in trees stops being seen */
     int32_t gunsight_min;
