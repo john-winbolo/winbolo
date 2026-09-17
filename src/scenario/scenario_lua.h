@@ -145,29 +145,68 @@ typedef enum {
                               answer */
 } ScnLuaFnKind;
 
-/* One function the author writes and the host calls. params are the
- * author's own parameter names in order, without the trailing scripted flag
- * an event hook carries — kind is what says whether there is one. returns
- * says what a policy answers, and is NULL for a hook, which answers
- * nothing. */
+/* What one parameter holds, beside the name the author writes it under. A
+ * name says what a parameter is called and nothing about what may be put in
+ * it, so the type is what lets a caller tell a seat from a pillbox number
+ * and work out which fields a value of that kind carries with it.
+ *
+ * SCN_PARAM_SLOT and SCN_PARAM_OWNER are both a player slot; the difference
+ * is that an owner may be NEUTRAL, so anything reading one has nobody to
+ * ask about as well as a seat. */
+typedef enum {
+    SCN_PARAM_NONE,      /* the terminator of a row's array, and nothing
+                            else */
+    SCN_PARAM_SLOT,      /* a player slot, 0-based, always a real seat */
+    SCN_PARAM_OWNER,     /* a player slot or NEUTRAL: a seat, or nobody */
+    SCN_PARAM_TEAM,      /* a team number */
+    SCN_PARAM_PILL,      /* a pillbox index, 1-based as a script counts */
+    SCN_PARAM_BASE,      /* a base index, 1-based as a script counts */
+    SCN_PARAM_ITEM,      /* a pill, base or start index, which of the three
+                            decided by a kind argument beside it */
+    SCN_PARAM_SQUARE_X,  /* a map square's x */
+    SCN_PARAM_SQUARE_Y,  /* a map square's y */
+    SCN_PARAM_WORD,      /* one of a fixed set of strings the surface names */
+    SCN_PARAM_NUMBER,
+    SCN_PARAM_STRING,    /* free text */
+    SCN_PARAM_BOOL,
+    SCN_PARAM_TAG,       /* a scenario tag; a derived field's type */
+    SCN_PARAM_REGION     /* a declared region's name */
+} ScnLuaParamType;
+
+/* One parameter of one function: the name the author writes and what may be
+ * put in it. */
 typedef struct {
-    const char        *name;
-    ScnLuaFnKind       kind;
-    const char *const *params;
-    size_t             paramCount;
-    const char        *returns;
+    const char     *name;
+    ScnLuaParamType type;
+} ScnLuaFnParam;
+
+/* One function the author writes and the host calls. params are the
+ * author's own parameter names in order, each with the type of what the
+ * host puts in it, and without the trailing scripted flag an event hook
+ * carries — kind is what says whether there is one. returns says what a
+ * policy answers, and is NULL for a hook, which answers nothing. */
+typedef struct {
+    const char          *name;
+    ScnLuaFnKind         kind;
+    const ScnLuaFnParam *params;
+    size_t               paramCount;
+    const char          *returns;
 } ScnLuaFnRow;
 
-/* The parameter names of one row, as a list below writes them. Each of
- * these leaves its names followed by a comma, so the array built from a row
- * closes on the NULL that ends it however many names there are, none
- * included. Five is as many as any function on the surface takes. */
+/* The parameters of one row, as a list below writes them: a name and a type
+ * for each. Each of these leaves its pairs followed by a comma, so the array
+ * built from a row closes on the terminator that ends it however many pairs
+ * there are, none included. Five is as many as any function on the surface
+ * takes. */
 #define SCN_FN_ARGS0()
-#define SCN_FN_ARGS1(a)             a,
-#define SCN_FN_ARGS2(a, b)          a, b,
-#define SCN_FN_ARGS3(a, b, c)       a, b, c,
-#define SCN_FN_ARGS4(a, b, c, d)    a, b, c, d,
-#define SCN_FN_ARGS5(a, b, c, d, e) a, b, c, d, e,
+#define SCN_FN_ARGS1(n1, t1) { n1, t1 },
+#define SCN_FN_ARGS2(n1, t1, n2, t2) { n1, t1 }, { n2, t2 },
+#define SCN_FN_ARGS3(n1, t1, n2, t2, n3, t3)                                 \
+    { n1, t1 }, { n2, t2 }, { n3, t3 },
+#define SCN_FN_ARGS4(n1, t1, n2, t2, n3, t3, n4, t4)                         \
+    { n1, t1 }, { n2, t2 }, { n3, t3 }, { n4, t4 },
+#define SCN_FN_ARGS5(n1, t1, n2, t2, n3, t3, n4, t4, n5, t5)                 \
+    { n1, t1 }, { n2, t2 }, { n3, t3 }, { n4, t4 }, { n5, t5 },
 
 /* Every function a round may call, in one list: the four lifecycle calls
  * and one per event the host turns into a hook. The name a script writes it
@@ -199,51 +238,62 @@ typedef struct {
     X(START,            "on_start",            SCN_FN_LIFECYCLE_HOOK,        \
       SCN_FN_ARGS0())                                                        \
     X(TICK,             "on_tick",             SCN_FN_LIFECYCLE_HOOK,        \
-      SCN_FN_ARGS1("tick"))                                                  \
+      SCN_FN_ARGS1("tick", SCN_PARAM_NUMBER))                                \
     X(END,              "on_end",              SCN_FN_LIFECYCLE_HOOK,        \
       SCN_FN_ARGS0())                                                        \
     X(LOBBY,            "on_lobby",            SCN_FN_EVENT_HOOK,            \
-      SCN_FN_ARGS1("p"))                                                     \
+      SCN_FN_ARGS1("p", SCN_PARAM_SLOT))                                     \
     X(PLAYER_JOIN,      "on_player_join",      SCN_FN_EVENT_HOOK,            \
-      SCN_FN_ARGS1("p"))                                                     \
+      SCN_FN_ARGS1("p", SCN_PARAM_SLOT))                                     \
     X(PLAYER_LEAVE,     "on_player_leave",     SCN_FN_EVENT_HOOK,            \
-      SCN_FN_ARGS1("p"))                                                     \
+      SCN_FN_ARGS1("p", SCN_PARAM_SLOT))                                     \
     X(TEAM_CHANGED,     "on_team_changed",     SCN_FN_EVENT_HOOK,            \
-      SCN_FN_ARGS2("p", "team"))                                             \
+      SCN_FN_ARGS2("p", SCN_PARAM_SLOT, "team", SCN_PARAM_TEAM))             \
     X(CHAT,             "on_chat",             SCN_FN_EVENT_HOOK,            \
-      SCN_FN_ARGS2("p", "text"))                                             \
+      SCN_FN_ARGS2("p", SCN_PARAM_SLOT, "text", SCN_PARAM_STRING))           \
     X(PING,             "on_ping",             SCN_FN_EVENT_HOOK,            \
-      SCN_FN_ARGS4("p", "kind", "mx", "my"))                                 \
+      SCN_FN_ARGS4("p", SCN_PARAM_SLOT, "kind", SCN_PARAM_NUMBER,            \
+                   "mx", SCN_PARAM_SQUARE_X, "my", SCN_PARAM_SQUARE_Y))      \
     X(TANK_SPAWNED,     "on_tank_spawned",     SCN_FN_EVENT_HOOK,            \
-      SCN_FN_ARGS4("p", "mx", "my", "respawn"))                              \
+      SCN_FN_ARGS4("p", SCN_PARAM_SLOT, "mx", SCN_PARAM_SQUARE_X,            \
+                   "my", SCN_PARAM_SQUARE_Y, "respawn", SCN_PARAM_BOOL))     \
     X(TANK_KILLED,      "on_tank_killed",      SCN_FN_EVENT_HOOK,            \
-      SCN_FN_ARGS3("victim", "killer", "cause"))                             \
+      SCN_FN_ARGS3("victim", SCN_PARAM_SLOT, "killer", SCN_PARAM_OWNER,      \
+                   "cause", SCN_PARAM_WORD))                                 \
     X(LGM_DIED,         "on_lgm_died",         SCN_FN_EVENT_HOOK,            \
-      SCN_FN_ARGS4("p", "killer", "mx", "my"))                               \
+      SCN_FN_ARGS4("p", SCN_PARAM_SLOT, "killer", SCN_PARAM_OWNER,           \
+                   "mx", SCN_PARAM_SQUARE_X, "my", SCN_PARAM_SQUARE_Y))      \
     X(LGM_LANDED,       "on_lgm_landed",       SCN_FN_EVENT_HOOK,            \
-      SCN_FN_ARGS3("p", "mx", "my"))                                         \
+      SCN_FN_ARGS3("p", SCN_PARAM_SLOT, "mx", SCN_PARAM_SQUARE_X,            \
+                   "my", SCN_PARAM_SQUARE_Y))                                \
     X(BASE_CAPTURED,    "on_base_captured",    SCN_FN_EVENT_HOOK,            \
-      SCN_FN_ARGS3("n", "old", "new"))                                       \
+      SCN_FN_ARGS3("n", SCN_PARAM_BASE, "old", SCN_PARAM_OWNER,              \
+                   "new", SCN_PARAM_OWNER))                                  \
     X(BASE_NEUTRALIZED, "on_base_neutralized", SCN_FN_EVENT_HOOK,            \
-      SCN_FN_ARGS2("n", "old"))                                              \
+      SCN_FN_ARGS2("n", SCN_PARAM_BASE, "old", SCN_PARAM_OWNER))             \
     X(PILL_CAPTURED,    "on_pill_captured",    SCN_FN_EVENT_HOOK,            \
-      SCN_FN_ARGS3("n", "old", "new"))                                       \
+      SCN_FN_ARGS3("n", SCN_PARAM_PILL, "old", SCN_PARAM_OWNER,              \
+                   "new", SCN_PARAM_OWNER))                                  \
     X(PILL_PLACED,      "on_pill_placed",      SCN_FN_EVENT_HOOK,            \
-      SCN_FN_ARGS3("n", "p", "armour"))                                      \
+      SCN_FN_ARGS3("n", SCN_PARAM_PILL, "p", SCN_PARAM_SLOT,                 \
+                   "armour", SCN_PARAM_NUMBER))                              \
     X(PILL_PICKED_UP,   "on_pill_picked_up",   SCN_FN_EVENT_HOOK,            \
-      SCN_FN_ARGS2("n", "p"))                                                \
+      SCN_FN_ARGS2("n", SCN_PARAM_PILL, "p", SCN_PARAM_SLOT))                \
     X(PILL_KILLED,      "on_pill_killed",      SCN_FN_EVENT_HOOK,            \
-      SCN_FN_ARGS2("n", "by"))                                               \
+      SCN_FN_ARGS2("n", SCN_PARAM_PILL, "by", SCN_PARAM_OWNER))              \
     X(BUILT,            "on_built",            SCN_FN_EVENT_HOOK,            \
-      SCN_FN_ARGS4("p", "action", "x", "y"))                                 \
+      SCN_FN_ARGS4("p", SCN_PARAM_SLOT, "action", SCN_PARAM_WORD,            \
+                   "x", SCN_PARAM_SQUARE_X, "y", SCN_PARAM_SQUARE_Y))        \
     X(MINE_LAID,        "on_mine_laid",        SCN_FN_EVENT_HOOK,            \
-      SCN_FN_ARGS3("p", "mx", "my"))                                         \
+      SCN_FN_ARGS3("p", SCN_PARAM_SLOT, "mx", SCN_PARAM_SQUARE_X,            \
+                   "my", SCN_PARAM_SQUARE_Y))                                \
     X(MINE_EXPLOSION,   "on_mine_explosion",   SCN_FN_EVENT_HOOK,            \
-      SCN_FN_ARGS3("mx", "my", "layer"))                                     \
+      SCN_FN_ARGS3("mx", SCN_PARAM_SQUARE_X, "my", SCN_PARAM_SQUARE_Y,       \
+                   "layer", SCN_PARAM_OWNER))                                \
     X(ENTER_REGION,     "on_enter_region",     SCN_FN_REGION_HOOK,           \
-      SCN_FN_ARGS2("p", "name"))                                             \
+      SCN_FN_ARGS2("p", SCN_PARAM_SLOT, "name", SCN_PARAM_REGION))           \
     X(LEAVE_REGION,     "on_leave_region",     SCN_FN_REGION_HOOK,           \
-      SCN_FN_ARGS2("p", "name"))
+      SCN_FN_ARGS2("p", SCN_PARAM_SLOT, "name", SCN_PARAM_REGION))
 
 /* Every question the host puts to a round, in one list, in the order the
  * engine reaches them: the two the lobby and the round's endings ask, then
@@ -265,26 +315,35 @@ typedef struct {
       "true to let the seat sit on a team of its own")                       \
     X(ALLOW_BASE_WIN,    "allow_base_win",    SCN_FN_ARGS0(),                \
       "false to take that ending out of the round")                          \
-    X(CAN_RESPAWN,       "can_respawn",       SCN_FN_ARGS1("p"),             \
+    X(CAN_RESPAWN,       "can_respawn",                                      \
+      SCN_FN_ARGS1("p", SCN_PARAM_SLOT),                                     \
       "false to hold the tank where it is")                                  \
     X(CAN_BUILD,         "can_build",                                        \
-      SCN_FN_ARGS5("p", "action", "x", "y", "n"),                            \
+      SCN_FN_ARGS5("p", SCN_PARAM_SLOT, "action", SCN_PARAM_WORD,            \
+                   "x", SCN_PARAM_SQUARE_X, "y", SCN_PARAM_SQUARE_Y,         \
+                   "n", SCN_PARAM_ITEM),                                     \
       "false to refuse the order")                                           \
     X(CAN_CAPTURE,       "can_capture",                                      \
-      SCN_FN_ARGS3("kind", "n", "p"),                                        \
+      SCN_FN_ARGS3("kind", SCN_PARAM_WORD, "n", SCN_PARAM_ITEM,              \
+                   "p", SCN_PARAM_SLOT),                                     \
       "false to leave the objective where it is")                            \
     X(ANNOUNCE,          "announce",                                         \
-      SCN_FN_ARGS3("kind", "subject", "actor"),                              \
+      SCN_FN_ARGS3("kind", SCN_PARAM_WORD, "subject", SCN_PARAM_ITEM,        \
+                   "actor", SCN_PARAM_OWNER),                                \
       "false to keep the line off every newswire")                           \
     X(CAN_DIE,           "can_die",                                          \
-      SCN_FN_ARGS4("kind", "n", "killer", "cause"),                          \
+      SCN_FN_ARGS4("kind", SCN_PARAM_WORD, "n", SCN_PARAM_ITEM,              \
+                   "killer", SCN_PARAM_OWNER, "cause", SCN_PARAM_WORD),      \
       "false to leave what the blow landed on standing")                     \
-    X(ON_CHOOSE_START,   "on_choose_start",   SCN_FN_ARGS1("p"),             \
+    X(ON_CHOOSE_START,   "on_choose_start",                                  \
+      SCN_FN_ARGS1("p", SCN_PARAM_SLOT),                                     \
       "a start number, counted from 1 as game.start counts")                 \
-    X(SPAWN_LOADOUT,     "spawn_loadout",     SCN_FN_ARGS1("p"),             \
+    X(SPAWN_LOADOUT,     "spawn_loadout",                                    \
+      SCN_FN_ARGS1("p", SCN_PARAM_SLOT),                                     \
       "a loadout word, or a table of shells, mines, armour and trees")       \
     X(DAMAGE_SCALE,      "damage_scale",                                     \
-      SCN_FN_ARGS3("attacker", "victim", "cause"),                           \
+      SCN_FN_ARGS3("attacker", SCN_PARAM_OWNER, "victim", SCN_PARAM_SLOT,    \
+                   "cause", SCN_PARAM_WORD),                                 \
       "a percent from 0 to 10000, where 100 is the ordinary amount")
 
 /*********************************************************
@@ -341,6 +400,39 @@ const ScnLuaWordTable *scenarioLuaWordTables(size_t *count);
  *  so what this answers is what the host actually calls.
  *********************************************************/
 const ScnLuaFnRow *scenarioLuaFunctions(size_t *count);
+
+/* Room for a field name and its terminator. The longest a derived name
+ * reaches is a parameter's own plus _team, and no parameter in the
+ * catalogue is anywhere near long enough to need this much. */
+#define SCN_FN_FIELD_NAME_LEN 32
+
+/* One name a trigger's where-row may test on a given catalogue row: either
+ * one of the function's own parameters or a field derived from one. The name
+ * is copied rather than pointed at, because a derived name is built and has
+ * nowhere of its own to live. */
+typedef struct {
+    char            name[SCN_FN_FIELD_NAME_LEN];
+    ScnLuaParamType type;
+    size_t          from;     /* the parameter index the field reads */
+    bool            derived;  /* false for the parameter itself */
+} ScnLuaFnField;
+
+/*********************************************************
+ *NAME:          scenarioLuaFnFields
+ *PURPOSE:
+ *  Every field a trigger may test on one catalogue row:
+ *  the function's own parameters, in order, then the
+ *  fields their types earn — a team for a seat or an
+ *  owner, a tag for a pillbox or a base, a region for a
+ *  square pair.
+ *
+ *  Answers how many the row has and writes at most outMax
+ *  of them, so a caller sizing an array asks with an
+ *  outMax of 0 and a NULL out first. row is an index into
+ *  what scenarioLuaFunctions answers; a row past the end
+ *  answers 0.
+ *********************************************************/
+size_t scenarioLuaFnFields(size_t row, ScnLuaFnField *out, size_t outMax);
 
 /* ── The three index rules ──────────────────────────────────────────
  *

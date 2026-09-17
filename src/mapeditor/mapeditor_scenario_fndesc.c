@@ -119,7 +119,7 @@ static void meScnFnAddParams(const ScnLuaFnRow *r, char *out, size_t outLen,
         if (i > 0) {
             meScnFnAdd(out, outLen, want, ", ");
         }
-        meScnFnAdd(out, outLen, want, r->params[i]);
+        meScnFnAdd(out, outLen, want, r->params[i].name);
     }
     if (r->kind == SCN_FN_EVENT_HOOK) {
         if (r->paramCount > 0) {

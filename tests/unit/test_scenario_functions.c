@@ -10,9 +10,12 @@
  * for.
  *
  * run_scenario_functions_table
- *      — the shape of the rows: names, counts, which kind carries an
+ *      — the shape of the rows: names, counts, types, which kind carries an
  *        answer, and the hook half against the hook list the host resolves
  *        its names from
+ * run_scenario_functions_fields
+ *      — the names a trigger may test on a row: the parameters themselves
+ *        and the fields their types earn
  * run_scenario_functions_match_dispatch
  *      — every hook the harness can fire, with a handler that records how
  *        many arguments it was handed, held against what its row claims
@@ -112,10 +115,16 @@ int run_scenario_functions_table(void) {
            count is how many there are. */
         UT_ASSERT_MSG(r->params != NULL, "'%s' has no parameter array",
                       r->name);
-        while (walked <= r->paramCount && r->params[walked] != NULL) {
-            UT_ASSERT_MSG(r->params[walked][0] != '\0',
+        while (walked <= r->paramCount && r->params[walked].name != NULL) {
+            UT_ASSERT_MSG(r->params[walked].name[0] != '\0',
                           "'%s' names an empty parameter at %d", r->name,
                           (int)walked);
+            /* The terminator's type and nothing else. A real parameter left
+               untyped would reach the field list as a value meaning "the end
+               of the array" and be read as one. */
+            UT_ASSERT_MSG(r->params[walked].type != SCN_PARAM_NONE,
+                          "'%s' gives its parameter '%s' no type", r->name,
+                          r->params[walked].name);
             walked++;
         }
         UT_ASSERT_MSG(walked == r->paramCount,
@@ -172,6 +181,271 @@ int run_scenario_functions_table(void) {
         UT_ASSERT_MSG(found, "the policy '%s' has no row in the catalogue",
                       kSfnPolicyNames[i]);
     }
+
+    return 0;
+}
+
+/* ── 2. The fields a trigger may test ─────────────────────────────── */
+
+/* Room for any row's fields. The widest the catalogue holds is can_build's
+   five parameters and the two they earn, so this is well clear of it and
+   leaves the truncation checks below room to ask for less. */
+#define SFN_FIELD_MAX 32
+
+/* One field as it is expected back: what it is called, what may be in it,
+   and whether the accessor built the name or copied it. */
+typedef struct {
+    const char     *name;
+    ScnLuaParamType type;
+    bool            derived;
+} SfnWantField;
+
+static size_t sfnRowByName(const ScnLuaFnRow *rows, size_t count,
+                           const char *name) {
+    size_t i;
+
+    for (i = 0; i < count; i++) {
+        if (strcmp(rows[i].name, name) == 0) {
+            return i;
+        }
+    }
+    return count;
+}
+
+/* The accessor's answer for one named row, against a list written out by
+   hand. Answers 0 where they agree, as a case does. */
+static int sfnFieldsAre(const char *name, const SfnWantField *want,
+                        size_t wantCount) {
+    const ScnLuaFnRow *rows;
+    ScnLuaFnField      got[SFN_FIELD_MAX];
+    size_t             count = 0;
+    size_t             row;
+    size_t             n;
+    size_t             i;
+
+    rows = scenarioLuaFunctions(&count);
+    row  = sfnRowByName(rows, count, name);
+    UT_ASSERT_MSG(row < count, "the catalogue has no row named '%s'", name);
+
+    n = scenarioLuaFnFields(row, got, SFN_FIELD_MAX);
+    UT_ASSERT_MSG(n == wantCount, "'%s' answers %d fields; expected %d",
+                  name, (int)n, (int)wantCount);
+    for (i = 0; i < wantCount; i++) {
+        UT_ASSERT_MSG(strcmp(got[i].name, want[i].name) == 0,
+                      "'%s' field %d is '%s'; expected '%s'", name, (int)i,
+                      got[i].name, want[i].name);
+        UT_ASSERT_MSG(got[i].type == want[i].type,
+                      "'%s' field '%s' is type %d; expected %d", name,
+                      want[i].name, (int)got[i].type, (int)want[i].type);
+        UT_ASSERT_MSG(got[i].derived == want[i].derived,
+                      "'%s' field '%s' says derived %d; expected %d", name,
+                      want[i].name, (int)got[i].derived,
+                      (int)want[i].derived);
+    }
+    return 0;
+}
+
+int run_scenario_functions_fields(void) {
+    /* The four rows written out in full: one with two slot-shaped
+       parameters, one with an item and two owners, one with a square pair,
+       and one carrying both a square pair and an owner, which is where the
+       order of the derived half shows. Between them they reach every rule
+       there is. */
+    static const SfnWantField kTankKilled[] = {
+        { "victim",      SCN_PARAM_SLOT,  false },
+        { "killer",      SCN_PARAM_OWNER, false },
+        { "cause",       SCN_PARAM_WORD,  false },
+        { "victim_team", SCN_PARAM_TEAM,  true  },
+        { "killer_team", SCN_PARAM_TEAM,  true  },
+    };
+    static const SfnWantField kBaseCaptured[] = {
+        { "n",         SCN_PARAM_BASE,  false },
+        { "old",       SCN_PARAM_OWNER, false },
+        { "new",       SCN_PARAM_OWNER, false },
+        { "tag",       SCN_PARAM_TAG,   true  },
+        { "old_team",  SCN_PARAM_TEAM,  true  },
+        { "new_team",  SCN_PARAM_TEAM,  true  },
+    };
+    static const SfnWantField kPing[] = {
+        { "p",      SCN_PARAM_SLOT,     false },
+        { "kind",   SCN_PARAM_NUMBER,   false },
+        { "mx",     SCN_PARAM_SQUARE_X, false },
+        { "my",     SCN_PARAM_SQUARE_Y, false },
+        { "p_team", SCN_PARAM_TEAM,     true  },
+        { "region", SCN_PARAM_REGION,   true  },
+    };
+    static const SfnWantField kMineExplosion[] = {
+        { "mx",         SCN_PARAM_SQUARE_X, false },
+        { "my",         SCN_PARAM_SQUARE_Y, false },
+        { "layer",      SCN_PARAM_OWNER,    false },
+        { "region",     SCN_PARAM_REGION,   true  },
+        { "layer_team", SCN_PARAM_TEAM,     true  },
+    };
+
+    const ScnLuaFnRow *rows;
+    ScnLuaFnField      got[SFN_FIELD_MAX];
+    size_t             count = 0;
+    size_t             i;
+    size_t             j;
+    size_t             n;
+
+    rows = scenarioLuaFunctions(&count);
+    UT_ASSERT_MSG(rows != NULL && count > 0, "the catalogue answered nothing");
+
+    for (i = 0; i < count; i++) {
+        const ScnLuaFnRow *r = &rows[i];
+
+        n = scenarioLuaFnFields(i, got, SFN_FIELD_MAX);
+        UT_ASSERT_MSG(n >= r->paramCount,
+                      "'%s' takes %d parameters and answers %d fields",
+                      r->name, (int)r->paramCount, (int)n);
+        UT_ASSERT_MSG(n <= SFN_FIELD_MAX,
+                      "'%s' answers %d fields, more than this case holds",
+                      r->name, (int)n);
+
+        /* The parameters themselves come first, in the order the function
+           takes them, so a form drawing the row's own arguments can stop at
+           paramCount. */
+        for (j = 0; j < r->paramCount; j++) {
+            UT_ASSERT_MSG(strcmp(got[j].name, r->params[j].name) == 0,
+                          "'%s' field %d is '%s'; the parameter there is "
+                          "'%s'", r->name, (int)j, got[j].name,
+                          r->params[j].name);
+            UT_ASSERT_MSG(got[j].type == r->params[j].type,
+                          "'%s' field '%s' is type %d; the parameter is %d",
+                          r->name, got[j].name, (int)got[j].type,
+                          (int)r->params[j].type);
+            UT_ASSERT_MSG(!got[j].derived,
+                          "'%s' calls its own parameter '%s' derived",
+                          r->name, got[j].name);
+            UT_ASSERT_MSG(got[j].from == j,
+                          "'%s' parameter '%s' reads parameter %d", r->name,
+                          got[j].name, (int)got[j].from);
+        }
+
+        for (j = 0; j < n; j++) {
+            size_t k;
+
+            UT_ASSERT_MSG(got[j].name[0] != '\0',
+                          "'%s' answers an empty field name at %d", r->name,
+                          (int)j);
+            UT_ASSERT_MSG(got[j].type != SCN_PARAM_NONE,
+                          "'%s' field '%s' has no type", r->name,
+                          got[j].name);
+
+            /* A where-row names one field, so two of them answering to one
+               name would leave one untestable. */
+            for (k = 0; k < j; k++) {
+                UT_ASSERT_MSG(strcmp(got[k].name, got[j].name) != 0,
+                              "'%s' answers '%s' twice, at %d and %d",
+                              r->name, got[j].name, (int)k, (int)j);
+            }
+
+            if (!got[j].derived) {
+                continue;
+            }
+            UT_ASSERT_MSG(got[j].from < r->paramCount,
+                          "'%s' field '%s' reads parameter %d of %d",
+                          r->name, got[j].name, (int)got[j].from,
+                          (int)r->paramCount);
+
+            /* Each derived field against the parameter it says it came
+               from: the type it reads has to be one the rules derive it
+               from. */
+            switch (got[j].type) {
+                case SCN_PARAM_TEAM:
+                    UT_ASSERT_MSG(
+                        r->params[got[j].from].type == SCN_PARAM_SLOT ||
+                            r->params[got[j].from].type == SCN_PARAM_OWNER,
+                        "'%s' derives the team '%s' from '%s', which is "
+                        "neither a slot nor an owner", r->name, got[j].name,
+                        r->params[got[j].from].name);
+                    break;
+
+                case SCN_PARAM_TAG:
+                    UT_ASSERT_MSG(
+                        r->params[got[j].from].type == SCN_PARAM_PILL ||
+                            r->params[got[j].from].type == SCN_PARAM_BASE,
+                        "'%s' derives a tag from '%s', which is neither a "
+                        "pillbox nor a base", r->name,
+                        r->params[got[j].from].name);
+                    break;
+
+                case SCN_PARAM_REGION:
+                    UT_ASSERT_MSG(
+                        r->params[got[j].from].type == SCN_PARAM_SQUARE_X &&
+                            got[j].from + 1 < r->paramCount &&
+                            r->params[got[j].from + 1].type ==
+                                SCN_PARAM_SQUARE_Y,
+                        "'%s' derives a region from '%s', which is not the "
+                        "x of a square pair", r->name,
+                        r->params[got[j].from].name);
+                    break;
+
+                default:
+                    UT_ASSERT_MSG(false,
+                                  "'%s' derives '%s' as type %d, which no "
+                                  "rule derives", r->name, got[j].name,
+                                  (int)got[j].type);
+                    break;
+            }
+        }
+    }
+
+    if (sfnFieldsAre("on_tank_killed", kTankKilled,
+                     sizeof(kTankKilled) / sizeof(kTankKilled[0])) != 0) {
+        return 1;
+    }
+    if (sfnFieldsAre("on_base_captured", kBaseCaptured,
+                     sizeof(kBaseCaptured) / sizeof(kBaseCaptured[0])) != 0) {
+        return 1;
+    }
+    if (sfnFieldsAre("on_ping", kPing,
+                     sizeof(kPing) / sizeof(kPing[0])) != 0) {
+        return 1;
+    }
+    if (sfnFieldsAre("on_mine_explosion", kMineExplosion,
+                     sizeof(kMineExplosion) /
+                         sizeof(kMineExplosion[0])) != 0) {
+        return 1;
+    }
+
+    /* Asked for less than there is: the answer is still the whole count, and
+       nothing past the room given is touched. A caller sizes an array off
+       the first answer and asks again. */
+    {
+        size_t row  = sfnRowByName(rows, count, "on_ping");
+        size_t full = 0;
+
+        UT_ASSERT_MSG(row < count, "the catalogue has no row named 'on_ping'");
+        full = scenarioLuaFnFields(row, NULL, 0);
+        UT_ASSERT_MSG(full == sizeof(kPing) / sizeof(kPing[0]),
+                      "'on_ping' answers %d fields for a NULL out; expected "
+                      "%d", (int)full,
+                      (int)(sizeof(kPing) / sizeof(kPing[0])));
+
+        memset(got, 0, sizeof(got));
+        n = scenarioLuaFnFields(row, got, 2);
+        UT_ASSERT_MSG(n == full,
+                      "'on_ping' answers %d fields when asked for two; "
+                      "expected %d", (int)n, (int)full);
+        UT_ASSERT_MSG(strcmp(got[0].name, kPing[0].name) == 0 &&
+                          strcmp(got[1].name, kPing[1].name) == 0,
+                      "the two fields written are '%s' and '%s'", got[0].name,
+                      got[1].name);
+        for (i = 2; i < SFN_FIELD_MAX; i++) {
+            UT_ASSERT_MSG(got[i].name[0] == '\0',
+                          "a field was written past the room given, at %d: "
+                          "'%s'", (int)i, got[i].name);
+        }
+    }
+
+    /* A row that is not there has no fields. */
+    memset(got, 0, sizeof(got));
+    n = scenarioLuaFnFields(count, got, SFN_FIELD_MAX);
+    UT_ASSERT_MSG(n == 0, "the row past the last answered %d fields", (int)n);
+    UT_ASSERT_MSG(got[0].name[0] == '\0',
+                  "the row past the last wrote '%s'", got[0].name);
 
     return 0;
 }
@@ -376,7 +650,7 @@ static size_t sfnWantArgs(const ScnLuaFnRow *r) {
     return r->paramCount + (r->kind == SCN_FN_EVENT_HOOK ? 1u : 0u);
 }
 
-/* ── 2. Every hook the harness can fire ───────────────────────────── */
+/* ── 3. Every hook the harness can fire ───────────────────────────── */
 
 /* One event per hook that comes off one, with the payload the emitting
  * callback writes. The values are immaterial here — what is being read is

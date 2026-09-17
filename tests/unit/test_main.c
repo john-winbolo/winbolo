@@ -1519,6 +1519,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_derived_region_loop_terminates",         run_scenario_derived_region_loop_terminates         },
     { "scenario_derived_fixture_wins_without_on_tick",   run_scenario_derived_fixture_wins_without_on_tick   },
     { "scenario_functions_table",                        run_scenario_functions_table                        },
+    { "scenario_functions_fields",                       run_scenario_functions_fields                       },
     { "scenario_functions_match_dispatch",               run_scenario_functions_match_dispatch               },
     { "scenario_fndesc_table",                           run_scenario_fndesc_table                           },
     { "scenario_fnstub_forms",                           run_scenario_fnstub_forms                           },

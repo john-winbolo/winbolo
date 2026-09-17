@@ -5789,6 +5789,7 @@ set(_unit_test_names
     scenario_derived_region_loop_terminates
     scenario_derived_fixture_wins_without_on_tick
     scenario_functions_table
+    scenario_functions_fields
     scenario_functions_match_dispatch
     scenario_fndesc_table
     scenario_fnstub_forms

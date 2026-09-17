@@ -4196,16 +4196,21 @@ static const ScnLuaWordTable kScnLuaWordTables[] = {
 
 /* ── The functions the author writes ──────────────────────────────── */
 
-/* One parameter-name array per row, built from the two lists in
- * scenario_lua.h. Each array ends on a NULL, so a row's count below is the
- * array's length less that terminator and the two cannot disagree. */
+/* One parameter array per row, built from the two lists in scenario_lua.h:
+ * a name and the type of what the host puts in it, for each. Each array ends
+ * on a terminator naming nothing, so a row's count below is the array's
+ * length less that terminator and the two cannot disagree. */
 #define SCN_FN_HOOK_PARAMS(id, name, kind, params)                            \
-    static const char *const kScnFnHook_##id[] = { params NULL };
+    static const ScnLuaFnParam kScnFnHook_##id[] = {                          \
+        params { NULL, SCN_PARAM_NONE }                                       \
+    };
 SCN_HOOK_LIST(SCN_FN_HOOK_PARAMS)
 #undef SCN_FN_HOOK_PARAMS
 
 #define SCN_FN_POLICY_PARAMS(id, name, params, returns)                       \
-    static const char *const kScnFnPolicy_##id[] = { params NULL };
+    static const ScnLuaFnParam kScnFnPolicy_##id[] = {                        \
+        params { NULL, SCN_PARAM_NONE }                                       \
+    };
 SCN_POLICY_LIST(SCN_FN_POLICY_PARAMS)
 #undef SCN_FN_POLICY_PARAMS
 
@@ -4251,6 +4256,84 @@ const ScnLuaFnRow *scenarioLuaFunctions(size_t *count) {
         *count = sizeof(kScnLuaFunctions) / sizeof(kScnLuaFunctions[0]);
     }
     return kScnLuaFunctions;
+}
+
+/* One field on to the end of what has been counted, written only where the
+ * caller left room for it. The tally rises either way, so a caller that
+ * asked for none still learns how many there are. A name too long for the
+ * field is cut rather than written past the end of it. */
+static void scnFnFieldAdd(ScnLuaFnField *out, size_t outMax, size_t *count,
+                          const char *name, ScnLuaParamType type, size_t from,
+                          bool derived) {
+    if (out != NULL && *count < outMax) {
+        ScnLuaFnField *f = &out[*count];
+
+        memset(f, 0, sizeof(*f));
+        snprintf(f->name, sizeof(f->name), "%s", name);
+        f->type    = type;
+        f->from    = from;
+        f->derived = derived;
+    }
+    (*count)++;
+}
+
+/* The parameters of a row, and then what their types are worth on top of
+ * them: a seat and an owner each carry the team they are on, a pillbox and a
+ * base each carry the tag the scenario put on them, and a square's two
+ * halves together carry whichever region holds them.
+ *
+ * The derived names follow the parameters rather than sitting beside them,
+ * so the first paramCount fields are always the function's own arguments in
+ * the order it takes them. _team is prefixed with the parameter's name
+ * because a function may take more than one seat; tag and region are bare
+ * because no function in the catalogue takes two items or two squares. */
+size_t scenarioLuaFnFields(size_t row, ScnLuaFnField *out, size_t outMax) {
+    const ScnLuaFnRow *r;
+    size_t             count = 0;
+    size_t             i;
+
+    if (row >= sizeof(kScnLuaFunctions) / sizeof(kScnLuaFunctions[0])) {
+        return 0;
+    }
+    r = &kScnLuaFunctions[row];
+
+    for (i = 0; i < r->paramCount; i++) {
+        scnFnFieldAdd(out, outMax, &count, r->params[i].name,
+                      r->params[i].type, i, false);
+    }
+    for (i = 0; i < r->paramCount; i++) {
+        char derived[SCN_FN_FIELD_NAME_LEN];
+
+        switch (r->params[i].type) {
+            case SCN_PARAM_SLOT:
+            case SCN_PARAM_OWNER:
+                snprintf(derived, sizeof(derived), "%s_team",
+                         r->params[i].name);
+                scnFnFieldAdd(out, outMax, &count, derived, SCN_PARAM_TEAM, i,
+                              true);
+                break;
+
+            case SCN_PARAM_PILL:
+            case SCN_PARAM_BASE:
+                scnFnFieldAdd(out, outMax, &count, "tag", SCN_PARAM_TAG, i,
+                              true);
+                break;
+
+            case SCN_PARAM_SQUARE_X:
+                /* The pair, not the half: an x with no y behind it names no
+                   square and so holds no region. */
+                if (i + 1 < r->paramCount &&
+                    r->params[i + 1].type == SCN_PARAM_SQUARE_Y) {
+                    scnFnFieldAdd(out, outMax, &count, "region",
+                                  SCN_PARAM_REGION, i, true);
+                }
+                break;
+
+            default:
+                break;
+        }
+    }
+    return count;
 }
 
 const ScnLuaRow *scenarioLuaRows(size_t *count) {

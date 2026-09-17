@@ -2926,9 +2926,11 @@ int run_scenario_derived_region_loop_terminates(void);
 int run_scenario_derived_fixture_wins_without_on_tick(void);
 
 /* The function catalogue (test_scenario_functions.c): the rows that name
- * every hook and every policy an author writes, and whether the parameter
- * list a row claims is the one the host pushes. */
+ * every hook and every policy an author writes, the fields a trigger may
+ * test on one, and whether the parameter list a row claims is the one the
+ * host pushes. */
 int run_scenario_functions_table(void);
+int run_scenario_functions_fields(void);
 int run_scenario_functions_match_dispatch(void);
 
 /* The line beside each function (test_scenario_fndesc.c): a description for
