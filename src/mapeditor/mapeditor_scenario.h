@@ -68,11 +68,26 @@ bool meScenarioSaveForMap(MEScenarioState *st, const char *mapPath);
  * follows the map to its new name. */
 void meScenarioAdoptPath(MEScenarioState *st, const char *mapPath);
 
+/* Shows the script that came out of the map's own package. There is no loose
+ * file behind it, so the buffer is not dirty and not on disk: Save writes the
+ * loose script beside the map, which is the file a server reads in preference
+ * to the packed one. The status line says where the text came from.
+ *
+ * Only for a map with no loose script beside it — a loose one overrides the
+ * packed script when a round starts on it, and overrides it here too. */
+void meScenarioSetPackedScript(MEScenarioState *st, const char *text,
+                               size_t len);
+
 /* Re-reads scriptPath, discarding edits, and asks the view to re-seed. */
 bool meScenarioReload(MEScenarioState *st);
 
 /* Replaces the buffer with len bytes of text and marks it dirty. */
 void meScenarioSetText(MEScenarioState *st, const char *text, size_t len);
+
+/* Puts one line on the panel's status line: what the last read or write did.
+ * The script view draws it in its toolbar and the metadata view under its
+ * save buttons, so the panel says one thing at a time. */
+void meScenarioSetStatus(MEScenarioState *st, const char *text);
 
 /* True when the buffer differs from what is on disk. */
 bool meScenarioDirty(const MEScenarioState *st);

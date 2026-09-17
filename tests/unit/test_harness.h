@@ -3043,6 +3043,17 @@ int run_editor_form_rules_full(void);
 int run_editor_form_teams(void);
 int run_editor_form_rule_change(void);
 
+/* The editor writing a scenario out (test_editor_scenario_pack.c): the chunk
+ * on to the map and the standalone .scenario a mod is, both read back through
+ * the container reader the server uses. A mod loses the bound flag, the tags
+ * and the regions whatever the form held; a map form refuses a manifest that
+ * is not built for its map; and a map that has been packed twice is the same
+ * bytes as one packed once and still reads as a map. */
+int run_editor_pack_mod_round_trip(void);
+int run_editor_pack_map_round_trip(void);
+int run_editor_pack_twice_identical(void);
+int run_editor_pack_refuses_unbound(void);
+
 /* The last status tile frontEndStatusTank was handed by the stub in
  * test_stubs.c: the 1-based player number, and the tankAlliance as an int so
  * the header does not have to pull screentank.h in. Both are -1 until the

@@ -288,6 +288,38 @@ void meScenarioAdoptPath(MEScenarioState *st, const char *mapPath) {
     }
 }
 
+void meScenarioSetPackedScript(MEScenarioState *st, const char *text,
+                               size_t len) {
+    char *copy;
+
+    if (st == NULL) {
+        return;
+    }
+    if (text == NULL) {
+        len = 0;
+    }
+
+    copy = (char *)malloc(len + 1);
+    if (copy == NULL) {
+        return; /* keep what is already there rather than losing it */
+    }
+    if (len > 0) {
+        memcpy(copy, text, len);
+    }
+    copy[len] = '\0';
+
+    meScenarioTake(st, copy, len);
+    /* Not an edit and not a file: the text came out of the map itself. Saving
+     * it writes the loose script beside the map, and a loose script is what a
+     * server runs in preference to the packed one, so the Save button stays
+     * off until the author actually changes something. */
+    st->dirty        = false;
+    st->fileOnDisk   = false;
+    st->readRefused  = false;
+    st->pushToWidget = true;
+    meScenarioStatus(st, STR_MAPEDIT_SCENARIO_FROM_PACKAGE);
+}
+
 bool meScenarioReload(MEScenarioState *st) {
     char  *text;
     size_t len;
@@ -351,6 +383,13 @@ void meScenarioSetText(MEScenarioState *st, const char *text, size_t len) {
 
     meScenarioTake(st, copy, len);
     st->dirty = true;
+}
+
+void meScenarioSetStatus(MEScenarioState *st, const char *text) {
+    if (st == NULL) {
+        return;
+    }
+    snprintf(st->status, sizeof(st->status), "%s", text != NULL ? text : "");
 }
 
 bool meScenarioDirty(const MEScenarioState *st) {

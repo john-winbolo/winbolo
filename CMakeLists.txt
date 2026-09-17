@@ -1581,11 +1581,11 @@ set(CLIENT_SOURCES
     src/gui/sdl3/voice.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     # The scenario panel: the script buffer and the file handling in C, the
-    # manifest its metadata, lobby and rules forms edit, the panel that draws
-    # all four views, and the vendored text editor widget the script view
-    # draws with. LanguageDefinitions.cpp is where that widget keeps its Lua
-    # highlighting.
-    src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_form.c src/mapeditor/mapeditor_scenario_check.c src/mapeditor/mapeditor_scenario_imgui.cpp
+    # manifest its metadata, lobby and rules forms edit, the container that
+    # manifest is read from and written back to, the panel that draws all four
+    # views, and the vendored text editor widget the script view draws with.
+    # LanguageDefinitions.cpp is where that widget keeps its Lua highlighting.
+    src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_form.c src/mapeditor/mapeditor_scenario_check.c src/mapeditor/mapeditor_scenario_pack.c src/mapeditor/mapeditor_scenario_imgui.cpp
     src/third_party/ImGuiColorTextEdit/TextEditor.cpp
     src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
     # Embedded editor's "Open from WinBolo.net" dialog — client only, it
@@ -2890,11 +2890,11 @@ set(MAPEDITOR_SOURCES
     src/server/server_stubs.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     # The scenario panel: the script buffer and the file handling in C, the
-    # manifest its metadata, lobby and rules forms edit, the panel that draws
-    # all four views, and the vendored text editor widget the script view
-    # draws with. LanguageDefinitions.cpp is where that widget keeps its Lua
-    # highlighting.
-    src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_form.c src/mapeditor/mapeditor_scenario_check.c src/mapeditor/mapeditor_scenario_imgui.cpp
+    # manifest its metadata, lobby and rules forms edit, the container that
+    # manifest is read from and written back to, the panel that draws all four
+    # views, and the vendored text editor widget the script view draws with.
+    # LanguageDefinitions.cpp is where that widget keeps its Lua highlighting.
+    src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_form.c src/mapeditor/mapeditor_scenario_check.c src/mapeditor/mapeditor_scenario_pack.c src/mapeditor/mapeditor_scenario_imgui.cpp
     src/third_party/ImGuiColorTextEdit/TextEditor.cpp
     src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
@@ -3640,6 +3640,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     # it is compiled in here the same way.
     tests/unit/test_editor_scenario_form.c
     src/mapeditor/mapeditor_scenario_form.c
+    # The editor writing a scenario out: the chunk on to the map and the
+    # standalone .scenario a mod is, both read back through the container
+    # reader the server uses. Plain C over scenario_io, which this target
+    # already links, so the module is compiled in here too.
+    tests/unit/test_editor_scenario_pack.c
+    src/mapeditor/mapeditor_scenario_pack.c
     # The per-tank modifier set: the op that writes it, the snapshot group
     # under the ninth presence bit, and when the values are cleared.
     tests/unit/test_tank_modifiers.c
@@ -5719,6 +5725,10 @@ set(_unit_test_names
     editor_form_rules_full
     editor_form_teams
     editor_form_rule_change
+    editor_pack_mod_round_trip
+    editor_pack_map_round_trip
+    editor_pack_twice_identical
+    editor_pack_refuses_unbound
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

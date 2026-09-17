@@ -2252,4 +2252,14 @@ STR_MAPEDIT_SCENARIO_NO_ISSUES=No problems found
 STR_MAPEDIT_SCENARIO_NO_SIM_CHECKS=Rules and tags are checked against the map when the round starts, not here
 STR_MAPEDIT_SCENARIO_ISSUES_DROPPED=More problems were found than this list holds
 STR_MAPEDIT_SCENARIO_CALLS=Scenario Calls
+STR_MAPEDIT_SCENARIO_PACK_MAP=Pack into Map
+STR_MAPEDIT_SCENARIO_SAVE_MOD=Save as Mod…
+STR_MAPEDIT_SCENARIO_PACK_NO_MAP=Save the map first — a packed scenario lives in the map file
+STR_MAPEDIT_SCENARIO_PACKED=Packed into the map — a loose script beside it still overrides the packed one when a server loads it
+STR_MAPEDIT_SCENARIO_MOD_SAVED=Mod saved
+STR_MAPEDIT_SCENARIO_PACK_ISSUES=The script has problems, so nothing was written — the Script view lists them
+STR_MAPEDIT_SCENARIO_PACK_CONFLICT=The forms and the script's own table disagree, so nothing was written
+STR_MAPEDIT_SCENARIO_PACK_FAILED=The scenario was not written
+STR_MAPEDIT_SCENARIO_FROM_PACKAGE=Script read from the scenario packed into this map
+STR_MAPEDIT_SCENARIO_PACK_READ_FAILED=The scenario packed into this map could not be read
 

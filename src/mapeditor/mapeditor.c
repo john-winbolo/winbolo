@@ -37,6 +37,8 @@
 #include "mapeditor_stats.h"
 #include "mapeditor_scenario_check.h" /* MapEditorState holds a check by value */
 #include "mapeditor_scenario_form.h" /* MapEditorState holds a form by value */
+#include "mapeditor_scenario_pack.h" /* the container a map's scenario is read
+                                      * from and written back to */
 
 #include <string.h>
 #include <stdlib.h>
@@ -90,7 +92,8 @@ typedef enum {
     FILE_OP_SAVE_THEN_NEW,     /* Save current, then create new */
     FILE_OP_SAVE_THEN_OPEN,    /* Save current, then open another */
     FILE_OP_SAVE_THEN_EXIT,    /* Save current, then exit */
-    FILE_OP_SAVE_THEN_OPEN_WBN /* Save current, then open the WinBolo.net chooser */
+    FILE_OP_SAVE_THEN_OPEN_WBN,/* Save current, then open the WinBolo.net chooser */
+    FILE_OP_SAVE_SCENARIO_MOD  /* Write the scenario as a .scenario of its own */
 } FileOp;
 
 /* Map editor state */
@@ -2288,6 +2291,57 @@ static bool meSaveToPath(MapEditorState *ed, const char *path) {
 }
 
 /* -------------------------------------------------------
+ * The scenario already packed into a map, into the panel.
+ * ------------------------------------------------------- */
+/* A map can carry its scenario inside it: a container after the map data with
+ * the manifest and the script in it. The forms take that manifest, or the next
+ * pack writes a blank one over the author's.
+ *
+ * The pane takes the packed script only where there is no loose
+ * X.scenario.lua beside the map: a loose script overrides the packed one when
+ * a server loads the map, so it overrides it here too. Saving the pane still
+ * writes the loose file, which is the dev loop — edit, reload, play, pack when
+ * done.
+ *
+ * Called after meScenarioSetMap and meScenarioFormReset, which are what decide
+ * whether there is a loose script and leave the form empty for this to fill.
+ * A plain map is the ordinary case and says nothing. */
+static void meLoadPackedScenario(MapEditorState *ed, const char *path) {
+    ScenarioManifest packed;
+    char            *script    = NULL;
+    size_t           scriptLen = 0;
+    bool             found     = false;
+    char             err[ME_SCENARIO_PACK_ERR_LEN];
+    char             line[256];
+
+    if (path == NULL || path[0] == '\0') {
+        return;
+    }
+
+    if (!meScenarioReadFromMap(path, &packed, &script, &scriptLen, &found, err,
+                               sizeof(err))) {
+        /* The map itself read, so this is a container that would not open
+         * rather than a map that would not. It goes on the panel's status line
+         * and not into a modal over the map. */
+        snprintf(line, sizeof(line), "%s: %s",
+                 langGetText(STR_MAPEDIT_SCENARIO_PACK_READ_FAILED), err);
+        meScenarioSetStatus(&ed->scn, line);
+        return;
+    }
+    if (!found) {
+        return;
+    }
+
+    ed->scnForm.manifest = packed;
+    ed->scnForm.dirty    = false;
+
+    if (!ed->scn.fileOnDisk && script != NULL) {
+        meScenarioSetPackedScript(&ed->scn, script, scriptLen);
+    }
+    free(script);
+}
+
+/* -------------------------------------------------------
  * Load a map from path. Returns true on success.
  * ------------------------------------------------------- */
 static bool meLoadFromPath(MapEditorState *ed, const char *path) {
@@ -2334,6 +2388,9 @@ static bool meLoadFromPath(MapEditorState *ed, const char *path) {
     meScenarioSetMap(&ed->scn, path);
     meScenarioFormReset(&ed->scnForm);
     meScenarioCheckClear(&ed->scnCheck);
+    /* And whatever the map itself carries, which the empty form above is
+     * waiting for. */
+    meLoadPackedScenario(ed, path);
     meUpdateWindowTitle(ed);
     return true;
 }
@@ -2452,6 +2509,27 @@ static void meShowSaveDialog(MapEditorState *ed, FileOp op) {
     ed->fileDialogPending = true;
     ed->fileDialogGotResult = false;
     SDL_ShowSaveFileDialog(meFileDialogCallback, ed, ed->window, filters, 1, NULL);
+}
+
+/* The same dialog for the other kind of file the editor writes: a scenario
+ * that plays over any map rather than a map. The name it opens on is the
+ * manifest's own, so a scenario called Fast Reload is offered as
+ * Fast Reload.scenario. */
+static void meShowSaveModDialog(MapEditorState *ed) {
+    SDL_DialogFileFilter filters[] = {
+        { "Scenario Files", "scenario" },
+    };
+    char suggested[ME_PATH_MAX];
+
+    if (!meScenarioModFileName(&ed->scnForm.manifest, suggested,
+                               sizeof(suggested))) {
+        suggested[0] = '\0';
+    }
+    ed->pendingFileOp = FILE_OP_SAVE_SCENARIO_MOD;
+    ed->fileDialogPending = true;
+    ed->fileDialogGotResult = false;
+    SDL_ShowSaveFileDialog(meFileDialogCallback, ed, ed->window, filters, 1,
+                           suggested[0] != '\0' ? suggested : NULL);
 }
 
 /* -------------------------------------------------------
@@ -2904,6 +2982,92 @@ static void meActionExit(MapEditorState *ed) {
     }
 }
 
+/* -------------------------------------------------------
+ * Writing the scenario: on to the map, or out as a mod.
+ * ------------------------------------------------------- */
+/* What has to be true before either write, in the order -pack makes it true:
+ * the script in the pane checks out, and the manifest that is about to be
+ * written agrees with the table that script declares. The host fills the
+ * scenario global from the manifest, runs the chunk and refuses the load when
+ * the table left behind says something else, so a package written past this
+ * check is one a server turns down when a round starts on it.
+ *
+ * A pane with nothing in it is not a script with a problem: there is no script
+ * at all, and the manifest stands on its own — which is what a rules-only
+ * scenario is. Anything with bytes in it is checked, and any issue is a
+ * refusal, with the problems going to the list the script view draws.
+ *
+ * modPath NULL writes the chunk on to the open map; a path writes a mod
+ * there. Nothing is written by either until both checks pass. */
+static void meWriteScenario(MapEditorState *ed, const char *modPath) {
+    ScenarioManifest toWrite;
+    char             key[SCN_VALIDATE_KEY_LEN];
+    char             err[ME_SCENARIO_PACK_ERR_LEN];
+    char             line[256];
+    bool             ok;
+
+    if (ed->scn.scriptLen > 0 && ed->scn.script != NULL) {
+        meScenarioCheckRun(&ed->scnCheck, ed->scn.script, ed->scn.scriptLen,
+                           ed->scn.scriptPath[0] != '\0'
+                               ? ed->scn.scriptPath
+                               : ME_SCENARIO_CHECK_UNNAMED);
+        if (ed->scnCheck.result.count > 0) {
+            snprintf(line, sizeof(line), "%s (%u)",
+                     langGetText(STR_MAPEDIT_SCENARIO_PACK_ISSUES),
+                     (unsigned)ed->scnCheck.result.count);
+            meScenarioSetStatus(&ed->scn, line);
+            return;
+        }
+    } else {
+        meScenarioCheckClear(&ed->scnCheck);
+    }
+
+    /* A mod is written from a copy of the form's manifest — bound false, no
+     * tags, no regions — and the comparison runs against that same copy, so a
+     * script that declares bound = true is caught here rather than at load. */
+    if (modPath != NULL) {
+        meScenarioModManifest(&ed->scnForm.manifest, &toWrite);
+    } else {
+        toWrite = ed->scnForm.manifest;
+    }
+
+    if (ed->scnCheck.hasRun && ed->scnCheck.result.haveManifest &&
+        !meScenarioManifestAgrees(&toWrite, &ed->scnCheck.result.manifest, key,
+                                  sizeof(key), err, sizeof(err))) {
+        snprintf(line, sizeof(line), "%s: %s — %s",
+                 langGetText(STR_MAPEDIT_SCENARIO_PACK_CONFLICT), key, err);
+        meScenarioSetStatus(&ed->scn, line);
+        return;
+    }
+
+    if (modPath != NULL) {
+        ok = meScenarioWriteMod(&toWrite, ed->scn.script, ed->scn.scriptLen,
+                                modPath, err, sizeof(err));
+    } else {
+        ok = meScenarioPackIntoMap(&toWrite, ed->scn.script, ed->scn.scriptLen,
+                                   ed->currentFilePath, err, sizeof(err));
+    }
+
+    if (!ok) {
+        snprintf(line, sizeof(line), "%s: %s",
+                 langGetText(STR_MAPEDIT_SCENARIO_PACK_FAILED), err);
+        meScenarioSetStatus(&ed->scn, line);
+        return;
+    }
+
+    if (modPath != NULL) {
+        meScenarioSetStatus(&ed->scn,
+                            langGetText(STR_MAPEDIT_SCENARIO_MOD_SAVED));
+    } else {
+        /* The manifest is on the map now, so the form is no longer ahead of
+         * anything. The line says the loose script still wins, because an
+         * author who packs and then tests would otherwise be running the file
+         * beside the map without being told. */
+        ed->scnForm.dirty = false;
+        meScenarioSetStatus(&ed->scn, langGetText(STR_MAPEDIT_SCENARIO_PACKED));
+    }
+}
+
 /* Process a completed file dialog result. */
 static void meHandleFileDialogResult(MapEditorState *ed) {
     ed->fileDialogGotResult = false;
@@ -2944,6 +3108,11 @@ static void meHandleFileDialogResult(MapEditorState *ed) {
         if (meSaveToPath(ed, path)) {
             ed->quit = true;
         }
+        break;
+    case FILE_OP_SAVE_SCENARIO_MOD:
+        /* A mod is a file of its own and touches neither the map nor the
+         * script beside it. */
+        meWriteScenario(ed, path);
         break;
     default:
         break;
@@ -3320,6 +3489,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     meScenarioSetMap(&ed->scn, ed->currentFilePath);
     meScenarioFormReset(&ed->scnForm);
     meScenarioCheckClear(&ed->scnCheck);
+    meLoadPackedScenario(ed, ed->currentFilePath);
     meUpdateWindowTitle(ed);
 
     /* Create minimap texture */
@@ -4782,11 +4952,14 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             bool wantScriptSave = false;
             bool wantScriptReload = false;
             bool wantScriptValidate = false;
+            bool wantPack = false;
+            bool wantSaveMod = false;
             mapEditorImguiScenarioPanel(&ed->scn, &ed->scnForm, &ed->scnCheck,
                                         ed->currentFilePath, &ed->scnView,
                                         &ed->showScenario, &wantScriptSave,
                                         &wantScriptReload,
-                                        &wantScriptValidate);
+                                        &wantScriptValidate, &wantPack,
+                                        &wantSaveMod);
             if (wantScriptSave && ed->currentFilePath[0]) {
                 /* A script that reached the disk is checked without being
                  * asked, so the author is told about a typo at the moment the
@@ -4807,6 +4980,14 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                                    ed->scn.scriptPath[0] != '\0'
                                        ? ed->scn.scriptPath
                                        : ME_SCENARIO_CHECK_UNNAMED);
+            }
+            if (wantPack && ed->currentFilePath[0]) {
+                meWriteScenario(ed, NULL);
+            }
+            if (wantSaveMod) {
+                /* A mod needs a name of its own, so the write waits for the
+                 * dialog the way Save As does. */
+                meShowSaveModDialog(ed);
             }
         }
 

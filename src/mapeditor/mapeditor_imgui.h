@@ -332,9 +332,13 @@ typedef enum {
  * wantSave: set to true when the user clicks Save.
  * wantReload: set to true when the user clicks Reload.
  * wantValidate: set to true when the user clicks Validate.
- * The panel never touches the filesystem; mapeditor.c acts on the three flags,
- * and the manifest the forms edit has nowhere to be written yet. The check is
- * read for its issues and its markers; mapeditor.c is what runs it. */
+ * wantPack: set to true when the user clicks Pack into Map, at the foot of the
+ *           metadata view.
+ * wantSaveMod: set to true when the user clicks Save as Mod, which needs a path
+ *              and so opens a save dialog.
+ * The panel never touches the filesystem; mapeditor.c acts on the five flags.
+ * The check is read for its issues and its markers; mapeditor.c is what runs
+ * it, and what the last write did is the state's own status line. */
 #include "mapeditor_scenario.h"
 /* The form and the check are passed by pointer, so their headers stay out of
  * this one: they would otherwise carry the manifest's layout and the issue
@@ -348,7 +352,8 @@ void mapEditorImguiScenarioPanel(MEScenarioState *st, struct MEScenarioForm *for
                                  struct MEScenarioCheck *check,
                                  const char *mapPath, int *view, bool *p_open,
                                  bool *wantSave, bool *wantReload,
-                                 bool *wantValidate);
+                                 bool *wantValidate, bool *wantPack,
+                                 bool *wantSaveMod);
 
 /* Render the Image Import dialog.
  * open: pointer to the open flag (set to false when dialog closes).

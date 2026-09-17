@@ -14,10 +14,11 @@
  *   mapeditor_scenario_form.c holds.
  *
  *   The panel draws and reports what the user asked for;
- *   reading and writing the script file is mapeditor.c's
- *   job, the way the stats panel's Refresh works. The
- *   manifest has nowhere to be written yet, so the forms
- *   edit it and nothing else.
+ *   reading and writing files is mapeditor.c's job, the way
+ *   the stats panel's Refresh works. That includes the two
+ *   buttons at the foot of the metadata view, which say the
+ *   scenario should be written on to the map or out as a
+ *   mod and leave the writing to the caller.
  *********************************************************/
 
 #ifdef _WIN32
@@ -416,7 +417,62 @@ static void meScnScriptBody(MEScenarioState *st, MEScenarioCheck *chk,
 /* -------------------------------------------------------
  * Metadata
  * ------------------------------------------------------- */
-static void meScnMetadataBody(MEScenarioForm *f) {
+/* The last component of a path, which is what a button says the scenario is
+ * being packed into. */
+static const char *meScnFileName(const char *path) {
+    const char *at   = path;
+    const char *last = path;
+
+    if (path == NULL) {
+        return "";
+    }
+    for (; *at != '\0'; at++) {
+        if (*at == '/' || *at == '\\') {
+            last = at + 1;
+        }
+    }
+    return last;
+}
+
+/* Where the scenario is saved to: on to the map it was written for, or as a
+ * file of its own that plays over any map. The two live under the metadata
+ * form because that is where the package's identity is edited — its name, its
+ * game type and whether it is built for this map at all. */
+static void meScnSaveRow(MEScenarioState *st, const char *mapPath,
+                         bool *wantPack, bool *wantSaveMod) {
+    const bool haveMap = (mapPath != NULL && mapPath[0] != '\0');
+
+    ImGui::Separator();
+
+    ImGui::BeginDisabled(!haveMap);
+    if (ImGui::Button(langGetText(STR_MAPEDIT_SCENARIO_PACK_MAP)) &&
+        wantPack != NULL) {
+        *wantPack = true;
+    }
+    ImGui::EndDisabled();
+
+    ImGui::SameLine();
+    if (haveMap) {
+        meScnHint(meScnFileName(mapPath));
+    } else {
+        meScnHint(langGetText(STR_MAPEDIT_SCENARIO_PACK_NO_MAP));
+    }
+
+    if (ImGui::Button(langGetText(STR_MAPEDIT_SCENARIO_SAVE_MOD)) &&
+        wantSaveMod != NULL) {
+        *wantSaveMod = true;
+    }
+
+    /* What the last read or write did. One status line for the panel, which
+     * the script view shows in its toolbar and this view shows here. */
+    if (st != NULL && st->status[0] != '\0') {
+        ImGui::TextWrapped("%s", st->status);
+    }
+}
+
+static void meScnMetadataBody(MEScenarioForm *f, MEScenarioState *st,
+                              const char *mapPath, bool *wantPack,
+                              bool *wantSaveMod) {
     /* The game types a manifest may name, and the word each one is written
      * as. The empty word is no game type at all, which plays the round as a
      * strict tournament. */
@@ -483,6 +539,8 @@ static void meScnMetadataBody(MEScenarioForm *f) {
                         &m->fillToCaps)) {
         f->dirty = true;
     }
+
+    meScnSaveRow(st, mapPath, wantPack, wantSaveMod);
 }
 
 /* -------------------------------------------------------
@@ -739,7 +797,8 @@ static void meScnRulesBody(MEScenarioForm *f) {
 void mapEditorImguiScenarioPanel(MEScenarioState *st, MEScenarioForm *form,
                                  MEScenarioCheck *check, const char *mapPath,
                                  int *view, bool *p_open, bool *wantSave,
-                                 bool *wantReload, bool *wantValidate) {
+                                 bool *wantReload, bool *wantValidate,
+                                 bool *wantPack, bool *wantSaveMod) {
     if (st == NULL || form == NULL || view == NULL || p_open == NULL ||
         !*p_open) {
         return;
@@ -767,7 +826,7 @@ void mapEditorImguiScenarioPanel(MEScenarioState *st, MEScenarioForm *form,
 
     switch (*view) {
         case ME_SCENARIO_VIEW_METADATA:
-            meScnMetadataBody(form);
+            meScnMetadataBody(form, st, mapPath, wantPack, wantSaveMod);
             break;
         case ME_SCENARIO_VIEW_LOBBY:
             meScnLobbyBody(form);

@@ -2452,6 +2452,22 @@
 #define STR_MAPEDIT_SCENARIO_ISSUES_DROPPED  2279
 #define STR_MAPEDIT_SCENARIO_CALLS           2280
 
+/* Saving the scenario itself: the chunk written on to the map file, the
+ * standalone .scenario a mod is, and what stopped either of them. The line
+ * after a successful pack says the loose script still wins, because an author
+ * who packs and then tests is otherwise running the file beside the map
+ * without being told. */
+#define STR_MAPEDIT_SCENARIO_PACK_MAP         2281
+#define STR_MAPEDIT_SCENARIO_SAVE_MOD         2282
+#define STR_MAPEDIT_SCENARIO_PACK_NO_MAP      2283
+#define STR_MAPEDIT_SCENARIO_PACKED           2284
+#define STR_MAPEDIT_SCENARIO_MOD_SAVED        2285
+#define STR_MAPEDIT_SCENARIO_PACK_ISSUES      2286
+#define STR_MAPEDIT_SCENARIO_PACK_CONFLICT    2287
+#define STR_MAPEDIT_SCENARIO_PACK_FAILED      2288
+#define STR_MAPEDIT_SCENARIO_FROM_PACKAGE     2289
+#define STR_MAPEDIT_SCENARIO_PACK_READ_FAILED 2290
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

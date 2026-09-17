@@ -1557,6 +1557,10 @@ static const UnitTestEntry s_tests[] = {
     { "editor_form_rules_full",                  run_editor_form_rules_full                  },
     { "editor_form_teams",                       run_editor_form_teams                       },
     { "editor_form_rule_change",                 run_editor_form_rule_change                 },
+    { "editor_pack_mod_round_trip",              run_editor_pack_mod_round_trip              },
+    { "editor_pack_map_round_trip",              run_editor_pack_map_round_trip              },
+    { "editor_pack_twice_identical",             run_editor_pack_twice_identical             },
+    { "editor_pack_refuses_unbound",             run_editor_pack_refuses_unbound             },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },

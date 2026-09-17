@@ -2231,6 +2231,16 @@ static const LangEntry langTable[] = {
     {2278, "Rules and tags are checked against the map when the round starts, not here"},
     {2279, "More problems were found than this list holds"},
     {2280, "Scenario Calls"},
+    {2281, "Pack into Map"},
+    {2282, "Save as Mod…"},
+    {2283, "Save the map first — a packed scenario lives in the map file"},
+    {2284, "Packed into the map — a loose script beside it still overrides the packed one when a server loads it"},
+    {2285, "Mod saved"},
+    {2286, "The script has problems, so nothing was written — the Script view lists them"},
+    {2287, "The forms and the script's own table disagree, so nothing was written"},
+    {2288, "The scenario was not written"},
+    {2289, "Script read from the scenario packed into this map"},
+    {2290, "The scenario packed into this map could not be read"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
