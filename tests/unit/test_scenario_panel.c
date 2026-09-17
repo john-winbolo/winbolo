@@ -22,8 +22,11 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "global.h"          /* MAX_TANKS */
+#include "global.h"          /* MAX_TANKS, GAME_NUMTOTALTICKS_SEC */
 #include "scenario_panel.h"
+#include "scenario_panel_draw.h" /* scnPanelTimerText — the drawer's one
+                                  * piece of arithmetic, which is plain C
+                                  * and needs no renderer behind it */
 #include "scenario_defs.h"   /* SCN_PANEL_MAX — the byte cap one list rides in */
 #include "test_harness.h"
 
@@ -435,6 +438,76 @@ int run_scenario_panel_roundtrip(void) {
     UT_ASSERT(scnPanelWrite(&out, buf, (uint16_t)(GOLDEN_LIST_BYTES - 1)) == 0);
     out.items[5].u.bar.colour = SCN_PANEL_COLOURS;
     UT_ASSERT(scnPanelWrite(&out, buf, (uint16_t)sizeof(buf)) == 0);
+
+    return 0;
+}
+
+/* The timer primitive's text.
+ *
+ * A timer carries one tick and a direction, and every client works the
+ * minutes and seconds out against its own clock — which is what makes a
+ * countdown one message rather than one a tick. The strings below are
+ * written out by hand rather than computed, so the arithmetic is pinned
+ * from outside itself.
+ *
+ * Ticks run at GAME_NUMTOTALTICKS_SEC, a hundred a second; the seconds in
+ * the table are multiplied by it here so each row reads as the time it
+ * stands for. */
+#define TICKS_PER_SEC ((uint32_t)GAME_NUMTOTALTICKS_SEC)
+
+int run_scenario_panel_timer_text(void) {
+    static const struct {
+        uint32_t    nowSecs;
+        uint32_t    targetSecs;
+        uint8_t     mode;
+        const char *expect;
+    } kRows[] = {
+        /* Counting down, with time left. */
+        { 10,    70,    SCN_PANEL_TIMER_DOWN, "1:00" },
+        { 0,     65,    SCN_PANEL_TIMER_DOWN, "1:05" },
+        { 0,     5,     SCN_PANEL_TIMER_DOWN, "0:05" },
+        /* Counting down past its tick reads 0:00 rather than going
+           negative: a wave whose time has run out sits at zero until the
+           script says something else. */
+        { 80,    70,    SCN_PANEL_TIMER_DOWN, "0:00" },
+        { 100000, 1,    SCN_PANEL_TIMER_DOWN, "0:00" },
+        /* Exactly its tick, both ways. */
+        { 70,    70,    SCN_PANEL_TIMER_DOWN, "0:00" },
+        { 70,    70,    SCN_PANEL_TIMER_UP,   "0:00" },
+        /* Counting up from its tick. */
+        { 70,    10,    SCN_PANEL_TIMER_UP,   "1:00" },
+        { 125,   0,     SCN_PANEL_TIMER_UP,   "2:05" },
+        /* A count-up whose tick has not arrived yet is held at zero the
+           same way. */
+        { 10,    70,    SCN_PANEL_TIMER_UP,   "0:00" },
+        /* Past an hour the minutes keep counting rather than wrapping: a
+           panel reading 30:00 for an hour and a half would be lying about
+           the hour. */
+        { 0,     5400,  SCN_PANEL_TIMER_DOWN, "90:00" },
+        { 3661,  0,     SCN_PANEL_TIMER_UP,   "61:01" },
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(kRows) / sizeof(kRows[0]); i++) {
+        char out[SCN_PANEL_TIMER_TEXT_MAX];
+        out[0] = 'x';
+        scnPanelTimerText(kRows[i].nowSecs * TICKS_PER_SEC,
+                          kRows[i].targetSecs * TICKS_PER_SEC,
+                          kRows[i].mode, out, sizeof(out));
+        UT_ASSERT(strcmp(out, kRows[i].expect) == 0);
+    }
+
+    /* A tick difference that is not a whole second is the second it has
+       finished, not the one it is in: 5.99 seconds left reads 0:05. */
+    {
+        char out[SCN_PANEL_TIMER_TEXT_MAX];
+        scnPanelTimerText(0, 6 * TICKS_PER_SEC - 1, SCN_PANEL_TIMER_DOWN, out,
+                          sizeof(out));
+        UT_ASSERT(strcmp(out, "0:05") == 0);
+    }
+
+    /* Nowhere to write it is not a crash. */
+    scnPanelTimerText(0, TICKS_PER_SEC, SCN_PANEL_TIMER_DOWN, NULL, 16);
 
     return 0;
 }

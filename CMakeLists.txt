@@ -882,6 +882,7 @@ set(IOS_SERVER_SOURCES
 set(IOS_GUI_SOURCES
     src/gui/sdl3/clientmutex.c
     src/gui/sdl3/sdl3imgui.cpp
+    src/gui/sdl3/scenario_panel_draw.cpp
     src/gui/sdl3/imgui_steam_nav.cpp
     src/gui/sdl3/sdl3imgui_tablet.cpp
     src/gui/sdl3/sdl3draw.c
@@ -1543,6 +1544,11 @@ set(CLIENT_SOURCES
     src/gui/ui_mode.c
     src/gui/visibility_presets.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/sdl3imgui.cpp src/gui/sdl3/imgui_steam_nav.cpp src/gui/sdl3/sdl3imgui_tablet.cpp src/gui/sdl3/luabrainshandler.c src/gui/sdl3/wb_theme.cpp
+    # The scenario panel's display list, drawn with ImGui's own 2D calls.
+    # Written against ImGui, public/scenario_panel.h and the tile lookup in
+    # sprite_positions.c alone, so the log viewer and the wasm target can
+    # compile it unchanged when their own slots are wired up.
+    src/gui/sdl3/scenario_panel_draw.cpp
     src/gui/sdl3/cursor.c src/gui/sdl3/flags.c src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/winbolo.c src/gui/sdl3/gamefront.c
     src/client_frontend/client_frontend_connect.c
@@ -5675,6 +5681,7 @@ set(_unit_test_names
     scenario_panel_roundtrip
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
+    scenario_panel_timer_text
     scn_presentation_decoder_sets_broadcast
     scn_presentation_client_filters
     scn_arm_panel_publishes_and_records

@@ -2974,6 +2974,9 @@ int run_scenario_panel_boundaries(void);
 int run_scenario_panel_roundtrip(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
+/* And the timer primitive's text: the tick difference the drawer turns into
+ * minutes and seconds, held to exact strings with no renderer behind it. */
+int run_scenario_panel_timer_text(void);
  * their body codecs against hand-written bytes, the refusals a short or
  * overrunning body gets, the broadcast recipient pair every decoder sets,
  * and the in-process filter the client applies before it stores. */

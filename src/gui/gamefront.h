@@ -1000,6 +1000,16 @@ extern float gameFrontOverviewZoom;     /* camera scale, e.g. 1.0 */
 extern bool  gameFrontOverviewFollow;
 extern bool  gameFrontShowMapOverview;  /* open when the last game ended */
 
+/* Where the scenario panel sits ([WINDOW] section). The panel is an ImGui
+ * window inside the main one rather than an OS window of its own, so this is
+ * a position in the main window's own render coordinates, not a desktop one.
+ * -1 for either means the player has never moved it, and it opens at the
+ * top-right of the game view; a position saved on a larger display is
+ * clamped back inside the window it is restored into. Written through the
+ * debounced gameFrontSaveWindowSettings path as the player drags it. */
+extern int   gameFrontScnPanelX;        /* -1 = never moved */
+extern int   gameFrontScnPanelY;
+
 /* App full screen mode ([MENU] section). While it is on the main window is
  * full screen everywhere — menus, lobby and game — and every game opens in
  * the Full Screen Map view. That view is the map, so the pop-out above never

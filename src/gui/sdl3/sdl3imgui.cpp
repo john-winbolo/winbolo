@@ -80,6 +80,7 @@ extern "C" {
 #include "flags.h"
 #include "glyphs.h"
 #include "ping_overlay.h"
+#include "scenario_panel_draw.h" /* the shared drawer behind the scenario panel */
 #include "dialogs/imgui_keycap.h"
 /* The lobby's visibility value renderer and the preset table, so the
  * in-game info panel names a server's rules in the same words and
@@ -3728,6 +3729,167 @@ static void renderPlayersPanel(ClientSim *cs) {
     ImGui::End();
 }
 
+/* -------------------------------------------------------
+ * The scenario panel
+ *
+ * A scenario puts information in front of players by
+ * sending a display list, and this is where panel 0 — the
+ * in-game square — lands: a small window over the game
+ * view, one panel unit to one pixel at zoom 1 and scaled
+ * with the game's zoom from there.
+ *
+ * It is not one of the status panels. Those are a fixed
+ * column at the positions src/gui/positions.h names and
+ * cannot be dragged. This one is the player's to put where
+ * they like, and where they put it is kept in the
+ * preferences.
+ *
+ * Drawn only while panel 0 holds a list with something in
+ * it. An empty list is a scenario taking the panel away, so
+ * an empty frame left sitting on the map would be showing
+ * the player something the scenario had just removed.
+ *
+ * Panels 1, 2 and 3 are not drawn here: 1 is a block in the
+ * lobby's map-info area and 2 and 3 are reserved. The
+ * ClientSim holds all four either way.
+ * ------------------------------------------------------- */
+
+/* How far in from the top-right corner of the game view the panel sits the
+   first time it is shown, in panel units so the inset scales with it. */
+#define SCN_PANEL_DEFAULT_INSET 4.0f
+
+/* The name a seat is playing under, for the list's name primitive. NULL for
+   a seat nobody holds, which is what makes that primitive draw nothing. */
+static const char *scnPanelPlayerName(void *ctx, uint8_t slot) {
+    const char *name;
+    (void)ctx;
+    name = sdl3ImguiGetPlayerName((unsigned char)slot);
+    if (name == nullptr || name[0] == '\0') return nullptr;
+    return name;
+}
+
+static void renderScenarioPanel(ClientSim *cs) {
+    /* Whether ImGui is already holding a position for the window. Cleared
+       whenever the panel is not drawn, so the next list to arrive places it
+       again from what was saved rather than from wherever the last one that
+       shared this window id happened to sit. */
+    static bool s_scnPanelPlaced = false;
+
+    const ScnPanelList *list =
+        (cs != nullptr) ? clientSimGetScnPanel(cs, 0) : nullptr;
+
+    /* Tablet mode is the mobile frontends. They map the square into a slot
+       of their own rather than into a window the player drags, so this one
+       stays out of their way. */
+    if (cs == nullptr || uiModeIsTablet() || list == nullptr ||
+        list->count == 0) {
+        s_scnPanelPlaced = false;
+        return;
+    }
+
+    /* The game's own zoom, as the pixels it actually comes out at on screen:
+       in Custom zoom the game is drawn into a render target at the integer
+       zoom and then blitted at a fractional scale, so the two multiply. The
+       same number the vote widgets anchor themselves with. */
+    int rawZoom = sdl3DrawGetZoomFactor();
+    if (rawZoom < 1) rawZoom = 1;
+    float gameScale = 1.0f;
+    sdl3DrawGetGameRect(nullptr, nullptr, nullptr, nullptr, &gameScale);
+    if (gameScale <= 0.0f) gameScale = 1.0f;
+    const float scale = (float)rawZoom * gameScale;
+    const float side  = (float)SCN_PANEL_UNITS * scale;
+
+    /* Where it goes when nothing has been saved: the top-right of the game
+       view, inset a little. Render coordinates, which is what ImGui draws
+       in and what the smart-ping overlay pins itself with. */
+    float defX = SCN_PANEL_DEFAULT_INSET * scale;
+    float defY = SCN_PANEL_DEFAULT_INSET * scale;
+    {
+        float gx, gy, gw, gh, gtw, gth, rx0, ry0, rx1, ry1;
+        if (sdl3DrawGetMainViewGameRect(&gx, &gy, &gw, &gh, &gtw, &gth) &&
+            sdl3DrawGameToRenderCoords(gx, gy, &rx0, &ry0) &&
+            sdl3DrawGameToRenderCoords(gx + gw, gy + gh, &rx1, &ry1)) {
+            defX = rx1 - side - SCN_PANEL_DEFAULT_INSET * scale;
+            defY = ry0 + SCN_PANEL_DEFAULT_INSET * scale;
+        }
+    }
+
+    /* A position saved on a larger display would put the panel off screen,
+       where there is nothing to grab to drag it back, so a restored one is
+       brought inside the window it is restored into. */
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    float wantX = (gameFrontScnPanelX >= 0) ? (float)gameFrontScnPanelX : defX;
+    float wantY = (gameFrontScnPanelY >= 0) ? (float)gameFrontScnPanelY : defY;
+    if (wantX > display.x - side) wantX = display.x - side;
+    if (wantY > display.y - side) wantY = display.y - side;
+    if (wantX < 0.0f) wantX = 0.0f;
+    if (wantY < 0.0f) wantY = 0.0f;
+
+    if (!s_scnPanelPlaced) {
+        ImGui::SetNextWindowPos(ImVec2(wantX, wantY), ImGuiCond_Always);
+        s_scnPanelPlaced = true;
+    }
+    ImGui::SetNextWindowSize(ImVec2(side, side), ImGuiCond_Always);
+
+    /* No padding, so the window's own rect is the square the list is drawn
+       in and one panel unit is one pixel at zoom 1. The backing is dim
+       rather than opaque: the map under the panel stays readable, and what
+       the script draws reads on top of it. */
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 110));
+    const bool open = ImGui::Begin("##scenariopanel", nullptr,
+                                   ImGuiWindowFlags_NoTitleBar |
+                                   ImGuiWindowFlags_NoResize |
+                                   ImGuiWindowFlags_NoScrollbar |
+                                   ImGuiWindowFlags_NoScrollWithMouse |
+                                   ImGuiWindowFlags_NoCollapse |
+                                   ImGuiWindowFlags_NoSavedSettings |
+                                   ImGuiWindowFlags_NoFocusOnAppearing |
+                                   ImGuiWindowFlags_NoDocking |
+                                   ImGuiWindowFlags_NoNav);
+    if (open) {
+        const ImVec2 pos = ImGui::GetWindowPos();
+
+        /* The window is movable, so this is also where a drag is read back.
+           Clamped again here for the main window having been made smaller
+           since the panel was placed, which ImGui does not do on its own.
+           The clamp lands on the next frame — the background was submitted
+           at pos already, and the list is drawn on top of that background
+           rather than half a frame ahead of it. */
+        float keepX = pos.x, keepY = pos.y;
+        if (keepX > display.x - side) keepX = display.x - side;
+        if (keepY > display.y - side) keepY = display.y - side;
+        if (keepX < 0.0f) keepX = 0.0f;
+        if (keepY < 0.0f) keepY = 0.0f;
+        if (keepX != pos.x || keepY != pos.y) {
+            ImGui::SetWindowPos(ImVec2(keepX, keepY));
+        }
+
+        /* Saved through the debounced window-settings path, the way the map
+           overview's geometry is: a drag is a burst of positions and only
+           the one it ends on is worth a write. */
+        if ((int)keepX != gameFrontScnPanelX ||
+            (int)keepY != gameFrontScnPanelY) {
+            gameFrontScnPanelX = (int)keepX;
+            gameFrontScnPanelY = (int)keepY;
+            gameFrontSaveWindowSettings();
+        }
+
+        ScnPanelDrawEnv env;
+        env.playerName = scnPanelPlayerName;
+        env.ctx        = nullptr;
+        /* The tick a ClientSim last heard from the server — the clock the
+           scenario counted its timer's tick on. */
+        env.tick       = clientSimGetLastServerTick(cs);
+        env.scale      = scale;
+        env.tiles      = (void *)sdl3DrawGetTilesTexture();
+        scnPanelDraw(list, pos.x, pos.y, &env);
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
+}
+
 /* About modal + linked markdown popups live in dialogs/imgui_about.cpp so
  * the welcome screen (its own ImGui context) can show the same dialog. */
 
@@ -7091,6 +7253,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     renderGameInfoPanel(cs);
     renderSendMsgPanel(cs);
     renderPlayersPanel(cs);
+    renderScenarioPanel(cs);
 
     /* Modal dialogs */
     aboutPopupRender();
