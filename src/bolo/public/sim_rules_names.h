@@ -248,6 +248,14 @@ typedef enum {
       SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
     X(tank_explosion_width, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \
     X(tank_explosion_height, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)        \
+    /* Spawning */                                                           \
+    X(start_tank_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
+    X(start_pill_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
+    X(start_base_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
+    X(start_spawn_separation, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)       \
+    X(start_scatter_max, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)            \
+    X(start_neutral_threshold_pct, SIM_RULE_VALUE_INT,                       \
+      SIM_RULE_UNIT_PERCENT)                                                 \
     /* Hearing */                                                            \
     X(sound_soft_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
     X(sound_none_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \

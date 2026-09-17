@@ -194,6 +194,19 @@ typedef struct SimRules {
     int32_t tank_explosion_width;         /* half the wreck's collision box */
     int32_t tank_explosion_height;
 
+    /* ---- Spawning ----
+     * How a respawn picks its start. The three ranges are what counts as
+     * too near a tank, a pillbox or a base; the separation is how far a
+     * scattered spawn keeps from another live tank, the scatter cap how
+     * long the spiral search looks, and the threshold the share of neutral
+     * bases below which a player's own base is preferred to a neutral. */
+    int32_t start_tank_range;
+    int32_t start_pill_range;
+    int32_t start_base_range;
+    int32_t start_spawn_separation;
+    int32_t start_scatter_max;
+    int32_t start_neutral_threshold_pct;
+
     /* ---- Hearing ----
      * How far a sound carries, in map squares. Inside the soft range it is
      * played near, past the none range it is dropped, and between the two

@@ -121,6 +121,7 @@
 #include "tankexp.h"     /* TK_DAMAGE — the splash the explosion path deals */
 #include "floodfill.h"  /* FLOOD_FILL_WAIT */
 #include "sounddist.h"  /* SDIST_SOFT / SDIST_NONE */
+#include "starts.h"     /* START_* */
 #include "treegrow.h"
 #include "sim_rules.h"
 #include "client_sim.h"
@@ -296,6 +297,12 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(tank_explosion_height, TK_HEIGHT_CHECK);
 
     /* Tree growth */
+    SR_EQ(start_tank_range, START_TANK_RANGE);
+    SR_EQ(start_pill_range, START_PILL_RANGE);
+    SR_EQ(start_base_range, START_BASE_RANGE);
+    SR_EQ(start_spawn_separation, START_SPAWN_SEPARATION);
+    SR_EQ(start_scatter_max, START_SCATTER_MAX);
+    SR_EQ(start_neutral_threshold_pct, START_NEUTRAL_THRESHOLD_PCT);
     SR_EQ(sound_soft_range, SDIST_SOFT);
     SR_EQ(sound_none_range, SDIST_NONE);
     SR_EQ(flood_fill_ticks, FLOOD_FILL_WAIT);

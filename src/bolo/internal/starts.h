@@ -33,6 +33,21 @@
 #include "global.h"
 #include "types.h"
 
+/* Spawn safety. Each of these is the classic default of a start_* rule;
+ * startsGetStart and the calls under it read the rule, not the constant.
+ * Here rather than in starts.c so simRulesClassic can see them. */
+
+/* Distance thresholds in map squares */
+#define START_TANK_RANGE 1
+#define START_PILL_RANGE 9
+#define START_BASE_RANGE 9
+/* Minimum distance a scattered spawn keeps from another live tank */
+#define START_SPAWN_SEPARATION 2
+/* Maximum spiral search steps */
+#define START_SCATTER_MAX 1000
+/* Fraction of neutral bases before we treat neutral same as own */
+#define START_NEUTRAL_THRESHOLD_PCT 20
+
 #define START_TIMES_16 16
 #define START0 0
 #define START1 1

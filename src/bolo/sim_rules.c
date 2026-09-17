@@ -44,6 +44,7 @@
 #include "treegrow.h"    /* TREEGROW_* / TREE_GROW_* */
 #include "floodfill.h"   /* FLOOD_FILL_WAIT */
 #include "sounddist.h"   /* SDIST_SOFT / SDIST_NONE */
+#include "starts.h"      /* START_* — the spawn-safety defaults */
 
 void simRulesClassic(SimRules *out) {
     if (out == NULL) {
@@ -192,6 +193,14 @@ void simRulesClassic(SimRules *out) {
     out->tank_explosion_update_ticks = TK_UPDATE_TIME;
     out->tank_explosion_width        = TK_WIDTH_CHECK;
     out->tank_explosion_height       = TK_HEIGHT_CHECK;
+
+    /* ---- Spawning ---- */
+    out->start_tank_range          = START_TANK_RANGE;
+    out->start_pill_range          = START_PILL_RANGE;
+    out->start_base_range          = START_BASE_RANGE;
+    out->start_spawn_separation    = START_SPAWN_SEPARATION;
+    out->start_scatter_max         = START_SCATTER_MAX;
+    out->start_neutral_threshold_pct = START_NEUTRAL_THRESHOLD_PCT;
 
     /* ---- Hearing ---- */
     out->sound_soft_range          = SDIST_SOFT;
@@ -578,6 +587,16 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
               "tank_explosion_damage is %ld, above pill_max_armour %ld",
               (long) rules->tank_explosion_damage,
               (long) rules->pill_max_armour)
+
+    /* ---- Spawning ----
+       Zero on any of the three ranges is a spawn that does not care what is
+       standing there, which is a table worth being able to write. */
+    RULE_INT(start_tank_range, 0, 255)
+    RULE_INT(start_pill_range, 0, 255)
+    RULE_INT(start_base_range, 0, 255)
+    RULE_INT(start_spawn_separation, 0, 255)
+    RULE_INT(start_scatter_max, 1, 65535)
+    RULE_INT(start_neutral_threshold_pct, 0, 100)
 
     /* ---- Hearing ---- */
     RULE_INT(sound_soft_range, 0, 255)
