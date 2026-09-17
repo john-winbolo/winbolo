@@ -104,6 +104,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 63 | `log_ScnScore` | A scenario's score for one player or one team (below) |
 | 64 | `log_ScnAnnounce` | A centre-screen line a scenario put up (below) |
 | 65 | `log_ScnMarker` | A scenario map marker (below) |
+| 66 | `log_ScnHint` | An order a scenario gave one bot (below) |
 
 ### `log_GameSettings` payload
 
@@ -394,6 +395,25 @@ whatever the kind so that every marker record is the same length.
 
 Written by the scenario funnel's marker arm. The viewer consumes the record
 and does not yet draw it.
+
+### `log_ScnHint` payload
+
+One order a scenario gave one bot. The bot's seat, then the verb the order
+led with as a Pascal string:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0 | Slot | The 0-based seat the hint was for |
+| 1 | Verb length | 0–63 |
+| 2… | Verb | That many bytes |
+
+The rest of the hint's pairs are not recorded. What a key means is a contract
+between the script and the brain it was written for, so nothing outside that
+brain can read them; what a replay can say is which seat was given which
+order, and that is what goes down.
+
+Written by the scenario funnel's hint arm. The viewer consumes the record and
+shows nothing for it.
 
 ## Snapshot body
 

@@ -1053,6 +1053,16 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
       break;
+    case log_ScnHint:
+      /* An order a scenario gave one bot: the bot's slot, then the verb the
+         order led with as a pascal string. Read and dropped — the viewer
+         shows nothing for it — and what this case has to do is consume the
+         record's bytes so everything after it is still read from the right
+         byte. */
+      logReadBytes(&opt1, 1);
+      logReadBytes((BYTE *)mem, 1);
+      logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
+      break;
     case log_BaseSetOwner:
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
@@ -2064,6 +2074,15 @@ static int walkSkipEventBody(BYTE code) {
       { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;
         if (rc != lenByte) return -1; }
       return 7 + lenByte;
+    case log_ScnHint:
+      /* The ordered bot's slot, then the order's verb as a pascal string.
+         Only a v2 log can carry one; the v1 walker is given the case anyway,
+         for the reason it is given one for log_Ping. */
+      { BYTE b; if (logReadBytes(&b, 1) != 1) return -1; }
+      if (logReadBytes(&lenByte, 1) != 1) return -1;
+      { BYTE buf[256]; rc = lenByte ? logReadBytes(buf, lenByte) : 0;
+        if (rc != lenByte) return -1; }
+      return 2 + lenByte;
     case log_ScnPanel: {
       /* panel id + the two destination bytes + the list's length as a
          big-endian u16, then the list. The length is two bytes rather than a

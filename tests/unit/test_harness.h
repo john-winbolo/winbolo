@@ -3002,6 +3002,13 @@ int run_scn_arm_panel_replayed_to_joiner(void);
 int run_scn_arm_panel_snapshot_bounded(void);
 int run_scn_arm_score_announce_marker(void);
 
+/* The bot hint (test_scenario_hint.c): the table a fixture brain gets back
+ * whole, every refusal the arm answers with, and the record naming the seat
+ * and the verb. */
+int run_scenario_hint_reaches_brain(void);
+int run_scenario_hint_refusals(void);
+int run_scenario_hint_records(void);
+
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init
  * [arg] text maps to the pairs the flag's syntax describes. */

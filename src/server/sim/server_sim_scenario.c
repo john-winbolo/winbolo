@@ -40,6 +40,7 @@
 #include "server_sim_lifecycle.h"  /* serverSimSetTeam, lobbyAutoUnreadyOnChange, serverSimEnterGameOver */
 #include "server_sim_join.h"       /* serverSimFindFreeSlot — the first free seat */
 #include "netpacks.h"      /* lobbyBotNameAcceptable — the lobby's own name check */
+#include "bot_manager.h"   /* botManagerScenarioHint — the hint arm's delivery */
 #include "../../common/wb_log.h"   /* the line a dropped roster change leaves */
 #include "channel_mux.h"   /* CHANNEL_CONTROL_SEG — the panel cap is derived from it */
 #include "tank.h"          /* the tank arms mutate through these */
@@ -1712,7 +1713,9 @@ static bool scenarioAddBotInSeat(ServerSim *sim, BYTE slot, const char *brain,
 }
 
 /* The slot a remove names: a seat with somebody in it, and that somebody a
- * bot. Both remove arms ask the same two questions in the same order. */
+ * bot. The two remove arms and the hint arm ask the same two questions in the
+ * same order, so a script is told the same thing about a seat whichever of
+ * the three it names. */
 static ScnOpResult scenarioRemovableBot(ServerSim *sim, BYTE slot) {
     if (slot >= MAX_TANKS || !sim->playerConnected[slot]) {
         return SCN_OP_NO_SUCH_PLAYER;
@@ -2351,6 +2354,60 @@ void serverSimScenarioResetRoster(ServerSim *sim) {
     }
     sim->scenarioRosterHead = 0;
     sim->scenarioRosterCount = 0;
+}
+
+/* ── Bots ──────────────────────────────────────────────────────────────── */
+
+/* Hand one bot's brain an order from the script.
+ *
+ * The pairs go onto that bot's Lua stack and its on_scenario_hint is called
+ * with the table they build. Nothing a script wrote is compiled: this is the
+ * whole reason the delivery is not botManagerExecLua with a composed chunk.
+ *
+ * Two things that look like failures are not. A brain that defines no
+ * on_scenario_hint ignores the order, because a scenario names a seat and
+ * cannot know which brain a server runs it with. A bot with no tank — dead,
+ * or waiting to come in — is handed the order anyway, because the brain is
+ * running and reading it costs it nothing; a hint to a bot that cannot act on
+ * it yet is a wasted order rather than a mistake, which is why this arm has
+ * no state test of its own beyond the prelude's. Both answer SCN_OP_OK.
+ *
+ * Nothing is published. The order is for one brain and no client is told. */
+static ScnOpResult scenarioOpBotHint(ServerSim *sim, const ScnOpBotHint *p) {
+    char        pstr[1 + SCN_TABLE_VALUE_LEN];
+    const char *verb;
+    size_t      len;
+    BYTE        k;
+    ScnOpResult r;
+
+    r = scenarioRemovableBot(sim, p->slot);
+    if (r != SCN_OP_OK) return r;
+
+    /* The table reaches a Lua VM, so every string in it must end inside its
+       own field and there must be no more pairs than the table holds. */
+    if (p->hint.count > SCN_TABLE_MAX) {
+        return SCN_OP_TOO_BIG;
+    }
+    for (k = 0; k < p->hint.count; k++) {
+        if (!scenarioTextTerminated(p->hint.kv[k].key, SCN_TABLE_KEY_LEN) ||
+            !scenarioTextTerminated(p->hint.kv[k].value, SCN_TABLE_VALUE_LEN)) {
+            return SCN_OP_TOO_BIG;
+        }
+    }
+
+    /* The verb alone goes into the recording. The other pairs mean whatever
+       the brain they were written for reads them as, so there is nothing a
+       replay could do with them; the seat and the verb are what it can
+       show. A hint carrying no verb records an empty one. */
+    verb = scnTableGet(&p->hint, "verb");
+    if (verb == NULL) verb = "";
+    len = strlen(verb);
+    pstr[0] = (char)len;
+    memcpy(pstr + 1, verb, len);
+    logAddEvent(log_ScnHint, p->slot, 0, 0, 0, 0, pstr);
+
+    botManagerScenarioHint(sim, p->slot, &p->hint);
+    return SCN_OP_OK;
 }
 
 /* ── Comms ─────────────────────────────────────────────────────────────── */
@@ -3526,7 +3583,8 @@ static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpLobbyRemoveBot(sim, &op->u.lobbyRemoveBot);
         case SCN_OP_LOBBY_SET_TEAM:
             return scenarioOpLobbySetTeam(sim, &op->u.lobbySetTeam);
-        case SCN_OP_BOT_HINT:            return SCN_OP_UNSUPPORTED;
+        case SCN_OP_BOT_HINT:
+            return scenarioOpBotHint(sim, &op->u.botHint);
         case SCN_OP_MSG_ALL:
             return scenarioOpMsgAll(sim, &op->u.msgAll);
         case SCN_OP_MSG_TEAM:

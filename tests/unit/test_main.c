@@ -1564,6 +1564,9 @@ static const UnitTestEntry s_tests[] = {
     { "scn_arm_panel_replayed_to_joiner",                run_scn_arm_panel_replayed_to_joiner                },
     { "scn_arm_panel_snapshot_bounded",                  run_scn_arm_panel_snapshot_bounded                  },
     { "scn_arm_score_announce_marker",                   run_scn_arm_score_announce_marker                   },
+    { "scenario_hint_reaches_brain",                     run_scenario_hint_reaches_brain                     },
+    { "scenario_hint_refusals",                          run_scenario_hint_refusals                          },
+    { "scenario_hint_records",                           run_scenario_hint_records                           },
     { "bot_init_table_empty_when_none",          run_bot_init_table_empty_when_none          },
     { "bot_init_arg_text_to_table",              run_bot_init_arg_text_to_table              },
 #ifdef WB_NETDEBUG

@@ -59,6 +59,7 @@
 #include "bot_worker_pool.h"
 #include "brain_list.h"    /* brainListLoadModesForPath — the mode/level keys */
 #include "brain_worldsim.h"
+#include "braincore.h"  /* brainCoreCallScenarioHint — the hint's stack work */
 #include <lua.h>
 #include <lauxlib.h>   /* luaL_loadstring for botManagerExecLua */
 #include "../common/wb_log.h"
@@ -2357,6 +2358,35 @@ bool botManagerExecLua(ServerSim *sim, BYTE playerNum, const char *src) {
         return false;
     }
     return true;
+}
+
+bool botManagerScenarioHint(ServerSim *sim, BYTE playerNum,
+                            const ScnTable *hint) {
+    char err[256];
+    if (sim == NULL || playerNum >= MAX_TANKS) return false;
+    if (!sim->botMgr.bots[playerNum].active) return false;
+    if (!sim->botMgr.bots[playerNum].brain.running) return false;
+    lua_State *L = sim->botMgr.bots[playerNum].brain.L;
+    if (!L || !hint) return false;
+    /* The same four guards and the same VM lookup botManagerExecLua makes
+     * above, and then the opposite of what it does with them: the pairs are
+     * pushed onto the stack and on_scenario_hint is called with the table
+     * they built, never compiled as a source chunk. The keys and the values
+     * are a scenario author's bytes, and a chunk composed out of them would
+     * be an author's text running as code inside this bot's VM. */
+    switch (brainCoreCallScenarioHint(L, hint, err, sizeof(err))) {
+        case BRAIN_HINT_DELIVERED:
+            return true;
+        case BRAIN_HINT_ERROR:
+            WB_LOG_WARN(WB_LOG_CAT_LUA, "brain %d: on_scenario_hint error: %s",
+                        playerNum, err);
+            return false;
+        case BRAIN_HINT_NO_HANDLER:
+        default:
+            /* A brain that does not take hints. Said nowhere: a server runs
+               whatever brains it has, and most will never define one. */
+            return false;
+    }
 }
 
 bool botManagerSetLuaGlobalString(ServerSim *sim, BYTE playerNum,

@@ -920,6 +920,17 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     memcpy(out + off, words, wordsLen);
     off += wordsLen;
     break;
+  case log_ScnHint:
+    /* Which bot was ordered, and the verb the order led with. The rest of
+       the hint's pairs are a contract between the script and the brain it
+       was written for; nothing outside that brain can read them, so what
+       goes down is what a replay can say: this seat was given this order. */
+    out[off++] = log_ScnHint;
+    out[off++] = opt1;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
   default:
     return 0;
   }

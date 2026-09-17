@@ -3486,6 +3486,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # spectator ring's snapshot, the one-update-per-tick key, every refusal,
     # and the score, announcement and marker arms.
     tests/unit/test_scenario_presentation_arms.c
+    # The bot hint: the flat table a scenario hands one bot, delivered into
+    # that bot's brain VM as on_scenario_hint(table) — the fixture brain gets
+    # it back whole, custom keys included — plus every refusal the arm
+    # answers with and the record naming the seat and the verb.
+    tests/unit/test_scenario_hint.c
     # The binding table: the game table a script reads the sim through, the
     # three index rules, what an absent entity reads as, and the bytes and
     # audiences the presentation rows build.
@@ -5698,6 +5703,9 @@ set(_unit_test_names
     scn_arm_panel_replayed_to_joiner
     scn_arm_panel_snapshot_bounded
     scn_arm_score_announce_marker
+    scenario_hint_reaches_brain
+    scenario_hint_refusals
+    scenario_hint_records
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

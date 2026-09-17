@@ -464,6 +464,9 @@ static const char *const kSlEveryRow =
     "  lobby_add_bot = function() return game.lobby_add_bot({team=2}) end,\n"
     "  lobby_remove_bot = function() return game.lobby_remove_bot(9) end,\n"
     "  lobby_set_team = function() return game.lobby_set_team(9, 2) end,\n"
+    /* Seat 9 is empty, so the hint row is exercised and refused before
+       anything looks for a brain to hand the table to. */
+    "  hint        = function() return game.hint(9, {verb=\"hold\"}) end,\n"
     "  message     = function() return game.message(\"hello\") end,\n"
     /* Seat 9 is empty, so the row is exercised and refused before the line
        reaches the chat dispatcher, which this fixture has no round for. */

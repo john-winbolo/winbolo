@@ -4277,6 +4277,16 @@ M.BOT_PINGS_DEFAULT      = false  -- keel false
 -- would put another marker on the same pill.  1500 ticks is 30 s.
 M.ORDER_PING_REPEAT_TICKS = 1500  -- keel 1500 (moot; master off) 30 s
 
+-- How far the seat a bot is escorting may drift from where the bot was last
+-- sent before the escort re-aims.  A hint may name its own `distance`; this
+-- is what one that does not gets.  Three squares keeps the pair together
+-- without re-running the order every think as the escorted tank rolls.
+--
+-- NO `keel` ENTRY.  Scenario hints did not exist in the keel baseline, so
+-- there is no pre-change value for a keel bot to reproduce: it is never
+-- hinted and never reads this.
+M.ORDER_HINT_ESCORT_TILES = 3
+
 -- ══════════════════════════════════════════════════════════════════════════
 -- PRESETS — named bundles of constant overrides, applied per bot
 -- ══════════════════════════════════════════════════════════════════════════

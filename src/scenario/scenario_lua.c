@@ -2242,11 +2242,80 @@ static void scnTableBadKey(lua_State *L, char *out, size_t outCap) {
     lua_pop(L, 1);
 }
 
+/* One value of a flat table as the text that is stored for it. A name is
+ * itself and a number renders; a boolean has no text of its own, so it is
+ * written out as the word Lua's own tostring would give it. allowBool says
+ * whether the caller takes one at all — the init table does not, because its
+ * values follow the -bot-init text form where a bare flag is "1", and two
+ * spellings of yes in one table would be worse than turning the second down.
+ *
+ * Reading a number here rewrites it in place, which is safe: the walk is
+ * already past the value. */
+static const char *scnTableValueText(lua_State *L, int idx, bool allowBool) {
+    if (allowBool && lua_type(L, idx) == LUA_TBOOLEAN) {
+        return lua_toboolean(L, idx) ? "true" : "false";
+    }
+    return lua_tostring(L, idx);
+}
+
+static bool scnTableValueTakeable(lua_State *L, int idx, bool allowBool) {
+    int t = lua_type(L, idx);
+    return t == LUA_TSTRING || t == LUA_TNUMBER ||
+           (allowBool && t == LUA_TBOOLEAN);
+}
+
+/* Walk a table already on the stack at tblIdx into out. The two readers below
+ * differ only in how they get to the table and in what they take for a value,
+ * so the walk itself is written once. */
+static ScnTableRead scnTableWalk(lua_State *L, int tblIdx, ScnTable *out,
+                                 char *badKey, size_t badCap,
+                                 char *why, size_t whyCap, bool allowBool) {
+    ScnTableRead r = SCN_TABLE_READ_OK;
+    const char  *takes = allowBool ? "a string, a number or true/false"
+                                   : "a string or a number";
+
+    lua_pushnil(L);
+    while (r == SCN_TABLE_READ_OK && lua_next(L, tblIdx) != 0) {
+        /* The key is tested rather than read as a string: lua_tostring on a
+           number key would rewrite it in place and break the walk. The value
+           is safe to convert, since the walk is past it. */
+        if (lua_type(L, -2) != LUA_TSTRING) {
+            scnTableBadKey(L, badKey, badCap);
+            if (why != NULL && whyCap > 0) {
+                snprintf(why, whyCap, " has a key that is not a name");
+            }
+            r = SCN_TABLE_READ_BAD_KEY;
+        } else if (!scnTableValueTakeable(L, -1, allowBool)) {
+            if (badKey != NULL && badCap > 0) {
+                snprintf(badKey, badCap, "%s", lua_tostring(L, -2));
+            }
+            if (why != NULL && whyCap > 0) {
+                snprintf(why, whyCap, ".%s must be %s, got %s",
+                         lua_tostring(L, -2), takes, luaL_typename(L, -1));
+            }
+            r = SCN_TABLE_READ_BAD_VALUE;
+        } else if (!scnTableSet(out, lua_tostring(L, -2),
+                                scnTableValueText(L, -1, allowBool))) {
+            if (badKey != NULL && badCap > 0) {
+                snprintf(badKey, badCap, "%s", lua_tostring(L, -2));
+            }
+            if (why != NULL && whyCap > 0) {
+                snprintf(why, whyCap, ".%s does not fit", lua_tostring(L, -2));
+            }
+            r = SCN_TABLE_READ_NO_ROOM;
+        }
+        lua_pop(L, 1);   /* the value; the key stays for the next step */
+    }
+    if (r != SCN_TABLE_READ_OK) {
+        lua_pop(L, 1);   /* the key the walk stopped on */
+    }
+    return r;
+}
+
 ScnTableRead scenarioLuaReadTable(lua_State *L, int idx, const char *key,
                                   ScnTable *out, char *badKey, size_t badCap,
                                   char *why, size_t whyCap) {
-    ScnTableRead r = SCN_TABLE_READ_OK;
-    int          t;
+    ScnTableRead r;
 
     scnTableClear(out);
     if (badKey != NULL && badCap > 0) badKey[0] = '\0';
@@ -2265,47 +2334,22 @@ ScnTableRead scenarioLuaReadTable(lua_State *L, int idx, const char *key,
         lua_pop(L, 1);
         return SCN_TABLE_READ_NOT_TABLE;
     }
-    t = lua_gettop(L);
 
-    lua_pushnil(L);
-    while (r == SCN_TABLE_READ_OK && lua_next(L, t) != 0) {
-        /* The key is tested rather than read as a string: lua_tostring on a
-           number key would rewrite it in place and break the walk. The value
-           is safe to convert, since the walk is past it. */
-        if (lua_type(L, -2) != LUA_TSTRING) {
-            scnTableBadKey(L, badKey, badCap);
-            if (why != NULL && whyCap > 0) {
-                snprintf(why, whyCap, " has a key that is not a name");
-            }
-            r = SCN_TABLE_READ_BAD_KEY;
-        } else if (lua_type(L, -1) != LUA_TSTRING &&
-                   lua_type(L, -1) != LUA_TNUMBER) {
-            if (badKey != NULL && badCap > 0) {
-                snprintf(badKey, badCap, "%s", lua_tostring(L, -2));
-            }
-            if (why != NULL && whyCap > 0) {
-                snprintf(why, whyCap,
-                         ".%s must be a string or a number, got %s",
-                         lua_tostring(L, -2), luaL_typename(L, -1));
-            }
-            r = SCN_TABLE_READ_BAD_VALUE;
-        } else if (!scnTableSet(out, lua_tostring(L, -2),
-                                lua_tostring(L, -1))) {
-            if (badKey != NULL && badCap > 0) {
-                snprintf(badKey, badCap, "%s", lua_tostring(L, -2));
-            }
-            if (why != NULL && whyCap > 0) {
-                snprintf(why, whyCap, ".%s does not fit", lua_tostring(L, -2));
-            }
-            r = SCN_TABLE_READ_NO_ROOM;
-        }
-        lua_pop(L, 1);   /* the value; the key stays for the next step */
-    }
-    if (r != SCN_TABLE_READ_OK) {
-        lua_pop(L, 1);   /* the key the walk stopped on */
-    }
+    r = scnTableWalk(L, lua_gettop(L), out, badKey, badCap, why, whyCap,
+                     false);
     lua_pop(L, 1);       /* the table */
     return r;
+}
+
+/* The hint table, which is the argument itself rather than a field of one,
+ * and which takes true and false beside strings and numbers. */
+static ScnTableRead scnLuaReadArgTable(lua_State *L, int idx, ScnTable *out,
+                                       char *badKey, size_t badCap,
+                                       char *why, size_t whyCap) {
+    scnTableClear(out);
+    if (badKey != NULL && badCap > 0) badKey[0] = '\0';
+    if (why != NULL && whyCap > 0) why[0] = '\0';
+    return scnTableWalk(L, idx, out, badKey, badCap, why, whyCap, true);
 }
 
 /* The same read as a Lua argument. What did not fit is answered false, with
@@ -2573,6 +2617,54 @@ static int scnLuaLobbySetTeam(lua_State *L) {
     op.u.lobbySetTeam.slot = (BYTE)p;
     op.u.lobbySetTeam.team = (BYTE)t;
     return scnDone(L, &op, "player %d to team %d", (int)p, (int)t);
+}
+
+/* ── Bots ─────────────────────────────────────────────────────────── */
+
+/* An order for one bot's brain: a flat table with a verb in it, and whatever
+ * else the brain it was written for reads. Nothing here knows what any of it
+ * means — the engine marshals the table and the brain is the only thing that
+ * reads it — so every pair but `verb` is carried through untouched.
+ *
+ * A missing verb RAISES rather than being refused or passed on. Every other
+ * shape mistake in this file raises, because the shape of an argument is the
+ * author's business and knowable without the round; and a hint with no verb
+ * is the one mistake that would otherwise be invisible, since a brain quietly
+ * ignores a table it cannot read. A refusal would be wrong for the same
+ * reason: there is no state of the round that makes a verb appear. */
+static int scnLuaHint(lua_State *L) {
+    ScenarioOp   op;
+    ScnTableRead tr;
+    char         badKey[SCN_TABLE_KEY_LEN + 1];
+    char         why[SCN_TABLE_WHY_LEN];
+    const char  *verb;
+    lua_Integer  p = scnArgInt(L, 1, "p");
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    scnArgTable(L, 2, "t");
+    memset(&op, 0, sizeof(op));
+    op.type              = SCN_OP_BOT_HINT;
+    op.u.botHint.slot    = (BYTE)p;
+
+    tr = scnLuaReadArgTable(L, 2, &op.u.botHint.hint, badKey, sizeof(badKey),
+                            why, sizeof(why));
+    if (tr == SCN_TABLE_READ_NO_ROOM) {
+        return scnTableTooBig(L, "hint", badKey);
+    }
+    if (tr != SCN_TABLE_READ_OK) {
+        return luaL_argerror(L, 2, lua_pushfstring(L, "t%s", why));
+    }
+
+    verb = scnTableGet(&op.u.botHint.hint, "verb");
+    if (verb == NULL || verb[0] == '\0') {
+        return luaL_argerror(L, 2,
+                             "t.verb is the word that says what the order "
+                             "is, and a hint has to carry one");
+    }
+    return scnDone(L, &op, "player %d, verb '%s'", (int)p, verb);
 }
 
 /* ── Comms ────────────────────────────────────────────────────────── */
@@ -3996,6 +4088,11 @@ static const ScnLuaRow kScnLuaRows[] = {
       "refused." },
     { "lobby_set_team", scnLuaLobbySetTeam,
       "lobby_set_team(p, t) — move a lobby seat to another team." },
+    { "hint", scnLuaHint,
+      "hint(p, t) — hand bot p's brain an order: a flat table with a verb "
+      "and whatever else the brain reads. Values may be strings, numbers or "
+      "true/false and all reach the brain as text. A brain that takes no "
+      "hints ignores it." },
     { "message", scnLuaMessage,
       "message(text[, target]) — a line to everyone, to one seat with a "
       "number, or to a team with { team = t }." },

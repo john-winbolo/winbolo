@@ -151,6 +151,7 @@ static bool opArmHasLanded(ScenarioOpType t) {
            t == SCN_OP_LOBBY_ADD_BOT ||
            t == SCN_OP_LOBBY_REMOVE_BOT ||
            t == SCN_OP_LOBBY_SET_TEAM ||
+           t == SCN_OP_BOT_HINT ||           /* test_scenario_hint.c */
            t == SCN_OP_MSG_ALL ||            /* test_scenario_comms_arms.c */
            t == SCN_OP_MSG_TEAM ||
            t == SCN_OP_MSG_PLAYER ||

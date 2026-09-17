@@ -28,6 +28,7 @@ bug worth reporting.
 - [Tags and regions](#tags-and-regions)
 - [Changing the world](#changing-the-world)
 - [Bots and seats](#bots-and-seats)
+  - [Hints: telling one bot what to do](#hints-telling-one-bot-what-to-do)
 - [Talking to players, and ending the round](#talking-to-players-and-ending-the-round)
 - [Showing things on a client](#showing-things-on-a-client)
   - [The panel](#the-panel)
@@ -951,12 +952,94 @@ new the way a respawn is. A spawn naming either differently gets a runner built
 for it instead, which is what a wave transition costs when it is paid, and a
 line in the server log saying which of the two differed. The `init` table is
 read once, when the VM is built, so it is not the place for orders that change
-from one wave to the next; a call that speaks to a bot's brain is not here yet.
+from one wave to the next; `game.hint` below is.
 
 The roster ops are the six above, `set_team` and `lobby_set_team` included.
 All of them are refused inside `on_setup`: the round is still being built
 there, and a roster edit would re-enter the machinery that is building it.
 Field your first wave, and move seats between teams, from `on_start`.
+
+---
+
+### Hints: telling one bot what to do
+
+| Call | What it does |
+|---|---|
+| `game.hint(p, t)` | Hands bot `p`'s brain an order: one flat table with a `verb` in it. |
+
+A hint goes to **one bot's brain**, not to the world. The engine marshals the
+table and never reads it: what a key means is a contract between the script
+and the brain it was written for.
+
+`t` is a flat table — names to values, nothing nested. A key is at most 23
+bytes, a value at most 63, and there are at most 16 pairs; past any of those
+the call is refused with `SCN_OP_TOO_BIG`. Values may be strings, numbers or
+`true`/`false`, and **every one of them reaches the brain as text**, so
+
+```lua
+game.hint(p, { verb = "defend", base = 3, tight = true })
+```
+
+arrives as `t.verb == "defend"`, `t.base == "3"` and `t.tight == "true"`. A
+brain reads a number back with `tonumber`.
+
+`verb` is required: a table without one, or with an empty one, stops the call
+the way any bad argument does. Everything else is the script's business.
+
+**What the brain has to do.** The server calls the global `on_scenario_hint(t)`
+on that bot's Lua state, if the brain defines one:
+
+```lua
+function on_scenario_hint(t)
+  if t.verb == "goto" then ... end
+end
+```
+
+A brain that does not define it ignores the hint and the call still answers
+`true` — a scenario names a seat and cannot know which brain a server runs it
+with. `game.hint` is refused for a seat with nobody in it
+(`SCN_OP_NO_SUCH_PLAYER`) and for a human (`SCN_OP_IS_HUMAN`), and nothing
+else: a bot that is dead or waiting to come in is handed the order anyway,
+because its brain is still running.
+
+**The seven standard verbs.** These are the words a brain that takes hints is
+expected to know. Everything past them passes through untouched, so a brain
+author and a script author can agree on words of their own.
+
+| `verb` | Keys | Means |
+|---|---|---|
+| `goto` | `x`, `y`, and optionally `w`, `h` | Go to that square, or to the middle of that rectangle, and hold there |
+| `attack` | `player` | Attack that seat's tank |
+| `defend` | `pill` or `base` | Hold that pillbox or that base |
+| `hold` | `x`, `y`, both optional | Stand still — on that square, or where the bot already is |
+| `patrol` | `x1`, `y1`, `x2`, `y2`, … up to `x7`, `y7` | Walk the points in order, round and round |
+| `escort` | `player`, and optionally `distance` | Stay with that seat, within `distance` squares of it (3 by default) |
+| `avoid` | `x`, `y`, `w`, `h` | Keep out of that rectangle until told otherwise |
+
+There is no `region` key. A brain has no region table to look a name up in, so
+a script that wants a bot in a region reads the rectangle itself and sends the
+numbers:
+
+```lua
+local r = game.region("keep")
+game.hint(p, { verb = "goto", x = r.x, y = r.y, w = r.w, h = r.h })
+```
+
+**What GoalHunter does with them.** The brain routes a hint into the same
+order machinery a chat line from a human ally reaches, so a hinted bot acks
+it, holds it for the same sixty seconds, and drops it for anything a person
+says afterwards. A player can call a scripted order off with `cancel all` or
+by naming the bot — a bare `cancel` cannot, because that one releases only
+the speaker's own order and a hint's sender is the scenario.
+
+Three of the seven are as near as the brain's existing goals get. `defend` on
+a **base** stands on the base, because there is no defend-a-base goal — a base
+is not held the way a pillbox is. `avoid` is remembered rather than fed to the
+pathfinder: a bot standing inside the rectangle leaves it, and a later `goto`
+or `hold` inside it is turned down, but a route may still pass through.
+`escort` follows a seat whose position the brain knows, which is an ally
+**bot**; a human ally broadcasts nothing the brain can follow, so a bot told
+to escort a person stays where it is.
 
 ---
 
@@ -1448,6 +1531,7 @@ The `code` a refused write answers, as a string.
 | A panel text primitive | 48 bytes |
 | A score label | 15 bytes |
 | A bot's `init` table | 16 pairs |
+| A hint table | 16 pairs; a name 23 bytes, a value 63 |
 | Events queued for one frame | 256 |
 | Roster changes outstanding at once | 32 |
 | Tiles a fill may change in one tick | 256 |
@@ -1521,9 +1605,6 @@ Named so you do not spend an afternoon looking for them:
   may put a seat on a team nobody is on is still decided by the
   `allow_extra_teams()` policy alone.
 - **Packaged brains.** `package:NAME` is refused wherever a brain is named.
-- **Bot hints.** There is no call that hands a bot's brain a structured
-  hint. `say` reaches a brain through its chat inbox, which is the
-  channel a human ally has, and nothing beyond it.
 - **Presentation.** A panel, a score line, a newswire line and a map marker
   have no calls yet.
 - **Triggers.** A `scenario.triggers` table is not read, and a script that
