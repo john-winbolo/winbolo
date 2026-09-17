@@ -2537,6 +2537,29 @@
 #define STR_MAPEDIT_SCENARIO_TEAM_ID_RANGE    2325
 #define STR_MAPEDIT_SCENARIO_TEAM_ID_TAKEN    2326
 
+/* The functions view: every hook and policy a scenario may define, which of
+ * them this script has written, and the two things an author does from the
+ * list — start one that is not there, or go to one that is. The words for
+ * Add and for the filter box are the rules view's, which already say them
+ * in this panel.
+ *
+ * The last three are what a definition the scanner found can be wrong
+ * about. A colon puts an implicit self in front of the parameters while the
+ * host calls the field with the hook's own arguments, so every argument
+ * shifts by one and a hook that looks written behaves wrongly. Two
+ * definitions of one name are both live Lua and the later one silently
+ * replaces the earlier, so the row says there are two rather than showing
+ * one of them. */
+#define STR_MAPEDIT_SCENARIO_VIEW_FUNCTIONS   2470
+#define STR_MAPEDIT_SCENARIO_FN_GOTO          2471
+#define STR_MAPEDIT_SCENARIO_FN_IN_SCRIPT     2472
+#define STR_MAPEDIT_SCENARIO_FN_ANSWERS       2473
+#define STR_MAPEDIT_SCENARIO_FN_GOTO_ONE      2474
+#define STR_MAPEDIT_SCENARIO_FN_NONE_YET      2475
+#define STR_MAPEDIT_SCENARIO_FN_AT_LINE       2476
+#define STR_MAPEDIT_SCENARIO_FN_COLON         2477
+#define STR_MAPEDIT_SCENARIO_FN_TWICE         2478
+
 /* The lobby's rules popup: the button on the scenario line, the window's
  * caption, and the four columns a row is drawn in — the rule, what the
  * classic game plays it at, what the scenario set it to, and what that does

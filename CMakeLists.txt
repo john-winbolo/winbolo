@@ -3588,9 +3588,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # writes, and the parameter list each row claims held against the
     # arguments the host pushes at the dispatch site.
     tests/unit/test_scenario_functions.c
-    # The line the editor shows beside each of those functions. The table
-    # renders through langGetText, which test_stubs.c provides here, so the
-    # module compiles in without lang.c.
+    # The line the editor shows beside each of those functions, and the stub
+    # it inserts for one that has not been written. The table renders through
+    # langGetText, which test_stubs.c provides here, so the module compiles
+    # in without lang.c.
     tests/unit/test_scenario_fndesc.c
     src/mapeditor/mapeditor_scenario_fndesc.c
     # Which of those functions a script has already written, read off its
@@ -5790,6 +5791,7 @@ set(_unit_test_names
     scenario_functions_table
     scenario_functions_match_dispatch
     scenario_fndesc_table
+    scenario_fnstub_forms
     scenario_fnscan_forms
     scenario_package_round_trip
     scenario_package_bad_framing

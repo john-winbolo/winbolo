@@ -9,6 +9,11 @@
  *   One description id per row of the function catalogue,
  *   read off the two lists themselves so a hook or a policy
  *   added without a line of its own does not compile.
+ *
+ *   The rest of the file reads the catalogue's rows rather
+ *   than the lists behind them, and writes out the text a
+ *   list of functions needs: the name, the parameter list
+ *   and the stub an author starts a function from.
  *********************************************************/
 
 #include <stddef.h>
@@ -57,4 +62,125 @@ const char *meScnFnDescription(size_t row) {
         return "";
     }
     return langGetText(meScnFnDescIds[row]);
+}
+
+/* ── The text a list of functions is drawn from ─────────────────────── */
+
+/* The catalogue row at that index, or NULL for an index it does not hold.
+ * Every accessor below goes through here, so a row off the end answers
+ * emptily in one place rather than in five. */
+static const ScnLuaFnRow *meScnFnRowAt(size_t row) {
+    const ScnLuaFnRow *rows;
+    size_t             count = 0;
+
+    rows = scenarioLuaFunctions(&count);
+    if (rows == NULL || row >= count) {
+        return NULL;
+    }
+    return &rows[row];
+}
+
+/* Adds src to what is being written, and adds its length to *want whether
+ * there was room for it or not. That is what lets the answer say how much a
+ * complete one would have taken once the buffer has run out: *want walks
+ * past outLen and keeps counting. The last byte of out is left for the
+ * terminator meScnFnEnd puts there. */
+static void meScnFnAdd(char *out, size_t outLen, size_t *want,
+                       const char *src) {
+    size_t i;
+
+    for (i = 0; src[i] != '\0'; i++) {
+        if (out != NULL && *want + i + 1 < outLen) {
+            out[*want + i] = src[i];
+        }
+    }
+    *want += i;
+}
+
+/* Terminates what was written, at the end of it or at the last byte of the
+ * buffer, whichever came first. */
+static void meScnFnEnd(char *out, size_t outLen, size_t want) {
+    if (out == NULL || outLen == 0) {
+        return;
+    }
+    out[want < outLen ? want : outLen - 1] = '\0';
+}
+
+/* The parameter list of one row, added to what is already there. The names
+ * are the author's own, and the trailing scripted flag belongs to an event
+ * hook and to nothing else: the kind is what says there is one, because the
+ * catalogue's names stop short of it. */
+static void meScnFnAddParams(const ScnLuaFnRow *r, char *out, size_t outLen,
+                             size_t *want) {
+    size_t i;
+
+    meScnFnAdd(out, outLen, want, "(");
+    for (i = 0; i < r->paramCount; i++) {
+        if (i > 0) {
+            meScnFnAdd(out, outLen, want, ", ");
+        }
+        meScnFnAdd(out, outLen, want, r->params[i]);
+    }
+    if (r->kind == SCN_FN_EVENT_HOOK) {
+        if (r->paramCount > 0) {
+            meScnFnAdd(out, outLen, want, ", ");
+        }
+        meScnFnAdd(out, outLen, want, "scripted");
+    }
+    meScnFnAdd(out, outLen, want, ")");
+}
+
+size_t meScnFnCount(void) {
+    size_t count = 0;
+
+    (void)scenarioLuaFunctions(&count);
+    return count;
+}
+
+const char *meScnFnName(size_t row) {
+    const ScnLuaFnRow *r = meScnFnRowAt(row);
+
+    return (r != NULL && r->name != NULL) ? r->name : "";
+}
+
+const char *meScnFnReturns(size_t row) {
+    const ScnLuaFnRow *r = meScnFnRowAt(row);
+
+    return (r != NULL && r->returns != NULL) ? r->returns : "";
+}
+
+size_t meScnFnParamList(size_t row, char *out, size_t outLen) {
+    const ScnLuaFnRow *r    = meScnFnRowAt(row);
+    size_t             want = 0;
+
+    if (out != NULL && outLen > 0) {
+        out[0] = '\0';
+    }
+    if (r == NULL) {
+        return 0;
+    }
+    meScnFnAddParams(r, out, outLen, &want);
+    meScnFnEnd(out, outLen, want);
+    return want;
+}
+
+size_t meScnFnStub(size_t row, char *out, size_t outLen) {
+    const ScnLuaFnRow *r    = meScnFnRowAt(row);
+    size_t             want = 0;
+
+    if (out != NULL && outLen > 0) {
+        out[0] = '\0';
+    }
+    if (r == NULL) {
+        return 0;
+    }
+    meScnFnAdd(out, outLen, &want, "function ");
+    meScnFnAdd(out, outLen, &want, r->name);
+    meScnFnAddParams(r, out, outLen, &want);
+    /* Two lines and no third. A body would be this file writing the
+       author's function for them, and for a policy it would be an answer
+       they have not given. */
+    meScnFnAdd(out, outLen, &want, "\nend");
+    meScnFnEnd(out, outLen, want);
+    return want;
 }

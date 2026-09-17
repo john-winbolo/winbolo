@@ -13,6 +13,12 @@
  *   Lobby, Rules and Tags are forms over the manifest
  *   mapeditor_scenario_form.c holds.
  *
+ *   Functions lists every hook and policy a scenario may
+ *   define, marks the ones this script has written, and
+ *   starts one it has not. The catalogue behind that list is
+ *   a C header naming Lua types, so the rows reach this file
+ *   as plain text through mapeditor_scenario_fndesc.h.
+ *
  *   The tags view lists the map's own pills, bases and
  *   starts, which this file cannot ask the map for: those
  *   lists are bolo internals and nothing here reaches into
@@ -48,6 +54,8 @@
 #include "mapeditor_imgui.h"
 #include "mapeditor_scenario.h"
 #include "mapeditor_scenario_check.h"
+#include "mapeditor_scenario_fndesc.h"
+#include "mapeditor_scenario_fnscan.h"
 #include "mapeditor_scenario_form.h"
 #include "../gui/lang.h"
 #include "../gui/sim_rules_phrase.h"
@@ -333,6 +341,87 @@ static void meScnCallsPopup(TextEditor *editor, MEScenarioState *st,
     ImGui::EndPopup();
 }
 
+/* What the functions view asked the script view to do, waiting for the next
+ * frame the script view draws.
+ *
+ * The widget belongs to that view's own body and only one view draws per
+ * frame, so the functions view cannot reach it. It leaves the action here
+ * and switches the panel to the script view, which is where an author
+ * pressing either button wants to end up: Add and Go to both mean show me
+ * this in the script.
+ *
+ * An empty stub and a line of 0 mean there is nothing waiting. The line
+ * counts from 1, as the scanner and the issues list count. */
+static char s_pendingStub[ME_SCN_FN_STUB_MAX] = "";
+static int  s_pendingLine                     = 0;
+
+/* The two things the functions view can ask for. Each clears the other,
+ * because only one of them can be what the author last pressed, and each
+ * switches the panel to the view that carries it out. */
+static void meScnAskInsert(size_t row, int *view) {
+    meScnFnStub(row, s_pendingStub, sizeof(s_pendingStub));
+    s_pendingLine = 0;
+    *view         = ME_SCENARIO_VIEW_SCRIPT;
+}
+
+static void meScnAskGoTo(int line, int *view) {
+    s_pendingStub[0] = '\0';
+    s_pendingLine    = line;
+    *view            = ME_SCENARIO_VIEW_SCRIPT;
+}
+
+/* Whatever the functions view left behind, applied to the widget.
+ *
+ * A stub goes in at the start of the line the cursor is on, so it takes
+ * lines of its own and the line that was there is pushed down whole rather
+ * than split around it. A blank line follows it, and the cursor is left at
+ * the end of the function line, which is where the body gets typed.
+ *
+ * InsertTextAtCursor adds no undo record, so the watch on the undo index in
+ * the body below will not see it. The text is read back here for the same
+ * reason the completion popup reads it back: without that the buffer keeps
+ * what it held before the insert and a save writes that. */
+static void meScnApplyPending(TextEditor *editor, MEScenarioState *st,
+                              MEScenarioCheck *chk) {
+    if (s_pendingStub[0] != '\0') {
+        const char *eol      = strchr(s_pendingStub, '\n');
+        const int   firstLen = (eol != NULL) ? (int)(eol - s_pendingStub)
+                                             : (int)strlen(s_pendingStub);
+        int         line     = 0;
+        int         column   = 0;
+        char        text[ME_SCN_FN_STUB_MAX + 4];
+
+        editor->GetCursorPosition(line, column);
+        editor->SetCursorPosition(line, 0);
+        snprintf(text, sizeof(text), "%s\n\n", s_pendingStub);
+        editor->InsertTextAtCursor(text);
+        s_pendingStub[0] = '\0';
+
+        editor->SetCursorPosition(line, firstLen);
+        editor->SetViewAtLine(line, TextEditor::SetViewAtLineMode::Centered);
+
+        const std::string edited = editor->GetText();
+        meScnTextEdited(st, chk, edited.c_str(), edited.size());
+    }
+
+    if (s_pendingLine > 0) {
+        /* A definition counts lines from 1 and the widget from 0. The text
+           can have moved since the list was drawn, so a line past the end
+           of it lands on the last line rather than nowhere. */
+        int line = s_pendingLine - 1;
+
+        if (line >= editor->GetLineCount()) {
+            line = editor->GetLineCount() - 1;
+        }
+        if (line < 0) {
+            line = 0;
+        }
+        editor->SetCursorPosition(line, 0);
+        editor->SetViewAtLine(line, TextEditor::SetViewAtLineMode::Centered);
+        s_pendingLine = 0;
+    }
+}
+
 static void meScnScriptBody(MEScenarioState *st, MEScenarioCheck *chk,
                             const char *mapPath, bool *wantSave,
                             bool *wantReload, bool *wantValidate) {
@@ -361,6 +450,10 @@ static void meScnScriptBody(MEScenarioState *st, MEScenarioCheck *chk,
         st->pushToWidget = false;
         s_seenUndoIndex = s_editor.GetUndoIndex();
     }
+
+    /* After the seeding above, so an insert made on the frame a script
+     * arrived goes into that script rather than into the one it replaced. */
+    meScnApplyPending(&s_editor, st, chk);
 
     /* The markers follow the last check the same way the text follows the last
      * read: applied once when they change, not rebuilt every frame. */
@@ -1209,6 +1302,275 @@ static void meScnTagsBody(MEScenarioForm *f, const MEScenarioMapInfo *info,
 }
 
 /* -------------------------------------------------------
+ * Functions
+ * ------------------------------------------------------- */
+
+/* How wide the column of Add and Go to buttons is, so the names line up
+ * down the list whichever button a row carries, and how wide the chooser
+ * under the list opens. */
+static const float kFnButtonWidth  = 78.0f;
+static const float kFnChooserWidth = 300.0f;
+
+/* As many definitions as the view reads out of one script. The catalogue is
+ * 35 rows and the rest of what a script defines is the author's own
+ * helpers, so this is well above what a list has to show; a script with
+ * more than this has the rest left off the list and off the chooser. */
+#define ME_SCN_FOUND_MAX 128
+
+static bool meScnFnIsNameChar(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || c == '_';
+}
+
+/* One line of the script, by the number the scanner gave it, cut where the
+ * scanner cuts a line: at the first --, which is where the code stops. The
+ * rule is written again here rather than reached for, because it belongs to
+ * the scan and the scan answers names and lines, not text. NULL for a line
+ * the text does not have. */
+static const char *meScnFnLineAt(const char *text, int lineNo, size_t *len) {
+    const char *p  = text;
+    const char *eol;
+    int         at = 1;
+    size_t      i;
+
+    if (text == NULL || lineNo < 1) {
+        return NULL;
+    }
+    while (at < lineNo) {
+        eol = strchr(p, '\n');
+        if (eol == NULL) {
+            return NULL;
+        }
+        p = eol + 1;
+        at++;
+    }
+    eol  = strchr(p, '\n');
+    *len = (eol != NULL) ? (size_t)(eol - p) : strlen(p);
+    for (i = 0; i + 1 < *len; i++) {
+        if (p[i] == '-' && p[i + 1] == '-') {
+            *len = i;
+            break;
+        }
+    }
+    return p;
+}
+
+/* Whether the definition on that line is the colon form — the
+ * function scenario:on_tick(tick) spelling.
+ *
+ * The scanner reports that line as defining on_tick, which is right: the
+ * field is defined either way. What it does not report is which spelling
+ * did it, and the difference is the whole of what this is for. A colon puts
+ * an implicit self in front of the parameters, while the host calls the
+ * field with the hook's own arguments, so self swallows the first of them
+ * and every argument after it shifts. The author has a hook that is there
+ * and behaves wrongly. So the line the scanner named is read again, for the
+ * name with a colon in front of it and a parameter list after it. */
+static bool meScnFnColonForm(const char *text, const char *name, int lineNo) {
+    size_t      len     = 0;
+    const char *line    = meScnFnLineAt(text, lineNo, &len);
+    const size_t nameLen = strlen(name);
+    size_t      i;
+
+    if (line == NULL || nameLen == 0) {
+        return false;
+    }
+    for (i = 0; i + nameLen <= len; i++) {
+        size_t j;
+
+        if (memcmp(line + i, name, nameLen) != 0) {
+            continue;
+        }
+        /* The name a parameter list opens on, rather than one mentioned in
+           passing or the tail of a longer one. */
+        if (i + nameLen < len && meScnFnIsNameChar(line[i + nameLen])) {
+            continue;
+        }
+        j = i + nameLen;
+        while (j < len && (line[j] == ' ' || line[j] == '\t')) {
+            j++;
+        }
+        if (j >= len || line[j] != '(') {
+            continue;
+        }
+        /* And what stands in front of it, past whatever spaces. A colon
+           there is the form; a dot or the keyword itself is not. */
+        j = i;
+        while (j > 0 && (line[j - 1] == ' ' || line[j - 1] == '\t')) {
+            j--;
+        }
+        if (j > 0 && line[j - 1] == ':') {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* How many of the definitions found are of that name, which line the first
+ * of them is on, and whether any of them is the colon form. */
+static int meScnFnDefinedAs(const char *text, const MEScnFoundFn *found,
+                            size_t nFound, const char *name, int *firstLine,
+                            bool *colon) {
+    int    n = 0;
+    size_t i;
+
+    *firstLine = 0;
+    *colon     = false;
+    for (i = 0; i < nFound; i++) {
+        if (strcmp(found[i].name, name) != 0) {
+            continue;
+        }
+        if (n == 0) {
+            *firstLine = found[i].line;
+        }
+        n++;
+        if (meScnFnColonForm(text, name, found[i].line)) {
+            *colon = true;
+        }
+    }
+    return n;
+}
+
+/* Every function a scenario may define, what each is for, and which of them
+ * this script has written. A row the script does not define offers a stub
+ * to start from; one it does offers somewhere to go. Never both: a second
+ * definition of a name is live Lua that silently replaces the first, so an
+ * Add here would write a function the author would never see run.
+ *
+ * Neither button touches the script itself. Both leave the action for the
+ * script view and switch to it — see meScnApplyPending. */
+static void meScnFunctionsBody(MEScenarioState *st, int *view) {
+    /* What the author has typed into the filter. One panel, so one box, and
+     * it survives a switch away and back. */
+    static char s_filter[64] = "";
+
+    MEScnFoundFn found[ME_SCN_FOUND_MAX];
+    const char  *text  = (st->script != NULL) ? st->script : "";
+    const size_t count = meScnFnCount();
+    size_t       nFound;
+    size_t       i;
+    char         params[ME_SCN_FN_STUB_MAX];
+
+    /* What this script defines, read again every frame. It is a line scan
+     * over a buffer already in memory, and the list has to follow an edit
+     * made in the script view a moment ago. */
+    nFound = meScnScanFunctions(text, found, ME_SCN_FOUND_MAX);
+
+    ImGui::SetNextItemWidth(260.0f);
+    ImGui::InputTextWithHint("##fnFilter",
+                             langGetText(STR_MAPEDIT_SCENARIO_FILTER),
+                             s_filter, sizeof(s_filter));
+
+    /* The chooser and its line keep the foot of the window; the list takes
+     * everything above them. */
+    const float below = ImGui::GetFrameHeightWithSpacing() +
+                        ImGui::GetTextLineHeightWithSpacing();
+
+    ImGui::BeginChild("##fnList", ImVec2(0.0f, -below),
+                      ImGuiChildFlags_Borders);
+    {
+        for (i = 0; i < count; i++) {
+            const char *name    = meScnFnName(i);
+            const char *returns = meScnFnReturns(i);
+            int         firstLine = 0;
+            bool        colon     = false;
+            int         defined;
+
+            if (!meScnContains(name, s_filter)) {
+                continue;
+            }
+            defined = meScnFnDefinedAs(text, found, nFound, name, &firstLine,
+                                       &colon);
+
+            ImGui::PushID((int)i);
+            if (defined > 0) {
+                if (ImGui::Button(
+                        langGetText(STR_MAPEDIT_SCENARIO_FN_GOTO))) {
+                    meScnAskGoTo(firstLine, view);
+                }
+            } else if (ImGui::Button(langGetText(STR_MAPEDIT_SCENARIO_ADD))) {
+                meScnAskInsert(i, view);
+            }
+
+            /* The name and its parameters as an author writes them, so the
+               row reads as the line the stub puts in the script. */
+            ImGui::SameLine(kFnButtonWidth);
+            meScnFnParamList(i, params, sizeof(params));
+            ImGui::Text("%s%s", name, params);
+
+            if (defined > 0) {
+                MessageArgs args = {};
+                args.number      = firstLine;
+                ImGui::SameLine();
+                meScnHint(langGetTextFmt(STR_MAPEDIT_SCENARIO_FN_IN_SCRIPT,
+                                         &args));
+            }
+
+            ImGui::Indent(kFnButtonWidth);
+            ImGui::PushTextWrapPos(0.0f);
+            meScnHint(meScnFnDescription(i));
+
+            /* A policy is a question, so its row says what the host does
+               with the answer. A hook answers nothing and has no such
+               line. */
+            if (returns[0] != '\0') {
+                MessageArgs args = {};
+                meScnCopy(args.string1, sizeof(args.string1), returns);
+                meScnHint(langGetTextFmt(STR_MAPEDIT_SCENARIO_FN_ANSWERS,
+                                         &args));
+            }
+
+            /* The two ways a definition that is there can still be wrong.
+               Drawn in the ordinary colour rather than the hint colour,
+               because neither is a note about the function. */
+            if (colon) {
+                ImGui::TextUnformatted(
+                    langGetText(STR_MAPEDIT_SCENARIO_FN_COLON));
+            }
+            if (defined > 1) {
+                MessageArgs args = {};
+                args.number      = defined;
+                ImGui::TextUnformatted(
+                    langGetTextFmt(STR_MAPEDIT_SCENARIO_FN_TWICE, &args));
+            }
+            ImGui::PopTextWrapPos();
+            ImGui::Unindent(kFnButtonWidth);
+            ImGui::PopID();
+        }
+    }
+    ImGui::EndChild();
+
+    /* Somewhere to jump to, listing what the file defines in the order it
+     * defines it — an author's own helpers with the hooks, since those are
+     * what the file has. Only what is in the file: the list above is
+     * already every function there is, and a definition that has not been
+     * written has nowhere to go. */
+    if (nFound == 0) {
+        meScnHint(langGetText(STR_MAPEDIT_SCENARIO_FN_NONE_YET));
+        return;
+    }
+
+    ImGui::SetNextItemWidth(kFnChooserWidth);
+    if (ImGui::BeginCombo("##fnGoTo",
+                          langGetText(STR_MAPEDIT_SCENARIO_FN_GOTO_ONE))) {
+        for (i = 0; i < nFound; i++) {
+            MessageArgs args = {};
+
+            meScnCopy(args.string1, sizeof(args.string1), found[i].name);
+            args.number = found[i].line;
+
+            ImGui::PushID((int)i);
+            if (ImGui::Selectable(
+                    langGetTextFmt(STR_MAPEDIT_SCENARIO_FN_AT_LINE, &args))) {
+                meScnAskGoTo(found[i].line, view);
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+}
+
+/* -------------------------------------------------------
  * The panel
  * ------------------------------------------------------- */
 void mapEditorImguiScenarioPanel(MEScenarioState *st, MEScenarioForm *form,
@@ -1261,6 +1623,9 @@ void mapEditorImguiScenarioPanel(MEScenarioState *st, MEScenarioForm *form,
     ImGui::SameLine();
     meScnViewButton(view, ME_SCENARIO_VIEW_TAGS,
                     STR_MAPEDIT_SCENARIO_VIEW_TAGS);
+    ImGui::SameLine();
+    meScnViewButton(view, ME_SCENARIO_VIEW_FUNCTIONS,
+                    STR_MAPEDIT_SCENARIO_VIEW_FUNCTIONS);
     ImGui::Separator();
 
     switch (*view) {
@@ -1276,6 +1641,9 @@ void mapEditorImguiScenarioPanel(MEScenarioState *st, MEScenarioForm *form,
         case ME_SCENARIO_VIEW_TAGS:
             meScnTagsBody(form, mapInfo, selKind, selIndex, clickedKind,
                           clickedIndex, panX, panY);
+            break;
+        case ME_SCENARIO_VIEW_FUNCTIONS:
+            meScnFunctionsBody(st, view);
             break;
         default:
             meScnScriptBody(st, check, mapPath, wantSave, wantReload,

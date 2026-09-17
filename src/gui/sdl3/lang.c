@@ -2420,6 +2420,15 @@ static const LangEntry langTable[] = {
     {2467, "Which start a seat takes, asked at a spawn, a respawn or a teleport that names none."},
     {2468, "What a spawning tank is handed, unless the op that spawned it named a loadout."},
     {2469, "What a hit on a tank is worth, asked on every hit it takes."},
+    {2470, "Functions"},
+    {2471, "Go to"},
+    {2472, "in this script, line {number}"},
+    {2473, "answers {string1}"},
+    {2474, "Go to a definition"},
+    {2475, "This script defines none of them yet."},
+    {2476, "{string1}  line {number}"},
+    {2477, "written with a colon, so self takes the first argument and every argument after it shifts"},
+    {2478, "defined {number} times; the last one is the one that runs"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

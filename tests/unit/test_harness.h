@@ -2932,9 +2932,11 @@ int run_scenario_functions_table(void);
 int run_scenario_functions_match_dispatch(void);
 
 /* The line beside each function (test_scenario_fndesc.c): a description for
- * every catalogue row and none for anything else, and the lang ids behind
- * them. */
+ * every catalogue row and none for anything else, the lang ids behind them,
+ * and the stub the editor inserts for a function that has not been written
+ * yet. */
 int run_scenario_fndesc_table(void);
+int run_scenario_fnstub_forms(void);
 
 /* The definitions a script already holds (test_scenario_fnscan.c): the four
  * spellings a definition takes, the line each is on, and what a line scan
