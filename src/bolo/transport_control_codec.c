@@ -863,6 +863,19 @@ BOLO_STATIC_ASSERT(
  *   repeat highlightCount times (26 bytes each):
  *     [startTick 4][durationTicks 4][startMs 4][durationMs 4]
  *     [mapX 1][mapY 1][type 1][awardId 1][actorA 1][actorB 1][value 4]
+ *   [hasScenarioScore 1]
+ *   when that byte is 1, the scenario's own scoreboard follows:
+ *     [labelLen 1] [scenarioScoreLabel labelLen]
+ *     [scenarioScoreMask 2 BE]      bit i set = slot i was scored
+ *     [scenarioTeamScoreMask 2 BE]  bit t set = team t was scored; bit 0 unused
+ *     [scenarioScore MAX_TANKS x 4 BE signed]      per 0-based player slot
+ *     [scenarioTeamScore MAX_TANKS x 4 BE signed]  per team; entry 0 unused
+ * The masks carry what the numbers cannot: a row scored zero against a row
+ * nobody scored. Both arrays cross whole either way, so a reader indexes
+ * them the way the server does and consults the mask for what is in them.
+ * The scoreboard is last so that adding it moved nothing above it. A round
+ * without a scenario, or with one that never scored, spends one zero byte on
+ * it and sends no arrays.
  * The ticks are the scorer's units and the ms are the server's conversion of
  * them; both cross so a client can take the time without modelling the sim's
  * cadence and the viewer's own calibration still has the ticks to work from.
@@ -885,10 +898,20 @@ static EncodeResult encodeRoundStatsBody(const ControlEvent *evt,
     uint8_t keyLen = (uint8_t)strnlen(s->wbnLogKey, ROUND_STATS_LOGKEY_LEN - 1);
     uint8_t hc = s->highlightCount;
     if (hc > ROUND_STATS_HIGHLIGHTS_WIRE_MAX) hc = ROUND_STATS_HIGHLIGHTS_WIRE_MAX;
+    /* One below the field, so the length the decoder reads always leaves it
+     * room for the terminator it writes. */
+    uint8_t scnLabelLen =
+        s->hasScenarioScore
+            ? (uint8_t)strnlen(s->scenarioScoreLabel,
+                               ROUND_STATS_SCN_LABEL_LEN - 1)
+            : 0;
 
     /* Pre-compute total size; bail before any write if it can't fit. */
     size_t needed = 1 + (size_t)pc * 20 + 1 + (size_t)ac * 8 + 1 + keyLen +
-                    1 + (size_t)hc * 26;
+                    1 + (size_t)hc * 26 + 1;
+    if (s->hasScenarioScore) {
+        needed += 1 + scnLabelLen + 4 + (size_t)MAX_TANKS * 8;
+    }
     if (bufCap < needed) return ENCODE_OVERFLOW;
 
     size_t pos = 0;
@@ -931,6 +954,27 @@ static EncodeResult encodeRoundStatsBody(const ControlEvent *evt,
         buf[pos++] = h->actorA;
         buf[pos++] = h->actorB;
         packU32(buf + pos, h->value);         pos += 4;
+    }
+    buf[pos++] = s->hasScenarioScore ? 1 : 0;
+    if (s->hasScenarioScore) {
+        buf[pos++] = scnLabelLen;
+        if (scnLabelLen > 0) {
+            memcpy(buf + pos, s->scenarioScoreLabel, scnLabelLen);
+            pos += scnLabelLen;
+        }
+        packU16(buf + pos, s->scenarioScoreMask);     pos += 2;
+        packU16(buf + pos, s->scenarioTeamScoreMask); pos += 2;
+        /* Both arrays go whole, at their own index bases: scenarioScore by
+         * 0-based slot, scenarioTeamScore by team number with entry 0 unused.
+         * Sending them whole keeps the reader's indexing the same as the
+         * server's, which a count-and-pairs form would not, and the masks
+         * above say which entries of them mean anything. */
+        for (int i = 0; i < MAX_TANKS; i++) {
+            packU32(buf + pos, (uint32_t)s->scenarioScore[i]);     pos += 4;
+        }
+        for (int i = 0; i < MAX_TANKS; i++) {
+            packU32(buf + pos, (uint32_t)s->scenarioTeamScore[i]); pos += 4;
+        }
     }
     *outLen = pos;
     return ENCODE_OK;
@@ -1203,16 +1247,51 @@ static bool decodeRoundStatsBody(const uint8_t *buf, size_t len,
         /* score is not on the wire; the event-wide memset above leaves it 0. */
     }
     s->highlightCount = hc;
+
+    /* The scenario's own scoreboard, on the end of the body. When the byte
+     * says the group is absent every field of it keeps what the event-wide
+     * memset above left it: the flag false, both masks and both arrays zero
+     * and the label empty. That clearing is the point — a decoded event must
+     * never show a score that was sitting in the caller's buffer from the
+     * round before. */
+    if (pos + 1 > len) return false;
+    uint8_t hasScn = buf[pos++];
+    if (hasScn > 1) return false;
+    if (hasScn) {
+        if (pos + 1 > len) return false;
+        uint8_t scnLabelLen = buf[pos++];
+        /* The field has no room for a terminator past its last byte, so a
+         * length that fills it exactly is already one too many. */
+        if (scnLabelLen > ROUND_STATS_SCN_LABEL_LEN - 1) return false;
+        if (pos + scnLabelLen + 4 + (size_t)MAX_TANKS * 8 > len) return false;
+        if (scnLabelLen > 0) {
+            memcpy(s->scenarioScoreLabel, buf + pos, scnLabelLen);
+        }
+        s->scenarioScoreLabel[scnLabelLen] = '\0';
+        pos += scnLabelLen;
+        s->scenarioScoreMask     = unpackU16(buf + pos); pos += 2;
+        s->scenarioTeamScoreMask = unpackU16(buf + pos); pos += 2;
+        for (int i = 0; i < MAX_TANKS; i++) {
+            s->scenarioScore[i] = (int32_t)unpackU32(buf + pos);     pos += 4;
+        }
+        for (int i = 0; i < MAX_TANKS; i++) {
+            s->scenarioTeamScore[i] = (int32_t)unpackU32(buf + pos); pos += 4;
+        }
+        s->hasScenarioScore = true;
+    }
     return true;
 }
 
 /* Compile-time guarantee that the round-stats worst case (every slot
- * present, every award won, a full-length key, a full clip list) fits
- * MAX_CONTROL_PACKET. 8 + 1 + 16*20 + 1 + 18*8 + 1 + 32 + 1 + 12*26 = 820. */
+ * present, every award won, a full-length key, a full clip list and a
+ * scenario scoreboard with a full-length title) fits MAX_CONTROL_PACKET.
+ * 8 + 1 + 16*20 + 1 + 18*8 + 1 + 32 + 1 + 12*26 = 820 without the
+ * scoreboard, and 820 + 1 + 1 + 15 + 4 + 16*8 = 969 with it. */
 BOLO_STATIC_ASSERT(
     PACKET_HEADER_SIZE + 1 + (size_t)MAX_TANKS * 20 + 1 +
         (size_t)AWARD_COUNT * 8 + 1 + (ROUND_STATS_LOGKEY_LEN - 1) + 1 +
-        (size_t)ROUND_STATS_HIGHLIGHTS_WIRE_MAX * 26
+        (size_t)ROUND_STATS_HIGHLIGHTS_WIRE_MAX * 26 + 1 + 1 +
+        (ROUND_STATS_SCN_LABEL_LEN - 1) + 4 + (size_t)MAX_TANKS * 8
         <= MAX_CONTROL_PACKET,
     round_stats_worst_case_fits_MAX_CONTROL_PACKET);
 

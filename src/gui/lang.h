@@ -733,6 +733,7 @@
 #define STR_DLGLOBBY_LASTROUND_BTN          1896
 #define STR_DLGLOBBY_LASTROUND_COL_LGMK     1897
 #define STR_DLGLOBBY_LASTROUND_COL_LGMD     1898
+#define STR_DLGLOBBY_LASTROUND_COL_SCNSCORE 2226  /* scenario score column, untitled */
 
 /* Lobby "Last round" panel — the round's highlight clips. */
 #define STR_DLGLOBBY_HL_HEADER               1922

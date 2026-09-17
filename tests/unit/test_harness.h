@@ -263,7 +263,9 @@ int run_awards_subset_deterministic(void);
 int run_round_stats_codec_roundtrip(void);
 int run_round_stats_codec_rejects_bad_key(void);
 int run_round_stats_codec_worstcase(void);
+int run_round_stats_scenario_score_codec(void);
 int run_round_stats_build_summary(void);
+int run_round_stats_scenario_score_filled(void);
 int run_round_stats_summary_highlights(void);
 int run_round_stats_client_ingest(void);
 int run_round_stats_track_records(void);
@@ -2804,11 +2806,11 @@ int run_scenario_lua_detail_carries_the_number(void);
 int run_scenario_lua_teleport_start_refuses_bad_index(void);
 int run_scenario_lua_spawn_bot_refuses_bad_start(void);
 int run_scenario_lua_game_type_resolves_scripted(void);
-int run_scn_lua_panel_builds_bytes(void);
-int run_scn_lua_panel_words_and_numbers(void);
-int run_scn_lua_panel_refusals(void);
-int run_scn_lua_presentation_targets(void);
-int run_scn_lua_score_and_announce(void);
+int run_scenario_lua_panel_builds_bytes(void);
+int run_scenario_lua_panel_words_and_numbers(void);
+int run_scenario_lua_panel_refusals(void);
+int run_scenario_lua_presentation_targets(void);
+int run_scenario_lua_score_and_announce(void);
 
 /* The state a scenario runs in (test_scenario_sandbox.c): the names the
  * whitelist takes and the ones it keeps, the precompiled chunk the loader
@@ -2972,11 +2974,11 @@ int run_scenario_panel_parses_each_primitive(void);
 int run_scenario_panel_refuses_malformed(void);
 int run_scenario_panel_boundaries(void);
 int run_scenario_panel_roundtrip(void);
-
-/* The four presentation control events (test_scenario_presentation_codec.c):
 /* And the timer primitive's text: the tick difference the drawer turns into
  * minutes and seconds, held to exact strings with no renderer behind it. */
 int run_scenario_panel_timer_text(void);
+
+/* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or
  * overrunning body gets, the broadcast recipient pair every decoder sets,
  * and the in-process filter the client applies before it stores. */

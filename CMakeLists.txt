@@ -4457,8 +4457,10 @@ set(_unit_test_names
     awards_subset_deterministic
     round_stats_codec_roundtrip
     round_stats_codec_worstcase
+    round_stats_scenario_score_codec
     round_stats_codec_rejects_bad_key
     round_stats_build_summary
+    round_stats_scenario_score_filled
     round_stats_summary_highlights
     round_stats_client_ingest
     round_stats_track_records
@@ -5579,11 +5581,11 @@ set(_unit_test_names
     scenario_lua_teleport_start_refuses_bad_index
     scenario_lua_spawn_bot_refuses_bad_start
     scenario_lua_game_type_resolves_scripted
-    scn_lua_panel_builds_bytes
-    scn_lua_panel_words_and_numbers
-    scn_lua_panel_refusals
-    scn_lua_presentation_targets
-    scn_lua_score_and_announce
+    scenario_lua_panel_builds_bytes
+    scenario_lua_panel_words_and_numbers
+    scenario_lua_panel_refusals
+    scenario_lua_presentation_targets
+    scenario_lua_score_and_announce
     scenario_sandbox_removed_names_are_nil
     scenario_sandbox_bytecode_chunk_refused
     scenario_sandbox_collectgarbage_stop_refused
@@ -5679,9 +5681,9 @@ set(_unit_test_names
     scenario_panel_refuses_malformed
     scenario_panel_boundaries
     scenario_panel_roundtrip
+    scenario_panel_timer_text
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
-    scenario_panel_timer_text
     scn_presentation_decoder_sets_broadcast
     scn_presentation_client_filters
     scn_arm_panel_publishes_and_records

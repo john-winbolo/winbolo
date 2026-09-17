@@ -74,20 +74,22 @@
  * and the presentation rows, whose answers are read at a subscriber because
  * what the payload's one target byte meant is what the arm unpacked it into:
  *
- * run_scn_lua_panel_builds_bytes       — one of each primitive reaches the
+ * run_scenario_lua_panel_builds_bytes  — one of each primitive reaches the
  *                                        arm as the bytes the layout spells,
  *                                        and the shared parser takes them
  *                                        back apart
- * run_scn_lua_panel_words_and_numbers  — a colour, size, alignment and timer
+ * run_scenario_lua_panel_words_and_numbers
+ *                                      — a colour, size, alignment and timer
  *                                        mode written as words build the same
  *                                        list as the numbers they stand for
- * run_scn_lua_panel_refusals           — an empty list clears, a list past
+ * run_scenario_lua_panel_refusals      — an empty list clears, a list past
  *                                        the count is refused, and a bad word
  *                                        or a missing operand raises
- * run_scn_lua_presentation_targets     — everyone, a team and a seat reach
+ * run_scenario_lua_presentation_targets
+ *                                      — everyone, a team and a seat reach
  *                                        the arm as the pair each packs to,
  *                                        for a panel, a line and a marker
- * run_scn_lua_score_and_announce       — the target chooses the score's kind,
+ * run_scenario_lua_score_and_announce  — the target chooses the score's kind,
  *                                        a label with no room for its
  *                                        terminator is refused, seconds
  *                                        become ticks and an empty line
@@ -2155,7 +2157,7 @@ static const uint8_t kSlOneOfEachBytes[] = {
 
 /* Every primitive at the values the list above writes, so the parse is held
  * against what the script asked for rather than against itself. */
-int run_scn_lua_panel_builds_bytes(void) {
+int run_scenario_lua_panel_builds_bytes(void) {
     ServerSim       *sim = ut_make_running_sim("Seat0");
     ScenarioManifest m;
     ScnLuaCtx        ctx;
@@ -2225,7 +2227,7 @@ int run_scn_lua_panel_builds_bytes(void) {
 
 /* Two panels in one tick, so the coalescing rule — one update per panel per
  * audience per tick — leaves both alone. */
-int run_scn_lua_panel_words_and_numbers(void) {
+int run_scenario_lua_panel_words_and_numbers(void) {
     ServerSim       *sim = ut_make_running_sim("Seat0");
     ScenarioManifest m;
     ScnLuaCtx        ctx;
@@ -2270,7 +2272,7 @@ int run_scn_lua_panel_words_and_numbers(void) {
 /* The empty list is the one to get wrong: the writer answers 0 both for a
  * list it would not take and for one with nothing in it, so a row reading
  * that 0 as a refusal would leave a script no way to clear a panel. */
-int run_scn_lua_panel_refusals(void) {
+int run_scenario_lua_panel_refusals(void) {
     ServerSim       *sim = ut_make_running_sim("Seat0");
     ScenarioManifest m;
     ScnLuaCtx        ctx;
@@ -2356,7 +2358,7 @@ int run_scn_lua_panel_refusals(void) {
 /* Everyone, one team and one seat, through the one byte the payload carries
  * and the pair the arm unpacks it into. Read at the event, because the
  * unpacker is the only thing that says what the byte meant. */
-int run_scn_lua_presentation_targets(void) {
+int run_scenario_lua_presentation_targets(void) {
     static const struct {
         const char *what;
         const char *lua;
@@ -2436,7 +2438,7 @@ int run_scn_lua_presentation_targets(void) {
 /* Seconds are the unit a script counts in and the payload's is the server's
  * own tick, which runs at GAME_NUMTOTALTICKS_SEC — the rate game.timer
  * converts at and the one the client measures the line against. */
-int run_scn_lua_score_and_announce(void) {
+int run_scenario_lua_score_and_announce(void) {
     ServerSim       *sim = ut_make_running_sim("Seat0");
     ScenarioManifest m;
     ScnLuaCtx        ctx;
