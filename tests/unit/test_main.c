@@ -1565,6 +1565,7 @@ static const UnitTestEntry s_tests[] = {
     { "editor_script_round_trip",                run_editor_script_round_trip                },
     { "editor_script_missing",                   run_editor_script_missing                   },
     { "editor_script_over_cap",                  run_editor_script_over_cap                  },
+    { "editor_script_follows_save_as",           run_editor_script_follows_save_as           },
     { "editor_form_init",                        run_editor_form_init                        },
     { "editor_form_rules",                       run_editor_form_rules                       },
     { "editor_form_rules_full",                  run_editor_form_rules_full                  },

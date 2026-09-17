@@ -5767,6 +5767,7 @@ set(_unit_test_names
     editor_script_round_trip
     editor_script_missing
     editor_script_over_cap
+    editor_script_follows_save_as
     editor_form_init
     editor_form_rules
     editor_form_rules_full

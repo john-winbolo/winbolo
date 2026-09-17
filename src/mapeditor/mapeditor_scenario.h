@@ -62,10 +62,24 @@ void meScenarioSetMap(MEScenarioState *st, const char *mapPath);
  * file and goes ahead. */
 bool meScenarioSaveForMap(MEScenarioState *st, const char *mapPath);
 
-/* Points the state at the script for mapPath without reading or writing
- * anything, keeping the buffer and its dirty flag. This is what a map saved
- * under a new name needs when the script has not been edited: the state
- * follows the map to its new name. */
+/* Makes the state follow a map that has just been written to mapPath, with
+ * the buffer and its dirty flag kept. This is what a save needs when the
+ * script has not been edited, and what it does depends on where the buffer
+ * came from:
+ *
+ *  - the script path for mapPath is the one the state already holds: nothing
+ *    moves, and only "is there a file at this name" is asked again;
+ *  - a different path, and the buffer is a loose script that was read
+ *    (fileOnDisk, not readRefused): the buffer is written there the way
+ *    meScenarioSaveForMap writes it, and that path is adopted as a file on
+ *    disk, so the copy carries the script the original had. A write that
+ *    fails leaves the status line saying so and the state pointed at the new
+ *    path with no file behind it;
+ *  - a different path, and the buffer stands for a file that would not open
+ *    (readRefused), or came out of the map's own package and has no loose
+ *    file behind it at all: nothing is written, since there is no loose
+ *    script to carry and a packed one travels inside the map. The path is
+ *    adopted and checked for a file of its own. */
 void meScenarioAdoptPath(MEScenarioState *st, const char *mapPath);
 
 /* Shows the script that came out of the map's own package. There is no loose

@@ -2333,8 +2333,10 @@ static bool meSaveToPath(MapEditorState *ed, const char *path) {
     /* The script lives beside the map, so an edited one is written with it.
      * The map is on disk by now, so a script that will not write is shown
      * the way any other editor error is and the save still counts as done.
-     * With the script untouched there is nothing to write, but the state
-     * still follows the map to the name it was saved under. */
+     * An untouched script follows the map to the name it was saved under,
+     * which under a new name means writing it there: a loose script is what
+     * a server runs in preference to the packed one, so a copy without it
+     * plays differently from the map it came from. */
     if (meScenarioDirty(&ed->scn)) {
         if (!meScenarioSaveForMap(&ed->scn, path)) {
             /* The state says what stopped it — a write that failed, or a

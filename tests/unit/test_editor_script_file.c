@@ -26,6 +26,10 @@
  *                                which is not a failure
  * run_editor_script_over_cap   — a script too big to open is not written over
  *                                by the empty buffer standing in for it
+ * run_editor_script_follows_save_as
+ *                              — a map saved under a new name takes an
+ *                                unedited script with it, and takes nothing
+ *                                where there was nothing to read
  */
 
 #include <stdio.h>
@@ -84,6 +88,26 @@ static long esSize(const char *path) {
     n = ftell(f);
     fclose(f);
     return n;
+}
+
+/* True when the file holds exactly text and nothing else, for a copy that has
+ * to be the byte-for-byte script it was copied from. */
+static bool esSame(const char *path, const char *text) {
+    char   buf[1024];
+    FILE  *f;
+    size_t want = strlen(text);
+    size_t got;
+
+    if (want >= sizeof(buf)) {
+        return false;
+    }
+    f = fopen(path, "rb");
+    if (f == NULL) {
+        return false;
+    }
+    got = fread(buf, 1, sizeof(buf), f);
+    fclose(f);
+    return got == want && memcmp(buf, text, want) == 0;
 }
 
 int run_editor_script_path(void) {
@@ -311,3 +335,126 @@ int run_editor_script_over_cap(void) {
 #undef OC_ASSERT_MSG
 #undef OC_ASSERT
 #undef OC_CLEANUP
+
+/* As above: every way out of the case below takes its fixtures with it, the
+ * 1 MB one included. */
+#define SA_CLEANUP()          \
+    do {                      \
+        meScenarioFree(&st);  \
+        remove(srcScript);    \
+        remove(copyScript);   \
+        remove(bigScript);    \
+        remove(bigCopy);      \
+    } while (0)
+
+#define SA_ASSERT(cond)                            \
+    do {                                           \
+        if (!(cond)) {                             \
+            SA_CLEANUP();                          \
+            UT_FAIL("assertion failed: %s", #cond); \
+        }                                          \
+    } while (0)
+
+#define SA_ASSERT_MSG(cond, fmt, ...)                             \
+    do {                                                          \
+        if (!(cond)) {                                            \
+            SA_CLEANUP();                                         \
+            UT_FAIL("%s — " fmt, #cond, ##__VA_ARGS__);           \
+        }                                                         \
+    } while (0)
+
+int run_editor_script_follows_save_as(void) {
+    static const char   kMap[] = "ut_editor_script_follows.map";
+    static const char   kCopy[] = "ut_editor_script_follows_copy.map";
+    static const char   kBigMap[] = "ut_editor_script_follows_big.map";
+    static const char   kBigCopyMap[] = "ut_editor_script_follows_big_copy.map";
+    static const char   kScript[] =
+        "local scenario = {}\n"
+        "function scenario.on_round_start()\n"
+        "  game.message(\"beside the map\")\n"
+        "end\n"
+        "return scenario\n";
+    /* One byte past the largest script the editor opens, as in the case
+     * above: the file is there and the buffer standing in for it is empty. */
+    static const size_t kOverCap = (size_t)(1024 * 1024) + 1;
+    MEScenarioState     st;
+    char                srcScript[128];
+    char                copyScript[128];
+    char                bigScript[128];
+    char                bigCopy[128];
+
+    UT_ASSERT(meScenarioScriptPathForMap(kMap, srcScript, sizeof(srcScript)));
+    UT_ASSERT(meScenarioScriptPathForMap(kCopy, copyScript,
+                                         sizeof(copyScript)));
+    UT_ASSERT(
+        meScenarioScriptPathForMap(kBigMap, bigScript, sizeof(bigScript)));
+    UT_ASSERT(
+        meScenarioScriptPathForMap(kBigCopyMap, bigCopy, sizeof(bigCopy)));
+    /* A run that died before its cleanup must not decide this one. */
+    remove(srcScript);
+    remove(copyScript);
+    remove(bigScript);
+    remove(bigCopy);
+
+    meScenarioInit(&st);
+
+    if (!esPut(srcScript, kScript)) {
+        SA_CLEANUP();
+        UT_FAIL("could not write the fixture '%s'", srcScript);
+    }
+
+    /* A loose script read off the disk and left alone. */
+    meScenarioSetMap(&st, kMap);
+    SA_ASSERT(!meScenarioDirty(&st));
+    SA_ASSERT(st.fileOnDisk);
+    SA_ASSERT(!st.readRefused);
+    SA_ASSERT(st.script != NULL);
+    SA_ASSERT_MSG(strcmp(st.script, kScript) == 0, "got '%s'", st.script);
+
+    /* Saved under another name: the script is written beside that name, so
+     * the copy runs the script the original ran. */
+    meScenarioAdoptPath(&st, kCopy);
+    SA_ASSERT_MSG(strcmp(st.scriptPath, copyScript) == 0, "got '%s'",
+                  st.scriptPath);
+    SA_ASSERT(st.fileOnDisk);
+    SA_ASSERT(!st.readRefused);
+    SA_ASSERT(!meScenarioDirty(&st));
+    SA_ASSERT_MSG(esSize(copyScript) == (long)strlen(kScript),
+                  "wrote %ld bytes", esSize(copyScript));
+    SA_ASSERT(esSame(copyScript, kScript));
+    /* And the map it was copied from still has its own. */
+    SA_ASSERT_MSG(esSize(srcScript) == (long)strlen(kScript),
+                  "'%s' is now %ld bytes", srcScript, esSize(srcScript));
+    SA_ASSERT(esSame(srcScript, kScript));
+
+    /* A script that would not open is a different matter: the buffer is empty
+     * for want of the file's contents, so there is nothing to copy and the new
+     * name gets no file at all. */
+    if (!esPutSize(bigScript, kOverCap)) {
+        SA_CLEANUP();
+        UT_FAIL("could not write the fixture '%s'", bigScript);
+    }
+    meScenarioSetMap(&st, kBigMap);
+    SA_ASSERT(st.fileOnDisk);
+    SA_ASSERT(st.readRefused);
+    SA_ASSERT(st.scriptLen == 0);
+
+    meScenarioAdoptPath(&st, kBigCopyMap);
+    SA_ASSERT_MSG(strcmp(st.scriptPath, bigCopy) == 0, "got '%s'",
+                  st.scriptPath);
+    SA_ASSERT_MSG(esSize(bigCopy) == -1, "'%s' is %ld bytes", bigCopy,
+                  esSize(bigCopy));
+    SA_ASSERT(!st.fileOnDisk);
+    /* A different name is a different file, so the refusal does not follow. */
+    SA_ASSERT(!st.readRefused);
+    /* The one that would not open is still the length it was. */
+    SA_ASSERT_MSG(esSize(bigScript) == (long)kOverCap,
+                  "the script on disk is now %ld bytes", esSize(bigScript));
+
+    SA_CLEANUP();
+    return 0;
+}
+
+#undef SA_ASSERT_MSG
+#undef SA_ASSERT
+#undef SA_CLEANUP

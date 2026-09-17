@@ -3059,13 +3059,17 @@ int ut_brain_stub_destroys(void);
 /* The map editor's scenario script file (test_editor_script_file.c): where a
  * script sits beside a map, the round trip Save and re-opening the map make,
  * and the map that has no script beside it. The path rule mirrors
- * scnScriptPath, which the editor cannot call. The last case holds the
+ * scnScriptPath, which the editor cannot call. The over-cap case holds the
  * script that is there but will not open, which the editor shows as an empty
- * buffer and must not write that buffer back over. */
+ * buffer and must not write that buffer back over. The last case saves a map
+ * under a new name: an unedited script is written beside that name so the
+ * copy plays as the original did, and a buffer with no file read behind it
+ * takes the new path without writing anything there. */
 int run_editor_script_path(void);
 int run_editor_script_round_trip(void);
 int run_editor_script_missing(void);
 int run_editor_script_over_cap(void);
+int run_editor_script_follows_save_as(void);
 
 /* The manifest behind the scenario panel's metadata, lobby, rules and tags
  * forms (test_editor_scenario_form.c): the empty manifest a new map starts

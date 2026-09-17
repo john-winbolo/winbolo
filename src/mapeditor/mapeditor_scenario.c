@@ -271,11 +271,45 @@ void meScenarioAdoptPath(MEScenarioState *st, const char *mapPath) {
         return;
     }
 
-    /* A different name is a different file, so whatever would not open at the
-     * old one says nothing about this one. Staying put keeps the refusal. */
-    if (strcmp(path, st->scriptPath) != 0) {
-        st->readRefused = false;
+    /* The same name: the state already stands for this file, so nothing moves.
+     * Only the answer to "is there a file at this name" is taken again, and
+     * that is what Reload asks. A refusal at this name is kept, because it is
+     * still the same file that would not open. */
+    if (strcmp(path, st->scriptPath) == 0) {
+        f = fopen(path, "rb");
+        st->fileOnDisk = (f != NULL);
+        if (f != NULL) {
+            fclose(f);
+        }
+        return;
     }
+
+    /* A different name, and the buffer holds what a loose script at the old
+     * name says. The map is being kept under the new name, so the script has
+     * to be there too: a server runs the loose script in preference to the
+     * packed one, and a copy with no loose script beside it plays differently
+     * from the map it was copied from. The buffer is the widget's text, so a
+     * script read with CRLF line endings is written back with LF — that is
+     * true of every save the pane makes and needs nothing extra here. */
+    if (st->fileOnDisk && !st->readRefused) {
+        if (meScenarioSaveForMap(st, mapPath)) {
+            return;
+        }
+        /* The write did not happen and its status line says why. The state
+         * still follows the map, with nothing at the new name to reload. */
+        snprintf(st->scriptPath, sizeof(st->scriptPath), "%s", path);
+        st->fileOnDisk = false;
+        st->readRefused = false;
+        return;
+    }
+
+    /* Nothing was read from a loose file at the old name: either the file is
+     * there and would not open, so the empty buffer standing in for it is not
+     * a script to copy anywhere, or the text came out of the map's own package
+     * and travels inside the map. Re-point without reading or writing. A
+     * different name is a different file, so whatever would not open at the
+     * old one says nothing about this one. */
+    st->readRefused = false;
     snprintf(st->scriptPath, sizeof(st->scriptPath), "%s", path);
 
     /* The buffer and its dirty flag are left alone; only the answer to "is
