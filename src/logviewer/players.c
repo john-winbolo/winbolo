@@ -1090,7 +1090,10 @@ BYTE lv_playersGetUnusedTeam(BYTE playerNum) {
 }
 
 BYTE lv_playersGetTeamForOwner(BYTE owner) {
-  if (plrs.item[owner].inUse == TRUE) {
+  /* owner is a byte off the recording and the caller uses the answer as a tc[]
+     row, so neither array may be reached past on a damaged or hostile file. */
+  if (owner < MAX_TANKS && plrs.item[owner].inUse == TRUE &&
+      plrs.item[owner].team < MAX_TANKS) {
     return plrs.item[owner].team;
   }
   return NEUTRAL_TEAM;
