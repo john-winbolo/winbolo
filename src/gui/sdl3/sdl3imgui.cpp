@@ -6143,8 +6143,33 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                     ImGuiContext *savedCtx = ImGui::GetCurrentContext();
                     ImGui::SetCurrentContext(pw->imguiCtx);
                     ImGui_ImplSDL3_ProcessEvent(&ev);
+                    bool popWantsKeys = ImGui::GetIO().WantTextInput;
                     ImGui::SetCurrentContext(savedCtx);
                     consumedByPopOut = true;
+
+                    /* Tap-style key actions from the Map Overview pop-out.
+                       Tank View is the only one that travels by event rather
+                       than by polling, and this block swallows this window's
+                       key events, so it was the one view key that did nothing
+                       from the overview while Pill, Base and Allied View all
+                       worked — those are polled in itemViewInputStep, and
+                       SDL_GetKeyboardState does not care which window has
+                       focus.
+
+                       The overview is a window the player drives the game
+                       from: input.c's appHasFocus names this same pair, which
+                       is why the polled keys work here at all. So the event
+                       path has to name it too, and it does it here rather than
+                       at the dispatch further down, which this consume never
+                       reaches. Key Setup learning a chord is skipped for the
+                       reason the main window's site is placed after its
+                       capture hook: that press is meant to become the binding,
+                       not to fire the action it is being bound to. */
+                    if (pw == &s_popMapOverview &&
+                        ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
+                        !popWantsKeys && !imguiKeySetupIsCapturingInGameKey()) {
+                        windowKeyPressed(cs, (int)ev.key.scancode);
+                    }
 
                     /* Track the current size of a resizable pop-out. The main
                        window's resize handler further down only ever looks at
