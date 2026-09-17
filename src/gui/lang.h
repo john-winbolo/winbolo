@@ -2396,6 +2396,50 @@
 #define STR_MAPEDIT_SCENARIO_TOO_BIG        2236
 #define STR_MAPEDIT_SCENARIO_SAVE_REFUSED   2237
 
+/* The rest of the scenario panel: the row of buttons that picks which view
+ * the body shows, and the three forms over the manifest the editor holds in
+ * memory — what the scenario is called and how it plays, the lobby template
+ * it seats, and the simulation rules the author set. The words for the game
+ * type itself are STR_DLGGAMEINFO_OPEN / _TOURN / _STRICT, which already say
+ * them everywhere else. */
+#define STR_MAPEDIT_SCENARIO_VIEW_SCRIPT     2238
+#define STR_MAPEDIT_SCENARIO_VIEW_METADATA   2239
+#define STR_MAPEDIT_SCENARIO_VIEW_LOBBY      2240
+#define STR_MAPEDIT_SCENARIO_VIEW_RULES      2241
+#define STR_MAPEDIT_SCENARIO_NAME            2242
+#define STR_MAPEDIT_SCENARIO_DESCRIPTION     2243
+#define STR_MAPEDIT_SCENARIO_API             2244
+#define STR_MAPEDIT_SCENARIO_GAME            2245
+#define STR_MAPEDIT_SCENARIO_GAME_NONE       2246
+#define STR_MAPEDIT_SCENARIO_BOUND           2247
+#define STR_MAPEDIT_SCENARIO_BOUND_NOTE      2248
+#define STR_MAPEDIT_SCENARIO_FILL_TO_CAPS    2249
+#define STR_MAPEDIT_SCENARIO_MAX_PLAYERS     2250
+#define STR_MAPEDIT_SCENARIO_MAX_PLAYERS_ANY 2251
+#define STR_MAPEDIT_SCENARIO_EXTRA_TEAMS     2252
+#define STR_MAPEDIT_SCENARIO_TEAM            2253
+#define STR_MAPEDIT_SCENARIO_TEAM_ID         2254
+#define STR_MAPEDIT_SCENARIO_TEAM_BOTS       2255
+#define STR_MAPEDIT_SCENARIO_TEAM_MAX_BOTS   2256
+#define STR_MAPEDIT_SCENARIO_TEAM_FIELDED    2257
+#define STR_MAPEDIT_SCENARIO_TEAM_BRAIN      2258
+#define STR_MAPEDIT_SCENARIO_BRAIN_IS_NAME   2259
+#define STR_MAPEDIT_SCENARIO_INIT            2260
+#define STR_MAPEDIT_SCENARIO_INIT_KEY        2261
+#define STR_MAPEDIT_SCENARIO_INIT_VALUE      2262
+#define STR_MAPEDIT_SCENARIO_ADD_PAIR        2263
+#define STR_MAPEDIT_SCENARIO_INIT_FULL       2264
+#define STR_MAPEDIT_SCENARIO_ADD_TEAM        2265
+#define STR_MAPEDIT_SCENARIO_REMOVE_TEAM     2266
+#define STR_MAPEDIT_SCENARIO_TEAMS_FULL      2267
+#define STR_MAPEDIT_SCENARIO_NO_TEAMS        2268
+#define STR_MAPEDIT_SCENARIO_REMOVE          2269
+#define STR_MAPEDIT_SCENARIO_CLASSIC         2270
+#define STR_MAPEDIT_SCENARIO_NO_RULES        2271
+#define STR_MAPEDIT_SCENARIO_ADD_RULE        2272
+#define STR_MAPEDIT_SCENARIO_FILTER          2273
+#define STR_MAPEDIT_SCENARIO_RULES_FULL      2274
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

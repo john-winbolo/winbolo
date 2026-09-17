@@ -1580,10 +1580,12 @@ set(CLIENT_SOURCES
     src/client_frontend/voice_client.c
     src/gui/sdl3/voice.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
-    # The scenario script pane: the buffer and the file handling in C, the
-    # pane that draws it, and the vendored text editor widget it draws with.
-    # LanguageDefinitions.cpp is where that widget keeps its Lua highlighting.
-    src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_imgui.cpp
+    # The scenario panel: the script buffer and the file handling in C, the
+    # manifest its metadata, lobby and rules forms edit, the panel that draws
+    # all four views, and the vendored text editor widget the script view
+    # draws with. LanguageDefinitions.cpp is where that widget keeps its Lua
+    # highlighting.
+    src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_form.c src/mapeditor/mapeditor_scenario_imgui.cpp
     src/third_party/ImGuiColorTextEdit/TextEditor.cpp
     src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
     # Embedded editor's "Open from WinBolo.net" dialog — client only, it
@@ -2887,10 +2889,12 @@ set(MAPEDITOR_SOURCES
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_stubs.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
-    # The scenario script pane: the buffer and the file handling in C, the
-    # pane that draws it, and the vendored text editor widget it draws with.
-    # LanguageDefinitions.cpp is where that widget keeps its Lua highlighting.
-    src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_imgui.cpp
+    # The scenario panel: the script buffer and the file handling in C, the
+    # manifest its metadata, lobby and rules forms edit, the panel that draws
+    # all four views, and the vendored text editor widget the script view
+    # draws with. LanguageDefinitions.cpp is where that widget keeps its Lua
+    # highlighting.
+    src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_form.c src/mapeditor/mapeditor_scenario_imgui.cpp
     src/third_party/ImGuiColorTextEdit/TextEditor.cpp
     src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
@@ -3624,6 +3628,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     # C and draws nothing, so it is compiled in here directly.
     tests/unit/test_editor_script_file.c
     src/mapeditor/mapeditor_scenario.c
+    # The manifest behind the scenario panel's metadata, lobby and rules
+    # forms: the rule list that never holds one rule twice, the team numbers
+    # the template hands out, and both bounds. Plain C that draws nothing, so
+    # it is compiled in here the same way.
+    tests/unit/test_editor_scenario_form.c
+    src/mapeditor/mapeditor_scenario_form.c
     # The per-tank modifier set: the op that writes it, the snapshot group
     # under the ninth presence bit, and when the values are cleared.
     tests/unit/test_tank_modifiers.c
@@ -5695,6 +5705,11 @@ set(_unit_test_names
     editor_script_round_trip
     editor_script_missing
     editor_script_over_cap
+    editor_form_init
+    editor_form_rules
+    editor_form_rules_full
+    editor_form_teams
+    editor_form_rule_change
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

@@ -311,17 +311,38 @@ bool mapEditorImguiTextDialog(bool *open, TextConfig *cfg,
 #include "mapeditor_stats.h"
 void mapEditorImguiStatsPanel(const MapStats *stats, bool *p_open, bool *wantRefresh);
 
-/* Render the scenario script pane.
+/* Which of the scenario panel's views its body shows. The order is the order
+ * of the button row across the top, and the script view is what a panel that
+ * has never been switched opens on. */
+typedef enum {
+    ME_SCENARIO_VIEW_SCRIPT = 0,
+    ME_SCENARIO_VIEW_METADATA,
+    ME_SCENARIO_VIEW_LOBBY,
+    ME_SCENARIO_VIEW_RULES
+} MEScenarioView;
+
+/* Render the scenario panel: the button row and whichever view it picks.
  * st: the script buffer and where it came from.
+ * form: the manifest the metadata, lobby and rules forms edit.
  * mapPath: the map the script belongs to ("" when the map has no file yet,
  *          which disables Save — a script is stored beside a map).
+ * view: which view the body shows, one of MEScenarioView; the button row
+ *       writes to it.
  * p_open: pointer to show/hide flag.
  * wantSave: set to true when the user clicks Save.
  * wantReload: set to true when the user clicks Reload.
- * The pane never touches the filesystem; mapeditor.c acts on the two flags. */
+ * The panel never touches the filesystem; mapeditor.c acts on the two flags,
+ * and the manifest the forms edit has nowhere to be written yet. */
 #include "mapeditor_scenario.h"
-void mapEditorImguiScenarioScript(MEScenarioState *st, const char *mapPath,
-                                  bool *p_open, bool *wantSave, bool *wantReload);
+/* The form is passed by pointer, so its header stays out of this one: it
+ * would otherwise carry the manifest's layout into every file that includes
+ * mapeditor_imgui.h. The two that edit a form include it themselves. The tag
+ * is declared here rather than left to the prototype, which in C would scope
+ * it to the parameter list and leave the call site holding another type. */
+struct MEScenarioForm;
+void mapEditorImguiScenarioPanel(MEScenarioState *st, struct MEScenarioForm *form,
+                                 const char *mapPath, int *view, bool *p_open,
+                                 bool *wantSave, bool *wantReload);
 
 /* Render the Image Import dialog.
  * open: pointer to the open flag (set to false when dialog closes).

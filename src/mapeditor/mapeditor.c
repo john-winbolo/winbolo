@@ -35,6 +35,7 @@
 #endif
 #include "mapeditor_validate.h"
 #include "mapeditor_stats.h"
+#include "mapeditor_scenario_form.h" /* MapEditorState holds a form by value */
 
 #include <string.h>
 #include <stdlib.h>
@@ -285,8 +286,13 @@ typedef struct {
     bool showStatsPanel;
     bool statsDirty;
 
-    /* --- Scenario script pane --- */
+    /* --- Scenario panel --- */
     MEScenarioState scn;
+    /* The manifest the panel's metadata, lobby and rules forms edit. There is
+     * nowhere to write it yet, so it is emptied whenever the map changes and
+     * is deliberately not part of any unsaved-changes check. */
+    MEScenarioForm scnForm;
+    int  scnView;            /* one of MEScenarioView */
     bool showScenario;
 
     /* --- Text tool --- */
@@ -2310,8 +2316,10 @@ static bool meLoadFromPath(MapEditorState *ed, const char *path) {
     ed->statsDirty = true;
     ed->tabCycleIndex = 0;
     meAddRecentFile(ed, path);
-    /* The script beside the new map replaces whatever was being edited. */
+    /* The script beside the new map replaces whatever was being edited, and
+     * the manifest goes with it: it belongs to the map that was open. */
     meScenarioSetMap(&ed->scn, path);
+    meScenarioFormReset(&ed->scnForm);
     meUpdateWindowTitle(ed);
     return true;
 }
@@ -2364,6 +2372,7 @@ static bool meLoadFromMemory(MapEditorState *ed, const unsigned char *bytes,
     /* A download has no file behind it, so there is nowhere for a script to
      * sit beside it until the map is saved. */
     meScenarioSetMap(&ed->scn, "");
+    meScenarioFormReset(&ed->scnForm);
     meUpdateWindowTitle(ed);
     return true;
 }
@@ -2388,6 +2397,7 @@ static void meDoNew(MapEditorState *ed) {
     ed->tabCycleIndex = 0;
     /* A blank map has no file yet, so it has no script either. */
     meScenarioSetMap(&ed->scn, "");
+    meScenarioFormReset(&ed->scnForm);
     meUpdateWindowTitle(ed);
 }
 
@@ -3228,6 +3238,8 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     ed->exportCfg.showGrid = false;
     ed->brushSeen = calloc(256 * 256, sizeof(bool));
     meScenarioInit(&ed->scn);
+    meScenarioFormInit(&ed->scnForm);
+    ed->scnView = ME_SCENARIO_VIEW_SCRIPT;
 
     /* Stamp library */
     {
@@ -3289,6 +3301,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     /* Whatever the editor opened with, the script that goes with it. A blank
      * map leaves currentFilePath empty, which clears the pane. */
     meScenarioSetMap(&ed->scn, ed->currentFilePath);
+    meScenarioFormReset(&ed->scnForm);
     meUpdateWindowTitle(ed);
 
     /* Create minimap texture */
@@ -4745,14 +4758,15 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             }
         }
 
-        /* Scenario script pane. The pane reports what was clicked; reading
-         * and writing the file happens here. */
+        /* Scenario panel. The panel reports what was clicked; reading and
+         * writing the script file happens here. */
         if (ed->showScenario) {
             bool wantScriptSave = false;
             bool wantScriptReload = false;
-            mapEditorImguiScenarioScript(&ed->scn, ed->currentFilePath,
-                                         &ed->showScenario, &wantScriptSave,
-                                         &wantScriptReload);
+            mapEditorImguiScenarioPanel(&ed->scn, &ed->scnForm,
+                                        ed->currentFilePath, &ed->scnView,
+                                        &ed->showScenario, &wantScriptSave,
+                                        &wantScriptReload);
             if (wantScriptSave && ed->currentFilePath[0]) {
                 meScenarioSaveForMap(&ed->scn, ed->currentFilePath);
             }

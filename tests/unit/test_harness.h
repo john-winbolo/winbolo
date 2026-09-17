@@ -3029,6 +3029,17 @@ int run_editor_script_round_trip(void);
 int run_editor_script_missing(void);
 int run_editor_script_over_cap(void);
 
+/* The manifest behind the scenario panel's metadata, lobby and rules forms
+ * (test_editor_scenario_form.c): the empty manifest a new map starts from,
+ * the rule list that updates a row rather than growing a second one for the
+ * same rule, the team numbers the template hands out, both bounds, and the
+ * change a rules row describes beside a value. */
+int run_editor_form_init(void);
+int run_editor_form_rules(void);
+int run_editor_form_rules_full(void);
+int run_editor_form_teams(void);
+int run_editor_form_rule_change(void);
+
 /* The last status tile frontEndStatusTank was handed by the stub in
  * test_stubs.c: the 1-based player number, and the tankAlliance as an int so
  * the header does not have to pull screentank.h in. Both are -1 until the
