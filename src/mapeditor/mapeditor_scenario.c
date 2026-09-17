@@ -20,15 +20,11 @@
 
 #include "../gui/lang.h" /* langGetText — the status line the pane shows */
 
-/* The suffix a script takes and the largest one the editor opens. Both
- * restate SCN_SCRIPT_SUFFIX and SCN_SCRIPT_MAX_BYTES in
- * src/scenario/scenario_host.h, which this file deliberately does not
- * include: the editor links neither scenario_static nor scenario_io_static,
- * and the panel builds against public/ and the gui headers alone. Change one
- * of those two and this pair has to move with it, or the editor and the
- * server stop agreeing on where a script lives and how big it may be. */
-static const char ME_SCENARIO_SUFFIX[] = ".scenario.lua";
-#define ME_SCENARIO_MAX_BYTES (1024 * 1024)
+#include "scenario_host.h"     /* SCN_SCRIPT_MAX_BYTES — the largest script the
+                                * server will read, and so the largest the
+                                * editor opens */
+#include "scenario_validate.h" /* scnScriptPath — the path a script takes
+                                * beside a map */
 
 /* ── Status ───────────────────────────────────────────────────────── */
 
@@ -46,44 +42,19 @@ static void meScenarioTake(MEScenarioState *st, char *text, size_t len) {
 
 /* ── Finding the script ───────────────────────────────────────────── */
 
-/* This mirrors scnScriptPath in src/scenario/scenario_host.c, which is the
- * rule the server itself follows when it looks for a script beside a map.
- * Keep the two the same — a script the editor writes is one the server has to
- * find. Both targets that compile this file link scenario_static now, so the
- * two spellings could be collapsed into one call; that is a change of its own
- * and has not been made here.
+/* Where a script sits beside a map is the server's rule, and scnScriptPath in
+ * src/scenario/scenario_host.c is the one place it is written: a script the
+ * editor writes is one the server has to find.
  *
  * The one difference is deliberate: an empty path is refused here rather
  * than resolving to a bare ".scenario.lua", because a map with no file yet
- * has nowhere to put a script. */
+ * has nowhere to put a script. A NULL path and a missing buffer are refused
+ * here too, since scnScriptPath reads both without checking them. */
 bool meScenarioScriptPathForMap(const char *mapPath, char *out, size_t outLen) {
-    size_t n;
-    size_t base;
-    size_t suffix = sizeof(ME_SCENARIO_SUFFIX) - 1;
-
-    if (mapPath == NULL || out == NULL || outLen == 0) {
+    if (mapPath == NULL || mapPath[0] == '\0' || out == NULL || outLen == 0) {
         return false;
     }
-    n = strlen(mapPath);
-    if (n == 0) {
-        return false;
-    }
-
-    base = n;
-    if (n >= 4) {
-        const char *ext = mapPath + n - 4;
-        if (ext[0] == '.' && (ext[1] == 'm' || ext[1] == 'M') &&
-            (ext[2] == 'a' || ext[2] == 'A') &&
-            (ext[3] == 'p' || ext[3] == 'P')) {
-            base = n - 4;
-        }
-    }
-    if (base + suffix + 1 > outLen) {
-        return false;
-    }
-    memcpy(out, mapPath, base);
-    memcpy(out + base, ME_SCENARIO_SUFFIX, suffix + 1);
-    return true;
+    return scnScriptPath(mapPath, out, outLen);
 }
 
 /* ── Reading ──────────────────────────────────────────────────────── */
@@ -122,7 +93,7 @@ static bool meScenarioReadFile(const char *path, char **out, size_t *outLen,
         fclose(f);
         return false;
     }
-    if ((size_t)size > (size_t)ME_SCENARIO_MAX_BYTES) {
+    if ((size_t)size > (size_t)SCN_SCRIPT_MAX_BYTES) {
         *tooBig = true;
         fclose(f);
         return false;

@@ -9,10 +9,12 @@
  *   Runs the scenario validator over the pane's text and
  *   reads the binding registry for the completion list.
  *
- *   This is the whole of what the editor calls in
- *   scenario_static: scenarioValidateSource and
- *   scenarioLuaRows. Nothing here creates a ServerSim,
- *   attaches a host or ticks anything.
+ *   These two calls, scenarioValidateSource and
+ *   scenarioLuaRows, are what the editor asks of
+ *   scenario_static, along with the script path
+ *   mapeditor_scenario.c derives through scnScriptPath.
+ *   Nothing here creates a ServerSim, attaches a host or
+ *   ticks anything.
  *********************************************************/
 
 #include <stddef.h>

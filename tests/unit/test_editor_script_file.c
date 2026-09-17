@@ -2,12 +2,11 @@
  * The map editor's scenario script file: where a script sits beside a map,
  * and the read and write the pane's Save and Reload stand on.
  *
- * meScenarioScriptPathForMap mirrors scnScriptPath in
+ * meScenarioScriptPathForMap wraps scnScriptPath in
  * src/scenario/scenario_host.c, which is the rule the server follows when it
- * looks for a script beside a map. The editor cannot call that function — it
- * links neither scenario_static nor scenario_io_static — so the two are held
- * together by the derivation case below rather than by the compiler. A
- * script the editor writes has to be one the server finds.
+ * looks for a script beside a map. The derivation case below calls both on the
+ * same paths and compares what they answer, so a script the editor writes is
+ * one the server finds.
  *
  * Each case names its own fixture files. CTest runs cases as separate
  * processes in one directory, so a shared fixture name is a race rather than
@@ -16,10 +15,13 @@
  * Nothing here draws anything: the pane is C++ over ImGui and is the human
  * half of this work. This is the half that can be asserted.
  *
- * run_editor_script_path       — .map, .MAP and .Map all give up the
- *                                extension; a name without one keeps it all;
- *                                a buffer too small and an empty path are
- *                                refused
+ * run_editor_script_path       — the path the editor derives is the path
+ *                                scnScriptPath derives: .map, .MAP and .Map
+ *                                all give up the extension; a name without one
+ *                                keeps it all; a buffer too small is refused by
+ *                                both. An empty path is the one place the two
+ *                                part company, and the editor's refusal is
+ *                                asserted there
  * run_editor_script_round_trip — a script written through Save is the script
  *                                read back when the map is opened again; the
  *                                read that stops short of the length the file
@@ -43,6 +45,7 @@
 #include <string.h>
 
 #include "mapeditor_scenario.h"
+#include "scenario_validate.h" /* scnScriptPath — the rule the server follows */
 #include "test_harness.h"
 
 /* Writes a file, so a case can set up a script the editor did not write. */
@@ -116,37 +119,64 @@ static bool esSame(const char *path, const char *text) {
     return got == want && memcmp(buf, text, want) == 0;
 }
 
+/* Both spellings of the rule on one map path: the editor's, into out, and the
+ * server's own scnScriptPath beside it. True when the two answer the same
+ * thing — the same yes or no, and where they answer a path, the same path. */
+static bool esPathAgrees(const char *mapPath, char *out, size_t outLen) {
+    char ref[128];
+    bool byEditor;
+    bool byServer;
+
+    if (outLen > sizeof(ref)) {
+        return false;
+    }
+    byEditor = meScenarioScriptPathForMap(mapPath, out, outLen);
+    byServer = scnScriptPath(mapPath, ref, outLen);
+    if (byEditor != byServer) {
+        return false;
+    }
+    return !byEditor || strcmp(out, ref) == 0;
+}
+
 int run_editor_script_path(void) {
     char out[64];
+    char ref[64];
     char small[8];
 
     /* A trailing .map goes, whatever its case, and the suffix takes its
      * place. */
-    UT_ASSERT(meScenarioScriptPathForMap("maps/foo.map", out, sizeof(out)));
+    UT_ASSERT(esPathAgrees("maps/foo.map", out, sizeof(out)));
     UT_ASSERT_MSG(strcmp(out, "maps/foo.scenario.lua") == 0, "got '%s'", out);
 
-    UT_ASSERT(meScenarioScriptPathForMap("maps/foo.MAP", out, sizeof(out)));
+    UT_ASSERT(esPathAgrees("maps/foo.MAP", out, sizeof(out)));
     UT_ASSERT_MSG(strcmp(out, "maps/foo.scenario.lua") == 0, "got '%s'", out);
 
-    UT_ASSERT(meScenarioScriptPathForMap("maps/foo.Map", out, sizeof(out)));
+    UT_ASSERT(esPathAgrees("maps/foo.Map", out, sizeof(out)));
     UT_ASSERT_MSG(strcmp(out, "maps/foo.scenario.lua") == 0, "got '%s'", out);
 
     /* A name that does not end in .map keeps the whole of it and takes the
      * suffix as it is, so a path with no extension still resolves. */
-    UT_ASSERT(meScenarioScriptPathForMap("maps/foo", out, sizeof(out)));
+    UT_ASSERT(esPathAgrees("maps/foo", out, sizeof(out)));
     UT_ASSERT_MSG(strcmp(out, "maps/foo.scenario.lua") == 0, "got '%s'", out);
 
-    UT_ASSERT(meScenarioScriptPathForMap("maps/foo.bmap", out, sizeof(out)));
+    UT_ASSERT(esPathAgrees("maps/foo.bmap", out, sizeof(out)));
     UT_ASSERT_MSG(strcmp(out, "maps/foo.bmap.scenario.lua") == 0, "got '%s'",
                   out);
 
     /* A path that is nothing but the extension gives all of it up. */
-    UT_ASSERT(meScenarioScriptPathForMap(".map", out, sizeof(out)));
+    UT_ASSERT(esPathAgrees(".map", out, sizeof(out)));
     UT_ASSERT_MSG(strcmp(out, ".scenario.lua") == 0, "got '%s'", out);
 
-    /* No room for the result, and no path at all. */
+    /* No room for the result: refused, and refused by both. */
+    UT_ASSERT(esPathAgrees("maps/foo.map", small, sizeof(small)));
     UT_ASSERT(!meScenarioScriptPathForMap("maps/foo.map", small, sizeof(small)));
+
+    /* No path at all is the one place the two part company, and deliberately:
+     * the server resolves it to a bare suffix, and the editor refuses it,
+     * because a map with no file yet has nowhere to put a script. */
     UT_ASSERT(!meScenarioScriptPathForMap("", out, sizeof(out)));
+    UT_ASSERT(scnScriptPath("", ref, sizeof(ref)));
+    UT_ASSERT_MSG(strcmp(ref, ".scenario.lua") == 0, "got '%s'", ref);
 
     return 0;
 }

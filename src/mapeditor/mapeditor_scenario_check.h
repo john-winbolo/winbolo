@@ -6,12 +6,12 @@
 /*********************************************************
  * Name:          mapeditor_scenario_check.h
  * Purpose:
- *   The editor's one reach into the scenario runtime: the
+ *   The editor's reach into the scenario runtime: the
  *   validator run over the text in the script pane, and the
  *   game.* rows the completion list is built from.
  *
- *   Both calls live behind this header so the rest of the
- *   editor names no scenario header. The check runs no sim
+ *   Both calls live behind this header so the panel code
+ *   names no scenario header. The check runs no sim
  *   and boots no host — it loads the chunk once in a Lua
  *   state of its own and reads the table it declared, which
  *   is what keeps the editor's privileged exception in

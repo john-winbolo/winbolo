@@ -46,7 +46,7 @@
  * pulls scenario_defs.h out of scenario_api/, and the editor is built under
  * the gui profile, which grants only public/. Change one and this has to move
  * with it, or a mod the editor writes is one the scenario directory does not
- * list. The same restating is in mapeditor_scenario.c for the script suffix. */
+ * list. */
 #define ME_PACK_MOD_EXT ".scenario"
 
 static void mePackErr(char *err, size_t errLen, const char *fmt, ...) {

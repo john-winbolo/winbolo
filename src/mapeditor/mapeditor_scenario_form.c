@@ -29,9 +29,10 @@
 
 /* SCENARIO_API_VERSION: the version of the scenario surface this build
  * writes, so a new manifest states the one it was authored against. Only the
- * constant is taken from there — the editor links neither the scenario
- * runtime nor the container library, and calls nothing declared on that
- * header. gamefront.c takes the same header the same way. */
+ * constant is taken from there: the editor links the scenario runtime and the
+ * container library, but this file calls nothing declared on that header or
+ * anything else in either of them. gamefront.c takes the same header the same
+ * way. */
 #include "../scenario/scenario_host.h"
 
 void meScenarioFormReset(MEScenarioForm *f) {
