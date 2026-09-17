@@ -3631,9 +3631,6 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   intToStr(DEFAULT_ALLYVIEW, def, sizeof(def));
   prefsGetString("KEYS", "Ally View", def, buff, FILENAME_MAX);
   keys->kiAllyView = atoi(buff);
-  intToStr(DEFAULT_LGMVIEW, def, sizeof(def));
-  prefsGetString("KEYS", "LGM View", def, buff, FILENAME_MAX);
-  keys->kiLGMView = atoi(buff);
   intToStr(DEFAULT_BASEVIEW, def, sizeof(def));
   prefsGetString("KEYS", "Base View", def, buff, FILENAME_MAX);
   keys->kiBaseView = atoi(buff);
@@ -4415,8 +4412,6 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("KEYS", "Pill View", buff);
   intToStr(keys->kiAllyView, buff, sizeof(buff));
   prefsSetString("KEYS", "Ally View", buff);
-  intToStr(keys->kiLGMView, buff, sizeof(buff));
-  prefsSetString("KEYS", "LGM View", buff);
   intToStr(keys->kiBaseView, buff, sizeof(buff));
   prefsSetString("KEYS", "Base View", buff);
   intToStr(keys->kiOverviewZoom, buff, sizeof(buff));

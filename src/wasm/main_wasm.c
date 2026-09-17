@@ -683,7 +683,6 @@ void wasmApplyJoinPrefs(const char *prefsJson, int len) {
     keys.kiTankView     = prefInt(k, "Tank View",      keys.kiTankView);
     keys.kiPillView     = prefInt(k, "Pill View",      keys.kiPillView);
     keys.kiAllyView     = prefInt(k, "Ally View",      keys.kiAllyView);
-    keys.kiLGMView      = prefInt(k, "LGM View",       keys.kiLGMView);
     keys.kiBaseView     = prefInt(k, "Base View",      keys.kiBaseView);
     keys.kiOverviewZoom = prefInt(k, "Overview Zoom",  keys.kiOverviewZoom);
     keys.kiOverviewFollow  = prefInt(k, "Overview Follow",   keys.kiOverviewFollow);

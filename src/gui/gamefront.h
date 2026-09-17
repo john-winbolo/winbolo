@@ -55,7 +55,6 @@
 #define DEFAULT_TANKVIEW     23   /* SDL_SCANCODE_T */
 #define DEFAULT_PILLVIEW     10   /* SDL_SCANCODE_G */
 #define DEFAULT_ALLYVIEW     28   /* SDL_SCANCODE_Y */
-#define DEFAULT_LGMVIEW      11   /* SDL_SCANCODE_H */
 #define DEFAULT_BASEVIEW     16   /* SDL_SCANCODE_M */
 
 /* Held while the wheel turns over the map overview, it zooms the map rather
