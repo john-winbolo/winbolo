@@ -6267,6 +6267,10 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
             ev.key.windowID == SDL_GetWindowID(s_window) &&
             (ev.key.mod & KMOD_PRIMARY) != 0) {
+            /* Set by every case below that acts; cleared by default, so the
+               tail can tell a shortcut that ran from a chord this switch has
+               nothing for. */
+            bool shortcutTook = true;
             switch (ev.key.scancode) {
             case SDL_SCANCODE_M:
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
@@ -6291,46 +6295,58 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
                 }
 #endif
-                continue;
+                break;
             case SDL_SCANCODE_K:
                 sdl3ImguiShowKeySetup();
-                continue;
+                break;
             case SDL_SCANCODE_S:
                 windowSaveMap(cs);
-                continue;
+                break;
             case SDL_SCANCODE_G:
                 windowShowGunsight_toggle(cs);
-                continue;
+                break;
             case SDL_SCANCODE_A:
                 windowAutomaticScrolling_toggle(cs);
-                continue;
+                break;
             case SDL_SCANCODE_1:
                 windowSetTankLabelLen(cs, lblNone);
-                continue;
+                break;
             case SDL_SCANCODE_2:
                 windowSetTankLabelLen(cs, lblShort);
-                continue;
+                break;
             case SDL_SCANCODE_3:
                 windowSetTankLabelLen(cs, lblLong);
-                continue;
+                break;
             case SDL_SCANCODE_P:
                 /* This switch gates on KMOD_PRIMARY only, so the shift-modified
                    form has to be separated here rather than by its own case. */
                 if (ev.key.mod & SDL_KMOD_SHIFT) sdl3ImguiShowPlayersPanel(true);
                 else                             windowShowPillLabels_toggle(cs);
-                continue;
+                break;
             case SDL_SCANCODE_B:
                 windowShowBaseLabels_toggle(cs);
-                continue;
+                break;
             case SDL_SCANCODE_R:
                 clientSimRequestAllianceSelected(cs);
-                continue;
+                break;
             case SDL_SCANCODE_O:
                 /* Same running-game condition as the File menu item. */
                 if (cs != nullptr && clientSimIsRunning(cs)) sdl3ImguiShowMapOverview(true);
-                continue;
-            default:
                 break;
+            default:
+                shortcutTook = false;
+                break;
+            }
+            if (shortcutTook) {
+                /* The letter is bound in the game as well, and on the defaults
+                   four of them are: M is Base View, S turns left, G is Pill
+                   View and 1/2/3 are the quick builds. Dropping this event is
+                   not enough on its own — a binding is not read from the event
+                   but polled out of SDL's keyboard state, where the letter is
+                   still down — so the key is marked and reads as up to the
+                   game until the player lets go of it. */
+                inputSwallowKeyUntilRelease((int)ev.key.scancode);
+                continue;
             }
         }
 #endif
