@@ -149,6 +149,9 @@ void simRulesClassic(SimRules *out) {
     out->pill_range            = PILLBOX_RANGE;
     out->pill_shell_damage     = PILLBOX_SHELL_DAMAGE;
     out->pill_angry_divisor    = PILLBOX_ANGRY_DIVISOR;
+    out->pill_fire_length      = (float) PILLBOX_FIRE_DISTANCE;
+    out->pill_base_defend_range = PILL_BASE_HIT_RANGE;
+    out->pill_aim_iterations   = MAX_AIM_ITERATE;
 
     /* ---- Base ---- */
     out->base_full_armour         = BASE_FULL_ARMOUR;
@@ -498,6 +501,14 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
     /* One is a pill that never angers, which is a coherent setting and why
        the floor is one rather than two. */
     RULE_INT(pill_angry_divisor, 1, 255)
+    /* The shell's own length, in half map squares, the way a tank's is: the
+       gunsight rows are bounded the same way. */
+    RULE_FLT(pill_fire_length, 0.5, 127.0)
+    /* Zero is a pill that only answers for the square it stands on. */
+    RULE_INT(pill_base_defend_range, 0, 255)
+    /* The aim solver's step budget. One is a pill that never leads a
+       target and fires straight at where it is standing now. */
+    RULE_INT(pill_aim_iterations, 1, 65535)
     RULE_PAIR(PAIR_ASKED2(pill_shell_damage, pill_max_armour),
               rules->pill_shell_damage <= rules->pill_max_armour,
               "pill_shell_damage is %ld, above pill_max_armour %ld",

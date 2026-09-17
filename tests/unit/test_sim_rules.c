@@ -251,6 +251,9 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(pill_range, PILLBOX_RANGE);
     SR_EQ(pill_shell_damage, PILLBOX_SHELL_DAMAGE);
     SR_EQ(pill_angry_divisor, PILLBOX_ANGRY_DIVISOR);
+    SR_FEQ(pill_fire_length, PILLBOX_FIRE_DISTANCE);
+    SR_EQ(pill_base_defend_range, PILL_BASE_HIT_RANGE);
+    SR_EQ(pill_aim_iterations, MAX_AIM_ITERATE);
 
     /* Base */
     SR_EQ(base_full_armour, BASE_FULL_ARMOUR);

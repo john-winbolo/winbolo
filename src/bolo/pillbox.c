@@ -614,7 +614,7 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
         /* Fire at closest enemy tank */
         if ((*value)->item[count].justSeen == TRUE) {
           dir = pillsTargetTank(sim, mp, value, bs, x, y, bestTankX, bestTankY, (TURNTYPE) bestTankDir, bestTankSpeed, (tankIsOnBoat(bestTank)), tankBoatExitSpeed(sim, *bestTank));
-          shellsAddItem(sim, shs, x, y, dir, (float) (PILLBOX_FIRE_DISTANCE), NEUTRAL, FALSE);
+          shellsAddItem(sim, shs, x, y, dir, sim->rules.pill_fire_length, NEUTRAL, FALSE);
           (*value)->item[count].reload = 0;
           sim->callbacks.soundDist(sim->callbacks.ctx, shootNear, (*value)->item[count].x, (*value)->item[count].y);
         } else {
@@ -980,7 +980,7 @@ TURNTYPE pillsTargetTankMove(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WO
   shellX = (WORLD) (xValue + shellAddX);
   shellY = (WORLD) (yValue + shellAddY);
   
-  while (found == FALSE && count < MAX_AIM_ITERATE) {
+  while (found == FALSE && count < sim->rules.pill_aim_iterations) {
     if ((utilIsTankHit(tankX, tankY, angle, shellX, shellY, estimate,
                        (WORLD) sim->rules.tank_hit_radius)) == TRUE  ) {
       found = TRUE;
@@ -1740,7 +1740,12 @@ void pillsBaseHit(GameSim *sim, pillboxes *value, BYTE mx, BYTE my, BYTE baseOwn
   for (count=0;count<(*value)->numPills;count++) {
     xDist = ((*value)->item[count].x) - mx;
     yDist = ((*value)->item[count].y) - my;
-    if ((*value)->active[count] != FALSE && xDist >= PILL_BASE_HIT_LEFT && xDist <= PILL_BASE_HIT_RIGHT && yDist >= PILL_BASE_HIT_TOP && yDist <= PILL_BASE_HIT_BOTTOM && (*value)->item[count].owner != NEUTRAL && (playersIsAllie(&sim->plyrs, baseOwner, (*value)->item[count].owner) == TRUE) && (*value)->item[count].armour > 0) {
+    if ((*value)->active[count] != FALSE &&
+        xDist >= -sim->rules.pill_base_defend_range &&
+        xDist <= sim->rules.pill_base_defend_range &&
+        yDist >= -sim->rules.pill_base_defend_range &&
+        yDist <= sim->rules.pill_base_defend_range &&
+        (*value)->item[count].owner != NEUTRAL && (playersIsAllie(&sim->plyrs, baseOwner, (*value)->item[count].owner) == TRUE) && (*value)->item[count].armour > 0) {
       /* It is in range make it angry */
       (*value)->item[count].coolDown = (BYTE) sim->rules.pill_cooldown_ticks;
       if ((*value)->item[count].speed > sim->rules.pill_attack_min_ticks) {
