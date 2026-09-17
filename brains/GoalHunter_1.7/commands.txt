@@ -1,22 +1,68 @@
 BOT COMMANDS ARE EXPERIMENTAL AND IN BETA. Expect rough edges and tell us what breaks.
 
-Allies can order GoalHunter bots:
+QUICK INFO:
 
-1) by "Bot Command" pings on a target or tile, or "Caution" on a target or bot to cancel and again to retreat.
+1) SMART PING
 
-2) by chat:
+   - Smart ping using BOT COMMAND on a pill, tanks, or land tile to command
+     the bot.
+   - Closest bot will respond (closest by ROUTE, and only a bot that is free)
+   - Keep pinging the same place to add a second bot, etc.
 
-Specific goal:
+Ping "CAUTION" on a target or bot to cancel; on a bot holding nothing it
+retreats it. A ping on an ALLY BOT selects it for your next order.
 
-  <subject name|all|nearby|last> attack|capture|sweep|defend|retreat|cancel <pill#/tank name, defaults to pill>
+2) SHOOTING
 
-Ex. "Bot 1 attack 3", "Bot 1 attack Joe", "Bot 1 sweep 4"
+   - Shoot 3 times in a row to command closest bot to go there for 10 seconds
+     (good for decoys).
 
-General strategic focus:
+All three must run their FULL RANGE onto one open square inside two seconds
+with nothing else of yours fired either side. Only bots within 14 squares of
+YOU hear it, and the 10 seconds start on arrival.
 
-  <subject> focus <bases|pills|off>
+3) CHAT
 
-Note: Pillbox repositioning is turned off when human allies are present. Say "repositioning on" to turn it back on.
+   - Commands (Ctrl-P by default to turn on pill numbers, Ctrl-B for bases;
+     Cmd-P and Cmd-B on a Mac)
+
+ Examples:
+
+"attack 5" (closest bot attack pill 5)
+
+"bot5 attack pill 5" (specifically only bot named bot5)
+
+"all attack 5" (all bots attack pill 5)
+
+"4 attack closest" (4 bots closest to the pill closest to the sender)
+
+"4 attack 5" (4 bots closest to pill 5 will attack it)
+
+"last attack bob" (last bot previously commanded will attack enemy player
+with bob in its name)
+
+A bot's name may be shortened. "closest" is always a PILLBOX: attack and
+capture look at the ones not ours, defend at ours.
+
+   - Overall strategy:
+
+"focus pills"
+"focus bases"
+"focus off" (back to auto)
+
+4) BOT CONFIRMATIONS
+
+"bot pings on" (ping bot goals)
+"bot chat on" (bots chat their goals)
+
+Both take "off". Pings start OFF, chat starts ON. "bot chat off" silences
+the goal lines only; an answer you are owed still comes back.
+
+NOTE: Bots <= 7 tiles from a human will suicide when attacking a pill (no
+wall blockers built, for brevity).
+
+NOTE: Pillbox repositioning is off when human allies are present. Say
+"repositioning on" to turn it back on.
 
 ~~~~~~~~~~~~~~~
 
@@ -52,6 +98,9 @@ WHO WORDS
   (nothing)   one bot: the one with the cheapest route to the target.
   all         every bot on the team.
   nearby      every bot within 10 tiles of the target.
+  a number    that many bots, 1 to 16: "3 attack 7". The cheapest routes
+              win, so they are the ones nearest the TARGET. Said about a
+              running order, it adds bots to that one.
   last        the bot or bots that took YOUR last order, with no auction, as
               if you had typed their names: "last attack 7". If you have a
               selection running, that is the set instead. With no order
@@ -75,6 +124,9 @@ TARGETS
   A base needs the word: "capture base 2".
   "pill 5", "pillbox 5" and "pills 5" all mean the same.
   A tank is named, not numbered: "attack bruce".
+  closest     the pillbox nearest YOU, not the one nearest the bot.
+              "nearest" is the same word. "closest base" is turned down, and
+              a bot that cannot see you says "can't see you".
 
 CANCEL
   A cancelled order is OVER. No other bot picks it up, and neither does the
@@ -116,10 +168,21 @@ TEAM SETTINGS
                  attacking a pillbox or a tank, so you can see what the bots
                  are going for without reading chat. "botpings on" too.
   bot pings off  stop the attack markers. This is how a game starts.
+  bot chat on    the bots say their goals: "Got it! attack_pill #5". This
+                 is how a game starts. "botchat" is the same word.
+  bot chat off   stop those lines. Only the GOAL lines go quiet.
   These settings take a subject and ignore it: they are team-wide, so
   "socrates focus bases" and "last repositioning on" do what the bare lines do.
   help           the bots say a short version of this page in chat.
   A setting holds for the whole game, or until you change it.
+
+
+STANDING BESIDE A BOT
+
+A bot attacking a pillbox normally builds a wall in front of it first, which
+takes trees and time. A bot with a HUMAN team-mate within 7 tiles skips that
+and goes straight in. Only the walls change, and a BOT team-mate does not
+count: two bots together keep building.
 
 
 PINGS
