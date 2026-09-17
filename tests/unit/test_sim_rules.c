@@ -163,6 +163,7 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(shell_damage, DAMAGE);
     SR_EQ(mine_damage, MINE_DAMAGE);
     SR_EQ(just_fired_ticks, JUST_FIRED_TICKS);
+    SR_EQ(tree_hide_distance, MIN_TREEHIDE_DIST);
     SR_EQ(gunsight_min, GUNSIGHT_MIN);
     SR_EQ(gunsight_max, GUNSIGHT_MAX);
     SR_FEQ(tank_accel_rate, TANK_ACCELERATE_RATE);

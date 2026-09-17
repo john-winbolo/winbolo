@@ -52,6 +52,7 @@ typedef struct SimRules {
     int32_t shell_damage;
     int32_t mine_damage;
     int32_t just_fired_ticks;    /* how long a shot keeps a tank out of the trees */
+    int32_t tree_hide_distance;  /* how far off a tank in trees stops being seen */
     int32_t gunsight_min;
     int32_t gunsight_max;
     float   tank_accel_rate;

@@ -375,7 +375,7 @@ typedef enum {
     F(base_capture_armour) F(base_hit_armour)
 
 #define CTRL_SIM_RULES_U16_FIELDS(F)                                         \
-    F(tank_death_ticks)
+    F(tank_death_ticks) F(tree_hide_distance)
 
 #define CTRL_SIM_RULES_U32_FIELDS(F)                                         \
     F(shell_start_add) F(base_regen_ticks) F(tree_grow_initial_ticks)

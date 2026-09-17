@@ -90,6 +90,7 @@ typedef enum {
     X(mine_damage, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)                  \
     X(just_fired_ticks, SIM_RULE_VALUE_INT,                                  \
       SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
+    X(tree_hide_distance, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)           \
     X(gunsight_min, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)                 \
     X(gunsight_max, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)                 \
     X(tank_accel_rate, SIM_RULE_VALUE_FLOAT,                                 \

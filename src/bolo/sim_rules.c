@@ -59,6 +59,7 @@ void simRulesClassic(SimRules *out) {
     out->shell_damage        = DAMAGE;
     out->mine_damage         = MINE_DAMAGE;
     out->just_fired_ticks    = JUST_FIRED_TICKS;
+    out->tree_hide_distance  = MIN_TREEHIDE_DIST;
     out->gunsight_min        = GUNSIGHT_MIN;
     out->gunsight_max        = GUNSIGHT_MAX;
     out->tank_accel_rate     = (float) TANK_ACCELERATE_RATE;
@@ -357,6 +358,8 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
     RULE_INT(shell_damage, 1, 255)
     RULE_INT(mine_damage, 1, 255)
     RULE_INT(just_fired_ticks, 0, 255)
+    /* Zero is a wood that hides nothing, which is a coherent table. */
+    RULE_INT(tree_hide_distance, 0, 65535)
     RULE_INT(gunsight_min, 1, 255)
     RULE_INT(gunsight_max, 1, 255)
     RULE_FLT(tank_accel_rate, 0.01, 16.0)

@@ -592,7 +592,8 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
         }
 
         /* Check visibility: not hidden in trees (unless very close or just fired) */
-        if ((utilIsTankInTrees(mp, value, bs, tankX, tankY)) == TRUE && (diffX >= MIN_TREEHIDE_DIST || diffY >= MIN_TREEHIDE_DIST) && tankJustFired(&tanks[t]) == FALSE) {
+        if ((utilIsTankInTrees(mp, value, bs, tankX, tankY)) == TRUE && (diffX >= sim->rules.tree_hide_distance ||
+             diffY >= sim->rules.tree_hide_distance) && tankJustFired(&tanks[t]) == FALSE) {
           continue;
         }
 
