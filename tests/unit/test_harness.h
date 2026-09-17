@@ -1768,6 +1768,8 @@ int run_sim_rules_base_regen_seed_follows(void);
 int run_sim_rules_terrain_life_follows(void);
 int run_sim_rules_base_empties_without_wrapping(void);
 int run_sim_rules_pill_empties_without_wrapping(void);
+int run_sim_rules_pill_shell_damage_follows(void);
+int run_sim_rules_pill_angry_divisor_follows(void);
 int run_sim_rules_pairs(void);
 int run_sim_rules_capture_threshold_moves(void);
 int run_sim_rules_builder_cost_follows(void);

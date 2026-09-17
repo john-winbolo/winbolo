@@ -220,6 +220,8 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(pill_cooldown_ticks, PILLBOX_COOLDOWN_TIME);
     SR_EQ(pill_repair_amount, PILL_REPAIR_AMOUNT);
     SR_EQ(pill_range, PILLBOX_RANGE);
+    SR_EQ(pill_shell_damage, PILLBOX_SHELL_DAMAGE);
+    SR_EQ(pill_angry_divisor, PILLBOX_ANGRY_DIVISOR);
 
     /* Base */
     SR_EQ(base_full_armour, BASE_FULL_ARMOUR);
@@ -959,6 +961,131 @@ int run_sim_rules_pill_empties_without_wrapping(void) {
     UT_ASSERT_MSG(gs->pb->item[0].armour == 0,
                   "an explosion on a dead pill left it at %u, expected 0",
                   (unsigned) gs->pb->item[0].armour);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* What a shell takes off a pillbox. A shell takes shell_damage off a tank and
+ * off a base; against a pill it took one, written as a decrement, so the
+ * amount could not be moved without moving what a shell does to everything
+ * else. pillsDamagePos now reads its own rule, and reads it the way the base
+ * path reads its own — asking whether the blow takes more than is left rather
+ * than subtracting into a BYTE and reading the wrap. */
+int run_sim_rules_pill_shell_damage_follows(void) {
+    ServerSim *sim = ut_make_running_sim("Sapper");
+    GameSim *gs;
+    pillbox item;
+    BYTE px, py;
+
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    UT_ASSERT_MSG(pillsGetNumPills(&gs->pb) >= 1,
+                  "Everard Island should carry at least one pillbox");
+    memset(&item, 0, sizeof(item));
+    pillsGetPill(&gs->pb, &item, 1);
+    px = item.x;
+    py = item.y;
+
+    /* The classic rule is one, which is what the decrement used to do. */
+    UT_ASSERT_MSG(gs->rules.pill_shell_damage == PILLBOX_SHELL_DAMAGE,
+                  "a running sim starts at pill_shell_damage %ld, expected %d",
+                  (long) gs->rules.pill_shell_damage, PILLBOX_SHELL_DAMAGE);
+    gs->pb->item[0].armour = 10;
+    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL);
+    UT_ASSERT_MSG(gs->pb->item[0].armour == 9,
+                  "a classic shell left the pill at %u, expected 9",
+                  (unsigned) gs->pb->item[0].armour);
+
+    /* Moved, and the shell takes the rule rather than one. */
+    gs->rules.pill_shell_damage = 4;
+    gs->pb->item[0].armour = 10;
+    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL);
+    UT_ASSERT_MSG(gs->pb->item[0].armour == 6,
+                  "a shell taking 4 left the pill at %u, expected 6",
+                  (unsigned) gs->pb->item[0].armour);
+
+    /* Less left than the shell takes: empty, not a wrap. */
+    gs->pb->item[0].armour = 2;
+    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL);
+    UT_ASSERT_MSG(gs->pb->item[0].armour == 0,
+                  "a pill at 2 armour hit for 4 read back %u, expected 0",
+                  (unsigned) gs->pb->item[0].armour);
+    UT_ASSERT_MSG(pillsDeadPos(&gs->pb, px, py) == TRUE,
+                  "a pill emptied by a raised shell did not read as dead");
+
+    /* A shell that takes the whole cap is a pill killed by one hit, which the
+       range check allows and which the path has to actually carry out. */
+    gs->rules.pill_shell_damage = gs->rules.pill_max_armour;
+    gs->pb->item[0].armour = (BYTE) gs->rules.pill_max_armour;
+    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL);
+    UT_ASSERT_MSG(gs->pb->item[0].armour == 0,
+                  "a full pill hit for the whole cap read back %u, expected 0",
+                  (unsigned) gs->pb->item[0].armour);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* How fast a hurt pillbox angers. The interval starts at pill_attack_ticks and
+ * is floored at pill_attack_min_ticks, both rules already; the step between
+ * them was a literal halving, so the two ends could be moved and the ramp
+ * between them could not. A divisor of one is a pill that never angers, which
+ * is why the range check's floor is one rather than two. */
+int run_sim_rules_pill_angry_divisor_follows(void) {
+    ServerSim *sim = ut_make_running_sim("Stoker");
+    GameSim *gs;
+    pillbox item;
+    BYTE px, py;
+
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    UT_ASSERT_MSG(pillsGetNumPills(&gs->pb) >= 1,
+                  "Everard Island should carry at least one pillbox");
+    memset(&item, 0, sizeof(item));
+    pillsGetPill(&gs->pb, &item, 1);
+    px = item.x;
+    py = item.y;
+
+    UT_ASSERT_MSG(gs->rules.pill_angry_divisor == PILLBOX_ANGRY_DIVISOR,
+                  "a running sim starts at pill_angry_divisor %ld, expected %d",
+                  (long) gs->rules.pill_angry_divisor, PILLBOX_ANGRY_DIVISOR);
+
+    /* Classic: one hit halves the interval. */
+    gs->pb->item[0].armour = 10;
+    gs->pb->item[0].speed = (BYTE) gs->rules.pill_attack_ticks;
+    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL);
+    UT_ASSERT_MSG(gs->pb->item[0].speed ==
+                      (BYTE) (gs->rules.pill_attack_ticks / 2),
+                  "a classic hit left the interval at %u, expected %ld",
+                  (unsigned) gs->pb->item[0].speed,
+                  (long) (gs->rules.pill_attack_ticks / 2));
+
+    /* A divisor of one is a pill that never angers. */
+    gs->rules.pill_angry_divisor = 1;
+    gs->pb->item[0].armour = 10;
+    gs->pb->item[0].speed = (BYTE) gs->rules.pill_attack_ticks;
+    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL);
+    UT_ASSERT_MSG(gs->pb->item[0].speed ==
+                      (BYTE) gs->rules.pill_attack_ticks,
+                  "a divisor of one moved the interval to %u, expected %ld",
+                  (unsigned) gs->pb->item[0].speed,
+                  (long) gs->rules.pill_attack_ticks);
+
+    /* A divisor past the whole span angers the pill fully on the first shell,
+       and the floor is what catches it rather than the division. */
+    gs->rules.pill_angry_divisor = 255;
+    gs->pb->item[0].armour = 10;
+    gs->pb->item[0].speed = (BYTE) gs->rules.pill_attack_ticks;
+    pillsDamagePos(gs, px, py, TRUE, FALSE, NEUTRAL);
+    UT_ASSERT_MSG(gs->pb->item[0].speed ==
+                      (BYTE) gs->rules.pill_attack_min_ticks,
+                  "a divisor of 255 left the interval at %u, expected the "
+                  "floor %ld",
+                  (unsigned) gs->pb->item[0].speed,
+                  (long) gs->rules.pill_attack_min_ticks);
 
     serverSimDestroy(sim);
     return 0;

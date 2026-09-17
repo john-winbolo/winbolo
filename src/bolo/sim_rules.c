@@ -117,6 +117,8 @@ void simRulesClassic(SimRules *out) {
     out->pill_cooldown_ticks   = PILLBOX_COOLDOWN_TIME;
     out->pill_repair_amount    = PILL_REPAIR_AMOUNT;
     out->pill_range            = PILLBOX_RANGE;
+    out->pill_shell_damage     = PILLBOX_SHELL_DAMAGE;
+    out->pill_angry_divisor    = PILLBOX_ANGRY_DIVISOR;
 
     /* ---- Base ---- */
     out->base_full_armour         = BASE_FULL_ARMOUR;
@@ -415,6 +417,18 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
     RULE_INT(pill_cooldown_ticks, 0, 255)
     RULE_INT_MIN(pill_repair_amount, 1)
     RULE_INT(pill_range, 0, 65535)
+    /* Capped by what a pill can hold, so only its own end is fixed here. A
+       shell that takes the whole cap is a pill killed by one hit, which is a
+       table a scenario may want; one that takes more is the same thing said
+       twice. */
+    RULE_INT_MIN(pill_shell_damage, 1)
+    /* One is a pill that never angers, which is a coherent setting and why
+       the floor is one rather than two. */
+    RULE_INT(pill_angry_divisor, 1, 255)
+    RULE_PAIR(PAIR_ASKED2(pill_shell_damage, pill_max_armour),
+              rules->pill_shell_damage <= rules->pill_max_armour,
+              "pill_shell_damage is %ld, above pill_max_armour %ld",
+              (long) rules->pill_shell_damage, (long) rules->pill_max_armour)
 
     /* ---- Base ---- */
     RULE_INT(base_full_armour, 0, 255)

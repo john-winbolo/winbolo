@@ -112,6 +112,8 @@ typedef struct SimRules {
     int32_t pill_cooldown_ticks;
     int32_t pill_repair_amount;
     int32_t pill_range;
+    int32_t pill_shell_damage;      /* what one shell takes off a pill */
+    int32_t pill_angry_divisor;     /* the step from normal toward min */
 
     /* ---- Base ---- */
     int32_t base_full_armour;

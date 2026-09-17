@@ -690,7 +690,16 @@ bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, boo
       done = TRUE;
       BYTE before = (*value)->item[count].armour;  /* > 0 here */
       if (wantDamage == TRUE && (*value)->item[count].armour > 0) {
-        (*value)->item[count].armour--;
+        /* Ask whether the shell takes more than is left rather than
+           subtracting first and reading the wrap: what a shell takes off a
+           pill and what a pill may hold are two rules now, and a table may
+           put any pair of numbers here. */
+        if (sim->rules.pill_shell_damage > before) {
+          (*value)->item[count].armour = 0;
+        } else {
+          (*value)->item[count].armour =
+              (BYTE) (before - sim->rules.pill_shell_damage);
+        }
         /* The blow that would finish the pill is the host's to refuse, and a
            refusal holds it at one armour, where it goes on firing. Taken back
            before the damage is recorded, so the record says what the pill
@@ -723,7 +732,7 @@ bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, boo
       } else if (wantDamage == TRUE) {
         (*value)->item[count].coolDown = (BYTE) sim->rules.pill_cooldown_ticks;
         if ((*value)->item[count].speed > sim->rules.pill_attack_min_ticks) {
-          (*value)->item[count].speed /=2;
+          (*value)->item[count].speed /= (BYTE) sim->rules.pill_angry_divisor;
           if ((*value)->item[count].speed < sim->rules.pill_attack_min_ticks) {
             (*value)->item[count].speed = (BYTE) sim->rules.pill_attack_min_ticks;
           }
@@ -1733,7 +1742,7 @@ void pillsBaseHit(GameSim *sim, pillboxes *value, BYTE mx, BYTE my, BYTE baseOwn
       /* It is in range make it angry */
       (*value)->item[count].coolDown = (BYTE) sim->rules.pill_cooldown_ticks;
       if ((*value)->item[count].speed > sim->rules.pill_attack_min_ticks) {
-        (*value)->item[count].speed /=2;
+        (*value)->item[count].speed /= (BYTE) sim->rules.pill_angry_divisor;
         if ((*value)->item[count].speed < sim->rules.pill_attack_min_ticks) {
           (*value)->item[count].speed = (BYTE) sim->rules.pill_attack_min_ticks;
         }

@@ -164,6 +164,8 @@ typedef enum {
       SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
     X(pill_repair_amount, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)           \
     X(pill_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)                   \
+    X(pill_shell_damage, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)            \
+    X(pill_angry_divisor, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)           \
     /* Base */                                                               \
     X(base_full_armour, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
     X(base_full_shells, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
