@@ -366,6 +366,9 @@ typedef enum {
     F(shell_damage) F(mine_damage) F(just_fired_ticks)                       \
     F(mine_fatal_divisor) F(water_loss_shells) F(water_loss_mines)           \
     F(gunsight_min) F(gunsight_max) F(tank_min_move)                         \
+    F(tank_hit_radius) F(tank_nudge_amount) F(tank_nudge_iterations)         \
+    F(tank_bump_decay_shift) F(tank_pill_pickup_inset)                       \
+    F(tank_boat_exit_inset) F(tank_slide_step)                               \
     F(speed_road) F(speed_grass) F(speed_forest) F(speed_river)              \
     F(speed_swamp) F(speed_crater) F(speed_rubble) F(speed_boat)             \
     F(speed_deep_sea) F(speed_refuel_base)                                   \
@@ -376,14 +379,15 @@ typedef enum {
     F(base_capture_armour) F(base_hit_armour)
 
 #define CTRL_SIM_RULES_U16_FIELDS(F)                                         \
-    F(tank_death_ticks) F(mine_damage_range) F(tree_hide_distance)
+    F(tank_death_ticks) F(tank_collision_distance) F(tank_nudge_threshold)   \
+    F(mine_damage_range) F(tree_hide_distance)
 
 #define CTRL_SIM_RULES_U32_FIELDS(F)                                         \
     F(shell_start_add) F(base_regen_ticks) F(tree_grow_initial_ticks)
 
 #define CTRL_SIM_RULES_F32_FIELDS(F)                                         \
     F(tank_accel_rate) F(tank_decel_rate) F(tank_brake_rate)                 \
-    F(tank_autoslow_rate)                                                    \
+    F(tank_autoslow_rate) F(tank_wall_glide)                                 \
     F(turn_road) F(turn_grass) F(turn_forest) F(turn_river) F(turn_swamp)    \
     F(turn_crater) F(turn_rubble) F(turn_boat) F(turn_deep_sea)              \
     F(turn_refuel_base)

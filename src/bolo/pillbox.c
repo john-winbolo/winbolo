@@ -981,7 +981,8 @@ TURNTYPE pillsTargetTankMove(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WO
   shellY = (WORLD) (yValue + shellAddY);
   
   while (found == FALSE && count < MAX_AIM_ITERATE) {
-    if ((utilIsTankHit(tankX, tankY, angle, shellX, shellY, estimate)) == TRUE  ) {
+    if ((utilIsTankHit(tankX, tankY, angle, shellX, shellY, estimate,
+                       (WORLD) sim->rules.tank_hit_radius)) == TRUE  ) {
       found = TRUE;
       returnValue = estimate;
     }

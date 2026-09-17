@@ -65,6 +65,22 @@ typedef struct SimRules {
     float   tank_autoslow_rate;
     int32_t tank_min_move;       /* residual speed a tank needs to move a tick */
 
+    /* ---- Tank collision geometry ----
+     * What the tank is, as a shape, to a shell and to the world it drives
+     * through. tank_hit_radius is the circle both the shell test and the
+     * building resolver use; the rest is how two tanks shove each other
+     * apart and how one comes off a wall. */
+    int32_t tank_hit_radius;         /* the circle a shell has to reach */
+    int32_t tank_collision_distance; /* how close two tanks shove */
+    int32_t tank_nudge_threshold;    /* which axis a shove takes */
+    int32_t tank_nudge_amount;       /* how far one shove moves a tank */
+    int32_t tank_nudge_iterations;   /* shoves tried in a tick */
+    int32_t tank_bump_decay_shift;   /* how fast a bump dies away */
+    int32_t tank_pill_pickup_inset;  /* the reach a tank picks a pill up from */
+    int32_t tank_boat_exit_inset;    /* how far inside a bank a boat is held */
+    int32_t tank_slide_step;         /* world units a knocked tank slides */
+    float   tank_wall_glide;         /* 0 slides along a wall, 1 glides free */
+
     /* ---- Terrain: the cap a tank's speed clamps to ----
      * Building, half-building and pillbox are absent on purpose: they are
      * impassable because tankBuildingCollision tests the terrain type, not

@@ -72,6 +72,18 @@ void simRulesClassic(SimRules *out) {
     out->tank_autoslow_rate  = (float) TANK_AUTOSLOW_SPEED;
     out->tank_min_move       = TANK_MIN_MOVE_SPEED;
 
+    /* ---- Tank collision geometry ---- */
+    out->tank_hit_radius         = TANK_HIT_RADIUS;
+    out->tank_collision_distance = TANK_COLLISION_DISTANCE;
+    out->tank_nudge_threshold    = TANK_NUDGE_THRESHOLD;
+    out->tank_nudge_amount       = TANK_NUDGE_AMOUNT;
+    out->tank_nudge_iterations   = TANK_MAX_NUDGE_ITERATIONS;
+    out->tank_bump_decay_shift   = TANK_BUMP_DECAY_SHIFT;
+    out->tank_pill_pickup_inset  = TANK_PILL_PICKUP_INSET;
+    out->tank_boat_exit_inset    = TANK_MOVE_BOAT_SUB;
+    out->tank_slide_step         = TANK_SLIDE;
+    out->tank_wall_glide         = (float) TANK_WALL_GLIDE;
+
     /* ---- Terrain speed caps ---- */
     out->speed_road          = MAP_SPEED_TROAD;
     out->speed_grass         = MAP_SPEED_TGRASS;
@@ -390,6 +402,20 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
     RULE_FLT(tank_brake_rate, 0.01, 16.0)
     RULE_FLT(tank_autoslow_rate, 0.01, 16.0)
     RULE_INT(tank_min_move, 0, 255)
+
+    /* The hit circle. Squared at its use sites, which is why the ceiling is
+       255 rather than a world-unit range: 255 squared still fits an int. */
+    RULE_INT(tank_hit_radius, 1, 255)
+    RULE_INT(tank_collision_distance, 0, 65535)
+    RULE_INT(tank_nudge_threshold, 0, 65535)
+    RULE_INT(tank_nudge_amount, 1, 255)
+    RULE_INT(tank_nudge_iterations, 1, 255)
+    /* A shift, so its ceiling is what an int32_t can be shifted by. */
+    RULE_INT(tank_bump_decay_shift, 0, 31)
+    RULE_INT(tank_pill_pickup_inset, 0, 255)
+    RULE_INT(tank_boat_exit_inset, 0, 255)
+    RULE_INT(tank_slide_step, 0, 255)
+    RULE_FLT(tank_wall_glide, 0.0, 1.0)
 
     /* ---- Terrain speed caps: the players[].speed packing saturates at 63 ---- */
     RULE_INT(speed_road, 0, 63)

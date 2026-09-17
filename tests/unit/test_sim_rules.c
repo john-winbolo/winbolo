@@ -176,6 +176,18 @@ int run_sim_rules_classic_defaults(void) {
     SR_FEQ(tank_autoslow_rate, TANK_AUTOSLOW_SPEED);
     SR_EQ(tank_min_move, TANK_MIN_MOVE_SPEED);
 
+    /* Tank collision geometry */
+    SR_EQ(tank_hit_radius, TANK_HIT_RADIUS);
+    SR_EQ(tank_collision_distance, TANK_COLLISION_DISTANCE);
+    SR_EQ(tank_nudge_threshold, TANK_NUDGE_THRESHOLD);
+    SR_EQ(tank_nudge_amount, TANK_NUDGE_AMOUNT);
+    SR_EQ(tank_nudge_iterations, TANK_MAX_NUDGE_ITERATIONS);
+    SR_EQ(tank_bump_decay_shift, TANK_BUMP_DECAY_SHIFT);
+    SR_EQ(tank_pill_pickup_inset, TANK_PILL_PICKUP_INSET);
+    SR_EQ(tank_boat_exit_inset, TANK_MOVE_BOAT_SUB);
+    SR_EQ(tank_slide_step, TANK_SLIDE);
+    SR_FEQ(tank_wall_glide, TANK_WALL_GLIDE);
+
     /* Terrain speed caps */
     SR_EQ(speed_road, MAP_SPEED_TROAD);
     SR_EQ(speed_grass, MAP_SPEED_TGRASS);

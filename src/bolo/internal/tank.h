@@ -95,10 +95,11 @@ struct GameSim;
  * though the tank doesn't physically occupy those corners; the circle rejects
  * those corner cases.
  *
- * Used by tank.c (tankIsTankHit / tankIsTankHitAtPosition and the circle
- * building resolver), util.c (utilIsTankHit, used by pillbox AI shell
- * prediction) and client_sim.c (predicted-shell visual-block sweep). Keep
- * these in sync. */
+ * This is the classic default of the tank_hit_radius rule, which is what
+ * tank.c (tankIsTankHit / tankIsTankHitAtPosition and the circle building
+ * resolver) and client_sim.c (predicted-shell visual-block sweep) read.
+ * util.c's utilIsTankHit, used by pillbox aim prediction, is handed the
+ * same number by its caller. */
 #define TANK_HIT_RADIUS         112   /* one-tile mid-radius (128) − 16 wu (1 game unit) */
 #define TANK_HIT_RADIUS_SQUARED (TANK_HIT_RADIUS * TANK_HIT_RADIUS)
 

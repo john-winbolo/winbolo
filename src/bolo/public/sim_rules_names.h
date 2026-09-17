@@ -106,6 +106,17 @@ typedef enum {
     X(tank_autoslow_rate, SIM_RULE_VALUE_FLOAT,                              \
       SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                                  \
     X(tank_min_move, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)                \
+    /* Tank collision geometry */                                           \
+    X(tank_hit_radius, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)              \
+    X(tank_collision_distance, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)      \
+    X(tank_nudge_threshold, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \
+    X(tank_nudge_amount, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)            \
+    X(tank_nudge_iterations, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)        \
+    X(tank_bump_decay_shift, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)        \
+    X(tank_pill_pickup_inset, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)       \
+    X(tank_boat_exit_inset, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \
+    X(tank_slide_step, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)              \
+    X(tank_wall_glide, SIM_RULE_VALUE_FLOAT, SIM_RULE_UNIT_COUNT)            \
     /* Terrain: the cap a tank's speed clamps to */                          \
     X(speed_road, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)  \
     X(speed_grass, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER) \

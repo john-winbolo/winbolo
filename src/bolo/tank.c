@@ -62,7 +62,8 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
 
 #ifdef BOLO_LEGACY_SQUARE_COLLISION
 /* The direction-dependent bounding boxes are only consulted by the legacy
- * grid-snap nudge; the default circle resolver uses a fixed TANK_HIT_RADIUS. */
+ * grid-snap nudge; the default circle resolver uses the tank_hit_radius
+ * rule. */
 
 /* Land tank bounding box insets (from tank_self_XX.png sprites)
  * Values are transparent pixel margins from each sprite edge.
@@ -208,21 +209,22 @@ static void tankNudgeOtherTanks(GameSim *sim, tank *value) {
     if (other->destroyed) continue;
 
     int j;
-    for (j = 0; j < TANK_MAX_NUDGE_ITERATIONS; j++) {
+    for (j = 0; j < sim->rules.tank_nudge_iterations; j++) {
+      const WORLD step = (WORLD) sim->rules.tank_nudge_amount;
       int dx = abs((*value)->x - other->x);
       int dy = abs((*value)->y - other->y);
-      if (dx + dy >= TANK_COLLISION_DISTANCE) break;
+      if (dx + dy >= sim->rules.tank_collision_distance) break;
 
-      if (dx > TANK_NUDGE_THRESHOLD) {
+      if (dx > sim->rules.tank_nudge_threshold) {
         if ((*value)->x < other->x)
-          (*value)->x = ((*value)->x - TANK_NUDGE_AMOUNT) | TANK_GRID_LOW_MASK;
+          (*value)->x = ((*value)->x - step) | TANK_GRID_LOW_MASK;
         else
-          (*value)->x = ((*value)->x + TANK_NUDGE_AMOUNT) & TANK_GRID_MASK;
+          (*value)->x = ((*value)->x + step) & TANK_GRID_MASK;
       } else {
         if ((*value)->y < other->y)
-          (*value)->y = ((*value)->y - TANK_NUDGE_AMOUNT) | TANK_GRID_LOW_MASK;
+          (*value)->y = ((*value)->y - step) | TANK_GRID_LOW_MASK;
         else
-          (*value)->y = ((*value)->y + TANK_NUDGE_AMOUNT) & TANK_GRID_MASK;
+          (*value)->y = ((*value)->y + step) & TANK_GRID_MASK;
       }
     }
   }
@@ -239,12 +241,12 @@ static BumpInfo tankNudgeBuildings(GameSim *sim, tank *value, int maxNudges) {
 
 #ifndef BOLO_LEGACY_SQUARE_COLLISION
   /* Circle-vs-AABB resolver (default). The tank is a circle of radius
-   * TANK_HIT_RADIUS; each solid map tile is a 256-WU axis-aligned box. Each
+   * tank_hit_radius; each solid map tile is a 256-WU axis-aligned box. Each
    * pass, push the circle out of every overlapping solid tile along its
    * minimum-translation vector (toward the closest point on the box).
    * Perpendicular push with the tangential component untouched = smooth
    * sliding along walls and around corners. */
-  const int R    = TANK_HIT_RADIUS;
+  const int R    = (int) sim->rules.tank_hit_radius;
   const int TILE = 1 << TANK_SHIFT_MAPSIZE;
   int cx = (int)(*value)->x, cy = (int)(*value)->y;
   int pass;
@@ -1422,9 +1424,9 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 
 	returnValue = TH_MISSED;
 
-	/* Shell hit-zone test — circle by default (see TANK_HIT_RADIUS in
+	/* Shell hit-zone test — circle by default (see tank_hit_radius in
 	 * internal/tank.h). The tank's WORLD coordinates are its centre, so a
-	 * hit is a shell centre within TANK_HIT_RADIUS of it. */
+	 * hit is a shell centre within tank_hit_radius of it. */
 #ifdef BOLO_LEGACY_SQUARE_COLLISION
 	bool inHitZone = (abs((*value)->x - x) < 128 && abs((*value)->y - y) < 128);
 #else
@@ -1432,11 +1434,12 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 	int hitDY = (int)(*value)->y - (int)y;
 	/* Bounding-box pre-test before squaring: every point inside the radius
 	 * circle is also inside this box, so it never rejects a real hit — it
-	 * just bounds hitDX/hitDY to < TANK_HIT_RADIUS so hitDX*hitDX can't
+	 * just bounds hitDX/hitDY to < tank_hit_radius so hitDX*hitDX can't
 	 * overflow int for far-apart shell/tank pairs (the per-shell loop tests
 	 * every tank regardless of distance). */
-	bool inHitZone = (abs(hitDX) < TANK_HIT_RADIUS && abs(hitDY) < TANK_HIT_RADIUS &&
-	                  (hitDX * hitDX + hitDY * hitDY) < TANK_HIT_RADIUS_SQUARED);
+	const int hitR = (int) sim->rules.tank_hit_radius;
+	bool inHitZone = (abs(hitDX) < hitR && abs(hitDY) < hitR &&
+	                  (hitDX * hitDX + hitDY * hitDY) < hitR * hitR);
 #endif
 	if (inHitZone && !(*value)->destroyed) {
 		returnValue = TH_HIT;
@@ -1482,7 +1485,7 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 			tankDropPills(sim, value);
 		} else {
 			/* Tank was hit and survived — set bump for gradual knockback */
-			utilCalcDistance(&newX, &newY, angle, TANK_SLIDE);
+			utilCalcDistance(&newX, &newY, angle, (TURNTYPE) sim->rules.tank_slide_step);
 			(*value)->bumpX = newX * 512;
 			(*value)->bumpY = newY * 512;
 		}
@@ -1872,8 +1875,8 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
   (*value)->x += (*value)->bumpX >> 9;
   (*value)->y += (*value)->bumpY >> 9;
   if (!(*value)->destroyed) {
-    (*value)->bumpX -= ((*value)->bumpX >> TANK_BUMP_DECAY_SHIFT) + ((*value)->bumpX > 0 ? 1 : 0);
-    (*value)->bumpY -= ((*value)->bumpY >> TANK_BUMP_DECAY_SHIFT) + ((*value)->bumpY > 0 ? 1 : 0);
+    (*value)->bumpX -= ((*value)->bumpX >> sim->rules.tank_bump_decay_shift) + ((*value)->bumpX > 0 ? 1 : 0);
+    (*value)->bumpY -= ((*value)->bumpY >> sim->rules.tank_bump_decay_shift) + ((*value)->bumpY > 0 ? 1 : 0);
   }
 
   /* Step 4 — Building nudge */
@@ -1887,10 +1890,10 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
     WORLD oldX = (*value)->x & TANK_GRID_MASK;
     WORLD oldY = (*value)->y & TANK_GRID_MASK;
     int preX = (int)(*value)->x, preY = (int)(*value)->y;
-    BumpInfo bumptype = tankNudgeBuildings(sim, value, TANK_MAX_NUDGE_ITERATIONS);
+    BumpInfo bumptype = tankNudgeBuildings(sim, value, (int) sim->rules.tank_nudge_iterations);
     int pushX = (int)(*value)->x - preX, pushY = (int)(*value)->y - preY;
     if ((pushX || pushY) && (xAmount || yAmount)) {
-      const float SLIP = TANK_WALL_GLIDE; /* 0 = plain slide, 1 = frictionless */
+      const float SLIP = sim->rules.tank_wall_glide; /* 0 = plain slide, 1 = frictionless */
       float nlen = sqrtf((float)(pushX * pushX + pushY * pushY));
       float nx = pushX / nlen, ny = pushY / nlen;            /* outward normal  */
       float mdotn = (float)xAmount * nx + (float)yAmount * ny;
@@ -1905,7 +1908,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
         if (nxp < 0) nxp = 0; else if (nxp > WORLD_MAX) nxp = WORLD_MAX;
         if (nyp < 0) nyp = 0; else if (nyp > WORLD_MAX) nyp = WORLD_MAX;
         (*value)->x = (WORLD)nxp; (*value)->y = (WORLD)nyp;
-        bumptype |= tankNudgeBuildings(sim, value, TANK_MAX_NUDGE_ITERATIONS);
+        bumptype |= tankNudgeBuildings(sim, value, (int) sim->rules.tank_nudge_iterations);
       }
     }
     /* Expose a wall-stuck signal to brains via tank_obstructed (read by
@@ -1923,7 +1926,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
 #else
   WORLD oldX = (*value)->x & TANK_GRID_MASK;
   WORLD oldY = (*value)->y & TANK_GRID_MASK;
-  BumpInfo bumptype = tankNudgeBuildings(sim, value, TANK_MAX_NUDGE_ITERATIONS);
+  BumpInfo bumptype = tankNudgeBuildings(sim, value, (int) sim->rules.tank_nudge_iterations);
 
   /* Step 5 — Slow down from collisions (not shore or boat — shore slowdown
    * is handled by terrain speed limits, and boat tiles should not slow a
@@ -2012,7 +2015,7 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
         if (!isServer) { clientSimRecalc((struct ClientSim *)sim); }
       }
 
-      /* Lookahead bank clamp: hold tank center TANK_MOVE_BOAT_SUB inside
+      /* Lookahead bank clamp: hold tank center (WORLD) sim->rules.tank_boat_exit_inset inside
        * the river tile when an adjacent tile is soft land. Without this,
        * the body extends ~half a tile into the bank before the center
        * crosses and triggers the per-axis revert below. Skipped for
@@ -2029,25 +2032,25 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
         if (newbmx > 0 && mapIsLand(mp, pb, bs, newbmx - 1, newbmy)) {
           adj = mapGetPos(mp, newbmx - 1, newbmy);
           if (adj != ROAD && adj != HALFBUILDING && adj != BOAT) {
-            if ((*value)->x < rMinX + TANK_MOVE_BOAT_SUB) (*value)->x = rMinX + TANK_MOVE_BOAT_SUB;
+            if ((*value)->x < rMinX + (WORLD) sim->rules.tank_boat_exit_inset) (*value)->x = rMinX + (WORLD) sim->rules.tank_boat_exit_inset;
           }
         }
         if (newbmx < 255 && mapIsLand(mp, pb, bs, newbmx + 1, newbmy)) {
           adj = mapGetPos(mp, newbmx + 1, newbmy);
           if (adj != ROAD && adj != HALFBUILDING && adj != BOAT) {
-            if ((*value)->x > rMaxX - TANK_MOVE_BOAT_SUB) (*value)->x = rMaxX - TANK_MOVE_BOAT_SUB;
+            if ((*value)->x > rMaxX - (WORLD) sim->rules.tank_boat_exit_inset) (*value)->x = rMaxX - (WORLD) sim->rules.tank_boat_exit_inset;
           }
         }
         if (newbmy > 0 && mapIsLand(mp, pb, bs, newbmx, newbmy - 1)) {
           adj = mapGetPos(mp, newbmx, newbmy - 1);
           if (adj != ROAD && adj != HALFBUILDING && adj != BOAT) {
-            if ((*value)->y < rMinY + TANK_MOVE_BOAT_SUB) (*value)->y = rMinY + TANK_MOVE_BOAT_SUB;
+            if ((*value)->y < rMinY + (WORLD) sim->rules.tank_boat_exit_inset) (*value)->y = rMinY + (WORLD) sim->rules.tank_boat_exit_inset;
           }
         }
         if (newbmy < 255 && mapIsLand(mp, pb, bs, newbmx, newbmy + 1)) {
           adj = mapGetPos(mp, newbmx, newbmy + 1);
           if (adj != ROAD && adj != HALFBUILDING && adj != BOAT) {
-            if ((*value)->y > rMaxY - TANK_MOVE_BOAT_SUB) (*value)->y = rMaxY - TANK_MOVE_BOAT_SUB;
+            if ((*value)->y > rMaxY - (WORLD) sim->rules.tank_boat_exit_inset) (*value)->y = rMaxY - (WORLD) sim->rules.tank_boat_exit_inset;
           }
         }
       }
@@ -2350,7 +2353,7 @@ void tankCheckPillCapture(GameSim *sim, tank *value) {
 
 	/* Tank is alive and we are either in a server context or a non-network game */
 	if (!(*value)->destroyed && (isServer)) {
-		/* Pickup tests a small box around the tank centre (TANK_PILL_PICKUP_INSET
+		/* Pickup tests a small box around the tank centre ((WORLD) sim->rules.tank_pill_pickup_inset
 		 * each way): the centre, four edge midpoints and four corners. Much
 		 * smaller than the tank's collision footprint so a pill isn't grabbed
 		 * from a mere graze, but still "any part overlaps" rather than
@@ -2359,10 +2362,10 @@ void tankCheckPillCapture(GameSim *sim, tank *value) {
 		 * is solid, so the box can't reach one past a wall. */
 		WORLD tankX = (*value)->x;
 		WORLD tankY = (*value)->y;
-		WORLD top    = tankY - TANK_PILL_PICKUP_INSET;
-		WORLD bottom = tankY + TANK_PILL_PICKUP_INSET;
-		WORLD left   = tankX - TANK_PILL_PICKUP_INSET;
-		WORLD right  = tankX + TANK_PILL_PICKUP_INSET;
+		WORLD top    = tankY - (WORLD) sim->rules.tank_pill_pickup_inset;
+		WORLD bottom = tankY + (WORLD) sim->rules.tank_pill_pickup_inset;
+		WORLD left   = tankX - (WORLD) sim->rules.tank_pill_pickup_inset;
+		WORLD right  = tankX + (WORLD) sim->rules.tank_pill_pickup_inset;
 		/* centre, 4 edge midpoints, 4 corners */
 		WORLD probeX[9] = { tankX, tankX, tankX, left,  right, right, right,  left,   left };
 		WORLD probeY[9] = { tankY, top,   bottom, tankY, tankY, top,   bottom, bottom, top  };
@@ -3994,7 +3997,7 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 
 	returnValue = TH_MISSED;
 
-	/* Shell hit-zone test — circle by default (see TANK_HIT_RADIUS). */
+	/* Shell hit-zone test — circle by default (see tank_hit_radius). */
 #ifdef BOLO_LEGACY_SQUARE_COLLISION
 	bool inHitZone = (abs(tankX - shellX) < 128 && abs(tankY - shellY) < 128);
 #else
@@ -4002,8 +4005,9 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 	int hitDY = (int)tankY - (int)shellY;
 	/* Bounding-box pre-test bounds hitDX/hitDY before squaring; see the note
 	 * in tankIsTankHit. Never rejects a real hit, prevents int overflow. */
-	bool inHitZone = (abs(hitDX) < TANK_HIT_RADIUS && abs(hitDY) < TANK_HIT_RADIUS &&
-	                  (hitDX * hitDX + hitDY * hitDY) < TANK_HIT_RADIUS_SQUARED);
+	const int hitR = (int) sim->rules.tank_hit_radius;
+	bool inHitZone = (abs(hitDX) < hitR && abs(hitDY) < hitR &&
+	                  (hitDX * hitDX + hitDY * hitDY) < hitR * hitR);
 #endif
 	if (inHitZone && !(*value)->destroyed) {
 		returnValue = TH_HIT;
@@ -4048,7 +4052,7 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 			tankDropPills(sim, value);
 		} else {
 			/* Tank was hit and survived — set bump for gradual knockback */
-			utilCalcDistance(&newX, &newY, angle, TANK_SLIDE);
+			utilCalcDistance(&newX, &newY, angle, (TURNTYPE) sim->rules.tank_slide_step);
 			(*value)->bumpX = newX * 512;
 			(*value)->bumpY = newY * 512;
 		}
