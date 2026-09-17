@@ -588,7 +588,7 @@ BYTE lv_pillsSetPillOwner(pillboxes *value, BYTE pillNum, BYTE owner, bool migra
 bool lv_pillsChooseView(pillboxes *value, int x, int y) {
   BYTE count = 0;
   while (count < (*value)->numPills) {
-    if ((*value)->active[count] != FALSE && (*value)->item[count].inTank == FALSE && (*value)->item[count].x == x && (*value)->item[count].y == y && (*value)->item[count].owner != NEUTRAL) {
+    if ((*value)->active[count] != FALSE && (*value)->item[count].inTank == FALSE && (*value)->item[count].x == x && (*value)->item[count].y == y && (*value)->item[count].owner < MAX_TANKS) {
       lv_playersSetSelf((*value)->item[count].owner);
       return TRUE;
     }

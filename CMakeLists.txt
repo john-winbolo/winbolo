@@ -4681,6 +4681,8 @@ set(_unit_test_names
     replay_v1_pill_health_nibble
     brainrec_version_rejects_old
     lv_tank_stocks_from_snapshot
+    lv_team_colours_from_snapshot
+    lv_team_colours_events
     lv_tank_stocks_snapshot_without_tail
     lv_tank_stocks_from_record
     lv_hostile_item_counts
