@@ -92,6 +92,18 @@ void simRulesClassic(SimRules *out) {
     out->turn_deep_sea       = (float) MAP_TURN_TDEEPSEA;
     out->turn_refuel_base    = (float) MAP_TURN_TREFBASE;
 
+    /* ---- Builder walk speeds ---- */
+    out->man_speed_road         = MAP_MANSPEED_TROAD;
+    out->man_speed_grass        = MAP_MANSPEED_TGRASS;
+    out->man_speed_forest       = MAP_MANSPEED_TFOREST;
+    out->man_speed_river        = MAP_MANSPEED_TRIVER;
+    out->man_speed_swamp        = MAP_MANSPEED_TSWAMP;
+    out->man_speed_crater       = MAP_MANSPEED_TCRATER;
+    out->man_speed_rubble       = MAP_MANSPEED_TRUBBLE;
+    out->man_speed_boat         = MAP_MANSPEED_TBOAT;
+    out->man_speed_deep_sea     = MAP_MANSPEED_TDEEPSEA;
+    out->man_speed_refuel_base  = MAP_MANSPEED_TREFBASE;
+
     /* ---- Shells ---- */
     out->shell_life          = SHELL_LIFE;
     out->shell_speed         = SHELL_SPEED;
@@ -391,6 +403,20 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
     RULE_FLT(turn_boat, 0.0, 16.0)
     RULE_FLT(turn_deep_sea, 0.0, 16.0)
     RULE_FLT(turn_refuel_base, 0.0, 16.0)
+
+    /* The builder's walk, in the window the tank's own caps use: the
+       players[].speed packing saturates at 63 and the man is stored the
+       same way. */
+    RULE_INT(man_speed_road, 0, 63)
+    RULE_INT(man_speed_grass, 0, 63)
+    RULE_INT(man_speed_forest, 0, 63)
+    RULE_INT(man_speed_river, 0, 63)
+    RULE_INT(man_speed_swamp, 0, 63)
+    RULE_INT(man_speed_crater, 0, 63)
+    RULE_INT(man_speed_rubble, 0, 63)
+    RULE_INT(man_speed_boat, 0, 63)
+    RULE_INT(man_speed_deep_sea, 0, 63)
+    RULE_INT(man_speed_refuel_base, 0, 63)
 
     /* ---- Shells ---- */
     RULE_INT(shell_life, 1, 255)

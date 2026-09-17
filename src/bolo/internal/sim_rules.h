@@ -88,6 +88,23 @@ typedef struct SimRules {
     float   turn_deep_sea;
     float   turn_refuel_base;
 
+    /* ---- Terrain: the cap the builder's walk clamps to ----
+     * The tank's own caps are the speed_* rows above. A man walks a
+     * different table - he crosses swamp and rubble faster than a tank
+     * does and cannot cross a river at all - so the two are separate rows
+     * rather than one set read twice. Building, half-building and pillbox
+     * are absent for the reason they are absent from speed_*. */
+    int32_t man_speed_road;
+    int32_t man_speed_grass;
+    int32_t man_speed_forest;
+    int32_t man_speed_river;
+    int32_t man_speed_swamp;
+    int32_t man_speed_crater;
+    int32_t man_speed_rubble;
+    int32_t man_speed_boat;
+    int32_t man_speed_deep_sea;
+    int32_t man_speed_refuel_base;
+
     /* ---- Shells ---- */
     int32_t shell_life;
     int32_t shell_speed;

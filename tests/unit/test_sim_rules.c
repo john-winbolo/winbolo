@@ -196,6 +196,18 @@ int run_sim_rules_classic_defaults(void) {
     SR_FEQ(turn_deep_sea, MAP_TURN_TDEEPSEA);
     SR_FEQ(turn_refuel_base, MAP_TURN_TREFBASE);
 
+    /* Builder walk speeds */
+    SR_EQ(man_speed_road, MAP_MANSPEED_TROAD);
+    SR_EQ(man_speed_grass, MAP_MANSPEED_TGRASS);
+    SR_EQ(man_speed_forest, MAP_MANSPEED_TFOREST);
+    SR_EQ(man_speed_river, MAP_MANSPEED_TRIVER);
+    SR_EQ(man_speed_swamp, MAP_MANSPEED_TSWAMP);
+    SR_EQ(man_speed_crater, MAP_MANSPEED_TCRATER);
+    SR_EQ(man_speed_rubble, MAP_MANSPEED_TRUBBLE);
+    SR_EQ(man_speed_boat, MAP_MANSPEED_TBOAT);
+    SR_EQ(man_speed_deep_sea, MAP_MANSPEED_TDEEPSEA);
+    SR_EQ(man_speed_refuel_base, MAP_MANSPEED_TREFBASE);
+
     /* Shells */
     SR_EQ(shell_life, SHELL_LIFE);
     SR_EQ(shell_speed, SHELL_SPEED);

@@ -782,7 +782,7 @@ void lgmMoveAway(GameSim *sim, lgm *lgman, tank *tnk) {
   bmy = (BYTE) conv;
 
   if ((bmx == (*lgman)->blessX && bmy == (*lgman)->blessY) || onBoat == TRUE) {
-    speed = MAP_MANSPEED_TREFBASE;
+    speed = (BYTE) sim->rules.man_speed_refuel_base;
   } else {
     speed = mapGetManSpeed(sim, mp, pb, bs, bmx, bmy, (*lgman)->playerNum);
   }
@@ -925,7 +925,7 @@ void lgmReturn(GameSim *sim, lgm *lgman, tank *tnk) {
     speed = 0;
     return;
   } else if ((bmx == (*lgman)->blessX && bmy == (*lgman)->blessY) || onBoat == TRUE) {
-    speed = MAP_MANSPEED_TREFBASE;
+    speed = (BYTE) sim->rules.man_speed_refuel_base;
   } else {
     speed = mapGetManSpeed(sim, mp, pb, bs, bmx, bmy, (*lgman)->playerNum);
   }

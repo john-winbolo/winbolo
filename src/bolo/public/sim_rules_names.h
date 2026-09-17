@@ -137,6 +137,27 @@ typedef enum {
       SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                                  \
     X(turn_refuel_base, SIM_RULE_VALUE_FLOAT,                                \
       SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                                  \
+    /* Terrain: the cap the builder's walk clamps to */                      \
+    X(man_speed_road, SIM_RULE_VALUE_INT,                                \
+      SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                              \
+    X(man_speed_grass, SIM_RULE_VALUE_INT,                               \
+      SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                              \
+    X(man_speed_forest, SIM_RULE_VALUE_INT,                              \
+      SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                              \
+    X(man_speed_river, SIM_RULE_VALUE_INT,                               \
+      SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                              \
+    X(man_speed_swamp, SIM_RULE_VALUE_INT,                               \
+      SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                              \
+    X(man_speed_crater, SIM_RULE_VALUE_INT,                              \
+      SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                              \
+    X(man_speed_rubble, SIM_RULE_VALUE_INT,                              \
+      SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                              \
+    X(man_speed_boat, SIM_RULE_VALUE_INT,                                \
+      SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                              \
+    X(man_speed_deep_sea, SIM_RULE_VALUE_INT,                            \
+      SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                              \
+    X(man_speed_refuel_base, SIM_RULE_VALUE_INT,                         \
+      SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                              \
     /* Shells */                                                             \
     X(shell_life, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)                   \
     X(shell_speed, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER) \
