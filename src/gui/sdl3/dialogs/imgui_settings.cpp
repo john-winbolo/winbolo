@@ -1021,6 +1021,36 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
         if (ImGui::IsItemDeactivatedAfterEdit()) gameFrontSaveCurrentPrefs();
     }
 #endif
+
+    /* ---- The simplified view ---- Both surfaces it covers are desktop and
+       Deck, the same as the map view settings above, so it follows their
+       tablet test.  Each tick is applied and written as it is clicked: the
+       views read the setting every frame, so the change shows at once. */
+    if (!uiModeIsTablet()) {
+        ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_MAPVIEW));
+
+        bool simple = gfxGetSimplifiedZoomOut();
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_SIMPLEZOOM), &simple)) {
+            gfxSetSimplifiedZoomOut(simple);
+            gameFrontSaveCurrentPrefs();
+        }
+        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_SIMPLEZOOM_TIP));
+
+        /* Indented and disabled under its parent: with the simplified view
+           off there is nothing for it to hold back, and the tick would read
+           as a second, independent switch. */
+        ImGui::Indent();
+        ImGui::BeginDisabled(!simple);
+        bool overviewOnly = gfxGetSimplifiedOverviewOnly();
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW),
+                            &overviewOnly)) {
+            gfxSetSimplifiedOverviewOnly(overviewOnly);
+            gameFrontSaveCurrentPrefs();
+        }
+        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW_TIP));
+        ImGui::EndDisabled();
+        ImGui::Unindent();
+    }
 #endif
 
     /* ---- Skin ---- */
@@ -2417,9 +2447,7 @@ extern "C" void imguiSettingsShow(void) {
             dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
-            if (ev.type == SDL_EVENT_QUIT ||
-                (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
-                 ev.window.windowID == SDL_GetWindowID(window))) {
+            if (dialogHandleQuitEvent(window, &ev)) {
                 running = false;
             }
         }

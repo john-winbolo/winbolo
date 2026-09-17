@@ -2379,22 +2379,34 @@
 #define STR_RULE_ON                         2224
 #define STR_RULE_OFF                        2225
 
+/* The log viewer's own "back to WinBolo" wording, which is not the map
+ * editor's STR_MAPEDIT_MENU_RETURN ("Return to Menu"): embedded, the viewer
+ * returns to the main menu and the editor to the screen that opened it. */
+#define STR_LV_RETURN_MAIN_MENU             2226
+
+/* Map view — the simplified view when zoomed out */
+#define STR_DLGSETTINGS_MAPVIEW             2227
+#define STR_DLGSETTINGS_SIMPLEZOOM          2228
+#define STR_DLGSETTINGS_SIMPLEZOOM_TIP      2229
+#define STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW 2230
+#define STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW_TIP 2231
+
 /* The map editor's scenario script pane: the window and its Window-menu
  * entry, the toolbar above the text, and the line the pane shows for
  * whatever the last read or write did. A script is a loose X.scenario.lua
  * beside X.map, so a map with no file yet has nowhere to keep one. */
-#define STR_MAPEDIT_SCENARIO_TITLE          2226
-#define STR_MAPEDIT_SCENARIO_NO_MAP         2227
-#define STR_MAPEDIT_SCENARIO_SAVE           2228
-#define STR_MAPEDIT_SCENARIO_RELOAD         2229
-#define STR_MAPEDIT_SCENARIO_UNSAVED        2230
-#define STR_MAPEDIT_SCENARIO_LOADED         2231
-#define STR_MAPEDIT_SCENARIO_NO_SCRIPT      2232
-#define STR_MAPEDIT_SCENARIO_SAVED          2233
-#define STR_MAPEDIT_SCENARIO_READ_FAILED    2234
-#define STR_MAPEDIT_SCENARIO_WRITE_FAILED   2235
-#define STR_MAPEDIT_SCENARIO_TOO_BIG        2236
-#define STR_MAPEDIT_SCENARIO_SAVE_REFUSED   2237
+#define STR_MAPEDIT_SCENARIO_TITLE          2232
+#define STR_MAPEDIT_SCENARIO_NO_MAP         2233
+#define STR_MAPEDIT_SCENARIO_SAVE           2234
+#define STR_MAPEDIT_SCENARIO_RELOAD         2235
+#define STR_MAPEDIT_SCENARIO_UNSAVED        2236
+#define STR_MAPEDIT_SCENARIO_LOADED         2237
+#define STR_MAPEDIT_SCENARIO_NO_SCRIPT      2238
+#define STR_MAPEDIT_SCENARIO_SAVED          2239
+#define STR_MAPEDIT_SCENARIO_READ_FAILED    2240
+#define STR_MAPEDIT_SCENARIO_WRITE_FAILED   2241
+#define STR_MAPEDIT_SCENARIO_TOO_BIG        2242
+#define STR_MAPEDIT_SCENARIO_SAVE_REFUSED   2243
 
 /* The rest of the scenario panel: the row of buttons that picks which view
  * the body shows, and the three forms over the manifest the editor holds in
@@ -2402,73 +2414,73 @@
  * it seats, and the simulation rules the author set. The words for the game
  * type itself are STR_DLGGAMEINFO_OPEN / _TOURN / _STRICT, which already say
  * them everywhere else. */
-#define STR_MAPEDIT_SCENARIO_VIEW_SCRIPT     2238
-#define STR_MAPEDIT_SCENARIO_VIEW_METADATA   2239
-#define STR_MAPEDIT_SCENARIO_VIEW_LOBBY      2240
-#define STR_MAPEDIT_SCENARIO_VIEW_RULES      2241
-#define STR_MAPEDIT_SCENARIO_NAME            2242
-#define STR_MAPEDIT_SCENARIO_DESCRIPTION     2243
-#define STR_MAPEDIT_SCENARIO_API             2244
-#define STR_MAPEDIT_SCENARIO_GAME            2245
-#define STR_MAPEDIT_SCENARIO_GAME_NONE       2246
-#define STR_MAPEDIT_SCENARIO_BOUND           2247
-#define STR_MAPEDIT_SCENARIO_BOUND_NOTE      2248
-#define STR_MAPEDIT_SCENARIO_FILL_TO_CAPS    2249
-#define STR_MAPEDIT_SCENARIO_MAX_PLAYERS     2250
-#define STR_MAPEDIT_SCENARIO_MAX_PLAYERS_ANY 2251
-#define STR_MAPEDIT_SCENARIO_EXTRA_TEAMS     2252
-#define STR_MAPEDIT_SCENARIO_TEAM            2253
-#define STR_MAPEDIT_SCENARIO_TEAM_ID         2254
-#define STR_MAPEDIT_SCENARIO_TEAM_BOTS       2255
-#define STR_MAPEDIT_SCENARIO_TEAM_MAX_BOTS   2256
-#define STR_MAPEDIT_SCENARIO_TEAM_FIELDED    2257
-#define STR_MAPEDIT_SCENARIO_TEAM_BRAIN      2258
-#define STR_MAPEDIT_SCENARIO_BRAIN_IS_NAME   2259
-#define STR_MAPEDIT_SCENARIO_INIT            2260
-#define STR_MAPEDIT_SCENARIO_INIT_KEY        2261
-#define STR_MAPEDIT_SCENARIO_INIT_VALUE      2262
-#define STR_MAPEDIT_SCENARIO_ADD_PAIR        2263
-#define STR_MAPEDIT_SCENARIO_INIT_FULL       2264
-#define STR_MAPEDIT_SCENARIO_ADD_TEAM        2265
-#define STR_MAPEDIT_SCENARIO_REMOVE_TEAM     2266
-#define STR_MAPEDIT_SCENARIO_TEAMS_FULL      2267
-#define STR_MAPEDIT_SCENARIO_NO_TEAMS        2268
-#define STR_MAPEDIT_SCENARIO_REMOVE          2269
-#define STR_MAPEDIT_SCENARIO_CLASSIC         2270
-#define STR_MAPEDIT_SCENARIO_NO_RULES        2271
-#define STR_MAPEDIT_SCENARIO_ADD_RULE        2272
-#define STR_MAPEDIT_SCENARIO_FILTER          2273
-#define STR_MAPEDIT_SCENARIO_RULES_FULL      2274
+#define STR_MAPEDIT_SCENARIO_VIEW_SCRIPT     2244
+#define STR_MAPEDIT_SCENARIO_VIEW_METADATA   2245
+#define STR_MAPEDIT_SCENARIO_VIEW_LOBBY      2246
+#define STR_MAPEDIT_SCENARIO_VIEW_RULES      2247
+#define STR_MAPEDIT_SCENARIO_NAME            2248
+#define STR_MAPEDIT_SCENARIO_DESCRIPTION     2249
+#define STR_MAPEDIT_SCENARIO_API             2250
+#define STR_MAPEDIT_SCENARIO_GAME            2251
+#define STR_MAPEDIT_SCENARIO_GAME_NONE       2252
+#define STR_MAPEDIT_SCENARIO_BOUND           2253
+#define STR_MAPEDIT_SCENARIO_BOUND_NOTE      2254
+#define STR_MAPEDIT_SCENARIO_FILL_TO_CAPS    2255
+#define STR_MAPEDIT_SCENARIO_MAX_PLAYERS     2256
+#define STR_MAPEDIT_SCENARIO_MAX_PLAYERS_ANY 2257
+#define STR_MAPEDIT_SCENARIO_EXTRA_TEAMS     2258
+#define STR_MAPEDIT_SCENARIO_TEAM            2259
+#define STR_MAPEDIT_SCENARIO_TEAM_ID         2260
+#define STR_MAPEDIT_SCENARIO_TEAM_BOTS       2261
+#define STR_MAPEDIT_SCENARIO_TEAM_MAX_BOTS   2262
+#define STR_MAPEDIT_SCENARIO_TEAM_FIELDED    2263
+#define STR_MAPEDIT_SCENARIO_TEAM_BRAIN      2264
+#define STR_MAPEDIT_SCENARIO_BRAIN_IS_NAME   2265
+#define STR_MAPEDIT_SCENARIO_INIT            2266
+#define STR_MAPEDIT_SCENARIO_INIT_KEY        2267
+#define STR_MAPEDIT_SCENARIO_INIT_VALUE      2268
+#define STR_MAPEDIT_SCENARIO_ADD_PAIR        2269
+#define STR_MAPEDIT_SCENARIO_INIT_FULL       2270
+#define STR_MAPEDIT_SCENARIO_ADD_TEAM        2271
+#define STR_MAPEDIT_SCENARIO_REMOVE_TEAM     2272
+#define STR_MAPEDIT_SCENARIO_TEAMS_FULL      2273
+#define STR_MAPEDIT_SCENARIO_NO_TEAMS        2274
+#define STR_MAPEDIT_SCENARIO_REMOVE          2275
+#define STR_MAPEDIT_SCENARIO_CLASSIC         2276
+#define STR_MAPEDIT_SCENARIO_NO_RULES        2277
+#define STR_MAPEDIT_SCENARIO_ADD_RULE        2278
+#define STR_MAPEDIT_SCENARIO_FILTER          2279
+#define STR_MAPEDIT_SCENARIO_RULES_FULL      2280
 
 /* The script pane's check: the button that runs the validator, the list of
  * what it found under the editor, and the popup that lists the game.* calls a
  * script may make. The one line about rules and tags is there because the
  * editor hands the validator no sim — it makes none — so the two checks that
  * read a map do not run here. */
-#define STR_MAPEDIT_SCENARIO_VALIDATE        2275
-#define STR_MAPEDIT_SCENARIO_ISSUES          2276
-#define STR_MAPEDIT_SCENARIO_NO_ISSUES       2277
-#define STR_MAPEDIT_SCENARIO_NO_SIM_CHECKS   2278
-#define STR_MAPEDIT_SCENARIO_ISSUES_DROPPED  2279
-#define STR_MAPEDIT_SCENARIO_CALLS           2280
+#define STR_MAPEDIT_SCENARIO_VALIDATE        2281
+#define STR_MAPEDIT_SCENARIO_ISSUES          2282
+#define STR_MAPEDIT_SCENARIO_NO_ISSUES       2283
+#define STR_MAPEDIT_SCENARIO_NO_SIM_CHECKS   2284
+#define STR_MAPEDIT_SCENARIO_ISSUES_DROPPED  2285
+#define STR_MAPEDIT_SCENARIO_CALLS           2286
 
 /* Saving the scenario itself: the chunk written on to the map file, the
  * standalone .scenario a mod is, and what stopped either of them. The line
  * after a successful pack says the loose script still wins, because an author
  * who packs and then tests is otherwise running the file beside the map
  * without being told. */
-#define STR_MAPEDIT_SCENARIO_PACK_MAP         2281
-#define STR_MAPEDIT_SCENARIO_SAVE_MOD         2282
-#define STR_MAPEDIT_SCENARIO_PACK_NO_MAP      2283
-#define STR_MAPEDIT_SCENARIO_PACKED           2284
-#define STR_MAPEDIT_SCENARIO_MOD_SAVED        2285
-#define STR_MAPEDIT_SCENARIO_PACK_ISSUES      2286
-#define STR_MAPEDIT_SCENARIO_PACK_CONFLICT    2287
-#define STR_MAPEDIT_SCENARIO_PACK_FAILED      2288
-#define STR_MAPEDIT_SCENARIO_FROM_PACKAGE     2289
-#define STR_MAPEDIT_SCENARIO_PACK_READ_FAILED 2290
-#define STR_MAPEDIT_SCENARIO_CHUNK_KEPT       2291
-#define STR_MAPEDIT_SCENARIO_CHUNK_LOST       2292
+#define STR_MAPEDIT_SCENARIO_PACK_MAP         2287
+#define STR_MAPEDIT_SCENARIO_SAVE_MOD         2288
+#define STR_MAPEDIT_SCENARIO_PACK_NO_MAP      2289
+#define STR_MAPEDIT_SCENARIO_PACKED           2290
+#define STR_MAPEDIT_SCENARIO_MOD_SAVED        2291
+#define STR_MAPEDIT_SCENARIO_PACK_ISSUES      2292
+#define STR_MAPEDIT_SCENARIO_PACK_CONFLICT    2293
+#define STR_MAPEDIT_SCENARIO_PACK_FAILED      2294
+#define STR_MAPEDIT_SCENARIO_FROM_PACKAGE     2295
+#define STR_MAPEDIT_SCENARIO_PACK_READ_FAILED 2296
+#define STR_MAPEDIT_SCENARIO_CHUNK_KEPT       2297
+#define STR_MAPEDIT_SCENARIO_CHUNK_LOST       2298
 
 /* The tags view: the named tags an author puts on this map's pills, bases and
  * starts, and the named rectangles of squares drawn beside them. A row names
@@ -2477,30 +2489,30 @@
  * selection tool, so the line about selecting first is what an empty selection
  * says. The last line is what Save as Mod leaves out: a mod plays over a map
  * it has never seen, so it can carry neither. */
-#define STR_MAPEDIT_SCENARIO_VIEW_TAGS        2293
-#define STR_MAPEDIT_SCENARIO_PILLS            2294
-#define STR_MAPEDIT_SCENARIO_BASES            2295
-#define STR_MAPEDIT_SCENARIO_STARTS           2296
-#define STR_MAPEDIT_SCENARIO_NO_ENTITIES      2297
-#define STR_MAPEDIT_SCENARIO_ADD_TAG          2298
-#define STR_MAPEDIT_SCENARIO_TAG              2299
-#define STR_MAPEDIT_SCENARIO_TAGS_FULL        2300
-#define STR_MAPEDIT_SCENARIO_PILL_ROW         2301
-#define STR_MAPEDIT_SCENARIO_BASE_ROW         2302
-#define STR_MAPEDIT_SCENARIO_START_ROW        2303
-#define STR_MAPEDIT_SCENARIO_REGIONS          2304
-#define STR_MAPEDIT_SCENARIO_NO_REGIONS       2305
-#define STR_MAPEDIT_SCENARIO_REGION_NAME      2306
-#define STR_MAPEDIT_SCENARIO_ADD_REGION       2307
-#define STR_MAPEDIT_SCENARIO_REGION_FROM_SEL  2308
-#define STR_MAPEDIT_SCENARIO_REGION_NO_SEL    2309
-#define STR_MAPEDIT_SCENARIO_REGIONS_FULL     2310
-#define STR_MAPEDIT_SCENARIO_REGION_X         2311
-#define STR_MAPEDIT_SCENARIO_REGION_Y         2312
-#define STR_MAPEDIT_SCENARIO_REGION_W         2313
-#define STR_MAPEDIT_SCENARIO_REGION_H         2314
-#define STR_MAPEDIT_SCENARIO_REGIONS_ON_MAP   2315
-#define STR_MAPEDIT_SCENARIO_MOD_DROPS        2316
+#define STR_MAPEDIT_SCENARIO_VIEW_TAGS        2299
+#define STR_MAPEDIT_SCENARIO_PILLS            2300
+#define STR_MAPEDIT_SCENARIO_BASES            2301
+#define STR_MAPEDIT_SCENARIO_STARTS           2302
+#define STR_MAPEDIT_SCENARIO_NO_ENTITIES      2303
+#define STR_MAPEDIT_SCENARIO_ADD_TAG          2304
+#define STR_MAPEDIT_SCENARIO_TAG              2305
+#define STR_MAPEDIT_SCENARIO_TAGS_FULL        2306
+#define STR_MAPEDIT_SCENARIO_PILL_ROW         2307
+#define STR_MAPEDIT_SCENARIO_BASE_ROW         2308
+#define STR_MAPEDIT_SCENARIO_START_ROW        2309
+#define STR_MAPEDIT_SCENARIO_REGIONS          2310
+#define STR_MAPEDIT_SCENARIO_NO_REGIONS       2311
+#define STR_MAPEDIT_SCENARIO_REGION_NAME      2312
+#define STR_MAPEDIT_SCENARIO_ADD_REGION       2313
+#define STR_MAPEDIT_SCENARIO_REGION_FROM_SEL  2314
+#define STR_MAPEDIT_SCENARIO_REGION_NO_SEL    2315
+#define STR_MAPEDIT_SCENARIO_REGIONS_FULL     2316
+#define STR_MAPEDIT_SCENARIO_REGION_X         2317
+#define STR_MAPEDIT_SCENARIO_REGION_Y         2318
+#define STR_MAPEDIT_SCENARIO_REGION_W         2319
+#define STR_MAPEDIT_SCENARIO_REGION_H         2320
+#define STR_MAPEDIT_SCENARIO_REGIONS_ON_MAP   2321
+#define STR_MAPEDIT_SCENARIO_MOD_DROPS        2322
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

@@ -2197,6 +2197,14 @@ STR_RULE_TWICE=twice as many
 STR_RULE_HALF=half as many
 STR_RULE_ON=on
 STR_RULE_OFF=off
+STR_LV_RETURN_MAIN_MENU=Return to main menu
+
+# Map view — the simplified view when zoomed out
+STR_DLGSETTINGS_MAPVIEW=Map view
+STR_DLGSETTINGS_SIMPLEZOOM=Use simplified view when zoomed out
+STR_DLGSETTINGS_SIMPLEZOOM_TIP=Zoomed out past 1x, draw each square as one colour with simple markers for tanks, pillboxes and bases, instead of shrinking the sprites down to a smudge.
+STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW=Only map overview
+STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW_TIP=Keep the simplified view to the Map Overview window. The full screen map draws its sprites at every zoom.
 STR_MAPEDIT_SCENARIO_TITLE=Scenario
 STR_MAPEDIT_SCENARIO_NO_MAP=Save the map first — a script is kept beside its map
 STR_MAPEDIT_SCENARIO_SAVE=Save Script

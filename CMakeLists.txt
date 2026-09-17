@@ -889,6 +889,8 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/tank_label.c
     src/gui/sdl3/mapview.c
     src/gui/sdl3/mapview_overlay.c
+    src/gui/sdl3/map_colours.c
+    src/gui/sdl3/map_markers.c
     src/gui/sdl3/sprite_positions.c
     src/gui/sdl3/tileloader.c
     src/gui/sdl3/skin_source.c
@@ -952,6 +954,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/imgui_about.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
+    src/gui/sdl3/dialogs/dialog_quit.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/lobby_start_list.cpp
     src/gui/sdl3/map_preview_view.cpp
@@ -1548,7 +1551,7 @@ set(CLIENT_SOURCES
     src/client_frontend/client_frontend_connect.c
     src/client_frontend/client_frontend_tick.c
     src/client_frontend/client_frontend_common.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/lobby_start_list.cpp
@@ -1567,7 +1570,7 @@ set(CLIENT_SOURCES
     src/gui/sdl3/ping_marker.c
     src/gui/sdl3/ring_band.c
     src/gui/sdl3/minimap_render.c
-    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/mapview_overlay.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
+    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/mapview_overlay.c src/gui/sdl3/map_colours.c src/gui/sdl3/map_markers.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
     # Real bodies for the spectator_input.h seam: the embedded LogViewer's
     # spectatorRun reads the controller through it for overview pan/zoom. Reads
     # the singleton gamepad input_gamepad.c owns. The standalone LogViewer links
@@ -2316,6 +2319,7 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
+    src/gui/sdl3/dialogs/dialog_quit.cpp
     src/gui/sdl3/mapview.c
     src/gui/sdl3/sdl3draw_status.c
     src/gui/sdl3/tank_label.c
@@ -2332,6 +2336,7 @@ set(LOGVIEWER_WBN_BROWSER_SOURCES
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
+    src/gui/sdl3/dialogs/dialog_quit.cpp
     src/gui/sdl3/dialogs/imgui_keyboard.cpp
     src/logviewer/imgui/imgui_lv_browser_stubs.cpp
 )
@@ -2388,6 +2393,11 @@ add_executable(LogViewer
     src/gui/sdl3/tileloader.c
     src/gui/sdl3/skin_source.c
     src/gui/sdl3/gfx_settings.c
+    # The zoomed-out ground colours, which draw.c fills a square with below
+    # 1x, and the shapes it draws on top of them. Plain SDL, the tile numbers
+    # and ring_band.c, all of which this target already has.
+    src/gui/sdl3/map_colours.c
+    src/gui/sdl3/map_markers.c
     src/gui/ui_mode.c
     src/steam/steam_wrapper_stub.c
 )
@@ -2882,6 +2892,13 @@ set(MAPEDITOR_SOURCES
     src/bolo/transport_udp_client.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/minimap_render.c
+    # The editor's own drawing uses minimap_render.c above; these three are
+    # here for the map chooser it shares with the game (map_preview_view.cpp),
+    # which draws pillbox and base marks. ring_band.c is what a disc is built
+    # from.
+    src/gui/sdl3/map_colours.c
+    src/gui/sdl3/map_markers.c
+    src/gui/sdl3/ring_band.c
     src/gui/sdl3/lang.c
     src/gui/sdl3/sim_rules_phrase.c
     src/gui/sdl3/gamefront_stubs.c
@@ -2899,6 +2916,7 @@ set(MAPEDITOR_SOURCES
     src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
+    src/gui/sdl3/dialogs/dialog_quit.cpp
     src/third_party/stb/stb_image_write_impl.c
     src/mapeditor/mapeditor_main.c
     src/braintest/braintest_frontend.c
@@ -3795,6 +3813,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_overview_snapshot.c
     tests/unit/test_mapview_sprite_scale.c
     tests/unit/test_mapview_overlay.c
+    tests/unit/test_map_colours.c
     tests/unit/test_input_catchup.c
     tests/unit/test_build_harvest_stale.c
     tests/unit/test_lgm_request_valid.c
@@ -4019,6 +4038,16 @@ set(WINBOLO_UNITTESTS_SOURCES
     # length, strict bsearch sort order, and name round-trips — pins the
     # off-by-one that crashed resolveName's bsearch on startup.
     tests/unit/test_lang_name_table.c
+    # What a quit inside a dialog means, and where it goes. The same
+    # decision is made in eleven dialog poll loops with nothing to check
+    # that a new one makes it; telling a real close request from the one
+    # the gamepad's B button forges is the difference between cancelling a
+    # dialog and ending the application under the player.
+    tests/unit/test_dialog_quit.c
+    # dialogQuitClassify and the handler registration, for the test above. A
+    # leaf under the "Linked GUI sources" rule in docs/ARCHITECTURE.md:
+    # plain SDL, no ImGui, and it opens no window, renderer or device.
+    src/gui/sdl3/dialogs/dialog_quit.cpp
     # Bot difficulty plumbing: the "difficulty=<word>" BRAIN_INIT_ARG token
     # assembly (whole-token-or-nothing when the buffer is tight) and the
     # difficulty <-> word round trip -difficulty and the preference share.
@@ -4103,6 +4132,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/gui/sdl3/overview_fog.cpp
     src/gui/sdl3/overview_hud_layout.cpp
     src/gui/sdl3/sprite_positions.c
+    # map_colours.c qualifies on the same footing: its includes are SDL3 for
+    # the colour types, tilenum.h and global.h for the tile numbers, and
+    # skin_source.h to read a skin's [MapPalette] — whose skin_source.c this
+    # target already builds for its own tests — and its functions are a tile
+    # number in and a colour out. test_map_colours.c drives it directly.
+    src/gui/sdl3/map_colours.c
     # The threaded news fetcher itself (not just the pure parser): the
     # free-during-fetch lifetime test drives its real worker thread. Its
     # network GET is reached through a test seam, so no libcurl is pulled in
@@ -4728,6 +4763,8 @@ set(_unit_test_names
     replay_v1_pill_health_nibble
     brainrec_version_rejects_old
     lv_tank_stocks_from_snapshot
+    lv_team_colours_from_snapshot
+    lv_team_colours_events
     lv_tank_stocks_snapshot_without_tail
     lv_tank_stocks_from_record
     lv_hostile_item_counts
@@ -4955,6 +4992,11 @@ set(_unit_test_names
     mapview_overlay_tank_label
     mapview_overlay_cursor
     mapview_overlay_item_labels
+    map_colours_item_kind
+    map_colours_terrain
+    map_colours_markers
+    map_colours_palette_key
+    map_colours_team
     stall_advances_processed_tick
     stall_mine_late_lays_once
     stall_mine_duplicate_not_relaid
@@ -5142,6 +5184,7 @@ set(_unit_test_names
     game_settings_blob
     ping_network
     lang_name_table
+    dialog_quit
     screencalc_river_road_counts_as_water
     screencalc_river_arms_of_road_centred_cross
     screencalc_river_copies_agree
@@ -5242,6 +5285,7 @@ set(_unit_test_names
     skin_source_dir_and_zip
     skin_active_vs_requested
     skin_workshop_id_roundtrip
+    skin_map_palette
     skin_density_scan
     sheet_bleed_edges
     sheet_no_key_under_alpha

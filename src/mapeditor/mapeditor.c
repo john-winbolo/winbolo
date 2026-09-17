@@ -338,7 +338,19 @@ typedef struct {
 
     bool  fromMainMenu;
     bool  quit;
+    /* Why the loop is ending.  Leaving the editor and quitting the
+     * application both set quit, and embedded they mean different things:
+     * one hands the window back to WinBolo, the other ends it. */
+    bool  exitIsAppQuit;
 } MapEditorState;
+
+/* Read back by mapEditorAppQuitRequested() once the run has returned — the
+ * editor state is freed by then, so the answer outlives it here. */
+static bool s_appQuitRequested = FALSE;
+
+bool mapEditorAppQuitRequested(void) {
+    return s_appQuitRequested;
+}
 
 /* Read a neighbour tile for adjacency calculation, treating bases as ROAD
  * and stripping mine variants. Same logic as mapViewNeighbour in mapview.c
@@ -566,9 +578,13 @@ static void mapEditorRebuildMinimap(MapEditorState *ed) {
 
     {
         MapPreview *terrainView = clientMapPreviewWrap(ed->mp, NULL, NULL, NULL);
+        /* MINIMAP_EDIT_PALETTE: this panel is a diagram of the map being
+           built, where every terrain wants its own colour, rather than a
+           small picture of one being played. */
         minimapRenderPixels(terrainView,
                             (uint8_t *)ed->minimapPixels, NULL,
-                            MINIMAP_DARKEN_BORDER | MINIMAP_DARKEN_MINES);
+                            MINIMAP_DARKEN_BORDER | MINIMAP_DARKEN_MINES |
+                            MINIMAP_EDIT_PALETTE);
         clientMapPreviewDestroy(terrainView);
     }
 
@@ -3272,7 +3288,9 @@ static void meHandleUnsavedChoice(MapEditorState *ed, int choice) {
     ed->deferredAction = FILE_OP_NONE;
 
     if (choice == 3) {
-        /* Cancel — do nothing */
+        /* Cancel — do nothing.  The exit this modal was asked about is off,
+         * so the quit that may have started it is off with it. */
+        if (action == FILE_OP_SAVE_THEN_EXIT) ed->exitIsAppQuit = false;
         return;
     }
 
@@ -3544,6 +3562,8 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     ed->zoomLevel = 2.0f;
     ed->offscreenTex = NULL;
     ed->quit = false;
+    ed->exitIsAppQuit = false;
+    s_appQuitRequested = FALSE;
     ed->showMines = true;
     ed->showGrid = false;
     ed->showPillRanges = false;
@@ -3691,7 +3711,16 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             mapEditorImguiProcessEvent(&ev);
 
             switch (ev.type) {
+            case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+                /* Embedded, this is WinBolo's window the editor is drawing
+                 * into; a close request meant for anything else is not ours. */
+                if (ev.window.windowID != SDL_GetWindowID(ed->window)) break;
+                /* fall through */
             case SDL_EVENT_QUIT:
+                /* Cmd+Q, Alt+F4, the close box.  All of them end the
+                 * application, embedded as well as standalone — the way back
+                 * to WinBolo is File > Return to Menu, or Escape. */
+                ed->exitIsAppQuit = true;
                 if (ed->dirty || meScenarioDirty(&ed->scn)) {
                     ed->deferredAction = FILE_OP_SAVE_THEN_EXIT;
                     openUnsavedModal = true;
@@ -3776,6 +3805,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                         break;
                     case SDLK_Q:
                         if (!ed->fromMainMenu) {
+                            ed->exitIsAppQuit = true;
                             meActionExit(ed);
                             if (ed->deferredAction) openUnsavedModal = true;
                         }
@@ -3825,6 +3855,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                         ed->hasSelection = false;
                         ed->hasSelMask = false;
                     } else if (ed->fromMainMenu) {
+                        ed->exitIsAppQuit = false;
                         meActionExit(ed);
                         if (ed->deferredAction) openUnsavedModal = true;
                     }
@@ -4600,6 +4631,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             meActionSaveAs(ed);
         }
         if (menuAction.wantExit) {
+            ed->exitIsAppQuit = menuAction.wantQuitApp;
             meActionExit(ed);
             if (ed->deferredAction) openUnsavedModal = true;
         }
@@ -5299,6 +5331,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     me_mac_menubar_uninstall();
 #endif
     mapEditorImguiShutdown();
+    s_appQuitRequested = ed->exitIsAppQuit;
     undoStackClear(&ed->undoStack);
     if (ed->offscreenTex) SDL_DestroyTexture(ed->offscreenTex);
     if (ed->minimapTex) SDL_DestroyTexture(ed->minimapTex);

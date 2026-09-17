@@ -38,6 +38,7 @@
 #include "logviewer.h"
 #include "lv_host.h"
 #include "lv_stats.h"
+#include "../gui/sdl3/gfx_settings.h"  /* the simplified view setting */
 
 #include <SDL3/SDL.h>
 
@@ -128,9 +129,14 @@ static size_t   s_pendingZipLen  = 0;
 
 /* --------------------------------------------------------------------------
  * Helper: default team colour value for index
+ *
+ * Palette rows, in the order the colour dialog lists them. Team 1 green and
+ * Team 2 red, the game's own ally / enemy reading, since a two-team round
+ * lands on exactly those two slots (lv_playersRebuildTeams). Blue and yellow
+ * next for the four-team case; the rest keep their old order.
  * -------------------------------------------------------------------------- */
 static void getDef(char *dest, int index) {
-    static const int defaults[] = { 11, 12, 2, 4, 16, 13, 8, 3, 6, 1, 5, 7, 9, 14, 15, 0 };
+    static const int defaults[] = { 2, 11, 12, 4, 16, 13, 8, 3, 6, 1, 5, 7, 9, 14, 15, 0 };
     int val = (index >= 0 && index < 16) ? defaults[index] : 0;
     snprintf(dest, 12, "%d", val);
 }
@@ -415,6 +421,17 @@ static void loadPreferences(void) {
     lv_platform_config_get_string("LOGVIEWER", "Neutral Colour", "10", val, sizeof(val));
     g_lv->tc[16] = (BYTE)atoi(val);
     if (g_lv->tc[16] > 16) g_lv->tc[16] = 16;
+
+    /* The simplified view, from the game's own [SETTINGS] section rather than
+       a key of this viewer's. Both read the same preferences document, and a
+       player who has asked for a readable zoomed-out map has asked once.
+
+       The game's sub-option, SimplifiedOverviewOnly, is not read: it chooses
+       between the Map Overview window and the full screen map, and this
+       viewer is neither. */
+    lv_platform_config_get_string("SETTINGS", "SimplifiedZoomOut", "Yes",
+                                  line, sizeof(line));
+    gfxSetSimplifiedZoomOut(tolower((unsigned char)line[0]) != 'n');
 
     /* Playback Speed */
     lv_platform_config_get_string("LOGVIEWER", "Playback Speed", "1", val, sizeof(val));
@@ -1006,8 +1023,29 @@ static void lvHostRenderFrame(const char *overlay) {
  * Takes ownership of the event loop until the user exits.
  * Window and renderer are borrowed, not owned.
  * -------------------------------------------------------------------------- */
+/* The viewer ends its loop on SDL_EVENT_QUIT, and both "Return to main menu"
+ * and Quit raise one — the first means go back to WinBolo, the second means
+ * the application is finished.  Quit says so here on its way past, and the
+ * caller reads it with logViewerAppQuitRequested() once the run returns. */
+static bool s_appQuitRequested = FALSE;
+
+void logViewerRequestAppQuit(void) {
+    SDL_Event quitEvent;
+    s_appQuitRequested = TRUE;
+    SDL_zero(quitEvent);
+    quitEvent.type = SDL_EVENT_QUIT;
+    SDL_PushEvent(&quitEvent);
+}
+
+bool logViewerAppQuitRequested(void) {
+    return s_appQuitRequested;
+}
+
 void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
                   const char *logPath, bool fromMainMenu) {
+    /* A quit belongs to the run that saw it — never to the next one. */
+    s_appQuitRequested = FALSE;
+
     /* Bring up the decoder, platform layer, draw/ImGui/sound and preferences,
      * and size the screen to the window (shared with spectatorRun). */
     if (lvHostSetup(window, renderer, fromMainMenu) == FALSE) {
@@ -1081,6 +1119,12 @@ void logViewerRun(SDL_Window *window, SDL_Renderer *renderer,
                         lv_drawZoomOut(mx, my);
                     }
                 }
+            }
+            /* Embedded, this is WinBolo's window the viewer is drawing into;
+             * a close request meant for anything else is not ours. */
+            if (sdlEvent.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
+                sdlEvent.window.windowID == SDL_GetWindowID(g_lv->window)) {
+                logViewerRequestAppQuit();
             }
             if (sdlEvent.type == SDL_EVENT_QUIT) {
                 g_lv->quit = TRUE;
@@ -1232,6 +1276,11 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
      * the live lobby on true and exits on false. */
     bool liveResumed = false;
 
+    /* A quit belongs to the run that saw it — never to the next one.  Same
+     * reset logViewerRun does: this loop can raise the flag too, and the
+     * caller reads it once we return. */
+    s_appQuitRequested = FALSE;
+
     if (lvHostSetup(window, renderer, /* fromMainMenu */ TRUE) == FALSE) {
         return false;
     }
@@ -1263,6 +1312,12 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
             lv_imgui_context_handle_event(&sdlEvent);
             /* Esc is the back affordance: leave the spectator view (including
              * a stalled "connection lost" overlay) and return to the caller. */
+            /* Embedded, this is WinBolo's window the viewer is drawing into;
+             * a close request meant for anything else is not ours. */
+            if (sdlEvent.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
+                sdlEvent.window.windowID == SDL_GetWindowID(g_lv->window)) {
+                logViewerRequestAppQuit();
+            }
             if (sdlEvent.type == SDL_EVENT_QUIT ||
                 (sdlEvent.type == SDL_EVENT_KEY_DOWN &&
                  sdlEvent.key.key == SDLK_ESCAPE)) {
@@ -1446,6 +1501,12 @@ bool spectatorRun(SDL_Window *window, SDL_Renderer *renderer, void *cs,
              * controller B-button arms it through the same entry point. The
              * game-view key handler above leaves Esc unconsumed, so it falls
              * through here. */
+            /* Embedded, this is WinBolo's window the viewer is drawing into;
+             * a close request meant for anything else is not ours. */
+            if (sdlEvent.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
+                sdlEvent.window.windowID == SDL_GetWindowID(g_lv->window)) {
+                logViewerRequestAppQuit();
+            }
             if (sdlEvent.type == SDL_EVENT_QUIT) {
                 g_lv->quit = TRUE;
                 break;

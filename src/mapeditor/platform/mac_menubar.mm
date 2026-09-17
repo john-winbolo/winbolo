@@ -131,7 +131,13 @@ static int s_me_lastScopeIsSelection = -1; /* -1 forces first refresh */
 @end
 
 @implementation MEMenuBridge
-- (void)onQuit:(id)sender { (void)sender; s_me_pending.wantExit = true; }
+- (void)onQuit:(id)sender {
+    (void)sender;
+    /* Quit and Return to Menu both leave the editor; only this one goes on to
+     * end the application. */
+    s_me_pending.wantExit = true;
+    s_me_pending.wantQuitApp = true;
+}
 - (void)onNew:(id)sender { (void)sender; s_me_pending.wantNew = true; }
 - (void)onOpen:(id)sender { (void)sender; s_me_pending.wantOpen = true; }
 #ifdef MAPEDITOR_WBN_OPEN
@@ -890,6 +896,7 @@ void me_mac_menubar_consume_actions(MapEditorMenuAction *action) {
 
     /* Boolean flags — straight copies (pending was reset to false). */
     action->wantExit            = s_me_pending.wantExit;
+    action->wantQuitApp         = s_me_pending.wantQuitApp;
     action->wantNew             = s_me_pending.wantNew;
     action->wantOpen            = s_me_pending.wantOpen;
     action->wantOpenWbn         = s_me_pending.wantOpenWbn;

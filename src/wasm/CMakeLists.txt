@@ -231,6 +231,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_quickchat.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_about.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/dialog_footer.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/dialog_quit.cpp
     ${SRC_ROOT}/gui/sdl3/map_preview_popup.cpp
     ${SRC_ROOT}/gui/sdl3/lobby_start_list.cpp
     ${SRC_ROOT}/gui/sdl3/map_preview_view.cpp
@@ -243,6 +244,13 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/bg_game.c
     ${SRC_ROOT}/gui/sdl3/mapview.c
     ${SRC_ROOT}/gui/sdl3/mapview_overlay.c
+    # The colours a square is filled with once it is drawn too small for its
+    # sprite, and the shapes drawn on top of them. minimap_render.c,
+    # map_preview_view.cpp, overview_view.cpp and mapview_overlay.c above all
+    # call into these. map_markers.c builds its disc from ring_band.c, which
+    # this target already has.
+    ${SRC_ROOT}/gui/sdl3/map_colours.c
+    ${SRC_ROOT}/gui/sdl3/map_markers.c
     ${SRC_ROOT}/gui/sdl3/sprite_positions.c
     ${SRC_ROOT}/gui/sdl3/tileloader.c
     ${SRC_ROOT}/gui/sdl3/skin_source.c

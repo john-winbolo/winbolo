@@ -1051,6 +1051,16 @@ int run_lv_tank_stocks_from_snapshot(void);
 int run_lv_tank_stocks_snapshot_without_tail(void);
 int run_lv_tank_stocks_from_record(void);
 
+/* Viewer palette slots follow alliance groups (same file). from_snapshot:
+ * mutual allies listed as forward references in a snapshot share a slot, and
+ * keyframes that split and restore the groups without alliance events keep the
+ * slots stable. events: players who joined solo hold slot-order colours, the
+ * round's first world snapshot deals the merged groups compact colours (two
+ * teams are Team 1 and Team 2 wherever they sat), and later merges and splits
+ * leave everyone who didn't move alone. */
+int run_lv_team_colours_from_snapshot(void);
+int run_lv_team_colours_events(void);
+
 /* The viewer reading a recording it cannot trust (test_lv_hostile_records.c):
  * hand-built bytes through lv_specSeedLoad / lv_specRecordPump. A count byte
  * past the item arrays or past the block's length is clamped before it is
@@ -1651,6 +1661,15 @@ int run_mapview_overlay_tank_label(void);
 int run_mapview_overlay_cursor(void);
 int run_mapview_overlay_item_labels(void);
 
+/* The shared map colours: what a tile number says is standing on a square,
+ * the flat colour its ground gets when the square is drawn too small for its
+ * sprite, and the three layers a marker's stroke is built from. */
+int run_map_colours_item_kind(void);
+int run_map_colours_terrain(void);
+int run_map_colours_markers(void);
+int run_map_colours_palette_key(void);
+int run_map_colours_team(void);
+
 int run_stall_advances_processed_tick(void);
 int run_stall_mine_late_lays_once(void);
 int run_stall_mine_duplicate_not_relaid(void);
@@ -2068,6 +2087,15 @@ int run_ping_network(void);
  * guards the off-by-one that walked resolveName()'s bsearch off the end. */
 int run_lang_name_table(void);
 
+/* What a quit inside a dialog means (test_dialog_quit.c): Cmd+Q, Alt+F4 and
+ * the close box end the application; the close request the gamepad's B
+ * button forges only closes the dialog; another window's close request and a
+ * windowless dialog claim neither. Plus where the quit goes — the host
+ * registers a handler, and with none registered a quit must not crash the
+ * standalone Log Viewer and Map Editor, which link these dialogs but have no
+ * application loop to end. */
+int run_dialog_quit(void);
+
 /* Bot difficulty plumbing (test_bot_init_arg.c): the "difficulty=<word>"
  * BRAIN_INIT_ARG token is appended after any existing tokens with a ';',
  * takes an exact fit, and is dropped WHOLE (buffer untouched) when it would
@@ -2229,6 +2257,11 @@ int run_skin_active_vs_requested(void);
 /* Writing a Workshop id into a directory skin and into an archive
  * (test_skin_source.c). */
 int run_skin_workshop_id_roundtrip(void);
+
+/* The [MapPalette] section of skin.ini: the three colour spellings, black
+ * surviving as a value rather than reading as absent, a bad value leaving its
+ * own entry alone, and a section the parser does not know being skipped. */
+int run_skin_map_palette(void);
 
 /* Which densities a skin serves, and what each Tile Detail mode picks
  * out of that (test_skin_density.c). */

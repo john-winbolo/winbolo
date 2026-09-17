@@ -843,12 +843,7 @@ extern "C" int imguiGameBrowserShow(const char *title, int useTracker) {
             dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
-            if (ev.type == SDL_EVENT_QUIT) {
-                gameFrontSetDlgState(openWelcome);
-                running = false;
-            }
-            if (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
-                ev.window.windowID == SDL_GetWindowID(window)) {
+            if (dialogHandleQuitEvent(window, &ev)) {
                 gameFrontSetDlgState(openWelcome);
                 running = false;
             }

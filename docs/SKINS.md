@@ -86,6 +86,10 @@ WorkshopId=
 WorkshopAuthor=
 ```
 
+A second section, `[MapPalette]`, is described under
+[The map palette](#the-map-palette). Any other section is ignored, so a skin
+may carry its own without the game reading it.
+
 - **`MaxPixelDensity`** — the finest multiple your SVG art is meant to be drawn
   at. `0` or absent means unlimited, which is right for genuine vector art. Set
   it to `1` if your SVGs are pixel-art rectangle grids that should stay chunky.
@@ -147,6 +151,101 @@ around the play area. The stock one is 515 × 325 and it is drawn at that size
 times the zoom level. A larger image is scaled to fit without smoothing, so it
 only looks sharper at zoom 2 and above; at zoom 1 it is point-sampled down. The
 Texture filter setting does not apply to the background.
+
+### The map palette
+
+Once a map is drawn too small for its sprites, the game stops drawing them: each
+square becomes one flat colour, and tanks, pillboxes and bases become marker
+shapes — a triangle pointing the way a tank faces, a disc for a pillbox, a square
+for a base. That happens in the Map Overview and the full screen map below 1x
+(the player can turn it off under Settings → Display → Map view), and always in
+the map choosers, which draw a whole map in a thumbnail.
+
+Your art is not involved at those sizes, so a skin sets the colours instead, in
+a `[MapPalette]` section of `skin.ini`:
+
+```ini
+[MapPalette]
+; the ground, one key per terrain
+Grass=#002806
+Swamp=#003933
+Rubble=#303819
+Crater=#292911
+Forest=#045311
+Road=#000000
+River=#008c9c
+DeepSea=#008a9e
+Boat=#61848b
+Building=#785e41
+HalfBuilding=#56422c
+
+; the shapes standing on it, one colour per side
+MarkerSelf=#b4b4b4
+MarkerGood=#58d858
+MarkerEvil=#ff5d5d
+MarkerNeutral=#f0b429
+
+; the seventeen colours a player can be assigned
+TeamGrey=#6f6f6f
+TeamKhaki=#c8df00
+TeamGreen=#18b510
+TeamPink=#fd77ff
+TeamYellow=#ffff31
+TeamLightBlue=#008f9f
+TeamOrange=#ffce00
+TeamLightPurple=#bf00bf
+TeamAqua=#00ffff
+TeamLightGreen=#31ce31
+TeamLightGrey=#a5a5a5
+TeamRed=#bf0000
+TeamBlue=#0000bd
+TeamBrown=#808000
+TeamLightPink=#ffc0c0
+TeamPaleGreen=#96ff96
+TeamPurple=#60127a
+```
+
+Those are the built-in values, so that block changes nothing — copy it and edit
+the lines you care about.
+
+- Every key is optional and stands on its own. Name three and you get those
+  three with the built-in rest; leave the section out and you get the built-in
+  set.
+- `#rrggbb`, `rrggbb` and `0xrrggbb` are all accepted, upper or lower case. Key
+  names are matched without regard to case.
+- Exactly six hex digits. Anything else — three digits, eight, a colour name,
+  an empty value — leaves that one key at its built-in colour and does not
+  disturb the others. Nothing is reported, so check your spelling.
+- `#000000` is black, not "unset". Setting a key to black is a thing you can
+  do.
+- One colour covers a whole terrain family, however the square is shaped: a
+  river bend and a river straight are both `River`.
+- `MarkerGood` and `MarkerEvil` colour a tank, a pillbox and a base alike, so a
+  friendly tank parked on a friendly base is one colour. `MarkerNeutral` is
+  bases only — a pillbox nobody owns takes `MarkerEvil`, because to everyone
+  who can see it that is what it is.
+- `MarkerSelf` is the viewer's own tank, where a view tells it apart from its
+  allies. The game does not — in play your own tank is `MarkerGood` like every
+  other friendly one — so this only shows up in the log viewer's ally-colour
+  mode.
+- The seventeen `Team*` keys are the colours a player can be assigned, named as
+  the log viewer's Team Colours dialog names them. **The name says which slot,
+  not what you have to put in it** — `TeamGrey` is the first slot, and setting
+  it to blue is allowed, if confusing for anyone reading your file.
+
+  Their built-in values are read off `tanks.bmp`, one per row, so a marker
+  drawn in one of them is the colour of the tank it stands for. **If you
+  repaint the tanks, set these to match**, or a player's marker and their tank
+  will be different colours. If you leave the tank art alone, leave these
+  alone. `TeamGrey` is the one to watch: grey is also the structural colour
+  every tank shares, so that row has no colour of its own to read.
+- A pillbox draws the same whatever its health, and a square carrying a mine
+  draws as the ground under it.
+
+These colours are the map at a glance rather than the map in detail, so the
+built-in set keeps the ground dark and low contrast and lets the markers carry
+the eye. A set with loud ground will read as busy once pings, fog and markers
+are drawn over it.
 
 ### Sounds
 
