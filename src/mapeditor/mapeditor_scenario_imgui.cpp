@@ -795,15 +795,20 @@ static void meScnLobbyBody(MEScenarioForm *f) {
  * Rules
  * ------------------------------------------------------- */
 static void meScnRulesBody(MEScenarioForm *f) {
-    /* What the author has typed into the Add Rule filter. One panel, so one
-     * box, and it survives a switch away and back. */
+    /* What the author has typed into the Add Rule filter, and which row of the
+     * list they are reading about. One panel, so one box and one selection,
+     * and both survive a switch away and back. */
     static char s_filter[64] = "";
+    static int  s_selected   = -1;
 
     ScenarioManifest *m = &f->manifest;
     int               i;
-    int               removeAt = -1;
+    int               removeAt    = -1;
+    bool              addSelected = false;
     char              classic[64];
     char              phrase[128];
+    char              range[128];
+    char              detail[256];
 
     if (m->numRules == 0) {
         meScnHint(langGetText(STR_MAPEDIT_SCENARIO_NO_RULES));
@@ -886,14 +891,56 @@ static void meScnRulesBody(MEScenarioForm *f) {
             if (!meScnContains(name, s_filter)) {
                 continue;
             }
-            if (ImGui::Selectable(name)) {
-                /* A rule starts at the value the classic game plays it at,
-                 * so the row reads "unchanged" until the author moves it. */
-                meScenarioFormSetRule(f, r, simRulesClassicValue(r));
+            /* Clicking a row reads about the rule; the Add button under the
+             * list is what puts it on the manifest. */
+            if (ImGui::Selectable(name, r == s_selected)) {
+                s_selected = r;
             }
         }
     }
     ImGui::EndChild();
+
+    /* The selection is an index held across frames while the list under it
+     * changes. A rule that has been added, or that the filter no longer
+     * matches, is not in the list to be pointed at any more, so the block
+     * below would describe a row the author cannot see and Add would take a
+     * rule they did not pick. */
+    if (s_selected >= 0 &&
+        (s_selected >= simRulesRuleCount() ||
+         meScenarioFormFindRule(f, s_selected) >= 0 ||
+         !meScnContains(simRulesRuleName(s_selected), s_filter))) {
+        s_selected = -1;
+    }
+
+    if (s_selected < 0) {
+        meScnHint(langGetText(STR_MAPEDIT_SCENARIO_RULE_NO_SEL));
+        return;
+    }
+
+    /* The selected rule: its name as the manifest spells it, what it governs,
+     * and the two numbers an author needs before taking it. */
+    ImGui::TextUnformatted(simRulesRuleName(s_selected));
+    ImGui::SameLine();
+    addSelected = ImGui::Button(langGetText(STR_MAPEDIT_SCENARIO_ADD));
+
+    /* A description runs to about a hundred characters, so it wraps rather
+     * than running off the right of the panel. */
+    ImGui::TextWrapped("%s", simRulesRuleDescription(s_selected));
+
+    simRulesRangePhrase(s_selected, range, sizeof(range));
+    snprintf(detail, sizeof(detail), "%s %g   %s %s",
+             langGetText(STR_MAPEDIT_SCENARIO_CLASSIC),
+             simRulesClassicValue(s_selected),
+             langGetText(STR_MAPEDIT_SCENARIO_RANGE), range);
+    meScnHint(detail);
+
+    if (addSelected) {
+        /* A rule starts at the value the classic game plays it at, so the row
+         * reads "unchanged" until the author moves it. It is on the manifest
+         * now, so it leaves the list and the block is cleared with it. */
+        meScenarioFormSetRule(f, s_selected, simRulesClassicValue(s_selected));
+        s_selected = -1;
+    }
 }
 
 /* -------------------------------------------------------

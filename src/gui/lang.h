@@ -2452,6 +2452,9 @@
 #define STR_MAPEDIT_SCENARIO_ADD_RULE        2278
 #define STR_MAPEDIT_SCENARIO_FILTER          2279
 #define STR_MAPEDIT_SCENARIO_RULES_FULL      2280
+#define STR_MAPEDIT_SCENARIO_ADD             2429
+#define STR_MAPEDIT_SCENARIO_RANGE           2430
+#define STR_MAPEDIT_SCENARIO_RULE_NO_SEL     2431
 
 /* The script pane's check: the button that runs the validator, the list of
  * what it found under the editor, and the popup that lists the game.* calls a
