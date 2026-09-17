@@ -26,6 +26,9 @@
 
 #ifdef _WIN32
 /* MoveFileExA, which is how the written map is put in place there. */
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 #endif
 
