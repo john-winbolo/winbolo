@@ -1212,8 +1212,14 @@ static void scnPushRegions(lua_State *L, const ScenarioManifest *m) {
  *
  * The value goes on through the globals table itself rather than through
  * lua_setglobal, for the reason scnRawGlobal reads through it: a metatable on
- * _G is the script's business and running one here is not. */
-static void scnPushManifestGlobal(lua_State *L, const ScenarioManifest *m) {
+ * _G is the script's business and running one here is not.
+ *
+ * Declared on scenario_validate.h with the rest of the parse, because the
+ * validator pushes the same table before the same chunk: an editor checking a
+ * script against the manifest its forms hold is asking what this server will
+ * do with the pair, and a check that pushed nothing would refuse a script the
+ * load accepts. */
+void scnPushManifestGlobal(lua_State *L, const ScenarioManifest *m) {
     int t;
 
     lua_newtable(L);

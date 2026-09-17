@@ -95,6 +95,47 @@ bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
 bool scenarioValidateScript(const ServerSim *sim, const char *scriptPath,
                             ScnValidateResult *out);
 
+/*********************************************************
+ *NAME:          scenarioValidateSource
+ *PURPOSE:
+ *  The same checks again, against len bytes the caller is
+ *  already holding rather than a file. This is the entry an
+ *  editor uses: the text in its pane may never have been on
+ *  disk, and the copy on disk is a save behind whatever the
+ *  author is looking at.
+ *
+ *  name is what the chunk is called, so it is what Lua writes
+ *  ahead of the line in a syntax error and what a message
+ *  that has to name the script names. The script's path where
+ *  there is one, and a stand-in where the map has no file
+ *  yet.
+ *
+ *  scenarioValidateScript reads the file and comes through
+ *  here, so the two report the same things about the same
+ *  bytes. The one behaviour that is not shared is an absent
+ *  file, which only the file entry can meet and which it
+ *  answers true with no issues; an empty buffer handed over
+ *  here is a script that is empty, not a script that is not
+ *  there.
+ *
+ *  push is the manifest to put on the state as the scenario
+ *  global before the chunk runs, the way a host does it for a
+ *  script that came out of a container, and NULL for none. An
+ *  editor holding a manifest in its forms passes it, so a
+ *  script that declares no table of its own is checked as the
+ *  pair will be loaded rather than refused for a table the
+ *  package already carries. A script that does declare one
+ *  overwrites the global, so the table read back is still the
+ *  script's own and still worth holding against the manifest.
+ *
+ *  A NULL sim leaves out the two checks that read a map, as
+ *  above. A NULL out, a NULL text or a NULL name returns
+ *  false.
+ *********************************************************/
+bool scenarioValidateSource(const ServerSim *sim, const char *text, size_t len,
+                            const char *name, const ScenarioManifest *push,
+                            ScnValidateResult *out);
+
 /* ── The parse, which the host and the validator share ──────────────── */
 
 /*********************************************************
@@ -158,6 +199,26 @@ struct lua_State *scnNewVm(void);
  *  close.
  *********************************************************/
 void scnCloseVm(struct lua_State *L);
+
+/*********************************************************
+ *NAME:          scnPushManifestGlobal
+ *PURPOSE:
+ *  Puts m on the state as the scenario global, in the shape
+ *  scnReadManifest reads, before the chunk is run.
+ *
+ *  A script that came out of a container may then declare no
+ *  table of its own and still be a scenario, because what the
+ *  chunk leaves behind is this one; a script that restates the
+ *  table overwrites the global, so scnReadManifest still reads
+ *  the script's own and the two are held against each other
+ *  afterwards. A loose script gets nothing pushed.
+ *
+ *  The host does this at attach, at every round start and at
+ *  the package check. The validator does it for a caller that
+ *  holds a manifest, so a script is checked the way it will be
+ *  loaded.
+ *********************************************************/
+void scnPushManifestGlobal(struct lua_State *L, const ScenarioManifest *m);
 
 /*********************************************************
  *NAME:          scnRunChunk

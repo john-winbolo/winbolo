@@ -2813,6 +2813,11 @@ int run_scenario_validate_syntax_error_line(void);
 int run_scenario_validate_lines_point_at_the_key(void);
 int run_scenario_validate_wave_defense(void);
 int run_scenario_validate_unknown_game(void);
+int run_scenario_validate_source_syntax_error(void);
+int run_scenario_validate_source_bad_key(void);
+int run_scenario_validate_source_matches_file(void);
+int run_scenario_validate_source_pushed_manifest(void);
+int run_scenario_validate_source_pushed_conflict(void);
 
 /* The binding table (test_scenario_lua.c): every row of the registry
  * called once, the three index rules, the nils an absent entity reads
@@ -3050,6 +3055,52 @@ int ut_brain_stub_creates(int player_num);
  * handed an instance and no player number, so there is no slot to file them
  * under. Both counts are reset by ut_brain_stub_arm. */
 int ut_brain_stub_destroys(void);
+
+/* The map editor's scenario script file (test_editor_script_file.c): where a
+ * script sits beside a map, the round trip Save and re-opening the map make,
+ * and the map that has no script beside it. The path rule mirrors
+ * scnScriptPath, which the editor cannot call. The over-cap case holds the
+ * script that is there but will not open, which the editor shows as an empty
+ * buffer and must not write that buffer back over. The last case saves a map
+ * under a new name: an unedited script is written beside that name so the
+ * copy plays as the original did, and a buffer with no file read behind it
+ * takes the new path without writing anything there. */
+int run_editor_script_path(void);
+int run_editor_script_round_trip(void);
+int run_editor_script_missing(void);
+int run_editor_script_over_cap(void);
+int run_editor_script_follows_save_as(void);
+
+/* The manifest behind the scenario panel's metadata, lobby, rules and tags
+ * forms (test_editor_scenario_form.c): the empty manifest a new map starts
+ * from, the rule list that updates a row rather than growing a second one for
+ * the same rule, the team numbers the template hands out, both bounds, the
+ * change a rules row describes beside a value, and the tags and regions the
+ * tags view edits. The index case is the one that matters most: the editor
+ * counts entities from 0 and the manifest's arrays are 1-based, and it asserts
+ * that sum at both ends of every range. */
+int run_editor_form_init(void);
+int run_editor_form_rules(void);
+int run_editor_form_rules_full(void);
+int run_editor_form_teams(void);
+int run_editor_form_rule_change(void);
+int run_editor_form_tag_indices(void);
+int run_editor_form_tags(void);
+int run_editor_form_regions(void);
+int run_editor_form_dirty_flag(void);
+int run_editor_form_team_ids(void);
+
+/* The editor writing a scenario out (test_editor_scenario_pack.c): the chunk
+ * on to the map and the standalone .scenario a mod is, both read back through
+ * the container reader the server uses. A mod loses the bound flag, the tags
+ * and the regions whatever the form held; a map form refuses a manifest that
+ * is not built for its map; and a map that has been packed twice is the same
+ * bytes as one packed once and still reads as a map. */
+int run_editor_pack_mod_round_trip(void);
+int run_editor_pack_map_round_trip(void);
+int run_editor_pack_twice_identical(void);
+int run_editor_pack_refuses_unbound(void);
+int run_editor_pack_survives_map_save(void);
 
 /* The last status tile frontEndStatusTank was handed by the stub in
  * test_stubs.c: the 1-based player number, and the tankAlliance as an int so
