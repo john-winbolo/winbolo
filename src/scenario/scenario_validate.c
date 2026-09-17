@@ -74,11 +74,12 @@ static int scnStubRow(lua_State *L) {
  * the registry the real table is built from, so a row added to the surface is
  * on this table too with no second edit. */
 static void scnInstallStubGame(lua_State *L) {
-    const ScnLuaRow     *rows;
-    const ScnLuaConst   *consts;
-    const ScnLuaTerrain *terrain;
-    size_t               n;
-    size_t               i;
+    const ScnLuaRow       *rows;
+    const ScnLuaConst     *consts;
+    const ScnLuaTerrain   *terrain;
+    const ScnLuaWordTable *words;
+    size_t                 n;
+    size_t                 i;
 
     lua_newtable(L);
 
@@ -104,6 +105,20 @@ static void scnInstallStubGame(lua_State *L) {
         lua_setfield(L, -2, terrain[i].name);
     }
     lua_setfield(L, -2, "TERRAIN");
+
+    /* And the word tables beside it, for the same reason: a chunk reading
+       game.COLOUR.red at its top level reads the number the round would give
+       it rather than indexing a nil. */
+    words = scenarioLuaWordTables(&n);
+    for (i = 0; i < n; i++) {
+        size_t w;
+        lua_newtable(L);
+        for (w = 0; w < words[i].count; w++) {
+            lua_pushinteger(L, (lua_Integer)words[i].words[w].value);
+            lua_setfield(L, -2, words[i].words[w].word);
+        }
+        lua_setfield(L, -2, words[i].name);
+    }
 
     lua_setglobal(L, "game");
 }

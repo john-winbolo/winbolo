@@ -3476,7 +3476,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # and the score, announcement and marker arms.
     tests/unit/test_scenario_presentation_arms.c
     # The binding table: the game table a script reads the sim through, the
-    # three index rules and what an absent entity reads as.
+    # three index rules, what an absent entity reads as, and the bytes and
+    # audiences the presentation rows build.
     tests/unit/test_scenario_lua.c
     # The state a scenario runs in: the names the whitelist takes and the
     # ones it keeps, the precompiled chunk the loader refuses, where a
@@ -5572,6 +5573,11 @@ set(_unit_test_names
     scenario_lua_teleport_start_refuses_bad_index
     scenario_lua_spawn_bot_refuses_bad_start
     scenario_lua_game_type_resolves_scripted
+    scn_lua_panel_builds_bytes
+    scn_lua_panel_words_and_numbers
+    scn_lua_panel_refusals
+    scn_lua_presentation_targets
+    scn_lua_score_and_announce
     scenario_sandbox_removed_names_are_nil
     scenario_sandbox_bytecode_chunk_refused
     scenario_sandbox_collectgarbage_stop_refused

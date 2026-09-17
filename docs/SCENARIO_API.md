@@ -29,6 +29,8 @@ bug worth reporting.
 - [Changing the world](#changing-the-world)
 - [Bots and seats](#bots-and-seats)
 - [Talking to players, and ending the round](#talking-to-players-and-ending-the-round)
+- [Showing things on a client](#showing-things-on-a-client)
+  - [The panel](#the-panel)
 - [Rules](#rules)
 - [Test hooks](#test-hooks)
 - [Constants](#constants)
@@ -1011,6 +1013,114 @@ server adds no verdict of its own.
 
 ---
 
+## Showing things on a client
+
+A scenario never draws on a client. It sends what it wants shown as data, and
+each frontend draws that with its own 2D calls, so one scenario looks right on
+the desktop game, in a browser and on a phone without knowing that any of them
+exist.
+
+| Call | What it does |
+|---|---|
+| `game.panel(id, list[, target])` | Draws panel `id` from a list of primitives. An empty list clears it. |
+| `game.score(target, value[, label])` | The scenario's own score for one seat with a number, or for a team with `{ team = t }`. `label` is the short word shown beside it, up to 15 bytes. |
+| `game.announce(text, seconds[, target])` | A line across the centre of the screen for that many seconds. Empty text takes the line away. |
+| `game.marker(id, x, y[, colour[, target]])` | Puts mark `id` on a map square. |
+| `game.marker_follow(id, p[, colour[, target]])` | Puts mark `id` on seat `p`, where it rides the tank rather than the ground. |
+| `game.clear_marker(id[, target])` | Takes mark `id` off the map. |
+
+There are four panels, numbered 0 to 3, and sixteen markers, numbered 0 to 15.
+A marker id holds one mark: putting a second one on an id replaces the first,
+and `clear_marker` takes it off. A colour left out of a marker call is
+`yellow`.
+
+`announce` is counted in seconds and the client counts it down in ticks, at
+100 a second — the same rate `game.timer` converts at, and the one
+[Three clocks](#three-clocks) describes. Two seconds is 200 ticks, and the
+longest a line can be asked to stay up is 65535 ticks, about 655 seconds. A
+line with something in it and a time of zero is refused, and one written with
+no time at all stops the script; an empty line is the clear, and it needs
+neither. In the lobby the clock moves at half that
+rate, so a line put up before the round starts stays up about twice as long as
+it asked for.
+
+**Who sees it.** The last argument of `panel`, `announce` and the three marker
+calls is the same target every other call takes: left out, or `"all"`, for
+everyone; a number for one seat; `{ team = t }` for one team. A late joiner is
+given whatever the panels hold at the moment it arrives, so a panel put up in
+the first tick of a round is still there for somebody who connects in the
+tenth minute.
+
+`score` is the exception. Its target says *whose* score it is, not who sees
+it, so a score is shown to everyone. There is no everyone's score: a call with
+no target, or with `"all"`, is the call written wrong and stops the script.
+
+**One update per panel per audience per tick.** Every update replaces the
+whole list, so a second update to the same panel for the same audience in the
+same tick is refused with `SCN_OP_RATE` rather than queued — the one it would
+have replaced was never going to be seen. Giving each of sixteen players their
+own copy of panel 0 in one tick is fine: the audience is part of the key.
+
+### The panel
+
+A panel is a square of 128 logical units on a side, origin top-left, with `x`
+running right and `y` running down. Each frontend maps that square into a slot
+in its own layout and scales it with the game's zoom, so a script never knows
+a pixel size. Coordinates are bytes: a primitive may start inside the square
+and run past its edge, and the frontend clips it.
+
+A list is an array of primitives. Each primitive is an array whose first
+element is its name, with the operands after it in the order below:
+
+| Primitive | Written as | Draws |
+|---|---|---|
+| `rect` | `{ "rect", x, y, w, h, colour, fill }` | A rectangle, outlined or filled. `fill` is `true` or `false`. |
+| `line` | `{ "line", x0, y0, x1, y1, colour }` | A one-unit line. |
+| `text` | `{ "text", x, y, colour, size, align, s }` | `s` in the frontend's own font, up to 48 bytes, and only bytes a panel draws — no newlines or escapes. |
+| `name` | `{ "name", x, y, colour, size, align, p }` | The name seat `p` is playing under, so a script never sends names and a rename shows through. |
+| `sprite` | `{ "sprite", x, y, tile }` | One tile from the skin's own sheet, by its `tilenum.h` id: terrain, a pillbox, a base, a tank frame. |
+| `bar` | `{ "bar", x, y, w, h, colour, value, max }` | A horizontal bar filled to `value` over `max`, outlined. Both are 16-bit, so a bar can show a real total. |
+| `timer` | `{ "timer", x, y, colour, size, align, mode, tick }` | Minutes and seconds counting down to, or up from, a game tick. The client works it out against its own clock, so a countdown is one message rather than one a tick. |
+
+`size` is `"small"` or `"normal"`. `align` is `"left"`, `"centre"` or
+`"right"`, and says which way the text sits about its `x`. A timer's `mode` is
+`"down"` or `"up"`, and its `tick` is a tick on `game.tick()`'s clock.
+
+```lua
+game.panel(0, {
+  { "rect",  0, 0, 128, 20, "grey_dark", true },
+  { "text",  64, 4, "white", "normal", "centre", "Wave 3" },
+  { "bar",   4, 24, 120, 8, "green", holding, 20 },
+  { "timer", 64, 40, "yellow", "normal", "centre", "down", ends_at },
+})
+
+game.panel(0, {})            -- take it away again
+```
+
+A list holds up to 128 primitives and is refused with `SCN_OP_TOO_BIG` past
+that, or if the whole list comes to more than the 1017 bytes one update
+carries. A primitive written wrong — a name that spells no primitive, an
+operand missing, an operand that is not a number — stops the script, like any
+other call written wrong. A value the simulation will not take, such as a
+colour outside the palette, is refused as an answer the script can read.
+
+### Colours
+
+Every colour is an index into a palette of sixteen, so a skin or a dark mode
+maps the sixteen rather than a script choosing RGB. A colour is written as its
+name or as its number:
+
+`none`, `black`, `white`, `grey`, `grey_dark`, `red`, `green`, `blue`,
+`yellow`, `orange`, `cyan`, `magenta`, `reserved_12`, `reserved_13`,
+`reserved_14`, `reserved_15`.
+
+`none` draws nothing, and the four reserved entries draw nothing until a skin
+gives them a colour. The names are also on the `game` table as
+`game.COLOUR.red` and so on, beside `game.SIZE`, `game.ALIGN` and
+`game.TIMER_MODE`, for a script that computes one rather than writing it.
+
+---
+
 ## Rules
 
 Every gameplay number the simulation runs on is a named rule. `game.rule(name)`
@@ -1333,6 +1443,10 @@ The `code` a refused write answers, as a string.
 | Regions | 64, declared and defined together; names 31 bytes |
 | Timers waiting at once | 64 |
 | A line of text | 128 bytes |
+| Primitives in one panel list | 128 |
+| Bytes in one panel list | 1017 |
+| A panel text primitive | 48 bytes |
+| A score label | 15 bytes |
 | A bot's `init` table | 16 pairs |
 | Events queued for one frame | 256 |
 | Roster changes outstanding at once | 32 |

@@ -2804,6 +2804,11 @@ int run_scenario_lua_detail_carries_the_number(void);
 int run_scenario_lua_teleport_start_refuses_bad_index(void);
 int run_scenario_lua_spawn_bot_refuses_bad_start(void);
 int run_scenario_lua_game_type_resolves_scripted(void);
+int run_scn_lua_panel_builds_bytes(void);
+int run_scn_lua_panel_words_and_numbers(void);
+int run_scn_lua_panel_refusals(void);
+int run_scn_lua_presentation_targets(void);
+int run_scn_lua_score_and_announce(void);
 
 /* The state a scenario runs in (test_scenario_sandbox.c): the names the
  * whitelist takes and the ones it keeps, the precompiled chunk the loader
