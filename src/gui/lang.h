@@ -2384,6 +2384,13 @@
  * returns to the main menu and the editor to the screen that opened it. */
 #define STR_LV_RETURN_MAIN_MENU             2226
 
+/* Map view — the simplified view when zoomed out */
+#define STR_DLGSETTINGS_MAPVIEW             2227
+#define STR_DLGSETTINGS_SIMPLEZOOM          2228
+#define STR_DLGSETTINGS_SIMPLEZOOM_TIP      2229
+#define STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW 2230
+#define STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW_TIP 2231
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

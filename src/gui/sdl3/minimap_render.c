@@ -22,6 +22,8 @@
 #include "client_mappreview.h"
 #include "global.h"  /* MAP_MINE_EDGE_*, MINE_START/END/SUBTRACT, terrain constants */
 #include "types.h"   /* struct mapObj/pillsObj/basesObj/startsObj layouts */
+#include "map_colours.h"
+
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -70,7 +72,20 @@ void minimapRenderPixels(const MapPreview *view,
                 terrain = (BYTE)(raw - MINE_SUBTRACT);
             }
 
-            minimapTerrainColor(terrain, &pixels[idx], &pixels[idx+1], &pixels[idx+2]);
+            /* mapColourTerrain takes raw terrain, so the mine strip above is
+               work it would have done anyway; minimapTerrainColor strips too.
+               Neither can refuse a terrain a map file holds, so the fallback
+               only catches a byte no terrain uses. */
+            if (flags & MINIMAP_EDIT_PALETTE) {
+                minimapTerrainColor(terrain, &pixels[idx], &pixels[idx+1],
+                                    &pixels[idx+2]);
+            } else {
+                SDL_Color c = { 0, 0, 0, 255 };
+                mapColourTerrain(terrain, &c);
+                pixels[idx]   = c.r;
+                pixels[idx+1] = c.g;
+                pixels[idx+2] = c.b;
+            }
             pixels[idx+3] = 255;
 
             /* Darken mined tiles */

@@ -48,6 +48,7 @@ extern "C" {
 #include "../sdl3draw.h"
 #include "global.h"
 #include "../minimap_render.h"
+#include "../map_colours.h"   /* mapColourPaletteKey — part of the cache key */
 #include "../map_preview_popup.h"
 #include "mapgen.h"
 #include "mapgen_maze.h"
@@ -147,6 +148,18 @@ static std::string hashKeyToFilename(const char *scope,
         h = ((h << 5) + h) + '|';
     }
     for (char c : key) h = ((h << 5) + h) + (unsigned char)c;
+    /* The palette the thumbnail will be drawn in. A skin can change it, and
+       the cached PNG carries the colours it was written with, so without this
+       a skin change would leave every thumbnail on disk in the old colours
+       until its map file's modification time changed - never, for a map that
+       shipped with the game. Mixed in as a different file name rather than by
+       clearing the cache, so switching skins back and forth finds both sets
+       already rendered. */
+    uint64_t pal = mapColourPaletteKey();
+    for (int i = 0; i < 8; i++) {
+        h = ((h << 5) + h) + (unsigned char)(pal & 0xFF);
+        pal >>= 8;
+    }
     uint64_t m = (uint64_t)modTime;
     for (int i = 0; i < 8; i++) {
         h = ((h << 5) + h) + (unsigned char)(m & 0xFF);

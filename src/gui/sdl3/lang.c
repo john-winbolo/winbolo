@@ -2177,6 +2177,11 @@ static const LangEntry langTable[] = {
     {2224, "on"},
     {2225, "off"},
     {2226, "Return to main menu"},
+    {2227, "Map view"},
+    {2228, "Use simplified view when zoomed out"},
+    {2229, "Zoomed out past 1x, draw each square as one colour with simple markers for tanks, pillboxes and bases, instead of shrinking the sprites down to a smudge."},
+    {2230, "Only map overview"},
+    {2231, "Keep the simplified view to the Map Overview window. The full screen map draws its sprites at every zoom."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

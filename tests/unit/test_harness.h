@@ -1661,6 +1661,15 @@ int run_mapview_overlay_tank_label(void);
 int run_mapview_overlay_cursor(void);
 int run_mapview_overlay_item_labels(void);
 
+/* The shared map colours: what a tile number says is standing on a square,
+ * the flat colour its ground gets when the square is drawn too small for its
+ * sprite, and the three layers a marker's stroke is built from. */
+int run_map_colours_item_kind(void);
+int run_map_colours_terrain(void);
+int run_map_colours_markers(void);
+int run_map_colours_palette_key(void);
+int run_map_colours_team(void);
+
 int run_stall_advances_processed_tick(void);
 int run_stall_mine_late_lays_once(void);
 int run_stall_mine_duplicate_not_relaid(void);
@@ -2248,6 +2257,11 @@ int run_skin_active_vs_requested(void);
 /* Writing a Workshop id into a directory skin and into an archive
  * (test_skin_source.c). */
 int run_skin_workshop_id_roundtrip(void);
+
+/* The [MapPalette] section of skin.ini: the three colour spellings, black
+ * surviving as a value rather than reading as absent, a bad value leaving its
+ * own entry alone, and a section the parser does not know being skipped. */
+int run_skin_map_palette(void);
 
 /* Which densities a skin serves, and what each Tile Detail mode picks
  * out of that (test_skin_density.c). */

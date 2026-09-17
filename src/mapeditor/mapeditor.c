@@ -557,9 +557,13 @@ static void mapEditorRebuildMinimap(MapEditorState *ed) {
 
     {
         MapPreview *terrainView = clientMapPreviewWrap(ed->mp, NULL, NULL, NULL);
+        /* MINIMAP_EDIT_PALETTE: this panel is a diagram of the map being
+           built, where every terrain wants its own colour, rather than a
+           small picture of one being played. */
         minimapRenderPixels(terrainView,
                             (uint8_t *)ed->minimapPixels, NULL,
-                            MINIMAP_DARKEN_BORDER | MINIMAP_DARKEN_MINES);
+                            MINIMAP_DARKEN_BORDER | MINIMAP_DARKEN_MINES |
+                            MINIMAP_EDIT_PALETTE);
         clientMapPreviewDestroy(terrainView);
     }
 

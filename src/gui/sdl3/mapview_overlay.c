@@ -22,11 +22,47 @@
  *********************************************************/
 
 #include "mapview_overlay.h"
+#include "gfx_settings.h"
+#include "tilenum.h"   /* the tank and boat frames the marker pass reads */
+#include "map_markers.h" /* the triangle a tank becomes */
 #include "../tiles.h"     /* MOUSE_SQUARE_X / Y, TILE_SIZE_X / Y */
 
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+
+/* A tank as a triangle pointing the way it faces, for the zooms where its
+   sprite is too small to read: one shape, in the shared marker palette and
+   stroke (map_colours.h), so a tank parked on a base is outlined the same way
+   the base is. Positioned from the same sprite positions and allegiance
+   frames as the normal draw, boats included. */
+static void overlayDrawTankMarkers(MapViewCtx *ctx, screenTanks *tks,
+                                   float baseX, float baseY, float tileW, float tileH) {
+  int mode = (int)gfxGetAnimSmoothness();
+  BYTE total = screenTanksGetNumEntries(tks);
+  SDL_BlendMode oldBlend;
+  SDL_GetRenderDrawBlendMode(ctx->renderer, &oldBlend);
+  SDL_SetRenderDrawBlendMode(ctx->renderer, SDL_BLENDMODE_BLEND);
+  for (BYTE count = 1; count <= total; count++) {
+    BYTE mx, my, px, py, frame, playerNum, wx, wy, angle;
+    char name[256];
+    screenTanksGetItem(tks, count, &mx, &my, &px, &py, &frame, &playerNum, name);
+    if (frame > TANK_EVILBOAT_15) continue;
+    screenTanksGetSubPixel(tks, count, &wx, &wy, &angle);
+    float cx = baseX + tileW / 2 + spritePositionOffset(mode, ctx->scale,
+                                                       ctx->sheetScale, mx, px, wx);
+    float cy = baseY + tileH / 2 + spritePositionOffset(mode, ctx->scale,
+                                                       ctx->sheetScale, my, py, wy);
+    float radius = SDL_max(3.0f, tileW * 0.45f);
+    SDL_FColor color = { 1, 1, 1, 1 };
+    if (frame >= TANK_EVIL_0) color = mapColourMarkerEvil();
+    else if (frame >= TANK_GOOD_0) color = mapColourMarkerGood();
+    /* The frame carries the allegiance offset as well as the heading;
+       mapMarkerTank wraps, so it takes the frame as it stands. */
+    mapMarkerTank(ctx->renderer, cx, cy, radius, (int)frame, color);
+  }
+  SDL_SetRenderDrawBlendMode(ctx->renderer, oldBlend);
+}
 
 /* The host's clip, put back after the labels are drawn. */
 typedef struct {
@@ -249,7 +285,8 @@ void mapViewDrawOverlay(MapViewCtx *ctx, const MapViewOverlay *ov,
   }
 
   mapViewDrawShells(ctx, sb, originX, originY, tileW, tileH, edgeX, edgeY);
-  mapViewDrawTanks(ctx, tks, originX, originY, tileW, tileH, edgeX, edgeY);
+  if (ov->simpleTanks) overlayDrawTankMarkers(ctx, tks, baseX, baseY, tileW, tileH);
+  else mapViewDrawTanks(ctx, tks, originX, originY, tileW, tileH, edgeX, edgeY);
   overlayDrawTankLabels(ctx, ov, tks, baseX, baseY);
   mapViewDrawLGMs(ctx, lgms, originX, originY, tileW, tileH, edgeX, edgeY);
 

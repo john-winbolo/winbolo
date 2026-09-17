@@ -38,6 +38,7 @@
 #include "logviewer.h"
 #include "lv_host.h"
 #include "lv_stats.h"
+#include "../gui/sdl3/gfx_settings.h"  /* the simplified view setting */
 
 #include <SDL3/SDL.h>
 
@@ -420,6 +421,17 @@ static void loadPreferences(void) {
     lv_platform_config_get_string("LOGVIEWER", "Neutral Colour", "10", val, sizeof(val));
     g_lv->tc[16] = (BYTE)atoi(val);
     if (g_lv->tc[16] > 16) g_lv->tc[16] = 16;
+
+    /* The simplified view, from the game's own [SETTINGS] section rather than
+       a key of this viewer's. Both read the same preferences document, and a
+       player who has asked for a readable zoomed-out map has asked once.
+
+       The game's sub-option, SimplifiedOverviewOnly, is not read: it chooses
+       between the Map Overview window and the full screen map, and this
+       viewer is neither. */
+    lv_platform_config_get_string("SETTINGS", "SimplifiedZoomOut", "Yes",
+                                  line, sizeof(line));
+    gfxSetSimplifiedZoomOut(tolower((unsigned char)line[0]) != 'n');
 
     /* Playback Speed */
     lv_platform_config_get_string("LOGVIEWER", "Playback Speed", "1", val, sizeof(val));
