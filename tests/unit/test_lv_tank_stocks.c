@@ -220,6 +220,15 @@ int run_lv_team_colours_events(void) {
   char location[1] = "";
   BYTE slot;
   UT_ASSERT(lv != NULL);
+  /* This test drives the alliance calls directly rather than loading a log, so
+   * stand in for the setup every load path does: size the view buffers, then
+   * lv_screenSetup. It creates the pill and base stores those calls walk on
+   * their way out — without it lv_screenNumBases reads through a NULL — and it
+   * resets the players table, a file static that would otherwise arrive
+   * holding whatever the previous test in this process left in it. */
+  lv_screenSetSizeX(30);
+  lv_screenSetSizeY(30);
+  lv_screenSetup();
 
   for (slot = 0; slot < 4; slot++) {
     char name[8];
