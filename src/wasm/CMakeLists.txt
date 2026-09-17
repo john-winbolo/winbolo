@@ -195,6 +195,13 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/sdl3imgui.cpp
     ${SRC_ROOT}/gui/sdl3/imgui_steam_nav.cpp
     ${SRC_ROOT}/gui/sdl3/sdl3imgui_tablet.cpp
+    # The scenario panel's display list and a scenario's map markers.
+    # sdl3imgui.cpp above calls the drawer, and sdl3draw.c and
+    # overview_view.cpp below both call the marker, so this target needs
+    # them to link whether or not it has a slot of its own to draw the
+    # panel in yet.
+    ${SRC_ROOT}/gui/sdl3/scenario_panel_draw.cpp
+    ${SRC_ROOT}/gui/sdl3/scenario_marker.c
     ${SRC_ROOT}/gui/sdl3/luabrainshandler.c
     ${SRC_ROOT}/gui/sdl3/minimap_render.c
     ${SRC_ROOT}/gui/sdl3/cursor.c
