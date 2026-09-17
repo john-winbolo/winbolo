@@ -2548,6 +2548,14 @@
 #define STR_DLGLOBBY_RULES_COL_SCENARIO     2332
 #define STR_DLGLOBBY_RULES_COL_CHANGE       2333
 
+/* The same popup's per-rule detail: the button on a row that opens it, the
+ * caption naming the rule as the manifest spells it, and the one label the
+ * four columns above do not already provide. The other three lines in there
+ * are labelled with the column ids, which are the same words. */
+#define STR_DLGLOBBY_RULE_DETAIL_TITLE      2432
+#define STR_DLGLOBBY_RULES_INFO             2433
+#define STR_DLGLOBBY_RULES_RANGE            2434
+
 /* Rule descriptions */
 
 /* What each simulation rule governs, one line apiece, shown wherever a rule

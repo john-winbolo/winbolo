@@ -1240,140 +1240,140 @@ below the tables say which.
 
 **Tank.**
 
-| Rule | Classic | Range |
-|---|---|---|
-| `tank_reload_ticks` | 13 | 0 to 255 |
-| `tank_full_shells` | 40 | 0 to 255 |
-| `tank_full_mines` | 40 | 0 to 255 |
-| `tank_full_trees` | 40 | 0 to 255 |
-| `tank_full_armour` | 40 | 0 to 255 |
-| `tank_death_ticks` | 255 | 0 to 65535 |
-| `tank_water_ticks` | 15 | 1 to 255 |
-| `shell_damage` | 5 | 1 to 255 |
-| `mine_damage` | 15 | 1 to 255; fatal tank hits use two-thirds of the modified damage, rounded up |
-| `just_fired_ticks` | 101 | 0 to 255 |
-| `gunsight_min` | 2 | 1 to 255 |
-| `gunsight_max` | 14 | 1 to 255 |
-| `tank_accel_rate` | 0.25 | 0.01 to 16.0 |
-| `tank_decel_rate` | 0.25 | 0.01 to 16.0 |
-| `tank_brake_rate` | 0.25 | 0.01 to 16.0 |
-| `tank_autoslow_rate` | 0.25 | 0.01 to 16.0 |
-| `tank_min_move` | 6 | 0 to 255 |
+| Rule | Classic | Range | Description |
+|---|---|---|---|
+| `tank_reload_ticks` | 13 | 0 to 255 | Ticks a tank waits between shots. |
+| `tank_full_shells` | 40 | 0 to 255 | The most shells a tank can hold. |
+| `tank_full_mines` | 40 | 0 to 255 | The most mines a tank can hold. |
+| `tank_full_trees` | 40 | 0 to 255 | The most trees a tank can hold. |
+| `tank_full_armour` | 40 | 0 to 255 | The most armour a tank can hold, and what it starts a life with. |
+| `tank_death_ticks` | 255 | 0 to 65535 | Ticks a destroyed tank waits before it comes back. |
+| `tank_water_ticks` | 15 | 1 to 255 | Ticks a tank wades in a river before the water costs it a shell and a mine. |
+| `shell_damage` | 5 | 1 to 255 | Armour a shell takes off the tank or base it hits. |
+| `mine_damage` | 15 | 1 to 255; fatal tank hits use two-thirds of the modified damage, rounded up | Armour a mine takes off the tank that sets it off. |
+| `just_fired_ticks` | 101 | 0 to 255 | Ticks a tank stays visible in the trees after firing. |
+| `gunsight_min` | 2 | 1 to 255 | The shortest the gunsight range winds down to. |
+| `gunsight_max` | 14 | 1 to 255 | The longest the gunsight range winds out to. |
+| `tank_accel_rate` | 0.25 | 0.01 to 16.0 | Speed a tank gains each tick while the accelerate key is held. |
+| `tank_decel_rate` | 0.25 | 0.01 to 16.0 | Speed a tank loses each tick while it is above the terrain's cap. |
+| `tank_brake_rate` | 0.25 | 0.01 to 16.0 | Speed a tank loses each tick while the slow key is held. |
+| `tank_autoslow_rate` | 0.25 | 0.01 to 16.0 | Speed a tank loses each tick when auto-slowdown is on and no key is held. |
+| `tank_min_move` | 6 | 0 to 255 | Speed a tank has to build up before it moves a step. |
 
 **Terrain: the cap a tank's speed clamps to.**
 
-| Rule | Classic | Range |
-|---|---|---|
-| `speed_road` | 16 | 0 to 63 |
-| `speed_grass` | 12 | 0 to 63 |
-| `speed_forest` | 6 | 0 to 63 |
-| `speed_river` | 3 | 0 to 63 |
-| `speed_swamp` | 3 | 0 to 63 |
-| `speed_crater` | 3 | 0 to 63 |
-| `speed_rubble` | 3 | 0 to 63 |
-| `speed_boat` | 16 | 0 to 63 |
-| `speed_deep_sea` | 3 | 0 to 63 |
-| `speed_refuel_base` | 16 | 0 to 63 |
+| Rule | Classic | Range | Description |
+|---|---|---|---|
+| `speed_road` | 16 | 0 to 63 | The fastest a tank may drive on a road. |
+| `speed_grass` | 12 | 0 to 63 | The fastest a tank may drive on grass. |
+| `speed_forest` | 6 | 0 to 63 | The fastest a tank may drive through forest. |
+| `speed_river` | 3 | 0 to 63 | The fastest a tank may drive through a river, and the speed at or below which it wades. |
+| `speed_swamp` | 3 | 0 to 63 | The fastest a tank may drive through swamp. |
+| `speed_crater` | 3 | 0 to 63 | The fastest a tank may drive through a crater. |
+| `speed_rubble` | 3 | 0 to 63 | The fastest a tank may drive over rubble. |
+| `speed_boat` | 16 | 0 to 63 | The fastest a boat carries a tank, and the speed it leaves the boat with. |
+| `speed_deep_sea` | 3 | 0 to 63 | The fastest a tank may drive on deep sea. |
+| `speed_refuel_base` | 16 | 0 to 63 | The fastest a tank may drive over a base it is allowed onto. |
 
 **Terrain: bradians turned per tick.**
 
-| Rule | Classic | Range |
-|---|---|---|
-| `turn_road` | 1 | 0.0 to 16.0 |
-| `turn_grass` | 1 | 0.0 to 16.0 |
-| `turn_forest` | 0.5 | 0.0 to 16.0 |
-| `turn_river` | 0.25 | 0.0 to 16.0 |
-| `turn_swamp` | 0.25 | 0.0 to 16.0 |
-| `turn_crater` | 0.25 | 0.0 to 16.0 |
-| `turn_rubble` | 0.25 | 0.0 to 16.0 |
-| `turn_boat` | 1 | 0.0 to 16.0 |
-| `turn_deep_sea` | 0.5 | 0.0 to 16.0 |
-| `turn_refuel_base` | 1 | 0.0 to 16.0 |
+| Rule | Classic | Range | Description |
+|---|---|---|---|
+| `turn_road` | 1 | 0.0 to 16.0 | How fast a tank turns on a road. |
+| `turn_grass` | 1 | 0.0 to 16.0 | How fast a tank turns on grass. |
+| `turn_forest` | 0.5 | 0.0 to 16.0 | How fast a tank turns in forest. |
+| `turn_river` | 0.25 | 0.0 to 16.0 | How fast a tank turns in a river. |
+| `turn_swamp` | 0.25 | 0.0 to 16.0 | How fast a tank turns in swamp. |
+| `turn_crater` | 0.25 | 0.0 to 16.0 | How fast a tank turns in a crater. |
+| `turn_rubble` | 0.25 | 0.0 to 16.0 | How fast a tank turns on rubble. |
+| `turn_boat` | 1 | 0.0 to 16.0 | How fast a tank turns while it is on a boat. |
+| `turn_deep_sea` | 0.5 | 0.0 to 16.0 | How fast a tank turns on deep sea. |
+| `turn_refuel_base` | 1 | 0.0 to 16.0 | How fast a tank turns on a base it is allowed onto. |
 
 **Shells.**
 
-| Rule | Classic | Range |
-|---|---|---|
-| `shell_life` | 8 | 1 to 255 |
-| `shell_speed` | 32 | 1 to 255 |
-| `shell_start_add` | 5 | 0 and up |
+| Rule | Classic | Range | Description |
+|---|---|---|---|
+| `shell_life` | 8 | 1 to 255 | Ticks a shell flies for each unit of gunsight range. |
+| `shell_speed` | 32 | 1 to 255 | How far a shell travels each tick. |
+| `shell_start_add` | 5 | 0 and up | How far ahead of the tank a shell starts, counted in ticks of its own travel. |
 
 **Builder.**
 
-| Rule | Classic | Range |
-|---|---|---|
-| `lgm_build_ticks` | 20 | 0 to 255 |
-| `lgm_cost_road` | 2 | 0 and up |
-| `lgm_cost_building` | 2 | 0 and up |
-| `lgm_cost_repair_building` | 1 | 0 and up |
-| `lgm_cost_pill_repair` | 1 | 0 and up |
-| `lgm_cost_boat` | 20 | 0 and up |
-| `lgm_cost_pill_new` | 4 | 0 and up |
-| `lgm_cost_mine` | 1 | 0 and up |
-| `lgm_pill_repair_load` | 4 | 1 to 255 |
-| `lgm_gather_trees` | 4 | 1 to 255 |
-| `lgm_helicopter_speed` | 3 | 1 to 255 |
+| Rule | Classic | Range | Description |
+|---|---|---|---|
+| `lgm_build_ticks` | 20 | 0 to 255 | Ticks the builder spends at the square doing a job. |
+| `lgm_cost_road` | 2 | 0 and up | Trees the builder spends to lay a road. |
+| `lgm_cost_building` | 2 | 0 and up | Trees the builder spends to put up a wall. |
+| `lgm_cost_repair_building` | 1 | 0 and up | Trees the builder spends to mend a damaged wall. |
+| `lgm_cost_pill_repair` | 1 | 0 and up | Trees one unit of pillbox repair costs. |
+| `lgm_cost_boat` | 20 | 0 and up | Trees the builder spends to build a boat. |
+| `lgm_cost_pill_new` | 4 | 0 and up | Trees the builder spends to place a pillbox the tank is carrying. |
+| `lgm_cost_mine` | 1 | 0 and up | Mines the builder spends to lay a mine. |
+| `lgm_pill_repair_load` | 4 | 1 to 255 | Units of pillbox repair the builder carries in one trip. |
+| `lgm_gather_trees` | 4 | 1 to 255 | Trees the builder brings back from one square of forest. |
+| `lgm_helicopter_speed` | 3 | 1 to 255 | How far the builder travels each tick while he parachutes in. |
 
 **Pillbox.**
 
-| Rule | Classic | Range |
-|---|---|---|
-| `pill_max_armour` | 15 | 1 to 255 |
-| `pill_attack_ticks` | 100 | 1 to 255 |
-| `pill_attack_min_ticks` | 6 | 1 and up |
-| `pill_cooldown_ticks` | 32 | 0 to 255 |
-| `pill_repair_amount` | 4 | 1 and up |
-| `pill_range` | 2048 | 0 to 65535 |
+| Rule | Classic | Range | Description |
+|---|---|---|---|
+| `pill_max_armour` | 15 | 1 to 255 | The most armour a pillbox holds, and what a newly built one starts with. |
+| `pill_attack_ticks` | 100 | 1 to 255 | Ticks between shots from a pillbox nobody has hit. |
+| `pill_attack_min_ticks` | 6 | 1 and up | The shortest the interval between a hurt pillbox's shots falls to. |
+| `pill_cooldown_ticks` | 32 | 0 to 255 | Ticks an angry pillbox waits before its interval eases back by one. |
+| `pill_repair_amount` | 4 | 1 and up | Armour a pillbox gains from one unit of repair. |
+| `pill_range` | 2048 | 0 to 65535 | How far a pillbox looks for a tank to shoot at. |
 
 **Base.**
 
-| Rule | Classic | Range |
-|---|---|---|
-| `base_full_armour` | 90 | 0 to 255 |
-| `base_full_shells` | 90 | 0 to 255 |
-| `base_full_mines` | 90 | 0 to 255 |
-| `base_capture_armour` | 9 | 0 and up |
-| `base_hit_armour` | 4 | 0 and up |
-| `base_min_armour` | 10 | 0 and up |
-| `base_min_shells` | 0 | 0 and up |
-| `base_min_mines` | 0 | 0 and up |
-| `base_armour_give` | 5 | 0 and up |
-| `base_shells_give` | 1 | 0 and up |
-| `base_mines_give` | 1 | 0 and up |
-| `base_refuel_armour_ticks` | 46 | 1 to 255 |
-| `base_refuel_shells_ticks` | 7.5 | 0.5 to 255.0 |
-| `base_refuel_mines_ticks` | 7.5 | 0.5 to 255.0 |
-| `base_regen_ticks` | 1000 | 1 and up |
+| Rule | Classic | Range | Description |
+|---|---|---|---|
+| `base_full_armour` | 90 | 0 to 255 | The most armour a base holds. |
+| `base_full_shells` | 90 | 0 to 255 | The most shells a base holds. |
+| `base_full_mines` | 90 | 0 to 255 | The most mines a base holds. |
+| `base_capture_armour` | 9 | 0 and up | The armour at or below which a base is taken by the next tank to drive onto it. |
+| `base_hit_armour` | 4 | 0 and up | The armour a base has to be above before an enemy shell can hit it. |
+| `base_min_armour` | 10 | 0 and up | Armour a base keeps back rather than hand out. |
+| `base_min_shells` | 0 | 0 and up | Shells a base keeps back rather than hand out. |
+| `base_min_mines` | 0 | 0 and up | Mines a base keeps back rather than hand out. |
+| `base_armour_give` | 5 | 0 and up | Armour a base hands a tank each time it refuels one. |
+| `base_shells_give` | 1 | 0 and up | Shells a base hands a tank each time it refuels one. |
+| `base_mines_give` | 1 | 0 and up | Mines a base hands a tank each time it refuels one. |
+| `base_refuel_armour_ticks` | 46 | 1 to 255 | Ticks a base waits between handing out one lot of armour and the next. |
+| `base_refuel_shells_ticks` | 7.5 | 0.5 to 255.0 | Ticks a base waits between handing out one lot of shells and the next. |
+| `base_refuel_mines_ticks` | 7.5 | 0.5 to 255.0 | Ticks a base waits between handing out one lot of mines and the next. |
+| `base_regen_ticks` | 1000 | 1 and up | Ticks between a base adding one armour, one shell and one mine to its own stock. |
 
 **Terrain destruction and explosions.**
 
-| Rule | Classic | Range |
-|---|---|---|
-| `building_life` | 4 | 1 to 255 |
-| `rubble_life` | 4 | 1 to 255 |
-| `grass_life` | 4 | 1 to 255 |
-| `swamp_life` | 3 | 1 to 255 |
-| `mine_fuse_ticks` | 10 | 1 to 255 |
-| `big_explosion_threshold` | 20 | 0 to 510 |
+| Rule | Classic | Range | Description |
+|---|---|---|---|
+| `building_life` | 4 | 1 to 255 | Shell hits a wall stands before it falls to rubble. |
+| `rubble_life` | 4 | 1 to 255 | Shell hits rubble stands before it washes away to river. |
+| `grass_life` | 4 | 1 to 255 | Shell hits grass stands before it turns to swamp. |
+| `swamp_life` | 3 | 1 to 255 | Shell hits swamp stands before it turns to river. |
+| `mine_fuse_ticks` | 10 | 1 to 255 | Ticks between a mine being set off and it going up. |
+| `big_explosion_threshold` | 20 | 0 to 510 | Shells and mines a dying tank has to be carrying to go up in a big explosion. |
 
 **Tree growth.**
 
-| Rule | Classic | Range |
-|---|---|---|
-| `tree_grow_ticks` | 3000 | 1 and up |
-| `tree_grow_initial_ticks` | 30000 | 1 and up |
-| `tree_weight_forest` | 100 | -32768 to 32767 |
-| `tree_weight_grass` | 25 | -32768 to 32767 |
-| `tree_weight_river` | 2 | -32768 to 32767 |
-| `tree_weight_boat` | 1 | -32768 to 32767 |
-| `tree_weight_deep_sea` | 0 | -32768 to 32767 |
-| `tree_weight_swamp` | 2 | -32768 to 32767 |
-| `tree_weight_rubble` | -2 | -32768 to 32767 |
-| `tree_weight_building` | -20 | -32768 to 32767 |
-| `tree_weight_half_building` | -15 | -32768 to 32767 |
-| `tree_weight_crater` | -2 | -32768 to 32767 |
-| `tree_weight_road` | -100 | -32768 to 32767 |
-| `tree_weight_mine` | -7 | -32768 to 32767 |
+| Rule | Classic | Range | Description |
+|---|---|---|---|
+| `tree_grow_ticks` | 3000 | 1 and up | Ticks before the best square found so far grows its tree. |
+| `tree_grow_initial_ticks` | 30000 | 1 and up | Ticks before the first tree of a round grows. |
+| `tree_weight_forest` | 100 | -32768 to 32767 | What forest counts for in a square's tree growing score. |
+| `tree_weight_grass` | 25 | -32768 to 32767 | What grass counts for in a square's tree growing score. |
+| `tree_weight_river` | 2 | -32768 to 32767 | What a river counts for in a square's tree growing score. |
+| `tree_weight_boat` | 1 | -32768 to 32767 | What a boat counts for in a square's tree growing score. |
+| `tree_weight_deep_sea` | 0 | -32768 to 32767 | What deep sea counts for in a square's tree growing score. |
+| `tree_weight_swamp` | 2 | -32768 to 32767 | What swamp counts for in a square's tree growing score. |
+| `tree_weight_rubble` | -2 | -32768 to 32767 | What rubble counts for in a square's tree growing score. |
+| `tree_weight_building` | -20 | -32768 to 32767 | What a wall counts for in a square's tree growing score. |
+| `tree_weight_half_building` | -15 | -32768 to 32767 | What a damaged wall counts for in a square's tree growing score. |
+| `tree_weight_crater` | -2 | -32768 to 32767 | What a crater counts for in a square's tree growing score. |
+| `tree_weight_road` | -100 | -32768 to 32767 | What a road counts for in a square's tree growing score; a pill or base square counts the same. |
+| `tree_weight_mine` | -7 | -32768 to 32767 | What a laid mine adds to a square's tree growing score, on top of the terrain under it. |
 
 **Pairs.** A value inside its own range can still be refused with
 `SCN_OP_PAIR` when it breaks one of these:

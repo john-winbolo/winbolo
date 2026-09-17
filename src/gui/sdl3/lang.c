@@ -2231,9 +2231,6 @@ static const LangEntry langTable[] = {
     {2278, "Add Rule"},
     {2279, "Filter"},
     {2280, "No room for another rule"},
-    {2429, "Add"},
-    {2430, "range"},
-    {2431, "Select a rule to see what it does"},
     {2281, "Validate"},
     {2282, "Issues"},
     {2283, "No problems found"},
@@ -2382,6 +2379,12 @@ static const LangEntry langTable[] = {
     {2426, "{string1} to {string2}"},
     {2427, "{string1} and up"},
     {2428, "{string1}, at most {string2}"},
+    {2429, "Add"},
+    {2430, "range"},
+    {2431, "Select a rule to see what it does"},
+    {2432, "Rule: {string1}"},
+    {2433, "Info"},
+    {2434, "Range"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
