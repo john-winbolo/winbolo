@@ -3587,6 +3587,12 @@ struct OverviewSnapshot {
    * network thread writes. */
   ClientPing        pings[MAX_CLIENT_PINGS];
   int               pingCount;
+
+  /* A scenario's map markers, taken here for the reason the pings are: the
+   * overview's render half reads this snapshot and never the live store the
+   * control events write. Kept whole and by id, so a cleared marker crosses
+   * as the inactive row it is. */
+  ClientScnMarker   scnMarkers[SCN_MARKERS_MAX];
 };
 
 /* Whether an entity standing on (mapX, mapY) may be drawn: only a square the
@@ -3713,6 +3719,7 @@ void clientSimFillOverviewSnapshot(ClientSim *cs, OverviewSnapshot *s) {
   s->windowCentreY     = 0.0f;
   s->itemLabelCount = 0;
   s->pingCount     = 0;
+  memset(s->scnMarkers, 0, sizeof(s->scnMarkers));
   s->haveMap       = (cs != NULL);
   if (cs == NULL) return;
 
@@ -3721,6 +3728,9 @@ void clientSimFillOverviewSnapshot(ClientSim *cs, OverviewSnapshot *s) {
    * only ever read under the same lock the rest of this fill runs under. */
   s->pingCount = clientSimGetPings(cs, (uint32_t)SDL_GetTicks(), s->pings,
                                    MAX_CLIENT_PINGS);
+
+  /* The scenario's markers, on the same terms. */
+  memcpy(s->scnMarkers, cs->scnMarkers, sizeof(s->scnMarkers));
 
   /* Generation 0 only exists between a round reset and the seed that follows
    * it, so a match on 0 can be a snapshot filled in that same window a round
@@ -3895,6 +3905,10 @@ const ClientPing *overviewSnapshotPings(const OverviewSnapshot *s) {
 
 int overviewSnapshotPingCount(const OverviewSnapshot *s) {
   return s ? s->pingCount : 0;
+}
+
+const ClientScnMarker *overviewSnapshotScnMarkers(const OverviewSnapshot *s) {
+  return s ? &s->scnMarkers[0] : NULL;
 }
 
 const OverviewItemLabel *overviewSnapshotItemLabels(const OverviewSnapshot *s) {

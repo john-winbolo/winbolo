@@ -3890,6 +3890,104 @@ static void renderScenarioPanel(ClientSim *cs) {
     ImGui::PopStyleVar();
 }
 
+/* -------------------------------------------------------
+ * The scenario announcement
+ *
+ * One line across the game view, for the few seconds a
+ * scenario asked for. It sits in the view's upper third
+ * rather than dead centre, which is where the player's own
+ * tank is.
+ *
+ * Drawn on the foreground draw list and not in a window at
+ * all. A window across the middle of the screen would take
+ * the mouse with it and stop the player firing under it,
+ * and a draw list has no hit test to turn off — there is
+ * nothing there to click on.
+ *
+ * Outlined rather than merely coloured: the line lands over
+ * whatever terrain happens to be under it, and one colour
+ * against grass is a line somebody cannot read.
+ *
+ * The bytes are the script's own and are not localised, so
+ * nothing on this path goes near the language table.
+ * ------------------------------------------------------- */
+
+/* The line's height in panel units, so it scales with the game's zoom the
+   same way the panel's own text does. */
+#define SCN_ANNOUNCE_UNITS 20.0f
+
+/* How far down the game view the line sits, as a fraction of its height. */
+#define SCN_ANNOUNCE_DOWN 0.28f
+
+/* The last of an announcement's life spent fading, in ticks. Long enough to
+   read as going rather than as cut off; ticks run at a hundred a second, so
+   this is a third of one. */
+#define SCN_ANNOUNCE_FADE_TICKS 33u
+
+static void renderScenarioAnnounce(ClientSim *cs) {
+    if (cs == nullptr || uiModeIsTablet()) return;
+
+    uint16_t    ticks       = 0;
+    uint32_t    arrivedTick = 0;
+    const char *text        = clientSimGetScnAnnounce(cs, &ticks, &arrivedTick);
+    uint32_t    left        = 0;
+    if (!scnAnnounceRemaining(text, arrivedTick, ticks,
+                              clientSimGetLastServerTick(cs), &left)) {
+        return;
+    }
+
+    /* The same zoom the panel window scales by, so the two agree about what
+       one unit is worth on this screen. */
+    int rawZoom = sdl3DrawGetZoomFactor();
+    if (rawZoom < 1) rawZoom = 1;
+    float gameScale = 1.0f;
+    sdl3DrawGetGameRect(nullptr, nullptr, nullptr, nullptr, &gameScale);
+    if (gameScale <= 0.0f) gameScale = 1.0f;
+    const float scale = (float)rawZoom * gameScale;
+
+    float gx, gy, gw, gh, gtw, gth, rx0, ry0, rx1, ry1;
+    if (!sdl3DrawGetMainViewGameRect(&gx, &gy, &gw, &gh, &gtw, &gth)) return;
+    if (!sdl3DrawGameToRenderCoords(gx, gy, &rx0, &ry0)) return;
+    if (!sdl3DrawGameToRenderCoords(gx + gw, gy + gh, &rx1, &ry1)) return;
+
+    ImFont *font = ImGui::GetFont();
+    if (font == nullptr) return;
+
+    float height = SCN_ANNOUNCE_UNITS * scale;
+    if (height < 8.0f) height = 8.0f;
+    const ImVec2 measured = font->CalcTextSizeA(height, FLT_MAX, 0.0f, text);
+
+    const float px = (rx0 + rx1) * 0.5f - measured.x * 0.5f;
+    const float py = ry0 + (ry1 - ry0) * SCN_ANNOUNCE_DOWN;
+
+    /* Full strength until the last stretch, then out. */
+    float fade = 1.0f;
+    if (left < SCN_ANNOUNCE_FADE_TICKS) {
+        fade = (float)left / (float)SCN_ANNOUNCE_FADE_TICKS;
+    }
+    const int alpha = (int)(255.0f * fade);
+    if (alpha <= 0) return;
+
+    ImDrawList *dl = ImGui::GetForegroundDrawList();
+    if (dl == nullptr) return;
+
+    /* The outline: the same line in near-black, one stroke out in each of the
+       eight directions, so the letters keep an edge whichever way the terrain
+       under them happens to run. */
+    const ImU32 edge = IM_COL32(0, 0, 0, alpha);
+    const float o    = (scale > 1.0f) ? scale : 1.0f;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            dl->AddText(font, height,
+                        ImVec2(px + (float)dx * o, py + (float)dy * o),
+                        edge, text);
+        }
+    }
+    dl->AddText(font, height, ImVec2(px, py),
+                IM_COL32(255, 255, 255, alpha), text);
+}
+
 /* About modal + linked markdown popups live in dialogs/imgui_about.cpp so
  * the welcome screen (its own ImGui context) can show the same dialog. */
 
@@ -7254,6 +7352,7 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     renderSendMsgPanel(cs);
     renderPlayersPanel(cs);
     renderScenarioPanel(cs);
+    renderScenarioAnnounce(cs);
 
     /* Modal dialogs */
     aboutPopupRender();

@@ -146,7 +146,9 @@ typedef enum {
  *   bar        6       x, y, w, h, colour, value (u16), max (u16)      10
  *   timer      7       x, y, colour, size, align, mode, tick (u32)     11
  *
- * tile is a tilenum.h id and fits a byte (the largest today is 146).
+ * tile is a tilenum.h id and fits a byte: the largest naming a slot on the
+ * sheet is CRATER_RIGHT at 181, and TANK_TRANSPARENT, the sentinel above
+ * every slot, is 255.
  * tick is a game tick as serverSimGetTick answers it. A bar's value and
  * max are 16-bit so a bar can show a real total rather than one capped
  * at 255. */

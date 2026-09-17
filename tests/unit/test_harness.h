@@ -2977,6 +2977,10 @@ int run_scenario_panel_roundtrip(void);
 /* And the timer primitive's text: the tick difference the drawer turns into
  * minutes and seconds, held to exact strings with no renderer behind it. */
 int run_scenario_panel_timer_text(void);
+/* And whether a scenario's announcement is still on screen, and for how
+ * long — the other piece of the presentation's arithmetic with no renderer
+ * in it. */
+int run_scenario_announce_remaining(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or

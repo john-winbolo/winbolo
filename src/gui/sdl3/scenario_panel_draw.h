@@ -30,6 +30,7 @@
 #ifndef SCENARIO_PANEL_DRAW_H
 #define SCENARIO_PANEL_DRAW_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -102,6 +103,73 @@ static inline void scnPanelTimerText(uint32_t now, uint32_t target,
     secs    = (unsigned int)(seconds % 60u);
     snprintf(out, outSize, "%u:%02u", mins, secs);
 }
+
+/*********************************************************
+ *NAME:          scnAnnounceRemaining
+ *PURPOSE:
+ *  Whether a scenario's announcement is still on screen,
+ *  and how many ticks it has left.
+ *
+ *  An announcement carries the tick it landed at and how
+ *  long it was asked to stay up, both on the tick the
+ *  server counts in, and every viewer works the rest out
+ *  against its own clock — the same bargain the timer
+ *  primitive makes. Nothing to show is an empty text, a
+ *  duration of nothing, or a clock that has reached the end
+ *  of one; all three answer false and leave the remainder
+ *  zero.
+ *
+ *  It sits beside the timer's text above because the two
+ *  are the same kind of thing: the arithmetic under a
+ *  scenario's presentation, with no renderer in it, which
+ *  is what lets a test hold either to a table of answers.
+ *
+ *ARGUMENTS:
+ *  text        - the announcement, or NULL
+ *  arrivedTick - the tick it landed at
+ *  ticks       - how long it was asked to stay up
+ *  nowTick     - the tick the viewer is on
+ *  outLeft     - receives the ticks left; may be NULL
+ *********************************************************/
+static inline bool scnAnnounceRemaining(const char *text, uint32_t arrivedTick,
+                                        uint16_t ticks, uint32_t nowTick,
+                                        uint32_t *outLeft) {
+    uint32_t elapsed;
+
+    if (outLeft != NULL) *outLeft = 0;
+    if (text == NULL || text[0] == '\0' || ticks == 0) return false;
+
+    /* A clock behind the arrival has not reached it yet, which is the whole
+     * duration still to run rather than a negative age. */
+    elapsed = (nowTick > arrivedTick) ? (nowTick - arrivedTick) : 0u;
+    if (elapsed >= (uint32_t)ticks) return false;
+
+    if (outLeft != NULL) *outLeft = (uint32_t)ticks - elapsed;
+    return true;
+}
+
+/*********************************************************
+ *NAME:          scnPanelColourRGBA
+ *PURPOSE:
+ *  The palette entry an index names, as RGBA bytes.
+ *
+ *  False for an index that draws nothing — 0, one of the
+ *  four reserved entries, or one past the palette — and the
+ *  outputs are left alone. Any output pointer may be NULL.
+ *
+ *  The table is in scenario_panel_draw.cpp and this is the
+ *  way out of it, so the panel drawn through ImGui and the
+ *  map marker drawn through the SDL renderer take their
+ *  sixteen colours from one place rather than from two
+ *  copies that would drift the first time a skin changed
+ *  one.
+ *
+ *ARGUMENTS:
+ *  index   - a ScnPanelColour
+ *  r/g/b/a - receive the colour; each may be NULL
+ *********************************************************/
+bool scnPanelColourRGBA(uint8_t index, uint8_t *r, uint8_t *g, uint8_t *b,
+                        uint8_t *a);
 
 /* What the drawer needs from the frontend around it.
  *

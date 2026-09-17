@@ -1469,6 +1469,13 @@ const OverviewItemLabel *overviewSnapshotItemLabels(const OverviewSnapshot *s);
 const ClientPing *overviewSnapshotPings(const OverviewSnapshot *s);
 int               overviewSnapshotPingCount(const OverviewSnapshot *s);
 
+/* The scenario's map markers, by id, SCN_MARKERS_MAX of them. Never NULL for
+ * a snapshot that exists; a marker nothing has set, or one a scenario
+ * cleared, reads back with active false. Taken with the rest of the frame's
+ * reads, so the overview's render half never touches the live store the
+ * control events write. */
+const ClientScnMarker *overviewSnapshotScnMarkers(const OverviewSnapshot *s);
+
 void         clientSimShowMessages(ClientSim *cs, BYTE msgType, bool isShown);
 void         clientSimNetStatusMessage(ClientSim *cs, char *messageStr);
 

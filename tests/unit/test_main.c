@@ -1553,6 +1553,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_panel_boundaries",                       run_scenario_panel_boundaries                       },
     { "scenario_panel_roundtrip",                        run_scenario_panel_roundtrip                        },
     { "scenario_panel_timer_text",                       run_scenario_panel_timer_text                       },
+    { "scenario_announce_remaining",                     run_scenario_announce_remaining                     },
     { "scn_presentation_codec_bodies",                   run_scn_presentation_codec_bodies                   },
     { "scn_presentation_codec_refuses_short",            run_scn_presentation_codec_refuses_short            },
     { "scn_presentation_decoder_sets_broadcast",         run_scn_presentation_decoder_sets_broadcast         },

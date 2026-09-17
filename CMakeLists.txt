@@ -883,6 +883,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/clientmutex.c
     src/gui/sdl3/sdl3imgui.cpp
     src/gui/sdl3/scenario_panel_draw.cpp
+    src/gui/sdl3/scenario_marker.c
     src/gui/sdl3/imgui_steam_nav.cpp
     src/gui/sdl3/sdl3imgui_tablet.cpp
     src/gui/sdl3/sdl3draw.c
@@ -1549,6 +1550,10 @@ set(CLIENT_SOURCES
     # sprite_positions.c alone, so the log viewer and the wasm target can
     # compile it unchanged when their own slots are wired up.
     src/gui/sdl3/scenario_panel_draw.cpp
+    # A scenario's map markers, drawn with the SDL renderer beside the smart
+    # ping's. Its colours come out of the drawer above rather than a second
+    # copy of the palette.
+    src/gui/sdl3/scenario_marker.c
     src/gui/sdl3/cursor.c src/gui/sdl3/flags.c src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/winbolo.c src/gui/sdl3/gamefront.c
     src/client_frontend/client_frontend_connect.c
@@ -5682,6 +5687,7 @@ set(_unit_test_names
     scenario_panel_boundaries
     scenario_panel_roundtrip
     scenario_panel_timer_text
+    scenario_announce_remaining
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast

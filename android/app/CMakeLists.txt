@@ -216,6 +216,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/clientmutex.c
     ${PROJ_ROOT}/src/gui/sdl3/sdl3imgui.cpp
     ${PROJ_ROOT}/src/gui/sdl3/scenario_panel_draw.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/scenario_marker.c
     ${PROJ_ROOT}/src/gui/sdl3/imgui_steam_nav.cpp
     ${PROJ_ROOT}/src/gui/sdl3/sdl3imgui_tablet.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialog_backend.c

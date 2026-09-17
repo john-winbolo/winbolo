@@ -65,6 +65,7 @@ extern "C" {
 #include "mapview_overlay.h" /* mapViewDrawOverlay — the whole entity layer */
 #include "../ping_kinds.h"   /* pingDisplayAlpha */
 #include "ping_marker.h"     /* pingMarkerDraw — the on-map ping pass */
+#include "scenario_marker.h" /* scnMarkerDraw — a scenario's marks, beside it */
 #include "ping_overlay.h"    /* pingOverlayIsMenuOpen — the wheel's gate */
 #include "ring_band.h"       /* the respawn ring's band, sides and curve */
 }
@@ -1095,6 +1096,43 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
                 label.slot = pl[i].sender;
                 pingMarkerDraw(r, pl[i].kind, sx, sy, tilePx, tilePx,
                                ageMs, &label);
+            }
+        }
+
+        /* A scenario's map markers, beside the pings and on the same terms:
+         * the square's centre and one map square at this zoom, handed to the
+         * shared drawer that decides everything about how a marker looks. The
+         * classic view calls the same function with its own two numbers, so
+         * the two views cannot come to look different.
+         *
+         * Not held to the live-square filter either, for the ping's reason: a
+         * scenario marking ground is usually marking ground nobody can see. */
+        {
+            const ClientScnMarker *ml = overviewSnapshotScnMarkers(snap);
+            const screenTanks     *mt = (const screenTanks *)
+                                        overviewSnapshotTanks(snap);
+            Uint32 nowMs     = (Uint32)SDL_GetTicks();
+            float  zoomScale = overviewCameraZoomScale(&v->cam);
+            float  tilePx    = (float)OVERVIEW_TILE_PX * zoomScale;
+            for (int i = 0; ml != NULL && i < SCN_MARKERS_MAX; i++) {
+                uint8_t sqX = 0, sqY = 0;
+                float   sx = 0.0f, sy = 0.0f;
+                if (!ml[i].active) continue;
+                if (ml[i].kind == SCN_MARKER_KIND_FOLLOW) {
+                    /* The same tank list the sprites below are drawn from, so
+                     * a slot with no tank in this frame leaves no mark. */
+                    if (!scnMarkerTankSquare(mt, ml[i].slot, &sqX, &sqY)) {
+                        continue;
+                    }
+                } else {
+                    sqX = ml[i].x;
+                    sqY = ml[i].y;
+                }
+                overviewCameraWorldToScreen(&v->cam, w, h,
+                                            (float)sqX + 0.5f,
+                                            (float)sqY + 0.5f, &sx, &sy);
+                scnMarkerDraw(r, ml[i].colour, sx, sy, tilePx, tilePx,
+                              (unsigned int)nowMs);
             }
         }
 

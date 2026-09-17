@@ -511,3 +511,46 @@ int run_scenario_panel_timer_text(void) {
 
     return 0;
 }
+
+/* Whether an announcement is still on screen, and for how long.
+ *
+ * An announcement carries the tick it landed at and how long it was asked to
+ * stay up; every viewer works the rest out against its own clock, the same
+ * bargain the timer primitive makes. The rows below are the four answers
+ * that matter and are written out by hand. */
+int run_scenario_announce_remaining(void) {
+    uint32_t left;
+
+    /* Still up: landed at tick 1000 for five seconds, and the clock is two
+       seconds past it. Three seconds left. */
+    left = 0;
+    UT_ASSERT(scnAnnounceRemaining("Wave 3", 1000, (uint16_t)(5 * TICKS_PER_SEC),
+                                   1000 + 2 * TICKS_PER_SEC, &left));
+    UT_ASSERT(left == 3 * TICKS_PER_SEC);
+
+    /* Exactly expired: the tick it runs out on is already off, not the last
+       one it is on. */
+    left = 99;
+    UT_ASSERT(!scnAnnounceRemaining("Wave 3", 1000, (uint16_t)(5 * TICKS_PER_SEC),
+                                    1000 + 5 * TICKS_PER_SEC, &left));
+    UT_ASSERT(left == 0);
+
+    /* Expired long ago. */
+    left = 99;
+    UT_ASSERT(!scnAnnounceRemaining("Wave 3", 1000, (uint16_t)(5 * TICKS_PER_SEC),
+                                    9999999, &left));
+    UT_ASSERT(left == 0);
+
+    /* Nothing to show: no text, an empty one, and a duration of nothing. */
+    UT_ASSERT(!scnAnnounceRemaining(NULL, 1000, 500, 1000, NULL));
+    UT_ASSERT(!scnAnnounceRemaining("", 1000, 500, 1000, NULL));
+    UT_ASSERT(!scnAnnounceRemaining("Wave 3", 1000, 0, 1000, NULL));
+
+    /* A clock behind the arrival has not reached it yet, so the whole
+       duration is still to run rather than a negative age wrapping round. */
+    left = 0;
+    UT_ASSERT(scnAnnounceRemaining("Wave 3", 1000, 500, 900, &left));
+    UT_ASSERT(left == 500);
+
+    return 0;
+}

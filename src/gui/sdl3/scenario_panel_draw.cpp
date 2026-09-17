@@ -42,32 +42,50 @@
  * something gives them a colour. A skin may take this table over later —
  * the whole reason a script sends an index and not an RGB is that the
  * frontend owns what the index means.
+ *
+ * Bytes rather than a packed word, because the two things that read the
+ * table pack differently: the panel below wants IM_COL32 and the map marker
+ * drawn with the SDL renderer wants four arguments.
  */
-static const ImU32 kScnPanelPalette[SCN_PANEL_COLOURS] = {
-    IM_COL32(0, 0, 0, 0),            /* none — draws nothing */
-    IM_COL32(16, 16, 16, 255),       /* black */
-    IM_COL32(255, 255, 255, 255),    /* white */
-    IM_COL32(176, 176, 176, 255),    /* grey */
-    IM_COL32(88, 88, 88, 255),       /* grey_dark */
-    IM_COL32(232, 72, 64, 255),      /* red */
-    IM_COL32(88, 216, 104, 255),     /* green */
-    IM_COL32(96, 152, 248, 255),     /* blue */
-    IM_COL32(248, 216, 80, 255),     /* yellow */
-    IM_COL32(248, 152, 56, 255),     /* orange */
-    IM_COL32(88, 216, 224, 255),     /* cyan */
-    IM_COL32(232, 112, 208, 255),    /* magenta */
-    IM_COL32(0, 0, 0, 0),            /* reserved_12 */
-    IM_COL32(0, 0, 0, 0),            /* reserved_13 */
-    IM_COL32(0, 0, 0, 0),            /* reserved_14 */
-    IM_COL32(0, 0, 0, 0)             /* reserved_15 */
+static const struct { uint8_t r, g, b, a; }
+kScnPanelPalette[SCN_PANEL_COLOURS] = {
+    {   0,   0,   0,   0 },   /* none — draws nothing */
+    {  16,  16,  16, 255 },   /* black */
+    { 255, 255, 255, 255 },   /* white */
+    { 176, 176, 176, 255 },   /* grey */
+    {  88,  88,  88, 255 },   /* grey_dark */
+    { 232,  72,  64, 255 },   /* red */
+    {  88, 216, 104, 255 },   /* green */
+    {  96, 152, 248, 255 },   /* blue */
+    { 248, 216,  80, 255 },   /* yellow */
+    { 248, 152,  56, 255 },   /* orange */
+    {  88, 216, 224, 255 },   /* cyan */
+    { 232, 112, 208, 255 },   /* magenta */
+    {   0,   0,   0,   0 },   /* reserved_12 */
+    {   0,   0,   0,   0 },   /* reserved_13 */
+    {   0,   0,   0,   0 },   /* reserved_14 */
+    {   0,   0,   0,   0 }    /* reserved_15 */
 };
 
-/* The colour an index stands for, or 0 for one that draws nothing — index
- * 0, a reserved entry, and an index past the palette, which the parser
- * turns down but which costs nothing to hold here too. */
+/* The one way out of the table, for anything that is not the panel. */
+bool scnPanelColourRGBA(uint8_t index, uint8_t *r, uint8_t *g, uint8_t *b,
+                        uint8_t *a) {
+    if (index >= SCN_PANEL_COLOURS) return false;
+    if (kScnPanelPalette[index].a == 0) return false;
+    if (r) *r = kScnPanelPalette[index].r;
+    if (g) *g = kScnPanelPalette[index].g;
+    if (b) *b = kScnPanelPalette[index].b;
+    if (a) *a = kScnPanelPalette[index].a;
+    return true;
+}
+
+/* The colour an index stands for as ImGui takes it, or 0 for one that draws
+ * nothing — index 0, a reserved entry, and an index past the palette, which
+ * the parser turns down but which costs nothing to hold here too. */
 static ImU32 panelColour(uint8_t index) {
-    if (index >= SCN_PANEL_COLOURS) return 0;
-    return kScnPanelPalette[index];
+    uint8_t r = 0, g = 0, b = 0, a = 0;
+    if (!scnPanelColourRGBA(index, &r, &g, &b, &a)) return 0;
+    return IM_COL32(r, g, b, a);
 }
 
 /* Whether a colour is worth drawing at all: a fully transparent entry is
