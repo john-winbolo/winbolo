@@ -27,6 +27,9 @@
  * run_editor_pack_refuses_unbound
  *      — a manifest that is not built for its map is refused by the map form
  *        with the file untouched: that scenario is a mod
+ * run_editor_pack_survives_map_save
+ *      — a map save truncates the file, so the container is put back: the one
+ *        on the file afterwards is the one that was on it before
  */
 
 #include <stdint.h>
@@ -584,5 +587,140 @@ int run_editor_pack_refuses_unbound(void) {
     UT_ASSERT_MSG(same, "the refused pack changed the map file");
 
     remove(mapPath);
+    return 0;
+}
+
+/* A map save truncates the file, so the chunk has to be put back. This drives
+   the sequence meSaveToPath makes — read the map, write it out again over the
+   same path, then restore — and asks that the container that comes off the
+   file afterwards is the one that went on, byte for byte. */
+int run_editor_pack_survives_map_save(void) {
+    char             mapPath[1024];
+    char             err[ME_SCENARIO_PACK_ERR_LEN];
+    ScenarioManifest m;
+    MEScenarioPacked kept;
+    uint8_t         *file     = NULL;
+    size_t           fileLen  = 0;
+    uint8_t         *after    = NULL;
+    size_t           afterLen = 0;
+    const uint8_t   *chunk    = NULL;
+    size_t           chunkLen = 0;
+    uint8_t         *before   = NULL;
+    size_t           beforeLen = 0;
+    map              mp;
+    pillboxes        pb;
+    bases            bs;
+    starts           ss;
+    bool             ok;
+
+    meScenarioPackedInit(&kept);
+
+    UT_ASSERT_MSG(epCopyMap("editor_pack_save.map", mapPath, sizeof(mapPath)),
+                  "the map fixture could not be copied from %s/%s",
+                  WB_REPO_ROOT_DIR, EP_SOURCE_MAP);
+    epFillManifest(&m);
+
+    err[0] = '\0';
+    if (!meScenarioPackIntoMap(&m, kEpScript, strlen(kEpScript), mapPath, err,
+                               sizeof(err))) {
+        remove(mapPath);
+        UT_FAIL("the map was not packed: %s", err);
+    }
+
+    /* The container as it sits on the file, which is what has to survive. */
+    if (!epReadWhole(mapPath, &file, &fileLen) ||
+        !scnPackageFindInMap(file, fileLen, &chunk, &chunkLen)) {
+        free(file);
+        remove(mapPath);
+        UT_FAIL("the packed map carries no container to begin with");
+    }
+    beforeLen = chunkLen;
+    before    = (uint8_t *)malloc(beforeLen);
+    if (before == NULL) {
+        free(file);
+        remove(mapPath);
+        UT_FAIL("out of memory copying the container");
+    }
+    memcpy(before, chunk, beforeLen);
+    free(file);
+    file = NULL;
+
+    /* What the editor keeps from the open, and what it writes back after. */
+    if (!meScenarioPackedSet(&kept, &m, kEpScript, strlen(kEpScript))) {
+        free(before);
+        remove(mapPath);
+        UT_FAIL("the scenario the map came with could not be kept");
+    }
+
+    /* The map save itself: read, then mapWrite over the same path, which
+       truncates and takes the container with it. */
+    mapCreate(&mp);
+    pillsCreate(&pb);
+    basesCreate(&bs);
+    startsCreate(&ss);
+    ok = mapRead(mapPath, &mp, &pb, &bs, &ss) &&
+         mapWrite(mapPath, &mp, &pb, &bs, &ss);
+    mapDestroy(&mp);
+    pillsDestroy(&pb);
+    basesDestroy(&bs);
+    startsDestroy(&ss);
+    if (!ok) {
+        meScenarioPackedClear(&kept);
+        free(before);
+        remove(mapPath);
+        UT_FAIL("the map did not survive a read and a write");
+    }
+
+    /* Gone, until it is put back. */
+    if (epReadWhole(mapPath, &file, &fileLen) &&
+        scnPackageFindInMap(file, fileLen, &chunk, &chunkLen)) {
+        free(file);
+        meScenarioPackedClear(&kept);
+        free(before);
+        remove(mapPath);
+        UT_FAIL("mapWrite left a container on the file, so this case proves "
+                "nothing");
+    }
+    free(file);
+    file = NULL;
+
+    err[0] = '\0';
+    if (!meScenarioPackedRestore(&kept, mapPath, err, sizeof(err))) {
+        meScenarioPackedClear(&kept);
+        free(before);
+        remove(mapPath);
+        UT_FAIL("the kept scenario did not go back on: %s", err);
+    }
+    meScenarioPackedClear(&kept);
+
+    /* The same container, byte for byte. */
+    if (!epReadWhole(mapPath, &after, &afterLen) ||
+        !scnPackageFindInMap(after, afterLen, &chunk, &chunkLen)) {
+        free(after);
+        free(before);
+        remove(mapPath);
+        UT_FAIL("the saved map carries no container after the write-back");
+    }
+    ok = (chunkLen == beforeLen) && memcmp(chunk, before, beforeLen) == 0;
+    free(after);
+    free(before);
+    if (!ok) {
+        remove(mapPath);
+        UT_FAIL("the container after a map save is not the one before it");
+    }
+
+    /* And it is still a map. */
+    mapCreate(&mp);
+    pillsCreate(&pb);
+    basesCreate(&bs);
+    startsCreate(&ss);
+    ok = mapRead(mapPath, &mp, &pb, &bs, &ss);
+    mapDestroy(&mp);
+    pillsDestroy(&pb);
+    basesDestroy(&bs);
+    startsDestroy(&ss);
+    remove(mapPath);
+    UT_ASSERT_MSG(ok, "the map does not read after the chunk went back on");
+
     return 0;
 }

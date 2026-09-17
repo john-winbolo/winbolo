@@ -1561,6 +1561,7 @@ static const UnitTestEntry s_tests[] = {
     { "editor_pack_map_round_trip",              run_editor_pack_map_round_trip              },
     { "editor_pack_twice_identical",             run_editor_pack_twice_identical             },
     { "editor_pack_refuses_unbound",             run_editor_pack_refuses_unbound             },
+    { "editor_pack_survives_map_save",             run_editor_pack_survives_map_save             },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },

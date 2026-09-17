@@ -2241,6 +2241,8 @@ static const LangEntry langTable[] = {
     {2288, "The scenario was not written"},
     {2289, "Script read from the scenario packed into this map"},
     {2290, "The scenario packed into this map could not be read"},
+    {2291, "The map's packed scenario was written back. Pack into Map saves the forms' changes."},
+    {2292, "The map saved, but its packed scenario could not be written back"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

@@ -243,6 +243,75 @@ void meScenarioModManifest(const ScenarioManifest *in, ScenarioManifest *out) {
     out->numRegions = 0;
 }
 
+/* ── The scenario the map came with ───────────────────────────────── */
+
+void meScenarioPackedInit(MEScenarioPacked *p) {
+    if (p == NULL) {
+        return;
+    }
+    memset(p, 0, sizeof(*p));
+}
+
+void meScenarioPackedClear(MEScenarioPacked *p) {
+    if (p == NULL) {
+        return;
+    }
+    free(p->script);
+    memset(p, 0, sizeof(*p));
+}
+
+bool meScenarioPackedSet(MEScenarioPacked *p, const ScenarioManifest *m,
+                         const char *script, size_t scriptLen) {
+    char *copy = NULL;
+
+    if (p == NULL || m == NULL) {
+        return false;
+    }
+
+    if (script != NULL) {
+        copy = (char *)malloc(scriptLen + 1);
+        if (copy == NULL) {
+            /* Nothing kept rather than a manifest with no script beside it:
+               putting half of a package back would be worse than saying it
+               could not be kept. */
+            meScenarioPackedClear(p);
+            return false;
+        }
+        if (scriptLen > 0) {
+            memcpy(copy, script, scriptLen);
+        }
+        copy[scriptLen] = '\0';
+    }
+
+    free(p->script);
+    p->manifest  = *m;
+    p->script    = copy;
+    p->scriptLen = (copy != NULL) ? scriptLen : 0;
+    p->present   = true;
+    return true;
+}
+
+bool meScenarioPackedRestore(const MEScenarioPacked *p, const char *mapPath,
+                             char *err, size_t errLen) {
+    if (err != NULL && errLen > 0) {
+        err[0] = '\0';
+    }
+    if (p == NULL || !p->present) {
+        return true; /* the map opened without one, so there is none to keep */
+    }
+    if (mapPath == NULL || mapPath[0] == '\0') {
+        mePackErr(err, errLen, "there is no map to write the scenario back to");
+        return false;
+    }
+
+    /* The same writer the pack action uses, on the bytes that were already on
+       the file. Saved under a new name, the new file gets the chunk too. */
+    return scnIoWriteMapChunk(mapPath, &p->manifest,
+                              (p->script != NULL) ? p->script : "",
+                              (p->script != NULL) ? p->scriptLen : 0, err,
+                              errLen);
+}
+
 bool meScenarioPackIntoMap(const ScenarioManifest *m, const char *script,
                            size_t scriptLen, const char *mapPath,
                            char *err, size_t errLen) {

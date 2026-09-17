@@ -300,6 +300,9 @@ typedef struct {
      * whenever the map changes or the script is re-read, so the markers never
      * outlive the text they were found in. */
     MEScenarioCheck scnCheck;
+    /* The scenario the open map already carried, so a map save puts it back:
+     * mapWrite truncates the file and would otherwise take it off the end. */
+    MEScenarioPacked scnPacked;
     int  scnView;            /* one of MEScenarioView */
     bool showScenario;
 
@@ -2287,6 +2290,30 @@ static bool meSaveToPath(MapEditorState *ed, const char *path) {
     } else {
         meScenarioAdoptPath(&ed->scn, path);
     }
+
+    /* mapWrite truncated the file, so a container that was on it is gone. Put
+     * back the one the map came with — the bytes that were already there,
+     * which need no checking. What the forms hold may have been edited and is
+     * written by Pack into Map, which checks it first. Saved under a new name,
+     * the new file gets the chunk by this same path. */
+    if (ed->scnPacked.present) {
+        char packErr[ME_SCENARIO_PACK_ERR_LEN];
+        char line[256];
+
+        if (meScenarioPackedRestore(&ed->scnPacked, path, packErr,
+                                    sizeof(packErr))) {
+            meScenarioSetStatus(&ed->scn,
+                                langGetText(STR_MAPEDIT_SCENARIO_CHUNK_KEPT));
+        } else {
+            /* The map is written either way, so this is reported the way a
+             * failed script write is and the save still counts. */
+            snprintf(line, sizeof(line), "%s: %s",
+                     langGetText(STR_MAPEDIT_SCENARIO_CHUNK_LOST), packErr);
+            meScenarioSetStatus(&ed->scn, line);
+            snprintf(ed->errorMessage, sizeof(ed->errorMessage), "%s\n%s",
+                     langGetText(STR_MAPEDIT_SCENARIO_CHUNK_LOST), path);
+        }
+    }
     return true;
 }
 
@@ -2338,6 +2365,9 @@ static void meLoadPackedScenario(MapEditorState *ed, const char *path) {
     if (!ed->scn.fileOnDisk && script != NULL) {
         meScenarioSetPackedScript(&ed->scn, script, scriptLen);
     }
+    /* Kept so a map save can put the chunk back: mapWrite truncates the file.
+     * These are the bytes that were on it, not what the forms now hold. */
+    meScenarioPackedSet(&ed->scnPacked, &packed, script, scriptLen);
     free(script);
 }
 
@@ -2388,6 +2418,9 @@ static bool meLoadFromPath(MapEditorState *ed, const char *path) {
     meScenarioSetMap(&ed->scn, path);
     meScenarioFormReset(&ed->scnForm);
     meScenarioCheckClear(&ed->scnCheck);
+    /* Whatever the last map carried is not this map's. A map that opens with
+     * no container leaves this empty, so its save writes none. */
+    meScenarioPackedClear(&ed->scnPacked);
     /* And whatever the map itself carries, which the empty form above is
      * waiting for. */
     meLoadPackedScenario(ed, path);
@@ -2445,6 +2478,9 @@ static bool meLoadFromMemory(MapEditorState *ed, const unsigned char *bytes,
     meScenarioSetMap(&ed->scn, "");
     meScenarioFormReset(&ed->scnForm);
     meScenarioCheckClear(&ed->scnCheck);
+    /* Whatever the last map carried is not this map's. A map that opens with
+     * no container leaves this empty, so its save writes none. */
+    meScenarioPackedClear(&ed->scnPacked);
     meUpdateWindowTitle(ed);
     return true;
 }
@@ -2471,6 +2507,9 @@ static void meDoNew(MapEditorState *ed) {
     meScenarioSetMap(&ed->scn, "");
     meScenarioFormReset(&ed->scnForm);
     meScenarioCheckClear(&ed->scnCheck);
+    /* Whatever the last map carried is not this map's. A map that opens with
+     * no container leaves this empty, so its save writes none. */
+    meScenarioPackedClear(&ed->scnPacked);
     meUpdateWindowTitle(ed);
 }
 
@@ -3064,6 +3103,10 @@ static void meWriteScenario(MapEditorState *ed, const char *modPath) {
          * author who packs and then tests would otherwise be running the file
          * beside the map without being told. */
         ed->scnForm.dirty = false;
+        /* What is on the map now is what a later map save has to put back,
+         * rather than the container the file was opened with. */
+        meScenarioPackedSet(&ed->scnPacked, &toWrite, ed->scn.script,
+                            ed->scn.scriptLen);
         meScenarioSetStatus(&ed->scn, langGetText(STR_MAPEDIT_SCENARIO_PACKED));
     }
 }
@@ -3425,6 +3468,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     meScenarioInit(&ed->scn);
     meScenarioFormInit(&ed->scnForm);
     meScenarioCheckInit(&ed->scnCheck);
+    meScenarioPackedInit(&ed->scnPacked);
     ed->scnView = ME_SCENARIO_VIEW_SCRIPT;
 
     /* Stamp library */
@@ -3489,6 +3533,9 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     meScenarioSetMap(&ed->scn, ed->currentFilePath);
     meScenarioFormReset(&ed->scnForm);
     meScenarioCheckClear(&ed->scnCheck);
+    /* Whatever the last map carried is not this map's. A map that opens with
+     * no container leaves this empty, so its save writes none. */
+    meScenarioPackedClear(&ed->scnPacked);
     meLoadPackedScenario(ed, ed->currentFilePath);
     meUpdateWindowTitle(ed);
 
@@ -5111,6 +5158,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     /* Cleanup */
     stampLibraryFree(&ed->stampLib);
     meScenarioFree(&ed->scn);
+    meScenarioPackedClear(&ed->scnPacked);
     imageImportFree(&ed->imageImportCfg);
     validateResultFree(&ed->lastValidation);
     macOSPinchZoomDestroy();

@@ -2262,4 +2262,6 @@ STR_MAPEDIT_SCENARIO_PACK_CONFLICT=The forms and the script's own table disagree
 STR_MAPEDIT_SCENARIO_PACK_FAILED=The scenario was not written
 STR_MAPEDIT_SCENARIO_FROM_PACKAGE=Script read from the scenario packed into this map
 STR_MAPEDIT_SCENARIO_PACK_READ_FAILED=The scenario packed into this map could not be read
+STR_MAPEDIT_SCENARIO_CHUNK_KEPT=The map's packed scenario was written back. Pack into Map saves the forms' changes.
+STR_MAPEDIT_SCENARIO_CHUNK_LOST=The map saved, but its packed scenario could not be written back
 

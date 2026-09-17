@@ -3053,6 +3053,7 @@ int run_editor_pack_mod_round_trip(void);
 int run_editor_pack_map_round_trip(void);
 int run_editor_pack_twice_identical(void);
 int run_editor_pack_refuses_unbound(void);
+int run_editor_pack_survives_map_save(void);
 
 /* The last status tile frontEndStatusTank was handed by the stub in
  * test_stubs.c: the 1-based player number, and the tankAlliance as an int so

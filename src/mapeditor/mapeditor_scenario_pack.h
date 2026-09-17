@@ -64,6 +64,51 @@ bool meScenarioReadFromMap(const char *mapPath, ScenarioManifest *outManifest,
                            bool *outFound, char *err, size_t errLen);
 
 /*********************************************************
+ *NAME:          MEScenarioPacked
+ *PURPOSE:
+ *  The scenario a map already carried when it was opened,
+ *  kept so a map save can put it back.
+ *
+ *  mapWrite opens the file with "wb" and writes the map, so
+ *  it takes the container off the end with it. Saving terrain
+ *  on a packed map would otherwise drop the scenario from the
+ *  file without saying so. The pane cannot stand in for this:
+ *  where a loose script exists the pane holds that one, and
+ *  the packed bytes are nowhere else in memory.
+ *
+ *  These are the bytes that were on the file, so they are
+ *  written back as they are. What the forms hold may have
+ *  been edited and has not been checked; Pack into Map is
+ *  what writes those, with the checks that go with them.
+ *********************************************************/
+typedef struct MEScenarioPacked {
+    ScenarioManifest manifest;
+    char            *script;    /* NUL-terminated; NULL when there was none */
+    size_t           scriptLen;
+    bool             present;   /* the map carried a container when it opened */
+} MEScenarioPacked;
+
+/* An empty store: no manifest, no script, nothing to put back. */
+void meScenarioPackedInit(MEScenarioPacked *p);
+
+/* Releases the script and returns the store to empty. Called wherever the
+ * rest of the editor's scenario state is cleared, so a save can never write
+ * one map's scenario on to another. */
+void meScenarioPackedClear(MEScenarioPacked *p);
+
+/* Takes a copy of the manifest and the script for putting back later. False
+ * when the copy could not be made, leaving the store empty rather than half
+ * filled. A NULL script is a package that carries none. */
+bool meScenarioPackedSet(MEScenarioPacked *p, const ScenarioManifest *m,
+                         const char *script, size_t scriptLen);
+
+/* Writes the kept chunk back on to mapPath. True and nothing written when the
+ * store is empty, which is every map that opened without a container. False
+ * with err set when there was one and it did not go back. */
+bool meScenarioPackedRestore(const MEScenarioPacked *p, const char *mapPath,
+                             char *err, size_t errLen);
+
+/*********************************************************
  *NAME:          meScenarioPackIntoMap
  *PURPOSE:
  *  Writes the manifest and the script on to the map file as

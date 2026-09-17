@@ -5729,6 +5729,7 @@ set(_unit_test_names
     editor_pack_map_round_trip
     editor_pack_twice_identical
     editor_pack_refuses_unbound
+    editor_pack_survives_map_save
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

@@ -2467,6 +2467,9 @@
 #define STR_MAPEDIT_SCENARIO_PACK_FAILED      2288
 #define STR_MAPEDIT_SCENARIO_FROM_PACKAGE     2289
 #define STR_MAPEDIT_SCENARIO_PACK_READ_FAILED 2290
+#define STR_MAPEDIT_SCENARIO_CHUNK_KEPT       2291
+#define STR_MAPEDIT_SCENARIO_CHUNK_LOST       2292
+
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
