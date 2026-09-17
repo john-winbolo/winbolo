@@ -139,7 +139,7 @@ int run_scenario_panel_parses_each_primitive(void) {
     UT_ASSERT(SCN_PANEL_OP_BAR == 6);
     UT_ASSERT(SCN_PANEL_OP_TIMER == 7);
     UT_ASSERT(SCN_PANEL_UNITS == 128);
-    UT_ASSERT(SCN_PANEL_IDS == 4);
+    UT_ASSERT(SCN_PANEL_IDS == 1);
     UT_ASSERT(SCN_PANEL_COLOURS == 16);
 
     return 0;

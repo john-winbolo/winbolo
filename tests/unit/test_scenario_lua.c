@@ -2134,7 +2134,7 @@ static const char *const kSlOneOfEach =
 
 /* The same list with every word written as the number it stands for. */
 static const char *const kSlOneOfEachNumbers =
-    "ok = game.panel(1, {\n"
+    "ok = game.panel(0, {\n"
     "  { \"rect\",   1, 2, 3, 4, 5, 1 },\n"
     "  { \"line\",   5, 6, 7, 8, 7 },\n"
     "  { \"text\",   9, 10, 2, 0, 1, \"Hi\" },\n"
@@ -2253,6 +2253,10 @@ int run_scenario_lua_panel_words_and_numbers(void) {
     wordsLen = cap.panel.u.scnPanel.len;
     memcpy(words, cap.panel.u.scnPanel.bytes, wordsLen);
 
+    /* The next tick, because both chunks write the one panel for everyone and
+       the arm takes one update per (panel, target) in a tick. */
+    sim->tick++;
+
     UT_ASSERT_MSG(slRun(L, kSlOneOfEachNumbers, err, sizeof(err)),
                   "the numbers chunk would not run: %s", err);
     UT_ASSERT_MSG(slGlobalBool(L, "ok"), "the numbers list was not taken");
@@ -2306,7 +2310,7 @@ int run_scenario_lua_panel_refusals(void) {
     UT_ASSERT_MSG(slRun(L,
                         "local big = {}\n"
                         "for i = 1, 129 do big[i] = { \"sprite\", 1, 1, 1 } end\n"
-                        "res, code, detail = game.panel(1, big)\n",
+                        "res, code, detail = game.panel(0, big)\n",
                         err, sizeof(err)),
                   "the long list would not run: %s", err);
     UT_ASSERT_MSG(slGlobalIsNil(L, "res"),
@@ -2322,13 +2326,13 @@ int run_scenario_lua_panel_refusals(void) {
        are the script written wrong, so both raise. */
     UT_ASSERT_MSG(slRun(L,
                         "word_ok, word_err = pcall(function()\n"
-                        "  return game.panel(1, { { \"blob\", 1, 2 } })\n"
+                        "  return game.panel(0, { { \"blob\", 1, 2 } })\n"
                         "end)\n"
                         "short_ok, short_err = pcall(function()\n"
-                        "  return game.panel(1, { { \"rect\", 1, 2, 3, 4, \"red\" } })\n"
+                        "  return game.panel(0, { { \"rect\", 1, 2, 3, 4, \"red\" } })\n"
                         "end)\n"
                         "flat_ok, flat_err = pcall(function()\n"
-                        "  return game.panel(1, { 7 })\n"
+                        "  return game.panel(0, { 7 })\n"
                         "end)\n",
                         err, sizeof(err)),
                   "the raising chunk would not run: %s", err);

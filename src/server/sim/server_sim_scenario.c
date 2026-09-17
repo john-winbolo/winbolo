@@ -2605,9 +2605,13 @@ static ScnOpResult scenarioOpLog(ServerSim *sim, const ScnOpLog *p) {
 /* ── Presentation ─────────────────────────────────────
  *
  * Four arms that show a player something without changing the world. None of
- * them has a state guard: panel id 1 is a block in the lobby's map-info area,
- * so a scenario dresses the lobby with the same ops it dresses a round with.
- * The prelude's policy refusal applies here as it does to every op.
+ * them has a state guard, because a scenario talks to the lobby as well as to
+ * a round: an announcement naming the next map and a marker on the ground it
+ * is about are both worth putting up before anybody has spawned, and the
+ * lobby is where a player is reading. A panel sent there is stored and drawn
+ * when the round opens, since the one drawer the desktop has sits over the
+ * game view. The prelude's policy refusal applies here as it does to every
+ * op.
  *
  * Each carries one target byte, unpacked into the destination pair the
  * control events carry. The codecs ignore that pair — it is a server-side

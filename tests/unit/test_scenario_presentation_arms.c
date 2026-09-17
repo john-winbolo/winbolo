@@ -256,9 +256,10 @@ static bool paSkipSnapshot(const uint8_t *buf, size_t len, size_t *pos) {
     int n, i;
     if (p + 8 > len) return false;
     p += 8;
-    if ((n = paReadByte(buf, len, p)) < 0) return false; p += 1 + (size_t)n;
-    if ((n = paReadByte(buf, len, p)) < 0) return false; p += 1 + (size_t)n;
-    if ((n = paReadByte(buf, len, p)) < 0) return false; p += 1 + (size_t)n;
+    for (i = 0; i < 3; i++) {
+        if ((n = paReadByte(buf, len, p)) < 0) return false;
+        p += 1 + (size_t)n;
+    }
     while (1) {
         int dlen, y, sx, ex;
         if (p + 4 > len) return false;
@@ -382,12 +383,12 @@ int run_scn_arm_panel_publishes_and_records(void) {
     /* A list held to one player. The target byte packs a 0-based slot, so
        what comes out is that same slot and not the byte it arrived in. */
     listLen = paSpriteList(sprite, 32);
-    UT_ASSERT(paPanel(sim, PA_TARGET_PLAYER(PA_SLOT_OTHER), 2, sprite,
+    UT_ASSERT(paPanel(sim, PA_TARGET_PLAYER(PA_SLOT_OTHER), 0, sprite,
                       listLen) == SCN_OP_OK);
     UT_ASSERT_MSG(cap.panelCount == 1,
                   "the arm published %d CTRL_SCN_PANEL, expected 1",
                   cap.panelCount);
-    UT_ASSERT(cap.lastPanel.u.scnPanel.panel == 2);
+    UT_ASSERT(cap.lastPanel.u.scnPanel.panel == 0);
     UT_ASSERT(cap.lastPanel.u.scnPanel.len == listLen);
     UT_ASSERT(memcmp(cap.lastPanel.u.scnPanel.bytes, sprite, listLen) == 0);
     UT_ASSERT_MSG(cap.lastPanel.u.scnPanel.destTeam == 0,
@@ -415,7 +416,7 @@ int run_scn_arm_panel_publishes_and_records(void) {
     UT_ASSERT_MSG(fullLen == SCN_PANEL_MAX,
                   "the filled list is %u bytes, expected %u",
                   (unsigned)fullLen, (unsigned)SCN_PANEL_MAX);
-    UT_ASSERT(paPanel(sim, 0, 1, list, fullLen) == SCN_OP_OK);
+    UT_ASSERT(paPanel(sim, 0, 0, list, fullLen) == SCN_OP_OK);
     UT_ASSERT(cap.panelCount == 3);
     UT_ASSERT(cap.lastPanel.u.scnPanel.destTeam == 0);
     UT_ASSERT(cap.lastPanel.u.scnPanel.destPlayer == 0xFF);
@@ -433,7 +434,7 @@ int run_scn_arm_panel_publishes_and_records(void) {
     /* The player-held list: panel id, the destination pair, the length as a
        big-endian u16, then the bytes. */
     UT_ASSERT(hits.payloadLen[0] == 5 + (int)listLen);
-    UT_ASSERT(hits.payload[0][0] == 2);
+    UT_ASSERT(hits.payload[0][0] == 0);
     UT_ASSERT(hits.payload[0][1] == 0);
     UT_ASSERT_MSG(hits.payload[0][2] == PA_SLOT_OTHER,
                   "the record names slot %u, expected %d",
@@ -449,7 +450,7 @@ int run_scn_arm_panel_publishes_and_records(void) {
     UT_ASSERT_MSG(hits.payloadLen[2] == 5 + SCN_PANEL_MAX,
                   "the full list recorded %d payload bytes, expected %d",
                   hits.payloadLen[2], 5 + SCN_PANEL_MAX);
-    UT_ASSERT(hits.payload[2][0] == 1);
+    UT_ASSERT(hits.payload[2][0] == 0);
     UT_ASSERT(((hits.payload[2][3] << 8) | hits.payload[2][4]) ==
               SCN_PANEL_MAX);
     UT_ASSERT_MSG(memcmp(hits.payload[2] + 5, list, SCN_PANEL_MAX) == 0,
@@ -516,15 +517,16 @@ int run_scn_arm_panel_one_update_per_tick(void) {
     UT_ASSERT_MSG(paPanel(sim, 0, 0, list, listLen) == SCN_OP_RATE,
                   "a second update for one pair in one tick was taken");
 
-    /* The key is the pair, not the panel: a different target in the same
-       tick is a different key and goes through. So is a different panel. */
+    /* The key is the pair and not the panel alone: a different target in the
+       same tick is a different key and goes through. With one panel id the
+       target is the whole of what separates two keys, which is the half that
+       matters — a scenario giving each of sixteen players its own copy of the
+       panel in one tick is ordinary. */
     UT_ASSERT_MSG(paPanel(sim, PA_TARGET_PLAYER(PA_SLOT_HOST), 0, list,
                           listLen) == SCN_OP_OK,
                   "a second target in one tick was refused");
     UT_ASSERT_MSG(paPanel(sim, PA_TEAM, 0, list, listLen) == SCN_OP_OK,
                   "a team target in one tick was refused");
-    UT_ASSERT_MSG(paPanel(sim, 0, 1, list, listLen) == SCN_OP_OK,
-                  "a second panel in one tick was refused");
 
     /* And each of those is itself one per tick. */
     UT_ASSERT(paPanel(sim, PA_TEAM, 0, list, listLen) == SCN_OP_RATE);
@@ -548,15 +550,20 @@ int run_scn_arm_panel_replayed_to_joiner(void) {
     SubscriberHandle    handle;
     const ScnPanelList *held;
     uint8_t             list[SCN_PANEL_MAX];
+    uint8_t             other[SCN_PANEL_MAX];
     uint16_t            listLen;
+    uint16_t            otherLen;
 
     UT_ASSERT(sim != NULL);
-    listLen = paSpriteList(list, 32);
+    listLen  = paSpriteList(list, 32);
+    otherLen = paSpriteList(other, 99);
 
-    /* One list for everyone, and one held to a slot the joiner is not in. */
+    /* The same panel addressed two ways: one list for everyone, and one held
+       to a slot the joiner is not in. The two carry different sprites, so
+       which of them the joiner ends up holding says whether the filter ran. */
     UT_ASSERT(paPanel(sim, 0, 0, list, listLen) == SCN_OP_OK);
-    UT_ASSERT(paPanel(sim, PA_TARGET_PLAYER(PA_SLOT_OTHER), 1, list,
-                      listLen) == SCN_OP_OK);
+    UT_ASSERT(paPanel(sim, PA_TARGET_PLAYER(PA_SLOT_OTHER), 0, other,
+                      otherLen) == SCN_OP_OK);
 
     cs = clientSimAlloc();
     UT_ASSERT(cs != NULL);
@@ -577,13 +584,14 @@ int run_scn_arm_panel_replayed_to_joiner(void) {
                   "the joiner's panel 0 holds %u primitive(s), expected 1",
                   (unsigned)held->count);
     UT_ASSERT(held->items[0].op == SCN_PANEL_OP_SPRITE);
-    UT_ASSERT(held->items[0].u.sprite.tile == 32);
 
     /* The list held to another slot is filtered on the way in, exactly as a
-       live publish is. */
-    UT_ASSERT_MSG(clientSimGetScnPanel(cs, 1) == NULL,
-                  "the joiner was given a list addressed to slot %d",
-                  PA_SLOT_OTHER);
+       live publish is, so what the joiner holds is the everyone-addressed
+       one and not the sprite the other slot's list carried. */
+    UT_ASSERT_MSG(held->items[0].u.sprite.tile == 32,
+                  "the joiner's panel holds tile %u — 99 means the list "
+                  "addressed to slot %d reached it",
+                  (unsigned)held->items[0].u.sprite.tile, PA_SLOT_OTHER);
 
     serverSimUnregisterSubscriber(sim, handle);
     clientSimDestroy(cs);
@@ -608,8 +616,6 @@ int run_scn_arm_panel_replayed_to_joiner(void) {
 #define PA_TILE_ALL_0    100
 #define PA_TILE_TEAM_0   101
 #define PA_TILE_PLAYER_0 102
-#define PA_TILE_TEAM_1   103
-#define PA_TILE_ALL_2    104
 
 /* One CTRL_SCN_PANEL record the snapshot holds. */
 typedef struct {
@@ -672,13 +678,6 @@ int run_scn_arm_panel_snapshot_bounded(void) {
     listLen = paSpriteList(list, PA_TILE_PLAYER_0);
     UT_ASSERT(paPanel(sim, PA_TARGET_PLAYER(PA_SLOT_OTHER), 0, list,
                       listLen) == SCN_OP_OK);
-    /* Panel 1 held to a team and to nobody else: a panel whose only list is
-       targeted puts nothing in the snapshot at all. */
-    listLen = paSpriteList(list, PA_TILE_TEAM_1);
-    UT_ASSERT(paPanel(sim, PA_TEAM, 1, list, listLen) == SCN_OP_OK);
-    /* Panel 2 for everyone. Panel 3 is left alone. */
-    listLen = paSpriteList(list, PA_TILE_ALL_2);
-    UT_ASSERT(paPanel(sim, 0, 2, list, listLen) == SCN_OP_OK);
 
     snap = (uint8_t *)malloc(LOG_CONTROL_SNAPSHOT_MAX);
     UT_ASSERT(snap != NULL);
@@ -690,15 +689,14 @@ int run_scn_arm_panel_snapshot_bounded(void) {
 
     count = paSnapshotPanels(snap, snapLen, held, PA_MAX_SNAP_PANELS);
     UT_ASSERT_MSG(count >= 0, "the snapshot's record framing does not close");
-    UT_ASSERT_MSG(count == 2,
-                  "the snapshot holds %d panel record(s), expected 2 — one "
-                  "for each panel with a list addressed to everyone", count);
+    UT_ASSERT_MSG(count == 1,
+                  "the snapshot holds %d panel record(s), expected 1 — the "
+                  "everyone-addressed list and neither of the two held to a "
+                  "team or a slot", count);
     UT_ASSERT_MSG(held[0].panel == 0 && held[0].tile == PA_TILE_ALL_0,
-                  "the first panel record is panel %u tile %u",
+                  "the panel record is panel %u tile %u, so a targeted list "
+                  "reached the ring's keyframe",
                   (unsigned)held[0].panel, (unsigned)held[0].tile);
-    UT_ASSERT_MSG(held[1].panel == 2 && held[1].tile == PA_TILE_ALL_2,
-                  "the second panel record is panel %u tile %u",
-                  (unsigned)held[1].panel, (unsigned)held[1].tile);
 
     free(snap);
     serverSimDestroy(sim);

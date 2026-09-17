@@ -114,6 +114,10 @@ int run_scn_presentation_codec_bodies(void) {
     /* ── panel ── */
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_SCN_PANEL;
+    /* A panel id no arm produces, on purpose: the codec carries the byte it
+       is given rather than assuming the only id there is, so an encoder that
+       wrote a constant 0 would fail here. The arm is where an id is bounded
+       against SCN_PANEL_IDS; the wire just carries a byte. */
     evt.u.scnPanel.panel = 2;
     evt.u.scnPanel.len = 4;
     evt.u.scnPanel.bytes[0] = SCN_PANEL_OP_SPRITE;

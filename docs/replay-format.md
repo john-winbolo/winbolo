@@ -304,7 +304,7 @@ reader needs no history:
 
 | Bytes | Field | Notes |
 |---|---|---|
-| 0 | Panel id | 0–3. Id 0 is the in-game square and id 1 the block in the lobby's map-info area; 2 and 3 are reserved |
+| 0 | Panel id | Always 0, the in-game square, which is the only panel there is. It rides as a byte, so a second panel would need no change to this record |
 | 1 | `destTeam` | 0 = everyone, otherwise the team number the list was held to. Teams run 1–15 |
 | 2 | `destPlayer` | 0xFF = everyone, otherwise the 0-based player slot the list was held to |
 | 3–4 | List length | Big-endian; 0 for a list that cleared the panel |

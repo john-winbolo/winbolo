@@ -1112,8 +1112,9 @@ exist.
 | `game.marker_follow(id, p[, colour[, target]])` | Puts mark `id` on seat `p`, where it rides the tank rather than the ground. |
 | `game.clear_marker(id[, target])` | Takes mark `id` off the map. |
 
-There are four panels, numbered 0 to 3, and sixteen markers, numbered 0 to 15.
-A marker id holds one mark: putting a second one on an id replaces the first,
+There is one panel, id 0 — the square over the game view — and any other id is
+refused with `SCN_OP_RANGE`. There are sixteen markers, numbered 0 to 15. A
+marker id holds one mark: putting a second one on an id replaces the first,
 and `clear_marker` takes it off. A colour left out of a marker call is
 `yellow`.
 

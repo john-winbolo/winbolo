@@ -3749,9 +3749,8 @@ static void renderPlayersPanel(ClientSim *cs) {
  * an empty frame left sitting on the map would be showing
  * the player something the scenario had just removed.
  *
- * Panels 1, 2 and 3 are not drawn here: 1 is a block in the
- * lobby's map-info area and 2 and 3 are reserved. The
- * ClientSim holds all four either way.
+ * Panel 0 is the only panel there is, so this is the only
+ * place a display list is drawn.
  * ------------------------------------------------------- */
 
 /* How far in from the top-right corner of the game view the panel sits the

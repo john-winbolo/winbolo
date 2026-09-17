@@ -46,7 +46,15 @@ extern "C" {
 #endif
 
 #define SCN_PANEL_UNITS      128   /* the logical square, origin top-left */
-#define SCN_PANEL_IDS        4     /* panel ids 0..3 */
+/* Panel ids. One: the in-game square, id 0, and nothing else.
+ *
+ * There were four, with id 1 meant for a block in the lobby's map-info
+ * area and 2 and 3 reserved. Nothing ever drew them, and reserving id
+ * space buys nothing here — the id is a byte on the wire either way, so
+ * raising this number is the whole of what a second panel would cost.
+ * Keeping the four meant a ServerSim carried 128 KiB of panel store and
+ * a ClientSim 30 KB for three ids no frontend could show. */
+#define SCN_PANEL_IDS        1
 #define SCN_PANEL_TEXT_MAX   48    /* bytes of one text primitive's string */
 #define SCN_PANEL_ITEMS_MAX  128   /* most primitives one list may hold */
 #define SCN_PANEL_COLOURS    16    /* the palette's size */
