@@ -1795,6 +1795,13 @@ int run_sim_rules_describe_units(void);
  * no rule. The lang arms come back as test_stubs.c's placeholder. */
 int run_sim_rules_phrase(void);
 
+/* The range behind each rule (test_sim_rules_range.c): every rule answers
+ * one, the ends it states are the ends the validator refuses on, and the
+ * rows a second rule caps name that rule. */
+int run_sim_rules_range_every_rule(void);
+int run_sim_rules_range_matches_check(void);
+int run_sim_rules_range_paired(void);
+
 int run_snapshot_compaction(void);
 
 /* Render-only error smoothing (test_error_smoothing.c): the offset

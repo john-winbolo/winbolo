@@ -322,6 +322,152 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
         return SIM_RULES_FAULT_RANGE;                                        \
     }
 
+/* ---- The bounds ---------------------------------------------------------
+ *
+ * Every fixed bound, one row per rule, in the order SIM_RULE_LIST names
+ * them. The arms below are generated from this list and so is the table
+ * simRulesRuleRange reads, so a number is written down once and a refusal
+ * and the range a form shows cannot say different things.
+ *
+ * The shape says how a row is read: INT is a whole-number row with both
+ * ends fixed, FLT a rate row with both ends fixed, and INTMIN a row with a
+ * floor and no fixed ceiling — what caps it is another rule, or nothing. An
+ * INTMIN row carries INT32_MAX in the hi column because that is the ceiling
+ * simRulesWhyInt prints for it; the shape rather than that number is what
+ * tells simRulesRuleRange the row has no fixed ceiling of its own. */
+#define SIM_RULE_BOUND_LIST(X)                                               \
+    /* Tank */                                                               \
+    X(tank_reload_ticks,         INT,    0,      255)                        \
+    X(tank_full_shells,          INT,    0,      255)                        \
+    X(tank_full_mines,           INT,    0,      255)                        \
+    X(tank_full_trees,           INT,    0,      255)                        \
+    X(tank_full_armour,          INT,    0,      255)                        \
+    X(tank_death_ticks,          INT,    0,      65535)                      \
+    X(tank_water_ticks,          INT,    1,      255)                        \
+    X(shell_damage,              INT,    1,      255)                        \
+    X(mine_damage,               INT,    1,      255)                        \
+    X(just_fired_ticks,          INT,    0,      255)                        \
+    X(gunsight_min,              INT,    1,      255)                        \
+    X(gunsight_max,              INT,    1,      255)                        \
+    X(tank_accel_rate,           FLT,    0.01,   16.0)                       \
+    X(tank_decel_rate,           FLT,    0.01,   16.0)                       \
+    X(tank_brake_rate,           FLT,    0.01,   16.0)                       \
+    X(tank_autoslow_rate,        FLT,    0.01,   16.0)                       \
+    X(tank_min_move,             INT,    0,      255)                        \
+    /* Terrain speed caps: the players[].speed packing saturates at 63 */    \
+    X(speed_road,                INT,    0,      63)                         \
+    X(speed_grass,               INT,    0,      63)                         \
+    X(speed_forest,              INT,    0,      63)                         \
+    X(speed_river,               INT,    0,      63)                         \
+    X(speed_swamp,               INT,    0,      63)                         \
+    X(speed_crater,              INT,    0,      63)                         \
+    X(speed_rubble,              INT,    0,      63)                         \
+    X(speed_boat,                INT,    0,      63)                         \
+    X(speed_deep_sea,            INT,    0,      63)                         \
+    X(speed_refuel_base,         INT,    0,      63)                         \
+    /* Terrain turn rates */                                                 \
+    X(turn_road,                 FLT,    0.0,    16.0)                       \
+    X(turn_grass,                FLT,    0.0,    16.0)                       \
+    X(turn_forest,               FLT,    0.0,    16.0)                       \
+    X(turn_river,                FLT,    0.0,    16.0)                       \
+    X(turn_swamp,                FLT,    0.0,    16.0)                       \
+    X(turn_crater,               FLT,    0.0,    16.0)                       \
+    X(turn_rubble,               FLT,    0.0,    16.0)                       \
+    X(turn_boat,                 FLT,    0.0,    16.0)                       \
+    X(turn_deep_sea,             FLT,    0.0,    16.0)                       \
+    X(turn_refuel_base,          FLT,    0.0,    16.0)                       \
+    /* Shells */                                                             \
+    X(shell_life,                INT,    1,      255)                        \
+    X(shell_speed,               INT,    1,      255)                        \
+    X(shell_start_add,           INTMIN, 0,      INT32_MAX)                  \
+    /* Builder */                                                            \
+    X(lgm_build_ticks,           INT,    0,      255)                        \
+    X(lgm_cost_road,             INTMIN, 0,      INT32_MAX)                  \
+    X(lgm_cost_building,         INTMIN, 0,      INT32_MAX)                  \
+    X(lgm_cost_repair_building,  INTMIN, 0,      INT32_MAX)                  \
+    X(lgm_cost_pill_repair,      INTMIN, 0,      INT32_MAX)                  \
+    X(lgm_cost_boat,             INTMIN, 0,      INT32_MAX)                  \
+    X(lgm_cost_pill_new,         INTMIN, 0,      INT32_MAX)                  \
+    X(lgm_cost_mine,             INTMIN, 0,      INT32_MAX)                  \
+    X(lgm_pill_repair_load,      INT,    1,      255)                        \
+    X(lgm_gather_trees,          INT,    1,      255)                        \
+    X(lgm_helicopter_speed,      INT,    1,      255)                        \
+    /* Pillbox */                                                            \
+    X(pill_max_armour,           INT,    1,      255)                        \
+    X(pill_attack_ticks,         INT,    1,      255)                        \
+    X(pill_attack_min_ticks,     INTMIN, 1,      INT32_MAX)                  \
+    X(pill_cooldown_ticks,       INT,    0,      255)                        \
+    X(pill_repair_amount,        INTMIN, 1,      INT32_MAX)                  \
+    X(pill_range,                INT,    0,      65535)                      \
+    /* Base */                                                               \
+    X(base_full_armour,          INT,    0,      255)                        \
+    X(base_full_shells,          INT,    0,      255)                        \
+    X(base_full_mines,           INT,    0,      255)                        \
+    X(base_capture_armour,       INTMIN, 0,      INT32_MAX)                  \
+    X(base_hit_armour,           INTMIN, 0,      INT32_MAX)                  \
+    X(base_min_armour,           INTMIN, 0,      INT32_MAX)                  \
+    X(base_min_shells,           INTMIN, 0,      INT32_MAX)                  \
+    X(base_min_mines,            INTMIN, 0,      INT32_MAX)                  \
+    X(base_armour_give,          INTMIN, 0,      INT32_MAX)                  \
+    X(base_shells_give,          INTMIN, 0,      INT32_MAX)                  \
+    X(base_mines_give,           INTMIN, 0,      INT32_MAX)                  \
+    X(base_refuel_armour_ticks,  INT,    1,      255)                        \
+    X(base_refuel_shells_ticks,  FLT,    0.5,    255.0)                      \
+    X(base_refuel_mines_ticks,   FLT,    0.5,    255.0)                      \
+    X(base_regen_ticks,          INT,    1,      INT32_MAX)                  \
+    /* Terrain destruction and explosions */                                 \
+    X(building_life,             INT,    1,      255)                        \
+    X(rubble_life,               INT,    1,      255)                        \
+    X(grass_life,                INT,    1,      255)                        \
+    X(swamp_life,                INT,    1,      255)                        \
+    X(mine_fuse_ticks,           INT,    1,      255)                        \
+    X(big_explosion_threshold,   INT,    0,      510)                        \
+    /* Tree growth */                                                        \
+    X(tree_grow_ticks,           INT,    1,      INT32_MAX)                  \
+    X(tree_grow_initial_ticks,   INT,    1,      INT32_MAX)                  \
+    X(tree_weight_forest,        INT,    -32768, 32767)                      \
+    X(tree_weight_grass,         INT,    -32768, 32767)                      \
+    X(tree_weight_river,         INT,    -32768, 32767)                      \
+    X(tree_weight_boat,          INT,    -32768, 32767)                      \
+    X(tree_weight_deep_sea,      INT,    -32768, 32767)                      \
+    X(tree_weight_swamp,         INT,    -32768, 32767)                      \
+    X(tree_weight_rubble,        INT,    -32768, 32767)                      \
+    X(tree_weight_building,      INT,    -32768, 32767)                      \
+    X(tree_weight_half_building, INT,    -32768, 32767)                      \
+    X(tree_weight_crater,        INT,    -32768, 32767)                      \
+    X(tree_weight_road,          INT,    -32768, 32767)                      \
+    X(tree_weight_mine,          INT,    -32768, 32767)
+
+/* The rules a single other rule also caps, as the pairs below hold them.
+ * Only a direct field against other_field test is here: where a ceiling is
+ * an expression of more than one rule — shell_start_add against shell_life
+ * times gunsight_min halved, a give row against a full row less a min row —
+ * no one rule names it, and those rows answer cappedBy -1 with the reason
+ * left to the words the refusal itself carries. */
+#define SIM_RULE_CAPPED_BY_LIST(X)                                           \
+    X(pill_attack_min_ticks,    pill_attack_ticks)                           \
+    X(base_capture_armour,      base_full_armour)                            \
+    X(base_hit_armour,          base_capture_armour)                         \
+    X(base_min_armour,          base_full_armour)                            \
+    X(base_min_shells,          base_full_shells)                            \
+    X(base_min_mines,           base_full_mines)                             \
+    X(lgm_cost_road,            tank_full_trees)                             \
+    X(lgm_cost_building,        tank_full_trees)                             \
+    X(lgm_cost_repair_building, tank_full_trees)                             \
+    X(lgm_cost_boat,            tank_full_trees)                             \
+    X(lgm_cost_pill_new,        tank_full_trees)                             \
+    X(lgm_cost_mine,            tank_full_mines)                             \
+    X(pill_repair_amount,       pill_max_armour)                             \
+    X(gunsight_min,             gunsight_max)
+
+/* A row's arm, chosen by its shape: the three above are the three bodies,
+ * and the one for a row with no fixed ceiling takes only the floor. */
+#define SIM_RULE_ARM_INT(field, lo, hi)    RULE_INT(field, lo, hi)
+#define SIM_RULE_ARM_INTMIN(field, lo, hi) RULE_INT_MIN(field, lo)
+#define SIM_RULE_ARM_FLT(field, lo, hi)    RULE_FLT(field, lo, hi)
+#define SIM_RULE_BOUND_ARM(field, shape, lo, hi)                             \
+    SIM_RULE_ARM_##shape(field, lo, hi)
+
 /* The one body both passes run. carriedOnly false is the server's whole
  * check; true is the client's, asking only what a CTRL_SIM_RULES event can
  * have brought. */
@@ -337,125 +483,7 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
         return SIM_RULES_FAULT_NO_TABLE;
     }
 
-    /* ---- Tank ---- */
-    RULE_INT(tank_reload_ticks, 0, 255)
-    RULE_INT(tank_full_shells, 0, 255)
-    RULE_INT(tank_full_mines, 0, 255)
-    RULE_INT(tank_full_trees, 0, 255)
-    RULE_INT(tank_full_armour, 0, 255)
-    RULE_INT(tank_death_ticks, 0, 65535)
-    RULE_INT(tank_water_ticks, 1, 255)
-    RULE_INT(shell_damage, 1, 255)
-    RULE_INT(mine_damage, 1, 255)
-    RULE_INT(just_fired_ticks, 0, 255)
-    RULE_INT(gunsight_min, 1, 255)
-    RULE_INT(gunsight_max, 1, 255)
-    RULE_FLT(tank_accel_rate, 0.01, 16.0)
-    RULE_FLT(tank_decel_rate, 0.01, 16.0)
-    RULE_FLT(tank_brake_rate, 0.01, 16.0)
-    RULE_FLT(tank_autoslow_rate, 0.01, 16.0)
-    RULE_INT(tank_min_move, 0, 255)
-
-    /* ---- Terrain speed caps: the players[].speed packing saturates at 63 ---- */
-    RULE_INT(speed_road, 0, 63)
-    RULE_INT(speed_grass, 0, 63)
-    RULE_INT(speed_forest, 0, 63)
-    RULE_INT(speed_river, 0, 63)
-    RULE_INT(speed_swamp, 0, 63)
-    RULE_INT(speed_crater, 0, 63)
-    RULE_INT(speed_rubble, 0, 63)
-    RULE_INT(speed_boat, 0, 63)
-    RULE_INT(speed_deep_sea, 0, 63)
-    RULE_INT(speed_refuel_base, 0, 63)
-
-    /* ---- Terrain turn rates ---- */
-    RULE_FLT(turn_road, 0.0, 16.0)
-    RULE_FLT(turn_grass, 0.0, 16.0)
-    RULE_FLT(turn_forest, 0.0, 16.0)
-    RULE_FLT(turn_river, 0.0, 16.0)
-    RULE_FLT(turn_swamp, 0.0, 16.0)
-    RULE_FLT(turn_crater, 0.0, 16.0)
-    RULE_FLT(turn_rubble, 0.0, 16.0)
-    RULE_FLT(turn_boat, 0.0, 16.0)
-    RULE_FLT(turn_deep_sea, 0.0, 16.0)
-    RULE_FLT(turn_refuel_base, 0.0, 16.0)
-
-    /* ---- Shells ---- */
-    RULE_INT(shell_life, 1, 255)
-    RULE_INT(shell_speed, 1, 255)
-    RULE_INT_MIN(shell_start_add, 0)
-
-    /* ---- Builder ---- */
-    RULE_INT(lgm_build_ticks, 0, 255)
-    RULE_INT_MIN(lgm_cost_road, 0)
-    RULE_INT_MIN(lgm_cost_building, 0)
-    RULE_INT_MIN(lgm_cost_repair_building, 0)
-    RULE_INT_MIN(lgm_cost_pill_repair, 0)
-    RULE_INT_MIN(lgm_cost_boat, 0)
-    RULE_INT_MIN(lgm_cost_pill_new, 0)
-    RULE_INT_MIN(lgm_cost_mine, 0)
-    RULE_INT(lgm_pill_repair_load, 1, 255)
-    RULE_INT(lgm_gather_trees, 1, 255)
-    RULE_INT(lgm_helicopter_speed, 1, 255)
-
-    /* ---- Pillbox ---- */
-    RULE_INT(pill_max_armour, 1, 255)
-    RULE_INT(pill_attack_ticks, 1, 255)
-    RULE_INT_MIN(pill_attack_min_ticks, 1)
-    /* Both ends of the attack interval are converted, so the pair can be
-     * asked here: the fastest a hurt pill fires cannot be slower than the
-     * rate an untouched one sits at, or the clamp has no window to land in. */
-    /* A pair, though it is asked here rather than in the pairs block below:
-       both its sides are pillbox rows and it sits with them. */
-    RULE_PAIR(PAIR_ASKED2(pill_attack_min_ticks, pill_attack_ticks),
-              rules->pill_attack_min_ticks <= rules->pill_attack_ticks,
-              "pill_attack_min_ticks is %ld, above pill_attack_ticks %ld",
-              (long) rules->pill_attack_min_ticks,
-              (long) rules->pill_attack_ticks)
-    RULE_INT(pill_cooldown_ticks, 0, 255)
-    RULE_INT_MIN(pill_repair_amount, 1)
-    RULE_INT(pill_range, 0, 65535)
-
-    /* ---- Base ---- */
-    RULE_INT(base_full_armour, 0, 255)
-    RULE_INT(base_full_shells, 0, 255)
-    RULE_INT(base_full_mines, 0, 255)
-    RULE_INT_MIN(base_capture_armour, 0)
-    RULE_INT_MIN(base_hit_armour, 0)
-    RULE_INT_MIN(base_min_armour, 0)
-    RULE_INT_MIN(base_min_shells, 0)
-    RULE_INT_MIN(base_min_mines, 0)
-    RULE_INT_MIN(base_armour_give, 0)
-    RULE_INT_MIN(base_shells_give, 0)
-    RULE_INT_MIN(base_mines_give, 0)
-    RULE_INT(base_refuel_armour_ticks, 1, 255)
-    RULE_FLT(base_refuel_shells_ticks, 0.5, 255.0)
-    RULE_FLT(base_refuel_mines_ticks, 0.5, 255.0)
-    RULE_INT(base_regen_ticks, 1, INT32_MAX)
-
-    /* ---- Terrain destruction and explosions ---- */
-    RULE_INT(building_life, 1, 255)
-    RULE_INT(rubble_life, 1, 255)
-    RULE_INT(grass_life, 1, 255)
-    RULE_INT(swamp_life, 1, 255)
-    RULE_INT(mine_fuse_ticks, 1, 255)
-    RULE_INT(big_explosion_threshold, 0, 510)
-
-    /* ---- Tree growth ---- */
-    RULE_INT(tree_grow_ticks, 1, INT32_MAX)
-    RULE_INT(tree_grow_initial_ticks, 1, INT32_MAX)
-    RULE_INT(tree_weight_forest, -32768, 32767)
-    RULE_INT(tree_weight_grass, -32768, 32767)
-    RULE_INT(tree_weight_river, -32768, 32767)
-    RULE_INT(tree_weight_boat, -32768, 32767)
-    RULE_INT(tree_weight_deep_sea, -32768, 32767)
-    RULE_INT(tree_weight_swamp, -32768, 32767)
-    RULE_INT(tree_weight_rubble, -32768, 32767)
-    RULE_INT(tree_weight_building, -32768, 32767)
-    RULE_INT(tree_weight_half_building, -32768, 32767)
-    RULE_INT(tree_weight_crater, -32768, 32767)
-    RULE_INT(tree_weight_road, -32768, 32767)
-    RULE_INT(tree_weight_mine, -32768, 32767)
+    SIM_RULE_BOUND_LIST(SIM_RULE_BOUND_ARM)
 
     /* ---- Pairs ----------------------------------------------------------
      *
@@ -463,11 +491,21 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
      * a rule. The rows above check each field against its own fixed bounds;
      * these check the rows against each other, in an order that lets a later
      * arm rely on an earlier one — base_min_* is known to be inside
-     * base_full_* before the give rows subtract the two. The attack-interval
-     * pair is not here: both its sides are pillbox rows and it sits with
-     * them. The two products are computed in 64 bits because a cost and a
-     * load are each bounded below and not above, so multiplying them in
-     * int32_t could overflow before the comparison. */
+     * base_full_* before the give rows subtract the two. The two products are
+     * computed in 64 bits because a cost and a load are each bounded below
+     * and not above, so multiplying them in int32_t could overflow before the
+     * comparison. */
+
+    /* Both ends of the attack interval are converted, so the pair can be
+     * asked here: the fastest a hurt pill fires cannot be slower than the
+     * rate an untouched one sits at, or the clamp has no window to land in.
+     * It leads the block because it stands on its own, where the rows under
+     * it are ordered so that a later one can take an earlier one as read. */
+    RULE_PAIR(PAIR_ASKED2(pill_attack_min_ticks, pill_attack_ticks),
+              rules->pill_attack_min_ticks <= rules->pill_attack_ticks,
+              "pill_attack_min_ticks is %ld, above pill_attack_ticks %ld",
+              (long) rules->pill_attack_min_ticks,
+              (long) rules->pill_attack_ticks)
 
     /* The three base armour thresholds read hit, capture, full, in that
      * order. A capture threshold above what a base can ever hold would make
@@ -625,6 +663,10 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
 #undef RULE_PAIR
 #undef PAIR_ASKED2
 #undef PAIR_ASKED3
+#undef SIM_RULE_ARM_INT
+#undef SIM_RULE_ARM_INTMIN
+#undef SIM_RULE_ARM_FLT
+#undef SIM_RULE_BOUND_ARM
 
 SimRulesFault simRulesCheck(const SimRules *rules, char *why, size_t whyLen) {
     return simRulesCheckRows(rules, false, why, whyLen);
@@ -672,6 +714,41 @@ static const SimRuleValueKind simRuleValueKinds[] = {
     SIM_RULE_LIST(SIM_RULE_KIND_ROW)
 };
 #undef SIM_RULE_KIND_ROW
+
+/* The bounds, off the same list the arms are generated from. An INTMIN row
+ * carries the ceiling simRulesWhyInt prints and answers hasHi false, since
+ * what caps it is another rule or nothing. cappedBy is -1 in every row here
+ * and the pair table below is what fills it in. */
+#define SIM_RULE_RANGE_HAS_HI_INT    true
+#define SIM_RULE_RANGE_HAS_HI_INTMIN false
+#define SIM_RULE_RANGE_HAS_HI_FLT    true
+#define SIM_RULE_RANGE_ROW(field, shape, lo, hi)                             \
+    { (double) (lo), (double) (hi), SIM_RULE_RANGE_HAS_HI_##shape, -1 },
+static const SimRuleRange simRuleRanges[] = {
+    SIM_RULE_BOUND_LIST(SIM_RULE_RANGE_ROW)
+};
+#undef SIM_RULE_RANGE_ROW
+#undef SIM_RULE_RANGE_HAS_HI_INT
+#undef SIM_RULE_RANGE_HAS_HI_INTMIN
+#undef SIM_RULE_RANGE_HAS_HI_FLT
+
+/* A rule given a row in SIM_RULE_LIST and none in the bound list leaves
+ * this table short of the others, which is what this catches. */
+BOLO_STATIC_ASSERT(sizeof(simRuleRanges) / sizeof(simRuleRanges[0]) ==
+                       (size_t)SIM_RULE_COUNT,
+                   sim_rule_bounds_cover_every_rule);
+
+/* The rows a second rule caps, walked rather than indexed: fourteen rows,
+ * read by a form rather than by the tick. */
+#define SIM_RULE_CAPPED_BY_ROW(field, cap)                                   \
+    { SIM_RULE_##field, SIM_RULE_##cap },
+static const struct {
+    int rule;
+    int cap;
+} simRuleCappedBy[] = {
+    SIM_RULE_CAPPED_BY_LIST(SIM_RULE_CAPPED_BY_ROW)
+};
+#undef SIM_RULE_CAPPED_BY_ROW
 
 /* Whether an index names a rule at all. Every accessor asks this first: a
  * caller holding a rule number off a wire or out of a manifest has one that
@@ -738,6 +815,31 @@ double simRulesClassicValue(int rule) {
         return (double) rate;
     }
     return (double) words[rule];
+}
+
+bool simRulesRuleRange(int rule, SimRuleRange *out) {
+    size_t       i;
+    const size_t pairs = sizeof(simRuleCappedBy) / sizeof(simRuleCappedBy[0]);
+
+    if (out == NULL) {
+        return false;
+    }
+    out->lo       = 0.0;
+    out->hi       = 0.0;
+    out->hasHi    = false;
+    out->cappedBy = -1;
+    if (!simRulesIndexInRange(rule)) {
+        return false;
+    }
+
+    *out = simRuleRanges[rule];
+    for (i = 0; i < pairs; i++) {
+        if (simRuleCappedBy[i].rule == rule) {
+            out->cappedBy = simRuleCappedBy[i].cap;
+            break;
+        }
+    }
+    return true;
 }
 
 /* ---- What a value does to a rule -----------------------------------------

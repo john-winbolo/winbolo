@@ -3869,6 +3869,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # test_stubs.c provides here, so it compiles in without lang.c.
     tests/unit/test_sim_rules_describe.c
     src/gui/sdl3/sim_rules_phrase.c
+    # The range behind each rule, against the validator that refuses on it.
+    tests/unit/test_sim_rules_range.c
     tests/unit/test_screen_bullets_build.c
     tests/unit/test_ping_smoother.c
     tests/unit/test_client_timing.c
@@ -5083,6 +5085,9 @@ set(_unit_test_names
     sim_rules_describe_ratios
     sim_rules_describe_units
     sim_rules_phrase
+    sim_rules_range_every_rule
+    sim_rules_range_matches_check
+    sim_rules_range_paired
     screen_bullets_build
     ping_smoother
     client_timing
