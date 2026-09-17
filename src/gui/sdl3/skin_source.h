@@ -297,6 +297,25 @@ const char  *skinGetRequested(void);          /* "" = built-in assets */
 SkinSource  *skinGetActiveSource(void);       /* NULL when none */
 
 /*********************************************************
+ * NAME:          skinSourceLock / skinSourceUnlock
+ * PURPOSE:
+ *   Hold the module's lock across more than one call.
+ *
+ *   The individual calls take it for themselves, so most
+ *   callers need neither. This is for a caller that asks
+ *   skinGetActiveSource for a pointer and then uses it:
+ *   skinSetActive closes and frees the active source, so
+ *   the pointer is only good for as long as the lock is
+ *   held. map_colours does this to read [MapPalette] from
+ *   the map chooser's preview worker thread.
+ *
+ *   Reentrant, so the calls made while it is held may take
+ *   it again. Do not hold it across anything slow.
+ *********************************************************/
+void         skinSourceLock(void);
+void         skinSourceUnlock(void);
+
+/*********************************************************
  * NAME:          skinSourceSerial
  * PURPOSE:
  *   A number unique to this source for the life of the

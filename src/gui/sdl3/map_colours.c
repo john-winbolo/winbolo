@@ -104,7 +104,14 @@ BOLO_STATIC_ASSERT(sizeof(kBuiltIn) / sizeof(kBuiltIn[0]) == COLOUR_COUNT,
    and four paths through the settings dialog - and a push would be five call
    sites to keep in step, with a stale palette the price of missing one.
    skinSourceSerial is never reused, so comparing it is enough to notice any
-   change, including a skin closed and another opened into the same block. */
+   change, including a skin closed and another opened into the same block.
+
+   Read from two threads: the renderer draws a square with these, and the map
+   chooser's preview worker rasterises a thumbnail with them through
+   minimapRenderPixels. Both the table and the source it is filled from are
+   held under skin_source's lock, so a reader never meets the table half
+   refilled, and the source the fill reads cannot be closed out from under it
+   by a skin change on the other thread. See skinSourceLock. */
 static Uint32   s_colour[COLOUR_COUNT];
 static uint64_t s_serial;
 static bool     s_haveColours;
@@ -116,8 +123,16 @@ static void colourApply(MapColourSlot slot, int32_t rgb) {
 }
 
 static Uint32 colourOf(MapColourSlot slot) {
-    SkinSource *src = skinGetActiveSource();
-    uint64_t    serial = (src != NULL) ? skinSourceSerial(src) : 0;
+    SkinSource *src;
+    uint64_t    serial;
+    Uint32      rgb;
+
+    /* Taken even on the path that finds the table already good: the fill is
+       what it guards against, and the fill happens on whichever thread gets
+       there first after a skin change. */
+    skinSourceLock();
+    src    = skinGetActiveSource();
+    serial = (src != NULL) ? skinSourceSerial(src) : 0;
 
     if (!s_haveColours || serial != s_serial) {
         SkinInfo info;
@@ -154,7 +169,9 @@ static Uint32 colourOf(MapColourSlot slot) {
         s_serial      = serial;
         s_haveColours = true;
     }
-    return s_colour[slot];
+    rgb = s_colour[slot];
+    skinSourceUnlock();
+    return rgb;
 }
 
 /* A slot as the float colour the marker drawers take. */

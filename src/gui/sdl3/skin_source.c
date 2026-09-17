@@ -72,6 +72,45 @@ static char        s_requestedId[SKIN_ID_MAX];
 static SkinSource *s_activeSource;
 static uint64_t    s_nextSerial = 1;   /* 0 is reserved for "no source" */
 
+/* This module used to be the render thread's alone. It is not any more: the
+ * map chooser's preview worker rasterises a thumbnail with minimapRenderPixels,
+ * which asks map_colours for a square's colour, which reads the active skin's
+ * [MapPalette]. Two things there are not safe to do from two threads at once.
+ *
+ * A zip source drives one unzFile cursor - unzGoToFilePos, then open, read and
+ * close the current file - so two reads through the same handle interleave into
+ * each other's file. And the active source is closed and freed when the player
+ * picks another skin, so a thread holding the pointer skinGetActiveSource gave
+ * it can be reading a source that no longer exists.
+ *
+ * One mutex for the module covers both: every read of a source's bytes, the
+ * lazy skin.ini fill behind them, and every point where s_activeSource is
+ * closed or replaced. SDL mutexes are reentrant, so the nesting these have -
+ * skinSourceReadIni calling skinSourceRead, skinSetActive calling
+ * skinSourceOpen - needs no second thought. A caller that has to hold a source
+ * across more than one call, as map_colours does, takes it for itself through
+ * skinSourceLock.
+ *
+ * Coarse on purpose. The lock is held over file reads, but the only caller
+ * that takes it at any rate is the per-square colour lookup, which finds the
+ * ini already parsed and does nothing but read a field. */
+static SDL_InitState s_lockInit;
+static SDL_Mutex    *s_lock;
+
+void skinSourceLock(void) {
+    if (SDL_ShouldInit(&s_lockInit)) {
+        s_lock = SDL_CreateMutex();
+        SDL_SetInitialized(&s_lockInit, true);
+    }
+    /* SDL_LockMutex(NULL) is a no-op, so a mutex that could not be created
+       leaves the old single-threaded behaviour rather than crashing. */
+    SDL_LockMutex(s_lock);
+}
+
+void skinSourceUnlock(void) {
+    SDL_UnlockMutex(s_lock);
+}
+
 /* ------------------------------------------------------------------ */
 /* Name handling                                                       */
 /* ------------------------------------------------------------------ */
@@ -544,32 +583,40 @@ bool skinSourceRead(SkinSource *src, const char *relName,
         size_t sz = (size_t)e->size;
         size_t got = 0;
         unsigned char *data;
+        bool ok = false;
         /* The index already refused anything over the limit; this keeps the
          * sz + 1 below from wrapping on a 32-bit size_t whatever put the
          * entry there. */
         if (e->size > SKIN_ENTRY_MAX_BYTES) return false;
-        if (unzGoToFilePos(src->zip, &pos) != UNZ_OK) return false;
-        if (unzOpenCurrentFile(src->zip) != UNZ_OK) return false;
-        data = (unsigned char *)SDL_malloc(sz + 1);
-        if (!data) {
-            unzCloseCurrentFile(src->zip);
-            return false;
+        /* One cursor per unzFile: seek, open, read and close are one
+           indivisible sequence, and a second thread landing in the middle of
+           it reads this file's bytes into its own buffer. */
+        skinSourceLock();
+        if (unzGoToFilePos(src->zip, &pos) == UNZ_OK &&
+            unzOpenCurrentFile(src->zip) == UNZ_OK) {
+            data = (unsigned char *)SDL_malloc(sz + 1);
+            if (data) {
+                while (got < sz) {
+                    int n = unzReadCurrentFile(src->zip, data + got,
+                                               (unsigned int)(sz - got));
+                    if (n <= 0) break;
+                    got += (size_t)n;
+                }
+                unzCloseCurrentFile(src->zip);
+                if (got == sz) {
+                    data[sz] = '\0';
+                    *buf = data;
+                    *len = sz;
+                    ok = true;
+                } else {
+                    SDL_free(data);
+                }
+            } else {
+                unzCloseCurrentFile(src->zip);
+            }
         }
-        while (got < sz) {
-            int n = unzReadCurrentFile(src->zip, data + got,
-                                       (unsigned int)(sz - got));
-            if (n <= 0) break;
-            got += (size_t)n;
-        }
-        unzCloseCurrentFile(src->zip);
-        if (got != sz) {
-            SDL_free(data);
-            return false;
-        }
-        data[sz] = '\0';
-        *buf = data;
-        *len = sz;
-        return true;
+        skinSourceUnlock();
+        return ok;
     }
 }
 
@@ -821,6 +868,7 @@ void skinSourceReadIni(SkinSource *src, SkinInfo *out) {
     if (!out) return;
     skinInfoClear(out);
     if (!src) return;
+    skinSourceLock();
     if (!src->iniLoaded) {
         void *buf = NULL;
         size_t len = 0;
@@ -834,6 +882,7 @@ void skinSourceReadIni(SkinSource *src, SkinInfo *out) {
         src->iniLoaded = true;
     }
     *out = src->ini;
+    skinSourceUnlock();
 }
 
 /* ------------------------------------------------------------------ */
@@ -1285,9 +1334,14 @@ static bool rewriteArchiveSkinIni(const char *archive, uint64_t id,
  * which also refreshes its cached skin.ini with the id just written. */
 static bool rewriteArchiveKeepingActive(const char *archive, uint64_t id,
                                         uint64_t authorSteamId) {
-    bool wasActive = s_activeSource != NULL && s_activeSource->isZip &&
-                     SDL_strcmp(s_activeSource->path, archive) == 0;
+    bool wasActive;
     bool ok;
+
+    /* Same reason as skinSetActive: the close below frees a source another
+       thread may be reading, and the lock is what keeps the two apart. */
+    skinSourceLock();
+    wasActive = s_activeSource != NULL && s_activeSource->isZip &&
+                SDL_strcmp(s_activeSource->path, archive) == 0;
 
     if (wasActive) {
         skinSourceClose(s_activeSource);
@@ -1303,6 +1357,7 @@ static bool rewriteArchiveKeepingActive(const char *archive, uint64_t id,
             s_activeId[0] = '\0';
         }
     }
+    skinSourceUnlock();
     return ok;
 }
 
@@ -1545,6 +1600,12 @@ bool skinSetActive(const char *id) {
         SDL_strlcpy(s_requestedId, id, sizeof(s_requestedId));
     }
 
+    /* Held until the replacement is open. skinSourceClose frees the source,
+       and another thread may be part way through reading the palette out of
+       it - it asked skinGetActiveSource for the pointer under this same
+       lock, so it either finishes before the close or sees the new source. */
+    skinSourceLock();
+
     if (s_activeSource) {
         skinSourceClose(s_activeSource);
         s_activeSource = NULL;
@@ -1552,6 +1613,7 @@ bool skinSetActive(const char *id) {
     s_activeId[0] = '\0';
 
     if (!id || id[0] == '\0' || SDL_strcasecmp(id, "default") == 0) {
+        skinSourceUnlock();
         return true;
     }
 
@@ -1575,6 +1637,7 @@ bool skinSetActive(const char *id) {
     }
 
     if (!s_activeSource) {
+        skinSourceUnlock();
         /* An id from another machine, a Workshop item still downloading, or
          * one whose files are offline: the built-in assets stand in and the
          * caller carries on, but the id stays the player's choice. */
@@ -1584,6 +1647,7 @@ bool skinSetActive(const char *id) {
                      id);
         return false;
     }
+    skinSourceUnlock();
     return true;
 }
 
