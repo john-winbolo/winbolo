@@ -690,6 +690,7 @@ else()
         src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
         src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
         src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_scenario_rules.cpp
         src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
         src/gui/sdl3/wbn_map_source.cpp
         PROPERTIES COMPILE_OPTIONS "-Werror=undef;${LOBBY_MISSING_DECL_OPTION}"
@@ -941,6 +942,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
     src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
     src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_scenario_rules.cpp
     src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     src/gui/sdl3/dialogs/imgui_settings.cpp
     src/gui/sdl3/dialogs/imgui_keysetup.cpp
@@ -1559,7 +1561,7 @@ set(CLIENT_SOURCES
     src/client_frontend/client_frontend_connect.c
     src/client_frontend/client_frontend_tick.c
     src/client_frontend/client_frontend_common.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_rules.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/lobby_start_list.cpp
@@ -3486,6 +3488,16 @@ set(WINBOLO_UNITTESTS_SOURCES
     # spectator ring's snapshot, the one-update-per-tick key, every refusal,
     # and the score, announcement and marker arms.
     tests/unit/test_scenario_presentation_arms.c
+    # The rules a scenario's own manifest sets, as the lobby's popup reads
+    # them: the body codec against hand-written bytes and every refusal a
+    # malformed body gets.
+    tests/unit/test_scenario_rules_codec.c
+    # The set published when a scenario attaches, emptied when one detaches,
+    # and never written at all on a map that has never had one.
+    tests/unit/test_scenario_rules_published.c
+    # And the replay that hands the set to a client registering after the
+    # attach, so a mid-lobby joiner reads what the host reads.
+    tests/unit/test_scenario_rules_reaches_joiner.c
     # The bot hint: the flat table a scenario hands one bot, delivered into
     # that bot's brain VM as on_scenario_hint(table) — the fixture brain gets
     # it back whole, custom keys included — plus every refusal the arm
@@ -5703,6 +5715,9 @@ set(_unit_test_names
     scn_arm_panel_replayed_to_joiner
     scn_arm_panel_snapshot_bounded
     scn_arm_score_announce_marker
+    scenario_rules_codec
+    scenario_rules_published
+    scenario_rules_reaches_joiner
     scenario_hint_reaches_brain
     scenario_hint_refusals
     scenario_hint_records

@@ -3028,6 +3028,93 @@ static bool decodeScnMarkerBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CTRL_SCENARIO_RULES body: [count 1] then count rows of
+ * [rule 1][value 8, the double's bit pattern, most significant byte first].
+ *
+ * Variable length, and the length has to agree with the count: a body that
+ * says more rows than it carries would read past the buffer and one that
+ * says fewer is not the set that was sent. A count past the row cap and a
+ * rule index that names no rule are refused outright rather than clamped —
+ * a set a client cannot read whole is one it must not half-show.
+ *
+ * The value rides as its bit pattern for the reason the float rules of
+ * CTRL_SIM_RULES do: a fixed-point scale would round a rate, and this set is
+ * what a lobby reads a rule's new value off. Serialised through two uint32_t
+ * halves and packU32, so the host's own byte order never reaches the wire. */
+BOLO_STATIC_ASSERT(sizeof(double) == 8, ctrl_scenario_rules_double_is_eight_bytes);
+
+#define SCN_RULES_ROW_LEN 9
+
+static void packF64(uint8_t *buf, double value) {
+    uint64_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    packU32(buf, (uint32_t)(bits >> 32));
+    packU32(buf + 4, (uint32_t)(bits & 0xFFFFFFFFu));
+}
+
+static double unpackF64(const uint8_t *buf) {
+    uint64_t bits = ((uint64_t)unpackU32(buf) << 32) | (uint64_t)unpackU32(buf + 4);
+    double   value;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+/* recipient: safe — ignored. A scenario's own rules table is public. */
+static EncodeResult encodeScenarioRulesBody(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
+    size_t count;
+    size_t needed;
+    size_t i;
+    (void)recipient;
+
+    count = evt->u.scenarioRules.count;
+    if (count > (size_t)CTRL_SCENARIO_RULES_MAX) {
+        count = (size_t)CTRL_SCENARIO_RULES_MAX;
+    }
+    needed = 1 + count * SCN_RULES_ROW_LEN;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+
+    buf[0] = (uint8_t)count;
+    for (i = 0; i < count; i++) {
+        uint8_t *row = buf + 1 + i * SCN_RULES_ROW_LEN;
+        row[0] = evt->u.scenarioRules.rule[i];
+        packF64(row + 1, evt->u.scenarioRules.value[i]);
+    }
+    *outLen = needed;
+    return ENCODE_OK;
+}
+
+static bool decodeScenarioRulesBody(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt) {
+    size_t count;
+    size_t i;
+
+    if (buf == NULL || outEvt == NULL) return false;
+    if (len < 1) return false;
+    count = buf[0];
+    if (count > (size_t)CTRL_SCENARIO_RULES_MAX) return false;
+    if (len != 1 + count * SCN_RULES_ROW_LEN) return false;
+    for (i = 0; i < count; i++) {
+        if (buf[1 + i * SCN_RULES_ROW_LEN] >= CTRL_SCENARIO_RULES_MAX) {
+            return false;   /* an index that names no rule */
+        }
+    }
+
+    /* The memset is what zeroes the entries above count, so a set that
+       shrinks cannot leave a stale row behind the new one. */
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_SCENARIO_RULES;
+    outEvt->u.scenarioRules.count = (uint8_t)count;
+    for (i = 0; i < count; i++) {
+        const uint8_t *row = buf + 1 + i * SCN_RULES_ROW_LEN;
+        outEvt->u.scenarioRules.rule[i]  = row[0];
+        outEvt->u.scenarioRules.value[i] = unpackF64(row + 1);
+    }
+    return true;
+}
+
 /* ================================================================
  * Encoder lookup — indexed by ControlEventType. Variants without
  * a wire form leave NULL slots (CTRL_MAP_DOWNLOAD_COMPLETE is
@@ -3126,6 +3213,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SCN_SCORE]             = encodeScnScoreBody,
     [CTRL_SCN_ANNOUNCE]          = encodeScnAnnounceBody,
     [CTRL_SCN_MARKER]            = encodeScnMarkerBody,
+    [CTRL_SCENARIO_RULES]        = encodeScenarioRulesBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -3176,6 +3264,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SCN_SCORE]             = decodeScnScoreBody,
     [CTRL_SCN_ANNOUNCE]          = decodeScnAnnounceBody,
     [CTRL_SCN_MARKER]            = decodeScnMarkerBody,
+    [CTRL_SCENARIO_RULES]        = decodeScenarioRulesBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {

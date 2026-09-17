@@ -256,6 +256,11 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
      * markers with a blank scoreboard beside them looks broken, the
      * same reason CTRL_STATS_SEED is allowed above. */
     case CTRL_SCN_SCORE:
+    /* And the rules that scenario's manifest sets: the lobby line a viewer
+     * already reads names the scenario, and this is what is behind it. As
+     * public as the name and the description CTRL_LOBBY_SETTINGS carries to
+     * the same viewer, and addressed to nobody. */
+    case CTRL_SCENARIO_RULES:
         allow = true;
         break;
     default:

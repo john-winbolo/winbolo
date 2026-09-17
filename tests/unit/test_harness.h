@@ -3002,6 +3002,16 @@ int run_scn_arm_panel_replayed_to_joiner(void);
 int run_scn_arm_panel_snapshot_bounded(void);
 int run_scn_arm_score_announce_marker(void);
 
+/* The rules a scenario's manifest sets (test_scenario_rules_codec.c,
+ * test_scenario_rules_published.c, test_scenario_rules_reaches_joiner.c):
+ * the body codec against hand-written bytes and every refusal a malformed
+ * body gets; the set published on an attach, emptied on a detach and never
+ * written on a map that has never had a scenario; and the replay that hands
+ * it to a client registering after the attach. */
+int run_scenario_rules_codec(void);
+int run_scenario_rules_published(void);
+int run_scenario_rules_reaches_joiner(void);
+
 /* The bot hint (test_scenario_hint.c): the table a fixture brain gets back
  * whole, every refusal the arm answers with, and the record naming the seat
  * and the verb. */

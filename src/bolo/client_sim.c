@@ -2734,6 +2734,23 @@ const char *clientSimGetLobbyScenarioName(const ClientSim *cs)       { return cs
 const char *clientSimGetLobbyScenarioFileName(const ClientSim *cs)   { return cs ? cs->lobbyScenarioFileName : ""; }
 const char *clientSimGetLobbyScenarioDescription(const ClientSim *cs){ return cs ? cs->lobbyScenarioDescription : ""; }
 bool     clientSimGetLobbyScenarioExtraTeams(const ClientSim *cs)    { return cs ? cs->lobbyScenarioExtraTeams : false; }
+
+/* The rules that scenario's manifest sets. Bounded on the stored count
+   rather than on the array, so a row above it — one an earlier, longer set
+   left behind — is never handed out. */
+int clientSimGetScenarioRulesCount(const ClientSim *cs) {
+  return cs ? (int)cs->scenarioRulesCount : 0;
+}
+
+int clientSimGetScenarioRuleIndex(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= (int)cs->scenarioRulesCount) return -1;
+  return (int)cs->scenarioRuleIndex[idx];
+}
+
+double clientSimGetScenarioRuleValue(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= (int)cs->scenarioRulesCount) return 0.0;
+  return cs->scenarioRuleValue[idx];
+}
 bool     clientSimGetLobbyWbnAvailable(const ClientSim *cs)          { return cs ? cs->lobbyWbnAvailable : false; }
 uint32_t clientSimGetLobbyServerLocks(const ClientSim *cs)           { return cs->lobbyServerLocks; }
 UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs)           { return cs ? cs->uploadPolicy : UPLOAD_POLICY_ALLOW; }

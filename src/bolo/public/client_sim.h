@@ -1037,6 +1037,19 @@ const char *clientSimGetLobbyScenarioFileName(const ClientSim *cs);
 const char *clientSimGetLobbyScenarioDescription(const ClientSim *cs);
 bool        clientSimGetLobbyScenarioExtraTeams(const ClientSim *cs);
 
+/* The rules that scenario's own manifest sets, mirrored via
+ * CTRL_SCENARIO_RULES: which rule, and what the author set it to. The rule
+ * is a SimRuleIndex (public/sim_rules_names.h), which is what names it and
+ * what simRulesClassicValue and simRulesDescribeChange take, so a caller
+ * draws a row without knowing anything about scenarios.
+ *
+ * 0 rows for a lobby with no scenario, and for one whose scenario changes no
+ * rule: a caller with nothing to list draws nothing either way. -1 / 0 for a
+ * NULL cs or an index out of range. */
+int         clientSimGetScenarioRulesCount(const ClientSim *cs);
+int         clientSimGetScenarioRuleIndex(const ClientSim *cs, int idx);
+double      clientSimGetScenarioRuleValue(const ClientSim *cs, int idx);
+
 /* Server map-upload policy as last broadcast in the lobby-settings event.
  * Defaults to UPLOAD_POLICY_ALLOW until the first event arrives. */
 UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs);

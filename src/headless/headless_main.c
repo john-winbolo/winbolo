@@ -357,6 +357,7 @@ static const char *logEventsTypeName(int type) {
     case CTRL_SCN_SCORE:             return "CTRL_SCN_SCORE";
     case CTRL_SCN_ANNOUNCE:          return "CTRL_SCN_ANNOUNCE";
     case CTRL_SCN_MARKER:            return "CTRL_SCN_MARKER";
+    case CTRL_SCENARIO_RULES:        return "CTRL_SCENARIO_RULES";
     default:                         return NULL;
   }
 }
@@ -677,6 +678,23 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
     case CTRL_LOBBY_BRAIN_DOCS_CHUNK:
       /* Dropped above; never reaches the body writer. */
       break;
+
+    case CTRL_SCENARIO_RULES: {
+      /* The rules a scenario's own manifest set. Written out in full: a run
+         over a scripted map is exactly where a reader wants to see which
+         rules the script asked for. A plain map never publishes this event,
+         so a recording of one carries no line of it at all. */
+      unsigned k;
+      fprintf(f, ",\"count\":%u,\"rules\":[",
+              (unsigned)evt->u.scenarioRules.count);
+      for (k = 0; k < (unsigned)evt->u.scenarioRules.count; k++) {
+        fprintf(f, "%s{\"rule\":%u,\"value\":%g}", (k == 0) ? "" : ",",
+                (unsigned)evt->u.scenarioRules.rule[k],
+                evt->u.scenarioRules.value[k]);
+      }
+      fputc(']', f);
+      break;
+    }
 
     case CTRL_EVENT_TYPE_COUNT:
       /* Sentinel — never actually delivered. */

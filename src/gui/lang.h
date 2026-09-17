@@ -2380,6 +2380,17 @@
 #define STR_RULE_ON                         2224
 #define STR_RULE_OFF                        2225
 
+/* The lobby's rules popup: the button on the scenario line, the window's
+ * caption, and the four columns a row is drawn in — the rule, what the
+ * classic game plays it at, what the scenario set it to, and what that does
+ * to it in words. */
+#define STR_DLGLOBBY_SCENARIO_RULES         2227
+#define STR_DLGLOBBY_SCENARIO_RULES_TITLE   2228
+#define STR_DLGLOBBY_RULES_COL_RULE         2229
+#define STR_DLGLOBBY_RULES_COL_CLASSIC      2230
+#define STR_DLGLOBBY_RULES_COL_SCENARIO     2231
+#define STR_DLGLOBBY_RULES_COL_CHANGE       2232
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

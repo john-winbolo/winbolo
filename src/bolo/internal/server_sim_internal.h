@@ -929,6 +929,19 @@ struct ServerSim {
         char                description[LOBBY_SCENARIO_DESC_LEN];
         bool                extraTeams;
     } scenarioIdentity;
+    /* The rules the attached scenario's own manifest sets, as its author
+     * wrote them, so the lobby can say what a mod changes without opening
+     * the file. Not the table the round is running on: sim.rules is that,
+     * and a scenario changing a rule mid-round moves it and leaves this
+     * alone. Held beside the identity because it is set and cleared with
+     * it — a scenario attaching states its set and one detaching empties
+     * it — rather than with the presentation, which the return to lobby
+     * drops while the scenario is still attached.
+     *
+     * A manifest names each rule at most once, so the array holds every
+     * rule there is and rows past the count name none. */
+    ScnOpSetRule           scenarioRules[CTRL_SCENARIO_RULES_MAX];
+    uint8_t                scenarioRulesCount;
     /* What the lobby was set to when a scripted map displaced it: the game
      * type gameScripted took the place of, the ranked flag a scripted round
      * cannot run under, and the AI policy and bot AI type that aiNone was
@@ -1114,6 +1127,16 @@ void serverSimScenarioReplayPanels(
     void (*deliver)(void *, const struct ControlEvent *),
     void *ctx,
     bool withTargeted);
+
+/* Fill a CTRL_SCENARIO_RULES from the set the attached scenario's manifest
+ * holds. Always fills: an attached scenario that changes no rule states an
+ * empty set, which is a different thing from the event not being sent.
+ * Whether to send it at all is the caller's question — the publish sites and
+ * the sync replay each ask whether a scenario is attached. Declared here
+ * rather than on the scenario surface because both callers are the sim's
+ * own. */
+void serverSimFillScenarioRulesEvent(const ServerSim *sim,
+                                     struct ControlEvent *evt);
 
 BOLO_STATIC_ASSERT(MAX_TANKS <= 16, shadowCulledSlots_holds_one_bit_per_slot);
 

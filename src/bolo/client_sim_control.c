@@ -1481,5 +1481,36 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         m->colour = evt->u.scnMarker.colour;
         break;
     }
+
+    case CTRL_SCENARIO_RULES: {
+        /* Broadcast: a scenario's own rules table is as public as the name
+           and the description the lobby settings event already carries.
+           The whole set is replaced, so a row the new set does not name is
+           gone rather than left behind, and the empty set a detach sends
+           leaves the lobby with nothing to show. */
+        uint8_t n = evt->u.scenarioRules.count;
+        uint8_t kept = 0;
+        uint8_t i;
+        if (n > (uint8_t)CTRL_SCENARIO_RULES_MAX) {
+            n = (uint8_t)CTRL_SCENARIO_RULES_MAX;
+        }
+        memset(cs->scenarioRuleIndex, 0, sizeof(cs->scenarioRuleIndex));
+        memset(cs->scenarioRuleValue, 0, sizeof(cs->scenarioRuleValue));
+        for (i = 0; i < n; i++) {
+            /* A row naming no rule is dropped rather than kept, so every
+               row a reader is handed names one. The wire decoder refuses
+               such a body outright; an in-process publish does not go
+               through it, which is why this asks as well. */
+            if (evt->u.scenarioRules.rule[i] >=
+                (uint8_t)CTRL_SCENARIO_RULES_MAX) {
+                continue;
+            }
+            cs->scenarioRuleIndex[kept] = evt->u.scenarioRules.rule[i];
+            cs->scenarioRuleValue[kept] = evt->u.scenarioRules.value[i];
+            kept++;
+        }
+        cs->scenarioRulesCount = kept;
+        break;
+    }
     }
 }

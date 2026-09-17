@@ -697,6 +697,23 @@ void serverSimFillSimRulesEvent(const ServerSim *sim, ControlEvent *evt) {
 #undef SIM_RULES_FILL_FIELD
 }
 
+/* Fill a CTRL_SCENARIO_RULES from the set the attached scenario's manifest
+ * holds. The rows are copied as they were given: this event says what the
+ * author wrote, so a value the sim later refused or clamped is still the
+ * value the table asked for. */
+void serverSimFillScenarioRulesEvent(const ServerSim *sim, ControlEvent *evt) {
+    uint8_t i;
+
+    if (sim == NULL || evt == NULL) return;
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_SCENARIO_RULES;
+    evt->u.scenarioRules.count = sim->scenarioRulesCount;
+    for (i = 0; i < sim->scenarioRulesCount; i++) {
+        evt->u.scenarioRules.rule[i]  = (uint8_t)sim->scenarioRules[i].rule;
+        evt->u.scenarioRules.value[i] = sim->scenarioRules[i].value;
+    }
+}
+
 void serverSimPublishSimRules(ServerSim *sim) {
     ControlEvent evt;
     if (sim == NULL) return;
@@ -958,6 +975,17 @@ static void serverSimSyncSubscriber(
      * is — the ordering check refuses a non-join event after the first
      * join. */
     serverSimScenarioReplayPanels(sim, deliver, ctx, fullReplay);
+
+    /* What the attached scenario's own manifest sets, so a client that joins
+     * after the attach reads the same table the lobby's popup draws from.
+     * Only while one is attached: an empty set says a scenario has just
+     * detached, and a map that never had one has nothing to say. Placed
+     * ahead of the player-join roster for the reason the two above are — the
+     * ordering check refuses a non-join event after the first join. */
+    if (sim->scenarioIdentity.source != lobbyScenarioNone) {
+        serverSimFillScenarioRulesEvent(sim, &evt);
+        deliver(ctx, &evt);
+    }
 
     for (i = 0; i < MAX_TANKS; i++) {
         if (playersIsInUse(&sim->sim.plyrs, i) == TRUE) {

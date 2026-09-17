@@ -2177,6 +2177,12 @@ static const LangEntry langTable[] = {
     {2224, "on"},
     {2225, "off"},
     {2226, "Score"},
+    {2227, "Rules"},
+    {2228, "What {string1} changes"},
+    {2229, "Rule"},
+    {2230, "Classic"},
+    {2231, "Scenario"},
+    {2232, "Change"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

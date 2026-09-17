@@ -753,6 +753,17 @@ struct ClientSim {
     char     lobbyScenarioDescription[LOBBY_SCENARIO_DESC_LEN];
     bool     lobbyScenarioExtraTeams;
 
+    /* The rules that scenario's own manifest sets, from CTRL_SCENARIO_RULES.
+     * Here beside the identity rather than with the presentation below: a
+     * scenario stays attached across the return to lobby, which is where the
+     * presentation is dropped and where this set is read most — the lobby's
+     * popup is the only thing that says what a rules-only mod does. Each
+     * event replaces the whole set, and the empty one a detach publishes is
+     * what empties it, so nothing else clears it. */
+    uint8_t  scenarioRulesCount;
+    uint8_t  scenarioRuleIndex[CTRL_SCENARIO_RULES_MAX];
+    double   scenarioRuleValue[CTRL_SCENARIO_RULES_MAX];
+
     /* Most recent server reject — surfaced via toast/log when set.
      * lobbyLastRejectPacket is set to 0 when no pending message. */
     uint8_t  lobbyLastRejectPacket;

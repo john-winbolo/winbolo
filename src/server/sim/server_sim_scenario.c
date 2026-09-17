@@ -3815,7 +3815,13 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
            caller passed goes with it rather than being kept beside a source
            that says there is no scenario. The panels and scores go too: they
            are what the scenario that has just gone was presenting, and a
-           client joining after this must not be given them. */
+           client joining after this must not be given them. The rules set
+           goes as well, so the sync replay cannot hand a joiner the table of
+           a scenario that is no longer attached. Emptied rather than
+           published empty: the publish belongs to
+           serverSimSetScenarioRules, which the detach calls beside this. */
+        memset(sim->scenarioRules, 0, sizeof(sim->scenarioRules));
+        sim->scenarioRulesCount = 0;
         serverSimScenarioResetPresentation(sim);
         return;
     }
@@ -3827,6 +3833,30 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
                         sizeof(sim->scenarioIdentity.fileName), fileName);
     scnCopyIdentityText(sim->scenarioIdentity.description,
                         sizeof(sim->scenarioIdentity.description), description);
+}
+
+void serverSimSetScenarioRules(ServerSim *sim, const ScnOpSetRule *rules,
+                               int count) {
+    ControlEvent evt;
+    int          i;
+
+    if (sim == NULL) return;
+    memset(sim->scenarioRules, 0, sizeof(sim->scenarioRules));
+    sim->scenarioRulesCount = 0;
+    if (rules != NULL) {
+        for (i = 0; i < count; i++) {
+            if (rules[i].rule >= (uint16_t)CTRL_SCENARIO_RULES_MAX) {
+                continue;   /* names no rule */
+            }
+            if (sim->scenarioRulesCount >= CTRL_SCENARIO_RULES_MAX) {
+                break;      /* every rule there is, already named */
+            }
+            sim->scenarioRules[sim->scenarioRulesCount] = rules[i];
+            sim->scenarioRulesCount++;
+        }
+    }
+    serverSimFillScenarioRulesEvent(sim, &evt);
+    serverSimPublishControl(sim, &evt);
 }
 
 void serverSimSetScenarioState(ServerSim *sim, void *state) {

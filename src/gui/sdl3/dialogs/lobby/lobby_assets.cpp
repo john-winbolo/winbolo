@@ -74,10 +74,16 @@ static bool lobbyScenarioMayChoose(ClientSim *cs) {
  * in when they go looking for a scenario, so it is the last place the way in
  * should be missing. A joiner sees no button at all.
  *
- * The button only asks for the dialog. The dialog itself is drawn from the
- * lobby's own frame, beside the map chooser's window, because this line is
- * drawn inside the Map tab and a dialog that stopped being drawn when the
- * player changed tab would be open with no way back to it. */
+ * The Rules button is the exception: everyone sees it, host and joiner alike,
+ * because what a scenario changes is the same question for both and a joiner
+ * has no other way to ask it. It is drawn only where there is something to
+ * list — a scenario is attached and its manifest sets at least one rule — so
+ * a plain map offers no way into an empty popup.
+ *
+ * The buttons only ask for their dialogs. Both are drawn from the lobby's own
+ * frame, because this line is drawn inside the Map tab and a dialog that
+ * stopped being drawn when the player changed tab would be open with no way
+ * back to it. */
 void lobbyRenderScenarioLine(ClientSim *cs) {
     if (cs == NULL) return;
 
@@ -118,6 +124,16 @@ void lobbyRenderScenarioLine(ClientSim *cs) {
             if (ImGui::SmallButton(
                     langGetText(STR_DLGLOBBY_CHOOSE_SCENARIO))) {
                 lobbyScenarioChooserOpen();
+            }
+        }
+        /* And what its rules table says, for whoever is looking at the line.
+           A mod whose whole content is a rules table has nothing else to say
+           what it does. */
+        if (lobbyScenarioRulesAvailable(cs)) {
+            if (mayChoose) ImGui::SameLine();
+            if (ImGui::SmallButton(
+                    langGetText(STR_DLGLOBBY_SCENARIO_RULES))) {
+                lobbyScenarioRulesOpen();
             }
         }
         return;

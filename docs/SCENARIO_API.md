@@ -1605,7 +1605,5 @@ Named so you do not spend an afternoon looking for them:
   may put a seat on a team nobody is on is still decided by the
   `allow_extra_teams()` policy alone.
 - **Packaged brains.** `package:NAME` is refused wherever a brain is named.
-- **Presentation.** A panel, a score line, a newswire line and a map marker
-  have no calls yet.
 - **Triggers.** A `scenario.triggers` table is not read, and a script that
   carries one is neither parsed nor refused for it.
