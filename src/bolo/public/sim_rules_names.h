@@ -194,6 +194,13 @@ typedef enum {
     X(mine_fuse_ticks, SIM_RULE_VALUE_INT,                                   \
       SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
     X(big_explosion_threshold, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)      \
+    X(tank_explosion_damage, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)        \
+    X(tank_explosion_length, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)        \
+    X(tank_explosion_move, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)          \
+    X(tank_explosion_update_ticks, SIM_RULE_VALUE_INT,                       \
+      SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
+    X(tank_explosion_width, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \
+    X(tank_explosion_height, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)        \
     /* Tree growth */                                                        \
     X(tree_grow_ticks, SIM_RULE_VALUE_INT,                                   \
       SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \

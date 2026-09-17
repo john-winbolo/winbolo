@@ -247,6 +247,12 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(swamp_life, SWAMP_LIFE);
     SR_EQ(mine_fuse_ticks, MINES_EXPLOSION_WAIT);
     SR_EQ(big_explosion_threshold, TANK_BIG_EXPLOSION_THRESHOLD);
+    SR_EQ(tank_explosion_damage, TK_DAMAGE);
+    SR_EQ(tank_explosion_length, TK_EXPLODE_LENGTH);
+    SR_EQ(tank_explosion_move, TK_MOVE_AMOUNT);
+    SR_EQ(tank_explosion_update_ticks, TK_UPDATE_TIME);
+    SR_EQ(tank_explosion_width, TK_WIDTH_CHECK);
+    SR_EQ(tank_explosion_height, TK_HEIGHT_CHECK);
 
     /* Tree growth */
     SR_EQ(tree_grow_ticks, TREEGROW_TIME);
@@ -1086,6 +1092,71 @@ int run_sim_rules_pill_angry_divisor_follows(void) {
                   "floor %ld",
                   (unsigned) gs->pb->item[0].speed,
                   (long) gs->rules.pill_attack_min_ticks);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The splash a dying tank lays on a pillbox, and the shape of the wreck that
+ * carries it. tkExplosionUpdate drove the wreck on TK_MOVE_AMOUNT every
+ * TK_UPDATE_TIME ticks and tested a box of TK_WIDTH_CHECK by TK_HEIGHT_CHECK
+ * around it; the four splash sites passed TK_DAMAGE. All six are rules now,
+ * so a scenario can make a death throw a longer, wider or harder wreck. The
+ * splash is checked through pillsGetDamagePos, which is the path the wreck
+ * itself calls. */
+int run_sim_rules_tank_explosion_follows(void) {
+    ServerSim *sim = ut_make_running_sim("Pyre");
+    GameSim *gs;
+    pillbox item;
+    BYTE px, py;
+
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    UT_ASSERT_MSG(pillsGetNumPills(&gs->pb) >= 1,
+                  "Everard Island should carry at least one pillbox");
+    memset(&item, 0, sizeof(item));
+    pillsGetPill(&gs->pb, &item, 1);
+    px = item.x;
+    py = item.y;
+
+    /* The six defaults are the constants the sites used to read. */
+    UT_ASSERT_MSG(gs->rules.tank_explosion_damage == TK_DAMAGE,
+                  "tank_explosion_damage is %ld, expected %d",
+                  (long) gs->rules.tank_explosion_damage, TK_DAMAGE);
+    UT_ASSERT_MSG(gs->rules.tank_explosion_length == TK_EXPLODE_LENGTH,
+                  "tank_explosion_length is %ld, expected %d",
+                  (long) gs->rules.tank_explosion_length, TK_EXPLODE_LENGTH);
+    UT_ASSERT_MSG(gs->rules.tank_explosion_move == TK_MOVE_AMOUNT,
+                  "tank_explosion_move is %ld, expected %d",
+                  (long) gs->rules.tank_explosion_move, TK_MOVE_AMOUNT);
+    UT_ASSERT_MSG(gs->rules.tank_explosion_update_ticks == TK_UPDATE_TIME,
+                  "tank_explosion_update_ticks is %ld, expected %d",
+                  (long) gs->rules.tank_explosion_update_ticks, TK_UPDATE_TIME);
+    UT_ASSERT_MSG(gs->rules.tank_explosion_width == TK_WIDTH_CHECK,
+                  "tank_explosion_width is %ld, expected %d",
+                  (long) gs->rules.tank_explosion_width, TK_WIDTH_CHECK);
+    UT_ASSERT_MSG(gs->rules.tank_explosion_height == TK_HEIGHT_CHECK,
+                  "tank_explosion_height is %ld, expected %d",
+                  (long) gs->rules.tank_explosion_height, TK_HEIGHT_CHECK);
+
+    /* The splash takes the rule rather than the constant. */
+    gs->rules.tank_explosion_damage = 2;
+    gs->pb->item[0].armour = 10;
+    pillsGetDamagePos(gs, &gs->pb, px, py,
+                      (BYTE) gs->rules.tank_explosion_damage);
+    UT_ASSERT_MSG(gs->pb->item[0].armour == 8,
+                  "a splash of 2 left the pill at %u, expected 8",
+                  (unsigned) gs->pb->item[0].armour);
+
+    /* Zero is a wreck that scorches nothing, which the range check allows. */
+    gs->rules.tank_explosion_damage = 0;
+    gs->pb->item[0].armour = 10;
+    pillsGetDamagePos(gs, &gs->pb, px, py,
+                      (BYTE) gs->rules.tank_explosion_damage);
+    UT_ASSERT_MSG(gs->pb->item[0].armour == 10,
+                  "a splash of 0 moved the pill to %u, expected 10",
+                  (unsigned) gs->pb->item[0].armour);
 
     serverSimDestroy(sim);
     return 0;

@@ -139,6 +139,12 @@ typedef struct SimRules {
     int32_t swamp_life;
     int32_t mine_fuse_ticks;
     int32_t big_explosion_threshold;
+    int32_t tank_explosion_damage;        /* the splash a dying tank deals a pill */
+    int32_t tank_explosion_length;        /* how long the wreck travels */
+    int32_t tank_explosion_move;          /* world units a wreck moves a step */
+    int32_t tank_explosion_update_ticks;  /* ticks between those steps */
+    int32_t tank_explosion_width;         /* half the wreck's collision box */
+    int32_t tank_explosion_height;
 
     /* ---- Tree growth ---- */
     int32_t tree_grow_ticks;

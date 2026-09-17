@@ -5070,6 +5070,7 @@ set(_unit_test_names
     sim_rules_pill_empties_without_wrapping
     sim_rules_pill_shell_damage_follows
     sim_rules_pill_angry_divisor_follows
+    sim_rules_tank_explosion_follows
     sim_rules_pairs
     sim_rules_capture_threshold_moves
     sim_rules_builder_cost_follows

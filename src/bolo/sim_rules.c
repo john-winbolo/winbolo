@@ -40,6 +40,7 @@
 #include "grass.h"       /* GRASS_LIFE */
 #include "swamp.h"       /* SWAMP_LIFE */
 #include "minesexp.h"    /* MINES_EXPLOSION_WAIT */
+#include "tankexp.h"     /* TK_DAMAGE and the wreck's shape */
 #include "treegrow.h"    /* TREEGROW_* / TREE_GROW_* */
 
 void simRulesClassic(SimRules *out) {
@@ -144,6 +145,12 @@ void simRulesClassic(SimRules *out) {
     out->swamp_life              = SWAMP_LIFE;
     out->mine_fuse_ticks         = MINES_EXPLOSION_WAIT;
     out->big_explosion_threshold = TANK_BIG_EXPLOSION_THRESHOLD;
+    out->tank_explosion_damage       = TK_DAMAGE;
+    out->tank_explosion_length       = TK_EXPLODE_LENGTH;
+    out->tank_explosion_move         = TK_MOVE_AMOUNT;
+    out->tank_explosion_update_ticks = TK_UPDATE_TIME;
+    out->tank_explosion_width        = TK_WIDTH_CHECK;
+    out->tank_explosion_height       = TK_HEIGHT_CHECK;
 
     /* ---- Tree growth ---- */
     out->tree_grow_ticks           = TREEGROW_TIME;
@@ -454,6 +461,20 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
     RULE_INT(swamp_life, 1, 255)
     RULE_INT(mine_fuse_ticks, 1, 255)
     RULE_INT(big_explosion_threshold, 0, 510)
+    /* Capped by what a pill can hold, so only its own end is fixed here.
+       Zero is a wreck that scorches nothing, which is a table a scenario
+       may want. */
+    RULE_INT_MIN(tank_explosion_damage, 0)
+    RULE_INT(tank_explosion_length, 1, 255)
+    RULE_INT(tank_explosion_move, 0, 255)
+    RULE_INT(tank_explosion_update_ticks, 1, 255)
+    RULE_INT(tank_explosion_width, 0, 255)
+    RULE_INT(tank_explosion_height, 0, 255)
+    RULE_PAIR(PAIR_ASKED2(tank_explosion_damage, pill_max_armour),
+              rules->tank_explosion_damage <= rules->pill_max_armour,
+              "tank_explosion_damage is %ld, above pill_max_armour %ld",
+              (long) rules->tank_explosion_damage,
+              (long) rules->pill_max_armour)
 
     /* ---- Tree growth ---- */
     RULE_INT(tree_grow_ticks, 1, INT32_MAX)

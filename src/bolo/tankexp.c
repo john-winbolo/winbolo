@@ -199,7 +199,7 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
 
   /* Update only so often - Not every game tick */
   (*updateTime)++;
-  if (*updateTime < TK_UPDATE_TIME) {
+  if (*updateTime < sim->rules.tank_explosion_update_ticks) {
     return;
   }
 
@@ -210,13 +210,14 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
    * loop below were removed: scrollCenterObject in client_ui_events.c
    * already snaps the camera to the leading own-fireball once per tick,
    * and the pan-per-fireball was an additional shift that fought that
-   * snap (manifesting as +2/-1 oscillations every TK_UPDATE_TIME ticks
+   * snap (manifesting as +2/-1 oscillations every tank_explosion_update_ticks
    * during the death sequence). playerNum is still used below for the
    * deep-sea-death sound branch. */
 
   while (NonEmpty(position)) {
     needUpdate = TRUE;
-    utilCalcDistance(&moveX, &moveY, position->angle, TK_MOVE_AMOUNT);
+    utilCalcDistance(&moveX, &moveY, position->angle,
+                     (TURNTYPE) sim->rules.tank_explosion_move);
     if (position->length > TK_EXPLODE_DEATH) {
       /* Add the "flame trail" */
       conv = position->x;
@@ -240,14 +241,14 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
 
       /* Collision Test */
       if (newX > 0) {
-        newX += TK_WIDTH_CHECK;
+        newX += (WORLD) sim->rules.tank_explosion_width;
       } else {
-        newX -= TK_WIDTH_CHECK;
+        newX -= (WORLD) sim->rules.tank_explosion_width;
       }
       if (newY > 0) {
-        newY += TK_HEIGHT_CHECK;
+        newY += (WORLD) sim->rules.tank_explosion_height;
       } else {
-        newY -= TK_HEIGHT_CHECK;
+        newY -= (WORLD) sim->rules.tank_explosion_height;
       }
 
       conv = newX;
@@ -523,7 +524,7 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   currentPos = mapGetPos(mp, (BYTE) (mx+moveX), (BYTE) (my+moveY));
   tkExplosionCheckRemove(sim, currentPos, (BYTE) (mx + moveX), (BYTE) (my +moveY));
   if (sim->isServer && pillsExistPos(pb, (BYTE) (mx+moveX), (BYTE) (my + moveY))) {
-    pillsGetDamagePos(sim, pb, (BYTE) (mx+moveX), (BYTE) (my+moveY), TK_DAMAGE);
+    pillsGetDamagePos(sim, pb, (BYTE) (mx+moveX), (BYTE) (my+moveY), (BYTE) sim->rules.tank_explosion_damage);
   } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA &&
              basesExistPos(bs, (BYTE) (mx+moveX), (BYTE) (my+moveY)) == FALSE &&
              pillsExistPos(pb, (BYTE) (mx+moveX), (BYTE) (my+moveY)) == FALSE) {
@@ -543,7 +544,7 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   currentPos = mapGetPos(mp, (BYTE) (mx+moveX), my);
   tkExplosionCheckRemove(sim, currentPos, (BYTE) (mx + moveX), my);
   if (sim->isServer && pillsExistPos(pb, (BYTE) (mx+moveX), my)) {
-    pillsGetDamagePos(sim, pb, (BYTE) (mx+moveX), my, TK_DAMAGE);
+    pillsGetDamagePos(sim, pb, (BYTE) (mx+moveX), my, (BYTE) sim->rules.tank_explosion_damage);
   } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA &&
              basesExistPos(bs, (BYTE) (mx+moveX), my) == FALSE &&
              pillsExistPos(pb, (BYTE) (mx+moveX), my) == FALSE) {
@@ -562,7 +563,7 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   currentPos = mapGetPos(mp, mx, (BYTE) (my+moveY));
   tkExplosionCheckRemove(sim, currentPos, mx, (BYTE) (my +moveY));
   if (sim->isServer && pillsExistPos(pb, mx, (BYTE) (my + moveY))) {
-    pillsGetDamagePos(sim, pb, mx, (BYTE) (my + moveY), TK_DAMAGE);
+    pillsGetDamagePos(sim, pb, mx, (BYTE) (my + moveY), (BYTE) sim->rules.tank_explosion_damage);
   } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA &&
              basesExistPos(bs, mx, (BYTE) (my+moveY)) == FALSE &&
              pillsExistPos(pb, mx, (BYTE) (my+moveY)) == FALSE) {
@@ -590,7 +591,7 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
   currentPos = mapGetPos(mp, mx, my);
   tkExplosionCheckRemove(sim, currentPos, mx, my);
   if (sim->isServer && pillsExistPos(pb, mx, my)) {
-    pillsGetDamagePos(sim, pb, mx, my, TK_DAMAGE);
+    pillsGetDamagePos(sim, pb, mx, my, (BYTE) sim->rules.tank_explosion_damage);
   } else if (currentPos != BOAT && currentPos != RIVER && currentPos != DEEP_SEA &&
              basesExistPos(bs, mx, my) == FALSE &&
              pillsExistPos(pb, mx, my) == FALSE) {
