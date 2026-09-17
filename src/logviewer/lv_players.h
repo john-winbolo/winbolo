@@ -467,6 +467,9 @@ BYTE lv_playersGetTeamId(BYTE playerNum);
 BYTE lv_playersGetUnusedTeam(BYTE playerNum);
 BYTE lv_playersGetTeamForOwner(BYTE owner);
 void lv_playersSetTeams(BYTE *pTeams);
+/* Reconcile palette slots with the alliance groups; keep TRUE preserves each
+ * group's existing colour, FALSE deals them afresh (round start). */
+void lv_playersRebuildTeams(bool keep);
 void lv_playersCopyPTeams(BYTE *dest);
 
 #endif /* _PLAYERS_H */

@@ -2192,3 +2192,15 @@ STR_DLGSETTINGS_SIMPLEZOOM_TIP=Zoomed out past 1x, draw each square as one colou
 STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW=Only map overview
 STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW_TIP=Keep the simplified view to the Map Overview window. The full screen map draws its sprites at every zoom.
 
+# Rule change descriptions
+STR_RULE_UNCHANGED=unchanged
+STR_RULE_FASTER={string1}x faster
+STR_RULE_SLOWER={string1}x slower
+STR_RULE_MORE={string1}x as many
+STR_RULE_FEWER={string1}x fewer
+STR_RULE_TWICE=twice as many
+STR_RULE_HALF=half as many
+STR_RULE_ON=on
+STR_RULE_OFF=off
+STR_LV_RETURN_MAIN_MENU=Return to main menu
+

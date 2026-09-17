@@ -864,6 +864,7 @@ set(IOS_BOLO_SOURCES
 # minimal feature set.
 add_subdirectory(src/bolo)
 add_subdirectory(src/server)
+add_subdirectory(src/scenario_io)
 add_subdirectory(src/scenario)
 add_subdirectory(brains)
 
@@ -898,6 +899,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/sound.c
     src/gui/sdl3/sound_variants.c
     src/gui/sdl3/lang.c
+    src/gui/sdl3/sim_rules_phrase.c
     src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/bg_game.c
     src/gui/sdl3/minimap_render.c
@@ -952,6 +954,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/imgui_about.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
+    src/gui/sdl3/dialogs/dialog_quit.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/lobby_start_list.cpp
     src/gui/sdl3/map_preview_view.cpp
@@ -1467,6 +1470,7 @@ endif()
 
 add_subdirectory(src/bolo)
 add_subdirectory(src/server)
+add_subdirectory(src/scenario_io)
 add_subdirectory(src/scenario)
 add_subdirectory(brains)
 
@@ -1547,7 +1551,7 @@ set(CLIENT_SOURCES
     src/client_frontend/client_frontend_connect.c
     src/client_frontend/client_frontend_tick.c
     src/client_frontend/client_frontend_common.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/lobby_start_list.cpp
@@ -1573,7 +1577,8 @@ set(CLIENT_SOURCES
     # spectator_input_stub.c instead.
     src/gui/sdl3/spectator_input.c
     src/gui/sdl3/tutorial_text.c
-    src/gui/sdl3/lang.c src/gui/sdl3/sound.c src/gui/sdl3/sound_variants.c
+    src/gui/sdl3/lang.c src/gui/sdl3/sim_rules_phrase.c
+    src/gui/sdl3/sound.c src/gui/sdl3/sound_variants.c
     src/client_frontend/voice_core.c
     src/client_frontend/voice_client.c
     src/gui/sdl3/voice.c
@@ -2299,6 +2304,7 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
+    src/gui/sdl3/dialogs/dialog_quit.cpp
     src/gui/sdl3/mapview.c
     src/gui/sdl3/sdl3draw_status.c
     src/gui/sdl3/tank_label.c
@@ -2315,6 +2321,7 @@ set(LOGVIEWER_WBN_BROWSER_SOURCES
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
+    src/gui/sdl3/dialogs/dialog_quit.cpp
     src/gui/sdl3/dialogs/imgui_keyboard.cpp
     src/logviewer/imgui/imgui_lv_browser_stubs.cpp
 )
@@ -2358,6 +2365,8 @@ add_executable(LogViewer
     # spectates, so these resolve the seam symbols here.
     src/logviewer/spectator_input_stub.c
     src/gui/sdl3/lang.c
+    # Not sim_rules_phrase.c beside it: the phrase calls
+    # simRulesDescribeChange in bolo_static, which this target does not link.
     src/gui/sdl3/gamefront_stubs.c
     # The replay draws the same smart-ping glyphs the game does, out of the
     # same loose files.
@@ -2876,6 +2885,7 @@ set(MAPEDITOR_SOURCES
     src/gui/sdl3/map_markers.c
     src/gui/sdl3/ring_band.c
     src/gui/sdl3/lang.c
+    src/gui/sdl3/sim_rules_phrase.c
     src/gui/sdl3/gamefront_stubs.c
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/gfx_settings.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
@@ -2883,6 +2893,7 @@ set(MAPEDITOR_SOURCES
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
     src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
+    src/gui/sdl3/dialogs/dialog_quit.cpp
     src/third_party/stb/stb_image_write_impl.c
     src/mapeditor/mapeditor_main.c
     src/braintest/braintest_frontend.c
@@ -3752,6 +3763,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
     tests/unit/test_sim_rules.c
+    # The rule list a frontend reads: the names, the classic value behind
+    # each one, and what a value does to a rule against that default. The
+    # phrase file renders that answer through langGetText, which
+    # test_stubs.c provides here, so it compiles in without lang.c.
+    tests/unit/test_sim_rules_describe.c
+    src/gui/sdl3/sim_rules_phrase.c
     tests/unit/test_screen_bullets_build.c
     tests/unit/test_ping_smoother.c
     tests/unit/test_client_timing.c
@@ -3963,6 +3980,16 @@ set(WINBOLO_UNITTESTS_SOURCES
     # length, strict bsearch sort order, and name round-trips — pins the
     # off-by-one that crashed resolveName's bsearch on startup.
     tests/unit/test_lang_name_table.c
+    # What a quit inside a dialog means, and where it goes. The same
+    # decision is made in eleven dialog poll loops with nothing to check
+    # that a new one makes it; telling a real close request from the one
+    # the gamepad's B button forges is the difference between cancelling a
+    # dialog and ending the application under the player.
+    tests/unit/test_dialog_quit.c
+    # dialogQuitClassify and the handler registration, for the test above. A
+    # leaf under the "Linked GUI sources" rule in docs/ARCHITECTURE.md:
+    # plain SDL, no ImGui, and it opens no window, renderer or device.
+    src/gui/sdl3/dialogs/dialog_quit.cpp
     # Bot difficulty plumbing: the "difficulty=<word>" BRAIN_INIT_ARG token
     # assembly (whole-token-or-nothing when the buffer is tight) and the
     # difficulty <-> word round trip -difficulty and the preference share.
@@ -4673,6 +4700,8 @@ set(_unit_test_names
     replay_v1_pill_health_nibble
     brainrec_version_rejects_old
     lv_tank_stocks_from_snapshot
+    lv_team_colours_from_snapshot
+    lv_team_colours_events
     lv_tank_stocks_snapshot_without_tail
     lv_tank_stocks_from_record
     lv_hostile_item_counts
@@ -4942,6 +4971,11 @@ set(_unit_test_names
     sim_rules_worldsim_pill_follows
     sim_rules_boat_speed_follows
     sim_rules_obs_reload_follows
+    sim_rules_describe_names
+    sim_rules_describe_reload
+    sim_rules_describe_ratios
+    sim_rules_describe_units
+    sim_rules_phrase
     screen_bullets_build
     ping_smoother
     client_timing
@@ -5087,6 +5121,7 @@ set(_unit_test_names
     game_settings_blob
     ping_network
     lang_name_table
+    dialog_quit
     screencalc_river_road_counts_as_water
     screencalc_river_arms_of_road_centred_cross
     screencalc_river_copies_agree

@@ -102,7 +102,7 @@ static void lv_push_sdl_quit(void) {
 @end
 
 @implementation LVMenuBridge
-- (void)onQuit:(id)sender { (void)sender; lv_push_sdl_quit(); }
+- (void)onQuit:(id)sender { (void)sender; logViewerRequestAppQuit(); }
 - (void)onAbout:(id)sender { (void)sender; lv_imgui_show_about_dialog(); }
 - (void)onOpenWbn:(id)sender { (void)sender; lv_imgui_open_wbn_browser(); }
 - (void)onOpenFile:(id)sender { (void)sender; lv_windowOpenFile(NULL); }

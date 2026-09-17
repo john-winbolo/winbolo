@@ -1659,6 +1659,16 @@ void lv_screenCentreOnSelectedItem() {
  * is what separates the two. */
 static bool s_lastSnapshotHadWorld = FALSE;
 
+/* File position of the round's first world snapshot: the kickoff rewrite on a
+ * lobby-started log, the opening snapshot otherwise. Palette colours are dealt
+ * afresh there and kept everywhere else (lv_playersRebuildTeams), and keying
+ * that on the position rather than on the previous decode means a seek back
+ * to it deals the same colours the first pass did, while a seek from the
+ * lobby straight into mid-game keeps the stored ones. Forgotten with the
+ * snapshot store, since the position belongs to one file. */
+static bool   s_firstWorldSnapKnown = FALSE;
+static size_t s_firstWorldSnapPos = 0;
+
 /* The same answer for the opening snapshot, which the loader consumes before
  * the event stream starts. Set, it means the log opened on a running round and
  * has no lobby in front of it. Both loaders write it as they decode that
@@ -1679,10 +1689,14 @@ bool lv_processSnapshot() {
   BYTE numAllies;
   BYTE *allies;
   BYTE pos;
-
-  // We should add this snapshot timestamp and file location to the store so we can goto later
-  lv_playersCopyPTeams(data);
-  lv_snapshotAdd(&g_lv->snap, lv_logGetCurrentPosition(), g_lv->timeRunning, lv_blocksGetKey(), data);
+  /* Where this snapshot starts, for the seek store. The teams that go with
+     it are stored at the end, once they have been rebuilt, so a seek back
+     here restores the colours this snapshot settled on rather than the ones
+     that were current before it was decoded. */
+  size_t snapPos = lv_logGetCurrentPosition();
+  uint32_t snapTime = g_lv->timeRunning;
+  BYTE snapKey = lv_blocksGetKey();
+  bool worldRead = FALSE;
 
 
   /* Read in start delay and time limit */
@@ -1727,6 +1741,7 @@ bool lv_processSnapshot() {
     int numRuns = 0;
     returnValue = lv_mapReadRuns(&g_lv->mp, &numRuns);
     s_lastSnapshotHadWorld = (numRuns > 0);
+    worldRead = s_lastSnapshotHadWorld;
   }
 
 
@@ -1831,6 +1846,17 @@ bool lv_processSnapshot() {
     count++;
   }
 
+  if (worldRead && s_firstWorldSnapKnown == FALSE) {
+    s_firstWorldSnapKnown = TRUE;
+    s_firstWorldSnapPos = snapPos;
+  }
+  /* Unconditional: a snapshot that failed part-way can still have left a
+     slot on NO_TEAM_SET (a seek restores that for players the stored teams
+     predate), and the rebuild only reads inUse, allies and team, so it is
+     safe to run on whatever did load. Callers draw regardless of the return. */
+  lv_playersRebuildTeams(!(s_firstWorldSnapKnown && snapPos == s_firstWorldSnapPos));
+  lv_playersCopyPTeams(data);
+  lv_snapshotAdd(&g_lv->snap, snapPos, snapTime, snapKey, data);
   return returnValue;
 }
 
@@ -2585,6 +2611,7 @@ bool lv_logLoad(char *fileName, int memoryBufferSize) {
 
   lv_snapshotDestroy(&g_lv->snap);
   g_lv->snap = lv_snapshotCreate();
+  s_firstWorldSnapKnown = FALSE;
   g_lv->timeRunning = 0;
   memset(g_lv->kills,        0, sizeof(g_lv->kills));
   memset(g_lv->deaths,       0, sizeof(g_lv->deaths));
@@ -2733,6 +2760,7 @@ static bool lv_logLoadCommon(void) {
 
   lv_snapshotDestroy(&g_lv->snap);
   g_lv->snap = lv_snapshotCreate();
+  s_firstWorldSnapKnown = FALSE;
   g_lv->timeRunning = 0;
   memset(g_lv->kills,        0, sizeof(g_lv->kills));
   memset(g_lv->deaths,       0, sizeof(g_lv->deaths));
@@ -3720,6 +3748,7 @@ void lv_screenSpecResetSegment(void) {
   }
   lv_snapshotDestroy(&g_lv->snap);
   g_lv->snap        = lv_snapshotCreate();
+  s_firstWorldSnapKnown = FALSE;
   s_specFollowLive  = true;
   s_specSeekPark    = false;
   s_specHeadTick    = 0;

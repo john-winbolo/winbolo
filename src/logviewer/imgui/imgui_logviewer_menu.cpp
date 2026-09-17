@@ -14,6 +14,7 @@
 #include "imgui.h"
 #include "imgui_logviewer_menu.h"
 #include "imgui_main_menu.h"
+#include "../../gui/lang.h"
 #include <SDL3/SDL.h>
 
 extern "C" {
@@ -134,14 +135,14 @@ void lvMenuRender(struct LogViewerState *lv) {
         }
 #endif
         if (fromMainMenu) {
-            if (ImGui::Button("Return to main menu", btnSize)) {
+            if (ImGui::Button(langGetText(STR_LV_RETURN_MAIN_MENU), btnSize)) {
                 push_quit();
                 ImGui::CloseCurrentPopup();
                 s_open = false;
             }
         } else {
-            if (ImGui::Button("Exit", btnSize)) {
-                push_quit();
+            if (ImGui::Button(langGetText(STR_MENU_EXIT), btnSize)) {
+                logViewerRequestAppQuit();
                 ImGui::CloseCurrentPopup();
                 s_open = false;
             }

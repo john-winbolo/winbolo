@@ -295,10 +295,7 @@ int lv_imgui_main_menu_bar(void) {
                 }
             } else {
                 if (ImGui::MenuItem(langGetText(STR_MENU_EXIT))) {
-                    SDL_Event quit_event;
-                    SDL_zero(quit_event);
-                    quit_event.type = SDL_EVENT_QUIT;
-                    SDL_PushEvent(&quit_event);
+                    logViewerRequestAppQuit();
                     clicked = 1;
                 }
             }

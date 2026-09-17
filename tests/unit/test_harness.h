@@ -1051,6 +1051,16 @@ int run_lv_tank_stocks_from_snapshot(void);
 int run_lv_tank_stocks_snapshot_without_tail(void);
 int run_lv_tank_stocks_from_record(void);
 
+/* Viewer palette slots follow alliance groups (same file). from_snapshot:
+ * mutual allies listed as forward references in a snapshot share a slot, and
+ * keyframes that split and restore the groups without alliance events keep the
+ * slots stable. events: players who joined solo hold slot-order colours, the
+ * round's first world snapshot deals the merged groups compact colours (two
+ * teams are Team 1 and Team 2 wherever they sat), and later merges and splits
+ * leave everyone who didn't move alone. */
+int run_lv_team_colours_from_snapshot(void);
+int run_lv_team_colours_events(void);
+
 /* The viewer reading a recording it cannot trust (test_lv_hostile_records.c):
  * hand-built bytes through lv_specSeedLoad / lv_specRecordPump. A count byte
  * past the item arrays or past the block's length is clamped before it is
@@ -1770,6 +1780,19 @@ int run_sim_rules_worldsim_pill_follows(void);
 int run_sim_rules_boat_speed_follows(void);
 int run_sim_rules_obs_reload_follows(void);
 
+/* The rule list as a frontend reads it (test_sim_rules_describe.c): the
+ * names and the classic values behind them, the reload rule a mod moves
+ * first, the ratios and differences a change is described by, and the arm
+ * each unit tag chooses. */
+int run_sim_rules_describe_names(void);
+int run_sim_rules_describe_reload(void);
+int run_sim_rules_describe_ratios(void);
+int run_sim_rules_describe_units(void);
+/* The words a change is drawn as (src/gui/sdl3/sim_rules_phrase.c): the
+ * number's sign, places and trimming, and nothing for an index that names
+ * no rule. The lang arms come back as test_stubs.c's placeholder. */
+int run_sim_rules_phrase(void);
+
 int run_snapshot_compaction(void);
 
 /* Render-only error smoothing (test_error_smoothing.c): the offset
@@ -2063,6 +2086,15 @@ int run_ping_network(void);
  * the table is strictly sorted for bsearch, and every name round-trips —
  * guards the off-by-one that walked resolveName()'s bsearch off the end. */
 int run_lang_name_table(void);
+
+/* What a quit inside a dialog means (test_dialog_quit.c): Cmd+Q, Alt+F4 and
+ * the close box end the application; the close request the gamepad's B
+ * button forges only closes the dialog; another window's close request and a
+ * windowless dialog claim neither. Plus where the quit goes — the host
+ * registers a handler, and with none registered a quit must not crash the
+ * standalone Log Viewer and Map Editor, which link these dialogs but have no
+ * application loop to end. */
+int run_dialog_quit(void);
 
 /* Bot difficulty plumbing (test_bot_init_arg.c): the "difficulty=<word>"
  * BRAIN_INIT_ARG token is appended after any existing tokens with a ';',

@@ -1039,7 +1039,7 @@ static BYTE lv_drawTankAllyRow(BYTE frame) {
 void lv_drawTanks(screenTanks *tks) {
     int x, y, srcX, srcY;
     BYTE count, total, px, py, mx, my, team, zoomFactor, dir, frame;
-    bool onBoat, simple;
+    bool onBoat, simple, allyRead;
     char playerName[PLAYER_NAME_LEN];
     SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
     LogViewerState *lv = lv_screenGetState();
@@ -1055,6 +1055,12 @@ void lv_drawTanks(screenTanks *tks) {
         SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
     }
 
+    /* Which reading the tanks take. The reel's ally colours and team colours
+       switched off both want the game's own self / ally / enemy sides; only
+       the team palette says which player is which, which is the one thing
+       that reading cannot. */
+    allyRead = lv->allyColours || !lv->useTeamColours;
+
     for (count = 1; count <= total; count++) {
         lv_screenTanksGetItem(tks, count, &mx, &my, &px, &py, &frame, &team, &dir, &onBoat, playerName);
         px += 2; py += 2;
@@ -1062,13 +1068,11 @@ void lv_drawTanks(screenTanks *tks) {
         y = my * (zoomFactor * TILE_SIZE_Y) + (zoomFactor * py);
 
         if (simple) {
-            /* A triangle pointing the way it faces. Ally colours are the
-               three the game's markers use, with the viewer's own tank told
-               apart; otherwise the player's assigned colour, which is the
-               one thing the game's two-sided palette cannot say. A tank on a
-               boat is still a tank. */
+            /* A triangle pointing the way it faces, in whichever reading the
+               sprites would have used, so the two cannot disagree. A tank on
+               a boat is still a tank. */
             SDL_FColor colour;
-            if (lv->allyColours) {
+            if (allyRead) {
                 BYTE row = lv_drawTankAllyRow(frame);
                 colour = (row == TANK_ROW_SELF) ? mapColourMarkerSelf()
                        : (row == TANK_ROW_GOOD) ? mapColourMarkerGood()
@@ -1082,16 +1086,11 @@ void lv_drawTanks(screenTanks *tks) {
                               (float)x + side / 2.0f, (float)y + side / 2.0f,
                               SDL_max(3.0f, side * 0.45f), (int)dir, colour);
             }
-        } else if (lv->allyColours) {
+        } else if (allyRead) {
             srcX = zoomFactor * TILE_SIZE_X * dir;
             srcY = zoomFactor * TILE_SIZE_Y * lv_drawTankAllyRow(frame);
             drawRenderTexture(onBoat ? textureBoats : textureTanks, srcX, srcY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, x, y);
-        } else if (lv->useTeamColours) {
-            srcX = zoomFactor * TILE_SIZE_X * dir;
-            srcY = zoomFactor * TILE_SIZE_Y * lv->tc[team];
-            drawRenderTexture(onBoat ? textureBoats : textureTanks, srcX, srcY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, x, y);
         } else {
-            /* Simplified: use direction-based sprite selection for non-team mode */
             srcX = zoomFactor * TILE_SIZE_X * dir;
             srcY = zoomFactor * TILE_SIZE_Y * lv->tc[team];
             drawRenderTexture(onBoat ? textureBoats : textureTanks, srcX, srcY, zoomFactor * TILE_SIZE_X, zoomFactor * TILE_SIZE_Y, x, y);

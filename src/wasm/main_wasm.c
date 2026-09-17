@@ -581,7 +581,13 @@ int main(int argc, char *argv[]) {
  * ------------------------------------------------------- */
 
 void windowReCreate(void)  { }
-void windowSetQuitting(void) { winboloQuit = TRUE; finishedLoop = TRUE; }
+/* Raised only by windowSetQuitting, exactly as on the desktop: winboloQuit
+ * cannot answer the question on its own, because the game loop sets it TRUE
+ * on the way in as its default answer.  See windowIsQuitting in
+ * src/gui/sdl3/winbolo.c. */
+static bool quitRequested = FALSE;
+void windowSetQuitting(void) { quitRequested = TRUE; winboloQuit = TRUE; finishedLoop = TRUE; }
+bool windowIsQuitting(void)   { return quitRequested; }
 
 /* Leave the game: navigate the hosting page back to the lobby landing. */
 void windowLeaveGame(void) { emscripten_run_script("window.location.href='/'"); }

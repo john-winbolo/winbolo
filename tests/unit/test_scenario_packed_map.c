@@ -59,6 +59,7 @@
                                            * the console routes through */
 #include "scenario_host.h"
 #include "scenario_manifest.h"
+#include "scenario_validate.h"     /* scenarioHostManifest */
 #include "scenario_table.h"        /* scnTableGet — the team's init pairs */
 #include "scenario_package.h"
 #include "test_harness.h"

@@ -102,6 +102,7 @@ void logViewerRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   const char *logPath, bool fromMainMenu);
 void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *renderer,
                             uint8_t *zipData, size_t zipLen, bool fromMainMenu);
+bool logViewerAppQuitRequested(void);
 bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   void *cs, const char *serverHost, uint16_t serverPort);
 
@@ -1077,6 +1078,15 @@ static bool gameFrontDialogs(void) {
   }
 
   while (done == FALSE) {
+    /* A dialog closes on a quit the same way it closes on Cancel, and most
+     * of them steer back to the welcome screen as they go.  Asked here,
+     * once, so the unwinding stops at the first screen to notice rather
+     * than walking the player back up the menus one dialog at a time. */
+    if (windowIsQuitting()) {
+      done = TRUE;
+      userQuit = TRUE;
+      break;
+    }
     switch (dlgState) {
     case openStart:
       dlgState = openWelcome;
@@ -1209,6 +1219,10 @@ static bool gameFrontDialogs(void) {
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
     case openMapEditor:
       mapEditorRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), NULL, true);
+      /* The editor runs its own loop in WinBolo's window, so a quit taken
+       * there stops with it.  Leaving the editor comes back to the welcome
+       * screen; quitting carries on out. */
+      if (mapEditorAppQuitRequested()) windowSetQuitting();
       dlgState = openWelcome;
       break;
     case openLogViewer: {
@@ -1232,6 +1246,8 @@ static bool gameFrontDialogs(void) {
       default:
         break;
       }
+      /* Same as the editor above: the viewer owns the loop while it is up. */
+      if (logViewerAppQuitRequested()) windowSetQuitting();
       dlgState = openWelcome;
       break;
     }
@@ -1319,6 +1335,10 @@ static bool gameFrontDialogs(void) {
        * tear it down so the socket/transport is released before returning. */
       clientSimDisconnect(spectatorSim);
       clientSimDestroy(spectatorSim);
+      /* Same as the editor and the viewer above: spectatorRun owns the loop
+       * while it is up, so a quit taken there stops with it.  Asked after the
+       * disconnect so the socket is released either way. */
+      if (logViewerAppQuitRequested()) windowSetQuitting();
       dlgState = openWelcome;
       break;
     }

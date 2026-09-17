@@ -33,7 +33,6 @@
  *  the same list as everything below.
  *********************************************************/
 
-#include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -53,40 +52,13 @@
 #include "scenario_host.h"
 #include "scenario_manifest.h"
 #include "scenario_lua.h"
+#include "sim_rules_names.h"      /* simRulesRuleName — a rule in a reason */
 #include "scenario_validate.h"
 
 /* One line from the parse or from Lua, before it becomes an issue. Lua's own
  * messages carry the file path and the line ahead of the text, so this is
  * longer than the message field it is copied into. */
 #define SCN_VALIDATE_LINE_LEN 512
-
-/* ── The list ─────────────────────────────────────────────────────── */
-
-void scnIssueAdd(ScnValidateResult *out, const char *key,
-                 const char *fmt, ...) {
-    ScnValidateIssue *issue;
-    va_list           ap;
-
-    if (out == NULL) {
-        return;
-    }
-    if (out->count >= SCN_VALIDATE_ISSUES_MAX) {
-        /* A count that cannot wrap. Past the list's end the number is all
-           there is left to say about the rest of them. */
-        if (out->dropped < UINT16_MAX) {
-            out->dropped++;
-        }
-        return;
-    }
-
-    issue = &out->issues[out->count];
-    out->count++;
-    memset(issue, 0, sizeof(*issue));
-    snprintf(issue->key, sizeof(issue->key), "%s", (key != NULL) ? key : "");
-    va_start(ap, fmt);
-    vsnprintf(issue->message, sizeof(issue->message), fmt, ap);
-    va_end(ap);
-}
 
 /* ── The stub table ───────────────────────────────────────────────── */
 
@@ -402,7 +374,7 @@ static void scnCheckRules(const ServerSim *sim, const ScenarioManifest *m,
     ScnOpResult r;
 
     for (i = 0; i < m->numRules && i < SCN_MANIFEST_RULES_MAX; i++) {
-        const char *name = scenarioLuaRuleName((int)m->rules[i].rule);
+        const char *name = simRulesRuleName((int)m->rules[i].rule);
 
         rules[i]  = m->rules[i].rule;
         values[i] = m->rules[i].value;

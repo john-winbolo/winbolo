@@ -1,5 +1,5 @@
 /*
- * The WBSC container (src/scenario/scenario_package.c): the ten framing
+ * The WBSC container (src/scenario_io/scenario_package.c): the ten framing
  * bytes, the ZIP archive behind them, and the two handles that have to be
  * able to read different containers at the same time.
  *

@@ -28,6 +28,7 @@
 #include "types.h"          /* TankModifiers — the modifier op's payload */
 #include "wire_limits.h"    /* PACKET_MAX_CHAT_MESSAGE — the text cap below */
 #include "scenario_table.h" /* ScnTable — the init and hint payloads below */
+#include "sim_rules_names.h" /* SIM_RULE_LIST — the rule list SCN_RULE_LIST is */
 
 /* Text capacity for every op that carries a line. The server-text
  * control event holds char text[PACKET_MAX_CHAT_MESSAGE + 1]
@@ -97,7 +98,7 @@ typedef struct {
 /* What a scenario is called and what it asks for, as the sim reads it.
  *
  * The name and description lengths are SCN_SCENARIO_NAME_LEN and
- * SCN_SCENARIO_DESC_LEN in src/scenario/scenario_host.h, stated again here
+ * SCN_SCENARIO_DESC_LEN in src/scenario_io/scenario_manifest.h, stated again
  * under names of their own: that header is the one a frontend includes and
  * this one is not, so a gui or runtime_only translation unit can reach it and
  * not this. scenario_dir.c sees both and holds each pair against the other,
@@ -558,129 +559,34 @@ typedef struct {
 
 /* ── Rules ─────────────────────────────────────────────────────── */
 
-/* Every SimRules field, in the order the struct declares them. The index
- * enum below is generated from this one list, and so is the arm's write
- * table in server_sim_scenario.c, so an index and a field cannot drift
- * apart by hand: there is one list and two readings of it.
+/* Every SimRules field, in the order the struct declares them, with the
+ * type its field holds and the unit it is read in. The list itself lives in
+ * public/sim_rules_names.h, where a frontend can see it: the editor's rules
+ * form and the lobby's popup name a rule and describe a value, and neither
+ * of them sees this directory. SCN_RULE_LIST is that list under the name
+ * the scenario surface has always spelled it, so the expansion sites here
+ * and in server_sim_scenario.c are unchanged apart from the two columns
+ * they ignore.
  *
- * What holds the list against the struct is in server_sim_scenario.c,
- * which can see both: a static assertion that the table is exactly
- * SCN_RULE_COUNT fields wide, so a field added to SimRules without a line
- * here does not compile, and the offsets case in
- * tests/unit/test_scenario_rule_arms.c, which walks the list against the
- * struct and fails on a line out of order or a field named twice.
+ * The index enum below is generated from the list, and so is the arm's
+ * write table in server_sim_scenario.c, so an index and a field cannot
+ * drift apart by hand: there is one list and two readings of it.
  *
- * A field's name is the name a scenario uses for it (sim_rules.h), so the
- * enumerator carries that name verbatim rather than an upper-case
- * respelling of it: one spelling, and no second column to get wrong. */
-#define SCN_RULE_LIST(X)                                                     \
-    /* Tank */                                                               \
-    X(tank_reload_ticks)                                                     \
-    X(tank_full_shells)                                                      \
-    X(tank_full_mines)                                                       \
-    X(tank_full_trees)                                                       \
-    X(tank_full_armour)                                                      \
-    X(tank_death_ticks)                                                      \
-    X(tank_water_ticks)                                                      \
-    X(shell_damage)                                                          \
-    X(mine_damage)                                                           \
-    X(just_fired_ticks)                                                      \
-    X(gunsight_min)                                                          \
-    X(gunsight_max)                                                          \
-    X(tank_accel_rate)                                                       \
-    X(tank_decel_rate)                                                       \
-    X(tank_brake_rate)                                                       \
-    X(tank_autoslow_rate)                                                    \
-    X(tank_min_move)                                                         \
-    /* Terrain: the cap a tank's speed clamps to */                          \
-    X(speed_road)                                                            \
-    X(speed_grass)                                                           \
-    X(speed_forest)                                                          \
-    X(speed_river)                                                           \
-    X(speed_swamp)                                                           \
-    X(speed_crater)                                                          \
-    X(speed_rubble)                                                          \
-    X(speed_boat)                                                            \
-    X(speed_deep_sea)                                                        \
-    X(speed_refuel_base)                                                     \
-    /* Terrain: bradians turned per tick */                                  \
-    X(turn_road)                                                             \
-    X(turn_grass)                                                            \
-    X(turn_forest)                                                           \
-    X(turn_river)                                                            \
-    X(turn_swamp)                                                            \
-    X(turn_crater)                                                           \
-    X(turn_rubble)                                                           \
-    X(turn_boat)                                                             \
-    X(turn_deep_sea)                                                         \
-    X(turn_refuel_base)                                                      \
-    /* Shells */                                                             \
-    X(shell_life)                                                            \
-    X(shell_speed)                                                           \
-    X(shell_start_add)                                                       \
-    /* Builder */                                                            \
-    X(lgm_build_ticks)                                                       \
-    X(lgm_cost_road)                                                         \
-    X(lgm_cost_building)                                                     \
-    X(lgm_cost_repair_building)                                              \
-    X(lgm_cost_pill_repair)                                                  \
-    X(lgm_cost_boat)                                                         \
-    X(lgm_cost_pill_new)                                                     \
-    X(lgm_cost_mine)                                                         \
-    X(lgm_pill_repair_load)                                                  \
-    X(lgm_gather_trees)                                                      \
-    X(lgm_helicopter_speed)                                                  \
-    /* Pillbox */                                                            \
-    X(pill_max_armour)                                                       \
-    X(pill_attack_ticks)                                                     \
-    X(pill_attack_min_ticks)                                                 \
-    X(pill_cooldown_ticks)                                                   \
-    X(pill_repair_amount)                                                    \
-    X(pill_range)                                                            \
-    /* Base */                                                               \
-    X(base_full_armour)                                                      \
-    X(base_full_shells)                                                      \
-    X(base_full_mines)                                                       \
-    X(base_capture_armour)                                                   \
-    X(base_hit_armour)                                                       \
-    X(base_min_armour)                                                       \
-    X(base_min_shells)                                                       \
-    X(base_min_mines)                                                        \
-    X(base_armour_give)                                                      \
-    X(base_shells_give)                                                      \
-    X(base_mines_give)                                                       \
-    X(base_refuel_armour_ticks)                                              \
-    X(base_refuel_shells_ticks)                                              \
-    X(base_refuel_mines_ticks)                                               \
-    X(base_regen_ticks)                                                      \
-    /* Terrain destruction and explosions */                                 \
-    X(building_life)                                                         \
-    X(rubble_life)                                                           \
-    X(grass_life)                                                            \
-    X(swamp_life)                                                            \
-    X(mine_fuse_ticks)                                                       \
-    X(big_explosion_threshold)                                               \
-    /* Tree growth */                                                        \
-    X(tree_grow_ticks)                                                       \
-    X(tree_grow_initial_ticks)                                               \
-    X(tree_weight_forest)                                                    \
-    X(tree_weight_grass)                                                     \
-    X(tree_weight_river)                                                     \
-    X(tree_weight_boat)                                                      \
-    X(tree_weight_deep_sea)                                                  \
-    X(tree_weight_swamp)                                                     \
-    X(tree_weight_rubble)                                                    \
-    X(tree_weight_building)                                                  \
-    X(tree_weight_half_building)                                             \
-    X(tree_weight_crater)                                                    \
-    X(tree_weight_road)                                                      \
-    X(tree_weight_mine)
+ * What holds the list against the struct is the static assertion in
+ * sim_rules.c, which can see both — sizeof(SimRules) against
+ * SIM_RULE_COUNT times four, so a field added to SimRules without a row in
+ * the list does not compile — the assertion in server_sim_scenario.c that
+ * the write table is exactly SCN_RULE_COUNT fields wide, and the offsets
+ * case in tests/unit/test_scenario_rule_arms.c, which walks the list
+ * against the struct and fails on a row out of order or a field named
+ * twice. */
+#define SCN_RULE_LIST(X) SIM_RULE_LIST(X)
 
 /* How a rule is named on the op: one member per SimRules field, in the
  * struct's own field order. SCN_RULE_COUNT is one past the last, and an
  * index at or above it names no rule. */
 typedef enum {
-#define SCN_RULE_ENUM_MEMBER(name) SCN_RULE_##name,
+#define SCN_RULE_ENUM_MEMBER(name, kind, unit) SCN_RULE_##name,
     SCN_RULE_LIST(SCN_RULE_ENUM_MEMBER)
 #undef SCN_RULE_ENUM_MEMBER
     SCN_RULE_COUNT

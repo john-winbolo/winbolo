@@ -168,9 +168,7 @@ extern "C" int imguiOnboardingShow(void) {
             dialogHandleGamepadCancelEvent(window, &ev);   /* B backs out to welcome */
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
-            if (ev.type == SDL_EVENT_QUIT ||
-                (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
-                 ev.window.windowID == SDL_GetWindowID(window))) {
+            if (dialogHandleQuitEvent(window, &ev)) {
                 /* Quit / close: bail to welcome, don't mark complete. */
                 result = 0;
                 running = false;

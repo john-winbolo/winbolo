@@ -69,9 +69,13 @@ static const double FRAME_INTERVAL_MS = 50.0; /* ~20 FPS for screen updates */
 
 /* --------------------------------------------------------------------------
  * Helper: default team colour value for index
+ *
+ * The same rows in the same order as the desktop viewer's getDef, so a log
+ * watched in a browser is coloured the way it is on the desktop. Team 1 green
+ * and Team 2 red, the game's own ally / enemy reading.
  * -------------------------------------------------------------------------- */
 static void getDef(char *dest, int index) {
-    static const int defaults[] = { 11, 12, 2, 4, 16, 13, 8, 3, 6, 1, 5, 7, 9, 14, 15, 0 };
+    static const int defaults[] = { 2, 11, 12, 4, 16, 13, 8, 3, 6, 1, 5, 7, 9, 14, 15, 0 };
     int val = (index >= 0 && index < 16) ? defaults[index] : 0;
     snprintf(dest, 12, "%d", val);
 }

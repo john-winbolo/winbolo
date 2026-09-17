@@ -189,6 +189,7 @@ target_link_libraries(imgui_backends PUBLIC SDL3::SDL3)
 include(${PROJ_ROOT}/cmake/bolo_version.cmake)
 add_subdirectory(${PROJ_ROOT}/src/bolo ${CMAKE_BINARY_DIR}/bolo_static)
 add_subdirectory(${PROJ_ROOT}/src/server ${CMAKE_BINARY_DIR}/server_static)
+add_subdirectory(${PROJ_ROOT}/src/scenario_io ${CMAKE_BINARY_DIR}/scenario_io_static)
 add_subdirectory(${PROJ_ROOT}/src/scenario ${CMAKE_BINARY_DIR}/scenario_static)
 add_subdirectory(${PROJ_ROOT}/brains ${CMAKE_BINARY_DIR}/bot_brains_static)
 
@@ -242,6 +243,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_quickchat.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_onboarding.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_winbolonet.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/dialog_quit.cpp
     ${PROJ_ROOT}/src/gui/sdl3/map_preview_popup.cpp
     ${PROJ_ROOT}/src/gui/sdl3/lobby_start_list.cpp
     ${PROJ_ROOT}/src/gui/sdl3/map_preview_view.cpp
@@ -282,6 +284,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/build_cursor.c
     ${PROJ_ROOT}/src/gui/sdl3/tutorial_text.c
     ${PROJ_ROOT}/src/gui/sdl3/lang.c
+    ${PROJ_ROOT}/src/gui/sdl3/sim_rules_phrase.c
     ${PROJ_ROOT}/src/gui/sdl3/sound.c
     ${PROJ_ROOT}/src/gui/sdl3/sound_variants.c
 
