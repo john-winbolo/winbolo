@@ -315,6 +315,35 @@ BOLO_STATIC_ASSERT(
         (int)SCN_HOOK_COUNT,
     hook_name_table_is_the_whole_hook_list);
 
+/* ── The policies ─────────────────────────────────────────────────── */
+
+/* SCN_POLICY_LIST sits beside the hook list in scenario_lua.h and carries
+ * each policy's parameter names and what it answers as well as its name.
+ * What this file takes from it is the id and the name, so the name a policy
+ * is asked for below is the name the catalogue holds and the editor writes a
+ * stub for.
+ *
+ * Nothing is indexed by these values — a policy is looked up by name at each
+ * call rather than resolved once — so the order of the rows carries no
+ * meaning here. */
+typedef enum {
+#define SCN_POLICY_ID_ROW(id, name, params, returns) SCN_POLICY_##id,
+    SCN_POLICY_LIST(SCN_POLICY_ID_ROW)
+#undef SCN_POLICY_ID_ROW
+    SCN_POLICY_COUNT
+} ScnPolicyId;
+
+static const char *const kScnPolicyNames[] = {
+#define SCN_POLICY_NAME_ROW(id, name, params, returns) name,
+    SCN_POLICY_LIST(SCN_POLICY_NAME_ROW)
+#undef SCN_POLICY_NAME_ROW
+};
+
+BOLO_STATIC_ASSERT(
+    (int)(sizeof(kScnPolicyNames) / sizeof(kScnPolicyNames[0])) ==
+        (int)SCN_POLICY_COUNT,
+    policy_name_table_is_the_whole_policy_list);
+
 /* ── The host ─────────────────────────────────────────────────────── */
 
 struct ScenarioHost {
@@ -2365,8 +2394,9 @@ static bool scnAllowExtraTeams(void *ctx) {
         return true;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "allow_extra_teams")) {
-        allow = scnPolicyBool(h, "allow_extra_teams", 0, true);
+    if (scnPolicyBegin(h, kScnPolicyNames[SCN_POLICY_ALLOW_EXTRA_TEAMS])) {
+        allow = scnPolicyBool(h, kScnPolicyNames[SCN_POLICY_ALLOW_EXTRA_TEAMS],
+                              0, true);
     }
     scnLockLeave(&h->lock);
     return allow;
@@ -2382,8 +2412,9 @@ static bool scnAllowBaseWin(void *ctx) {
         return true;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "allow_base_win")) {
-        allow = scnPolicyBool(h, "allow_base_win", 0, true);
+    if (scnPolicyBegin(h, kScnPolicyNames[SCN_POLICY_ALLOW_BASE_WIN])) {
+        allow = scnPolicyBool(h, kScnPolicyNames[SCN_POLICY_ALLOW_BASE_WIN], 0,
+                              true);
     }
     scnLockLeave(&h->lock);
     return allow;
@@ -2399,9 +2430,10 @@ static bool scnCanRespawn(void *ctx, BYTE player) {
         return true;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "can_respawn")) {
+    if (scnPolicyBegin(h, kScnPolicyNames[SCN_POLICY_CAN_RESPAWN])) {
         lua_pushinteger(h->L, (lua_Integer)player);
-        may = scnPolicyBool(h, "can_respawn", 1, true);
+        may = scnPolicyBool(h, kScnPolicyNames[SCN_POLICY_CAN_RESPAWN], 1,
+                            true);
     }
     scnLockLeave(&h->lock);
     return may;
@@ -2421,13 +2453,13 @@ static bool scnCanBuild(void *ctx, BYTE player, BYTE action, BYTE x, BYTE y,
         return true;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "can_build")) {
+    if (scnPolicyBegin(h, kScnPolicyNames[SCN_POLICY_CAN_BUILD])) {
         lua_pushinteger(h->L, (lua_Integer)player);
         lua_pushstring(h->L, word);
         lua_pushinteger(h->L, (lua_Integer)x);
         lua_pushinteger(h->L, (lua_Integer)y);
         scnPushItemIndex(h, idx, MAX_PILLS);
-        may = scnPolicyBool(h, "can_build", 5, true);
+        may = scnPolicyBool(h, kScnPolicyNames[SCN_POLICY_CAN_BUILD], 5, true);
     }
     scnLockLeave(&h->lock);
     return may;
@@ -2444,12 +2476,13 @@ static bool scnCanCapture(void *ctx, BYTE kind, BYTE idx, BYTE player) {
         return true;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "can_capture")) {
+    if (scnPolicyBegin(h, kScnPolicyNames[SCN_POLICY_CAN_CAPTURE])) {
         lua_pushstring(h->L, word);
         scnPushItemIndex(h, idx,
                          (kind == CAPTURE_KIND_PILL) ? MAX_PILLS : MAX_BASES);
         lua_pushinteger(h->L, (lua_Integer)player);
-        may = scnPolicyBool(h, "can_capture", 3, true);
+        may = scnPolicyBool(h, kScnPolicyNames[SCN_POLICY_CAN_CAPTURE], 3,
+                            true);
     }
     scnLockLeave(&h->lock);
     return may;
@@ -2468,7 +2501,7 @@ static bool scnAnnounce(void *ctx, BYTE kind, BYTE subject, BYTE actor) {
         return true;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "announce")) {
+    if (scnPolicyBegin(h, kScnPolicyNames[SCN_POLICY_ANNOUNCE])) {
         lua_pushstring(h->L, word);
         if (kind == ANNOUNCE_KIND_BASE_CAPTURED) {
             scnPushItemIndex(h, subject, MAX_BASES);
@@ -2478,7 +2511,7 @@ static bool scnAnnounce(void *ctx, BYTE kind, BYTE subject, BYTE actor) {
             lua_pushinteger(h->L, (lua_Integer)subject);
         }
         lua_pushinteger(h->L, (lua_Integer)actor);
-        show = scnPolicyBool(h, "announce", 3, true);
+        show = scnPolicyBool(h, kScnPolicyNames[SCN_POLICY_ANNOUNCE], 3, true);
     }
     scnLockLeave(&h->lock);
     return show;
@@ -2498,7 +2531,7 @@ static bool scnCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
         return true;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "can_die")) {
+    if (scnPolicyBegin(h, kScnPolicyNames[SCN_POLICY_CAN_DIE])) {
         lua_pushstring(h->L, word);
         if (kind == DIE_KIND_PILL) {
             scnPushItemIndex(h, index, MAX_PILLS);
@@ -2509,7 +2542,7 @@ static bool scnCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
         scnPushWord(h, (kind == DIE_KIND_TANK)
                            ? scenarioLuaDeathCauseWord((int)cause)
                            : scenarioLuaDamageSourceWord((int)cause));
-        may = scnPolicyBool(h, "can_die", 4, true);
+        may = scnPolicyBool(h, kScnPolicyNames[SCN_POLICY_CAN_DIE], 4, true);
     }
     scnLockLeave(&h->lock);
     return may;
@@ -2531,15 +2564,17 @@ static bool scnChooseStart(void *ctx, BYTE player, BYTE *startIdx) {
         return false;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "on_choose_start")) {
+    if (scnPolicyBegin(h, kScnPolicyNames[SCN_POLICY_ON_CHOOSE_START])) {
         lua_pushinteger(h->L, (lua_Integer)player);
-        if (scnPolicyAnswer(h, "on_choose_start", 1)) {
+        if (scnPolicyAnswer(h, kScnPolicyNames[SCN_POLICY_ON_CHOOSE_START],
+                            1)) {
             ServerSimStartInfo info;
             long               n    = 0;
             BYTE               read = 0;
 
             if (!scnPolicyWhole(h->L, &n)) {
-                scnPolicyBadAnswer(h, "on_choose_start",
+                scnPolicyBadAnswer(h,
+                                   kScnPolicyNames[SCN_POLICY_ON_CHOOSE_START],
                                    "with no start number");
             } else {
                 read = scenarioLuaIndexToRead((lua_Integer)n);
@@ -2581,9 +2616,9 @@ static bool scnSpawnLoadout(void *ctx, BYTE player, ScnLoadout *out) {
     }
     memset(out, 0, sizeof(*out));
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "spawn_loadout")) {
+    if (scnPolicyBegin(h, kScnPolicyNames[SCN_POLICY_SPAWN_LOADOUT])) {
         lua_pushinteger(h->L, (lua_Integer)player);
-        if (scnPolicyAnswer(h, "spawn_loadout", 1)) {
+        if (scnPolicyAnswer(h, kScnPolicyNames[SCN_POLICY_SPAWN_LOADOUT], 1)) {
             if (lua_type(h->L, -1) == LUA_TSTRING) {
                 const char *answer = lua_tostring(h->L, -1);
                 int         type   = 0;
@@ -2610,12 +2645,14 @@ static bool scnSpawnLoadout(void *ctx, BYTE player, ScnLoadout *out) {
                     answered = true;
                     scnErrorCleared(h);
                 } else {
-                    scnPolicyBadAnswer(h, "spawn_loadout",
-                                       "with a table that is not four amounts "
-                                       "of 0 to 255");
+                    scnPolicyBadAnswer(
+                        h, kScnPolicyNames[SCN_POLICY_SPAWN_LOADOUT],
+                        "with a table that is not four amounts "
+                        "of 0 to 255");
                 }
             } else {
-                scnPolicyBadAnswer(h, "spawn_loadout",
+                scnPolicyBadAnswer(h,
+                                   kScnPolicyNames[SCN_POLICY_SPAWN_LOADOUT],
                                    "with neither a loadout word nor a table "
                                    "of amounts");
             }
@@ -2648,18 +2685,19 @@ static int scnDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause) {
         return 100;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "damage_scale")) {
+    if (scnPolicyBegin(h, kScnPolicyNames[SCN_POLICY_DAMAGE_SCALE])) {
         lua_pushinteger(h->L, (lua_Integer)attacker);
         lua_pushinteger(h->L, (lua_Integer)victim);
         lua_pushstring(h->L, word);
-        if (scnPolicyAnswer(h, "damage_scale", 3)) {
+        if (scnPolicyAnswer(h, kScnPolicyNames[SCN_POLICY_DAMAGE_SCALE], 3)) {
             long v = 0;
             if (scnPolicyWhole(h->L, &v) && v >= 0 &&
                 v <= SCN_DAMAGE_SCALE_MAX) {
                 pct = (int)v;
                 scnErrorCleared(h);
             } else {
-                scnPolicyBadAnswer(h, "damage_scale",
+                scnPolicyBadAnswer(h,
+                                   kScnPolicyNames[SCN_POLICY_DAMAGE_SCALE],
                                    "with no percent between 0 and "
                                    "a hundredfold");
             }
