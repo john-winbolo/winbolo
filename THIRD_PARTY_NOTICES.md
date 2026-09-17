@@ -141,6 +141,20 @@ WinBolo uses the following third-party libraries and code.
 - https://github.com/mjansson/mdns
 - Author: Mattias Jansson
 
+### ImGuiColorTextEdit
+- Location: src/third_party/ImGuiColorTextEdit/
+- Commit: 264bee49ddc3c789b05d928d09c628649458da47 (2025-10-11)
+- License: MIT
+- https://github.com/santaclose/ImGuiColorTextEdit
+- Authors: BalazsJako (original), santaclose
+- The map editor's scenario script pane - a text editor with Lua syntax
+  highlighting. Only TextEditor.h, TextEditor.cpp, LanguageDefinitions.cpp
+  and LICENSE are taken; the demo panel and tests are not.
+- Modified for WinBolo: GetLineCount casts mLines.size() to int, and
+  SetPalette gives palletteBase a starting value ahead of its switch, so
+  MSVC's /W4 /WX /sdl build accepts the header and the sources.
+  Re-apply on upgrade.
+
 ### MD5 (RFC 1321 reference)
 - Location: src/bolo/md5.c, src/bolo/public/md5.h
 - License: Public domain
