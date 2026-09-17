@@ -2234,7 +2234,7 @@ static const LangEntry langTable[] = {
     {2281, "Validate"},
     {2282, "Issues"},
     {2283, "No problems found"},
-    {2284, "Rules and tags are checked against the map when the round starts, not here"},
+    {2284, "Tags are checked against the map when the round starts, not here"},
     {2285, "More problems were found than this list holds"},
     {2286, "Scenario Calls"},
     {2287, "Pack into Map"},
@@ -2429,6 +2429,7 @@ static const LangEntry langTable[] = {
     {2476, "{string1}  line {number}"},
     {2477, "written with a colon, so self takes the first argument and every argument after it shifts"},
     {2478, "defined {number} times; the last one is the one that runs"},
+    {2479, "out of range —"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

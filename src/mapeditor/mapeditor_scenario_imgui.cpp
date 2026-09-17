@@ -68,6 +68,11 @@
 static const float kRuleNameWidth  = 210.0f;
 static const float kRuleValueWidth = 110.0f;
 
+/* What a value the rule will not take is written in. The same red the map
+ * validator writes its errors in, so a problem reads as a problem wherever
+ * the editor says one. */
+static const ImVec4 kValueRefused(1.0f, 0.3f, 0.3f, 1.0f);
+
 /* Set while the script view draws its widget. The panel is not called at all
  * while it is closed, and the body below is not reached when another view is
  * showing, so a mark that is not set again is what says the widget has gone.
@@ -256,8 +261,8 @@ static void meScnIssuesList(TextEditor *editor, const MEScenarioCheck *chk,
         if (chk->result.dropped > 0) {
             meScnHint(langGetText(STR_MAPEDIT_SCENARIO_ISSUES_DROPPED));
         }
-        /* The editor hands the validator no sim, so two of its checks did not
-           run. Said here rather than nowhere. */
+        /* The editor hands the validator no sim, so the tag check did not run.
+           Said here rather than nowhere. */
         meScnHint(langGetText(STR_MAPEDIT_SCENARIO_NO_SIM_CHECKS));
     }
     ImGui::EndChild();
@@ -887,7 +892,29 @@ static void meScnLobbyBody(MEScenarioForm *f) {
 /* -------------------------------------------------------
  * Rules
  * ------------------------------------------------------- */
-static void meScnRulesBody(MEScenarioForm *f) {
+
+/* What the last check said about one rule, or NULL where it said nothing. The
+ * validator keys a rule's problem "rules.<name>", which is the whole of what
+ * ties a row here to a line in the list under the script. A check that has not
+ * run has said nothing about anything. */
+static const ScnValidateIssue *meScnRuleIssue(const MEScenarioCheck *chk,
+                                              const char *name) {
+    char     key[SCN_VALIDATE_KEY_LEN];
+    uint16_t i;
+
+    if (chk == NULL || !chk->hasRun || name == NULL || name[0] == '\0') {
+        return NULL;
+    }
+    snprintf(key, sizeof(key), "rules.%s", name);
+    for (i = 0; i < chk->result.count; i++) {
+        if (strcmp(chk->result.issues[i].key, key) == 0) {
+            return &chk->result.issues[i];
+        }
+    }
+    return NULL;
+}
+
+static void meScnRulesBody(MEScenarioForm *f, const MEScenarioCheck *chk) {
     /* What the author has typed into the Add Rule filter, and which row of the
      * list they are reading about. One panel, so one box and one selection,
      * and both survive a switch away and back. */
@@ -902,6 +929,7 @@ static void meScnRulesBody(MEScenarioForm *f) {
     char              phrase[128];
     char              range[128];
     char              detail[256];
+    SimRuleRange      rng;
 
     if (m->numRules == 0) {
         meScnHint(langGetText(STR_MAPEDIT_SCENARIO_NO_RULES));
@@ -942,6 +970,41 @@ static void meScnRulesBody(MEScenarioForm *f) {
         ImGui::SameLine();
         simRulesPhrase(rule, m->rules[i].value, phrase, sizeof(phrase));
         ImGui::TextUnformatted(phrase);
+
+        /* Whether the value is one the rule holds at all, asked of the row
+           itself every frame so the mark follows the typing rather than the
+           last check. A row with a floor and no ceiling has nothing above it
+           to be outside of. */
+        {
+            const char             *name = simRulesRuleName(rule);
+            const ScnValidateIssue *iss  = NULL;
+            bool                    bad  = false;
+
+            if (simRulesRuleRange(rule, &rng)) {
+                bad = m->rules[i].value < rng.lo ||
+                      (rng.hasHi && m->rules[i].value > rng.hi);
+            }
+            if (!bad) {
+                /* Two rules that each sit inside their own bounds can still
+                   break the pair they share, which takes the whole table to
+                   see. That answer is the check's. */
+                iss = meScnRuleIssue(chk, name);
+            }
+
+            if (bad) {
+                simRulesRangePhrase(rule, range, sizeof(range));
+                snprintf(detail, sizeof(detail), "%s %s",
+                         langGetText(STR_MAPEDIT_SCENARIO_RULE_RANGE_BAD),
+                         range);
+                ImGui::SameLine();
+                ImGui::TextColored(kValueRefused, "%s", detail);
+            } else if (iss != NULL) {
+                /* The rule's own bounds are not what is wrong here, so the
+                   row says what the check said instead of naming them. */
+                ImGui::SameLine();
+                ImGui::TextColored(kValueRefused, "%s", iss->message);
+            }
+        }
 
         ImGui::SameLine();
         if (ImGui::Button(langGetText(STR_MAPEDIT_SCENARIO_REMOVE))) {
@@ -1636,7 +1699,7 @@ void mapEditorImguiScenarioPanel(MEScenarioState *st, MEScenarioForm *form,
             meScnLobbyBody(form);
             break;
         case ME_SCENARIO_VIEW_RULES:
-            meScnRulesBody(form);
+            meScnRulesBody(form, check);
             break;
         case ME_SCENARIO_VIEW_TAGS:
             meScnTagsBody(form, mapInfo, selKind, selIndex, clickedKind,

@@ -2455,12 +2455,15 @@
 #define STR_MAPEDIT_SCENARIO_ADD             2429
 #define STR_MAPEDIT_SCENARIO_RANGE           2430
 #define STR_MAPEDIT_SCENARIO_RULE_NO_SEL     2431
+/* Written before the range on a row whose value is outside it. Only a row
+ * that is wrong carries it, so it reads as a mark and not as a column. */
+#define STR_MAPEDIT_SCENARIO_RULE_RANGE_BAD  2479
 
 /* The script pane's check: the button that runs the validator, the list of
  * what it found under the editor, and the popup that lists the game.* calls a
- * script may make. The one line about rules and tags is there because the
- * editor hands the validator no sim — it makes none — so the two checks that
- * read a map do not run here. */
+ * script may make. The one line about tags is there because the editor hands
+ * the validator no sim — it makes none — so the one check that reads a map
+ * does not run here. */
 #define STR_MAPEDIT_SCENARIO_VALIDATE        2281
 #define STR_MAPEDIT_SCENARIO_ISSUES          2282
 #define STR_MAPEDIT_SCENARIO_NO_ISSUES       2283

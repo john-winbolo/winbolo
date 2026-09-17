@@ -73,9 +73,10 @@ void meScenarioCheckClear(MEScenarioCheck *c);
  * still compared afterwards and a conflict is still reported.
  *
  * The sim handed to the validator is NULL, because the editor has none and
- * must not make one. That leaves out the two checks that read a map, the rules
- * against the catalogue and the tags against the entity lists; everything the
- * table says about itself is still checked. */
+ * must not make one. That leaves out the tags against the entity lists, which
+ * is the one check that reads a map; everything the table says about itself is
+ * still checked, the rules included — a rule's bounds and the pairs it sits in
+ * belong to the rules table rather than to a map. */
 void meScenarioCheckRun(MEScenarioCheck *c, const char *text, size_t len,
                         const char *name, const ScenarioManifest *manifest);
 
