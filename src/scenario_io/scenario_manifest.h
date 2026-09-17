@@ -83,8 +83,12 @@
 #define SCN_BRAIN_LEN 256
 
 /* Room for every rule the table can name. scenario_host.c checks this
- * covers the rule list, so a rule added to the list cannot overflow it. */
-#define SCN_MANIFEST_RULES_MAX 128
+ * covers the rule list, so a rule added to the list cannot overflow it.
+ * Held well clear of the list's own length rather than trimmed to it: the
+ * check is a static assertion, so a run of rules that outgrew this number
+ * would stop the build rather than fail anything at runtime, and the array
+ * it sizes is sixteen bytes a row. */
+#define SCN_MANIFEST_RULES_MAX 256
 
 /* One rule the table sets: which rule, and what it was set to. The value
  * is a double because sixteen of the rules are float-valued and the rest
