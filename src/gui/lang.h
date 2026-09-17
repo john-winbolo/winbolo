@@ -2384,8 +2384,7 @@
  * returns to the main menu and the editor to the screen that opened it. */
 #define STR_LV_RETURN_MAIN_MENU             2226
 
-/* The simplified view: its own heading on the Display tab, the switch, and
- * the sub-option that holds it to the Map Overview window. */
+/* Map view — the simplified view when zoomed out */
 #define STR_DLGSETTINGS_MAPVIEW             2227
 #define STR_DLGSETTINGS_SIMPLEZOOM          2228
 #define STR_DLGSETTINGS_SIMPLEZOOM_TIP      2229

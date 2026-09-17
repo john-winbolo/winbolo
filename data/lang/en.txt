@@ -2198,6 +2198,8 @@ STR_RULE_HALF=half as many
 STR_RULE_ON=on
 STR_RULE_OFF=off
 STR_LV_RETURN_MAIN_MENU=Return to main menu
+
+# Map view — the simplified view when zoomed out
 STR_DLGSETTINGS_MAPVIEW=Map view
 STR_DLGSETTINGS_SIMPLEZOOM=Use simplified view when zoomed out
 STR_DLGSETTINGS_SIMPLEZOOM_TIP=Zoomed out past 1x, draw each square as one colour with simple markers for tanks, pillboxes and bases, instead of shrinking the sprites down to a smudge.
