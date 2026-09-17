@@ -1603,6 +1603,7 @@ set(CLIENT_SOURCES
     # LanguageDefinitions.cpp is where that widget keeps its Lua highlighting.
     src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_form.c src/mapeditor/mapeditor_scenario_check.c src/mapeditor/mapeditor_scenario_pack.c src/mapeditor/mapeditor_scenario_imgui.cpp
     src/mapeditor/mapeditor_scenario_fndesc.c
+    src/mapeditor/mapeditor_scenario_fnscan.c
     src/third_party/ImGuiColorTextEdit/TextEditor.cpp
     src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
     # Embedded editor's "Open from WinBolo.net" dialog — client only, it
@@ -2927,6 +2928,7 @@ set(MAPEDITOR_SOURCES
     # LanguageDefinitions.cpp is where that widget keeps its Lua highlighting.
     src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_form.c src/mapeditor/mapeditor_scenario_check.c src/mapeditor/mapeditor_scenario_pack.c src/mapeditor/mapeditor_scenario_imgui.cpp
     src/mapeditor/mapeditor_scenario_fndesc.c
+    src/mapeditor/mapeditor_scenario_fnscan.c
     src/third_party/ImGuiColorTextEdit/TextEditor.cpp
     src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
@@ -3591,6 +3593,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # module compiles in without lang.c.
     tests/unit/test_scenario_fndesc.c
     src/mapeditor/mapeditor_scenario_fndesc.c
+    # Which of those functions a script has already written, read off its
+    # text a line at a time. Plain C over a buffer that links no Lua, so it
+    # compiles in here as it stands.
+    tests/unit/test_scenario_fnscan.c
+    src/mapeditor/mapeditor_scenario_fnscan.c
     # The scenario read surface: the roster, pill, base, start, tank and
     # builder accessors, the whole-map terrain copy and the fielded count.
     tests/unit/test_scenario_reads.c
@@ -5783,6 +5790,7 @@ set(_unit_test_names
     scenario_functions_table
     scenario_functions_match_dispatch
     scenario_fndesc_table
+    scenario_fnscan_forms
     scenario_package_round_trip
     scenario_package_bad_framing
     scenario_package_entry_names

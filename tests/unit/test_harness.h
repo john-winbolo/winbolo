@@ -2936,6 +2936,11 @@ int run_scenario_functions_match_dispatch(void);
  * them. */
 int run_scenario_fndesc_table(void);
 
+/* The definitions a script already holds (test_scenario_fnscan.c): the four
+ * spellings a definition takes, the line each is on, and what a line scan
+ * over the text does not see. */
+int run_scenario_fnscan_forms(void);
+
 /* The WBSC container (test_scenario_package.c): the framing round trip,
  * the refusals a malformed buffer gets, the entry and brain lists, two
  * containers open at the same time, and the cap an entry is measured against
