@@ -45,6 +45,57 @@
 
 static SDL_Renderer *s_meRenderer = nullptr;
 
+/* The window the editor draws into, kept the way the renderer above is: the
+ * scenario panel's script view needs SDL text input running on it, and that
+ * takes the window. Embedded, this is WinBolo's own window. */
+static SDL_Window *s_meWindow = nullptr;
+
+/* Whether this file is what turned SDL text input on, so it never stops input
+ * something else asked for. */
+static bool s_meStartedTextInput = false;
+
+/* The scenario panel's script view is a vendored widget that reads characters
+ * out of io.InputQueueCharacters. That queue fills from SDL's text-input
+ * events, and SDL3 sends none until text input has been started on the window.
+ * The widget asks for them by assigning io.WantTextInput, which imgui
+ * recomputes every frame from its own InputText state, so the assignment never
+ * reaches the backend and no character ever arrives. That is why the arrow
+ * keys, Enter and Backspace worked in that view and letters did not: those
+ * come in as key events, a separate path.
+ *
+ * The backend starts and stops text input off imgui's IME data, which imgui
+ * hands it only when that data changes, so this acts on the change rather than
+ * calling every frame. SDL's own flag is read each time because the backend
+ * stops text input when a field elsewhere in the editor loses focus, and the
+ * view has to get it back after that. */
+static void meApplyScriptTextInput(bool want) {
+    if (s_meWindow == nullptr) {
+        return;
+    }
+
+    if (want) {
+        if (!SDL_TextInputActive(s_meWindow)) {
+            SDL_StartTextInput(s_meWindow);
+        }
+        s_meStartedTextInput = true;
+        return;
+    }
+
+    if (!s_meStartedTextInput) {
+        return;
+    }
+    /* A field somewhere else in the editor is taking text. Leave it running
+     * and hand it back on a later frame rather than taking the keyboard off
+     * something the user is typing into. */
+    if (ImGui::GetIO().WantTextInput) {
+        return;
+    }
+    if (SDL_TextInputActive(s_meWindow)) {
+        SDL_StopTextInput(s_meWindow);
+    }
+    s_meStartedTextInput = false;
+}
+
 /* Track display size to reposition windows on resize */
 static float s_lastDisplayW = 0;
 static float s_lastDisplayH = 0;
@@ -71,6 +122,8 @@ static bool s_textToolIconLoaded = false;
 void mapEditorImguiInit(SDL_Window *window, SDL_Renderer *renderer) {
     mapEditorImguiSetRenderer(renderer);
     s_meRenderer = renderer;
+    s_meWindow = window;
+    s_meStartedTextInput = false;
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
@@ -85,6 +138,14 @@ void mapEditorImguiInit(SDL_Window *window, SDL_Renderer *renderer) {
 }
 
 void mapEditorImguiShutdown(void) {
+    /* Embedded, the window is WinBolo's and outlives the editor, so text input
+     * the script view started does not stay on after the editor has gone. */
+    if (s_meStartedTextInput && s_meWindow != nullptr &&
+        SDL_TextInputActive(s_meWindow)) {
+        SDL_StopTextInput(s_meWindow);
+    }
+    s_meStartedTextInput = false;
+
     /* Clean up tool icon textures */
     for (int i = 0; i < ME_NUM_DRAWING_TOOLS; i++) {
         if (s_toolIcons[i]) {
@@ -101,6 +162,7 @@ void mapEditorImguiShutdown(void) {
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
     s_meRenderer = nullptr;
+    s_meWindow = nullptr;
 }
 
 bool mapEditorImguiProcessEvent(const SDL_Event *event) {
@@ -122,6 +184,11 @@ void mapEditorImguiNewFrame(void) {
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
     s_displayResized = meDisplaySizeChanged();
+    /* After ImGui::NewFrame, so io.WantTextInput is this frame's answer, and
+     * after the backend's own text-input pass, so a start here is not undone
+     * in the same frame. The mark is the frame that just ended, which is soon
+     * enough: the view has to be clicked into before a character is typed. */
+    meApplyScriptTextInput(mapEditorImguiScriptViewDrew());
 }
 
 void mapEditorImguiMenuBar(MapEditorMenuAction *action,

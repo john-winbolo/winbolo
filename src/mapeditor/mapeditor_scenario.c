@@ -199,9 +199,8 @@ void meScenarioSetMap(MEScenarioState *st, const char *mapPath) {
     }
 
     /* Nothing to show. A file that is there but would not read still counts
-     * as being on disk, so Reload stays available to try it again — and it is
-     * marked as not read, because the empty buffer standing in for it must
-     * not be written back over it. */
+     * as being on disk, and is marked as not read, because the empty buffer
+     * standing in for it must not be written back over it. */
     meScenarioTake(st, NULL, 0);
     st->fileOnDisk = found;
     st->readRefused = found;

@@ -60,6 +60,19 @@
 static const float kRuleNameWidth  = 210.0f;
 static const float kRuleValueWidth = 110.0f;
 
+/* Set while the script view draws its widget. The panel is not called at all
+ * while it is closed, and the body below is not reached when another view is
+ * showing, so a mark that is not set again is what says the widget has gone.
+ * mapeditor_imgui.cpp reads it once a frame to decide whether SDL text input
+ * should be running on the editor's window. */
+static bool s_scriptViewDrew = false;
+
+bool mapEditorImguiScriptViewDrew(void) {
+    const bool drew  = s_scriptViewDrew;
+    s_scriptViewDrew = false;
+    return drew;
+}
+
 /* Copies src into a fixed field, always NUL-terminated. */
 static void meScnCopy(char *dst, size_t cap, const char *src) {
     if (dst == NULL || cap == 0) {
@@ -347,12 +360,20 @@ static void meScnScriptBody(MEScenarioState *st, MEScenarioCheck *chk,
     ImGui::EndDisabled();
 
     ImGui::SameLine();
-    ImGui::BeginDisabled(!st->fileOnDisk);
+    /* Live whenever the pane knows where the script goes, rather than only
+     * when one was found: a script written beside the map after the map was
+     * opened is read by pressing this, and there is no other way to pick one
+     * up short of closing the map and opening it again. A read that finds
+     * nothing keeps the buffer and says so on the status line. */
+    ImGui::BeginDisabled(st->scriptPath[0] == '\0');
     if (ImGui::Button(langGetText(STR_MAPEDIT_SCENARIO_RELOAD)) &&
         wantReload != NULL) {
         *wantReload = true;
     }
     ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::SetTooltip("%s", langGetText(STR_MAPEDIT_SCENARIO_RELOAD_TIP));
+    }
 
     ImGui::SameLine();
     if (ImGui::Button(langGetText(STR_MAPEDIT_SCENARIO_VALIDATE)) &&
@@ -401,6 +422,11 @@ static void meScnScriptBody(MEScenarioState *st, MEScenarioCheck *chk,
             issuesHeight = kIssuesMaxHeight;
         }
     }
+
+    /* The widget takes its characters from ImGui's character queue, which only
+     * fills while SDL text input is running. Saying the view drew is what gets
+     * it started; the editor's frame hook does the starting. */
+    s_scriptViewDrew = true;
 
     /* The rest of the window is the editor, less whatever the list takes. */
     s_editor.Render("##scenarioScript", false,

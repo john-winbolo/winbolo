@@ -375,6 +375,13 @@ void mapEditorImguiScenarioPanel(MEScenarioState *st, struct MEScenarioForm *for
                                  bool *wantValidate, bool *wantPack,
                                  bool *wantSaveMod);
 
+/* Did the scenario panel's script view draw in the frame that just ended?
+ * Reading it clears the mark. mapEditorImguiNewFrame asks once a frame so the
+ * editor can keep SDL text input running for the window while that view is up:
+ * the widget takes its characters from ImGui's character queue, which fills
+ * from SDL text-input events and nothing else turns those on. */
+bool mapEditorImguiScriptViewDrew(void);
+
 /* Render the Image Import dialog.
  * open: pointer to the open flag (set to false when dialog closes).
  * cfg: pointer to ImageImportConfig to edit.

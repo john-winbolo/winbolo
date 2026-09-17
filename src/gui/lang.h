@@ -2514,6 +2514,12 @@
 #define STR_MAPEDIT_SCENARIO_REGIONS_ON_MAP   2321
 #define STR_MAPEDIT_SCENARIO_MOD_DROPS        2322
 
+/* What Reload does, on the button in the script pane's toolbar. The button is
+ * live whenever the pane knows where the script goes, with or without a file
+ * behind it, so the line says that a script written beside the map after the
+ * map was opened is read by pressing it. */
+#define STR_MAPEDIT_SCENARIO_RELOAD_TIP       2323
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

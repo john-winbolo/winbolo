@@ -78,7 +78,10 @@ void meScenarioAdoptPath(MEScenarioState *st, const char *mapPath);
 void meScenarioSetPackedScript(MEScenarioState *st, const char *text,
                                size_t len);
 
-/* Re-reads scriptPath, discarding edits, and asks the view to re-seed. */
+/* Re-reads scriptPath, discarding edits, and asks the view to re-seed. False
+ * with the status line set and the buffer kept when there is nothing to read,
+ * which is the path a script written beside an already-open map takes on its
+ * first press and any press before it. */
 bool meScenarioReload(MEScenarioState *st);
 
 /* Replaces the buffer with len bytes of text and marks it dirty. */
