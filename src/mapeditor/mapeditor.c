@@ -3164,11 +3164,20 @@ static void meScenarioFillMapInfo(MapEditorState *ed, MEScenarioMapInfo *info) {
  * modPath NULL writes the chunk on to the open map; a path writes a mod
  * there. Nothing is written by either until both checks pass. */
 static void meWriteScenario(MapEditorState *ed, const char *modPath) {
-    ScenarioManifest toWrite;
-    char             key[SCN_VALIDATE_KEY_LEN];
-    char             err[ME_SCENARIO_PACK_ERR_LEN];
-    char             line[256];
-    bool             ok;
+    ScenarioManifest *toWrite;
+    char              key[SCN_VALIDATE_KEY_LEN];
+    char              err[ME_SCENARIO_PACK_ERR_LEN];
+    char              line[256];
+    bool              ok;
+
+    /* On the heap rather than the stack: a manifest is more than this frame
+     * should hold, and the editor's own copies are on the heap with it. */
+    toWrite = (ScenarioManifest *)malloc(sizeof(*toWrite));
+    if (toWrite == NULL) {
+        meScenarioSetStatus(&ed->scn,
+                            langGetText(STR_MAPEDIT_SCENARIO_PACK_FAILED));
+        return;
+    }
 
     /* A mod is written from a copy of the form's manifest — bound false, no
      * tags, no regions — and the comparison runs against that same copy, so a
@@ -3179,9 +3188,9 @@ static void meWriteScenario(MapEditorState *ed, const char *modPath) {
      * form's instead would hold a mod's script against a table the mod file
      * will not carry. */
     if (modPath != NULL) {
-        meScenarioModManifest(&ed->scnForm.manifest, &toWrite);
+        meScenarioModManifest(&ed->scnForm.manifest, toWrite);
     } else {
-        toWrite = ed->scnForm.manifest;
+        *toWrite = ed->scnForm.manifest;
     }
 
     if (ed->scn.scriptLen > 0 && ed->scn.script != NULL) {
@@ -3189,32 +3198,32 @@ static void meWriteScenario(MapEditorState *ed, const char *modPath) {
                            ed->scn.scriptPath[0] != '\0'
                                ? ed->scn.scriptPath
                                : ME_SCENARIO_CHECK_UNNAMED,
-                           &toWrite);
+                           toWrite);
         if (ed->scnCheck.result.count > 0) {
             snprintf(line, sizeof(line), "%s (%u)",
                      langGetText(STR_MAPEDIT_SCENARIO_PACK_ISSUES),
                      (unsigned)ed->scnCheck.result.count);
             meScenarioSetStatus(&ed->scn, line);
-            return;
+            goto done;
         }
     } else {
         meScenarioCheckClear(&ed->scnCheck);
     }
 
     if (ed->scnCheck.hasRun && ed->scnCheck.result.haveManifest &&
-        !meScenarioManifestAgrees(&toWrite, &ed->scnCheck.result.manifest, key,
+        !meScenarioManifestAgrees(toWrite, &ed->scnCheck.result.manifest, key,
                                   sizeof(key), err, sizeof(err))) {
         snprintf(line, sizeof(line), "%s: %s — %s",
                  langGetText(STR_MAPEDIT_SCENARIO_PACK_CONFLICT), key, err);
         meScenarioSetStatus(&ed->scn, line);
-        return;
+        goto done;
     }
 
     if (modPath != NULL) {
-        ok = meScenarioWriteMod(&toWrite, ed->scn.script, ed->scn.scriptLen,
+        ok = meScenarioWriteMod(toWrite, ed->scn.script, ed->scn.scriptLen,
                                 modPath, err, sizeof(err));
     } else {
-        ok = meScenarioPackIntoMap(&toWrite, ed->scn.script, ed->scn.scriptLen,
+        ok = meScenarioPackIntoMap(toWrite, ed->scn.script, ed->scn.scriptLen,
                                    ed->currentFilePath, err, sizeof(err));
     }
 
@@ -3222,7 +3231,7 @@ static void meWriteScenario(MapEditorState *ed, const char *modPath) {
         snprintf(line, sizeof(line), "%s: %s",
                  langGetText(STR_MAPEDIT_SCENARIO_PACK_FAILED), err);
         meScenarioSetStatus(&ed->scn, line);
-        return;
+        goto done;
     }
 
     if (modPath != NULL) {
@@ -3236,10 +3245,13 @@ static void meWriteScenario(MapEditorState *ed, const char *modPath) {
         ed->scnForm.dirty = false;
         /* What is on the map now is what a later map save has to put back,
          * rather than the container the file was opened with. */
-        meScenarioPackedSet(&ed->scnPacked, &toWrite, ed->scn.script,
+        meScenarioPackedSet(&ed->scnPacked, toWrite, ed->scn.script,
                             ed->scn.scriptLen);
         meScenarioSetStatus(&ed->scn, langGetText(STR_MAPEDIT_SCENARIO_PACKED));
     }
+
+done:
+    free(toWrite);
 }
 
 /* The save behind the unsaved-changes prompt's Yes: the map to path, and then

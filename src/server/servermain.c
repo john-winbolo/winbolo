@@ -1350,7 +1350,7 @@ static const char *overviewWindowArgWord(OverviewWindow window) {
    nothing it does starts anything. */
 static int validateMapAndReport(char *mapPath) {
   ServerSim *sim;
-  ScnValidateResult result;
+  ScnValidateResult *result;
   char script[SCN_SCRIPT_PATH_MAX];
   bool ok;
   uint16_t i;
@@ -1378,10 +1378,19 @@ static int validateMapAndReport(char *mapPath) {
     return 1;
   }
 
-  ok = scenarioValidateMap(sim, mapPath, &result);
+  /* On the heap rather than the stack: a result carries the whole manifest and
+     the issue list with it, which is more than this frame should hold. */
+  result = (ScnValidateResult *)malloc(sizeof(*result));
+  if (result == NULL) {
+    fprintf(stderr, "%s: out of memory reading the script\n", mapPath);
+    serverSimDestroy(sim);
+    return 1;
+  }
 
-  for (i = 0; i < result.count; i++) {
-    const ScnValidateIssue *issue = &result.issues[i];
+  ok = scenarioValidateMap(sim, mapPath, result);
+
+  for (i = 0; i < result->count; i++) {
+    const ScnValidateIssue *issue = &result->issues[i];
     if (issue->line > 0) {
       fprintf(stderr, "%s:%d: %s: %s\n", script, issue->line, issue->key,
               issue->message);
@@ -1390,18 +1399,19 @@ static int validateMapAndReport(char *mapPath) {
     }
   }
 
-  if (result.haveManifest == FALSE && result.count == 0) {
+  if (result->haveManifest == FALSE && result->count == 0) {
     fprintf(stderr, "%s: no scenario script beside it\n", mapPath);
   } else if (ok == TRUE) {
     fprintf(stderr, "%s: no problems\n", script);
-  } else if (result.dropped > 0) {
+  } else if (result->dropped > 0) {
     fprintf(stderr, "%s: %u problems, and %u more than the list holds\n",
-            script, (unsigned)result.count, (unsigned)result.dropped);
+            script, (unsigned)result->count, (unsigned)result->dropped);
   } else {
-    fprintf(stderr, "%s: %u problem%s\n", script, (unsigned)result.count,
-            (result.count == 1) ? "" : "s");
+    fprintf(stderr, "%s: %u problem%s\n", script, (unsigned)result->count,
+            (result->count == 1) ? "" : "s");
   }
 
+  free(result);
   serverSimDestroy(sim);
   return (ok == TRUE) ? 0 : 1;
 }

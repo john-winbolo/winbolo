@@ -60,13 +60,13 @@ static void packErr(char *err, size_t errLen, const char *fmt, ...) {
 }
 
 bool scnPackMap(const char *mapPath, char *err, size_t errLen) {
-    ServerSim        *sim;
-    ScnValidateResult result;
-    char             *src    = NULL;
-    size_t            srcLen = 0;
-    char              script[SCN_SCRIPT_PATH_MAX];
-    bool              checked;
-    bool              ok = false;
+    ServerSim         *sim;
+    ScnValidateResult *result = NULL;
+    char              *src    = NULL;
+    size_t             srcLen = 0;
+    char               script[SCN_SCRIPT_PATH_MAX];
+    bool               checked;
+    bool               ok = false;
 
     if (err != NULL && errLen > 0) {
         err[0] = '\0';
@@ -90,11 +90,19 @@ bool scnPackMap(const char *mapPath, char *err, size_t errLen) {
         return false;
     }
 
+    /* On the heap rather than the stack: a result carries the whole manifest
+       and the issue list with it, which is more than this frame should hold. */
+    result = (ScnValidateResult *)malloc(sizeof(*result));
+    if (result == NULL) {
+        packErr(err, errLen, "%s: out of memory reading the script", mapPath);
+        goto done;
+    }
+
     /* Where the manifest comes from: the same parse an author checking the
        script would get, rather than a second read of the table. */
-    checked = scenarioValidateMap(sim, mapPath, &result);
+    checked = scenarioValidateMap(sim, mapPath, result);
 
-    if (result.haveManifest == false && result.count == 0) {
+    if (result->haveManifest == false && result->count == 0) {
         packErr(err, errLen,
                 "%s: no scenario script beside it, so there is nothing to pack",
                 mapPath);
@@ -105,8 +113,8 @@ bool scnPackMap(const char *mapPath, char *err, size_t errLen) {
            what is wrong with it is -validate's to print. */
         packErr(err, errLen,
                 "%s: %u problem%s; run -validate on the map to see %s", script,
-                (unsigned)result.count, (result.count == 1) ? "" : "s",
-                (result.count == 1) ? "it" : "them");
+                (unsigned)result->count, (result->count == 1) ? "" : "s",
+                (result->count == 1) ? "it" : "them");
         goto done;
     }
 
@@ -117,13 +125,14 @@ bool scnPackMap(const char *mapPath, char *err, size_t errLen) {
         goto done;
     }
 
-    if (!scnIoWriteMapChunk(mapPath, &result.manifest, src, srcLen, err,
+    if (!scnIoWriteMapChunk(mapPath, &result->manifest, src, srcLen, err,
                             errLen)) {
         goto done;
     }
     ok = true;
 
 done:
+    free(result);
     free(src);
     serverSimDestroy(sim);
     return ok;
