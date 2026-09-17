@@ -307,7 +307,8 @@ void tkExplosionUpdate(GameSim *sim, lgm **lgms, BYTE numLgm, tank *tank, starts
             basesExistPos(&sim->bs, mx, my) == FALSE &&
             pillsExistPos(&sim->pb, mx, my) == FALSE) {
             mapSetPos(sim, mp, mx, my, CRATER, FALSE, FALSE);
-            floodAddItem(&sim->ff, mx, my);
+            floodAddItem(&sim->ff, mx, my,
+                       (BYTE) sim->rules.flood_fill_ticks);
             if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
         }
         if (sim->isServer) {
@@ -529,7 +530,8 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
              basesExistPos(bs, (BYTE) (mx+moveX), (BYTE) (my+moveY)) == FALSE &&
              pillsExistPos(pb, (BYTE) (mx+moveX), (BYTE) (my+moveY)) == FALSE) {
       mapSetPos(sim, mp,(BYTE) (mx+moveX), (BYTE) (my+moveY), CRATER, FALSE, FALSE);
-      floodAddItem(&sim->ff, (BYTE) (mx+moveX), (BYTE) (my+moveY));
+      floodAddItem(&sim->ff, (BYTE) (mx+moveX), (BYTE) (my+moveY),
+                       (BYTE) sim->rules.flood_fill_ticks);
   }
 
   if (sim->isServer) {
@@ -549,7 +551,8 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
              basesExistPos(bs, (BYTE) (mx+moveX), my) == FALSE &&
              pillsExistPos(pb, (BYTE) (mx+moveX), my) == FALSE) {
       mapSetPos(sim, mp,(BYTE) (mx+moveX), my, CRATER, FALSE, FALSE);
-    floodAddItem(&sim->ff, (BYTE) (mx+moveX), my);
+    floodAddItem(&sim->ff, (BYTE) (mx+moveX), my,
+                       (BYTE) sim->rules.flood_fill_ticks);
   }
   if (sim->isServer) {
     count = 1;
@@ -568,7 +571,8 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
              basesExistPos(bs, mx, (BYTE) (my+moveY)) == FALSE &&
              pillsExistPos(pb, mx, (BYTE) (my+moveY)) == FALSE) {
       mapSetPos(sim, mp, mx, (BYTE) (my+moveY), CRATER, FALSE, FALSE);
-    floodAddItem(&sim->ff, mx, (BYTE) (my+moveY));
+    floodAddItem(&sim->ff, mx, (BYTE) (my+moveY),
+                       (BYTE) sim->rules.flood_fill_ticks);
   }
 
   if (sim->isServer) {
@@ -596,7 +600,8 @@ void tkExplosionBigExplosion(GameSim *sim, BYTE mx, BYTE my, int moveX, int move
              basesExistPos(bs, mx, my) == FALSE &&
              pillsExistPos(pb, mx, my) == FALSE) {
       mapSetPos(sim, mp, mx, my, CRATER, FALSE, FALSE);
-    floodAddItem(&sim->ff, mx, my);
+    floodAddItem(&sim->ff, mx, my,
+                       (BYTE) sim->rules.flood_fill_ticks);
   }
   if (!sim->isServer) {
     sim->callbacks.soundDist(sim->callbacks.ctx, bigExplosionNear, mx, my);

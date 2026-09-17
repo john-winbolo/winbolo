@@ -119,6 +119,7 @@
 #include "swamp.h"
 #include "minesexp.h"
 #include "tankexp.h"     /* TK_DAMAGE — the splash the explosion path deals */
+#include "floodfill.h"  /* FLOOD_FILL_WAIT */
 #include "treegrow.h"
 #include "sim_rules.h"
 #include "client_sim.h"
@@ -287,8 +288,10 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(tank_explosion_height, TK_HEIGHT_CHECK);
 
     /* Tree growth */
+    SR_EQ(flood_fill_ticks, FLOOD_FILL_WAIT);
     SR_EQ(tree_grow_ticks, TREEGROW_TIME);
     SR_EQ(tree_grow_initial_ticks, TREEGROW_INITIAL_TIME);
+    SR_EQ(tree_grow_initial_score, TREEGROW_INITIAL_SCORE);
     SR_EQ(tree_weight_forest, TREE_GROW_FOREST);
     SR_EQ(tree_weight_grass, TREE_GROW_GRASS);
     SR_EQ(tree_weight_river, TREE_GROW_RIVER);

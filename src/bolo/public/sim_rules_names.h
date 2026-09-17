@@ -241,11 +241,16 @@ typedef enum {
       SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
     X(tank_explosion_width, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \
     X(tank_explosion_height, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)        \
+    /* Terrain flooding */                                                   \
+    X(flood_fill_ticks, SIM_RULE_VALUE_INT,                                  \
+      SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
     /* Tree growth */                                                        \
     X(tree_grow_ticks, SIM_RULE_VALUE_INT,                                   \
       SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
     X(tree_grow_initial_ticks, SIM_RULE_VALUE_INT,                           \
       SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
+    X(tree_grow_initial_score, SIM_RULE_VALUE_INT,                           \
+      SIM_RULE_UNIT_CONSTANT_BY_DESIGN)                                      \
     X(tree_weight_forest, SIM_RULE_VALUE_INT,                                \
       SIM_RULE_UNIT_CONSTANT_BY_DESIGN)                                      \
     X(tree_weight_grass, SIM_RULE_VALUE_INT,                                 \

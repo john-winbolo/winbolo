@@ -1226,7 +1226,8 @@ void lgmDoWork(GameSim *sim, lgm *lgman, tank *tnk) {
       if (isPill == FALSE && isBase == FALSE && minesExistPos(&sim->mns, &sim->mp, bmx, bmy) == FALSE && terrain != BUILDING && terrain != HALFBUILDING && terrain != RIVER && terrain != BOAT && terrain != DEEP_SEA) {
         if (isMine == TRUE) {
           minesExpAddItem(sim, &sim->minesExplosions, mp, bmx, bmy);
-          floodAddItem(&sim->ff, bmx, bmy);
+          floodAddItem(&sim->ff, bmx, bmy,
+                       (BYTE) sim->rules.flood_fill_ticks);
           lgmDeathCheck(sim, lgman, (WORLD) ((bmx << M_W_SHIFT_SIZE) +MAP_SQUARE_MIDDLE), (WORLD) ((bmy<< M_W_SHIFT_SIZE)+MAP_SQUARE_MIDDLE), NEUTRAL, tnk);
           sim->callbacks.soundDist(sim->callbacks.ctx, mineExplosionNear, bmx, bmy);
           mapSetPos(sim, mp, bmx, bmy, CRATER, TRUE, FALSE);

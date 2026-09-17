@@ -42,6 +42,7 @@
 #include "minesexp.h"    /* MINES_EXPLOSION_WAIT */
 #include "tankexp.h"     /* TK_DAMAGE and the wreck's shape */
 #include "treegrow.h"    /* TREEGROW_* / TREE_GROW_* */
+#include "floodfill.h"   /* FLOOD_FILL_WAIT */
 
 void simRulesClassic(SimRules *out) {
     if (out == NULL) {
@@ -184,9 +185,13 @@ void simRulesClassic(SimRules *out) {
     out->tank_explosion_width        = TK_WIDTH_CHECK;
     out->tank_explosion_height       = TK_HEIGHT_CHECK;
 
+    /* ---- Terrain flooding ---- */
+    out->flood_fill_ticks          = FLOOD_FILL_WAIT;
+
     /* ---- Tree growth ---- */
     out->tree_grow_ticks           = TREEGROW_TIME;
     out->tree_grow_initial_ticks   = TREEGROW_INITIAL_TIME;
+    out->tree_grow_initial_score   = TREEGROW_INITIAL_SCORE;
     out->tree_weight_forest        = TREE_GROW_FOREST;
     out->tree_weight_grass         = TREE_GROW_GRASS;
     out->tree_weight_river         = TREE_GROW_RIVER;
@@ -553,9 +558,16 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
               (long) rules->tank_explosion_damage,
               (long) rules->pill_max_armour)
 
+    /* ---- Terrain flooding ---- */
+    RULE_INT(flood_fill_ticks, 1, 255)
+
     /* ---- Tree growth ---- */
     RULE_INT(tree_grow_ticks, 1, INT32_MAX)
     RULE_INT(tree_grow_initial_ticks, 1, INT32_MAX)
+    /* The score the weighted draw starts and resets from, so how long the
+       map waits for its first tree. Negative by design, and the weights
+       below share its window. */
+    RULE_INT(tree_grow_initial_score, -32768, 32767)
     RULE_INT(tree_weight_forest, -32768, 32767)
     RULE_INT(tree_weight_grass, -32768, 32767)
     RULE_INT(tree_weight_river, -32768, 32767)

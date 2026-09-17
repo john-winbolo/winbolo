@@ -187,9 +187,13 @@ typedef struct SimRules {
     int32_t tank_explosion_width;         /* half the wreck's collision box */
     int32_t tank_explosion_height;
 
+    /* ---- Terrain flooding ---- */
+    int32_t flood_fill_ticks;    /* how long water takes to claim a square */
+
     /* ---- Tree growth ---- */
     int32_t tree_grow_ticks;
     int32_t tree_grow_initial_ticks;
+    int32_t tree_grow_initial_score; /* what the weighted draw starts and resets from */
     int32_t tree_weight_forest;
     int32_t tree_weight_grass;
     int32_t tree_weight_river;
