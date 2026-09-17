@@ -175,7 +175,7 @@ void overviewCameraKeepOnScreen(OverviewCamera *cam, int viewW, int viewH,
                                 float pointX, float pointY);
 
 /* The centre overviewCameraKeepOnScreen would move to, worked out without
- * touching the camera. Writes it to *outCx/*outCy, already through the same
+ * touching the camera. Writes it to *outCx / *outCy, already through the same
  * map clamp every camera move ends in, so a caller gets a centre the camera
  * would accept. Returns true when that centre differs from the one the camera
  * is on — when there is a move to make — and false when the point is already
