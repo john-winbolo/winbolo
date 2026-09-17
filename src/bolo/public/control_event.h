@@ -360,28 +360,26 @@ typedef enum {
  * variant's members, the encoder, the decoder, the server's fill and the
  * client's apply are all written from these lists, so a rule cannot be
  * encoded and not decoded, or sent and not applied. */
-#define CTRL_SIM_RULES_U8_FIELDS(F)                                          \
-    F(tank_reload_ticks) F(tank_full_shells) F(tank_full_mines)              \
-    F(tank_full_trees) F(tank_full_armour) F(tank_water_ticks)               \
-    F(shell_damage) F(mine_damage) F(just_fired_ticks)                       \
-    F(mine_fatal_divisor) F(water_loss_shells) F(water_loss_mines)           \
-    F(gunsight_min) F(gunsight_max) F(tank_min_move)                         \
-    F(tank_hit_radius) F(tank_nudge_amount) F(tank_nudge_iterations)         \
-    F(tank_bump_decay_shift) F(tank_pill_pickup_inset)                       \
-    F(tank_boat_exit_inset) F(tank_slide_step)                               \
-    F(speed_road) F(speed_grass) F(speed_forest) F(speed_river)              \
-    F(speed_swamp) F(speed_crater) F(speed_rubble) F(speed_boat)             \
-    F(speed_deep_sea) F(speed_refuel_base)                                   \
-    F(shell_life) F(shell_speed)                                             \
-    F(pill_max_armour) F(pill_attack_ticks) F(pill_attack_min_ticks)         \
-    F(pill_cooldown_ticks)                                                   \
-    F(base_full_armour) F(base_full_shells) F(base_full_mines)               \
-    F(base_capture_armour) F(base_hit_armour)                                \
-    F(sound_soft_range) F(sound_none_range)
+#define CTRL_SIM_RULES_U8_FIELDS(F)                                      \
+    F(tank_reload_ticks) F(tank_full_shells) F(tank_full_mines)          \
+    F(tank_full_trees) F(tank_full_armour) F(tank_water_ticks)           \
+    F(shell_damage) F(mine_damage) F(mine_fatal_divisor)                 \
+    F(water_loss_shells) F(water_loss_mines) F(just_fired_ticks)         \
+    F(gunsight_min) F(gunsight_max) F(tank_min_move) F(tank_hit_radius)  \
+    F(tank_nudge_amount) F(tank_nudge_iterations)                        \
+    F(tank_bump_decay_shift) F(tank_pill_pickup_inset)                   \
+    F(tank_boat_exit_inset) F(tank_slide_step) F(speed_road)             \
+    F(speed_grass) F(speed_forest) F(speed_river) F(speed_swamp)         \
+    F(speed_crater) F(speed_rubble) F(speed_boat) F(speed_deep_sea)      \
+    F(speed_refuel_base) F(shell_life) F(shell_speed) F(pill_max_armour) \
+    F(pill_attack_ticks) F(pill_attack_min_ticks) F(pill_cooldown_ticks) \
+    F(base_full_armour) F(base_full_shells) F(base_full_mines)           \
+    F(base_capture_armour) F(base_hit_armour) F(sound_soft_range)        \
+    F(sound_none_range)
 
-#define CTRL_SIM_RULES_U16_FIELDS(F)                                         \
-    F(tank_death_ticks) F(tank_collision_distance) F(tank_nudge_threshold)   \
-    F(mine_damage_range) F(tree_hide_distance)                               \
+#define CTRL_SIM_RULES_U16_FIELDS(F)                                     \
+    F(tank_death_ticks) F(mine_damage_range) F(tree_hide_distance)       \
+    F(tank_collision_distance) F(tank_nudge_threshold)                   \
     F(base_status_range) F(base_reveal_range)
 
 #define CTRL_SIM_RULES_U32_FIELDS(F)                                         \
