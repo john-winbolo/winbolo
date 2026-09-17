@@ -54,6 +54,7 @@ local function shape(c)
   if c.select then return "select:" .. table.concat(c.select, ",") end
   if c.clear_select then return "clear_select" end
   local w = c.who.mode
+  if c.who.n then w = w .. "[" .. c.who.n .. "]" end
   if c.who.pns then w = w .. "(" .. table.concat(c.who.pns, ",") .. ")" end
   local t = "-"
   if c.target then t = c.target.kind .. ":" .. tostring(c.target.id or c.target.pn) end
@@ -221,13 +222,101 @@ check("socrates bot pings on",
 check("all botpings off",
       shape(P("all botpings off")) == "set:bot_pings=false", shape(P("all botpings off")))
 
+print("orders.lua — bot chat switch")
+check("bot chat on",  shape(P("bot chat on"))  == "set:bot_chat=true",  shape(P("bot chat on")))
+check("bot chat off", shape(P("bot chat off")) == "set:bot_chat=false", shape(P("bot chat off")))
+check("botchat on",   shape(P("botchat on"))   == "set:bot_chat=true",  shape(P("botchat on")))
+check("botchat off",  shape(P("botchat off"))  == "set:bot_chat=false", shape(P("botchat off")))
+check("BOT CHAT OFF (case)", shape(P("BOT CHAT OFF")) == "set:bot_chat=false", shape(P("BOT CHAT OFF")))
+check("bot chat alone",  shape(P("bot chat")) == "reply:didn't understand", shape(P("bot chat")))
+check("bot chat wibble", shape(P("bot chat wibble")) == "reply:didn't understand", shape(P("bot chat wibble")))
+check("socrates bot chat off",
+      shape(P("socrates bot chat off")) == "set:bot_chat=false", shape(P("socrates bot chat off")))
+check("all botchat on",
+      shape(P("all botchat on")) == "set:bot_chat=true", shape(P("all botchat on")))
+-- The two latches are separate words and must not be read as each other.
+check("bot pings is not bot chat",
+      shape(P("bot pings off")) == "set:bot_pings=false", shape(P("bot pings off")))
+
+-- =========================================================================
+-- A COUNT IS THE FOURTH WHO-WORD: "4 attack 5" = the four bots closest to
+-- pill 5.  The parser only marks the number; the auction already ranks every
+-- free bot by travel price to the target, so `want = N` picks the N nearest.
+-- =========================================================================
+print("orders.lua — a count who-word")
+check("4 attack 5",     shape(P("4 attack 5")) == "attack who=count[4] tgt=pill:5", shape(P("4 attack 5")))
+check("1 attack 5",     shape(P("1 attack 5")) == "attack who=count[1] tgt=pill:5", shape(P("1 attack 5")))
+check("16 attack 5",    shape(P("16 attack 5")) == "attack who=count[16] tgt=pill:5", shape(P("16 attack 5")))
+check("3 defend pill 9", shape(P("3 defend pill 9")) == "defend who=count[3] tgt=pill:9", shape(P("3 defend pill 9")))
+check("2 capture base 3", shape(P("2 capture base 3")) == "capture who=count[2] tgt=base:3", shape(P("2 capture base 3")))
+check("2 attack hannibal", shape(P("2 attack hannibal")) == "attack who=count[2] tgt=tank:7", shape(P("2 attack hannibal")))
+-- Out of range is a mistake, not an order, and it is ANSWERED: the line has
+-- a verb in it, so the sender is plainly talking to the bots.
+check("0 attack 5 rejected",  shape(P("0 attack 5")) == "reply:didn't understand", shape(P("0 attack 5")))
+check("17 attack 5 rejected", shape(P("17 attack 5")) == "reply:didn't understand", shape(P("17 attack 5")))
+-- A NUMBER WITH NO VERB BEHIND IT IS ORDINARY CHAT.  Without this the gate
+-- would read half the numbers people type at each other as orders.
+check("'5 more shells please' is chat", P("5 more shells please") == nil, shape(P("5 more shells please")))
+check("'3' alone is chat",              P("3") == nil, shape(P("3")))
+check("'2 pills left' is chat",         P("2 pills left") == nil, shape(P("2 pills left")))
+-- A count cannot be a name AND a count, so the count only reads when the
+-- number is not a bot's name (tested against a digit-named roster below).
+check("count does not shadow a real name", (function()
+  local R2 = { { pn = 1, name = "4" }, { pn = 2, name = "Plato" } }
+  return shape(ORD.parse("4 attack 5", R2, R2)) == "attack who=names(1) tgt=pill:5"
+end)(), shape((function()
+  local R2 = { { pn = 1, name = "4" }, { pn = 2, name = "Plato" } }
+  return ORD.parse("4 attack 5", R2, R2)
+end)()))
+-- "4 attack 5" and "attack 5" are ONE job on pill 5, so they share an order
+-- id: the count line grows the first order instead of opening a rival one.
+check("a count shares the plain order's id",
+      ORD.order_id(0, P("4 attack 5")) == ORD.order_id(0, P("attack 5")),
+      tostring(ORD.order_id(0, P("4 attack 5"))))
+check("a count is still a different order from `all`",
+      ORD.order_id(0, P("4 attack 5")) ~= ORD.order_id(0, P("all attack 5")), "?")
+
+-- =========================================================================
+-- "closest" — THE PILL NEAREST THE SENDER.  The parser marks it; the pill
+-- number is chosen in on_chat, where the sender's tile is known.
+-- =========================================================================
+print("orders.lua — the closest target word")
+local function closest_shape(t)
+  local c = P(t)
+  if not c then return "nil" end
+  if c.reply then return "reply:" .. c.reply end
+  if not c.target then return "no target" end
+  return string.format("%s %s closest=%s", c.verb, c.target.kind,
+                       tostring(c.target.closest))
+end
+check("attack closest",       closest_shape("attack closest") == "attack pill closest=true", closest_shape("attack closest"))
+check("attack closest pill",  closest_shape("attack closest pill") == "attack pill closest=true", closest_shape("attack closest pill"))
+check("attack pill closest",  closest_shape("attack pill closest") == "attack pill closest=true", closest_shape("attack pill closest"))
+check("capture closest",      closest_shape("capture closest") == "capture pill closest=true", closest_shape("capture closest"))
+check("defend closest",       closest_shape("defend closest") == "defend pill closest=true", closest_shape("defend closest"))
+check("nearest is the same word", closest_shape("attack nearest") == "attack pill closest=true", closest_shape("attack nearest"))
+check("4 attack closest",     shape(P("4 attack closest")) == "attack who=count[4] tgt=pill:nil", shape(P("4 attack closest")))
+check("all attack closest",   shape(P("all attack closest")) == "attack who=all tgt=pill:nil", shape(P("all attack closest")))
+check("socrates attack closest",
+      shape(P("socrates attack closest")) == "attack who=names(1) tgt=pill:nil", shape(P("socrates attack closest")))
+-- CLOSEST IS A PILL WORD.  A base has a number on the map the same way a
+-- pill does, so "closest base" is turned down in words rather than quietly
+-- redirected onto a pill.
+check("closest base rejected", closest_shape("attack closest base") == "reply:closest takes a pill", closest_shape("attack closest base"))
+check("base closest rejected", closest_shape("attack base closest") == "reply:closest takes a pill", closest_shape("attack base closest"))
+-- A bare "closest" is not an order at all: no verb, so it is ordinary chat.
+check("'closest' alone is chat", P("closest") == nil, shape(P("closest")))
 
 print("orders.lua — help")
 check("help",             shape(P("help")) == "help", shape(P("help")))
 check("help with junk",   shape(P("help me")) == "reply:didn't understand", shape(P("help me")))
 check("help: 4 lines",    #ORD.HELP == 4, tostring(#ORD.HELP))
-check("help line 1 lists the last who-word",
-      ORD.HELP[1]:find("all|nearby|last|bot name", 1, true) ~= nil, ORD.HELP[1])
+check("help line 1 lists the last and count who-words",
+      ORD.HELP[1]:find("all|nearby|last|N|bot name", 1, true) ~= nil, ORD.HELP[1])
+check("help line 1 lists the closest target",
+      ORD.HELP[1]:find("closest", 1, true) ~= nil, ORD.HELP[1])
+check("help line 2 lists the bot chat latch",
+      ORD.HELP[2]:find("bot chat on|off", 1, true) ~= nil, ORD.HELP[2])
 check("help lines fit the 128-byte chat max", (function()
   for _, l in ipairs(ORD.HELP) do if #l > 128 then return false end end
   return true
@@ -510,6 +599,172 @@ local st3 = ST()
 ORD.update(st3, W(), I({ allies = 0x16, player_bots = 0x16 }), 50)
 check("no game-start line with no human ally",
       #st3.orders.say == 0, tostring(#st3.orders.say))
+
+-- =========================================================================
+-- "bot chat off" — THE SPOKEN GOAL CONFIRMATIONS, AND ONLY THOSE.
+-- The latch rides its own wire verb (obh) like the other three, and a bot
+-- that joins late catches it off the heartbeat.
+-- =========================================================================
+print("orders.lua — bot chat off (the runtime path)")
+st, w, inf = ST(), W(), I()
+inf.allies = 0x17
+check("bot chat is ON before anybody says otherwise",
+      ORD.bot_chat_on(st) == true, tostring(ORD.bot_chat_on(st)))
+ORD.on_chat(st, w, inf, 0, "bot chat off", 200, true, false)
+check("bot chat off latches", ORD.bot_chat_on(st) == false, tostring(ORD.bot_chat_on(st)))
+-- The confirmation of the latch ITSELF is still said: a person who has just
+-- turned the chat off is owed the word that it is off.
+check("the speaking bot confirms the latch",
+      st.orders.say[1] == "Bot chat off.", tostring(st.orders.say[1]))
+check("and puts it on the wire",
+      st.orders.out[1] == "/info obh 0", tostring(st.orders.out[1]))
+local n_before = #st.orders.say
+ORD.on_chat(st, w, inf, 0, "socrates attack 5", 210, true, false)
+check("the order is still taken with chat off",
+      st.orders.held ~= nil and st.orders.held.tid == 5,
+      st.orders.held and tostring(st.orders.held.tid) or "nil")
+check("but the ack is NOT said", #st.orders.say == n_before,
+      tostring(#st.orders.say) .. " vs " .. tostring(n_before))
+-- A REPLY A PERSON IS OWED IS NEVER SILENCED.
+ORD.on_chat(st, w, inf, 0, "attack", 220, true, false)
+check("a 'didn't understand' still comes back with chat off",
+      st.orders.say[#st.orders.say] == "didn't understand",
+      tostring(st.orders.say[#st.orders.say]))
+ORD.on_chat(st, w, inf, 0, "help", 230, true, false)
+check("help still answers with chat off",
+      #st.orders.say == n_before + 5, tostring(#st.orders.say))
+-- Back on, and the ack comes back with it.
+st, w, inf = ST(), W(), I()
+inf.allies = 0x17
+ORD.on_chat(st, w, inf, 0, "bot chat off", 300, true, false)
+ORD.on_chat(st, w, inf, 0, "bot chat on", 310, true, false)
+check("bot chat on latches again", ORD.bot_chat_on(st) == true, tostring(ORD.bot_chat_on(st)))
+local n2 = #st.orders.say
+ORD.on_chat(st, w, inf, 0, "socrates attack 5", 320, true, false)
+check("the ack is said again once chat is back on",
+      #st.orders.say > n2, tostring(#st.orders.say) .. " vs " .. tostring(n2))
+-- A late joiner latches it off the wire, exactly like focus and bot pings.
+local st4 = ST()
+ORD.rx(1, "/info obh 0", 400, st4)
+ORD.update(st4, W(), I({ allies = 0x17 }), 400)
+check("a late bot latches bot chat from the verb",
+      ORD.bot_chat_on(st4) == false, tostring(ORD.bot_chat_on(st4)))
+
+-- =========================================================================
+-- A COUNT WHO-WORD AT RUNTIME: the auction is opened with want = N, and the
+-- settle hands the order to the N cheapest bids.
+-- =========================================================================
+print("orders.lua — a count who-word (the runtime path)")
+st, w, inf = ST(), W(), I()
+inf.allies = 0x17
+ORD.on_chat(st, w, inf, 0, "4 attack 5", 200, true, false)
+local coid = next(st.orders.auctions)
+check("a count opens an auction with want = N",
+      coid ~= nil and st.orders.auctions[coid].want == 4,
+      coid and tostring(st.orders.auctions[coid].want) or "nil")
+check("a count is a GROUP order, so it settles into the group ack path",
+      (function()
+         ORD.update(st, w, inf, 210)
+         return st.orders.held ~= nil and st.orders.held.group == true
+       end)(),
+      st.orders.held and tostring(st.orders.held.group) or "nil held")
+-- A plain line is still one bot.
+st, w, inf = ST(), W(), I()
+inf.allies = 0x17
+ORD.on_chat(st, w, inf, 0, "attack 5", 200, true, false)
+local aoid = next(st.orders.auctions)
+check("a plain order still wants one bot",
+      aoid ~= nil and st.orders.auctions[aoid].want == 1,
+      aoid and tostring(st.orders.auctions[aoid].want) or "nil")
+-- THE COUNT LINE GROWS AN ORDER THE BOT ALREADY HOLDS, the way a repeat ping
+-- does: same id, auction re-opened for the slots still empty.
+ORD.update(st, w, inf, 210)
+check("the plain order is held", st.orders.held ~= nil and st.orders.held.oid == aoid, "?")
+ORD.on_chat(st, w, inf, 0, "3 attack 5", 220, true, false)
+check("a count line re-opens the SAME order for more bots",
+      st.orders.auctions[aoid] ~= nil and st.orders.auctions[aoid].want == 3,
+      st.orders.auctions[aoid] and tostring(st.orders.auctions[aoid].want) or "nil")
+check("and opens no second order",
+      (function()
+         local n = 0
+         for _ in pairs(st.orders.known) do n = n + 1 end
+         return n == 1
+       end)(), "?")
+
+-- =========================================================================
+-- "attack closest" AT RUNTIME: the pill nearest the PERSON WHO TYPED IT.
+-- p0 is the human; the fixture leaves its tank out of info.objects, which is
+-- exactly the "I cannot see you" case.
+-- =========================================================================
+print("orders.lua — the closest target word (the runtime path)")
+-- A human tank object at a tile, added to the fixture's object list.
+local function with_human(mx, my)
+  local i = I()
+  i.allies = 0x17
+  i.objects[#i.objects + 1] = { type = 1, idnum = 0, x = mx * 256, y = my * 256, info = 0 }
+  return i
+end
+st, w, inf = ST(), W(), I()
+inf.allies = 0x17
+ORD.on_chat(st, w, inf, 0, "attack closest", 200, true, false)
+check("with the sender out of sight the bot says so",
+      st.orders.say[1] == "can't see you", tostring(st.orders.say[1]))
+check("and starts nothing", st.orders.held == nil and next(st.orders.auctions) == nil, "?")
+-- Pill 5 is at (20,20) and pill 7 at (40,40); the human at (19,19) is beside 5.
+st, w = ST(), W()
+inf = with_human(19, 19)
+ORD.on_chat(st, w, inf, 0, "attack closest", 200, true, false)
+ORD.update(st, w, inf, 210)
+check("the sender beside pill 5 gets pill 5",
+      st.orders.held ~= nil and st.orders.held.tid == 5,
+      st.orders.held and tostring(st.orders.held.tid) or "nil")
+-- The same line from the other side of the map gets the other pill.
+st, w = ST(), W()
+inf = with_human(38, 38)
+ORD.on_chat(st, w, inf, 0, "attack closest", 200, true, false)
+ORD.update(st, w, inf, 210)
+check("the sender beside pill 7 gets pill 7",
+      st.orders.held ~= nil and st.orders.held.tid == 7,
+      st.orders.held and tostring(st.orders.held.tid) or "nil")
+-- ATTACK NEVER PICKS ONE OF OUR OWN PILLS, even when the sender is standing
+-- on it: pill 9 at (60,60) is friendly, so a human at (60,61) still gets 7.
+st, w = ST(), W()
+inf = with_human(60, 61)
+ORD.on_chat(st, w, inf, 0, "attack closest", 200, true, false)
+ORD.update(st, w, inf, 210)
+check("attack closest skips our own pills",
+      st.orders.held ~= nil and st.orders.held.tid == 7,
+      st.orders.held and tostring(st.orders.held.tid) or "nil")
+-- DEFEND LOOKS THE OTHER WAY: ours only, so the same tile gets pill 9.
+st, w = ST(), W()
+inf = with_human(60, 61)
+ORD.on_chat(st, w, inf, 0, "defend closest", 200, true, false)
+ORD.update(st, w, inf, 210)
+check("defend closest takes one of OUR pills",
+      st.orders.held ~= nil and st.orders.held.tid == 9,
+      st.orders.held and tostring(st.orders.held.tid) or "nil")
+-- THE LAST KNOWN POSITION. The human is seen on one think and gone on the
+-- next; the line still resolves against where the bot last saw them.
+st, w = ST(), W()
+inf = with_human(19, 19)
+ORD.update(st, w, inf, 200)                      -- remembers p0 at (19,19)
+local gone = I()
+gone.allies = 0x17                               -- p0 is not in the object list
+ORD.on_chat(st, w, gone, 0, "attack closest", 210, true, false)
+ORD.update(st, w, gone, 220)
+check("a sender who drove out of sight still resolves",
+      st.orders.held ~= nil and st.orders.held.tid == 5,
+      st.orders.held and tostring(st.orders.held.tid) or "nil")
+-- A COUNT AND `closest` ON ONE LINE — the README's "4 attack closest".
+st, w = ST(), W()
+inf = with_human(19, 19)
+ORD.on_chat(st, w, inf, 0, "4 attack closest", 200, true, false)
+local xoid = next(st.orders.auctions)
+check("'4 attack closest' wants 4 bots on the pill beside the sender",
+      xoid ~= nil and st.orders.auctions[xoid].want == 4
+      and st.orders.auctions[xoid].spec.tid == 5,
+      xoid and (tostring(st.orders.auctions[xoid].want) .. "/" ..
+                tostring(st.orders.auctions[xoid].spec.tid)) or "nil")
 
 -- =========================================================================
 -- THREE SHOTS = GO THERE.  Three of one player's shells that run their full
@@ -1846,6 +2101,66 @@ check("runtime: ordinary chat is not even taken",
       ORD.on_chat(st, w, inf, 0, "cause we should push", 100, true, false) == false,
       "took it")
 check("runtime: and nothing is said", st.orders == nil, "?")
+
+-- =========================================================================
+-- "Bots <= 7 tiles from a human will suicide when attacking a pill (no wall
+-- blockers built)" — the lobby docs' last line.
+--
+-- The whole of the new input is util.human_ally_near: how far the nearest
+-- HUMAN team-mate is, or nil. Everything downstream of it is the line
+-- attack.lua already ran for a designated pill_suicider — _is_ppt off, so no
+-- shield scan, no gather_trees and no build_walls — so this is the part worth
+-- pinning, and pinning it exactly.
+--
+-- IT CANNOT BE A ROOST ROUND. Every seat in a headless round is a bot: the
+-- server stamps PLAYER_FLAG_BOT as it seats one and no scenario op clears it
+-- (docs/SCENARIO_API.md, "Bots and seats"), so a round cannot put a human
+-- five squares from anything. See tests/roost/README.md.
+-- =========================================================================
+print("util.lua — a human team-mate standing close")
+local UTIL = require("util")
+-- me = p1. p0 is a human ally, p2 an ally BOT, p7 an enemy: allies has bits
+-- 0,1,2 and player_bots has bits 1,2, which is the shape init.lua reads.
+local function HI(list)
+  local i = { player_number = 1, allies = 0x07, player_bots = 0x06, objects = {} }
+  for _, e in ipairs(list) do
+    i.objects[#i.objects + 1] = { type = 1, idnum = e[1],
+                                  x = e[2] * 256, y = e[3] * 256, info = e[4] or 0 }
+  end
+  return i
+end
+local function near(list, tiles)
+  return UTIL.human_ally_near(HI(list), 100, 100, tiles)
+end
+check("a human ally 5 away is seen at 7",   near({ { 0, 105, 100 } }, 7) == 5,
+      tostring(near({ { 0, 105, 100 } }, 7)))
+check("a human ally exactly 7 away is seen", near({ { 0, 100, 93 } }, 7) == 7,
+      tostring(near({ { 0, 100, 93 } }, 7)))
+check("a human ally 8 away is not",          near({ { 0, 108, 100 } }, 7) == nil,
+      tostring(near({ { 0, 108, 100 } }, 7)))
+check("a human ally 12 away is not",         near({ { 0, 100, 112 } }, 7) == nil,
+      tostring(near({ { 0, 100, 112 } }, 7)))
+-- THE DISCRIMINATION THAT MATTERS. A bot team-mate is not a person watching,
+-- so it must never trigger the rule -- two bots side by side keep building.
+check("an ally BOT standing on top of us is not a human",
+      near({ { 2, 101, 100 } }, 7) == nil, tostring(near({ { 2, 101, 100 } }, 7)))
+check("an ENEMY tank close by is not a human ally",
+      near({ { 7, 101, 100, 0x80 } }, 7) == nil, tostring(near({ { 7, 101, 100, 0x80 } }, 7)))
+-- Chebyshev, the way a screen is measured: a diagonal at (5,5) is 5, not 10.
+check("distance is Chebyshev", near({ { 0, 105, 105 } }, 7) == 5,
+      tostring(near({ { 0, 105, 105 } }, 7)))
+check("the NEAREST human is the answer",
+      near({ { 0, 106, 100 } }, 7) == 6, tostring(near({ { 0, 106, 100 } }, 7)))
+check("no objects at all is nil", near({}, 7) == nil, tostring(near({}, 7)))
+-- 0 tiles is the knob's OFF value and must short-circuit, whatever is there.
+check("0 tiles turns the whole question off",
+      near({ { 0, 100, 100 } }, 0) == nil, tostring(near({ { 0, 100, 100 } }, 0)))
+check("keel ships it off",
+      C.PRESETS.keel.ORDER_HUMAN_NEAR_SUICIDE_TILES == 0,
+      tostring(C.PRESETS.keel.ORDER_HUMAN_NEAR_SUICIDE_TILES))
+check("the live value is the 7 the docs promise",
+      C.ORDER_HUMAN_NEAR_SUICIDE_TILES == 7,
+      tostring(C.ORDER_HUMAN_NEAR_SUICIDE_TILES))
 
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
