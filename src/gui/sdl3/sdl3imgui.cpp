@@ -367,13 +367,11 @@ static SDL_Texture *s_iconBotChipGreen[ICON_SLOT_COUNT] = {};
 static SDL_Texture *s_iconBotChipRed[ICON_SLOT_COUNT]   = {};
 /* Large chip rasterization used for tank-label overlays, kept as a surface
  * because the label textures it per renderer (main window, pop-out
- * overview). The small s_iconBotChip is rasterized at WBN_ICON_SIZE for the
- * player-popup / renderPlayerName paths; sized up to a tank-label height
- * (~16-48 px depending on zoom) the small one looks soft because the SVG's
- * vector edges were already baked into a 14-px bitmap.
- * WBN_ICON_TANK_LABEL_SIZE rasterizes the same SVG at a height that covers
- * the realistic zoom range so the label-side blit is a (sharp) downscale
- * rather than an upscale. */
+ * overview). The small s_iconBotChip is rasterized at WBN_ICON_RASTER_PX for
+ * the player-popup / renderPlayerName paths, and the tank label asks for a
+ * height the zoom decides (~16-48 px). Kept separate because the label needs
+ * a renderer-free surface, not because of the size — both rasterize past the
+ * size they are drawn at so the blit is a (sharp) downscale. */
 static SDL_Surface *s_iconBotChipSurfGreen = nullptr;
 static SDL_Surface *s_iconBotChipSurfRed   = nullptr;
 
@@ -402,7 +400,8 @@ static SDL_Texture *s_iconSkull[ICON_SLOT_COUNT] = {};
  * Loaded here as white alpha masks through imguiLoadSvgIconWhite, not through
  * pingIconTexture: that cache rasterises for the map at the view's own scale
  * and hands back the kind table's colour, where this cell needs one icon at
- * WBN_ICON_SIZE that it tints itself, dim or red, from the mute state. */
+ * the badge run's size that it tints itself, dim or red, from the mute
+ * state. */
 static SDL_Texture *s_iconPing[ICON_SLOT_COUNT]      = {};
 static SDL_Texture *s_iconPingMuted[ICON_SLOT_COUNT] = {};
 #if defined(WINBOLO_VOICE)
@@ -455,15 +454,43 @@ static const float MIC_PULSE_FLOOR      = 0.35f;
 #define MIC_ICON_MAX_PX 256
 #endif
 static bool s_wbnIconsLoaded[ICON_SLOT_COUNT] = {};
-#define WBN_ICON_SIZE 14
+/* The badge run beside a player name — platform, WBN shield, Steam, the bot
+ * chip, the smart-ping mute cell, the mic cell and the country flag — has two
+ * sizes, and they are not the same number.
+ *
+ * WBN_ICON_DRAW_PX is what a badge is drawn at: one font size, which is what
+ * the config cog beside it and the tank badge in front of it already use, so
+ * the run lands the same height as everything else on the row. It was a flat
+ * 14 px, and that is where the lobby's mic reading small next to the cog came
+ * from: the row's font is 18 px at 1x and grows with the UI scale, where the
+ * badge stayed 14 whatever the scale was.
+ *
+ * WBN_ICON_RASTER_PX is what the SVGs are rasterised at — past the largest
+ * size the run is ever drawn at (the dialog font tops out at 20 * 2.5), so a
+ * draw is a sharp downscale rather than a blurred upscale. flags.c (44) and
+ * WBN_ICON_TANK_LABEL_SIZE below already size their art this way.
+ *
+ * WBN_ICON_BASE_PX is only an aspect reference now: the country flag keeps
+ * the proportion it had against a 14 px badge, since a flag is wider than it
+ * is tall and should not become a square. */
+#define WBN_ICON_BASE_PX 14
+#define WBN_ICON_RASTER_PX 64
 #define WBN_ICON_TANK_LABEL_SIZE 48
+
+float sdl3ImguiWbnIconPx(void) { return ImGui::GetFontSize(); }
+
+void sdl3ImguiFlagSize(float *outW, float *outH) {
+    const float k = sdl3ImguiWbnIconPx() / (float)WBN_ICON_BASE_PX;
+    if (outW) *outW = (float)FLAG_WIDTH * k;
+    if (outH) *outH = (float)FLAG_HEIGHT * k;
+}
 
 static void ensureWbnIconsLoaded(void) {
     int slot = activeIconSlot();
     if (s_wbnIconsLoaded[slot]) return;
     s_wbnIconsLoaded[slot] = true;
     SDL_Renderer *r = activeRenderer();
-    s_iconSteam[slot]   = imguiLoadSvgIconWhite(r, "data/ui/steam.svg", WBN_ICON_SIZE);
+    s_iconSteam[slot]   = imguiLoadSvgIconWhite(r, "data/ui/steam.svg", WBN_ICON_RASTER_PX);
     /* The bot badge in a player row: the same two chips the lobby marks its
      * bot rows with (lobby_assets.cpp loads the same pair), so one game does
      * not say "computer player" with a chip in one list and a brain in
@@ -477,23 +504,23 @@ static void ensureWbnIconsLoaded(void) {
      * the silhouette green or red gives a solid blob rather than the chip
      * the lobby draws. Two files, drawn as authored, is what the art is for.  */
     s_iconBotChipGreen[slot] = imguiLoadSvgIcon(r, "data/ui/bot-cpu-green.svg",
-                                                WBN_ICON_SIZE);
+                                                WBN_ICON_RASTER_PX);
     s_iconBotChipRed[slot]   = imguiLoadSvgIcon(r, "data/ui/bot-cpu-red.svg",
-                                                WBN_ICON_SIZE);
+                                                WBN_ICON_RASTER_PX);
     /* Outside the voice test below: the counter columns that draw this are
      * not a voice feature and ship in -DWINBOLO_VOICE=OFF builds too. */
-    s_iconSkull[slot]   = imguiLoadSvgIconWhite(r, "data/ui/skull.svg", WBN_ICON_SIZE);
+    s_iconSkull[slot]   = imguiLoadSvgIconWhite(r, "data/ui/skull.svg", WBN_ICON_RASTER_PX);
     /* Ping-mute toggle, outside the voice test with the skull. */
     s_iconPing[slot]      = imguiLoadSvgIconWhite(r, "data/ui/ping/standard.svg",
-                                                  WBN_ICON_SIZE);
+                                                  WBN_ICON_RASTER_PX);
     s_iconPingMuted[slot] = imguiLoadSvgIconWhite(r, "data/ui/ping/standard-muted.svg",
-                                                  WBN_ICON_SIZE);
+                                                  WBN_ICON_RASTER_PX);
 #if defined(WINBOLO_VOICE)
-    s_iconMic[slot]          = imguiLoadSvgIconWhite(r, "data/ui/mic.svg",           WBN_ICON_SIZE);
-    s_iconMicMuted[slot]     = imguiLoadSvgIconWhite(r, "data/ui/mic-muted.svg",     WBN_ICON_SIZE);
-    s_iconMicOff[slot]       = imguiLoadSvgIconWhite(r, "data/ui/mic-off.svg",       WBN_ICON_SIZE);
-    s_iconSpeaker[slot]      = imguiLoadSvgIconWhite(r, "data/ui/speaker.svg",       WBN_ICON_SIZE);
-    s_iconSpeakerMuted[slot] = imguiLoadSvgIconWhite(r, "data/ui/speaker-muted.svg", WBN_ICON_SIZE);
+    s_iconMic[slot]          = imguiLoadSvgIconWhite(r, "data/ui/mic.svg",           WBN_ICON_RASTER_PX);
+    s_iconMicMuted[slot]     = imguiLoadSvgIconWhite(r, "data/ui/mic-muted.svg",     WBN_ICON_RASTER_PX);
+    s_iconMicOff[slot]       = imguiLoadSvgIconWhite(r, "data/ui/mic-off.svg",       WBN_ICON_RASTER_PX);
+    s_iconSpeaker[slot]      = imguiLoadSvgIconWhite(r, "data/ui/speaker.svg",       WBN_ICON_RASTER_PX);
+    s_iconSpeakerMuted[slot] = imguiLoadSvgIconWhite(r, "data/ui/speaker-muted.svg", WBN_ICON_RASTER_PX);
 #endif
     /* Renderer-free, so they are loaded once for every slot rather than
      * rasterized again per renderer. */
@@ -687,13 +714,13 @@ static void ensurePlatformIconsLoaded(void) {
     /* Force white so platform icons read against the dark ImGui background
      * regardless of each SVG's authored fill (mac.svg=#888, windows.svg=#000…). */
     s_iconPlatform[slot][CLIENT_TYPE_UNKNOWN]   = nullptr;
-    s_iconPlatform[slot][CLIENT_TYPE_WINDOWS]   = imguiLoadSvgIconWhite(r, "data/ui/windows.svg",    WBN_ICON_SIZE);
-    s_iconPlatform[slot][CLIENT_TYPE_LINUX]     = imguiLoadSvgIconWhite(r, "data/ui/linux.svg",      WBN_ICON_SIZE);
-    s_iconPlatform[slot][CLIENT_TYPE_MACOS]     = imguiLoadSvgIconWhite(r, "data/ui/mac.svg",        WBN_ICON_SIZE);
-    s_iconPlatform[slot][CLIENT_TYPE_IOS]       = imguiLoadSvgIconWhite(r, "data/ui/ios.svg",        WBN_ICON_SIZE);
-    s_iconPlatform[slot][CLIENT_TYPE_ANDROID]   = imguiLoadSvgIconWhite(r, "data/ui/android.svg",    WBN_ICON_SIZE);
-    s_iconPlatform[slot][CLIENT_TYPE_STEAMDECK] = imguiLoadSvgIconWhite(r, "data/ui/steam-deck.svg", WBN_ICON_SIZE);
-    s_iconPlatform[slot][CLIENT_TYPE_WEB]       = imguiLoadSvgIconWhite(r, "data/ui/globe.svg",      WBN_ICON_SIZE);
+    s_iconPlatform[slot][CLIENT_TYPE_WINDOWS]   = imguiLoadSvgIconWhite(r, "data/ui/windows.svg",    WBN_ICON_RASTER_PX);
+    s_iconPlatform[slot][CLIENT_TYPE_LINUX]     = imguiLoadSvgIconWhite(r, "data/ui/linux.svg",      WBN_ICON_RASTER_PX);
+    s_iconPlatform[slot][CLIENT_TYPE_MACOS]     = imguiLoadSvgIconWhite(r, "data/ui/mac.svg",        WBN_ICON_RASTER_PX);
+    s_iconPlatform[slot][CLIENT_TYPE_IOS]       = imguiLoadSvgIconWhite(r, "data/ui/ios.svg",        WBN_ICON_RASTER_PX);
+    s_iconPlatform[slot][CLIENT_TYPE_ANDROID]   = imguiLoadSvgIconWhite(r, "data/ui/android.svg",    WBN_ICON_RASTER_PX);
+    s_iconPlatform[slot][CLIENT_TYPE_STEAMDECK] = imguiLoadSvgIconWhite(r, "data/ui/steam-deck.svg", WBN_ICON_RASTER_PX);
+    s_iconPlatform[slot][CLIENT_TYPE_WEB]       = imguiLoadSvgIconWhite(r, "data/ui/globe.svg",      WBN_ICON_RASTER_PX);
 }
 
 /* Free one renderer's copies of every icon and let them be loaded again.
@@ -2814,23 +2841,24 @@ static void renderPlayersContent(ClientSim *cs) {
      * The candidates, each read from the code that draws it:
      *   checkbox                ImGui draws it GetFrameHeight() square
      *   platform / WBN / Steam / brain icons, the mic cell, and the
-     *   smart-ping mute cell    WBN_ICON_SIZE, 14 — the ping cell draws an
+     *   smart-ping mute cell    sdl3ImguiWbnIconPx() — the ping cell draws an
      *                           ImageButton of exactly the size this panel
      *                           hands renderPlayerPingMuteCell
-     *   country flag            FLAG_HEIGHT, 11 (flags.h; drawn at 7131)
+     *   country flag            sdl3ImguiFlagSize, shorter than a badge
      *   volume slider           GetTextLineHeight() — it is pushed with
      *                           zero FramePadding, so it is a frame with
      *                           its padding taken out, and an empty label
      *                           measures one font size tall
      *   alliance mark, name, counters, ping
      *                           GetTextLineHeight()
-     * The flag is never the tallest, 11 being under 14, and a frame with no
-     * padding is never taller than one with it, so the max is over the other
-     * three. Computed once for the panel rather than per row: nothing in it
-     * depends on which player the row is for, and the blank rows the desktop
-     * list draws for departed players have to come out the same height. */
+     * The flag is never the tallest — it keeps its 11-against-14 proportion
+     * against a badge — and a frame with no padding is never taller than one
+     * with it, so the max is over the other three. Computed once for the
+     * panel rather than per row: nothing in it depends on which player the
+     * row is for, and the blank rows the desktop list draws for departed
+     * players have to come out the same height. */
     const float panelRowH = ImMax(ImGui::GetFrameHeight(),
-                                  ImMax((float)WBN_ICON_SIZE,
+                                  ImMax(sdl3ImguiWbnIconPx(),
                                         ImGui::GetTextLineHeight()));
 
     /* Render a single player row */
@@ -2988,14 +3016,16 @@ static void renderPlayersContent(ClientSim *cs) {
         /* Flag icon — skipped for bots (no real country; renderPlayerName
          * below shows a brain icon in the platform-icon slot instead). */
         if (!(s_playerFlags[i] & PLAYER_FLAG_BOT) && s_playerCountry[i][0] != '\0') {
-            cyAbs((float)FLAG_HEIGHT);
+            float flagH = 0.0f;
+            sdl3ImguiFlagSize(NULL, &flagH);
+            cyAbs(flagH);
             if (drawCountryFlagWithTip(s_playerCountry[i])) {
                 ImGui::SameLine();
             }
         }
 
         /* Platform / WBN / Steam icons (brain icon for bots). Every icon in
-         * that run is WBN_ICON_SIZE tall, so one placement covers the run:
+         * that run is sdl3ImguiWbnIconPx() tall, so one placement covers it:
          * keepIconY holds the y this call starts at across the run's own
          * SameLine calls, which would otherwise drop icons two and three
          * back onto the line's top.
@@ -3004,7 +3034,7 @@ static void renderPlayersContent(ClientSim *cs) {
          * mark in front of the name, so the row says whose side it is on
          * twice over rather than showing a neutral glyph beside a coloured
          * star. Your own row can hold no bot, so the self case never arises. */
-        cyAbs((float)WBN_ICON_SIZE);
+        cyAbs(sdl3ImguiWbnIconPx());
         RenderPlayerNameOpts nameOpts = { isAlly[i], true };
         renderPlayerNameEx(NULL, s_playerFlags[i], s_playerClientType[i], "",
                            false, &nameOpts);
@@ -3030,13 +3060,12 @@ static void renderPlayersContent(ClientSim *cs) {
          * on the local row so the name still starts at the same x there. */
         /* One icon square, the size the mic cell beside it takes and the size
          * the lobby already passes this helper. It was GetFrameHeight() while
-         * the cell was a lettered button, which is larger; the SVG rasterises
-         * at WBN_ICON_SIZE, so drawing it at a frame height would upscale a
-         * 14 px mask and blur it. */
-        float pingMuteWidth  = (float)WBN_ICON_SIZE;
+         * the cell was a lettered button, which is larger; a frame height is
+         * the padding plus the font, and this run sits at the font itself. */
+        float pingMuteWidth  = sdl3ImguiWbnIconPx();
 #if defined(WINBOLO_VOICE)
         /* The mic cell is one icon square. */
-        float micWidth = (float)WBN_ICON_SIZE;
+        float micWidth = sdl3ImguiWbnIconPx();
         /* Room the per-player volume slider takes. Held on the local
          * player's row too, which draws a blank there, or the name would
          * start at a different x on that one row. Read before the zero
@@ -8201,7 +8230,9 @@ bool drawCountryFlagWithTip(const char *countryCode) {
     if (up[0] == 'X' && up[1] == 'X') return false;        /* sentinel */
     SDL_Texture *flagTex = flagsGetTextureFor(activeRenderer(), countryCode);
     if (!flagTex) return false;
-    ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
+    float flagW = 0.0f, flagH = 0.0f;
+    sdl3ImguiFlagSize(&flagW, &flagH);
+    ImGui::Image((ImTextureID)flagTex, ImVec2(flagW, flagH));
     if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) {
         const CountryNameEntry *e = (const CountryNameEntry *)bsearch(
             up, kCountryNames, K_COUNTRY_NAMES_SIZE,
@@ -8224,7 +8255,10 @@ void renderPlayerNameEx(const char *name, uint8_t flags, uint8_t clientType,
                         const RenderPlayerNameOpts *opts) {
     ensurePlatformIconsLoaded();
     ensureWbnIconsLoaded();
-    const int iconSlot = activeIconSlot();
+    const int   iconSlot = activeIconSlot();
+    /* One size for every badge in the run, read once so the platform icon,
+     * the shield and the Steam mark cannot drift apart. */
+    const float iconPx   = sdl3ImguiWbnIconPx();
     /* opts is optional, so read both choices once here and let the rest of
      * the function work from plain locals. */
     const bool botIsAlly = opts && opts->botIsAlly;
@@ -8257,7 +8291,7 @@ void renderPlayerNameEx(const char *name, uint8_t flags, uint8_t clientType,
         /* Drawn as authored, with no tint: these two files carry their own
          * colours and the green and red ones are separate artwork, not one
          * shape recoloured. */
-        ImGui::Image((ImTextureID)botChip, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+        ImGui::Image((ImTextureID)botChip, ImVec2(iconPx, iconPx));
         imguiHelpTooltip(langGetText(STR_PLAYER_TIP_AI));
         sameLineKeepY();
     } else {
@@ -8267,7 +8301,7 @@ void renderPlayerNameEx(const char *name, uint8_t flags, uint8_t clientType,
             /* ImGui 1.91.9+ removed tint_col from Image(); ImageWithBg takes
              * (size, uv0, uv1, bg_col, tint_col) - bg transparent. */
             ImGui::ImageWithBg((ImTextureID)platTex,
-                               ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE),
+                               ImVec2(iconPx, iconPx),
                                ImVec2(0, 0), ImVec2(1, 1),
                                ImVec4(0, 0, 0, 0), tint);
             if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) {
@@ -8287,14 +8321,14 @@ void renderPlayerNameEx(const char *name, uint8_t flags, uint8_t clientType,
             /* Vector shield (crisp at this size); gold for supporters, white
              * otherwise — same scheme as the platform icon above. */
             ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
-            imguiShieldBadge(WBN_ICON_SIZE, ImGui::GetColorU32(tint));
+            imguiShieldBadge(iconPx, ImGui::GetColorU32(tint));
             imguiHelpTooltip(langGetText(STR_PLAYER_TIP_WBN_VERIFIED));
             sameLineKeepY();
         }
         if ((flags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam[iconSlot]) {
             ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
             ImGui::ImageWithBg((ImTextureID)s_iconSteam[iconSlot],
-                               ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE),
+                               ImVec2(iconPx, iconPx),
                                ImVec2(0, 0), ImVec2(1, 1),
                                ImVec4(0, 0, 0, 0), tint);
             imguiHelpTooltip(langGetText((flags & PLAYER_FLAG_WBN_STEAM_LINKED)
@@ -8560,8 +8594,8 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
  * silences rather than against a letter. Muted draws standard-muted.svg, the
  * same pin slashed the way mic-muted.svg slashes the microphone, so the two
  * muted states in one row say it the same way. Colour carries it as well as
- * shape, dim when pings are shown and red when they are not, because at
- * WBN_ICON_SIZE a diagonal bar is a few pixels and should not be the only
+ * shape, dim when pings are shown and red when they are not, because at a
+ * badge's size a diagonal bar is a few pixels and should not be the only
  * thing separating the two. A tooltip names the state either way. */
 void renderPlayerPingMuteCell(struct ClientSim *cs, int playerNum, bool isSelf,
                               float size) {
