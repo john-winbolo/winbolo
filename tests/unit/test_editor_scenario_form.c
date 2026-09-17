@@ -25,9 +25,18 @@
  *                               than the words, because langGetText is a stub
  *                               in this binary and the words would be the
  *                               stub's.
+ * run_editor_form_tag_indices — editor entity i is manifest entry i + 1, at
+ *                               both ends of all three ranges, read out of the
+ *                               manifest rather than back through the accessor
+ * run_editor_form_tags        — the per-entity bound, a name longer than the
+ *                               field, and a remove that keeps the rest packed
+ * run_editor_form_regions     — add, edit and remove keeping the array packed,
+ *                               the rectangle clamped on to the map, and the
+ *                               SCN_REGIONS_MAX bound
  */
 
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "mapeditor_scenario_form.h"
@@ -236,6 +245,226 @@ int run_editor_form_rule_change(void) {
     ch = simRulesDescribeChange(SIM_RULE_tank_reload_ticks, 2.0);
     UT_ASSERT_MSG(ch.kind == SIM_RULE_CHANGE_FASTER, "kind is %d", (int)ch.kind);
     UT_ASSERT_MSG(fabs(ch.number - 6.5) < 0.0001, "multiple is %g", ch.number);
+
+    return 0;
+}
+
+int run_editor_form_tag_indices(void) {
+    static const struct {
+        MEScenarioTagKind kind;
+        const char       *what;
+    } kKinds[] = {
+        {ME_SCENARIO_TAG_PILL, "pill"},
+        {ME_SCENARIO_TAG_BASE, "base"},
+        {ME_SCENARIO_TAG_START, "start"},
+    };
+    MEScenarioForm f;
+    int            k;
+
+    meScenarioFormInit(&f);
+
+    /* The conversion, at both ends of every kind's range. The editor counts
+     * entities from 0 and the manifest's arrays are 1-based, so entity 0 is
+     * entry 1 and the last entity a map can hold is the last entry the array
+     * has. This is the off-by-one the whole accessor exists to hold in one
+     * place, so the entries are read out of the manifest directly rather than
+     * back through the accessor that wrote them. */
+    for (k = 0; k < (int)(sizeof(kKinds) / sizeof(kKinds[0])); k++) {
+        const MEScenarioTagKind kind = kKinds[k].kind;
+        const int               cap  = meScenarioFormEntityCap(kind);
+        const ScnManifestTags  *arr;
+
+        UT_ASSERT_MSG(cap > 0, "%s has a cap of %d", kKinds[k].what, cap);
+
+        UT_ASSERT(meScenarioFormAddTag(&f, kind, 0, "first"));
+        UT_ASSERT(meScenarioFormAddTag(&f, kind, cap - 1, "last"));
+
+        switch (kind) {
+            case ME_SCENARIO_TAG_PILL:
+                arr = f.manifest.pillTags;
+                UT_ASSERT(cap == MAX_PILLS);
+                break;
+            case ME_SCENARIO_TAG_BASE:
+                arr = f.manifest.baseTags;
+                UT_ASSERT(cap == MAX_BASES);
+                break;
+            default:
+                arr = f.manifest.startTags;
+                UT_ASSERT(cap == MAX_STARTS);
+                break;
+        }
+
+        /* Entry 0 is the unused one the file never writes. */
+        UT_ASSERT_MSG(arr[0].count == 0,
+                      "%s entry 0 holds %u tags and the file never writes it",
+                      kKinds[k].what, (unsigned)arr[0].count);
+        UT_ASSERT_MSG(arr[1].count == 1 &&
+                          strcmp(arr[1].tag[0], "first") == 0,
+                      "%s editor index 0 did not land in entry 1",
+                      kKinds[k].what);
+        UT_ASSERT_MSG(arr[cap].count == 1 &&
+                          strcmp(arr[cap].tag[0], "last") == 0,
+                      "%s editor index %d did not land in entry %d",
+                      kKinds[k].what, cap - 1, cap);
+
+        /* And the accessor reads back the entries it wrote. */
+        UT_ASSERT(meScenarioFormTags(&f, kind, 0) == &arr[1]);
+        UT_ASSERT(meScenarioFormTags(&f, kind, cap - 1) == &arr[cap]);
+
+        /* An index off either end has no entry and writes nothing. */
+        UT_ASSERT(meScenarioFormTags(&f, kind, -1) == NULL);
+        UT_ASSERT(meScenarioFormTags(&f, kind, cap) == NULL);
+        UT_ASSERT(!meScenarioFormAddTag(&f, kind, -1, "nowhere"));
+        UT_ASSERT(!meScenarioFormAddTag(&f, kind, cap, "nowhere"));
+    }
+
+    UT_ASSERT(meScenarioFormDirty(&f));
+    return 0;
+}
+
+int run_editor_form_tags(void) {
+    char                   oversize[SCN_TAG_LEN * 2];
+    MEScenarioForm         f;
+    const ScnManifestTags *tags;
+    int                    i;
+
+    meScenarioFormInit(&f);
+
+    /* An entity carries SCN_TAGS_PER_ENTITY of them and no more. */
+    for (i = 0; i < SCN_TAGS_PER_ENTITY; i++) {
+        char name[SCN_TAG_LEN];
+        snprintf(name, sizeof(name), "tag%d", i);
+        UT_ASSERT_MSG(meScenarioFormAddTag(&f, ME_SCENARIO_TAG_BASE, 3, name),
+                      "tag %d refused below the bound", i);
+    }
+    tags = meScenarioFormTags(&f, ME_SCENARIO_TAG_BASE, 3);
+    UT_ASSERT(tags != NULL);
+    UT_ASSERT_MSG(tags->count == SCN_TAGS_PER_ENTITY, "count is %u",
+                  (unsigned)tags->count);
+
+    UT_ASSERT(!meScenarioFormAddTag(&f, ME_SCENARIO_TAG_BASE, 3, "fifth"));
+    UT_ASSERT(tags->count == SCN_TAGS_PER_ENTITY);
+
+    /* An empty name is not a tag. */
+    UT_ASSERT(!meScenarioFormAddTag(&f, ME_SCENARIO_TAG_BASE, 4, ""));
+    UT_ASSERT(meScenarioFormTags(&f, ME_SCENARIO_TAG_BASE, 4)->count == 0);
+
+    /* Removing the first closes the rest up and leaves the count right. */
+    meScenarioFormRemoveTag(&f, ME_SCENARIO_TAG_BASE, 3, 0);
+    UT_ASSERT_MSG(tags->count == SCN_TAGS_PER_ENTITY - 1, "count is %u",
+                  (unsigned)tags->count);
+    for (i = 0; i < (int)tags->count; i++) {
+        char want[SCN_TAG_LEN];
+        snprintf(want, sizeof(want), "tag%d", i + 1);
+        UT_ASSERT_MSG(strcmp(tags->tag[i], want) == 0,
+                      "tag %d reads '%s', expected '%s'", i, tags->tag[i],
+                      want);
+    }
+    /* The slot past the end is cleared rather than left holding the last
+     * name twice. */
+    UT_ASSERT(tags->tag[tags->count][0] == '\0');
+
+    /* An index off either end changes nothing. */
+    meScenarioFormRemoveTag(&f, ME_SCENARIO_TAG_BASE, 3, -1);
+    meScenarioFormRemoveTag(&f, ME_SCENARIO_TAG_BASE, 3,
+                            SCN_TAGS_PER_ENTITY);
+    UT_ASSERT(tags->count == SCN_TAGS_PER_ENTITY - 1);
+
+    /* A name longer than the field is cut to fit, not written past it. */
+    memset(oversize, 'x', sizeof(oversize) - 1);
+    oversize[sizeof(oversize) - 1] = '\0';
+    UT_ASSERT(meScenarioFormAddTag(&f, ME_SCENARIO_TAG_START, 0, oversize));
+    tags = meScenarioFormTags(&f, ME_SCENARIO_TAG_START, 0);
+    UT_ASSERT(tags != NULL);
+    UT_ASSERT_MSG(strlen(tags->tag[0]) == SCN_TAG_LEN - 1,
+                  "the cut name is %u bytes, expected %d",
+                  (unsigned)strlen(tags->tag[0]), SCN_TAG_LEN - 1);
+
+    return 0;
+}
+
+int run_editor_form_regions(void) {
+    MEScenarioForm f;
+    int            i;
+
+    meScenarioFormInit(&f);
+    UT_ASSERT(meScenarioFormRegionCount(&f) == 0);
+
+    /* An ordinary rectangle is stored as it was given. */
+    UT_ASSERT(meScenarioFormAddRegion(&f, "keep", 10, 20, 8, 4));
+    UT_ASSERT(meScenarioFormRegionCount(&f) == 1);
+    UT_ASSERT(strcmp(f.manifest.regions[0].name, "keep") == 0);
+    UT_ASSERT(f.manifest.regions[0].x == 10);
+    UT_ASSERT(f.manifest.regions[0].y == 20);
+    UT_ASSERT(f.manifest.regions[0].w == 8);
+    UT_ASSERT(f.manifest.regions[0].h == 4);
+    UT_ASSERT(meScenarioFormDirty(&f));
+
+    /* A name with nothing in it is not a region. */
+    UT_ASSERT(!meScenarioFormAddRegion(&f, "", 0, 0, 4, 4));
+    UT_ASSERT(meScenarioFormRegionCount(&f) == 1);
+
+    /* Editing one moves it. */
+    UT_ASSERT(meScenarioFormSetRegionRect(&f, 0, 1, 2, 3, 4));
+    UT_ASSERT(f.manifest.regions[0].x == 1 && f.manifest.regions[0].y == 2 &&
+              f.manifest.regions[0].w == 3 && f.manifest.regions[0].h == 4);
+    UT_ASSERT(!meScenarioFormSetRegionRect(&f, 1, 0, 0, 1, 1));
+    UT_ASSERT(!meScenarioFormSetRegionRect(&f, -1, 0, 0, 1, 1));
+
+    /* A rectangle that runs off the map is brought back on to it, and one with
+     * no squares in it is given one: the validator refuses both. */
+    UT_ASSERT(meScenarioFormAddRegion(&f, "corner", 250, 250, 40, 40));
+    UT_ASSERT_MSG((int)f.manifest.regions[1].x +
+                          (int)f.manifest.regions[1].w <= MAP_ARRAY_SIZE,
+                  "the region runs to %d and a map is %d square",
+                  (int)f.manifest.regions[1].x + (int)f.manifest.regions[1].w,
+                  MAP_ARRAY_SIZE);
+    UT_ASSERT((int)f.manifest.regions[1].y + (int)f.manifest.regions[1].h <=
+              MAP_ARRAY_SIZE);
+    UT_ASSERT(f.manifest.regions[1].w > 0 && f.manifest.regions[1].h > 0);
+
+    UT_ASSERT(meScenarioFormAddRegion(&f, "empty", 5, 5, 0, -3));
+    UT_ASSERT_MSG(f.manifest.regions[2].w == 1 &&
+                      f.manifest.regions[2].h == 1,
+                  "an empty rectangle came out %u by %u",
+                  (unsigned)f.manifest.regions[2].w,
+                  (unsigned)f.manifest.regions[2].h);
+
+    /* A negative corner is pulled back on to the map too. */
+    UT_ASSERT(meScenarioFormSetRegionRect(&f, 2, -4, -9, 6, 6));
+    UT_ASSERT(f.manifest.regions[2].x == 0 && f.manifest.regions[2].y == 0);
+
+    /* Removing from the middle closes the list up over it. */
+    meScenarioFormRemoveRegion(&f, 1);
+    UT_ASSERT_MSG(meScenarioFormRegionCount(&f) == 2, "%d regions left",
+                  meScenarioFormRegionCount(&f));
+    UT_ASSERT(strcmp(f.manifest.regions[0].name, "keep") == 0);
+    UT_ASSERT(strcmp(f.manifest.regions[1].name, "empty") == 0);
+    UT_ASSERT(f.manifest.regions[2].name[0] == '\0');
+
+    /* An index off either end changes nothing. */
+    meScenarioFormRemoveRegion(&f, -1);
+    meScenarioFormRemoveRegion(&f, 2);
+    UT_ASSERT(meScenarioFormRegionCount(&f) == 2);
+
+    /* The list fills to its bound and refuses the next one. */
+    for (i = meScenarioFormRegionCount(&f); i < SCN_REGIONS_MAX; i++) {
+        char name[SCN_REGION_NAME_LEN];
+        snprintf(name, sizeof(name), "r%d", i);
+        UT_ASSERT_MSG(meScenarioFormAddRegion(&f, name, 0, 0, 2, 2),
+                      "region %d refused below the bound", i);
+    }
+    UT_ASSERT(meScenarioFormRegionCount(&f) == SCN_REGIONS_MAX);
+    UT_ASSERT(!meScenarioFormAddRegion(&f, "one too many", 0, 0, 2, 2));
+    UT_ASSERT(meScenarioFormRegionCount(&f) == SCN_REGIONS_MAX);
+
+    /* And what Save as Mod says it will leave out counts both. */
+    UT_ASSERT(meScenarioFormTagCount(&f) == 0);
+    UT_ASSERT(meScenarioFormAddTag(&f, ME_SCENARIO_TAG_PILL, 0, "a"));
+    UT_ASSERT(meScenarioFormAddTag(&f, ME_SCENARIO_TAG_PILL, 0, "b"));
+    UT_ASSERT(meScenarioFormAddTag(&f, ME_SCENARIO_TAG_START, 2, "c"));
+    UT_ASSERT_MSG(meScenarioFormTagCount(&f) == 3, "%d tags counted",
+                  meScenarioFormTagCount(&f));
 
     return 0;
 }

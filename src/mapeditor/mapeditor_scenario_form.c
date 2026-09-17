@@ -14,6 +14,12 @@
  *
  *   The struct is the whole state. Every mutator marks the
  *   form dirty and none of them touches a file.
+ *
+ *   The tag accessors carry the editor's one index
+ *   conversion: entity i on the map is entry i + 1 in the
+ *   manifest, because the file counts entities from 1 and
+ *   entry 0 of each array is unused. meScnTagsAt is the only
+ *   place that sum is written.
  *********************************************************/
 
 #include "mapeditor_scenario_form.h"
@@ -156,6 +162,235 @@ void meScenarioFormRemoveTeam(MEScenarioForm *f, int index) {
     lob->numTeams--;
     memset(&lob->teams[lob->numTeams], 0, sizeof(lob->teams[0]));
     f->dirty = true;
+}
+
+/* ── Tags ─────────────────────────────────────────────────────────── */
+
+int meScenarioFormEntityCap(MEScenarioTagKind kind) {
+    switch (kind) {
+        case ME_SCENARIO_TAG_PILL:
+            return MAX_PILLS;
+        case ME_SCENARIO_TAG_BASE:
+            return MAX_BASES;
+        case ME_SCENARIO_TAG_START:
+            return MAX_STARTS;
+        default:
+            return 0;
+    }
+}
+
+/* The manifest entry holding the tags on editor entity editorIndex.
+ *
+ * This is the conversion, and the only copy of it. The editor's pill, base and
+ * start lists count from 0; the manifest's arrays are 1-based because Lua
+ * writes tags.pills[1] for the first pill, so entry 0 of each array is unused
+ * and the arrays are one longer than the entity cap. Editor entity i is
+ * therefore manifest entry i + 1, and the last entity a map can hold, cap - 1,
+ * is entry cap — the last one the array has.
+ *
+ * NULL for a kind that is none of the three and for an index outside 0 to
+ * cap - 1. */
+static ScnManifestTags *meScnTagsAt(ScenarioManifest *m, MEScenarioTagKind kind,
+                                    int editorIndex) {
+    const int cap = meScenarioFormEntityCap(kind);
+
+    if (m == NULL || cap == 0 || editorIndex < 0 || editorIndex >= cap) {
+        return NULL;
+    }
+    switch (kind) {
+        case ME_SCENARIO_TAG_PILL:
+            return &m->pillTags[editorIndex + 1];
+        case ME_SCENARIO_TAG_BASE:
+            return &m->baseTags[editorIndex + 1];
+        case ME_SCENARIO_TAG_START:
+            return &m->startTags[editorIndex + 1];
+        default:
+            return NULL;
+    }
+}
+
+const ScnManifestTags *meScenarioFormTags(const MEScenarioForm *f,
+                                          MEScenarioTagKind     kind,
+                                          int                   editorIndex) {
+    if (f == NULL) {
+        return NULL;
+    }
+    /* The cast is over the const on the form, not over the manifest's shape:
+     * one conversion serves the readers and the two writers below. */
+    return meScnTagsAt((ScenarioManifest *)&f->manifest, kind, editorIndex);
+}
+
+bool meScenarioFormAddTag(MEScenarioForm *f, MEScenarioTagKind kind,
+                          int editorIndex, const char *tag) {
+    ScnManifestTags *tags;
+    size_t           n;
+
+    if (f == NULL || tag == NULL || tag[0] == '\0') {
+        return false;
+    }
+    tags = meScnTagsAt(&f->manifest, kind, editorIndex);
+    if (tags == NULL || tags->count >= SCN_TAGS_PER_ENTITY) {
+        return false;
+    }
+
+    /* Cut rather than written past: the field holds SCN_TAG_LEN bytes with the
+     * terminator among them, and a long name is the author's to shorten. */
+    n = strlen(tag);
+    if (n >= SCN_TAG_LEN) {
+        n = SCN_TAG_LEN - 1;
+    }
+    memcpy(tags->tag[tags->count], tag, n);
+    tags->tag[tags->count][n] = '\0';
+    tags->count++;
+    f->dirty = true;
+    return true;
+}
+
+void meScenarioFormRemoveTag(MEScenarioForm *f, MEScenarioTagKind kind,
+                             int editorIndex, int at) {
+    ScnManifestTags *tags;
+
+    if (f == NULL) {
+        return;
+    }
+    tags = meScnTagsAt(&f->manifest, kind, editorIndex);
+    if (tags == NULL || at < 0 || at >= (int)tags->count) {
+        return;
+    }
+    memmove(tags->tag[at], tags->tag[at + 1],
+            (size_t)((int)tags->count - at - 1) * sizeof(tags->tag[0]));
+    tags->count--;
+    memset(tags->tag[tags->count], 0, sizeof(tags->tag[0]));
+    f->dirty = true;
+}
+
+int meScenarioFormTagCount(const MEScenarioForm *f) {
+    static const MEScenarioTagKind kKinds[] = {
+        ME_SCENARIO_TAG_PILL, ME_SCENARIO_TAG_BASE, ME_SCENARIO_TAG_START
+    };
+    int n = 0;
+    int k;
+
+    if (f == NULL) {
+        return 0;
+    }
+    for (k = 0; k < (int)(sizeof(kKinds) / sizeof(kKinds[0])); k++) {
+        const int cap = meScenarioFormEntityCap(kKinds[k]);
+        int       e;
+        for (e = 0; e < cap; e++) {
+            const ScnManifestTags *tags = meScenarioFormTags(f, kKinds[k], e);
+            if (tags != NULL) {
+                n += (int)tags->count;
+            }
+        }
+    }
+    return n;
+}
+
+/* ── Regions ──────────────────────────────────────────────────────── */
+
+/* A rectangle the manifest can hold and the validator will not complain
+ * about: at least one square each way, and every square of it on the map.
+ *
+ * The four numbers are stored as bytes, so a size of 256 cannot be written at
+ * all; a rectangle drawn over the whole map gives up its last column and row
+ * rather than wrapping to zero. */
+static void meScnClampRect(int *x, int *y, int *w, int *h) {
+    if (*x < 0) {
+        *x = 0;
+    }
+    if (*y < 0) {
+        *y = 0;
+    }
+    if (*x > MAP_ARRAY_SIZE - 1) {
+        *x = MAP_ARRAY_SIZE - 1;
+    }
+    if (*y > MAP_ARRAY_SIZE - 1) {
+        *y = MAP_ARRAY_SIZE - 1;
+    }
+    if (*w < 1) {
+        *w = 1;
+    }
+    if (*h < 1) {
+        *h = 1;
+    }
+    if (*x + *w > MAP_ARRAY_SIZE) {
+        *w = MAP_ARRAY_SIZE - *x;
+    }
+    if (*y + *h > MAP_ARRAY_SIZE) {
+        *h = MAP_ARRAY_SIZE - *y;
+    }
+    if (*w > UINT8_MAX) {
+        *w = UINT8_MAX;
+    }
+    if (*h > UINT8_MAX) {
+        *h = UINT8_MAX;
+    }
+}
+
+bool meScenarioFormAddRegion(MEScenarioForm *f, const char *name, int x, int y,
+                             int w, int h) {
+    ScnManifestRegion *r;
+    size_t             n;
+
+    if (f == NULL || name == NULL || name[0] == '\0') {
+        return false;
+    }
+    if (f->manifest.numRegions >= SCN_REGIONS_MAX) {
+        return false;
+    }
+    meScnClampRect(&x, &y, &w, &h);
+
+    r = &f->manifest.regions[f->manifest.numRegions];
+    memset(r, 0, sizeof(*r));
+    n = strlen(name);
+    if (n >= SCN_REGION_NAME_LEN) {
+        n = SCN_REGION_NAME_LEN - 1;
+    }
+    memcpy(r->name, name, n);
+    r->name[n] = '\0';
+    r->x       = (uint8_t)x;
+    r->y       = (uint8_t)y;
+    r->w       = (uint8_t)w;
+    r->h       = (uint8_t)h;
+    f->manifest.numRegions++;
+    f->dirty = true;
+    return true;
+}
+
+bool meScenarioFormSetRegionRect(MEScenarioForm *f, int index, int x, int y,
+                                 int w, int h) {
+    ScnManifestRegion *r;
+
+    if (f == NULL || index < 0 || index >= (int)f->manifest.numRegions) {
+        return false;
+    }
+    meScnClampRect(&x, &y, &w, &h);
+
+    r        = &f->manifest.regions[index];
+    r->x     = (uint8_t)x;
+    r->y     = (uint8_t)y;
+    r->w     = (uint8_t)w;
+    r->h     = (uint8_t)h;
+    f->dirty = true;
+    return true;
+}
+
+void meScenarioFormRemoveRegion(MEScenarioForm *f, int index) {
+    if (f == NULL || index < 0 || index >= (int)f->manifest.numRegions) {
+        return;
+    }
+    memmove(&f->manifest.regions[index], &f->manifest.regions[index + 1],
+            (size_t)((int)f->manifest.numRegions - index - 1) *
+                sizeof(f->manifest.regions[0]));
+    f->manifest.numRegions--;
+    memset(&f->manifest.regions[f->manifest.numRegions], 0,
+           sizeof(f->manifest.regions[0]));
+    f->dirty = true;
+}
+
+int meScenarioFormRegionCount(const MEScenarioForm *f) {
+    return (f == NULL) ? 0 : (int)f->manifest.numRegions;
 }
 
 bool meScenarioFormDirty(const MEScenarioForm *f) {

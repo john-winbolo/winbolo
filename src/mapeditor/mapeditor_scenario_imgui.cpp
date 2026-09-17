@@ -10,8 +10,18 @@
  *   picks a view, and the body of whichever view is
  *   showing. Script is a text editor with Lua highlighting
  *   over the buffer mapeditor_scenario.c holds; Metadata,
- *   Lobby and Rules are forms over the manifest
+ *   Lobby, Rules and Tags are forms over the manifest
  *   mapeditor_scenario_form.c holds.
+ *
+ *   The tags view lists the map's own pills, bases and
+ *   starts, which this file cannot ask the map for: those
+ *   lists are bolo internals and nothing here reaches into
+ *   them. mapeditor.c passes the counts and the positions in,
+ *   and the rectangle the selection tool is holding with
+ *   them, because that rectangle is where a region's bounds
+ *   come from. Entity indices here are the editor's own,
+ *   counting from 0; the form module is what turns one into
+ *   the manifest's 1-based entry.
  *
  *   The panel draws and reports what the user asked for;
  *   reading and writing files is mapeditor.c's job, the way
@@ -438,9 +448,12 @@ static const char *meScnFileName(const char *path) {
  * file of its own that plays over any map. The two live under the metadata
  * form because that is where the package's identity is edited — its name, its
  * game type and whether it is built for this map at all. */
-static void meScnSaveRow(MEScenarioState *st, const char *mapPath,
-                         bool *wantPack, bool *wantSaveMod) {
+static void meScnSaveRow(const MEScenarioForm *f, MEScenarioState *st,
+                         const char *mapPath, bool *wantPack,
+                         bool *wantSaveMod) {
     const bool haveMap = (mapPath != NULL && mapPath[0] != '\0');
+    const int  dropTags    = meScenarioFormTagCount(f);
+    const int  dropRegions = meScenarioFormRegionCount(f);
 
     ImGui::Separator();
 
@@ -461,6 +474,18 @@ static void meScnSaveRow(MEScenarioState *st, const char *mapPath,
     if (ImGui::Button(langGetText(STR_MAPEDIT_SCENARIO_SAVE_MOD)) &&
         wantSaveMod != NULL) {
         *wantSaveMod = true;
+    }
+
+    /* A mod is written from a copy with the tags and the regions cleared,
+     * because it plays over a map it has never seen. Said here, beside the
+     * button, so the author reads it before asking rather than after. */
+    if (dropTags > 0 || dropRegions > 0) {
+        MessageArgs args = {};
+        args.number  = dropTags;
+        args.number2 = dropRegions;
+        ImGui::TextWrapped("%s",
+                           langGetTextFmt(STR_MAPEDIT_SCENARIO_MOD_DROPS,
+                                          &args));
     }
 
     /* What the last read or write did. One status line for the panel, which
@@ -540,7 +565,7 @@ static void meScnMetadataBody(MEScenarioForm *f, MEScenarioState *st,
         f->dirty = true;
     }
 
-    meScnSaveRow(st, mapPath, wantPack, wantSaveMod);
+    meScnSaveRow(f, st, mapPath, wantPack, wantSaveMod);
 }
 
 /* -------------------------------------------------------
@@ -792,13 +817,297 @@ static void meScnRulesBody(MEScenarioForm *f) {
 }
 
 /* -------------------------------------------------------
+ * Tags and regions
+ * ------------------------------------------------------- */
+
+/* How wide an entity's row is before the box for its next tag, how wide that
+ * box is, and how wide one of a region's four numbers is. The row is a fixed
+ * width so the boxes down the list line up under each other. */
+static const float kEntityRowWidth  = 200.0f;
+static const float kTagBoxWidth     = 150.0f;
+static const float kRegionNameWidth = 160.0f;
+static const float kRegionNumWidth  = 60.0f;
+
+/* The longest of the three entity lists, which is as many rows as one kind
+ * can show. */
+static const int kEntityRows = (MAX_PILLS >= MAX_BASES &&
+                                MAX_PILLS >= MAX_STARTS)
+                                   ? MAX_PILLS
+                                   : (MAX_BASES >= MAX_STARTS ? MAX_BASES
+                                                              : MAX_STARTS);
+
+/* One of a region's four numbers, edited as an int and handed straight back to
+ * the form. The clamping is the form's, so the boxes and Set from Selection
+ * are held to the same rectangle. */
+static bool meScnRegionField(langid label, const char *id, int *value) {
+    bool changed;
+
+    ImGui::PushID(id);
+    ImGui::SetNextItemWidth(kRegionNumWidth);
+    changed = ImGui::InputInt(langGetText(label), value, 0, 0);
+    ImGui::PopID();
+    return changed;
+}
+
+/* The named rectangles, under the entity lists. A region is drawn with the
+ * selection tool the editor already has: select squares on the map, name them
+ * and press Add. Each row can re-take the bounds from whatever is selected
+ * now, which is how a region is moved without typing four numbers. */
+static void meScnRegionRows(MEScenarioForm *f, const MEScenarioMapInfo *info) {
+    /* The name being typed for the next region. One panel, so one box. */
+    static char s_name[SCN_REGION_NAME_LEN] = "";
+
+    ScenarioManifest *m       = &f->manifest;
+    const bool        haveSel = (info != NULL && info->hasSelection);
+    int               removeAt = -1;
+    int               i;
+
+    ImGui::Separator();
+    ImGui::TextUnformatted(langGetText(STR_MAPEDIT_SCENARIO_REGIONS));
+    meScnHint(langGetText(STR_MAPEDIT_SCENARIO_REGIONS_ON_MAP));
+
+    if (m->numRegions == 0) {
+        meScnHint(langGetText(STR_MAPEDIT_SCENARIO_NO_REGIONS));
+    }
+
+    for (i = 0; i < (int)m->numRegions; i++) {
+        ScnManifestRegion *r = &m->regions[i];
+        int                x = (int)r->x;
+        int                y = (int)r->y;
+        int                w = (int)r->w;
+        int                h = (int)r->h;
+        bool               moved = false;
+
+        ImGui::PushID(i);
+        ImGui::SetNextItemWidth(kRegionNameWidth);
+        if (ImGui::InputTextWithHint("##name",
+                                     langGetText(STR_MAPEDIT_SCENARIO_REGION_NAME),
+                                     r->name, sizeof(r->name))) {
+            f->dirty = true;
+        }
+
+        ImGui::SameLine();
+        moved |= meScnRegionField(STR_MAPEDIT_SCENARIO_REGION_X, "x", &x);
+        ImGui::SameLine();
+        moved |= meScnRegionField(STR_MAPEDIT_SCENARIO_REGION_Y, "y", &y);
+        ImGui::SameLine();
+        moved |= meScnRegionField(STR_MAPEDIT_SCENARIO_REGION_W, "w", &w);
+        ImGui::SameLine();
+        moved |= meScnRegionField(STR_MAPEDIT_SCENARIO_REGION_H, "h", &h);
+        if (moved) {
+            meScenarioFormSetRegionRect(f, i, x, y, w, h);
+        }
+
+        /* The two buttons go under the numbers rather than after them: four
+           boxes and two buttons on one line run off the right of the window at
+           the size the panel opens at. */
+        ImGui::Indent();
+        ImGui::BeginDisabled(!haveSel);
+        if (ImGui::Button(langGetText(STR_MAPEDIT_SCENARIO_REGION_FROM_SEL))) {
+            meScenarioFormSetRegionRect(f, i, info->selX, info->selY,
+                                        info->selW, info->selH);
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button(langGetText(STR_MAPEDIT_SCENARIO_REMOVE))) {
+            removeAt = i;
+        }
+        ImGui::Unindent();
+        ImGui::PopID();
+    }
+
+    if (removeAt >= 0) {
+        meScenarioFormRemoveRegion(f, removeAt);
+    }
+
+    ImGui::Separator();
+    if (m->numRegions >= SCN_REGIONS_MAX) {
+        meScnHint(langGetText(STR_MAPEDIT_SCENARIO_REGIONS_FULL));
+        return;
+    }
+    if (!haveSel) {
+        meScnHint(langGetText(STR_MAPEDIT_SCENARIO_REGION_NO_SEL));
+        return;
+    }
+
+    ImGui::SetNextItemWidth(kRegionNameWidth);
+    const bool entered = ImGui::InputTextWithHint(
+        "##newRegion", langGetText(STR_MAPEDIT_SCENARIO_REGION_NAME), s_name,
+        sizeof(s_name), ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::SameLine();
+    if ((ImGui::Button(langGetText(STR_MAPEDIT_SCENARIO_ADD_REGION)) ||
+         entered) &&
+        meScenarioFormAddRegion(f, s_name, info->selX, info->selY, info->selW,
+                                info->selH)) {
+        s_name[0] = '\0';
+    }
+}
+
+static void meScnTagsBody(MEScenarioForm *f, const MEScenarioMapInfo *info,
+                          int selKind, int selIndex, int *clickedKind,
+                          int *clickedIndex, int *panX, int *panY) {
+    /* What is being typed for the next tag on each row. One buffer per row, so
+       a name half typed against one pill does not appear against every other
+       one. */
+    static char s_typed[3][kEntityRows][SCN_TAG_LEN];
+
+    /* The three entity lists, in the order the view draws them: which manifest
+       array a tag goes in, what the header and the row say, and which of the
+       editor's own selection kinds names it on the map. */
+    struct TagKindRow {
+        MEScenarioTagKind kind;
+        langid            header;
+        langid            row;
+        int               selKind;
+        int               count;
+        const uint8_t    *xs;
+        const uint8_t    *ys;
+    };
+    const TagKindRow kinds[3] = {
+        {ME_SCENARIO_TAG_PILL, STR_MAPEDIT_SCENARIO_PILLS,
+         STR_MAPEDIT_SCENARIO_PILL_ROW, ME_SEL_PILL,
+         info != NULL ? info->numPills : 0, info != NULL ? info->pillX : NULL,
+         info != NULL ? info->pillY : NULL},
+        {ME_SCENARIO_TAG_BASE, STR_MAPEDIT_SCENARIO_BASES,
+         STR_MAPEDIT_SCENARIO_BASE_ROW, ME_SEL_BASE,
+         info != NULL ? info->numBases : 0, info != NULL ? info->baseX : NULL,
+         info != NULL ? info->baseY : NULL},
+        {ME_SCENARIO_TAG_START, STR_MAPEDIT_SCENARIO_STARTS,
+         STR_MAPEDIT_SCENARIO_START_ROW, ME_SEL_START,
+         info != NULL ? info->numStarts : 0, info != NULL ? info->startX : NULL,
+         info != NULL ? info->startY : NULL},
+    };
+
+    /* A tag is dropped after the list has been drawn, so the row being read is
+       not the row being changed. */
+    MEScenarioTagKind removeKind   = ME_SCENARIO_TAG_PILL;
+    int               removeEntity = -1;
+    int               removeTag    = -1;
+    int               k;
+
+    for (k = 0; k < (int)(sizeof(kinds) / sizeof(kinds[0])); k++) {
+        const TagKindRow *kd = &kinds[k];
+        int               i;
+
+        ImGui::PushID(k);
+        if (ImGui::CollapsingHeader(langGetText(kd->header),
+                                    ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (kd->count <= 0) {
+                meScnHint(langGetText(STR_MAPEDIT_SCENARIO_NO_ENTITIES));
+            }
+            for (i = 0; i < kd->count && i < kEntityRows; i++) {
+                const ScnManifestTags *tags =
+                    meScenarioFormTags(f, kd->kind, i);
+                MessageArgs args = {};
+                int         t;
+
+                if (tags == NULL) {
+                    continue;   /* an entity the manifest has no entry for */
+                }
+                args.number  = i;
+                args.number2 = (int)kd->xs[i];
+                args.number3 = (int)kd->ys[i];
+
+                ImGui::PushID(i);
+                /* The row is marked when it is the object selected on the map,
+                   and clicking it selects that object and pans to it. */
+                if (ImGui::Selectable(langGetTextFmt(kd->row, &args),
+                                      selKind == kd->selKind && selIndex == i,
+                                      0, ImVec2(kEntityRowWidth, 0.0f))) {
+                    if (clickedKind != NULL) {
+                        *clickedKind = kd->selKind;
+                    }
+                    if (clickedIndex != NULL) {
+                        *clickedIndex = i;
+                    }
+                    if (panX != NULL) {
+                        *panX = (int)kd->xs[i];
+                    }
+                    if (panY != NULL) {
+                        *panY = (int)kd->ys[i];
+                    }
+                }
+
+                ImGui::SameLine();
+                if (tags->count >= SCN_TAGS_PER_ENTITY) {
+                    meScnHint(langGetText(STR_MAPEDIT_SCENARIO_TAGS_FULL));
+                } else {
+                    char *box = s_typed[k][i];
+
+                    ImGui::SetNextItemWidth(kTagBoxWidth);
+                    const bool entered = ImGui::InputTextWithHint(
+                        "##tag", langGetText(STR_MAPEDIT_SCENARIO_TAG), box,
+                        SCN_TAG_LEN, ImGuiInputTextFlags_EnterReturnsTrue);
+                    ImGui::SameLine();
+                    if ((ImGui::Button(
+                             langGetText(STR_MAPEDIT_SCENARIO_ADD_TAG)) ||
+                         entered) &&
+                        meScenarioFormAddTag(f, kd->kind, i, box)) {
+                        box[0] = '\0';
+                    }
+                }
+
+                /* The tags themselves, under the row. Four at most, and each
+                   one short, so they share a line. */
+                if (tags->count > 0) {
+                    ImGui::Indent();
+                    for (t = 0; t < (int)tags->count; t++) {
+                        ImGui::PushID(t);
+                        ImGui::TextUnformatted(tags->tag[t]);
+                        ImGui::SameLine();
+                        if (ImGui::Button(
+                                langGetText(STR_MAPEDIT_SCENARIO_REMOVE))) {
+                            removeKind   = kd->kind;
+                            removeEntity = i;
+                            removeTag    = t;
+                        }
+                        ImGui::PopID();
+                        if (t + 1 < (int)tags->count) {
+                            ImGui::SameLine();
+                        }
+                    }
+                    ImGui::Unindent();
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::PopID();
+    }
+
+    if (removeTag >= 0) {
+        meScenarioFormRemoveTag(f, removeKind, removeEntity, removeTag);
+    }
+
+    meScnRegionRows(f, info);
+}
+
+/* -------------------------------------------------------
  * The panel
  * ------------------------------------------------------- */
 void mapEditorImguiScenarioPanel(MEScenarioState *st, MEScenarioForm *form,
                                  MEScenarioCheck *check, const char *mapPath,
-                                 int *view, bool *p_open, bool *wantSave,
-                                 bool *wantReload, bool *wantValidate,
-                                 bool *wantPack, bool *wantSaveMod) {
+                                 int *view, bool *p_open,
+                                 const MEScenarioMapInfo *mapInfo, int selKind,
+                                 int selIndex, int *clickedKind,
+                                 int *clickedIndex, int *panX, int *panY,
+                                 bool *wantSave, bool *wantReload,
+                                 bool *wantValidate, bool *wantPack,
+                                 bool *wantSaveMod) {
+    /* Nothing clicked and nowhere to pan until a row below says otherwise, on
+       every path out of here including the ones that draw nothing. */
+    if (clickedKind != NULL) {
+        *clickedKind = ME_SEL_NONE;
+    }
+    if (clickedIndex != NULL) {
+        *clickedIndex = -1;
+    }
+    if (panX != NULL) {
+        *panX = -1;
+    }
+    if (panY != NULL) {
+        *panY = -1;
+    }
+
     if (st == NULL || form == NULL || view == NULL || p_open == NULL ||
         !*p_open) {
         return;
@@ -822,6 +1131,9 @@ void mapEditorImguiScenarioPanel(MEScenarioState *st, MEScenarioForm *form,
     ImGui::SameLine();
     meScnViewButton(view, ME_SCENARIO_VIEW_RULES,
                     STR_MAPEDIT_SCENARIO_VIEW_RULES);
+    ImGui::SameLine();
+    meScnViewButton(view, ME_SCENARIO_VIEW_TAGS,
+                    STR_MAPEDIT_SCENARIO_VIEW_TAGS);
     ImGui::Separator();
 
     switch (*view) {
@@ -833,6 +1145,10 @@ void mapEditorImguiScenarioPanel(MEScenarioState *st, MEScenarioForm *form,
             break;
         case ME_SCENARIO_VIEW_RULES:
             meScnRulesBody(form);
+            break;
+        case ME_SCENARIO_VIEW_TAGS:
+            meScnTagsBody(form, mapInfo, selKind, selIndex, clickedKind,
+                          clickedIndex, panX, panY);
             break;
         default:
             meScnScriptBody(st, check, mapPath, wantSave, wantReload,

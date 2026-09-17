@@ -1470,6 +1470,52 @@ static void meRenderSelection(MapEditorState *ed, int screenW, int screenH) {
 }
 
 /* -------------------------------------------------------
+ * Render the scenario's named regions
+ * ------------------------------------------------------- */
+
+/* The rectangles the scenario panel's tags view names, over the squares they
+ * cover, while that view is open. The camera arithmetic is meRenderSelection's
+ * above; the colour is not, so a region and the selection a region's bounds are
+ * taken from are told apart on the map. */
+static void meRenderScenarioRegions(MapEditorState *ed, int screenW,
+                                     int screenH) {
+    if (!ed->showScenario || ed->scnView != ME_SCENARIO_VIEW_TAGS) return;
+    if (ed->scnForm.manifest.numRegions == 0) return;
+
+    int zf = ed->zoomFactor;
+    int tileSize = TILE_SIZE_X;
+
+    int centerPX = ((int)ed->viewCenterX * tileSize) >> 8;
+    int centerPY = ((int)ed->viewCenterY * tileSize) >> 8;
+    int camPX = centerPX - screenW / (2 * zf);
+    int camPY = centerPY - screenH / (2 * zf);
+
+    SDL_SetRenderDrawBlendMode(ed->renderer, SDL_BLENDMODE_BLEND);
+
+    for (int i = 0; i < (int)ed->scnForm.manifest.numRegions; i++) {
+        const ScnManifestRegion *r = &ed->scnForm.manifest.regions[i];
+
+        /* The top-left square is inclusive and the size counts squares, so the
+           far edge is the square past the last one. */
+        float left   = (float)((int)r->x * tileSize - camPX) * zf;
+        float top    = (float)((int)r->y * tileSize - camPY) * zf;
+        float right  = (float)(((int)r->x + (int)r->w) * tileSize - camPX) * zf;
+        float bottom = (float)(((int)r->y + (int)r->h) * tileSize - camPY) * zf;
+        SDL_FRect rect = { left, top, right - left, bottom - top };
+
+        SDL_SetRenderDrawColor(ed->renderer, 255, 170, 60, 40);
+        SDL_RenderFillRect(ed->renderer, &rect);
+        SDL_SetRenderDrawColor(ed->renderer, 255, 170, 60, 220);
+        SDL_RenderRect(ed->renderer, &rect);
+
+        if (r->name[0] != '\0') {
+            SDL_SetRenderDrawColor(ed->renderer, 255, 220, 160, 255);
+            SDL_RenderDebugText(ed->renderer, left + 2.0f, top + 2.0f, r->name);
+        }
+    }
+}
+
+/* -------------------------------------------------------
  * Render paste preview
  * ------------------------------------------------------- */
 static void meRenderPastePreview(MapEditorState *ed, int screenW, int screenH,
@@ -2285,7 +2331,8 @@ static bool meSaveToPath(MapEditorState *ed, const char *path) {
                                ed->scn.scriptLen,
                                ed->scn.scriptPath[0] != '\0'
                                    ? ed->scn.scriptPath
-                                   : ME_SCENARIO_CHECK_UNNAMED);
+                                   : ME_SCENARIO_CHECK_UNNAMED,
+                               &ed->scnForm.manifest);
         }
     } else {
         meScenarioAdoptPath(&ed->scn, path);
@@ -3021,6 +3068,56 @@ static void meActionExit(MapEditorState *ed) {
     }
 }
 
+/* What the scenario panel's tags view needs to know about the open map: how
+ * many pills, bases and starts it holds, where each one sits, and the
+ * rectangle the selection tool is holding, which is where a region's bounds
+ * come from.
+ *
+ * The panel reads none of it for itself. pillsGetNumPills, basesGetNumBases
+ * and startsGetNumStarts are bolo internals and mapeditor_scenario_imgui.cpp
+ * has no reach into them, so this file — which has — copies out the numbers
+ * and hands them over. Indices stay the editor's own, counting from 0; the
+ * form module is what turns one into the manifest's 1-based entry. */
+static void meScenarioFillMapInfo(MapEditorState *ed, MEScenarioMapInfo *info) {
+    memset(info, 0, sizeof(*info));
+
+    info->numPills = ed->pb->numPills;
+    if (info->numPills > MAX_PILLS) info->numPills = MAX_PILLS;
+    for (int i = 0; i < info->numPills; i++) {
+        info->pillX[i] = ed->pb->item[i].x;
+        info->pillY[i] = ed->pb->item[i].y;
+    }
+
+    info->numBases = ed->bs->numBases;
+    if (info->numBases > MAX_BASES) info->numBases = MAX_BASES;
+    for (int i = 0; i < info->numBases; i++) {
+        info->baseX[i] = ed->bs->item[i].x;
+        info->baseY[i] = ed->bs->item[i].y;
+    }
+
+    info->numStarts = ed->ss->numStarts;
+    if (info->numStarts > MAX_STARTS) info->numStarts = MAX_STARTS;
+    for (int i = 0; i < info->numStarts; i++) {
+        info->startX[i] = ed->ss->item[i].x;
+        info->startY[i] = ed->ss->item[i].y;
+    }
+
+    /* The selection is two corners in whichever order they were dragged; a
+     * region is a top-left and a count of squares. */
+    if (ed->hasSelection) {
+        int x0 = ed->selX1 < ed->selX2 ? ed->selX1 : ed->selX2;
+        int y0 = ed->selY1 < ed->selY2 ? ed->selY1 : ed->selY2;
+        int x1 = ed->selX1 > ed->selX2 ? ed->selX1 : ed->selX2;
+        int y1 = ed->selY1 > ed->selY2 ? ed->selY1 : ed->selY2;
+
+        info->hasSelection = true;
+        info->selX = x0;
+        info->selY = y0;
+        info->selW = x1 - x0 + 1;
+        info->selH = y1 - y0 + 1;
+    }
+}
+
 /* -------------------------------------------------------
  * Writing the scenario: on to the map, or out as a mod.
  * ------------------------------------------------------- */
@@ -3045,11 +3142,26 @@ static void meWriteScenario(MapEditorState *ed, const char *modPath) {
     char             line[256];
     bool             ok;
 
+    /* A mod is written from a copy of the form's manifest — bound false, no
+     * tags, no regions — and the comparison runs against that same copy, so a
+     * script that declares bound = true is caught here rather than at load.
+     *
+     * The copy is made before the check, because the check pushes it: the
+     * server pushes the manifest it loaded the package with, and pushing the
+     * form's instead would hold a mod's script against a table the mod file
+     * will not carry. */
+    if (modPath != NULL) {
+        meScenarioModManifest(&ed->scnForm.manifest, &toWrite);
+    } else {
+        toWrite = ed->scnForm.manifest;
+    }
+
     if (ed->scn.scriptLen > 0 && ed->scn.script != NULL) {
         meScenarioCheckRun(&ed->scnCheck, ed->scn.script, ed->scn.scriptLen,
                            ed->scn.scriptPath[0] != '\0'
                                ? ed->scn.scriptPath
-                               : ME_SCENARIO_CHECK_UNNAMED);
+                               : ME_SCENARIO_CHECK_UNNAMED,
+                           &toWrite);
         if (ed->scnCheck.result.count > 0) {
             snprintf(line, sizeof(line), "%s (%u)",
                      langGetText(STR_MAPEDIT_SCENARIO_PACK_ISSUES),
@@ -3059,15 +3171,6 @@ static void meWriteScenario(MapEditorState *ed, const char *modPath) {
         }
     } else {
         meScenarioCheckClear(&ed->scnCheck);
-    }
-
-    /* A mod is written from a copy of the form's manifest — bound false, no
-     * tags, no regions — and the comparison runs against that same copy, so a
-     * script that declares bound = true is caught here rather than at load. */
-    if (modPath != NULL) {
-        meScenarioModManifest(&ed->scnForm.manifest, &toWrite);
-    } else {
-        toWrite = ed->scnForm.manifest;
     }
 
     if (ed->scnCheck.hasRun && ed->scnCheck.result.haveManifest &&
@@ -4350,6 +4453,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         if (ed->mazePreviewCount > 0) meRenderMazePreview(ed, renderW, renderH);
         if (ed->genPreviewCount > 0) meRenderGenPreview(ed, renderW, renderH);
         meRenderSelection(ed, renderW, renderH);
+        meRenderScenarioRegions(ed, renderW, renderH);
         meRenderPastePreview(ed, renderW, renderH, hoverMX, hoverMY);
         meRenderBorderIndicator(ed, renderW, renderH, hoverMX, hoverMY);
         meRenderObjSelection(ed, renderW, renderH);
@@ -5001,12 +5105,30 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             bool wantScriptValidate = false;
             bool wantPack = false;
             bool wantSaveMod = false;
+            MEScenarioMapInfo scnMap;
+            int scnClickKind, scnClickIdx, scnPanX, scnPanY;
+
+            meScenarioFillMapInfo(ed, &scnMap);
             mapEditorImguiScenarioPanel(&ed->scn, &ed->scnForm, &ed->scnCheck,
                                         ed->currentFilePath, &ed->scnView,
-                                        &ed->showScenario, &wantScriptSave,
+                                        &ed->showScenario, &scnMap,
+                                        ed->selectedObjKind,
+                                        ed->selectedObjIndex, &scnClickKind,
+                                        &scnClickIdx, &scnPanX, &scnPanY,
+                                        &wantScriptSave,
                                         &wantScriptReload,
                                         &wantScriptValidate, &wantPack,
                                         &wantSaveMod);
+            /* A tag row picks the object it names, the way the object list
+             * does. */
+            if (scnClickKind != ME_SEL_NONE) {
+                ed->selectedObjKind = scnClickKind;
+                ed->selectedObjIndex = scnClickIdx;
+                if (scnPanX >= 0 && scnPanY >= 0) {
+                    ed->viewCenterX = (WORLD)(scnPanX << 8);
+                    ed->viewCenterY = (WORLD)(scnPanY << 8);
+                }
+            }
             if (wantScriptSave && ed->currentFilePath[0]) {
                 /* A script that reached the disk is checked without being
                  * asked, so the author is told about a typo at the moment the
@@ -5022,11 +5144,15 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                 meScenarioCheckClear(&ed->scnCheck);
             }
             if (wantScriptValidate) {
+                /* The forms' manifest goes on as the scenario global first, so
+                 * Validate asks the question a server asks when it loads the
+                 * pair rather than a stricter one about the script alone. */
                 meScenarioCheckRun(&ed->scnCheck, ed->scn.script,
                                    ed->scn.scriptLen,
                                    ed->scn.scriptPath[0] != '\0'
                                        ? ed->scn.scriptPath
-                                       : ME_SCENARIO_CHECK_UNNAMED);
+                                       : ME_SCENARIO_CHECK_UNNAMED,
+                                   &ed->scnForm.manifest);
             }
             if (wantPack && ed->currentFilePath[0]) {
                 meWriteScenario(ed, NULL);

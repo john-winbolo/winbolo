@@ -2470,6 +2470,37 @@
 #define STR_MAPEDIT_SCENARIO_CHUNK_KEPT       2291
 #define STR_MAPEDIT_SCENARIO_CHUNK_LOST       2292
 
+/* The tags view: the named tags an author puts on this map's pills, bases and
+ * starts, and the named rectangles of squares drawn beside them. A row names
+ * the entity the editor numbers it as, which is one less than the number the
+ * manifest and a script spell it with. A region's bounds come from the
+ * selection tool, so the line about selecting first is what an empty selection
+ * says. The last line is what Save as Mod leaves out: a mod plays over a map
+ * it has never seen, so it can carry neither. */
+#define STR_MAPEDIT_SCENARIO_VIEW_TAGS        2293
+#define STR_MAPEDIT_SCENARIO_PILLS            2294
+#define STR_MAPEDIT_SCENARIO_BASES            2295
+#define STR_MAPEDIT_SCENARIO_STARTS           2296
+#define STR_MAPEDIT_SCENARIO_NO_ENTITIES      2297
+#define STR_MAPEDIT_SCENARIO_ADD_TAG          2298
+#define STR_MAPEDIT_SCENARIO_TAG              2299
+#define STR_MAPEDIT_SCENARIO_TAGS_FULL        2300
+#define STR_MAPEDIT_SCENARIO_PILL_ROW         2301
+#define STR_MAPEDIT_SCENARIO_BASE_ROW         2302
+#define STR_MAPEDIT_SCENARIO_START_ROW        2303
+#define STR_MAPEDIT_SCENARIO_REGIONS          2304
+#define STR_MAPEDIT_SCENARIO_NO_REGIONS       2305
+#define STR_MAPEDIT_SCENARIO_REGION_NAME      2306
+#define STR_MAPEDIT_SCENARIO_ADD_REGION       2307
+#define STR_MAPEDIT_SCENARIO_REGION_FROM_SEL  2308
+#define STR_MAPEDIT_SCENARIO_REGION_NO_SEL    2309
+#define STR_MAPEDIT_SCENARIO_REGIONS_FULL     2310
+#define STR_MAPEDIT_SCENARIO_REGION_X         2311
+#define STR_MAPEDIT_SCENARIO_REGION_Y         2312
+#define STR_MAPEDIT_SCENARIO_REGION_W         2313
+#define STR_MAPEDIT_SCENARIO_REGION_H         2314
+#define STR_MAPEDIT_SCENARIO_REGIONS_ON_MAP   2315
+#define STR_MAPEDIT_SCENARIO_MOD_DROPS        2316
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

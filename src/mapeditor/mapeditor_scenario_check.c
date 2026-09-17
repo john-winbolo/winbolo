@@ -39,7 +39,7 @@ void meScenarioCheckClear(MEScenarioCheck *c) {
 }
 
 void meScenarioCheckRun(MEScenarioCheck *c, const char *text, size_t len,
-                        const char *name) {
+                        const char *name, const ScenarioManifest *manifest) {
     if (c == NULL) {
         return;
     }
@@ -58,8 +58,9 @@ void meScenarioCheckRun(MEScenarioCheck *c, const char *text, size_t len,
 
     /* A NULL sim on purpose: see the header. An empty buffer is checked as the
        empty script it is rather than skipped, which is what the source entry
-       is for. */
-    scenarioValidateSource(NULL, text, len, name, &c->result);
+       is for. The manifest goes on as the scenario global first, which is the
+       one thing that made the editor's check stricter than the host's load. */
+    scenarioValidateSource(NULL, text, len, name, manifest, &c->result);
 }
 
 size_t meScenarioCompletionCount(void) {

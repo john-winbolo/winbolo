@@ -25,6 +25,9 @@
 #include <stddef.h>
 
 #include "scenario_issues.h" /* ScnValidateResult, ScnValidateIssue */
+#include "../scenario_io/scenario_manifest.h" /* ScenarioManifest — the table
+                                               * the check pushes for the
+                                               * script to be read against */
 
 /* What a script with no file yet is called in a Lua error. Not translated: it
  * stands where a path stands, and Lua writes it ahead of the line number in a
@@ -55,12 +58,19 @@ void meScenarioCheckClear(MEScenarioCheck *c);
  * is called in a Lua error — the script's path, or ME_SCENARIO_CHECK_UNNAMED
  * where the map has no file yet.
  *
+ * manifest goes on as the scenario global before the chunk runs, the way a
+ * server does it for a script that came out of a package, and is NULL for
+ * none. The editor passes the manifest it is about to write, so a script that
+ * leaves the table to the forms checks clean here exactly as it loads there.
+ * A script that declares its own table overwrites the global, so the two are
+ * still compared afterwards and a conflict is still reported.
+ *
  * The sim handed to the validator is NULL, because the editor has none and
  * must not make one. That leaves out the two checks that read a map, the rules
  * against the catalogue and the tags against the entity lists; everything the
  * table says about itself is still checked. */
 void meScenarioCheckRun(MEScenarioCheck *c, const char *text, size_t len,
-                        const char *name);
+                        const char *name, const ScenarioManifest *manifest);
 
 /* How many rows the scenario surface has, and the name and the one-line
  * document of one of them. The list is the registry itself rather than a copy,

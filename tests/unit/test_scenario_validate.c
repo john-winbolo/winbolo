@@ -55,6 +55,15 @@
  *                                        — the same bytes through the file
  *                                          entry and the source entry report
  *                                          the same issues
+ * run_scenario_validate_source_pushed_manifest
+ *                                        — a script that declares no table
+ *                                          checks clean against one pushed as
+ *                                          the scenario global, and is still
+ *                                          refused with nothing pushed
+ * run_scenario_validate_source_pushed_conflict
+ *                                        — a script that declares its own
+ *                                          table overwrites the pushed one, so
+ *                                          the two still disagree by key
  */
 
 #include <stdint.h>
@@ -70,6 +79,8 @@
 #include "everard_map.h"
 #include "scenario_host.h"
 #include "scenario_manifest.h"
+#include "scenario_manifest_json.h" /* scnManifestAgrees — the check the
+                                      * pushed table must not make vacuous */
 #include "scenario_validate.h"
 #include "test_harness.h"
 
@@ -739,7 +750,7 @@ int run_scenario_validate_source_syntax_error(void) {
     ScnValidateResult r;
 
     UT_ASSERT_MSG(
-        !scenarioValidateSource(NULL, kLua, strlen(kLua), kName, &r),
+        !scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL, &r),
         "a buffer that does not parse was accepted");
     UT_ASSERT_MSG(r.count == 1, "%u issues against one syntax error",
                   (unsigned)r.count);
@@ -769,7 +780,7 @@ int run_scenario_validate_source_bad_key(void) {
     char                    seen[1024];
 
     UT_ASSERT_MSG(
-        !scenarioValidateSource(NULL, kLua, strlen(kLua), kName, &r),
+        !scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL, &r),
         "a key naming no rule was accepted");
     svList(&r, seen, sizeof(seen));
     issue = svFind(&r, "rules.tank_death_tick");
@@ -843,7 +854,8 @@ int run_scenario_validate_source_matches_file(void) {
     } while (0)
 
     fileOk = scenarioValidateScript(sim, script, &fromFile);
-    textOk = scenarioValidateSource(sim, lua, strlen(lua), script, &fromText);
+    textOk = scenarioValidateSource(sim, lua, strlen(lua), script, NULL,
+                                    &fromText);
 
     BW_ASSERT(fileOk == textOk, "the file entry said %d and the source entry "
                                 "said %d about the same script",
@@ -885,5 +897,105 @@ int run_scenario_validate_source_matches_file(void) {
 
     serverSimDestroy(sim);
     svDrop(kMap);
+    return 0;
+}
+
+/* ── 18. A table handed over rather than declared ─────────────────── */
+
+/* The manifest a caller is already holding, on the state as the scenario
+   global before the chunk runs. That is what the host does for a script that
+   came out of a package, and until the source entry could do it the editor
+   refused to pack a package the server would have loaded. */
+static void svPushed(ScenarioManifest *m, const char *name) {
+    memset(m, 0, sizeof(*m));
+    snprintf(m->name, sizeof(m->name), "%s", name);
+    m->api   = SCENARIO_API_VERSION;
+    m->bound = true;
+}
+
+int run_scenario_validate_source_pushed_manifest(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    /* A script that says nothing about itself. Every table it needs is the
+       one the caller pushed. */
+    static const char *const kLua =
+        "local wave = 0\n"
+        "function on_round_start() wave = wave + 1 end\n";
+    ScenarioManifest  pushed;
+    ScnValidateResult withTable;
+    ScnValidateResult without;
+    char              seen[1024];
+
+    svPushed(&pushed, "Handed Over");
+
+    if (!scenarioValidateSource(NULL, kLua, strlen(kLua), kName, &pushed,
+                                &withTable)) {
+        svList(&withTable, seen, sizeof(seen));
+        UT_FAIL("a script checked against a pushed manifest was refused: %s",
+                seen);
+    }
+    UT_ASSERT_MSG(withTable.haveManifest,
+                  "the pushed table was not read back as the manifest");
+    UT_ASSERT_MSG(strcmp(withTable.manifest.name, "Handed Over") == 0,
+                  "the manifest read back is called '%s'",
+                  withTable.manifest.name);
+
+    /* The same bytes with nothing pushed are what they were before: a file
+       that ran and is not a scenario. */
+    UT_ASSERT_MSG(
+        !scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL,
+                                &without),
+        "a script declaring no table was accepted with nothing pushed");
+    UT_ASSERT_MSG(without.count == 1, "%u issues against one missing table",
+                  (unsigned)without.count);
+    UT_ASSERT_MSG(strstr(without.issues[0].message,
+                         "declares no scenario table") != NULL,
+                  "the issue does not say the table is missing: %s",
+                  without.issues[0].message);
+    UT_ASSERT_MSG(!without.haveManifest,
+                  "a script with no table left a manifest behind");
+    return 0;
+}
+
+/* ── 19. A pushed table a script overwrites ───────────────────────── */
+
+/* What keeps the pushed manifest from making the agreement check vacuous: a
+   script that declares its own table assigns over the global, so the table
+   read back is the script's and the two are still two different things. If
+   this ever stopped being true, a package could be written whose manifest and
+   whose script said different things and nothing would notice. */
+int run_scenario_validate_source_pushed_conflict(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  name = \"Declared\",\n"
+        "  api = 1,\n"
+        "  bound = true,\n"
+        "}\n";
+    ScenarioManifest  pushed;
+    ScnValidateResult r;
+    char              key[SCN_VALIDATE_KEY_LEN];
+    char              why[256];
+    char              seen[1024];
+
+    svPushed(&pushed, "Pushed");
+
+    if (!scenarioValidateSource(NULL, kLua, strlen(kLua), kName, &pushed, &r)) {
+        svList(&r, seen, sizeof(seen));
+        UT_FAIL("a script declaring a sound table was refused: %s", seen);
+    }
+    UT_ASSERT(r.haveManifest);
+
+    /* The script's own name, not the one that went on ahead of it. */
+    UT_ASSERT_MSG(strcmp(r.manifest.name, "Declared") == 0,
+                  "the table read back is called '%s', so the script did not "
+                  "overwrite the pushed one", r.manifest.name);
+
+    /* And so the comparison the three loaders make still has two things to
+       compare, and still names the key that differs. */
+    UT_ASSERT_MSG(!scnManifestAgrees(&pushed, &r.manifest, key, sizeof(key),
+                                     why, sizeof(why)),
+                  "a script naming itself '%s' agreed with a manifest naming "
+                  "it '%s'", r.manifest.name, pushed.name);
+    UT_ASSERT_MSG(strcmp(key, "name") == 0, "the key named is '%s'", key);
     return 0;
 }

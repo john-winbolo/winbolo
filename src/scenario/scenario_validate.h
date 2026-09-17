@@ -118,12 +118,23 @@ bool scenarioValidateScript(const ServerSim *sim, const char *scriptPath,
  *  here is a script that is empty, not a script that is not
  *  there.
  *
+ *  push is the manifest to put on the state as the scenario
+ *  global before the chunk runs, the way a host does it for a
+ *  script that came out of a container, and NULL for none. An
+ *  editor holding a manifest in its forms passes it, so a
+ *  script that declares no table of its own is checked as the
+ *  pair will be loaded rather than refused for a table the
+ *  package already carries. A script that does declare one
+ *  overwrites the global, so the table read back is still the
+ *  script's own and still worth holding against the manifest.
+ *
  *  A NULL sim leaves out the two checks that read a map, as
  *  above. A NULL out, a NULL text or a NULL name returns
  *  false.
  *********************************************************/
 bool scenarioValidateSource(const ServerSim *sim, const char *text, size_t len,
-                            const char *name, ScnValidateResult *out);
+                            const char *name, const ScenarioManifest *push,
+                            ScnValidateResult *out);
 
 /* ── The parse, which the host and the validator share ──────────────── */
 
@@ -188,6 +199,26 @@ struct lua_State *scnNewVm(void);
  *  close.
  *********************************************************/
 void scnCloseVm(struct lua_State *L);
+
+/*********************************************************
+ *NAME:          scnPushManifestGlobal
+ *PURPOSE:
+ *  Puts m on the state as the scenario global, in the shape
+ *  scnReadManifest reads, before the chunk is run.
+ *
+ *  A script that came out of a container may then declare no
+ *  table of its own and still be a scenario, because what the
+ *  chunk leaves behind is this one; a script that restates the
+ *  table overwrites the global, so scnReadManifest still reads
+ *  the script's own and the two are held against each other
+ *  afterwards. A loose script gets nothing pushed.
+ *
+ *  The host does this at attach, at every round start and at
+ *  the package check. The validator does it for a caller that
+ *  holds a manifest, so a script is checked the way it will be
+ *  loaded.
+ *********************************************************/
+void scnPushManifestGlobal(struct lua_State *L, const ScenarioManifest *m);
 
 /*********************************************************
  *NAME:          scnRunChunk

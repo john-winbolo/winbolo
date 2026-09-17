@@ -508,9 +508,15 @@ static void scnCheckBound(const ScenarioManifest *m, ScnValidateResult *out) {
  * script checked beside a map, one named directly and one still in an editor's
  * buffer are read the same way and report the same things.
  *
+ * push is the manifest that goes on as the scenario global before the chunk,
+ * or NULL. The three sites in scenario_host.c that load a packaged script do
+ * the same thing in the same place, so a caller holding both halves of a
+ * package is told what the load will say about them.
+ *
  * The bytes are the caller's. Nothing here frees them. */
 static bool scnValidateSource(const ServerSim *sim, const char *src,
                               size_t srcLen, const char *name,
+                              const ScenarioManifest *push,
                               ScnValidateResult *out) {
     char           chunkName[SCN_SCRIPT_PATH_MAX + 2];
     char           err[SCN_VALIDATE_LINE_LEN];
@@ -523,6 +529,13 @@ static bool scnValidateSource(const ServerSim *sim, const char *src,
         return false;
     }
     scnInstallStubGame(L);
+
+    /* The manifest the caller holds, before the chunk, exactly where the host
+       puts it. A script that declares no table of its own then reads back this
+       one; a script that declares one replaces it. */
+    if (push != NULL) {
+        scnPushManifestGlobal(L, push);
+    }
 
     /* The top level and no further. What the chunk defines is what the table
        below is read out of; the functions it left behind are never called. */
@@ -586,7 +599,9 @@ static bool scnValidateFile(const ServerSim *sim, const char *script,
         return false;
     }
 
-    ok = scnValidateSource(sim, src, srcLen, script, out);
+    /* Nothing is pushed: a script found on disk beside a map is a loose
+       script, which declares its own table or is not a scenario. */
+    ok = scnValidateSource(sim, src, srcLen, script, NULL, out);
     free(src);
     return ok;
 }
@@ -618,10 +633,11 @@ bool scenarioValidateScript(const ServerSim *sim, const char *scriptPath,
 }
 
 bool scenarioValidateSource(const ServerSim *sim, const char *text, size_t len,
-                            const char *name, ScnValidateResult *out) {
+                            const char *name, const ScenarioManifest *push,
+                            ScnValidateResult *out) {
     if (out == NULL || text == NULL || name == NULL) {
         return false;
     }
     memset(out, 0, sizeof(*out));
-    return scnValidateSource(sim, text, len, name, out);
+    return scnValidateSource(sim, text, len, name, push, out);
 }
