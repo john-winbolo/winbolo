@@ -138,6 +138,11 @@ void simRulesClassic(SimRules *out) {
     out->lgm_pill_repair_load     = LGM_LOAD_PILLREPAIR;
     out->lgm_gather_trees         = LGM_GATHER_TREE;
     out->lgm_helicopter_speed     = LGM_HELICOPTER_SPEED;
+    out->lgm_arrive_tolerance     = LGM_MAX_GOAL;
+    out->lgm_return_tolerance     = LGM_RETURN_MAX_GOAL;
+    out->lgm_pill_drop_search     = LGM_PILL_DROP_SEARCH;
+    out->lgm_boat_leave_offset    = LGM_TANKBOAT_LEAVE;
+    out->lgm_boat_return_offset   = LGM_TANKBOAT_RETURN;
 
     /* ---- Pillbox ----
      * pill_max_armour was PILLS_MAX_ARMOUR and PILL_MAX_HEALTH, two names for
@@ -480,6 +485,13 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
     RULE_INT(lgm_pill_repair_load, 1, 255)
     RULE_INT(lgm_gather_trees, 1, 255)
     RULE_INT(lgm_helicopter_speed, 1, 255)
+    /* The tolerances are half-widths: the test takes each either way round
+       the goal, which is what the two-signed constants used to spell. */
+    RULE_INT(lgm_arrive_tolerance, 1, 255)
+    RULE_INT(lgm_return_tolerance, 1, 65535)
+    RULE_INT(lgm_pill_drop_search, 1, 255)
+    RULE_INT(lgm_boat_leave_offset, 0, 255)
+    RULE_INT(lgm_boat_return_offset, 0, 255)
 
     /* ---- Pillbox ---- */
     RULE_INT(pill_max_armour, 1, 255)

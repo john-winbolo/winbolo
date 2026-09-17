@@ -191,6 +191,11 @@ typedef enum {
     X(lgm_gather_trees, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
     X(lgm_helicopter_speed, SIM_RULE_VALUE_INT,                              \
       SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                                  \
+    X(lgm_arrive_tolerance, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \
+    X(lgm_return_tolerance, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \
+    X(lgm_pill_drop_search, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \
+    X(lgm_boat_leave_offset, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)        \
+    X(lgm_boat_return_offset, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)       \
     /* Pillbox */                                                            \
     X(pill_max_armour, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)              \
     X(pill_attack_ticks, SIM_RULE_VALUE_INT,                                 \

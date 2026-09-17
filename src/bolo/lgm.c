@@ -765,7 +765,8 @@ void lgmMoveAway(GameSim *sim, lgm *lgman, tank *tnk) {
   bool onBoat;    /* Is the tank on a boat */
 
   /* Deal with the tank being on a boat */
-  onBoat = lgmCheckTankBoat(lgman, tnk, LGM_TANKBOAT_LEAVE);
+  onBoat = lgmCheckTankBoat(lgman, tnk,
+                            (WORLD) sim->rules.lgm_boat_leave_offset);
 
   noGo = FALSE;
   tankGetWorld(tnk, &newmx, &newmy);
@@ -834,7 +835,10 @@ void lgmMoveAway(GameSim *sim, lgm *lgman, tank *tnk) {
   } 
 
   /* Check for achieved goal */
-  if (((*lgman)->x - (*lgman)->destX) >= LGM_MIN_GOAL  && ((*lgman)->x - (*lgman)->destX) <= LGM_MAX_GOAL && ((*lgman)->y - (*lgman)->destY) >= LGM_MIN_GOAL && ((*lgman)->y - (*lgman)->destY) <= LGM_MAX_GOAL) {
+  if (((*lgman)->x - (*lgman)->destX) >= -sim->rules.lgm_arrive_tolerance &&
+      ((*lgman)->x - (*lgman)->destX) <= sim->rules.lgm_arrive_tolerance &&
+      ((*lgman)->y - (*lgman)->destY) >= -sim->rules.lgm_arrive_tolerance &&
+      ((*lgman)->y - (*lgman)->destY) <= sim->rules.lgm_arrive_tolerance) {
     /* Arrived */
     (*lgman)->waitTime = (BYTE) sim->rules.lgm_build_ticks;
     (*lgman)->state = LGM_STATE_RETURN;
@@ -906,7 +910,8 @@ void lgmReturn(GameSim *sim, lgm *lgman, tank *tnk) {
   tankGetWorld(tnk, &newmx, &newmy);
 
   /* Deal with the tank being on a boat */
-  onBoat = lgmCheckTankBoat(lgman, tnk, LGM_TANKBOAT_RETURN);
+  onBoat = lgmCheckTankBoat(lgman, tnk,
+                            (WORLD) sim->rules.lgm_boat_return_offset);
   
   angle = utilCalcAngle((*lgman)->x, (*lgman)->y, newmx, newmy);
 
@@ -1057,7 +1062,10 @@ void lgmReturn(GameSim *sim, lgm *lgman, tank *tnk) {
 
   /* Check for achieved goal */
   tankGetWorld(tnk, &newmx, &newmy);
-  if (((*lgman)->x - newmx) >= LGM_RETURN_MIN_GOAL && ((*lgman)->x - newmx) <= LGM_RETURN_MAX_GOAL && ((*lgman)->y - newmy) >= LGM_RETURN_MIN_GOAL && ((*lgman)->y - newmy) <= LGM_RETURN_MAX_GOAL ) {
+  if (((*lgman)->x - newmx) >= -sim->rules.lgm_return_tolerance &&
+      ((*lgman)->x - newmx) <= sim->rules.lgm_return_tolerance &&
+      ((*lgman)->y - newmy) >= -sim->rules.lgm_return_tolerance &&
+      ((*lgman)->y - newmy) <= sim->rules.lgm_return_tolerance) {
     /* Arrived back at tank */
     (*lgman)->state = LGM_STATE_IDLE;
     (*lgman)->inTank = TRUE;
@@ -1578,7 +1586,8 @@ void lgmDropCarriedPill(GameSim *sim, lgm *lgman) {
         }
       }
       count++;
-      if (count == 10 && finishedPillPlace == FALSE) {
+      if (count == sim->rules.lgm_pill_drop_search &&
+          finishedPillPlace == FALSE) {
         count = 0;
         item.y = pillPlaceY;
         pillPlaceX++;
@@ -1740,7 +1749,12 @@ void lgmParchutingIn(GameSim *sim, lgm *lgman) {
   (*lgman)->y = (WORLD) ((*lgman)->y + yAdd);
 
   /* Check for achieved goal */
-  if (((*lgman)->x - (*lgman)->destX) >= -16 && ((*lgman)->x - (*lgman)->destX) <=16 && ((*lgman)->y - (*lgman)->destY) >= -16 && ((*lgman)->y - (*lgman)->destY) <=16) {
+  /* The same tolerance the goal test above uses; this site spelled it out
+     rather than reading the constant. */
+  if (((*lgman)->x - (*lgman)->destX) >= -sim->rules.lgm_arrive_tolerance &&
+      ((*lgman)->x - (*lgman)->destX) <= sim->rules.lgm_arrive_tolerance &&
+      ((*lgman)->y - (*lgman)->destY) >= -sim->rules.lgm_arrive_tolerance &&
+      ((*lgman)->y - (*lgman)->destY) <= sim->rules.lgm_arrive_tolerance) {
     /* Arrived at drop off spot. Begin trek back to tank */
     if (isServer == TRUE) {
       /* The square he actually reached, read here before anything moves him

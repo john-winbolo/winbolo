@@ -242,6 +242,11 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(lgm_pill_repair_load, LGM_LOAD_PILLREPAIR);
     SR_EQ(lgm_gather_trees, LGM_GATHER_TREE);
     SR_EQ(lgm_helicopter_speed, LGM_HELICOPTER_SPEED);
+    SR_EQ(lgm_arrive_tolerance, LGM_MAX_GOAL);
+    SR_EQ(lgm_return_tolerance, LGM_RETURN_MAX_GOAL);
+    SR_EQ(lgm_pill_drop_search, LGM_PILL_DROP_SEARCH);
+    SR_EQ(lgm_boat_leave_offset, LGM_TANKBOAT_LEAVE);
+    SR_EQ(lgm_boat_return_offset, LGM_TANKBOAT_RETURN);
 
     /* Pillbox */
     SR_EQ(pill_max_armour, PILLS_MAX_ARMOUR);
