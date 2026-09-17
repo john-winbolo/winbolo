@@ -125,9 +125,20 @@ typedef struct {
 
 #define LV_ITEM_MARKER_MAX 32
 
+/* The blend mode belongs here rather than at the call sites: a marker's
+ * outline layer is translucent, and drawn without it the outline comes out
+ * opaque black and the markers gain a hard border. map_markers.h asks a
+ * caller drawing a run of markers to set it once round the lot, and this is
+ * that caller - both the overflow flush inside the ground pass and the batch
+ * after it come through here, so neither can be the one that forgets. */
 static void lvDrawItemMarkers(const LvItemMarker *hits, int count,
                               BYTE zoomFactor) {
+    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
     int i;
+
+    if (count <= 0) return;
+    SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
+    SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
     for (i = 0; i < count; i++) {
         float side = (float)(zoomFactor * TILE_SIZE_X);
         float cx = (float)(zoomFactor * (hits[i].mx * TILE_SIZE_X)) + side / 2.0f;
@@ -142,6 +153,7 @@ static void lvDrawItemMarkers(const LvItemMarker *hits, int count,
                           SDL_max(2.0f, side * 0.36f), hits[i].colour);
         }
     }
+    SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
 }
 
 /* Embed mode: a host that already owns an ImGui frame draws the world
@@ -823,7 +835,6 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
     bool simple = lvSimpleView();
     LvItemMarker itemHits[LV_ITEM_MARKER_MAX];
     int          itemHitCount = 0;
-    SDL_BlendMode oldBlend = SDL_BLENDMODE_NONE;
     if (simple != g_lastSimple) {
         g_lastSimple = simple;
         lv_drawDirtyScreen();
@@ -932,13 +943,9 @@ void lv_drawMainScreen(screen *value, screenMines *mineView, screenTanks *tks, s
         if (++x > lv_screenGetSizeX()) { x = 0; y++; if (y > lv_screenGetSizeY()) done = TRUE; }
     }
     
-    /* The markers, on top of the finished ground. The outline layer is
-       translucent, so the blend mode is set once round the lot and put back. */
-    if (simple && itemHitCount > 0) {
-        SDL_GetRenderDrawBlendMode(sdlRenderer, &oldBlend);
-        SDL_SetRenderDrawBlendMode(sdlRenderer, SDL_BLENDMODE_BLEND);
+    /* The markers, on top of the finished ground. */
+    if (simple) {
         lvDrawItemMarkers(itemHits, itemHitCount, zoomFactor);
-        SDL_SetRenderDrawBlendMode(sdlRenderer, oldBlend);
     }
 
     lv_drawShells(sBullets);
