@@ -103,9 +103,9 @@ extern "C" {
 #endif
 
 /* Sizes shared between the cluster that owns the widget and the ones that
- * measure against it: the WinBolo.net row icon the player list draws, and the
- * chat input buffer the reel's timestamp helper appends into. */
-#define LOBBY_WBN_ICON_SIZE 14
+ * measure against it. The player row's badge run used to be here as a flat
+ * 14 px; it is sdl3ImguiWbnIconPx() now (sdl3imgui.h), so it comes out the
+ * same height as the cog beside it at every UI scale. */
 #define LOBBY_CHAT_INPUT_SIZE 129  /* 128 chars + null terminator */
 
 /* ── Shared types ─────────────────────────────────────────────────
