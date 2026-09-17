@@ -414,7 +414,7 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     X(base_refuel_armour_ticks,  INT,    1,      255)                        \
     X(base_refuel_shells_ticks,  FLT,    0.5,    255.0)                      \
     X(base_refuel_mines_ticks,   FLT,    0.5,    255.0)                      \
-    X(base_regen_ticks,          INT,    1,      INT32_MAX)                  \
+    X(base_regen_ticks,          INTMIN, 1,      INT32_MAX)                  \
     /* Terrain destruction and explosions */                                 \
     X(building_life,             INT,    1,      255)                        \
     X(rubble_life,               INT,    1,      255)                        \
@@ -423,8 +423,8 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     X(mine_fuse_ticks,           INT,    1,      255)                        \
     X(big_explosion_threshold,   INT,    0,      510)                        \
     /* Tree growth */                                                        \
-    X(tree_grow_ticks,           INT,    1,      INT32_MAX)                  \
-    X(tree_grow_initial_ticks,   INT,    1,      INT32_MAX)                  \
+    X(tree_grow_ticks,           INTMIN, 1,      INT32_MAX)                  \
+    X(tree_grow_initial_ticks,   INTMIN, 1,      INT32_MAX)                  \
     X(tree_weight_forest,        INT,    -32768, 32767)                      \
     X(tree_weight_grass,         INT,    -32768, 32767)                      \
     X(tree_weight_river,         INT,    -32768, 32767)                      \

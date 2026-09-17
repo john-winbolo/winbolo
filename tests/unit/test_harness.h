@@ -1802,6 +1802,13 @@ int run_sim_rules_range_every_rule(void);
 int run_sim_rules_range_matches_check(void);
 int run_sim_rules_range_paired(void);
 
+/* What a rule is in words (test_sim_rules_desc.c): a description id per rule,
+ * inside the block they were given and none of them shared, and the range
+ * phrase answering safely for any index and any buffer. The English itself is
+ * not visible here — test_stubs.c answers "?" for every id. */
+int run_sim_rules_desc_table(void);
+int run_sim_rules_desc_range_phrase(void);
+
 int run_snapshot_compaction(void);
 
 /* Render-only error smoothing (test_error_smoothing.c): the offset

@@ -833,6 +833,8 @@ static const UnitTestEntry s_tests[] = {
     { "sim_rules_range_every_rule",              run_sim_rules_range_every_rule              },
     { "sim_rules_range_matches_check",           run_sim_rules_range_matches_check           },
     { "sim_rules_range_paired",                  run_sim_rules_range_paired                  },
+    { "sim_rules_desc_table",                    run_sim_rules_desc_table                    },
+    { "sim_rules_desc_range_phrase",             run_sim_rules_desc_range_phrase             },
     { "snapshot_compaction",                     run_snapshot_compaction                     },
     { "error_smoothing",                         run_error_smoothing                         },
     { "loopback_join",                           run_loopback_join                           },

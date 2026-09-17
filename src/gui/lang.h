@@ -2545,6 +2545,117 @@
 #define STR_DLGLOBBY_RULES_COL_SCENARIO     2332
 #define STR_DLGLOBBY_RULES_COL_CHANGE       2333
 
+/* Rule descriptions */
+
+/* What each simulation rule governs, one line apiece, shown wherever a rule
+ * is named: the editor's rules form and the lobby's rules popup. Named for
+ * the rule as SIM_RULE_LIST spells it, and in that order, so the table in
+ * sim_rules_phrase.c is generated from the list rather than written out. A
+ * rule's own name is not translated — it is what a manifest, a script and an
+ * operator line all spell — so there is no id for it here. */
+#define STR_RULE_DESC_tank_reload_ticks          2334
+#define STR_RULE_DESC_tank_full_shells           2335
+#define STR_RULE_DESC_tank_full_mines            2336
+#define STR_RULE_DESC_tank_full_trees            2337
+#define STR_RULE_DESC_tank_full_armour           2338
+#define STR_RULE_DESC_tank_death_ticks           2339
+#define STR_RULE_DESC_tank_water_ticks           2340
+#define STR_RULE_DESC_shell_damage               2341
+#define STR_RULE_DESC_mine_damage                2342
+#define STR_RULE_DESC_just_fired_ticks           2343
+#define STR_RULE_DESC_gunsight_min               2344
+#define STR_RULE_DESC_gunsight_max               2345
+#define STR_RULE_DESC_tank_accel_rate            2346
+#define STR_RULE_DESC_tank_decel_rate            2347
+#define STR_RULE_DESC_tank_brake_rate            2348
+#define STR_RULE_DESC_tank_autoslow_rate         2349
+#define STR_RULE_DESC_tank_min_move              2350
+#define STR_RULE_DESC_speed_road                 2351
+#define STR_RULE_DESC_speed_grass                2352
+#define STR_RULE_DESC_speed_forest               2353
+#define STR_RULE_DESC_speed_river                2354
+#define STR_RULE_DESC_speed_swamp                2355
+#define STR_RULE_DESC_speed_crater               2356
+#define STR_RULE_DESC_speed_rubble               2357
+#define STR_RULE_DESC_speed_boat                 2358
+#define STR_RULE_DESC_speed_deep_sea             2359
+#define STR_RULE_DESC_speed_refuel_base          2360
+#define STR_RULE_DESC_turn_road                  2361
+#define STR_RULE_DESC_turn_grass                 2362
+#define STR_RULE_DESC_turn_forest                2363
+#define STR_RULE_DESC_turn_river                 2364
+#define STR_RULE_DESC_turn_swamp                 2365
+#define STR_RULE_DESC_turn_crater                2366
+#define STR_RULE_DESC_turn_rubble                2367
+#define STR_RULE_DESC_turn_boat                  2368
+#define STR_RULE_DESC_turn_deep_sea              2369
+#define STR_RULE_DESC_turn_refuel_base           2370
+#define STR_RULE_DESC_shell_life                 2371
+#define STR_RULE_DESC_shell_speed                2372
+#define STR_RULE_DESC_shell_start_add            2373
+#define STR_RULE_DESC_lgm_build_ticks            2374
+#define STR_RULE_DESC_lgm_cost_road              2375
+#define STR_RULE_DESC_lgm_cost_building          2376
+#define STR_RULE_DESC_lgm_cost_repair_building   2377
+#define STR_RULE_DESC_lgm_cost_pill_repair       2378
+#define STR_RULE_DESC_lgm_cost_boat              2379
+#define STR_RULE_DESC_lgm_cost_pill_new          2380
+#define STR_RULE_DESC_lgm_cost_mine              2381
+#define STR_RULE_DESC_lgm_pill_repair_load       2382
+#define STR_RULE_DESC_lgm_gather_trees           2383
+#define STR_RULE_DESC_lgm_helicopter_speed       2384
+#define STR_RULE_DESC_pill_max_armour            2385
+#define STR_RULE_DESC_pill_attack_ticks          2386
+#define STR_RULE_DESC_pill_attack_min_ticks      2387
+#define STR_RULE_DESC_pill_cooldown_ticks        2388
+#define STR_RULE_DESC_pill_repair_amount         2389
+#define STR_RULE_DESC_pill_range                 2390
+#define STR_RULE_DESC_base_full_armour           2391
+#define STR_RULE_DESC_base_full_shells           2392
+#define STR_RULE_DESC_base_full_mines            2393
+#define STR_RULE_DESC_base_capture_armour        2394
+#define STR_RULE_DESC_base_hit_armour            2395
+#define STR_RULE_DESC_base_min_armour            2396
+#define STR_RULE_DESC_base_min_shells            2397
+#define STR_RULE_DESC_base_min_mines             2398
+#define STR_RULE_DESC_base_armour_give           2399
+#define STR_RULE_DESC_base_shells_give           2400
+#define STR_RULE_DESC_base_mines_give            2401
+#define STR_RULE_DESC_base_refuel_armour_ticks   2402
+#define STR_RULE_DESC_base_refuel_shells_ticks   2403
+#define STR_RULE_DESC_base_refuel_mines_ticks    2404
+#define STR_RULE_DESC_base_regen_ticks           2405
+#define STR_RULE_DESC_building_life              2406
+#define STR_RULE_DESC_rubble_life                2407
+#define STR_RULE_DESC_grass_life                 2408
+#define STR_RULE_DESC_swamp_life                 2409
+#define STR_RULE_DESC_mine_fuse_ticks            2410
+#define STR_RULE_DESC_big_explosion_threshold    2411
+#define STR_RULE_DESC_tree_grow_ticks            2412
+#define STR_RULE_DESC_tree_grow_initial_ticks    2413
+#define STR_RULE_DESC_tree_weight_forest         2414
+#define STR_RULE_DESC_tree_weight_grass          2415
+#define STR_RULE_DESC_tree_weight_river          2416
+#define STR_RULE_DESC_tree_weight_boat           2417
+#define STR_RULE_DESC_tree_weight_deep_sea       2418
+#define STR_RULE_DESC_tree_weight_swamp          2419
+#define STR_RULE_DESC_tree_weight_rubble         2420
+#define STR_RULE_DESC_tree_weight_building       2421
+#define STR_RULE_DESC_tree_weight_half_building  2422
+#define STR_RULE_DESC_tree_weight_crater         2423
+#define STR_RULE_DESC_tree_weight_road           2424
+#define STR_RULE_DESC_tree_weight_mine           2425
+
+/* Rule range wording */
+
+/* The range a rule accepts, in words: the two ends of a fixed range, a floor
+ * with no ceiling of its own, and the wrapper for a rule another rule also
+ * caps. {string1} and {string2} rather than {number} because an end can be
+ * 0.01 and because the second half of the wrapper is a rule's name. */
+#define STR_RULE_RANGE_BETWEEN                   2426
+#define STR_RULE_RANGE_FROM                      2427
+#define STR_RULE_RANGE_CAPPED                    2428
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

@@ -3871,6 +3871,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/gui/sdl3/sim_rules_phrase.c
     # The range behind each rule, against the validator that refuses on it.
     tests/unit/test_sim_rules_range.c
+    # A description id per rule, and the range in words. The phrase file above
+    # carries the table both accessors read.
+    tests/unit/test_sim_rules_desc.c
     tests/unit/test_screen_bullets_build.c
     tests/unit/test_ping_smoother.c
     tests/unit/test_client_timing.c
@@ -5088,6 +5091,8 @@ set(_unit_test_names
     sim_rules_range_every_rule
     sim_rules_range_matches_check
     sim_rules_range_paired
+    sim_rules_desc_table
+    sim_rules_desc_range_phrase
     screen_bullets_build
     ping_smoother
     client_timing
