@@ -21,7 +21,13 @@
  *                                a buffer too small and an empty path are
  *                                refused
  * run_editor_script_round_trip — a script written through Save is the script
- *                                read back when the map is opened again
+ *                                read back when the map is opened again; the
+ *                                read that stops short of the length the file
+ *                                measured is refused rather than kept, and no
+ *                                case here covers that branch, because there
+ *                                is no way to make fread come up short on a
+ *                                file fopen will open that behaves the same
+ *                                on Linux, macOS and Windows
  * run_editor_script_missing    — a map with no script beside it opens empty,
  *                                which is not a failure
  * run_editor_script_over_cap   — a script too big to open is not written over

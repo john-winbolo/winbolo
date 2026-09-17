@@ -91,7 +91,10 @@ bool meScenarioScriptPathForMap(const char *mapPath, char *out, size_t outLen) {
 /* The whole file, NUL-terminated, into a buffer the caller owns. found says
  * whether a file was there at all, which is the difference between a map
  * that has no script yet and one whose script will not read. tooBig says the
- * file is past the cap, which is refused rather than truncated. */
+ * file is past the cap, which is refused rather than truncated. A read that
+ * stops short of the length the file measured is refused the same way rather
+ * than handed back as the script: the bytes that did arrive are not what the
+ * file says, and a later Save would put them over it. */
 static bool meScenarioReadFile(const char *path, char **out, size_t *outLen,
                                bool *found, bool *tooBig) {
     FILE  *f;
@@ -136,6 +139,10 @@ static bool meScenarioReadFile(const char *path, char **out, size_t *outLen,
     }
     got = fread(buf, 1, (size_t)size, f);
     fclose(f);
+    if (got != (size_t)size) {
+        free(buf);
+        return false;
+    }
     buf[got] = '\0';
 
     *out = buf;
