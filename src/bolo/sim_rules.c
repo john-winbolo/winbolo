@@ -43,6 +43,7 @@
 #include "tankexp.h"     /* TK_DAMAGE and the wreck's shape */
 #include "treegrow.h"    /* TREEGROW_* / TREE_GROW_* */
 #include "floodfill.h"   /* FLOOD_FILL_WAIT */
+#include "sounddist.h"   /* SDIST_SOFT / SDIST_NONE */
 
 void simRulesClassic(SimRules *out) {
     if (out == NULL) {
@@ -175,6 +176,8 @@ void simRulesClassic(SimRules *out) {
     out->base_refuel_shells_ticks = (float) BASE_REFUEL_SHELLS;
     out->base_refuel_mines_ticks  = (float) BASE_REFUEL_MINES;
     out->base_regen_ticks         = BASE_TICKS_BETWEEN_REFUEL;
+    out->base_status_range        = BASE_STATUS_RANGE;
+    out->base_reveal_range        = BASE_PREDICT_REVEAL_RANGE;
 
     /* ---- Terrain destruction and explosions ---- */
     out->building_life           = BUILDING_LIFE;
@@ -189,6 +192,10 @@ void simRulesClassic(SimRules *out) {
     out->tank_explosion_update_ticks = TK_UPDATE_TIME;
     out->tank_explosion_width        = TK_WIDTH_CHECK;
     out->tank_explosion_height       = TK_HEIGHT_CHECK;
+
+    /* ---- Hearing ---- */
+    out->sound_soft_range          = SDIST_SOFT;
+    out->sound_none_range          = SDIST_NONE;
 
     /* ---- Terrain flooding ---- */
     out->flood_fill_ticks          = FLOOD_FILL_WAIT;
@@ -547,6 +554,8 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
     RULE_FLT(base_refuel_shells_ticks, 0.5, 255.0)
     RULE_FLT(base_refuel_mines_ticks, 0.5, 255.0)
     RULE_INT(base_regen_ticks, 1, INT32_MAX)
+    RULE_INT(base_status_range, 0, 65535)
+    RULE_INT(base_reveal_range, 0, 65535)
 
     /* ---- Terrain destruction and explosions ---- */
     RULE_INT(building_life, 1, 255)
@@ -569,6 +578,17 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
               "tank_explosion_damage is %ld, above pill_max_armour %ld",
               (long) rules->tank_explosion_damage,
               (long) rules->pill_max_armour)
+
+    /* ---- Hearing ---- */
+    RULE_INT(sound_soft_range, 0, 255)
+    RULE_INT(sound_none_range, 0, 255)
+    /* The near band sits inside the audible one, or there is no far band
+       for a sound to land in. */
+    RULE_PAIR(PAIR_ASKED2(sound_soft_range, sound_none_range),
+              rules->sound_soft_range <= rules->sound_none_range,
+              "sound_soft_range is %ld, above sound_none_range %ld",
+              (long) rules->sound_soft_range,
+              (long) rules->sound_none_range)
 
     /* ---- Terrain flooding ---- */
     RULE_INT(flood_fill_ticks, 1, 255)

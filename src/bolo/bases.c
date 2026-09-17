@@ -1262,7 +1262,8 @@ void basesRefueling(GameSim *sim, tank *tnk, BYTE baseNum) {
 *  yValue - Y Map Location of the tank
 *********************************************************/
 BYTE basesGetClosest(GameSim *sim, WORLD tankX, WORLD tankY) {
-  return basesGetClosestForPlayer(sim, sim->viewPlayer, tankX, tankY, BASE_STATUS_RANGE);
+  return basesGetClosestForPlayer(sim, sim->viewPlayer, tankX, tankY,
+                                  (WORLD) sim->rules.base_status_range);
 }
 
 /*********************************************************
@@ -1545,11 +1546,13 @@ bool basesArmourVisibleToPlayer(GameSim *sim, BYTE baseIdx, BYTE player) {
   gapY = abs((int)tankY - baseY);
   /* Bound both axes before squaring so the multiply cannot overflow on a
      full-size map; never rejects a base that is genuinely in range. */
-  if (gapX >= BASE_PREDICT_REVEAL_RANGE || gapY >= BASE_PREDICT_REVEAL_RANGE) {
+  if (gapX >= sim->rules.base_reveal_range ||
+      gapY >= sim->rules.base_reveal_range) {
     return FALSE;
   }
   return (gapX * gapX + gapY * gapY) <
-         (BASE_PREDICT_REVEAL_RANGE * BASE_PREDICT_REVEAL_RANGE);
+         ((int64_t) sim->rules.base_reveal_range *
+          sim->rules.base_reveal_range);
 }
 
 /*********************************************************

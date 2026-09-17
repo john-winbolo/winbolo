@@ -231,6 +231,8 @@ typedef enum {
       SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
     X(base_regen_ticks, SIM_RULE_VALUE_INT,                                  \
       SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
+    X(base_status_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)            \
+    X(base_reveal_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)            \
     /* Terrain destruction and explosions */                                 \
     X(building_life, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)                \
     X(rubble_life, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)                  \
@@ -246,6 +248,9 @@ typedef enum {
       SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
     X(tank_explosion_width, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \
     X(tank_explosion_height, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)        \
+    /* Hearing */                                                            \
+    X(sound_soft_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
+    X(sound_none_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
     /* Terrain flooding */                                                   \
     X(flood_fill_ticks, SIM_RULE_VALUE_INT,                                  \
       SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \

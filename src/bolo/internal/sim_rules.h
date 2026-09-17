@@ -177,6 +177,8 @@ typedef struct SimRules {
     float   base_refuel_shells_ticks;  /* halves: basesHalfTickCalulator alternates */
     float   base_refuel_mines_ticks;
     int32_t base_regen_ticks;
+    int32_t base_status_range;   /* how near a base has to be to read its stock */
+    int32_t base_reveal_range;   /* how near before its armour is worth predicting */
 
     /* ---- Terrain destruction and explosions ---- */
     int32_t building_life;
@@ -191,6 +193,13 @@ typedef struct SimRules {
     int32_t tank_explosion_update_ticks;  /* ticks between those steps */
     int32_t tank_explosion_width;         /* half the wreck's collision box */
     int32_t tank_explosion_height;
+
+    /* ---- Hearing ----
+     * How far a sound carries, in map squares. Inside the soft range it is
+     * played near, past the none range it is dropped, and between the two
+     * it is played far. */
+    int32_t sound_soft_range;
+    int32_t sound_none_range;
 
     /* ---- Terrain flooding ---- */
     int32_t flood_fill_ticks;    /* how long water takes to claim a square */

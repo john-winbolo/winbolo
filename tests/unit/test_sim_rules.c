@@ -120,6 +120,7 @@
 #include "minesexp.h"
 #include "tankexp.h"     /* TK_DAMAGE — the splash the explosion path deals */
 #include "floodfill.h"  /* FLOOD_FILL_WAIT */
+#include "sounddist.h"  /* SDIST_SOFT / SDIST_NONE */
 #include "treegrow.h"
 #include "sim_rules.h"
 #include "client_sim.h"
@@ -277,6 +278,8 @@ int run_sim_rules_classic_defaults(void) {
     SR_FEQ(base_refuel_shells_ticks, BASE_REFUEL_SHELLS);
     SR_FEQ(base_refuel_mines_ticks, BASE_REFUEL_MINES);
     SR_EQ(base_regen_ticks, BASE_TICKS_BETWEEN_REFUEL);
+    SR_EQ(base_status_range, BASE_STATUS_RANGE);
+    SR_EQ(base_reveal_range, BASE_PREDICT_REVEAL_RANGE);
 
     /* Terrain destruction and explosions */
     SR_EQ(building_life, BUILDING_LIFE);
@@ -293,6 +296,8 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(tank_explosion_height, TK_HEIGHT_CHECK);
 
     /* Tree growth */
+    SR_EQ(sound_soft_range, SDIST_SOFT);
+    SR_EQ(sound_none_range, SDIST_NONE);
     SR_EQ(flood_fill_ticks, FLOOD_FILL_WAIT);
     SR_EQ(tree_grow_ticks, TREEGROW_TIME);
     SR_EQ(tree_grow_initial_ticks, TREEGROW_INITIAL_TIME);
