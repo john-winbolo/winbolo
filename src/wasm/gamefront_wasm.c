@@ -287,7 +287,6 @@ static void gameFrontSetDefaultKeys(keyItems *keys) {
   keys->kiTankView     = DEFAULT_TANKVIEW;
   keys->kiPillView     = DEFAULT_PILLVIEW;
   keys->kiAllyView     = DEFAULT_ALLYVIEW;
-  keys->kiLGMView      = DEFAULT_LGMVIEW;
   keys->kiBaseView     = DEFAULT_BASEVIEW;
   keys->kiOverviewZoom = DEFAULT_OVERVIEW_ZOOM;
   keys->kiOverviewFollow  = DEFAULT_OVERVIEW_FOLLOW;

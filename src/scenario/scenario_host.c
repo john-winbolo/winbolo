@@ -3123,7 +3123,7 @@ static bool scnMapHasScriptUncached(const char *mapPath) {
 typedef struct {
     char    *path;          /* owned; NULL for a row nothing is in */
     SDL_Time modified;      /* the map file's */
-    Sint64   size;          /* the map file's */
+    Uint64   size;          /* the map file's */
     bool     looseSeen;     /* is an X.scenario.lua beside it */
     SDL_Time looseModified; /* and when it was last written; 0 for none */
     bool     scripted;

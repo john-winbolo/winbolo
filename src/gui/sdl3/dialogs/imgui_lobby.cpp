@@ -200,7 +200,18 @@ static void lobbyFrameInitState(ClientSim *cs) {
     s_lf.awaitingFrames          = 0;
     s_lf.lastMapChangeSeq        = clientSimGetLobbyMapChangeSeq(cs);
 
-    s_lf.focusReadyPending = uiShouldUseControllerMode();
+    /* Seed the keyboard focus onto Ready / Start. Not controller-only any
+     * more: with nothing seeded, ImGui's nav init picks the first item in the
+     * window, and that is the little back arrow at the top left — so Enter in
+     * the lobby asked to leave for the main menu rather than readying up.
+     * Enter is the keyboard equivalent of the primary action, and here that is
+     * Ready. Escape still leaves, which is the pair it belongs in.
+     *
+     * Applied once, on the first frame Ready is actually enabled — see the two
+     * sites that consume this. SetKeyboardFocusHere carries
+     * ImGuiNavMoveFlags_NoSetNavCursorVisible, so this seeds what Enter hits
+     * without lighting a focus ring the player did not ask for. */
+    s_lf.focusReadyPending = true;
     s_lf.prevCountdown     = clientSimGetCountdownSeconds(cs);
 }
 
@@ -1491,7 +1502,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 /* One-shot initial focus for controller players — only once
                  * Ready is enabled, so we don't try to focus a disabled item. */
                 if (focusReadyPending && canReady) {
-                    ImGui::SetKeyboardFocusHere();
+                    /* Unless the player has already put the caret somewhere —
+                     * the chat box, most likely, while a map was still coming
+                     * down. Their choice wins, and the seed is dropped rather
+                     * than held, so it cannot yank the caret out of a
+                     * half-typed line the moment they pause. */
+                    if (!ImGui::GetIO().WantTextInput) ImGui::SetKeyboardFocusHere();
                     focusReadyPending = false;
                 }
                 if (ImGui::Button(readyLabel, ImVec2(100 * s, 0))) {
@@ -2232,7 +2248,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 /* One-shot initial focus for controller players — only once
                  * Ready is enabled, so we don't try to focus a disabled item. */
                 if (focusReadyPending && canReady) {
-                    ImGui::SetKeyboardFocusHere();
+                    /* Unless the player has already put the caret somewhere —
+                     * the chat box, most likely, while a map was still coming
+                     * down. Their choice wins, and the seed is dropped rather
+                     * than held, so it cannot yank the caret out of a
+                     * half-typed line the moment they pause. */
+                    if (!ImGui::GetIO().WantTextInput) ImGui::SetKeyboardFocusHere();
                     focusReadyPending = false;
                 }
                 if (ImGui::Button(readyLabel, ImVec2(-1, 0))) {

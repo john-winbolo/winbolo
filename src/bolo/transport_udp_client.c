@@ -782,6 +782,35 @@ static bool decodeLocalizedPayload(const uint8_t *buf, int len, int startPos,
     return true;
 }
 
+/* Take one [len 1][bytes N] field off the wire into a NUL-terminated buffer,
+ * advancing *pos past it. The lobby map handlers below all read their paths
+ * and queries this way.
+ *
+ * False — with dst left empty — when the field runs past the end of the
+ * packet, or when it will not fit in dst. Both are real checks at every call
+ * site: dstCap arrives as a value, so it holds for the 128-byte query buffer
+ * as well as the 256-byte path ones. Written against sizeof at each handler
+ * it did not: a uint8_t cannot reach 256, so the compiler folded the path
+ * ones away and warned that it had, four times over.
+ *
+ * *pos advances past the field even when the copy is refused, so a caller
+ * that keeps reading stays aligned on the wire. Same shape as the argument
+ * copy in decodeLocalizedPayload above. */
+static bool wireTakeU8Field(const uint8_t *buf, int len, int *pos,
+                            char *dst, size_t dstCap) {
+    if (dstCap == 0) return false;
+    dst[0] = '\0';
+    if (*pos + 1 > len) return false;
+    uint8_t n = buf[(*pos)++];
+    if (*pos + n > len) return false;
+    const uint8_t *field = buf + *pos;
+    *pos += n;
+    if ((size_t)n >= dstCap) return false;
+    memcpy(dst, field, n);
+    dst[n] = '\0';
+    return true;
+}
+
 /* Apply one PACKET_LOBBY_MAP_LIST_RSP chunk to the client's accumulator.
  * Wire format:
  *   [header 8] [pathLen 1] [path N] [final 1] [count 1]
@@ -796,17 +825,10 @@ static bool decodeLocalizedPayload(const uint8_t *buf, int len, int startPos,
 void udpClientHandleLobbyMapListRsp(ClientSim *cs,
                                     const uint8_t *buf, int len) {
     if (!cs) return;
-    if (len < PACKET_HEADER_SIZE + 1) return;
     int pos = PACKET_HEADER_SIZE;
-    uint8_t plen = buf[pos++];
-    if (pos + plen + 2 > len) return;
     char rspPath[256];
-    memset(rspPath, 0, sizeof(rspPath));
-    if (plen > 0) {
-        if (plen >= sizeof(rspPath)) plen = (uint8_t)(sizeof(rspPath) - 1);
-        memcpy(rspPath, buf + pos, plen);
-    }
-    pos += plen;
+    if (!wireTakeU8Field(buf, len, &pos, rspPath, sizeof(rspPath))) return;
+    if (pos + 2 > len) return;
     uint8_t finalFlag = buf[pos++];
     uint8_t cnt = buf[pos++];
 
@@ -1042,14 +1064,8 @@ void udpClientHandleLobbyMapPreviewErr(ClientSim *cs,
                                        const uint8_t *buf, int len) {
     if (!cs) return;
     int pos = PACKET_HEADER_SIZE;
-    if (pos + 1 > len) return;
-    uint8_t plen = buf[pos++];
-    if (pos + plen > len) return;
     char path[256];
-    memset(path, 0, sizeof(path));
-    uint8_t cp = plen;
-    if (cp >= sizeof(path)) cp = (uint8_t)(sizeof(path) - 1);
-    memcpy(path, buf + pos, cp);
+    if (!wireTakeU8Field(buf, len, &pos, path, sizeof(path))) return;
     if (strncmp(path, cs->lobbyMapPreviewReqPath,
                 sizeof(cs->lobbyMapPreviewReqPath)) != 0) {
         return;
@@ -1070,26 +1086,15 @@ void udpClientHandleLobbyMapPreviewErr(ClientSim *cs,
 void udpClientHandleLobbyMapSearchRsp(ClientSim *cs,
                                       const uint8_t *buf, int len) {
     if (!cs) return;
-    if (len < PACKET_HEADER_SIZE + 1) return;
     int pos = PACKET_HEADER_SIZE;
-    uint8_t plen = buf[pos++];
-    if (pos + plen + 2 > len) return;
     char rspPath[256];
-    memset(rspPath, 0, sizeof(rspPath));
-    if (plen > 0) {
-        if (plen >= sizeof(rspPath)) plen = (uint8_t)(sizeof(rspPath) - 1);
-        memcpy(rspPath, buf + pos, plen);
-    }
-    pos += plen;
-    uint8_t qlen = buf[pos++];
-    if (pos + qlen + 2 > len) return;
     char rspQuery[128];
-    memset(rspQuery, 0, sizeof(rspQuery));
-    if (qlen > 0) {
-        if (qlen >= sizeof(rspQuery)) qlen = (uint8_t)(sizeof(rspQuery) - 1);
-        memcpy(rspQuery, buf + pos, qlen);
-    }
-    pos += qlen;
+    if (!wireTakeU8Field(buf, len, &pos, rspPath, sizeof(rspPath))) return;
+    /* A query longer than this buffer is refused rather than truncated. It
+     * reached the same return either way: a truncated one failed the match
+     * against the in-flight request two lines down. */
+    if (!wireTakeU8Field(buf, len, &pos, rspQuery, sizeof(rspQuery))) return;
+    if (pos + 2 > len) return;
     uint8_t finalFlag = buf[pos++];
     uint8_t cnt = buf[pos++];
 
@@ -3254,15 +3259,13 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         if (!c->clientSim || len < PACKET_HEADER_SIZE + 2) break;
         if (c->clientSim->lobbyMapUploadStatus != 1 &&
             c->clientSim->lobbyMapUploadStatus != 2) break;
-        uint8_t status = buf[PACKET_HEADER_SIZE];
-        uint8_t plen   = buf[PACKET_HEADER_SIZE + 1];
-        if (len < PACKET_HEADER_SIZE + 2 + plen) break;
+        int pos = PACKET_HEADER_SIZE;
+        uint8_t status = buf[pos++];
         if (status == 0) {
-            memset(c->clientSim->lobbyMapUploadFinalPath, 0,
-                   sizeof(c->clientSim->lobbyMapUploadFinalPath));
-            if (plen > 0 && plen < sizeof(c->clientSim->lobbyMapUploadFinalPath)) {
-                memcpy(c->clientSim->lobbyMapUploadFinalPath,
-                       buf + PACKET_HEADER_SIZE + 2, plen);
+            if (!wireTakeU8Field(buf, len, &pos,
+                                 c->clientSim->lobbyMapUploadFinalPath,
+                                 sizeof(c->clientSim->lobbyMapUploadFinalPath))) {
+                break;
             }
             c->clientSim->lobbyMapUploadStatus = 3;
             /* The server's map directory just gained a file, so whatever

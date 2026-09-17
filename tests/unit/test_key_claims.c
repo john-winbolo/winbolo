@@ -14,7 +14,7 @@
  * new field takes the next sentinel, so the two orders drift apart as fields
  * are added — only distinctness matters. */
 #define KC_FIRST_SENTINEL 101
-#define KC_FIELD_COUNT    26
+#define KC_FIELD_COUNT    25
 
 /* An unbound scancode — outside the sentinel block above. */
 #define KC_UNBOUND_SCANCODE 200
@@ -36,21 +36,20 @@ int run_key_claims(void) {
         k.kiTankView     = KC_FIRST_SENTINEL + 8;
         k.kiPillView     = KC_FIRST_SENTINEL + 9;
         k.kiOverviewZoom = KC_FIRST_SENTINEL + 10;
-        k.kiOverviewFollow  = KC_FIRST_SENTINEL + 23;
-        k.kiOverviewZoomIn  = KC_FIRST_SENTINEL + 24;
-        k.kiOverviewZoomOut = KC_FIRST_SENTINEL + 25;
+        k.kiOverviewFollow  = KC_FIRST_SENTINEL + 22;
+        k.kiOverviewZoomIn  = KC_FIRST_SENTINEL + 23;
+        k.kiOverviewZoomOut = KC_FIRST_SENTINEL + 24;
         k.kiScrollUp     = KC_FIRST_SENTINEL + 11;
         k.kiScrollDown   = KC_FIRST_SENTINEL + 12;
         k.kiScrollLeft   = KC_FIRST_SENTINEL + 13;
         k.kiScrollRight  = KC_FIRST_SENTINEL + 14;
         k.kiAllyView     = KC_FIRST_SENTINEL + 15;
-        k.kiLGMView      = KC_FIRST_SENTINEL + 16;
-        k.kiBaseView     = KC_FIRST_SENTINEL + 17;
-        k.kiQuickTree    = KC_FIRST_SENTINEL + 18;
-        k.kiQuickRoad    = KC_FIRST_SENTINEL + 19;
-        k.kiQuickWall    = KC_FIRST_SENTINEL + 20;
-        k.kiQuickPillbox = KC_FIRST_SENTINEL + 21;
-        k.kiQuickMine    = KC_FIRST_SENTINEL + 22;
+        k.kiBaseView     = KC_FIRST_SENTINEL + 16;
+        k.kiQuickTree    = KC_FIRST_SENTINEL + 17;
+        k.kiQuickRoad    = KC_FIRST_SENTINEL + 18;
+        k.kiQuickWall    = KC_FIRST_SENTINEL + 19;
+        k.kiQuickPillbox = KC_FIRST_SENTINEL + 20;
+        k.kiQuickMine    = KC_FIRST_SENTINEL + 21;
 
         for (i = 0; i < KC_FIELD_COUNT; i++) {
             UT_ASSERT_MSG(keyIsClaimedByGame(&k, KC_FIRST_SENTINEL + i),
@@ -99,7 +98,6 @@ int run_key_claims(void) {
         k.kiScrollLeft   = 80;   /* SDL_SCANCODE_LEFT   */
         k.kiScrollRight  = 79;   /* SDL_SCANCODE_RIGHT  */
         k.kiAllyView     = 28;   /* SDL_SCANCODE_Y      */
-        k.kiLGMView      = 11;   /* SDL_SCANCODE_H      */
         k.kiBaseView     = 16;   /* SDL_SCANCODE_M      */
         k.kiQuickTree    = 30;   /* SDL_SCANCODE_1      */
         k.kiQuickRoad    = 31;   /* SDL_SCANCODE_2      */

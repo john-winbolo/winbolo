@@ -24,10 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef _WIN32
-/* MoveFileExA, which is how the written map is put in place there. */
-#include <windows.h>
-#endif
+#include <SDL3/SDL.h> /* SDL_RenamePath — how the written map is put in place */
 
 #include "bolo_map_validate.h" /* boloMapBodyLength — where a map file ends */
 
@@ -133,26 +130,21 @@ static bool packWriteMap(const char *path, const uint8_t *body, size_t bodyLen,
         return false;
     }
 
-#ifdef _WIN32
-    /* MoveFileExA replaces the destination in one step. The removing rename
-       this used to do could lose both copies: a sharing violation on the
-       rename left the map already deleted and then deleted the temporary
-       file as well, so a map that was open in another program came back as
-       nothing at all. */
-    if (!MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING)) {
-        chunkErr(err, errLen, "%s: the packed map could not be put in place",
-                 path);
+    /* SDL_RenamePath replaces the destination in one step on every platform:
+       rename() where that already does it, MoveFileExW with
+       MOVEFILE_REPLACE_EXISTING on Windows. The removing rename this used to
+       do there could lose both copies: a sharing violation on the rename left
+       the map already deleted and then deleted the temporary file as well, so
+       a map that was open in another program came back as nothing at all.
+       SDL's reason goes into the message because that sharing violation is
+       the failure an author hits, and it is what says to close the map
+       elsewhere and pack again. */
+    if (!SDL_RenamePath(tmp, path)) {
+        chunkErr(err, errLen,
+                 "%s: the packed map could not be put in place: %s", path,
+                 SDL_GetError());
         return false;
     }
-#else
-    /* rename replaces the destination here, so there is nothing to remove
-       first and nothing to lose if it fails. */
-    if (rename(tmp, path) != 0) {
-        chunkErr(err, errLen, "%s: the packed map could not be put in place",
-                 path);
-        return false;
-    }
-#endif
     return true;
 }
 

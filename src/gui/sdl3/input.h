@@ -126,6 +126,25 @@ void inputActivate(void);
 void inputResetHeldKeys(void);
 
 /*********************************************************
+*NAME:          inputSwallowKeyUntilRelease
+*PURPOSE:
+*  Marks one key as taken by the shortcut layer, so the
+*  game binding on it does not also fire. The key reads as
+*  released to every binding poll until it is physically
+*  let go.
+*
+*  For a menu shortcut whose letter is also a game key —
+*  Ctrl+M opens Send Message and M is the default Base View
+*  key, so both used to happen at once. Dropping the event
+*  is not enough: bindings are polled from SDL's keyboard
+*  state, where the letter is still down.
+*
+*ARGUMENTS:
+*  scancode - SDL_Scancode the shortcut consumed
+*********************************************************/
+void inputSwallowKeyUntilRelease(int scancode);
+
+/*********************************************************
 *NAME:          inputButtonInput
 *PURPOSE:
 *  Called from the SDL event loop on SDL_EVENT_KEY_DOWN /
