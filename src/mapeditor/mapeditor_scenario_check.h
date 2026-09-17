@@ -1,0 +1,78 @@
+/*
+ * Copyright (c) 1998-2026 John Morrison.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/*********************************************************
+ * Name:          mapeditor_scenario_check.h
+ * Purpose:
+ *   The editor's one reach into the scenario runtime: the
+ *   validator run over the text in the script pane, and the
+ *   game.* rows the completion list is built from.
+ *
+ *   Both calls live behind this header so the rest of the
+ *   editor names no scenario header. The check runs no sim
+ *   and boots no host — it loads the chunk once in a Lua
+ *   state of its own and reads the table it declared, which
+ *   is what keeps the editor's privileged exception in
+ *   docs/ARCHITECTURE.md intact.
+ *********************************************************/
+
+#ifndef MAPEDITOR_SCENARIO_CHECK_H
+#define MAPEDITOR_SCENARIO_CHECK_H
+
+#include <stdbool.h>
+#include <stddef.h>
+
+#include "scenario_issues.h" /* ScnValidateResult, ScnValidateIssue */
+
+/* What a script with no file yet is called in a Lua error. Not translated: it
+ * stands where a path stands, and Lua writes it ahead of the line number in a
+ * message the author reads as the compiler's own words. */
+#define ME_SCENARIO_CHECK_UNNAMED "untitled.scenario.lua"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct MEScenarioCheck {
+    ScnValidateResult result;
+    bool              hasRun;       /* false until the first check, which is
+                                     * what tells "no problems" from "not
+                                     * looked at" */
+    bool              pushToWidget; /* the view must re-apply its markers, the
+                                     * way MEScenarioState re-seeds its text */
+} MEScenarioCheck;
+
+/* An empty check that has not run. */
+void meScenarioCheckInit(MEScenarioCheck *c);
+
+/* Forgets the last run: no issues, and hasRun false again. What a reloaded
+ * script or a new map leaves behind. */
+void meScenarioCheckClear(MEScenarioCheck *c);
+
+/* Checks len bytes of script text and keeps the result. name is what the chunk
+ * is called in a Lua error — the script's path, or ME_SCENARIO_CHECK_UNNAMED
+ * where the map has no file yet.
+ *
+ * The sim handed to the validator is NULL, because the editor has none and
+ * must not make one. That leaves out the two checks that read a map, the rules
+ * against the catalogue and the tags against the entity lists; everything the
+ * table says about itself is still checked. */
+void meScenarioCheckRun(MEScenarioCheck *c, const char *text, size_t len,
+                        const char *name);
+
+/* How many rows the scenario surface has, and the name and the one-line
+ * document of one of them. The list is the registry itself rather than a copy,
+ * so a row added to the surface is in the editor's completion list with no
+ * second edit. False for an index past the end, which leaves both out
+ * parameters alone. */
+size_t meScenarioCompletionCount(void);
+bool   meScenarioCompletionAt(size_t index, const char **name,
+                              const char **doc);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* MAPEDITOR_SCENARIO_CHECK_H */

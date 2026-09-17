@@ -19,6 +19,21 @@
  *    widget builds without boost. Only a language definition that fills
  *    mTokenRegexStrings compiles a regex at all, and the Lua definition
  *    fills none - it tokenizes with a function instead.
+ * 2. TextEditor.h/.cpp: error markers. SetErrorMarkers and
+ *    ClearErrorMarkers on the public API, a std::map<int, std::string>
+ *    member keyed by 1-based line, and a fill in the per-line render
+ *    path that paints PaletteIndex::ErrorMarker behind a marked line and
+ *    shows that line's message as a tooltip while the mouse is over it.
+ *    Upstream has no equivalent: this copy still carries the
+ *    PaletteIndex::ErrorMarker entry and a colour for it in all four
+ *    palettes, but the machinery that used it was removed upstream, so
+ *    there is no setter to call. The scenario script pane needs one to
+ *    put the validator's messages on the lines they name.
+ * 3. TextEditor.h: InsertTextAtCursor moved from the private section to
+ *    the public one, nothing else about it changed. Upstream has the
+ *    method but keeps it private, and the pane's completion list has to
+ *    insert a game.* name where the caret is. The public API has no
+ *    other way in that does not go through the clipboard.
  *
  * Nothing else was changed. Every ImGui symbol these sources call
  * resolves in the imgui the tree pins (v1.92.9b-docking). The one
@@ -113,6 +128,15 @@ public:
 	inline bool CanUndo() const { return !mReadOnly && mUndoIndex > 0; };
 	inline bool CanRedo() const { return !mReadOnly && mUndoIndex < (int)mUndoBuffer.size(); };
 	inline int GetUndoIndex() const { return mUndoIndex; };
+
+	// Local edit 2. Lines are 1-based, matching what a compiler or a
+	// checker reports. A marked line is painted in the palette's
+	// ErrorMarker colour and shows its message on hover.
+	void SetErrorMarkers(const std::map<int, std::string>& aMarkers);
+	void ClearErrorMarkers();
+
+	// Local edit 3: public so a completion list can insert at the caret.
+	void InsertTextAtCursor(const char* aValue, int aCursor = -1);
 
 	void SetText(const std::string& aText);
 	std::string GetText() const;
@@ -358,7 +382,6 @@ private:
 	void SetCursorPosition(const Coordinates& aPosition, int aCursor = -1, bool aClearSelection = true);
 
 	int InsertTextAt(Coordinates& aWhere, const char* aValue);
-	void InsertTextAtCursor(const char* aValue, int aCursor = -1);
 
 	enum class MoveDirection { Right = 0, Left = 1, Up = 2, Down = 3 };
 	bool Move(int& aLine, int& aCharIndex, bool aLeft = false, bool aLockLine = false) const;
@@ -480,6 +503,7 @@ private:
 	Palette mPalette;
 	LanguageDefinitionId mLanguageDefinitionId;
 	const LanguageDefinition* mLanguageDefinition = nullptr;
+	std::map<int, std::string> mErrorMarkers; // local edit 2, keyed by 1-based line
 
 	inline bool IsHorizontalScrollbarVisible() const { return mCurrentSpaceWidth > mContentWidth; }
 	inline bool IsVerticalScrollbarVisible() const { return mCurrentSpaceHeight > mContentHeight; }

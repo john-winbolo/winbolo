@@ -1585,7 +1585,7 @@ set(CLIENT_SOURCES
     # all four views, and the vendored text editor widget the script view
     # draws with. LanguageDefinitions.cpp is where that widget keeps its Lua
     # highlighting.
-    src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_form.c src/mapeditor/mapeditor_scenario_imgui.cpp
+    src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_form.c src/mapeditor/mapeditor_scenario_check.c src/mapeditor/mapeditor_scenario_imgui.cpp
     src/third_party/ImGuiColorTextEdit/TextEditor.cpp
     src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
     # Embedded editor's "Open from WinBolo.net" dialog — client only, it
@@ -2894,7 +2894,7 @@ set(MAPEDITOR_SOURCES
     # all four views, and the vendored text editor widget the script view
     # draws with. LanguageDefinitions.cpp is where that widget keeps its Lua
     # highlighting.
-    src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_form.c src/mapeditor/mapeditor_scenario_imgui.cpp
+    src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_form.c src/mapeditor/mapeditor_scenario_check.c src/mapeditor/mapeditor_scenario_imgui.cpp
     src/third_party/ImGuiColorTextEdit/TextEditor.cpp
     src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
@@ -2971,7 +2971,13 @@ else()
     target_compile_options(MapEditor PRIVATE -fcommon)
 endif()
 
-target_link_libraries(MapEditor PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
+target_link_libraries(MapEditor PRIVATE
+    bolo_static
+    # Ahead of the server group: scenario_static calls the funnel and the
+    # round-start registration, which the group provides. The editor links it
+    # to check a script and to list game.* for completion; it boots no host.
+    scenario_static
+    server_sim_static bot_brains_static threads_static)
 target_link_libraries(MapEditor PRIVATE
     winbolonet_core winbolonet_client
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static
@@ -5588,6 +5594,9 @@ set(_unit_test_names
     scenario_validate_lines_point_at_the_key
     scenario_validate_wave_defense
     scenario_validate_unknown_game
+    scenario_validate_source_syntax_error
+    scenario_validate_source_bad_key
+    scenario_validate_source_matches_file
     scenario_lua_every_row_answers
     scenario_lua_read_index_passes_through
     scenario_lua_op_index_subtracts_one

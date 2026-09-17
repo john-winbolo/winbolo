@@ -46,6 +46,15 @@
  *                                          Defense.map, against that map
  * run_scenario_validate_unknown_game     — a game type the engine has no word
  *                                          for, and one it does
+ * run_scenario_validate_source_syntax_error
+ *                                        — a buffer that does not parse, on
+ *                                          the line Lua named
+ * run_scenario_validate_source_bad_key   — a buffer whose table carries a key
+ *                                          naming no rule
+ * run_scenario_validate_source_matches_file
+ *                                        — the same bytes through the file
+ *                                          entry and the source entry report
+ *                                          the same issues
  */
 
 #include <stdint.h>
@@ -710,5 +719,171 @@ int run_scenario_validate_unknown_game(void) {
     serverSimDestroy(sim);
     svDrop(kBad);
     svDrop(kGood);
+    return 0;
+}
+
+/* ── 15. A buffer that does not parse ─────────────────────────────── */
+
+/* The source entry takes bytes the caller is holding, so these three cases
+   write no fixture at all. The name is the stand-in an editor passes for a map
+   that has no file yet: it is what Lua puts ahead of the line, and the line is
+   read back out of the message it wrote. */
+int run_scenario_validate_source_syntax_error(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    /* The bad statement is on line 4 and nothing else is wrong with it. */
+    static const char *const kLua =
+        "-- 1\n"
+        "-- 2\n"
+        "-- 3\n"
+        "this is not lua\n";
+    ScnValidateResult r;
+
+    UT_ASSERT_MSG(
+        !scenarioValidateSource(NULL, kLua, strlen(kLua), kName, &r),
+        "a buffer that does not parse was accepted");
+    UT_ASSERT_MSG(r.count == 1, "%u issues against one syntax error",
+                  (unsigned)r.count);
+    UT_ASSERT_MSG(!r.haveManifest,
+                  "a chunk that never ran left a manifest behind");
+    UT_ASSERT_MSG(r.issues[0].line > 0,
+                  "the error carries no line: %s", r.issues[0].message);
+    UT_ASSERT_MSG(r.issues[0].line == 4,
+                  "the error is on line %d, expected the 4 Lua named: %s",
+                  r.issues[0].line, r.issues[0].message);
+    return 0;
+}
+
+/* ── 16. A buffer whose table names no such rule ──────────────────── */
+
+/* The parse's own complaints reach the list whether or not a sim was handed
+   over, which is what an editor with a script and no map has to see. */
+int run_scenario_validate_source_bad_key(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  rules = { tank_death_tick = 400 },\n"
+        "}\n";
+    ScnValidateResult       r;
+    const ScnValidateIssue *issue;
+    char                    seen[1024];
+
+    UT_ASSERT_MSG(
+        !scenarioValidateSource(NULL, kLua, strlen(kLua), kName, &r),
+        "a key naming no rule was accepted");
+    svList(&r, seen, sizeof(seen));
+    issue = svFind(&r, "rules.tank_death_tick");
+    UT_ASSERT_MSG(issue != NULL, "no issue under the key: %s", seen);
+    UT_ASSERT_MSG(strstr(issue->message, "tank_death_tick") != NULL,
+                  "the message does not name the key: %s", issue->message);
+    UT_ASSERT_MSG(issue->line == 3, "the key is on line %d, expected 3",
+                  issue->line);
+    UT_ASSERT_MSG(r.haveManifest,
+                  "a table that parsed left no manifest to read");
+    return 0;
+}
+
+/* ── 17. The two entries agree ────────────────────────────────────── */
+
+/* What keeps the split honest: the file entry reads the bytes and comes
+   through the same body, so the same script named the same way has to produce
+   the same list either way. The script is written to disk for the file entry
+   and handed over as text for the source entry, with the script's own path as
+   the name both times — a different name would move what Lua writes ahead of a
+   line and the comparison would be about the name rather than the checks. */
+int run_scenario_validate_source_matches_file(void) {
+    static const char *const kMap = "scnval_bothways.map";
+    char                     lua[512];
+    char                     script[512];
+    ServerSim               *sim;
+    ScnValidateResult        fromFile;
+    ScnValidateResult        fromText;
+    bool                     fileOk;
+    bool                     textOk;
+    uint16_t                 i;
+
+    /* Three problems with three different keys: one the api check finds, one
+       the parse reports, and one the region check finds. */
+    snprintf(lua, sizeof(lua),
+             "scenario = {\n"
+             "  name = \"Both Ways\",\n"
+             "  api = %d,\n"
+             "  rules = {\n"
+             "    tank_death_tick = 400,\n"
+             "  },\n"
+             "  regions = {\n"
+             "    keep = { x = 250, y = 0, w = 10, h = 4 },\n"
+             "  },\n"
+             "}\n",
+             SCENARIO_API_VERSION + 1);
+
+    UT_ASSERT(svPut(kMap, lua));
+    svScriptFor(kMap, script, sizeof(script));
+
+    sim = svSim();
+    if (sim == NULL) {
+        svDrop(kMap);
+        UT_FAIL("the sim would not build");
+    }
+
+/* Every exit past this point drops the fixture and the sim. The assertion
+   macros return straight out of the case, so the cleanup goes in the macro
+   rather than after it. */
+#define BW_FAIL(fmt, ...)                                                   \
+    do {                                                                    \
+        serverSimDestroy(sim);                                              \
+        svDrop(kMap);                                                       \
+        UT_FAIL(fmt, ##__VA_ARGS__);                                        \
+    } while (0)
+#define BW_ASSERT(cond, fmt, ...)                                           \
+    do {                                                                    \
+        if (!(cond)) {                                                      \
+            BW_FAIL("%s — " fmt, #cond, ##__VA_ARGS__);                     \
+        }                                                                   \
+    } while (0)
+
+    fileOk = scenarioValidateScript(sim, script, &fromFile);
+    textOk = scenarioValidateSource(sim, lua, strlen(lua), script, &fromText);
+
+    BW_ASSERT(fileOk == textOk, "the file entry said %d and the source entry "
+                                "said %d about the same script",
+              (int)fileOk, (int)textOk);
+    BW_ASSERT(fromFile.count == fromText.count,
+              "the file entry found %u issues and the source entry %u",
+              (unsigned)fromFile.count, (unsigned)fromText.count);
+    BW_ASSERT(fromFile.dropped == fromText.dropped,
+              "the file entry dropped %u and the source entry %u",
+              (unsigned)fromFile.dropped, (unsigned)fromText.dropped);
+    BW_ASSERT(fromFile.haveManifest == fromText.haveManifest,
+              "the two entries disagree about whether a table was read");
+
+    /* The three the script asks for, so a pass that found nothing cannot be
+       mistaken for the two entries agreeing. */
+    BW_ASSERT(fromFile.count == 3, "%u issues against a script with three",
+              (unsigned)fromFile.count);
+
+    for (i = 0; i < fromFile.count; i++) {
+        BW_ASSERT(strcmp(fromFile.issues[i].key, fromText.issues[i].key) == 0,
+                  "issue %u is under '%s' from the file and '%s' from the "
+                  "source",
+                  (unsigned)i, fromFile.issues[i].key, fromText.issues[i].key);
+        BW_ASSERT(fromFile.issues[i].line == fromText.issues[i].line,
+                  "issue %u ('%s') is on line %d from the file and %d from "
+                  "the source",
+                  (unsigned)i, fromFile.issues[i].key, fromFile.issues[i].line,
+                  fromText.issues[i].line);
+        BW_ASSERT(strcmp(fromFile.issues[i].message,
+                         fromText.issues[i].message) == 0,
+                  "issue %u ('%s') reads '%s' from the file and '%s' from the "
+                  "source",
+                  (unsigned)i, fromFile.issues[i].key,
+                  fromFile.issues[i].message, fromText.issues[i].message);
+    }
+
+#undef BW_ASSERT
+#undef BW_FAIL
+
+    serverSimDestroy(sim);
+    svDrop(kMap);
     return 0;
 }

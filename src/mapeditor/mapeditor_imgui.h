@@ -331,18 +331,24 @@ typedef enum {
  * p_open: pointer to show/hide flag.
  * wantSave: set to true when the user clicks Save.
  * wantReload: set to true when the user clicks Reload.
- * The panel never touches the filesystem; mapeditor.c acts on the two flags,
- * and the manifest the forms edit has nowhere to be written yet. */
+ * wantValidate: set to true when the user clicks Validate.
+ * The panel never touches the filesystem; mapeditor.c acts on the three flags,
+ * and the manifest the forms edit has nowhere to be written yet. The check is
+ * read for its issues and its markers; mapeditor.c is what runs it. */
 #include "mapeditor_scenario.h"
-/* The form is passed by pointer, so its header stays out of this one: it
- * would otherwise carry the manifest's layout into every file that includes
- * mapeditor_imgui.h. The two that edit a form include it themselves. The tag
- * is declared here rather than left to the prototype, which in C would scope
- * it to the parameter list and leave the call site holding another type. */
+/* The form and the check are passed by pointer, so their headers stay out of
+ * this one: they would otherwise carry the manifest's layout and the issue
+ * list into every file that includes mapeditor_imgui.h. The files that edit a
+ * form or read a check include them themselves. The tags are declared here
+ * rather than left to the prototype, which in C would scope them to the
+ * parameter list and leave the call site holding another type. */
 struct MEScenarioForm;
+struct MEScenarioCheck;
 void mapEditorImguiScenarioPanel(MEScenarioState *st, struct MEScenarioForm *form,
+                                 struct MEScenarioCheck *check,
                                  const char *mapPath, int *view, bool *p_open,
-                                 bool *wantSave, bool *wantReload);
+                                 bool *wantSave, bool *wantReload,
+                                 bool *wantValidate);
 
 /* Render the Image Import dialog.
  * open: pointer to the open flag (set to false when dialog closes).

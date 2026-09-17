@@ -503,59 +503,45 @@ static void scnCheckBound(const ScenarioManifest *m, ScnValidateResult *out) {
 
 /* ── The whole check ──────────────────────────────────────────────── */
 
-/* The checks themselves, against a script that has already been named and an
- * out the caller has cleared. Both entry points below come through here, so a
- * script checked beside a map and one named directly are read the same way and
- * report the same things. */
-static bool scnValidateFile(const ServerSim *sim, const char *script,
-                            ScnValidateResult *out) {
+/* The checks themselves, against source that has already been named and an out
+ * the caller has cleared. Every entry point below comes through here, so a
+ * script checked beside a map, one named directly and one still in an editor's
+ * buffer are read the same way and report the same things.
+ *
+ * The bytes are the caller's. Nothing here frees them. */
+static bool scnValidateSource(const ServerSim *sim, const char *src,
+                              size_t srcLen, const char *name,
+                              ScnValidateResult *out) {
     char           chunkName[SCN_SCRIPT_PATH_MAX + 2];
     char           err[SCN_VALIDATE_LINE_LEN];
-    char          *src    = NULL;
-    size_t         srcLen = 0;
     lua_State     *L;
     ScnParseReport rep;
 
-    /* No file at all is the ordinary case: a plain map, and nothing to check
-       about it. */
-    err[0] = '\0';
-    if (!scnReadFile(script, &src, &srcLen, err, sizeof(err))) {
-        if (err[0] == '\0') {
-            return true;
-        }
-        scnIssueAdd(out, "", "%s", err);
-        return false;
-    }
-
     L = scnNewVm();
     if (L == NULL) {
-        free(src);
-        scnIssueAdd(out, "", "no memory for a Lua state to check %s", script);
+        scnIssueAdd(out, "", "no memory for a Lua state to check %s", name);
         return false;
     }
     scnInstallStubGame(L);
 
     /* The top level and no further. What the chunk defines is what the table
        below is read out of; the functions it left behind are never called. */
-    snprintf(chunkName, sizeof(chunkName), "@%s", script);
+    snprintf(chunkName, sizeof(chunkName), "@%s", name);
     if (!scnRunChunk(L, src, srcLen, chunkName, err, sizeof(err))) {
         scnIssueAdd(out, "", "%s", err);
         if (out->count > 0) {
-            out->issues[out->count - 1].line =
-                scnLineFromLuaError(err, script);
+            out->issues[out->count - 1].line = scnLineFromLuaError(err, name);
         }
         scnCloseVm(L);
-        free(src);
         return false;
     }
 
     rep.soft    = NULL;
     rep.softLen = 0;
     rep.sink    = out;
-    if (!scnReadManifest(L, &out->manifest, script, err, sizeof(err), &rep)) {
+    if (!scnReadManifest(L, &out->manifest, name, err, sizeof(err), &rep)) {
         scnIssueAdd(out, "", "%s", err);
         scnCloseVm(L);
-        free(src);
         return false;
     }
     out->haveManifest = true;
@@ -576,8 +562,33 @@ static bool scnValidateFile(const ServerSim *sim, const char *script,
     scnAttributeLines(out, src, srcLen);
 
     scnCloseVm(L);
-    free(src);
     return out->count == 0;
+}
+
+/* The bytes, and the one case that is not a fault. The read is the whole of
+ * what the two file entries do beyond the checks above. */
+static bool scnValidateFile(const ServerSim *sim, const char *script,
+                            ScnValidateResult *out) {
+    char   err[SCN_VALIDATE_LINE_LEN];
+    char  *src    = NULL;
+    size_t srcLen = 0;
+    bool   ok;
+
+    /* No file at all is the ordinary case: a plain map, and nothing to check
+       about it. A caller handing over an empty buffer is a different thing,
+       and is checked as the empty script it is. */
+    err[0] = '\0';
+    if (!scnReadFile(script, &src, &srcLen, err, sizeof(err))) {
+        if (err[0] == '\0') {
+            return true;
+        }
+        scnIssueAdd(out, "", "%s", err);
+        return false;
+    }
+
+    ok = scnValidateSource(sim, src, srcLen, script, out);
+    free(src);
+    return ok;
 }
 
 bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
@@ -604,4 +615,13 @@ bool scenarioValidateScript(const ServerSim *sim, const char *scriptPath,
     }
     memset(out, 0, sizeof(*out));
     return scnValidateFile(sim, scriptPath, out);
+}
+
+bool scenarioValidateSource(const ServerSim *sim, const char *text, size_t len,
+                            const char *name, ScnValidateResult *out) {
+    if (out == NULL || text == NULL || name == NULL) {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+    return scnValidateSource(sim, text, len, name, out);
 }

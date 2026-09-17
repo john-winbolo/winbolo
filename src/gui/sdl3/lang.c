@@ -2225,6 +2225,12 @@ static const LangEntry langTable[] = {
     {2272, "Add Rule"},
     {2273, "Filter"},
     {2274, "No room for another rule"},
+    {2275, "Validate"},
+    {2276, "Issues"},
+    {2277, "No problems found"},
+    {2278, "Rules and tags are checked against the map when the round starts, not here"},
+    {2279, "More problems were found than this list holds"},
+    {2280, "Scenario Calls"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

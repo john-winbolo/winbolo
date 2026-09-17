@@ -48,9 +48,10 @@ static void meScenarioTake(MEScenarioState *st, char *text, size_t len) {
 
 /* This mirrors scnScriptPath in src/scenario/scenario_host.c, which is the
  * rule the server itself follows when it looks for a script beside a map.
- * The editor cannot call it: that function lives in scenario_static, and the
- * editor links neither scenario_static nor scenario_io_static. Keep the two
- * the same — a script the editor writes is one the server has to find.
+ * Keep the two the same — a script the editor writes is one the server has to
+ * find. Both targets that compile this file link scenario_static now, so the
+ * two spellings could be collapsed into one call; that is a change of its own
+ * and has not been made here.
  *
  * The one difference is deliberate: an empty path is refused here rather
  * than resolving to a bare ".scenario.lua", because a map with no file yet

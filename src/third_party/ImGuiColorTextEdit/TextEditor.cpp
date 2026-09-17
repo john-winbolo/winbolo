@@ -334,6 +334,18 @@ void TextEditor::Redo(int aSteps)
 		mUndoBuffer[mUndoIndex++].Redo(this);
 }
 
+// Local edit 2. The markers are held as given and read in the render path;
+// a line past the end of the buffer simply never comes up for drawing.
+void TextEditor::SetErrorMarkers(const std::map<int, std::string>& aMarkers)
+{
+	mErrorMarkers = aMarkers;
+}
+
+void TextEditor::ClearErrorMarkers()
+{
+	mErrorMarkers.clear();
+}
+
 void TextEditor::SetText(const std::string& aText)
 {
 	mLines.clear();
@@ -2258,6 +2270,27 @@ void TextEditor::Render(bool aParentIsFocused)
 
 			Coordinates lineStartCoord(lineNo, 0);
 			Coordinates lineEndCoord(lineNo, maxColumnLimited);
+
+			// Local edit 2: a marked line, painted first so the selection and
+			// the text stay legible over it. The fill runs the width of the
+			// view rather than the width of the text, so a short line and a
+			// long one are marked alike.
+			if (!mErrorMarkers.empty())
+			{
+				auto errorIt = mErrorMarkers.find(lineNo + 1);
+				if (errorIt != mErrorMarkers.end())
+				{
+					ImVec2 markerEnd(lineStartScreenPos.x + mScrollX + ImGui::GetWindowWidth(), lineStartScreenPos.y + mCharAdvance.y);
+					drawList->AddRectFilled(lineStartScreenPos, markerEnd, mPalette[(int)PaletteIndex::ErrorMarker]);
+
+					if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(lineStartScreenPos, markerEnd))
+					{
+						ImGui::BeginTooltip();
+						ImGui::TextUnformatted(errorIt->second.c_str());
+						ImGui::EndTooltip();
+					}
+				}
+			}
 
 			// Draw selection for the current line
 			for (int c = 0; c <= mState.mCurrentCursor; c++)

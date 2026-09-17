@@ -2780,6 +2780,9 @@ int run_scenario_validate_syntax_error_line(void);
 int run_scenario_validate_lines_point_at_the_key(void);
 int run_scenario_validate_wave_defense(void);
 int run_scenario_validate_unknown_game(void);
+int run_scenario_validate_source_syntax_error(void);
+int run_scenario_validate_source_bad_key(void);
+int run_scenario_validate_source_matches_file(void);
 
 /* The binding table (test_scenario_lua.c): every row of the registry
  * called once, the three index rules, the nils an absent entity reads

@@ -2440,6 +2440,18 @@
 #define STR_MAPEDIT_SCENARIO_FILTER          2273
 #define STR_MAPEDIT_SCENARIO_RULES_FULL      2274
 
+/* The script pane's check: the button that runs the validator, the list of
+ * what it found under the editor, and the popup that lists the game.* calls a
+ * script may make. The one line about rules and tags is there because the
+ * editor hands the validator no sim — it makes none — so the two checks that
+ * read a map do not run here. */
+#define STR_MAPEDIT_SCENARIO_VALIDATE        2275
+#define STR_MAPEDIT_SCENARIO_ISSUES          2276
+#define STR_MAPEDIT_SCENARIO_NO_ISSUES       2277
+#define STR_MAPEDIT_SCENARIO_NO_SIM_CHECKS   2278
+#define STR_MAPEDIT_SCENARIO_ISSUES_DROPPED  2279
+#define STR_MAPEDIT_SCENARIO_CALLS           2280
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

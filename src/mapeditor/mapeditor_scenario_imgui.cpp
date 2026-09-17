@@ -24,9 +24,11 @@
 #include <WinSock2.h>
 #endif
 
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
+#include <map>
 #include <string>
 
 #include "imgui.h"
@@ -34,6 +36,7 @@
 
 #include "mapeditor_imgui.h"
 #include "mapeditor_scenario.h"
+#include "mapeditor_scenario_check.h"
 #include "mapeditor_scenario_form.h"
 #include "../gui/lang.h"
 #include "../gui/sim_rules_phrase.h"
@@ -130,16 +133,169 @@ static void meScnViewButton(int *view, int which, langid label) {
 /* -------------------------------------------------------
  * Script
  * ------------------------------------------------------- */
-static void meScnScriptBody(MEScenarioState *st, const char *mapPath,
-                            bool *wantSave, bool *wantReload) {
+
+/* The most the issues list takes from the editor above it, and how wide the
+ * completion popup opens. The popup is a popup rather than a column so it
+ * costs the script none of its width at Deck size. */
+static const float kIssuesMaxHeight = 150.0f;
+static const float kCallsWidth      = 380.0f;
+static const float kCallsListHeight = 220.0f;
+
+/* The markers the widget draws, built from the issues that carry a line. A
+ * problem the validator could not place stays out of here and is read off the
+ * list below the editor instead. */
+static void meScnApplyMarkers(TextEditor *editor, const MEScenarioCheck *chk) {
+    std::map<int, std::string> markers;
+    uint16_t                   i;
+
+    for (i = 0; i < chk->result.count; i++) {
+        const ScnValidateIssue *iss = &chk->result.issues[i];
+
+        if (iss->line <= 0) {
+            continue;
+        }
+        /* The widget holds one message a line, so two problems on one line are
+           joined rather than one replacing the other. */
+        std::map<int, std::string>::iterator at = markers.find(iss->line);
+        if (at == markers.end()) {
+            markers[iss->line] = iss->message;
+        } else {
+            at->second += "\n";
+            at->second += iss->message;
+        }
+    }
+
+    if (markers.empty()) {
+        editor->ClearErrorMarkers();
+    } else {
+        editor->SetErrorMarkers(markers);
+    }
+}
+
+/* What the last check found, under the editor. A row with a line moves the
+ * caret to it and brings it into view; a row without one — a problem the
+ * source does not spell in any one place — is still listed, because it is
+ * still wrong. */
+static void meScnIssuesList(TextEditor *editor, const MEScenarioCheck *chk,
+                            float height) {
+    char     row[SCN_VALIDATE_KEY_LEN + SCN_VALIDATE_MSG_LEN + 32];
+    uint16_t i;
+
+    ImGui::Text("%s (%u)", langGetText(STR_MAPEDIT_SCENARIO_ISSUES),
+                (unsigned)chk->result.count);
+
+    ImGui::BeginChild("##scenarioIssues", ImVec2(0.0f, height),
+                      ImGuiChildFlags_Borders);
+    {
+        for (i = 0; i < chk->result.count; i++) {
+            const ScnValidateIssue *iss = &chk->result.issues[i];
+
+            if (iss->line > 0) {
+                snprintf(row, sizeof(row), "%d  %s  %s", iss->line, iss->key,
+                         iss->message);
+            } else {
+                snprintf(row, sizeof(row), "-  %s  %s", iss->key,
+                         iss->message);
+            }
+
+            ImGui::PushID((int)i);
+            if (ImGui::Selectable(row) && iss->line > 0) {
+                /* An issue counts lines from 1 and the widget from 0. */
+                editor->SetCursorPosition(iss->line - 1, 0);
+                editor->SetViewAtLine(iss->line - 1,
+                                      TextEditor::SetViewAtLineMode::Centered);
+            }
+            ImGui::PopID();
+        }
+
+        if (chk->result.dropped > 0) {
+            meScnHint(langGetText(STR_MAPEDIT_SCENARIO_ISSUES_DROPPED));
+        }
+        /* The editor hands the validator no sim, so two of its checks did not
+           run. Said here rather than nowhere. */
+        meScnHint(langGetText(STR_MAPEDIT_SCENARIO_NO_SIM_CHECKS));
+    }
+    ImGui::EndChild();
+}
+
+/* The game.* calls a script may make, from the binding registry itself. The
+ * row is the name; the line under the list is what that row does. */
+static void meScnCallsPopup(TextEditor *editor, MEScenarioState *st) {
+    static char s_filter[64] = "";
+    /* Which row the line under the list is describing. It survives a frame the
+     * mouse is between rows, so the line does not blink out. */
+    static int s_described = -1;
+
+    const char *doc  = NULL;
+    const char *name = NULL;
+    size_t      count;
+    size_t      i;
+
+    if (!ImGui::BeginPopup("##scenarioCalls")) {
+        return;
+    }
+    count = meScenarioCompletionCount();
+
+    ImGui::SetNextItemWidth(kCallsWidth);
+    ImGui::InputTextWithHint("##callFilter",
+                             langGetText(STR_MAPEDIT_SCENARIO_FILTER),
+                             s_filter, sizeof(s_filter));
+
+    ImGui::BeginChild("##callList", ImVec2(kCallsWidth, kCallsListHeight),
+                      ImGuiChildFlags_Borders);
+    {
+        for (i = 0; i < count; i++) {
+            if (!meScenarioCompletionAt(i, &name, &doc)) {
+                continue;
+            }
+            if (!meScnContains(name, s_filter)) {
+                continue;
+            }
+
+            ImGui::PushID((int)i);
+            if (ImGui::Selectable(name)) {
+                editor->InsertTextAtCursor(name);
+                /* The insert adds no undo record, so the watch on the undo
+                   index in the body below will not see it. The text is read
+                   back here instead; without this the buffer keeps what it
+                   held before the insert and a save writes that. */
+                const std::string text = editor->GetText();
+                meScenarioSetText(st, text.c_str(), text.size());
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::IsItemHovered()) {
+                s_described = (int)i;
+            }
+            ImGui::PopID();
+        }
+    }
+    ImGui::EndChild();
+
+    doc = NULL;
+    if (s_described >= 0) {
+        /* The name is not wanted here, only the line under the list. */
+        (void)meScenarioCompletionAt((size_t)s_described, NULL, &doc);
+    }
+    ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + kCallsWidth);
+    meScnHint(doc != NULL ? doc : "");
+    ImGui::PopTextWrapPos();
+
+    ImGui::EndPopup();
+}
+
+static void meScnScriptBody(MEScenarioState *st, MEScenarioCheck *chk,
+                            const char *mapPath, bool *wantSave,
+                            bool *wantReload, bool *wantValidate) {
     /* One widget for the one view. It holds the text being edited and the
      * undo history that goes with it, so it outlives a frame. */
     static TextEditor s_editor;
     static bool       s_ready = false;
     /* Where the widget's undo history stood when the buffer below last
-     * agreed with it. Every edit the widget makes adds an undo record, so a
-     * different index means the text has moved on and is worth reading back.
-     * This is what keeps GetText() off the per-frame path. */
+     * agreed with it. A typed edit adds an undo record, so a different index
+     * means the text has moved on and is worth reading back. This is what
+     * keeps GetText() off the per-frame path. The one mutation that adds no
+     * record is the completion popup's insert, which is why that path reads
+     * the text back itself rather than leaving it to this watch. */
     static int s_seenUndoIndex = 0;
 
     if (!s_ready) {
@@ -154,6 +310,13 @@ static void meScnScriptBody(MEScenarioState *st, const char *mapPath,
         s_editor.SetText(st->script != NULL ? st->script : "");
         st->pushToWidget = false;
         s_seenUndoIndex = s_editor.GetUndoIndex();
+    }
+
+    /* The markers follow the last check the same way the text follows the last
+     * read: applied once when they change, not rebuilt every frame. */
+    if (chk != NULL && chk->pushToWidget) {
+        meScnApplyMarkers(&s_editor, chk);
+        chk->pushToWidget = false;
     }
 
     const bool haveMap = (mapPath != NULL && mapPath[0] != '\0');
@@ -180,6 +343,25 @@ static void meScnScriptBody(MEScenarioState *st, const char *mapPath,
     }
     ImGui::EndDisabled();
 
+    ImGui::SameLine();
+    if (ImGui::Button(langGetText(STR_MAPEDIT_SCENARIO_VALIDATE)) &&
+        wantValidate != NULL) {
+        *wantValidate = true;
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button(langGetText(STR_MAPEDIT_SCENARIO_CALLS))) {
+        ImGui::OpenPopup("##scenarioCalls");
+    }
+    meScnCallsPopup(&s_editor, st);
+
+    /* A check that found nothing says so here rather than opening a list with
+     * nothing in it. */
+    if (chk != NULL && chk->hasRun && chk->result.count == 0) {
+        ImGui::SameLine();
+        meScnHint(langGetText(STR_MAPEDIT_SCENARIO_NO_ISSUES));
+    }
+
     if (st->dirty) {
         ImGui::SameLine();
         ImGui::TextUnformatted(langGetText(STR_MAPEDIT_SCENARIO_UNSAVED));
@@ -195,8 +377,27 @@ static void meScnScriptBody(MEScenarioState *st, const char *mapPath,
 
     ImGui::Separator();
 
-    /* The rest of the window is the editor. */
-    s_editor.Render("##scenarioScript", false, ImVec2(0.0f, 0.0f), false);
+    /* How much of the window the issues list takes, and so how much is left
+     * for the editor. Nothing is reserved when there is nothing to list, which
+     * leaves the pane exactly as it was before a check was run. */
+    const bool haveIssues =
+        (chk != NULL && chk->hasRun && chk->result.count > 0);
+    float issuesHeight = 0.0f;
+    if (haveIssues) {
+        issuesHeight = ImGui::GetTextLineHeightWithSpacing() *
+                       (float)(chk->result.count + 2);
+        if (issuesHeight > kIssuesMaxHeight) {
+            issuesHeight = kIssuesMaxHeight;
+        }
+    }
+
+    /* The rest of the window is the editor, less whatever the list takes. */
+    s_editor.Render("##scenarioScript", false,
+                    ImVec2(0.0f, haveIssues
+                                     ? -(issuesHeight +
+                                         ImGui::GetTextLineHeightWithSpacing())
+                                     : 0.0f),
+                    false);
 
     /* Read the text back only when the widget has moved on from what the
      * buffer holds. */
@@ -205,6 +406,10 @@ static void meScnScriptBody(MEScenarioState *st, const char *mapPath,
         const std::string text = s_editor.GetText();
         meScenarioSetText(st, text.c_str(), text.size());
         s_seenUndoIndex = undoIndex;
+    }
+
+    if (haveIssues) {
+        meScnIssuesList(&s_editor, chk, issuesHeight);
     }
 }
 
@@ -532,8 +737,9 @@ static void meScnRulesBody(MEScenarioForm *f) {
  * The panel
  * ------------------------------------------------------- */
 void mapEditorImguiScenarioPanel(MEScenarioState *st, MEScenarioForm *form,
-                                 const char *mapPath, int *view, bool *p_open,
-                                 bool *wantSave, bool *wantReload) {
+                                 MEScenarioCheck *check, const char *mapPath,
+                                 int *view, bool *p_open, bool *wantSave,
+                                 bool *wantReload, bool *wantValidate) {
     if (st == NULL || form == NULL || view == NULL || p_open == NULL ||
         !*p_open) {
         return;
@@ -570,7 +776,8 @@ void mapEditorImguiScenarioPanel(MEScenarioState *st, MEScenarioForm *form,
             meScnRulesBody(form);
             break;
         default:
-            meScnScriptBody(st, mapPath, wantSave, wantReload);
+            meScnScriptBody(st, check, mapPath, wantSave, wantReload,
+                            wantValidate);
             break;
     }
 

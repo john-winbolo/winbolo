@@ -35,6 +35,7 @@
 #endif
 #include "mapeditor_validate.h"
 #include "mapeditor_stats.h"
+#include "mapeditor_scenario_check.h" /* MapEditorState holds a check by value */
 #include "mapeditor_scenario_form.h" /* MapEditorState holds a form by value */
 
 #include <string.h>
@@ -292,6 +293,10 @@ typedef struct {
      * nowhere to write it yet, so it is emptied whenever the map changes and
      * is deliberately not part of any unsaved-changes check. */
     MEScenarioForm scnForm;
+    /* What the validator last said about the script in the pane. Emptied
+     * whenever the map changes or the script is re-read, so the markers never
+     * outlive the text they were found in. */
+    MEScenarioCheck scnCheck;
     int  scnView;            /* one of MEScenarioView */
     bool showScenario;
 
@@ -2267,6 +2272,14 @@ static bool meSaveToPath(MapEditorState *ed, const char *path) {
              * refusal to write over a script it could not open. */
             snprintf(ed->errorMessage, sizeof(ed->errorMessage), "%s\n%s",
                      ed->scn.status, ed->scn.scriptPath);
+        } else {
+            /* Written, so checked: a script is validated every time it
+             * reaches the disk, whichever Save put it there. */
+            meScenarioCheckRun(&ed->scnCheck, ed->scn.script,
+                               ed->scn.scriptLen,
+                               ed->scn.scriptPath[0] != '\0'
+                                   ? ed->scn.scriptPath
+                                   : ME_SCENARIO_CHECK_UNNAMED);
         }
     } else {
         meScenarioAdoptPath(&ed->scn, path);
@@ -2320,6 +2333,7 @@ static bool meLoadFromPath(MapEditorState *ed, const char *path) {
      * the manifest goes with it: it belongs to the map that was open. */
     meScenarioSetMap(&ed->scn, path);
     meScenarioFormReset(&ed->scnForm);
+    meScenarioCheckClear(&ed->scnCheck);
     meUpdateWindowTitle(ed);
     return true;
 }
@@ -2373,6 +2387,7 @@ static bool meLoadFromMemory(MapEditorState *ed, const unsigned char *bytes,
      * sit beside it until the map is saved. */
     meScenarioSetMap(&ed->scn, "");
     meScenarioFormReset(&ed->scnForm);
+    meScenarioCheckClear(&ed->scnCheck);
     meUpdateWindowTitle(ed);
     return true;
 }
@@ -2398,6 +2413,7 @@ static void meDoNew(MapEditorState *ed) {
     /* A blank map has no file yet, so it has no script either. */
     meScenarioSetMap(&ed->scn, "");
     meScenarioFormReset(&ed->scnForm);
+    meScenarioCheckClear(&ed->scnCheck);
     meUpdateWindowTitle(ed);
 }
 
@@ -3239,6 +3255,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     ed->brushSeen = calloc(256 * 256, sizeof(bool));
     meScenarioInit(&ed->scn);
     meScenarioFormInit(&ed->scnForm);
+    meScenarioCheckInit(&ed->scnCheck);
     ed->scnView = ME_SCENARIO_VIEW_SCRIPT;
 
     /* Stamp library */
@@ -3302,6 +3319,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
      * map leaves currentFilePath empty, which clears the pane. */
     meScenarioSetMap(&ed->scn, ed->currentFilePath);
     meScenarioFormReset(&ed->scnForm);
+    meScenarioCheckClear(&ed->scnCheck);
     meUpdateWindowTitle(ed);
 
     /* Create minimap texture */
@@ -4763,15 +4781,32 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         if (ed->showScenario) {
             bool wantScriptSave = false;
             bool wantScriptReload = false;
-            mapEditorImguiScenarioPanel(&ed->scn, &ed->scnForm,
+            bool wantScriptValidate = false;
+            mapEditorImguiScenarioPanel(&ed->scn, &ed->scnForm, &ed->scnCheck,
                                         ed->currentFilePath, &ed->scnView,
                                         &ed->showScenario, &wantScriptSave,
-                                        &wantScriptReload);
+                                        &wantScriptReload,
+                                        &wantScriptValidate);
             if (wantScriptSave && ed->currentFilePath[0]) {
-                meScenarioSaveForMap(&ed->scn, ed->currentFilePath);
+                /* A script that reached the disk is checked without being
+                 * asked, so the author is told about a typo at the moment the
+                 * file becomes the one a round would read. */
+                if (meScenarioSaveForMap(&ed->scn, ed->currentFilePath)) {
+                    wantScriptValidate = true;
+                }
             }
             if (wantScriptReload) {
                 meScenarioReload(&ed->scn);
+                /* The text is not the text the markers were found in any
+                 * more. */
+                meScenarioCheckClear(&ed->scnCheck);
+            }
+            if (wantScriptValidate) {
+                meScenarioCheckRun(&ed->scnCheck, ed->scn.script,
+                                   ed->scn.scriptLen,
+                                   ed->scn.scriptPath[0] != '\0'
+                                       ? ed->scn.scriptPath
+                                       : ME_SCENARIO_CHECK_UNNAMED);
             }
         }
 
