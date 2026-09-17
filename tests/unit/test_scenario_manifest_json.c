@@ -797,13 +797,13 @@ static const char kTriggerManifest[] =
     "    { \"when\": \"on_base_captured\",\n"
     "      \"where\": [ [\"new_team\", \"eq\", 1],\n"
     "                   [\"tag\", \"in\", \"outer_base\"] ],\n"
-    "      \"then\": [ [\"announce\",\n"
+    "      \"actions\": [ [\"announce\",\n"
     "                   \"The ring holds and the wave is turned back short "
     "of the keep\", 5],\n"
     "                  [\"set_score\", { \"field\": \"new\" }, 10] ] },\n"
     "    { \"when\": \"on_tick\",\n"
     "      \"where\": [ [\"scripted\", \"eq\", false] ],\n"
-    "      \"then\": [ [\"log\", \"tick\"] ] }\n"
+    "      \"actions\": [ [\"log\", \"tick\"] ] }\n"
     "  ]\n"
     "}\n";
 
@@ -832,8 +832,8 @@ static int triggerManifestIsRight(const ScenarioManifest *m) {
     UT_ASSERT(strcmp(t->when, "on_base_captured") == 0);
     UT_ASSERT_MSG(t->numWhere == 2, "trigger 0 holds %u tests",
                   (unsigned)t->numWhere);
-    UT_ASSERT_MSG(t->numThen == 2, "trigger 0 holds %u actions",
-                  (unsigned)t->numThen);
+    UT_ASSERT_MSG(t->numActions == 2, "trigger 0 holds %u actions",
+                  (unsigned)t->numActions);
 
     /* A number against eq. */
     UT_ASSERT(strcmp(t->where[0].field, "new_team") == 0);
@@ -851,7 +851,7 @@ static int triggerManifestIsRight(const ScenarioManifest *m) {
 
     /* The long line is on the action, and the slot that holds it says so
        rather than carrying the bytes. */
-    a = &t->then[0];
+    a = &t->actions[0];
     UT_ASSERT(strcmp(a->op, "announce") == 0);
     UT_ASSERT_MSG(a->numArgs == 2, "announce took %u arguments",
                   (unsigned)a->numArgs);
@@ -865,7 +865,7 @@ static int triggerManifestIsRight(const ScenarioManifest *m) {
     UT_ASSERT(a->args[1].num == 5.0);
 
     /* A field reference, and a number beside it. */
-    a = &t->then[1];
+    a = &t->actions[1];
     UT_ASSERT(strcmp(a->op, "set_score") == 0);
     UT_ASSERT_MSG(a->numArgs == 2, "set_score took %u arguments",
                   (unsigned)a->numArgs);
@@ -885,11 +885,11 @@ static int triggerManifestIsRight(const ScenarioManifest *m) {
     UT_ASSERT(t->where[0].value.kind == SCN_TRIG_VAL_BOOL);
     UT_ASSERT_MSG(t->where[0].value.num == 0.0, "false decoded as %g",
                   t->where[0].value.num);
-    UT_ASSERT_MSG(t->numThen == 1, "trigger 1 holds %u actions",
-                  (unsigned)t->numThen);
-    UT_ASSERT(strcmp(t->then[0].op, "log") == 0);
-    UT_ASSERT(t->then[0].args[0].kind == SCN_TRIG_VAL_STRING);
-    UT_ASSERT(strcmp(t->then[0].args[0].text, "tick") == 0);
+    UT_ASSERT_MSG(t->numActions == 1, "trigger 1 holds %u actions",
+                  (unsigned)t->numActions);
+    UT_ASSERT(strcmp(t->actions[0].op, "log") == 0);
+    UT_ASSERT(t->actions[0].args[0].kind == SCN_TRIG_VAL_STRING);
+    UT_ASSERT(strcmp(t->actions[0].args[0].text, "tick") == 0);
     return 0;
 }
 
@@ -1036,7 +1036,7 @@ int run_scenario_manifest_json_triggers(void) {
                                  "%s[\"n\", \"eq\", %d]", (i > 0) ? ", " : "",
                                  i);
     }
-    used += (size_t)snprintf(big + used, (1 << 16) - used, "], \"then\": [");
+    used += (size_t)snprintf(big + used, (1 << 16) - used, "], \"actions\": [");
     for (i = 0; i <= SCN_TRIGGER_ACTIONS_MAX; i++) {
         int j;
         used += (size_t)snprintf(big + used, (1 << 16) - used, "%s[\"log\"",
@@ -1067,15 +1067,15 @@ int run_scenario_manifest_json_triggers(void) {
                     SCN_TRIGGER_CONDS_MAX);
             ok = false;
         }
-        if (t->numThen != SCN_TRIGGER_ACTIONS_MAX) {
+        if (t->numActions != SCN_TRIGGER_ACTIONS_MAX) {
             fprintf(stderr, "FAIL %s:%d: %u actions were kept, expected %d\n",
-                    __FILE__, __LINE__, (unsigned)t->numThen,
+                    __FILE__, __LINE__, (unsigned)t->numActions,
                     SCN_TRIGGER_ACTIONS_MAX);
             ok = false;
         }
-        if (t->then[0].numArgs != SCN_TRIGGER_ARGS_MAX) {
+        if (t->actions[0].numArgs != SCN_TRIGGER_ARGS_MAX) {
             fprintf(stderr, "FAIL %s:%d: %u arguments were kept, expected %d\n",
-                    __FILE__, __LINE__, (unsigned)t->then[0].numArgs,
+                    __FILE__, __LINE__, (unsigned)t->actions[0].numArgs,
                     SCN_TRIGGER_ARGS_MAX);
             ok = false;
         }
@@ -1086,7 +1086,7 @@ int run_scenario_manifest_json_triggers(void) {
                     __FILE__, __LINE__);
             ok = false;
         }
-        snprintf(want, sizeof(want), "triggers[0].then[%d]",
+        snprintf(want, sizeof(want), "triggers[0].actions[%d]",
                  SCN_TRIGGER_ACTIONS_MAX);
         if (!sawIssue(sink, want)) {
             fprintf(stderr,
@@ -1094,7 +1094,7 @@ int run_scenario_manifest_json_triggers(void) {
                     __FILE__, __LINE__);
             ok = false;
         }
-        if (!sawIssue(sink, "triggers[0].then[0]")) {
+        if (!sawIssue(sink, "triggers[0].actions[0]")) {
             fprintf(stderr,
                     "FAIL %s:%d: the argument past the cap said nothing\n",
                     __FILE__, __LINE__);

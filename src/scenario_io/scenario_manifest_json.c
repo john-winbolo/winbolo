@@ -580,8 +580,8 @@ static void mjTrigCond(const cJSON *row, ScnTrigCond *out,
     mjTrigValue(cJSON_GetArrayItem(row, 2), &out->value, NULL, where, rep);
 }
 
-/* One then-row: [op, arg...]. The op is the first entry and the rest are its
- * positional arguments, in the order the file wrote them. */
+/* One actions-row: [op, arg...]. The op is the first entry and the rest are
+ * its positional arguments, in the order the file wrote them. */
 static void mjTrigAct(const cJSON *row, ScnTrigAct *out, const char *where,
                       ScnParseReport *rep) {
     const cJSON *op;
@@ -693,22 +693,23 @@ static void mjDecodeTriggers(const cJSON *root, ScenarioManifest *m,
             }
         }
 
-        list = cJSON_GetObjectItemCaseSensitive(entry, "then");
+        list = cJSON_GetObjectItemCaseSensitive(entry, "actions");
         if (list != NULL && !cJSON_IsArray(list)) {
-            mjReport(rep, where, "scenario: %s's then is not an array", where);
+            mjReport(rep, where, "scenario: %s's actions is not an array",
+                     where);
         } else if (list != NULL) {
             int a = 0;
             cJSON_ArrayForEach(row, list) {
                 char slot[SCN_VALIDATE_KEY_LEN];
-                snprintf(slot, sizeof(slot), "%s.then[%d]", where, a++);
-                if (trig->numThen >= SCN_TRIGGER_ACTIONS_MAX) {
+                snprintf(slot, sizeof(slot), "%s.actions[%d]", where, a++);
+                if (trig->numActions >= SCN_TRIGGER_ACTIONS_MAX) {
                     mjReport(rep, slot,
                              "scenario: more than %d actions on one trigger; "
                              "%s dropped", SCN_TRIGGER_ACTIONS_MAX, slot);
                     continue;
                 }
-                mjTrigAct(row, &trig->then[trig->numThen], slot, rep);
-                trig->numThen++;
+                mjTrigAct(row, &trig->actions[trig->numActions], slot, rep);
+                trig->numActions++;
             }
         }
     }
@@ -1134,7 +1135,7 @@ static void mjEmitTriggers(cJSON *root, const ScenarioManifest *m) {
         const ScnTrigger *t = &m->triggers[i];
         cJSON            *obj = cJSON_CreateObject();
         cJSON            *where;
-        cJSON            *then;
+        cJSON            *actions;
 
         if (obj == NULL) {
             break;
@@ -1158,15 +1159,15 @@ static void mjEmitTriggers(cJSON *root, const ScenarioManifest *m) {
             cJSON_AddItemToArray(row, mjTrigValueOut(&c->value, NULL));
         }
 
-        then = cJSON_AddArrayToObject(obj, "then");
-        for (j = 0; then != NULL && j < (int)t->numThen; j++) {
-            const ScnTrigAct *a   = &t->then[j];
+        actions = cJSON_AddArrayToObject(obj, "actions");
+        for (j = 0; actions != NULL && j < (int)t->numActions; j++) {
+            const ScnTrigAct *a   = &t->actions[j];
             cJSON            *row = cJSON_CreateArray();
 
             if (row == NULL) {
                 break;
             }
-            cJSON_AddItemToArray(then, row);
+            cJSON_AddItemToArray(actions, row);
             cJSON_AddItemToArray(row, cJSON_CreateString(a->op));
             for (k = 0; k < (int)a->numArgs; k++) {
                 cJSON_AddItemToArray(row, mjTrigValueOut(&a->args[k], a));

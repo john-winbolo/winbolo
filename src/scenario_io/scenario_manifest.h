@@ -227,9 +227,9 @@ typedef struct {
 typedef struct {
     char        when[SCN_TRIGGER_NAME_LEN];
     uint8_t     numWhere;
-    uint8_t     numThen;
+    uint8_t     numActions;
     ScnTrigCond where[SCN_TRIGGER_CONDS_MAX];
-    ScnTrigAct  then[SCN_TRIGGER_ACTIONS_MAX];
+    ScnTrigAct  actions[SCN_TRIGGER_ACTIONS_MAX];
 } ScnTrigger;
 
 typedef struct {
