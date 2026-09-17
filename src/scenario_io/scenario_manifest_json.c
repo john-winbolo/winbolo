@@ -452,6 +452,268 @@ static void mjDecodeRegions(const cJSON *root, ScenarioManifest *m,
     }
 }
 
+/* ── Triggers ─────────────────────────────────────────────────────── */
+
+/* The seven operators a where-row may test with, in the order
+ * ScnTrigCompare declares them. */
+static const char *const mjTrigOps[] = {
+    "eq", "ne", "lt", "lte", "gt", "gte", "in"
+};
+
+/* The operator's name, or NULL for one outside the enum. Used by the
+ * encoder, which writes back what the decode stored. */
+static const char *mjTrigOpName(ScnTrigCompare op) {
+    if ((int)op < 0 || (size_t)op >= sizeof(mjTrigOps) / sizeof(mjTrigOps[0])) {
+        return NULL;
+    }
+    return mjTrigOps[(int)op];
+}
+
+/* An operator name as the enum, or SCN_TRIG_CMP_EQ for one this does not
+ * know. An unknown operator is not refused here: what the vocabulary allows
+ * is checked against the catalogue, which this library cannot see. */
+static ScnTrigCompare mjTrigOpFrom(const char *name) {
+    size_t i;
+
+    if (name == NULL) {
+        return SCN_TRIG_CMP_EQ;
+    }
+    for (i = 0; i < sizeof(mjTrigOps) / sizeof(mjTrigOps[0]); i++) {
+        if (strcmp(name, mjTrigOps[i]) == 0) {
+            return (ScnTrigCompare)i;
+        }
+    }
+    return SCN_TRIG_CMP_EQ;
+}
+
+/* One value or argument out of the tree.
+ *
+ * The four kinds a file may state: a number, a string, a boolean, and the
+ * object {"field": "<name>"} naming a field of the hook's payload. Anything
+ * else — a null, a bare array, an object without a field key — is stored as
+ * NONE and reported, so a row that holds one still decodes and the author is
+ * told which slot did not read.
+ *
+ * text is where a string goes when it fits. One that does not goes on the
+ * action's own text, which is why act is passed: a condition passes NULL and
+ * its oversized string is truncated the way every other name in the manifest
+ * is. Only the first oversized string in an action has somewhere to live; a
+ * second is reported and left NONE. */
+static void mjTrigValue(const cJSON *v, ScnTrigValue *out, ScnTrigAct *act,
+                        const char *where, ScnParseReport *rep) {
+    memset(out, 0, sizeof(*out));
+
+    if (cJSON_IsNumber(v)) {
+        out->kind = SCN_TRIG_VAL_NUMBER;
+        out->num  = v->valuedouble;
+        return;
+    }
+    if (cJSON_IsBool(v)) {
+        out->kind = SCN_TRIG_VAL_BOOL;
+        out->num  = cJSON_IsTrue(v) ? 1.0 : 0.0;
+        return;
+    }
+    if (cJSON_IsString(v) && v->valuestring != NULL) {
+        out->kind = SCN_TRIG_VAL_STRING;
+        if (strlen(v->valuestring) < SCN_TRIGGER_NAME_LEN) {
+            mjCopyStr(out->text, sizeof(out->text), v->valuestring);
+            return;
+        }
+        if (act == NULL) {
+            mjCopyStr(out->text, sizeof(out->text), v->valuestring);
+            mjReport(rep, where,
+                     "scenario: %s is longer than %d bytes and is cut to "
+                     "fit", where, SCN_TRIGGER_NAME_LEN - 1);
+            return;
+        }
+        if (act->text[0] != '\0') {
+            out->kind = SCN_TRIG_VAL_NONE;
+            mjReport(rep, where,
+                     "scenario: %s is the second long string on one action, "
+                     "which carries one; dropped", where);
+            return;
+        }
+        out->inText = true;
+        mjCopyStr(act->text, sizeof(act->text), v->valuestring);
+        return;
+    }
+    if (cJSON_IsObject(v)) {
+        const cJSON *f = cJSON_GetObjectItemCaseSensitive(v, "field");
+        if (cJSON_IsString(f) && f->valuestring != NULL) {
+            out->kind = SCN_TRIG_VAL_FIELD;
+            mjCopyStr(out->text, sizeof(out->text), f->valuestring);
+            return;
+        }
+    }
+    mjReport(rep, where,
+             "scenario: %s is not a number, a string, a boolean or a field "
+             "reference; dropped", where);
+}
+
+/* One where-row: [field, operator, value]. A row that is not an array of
+ * three is reported and dropped, since there is no part of it to keep. */
+static void mjTrigCond(const cJSON *row, ScnTrigCond *out,
+                       const char *where, ScnParseReport *rep) {
+    const cJSON *field;
+    const cJSON *op;
+
+    memset(out, 0, sizeof(*out));
+
+    if (!cJSON_IsArray(row) || cJSON_GetArraySize(row) != 3) {
+        mjReport(rep, where,
+                 "scenario: %s is not a [field, operator, value] row", where);
+        return;
+    }
+    field = cJSON_GetArrayItem(row, 0);
+    op    = cJSON_GetArrayItem(row, 1);
+
+    if (cJSON_IsString(field) && field->valuestring != NULL) {
+        mjCopyStr(out->field, sizeof(out->field), field->valuestring);
+    } else {
+        mjReport(rep, where, "scenario: %s names no field", where);
+    }
+    if (cJSON_IsString(op) && op->valuestring != NULL) {
+        out->op = mjTrigOpFrom(op->valuestring);
+    } else {
+        mjReport(rep, where, "scenario: %s names no operator", where);
+    }
+    mjTrigValue(cJSON_GetArrayItem(row, 2), &out->value, NULL, where, rep);
+}
+
+/* One then-row: [op, arg...]. The op is the first entry and the rest are its
+ * positional arguments, in the order the file wrote them. */
+static void mjTrigAct(const cJSON *row, ScnTrigAct *out, const char *where,
+                      ScnParseReport *rep) {
+    const cJSON *op;
+    const cJSON *arg;
+    int          i = 0;
+
+    memset(out, 0, sizeof(*out));
+
+    if (!cJSON_IsArray(row) || cJSON_GetArraySize(row) < 1) {
+        mjReport(rep, where, "scenario: %s is not an [op, argument...] row",
+                 where);
+        return;
+    }
+    op = cJSON_GetArrayItem(row, 0);
+    if (cJSON_IsString(op) && op->valuestring != NULL) {
+        mjCopyStr(out->op, sizeof(out->op), op->valuestring);
+    } else {
+        mjReport(rep, where, "scenario: %s names no op", where);
+    }
+
+    cJSON_ArrayForEach(arg, row) {
+        char slot[SCN_VALIDATE_KEY_LEN];
+        if (i++ == 0) {
+            continue;                   /* the op, already taken */
+        }
+        if (out->numArgs >= SCN_TRIGGER_ARGS_MAX) {
+            mjReport(rep, where,
+                     "scenario: %s takes more than %d arguments; the rest "
+                     "dropped", where, SCN_TRIGGER_ARGS_MAX);
+            break;
+        }
+        snprintf(slot, sizeof(slot), "%s[%d]", where, (int)out->numArgs);
+        mjTrigValue(arg, &out->args[out->numArgs], out, slot, rep);
+        out->numArgs++;
+    }
+}
+
+/* The triggers array into the struct.
+ *
+ * A trigger has no name to key a report on, so its position in the array is
+ * the key: triggers[7], and triggers[7].where[2] for a row inside it. The
+ * position counted is the one in the file, so a report names the row the
+ * author wrote rather than the slot it landed in after an earlier drop.
+ *
+ * Every cap here drops what is past it and says so. Nothing is a refusal:
+ * a manifest with more triggers than this build holds is still a manifest,
+ * the way one with more regions is. */
+static void mjDecodeTriggers(const cJSON *root, ScenarioManifest *m,
+                             ScnParseReport *rep) {
+    const cJSON *arr = cJSON_GetObjectItemCaseSensitive(root, "triggers");
+    const cJSON *entry;
+    int          at = 0;
+
+    if (arr == NULL) {
+        return;
+    }
+    if (!cJSON_IsArray(arr)) {
+        mjReport(rep, "triggers", "scenario: triggers is not an array");
+        return;
+    }
+    cJSON_ArrayForEach(entry, arr) {
+        char         where[SCN_VALIDATE_KEY_LEN];
+        ScnTrigger  *trig;
+        const cJSON *when;
+        const cJSON *list;
+        const cJSON *row;
+        int          n = at++;
+
+        snprintf(where, sizeof(where), "triggers[%d]", n);
+        if (!cJSON_IsObject(entry)) {
+            mjReport(rep, where, "scenario: %s is not a trigger object",
+                     where);
+            continue;
+        }
+        if (m->numTriggers >= SCN_TRIGGERS_MAX) {
+            mjReport(rep, where, "scenario: more than %d triggers; %s dropped",
+                     SCN_TRIGGERS_MAX, where);
+            continue;
+        }
+        trig = &m->triggers[m->numTriggers];
+        m->numTriggers++;
+        memset(trig, 0, sizeof(*trig));
+
+        when = cJSON_GetObjectItemCaseSensitive(entry, "when");
+        if (cJSON_IsString(when) && when->valuestring != NULL) {
+            mjCopyStr(trig->when, sizeof(trig->when), when->valuestring);
+        } else {
+            mjReport(rep, where, "scenario: %s names no hook to run on",
+                     where);
+        }
+
+        list = cJSON_GetObjectItemCaseSensitive(entry, "where");
+        if (list != NULL && !cJSON_IsArray(list)) {
+            mjReport(rep, where, "scenario: %s's where is not an array",
+                     where);
+        } else if (list != NULL) {
+            int w = 0;
+            cJSON_ArrayForEach(row, list) {
+                char slot[SCN_VALIDATE_KEY_LEN];
+                snprintf(slot, sizeof(slot), "%s.where[%d]", where, w++);
+                if (trig->numWhere >= SCN_TRIGGER_CONDS_MAX) {
+                    mjReport(rep, slot,
+                             "scenario: more than %d tests on one trigger; "
+                             "%s dropped", SCN_TRIGGER_CONDS_MAX, slot);
+                    continue;
+                }
+                mjTrigCond(row, &trig->where[trig->numWhere], slot, rep);
+                trig->numWhere++;
+            }
+        }
+
+        list = cJSON_GetObjectItemCaseSensitive(entry, "then");
+        if (list != NULL && !cJSON_IsArray(list)) {
+            mjReport(rep, where, "scenario: %s's then is not an array", where);
+        } else if (list != NULL) {
+            int a = 0;
+            cJSON_ArrayForEach(row, list) {
+                char slot[SCN_VALIDATE_KEY_LEN];
+                snprintf(slot, sizeof(slot), "%s.then[%d]", where, a++);
+                if (trig->numThen >= SCN_TRIGGER_ACTIONS_MAX) {
+                    mjReport(rep, slot,
+                             "scenario: more than %d actions on one trigger; "
+                             "%s dropped", SCN_TRIGGER_ACTIONS_MAX, slot);
+                    continue;
+                }
+                mjTrigAct(row, &trig->then[trig->numThen], slot, rep);
+                trig->numThen++;
+            }
+        }
+    }
+}
+
 static void mjDecodeBrains(const cJSON *root, ScnManifestDoc *d,
                            ScnParseReport *rep) {
     const cJSON *arr = cJSON_GetObjectItemCaseSensitive(root, "brains");
@@ -514,8 +776,9 @@ static bool mjDecodeApi(const cJSON *root, int *out, char *err, size_t errLen) {
 
 /* Everything the schema names, out of the tree and into the struct.
  *
- * triggers is not read. Its schema is not settled, so nothing decodes it and
- * it rides along in the tree like any other key this build has no use for.
+ * triggers is read here and written back from the struct, so a key inside a
+ * trigger that this build does not know is not kept the way an unknown key
+ * elsewhere in the tree is.
  *
  * False for a manifest that cannot be decoded at all, which today is an api
  * this build cannot read. Everything else reports and carries on. */
@@ -542,6 +805,7 @@ static bool mjDecode(ScnManifestDoc *d, ScnParseReport *rep,
     mjDecodeRules(d->root, m, rep);
     mjDecodeTags(d->root, m, rep);
     mjDecodeRegions(d->root, m, rep);
+    mjDecodeTriggers(d->root, m, rep);
     mjDecodeBrains(d->root, d, rep);
     return true;
 }
@@ -822,6 +1086,96 @@ static void mjEmitTagKind(cJSON *tags, const char *key,
     }
 }
 
+/* One value or argument back out, in the kind it was read as. act is the
+ * action the value belongs to, for a string held on its text, and is NULL
+ * for a condition's value. NONE is a slot that did not read, and goes out as
+ * a null so the row keeps the length the file gave it. */
+static cJSON *mjTrigValueOut(const ScnTrigValue *v, const ScnTrigAct *act) {
+    switch (v->kind) {
+    case SCN_TRIG_VAL_NUMBER:
+        return cJSON_CreateNumber(v->num);
+    case SCN_TRIG_VAL_BOOL:
+        return cJSON_CreateBool(v->num != 0.0 ? 1 : 0);
+    case SCN_TRIG_VAL_STRING:
+        if (v->inText && act != NULL) {
+            return cJSON_CreateString(act->text);
+        }
+        return cJSON_CreateString(v->text);
+    case SCN_TRIG_VAL_FIELD: {
+        cJSON *obj = cJSON_CreateObject();
+        if (obj == NULL) {
+            return NULL;
+        }
+        cJSON_AddStringToObject(obj, "field", v->text);
+        return obj;
+    }
+    case SCN_TRIG_VAL_NONE:
+    default:
+        return cJSON_CreateNull();
+    }
+}
+
+/* The triggers array built fresh from the struct. Unlike the rest of the
+ * emit, nothing of what was parsed is kept: a trigger is written whole or
+ * not at all, so the array the file gets is the array the struct holds.
+ *
+ * The key goes out whether or not there are any, the way brains and regions
+ * do, so a manifest that stated an empty array still has one after the
+ * trip. */
+static void mjEmitTriggers(cJSON *root, const ScenarioManifest *m) {
+    cJSON *arr;
+    int    i, j, k;
+
+    arr = cJSON_CreateArray();
+    if (arr == NULL) {
+        return;
+    }
+    for (i = 0; i < (int)m->numTriggers; i++) {
+        const ScnTrigger *t = &m->triggers[i];
+        cJSON            *obj = cJSON_CreateObject();
+        cJSON            *where;
+        cJSON            *then;
+
+        if (obj == NULL) {
+            break;
+        }
+        cJSON_AddItemToArray(arr, obj);
+        cJSON_AddStringToObject(obj, "when", t->when);
+
+        where = cJSON_AddArrayToObject(obj, "where");
+        for (j = 0; where != NULL && j < (int)t->numWhere; j++) {
+            const ScnTrigCond *c    = &t->where[j];
+            const char        *name = mjTrigOpName(c->op);
+            cJSON             *row  = cJSON_CreateArray();
+
+            if (row == NULL) {
+                break;
+            }
+            cJSON_AddItemToArray(where, row);
+            cJSON_AddItemToArray(row, cJSON_CreateString(c->field));
+            cJSON_AddItemToArray(row,
+                                 cJSON_CreateString(name != NULL ? name : ""));
+            cJSON_AddItemToArray(row, mjTrigValueOut(&c->value, NULL));
+        }
+
+        then = cJSON_AddArrayToObject(obj, "then");
+        for (j = 0; then != NULL && j < (int)t->numThen; j++) {
+            const ScnTrigAct *a   = &t->then[j];
+            cJSON            *row = cJSON_CreateArray();
+
+            if (row == NULL) {
+                break;
+            }
+            cJSON_AddItemToArray(then, row);
+            cJSON_AddItemToArray(row, cJSON_CreateString(a->op));
+            for (k = 0; k < (int)a->numArgs; k++) {
+                cJSON_AddItemToArray(row, mjTrigValueOut(&a->args[k], a));
+            }
+        }
+    }
+    mjPut(root, "triggers", arr);
+}
+
 /* The decoded fields written back over a copy of the parsed tree. Anything
  * the copy holds that is not written here is left exactly as it arrived. */
 static void mjEmit(cJSON *root, const ScnManifestDoc *d) {
@@ -876,6 +1230,8 @@ static void mjEmit(cJSON *root, const ScnManifestDoc *d) {
             mjPutNumber(r, "h", m->regions[i].h);
         }
     }
+
+    mjEmitTriggers(root, m);
 
     mjPutString(root, "script", d->script);
 

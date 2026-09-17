@@ -32,6 +32,13 @@
  *        the default, an api that is negative or has no finite value is
  *        refused outright, and a manifest whose numbers are in range is
  *        untouched
+ * run_scenario_manifest_json_triggers
+ *      — two triggers holding all four value kinds, an in and an eq, and an
+ *        action whose long line lands on the action rather than in the
+ *        argument slot, out to text and back unchanged; a triggers key that
+ *        is not an array and an entry that is not an object are reported
+ *        rather than refused; and each of the four caps drops what is past
+ *        it and says which row went
  */
 
 #include <stdint.h>
@@ -769,5 +776,337 @@ int run_scenario_manifest_json_number_range(void) {
                       (unsigned)m->lobby.teams[0].maxBots);
         scnManifestFree(d);
     }
+    return 0;
+}
+
+/* ── Triggers ─────────────────────────────────────────────────────── */
+
+/* The long line an announce carries: past SCN_TRIGGER_NAME_LEN, so it lands
+   on the action's text rather than in the argument slot. */
+static const char kLongLine[] =
+    "The ring holds and the wave is turned back short of the keep";
+
+/* Two triggers between them holding all four value kinds, an in and an eq,
+   and an action whose first argument is too long for an argument slot. */
+static const char kTriggerManifest[] =
+    "{\n"
+    "  \"manifest\": 1,\n"
+    "  \"api\": 1,\n"
+    "  \"name\": \"Trigger trial\",\n"
+    "  \"triggers\": [\n"
+    "    { \"when\": \"on_base_captured\",\n"
+    "      \"where\": [ [\"new_team\", \"eq\", 1],\n"
+    "                   [\"tag\", \"in\", \"outer_base\"] ],\n"
+    "      \"then\": [ [\"announce\",\n"
+    "                   \"The ring holds and the wave is turned back short "
+    "of the keep\", 5],\n"
+    "                  [\"set_score\", { \"field\": \"new\" }, 10] ] },\n"
+    "    { \"when\": \"on_tick\",\n"
+    "      \"where\": [ [\"scripted\", \"eq\", false] ],\n"
+    "      \"then\": [ [\"log\", \"tick\"] ] }\n"
+    "  ]\n"
+    "}\n";
+
+/* Is a key among the issues the parse collected? */
+static bool sawIssue(const ScnValidateResult *sink, const char *key) {
+    int i;
+    for (i = 0; i < (int)sink->count; i++) {
+        if (strcmp(sink->issues[i].key, key) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* What the two triggers of kTriggerManifest have to decode to. Held apart
+   from the round trip so the same reading is made of the text this build
+   wrote and of the text it was given. */
+static int triggerManifestIsRight(const ScenarioManifest *m) {
+    const ScnTrigger *t;
+    const ScnTrigAct *a;
+
+    UT_ASSERT_MSG(m->numTriggers == 2, "trigger count is %u",
+                  (unsigned)m->numTriggers);
+
+    t = &m->triggers[0];
+    UT_ASSERT(strcmp(t->when, "on_base_captured") == 0);
+    UT_ASSERT_MSG(t->numWhere == 2, "trigger 0 holds %u tests",
+                  (unsigned)t->numWhere);
+    UT_ASSERT_MSG(t->numThen == 2, "trigger 0 holds %u actions",
+                  (unsigned)t->numThen);
+
+    /* A number against eq. */
+    UT_ASSERT(strcmp(t->where[0].field, "new_team") == 0);
+    UT_ASSERT(t->where[0].op == SCN_TRIG_CMP_EQ);
+    UT_ASSERT(t->where[0].value.kind == SCN_TRIG_VAL_NUMBER);
+    UT_ASSERT_MSG(t->where[0].value.num == 1.0, "new_team is %g",
+                  t->where[0].value.num);
+
+    /* A short string against in: short enough for the slot's own text. */
+    UT_ASSERT(strcmp(t->where[1].field, "tag") == 0);
+    UT_ASSERT(t->where[1].op == SCN_TRIG_CMP_IN);
+    UT_ASSERT(t->where[1].value.kind == SCN_TRIG_VAL_STRING);
+    UT_ASSERT(!t->where[1].value.inText);
+    UT_ASSERT(strcmp(t->where[1].value.text, "outer_base") == 0);
+
+    /* The long line is on the action, and the slot that holds it says so
+       rather than carrying the bytes. */
+    a = &t->then[0];
+    UT_ASSERT(strcmp(a->op, "announce") == 0);
+    UT_ASSERT_MSG(a->numArgs == 2, "announce took %u arguments",
+                  (unsigned)a->numArgs);
+    UT_ASSERT(a->args[0].kind == SCN_TRIG_VAL_STRING);
+    UT_ASSERT_MSG(a->args[0].inText,
+                  "the long line was not moved to the action's text");
+    UT_ASSERT(a->args[0].text[0] == '\0');
+    UT_ASSERT_MSG(strcmp(a->text, kLongLine) == 0,
+                  "the action's text is '%s'", a->text);
+    UT_ASSERT(a->args[1].kind == SCN_TRIG_VAL_NUMBER);
+    UT_ASSERT(a->args[1].num == 5.0);
+
+    /* A field reference, and a number beside it. */
+    a = &t->then[1];
+    UT_ASSERT(strcmp(a->op, "set_score") == 0);
+    UT_ASSERT_MSG(a->numArgs == 2, "set_score took %u arguments",
+                  (unsigned)a->numArgs);
+    UT_ASSERT(a->args[0].kind == SCN_TRIG_VAL_FIELD);
+    UT_ASSERT(strcmp(a->args[0].text, "new") == 0);
+    UT_ASSERT(a->args[1].kind == SCN_TRIG_VAL_NUMBER);
+    UT_ASSERT(a->args[1].num == 10.0);
+    UT_ASSERT_MSG(a->text[0] == '\0',
+                  "an action with no long string carries '%s'", a->text);
+
+    /* A boolean. */
+    t = &m->triggers[1];
+    UT_ASSERT(strcmp(t->when, "on_tick") == 0);
+    UT_ASSERT_MSG(t->numWhere == 1, "trigger 1 holds %u tests",
+                  (unsigned)t->numWhere);
+    UT_ASSERT(strcmp(t->where[0].field, "scripted") == 0);
+    UT_ASSERT(t->where[0].value.kind == SCN_TRIG_VAL_BOOL);
+    UT_ASSERT_MSG(t->where[0].value.num == 0.0, "false decoded as %g",
+                  t->where[0].value.num);
+    UT_ASSERT_MSG(t->numThen == 1, "trigger 1 holds %u actions",
+                  (unsigned)t->numThen);
+    UT_ASSERT(strcmp(t->then[0].op, "log") == 0);
+    UT_ASSERT(t->then[0].args[0].kind == SCN_TRIG_VAL_STRING);
+    UT_ASSERT(strcmp(t->then[0].args[0].text, "tick") == 0);
+    return 0;
+}
+
+int run_scenario_manifest_json_triggers(void) {
+    char               err[256];
+    char               soft[256];
+    ScnManifestDoc    *first;
+    ScnManifestDoc    *again;
+    ScnValidateResult *sink;
+    ScnParseReport     rep;
+    char              *text;
+    char              *big;
+    size_t             used;
+    int                i;
+    int                rc;
+
+    /* ── The round trip ──────────────────────────────────────────── */
+
+    first = parseText(kTriggerManifest, NULL, err, sizeof(err));
+    UT_ASSERT_MSG(first != NULL, "the manifest was refused: %s", err);
+
+    rc = triggerManifestIsRight(scnManifestValues(first));
+    if (rc != 0) {
+        scnManifestFree(first);
+        return rc;
+    }
+
+    text = scnManifestWrite(first, err, sizeof(err));
+    if (text == NULL) {
+        scnManifestFree(first);
+        UT_FAIL("the manifest could not be written: %s", err);
+    }
+    again = parseText(text, NULL, err, sizeof(err));
+    free(text);
+    if (again == NULL) {
+        scnManifestFree(first);
+        UT_FAIL("what was written would not parse: %s", err);
+    }
+
+    rc = triggerManifestIsRight(scnManifestValues(again));
+    if (rc == 0 &&
+        memcmp(scnManifestValues(first)->triggers,
+               scnManifestValues(again)->triggers,
+               sizeof(ScnTrigger) * 2) != 0) {
+        fprintf(stderr, "FAIL %s:%d: the round trip changed the triggers\n",
+                __FILE__, __LINE__);
+        rc = 1;
+    }
+    scnManifestFree(first);
+    scnManifestFree(again);
+    if (rc != 0) {
+        return rc;
+    }
+
+    /* ── A triggers key that is not a list of objects ─────────────── */
+
+    sink = (ScnValidateResult *)malloc(sizeof(*sink));
+    UT_ASSERT(sink != NULL);
+    memset(sink, 0, sizeof(*sink));
+    soft[0]     = '\0';
+    rep.soft    = soft;
+    rep.softLen = sizeof(soft);
+    rep.sink    = sink;
+
+    first = parseText("{ \"manifest\": 1, \"triggers\": 7 }", &rep, err,
+                      sizeof(err));
+    if (first == NULL) {
+        free(sink);
+        UT_FAIL("a triggers key that is not an array was refused: %s", err);
+    }
+    if (scnManifestValues(first)->numTriggers != 0 ||
+        !sawIssue(sink, "triggers")) {
+        scnManifestFree(first);
+        free(sink);
+        UT_FAIL("a triggers key that is not an array was not reported");
+    }
+    scnManifestFree(first);
+
+    memset(sink, 0, sizeof(*sink));
+    first = parseText("{ \"manifest\": 1, \"triggers\": [ 7, \"no\" ] }", &rep,
+                      err, sizeof(err));
+    if (first == NULL) {
+        free(sink);
+        UT_FAIL("a triggers entry that is not an object was refused: %s", err);
+    }
+    if (scnManifestValues(first)->numTriggers != 0 ||
+        !sawIssue(sink, "triggers[0]") || !sawIssue(sink, "triggers[1]")) {
+        scnManifestFree(first);
+        free(sink);
+        UT_FAIL("a triggers entry that is not an object was not reported");
+    }
+    scnManifestFree(first);
+
+    /* ── Each of the four caps ───────────────────────────────────── */
+
+    /* One more trigger than the struct holds. */
+    big = (char *)malloc(1 << 16);
+    if (big == NULL) {
+        free(sink);
+        UT_FAIL("out of memory building the over-cap manifest");
+    }
+    used = (size_t)snprintf(big, 1 << 16, "{ \"manifest\": 1, \"triggers\": [");
+    for (i = 0; i <= SCN_TRIGGERS_MAX; i++) {
+        used += (size_t)snprintf(big + used, (1 << 16) - used,
+                                 "%s{ \"when\": \"on_tick\" }",
+                                 (i > 0) ? ", " : "");
+    }
+    snprintf(big + used, (1 << 16) - used, "] }");
+
+    memset(sink, 0, sizeof(*sink));
+    first = parseText(big, &rep, err, sizeof(err));
+    if (first == NULL) {
+        free(big);
+        free(sink);
+        UT_FAIL("more triggers than the cap was refused: %s", err);
+    }
+    if (scnManifestValues(first)->numTriggers != SCN_TRIGGERS_MAX) {
+        rc = (int)scnManifestValues(first)->numTriggers;
+        scnManifestFree(first);
+        free(big);
+        free(sink);
+        UT_FAIL("%d triggers were kept, expected %d", rc, SCN_TRIGGERS_MAX);
+    }
+    {
+        char want[SCN_VALIDATE_KEY_LEN];
+        snprintf(want, sizeof(want), "triggers[%d]", SCN_TRIGGERS_MAX);
+        if (!sawIssue(sink, want)) {
+            scnManifestFree(first);
+            free(big);
+            free(sink);
+            UT_FAIL("the trigger past the cap was dropped without a word");
+        }
+    }
+    scnManifestFree(first);
+
+    /* One more test, one more action and one more argument than a trigger
+       holds, all on the one trigger. */
+    used = (size_t)snprintf(
+        big, 1 << 16,
+        "{ \"manifest\": 1, \"triggers\": [ { \"when\": \"on_tick\","
+        " \"where\": [");
+    for (i = 0; i <= SCN_TRIGGER_CONDS_MAX; i++) {
+        used += (size_t)snprintf(big + used, (1 << 16) - used,
+                                 "%s[\"n\", \"eq\", %d]", (i > 0) ? ", " : "",
+                                 i);
+    }
+    used += (size_t)snprintf(big + used, (1 << 16) - used, "], \"then\": [");
+    for (i = 0; i <= SCN_TRIGGER_ACTIONS_MAX; i++) {
+        int j;
+        used += (size_t)snprintf(big + used, (1 << 16) - used, "%s[\"log\"",
+                                 (i > 0) ? ", " : "");
+        /* The first action is the one given more arguments than it holds. */
+        for (j = 0; j < ((i == 0) ? SCN_TRIGGER_ARGS_MAX + 1 : 1); j++) {
+            used += (size_t)snprintf(big + used, (1 << 16) - used, ", %d", j);
+        }
+        used += (size_t)snprintf(big + used, (1 << 16) - used, "]");
+    }
+    snprintf(big + used, (1 << 16) - used, "] } ] }");
+
+    memset(sink, 0, sizeof(*sink));
+    first = parseText(big, &rep, err, sizeof(err));
+    free(big);
+    if (first == NULL) {
+        free(sink);
+        UT_FAIL("a trigger past its caps was refused: %s", err);
+    }
+    {
+        const ScnTrigger *t = &scnManifestValues(first)->triggers[0];
+        bool              ok = true;
+        char              want[SCN_VALIDATE_KEY_LEN];
+
+        if (t->numWhere != SCN_TRIGGER_CONDS_MAX) {
+            fprintf(stderr, "FAIL %s:%d: %u tests were kept, expected %d\n",
+                    __FILE__, __LINE__, (unsigned)t->numWhere,
+                    SCN_TRIGGER_CONDS_MAX);
+            ok = false;
+        }
+        if (t->numThen != SCN_TRIGGER_ACTIONS_MAX) {
+            fprintf(stderr, "FAIL %s:%d: %u actions were kept, expected %d\n",
+                    __FILE__, __LINE__, (unsigned)t->numThen,
+                    SCN_TRIGGER_ACTIONS_MAX);
+            ok = false;
+        }
+        if (t->then[0].numArgs != SCN_TRIGGER_ARGS_MAX) {
+            fprintf(stderr, "FAIL %s:%d: %u arguments were kept, expected %d\n",
+                    __FILE__, __LINE__, (unsigned)t->then[0].numArgs,
+                    SCN_TRIGGER_ARGS_MAX);
+            ok = false;
+        }
+        snprintf(want, sizeof(want), "triggers[0].where[%d]",
+                 SCN_TRIGGER_CONDS_MAX);
+        if (!sawIssue(sink, want)) {
+            fprintf(stderr, "FAIL %s:%d: the test past the cap said nothing\n",
+                    __FILE__, __LINE__);
+            ok = false;
+        }
+        snprintf(want, sizeof(want), "triggers[0].then[%d]",
+                 SCN_TRIGGER_ACTIONS_MAX);
+        if (!sawIssue(sink, want)) {
+            fprintf(stderr,
+                    "FAIL %s:%d: the action past the cap said nothing\n",
+                    __FILE__, __LINE__);
+            ok = false;
+        }
+        if (!sawIssue(sink, "triggers[0].then[0]")) {
+            fprintf(stderr,
+                    "FAIL %s:%d: the argument past the cap said nothing\n",
+                    __FILE__, __LINE__);
+            ok = false;
+        }
+        scnManifestFree(first);
+        if (!ok) {
+            free(sink);
+            return 1;
+        }
+    }
+
+    free(sink);
     return 0;
 }

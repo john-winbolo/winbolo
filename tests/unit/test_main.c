@@ -1538,6 +1538,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_manifest_json_team_init",                run_scenario_manifest_json_team_init                },
     { "scenario_map_body_length",                        run_scenario_map_body_length                        },
     { "scenario_manifest_json_number_range",             run_scenario_manifest_json_number_range             },
+    { "scenario_manifest_json_triggers",                 run_scenario_manifest_json_triggers                 },
     { "scenario_map_find_container",                     run_scenario_map_find_container                     },
     { "scenario_map_has_script_chunk",                   run_scenario_map_has_script_chunk                   },
     { "scenario_map_preview_truncates",                  run_scenario_map_preview_truncates                  },

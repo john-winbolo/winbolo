@@ -1007,8 +1007,9 @@ static void scnReadRegions(lua_State *L, int tbl, ScenarioManifest *m,
 /* The whole table into the struct. A file with no scenario table at all is
  * refused: it ran, but it is not a scenario.
  *
- * triggers is not read. Its schema is not settled, so a script that
- * carries one is neither parsed nor refused for it. */
+ * triggers is not read. The schema is settled and the manifest carries them,
+ * but they come out of manifest.json alone: a script that states its own are
+ * neither parsed nor refused for it. */
 bool scnReadManifest(lua_State *L, ScenarioManifest *m,
                      const char *path, char *err, size_t errLen,
                      ScnParseReport *rep) {
@@ -1200,7 +1201,9 @@ static void scnPushRegions(lua_State *L, const ScenarioManifest *m) {
  * exactly what went on, so that comparison has nothing to do. A loose script
  * gets nothing pushed and declares its own table, as it always has.
  *
- * triggers is not built. Nothing reads it and the struct does not carry it.
+ * triggers is not built. The struct carries them, but scnReadManifest does not
+ * read one back, so a table pushed with them would not survive the comparison
+ * that follows: the push and the read go together or neither goes.
  *
  * The value goes on through the globals table itself rather than through
  * lua_setglobal, for the reason scnRawGlobal reads through it: a metatable on
