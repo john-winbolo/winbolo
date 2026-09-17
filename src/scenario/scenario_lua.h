@@ -130,6 +130,161 @@ typedef struct {
     size_t            count;
 } ScnLuaWordTable;
 
+/* ── The functions a scenario author writes ─────────────────────────── */
+
+/* What kind of function this is, which decides what the host does with it
+ * and what a stub for it looks like. */
+typedef enum {
+    SCN_FN_LIFECYCLE_HOOK, /* the round reaching a point of its own; comes
+                              off no queue and takes no scripted flag */
+    SCN_FN_EVENT_HOOK,     /* off the event queue; takes the trailing
+                              scripted flag */
+    SCN_FN_REGION_HOOK,    /* derived from tank positions once a tick; no
+                              scripted flag */
+    SCN_FN_POLICY          /* the host asks it a question and reads the
+                              answer */
+} ScnLuaFnKind;
+
+/* One function the author writes and the host calls. params are the
+ * author's own parameter names in order, without the trailing scripted flag
+ * an event hook carries — kind is what says whether there is one. returns
+ * says what a policy answers, and is NULL for a hook, which answers
+ * nothing. */
+typedef struct {
+    const char        *name;
+    ScnLuaFnKind       kind;
+    const char *const *params;
+    size_t             paramCount;
+    const char        *returns;
+} ScnLuaFnRow;
+
+/* The parameter names of one row, as a list below writes them. Each of
+ * these leaves its names followed by a comma, so the array built from a row
+ * closes on the NULL that ends it however many names there are, none
+ * included. Five is as many as any function on the surface takes. */
+#define SCN_FN_ARGS0()
+#define SCN_FN_ARGS1(a)             a,
+#define SCN_FN_ARGS2(a, b)          a, b,
+#define SCN_FN_ARGS3(a, b, c)       a, b, c,
+#define SCN_FN_ARGS4(a, b, c, d)    a, b, c, d,
+#define SCN_FN_ARGS5(a, b, c, d, e) a, b, c, d, e,
+
+/* Every function a round may call, in one list: the four lifecycle calls
+ * and one per event the host turns into a hook. The name a script writes it
+ * under is here and nowhere else, so the name the boot resolves, the name a
+ * case defines and the name a document is written from cannot drift apart.
+ *
+ * The four at the top are not events. They are made where the round reaches
+ * the point each of them names, and they take no trailing scripted boolean
+ * because there is no event behind them to have caused.
+ *
+ * Nor do the last two, and for the same reason read the other way round.
+ * Every hook between them comes off the queue, where the entry carries the
+ * mark saying whether the scenario caused the fact. The two region hooks
+ * come off no queue at all: the host samples where the tanks are once a
+ * tick and compares that against the sample before it, so what it has is a
+ * difference between two pictures and not an action anybody took. A
+ * boolean there could only be a guess about which of the things that moved
+ * a tank since the last sample mattered, and a script reading it would be
+ * reading a guess. See scnScanRegions for what bounds the loop instead.
+ *
+ * The parameter names are the author's own, in order, and stop short of the
+ * scripted flag an event hook carries — the kind beside them is what says
+ * there is one. scenario_host.c expands this list for the ScnHookId enum it
+ * dispatches by, so the order of the rows is the order of that enum and a
+ * row moved here moves a value the host indexes with. */
+#define SCN_HOOK_LIST(X)                                                     \
+    X(SETUP,            "on_setup",            SCN_FN_LIFECYCLE_HOOK,        \
+      SCN_FN_ARGS0())                                                        \
+    X(START,            "on_start",            SCN_FN_LIFECYCLE_HOOK,        \
+      SCN_FN_ARGS0())                                                        \
+    X(TICK,             "on_tick",             SCN_FN_LIFECYCLE_HOOK,        \
+      SCN_FN_ARGS1("tick"))                                                  \
+    X(END,              "on_end",              SCN_FN_LIFECYCLE_HOOK,        \
+      SCN_FN_ARGS0())                                                        \
+    X(LOBBY,            "on_lobby",            SCN_FN_EVENT_HOOK,            \
+      SCN_FN_ARGS1("p"))                                                     \
+    X(PLAYER_JOIN,      "on_player_join",      SCN_FN_EVENT_HOOK,            \
+      SCN_FN_ARGS1("p"))                                                     \
+    X(PLAYER_LEAVE,     "on_player_leave",     SCN_FN_EVENT_HOOK,            \
+      SCN_FN_ARGS1("p"))                                                     \
+    X(TEAM_CHANGED,     "on_team_changed",     SCN_FN_EVENT_HOOK,            \
+      SCN_FN_ARGS2("p", "team"))                                             \
+    X(CHAT,             "on_chat",             SCN_FN_EVENT_HOOK,            \
+      SCN_FN_ARGS2("p", "text"))                                             \
+    X(PING,             "on_ping",             SCN_FN_EVENT_HOOK,            \
+      SCN_FN_ARGS4("p", "kind", "mx", "my"))                                 \
+    X(TANK_SPAWNED,     "on_tank_spawned",     SCN_FN_EVENT_HOOK,            \
+      SCN_FN_ARGS4("p", "mx", "my", "respawn"))                              \
+    X(TANK_KILLED,      "on_tank_killed",      SCN_FN_EVENT_HOOK,            \
+      SCN_FN_ARGS3("victim", "killer", "cause"))                             \
+    X(LGM_DIED,         "on_lgm_died",         SCN_FN_EVENT_HOOK,            \
+      SCN_FN_ARGS4("p", "killer", "mx", "my"))                               \
+    X(LGM_LANDED,       "on_lgm_landed",       SCN_FN_EVENT_HOOK,            \
+      SCN_FN_ARGS3("p", "mx", "my"))                                         \
+    X(BASE_CAPTURED,    "on_base_captured",    SCN_FN_EVENT_HOOK,            \
+      SCN_FN_ARGS3("n", "old", "new"))                                       \
+    X(BASE_NEUTRALIZED, "on_base_neutralized", SCN_FN_EVENT_HOOK,            \
+      SCN_FN_ARGS2("n", "old"))                                              \
+    X(PILL_CAPTURED,    "on_pill_captured",    SCN_FN_EVENT_HOOK,            \
+      SCN_FN_ARGS3("n", "old", "new"))                                       \
+    X(PILL_PLACED,      "on_pill_placed",      SCN_FN_EVENT_HOOK,            \
+      SCN_FN_ARGS3("n", "p", "armour"))                                      \
+    X(PILL_PICKED_UP,   "on_pill_picked_up",   SCN_FN_EVENT_HOOK,            \
+      SCN_FN_ARGS2("n", "p"))                                                \
+    X(PILL_KILLED,      "on_pill_killed",      SCN_FN_EVENT_HOOK,            \
+      SCN_FN_ARGS2("n", "by"))                                               \
+    X(BUILT,            "on_built",            SCN_FN_EVENT_HOOK,            \
+      SCN_FN_ARGS4("p", "action", "x", "y"))                                 \
+    X(MINE_LAID,        "on_mine_laid",        SCN_FN_EVENT_HOOK,            \
+      SCN_FN_ARGS3("p", "mx", "my"))                                         \
+    X(MINE_EXPLOSION,   "on_mine_explosion",   SCN_FN_EVENT_HOOK,            \
+      SCN_FN_ARGS3("mx", "my", "layer"))                                     \
+    X(ENTER_REGION,     "on_enter_region",     SCN_FN_REGION_HOOK,           \
+      SCN_FN_ARGS2("p", "name"))                                             \
+    X(LEAVE_REGION,     "on_leave_region",     SCN_FN_REGION_HOOK,           \
+      SCN_FN_ARGS2("p", "name"))
+
+/* Every question the host puts to a round, in one list, in the order the
+ * engine reaches them: the two the lobby and the round's endings ask, then
+ * the ones asked in the middle of doing something.
+ *
+ * A policy is looked up by name at each call rather than resolved once, so
+ * unlike a hook it has no enum and no index — the name in the row is the
+ * whole of what the host needs, and the string at the call site is the same
+ * string this list holds.
+ *
+ * The last column is what the answer means. Every policy also answers
+ * nothing, by not being declared or by returning nil, and that is the
+ * ordinary rule rather than a value; see docs/SCENARIO_API.md for which
+ * rule each one falls back to. */
+#define SCN_POLICY_LIST(X)                                                   \
+    X(ALLOW_EXTRA_TEAMS, "allow_extra_teams", SCN_FN_ARGS0(),                \
+      "true to let the seat sit on a team of its own")                       \
+    X(ALLOW_BASE_WIN,    "allow_base_win",    SCN_FN_ARGS0(),                \
+      "false to take that ending out of the round")                          \
+    X(CAN_RESPAWN,       "can_respawn",       SCN_FN_ARGS1("p"),             \
+      "false to hold the tank where it is")                                  \
+    X(CAN_BUILD,         "can_build",                                        \
+      SCN_FN_ARGS5("p", "action", "x", "y", "n"),                            \
+      "false to refuse the order")                                           \
+    X(CAN_CAPTURE,       "can_capture",                                      \
+      SCN_FN_ARGS3("kind", "n", "p"),                                        \
+      "false to leave the objective where it is")                            \
+    X(ANNOUNCE,          "announce",                                         \
+      SCN_FN_ARGS3("kind", "subject", "actor"),                              \
+      "false to keep the line off every newswire")                           \
+    X(CAN_DIE,           "can_die",                                          \
+      SCN_FN_ARGS4("kind", "n", "killer", "cause"),                          \
+      "false to leave what the blow landed on standing")                     \
+    X(CHOOSE_START,      "on_choose_start",   SCN_FN_ARGS1("p"),             \
+      "a start number, counted from 1 as game.start counts")                 \
+    X(SPAWN_LOADOUT,     "spawn_loadout",     SCN_FN_ARGS1("p"),             \
+      "a loadout word, or a table of shells, mines, armour and trees")       \
+    X(DAMAGE_SCALE,      "damage_scale",                                     \
+      SCN_FN_ARGS3("attacker", "victim", "cause"),                           \
+      "a percent from 0 to 10000, where 100 is the ordinary amount")
+
 /*********************************************************
  *NAME:          scenarioLuaInstall
  *PURPOSE:
@@ -170,6 +325,20 @@ const ScnLuaTerrain *scenarioLuaTerrain(size_t *count);
  *  in the order it names them.
  *********************************************************/
 const ScnLuaWordTable *scenarioLuaWordTables(size_t *count);
+
+/*********************************************************
+ *NAME:          scenarioLuaFunctions
+ *PURPOSE:
+ *  Every hook and every policy a scenario author writes,
+ *  as one list: the hooks first, in the order the host
+ *  dispatches them, then the policies. *count is how many.
+ *
+ *  The rows are built from SCN_HOOK_LIST and
+ *  SCN_POLICY_LIST above, which are the same two lists the
+ *  host resolves its hooks from and names its policies at,
+ *  so what this answers is what the host actually calls.
+ *********************************************************/
+const ScnLuaFnRow *scenarioLuaFunctions(size_t *count);
 
 /* ── The three index rules ──────────────────────────────────────────
  *

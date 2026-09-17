@@ -2925,6 +2925,12 @@ int run_scenario_derived_define_region_adds_replaces_and_expires(void);
 int run_scenario_derived_region_loop_terminates(void);
 int run_scenario_derived_fixture_wins_without_on_tick(void);
 
+/* The function catalogue (test_scenario_functions.c): the rows that name
+ * every hook and every policy an author writes, and whether the parameter
+ * list a row claims is the one the host pushes. */
+int run_scenario_functions_table(void);
+int run_scenario_functions_match_dispatch(void);
+
 /* The WBSC container (test_scenario_package.c): the framing round trip,
  * the refusals a malformed buffer gets, the entry and brain lists, two
  * containers open at the same time, and the cap an entry is measured against

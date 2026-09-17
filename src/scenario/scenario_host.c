@@ -289,60 +289,23 @@ static void scnLockLeave(ScnVmLock *l) {
 
 /* ── The hooks ────────────────────────────────────────────────────── */
 
-/* Every function a round may call, in one list: the four lifecycle calls
- * and one per event the host turns into a hook. The name a script writes it
- * under is here and nowhere else, so the name the boot resolves and the name
- * a case defines cannot drift apart.
+/* SCN_HOOK_LIST is in scenario_lua.h, where it carries each hook's kind and
+ * parameter names as well as its name, so the catalogue the editor and the
+ * documentation read and the hooks this file dispatches are one list. What
+ * this file takes from it is the id and the name; the rest of a row is not
+ * the host's business.
  *
- * The four at the top are not events. They are made where the round reaches
- * the point each of them names, and they take no trailing scripted boolean
- * because there is no event behind them to have caused.
- *
- * Nor do the last two, and for the same reason read the other way round.
- * Every hook between them comes off the queue, where the entry carries the
- * mark saying whether the scenario caused the fact. The two region hooks
- * come off no queue at all: the host samples where the tanks are once a
- * tick and compares that against the sample before it, so what it has is a
- * difference between two pictures and not an action anybody took. A
- * boolean there could only be a guess about which of the things that moved
- * a tank since the last sample mattered, and a script reading it would be
- * reading a guess. See scnScanRegions for what bounds the loop instead. */
-#define SCN_HOOK_LIST(X)                                                     \
-    X(SETUP,            "on_setup")                                          \
-    X(START,            "on_start")                                          \
-    X(TICK,             "on_tick")                                           \
-    X(END,              "on_end")                                            \
-    X(LOBBY,            "on_lobby")                                          \
-    X(PLAYER_JOIN,      "on_player_join")                                    \
-    X(PLAYER_LEAVE,     "on_player_leave")                                   \
-    X(TEAM_CHANGED,     "on_team_changed")                                   \
-    X(CHAT,             "on_chat")                                           \
-    X(PING,             "on_ping")                                           \
-    X(TANK_SPAWNED,     "on_tank_spawned")                                   \
-    X(TANK_KILLED,      "on_tank_killed")                                    \
-    X(LGM_DIED,         "on_lgm_died")                                       \
-    X(LGM_LANDED,       "on_lgm_landed")                                     \
-    X(BASE_CAPTURED,    "on_base_captured")                                  \
-    X(BASE_NEUTRALIZED, "on_base_neutralized")                               \
-    X(PILL_CAPTURED,    "on_pill_captured")                                  \
-    X(PILL_PLACED,      "on_pill_placed")                                    \
-    X(PILL_PICKED_UP,   "on_pill_picked_up")                                 \
-    X(PILL_KILLED,      "on_pill_killed")                                    \
-    X(BUILT,            "on_built")                                          \
-    X(MINE_LAID,        "on_mine_laid")                                      \
-    X(MINE_EXPLOSION,   "on_mine_explosion")                                 \
-    X(ENTER_REGION,     "on_enter_region")                                   \
-    X(LEAVE_REGION,     "on_leave_region")
-
+ * The values below are what h->hooks is indexed by, so the order of the
+ * rows in that list is load-bearing here. */
 typedef enum {
-#define SCN_HOOK_ID_ROW(id, name) SCN_HOOK_##id,
+#define SCN_HOOK_ID_ROW(id, name, kind, params) SCN_HOOK_##id,
     SCN_HOOK_LIST(SCN_HOOK_ID_ROW)
 #undef SCN_HOOK_ID_ROW
     SCN_HOOK_COUNT
 } ScnHookId;
 
 static const char *const kScnHookNames[] = {
-#define SCN_HOOK_NAME_ROW(id, name) name,
+#define SCN_HOOK_NAME_ROW(id, name, kind, params) name,
     SCN_HOOK_LIST(SCN_HOOK_NAME_ROW)
 #undef SCN_HOOK_NAME_ROW
 };

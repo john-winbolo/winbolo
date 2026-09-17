@@ -4194,6 +4194,65 @@ static const ScnLuaWordTable kScnLuaWordTables[] = {
       sizeof(kScnTimerModeWords) / sizeof(kScnTimerModeWords[0]) },
 };
 
+/* ── The functions the author writes ──────────────────────────────── */
+
+/* One parameter-name array per row, built from the two lists in
+ * scenario_lua.h. Each array ends on a NULL, so a row's count below is the
+ * array's length less that terminator and the two cannot disagree. */
+#define SCN_FN_HOOK_PARAMS(id, name, kind, params)                            \
+    static const char *const kScnFnHook_##id[] = { params NULL };
+SCN_HOOK_LIST(SCN_FN_HOOK_PARAMS)
+#undef SCN_FN_HOOK_PARAMS
+
+#define SCN_FN_POLICY_PARAMS(id, name, params, returns)                       \
+    static const char *const kScnFnPolicy_##id[] = { params NULL };
+SCN_POLICY_LIST(SCN_FN_POLICY_PARAMS)
+#undef SCN_FN_POLICY_PARAMS
+
+/* The hooks first, in the order scenario_host.c dispatches them, then the
+ * policies. Both halves are the same row, so whatever reads this — a
+ * document, the editor's list of what a scenario may define — walks one
+ * table and reads the kind to tell a question from a fact. */
+static const ScnLuaFnRow kScnLuaFunctions[] = {
+#define SCN_FN_HOOK_ROW(id, name, kind, params)                               \
+    { name, kind, kScnFnHook_##id,                                            \
+      sizeof(kScnFnHook_##id) / sizeof(kScnFnHook_##id[0]) - 1, NULL },
+    SCN_HOOK_LIST(SCN_FN_HOOK_ROW)
+#undef SCN_FN_HOOK_ROW
+#define SCN_FN_POLICY_ROW(id, name, params, returns)                          \
+    { name, SCN_FN_POLICY, kScnFnPolicy_##id,                                 \
+      sizeof(kScnFnPolicy_##id) / sizeof(kScnFnPolicy_##id[0]) - 1, returns },
+    SCN_POLICY_LIST(SCN_FN_POLICY_ROW)
+#undef SCN_FN_POLICY_ROW
+};
+
+/* The table is the two lists and nothing else. The hook half is the tally
+ * ScnHookId ends on — scenario_host.c makes SCN_HOOK_COUNT from this same
+ * list — so a hook added there arrives here with its parameters or does not
+ * compile at all, the row macro having too few arguments. This holds the
+ * table against a row written in by hand underneath them, which would be
+ * the one way to have a function here the lists do not name.
+ *
+ * SCN_HOOK_COUNT itself belongs to the enum in scenario_host.c and is not
+ * visible from this file; scenario_functions_table is where the two are
+ * held together by name at run time. */
+#define SCN_FN_HOOK_TALLY(id, name, kind, params) +1
+#define SCN_FN_POLICY_TALLY(id, name, params, returns) +1
+BOLO_STATIC_ASSERT(
+    (int)(sizeof(kScnLuaFunctions) / sizeof(kScnLuaFunctions[0])) ==
+        (0 SCN_HOOK_LIST(SCN_FN_HOOK_TALLY)) +
+        (0 SCN_POLICY_LIST(SCN_FN_POLICY_TALLY)),
+    function_table_is_the_hook_list_and_the_policy_list);
+#undef SCN_FN_HOOK_TALLY
+#undef SCN_FN_POLICY_TALLY
+
+const ScnLuaFnRow *scenarioLuaFunctions(size_t *count) {
+    if (count != NULL) {
+        *count = sizeof(kScnLuaFunctions) / sizeof(kScnLuaFunctions[0]);
+    }
+    return kScnLuaFunctions;
+}
+
 const ScnLuaRow *scenarioLuaRows(size_t *count) {
     if (count != NULL) {
         *count = sizeof(kScnLuaRows) / sizeof(kScnLuaRows[0]);

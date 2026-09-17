@@ -3580,6 +3580,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # regions it names, and the enter and leave hooks the per-tick scan of
     # tank positions produces.
     tests/unit/test_scenario_derived.c
+    # The function catalogue: one row per hook and per policy an author
+    # writes, and the parameter list each row claims held against the
+    # arguments the host pushes at the dispatch site.
+    tests/unit/test_scenario_functions.c
     # The scenario read surface: the roster, pill, base, start, tank and
     # builder accessors, the whole-map terrain copy and the fielded count.
     tests/unit/test_scenario_reads.c
@@ -5769,6 +5773,8 @@ set(_unit_test_names
     scenario_derived_define_region_adds_replaces_and_expires
     scenario_derived_region_loop_terminates
     scenario_derived_fixture_wins_without_on_tick
+    scenario_functions_table
+    scenario_functions_match_dispatch
     scenario_package_round_trip
     scenario_package_bad_framing
     scenario_package_entry_names

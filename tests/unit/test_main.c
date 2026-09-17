@@ -1518,6 +1518,8 @@ static const UnitTestEntry s_tests[] = {
       run_scenario_derived_define_region_adds_replaces_and_expires                                           },
     { "scenario_derived_region_loop_terminates",         run_scenario_derived_region_loop_terminates         },
     { "scenario_derived_fixture_wins_without_on_tick",   run_scenario_derived_fixture_wins_without_on_tick   },
+    { "scenario_functions_table",                        run_scenario_functions_table                        },
+    { "scenario_functions_match_dispatch",               run_scenario_functions_match_dispatch               },
     { "scenario_package_round_trip",                     run_scenario_package_round_trip                     },
     { "scenario_package_bad_framing",                    run_scenario_package_bad_framing                    },
     { "scenario_package_entry_names",                    run_scenario_package_entry_names                    },
