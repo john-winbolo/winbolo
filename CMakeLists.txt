@@ -5675,6 +5675,7 @@ set(_unit_test_names
     scenario_host_api_too_new
     scenario_host_no_script
     scenario_host_manifest_roundtrip
+    scenario_host_trigger_manifest
     scenario_host_team_init_read
     scenario_host_seed_reproducible
     scenario_host_edit_after_attach
@@ -5724,6 +5725,8 @@ set(_unit_test_names
     scenario_validate_source_pushed_manifest
     scenario_validate_source_pushed_conflict
     scenario_validate_source_rule_range
+    scenario_validate_source_pushed_triggers
+    scenario_validate_trigger_caps
     scenario_lua_every_row_answers
     scenario_lua_read_index_passes_through
     scenario_lua_op_index_subtracts_one

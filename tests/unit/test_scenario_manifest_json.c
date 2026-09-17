@@ -16,7 +16,9 @@
  * run_scenario_manifest_agrees
  *      — two forms of the same scenario agree whatever order their rules
  *        and regions are in, and each field that can differ is refused
- *        with the key an author would look for
+ *        with the key an author would look for; triggers are compared in
+ *        order, having no name to be matched by, so the key naming one is
+ *        its position
  * run_scenario_manifest_from_values
  *      — a struct with no JSON behind it goes out as text and comes back
  *        as the same struct
@@ -331,6 +333,10 @@ int run_scenario_manifest_json_refusals(void) {
     return 0;
 }
 
+/* The pair of triggers both forms hold. Filled in the Triggers section
+   below, beside the JSON stating the same two. */
+static void fillTriggers(ScenarioManifest *m);
+
 /* One scenario, as both forms would hold it. */
 static void fillBase(ScenarioManifest *m) {
     memset(m, 0, sizeof(*m));
@@ -380,6 +386,8 @@ static void fillBase(ScenarioManifest *m) {
     m->regions[1].y = 5;
     m->regions[1].w = 6;
     m->regions[1].h = 7;
+
+    fillTriggers(m);
 }
 
 int run_scenario_manifest_agrees(void) {
@@ -483,6 +491,50 @@ int run_scenario_manifest_agrees(void) {
     b.pillTags[3].count = 0;
     UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
     UT_ASSERT_MSG(strcmp(key, "tags.pills[3]") == 0, "the key was '%s'", key);
+
+    /* Triggers. A trigger has no name to match one against another by, so
+       the two forms are compared in order and the key is the position —
+       which is the position both readers report under. */
+    fillBase(&b);
+    b.numTriggers = 1;
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "triggers") == 0, "the key was '%s'", key);
+
+    fillBase(&b);
+    snprintf(b.triggers[1].when, SCN_TRIGGER_NAME_LEN, "on_round_start");
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "triggers[1]") == 0, "the key was '%s'", key);
+
+    fillBase(&b);
+    snprintf(b.triggers[0].where[1].value.text, SCN_TRIGGER_NAME_LEN,
+             "inner_base");
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "triggers[0].where[1]") == 0,
+                  "the key was '%s'", key);
+
+    fillBase(&b);
+    b.triggers[0].actions[1].args[1].num = 11.0;
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "triggers[0].actions[1][1]") == 0,
+                  "the key was '%s'", key);
+
+    /* The long line an action carries is the action's, not the argument
+       slot's, and is held against the other form there. */
+    fillBase(&b);
+    snprintf(b.triggers[0].actions[0].text, SCN_TRIGGER_TEXT_LEN,
+             "The ring gives and the wave is through the keep before dawn");
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "triggers[0].actions[0]") == 0,
+                  "the key was '%s'", key);
+
+    /* A value differing only in the kind it was read as, which a comparison
+       reading num alone would pass: 0 as a number and false as a boolean
+       both carry 0.0. */
+    fillBase(&b);
+    b.triggers[1].where[0].value.kind = SCN_TRIG_VAL_NUMBER;
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "triggers[1].where[0]") == 0,
+                  "the key was '%s'", key);
 
     return 0;
 }
@@ -806,6 +858,59 @@ static const char kTriggerManifest[] =
     "      \"actions\": [ [\"log\", \"tick\"] ] }\n"
     "  ]\n"
     "}\n";
+
+/* The same two triggers again, straight into the struct: what
+   kTriggerManifest above decodes to, for the cases that start from a struct
+   rather than from text. */
+static void fillTriggers(ScenarioManifest *m) {
+    ScnTrigger *t;
+    ScnTrigAct *a;
+
+    m->numTriggers = 2;
+
+    t = &m->triggers[0];
+    snprintf(t->when, SCN_TRIGGER_NAME_LEN, "on_base_captured");
+    t->numWhere = 2;
+    snprintf(t->where[0].field, SCN_TRIGGER_NAME_LEN, "new_team");
+    t->where[0].op         = SCN_TRIG_CMP_EQ;
+    t->where[0].value.kind = SCN_TRIG_VAL_NUMBER;
+    t->where[0].value.num  = 1.0;
+    snprintf(t->where[1].field, SCN_TRIGGER_NAME_LEN, "tag");
+    t->where[1].op         = SCN_TRIG_CMP_IN;
+    t->where[1].value.kind = SCN_TRIG_VAL_STRING;
+    snprintf(t->where[1].value.text, SCN_TRIGGER_NAME_LEN, "outer_base");
+
+    t->numActions = 2;
+    a = &t->actions[0];
+    snprintf(a->op, SCN_TRIGGER_NAME_LEN, "announce");
+    a->numArgs        = 2;
+    a->args[0].kind   = SCN_TRIG_VAL_STRING;
+    a->args[0].inText = true;          /* the line is on the action below */
+    snprintf(a->text, SCN_TRIGGER_TEXT_LEN, "%s", kLongLine);
+    a->args[1].kind = SCN_TRIG_VAL_NUMBER;
+    a->args[1].num  = 5.0;
+    a = &t->actions[1];
+    snprintf(a->op, SCN_TRIGGER_NAME_LEN, "set_score");
+    a->numArgs      = 2;
+    a->args[0].kind = SCN_TRIG_VAL_FIELD;
+    snprintf(a->args[0].text, SCN_TRIGGER_NAME_LEN, "new");
+    a->args[1].kind = SCN_TRIG_VAL_NUMBER;
+    a->args[1].num  = 10.0;
+
+    t = &m->triggers[1];
+    snprintf(t->when, SCN_TRIGGER_NAME_LEN, "on_tick");
+    t->numWhere = 1;
+    snprintf(t->where[0].field, SCN_TRIGGER_NAME_LEN, "scripted");
+    t->where[0].op         = SCN_TRIG_CMP_EQ;
+    t->where[0].value.kind = SCN_TRIG_VAL_BOOL;
+    t->where[0].value.num  = 0.0;
+    t->numActions          = 1;
+    a                      = &t->actions[0];
+    snprintf(a->op, SCN_TRIGGER_NAME_LEN, "log");
+    a->numArgs      = 1;
+    a->args[0].kind = SCN_TRIG_VAL_STRING;
+    snprintf(a->args[0].text, SCN_TRIGGER_NAME_LEN, "tick");
+}
 
 /* Is a key among the issues the parse collected? */
 static bool sawIssue(const ScnValidateResult *sink, const char *key) {

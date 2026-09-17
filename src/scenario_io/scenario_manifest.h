@@ -28,9 +28,10 @@
  *  scenario_host.c, which sees both, is where an index
  *  becomes an op.
  *
- *  triggers is carried here and read out of manifest.json.
- *  The Lua reader does not take them yet, so a script's own
- *  table states none however many the package holds.
+ *  triggers are carried here and both readers fill them:
+ *  scnReadManifest out of a script's own table and the JSON
+ *  decoder out of manifest.json. A package stating them in
+ *  both forms is held to stating the same thing in each.
  *********************************************************/
 
 #ifndef SCENARIO_MANIFEST_H

@@ -67,6 +67,16 @@
  * run_scenario_validate_source_rule_range— a value outside its row's bounds is
  *                                          refused with no sim to check it
  *                                          against, and an in-range one passes
+ * run_scenario_validate_source_pushed_triggers
+ *                                        — a manifest's triggers go on with
+ *                                          the rest of the pushed table and
+ *                                          a script that states none reads
+ *                                          back the ones that went on
+ * run_scenario_validate_trigger_caps     — each of the four caps a trigger
+ *                                          table is read under, overflowing
+ *                                          on the Lua side: what is past the
+ *                                          cap is dropped and reported under
+ *                                          the row the author wrote
  */
 
 #include <stdint.h>
@@ -1054,4 +1064,277 @@ int run_scenario_validate_source_rule_range(void) {
     UT_ASSERT_MSG(r.count == 0, "%u issues against a table with nothing "
                   "wrong: %s", (unsigned)r.count, seen);
     return 0;
+}
+
+/* ── 21. A pushed table's triggers, read back ─────────────────────── */
+
+/* A manifest now carries triggers, and a packaged script may state none of
+   its own. The table that goes on the state has to carry them too, or the
+   table read back is short of every trigger the package holds and the two
+   forms are held to disagree at every load.
+
+   The four value kinds and the long line are all here, so the trip covers
+   the argument that lives on the action's text as well as the ones that fit
+   their own slot. */
+static void svPushedTriggers(ScenarioManifest *m) {
+    ScnTrigger *t;
+    ScnTrigAct *a;
+
+    m->numTriggers = 2;
+
+    t = &m->triggers[0];
+    snprintf(t->when, SCN_TRIGGER_NAME_LEN, "on_base_captured");
+    t->numWhere = 2;
+    snprintf(t->where[0].field, SCN_TRIGGER_NAME_LEN, "new_team");
+    t->where[0].op         = SCN_TRIG_CMP_EQ;
+    t->where[0].value.kind = SCN_TRIG_VAL_NUMBER;
+    t->where[0].value.num  = 1.0;
+    snprintf(t->where[1].field, SCN_TRIGGER_NAME_LEN, "tag");
+    t->where[1].op         = SCN_TRIG_CMP_IN;
+    t->where[1].value.kind = SCN_TRIG_VAL_STRING;
+    snprintf(t->where[1].value.text, SCN_TRIGGER_NAME_LEN, "outer_base");
+
+    t->numActions = 2;
+    a = &t->actions[0];
+    snprintf(a->op, SCN_TRIGGER_NAME_LEN, "announce");
+    a->numArgs        = 2;
+    a->args[0].kind   = SCN_TRIG_VAL_STRING;
+    a->args[0].inText = true;
+    snprintf(a->text, SCN_TRIGGER_TEXT_LEN, "%s",
+             "The ring holds and the wave is turned back short of the keep");
+    a->args[1].kind = SCN_TRIG_VAL_NUMBER;
+    a->args[1].num  = 5.0;
+    a = &t->actions[1];
+    snprintf(a->op, SCN_TRIGGER_NAME_LEN, "set_score");
+    a->numArgs      = 2;
+    a->args[0].kind = SCN_TRIG_VAL_FIELD;
+    snprintf(a->args[0].text, SCN_TRIGGER_NAME_LEN, "new");
+    a->args[1].kind = SCN_TRIG_VAL_NUMBER;
+    a->args[1].num  = 10.0;
+
+    t = &m->triggers[1];
+    snprintf(t->when, SCN_TRIGGER_NAME_LEN, "on_tick");
+    t->numWhere = 1;
+    snprintf(t->where[0].field, SCN_TRIGGER_NAME_LEN, "scripted");
+    t->where[0].op         = SCN_TRIG_CMP_EQ;
+    t->where[0].value.kind = SCN_TRIG_VAL_BOOL;
+    t->where[0].value.num  = 0.0;
+    t->numActions          = 1;
+    a                      = &t->actions[0];
+    snprintf(a->op, SCN_TRIGGER_NAME_LEN, "log");
+    a->numArgs      = 1;
+    a->args[0].kind = SCN_TRIG_VAL_STRING;
+    snprintf(a->args[0].text, SCN_TRIGGER_NAME_LEN, "tick");
+}
+
+int run_scenario_validate_source_pushed_triggers(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    /* A script that says nothing about itself, so what is read back is
+       exactly what was put on. */
+    static const char *const kLua =
+        "local wave = 0\n"
+        "function on_round_start() wave = wave + 1 end\n";
+    ScenarioManifest  *pushed;
+    ScnValidateResult *r;
+    char               key[SCN_VALIDATE_KEY_LEN];
+    char               why[256];
+    char               seen[1024];
+    int                rc = 0;
+
+    /* Both are large enough now that a case holding one of each is better
+       off not holding it on the stack. */
+    pushed = (ScenarioManifest *)malloc(sizeof(*pushed));
+    r      = (ScnValidateResult *)malloc(sizeof(*r));
+    if (pushed == NULL || r == NULL) {
+        free(pushed);
+        free(r);
+        UT_FAIL("out of memory for the manifest and the result");
+    }
+
+    svPushed(pushed, "Packaged");
+    svPushedTriggers(pushed);
+
+    if (!scenarioValidateSource(NULL, kLua, strlen(kLua), kName, pushed, r)) {
+        svList(r, seen, sizeof(seen));
+        fprintf(stderr,
+                "FAIL %s:%d: a script checked against a pushed manifest was "
+                "refused: %s\n", __FILE__, __LINE__, seen);
+        rc = 1;
+    }
+    if (rc == 0 && !r->haveManifest) {
+        fprintf(stderr, "FAIL %s:%d: the pushed table was not read back\n",
+                __FILE__, __LINE__);
+        rc = 1;
+    }
+    if (rc == 0 && r->manifest.numTriggers != pushed->numTriggers) {
+        fprintf(stderr,
+                "FAIL %s:%d: %u triggers went on and %u came back\n",
+                __FILE__, __LINE__, (unsigned)pushed->numTriggers,
+                (unsigned)r->manifest.numTriggers);
+        rc = 1;
+    }
+    /* Every byte of them, padding included: both the writer and the reader
+       clear a trigger before filling it. */
+    if (rc == 0 &&
+        memcmp(r->manifest.triggers, pushed->triggers,
+               sizeof(ScnTrigger) * pushed->numTriggers) != 0) {
+        fprintf(stderr,
+                "FAIL %s:%d: the triggers read back are not the ones pushed\n",
+                __FILE__, __LINE__);
+        rc = 1;
+    }
+    /* And the comparison a load makes of the two forms is content with
+       them, which is the thing the round trip is for. */
+    if (rc == 0 && !scnManifestAgrees(pushed, &r->manifest, key, sizeof(key),
+                                      why, sizeof(why))) {
+        fprintf(stderr, "FAIL %s:%d: the two forms differ at %s: %s\n",
+                __FILE__, __LINE__, key, why);
+        rc = 1;
+    }
+
+    free(pushed);
+    free(r);
+    return rc;
+}
+
+/* ── 22. More triggers than the struct holds ──────────────────────── */
+
+/* Each of the four caps a trigger table is read under, overflowing on the
+   Lua side. Past every one of them the row is dropped and said to be, under
+   the key of the row the author wrote — the same behaviour manifest.json's
+   decoder has, since a package whose two forms were cut differently would
+   not survive the comparison that follows. */
+int run_scenario_validate_trigger_caps(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    char                    *lua;
+    ScnValidateResult       *r;
+    char                     want[SCN_VALIDATE_KEY_LEN];
+    char                     seen[1024];
+    size_t                   used;
+    int                      i;
+    int                      rc = 0;
+
+    lua = (char *)malloc(1 << 16);
+    r   = (ScnValidateResult *)malloc(sizeof(*r));
+    if (lua == NULL || r == NULL) {
+        free(lua);
+        free(r);
+        UT_FAIL("out of memory building the over-cap table");
+    }
+
+    /* One more trigger than the struct holds. */
+    used = (size_t)snprintf(lua, 1 << 16, "scenario = { api = 1, triggers = {");
+    for (i = 0; i <= SCN_TRIGGERS_MAX; i++) {
+        used += (size_t)snprintf(lua + used, (1 << 16) - used,
+                                 " { when = \"on_tick\" },");
+    }
+    snprintf(lua + used, (1 << 16) - used, " } }\n");
+
+    if (scenarioValidateSource(NULL, lua, strlen(lua), kName, NULL, r)) {
+        fprintf(stderr,
+                "FAIL %s:%d: a table past the trigger cap said nothing\n",
+                __FILE__, __LINE__);
+        rc = 1;
+    }
+    if (rc == 0 && r->manifest.numTriggers != SCN_TRIGGERS_MAX) {
+        fprintf(stderr, "FAIL %s:%d: %u triggers were kept, expected %d\n",
+                __FILE__, __LINE__, (unsigned)r->manifest.numTriggers,
+                SCN_TRIGGERS_MAX);
+        rc = 1;
+    }
+    snprintf(want, sizeof(want), "triggers[%d]", SCN_TRIGGERS_MAX);
+    if (rc == 0 && svFind(r, want) == NULL) {
+        svList(r, seen, sizeof(seen));
+        fprintf(stderr,
+                "FAIL %s:%d: nothing was reported under %s: %s\n",
+                __FILE__, __LINE__, want, seen);
+        rc = 1;
+    }
+
+    /* One more test, one more action and one more argument than a trigger
+       holds, all on the one trigger. */
+    if (rc == 0) {
+        used = (size_t)snprintf(lua, 1 << 16,
+                                "scenario = { api = 1, triggers = { {"
+                                " when = \"on_tick\", where = {");
+        for (i = 0; i <= SCN_TRIGGER_CONDS_MAX; i++) {
+            used += (size_t)snprintf(lua + used, (1 << 16) - used,
+                                     " { \"n\", \"eq\", %d },", i);
+        }
+        used += (size_t)snprintf(lua + used, (1 << 16) - used, " }, actions = {");
+        for (i = 0; i <= SCN_TRIGGER_ACTIONS_MAX; i++) {
+            int j;
+            used += (size_t)snprintf(lua + used, (1 << 16) - used,
+                                     " { \"log\"");
+            /* The first action is the one given more arguments than it
+               holds. */
+            for (j = 0; j < ((i == 0) ? SCN_TRIGGER_ARGS_MAX + 1 : 1); j++) {
+                used += (size_t)snprintf(lua + used, (1 << 16) - used, ", %d",
+                                         j);
+            }
+            used += (size_t)snprintf(lua + used, (1 << 16) - used, " },");
+        }
+        snprintf(lua + used, (1 << 16) - used, " } } } }\n");
+
+        if (scenarioValidateSource(NULL, lua, strlen(lua), kName, NULL, r)) {
+            fprintf(stderr,
+                    "FAIL %s:%d: a trigger past its caps said nothing\n",
+                    __FILE__, __LINE__);
+            rc = 1;
+        }
+    }
+    if (rc == 0) {
+        const ScnTrigger *t = &r->manifest.triggers[0];
+
+        svList(r, seen, sizeof(seen));
+        if (r->manifest.numTriggers != 1) {
+            fprintf(stderr, "FAIL %s:%d: %u triggers were kept, expected 1\n",
+                    __FILE__, __LINE__, (unsigned)r->manifest.numTriggers);
+            rc = 1;
+        }
+        if (t->numWhere != SCN_TRIGGER_CONDS_MAX) {
+            fprintf(stderr, "FAIL %s:%d: %u tests were kept, expected %d\n",
+                    __FILE__, __LINE__, (unsigned)t->numWhere,
+                    SCN_TRIGGER_CONDS_MAX);
+            rc = 1;
+        }
+        if (t->numActions != SCN_TRIGGER_ACTIONS_MAX) {
+            fprintf(stderr, "FAIL %s:%d: %u actions were kept, expected %d\n",
+                    __FILE__, __LINE__, (unsigned)t->numActions,
+                    SCN_TRIGGER_ACTIONS_MAX);
+            rc = 1;
+        }
+        if (t->actions[0].numArgs != SCN_TRIGGER_ARGS_MAX) {
+            fprintf(stderr, "FAIL %s:%d: %u arguments were kept, expected %d\n",
+                    __FILE__, __LINE__, (unsigned)t->actions[0].numArgs,
+                    SCN_TRIGGER_ARGS_MAX);
+            rc = 1;
+        }
+        snprintf(want, sizeof(want), "triggers[0].where[%d]",
+                 SCN_TRIGGER_CONDS_MAX);
+        if (svFind(r, want) == NULL) {
+            fprintf(stderr, "FAIL %s:%d: nothing under %s: %s\n", __FILE__,
+                    __LINE__, want, seen);
+            rc = 1;
+        }
+        snprintf(want, sizeof(want), "triggers[0].actions[%d]",
+                 SCN_TRIGGER_ACTIONS_MAX);
+        if (svFind(r, want) == NULL) {
+            fprintf(stderr, "FAIL %s:%d: nothing under %s: %s\n", __FILE__,
+                    __LINE__, want, seen);
+            rc = 1;
+        }
+        /* The arguments past the cap are reported against the action that
+           took them, which is where an author would look for them. */
+        if (svFind(r, "triggers[0].actions[0]") == NULL) {
+            fprintf(stderr,
+                    "FAIL %s:%d: nothing under triggers[0].actions[0]: %s\n",
+                    __FILE__, __LINE__, seen);
+            rc = 1;
+        }
+    }
+
+    free(lua);
+    free(r);
+    return rc;
 }

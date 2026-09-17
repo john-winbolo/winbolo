@@ -30,7 +30,9 @@
  *  of those tables with lua_next, whose order is its own
  *  business. A team's init table is keyed the same way and
  *  is compared the same way. lobby.teams is a Lua array, so
- *  it is compared in order and the index is part of the key.
+ *  it is compared in order and the index is part of the key,
+ *  and triggers are an array with nothing but their order to
+ *  tell one from another.
  *********************************************************/
 
 #include <float.h>   /* DBL_MAX — what tells an infinity from a big number */
@@ -461,8 +463,9 @@ static const char *const mjTrigOps[] = {
 };
 
 /* The operator's name, or NULL for one outside the enum. Used by the
- * encoder, which writes back what the decode stored. */
-static const char *mjTrigOpName(ScnTrigCompare op) {
+ * encoder, which writes back what the decode stored, and by the Lua writer,
+ * which writes the same word into a script's own table. */
+const char *scnManifestTrigOpName(ScnTrigCompare op) {
     if ((int)op < 0 || (size_t)op >= sizeof(mjTrigOps) / sizeof(mjTrigOps[0])) {
         return NULL;
     }
@@ -471,8 +474,12 @@ static const char *mjTrigOpName(ScnTrigCompare op) {
 
 /* An operator name as the enum, or SCN_TRIG_CMP_EQ for one this does not
  * know. An unknown operator is not refused here: what the vocabulary allows
- * is checked against the catalogue, which this library cannot see. */
-static ScnTrigCompare mjTrigOpFrom(const char *name) {
+ * is checked against the catalogue, which this library cannot see.
+ *
+ * Public because scnReadManifest reads the same seven words out of a
+ * script's table. One table of names rather than two keeps the two readers
+ * from drifting apart over which word means which test. */
+ScnTrigCompare scnManifestTrigOpFrom(const char *name) {
     size_t i;
 
     if (name == NULL) {
@@ -573,7 +580,7 @@ static void mjTrigCond(const cJSON *row, ScnTrigCond *out,
         mjReport(rep, where, "scenario: %s names no field", where);
     }
     if (cJSON_IsString(op) && op->valuestring != NULL) {
-        out->op = mjTrigOpFrom(op->valuestring);
+        out->op = scnManifestTrigOpFrom(op->valuestring);
     } else {
         mjReport(rep, where, "scenario: %s names no operator", where);
     }
@@ -1146,7 +1153,7 @@ static void mjEmitTriggers(cJSON *root, const ScenarioManifest *m) {
         where = cJSON_AddArrayToObject(obj, "where");
         for (j = 0; where != NULL && j < (int)t->numWhere; j++) {
             const ScnTrigCond *c    = &t->where[j];
-            const char        *name = mjTrigOpName(c->op);
+            const char        *name = scnManifestTrigOpName(c->op);
             cJSON             *row  = cJSON_CreateArray();
 
             if (row == NULL) {
@@ -1346,6 +1353,38 @@ static bool mjAgreeTagKind(const ScnManifestTags *a, const ScnManifestTags *b,
         }
     }
     return true;
+}
+
+/* Two values, by the kind they were read as and then by the part that kind
+ * uses: num for a number and for a boolean, text for a string and for a
+ * field reference, and inText for a string whose bytes went to the action's
+ * own text — that text is compared with the action it belongs to, and both
+ * slots hold "" while the flag is set.
+ *
+ * A ScnTrigValue is not memcmp'd. It carries padding between kind and num,
+ * and a difference there is not a disagreement an author could act on. */
+static bool mjTrigValueSame(const ScnTrigValue *a, const ScnTrigValue *b) {
+    if (a->kind != b->kind || a->inText != b->inText) {
+        return false;
+    }
+    switch (a->kind) {
+    case SCN_TRIG_VAL_NUMBER:
+    case SCN_TRIG_VAL_BOOL:
+        return a->num == b->num;
+    case SCN_TRIG_VAL_STRING:
+    case SCN_TRIG_VAL_FIELD:
+        return strcmp(a->text, b->text) == 0;
+    case SCN_TRIG_VAL_NONE:
+    default:
+        return true;
+    }
+}
+
+/* An operator's name for a message, and "" for one outside the enum, which
+ * only a struct nobody decoded could hold. */
+static const char *mjOpText(ScnTrigCompare op) {
+    const char *name = scnManifestTrigOpName(op);
+    return name != NULL ? name : "";
 }
 
 /* The first init pair two forms of a team do not agree on, or NULL when they
@@ -1578,6 +1617,104 @@ bool scnManifestAgrees(const ScenarioManifest *fromJson,
             return mjDiffer(key, keyLen, err, errLen, where,
                             "scenario: the script's table names this region "
                             "and the manifest does not");
+        }
+    }
+
+    if (fromJson->numTriggers != fromLua->numTriggers) {
+        return mjDiffer(key, keyLen, err, errLen, "triggers",
+                        "scenario: the manifest states %d triggers and the "
+                        "script's table states %d",
+                        (int)fromJson->numTriggers, (int)fromLua->numTriggers);
+    }
+    /* A rule is matched by its index and a region by its name. A trigger has
+     * neither, so the two forms are compared position against position and
+     * the key is a subscript — the one key this function reports that names a
+     * place rather than something the author gave a name to. Both readers
+     * count that position the same way and report under it, so triggers[3]
+     * means the same row in the manifest, in the script's table and here. */
+    for (i = 0; i < (int)fromJson->numTriggers; i++) {
+        const ScnTrigger *ta = &fromJson->triggers[i];
+        const ScnTrigger *tb = &fromLua->triggers[i];
+        int               j;
+
+        snprintf(where, sizeof(where), "triggers[%d]", i);
+        if (strcmp(ta->when, tb->when) != 0) {
+            return mjDiffer(key, keyLen, err, errLen, where,
+                            "scenario: the manifest runs this on '%s' and the "
+                            "script's table runs it on '%s'",
+                            ta->when, tb->when);
+        }
+        if (ta->numWhere != tb->numWhere) {
+            return mjDiffer(key, keyLen, err, errLen, where,
+                            "scenario: the manifest tests this %d times and "
+                            "the script's table tests it %d times",
+                            (int)ta->numWhere, (int)tb->numWhere);
+        }
+        for (j = 0; j < (int)ta->numWhere; j++) {
+            const ScnTrigCond *ca = &ta->where[j];
+            const ScnTrigCond *cb = &tb->where[j];
+
+            snprintf(where, sizeof(where), "triggers[%d].where[%d]", i, j);
+            if (strcmp(ca->field, cb->field) != 0) {
+                return mjDiffer(key, keyLen, err, errLen, where,
+                                "scenario: the manifest tests '%s' here and "
+                                "the script's table tests '%s'",
+                                ca->field, cb->field);
+            }
+            if (ca->op != cb->op) {
+                return mjDiffer(key, keyLen, err, errLen, where,
+                                "scenario: the manifest tests this with '%s' "
+                                "and the script's table with '%s'",
+                                mjOpText(ca->op), mjOpText(cb->op));
+            }
+            if (!mjTrigValueSame(&ca->value, &cb->value)) {
+                return mjDiffer(key, keyLen, err, errLen, where,
+                                "scenario: the manifest and the script's "
+                                "table test this against different values");
+            }
+        }
+
+        snprintf(where, sizeof(where), "triggers[%d]", i);
+        if (ta->numActions != tb->numActions) {
+            return mjDiffer(key, keyLen, err, errLen, where,
+                            "scenario: the manifest gives this %d actions and "
+                            "the script's table gives it %d",
+                            (int)ta->numActions, (int)tb->numActions);
+        }
+        for (j = 0; j < (int)ta->numActions; j++) {
+            const ScnTrigAct *aa = &ta->actions[j];
+            const ScnTrigAct *ab = &tb->actions[j];
+            int               k;
+
+            snprintf(where, sizeof(where), "triggers[%d].actions[%d]", i, j);
+            if (strcmp(aa->op, ab->op) != 0) {
+                return mjDiffer(key, keyLen, err, errLen, where,
+                                "scenario: the manifest does '%s' here and "
+                                "the script's table does '%s'",
+                                aa->op, ab->op);
+            }
+            if (aa->numArgs != ab->numArgs) {
+                return mjDiffer(key, keyLen, err, errLen, where,
+                                "scenario: the manifest gives this %d "
+                                "arguments and the script's table gives it %d",
+                                (int)aa->numArgs, (int)ab->numArgs);
+            }
+            for (k = 0; k < (int)aa->numArgs; k++) {
+                if (!mjTrigValueSame(&aa->args[k], &ab->args[k])) {
+                    snprintf(where, sizeof(where),
+                             "triggers[%d].actions[%d][%d]", i, j, k);
+                    return mjDiffer(key, keyLen, err, errLen, where,
+                                    "scenario: the manifest and the script's "
+                                    "table give this argument differently");
+                }
+            }
+            snprintf(where, sizeof(where), "triggers[%d].actions[%d]", i, j);
+            if (strcmp(aa->text, ab->text) != 0) {
+                return mjDiffer(key, keyLen, err, errLen, where,
+                                "scenario: the manifest's line here is '%s' "
+                                "and the script's table's is '%s'",
+                                aa->text, ab->text);
+            }
         }
     }
 

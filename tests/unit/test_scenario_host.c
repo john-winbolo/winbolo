@@ -21,6 +21,9 @@
  * run_scenario_host_api_too_new       — an api above this server's is
  *                                       refused; equal and below are not
  * run_scenario_host_no_script        — no script is not an error
+ * run_scenario_host_trigger_manifest — the triggers a script's table states,
+ *                                      filling the struct with what the same
+ *                                      two fill from manifest.json
  * run_scenario_host_manifest_roundtrip— tags, regions and several teams
  * run_scenario_host_team_init_read    — a team's init table reaches the
  *                                       manifest and the sim's template, and
@@ -152,6 +155,8 @@
                                            * through */
 #include "scenario_host.h"
 #include "scenario_manifest.h"
+#include "scenario_manifest_json.h" /* scnManifestParse — the other form of
+                                     * the table the trigger case reads */
 #include "scenario_validate.h"    /* scenarioHostManifest */
 #include "test_harness.h"
 
@@ -782,6 +787,170 @@ int run_scenario_host_manifest_roundtrip(void) {
                       reg->h == 40,
                   "'moat' read as x %u y %u w %u h %u", (unsigned)reg->x,
                   (unsigned)reg->y, (unsigned)reg->w, (unsigned)reg->h);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* ── 7a2. Triggers, in both forms ─────────────────────────────────── */
+
+/* The line an announce carries, past SCN_TRIGGER_NAME_LEN so that it lands
+   on the action's own text rather than in the argument slot. */
+static const char kShLongLine[] =
+    "The ring holds and the wave is turned back short of the keep";
+
+/* The same two triggers written both ways: the scenario table a script
+   declares, and the manifest.json a package carries. Between them they hold
+   all four value kinds, an in and an eq, and the long line.
+
+   The point of the case is that the two spellings mean one thing, so both
+   are stated here rather than one being reached for across files. */
+static const char *const kShTriggerLua =
+    "scenario = {\n"
+    "  name = \"Trigger trial\", api = 1,\n"
+    "  triggers = {\n"
+    "    { when = \"on_base_captured\",\n"
+    "      where = { { \"new_team\", \"eq\", 1 },\n"
+    "                { \"tag\", \"in\", \"outer_base\" } },\n"
+    "      actions = { { \"announce\",\n"
+    "                    \"The ring holds and the wave is turned back short "
+    "of the keep\",\n"
+    "                    5 },\n"
+    "                  { \"set_score\", { field = \"new\" }, 10 } } },\n"
+    "    { when = \"on_tick\",\n"
+    "      where = { { \"scripted\", \"eq\", false } },\n"
+    "      actions = { { \"log\", \"tick\" } } },\n"
+    "  },\n"
+    "}\n";
+
+static const char kShTriggerJson[] =
+    "{\n"
+    "  \"manifest\": 1,\n"
+    "  \"api\": 1,\n"
+    "  \"name\": \"Trigger trial\",\n"
+    "  \"triggers\": [\n"
+    "    { \"when\": \"on_base_captured\",\n"
+    "      \"where\": [ [\"new_team\", \"eq\", 1],\n"
+    "                   [\"tag\", \"in\", \"outer_base\"] ],\n"
+    "      \"actions\": [ [\"announce\",\n"
+    "                      \"The ring holds and the wave is turned back short "
+    "of the keep\", 5],\n"
+    "                     [\"set_score\", { \"field\": \"new\" }, 10] ] },\n"
+    "    { \"when\": \"on_tick\",\n"
+    "      \"where\": [ [\"scripted\", \"eq\", false] ],\n"
+    "      \"actions\": [ [\"log\", \"tick\"] ] }\n"
+    "  ]\n"
+    "}\n";
+
+int run_scenario_host_trigger_manifest(void) {
+    static const char *const kMap = "scnhost_triggers.map";
+    ServerSim               *sim;
+    ScenarioHost            *h;
+    const ScenarioManifest  *m;
+    const ScnTrigger        *t;
+    const ScnTrigAct        *a;
+    ScnManifestDoc          *doc;
+    char                     err[512];
+
+    UT_ASSERT(shPut(kMap, kShTriggerLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+
+    UT_ASSERT_MSG(m->numTriggers == 2, "%u triggers, expected 2",
+                  (unsigned)m->numTriggers);
+
+    /* The first: a number against eq, a short string against in. */
+    t = &m->triggers[0];
+    UT_ASSERT_MSG(strcmp(t->when, "on_base_captured") == 0,
+                  "the first trigger runs on '%s'", t->when);
+    UT_ASSERT_MSG(t->numWhere == 2, "the first trigger holds %u tests",
+                  (unsigned)t->numWhere);
+    UT_ASSERT(strcmp(t->where[0].field, "new_team") == 0);
+    UT_ASSERT(t->where[0].op == SCN_TRIG_CMP_EQ);
+    UT_ASSERT(t->where[0].value.kind == SCN_TRIG_VAL_NUMBER);
+    UT_ASSERT_MSG(t->where[0].value.num == 1.0, "new_team read as %g",
+                  t->where[0].value.num);
+    UT_ASSERT(strcmp(t->where[1].field, "tag") == 0);
+    UT_ASSERT_MSG(t->where[1].op == SCN_TRIG_CMP_IN, "tag is tested with %d",
+                  (int)t->where[1].op);
+    UT_ASSERT(t->where[1].value.kind == SCN_TRIG_VAL_STRING);
+    UT_ASSERT(!t->where[1].value.inText);
+    UT_ASSERT(strcmp(t->where[1].value.text, "outer_base") == 0);
+
+    /* The long line is on the action and the slot says so rather than
+       carrying the bytes, which is the rule manifest.json reads by. */
+    UT_ASSERT_MSG(t->numActions == 2, "the first trigger holds %u actions",
+                  (unsigned)t->numActions);
+    a = &t->actions[0];
+    UT_ASSERT(strcmp(a->op, "announce") == 0);
+    UT_ASSERT_MSG(a->numArgs == 2, "announce took %u arguments",
+                  (unsigned)a->numArgs);
+    UT_ASSERT(a->args[0].kind == SCN_TRIG_VAL_STRING);
+    UT_ASSERT_MSG(a->args[0].inText,
+                  "the long line was not moved to the action's text");
+    UT_ASSERT(a->args[0].text[0] == '\0');
+    UT_ASSERT_MSG(strcmp(a->text, kShLongLine) == 0,
+                  "the action's text is '%s'", a->text);
+    UT_ASSERT(a->args[1].kind == SCN_TRIG_VAL_NUMBER);
+    UT_ASSERT(a->args[1].num == 5.0);
+
+    /* A field reference: { field = "new" } is the Lua spelling of the
+       manifest's {"field": "new"}. */
+    a = &t->actions[1];
+    UT_ASSERT(strcmp(a->op, "set_score") == 0);
+    UT_ASSERT_MSG(a->numArgs == 2, "set_score took %u arguments",
+                  (unsigned)a->numArgs);
+    UT_ASSERT(a->args[0].kind == SCN_TRIG_VAL_FIELD);
+    UT_ASSERT(strcmp(a->args[0].text, "new") == 0);
+    UT_ASSERT(a->args[1].kind == SCN_TRIG_VAL_NUMBER);
+    UT_ASSERT(a->args[1].num == 10.0);
+    UT_ASSERT_MSG(a->text[0] == '\0',
+                  "an action with no long string carries '%s'", a->text);
+
+    /* And a boolean. */
+    t = &m->triggers[1];
+    UT_ASSERT(strcmp(t->when, "on_tick") == 0);
+    UT_ASSERT_MSG(t->numWhere == 1, "the second trigger holds %u tests",
+                  (unsigned)t->numWhere);
+    UT_ASSERT(strcmp(t->where[0].field, "scripted") == 0);
+    UT_ASSERT(t->where[0].value.kind == SCN_TRIG_VAL_BOOL);
+    UT_ASSERT_MSG(t->where[0].value.num == 0.0, "false read as %g",
+                  t->where[0].value.num);
+    UT_ASSERT_MSG(t->numActions == 1, "the second trigger holds %u actions",
+                  (unsigned)t->numActions);
+    UT_ASSERT(strcmp(t->actions[0].op, "log") == 0);
+    UT_ASSERT(t->actions[0].args[0].kind == SCN_TRIG_VAL_STRING);
+    UT_ASSERT(strcmp(t->actions[0].args[0].text, "tick") == 0);
+
+    /* The whole array against what the same two triggers fill from JSON.
+       Both readers clear a trigger before filling it, so the padding
+       compares clean and a difference is a difference in the content. */
+    doc = scnManifestParse((const uint8_t *)kShTriggerJson,
+                           strlen(kShTriggerJson), NULL, err, sizeof(err));
+    if (doc == NULL) {
+        scenarioHostDetach(h);
+        serverSimDestroy(sim);
+        shDrop(kMap);
+        UT_FAIL("the manifest form was refused: %s", err);
+    }
+    if (scnManifestValues(doc)->numTriggers != m->numTriggers ||
+        memcmp(scnManifestValues(doc)->triggers, m->triggers,
+               sizeof(ScnTrigger) * m->numTriggers) != 0) {
+        scnManifestFree(doc);
+        scenarioHostDetach(h);
+        serverSimDestroy(sim);
+        shDrop(kMap);
+        UT_FAIL("the script's table and manifest.json fill the triggers "
+                "differently");
+    }
+    scnManifestFree(doc);
 
     scenarioHostDetach(h);
     serverSimDestroy(sim);
