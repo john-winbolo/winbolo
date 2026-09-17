@@ -163,6 +163,13 @@ add_executable(logviewer
     ${SRC_ROOT}/gui/sdl3/tileloader.c
     ${SRC_ROOT}/gui/sdl3/skin_source.c
     ${SRC_ROOT}/gui/sdl3/gfx_settings.c
+    # The zoomed-out ground colours, which draw.c fills a square with below
+    # 1x, and the shapes it draws on top of them. Plain SDL, the tile numbers
+    # and ring_band.c, which is here for the disc a pillbox marker is built
+    # from and which nothing else in this target pulls in.
+    ${SRC_ROOT}/gui/sdl3/map_colours.c
+    ${SRC_ROOT}/gui/sdl3/map_markers.c
+    ${SRC_ROOT}/gui/sdl3/ring_band.c
 )
 
 target_include_directories(logviewer PRIVATE
