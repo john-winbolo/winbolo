@@ -29,6 +29,7 @@
 #include "wire_limits.h"    /* PACKET_MAX_CHAT_MESSAGE — the text cap below */
 #include "scenario_table.h" /* ScnTable — the init and hint payloads below */
 #include "sim_rules_names.h" /* SIM_RULE_LIST — the rule list SCN_RULE_LIST is */
+#include "scenario_panel.h" /* SCN_PANEL_MAX — the panel op's byte capacity */
 
 /* Text capacity for every op that carries a line. The server-text
  * control event holds char text[PACKET_MAX_CHAT_MESSAGE + 1]
@@ -37,15 +38,11 @@
  * truncated. */
 #define SCN_TEXT_MAX (PACKET_MAX_CHAT_MESSAGE + 1)
 
-/* Byte capacity of one panel display list. The list rides a single
- * control segment, which carries CHANNEL_CONTROL_SEG (1024) bytes
- * (channel_mux.h) and rejects a message larger than that. Of those,
- * the channel frame spends type(1) + bodyLen(2), and the panel event's
- * own header spends target(1) + panel(1) + len(2):
- *   1024 - 1 - 2 - 1 - 1 - 2 = 1017
- * server_sim_scenario.c pins this against CHANNEL_CONTROL_SEG, which
- * it can see and this header cannot. */
-#define SCN_PANEL_MAX 1017
+/* SCN_PANEL_MAX, the byte capacity of one panel display list, comes in
+ * from scenario_panel.h with the rest of the panel's public types. It
+ * moved there when the control event that delivers a list needed the
+ * same number: control_event.h is public and cannot read this
+ * directory, and two copies of the figure would drift. */
 
 /* Buffer for a brain: the name a scenario writes — a directory under the
  * server's own brains/, such as "GoalHunter_1.7" — and the path that name is

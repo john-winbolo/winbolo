@@ -753,6 +753,17 @@ struct ClientSim {
     char     lobbyScenarioDescription[LOBBY_SCENARIO_DESC_LEN];
     bool     lobbyScenarioExtraTeams;
 
+    /* The rules that scenario's own manifest sets, from CTRL_SCENARIO_RULES.
+     * Here beside the identity rather than with the presentation below: a
+     * scenario stays attached across the return to lobby, which is where the
+     * presentation is dropped and where this set is read most — the lobby's
+     * popup is the only thing that says what a rules-only mod does. Each
+     * event replaces the whole set, and the empty one a detach publishes is
+     * what empties it, so nothing else clears it. */
+    uint8_t  scenarioRulesCount;
+    uint8_t  scenarioRuleIndex[CTRL_SCENARIO_RULES_MAX];
+    double   scenarioRuleValue[CTRL_SCENARIO_RULES_MAX];
+
     /* Most recent server reject — surfaced via toast/log when set.
      * lobbyLastRejectPacket is set to 0 when no pending message. */
     uint8_t  lobbyLastRejectPacket;
@@ -856,6 +867,41 @@ struct ClientSim {
      * with clientSimClearPendingAllianceRequest after popping the
      * dialog (or auto-rejecting). */
     BYTE pendingAllianceRequestFrom;
+
+    /* ── What a scenario is presenting ───────────────────────────────
+     * Where the four CTRL_SCN_* events land. The control arms only
+     * store; the per-frame render pass reads, per the renderer thread
+     * rule. All of it is dropped on the return to lobby, in the
+     * CTRL_GAME_PHASE_LOBBY arm beside the rest of that reset. */
+
+    /* One display list per panel id, already decoded. scnPanelValid
+     * says a list has arrived at all: a panel nothing has sent to is
+     * not the same as one sent an empty list to clear it, and only the
+     * first of those should leave the frontend's slot unbuilt. */
+    ScnPanelList scnPanels[SCN_PANEL_IDS];
+    bool         scnPanelValid[SCN_PANEL_IDS];
+    /* Arriving lists scnPanelParse refused: dropped rather than drawn,
+     * and counted so a malformed list is visible to whoever wrote it
+     * instead of silently showing nothing. */
+    uint32_t     scnPanelRejects;
+
+    /* The announcement on screen; text[0] == '\0' is none.
+     * scnAnnounceArrivedTick is lastServerTick as it stood when the
+     * line landed, so a drawer works out what is left of
+     * scnAnnounceTicks against the same clock the scenario counted in
+     * rather than against wall time. */
+    char         scnAnnounceText[PACKET_MAX_CHAT_MESSAGE + 1];
+    uint16_t     scnAnnounceTicks;
+    uint32_t     scnAnnounceArrivedTick;
+
+    /* Markers by id. SCN_MARKER_KIND_CLEAR turns one off rather than
+     * storing a third kind, so a stored marker is always drawable. */
+    ClientScnMarker scnMarkers[SCN_MARKERS_MAX];
+
+    /* A scenario's own scores. Teams run 1..MAX_TANKS-1, so index 0 of
+     * the team rows is unused and stays invalid. */
+    ClientScnScore scnPlayerScores[MAX_TANKS];
+    ClientScnScore scnTeamScores[MAX_TANKS];
 };
 
 BOLO_STATIC_ASSERT(offsetof(struct ClientSim, sim) == 0,

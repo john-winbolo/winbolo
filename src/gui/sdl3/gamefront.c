@@ -377,6 +377,8 @@ int   gameFrontOverviewW = 640;
 int   gameFrontOverviewH = 640;
 int   gameFrontOverviewX = -1;
 int   gameFrontOverviewY = -1;
+int   gameFrontScnPanelX = -1;
+int   gameFrontScnPanelY = -1;
 float gameFrontOverviewZoom = 2.0f;
 bool  gameFrontOverviewFollow = TRUE;
 bool  gameFrontShowMapOverview = FALSE;
@@ -4249,6 +4251,14 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("WINDOW", "Overview Follow", "Yes", buff, FILENAME_MAX);
   gameFrontOverviewFollow = YESNO_TO_TRUEFALSE(buff[0]);
 
+  /* The scenario panel's place inside the main window. -1 for either
+     coordinate means it has never been moved, so it opens at the top-right
+     of the game view. */
+  prefsGetString("WINDOW", "Scenario Panel X", "-1", buff, FILENAME_MAX);
+  gameFrontScnPanelX = atoi(buff);
+  prefsGetString("WINDOW", "Scenario Panel Y", "-1", buff, FILENAME_MAX);
+  gameFrontScnPanelY = atoi(buff);
+
   prefsGetString("MENU", "Message Label Size", "1", buff, FILENAME_MAX);
   labelMsg = atoi(buff);
   prefsGetString("MENU", "Tank Label Size", "1", buff, FILENAME_MAX);
@@ -4726,6 +4736,11 @@ void gameFrontFlushWindowSettings(void) {
   prefsSetString("WINDOW", "Overview Zoom", buff);
   prefsSetString("WINDOW", "Overview Follow",
                  TRUEFALSE_TO_STR(gameFrontOverviewFollow));
+
+  intToStr(gameFrontScnPanelX, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Scenario Panel X", buff);
+  intToStr(gameFrontScnPanelY, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Scenario Panel Y", buff);
 
   s_windowSettingsDirty = false;
 }

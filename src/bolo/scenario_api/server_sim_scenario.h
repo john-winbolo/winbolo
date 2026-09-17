@@ -314,6 +314,35 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
                                   bool extraTeams);
 
 /*********************************************************
+ *NAME:          serverSimSetScenarioRules
+ *PURPOSE:
+ *  Tells the sim which rules the attached scenario's own
+ *  manifest sets, and publishes the set, so the lobby can
+ *  say what a mod changes without opening the file. The
+ *  author's table, not the table the round is running on:
+ *  a rule a scenario changes mid-round moves the second
+ *  and leaves this alone.
+ *
+ *  Goes beside the identity, at the same two points: an
+ *  attach states its set and a detach states an empty one,
+ *  which is what tells a client the scenario has gone. A
+ *  map that never had a scenario reaches neither call, so
+ *  nothing is published there at all.
+ *
+ *  A row naming no rule is dropped, and rows past the
+ *  event's cap with it — a manifest names each rule at
+ *  most once, so a set inside the cap holds every rule
+ *  there is.
+ *
+ *ARGUMENTS:
+ *  sim   - The sim being told
+ *  rules - The rule/value pairs; NULL for none
+ *  count - How many of them; 0 empties the set
+ *********************************************************/
+void serverSimSetScenarioRules(ServerSim *sim, const ScnOpSetRule *rules,
+                               int count);
+
+/*********************************************************
  *NAME:          serverSimAddUnfieldedSeat
  *PURPOSE:
  *  Seat a bot in the lobby without putting it on the

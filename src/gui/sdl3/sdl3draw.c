@@ -65,6 +65,7 @@
 #include "glyphs.h"
 #include "ping_overlay.h"
 #include "ping_marker.h"    /* pingMarkerDraw — the on-map ping pass */
+#include "scenario_marker.h" /* scnMarkerDraw — a scenario's marks, beside it */
 #include "../ping_kinds.h"  /* pingDisplayAlpha */
 #include "global.h"
 #include "client_sim.h"
@@ -3045,6 +3046,44 @@ void sdl3DrawMainScreen(ClientSim *cs, screen *value, screenMines *mineView, scr
           pingMarkerDraw(gRenderer, pings[pi].kind, cx, cy,
                          (float)tileW, (float)tileH,
                          nowMs - pings[pi].recvMs, &label);
+        }
+      }
+
+      /* A scenario's map markers, beside the pings and on the same footing:
+         marks on the ground, so after the terrain and under every sprite,
+         placed with the same offset and edge arithmetic. A marker on a
+         square the view does not reach is not drawn at all — one square of
+         slack each way, because the pointer stands above its square and a
+         marker just off the top edge still has something worth showing. */
+      {
+        Uint32 nowMs = (Uint32)SDL_GetTicks();
+        BYTE   mi;
+        for (mi = 0; mi < SCN_MARKERS_MAX; mi++) {
+          const ClientScnMarker *m = clientSimGetScnMarker(cs, mi);
+          uint8_t sqX = 0, sqY = 0;
+          int vx, vy;
+          float cx, cy;
+          if (m == NULL || !m->active) continue;
+          if (m->kind == SCN_MARKER_KIND_FOLLOW) {
+            /* Rides the tank in its slot, out of the very list the tank
+               sprites are drawn from below, so a slot with nothing on
+               screen — dead, never joined, or scrolled away — draws
+               nothing and leaves no mark behind. */
+            if (!scnMarkerTankSquare(tks, m->slot, &sqX, &sqY)) continue;
+          } else {
+            sqX = m->x;
+            sqY = m->y;
+          }
+          vx = (int)sqX - (int)(clientSimGetXOffset(cs) + 1);
+          vy = (int)sqY - (int)(clientSimGetYOffset(cs) + 1);
+          if (vx < -1 || vx > MAIN_SCREEN_SIZE_X) continue;
+          if (vy < -1 || vy > MAIN_SCREEN_SIZE_Y) continue;
+          cx = (float)originX + ((float)vx + 0.5f) * (float)tileW
+             - (float)edgeX;
+          cy = (float)originY + ((float)vy + 0.5f) * (float)tileH
+             - (float)edgeY;
+          scnMarkerDraw(gRenderer, m->colour, cx, cy,
+                        (float)tileW, (float)tileH, (unsigned int)nowMs);
         }
       }
 

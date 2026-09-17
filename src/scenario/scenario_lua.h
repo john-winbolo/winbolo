@@ -111,6 +111,25 @@ typedef struct {
     BYTE        code;
 } ScnLuaTerrain;
 
+/* One word a script may write for a small argument, and the number the
+ * payload carries for it. */
+typedef struct {
+    const char *word;
+    int         value;
+} ScnLuaWord;
+
+/* One of the word tables the game table carries beside TERRAIN — COLOUR,
+ * SIZE, ALIGN and TIMER_MODE — under the name a script indexes it by.
+ *
+ * The members are the same rows the argument readers match a word against,
+ * so a word a panel primitive takes is a name the table holds and a document
+ * written from here names every word the surface accepts. */
+typedef struct {
+    const char       *name;
+    const ScnLuaWord *words;
+    size_t            count;
+} ScnLuaWordTable;
+
 /*********************************************************
  *NAME:          scenarioLuaInstall
  *PURPOSE:
@@ -143,6 +162,14 @@ const ScnLuaConst *scenarioLuaConsts(size_t *count);
  *  The members of game.TERRAIN, in the order it names them.
  *********************************************************/
 const ScnLuaTerrain *scenarioLuaTerrain(size_t *count);
+
+/*********************************************************
+ *NAME:          scenarioLuaWordTables
+ *PURPOSE:
+ *  The word tables the game table carries beside TERRAIN,
+ *  in the order it names them.
+ *********************************************************/
+const ScnLuaWordTable *scenarioLuaWordTables(size_t *count);
 
 /* ── The three index rules ──────────────────────────────────────────
  *

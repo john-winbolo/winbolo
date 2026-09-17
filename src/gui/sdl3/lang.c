@@ -2277,6 +2277,13 @@ static const LangEntry langTable[] = {
     {2324, "Edited since this check ran, so these lines may have moved"},
     {2325, "Team numbers run 1 to {number}"},
     {2326, "Another team in this template has this number"},
+    {2327, "Score"},
+    {2328, "Rules"},
+    {2329, "What {string1} changes"},
+    {2330, "Rule"},
+    {2331, "Classic"},
+    {2332, "Scenario"},
+    {2333, "Change"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

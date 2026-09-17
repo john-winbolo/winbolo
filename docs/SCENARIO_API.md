@@ -28,7 +28,10 @@ bug worth reporting.
 - [Tags and regions](#tags-and-regions)
 - [Changing the world](#changing-the-world)
 - [Bots and seats](#bots-and-seats)
+  - [Hints: telling one bot what to do](#hints-telling-one-bot-what-to-do)
 - [Talking to players, and ending the round](#talking-to-players-and-ending-the-round)
+- [Showing things on a client](#showing-things-on-a-client)
+  - [The panel](#the-panel)
 - [Rules](#rules)
 - [Test hooks](#test-hooks)
 - [Constants](#constants)
@@ -949,12 +952,94 @@ new the way a respawn is. A spawn naming either differently gets a runner built
 for it instead, which is what a wave transition costs when it is paid, and a
 line in the server log saying which of the two differed. The `init` table is
 read once, when the VM is built, so it is not the place for orders that change
-from one wave to the next; a call that speaks to a bot's brain is not here yet.
+from one wave to the next; `game.hint` below is.
 
 The roster ops are the six above, `set_team` and `lobby_set_team` included.
 All of them are refused inside `on_setup`: the round is still being built
 there, and a roster edit would re-enter the machinery that is building it.
 Field your first wave, and move seats between teams, from `on_start`.
+
+---
+
+### Hints: telling one bot what to do
+
+| Call | What it does |
+|---|---|
+| `game.hint(p, t)` | Hands bot `p`'s brain an order: one flat table with a `verb` in it. |
+
+A hint goes to **one bot's brain**, not to the world. The engine marshals the
+table and never reads it: what a key means is a contract between the script
+and the brain it was written for.
+
+`t` is a flat table — names to values, nothing nested. A key is at most 23
+bytes, a value at most 63, and there are at most 16 pairs; past any of those
+the call is refused with `SCN_OP_TOO_BIG`. Values may be strings, numbers or
+`true`/`false`, and **every one of them reaches the brain as text**, so
+
+```lua
+game.hint(p, { verb = "defend", base = 3, tight = true })
+```
+
+arrives as `t.verb == "defend"`, `t.base == "3"` and `t.tight == "true"`. A
+brain reads a number back with `tonumber`.
+
+`verb` is required: a table without one, or with an empty one, stops the call
+the way any bad argument does. Everything else is the script's business.
+
+**What the brain has to do.** The server calls the global `on_scenario_hint(t)`
+on that bot's Lua state, if the brain defines one:
+
+```lua
+function on_scenario_hint(t)
+  if t.verb == "goto" then ... end
+end
+```
+
+A brain that does not define it ignores the hint and the call still answers
+`true` — a scenario names a seat and cannot know which brain a server runs it
+with. `game.hint` is refused for a seat with nobody in it
+(`SCN_OP_NO_SUCH_PLAYER`) and for a human (`SCN_OP_IS_HUMAN`), and nothing
+else: a bot that is dead or waiting to come in is handed the order anyway,
+because its brain is still running.
+
+**The seven standard verbs.** These are the words a brain that takes hints is
+expected to know. Everything past them passes through untouched, so a brain
+author and a script author can agree on words of their own.
+
+| `verb` | Keys | Means |
+|---|---|---|
+| `goto` | `x`, `y`, and optionally `w`, `h` | Go to that square, or to the middle of that rectangle, and hold there |
+| `attack` | `player` | Attack that seat's tank |
+| `defend` | `pill` or `base` | Hold that pillbox or that base |
+| `hold` | `x`, `y`, both optional | Stand still — on that square, or where the bot already is |
+| `patrol` | `x1`, `y1`, `x2`, `y2`, … up to `x7`, `y7` | Walk the points in order, round and round |
+| `escort` | `player`, and optionally `distance` | Stay with that seat, within `distance` squares of it (3 by default) |
+| `avoid` | `x`, `y`, `w`, `h` | Keep out of that rectangle until told otherwise |
+
+There is no `region` key. A brain has no region table to look a name up in, so
+a script that wants a bot in a region reads the rectangle itself and sends the
+numbers:
+
+```lua
+local r = game.region("keep")
+game.hint(p, { verb = "goto", x = r.x, y = r.y, w = r.w, h = r.h })
+```
+
+**What GoalHunter does with them.** The brain routes a hint into the same
+order machinery a chat line from a human ally reaches, so a hinted bot acks
+it, holds it for the same sixty seconds, and drops it for anything a person
+says afterwards. A player can call a scripted order off with `cancel all` or
+by naming the bot — a bare `cancel` cannot, because that one releases only
+the speaker's own order and a hint's sender is the scenario.
+
+Three of the seven are as near as the brain's existing goals get. `defend` on
+a **base** stands on the base, because there is no defend-a-base goal — a base
+is not held the way a pillbox is. `avoid` is remembered rather than fed to the
+pathfinder: a bot standing inside the rectangle leaves it, and a later `goto`
+or `hold` inside it is turned down, but a route may still pass through.
+`escort` follows a seat whose position the brain knows, which is an ally
+**bot**; a human ally broadcasts nothing the brain can follow, so a bot told
+to escort a person stays where it is.
 
 ---
 
@@ -1008,6 +1093,115 @@ receiver that never sees it. Use `"all"` or a seat number there.
 `end_round` is how a scenario wins or loses a round. It stops play there and
 then, and the line it carries is shown in the lobby exactly as written — the
 server adds no verdict of its own.
+
+---
+
+## Showing things on a client
+
+A scenario never draws on a client. It sends what it wants shown as data, and
+each frontend draws that with its own 2D calls, so one scenario looks right on
+the desktop game, in a browser and on a phone without knowing that any of them
+exist.
+
+| Call | What it does |
+|---|---|
+| `game.panel(id, list[, target])` | Draws panel `id` from a list of primitives. An empty list clears it. |
+| `game.score(target, value[, label])` | The scenario's own score for one seat with a number, or for a team with `{ team = t }`. `label` is the short word shown beside it, up to 15 bytes. |
+| `game.announce(text, seconds[, target])` | A line across the centre of the screen for that many seconds. Empty text takes the line away. |
+| `game.marker(id, x, y[, colour[, target]])` | Puts mark `id` on a map square. |
+| `game.marker_follow(id, p[, colour[, target]])` | Puts mark `id` on seat `p`, where it rides the tank rather than the ground. |
+| `game.clear_marker(id[, target])` | Takes mark `id` off the map. |
+
+There is one panel, id 0 — the square over the game view — and any other id is
+refused with `SCN_OP_RANGE`. There are sixteen markers, numbered 0 to 15. A
+marker id holds one mark: putting a second one on an id replaces the first,
+and `clear_marker` takes it off. A colour left out of a marker call is
+`yellow`.
+
+`announce` is counted in seconds and the client counts it down in ticks, at
+100 a second — the same rate `game.timer` converts at, and the one
+[Three clocks](#three-clocks) describes. Two seconds is 200 ticks, and the
+longest a line can be asked to stay up is 65535 ticks, about 655 seconds. A
+line with something in it and a time of zero is refused, and one written with
+no time at all stops the script; an empty line is the clear, and it needs
+neither. In the lobby the clock moves at half that
+rate, so a line put up before the round starts stays up about twice as long as
+it asked for.
+
+**Who sees it.** The last argument of `panel`, `announce` and the three marker
+calls is the same target every other call takes: left out, or `"all"`, for
+everyone; a number for one seat; `{ team = t }` for one team. A late joiner is
+given whatever the panels hold at the moment it arrives, so a panel put up in
+the first tick of a round is still there for somebody who connects in the
+tenth minute.
+
+`score` is the exception. Its target says *whose* score it is, not who sees
+it, so a score is shown to everyone. There is no everyone's score: a call with
+no target, or with `"all"`, is the call written wrong and stops the script.
+
+**One update per panel per audience per tick.** Every update replaces the
+whole list, so a second update to the same panel for the same audience in the
+same tick is refused with `SCN_OP_RATE` rather than queued — the one it would
+have replaced was never going to be seen. Giving each of sixteen players their
+own copy of panel 0 in one tick is fine: the audience is part of the key.
+
+### The panel
+
+A panel is a square of 128 logical units on a side, origin top-left, with `x`
+running right and `y` running down. Each frontend maps that square into a slot
+in its own layout and scales it with the game's zoom, so a script never knows
+a pixel size. Coordinates are bytes: a primitive may start inside the square
+and run past its edge, and the frontend clips it.
+
+A list is an array of primitives. Each primitive is an array whose first
+element is its name, with the operands after it in the order below:
+
+| Primitive | Written as | Draws |
+|---|---|---|
+| `rect` | `{ "rect", x, y, w, h, colour, fill }` | A rectangle, outlined or filled. `fill` is `true` or `false`. |
+| `line` | `{ "line", x0, y0, x1, y1, colour }` | A one-unit line. |
+| `text` | `{ "text", x, y, colour, size, align, s }` | `s` in the frontend's own font, up to 48 bytes, and only bytes a panel draws — no newlines or escapes. |
+| `name` | `{ "name", x, y, colour, size, align, p }` | The name seat `p` is playing under, so a script never sends names and a rename shows through. |
+| `sprite` | `{ "sprite", x, y, tile }` | One tile from the skin's own sheet, by its `tilenum.h` id: terrain, a pillbox, a base, a tank frame. |
+| `bar` | `{ "bar", x, y, w, h, colour, value, max }` | A horizontal bar filled to `value` over `max`, outlined. Both are 16-bit, so a bar can show a real total. |
+| `timer` | `{ "timer", x, y, colour, size, align, mode, tick }` | Minutes and seconds counting down to, or up from, a game tick. The client works it out against its own clock, so a countdown is one message rather than one a tick. |
+
+`size` is `"small"` or `"normal"`. `align` is `"left"`, `"centre"` or
+`"right"`, and says which way the text sits about its `x`. A timer's `mode` is
+`"down"` or `"up"`, and its `tick` is a tick on `game.tick()`'s clock.
+
+```lua
+game.panel(0, {
+  { "rect",  0, 0, 128, 20, "grey_dark", true },
+  { "text",  64, 4, "white", "normal", "centre", "Wave 3" },
+  { "bar",   4, 24, 120, 8, "green", holding, 20 },
+  { "timer", 64, 40, "yellow", "normal", "centre", "down", ends_at },
+})
+
+game.panel(0, {})            -- take it away again
+```
+
+A list holds up to 128 primitives and is refused with `SCN_OP_TOO_BIG` past
+that, or if the whole list comes to more than the 1017 bytes one update
+carries. A primitive written wrong — a name that spells no primitive, an
+operand missing, an operand that is not a number — stops the script, like any
+other call written wrong. A value the simulation will not take, such as a
+colour outside the palette, is refused as an answer the script can read.
+
+### Colours
+
+Every colour is an index into a palette of sixteen, so a skin or a dark mode
+maps the sixteen rather than a script choosing RGB. A colour is written as its
+name or as its number:
+
+`none`, `black`, `white`, `grey`, `grey_dark`, `red`, `green`, `blue`,
+`yellow`, `orange`, `cyan`, `magenta`, `reserved_12`, `reserved_13`,
+`reserved_14`, `reserved_15`.
+
+`none` draws nothing, and the four reserved entries draw nothing until a skin
+gives them a colour. The names are also on the `game` table as
+`game.COLOUR.red` and so on, beside `game.SIZE`, `game.ALIGN` and
+`game.TIMER_MODE`, for a script that computes one rather than writing it.
 
 ---
 
@@ -1333,7 +1527,12 @@ The `code` a refused write answers, as a string.
 | Regions | 64, declared and defined together; names 31 bytes |
 | Timers waiting at once | 64 |
 | A line of text | 128 bytes |
+| Primitives in one panel list | 128 |
+| Bytes in one panel list | 1017 |
+| A panel text primitive | 48 bytes |
+| A score label | 15 bytes |
 | A bot's `init` table | 16 pairs |
+| A hint table | 16 pairs; a name 23 bytes, a value 63 |
 | Events queued for one frame | 256 |
 | Roster changes outstanding at once | 32 |
 | Tiles a fill may change in one tick | 256 |
@@ -1407,10 +1606,5 @@ Named so you do not spend an afternoon looking for them:
   may put a seat on a team nobody is on is still decided by the
   `allow_extra_teams()` policy alone.
 - **Packaged brains.** `package:NAME` is refused wherever a brain is named.
-- **Bot hints.** There is no call that hands a bot's brain a structured
-  hint. `say` reaches a brain through its chat inbox, which is the
-  channel a human ally has, and nothing beyond it.
-- **Presentation.** A panel, a score line, a newswire line and a map marker
-  have no calls yet.
 - **Triggers.** A `scenario.triggers` table is not read, and a script that
   carries one is neither parsed nor refused for it.

@@ -44,6 +44,8 @@
 #include "view_policy.h"   /* ViewPolicy / ViewCategory — clientSimGetViewPolicy */
 #include "ping_display.h" /* PingBand — clientSimGetPlayerPingBand return */
 #include "server_voice_mode.h" /* ServerVoiceMode — clientSimGetServerVoiceMode return */
+#include "scenario_panel.h" /* ScnPanelList, SCN_PANEL_IDS, SCN_MARKERS_MAX —
+                             * the scenario presentation reads below */
 
 #ifndef GAMESIM_TYPEDEF
 #define GAMESIM_TYPEDEF
@@ -688,6 +690,56 @@ const ClientPlayerStats *clientSimGetPlayerStats(const ClientSim *cs,
 /* Spectator roster slot mirror; out-of-range idx returns NULL. */
 const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_t idx);
 
+/* ── What a scenario is presenting ─────────────────────────────────
+ * The four CTRL_SCN_* events store here and the render pass reads.
+ * Everything below is dropped on the return to lobby. */
+
+/* One scenario score row: the number and the label the scenario gave
+ * it. valid separates a row nothing has sent from one sent a zero. */
+typedef struct {
+    bool    valid;
+    int32_t score;
+    char    label[16];
+} ClientScnScore;
+
+/* One scenario map marker. A marker SCN_MARKER_KIND_CLEAR removed, or
+ * one nothing has set, reads back with active false; kind is therefore
+ * only ever SQUARE or FOLLOW. */
+typedef struct {
+    bool    active;
+    uint8_t kind;      /* ScnMarkerKind */
+    uint8_t x, y;      /* SCN_MARKER_KIND_SQUARE */
+    uint8_t slot;      /* SCN_MARKER_KIND_FOLLOW */
+    uint8_t colour;
+} ClientScnMarker;
+
+/* The decoded display list panel `id` holds, or NULL for an out-of-range
+ * id or a panel nothing has sent a list to. A list that arrived empty
+ * reads back as a non-NULL list of count 0 — that is a panel cleared on
+ * purpose, not one that was never used. The pointer is into the
+ * ClientSim and stays good until the next control event is applied, so
+ * a caller draws from it rather than holding it across frames. */
+const ScnPanelList *clientSimGetScnPanel(const ClientSim *cs, uint8_t id);
+
+/* How many arriving panel lists scnPanelParse refused, and this client
+ * therefore dropped instead of drawing. */
+uint32_t clientSimGetScnPanelRejectCount(const ClientSim *cs);
+
+/* The announcement on screen, or NULL when there is none. outTicks gets
+ * how long it was asked to stay up and outArrivedTick the server tick
+ * it landed at — both on clientSimGetLastServerTick's clock, which is
+ * the clock the scenario counted in. Either out pointer may be NULL. */
+const char *clientSimGetScnAnnounce(const ClientSim *cs, uint16_t *outTicks,
+                                    uint32_t *outArrivedTick);
+
+/* Marker `id`; out-of-range id returns NULL. */
+const ClientScnMarker *clientSimGetScnMarker(const ClientSim *cs, uint8_t id);
+
+/* A scenario's score for one player slot, and for one team (teams run
+ * 1..MAX_TANKS-1). Out-of-range index returns NULL. */
+const ClientScnScore *clientSimGetScnPlayerScore(const ClientSim *cs, BYTE slot);
+const ClientScnScore *clientSimGetScnTeamScore(const ClientSim *cs, BYTE team);
+
 /* Count of currently-connected lobby slots (humans + bots).
  * Matches what the lobby UI's player table renders. */
 BYTE clientSimGetLobbyNumConnected(const ClientSim *cs);
@@ -984,6 +1036,19 @@ const char *clientSimGetLobbyScenarioName(const ClientSim *cs);
 const char *clientSimGetLobbyScenarioFileName(const ClientSim *cs);
 const char *clientSimGetLobbyScenarioDescription(const ClientSim *cs);
 bool        clientSimGetLobbyScenarioExtraTeams(const ClientSim *cs);
+
+/* The rules that scenario's own manifest sets, mirrored via
+ * CTRL_SCENARIO_RULES: which rule, and what the author set it to. The rule
+ * is a SimRuleIndex (public/sim_rules_names.h), which is what names it and
+ * what simRulesClassicValue and simRulesDescribeChange take, so a caller
+ * draws a row without knowing anything about scenarios.
+ *
+ * 0 rows for a lobby with no scenario, and for one whose scenario changes no
+ * rule: a caller with nothing to list draws nothing either way. -1 / 0 for a
+ * NULL cs or an index out of range. */
+int         clientSimGetScenarioRulesCount(const ClientSim *cs);
+int         clientSimGetScenarioRuleIndex(const ClientSim *cs, int idx);
+double      clientSimGetScenarioRuleValue(const ClientSim *cs, int idx);
 
 /* Server map-upload policy as last broadcast in the lobby-settings event.
  * Defaults to UPLOAD_POLICY_ALLOW until the first event arrives. */
@@ -1416,6 +1481,13 @@ const OverviewItemLabel *overviewSnapshotItemLabels(const OverviewSnapshot *s);
    pointer for a non-NULL snapshot; the count is what matters. */
 const ClientPing *overviewSnapshotPings(const OverviewSnapshot *s);
 int               overviewSnapshotPingCount(const OverviewSnapshot *s);
+
+/* The scenario's map markers, by id, SCN_MARKERS_MAX of them. Never NULL for
+ * a snapshot that exists; a marker nothing has set, or one a scenario
+ * cleared, reads back with active false. Taken with the rest of the frame's
+ * reads, so the overview's render half never touches the live store the
+ * control events write. */
+const ClientScnMarker *overviewSnapshotScnMarkers(const OverviewSnapshot *s);
 
 void         clientSimShowMessages(ClientSim *cs, BYTE msgType, bool isShown);
 void         clientSimNetStatusMessage(ClientSim *cs, char *messageStr);

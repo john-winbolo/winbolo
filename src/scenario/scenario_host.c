@@ -3767,7 +3767,9 @@ static void scnHandLobbyOver(ServerSim *sim, const ScenarioManifest *m,
                              LobbyScenarioSource source,
                              const char *fileName) {
     ScnLobbyTemplate t;
+    ScnOpSetRule     rules[SCN_MANIFEST_RULES_MAX];
     int              base = 0;
+    uint16_t         i;
 
     scnFillLobbyTemplate(&m->lobby, &t);
     if (m->game[0] != '\0' && scenarioLuaLoadoutFromWord(m->game, &base)) {
@@ -3784,6 +3786,16 @@ static void scnHandLobbyOver(ServerSim *sim, const ScenarioManifest *m,
        over. */
     serverSimSetScenarioIdentity(sim, source, m->name, fileName,
                                  m->description, m->lobby.extraTeams);
+    /* And which rules it sets, so the lobby can say what it changes without
+       anybody opening the file. The manifest's own pairs, whatever the round
+       later makes of them: the table an author wrote is the question the
+       popup asks. A reload comes through here too, so a host who edits the
+       rules block sees the new set the way they see the new name. */
+    for (i = 0; i < m->numRules && i < SCN_MANIFEST_RULES_MAX; i++) {
+        rules[i].rule  = m->rules[i].rule;
+        rules[i].value = m->rules[i].value;
+    }
+    serverSimSetScenarioRules(sim, rules, (int)i);
 }
 
 /* Everything an attach does once the script's bytes are in hand, whichever
@@ -4364,6 +4376,11 @@ void scenarioHostDetach(ScenarioHost *h) {
            it has none. */
         serverSimSetScenarioIdentity(h->sim, lobbyScenarioNone, NULL, NULL,
                                      NULL, false);
+        /* And an empty rules set, which is how a client is told the set it
+           was shown has gone. Reached only where a host existed, so a map
+           that never had a scenario publishes nothing at all rather than an
+           empty set saying one has just left. */
+        serverSimSetScenarioRules(h->sim, NULL, 0);
         /* Both channels go with the slot, and an invalid handle is a
            no-op, so this needs no test of its own. */
         serverSimUnregisterSubscriber(h->sim, h->sub);

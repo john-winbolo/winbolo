@@ -215,6 +215,8 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/visibility_presets.c
     ${PROJ_ROOT}/src/gui/sdl3/clientmutex.c
     ${PROJ_ROOT}/src/gui/sdl3/sdl3imgui.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/scenario_panel_draw.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/scenario_marker.c
     ${PROJ_ROOT}/src/gui/sdl3/imgui_steam_nav.cpp
     ${PROJ_ROOT}/src/gui/sdl3/sdl3imgui_tablet.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialog_backend.c
@@ -235,6 +237,7 @@ set(ANDROID_SOURCES
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
+    ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_scenario_rules.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_settings.cpp
     ${PROJ_ROOT}/src/gui/sdl3/dialogs/imgui_keysetup.cpp

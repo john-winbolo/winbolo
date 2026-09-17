@@ -195,6 +195,13 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/sdl3imgui.cpp
     ${SRC_ROOT}/gui/sdl3/imgui_steam_nav.cpp
     ${SRC_ROOT}/gui/sdl3/sdl3imgui_tablet.cpp
+    # The scenario panel's display list and a scenario's map markers.
+    # sdl3imgui.cpp above calls the drawer, and sdl3draw.c and
+    # overview_view.cpp below both call the marker, so this target needs
+    # them to link whether or not it has a slot of its own to draw the
+    # panel in yet.
+    ${SRC_ROOT}/gui/sdl3/scenario_panel_draw.cpp
+    ${SRC_ROOT}/gui/sdl3/scenario_marker.c
     ${SRC_ROOT}/gui/sdl3/luabrainshandler.c
     ${SRC_ROOT}/gui/sdl3/minimap_render.c
     ${SRC_ROOT}/gui/sdl3/cursor.c
@@ -223,6 +230,7 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_reel.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
+    ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_scenario_rules.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_settings.cpp
     ${SRC_ROOT}/gui/sdl3/dialogs/imgui_keysetup.cpp
@@ -273,6 +281,8 @@ set(GUI_SOURCES
     ${SRC_ROOT}/gui/sdl3/build_cursor.c
     ${SRC_ROOT}/gui/sdl3/tutorial_text.c
     ${SRC_ROOT}/gui/sdl3/lang.c
+    # The words the lobby's rules popup describes a rule's value in.
+    ${SRC_ROOT}/gui/sdl3/sim_rules_phrase.c
 )
 
 # Log viewer sources — the .wbv decoder, its block-grid renderer and the

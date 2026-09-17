@@ -119,6 +119,51 @@ void brainCoreSetInitTable(lua_State *L, const ScnTable *init) {
 }
 
 /* ------------------------------------------------------------------ */
+/* The hint table, and the handler it is handed to                     */
+/* ------------------------------------------------------------------ */
+
+BrainHintResult brainCoreCallScenarioHint(lua_State *L, const ScnTable *hint,
+                                          char *err, size_t errCap) {
+  int n = (hint != NULL) ? (int)hint->count : 0;
+  int i;
+
+  if (err != NULL && errCap > 0) err[0] = '\0';
+  if (L == NULL) return BRAIN_HINT_NO_HANDLER;
+  if (n > SCN_TABLE_MAX) n = SCN_TABLE_MAX;
+
+  lua_getglobal(L, "on_scenario_hint");
+  if (!lua_isfunction(L, -1)) {
+    /* A brain that does not take hints. The scenario named a seat, not a
+       brain, and it cannot know which brains a server runs, so this is
+       nothing happening rather than something going wrong. */
+    lua_pop(L, 1);
+    return BRAIN_HINT_NO_HANDLER;
+  }
+
+  /* The pairs go onto the stack one at a time and the handler is called with
+     the table they built. Never as a source chunk: the keys and the values
+     are a scenario author's bytes, and composing Lua out of them would be
+     running an author's text as code inside the brain's VM. It is also the
+     reason brainCoreSetInitTable above builds its table this way. */
+  lua_createtable(L, 0, n);
+  for (i = 0; i < n; i++) {
+    if (hint->kv[i].key[0] == '\0') continue;
+    lua_pushstring(L, hint->kv[i].value);
+    lua_setfield(L, -2, hint->kv[i].key);
+  }
+
+  if (lua_pcall(L, 1, 0, 0) != LUA_OK) {
+    if (err != NULL && errCap > 0) {
+      const char *msg = lua_tostring(L, -1);
+      snprintf(err, errCap, "%s", (msg != NULL) ? msg : "(no message)");
+    }
+    lua_pop(L, 1);
+    return BRAIN_HINT_ERROR;
+  }
+  return BRAIN_HINT_DELIVERED;
+}
+
+/* ------------------------------------------------------------------ */
 /* Constant registration                                               */
 /* ------------------------------------------------------------------ */
 

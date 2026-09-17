@@ -36,6 +36,9 @@
 #include "upload_policy.h" /* UploadPolicy in lobbySettings */
 #include "view_policy.h"   /* ViewPolicy / VIEW_CATEGORY_COUNT in lobbySettings */
 #include "server_voice_mode.h" /* ServerVoiceMode in lobbySettings */
+#include "scenario_panel.h" /* SCN_PANEL_MAX for the panel event's byte list */
+#include "sim_rules_names.h" /* SIM_RULE_COUNT — the scenario rules event's
+                             * row cap, taken from the rule list itself */
 
 #ifndef LOBBY_TEAM_NAME_LEN
 #define LOBBY_TEAM_NAME_LEN 32
@@ -211,8 +214,57 @@ typedef enum {
      * transport_control_codec.c are indexed by it, so a new type goes
      * last rather than shifting the ones already there. */
     CTRL_LOBBY_BRAIN_DOCS_CHUNK,
+    /* The four a scenario presents with. Each is body-only on
+     * CHANNEL_CONTROL, as CTRL_ENTITY_SYNC and CTRL_SIM_RULES are:
+     * there is no full-packet wrapper and no PACKET_* type.
+     *
+     * The codecs are recipient-agnostic. Three of the four carry a
+     * destTeam/destPlayer pair that never travels; udpClientDeliverControl
+     * filters on it the way it filters CTRL_SERVER_TEXT, and
+     * client_sim_control.c applies the same test for in-process
+     * subscribers. CTRL_SCN_SCORE has no pair: it is broadcast, and its
+     * target says whose score it is, not who receives it.
+     *
+     * Appended at the END, like CTRL_LOBBY_BRAIN_DOCS_CHUNK above: the
+     * tables in transport_control_codec.c are indexed by this enum, so
+     * a new type goes last rather than shifting the ones already there. */
+    CTRL_SCN_PANEL,
+    CTRL_SCN_SCORE,
+    CTRL_SCN_ANNOUNCE,
+    CTRL_SCN_MARKER,
+    /* CTRL_SCENARIO_RULES — the rules a scenario's own manifest sets, so a
+     * host can answer "what do these mods change?" without opening the file.
+     * The author's table rather than the table the round is running on: a
+     * scenario changing a rule mid-round moves the second and not this one,
+     * and CTRL_SIM_RULES is what says what the simulation is reading now.
+     *
+     * Published beside the identity, so a scenario that attaches states its
+     * set and one that detaches states an empty one. A map that has never
+     * had a scenario publishes neither: an empty set says a scenario has
+     * just gone, and a map with none never had one to go.
+     *
+     * Broadcast and body-only on CHANNEL_CONTROL, as CTRL_SIM_RULES is:
+     * the manifest is as public as the name and the description the lobby
+     * settings event already carries. Replayed into a joining client's sync
+     * while a scenario is attached, so a mid-lobby joiner reads the same
+     * table the host does.
+     *
+     * Appended at the END, like the four above: the tables in
+     * transport_control_codec.c are indexed by this enum. */
+    CTRL_SCENARIO_RULES,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
+
+/* How many rows CTRL_SCENARIO_RULES can carry: one per rule there is, taken
+ * from SIM_RULE_LIST rather than written out, so a rule added to that list
+ * cannot overflow the event. A manifest names each rule at most once, so a
+ * set can hold every rule and no more.
+ *
+ * The count and each row's rule index travel as one byte, which is what the
+ * assertion below holds the list to. */
+#define CTRL_SCENARIO_RULES_MAX SIM_RULE_COUNT
+BOLO_STATIC_ASSERT(CTRL_SCENARIO_RULES_MAX <= 255,
+                   ctrl_scenario_rules_count_and_index_fit_a_byte);
 
 /* Body capacity for CTRL_CHAT.  Worst case is the localized server
  * message: 2 langid + 1 argCount + 4 * (1 lenByte + (PLAYER_NAME_LEN-1)
@@ -815,6 +867,78 @@ typedef struct ControlEvent {
             CTRL_SIM_RULES_U32_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
             CTRL_SIM_RULES_F32_FIELDS(CTRL_SIM_RULES_FLT_MEMBER)
         } simRules;
+
+        /* CTRL_SCN_PANEL — one panel's display list, replacing whatever
+         * that panel held. An empty list clears it. The bytes are the
+         * primitives scenario_panel.h describes; nothing on this path
+         * parses them, because the arm validates a list on the way out
+         * and the drawer does on the way in. */
+        struct {
+            uint8_t  panel;      /* 0..3 */
+            uint16_t len;
+            uint8_t  bytes[SCN_PANEL_MAX];
+            uint8_t  destTeam;   /* 0 = everyone; 1..15 = only that team. Server-side
+                                    recipient filter; not sent on the wire. */
+            uint8_t  destPlayer; /* 0xFF = everyone; otherwise only that slot. Same,
+                                    and 0 is a real slot, so every producer — the
+                                    publishers and the body decoder — sets 0xFF. */
+        } scnPanel;
+
+        /* CTRL_SCN_SCORE — a scenario's own score for one slot or one
+         * team. Broadcast: target is whose score it is, not who
+         * receives it, so this variant carries no recipient pair. */
+        struct {
+            uint8_t kind;        /* a slot's score, or a team's */
+            uint8_t target;      /* the slot, or the team */
+            int32_t score;
+            char    label[16];
+        } scnScore;
+
+        /* CTRL_SCN_ANNOUNCE — a line drawn across the centre of the screen. */
+        struct {
+            char     text[PACKET_MAX_CHAT_MESSAGE + 1];
+            uint16_t ticks;      /* how long it stays up */
+            uint8_t  destTeam;
+            uint8_t  destPlayer;
+        } scnAnnounce;
+
+        /* CTRL_SCN_MARKER — a mark on the map, kept by id. */
+        struct {
+            uint8_t id;
+            uint8_t kind;        /* square, follow a player, or clear */
+            uint8_t x, y;        /* square kind */
+            uint8_t slot;        /* follow-player kind */
+            uint8_t colour;
+            uint8_t destTeam;
+            uint8_t destPlayer;
+        } scnMarker;
+
+        /* CTRL_SCENARIO_RULES — the rules a scenario's own manifest sets, as
+         * its author wrote them. Empty when no scenario is attached.
+         *
+         * rule[i] is a SimRuleIndex, which is the index every other side of
+         * the fence names a rule by, and value[i] is what the manifest set
+         * that rule to — a double because sixteen of the rules are
+         * float-valued and the rest are whole numbers a double carries
+         * exactly. Entries at or above count name no rule and read zero.
+         *
+         * Two arrays rather than one array of {rule, value} pairs, and it
+         * has to stay two: a pair pads to sixteen bytes to carry one byte of
+         * index and eight of value, which would make this variant 1480 bytes
+         * and the largest member of the union. A ServerSim holds 200
+         * ControlEvents in its lobby chat buffer, so every byte the union
+         * grows by is paid two hundred times over on every sim. Split, the
+         * variant is 832 bytes, the union's size stays the one the round
+         * stats summary sets, and the sim pays nothing for this event.
+         *
+         * The wire form is the same either way: the body is a count and then
+         * a [rule][value] row per entry, which the encoder builds by walking
+         * the two arrays together. */
+        struct {
+            uint8_t count;
+            uint8_t rule[CTRL_SCENARIO_RULES_MAX];   /* a SimRuleIndex per row */
+            double  value[CTRL_SCENARIO_RULES_MAX];  /* the value at the same index */
+        } scenarioRules;
     } u;
 } ControlEvent;
 

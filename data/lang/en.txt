@@ -689,6 +689,7 @@ STR_DLGLOBBY_AWARD_BIGGEST_FUMBLE=Biggest Fumble
 STR_DLGLOBBY_LASTROUND_BTN=Last round
 STR_DLGLOBBY_LASTROUND_COL_LGMK=Builder Kills
 STR_DLGLOBBY_LASTROUND_COL_LGMD=Builder Deaths
+STR_DLGLOBBY_LASTROUND_COL_SCNSCORE=Score
 
 # Lobby "Last round" panel — the round's highlight clips.
 STR_DLGLOBBY_HL_HEADER=Highlights
@@ -2300,4 +2301,10 @@ STR_MAPEDIT_SCENARIO_RELOAD_TIP=Reads the script beside the map again, including
 STR_MAPEDIT_SCENARIO_CHECK_STALE=Edited since this check ran, so these lines may have moved
 STR_MAPEDIT_SCENARIO_TEAM_ID_RANGE=Team numbers run 1 to {number}
 STR_MAPEDIT_SCENARIO_TEAM_ID_TAKEN=Another team in this template has this number
+STR_DLGLOBBY_SCENARIO_RULES=Rules
+STR_DLGLOBBY_SCENARIO_RULES_TITLE=What {string1} changes
+STR_DLGLOBBY_RULES_COL_RULE=Rule
+STR_DLGLOBBY_RULES_COL_CLASSIC=Classic
+STR_DLGLOBBY_RULES_COL_SCENARIO=Scenario
+STR_DLGLOBBY_RULES_COL_CHANGE=Change
 

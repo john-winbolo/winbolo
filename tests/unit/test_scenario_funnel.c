@@ -151,12 +151,17 @@ static bool opArmHasLanded(ScenarioOpType t) {
            t == SCN_OP_LOBBY_ADD_BOT ||
            t == SCN_OP_LOBBY_REMOVE_BOT ||
            t == SCN_OP_LOBBY_SET_TEAM ||
+           t == SCN_OP_BOT_HINT ||           /* test_scenario_hint.c */
            t == SCN_OP_MSG_ALL ||            /* test_scenario_comms_arms.c */
            t == SCN_OP_MSG_TEAM ||
            t == SCN_OP_MSG_PLAYER ||
            t == SCN_OP_MSG_SAY ||
            t == SCN_OP_SOUND ||
            t == SCN_OP_LOG ||
+           t == SCN_OP_PANEL ||              /* test_scenario_presentation_arms.c */
+           t == SCN_OP_SCORE ||
+           t == SCN_OP_ANNOUNCE ||
+           t == SCN_OP_MARKER ||
            t == SCN_OP_END_ROUND ||          /* test_scenario_flow_arms.c */
            t == SCN_OP_SET_GAME_TIME ||
            t == SCN_OP_SET_RULE ||           /* test_scenario_rule_arms.c */

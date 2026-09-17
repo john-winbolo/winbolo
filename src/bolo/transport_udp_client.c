@@ -1173,6 +1173,11 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_ENTITY_CHANGE:    return "ENTITY_CHANGE";
     case CTRL_ENTITY_SYNC:      return "ENTITY_SYNC";
     case CTRL_SIM_RULES:        return "SIM_RULES";
+    case CTRL_SCN_PANEL:        return "SCN_PANEL";
+    case CTRL_SCN_SCORE:        return "SCN_SCORE";
+    case CTRL_SCN_ANNOUNCE:     return "SCN_ANNOUNCE";
+    case CTRL_SCN_MARKER:       return "SCN_MARKER";
+    case CTRL_SCENARIO_RULES:   return "SCENARIO_RULES";
     default:                    return "<unknown>";
     }
 }

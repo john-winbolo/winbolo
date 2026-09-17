@@ -225,6 +225,7 @@ extern "C" void imguiLobbyFrameReset(void) {
 
     lobbyChooserReset();
     lobbyScenarioChooserReset();
+    lobbyScenarioRulesReset();
 
     lobbyChatReset();
 
@@ -2281,6 +2282,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
            asks for it happens inside the chat child, and BeginPopupModal
            only finds a popup opened at its own scope. --- */
         lobbyChatDocsRenderModal(cs);
+
+        /* --- The scenario's rules, opened from the scenario line. Here for
+           the same reason as the docs modal above: the Rules button is drawn
+           inside the Map tab, and BeginPopupModal only finds a popup opened
+           at its own scope. --- */
+        lobbyScenarioRulesRenderModal(cs);
 
         /* --- Leave confirmation popup --- */
         char leavePopupModalId[64];

@@ -690,6 +690,7 @@ else()
         src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
         src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
         src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_scenario_rules.cpp
         src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
         src/gui/sdl3/wbn_map_source.cpp
         PROPERTIES COMPILE_OPTIONS "-Werror=undef;${LOBBY_MISSING_DECL_OPTION}"
@@ -882,6 +883,8 @@ set(IOS_SERVER_SOURCES
 set(IOS_GUI_SOURCES
     src/gui/sdl3/clientmutex.c
     src/gui/sdl3/sdl3imgui.cpp
+    src/gui/sdl3/scenario_panel_draw.cpp
+    src/gui/sdl3/scenario_marker.c
     src/gui/sdl3/imgui_steam_nav.cpp
     src/gui/sdl3/sdl3imgui_tablet.cpp
     src/gui/sdl3/sdl3draw.c
@@ -941,6 +944,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
     src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
     src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_scenario_rules.cpp
     src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     src/gui/sdl3/dialogs/imgui_settings.cpp
     src/gui/sdl3/dialogs/imgui_keysetup.cpp
@@ -1546,12 +1550,21 @@ set(CLIENT_SOURCES
     src/gui/ui_mode.c
     src/gui/visibility_presets.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/sdl3imgui.cpp src/gui/sdl3/imgui_steam_nav.cpp src/gui/sdl3/sdl3imgui_tablet.cpp src/gui/sdl3/luabrainshandler.c src/gui/sdl3/wb_theme.cpp
+    # The scenario panel's display list, drawn with ImGui's own 2D calls.
+    # Written against ImGui, public/scenario_panel.h and the tile lookup in
+    # sprite_positions.c alone, so the log viewer and the wasm target can
+    # compile it unchanged when their own slots are wired up.
+    src/gui/sdl3/scenario_panel_draw.cpp
+    # A scenario's map markers, drawn with the SDL renderer beside the smart
+    # ping's. Its colours come out of the drawer above rather than a second
+    # copy of the palette.
+    src/gui/sdl3/scenario_marker.c
     src/gui/sdl3/cursor.c src/gui/sdl3/flags.c src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/winbolo.c src/gui/sdl3/gamefront.c
     src/client_frontend/client_frontend_connect.c
     src/client_frontend/client_frontend_tick.c
     src/client_frontend/client_frontend_common.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_rules.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/lobby_start_list.cpp
@@ -3519,8 +3532,37 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Which scenario plays when a map and a mod both have a claim, and the
     # points the template is applied at.
     tests/unit/test_scenario_precedence.c
+    # The panel's display list: the byte layout decoded from a hand-written
+    # list, the refusal each malformed list gets, the caps at their edges,
+    # and a decoded list written back out and parsed again.
+    tests/unit/test_scenario_panel.c
+    # The four presentation control events: their body codecs against
+    # hand-written bytes, the refusals a malformed body gets, and the
+    # recipient filter the in-process subscriber applies before storing.
+    tests/unit/test_scenario_presentation_codec.c
+    # The four presentation ops: the panel list published, recorded, replayed
+    # to a joiner and pared back to the everyone-addressed lists in the
+    # spectator ring's snapshot, the one-update-per-tick key, every refusal,
+    # and the score, announcement and marker arms.
+    tests/unit/test_scenario_presentation_arms.c
+    # The rules a scenario's own manifest sets, as the lobby's popup reads
+    # them: the body codec against hand-written bytes and every refusal a
+    # malformed body gets.
+    tests/unit/test_scenario_rules_codec.c
+    # The set published when a scenario attaches, emptied when one detaches,
+    # and never written at all on a map that has never had one.
+    tests/unit/test_scenario_rules_published.c
+    # And the replay that hands the set to a client registering after the
+    # attach, so a mid-lobby joiner reads what the host reads.
+    tests/unit/test_scenario_rules_reaches_joiner.c
+    # The bot hint: the flat table a scenario hands one bot, delivered into
+    # that bot's brain VM as on_scenario_hint(table) — the fixture brain gets
+    # it back whole, custom keys included — plus every refusal the arm
+    # answers with and the record naming the seat and the verb.
+    tests/unit/test_scenario_hint.c
     # The binding table: the game table a script reads the sim through, the
-    # three index rules and what an absent entity reads as.
+    # three index rules, what an absent entity reads as, and the bytes and
+    # audiences the presentation rows build.
     tests/unit/test_scenario_lua.c
     # The state a scenario runs in: the names the whitelist takes and the
     # ones it keeps, the precompiled chunk the loader refuses, where a
@@ -4533,8 +4575,10 @@ set(_unit_test_names
     awards_subset_deterministic
     round_stats_codec_roundtrip
     round_stats_codec_worstcase
+    round_stats_scenario_score_codec
     round_stats_codec_rejects_bad_key
     round_stats_build_summary
+    round_stats_scenario_score_filled
     round_stats_summary_highlights
     round_stats_client_ingest
     round_stats_track_records
@@ -5669,6 +5713,11 @@ set(_unit_test_names
     scenario_lua_teleport_start_refuses_bad_index
     scenario_lua_spawn_bot_refuses_bad_start
     scenario_lua_game_type_resolves_scripted
+    scenario_lua_panel_builds_bytes
+    scenario_lua_panel_words_and_numbers
+    scenario_lua_panel_refusals
+    scenario_lua_presentation_targets
+    scenario_lua_score_and_announce
     scenario_sandbox_removed_names_are_nil
     scenario_sandbox_bytecode_chunk_refused
     scenario_sandbox_collectgarbage_stop_refused
@@ -5760,6 +5809,28 @@ set(_unit_test_names
     scenario_precedence_no_game_plays_strict
     scenario_precedence_open_game_plays_open
     scenario_precedence_reload_refuses_bound
+    scenario_panel_parses_each_primitive
+    scenario_panel_refuses_malformed
+    scenario_panel_boundaries
+    scenario_panel_roundtrip
+    scenario_panel_timer_text
+    scenario_announce_remaining
+    scn_presentation_codec_bodies
+    scn_presentation_codec_refuses_short
+    scn_presentation_decoder_sets_broadcast
+    scn_presentation_client_filters
+    scn_arm_panel_publishes_and_records
+    scn_arm_panel_refusals
+    scn_arm_panel_one_update_per_tick
+    scn_arm_panel_replayed_to_joiner
+    scn_arm_panel_snapshot_bounded
+    scn_arm_score_announce_marker
+    scenario_rules_codec
+    scenario_rules_published
+    scenario_rules_reaches_joiner
+    scenario_hint_reaches_brain
+    scenario_hint_refusals
+    scenario_hint_records
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table

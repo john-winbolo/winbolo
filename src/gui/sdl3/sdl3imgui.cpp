@@ -80,6 +80,7 @@ extern "C" {
 #include "flags.h"
 #include "glyphs.h"
 #include "ping_overlay.h"
+#include "scenario_panel_draw.h" /* the shared drawer behind the scenario panel */
 #include "dialogs/imgui_keycap.h"
 /* The lobby's visibility value renderer and the preset table, so the
  * in-game info panel names a server's rules in the same words and
@@ -3728,6 +3729,264 @@ static void renderPlayersPanel(ClientSim *cs) {
     ImGui::End();
 }
 
+/* -------------------------------------------------------
+ * The scenario panel
+ *
+ * A scenario puts information in front of players by
+ * sending a display list, and this is where panel 0 — the
+ * in-game square — lands: a small window over the game
+ * view, one panel unit to one pixel at zoom 1 and scaled
+ * with the game's zoom from there.
+ *
+ * It is not one of the status panels. Those are a fixed
+ * column at the positions src/gui/positions.h names and
+ * cannot be dragged. This one is the player's to put where
+ * they like, and where they put it is kept in the
+ * preferences.
+ *
+ * Drawn only while panel 0 holds a list with something in
+ * it. An empty list is a scenario taking the panel away, so
+ * an empty frame left sitting on the map would be showing
+ * the player something the scenario had just removed.
+ *
+ * Panel 0 is the only panel there is, so this is the only
+ * place a display list is drawn.
+ * ------------------------------------------------------- */
+
+/* How far in from the top-right corner of the game view the panel sits the
+   first time it is shown, in panel units so the inset scales with it. */
+#define SCN_PANEL_DEFAULT_INSET 4.0f
+
+/* The name a seat is playing under, for the list's name primitive. NULL for
+   a seat nobody holds, which is what makes that primitive draw nothing. */
+static const char *scnPanelPlayerName(void *ctx, uint8_t slot) {
+    const char *name;
+    (void)ctx;
+    name = sdl3ImguiGetPlayerName((unsigned char)slot);
+    if (name == nullptr || name[0] == '\0') return nullptr;
+    return name;
+}
+
+static void renderScenarioPanel(ClientSim *cs) {
+    /* Whether ImGui is already holding a position for the window. Cleared
+       whenever the panel is not drawn, so the next list to arrive places it
+       again from what was saved rather than from wherever the last one that
+       shared this window id happened to sit. */
+    static bool s_scnPanelPlaced = false;
+
+    const ScnPanelList *list =
+        (cs != nullptr) ? clientSimGetScnPanel(cs, 0) : nullptr;
+
+    /* Tablet mode is the mobile frontends. They map the square into a slot
+       of their own rather than into a window the player drags, so this one
+       stays out of their way. */
+    if (cs == nullptr || uiModeIsTablet() || list == nullptr ||
+        list->count == 0) {
+        s_scnPanelPlaced = false;
+        return;
+    }
+
+    /* The game's own zoom, as the pixels it actually comes out at on screen:
+       in Custom zoom the game is drawn into a render target at the integer
+       zoom and then blitted at a fractional scale, so the two multiply. The
+       same number the vote widgets anchor themselves with. */
+    int rawZoom = sdl3DrawGetZoomFactor();
+    if (rawZoom < 1) rawZoom = 1;
+    float gameScale = 1.0f;
+    sdl3DrawGetGameRect(nullptr, nullptr, nullptr, nullptr, &gameScale);
+    if (gameScale <= 0.0f) gameScale = 1.0f;
+    const float scale = (float)rawZoom * gameScale;
+    const float side  = (float)SCN_PANEL_UNITS * scale;
+
+    /* Where it goes when nothing has been saved: the top-right of the game
+       view, inset a little. Render coordinates, which is what ImGui draws
+       in and what the smart-ping overlay pins itself with. */
+    float defX = SCN_PANEL_DEFAULT_INSET * scale;
+    float defY = SCN_PANEL_DEFAULT_INSET * scale;
+    {
+        float gx, gy, gw, gh, gtw, gth, rx0, ry0, rx1, ry1;
+        if (sdl3DrawGetMainViewGameRect(&gx, &gy, &gw, &gh, &gtw, &gth) &&
+            sdl3DrawGameToRenderCoords(gx, gy, &rx0, &ry0) &&
+            sdl3DrawGameToRenderCoords(gx + gw, gy + gh, &rx1, &ry1)) {
+            defX = rx1 - side - SCN_PANEL_DEFAULT_INSET * scale;
+            defY = ry0 + SCN_PANEL_DEFAULT_INSET * scale;
+        }
+    }
+
+    /* A position saved on a larger display would put the panel off screen,
+       where there is nothing to grab to drag it back, so a restored one is
+       brought inside the window it is restored into. */
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    float wantX = (gameFrontScnPanelX >= 0) ? (float)gameFrontScnPanelX : defX;
+    float wantY = (gameFrontScnPanelY >= 0) ? (float)gameFrontScnPanelY : defY;
+    if (wantX > display.x - side) wantX = display.x - side;
+    if (wantY > display.y - side) wantY = display.y - side;
+    if (wantX < 0.0f) wantX = 0.0f;
+    if (wantY < 0.0f) wantY = 0.0f;
+
+    if (!s_scnPanelPlaced) {
+        ImGui::SetNextWindowPos(ImVec2(wantX, wantY), ImGuiCond_Always);
+        s_scnPanelPlaced = true;
+    }
+    ImGui::SetNextWindowSize(ImVec2(side, side), ImGuiCond_Always);
+
+    /* No padding, so the window's own rect is the square the list is drawn
+       in and one panel unit is one pixel at zoom 1. The backing is dim
+       rather than opaque: the map under the panel stays readable, and what
+       the script draws reads on top of it. */
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 110));
+    const bool open = ImGui::Begin("##scenariopanel", nullptr,
+                                   ImGuiWindowFlags_NoTitleBar |
+                                   ImGuiWindowFlags_NoResize |
+                                   ImGuiWindowFlags_NoScrollbar |
+                                   ImGuiWindowFlags_NoScrollWithMouse |
+                                   ImGuiWindowFlags_NoCollapse |
+                                   ImGuiWindowFlags_NoSavedSettings |
+                                   ImGuiWindowFlags_NoFocusOnAppearing |
+                                   ImGuiWindowFlags_NoDocking |
+                                   ImGuiWindowFlags_NoNav);
+    if (open) {
+        const ImVec2 pos = ImGui::GetWindowPos();
+
+        /* The window is movable, so this is also where a drag is read back.
+           Clamped again here for the main window having been made smaller
+           since the panel was placed, which ImGui does not do on its own.
+           The clamp lands on the next frame — the background was submitted
+           at pos already, and the list is drawn on top of that background
+           rather than half a frame ahead of it. */
+        float keepX = pos.x, keepY = pos.y;
+        if (keepX > display.x - side) keepX = display.x - side;
+        if (keepY > display.y - side) keepY = display.y - side;
+        if (keepX < 0.0f) keepX = 0.0f;
+        if (keepY < 0.0f) keepY = 0.0f;
+        if (keepX != pos.x || keepY != pos.y) {
+            ImGui::SetWindowPos(ImVec2(keepX, keepY));
+        }
+
+        /* Saved through the debounced window-settings path, the way the map
+           overview's geometry is: a drag is a burst of positions and only
+           the one it ends on is worth a write. */
+        if ((int)keepX != gameFrontScnPanelX ||
+            (int)keepY != gameFrontScnPanelY) {
+            gameFrontScnPanelX = (int)keepX;
+            gameFrontScnPanelY = (int)keepY;
+            gameFrontSaveWindowSettings();
+        }
+
+        ScnPanelDrawEnv env;
+        env.playerName = scnPanelPlayerName;
+        env.ctx        = nullptr;
+        /* The tick a ClientSim last heard from the server — the clock the
+           scenario counted its timer's tick on. */
+        env.tick       = clientSimGetLastServerTick(cs);
+        env.scale      = scale;
+        env.tiles      = (void *)sdl3DrawGetTilesTexture();
+        scnPanelDraw(list, pos.x, pos.y, &env);
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
+}
+
+/* -------------------------------------------------------
+ * The scenario announcement
+ *
+ * One line across the game view, for the few seconds a
+ * scenario asked for. It sits in the view's upper third
+ * rather than dead centre, which is where the player's own
+ * tank is.
+ *
+ * Drawn on the foreground draw list and not in a window at
+ * all. A window across the middle of the screen would take
+ * the mouse with it and stop the player firing under it,
+ * and a draw list has no hit test to turn off — there is
+ * nothing there to click on.
+ *
+ * Outlined rather than merely coloured: the line lands over
+ * whatever terrain happens to be under it, and one colour
+ * against grass is a line somebody cannot read.
+ *
+ * The bytes are the script's own and are not localised, so
+ * nothing on this path goes near the language table.
+ * ------------------------------------------------------- */
+
+/* The line's height in panel units, so it scales with the game's zoom the
+   same way the panel's own text does. */
+#define SCN_ANNOUNCE_UNITS 20.0f
+
+/* How far down the game view the line sits, as a fraction of its height. */
+#define SCN_ANNOUNCE_DOWN 0.28f
+
+/* The last of an announcement's life spent fading, in ticks. Long enough to
+   read as going rather than as cut off; ticks run at a hundred a second, so
+   this is a third of one. */
+#define SCN_ANNOUNCE_FADE_TICKS 33u
+
+static void renderScenarioAnnounce(ClientSim *cs) {
+    if (cs == nullptr || uiModeIsTablet()) return;
+
+    uint16_t    ticks       = 0;
+    uint32_t    arrivedTick = 0;
+    const char *text        = clientSimGetScnAnnounce(cs, &ticks, &arrivedTick);
+    uint32_t    left        = 0;
+    if (!scnAnnounceRemaining(text, arrivedTick, ticks,
+                              clientSimGetLastServerTick(cs), &left)) {
+        return;
+    }
+
+    /* The same zoom the panel window scales by, so the two agree about what
+       one unit is worth on this screen. */
+    int rawZoom = sdl3DrawGetZoomFactor();
+    if (rawZoom < 1) rawZoom = 1;
+    float gameScale = 1.0f;
+    sdl3DrawGetGameRect(nullptr, nullptr, nullptr, nullptr, &gameScale);
+    if (gameScale <= 0.0f) gameScale = 1.0f;
+    const float scale = (float)rawZoom * gameScale;
+
+    float gx, gy, gw, gh, gtw, gth, rx0, ry0, rx1, ry1;
+    if (!sdl3DrawGetMainViewGameRect(&gx, &gy, &gw, &gh, &gtw, &gth)) return;
+    if (!sdl3DrawGameToRenderCoords(gx, gy, &rx0, &ry0)) return;
+    if (!sdl3DrawGameToRenderCoords(gx + gw, gy + gh, &rx1, &ry1)) return;
+
+    ImFont *font = ImGui::GetFont();
+    if (font == nullptr) return;
+
+    float height = SCN_ANNOUNCE_UNITS * scale;
+    if (height < 8.0f) height = 8.0f;
+    const ImVec2 measured = font->CalcTextSizeA(height, FLT_MAX, 0.0f, text);
+
+    const float px = (rx0 + rx1) * 0.5f - measured.x * 0.5f;
+    const float py = ry0 + (ry1 - ry0) * SCN_ANNOUNCE_DOWN;
+
+    /* Full strength until the last stretch, then out. */
+    float fade = 1.0f;
+    if (left < SCN_ANNOUNCE_FADE_TICKS) {
+        fade = (float)left / (float)SCN_ANNOUNCE_FADE_TICKS;
+    }
+    const int alpha = (int)(255.0f * fade);
+    if (alpha <= 0) return;
+
+    ImDrawList *dl = ImGui::GetForegroundDrawList();
+    if (dl == nullptr) return;
+
+    /* The outline: the same line in near-black, one stroke out in each of the
+       eight directions, so the letters keep an edge whichever way the terrain
+       under them happens to run. */
+    const ImU32 edge = IM_COL32(0, 0, 0, alpha);
+    const float o    = (scale > 1.0f) ? scale : 1.0f;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            dl->AddText(font, height,
+                        ImVec2(px + (float)dx * o, py + (float)dy * o),
+                        edge, text);
+        }
+    }
+    dl->AddText(font, height, ImVec2(px, py),
+                IM_COL32(255, 255, 255, alpha), text);
+}
+
 /* About modal + linked markdown popups live in dialogs/imgui_about.cpp so
  * the welcome screen (its own ImGui context) can show the same dialog. */
 
@@ -7091,6 +7350,8 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     renderGameInfoPanel(cs);
     renderSendMsgPanel(cs);
     renderPlayersPanel(cs);
+    renderScenarioPanel(cs);
+    renderScenarioAnnounce(cs);
 
     /* Modal dialogs */
     aboutPopupRender();

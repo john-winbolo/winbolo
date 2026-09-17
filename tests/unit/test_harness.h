@@ -263,7 +263,9 @@ int run_awards_subset_deterministic(void);
 int run_round_stats_codec_roundtrip(void);
 int run_round_stats_codec_rejects_bad_key(void);
 int run_round_stats_codec_worstcase(void);
+int run_round_stats_scenario_score_codec(void);
 int run_round_stats_build_summary(void);
+int run_round_stats_scenario_score_filled(void);
 int run_round_stats_summary_highlights(void);
 int run_round_stats_client_ingest(void);
 int run_round_stats_track_records(void);
@@ -2842,6 +2844,11 @@ int run_scenario_lua_detail_carries_the_number(void);
 int run_scenario_lua_teleport_start_refuses_bad_index(void);
 int run_scenario_lua_spawn_bot_refuses_bad_start(void);
 int run_scenario_lua_game_type_resolves_scripted(void);
+int run_scenario_lua_panel_builds_bytes(void);
+int run_scenario_lua_panel_words_and_numbers(void);
+int run_scenario_lua_panel_refusals(void);
+int run_scenario_lua_presentation_targets(void);
+int run_scenario_lua_score_and_announce(void);
 
 /* The state a scenario runs in (test_scenario_sandbox.c): the names the
  * whitelist takes and the ones it keeps, the precompiled chunk the loader
@@ -2996,6 +3003,59 @@ int run_scenario_precedence_reload_reseats(void);
 int run_scenario_precedence_no_game_plays_strict(void);
 int run_scenario_precedence_open_game_plays_open(void);
 int run_scenario_precedence_reload_refuses_bound(void);
+
+/* The panel's display list (test_scenario_panel.c): the byte layout
+ * decoded from a hand-written list, the refusal each malformed list
+ * gets, the caps at their edges, and a decoded list written back out
+ * and parsed again. */
+int run_scenario_panel_parses_each_primitive(void);
+int run_scenario_panel_refuses_malformed(void);
+int run_scenario_panel_boundaries(void);
+int run_scenario_panel_roundtrip(void);
+/* And the timer primitive's text: the tick difference the drawer turns into
+ * minutes and seconds, held to exact strings with no renderer behind it. */
+int run_scenario_panel_timer_text(void);
+/* And whether a scenario's announcement is still on screen, and for how
+ * long — the other piece of the presentation's arithmetic with no renderer
+ * in it. */
+int run_scenario_announce_remaining(void);
+
+/* The four presentation control events (test_scenario_presentation_codec.c):
+ * their body codecs against hand-written bytes, the refusals a short or
+ * overrunning body gets, the broadcast recipient pair every decoder sets,
+ * and the in-process filter the client applies before it stores. */
+int run_scn_presentation_codec_bodies(void);
+int run_scn_presentation_codec_refuses_short(void);
+int run_scn_presentation_decoder_sets_broadcast(void);
+int run_scn_presentation_client_filters(void);
+
+/* The four presentation ops (test_scenario_presentation_arms.c): the panel
+ * list published, recorded, replayed to a joiner and pared back to the
+ * everyone-addressed lists in the spectator ring's snapshot, the coalescing
+ * key, every refusal, and the score, announcement and marker arms. */
+int run_scn_arm_panel_publishes_and_records(void);
+int run_scn_arm_panel_refusals(void);
+int run_scn_arm_panel_one_update_per_tick(void);
+int run_scn_arm_panel_replayed_to_joiner(void);
+int run_scn_arm_panel_snapshot_bounded(void);
+int run_scn_arm_score_announce_marker(void);
+
+/* The rules a scenario's manifest sets (test_scenario_rules_codec.c,
+ * test_scenario_rules_published.c, test_scenario_rules_reaches_joiner.c):
+ * the body codec against hand-written bytes and every refusal a malformed
+ * body gets; the set published on an attach, emptied on a detach and never
+ * written on a map that has never had a scenario; and the replay that hands
+ * it to a client registering after the attach. */
+int run_scenario_rules_codec(void);
+int run_scenario_rules_published(void);
+int run_scenario_rules_reaches_joiner(void);
+
+/* The bot hint (test_scenario_hint.c): the table a fixture brain gets back
+ * whole, every refusal the arm answers with, and the record naming the seat
+ * and the verb. */
+int run_scenario_hint_reaches_brain(void);
+int run_scenario_hint_refusals(void);
+int run_scenario_hint_records(void);
 
 /* The init table a bot is created with (test_bot_init_table.c): each
  * brain VM sees its own, none means an empty table, and the -bot-init

@@ -733,6 +733,7 @@
 #define STR_DLGLOBBY_LASTROUND_BTN          1896
 #define STR_DLGLOBBY_LASTROUND_COL_LGMK     1897
 #define STR_DLGLOBBY_LASTROUND_COL_LGMD     1898
+#define STR_DLGLOBBY_LASTROUND_COL_SCNSCORE 2327  /* scenario score column, untitled */
 
 /* Lobby "Last round" panel — the round's highlight clips. */
 #define STR_DLGLOBBY_HL_HEADER               1922
@@ -2532,6 +2533,17 @@
  * under the field while the number is being typed. */
 #define STR_MAPEDIT_SCENARIO_TEAM_ID_RANGE    2325
 #define STR_MAPEDIT_SCENARIO_TEAM_ID_TAKEN    2326
+
+/* The lobby's rules popup: the button on the scenario line, the window's
+ * caption, and the four columns a row is drawn in — the rule, what the
+ * classic game plays it at, what the scenario set it to, and what that does
+ * to it in words. */
+#define STR_DLGLOBBY_SCENARIO_RULES         2328
+#define STR_DLGLOBBY_SCENARIO_RULES_TITLE   2329
+#define STR_DLGLOBBY_RULES_COL_RULE         2330
+#define STR_DLGLOBBY_RULES_COL_CLASSIC      2331
+#define STR_DLGLOBBY_RULES_COL_SCENARIO     2332
+#define STR_DLGLOBBY_RULES_COL_CHANGE       2333
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
