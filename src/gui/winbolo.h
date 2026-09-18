@@ -552,4 +552,29 @@ bool windowShowAllianceRequest(void);
 *********************************************************/
 void windowAllowPlayerNameChange(bool allow);
 
+/*********************************************************
+*NAME:          windowSetQuitting
+*PURPOSE:
+* Record that the player asked for the application to end
+* and break the loop that is currently running.  Called
+* from the in-game loop, the native menu bar's Quit item
+* and any dialog that sees a quit.
+*
+*ARGUMENTS:
+*********************************************************/
+void windowSetQuitting(void);
+
+/*********************************************************
+*NAME:          windowIsQuitting
+*PURPOSE:
+* Has windowSetQuitting been called?  A dialog closes on a
+* quit the same way it closes on Cancel, so the front end
+* asks this rather than reading the dialog's result: one
+* screen closing is not the same thing as the application
+* ending.
+*
+*ARGUMENTS:
+*********************************************************/
+bool windowIsQuitting(void);
+
 #endif

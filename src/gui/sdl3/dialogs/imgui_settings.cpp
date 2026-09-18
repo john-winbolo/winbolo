@@ -1021,6 +1021,36 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
         if (ImGui::IsItemDeactivatedAfterEdit()) gameFrontSaveCurrentPrefs();
     }
 #endif
+
+    /* ---- The simplified view ---- Both surfaces it covers are desktop and
+       Deck, the same as the map view settings above, so it follows their
+       tablet test.  Each tick is applied and written as it is clicked: the
+       views read the setting every frame, so the change shows at once. */
+    if (!uiModeIsTablet()) {
+        ImGui::SeparatorText(langGetText(STR_DLGSETTINGS_MAPVIEW));
+
+        bool simple = gfxGetSimplifiedZoomOut();
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_SIMPLEZOOM), &simple)) {
+            gfxSetSimplifiedZoomOut(simple);
+            gameFrontSaveCurrentPrefs();
+        }
+        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_SIMPLEZOOM_TIP));
+
+        /* Indented and disabled under its parent: with the simplified view
+           off there is nothing for it to hold back, and the tick would read
+           as a second, independent switch. */
+        ImGui::Indent();
+        ImGui::BeginDisabled(!simple);
+        bool overviewOnly = gfxGetSimplifiedOverviewOnly();
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW),
+                            &overviewOnly)) {
+            gfxSetSimplifiedOverviewOnly(overviewOnly);
+            gameFrontSaveCurrentPrefs();
+        }
+        imguiHelpTooltip(langGetText(STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW_TIP));
+        ImGui::EndDisabled();
+        ImGui::Unindent();
+    }
 #endif
 
     /* ---- Skin ---- */
@@ -1620,6 +1650,61 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
             }
             imguiHelpTooltip(langGetText(STR_DLGSKIN_TEXFILTER_TIP));
         }
+
+        /* Fog of war style.  Read where each view washes its hidden squares,
+           so a pick shows on the next frame with no rebuild of anything.  Not
+           greyed by what the server allows: the wash is this client painting
+           ground it is already being sent, and the pick changes the colour of
+           that paint and nothing else. */
+        {
+            const char *fogLabels[FOG_STYLE_COUNT] = {
+                langGetText(STR_DLGSKIN_FOGSTYLE_GREY),
+                langGetText(STR_DLGSKIN_FOGSTYLE_DARK),
+                langGetText(STR_DLGSKIN_FOGSTYLE_DARKROADS),
+                langGetText(STR_DLGSKIN_FOGSTYLE_NONE),
+            };
+            const char *fogTips[FOG_STYLE_COUNT] = {
+                langGetText(STR_DLGSKIN_FOGSTYLE_GREY_TIP),
+                langGetText(STR_DLGSKIN_FOGSTYLE_DARK_TIP),
+                langGetText(STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP),
+                langGetText(STR_DLGSKIN_FOGSTYLE_NONE_TIP),
+            };
+            int fsIdx = (int)gfxGetFogStyle();
+            if (fsIdx < 0 || fsIdx >= FOG_STYLE_COUNT) fsIdx = 0;
+
+            ImGui::TextUnformatted(langGetText(STR_DLGSKIN_FOGSTYLE));
+            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.0f);
+            if (ImGui::BeginCombo("##fogstyle", fogLabels[fsIdx])) {
+                for (int i = 0; i < FOG_STYLE_COUNT; i++) {
+                    bool sel = (fsIdx == i);
+                    if (ImGui::Selectable(fogLabels[i], sel) && i != fsIdx) {
+                        gfxSetFogStyle((FogStyle)i);
+                        gameFrontSaveCurrentPrefs();
+                    }
+                    /* One line each, on the entry it is about, so the list
+                       says what it is offering without a tip per row in the
+                       closed control. */
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+                        ImGui::SetTooltip("%s", fogTips[i]);
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            imguiHelpTooltip(langGetText(STR_DLGSKIN_FOGSTYLE_TIP));
+
+            /* None is the one entry a player could read as switching fog of
+               war off, so it says plainly that it has not.  Read back from
+               the store rather than from fsIdx above, which was taken before
+               the combo and is a frame behind a pick made in it.  Wrapped and
+               dimmed the way the other notes in this dialog are. */
+            if (gfxGetFogStyle() == FOG_STYLE_NONE) {
+                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() +
+                                       ImGui::GetFontSize() * 20.0f);
+                ImGui::TextDisabled(
+                    "%s", langGetText(STR_DLGSKIN_FOGSTYLE_NONE_NOTE));
+                ImGui::PopTextWrapPos();
+            }
+        }
     }
 }
 
@@ -1889,6 +1974,22 @@ static void SDLCALL hostingUploadDirDialogCallback(void *userdata,
 static char s_hostingLogPickedDir[FILENAME_MAX];
 static bool s_hostingLogDirPicked = false;
 
+/* And again for the Scenario Directory field, on statics of its own for the
+ * same reason. */
+static char s_hostingScnPickedDir[FILENAME_MAX];
+static bool s_hostingScnDirPicked = false;
+
+static void SDLCALL hostingScenarioDirDialogCallback(void *userdata,
+                                                     const char *const *filelist,
+                                                     int filter) {
+    (void)userdata;
+    (void)filter;
+    if (filelist && filelist[0]) {
+        SDL_strlcpy(s_hostingScnPickedDir, filelist[0], FILENAME_MAX);
+        s_hostingScnDirPicked = true;
+    }
+}
+
 static void SDLCALL hostingLogDirDialogCallback(void *userdata,
                                                 const char *const *filelist,
                                                 int filter) {
@@ -1936,6 +2037,16 @@ static void hostingViewRow(const char *id, langid label, int *policy,
     ImGui::PopID();
 }
 
+/* The label to the left of a value field, as the Display tab draws its
+ * rows: text first, then the widget on the same line under a hidden "##"
+ * label. ImGui's own label goes to the right of a widget, which is where a
+ * checkbox keeps it and where a number, a path or a choice should not. */
+static void hostingLabel(langid label) {
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(langGetText(label));
+    ImGui::SameLine();
+}
+
 /* -------------------------------------------------------
  * Hosting tab — settings for the server the client spins up
  * when hosting from the game finder.  Shared by the pre-game
@@ -1947,7 +2058,8 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
     /* ---- Port ---- */
     {
         int port = gameFrontHostingPort;
-        if (ImGui::InputInt(langGetText(STR_DLGSETTINGS_HOSTING_PORT), &port)) {
+        hostingLabel(STR_DLGSETTINGS_HOSTING_PORT);
+        if (ImGui::InputInt("##hostingport", &port)) {
             if (port < 1024)  port = 1024;
             if (port > 65535) port = 65535;
             gameFrontSetHostingPort((unsigned short)port);
@@ -1964,7 +2076,8 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
          * preserved so toggling back on restores the previous number. */
         ImGui::BeginDisabled(!allow);
         int maxSpec = gameFrontHostingMaxSpec;
-        if (ImGui::InputInt(langGetText(STR_DLGSETTINGS_HOSTING_MAXSPEC), &maxSpec)) {
+        hostingLabel(STR_DLGSETTINGS_HOSTING_MAXSPEC);
+        if (ImGui::InputInt("##hostingmaxspec", &maxSpec)) {
             if (maxSpec < 1)  maxSpec = 1;
             if (maxSpec > 32) maxSpec = 32;
             gameFrontSetHostingMaxSpec(maxSpec);
@@ -1979,6 +2092,54 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
                             &runScripts)) {
             gameFrontSetHostingScripts(runScripts);
         }
+        /* The narrower switch under it: a map a player uploaded here may
+         * carry a scenario inside the .map file, and this is what decides
+         * whether it runs. Greyed while scripts are off altogether, which
+         * already turns it down; the value is kept so switching scripts back
+         * on restores what the host chose. */
+        ImGui::BeginDisabled(!runScripts);
+        bool uploadScripts = gameFrontHostingUploadScripts;
+        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS),
+                            &uploadScripts)) {
+            gameFrontSetHostingUploadScripts(uploadScripts);
+        }
+        ImGui::EndDisabled();
+
+        /* The scenarios this host offers on their own, independently of any
+         * map — what the lobby's mod chooser lists. Same shape as the Upload
+         * Directory field below: an editable field that is the primary input
+         * and the fallback where there is no native folder dialog, with
+         * Browse filling it in. */
+        static char scnDirBuf[FILENAME_MAX];
+        static bool scnDirEditing = false;
+        if (s_hostingScnDirPicked) {
+            gameFrontSetHostingScenarioDir(s_hostingScnPickedDir);
+            s_hostingScnDirPicked = false;
+        }
+        if (!scnDirEditing) {
+            SDL_strlcpy(scnDirBuf, gameFrontHostingScenarioDir,
+                        sizeof(scnDirBuf));
+        }
+        hostingLabel(STR_DLGSETTINGS_HOSTING_SCENARIODIR);
+        bool scnCommit = ImGui::InputText(
+            "##hostingscenariodirfield",
+            scnDirBuf, sizeof(scnDirBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+        scnDirEditing = ImGui::IsItemActive();
+        if (scnCommit || ImGui::IsItemDeactivatedAfterEdit()) {
+            gameFrontSetHostingScenarioDir(scnDirBuf);
+        }
+        /* Distinct ID from the Upload Directory and Log Directory Browse
+         * buttons, which share the same label and can be on screen at the
+         * same time. */
+        ImGui::PushID("hostingscenariodir");
+        if (ImGui::Button(langGetText(STR_MAPEDIT_BROWSE))) {
+            SDL_Window *win = sdl3DrawGetWindow();
+            const char *loc = gameFrontHostingScenarioDir[0]
+                                  ? gameFrontHostingScenarioDir : NULL;
+            SDL_ShowOpenFolderDialog(hostingScenarioDirDialogCallback, NULL,
+                                     win, loc, false);
+        }
+        ImGui::PopID();
     }
 
     /* ---- Map uploads ---- */
@@ -1997,8 +2158,8 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
         for (int i = 0; i < 3; ++i) {
             if (kPolicyByIndex[i] == gameFrontHostingUploadPolicy) { idx = i; break; }
         }
-        if (ImGui::Combo(langGetText(STR_DLGSETTINGS_HOSTING_MAPUPLOADS),
-                         &idx, policyItems, 3)) {
+        hostingLabel(STR_DLGSETTINGS_HOSTING_MAPUPLOADS);
+        if (ImGui::Combo("##hostingmapuploads", &idx, policyItems, 3)) {
             gameFrontSetHostingUploadPolicy(kPolicyByIndex[idx]);
         }
 
@@ -2020,8 +2181,9 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
             if (!dirEditing) {
                 SDL_strlcpy(dirBuf, gameFrontHostingUploadDir, sizeof(dirBuf));
             }
+            hostingLabel(STR_DLGSETTINGS_HOSTING_UPLOADDIR);
             bool commit = ImGui::InputText(
-                langGetText(STR_DLGSETTINGS_HOSTING_UPLOADDIR),
+                "##hostinguploaddirfield",
                 dirBuf, sizeof(dirBuf), ImGuiInputTextFlags_EnterReturnsTrue);
             dirEditing = ImGui::IsItemActive();
             if (commit || ImGui::IsItemDeactivatedAfterEdit()) {
@@ -2036,15 +2198,15 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
             }
 
             int maxFiles = gameFrontHostingUploadMaxFiles;
-            if (ImGui::InputInt(langGetText(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXFILES),
-                                &maxFiles)) {
+            hostingLabel(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXFILES);
+            if (ImGui::InputInt("##hostinguploadmaxfiles", &maxFiles)) {
                 if (maxFiles < 1)   maxFiles = 1;
                 if (maxFiles > 255) maxFiles = 255;
                 gameFrontSetHostingUploadMaxFiles(maxFiles);
             }
             int maxStorage = gameFrontHostingUploadMaxStorage;
-            if (ImGui::InputInt(langGetText(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXSTORAGE),
-                                &maxStorage)) {
+            hostingLabel(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXSTORAGE);
+            if (ImGui::InputInt("##hostinguploadmaxstorage", &maxStorage)) {
                 if (maxStorage < 1)    maxStorage = 1;
                 if (maxStorage > 4095) maxStorage = 4095;
                 gameFrontSetHostingUploadMaxStorage(maxStorage);
@@ -2076,8 +2238,9 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
             if (!logDirEditing) {
                 SDL_strlcpy(logDirBuf, gameFrontHostingLogDir, sizeof(logDirBuf));
             }
+            hostingLabel(STR_DLGSETTINGS_HOSTING_LOGDIR);
             bool commit = ImGui::InputText(
-                langGetText(STR_DLGSETTINGS_HOSTING_LOGDIR),
+                "##hostinglogdirfield",
                 logDirBuf, sizeof(logDirBuf), ImGuiInputTextFlags_EnterReturnsTrue);
             logDirEditing = ImGui::IsItemActive();
             if (commit || ImGui::IsItemDeactivatedAfterEdit()) {
@@ -2126,8 +2289,8 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
         for (int i = 0; i < 3; ++i) {
             if (kVoiceByIndex[i] == gameFrontHostingVoiceMode) { idx = i; break; }
         }
-        if (ImGui::Combo(langGetText(STR_DLGSETTINGS_HOSTING_VOICE),
-                         &idx, voiceItems, 3)) {
+        hostingLabel(STR_DLGSETTINGS_HOSTING_VOICE);
+        if (ImGui::Combo("##hostingvoice", &idx, voiceItems, 3)) {
             gameFrontSetHostingVoiceMode(kVoiceByIndex[idx]);
         }
         /* Proximity is stored and sent but nothing acts on it yet, so say so
@@ -2339,9 +2502,7 @@ extern "C" void imguiSettingsShow(void) {
             dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
-            if (ev.type == SDL_EVENT_QUIT ||
-                (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
-                 ev.window.windowID == SDL_GetWindowID(window))) {
+            if (dialogHandleQuitEvent(window, &ev)) {
                 running = false;
             }
         }

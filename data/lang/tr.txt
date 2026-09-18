@@ -1979,6 +1979,17 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Yalnızca kendi görünüm klasörünüzdeki bir g�
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Bu görünümün yalnızca bazı sprite'lar için daha ince çizimleri var, bu yüzden Yakınlaştırmaya Uydur, Klasik ile aynı karoları oluşturur. Yüksek Detay ise görünümün ince çizimi olduğu yerlerde onu kullanır.
 STR_DLGSKIN_RECFILTER_LBL=Önerilen filtre:
 STR_DLGSKIN_RECOMMENDED_TAG=(önerilen)
+STR_DLGSKIN_FOGSTYLE=Savaş sisi stili
+STR_DLGSKIN_FOGSTYLE_TIP=Göremediğiniz arazinin nasıl çizildiğini belirler. Yalnızca kendi ekranınızdaki görüntüyü değiştirir; hangisini seçerseniz seçin sunucu aynı haritayı gönderir.
+STR_DLGSKIN_FOGSTYLE_GREY=Gri
+STR_DLGSKIN_FOGSTYLE_GREY_TIP=Göremediğiniz arazi griye doğru kaydırılır, böylece açıkça görünen araziden daha açık renkli görünür.
+STR_DLGSKIN_FOGSTYLE_DARK=Daha Koyu
+STR_DLGSKIN_FOGSTYLE_DARK_TIP=Göremediğiniz arazi siyaha doğru kaydırılır. Yollar zaten siyah olduğundan, sis altındaki bir yol açıkça görünen bir yolla aynı görünür.
+STR_DLGSKIN_FOGSTYLE_DARKROADS=Sis Kenarlı Daha Koyu
+STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP=Daha Koyu ile aynı, ama sis sınırını hafifçe belirten ince bir çizgi eklenir. Bu şerit her arazide sınırın sisli tarafında durur, böylece çizgi, siyah olan ve tek başına koyulaştırmanın işaretleyemediği bir yolun üzerinde de görünür. Standart görünüm budur.
+STR_DLGSKIN_FOGSTYLE_NONE=Yok
+STR_DLGSKIN_FOGSTYLE_NONE_TIP=Harita hiç karartılmaz, bu yüzden hatırlanan arazi açıkça görünen araziyle aynı görünür. Diğer stillerin gösterdiği hiçbir şeyi gizlemez: hangi tankların ve mermilerin çizileceğine sunucu karar verir, bu ayar değil.
+STR_DLGSKIN_FOGSTYLE_NONE_NOTE=Not: Bu yalnızca yerel görüntünüzü değiştirir, oyun ayarlarındaki savaş sisi ayarını kapatmaz. Tanklar ve mermiler, savaş sisinin gösterileceği yerde kaybolmaya devam eder.
 
 # Harita Genel Görünümü ve tam ekran harita
 STR_MENU_MAP_OVERVIEW=Harita Genel Görünümü
@@ -2128,3 +2139,28 @@ STR_PING_MOUSE_RIGHT=Sağ Fare Tuşu
 STR_PING_MOUSE_X1=Fare 4
 STR_PING_MOUSE_X2=Fare 5
 STR_DLGKEYSETUP_PING_ALT2=Akıllı Ping – Alternatif Tuşlar 2
+
+# Lobide senaryo seçimi
+STR_DLGGAMEINFO_SCRIPTED=Senaryolu
+STR_DLGSETTINGS_HOSTING_SCRIPTS=Sunucu açarken harita betiklerini çalıştır
+STR_DLGLOBBY_SCENARIO_LBL=Senaryo:
+STR_DLGLOBBY_SCRIPTS_OFF=Betikler kapalı
+STR_DLGLOBBY_RELOAD_SCENARIO=Betiği Yenile
+STR_DLGLOBBY_REJECT_SCENARIO=Bu ayarı haritanın senaryosu belirliyor
+STR_DLGLOBBY_REJECT_COOLDOWN=Çok erken, birazdan tekrar deneyin
+STR_DLGLOBBY_CHOOSE_SCENARIO=Seç
+STR_DLGLOBBY_SCENARIO_TITLE=Mod Seç
+STR_DLGLOBBY_SCENARIO_NONE=Hiçbiri — mod yok. Harita, varsa kendi senaryosunu oynar.
+STR_DLGLOBBY_SCENARIO_WAITING=Sunucuya soruluyor...
+STR_DLGLOBBY_SCENARIO_EMPTY=Bu sunucu mod sunmuyor.
+STR_DLGLOBBY_SCENARIO_BOUND=Tek bir harita için yapılmış, bu yüzden mod olarak oynanamaz
+STR_DLGLOBBY_SCENARIO_MAXPLAYERS=En fazla {number} oyuncu
+STR_DLGLOBBY_SCENARIO_BOTS={number} bot yeri
+STR_DLGLOBBY_SCENARIO_ON_MAP=Mod: {string2} ({string1} üzerinde)
+STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Yüklenen haritalardaki betikleri çalıştır
+STR_DLGSETTINGS_HOSTING_SCENARIODIR=Senaryo Dizini
+STR_DLGSETTINGS_MAPVIEW=Harita Görünümü
+STR_DLGSETTINGS_SIMPLEZOOM=Uzaklaştırıldığında basitleştirilmiş görünümü kullan
+STR_DLGSETTINGS_SIMPLEZOOM_TIP=1x'in ötesine uzaklaştırıldığında, sprite'ları bulanık bir lekeye küçültmek yerine her kareyi tek bir renkle, tanklar, bunkerlar ve üsler için basit işaretlerle çizer.
+STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW=Yalnızca Harita Genel Görünümü
+STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW_TIP=Basitleştirilmiş görünümü Harita Genel Görünümü penceresiyle sınırlı tutar. Tam ekran harita, sprite'larını her yakınlaştırma seviyesinde çizer.

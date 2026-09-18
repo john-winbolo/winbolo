@@ -75,6 +75,7 @@ add_library(bolo_static STATIC
     position_history.c
     round_stats_derive.c
     rubble.c
+    scenario_panel.c
     scenario_table.c
     screenbrainmap.c
     screenbullet.c

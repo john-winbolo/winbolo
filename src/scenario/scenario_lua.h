@@ -35,6 +35,7 @@
 
 #include "server_sim.h"       /* ServerSim, BYTE */
 #include "scenario_table.h"   /* ScnTable — what the reader below fills */
+#include "scenario_host.h"     /* SCN_TIMERS_MAX — the timer table below */
 #include "scenario_manifest.h"
 
 /* One timer a script is waiting on: the tick it comes due, the function to
@@ -110,6 +111,25 @@ typedef struct {
     BYTE        code;
 } ScnLuaTerrain;
 
+/* One word a script may write for a small argument, and the number the
+ * payload carries for it. */
+typedef struct {
+    const char *word;
+    int         value;
+} ScnLuaWord;
+
+/* One of the word tables the game table carries beside TERRAIN — COLOUR,
+ * SIZE, ALIGN and TIMER_MODE — under the name a script indexes it by.
+ *
+ * The members are the same rows the argument readers match a word against,
+ * so a word a panel primitive takes is a name the table holds and a document
+ * written from here names every word the surface accepts. */
+typedef struct {
+    const char       *name;
+    const ScnLuaWord *words;
+    size_t            count;
+} ScnLuaWordTable;
+
 /*********************************************************
  *NAME:          scenarioLuaInstall
  *PURPOSE:
@@ -142,6 +162,14 @@ const ScnLuaConst *scenarioLuaConsts(size_t *count);
  *  The members of game.TERRAIN, in the order it names them.
  *********************************************************/
 const ScnLuaTerrain *scenarioLuaTerrain(size_t *count);
+
+/*********************************************************
+ *NAME:          scenarioLuaWordTables
+ *PURPOSE:
+ *  The word tables the game table carries beside TERRAIN,
+ *  in the order it names them.
+ *********************************************************/
+const ScnLuaWordTable *scenarioLuaWordTables(size_t *count);
 
 /* ── The three index rules ──────────────────────────────────────────
  *
@@ -407,25 +435,5 @@ ScnTableRead scenarioLuaReadTable(lua_State *L, int idx, const char *key,
  *  one. "" for a number that names no result.
  *********************************************************/
 const char *scenarioLuaResultName(int result);
-
-/*********************************************************
- *NAME:          scenarioLuaRuleIndex
- *PURPOSE:
- *  The index of the rule a name spells, or -1 for a name
- *  that spells none. A rule's name in a script is its name
- *  in the rule list, so the list is the only place the
- *  spelling exists: the script's rules table and the
- *  game.rule row resolve a name through this one lookup.
- *********************************************************/
-int scenarioLuaRuleIndex(const char *name);
-
-/*********************************************************
- *NAME:          scenarioLuaRuleName
- *PURPOSE:
- *  What a rule is called, for an operator line that has an
- *  index and needs to say which rule it was. "" for an
- *  index that names no rule.
- *********************************************************/
-const char *scenarioLuaRuleName(int rule);
 
 #endif /* SCENARIO_LUA_H */

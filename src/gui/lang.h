@@ -733,6 +733,7 @@
 #define STR_DLGLOBBY_LASTROUND_BTN          1896
 #define STR_DLGLOBBY_LASTROUND_COL_LGMK     1897
 #define STR_DLGLOBBY_LASTROUND_COL_LGMD     1898
+#define STR_DLGLOBBY_LASTROUND_COL_SCNSCORE 2327  /* scenario score column, untitled */
 
 /* Lobby "Last round" panel — the round's highlight clips. */
 #define STR_DLGLOBBY_HL_HEADER               1922
@@ -818,6 +819,24 @@
 #define STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP  1984
 #define STR_DLGSKIN_RECFILTER_LBL           1985
 #define STR_DLGSKIN_RECOMMENDED_TAG         1986
+/* Fog of war style: the dropdown, its four looks, and a line each saying
+ * what the look does. Sits with the other graphics settings because it is
+ * one - it changes how the client paints ground the player is remembering,
+ * and changes nothing the server sends. */
+#define STR_DLGSKIN_FOGSTYLE                2334
+#define STR_DLGSKIN_FOGSTYLE_TIP            2335
+#define STR_DLGSKIN_FOGSTYLE_GREY           2336
+#define STR_DLGSKIN_FOGSTYLE_GREY_TIP       2337
+#define STR_DLGSKIN_FOGSTYLE_DARK           2338
+#define STR_DLGSKIN_FOGSTYLE_DARK_TIP       2339
+#define STR_DLGSKIN_FOGSTYLE_DARKROADS      2340
+#define STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP  2341
+#define STR_DLGSKIN_FOGSTYLE_NONE           2342
+#define STR_DLGSKIN_FOGSTYLE_NONE_TIP       2343
+/* Shown under the dropdown while None is picked, because None is the one
+ * choice a player could read as switching fog of war off. It does not: the
+ * server still decides what this client is sent and what it may draw. */
+#define STR_DLGSKIN_FOGSTYLE_NONE_NOTE      2344
 
 /* Tracker Setup dialog */
 #define STR_DLGTRACKER_WINTITLE             771
@@ -2341,6 +2360,208 @@
  * again before the server will take another. */
 #define STR_DLGLOBBY_REJECT_SCENARIO        2201
 #define STR_DLGLOBBY_REJECT_COOLDOWN        2202
+
+/* The lobby's scenario chooser: the button on the scenario line that opens
+ * it, the dialog's own title, the row that picks none, the two states the
+ * list can be in before it has rows, the reason an entry tied to its own map
+ * cannot be picked, and the two numbers a row carries. ON_MAP is the line
+ * that names the committed map and the scenario a host picked to play over
+ * it, rather than naming the scenario alone. */
+#define STR_DLGLOBBY_CHOOSE_SCENARIO        2204
+#define STR_DLGLOBBY_SCENARIO_TITLE         2205
+#define STR_DLGLOBBY_SCENARIO_NONE          2206
+#define STR_DLGLOBBY_SCENARIO_WAITING       2207
+#define STR_DLGLOBBY_SCENARIO_EMPTY         2208
+#define STR_DLGLOBBY_SCENARIO_BOUND         2209
+#define STR_DLGLOBBY_SCENARIO_MAXPLAYERS    2210
+#define STR_DLGLOBBY_SCENARIO_BOTS          2211
+#define STR_DLGLOBBY_SCENARIO_ON_MAP        2212
+
+/* The two hosting settings that go with a scenario carried inside a map: the
+ * switch that decides whether a map a player uploaded may bring one, and the
+ * directory of scenarios this host offers on their own. */
+#define STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS 2213
+#define STR_DLGSETTINGS_HOSTING_SCENARIODIR  2216
+
+/* Rule change descriptions */
+
+/* What a simulation rule's value does to it, beside the number: the words
+ * simRulesPhrase renders a SimRuleChange as. {string1} rather than {number}
+ * because a multiple can be 2.6 and {number} is an integer. */
+#define STR_RULE_UNCHANGED                  2217
+#define STR_RULE_FASTER                     2218
+#define STR_RULE_SLOWER                     2219
+#define STR_RULE_MORE                       2220
+#define STR_RULE_FEWER                      2221
+#define STR_RULE_TWICE                      2222
+#define STR_RULE_HALF                       2223
+#define STR_RULE_ON                         2224
+#define STR_RULE_OFF                        2225
+
+/* The log viewer's own "back to WinBolo" wording, which is not the map
+ * editor's STR_MAPEDIT_MENU_RETURN ("Return to Menu"): embedded, the viewer
+ * returns to the main menu and the editor to the screen that opened it. */
+#define STR_LV_RETURN_MAIN_MENU             2226
+
+/* Map view — the simplified view when zoomed out */
+#define STR_DLGSETTINGS_MAPVIEW             2227
+#define STR_DLGSETTINGS_SIMPLEZOOM          2228
+#define STR_DLGSETTINGS_SIMPLEZOOM_TIP      2229
+#define STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW 2230
+#define STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW_TIP 2231
+
+/* The map editor's scenario script pane: the window and its Window-menu
+ * entry, the toolbar above the text, and the line the pane shows for
+ * whatever the last read or write did. A script is a loose X.scenario.lua
+ * beside X.map, so a map with no file yet has nowhere to keep one. */
+#define STR_MAPEDIT_SCENARIO_TITLE          2232
+#define STR_MAPEDIT_SCENARIO_NO_MAP         2233
+#define STR_MAPEDIT_SCENARIO_SAVE           2234
+#define STR_MAPEDIT_SCENARIO_RELOAD         2235
+#define STR_MAPEDIT_SCENARIO_UNSAVED        2236
+#define STR_MAPEDIT_SCENARIO_LOADED         2237
+#define STR_MAPEDIT_SCENARIO_NO_SCRIPT      2238
+#define STR_MAPEDIT_SCENARIO_SAVED          2239
+#define STR_MAPEDIT_SCENARIO_READ_FAILED    2240
+#define STR_MAPEDIT_SCENARIO_WRITE_FAILED   2241
+#define STR_MAPEDIT_SCENARIO_TOO_BIG        2242
+#define STR_MAPEDIT_SCENARIO_SAVE_REFUSED   2243
+
+/* The rest of the scenario panel: the row of buttons that picks which view
+ * the body shows, and the three forms over the manifest the editor holds in
+ * memory — what the scenario is called and how it plays, the lobby template
+ * it seats, and the simulation rules the author set. The words for the game
+ * type itself are STR_DLGGAMEINFO_OPEN / _TOURN / _STRICT, which already say
+ * them everywhere else. */
+#define STR_MAPEDIT_SCENARIO_VIEW_SCRIPT     2244
+#define STR_MAPEDIT_SCENARIO_VIEW_METADATA   2245
+#define STR_MAPEDIT_SCENARIO_VIEW_LOBBY      2246
+#define STR_MAPEDIT_SCENARIO_VIEW_RULES      2247
+#define STR_MAPEDIT_SCENARIO_NAME            2248
+#define STR_MAPEDIT_SCENARIO_DESCRIPTION     2249
+#define STR_MAPEDIT_SCENARIO_API             2250
+#define STR_MAPEDIT_SCENARIO_GAME            2251
+#define STR_MAPEDIT_SCENARIO_GAME_NONE       2252
+#define STR_MAPEDIT_SCENARIO_BOUND           2253
+#define STR_MAPEDIT_SCENARIO_BOUND_NOTE      2254
+#define STR_MAPEDIT_SCENARIO_FILL_TO_CAPS    2255
+#define STR_MAPEDIT_SCENARIO_MAX_PLAYERS     2256
+#define STR_MAPEDIT_SCENARIO_MAX_PLAYERS_ANY 2257
+#define STR_MAPEDIT_SCENARIO_EXTRA_TEAMS     2258
+#define STR_MAPEDIT_SCENARIO_TEAM            2259
+#define STR_MAPEDIT_SCENARIO_TEAM_ID         2260
+#define STR_MAPEDIT_SCENARIO_TEAM_BOTS       2261
+#define STR_MAPEDIT_SCENARIO_TEAM_MAX_BOTS   2262
+#define STR_MAPEDIT_SCENARIO_TEAM_FIELDED    2263
+#define STR_MAPEDIT_SCENARIO_TEAM_BRAIN      2264
+#define STR_MAPEDIT_SCENARIO_BRAIN_IS_NAME   2265
+#define STR_MAPEDIT_SCENARIO_INIT            2266
+#define STR_MAPEDIT_SCENARIO_INIT_KEY        2267
+#define STR_MAPEDIT_SCENARIO_INIT_VALUE      2268
+#define STR_MAPEDIT_SCENARIO_ADD_PAIR        2269
+#define STR_MAPEDIT_SCENARIO_INIT_FULL       2270
+#define STR_MAPEDIT_SCENARIO_ADD_TEAM        2271
+#define STR_MAPEDIT_SCENARIO_REMOVE_TEAM     2272
+#define STR_MAPEDIT_SCENARIO_TEAMS_FULL      2273
+#define STR_MAPEDIT_SCENARIO_NO_TEAMS        2274
+#define STR_MAPEDIT_SCENARIO_REMOVE          2275
+#define STR_MAPEDIT_SCENARIO_CLASSIC         2276
+#define STR_MAPEDIT_SCENARIO_NO_RULES        2277
+#define STR_MAPEDIT_SCENARIO_ADD_RULE        2278
+#define STR_MAPEDIT_SCENARIO_FILTER          2279
+#define STR_MAPEDIT_SCENARIO_RULES_FULL      2280
+
+/* The script pane's check: the button that runs the validator, the list of
+ * what it found under the editor, and the popup that lists the game.* calls a
+ * script may make. The one line about rules and tags is there because the
+ * editor hands the validator no sim — it makes none — so the two checks that
+ * read a map do not run here. */
+#define STR_MAPEDIT_SCENARIO_VALIDATE        2281
+#define STR_MAPEDIT_SCENARIO_ISSUES          2282
+#define STR_MAPEDIT_SCENARIO_NO_ISSUES       2283
+#define STR_MAPEDIT_SCENARIO_NO_SIM_CHECKS   2284
+#define STR_MAPEDIT_SCENARIO_ISSUES_DROPPED  2285
+#define STR_MAPEDIT_SCENARIO_CALLS           2286
+
+/* Saving the scenario itself: the chunk written on to the map file, the
+ * standalone .scenario a mod is, and what stopped either of them. The line
+ * after a successful pack says the loose script still wins, because an author
+ * who packs and then tests is otherwise running the file beside the map
+ * without being told. */
+#define STR_MAPEDIT_SCENARIO_PACK_MAP         2287
+#define STR_MAPEDIT_SCENARIO_SAVE_MOD         2288
+#define STR_MAPEDIT_SCENARIO_PACK_NO_MAP      2289
+#define STR_MAPEDIT_SCENARIO_PACKED           2290
+#define STR_MAPEDIT_SCENARIO_MOD_SAVED        2291
+#define STR_MAPEDIT_SCENARIO_PACK_ISSUES      2292
+#define STR_MAPEDIT_SCENARIO_PACK_CONFLICT    2293
+#define STR_MAPEDIT_SCENARIO_PACK_FAILED      2294
+#define STR_MAPEDIT_SCENARIO_FROM_PACKAGE     2295
+#define STR_MAPEDIT_SCENARIO_PACK_READ_FAILED 2296
+#define STR_MAPEDIT_SCENARIO_CHUNK_KEPT       2297
+#define STR_MAPEDIT_SCENARIO_CHUNK_LOST       2298
+
+/* The tags view: the named tags an author puts on this map's pills, bases and
+ * starts, and the named rectangles of squares drawn beside them. A row names
+ * the entity the editor numbers it as, which is one less than the number the
+ * manifest and a script spell it with. A region's bounds come from the
+ * selection tool, so the line about selecting first is what an empty selection
+ * says. The last line is what Save as Mod leaves out: a mod plays over a map
+ * it has never seen, so it can carry neither. */
+#define STR_MAPEDIT_SCENARIO_VIEW_TAGS        2299
+#define STR_MAPEDIT_SCENARIO_PILLS            2300
+#define STR_MAPEDIT_SCENARIO_BASES            2301
+#define STR_MAPEDIT_SCENARIO_STARTS           2302
+#define STR_MAPEDIT_SCENARIO_NO_ENTITIES      2303
+#define STR_MAPEDIT_SCENARIO_ADD_TAG          2304
+#define STR_MAPEDIT_SCENARIO_TAG              2305
+#define STR_MAPEDIT_SCENARIO_TAGS_FULL        2306
+#define STR_MAPEDIT_SCENARIO_PILL_ROW         2307
+#define STR_MAPEDIT_SCENARIO_BASE_ROW         2308
+#define STR_MAPEDIT_SCENARIO_START_ROW        2309
+#define STR_MAPEDIT_SCENARIO_REGIONS          2310
+#define STR_MAPEDIT_SCENARIO_NO_REGIONS       2311
+#define STR_MAPEDIT_SCENARIO_REGION_NAME      2312
+#define STR_MAPEDIT_SCENARIO_ADD_REGION       2313
+#define STR_MAPEDIT_SCENARIO_REGION_FROM_SEL  2314
+#define STR_MAPEDIT_SCENARIO_REGION_NO_SEL    2315
+#define STR_MAPEDIT_SCENARIO_REGIONS_FULL     2316
+#define STR_MAPEDIT_SCENARIO_REGION_X         2317
+#define STR_MAPEDIT_SCENARIO_REGION_Y         2318
+#define STR_MAPEDIT_SCENARIO_REGION_W         2319
+#define STR_MAPEDIT_SCENARIO_REGION_H         2320
+#define STR_MAPEDIT_SCENARIO_REGIONS_ON_MAP   2321
+#define STR_MAPEDIT_SCENARIO_MOD_DROPS        2322
+
+/* What Reload does, on the button in the script pane's toolbar. The button is
+ * live whenever the pane knows where the script goes, with or without a file
+ * behind it, so the line says that a script written beside the map after the
+ * map was opened is read by pressing it. */
+#define STR_MAPEDIT_SCENARIO_RELOAD_TIP       2323
+
+/* The issues list read against text that has moved on. The check keeps what it
+ * found while the author types, because the other problems are still worth
+ * reading, so this line says the numbers beside them were the numbers in the
+ * script as it stood when the check ran. */
+#define STR_MAPEDIT_SCENARIO_CHECK_STALE      2324
+
+/* A team number the lobby form will hold and the scenario cannot use: one
+ * outside 1 to MAX_TANKS - 1, or one another team in the template already has.
+ * The validator reports both when the scenario is packed; these two say it
+ * under the field while the number is being typed. */
+#define STR_MAPEDIT_SCENARIO_TEAM_ID_RANGE    2325
+#define STR_MAPEDIT_SCENARIO_TEAM_ID_TAKEN    2326
+
+/* The lobby's rules popup: the button on the scenario line, the window's
+ * caption, and the four columns a row is drawn in — the rule, what the
+ * classic game plays it at, what the scenario set it to, and what that does
+ * to it in words. */
+#define STR_DLGLOBBY_SCENARIO_RULES         2328
+#define STR_DLGLOBBY_SCENARIO_RULES_TITLE   2329
+#define STR_DLGLOBBY_RULES_COL_RULE         2330
+#define STR_DLGLOBBY_RULES_COL_CLASSIC      2331
+#define STR_DLGLOBBY_RULES_COL_SCENARIO     2332
+#define STR_DLGLOBBY_RULES_COL_CHANGE       2333
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

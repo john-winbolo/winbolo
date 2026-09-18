@@ -60,6 +60,7 @@
 #include "control_event.h"
 #include "everard_map.h"
 #include "scenario_host.h"
+#include "scenario_manifest.h" /* SCN_REGIONS_MAX */
 #include "test_harness.h"
 
 /* How many ticks a case will drive before it gives up waiting for

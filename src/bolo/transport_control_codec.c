@@ -47,6 +47,8 @@
 #include <string.h>
 
 #include "../winbolonet/winbolonet_core.h" /* winbolonetKeyIsValid */
+#include "channel_mux.h"   /* CHANNEL_CONTROL_SEG — the scenario rules
+                            * fragment is pinned against it below */
 #include "control_event.h"
 #include "netpacks.h"
 #include "player_flags.h"  /* CLIENT_TYPE_COUNT / CLIENT_TYPE_UNKNOWN */
@@ -863,6 +865,19 @@ BOLO_STATIC_ASSERT(
  *   repeat highlightCount times (26 bytes each):
  *     [startTick 4][durationTicks 4][startMs 4][durationMs 4]
  *     [mapX 1][mapY 1][type 1][awardId 1][actorA 1][actorB 1][value 4]
+ *   [hasScenarioScore 1]
+ *   when that byte is 1, the scenario's own scoreboard follows:
+ *     [labelLen 1] [scenarioScoreLabel labelLen]
+ *     [scenarioScoreMask 2 BE]      bit i set = slot i was scored
+ *     [scenarioTeamScoreMask 2 BE]  bit t set = team t was scored; bit 0 unused
+ *     [scenarioScore MAX_TANKS x 4 BE signed]      per 0-based player slot
+ *     [scenarioTeamScore MAX_TANKS x 4 BE signed]  per team; entry 0 unused
+ * The masks carry what the numbers cannot: a row scored zero against a row
+ * nobody scored. Both arrays cross whole either way, so a reader indexes
+ * them the way the server does and consults the mask for what is in them.
+ * The scoreboard is last so that adding it moved nothing above it. A round
+ * without a scenario, or with one that never scored, spends one zero byte on
+ * it and sends no arrays.
  * The ticks are the scorer's units and the ms are the server's conversion of
  * them; both cross so a client can take the time without modelling the sim's
  * cadence and the viewer's own calibration still has the ticks to work from.
@@ -885,10 +900,20 @@ static EncodeResult encodeRoundStatsBody(const ControlEvent *evt,
     uint8_t keyLen = (uint8_t)strnlen(s->wbnLogKey, ROUND_STATS_LOGKEY_LEN - 1);
     uint8_t hc = s->highlightCount;
     if (hc > ROUND_STATS_HIGHLIGHTS_WIRE_MAX) hc = ROUND_STATS_HIGHLIGHTS_WIRE_MAX;
+    /* One below the field, so the length the decoder reads always leaves it
+     * room for the terminator it writes. */
+    uint8_t scnLabelLen =
+        s->hasScenarioScore
+            ? (uint8_t)strnlen(s->scenarioScoreLabel,
+                               ROUND_STATS_SCN_LABEL_LEN - 1)
+            : 0;
 
     /* Pre-compute total size; bail before any write if it can't fit. */
     size_t needed = 1 + (size_t)pc * 20 + 1 + (size_t)ac * 8 + 1 + keyLen +
-                    1 + (size_t)hc * 26;
+                    1 + (size_t)hc * 26 + 1;
+    if (s->hasScenarioScore) {
+        needed += 1 + scnLabelLen + 4 + (size_t)MAX_TANKS * 8;
+    }
     if (bufCap < needed) return ENCODE_OVERFLOW;
 
     size_t pos = 0;
@@ -931,6 +956,27 @@ static EncodeResult encodeRoundStatsBody(const ControlEvent *evt,
         buf[pos++] = h->actorA;
         buf[pos++] = h->actorB;
         packU32(buf + pos, h->value);         pos += 4;
+    }
+    buf[pos++] = s->hasScenarioScore ? 1 : 0;
+    if (s->hasScenarioScore) {
+        buf[pos++] = scnLabelLen;
+        if (scnLabelLen > 0) {
+            memcpy(buf + pos, s->scenarioScoreLabel, scnLabelLen);
+            pos += scnLabelLen;
+        }
+        packU16(buf + pos, s->scenarioScoreMask);     pos += 2;
+        packU16(buf + pos, s->scenarioTeamScoreMask); pos += 2;
+        /* Both arrays go whole, at their own index bases: scenarioScore by
+         * 0-based slot, scenarioTeamScore by team number with entry 0 unused.
+         * Sending them whole keeps the reader's indexing the same as the
+         * server's, which a count-and-pairs form would not, and the masks
+         * above say which entries of them mean anything. */
+        for (int i = 0; i < MAX_TANKS; i++) {
+            packU32(buf + pos, (uint32_t)s->scenarioScore[i]);     pos += 4;
+        }
+        for (int i = 0; i < MAX_TANKS; i++) {
+            packU32(buf + pos, (uint32_t)s->scenarioTeamScore[i]); pos += 4;
+        }
     }
     *outLen = pos;
     return ENCODE_OK;
@@ -1203,16 +1249,51 @@ static bool decodeRoundStatsBody(const uint8_t *buf, size_t len,
         /* score is not on the wire; the event-wide memset above leaves it 0. */
     }
     s->highlightCount = hc;
+
+    /* The scenario's own scoreboard, on the end of the body. When the byte
+     * says the group is absent every field of it keeps what the event-wide
+     * memset above left it: the flag false, both masks and both arrays zero
+     * and the label empty. That clearing is the point — a decoded event must
+     * never show a score that was sitting in the caller's buffer from the
+     * round before. */
+    if (pos + 1 > len) return false;
+    uint8_t hasScn = buf[pos++];
+    if (hasScn > 1) return false;
+    if (hasScn) {
+        if (pos + 1 > len) return false;
+        uint8_t scnLabelLen = buf[pos++];
+        /* The field has no room for a terminator past its last byte, so a
+         * length that fills it exactly is already one too many. */
+        if (scnLabelLen > ROUND_STATS_SCN_LABEL_LEN - 1) return false;
+        if (pos + scnLabelLen + 4 + (size_t)MAX_TANKS * 8 > len) return false;
+        if (scnLabelLen > 0) {
+            memcpy(s->scenarioScoreLabel, buf + pos, scnLabelLen);
+        }
+        s->scenarioScoreLabel[scnLabelLen] = '\0';
+        pos += scnLabelLen;
+        s->scenarioScoreMask     = unpackU16(buf + pos); pos += 2;
+        s->scenarioTeamScoreMask = unpackU16(buf + pos); pos += 2;
+        for (int i = 0; i < MAX_TANKS; i++) {
+            s->scenarioScore[i] = (int32_t)unpackU32(buf + pos);     pos += 4;
+        }
+        for (int i = 0; i < MAX_TANKS; i++) {
+            s->scenarioTeamScore[i] = (int32_t)unpackU32(buf + pos); pos += 4;
+        }
+        s->hasScenarioScore = true;
+    }
     return true;
 }
 
 /* Compile-time guarantee that the round-stats worst case (every slot
- * present, every award won, a full-length key, a full clip list) fits
- * MAX_CONTROL_PACKET. 8 + 1 + 16*20 + 1 + 18*8 + 1 + 32 + 1 + 12*26 = 820. */
+ * present, every award won, a full-length key, a full clip list and a
+ * scenario scoreboard with a full-length title) fits MAX_CONTROL_PACKET.
+ * 8 + 1 + 16*20 + 1 + 18*8 + 1 + 32 + 1 + 12*26 = 820 without the
+ * scoreboard, and 820 + 1 + 1 + 15 + 4 + 16*8 = 969 with it. */
 BOLO_STATIC_ASSERT(
     PACKET_HEADER_SIZE + 1 + (size_t)MAX_TANKS * 20 + 1 +
         (size_t)AWARD_COUNT * 8 + 1 + (ROUND_STATS_LOGKEY_LEN - 1) + 1 +
-        (size_t)ROUND_STATS_HIGHLIGHTS_WIRE_MAX * 26
+        (size_t)ROUND_STATS_HIGHLIGHTS_WIRE_MAX * 26 + 1 + 1 +
+        (ROUND_STATS_SCN_LABEL_LEN - 1) + 4 + (size_t)MAX_TANKS * 8
         <= MAX_CONTROL_PACKET,
     round_stats_worst_case_fits_MAX_CONTROL_PACKET);
 
@@ -2754,6 +2835,323 @@ static bool decodeChannelResetBody(const uint8_t *buf, size_t len,
 }
 
 /* ================================================================
+ * The four a scenario presents with. Each is body-only on
+ * CHANNEL_CONTROL, as CTRL_ENTITY_SYNC and CTRL_SIM_RULES are: no
+ * full-packet wrapper, no PACKET_* type, so each registers in the
+ * body tables and not in s_encoders.
+ *
+ * destTeam and destPlayer do not travel. They are recipient filters
+ * read by udpClientDeliverControl before the encoder is reached, so
+ * an event that arrives at a client is one addressed to it; every
+ * decoder here sets destPlayer = 0xFF for the same reason
+ * decodeServerTextBody does — 0 is a real slot, and a field a decoder
+ * leaves alone is a zero on every wire client.
+ * ================================================================ */
+
+/* CTRL_SCN_PANEL body: [panel 1][len 2 BE][bytes × len]. */
+
+/* recipient: safe — ignored. The list is the same for everyone it
+ * reaches; who reaches it is settled before the encoder is called. */
+static EncodeResult encodeScnPanelBody(const ControlEvent *evt,
+                                       const struct UdpServerClient *recipient,
+                                       uint8_t *buf, size_t bufCap,
+                                       size_t *outLen) {
+    size_t len;
+    size_t needed;
+    (void)recipient;
+    len = evt->u.scnPanel.len;
+    if (len > SCN_PANEL_MAX) return ENCODE_OVERFLOW;
+    needed = 3 + len;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.scnPanel.panel;
+    packU16(buf + 1, (uint16_t)len);
+    if (len > 0) {
+        memcpy(buf + 3, evt->u.scnPanel.bytes, len);
+    }
+    *outLen = needed;
+    return ENCODE_OK;
+}
+
+static bool decodeScnPanelBody(const uint8_t *buf, size_t len,
+                               ControlEvent *outEvt) {
+    size_t listLen;
+    if (buf == NULL || outEvt == NULL) return false;
+    if (len < 3) return false;
+    listLen = unpackU16(buf + 1);
+    if (listLen > SCN_PANEL_MAX) return false;
+    /* The declared length has to be exactly what follows it: a body
+     * that says more than it carries would read past the buffer, and
+     * one that says less is not the list that was sent. */
+    if (len != 3 + listLen) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_SCN_PANEL;
+    outEvt->u.scnPanel.destPlayer = 0xFF;
+    outEvt->u.scnPanel.panel = buf[0];
+    outEvt->u.scnPanel.len = (uint16_t)listLen;
+    if (listLen > 0) {
+        memcpy(outEvt->u.scnPanel.bytes, buf + 3, listLen);
+    }
+    return true;
+}
+
+/* CTRL_SCN_SCORE body: [kind 1][target 1][score 4 BE signed][labelLen 1]
+ * [label × labelLen]. */
+
+/* recipient: safe — ignored. A scenario's scores are public. */
+static EncodeResult encodeScnScoreBody(const ControlEvent *evt,
+                                       const struct UdpServerClient *recipient,
+                                       uint8_t *buf, size_t bufCap,
+                                       size_t *outLen) {
+    size_t labelLen;
+    size_t needed;
+    (void)recipient;
+    labelLen = strnlen(evt->u.scnScore.label, sizeof(evt->u.scnScore.label));
+    /* One below the field, because that is what the decoder takes: label[]
+     * has no room for a terminator past its last byte, so a label filling
+     * all sixteen decodes as one byte too long and the body is refused.
+     * Capped here so the encoder cannot put a body on the wire its own
+     * decoder throws away. */
+    if (labelLen > sizeof(evt->u.scnScore.label) - 1) {
+        labelLen = sizeof(evt->u.scnScore.label) - 1;
+    }
+    needed = 7 + labelLen;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.scnScore.kind;
+    buf[1] = evt->u.scnScore.target;
+    packU32(buf + 2, (uint32_t)evt->u.scnScore.score);
+    buf[6] = (uint8_t)labelLen;
+    if (labelLen > 0) {
+        memcpy(buf + 7, evt->u.scnScore.label, labelLen);
+    }
+    *outLen = needed;
+    return ENCODE_OK;
+}
+
+static bool decodeScnScoreBody(const uint8_t *buf, size_t len,
+                               ControlEvent *outEvt) {
+    size_t labelLen;
+    if (buf == NULL || outEvt == NULL) return false;
+    if (len < 7) return false;
+    labelLen = buf[6];
+    /* label[] has no room for a terminator past its last byte, so a
+     * length that fills it exactly is already one too many. */
+    if (labelLen >= sizeof(outEvt->u.scnScore.label)) return false;
+    if (len != 7 + labelLen) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_SCN_SCORE;
+    outEvt->u.scnScore.kind = buf[0];
+    outEvt->u.scnScore.target = buf[1];
+    outEvt->u.scnScore.score = (int32_t)unpackU32(buf + 2);
+    if (labelLen > 0) {
+        memcpy(outEvt->u.scnScore.label, buf + 7, labelLen);
+    }
+    outEvt->u.scnScore.label[labelLen] = '\0';
+    return true;
+}
+
+/* CTRL_SCN_ANNOUNCE body: [ticks 2 BE][text, the rest of the body].
+ * The text carries no terminator on the wire, the way the chat bodies
+ * do it; the decoder terminates what it stores. */
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeScnAnnounceBody(const ControlEvent *evt,
+                                          const struct UdpServerClient *recipient,
+                                          uint8_t *buf, size_t bufCap,
+                                          size_t *outLen) {
+    size_t textLen;
+    size_t needed;
+    (void)recipient;
+    textLen = strnlen(evt->u.scnAnnounce.text, sizeof(evt->u.scnAnnounce.text));
+    if (textLen > PACKET_MAX_CHAT_MESSAGE) textLen = PACKET_MAX_CHAT_MESSAGE;
+    needed = 2 + textLen;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+    packU16(buf, evt->u.scnAnnounce.ticks);
+    if (textLen > 0) {
+        memcpy(buf + 2, evt->u.scnAnnounce.text, textLen);
+    }
+    *outLen = needed;
+    return ENCODE_OK;
+}
+
+static bool decodeScnAnnounceBody(const uint8_t *buf, size_t len,
+                                  ControlEvent *outEvt) {
+    size_t textLen;
+    if (buf == NULL || outEvt == NULL) return false;
+    if (len < 2) return false;
+    textLen = len - 2;
+    /* A body longer than the field is refused rather than truncated: a
+     * cut announcement is a different line from the one the scenario
+     * wrote, and the sender had the same cap to measure against. */
+    if (textLen >= sizeof(outEvt->u.scnAnnounce.text)) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_SCN_ANNOUNCE;
+    outEvt->u.scnAnnounce.destPlayer = 0xFF;
+    outEvt->u.scnAnnounce.ticks = unpackU16(buf);
+    if (textLen > 0) {
+        memcpy(outEvt->u.scnAnnounce.text, buf + 2, textLen);
+    }
+    outEvt->u.scnAnnounce.text[textLen] = '\0';
+    return true;
+}
+
+/* CTRL_SCN_MARKER body: [id 1][kind 1][x 1][y 1][slot 1][colour 1]. */
+#define SCN_MARKER_BODY_LEN 6
+
+/* recipient: safe — ignored. */
+static EncodeResult encodeScnMarkerBody(const ControlEvent *evt,
+                                        const struct UdpServerClient *recipient,
+                                        uint8_t *buf, size_t bufCap,
+                                        size_t *outLen) {
+    (void)recipient;
+    if (bufCap < SCN_MARKER_BODY_LEN) return ENCODE_OVERFLOW;
+    buf[0] = evt->u.scnMarker.id;
+    buf[1] = evt->u.scnMarker.kind;
+    buf[2] = evt->u.scnMarker.x;
+    buf[3] = evt->u.scnMarker.y;
+    buf[4] = evt->u.scnMarker.slot;
+    buf[5] = evt->u.scnMarker.colour;
+    *outLen = SCN_MARKER_BODY_LEN;
+    return ENCODE_OK;
+}
+
+static bool decodeScnMarkerBody(const uint8_t *buf, size_t len,
+                                ControlEvent *outEvt) {
+    if (buf == NULL || outEvt == NULL) return false;
+    if (len != SCN_MARKER_BODY_LEN) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_SCN_MARKER;
+    outEvt->u.scnMarker.destPlayer = 0xFF;
+    outEvt->u.scnMarker.id = buf[0];
+    outEvt->u.scnMarker.kind = buf[1];
+    outEvt->u.scnMarker.x = buf[2];
+    outEvt->u.scnMarker.y = buf[3];
+    outEvt->u.scnMarker.slot = buf[4];
+    outEvt->u.scnMarker.colour = buf[5];
+    return true;
+}
+
+/* CTRL_SCENARIO_RULES body: [seq 1][fragCount 1][count 1] then count rows of
+ * [rule 1][value 8, the double's bit pattern, most significant byte first].
+ *
+ * One fragment of a set, not the set: count is this fragment's rows and the
+ * reader appends them until it has taken seq == fragCount - 1. An empty set
+ * is one fragment carrying no rows.
+ *
+ * Variable length, and the length has to agree with the count: a body that
+ * says more rows than it carries would read past the buffer and one that
+ * says fewer is not the fragment that was sent. A count past the row cap, a
+ * seq outside its own fragCount, a fragCount of zero and a rule index that
+ * names no rule are all refused outright rather than clamped — a set a
+ * client cannot read whole is one it must not half-show.
+ *
+ * The value rides as its bit pattern for the reason the float rules of
+ * CTRL_SIM_RULES do: a fixed-point scale would round a rate, and this set is
+ * what a lobby reads a rule's new value off. Serialised through two uint32_t
+ * halves and packU32, so the host's own byte order never reaches the wire. */
+BOLO_STATIC_ASSERT(sizeof(double) == 8, ctrl_scenario_rules_double_is_eight_bytes);
+
+#define SCN_RULES_ROW_LEN 9
+#define SCN_RULES_HDR_LEN 3
+
+/* What the row cap is really held against: one control event is one channel
+ * segment, and a segment carries CHANNEL_CONTROL_SEG bytes less the channel
+ * frame's type(1) and bodyLen(2). control_event.h picks SCN_RULES_FRAG_ROWS
+ * and cannot see channel_mux.h to check it; this is the file that can. The
+ * whole-set ceiling that used to stand here is gone — a set of any size now
+ * rides as many fragments as it needs. */
+BOLO_STATIC_ASSERT(
+    SCN_RULES_HDR_LEN + SCN_RULES_FRAG_ROWS * SCN_RULES_ROW_LEN <=
+        CHANNEL_CONTROL_SEG - 3,
+    scenario_rules_fragment_fits_one_control_segment);
+
+static void packF64(uint8_t *buf, double value) {
+    uint64_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    packU32(buf, (uint32_t)(bits >> 32));
+    packU32(buf + 4, (uint32_t)(bits & 0xFFFFFFFFu));
+}
+
+static double unpackF64(const uint8_t *buf) {
+    uint64_t bits = ((uint64_t)unpackU32(buf) << 32) | (uint64_t)unpackU32(buf + 4);
+    double   value;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+/* recipient: safe — ignored. A scenario's own rules table is public. */
+static EncodeResult encodeScenarioRulesBody(const ControlEvent *evt,
+                                            const struct UdpServerClient *recipient,
+                                            uint8_t *buf, size_t bufCap,
+                                            size_t *outLen) {
+    size_t count;
+    size_t needed;
+    size_t i;
+    (void)recipient;
+
+    /* Refused rather than clamped: a fragment the encoder quietly trimmed
+       would arrive as a different set than the one the sim published, and
+       the reader has no way to tell. */
+    if (evt->u.scenarioRules.fragCount == 0) return ENCODE_OVERFLOW;
+    if (evt->u.scenarioRules.seq >= evt->u.scenarioRules.fragCount) {
+        return ENCODE_OVERFLOW;
+    }
+    count = evt->u.scenarioRules.count;
+    if (count > (size_t)SCN_RULES_FRAG_ROWS) return ENCODE_OVERFLOW;
+
+    needed = SCN_RULES_HDR_LEN + count * SCN_RULES_ROW_LEN;
+    if (bufCap < needed) return ENCODE_OVERFLOW;
+
+    buf[0] = evt->u.scenarioRules.seq;
+    buf[1] = evt->u.scenarioRules.fragCount;
+    buf[2] = (uint8_t)count;
+    for (i = 0; i < count; i++) {
+        uint8_t *row = buf + SCN_RULES_HDR_LEN + i * SCN_RULES_ROW_LEN;
+        row[0] = evt->u.scenarioRules.rule[i];
+        packF64(row + 1, evt->u.scenarioRules.value[i]);
+    }
+    *outLen = needed;
+    return ENCODE_OK;
+}
+
+static bool decodeScenarioRulesBody(const uint8_t *buf, size_t len,
+                                    ControlEvent *outEvt) {
+    size_t  count;
+    size_t  i;
+    uint8_t seq;
+    uint8_t fragCount;
+
+    if (buf == NULL || outEvt == NULL) return false;
+    if (len < SCN_RULES_HDR_LEN) return false;
+    seq       = buf[0];
+    fragCount = buf[1];
+    count     = buf[2];
+    if (fragCount == 0) return false;            /* no set has no fragments */
+    if (seq >= fragCount) return false;          /* names no fragment of it */
+    if (count > (size_t)SCN_RULES_FRAG_ROWS) return false;
+    if (len != SCN_RULES_HDR_LEN + count * SCN_RULES_ROW_LEN) return false;
+    for (i = 0; i < count; i++) {
+        if (buf[SCN_RULES_HDR_LEN + i * SCN_RULES_ROW_LEN] >=
+            CTRL_SCENARIO_RULES_MAX) {
+            return false;   /* an index that names no rule */
+        }
+    }
+
+    /* The memset is what zeroes the entries above count, so a fragment that
+       shrinks cannot leave a stale row behind the new one. */
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_SCENARIO_RULES;
+    outEvt->u.scenarioRules.seq       = seq;
+    outEvt->u.scenarioRules.fragCount = fragCount;
+    outEvt->u.scenarioRules.count     = (uint8_t)count;
+    for (i = 0; i < count; i++) {
+        const uint8_t *row = buf + SCN_RULES_HDR_LEN + i * SCN_RULES_ROW_LEN;
+        outEvt->u.scenarioRules.rule[i]  = row[0];
+        outEvt->u.scenarioRules.value[i] = unpackF64(row + 1);
+    }
+    return true;
+}
+
+/* ================================================================
  * Encoder lookup — indexed by ControlEventType. Variants without
  * a wire form leave NULL slots (CTRL_MAP_DOWNLOAD_COMPLETE is
  * client-internal — published by the client on its own bus when
@@ -2847,6 +3245,11 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_ENTITY_CHANGE]         = encodeEntityChangeBody,
     [CTRL_ENTITY_SYNC]           = encodeEntitySyncBody,
     [CTRL_SIM_RULES]             = encodeSimRulesBody,
+    [CTRL_SCN_PANEL]             = encodeScnPanelBody,
+    [CTRL_SCN_SCORE]             = encodeScnScoreBody,
+    [CTRL_SCN_ANNOUNCE]          = encodeScnAnnounceBody,
+    [CTRL_SCN_MARKER]            = encodeScnMarkerBody,
+    [CTRL_SCENARIO_RULES]        = encodeScenarioRulesBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -2893,6 +3296,11 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_ENTITY_CHANGE]         = decodeEntityChangeBody,
     [CTRL_ENTITY_SYNC]           = decodeEntitySyncBody,
     [CTRL_SIM_RULES]             = decodeSimRulesBody,
+    [CTRL_SCN_PANEL]             = decodeScnPanelBody,
+    [CTRL_SCN_SCORE]             = decodeScnScoreBody,
+    [CTRL_SCN_ANNOUNCE]          = decodeScnAnnounceBody,
+    [CTRL_SCN_MARKER]            = decodeScnMarkerBody,
+    [CTRL_SCENARIO_RULES]        = decodeScenarioRulesBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {

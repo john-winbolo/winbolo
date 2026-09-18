@@ -266,8 +266,8 @@ bool clientSimCreate(ClientSim *cs) {
 
   /* A client is never handed a lobby template; the game a scenario declared
      reaches it on the settings tail instead. Until a settings event lands
-     this is 0, and a scripted round resolves as gameOpen through the same
-     code the server runs. */
+     this is 0, and a scripted round resolves as gameStrictTournament through
+     the same code the server runs. */
   cs->sim.scenarioBaseGame = (gameType)0;
 
   /* Initialize GameSim identity and callbacks */
@@ -1323,7 +1323,7 @@ static bool clientShellVisualBlocked(ClientSim *cs, WORLD newX, WORLD newY,
     if (!interpIsAlive(&cs->interpCtx, p)) continue;
     if (interpGetPosition(&cs->interpCtx, p, 1.0f, &tkX, &tkY, &tkAngle, &tkOnBoat)) {
       /* Match the authoritative shell hit-zone (circle by default; square
-       * under BOLO_LEGACY_SQUARE_COLLISION). See TANK_HIT_RADIUS. */
+       * under BOLO_LEGACY_SQUARE_COLLISION). See tank_hit_radius. */
 #ifdef BOLO_LEGACY_SQUARE_COLLISION
       if (abs((int)newX - (int)tkX) < 128 && abs((int)newY - (int)tkY) < 128) {
         return true;
@@ -1332,8 +1332,9 @@ static bool clientShellVisualBlocked(ClientSim *cs, WORLD newX, WORLD newY,
       int dx = (int)newX - (int)tkX, dy = (int)newY - (int)tkY;
       /* Bounding-box pre-test bounds dx/dy before squaring; see tankIsTankHit
        * in tank.c. Never rejects a real hit, prevents int overflow. */
-      if (abs(dx) < TANK_HIT_RADIUS && abs(dy) < TANK_HIT_RADIUS &&
-          dx * dx + dy * dy < TANK_HIT_RADIUS_SQUARED) {
+      const int hitR = (int) cs->sim.rules.tank_hit_radius;
+      if (abs(dx) < hitR && abs(dy) < hitR &&
+          dx * dx + dy * dy < hitR * hitR) {
         return true;
       }
 #endif
@@ -2202,6 +2203,39 @@ const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_
   return &cs->spectatorSlots[idx];
 }
 
+const ScnPanelList *clientSimGetScnPanel(const ClientSim *cs, uint8_t id) {
+  if (cs == NULL || id >= SCN_PANEL_IDS) return NULL;
+  if (!cs->scnPanelValid[id]) return NULL;
+  return &cs->scnPanels[id];
+}
+
+uint32_t clientSimGetScnPanelRejectCount(const ClientSim *cs) {
+  return cs ? cs->scnPanelRejects : 0;
+}
+
+const char *clientSimGetScnAnnounce(const ClientSim *cs, uint16_t *outTicks,
+                                    uint32_t *outArrivedTick) {
+  if (cs == NULL || cs->scnAnnounceText[0] == '\0') return NULL;
+  if (outTicks != NULL) *outTicks = cs->scnAnnounceTicks;
+  if (outArrivedTick != NULL) *outArrivedTick = cs->scnAnnounceArrivedTick;
+  return cs->scnAnnounceText;
+}
+
+const ClientScnMarker *clientSimGetScnMarker(const ClientSim *cs, uint8_t id) {
+  if (cs == NULL || id >= SCN_MARKERS_MAX) return NULL;
+  return &cs->scnMarkers[id];
+}
+
+const ClientScnScore *clientSimGetScnPlayerScore(const ClientSim *cs, BYTE slot) {
+  if (cs == NULL || slot >= MAX_TANKS) return NULL;
+  return &cs->scnPlayerScores[slot];
+}
+
+const ClientScnScore *clientSimGetScnTeamScore(const ClientSim *cs, BYTE team) {
+  if (cs == NULL || team >= MAX_TANKS) return NULL;
+  return &cs->scnTeamScores[team];
+}
+
 BYTE clientSimGetLobbyNumConnected(const ClientSim *cs) {
   if (cs == NULL) return 0;
   BYTE count = 0;
@@ -2701,6 +2735,23 @@ const char *clientSimGetLobbyScenarioName(const ClientSim *cs)       { return cs
 const char *clientSimGetLobbyScenarioFileName(const ClientSim *cs)   { return cs ? cs->lobbyScenarioFileName : ""; }
 const char *clientSimGetLobbyScenarioDescription(const ClientSim *cs){ return cs ? cs->lobbyScenarioDescription : ""; }
 bool     clientSimGetLobbyScenarioExtraTeams(const ClientSim *cs)    { return cs ? cs->lobbyScenarioExtraTeams : false; }
+
+/* The rules that scenario's manifest sets. Bounded on the stored count
+   rather than on the array, so a row above it — one an earlier, longer set
+   left behind — is never handed out. */
+int clientSimGetScenarioRulesCount(const ClientSim *cs) {
+  return cs ? (int)cs->scenarioRulesCount : 0;
+}
+
+int clientSimGetScenarioRuleIndex(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= (int)cs->scenarioRulesCount) return -1;
+  return (int)cs->scenarioRuleIndex[idx];
+}
+
+double clientSimGetScenarioRuleValue(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= (int)cs->scenarioRulesCount) return 0.0;
+  return cs->scenarioRuleValue[idx];
+}
 bool     clientSimGetLobbyWbnAvailable(const ClientSim *cs)          { return cs ? cs->lobbyWbnAvailable : false; }
 uint32_t clientSimGetLobbyServerLocks(const ClientSim *cs)           { return cs->lobbyServerLocks; }
 UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs)           { return cs ? cs->uploadPolicy : UPLOAD_POLICY_ALLOW; }
@@ -2846,6 +2897,47 @@ uint32_t clientSimGetLobbyMapListSeq(const ClientSim *cs) {
 }
 uint32_t clientSimGetLobbyMapChangeSeq(const ClientSim *cs) {
   return cs ? cs->lobbyMapChangeSeq : 0;
+}
+
+/* The scenarios the server offers on their own. Every one of these tolerates
+ * a NULL cs and an index out of range: the list is read by UI code a frame at
+ * a time, and a response landing between two reads must not cost a crash. */
+int clientSimGetLobbyScenarioListCount(const ClientSim *cs) {
+  return cs ? cs->lobbyScenarioListCount : 0;
+}
+const char *clientSimGetLobbyScenarioListFile(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return "";
+  return cs->lobbyScenarioListFiles[idx];
+}
+const char *clientSimGetLobbyScenarioListName(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return "";
+  return cs->lobbyScenarioListNames[idx];
+}
+const char *clientSimGetLobbyScenarioListDescription(const ClientSim *cs,
+                                                     int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return "";
+  return cs->lobbyScenarioListDescs[idx];
+}
+int clientSimGetLobbyScenarioListMaxPlayers(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return 0;
+  return (int)cs->lobbyScenarioListMaxPlayers[idx];
+}
+int clientSimGetLobbyScenarioListBots(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return 0;
+  return (int)cs->lobbyScenarioListBots[idx];
+}
+bool clientSimGetLobbyScenarioListBound(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return false;
+  return cs->lobbyScenarioListBound[idx];
+}
+bool clientSimGetLobbyScenarioListReady(const ClientSim *cs) {
+  return cs ? cs->lobbyScenarioListReady : false;
+}
+bool clientSimGetLobbyScenarioListInFlight(const ClientSim *cs) {
+  return cs ? cs->lobbyScenarioListInFlight : false;
+}
+uint32_t clientSimGetLobbyScenarioListSeq(const ClientSim *cs) {
+  return cs ? cs->lobbyScenarioListSeq : 0;
 }
 
 const char *clientSimGetLobbyMapSearchPath(const ClientSim *cs) {
@@ -3513,6 +3605,12 @@ struct OverviewSnapshot {
    * network thread writes. */
   ClientPing        pings[MAX_CLIENT_PINGS];
   int               pingCount;
+
+  /* A scenario's map markers, taken here for the reason the pings are: the
+   * overview's render half reads this snapshot and never the live store the
+   * control events write. Kept whole and by id, so a cleared marker crosses
+   * as the inactive row it is. */
+  ClientScnMarker   scnMarkers[SCN_MARKERS_MAX];
 };
 
 /* Whether an entity standing on (mapX, mapY) may be drawn: only a square the
@@ -3639,6 +3737,7 @@ void clientSimFillOverviewSnapshot(ClientSim *cs, OverviewSnapshot *s) {
   s->windowCentreY     = 0.0f;
   s->itemLabelCount = 0;
   s->pingCount     = 0;
+  memset(s->scnMarkers, 0, sizeof(s->scnMarkers));
   s->haveMap       = (cs != NULL);
   if (cs == NULL) return;
 
@@ -3647,6 +3746,9 @@ void clientSimFillOverviewSnapshot(ClientSim *cs, OverviewSnapshot *s) {
    * only ever read under the same lock the rest of this fill runs under. */
   s->pingCount = clientSimGetPings(cs, (uint32_t)SDL_GetTicks(), s->pings,
                                    MAX_CLIENT_PINGS);
+
+  /* The scenario's markers, on the same terms. */
+  memcpy(s->scnMarkers, cs->scnMarkers, sizeof(s->scnMarkers));
 
   /* Generation 0 only exists between a round reset and the seed that follows
    * it, so a match on 0 can be a snapshot filled in that same window a round
@@ -3821,6 +3923,10 @@ const ClientPing *overviewSnapshotPings(const OverviewSnapshot *s) {
 
 int overviewSnapshotPingCount(const OverviewSnapshot *s) {
   return s ? s->pingCount : 0;
+}
+
+const ClientScnMarker *overviewSnapshotScnMarkers(const OverviewSnapshot *s) {
+  return s ? &s->scnMarkers[0] : NULL;
 }
 
 const OverviewItemLabel *overviewSnapshotItemLabels(const OverviewSnapshot *s) {

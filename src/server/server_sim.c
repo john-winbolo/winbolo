@@ -209,7 +209,8 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
     }
 
     /* No scenario has declared a base game type yet, so a round that turns
-       out to be scripted plays open until a lobby template says otherwise. */
+       out to be scripted plays strict tournament until a lobby template says
+       otherwise. */
     sim->sim.scenarioBaseGame = (gameType)0;
 
     /* "No tutorial progress yet" — memset would leave 0, which (being below
@@ -840,6 +841,46 @@ void serverSimBuildRoundStatsSummary(ServerSim *sim, RoundStatsSummary *out) {
         strncpy(out->wbnLogKey, serverKey, sizeof(out->wbnLogKey) - 1);
         out->wbnLogKey[sizeof(out->wbnLogKey) - 1] = '\0';
     }
+
+    /* A scenario's own scoreboard, taken from the rows its score op wrote.
+     * Both stores are cleared at round start, so a round with no scenario —
+     * or one whose scenario never scored — leaves hasScenarioScore false and
+     * the recap without a column.
+     *
+     * Player rows are keyed by a 0-based slot and team rows by the team
+     * number (1..MAX_TANKS-1, row 0 naming no team); the summary keeps those
+     * two bases, so a row is copied straight across at its own index, and
+     * each mask carries the store's own valid bit at that same index. The
+     * mask is what tells a reader a row scored zero from a row nobody
+     * scored, which the number alone cannot.
+     *
+     * The op lets every row carry its own label and the recap has one column
+     * to head, so the first label found wins: player rows by ascending slot,
+     * then team rows by ascending team. A scenario that wants a predictable
+     * title gives every row the same one. */
+    for (int slot = 0; slot < MAX_TANKS; slot++) {
+        const ScnScoreRow *row = &sim->scenarioPlayerScores[slot];
+        if (!row->valid) continue;
+        out->scenarioScoreMask |= (uint16_t)(1u << slot);
+        out->scenarioScore[slot] = row->score;
+        if (out->scenarioScoreLabel[0] == '\0' && row->label[0] != '\0') {
+            strncpy(out->scenarioScoreLabel, row->label,
+                    sizeof(out->scenarioScoreLabel) - 1);
+        }
+    }
+    for (int team = 1; team < MAX_TANKS; team++) {
+        const ScnScoreRow *row = &sim->scenarioTeamScores[team];
+        if (!row->valid) continue;
+        out->scenarioTeamScoreMask |= (uint16_t)(1u << team);
+        out->scenarioTeamScore[team] = row->score;
+        if (out->scenarioScoreLabel[0] == '\0' && row->label[0] != '\0') {
+            strncpy(out->scenarioScoreLabel, row->label,
+                    sizeof(out->scenarioScoreLabel) - 1);
+        }
+    }
+    out->scenarioScoreLabel[sizeof(out->scenarioScoreLabel) - 1] = '\0';
+    out->hasScenarioScore =
+        (out->scenarioScoreMask | out->scenarioTeamScoreMask) != 0;
 }
 
 bool serverSimIsRunning(void) {

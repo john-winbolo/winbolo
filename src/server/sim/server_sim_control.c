@@ -697,6 +697,51 @@ void serverSimFillSimRulesEvent(const ServerSim *sim, ControlEvent *evt) {
 #undef SIM_RULES_FILL_FIELD
 }
 
+/* How many fragments the stored set needs. An empty set still needs one, so
+ * that a detach has a fragment to say it on. */
+uint8_t serverSimScenarioRulesFragCount(const ServerSim *sim) {
+    uint8_t rows;
+
+    if (sim == NULL) return 1;
+    rows = sim->scenarioRulesCount;
+    if (rows == 0) return 1;
+    return (uint8_t)((rows + SCN_RULES_FRAG_ROWS - 1) / SCN_RULES_FRAG_ROWS);
+}
+
+/* Fill fragment `seq` of a CTRL_SCENARIO_RULES from the set the attached
+ * scenario's manifest holds. The rows are copied as they were given: this
+ * event says what the author wrote, so a value the sim later refused or
+ * clamped is still the value the table asked for.
+ *
+ * A seq past the last fragment fills an empty one rather than reading off
+ * the end of the stored set; every caller walks the count above, so that is
+ * a guard and not a path. */
+void serverSimFillScenarioRulesEvent(const ServerSim *sim, uint8_t seq,
+                                     ControlEvent *evt) {
+    uint8_t fragCount;
+    uint8_t first;
+    uint8_t rows;
+    uint8_t i;
+
+    if (sim == NULL || evt == NULL) return;
+    fragCount = serverSimScenarioRulesFragCount(sim);
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_SCENARIO_RULES;
+    evt->u.scenarioRules.seq       = seq;
+    evt->u.scenarioRules.fragCount = fragCount;
+    if (seq >= fragCount) return;   /* names no fragment — carries no rows */
+
+    first = (uint8_t)(seq * SCN_RULES_FRAG_ROWS);
+    rows  = (uint8_t)(sim->scenarioRulesCount - first);
+    if (rows > SCN_RULES_FRAG_ROWS) rows = SCN_RULES_FRAG_ROWS;
+    evt->u.scenarioRules.count = rows;
+    for (i = 0; i < rows; i++) {
+        evt->u.scenarioRules.rule[i] =
+            (uint8_t)sim->scenarioRules[first + i].rule;
+        evt->u.scenarioRules.value[i] = sim->scenarioRules[first + i].value;
+    }
+}
+
 void serverSimPublishSimRules(ServerSim *sim) {
     ControlEvent evt;
     if (sim == NULL) return;
@@ -745,17 +790,31 @@ static void serverSimSyncOrderingDeliver(void *ctx,
     check->inner(check->innerCtx, evt);
 }
 
-/* `withBrainDocs` says whether the brains' lobby texts belong in this
- * replay. TRUE for a real client's (or spectator's) join sync, which is a
- * one-off. FALSE for the delayed spectator ring's control snapshot, which is
- * rebuilt on every keyframe: reading the texts there put file opens on the
- * tick thread, and the fragments themselves overran LOG_CONTROL_SNAPSHOT_MAX
- * so the whole keyframe was dropped without a word. */
+/* `fullReplay` says who is being replayed to. TRUE for a real client's (or
+ * spectator's) join sync, which happens once and is addressed to one
+ * recipient the delivery path can filter for. FALSE for the delayed
+ * spectator ring's control snapshot, which is rebuilt on every keyframe into
+ * a buffer of LOG_CONTROL_SNAPSHOT_MAX bytes, and which is written once for
+ * every spectator rather than for one of them.
+ *
+ * Two things are left out of the snapshot, both for the same reason: they
+ * cost the keyframe bytes it cannot spare and reach nobody on that path.
+ *
+ * The brains' lobby texts. Reading them there put file opens on the tick
+ * thread, and the fragments themselves overran LOG_CONTROL_SNAPSHOT_MAX so
+ * the whole keyframe was dropped without a word.
+ *
+ * The panel lists held to one team or one player. A spectator belongs to no
+ * team and holds no slot, so serverSpectatorDeliverControl admits a panel
+ * only when it is addressed to everyone; a snapshot carrying the targeted
+ * ones would spend up to 127 further records on lists that reach nobody. The
+ * everyone-addressed lists still go, which is every list a spectator can
+ * see. */
 static void serverSimSyncSubscriber(
     ServerSim *sim,
     void (*deliver)(void *, const struct ControlEvent *),
     void *ctx,
-    bool withBrainDocs) {
+    bool fullReplay) {
     ControlEvent evt;
     BYTE i;
     SyncOrderingCheck check;
@@ -813,9 +872,9 @@ static void serverSimSyncSubscriber(
 
         /* The brains' own lobby texts, straight after the list they index
          * into: the lobby turns a bot's announce line into team chat and
-         * hangs its commands docs off it. Same lobby-only gate, plus the
-         * ring-snapshot gate above. */
-        if (withBrainDocs) {
+         * hangs its commands docs off it. Same lobby-only gate, and left out
+         * of the ring's snapshot for the reason above the function. */
+        if (fullReplay) {
             serverSimEmitBrainDocs(sim, deliver, ctx);
         }
 
@@ -931,6 +990,33 @@ static void serverSimSyncSubscriber(
      * join. */
     if (serverSimFillEntitySyncEvent(sim, &evt)) {
         deliver(ctx, &evt);
+    }
+
+    /* What each scenario panel is showing. Every update replaces the whole
+     * list, so the last one the sim stored is the whole of a panel's state
+     * and a joiner needs no history. Replayed as it was published, recipient
+     * pair and all: the delivery path filters a replayed event the way it
+     * filters a live one, so a list held to one team or one player reaches
+     * the joiner only if it is addressed to them. The ring's snapshot takes
+     * the everyone-addressed lists alone, for the reason above the function.
+     * Placed ahead of the player-join roster for the reason the entity sync
+     * is — the ordering check refuses a non-join event after the first
+     * join. */
+    serverSimScenarioReplayPanels(sim, deliver, ctx, fullReplay);
+
+    /* What the attached scenario's own manifest sets, so a client that joins
+     * after the attach reads the same table the lobby's popup draws from.
+     * Only while one is attached: an empty set says a scenario has just
+     * detached, and a map that never had one has nothing to say. Placed
+     * ahead of the player-join roster for the reason the two above are — the
+     * ordering check refuses a non-join event after the first join. */
+    if (sim->scenarioIdentity.source != lobbyScenarioNone) {
+        uint8_t frags = serverSimScenarioRulesFragCount(sim);
+        uint8_t seq;
+        for (seq = 0; seq < frags; seq++) {
+            serverSimFillScenarioRulesEvent(sim, seq, &evt);
+            deliver(ctx, &evt);
+        }
     }
 
     for (i = 0; i < MAX_TANKS; i++) {

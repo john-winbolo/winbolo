@@ -51,7 +51,12 @@ typedef struct SimRules {
     int32_t tank_water_ticks;    /* ticks per unit of drowning drain */
     int32_t shell_damage;
     int32_t mine_damage;
+    int32_t mine_damage_range;   /* world units off centre a mine still hurts */
+    int32_t mine_fatal_divisor;  /* what a blow bigger than the armour left is cut by */
+    int32_t water_loss_shells;   /* what a wading tank loses each interval */
+    int32_t water_loss_mines;
     int32_t just_fired_ticks;    /* how long a shot keeps a tank out of the trees */
+    int32_t tree_hide_distance;  /* how far off a tank in trees stops being seen */
     int32_t gunsight_min;
     int32_t gunsight_max;
     float   tank_accel_rate;
@@ -59,6 +64,22 @@ typedef struct SimRules {
     float   tank_brake_rate;     /* the slow key */
     float   tank_autoslow_rate;
     int32_t tank_min_move;       /* residual speed a tank needs to move a tick */
+
+    /* ---- Tank collision geometry ----
+     * What the tank is, as a shape, to a shell and to the world it drives
+     * through. tank_hit_radius is the circle both the shell test and the
+     * building resolver use; the rest is how two tanks shove each other
+     * apart and how one comes off a wall. */
+    int32_t tank_hit_radius;         /* the circle a shell has to reach */
+    int32_t tank_collision_distance; /* how close two tanks shove */
+    int32_t tank_nudge_threshold;    /* which axis a shove takes */
+    int32_t tank_nudge_amount;       /* how far one shove moves a tank */
+    int32_t tank_nudge_iterations;   /* shoves tried in a tick */
+    int32_t tank_bump_decay_shift;   /* how fast a bump dies away */
+    int32_t tank_pill_pickup_inset;  /* the reach a tank picks a pill up from */
+    int32_t tank_boat_exit_inset;    /* how far inside a bank a boat is held */
+    int32_t tank_slide_step;         /* world units a knocked tank slides */
+    float   tank_wall_glide;         /* 0 slides along a wall, 1 glides free */
 
     /* ---- Terrain: the cap a tank's speed clamps to ----
      * Building, half-building and pillbox are absent on purpose: they are
@@ -87,6 +108,23 @@ typedef struct SimRules {
     float   turn_deep_sea;
     float   turn_refuel_base;
 
+    /* ---- Terrain: the cap the builder's walk clamps to ----
+     * The tank's own caps are the speed_* rows above. A man walks a
+     * different table - he crosses swamp and rubble faster than a tank
+     * does and cannot cross a river at all - so the two are separate rows
+     * rather than one set read twice. Building, half-building and pillbox
+     * are absent for the reason they are absent from speed_*. */
+    int32_t man_speed_road;
+    int32_t man_speed_grass;
+    int32_t man_speed_forest;
+    int32_t man_speed_river;
+    int32_t man_speed_swamp;
+    int32_t man_speed_crater;
+    int32_t man_speed_rubble;
+    int32_t man_speed_boat;
+    int32_t man_speed_deep_sea;
+    int32_t man_speed_refuel_base;
+
     /* ---- Shells ---- */
     int32_t shell_life;
     int32_t shell_speed;
@@ -104,6 +142,11 @@ typedef struct SimRules {
     int32_t lgm_pill_repair_load;
     int32_t lgm_gather_trees;
     int32_t lgm_helicopter_speed;  /* also the parachute delay: distance / speed */
+    int32_t lgm_arrive_tolerance;  /* how near his goal counts as arrived */
+    int32_t lgm_return_tolerance;  /* the same, coming back to the tank */
+    int32_t lgm_pill_drop_search;  /* squares a column of the drop search walks */
+    int32_t lgm_boat_leave_offset; /* how far out he steps onto a boat */
+    int32_t lgm_boat_return_offset;
 
     /* ---- Pillbox ---- */
     int32_t pill_max_armour;
@@ -112,6 +155,11 @@ typedef struct SimRules {
     int32_t pill_cooldown_ticks;
     int32_t pill_repair_amount;
     int32_t pill_range;
+    int32_t pill_shell_damage;      /* what one shell takes off a pill */
+    int32_t pill_angry_divisor;     /* the step from normal toward min */
+    float   pill_fire_length;       /* how far the shell a pill fires flies */
+    int32_t pill_base_defend_range; /* exclusive radius in map squares around a shot base */
+    int32_t pill_aim_iterations;    /* how hard a pill works to lead a target */
 
     /* ---- Base ---- */
     int32_t base_full_armour;
@@ -129,6 +177,8 @@ typedef struct SimRules {
     float   base_refuel_shells_ticks;  /* halves: basesHalfTickCalulator alternates */
     float   base_refuel_mines_ticks;
     int32_t base_regen_ticks;
+    int32_t base_status_range;   /* how near a base has to be to read its stock */
+    int32_t base_reveal_range;   /* how near before its armour is worth predicting */
 
     /* ---- Terrain destruction and explosions ---- */
     int32_t building_life;
@@ -137,10 +187,40 @@ typedef struct SimRules {
     int32_t swamp_life;
     int32_t mine_fuse_ticks;
     int32_t big_explosion_threshold;
+    int32_t tank_explosion_damage;        /* the splash a dying tank deals a pill */
+    int32_t tank_explosion_length;        /* how long the wreck travels */
+    int32_t tank_explosion_move;          /* world units a wreck moves a step */
+    int32_t tank_explosion_update_ticks;  /* ticks between those steps */
+    int32_t tank_explosion_width;         /* half the wreck's collision box */
+    int32_t tank_explosion_height;
+
+    /* ---- Spawning ----
+     * How a respawn picks its start. The three ranges are what counts as
+     * too near a tank, a pillbox or a base; the separation is how far a
+     * scattered spawn keeps from another live tank, the scatter cap how
+     * long the spiral search looks, and the threshold the share of neutral
+     * bases below which a player's own base is preferred to a neutral. */
+    int32_t start_tank_range;
+    int32_t start_pill_range;
+    int32_t start_base_range;
+    int32_t start_spawn_separation;
+    int32_t start_scatter_max;
+    int32_t start_neutral_threshold_pct;
+
+    /* ---- Hearing ----
+     * How far a sound carries, in map squares. Inside the soft range it is
+     * played near, past the none range it is dropped, and between the two
+     * it is played far. */
+    int32_t sound_soft_range;
+    int32_t sound_none_range;
+
+    /* ---- Terrain flooding ---- */
+    int32_t flood_fill_ticks;    /* how long water takes to claim a square */
 
     /* ---- Tree growth ---- */
     int32_t tree_grow_ticks;
     int32_t tree_grow_initial_ticks;
+    int32_t tree_grow_initial_score; /* what the weighted draw starts and resets from */
     int32_t tree_weight_forest;
     int32_t tree_weight_grass;
     int32_t tree_weight_river;
@@ -197,10 +277,9 @@ bool simRulesAreClassic(const SimRules *rules);
  *  table is classic. A NULL table answers 0.
  *
  *  The index counts fields from the front of the struct, so
- *  it is the same index the scenario surface names a rule by
- *  and a caller holding SCN_RULE_LIST can turn it into that
- *  rule's name. This file cannot: the name list is the
- *  scenario's and sits above it.
+ *  it is the same index the scenario surface names a rule by,
+ *  and simRulesRuleName (public/sim_rules_names.h) turns it
+ *  into that rule's name.
  *
  *  A refusal that has to tell an operator what is wrong
  *  wants this rather than the bool — "the rules are not

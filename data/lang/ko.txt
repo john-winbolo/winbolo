@@ -1977,6 +1977,17 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=게시할 수 있는 스킨은 자신의 스킨 폴
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=이 스킨은 일부 스프라이트에만 더 정교한 그림이 있어서, 줌에 맞추기는 클래식과 같은 타일을 만들어요. 높은 디테일은 스킨에 정교한 그림이 있는 곳에서 그 그림을 사용해요.
 STR_DLGSKIN_RECFILTER_LBL=추천 필터:
 STR_DLGSKIN_RECOMMENDED_TAG=(추천)
+STR_DLGSKIN_FOGSTYLE=전장의 안개 스타일
+STR_DLGSKIN_FOGSTYLE_TIP=보이지 않는 땅을 어떻게 그릴지예요. 자신의 화면에만 영향을 주며, 무엇을 선택해도 서버가 보내는 맵은 같아요.
+STR_DLGSKIN_FOGSTYLE_GREY=회색
+STR_DLGSKIN_FOGSTYLE_GREY_TIP=보이지 않는 땅은 회색에 가깝게 표시되어, 눈에 보이는 땅보다 더 밝게 나와요.
+STR_DLGSKIN_FOGSTYLE_DARK=더 어둡게
+STR_DLGSKIN_FOGSTYLE_DARK_TIP=보이지 않는 땅은 검은색에 가깝게 표시돼요. 도로는 원래 검은색이라, 안개 속 도로도 눈에 보이는 도로와 똑같이 보여요.
+STR_DLGSKIN_FOGSTYLE_DARKROADS=더 어둡게(경계선 포함)
+STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP=더 어둡게에 안개 경계선을 옅게 다시 그려 넣어요. 이 띠는 모든 지형에서 안개 쪽에 놓이기 때문에, 검은색이라 어둡게 처리만으로는 표시할 수 없는 도로 위에도 경계선이 나타나요. 이것이 기본 모습이에요.
+STR_DLGSKIN_FOGSTYLE_NONE=없음
+STR_DLGSKIN_FOGSTYLE_NONE_TIP=맵에 음영을 전혀 넣지 않아서, 기억하고 있는 땅도 눈에 보이는 땅과 똑같이 보여요. 다른 스타일이 보여주는 것을 감추지는 않아요. 어떤 탱크와 포탄을 그릴지는 이 설정이 아니라 서버가 정하는 규칙이에요.
+STR_DLGSKIN_FOGSTYLE_NONE_NOTE=참고: 이 설정은 내 화면 표시만 바꿀 뿐, 게임 설정의 전장의 안개 옵션을 끄는 것은 아니에요. 전장의 안개가 표시될 위치에서는 탱크와 포탄이 보이지 않게 돼요.
 
 # Map Overview and the full screen map
 STR_MENU_MAP_OVERVIEW=지도 전체 보기
@@ -2126,3 +2137,28 @@ STR_PING_MOUSE_RIGHT=마우스 오른쪽 버튼
 STR_PING_MOUSE_X1=마우스 4
 STR_PING_MOUSE_X2=마우스 5
 STR_DLGKEYSETUP_PING_ALT2=스마트 핑 대체 키 2
+
+# 로비 시나리오 선택
+STR_DLGGAMEINFO_SCRIPTED=스크립트
+STR_DLGSETTINGS_HOSTING_SCRIPTS=호스트일 때 맵 스크립트 실행
+STR_DLGLOBBY_SCENARIO_LBL=시나리오:
+STR_DLGLOBBY_SCRIPTS_OFF=스크립트 꺼짐
+STR_DLGLOBBY_RELOAD_SCENARIO=스크립트 새로고침
+STR_DLGLOBBY_REJECT_SCENARIO=그 설정은 맵의 시나리오로 고정되어 있어요
+STR_DLGLOBBY_REJECT_COOLDOWN=너무 빨라요. 잠시 후 다시 시도해 보세요.
+STR_DLGLOBBY_CHOOSE_SCENARIO=선택
+STR_DLGLOBBY_SCENARIO_TITLE=모드 선택
+STR_DLGLOBBY_SCENARIO_NONE=없음 — 모드 없음. 맵에 자체 시나리오가 있으면 그것을 실행해요.
+STR_DLGLOBBY_SCENARIO_WAITING=서버에 문의하는 중...
+STR_DLGLOBBY_SCENARIO_EMPTY=이 서버는 모드를 제공하지 않아요.
+STR_DLGLOBBY_SCENARIO_BOUND=특정 맵 전용이라 모드로 사용할 수 없어요.
+STR_DLGLOBBY_SCENARIO_MAXPLAYERS=최대 {number}명
+STR_DLGLOBBY_SCENARIO_BOTS=봇 {number}자리
+STR_DLGLOBBY_SCENARIO_ON_MAP=모드: {string2} ({string1} 맵에서)
+STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=업로드된 맵의 스크립트 실행
+STR_DLGSETTINGS_HOSTING_SCENARIODIR=시나리오 폴더
+STR_DLGSETTINGS_MAPVIEW=지도 보기
+STR_DLGSETTINGS_SIMPLEZOOM=축소 시 단순화된 보기 사용
+STR_DLGSETTINGS_SIMPLEZOOM_TIP=1x보다 축소하면 스프라이트를 줄여 흐릿하게 만드는 대신, 각 칸을 단색으로 채우고 탱크, 토치카, 기지는 단순한 마커로 표시합니다.
+STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW=지도 전체 보기만
+STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW_TIP=단순화된 보기는 지도 전체 보기 창에만 적용됩니다. 전체 화면 지도는 확대/축소 단계와 관계없이 항상 스프라이트를 그립니다.

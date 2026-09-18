@@ -1979,6 +1979,17 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Nur ein Skin im eigenen Skin-Ordner kann veröffent
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Dieser Skin hat feinere Grafiken nur für einige Sprites, daher erzeugt "An Zoom anpassen" dieselben Kacheln wie "Klassisch". "Hohes Detail" verwendet die feineren Grafiken, wo der Skin sie hat.
 STR_DLGSKIN_RECFILTER_LBL=Empfohlener Filter:
 STR_DLGSKIN_RECOMMENDED_TAG=(empfohlen)
+STR_DLGSKIN_FOGSTYLE=Kriegsnebelstil
+STR_DLGSKIN_FOGSTYLE_TIP=Wie Gelände dargestellt wird, das nicht eingesehen werden kann. Das ändert nur das Bild auf dem eigenen Bildschirm; der Server sendet unabhängig von der gewählten Einstellung dieselbe Karte.
+STR_DLGSKIN_FOGSTYLE_GREY=Grau
+STR_DLGSKIN_FOGSTYLE_GREY_TIP=Gelände, das nicht eingesehen werden kann, wird ins Graue gezogen und erscheint dadurch heller als Gelände in Sichtweite.
+STR_DLGSKIN_FOGSTYLE_DARK=Dunkler
+STR_DLGSKIN_FOGSTYLE_DARK_TIP=Gelände, das nicht eingesehen werden kann, wird ins Schwarze gezogen. Straßen sind bereits schwarz, daher sieht eine Straße unter Nebel genauso aus wie eine Straße in Sichtweite.
+STR_DLGSKIN_FOGSTYLE_DARKROADS=Dunkler mit Nebelkante
+STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP=Dunkler, wobei die Nebelgrenze schwach wieder eingezeichnet wird. Der Streifen liegt bei jedem Gelände auf der nebligen Seite der Grenze, sodass sie auch über einer Straße sichtbar bleibt, die schwarz ist und die das Verdunkeln allein nicht markieren kann. Das ist die Standardansicht.
+STR_DLGSKIN_FOGSTYLE_NONE=Keine
+STR_DLGSKIN_FOGSTYLE_NONE_TIP=Die Karte wird überhaupt nicht abgedunkelt, sodass sich erinnertes Gelände genauso zeigt wie Gelände in Sichtweite. Das verbirgt nichts, was die anderen Stile zeigen: welche Panzer und Granaten gezeichnet werden, entscheidet der Server, nicht diese Einstellung.
+STR_DLGSKIN_FOGSTYLE_NONE_NOTE=Hinweis: Das ändert nur die eigene Anzeige und schaltet die Einstellung für den Nebel des Krieges im Spielaufbau nicht aus. Panzer und Granaten verschwinden weiterhin dort, wo sonst der Nebel des Krieges zu sehen wäre.
 
 # Map Overview and the full screen map
 STR_MENU_MAP_OVERVIEW=Kartenübersicht
@@ -2128,3 +2139,28 @@ STR_PING_MOUSE_RIGHT=Rechte Maustaste
 STR_PING_MOUSE_X1=Maus 4
 STR_PING_MOUSE_X2=Maus 5
 STR_DLGKEYSETUP_PING_ALT2=Smart Ping – Alternative Tasten 2
+
+# Szenario-Auswahl in der Lobby
+STR_DLGGAMEINFO_SCRIPTED=Skriptgesteuert
+STR_DLGSETTINGS_HOSTING_SCRIPTS=Kartenskripte beim Hosten ausführen
+STR_DLGLOBBY_SCENARIO_LBL=Szenario:
+STR_DLGLOBBY_SCRIPTS_OFF=Skripte aus
+STR_DLGLOBBY_RELOAD_SCENARIO=Skript neu laden
+STR_DLGLOBBY_REJECT_SCENARIO=Diese Einstellung ist durch das Szenario der Karte festgelegt
+STR_DLGLOBBY_REJECT_COOLDOWN=Zu früh; bitte in Kürze erneut versuchen
+STR_DLGLOBBY_CHOOSE_SCENARIO=Wählen
+STR_DLGLOBBY_SCENARIO_TITLE=Mod wählen
+STR_DLGLOBBY_SCENARIO_NONE=Kein Mod — die Karte spielt ihr eigenes Szenario, falls vorhanden.
+STR_DLGLOBBY_SCENARIO_WAITING=Server wird angefragt...
+STR_DLGLOBBY_SCENARIO_EMPTY=Dieser Server bietet keine Mods an.
+STR_DLGLOBBY_SCENARIO_BOUND=Nur für eine Karte gebaut, kann daher nicht als Mod gespielt werden
+STR_DLGLOBBY_SCENARIO_MAXPLAYERS=Bis zu {number} Spieler
+STR_DLGLOBBY_SCENARIO_BOTS={number} Bot-Plätze
+STR_DLGLOBBY_SCENARIO_ON_MAP=Mod: {string2} (auf {string1})
+STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Skripte in hochgeladenen Karten ausführen
+STR_DLGSETTINGS_HOSTING_SCENARIODIR=Szenario-Verzeichnis
+STR_DLGSETTINGS_MAPVIEW=Kartenansicht
+STR_DLGSETTINGS_SIMPLEZOOM=Vereinfachte Ansicht beim Herauszoomen verwenden
+STR_DLGSETTINGS_SIMPLEZOOM_TIP=Beim Herauszoomen über 1x hinaus wird jede Kachel in einer Farbe gezeichnet, mit einfachen Markierungen für Panzer, Bunker und Basen, statt die Sprites auf einen unscharfen Fleck zu verkleinern.
+STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW=Nur Kartenübersicht
+STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW_TIP=Beschränkt die vereinfachte Ansicht auf die Kartenübersicht. Die Vollbildkarte zeichnet ihre Sprites bei jedem Zoom.

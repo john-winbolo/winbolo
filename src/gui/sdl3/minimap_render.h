@@ -48,6 +48,13 @@ void minimapTerrainColor(BYTE terrain, uint8_t *r, uint8_t *g, uint8_t *b);
  * flags: bitmask controlling optional effects. */
 #define MINIMAP_DARKEN_BORDER  (1 << 0)  /* Dim mine border zone */
 #define MINIMAP_DARKEN_MINES   (1 << 1)  /* Slightly darken mined tiles */
+/* Draw with minimapTerrainColor rather than map_colours.h's palette: every
+ * terrain a distinct colour, for reading a map as a diagram while building
+ * it. The map editor's own minimap panel asks for this. Everywhere else - the
+ * lobby's map preview, the chooser's thumbnails - leaves it clear and gets
+ * the colours the game draws a zoomed-out map in, so a map looks the same
+ * wherever a player meets it. */
+#define MINIMAP_EDIT_PALETTE   (1 << 2)
 
 void minimapRenderPixels(const MapPreview *view,
                          uint8_t *pixels,

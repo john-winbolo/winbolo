@@ -1977,6 +1977,17 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Publikovat lze pouze vzhled z tvé vlastní složky
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Tento vzhled má jemnější grafiku jen pro některé sprity, takže Podle přiblížení vytváří stejné dlaždice jako Klasický. Vysoký detail používá jemnější grafiku tam, kde ji vzhled má.
 STR_DLGSKIN_RECFILTER_LBL=Doporučený filtr:
 STR_DLGSKIN_RECOMMENDED_TAG=(doporučeno)
+STR_DLGSKIN_FOGSTYLE=Styl válečné mlhy
+STR_DLGSKIN_FOGSTYLE_TIP=Jak se kreslí terén, do kterého nevidíte. Mění to jen obraz na vaší obrazovce; server odesílá stejnou mapu bez ohledu na to, co vyberete.
+STR_DLGSKIN_FOGSTYLE_GREY=Šedý
+STR_DLGSKIN_FOGSTYLE_GREY_TIP=Terén, do kterého nevidíte, se stírá do šedé, takže je světlejší než terén, který právě vidíte.
+STR_DLGSKIN_FOGSTYLE_DARK=Tmavší
+STR_DLGSKIN_FOGSTYLE_DARK_TIP=Terén, do kterého nevidíte, se stahuje k černé. Silnice jsou už černé, takže silnice ve mlze vypadá stejně jako silnice, kterou právě vidíte.
+STR_DLGSKIN_FOGSTYLE_DARKROADS=Tmavší s hranou mlhy
+STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP=Tmavší, s hranicí mlhy slabě dokreslenou zpět podél ní. Pruh leží na zamlžené straně hranice, na každém terénu, takže hranice je vidět i nad silnicí, která je černá a kterou samo ztmavení nedokáže vyznačit. Toto je výchozí vzhled.
+STR_DLGSKIN_FOGSTYLE_NONE=Žádný
+STR_DLGSKIN_FOGSTYLE_NONE_TIP=Mapa se vůbec nestínuje, takže zapamatovaný terén vypadá stejně jako terén, který právě vidíte. Neskrývá nic, co ukazují ostatní styly: které tanky a granáty se kreslí, určuje server, ne toto nastavení.
+STR_DLGSKIN_FOGSTYLE_NONE_NOTE=Poznámka: tímto se mění jen vaše místní zobrazení, nevypíná se tím nastavení válečné mlhy v konfiguraci hry. Tanky a granáty budou mizet tam, kde by se ukazovala válečná mlha.
 
 # Map Overview and the full screen map
 STR_MENU_MAP_OVERVIEW=Přehled mapy
@@ -2126,3 +2137,28 @@ STR_PING_MOUSE_RIGHT=Pravé tlačítko myši
 STR_PING_MOUSE_X1=Myš 4
 STR_PING_MOUSE_X2=Myš 5
 STR_DLGKEYSETUP_PING_ALT2=Chytrý ping – alternativní klávesy 2
+
+# Výběr scénáře v lobby
+STR_DLGGAMEINFO_SCRIPTED=Skriptovaná
+STR_DLGSETTINGS_HOSTING_SCRIPTS=Spouštět skripty mapy při hostování
+STR_DLGLOBBY_SCENARIO_LBL=Scénář:
+STR_DLGLOBBY_SCRIPTS_OFF=Skripty vypnuty
+STR_DLGLOBBY_RELOAD_SCENARIO=Znovu načíst skript
+STR_DLGLOBBY_REJECT_SCENARIO=Scénář mapy určuje toto nastavení
+STR_DLGLOBBY_REJECT_COOLDOWN=Příliš brzy; zkus to za chvíli znovu
+STR_DLGLOBBY_CHOOSE_SCENARIO=Vybrat
+STR_DLGLOBBY_SCENARIO_TITLE=Vybrat mod
+STR_DLGLOBBY_SCENARIO_NONE=Žádný — žádný mod. Mapa hraje vlastní scénář, pokud ho má.
+STR_DLGLOBBY_SCENARIO_WAITING=Dotazování serveru...
+STR_DLGLOBBY_SCENARIO_EMPTY=Tento server nenabízí žádné mody.
+STR_DLGLOBBY_SCENARIO_BOUND=Vytvořen pro jednu mapu, takže ho nelze hrát jako mod
+STR_DLGLOBBY_SCENARIO_MAXPLAYERS=Až {number} hráčů
+STR_DLGLOBBY_SCENARIO_BOTS={number} míst pro boty
+STR_DLGLOBBY_SCENARIO_ON_MAP=Mod: {string2} (na {string1})
+STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Spouštět skripty v nahraných mapách
+STR_DLGSETTINGS_HOSTING_SCENARIODIR=Adresář scénářů
+STR_DLGSETTINGS_MAPVIEW=Pohled na mapu
+STR_DLGSETTINGS_SIMPLEZOOM=Použít zjednodušené zobrazení při oddálení
+STR_DLGSETTINGS_SIMPLEZOOM_TIP=Při oddálení nad 1x se každá dlaždice vykreslí jednou barvou s jednoduchými značkami pro tanky, bunkry a základny, místo zmenšování spritů na nerozeznatelnou šmouhu.
+STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW=Pouze přehled mapy
+STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW_TIP=Omezí zjednodušené zobrazení jen na přehled mapy. Mapa na celou obrazovku vykresluje své sprity při každém přiblížení.

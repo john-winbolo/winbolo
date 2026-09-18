@@ -28,7 +28,10 @@ bug worth reporting.
 - [Tags and regions](#tags-and-regions)
 - [Changing the world](#changing-the-world)
 - [Bots and seats](#bots-and-seats)
+  - [Hints: telling one bot what to do](#hints-telling-one-bot-what-to-do)
 - [Talking to players, and ending the round](#talking-to-players-and-ending-the-round)
+- [Showing things on a client](#showing-things-on-a-client)
+  - [The panel](#the-panel)
 - [Rules](#rules)
 - [Test hooks](#test-hooks)
 - [Constants](#constants)
@@ -170,6 +173,28 @@ With any of them off a map that has a script beside it plays plainly, the
 operator is told which script was skipped, and the map chooser does not tag
 the map as scripted.
 
+**Switching off only the scripts inside uploaded maps.** A `.map` a player
+uploads to a server can have a scenario packed into the file, and the server
+keeps the bytes it was sent whole, so committing that map later runs the
+script that came with it. An uploaded map's script runs under exactly the
+same sandbox as one on the operator's own disk — the same library, the same
+memory cap, the same instruction budget — and, as above, at the server's own
+privilege. A server that would rather not take a script from a player has a
+narrower switch than turning scripts off altogether:
+
+- `-nouploadscripts` on the dedicated server. One dash.
+- `--nouploadscripts` on the headless runner. Two.
+- **Run scripts in uploaded maps**, the desktop client's hosting preference,
+  under the one above. On by default, and it takes effect the moment it
+  changes.
+
+With it off, a map whose file sits in the server's uploads directory attaches
+neither a packed scenario nor a loose script beside it, the console names the
+upload that was turned down, and the map chooser does not tag it as scripted.
+Every other map is unaffected. With it on, one console line names each
+uploaded map whose packed scenario is what runs, so the operator can see when
+a round is being played by a script a player sent.
+
 **Reloading after an edit.** Two ways in. On a dedicated server the console
 command `reload` reads the file again; in a lobby, the host has a **Reload
 script** button beside the scenario's name. The button is the host's alone
@@ -195,7 +220,10 @@ change from the script.
 **The game type reads Scripted.** In the lobby and in both game finders, a
 round with a scenario attached shows its type as Scripted rather than as the
 game the scenario declared. `scenario.game` is what the round is actually
-played by; Scripted is what the round is called.
+played by; Scripted is what the round is called. A scenario that declares no
+`game`, or one the server has no behaviour for, is played as strict
+tournament — the lobby does not keep the type it was on, so a mod that came
+to change one rule and named no game still moves the round to strict.
 
 **The scenario names itself under the map.** The lobby draws the scenario's
 name below the map lines, and the description under that in a dimmer shade.
@@ -299,15 +327,16 @@ the name you gave the file rather than by the one you would have chosen.
 
 ```lua
 scenario = {
-  name        = "Wave Defense",
-  description = "Hold the four pillboxes at the centre of the map.",
-  api         = 1,
-  game        = "open",
-  bound       = true,
-  lobby       = { ... },
-  rules       = { ... },
-  tags        = { ... },
-  regions     = { ... },
+  name         = "Wave Defense",
+  description  = "Hold the four pillboxes at the centre of the map.",
+  api          = 1,
+  game         = "open",
+  bound        = true,
+  fill_to_caps = false,
+  lobby        = { ... },
+  rules        = { ... },
+  tags         = { ... },
+  regions      = { ... },
 }
 ```
 
@@ -316,8 +345,9 @@ scenario = {
 | `name` | string | What the scenario is called. |
 | `description` | string | One or two sentences for a host reading a list. |
 | `api` | number | The API version you wrote against. Defaults to 1. A server older than the version you name refuses the scenario rather than running it half-understood. |
-| `game` | string | The game type the scenario asks for: `"open"`, `"tournament"` or `"strict"`. The round plays under it — the lobby and both game finders read the type as Scripted, and every part of the engine that picks behaviour from the game type resolves that to the word named here. Left out, the round plays open. A word that is none of the three also plays open, and `-validate` reports it by name. |
-| `bound` | boolean | True (the default) when the scenario is tied to its map. A scenario that names tags or regions is tied to its map by definition, because tags and regions are the map's own squares and entities. |
+| `game` | string | The game type the scenario asks for: `"open"`, `"tournament"` or `"strict"`. The round plays under it — the lobby and both game finders read the type as Scripted, and every part of the engine that picks behaviour from the game type resolves that to the word named here. Left out, the round plays strict tournament. A word that is none of the three also plays strict tournament, and `-validate` reports it by name. Write `game = "open"` for an open round: a scenario that says nothing is not read as asking for one. |
+| `bound` | boolean | True (the default) when the scenario is tied to its map. A scenario that names tags or regions is tied to its map by definition, because tags and regions are the map's own squares and entities. A server can also offer scenarios of its own, which play over whichever map a host has committed; a scenario with `bound` true is not one of those and a host picking it is refused, because over another map its tags, its regions and its entity indices name items that are not there. |
+| `fill_to_caps` | boolean | False by default. True starts every pillbox and base on the map at the caps your `rules` table leaves in force rather than at the numbers the map file holds. A map file states a number for each pill's armour and each base's stocks and has no way of stating "full", so a scenario that raises `base_full_armour` or `pill_max_armour` would otherwise open with the map's own smaller numbers and climb to the new ones over the round. Raising only: anything already at or above a cap is left where it is, and anything above one is brought down by the rules themselves. A pill's firing rate is not touched. |
 
 ### `scenario.lobby`
 
@@ -337,8 +367,17 @@ Each team:
 | `bots` | number | How many seats to seat for this team when the lobby is built. A host who trims them gets the trimmed number back next round: the point of seating them where a host can see them is that the host may change them. |
 | `max_bots` | number | The ceiling a host may raise `bots` to. 0 means no ceiling stated, which is not the same as no bots allowed. |
 | `fielded` | boolean | True (the default) puts a bot in the seat at the start of the round. False holds the seat without one: it is in the roster, it takes no tank, and no bot plays in it until a `spawn_bot` names it. Its runner is built ahead of the round, as the two paragraphs below this table describe. |
-| `brain` | string | The brain this team's bots run, as a path on the server's disk. Empty means the server's own. `package:NAME`, a brain carried inside the scenario, is reserved for packaged scenarios and is refused with `SCN_OP_NOT_FOUND` today. |
+| `brain` | string | The brain this team's bots run, **named**: the directory under the server's `brains/`, such as `GoalHunter_1.7`. Empty means the server's own. A name this server does not have leaves the team's seats on the server's own brain, says one line on the console, and is reported by `-validate` before a round is ever started. A value with `/` or `\` in it is a path, not a name, and is refused as such — a scenario shared with a server knows nothing of that server's layout, which is why it names the brain and lets the server find it. `package:NAME`, a brain carried inside the scenario, is still refused with `SCN_OP_NOT_FOUND`. |
 | `init` | table | A flat table of names to strings or numbers, handed to this team's bots when their VM is built. A `spawn_bot` that names one of these seats and carries no `init` of its own gets this one. |
+
+The server's own `-brain` switch is still a path, and deliberately: that is an
+operator naming a file on their own machine, where the layout is theirs to know.
+A `brain` in a scenario is content that travels with the map to servers that
+have never seen it, so it names what it wants and the server resolves the name
+against its own `brains/` — the same directories the lobby's bot list is built
+from. Ship a scenario that needs `GoalHunter_1.7` and every server that has
+`GoalHunter_1.7` runs it; one that does not gets a reported problem and a
+playable round.
 
 `max_bots` is a memory ceiling as well as a seating one. A seat keeps the runner
 behind it — one ClientSim and one brain VM — across the unfielding that takes
@@ -642,7 +681,7 @@ far as the server is concerned.
 | `game.num_players()` | How many seats are playing the round, bots included. |
 | `game.num_humans()` | How many of those are people. |
 | `game.team_size(t)` | How many seats sit on team `t`, playing the round or not. |
-| `game.game_type()` | `"open"`, `"tournament"` or `"strict"` — the game the round is being played by. It answers `scenario.game` when the table sets one, and the game the round resolves to otherwise. It never answers `"scripted"`: that is what the lobby calls the round, not a set of rules anything plays by. |
+| `game.game_type()` | `"open"`, `"tournament"` or `"strict"` — the game the round is being played by. It answers `scenario.game` when the table sets one of those three, and the game the round resolves to otherwise, so a table that named no game or a word the server has no behaviour for reads `"strict"`. It never answers `"scripted"`: that is what the lobby calls the round, not a set of rules anything plays by. |
 
 ### Three clocks
 
@@ -887,7 +926,7 @@ A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
 |---|---|
 | `slot` | The seat to take. Left out, the first free seat is taken, and which one that is is decided as the spawn lands rather than as it is queued. A seat held for a bot that is not on the field is the one occupied seat a spawn may name — fielding it is what the seat is for. A seat that already has somebody on the field is refused with `SCN_OP_ALREADY`. |
 | `name` | The bot's name. A seat that is already held keeps the name it was seated with, whatever this says. |
-| `brain` | The brain to run, as a path on the server's disk. Left out, the seat's own brain is used — the one its team was written with — and failing that the server's. `package:NAME` is refused with `SCN_OP_NOT_FOUND` today. |
+| `brain` | The brain to run, named the way a team's is: the directory under the server's `brains/`, such as `GoalHunter_1.7`. Left out, the seat's own brain is used — the one its team was written with — and failing that the server's. A name this server does not have, a value with `/` or `\` in it, and `package:NAME` are each refused with `SCN_OP_NOT_FOUND`. |
 | `team` | The team to join. A held seat keeps the team it was seated with. |
 | `start` | The start to come in on, 1-based. Left out, the engine chooses. |
 | `loadout` | What this one bot comes in with: `"open"`, `"tournament"` or `"strict"` for that game type's amounts. A word that is none of the three stops the call the way any bad argument does. It outranks `spawn_loadout`, which is not asked about this tank at all, and it is spent on the tank the spawn builds — the bot's next life is fuelled the way every other tank's is. Left out, `spawn_loadout` answers, and failing that the round's own game type. |
@@ -913,12 +952,94 @@ new the way a respawn is. A spawn naming either differently gets a runner built
 for it instead, which is what a wave transition costs when it is paid, and a
 line in the server log saying which of the two differed. The `init` table is
 read once, when the VM is built, so it is not the place for orders that change
-from one wave to the next; a call that speaks to a bot's brain is not here yet.
+from one wave to the next; `game.hint` below is.
 
 The roster ops are the six above, `set_team` and `lobby_set_team` included.
 All of them are refused inside `on_setup`: the round is still being built
 there, and a roster edit would re-enter the machinery that is building it.
 Field your first wave, and move seats between teams, from `on_start`.
+
+---
+
+### Hints: telling one bot what to do
+
+| Call | What it does |
+|---|---|
+| `game.hint(p, t)` | Hands bot `p`'s brain an order: one flat table with a `verb` in it. |
+
+A hint goes to **one bot's brain**, not to the world. The engine marshals the
+table and never reads it: what a key means is a contract between the script
+and the brain it was written for.
+
+`t` is a flat table — names to values, nothing nested. A key is at most 23
+bytes, a value at most 63, and there are at most 16 pairs; past any of those
+the call is refused with `SCN_OP_TOO_BIG`. Values may be strings, numbers or
+`true`/`false`, and **every one of them reaches the brain as text**, so
+
+```lua
+game.hint(p, { verb = "defend", base = 3, tight = true })
+```
+
+arrives as `t.verb == "defend"`, `t.base == "3"` and `t.tight == "true"`. A
+brain reads a number back with `tonumber`.
+
+`verb` is required: a table without one, or with an empty one, stops the call
+the way any bad argument does. Everything else is the script's business.
+
+**What the brain has to do.** The server calls the global `on_scenario_hint(t)`
+on that bot's Lua state, if the brain defines one:
+
+```lua
+function on_scenario_hint(t)
+  if t.verb == "goto" then ... end
+end
+```
+
+A brain that does not define it ignores the hint and the call still answers
+`true` — a scenario names a seat and cannot know which brain a server runs it
+with. `game.hint` is refused for a seat with nobody in it
+(`SCN_OP_NO_SUCH_PLAYER`) and for a human (`SCN_OP_IS_HUMAN`), and nothing
+else: a bot that is dead or waiting to come in is handed the order anyway,
+because its brain is still running.
+
+**The seven standard verbs.** These are the words a brain that takes hints is
+expected to know. Everything past them passes through untouched, so a brain
+author and a script author can agree on words of their own.
+
+| `verb` | Keys | Means |
+|---|---|---|
+| `goto` | `x`, `y`, and optionally `w`, `h` | Go to that square, or to the middle of that rectangle, and hold there |
+| `attack` | `player` | Attack that seat's tank |
+| `defend` | `pill` or `base` | Hold that pillbox or that base |
+| `hold` | `x`, `y`, both optional | Stand still — on that square, or where the bot already is |
+| `patrol` | `x1`, `y1`, `x2`, `y2`, … up to `x7`, `y7` | Walk the points in order, round and round |
+| `escort` | `player`, and optionally `distance` | Stay with that seat, within `distance` squares of it (3 by default) |
+| `avoid` | `x`, `y`, `w`, `h` | Keep out of that rectangle until told otherwise |
+
+There is no `region` key. A brain has no region table to look a name up in, so
+a script that wants a bot in a region reads the rectangle itself and sends the
+numbers:
+
+```lua
+local r = game.region("keep")
+game.hint(p, { verb = "goto", x = r.x, y = r.y, w = r.w, h = r.h })
+```
+
+**What GoalHunter does with them.** The brain routes a hint into the same
+order machinery a chat line from a human ally reaches, so a hinted bot acks
+it, holds it for the same sixty seconds, and drops it for anything a person
+says afterwards. A player can call a scripted order off with `cancel all` or
+by naming the bot — a bare `cancel` cannot, because that one releases only
+the speaker's own order and a hint's sender is the scenario.
+
+Three of the seven are as near as the brain's existing goals get. `defend` on
+a **base** stands on the base, because there is no defend-a-base goal — a base
+is not held the way a pillbox is. `avoid` is remembered rather than fed to the
+pathfinder: a bot standing inside the rectangle leaves it, and a later `goto`
+or `hold` inside it is turned down, but a route may still pass through.
+`escort` follows a seat whose position the brain knows, which is an ally
+**bot**; a human ally broadcasts nothing the brain can follow, so a bot told
+to escort a person stays where it is.
 
 ---
 
@@ -972,6 +1093,115 @@ receiver that never sees it. Use `"all"` or a seat number there.
 `end_round` is how a scenario wins or loses a round. It stops play there and
 then, and the line it carries is shown in the lobby exactly as written — the
 server adds no verdict of its own.
+
+---
+
+## Showing things on a client
+
+A scenario never draws on a client. It sends what it wants shown as data, and
+each frontend draws that with its own 2D calls, so one scenario looks right on
+the desktop game, in a browser and on a phone without knowing that any of them
+exist.
+
+| Call | What it does |
+|---|---|
+| `game.panel(id, list[, target])` | Draws panel `id` from a list of primitives. An empty list clears it. |
+| `game.score(target, value[, label])` | The scenario's own score for one seat with a number, or for a team with `{ team = t }`. `label` is the short word shown beside it, up to 15 bytes. |
+| `game.announce(text, seconds[, target])` | A line across the centre of the screen for that many seconds. Empty text takes the line away. |
+| `game.marker(id, x, y[, colour[, target]])` | Puts mark `id` on a map square. |
+| `game.marker_follow(id, p[, colour[, target]])` | Puts mark `id` on seat `p`, where it rides the tank rather than the ground. |
+| `game.clear_marker(id[, target])` | Takes mark `id` off the map. |
+
+There is one panel, id 0 — the square over the game view — and any other id is
+refused with `SCN_OP_RANGE`. There are sixteen markers, numbered 0 to 15. A
+marker id holds one mark: putting a second one on an id replaces the first,
+and `clear_marker` takes it off. A colour left out of a marker call is
+`yellow`.
+
+`announce` is counted in seconds and the client counts it down in ticks, at
+100 a second — the same rate `game.timer` converts at, and the one
+[Three clocks](#three-clocks) describes. Two seconds is 200 ticks, and the
+longest a line can be asked to stay up is 65535 ticks, about 655 seconds. A
+line with something in it and a time of zero is refused, and one written with
+no time at all stops the script; an empty line is the clear, and it needs
+neither. In the lobby the clock moves at half that
+rate, so a line put up before the round starts stays up about twice as long as
+it asked for.
+
+**Who sees it.** The last argument of `panel`, `announce` and the three marker
+calls is the same target every other call takes: left out, or `"all"`, for
+everyone; a number for one seat; `{ team = t }` for one team. A late joiner is
+given whatever the panels hold at the moment it arrives, so a panel put up in
+the first tick of a round is still there for somebody who connects in the
+tenth minute.
+
+`score` is the exception. Its target says *whose* score it is, not who sees
+it, so a score is shown to everyone. There is no everyone's score: a call with
+no target, or with `"all"`, is the call written wrong and stops the script.
+
+**One update per panel per audience per tick.** Every update replaces the
+whole list, so a second update to the same panel for the same audience in the
+same tick is refused with `SCN_OP_RATE` rather than queued — the one it would
+have replaced was never going to be seen. Giving each of sixteen players their
+own copy of panel 0 in one tick is fine: the audience is part of the key.
+
+### The panel
+
+A panel is a square of 128 logical units on a side, origin top-left, with `x`
+running right and `y` running down. Each frontend maps that square into a slot
+in its own layout and scales it with the game's zoom, so a script never knows
+a pixel size. Coordinates are bytes: a primitive may start inside the square
+and run past its edge, and the frontend clips it.
+
+A list is an array of primitives. Each primitive is an array whose first
+element is its name, with the operands after it in the order below:
+
+| Primitive | Written as | Draws |
+|---|---|---|
+| `rect` | `{ "rect", x, y, w, h, colour, fill }` | A rectangle, outlined or filled. `fill` is `true` or `false`. |
+| `line` | `{ "line", x0, y0, x1, y1, colour }` | A one-unit line. |
+| `text` | `{ "text", x, y, colour, size, align, s }` | `s` in the frontend's own font, up to 48 bytes, and only bytes a panel draws — no newlines or escapes. |
+| `name` | `{ "name", x, y, colour, size, align, p }` | The name seat `p` is playing under, so a script never sends names and a rename shows through. |
+| `sprite` | `{ "sprite", x, y, tile }` | One tile from the skin's own sheet, by its `tilenum.h` id: terrain, a pillbox, a base, a tank frame. |
+| `bar` | `{ "bar", x, y, w, h, colour, value, max }` | A horizontal bar filled to `value` over `max`, outlined. Both are 16-bit, so a bar can show a real total. |
+| `timer` | `{ "timer", x, y, colour, size, align, mode, tick }` | Minutes and seconds counting down to, or up from, a game tick. The client works it out against its own clock, so a countdown is one message rather than one a tick. |
+
+`size` is `"small"` or `"normal"`. `align` is `"left"`, `"centre"` or
+`"right"`, and says which way the text sits about its `x`. A timer's `mode` is
+`"down"` or `"up"`, and its `tick` is a tick on `game.tick()`'s clock.
+
+```lua
+game.panel(0, {
+  { "rect",  0, 0, 128, 20, "grey_dark", true },
+  { "text",  64, 4, "white", "normal", "centre", "Wave 3" },
+  { "bar",   4, 24, 120, 8, "green", holding, 20 },
+  { "timer", 64, 40, "yellow", "normal", "centre", "down", ends_at },
+})
+
+game.panel(0, {})            -- take it away again
+```
+
+A list holds up to 128 primitives and is refused with `SCN_OP_TOO_BIG` past
+that, or if the whole list comes to more than the 1017 bytes one update
+carries. A primitive written wrong — a name that spells no primitive, an
+operand missing, an operand that is not a number — stops the script, like any
+other call written wrong. A value the simulation will not take, such as a
+colour outside the palette, is refused as an answer the script can read.
+
+### Colours
+
+Every colour is an index into a palette of sixteen, so a skin or a dark mode
+maps the sixteen rather than a script choosing RGB. A colour is written as its
+name or as its number:
+
+`none`, `black`, `white`, `grey`, `grey_dark`, `red`, `green`, `blue`,
+`yellow`, `orange`, `cyan`, `magenta`, `reserved_12`, `reserved_13`,
+`reserved_14`, `reserved_15`.
+
+`none` draws nothing, and the four reserved entries draw nothing until a skin
+gives them a colour. The names are also on the `game` table as
+`game.COLOUR.red` and so on, beside `game.SIZE`, `game.ALIGN` and
+`game.TIMER_MODE`, for a script that computes one rather than writing it.
 
 ---
 
@@ -1281,7 +1511,7 @@ The `code` a refused write answers, as a string.
 | `SCN_OP_ALREADY` | An add of something already there, a give of a carried pillbox, a spawn into a seat already on the field. |
 | `SCN_OP_TOO_BIG` | A list or a line past its buffer. |
 | `SCN_OP_RATE` | A budget for the tick is spent, or a second `fill_rect` was asked for while one is still landing. |
-| `SCN_OP_NOT_FOUND` | A brain path or a package name that does not resolve. |
+| `SCN_OP_NOT_FOUND` | A brain that does not resolve: a name this server does not have, a path written where a name belongs, or a `package:NAME`. |
 | `SCN_OP_NO_STOCK` | A builder order the tank cannot pay for. |
 | `SCN_OP_BAD_CALL` | The call itself is malformed. |
 
@@ -1297,7 +1527,12 @@ The `code` a refused write answers, as a string.
 | Regions | 64, declared and defined together; names 31 bytes |
 | Timers waiting at once | 64 |
 | A line of text | 128 bytes |
+| Primitives in one panel list | 128 |
+| Bytes in one panel list | 1017 |
+| A panel text primitive | 48 bytes |
+| A score label | 15 bytes |
 | A bot's `init` table | 16 pairs |
+| A hint table | 16 pairs; a name 23 bytes, a value 63 |
 | Events queued for one frame | 256 |
 | Roster changes outstanding at once | 32 |
 | Tiles a fill may change in one tick | 256 |
@@ -1305,7 +1540,7 @@ The `code` a refused write answers, as a string.
 | `scenario.name` | 63 bytes |
 | `scenario.description` | 255 bytes |
 | `scenario.game` | 23 bytes |
-| A team's `brain` | 255 bytes |
+| A team's `brain` name | 255 bytes |
 
 Going past one of the counts is reported and refused. Spawns and removals
 share the one roster queue and the sim drains one a tick, so a script that
@@ -1343,6 +1578,12 @@ spells nothing, a tag past what the map holds — are also written to standard
 output as the server would log them, so a run that captures one stream sees
 half the report. The map has to load before the script is looked at.
 
+The brains a scenario's teams name are checked against the ones this server
+has, so `-validate` on the server you are about to run is what tells you a map
+wants `GoalHunter_1.7` and this machine has not got it. That is a problem
+rather than a refusal: the map still plays, with those seats on the server's
+own brain.
+
 No round is run and no bot loads, but the file's top level does run, the same
 way it would at a round start — so a file you would not run is a file you
 should not check. The stub `game` table answers `nil` to every call, so a
@@ -1365,10 +1606,5 @@ Named so you do not spend an afternoon looking for them:
   may put a seat on a team nobody is on is still decided by the
   `allow_extra_teams()` policy alone.
 - **Packaged brains.** `package:NAME` is refused wherever a brain is named.
-- **Bot hints.** There is no call that hands a bot's brain a structured
-  hint. `say` reaches a brain through its chat inbox, which is the
-  channel a human ally has, and nothing beyond it.
-- **Presentation.** A panel, a score line, a newswire line and a map marker
-  have no calls yet.
 - **Triggers.** A `scenario.triggers` table is not read, and a script that
   carries one is neither parsed nor refused for it.

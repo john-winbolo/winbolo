@@ -278,6 +278,35 @@ int run_command_codec_roundtrip_variants(void) {
     UT_ASSERT(out.u.lobbySetMap.relPathLen == 8);
     UT_ASSERT(memcmp(out.u.lobbySetMap.relPath, "test.map", 8) == 0);
 
+    /* CMD_LOBBY_SET_SCENARIO — the same shape, and a populated path
+       survives it the way the map's does. */
+    memset(&in, 0, sizeof(in));
+    in.type = CMD_LOBBY_SET_SCENARIO;
+    in.cmdSeq = 78;
+    in.u.lobbySetScenario.relPathLen = 13;
+    memcpy(in.u.lobbySetScenario.relPath, "wave.scenario", 13);
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(roundtrip_command(&in, &out) == 0, "CMD_LOBBY_SET_SCENARIO");
+    UT_ASSERT(out.type == CMD_LOBBY_SET_SCENARIO);
+    UT_ASSERT(out.cmdSeq == 78);
+    UT_ASSERT(out.u.lobbySetScenario.relPathLen == 13);
+    UT_ASSERT(memcmp(out.u.lobbySetScenario.relPath, "wave.scenario", 13) == 0);
+
+    /* And an empty path, which selects no scenario. Unlike the map command
+       the decoder carries a zero length rather than refusing it, so this is
+       a message that survives the wire and not a malformed one. */
+    memset(&in, 0, sizeof(in));
+    in.type = CMD_LOBBY_SET_SCENARIO;
+    in.cmdSeq = 79;
+    in.u.lobbySetScenario.relPathLen = 0;
+    memset(&out, 0, sizeof(out));
+    out.u.lobbySetScenario.relPathLen = 0xFF;  /* so 0 below is the decode's */
+    UT_ASSERT_MSG(roundtrip_command(&in, &out) == 0,
+                  "CMD_LOBBY_SET_SCENARIO with an empty path");
+    UT_ASSERT(out.type == CMD_LOBBY_SET_SCENARIO);
+    UT_ASSERT(out.cmdSeq == 79);
+    UT_ASSERT(out.u.lobbySetScenario.relPathLen == 0);
+
     /* CMD_LOBBY_PREVIEW_CANCEL — empty body */
     memset(&in, 0, sizeof(in));
     in.type = CMD_LOBBY_PREVIEW_CANCEL;

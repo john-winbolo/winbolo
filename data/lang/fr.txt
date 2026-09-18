@@ -1979,6 +1979,17 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Seul un skin présent dans votre propre dossier de 
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Ce skin possède des graphismes plus fins pour certains sprites seulement, donc « Adapté au zoom » produit les mêmes cases que « Classique ». « Détail élevé » utilise les graphismes plus fins là où le skin les possède.
 STR_DLGSKIN_RECFILTER_LBL=Filtre recommandé :
 STR_DLGSKIN_RECOMMENDED_TAG=(recommandé)
+STR_DLGSKIN_FOGSTYLE=Style de brouillard de guerre
+STR_DLGSKIN_FOGSTYLE_TIP=La façon dont est représenté le terrain que vous ne voyez pas. Cela ne change que l'affichage sur votre propre écran ; le serveur envoie la même carte quel que soit le style choisi.
+STR_DLGSKIN_FOGSTYLE_GREY=Gris
+STR_DLGSKIN_FOGSTYLE_GREY_TIP=Le terrain que vous ne voyez pas est délavé vers le gris, ce qui le rend plus clair que le terrain que vous voyez directement.
+STR_DLGSKIN_FOGSTYLE_DARK=Plus sombre
+STR_DLGSKIN_FOGSTYLE_DARK_TIP=Le terrain que vous ne voyez pas est assombri vers le noir. Les routes sont déjà noires, donc une route sous le brouillard a le même aspect qu'une route bien visible.
+STR_DLGSKIN_FOGSTYLE_DARKROADS=Plus sombre avec bordure de brouillard
+STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP=Plus sombre, avec la ligne de brouillard redessinée en filigrane le long de son tracé. La bande se trouve du côté brumeux de la ligne, sur tous les terrains, si bien que la ligne reste visible même sur une route, qui est noire et que l'assombrissement seul ne peut pas marquer. C'est l'apparence standard.
+STR_DLGSKIN_FOGSTYLE_NONE=Aucun
+STR_DLGSKIN_FOGSTYLE_NONE_TIP=La carte n'est pas du tout ombrée, si bien que le terrain mémorisé a le même aspect que le terrain visible. Cela ne cache rien que les autres styles montrent : quels tanks et obus sont dessinés dépend du serveur, pas de ce réglage.
+STR_DLGSKIN_FOGSTYLE_NONE_NOTE=Note : ceci ne change que votre affichage local, cela ne désactive pas le réglage du brouillard de guerre dans la configuration de la partie. Les tanks et les obus disparaîtront là où le brouillard de guerre serait affiché.
 
 # Vue d'ensemble de la carte et la carte en plein écran
 STR_MENU_MAP_OVERVIEW=Vue d'ensemble de la carte
@@ -2128,3 +2139,28 @@ STR_PING_MOUSE_RIGHT=Clic droit
 STR_PING_MOUSE_X1=Souris 4
 STR_PING_MOUSE_X2=Souris 5
 STR_DLGKEYSETUP_PING_ALT2=Ping intelligent – touches alternatives 2
+
+# Sélection de scénario dans le salon
+STR_DLGGAMEINFO_SCRIPTED=Scripté
+STR_DLGSETTINGS_HOSTING_SCRIPTS=Exécuter les scripts de la carte en tant qu'hôte
+STR_DLGLOBBY_SCENARIO_LBL=Scénario :
+STR_DLGLOBBY_SCRIPTS_OFF=Scripts désactivés
+STR_DLGLOBBY_RELOAD_SCENARIO=Actualiser le script
+STR_DLGLOBBY_REJECT_SCENARIO=Ce paramètre est fixé par le scénario de la carte
+STR_DLGLOBBY_REJECT_COOLDOWN=Trop tôt ; réessayez dans un instant
+STR_DLGLOBBY_CHOOSE_SCENARIO=Choisir
+STR_DLGLOBBY_SCENARIO_TITLE=Choisir un mod
+STR_DLGLOBBY_SCENARIO_NONE=Aucun — pas de mod. La carte joue son propre scénario, si elle en a un.
+STR_DLGLOBBY_SCENARIO_WAITING=Demande au serveur...
+STR_DLGLOBBY_SCENARIO_EMPTY=Ce serveur ne propose aucun mod.
+STR_DLGLOBBY_SCENARIO_BOUND=Conçu pour une seule carte, il ne peut donc pas être joué comme mod
+STR_DLGLOBBY_SCENARIO_MAXPLAYERS=Jusqu'à {number} joueurs
+STR_DLGLOBBY_SCENARIO_BOTS={number} places pour bots
+STR_DLGLOBBY_SCENARIO_ON_MAP=Mod : {string2} (sur {string1})
+STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Exécuter les scripts des cartes envoyées
+STR_DLGSETTINGS_HOSTING_SCENARIODIR=Dossier des scénarios
+STR_DLGSETTINGS_MAPVIEW=Vue carte
+STR_DLGSETTINGS_SIMPLEZOOM=Utiliser une vue simplifiée en zoom arrière
+STR_DLGSETTINGS_SIMPLEZOOM_TIP=Au-delà d'un zoom arrière de 1x, chaque case est dessinée d'une seule couleur avec des marqueurs simples pour les tanks, pillboxes et bases, au lieu de réduire les sprites jusqu'à une tache floue.
+STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW=Vue d'ensemble de la carte uniquement
+STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW_TIP=Limite la vue simplifiée à la vue d'ensemble de la carte. La carte en plein écran dessine ses sprites à tous les niveaux de zoom.

@@ -78,6 +78,11 @@ const char *mpDiagCtrlName(int type) {
     case CTRL_ENTITY_CHANGE:    return "ENTITY_CHANGE";
     case CTRL_ENTITY_SYNC:      return "ENTITY_SYNC";
     case CTRL_SIM_RULES:        return "SIM_RULES";
+    case CTRL_SCN_PANEL:        return "SCN_PANEL";
+    case CTRL_SCN_SCORE:        return "SCN_SCORE";
+    case CTRL_SCN_ANNOUNCE:     return "SCN_ANNOUNCE";
+    case CTRL_SCN_MARKER:       return "SCN_MARKER";
+    case CTRL_SCENARIO_RULES:   return "SCENARIO_RULES";
     default:                    return "<unknown>";
     }
 }
@@ -198,6 +203,47 @@ void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
                       "reason=not-addressed destPlayer=%d clientPlayerNum=%d",
                       idx, (int)evt->u.serverText.destPlayer,
                       (int)client->playerNum);
+            return;
+        }
+    }
+    if (evt->type == CTRL_SCN_PANEL || evt->type == CTRL_SCN_ANNOUNCE ||
+        evt->type == CTRL_SCN_MARKER) {
+        /* A scenario's presentation, addressed the way server text is:
+         * destTeam 0 means everyone, destPlayer 0xFF means everyone.
+         * CTRL_SCN_SCORE is deliberately not here — it is broadcast, and
+         * its target says whose score it is, not who receives it. */
+        uint8_t destTeam;
+        uint8_t destPlayer;
+        switch (evt->type) {
+        case CTRL_SCN_PANEL:
+            destTeam   = evt->u.scnPanel.destTeam;
+            destPlayer = evt->u.scnPanel.destPlayer;
+            break;
+        case CTRL_SCN_ANNOUNCE:
+            destTeam   = evt->u.scnAnnounce.destTeam;
+            destPlayer = evt->u.scnAnnounce.destPlayer;
+            break;
+        default:
+            destTeam   = evt->u.scnMarker.destTeam;
+            destPlayer = evt->u.scnMarker.destPlayer;
+            break;
+        }
+        if (destTeam != 0) {
+            const LobbyPlayer *lp =
+                serverSimGetLobbyPlayer(serverSimGetActive(), client->playerNum);
+            if (!lp || lp->teamNumber != destTeam) {
+                mpDiagLog("[srv] deliver FILTER slot=%d type=%s "
+                          "reason=not-on-team destTeam=%d clientPlayerNum=%d",
+                          idx, mpDiagCtrlName((int)evt->type),
+                          (int)destTeam, (int)client->playerNum);
+                return;
+            }
+        }
+        if (destPlayer != 0xFF && client->playerNum != destPlayer) {
+            mpDiagLog("[srv] deliver FILTER slot=%d type=%s "
+                      "reason=not-addressed destPlayer=%d clientPlayerNum=%d",
+                      idx, mpDiagCtrlName((int)evt->type),
+                      (int)destPlayer, (int)client->playerNum);
             return;
         }
     }

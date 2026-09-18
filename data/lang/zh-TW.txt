@@ -1977,6 +1977,17 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=只有位於您自己外觀資料夾中的外觀才
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=此外觀僅為部分精靈圖提供了更精細的美術素材，因此配合縮放產生的圖格與經典相同。高精細度會在外觀擁有精細素材之處使用它。
 STR_DLGSKIN_RECFILTER_LBL=建議的過濾方式：
 STR_DLGSKIN_RECOMMENDED_TAG=（建議）
+STR_DLGSKIN_FOGSTYLE=戰爭之霧樣式
+STR_DLGSKIN_FOGSTYLE_TIP=決定看不到的地面要如何顯示。只會改變您自己畫面上的顯示，不論選擇哪一種，伺服器傳送的地圖都相同。
+STR_DLGSKIN_FOGSTYLE_GREY=灰色
+STR_DLGSKIN_FOGSTYLE_GREY_TIP=看不到的地面會偏向灰色，因此顯示得比看得到的地面更亮。
+STR_DLGSKIN_FOGSTYLE_DARK=加深
+STR_DLGSKIN_FOGSTYLE_DARK_TIP=看不到的地面會偏向黑色。道路本來就是黑色的，因此霧中的道路，看起來會和看得到的道路一樣。
+STR_DLGSKIN_FOGSTYLE_DARKROADS=加深並顯示霧界線
+STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP=在加深的基礎上，沿著霧的邊界淡淡地描出一條線。這條線落在每種地形上霧的一側，因此即使是黑色、光靠加深顏色無法標示出來的道路，上面也能看到這條線。這是標準顯示方式。
+STR_DLGSKIN_FOGSTYLE_NONE=無
+STR_DLGSKIN_FOGSTYLE_NONE_TIP=地圖完全不加陰影，因此記得的地面會和看得到的地面顯示相同。其他樣式能顯示的內容，它都不會隱藏：坦克和砲彈是否顯示，是伺服器的規則，與這個設定無關。
+STR_DLGSKIN_FOGSTYLE_NONE_NOTE=注意：這只會改變您本機的顯示，並不會關閉遊戲設定中的戰爭之霧選項。在應該顯示戰爭之霧的地方，坦克和砲彈仍會消失。
 
 # Map Overview and the full screen map
 STR_MENU_MAP_OVERVIEW=地圖總覽
@@ -2126,3 +2137,28 @@ STR_PING_MOUSE_RIGHT=滑鼠右鍵
 STR_PING_MOUSE_X1=滑鼠 4
 STR_PING_MOUSE_X2=滑鼠 5
 STR_DLGKEYSETUP_PING_ALT2=智慧標記 備用按鍵 2
+
+# 大廳場景選擇
+STR_DLGGAMEINFO_SCRIPTED=腳本
+STR_DLGSETTINGS_HOSTING_SCRIPTS=擔任主機時執行地圖腳本
+STR_DLGLOBBY_SCENARIO_LBL=場景：
+STR_DLGLOBBY_SCRIPTS_OFF=腳本關閉
+STR_DLGLOBBY_RELOAD_SCENARIO=重新載入腳本
+STR_DLGLOBBY_REJECT_SCENARIO=該設定由地圖的場景鎖定
+STR_DLGLOBBY_REJECT_COOLDOWN=操作過快，請稍候再試。
+STR_DLGLOBBY_CHOOSE_SCENARIO=選擇
+STR_DLGLOBBY_SCENARIO_TITLE=選擇模組
+STR_DLGLOBBY_SCENARIO_NONE=無 — 不使用模組，若地圖自帶場景則執行該場景。
+STR_DLGLOBBY_SCENARIO_WAITING=正在詢問伺服器…
+STR_DLGLOBBY_SCENARIO_EMPTY=此伺服器沒有模組。
+STR_DLGLOBBY_SCENARIO_BOUND=專為特定地圖打造，無法作為模組使用。
+STR_DLGLOBBY_SCENARIO_MAXPLAYERS=最多 {number} 名玩家
+STR_DLGLOBBY_SCENARIO_BOTS={number} 個機器人席位
+STR_DLGLOBBY_SCENARIO_ON_MAP=模組：{string2}（{string1} 地圖）
+STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=執行上傳地圖中的腳本
+STR_DLGSETTINGS_HOSTING_SCENARIODIR=場景目錄
+STR_DLGSETTINGS_MAPVIEW=地圖檢視
+STR_DLGSETTINGS_SIMPLEZOOM=縮小時使用簡化檢視
+STR_DLGSETTINGS_SIMPLEZOOM_TIP=縮小超過 1x 後，每個圖格會以單一顏色繪製，坦克、碉堡和基地則用簡單標記表示，而不是把精靈圖縮小成一團模糊的色塊。
+STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW=僅地圖總覽
+STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW_TIP=將簡化檢視限制在地圖總覽視窗內。全螢幕地圖在任何縮放比例下都會繪製精靈圖。

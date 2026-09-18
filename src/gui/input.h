@@ -66,7 +66,6 @@ typedef struct {
   int kiScrollLeft;  /* Scroll left */
   int kiScrollRight; /* Scroll right */
   int kiAllyView;
-  int kiLGMView;
   int kiBaseView;
   int kiQuickTree;
   int kiQuickRoad;

@@ -16,4 +16,16 @@
  * buffers, runs mapRead against them, and frees them before returning. */
 bool boloMapValidate(const char *path, char *outMapName, size_t outMapNameSize);
 
+/* How many bytes of `data` are the map itself: the preamble, the pills,
+ * bases and starts, and the runs through the terminator. Anything after
+ * that is not map data. False when the buffer does not hold a whole,
+ * well-formed BMAP.
+ *
+ * A measure rather than a parse: it decodes no terrain, builds nothing and
+ * allocates nothing, and every step checks the bytes are there before it
+ * walks over them. The parser cannot answer this — mapReadRuns reads one
+ * more run header after the terminator, so its position is up to four bytes
+ * past the end. */
+bool boloMapBodyLength(const unsigned char *data, size_t len, size_t *outLen);
+
 #endif

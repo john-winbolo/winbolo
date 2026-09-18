@@ -102,6 +102,7 @@ void logViewerRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   const char *logPath, bool fromMainMenu);
 void logViewerRunFromMemory(struct SDL_Window *window, struct SDL_Renderer *renderer,
                             uint8_t *zipData, size_t zipLen, bool fromMainMenu);
+bool logViewerAppQuitRequested(void);
 bool spectatorRun(struct SDL_Window *window, struct SDL_Renderer *renderer,
                   void *cs, const char *serverHost, uint16_t serverPort);
 
@@ -254,6 +255,7 @@ bool gameFrontUseNatTraversal = TRUE;
 unsigned short gameFrontHostingPort            = DEFAULT_UDP_PORT;
 bool           gameFrontHostingAllowSpec       = TRUE;
 bool           gameFrontHostingScripts         = TRUE;
+bool           gameFrontHostingUploadScripts   = TRUE;
 int            gameFrontHostingMaxSpec         = 16;
 int            gameFrontHostingUploadPolicy    = UPLOAD_POLICY_ALLOW;
 int            gameFrontHostingUploadMaxFiles  = 64;
@@ -265,6 +267,9 @@ bool           gameFrontHostingLogging         = TRUE;
 /* Round-log dir. Empty until gameFrontGetPrefs seeds the default
  * (the prefs path) or the user picks one. */
 char           gameFrontHostingLogDir[FILENAME_MAX] = "";
+/* The scenarios this host offers on their own, independently of any map.
+ * Empty until gameFrontGetPrefs seeds the default (<prefs path>scenarios). */
+char           gameFrontHostingScenarioDir[FILENAME_MAX] = "";
 bool           gameFrontHostingServeReplays   = TRUE;
 /* How the hosted server handles the voice its clients send it. Holds a
  * ServerVoiceMode; serverVoiceOn is what a client host did before this
@@ -372,6 +377,8 @@ int   gameFrontOverviewW = 640;
 int   gameFrontOverviewH = 640;
 int   gameFrontOverviewX = -1;
 int   gameFrontOverviewY = -1;
+int   gameFrontScnPanelX = -1;
+int   gameFrontScnPanelY = -1;
 float gameFrontOverviewZoom = 2.0f;
 bool  gameFrontOverviewFollow = TRUE;
 bool  gameFrontShowMapOverview = FALSE;
@@ -1073,6 +1080,15 @@ static bool gameFrontDialogs(void) {
   }
 
   while (done == FALSE) {
+    /* A dialog closes on a quit the same way it closes on Cancel, and most
+     * of them steer back to the welcome screen as they go.  Asked here,
+     * once, so the unwinding stops at the first screen to notice rather
+     * than walking the player back up the menus one dialog at a time. */
+    if (windowIsQuitting()) {
+      done = TRUE;
+      userQuit = TRUE;
+      break;
+    }
     switch (dlgState) {
     case openStart:
       dlgState = openWelcome;
@@ -1205,6 +1221,10 @@ static bool gameFrontDialogs(void) {
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
     case openMapEditor:
       mapEditorRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(), NULL, true);
+      /* The editor runs its own loop in WinBolo's window, so a quit taken
+       * there stops with it.  Leaving the editor comes back to the welcome
+       * screen; quitting carries on out. */
+      if (mapEditorAppQuitRequested()) windowSetQuitting();
       dlgState = openWelcome;
       break;
     case openLogViewer: {
@@ -1228,6 +1248,8 @@ static bool gameFrontDialogs(void) {
       default:
         break;
       }
+      /* Same as the editor above: the viewer owns the loop while it is up. */
+      if (logViewerAppQuitRequested()) windowSetQuitting();
       dlgState = openWelcome;
       break;
     }
@@ -1315,6 +1337,10 @@ static bool gameFrontDialogs(void) {
        * tear it down so the socket/transport is released before returning. */
       clientSimDisconnect(spectatorSim);
       clientSimDestroy(spectatorSim);
+      /* Same as the editor and the viewer above: spectatorRun owns the loop
+       * while it is up, so a quit taken there stops with it.  Asked after the
+       * disconnect so the socket is released either way. */
+      if (logViewerAppQuitRequested()) windowSetQuitting();
       dlgState = openWelcome;
       break;
     }
@@ -1709,11 +1735,19 @@ bool gameFrontSetDlgState(openingStates newState) {
              ways, because unlike a command-line switch this can be turned
              back on without restarting. */
           scenarioHostSetEnabled(gameFrontHostingScripts);
+          /* And the narrower one beside it, applied at the same point: a map
+             this host took as an upload plays plainly with it off. */
+          scenarioHostSetUploadScriptsEnabled(gameFrontHostingUploadScripts);
           /* And the question the map chooser's server list asks of each map,
              registered beside the switch rather than at the attach: an attach
              answers NULL for a map with no script, so hosting a plain map
              would report every scripted map in the directory as plain. */
           scenarioHostRegisterMapScripted(spServerSim);
+          /* And the read of this host's scenarios directory, registered
+             beside it for the same reason: what the list holds has nothing to
+             do with whichever map is being hosted. */
+          serverSimSetScenarioDir(spServerSim, gameFrontHostingScenarioDir);
+          scenarioHostRegisterScenarioLister(spServerSim);
           if (strncmp(fileName, "randommap:", 10) != 0 && fileName[0] != '\0') {
             char scenarioErr[512];
             spScenarioHost = scenarioHostAttach(spServerSim, fileName,
@@ -2202,6 +2236,16 @@ void gameFrontSetHostingScripts(bool allow) {
   scenarioHostSetEnabled(allow);
 }
 
+void gameFrontSetHostingUploadScripts(bool allow) {
+  gameFrontHostingUploadScripts = allow;
+  prefsSetString("HOSTING", "Run Upload Scripts", TRUEFALSE_TO_STR(allow));
+  /* And the library, for the reason the switch above sets it here: the
+     preference is true of the process the moment it moves rather than from
+     the next hosted game, and the map chooser's scripted tag reads it too,
+     so an uploaded map stops being tagged as soon as this goes off. */
+  scenarioHostSetUploadScriptsEnabled(allow);
+}
+
 void gameFrontSetHostingMaxSpec(int maxSpec) {
   gameFrontHostingMaxSpec = maxSpec;
   char buf[16];
@@ -2246,6 +2290,15 @@ void gameFrontSetHostingLogDir(const char *dir) {
   SDL_strlcpy(gameFrontHostingLogDir, dir ? dir : "",
               sizeof(gameFrontHostingLogDir));
   prefsSetString("HOSTING", "Log Dir", gameFrontHostingLogDir);
+}
+
+/* The scenarios directory is read at the two hosting-start paths, which pass
+   it to serverSimSetScenarioDir, so a change made here is picked up by the
+   next hosted game rather than by the one already running. */
+void gameFrontSetHostingScenarioDir(const char *dir) {
+  SDL_strlcpy(gameFrontHostingScenarioDir, dir ? dir : "",
+              sizeof(gameFrontHostingScenarioDir));
+  prefsSetString("HOSTING", "Scenario Dir", gameFrontHostingScenarioDir);
 }
 
 void gameFrontSetHostingServeReplays(bool serve) {
@@ -3180,7 +3233,10 @@ bool gameFrontSetupServer(void) {
   /* A scenario script beside the map, as on the single-player path, and the
      same host preference deciding whether it runs at all. */
   scenarioHostSetEnabled(gameFrontHostingScripts);
+  scenarioHostSetUploadScriptsEnabled(gameFrontHostingUploadScripts);
   scenarioHostRegisterMapScripted(spServerSim);
+  serverSimSetScenarioDir(spServerSim, gameFrontHostingScenarioDir);
+  scenarioHostRegisterScenarioLister(spServerSim);
   if (strncmp(fileName, "randommap:", 10) != 0 && fileName[0] != '\0') {
     char scenarioErr[512];
     spScenarioHost = scenarioHostAttach(spServerSim, fileName,
@@ -3445,6 +3501,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   gameFrontHostingAllowSpec = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("HOSTING", "Run Map Scripts", "Yes", buff, FILENAME_MAX);
   gameFrontHostingScripts = YESNO_TO_TRUEFALSE(buff[0]);
+  prefsGetString("HOSTING", "Run Upload Scripts", "Yes", buff, FILENAME_MAX);
+  gameFrontHostingUploadScripts = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("HOSTING", "Max Spectators", "16", buff, FILENAME_MAX);
   {
     int m = atoi(buff);
@@ -3487,6 +3545,23 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     }
     prefsGetString("HOSTING", "Upload Dir", def, gameFrontHostingUploadDir,
                    FILENAME_MAX);
+  }
+  /* The scenarios directory, defaulted under the writable prefs path for the
+   * reason the upload dir is: the app's own data directory is inside the
+   * read-only bundle, and this is a place a player drops files into.
+   * SDL_GetPrefPath returns a trailing separator, so append "scenarios"
+   * directly. A directory that is not there is not an error — it means this
+   * host offers no scenarios of its own. */
+  {
+    const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (prefDir) {
+      snprintf(def, FILENAME_MAX, "%sscenarios", prefDir);
+      SDL_free((void *)prefDir);
+    } else {
+      snprintf(def, FILENAME_MAX, "%s", "scenarios");
+    }
+    prefsGetString("HOSTING", "Scenario Dir", def,
+                   gameFrontHostingScenarioDir, FILENAME_MAX);
   }
   prefsGetString("HOSTING", "Logging", "Yes", buff, FILENAME_MAX);
   gameFrontHostingLogging = YESNO_TO_TRUEFALSE(buff[0]);
@@ -3556,9 +3631,6 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   intToStr(DEFAULT_ALLYVIEW, def, sizeof(def));
   prefsGetString("KEYS", "Ally View", def, buff, FILENAME_MAX);
   keys->kiAllyView = atoi(buff);
-  intToStr(DEFAULT_LGMVIEW, def, sizeof(def));
-  prefsGetString("KEYS", "LGM View", def, buff, FILENAME_MAX);
-  keys->kiLGMView = atoi(buff);
   intToStr(DEFAULT_BASEVIEW, def, sizeof(def));
   prefsGetString("KEYS", "Base View", def, buff, FILENAME_MAX);
   keys->kiBaseView = atoi(buff);
@@ -3737,6 +3809,29 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     int v = atoi(buff);
     if (v < (int)GFX_FILTER_NEAREST || v > (int)GFX_FILTER_PIXELART) v = 0;
     gfxSetTextureFilter((GfxTextureFilter)v);
+  }
+  /* The simplified view, and whether it is held to the Map Overview window.
+     On by default, since that is how the zoomed-out map is meant to look;
+     the sub-option off, so it applies to the full screen map as well.  The
+     log viewer reads these same two keys out of the same prefs document. */
+  prefsGetString("SETTINGS", "SimplifiedZoomOut", "Yes", buff, FILENAME_MAX);
+  gfxSetSimplifiedZoomOut(YESNO_TO_TRUEFALSE(buff[0]));
+  prefsGetString("SETTINGS", "SimplifiedOverviewOnly", "No", buff, FILENAME_MAX);
+  gfxSetSimplifiedOverviewOnly(YESNO_TO_TRUEFALSE(buff[0]));
+
+  /* Fog of war look: 0 Grey / 1 Darker / 2 Darker with fog edge / 3 None.
+     The fallback is "-1" rather than a style number so that a missing key and
+     an unreadable one take the same road out - both fail the range check below
+     and land on FOG_STYLE_DEFAULT, which is the one place the default is
+     written down.  A player who has picked keeps their pick: only an absent or
+     out-of-range value is replaced. */
+  prefsGetString("SETTINGS", "FogStyle", "-1", buff, FILENAME_MAX);
+  {
+    int v = atoi(buff);
+    if (v < (int)FOG_STYLE_GREY || v >= FOG_STYLE_COUNT) {
+      v = (int)FOG_STYLE_DEFAULT;
+    }
+    gfxSetFogStyle((FogStyle)v);
   }
 
   /* Gamepad — Path B rebindable action table.  Start from defaults so
@@ -4168,6 +4263,14 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("WINDOW", "Overview Follow", "Yes", buff, FILENAME_MAX);
   gameFrontOverviewFollow = YESNO_TO_TRUEFALSE(buff[0]);
 
+  /* The scenario panel's place inside the main window. -1 for either
+     coordinate means it has never been moved, so it opens at the top-right
+     of the game view. */
+  prefsGetString("WINDOW", "Scenario Panel X", "-1", buff, FILENAME_MAX);
+  gameFrontScnPanelX = atoi(buff);
+  prefsGetString("WINDOW", "Scenario Panel Y", "-1", buff, FILENAME_MAX);
+  gameFrontScnPanelY = atoi(buff);
+
   prefsGetString("MENU", "Message Label Size", "1", buff, FILENAME_MAX);
   labelMsg = atoi(buff);
   prefsGetString("MENU", "Tank Label Size", "1", buff, FILENAME_MAX);
@@ -4269,6 +4372,8 @@ void gameFrontPutPrefs(keyItems *keys) {
                             TRUEFALSE_TO_STR(gameFrontHostingAllowSpec));
   prefsSetString("HOSTING", "Run Map Scripts",
                             TRUEFALSE_TO_STR(gameFrontHostingScripts));
+  prefsSetString("HOSTING", "Run Upload Scripts",
+                            TRUEFALSE_TO_STR(gameFrontHostingUploadScripts));
   intToStr(gameFrontHostingMaxSpec, buff, sizeof(buff));
   prefsSetString("HOSTING", "Max Spectators", buff);
   prefsSetString("HOSTING", "Upload Policy",
@@ -4280,6 +4385,7 @@ void gameFrontPutPrefs(keyItems *keys) {
   intToStr(gameFrontHostingUploadMaxStorage, buff, sizeof(buff));
   prefsSetString("HOSTING", "Upload Max Storage", buff);
   prefsSetString("HOSTING", "Upload Dir", gameFrontHostingUploadDir);
+  prefsSetString("HOSTING", "Scenario Dir", gameFrontHostingScenarioDir);
   prefsSetString("HOSTING", "Logging",
                             TRUEFALSE_TO_STR(gameFrontHostingLogging));
   prefsSetString("HOSTING", "Log Dir", gameFrontHostingLogDir);
@@ -4321,8 +4427,6 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("KEYS", "Pill View", buff);
   intToStr(keys->kiAllyView, buff, sizeof(buff));
   prefsSetString("KEYS", "Ally View", buff);
-  intToStr(keys->kiLGMView, buff, sizeof(buff));
-  prefsSetString("KEYS", "LGM View", buff);
   intToStr(keys->kiBaseView, buff, sizeof(buff));
   prefsSetString("KEYS", "Base View", buff);
   intToStr(keys->kiOverviewZoom, buff, sizeof(buff));
@@ -4406,7 +4510,7 @@ void gameFrontPutPrefs(keyItems *keys) {
      what loaded: a skin that cannot be read right now stays saved. */
   prefsSetString("SETTINGS", "Skin", skinGetRequested());
 
-  /* Graphics settings.  Same four keys the loader reads. */
+  /* Graphics settings.  Same keys the loader reads. */
   intToStr((int)gfxGetTileDetail(), buff, sizeof(buff));
   prefsSetString("SETTINGS", "TileDetail", buff);
   intToStr((int)gfxGetAnimSmoothness(), buff, sizeof(buff));
@@ -4414,6 +4518,12 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("SETTINGS", "SmoothShells", TRUEFALSE_TO_STR(gfxGetSmoothShells()));
   intToStr((int)gfxGetTextureFilter(), buff, sizeof(buff));
   prefsSetString("SETTINGS", "TextureFilter", buff);
+  prefsSetString("SETTINGS", "SimplifiedZoomOut",
+                 TRUEFALSE_TO_STR(gfxGetSimplifiedZoomOut()));
+  prefsSetString("SETTINGS", "SimplifiedOverviewOnly",
+                 TRUEFALSE_TO_STR(gfxGetSimplifiedOverviewOnly()));
+  intToStr((int)gfxGetFogStyle(), buff, sizeof(buff));
+  prefsSetString("SETTINGS", "FogStyle", buff);
 
   /* Gamepad — Path B rebindable action table.  Four keys per action:
      gpb_<name>_pri_{kind,code} and gpb_<name>_sec_{kind,code} where
@@ -4638,6 +4748,11 @@ void gameFrontFlushWindowSettings(void) {
   prefsSetString("WINDOW", "Overview Zoom", buff);
   prefsSetString("WINDOW", "Overview Follow",
                  TRUEFALSE_TO_STR(gameFrontOverviewFollow));
+
+  intToStr(gameFrontScnPanelX, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Scenario Panel X", buff);
+  intToStr(gameFrontScnPanelY, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Scenario Panel Y", buff);
 
   s_windowSettingsDirty = false;
 }

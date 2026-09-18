@@ -56,7 +56,7 @@
 void treeGrowCreate(GameSim *sim) {
   sim->treeGrowSeed = (WORD)(bolo_rand() | 1);
   sim->treeGrowTime = sim->rules.tree_grow_initial_ticks;
-  sim->treeGrowScore = TREEGROW_INITIAL_SCORE;
+  sim->treeGrowScore = sim->rules.tree_grow_initial_score;
   sim->treeGrowX = 0;
   sim->treeGrowY = 0;
 }
@@ -93,7 +93,7 @@ void treeGrowDestroy(GameSim *sim) {
 *********************************************************/
 void treeGrowReset(GameSim *sim) {
   sim->treeGrowTime = sim->rules.tree_grow_initial_ticks;
-  sim->treeGrowScore = TREEGROW_INITIAL_SCORE;
+  sim->treeGrowScore = sim->rules.tree_grow_initial_score;
   sim->treeGrowX = 0;
   sim->treeGrowY = 0;
 }
@@ -225,7 +225,7 @@ void treeGrowCheckGrowTree(GameSim *sim) {
   sim->treeGrowTime--;
     /* Check for fill and remove from data structure */
   if (sim->treeGrowTime <= 0) {
-    sim->treeGrowScore = TREEGROW_INITIAL_SCORE;
+    sim->treeGrowScore = sim->rules.tree_grow_initial_score;
     sim->treeGrowTime = sim->rules.tree_grow_initial_ticks;
     pos = mapGetPos(mp, sim->treeGrowX, sim->treeGrowY);
     if (pos != RIVER && pos != BUILDING && pos != HALFBUILDING && pos != DEEP_SEA && pos != BOAT && pillsExistPos(pb, sim->treeGrowX, sim->treeGrowY) == FALSE && basesExistPos(bs, sim->treeGrowX, sim->treeGrowY) == FALSE) {

@@ -94,7 +94,7 @@ void floodDestroy(floodFill *ff);
 *  x  - X co-ord
 *  y  - Y co-ord
 *********************************************************/
-void floodAddItem(floodFill *ff, BYTE x, BYTE y);
+void floodAddItem(floodFill *ff, BYTE x, BYTE y, BYTE wait);
 
 /*********************************************************
 *NAME:          floodUpdate

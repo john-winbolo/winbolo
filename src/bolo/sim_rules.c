@@ -19,11 +19,14 @@
 
 #include "sim_rules.h"
 
+#include <math.h>     /* floor / fabs — the ratio a change is snapped to */
 #include <stddef.h>   /* offsetof — which rules CTRL_SIM_RULES carries */
 #include <stdio.h>
 #include <string.h>   /* memcmp — the comparison against the classic table */
 
 #include "control_event.h"  /* CTRL_SIM_RULES_ALL_FIELDS */
+#include "platform_types.h"  /* BOLO_STATIC_ASSERT */
+#include "sim_rules_names.h" /* SIM_RULE_LIST and the describe kinds */
 #include "global.h"      /* DAMAGE */
 #include "gametype.h"    /* TANK_FULL_* */
 #include "tank.h"        /* the tank timings, rates and MINE_DAMAGE */
@@ -37,7 +40,11 @@
 #include "grass.h"       /* GRASS_LIFE */
 #include "swamp.h"       /* SWAMP_LIFE */
 #include "minesexp.h"    /* MINES_EXPLOSION_WAIT */
+#include "tankexp.h"     /* TK_DAMAGE and the wreck's shape */
 #include "treegrow.h"    /* TREEGROW_* / TREE_GROW_* */
+#include "floodfill.h"   /* FLOOD_FILL_WAIT */
+#include "sounddist.h"   /* SDIST_SOFT / SDIST_NONE */
+#include "starts.h"      /* START_* — the spawn-safety defaults */
 
 void simRulesClassic(SimRules *out) {
     if (out == NULL) {
@@ -54,7 +61,12 @@ void simRulesClassic(SimRules *out) {
     out->tank_water_ticks    = TANK_WATER_TIME;
     out->shell_damage        = DAMAGE;
     out->mine_damage         = MINE_DAMAGE;
+    out->mine_damage_range   = MINE_DAMAGE_RANGE;
+    out->mine_fatal_divisor  = MINE_FATAL_DIVISOR;
+    out->water_loss_shells   = TANK_WATER_LOSS_SHELLS;
+    out->water_loss_mines    = TANK_WATER_LOSS_MINES;
     out->just_fired_ticks    = JUST_FIRED_TICKS;
+    out->tree_hide_distance  = MIN_TREEHIDE_DIST;
     out->gunsight_min        = GUNSIGHT_MIN;
     out->gunsight_max        = GUNSIGHT_MAX;
     out->tank_accel_rate     = (float) TANK_ACCELERATE_RATE;
@@ -62,6 +74,18 @@ void simRulesClassic(SimRules *out) {
     out->tank_brake_rate     = (float) TANK_SLOWKEY_RATE;
     out->tank_autoslow_rate  = (float) TANK_AUTOSLOW_SPEED;
     out->tank_min_move       = TANK_MIN_MOVE_SPEED;
+
+    /* ---- Tank collision geometry ---- */
+    out->tank_hit_radius         = TANK_HIT_RADIUS;
+    out->tank_collision_distance = TANK_COLLISION_DISTANCE;
+    out->tank_nudge_threshold    = TANK_NUDGE_THRESHOLD;
+    out->tank_nudge_amount       = TANK_NUDGE_AMOUNT;
+    out->tank_nudge_iterations   = TANK_MAX_NUDGE_ITERATIONS;
+    out->tank_bump_decay_shift   = TANK_BUMP_DECAY_SHIFT;
+    out->tank_pill_pickup_inset  = TANK_PILL_PICKUP_INSET;
+    out->tank_boat_exit_inset    = TANK_MOVE_BOAT_SUB;
+    out->tank_slide_step         = TANK_SLIDE;
+    out->tank_wall_glide         = (float) TANK_WALL_GLIDE;
 
     /* ---- Terrain speed caps ---- */
     out->speed_road          = MAP_SPEED_TROAD;
@@ -87,6 +111,18 @@ void simRulesClassic(SimRules *out) {
     out->turn_deep_sea       = (float) MAP_TURN_TDEEPSEA;
     out->turn_refuel_base    = (float) MAP_TURN_TREFBASE;
 
+    /* ---- Builder walk speeds ---- */
+    out->man_speed_road         = MAP_MANSPEED_TROAD;
+    out->man_speed_grass        = MAP_MANSPEED_TGRASS;
+    out->man_speed_forest       = MAP_MANSPEED_TFOREST;
+    out->man_speed_river        = MAP_MANSPEED_TRIVER;
+    out->man_speed_swamp        = MAP_MANSPEED_TSWAMP;
+    out->man_speed_crater       = MAP_MANSPEED_TCRATER;
+    out->man_speed_rubble       = MAP_MANSPEED_TRUBBLE;
+    out->man_speed_boat         = MAP_MANSPEED_TBOAT;
+    out->man_speed_deep_sea     = MAP_MANSPEED_TDEEPSEA;
+    out->man_speed_refuel_base  = MAP_MANSPEED_TREFBASE;
+
     /* ---- Shells ---- */
     out->shell_life          = SHELL_LIFE;
     out->shell_speed         = SHELL_SPEED;
@@ -104,6 +140,11 @@ void simRulesClassic(SimRules *out) {
     out->lgm_pill_repair_load     = LGM_LOAD_PILLREPAIR;
     out->lgm_gather_trees         = LGM_GATHER_TREE;
     out->lgm_helicopter_speed     = LGM_HELICOPTER_SPEED;
+    out->lgm_arrive_tolerance     = LGM_MAX_GOAL;
+    out->lgm_return_tolerance     = LGM_RETURN_MAX_GOAL;
+    out->lgm_pill_drop_search     = LGM_PILL_DROP_SEARCH;
+    out->lgm_boat_leave_offset    = LGM_TANKBOAT_LEAVE;
+    out->lgm_boat_return_offset   = LGM_TANKBOAT_RETURN;
 
     /* ---- Pillbox ----
      * pill_max_armour was PILLS_MAX_ARMOUR and PILL_MAX_HEALTH, two names for
@@ -114,6 +155,11 @@ void simRulesClassic(SimRules *out) {
     out->pill_cooldown_ticks   = PILLBOX_COOLDOWN_TIME;
     out->pill_repair_amount    = PILL_REPAIR_AMOUNT;
     out->pill_range            = PILLBOX_RANGE;
+    out->pill_shell_damage     = PILLBOX_SHELL_DAMAGE;
+    out->pill_angry_divisor    = PILLBOX_ANGRY_DIVISOR;
+    out->pill_fire_length      = (float) PILLBOX_FIRE_DISTANCE;
+    out->pill_base_defend_range = PILL_BASE_HIT_RANGE;
+    out->pill_aim_iterations   = MAX_AIM_ITERATE;
 
     /* ---- Base ---- */
     out->base_full_armour         = BASE_FULL_ARMOUR;
@@ -131,6 +177,8 @@ void simRulesClassic(SimRules *out) {
     out->base_refuel_shells_ticks = (float) BASE_REFUEL_SHELLS;
     out->base_refuel_mines_ticks  = (float) BASE_REFUEL_MINES;
     out->base_regen_ticks         = BASE_TICKS_BETWEEN_REFUEL;
+    out->base_status_range        = BASE_STATUS_RANGE;
+    out->base_reveal_range        = BASE_PREDICT_REVEAL_RANGE;
 
     /* ---- Terrain destruction and explosions ---- */
     out->building_life           = BUILDING_LIFE;
@@ -139,10 +187,32 @@ void simRulesClassic(SimRules *out) {
     out->swamp_life              = SWAMP_LIFE;
     out->mine_fuse_ticks         = MINES_EXPLOSION_WAIT;
     out->big_explosion_threshold = TANK_BIG_EXPLOSION_THRESHOLD;
+    out->tank_explosion_damage       = TK_DAMAGE;
+    out->tank_explosion_length       = TK_EXPLODE_LENGTH;
+    out->tank_explosion_move         = TK_MOVE_AMOUNT;
+    out->tank_explosion_update_ticks = TK_UPDATE_TIME;
+    out->tank_explosion_width        = TK_WIDTH_CHECK;
+    out->tank_explosion_height       = TK_HEIGHT_CHECK;
+
+    /* ---- Spawning ---- */
+    out->start_tank_range          = START_TANK_RANGE;
+    out->start_pill_range          = START_PILL_RANGE;
+    out->start_base_range          = START_BASE_RANGE;
+    out->start_spawn_separation    = START_SPAWN_SEPARATION;
+    out->start_scatter_max         = START_SCATTER_MAX;
+    out->start_neutral_threshold_pct = START_NEUTRAL_THRESHOLD_PCT;
+
+    /* ---- Hearing ---- */
+    out->sound_soft_range          = SDIST_SOFT;
+    out->sound_none_range          = SDIST_NONE;
+
+    /* ---- Terrain flooding ---- */
+    out->flood_fill_ticks          = FLOOD_FILL_WAIT;
 
     /* ---- Tree growth ---- */
     out->tree_grow_ticks           = TREEGROW_TIME;
     out->tree_grow_initial_ticks   = TREEGROW_INITIAL_TIME;
+    out->tree_grow_initial_score   = TREEGROW_INITIAL_SCORE;
     out->tree_weight_forest        = TREE_GROW_FOREST;
     out->tree_weight_grass         = TREE_GROW_GRASS;
     out->tree_weight_river         = TREE_GROW_RIVER;
@@ -187,9 +257,9 @@ int simRulesFirstDifference(const SimRules *rules) {
     }
 
     /* Which one. Walked as four-byte words rather than by name: the fields
-       are all four bytes and the list that names them is the scenario's,
-       which sits above this file. The index is that list's own index, so a
-       caller holding SCN_RULE_LIST can turn it into the rule's name. */
+       are all four bytes and SIM_RULE_LIST names them in this order. The
+       index is that list's own index, so simRulesRuleName turns it into the
+       rule's name. */
     a = (const int32_t *) (const void *) rules;
     b = (const int32_t *) (const void *) &classic;
     for (i = 0; i < fields; i++) {
@@ -344,7 +414,16 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
     RULE_INT(tank_water_ticks, 1, 255)
     RULE_INT(shell_damage, 1, 255)
     RULE_INT(mine_damage, 1, 255)
+    /* Zero is a mine that only hurts a tank standing exactly on its
+       centre, which is a table worth being able to write. */
+    RULE_INT(mine_damage_range, 0, 65535)
+    /* One leaves a fatal hit at full strength. */
+    RULE_INT(mine_fatal_divisor, 1, 255)
+    RULE_INT(water_loss_shells, 0, 255)
+    RULE_INT(water_loss_mines, 0, 255)
     RULE_INT(just_fired_ticks, 0, 255)
+    /* Zero is a wood that hides nothing, which is a coherent table. */
+    RULE_INT(tree_hide_distance, 0, 65535)
     RULE_INT(gunsight_min, 1, 255)
     RULE_INT(gunsight_max, 1, 255)
     RULE_FLT(tank_accel_rate, 0.01, 16.0)
@@ -352,6 +431,20 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
     RULE_FLT(tank_brake_rate, 0.01, 16.0)
     RULE_FLT(tank_autoslow_rate, 0.01, 16.0)
     RULE_INT(tank_min_move, 0, 255)
+
+    /* The hit circle. Squared at its use sites, which is why the ceiling is
+       255 rather than a world-unit range: 255 squared still fits an int. */
+    RULE_INT(tank_hit_radius, 1, 255)
+    RULE_INT(tank_collision_distance, 0, 65535)
+    RULE_INT(tank_nudge_threshold, 0, 65535)
+    RULE_INT(tank_nudge_amount, 1, 255)
+    RULE_INT(tank_nudge_iterations, 1, 255)
+    /* A shift, so its ceiling is what an int32_t can be shifted by. */
+    RULE_INT(tank_bump_decay_shift, 0, 31)
+    RULE_INT(tank_pill_pickup_inset, 0, 255)
+    RULE_INT(tank_boat_exit_inset, 0, 255)
+    RULE_INT(tank_slide_step, 0, 255)
+    RULE_FLT(tank_wall_glide, 0.0, 1.0)
 
     /* ---- Terrain speed caps: the players[].speed packing saturates at 63 ---- */
     RULE_INT(speed_road, 0, 63)
@@ -377,6 +470,20 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
     RULE_FLT(turn_deep_sea, 0.0, 16.0)
     RULE_FLT(turn_refuel_base, 0.0, 16.0)
 
+    /* The builder's walk, in the window the tank's own caps use: the
+       players[].speed packing saturates at 63 and the man is stored the
+       same way. */
+    RULE_INT(man_speed_road, 0, 63)
+    RULE_INT(man_speed_grass, 0, 63)
+    RULE_INT(man_speed_forest, 0, 63)
+    RULE_INT(man_speed_river, 0, 63)
+    RULE_INT(man_speed_swamp, 0, 63)
+    RULE_INT(man_speed_crater, 0, 63)
+    RULE_INT(man_speed_rubble, 0, 63)
+    RULE_INT(man_speed_boat, 0, 63)
+    RULE_INT(man_speed_deep_sea, 0, 63)
+    RULE_INT(man_speed_refuel_base, 0, 63)
+
     /* ---- Shells ---- */
     RULE_INT(shell_life, 1, 255)
     RULE_INT(shell_speed, 1, 255)
@@ -394,6 +501,13 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
     RULE_INT(lgm_pill_repair_load, 1, 255)
     RULE_INT(lgm_gather_trees, 1, 255)
     RULE_INT(lgm_helicopter_speed, 1, 255)
+    /* The tolerances are half-widths: the test takes each either way round
+       the goal, which is what the two-signed constants used to spell. */
+    RULE_INT(lgm_arrive_tolerance, 1, 255)
+    RULE_INT(lgm_return_tolerance, 1, 65535)
+    RULE_INT(lgm_pill_drop_search, 1, 255)
+    RULE_INT(lgm_boat_leave_offset, 0, 255)
+    RULE_INT(lgm_boat_return_offset, 0, 255)
 
     /* ---- Pillbox ---- */
     RULE_INT(pill_max_armour, 1, 255)
@@ -412,6 +526,26 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
     RULE_INT(pill_cooldown_ticks, 0, 255)
     RULE_INT_MIN(pill_repair_amount, 1)
     RULE_INT(pill_range, 0, 65535)
+    /* Capped by what a pill can hold, so only its own end is fixed here. A
+       shell that takes the whole cap is a pill killed by one hit, which is a
+       table a scenario may want; one that takes more is the same thing said
+       twice. */
+    RULE_INT_MIN(pill_shell_damage, 1)
+    /* One is a pill that never angers, which is a coherent setting and why
+       the floor is one rather than two. */
+    RULE_INT(pill_angry_divisor, 1, 255)
+    /* The shell's own length, in half map squares, the way a tank's is: the
+       gunsight rows are bounded the same way. */
+    RULE_FLT(pill_fire_length, 0.5, 127.0)
+    /* Zero is a pill that only answers for the square it stands on. */
+    RULE_INT(pill_base_defend_range, 0, 255)
+    /* The aim solver's step budget. One is a pill that never leads a
+       target and fires straight at where it is standing now. */
+    RULE_INT(pill_aim_iterations, 1, 65535)
+    RULE_PAIR(PAIR_ASKED2(pill_shell_damage, pill_max_armour),
+              rules->pill_shell_damage <= rules->pill_max_armour,
+              "pill_shell_damage is %ld, above pill_max_armour %ld",
+              (long) rules->pill_shell_damage, (long) rules->pill_max_armour)
 
     /* ---- Base ---- */
     RULE_INT(base_full_armour, 0, 255)
@@ -429,6 +563,8 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
     RULE_FLT(base_refuel_shells_ticks, 0.5, 255.0)
     RULE_FLT(base_refuel_mines_ticks, 0.5, 255.0)
     RULE_INT(base_regen_ticks, 1, INT32_MAX)
+    RULE_INT(base_status_range, 0, 65535)
+    RULE_INT(base_reveal_range, 0, 65535)
 
     /* ---- Terrain destruction and explosions ---- */
     RULE_INT(building_life, 1, 255)
@@ -437,10 +573,52 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
     RULE_INT(swamp_life, 1, 255)
     RULE_INT(mine_fuse_ticks, 1, 255)
     RULE_INT(big_explosion_threshold, 0, 510)
+    /* Capped by what a pill can hold, so only its own end is fixed here.
+       Zero is a wreck that scorches nothing, which is a table a scenario
+       may want. */
+    RULE_INT_MIN(tank_explosion_damage, 0)
+    RULE_INT(tank_explosion_length, 1, 255)
+    RULE_INT(tank_explosion_move, 0, 255)
+    RULE_INT(tank_explosion_update_ticks, 1, 255)
+    RULE_INT(tank_explosion_width, 0, 255)
+    RULE_INT(tank_explosion_height, 0, 255)
+    RULE_PAIR(PAIR_ASKED2(tank_explosion_damage, pill_max_armour),
+              rules->tank_explosion_damage <= rules->pill_max_armour,
+              "tank_explosion_damage is %ld, above pill_max_armour %ld",
+              (long) rules->tank_explosion_damage,
+              (long) rules->pill_max_armour)
+
+    /* ---- Spawning ----
+       Zero on any of the three ranges is a spawn that does not care what is
+       standing there, which is a table worth being able to write. */
+    RULE_INT(start_tank_range, 0, 255)
+    RULE_INT(start_pill_range, 0, 255)
+    RULE_INT(start_base_range, 0, 255)
+    RULE_INT(start_spawn_separation, 0, 255)
+    RULE_INT(start_scatter_max, 1, 65535)
+    RULE_INT(start_neutral_threshold_pct, 0, 100)
+
+    /* ---- Hearing ---- */
+    RULE_INT(sound_soft_range, 0, 255)
+    RULE_INT(sound_none_range, 0, 255)
+    /* The near band sits inside the audible one, or there is no far band
+       for a sound to land in. */
+    RULE_PAIR(PAIR_ASKED2(sound_soft_range, sound_none_range),
+              rules->sound_soft_range <= rules->sound_none_range,
+              "sound_soft_range is %ld, above sound_none_range %ld",
+              (long) rules->sound_soft_range,
+              (long) rules->sound_none_range)
+
+    /* ---- Terrain flooding ---- */
+    RULE_INT(flood_fill_ticks, 1, 255)
 
     /* ---- Tree growth ---- */
     RULE_INT(tree_grow_ticks, 1, INT32_MAX)
     RULE_INT(tree_grow_initial_ticks, 1, INT32_MAX)
+    /* The score the weighted draw starts and resets from, so how long the
+       map waits for its first tree. Negative by design, and the weights
+       below share its window. */
+    RULE_INT(tree_grow_initial_score, -32768, 32767)
     RULE_INT(tree_weight_forest, -32768, 32767)
     RULE_INT(tree_weight_grass, -32768, 32767)
     RULE_INT(tree_weight_river, -32768, 32767)
@@ -635,4 +813,201 @@ SimRulesFault simRulesCheckCarried(const SimRules *rules, char *why,
 /* For the callers that only want to know whether the table is usable. */
 bool simRulesValidate(const SimRules *rules, char *why, size_t whyLen) {
     return simRulesCheck(rules, why, whyLen) == SIM_RULES_OK;
+}
+
+/* ---- The rules by index --------------------------------------------------
+ *
+ * Name, unit and value kind come straight off SIM_RULE_LIST, so the three
+ * tables are three readings of the one list and cannot fall out of step with
+ * each other or with the enum.
+ *
+ * A value is read out of a filled classic table as a four-byte word rather
+ * than by name: every field is four bytes and the list's order is the
+ * struct's, which is what simRulesFirstDifference already relies on. The
+ * assertion below is what keeps that true — a field added to SimRules
+ * without a row in the list makes the sizes disagree and does not compile. */
+
+BOLO_STATIC_ASSERT(sizeof(SimRules) == (size_t)SIM_RULE_COUNT * 4,
+                   sim_rules_struct_is_the_whole_rule_list);
+
+#define SIM_RULE_NAME_ROW(name, kind, unit) #name,
+static const char *const simRuleNames[] = {
+    SIM_RULE_LIST(SIM_RULE_NAME_ROW)
+};
+#undef SIM_RULE_NAME_ROW
+
+#define SIM_RULE_UNIT_ROW(name, kind, unit) unit,
+static const SimRuleUnit simRuleUnits[] = {
+    SIM_RULE_LIST(SIM_RULE_UNIT_ROW)
+};
+#undef SIM_RULE_UNIT_ROW
+
+#define SIM_RULE_KIND_ROW(name, kind, unit) kind,
+static const SimRuleValueKind simRuleValueKinds[] = {
+    SIM_RULE_LIST(SIM_RULE_KIND_ROW)
+};
+#undef SIM_RULE_KIND_ROW
+
+/* Whether an index names a rule at all. Every accessor asks this first: a
+ * caller holding a rule number off a wire or out of a manifest has one that
+ * may name nothing, and each of them answers that case rather than reading
+ * past the end of a table. */
+static bool simRulesIndexInRange(int rule) {
+    return rule >= 0 && rule < (int)SIM_RULE_COUNT;
+}
+
+int simRulesRuleCount(void) {
+    return (int)SIM_RULE_COUNT;
+}
+
+const char *simRulesRuleName(int rule) {
+    if (!simRulesIndexInRange(rule)) {
+        return "";
+    }
+    return simRuleNames[rule];
+}
+
+int simRulesRuleIndex(const char *name) {
+    int i;
+
+    if (name == NULL) {
+        return -1;
+    }
+    for (i = 0; i < (int)SIM_RULE_COUNT; i++) {
+        if (strcmp(simRuleNames[i], name) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+SimRuleUnit simRulesRuleUnit(int rule) {
+    if (!simRulesIndexInRange(rule)) {
+        return SIM_RULE_UNIT_COUNT;
+    }
+    return simRuleUnits[rule];
+}
+
+SimRuleValueKind simRulesRuleValueKind(int rule) {
+    if (!simRulesIndexInRange(rule)) {
+        return SIM_RULE_VALUE_INT;
+    }
+    return simRuleValueKinds[rule];
+}
+
+double simRulesClassicValue(int rule) {
+    SimRules       classic;
+    const int32_t *words;
+
+    if (!simRulesIndexInRange(rule)) {
+        return 0.0;
+    }
+    simRulesClassic(&classic);
+    words = (const int32_t *) (const void *) &classic;
+    if (simRuleValueKinds[rule] == SIM_RULE_VALUE_FLOAT) {
+        float rate;
+        /* Copied rather than cast through a pointer: the word is an int32_t
+           here and the field a float, and only a copy reads the bits as the
+           type the field holds without depending on how the two alias. */
+        memcpy(&rate, &words[rule], sizeof(rate));
+        return (double) rate;
+    }
+    return (double) words[rule];
+}
+
+/* ---- What a value does to a rule -----------------------------------------
+ *
+ * A kind and a number, never a string: the frontends that ask this question
+ * each have their own way of drawing it and their own language, and this
+ * file is below both. src/gui/sim_rules_phrase.h renders the pair.
+ *
+ * A ratio is only offered where it says something true. Below 1.5x a
+ * difference is the clearer answer — "+2" rather than "1.2x as many" — and a
+ * default or a value at or below zero has no ratio to take at all, which is
+ * what keeps a weighted-draw entry from being described as a multiple of
+ * itself. Above that the ratio snaps to a whole number when it lands within
+ * five percent of one, so a rate that works out at 2.02 reads as twice
+ * rather than as 2.0, and otherwise keeps one decimal. */
+
+#define SIM_RULE_RATIO_MIN   1.5   /* below this a difference says more */
+#define SIM_RULE_SNAP_BAND   0.05  /* how near a whole multiple has to be */
+
+SimRuleChange simRulesDescribeValue(SimRuleUnit unit, double classic,
+                                    double value) {
+    SimRuleChange out;
+    double        ratio;
+    double        whole;
+
+    out.kind   = SIM_RULE_CHANGE_UNCHANGED;
+    out.number = 0.0;
+
+    if (value == classic) {
+        return out;
+    }
+    if (unit == SIM_RULE_UNIT_FLAG) {
+        out.kind = (value != 0.0) ? SIM_RULE_CHANGE_ON : SIM_RULE_CHANGE_OFF;
+        return out;
+    }
+    if (unit == SIM_RULE_UNIT_CONSTANT_BY_DESIGN) {
+        out.kind   = SIM_RULE_CHANGE_RAW;
+        out.number = value;
+        return out;
+    }
+    if (classic <= 0.0 || value <= 0.0) {
+        out.kind   = SIM_RULE_CHANGE_DELTA;
+        out.number = value - classic;
+        return out;
+    }
+
+    ratio = (value > classic) ? value / classic : classic / value;
+    if (ratio < SIM_RULE_RATIO_MIN) {
+        out.kind   = SIM_RULE_CHANGE_DELTA;
+        out.number = value - classic;
+        return out;
+    }
+
+    whole = floor(ratio + 0.5);
+    if (whole >= 2.0 && fabs(ratio - whole) <= whole * SIM_RULE_SNAP_BAND) {
+        ratio = whole;
+    } else {
+        ratio = floor(ratio * 10.0 + 0.5) / 10.0;
+    }
+
+    switch (unit) {
+        case SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER:
+            out.kind = (value < classic) ? SIM_RULE_CHANGE_FASTER
+                                         : SIM_RULE_CHANGE_SLOWER;
+            break;
+        case SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER:
+            out.kind = (value > classic) ? SIM_RULE_CHANGE_FASTER
+                                         : SIM_RULE_CHANGE_SLOWER;
+            break;
+        case SIM_RULE_UNIT_COUNT:
+        case SIM_RULE_UNIT_PERCENT:
+        default:
+            out.kind = (value > classic) ? SIM_RULE_CHANGE_MORE
+                                         : SIM_RULE_CHANGE_FEWER;
+            break;
+    }
+    out.number = ratio;
+    return out;
+}
+
+SimRuleChange simRulesDescribeChange(int rule, double value) {
+    SimRuleChange out;
+
+    if (!simRulesIndexInRange(rule)) {
+        /* No rule, so nothing has changed about one. */
+        out.kind   = SIM_RULE_CHANGE_UNCHANGED;
+        out.number = 0.0;
+        return out;
+    }
+    if (simRuleValueKinds[rule] == SIM_RULE_VALUE_FLOAT) {
+        /* What the field would hold, not what was typed: the field is a
+           float and the classic value is read out of one, so a value that
+           only differs past float precision is the same value. */
+        value = (double) (float) value;
+    }
+    return simRulesDescribeValue(simRuleUnits[rule], simRulesClassicValue(rule),
+                                 value);
 }

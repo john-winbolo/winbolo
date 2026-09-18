@@ -43,11 +43,11 @@
 #include "transport_control_codec.h"
 #include "test_harness.h"
 
-/* What the four width groups add up to: 33 one-byte rules, one two-byte
- * rule, three four-byte rules and fourteen four-byte rates. Written out
+/* What the four width groups add up to: 45 one-byte rules, seven two-byte
+ * rules, three four-byte rules and fifteen four-byte rates. Written out
  * rather than taken from the macro, so a rule added to the event without a
  * thought about the control segment fails here and is looked at. */
-#define SR_EXPECTED_BODY_LEN 103
+#define SR_EXPECTED_BODY_LEN 131
 
 /* ── 1. Round trip ─────────────────────────────────────────────────────── */
 
@@ -62,7 +62,13 @@ static void srFillCounted(ControlEvent *evt) {
 #define SR_FILL_U8(name)  evt->u.simRules.name = (int32_t)(++n);
     CTRL_SIM_RULES_U8_FIELDS(SR_FILL_U8)
 #undef SR_FILL_U8
-    evt->u.simRules.tank_death_ticks       = 65535;
+    evt->u.simRules.tank_death_ticks        = 65535;
+    evt->u.simRules.mine_damage_range       = 65534;
+    evt->u.simRules.tree_hide_distance      = 65533;
+    evt->u.simRules.tank_collision_distance = 65532;
+    evt->u.simRules.tank_nudge_threshold    = 65531;
+    evt->u.simRules.base_status_range       = 65530;
+    evt->u.simRules.base_reveal_range       = 65529;
     evt->u.simRules.shell_start_add        = 2147483647;
     evt->u.simRules.base_regen_ticks       = 1000000;
     evt->u.simRules.tree_grow_initial_ticks = 30000;
@@ -74,6 +80,7 @@ static void srFillCounted(ControlEvent *evt) {
     evt->u.simRules.tank_decel_rate    = 0.33f;
     evt->u.simRules.tank_brake_rate    = 15.99f;
     evt->u.simRules.tank_autoslow_rate = 0.25f;
+    evt->u.simRules.tank_wall_glide    = 0.61f;
     evt->u.simRules.turn_road       = 1.0f;
     evt->u.simRules.turn_grass      = 0.9f;
     evt->u.simRules.turn_forest     = 0.5f;
@@ -168,21 +175,34 @@ int run_sim_rules_codec_roundtrip(void) {
 /* The body the values below must produce, byte for byte.
  *
  * The one-byte rules carry their own 1-based position in the wire order, so
- * the first 33 bytes read 0x01..0x21 and a rule that moves in the list moves
- * a byte here. Then tank_death_ticks big-endian, the three four-byte rules
- * big-endian, and the fourteen rates as their IEEE-754 bit patterns, most
- * significant byte first. Every value below is a power-of-two fraction or a
- * small whole number, so each bit pattern is exact and was written out by
- * hand rather than taken from the encoder. */
+ * the first 45 bytes read 0x01..0x2D and a rule that moves in the list moves
+ * a byte here. Then the seven two-byte rules big-endian, the three four-byte
+ * rules big-endian, and the fifteen rates as their IEEE-754 bit patterns,
+ * most significant byte first. Every value below is a power-of-two fraction
+ * or a small whole number, so each bit pattern is exact and was written out
+ * by hand rather than taken from the encoder. */
 static const uint8_t kSrGolden[SR_EXPECTED_BODY_LEN] = {
-    /* the 33 one-byte rules, in wire order */
+    /* the 45 one-byte rules, in wire order */
     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
     0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
     0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
     0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20,
-    0x21,
-    /* tank_death_ticks = 0x0102 */
+    0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
+    0x29, 0x2A, 0x2B, 0x2C, 0x2D,
+    /* tank_death_ticks        = 0x0102 */
     0x01, 0x02,
+    /* mine_damage_range       = 0x0304 */
+    0x03, 0x04,
+    /* tree_hide_distance      = 0x0506 */
+    0x05, 0x06,
+    /* tank_collision_distance = 0x0708 */
+    0x07, 0x08,
+    /* tank_nudge_threshold    = 0x090A */
+    0x09, 0x0A,
+    /* base_status_range       = 0x0B0C */
+    0x0B, 0x0C,
+    /* base_reveal_range       = 0x0D0E */
+    0x0D, 0x0E,
     /* shell_start_add = 0x00010203 */
     0x00, 0x01, 0x02, 0x03,
     /* base_regen_ticks = 0x04050607 */
@@ -193,6 +213,7 @@ static const uint8_t kSrGolden[SR_EXPECTED_BODY_LEN] = {
     /* tank_decel_rate    = 0.5    */ 0x3F, 0x00, 0x00, 0x00,
     /* tank_brake_rate    = 1.0    */ 0x3F, 0x80, 0x00, 0x00,
     /* tank_autoslow_rate = 2.0    */ 0x40, 0x00, 0x00, 0x00,
+    /* tank_wall_glide    = 0.75   */ 0x3F, 0x40, 0x00, 0x00,
     /* turn_road          = 4.0    */ 0x40, 0x80, 0x00, 0x00,
     /* turn_grass         = 8.0    */ 0x41, 0x00, 0x00, 0x00,
     /* turn_forest        = 0.125  */ 0x3E, 0x00, 0x00, 0x00,
@@ -220,41 +241,59 @@ int run_sim_rules_codec_golden(void) {
     in.type = CTRL_SIM_RULES;
 
     /* Every one-byte rule set to its own place in the wire order, by name. */
-    in.u.simRules.tank_reload_ticks     = 1;
-    in.u.simRules.tank_full_shells      = 2;
-    in.u.simRules.tank_full_mines       = 3;
-    in.u.simRules.tank_full_trees       = 4;
-    in.u.simRules.tank_full_armour      = 5;
-    in.u.simRules.tank_water_ticks      = 6;
-    in.u.simRules.shell_damage          = 7;
-    in.u.simRules.mine_damage           = 8;
-    in.u.simRules.just_fired_ticks      = 9;
-    in.u.simRules.gunsight_min          = 10;
-    in.u.simRules.gunsight_max          = 11;
-    in.u.simRules.tank_min_move         = 12;
-    in.u.simRules.speed_road            = 13;
-    in.u.simRules.speed_grass           = 14;
-    in.u.simRules.speed_forest          = 15;
-    in.u.simRules.speed_river           = 16;
-    in.u.simRules.speed_swamp           = 17;
-    in.u.simRules.speed_crater          = 18;
-    in.u.simRules.speed_rubble          = 19;
-    in.u.simRules.speed_boat            = 20;
-    in.u.simRules.speed_deep_sea        = 21;
-    in.u.simRules.speed_refuel_base     = 22;
-    in.u.simRules.shell_life            = 23;
-    in.u.simRules.shell_speed           = 24;
-    in.u.simRules.pill_max_armour       = 25;
-    in.u.simRules.pill_attack_ticks     = 26;
-    in.u.simRules.pill_attack_min_ticks = 27;
-    in.u.simRules.pill_cooldown_ticks   = 28;
-    in.u.simRules.base_full_armour      = 29;
-    in.u.simRules.base_full_shells      = 30;
-    in.u.simRules.base_full_mines       = 31;
-    in.u.simRules.base_capture_armour   = 32;
-    in.u.simRules.base_hit_armour       = 33;
+    in.u.simRules.tank_reload_ticks      = 1;
+    in.u.simRules.tank_full_shells       = 2;
+    in.u.simRules.tank_full_mines        = 3;
+    in.u.simRules.tank_full_trees        = 4;
+    in.u.simRules.tank_full_armour       = 5;
+    in.u.simRules.tank_water_ticks       = 6;
+    in.u.simRules.shell_damage           = 7;
+    in.u.simRules.mine_damage            = 8;
+    in.u.simRules.mine_fatal_divisor     = 9;
+    in.u.simRules.water_loss_shells      = 10;
+    in.u.simRules.water_loss_mines       = 11;
+    in.u.simRules.just_fired_ticks       = 12;
+    in.u.simRules.gunsight_min           = 13;
+    in.u.simRules.gunsight_max           = 14;
+    in.u.simRules.tank_min_move          = 15;
+    in.u.simRules.tank_hit_radius        = 16;
+    in.u.simRules.tank_nudge_amount      = 17;
+    in.u.simRules.tank_nudge_iterations  = 18;
+    in.u.simRules.tank_bump_decay_shift  = 19;
+    in.u.simRules.tank_pill_pickup_inset = 20;
+    in.u.simRules.tank_boat_exit_inset   = 21;
+    in.u.simRules.tank_slide_step        = 22;
+    in.u.simRules.speed_road             = 23;
+    in.u.simRules.speed_grass            = 24;
+    in.u.simRules.speed_forest           = 25;
+    in.u.simRules.speed_river            = 26;
+    in.u.simRules.speed_swamp            = 27;
+    in.u.simRules.speed_crater           = 28;
+    in.u.simRules.speed_rubble           = 29;
+    in.u.simRules.speed_boat             = 30;
+    in.u.simRules.speed_deep_sea         = 31;
+    in.u.simRules.speed_refuel_base      = 32;
+    in.u.simRules.shell_life             = 33;
+    in.u.simRules.shell_speed            = 34;
+    in.u.simRules.pill_max_armour        = 35;
+    in.u.simRules.pill_attack_ticks      = 36;
+    in.u.simRules.pill_attack_min_ticks  = 37;
+    in.u.simRules.pill_cooldown_ticks    = 38;
+    in.u.simRules.base_full_armour       = 39;
+    in.u.simRules.base_full_shells       = 40;
+    in.u.simRules.base_full_mines        = 41;
+    in.u.simRules.base_capture_armour    = 42;
+    in.u.simRules.base_hit_armour        = 43;
+    in.u.simRules.sound_soft_range       = 44;
+    in.u.simRules.sound_none_range       = 45;
 
     in.u.simRules.tank_death_ticks        = 0x0102;
+    in.u.simRules.mine_damage_range       = 0x0304;
+    in.u.simRules.tree_hide_distance      = 0x0506;
+    in.u.simRules.tank_collision_distance = 0x0708;
+    in.u.simRules.tank_nudge_threshold    = 0x090A;
+    in.u.simRules.base_status_range       = 0x0B0C;
+    in.u.simRules.base_reveal_range       = 0x0D0E;
     in.u.simRules.shell_start_add         = 0x00010203;
     in.u.simRules.base_regen_ticks        = 0x04050607;
     in.u.simRules.tree_grow_initial_ticks = 0x08090A0B;
@@ -263,6 +302,7 @@ int run_sim_rules_codec_golden(void) {
     in.u.simRules.tank_decel_rate    = 0.5f;
     in.u.simRules.tank_brake_rate    = 1.0f;
     in.u.simRules.tank_autoslow_rate = 2.0f;
+    in.u.simRules.tank_wall_glide    = 0.75f;
     in.u.simRules.turn_road          = 4.0f;
     in.u.simRules.turn_grass         = 8.0f;
     in.u.simRules.turn_forest        = 0.125f;
@@ -292,14 +332,17 @@ int run_sim_rules_codec_golden(void) {
     UT_ASSERT_MSG(dec(kSrGolden, sizeof(kSrGolden), &out),
                   "the decoder refused the golden body");
     UT_ASSERT_MSG(out.u.simRules.tank_reload_ticks == 1 &&
-                      out.u.simRules.base_hit_armour == 33,
+                      out.u.simRules.sound_none_range == 45,
                   "the golden body decoded its first one-byte rule as %ld and "
-                  "its last as %ld, expected 1 and 33",
+                  "its last as %ld, expected 1 and 45",
                   (long)out.u.simRules.tank_reload_ticks,
-                  (long)out.u.simRules.base_hit_armour);
-    UT_ASSERT_MSG(out.u.simRules.tank_death_ticks == 0x0102,
-                  "the golden body decoded tank_death_ticks as %ld",
-                  (long)out.u.simRules.tank_death_ticks);
+                  (long)out.u.simRules.sound_none_range);
+    UT_ASSERT_MSG(out.u.simRules.tank_death_ticks == 0x0102 &&
+                      out.u.simRules.base_reveal_range == 0x0D0E,
+                  "the golden body decoded its first two-byte rule as %ld and "
+                  "its last as %ld, expected 0x0102 and 0x0D0E",
+                  (long)out.u.simRules.tank_death_ticks,
+                  (long)out.u.simRules.base_reveal_range);
     UT_ASSERT_MSG(out.u.simRules.tree_grow_initial_ticks == 0x08090A0B,
                   "the golden body decoded tree_grow_initial_ticks as %ld",
                   (long)out.u.simRules.tree_grow_initial_ticks);

@@ -48,6 +48,22 @@
  * upload_cap_enforced. */
 #define LOBBY_MAP_UPLOAD_MAX_BYTES (64u * 1024u)
 
+/* Maximum bytes accepted for a scenario package: a .scenario file, or a
+ * .map with a WBSC container appended to it. The cap above stays the one
+ * a plain map is held to — a package is bigger because it carries a
+ * manifest, a script and whatever brain directories the scenario ships
+ * with, all deflated inside the container.
+ *
+ * 4 MiB, the same as ROUND_LOG_MAX_BYTES. The heaviest brain in this tree
+ * is GoalHunter, 5.8 MB of Lua on disk and about 1 MB deflated, so a map
+ * shipping one comes to roughly a megabyte and this leaves room for
+ * several. Nothing sends a package yet, so nothing on the wire enforces
+ * this; what reads against it today is the scenario host, which reads a
+ * map file from the operator's own disk looking for a container in it.
+ * One number for both, so a package an operator can play on their own
+ * server is one they will be able to upload. */
+#define LOBBY_PACKAGE_UPLOAD_MAX_BYTES (4u * 1024u * 1024u)
+
 /* Maximum bytes the server will serve for the last completed round's
  * replay log (PACKET_ROUND_LOG_REQ, carried as BULK_KIND_ROUND_LOG).
  * A busy full lobby records about 2.3 KB/s, so 4 MiB is roughly half

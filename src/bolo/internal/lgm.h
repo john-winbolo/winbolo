@@ -83,6 +83,10 @@ struct GameSim;
 #define LGM_TANKBOAT_LEAVE 144
 #define LGM_TANKBOAT_RETURN 160
 
+/* How far down a column the pill-drop search walks before stepping across
+   to the next one. Was a bare 10 in lgmAddPillRequest. */
+#define LGM_PILL_DROP_SEARCH 10
+
 /* Speed the helicpter flys at */
 #define LGM_HELICOPTER_SPEED 3
 /* The frame number for the helicopter */

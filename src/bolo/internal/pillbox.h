@@ -47,6 +47,18 @@ struct ClientSim;
 #define PILLBOX_COOLDOWN_TIME 32
 #define PILLBOX_MAX_FIRERATE 6 /* 6 */
 
+/* What a shell takes off a pillbox. A shell takes shell_damage off a tank
+ * and off a base; against a pill it has always taken one, which is why this
+ * is its own number rather than the same one. */
+#define PILLBOX_SHELL_DAMAGE 1
+
+/* What a hurt pillbox divides its firing interval by. The interval starts at
+ * PILLBOX_ATTACK_NORMAL and is floored at PILLBOX_MAX_FIRERATE; this is the
+ * step it takes between the two each time it is hit, so 1 is a pill that
+ * never angers and a number above the whole span is one that angers fully on
+ * the first shell. */
+#define PILLBOX_ANGRY_DIVISOR 2
+
 #define PILLS_MAX_ARMOUR 15
 
 /* A pill's flags byte. Armour travels in a byte of its own; this byte carries
@@ -91,7 +103,7 @@ static inline bool    pillPosCurrentFromByte(uint8_t b) {
 #define PILL_NOT_FOUND 254
 
 /* A pillbox must be strictly less than 7 map squares from a shot base. */
-#define PILL_BASE_HIT_RADIUS 7
+#define PILL_BASE_HIT_RANGE 7
 
 /* Amount of damage each tree unit repairs */
 #define PILL_REPAIR_AMOUNT 4
@@ -1034,6 +1046,10 @@ void pillsValidate(pillboxes *value);
 /* Clamps every pillbox against the sim's gameplay caps. Called by
    mapClampToRules once a sim owns the records; see bolo_map.h. */
 void pillsClampToRules(struct GameSim *sim, pillboxes *value);
+/* Raises every pillbox to the sim's armour cap — the same walk the other way
+   round, for a scenario that raises the cap and asks for the map to start at
+   it. Called by serverSimScenarioFillWorldToRules, which writes the records. */
+void pillsFillToRules(struct GameSim *sim, pillboxes *value);
 
 
 #endif /* PILLBOX_H */

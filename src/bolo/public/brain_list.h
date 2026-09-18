@@ -73,6 +73,24 @@ bool brainListLoadMeta(const char *name,
  * found; *rgb is 0xRRGGBB. */
 bool brainListLoadColor(const char *name, uint32_t *rgb);
 
+/* The init.lua of the named brain: "GoalHunter_1.7" becomes
+ * "brains/GoalHunter_1.7/init.lua" in whichever brains parent holds it. The
+ * parents are the ones brainListLoadMeta reads a brain's files from — the
+ * working directory's brains/ and Brains/, then the same two beside the
+ * executable — and the two searches share one list, so a brain whose about.txt
+ * one of them finds is a brain the other resolves.
+ *
+ * False, with outPath emptied, when no parent holds the brain, when the name
+ * carries a path separator or opens with a dot — a name is one directory under
+ * a brains parent, not a path — and when the path would not fit outPath.
+ *
+ * This is the one disk path the catalogue hands out publicly. A scenario names
+ * the brain its teams run rather than pathing to one, because a scenario
+ * written on one machine knows nothing of another's layout; the scenario
+ * runtime turns that name into the path the bot loader opens, and it sees
+ * src/bolo/public/ alone. */
+bool brainListResolve(const char *name, char *outPath, size_t outLen);
+
 
 /* ── announce.txt / commands.txt: what a brain tells the lobby ────────
  *

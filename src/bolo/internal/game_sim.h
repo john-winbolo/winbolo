@@ -395,9 +395,9 @@ struct GameSim {
     /* The base game type a scenario declared, 0 for no scenario or none
        declared. game being gameScripted sends every site that picks
        behaviour from the game type here instead, through gameTypeResolve,
-       and 0 there reads as gameOpen. The server writes it from the lobby
-       template the host hands over; a client is handed no template and
-       writes it from the scenario tail of the lobby settings instead, so
+       and 0 there reads as gameStrictTournament. The server writes it from
+       the lobby template the host hands over; a client is handed no template
+       and writes it from the scenario tail of the lobby settings instead, so
        both resolve a scripted round the same way. */
     gameType    scenarioBaseGame;
     /* Tutorial respawn start index. While sim->isTutorial, startsGetStart

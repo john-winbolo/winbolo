@@ -14,18 +14,19 @@
  *  thing past the read works on the struct and never on the
  *  VM, which is what keeps the marshalling in one place.
  *
- *  This is the library's header and the tests', not a
- *  frontend's. scenario_static publishes its own directory to
- *  whatever links it, so this file is reachable rather than
- *  sealed off: the unit tests include it to check what the
- *  parse produced. A frontend has no business here and works
- *  through scenario_host.h and the accessors on it.
+ *  scenario_io_static publishes its own directory to whatever
+ *  links it, and scenario_static links it publicly, so this
+ *  file is reachable rather than sealed off: the unit tests
+ *  include it to check what the parse produced, and a reader
+ *  or writer of a container has the shape without the
+ *  runtime. A frontend that wants a round works through
+ *  scenario_host.h and the accessors on it.
  *
  *  A rule is held as a plain uint16_t index rather than as
  *  ScnRuleIndex, so the struct needs nothing from
- *  src/bolo/scenario_api/ and this header stays readable by
- *  anything in the library. scenario_host.c, which sees both,
- *  is where an index becomes an op.
+ *  src/bolo/scenario_api/, which this file cannot see.
+ *  scenario_host.c, which sees both, is where an index
+ *  becomes an op.
  *
  *  triggers is deliberately not here. Its schema is not
  *  settled, so the parser reads nothing from it and a script
@@ -38,8 +39,56 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "scenario_host.h"  /* the sizes below, and the entity counts */
+/* The four counts the arrays below are sized by, taken from the headers that
+ * define them rather than through server_sim.h. That header declares a bot
+ * config whose gameType member is named after its own type, which a C++
+ * translation unit refuses to compile, and the map editor's forms read this
+ * manifest from C++. Nothing here names a ServerSim type. */
+#include "global.h"         /* MAX_TANKS */
+#include "types.h"          /* MAX_PILLS / MAX_BASES / MAX_STARTS */
 #include "scenario_table.h" /* ScnTable — a team's init block below */
+
+/* Tags and regions, at the sizes the scenario table is specified with. A
+ * tag names a pill, base or start; a region names a rectangle of map
+ * squares. Both are read into the manifest here and mean nothing to the
+ * engine yet.
+ *
+ * SCN_TIMERS_MAX in scenario_host.h bounds the regions a round holds and
+ * is stated against SCN_REGIONS_MAX there. */
+#define SCN_TAG_LEN          32
+#define SCN_TAGS_PER_ENTITY   4
+#define SCN_REGIONS_MAX      64
+#define SCN_REGION_NAME_LEN  32
+
+/* The text fields of the scenario table. The name is what a lobby row
+ * shows and the description what a tooltip or an info line shows, so they
+ * are sized for a line rather than for prose.
+ *
+ * SCN_DIR_NAME_LEN and SCN_DIR_DESC_LEN in scenario_api/scenario_defs.h are
+ * the same two lengths on the sim's side of the fence, where a scenario the
+ * server offers is described. They are stated twice because this header sees
+ * public/ alone and that one is not on its include path. scenario_dir.c sees
+ * both and holds them against each other. */
+#define SCN_SCENARIO_NAME_LEN 64
+#define SCN_SCENARIO_DESC_LEN 256
+
+/* scenario.game names a game type ("open", "tournament", "strict"), kept
+ * as the text the file gave. */
+#define SCN_GAME_NAME_LEN 24
+
+/* A brain named by a lobby team: the directory under the server's own
+ * brains/, as the file wrote it. The same length the spawn op carries a brain
+ * in, because that op carries the path this name resolves to; scenario_host.c
+ * holds the two against each other where it can see both. */
+#define SCN_BRAIN_LEN 256
+
+/* Room for every rule the table can name. scenario_host.c checks this
+ * covers the rule list, so a rule added to the list cannot overflow it.
+ * Held well clear of the list's own length rather than trimmed to it: the
+ * check is a static assertion, so a run of rules that outgrew this number
+ * would stop the build rather than fail anything at runtime, and the array
+ * it sizes is sixteen bytes a row. */
+#define SCN_MANIFEST_RULES_MAX 256
 
 /* One rule the table sets: which rule, and what it was set to. The value
  * is a double because sixteen of the rules are float-valued and the rest
@@ -63,8 +112,8 @@ typedef struct {
     uint8_t  bots;
     uint8_t  maxBots;
     bool     fielded;
-    char     brain[SCN_BRAIN_LEN];   /* a path or "package:NAME"; "" = the
-                                      * server's own */
+    char     brain[SCN_BRAIN_LEN];   /* the brain's name, as the file wrote
+                                      * it; "" = the server's own */
     ScnTable init;
     char     initBadKey[SCN_TABLE_KEY_LEN];
 } ScnManifestTeam;
@@ -98,6 +147,13 @@ typedef struct {
     char game[SCN_GAME_NAME_LEN];   /* the game type it asks for; "" = none */
     bool bound;                     /* true = tied to its map; false = a mod */
 
+    /* Start the map's pills and bases at the caps this table sets rather
+     * than at the numbers the map file holds. A map file states a number
+     * and cannot state "full", so a scenario that raises a cap would
+     * otherwise leave every base short of it and every pill under it. Off
+     * unless the file asks for it, which leaves a map's own numbers alone. */
+    bool fillToCaps;
+
     ScnManifestLobby lobby;
 
     uint16_t        numRules;
@@ -113,13 +169,9 @@ typedef struct {
     ScnManifestRegion regions[SCN_REGIONS_MAX];
 } ScenarioManifest;
 
-/*********************************************************
- *NAME:          scenarioHostManifest
- *PURPOSE:
- *  The table the host last read, for the library's own code
- *  and for the tests that check the parse. NULL for a NULL
- *  host.
- *********************************************************/
-const ScenarioManifest *scenarioHostManifest(const ScenarioHost *h);
+/* Nothing here reaches up into the runtime. The table a host last read is
+ * scenarioHostManifest, declared in src/scenario/scenario_validate.h with
+ * the rest of what the host and the validator share: a target that links
+ * this library alone has no host to ask. */
 
 #endif /* SCENARIO_MANIFEST_H */

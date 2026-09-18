@@ -132,7 +132,7 @@ int run_prefs_keys_roundtrip(void) {
     const char *keys[] = {
         "Forward", "Backwards", "Left", "Right", "Shoot",
         "Lay Mine", "Increase Range", "Decrease Range",
-        "Tank View", "Pill View", "Ally View", "LGM View", "Base View",
+        "Tank View", "Pill View", "Ally View", "Base View",
         "Scroll Up", "Scroll Down", "Scroll Left", "Scroll Right",
         "Quick Tree", "Quick Road", "Quick Wall", "Quick Pillbox",
         "Quick Mine",

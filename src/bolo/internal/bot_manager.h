@@ -1120,6 +1120,30 @@ bool botManagerExecLua(struct ServerSim *sim, BYTE playerNum,
                        const char *src);
 
 /*********************************************************
+ *NAME:          botManagerScenarioHint
+ *PURPOSE:
+ *  Hand one bot's brain a scenario's hint: the table's
+ *  pairs are built on that bot's Lua stack and its
+ *  on_scenario_hint is called with them. No part of the
+ *  table is ever compiled, so a scenario author's bytes
+ *  never reach the VM as code.
+ *
+ *  Returns true when the brain had a handler and it
+ *  returned. False is the bot being inactive, its brain
+ *  not running, the brain not defining the handler, or
+ *  the handler raising — the last of which is the only
+ *  one that leaves a line in the log. The funnel's arm
+ *  answers its script the same either way: a scenario
+ *  cannot know which brains a server runs.
+ *
+ *ARGUMENTS:
+ *  playerNum - Bot slot
+ *  hint      - the pairs to hand it; a verb is one of them
+ *********************************************************/
+bool botManagerScenarioHint(struct ServerSim *sim, BYTE playerNum,
+                            const ScnTable *hint);
+
+/*********************************************************
  *NAME:          botManagerToggleAllBrainDebugMode
  *PURPOSE:
  *  Flip the BRAIN_DEBUG_MODE Lua global on every active bot.

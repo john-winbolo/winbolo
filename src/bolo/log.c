@@ -514,7 +514,7 @@ void logAddToMemory(BYTE *memPos, const void *dataIn, BYTE dataLen) {
 *  opt4    - Option argument 4
 *  short1  - Short optional argument
 *  words   - Char* optional argument (pascal string)
-*  out     - Destination buffer (must hold up to 264 bytes)
+*  out     - Destination buffer (must hold up to LOG_EVENT_MAX_BYTES bytes)
 *********************************************************/
 static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, unsigned short short1, const char *words, BYTE *out) {
   int off = 0; /* Bytes written so far */
@@ -855,6 +855,82 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     memcpy(out + off, words, wordsLen);
     off += wordsLen;
     break;
+  case log_ScnPanel:
+    /* One panel's display list: the panel id, the two destination bytes, then
+       the list's own length as a big-endian u16 and that many bytes. The
+       length is two bytes rather than a pascal string's one because a list
+       runs to SCN_PANEL_MAX, well past what one byte counts. The bytes are
+       the primitives scenario_panel.h describes; nothing here reads them. */
+    out[off++] = log_ScnPanel;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    wordsLen = short1;
+    if (wordsLen > SCN_PANEL_MAX) {
+      /* The arm refuses a longer list, so this only states the bound the
+         buffer above was sized for. */
+      wordsLen = SCN_PANEL_MAX;
+    }
+    out[off++] = (BYTE)((wordsLen >> 8) & 0xFF);
+    out[off++] = (BYTE)(wordsLen & 0xFF);
+    if (wordsLen > 0) {
+      memcpy(out + off, words, wordsLen);
+      off += wordsLen;
+    }
+    break;
+  case log_ScnScore:
+    /* Whose score it is and what it now reads: the kind and the target, then
+       the score as a big-endian int32 across opt3, opt4 and the short, and
+       the label as a pascal string. The int32 is spread over three arguments
+       because the two opt bytes ahead of it are already spoken for. */
+    out[off++] = log_ScnScore;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    out[off++] = opt4;
+    out[off++] = (BYTE)((short1 >> 8) & 0xFF);
+    out[off++] = (BYTE)(short1 & 0xFF);
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_ScnAnnounce:
+    /* The destination the line was put up for, how long it stays up as a
+       big-endian u16 of ticks, then the line. An empty line is the clear. */
+    out[off++] = log_ScnAnnounce;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = (BYTE)((short1 >> 8) & 0xFF);
+    out[off++] = (BYTE)(short1 & 0xFF);
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_ScnMarker:
+    /* The marker's id, its kind and the destination, then x, y, slot and
+       colour as a four-byte blob. The four travel as a blob rather than as
+       more opt bytes because the four opt bytes are already spent, the way
+       log_TankSetModifiers carries its six. */
+    out[off++] = log_ScnMarker;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    out[off++] = opt4;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
+  case log_ScnHint:
+    /* Which bot was ordered, and the verb the order led with. The rest of
+       the hint's pairs are a contract between the script and the brain it
+       was written for; nothing outside that brain can read them, so what
+       goes down is what a replay can say: this seat was given this order. */
+    out[off++] = log_ScnHint;
+    out[off++] = opt1;
+    wordsLen = (unsigned short)((BYTE)words[0]) + 1;
+    memcpy(out + off, words, wordsLen);
+    off += wordsLen;
+    break;
   default:
     return 0;
   }
@@ -920,7 +996,7 @@ static bool logCheckTankStockSame(BYTE playerNum, BYTE shells, BYTE mines, BYTE 
 *  words   - Char* optional argument
 *********************************************************/
 void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, unsigned short short1, char *words) {
-  BYTE event[264]; /* Plaintext event: type + u16 len + 6-byte header + 256-byte pascal string */
+  BYTE event[LOG_EVENT_MAX_BYTES]; /* Plaintext event: type + u16 len + the widest payload any record writes */
   int eventLen; /* Bytes the serializer produced */
   int count;
   bool wbvActive; /* Is a .wbv log buffer the destination this call */
@@ -943,9 +1019,8 @@ void logAddEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, BYTE opt4, un
   }
   /* Bounds check applies only to the .wbv buffer (the ring has its own bound
      below). Preserves the original drop-the-event-with-no-side-effect semantics
-     when the .wbv buffer is full. Max single event is type + u16 len + 6 bytes
-     header + 256 bytes words data. */
-  if (wbvActive == TRUE && logMemSize + 264 >= LOG_MEMORY_BUFFER_SIZE) {
+     when the .wbv buffer is full. Max single event is LOG_EVENT_MAX_BYTES. */
+  if (wbvActive == TRUE && logMemSize + LOG_EVENT_MAX_BYTES >= LOG_MEMORY_BUFFER_SIZE) {
     return;
   }
   /* log_PlayerLocation only emits when the tank state changed; logCheckTankSame
@@ -1145,7 +1220,7 @@ int logSerializeSnapshotBody(ServerSim *ssim, BYTE *out, int cap) {
 static bool logWriteEntityMasks(ServerSim *ssim) {
   ControlEvent evt;
   BYTE block[2];
-  BYTE event[264];
+  BYTE event[LOG_EVENT_MAX_BYTES];
   int eventLen;
 
   if (ssim == NULL) {

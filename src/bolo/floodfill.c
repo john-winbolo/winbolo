@@ -85,7 +85,7 @@ void floodDestroy(floodFill *ff) {
 *  x  - X co-ord
 *  y  - Y co-ord
 *********************************************************/
-void floodAddItem(floodFill *ff, BYTE x, BYTE y) {
+void floodAddItem(floodFill *ff, BYTE x, BYTE y, BYTE wait) {
   floodFill q;
   floodFill inc;
   floodFill prev;
@@ -107,14 +107,14 @@ void floodAddItem(floodFill *ff, BYTE x, BYTE y) {
     New(q);
     q->x = x;
     q->y = y;
-    q->time = FLOOD_FILL_WAIT;
+    q->time = wait;
     q->next = *ff;
     *ff = q;
   } else if (found == FALSE) {
     New (q);
     q->x = x;
     q->y = y;
-    q->time = FLOOD_FILL_WAIT;
+    q->time = wait;
     q->next = NULL;
     prev->next = q;
   }
@@ -268,16 +268,16 @@ void floodCheckFill(GameSim *sim, BYTE mx, BYTE my) {
 
     /* Add items if craters */
     if (leftPos == CRATER || leftPos == MINE_CRATER) {
-      floodAddItem(ff, (BYTE) (mx-1), my);
+      floodAddItem(ff, (BYTE) (mx-1), my, (BYTE) sim->rules.flood_fill_ticks);
     }
     if (rightPos == CRATER || rightPos == MINE_CRATER) {
-      floodAddItem(ff, (BYTE) (mx+1), my);
+      floodAddItem(ff, (BYTE) (mx+1), my, (BYTE) sim->rules.flood_fill_ticks);
     }
     if (above == CRATER || above == MINE_CRATER) {
-      floodAddItem(ff, mx, (BYTE) (my-1));
+      floodAddItem(ff, mx, (BYTE) (my-1), (BYTE) sim->rules.flood_fill_ticks);
     }
     if (below == CRATER || below == MINE_CRATER) {
-      floodAddItem(ff, mx, (BYTE) (my+1));
+      floodAddItem(ff, mx, (BYTE) (my+1), (BYTE) sim->rules.flood_fill_ticks);
     }
     if (!sim->isServer) { clientSimRecalc((struct ClientSim *)sim); }
   }

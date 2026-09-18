@@ -711,7 +711,13 @@ local function S(state)
           -- marker on that target.  Stops a re-planned goal re-marking the
           -- same pill on every replan.
           atk_ping = {},
-          banner = nil, latch_tx = 0, anchors = {} }
+          banner = nil, latch_tx = 0, anchors = {},
+          -- The three scenario hints that outlive one order (orders.lua's
+          -- hint section). A patrol is its route and which point is next,
+          -- an escort is the seat being followed and how far it may drift,
+          -- and an avoid is a rectangle this bot keeps out of. nil each
+          -- until a hint sets one.
+          hint_patrol = nil, hint_escort = nil, hint_avoid = nil }
     state.orders = o
   end
   return o
@@ -1775,6 +1781,340 @@ function M.on_chat(state, world, info, sender, text, now, from_ally, sender_is_b
   end
 
   return start_order(state, world, info, spec, who, now)
+end
+
+-- =========================================================================
+-- SCENARIO HINTS — an order that did not arrive as chat
+--
+-- A scenario script calls game.hint(p, t) and the server hands this bot's VM
+-- a flat table: a `verb` and whatever other keys the script wrote.  Every
+-- value is TEXT, because that is how the table travels (a script writing
+-- base = 3 sends "3"), so every number here goes through tonumber.
+--
+-- A hint names ONE bot -- the seat the script wrote -- so there is no
+-- auction and no who-word to work out: the command is built with the
+-- who-word a person gets by typing a bot's name, and everything past that
+-- point is the chat path.  Same M.goal_kind, same order id, same
+-- start_order, same acks, and a newer order from a person replaces it the
+-- way any newer order replaces an older one.  `cancel all` and `cancel
+-- <bot>` call one off; a bare `cancel` does not, because that one releases
+-- only the SPEAKER's own order and the sender here is the scenario.
+--
+-- Seven verbs are the documented set (docs/SCENARIO_API.md).  Four of them
+-- are one order and nothing more: goto, attack, defend and hold.  Three are
+-- a STANDING instruction that outlives a single order -- patrol, escort and
+-- avoid -- so they are kept on the order state and M.hint_update carries
+-- them a step each think.  An eighth verb somebody invented is ignored in
+-- silence: a brain is allowed not to know a word, and answering back would
+-- make every scenario written for another brain noisy here.
+-- =========================================================================
+
+-- The sender a hint is filed under.  Not a seat: player numbers run 0..15,
+-- so a hint can never collide with a person's `last`, and a person cancelling
+-- their own order never takes a scripted one away by accident.
+local HINT_SENDER = 255
+M.HINT_SENDER = HINT_SENDER
+
+-- A hint's numbers are decimal text.  nil for anything that is not a number.
+local function hint_num(v)
+  local n = tonumber(v)
+  if not n then return nil end
+  return math.floor(n)
+end
+
+local function hint_square(x, y)
+  if not x or not y then return nil end
+  if x < 0 or x > 255 or y < 0 or y > 255 then return nil end
+  return x, y
+end
+
+local function hint_tile(t, xk, yk)
+  return hint_square(hint_num(t[xk]), hint_num(t[yk]))
+end
+
+-- "go there and hold", in the command shape M.parse builds for the three-shot
+-- line.  The square is packed into the target id the way that line packs it,
+-- so one number identifies it in the order id and on the wire.
+local function hint_goto(state, mx, my)
+  return { verb = "goto",
+           who = { mode = "names", pns = { state.player_number } },
+           target = { kind = "here", id = mx * 256 + my, mx = mx, my = my } }
+end
+
+-- The middle of a rectangle, for a hint that names a region rather than a
+-- square.  A script reads game.region(name) and writes the four numbers out;
+-- the brain has no region table of its own to look a name up in.
+local function hint_rect_middle(t)
+  local x, y = hint_tile(t, "x", "y")
+  local w, h = hint_num(t.w), hint_num(t.h)
+  if not x then return nil end
+  if w and h and w > 0 and h > 0 then
+    return hint_square(x + math.floor((w - 1) / 2), y + math.floor((h - 1) / 2))
+  end
+  return x, y
+end
+
+-- The patrol route: x1,y1 x2,y2 ... up to seven points, which is what a
+-- sixteen-pair table has room for beside the verb.  Numbered keys rather than
+-- one packed string because the table is flat by design and a brain author
+-- should not have to parse a value.
+local function hint_points(t)
+  local pts = {}
+  for i = 1, 7 do
+    local x, y = hint_tile(t, "x" .. i, "y" .. i)
+    if not x then break end
+    pts[#pts + 1] = { x = x, y = y }
+  end
+  return pts
+end
+
+-- The rectangle an `avoid` names, as its two corners.
+local function hint_box(t)
+  local x, y = hint_tile(t, "x", "y")
+  if not x then return nil end
+  local w = hint_num(t.w) or 1
+  local h = hint_num(t.h) or 1
+  if w < 1 then w = 1 end
+  if h < 1 then h = 1 end
+  return { x0 = x, y0 = y, x1 = x + w - 1, y1 = y + h - 1 }
+end
+
+local function hint_inside(box, mx, my)
+  return box ~= nil and mx ~= nil
+         and mx >= box.x0 and mx <= box.x1 and my >= box.y0 and my <= box.y1
+end
+
+-- The nearest square outside the box, walked out along the shorter axis.  A
+-- bot standing in a place it has been told to keep out of is sent to the edge
+-- and one square past it; every other order is left alone.
+local function hint_way_out(box, mx, my)
+  local left  = mx - box.x0 + 1
+  local right = box.x1 - mx + 1
+  local up    = my - box.y0 + 1
+  local down  = box.y1 - my + 1
+  local best, bx, by = left, box.x0 - 1, my
+  if right < best then best, bx, by = right, box.x1 + 1, my end
+  if up    < best then best, bx, by = up,    mx, box.y0 - 1 end
+  if down  < best then best, bx, by = down,  mx, box.y1 + 1 end
+  return hint_square(bx, by)
+end
+
+-- The tail of on_chat, from a command table to a running order.  Everything
+-- it calls is what a typed line calls.
+local function hint_start(state, world, info, cmd, now)
+  local o = S(state)
+  local kind, needs_shells, tid, err = M.goal_kind(cmd, world, info)
+  -- err is the line a person would have been answered with.  Nobody is
+  -- listening to a hint, so an order that cannot be built is dropped.
+  if err or not kind then return false end
+
+  local spec = {
+    oid = M.order_id(HINT_SENDER, cmd), verb = cmd.verb, kind = kind,
+    tkind = cmd.target and cmd.target.kind or nil,
+    tid = tid, sender = HINT_SENDER, sender_name = "scenario",
+    mx = cmd.target and cmd.target.mx, my = cmd.target and cmd.target.my,
+    needs_shells = needs_shells, who = cmd.who,
+  }
+  o.known[spec.oid] = { spec = spec, tick = now }
+  note_last(o, HINT_SENDER, spec.oid)
+
+  -- The same hint again, while it is still held, refreshes the focus rather
+  -- than restarting the job -- what a repeated chat line does.
+  if o.held and o.held.oid == spec.oid then
+    o.held.expiry = now + (C.ORDER_FOCUS_TICKS or 3000)
+    return true
+  end
+  print2(string.format("HINT_START t=%d verb=%s kind=%s tid=%s", now,
+         tostring(cmd.verb), tostring(kind), tostring(tid)))
+  return start_order(state, world, info, spec, cmd.who, now)
+end
+
+-- The four verbs that are one order, as the command a chat line would have
+-- produced.  nil means this brain has no order for that word, which is how an
+-- unknown verb leaves in silence.
+local function hint_command(state, world, info, t)
+  local v  = t.verb
+  local me = state.player_number
+  local who = { mode = "names", pns = { me } }
+
+  if v == "goto" then
+    local mx, my = hint_rect_middle(t)
+    if not mx then return nil end
+    return hint_goto(state, mx, my)
+  end
+
+  if v == "hold" then
+    -- A hold with no square is "stop where you are".
+    local mx, my = hint_rect_middle(t)
+    if not mx then
+      mx, my = hint_square(bit.rshift(info.tankx or 0, 8),
+                           bit.rshift(info.tanky or 0, 8))
+    end
+    if not mx then return nil end
+    return hint_goto(state, mx, my)
+  end
+
+  if v == "attack" then
+    local pn = hint_num(t.player)
+    if not pn or pn < 0 or pn >= ally_state.MAX_TANKS then return nil end
+    return { verb = "attack", who = who, target = { kind = "tank", pn = pn } }
+  end
+
+  if v == "defend" then
+    local pid = hint_num(t.pill)
+    if pid then
+      return { verb = "defend", who = who, target = { kind = "pill", id = pid } }
+    end
+    -- DEFENDING A BASE IS STANDING ON IT.  There is no defend_base goal --
+    -- a base is not held the way a pill is, which is why M.parse turns
+    -- "defend base 3" down -- and a script is not a person who can be asked
+    -- to say it another way.  The nearest thing the brain already does is the
+    -- go-there lock on the base's own square.
+    local bid = hint_num(t.base)
+    local b   = bid and world.bases[bid]
+    if not b then return nil end
+    return hint_goto(state, b.mx, b.my)
+  end
+
+  return nil
+end
+
+-- =========================================================================
+-- HINT ENTRY POINT — called from init.lua once per think for each hint the
+-- server queued on this bot's VM.  Returns true when the hint became an
+-- order or a standing instruction.
+-- =========================================================================
+function M.on_scenario_hint(state, world, info, t, now)
+  if not C.BOT_COMMANDS_ENABLED then return false end
+  if type(t) ~= "table" or type(t.verb) ~= "string" then return false end
+  local o = S(state)
+  local v = t.verb
+
+  if v == "patrol" then
+    local pts = hint_points(t)
+    if #pts == 0 then return false end
+    o.hint_patrol = { pts = pts, at = 1 }
+    o.hint_escort = nil
+    return hint_start(state, world, info,
+                      hint_goto(state, pts[1].x, pts[1].y), now)
+  end
+
+  if v == "escort" then
+    local pn = hint_num(t.player)
+    if not pn or pn < 0 or pn >= ally_state.MAX_TANKS then return false end
+    o.hint_escort = { pn = pn,
+                      near = hint_num(t.distance) or C.ORDER_HINT_ESCORT_TILES,
+                      mx = nil, my = nil }
+    o.hint_patrol = nil
+    -- It goes as soon as it knows where that seat is, which may be now.  The
+    -- first leg is raised here rather than through M.hint_update, because
+    -- that stands a standing hint down when the bot is holding somebody
+    -- else's order -- and this hint IS the newer word about this bot, so it
+    -- replaces that order the way any other order would.
+    local mx = tonumber(ally_state.get_key(pn, "mx"))
+    local my = tonumber(ally_state.get_key(pn, "my"))
+    if mx and my and not hint_inside(o.hint_avoid, mx, my) then
+      o.hint_escort.mx, o.hint_escort.my = mx, my
+      hint_start(state, world, info, hint_goto(state, mx, my), now)
+    end
+    return true
+  end
+
+  if v == "avoid" then
+    local box = hint_box(t)
+    if not box then return false end
+    o.hint_avoid = box
+    -- Standing in it already is the one thing worth acting on straight away.
+    local tmx = bit.rshift(info.tankx or 0, 8)
+    local tmy = bit.rshift(info.tanky or 0, 8)
+    if hint_inside(box, tmx, tmy) then
+      local mx, my = hint_way_out(box, tmx, tmy)
+      if mx then return hint_start(state, world, info,
+                                   hint_goto(state, mx, my), now) end
+    end
+    return true
+  end
+
+  local cmd = hint_command(state, world, info, t)
+  if not cmd then return false end
+  -- A one-off order replaces whatever standing instruction was running: the
+  -- script has said something newer about this bot.
+  o.hint_patrol, o.hint_escort = nil, nil
+  -- AND IT MAY NOT BREAK THE AVOID.  A square inside the box the script told
+  -- this bot to keep out of is the script contradicting itself, and the
+  -- keep-out is the older and broader instruction, so the order is dropped.
+  if cmd.target and cmd.target.kind == "here"
+     and hint_inside(o.hint_avoid, cmd.target.mx, cmd.target.my) then
+    return false
+  end
+  return hint_start(state, world, info, cmd, now)
+end
+
+-- =========================================================================
+-- THE STANDING HINTS, one step a think.  Called from init.lua beside
+-- ORD.on_events, so an order this raises bids on the same tick a ping's
+-- would.
+-- =========================================================================
+function M.hint_update(state, world, info, now)
+  local o = state.orders
+  if not o then return false end
+  local h = o.held
+
+  -- A STANDING HINT ENDS WHEN SOMEBODY GIVES THIS BOT A DIFFERENT JOB.  A
+  -- held order from anyone but the script says a person (or a ping) has
+  -- spoken more recently than the scenario did, and the newest word wins --
+  -- the same rule the chat orders run on.  NOT holding an order is not that:
+  -- the leg lapsed, or the bot was busy when it was raised, and the standing
+  -- instruction is what says to try again.
+  if h ~= nil and h.sender ~= HINT_SENDER then
+    if o.hint_patrol or o.hint_escort then
+      print2(string.format("HINT_STAND_DOWN t=%d oid=%d", now, h.oid or 0))
+    end
+    o.hint_patrol = nil
+    o.hint_escort = nil
+    return false
+  end
+
+  -- PATROL.  The leg is a go-there order like any other, and arriving is
+  -- what advances the route.  A leg is only raised while the bot is free:
+  -- start_order answers a busy bot with a spoken "Busy", and asking it every
+  -- think would be the only thing the team heard.
+  if o.hint_patrol then
+    local p = o.hint_patrol
+    if h ~= nil and h.arrived then
+      p.at = (p.at % #p.pts) + 1
+      release_held(state, info, nil, true, true)
+      h = nil
+    end
+    if h == nil and not M.busy(state, info) then
+      return hint_start(state, world, info,
+                        hint_goto(state, p.pts[p.at].x, p.pts[p.at].y), now)
+    end
+    return false
+  end
+
+  -- ESCORT.  The escorted seat's tile comes off the ally slate, which is
+  -- filled by the /info state every ally BOT broadcasts; a human ally sends
+  -- none, so a bot told to escort a person has nothing to follow and stays
+  -- where it is.  The order is re-aimed only when the seat has moved further
+  -- than `near` from where this bot was last sent, so the auction and the ack
+  -- do not run every think.
+  if o.hint_escort then
+    local e  = o.hint_escort
+    local mx = tonumber(ally_state.get_key(e.pn, "mx"))
+    local my = tonumber(ally_state.get_key(e.pn, "my"))
+    if not mx or not my then return false end
+    if e.mx ~= nil and h ~= nil
+       and U.mdist(e.mx, e.my, mx, my) <= (e.near or 3) then
+      return false
+    end
+    if hint_inside(o.hint_avoid, mx, my) then return false end
+    if M.busy(state, info) then return false end
+    e.mx, e.my = mx, my
+    return hint_start(state, world, info, hint_goto(state, mx, my), now)
+  end
+
+  return false
 end
 
 -- =========================================================================

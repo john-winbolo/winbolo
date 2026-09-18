@@ -1979,6 +1979,17 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Опублікувати можна лише тем
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Ця тема має детальнішу графіку лише для деяких спрайтів, тому «За масштабом» створює ті самі тайли, що й «Класична». «Висока деталізація» використовує детальнішу графіку там, де вона є в темі.
 STR_DLGSKIN_RECFILTER_LBL=Рекомендований фільтр:
 STR_DLGSKIN_RECOMMENDED_TAG=(рекомендовано)
+STR_DLGSKIN_FOGSTYLE=Стиль туману війни
+STR_DLGSKIN_FOGSTYLE_TIP=Як малюється рельєф, який ви не бачите. Це змінює лише зображення на вашому екрані; сервер надсилає ту саму карту незалежно від вибору.
+STR_DLGSKIN_FOGSTYLE_GREY=Сірий
+STR_DLGSKIN_FOGSTYLE_GREY_TIP=Рельєф, який ви не бачите, зсувається за кольором у бік сірого, тому він виглядає світлішим, ніж рельєф на видноті.
+STR_DLGSKIN_FOGSTYLE_DARK=Темніше
+STR_DLGSKIN_FOGSTYLE_DARK_TIP=Рельєф, який ви не бачите, зсувається за кольором у бік чорного. Дороги вже чорні, тому дорога під туманом виглядає так само, як дорога на видноті.
+STR_DLGSKIN_FOGSTYLE_DARKROADS=Темніше з межею туману
+STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP=Темніше, з тонкою лінією, що слабо позначає межу туману. Смуга йде із затуманеного боку цієї межі на будь-якому рельєфі, тому лінія видна навіть над дорогою, яка чорна і яку саме лише затемнення не може позначити. Це стандартний вигляд.
+STR_DLGSKIN_FOGSTYLE_NONE=Немає
+STR_DLGSKIN_FOGSTYLE_NONE_TIP=Карта взагалі не затемнюється, тому запам'ятований рельєф виглядає так само, як рельєф на видноті. Це не приховує нічого з того, що показують інші стилі: які танки й снаряди малюються — вирішує сервер, а не це налаштування.
+STR_DLGSKIN_FOGSTYLE_NONE_NOTE=Примітка: це змінює лише ваше локальне відображення і не вимикає туман війни в налаштуваннях гри. Танки й снаряди все одно зникатимуть там, де мав би бути туман війни.
 
 # Огляд карти та карта на весь екран
 STR_MENU_MAP_OVERVIEW=Огляд карти
@@ -2128,3 +2139,28 @@ STR_PING_MOUSE_RIGHT=Права кнопка миші
 STR_PING_MOUSE_X1=Миша 4
 STR_PING_MOUSE_X2=Миша 5
 STR_DLGKEYSETUP_PING_ALT2=Розумний пінг — альтернативні клавіші 2
+
+# Вибір сценарію в лобі
+STR_DLGGAMEINFO_SCRIPTED=Скриптована
+STR_DLGSETTINGS_HOSTING_SCRIPTS=Запускати скрипти карти під час хостингу
+STR_DLGLOBBY_SCENARIO_LBL=Сценарій:
+STR_DLGLOBBY_SCRIPTS_OFF=Скрипти вимкнено
+STR_DLGLOBBY_RELOAD_SCENARIO=Перечитати скрипт
+STR_DLGLOBBY_REJECT_SCENARIO=Цей параметр визначається сценарієм карти
+STR_DLGLOBBY_REJECT_COOLDOWN=Зарано, спробуйте ще раз за мить
+STR_DLGLOBBY_CHOOSE_SCENARIO=Вибрати
+STR_DLGLOBBY_SCENARIO_TITLE=Вибрати мод
+STR_DLGLOBBY_SCENARIO_NONE=Жодного — без мода. Карта грає власним сценарієм, якщо він є.
+STR_DLGLOBBY_SCENARIO_WAITING=Запит до сервера...
+STR_DLGLOBBY_SCENARIO_EMPTY=Цей сервер не пропонує модів.
+STR_DLGLOBBY_SCENARIO_BOUND=Створений для однієї карти, тому не може використовуватися як мод
+STR_DLGLOBBY_SCENARIO_MAXPLAYERS=Гравців: до {number}
+STR_DLGLOBBY_SCENARIO_BOTS=Місць для ботів: {number}
+STR_DLGLOBBY_SCENARIO_ON_MAP=Мод: {string2} (на {string1})
+STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=Запускати скрипти у завантажених картах
+STR_DLGSETTINGS_HOSTING_SCENARIODIR=Папка сценаріїв
+STR_DLGSETTINGS_MAPVIEW=Вид карти
+STR_DLGSETTINGS_SIMPLEZOOM=Використовувати спрощений вид при зменшенні
+STR_DLGSETTINGS_SIMPLEZOOM_TIP=При зменшенні понад 1x кожна клітинка малюється одним кольором із простими позначками для танків, бункерів і баз, замість того щоб зменшувати спрайти до розмитої плями.
+STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW=Лише огляд карти
+STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW_TIP=Спрощений вид застосовується лише до вікна «Огляд карти». Карта на весь екран малює свої спрайти за будь-якого масштабу.

@@ -61,11 +61,17 @@
 #include <lauxlib.h>
 
 #include "platform_types.h"       /* BOLO_STATIC_ASSERT */
+#include "brain_list.h"           /* brainListResolve — the brain a roster row
+                                   * names, against this server's own brains
+                                   * directory */
 #include "global.h"               /* the terrain codes, NEUTRAL, MAX_TANKS */
 #include "gametype.h"             /* gameOpen and its siblings */
 #include "client_enums.h"         /* sndEffects — the sound row's words */
 #include "server_sim.h"           /* the accessors, and the rule read */
-#include "scenario_defs.h"        /* SCN_RULE_LIST, the op payloads */
+#include "scenario_defs.h"        /* the op payloads */
+#include "scenario_panel.h"       /* the display list's primitives, and the
+                                   * one writer that turns them into bytes */
+#include "sim_rules_names.h"      /* simRulesRuleIndex — a rule by name */
 #include "server_sim_scenario.h"  /* serverSimApplyScenarioOp */
 
 #include "scenario_host.h"
@@ -82,42 +88,6 @@
  * entity list a map has, so an op built from it is refused rather than
  * naming an item that does exist. */
 #define SCN_LUA_NO_ITEM 255
-
-/* ── The rule names ───────────────────────────────────────────────── */
-
-/* A rule's name in a script is its name in the rule list, so the list is the
- * only place the spelling exists. A rule added there is resolvable here with
- * nothing to update. */
-static const char *const kScnRuleNames[] = {
-#define SCN_RULE_NAME_ROW(name) #name,
-    SCN_RULE_LIST(SCN_RULE_NAME_ROW)
-#undef SCN_RULE_NAME_ROW
-};
-
-BOLO_STATIC_ASSERT(
-    (int)(sizeof(kScnRuleNames) / sizeof(kScnRuleNames[0])) == (int)SCN_RULE_COUNT,
-    rule_name_table_is_the_whole_rule_list);
-
-int scenarioLuaRuleIndex(const char *name) {
-    int i;
-
-    if (name == NULL) {
-        return -1;
-    }
-    for (i = 0; i < (int)SCN_RULE_COUNT; i++) {
-        if (strcmp(kScnRuleNames[i], name) == 0) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-const char *scenarioLuaRuleName(int rule) {
-    if (rule < 0 || rule >= (int)SCN_RULE_COUNT) {
-        return "";
-    }
-    return kScnRuleNames[rule];
-}
 
 /* ── What an op answered ──────────────────────────────────────────── */
 
@@ -363,12 +333,12 @@ static const char *scnGameTypeWord(gameType g) {
         case gameTournament:       return "tournament";
         case gameStrictTournament: return "strict";
         /* The one caller resolves gameScripted before it gets here, so this
-           arm is only what keeps the switch covering the enumeration. A
-           scripted round plays under the base game it declared, and "open"
+           case is only what keeps the switch covering the enumeration. A
+           scripted round plays under the base game it declared, and "strict"
            is what an undeclared one plays. */
-        case gameScripted:         return "open";
+        case gameScripted:         return "strict";
     }
-    return "open";
+    return "strict";
 }
 
 static const char *scnBuilderStateWord(BuilderState s) {
@@ -531,11 +501,18 @@ static int scnLuaTeamSize(lua_State *L) {
  * other site resolves it. The resolve is what keeps "scripted" off this row:
  * a scripted round's own game type is gameScripted, and the word a script
  * wants back is the base game it plays — the same three words the loadout
- * table in a spawn_bot call holds. */
+ * table in a spawn_bot call holds.
+ *
+ * The table's word is checked against that same set before it is handed
+ * back, because a word the set does not hold never reached the lobby
+ * template: the round plays strict, and this row says strict rather than
+ * repeating what the author typed. */
 static int scnLuaGameType(lua_State *L) {
     const ScnLuaCtx *c = scnCtx(L);
+    int              declared = 0;
 
-    if (c->manifest != NULL && c->manifest->game[0] != '\0') {
+    if (c->manifest != NULL && c->manifest->game[0] != '\0' &&
+        scenarioLuaLoadoutFromWord(c->manifest->game, &declared)) {
         lua_pushstring(L, c->manifest->game);
         return 1;
     }
@@ -793,7 +770,7 @@ static int scnLuaLobbySlot(lua_State *L) {
 static int scnLuaRule(lua_State *L) {
     const ScnLuaCtx *c    = scnCtx(L);
     const char      *name = scnArgStr(L, 1, "name");
-    int              rule = scenarioLuaRuleIndex(name);
+    int              rule = simRulesRuleIndex(name);
     double           v    = 0.0;
 
     if (rule < 0) {
@@ -1039,11 +1016,10 @@ static int scnLuaInRegion(lua_State *L) {
  * script's 1-based numbering becomes the op's 0-based one. Player slots are
  * 0-based on both sides and convert nowhere. */
 
-/* One word a script may write, and what the payload carries for it. */
-typedef struct {
-    const char *word;
-    int         value;
-} ScnLuaWord;
+/* One word a script may write, and what the payload carries for it, is
+ * ScnLuaWord in the header: four of the sets below are also the tables the
+ * game table carries, so a document reads the rows an argument is matched
+ * against rather than a second copy of them. */
 
 /* A set of them, and what a message calls the set when a script writes a
  * word that is not in it. */
@@ -1121,17 +1097,129 @@ static const ScnLuaWordSet kScnSounds = {
     "a sound"
 };
 
+/* The seven panel primitives, by the word a list entry names one with. */
+static const ScnLuaWord kScnPanelOpWords[] = {
+    { "rect",   (int)SCN_PANEL_OP_RECT   },
+    { "line",   (int)SCN_PANEL_OP_LINE   },
+    { "text",   (int)SCN_PANEL_OP_TEXT   },
+    { "name",   (int)SCN_PANEL_OP_NAME   },
+    { "sprite", (int)SCN_PANEL_OP_SPRITE },
+    { "bar",    (int)SCN_PANEL_OP_BAR    },
+    { "timer",  (int)SCN_PANEL_OP_TIMER  },
+};
+static const ScnLuaWordSet kScnPanelOps = {
+    kScnPanelOpWords, sizeof(kScnPanelOpWords) / sizeof(kScnPanelOpWords[0]),
+    "a panel primitive"
+};
+
+/* The palette a panel and a marker draw from. A script writes the word or
+ * the number itself, so a hand-written list reads as colours and one a
+ * script computes still reaches the same byte.
+ *
+ * Index 0 draws nothing, and the last four carry names that say they are
+ * reserved: they parse and draw as nothing until a skin gives them a colour,
+ * so a script naming one is asking for that rather than for a colour. */
+static const ScnLuaWord kScnColourWords[] = {
+    { "none",        (int)SCN_PANEL_COLOUR_NONE        },
+    { "black",       (int)SCN_PANEL_COLOUR_BLACK       },
+    { "white",       (int)SCN_PANEL_COLOUR_WHITE       },
+    { "grey",        (int)SCN_PANEL_COLOUR_GREY        },
+    { "grey_dark",   (int)SCN_PANEL_COLOUR_GREY_DARK   },
+    { "red",         (int)SCN_PANEL_COLOUR_RED         },
+    { "green",       (int)SCN_PANEL_COLOUR_GREEN       },
+    { "blue",        (int)SCN_PANEL_COLOUR_BLUE        },
+    { "yellow",      (int)SCN_PANEL_COLOUR_YELLOW      },
+    { "orange",      (int)SCN_PANEL_COLOUR_ORANGE      },
+    { "cyan",        (int)SCN_PANEL_COLOUR_CYAN        },
+    { "magenta",     (int)SCN_PANEL_COLOUR_MAGENTA     },
+    { "reserved_12", (int)SCN_PANEL_COLOUR_RESERVED_12 },
+    { "reserved_13", (int)SCN_PANEL_COLOUR_RESERVED_13 },
+    { "reserved_14", (int)SCN_PANEL_COLOUR_RESERVED_14 },
+    { "reserved_15", (int)SCN_PANEL_COLOUR_RESERVED_15 },
+};
+static const ScnLuaWordSet kScnColours = {
+    kScnColourWords, sizeof(kScnColourWords) / sizeof(kScnColourWords[0]),
+    "a panel colour"
+};
+
+/* Text height, in the frontend's own font. */
+static const ScnLuaWord kScnSizeWords[] = {
+    { "small",  (int)SCN_PANEL_SIZE_SMALL  },
+    { "normal", (int)SCN_PANEL_SIZE_NORMAL },
+};
+static const ScnLuaWordSet kScnSizes = {
+    kScnSizeWords, sizeof(kScnSizeWords) / sizeof(kScnSizeWords[0]),
+    "a text size"
+};
+
+/* Which way text and timers sit about their x. */
+static const ScnLuaWord kScnAlignWords[] = {
+    { "left",   (int)SCN_PANEL_ALIGN_LEFT   },
+    { "centre", (int)SCN_PANEL_ALIGN_CENTRE },
+    { "right",  (int)SCN_PANEL_ALIGN_RIGHT  },
+};
+static const ScnLuaWordSet kScnAligns = {
+    kScnAlignWords, sizeof(kScnAlignWords) / sizeof(kScnAlignWords[0]),
+    "an alignment"
+};
+
+/* Whether a timer counts down to its tick or up from it. */
+static const ScnLuaWord kScnTimerModeWords[] = {
+    { "down", (int)SCN_PANEL_TIMER_DOWN },
+    { "up",   (int)SCN_PANEL_TIMER_UP   },
+};
+static const ScnLuaWordSet kScnTimerModes = {
+    kScnTimerModeWords,
+    sizeof(kScnTimerModeWords) / sizeof(kScnTimerModeWords[0]),
+    "a timer mode"
+};
+
+/* Every one of the four sets above names every value its field can carry,
+ * counting from zero, so a number a set does not reach is a number the panel
+ * parser would turn down. The readers lean on that rather than carrying a
+ * ceiling of their own. */
+BOLO_STATIC_ASSERT(
+    (int)(sizeof(kScnColourWords) / sizeof(kScnColourWords[0])) ==
+        (int)SCN_PANEL_COLOURS,
+    colour_words_are_the_whole_palette);
+BOLO_STATIC_ASSERT(
+    (int)(sizeof(kScnSizeWords) / sizeof(kScnSizeWords[0])) ==
+        (int)SCN_PANEL_SIZE_NORMAL + 1,
+    size_words_are_every_text_size);
+BOLO_STATIC_ASSERT(
+    (int)(sizeof(kScnAlignWords) / sizeof(kScnAlignWords[0])) ==
+        (int)SCN_PANEL_ALIGN_RIGHT + 1,
+    align_words_are_every_alignment);
+BOLO_STATIC_ASSERT(
+    (int)(sizeof(kScnTimerModeWords) / sizeof(kScnTimerModeWords[0])) ==
+        (int)SCN_PANEL_TIMER_UP + 1,
+    timer_mode_words_are_every_mode);
+
+/* What a word stands for in its set, or false for one the set does not hold.
+ * The lookup behind both the word arguments below and the panel list's own
+ * readers, so a word is matched the same way wherever one is written. */
+static bool scnWordValue(const ScnLuaWordSet *set, const char *word,
+                         lua_Integer *out) {
+    size_t i;
+
+    for (i = 0; i < set->count; i++) {
+        if (strcmp(set->rows[i].word, word) == 0) {
+            *out = set->rows[i].value;
+            return true;
+        }
+    }
+    return false;
+}
+
 /* A word argument. One that names nothing in its set is a shape error, so a
  * misspelling stops the script rather than doing something else quietly. */
 static int scnArgWord(lua_State *L, int idx, const char *name,
                       const ScnLuaWordSet *set) {
     const char *word = scnArgStr(L, idx, name);
-    size_t      i;
+    lua_Integer value;
 
-    for (i = 0; i < set->count; i++) {
-        if (strcmp(set->rows[i].word, word) == 0) {
-            return set->rows[i].value;
-        }
+    if (scnWordValue(set, word, &value)) {
+        return (int)value;
     }
     return luaL_argerror(L, idx,
                          lua_pushfstring(L, "%s is '%s', which is not %s",
@@ -1802,11 +1890,10 @@ static int scnAdded(lua_State *L, ScenarioOp *op, const char *fmt, ...) {
  * without one takes. Read off the round's own table, so a scenario that
  * changed the rule adds pills at the rate it is playing with. */
 static BYTE scnRoundPillSpeed(lua_State *L) {
-    int    rule = scenarioLuaRuleIndex("pill_attack_ticks");
-    double v    = 0.0;
+    double v = 0.0;
 
-    if (rule >= 0 &&
-        serverSimGetScenarioRule(scnCtx(L)->sim, (uint16_t)rule, &v) &&
+    if (serverSimGetScenarioRule(scnCtx(L)->sim,
+                                 (uint16_t)SCN_RULE_pill_attack_ticks, &v) &&
         v >= 0.0 && v <= 255.0) {
         return (BYTE)v;
     }
@@ -2155,11 +2242,80 @@ static void scnTableBadKey(lua_State *L, char *out, size_t outCap) {
     lua_pop(L, 1);
 }
 
+/* One value of a flat table as the text that is stored for it. A name is
+ * itself and a number renders; a boolean has no text of its own, so it is
+ * written out as the word Lua's own tostring would give it. allowBool says
+ * whether the caller takes one at all — the init table does not, because its
+ * values follow the -bot-init text form where a bare flag is "1", and two
+ * spellings of yes in one table would be worse than turning the second down.
+ *
+ * Reading a number here rewrites it in place, which is safe: the walk is
+ * already past the value. */
+static const char *scnTableValueText(lua_State *L, int idx, bool allowBool) {
+    if (allowBool && lua_type(L, idx) == LUA_TBOOLEAN) {
+        return lua_toboolean(L, idx) ? "true" : "false";
+    }
+    return lua_tostring(L, idx);
+}
+
+static bool scnTableValueTakeable(lua_State *L, int idx, bool allowBool) {
+    int t = lua_type(L, idx);
+    return t == LUA_TSTRING || t == LUA_TNUMBER ||
+           (allowBool && t == LUA_TBOOLEAN);
+}
+
+/* Walk a table already on the stack at tblIdx into out. The two readers below
+ * differ only in how they get to the table and in what they take for a value,
+ * so the walk itself is written once. */
+static ScnTableRead scnTableWalk(lua_State *L, int tblIdx, ScnTable *out,
+                                 char *badKey, size_t badCap,
+                                 char *why, size_t whyCap, bool allowBool) {
+    ScnTableRead r = SCN_TABLE_READ_OK;
+    const char  *takes = allowBool ? "a string, a number or true/false"
+                                   : "a string or a number";
+
+    lua_pushnil(L);
+    while (r == SCN_TABLE_READ_OK && lua_next(L, tblIdx) != 0) {
+        /* The key is tested rather than read as a string: lua_tostring on a
+           number key would rewrite it in place and break the walk. The value
+           is safe to convert, since the walk is past it. */
+        if (lua_type(L, -2) != LUA_TSTRING) {
+            scnTableBadKey(L, badKey, badCap);
+            if (why != NULL && whyCap > 0) {
+                snprintf(why, whyCap, " has a key that is not a name");
+            }
+            r = SCN_TABLE_READ_BAD_KEY;
+        } else if (!scnTableValueTakeable(L, -1, allowBool)) {
+            if (badKey != NULL && badCap > 0) {
+                snprintf(badKey, badCap, "%s", lua_tostring(L, -2));
+            }
+            if (why != NULL && whyCap > 0) {
+                snprintf(why, whyCap, ".%s must be %s, got %s",
+                         lua_tostring(L, -2), takes, luaL_typename(L, -1));
+            }
+            r = SCN_TABLE_READ_BAD_VALUE;
+        } else if (!scnTableSet(out, lua_tostring(L, -2),
+                                scnTableValueText(L, -1, allowBool))) {
+            if (badKey != NULL && badCap > 0) {
+                snprintf(badKey, badCap, "%s", lua_tostring(L, -2));
+            }
+            if (why != NULL && whyCap > 0) {
+                snprintf(why, whyCap, ".%s does not fit", lua_tostring(L, -2));
+            }
+            r = SCN_TABLE_READ_NO_ROOM;
+        }
+        lua_pop(L, 1);   /* the value; the key stays for the next step */
+    }
+    if (r != SCN_TABLE_READ_OK) {
+        lua_pop(L, 1);   /* the key the walk stopped on */
+    }
+    return r;
+}
+
 ScnTableRead scenarioLuaReadTable(lua_State *L, int idx, const char *key,
                                   ScnTable *out, char *badKey, size_t badCap,
                                   char *why, size_t whyCap) {
-    ScnTableRead r = SCN_TABLE_READ_OK;
-    int          t;
+    ScnTableRead r;
 
     scnTableClear(out);
     if (badKey != NULL && badCap > 0) badKey[0] = '\0';
@@ -2178,47 +2334,22 @@ ScnTableRead scenarioLuaReadTable(lua_State *L, int idx, const char *key,
         lua_pop(L, 1);
         return SCN_TABLE_READ_NOT_TABLE;
     }
-    t = lua_gettop(L);
 
-    lua_pushnil(L);
-    while (r == SCN_TABLE_READ_OK && lua_next(L, t) != 0) {
-        /* The key is tested rather than read as a string: lua_tostring on a
-           number key would rewrite it in place and break the walk. The value
-           is safe to convert, since the walk is past it. */
-        if (lua_type(L, -2) != LUA_TSTRING) {
-            scnTableBadKey(L, badKey, badCap);
-            if (why != NULL && whyCap > 0) {
-                snprintf(why, whyCap, " has a key that is not a name");
-            }
-            r = SCN_TABLE_READ_BAD_KEY;
-        } else if (lua_type(L, -1) != LUA_TSTRING &&
-                   lua_type(L, -1) != LUA_TNUMBER) {
-            if (badKey != NULL && badCap > 0) {
-                snprintf(badKey, badCap, "%s", lua_tostring(L, -2));
-            }
-            if (why != NULL && whyCap > 0) {
-                snprintf(why, whyCap,
-                         ".%s must be a string or a number, got %s",
-                         lua_tostring(L, -2), luaL_typename(L, -1));
-            }
-            r = SCN_TABLE_READ_BAD_VALUE;
-        } else if (!scnTableSet(out, lua_tostring(L, -2),
-                                lua_tostring(L, -1))) {
-            if (badKey != NULL && badCap > 0) {
-                snprintf(badKey, badCap, "%s", lua_tostring(L, -2));
-            }
-            if (why != NULL && whyCap > 0) {
-                snprintf(why, whyCap, ".%s does not fit", lua_tostring(L, -2));
-            }
-            r = SCN_TABLE_READ_NO_ROOM;
-        }
-        lua_pop(L, 1);   /* the value; the key stays for the next step */
-    }
-    if (r != SCN_TABLE_READ_OK) {
-        lua_pop(L, 1);   /* the key the walk stopped on */
-    }
+    r = scnTableWalk(L, lua_gettop(L), out, badKey, badCap, why, whyCap,
+                     false);
     lua_pop(L, 1);       /* the table */
     return r;
+}
+
+/* The hint table, which is the argument itself rather than a field of one,
+ * and which takes true and false beside strings and numbers. */
+static ScnTableRead scnLuaReadArgTable(lua_State *L, int idx, ScnTable *out,
+                                       char *badKey, size_t badCap,
+                                       char *why, size_t whyCap) {
+    scnTableClear(out);
+    if (badKey != NULL && badCap > 0) badKey[0] = '\0';
+    if (why != NULL && whyCap > 0) why[0] = '\0';
+    return scnTableWalk(L, idx, out, badKey, badCap, why, whyCap, true);
 }
 
 /* The same read as a Lua argument. What did not fit is answered false, with
@@ -2246,6 +2377,43 @@ static int scnTableTooBig(lua_State *L, const char *field, const char *key) {
                       (int)SCN_TABLE_VALUE_LEN - 1);
 }
 
+/* The brain a roster row names, turned into the path the bot loader opens.
+ *
+ * A scenario names a brain — the directory under the server's own brains/ —
+ * rather than pathing to one, because a scenario shared with a server does not
+ * know that server's layout. Both rows that carry a brain come here, so a
+ * script writes a name wherever it writes a brain.
+ *
+ * A value with a path separator in it is refused, and told what to write
+ * instead, so an author who wrote the old form learns it here rather than from
+ * a seat that fields nothing. A name this server does not have is refused too:
+ * left as the script wrote it, it reaches the sim as a path relative to
+ * wherever the server was started, so spawn_bot{brain="init.lua"} would open
+ * whatever file that name happens to hit. An empty brain is the seat's own, or
+ * failing that the server's, and is left alone.
+ *
+ * Answers 0 for a row that should carry on, and otherwise the number of values
+ * the refusal pushed, which is the row's own answer to the script. */
+static int scnResolveOpBrain(lua_State *L, char *brain, size_t brainLen) {
+    char path[SCN_PATH_MAX];
+
+    if (brain[0] == '\0') {
+        return 0;
+    }
+    if (strpbrk(brain, "/\\") != NULL) {
+        return scnRefused(L, SCN_OP_NOT_FOUND,
+                          "brain '%s' is a path; a scenario names a brain, "
+                          "which is the directory under the server's brains/ "
+                          "— 'GoalHunter_1.7', not a path to it", brain);
+    }
+    if (!brainListResolve(brain, path, sizeof(path))) {
+        return scnRefused(L, SCN_OP_NOT_FOUND,
+                          "brain '%s' names no brain this server has", brain);
+    }
+    snprintf(brain, brainLen, "%s", path);
+    return 0;
+}
+
 static int scnLuaSpawnBot(lua_State *L) {
     ScenarioOp  op;
     ScnOpOut    out;
@@ -2256,6 +2424,7 @@ static int scnLuaSpawnBot(lua_State *L) {
     lua_Number  n;
     lua_Integer team, slot;
     int         loadout;
+    int         refused;
 
     if (scnCheckingOnly(L)) {
         return scnCheckOnlyRefusal(L);
@@ -2275,6 +2444,11 @@ static int scnLuaSpawnBot(lua_State *L) {
         return scnRefused(L, SCN_OP_TOO_BIG, "brain is %d bytes, limit %d",
                           (int)len,
                           (int)sizeof(op.u.rosterSpawnBot.brain) - 1);
+    }
+    refused = scnResolveOpBrain(L, op.u.rosterSpawnBot.brain,
+                                sizeof(op.u.rosterSpawnBot.brain));
+    if (refused != 0) {
+        return refused;
     }
     team = scnFieldInt(L, 1, "team", 0);
     if (!scnFitsByte(team)) {
@@ -2364,6 +2538,7 @@ static int scnLuaLobbyAddBot(lua_State *L) {
     ScnOpResult r;
     size_t      len = 0;
     lua_Integer team, slot;
+    int         refused;
 
     if (scnCheckingOnly(L)) {
         return scnCheckOnlyRefusal(L);
@@ -2381,6 +2556,11 @@ static int scnLuaLobbyAddBot(lua_State *L) {
                       sizeof(op.u.lobbyAddBot.brain), &len)) {
         return scnRefused(L, SCN_OP_TOO_BIG, "brain is %d bytes, limit %d",
                           (int)len, (int)sizeof(op.u.lobbyAddBot.brain) - 1);
+    }
+    refused = scnResolveOpBrain(L, op.u.lobbyAddBot.brain,
+                                sizeof(op.u.lobbyAddBot.brain));
+    if (refused != 0) {
+        return refused;
     }
     team = scnFieldInt(L, 1, "team", 0);
     if (!scnFitsByte(team)) {
@@ -2437,6 +2617,54 @@ static int scnLuaLobbySetTeam(lua_State *L) {
     op.u.lobbySetTeam.slot = (BYTE)p;
     op.u.lobbySetTeam.team = (BYTE)t;
     return scnDone(L, &op, "player %d to team %d", (int)p, (int)t);
+}
+
+/* ── Bots ─────────────────────────────────────────────────────────── */
+
+/* An order for one bot's brain: a flat table with a verb in it, and whatever
+ * else the brain it was written for reads. Nothing here knows what any of it
+ * means — the engine marshals the table and the brain is the only thing that
+ * reads it — so every pair but `verb` is carried through untouched.
+ *
+ * A missing verb RAISES rather than being refused or passed on. Every other
+ * shape mistake in this file raises, because the shape of an argument is the
+ * author's business and knowable without the round; and a hint with no verb
+ * is the one mistake that would otherwise be invisible, since a brain quietly
+ * ignores a table it cannot read. A refusal would be wrong for the same
+ * reason: there is no state of the round that makes a verb appear. */
+static int scnLuaHint(lua_State *L) {
+    ScenarioOp   op;
+    ScnTableRead tr;
+    char         badKey[SCN_TABLE_KEY_LEN + 1];
+    char         why[SCN_TABLE_WHY_LEN];
+    const char  *verb;
+    lua_Integer  p = scnArgInt(L, 1, "p");
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    scnArgTable(L, 2, "t");
+    memset(&op, 0, sizeof(op));
+    op.type              = SCN_OP_BOT_HINT;
+    op.u.botHint.slot    = (BYTE)p;
+
+    tr = scnLuaReadArgTable(L, 2, &op.u.botHint.hint, badKey, sizeof(badKey),
+                            why, sizeof(why));
+    if (tr == SCN_TABLE_READ_NO_ROOM) {
+        return scnTableTooBig(L, "hint", badKey);
+    }
+    if (tr != SCN_TABLE_READ_OK) {
+        return luaL_argerror(L, 2, lua_pushfstring(L, "t%s", why));
+    }
+
+    verb = scnTableGet(&op.u.botHint.hint, "verb");
+    if (verb == NULL || verb[0] == '\0') {
+        return luaL_argerror(L, 2,
+                             "t.verb is the word that says what the order "
+                             "is, and a hint has to carry one");
+    }
+    return scnDone(L, &op, "player %d, verb '%s'", (int)p, verb);
 }
 
 /* ── Comms ────────────────────────────────────────────────────────── */
@@ -2578,6 +2806,708 @@ static int scnLuaLog(lua_State *L) {
     return scnDone(L, &op, "%d bytes", (int)len);
 }
 
+/* ── Presentation ─────────────────────────────────────────────────── */
+
+/* The player bit in a presentation op's target byte. The layout is written
+ * down beside the payloads in scenario_defs.h — 0 for everyone,
+ * 1..MAX_TANKS-1 for a team, and this bit over a 0-based slot for one seat —
+ * and the arm unpacks with the same bit. */
+#define SCN_LUA_TARGET_PLAYER 0x80
+
+/* The colour a marker takes when a script names none. It has to be
+ * something: index 0 is the palette's "draw nothing", so a marker left at
+ * whatever the memset put there would not appear at all. */
+#define SCN_LUA_MARKER_COLOUR ((lua_Integer)SCN_PANEL_COLOUR_YELLOW)
+
+/* Who a presentation op is addressed to, as the one byte its payload
+ * carries. The three forms are the ones every other row takes, read by the
+ * same helper, so "to a team" is written one way across the surface.
+ *
+ * False for a target that will not pack: a seat or a team outside the
+ * roster, and team 0, which is the team a seat sits on before it is given
+ * one rather than a destination — the arm reads a 0 as everyone, so a script
+ * asking for team 0 is refused here rather than told the whole game. asked
+ * is the number the script wrote, for the sentence the row answers with. */
+static bool scnPresentationTarget(lua_State *L, int idx, BYTE *out,
+                                  lua_Integer *asked) {
+    ScnLuaTargetKind kind = scnArgTarget(L, idx, asked);
+
+    switch (kind) {
+        case SCN_LUA_TO_PLAYER:
+            if (*asked < 0 || *asked >= MAX_TANKS) {
+                return false;
+            }
+            *out = (BYTE)(SCN_LUA_TARGET_PLAYER | (BYTE)*asked);
+            return true;
+        case SCN_LUA_TO_TEAM:
+            if (*asked <= 0 || *asked >= MAX_TANKS) {
+                return false;
+            }
+            *out = (BYTE)*asked;
+            return true;
+        case SCN_LUA_TO_ALL:
+        default:
+            *out = 0;
+            return true;
+    }
+}
+
+/* A colour argument: the palette's word, the number itself, or nothing at
+ * all, which takes the row's own default. A name the palette does not hold
+ * raises, the way every other word argument does; a number outside it is a
+ * value the parser would turn down, so it comes back false and the row
+ * refuses it. */
+static bool scnArgColour(lua_State *L, int idx, lua_Integer def,
+                         lua_Integer *out) {
+    if (lua_isnoneornil(L, idx)) {
+        *out = def;
+        return true;
+    }
+    if (lua_type(L, idx) == LUA_TSTRING) {
+        *out = scnArgWord(L, idx, "colour", &kScnColours);
+        return true;
+    }
+    *out = scnArgInt(L, idx, "colour");
+    return *out >= 0 && *out < (lua_Integer)SCN_PANEL_COLOURS;
+}
+
+/* ── The panel's display list ─────────────────────────────────────── */
+
+/* A list is an array of primitives and a primitive is an array whose first
+ * element is the opcode word, so an operand is read by position, in the
+ * order the panel's own byte layout gives — with a text primitive's string
+ * standing where the layout writes a length.
+ *
+ * A malformed entry raises, naming the entry and the operand: an author who
+ * wrote the wrong shape has a bug rather than a refusal waiting. A value the
+ * sim would turn down is answered as a refusal the script reads, the way
+ * every other row answers one.
+ *
+ * Every operand rule scnPanelParse holds a list to is answered here, entry
+ * by entry. That is what lets the row read scnPanelWrite's one 0 as "the
+ * bytes did not fit": nothing else it refuses an item for is left. */
+
+/* What kind of operand sits at one position, so the order is written once
+ * as data rather than seven times as code. */
+typedef enum {
+    SCN_ARG_END = 0,
+    SCN_ARG_BYTE,     /* a coordinate, a width, a height, a tile id */
+    SCN_ARG_COLOUR,
+    SCN_ARG_SIZE,
+    SCN_ARG_ALIGN,
+    SCN_ARG_MODE,
+    SCN_ARG_FILL,     /* true or false, or the 0 or 1 the byte carries */
+    SCN_ARG_SLOT,     /* the seat a name primitive names */
+    SCN_ARG_U16,      /* a bar's value and max */
+    SCN_ARG_TICK,     /* a timer's game tick */
+    SCN_ARG_TEXT      /* a text primitive's bytes */
+} ScnPanelArg;
+
+/* Room for one primitive's operands and the SCN_ARG_END that closes its row.
+ * Seven operands is the most any of them takes — the bar's and the timer's —
+ * so eight covers the widest row and its end. */
+#define SCN_PANEL_ARGS_MAX 8
+
+/* The operands of each primitive, in the order the list writes them. Indexed
+ * by opcode, so the row a primitive reads is the row its opcode names. */
+static const struct {
+    ScnPanelArg kind;
+    const char *name;
+} kScnPanelArgs[SCN_PANEL_OP_TIMER + 1][SCN_PANEL_ARGS_MAX] = {
+    /* 0 is not a primitive */
+    { { SCN_ARG_END, NULL } },
+    /* rect */
+    { { SCN_ARG_BYTE, "x" }, { SCN_ARG_BYTE, "y" }, { SCN_ARG_BYTE, "w" },
+      { SCN_ARG_BYTE, "h" }, { SCN_ARG_COLOUR, "colour" },
+      { SCN_ARG_FILL, "fill" }, { SCN_ARG_END, NULL } },
+    /* line */
+    { { SCN_ARG_BYTE, "x0" }, { SCN_ARG_BYTE, "y0" }, { SCN_ARG_BYTE, "x1" },
+      { SCN_ARG_BYTE, "y1" }, { SCN_ARG_COLOUR, "colour" },
+      { SCN_ARG_END, NULL } },
+    /* text */
+    { { SCN_ARG_BYTE, "x" }, { SCN_ARG_BYTE, "y" },
+      { SCN_ARG_COLOUR, "colour" }, { SCN_ARG_SIZE, "size" },
+      { SCN_ARG_ALIGN, "align" }, { SCN_ARG_TEXT, "text" },
+      { SCN_ARG_END, NULL } },
+    /* name */
+    { { SCN_ARG_BYTE, "x" }, { SCN_ARG_BYTE, "y" },
+      { SCN_ARG_COLOUR, "colour" }, { SCN_ARG_SIZE, "size" },
+      { SCN_ARG_ALIGN, "align" }, { SCN_ARG_SLOT, "p" },
+      { SCN_ARG_END, NULL } },
+    /* sprite */
+    { { SCN_ARG_BYTE, "x" }, { SCN_ARG_BYTE, "y" }, { SCN_ARG_BYTE, "tile" },
+      { SCN_ARG_END, NULL } },
+    /* bar */
+    { { SCN_ARG_BYTE, "x" }, { SCN_ARG_BYTE, "y" }, { SCN_ARG_BYTE, "w" },
+      { SCN_ARG_BYTE, "h" }, { SCN_ARG_COLOUR, "colour" },
+      { SCN_ARG_U16, "value" }, { SCN_ARG_U16, "max" }, { SCN_ARG_END, NULL } },
+    /* timer */
+    { { SCN_ARG_BYTE, "x" }, { SCN_ARG_BYTE, "y" },
+      { SCN_ARG_COLOUR, "colour" }, { SCN_ARG_SIZE, "size" },
+      { SCN_ARG_ALIGN, "align" }, { SCN_ARG_MODE, "mode" },
+      { SCN_ARG_TICK, "tick" }, { SCN_ARG_END, NULL } },
+};
+
+/* The word a primitive begins with, as the opcode byte it names. A word the
+ * set does not hold raises, the way every other word argument does. */
+static int scnPanelOpcode(lua_State *L, int entry, int n) {
+    const char *word;
+    lua_Integer op = 0;
+
+    lua_rawgeti(L, entry, 1);
+    if (lua_type(L, -1) != LUA_TSTRING) {
+        return luaL_error(L,
+                          "list entry %d begins with %s, and a primitive "
+                          "begins with the word that names it", n,
+                          luaL_typename(L, -1));
+    }
+    word = lua_tostring(L, -1);
+    if (!scnWordValue(&kScnPanelOps, word, &op)) {
+        return luaL_error(L, "list entry %d is '%s', which is not %s", n, word,
+                          kScnPanelOps.what);
+    }
+    lua_pop(L, 1);
+    return (int)op;
+}
+
+/* One operand, as the whole number it arrived as. A missing one and one that
+ * is not a number both raise, naming the entry and the operand. */
+static lua_Integer scnPanelOperand(lua_State *L, int entry, int n, int pos,
+                                   const char *name) {
+    lua_Integer v;
+
+    lua_rawgeti(L, entry, pos);
+    if (lua_type(L, -1) != LUA_TNUMBER) {
+        if (lua_isnoneornil(L, -1)) {
+            return (lua_Integer)luaL_error(L, "list entry %d has no %s", n,
+                                           name);
+        }
+        return (lua_Integer)luaL_error(
+            L, "list entry %d: %s is %s, not a number", n, name,
+            luaL_typename(L, -1));
+    }
+    v = scnWhole(lua_tonumber(L, -1));
+    lua_pop(L, 1);
+    return v;
+}
+
+/* What a primitive's own operand is refused with. */
+static int scnPanelRange(lua_State *L, int n, const char *name,
+                         lua_Integer got, lua_Integer lo, lua_Integer hi) {
+    return scnRefused(L, SCN_OP_RANGE,
+                      "list entry %d: %s is %d, and it runs %d to %d", n, name,
+                      (int)got, (int)lo, (int)hi);
+}
+
+/* An operand that fills one byte. */
+static bool scnPanelByte(lua_State *L, int entry, int n, int pos,
+                         const char *name, lua_Integer *out) {
+    *out = scnPanelOperand(L, entry, n, pos, name);
+    return scnFitsByte(*out);
+}
+
+/* An operand a script may write as a word or as the number itself. A word
+ * the set does not hold raises; a number the set does not reach is refused,
+ * because each of these sets names every value its field carries, counting
+ * from zero. */
+static bool scnPanelWord(lua_State *L, int entry, int n, int pos,
+                         const char *name, const ScnLuaWordSet *set,
+                         lua_Integer *out) {
+    lua_rawgeti(L, entry, pos);
+    if (lua_type(L, -1) == LUA_TSTRING) {
+        const char *word = lua_tostring(L, -1);
+
+        if (scnWordValue(set, word, out)) {
+            lua_pop(L, 1);
+            return true;
+        }
+        luaL_error(L, "list entry %d: %s is '%s', which is not %s", n, name,
+                   word, set->what);
+        return false;   /* luaL_error does not return */
+    }
+    lua_pop(L, 1);
+    *out = scnPanelOperand(L, entry, n, pos, name);
+    return *out >= 0 && *out < (lua_Integer)set->count;
+}
+
+/* A rect's fill. A script writes true or false for it and the byte carries 0
+ * or 1, so both are taken. */
+static bool scnPanelFill(lua_State *L, int entry, int n, int pos,
+                         lua_Integer *out) {
+    lua_rawgeti(L, entry, pos);
+    if (lua_isboolean(L, -1)) {
+        *out = lua_toboolean(L, -1) ? 1 : 0;
+        lua_pop(L, 1);
+        return true;
+    }
+    lua_pop(L, 1);
+    *out = scnPanelOperand(L, entry, n, pos, "fill");
+    return *out == 0 || *out == 1;
+}
+
+/* The bytes of a text primitive, into the item's own buffer. False for a
+ * string longer than one primitive carries, and for one holding a byte no
+ * panel draws — both are lists the parser turns down, so both are refusals
+ * rather than raises. bad is the 1-based position of the offending byte, and
+ * 0 when it was the length. */
+static bool scnPanelText(lua_State *L, int entry, int n, int pos,
+                         ScnPanelItem *item, size_t *len, int *bad) {
+    const char *s;
+    size_t      i;
+
+    *len = 0;
+    *bad = 0;
+    lua_rawgeti(L, entry, pos);
+    if (lua_type(L, -1) != LUA_TSTRING) {
+        if (lua_isnoneornil(L, -1)) {
+            luaL_error(L, "list entry %d has no text", n);
+        }
+        luaL_error(L, "list entry %d: text is %s, not a string", n,
+                   luaL_typename(L, -1));
+        return false;   /* luaL_error does not return */
+    }
+    s = lua_tolstring(L, -1, len);
+    if (*len > SCN_PANEL_TEXT_MAX) {
+        lua_pop(L, 1);
+        return false;
+    }
+    for (i = 0; i < *len; i++) {
+        unsigned char c = (unsigned char)s[i];
+        /* The parser's own rule: a control byte or DEL is refused so a script
+           cannot write a newline or an escape into anyone's draw. */
+        if (c < 0x20 || c == 0x7F) {
+            *bad = (int)i + 1;
+            lua_pop(L, 1);
+            return false;
+        }
+    }
+    memcpy(item->u.text.text, s, *len);
+    item->u.text.text[*len] = '\0';
+    item->u.text.len        = (uint8_t)*len;
+    lua_pop(L, 1);
+    return true;
+}
+
+/* One primitive off the list, into the item. Answers 0 when the item is
+ * filled, and the number of results it pushed when the sim would turn the
+ * primitive down — the row hands that straight back, so a refusal from
+ * inside a list reads like any other. A malformed entry raises and does not
+ * return.
+ *
+ * The entry table is dropped before a filled item is answered for, so a list
+ * of 128 primitives does not need a stack 128 deep. A refusal leaves it
+ * where it is: the three results it pushed sit above it and are what the row
+ * hands back. */
+static int scnPanelItem(lua_State *L, int listIdx, int n, ScnPanelItem *item) {
+    lua_Integer v[SCN_PANEL_ARGS_MAX];
+    size_t      len = 0;
+    int         bad = 0;
+    int         entry;
+    int         i;
+
+    lua_rawgeti(L, listIdx, n);
+    if (!lua_istable(L, -1)) {
+        return luaL_error(L, "list entry %d is %s, and a primitive is a table",
+                          n, luaL_typename(L, -1));
+    }
+    entry    = lua_gettop(L);
+    item->op = (uint8_t)scnPanelOpcode(L, entry, n);
+
+    memset(v, 0, sizeof(v));
+    for (i = 0; kScnPanelArgs[item->op][i].kind != SCN_ARG_END; i++) {
+        const char *name = kScnPanelArgs[item->op][i].name;
+        int         pos  = i + 2;   /* the name is at 1, so operands start at 2 */
+
+        switch (kScnPanelArgs[item->op][i].kind) {
+            case SCN_ARG_BYTE:
+                if (!scnPanelByte(L, entry, n, pos, name, &v[i])) {
+                    return scnPanelRange(L, n, name, v[i], 0, 255);
+                }
+                break;
+            case SCN_ARG_COLOUR:
+                if (!scnPanelWord(L, entry, n, pos, name, &kScnColours,
+                                  &v[i])) {
+                    return scnPanelRange(L, n, name, v[i], 0,
+                                         SCN_PANEL_COLOURS - 1);
+                }
+                break;
+            case SCN_ARG_SIZE:
+                if (!scnPanelWord(L, entry, n, pos, name, &kScnSizes, &v[i])) {
+                    return scnPanelRange(L, n, name, v[i], 0,
+                                         SCN_PANEL_SIZE_NORMAL);
+                }
+                break;
+            case SCN_ARG_ALIGN:
+                if (!scnPanelWord(L, entry, n, pos, name, &kScnAligns, &v[i])) {
+                    return scnPanelRange(L, n, name, v[i], 0,
+                                         SCN_PANEL_ALIGN_RIGHT);
+                }
+                break;
+            case SCN_ARG_MODE:
+                if (!scnPanelWord(L, entry, n, pos, name, &kScnTimerModes,
+                                  &v[i])) {
+                    return scnPanelRange(L, n, name, v[i], 0,
+                                         SCN_PANEL_TIMER_UP);
+                }
+                break;
+            case SCN_ARG_FILL:
+                if (!scnPanelFill(L, entry, n, pos, &v[i])) {
+                    return scnPanelRange(L, n, name, v[i], 0, 1);
+                }
+                break;
+            case SCN_ARG_SLOT:
+                v[i] = scnPanelOperand(L, entry, n, pos, name);
+                if (v[i] < 0 || v[i] >= MAX_TANKS) {
+                    return scnPanelRange(L, n, name, v[i], 0, MAX_TANKS - 1);
+                }
+                break;
+            case SCN_ARG_U16:
+                v[i] = scnPanelOperand(L, entry, n, pos, name);
+                if (v[i] < 0 || v[i] > 0xFFFF) {
+                    return scnPanelRange(L, n, name, v[i], 0, 0xFFFF);
+                }
+                break;
+            case SCN_ARG_TICK:
+                /* A tick is four bytes on the wire and an argument is read in
+                   the int window, so the window's own top is the ceiling. At
+                   a hundred ticks a second it is months of round. */
+                v[i] = scnPanelOperand(L, entry, n, pos, name);
+                if (v[i] < 0) {
+                    return scnPanelRange(L, n, name, v[i], 0, SCN_LUA_INT_MAX);
+                }
+                break;
+            case SCN_ARG_TEXT:
+            default:
+                if (!scnPanelText(L, entry, n, pos, item, &len, &bad)) {
+                    if (bad > 0) {
+                        return scnRefused(
+                            L, SCN_OP_RANGE,
+                            "list entry %d: byte %d of the text is one no "
+                            "panel draws", n, bad);
+                    }
+                    return scnRefused(L, SCN_OP_TOO_BIG,
+                                      "list entry %d: the text is %d bytes, "
+                                      "limit %d", n, (int)len,
+                                      SCN_PANEL_TEXT_MAX);
+                }
+                break;
+        }
+    }
+
+    switch (item->op) {
+        case SCN_PANEL_OP_RECT:
+            item->u.rect.x      = (uint8_t)v[0];
+            item->u.rect.y      = (uint8_t)v[1];
+            item->u.rect.w      = (uint8_t)v[2];
+            item->u.rect.h      = (uint8_t)v[3];
+            item->u.rect.colour = (uint8_t)v[4];
+            item->u.rect.fill   = (uint8_t)v[5];
+            break;
+        case SCN_PANEL_OP_LINE:
+            item->u.line.x0     = (uint8_t)v[0];
+            item->u.line.y0     = (uint8_t)v[1];
+            item->u.line.x1     = (uint8_t)v[2];
+            item->u.line.y1     = (uint8_t)v[3];
+            item->u.line.colour = (uint8_t)v[4];
+            break;
+        case SCN_PANEL_OP_TEXT:
+            /* The bytes and the length are the text reader's: it copied them
+               into the item while the string was still on the stack. */
+            item->u.text.x      = (uint8_t)v[0];
+            item->u.text.y      = (uint8_t)v[1];
+            item->u.text.colour = (uint8_t)v[2];
+            item->u.text.size   = (uint8_t)v[3];
+            item->u.text.align  = (uint8_t)v[4];
+            break;
+        case SCN_PANEL_OP_NAME:
+            item->u.name.x      = (uint8_t)v[0];
+            item->u.name.y      = (uint8_t)v[1];
+            item->u.name.colour = (uint8_t)v[2];
+            item->u.name.size   = (uint8_t)v[3];
+            item->u.name.align  = (uint8_t)v[4];
+            item->u.name.slot   = (uint8_t)v[5];
+            break;
+        case SCN_PANEL_OP_SPRITE:
+            item->u.sprite.x    = (uint8_t)v[0];
+            item->u.sprite.y    = (uint8_t)v[1];
+            item->u.sprite.tile = (uint8_t)v[2];
+            break;
+        case SCN_PANEL_OP_BAR:
+            item->u.bar.x      = (uint8_t)v[0];
+            item->u.bar.y      = (uint8_t)v[1];
+            item->u.bar.w      = (uint8_t)v[2];
+            item->u.bar.h      = (uint8_t)v[3];
+            item->u.bar.colour = (uint8_t)v[4];
+            item->u.bar.value  = (uint16_t)v[5];
+            item->u.bar.max    = (uint16_t)v[6];
+            break;
+        case SCN_PANEL_OP_TIMER:
+        default:
+            item->u.timer.x      = (uint8_t)v[0];
+            item->u.timer.y      = (uint8_t)v[1];
+            item->u.timer.colour = (uint8_t)v[2];
+            item->u.timer.size   = (uint8_t)v[3];
+            item->u.timer.align  = (uint8_t)v[4];
+            item->u.timer.mode   = (uint8_t)v[5];
+            item->u.timer.tick   = (uint32_t)v[6];
+            break;
+    }
+    lua_pop(L, 1);   /* the entry */
+    return 0;
+}
+
+static int scnLuaPanel(lua_State *L) {
+    ScenarioOp   op;
+    ScnPanelList list;
+    lua_Integer  id     = scnArgInt(L, 1, "id");
+    lua_Integer  asked  = 0;
+    BYTE         target = 0;
+    size_t       count;
+    size_t       n;
+
+    scnArgTable(L, 2, "list");
+    if (!scnFitsByte(id)) {
+        return scnRefused(L, SCN_OP_RANGE, "panel %d is not a panel", (int)id);
+    }
+    if (!scnPresentationTarget(L, 3, &target, &asked)) {
+        return scnRefused(L, SCN_OP_RANGE, "target is %d", (int)asked);
+    }
+    count = lua_rawlen(L, 2);
+    if (count > SCN_PANEL_ITEMS_MAX) {
+        return scnRefused(L, SCN_OP_TOO_BIG,
+                          "the list has %d primitives, limit %d", (int)count,
+                          SCN_PANEL_ITEMS_MAX);
+    }
+
+    memset(&op, 0, sizeof(op));
+    memset(&list, 0, sizeof(list));
+    list.count = (uint8_t)count;
+    for (n = 1; n <= count; n++) {
+        int refused = scnPanelItem(L, 2, (int)n, &list.items[n - 1]);
+        if (refused != 0) {
+            return refused;
+        }
+    }
+    op.type           = SCN_OP_PANEL;
+    op.u.panel.target = target;
+    op.u.panel.panel  = (BYTE)id;
+    /* An empty list is the clear, and it never reaches the writer: 0 is the
+       writer's answer both for a list it would not take and for one with
+       nothing in it, and the count is what tells those apart. Every other
+       reason it has to refuse an item has been answered above, item by item,
+       so what a 0 means here is that the bytes did not fit. */
+    if (count > 0) {
+        uint16_t len = scnPanelWrite(&list, op.u.panel.bytes, SCN_PANEL_MAX);
+        if (len == 0) {
+            return scnRefused(L, SCN_OP_TOO_BIG,
+                              "the list does not fit the %d bytes a panel "
+                              "carries", SCN_PANEL_MAX);
+        }
+        op.u.panel.len = len;
+    }
+    return scnDone(L, &op, "panel %d, %d primitives, %d bytes", (int)id,
+                   (int)count, (int)op.u.panel.len);
+}
+
+/* ── The other three ──────────────────────────────────────────────── */
+
+static int scnLuaScore(lua_State *L) {
+    ScenarioOp       op;
+    lua_Integer      to    = 0;
+    ScnLuaTargetKind kind  = scnArgTarget(L, 1, &to);
+    lua_Number       value = scnArgNumber(L, 2, "value");
+    const char      *label = "";
+    size_t           len   = 0;
+
+    /* A score is one seat's or one team's. There is no everyone's, so the
+       two forms scnArgTarget reads as "the whole game" are the call being
+       written wrong rather than a destination the sim would refuse. */
+    if (kind == SCN_LUA_TO_ALL) {
+        return luaL_argerror(L, 1,
+                             "target must be a player or { team = t }: a score "
+                             "is one seat's or one team's");
+    }
+    if (!lua_isnoneornil(L, 3)) {
+        label = scnArgText(L, 3, "label", &len);
+    }
+    /* Negated, so a NaN takes the branch rather than falling through it. */
+    if (!(value >= (lua_Number)SCN_LUA_INT_MIN &&
+          value <= (lua_Number)SCN_LUA_INT_MAX)) {
+        return scnRefused(L, SCN_OP_RANGE, "a score runs %d to %d",
+                          SCN_LUA_INT_MIN, SCN_LUA_INT_MAX);
+    }
+    memset(&op, 0, sizeof(op));
+    /* The arm refuses a label with no terminator inside its own field rather
+       than reading past the end of one, so the row holds the text against
+       the field less the byte the terminator wants. */
+    if (len >= sizeof(op.u.score.label)) {
+        return scnRefused(L, SCN_OP_TOO_BIG, "label is %d bytes, limit %d",
+                          (int)len, (int)sizeof(op.u.score.label) - 1);
+    }
+    if (kind == SCN_LUA_TO_PLAYER) {
+        if (!scnFitsByte(to)) {
+            return scnRefused(L, SCN_OP_NO_SUCH_PLAYER,
+                              "player %d is not a seat", (int)to);
+        }
+        op.u.score.kind = SCN_SCORE_KIND_PLAYER;
+    } else {
+        if (!scnFitsByte(to)) {
+            return scnRefused(L, SCN_OP_RANGE, "team %d is not a team",
+                              (int)to);
+        }
+        op.u.score.kind = SCN_SCORE_KIND_TEAM;
+    }
+    op.type            = SCN_OP_SCORE;
+    op.u.score.target  = (BYTE)to;
+    op.u.score.score   = (int32_t)scnWhole(value);
+    memcpy(op.u.score.label, label, len + 1);
+    return scnDone(L, &op, "%s %d, score %d",
+                   (kind == SCN_LUA_TO_TEAM) ? "team" : "player", (int)to,
+                   (int)op.u.score.score);
+}
+
+static int scnLuaAnnounce(lua_State *L) {
+    ScenarioOp  op;
+    size_t      len     = 0;
+    const char *text    = scnArgText(L, 1, "text", &len);
+    lua_Number  seconds = 0.0;
+    lua_Number  ticks;
+    lua_Integer asked  = 0;
+    BYTE        target = 0;
+
+    /* A line to be held up has to say how long for, and a missing argument
+       is the call written wrong rather than a refusal waiting. The clear is
+       the one call that may leave it out: an empty line is taken away rather
+       than put up, so there is nothing to time. */
+    if (len > 0 || !lua_isnoneornil(L, 2)) {
+        seconds = scnArgNumber(L, 2, "seconds");
+    }
+    if (len >= SCN_TEXT_MAX) {
+        return scnRefused(L, SCN_OP_TOO_BIG, "text is %d bytes, limit %d",
+                          (int)len, (int)SCN_TEXT_MAX - 1);
+    }
+    if (!scnPresentationTarget(L, 3, &target, &asked)) {
+        return scnRefused(L, SCN_OP_RANGE, "target is %d", (int)asked);
+    }
+    /* Negated, so a NaN is refused rather than converting to something. */
+    if (!(seconds >= 0)) {
+        return scnRefused(L, SCN_OP_RANGE,
+                          "seconds is negative and an announcement runs "
+                          "forwards");
+    }
+    /* Seconds are the script's unit and the payload's is the server's own
+       tick, which is the clock game.tick() answers on and the one the client
+       measures the announcement against. game.timer converts the same way,
+       so the two ways a script counts a stretch of round agree. */
+    ticks = seconds * (lua_Number)GAME_NUMTOTALTICKS_SEC;
+    if (ticks > (lua_Number)0xFFFF) {
+        return scnRefused(L, SCN_OP_RANGE,
+                          "an announcement holds for at most %d ticks, which "
+                          "is %d seconds", 0xFFFF,
+                          0xFFFF / GAME_NUMTOTALTICKS_SEC);
+    }
+    /* An empty line is the clear, and the arm does not read its ticks: there
+       is nothing to hold up. A line with something in it and no time to be up
+       in is a mistake rather than a clear, so the arm refuses it and the row
+       says so in the same terms. */
+    if (len > 0 && (uint16_t)ticks == 0) {
+        return scnRefused(L, SCN_OP_RANGE,
+                          "seconds is under the one tick a line has to stay "
+                          "up for");
+    }
+    memset(&op, 0, sizeof(op));
+    op.type              = SCN_OP_ANNOUNCE;
+    op.u.announce.target = target;
+    op.u.announce.ticks  = (uint16_t)ticks;
+    memcpy(op.u.announce.text, text, len + 1);
+    return scnDone(L, &op, "%d bytes for %d ticks", (int)len,
+                   (int)op.u.announce.ticks);
+}
+
+/* The three marker rows are one op with the kind changed, so they are one
+ * function: the id, the colour and the target are read the same way for all
+ * three, and what a kind does not use is left as the memset put it. The
+ * clear reads no square, no seat and no colour, which is what lets a script
+ * clear an id without remembering what it put there. */
+static int scnMarker(lua_State *L, BYTE kind) {
+    ScenarioOp  op;
+    lua_Integer id     = scnArgInt(L, 1, "id");
+    lua_Integer x      = 0;
+    lua_Integer y      = 0;
+    lua_Integer p      = 0;
+    lua_Integer colour = SCN_LUA_MARKER_COLOUR;
+    lua_Integer asked  = 0;
+    BYTE        target = 0;
+    int         colourIdx = 0;   /* 0 for the kind that takes none */
+    int         targetIdx = 2;
+
+    switch (kind) {
+        case SCN_MARKER_KIND_SQUARE:
+            x         = scnArgInt(L, 2, "x");
+            y         = scnArgInt(L, 3, "y");
+            colourIdx = 4;
+            targetIdx = 5;
+            break;
+        case SCN_MARKER_KIND_FOLLOW:
+            p         = scnArgInt(L, 2, "p");
+            colourIdx = 3;
+            targetIdx = 4;
+            break;
+        case SCN_MARKER_KIND_CLEAR:
+        default:
+            break;
+    }
+    if (!scnFitsByte(id)) {
+        return scnRefused(L, SCN_OP_RANGE, "marker %d is not a marker",
+                          (int)id);
+    }
+    if (colourIdx != 0 &&
+        !scnArgColour(L, colourIdx, SCN_LUA_MARKER_COLOUR, &colour)) {
+        return scnRefused(L, SCN_OP_RANGE,
+                          "colour is %d, and the palette runs 0 to %d",
+                          (int)colour, SCN_PANEL_COLOURS - 1);
+    }
+    if (!scnPresentationTarget(L, targetIdx, &target, &asked)) {
+        return scnRefused(L, SCN_OP_RANGE, "target is %d", (int)asked);
+    }
+    if (kind == SCN_MARKER_KIND_SQUARE && (!scnFitsByte(x) || !scnFitsByte(y))) {
+        return scnRefused(L, SCN_OP_BAD_SQUARE, "square (%d, %d) is off the map",
+                          (int)x, (int)y);
+    }
+    if (kind == SCN_MARKER_KIND_FOLLOW && !scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+
+    memset(&op, 0, sizeof(op));
+    op.type            = SCN_OP_MARKER;
+    op.u.marker.target = target;
+    op.u.marker.id     = (BYTE)id;
+    op.u.marker.kind   = kind;
+    if (kind != SCN_MARKER_KIND_CLEAR) {
+        op.u.marker.x      = (BYTE)x;
+        op.u.marker.y      = (BYTE)y;
+        op.u.marker.slot   = (BYTE)p;
+        op.u.marker.colour = (BYTE)colour;
+    }
+    return scnDone(L, &op, "marker %d, %s", (int)id,
+                   (kind == SCN_MARKER_KIND_SQUARE)   ? "on a square"
+                   : (kind == SCN_MARKER_KIND_FOLLOW) ? "on a seat"
+                                                      : "cleared");
+}
+
+static int scnLuaMarker(lua_State *L) {
+    return scnMarker(L, SCN_MARKER_KIND_SQUARE);
+}
+
+static int scnLuaMarkerFollow(lua_State *L) {
+    return scnMarker(L, SCN_MARKER_KIND_FOLLOW);
+}
+
+static int scnLuaClearMarker(lua_State *L) {
+    return scnMarker(L, SCN_MARKER_KIND_CLEAR);
+}
+
 /* ── Flow ─────────────────────────────────────────────────────────── */
 
 static int scnLuaEndRound(lua_State *L) {
@@ -2625,7 +3555,7 @@ static int scnLuaAddGameTime(lua_State *L) {
 static int scnLuaSetRule(lua_State *L) {
     ScenarioOp  op;
     const char *name = scnArgStr(L, 1, "name");
-    int         rule = scenarioLuaRuleIndex(name);
+    int         rule = simRulesRuleIndex(name);
 
     if (rule < 0) {
         return luaL_error(L, "no rule is named '%s'", name);
@@ -3158,6 +4088,11 @@ static const ScnLuaRow kScnLuaRows[] = {
       "refused." },
     { "lobby_set_team", scnLuaLobbySetTeam,
       "lobby_set_team(p, t) — move a lobby seat to another team." },
+    { "hint", scnLuaHint,
+      "hint(p, t) — hand bot p's brain an order: a flat table with a verb "
+      "and whatever else the brain reads. Values may be strings, numbers or "
+      "true/false and all reach the brain as text. A brain that takes no "
+      "hints ignores it." },
     { "message", scnLuaMessage,
       "message(text[, target]) — a line to everyone, to one seat with a "
       "number, or to a team with { team = t }." },
@@ -3172,6 +4107,27 @@ static const ScnLuaRow kScnLuaRows[] = {
     { "log", scnLuaLog,
       "log(text) — write a line to the server's console; no player sees "
       "it." },
+    { "panel", scnLuaPanel,
+      "panel(id, list[, target]) — draw a panel from a list of primitives, "
+      "each an array with its name first: { \"rect\", x, y, w, h, colour, "
+      "fill }, { \"text\", x, y, colour, size, align, s } and so on. An "
+      "empty list clears the panel, and one update per panel per audience "
+      "per tick is taken." },
+    { "score", scnLuaScore,
+      "score(target, value[, label]) — the scenario's own score for one "
+      "seat with a number, or for a team with { team = t }; label is the "
+      "short word shown beside it." },
+    { "announce", scnLuaAnnounce,
+      "announce(text, seconds[, target]) — a line across the centre of the "
+      "screen for that many seconds; empty text takes the line away." },
+    { "marker", scnLuaMarker,
+      "marker(id, x, y[, colour[, target]]) — put mark id on a map square; "
+      "a second marker on the same id replaces the first." },
+    { "marker_follow", scnLuaMarkerFollow,
+      "marker_follow(id, p[, colour[, target]]) — put mark id on seat p, "
+      "where it rides the tank rather than a square." },
+    { "clear_marker", scnLuaClearMarker,
+      "clear_marker(id[, target]) — take mark id off the map." },
     { "end_round", scnLuaEndRound,
       "end_round([text[, winner_team]]) — end the round now, with the line "
       "the lobby shows and the team that won it." },
@@ -3224,6 +4180,20 @@ static const ScnLuaTerrain kScnLuaTerrain[] = {
     { "mine_grass",    MINE_GRASS   },
 };
 
+/* The word tables the game table carries beside TERRAIN. The rows are the
+ * ones the argument readers match a word against, so a name a script may
+ * write is a name -validate's stub table and the document both hold. */
+static const ScnLuaWordTable kScnLuaWordTables[] = {
+    { "COLOUR",     kScnColourWords,
+      sizeof(kScnColourWords) / sizeof(kScnColourWords[0])       },
+    { "SIZE",       kScnSizeWords,
+      sizeof(kScnSizeWords) / sizeof(kScnSizeWords[0])           },
+    { "ALIGN",      kScnAlignWords,
+      sizeof(kScnAlignWords) / sizeof(kScnAlignWords[0])         },
+    { "TIMER_MODE", kScnTimerModeWords,
+      sizeof(kScnTimerModeWords) / sizeof(kScnTimerModeWords[0]) },
+};
+
 const ScnLuaRow *scenarioLuaRows(size_t *count) {
     if (count != NULL) {
         *count = sizeof(kScnLuaRows) / sizeof(kScnLuaRows[0]);
@@ -3243,6 +4213,13 @@ const ScnLuaTerrain *scenarioLuaTerrain(size_t *count) {
         *count = sizeof(kScnLuaTerrain) / sizeof(kScnLuaTerrain[0]);
     }
     return kScnLuaTerrain;
+}
+
+const ScnLuaWordTable *scenarioLuaWordTables(size_t *count) {
+    if (count != NULL) {
+        *count = sizeof(kScnLuaWordTables) / sizeof(kScnLuaWordTables[0]);
+    }
+    return kScnLuaWordTables;
 }
 
 void scenarioLuaInstall(lua_State *L, const ScnLuaCtx *ctx) {
@@ -3270,6 +4247,22 @@ void scenarioLuaInstall(lua_State *L, const ScnLuaCtx *ctx) {
         lua_setfield(L, -2, kScnLuaTerrain[i].name);
     }
     lua_setfield(L, -2, "TERRAIN");
+
+    /* The word tables, each under its own name. A script writes the word
+       itself wherever one of these is taken, so these are for a script that
+       computes a value and for the completion list rather than for the
+       common case. */
+    for (i = 0; i < sizeof(kScnLuaWordTables) / sizeof(kScnLuaWordTables[0]);
+         i++) {
+        size_t w;
+        lua_newtable(L);
+        for (w = 0; w < kScnLuaWordTables[i].count; w++) {
+            lua_pushinteger(L,
+                            (lua_Integer)kScnLuaWordTables[i].words[w].value);
+            lua_setfield(L, -2, kScnLuaWordTables[i].words[w].word);
+        }
+        lua_setfield(L, -2, kScnLuaWordTables[i].name);
+    }
 
     lua_setglobal(L, "game");
 }

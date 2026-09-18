@@ -1979,6 +1979,17 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=公開できるのは自分のスキンフォルダ
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=このスキンは一部のスプライトにのみ精細な絵を用意しているため、「ズームに合わせる」は「クラシック」と同じタイルになります。「高精細」はスキンに精細な絵がある部分でそれを使用します。
 STR_DLGSKIN_RECFILTER_LBL=推奨フィルター:
 STR_DLGSKIN_RECOMMENDED_TAG=（推奨）
+STR_DLGSKIN_FOGSTYLE=戦場の霧のスタイル
+STR_DLGSKIN_FOGSTYLE_TIP=見えていない地面がどのように描かれるかです。変わるのは自分の画面の見た目だけで、どれを選んでもサーバーが送るマップは同じです。
+STR_DLGSKIN_FOGSTYLE_GREY=グレー
+STR_DLGSKIN_FOGSTYLE_GREY_TIP=見えていない地面はグレーに近づき、見えている地面より明るく表示されます。
+STR_DLGSKIN_FOGSTYLE_DARK=暗め
+STR_DLGSKIN_FOGSTYLE_DARK_TIP=見えていない地面は黒に近づきます。道路はもともと黒いため、霧の中の道路は見えている道路と同じに見えます。
+STR_DLGSKIN_FOGSTYLE_DARKROADS=暗め（境界線付き）
+STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP=暗めに加えて、霧の境界線を薄く描き直します。この帯はどの地形でも霧側に置かれるため、黒くて暗めの処理だけでは示せない道路の上にも、境界線が見えます。これが標準の見た目です。
+STR_DLGSKIN_FOGSTYLE_NONE=なし
+STR_DLGSKIN_FOGSTYLE_NONE_TIP=マップに陰影がまったく付かないため、記憶している地面も見えている地面と同じに見えます。ほかのスタイルが示すものを隠すことはありません。どのタンクや砲弾を描くかはサーバーの判断であり、この設定には関係ありません。
+STR_DLGSKIN_FOGSTYLE_NONE_NOTE=注意：これは自分の画面の表示だけを変えるものであり、ゲーム設定の戦場の霧をオフにするわけではありません。戦場の霧が表示される場所では、タンクと砲弾は見えなくなります。
 
 # Map Overview and the full screen map
 STR_MENU_MAP_OVERVIEW=マップ全体表示
@@ -2128,3 +2139,28 @@ STR_PING_MOUSE_RIGHT=マウス右ボタン
 STR_PING_MOUSE_X1=マウス 4
 STR_PING_MOUSE_X2=マウス 5
 STR_DLGKEYSETUP_PING_ALT2=スマートピング 代替キー 2
+
+# ロビーのシナリオ選択
+STR_DLGGAMEINFO_SCRIPTED=スクリプト
+STR_DLGSETTINGS_HOSTING_SCRIPTS=ホスト時にマップスクリプトを実行
+STR_DLGLOBBY_SCENARIO_LBL=シナリオ:
+STR_DLGLOBBY_SCRIPTS_OFF=スクリプトオフ
+STR_DLGLOBBY_RELOAD_SCENARIO=スクリプト再読み込み
+STR_DLGLOBBY_REJECT_SCENARIO=その設定はマップのシナリオで固定されています
+STR_DLGLOBBY_REJECT_COOLDOWN=早すぎます。しばらくしてからもう一度お試しください。
+STR_DLGLOBBY_CHOOSE_SCENARIO=選択
+STR_DLGLOBBY_SCENARIO_TITLE=MODを選択
+STR_DLGLOBBY_SCENARIO_NONE=なし — MODなし。マップ独自のシナリオがあれば実行します。
+STR_DLGLOBBY_SCENARIO_WAITING=サーバーに問い合わせ中...
+STR_DLGLOBBY_SCENARIO_EMPTY=このサーバーにはMODがありません。
+STR_DLGLOBBY_SCENARIO_BOUND=特定のマップ専用のため、MODとしては使用できません。
+STR_DLGLOBBY_SCENARIO_MAXPLAYERS=最大 {number} 人
+STR_DLGLOBBY_SCENARIO_BOTS=Bot {number} 枠
+STR_DLGLOBBY_SCENARIO_ON_MAP=MOD: {string2}（{string1} マップ上）
+STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS=アップロードされたマップのスクリプトを実行
+STR_DLGSETTINGS_HOSTING_SCENARIODIR=シナリオフォルダー
+STR_DLGSETTINGS_MAPVIEW=マップ表示
+STR_DLGSETTINGS_SIMPLEZOOM=ズームアウト時に簡略表示を使用
+STR_DLGSETTINGS_SIMPLEZOOM_TIP=1xを超えてズームアウトすると、スプライトを縮小して不鮮明にする代わりに、各マスを単色で塗りつぶし、タンク・トーチカ・基地は簡単なマーカーで表示します。
+STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW=マップ全体表示のみ
+STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW_TIP=簡略表示は「マップ全体表示」ウィンドウのみに適用されます。フルスクリーンのマップはズームレベルに関わらず常にスプライトを描画します。

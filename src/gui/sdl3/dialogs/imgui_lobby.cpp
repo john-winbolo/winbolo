@@ -200,7 +200,18 @@ static void lobbyFrameInitState(ClientSim *cs) {
     s_lf.awaitingFrames          = 0;
     s_lf.lastMapChangeSeq        = clientSimGetLobbyMapChangeSeq(cs);
 
-    s_lf.focusReadyPending = uiShouldUseControllerMode();
+    /* Seed the keyboard focus onto Ready / Start. Not controller-only any
+     * more: with nothing seeded, ImGui's nav init picks the first item in the
+     * window, and that is the little back arrow at the top left — so Enter in
+     * the lobby asked to leave for the main menu rather than readying up.
+     * Enter is the keyboard equivalent of the primary action, and here that is
+     * Ready. Escape still leaves, which is the pair it belongs in.
+     *
+     * Applied once, on the first frame Ready is actually enabled — see the two
+     * sites that consume this. SetKeyboardFocusHere carries
+     * ImGuiNavMoveFlags_NoSetNavCursorVisible, so this seeds what Enter hits
+     * without lighting a focus ring the player did not ask for. */
+    s_lf.focusReadyPending = true;
     s_lf.prevCountdown     = clientSimGetCountdownSeconds(cs);
 }
 
@@ -224,6 +235,8 @@ extern "C" void imguiLobbyFrameReset(void) {
     mapPreviewPopupDestroy();
 
     lobbyChooserReset();
+    lobbyScenarioChooserReset();
+    lobbyScenarioRulesReset();
 
     lobbyChatReset();
 
@@ -816,7 +829,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 }
             }
             if (leaveClicked ||
-                (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !mapPreviewPopupIsOpen() && !lobbyChooser()->open && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
+                (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !mapPreviewPopupIsOpen() && !lobbyChooser()->open && !lobbyScenarioChooserIsOpen() && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
                   (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
 #ifdef __APPLE__
                   || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
@@ -955,7 +968,10 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             /* The recap tab exists only while a stored end-of-round
              * summary does (set at game over, cleared on countdown). */
             const bool haveLastRound = lobbyShowLastRound;
-            if (!lobbyChooser()->open) {
+            /* Also stood down while the scenario chooser is up. That dialog is
+               drawn from the Map tab's own body, so a cycle away from that tab
+               would leave it open with nothing drawing it and no way back. */
+            if (!lobbyChooser()->open && !lobbyScenarioChooserIsOpen()) {
                 const ClientLobbySlot *myTabSlot =
                     clientSimGetLobbySlot(cs, myPlayerNum);
                 bool onTeam = !spectator && myTabSlot && myTabSlot->teamNumber != 0;
@@ -1486,7 +1502,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 /* One-shot initial focus for controller players — only once
                  * Ready is enabled, so we don't try to focus a disabled item. */
                 if (focusReadyPending && canReady) {
-                    ImGui::SetKeyboardFocusHere();
+                    /* Unless the player has already put the caret somewhere —
+                     * the chat box, most likely, while a map was still coming
+                     * down. Their choice wins, and the seed is dropped rather
+                     * than held, so it cannot yank the caret out of a
+                     * half-typed line the moment they pause. */
+                    if (!ImGui::GetIO().WantTextInput) ImGui::SetKeyboardFocusHere();
                     focusReadyPending = false;
                 }
                 if (ImGui::Button(readyLabel, ImVec2(100 * s, 0))) {
@@ -1510,7 +1531,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 ImGui::SameLine(0, 20);
                 glyphInline(SI_ACTION_MENU_CANCEL);   /* B glyph left of Leave */
                 if (ImGui::Button(langGetText(STR_DLGLOBBY_LEAVE), ImVec2(100 * s, 0)) ||
-                    (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !mapPreviewPopupIsOpen() && !lobbyChooser()->open && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
+                    (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !mapPreviewPopupIsOpen() && !lobbyChooser()->open && !lobbyScenarioChooserIsOpen() && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
                       (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
 #ifdef __APPLE__
                       || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
@@ -2227,7 +2248,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 /* One-shot initial focus for controller players — only once
                  * Ready is enabled, so we don't try to focus a disabled item. */
                 if (focusReadyPending && canReady) {
-                    ImGui::SetKeyboardFocusHere();
+                    /* Unless the player has already put the caret somewhere —
+                     * the chat box, most likely, while a map was still coming
+                     * down. Their choice wins, and the seed is dropped rather
+                     * than held, so it cannot yank the caret out of a
+                     * half-typed line the moment they pause. */
+                    if (!ImGui::GetIO().WantTextInput) ImGui::SetKeyboardFocusHere();
                     focusReadyPending = false;
                 }
                 if (ImGui::Button(readyLabel, ImVec2(-1, 0))) {
@@ -2277,6 +2303,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
            asks for it happens inside the chat child, and BeginPopupModal
            only finds a popup opened at its own scope. --- */
         lobbyChatDocsRenderModal(cs);
+
+        /* --- The scenario's rules, opened from the scenario line. Here for
+           the same reason as the docs modal above: the Rules button is drawn
+           inside the Map tab, and BeginPopupModal only finds a popup opened
+           at its own scope. --- */
+        lobbyScenarioRulesRenderModal(cs);
 
         /* --- Leave confirmation popup --- */
         char leavePopupModalId[64];
@@ -2424,6 +2456,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
          * SDL_GetWindowSize) — screenW/screenH is cached at lobby
          * entry and doesn't track OS-window resizes. */
         lobbyChooseMapRenderWindow(cs, renderer, s, winW, winH);
+
+        /* The scenario chooser, drawn here for the same reason and from the
+         * same live winW/winH. Opened by the Choose button on the scenario
+         * line, which sits inside the Map tab — drawing the dialog from
+         * there would lose it the moment the player changed tab. */
+        lobbyScenarioChooserRenderWindow(cs, s, winW, winH);
 
 #if !BOLO_MOBILE
     /* The reel outlives any single body render. Once the summary is gone (the
@@ -2757,11 +2795,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 ev.window.windowID == SDL_GetWindowID(window)) {
                 lobbySaveWindowGeometry(window);
             }
-            if (ev.type == SDL_EVENT_QUIT) {
-                running = false;
-            }
-            if (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
-                ev.window.windowID == SDL_GetWindowID(window)) {
+            if (dialogHandleQuitEvent(window, &ev)) {
                 running = false;
             }
         }
