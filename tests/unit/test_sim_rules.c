@@ -478,9 +478,10 @@ int run_sim_rules_validate_ranges(void) {
     SR_RANGE_FLT(tank_autoslow_rate, 0.01, 16.0, 0.005);
     /* A tree cannot be worth more than a whole pill, and one load still has
        to finish a pill on nothing — which at the top of the range means a
-       tree worth far more than the classic four. */
+       tree worth far more than the classic four. The splash a dying tank
+       deals sits under the same ceiling, so it comes down with it. */
     SR_RANGE_INT_WITH(pill_max_armour, 1, 255,
-                      t.pill_repair_amount = 1,
+                      t.pill_repair_amount = 1; t.tank_explosion_damage = 1,
                       t.pill_repair_amount = 255);
     SR_RANGE_INT(pill_cooldown_ticks, 0, 255);
     /* A base that holds nothing keeps nothing back, hands nothing out, and
