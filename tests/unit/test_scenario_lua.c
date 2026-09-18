@@ -11,6 +11,13 @@
  * run_scenario_lua_every_row_answers   — a script calls every row in the
  *                                        registry once and none of them
  *                                        raises or is missing
+ * run_scenario_lua_op_arguments_match_the_doc
+ *                                      — every row says what arguments it
+ *                                        takes, and says the same as the
+ *                                        signature its doc string opens
+ *                                        with; the ops whose arguments have
+ *                                        a shape of their own answer so
+ *                                        (at the foot of the file)
  * run_scenario_lua_read_index_passes_through
  *                                      — the Lua index of a read is the
  *                                        accessor's index, for every pill
@@ -2545,5 +2552,222 @@ int run_scenario_lua_score_and_announce(void) {
 
     lua_close(L);
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 24. What every op takes ──────────────────────────────────────── */
+
+/* A row's doc string opens with the call's own signature and the argument
+ * array beside it says the same thing as data. This holds the two against
+ * each other, name for name and bracket for bracket: a row whose array
+ * drifts from its sentence is one a validator and a document would disagree
+ * about, and neither reader would know which of them was wrong.
+ *
+ * Room for any row's arguments and for the longest name on the surface.
+ * The widest the registry holds is add_base's six. */
+#define SL_OP_ARG_MAX  16
+#define SL_OP_NAME_MAX 32
+
+/* One argument as a doc string writes it: the name, and whether the doc put
+ * it inside square brackets. */
+typedef struct {
+    char name[SL_OP_NAME_MAX];
+    bool optional;
+} SlDocArg;
+
+/* The signature a doc string opens with, taken apart. False for a doc that
+ * opens with no signature at all, one whose brackets do not close, and one
+ * carrying more arguments or a longer name than there is room for here.
+ *
+ * A name ends at a space, a comma, a bracket or the closing parenthesis, so
+ * an argument is optional exactly when it starts inside a bracket. The depth
+ * is read where the name starts rather than where it ends, which is what
+ * makes the y of "y[, x]" required and the x optional. */
+static bool slDocSignature(const char *doc, char *name, size_t nameMax,
+                           SlDocArg *args, size_t argMax, size_t *count) {
+    const char *open = strchr(doc, '(');
+    const char *p;
+    size_t      nameLen;
+    size_t      depth    = 0;
+    size_t      tokenLen = 0;
+    size_t      tokenAt  = 0;
+    char        token[SL_OP_NAME_MAX];
+    bool        done     = false;
+
+    *count = 0;
+    if (open == NULL || open == doc) {
+        return false;
+    }
+    nameLen = (size_t)(open - doc);
+    if (nameLen >= nameMax) {
+        return false;
+    }
+    memcpy(name, doc, nameLen);
+    name[nameLen] = '\0';
+
+    for (p = open + 1; !done; p++) {
+        bool ended = true;
+
+        switch (*p) {
+            case '\0':
+                return false;   /* the signature never closes */
+            case ')':
+                done = true;
+                break;
+            case '[':
+                depth++;
+                break;
+            case ']':
+                if (depth == 0) {
+                    return false;
+                }
+                depth--;
+                break;
+            case ',':
+            case ' ':
+                break;
+            default:
+                ended = false;
+                if (tokenLen == 0) {
+                    tokenAt = depth;
+                }
+                if (tokenLen + 1 >= sizeof(token)) {
+                    return false;
+                }
+                token[tokenLen] = *p;
+                tokenLen++;
+                break;
+        }
+        if (ended && tokenLen > 0) {
+            token[tokenLen] = '\0';
+            if (*count >= argMax) {
+                return false;
+            }
+            snprintf(args[*count].name, sizeof(args[*count].name), "%s",
+                     token);
+            args[*count].optional = (tokenAt > 0);
+            (*count)++;
+            tokenLen = 0;
+        }
+    }
+    return depth == 0;
+}
+
+/* The ops a trigger's action list cannot write out, because one of their
+   arguments has a shape of its own: six take a table of named fields, panel
+   takes a list of primitives, and timer takes a function. An author reaches
+   these through a scenario's own Lua. */
+static const char *const kSlShapedOps[] = {
+    "panel", "spawn_bot", "lobby_add_bot", "hint", "set_stocks",
+    "add_stocks", "set_modifiers", "timer"
+};
+
+static const ScnLuaRow *slRowNamed(const char *name) {
+    const ScnLuaRow *rows;
+    size_t           count = 0;
+    size_t           i;
+
+    rows = scenarioLuaRows(&count);
+    for (i = 0; rows != NULL && i < count; i++) {
+        if (strcmp(rows[i].name, name) == 0) {
+            return &rows[i];
+        }
+    }
+    return NULL;
+}
+
+int run_scenario_lua_op_arguments_match_the_doc(void) {
+    const ScnLuaRow *rows;
+    size_t           count = 0;
+    size_t           i;
+    size_t           j;
+
+    rows = scenarioLuaRows(&count);
+    UT_ASSERT_MSG(rows != NULL && count > 0, "the registry is empty");
+
+    for (i = 0; i < count; i++) {
+        const ScnLuaRow *r = &rows[i];
+        SlDocArg         doc[SL_OP_ARG_MAX];
+        char             docName[SL_OP_NAME_MAX];
+        size_t           docCount = 0;
+        size_t           walked   = 0;
+
+        /* The names run to the terminator the array was built with, and the
+           count is how many there are. */
+        UT_ASSERT_MSG(r->params != NULL, "'%s' has no argument array",
+                      r->name);
+        while (walked <= r->paramCount && r->params[walked].name != NULL) {
+            UT_ASSERT_MSG(r->params[walked].name[0] != '\0',
+                          "'%s' names an empty argument at %d", r->name,
+                          (int)walked);
+            /* The terminator's type and nothing else: a real argument left
+               untyped would be read as the end of the array. */
+            UT_ASSERT_MSG(r->params[walked].type != SCN_PARAM_NONE,
+                          "'%s' gives its argument '%s' no type", r->name,
+                          r->params[walked].name);
+            walked++;
+        }
+        UT_ASSERT_MSG(walked == r->paramCount,
+                      "'%s' claims %d arguments and names %d", r->name,
+                      (int)r->paramCount, (int)walked);
+
+        /* An argument a call may leave out cannot come before one it has to
+           write: there would be no way to reach the second. */
+        for (j = 1; j < r->paramCount; j++) {
+            UT_ASSERT_MSG(!(r->params[j - 1].optional &&
+                            !r->params[j].optional),
+                          "'%s' takes the optional '%s' before the required "
+                          "'%s'", r->name, r->params[j - 1].name,
+                          r->params[j].name);
+        }
+
+        /* And the sentence says the same thing. */
+        UT_ASSERT_MSG(slDocSignature(r->doc, docName, sizeof(docName), doc,
+                                     SL_OP_ARG_MAX, &docCount),
+                      "'%s' opens with no signature this case can read: %s",
+                      r->name, r->doc);
+        UT_ASSERT_MSG(strcmp(docName, r->name) == 0,
+                      "the row '%s' carries the doc for '%s'", r->name,
+                      docName);
+        UT_ASSERT_MSG(docCount == r->paramCount,
+                      "'%s' takes %d arguments and its doc writes %d",
+                      r->name, (int)r->paramCount, (int)docCount);
+        for (j = 0; j < docCount; j++) {
+            UT_ASSERT_MSG(strcmp(doc[j].name, r->params[j].name) == 0,
+                          "'%s' argument %d is '%s' and its doc calls it "
+                          "'%s'", r->name, (int)j, r->params[j].name,
+                          doc[j].name);
+            UT_ASSERT_MSG(doc[j].optional == r->params[j].optional,
+                          "'%s' takes '%s' as %s and its doc writes it %s",
+                          r->name, r->params[j].name,
+                          r->params[j].optional ? "optional" : "required",
+                          doc[j].optional ? "in brackets"
+                                          : "outside brackets");
+        }
+    }
+
+    /* What a trigger may call is read off the types. The shaped ones answer
+       no. */
+    for (i = 0; i < sizeof(kSlShapedOps) / sizeof(kSlShapedOps[0]); i++) {
+        const ScnLuaRow *r = slRowNamed(kSlShapedOps[i]);
+
+        UT_ASSERT_MSG(r != NULL, "the registry has no row '%s'",
+                      kSlShapedOps[i]);
+        UT_ASSERT_MSG(!scenarioLuaOpIsScalar(r),
+                      "'%s' answers that every argument it takes is a flat "
+                      "scalar", kSlShapedOps[i]);
+    }
+
+    /* And an ordinary one answers yes, so the test above is not passing for
+       want of anything answering true. */
+    {
+        const ScnLuaRow *r = slRowNamed("give_pill");
+
+        UT_ASSERT_MSG(r != NULL, "the registry has no row 'give_pill'");
+        UT_ASSERT_MSG(scenarioLuaOpIsScalar(r),
+                      "give_pill takes a seat and a pillbox and does not "
+                      "answer as a call a trigger can write");
+    }
+
     return 0;
 }

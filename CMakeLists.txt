@@ -5733,6 +5733,7 @@ set(_unit_test_names
     scenario_validate_source_pushed_triggers
     scenario_validate_trigger_caps
     scenario_lua_every_row_answers
+    scenario_lua_op_arguments_match_the_doc
     scenario_lua_read_index_passes_through
     scenario_lua_op_index_subtracts_one
     scenario_lua_script_index_adds_one

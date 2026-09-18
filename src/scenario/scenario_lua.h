@@ -89,12 +89,64 @@ typedef struct {
     bool              checkOnly;
 } ScnLuaCtx;
 
-/* One script-visible function: what it is called, what runs it, and the one
- * line a document says about it. */
+/* What one parameter holds, beside the name the author writes it under. A
+ * name says what a parameter is called and nothing about what may be put in
+ * it, so the type is what lets a caller tell a seat from a pillbox number
+ * and work out which fields a value of that kind carries with it.
+ *
+ * Both catalogues below are typed from this one list: the ops a script
+ * calls, and the functions an author writes.
+ *
+ * SCN_PARAM_SLOT and SCN_PARAM_OWNER are both a player slot; the difference
+ * is that an owner may be NEUTRAL, so anything reading one has nobody to
+ * ask about as well as a seat.
+ *
+ * The last two are what an op takes and a hook never does: an argument with
+ * a shape of its own, rather than the one value a form could hold. */
+typedef enum {
+    SCN_PARAM_NONE,      /* the terminator of a row's array, and nothing
+                            else */
+    SCN_PARAM_SLOT,      /* a player slot, 0-based, always a real seat */
+    SCN_PARAM_OWNER,     /* a player slot or NEUTRAL: a seat, or nobody */
+    SCN_PARAM_TEAM,      /* a team number */
+    SCN_PARAM_PILL,      /* a pillbox index, 1-based as a script counts */
+    SCN_PARAM_BASE,      /* a base index, 1-based as a script counts */
+    SCN_PARAM_ITEM,      /* a pill, base or start index, which of the three
+                            decided by a kind argument beside it */
+    SCN_PARAM_SQUARE_X,  /* a map square's x */
+    SCN_PARAM_SQUARE_Y,  /* a map square's y */
+    SCN_PARAM_WORD,      /* one of a fixed set of strings the surface names */
+    SCN_PARAM_NUMBER,
+    SCN_PARAM_STRING,    /* free text */
+    SCN_PARAM_BOOL,
+    SCN_PARAM_TAG,       /* a scenario tag; a derived field's type */
+    SCN_PARAM_REGION,    /* a declared region's name */
+    SCN_PARAM_TABLE,     /* a Lua table of named fields, or a list */
+    SCN_PARAM_FUNCTION   /* a Lua function the host holds and calls later */
+} ScnLuaParamType;
+
+/* One argument an op takes: the name the document writes it under, what may
+ * be put in it, and whether a call may leave it out. An optional argument is
+ * one the doc string writes inside brackets. */
 typedef struct {
-    const char   *name;
-    lua_CFunction fn;
-    const char   *doc;
+    const char     *name;
+    ScnLuaParamType type;
+    bool            optional;
+} ScnLuaOpParam;
+
+/* One script-visible function: what it is called, what runs it, the one line
+ * a document says about it, and the arguments it takes.
+ *
+ * The doc opens with the call's own signature and params says the same thing
+ * as data, name for name and bracket for bracket, so a caller that has to
+ * count arguments or tell one kind from another reads the row rather than
+ * the sentence. */
+typedef struct {
+    const char          *name;
+    lua_CFunction        fn;
+    const char          *doc;
+    const ScnLuaOpParam *params;
+    size_t               paramCount;
 } ScnLuaRow;
 
 /* One script-visible number that is not a call. */
@@ -144,34 +196,6 @@ typedef enum {
     SCN_FN_POLICY          /* the host asks it a question and reads the
                               answer */
 } ScnLuaFnKind;
-
-/* What one parameter holds, beside the name the author writes it under. A
- * name says what a parameter is called and nothing about what may be put in
- * it, so the type is what lets a caller tell a seat from a pillbox number
- * and work out which fields a value of that kind carries with it.
- *
- * SCN_PARAM_SLOT and SCN_PARAM_OWNER are both a player slot; the difference
- * is that an owner may be NEUTRAL, so anything reading one has nobody to
- * ask about as well as a seat. */
-typedef enum {
-    SCN_PARAM_NONE,      /* the terminator of a row's array, and nothing
-                            else */
-    SCN_PARAM_SLOT,      /* a player slot, 0-based, always a real seat */
-    SCN_PARAM_OWNER,     /* a player slot or NEUTRAL: a seat, or nobody */
-    SCN_PARAM_TEAM,      /* a team number */
-    SCN_PARAM_PILL,      /* a pillbox index, 1-based as a script counts */
-    SCN_PARAM_BASE,      /* a base index, 1-based as a script counts */
-    SCN_PARAM_ITEM,      /* a pill, base or start index, which of the three
-                            decided by a kind argument beside it */
-    SCN_PARAM_SQUARE_X,  /* a map square's x */
-    SCN_PARAM_SQUARE_Y,  /* a map square's y */
-    SCN_PARAM_WORD,      /* one of a fixed set of strings the surface names */
-    SCN_PARAM_NUMBER,
-    SCN_PARAM_STRING,    /* free text */
-    SCN_PARAM_BOOL,
-    SCN_PARAM_TAG,       /* a scenario tag; a derived field's type */
-    SCN_PARAM_REGION     /* a declared region's name */
-} ScnLuaParamType;
 
 /* One parameter of one function: the name the author writes and what may be
  * put in it. */
@@ -364,6 +388,20 @@ void scenarioLuaInstall(lua_State *L, const ScnLuaCtx *ctx);
  *  test that wants to reach every row. *count is how many.
  *********************************************************/
 const ScnLuaRow *scenarioLuaRows(size_t *count);
+
+/*********************************************************
+ *NAME:          scenarioLuaOpIsScalar
+ *PURPOSE:
+ *  Whether every argument this op takes is a flat scalar,
+ *  so a trigger's action list can express a call to it. An
+ *  op taking a table or a function reaches an author
+ *  through a scenario's own Lua instead.
+ *
+ *  Read off the argument types, so an op that grows a table
+ *  argument drops out of the list without anything being
+ *  told about it.
+ *********************************************************/
+bool scenarioLuaOpIsScalar(const ScnLuaRow *row);
 
 /*********************************************************
  *NAME:          scenarioLuaConsts
