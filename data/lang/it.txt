@@ -1981,6 +1981,17 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Può essere pubblicata solo una skin nella propria 
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Questa skin ha grafica più dettagliata solo per alcuni sprite, quindi "Adatta allo zoom" genera le stesse tile di "Classico". "Dettaglio alto" usa la grafica più dettagliata dove la skin la possiede.
 STR_DLGSKIN_RECFILTER_LBL=Filtro consigliato:
 STR_DLGSKIN_RECOMMENDED_TAG=(consigliato)
+STR_DLGSKIN_FOGSTYLE=Stile nebbia di guerra
+STR_DLGSKIN_FOGSTYLE_TIP=Come viene disegnato il terreno che non riesci a vedere. Cambia solo l'immagine sul tuo schermo; il server invia comunque la stessa mappa, indipendentemente dallo stile scelto.
+STR_DLGSKIN_FOGSTYLE_GREY=Grigio
+STR_DLGSKIN_FOGSTYLE_GREY_TIP=Il terreno che non riesci a vedere viene schiarito verso il grigio, risultando quindi più chiaro del terreno visibile.
+STR_DLGSKIN_FOGSTYLE_DARK=Più scuro
+STR_DLGSKIN_FOGSTYLE_DARK_TIP=Il terreno che non riesci a vedere viene scurito verso il nero. Le strade sono già nere, quindi una strada nella nebbia appare identica a una strada visibile.
+STR_DLGSKIN_FOGSTYLE_DARKROADS=Più scuro con bordo di nebbia
+STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP=Più scuro, con la linea della nebbia ridisegnata debolmente sopra di essa. La fascia si trova sul lato nebbioso della linea, su ogni terreno, così la linea resta visibile anche su una strada, che è nera e che lo scurimento da solo non può segnare. Questo è l'aspetto standard.
+STR_DLGSKIN_FOGSTYLE_NONE=Nessuno
+STR_DLGSKIN_FOGSTYLE_NONE_TIP=La mappa non viene ombreggiata affatto, quindi il terreno ricordato appare identico al terreno visibile. Non nasconde nulla che gli altri stili mostrino: quali tank e proiettili vengono disegnati è una regola del server, non di questa impostazione.
+STR_DLGSKIN_FOGSTYLE_NONE_NOTE=Nota: questo cambia solo la tua visualizzazione locale, non disattiva l'impostazione della nebbia di guerra nella configurazione della partita. Tank e proiettili scompariranno dove si mostrerebbe la nebbia di guerra.
 
 # Panoramica della mappa e la mappa a schermo intero
 STR_MENU_MAP_OVERVIEW=Panoramica della mappa

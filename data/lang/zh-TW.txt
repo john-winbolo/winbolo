@@ -1977,6 +1977,17 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=只有位於您自己外觀資料夾中的外觀才
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=此外觀僅為部分精靈圖提供了更精細的美術素材，因此配合縮放產生的圖格與經典相同。高精細度會在外觀擁有精細素材之處使用它。
 STR_DLGSKIN_RECFILTER_LBL=建議的過濾方式：
 STR_DLGSKIN_RECOMMENDED_TAG=（建議）
+STR_DLGSKIN_FOGSTYLE=戰爭之霧樣式
+STR_DLGSKIN_FOGSTYLE_TIP=決定看不到的地面要如何顯示。只會改變您自己畫面上的顯示，不論選擇哪一種，伺服器傳送的地圖都相同。
+STR_DLGSKIN_FOGSTYLE_GREY=灰色
+STR_DLGSKIN_FOGSTYLE_GREY_TIP=看不到的地面會偏向灰色，因此顯示得比看得到的地面更亮。
+STR_DLGSKIN_FOGSTYLE_DARK=加深
+STR_DLGSKIN_FOGSTYLE_DARK_TIP=看不到的地面會偏向黑色。道路本來就是黑色的，因此霧中的道路，看起來會和看得到的道路一樣。
+STR_DLGSKIN_FOGSTYLE_DARKROADS=加深並顯示霧界線
+STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP=在加深的基礎上，沿著霧的邊界淡淡地描出一條線。這條線落在每種地形上霧的一側，因此即使是黑色、光靠加深顏色無法標示出來的道路，上面也能看到這條線。這是標準顯示方式。
+STR_DLGSKIN_FOGSTYLE_NONE=無
+STR_DLGSKIN_FOGSTYLE_NONE_TIP=地圖完全不加陰影，因此記得的地面會和看得到的地面顯示相同。其他樣式能顯示的內容，它都不會隱藏：坦克和砲彈是否顯示，是伺服器的規則，與這個設定無關。
+STR_DLGSKIN_FOGSTYLE_NONE_NOTE=注意：這只會改變您本機的顯示，並不會關閉遊戲設定中的戰爭之霧選項。在應該顯示戰爭之霧的地方，坦克和砲彈仍會消失。
 
 # Map Overview and the full screen map
 STR_MENU_MAP_OVERVIEW=地圖總覽
