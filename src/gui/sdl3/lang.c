@@ -2053,7 +2053,7 @@ static const LangEntry langTable[] = {
     {2341, "Darker, with the fog line drawn faintly back in along it. The band sits on the fogged side of the line, on every terrain, so the line still shows over a road, which is black and which the darkening alone cannot mark. This is the standard look."},
     {2342, "None"},
     {2343, "The map is not shaded at all, so remembered ground looks the same as ground in plain sight. It hides nothing the other styles show: which tanks and shots are drawn is the server's rule, not this setting's."},
-    {2344, "Note: This is only changing your local display, it is not turning off the fog of war setting in the game setup. Tanks will disappear where the fog of war would be shown."},
+    {2344, "Note: This is only changing your local display, it is not turning off the fog of war setting in the game setup. Tanks and shells will disappear where the fog of war would be shown."},
 
     /* Voice section of the Display/Sound settings tab */
     {2030, "Voice"},
