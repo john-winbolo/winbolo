@@ -21,7 +21,10 @@
  * run_scenario_validate_api_too_new      — an api above this server's
  * run_scenario_validate_lobby_shape      — the human cap, a team number used
  *                                          twice, bots above max_bots and a
- *                                          package brain naming nothing
+ *                                          brain this server has not got
+ * run_scenario_validate_team_init_reported
+ *                                        — a team's init pair that will not
+ *                                          fit, named under the team's key
  * run_scenario_validate_unknown_rule     — a key that names no rule
  * run_scenario_validate_rule_out_of_range— a value outside its row's bounds
  * run_scenario_validate_rule_pair        — two values that pass alone and
@@ -43,6 +46,24 @@
  *                                          Defense.map, against that map
  * run_scenario_validate_unknown_game     — a game type the engine has no word
  *                                          for, and one it does
+ * run_scenario_validate_source_syntax_error
+ *                                        — a buffer that does not parse, on
+ *                                          the line Lua named
+ * run_scenario_validate_source_bad_key   — a buffer whose table carries a key
+ *                                          naming no rule
+ * run_scenario_validate_source_matches_file
+ *                                        — the same bytes through the file
+ *                                          entry and the source entry report
+ *                                          the same issues
+ * run_scenario_validate_source_pushed_manifest
+ *                                        — a script that declares no table
+ *                                          checks clean against one pushed as
+ *                                          the scenario global, and is still
+ *                                          refused with nothing pushed
+ * run_scenario_validate_source_pushed_conflict
+ *                                        — a script that declares its own
+ *                                          table overwrites the pushed one, so
+ *                                          the two still disagree by key
  */
 
 #include <stdint.h>
@@ -58,6 +79,8 @@
 #include "everard_map.h"
 #include "scenario_host.h"
 #include "scenario_manifest.h"
+#include "scenario_manifest_json.h" /* scnManifestAgrees — the check the
+                                      * pushed table must not make vacuous */
 #include "scenario_validate.h"
 #include "test_harness.h"
 
@@ -243,13 +266,68 @@ int run_scenario_validate_lobby_shape(void) {
     UT_ASSERT_MSG(svFind(&r, "lobby.teams[2].id") != NULL,
                   "a team number used twice was accepted: %s", seen);
     UT_ASSERT_MSG(svFind(&r, "lobby.teams[2].brain") != NULL,
-                  "a package brain naming nothing was accepted: %s", seen);
+                  "a brain no server has was accepted: %s", seen);
     UT_ASSERT_MSG(svFind(&r, "lobby.teams[3].id") == NULL,
                   "team %d is one the engine seats and was refused: %s",
                   MAX_TANKS - 1, seen);
     UT_ASSERT_MSG(svFind(&r, "lobby.teams[4].id") != NULL,
                   "team %d is above what the engine seats and was accepted: "
                   "%s", MAX_TANKS, seen);
+
+    serverSimDestroy(sim);
+    svDrop(kMap);
+    return 0;
+}
+
+/* ── 3b. An init pair a team could not keep ───────────────────────── */
+
+/* The read of a team's `init` keeps the pairs it can and names the one it
+ * stopped on, and this is where an author hears about it. The team's key is
+ * 1-based over the teams the file lists, as every other team key here is, so
+ * the first team in the file is `lobby.teams[1]`. */
+int run_scenario_validate_team_init_reported(void) {
+    static const char *const kMap = "scnval_team_init.map";
+    char                    lua[512];
+    char                    longValue[SCN_TABLE_VALUE_LEN + 8];
+    ServerSim              *sim;
+    ScnValidateResult       r;
+    const ScnValidateIssue *issue;
+    char                    seen[1024];
+
+    /* A value six bytes longer than the longest one that fits. */
+    memset(longValue, 'x', SCN_TABLE_VALUE_LEN + 6);
+    longValue[SCN_TABLE_VALUE_LEN + 6] = '\0';
+    snprintf(lua, sizeof(lua),
+             "scenario = {\n"
+             "  api = 1,\n"
+             "  lobby = {\n"
+             "    teams = { { id = 1, bots = 1,\n"
+             "                init = { toolong = \"%s\" } } },\n"
+             "  },\n"
+             "}\n", longValue);
+
+    UT_ASSERT(svPut(kMap, lua));
+    sim = svSim();
+    UT_ASSERT(sim != NULL);
+
+    UT_ASSERT_MSG(!scenarioValidateMap(sim, kMap, &r),
+                  "a team whose init pair did not fit was passed");
+    svList(&r, seen, sizeof(seen));
+    issue = svFind(&r, "lobby.teams[1].init");
+    UT_ASSERT_MSG(issue != NULL,
+                  "no issue under the first team's init key: %s", seen);
+    UT_ASSERT_MSG(strstr(issue->message, "toolong") != NULL,
+                  "the message does not name the pair: %s", issue->message);
+
+    /* And the table is still read: the team keeps whatever fitted, which
+       here is nothing, rather than the block being dropped. */
+    UT_ASSERT_MSG(r.haveManifest, "a script that parsed left no manifest");
+    UT_ASSERT_MSG(r.manifest.lobby.numTeams == 1,
+                  "%u teams read past the bad pair, expected 1",
+                  (unsigned)r.manifest.lobby.numTeams);
+    UT_ASSERT_MSG(r.manifest.lobby.teams[0].bots == 1,
+                  "the team past the bad pair reads %u bots, expected 1",
+                  (unsigned)r.manifest.lobby.teams[0].bots);
 
     serverSimDestroy(sim);
     svDrop(kMap);
@@ -612,9 +690,9 @@ int run_scenario_validate_wave_defense(void) {
 /* ── 14. A game type the engine has no word for ───────────────────── */
 
 /* The attach reads scenario.game through the word set a spawn op's loadout
-   takes and drops anything that set does not hold, so a typo plays open with
-   nothing said. The check has to name the word and the three that work, and
-   has to stay quiet for a word that does work. */
+   takes and drops anything that set does not hold, so a typo plays strict
+   tournament with nothing said. The check has to name the word and the three
+   that work, and has to stay quiet for a word that does work. */
 int run_scenario_validate_unknown_game(void) {
     static const char *const kBad  = "scnval_game_bad.map";
     static const char *const kGood = "scnval_game_good.map";
@@ -652,5 +730,272 @@ int run_scenario_validate_unknown_game(void) {
     serverSimDestroy(sim);
     svDrop(kBad);
     svDrop(kGood);
+    return 0;
+}
+
+/* ── 15. A buffer that does not parse ─────────────────────────────── */
+
+/* The source entry takes bytes the caller is holding, so these three cases
+   write no fixture at all. The name is the stand-in an editor passes for a map
+   that has no file yet: it is what Lua puts ahead of the line, and the line is
+   read back out of the message it wrote. */
+int run_scenario_validate_source_syntax_error(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    /* The bad statement is on line 4 and nothing else is wrong with it. */
+    static const char *const kLua =
+        "-- 1\n"
+        "-- 2\n"
+        "-- 3\n"
+        "this is not lua\n";
+    ScnValidateResult r;
+
+    UT_ASSERT_MSG(
+        !scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL, &r),
+        "a buffer that does not parse was accepted");
+    UT_ASSERT_MSG(r.count == 1, "%u issues against one syntax error",
+                  (unsigned)r.count);
+    UT_ASSERT_MSG(!r.haveManifest,
+                  "a chunk that never ran left a manifest behind");
+    UT_ASSERT_MSG(r.issues[0].line > 0,
+                  "the error carries no line: %s", r.issues[0].message);
+    UT_ASSERT_MSG(r.issues[0].line == 4,
+                  "the error is on line %d, expected the 4 Lua named: %s",
+                  r.issues[0].line, r.issues[0].message);
+    return 0;
+}
+
+/* ── 16. A buffer whose table names no such rule ──────────────────── */
+
+/* The parse's own complaints reach the list whether or not a sim was handed
+   over, which is what an editor with a script and no map has to see. */
+int run_scenario_validate_source_bad_key(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  rules = { tank_death_tick = 400 },\n"
+        "}\n";
+    ScnValidateResult       r;
+    const ScnValidateIssue *issue;
+    char                    seen[1024];
+
+    UT_ASSERT_MSG(
+        !scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL, &r),
+        "a key naming no rule was accepted");
+    svList(&r, seen, sizeof(seen));
+    issue = svFind(&r, "rules.tank_death_tick");
+    UT_ASSERT_MSG(issue != NULL, "no issue under the key: %s", seen);
+    UT_ASSERT_MSG(strstr(issue->message, "tank_death_tick") != NULL,
+                  "the message does not name the key: %s", issue->message);
+    UT_ASSERT_MSG(issue->line == 3, "the key is on line %d, expected 3",
+                  issue->line);
+    UT_ASSERT_MSG(r.haveManifest,
+                  "a table that parsed left no manifest to read");
+    return 0;
+}
+
+/* ── 17. The two entries agree ────────────────────────────────────── */
+
+/* What keeps the split honest: the file entry reads the bytes and comes
+   through the same body, so the same script named the same way has to produce
+   the same list either way. The script is written to disk for the file entry
+   and handed over as text for the source entry, with the script's own path as
+   the name both times — a different name would move what Lua writes ahead of a
+   line and the comparison would be about the name rather than the checks. */
+int run_scenario_validate_source_matches_file(void) {
+    static const char *const kMap = "scnval_bothways.map";
+    char                     lua[512];
+    char                     script[512];
+    ServerSim               *sim;
+    ScnValidateResult        fromFile;
+    ScnValidateResult        fromText;
+    bool                     fileOk;
+    bool                     textOk;
+    uint16_t                 i;
+
+    /* Three problems with three different keys: one the api check finds, one
+       the parse reports, and one the region check finds. */
+    snprintf(lua, sizeof(lua),
+             "scenario = {\n"
+             "  name = \"Both Ways\",\n"
+             "  api = %d,\n"
+             "  rules = {\n"
+             "    tank_death_tick = 400,\n"
+             "  },\n"
+             "  regions = {\n"
+             "    keep = { x = 250, y = 0, w = 10, h = 4 },\n"
+             "  },\n"
+             "}\n",
+             SCENARIO_API_VERSION + 1);
+
+    UT_ASSERT(svPut(kMap, lua));
+    svScriptFor(kMap, script, sizeof(script));
+
+    sim = svSim();
+    if (sim == NULL) {
+        svDrop(kMap);
+        UT_FAIL("the sim would not build");
+    }
+
+/* Every exit past this point drops the fixture and the sim. The assertion
+   macros return straight out of the case, so the cleanup goes in the macro
+   rather than after it. */
+#define BW_FAIL(fmt, ...)                                                   \
+    do {                                                                    \
+        serverSimDestroy(sim);                                              \
+        svDrop(kMap);                                                       \
+        UT_FAIL(fmt, ##__VA_ARGS__);                                        \
+    } while (0)
+#define BW_ASSERT(cond, fmt, ...)                                           \
+    do {                                                                    \
+        if (!(cond)) {                                                      \
+            BW_FAIL("%s — " fmt, #cond, ##__VA_ARGS__);                     \
+        }                                                                   \
+    } while (0)
+
+    fileOk = scenarioValidateScript(sim, script, &fromFile);
+    textOk = scenarioValidateSource(sim, lua, strlen(lua), script, NULL,
+                                    &fromText);
+
+    BW_ASSERT(fileOk == textOk, "the file entry said %d and the source entry "
+                                "said %d about the same script",
+              (int)fileOk, (int)textOk);
+    BW_ASSERT(fromFile.count == fromText.count,
+              "the file entry found %u issues and the source entry %u",
+              (unsigned)fromFile.count, (unsigned)fromText.count);
+    BW_ASSERT(fromFile.dropped == fromText.dropped,
+              "the file entry dropped %u and the source entry %u",
+              (unsigned)fromFile.dropped, (unsigned)fromText.dropped);
+    BW_ASSERT(fromFile.haveManifest == fromText.haveManifest,
+              "the two entries disagree about whether a table was read");
+
+    /* The three the script asks for, so a pass that found nothing cannot be
+       mistaken for the two entries agreeing. */
+    BW_ASSERT(fromFile.count == 3, "%u issues against a script with three",
+              (unsigned)fromFile.count);
+
+    for (i = 0; i < fromFile.count; i++) {
+        BW_ASSERT(strcmp(fromFile.issues[i].key, fromText.issues[i].key) == 0,
+                  "issue %u is under '%s' from the file and '%s' from the "
+                  "source",
+                  (unsigned)i, fromFile.issues[i].key, fromText.issues[i].key);
+        BW_ASSERT(fromFile.issues[i].line == fromText.issues[i].line,
+                  "issue %u ('%s') is on line %d from the file and %d from "
+                  "the source",
+                  (unsigned)i, fromFile.issues[i].key, fromFile.issues[i].line,
+                  fromText.issues[i].line);
+        BW_ASSERT(strcmp(fromFile.issues[i].message,
+                         fromText.issues[i].message) == 0,
+                  "issue %u ('%s') reads '%s' from the file and '%s' from the "
+                  "source",
+                  (unsigned)i, fromFile.issues[i].key,
+                  fromFile.issues[i].message, fromText.issues[i].message);
+    }
+
+#undef BW_ASSERT
+#undef BW_FAIL
+
+    serverSimDestroy(sim);
+    svDrop(kMap);
+    return 0;
+}
+
+/* ── 18. A table handed over rather than declared ─────────────────── */
+
+/* The manifest a caller is already holding, on the state as the scenario
+   global before the chunk runs. That is what the host does for a script that
+   came out of a package, and until the source entry could do it the editor
+   refused to pack a package the server would have loaded. */
+static void svPushed(ScenarioManifest *m, const char *name) {
+    memset(m, 0, sizeof(*m));
+    snprintf(m->name, sizeof(m->name), "%s", name);
+    m->api   = SCENARIO_API_VERSION;
+    m->bound = true;
+}
+
+int run_scenario_validate_source_pushed_manifest(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    /* A script that says nothing about itself. Every table it needs is the
+       one the caller pushed. */
+    static const char *const kLua =
+        "local wave = 0\n"
+        "function on_round_start() wave = wave + 1 end\n";
+    ScenarioManifest  pushed;
+    ScnValidateResult withTable;
+    ScnValidateResult without;
+    char              seen[1024];
+
+    svPushed(&pushed, "Handed Over");
+
+    if (!scenarioValidateSource(NULL, kLua, strlen(kLua), kName, &pushed,
+                                &withTable)) {
+        svList(&withTable, seen, sizeof(seen));
+        UT_FAIL("a script checked against a pushed manifest was refused: %s",
+                seen);
+    }
+    UT_ASSERT_MSG(withTable.haveManifest,
+                  "the pushed table was not read back as the manifest");
+    UT_ASSERT_MSG(strcmp(withTable.manifest.name, "Handed Over") == 0,
+                  "the manifest read back is called '%s'",
+                  withTable.manifest.name);
+
+    /* The same bytes with nothing pushed are what they were before: a file
+       that ran and is not a scenario. */
+    UT_ASSERT_MSG(
+        !scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL,
+                                &without),
+        "a script declaring no table was accepted with nothing pushed");
+    UT_ASSERT_MSG(without.count == 1, "%u issues against one missing table",
+                  (unsigned)without.count);
+    UT_ASSERT_MSG(strstr(without.issues[0].message,
+                         "declares no scenario table") != NULL,
+                  "the issue does not say the table is missing: %s",
+                  without.issues[0].message);
+    UT_ASSERT_MSG(!without.haveManifest,
+                  "a script with no table left a manifest behind");
+    return 0;
+}
+
+/* ── 19. A pushed table a script overwrites ───────────────────────── */
+
+/* What keeps the pushed manifest from making the agreement check vacuous: a
+   script that declares its own table assigns over the global, so the table
+   read back is the script's and the two are still two different things. If
+   this ever stopped being true, a package could be written whose manifest and
+   whose script said different things and nothing would notice. */
+int run_scenario_validate_source_pushed_conflict(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  name = \"Declared\",\n"
+        "  api = 1,\n"
+        "  bound = true,\n"
+        "}\n";
+    ScenarioManifest  pushed;
+    ScnValidateResult r;
+    char              key[SCN_VALIDATE_KEY_LEN];
+    char              why[256];
+    char              seen[1024];
+
+    svPushed(&pushed, "Pushed");
+
+    if (!scenarioValidateSource(NULL, kLua, strlen(kLua), kName, &pushed, &r)) {
+        svList(&r, seen, sizeof(seen));
+        UT_FAIL("a script declaring a sound table was refused: %s", seen);
+    }
+    UT_ASSERT(r.haveManifest);
+
+    /* The script's own name, not the one that went on ahead of it. */
+    UT_ASSERT_MSG(strcmp(r.manifest.name, "Declared") == 0,
+                  "the table read back is called '%s', so the script did not "
+                  "overwrite the pushed one", r.manifest.name);
+
+    /* And so the comparison the three loaders make still has two things to
+       compare, and still names the key that differs. */
+    UT_ASSERT_MSG(!scnManifestAgrees(&pushed, &r.manifest, key, sizeof(key),
+                                     why, sizeof(why)),
+                  "a script naming itself '%s' agreed with a manifest naming "
+                  "it '%s'", r.manifest.name, pushed.name);
+    UT_ASSERT_MSG(strcmp(key, "name") == 0, "the key named is '%s'", key);
     return 0;
 }

@@ -287,7 +287,6 @@ static void gameFrontSetDefaultKeys(keyItems *keys) {
   keys->kiTankView     = DEFAULT_TANKVIEW;
   keys->kiPillView     = DEFAULT_PILLVIEW;
   keys->kiAllyView     = DEFAULT_ALLYVIEW;
-  keys->kiLGMView      = DEFAULT_LGMVIEW;
   keys->kiBaseView     = DEFAULT_BASEVIEW;
   keys->kiOverviewZoom = DEFAULT_OVERVIEW_ZOOM;
   keys->kiOverviewFollow  = DEFAULT_OVERVIEW_FOLLOW;
@@ -991,7 +990,8 @@ void gameFrontSetVisibilityCustom(const VisibilitySettings *v) {
   gameFrontVisibilityCustomSaved = TRUE;
 }
 
-void gameFrontRememberVisibility(const VisibilitySettings *v) {
+void gameFrontRememberVisibility(const VisibilitySettings *v,
+                                 bool                      saveCustom) {
   VisibilityPreset p;
 
   if (v == NULL) return;
@@ -1007,7 +1007,7 @@ void gameFrontRememberVisibility(const VisibilitySettings *v) {
   gameFrontLineOfSight       = (int)v->lineOfSight;
   p = visibilityPresetMatch(v);
   gameFrontVisibilityPreset = (int)p;
-  if (p == visibilityPresetCustom) {
+  if (saveCustom && p == visibilityPresetCustom) {
     gameFrontSetVisibilityCustom(v);
   }
 }

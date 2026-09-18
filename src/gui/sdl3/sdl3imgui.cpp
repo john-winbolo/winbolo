@@ -80,6 +80,7 @@ extern "C" {
 #include "flags.h"
 #include "glyphs.h"
 #include "ping_overlay.h"
+#include "scenario_panel_draw.h" /* the shared drawer behind the scenario panel */
 #include "dialogs/imgui_keycap.h"
 /* The lobby's visibility value renderer and the preset table, so the
  * in-game info panel names a server's rules in the same words and
@@ -366,13 +367,11 @@ static SDL_Texture *s_iconBotChipGreen[ICON_SLOT_COUNT] = {};
 static SDL_Texture *s_iconBotChipRed[ICON_SLOT_COUNT]   = {};
 /* Large chip rasterization used for tank-label overlays, kept as a surface
  * because the label textures it per renderer (main window, pop-out
- * overview). The small s_iconBotChip is rasterized at WBN_ICON_SIZE for the
- * player-popup / renderPlayerName paths; sized up to a tank-label height
- * (~16-48 px depending on zoom) the small one looks soft because the SVG's
- * vector edges were already baked into a 14-px bitmap.
- * WBN_ICON_TANK_LABEL_SIZE rasterizes the same SVG at a height that covers
- * the realistic zoom range so the label-side blit is a (sharp) downscale
- * rather than an upscale. */
+ * overview). The small s_iconBotChip is rasterized at WBN_ICON_RASTER_PX for
+ * the player-popup / renderPlayerName paths, and the tank label asks for a
+ * height the zoom decides (~16-48 px). Kept separate because the label needs
+ * a renderer-free surface, not because of the size — both rasterize past the
+ * size they are drawn at so the blit is a (sharp) downscale. */
 static SDL_Surface *s_iconBotChipSurfGreen = nullptr;
 static SDL_Surface *s_iconBotChipSurfRed   = nullptr;
 
@@ -401,7 +400,8 @@ static SDL_Texture *s_iconSkull[ICON_SLOT_COUNT] = {};
  * Loaded here as white alpha masks through imguiLoadSvgIconWhite, not through
  * pingIconTexture: that cache rasterises for the map at the view's own scale
  * and hands back the kind table's colour, where this cell needs one icon at
- * WBN_ICON_SIZE that it tints itself, dim or red, from the mute state. */
+ * the badge run's size that it tints itself, dim or red, from the mute
+ * state. */
 static SDL_Texture *s_iconPing[ICON_SLOT_COUNT]      = {};
 static SDL_Texture *s_iconPingMuted[ICON_SLOT_COUNT] = {};
 #if defined(WINBOLO_VOICE)
@@ -454,15 +454,43 @@ static const float MIC_PULSE_FLOOR      = 0.35f;
 #define MIC_ICON_MAX_PX 256
 #endif
 static bool s_wbnIconsLoaded[ICON_SLOT_COUNT] = {};
-#define WBN_ICON_SIZE 14
+/* The badge run beside a player name — platform, WBN shield, Steam, the bot
+ * chip, the smart-ping mute cell, the mic cell and the country flag — has two
+ * sizes, and they are not the same number.
+ *
+ * WBN_ICON_DRAW_PX is what a badge is drawn at: one font size, which is what
+ * the config cog beside it and the tank badge in front of it already use, so
+ * the run lands the same height as everything else on the row. It was a flat
+ * 14 px, and that is where the lobby's mic reading small next to the cog came
+ * from: the row's font is 18 px at 1x and grows with the UI scale, where the
+ * badge stayed 14 whatever the scale was.
+ *
+ * WBN_ICON_RASTER_PX is what the SVGs are rasterised at — past the largest
+ * size the run is ever drawn at (the dialog font tops out at 20 * 2.5), so a
+ * draw is a sharp downscale rather than a blurred upscale. flags.c (44) and
+ * WBN_ICON_TANK_LABEL_SIZE below already size their art this way.
+ *
+ * WBN_ICON_BASE_PX is only an aspect reference now: the country flag keeps
+ * the proportion it had against a 14 px badge, since a flag is wider than it
+ * is tall and should not become a square. */
+#define WBN_ICON_BASE_PX 14
+#define WBN_ICON_RASTER_PX 64
 #define WBN_ICON_TANK_LABEL_SIZE 48
+
+float sdl3ImguiWbnIconPx(void) { return ImGui::GetFontSize(); }
+
+void sdl3ImguiFlagSize(float *outW, float *outH) {
+    const float k = sdl3ImguiWbnIconPx() / (float)WBN_ICON_BASE_PX;
+    if (outW) *outW = (float)FLAG_WIDTH * k;
+    if (outH) *outH = (float)FLAG_HEIGHT * k;
+}
 
 static void ensureWbnIconsLoaded(void) {
     int slot = activeIconSlot();
     if (s_wbnIconsLoaded[slot]) return;
     s_wbnIconsLoaded[slot] = true;
     SDL_Renderer *r = activeRenderer();
-    s_iconSteam[slot]   = imguiLoadSvgIconWhite(r, "data/ui/steam.svg", WBN_ICON_SIZE);
+    s_iconSteam[slot]   = imguiLoadSvgIconWhite(r, "data/ui/steam.svg", WBN_ICON_RASTER_PX);
     /* The bot badge in a player row: the same two chips the lobby marks its
      * bot rows with (lobby_assets.cpp loads the same pair), so one game does
      * not say "computer player" with a chip in one list and a brain in
@@ -476,23 +504,23 @@ static void ensureWbnIconsLoaded(void) {
      * the silhouette green or red gives a solid blob rather than the chip
      * the lobby draws. Two files, drawn as authored, is what the art is for.  */
     s_iconBotChipGreen[slot] = imguiLoadSvgIcon(r, "data/ui/bot-cpu-green.svg",
-                                                WBN_ICON_SIZE);
+                                                WBN_ICON_RASTER_PX);
     s_iconBotChipRed[slot]   = imguiLoadSvgIcon(r, "data/ui/bot-cpu-red.svg",
-                                                WBN_ICON_SIZE);
+                                                WBN_ICON_RASTER_PX);
     /* Outside the voice test below: the counter columns that draw this are
      * not a voice feature and ship in -DWINBOLO_VOICE=OFF builds too. */
-    s_iconSkull[slot]   = imguiLoadSvgIconWhite(r, "data/ui/skull.svg", WBN_ICON_SIZE);
+    s_iconSkull[slot]   = imguiLoadSvgIconWhite(r, "data/ui/skull.svg", WBN_ICON_RASTER_PX);
     /* Ping-mute toggle, outside the voice test with the skull. */
     s_iconPing[slot]      = imguiLoadSvgIconWhite(r, "data/ui/ping/standard.svg",
-                                                  WBN_ICON_SIZE);
+                                                  WBN_ICON_RASTER_PX);
     s_iconPingMuted[slot] = imguiLoadSvgIconWhite(r, "data/ui/ping/standard-muted.svg",
-                                                  WBN_ICON_SIZE);
+                                                  WBN_ICON_RASTER_PX);
 #if defined(WINBOLO_VOICE)
-    s_iconMic[slot]          = imguiLoadSvgIconWhite(r, "data/ui/mic.svg",           WBN_ICON_SIZE);
-    s_iconMicMuted[slot]     = imguiLoadSvgIconWhite(r, "data/ui/mic-muted.svg",     WBN_ICON_SIZE);
-    s_iconMicOff[slot]       = imguiLoadSvgIconWhite(r, "data/ui/mic-off.svg",       WBN_ICON_SIZE);
-    s_iconSpeaker[slot]      = imguiLoadSvgIconWhite(r, "data/ui/speaker.svg",       WBN_ICON_SIZE);
-    s_iconSpeakerMuted[slot] = imguiLoadSvgIconWhite(r, "data/ui/speaker-muted.svg", WBN_ICON_SIZE);
+    s_iconMic[slot]          = imguiLoadSvgIconWhite(r, "data/ui/mic.svg",           WBN_ICON_RASTER_PX);
+    s_iconMicMuted[slot]     = imguiLoadSvgIconWhite(r, "data/ui/mic-muted.svg",     WBN_ICON_RASTER_PX);
+    s_iconMicOff[slot]       = imguiLoadSvgIconWhite(r, "data/ui/mic-off.svg",       WBN_ICON_RASTER_PX);
+    s_iconSpeaker[slot]      = imguiLoadSvgIconWhite(r, "data/ui/speaker.svg",       WBN_ICON_RASTER_PX);
+    s_iconSpeakerMuted[slot] = imguiLoadSvgIconWhite(r, "data/ui/speaker-muted.svg", WBN_ICON_RASTER_PX);
 #endif
     /* Renderer-free, so they are loaded once for every slot rather than
      * rasterized again per renderer. */
@@ -686,13 +714,13 @@ static void ensurePlatformIconsLoaded(void) {
     /* Force white so platform icons read against the dark ImGui background
      * regardless of each SVG's authored fill (mac.svg=#888, windows.svg=#000…). */
     s_iconPlatform[slot][CLIENT_TYPE_UNKNOWN]   = nullptr;
-    s_iconPlatform[slot][CLIENT_TYPE_WINDOWS]   = imguiLoadSvgIconWhite(r, "data/ui/windows.svg",    WBN_ICON_SIZE);
-    s_iconPlatform[slot][CLIENT_TYPE_LINUX]     = imguiLoadSvgIconWhite(r, "data/ui/linux.svg",      WBN_ICON_SIZE);
-    s_iconPlatform[slot][CLIENT_TYPE_MACOS]     = imguiLoadSvgIconWhite(r, "data/ui/mac.svg",        WBN_ICON_SIZE);
-    s_iconPlatform[slot][CLIENT_TYPE_IOS]       = imguiLoadSvgIconWhite(r, "data/ui/ios.svg",        WBN_ICON_SIZE);
-    s_iconPlatform[slot][CLIENT_TYPE_ANDROID]   = imguiLoadSvgIconWhite(r, "data/ui/android.svg",    WBN_ICON_SIZE);
-    s_iconPlatform[slot][CLIENT_TYPE_STEAMDECK] = imguiLoadSvgIconWhite(r, "data/ui/steam-deck.svg", WBN_ICON_SIZE);
-    s_iconPlatform[slot][CLIENT_TYPE_WEB]       = imguiLoadSvgIconWhite(r, "data/ui/globe.svg",      WBN_ICON_SIZE);
+    s_iconPlatform[slot][CLIENT_TYPE_WINDOWS]   = imguiLoadSvgIconWhite(r, "data/ui/windows.svg",    WBN_ICON_RASTER_PX);
+    s_iconPlatform[slot][CLIENT_TYPE_LINUX]     = imguiLoadSvgIconWhite(r, "data/ui/linux.svg",      WBN_ICON_RASTER_PX);
+    s_iconPlatform[slot][CLIENT_TYPE_MACOS]     = imguiLoadSvgIconWhite(r, "data/ui/mac.svg",        WBN_ICON_RASTER_PX);
+    s_iconPlatform[slot][CLIENT_TYPE_IOS]       = imguiLoadSvgIconWhite(r, "data/ui/ios.svg",        WBN_ICON_RASTER_PX);
+    s_iconPlatform[slot][CLIENT_TYPE_ANDROID]   = imguiLoadSvgIconWhite(r, "data/ui/android.svg",    WBN_ICON_RASTER_PX);
+    s_iconPlatform[slot][CLIENT_TYPE_STEAMDECK] = imguiLoadSvgIconWhite(r, "data/ui/steam-deck.svg", WBN_ICON_RASTER_PX);
+    s_iconPlatform[slot][CLIENT_TYPE_WEB]       = imguiLoadSvgIconWhite(r, "data/ui/globe.svg",      WBN_ICON_RASTER_PX);
 }
 
 /* Free one renderer's copies of every icon and let them be loaded again.
@@ -1303,6 +1331,40 @@ static void overviewInWindowChoose(bool on) {
        next game reads. */
     if (on) mapOverviewHide();
     else if (gameFrontShowMapOverview && s_overviewWasRunning) mapOverviewOpen();
+    /* The other five — Send Message, Players, and the three Session Info
+     * panels — each have TWO forms, and which one is real depends on the mode
+     * this call just changed. In classic mode each is a pop-out, a separate OS
+     * window; while the overview owns the window each is drawn in-window
+     * instead, because a pop-out would land behind a map that is now full
+     * screen. Nothing was closing the form the player is leaving behind, and
+     * the two forms do not coexist — each panel refuses to draw in-window
+     * while its own pop-out is open (renderSendMsgPanel and its four
+     * siblings).
+     *
+     * So a pop-out opened in classic mode and still open at the switch left
+     * the panel unable to draw AND the pop-out unreachable behind the full
+     * screen window: Send Message could not be brought back by the shortcut or
+     * by Players > Send Message, and neither could the other four. The
+     * mirror leaves an in-window panel drawn over the classic view that the
+     * menu reports as closed, since there it reads the pop-out's flag.
+     *
+     * Closing the outgoing form settles both. The panel belongs to the mode it
+     * was opened in and does not follow the player across; asking for it again
+     * in the new mode opens the form that mode actually uses. The map overview
+     * above is the one that DOES follow, because it is the mode. */
+    if (on) {
+        if (s_popSysInfo.open)  popOutHide(&s_popSysInfo);
+        if (s_popNetInfo.open)  popOutHide(&s_popNetInfo);
+        if (s_popGameInfo.open) popOutHide(&s_popGameInfo);
+        if (s_popSendMsg.open)  popOutHide(&s_popSendMsg);
+        if (s_popPlayers.open)  popOutHide(&s_popPlayers);
+    } else {
+        s_showSysInfo      = false;
+        s_showNetInfo      = false;
+        s_showGameInfo     = false;
+        s_showSendMsg      = false;
+        s_showPlayersPanel = false;
+    }
     /* The player's own choice, so it survives the run — the same save
        windowFullScreenChoose makes for the same flag on the screens outside
        a game. The auto-exit and the cleanup path call overviewInWindowSet
@@ -2813,23 +2875,24 @@ static void renderPlayersContent(ClientSim *cs) {
      * The candidates, each read from the code that draws it:
      *   checkbox                ImGui draws it GetFrameHeight() square
      *   platform / WBN / Steam / brain icons, the mic cell, and the
-     *   smart-ping mute cell    WBN_ICON_SIZE, 14 — the ping cell draws an
+     *   smart-ping mute cell    sdl3ImguiWbnIconPx() — the ping cell draws an
      *                           ImageButton of exactly the size this panel
      *                           hands renderPlayerPingMuteCell
-     *   country flag            FLAG_HEIGHT, 11 (flags.h; drawn at 7131)
+     *   country flag            sdl3ImguiFlagSize, shorter than a badge
      *   volume slider           GetTextLineHeight() — it is pushed with
      *                           zero FramePadding, so it is a frame with
      *                           its padding taken out, and an empty label
      *                           measures one font size tall
      *   alliance mark, name, counters, ping
      *                           GetTextLineHeight()
-     * The flag is never the tallest, 11 being under 14, and a frame with no
-     * padding is never taller than one with it, so the max is over the other
-     * three. Computed once for the panel rather than per row: nothing in it
-     * depends on which player the row is for, and the blank rows the desktop
-     * list draws for departed players have to come out the same height. */
+     * The flag is never the tallest — it keeps its 11-against-14 proportion
+     * against a badge — and a frame with no padding is never taller than one
+     * with it, so the max is over the other three. Computed once for the
+     * panel rather than per row: nothing in it depends on which player the
+     * row is for, and the blank rows the desktop list draws for departed
+     * players have to come out the same height. */
     const float panelRowH = ImMax(ImGui::GetFrameHeight(),
-                                  ImMax((float)WBN_ICON_SIZE,
+                                  ImMax(sdl3ImguiWbnIconPx(),
                                         ImGui::GetTextLineHeight()));
 
     /* Render a single player row */
@@ -2987,14 +3050,16 @@ static void renderPlayersContent(ClientSim *cs) {
         /* Flag icon — skipped for bots (no real country; renderPlayerName
          * below shows a brain icon in the platform-icon slot instead). */
         if (!(s_playerFlags[i] & PLAYER_FLAG_BOT) && s_playerCountry[i][0] != '\0') {
-            cyAbs((float)FLAG_HEIGHT);
+            float flagH = 0.0f;
+            sdl3ImguiFlagSize(NULL, &flagH);
+            cyAbs(flagH);
             if (drawCountryFlagWithTip(s_playerCountry[i])) {
                 ImGui::SameLine();
             }
         }
 
         /* Platform / WBN / Steam icons (brain icon for bots). Every icon in
-         * that run is WBN_ICON_SIZE tall, so one placement covers the run:
+         * that run is sdl3ImguiWbnIconPx() tall, so one placement covers it:
          * keepIconY holds the y this call starts at across the run's own
          * SameLine calls, which would otherwise drop icons two and three
          * back onto the line's top.
@@ -3003,7 +3068,7 @@ static void renderPlayersContent(ClientSim *cs) {
          * mark in front of the name, so the row says whose side it is on
          * twice over rather than showing a neutral glyph beside a coloured
          * star. Your own row can hold no bot, so the self case never arises. */
-        cyAbs((float)WBN_ICON_SIZE);
+        cyAbs(sdl3ImguiWbnIconPx());
         RenderPlayerNameOpts nameOpts = { isAlly[i], true };
         renderPlayerNameEx(NULL, s_playerFlags[i], s_playerClientType[i], "",
                            false, &nameOpts);
@@ -3029,13 +3094,12 @@ static void renderPlayersContent(ClientSim *cs) {
          * on the local row so the name still starts at the same x there. */
         /* One icon square, the size the mic cell beside it takes and the size
          * the lobby already passes this helper. It was GetFrameHeight() while
-         * the cell was a lettered button, which is larger; the SVG rasterises
-         * at WBN_ICON_SIZE, so drawing it at a frame height would upscale a
-         * 14 px mask and blur it. */
-        float pingMuteWidth  = (float)WBN_ICON_SIZE;
+         * the cell was a lettered button, which is larger; a frame height is
+         * the padding plus the font, and this run sits at the font itself. */
+        float pingMuteWidth  = sdl3ImguiWbnIconPx();
 #if defined(WINBOLO_VOICE)
         /* The mic cell is one icon square. */
-        float micWidth = (float)WBN_ICON_SIZE;
+        float micWidth = sdl3ImguiWbnIconPx();
         /* Room the per-player volume slider takes. Held on the local
          * player's row too, which draws a blank there, or the name would
          * start at a different x on that one row. Read before the zero
@@ -3104,7 +3168,7 @@ static void renderPlayersContent(ClientSim *cs) {
              * opaque, so a dimmed frame turns translucent and takes the
              * colour of the row behind it — which means the same disabled
              * slider is one grey on a striped row and another on a bare one.
-             * With every row a bot, as a horde game is, that reads as the
+             * With every row a bot, as an all-bot game is, that reads as the
              * zebra leaking into the controls. The frame is a control's
              * outline and should not move with the row it sits on; the grab
              * is what has to say the control is dead. */
@@ -3177,10 +3241,28 @@ static void renderPlayersContent(ClientSim *cs) {
         const float  nameTextY = rowTopScreenY +
                                  (rowH - ImGui::GetTextLineHeight()) * 0.5f -
                                  ImGui::GetFontSize() * 0.12f;
+        /* A seat that is in the roster with nobody on the field — a seat held
+         * between waves — is drawn at the lobby's own 45%, for the reason the
+         * lobby gives: so a player can tell the seats being held from the bots
+         * playing this round. The name only, as there. The counters beside it
+         * are this seat's score for the round and stay true while it is off
+         * the field, and the cells after them — the ping pin, the mic, the
+         * volume — are already dead on a bot row, which every held seat is.
+         *
+         * RenderTextClipped takes its colour through GetColorU32, so the
+         * pushed alpha reaches it. */
+        const bool rowUnfielded = clientSimSlotIsUnfielded(cs, (BYTE)i);
+        if (rowUnfielded) {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                ImGui::GetStyle().Alpha * 0.45f);
+        }
         ImGui::RenderTextClipped(ImVec2(nameCell.x, nameTextY),
                                  ImVec2(nameCell.x + nameW,
                                         rowTopScreenY + rowH),
                                  label, NULL, NULL, ImVec2(0.0f, 0.0f));
+        if (rowUnfielded) {
+            ImGui::PopStyleVar();
+        }
         ImGui::Dummy(ImVec2(nameW, 1.0f));
 
         /* Live counters, centred in their columns under the marks that name
@@ -3708,6 +3790,264 @@ static void renderPlayersPanel(ClientSim *cs) {
     }
     renderPlayersContent(cs);
     ImGui::End();
+}
+
+/* -------------------------------------------------------
+ * The scenario panel
+ *
+ * A scenario puts information in front of players by
+ * sending a display list, and this is where panel 0 — the
+ * in-game square — lands: a small window over the game
+ * view, one panel unit to one pixel at zoom 1 and scaled
+ * with the game's zoom from there.
+ *
+ * It is not one of the status panels. Those are a fixed
+ * column at the positions src/gui/positions.h names and
+ * cannot be dragged. This one is the player's to put where
+ * they like, and where they put it is kept in the
+ * preferences.
+ *
+ * Drawn only while panel 0 holds a list with something in
+ * it. An empty list is a scenario taking the panel away, so
+ * an empty frame left sitting on the map would be showing
+ * the player something the scenario had just removed.
+ *
+ * Panel 0 is the only panel there is, so this is the only
+ * place a display list is drawn.
+ * ------------------------------------------------------- */
+
+/* How far in from the top-right corner of the game view the panel sits the
+   first time it is shown, in panel units so the inset scales with it. */
+#define SCN_PANEL_DEFAULT_INSET 4.0f
+
+/* The name a seat is playing under, for the list's name primitive. NULL for
+   a seat nobody holds, which is what makes that primitive draw nothing. */
+static const char *scnPanelPlayerName(void *ctx, uint8_t slot) {
+    const char *name;
+    (void)ctx;
+    name = sdl3ImguiGetPlayerName((unsigned char)slot);
+    if (name == nullptr || name[0] == '\0') return nullptr;
+    return name;
+}
+
+static void renderScenarioPanel(ClientSim *cs) {
+    /* Whether ImGui is already holding a position for the window. Cleared
+       whenever the panel is not drawn, so the next list to arrive places it
+       again from what was saved rather than from wherever the last one that
+       shared this window id happened to sit. */
+    static bool s_scnPanelPlaced = false;
+
+    const ScnPanelList *list =
+        (cs != nullptr) ? clientSimGetScnPanel(cs, 0) : nullptr;
+
+    /* Tablet mode is the mobile frontends. They map the square into a slot
+       of their own rather than into a window the player drags, so this one
+       stays out of their way. */
+    if (cs == nullptr || uiModeIsTablet() || list == nullptr ||
+        list->count == 0) {
+        s_scnPanelPlaced = false;
+        return;
+    }
+
+    /* The game's own zoom, as the pixels it actually comes out at on screen:
+       in Custom zoom the game is drawn into a render target at the integer
+       zoom and then blitted at a fractional scale, so the two multiply. The
+       same number the vote widgets anchor themselves with. */
+    int rawZoom = sdl3DrawGetZoomFactor();
+    if (rawZoom < 1) rawZoom = 1;
+    float gameScale = 1.0f;
+    sdl3DrawGetGameRect(nullptr, nullptr, nullptr, nullptr, &gameScale);
+    if (gameScale <= 0.0f) gameScale = 1.0f;
+    const float scale = (float)rawZoom * gameScale;
+    const float side  = (float)SCN_PANEL_UNITS * scale;
+
+    /* Where it goes when nothing has been saved: the top-right of the game
+       view, inset a little. Render coordinates, which is what ImGui draws
+       in and what the smart-ping overlay pins itself with. */
+    float defX = SCN_PANEL_DEFAULT_INSET * scale;
+    float defY = SCN_PANEL_DEFAULT_INSET * scale;
+    {
+        float gx, gy, gw, gh, gtw, gth, rx0, ry0, rx1, ry1;
+        if (sdl3DrawGetMainViewGameRect(&gx, &gy, &gw, &gh, &gtw, &gth) &&
+            sdl3DrawGameToRenderCoords(gx, gy, &rx0, &ry0) &&
+            sdl3DrawGameToRenderCoords(gx + gw, gy + gh, &rx1, &ry1)) {
+            defX = rx1 - side - SCN_PANEL_DEFAULT_INSET * scale;
+            defY = ry0 + SCN_PANEL_DEFAULT_INSET * scale;
+        }
+    }
+
+    /* A position saved on a larger display would put the panel off screen,
+       where there is nothing to grab to drag it back, so a restored one is
+       brought inside the window it is restored into. */
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    float wantX = (gameFrontScnPanelX >= 0) ? (float)gameFrontScnPanelX : defX;
+    float wantY = (gameFrontScnPanelY >= 0) ? (float)gameFrontScnPanelY : defY;
+    if (wantX > display.x - side) wantX = display.x - side;
+    if (wantY > display.y - side) wantY = display.y - side;
+    if (wantX < 0.0f) wantX = 0.0f;
+    if (wantY < 0.0f) wantY = 0.0f;
+
+    if (!s_scnPanelPlaced) {
+        ImGui::SetNextWindowPos(ImVec2(wantX, wantY), ImGuiCond_Always);
+        s_scnPanelPlaced = true;
+    }
+    ImGui::SetNextWindowSize(ImVec2(side, side), ImGuiCond_Always);
+
+    /* No padding, so the window's own rect is the square the list is drawn
+       in and one panel unit is one pixel at zoom 1. The backing is dim
+       rather than opaque: the map under the panel stays readable, and what
+       the script draws reads on top of it. */
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 110));
+    const bool open = ImGui::Begin("##scenariopanel", nullptr,
+                                   ImGuiWindowFlags_NoTitleBar |
+                                   ImGuiWindowFlags_NoResize |
+                                   ImGuiWindowFlags_NoScrollbar |
+                                   ImGuiWindowFlags_NoScrollWithMouse |
+                                   ImGuiWindowFlags_NoCollapse |
+                                   ImGuiWindowFlags_NoSavedSettings |
+                                   ImGuiWindowFlags_NoFocusOnAppearing |
+                                   ImGuiWindowFlags_NoDocking |
+                                   ImGuiWindowFlags_NoNav);
+    if (open) {
+        const ImVec2 pos = ImGui::GetWindowPos();
+
+        /* The window is movable, so this is also where a drag is read back.
+           Clamped again here for the main window having been made smaller
+           since the panel was placed, which ImGui does not do on its own.
+           The clamp lands on the next frame — the background was submitted
+           at pos already, and the list is drawn on top of that background
+           rather than half a frame ahead of it. */
+        float keepX = pos.x, keepY = pos.y;
+        if (keepX > display.x - side) keepX = display.x - side;
+        if (keepY > display.y - side) keepY = display.y - side;
+        if (keepX < 0.0f) keepX = 0.0f;
+        if (keepY < 0.0f) keepY = 0.0f;
+        if (keepX != pos.x || keepY != pos.y) {
+            ImGui::SetWindowPos(ImVec2(keepX, keepY));
+        }
+
+        /* Saved through the debounced window-settings path, the way the map
+           overview's geometry is: a drag is a burst of positions and only
+           the one it ends on is worth a write. */
+        if ((int)keepX != gameFrontScnPanelX ||
+            (int)keepY != gameFrontScnPanelY) {
+            gameFrontScnPanelX = (int)keepX;
+            gameFrontScnPanelY = (int)keepY;
+            gameFrontSaveWindowSettings();
+        }
+
+        ScnPanelDrawEnv env;
+        env.playerName = scnPanelPlayerName;
+        env.ctx        = nullptr;
+        /* The tick a ClientSim last heard from the server — the clock the
+           scenario counted its timer's tick on. */
+        env.tick       = clientSimGetLastServerTick(cs);
+        env.scale      = scale;
+        env.tiles      = (void *)sdl3DrawGetTilesTexture();
+        scnPanelDraw(list, pos.x, pos.y, &env);
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
+}
+
+/* -------------------------------------------------------
+ * The scenario announcement
+ *
+ * One line across the game view, for the few seconds a
+ * scenario asked for. It sits in the view's upper third
+ * rather than dead centre, which is where the player's own
+ * tank is.
+ *
+ * Drawn on the foreground draw list and not in a window at
+ * all. A window across the middle of the screen would take
+ * the mouse with it and stop the player firing under it,
+ * and a draw list has no hit test to turn off — there is
+ * nothing there to click on.
+ *
+ * Outlined rather than merely coloured: the line lands over
+ * whatever terrain happens to be under it, and one colour
+ * against grass is a line somebody cannot read.
+ *
+ * The bytes are the script's own and are not localised, so
+ * nothing on this path goes near the language table.
+ * ------------------------------------------------------- */
+
+/* The line's height in panel units, so it scales with the game's zoom the
+   same way the panel's own text does. */
+#define SCN_ANNOUNCE_UNITS 20.0f
+
+/* How far down the game view the line sits, as a fraction of its height. */
+#define SCN_ANNOUNCE_DOWN 0.28f
+
+/* The last of an announcement's life spent fading, in ticks. Long enough to
+   read as going rather than as cut off; ticks run at a hundred a second, so
+   this is a third of one. */
+#define SCN_ANNOUNCE_FADE_TICKS 33u
+
+static void renderScenarioAnnounce(ClientSim *cs) {
+    if (cs == nullptr || uiModeIsTablet()) return;
+
+    uint16_t    ticks       = 0;
+    uint32_t    arrivedTick = 0;
+    const char *text        = clientSimGetScnAnnounce(cs, &ticks, &arrivedTick);
+    uint32_t    left        = 0;
+    if (!scnAnnounceRemaining(text, arrivedTick, ticks,
+                              clientSimGetLastServerTick(cs), &left)) {
+        return;
+    }
+
+    /* The same zoom the panel window scales by, so the two agree about what
+       one unit is worth on this screen. */
+    int rawZoom = sdl3DrawGetZoomFactor();
+    if (rawZoom < 1) rawZoom = 1;
+    float gameScale = 1.0f;
+    sdl3DrawGetGameRect(nullptr, nullptr, nullptr, nullptr, &gameScale);
+    if (gameScale <= 0.0f) gameScale = 1.0f;
+    const float scale = (float)rawZoom * gameScale;
+
+    float gx, gy, gw, gh, gtw, gth, rx0, ry0, rx1, ry1;
+    if (!sdl3DrawGetMainViewGameRect(&gx, &gy, &gw, &gh, &gtw, &gth)) return;
+    if (!sdl3DrawGameToRenderCoords(gx, gy, &rx0, &ry0)) return;
+    if (!sdl3DrawGameToRenderCoords(gx + gw, gy + gh, &rx1, &ry1)) return;
+
+    ImFont *font = ImGui::GetFont();
+    if (font == nullptr) return;
+
+    float height = SCN_ANNOUNCE_UNITS * scale;
+    if (height < 8.0f) height = 8.0f;
+    const ImVec2 measured = font->CalcTextSizeA(height, FLT_MAX, 0.0f, text);
+
+    const float px = (rx0 + rx1) * 0.5f - measured.x * 0.5f;
+    const float py = ry0 + (ry1 - ry0) * SCN_ANNOUNCE_DOWN;
+
+    /* Full strength until the last stretch, then out. */
+    float fade = 1.0f;
+    if (left < SCN_ANNOUNCE_FADE_TICKS) {
+        fade = (float)left / (float)SCN_ANNOUNCE_FADE_TICKS;
+    }
+    const int alpha = (int)(255.0f * fade);
+    if (alpha <= 0) return;
+
+    ImDrawList *dl = ImGui::GetForegroundDrawList();
+    if (dl == nullptr) return;
+
+    /* The outline: the same line in near-black, one stroke out in each of the
+       eight directions, so the letters keep an edge whichever way the terrain
+       under them happens to run. */
+    const ImU32 edge = IM_COL32(0, 0, 0, alpha);
+    const float o    = (scale > 1.0f) ? scale : 1.0f;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            dl->AddText(font, height,
+                        ImVec2(px + (float)dx * o, py + (float)dy * o),
+                        edge, text);
+        }
+    }
+    dl->AddText(font, height, ImVec2(px, py),
+                IM_COL32(255, 255, 255, alpha), text);
 }
 
 /* About modal + linked markdown popups live in dialogs/imgui_about.cpp so
@@ -5074,9 +5414,22 @@ static void renderMenuBar(ClientSim *cs) {
                 /* Selectable player name (fills the slot between icons and ping). */
                 char selectLabel[64];
                 snprintf(selectLabel, sizeof(selectLabel), "%s##sel%d", label, i);
+                /* Off the field, and drawn at the same 45% the lobby and the
+                 * players panel use for it. Here the name is the item's own
+                 * label rather than text over it, so the row's hover tint
+                 * fades with the name — the row stays clickable, and ticking
+                 * a seat between waves still does what it did. */
+                const bool mUnfielded = clientSimSlotIsUnfielded(cs, (BYTE)i);
+                if (mUnfielded) {
+                    ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
+                                        ImGui::GetStyle().Alpha * 0.45f);
+                }
                 if (ImGui::Selectable(selectLabel, false, ImGuiSelectableFlags_DontClosePopups,
                                       ImVec2(nameWidth, 0))) {
                     clientSimTogglePlayerCheckState(cs, (BYTE)i);
+                }
+                if (mUnfielded) {
+                    ImGui::PopStyleVar();
                 }
                 imguiHandOnHover();
 
@@ -5794,8 +6147,33 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                     ImGuiContext *savedCtx = ImGui::GetCurrentContext();
                     ImGui::SetCurrentContext(pw->imguiCtx);
                     ImGui_ImplSDL3_ProcessEvent(&ev);
+                    bool popWantsKeys = ImGui::GetIO().WantTextInput;
                     ImGui::SetCurrentContext(savedCtx);
                     consumedByPopOut = true;
+
+                    /* Tap-style key actions from the Map Overview pop-out.
+                       Tank View is the only one that travels by event rather
+                       than by polling, and this block swallows this window's
+                       key events, so it was the one view key that did nothing
+                       from the overview while Pill, Base and Allied View all
+                       worked — those are polled in itemViewInputStep, and
+                       SDL_GetKeyboardState does not care which window has
+                       focus.
+
+                       The overview is a window the player drives the game
+                       from: input.c's appHasFocus names this same pair, which
+                       is why the polled keys work here at all. So the event
+                       path has to name it too, and it does it here rather than
+                       at the dispatch further down, which this consume never
+                       reaches. Key Setup learning a chord is skipped for the
+                       reason the main window's site is placed after its
+                       capture hook: that press is meant to become the binding,
+                       not to fire the action it is being bound to. */
+                    if (pw == &s_popMapOverview &&
+                        ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
+                        !popWantsKeys && !imguiKeySetupIsCapturingInGameKey()) {
+                        windowKeyPressed(cs, (int)ev.key.scancode);
+                    }
 
                     /* Track the current size of a resizable pop-out. The main
                        window's resize handler further down only ever looks at
@@ -5952,6 +6330,10 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
         if (ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
             ev.key.windowID == SDL_GetWindowID(s_window) &&
             (ev.key.mod & KMOD_PRIMARY) != 0) {
+            /* Set by every case below that acts; cleared by default, so the
+               tail can tell a shortcut that ran from a chord this switch has
+               nothing for. */
+            bool shortcutTook = true;
             switch (ev.key.scancode) {
             case SDL_SCANCODE_M:
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
@@ -5976,50 +6358,62 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__) && !(defined(__APPLE__) && TARGET_OS_IOS)
                 }
 #endif
-                continue;
+                break;
             case SDL_SCANCODE_K:
                 sdl3ImguiShowKeySetup();
-                continue;
+                break;
             case SDL_SCANCODE_COMMA:
                 /* Ctrl+, opens Settings, the shortcut most desktop apps use. */
                 sdl3ImguiShowSettings();
-                continue;
+                break;
             case SDL_SCANCODE_S:
                 windowSaveMap(cs);
-                continue;
+                break;
             case SDL_SCANCODE_G:
                 windowShowGunsight_toggle(cs);
-                continue;
+                break;
             case SDL_SCANCODE_A:
                 windowAutomaticScrolling_toggle(cs);
-                continue;
+                break;
             case SDL_SCANCODE_1:
                 windowSetTankLabelLen(cs, lblNone);
-                continue;
+                break;
             case SDL_SCANCODE_2:
                 windowSetTankLabelLen(cs, lblShort);
-                continue;
+                break;
             case SDL_SCANCODE_3:
                 windowSetTankLabelLen(cs, lblLong);
-                continue;
+                break;
             case SDL_SCANCODE_P:
                 /* This switch gates on KMOD_PRIMARY only, so the shift-modified
                    form has to be separated here rather than by its own case. */
                 if (ev.key.mod & SDL_KMOD_SHIFT) sdl3ImguiShowPlayersPanel(true);
                 else                             windowShowPillLabels_toggle(cs);
-                continue;
+                break;
             case SDL_SCANCODE_B:
                 windowShowBaseLabels_toggle(cs);
-                continue;
+                break;
             case SDL_SCANCODE_R:
                 clientSimRequestAllianceSelected(cs);
-                continue;
+                break;
             case SDL_SCANCODE_O:
                 /* Same running-game condition as the File menu item. */
                 if (cs != nullptr && clientSimIsRunning(cs)) sdl3ImguiShowMapOverview(true);
-                continue;
-            default:
                 break;
+            default:
+                shortcutTook = false;
+                break;
+            }
+            if (shortcutTook) {
+                /* The letter is bound in the game as well, and on the defaults
+                   four of them are: M is Base View, S turns left, G is Pill
+                   View and 1/2/3 are the quick builds. Dropping this event is
+                   not enough on its own — a binding is not read from the event
+                   but polled out of SDL's keyboard state, where the letter is
+                   still down — so the key is marked and reads as up to the
+                   game until the player lets go of it. */
+                inputSwallowKeyUntilRelease((int)ev.key.scancode);
+                continue;
             }
         }
 #endif
@@ -7068,6 +7462,8 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     renderGameInfoPanel(cs);
     renderSendMsgPanel(cs);
     renderPlayersPanel(cs);
+    renderScenarioPanel(cs);
+    renderScenarioAnnounce(cs);
 
     /* Modal dialogs */
     aboutPopupRender();
@@ -7917,7 +8313,9 @@ bool drawCountryFlagWithTip(const char *countryCode) {
     if (up[0] == 'X' && up[1] == 'X') return false;        /* sentinel */
     SDL_Texture *flagTex = flagsGetTextureFor(activeRenderer(), countryCode);
     if (!flagTex) return false;
-    ImGui::Image((ImTextureID)flagTex, ImVec2(FLAG_WIDTH, FLAG_HEIGHT));
+    float flagW = 0.0f, flagH = 0.0f;
+    sdl3ImguiFlagSize(&flagW, &flagH);
+    ImGui::Image((ImTextureID)flagTex, ImVec2(flagW, flagH));
     if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) {
         const CountryNameEntry *e = (const CountryNameEntry *)bsearch(
             up, kCountryNames, K_COUNTRY_NAMES_SIZE,
@@ -7940,7 +8338,10 @@ void renderPlayerNameEx(const char *name, uint8_t flags, uint8_t clientType,
                         const RenderPlayerNameOpts *opts) {
     ensurePlatformIconsLoaded();
     ensureWbnIconsLoaded();
-    const int iconSlot = activeIconSlot();
+    const int   iconSlot = activeIconSlot();
+    /* One size for every badge in the run, read once so the platform icon,
+     * the shield and the Steam mark cannot drift apart. */
+    const float iconPx   = sdl3ImguiWbnIconPx();
     /* opts is optional, so read both choices once here and let the rest of
      * the function work from plain locals. */
     const bool botIsAlly = opts && opts->botIsAlly;
@@ -7973,7 +8374,7 @@ void renderPlayerNameEx(const char *name, uint8_t flags, uint8_t clientType,
         /* Drawn as authored, with no tint: these two files carry their own
          * colours and the green and red ones are separate artwork, not one
          * shape recoloured. */
-        ImGui::Image((ImTextureID)botChip, ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE));
+        ImGui::Image((ImTextureID)botChip, ImVec2(iconPx, iconPx));
         imguiHelpTooltip(langGetText(STR_PLAYER_TIP_AI));
         sameLineKeepY();
     } else {
@@ -7983,7 +8384,7 @@ void renderPlayerNameEx(const char *name, uint8_t flags, uint8_t clientType,
             /* ImGui 1.91.9+ removed tint_col from Image(); ImageWithBg takes
              * (size, uv0, uv1, bg_col, tint_col) - bg transparent. */
             ImGui::ImageWithBg((ImTextureID)platTex,
-                               ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE),
+                               ImVec2(iconPx, iconPx),
                                ImVec2(0, 0), ImVec2(1, 1),
                                ImVec4(0, 0, 0, 0), tint);
             if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) {
@@ -8003,14 +8404,14 @@ void renderPlayerNameEx(const char *name, uint8_t flags, uint8_t clientType,
             /* Vector shield (crisp at this size); gold for supporters, white
              * otherwise — same scheme as the platform icon above. */
             ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
-            imguiShieldBadge(WBN_ICON_SIZE, ImGui::GetColorU32(tint));
+            imguiShieldBadge(iconPx, ImGui::GetColorU32(tint));
             imguiHelpTooltip(langGetText(STR_PLAYER_TIP_WBN_VERIFIED));
             sameLineKeepY();
         }
         if ((flags & (PLAYER_FLAG_WBN_STEAM_LINKED | PLAYER_FLAG_STEAM_BUILD)) && s_iconSteam[iconSlot]) {
             ImVec4 tint = (flags & PLAYER_FLAG_SUPPORTER) ? SUPPORTER_TINT : NO_TINT;
             ImGui::ImageWithBg((ImTextureID)s_iconSteam[iconSlot],
-                               ImVec2(WBN_ICON_SIZE, WBN_ICON_SIZE),
+                               ImVec2(iconPx, iconPx),
                                ImVec2(0, 0), ImVec2(1, 1),
                                ImVec4(0, 0, 0, 0), tint);
             imguiHelpTooltip(langGetText((flags & PLAYER_FLAG_WBN_STEAM_LINKED)
@@ -8276,8 +8677,8 @@ void renderPlayerMicCell(ClientSim *cs, int playerNum, uint8_t clientFlags,
  * silences rather than against a letter. Muted draws standard-muted.svg, the
  * same pin slashed the way mic-muted.svg slashes the microphone, so the two
  * muted states in one row say it the same way. Colour carries it as well as
- * shape, dim when pings are shown and red when they are not, because at
- * WBN_ICON_SIZE a diagonal bar is a few pixels and should not be the only
+ * shape, dim when pings are shown and red when they are not, because at a
+ * badge's size a diagonal bar is a few pixels and should not be the only
  * thing separating the two. A tooltip names the state either way. */
 void renderPlayerPingMuteCell(struct ClientSim *cs, int playerNum, bool isSelf,
                               float size) {
@@ -8354,6 +8755,20 @@ void sdl3ImguiCleanup(void) {
        Left latched, the second game of a session came up windowed-view inside
        a still-full-screen window, and the pop-out did not come back either. */
     s_overviewWasRunning = false;
+    /* The five two-form panels go with the game as well. popOutDestroy below
+       clears the pop-out half, but the in-window half is a plain flag that
+       nothing here was resetting, and this path reaches overviewInWindowSet
+       directly rather than through overviewInWindowChoose, which is where the
+       mode switch clears them. Left set, a game played full screen with Send
+       Message open came back to the NEXT game — classic mode by then — with
+       the in-window panel drawn over the classic view and Players > Send
+       Message reporting it closed, because in classic mode the menu reads the
+       pop-out's flag. */
+    s_showSysInfo      = false;
+    s_showNetInfo      = false;
+    s_showGameInfo     = false;
+    s_showSendMsg      = false;
+    s_showPlayersPanel = false;
     inputGamepadShutdown();
     /* Before the loop: all of these were made on the Map Overview pop-out's
        renderer, which popOutDestroy tears down. */

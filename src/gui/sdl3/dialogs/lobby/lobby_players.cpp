@@ -1264,6 +1264,12 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
          * divider dragged left does, and scaled by s throughout so it lands
          * the same at any DPI. */
         const float kColTankW    = 60.0f * s;
+        /* The tank badge, and the bot difficulty chips that are drawn at the
+         * same size so the two kinds of row line up. Declared here because
+         * the icons column is measured against the chip run below, and read
+         * again by the row that draws them. */
+        const float kTankBadgePx = 18.0f * s;
+        const float kBotChipGap  = 2.0f * s;
         /* The gear's own width. BOTH gears live in the icons column — a bot's
          * config gear beside its bot-cpu badge, and (in a voice build) the
          * local player's voice gear after the mic — so this is needed in
@@ -1274,29 +1280,57 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                                  ? ImGui::CalcTextSize(">").x
                                    + ImGui::GetStyle().FramePadding.x * 2.0f
                                  : ImGui::GetFontSize();
+        /* One badge's size, and the flag's, read once for the whole table:
+         * the column is measured against them here and the rows draw at them
+         * below, so the reserve and the run cannot drift apart. */
+        const float kIconPx      = sdl3ImguiWbnIconPx();
+        float kFlagW = 0.0f;
+        sdl3ImguiFlagSize(&kFlagW, NULL);
+        const float kSpacingX    = ImGui::GetStyle().ItemSpacing.x;
+        /* What the identity run itself takes, up to the ping-mute cell.
+         *
+         * A human row draws a country flag and up to three badges — the
+         * platform icon, the WBN shield and the Steam mark — each followed by
+         * one spacing. A bot row draws three difficulty chips at the tank
+         * badge's size, with kBotChipGap between them, and no flag. The
+         * column holds whichever is wider: both kinds of row share it.
+         *
+         * Derived from what actually draws rather than from one tuned number,
+         * because the run is sized off the font now — it was a flat 14 px per
+         * badge, which left the mic reading small beside the font-sized cog
+         * and left the whole run pinned at 14 however far the UI scaled. */
+        const float kHumanRunW   = kFlagW + kIconPx * 3.0f + kSpacingX * 3.0f;
+        const float kBotRunW     = kTankBadgePx * 3.0f + kBotChipGap * 2.0f
+                                 + kSpacingX;
+        const float kColBadgesW  = ImMax(kHumanRunW, kBotRunW);
 #if defined(WINBOLO_VOICE)
         /* The microphone cell follows the badge run, so the icons column
-         * carries one more LOBBY_WBN_ICON_SIZE icon plus the spacing before
-         * it, and the local player's row carries the voice gear after that,
-         * with a spacing of its own. That raises needIconsCol, so the column
-         * sheds at a slightly wider window than it does without voice — the
-         * wider run needs the room, and the whole column still goes at once.
-         * The gear draws on one row, but every team's table takes the width:
-         * the team panels are stacked, so a column one width in your team
-         * and another in the rest would not line up.
+         * carries one more badge plus the spacing before it, and the local
+         * player's row carries the voice gear after that, with a spacing of
+         * its own. That raises needIconsCol, so the column sheds at a slightly
+         * wider window than it does without voice — the wider run needs the
+         * room, and the whole column still goes at once. The gear draws on one
+         * row, but every team's table takes the width: the team panels are
+         * stacked, so a column one width in your team and another in the rest
+         * would not line up.
          *
          * Sized for the form that will draw, which is known here: the
          * SmallButton in controller mode, the font-sized icon otherwise. */
-        const float kColIconsW   = 96.0f * s + (float)LOBBY_WBN_ICON_SIZE * s
-                                 + ImGui::GetStyle().ItemSpacing.x
+        const float kColIconsW   = kColBadgesW
+                                 + kIconPx      /* smart-ping mute cell */
+                                 + kSpacingX
+                                 + kIconPx      /* mic / speaker cell */
+                                 + kSpacingX
                                  + kColGearW
-                                 + ImGui::GetStyle().ItemSpacing.x;
+                                 + kSpacingX;
 #else
         /* No voice build, but a BOT row still puts its config gear in this
          * column beside the bot-cpu badge, so the gear's width is kept here
-         * either way. */
-        const float kColIconsW   = 96.0f * s
-                                 + ImGui::GetStyle().ItemSpacing.x
+         * either way. The smart-ping mute cell is not a voice feature and
+         * draws in this build too. */
+        const float kColIconsW   = kColBadgesW
+                                 + kIconPx      /* smart-ping mute cell */
+                                 + kSpacingX
                                  + kColGearW;
 #endif
         const float kColPingW    = 50.0f * s;
@@ -1396,9 +1430,9 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                 bool isMe   = (!spectator && i == myPlayerNum);
                 bool isBot  = clientSimGetLobbySlot(cs, (BYTE)(i))->isBot;
                 /* A seat held for a bot that is not on the field draws faded,
-                 * so a host can tell the horde it has seated apart from the
+                 * so a host can tell the seats it is holding apart from the
                  * bots that are playing this round. */
-                bool unfielded = !clientSimGetLobbySlot(cs, (BYTE)(i))->fielded;
+                bool unfielded = clientSimSlotIsUnfielded(cs, (BYTE)(i));
                 bool isSelf = isMe;
                 bool isAlly = (myTeam != 0 && clientSimGetLobbySlot(cs, (BYTE)(i))->teamNumber == myTeam);
 
@@ -1407,7 +1441,7 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                  * are positioned per-cell via absolute Y so each one
                  * is centered on the row's vertical midline regardless
                  * of its own height. */
-                const float tankSz  = 18.0f * s;
+                const float tankSz  = kTankBadgePx;
                 const float closeSz = ImGui::GetFontSize();
                 const float rowH    = ImMax(ImGui::GetFrameHeight(),
                                             ImMax(tankSz, 22.0f * s));
@@ -1727,7 +1761,7 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                          * badge it has always been. */
                         SDL_Texture *dimTex = lobbyIcons()->botCpuGrey;
                         const int   chipN   = (botDiffChips > 0) ? 3 : 1;
-                        const float chipGap = 2.0f * s;
+                        const float chipGap = kBotChipGap;
                         const float runW    = tankSz * (float)chipN
                                             + chipGap * (float)(chipN - 1);
                         cyAbs(tankSz);
@@ -1889,14 +1923,16 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                     const float iconBiasY = 2.0f;
                     const char *cc = clientSimGetLobbySlot(cs, (BYTE)(i))->countryCode;
                     if (cc[0] != '\0' && !(cc[0] == 'X' && cc[1] == 'X') && flagsGetTexture(cc)) {
-                        cyAbs((float)FLAG_HEIGHT);
+                        float flagH = 0.0f;
+                        sdl3ImguiFlagSize(NULL, &flagH);
+                        cyAbs(flagH);
                         ImGui::SetCursorPosY(ImGui::GetCursorPosY() - iconBiasY);
                         drawCountryFlagWithTip(cc);
                         ImGui::SameLine();
                     }
                     /* All WBN/Steam/platform icons in renderPlayerName are
-                     * LOBBY_WBN_ICON_SIZE tall — center them as one block. */
-                    cyAbs((float)LOBBY_WBN_ICON_SIZE);
+                     * one badge tall — center them as one block. */
+                    cyAbs(kIconPx);
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() - iconBiasY);
                     {
                         /* Hide the WBN globe in local-only sessions —
@@ -1919,8 +1955,7 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                          * keeps the next item on the row is unconditional to
                          * match — without it, a non-voice build would wrap the
                          * name onto the next row. */
-                        renderPlayerPingMuteCell(cs, i, isSelf,
-                                                 (float)LOBBY_WBN_ICON_SIZE);
+                        renderPlayerPingMuteCell(cs, i, isSelf, kIconPx);
                         ImGui::SameLine();
 #if defined(WINBOLO_VOICE)
                         /* Voice state and the mute toggle. Lobby voice
@@ -1933,8 +1968,7 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                          * knowing they cannot talk matters. */
                         renderPlayerMicCell(cs, i,
                                             clientSimGetLobbySlot(cs, (BYTE)(i))->clientFlags,
-                                            talkingMap, isSelf,
-                                            (float)LOBBY_WBN_ICON_SIZE, true);
+                                            talkingMap, isSelf, kIconPx, true);
                         /* Gear beside your own microphone, expanding the
                          * voice sub-row below. Your row only: nobody else's
                          * microphone is yours to change. Controller mode

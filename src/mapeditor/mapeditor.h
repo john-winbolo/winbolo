@@ -28,6 +28,11 @@ extern "C" {
  *********************************************************/
 void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPath, bool fromMainMenu);
 
+/* Did the run that just returned end because the player quit, rather than
+ * leaving the editor?  Only the embedded caller asks; it hands the answer to
+ * windowSetQuitting(). */
+bool mapEditorAppQuitRequested(void);
+
 #ifdef __cplusplus
 }
 #endif

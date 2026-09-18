@@ -35,6 +35,10 @@
 #endif
 #include "mapeditor_validate.h"
 #include "mapeditor_stats.h"
+#include "mapeditor_scenario_check.h" /* MapEditorState holds a check by value */
+#include "mapeditor_scenario_form.h" /* MapEditorState holds a form by value */
+#include "mapeditor_scenario_pack.h" /* the container a map's scenario is read
+                                      * from and written back to */
 
 #include <string.h>
 #include <stdlib.h>
@@ -88,7 +92,8 @@ typedef enum {
     FILE_OP_SAVE_THEN_NEW,     /* Save current, then create new */
     FILE_OP_SAVE_THEN_OPEN,    /* Save current, then open another */
     FILE_OP_SAVE_THEN_EXIT,    /* Save current, then exit */
-    FILE_OP_SAVE_THEN_OPEN_WBN /* Save current, then open the WinBolo.net chooser */
+    FILE_OP_SAVE_THEN_OPEN_WBN,/* Save current, then open the WinBolo.net chooser */
+    FILE_OP_SAVE_SCENARIO_MOD  /* Write the scenario as a .scenario of its own */
 } FileOp;
 
 /* Map editor state */
@@ -285,6 +290,23 @@ typedef struct {
     bool showStatsPanel;
     bool statsDirty;
 
+    /* --- Scenario panel --- */
+    MEScenarioState scn;
+    /* The manifest the panel's metadata, lobby and rules forms edit. Pack into
+     * Map is where it goes, so edits in it are unsaved work like any other and
+     * count towards the unsaved-changes prompt. Emptied whenever the map
+     * changes. */
+    MEScenarioForm scnForm;
+    /* What the validator last said about the script in the pane. Emptied
+     * whenever the map changes or the script is re-read, so the markers never
+     * outlive the text they were found in. */
+    MEScenarioCheck scnCheck;
+    /* The scenario the open map already carried, so a map save puts it back:
+     * mapWrite truncates the file and would otherwise take it off the end. */
+    MEScenarioPacked scnPacked;
+    int  scnView;            /* one of MEScenarioView */
+    bool showScenario;
+
     /* --- Text tool --- */
     bool showTextDialog;
     TextConfig textConfig;
@@ -317,7 +339,19 @@ typedef struct {
 
     bool  fromMainMenu;
     bool  quit;
+    /* Why the loop is ending.  Leaving the editor and quitting the
+     * application both set quit, and embedded they mean different things:
+     * one hands the window back to WinBolo, the other ends it. */
+    bool  exitIsAppQuit;
 } MapEditorState;
+
+/* Read back by mapEditorAppQuitRequested() once the run has returned — the
+ * editor state is freed by then, so the answer outlives it here. */
+static bool s_appQuitRequested = FALSE;
+
+bool mapEditorAppQuitRequested(void) {
+    return s_appQuitRequested;
+}
 
 /* Read a neighbour tile for adjacency calculation, treating bases as ROAD
  * and stripping mine variants. Same logic as mapViewNeighbour in mapview.c
@@ -545,9 +579,13 @@ static void mapEditorRebuildMinimap(MapEditorState *ed) {
 
     {
         MapPreview *terrainView = clientMapPreviewWrap(ed->mp, NULL, NULL, NULL);
+        /* MINIMAP_EDIT_PALETTE: this panel is a diagram of the map being
+           built, where every terrain wants its own colour, rather than a
+           small picture of one being played. */
         minimapRenderPixels(terrainView,
                             (uint8_t *)ed->minimapPixels, NULL,
-                            MINIMAP_DARKEN_BORDER | MINIMAP_DARKEN_MINES);
+                            MINIMAP_DARKEN_BORDER | MINIMAP_DARKEN_MINES |
+                            MINIMAP_EDIT_PALETTE);
         clientMapPreviewDestroy(terrainView);
     }
 
@@ -1449,6 +1487,52 @@ static void meRenderSelection(MapEditorState *ed, int screenW, int screenH) {
 }
 
 /* -------------------------------------------------------
+ * Render the scenario's named regions
+ * ------------------------------------------------------- */
+
+/* The rectangles the scenario panel's tags view names, over the squares they
+ * cover, while that view is open. The camera arithmetic is meRenderSelection's
+ * above; the colour is not, so a region and the selection a region's bounds are
+ * taken from are told apart on the map. */
+static void meRenderScenarioRegions(MapEditorState *ed, int screenW,
+                                     int screenH) {
+    if (!ed->showScenario || ed->scnView != ME_SCENARIO_VIEW_TAGS) return;
+    if (ed->scnForm.manifest.numRegions == 0) return;
+
+    int zf = ed->zoomFactor;
+    int tileSize = TILE_SIZE_X;
+
+    int centerPX = ((int)ed->viewCenterX * tileSize) >> 8;
+    int centerPY = ((int)ed->viewCenterY * tileSize) >> 8;
+    int camPX = centerPX - screenW / (2 * zf);
+    int camPY = centerPY - screenH / (2 * zf);
+
+    SDL_SetRenderDrawBlendMode(ed->renderer, SDL_BLENDMODE_BLEND);
+
+    for (int i = 0; i < (int)ed->scnForm.manifest.numRegions; i++) {
+        const ScnManifestRegion *r = &ed->scnForm.manifest.regions[i];
+
+        /* The top-left square is inclusive and the size counts squares, so the
+           far edge is the square past the last one. */
+        float left   = (float)((int)r->x * tileSize - camPX) * zf;
+        float top    = (float)((int)r->y * tileSize - camPY) * zf;
+        float right  = (float)(((int)r->x + (int)r->w) * tileSize - camPX) * zf;
+        float bottom = (float)(((int)r->y + (int)r->h) * tileSize - camPY) * zf;
+        SDL_FRect rect = { left, top, right - left, bottom - top };
+
+        SDL_SetRenderDrawColor(ed->renderer, 255, 170, 60, 40);
+        SDL_RenderFillRect(ed->renderer, &rect);
+        SDL_SetRenderDrawColor(ed->renderer, 255, 170, 60, 220);
+        SDL_RenderRect(ed->renderer, &rect);
+
+        if (r->name[0] != '\0') {
+            SDL_SetRenderDrawColor(ed->renderer, 255, 220, 160, 255);
+            SDL_RenderDebugText(ed->renderer, left + 2.0f, top + 2.0f, r->name);
+        }
+    }
+}
+
+/* -------------------------------------------------------
  * Render paste preview
  * ------------------------------------------------------- */
 static void meRenderPastePreview(MapEditorState *ed, int screenW, int screenH,
@@ -2245,7 +2329,112 @@ static bool meSaveToPath(MapEditorState *ed, const char *path) {
     ed->undoStack.savedCommandIndex = ed->undoStack.count;
     meAddRecentFile(ed, path);
     meUpdateWindowTitle(ed);
+
+    /* The script lives beside the map, so an edited one is written with it.
+     * The map is on disk by now, so a script that will not write is shown
+     * the way any other editor error is and the save still counts as done.
+     * An untouched script follows the map to the name it was saved under,
+     * which under a new name means writing it there: a loose script is what
+     * a server runs in preference to the packed one, so a copy without it
+     * plays differently from the map it came from. */
+    if (meScenarioDirty(&ed->scn)) {
+        if (!meScenarioSaveForMap(&ed->scn, path)) {
+            /* The state says what stopped it — a write that failed, or a
+             * refusal to write over a script it could not open. */
+            snprintf(ed->errorMessage, sizeof(ed->errorMessage), "%s\n%s",
+                     ed->scn.status, ed->scn.scriptPath);
+        } else {
+            /* Written, so checked: a script is validated every time it
+             * reaches the disk, whichever Save put it there. */
+            meScenarioCheckRun(&ed->scnCheck, ed->scn.script,
+                               ed->scn.scriptLen,
+                               ed->scn.scriptPath[0] != '\0'
+                                   ? ed->scn.scriptPath
+                                   : ME_SCENARIO_CHECK_UNNAMED,
+                               &ed->scnForm.manifest);
+        }
+    } else {
+        meScenarioAdoptPath(&ed->scn, path);
+    }
+
+    /* mapWrite truncated the file, so a container that was on it is gone. Put
+     * back the one the map came with — the bytes that were already there,
+     * which need no checking. What the forms hold may have been edited and is
+     * written by Pack into Map, which checks it first. Saved under a new name,
+     * the new file gets the chunk by this same path. */
+    if (ed->scnPacked.present) {
+        char packErr[ME_SCENARIO_PACK_ERR_LEN];
+        char line[256];
+
+        if (meScenarioPackedRestore(&ed->scnPacked, path, packErr,
+                                    sizeof(packErr))) {
+            meScenarioSetStatus(&ed->scn,
+                                langGetText(STR_MAPEDIT_SCENARIO_CHUNK_KEPT));
+        } else {
+            /* The map is written either way, so this is reported the way a
+             * failed script write is and the save still counts. */
+            snprintf(line, sizeof(line), "%s: %s",
+                     langGetText(STR_MAPEDIT_SCENARIO_CHUNK_LOST), packErr);
+            meScenarioSetStatus(&ed->scn, line);
+            snprintf(ed->errorMessage, sizeof(ed->errorMessage), "%s\n%s",
+                     langGetText(STR_MAPEDIT_SCENARIO_CHUNK_LOST), path);
+        }
+    }
     return true;
+}
+
+/* -------------------------------------------------------
+ * The scenario already packed into a map, into the panel.
+ * ------------------------------------------------------- */
+/* A map can carry its scenario inside it: a container after the map data with
+ * the manifest and the script in it. The forms take that manifest, or the next
+ * pack writes a blank one over the author's.
+ *
+ * The pane takes the packed script only where there is no loose
+ * X.scenario.lua beside the map: a loose script overrides the packed one when
+ * a server loads the map, so it overrides it here too. Saving the pane still
+ * writes the loose file, which is the dev loop — edit, reload, play, pack when
+ * done.
+ *
+ * Called after meScenarioSetMap and meScenarioFormReset, which are what decide
+ * whether there is a loose script and leave the form empty for this to fill.
+ * A plain map is the ordinary case and says nothing. */
+static void meLoadPackedScenario(MapEditorState *ed, const char *path) {
+    ScenarioManifest packed;
+    char            *script    = NULL;
+    size_t           scriptLen = 0;
+    bool             found     = false;
+    char             err[ME_SCENARIO_PACK_ERR_LEN];
+    char             line[256];
+
+    if (path == NULL || path[0] == '\0') {
+        return;
+    }
+
+    if (!meScenarioReadFromMap(path, &packed, &script, &scriptLen, &found, err,
+                               sizeof(err))) {
+        /* The map itself read, so this is a container that would not open
+         * rather than a map that would not. It goes on the panel's status line
+         * and not into a modal over the map. */
+        snprintf(line, sizeof(line), "%s: %s",
+                 langGetText(STR_MAPEDIT_SCENARIO_PACK_READ_FAILED), err);
+        meScenarioSetStatus(&ed->scn, line);
+        return;
+    }
+    if (!found) {
+        return;
+    }
+
+    ed->scnForm.manifest = packed;
+    ed->scnForm.dirty    = false;
+
+    if (!ed->scn.fileOnDisk && script != NULL) {
+        meScenarioSetPackedScript(&ed->scn, script, scriptLen);
+    }
+    /* Kept so a map save can put the chunk back: mapWrite truncates the file.
+     * These are the bytes that were on it, not what the forms now hold. */
+    meScenarioPackedSet(&ed->scnPacked, &packed, script, scriptLen);
+    free(script);
 }
 
 /* -------------------------------------------------------
@@ -2290,6 +2479,17 @@ static bool meLoadFromPath(MapEditorState *ed, const char *path) {
     ed->statsDirty = true;
     ed->tabCycleIndex = 0;
     meAddRecentFile(ed, path);
+    /* The script beside the new map replaces whatever was being edited, and
+     * the manifest goes with it: it belongs to the map that was open. */
+    meScenarioSetMap(&ed->scn, path);
+    meScenarioFormReset(&ed->scnForm);
+    meScenarioCheckClear(&ed->scnCheck);
+    /* Whatever the last map carried is not this map's. A map that opens with
+     * no container leaves this empty, so its save writes none. */
+    meScenarioPackedClear(&ed->scnPacked);
+    /* And whatever the map itself carries, which the empty form above is
+     * waiting for. */
+    meLoadPackedScenario(ed, path);
     meUpdateWindowTitle(ed);
     return true;
 }
@@ -2339,6 +2539,14 @@ static bool meLoadFromMemory(MapEditorState *ed, const unsigned char *bytes,
     ed->minimapDirty = true;
     ed->statsDirty = true;
     ed->tabCycleIndex = 0;
+    /* A download has no file behind it, so there is nowhere for a script to
+     * sit beside it until the map is saved. */
+    meScenarioSetMap(&ed->scn, "");
+    meScenarioFormReset(&ed->scnForm);
+    meScenarioCheckClear(&ed->scnCheck);
+    /* Whatever the last map carried is not this map's. A map that opens with
+     * no container leaves this empty, so its save writes none. */
+    meScenarioPackedClear(&ed->scnPacked);
     meUpdateWindowTitle(ed);
     return true;
 }
@@ -2361,6 +2569,13 @@ static void meDoNew(MapEditorState *ed) {
     ed->minimapDirty = true;
     ed->statsDirty = true;
     ed->tabCycleIndex = 0;
+    /* A blank map has no file yet, so it has no script either. */
+    meScenarioSetMap(&ed->scn, "");
+    meScenarioFormReset(&ed->scnForm);
+    meScenarioCheckClear(&ed->scnCheck);
+    /* Whatever the last map carried is not this map's. A map that opens with
+     * no container leaves this empty, so its save writes none. */
+    meScenarioPackedClear(&ed->scnPacked);
     meUpdateWindowTitle(ed);
 }
 
@@ -2399,6 +2614,27 @@ static void meShowSaveDialog(MapEditorState *ed, FileOp op) {
     ed->fileDialogPending = true;
     ed->fileDialogGotResult = false;
     SDL_ShowSaveFileDialog(meFileDialogCallback, ed, ed->window, filters, 1, NULL);
+}
+
+/* The same dialog for the other kind of file the editor writes: a scenario
+ * that plays over any map rather than a map. The name it opens on is the
+ * manifest's own, so a scenario called Fast Reload is offered as
+ * Fast Reload.scenario. */
+static void meShowSaveModDialog(MapEditorState *ed) {
+    SDL_DialogFileFilter filters[] = {
+        { "Scenario Files", "scenario" },
+    };
+    char suggested[ME_PATH_MAX];
+
+    if (!meScenarioModFileName(&ed->scnForm.manifest, suggested,
+                               sizeof(suggested))) {
+        suggested[0] = '\0';
+    }
+    ed->pendingFileOp = FILE_OP_SAVE_SCENARIO_MOD;
+    ed->fileDialogPending = true;
+    ed->fileDialogGotResult = false;
+    SDL_ShowSaveFileDialog(meFileDialogCallback, ed, ed->window, filters, 1,
+                           suggested[0] != '\0' ? suggested : NULL);
 }
 
 /* -------------------------------------------------------
@@ -2796,9 +3032,18 @@ static void meDeleteSelectedObj(MapEditorState *ed) {
  * after an unsaved-changes modal resolves.
  * ------------------------------------------------------- */
 
+/* Everything a New, an Open or an Exit would throw away: the map itself, the
+ * script in the pane and the manifest behind the metadata, lobby and rules
+ * forms. Every site that asks whether to prompt asks this, so all of them
+ * count the same three. */
+static bool meAnythingDirty(const MapEditorState *ed) {
+    return ed->dirty || meScenarioDirty(&ed->scn) ||
+           meScenarioFormDirty(&ed->scnForm);
+}
+
 /* Begin "New" — checks dirty flag, may open modal. */
 static void meActionNew(MapEditorState *ed) {
-    if (ed->dirty) {
+    if (meAnythingDirty(ed)) {
         ed->deferredAction = FILE_OP_SAVE_THEN_NEW;
         /* The modal will be opened by the main loop via OpenPopup */
     } else {
@@ -2809,7 +3054,7 @@ static void meActionNew(MapEditorState *ed) {
 /* Begin "Open" — checks dirty flag, may open modal. */
 static void meActionOpen(MapEditorState *ed) {
     ed->pendingOpenPath[0] = '\0';
-    if (ed->dirty) {
+    if (meAnythingDirty(ed)) {
         ed->deferredAction = FILE_OP_SAVE_THEN_OPEN;
     } else {
         meShowOpenDialog(ed, FILE_OP_OPEN);
@@ -2820,7 +3065,7 @@ static void meActionOpen(MapEditorState *ed) {
 /* Begin "Open from WinBolo.net" — checks dirty flag, may open modal. */
 static void meActionOpenWbn(MapEditorState *ed) {
     ed->pendingOpenPath[0] = '\0';
-    if (ed->dirty) {
+    if (meAnythingDirty(ed)) {
         ed->deferredAction = FILE_OP_SAVE_THEN_OPEN_WBN;
     } else {
         meWbnOpenShow();
@@ -2844,11 +3089,181 @@ static void meActionSaveAs(MapEditorState *ed) {
 
 /* Begin "Exit" — checks dirty flag, may open modal. */
 static void meActionExit(MapEditorState *ed) {
-    if (ed->dirty) {
+    if (meAnythingDirty(ed)) {
         ed->deferredAction = FILE_OP_SAVE_THEN_EXIT;
     } else {
         ed->quit = true;
     }
+}
+
+/* What the scenario panel's tags view needs to know about the open map: how
+ * many pills, bases and starts it holds, where each one sits, and the
+ * rectangle the selection tool is holding, which is where a region's bounds
+ * come from.
+ *
+ * The panel reads none of it for itself. pillsGetNumPills, basesGetNumBases
+ * and startsGetNumStarts are bolo internals and mapeditor_scenario_imgui.cpp
+ * has no reach into them, so this file — which has — copies out the numbers
+ * and hands them over. Indices stay the editor's own, counting from 0; the
+ * form module is what turns one into the manifest's 1-based entry. */
+static void meScenarioFillMapInfo(MapEditorState *ed, MEScenarioMapInfo *info) {
+    memset(info, 0, sizeof(*info));
+
+    info->numPills = ed->pb->numPills;
+    if (info->numPills > MAX_PILLS) info->numPills = MAX_PILLS;
+    for (int i = 0; i < info->numPills; i++) {
+        info->pillX[i] = ed->pb->item[i].x;
+        info->pillY[i] = ed->pb->item[i].y;
+    }
+
+    info->numBases = ed->bs->numBases;
+    if (info->numBases > MAX_BASES) info->numBases = MAX_BASES;
+    for (int i = 0; i < info->numBases; i++) {
+        info->baseX[i] = ed->bs->item[i].x;
+        info->baseY[i] = ed->bs->item[i].y;
+    }
+
+    info->numStarts = ed->ss->numStarts;
+    if (info->numStarts > MAX_STARTS) info->numStarts = MAX_STARTS;
+    for (int i = 0; i < info->numStarts; i++) {
+        info->startX[i] = ed->ss->item[i].x;
+        info->startY[i] = ed->ss->item[i].y;
+    }
+
+    /* The selection is two corners in whichever order they were dragged; a
+     * region is a top-left and a count of squares. */
+    if (ed->hasSelection) {
+        int x0 = ed->selX1 < ed->selX2 ? ed->selX1 : ed->selX2;
+        int y0 = ed->selY1 < ed->selY2 ? ed->selY1 : ed->selY2;
+        int x1 = ed->selX1 > ed->selX2 ? ed->selX1 : ed->selX2;
+        int y1 = ed->selY1 > ed->selY2 ? ed->selY1 : ed->selY2;
+
+        info->hasSelection = true;
+        info->selX = x0;
+        info->selY = y0;
+        info->selW = x1 - x0 + 1;
+        info->selH = y1 - y0 + 1;
+    }
+}
+
+/* -------------------------------------------------------
+ * Writing the scenario: on to the map, or out as a mod.
+ * ------------------------------------------------------- */
+/* What has to be true before either write, in the order -pack makes it true:
+ * the script in the pane checks out, and the manifest that is about to be
+ * written agrees with the table that script declares. The host fills the
+ * scenario global from the manifest, runs the chunk and refuses the load when
+ * the table left behind says something else, so a package written past this
+ * check is one a server turns down when a round starts on it.
+ *
+ * A pane with nothing in it is not a script with a problem: there is no script
+ * at all, and the manifest stands on its own — which is what a rules-only
+ * scenario is. Anything with bytes in it is checked, and any issue is a
+ * refusal, with the problems going to the list the script view draws.
+ *
+ * modPath NULL writes the chunk on to the open map; a path writes a mod
+ * there. Nothing is written by either until both checks pass. */
+static void meWriteScenario(MapEditorState *ed, const char *modPath) {
+    ScenarioManifest toWrite;
+    char             key[SCN_VALIDATE_KEY_LEN];
+    char             err[ME_SCENARIO_PACK_ERR_LEN];
+    char             line[256];
+    bool             ok;
+
+    /* A mod is written from a copy of the form's manifest — bound false, no
+     * tags, no regions — and the comparison runs against that same copy, so a
+     * script that declares bound = true is caught here rather than at load.
+     *
+     * The copy is made before the check, because the check pushes it: the
+     * server pushes the manifest it loaded the package with, and pushing the
+     * form's instead would hold a mod's script against a table the mod file
+     * will not carry. */
+    if (modPath != NULL) {
+        meScenarioModManifest(&ed->scnForm.manifest, &toWrite);
+    } else {
+        toWrite = ed->scnForm.manifest;
+    }
+
+    if (ed->scn.scriptLen > 0 && ed->scn.script != NULL) {
+        meScenarioCheckRun(&ed->scnCheck, ed->scn.script, ed->scn.scriptLen,
+                           ed->scn.scriptPath[0] != '\0'
+                               ? ed->scn.scriptPath
+                               : ME_SCENARIO_CHECK_UNNAMED,
+                           &toWrite);
+        if (ed->scnCheck.result.count > 0) {
+            snprintf(line, sizeof(line), "%s (%u)",
+                     langGetText(STR_MAPEDIT_SCENARIO_PACK_ISSUES),
+                     (unsigned)ed->scnCheck.result.count);
+            meScenarioSetStatus(&ed->scn, line);
+            return;
+        }
+    } else {
+        meScenarioCheckClear(&ed->scnCheck);
+    }
+
+    if (ed->scnCheck.hasRun && ed->scnCheck.result.haveManifest &&
+        !meScenarioManifestAgrees(&toWrite, &ed->scnCheck.result.manifest, key,
+                                  sizeof(key), err, sizeof(err))) {
+        snprintf(line, sizeof(line), "%s: %s — %s",
+                 langGetText(STR_MAPEDIT_SCENARIO_PACK_CONFLICT), key, err);
+        meScenarioSetStatus(&ed->scn, line);
+        return;
+    }
+
+    if (modPath != NULL) {
+        ok = meScenarioWriteMod(&toWrite, ed->scn.script, ed->scn.scriptLen,
+                                modPath, err, sizeof(err));
+    } else {
+        ok = meScenarioPackIntoMap(&toWrite, ed->scn.script, ed->scn.scriptLen,
+                                   ed->currentFilePath, err, sizeof(err));
+    }
+
+    if (!ok) {
+        snprintf(line, sizeof(line), "%s: %s",
+                 langGetText(STR_MAPEDIT_SCENARIO_PACK_FAILED), err);
+        meScenarioSetStatus(&ed->scn, line);
+        return;
+    }
+
+    if (modPath != NULL) {
+        meScenarioSetStatus(&ed->scn,
+                            langGetText(STR_MAPEDIT_SCENARIO_MOD_SAVED));
+    } else {
+        /* The manifest is on the map now, so the form is no longer ahead of
+         * anything. The line says the loose script still wins, because an
+         * author who packs and then tests would otherwise be running the file
+         * beside the map without being told. */
+        ed->scnForm.dirty = false;
+        /* What is on the map now is what a later map save has to put back,
+         * rather than the container the file was opened with. */
+        meScenarioPackedSet(&ed->scnPacked, &toWrite, ed->scn.script,
+                            ed->scn.scriptLen);
+        meScenarioSetStatus(&ed->scn, langGetText(STR_MAPEDIT_SCENARIO_PACKED));
+    }
+}
+
+/* The save behind the unsaved-changes prompt's Yes: the map to path, and then
+ * the forms' manifest on to it when the author has edits in them.
+ *
+ * The pack runs after meSaveToPath has returned rather than inside it, because
+ * mapWrite truncates the file and meScenarioPackedRestore then puts the
+ * container the map came with back on the end; a pack from inside would be the
+ * one written over. meWriteScenario says on the panel's status line what it did
+ * and clears the form only when the write went through, so a form still dirty
+ * afterwards is a refusal. That is a save that did not finish: the caller drops
+ * the New, Open or Exit it was saving for, and the reason goes to the error
+ * popup the way a script that would not write does. */
+static bool meSaveAndPackForm(MapEditorState *ed, const char *path) {
+    if (!meSaveToPath(ed, path)) return false;
+    if (!meScenarioFormDirty(&ed->scnForm)) return true;
+
+    meWriteScenario(ed, NULL);
+    if (meScenarioFormDirty(&ed->scnForm)) {
+        snprintf(ed->errorMessage, sizeof(ed->errorMessage), "%s\n%s",
+                 ed->scn.status, path);
+        return false;
+    }
+    return true;
 }
 
 /* Process a completed file dialog result. */
@@ -2871,26 +3286,31 @@ static void meHandleFileDialogResult(MapEditorState *ed) {
         meSaveToPath(ed, path);
         break;
     case FILE_OP_SAVE_THEN_NEW:
-        if (meSaveToPath(ed, path)) {
+        if (meSaveAndPackForm(ed, path)) {
             meDoNew(ed);
         }
         break;
     case FILE_OP_SAVE_THEN_OPEN:
-        if (meSaveToPath(ed, path)) {
+        if (meSaveAndPackForm(ed, path)) {
             meShowOpenDialog(ed, FILE_OP_OPEN);
         }
         break;
 #ifdef MAPEDITOR_WBN_OPEN
     case FILE_OP_SAVE_THEN_OPEN_WBN:
-        if (meSaveToPath(ed, path)) {
+        if (meSaveAndPackForm(ed, path)) {
             meWbnOpenShow();
         }
         break;
 #endif
     case FILE_OP_SAVE_THEN_EXIT:
-        if (meSaveToPath(ed, path)) {
+        if (meSaveAndPackForm(ed, path)) {
             ed->quit = true;
         }
+        break;
+    case FILE_OP_SAVE_SCENARIO_MOD:
+        /* A mod is a file of its own and touches neither the map nor the
+         * script beside it. */
+        meWriteScenario(ed, path);
         break;
     default:
         break;
@@ -2904,14 +3324,17 @@ static void meHandleUnsavedChoice(MapEditorState *ed, int choice) {
     ed->deferredAction = FILE_OP_NONE;
 
     if (choice == 3) {
-        /* Cancel — do nothing */
+        /* Cancel — do nothing.  The exit this modal was asked about is off,
+         * so the quit that may have started it is off with it. */
+        if (action == FILE_OP_SAVE_THEN_EXIT) ed->exitIsAppQuit = false;
         return;
     }
 
     if (choice == 1) {
         /* Yes — save first */
         if (ed->currentFilePath[0]) {
-            if (!meSaveToPath(ed, ed->currentFilePath)) return;
+            /* The map and, when the forms hold edits, the manifest with it. */
+            if (!meSaveAndPackForm(ed, ed->currentFilePath)) return;
             /* Save succeeded, now do the deferred action */
         } else {
             /* No current path — need Save As dialog, keep deferred action */
@@ -3176,6 +3599,8 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     ed->zoomLevel = 2.0f;
     ed->offscreenTex = NULL;
     ed->quit = false;
+    ed->exitIsAppQuit = false;
+    s_appQuitRequested = FALSE;
     ed->showMines = true;
     ed->showGrid = false;
     ed->showPillRanges = false;
@@ -3200,6 +3625,11 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     ed->exportCfg.showMines = true;
     ed->exportCfg.showGrid = false;
     ed->brushSeen = calloc(256 * 256, sizeof(bool));
+    meScenarioInit(&ed->scn);
+    meScenarioFormInit(&ed->scnForm);
+    meScenarioCheckInit(&ed->scnCheck);
+    meScenarioPackedInit(&ed->scnPacked);
+    ed->scnView = ME_SCENARIO_VIEW_SCRIPT;
 
     /* Stamp library */
     {
@@ -3258,6 +3688,15 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     } else {
         meCreateBlankMap(ed);
     }
+    /* Whatever the editor opened with, the script that goes with it. A blank
+     * map leaves currentFilePath empty, which clears the pane. */
+    meScenarioSetMap(&ed->scn, ed->currentFilePath);
+    meScenarioFormReset(&ed->scnForm);
+    meScenarioCheckClear(&ed->scnCheck);
+    /* Whatever the last map carried is not this map's. A map that opens with
+     * no container leaves this empty, so its save writes none. */
+    meScenarioPackedClear(&ed->scnPacked);
+    meLoadPackedScenario(ed, ed->currentFilePath);
     meUpdateWindowTitle(ed);
 
     /* Create minimap texture */
@@ -3309,8 +3748,17 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             mapEditorImguiProcessEvent(&ev);
 
             switch (ev.type) {
+            case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+                /* Embedded, this is WinBolo's window the editor is drawing
+                 * into; a close request meant for anything else is not ours. */
+                if (ev.window.windowID != SDL_GetWindowID(ed->window)) break;
+                /* fall through */
             case SDL_EVENT_QUIT:
-                if (ed->dirty) {
+                /* Cmd+Q, Alt+F4, the close box.  All of them end the
+                 * application, embedded as well as standalone — the way back
+                 * to WinBolo is File > Return to Menu, or Escape. */
+                ed->exitIsAppQuit = true;
+                if (meAnythingDirty(ed)) {
                     ed->deferredAction = FILE_OP_SAVE_THEN_EXIT;
                     openUnsavedModal = true;
                 } else {
@@ -3394,11 +3842,12 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                         break;
                     case SDLK_Q:
                         if (!ed->fromMainMenu) {
+                            ed->exitIsAppQuit = true;
                             meActionExit(ed);
                             if (ed->deferredAction) openUnsavedModal = true;
                         }
                         break;
-                    /* Ctrl+1-7 = toggle panel visibility */
+                    /* Ctrl+1-8 = toggle panel visibility */
                     case SDLK_1: ed->showTerrain    = !ed->showTerrain;    break;
                     case SDLK_2: ed->showTools      = !ed->showTools;      break;
                     case SDLK_3: ed->showInspector  = !ed->showInspector;  break;
@@ -3406,6 +3855,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                     case SDLK_5: ed->showOverview     = !ed->showOverview;     break;
                     case SDLK_6: ed->showStampLibrary = !ed->showStampLibrary; break;
                     case SDLK_7: ed->showStatsPanel   = !ed->showStatsPanel;   break;
+                    case SDLK_8: ed->showScenario     = !ed->showScenario;     break;
                     default:
                         break;
                     }
@@ -3442,6 +3892,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                         ed->hasSelection = false;
                         ed->hasSelMask = false;
                     } else if (ed->fromMainMenu) {
+                        ed->exitIsAppQuit = false;
                         meActionExit(ed);
                         if (ed->deferredAction) openUnsavedModal = true;
                     }
@@ -3948,7 +4399,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             case SDL_EVENT_DROP_FILE: {
                 const char *dropPath = ev.drop.data;
                 if (dropPath) {
-                    if (ed->dirty) {
+                    if (meAnythingDirty(ed)) {
                         SDL_strlcpy(ed->pendingOpenPath, dropPath, ME_PATH_MAX);
                         ed->deferredAction = FILE_OP_SAVE_THEN_OPEN;
                         openUnsavedModal = true;
@@ -4070,6 +4521,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         if (ed->mazePreviewCount > 0) meRenderMazePreview(ed, renderW, renderH);
         if (ed->genPreviewCount > 0) meRenderGenPreview(ed, renderW, renderH);
         meRenderSelection(ed, renderW, renderH);
+        meRenderScenarioRegions(ed, renderW, renderH);
         meRenderPastePreview(ed, renderW, renderH, hoverMX, hoverMY);
         meRenderBorderIndicator(ed, renderW, renderH, hoverMX, hoverMY);
         meRenderObjSelection(ed, renderW, renderH);
@@ -4164,6 +4616,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             mes.showOverview     = ed->showOverview;
             mes.showStats        = ed->showStatsPanel;
             mes.showStampLibrary = ed->showStampLibrary;
+            mes.showScenario     = ed->showScenario;
             int nRecent = ed->numRecentFiles;
             if (nRecent > (int)(sizeof(mes.recentFiles) / sizeof(mes.recentFiles[0]))) {
                 nRecent = (int)(sizeof(mes.recentFiles) / sizeof(mes.recentFiles[0]));
@@ -4187,7 +4640,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
                               &ed->showTerrain, &ed->showTools,
                               &ed->showInspector, &ed->showObjects,
                               &ed->showOverview, &ed->showStatsPanel,
-                              &ed->showStampLibrary,
+                              &ed->showStampLibrary, &ed->showScenario,
                               ed->fromMainMenu,
                               ed->zoomStepIndex, (int)ZOOM_STEP_COUNT,
                               zoomSteps);
@@ -4215,6 +4668,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             meActionSaveAs(ed);
         }
         if (menuAction.wantExit) {
+            ed->exitIsAppQuit = menuAction.wantQuitApp;
             meActionExit(ed);
             if (ed->deferredAction) openUnsavedModal = true;
         }
@@ -4272,6 +4726,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         if (menuAction.wantToggleOverview)     ed->showOverview     = !ed->showOverview;
         if (menuAction.wantToggleStats)        ed->showStatsPanel   = !ed->showStatsPanel;
         if (menuAction.wantToggleStampLibrary) ed->showStampLibrary = !ed->showStampLibrary;
+        if (menuAction.wantToggleScenario)     ed->showScenario     = !ed->showScenario;
         if (menuAction.wantZoomIn) {
             if (ed->zoomStepIndex < (int)ZOOM_STEP_COUNT - 1) ed->zoomStepIndex++;
             ed->zoomLevel = zoomSteps[ed->zoomStepIndex];
@@ -4349,7 +4804,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
         }
         if (menuAction.openRecentIndex >= 0 && menuAction.openRecentIndex < ed->numRecentFiles) {
             const char *recentPath = ed->recentFiles[menuAction.openRecentIndex];
-            if (ed->dirty) {
+            if (meAnythingDirty(ed)) {
                 SDL_strlcpy(ed->pendingOpenPath, recentPath, ME_PATH_MAX);
                 ed->deferredAction = FILE_OP_SAVE_THEN_OPEN;
                 openUnsavedModal = true;
@@ -4711,6 +5166,73 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             }
         }
 
+        /* Scenario panel. The panel reports what was clicked; reading and
+         * writing the script file happens here. */
+        if (ed->showScenario) {
+            bool wantScriptSave = false;
+            bool wantScriptReload = false;
+            bool wantScriptValidate = false;
+            bool wantPack = false;
+            bool wantSaveMod = false;
+            MEScenarioMapInfo scnMap;
+            int scnClickKind, scnClickIdx, scnPanX, scnPanY;
+
+            meScenarioFillMapInfo(ed, &scnMap);
+            mapEditorImguiScenarioPanel(&ed->scn, &ed->scnForm, &ed->scnCheck,
+                                        ed->currentFilePath, &ed->scnView,
+                                        &ed->showScenario, &scnMap,
+                                        ed->selectedObjKind,
+                                        ed->selectedObjIndex, &scnClickKind,
+                                        &scnClickIdx, &scnPanX, &scnPanY,
+                                        &wantScriptSave,
+                                        &wantScriptReload,
+                                        &wantScriptValidate, &wantPack,
+                                        &wantSaveMod);
+            /* A tag row picks the object it names, the way the object list
+             * does. */
+            if (scnClickKind != ME_SEL_NONE) {
+                ed->selectedObjKind = scnClickKind;
+                ed->selectedObjIndex = scnClickIdx;
+                if (scnPanX >= 0 && scnPanY >= 0) {
+                    ed->viewCenterX = (WORLD)(scnPanX << 8);
+                    ed->viewCenterY = (WORLD)(scnPanY << 8);
+                }
+            }
+            if (wantScriptSave && ed->currentFilePath[0]) {
+                /* A script that reached the disk is checked without being
+                 * asked, so the author is told about a typo at the moment the
+                 * file becomes the one a round would read. */
+                if (meScenarioSaveForMap(&ed->scn, ed->currentFilePath)) {
+                    wantScriptValidate = true;
+                }
+            }
+            if (wantScriptReload) {
+                meScenarioReload(&ed->scn);
+                /* The text is not the text the markers were found in any
+                 * more. */
+                meScenarioCheckClear(&ed->scnCheck);
+            }
+            if (wantScriptValidate) {
+                /* The forms' manifest goes on as the scenario global first, so
+                 * Validate asks the question a server asks when it loads the
+                 * pair rather than a stricter one about the script alone. */
+                meScenarioCheckRun(&ed->scnCheck, ed->scn.script,
+                                   ed->scn.scriptLen,
+                                   ed->scn.scriptPath[0] != '\0'
+                                       ? ed->scn.scriptPath
+                                       : ME_SCENARIO_CHECK_UNNAMED,
+                                   &ed->scnForm.manifest);
+            }
+            if (wantPack && ed->currentFilePath[0]) {
+                meWriteScenario(ed, NULL);
+            }
+            if (wantSaveMod) {
+                /* A mod needs a name of its own, so the write waits for the
+                 * dialog the way Save As does. */
+                meShowSaveModDialog(ed);
+            }
+        }
+
         /* Stamp library panel */
         if (ed->showStampLibrary) {
             bool wantSave = false;
@@ -4830,6 +5352,8 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
 
     /* Cleanup */
     stampLibraryFree(&ed->stampLib);
+    meScenarioFree(&ed->scn);
+    meScenarioPackedClear(&ed->scnPacked);
     imageImportFree(&ed->imageImportCfg);
     validateResultFree(&ed->lastValidation);
     macOSPinchZoomDestroy();
@@ -4844,6 +5368,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
     me_mac_menubar_uninstall();
 #endif
     mapEditorImguiShutdown();
+    s_appQuitRequested = ed->exitIsAppQuit;
     undoStackClear(&ed->undoStack);
     if (ed->offscreenTex) SDL_DestroyTexture(ed->offscreenTex);
     if (ed->minimapTex) SDL_DestroyTexture(ed->minimapTex);

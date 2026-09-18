@@ -304,6 +304,9 @@ void transportUdpClientSubmitCommand(Transport *t,
 
 /* ── Layout A lobby commands — Client → Server ───────────────────── */
 void transportUdpClientSendLobbyMapListRequest(Transport *t, const char *relPath);
+/* No argument: the scenarios directory is flat, so there is no path to ask
+ * about. */
+void transportUdpClientSendLobbyScenarioListRequest(Transport *t);
 void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
                                                  const char *relPath,
                                                  const char *query);
@@ -358,6 +361,12 @@ void udpClientHandleLobbyMapListRsp(struct ClientSim *cs,
                                     const uint8_t *buf, int len);
 void udpClientHandleLobbyMapSearchRsp(struct ClientSim *cs,
                                       const uint8_t *buf, int len);
+
+/* The same, for the chunked SCENARIO_LIST_RSP. No path in this one: the
+ * scenarios directory is flat, so a response belongs to the request that is
+ * in flight and there is nothing to recognise a stale one by. */
+void udpClientHandleLobbyScenarioListRsp(struct ClientSim *cs,
+                                         const uint8_t *buf, int len);
 /* Client-side handler for a failed MAP_PREVIEW request. The map bytes
  * themselves now arrive over CHANNEL_BULK and are reassembled by the
  * transport's bulk receiver; ERR flags the request failed. `buf` includes

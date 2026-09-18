@@ -58,6 +58,7 @@ add_library(bolo_static STATIC
     log.c
     mapgen.c
     mapgen_maze.c
+    message_inbox.c
     messages.c
     mines.c
     minesexp.c
@@ -74,6 +75,7 @@ add_library(bolo_static STATIC
     position_history.c
     round_stats_derive.c
     rubble.c
+    scenario_panel.c
     scenario_table.c
     screenbrainmap.c
     screenbullet.c

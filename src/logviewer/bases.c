@@ -497,7 +497,7 @@ void lv_basesSetStock(bases *value, BYTE baseNum, BYTE s, BYTE m, BYTE a) {
 bool lv_basesChooseView(bases *value, int x, int y) {
   BYTE count = 0;
   while (count < (*value)->numBases) {
-    if ((*value)->active[count] != FALSE && (*value)->item[count].x == x && (*value)->item[count].y == y && (*value)->item[count].owner != NEUTRAL) {
+    if ((*value)->active[count] != FALSE && (*value)->item[count].x == x && (*value)->item[count].y == y && (*value)->item[count].owner < MAX_TANKS) {
       lv_playersSetSelf((*value)->item[count].owner);
       return TRUE;
     }

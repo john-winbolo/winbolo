@@ -10,6 +10,23 @@
 #                     without running one: the same parse against a stub game
 #                     table, reported as a list of keys, lines and messages.
 #
+#                     It also reads the server's scenarios directory — the
+#                     .scenario packages and loose .lua scripts a server
+#                     offers independently of any map — into the list the
+#                     lobby sends a client. The sim reaches that read through
+#                     a callback registered on it, not by calling in here:
+#                     this library calls the funnel, so it is linked ahead of
+#                     the server group and a call the other way would not
+#                     resolve.
+#
+#                     The files a scenario is made of — the WBSC container,
+#                     manifest.json, the chunk written on to a map — are
+#                     scenario_io_static's under src/scenario_io/, which this
+#                     library links PUBLIC. What is left here is the half
+#                     that needs a VM or a sim: the server's -pack flag lands
+#                     on scenario_pack.c, which validates the script and then
+#                     hands the manifest and the source over to be written.
+#
 #                     Built under the scenario_host include profile: it sees
 #                     src/bolo/public/ and src/bolo/scenario_api/, and
 #                     nothing under src/bolo/internal/. It is the first
@@ -17,15 +34,21 @@
 #                     what proves scenario_defs.h and server_sim_scenario.h
 #                     stand up against public/ alone.
 #
-#                     Linked by the binaries that host a ServerSim from a
-#                     map file on disk — WinBoloDS and WinBoloHeadless — and
-#                     by WinBoloUnitTests, which drives it directly. Not by
-#                     wasm, gym or braintest, none of which host.
+#                     Linked by the six binaries that host a ServerSim:
+#                     WinBoloDS and WinBoloHeadless, the three client builds
+#                     that host in process — WinBolo, WinBoloIOS and the
+#                     Android main — and WinBoloUnitTests, which drives it
+#                     directly. Each of those six is built from a CMake tree
+#                     that has to declare this library's own dependencies as
+#                     well: see the cJSON note at the foot of this file. Not
+#                     linked by wasm, gym or braintest, none of which host.
 
 add_library(scenario_static STATIC
     scenario_host.c
+    scenario_dir.c
     scenario_events.c
     scenario_lua.c
+    scenario_pack.c
     scenario_sandbox.c
     scenario_validate.c
 )
@@ -47,6 +70,13 @@ target_include_directories(scenario_static PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # includes the host header, as it does for the other bolo libraries.
 target_link_libraries(scenario_static PUBLIC SDL3::SDL3)
 
+# The file half of a scenario. PUBLIC because the headers that come with it
+# are part of what this library hands its includers — scenario_validate.h
+# names ScnValidateResult and scenario_lua.h names ScenarioManifest, both
+# declared over there — so the six binaries that link scenario_static
+# resolve those headers and those symbols without naming the library.
+target_link_libraries(scenario_static PUBLIC scenario_io_static)
+
 # lua_static is the stable name for whichever Lua the tree picked — LuaJIT
 # where it builds, PUC-Lua 5.4 otherwise. It carries the headers, the
 # WINBOLO_LUAJIT define and the 5.4-to-5.1 shim's force-include with it, so
@@ -58,6 +88,13 @@ target_link_libraries(scenario_static PUBLIC SDL3::SDL3)
 # way. scenario_lua.h does name them, and what includes that — the unit
 # tests — links lua_static for itself.
 target_link_libraries(scenario_static PRIVATE lua_static)
+
+# minizip and cJSON are scenario_io_static's, which links both PRIVATE: no
+# file left here includes zip.h, unzip.h, ioapi.h or cJSON.h. A static
+# library passes the link itself along, so a tree that links scenario_static
+# still resolves the symbols — and still has to declare both targets for
+# itself, the way it declares SDL3 and Lua. See the cJSON note in
+# src/scenario_io/CMakeLists.txt.
 
 if(NOT MSVC)
     target_compile_options(scenario_static PRIVATE -fcommon)

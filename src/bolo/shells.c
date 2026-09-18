@@ -250,6 +250,7 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
   q->creator = sim->viewPlayer;
   q->owner = owner;
   q->fireTick = sim->fireInputTick;  /* originating input tick, 0 when not a player fire */
+  q->serverFireTick = 0;             /* filled from the shellFired callback below */
   q->packSent = FALSE;
   q->shellDead = FALSE;
   q->compensationTicks = sim->lagCompTicks;
@@ -263,6 +264,27 @@ void shellsAddItem(GameSim *sim, shells *value, WORLD x, WORLD y, TURNTYPE angle
     (*value)->prev = q;
   }
   *value = q;
+
+  /* Tell the server the trigger was pulled, now rather than when the shell
+   * dies, and take back the SERVER tick it was recorded on.
+   *
+   * HOW LONG A SHELL IS IN THE AIR, measured rather than guessed. A tank
+   * fires with len = sightLen / 2, and sightLen tops out at GUNSIGHT_MAX
+   * (14, tank.h), so len is at most 7 map squares. q->length above is
+   * shellLifeTicks(7, shell_life 8, shell_start_add 5) = 1 + 8*7 - 5 = 52,
+   * and shellsUpdate runs once per GAME tick, which is every second server
+   * tick (server_sim_tick.c simRunHalfStep). A full-range shell is
+   * therefore 52 * 2 = 104 SERVER ticks in the air — longer than the
+   * detector's 100-tick quiet second, which is why a fire log fed only by
+   * shellDeath could not see a fourth shot at all.
+   *
+   * The returned tick is stamped on the shell so the death-time call can
+   * name the same number; the client's own fireTick above never takes part
+   * in a server-side rule. Server-only (NULL on the client), and inside the
+   * sim tick, so it stays deterministic. */
+  if (sim->callbacks.shellFired) {
+    q->serverFireTick = sim->callbacks.shellFired(sim->callbacks.ctx, owner);
+  }
 
   /* Play shoot sound at tank position (not offset shell position) */
   sim->callbacks.soundDistShoot(sim->callbacks.ctx, soundMX, soundMY, owner);
@@ -413,7 +435,7 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 				 * firing client can cull its predicted ghost and draw the impact
 				 * at the true position. Reached once per shell (collision path);
 				 * NULL on the client, which is not authoritative over shell death. */
-				if (sim->callbacks.shellDeath) sim->callbacks.shellDeath(sim->callbacks.ctx, position->fireTick, position->owner, newX, newY, shellOutcome);
+				if (sim->callbacks.shellDeath) sim->callbacks.shellDeath(sim->callbacks.ctx, position->fireTick, position->serverFireTick, position->owner, newX, newY, shellOutcome);
 				minesExpAddItem(sim, &sim->minesExplosions, mp, bmx, bmy);
 				count = 0;
 				while (count < numTanks) {
@@ -497,7 +519,7 @@ void shellsUpdate(GameSim *sim, tank *tk, BYTE numTanks, lgm **lgms, starts *sts
 			/* Server-only: shell reached end of life without a collision.
 			 * Reached once per shell (expiry path); same owner-closure as the
 			 * collision branch but with the shell's own end-of-life position. */
-			if (sim->callbacks.shellDeath) sim->callbacks.shellDeath(sim->callbacks.ctx, position->fireTick, position->owner, position->x, position->y, SHELL_OUTCOME_EXPIRED);
+			if (sim->callbacks.shellDeath) sim->callbacks.shellDeath(sim->callbacks.ctx, position->fireTick, position->serverFireTick, position->owner, position->x, position->y, SHELL_OUTCOME_EXPIRED);
 			minesExpAddItem(sim, &sim->minesExplosions, mp, bmx, bmy);
 			count = 0;
 			while (count < numTanks) {
@@ -760,14 +782,14 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 					case TH_KILL_SMALL:
 						returnValue = TRUE;
 						if (outOutcome != NULL) *outOutcome = SHELL_OUTCOME_TANK_KILL;
-						tkExplosionAddItem(sim, *xValue, *yValue, angle, TK_EXPLODE_LENGTH, TK_SMALL_EXPLOSION, targetPlayer);
+						tkExplosionAddItem(sim, *xValue, *yValue, angle, (TURNTYPE) sim->rules.tank_explosion_length, TK_SMALL_EXPLOSION, targetPlayer);
 						sim->callbacks.soundDistTankHit(sim->callbacks.ctx, mapX, mapY, targetPlayer);
 						sim->callbacks.tankKill(sim->callbacks.ctx, owner, targetPlayer, LAST_DEATH_BY_SHELL, 0);
 						break;
 					case TH_KILL_BIG:
 						returnValue = TRUE;
 						if (outOutcome != NULL) *outOutcome = SHELL_OUTCOME_TANK_KILL;
-						tkExplosionAddItem(sim, *xValue, *yValue, angle, TK_EXPLODE_LENGTH, TK_LARGE_EXPLOSION, targetPlayer);
+						tkExplosionAddItem(sim, *xValue, *yValue, angle, (TURNTYPE) sim->rules.tank_explosion_length, TK_LARGE_EXPLOSION, targetPlayer);
 						sim->callbacks.soundDistTankHit(sim->callbacks.ctx, mapX, mapY, targetPlayer);
 						sim->callbacks.tankKill(sim->callbacks.ctx, owner, targetPlayer, LAST_DEATH_BY_SHELL, 0);
 						break;
@@ -873,7 +895,8 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 						newTerrain = grassAddItem(sim, &sim->grs, mapX, mapY);
 						mapSetPos(sim, mp, mapX, mapY, newTerrain, FALSE, FALSE);
 						if (newTerrain == RIVER) {
-							floodAddItem(&sim->ff, mapX, mapY);
+							floodAddItem(&sim->ff, mapX, mapY,
+                       (BYTE) sim->rules.flood_fill_ticks);
 						}
 					}
 					break;
@@ -884,7 +907,8 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 						newTerrain = swampAddItem(sim, &sim->swp, mapX, mapY);
 						mapSetPos(sim, mp, mapX, mapY, newTerrain, FALSE, FALSE);
 						if (newTerrain == RIVER) {
-							floodAddItem(&sim->ff, mapX, mapY);
+							floodAddItem(&sim->ff, mapX, mapY,
+                       (BYTE) sim->rules.flood_fill_ticks);
 						}
 					}
 					break;
@@ -895,7 +919,8 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 						newTerrain = rubbleAddItem(sim, &sim->rbl, mapX, mapY);
 						mapSetPos(sim, mp, mapX, mapY, newTerrain, FALSE, FALSE);
 						if (newTerrain == RIVER) {
-							floodAddItem(&sim->ff, mapX, mapY);
+							floodAddItem(&sim->ff, mapX, mapY,
+                       (BYTE) sim->rules.flood_fill_ticks);
 						}
 					}
 					break;

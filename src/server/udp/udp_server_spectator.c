@@ -198,6 +198,11 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
     case CTRL_LOBBY_BOT_CONFIG:
     case CTRL_LOBBY_BOT_BRAIN:
     case CTRL_LOBBY_BRAIN_LIST:
+    /* The brains' lobby texts, which index into the list above. A spectator
+     * reads the lobby's team chat, and a bot's announce line is a team-chat
+     * line whose docs open when it is clicked — without these it would see
+     * the line and find nothing behind it. */
+    case CTRL_LOBBY_BRAIN_DOCS_CHUNK:
     case CTRL_PLAYER_JOIN:
     case CTRL_BALANCE_PROPOSAL:
     case CTRL_MAP_SKIP_STATE:
@@ -228,6 +233,35 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
          * No sender-skip needed — the sender is a player, the spectator has no
          * playerNum. */
         allow = (evt->u.chat.destPlayer == 0xFF);
+        break;
+    /* A scenario's presentation, for the three that carry a recipient
+     * pair: a viewer sees what is addressed to everyone and nothing
+     * narrower. A spectator belongs to no team and holds no slot, so a
+     * team- or player-addressed one never qualifies — the same reasoning
+     * the CTRL_CHAT arm above uses, and the same answer the per-client
+     * filter in udpClientDeliverControl reaches by comparing. */
+    case CTRL_SCN_PANEL:
+        allow = (evt->u.scnPanel.destTeam == 0 &&
+                 evt->u.scnPanel.destPlayer == 0xFF);
+        break;
+    case CTRL_SCN_ANNOUNCE:
+        allow = (evt->u.scnAnnounce.destTeam == 0 &&
+                 evt->u.scnAnnounce.destPlayer == 0xFF);
+        break;
+    case CTRL_SCN_MARKER:
+        allow = (evt->u.scnMarker.destTeam == 0 &&
+                 evt->u.scnMarker.destPlayer == 0xFF);
+        break;
+    /* Scores are broadcast — a viewer reading a scenario's panel and
+     * markers with a blank scoreboard beside them looks broken, the
+     * same reason CTRL_STATS_SEED is allowed above. */
+    case CTRL_SCN_SCORE:
+    /* And the rules that scenario's manifest sets: the lobby line a viewer
+     * already reads names the scenario, and this is what is behind it. As
+     * public as the name and the description CTRL_LOBBY_SETTINGS carries to
+     * the same viewer, and addressed to nobody. */
+    case CTRL_SCENARIO_RULES:
+        allow = true;
         break;
     default:
         allow = false;

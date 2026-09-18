@@ -239,6 +239,17 @@ bool mapReadFromMemory(const BYTE *data, int len, map *value, pillboxes *pb, bas
 *********************************************************/
 BYTE mapGetPos(map *value, BYTE xValue, BYTE yValue);
 
+/* Does the map really hold square (xValue, yValue)? The playable band runs
+ * MAP_MINE_EDGE_LEFT < x < MAP_MINE_EDGE_RIGHT and the same in y; every
+ * square outside it is off the map.
+ *
+ * Ask this FIRST wherever the difference between "open water" and "not a
+ * square at all" matters. mapGetPos answers DEEP_SEA for an off-map read,
+ * and deep sea is a perfectly ordinary terrain that a shell can fly over
+ * and die on — so a caller that only looks at the terrain code cannot tell
+ * the two apart, and treats the whole border as open ground. */
+bool mapPosInBounds(BYTE xValue, BYTE yValue);
+
 /*********************************************************
 *NAME:          mapGetSpeed
 *AUTHOR:        John Morrison

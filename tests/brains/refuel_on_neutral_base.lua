@@ -6,7 +6,7 @@
 -- on square 124, the road is mined on square 127, and the base the run is
 -- after — full armour, three shells, full mines — sits on square 130. The
 -- run passes over the first base and takes it on the way; the mine takes
--- ten armour off the tank, which is what gives the base armour to hand
+-- fifteen armour off the tank, which is what gives the base armour to hand
 -- back.
 --
 -- Braking begins two squares short of the middle of the target square,

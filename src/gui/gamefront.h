@@ -55,7 +55,6 @@
 #define DEFAULT_TANKVIEW     23   /* SDL_SCANCODE_T */
 #define DEFAULT_PILLVIEW     10   /* SDL_SCANCODE_G */
 #define DEFAULT_ALLYVIEW     28   /* SDL_SCANCODE_Y */
-#define DEFAULT_LGMVIEW      11   /* SDL_SCANCODE_H */
 #define DEFAULT_BASEVIEW     16   /* SDL_SCANCODE_M */
 
 /* Held while the wheel turns over the map overview, it zooms the map rather
@@ -1000,6 +999,16 @@ extern float gameFrontOverviewZoom;     /* camera scale, e.g. 1.0 */
 extern bool  gameFrontOverviewFollow;
 extern bool  gameFrontShowMapOverview;  /* open when the last game ended */
 
+/* Where the scenario panel sits ([WINDOW] section). The panel is an ImGui
+ * window inside the main one rather than an OS window of its own, so this is
+ * a position in the main window's own render coordinates, not a desktop one.
+ * -1 for either means the player has never moved it, and it opens at the
+ * top-right of the game view; a position saved on a larger display is
+ * clamped back inside the window it is restored into. Written through the
+ * debounced gameFrontSaveWindowSettings path as the player drags it. */
+extern int   gameFrontScnPanelX;        /* -1 = never moved */
+extern int   gameFrontScnPanelY;
+
 /* App full screen mode ([MENU] section). While it is on the main window is
  * full screen everywhere — menus, lobby and game — and every game opens in
  * the Full Screen Map view. That view is the map, so the pop-out above never
@@ -1025,6 +1034,12 @@ extern bool           gameFrontHostingScripts;          /* default Yes   */
                                * map pack can decline its script without
                                * deleting the file. Set on the scenario
                                * library before either attach site runs. */
+extern bool           gameFrontHostingUploadScripts;    /* default Yes   */
+                              /* Run a script carried by a map a player
+                               * uploaded to this host. Off plays those maps
+                               * plainly and leaves every other map alone.
+                               * Set on the scenario library beside the
+                               * switch above. */
 extern int            gameFrontHostingMaxSpec;         /* 1-32,  default 16 */
 extern int            gameFrontHostingUploadPolicy;    /* default ALLOW (0) */
 extern int            gameFrontHostingUploadMaxFiles;  /* 1-255, default 64 */
@@ -1034,6 +1049,10 @@ extern char           gameFrontHostingUploadDir[FILENAME_MAX];
 extern bool           gameFrontHostingLogging;         /* default Yes   */
 extern char           gameFrontHostingLogDir[FILENAME_MAX];
                               /* Round-log dir; default <prefs path> */
+extern char           gameFrontHostingScenarioDir[FILENAME_MAX];
+                              /* The scenarios this host offers on their own,
+                               * independently of any map; default
+                               * <prefs path>scenarios */
 extern bool           gameFrontHostingServeReplays;    /* default Yes   */
                               /* Hand a finished round's log to players who
                                * ask for it. Yes leaves the serve policy at
@@ -1048,6 +1067,7 @@ extern int            gameFrontHostingVoiceMode;       /* default ON (0) */
 void gameFrontSetHostingPort(unsigned short port);
 void gameFrontSetHostingAllowSpec(bool allow);
 void gameFrontSetHostingScripts(bool allow);
+void gameFrontSetHostingUploadScripts(bool allow);
 void gameFrontSetHostingMaxSpec(int maxSpec);
 void gameFrontSetHostingUploadPolicy(int policy);
 void gameFrontSetHostingUploadMaxFiles(int maxFiles);
@@ -1055,6 +1075,7 @@ void gameFrontSetHostingUploadMaxStorage(int maxStorageMb);
 void gameFrontSetHostingUploadDir(const char *dir);
 void gameFrontSetHostingLogging(bool logging);
 void gameFrontSetHostingLogDir(const char *dir);
+void gameFrontSetHostingScenarioDir(const char *dir);
 void gameFrontSetHostingServeReplays(bool serve);
 void gameFrontSetHostingVoiceMode(int mode);
 
@@ -1112,8 +1133,16 @@ void gameFrontSetVisibilityCustom(const VisibilitySettings *v);
 /* The seven visibility globals above as one set. */
 void gameFrontGetVisibilitySettings(VisibilitySettings *out);
 /* Records a set as the host's choice: the seven globals, which named set
- * it is, and — when it is none of them — the set itself. Call it wherever
- * a host changes visibility, rather than writing the three separately. */
-void gameFrontRememberVisibility(const VisibilitySettings *v);
+ * it is, and — when saveCustom is true and the set is none of the named
+ * ones — the set itself. Call it wherever a host changes visibility,
+ * rather than writing the three separately.
+ *
+ * saveCustom is false where the caller is only writing down what the
+ * settings are on right now. Applying a preset sends its settings one at
+ * a time, so the values pass through mixes that match no named set, and
+ * every one of those would otherwise be saved as the hand-made set. The
+ * lobby therefore passes false and writes the hand-made set itself, at
+ * the points where the player edited or picked something. */
+void gameFrontRememberVisibility(const VisibilitySettings *v, bool saveCustom);
 
 #endif

@@ -37,6 +37,19 @@ void serverLifecycleGetSimStats(double *outLastMs, double *outEwmaMs) {
   if (outEwmaMs) *outEwmaMs = 0.0;
 }
 
+/* The round's worst tick and its over-budget count, same story:
+ * server_sim_round.c reads the pair in serverSimInformation and clears it at
+ * each round start, and neither call has anything to measure on a binary
+ * that never runs the tick loop. */
+void serverLifecycleGetTickPeak(double *outPeakMs,
+                                unsigned int *outOverBudget) {
+  if (outPeakMs) *outPeakMs = 0.0;
+  if (outOverBudget) *outOverBudget = 0;
+}
+
+void serverLifecycleResetTickPeak(void) {
+}
+
 /* server_sim.c references these. The real implementations live in
  * transport_udp_server.c (server_static), which the non-server-static
  * targets compiling this file (WinBoloIOS, BrainTest, MapEditor,

@@ -206,14 +206,17 @@ BYTE utilGet16Dir(TURNTYPE value) {
 *  x         - X co-ord of shell
 *  y         - Y co-ord of shell
 *  angle     - The direction the shell came from
+*  hitRadius - The tank's hit circle, the caller's tank_hit_radius rule
 *********************************************************/
-bool utilIsTankHit(WORLD xTank, WORLD yTank, TURNTYPE tankAngle, WORLD x, WORLD y, TURNTYPE angle) {
-  /* Hit-zone test — circle by default (see TANK_HIT_RADIUS in
-   * internal/tank.h). The angle args are part of the legacy signature for a
-   * future per-facing check that isn't wired up yet. */
+bool utilIsTankHit(WORLD xTank, WORLD yTank, TURNTYPE tankAngle, WORLD x, WORLD y, TURNTYPE angle, WORLD hitRadius) {
+  /* Hit-zone test — circle by default. The radius is handed in rather than
+   * read: this file sits below the sim and has no rules table of its own,
+   * and its one caller does. The angle args are part of the legacy
+   * signature for a future per-facing check that isn't wired up yet. */
   (void)tankAngle;
   (void)angle;
 #ifdef BOLO_LEGACY_SQUARE_COLLISION
+  (void)hitRadius;
   return (abs(xTank - x) < 128 && abs(yTank - y) < 128);
 #else
   {
@@ -222,8 +225,8 @@ bool utilIsTankHit(WORLD xTank, WORLD yTank, TURNTYPE tankAngle, WORLD x, WORLD 
     /* Bounding-box pre-test bounds dx/dy before squaring; see tankIsTankHit.
      * Never rejects a real hit, prevents int overflow for far-apart pairs
      * (pillbox aim prediction steps a shell from far away toward the tank). */
-    return (abs(dx) < TANK_HIT_RADIUS && abs(dy) < TANK_HIT_RADIUS &&
-            (dx * dx + dy * dy) < TANK_HIT_RADIUS_SQUARED);
+    const int r = (int) hitRadius;
+    return (abs(dx) < r && abs(dy) < r && (dx * dx + dy * dy) < r * r);
   }
 #endif
 }

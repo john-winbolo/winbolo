@@ -451,7 +451,23 @@ void playersSetPlayer(ClientSim *csParam, players *plrs, BYTE selfPlayer, BYTE p
                         (*plrs)->item[playerNum].ping,
                         playersGetClientType(plrs, playerNum),
                         playersGetClientFlags(plrs, playerNum));
-      frontEndStatusTank(csParam, (BYTE) (playerNum+1), playersScreenAllience(plrs, selfPlayer, playerNum));
+      /* The status tile this seat shows. The alliance still comes from the
+         table with the selfPlayer this call was handed, not from
+         clientSimGetTankAlliance, which reads the local player off the
+         ClientSim instead: a spectator arrives here with 0xFF so the
+         self-branch cannot swallow a real slot-0 join, and that has to
+         survive. The held-seat rule is the part both routes have to agree
+         on, so that is what is asked for — a seat with no tank shows none,
+         here as in the per-frame accessor. playerNum is 0-based in this
+         function and the predicate takes it 0-based; the +1 above is
+         frontEndStatusTank's own 1-based convention. csParam is NULL on the
+         server paths, where the predicate answers false and the tile is
+         whatever the table said, as before. */
+      tankAlliance statusTank = playersScreenAllience(plrs, selfPlayer, playerNum);
+      if (clientSimSlotIsUnfielded(csParam, playerNum)) {
+        statusTank = tankNone;
+      }
+      frontEndStatusTank(csParam, (BYTE) (playerNum+1), statusTank);
       frontEndRedrawAll(csParam);
     }
   }
@@ -1177,7 +1193,8 @@ void playersMakeScreenLgm(ClientSim *cs, players *plrs, screenLgm *value, BYTE l
            in from a spawn, or out building — so the client still tests the
            LGM's own square. An ally's LGM follows the ally: shown while the
            server's allies-in-trees option is on. */
-        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST) ||
+        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < clientSimGetGameSim(cs)->rules.tree_hide_distance &&
+             conv2 < clientSimGetGameSim(cs)->rules.tree_hide_distance) ||
             (clientSimGetAlliesInTrees(cs) == TRUE && allienceExist(&((*plrs)->item[count].allie), clientSimGetMyPlayerNum(cs)) == TRUE)) {
           screenLgmAddItem(value,(BYTE) ((*plrs)->item[count].lgmMapX - leftPos), (BYTE) ((*plrs)->item[count].lgmMapY - top), (*plrs)->item[count].lgmPixelX, (*plrs)->item[count].lgmPixelY, (*plrs)->item[count].lgmFrame, (BYTE) wx, (BYTE) wy);
         }
@@ -2310,7 +2327,8 @@ void playersGetBrainLgmsInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE 
            in from a spawn, or out building — so the client still tests the
            LGM's own square. An ally's LGM follows the ally: shown while the
            server's allies-in-trees option is on. */
-        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || (playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST)) ||
+        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || (playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < clientSimGetGameSim(cs)->rules.tree_hide_distance &&
+             conv2 < clientSimGetGameSim(cs)->rules.tree_hide_distance)) ||
             (clientSimGetAlliesInTrees(cs) == TRUE && allienceExist(&((*plrs)->item[count].allie), clientSimGetMyPlayerNum(cs)) == TRUE)) {
           /* In the rectangle */
           /* Object Type */

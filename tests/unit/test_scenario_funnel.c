@@ -69,6 +69,7 @@ static const ScenarioOpType kAllOpTypes[] = {
     SCN_OP_MSG_ALL,
     SCN_OP_MSG_TEAM,
     SCN_OP_MSG_PLAYER,
+    SCN_OP_MSG_SAY,
     SCN_OP_SOUND,
     SCN_OP_LOG,
     SCN_OP_PANEL,
@@ -77,7 +78,8 @@ static const ScenarioOpType kAllOpTypes[] = {
     SCN_OP_MARKER,
     SCN_OP_END_ROUND,
     SCN_OP_SET_GAME_TIME,
-    SCN_OP_SET_RULE
+    SCN_OP_SET_RULE,
+    SCN_OP_SHELL_EXPIRED
 };
 #define NUM_OP_TYPES ((int)(sizeof(kAllOpTypes) / sizeof(kAllOpTypes[0])))
 
@@ -149,14 +151,21 @@ static bool opArmHasLanded(ScenarioOpType t) {
            t == SCN_OP_LOBBY_ADD_BOT ||
            t == SCN_OP_LOBBY_REMOVE_BOT ||
            t == SCN_OP_LOBBY_SET_TEAM ||
+           t == SCN_OP_BOT_HINT ||           /* test_scenario_hint.c */
            t == SCN_OP_MSG_ALL ||            /* test_scenario_comms_arms.c */
            t == SCN_OP_MSG_TEAM ||
            t == SCN_OP_MSG_PLAYER ||
+           t == SCN_OP_MSG_SAY ||
            t == SCN_OP_SOUND ||
            t == SCN_OP_LOG ||
+           t == SCN_OP_PANEL ||              /* test_scenario_presentation_arms.c */
+           t == SCN_OP_SCORE ||
+           t == SCN_OP_ANNOUNCE ||
+           t == SCN_OP_MARKER ||
            t == SCN_OP_END_ROUND ||          /* test_scenario_flow_arms.c */
            t == SCN_OP_SET_GAME_TIME ||
-           t == SCN_OP_SET_RULE;             /* test_scenario_rule_arms.c */
+           t == SCN_OP_SET_RULE ||           /* test_scenario_rule_arms.c */
+           t == SCN_OP_SHELL_EXPIRED;        /* test_three_shot_order.c */
 }
 
 /* An op with no arm answers UNSUPPORTED, and an op with one does not. The
@@ -165,9 +174,9 @@ static bool opArmHasLanded(ScenarioOpType t) {
 int run_scenario_op_every_type_unsupported(void) {
     int i;
 
-    UT_ASSERT_MSG(NUM_OP_TYPES == (int)SCN_OP_SET_RULE + 1,
+    UT_ASSERT_MSG(NUM_OP_TYPES == (int)SCN_OP_SHELL_EXPIRED + 1,
                   "kAllOpTypes covers %d types but the enum declares %d",
-                  NUM_OP_TYPES, (int)SCN_OP_SET_RULE + 1);
+                  NUM_OP_TYPES, (int)SCN_OP_SHELL_EXPIRED + 1);
 
     for (i = 0; i < NUM_OP_TYPES; i++) {
         ServerSim *sim = makeLobbySim();

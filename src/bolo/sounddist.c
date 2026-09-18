@@ -195,11 +195,13 @@ void clientSoundDistLocal(GameSim *sim, sndEffects value, BYTE mx, BYTE my) {
     gapY = tankY - my;
   }
 
-  if (gapY >= SDIST_NONE || gapX >= SDIST_NONE) {
+  if (gapY >= sim->rules.sound_none_range ||
+      gapX >= sim->rules.sound_none_range) {
     return;
   }
 
-  if (gapX <= SDIST_SOFT && gapY <= SDIST_SOFT) {
+  if (gapX <= sim->rules.sound_soft_range &&
+      gapY <= sim->rules.sound_soft_range) {
     tier = SOUND_TIER_NEAR;
   } else {
     tier = SOUND_TIER_FAR;

@@ -111,13 +111,40 @@ static bool appHasFocus(void) {
   return sdl3ImguiGameInputWindowHasFocus();
 }
 
+/* Keys the shortcut layer has taken, held swallowed until the player lets go.
+   One bit each, indexed by scancode.
+
+   A menu shortcut is the primary modifier and a letter, and that letter is
+   usually bound to something in the game as well: Ctrl+M opens Send Message
+   and M is the default Base View key, so the message window came up and the
+   view jumped to a base behind it. Ctrl+S, Ctrl+G and Ctrl+1/2/3 collide with
+   turn-left, pill view and the quick-build keys the same way.
+
+   The event that ran the shortcut cannot simply be dropped, because the
+   bindings are not read from events: keyDown polls SDL's keyboard state, and
+   the letter is still physically down there. So the shortcut marks the key
+   here and the poll reads it as up until it comes up for real. */
+static bool swallowedKeys[SDL_SCANCODE_COUNT];
+
 /* Returns non-zero if the key at the given SDL_Scancode is currently held */
 static bool keyDown(int sc) {
   const bool *state = SDL_GetKeyboardState(NULL);
   if (!state || sc <= 0 || sc >= SDL_SCANCODE_COUNT) {
     return false;
   }
+  if (swallowedKeys[sc]) {
+    /* Cleared by the physical release, not by a timer: the player may hold
+       the shortcut chord for as long as they like, and the binding comes back
+       the moment the key is up. */
+    if (state[sc]) return false;
+    swallowedKeys[sc] = FALSE;
+  }
   return state[sc];
+}
+
+void inputSwallowKeyUntilRelease(int scancode) {
+  if (scancode <= 0 || scancode >= SDL_SCANCODE_COUNT) return;
+  swallowedKeys[scancode] = TRUE;
 }
 
 #define KEY_DOWN(sc) keyDown(sc)
@@ -541,6 +568,10 @@ void inputResetHeldKeys(void) {
   mineKeyEventDown = FALSE;
   mineKeyPhysicalDown = FALSE;
   mineKeyEventsActive = FALSE;
+  /* SDL_ResetKeyboard above has already put every key up, so nothing is left
+     to swallow — and a key still marked here would otherwise stay dead until
+     it was pressed and released again. */
+  SDL_memset(swallowedKeys, 0, sizeof(swallowedKeys));
   pillViewKeyWasDown = FALSE;
   baseViewKeyWasDown = FALSE;
   allyViewKeyWasDown = FALSE;

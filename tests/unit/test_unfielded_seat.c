@@ -61,7 +61,7 @@
 /* The seat every case seats, so a failure message names the same thing the
  * assertion does. */
 #define UF_SEAT   3
-#define UF_NAME   "Horde1"
+#define UF_NAME   "Raider1"
 #define UF_TEAM   3
 
 /* A file for the brain path to name. The fixture brain never opens it — the

@@ -41,10 +41,10 @@ static inline bool keyIsClaimedByGame(const keyItems *k, int scancode) {
            scancode == k->kiOverviewZoomIn || scancode == k->kiOverviewZoomOut ||
            scancode == k->kiScrollUp     || scancode == k->kiScrollDown   ||
            scancode == k->kiScrollLeft   || scancode == k->kiScrollRight  ||
-           scancode == k->kiAllyView     || scancode == k->kiLGMView      ||
-           scancode == k->kiBaseView     || scancode == k->kiQuickTree    ||
-           scancode == k->kiQuickRoad    || scancode == k->kiQuickWall    ||
-           scancode == k->kiQuickPillbox || scancode == k->kiQuickMine;
+           scancode == k->kiAllyView     || scancode == k->kiBaseView     ||
+           scancode == k->kiQuickTree    || scancode == k->kiQuickRoad    ||
+           scancode == k->kiQuickWall    || scancode == k->kiQuickPillbox ||
+           scancode == k->kiQuickMine;
 }
 
 #endif /* WINBOLO_KEY_CLAIMS_H */

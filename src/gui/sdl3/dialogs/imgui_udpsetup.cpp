@@ -211,12 +211,7 @@ extern "C" int imguiUdpSetupShow(void) {
             dialogHandleGamepadCancelEvent(window, &ev);
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
-            if (ev.type == SDL_EVENT_QUIT) {
-                gameFrontSetDlgState(openWelcome);
-                running = false;
-            }
-            if (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
-                ev.window.windowID == SDL_GetWindowID(window)) {
+            if (dialogHandleQuitEvent(window, &ev)) {
                 gameFrontSetDlgState(openWelcome);
                 running = false;
             }
@@ -277,7 +272,13 @@ extern "C" int imguiUdpSetupShow(void) {
         ImGui::Separator();
         ImGui::Spacing();
 
-        /* --- Input fields --- */
+        /* --- Input fields ---
+         * Enter in any of them is Join, the way Enter is OK in a dialog that
+         * has one. This screen has three peer buttons and no OK, so nothing
+         * was bound to Enter at all and typing a host and pressing it did
+         * nothing. Join is the one it answers to: New and Rejoin stay clicks,
+         * hosting and rejoining being the deliberate choices of the three. */
+        bool enterJoin = false;
 #if BOLO_MOBILE || defined(__IPHONEOS__)
         /* On mobile, labels left, narrow inputs right-aligned on same line */
         float inputW = panelW * 0.225f;
@@ -286,26 +287,30 @@ extern "C" int imguiUdpSetupShow(void) {
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_MACHINENAME));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
-        ImGui::InputText("##address", address, FILENAME_MAX,
-                         ImGuiInputTextFlags_CallbackEdit,
+        enterJoin |= ImGui::InputText("##address", address, FILENAME_MAX,
+                         ImGuiInputTextFlags_CallbackEdit |
+                         ImGuiInputTextFlags_EnterReturnsTrue,
                          udpAddressEditCallback, &addrCtx);
 
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_THEREUDP));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
-        ImGui::InputText("##targetPort", targetPortBuf, sizeof(targetPortBuf),
-                         ImGuiInputTextFlags_CharsDecimal);
+        enterJoin |= ImGui::InputText("##targetPort", targetPortBuf, sizeof(targetPortBuf),
+                         ImGuiInputTextFlags_CharsDecimal |
+                         ImGuiInputTextFlags_EnterReturnsTrue);
 
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_USUDP));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
-        ImGui::InputText("##myPort", myPortBuf, sizeof(myPortBuf),
-                         ImGuiInputTextFlags_CharsDecimal);
+        enterJoin |= ImGui::InputText("##myPort", myPortBuf, sizeof(myPortBuf),
+                         ImGuiInputTextFlags_CharsDecimal |
+                         ImGuiInputTextFlags_EnterReturnsTrue);
 
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_NAME));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
-        ImGui::InputText("##playerName", playerName, PLAYER_NAME_LEN);
+        enterJoin |= ImGui::InputText("##playerName", playerName, PLAYER_NAME_LEN,
+                         ImGuiInputTextFlags_EnterReturnsTrue);
 #else
         float labelW = 250.0f * s;
         float inputW = panelW - labelW - 60.0f * s;
@@ -313,26 +318,30 @@ extern "C" int imguiUdpSetupShow(void) {
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_MACHINENAME));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
-        ImGui::InputText("##address", address, FILENAME_MAX,
-                         ImGuiInputTextFlags_CallbackEdit,
+        enterJoin |= ImGui::InputText("##address", address, FILENAME_MAX,
+                         ImGuiInputTextFlags_CallbackEdit |
+                         ImGuiInputTextFlags_EnterReturnsTrue,
                          udpAddressEditCallback, &addrCtx);
 
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_THEREUDP));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
-        ImGui::InputText("##targetPort", targetPortBuf, sizeof(targetPortBuf),
-                         ImGuiInputTextFlags_CharsDecimal);
+        enterJoin |= ImGui::InputText("##targetPort", targetPortBuf, sizeof(targetPortBuf),
+                         ImGuiInputTextFlags_CharsDecimal |
+                         ImGuiInputTextFlags_EnterReturnsTrue);
 
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_USUDP));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
-        ImGui::InputText("##myPort", myPortBuf, sizeof(myPortBuf),
-                         ImGuiInputTextFlags_CharsDecimal);
+        enterJoin |= ImGui::InputText("##myPort", myPortBuf, sizeof(myPortBuf),
+                         ImGuiInputTextFlags_CharsDecimal |
+                         ImGuiInputTextFlags_EnterReturnsTrue);
 
         ImGui::TextUnformatted(langGetText(STR_DLGTCP_NAME));
         ImGui::SameLine(labelW);
         ImGui::SetNextItemWidth(inputW);
-        ImGui::InputText("##playerName", playerName, PLAYER_NAME_LEN);
+        enterJoin |= ImGui::InputText("##playerName", playerName, PLAYER_NAME_LEN,
+                         ImGuiInputTextFlags_EnterReturnsTrue);
 #endif
 
         ImGui::Spacing();
@@ -380,7 +389,7 @@ extern "C" int imguiUdpSetupShow(void) {
             ImGui::TextUnformatted(langGetText(STR_DLGTCP_JOINBLURB));
         }
         ImGui::SameLine(panelW - btnW - 16.0f * s);
-        if (ImGui::Button(langGetText(STR_DLGTCP_JOIN), ImVec2(btnW, 0))) {
+        if (ImGui::Button(langGetText(STR_DLGTCP_JOIN), ImVec2(btnW, 0)) || enterJoin) {
             if (saveOptions(playerName, address, targetPortBuf, myPortBuf,
                             rememberName, true)) {
                 gameFrontSetDlgState(openUdpJoin);

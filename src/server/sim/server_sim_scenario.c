@@ -40,6 +40,7 @@
 #include "server_sim_lifecycle.h"  /* serverSimSetTeam, lobbyAutoUnreadyOnChange, serverSimEnterGameOver */
 #include "server_sim_join.h"       /* serverSimFindFreeSlot — the first free seat */
 #include "netpacks.h"      /* lobbyBotNameAcceptable — the lobby's own name check */
+#include "bot_manager.h"   /* botManagerScenarioHint — the hint arm's delivery */
 #include "../../common/wb_log.h"   /* the line a dropped roster change leaves */
 #include "channel_mux.h"   /* CHANNEL_CONTROL_SEG — the panel cap is derived from it */
 #include "tank.h"          /* the tank arms mutate through these */
@@ -52,6 +53,7 @@
 #include "gametype.h"      /* TANK_FULL_* — the stock caps */
 #include "sim_rules.h"     /* the table the rule arm writes, and its check */
 #include "log.h"           /* logAddEvent — the arm's record */
+#include "client_command.h" /* CMD_CHAT and the team destination the say arm builds */
 
 /* SCN_PANEL_MAX is written as a literal on the scenario surface, which
  * cannot see the channel sizes. This is where the two meet: one panel
@@ -1557,11 +1559,16 @@ static ScnOpResult scenarioBotName(const char *asked, BYTE slot,
  * seat was written with, which is how a seat held for a team gets that
  * team's brain when something fields it; and failing both the server's own.
  *
+ * What reaches here is a path. A scenario names a brain — a directory under
+ * the server's own brains/ — and the scenario runtime resolves that name to
+ * the file the loader opens before the op is submitted, so the sim has one
+ * kind of value to handle and opens it like any other brain.
+ *
  * A "package:NAME" brain is one carried by a scenario's package. Nothing on
  * the sim opens a package, so the name is refused here rather than handed to
  * the loader as a path — a file called "package:NAME" is not what the script
- * meant. The host that unpacks a scenario is what resolves these, and it
- * will resolve the name to a path before the op reaches this funnel. */
+ * meant. Nothing writes that form today; the check is what says so if
+ * something ever does. */
 static ScnOpResult scenarioBrainPath(ServerSim *sim, const char *asked,
                                      BYTE slot, const char **out) {
     const char *path;
@@ -1644,7 +1651,14 @@ static bool scenarioAddBotInSeat(ServerSim *sim, BYTE slot, const char *brain,
                                  const ScnTable *init) {
     /* A seat already held keeps the name and the team it was seated with: the
        add reads both off the roster rather than taking the op's, so a wave
-       spawning by seat number does not have to restate them. */
+       spawning by seat number does not have to restate them.
+
+       The init table goes the same way as the brain: a spawn that carries
+       none of its own is built with the seat's, which is what the countdown
+       warmed the seat's runner with, so the fielding is a resume. A spawn
+       that carries its own table still overrides it, and where that differs
+       from the seat's the bot manager says so in the log — the script has
+       given the one seat two tables. */
     const bool wasHeld = sim->playerConnected[slot] &&
                          !sim->lobbyPlayers[slot].fielded;
     char seatName[PLAYER_NAME_LEN];
@@ -1655,6 +1669,9 @@ static bool scenarioAddBotInSeat(ServerSim *sim, BYTE slot, const char *brain,
                              TRUE);
         name = seatName;
         team = sim->lobbyPlayers[slot].teamNumber;
+        if (init == NULL || init->count == 0) {
+            init = &sim->seatInit[slot];
+        }
     }
     if (!botManagerAddBot(sim, slot, brain, name,
                           serverSimGetBotAiType(sim),
@@ -1696,7 +1713,9 @@ static bool scenarioAddBotInSeat(ServerSim *sim, BYTE slot, const char *brain,
 }
 
 /* The slot a remove names: a seat with somebody in it, and that somebody a
- * bot. Both remove arms ask the same two questions in the same order. */
+ * bot. The two remove arms and the hint arm ask the same two questions in the
+ * same order, so a script is told the same thing about a seat whichever of
+ * the three it names. */
 static ScnOpResult scenarioRemovableBot(ServerSim *sim, BYTE slot) {
     if (slot >= MAX_TANKS || !sim->playerConnected[slot]) {
         return SCN_OP_NO_SUCH_PLAYER;
@@ -1795,19 +1814,25 @@ static bool scenarioSeatOne(ServerSim *sim, const ScnLobbyTeam *team) {
         const char *brain = (team->brain[0] != '\0')
                           ? team->brain : serverSimGetBotBrainPath(sim);
         if (brain == NULL || brain[0] == '\0') return false;
+        /* A team that plays from the start is built with its own table, the
+           same one a held seat's spawn is handed below. */
         if (!serverSimCreateBot(sim, (BYTE)slot, brain, name,
                                 serverSimGetBotAiType(sim),
                                 gameTypeGet(&sim->sim.game),
-                                sim->sim.hiddenMines, team->id, NULL)) {
+                                sim->sim.hiddenMines, team->id,
+                                &team->init)) {
             return false;
         }
         sim->lobbyPlayers[slot].keepSeat = true;
     }
     /* Recorded whether the seat holds a bot yet or not: an unfielded seat is
-       fielded later by a spawn that names no brain of its own, and this is
-       where that spawn finds the one its team was written with. */
+       fielded later by a spawn that names no brain and carries no init table
+       of its own, and this is where that spawn finds the two its team was
+       written with. The countdown reads the table from here as well, so the
+       runner it warms is built with what the wave will spawn with. */
     SDL_strlcpy(sim->seatBrain[slot], team->brain,
                 sizeof(sim->seatBrain[slot]));
+    sim->seatInit[slot] = team->init;
     if (team->id > 0 && team->id < MAX_TANKS && !sim->teams[team->id].in_use) {
         sim->teams[team->id].in_use = 1;
         if (sim->teams[team->id].name[0] == '\0') {
@@ -1820,8 +1845,8 @@ static bool scenarioSeatOne(ServerSim *sim, const ScnLobbyTeam *team) {
 
 /* Build the lobby the attached scenario asks for, from whatever is there
  * now. Every seat the previous scenario left goes first, so committing a
- * plain map over a scenario one leaves no horde behind, and a scenario with
- * no template of its own leaves an ordinary lobby. */
+ * plain map over a scenario one leaves no held seats behind, and a scenario
+ * with no template of its own leaves an ordinary lobby. */
 void serverSimScenarioSeatLobby(ServerSim *sim) {
     BYTE t;
     if (sim == NULL) return;
@@ -1841,12 +1866,12 @@ void serverSimScenarioSeatLobby(ServerSim *sim) {
  * template, keeping what the host did to it in between.
  *
  * bots is how many the engine seeds and not a number it keeps re-imposing:
- * a host who trimmed a horde of ten to six gets six back, because the point
+ * a host who trimmed ten seats to six gets six back, because the point
  * of seating them where the host can see them is that the host may trim
  * them. maxBots is the one that still binds, so a host who added past it is
  * cut back to it. A team the host emptied altogether stays empty — that is
  * the same edit as the trim to six, only further, and a floor that appeared
- * only at zero would let a host reduce a horde to one but not to none.
+ * only at zero would let a host reduce the seats to one but not to none.
  *
  * Then the other half: a seat the script fielded during the round goes back
  * to being held, so the next round starts from the lobby the template
@@ -2331,6 +2356,60 @@ void serverSimScenarioResetRoster(ServerSim *sim) {
     sim->scenarioRosterCount = 0;
 }
 
+/* ── Bots ──────────────────────────────────────────────────────────────── */
+
+/* Hand one bot's brain an order from the script.
+ *
+ * The pairs go onto that bot's Lua stack and its on_scenario_hint is called
+ * with the table they build. Nothing a script wrote is compiled: this is the
+ * whole reason the delivery is not botManagerExecLua with a composed chunk.
+ *
+ * Two things that look like failures are not. A brain that defines no
+ * on_scenario_hint ignores the order, because a scenario names a seat and
+ * cannot know which brain a server runs it with. A bot with no tank — dead,
+ * or waiting to come in — is handed the order anyway, because the brain is
+ * running and reading it costs it nothing; a hint to a bot that cannot act on
+ * it yet is a wasted order rather than a mistake, which is why this arm has
+ * no state test of its own beyond the prelude's. Both answer SCN_OP_OK.
+ *
+ * Nothing is published. The order is for one brain and no client is told. */
+static ScnOpResult scenarioOpBotHint(ServerSim *sim, const ScnOpBotHint *p) {
+    char        pstr[1 + SCN_TABLE_VALUE_LEN];
+    const char *verb;
+    size_t      len;
+    BYTE        k;
+    ScnOpResult r;
+
+    r = scenarioRemovableBot(sim, p->slot);
+    if (r != SCN_OP_OK) return r;
+
+    /* The table reaches a Lua VM, so every string in it must end inside its
+       own field and there must be no more pairs than the table holds. */
+    if (p->hint.count > SCN_TABLE_MAX) {
+        return SCN_OP_TOO_BIG;
+    }
+    for (k = 0; k < p->hint.count; k++) {
+        if (!scenarioTextTerminated(p->hint.kv[k].key, SCN_TABLE_KEY_LEN) ||
+            !scenarioTextTerminated(p->hint.kv[k].value, SCN_TABLE_VALUE_LEN)) {
+            return SCN_OP_TOO_BIG;
+        }
+    }
+
+    /* The verb alone goes into the recording. The other pairs mean whatever
+       the brain they were written for reads them as, so there is nothing a
+       replay could do with them; the seat and the verb are what it can
+       show. A hint carrying no verb records an empty one. */
+    verb = scnTableGet(&p->hint, "verb");
+    if (verb == NULL) verb = "";
+    len = strlen(verb);
+    pstr[0] = (char)len;
+    memcpy(pstr + 1, verb, len);
+    logAddEvent(log_ScnHint, p->slot, 0, 0, 0, 0, pstr);
+
+    botManagerScenarioHint(sim, p->slot, &p->hint);
+    return SCN_OP_OK;
+}
+
 /* ── Comms ─────────────────────────────────────────────────────────────── */
 
 /* The record every server line a script writes leaves behind: the destination
@@ -2405,6 +2484,78 @@ static ScnOpResult scenarioOpMsgPlayer(ServerSim *sim,
     return SCN_OP_OK;
 }
 
+/* Say something as a seat says it.
+ *
+ * The three arms above are the server talking: they publish CTRL_SERVER_TEXT,
+ * which a client shows on its newswire and a bot brain never sees, because a
+ * brain's inbox is fed from chat alone. This one is a player talking. It is
+ * the op a test uses to hand a bot the line a human ally would type, from a
+ * seat with nobody in it.
+ *
+ * The line is handed to the dispatcher's own CMD_CHAT arm rather than
+ * published here, so it takes the path a typed line takes and no other: the
+ * same destination checks, the same CTRL_CHAT, the same log entry, and from
+ * there the same MessageState inbox every brain reads. Everything the arm
+ * would refuse is refused above it, so the dispatcher's answer is only ever
+ * OK.
+ *
+ * A seat with no team has nobody to say a team line to, which is a refusal
+ * rather than a line the whole game hears: SCN_SAY_ALL is the mode for that.
+ */
+static ScnOpResult scenarioOpMsgSay(ServerSim *sim, const ScnOpMsgSay *p) {
+    ClientCommand cmd;
+    size_t        len;
+
+    if (p->slot >= MAX_TANKS || !sim->playerConnected[p->slot]) {
+        return SCN_OP_NO_SUCH_PLAYER;
+    }
+    if (!scenarioTextTerminated(p->text, sizeof(p->text))) {
+        return SCN_OP_TOO_BIG;
+    }
+    len = strlen(p->text);
+    /* An empty line is no line: every receiver drops a chat body of no
+       length, so it would be accepted here and arrive nowhere. */
+    if (len == 0) {
+        return SCN_OP_BAD_CALL;
+    }
+    if (len > (size_t)PACKET_MAX_CHAT_MESSAGE) {
+        len = (size_t)PACKET_MAX_CHAT_MESSAGE;
+    }
+
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type = CMD_CHAT;
+    switch (p->mode) {
+        case SCN_SAY_ALL:
+            cmd.u.chat.destPlayer = 0xFF;
+            break;
+        case SCN_SAY_PLAYER:
+            if (p->target >= MAX_TANKS || !sim->playerConnected[p->target]) {
+                return SCN_OP_NO_SUCH_PLAYER;
+            }
+            cmd.u.chat.destPlayer = p->target;
+            break;
+        case SCN_SAY_TEAM:
+        default: {
+            /* Team 0 is unassigned, and the destination byte only reaches
+               team 16, one past the last team ServerSim.teams[] is keyed
+               by. */
+            BYTE team = sim->lobbyPlayers[p->slot].teamNumber;
+            if (team == 0 || team >= MAX_TANKS) {
+                return SCN_OP_RANGE;
+            }
+            cmd.u.chat.destPlayer = (BYTE)(CHAT_DEST_TEAM_BASE + team);
+            break;
+        }
+    }
+    cmd.u.chat.bodyLen = (uint16_t)len;
+    memcpy(cmd.u.chat.body, p->text, len);
+
+    if (serverSimApplyCommand(sim, (int)p->slot, &cmd) != CMD_OK) {
+        return SCN_OP_WRONG_STATE;
+    }
+    return SCN_OP_OK;
+}
+
 /* Play a sound, at a square or at everyone.
  *
  * 0xFF, 0xFF is the square that is nowhere: soundPickOffer hands it to every
@@ -2449,6 +2600,357 @@ static ScnOpResult scenarioOpLog(ServerSim *sim, const ScnOpLog *p) {
 
     serverSimConsoleMessage(p->text);
     return SCN_OP_OK;
+}
+
+/* ── Presentation ─────────────────────────────────────
+ *
+ * Four arms that show a player something without changing the world. None of
+ * them has a state guard, because a scenario talks to the lobby as well as to
+ * a round: an announcement naming the next map and a marker on the ground it
+ * is about are both worth putting up before anybody has spawned, and the
+ * lobby is where a player is reading. A panel sent there is stored and drawn
+ * when the round opens, since the one drawer the desktop has sits over the
+ * game view. The prelude's policy refusal applies here as it does to every
+ * op.
+ *
+ * Each carries one target byte, unpacked into the destination pair the
+ * control events carry. The codecs ignore that pair — it is a server-side
+ * filter read at delivery — so an arm fills it and publishes, and the
+ * delivery path decides who the event reaches. */
+
+/* The player bit in a target byte. 0x80 | slot names one seat; a target
+ * without it is either everyone or a team. */
+#define SCN_TARGET_PLAYER_BIT 0x80
+
+/* One target byte, unpacked. 0 is everyone. 1..MAX_TANKS-1 is a team number,
+ * which is 1-based: team 0 is "unassigned" to every filter and is not a
+ * destination. 0x80 | slot is one player, and that slot is 0-based, so the
+ * legal slots are 0x80..0x8F. Anything else names nobody and is refused. */
+static ScnOpResult scenarioTargetUnpack(BYTE target, BYTE *outTeam,
+                                        BYTE *outPlayer) {
+    if (target == 0) {
+        *outTeam   = 0;
+        *outPlayer = 0xFF;
+        return SCN_OP_OK;
+    }
+    if (target < MAX_TANKS) {
+        *outTeam   = target;      /* a team number, 1..MAX_TANKS-1 */
+        *outPlayer = 0xFF;
+        return SCN_OP_OK;
+    }
+    if ((target & SCN_TARGET_PLAYER_BIT) != 0) {
+        BYTE slot = (BYTE)(target & (BYTE)~SCN_TARGET_PLAYER_BIT); /* 0-based */
+        if (slot >= MAX_TANKS) {
+            return SCN_OP_RANGE;
+        }
+        *outTeam   = 0;
+        *outPlayer = slot;
+        return SCN_OP_OK;
+    }
+    return SCN_OP_RANGE;
+}
+
+/* Which row of a panel's store one destination pair keys. Everyone is row 0,
+ * a team is its own 1-based number, and a 0-based slot sits MAX_TANKS above
+ * itself, so the three kinds of destination cannot collide. */
+static uint8_t scenarioPanelTargetIndex(BYTE destTeam, BYTE destPlayer) {
+    if (destPlayer != 0xFF) {
+        return (uint8_t)(MAX_TANKS + destPlayer);
+    }
+    return destTeam;
+}
+
+/* Fill the event one stored list publishes as. Shared by the arm and the
+ * join replay so a late joiner is given the same event the round saw. */
+static void scenarioFillPanelEvent(ControlEvent *evt, BYTE panel,
+                                   BYTE destTeam, BYTE destPlayer,
+                                   const uint8_t *bytes, uint16_t len) {
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_SCN_PANEL;
+    evt->u.scnPanel.panel      = panel;
+    evt->u.scnPanel.len        = len;
+    evt->u.scnPanel.destTeam   = destTeam;
+    evt->u.scnPanel.destPlayer = destPlayer;
+    if (len > 0) {
+        memcpy(evt->u.scnPanel.bytes, bytes, len);
+    }
+}
+
+/* Send a panel a display list.
+ *
+ * The list is validated by the parser every frontend reads it with, so a list
+ * that leaves here is one every client can draw. The decode is thrown away:
+ * what the arm needs from it is whether it decodes at all.
+ *
+ * One update per panel per destination per tick. The key is the pair, not the
+ * panel alone — a scenario giving each of sixteen players its own copy of
+ * panel 0 is ordinary, and the drain already bounds how many ops one tick
+ * applies. A second update for the same pair in the same tick is refused
+ * rather than queued: every update replaces the whole list, so the one that
+ * would have been overwritten was never going to be seen. */
+static ScnOpResult scenarioOpPanel(ServerSim *sim, const ScnOpPanel *p) {
+    ControlEvent   evt;
+    ScnPanelStore *store;
+    BYTE           destTeam, destPlayer;
+    ScnOpResult    r;
+
+    if (p->panel >= SCN_PANEL_IDS) {
+        return SCN_OP_RANGE;
+    }
+    r = scenarioTargetUnpack(p->target, &destTeam, &destPlayer);
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    if (p->len > SCN_PANEL_MAX) {
+        return SCN_OP_TOO_BIG;
+    }
+    /* Decoded into the sim's own scratch, which is where it lives to keep
+       7.7 KB off this frame. */
+    if (scnPanelParse(p->bytes, p->len, &sim->scenarioPanelScratch) !=
+        SCN_PANEL_OK) {
+        return SCN_OP_RANGE;
+    }
+
+    store = &sim->scenarioPanels[p->panel]
+                                [scenarioPanelTargetIndex(destTeam, destPlayer)];
+    /* valid is what makes tick 0 a tick like any other: a store that has
+       never held a list reads tick 0 too, and without the flag the first
+       update of a round would look like the second. */
+    if (store->valid && store->tick == sim->tick) {
+        return SCN_OP_RATE;
+    }
+
+    store->valid = true;
+    store->tick  = sim->tick;
+    store->len   = p->len;
+    if (p->len > 0) {
+        memcpy(store->bytes, p->bytes, p->len);
+    }
+
+    /* Recorded from the store, which holds the same bytes and is not const,
+       so the record costs no second copy. */
+    logAddEvent(log_ScnPanel, p->panel, destTeam, destPlayer, 0, p->len,
+                (char *)store->bytes);
+
+    scenarioFillPanelEvent(&evt, p->panel, destTeam, destPlayer, p->bytes,
+                           p->len);
+    serverSimPublishControl(sim, &evt);
+    return SCN_OP_OK;
+}
+
+/* Set a scenario's own score for one player or one team.
+ *
+ * Broadcast: the target says whose score it is, not who is meant to see it,
+ * so the event carries no destination pair. The number and the label are kept
+ * on the sim per slot and per team; nothing reads them yet. */
+static ScnOpResult scenarioOpScore(ServerSim *sim, const ScnOpScore *p) {
+    ControlEvent evt;
+    ScnScoreRow *row;
+    char         pstr[1 + sizeof(p->label)];
+    size_t       labelLen;
+
+    if (p->kind != SCN_SCORE_KIND_PLAYER && p->kind != SCN_SCORE_KIND_TEAM) {
+        return SCN_OP_RANGE;
+    }
+    if (p->kind == SCN_SCORE_KIND_PLAYER) {
+        /* A 0-based slot, and one with somebody in it: a score against an
+           empty seat names nobody the lobby could show it against. */
+        if (p->target >= MAX_TANKS || !sim->playerConnected[p->target]) {
+            return SCN_OP_NO_SUCH_PLAYER;
+        }
+        row = &sim->scenarioPlayerScores[p->target];
+    } else {
+        /* Team numbers are 1-based and run to MAX_TANKS-1; team 0 is
+           unassigned and has no score of its own. */
+        if (p->target == 0 || p->target >= MAX_TANKS) {
+            return SCN_OP_RANGE;
+        }
+        row = &sim->scenarioTeamScores[p->target];
+    }
+    /* The fixed-buffer rule: a label with no terminator inside its sixteen
+       bytes is refused rather than read past the end of. */
+    if (!scenarioTextTerminated(p->label, sizeof(p->label))) {
+        return SCN_OP_TOO_BIG;
+    }
+
+    row->valid = true;
+    row->score = p->score;
+    memcpy(row->label, p->label, sizeof(row->label));
+    row->label[sizeof(row->label) - 1] = '\0';
+
+    labelLen = strlen(p->label);
+    pstr[0] = (char)labelLen;
+    memcpy(pstr + 1, p->label, labelLen);
+    logAddEvent(log_ScnScore, p->kind, p->target,
+                (BYTE)(((uint32_t)p->score >> 24) & 0xFF),
+                (BYTE)(((uint32_t)p->score >> 16) & 0xFF),
+                (unsigned short)((uint32_t)p->score & 0xFFFF), pstr);
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SCN_SCORE;
+    evt.u.scnScore.kind   = p->kind;
+    evt.u.scnScore.target = p->target;
+    evt.u.scnScore.score  = p->score;
+    memcpy(evt.u.scnScore.label, p->label, sizeof(evt.u.scnScore.label));
+    evt.u.scnScore.label[sizeof(evt.u.scnScore.label) - 1] = '\0';
+    serverSimPublishControl(sim, &evt);
+    return SCN_OP_OK;
+}
+
+/* Put a line across the centre of the screen for a while.
+ *
+ * An empty line is the clear, and its ticks are not read: there is nothing to
+ * hold up. A line with something in it and no time to be up in is a mistake
+ * rather than a clear, so it is refused instead of flashing for a frame. */
+static ScnOpResult scenarioOpAnnounce(ServerSim *sim, const ScnOpAnnounce *p) {
+    ControlEvent evt;
+    char         pstr[1 + SCN_TEXT_MAX];
+    BYTE         destTeam, destPlayer;
+    size_t       len;
+    ScnOpResult  r;
+
+    r = scenarioTargetUnpack(p->target, &destTeam, &destPlayer);
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    if (!scenarioTextTerminated(p->text, sizeof(p->text))) {
+        return SCN_OP_TOO_BIG;
+    }
+    len = strlen(p->text);
+    /* The control event's own field. It is the same size as the op's today,
+       so a terminated line always fits; the test is here so a narrower field
+       refuses a line rather than carrying half of it. */
+    if (len >= sizeof(evt.u.scnAnnounce.text)) {
+        return SCN_OP_TOO_BIG;
+    }
+    if (len > 0 && p->ticks == 0) {
+        return SCN_OP_RANGE;
+    }
+
+    pstr[0] = (char)len;
+    memcpy(pstr + 1, p->text, len);
+    logAddEvent(log_ScnAnnounce, destTeam, destPlayer, 0, 0, p->ticks, pstr);
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SCN_ANNOUNCE;
+    SDL_strlcpy(evt.u.scnAnnounce.text, p->text,
+                sizeof(evt.u.scnAnnounce.text));
+    evt.u.scnAnnounce.ticks      = p->ticks;
+    evt.u.scnAnnounce.destTeam   = destTeam;
+    evt.u.scnAnnounce.destPlayer = destPlayer;
+    serverSimPublishControl(sim, &evt);
+    return SCN_OP_OK;
+}
+
+/* Put a mark on the map, or take one off.
+ *
+ * Markers are kept by id, so a second marker on the same id replaces the
+ * first and the clear kind removes it. The clear reads none of the fields
+ * that place a marker, which is what lets a script clear an id without
+ * remembering what it put there. */
+static ScnOpResult scenarioOpMarker(ServerSim *sim, const ScnOpMarker *p) {
+    ControlEvent evt;
+    char         blob[1 + 4];
+    BYTE         destTeam, destPlayer;
+    ScnOpResult  r;
+
+    r = scenarioTargetUnpack(p->target, &destTeam, &destPlayer);
+    if (r != SCN_OP_OK) {
+        return r;
+    }
+    if (p->id >= SCN_MARKERS_MAX) {
+        return SCN_OP_RANGE;
+    }
+    if (p->kind != SCN_MARKER_KIND_SQUARE && p->kind != SCN_MARKER_KIND_FOLLOW &&
+        p->kind != SCN_MARKER_KIND_CLEAR) {
+        return SCN_OP_RANGE;
+    }
+    if (p->kind != SCN_MARKER_KIND_CLEAR) {
+        if (p->colour >= SCN_PANEL_COLOURS) {
+            return SCN_OP_RANGE;
+        }
+        if (p->kind == SCN_MARKER_KIND_SQUARE &&
+            !scenarioSquareOnMap(p->x, p->y)) {
+            return SCN_OP_BAD_SQUARE;
+        }
+        /* A 0-based slot with somebody in it: a marker riding an empty seat
+           has nothing to follow. */
+        if (p->kind == SCN_MARKER_KIND_FOLLOW &&
+            (p->slot >= MAX_TANKS || !sim->playerConnected[p->slot])) {
+            return SCN_OP_NO_SUCH_PLAYER;
+        }
+    }
+
+    blob[0] = 4;
+    blob[1] = (char)p->x;
+    blob[2] = (char)p->y;
+    blob[3] = (char)p->slot;
+    blob[4] = (char)p->colour;
+    logAddEvent(log_ScnMarker, p->id, p->kind, destTeam, destPlayer, 0, blob);
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_SCN_MARKER;
+    evt.u.scnMarker.id         = p->id;
+    evt.u.scnMarker.kind       = p->kind;
+    evt.u.scnMarker.x          = p->x;
+    evt.u.scnMarker.y          = p->y;
+    evt.u.scnMarker.slot       = p->slot;
+    evt.u.scnMarker.colour     = p->colour;
+    evt.u.scnMarker.destTeam   = destTeam;
+    evt.u.scnMarker.destPlayer = destPlayer;
+    serverSimPublishControl(sim, &evt);
+    return SCN_OP_OK;
+}
+
+void serverSimScenarioResetPresentation(ServerSim *sim) {
+    if (sim == NULL) {
+        return;
+    }
+    memset(sim->scenarioPanels, 0, sizeof(sim->scenarioPanels));
+    memset(sim->scenarioPlayerScores, 0, sizeof(sim->scenarioPlayerScores));
+    memset(sim->scenarioTeamScores, 0, sizeof(sim->scenarioTeamScores));
+}
+
+void serverSimScenarioReplayPanels(
+    ServerSim *sim,
+    void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx,
+    bool withTargeted) {
+    ControlEvent evt;
+    int          panel;
+    int          lastTarget;
+    int          target;
+
+    if (sim == NULL || deliver == NULL) {
+        return;
+    }
+    /* Row 0 is the everyone-addressed list and the rows above it are the
+       teams and the slots. Without withTargeted the walk stops after row 0,
+       which is one record per panel rather than up to 32. */
+    lastTarget = withTargeted ? SCN_PANEL_TARGETS : 1;
+    for (panel = 0; panel < SCN_PANEL_IDS; panel++) {
+        for (target = 0; target < lastTarget; target++) {
+            const ScnPanelStore *store = &sim->scenarioPanels[panel][target];
+            BYTE destTeam;
+            BYTE destPlayer;
+            if (!store->valid || store->len == 0) {
+                /* A panel nothing has written, or one a scenario cleared. A
+                   joiner's panels start empty either way, so replaying the
+                   clear would send it what it already has. */
+                continue;
+            }
+            if (target < MAX_TANKS) {
+                destTeam   = (BYTE)target;   /* 0 = everyone, else the team */
+                destPlayer = 0xFF;
+            } else {
+                destTeam   = 0;
+                destPlayer = (BYTE)(target - MAX_TANKS);   /* a 0-based slot */
+            }
+            scenarioFillPanelEvent(&evt, (BYTE)panel, destTeam, destPlayer,
+                                   store->bytes, store->len);
+            deliver(ctx, &evt);
+        }
+    }
 }
 
 /* ── Flow ──────────────────────────────────────────────────────────────
@@ -2562,7 +3064,7 @@ BOLO_STATIC_ASSERT(sizeof(SimRules) == SCN_RULE_COUNT * sizeof(int32_t),
  * integer rule takes the whole part of it, a float rule takes the value — and
  * reading it straight back out says what the field ended up holding, which is
  * what is checked below and what the record carries. */
-#define SCN_RULE_WRITE_CASE(name)                                            \
+#define SCN_RULE_WRITE_CASE(name, kind, unit)                                \
     case SCN_RULE_##name:                                                    \
         copy->name = value;                                                  \
         *written   = (double)copy->name;                                     \
@@ -2724,6 +3226,78 @@ static void scenarioClampWorldToRules(ServerSim *sim) {
     }
 }
 
+/* The same pass the other way round: every pill and base brought up to the
+ * caps in force rather than down to them.
+ *
+ * What it is for. A map file states a number for each pill's armour and each
+ * base's stocks, and has no way of stating "full" — BASE_FULL_ARMOUR is the
+ * number the classic table is seeded from and nothing reads it off a file — so
+ * a scenario that raises a cap gets a map still holding whatever its author
+ * wrote. A round meant to be played at the higher numbers would open below
+ * them and climb, which is a different game from the one the scenario asked
+ * for. The scenario says fill_to_caps and this is what answers it.
+ *
+ * Raising only. A pill or a base already at or above a cap is left where it
+ * is: the clamp above is what brings anything above one down, and running
+ * both over the same list is how each stays a single direction.
+ *
+ * The records are the clamp's, written the same way and for the same reason —
+ * read off either side of the walk, one record per item that moved, and
+ * nothing written for a walk that moved nothing. A pill's speed and cooldown
+ * are not touched at all: the attack interval is a rate rather than a stock,
+ * and filling it would leave every pill on the map firing at the slowest rate
+ * the table allows. */
+void serverSimScenarioFillWorldToRules(ServerSim *sim) {
+    BYTE    pillArmour[MAX_PILLS];
+    BYTE    baseArmour[MAX_BASES];
+    BYTE    baseShells[MAX_BASES];
+    BYTE    baseMines[MAX_BASES];
+    BYTE    numPills;
+    BYTE    numBases;
+    BYTE    i;
+    pillbox pill;
+    base    item;
+
+    if (sim == NULL) {
+        return;
+    }
+    numPills = pillsGetNumPills(&sim->sim.pb);
+    numBases = basesGetNumBases(&sim->sim.bs);
+
+    for (i = 0; i < numPills; i++) {
+        memset(&pill, 0, sizeof(pill));
+        pillsGetPill(&sim->sim.pb, &pill, (BYTE)(i + 1));
+        pillArmour[i] = pill.armour;
+    }
+    for (i = 0; i < numBases; i++) {
+        memset(&item, 0, sizeof(item));
+        basesGetBase(&sim->sim.bs, &item, (BYTE)(i + 1));
+        baseArmour[i] = item.armour;
+        baseShells[i] = item.shells;
+        baseMines[i]  = item.mines;
+    }
+
+    pillsFillToRules(&sim->sim, &sim->sim.pb);
+    basesFillToRules(&sim->sim, &sim->sim.bs);
+
+    for (i = 0; i < numPills; i++) {
+        memset(&pill, 0, sizeof(pill));
+        pillsGetPill(&sim->sim.pb, &pill, (BYTE)(i + 1));
+        if (pill.armour != pillArmour[i]) {
+            logAddEvent(log_PillSetHealth, i, pill.armour, 0, 0, 0, NULL);
+        }
+    }
+    for (i = 0; i < numBases; i++) {
+        memset(&item, 0, sizeof(item));
+        basesGetBase(&sim->sim.bs, &item, (BYTE)(i + 1));
+        if (item.armour != baseArmour[i] || item.shells != baseShells[i] ||
+            item.mines != baseMines[i]) {
+            logAddEvent(log_BaseSetStock, i, item.shells, item.mines,
+                        item.armour, 0, NULL);
+        }
+    }
+}
+
 /* Write one rule. The write lands in a copy of the sim's table, the copy is
  * checked whole, and only a copy that passes is committed: a refused op
  * leaves the sim's table byte for byte as it was rather than half-applied.
@@ -2784,6 +3358,49 @@ static ScnOpResult scenarioOpSetRule(ServerSim *sim, const ScnOpSetRule *p) {
     return SCN_OP_OK;
 }
 
+/* ── Test hooks ────────────────────────────────────────────────── */
+
+/* Post one of a seat's shells as having run its full range and died on a
+ * square, and let the three-shot order detector read it. Three of these on
+ * one open square inside the detector's window put "!goto <mx> <my>" into
+ * every allied bot's inbox, which is the whole point: a script has no way
+ * to make a seat pull a trigger, and steering a round into three full-range
+ * shells landing on one chosen square is not a test anybody could read.
+ *
+ * Nothing else about the shell is simulated. No explosion, no sound and no
+ * shell object: the op names the one server path it is for. */
+static ScnOpResult scenarioOpShellExpired(ServerSim *sim,
+                                          const ScnOpShellExpired *p) {
+    if (p->slot >= MAX_TANKS || !sim->playerConnected[p->slot]) {
+        return SCN_OP_NO_SUCH_PLAYER;
+    }
+    if (sim->state != serverStateRunning) {
+        return SCN_OP_WRONG_STATE;
+    }
+    /* A square the map does not hold is not a landing. Both coordinates fit
+       in a BYTE, so the Lua arm's own check passes anything 0..255, and the
+       border outside the playable band reads back as deep sea — which the
+       detector's open-ground test would otherwise take for open water. */
+    if (!mapPosInBounds(p->x, p->y)) {
+        return SCN_OP_BAD_SQUARE;
+    }
+    /* The SERVER tick the shell left the gun, which is what the window and
+       the two quiet seconds are measured on. A script that says nothing gets
+       the current tick, which is a shot fired and landed in the same breath. */
+    uint32_t fireTick = p->haveFireTick ? p->fireTick : sim->tick;
+
+    /* The same two calls a real shell death makes, in the same order: the
+       shot is counted as fired whatever it hit, and then the landing is
+       offered to the detector. */
+    serverSimShotOrderShotFired(sim, p->slot, fireTick);
+    /* The centre of the square, which is where a shell that died over it
+       would have been. */
+    serverSimShotOrderNote(sim, p->slot, fireTick,
+                           (WORLD)(((WORLD)p->x << TANK_SHIFT_MAPSIZE) + 128),
+                           (WORLD)(((WORLD)p->y << TANK_SHIFT_MAPSIZE) + 128));
+    return SCN_OP_OK;
+}
+
 /* The same question the arm asks, without the answer landing anywhere. The
  * whole set is written into the copy before the check reads it, so a pair two
  * of the values break together is found although each of them passes alone —
@@ -2831,7 +3448,7 @@ ScnOpResult serverSimCheckScenarioRules(const ServerSim *sim,
  * index a script sets a rule by and the index it reads the same rule by
  * cannot name different fields. Each field is converted to the double the op
  * carries, which holds every value any of them can. */
-#define SCN_RULE_READ_CASE(name)                                             \
+#define SCN_RULE_READ_CASE(name, kind, unit)                                 \
     case SCN_RULE_##name:                                                    \
         *out = (double)sim->sim.rules.name;                                  \
         return true;
@@ -2970,27 +3587,36 @@ static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpLobbyRemoveBot(sim, &op->u.lobbyRemoveBot);
         case SCN_OP_LOBBY_SET_TEAM:
             return scenarioOpLobbySetTeam(sim, &op->u.lobbySetTeam);
-        case SCN_OP_BOT_HINT:            return SCN_OP_UNSUPPORTED;
+        case SCN_OP_BOT_HINT:
+            return scenarioOpBotHint(sim, &op->u.botHint);
         case SCN_OP_MSG_ALL:
             return scenarioOpMsgAll(sim, &op->u.msgAll);
         case SCN_OP_MSG_TEAM:
             return scenarioOpMsgTeam(sim, &op->u.msgTeam);
         case SCN_OP_MSG_PLAYER:
             return scenarioOpMsgPlayer(sim, &op->u.msgPlayer);
+        case SCN_OP_MSG_SAY:
+            return scenarioOpMsgSay(sim, &op->u.msgSay);
         case SCN_OP_SOUND:
             return scenarioOpSound(sim, &op->u.sound);
         case SCN_OP_LOG:
             return scenarioOpLog(sim, &op->u.log);
-        case SCN_OP_PANEL:               return SCN_OP_UNSUPPORTED;
-        case SCN_OP_SCORE:               return SCN_OP_UNSUPPORTED;
-        case SCN_OP_ANNOUNCE:            return SCN_OP_UNSUPPORTED;
-        case SCN_OP_MARKER:              return SCN_OP_UNSUPPORTED;
+        case SCN_OP_PANEL:
+            return scenarioOpPanel(sim, &op->u.panel);
+        case SCN_OP_SCORE:
+            return scenarioOpScore(sim, &op->u.score);
+        case SCN_OP_ANNOUNCE:
+            return scenarioOpAnnounce(sim, &op->u.announce);
+        case SCN_OP_MARKER:
+            return scenarioOpMarker(sim, &op->u.marker);
         case SCN_OP_END_ROUND:
             return scenarioOpEndRound(sim, &op->u.endRound);
         case SCN_OP_SET_GAME_TIME:
             return scenarioOpSetGameTime(sim, &op->u.setGameTime);
         case SCN_OP_SET_RULE:
             return scenarioOpSetRule(sim, &op->u.setRule);
+        case SCN_OP_SHELL_EXPIRED:
+            return scenarioOpShellExpired(sim, &op->u.shellExpired);
     }
 
     /* A value that is not a member of the enum at all. */
@@ -3096,6 +3722,35 @@ bool serverSimScenarioMapIsScripted(const ServerSim *sim, const char *mapPath) {
     return sim->scenarioMapScripted(sim->scenarioMapScriptedCtx, mapPath);
 }
 
+void serverSimSetScenarioLister(ServerSim *sim,
+                                int (*list)(void *ctx, const char *dir,
+                                            ScnDirEntry *out, int max),
+                                void *ctx) {
+    if (sim == NULL) return;
+    sim->scenarioLister = list;
+    sim->scenarioListerCtx = ctx;
+}
+
+int serverSimScenarioListDir(const ServerSim *sim, ScnDirEntry *out, int max) {
+    if (sim == NULL || out == NULL || max <= 0) {
+        return 0;
+    }
+    if (sim->scenarioLister == NULL) {
+        /* Nothing registered: no scenario library in this build, so there is
+           nothing to offer. An empty list, not a failure — the same answer a
+           directory that is not there gives. */
+        return 0;
+    }
+    {
+        int n = sim->scenarioLister(sim->scenarioListerCtx,
+                                    serverSimGetScenarioDir(sim), out, max);
+        /* A directory that cannot be read answers -1, which is nothing to
+           offer rather than something to report: a server with no scenarios
+           directory is the ordinary case. */
+        return (n < 0) ? 0 : n;
+    }
+}
+
 void serverSimSetScenarioMapChanged(ServerSim *sim,
                                     void (*mapChanged)(void *ctx,
                                                        ServerSim *sim,
@@ -3162,7 +3817,16 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
     if (source == lobbyScenarioNone) {
         /* A detach, or a map with nothing beside it. Everything else the
            caller passed goes with it rather than being kept beside a source
-           that says there is no scenario. */
+           that says there is no scenario. The panels and scores go too: they
+           are what the scenario that has just gone was presenting, and a
+           client joining after this must not be given them. The rules set
+           goes as well, so the sync replay cannot hand a joiner the table of
+           a scenario that is no longer attached. Emptied rather than
+           published empty: the publish belongs to
+           serverSimSetScenarioRules, which the detach calls beside this. */
+        memset(sim->scenarioRules, 0, sizeof(sim->scenarioRules));
+        sim->scenarioRulesCount = 0;
+        serverSimScenarioResetPresentation(sim);
         return;
     }
     sim->scenarioIdentity.source     = source;
@@ -3173,6 +3837,38 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
                         sizeof(sim->scenarioIdentity.fileName), fileName);
     scnCopyIdentityText(sim->scenarioIdentity.description,
                         sizeof(sim->scenarioIdentity.description), description);
+}
+
+void serverSimSetScenarioRules(ServerSim *sim, const ScnOpSetRule *rules,
+                               int count) {
+    ControlEvent evt;
+    int          i;
+    uint8_t      frags;
+    uint8_t      seq;
+
+    if (sim == NULL) return;
+    memset(sim->scenarioRules, 0, sizeof(sim->scenarioRules));
+    sim->scenarioRulesCount = 0;
+    if (rules != NULL) {
+        for (i = 0; i < count; i++) {
+            if (rules[i].rule >= (uint16_t)CTRL_SCENARIO_RULES_MAX) {
+                continue;   /* names no rule */
+            }
+            if (sim->scenarioRulesCount >= CTRL_SCENARIO_RULES_MAX) {
+                break;      /* every rule there is, already named */
+            }
+            sim->scenarioRules[sim->scenarioRulesCount] = rules[i];
+            sim->scenarioRulesCount++;
+        }
+    }
+    /* Published as the fragments the set needs, in order and back to back: a
+       reader installs the set when the last one lands, so a set split in two
+       reaches the lobby as one replacement rather than two. */
+    frags = serverSimScenarioRulesFragCount(sim);
+    for (seq = 0; seq < frags; seq++) {
+        serverSimFillScenarioRulesEvent(sim, seq, &evt);
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 void serverSimSetScenarioState(ServerSim *sim, void *state) {

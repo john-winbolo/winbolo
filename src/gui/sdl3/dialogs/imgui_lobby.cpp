@@ -200,7 +200,18 @@ static void lobbyFrameInitState(ClientSim *cs) {
     s_lf.awaitingFrames          = 0;
     s_lf.lastMapChangeSeq        = clientSimGetLobbyMapChangeSeq(cs);
 
-    s_lf.focusReadyPending = uiShouldUseControllerMode();
+    /* Seed the keyboard focus onto Ready / Start. Not controller-only any
+     * more: with nothing seeded, ImGui's nav init picks the first item in the
+     * window, and that is the little back arrow at the top left — so Enter in
+     * the lobby asked to leave for the main menu rather than readying up.
+     * Enter is the keyboard equivalent of the primary action, and here that is
+     * Ready. Escape still leaves, which is the pair it belongs in.
+     *
+     * Applied once, on the first frame Ready is actually enabled — see the two
+     * sites that consume this. SetKeyboardFocusHere carries
+     * ImGuiNavMoveFlags_NoSetNavCursorVisible, so this seeds what Enter hits
+     * without lighting a focus ring the player did not ask for. */
+    s_lf.focusReadyPending = true;
     s_lf.prevCountdown     = clientSimGetCountdownSeconds(cs);
 }
 
@@ -212,6 +223,9 @@ static void lobbyFrameInitState(ClientSim *cs) {
  * MapChooserState caches stay populated (next open re-uses the discovered
  * map list / preview view); only the visibility / focus / pending-action
  * flags reset. */
+/* Defined below, beside the poll that uses the same two records. */
+static void lobbyBotAnnounceReset(void);
+
 extern "C" void imguiLobbyFrameReset(void) {
     if (s_lf.mapPreviewTex) {
         SDL_DestroyTexture(s_lf.mapPreviewTex);
@@ -221,6 +235,8 @@ extern "C" void imguiLobbyFrameReset(void) {
     mapPreviewPopupDestroy();
 
     lobbyChooserReset();
+    lobbyScenarioChooserReset();
+    lobbyScenarioRulesReset();
 
     lobbyChatReset();
 
@@ -257,6 +273,10 @@ extern "C" void imguiLobbyFrameReset(void) {
     lobbyPlayersReset();
 
     lobbyCommandReset();
+
+    /* A new lobby is a new audience: every bot's brain announces itself
+       again. lobbyChatReset above already dropped the clickable blocks. */
+    lobbyBotAnnounceReset();
 
     s_lf.active = false;
 }
@@ -296,6 +316,106 @@ static void lobbyVoiceHintPoll(ClientSim *cs) {
 }
 #endif
 
+/* ── A bot's announce line in team chat ───────────────────────────────
+ *
+ * A brain may ship an announce.txt. When a bot running it is on YOUR team in
+ * the lobby, that text goes into the TEAM chat as a line from the bot, and
+ * the line opens the brain's commands.txt when clicked (lobby_chat.cpp).
+ *
+ * Said ONCE PER BRAIN, not once per bot: a four-bot team all on GoalHunter is
+ * one message, not four. The per-slot record below is what makes that a
+ * decision and not an accident — a slot is only looked at on the frame its
+ * (bot, team, brain) shape changes, so the poll does no work at all on a
+ * settled lobby, and a bot removed and re-added is looked at again.
+ *
+ * File-statics rather than prefs: a lobby re-entered is a fresh audience, and
+ * lobbyChatDocsReset (through lobbyChatReset) clears the registry with them. */
+static uint8_t s_announceSeen[MAX_TANKS];     /* brainIdx + 1, 0 = not seen */
+static bool    s_announceBrain[BRAIN_LIST_MAX];
+
+static void lobbyBotAnnounceReset(void) {
+    memset(s_announceSeen, 0, sizeof(s_announceSeen));
+    memset(s_announceBrain, 0, sizeof(s_announceBrain));
+}
+
+static void lobbyBotAnnouncePoll(ClientSim *cs) {
+    if (cs == NULL || !clientSimIsInLobby(cs)) return;
+    /* A spectator holds no slot, so it is on nobody's team and is told
+     * nothing; team 0 is "unassigned" and is not a team either. */
+    if (clientSimIsSpectator(cs)) return;
+
+    const ClientLobbySlot *mine =
+        clientSimGetLobbySlot(cs, clientSimGetMyPlayerNum(cs));
+    if (mine == NULL || !mine->connected || mine->teamNumber == 0) return;
+
+    const BrainList *bl = clientSimGetLobbyBrainList(cs);
+    if (bl == NULL || bl->count <= 0) return;
+
+    for (BYTE slot = 0; slot < MAX_TANKS; slot++) {
+        const ClientLobbySlot *s = clientSimGetLobbySlot(cs, slot);
+        uint8_t idx;
+        uint8_t stamp;
+
+        if (s == NULL || !s->connected || !s->isBot ||
+            s->teamNumber != mine->teamNumber) {
+            s_announceSeen[slot] = 0;      /* gone, or not ours any more */
+            continue;
+        }
+        idx = clientSimGetLobbyBotBrain(cs, slot);
+        if (idx == 0xFF || idx >= bl->count) idx = 0;   /* server default */
+        stamp = (uint8_t)(idx + 1);
+        if (s_announceSeen[slot] == stamp) continue;    /* already looked at */
+        s_announceSeen[slot] = stamp;
+
+        if (s_announceBrain[idx]) continue;             /* this brain spoke */
+        {
+            const char *announce = clientSimGetLobbyBrainAnnounce(cs, idx);
+            const char *docs     = clientSimGetLobbyBrainDocs(cs, idx);
+            char        base[BRAIN_LIST_NAME_LEN];
+            char        line[LOBBY_CHAT_LINE_MAX];
+            const char *history;
+            bool        landed;
+
+            if (announce == NULL || announce[0] == '\0') continue;
+
+            /* The name on the line is the BOT's, so it reads like the bot
+             * talking; the dialog is titled after the BRAIN, because the docs
+             * belong to the brain and not to one bot. */
+            brainListSplitVersion(bl->entries[idx].name, base, sizeof(base));
+            if (clientSimFormatLobbyChatLine(line, sizeof(line),
+                                             s->playerName, announce) < 0) {
+                s_announceSeen[slot] = 0;               /* try again later */
+                continue;
+            }
+
+            clientSimAppendLobbyTeamChat(cs, s->playerName, announce);
+
+            /* Did it actually land? A chat buffer near full drops the append
+             * without a word. The line is built by the same function the
+             * append builds it with (client_sim.c), so the search cannot miss
+             * for want of agreeing on the format. */
+            history = clientSimGetLobbyTeamChatHistory(cs);
+            landed  = (history != NULL && SDL_strstr(history, line) != NULL);
+
+            if (!landed) {
+                /* Nothing was said, so this brain has NOT spoken: leave the
+                 * latch alone and un-stamp the slot, and the next frame says
+                 * it again. Latching here was the bug — one dropped append
+                 * and the brain's announce was gone for the whole lobby. */
+                s_announceSeen[slot] = 0;
+                continue;
+            }
+            s_announceBrain[idx] = true;
+
+            /* Registering text that is not in the blob would simply never
+             * match, so this waits on the same answer. */
+            if (docs != NULL && docs[0] != '\0') {
+                lobbyChatDocsRegister((int)idx, base, line);
+            }
+        }
+    }
+}
+
 /* Build the lobby UI into the currently-active ImGui frame. See
  * imgui_lobby.h for the host contract. Returns LOBBY_FRAME_LEFT once the
  * player confirms leaving, otherwise LOBBY_FRAME_CONTINUE. */
@@ -313,6 +433,10 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
        function, so one call covers the blocking lobby and the in-game seam. */
     lobbyVoiceHintPoll(cs);
 #endif
+
+    /* Same place, same reason: a bot that has just joined your team says what
+       its brain can do, once, in team chat. */
+    lobbyBotAnnouncePoll(cs);
 
     SDL_Window   *window   = sdl3DrawGetWindow();
     SDL_Renderer *renderer = sdl3DrawGetRenderer();
@@ -705,7 +829,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 }
             }
             if (leaveClicked ||
-                (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !mapPreviewPopupIsOpen() && !lobbyChooser()->open && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
+                (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !mapPreviewPopupIsOpen() && !lobbyChooser()->open && !lobbyScenarioChooserIsOpen() && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
                   (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
 #ifdef __APPLE__
                   || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
@@ -844,7 +968,10 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             /* The recap tab exists only while a stored end-of-round
              * summary does (set at game over, cleared on countdown). */
             const bool haveLastRound = lobbyShowLastRound;
-            if (!lobbyChooser()->open) {
+            /* Also stood down while the scenario chooser is up. That dialog is
+               drawn from the Map tab's own body, so a cycle away from that tab
+               would leave it open with nothing drawing it and no way back. */
+            if (!lobbyChooser()->open && !lobbyScenarioChooserIsOpen()) {
                 const ClientLobbySlot *myTabSlot =
                     clientSimGetLobbySlot(cs, myPlayerNum);
                 bool onTeam = !spectator && myTabSlot && myTabSlot->teamNumber != 0;
@@ -1375,7 +1502,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 /* One-shot initial focus for controller players — only once
                  * Ready is enabled, so we don't try to focus a disabled item. */
                 if (focusReadyPending && canReady) {
-                    ImGui::SetKeyboardFocusHere();
+                    /* Unless the player has already put the caret somewhere —
+                     * the chat box, most likely, while a map was still coming
+                     * down. Their choice wins, and the seed is dropped rather
+                     * than held, so it cannot yank the caret out of a
+                     * half-typed line the moment they pause. */
+                    if (!ImGui::GetIO().WantTextInput) ImGui::SetKeyboardFocusHere();
                     focusReadyPending = false;
                 }
                 if (ImGui::Button(readyLabel, ImVec2(100 * s, 0))) {
@@ -1399,7 +1531,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 ImGui::SameLine(0, 20);
                 glyphInline(SI_ACTION_MENU_CANCEL);   /* B glyph left of Leave */
                 if (ImGui::Button(langGetText(STR_DLGLOBBY_LEAVE), ImVec2(100 * s, 0)) ||
-                    (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !mapPreviewPopupIsOpen() && !lobbyChooser()->open && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
+                    (((ImGui::IsKeyPressed(ImGuiKey_Escape) && !mapPreviewPopupIsOpen() && !lobbyChooser()->open && !lobbyScenarioChooserIsOpen() && (uiShouldUseControllerMode() ? (!ImGui::GetIO().WantTextInput && !keyboardIsOpen()) : !dialogNavWasInsideSubRegionAtFrameStart())) ||
                       (ImGui::IsKeyPressed(ImGuiKey_W) && IMGUI_PRIMARY_KEY_DOWN())
 #ifdef __APPLE__
                       || (ImGui::IsKeyPressed(ImGuiKey_Period) && ImGui::GetIO().KeySuper)
@@ -2116,7 +2248,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 /* One-shot initial focus for controller players — only once
                  * Ready is enabled, so we don't try to focus a disabled item. */
                 if (focusReadyPending && canReady) {
-                    ImGui::SetKeyboardFocusHere();
+                    /* Unless the player has already put the caret somewhere —
+                     * the chat box, most likely, while a map was still coming
+                     * down. Their choice wins, and the seed is dropped rather
+                     * than held, so it cannot yank the caret out of a
+                     * half-typed line the moment they pause. */
+                    if (!ImGui::GetIO().WantTextInput) ImGui::SetKeyboardFocusHere();
                     focusReadyPending = false;
                 }
                 if (ImGui::Button(readyLabel, ImVec2(-1, 0))) {
@@ -2160,6 +2297,18 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 lobbyChooseMapOpen(cs, renderer);
             }
         }
+
+        /* --- A bot's brain docs, opened from its announce line in team
+           chat. Here, at the lobby window's own id scope: the click that
+           asks for it happens inside the chat child, and BeginPopupModal
+           only finds a popup opened at its own scope. --- */
+        lobbyChatDocsRenderModal(cs);
+
+        /* --- The scenario's rules, opened from the scenario line. Here for
+           the same reason as the docs modal above: the Rules button is drawn
+           inside the Map tab, and BeginPopupModal only finds a popup opened
+           at its own scope. --- */
+        lobbyScenarioRulesRenderModal(cs);
 
         /* --- Leave confirmation popup --- */
         char leavePopupModalId[64];
@@ -2307,6 +2456,12 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
          * SDL_GetWindowSize) — screenW/screenH is cached at lobby
          * entry and doesn't track OS-window resizes. */
         lobbyChooseMapRenderWindow(cs, renderer, s, winW, winH);
+
+        /* The scenario chooser, drawn here for the same reason and from the
+         * same live winW/winH. Opened by the Choose button on the scenario
+         * line, which sits inside the Map tab — drawing the dialog from
+         * there would lose it the moment the player changed tab. */
+        lobbyScenarioChooserRenderWindow(cs, s, winW, winH);
 
 #if !BOLO_MOBILE
     /* The reel outlives any single body render. Once the summary is gone (the
@@ -2640,11 +2795,7 @@ extern "C" int imguiLobbyShow(ClientSim *cs) {
                 ev.window.windowID == SDL_GetWindowID(window)) {
                 lobbySaveWindowGeometry(window);
             }
-            if (ev.type == SDL_EVENT_QUIT) {
-                running = false;
-            }
-            if (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
-                ev.window.windowID == SDL_GetWindowID(window)) {
+            if (dialogHandleQuitEvent(window, &ev)) {
                 running = false;
             }
         }

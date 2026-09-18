@@ -33,7 +33,6 @@
  *  the same list as everything below.
  *********************************************************/
 
-#include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -44,47 +43,22 @@
 #include <lua.h>
 #include <lauxlib.h>
 
+#include "brain_list.h"          /* brainListResolve — whether this server has
+                                  * the brain a team names */
 #include "server_sim.h"          /* the entity counts, MAX_TANKS,
                                   * MAP_ARRAY_SIZE */
-#include "server_sim_scenario.h" /* serverSimCheckScenarioRules */
+#include "server_sim_scenario.h" /* serverSimCheckScenarioRules, SCN_PATH_MAX */
 
 #include "scenario_host.h"
 #include "scenario_manifest.h"
 #include "scenario_lua.h"
+#include "sim_rules_names.h"      /* simRulesRuleName — a rule in a reason */
 #include "scenario_validate.h"
 
 /* One line from the parse or from Lua, before it becomes an issue. Lua's own
  * messages carry the file path and the line ahead of the text, so this is
  * longer than the message field it is copied into. */
 #define SCN_VALIDATE_LINE_LEN 512
-
-/* ── The list ─────────────────────────────────────────────────────── */
-
-void scnIssueAdd(ScnValidateResult *out, const char *key,
-                 const char *fmt, ...) {
-    ScnValidateIssue *issue;
-    va_list           ap;
-
-    if (out == NULL) {
-        return;
-    }
-    if (out->count >= SCN_VALIDATE_ISSUES_MAX) {
-        /* A count that cannot wrap. Past the list's end the number is all
-           there is left to say about the rest of them. */
-        if (out->dropped < UINT16_MAX) {
-            out->dropped++;
-        }
-        return;
-    }
-
-    issue = &out->issues[out->count];
-    out->count++;
-    memset(issue, 0, sizeof(*issue));
-    snprintf(issue->key, sizeof(issue->key), "%s", (key != NULL) ? key : "");
-    va_start(ap, fmt);
-    vsnprintf(issue->message, sizeof(issue->message), fmt, ap);
-    va_end(ap);
-}
 
 /* ── The stub table ───────────────────────────────────────────────── */
 
@@ -100,11 +74,12 @@ static int scnStubRow(lua_State *L) {
  * the registry the real table is built from, so a row added to the surface is
  * on this table too with no second edit. */
 static void scnInstallStubGame(lua_State *L) {
-    const ScnLuaRow     *rows;
-    const ScnLuaConst   *consts;
-    const ScnLuaTerrain *terrain;
-    size_t               n;
-    size_t               i;
+    const ScnLuaRow       *rows;
+    const ScnLuaConst     *consts;
+    const ScnLuaTerrain   *terrain;
+    const ScnLuaWordTable *words;
+    size_t                 n;
+    size_t                 i;
 
     lua_newtable(L);
 
@@ -130,6 +105,20 @@ static void scnInstallStubGame(lua_State *L) {
         lua_setfield(L, -2, terrain[i].name);
     }
     lua_setfield(L, -2, "TERRAIN");
+
+    /* And the word tables beside it, for the same reason: a chunk reading
+       game.COLOUR.red at its top level reads the number the round would give
+       it rather than indexing a nil. */
+    words = scenarioLuaWordTables(&n);
+    for (i = 0; i < n; i++) {
+        size_t w;
+        lua_newtable(L);
+        for (w = 0; w < words[i].count; w++) {
+            lua_pushinteger(L, (lua_Integer)words[i].words[w].value);
+            lua_setfield(L, -2, words[i].words[w].word);
+        }
+        lua_setfield(L, -2, words[i].name);
+    }
 
     lua_setglobal(L, "game");
 }
@@ -275,8 +264,9 @@ static void scnCheckApi(const ScenarioManifest *m, ScnValidateResult *out) {
 
 /* The game type the table asks for. The attach reads it through the same
  * word set a spawn op's loadout takes, and a word that set does not hold is
- * dropped there without a sound — the round plays open and the author is
- * never told the line did nothing. */
+ * dropped there without a sound — the round plays strict tournament, as a
+ * round naming no game does, and the author is never told the line did
+ * nothing. */
 static void scnCheckGame(const ScenarioManifest *m, ScnValidateResult *out) {
     int base;
 
@@ -286,13 +276,14 @@ static void scnCheckGame(const ScenarioManifest *m, ScnValidateResult *out) {
     if (!scenarioLuaLoadoutFromWord(m->game, &base)) {
         scnIssueAdd(out, "game",
                     "game is '%s', and the game types are 'open', "
-                    "'tournament' and 'strict'",
+                    "'tournament' and 'strict'; the round plays strict",
                     m->game);
     }
 }
 
 /* The template the lobby is seated from: the human cap, and per team the
- * number it is, the bots it asks for and the brain it names them with. */
+ * number it is, the bots it asks for, the brain it names them with and the
+ * init table they are built with. */
 static void scnCheckLobby(const ScenarioManifest *m, ScnValidateResult *out) {
     const ScnManifestLobby *lob = &m->lobby;
     char                    key[SCN_VALIDATE_KEY_LEN];
@@ -339,14 +330,47 @@ static void scnCheckLobby(const ScenarioManifest *m, ScnValidateResult *out) {
                         (unsigned)t->bots, MAX_TANKS);
         }
 
-        /* The shape of the name and nothing else. A packaged brain is inside
-           a file this check has not been handed, so whether the package holds
-           one is not a question that can be asked here. */
-        if (strncmp(t->brain, "package:", 8) == 0 && t->brain[8] == '\0') {
+        /* The brain the team names, held against the brains this server has.
+           Neither of these refuses the scenario: the map still loads and the
+           team's seats fall back to the server's own brain. What they are for
+           is telling an operator they need GoalHunter_1.7 before a round is
+           started, rather than leaving them to find it out from a wave that
+           seats bots which field nothing.
+
+           A "package:NAME" carries no separator, so it arrives here as a name
+           like any other and is reported as a brain this server does not have,
+           which is what it is. */
+        if (t->brain[0] != '\0') {
+            char path[SCN_PATH_MAX];
+
             snprintf(key, sizeof(key), "lobby.teams[%u].brain",
                      (unsigned)(i + 1));
-            scnIssueAdd(out, key, "'%s' names nothing after the colon",
-                        t->brain);
+            if (strpbrk(t->brain, "/\\") != NULL) {
+                scnIssueAdd(out, key,
+                            "'%s' is a path; a scenario names a brain, which "
+                            "is the directory under the server's brains/ — "
+                            "'GoalHunter_1.7', not a path to it", t->brain);
+            } else if (!brainListResolve(t->brain, path, sizeof(path))) {
+                scnIssueAdd(out, key,
+                            "'%s' names no brain this server has; the team's "
+                            "seats take the server's own brain", t->brain);
+            }
+        }
+
+        /* A pair of the init table the read could not take. The reader keeps
+           the pairs before it and names this one, so the team still has an
+           init and the author is told what fell out of it. The caps are
+           derived from the table's own, so the sentence cannot drift from
+           what the reader will accept. */
+        if (t->initBadKey[0] != '\0') {
+            snprintf(key, sizeof(key), "lobby.teams[%u].init",
+                     (unsigned)(i + 1));
+            scnIssueAdd(out, key,
+                        "'%s' does not fit: an init pair is a name of at most "
+                        "%d bytes with a string or number value of at most "
+                        "%d, and a team holds at most %d pairs",
+                        t->initBadKey, (int)SCN_TABLE_KEY_LEN - 1,
+                        (int)SCN_TABLE_VALUE_LEN - 1, SCN_TABLE_MAX);
         }
     }
 }
@@ -365,7 +389,7 @@ static void scnCheckRules(const ServerSim *sim, const ScenarioManifest *m,
     ScnOpResult r;
 
     for (i = 0; i < m->numRules && i < SCN_MANIFEST_RULES_MAX; i++) {
-        const char *name = scenarioLuaRuleName((int)m->rules[i].rule);
+        const char *name = simRulesRuleName((int)m->rules[i].rule);
 
         rules[i]  = m->rules[i].rule;
         values[i] = m->rules[i].value;
@@ -494,67 +518,58 @@ static void scnCheckBound(const ScenarioManifest *m, ScnValidateResult *out) {
 
 /* ── The whole check ──────────────────────────────────────────────── */
 
-bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
-                         ScnValidateResult *out) {
-    char           script[SCN_SCRIPT_PATH_MAX];
+/* The checks themselves, against source that has already been named and an out
+ * the caller has cleared. Every entry point below comes through here, so a
+ * script checked beside a map, one named directly and one still in an editor's
+ * buffer are read the same way and report the same things.
+ *
+ * push is the manifest that goes on as the scenario global before the chunk,
+ * or NULL. The three sites in scenario_host.c that load a packaged script do
+ * the same thing in the same place, so a caller holding both halves of a
+ * package is told what the load will say about them.
+ *
+ * The bytes are the caller's. Nothing here frees them. */
+static bool scnValidateSource(const ServerSim *sim, const char *src,
+                              size_t srcLen, const char *name,
+                              const ScenarioManifest *push,
+                              ScnValidateResult *out) {
     char           chunkName[SCN_SCRIPT_PATH_MAX + 2];
     char           err[SCN_VALIDATE_LINE_LEN];
-    char          *src    = NULL;
-    size_t         srcLen = 0;
     lua_State     *L;
     ScnParseReport rep;
 
-    if (out == NULL || mapPath == NULL) {
-        return false;
-    }
-    memset(out, 0, sizeof(*out));
-
-    if (!scnScriptPath(mapPath, script, sizeof(script))) {
-        scnIssueAdd(out, "", "%s leaves no room for a script name beside it",
-                    mapPath);
-        return false;
-    }
-
-    /* No file at all is the ordinary case: a plain map, and nothing to check
-       about it. */
-    err[0] = '\0';
-    if (!scnReadFile(script, &src, &srcLen, err, sizeof(err))) {
-        if (err[0] == '\0') {
-            return true;
-        }
-        scnIssueAdd(out, "", "%s", err);
-        return false;
-    }
-
     L = scnNewVm();
     if (L == NULL) {
-        free(src);
-        scnIssueAdd(out, "", "no memory for a Lua state to check %s", script);
+        scnIssueAdd(out, "", "no memory for a Lua state to check %s", name);
         return false;
     }
     scnInstallStubGame(L);
 
+    /* The manifest the caller holds, before the chunk, exactly where the host
+       puts it. A script that declares no table of its own then reads back this
+       one; a script that declares one replaces it. */
+    if (push != NULL) {
+        scnPushManifestGlobal(L, push);
+    }
+
     /* The top level and no further. What the chunk defines is what the table
        below is read out of; the functions it left behind are never called. */
-    snprintf(chunkName, sizeof(chunkName), "@%s", script);
+    snprintf(chunkName, sizeof(chunkName), "@%s", name);
     if (!scnRunChunk(L, src, srcLen, chunkName, err, sizeof(err))) {
         scnIssueAdd(out, "", "%s", err);
         if (out->count > 0) {
-            out->issues[out->count - 1].line =
-                scnLineFromLuaError(err, script);
+            out->issues[out->count - 1].line = scnLineFromLuaError(err, name);
         }
         scnCloseVm(L);
-        free(src);
         return false;
     }
 
     rep.soft    = NULL;
     rep.softLen = 0;
     rep.sink    = out;
-    if (!scnReadManifest(L, &out->manifest, script, err, sizeof(err), &rep)) {
+    if (!scnReadManifest(L, &out->manifest, name, err, sizeof(err), &rep)) {
         scnIssueAdd(out, "", "%s", err);
         scnCloseVm(L);
-        free(src);
         return false;
     }
     out->haveManifest = true;
@@ -575,6 +590,69 @@ bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
     scnAttributeLines(out, src, srcLen);
 
     scnCloseVm(L);
-    free(src);
     return out->count == 0;
+}
+
+/* The bytes, and the one case that is not a fault. The read is the whole of
+ * what the two file entries do beyond the checks above. */
+static bool scnValidateFile(const ServerSim *sim, const char *script,
+                            ScnValidateResult *out) {
+    char   err[SCN_VALIDATE_LINE_LEN];
+    char  *src    = NULL;
+    size_t srcLen = 0;
+    bool   ok;
+
+    /* No file at all is the ordinary case: a plain map, and nothing to check
+       about it. A caller handing over an empty buffer is a different thing,
+       and is checked as the empty script it is. */
+    err[0] = '\0';
+    if (!scnReadFile(script, &src, &srcLen, err, sizeof(err))) {
+        if (err[0] == '\0') {
+            return true;
+        }
+        scnIssueAdd(out, "", "%s", err);
+        return false;
+    }
+
+    /* Nothing is pushed: a script found on disk beside a map is a loose
+       script, which declares its own table or is not a scenario. */
+    ok = scnValidateSource(sim, src, srcLen, script, NULL, out);
+    free(src);
+    return ok;
+}
+
+bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
+                         ScnValidateResult *out) {
+    char script[SCN_SCRIPT_PATH_MAX];
+
+    if (out == NULL || mapPath == NULL) {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+
+    if (!scnScriptPath(mapPath, script, sizeof(script))) {
+        scnIssueAdd(out, "", "%s leaves no room for a script name beside it",
+                    mapPath);
+        return false;
+    }
+    return scnValidateFile(sim, script, out);
+}
+
+bool scenarioValidateScript(const ServerSim *sim, const char *scriptPath,
+                            ScnValidateResult *out) {
+    if (out == NULL || scriptPath == NULL) {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+    return scnValidateFile(sim, scriptPath, out);
+}
+
+bool scenarioValidateSource(const ServerSim *sim, const char *text, size_t len,
+                            const char *name, const ScenarioManifest *push,
+                            ScnValidateResult *out) {
+    if (out == NULL || text == NULL || name == NULL) {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+    return scnValidateSource(sim, text, len, name, push, out);
 }

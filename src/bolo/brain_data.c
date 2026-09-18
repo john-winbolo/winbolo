@@ -662,6 +662,13 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
   *clientSimGetBrainsWantAllies(csPtr) = *(value->allies);
   value->wantallies = clientSimGetBrainsWantAllies(csPtr);
 
+  /* Smart ping request. Cleared on every think, so a brain that returns no
+   * ping fields places nothing and last think's request cannot fire twice. */
+  value->ping_pending = 0;
+  value->ping_kind = 0;
+  value->ping_x = 0;
+  value->ping_y = 0;
+
   /* Message Sending */
   value->messagedest = clientSimGetBrainsMessageDest(csPtr);
   clientSimGetBrainsMessage(csPtr)[0] = '\0';
@@ -824,6 +831,24 @@ void brainDataExtractInfo(ClientSim *csPtr, BrainInfo *value) {
       playersSendAiMessage(csPtr, gs, &gs->plyrs, *(value->messagedest), msg);
     }
     clientSimGetBrainsMessage(csPtr)[0] = '\0';
+  }
+
+  /* Smart ping. The brain asks; the engine places it from the brain's own
+   * player slot, so allies see it on the map, the team filter is the one
+   * every ping goes through, and a replay keeps it. Queued rather than
+   * applied: this runs on a bot worker thread during the parallel think
+   * stage, and serverSimApplyCommand belongs to the producer thread, which
+   * drains the queue in Stage 3 of botManagerTick. Same deferral the bot's
+   * chat takes, for the same reason. A local brain in a human's Brains menu
+   * has no bound ServerSim and no player slot of its own to ping from, so
+   * its request is dropped. */
+  if (value->ping_pending != 0) {
+    struct ServerSim *bound = clientSimGetBoundServerSim(csPtr);
+    if (bound != NULL) {
+      botManagerQueuePing(bound, clientSimGetMyPlayerNum(csPtr),
+                          value->ping_kind, value->ping_x, value->ping_y);
+    }
+    value->ping_pending = 0;
   }
 }
 /*********************************************************

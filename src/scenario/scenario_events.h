@@ -32,7 +32,7 @@
  *  own.
  *
  *  This is the library's header and the tests', not a
- *  frontend's, as scenario_manifest.h is: scenario_static
+ *  frontend's, as scenario_lua.h is: scenario_static
  *  publishes its own directory to whatever links it.
  *********************************************************/
 

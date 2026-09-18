@@ -103,9 +103,9 @@ extern "C" {
 #endif
 
 /* Sizes shared between the cluster that owns the widget and the ones that
- * measure against it: the WinBolo.net row icon the player list draws, and the
- * chat input buffer the reel's timestamp helper appends into. */
-#define LOBBY_WBN_ICON_SIZE 14
+ * measure against it. The player row's badge run used to be here as a flat
+ * 14 px; it is sdl3ImguiWbnIconPx() now (sdl3imgui.h), so it comes out the
+ * same height as the cog beside it at every UI scale. */
 #define LOBBY_CHAT_INPUT_SIZE 129  /* 128 chars + null terminator */
 
 /* ── Shared types ─────────────────────────────────────────────────
@@ -455,9 +455,50 @@ void lobbyChooseMapOpen(ClientSim *cs, SDL_Renderer *renderer);
 void lobbyChooseMapRenderWindow(ClientSim *cs, SDL_Renderer *renderer,
                                 float s, int screenW, int screenH);
 
+/* scenariochooser — the dialog behind the Choose button on the scenario
+ * line: what the server offers on its own, and the host's pick.
+ *
+ * Open is what the button calls. The window is drawn from the lobby's own
+ * frame, beside the map chooser's, rather than from the scenario line that
+ * opens it: the line is drawn inside the Map tab, and a dialog that stopped
+ * being drawn when the player changed tab would be open with no way back to
+ * it. IsOpen is what the lobby reads so its Esc and its controller tab cycle
+ * stand aside while the dialog is up. */
+void lobbyScenarioChooserReset(void);
+void lobbyScenarioChooserOpen(void);
+bool lobbyScenarioChooserIsOpen(void);
+void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
+                                      int screenW, int screenH);
+
+/* scenariorules — the popup behind the Rules button on the scenario line:
+ * one row per rule the attached scenario's manifest sets, named, with the
+ * classic value beside the scenario's and what the change does in words.
+ *
+ * Available is what the line asks before it draws the button, so a plain map
+ * and a scenario that changes no rule offer no way in. Open is what the
+ * button calls; the modal must be rendered at the lobby window's own id
+ * scope, the way the bot docs dialog is, because the button that opens it
+ * sits inside the Map tab. */
+void lobbyScenarioRulesReset(void);
+void lobbyScenarioRulesOpen(void);
+bool lobbyScenarioRulesAvailable(ClientSim *cs);
+void lobbyScenarioRulesRenderModal(ClientSim *cs);
+
 /* chat */
 void lobbyChatReset(void);
 void lobbyRenderChatHistory(const char *blob);
+/* A bot's announce line in team chat, and the docs dialog behind it. The
+ * announce text is registered as the exact block that was appended to the
+ * chat blob; lobbyRenderChatHistory matches it back out and draws it as a
+ * link. The modal must be rendered at the lobby window's own id scope. */
+/* Longest announce block the chat can carry: a bot name, ": ", and the
+ * brain's whole announce.txt (BRAIN_ANNOUNCE_MAX). */
+#define LOBBY_CHAT_DOCS_LINE_MAX 640
+void lobbyChatDocsReset(void);
+int  lobbyChatDocsCount(void);
+void lobbyChatDocsRegister(int brainIdx, const char *brainName,
+                           const char *text);
+void lobbyChatDocsRenderModal(ClientSim *cs);
 void lobbyRenderChatInputAndSend(ClientSim *cs, char *chatInput,
                                  BYTE myPlayerNum, bool hasTransport,
                                  float s, BYTE destPlayer);
@@ -507,9 +548,12 @@ SDL_Texture *lobbyBuildMapPreview(SDL_Renderer *renderer,
 
 /* assets */
 const char *lobbyGameTypeStr(gameType gt);
-/* The map's scenario — its name and its description — or, for a host who
- * has the scripts preference switched off, a line saying so. Draws nothing
- * for a joiner on a map with no scenario. */
+/* What scenario is playing — its name and its description, or the map's name
+ * and the mod playing over it — plus, for a host, the reload and Choose
+ * buttons. For a host who has the scripts preference switched off, a line
+ * saying so instead. Draws nothing for a joiner on a map with no scenario.
+ * The Choose button asks for the chooser dialog; the lobby's own frame is
+ * what draws it. */
 void lobbyRenderScenarioLine(ClientSim *cs);
 const char *lobbyAiTypeStr(uint8_t ai);
 void lobbyFormatTimeLimit(int32_t ticks, char *buf, int bufSize);

@@ -20,7 +20,9 @@
  *   skin, and enumerates the skins installed on disk.
  *********************************************************/
 
+#include <stddef.h>   /* offsetof */
 #include "skin_source.h"
+#include "platform_types.h"   /* BOLO_STATIC_ASSERT */
 
 #include <SDL3/SDL.h>
 
@@ -69,6 +71,45 @@ static char        s_activeId[SKIN_ID_MAX];
 static char        s_requestedId[SKIN_ID_MAX];
 static SkinSource *s_activeSource;
 static uint64_t    s_nextSerial = 1;   /* 0 is reserved for "no source" */
+
+/* This module used to be the render thread's alone. It is not any more: the
+ * map chooser's preview worker rasterises a thumbnail with minimapRenderPixels,
+ * which asks map_colours for a square's colour, which reads the active skin's
+ * [MapPalette]. Two things there are not safe to do from two threads at once.
+ *
+ * A zip source drives one unzFile cursor - unzGoToFilePos, then open, read and
+ * close the current file - so two reads through the same handle interleave into
+ * each other's file. And the active source is closed and freed when the player
+ * picks another skin, so a thread holding the pointer skinGetActiveSource gave
+ * it can be reading a source that no longer exists.
+ *
+ * One mutex for the module covers both: every read of a source's bytes, the
+ * lazy skin.ini fill behind them, and every point where s_activeSource is
+ * closed or replaced. SDL mutexes are reentrant, so the nesting these have -
+ * skinSourceReadIni calling skinSourceRead, skinSetActive calling
+ * skinSourceOpen - needs no second thought. A caller that has to hold a source
+ * across more than one call, as map_colours does, takes it for itself through
+ * skinSourceLock.
+ *
+ * Coarse on purpose. The lock is held over file reads, but the only caller
+ * that takes it at any rate is the per-square colour lookup, which finds the
+ * ini already parsed and does nothing but read a field. */
+static SDL_InitState s_lockInit;
+static SDL_Mutex    *s_lock;
+
+void skinSourceLock(void) {
+    if (SDL_ShouldInit(&s_lockInit)) {
+        s_lock = SDL_CreateMutex();
+        SDL_SetInitialized(&s_lockInit, true);
+    }
+    /* SDL_LockMutex(NULL) is a no-op, so a mutex that could not be created
+       leaves the old single-threaded behaviour rather than crashing. */
+    SDL_LockMutex(s_lock);
+}
+
+void skinSourceUnlock(void) {
+    SDL_UnlockMutex(s_lock);
+}
 
 /* ------------------------------------------------------------------ */
 /* Name handling                                                       */
@@ -542,32 +583,40 @@ bool skinSourceRead(SkinSource *src, const char *relName,
         size_t sz = (size_t)e->size;
         size_t got = 0;
         unsigned char *data;
+        bool ok = false;
         /* The index already refused anything over the limit; this keeps the
          * sz + 1 below from wrapping on a 32-bit size_t whatever put the
          * entry there. */
         if (e->size > SKIN_ENTRY_MAX_BYTES) return false;
-        if (unzGoToFilePos(src->zip, &pos) != UNZ_OK) return false;
-        if (unzOpenCurrentFile(src->zip) != UNZ_OK) return false;
-        data = (unsigned char *)SDL_malloc(sz + 1);
-        if (!data) {
-            unzCloseCurrentFile(src->zip);
-            return false;
+        /* One cursor per unzFile: seek, open, read and close are one
+           indivisible sequence, and a second thread landing in the middle of
+           it reads this file's bytes into its own buffer. */
+        skinSourceLock();
+        if (unzGoToFilePos(src->zip, &pos) == UNZ_OK &&
+            unzOpenCurrentFile(src->zip) == UNZ_OK) {
+            data = (unsigned char *)SDL_malloc(sz + 1);
+            if (data) {
+                while (got < sz) {
+                    int n = unzReadCurrentFile(src->zip, data + got,
+                                               (unsigned int)(sz - got));
+                    if (n <= 0) break;
+                    got += (size_t)n;
+                }
+                unzCloseCurrentFile(src->zip);
+                if (got == sz) {
+                    data[sz] = '\0';
+                    *buf = data;
+                    *len = sz;
+                    ok = true;
+                } else {
+                    SDL_free(data);
+                }
+            } else {
+                unzCloseCurrentFile(src->zip);
+            }
         }
-        while (got < sz) {
-            int n = unzReadCurrentFile(src->zip, data + got,
-                                       (unsigned int)(sz - got));
-            if (n <= 0) break;
-            got += (size_t)n;
-        }
-        unzCloseCurrentFile(src->zip);
-        if (got != sz) {
-            SDL_free(data);
-            return false;
-        }
-        data[sz] = '\0';
-        *buf = data;
-        *len = sz;
-        return true;
+        skinSourceUnlock();
+        return ok;
     }
 }
 
@@ -617,8 +666,105 @@ bool skinSourceReadHead(SkinSource *src, const char *relName,
  * (SKIN_FILTER_NEAREST), so "the author did not say" has to be written in
  * rather than left to the zeroing. */
 static void skinInfoClear(SkinInfo *info) {
+    int32_t *c = (int32_t *)&info->mapPalette;
+    size_t   n = sizeof(info->mapPalette) / sizeof(int32_t);
+    size_t   i;
+
     SDL_memset(info, 0, sizeof(*info));
     info->recommendedFilter = SKIN_FILTER_NONE;
+    /* SkinMapPalette is int32_t throughout, so its entries clear in one walk
+       and adding a colour to it needs no edit here. */
+    for (i = 0; i < n; i++) c[i] = SKIN_COLOUR_NONE;
+}
+
+/* A colour from [MapPalette]: "#rrggbb", "rrggbb" or "0xrrggbb", six hex
+   digits either way. SKIN_COLOUR_NONE for anything else, including a short
+   or long run of digits, so a typo keeps the built-in colour rather than
+   drawing some other colour the author did not choose. */
+static int32_t parsePaletteColour(const char *v) {
+    uint32_t rgb = 0;
+    int      i;
+
+    if (v[0] == '#') {
+        v++;
+    } else if (v[0] == '0' && (v[1] == 'x' || v[1] == 'X')) {
+        v += 2;
+    }
+    for (i = 0; i < 6; i++) {
+        char c = v[i];
+        uint32_t digit;
+        if (c >= '0' && c <= '9')      digit = (uint32_t)(c - '0');
+        else if (c >= 'a' && c <= 'f') digit = (uint32_t)(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') digit = (uint32_t)(c - 'A' + 10);
+        else return SKIN_COLOUR_NONE;
+        rgb = (rgb << 4) | digit;
+    }
+    if (v[6] != '\0') return SKIN_COLOUR_NONE;
+    return (int32_t)rgb;
+}
+
+/* The [MapPalette] keys, and where each one lands. */
+static const struct {
+    const char *key;
+    size_t      offset;
+} kPaletteKeys[] = {
+    { "Grass",         offsetof(SkinMapPalette, grass)         },
+    { "Swamp",         offsetof(SkinMapPalette, swamp)         },
+    { "Rubble",        offsetof(SkinMapPalette, rubble)        },
+    { "Crater",        offsetof(SkinMapPalette, crater)        },
+    { "Forest",        offsetof(SkinMapPalette, forest)        },
+    { "Road",          offsetof(SkinMapPalette, road)          },
+    { "River",         offsetof(SkinMapPalette, river)         },
+    { "DeepSea",       offsetof(SkinMapPalette, deepSea)       },
+    { "Boat",          offsetof(SkinMapPalette, boat)          },
+    { "Building",      offsetof(SkinMapPalette, building)      },
+    { "HalfBuilding",  offsetof(SkinMapPalette, halfBuilding)  },
+    { "MarkerSelf",    offsetof(SkinMapPalette, markerSelf)    },
+    { "MarkerGood",    offsetof(SkinMapPalette, markerGood)    },
+    { "MarkerEvil",    offsetof(SkinMapPalette, markerEvil)    },
+    { "MarkerNeutral", offsetof(SkinMapPalette, markerNeutral) },
+    /* The assignable player colours, named as the Team Colours dialog names
+       them. A skin may rename nothing: the key says which slot, not what
+       colour an author has to put in it. */
+    { "TeamGrey",        offsetof(SkinMapPalette, team[0])  },
+    { "TeamKhaki",       offsetof(SkinMapPalette, team[1])  },
+    { "TeamGreen",       offsetof(SkinMapPalette, team[2])  },
+    { "TeamPink",        offsetof(SkinMapPalette, team[3])  },
+    { "TeamYellow",      offsetof(SkinMapPalette, team[4])  },
+    { "TeamLightBlue",   offsetof(SkinMapPalette, team[5])  },
+    { "TeamOrange",      offsetof(SkinMapPalette, team[6])  },
+    { "TeamLightPurple", offsetof(SkinMapPalette, team[7])  },
+    { "TeamAqua",        offsetof(SkinMapPalette, team[8])  },
+    { "TeamLightGreen",  offsetof(SkinMapPalette, team[9])  },
+    { "TeamLightGrey",   offsetof(SkinMapPalette, team[10]) },
+    { "TeamRed",         offsetof(SkinMapPalette, team[11]) },
+    { "TeamBlue",        offsetof(SkinMapPalette, team[12]) },
+    { "TeamBrown",       offsetof(SkinMapPalette, team[13]) },
+    { "TeamLightPink",   offsetof(SkinMapPalette, team[14]) },
+    { "TeamPaleGreen",   offsetof(SkinMapPalette, team[15]) },
+    { "TeamPurple",      offsetof(SkinMapPalette, team[16]) },
+};
+
+/* One key per entry, and no entry without a key: a field added to
+   SkinMapPalette with no row above it would silently never be settable. */
+BOLO_STATIC_ASSERT(sizeof(kPaletteKeys) / sizeof(kPaletteKeys[0]) ==
+                       sizeof(SkinMapPalette) / sizeof(int32_t),
+                   skin_palette_keys_cover_every_entry);
+
+/* True when the key was one of ours, whatever the value parsed to: an
+   unreadable colour is still that key, and leaves its entry alone. */
+static bool applyPaletteKey(SkinMapPalette *out, const char *k, const char *v) {
+    size_t i;
+    for (i = 0; i < sizeof(kPaletteKeys) / sizeof(kPaletteKeys[0]); i++) {
+        if (SDL_strcasecmp(k, kPaletteKeys[i].key) == 0) {
+            int32_t rgb = parsePaletteColour(v);
+            if (rgb != SKIN_COLOUR_NONE) {
+                *(int32_t *)((char *)out + kPaletteKeys[i].offset) = rgb;
+            }
+            return true;
+        }
+    }
+    return false;
 }
 
 /* The value spellings RecommendedFilter accepts. "Pixel art" gets three
@@ -634,11 +780,18 @@ static int parseFilterName(const char *v) {
     return SKIN_FILTER_NONE;
 }
 
-/* One pass over the whole [Skin] section, picking up every key it carries.
+/* One pass over skin.ini, picking up every key the sections it knows carry.
  * Runs on the loaded buffer, which skinSourceRead leaves writable and
- * NUL-terminated. */
+ * NUL-terminated. A section it does not know is skipped whole, so a skin may
+ * carry sections for something else without them being read as ours. */
+typedef enum {
+    INI_SECTION_OTHER = 0,
+    INI_SECTION_SKIN,
+    INI_SECTION_MAP_PALETTE
+} IniSection;
+
 static void parseSkinIni(char *text, SkinInfo *out) {
-    bool inSection = false;
+    IniSection section = INI_SECTION_OTHER;
     char *p = text;
     while (p != NULL && *p != '\0') {
         char *line = p;
@@ -665,10 +818,16 @@ static void parseSkinIni(char *text, SkinInfo *out) {
         while (*line == ' ' || *line == '\t') line++;
 
         if (line[0] == '[') {
-            inSection = (SDL_strncasecmp(line, "[Skin]", 6) == 0);
+            if (SDL_strncasecmp(line, "[Skin]", 6) == 0) {
+                section = INI_SECTION_SKIN;
+            } else if (SDL_strncasecmp(line, "[MapPalette]", 12) == 0) {
+                section = INI_SECTION_MAP_PALETTE;
+            } else {
+                section = INI_SECTION_OTHER;
+            }
             continue;
         }
-        if (!inSection) continue;
+        if (section == INI_SECTION_OTHER) continue;
 
         eq = SDL_strchr(line, '=');
         if (!eq) continue;
@@ -683,7 +842,9 @@ static void parseSkinIni(char *text, SkinInfo *out) {
         vend = v + SDL_strlen(v);
         while (vend > v && (vend[-1] == ' ' || vend[-1] == '\t')) *--vend = '\0';
 
-        if (SDL_strcasecmp(k, "Name") == 0) {
+        if (section == INI_SECTION_MAP_PALETTE) {
+            applyPaletteKey(&out->mapPalette, k, v);
+        } else if (SDL_strcasecmp(k, "Name") == 0) {
             SDL_strlcpy(out->name, v, sizeof(out->name));
         } else if (SDL_strcasecmp(k, "Author") == 0) {
             SDL_strlcpy(out->author, v, sizeof(out->author));
@@ -707,6 +868,7 @@ void skinSourceReadIni(SkinSource *src, SkinInfo *out) {
     if (!out) return;
     skinInfoClear(out);
     if (!src) return;
+    skinSourceLock();
     if (!src->iniLoaded) {
         void *buf = NULL;
         size_t len = 0;
@@ -720,6 +882,7 @@ void skinSourceReadIni(SkinSource *src, SkinInfo *out) {
         src->iniLoaded = true;
     }
     *out = src->ini;
+    skinSourceUnlock();
 }
 
 /* ------------------------------------------------------------------ */
@@ -1171,9 +1334,14 @@ static bool rewriteArchiveSkinIni(const char *archive, uint64_t id,
  * which also refreshes its cached skin.ini with the id just written. */
 static bool rewriteArchiveKeepingActive(const char *archive, uint64_t id,
                                         uint64_t authorSteamId) {
-    bool wasActive = s_activeSource != NULL && s_activeSource->isZip &&
-                     SDL_strcmp(s_activeSource->path, archive) == 0;
+    bool wasActive;
     bool ok;
+
+    /* Same reason as skinSetActive: the close below frees a source another
+       thread may be reading, and the lock is what keeps the two apart. */
+    skinSourceLock();
+    wasActive = s_activeSource != NULL && s_activeSource->isZip &&
+                SDL_strcmp(s_activeSource->path, archive) == 0;
 
     if (wasActive) {
         skinSourceClose(s_activeSource);
@@ -1189,6 +1357,7 @@ static bool rewriteArchiveKeepingActive(const char *archive, uint64_t id,
             s_activeId[0] = '\0';
         }
     }
+    skinSourceUnlock();
     return ok;
 }
 
@@ -1431,6 +1600,12 @@ bool skinSetActive(const char *id) {
         SDL_strlcpy(s_requestedId, id, sizeof(s_requestedId));
     }
 
+    /* Held until the replacement is open. skinSourceClose frees the source,
+       and another thread may be part way through reading the palette out of
+       it - it asked skinGetActiveSource for the pointer under this same
+       lock, so it either finishes before the close or sees the new source. */
+    skinSourceLock();
+
     if (s_activeSource) {
         skinSourceClose(s_activeSource);
         s_activeSource = NULL;
@@ -1438,6 +1613,7 @@ bool skinSetActive(const char *id) {
     s_activeId[0] = '\0';
 
     if (!id || id[0] == '\0' || SDL_strcasecmp(id, "default") == 0) {
+        skinSourceUnlock();
         return true;
     }
 
@@ -1461,6 +1637,7 @@ bool skinSetActive(const char *id) {
     }
 
     if (!s_activeSource) {
+        skinSourceUnlock();
         /* An id from another machine, a Workshop item still downloading, or
          * one whose files are offline: the built-in assets stand in and the
          * caller carries on, but the id stays the player's choice. */
@@ -1470,6 +1647,7 @@ bool skinSetActive(const char *id) {
                      id);
         return false;
     }
+    skinSourceUnlock();
     return true;
 }
 

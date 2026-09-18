@@ -522,13 +522,17 @@ static void wbnRenderSignInColumn(bool onSteam) {
         ImGui::SetKeyboardFocusHere();
         wbnFocusUser = false;
     }
-    ImGui::InputText("##wbnuser", wbnUsername, sizeof(wbnUsername));
+    /* Enter signs in from the username field too, not just from the password
+     * one below. Both are this form's text inputs and Sign In is its only
+     * action, so Enter means the same thing in either. */
+    bool enterPressed = ImGui::InputText("##wbnuser", wbnUsername, sizeof(wbnUsername),
+                                         ImGuiInputTextFlags_EnterReturnsTrue);
 
     ImGui::TextUnformatted(langGetText(STR_DLGWBN_PASSWORD));
     ImGui::SetNextItemWidth(-1);
-    bool enterPressed = ImGui::InputText("##wbnpass", wbnPassword, sizeof(wbnPassword),
-                                         ImGuiInputTextFlags_Password |
-                                         ImGuiInputTextFlags_EnterReturnsTrue);
+    enterPressed |= ImGui::InputText("##wbnpass", wbnPassword, sizeof(wbnPassword),
+                                     ImGuiInputTextFlags_Password |
+                                     ImGuiInputTextFlags_EnterReturnsTrue);
 
     ImGui::Spacing();
     bool doLogin = ImGui::Button(langGetText(STR_DLGWBN_SIGNIN_OK), ImVec2(-1, 0));

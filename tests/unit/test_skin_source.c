@@ -694,3 +694,136 @@ int run_skin_workshop_id_roundtrip(void) {
     remove(WORKSHOP_ZIP);
     return rc;
 }
+
+/* The [MapPalette] section. A skin may name any subset of the colours a
+ * zoomed-out map is drawn in; the ones it does not name have to come back
+ * SKIN_COLOUR_NONE so map_colours keeps its built-in for those. 0 is a real
+ * colour here (black road), so "absent" cannot be 0 the way a zeroed struct
+ * would give. */
+#define PALETTE_DIR "skin_map_palette_test_dir"
+
+int run_skin_map_palette(void) {
+    static const char ini[] =
+        "[Skin]\n"
+        "Name=Palette Skin\n"
+        "MaxPixelDensity=2\n"
+        "\n"
+        "[MapPalette]\n"
+        "Grass=#123456\n"          /* the documented spelling */
+        "Swamp=abcdef\n"           /* bare, and lower case */
+        "Road=0xFF0000\n"          /* 0x, and upper case */
+        "deepsea=#000000\n"        /* key case is not significant; 0 is a colour */
+        "MarkerGood=#00ff00\n"
+        "MarkerSelf=#010203\n"
+        "TeamGrey=#111111\n"          /* the first of the seventeen */
+        "teampurple=#222222\n"        /* the last, key case ignored */
+        "Rubble=#12345\n"          /* five digits: not a colour */
+        "Crater=#1234567\n"        /* seven: not a colour either */
+        "Forest=green\n"           /* not hex at all */
+        "Boat=\n"                   /* empty */
+        "\n"
+        "[SomethingElse]\n"
+        "Grass=#ffffff\n"          /* a section we do not know is skipped */
+        "Name=Wrong Name\n";
+    char path[512];
+    SkinSource *src;
+    SkinInfo info;
+    int rc = 0;
+
+    /* No source at all: every entry absent, so a palette read before any skin
+       is chosen leaves the built-ins alone rather than painting everything
+       black. */
+    skinSourceReadIni(NULL, &info);
+    UT_ASSERT_MSG(info.mapPalette.grass == SKIN_COLOUR_NONE &&
+                  info.mapPalette.road == SKIN_COLOUR_NONE &&
+                  info.mapPalette.markerGood == SKIN_COLOUR_NONE,
+                  "no source: grass %d, road %d, markerGood %d, want %d",
+                  info.mapPalette.grass, info.mapPalette.road,
+                  info.mapPalette.markerGood, SKIN_COLOUR_NONE);
+
+    if (!SDL_CreateDirectory(PALETTE_DIR)) {
+        UT_FAIL("SDL_CreateDirectory('%s') failed", PALETTE_DIR);
+    }
+    snprintf(path, sizeof(path), "%s/skin.ini", PALETTE_DIR);
+    if (!SDL_SaveFile(path, ini, sizeof(ini) - 1)) {
+        UT_FAIL("writing '%s' failed", path);
+    }
+
+    src = skinSourceOpen(PALETTE_DIR);
+    if (src == NULL) {
+        remove(path);
+        removeSkinDir(PALETTE_DIR);
+        UT_FAIL("skinSourceOpen('%s') failed", PALETTE_DIR);
+    }
+    skinSourceReadIni(src, &info);
+    skinSourceClose(src);
+    remove(path);
+    removeSkinDir(PALETTE_DIR);
+
+    /* [Skin] still parses with another section after it. */
+    UT_ASSERT_MSG(strcmp(info.name, "Palette Skin") == 0,
+                  "Name is '%s': the [Skin] section did not parse, or a later "
+                  "section was read as part of it", info.name);
+    UT_ASSERT_MSG(info.maxPixelDensity == 2,
+                  "MaxPixelDensity is %d, want 2", info.maxPixelDensity);
+
+    /* The three spellings of a colour. */
+    UT_ASSERT_MSG(info.mapPalette.grass == 0x123456,
+                  "Grass is %06x, want 123456", info.mapPalette.grass);
+    UT_ASSERT_MSG(info.mapPalette.swamp == 0xabcdef,
+                  "Swamp is %06x, want abcdef", info.mapPalette.swamp);
+    UT_ASSERT_MSG(info.mapPalette.road == 0xff0000,
+                  "Road is %06x, want ff0000", info.mapPalette.road);
+
+    /* Black is a colour, not an absence. */
+    UT_ASSERT_MSG(info.mapPalette.deepSea == 0,
+                  "DeepSea is %d, want 0 — black has to survive as a value",
+                  info.mapPalette.deepSea);
+
+    UT_ASSERT_MSG(info.mapPalette.markerGood == 0x00ff00,
+                  "MarkerGood is %06x, want 00ff00", info.mapPalette.markerGood);
+
+    /* Four ways to write something that is not a colour. Each leaves its own
+       entry absent and none of them disturbs the others. */
+    UT_ASSERT_MSG(info.mapPalette.rubble == SKIN_COLOUR_NONE,
+                  "Rubble is %d: five digits was taken as a colour",
+                  info.mapPalette.rubble);
+    UT_ASSERT_MSG(info.mapPalette.crater == SKIN_COLOUR_NONE,
+                  "Crater is %d: seven digits was taken as a colour",
+                  info.mapPalette.crater);
+    UT_ASSERT_MSG(info.mapPalette.forest == SKIN_COLOUR_NONE,
+                  "Forest is %d: 'green' was taken as a colour",
+                  info.mapPalette.forest);
+    UT_ASSERT_MSG(info.mapPalette.boat == SKIN_COLOUR_NONE,
+                  "Boat is %d: an empty value was taken as a colour",
+                  info.mapPalette.boat);
+
+    /* markerSelf and the seventeen assignable colours are settable, and an
+     * unnamed one of the seventeen is left alone rather than dragged along
+     * with its neighbours. */
+    UT_ASSERT_MSG(info.mapPalette.markerSelf == 0x010203,
+                  "MarkerSelf is %d, want 010203", info.mapPalette.markerSelf);
+    UT_ASSERT_MSG(info.mapPalette.team[0] == 0x111111,
+                  "TeamGrey is %d, want 111111", info.mapPalette.team[0]);
+    UT_ASSERT_MSG(info.mapPalette.team[SKIN_TEAM_COLOUR_COUNT - 1] == 0x222222,
+                  "teampurple is %d, want 222222",
+                  info.mapPalette.team[SKIN_TEAM_COLOUR_COUNT - 1]);
+    {
+        int i;
+        for (i = 1; i < SKIN_TEAM_COLOUR_COUNT - 1; i++) {
+            UT_ASSERT_MSG(info.mapPalette.team[i] == SKIN_COLOUR_NONE,
+                          "team[%d] is %d, but the ini named neither it nor "
+                          "anything next to it", i, info.mapPalette.team[i]);
+        }
+    }
+
+    /* Keys the ini never named. */
+    UT_ASSERT_MSG(info.mapPalette.building == SKIN_COLOUR_NONE &&
+                  info.mapPalette.halfBuilding == SKIN_COLOUR_NONE &&
+                  info.mapPalette.river == SKIN_COLOUR_NONE &&
+                  info.mapPalette.markerEvil == SKIN_COLOUR_NONE &&
+                  info.mapPalette.markerNeutral == SKIN_COLOUR_NONE,
+                  "an unnamed key came back set");
+
+    return rc;
+}

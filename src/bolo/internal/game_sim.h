@@ -96,9 +96,31 @@ typedef struct GameSimCallbacks {
      * unicast CTRL_SHELL_DEATH so the firing client can match fireTick to
      * its predicted shell, cull the ghost, and draw the impact at
      * (impactWX, impactWY). NULL on the client (not authoritative over
-     * shell death). outcome is a SHELL_OUTCOME_* (shells.h). */
-    void (*shellDeath)(void *ctx, uint32_t fireTick, BYTE owner,
-                       WORLD impactWX, WORLD impactWY, uint8_t outcome);
+     * shell death). outcome is a SHELL_OUTCOME_* (shells.h).
+     *
+     * TWO ticks, and they are not the same number. fireTick is the CLIENT's
+     * own input-tick counter, which only the client it came from can make
+     * sense of — it goes straight back out on the wire and nothing else.
+     * serverFireTick is the server's tick at the moment the shell was
+     * created (shells.h serverFireTick), and it is the only one any
+     * server-side rule may be measured on. */
+    void (*shellDeath)(void *ctx, uint32_t fireTick, uint32_t serverFireTick,
+                       BYTE owner, WORLD impactWX, WORLD impactWY,
+                       uint8_t outcome);
+    /* Server-only: a shell owned by `owner` LEFT THE GUN. NULL on the
+     * client. shellDeath above is the first the server would otherwise hear
+     * of a shell, and a full-range shell is 104 server ticks in the air
+     * (shells.c shellsAddItem), which is longer than the three-shot order
+     * detector's quiet second: a shell still flying was simply absent from
+     * the fire log. This says so at the moment the shell is created, inside
+     * the sim tick, so the log is complete without waiting for a landing.
+     *
+     * RETURNS the SERVER tick the fire was recorded on. shellsAddItem
+     * stamps it on the shell as serverFireTick so the death-time call can
+     * name the same tick, and so no server-side rule ever has to read a
+     * number a client chose. Pillbox shells fire with owner NEUTRAL and are
+     * dropped by the handler, which still answers with the tick. */
+    uint32_t (*shellFired)(void *ctx, BYTE owner);
     /* Server-only stats attribution; NULL on the client (call sites null-check).
      * recordDamage: `attacker` dealt `dealt` effective armour damage to a target
      * of `targetKind` identified by `targetIndex` (the tank slot, or pill/base
@@ -147,7 +169,14 @@ typedef struct GameSimCallbacks {
      * back from a death.
      * lgmLanded: `player`'s builder finished the flight back and is standing
      * at mapX/mapY — the square he actually reached, not the one he left.
-     * pillPlaced: `player`'s builder put a carried pill down as pill `index`.
+     * pillPlaced: a carried pillbox `index` reached the map at mapX/mapY,
+     * carried there by `player`, with `armour` on it. Every route raises it,
+     * not only a builder finishing the job: the tank sinking or being
+     * destroyed puts its cargo down, the builder dying puts the one in his
+     * hands down, and a player leaving does both. `armour` is what separates
+     * them — a built pillbox lands at the sim's cap, every other route lands
+     * it dead at 0 — so it is read, rather than the player, to tell whether a
+     * live gun just appeared.
      * pillKilled: pill `index` lost its last armour. attacker is the slot
      * credited, or NEUTRAL where the blow names nobody.
      * built: `player`'s builder finished a job. action is the builder's own
@@ -160,7 +189,7 @@ typedef struct GameSimCallbacks {
                         bool respawn);
     void (*lgmLanded)(void *ctx, BYTE player, BYTE mapX, BYTE mapY);
     void (*pillPlaced)(void *ctx, BYTE player, BYTE index, BYTE mapX,
-                       BYTE mapY);
+                       BYTE mapY, BYTE armour);
     void (*pillKilled)(void *ctx, BYTE index, BYTE attacker);
     void (*built)(void *ctx, BYTE player, BYTE action, BYTE mapX, BYTE mapY);
     void (*mineLaid)(void *ctx, BYTE player, BYTE mapX, BYTE mapY);
@@ -366,9 +395,9 @@ struct GameSim {
     /* The base game type a scenario declared, 0 for no scenario or none
        declared. game being gameScripted sends every site that picks
        behaviour from the game type here instead, through gameTypeResolve,
-       and 0 there reads as gameOpen. The server writes it from the lobby
-       template the host hands over; a client is handed no template and
-       writes it from the scenario tail of the lobby settings instead, so
+       and 0 there reads as gameStrictTournament. The server writes it from
+       the lobby template the host hands over; a client is handed no template
+       and writes it from the scenario tail of the lobby settings instead, so
        both resolve a scripted round the same way. */
     gameType    scenarioBaseGame;
     /* Tutorial respawn start index. While sim->isTutorial, startsGetStart

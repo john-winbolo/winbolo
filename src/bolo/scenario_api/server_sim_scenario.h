@@ -76,6 +76,31 @@ ScnOpResult serverSimCheckScenarioRules(const ServerSim *sim,
                                         char *why, size_t whyLen);
 
 /*********************************************************
+ *NAME:          serverSimScenarioFillWorldToRules
+ *PURPOSE:
+ *  Starts every pill and base at the caps the sim's table
+ *  holds, instead of at the numbers the map file holds.
+ *
+ *  A map states a number for each pill's armour and each
+ *  base's stocks and cannot state "full", so a scenario
+ *  that raises a cap gets a map still carrying its author's
+ *  numbers. This is what a scenario asking fill_to_caps is
+ *  answered with, and it is called once the scenario's own
+ *  rules are in the table: run before them it would fill to
+ *  the caps that are on their way out.
+ *
+ *  Raising only — anything at or above a cap is left alone,
+ *  and bringing what is above one down is the clamp every
+ *  rule change already runs. Idempotent. What moves is
+ *  recorded the way that clamp records it, so a replay
+ *  reads the world the round opened on.
+ *
+ *  A pill's firing rate is not touched: an attack interval
+ *  is a rate rather than a stock.
+ *********************************************************/
+void serverSimScenarioFillWorldToRules(ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimSetScenarioPolicy
  *PURPOSE:
  *  Registers the vtable the sim asks its scenario decisions
@@ -187,6 +212,55 @@ void serverSimSetScenarioMapScripted(ServerSim *sim,
                                      void *ctx);
 
 /*********************************************************
+ *NAME:          serverSimSetScenarioLister
+ *PURPOSE:
+ *  Registers the read of the server's scenarios directory:
+ *  what a client is told is on offer when it asks for the
+ *  list. The lister answers how many entries it wrote, or
+ *  -1 for a directory it could not read.
+ *
+ *  A callback rather than a call, for the reason the map
+ *  question above is one: reading a package and running a
+ *  script's top level are the scenario library's to do and
+ *  the sim is below it. src/server/ names nothing under
+ *  src/scenario/, and the link order is what says so — the
+ *  scenario library is listed ahead of the server group
+ *  because it calls into the group, so a call the other way
+ *  would not resolve.
+ *
+ *  NULL clears it, and with nothing registered the directory
+ *  reads empty — which is what a build with no scenario
+ *  library offers, exactly as every map reads unscripted
+ *  above.
+ *
+ *  Registered once, where the process decides whether it
+ *  runs scripts at all, not where a scenario attaches: the
+ *  list is what a server offers instead of the map's own
+ *  scenario, so a server with no scenario attached is
+ *  precisely the one that needs it answered.
+ *
+ *  dir is the directory to read, which the sim holds and
+ *  hands over per call (serverSimGetScenarioDir), so the
+ *  lister keeps no path of its own.
+ *********************************************************/
+void serverSimSetScenarioLister(ServerSim *sim,
+                                int (*list)(void *ctx, const char *dir,
+                                            ScnDirEntry *out, int max),
+                                void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimScenarioListDir
+ *PURPOSE:
+ *  The scenarios this server offers, read through whatever
+ *  was registered above and against the directory the sim
+ *  holds. Answers how many entries were written, and 0 for
+ *  a server with no lister, no directory, or nothing in it
+ *  — all three of which are the ordinary case rather than a
+ *  fault, so none of them is told apart here.
+ *********************************************************/
+int serverSimScenarioListDir(const ServerSim *sim, ScnDirEntry *out, int max);
+
+/*********************************************************
  *NAME:          serverSimSetScenarioLobbyTemplate
  *PURPOSE:
  *  Hands the sim the lobby a scenario asks for. The sim
@@ -238,6 +312,35 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
                                   const char *fileName,
                                   const char *description,
                                   bool extraTeams);
+
+/*********************************************************
+ *NAME:          serverSimSetScenarioRules
+ *PURPOSE:
+ *  Tells the sim which rules the attached scenario's own
+ *  manifest sets, and publishes the set, so the lobby can
+ *  say what a mod changes without opening the file. The
+ *  author's table, not the table the round is running on:
+ *  a rule a scenario changes mid-round moves the second
+ *  and leaves this alone.
+ *
+ *  Goes beside the identity, at the same two points: an
+ *  attach states its set and a detach states an empty one,
+ *  which is what tells a client the scenario has gone. A
+ *  map that never had a scenario reaches neither call, so
+ *  nothing is published there at all.
+ *
+ *  A row naming no rule is dropped, and rows past the
+ *  event's cap with it — a manifest names each rule at
+ *  most once, so a set inside the cap holds every rule
+ *  there is.
+ *
+ *ARGUMENTS:
+ *  sim   - The sim being told
+ *  rules - The rule/value pairs; NULL for none
+ *  count - How many of them; 0 empties the set
+ *********************************************************/
+void serverSimSetScenarioRules(ServerSim *sim, const ScnOpSetRule *rules,
+                               int count);
 
 /*********************************************************
  *NAME:          serverSimAddUnfieldedSeat

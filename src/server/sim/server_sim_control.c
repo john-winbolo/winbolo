@@ -31,6 +31,7 @@
 #include "server_sim_internal.h"
 #include "round_stats_derive.h"     /* roundStatsApplyRecord — serverSimAddEvent's per-round stats funnel */
 #include "lobby_bot_pools.h"        /* lobbyBotPoolsSerialize — the bot-pool catalog streamed during sync */
+#include "brain_list.h"            /* brainListLoadTextsForPath — the brains' lobby texts */
 #include "client_sim_control.h"     /* clientSimApplyControl — the in-process subscriber's deliver */
 #include "transport_control_codec.h"   /* the body encoders the ring keyframe's control snapshot writes */
 #include "log_internal.h"           /* serverSimSerializeControlSnapshot prototype */
@@ -445,6 +446,155 @@ void serverSimFillLobbyBrainListEvent(const ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbyBrainList.list = sim->brainList;
 }
 
+/* ── The brains' lobby texts ─────────────────────────────────────────
+ *
+ * Unlike about.txt these DO travel: the server chooses the brain, so a client
+ * that does not have it installed would otherwise have nothing to show.
+ * Only brains that actually ship a file are sent, so the usual cost is one
+ * brain's handful of fragments (19 at the very most), not sixteen brains'
+ * worth.
+ *
+ * READ ONCE, NOT PER SEND. They used to be read off disk inside
+ * serverSimEmitBrainDocs, at the moment they were sent, on the grounds that
+ * the send happens twice in a lobby's life. It does not: the send sits inside
+ * serverSimSyncSubscriber, and the delayed spectator ring rebuilds a whole
+ * control snapshot through that same function on every lobby keyframe — with
+ * WinBoloDS defaulting to 16 spectator slots and the log writer running in
+ * lobby state, that is up to two file opens per brain per keyframe on the
+ * tick thread, and the extra events pushed the snapshot past
+ * LOG_CONTROL_SNAPSHOT_MAX so the keyframe was silently dropped.
+ *
+ * So the texts are read where the brains are scanned and kept as the finished
+ * wire blob. serverSimRefreshBrainDocs re-reads a brain whose files have a
+ * newer mtime, which keeps the "operator edits a brain between rounds" case
+ * the old shape had. The cache is ~271 KB, so it is allocated on the first
+ * refresh rather than in every ServerSim. */
+struct ServerBrainDocsEntry {
+    bool     read;       /* this entry has been built at least once */
+    bool     have;       /* this brain ships at least one of the two files */
+    int64_t  mtime;      /* newest of the two when the blob was built; 0 = none */
+    uint16_t blobLen;
+    uint8_t  blob[LOBBY_BRAIN_DOCS_WIRE_MAX];
+};
+
+struct ServerBrainDocsCache {
+    struct ServerBrainDocsEntry entry[BRAIN_LIST_MAX];
+};
+
+/* Build brain `i`'s blob into `e` from disk. Leaves e->have false when the
+ * brain ships neither file. */
+static void serverSimBuildBrainDocsEntry(const ServerSim *sim, int i,
+                                         struct ServerBrainDocsEntry *e,
+                                         char *announce, char *docs) {
+    bool   truncated = false;
+    size_t aLen, dLen, blen;
+
+    e->read    = true;
+    e->have    = false;
+    e->blobLen = 0;
+    e->mtime   = brainListTextsMtimeForPath(sim->brainPaths[i]);
+
+    if (!brainListLoadTextsForPath(sim->brainPaths[i],
+                                   announce, (size_t)BRAIN_ANNOUNCE_MAX + 1,
+                                   docs, (size_t)BRAIN_DOCS_MAX + 1,
+                                   &truncated)) {
+        return;                            /* this brain ships neither file */
+    }
+    if (truncated) {
+        WB_LOG_WARN(WB_LOG_CAT_SERVER,
+                       "brain '%s': announce.txt/commands.txt is longer "
+                       "than the wire allows (%d / %d bytes) and was cut",
+                       sim->brainList.entries[i].name,
+                       BRAIN_ANNOUNCE_MAX, BRAIN_DOCS_MAX);
+    }
+    aLen = strlen(announce);
+    dLen = strlen(docs);
+    blen = 0;
+    e->blob[blen++] = (uint8_t)((aLen >> 8) & 0xFF);
+    e->blob[blen++] = (uint8_t)(aLen & 0xFF);
+    memcpy(e->blob + blen, announce, aLen); blen += aLen;
+    e->blob[blen++] = (uint8_t)((dLen >> 8) & 0xFF);
+    e->blob[blen++] = (uint8_t)(dLen & 0xFF);
+    memcpy(e->blob + blen, docs, dLen); blen += dLen;
+
+    e->blobLen = (uint16_t)blen;
+    e->have    = true;
+}
+
+void serverSimRefreshBrainDocs(ServerSim *sim) {
+    char *announce = NULL, *docs = NULL;
+    int   i;
+
+    if (sim == NULL || sim->brainList.count <= 0) return;
+    if (sim->brainDocs == NULL) {
+        sim->brainDocs = (struct ServerBrainDocsCache *)
+            calloc(1, sizeof(*sim->brainDocs));
+        if (sim->brainDocs == NULL) return;
+    }
+
+    announce = (char *)malloc(BRAIN_ANNOUNCE_MAX + 1);
+    docs     = (char *)malloc(BRAIN_DOCS_MAX + 1);
+    if (announce == NULL || docs == NULL) {
+        free(announce); free(docs);
+        return;
+    }
+
+    for (i = 0; i < sim->brainList.count && i < BRAIN_LIST_MAX; i++) {
+        struct ServerBrainDocsEntry *e = &sim->brainDocs->entry[i];
+        int64_t now = brainListTextsMtimeForPath(sim->brainPaths[i]);
+        /* A brain already read whose files have not moved is left alone. A
+         * mtime of 0 means "ships neither file", and asking for that costs
+         * two path probes rather than two whole file reads. */
+        if (e->read && e->mtime == now) continue;
+        serverSimBuildBrainDocsEntry(sim, i, e, announce, docs);
+    }
+
+    free(announce);
+    free(docs);
+}
+
+void serverSimFreeBrainDocs(ServerSim *sim) {
+    if (sim == NULL) return;
+    free(sim->brainDocs);
+    sim->brainDocs = NULL;
+}
+
+void serverSimEmitBrainDocs(const ServerSim *sim,
+                            void (*deliver)(void *, const struct ControlEvent *),
+                            void *ctx) {
+    int i;
+    if (sim == NULL || deliver == NULL) return;
+    if (sim->brainList.count <= 0 || sim->brainDocs == NULL) return;
+
+    for (i = 0; i < sim->brainList.count && i < BRAIN_LIST_MAX; i++) {
+        const struct ServerBrainDocsEntry *e = &sim->brainDocs->entry[i];
+        size_t blen = e->blobLen;
+        int    nChunks, ci;
+        size_t off;
+
+        if (!e->have || blen == 0) continue;
+
+        nChunks = (int)((blen + LOBBY_BRAIN_DOCS_FRAG_MAX - 1) /
+                        LOBBY_BRAIN_DOCS_FRAG_MAX);
+        if (nChunks <= 0 || nChunks > 255) continue;
+        off = 0;
+        for (ci = 0; ci < nChunks; ci++) {
+            ControlEvent evt;
+            size_t fl = blen - off;
+            if (fl > LOBBY_BRAIN_DOCS_FRAG_MAX) fl = LOBBY_BRAIN_DOCS_FRAG_MAX;
+            memset(&evt, 0, sizeof(evt));
+            evt.type = CTRL_LOBBY_BRAIN_DOCS_CHUNK;
+            evt.u.lobbyBrainDocsChunk.brainIdx = (uint8_t)i;
+            evt.u.lobbyBrainDocsChunk.seq      = (uint8_t)ci;
+            evt.u.lobbyBrainDocsChunk.count    = (uint8_t)nChunks;
+            evt.u.lobbyBrainDocsChunk.fragLen  = (uint16_t)fl;
+            memcpy(evt.u.lobbyBrainDocsChunk.frag, e->blob + off, fl);
+            deliver(ctx, &evt);
+            off += fl;
+        }
+    }
+}
+
 /* Fill a CTRL_GAME_VOTE_STATE event for the given vote kind. Returns false
  * if there's no snapshot (caller must not deliver). Mirrors the inline
  * publish at publishGameVoteState. */
@@ -547,6 +697,51 @@ void serverSimFillSimRulesEvent(const ServerSim *sim, ControlEvent *evt) {
 #undef SIM_RULES_FILL_FIELD
 }
 
+/* How many fragments the stored set needs. An empty set still needs one, so
+ * that a detach has a fragment to say it on. */
+uint8_t serverSimScenarioRulesFragCount(const ServerSim *sim) {
+    uint8_t rows;
+
+    if (sim == NULL) return 1;
+    rows = sim->scenarioRulesCount;
+    if (rows == 0) return 1;
+    return (uint8_t)((rows + SCN_RULES_FRAG_ROWS - 1) / SCN_RULES_FRAG_ROWS);
+}
+
+/* Fill fragment `seq` of a CTRL_SCENARIO_RULES from the set the attached
+ * scenario's manifest holds. The rows are copied as they were given: this
+ * event says what the author wrote, so a value the sim later refused or
+ * clamped is still the value the table asked for.
+ *
+ * A seq past the last fragment fills an empty one rather than reading off
+ * the end of the stored set; every caller walks the count above, so that is
+ * a guard and not a path. */
+void serverSimFillScenarioRulesEvent(const ServerSim *sim, uint8_t seq,
+                                     ControlEvent *evt) {
+    uint8_t fragCount;
+    uint8_t first;
+    uint8_t rows;
+    uint8_t i;
+
+    if (sim == NULL || evt == NULL) return;
+    fragCount = serverSimScenarioRulesFragCount(sim);
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_SCENARIO_RULES;
+    evt->u.scenarioRules.seq       = seq;
+    evt->u.scenarioRules.fragCount = fragCount;
+    if (seq >= fragCount) return;   /* names no fragment — carries no rows */
+
+    first = (uint8_t)(seq * SCN_RULES_FRAG_ROWS);
+    rows  = (uint8_t)(sim->scenarioRulesCount - first);
+    if (rows > SCN_RULES_FRAG_ROWS) rows = SCN_RULES_FRAG_ROWS;
+    evt->u.scenarioRules.count = rows;
+    for (i = 0; i < rows; i++) {
+        evt->u.scenarioRules.rule[i] =
+            (uint8_t)sim->scenarioRules[first + i].rule;
+        evt->u.scenarioRules.value[i] = sim->scenarioRules[first + i].value;
+    }
+}
+
 void serverSimPublishSimRules(ServerSim *sim) {
     ControlEvent evt;
     if (sim == NULL) return;
@@ -595,10 +790,31 @@ static void serverSimSyncOrderingDeliver(void *ctx,
     check->inner(check->innerCtx, evt);
 }
 
+/* `fullReplay` says who is being replayed to. TRUE for a real client's (or
+ * spectator's) join sync, which happens once and is addressed to one
+ * recipient the delivery path can filter for. FALSE for the delayed
+ * spectator ring's control snapshot, which is rebuilt on every keyframe into
+ * a buffer of LOG_CONTROL_SNAPSHOT_MAX bytes, and which is written once for
+ * every spectator rather than for one of them.
+ *
+ * Two things are left out of the snapshot, both for the same reason: they
+ * cost the keyframe bytes it cannot spare and reach nobody on that path.
+ *
+ * The brains' lobby texts. Reading them there put file opens on the tick
+ * thread, and the fragments themselves overran LOG_CONTROL_SNAPSHOT_MAX so
+ * the whole keyframe was dropped without a word.
+ *
+ * The panel lists held to one team or one player. A spectator belongs to no
+ * team and holds no slot, so serverSpectatorDeliverControl admits a panel
+ * only when it is addressed to everyone; a snapshot carrying the targeted
+ * ones would spend up to 127 further records on lists that reach nobody. The
+ * everyone-addressed lists still go, which is every list a spectator can
+ * see. */
 static void serverSimSyncSubscriber(
     ServerSim *sim,
     void (*deliver)(void *, const struct ControlEvent *),
-    void *ctx) {
+    void *ctx,
+    bool fullReplay) {
     ControlEvent evt;
     BYTE i;
     SyncOrderingCheck check;
@@ -653,6 +869,14 @@ static void serverSimSyncSubscriber(
         memset(&evt, 0, sizeof(evt));
         serverSimFillLobbyBrainListEvent(sim, &evt);
         deliver(ctx, &evt);
+
+        /* The brains' own lobby texts, straight after the list they index
+         * into: the lobby turns a bot's announce line into team chat and
+         * hangs its commands docs off it. Same lobby-only gate, and left out
+         * of the ring's snapshot for the reason above the function. */
+        if (fullReplay) {
+            serverSimEmitBrainDocs(sim, deliver, ctx);
+        }
 
         /* Bot-pool catalog: the server's themed naming pools (loaded from
          * -botnames / data/bot_names.json), zlib-compressed and streamed
@@ -768,6 +992,33 @@ static void serverSimSyncSubscriber(
         deliver(ctx, &evt);
     }
 
+    /* What each scenario panel is showing. Every update replaces the whole
+     * list, so the last one the sim stored is the whole of a panel's state
+     * and a joiner needs no history. Replayed as it was published, recipient
+     * pair and all: the delivery path filters a replayed event the way it
+     * filters a live one, so a list held to one team or one player reaches
+     * the joiner only if it is addressed to them. The ring's snapshot takes
+     * the everyone-addressed lists alone, for the reason above the function.
+     * Placed ahead of the player-join roster for the reason the entity sync
+     * is — the ordering check refuses a non-join event after the first
+     * join. */
+    serverSimScenarioReplayPanels(sim, deliver, ctx, fullReplay);
+
+    /* What the attached scenario's own manifest sets, so a client that joins
+     * after the attach reads the same table the lobby's popup draws from.
+     * Only while one is attached: an empty set says a scenario has just
+     * detached, and a map that never had one has nothing to say. Placed
+     * ahead of the player-join roster for the reason the two above are — the
+     * ordering check refuses a non-join event after the first join. */
+    if (sim->scenarioIdentity.source != lobbyScenarioNone) {
+        uint8_t frags = serverSimScenarioRulesFragCount(sim);
+        uint8_t seq;
+        for (seq = 0; seq < frags; seq++) {
+            serverSimFillScenarioRulesEvent(sim, seq, &evt);
+            deliver(ctx, &evt);
+        }
+    }
+
     for (i = 0; i < MAX_TANKS; i++) {
         if (playersIsInUse(&sim->sim.plyrs, i) == TRUE) {
             memset(&evt, 0, sizeof(evt));
@@ -870,7 +1121,7 @@ int serverSimSerializeControlSnapshot(ServerSim *sim, BYTE *out, int cap) {
     sink.cap      = cap;
     sink.len      = 0;
     sink.overflow = false;
-    serverSimSyncSubscriber(sim, serverSimControlSnapshotDeliver, &sink);
+    serverSimSyncSubscriber(sim, serverSimControlSnapshotDeliver, &sink, false);
     return sink.overflow ? -1 : sink.len;
 }
 
@@ -931,7 +1182,7 @@ SubscriberHandle serverSimRegisterSubscriber(
      * this point — for the wire transport that means
      * udpServer.clients[slot] is fully populated before the caller
      * invokes serverSimRegisterSubscriber. */
-    serverSimSyncSubscriber(sim, deliver, ctx);
+    serverSimSyncSubscriber(sim, deliver, ctx, true);
 
     sim->subscribers[slot].deliver      = deliver;
     /* Control events only until the caller asks for the second channel. */

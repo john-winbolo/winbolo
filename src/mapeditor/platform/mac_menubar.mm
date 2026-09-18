@@ -68,6 +68,7 @@ static NSMenuItem *s_me_winObjectsItem    = nil;
 static NSMenuItem *s_me_winOverviewItem   = nil;
 static NSMenuItem *s_me_winStatsItem      = nil;
 static NSMenuItem *s_me_winStampLibItem   = nil;
+static NSMenuItem *s_me_winScenarioItem   = nil;
 static NSMenu     *s_me_recentMenu        = nil;
 static NSMenuItem *s_me_recentRootItem    = nil;
 static NSMenu     *s_me_zoomMenu          = nil;
@@ -126,10 +127,17 @@ static int s_me_lastScopeIsSelection = -1; /* -1 forces first refresh */
 - (void)onToggleOverview:(id)sender;
 - (void)onToggleStats:(id)sender;
 - (void)onToggleStampLibrary:(id)sender;
+- (void)onToggleScenario:(id)sender;
 @end
 
 @implementation MEMenuBridge
-- (void)onQuit:(id)sender { (void)sender; s_me_pending.wantExit = true; }
+- (void)onQuit:(id)sender {
+    (void)sender;
+    /* Quit and Return to Menu both leave the editor; only this one goes on to
+     * end the application. */
+    s_me_pending.wantExit = true;
+    s_me_pending.wantQuitApp = true;
+}
 - (void)onNew:(id)sender { (void)sender; s_me_pending.wantNew = true; }
 - (void)onOpen:(id)sender { (void)sender; s_me_pending.wantOpen = true; }
 #ifdef MAPEDITOR_WBN_OPEN
@@ -175,6 +183,7 @@ static int s_me_lastScopeIsSelection = -1; /* -1 forces first refresh */
 - (void)onToggleOverview:(id)sender { (void)sender; s_me_pending.wantToggleOverview = true; }
 - (void)onToggleStats:(id)sender { (void)sender; s_me_pending.wantToggleStats = true; }
 - (void)onToggleStampLibrary:(id)sender { (void)sender; s_me_pending.wantToggleStampLibrary = true; }
+- (void)onToggleScenario:(id)sender { (void)sender; s_me_pending.wantToggleScenario = true; }
 @end
 
 /* ----------------------------------------------------------------------------
@@ -642,6 +651,14 @@ void me_mac_menubar_install(struct SDL_Window *win) {
     [windowMenu addItem:winStats];
     s_me_winStatsItem = winStats;
 
+    NSMenuItem *winScenario = [[NSMenuItem alloc]
+        initWithTitle:LANG_STR(STR_MAPEDIT_SCENARIO_TITLE)
+        action:@selector(onToggleScenario:)
+        keyEquivalent:@"8"];
+    [winScenario setTarget:s_me_bridge];
+    [windowMenu addItem:winScenario];
+    s_me_winScenarioItem = winScenario;
+
     /* Force first-refresh rebuilds for the dynamic submenus. */
     s_me_lastRecentCount      = -1;
     s_me_lastZoomCount        = -1;
@@ -695,6 +712,7 @@ void me_mac_menubar_uninstall(void) {
     s_me_winOverviewItem   = nil;
     s_me_winStatsItem      = nil;
     s_me_winStampLibItem   = nil;
+    s_me_winScenarioItem   = nil;
     s_me_recentMenu        = nil;
     s_me_recentRootItem    = nil;
     s_me_zoomMenu          = nil;
@@ -782,6 +800,8 @@ void me_mac_menubar_refresh(const struct MeMenuState *s) {
         [s_me_winStatsItem setState:(s->showStats ? NSControlStateValueOn : NSControlStateValueOff)];
     if (s_me_winStampLibItem)
         [s_me_winStampLibItem setState:(s->showStampLibrary ? NSControlStateValueOn : NSControlStateValueOff)];
+    if (s_me_winScenarioItem)
+        [s_me_winScenarioItem setState:(s->showScenario ? NSControlStateValueOn : NSControlStateValueOff)];
 
     /* Recent Files — rebuild whenever the count changes. The slot's
      * title shows just the basename; the full path goes into the
@@ -876,6 +896,7 @@ void me_mac_menubar_consume_actions(MapEditorMenuAction *action) {
 
     /* Boolean flags — straight copies (pending was reset to false). */
     action->wantExit            = s_me_pending.wantExit;
+    action->wantQuitApp         = s_me_pending.wantQuitApp;
     action->wantNew             = s_me_pending.wantNew;
     action->wantOpen            = s_me_pending.wantOpen;
     action->wantOpenWbn         = s_me_pending.wantOpenWbn;
@@ -910,6 +931,7 @@ void me_mac_menubar_consume_actions(MapEditorMenuAction *action) {
     action->wantToggleOverview  = s_me_pending.wantToggleOverview;
     action->wantToggleStats     = s_me_pending.wantToggleStats;
     action->wantToggleStampLibrary = s_me_pending.wantToggleStampLibrary;
+    action->wantToggleScenario  = s_me_pending.wantToggleScenario;
 
     if (s_me_pending.wantZoomSet) {
         action->zoomSetIndex = s_me_pending.zoomSetIndex;

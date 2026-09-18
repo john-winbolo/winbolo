@@ -44,6 +44,8 @@
 #include "view_policy.h"   /* ViewPolicy / ViewCategory — clientSimGetViewPolicy */
 #include "ping_display.h" /* PingBand — clientSimGetPlayerPingBand return */
 #include "server_voice_mode.h" /* ServerVoiceMode — clientSimGetServerVoiceMode return */
+#include "scenario_panel.h" /* ScnPanelList, SCN_PANEL_IDS, SCN_MARKERS_MAX —
+                             * the scenario presentation reads below */
 
 #ifndef GAMESIM_TYPEDEF
 #define GAMESIM_TYPEDEF
@@ -418,6 +420,22 @@ void clientSimSetTransportControlObserver(ClientSim *cs, ControlObserverCb cb, v
 BYTE clientSimGetPendingAllianceRequest(const ClientSim *cs);
 void clientSimClearPendingAllianceRequest(ClientSim *cs);
 
+/* A buffer this big holds any one lobby chat line: a player name, ": ", and
+ * a whole chat body. */
+#define LOBBY_CHAT_LINE_MAX 640
+
+/* Write "<name>: <message>" into `out`, which is how EVERY line in a lobby
+ * chat log reads. Returns the length, or -1 when it would not fit.
+ *
+ * Exported because two sides must agree on the spelling: the appends below
+ * write the lines, and the lobby's bot-announce poll builds the same string
+ * to search the history for it — that search is how it learns whether its
+ * append landed (a full buffer drops one silently) before it hangs the
+ * brain's docs off that line. Two hand-written copies of "%s: %s" would let
+ * a change to one of them turn the search into a permanent miss. */
+int clientSimFormatLobbyChatLine(char *out, size_t cap, const char *name,
+                                 const char *message);
+
 /* Lobby chat helper — appends "name: message\n" to lobbyChatHistory */
 void clientSimAppendLobbyChat(ClientSim *cs, const char *name, const char *message);
 /* Team lobby chat helper — appends "name: message\n" to lobbyTeamChatHistory */
@@ -429,8 +447,13 @@ void clientSimAppendLobbyTeamChat(ClientSim *cs, const char *name, const char *m
 void clientSimClearLobbyChatHistory(ClientSim *cs);
 
 /* Player-to-player chat delivery: routes to lobby chat or in-game inbox
-   depending on whether the client is still in the lobby. */
-void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, char *messageStr);
+   depending on whether the client is still in the lobby.
+   `destPlayer` is what the sender addressed the line to (CHAT_DEST_BROADCAST,
+   a slot, or CHAT_DEST_TEAM_BASE + team). The caller has already decided this
+   seat may SEE the line; the dest is here because a hosted BOT additionally
+   drops an enemy's broadcast, which is chatter and not an order. */
+void clientSimIncomingMessage(ClientSim *cs, BYTE playerNum, BYTE destPlayer,
+                              char *messageStr);
 
 /* Message functions (per-instance) */
 void clientSimMessageSendAllPlayers(ClientSim *cs, BYTE playerNum, char *message);
@@ -666,6 +689,56 @@ const ClientPlayerStats *clientSimGetPlayerStats(const ClientSim *cs,
 
 /* Spectator roster slot mirror; out-of-range idx returns NULL. */
 const ClientSpectatorSlot *clientSimGetSpectatorSlot(const ClientSim *cs, uint8_t idx);
+
+/* ── What a scenario is presenting ─────────────────────────────────
+ * The four CTRL_SCN_* events store here and the render pass reads.
+ * Everything below is dropped on the return to lobby. */
+
+/* One scenario score row: the number and the label the scenario gave
+ * it. valid separates a row nothing has sent from one sent a zero. */
+typedef struct {
+    bool    valid;
+    int32_t score;
+    char    label[16];
+} ClientScnScore;
+
+/* One scenario map marker. A marker SCN_MARKER_KIND_CLEAR removed, or
+ * one nothing has set, reads back with active false; kind is therefore
+ * only ever SQUARE or FOLLOW. */
+typedef struct {
+    bool    active;
+    uint8_t kind;      /* ScnMarkerKind */
+    uint8_t x, y;      /* SCN_MARKER_KIND_SQUARE */
+    uint8_t slot;      /* SCN_MARKER_KIND_FOLLOW */
+    uint8_t colour;
+} ClientScnMarker;
+
+/* The decoded display list panel `id` holds, or NULL for an out-of-range
+ * id or a panel nothing has sent a list to. A list that arrived empty
+ * reads back as a non-NULL list of count 0 — that is a panel cleared on
+ * purpose, not one that was never used. The pointer is into the
+ * ClientSim and stays good until the next control event is applied, so
+ * a caller draws from it rather than holding it across frames. */
+const ScnPanelList *clientSimGetScnPanel(const ClientSim *cs, uint8_t id);
+
+/* How many arriving panel lists scnPanelParse refused, and this client
+ * therefore dropped instead of drawing. */
+uint32_t clientSimGetScnPanelRejectCount(const ClientSim *cs);
+
+/* The announcement on screen, or NULL when there is none. outTicks gets
+ * how long it was asked to stay up and outArrivedTick the server tick
+ * it landed at — both on clientSimGetLastServerTick's clock, which is
+ * the clock the scenario counted in. Either out pointer may be NULL. */
+const char *clientSimGetScnAnnounce(const ClientSim *cs, uint16_t *outTicks,
+                                    uint32_t *outArrivedTick);
+
+/* Marker `id`; out-of-range id returns NULL. */
+const ClientScnMarker *clientSimGetScnMarker(const ClientSim *cs, uint8_t id);
+
+/* A scenario's score for one player slot, and for one team (teams run
+ * 1..MAX_TANKS-1). Out-of-range index returns NULL. */
+const ClientScnScore *clientSimGetScnPlayerScore(const ClientSim *cs, BYTE slot);
+const ClientScnScore *clientSimGetScnTeamScore(const ClientSim *cs, BYTE team);
 
 /* Count of currently-connected lobby slots (humans + bots).
  * Matches what the lobby UI's player table renders. */
@@ -964,6 +1037,19 @@ const char *clientSimGetLobbyScenarioFileName(const ClientSim *cs);
 const char *clientSimGetLobbyScenarioDescription(const ClientSim *cs);
 bool        clientSimGetLobbyScenarioExtraTeams(const ClientSim *cs);
 
+/* The rules that scenario's own manifest sets, mirrored via
+ * CTRL_SCENARIO_RULES: which rule, and what the author set it to. The rule
+ * is a SimRuleIndex (public/sim_rules_names.h), which is what names it and
+ * what simRulesClassicValue and simRulesDescribeChange take, so a caller
+ * draws a row without knowing anything about scenarios.
+ *
+ * 0 rows for a lobby with no scenario, and for one whose scenario changes no
+ * rule: a caller with nothing to list draws nothing either way. -1 / 0 for a
+ * NULL cs or an index out of range. */
+int         clientSimGetScenarioRulesCount(const ClientSim *cs);
+int         clientSimGetScenarioRuleIndex(const ClientSim *cs, int idx);
+double      clientSimGetScenarioRuleValue(const ClientSim *cs, int idx);
+
 /* Server map-upload policy as last broadcast in the lobby-settings event.
  * Defaults to UPLOAD_POLICY_ALLOW until the first event arrives. */
 UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs);
@@ -1032,6 +1118,17 @@ uint8_t     clientSimGetLobbyBotBrain(const ClientSim *cs, BYTE slot);
 
 const BrainList *clientSimGetLobbyBrainList(const ClientSim *cs);
 
+/* A brain's LOBBY TEXTS, indexed the same way as the brain list above.
+ *   announce — the brain's announce.txt: the message the lobby drops into
+ *              team chat when a bot running this brain joins your team.
+ *   docs     — the brain's commands.txt: the long text that message opens.
+ * Both come from the server (CTRL_LOBBY_BRAIN_DOCS_CHUNK) rather than off the
+ * local disk, because the server picks the brain and this machine need not
+ * have it. Both always return a NUL-terminated string, "" when there is
+ * nothing, so a caller tests the first byte rather than for NULL. */
+const char *clientSimGetLobbyBrainAnnounce(const ClientSim *cs, int brainIdx);
+const char *clientSimGetLobbyBrainDocs(const ClientSim *cs, int brainIdx);
+
 /* Last finished round's scoreboard + awards, or NULL if none has been
  * received since the last countdown (round-only scope). */
 const RoundStatsSummary *clientSimGetLastRoundStats(const ClientSim *cs);
@@ -1065,6 +1162,35 @@ bool        clientSimGetLobbyMapListInFlight(const ClientSim *cs);
  * bumping this). A caller holding its own last-seen value re-reads the
  * caches when the two differ; only movement matters. 0 for a NULL cs. */
 uint32_t    clientSimGetLobbyMapListSeq(const ClientSim *cs);
+
+/* The scenarios the server offers on their own, independently of any map —
+ * populated asynchronously by PACKET_LOBBY_SCENARIO_LIST_RSP after the client
+ * sends a SCENARIO_LIST_REQ (clientSimNetSendLobbyScenarioListRequest).
+ *
+ * No path triple, unlike the map list above: the directory is flat, so there
+ * is only "we asked, waiting" and "have a listing". File is the name in the
+ * server's directory, which is what identifies a scenario; Name and
+ * Description are what its manifest says. MaxPlayers is the human cap the
+ * scenario asks for, 0 leaving the server's own. Bots is the seats its lobby
+ * template asks for. Bound says it is tied to the map it was written against,
+ * so a chooser can say why one it can see is not one it may pick.
+ *
+ * Nothing selects a scenario yet; this is what is on offer. "" / 0 / false
+ * for a NULL cs or an index out of range. */
+int         clientSimGetLobbyScenarioListCount(const ClientSim *cs);
+const char *clientSimGetLobbyScenarioListFile(const ClientSim *cs, int idx);
+const char *clientSimGetLobbyScenarioListName(const ClientSim *cs, int idx);
+const char *clientSimGetLobbyScenarioListDescription(const ClientSim *cs,
+                                                     int idx);
+int         clientSimGetLobbyScenarioListMaxPlayers(const ClientSim *cs,
+                                                    int idx);
+int         clientSimGetLobbyScenarioListBots(const ClientSim *cs, int idx);
+bool        clientSimGetLobbyScenarioListBound(const ClientSim *cs, int idx);
+bool        clientSimGetLobbyScenarioListReady(const ClientSim *cs);
+bool        clientSimGetLobbyScenarioListInFlight(const ClientSim *cs);
+/* Ticked on each completed response, so a caller holding its own last-seen
+ * value re-reads the list when the two differ. 0 for a NULL cs. */
+uint32_t    clientSimGetLobbyScenarioListSeq(const ClientSim *cs);
 
 /* Monotonic counter, ticked on every PACKET_LOBBY_MAP_CHANGE the
  * client receives. UI code can cache the last-seen value to detect
@@ -1250,6 +1376,14 @@ bool         clientSimGetMyTankMapPos(ClientSim *cs, BYTE *mapX, BYTE *mapY);
  * BYTE version; the map overview's follow camera glides on this where the
  * whole-square read would step a square at a time. */
 bool         clientSimGetMyTankMapPosF(ClientSim *cs, float *mapX, float *mapY);
+
+/* Where inside its square the local tank is standing, in world units across
+ * the square - the fraction the F version returns, as the whole number it is
+ * really kept as. Same false cases as the other two, and it leaves *subX /
+ * *subY alone when it fails, so a caller keeps whatever it seeded them with.
+ * Line of sight wants this: which corner of a wall the player can see round
+ * turns on where in the square they are, not just on which square it is. */
+bool         clientSimGetMyTankSubPos(ClientSim *cs, BYTE *subX, BYTE *subY);
 bool         clientSimGetGunsightTile(ClientSim *cs, BYTE *mapX, BYTE *mapY);
 
 /* The gunsight's map square and the pixel offset inside it, for a caller that
@@ -1348,6 +1482,13 @@ const OverviewItemLabel *overviewSnapshotItemLabels(const OverviewSnapshot *s);
 const ClientPing *overviewSnapshotPings(const OverviewSnapshot *s);
 int               overviewSnapshotPingCount(const OverviewSnapshot *s);
 
+/* The scenario's map markers, by id, SCN_MARKERS_MAX of them. Never NULL for
+ * a snapshot that exists; a marker nothing has set, or one a scenario
+ * cleared, reads back with active false. Taken with the rest of the frame's
+ * reads, so the overview's render half never touches the live store the
+ * control events write. */
+const ClientScnMarker *overviewSnapshotScnMarkers(const OverviewSnapshot *s);
+
 void         clientSimShowMessages(ClientSim *cs, BYTE msgType, bool isShown);
 void         clientSimNetStatusMessage(ClientSim *cs, char *messageStr);
 
@@ -1363,6 +1504,13 @@ void         clientSimManMoveToMap(ClientSim *cs, BYTE mapX, BYTE mapY, buildSel
 /* Cycle the current build selection by `delta` (positive or negative)
  * through the standard order: Trees -> Road -> Building -> Pillbox -> Mine. */
 void         clientSimCycleBuildSelect(ClientSim *cs, int delta);
+
+/* True for a seat the roster holds with nobody on the field. Such a seat
+ * keeps its players-table identity, so the table still reads it as a live
+ * player; what it does not have is a tank. playerNum is 0-based here, as
+ * the players table and the lobby mirror both are. False when cs is NULL,
+ * when the slot is out of range, and for every seat that is on the field. */
+bool         clientSimSlotIsUnfielded(const ClientSim *cs, BYTE playerNum);
 
 /* Alliance accessors. playerNum is 1-based (legacy screen-facade
  * convention); the function converts to 0-based internally. */

@@ -592,7 +592,8 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
         }
 
         /* Check visibility: not hidden in trees (unless very close or just fired) */
-        if ((utilIsTankInTrees(mp, value, bs, tankX, tankY)) == TRUE && (diffX >= MIN_TREEHIDE_DIST || diffY >= MIN_TREEHIDE_DIST) && tankJustFired(&tanks[t]) == FALSE) {
+        if ((utilIsTankInTrees(mp, value, bs, tankX, tankY)) == TRUE && (diffX >= sim->rules.tree_hide_distance ||
+             diffY >= sim->rules.tree_hide_distance) && tankJustFired(&tanks[t]) == FALSE) {
           continue;
         }
 
@@ -613,7 +614,7 @@ void pillsUpdate(GameSim *sim, tank tanks[], bool *connected, BYTE numTanks) {
         /* Fire at closest enemy tank */
         if ((*value)->item[count].justSeen == TRUE) {
           dir = pillsTargetTank(sim, mp, value, bs, x, y, bestTankX, bestTankY, (TURNTYPE) bestTankDir, bestTankSpeed, (tankIsOnBoat(bestTank)), tankBoatExitSpeed(sim, *bestTank));
-          shellsAddItem(sim, shs, x, y, dir, (float) (PILLBOX_FIRE_DISTANCE), NEUTRAL, FALSE);
+          shellsAddItem(sim, shs, x, y, dir, sim->rules.pill_fire_length, NEUTRAL, FALSE);
           (*value)->item[count].reload = 0;
           sim->callbacks.soundDist(sim->callbacks.ctx, shootNear, (*value)->item[count].x, (*value)->item[count].y);
         } else {
@@ -690,7 +691,16 @@ bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, boo
       done = TRUE;
       BYTE before = (*value)->item[count].armour;  /* > 0 here */
       if (wantDamage == TRUE && (*value)->item[count].armour > 0) {
-        (*value)->item[count].armour--;
+        /* Ask whether the shell takes more than is left rather than
+           subtracting first and reading the wrap: what a shell takes off a
+           pill and what a pill may hold are two rules now, and a table may
+           put any pair of numbers here. */
+        if (sim->rules.pill_shell_damage > before) {
+          (*value)->item[count].armour = 0;
+        } else {
+          (*value)->item[count].armour =
+              (BYTE) (before - sim->rules.pill_shell_damage);
+        }
         /* The blow that would finish the pill is the host's to refuse, and a
            refusal holds it at one armour, where it goes on firing. Taken back
            before the damage is recorded, so the record says what the pill
@@ -723,7 +733,7 @@ bool pillsDamagePos(GameSim *sim, BYTE xValue, BYTE yValue, bool wantDamage, boo
       } else if (wantDamage == TRUE) {
         (*value)->item[count].coolDown = (BYTE) sim->rules.pill_cooldown_ticks;
         if ((*value)->item[count].speed > sim->rules.pill_attack_min_ticks) {
-          (*value)->item[count].speed /=2;
+          (*value)->item[count].speed /= (BYTE) sim->rules.pill_angry_divisor;
           if ((*value)->item[count].speed < sim->rules.pill_attack_min_ticks) {
             (*value)->item[count].speed = (BYTE) sim->rules.pill_attack_min_ticks;
           }
@@ -970,8 +980,9 @@ TURNTYPE pillsTargetTankMove(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WO
   shellX = (WORLD) (xValue + shellAddX);
   shellY = (WORLD) (yValue + shellAddY);
   
-  while (found == FALSE && count < MAX_AIM_ITERATE) {
-    if ((utilIsTankHit(tankX, tankY, angle, shellX, shellY, estimate)) == TRUE  ) {
+  while (found == FALSE && count < sim->rules.pill_aim_iterations) {
+    if ((utilIsTankHit(tankX, tankY, angle, shellX, shellY, estimate,
+                       (WORLD) sim->rules.tank_hit_radius)) == TRUE  ) {
       found = TRUE;
       returnValue = estimate;
     }
@@ -1729,11 +1740,16 @@ void pillsBaseHit(GameSim *sim, pillboxes *value, BYTE mx, BYTE my, BYTE baseOwn
   for (count=0;count<(*value)->numPills;count++) {
     xDist = ((*value)->item[count].x) - mx;
     yDist = ((*value)->item[count].y) - my;
-    if ((*value)->active[count] != FALSE && xDist >= PILL_BASE_HIT_LEFT && xDist <= PILL_BASE_HIT_RIGHT && yDist >= PILL_BASE_HIT_TOP && yDist <= PILL_BASE_HIT_BOTTOM && (*value)->item[count].owner != NEUTRAL && (playersIsAllie(&sim->plyrs, baseOwner, (*value)->item[count].owner) == TRUE) && (*value)->item[count].armour > 0) {
+    if ((*value)->active[count] != FALSE &&
+        xDist >= -sim->rules.pill_base_defend_range &&
+        xDist <= sim->rules.pill_base_defend_range &&
+        yDist >= -sim->rules.pill_base_defend_range &&
+        yDist <= sim->rules.pill_base_defend_range &&
+        (*value)->item[count].owner != NEUTRAL && (playersIsAllie(&sim->plyrs, baseOwner, (*value)->item[count].owner) == TRUE) && (*value)->item[count].armour > 0) {
       /* It is in range make it angry */
       (*value)->item[count].coolDown = (BYTE) sim->rules.pill_cooldown_ticks;
       if ((*value)->item[count].speed > sim->rules.pill_attack_min_ticks) {
-        (*value)->item[count].speed /=2;
+        (*value)->item[count].speed /= (BYTE) sim->rules.pill_angry_divisor;
         if ((*value)->item[count].speed < sim->rules.pill_attack_min_ticks) {
           (*value)->item[count].speed = (BYTE) sim->rules.pill_attack_min_ticks;
         }
@@ -1836,6 +1852,39 @@ void pillsClampToRules(GameSim *sim, pillboxes *value) {
        its countdown, so a map installed mid-game does not restart it. */
     if (item->speed != sim->rules.pill_attack_ticks && item->coolDown == 0) {
       item->coolDown = (BYTE) sim->rules.pill_cooldown_ticks;
+    }
+  }
+}
+
+/*********************************************************
+*NAME:          pillsFillToRules
+*PURPOSE:
+*  Brings every pillbox up to the armour cap this sim runs
+*  on. The other direction from pillsClampToRules above, for
+*  a scenario that raises the cap and asks for the map to
+*  start at it: a map file holds a number and has no way of
+*  saying "full", so without this a raised cap leaves every
+*  pillbox where the file put it.
+*
+*  Armour only. Speed is an attack interval rather than a
+*  stock, so filling it would leave every pillbox firing at
+*  the slowest rate the table allows. Idempotent, and a pill
+*  already at the cap is left alone.
+*
+*ARGUMENTS:
+*  sim   - Pointer to the game sim
+*  value - Pointer to the pillboxes structure
+*********************************************************/
+void pillsFillToRules(GameSim *sim, pillboxes *value) {
+  BYTE count;
+
+  if (sim == NULL || value == NULL || *value == NULL) {
+    return;
+  }
+  for (count = 0; count < (*value)->numPills; count++) {
+    pillbox *item = &((*value)->item[count]);
+    if (item->armour < sim->rules.pill_max_armour) {
+      item->armour = (BYTE) sim->rules.pill_max_armour;
     }
   }
 }

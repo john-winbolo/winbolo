@@ -17,9 +17,15 @@
  * Purpose:
  *   Holds the graphics settings the player picks - tile
  *   detail, animation smoothness, smooth shells, texture
- *   filtering and the fog of war look - for the code that
- *   draws with them.  Every value defaults to 0, which is
- *   what the game did before these settings existed.
+ *   filtering, the simplified view and the fog of war look -
+ *   for the code that draws with them.
+ *
+ *   The first four default to 0, which is what the game did
+ *   before these settings existed. The simplified view is
+ *   the exception: it defaults to on, because it arrived
+ *   already switched on and is what the zoomed-out map is
+ *   meant to look like. Its sub-option defaults to off,
+ *   which leaves it applying everywhere.
  *********************************************************/
 
 #ifndef GFX_SETTINGS_H
@@ -70,10 +76,26 @@ void              gfxSetSmoothShells(bool v);
 GfxTextureFilter  gfxGetTextureFilter(void);
 void              gfxSetTextureFilter(GfxTextureFilter v);
 
+/* The simplified view: at the zooms where a 16 px sprite is drawn smaller
+   than about 8 px, fill each square with its map colour and draw tanks,
+   pills and bases as marker shapes (map_colours.h) instead of sprites.
+
+   Two settings, because the two surfaces that can zoom out are wanted
+   separately. Off, every view keeps its sprites at every zoom. On, the
+   sub-option decides how far it reaches: cleared, both the Map Overview
+   window and the full screen map use it; set, only the Map Overview does,
+   and the full screen map keeps its sprites.
+
+   The map choosers ignore both and always draw a zoomed-out map in these
+   colours - a whole map in a thumbnail has no sprite to keep. */
+bool              gfxGetSimplifiedZoomOut(void);
+void              gfxSetSimplifiedZoomOut(bool v);
+bool              gfxGetSimplifiedOverviewOnly(void);
+void              gfxSetSimplifiedOverviewOnly(bool v);
+
 /* What both views wash ground the player cannot see into with.  Read by the
    classic view's tile pass and by the full screen map's fog pass; fog_look.h
-   says what each value looks like.  Grey is the default, which is what the
-   game drew before the setting existed. */
+   says what each value looks like. */
 FogStyle          gfxGetFogStyle(void);
 void              gfxSetFogStyle(FogStyle v);
 
