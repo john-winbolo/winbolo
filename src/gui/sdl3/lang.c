@@ -2046,7 +2046,7 @@ static const LangEntry langTable[] = {
     {2334, "Fog of war style"},
     {2335, "How ground you cannot see into is drawn. It changes the picture on your own screen only; the server sends the same map whichever you pick."},
     {2336, "Grey"},
-    {2337, "Ground you cannot see into is washed towards grey, so it comes out lighter than ground in plain sight. This is what the game drew before this setting existed."},
+    {2337, "Ground you cannot see into is washed towards grey, so it comes out lighter than ground in plain sight."},
     {2338, "Darker"},
     {2339, "Ground you cannot see into is taken towards black. Roads are already black, so a road under fog looks the same as a road in plain sight."},
     {2340, "Darker with fog edge"},
