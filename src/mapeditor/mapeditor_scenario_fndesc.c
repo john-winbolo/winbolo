@@ -64,6 +64,30 @@ const char *meScnFnDescription(size_t row) {
     return langGetText(meScnFnDescIds[row]);
 }
 
+/* ── The parameter types, held to the catalogue's ───────────────────── */
+
+/* One assert per member, pasted onto the same name at both ends, so a type
+ * renamed in the catalogue does not compile here and one renumbered or
+ * inserted does not pass. */
+#define ME_SCN_PARAM_ASSERT(id)                                              \
+    BOLO_STATIC_ASSERT((int)ME_SCN_PARAM_##id == (int)SCN_PARAM_##id,        \
+                       scenario_param_##id##_is_the_editors_own_value);
+
+ME_SCN_PARAM_LIST(ME_SCN_PARAM_ASSERT)
+
+#undef ME_SCN_PARAM_ASSERT
+
+MEScnParamType meScnParamType(int catalogueType) {
+    /* The values are equal member for member, so this is a rename and not a
+       mapping. What it is here for is the range: a type the catalogue has
+       grown since comes back as NONE, which no field of a real parameter
+       is. */
+    if (catalogueType < 0 || catalogueType >= (int)ME_SCN_PARAM_COUNT) {
+        return ME_SCN_PARAM_NONE;
+    }
+    return (MEScnParamType)catalogueType;
+}
+
 /* ── The text a list of functions is drawn from ─────────────────────── */
 
 /* The catalogue row at that index, or NULL for an index it does not hold.
@@ -192,4 +216,53 @@ size_t meScnFnStub(size_t row, char *out, size_t outLen) {
     meScnFnAdd(out, outLen, &want, "\nend");
     meScnFnEnd(out, outLen, want);
     return want;
+}
+
+/* ── The fields a trigger may test ──────────────────────────────────── */
+
+BOLO_STATIC_ASSERT(ME_SCN_FIELD_NAME_LEN == SCN_FN_FIELD_NAME_LEN,
+                   scenario_field_name_fits_the_editors_buffer);
+
+/* As many fields as one row reaches, with room over. Ten is the most any of
+ * them has, and scenario_validate.c holds its own copy against a bound of the
+ * same size for the same reason. */
+#define ME_SCN_FN_FIELDS_MAX 16
+
+/* The fields of one row into out, and how many of them there are — never more
+ * than out holds, so the count one accessor answers is the count the other
+ * indexes. */
+static size_t meScnFnFieldsOf(size_t row, ScnLuaFnField *out) {
+    const size_t max = (size_t)ME_SCN_FN_FIELDS_MAX;
+    const size_t n   = scenarioLuaFnFields(row, out, max);
+
+    return (n > max) ? max : n;
+}
+
+size_t meScnFnFieldCount(size_t row) {
+    ScnLuaFnField fields[ME_SCN_FN_FIELDS_MAX];
+
+    return meScnFnFieldsOf(row, fields);
+}
+
+bool meScnFnFieldAt(size_t row, size_t index, char *name, size_t nameLen,
+                    MEScnParamType *type, bool *derived) {
+    ScnLuaFnField fields[ME_SCN_FN_FIELDS_MAX];
+    const size_t  count = meScnFnFieldsOf(row, fields);
+    size_t        want  = 0;
+
+    if (index >= count) {
+        return false;
+    }
+    if (name != NULL && nameLen > 0) {
+        name[0] = '\0';
+        meScnFnAdd(name, nameLen, &want, fields[index].name);
+        meScnFnEnd(name, nameLen, want);
+    }
+    if (type != NULL) {
+        *type = meScnParamType((int)fields[index].type);
+    }
+    if (derived != NULL) {
+        *derived = fields[index].derived;
+    }
+    return true;
 }

@@ -48,15 +48,33 @@
  *                               form edited
  * run_editor_form_triggers_full — the list fills to its bound and refuses the
  *                               next trigger rather than overrunning
+ * run_editor_form_trigger_rows — the tests and actions inside a trigger: each
+ *                               fills to its own bound, a new one is made
+ *                               against the hook rather than blank, remove
+ *                               closes the list up, and every index off either
+ *                               end is refused
+ * run_editor_form_trigger_row_values — a whole test and a whole action written
+ *                               back unchanged, the argument bound, and the
+ *                               two names the form passes through for the
+ *                               validator to report
+ * run_editor_form_trigger_vocabulary — what the view draws a row from: the
+ *                               seven operators, a hook's fields and an op's
+ *                               arguments, each held against the catalogue the
+ *                               accessor read it out of
  */
 
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
 
+#include "mapeditor_scenario_check.h"
 #include "mapeditor_scenario_fndesc.h"
 #include "mapeditor_scenario_form.h"
 #include "scenario_host.h"
+/* The catalogue itself, so the accessors the editor reaches it through can be
+ * held against what they are reading. */
+#include "scenario_lua.h"
+#include "scenario_manifest_json.h"
 #include "sim_rules_names.h"
 #include "test_harness.h"
 
@@ -768,6 +786,469 @@ int run_editor_form_triggers_full(void) {
     UT_ASSERT(meScenarioFormTriggerCount(&f) == SCN_TRIGGERS_MAX - 1);
     UT_ASSERT(meScenarioFormAddTrigger(&f, hook));
     UT_ASSERT(meScenarioFormTriggerCount(&f) == SCN_TRIGGERS_MAX);
+
+    return 0;
+}
+
+/* The nth hook the catalogue carries that is handed something, counting from
+ * 0, and "" past the end. A test names a field of the hook's payload, so the
+ * rows below are written on a hook that has one. */
+static const char *efHookWithFields(int nth) {
+    const size_t count = meScnFnCount();
+    size_t       row;
+    int          seen = 0;
+
+    for (row = 0; row < count; row++) {
+        if (!meScnFnIsHook(row) || meScnFnFieldCount(row) == 0) {
+            continue;
+        }
+        if (seen == nth) {
+            return meScnFnName(row);
+        }
+        seen++;
+    }
+    return "";
+}
+
+/* A hook the host hands nothing at all, and "" if every one of them carries
+ * something. on_setup, on_start and on_end are called with no payload, so a
+ * trigger on one of them has nothing to test. */
+static const char *efHookWithoutFields(void) {
+    const size_t count = meScnFnCount();
+    size_t       row;
+
+    for (row = 0; row < count; row++) {
+        if (meScnFnIsHook(row) && meScnFnFieldCount(row) == 0) {
+            return meScnFnName(row);
+        }
+    }
+    return "";
+}
+
+/* The first field of a hook, as the catalogue spells it. */
+static void efFirstField(const char *hook, char *out, size_t outLen) {
+    const size_t count = meScnFnCount();
+    size_t       row;
+
+    out[0] = '\0';
+    for (row = 0; row < count; row++) {
+        if (strcmp(meScnFnName(row), hook) == 0) {
+            (void)meScnFnFieldAt(row, 0, out, outLen, NULL, NULL);
+            return;
+        }
+    }
+}
+
+int run_editor_form_trigger_rows(void) {
+    char           field[ME_SCN_FIELD_NAME_LEN];
+    MEScenarioForm f;
+    const char    *hook = efHookWithFields(0);
+    const char    *bare = efHookWithoutFields();
+    ScnTrigCond    cond;
+    ScnTrigAct     act;
+    int            i;
+
+    UT_ASSERT_MSG(hook[0] != '\0', "no hook the catalogue carries has a field");
+    efFirstField(hook, field, sizeof(field));
+    UT_ASSERT(field[0] != '\0');
+
+    meScenarioFormInit(&f);
+
+    /* Nothing answers for a trigger the table has not got, and nothing is
+     * written into one either. */
+    UT_ASSERT(meScenarioFormCondCount(&f, 0) == 0);
+    UT_ASSERT(meScenarioFormActionCount(&f, 0) == 0);
+    UT_ASSERT(!meScenarioFormAddCond(&f, 0));
+    UT_ASSERT(!meScenarioFormAddAction(&f, 0));
+    memset(&cond, 0, sizeof(cond));
+    memset(&act, 0, sizeof(act));
+    UT_ASSERT(!meScenarioFormSetCond(&f, 0, 0, &cond));
+    UT_ASSERT(!meScenarioFormSetAction(&f, 0, 0, &act));
+    meScenarioFormRemoveCond(&f, 0, 0);
+    meScenarioFormRemoveAction(&f, 0, 0);
+    UT_ASSERT(!meScenarioFormDirty(&f));
+
+    /* A form nobody passed answers the same way. */
+    UT_ASSERT(meScenarioFormCondCount(NULL, 0) == 0);
+    UT_ASSERT(meScenarioFormActionCount(NULL, 0) == 0);
+    UT_ASSERT(!meScenarioFormAddCond(NULL, 0));
+    UT_ASSERT(!meScenarioFormAddAction(NULL, 0));
+    UT_ASSERT(!meScenarioFormSetCond(NULL, 0, 0, &cond));
+    UT_ASSERT(!meScenarioFormSetAction(NULL, 0, 0, &act));
+    meScenarioFormRemoveCond(NULL, 0, 0);
+    meScenarioFormRemoveAction(NULL, 0, 0);
+
+    UT_ASSERT(meScenarioFormAddTrigger(&f, hook));
+
+    /* The tests, up to the bound. A new one is made against the trigger's own
+     * hook and is never blank. */
+    for (i = 0; i < SCN_TRIGGER_CONDS_MAX; i++) {
+        f.dirty = false;
+        UT_ASSERT_MSG(meScenarioFormAddCond(&f, 0),
+                      "test %d refused below the bound", i);
+        UT_ASSERT(meScenarioFormDirty(&f));
+        UT_ASSERT_MSG(strcmp(f.manifest.triggers[0].where[i].field, field) == 0,
+                      "test %d names '%s', not '%s'", i,
+                      f.manifest.triggers[0].where[i].field, field);
+        UT_ASSERT(f.manifest.triggers[0].where[i].op != SCN_TRIG_CMP_UNKNOWN);
+    }
+    UT_ASSERT(meScenarioFormCondCount(&f, 0) == SCN_TRIGGER_CONDS_MAX);
+
+    /* One more is refused and the full list is left as it was. */
+    UT_ASSERT(!meScenarioFormAddCond(&f, 0));
+    UT_ASSERT(meScenarioFormCondCount(&f, 0) == SCN_TRIGGER_CONDS_MAX);
+
+    /* Each one marked apart, so what a removal closes up over can be told
+     * from what it left. */
+    for (i = 0; i < SCN_TRIGGER_CONDS_MAX; i++) {
+        cond            = f.manifest.triggers[0].where[i];
+        cond.value.kind = SCN_TRIG_VAL_NUMBER;
+        cond.value.num  = (double)i;
+        f.dirty         = false;
+        UT_ASSERT(meScenarioFormSetCond(&f, 0, i, &cond));
+        UT_ASSERT(meScenarioFormDirty(&f));
+    }
+
+    /* A row the trigger has not got, at either end. */
+    UT_ASSERT(!meScenarioFormSetCond(&f, 0, -1, &cond));
+    UT_ASSERT(!meScenarioFormSetCond(&f, 0, SCN_TRIGGER_CONDS_MAX, &cond));
+    UT_ASSERT(!meScenarioFormSetCond(&f, 0, 0, NULL));
+
+    /* Removing the second closes the rest up over it, in order and whole. */
+    f.dirty = false;
+    meScenarioFormRemoveCond(&f, 0, 1);
+    UT_ASSERT(meScenarioFormDirty(&f));
+    UT_ASSERT_MSG(meScenarioFormCondCount(&f, 0) == SCN_TRIGGER_CONDS_MAX - 1,
+                  "%d tests left", meScenarioFormCondCount(&f, 0));
+    UT_ASSERT(f.manifest.triggers[0].where[0].value.num == 0.0);
+    UT_ASSERT_MSG(f.manifest.triggers[0].where[1].value.num == 2.0,
+                  "the survivor carries %f",
+                  f.manifest.triggers[0].where[1].value.num);
+    UT_ASSERT(f.manifest.triggers[0].where[2].value.num == 3.0);
+    UT_ASSERT(strcmp(f.manifest.triggers[0].where[1].field, field) == 0);
+
+    /* The slot past the end is cleared rather than left holding the last row
+     * twice. */
+    UT_ASSERT(f.manifest.triggers[0]
+                  .where[SCN_TRIGGER_CONDS_MAX - 1]
+                  .field[0] == '\0');
+
+    /* An index off either end changes nothing. */
+    meScenarioFormRemoveCond(&f, 0, -1);
+    meScenarioFormRemoveCond(&f, 0, SCN_TRIGGER_CONDS_MAX - 1);
+    UT_ASSERT(meScenarioFormCondCount(&f, 0) == SCN_TRIGGER_CONDS_MAX - 1);
+
+    /* And with one gone there is room for another. */
+    UT_ASSERT(meScenarioFormAddCond(&f, 0));
+    UT_ASSERT(meScenarioFormCondCount(&f, 0) == SCN_TRIGGER_CONDS_MAX);
+
+    /* The actions, the same way. A new one names an op rather than nothing. */
+    for (i = 0; i < SCN_TRIGGER_ACTIONS_MAX; i++) {
+        f.dirty = false;
+        UT_ASSERT_MSG(meScenarioFormAddAction(&f, 0),
+                      "action %d refused below the bound", i);
+        UT_ASSERT(meScenarioFormDirty(&f));
+        UT_ASSERT_MSG(f.manifest.triggers[0].actions[i].op[0] != '\0',
+                      "action %d names no op", i);
+        UT_ASSERT(f.manifest.triggers[0].actions[i].numArgs == 0);
+    }
+    UT_ASSERT(meScenarioFormActionCount(&f, 0) == SCN_TRIGGER_ACTIONS_MAX);
+    UT_ASSERT(!meScenarioFormAddAction(&f, 0));
+    UT_ASSERT(meScenarioFormActionCount(&f, 0) == SCN_TRIGGER_ACTIONS_MAX);
+
+    for (i = 0; i < SCN_TRIGGER_ACTIONS_MAX; i++) {
+        act = f.manifest.triggers[0].actions[i];
+        snprintf(act.text, sizeof(act.text), "action %d", i);
+        f.dirty = false;
+        UT_ASSERT(meScenarioFormSetAction(&f, 0, i, &act));
+        UT_ASSERT(meScenarioFormDirty(&f));
+    }
+
+    UT_ASSERT(!meScenarioFormSetAction(&f, 0, -1, &act));
+    UT_ASSERT(!meScenarioFormSetAction(&f, 0, SCN_TRIGGER_ACTIONS_MAX, &act));
+    UT_ASSERT(!meScenarioFormSetAction(&f, 0, 0, NULL));
+
+    f.dirty = false;
+    meScenarioFormRemoveAction(&f, 0, 1);
+    UT_ASSERT(meScenarioFormDirty(&f));
+    UT_ASSERT(meScenarioFormActionCount(&f, 0) == SCN_TRIGGER_ACTIONS_MAX - 1);
+    UT_ASSERT(strcmp(f.manifest.triggers[0].actions[0].text, "action 0") == 0);
+    UT_ASSERT_MSG(
+        strcmp(f.manifest.triggers[0].actions[1].text, "action 2") == 0,
+        "the survivor carries '%s'", f.manifest.triggers[0].actions[1].text);
+    UT_ASSERT(strcmp(f.manifest.triggers[0].actions[2].text, "action 3") == 0);
+    UT_ASSERT(
+        f.manifest.triggers[0].actions[SCN_TRIGGER_ACTIONS_MAX - 1].op[0] ==
+        '\0');
+
+    meScenarioFormRemoveAction(&f, 0, -1);
+    meScenarioFormRemoveAction(&f, 0, SCN_TRIGGER_ACTIONS_MAX - 1);
+    UT_ASSERT(meScenarioFormActionCount(&f, 0) == SCN_TRIGGER_ACTIONS_MAX - 1);
+
+    /* A trigger the table has not got, at either end, over all eight. */
+    UT_ASSERT(meScenarioFormCondCount(&f, 1) == 0);
+    UT_ASSERT(meScenarioFormActionCount(&f, -1) == 0);
+    UT_ASSERT(!meScenarioFormAddCond(&f, 1));
+    UT_ASSERT(!meScenarioFormAddAction(&f, 1));
+    UT_ASSERT(!meScenarioFormSetCond(&f, 1, 0, &cond));
+    UT_ASSERT(!meScenarioFormSetAction(&f, 1, 0, &act));
+    f.dirty = false;
+    meScenarioFormRemoveCond(&f, 1, 0);
+    meScenarioFormRemoveAction(&f, -1, 0);
+    UT_ASSERT(!meScenarioFormDirty(&f));
+
+    /* A trigger on a hook the host hands nothing has no test to write, and
+     * still has actions to take. */
+    if (bare[0] != '\0') {
+        UT_ASSERT(meScenarioFormAddTrigger(&f, bare));
+        UT_ASSERT_MSG(!meScenarioFormAddCond(&f, 1),
+                      "a test was written against '%s', which carries none",
+                      bare);
+        UT_ASSERT(meScenarioFormCondCount(&f, 1) == 0);
+        UT_ASSERT(meScenarioFormAddAction(&f, 1));
+        UT_ASSERT(meScenarioFormActionCount(&f, 1) == 1);
+    }
+
+    return 0;
+}
+
+int run_editor_form_trigger_row_values(void) {
+    char           field[ME_SCN_FIELD_NAME_LEN];
+    MEScenarioForm f;
+    const char    *hook = efHookWithFields(0);
+    ScnTrigCond    cond;
+    ScnTrigAct     act;
+    int            i;
+
+    UT_ASSERT(hook[0] != '\0');
+    efFirstField(hook, field, sizeof(field));
+
+    meScenarioFormInit(&f);
+    UT_ASSERT(meScenarioFormAddTrigger(&f, hook));
+    UT_ASSERT(meScenarioFormAddCond(&f, 0));
+    UT_ASSERT(meScenarioFormAddAction(&f, 0));
+
+    /* A whole test written over the made one, a reference on its right rather
+     * than a literal: the form takes the row it is handed and keeps it. */
+    memset(&cond, 0, sizeof(cond));
+    snprintf(cond.field, sizeof(cond.field), "%s", field);
+    cond.op         = SCN_TRIG_CMP_NE;
+    cond.value.kind = SCN_TRIG_VAL_FIELD;
+    snprintf(cond.value.text, sizeof(cond.value.text), "some_other_field");
+    UT_ASSERT(meScenarioFormSetCond(&f, 0, 0, &cond));
+    UT_ASSERT(strcmp(f.manifest.triggers[0].where[0].field, field) == 0);
+    UT_ASSERT(f.manifest.triggers[0].where[0].op == SCN_TRIG_CMP_NE);
+    UT_ASSERT(f.manifest.triggers[0].where[0].value.kind ==
+              SCN_TRIG_VAL_FIELD);
+    UT_ASSERT_MSG(strcmp(f.manifest.triggers[0].where[0].value.text,
+                         "some_other_field") == 0,
+                  "the value names '%s'",
+                  f.manifest.triggers[0].where[0].value.text);
+
+    /* An action whole, text and arguments and all, filled to the bound. */
+    memset(&act, 0, sizeof(act));
+    snprintf(act.op, sizeof(act.op), "%s", ME_SCENARIO_CALL_OP);
+    snprintf(act.text, sizeof(act.text), "a line the action carries");
+    act.numArgs = SCN_TRIGGER_ARGS_MAX;
+    for (i = 0; i < SCN_TRIGGER_ARGS_MAX; i++) {
+        act.args[i].kind = SCN_TRIG_VAL_NUMBER;
+        act.args[i].num  = (double)(i + 1);
+    }
+    act.args[0].kind = SCN_TRIG_VAL_STRING;
+    snprintf(act.args[0].text, sizeof(act.args[0].text), "a_function");
+    act.args[1].kind = SCN_TRIG_VAL_FIELD;
+    snprintf(act.args[1].text, sizeof(act.args[1].text), "%s", field);
+    UT_ASSERT(meScenarioFormSetAction(&f, 0, 0, &act));
+    UT_ASSERT(strcmp(f.manifest.triggers[0].actions[0].op,
+                     ME_SCENARIO_CALL_OP) == 0);
+    UT_ASSERT_MSG(strcmp(f.manifest.triggers[0].actions[0].text,
+                         "a line the action carries") == 0,
+                  "the action carries '%s'",
+                  f.manifest.triggers[0].actions[0].text);
+    UT_ASSERT(f.manifest.triggers[0].actions[0].numArgs ==
+              SCN_TRIGGER_ARGS_MAX);
+    UT_ASSERT(strcmp(f.manifest.triggers[0].actions[0].args[0].text,
+                     "a_function") == 0);
+    UT_ASSERT(f.manifest.triggers[0].actions[0].args[1].kind ==
+              SCN_TRIG_VAL_FIELD);
+    UT_ASSERT(strcmp(f.manifest.triggers[0].actions[0].args[1].text, field) ==
+              0);
+    for (i = 2; i < SCN_TRIGGER_ARGS_MAX; i++) {
+        UT_ASSERT_MSG(f.manifest.triggers[0].actions[0].args[i].num ==
+                          (double)(i + 1),
+                      "argument %d came back as %f", i,
+                      f.manifest.triggers[0].actions[0].args[i].num);
+    }
+
+    /* One argument more than there is room for is refused, and the action is
+     * left as it was. */
+    act.numArgs = SCN_TRIGGER_ARGS_MAX + 1;
+    UT_ASSERT(!meScenarioFormSetAction(&f, 0, 0, &act));
+    UT_ASSERT(f.manifest.triggers[0].actions[0].numArgs ==
+              SCN_TRIGGER_ARGS_MAX);
+
+    /* And what the form does not refuse: a field that is no field of the hook
+     * and an op the game table has not got. Both are scnCheckTriggers' to
+     * report, in a sentence the author reads in the issues list, so a change
+     * that moves either refusal here fails this. */
+    memset(&cond, 0, sizeof(cond));
+    snprintf(cond.field, sizeof(cond.field), "no_field_of_any_hook");
+    cond.op = SCN_TRIG_CMP_EQ;
+    UT_ASSERT_MSG(meScenarioFormSetCond(&f, 0, 0, &cond),
+                  "the form refused a field name the validator reports");
+    UT_ASSERT(strcmp(f.manifest.triggers[0].where[0].field,
+                     "no_field_of_any_hook") == 0);
+
+    memset(&act, 0, sizeof(act));
+    snprintf(act.op, sizeof(act.op), "no_op_the_table_carries");
+    UT_ASSERT_MSG(meScenarioFormSetAction(&f, 0, 0, &act),
+                  "the form refused an op name the validator reports");
+    UT_ASSERT(strcmp(f.manifest.triggers[0].actions[0].op,
+                     "no_op_the_table_carries") == 0);
+
+    return 0;
+}
+
+int run_editor_form_trigger_vocabulary(void) {
+    const ScnLuaRow *rows;
+    char             name[ME_SCN_FIELD_NAME_LEN];
+    size_t           opCount     = 0;
+    size_t           row;
+    int              i;
+    int              j;
+    int              scalars     = 0;
+    int              nonScalars  = 0;
+    int              derivedSeen = 0;
+    int              setValued   = 0;
+
+    /* The seven operators, and not the eighth: a row that named none is left
+     * as SCN_TRIG_CMP_UNKNOWN, which is no choice to offer. */
+    UT_ASSERT_MSG(meScenarioFormCompareCount() == 7, "%d operators",
+                  meScenarioFormCompareCount());
+    for (i = 0; i < meScenarioFormCompareCount(); i++) {
+        const ScnTrigCompare op   = meScenarioFormCompareAt(i);
+        const char          *word = scnManifestTrigOpName(op);
+
+        UT_ASSERT(op != SCN_TRIG_CMP_UNKNOWN);
+        /* The word is the readers' own, and it reads back as the operator it
+           was written for. */
+        UT_ASSERT_MSG(word != NULL && word[0] != '\0', "operator %d has no "
+                                                       "word", i);
+        UT_ASSERT_MSG(strcmp(meScenarioFormCompareName(op), word) == 0,
+                      "operator %d is '%s', not '%s'", i,
+                      meScenarioFormCompareName(op), word);
+        UT_ASSERT(scnManifestTrigOpFrom(word) == op);
+        for (j = 0; j < i; j++) {
+            UT_ASSERT(meScenarioFormCompareAt(j) != op);
+        }
+    }
+    UT_ASSERT(meScenarioFormCompareAt(-1) == SCN_TRIG_CMP_UNKNOWN);
+    UT_ASSERT(meScenarioFormCompareAt(meScenarioFormCompareCount()) ==
+              SCN_TRIG_CMP_UNKNOWN);
+    UT_ASSERT(meScenarioFormCompareName(SCN_TRIG_CMP_UNKNOWN)[0] == '\0');
+
+    /* The fields, held against the catalogue row by row: the editor's answer
+     * is the catalogue's answer, name for name and type for type. A type the
+     * catalogue has grown and this build has no name for lands as NONE, which
+     * no real field is, so this is where that drift is caught. */
+    for (row = 0; row < meScnFnCount(); row++) {
+        /* As many as any row reaches, with room over — the same bound the
+         * editor's own copy of a row's fields is held to. A row that outgrew
+         * it is the first assert below. */
+        ScnLuaFnField fields[16];
+        const size_t  count = scenarioLuaFnFields(row, fields,
+                                                  sizeof(fields) /
+                                                      sizeof(fields[0]));
+        size_t        at;
+
+        UT_ASSERT_MSG(count <= sizeof(fields) / sizeof(fields[0]),
+                      "row %d carries %d fields", (int)row, (int)count);
+        UT_ASSERT_MSG(meScnFnFieldCount(row) == count, "row %d: %d against %d",
+                      (int)row, (int)meScnFnFieldCount(row), (int)count);
+
+        for (at = 0; at < count; at++) {
+            MEScnParamType type    = ME_SCN_PARAM_COUNT;
+            bool           derived = false;
+
+            UT_ASSERT(meScnFnFieldAt(row, at, name, sizeof(name), &type,
+                                     &derived));
+            UT_ASSERT_MSG(strcmp(name, fields[at].name) == 0,
+                          "row %d field %d is '%s', not '%s'", (int)row,
+                          (int)at, name, fields[at].name);
+            UT_ASSERT_MSG((int)type == (int)fields[at].type,
+                          "row %d field %s holds %d, not %d", (int)row, name,
+                          (int)type, (int)fields[at].type);
+            UT_ASSERT_MSG(type != ME_SCN_PARAM_NONE,
+                          "row %d field %s holds a type this build has no "
+                          "name for", (int)row, name);
+            UT_ASSERT(derived == fields[at].derived);
+            if (derived) {
+                derivedSeen++;
+                if (type == ME_SCN_PARAM_TAG || type == ME_SCN_PARAM_REGION) {
+                    setValued++;
+                }
+            }
+        }
+        /* One past the end of the row answers nothing. */
+        UT_ASSERT(!meScnFnFieldAt(row, count, name, sizeof(name), NULL, NULL));
+    }
+    UT_ASSERT(!meScnFnFieldAt(meScnFnCount(), 0, name, sizeof(name), NULL,
+                              NULL));
+    UT_ASSERT(meScnFnFieldCount(meScnFnCount()) == 0);
+    UT_ASSERT_MSG(derivedSeen > 0 && setValued > 0,
+                  "%d derived fields, %d of them set-valued", derivedSeen,
+                  setValued);
+
+    /* The ops, the same way: the editor's answer is the registry's, and the
+     * scalar flag is scenarioLuaOpIsScalar's rather than a list of names. */
+    rows = scenarioLuaRows(&opCount);
+    UT_ASSERT(rows != NULL && opCount > 0);
+    UT_ASSERT(meScenarioCompletionCount() == opCount);
+    for (row = 0; row < opCount; row++) {
+        const bool scalar = scenarioLuaOpIsScalar(&rows[row]);
+        size_t     at;
+
+        UT_ASSERT_MSG(meScenarioOpIsScalar(row) == scalar, "op %s",
+                      rows[row].name);
+        if (scalar) {
+            scalars++;
+        } else {
+            nonScalars++;
+        }
+        UT_ASSERT_MSG(meScenarioOpParamCount(row) == rows[row].paramCount,
+                      "op %s takes %d, not %d", rows[row].name,
+                      (int)meScenarioOpParamCount(row),
+                      (int)rows[row].paramCount);
+        for (at = 0; at < rows[row].paramCount; at++) {
+            const char    *argName  = NULL;
+            MEScnParamType type     = ME_SCN_PARAM_COUNT;
+            bool           optional = true;
+
+            UT_ASSERT(meScenarioOpParamAt(row, at, &argName, &type,
+                                          &optional));
+            UT_ASSERT(strcmp(argName, rows[row].params[at].name) == 0);
+            UT_ASSERT_MSG((int)type == (int)rows[row].params[at].type,
+                          "op %s argument %s holds %d, not %d", rows[row].name,
+                          argName, (int)type,
+                          (int)rows[row].params[at].type);
+            UT_ASSERT(type != ME_SCN_PARAM_NONE);
+            UT_ASSERT(optional == rows[row].params[at].optional);
+        }
+        UT_ASSERT(!meScenarioOpParamAt(row, rows[row].paramCount, NULL, NULL,
+                                       NULL));
+        /* call is a trigger action and no row of the game table, so the two
+           lists differ by exactly that word. */
+        UT_ASSERT_MSG(strcmp(rows[row].name, ME_SCENARIO_CALL_OP) != 0,
+                      "the registry carries '%s'", ME_SCENARIO_CALL_OP);
+    }
+    /* Both halves of the flag are real: an op an action can state, and one
+       taking a table or a function that it cannot. */
+    UT_ASSERT_MSG(scalars > 0 && nonScalars > 0, "%d scalar, %d not", scalars,
+                  nonScalars);
+
+    UT_ASSERT(!meScenarioOpIsScalar(opCount));
+    UT_ASSERT(meScenarioOpParamCount(opCount) == 0);
+    UT_ASSERT(!meScenarioOpParamAt(opCount, 0, NULL, NULL, NULL));
 
     return 0;
 }

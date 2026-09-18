@@ -43,6 +43,45 @@
 extern "C" {
 #endif
 
+/* ── What a parameter, a field or an argument holds ──────────────────
+ *
+ * ScnLuaParamType under the editor's own names. The catalogue's enum is
+ * declared in scenario_lua.h, which names Lua types and carries no linkage
+ * guard, so no C++ translation unit can include it; the view still has to
+ * know whether a field takes a tag, a region, a team or a number, because
+ * that is what decides the widget it draws beside one.
+ *
+ * So the members are spelled again here, one for one and in the catalogue's
+ * order, and mapeditor_scenario_fndesc.c holds each of them against its twin
+ * with an assert of its own. A member renamed, renumbered or inserted fails
+ * the build rather than quietly turning one type into another.
+ *
+ * A member appended after the last is the one change those asserts cannot
+ * see. meScnParamType answers NONE for a value this list has not got, so the
+ * view gets a type it knows rather than a number it has to guess at, and
+ * editor_form_trigger_vocabulary walks every field and every argument the
+ * catalogue carries and refuses one that lands there — so the drift is a
+ * failing case as soon as a row uses the new type. */
+#define ME_SCN_PARAM_LIST(X)                                                 \
+    X(NONE) X(SLOT) X(OWNER) X(TEAM) X(PILL) X(BASE) X(ITEM)                 \
+    X(SQUARE_X) X(SQUARE_Y) X(WORD) X(NUMBER) X(STRING) X(BOOL)              \
+    X(TAG) X(REGION) X(TABLE) X(FUNCTION)
+
+typedef enum {
+#define ME_SCN_PARAM_ROW(id) ME_SCN_PARAM_##id,
+    ME_SCN_PARAM_LIST(ME_SCN_PARAM_ROW)
+#undef ME_SCN_PARAM_ROW
+    ME_SCN_PARAM_COUNT /* how many there are, and no parameter's type */
+} MEScnParamType;
+
+/* One catalogue type under the name above. The argument is the catalogue's
+ * own value as an int, because this header cannot name the enum it came out
+ * of; every accessor here and in mapeditor_scenario_check.h has already been
+ * through this, so the view has no reason to call it.
+ *
+ * ME_SCN_PARAM_NONE for a value the list above has not got. */
+MEScnParamType meScnParamType(int catalogueType);
+
 /* What the function does, one sentence. "" for a row that is not in the
  * catalogue. row indexes scenarioLuaFunctions, whose order this table
  * follows because both come from the same two lists. */
@@ -97,6 +136,34 @@ size_t meScnFnParamList(size_t row, char *out, size_t outLen);
  *
  * out may be NULL, which asks for the length alone. */
 size_t meScnFnStub(size_t row, char *out, size_t outLen);
+
+/* ── The fields a trigger on this function may test ──────────────────
+ *
+ * The function's own parameters, in order, and then the fields their types
+ * earn: a team for a seat or an owner, a tag for a pillbox or a base, a
+ * region for a square pair. What a where-row's field combo lists, and the
+ * type is what the value beside it is drawn as. */
+
+/* Room for a field's name and its terminator, which is the length the
+ * catalogue builds one in; mapeditor_scenario_fndesc.c holds the two
+ * equal. */
+#define ME_SCN_FIELD_NAME_LEN 32
+
+/* How many fields row carries. 0 for a row that is not in the catalogue and
+ * for a function handed nothing at all — on_setup, on_start and on_end are
+ * each called with no payload, and there is no test to write against one. */
+size_t meScnFnFieldCount(size_t row);
+
+/* One of those fields: its name into name, what it holds into type, and
+ * whether it is derived rather than a parameter of the author's own into
+ * derived. Any of the three may be NULL, and name is cut to fit nameLen
+ * rather than written past it.
+ *
+ * The name is copied rather than pointed at because a derived one is built
+ * from a parameter's and has nowhere of its own to live. False for a row or
+ * an index the catalogue has not got, which leaves all three alone. */
+bool meScnFnFieldAt(size_t row, size_t index, char *name, size_t nameLen,
+                    MEScnParamType *type, bool *derived);
 
 #ifdef __cplusplus
 }

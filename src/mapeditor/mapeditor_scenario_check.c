@@ -7,10 +7,11 @@
  * Name:          mapeditor_scenario_check.c
  * Purpose:
  *   Runs the scenario validator over the pane's text and
- *   reads the binding registry for the completion list.
+ *   reads the binding registry, for the completion list and
+ *   for the ops a trigger's actions are written against.
  *
- *   These two calls, scenarioValidateSource and
- *   scenarioLuaRows, are what the editor asks of
+ *   These calls — scenarioValidateSource, scenarioLuaRows
+ *   and scenarioLuaOpIsScalar — are what the editor asks of
  *   scenario_static, along with the script path
  *   mapeditor_scenario.c derives through scnScriptPath.
  *   Nothing here creates a ServerSim, attaches a host or
@@ -90,6 +91,51 @@ bool meScenarioCompletionAt(size_t index, const char **name,
     }
     if (doc != NULL) {
         *doc = rows[index].doc;
+    }
+    return true;
+}
+
+/* The registry row at that index, or NULL for one it does not hold. The three
+ * below go through here, so an index off the end is answered for in one
+ * place. */
+static const ScnLuaRow *meScenarioOpAt(size_t index) {
+    const ScnLuaRow *rows;
+    size_t           n = 0;
+
+    rows = scenarioLuaRows(&n);
+    return (rows == NULL || index >= n) ? NULL : &rows[index];
+}
+
+bool meScenarioOpIsScalar(size_t index) {
+    const ScnLuaRow *row = meScenarioOpAt(index);
+
+    /* The accessor rather than a list of names: an op that grows a table
+       argument drops out of what an action can state without anything here
+       being told about it. */
+    return row != NULL && scenarioLuaOpIsScalar(row);
+}
+
+size_t meScenarioOpParamCount(size_t index) {
+    const ScnLuaRow *row = meScenarioOpAt(index);
+
+    return (row != NULL) ? row->paramCount : 0;
+}
+
+bool meScenarioOpParamAt(size_t index, size_t param, const char **name,
+                         MEScnParamType *type, bool *optional) {
+    const ScnLuaRow *row = meScenarioOpAt(index);
+
+    if (row == NULL || param >= row->paramCount) {
+        return false;
+    }
+    if (name != NULL) {
+        *name = row->params[param].name;
+    }
+    if (type != NULL) {
+        *type = meScnParamType((int)row->params[param].type);
+    }
+    if (optional != NULL) {
+        *optional = row->params[param].optional;
     }
     return true;
 }

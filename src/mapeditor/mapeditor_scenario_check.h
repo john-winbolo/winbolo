@@ -8,7 +8,10 @@
  * Purpose:
  *   The editor's reach into the scenario runtime: the
  *   validator run over the text in the script pane, and the
- *   game.* rows the completion list is built from.
+ *   game.* rows the completion list is built from — which
+ *   are the same rows a trigger's actions are written
+ *   against, read there for their arguments as well as
+ *   their names.
  *
  *   Both calls live behind this header so the panel code
  *   names no scenario header. The check runs no sim
@@ -25,6 +28,9 @@
 #include <stddef.h>
 
 #include "scenario_issues.h" /* ScnValidateResult, ScnValidateIssue */
+#include "mapeditor_scenario_fndesc.h" /* MEScnParamType — what an argument
+                                        * holds, in the one spelling of it a
+                                        * C++ view can see */
 #include "../scenario_io/scenario_manifest.h" /* ScenarioManifest — the table
                                                * the check pushes for the
                                                * script to be read against */
@@ -88,6 +94,41 @@ void meScenarioCheckRun(MEScenarioCheck *c, const char *text, size_t len,
 size_t meScenarioCompletionCount(void);
 bool   meScenarioCompletionAt(size_t index, const char **name,
                               const char **doc);
+
+/* ── The same rows, as a trigger's action list sees them ─────────────
+ *
+ * A trigger action names an op and states its arguments, so the row it is
+ * drawn from has to answer two more things than a completion list needs:
+ * whether it can be stated as an action at all, and what it takes. Both are
+ * read off the registry beside the name and the doc above, and index is the
+ * same index those take, counted under meScenarioCompletionCount. */
+
+/* Whether every argument this op takes is a flat scalar, so an action can
+ * state a call to it. One taking a table or a function reaches an author
+ * through a scenario's own Lua instead, which is what the call action below
+ * is for. False for an index past the end. */
+bool meScenarioOpIsScalar(size_t index);
+
+/* How many arguments the op takes. 0 for an index past the end and for an op
+ * that takes none. */
+size_t meScenarioOpParamCount(size_t index);
+
+/* One of those arguments: the name the document writes it under, what may be
+ * put in it, and whether a call may leave it out. Any of the three out
+ * parameters may be NULL.
+ *
+ * The name is handed over rather than copied, unlike a field's: an op's
+ * argument names are the registry's own and outlive the call. False for an
+ * index or an argument the registry has not got. */
+bool meScenarioOpParamAt(size_t index, size_t param, const char **name,
+                         MEScnParamType *type, bool *optional);
+
+/* The one action a trigger may take that is no row of that registry. call
+ * runs a top-level function of the author's own script rather than a row of
+ * the game table, so the list an action's op combo offers is the rows above
+ * plus this word. Here rather than in the drawing, so the editor spells it
+ * once. */
+#define ME_SCENARIO_CALL_OP "call"
 
 #ifdef __cplusplus
 }

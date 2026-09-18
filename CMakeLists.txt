@@ -3717,10 +3717,18 @@ set(WINBOLO_UNITTESTS_SOURCES
     # and triggers forms: the rule list that never holds one rule twice, the
     # team numbers the template hands out, every bound, the tag accessors that
     # turn the editor's 0-based entity index into the manifest's 1-based entry,
-    # and the trigger rows that are only ever made naming a hook. Plain C that
-    # draws nothing, so it is compiled in here the same way.
+    # and the trigger rows that are only ever made naming a hook, down to the
+    # tests and actions inside one. Plain C that draws nothing, so it is
+    # compiled in here the same way.
     tests/unit/test_editor_scenario_form.c
     src/mapeditor/mapeditor_scenario_form.c
+    # Beside it: the editor's reach into the scenario runtime, which is where
+    # the ops a trigger's actions are written against are read. The form asks
+    # it for the op a new action names, and the vocabulary case holds its
+    # answers against the registry itself. It runs no sim and draws nothing,
+    # and the validator and the binding registry it calls are both already
+    # linked here.
+    src/mapeditor/mapeditor_scenario_check.c
     # The editor writing a scenario out: the chunk on to the map and the
     # standalone .scenario a mod is, both read back through the container
     # reader the server uses. Plain C over scenario_io, which this target
@@ -5914,6 +5922,9 @@ set(_unit_test_names
     editor_form_team_ids
     editor_form_triggers
     editor_form_triggers_full
+    editor_form_trigger_rows
+    editor_form_trigger_row_values
+    editor_form_trigger_vocabulary
     editor_pack_mod_round_trip
     editor_pack_map_round_trip
     editor_pack_twice_identical

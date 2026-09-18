@@ -30,9 +30,12 @@
  *   meScnTagsAt below.
  *
  *   The triggers are here as well, as whole rows: adding one,
- *   dropping one and setting which hook it runs on. A hook name
- *   is held against the function catalogue, which this module
- *   reaches through mapeditor_scenario_fndesc.h.
+ *   dropping one, setting which hook it runs on, and the same
+ *   three over the tests and actions inside it. A hook name is
+ *   held against the function catalogue and a new test and a
+ *   new action are made out of it, which this module reaches
+ *   through mapeditor_scenario_fndesc.h and
+ *   mapeditor_scenario_check.h.
  *********************************************************/
 
 #ifndef MAPEDITOR_SCENARIO_FORM_H
@@ -177,6 +180,82 @@ bool meScenarioFormSetTriggerWhen(MEScenarioForm *f, int index,
 
 /* How many triggers the manifest carries. */
 int meScenarioFormTriggerCount(const MEScenarioForm *f);
+
+/* The operators a test may ask with: how many there are, and the one at an
+ * index. The seven the surface has and never SCN_TRIG_CMP_UNKNOWN, which is
+ * what a row naming no operator is left as and is no choice to offer;
+ * SCN_TRIG_CMP_UNKNOWN is what an index off either end answers. */
+int            meScenarioFormCompareCount(void);
+ScnTrigCompare meScenarioFormCompareAt(int index);
+
+/* The word a file writes one as — "eq", "in" — out of the table both readers
+ * resolve a file's own word through, so the editor cannot come to offer a word
+ * they do not know. "" for SCN_TRIG_CMP_UNKNOWN and for a value outside the
+ * enum. */
+const char *meScenarioFormCompareName(ScnTrigCompare op);
+
+/* ── The tests and actions inside one trigger ────────────────────────
+ *
+ * Coarse on purpose: the view reads a row, edits a copy and writes the whole
+ * row back. A setter per part would be ten functions and three more places to
+ * spell a field name wrong.
+ *
+ * Every one of these refuses a trigger the table has not got, and the four
+ * that take a row index refuse one the trigger has not got.
+ *
+ * What Set does not do is check the vocabulary. A field that is no field of
+ * the hook, an op the game table has not got, an operator the field cannot
+ * answer — each of those is scnCheckTriggers' to report, in a sentence the
+ * author reads in the issues list, and refusing it here as well would be two
+ * answers to one question. The form holds the shape; the validator holds the
+ * meaning. */
+
+/* How many tests the trigger carries, and 0 for a trigger the table has not
+ * got. */
+int meScenarioFormCondCount(const MEScenarioForm *f, int trigger);
+
+/* Appends a test the hook can answer: the first field of the trigger's own
+ * hook, an operator that field takes, and an empty value of the kind the
+ * field holds for the author to fill in.
+ *
+ * Never blank, for the reason a trigger is never blank, read off what a blank
+ * one would cost: the validator says nothing about a test naming no field, so
+ * a blank one would be a fault nobody reports until the file is read back and
+ * the reader refuses the row.
+ *
+ * False at SCN_TRIGGER_CONDS_MAX, and false for a trigger on a hook that is
+ * handed nothing — there is no test to write against a payload with nothing
+ * in it. */
+bool meScenarioFormAddCond(MEScenarioForm *f, int trigger);
+
+/* Drops the test at index, keeping the rest of the trigger's tests packed. */
+void meScenarioFormRemoveCond(MEScenarioForm *f, int trigger, int index);
+
+/* Writes a whole test over the one at index. */
+bool meScenarioFormSetCond(MEScenarioForm *f, int trigger, int index,
+                           const ScnTrigCond *cond);
+
+/* How many actions the trigger carries, and 0 for a trigger the table has not
+ * got. */
+int meScenarioFormActionCount(const MEScenarioForm *f, int trigger);
+
+/* Appends an action naming the first op the vocabulary offers that insists on
+ * no arguments, so the row is one the validator passes as it stands and the
+ * author changes an op rather than filling a blank in. The op is read off the
+ * registry, so no name of one is written here.
+ *
+ * False at SCN_TRIGGER_ACTIONS_MAX. */
+bool meScenarioFormAddAction(MEScenarioForm *f, int trigger);
+
+/* Drops the action at index, keeping the rest of the trigger's actions
+ * packed. */
+void meScenarioFormRemoveAction(MEScenarioForm *f, int trigger, int index);
+
+/* Writes a whole action over the one at index. False for one naming more than
+ * SCN_TRIGGER_ARGS_MAX arguments, which is the one thing about an action that
+ * is its shape rather than its meaning. */
+bool meScenarioFormSetAction(MEScenarioForm *f, int trigger, int index,
+                             const ScnTrigAct *act);
 
 /* What the tags view needs to know about the open map: how many of each entity
  * it holds, where each one sits, and the rectangle the selection tool is
