@@ -1691,6 +1691,19 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
                 ImGui::EndCombo();
             }
             imguiHelpTooltip(langGetText(STR_DLGSKIN_FOGSTYLE_TIP));
+
+            /* None is the one entry a player could read as switching fog of
+               war off, so it says plainly that it has not.  Read back from
+               the store rather than from fsIdx above, which was taken before
+               the combo and is a frame behind a pick made in it.  Wrapped and
+               dimmed the way the other notes in this dialog are. */
+            if (gfxGetFogStyle() == FOG_STYLE_NONE) {
+                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() +
+                                       ImGui::GetFontSize() * 20.0f);
+                ImGui::TextDisabled(
+                    "%s", langGetText(STR_DLGSKIN_FOGSTYLE_NONE_NOTE));
+                ImGui::PopTextWrapPos();
+            }
         }
     }
 }

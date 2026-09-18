@@ -785,6 +785,7 @@ STR_DLGSKIN_FOGSTYLE_DARKROADS=Darker with fog edge
 STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP=Darker, with the fog line drawn faintly back in along it. The band sits on the fogged side of the line, on every terrain, so the line still shows over a road, which is black and which the darkening alone cannot mark. This is the standard look.
 STR_DLGSKIN_FOGSTYLE_NONE=None
 STR_DLGSKIN_FOGSTYLE_NONE_TIP=The map is not shaded at all, so remembered ground looks the same as ground in plain sight. It hides nothing the other styles show: which tanks and shots are drawn is the server's rule, not this setting's.
+STR_DLGSKIN_FOGSTYLE_NONE_NOTE=Note: This is only changing your local display, it is not turning off the fog of war setting in the game setup. Tanks will disappear where the fog of war would be shown.
 
 # Tracker Setup dialog
 STR_DLGTRACKER_WINTITLE=WinBolo - Tracker Config

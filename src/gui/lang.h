@@ -833,6 +833,10 @@
 #define STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP  2341
 #define STR_DLGSKIN_FOGSTYLE_NONE           2342
 #define STR_DLGSKIN_FOGSTYLE_NONE_TIP       2343
+/* Shown under the dropdown while None is picked, because None is the one
+ * choice a player could read as switching fog of war off. It does not: the
+ * server still decides what this client is sent and what it may draw. */
+#define STR_DLGSKIN_FOGSTYLE_NONE_NOTE      2344
 
 /* Tracker Setup dialog */
 #define STR_DLGTRACKER_WINTITLE             771
