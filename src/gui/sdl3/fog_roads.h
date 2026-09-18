@@ -104,8 +104,11 @@
  * unused, and the one after that is a base.
  *
  * A square that has never been seen is handed over as OVERVIEW_UNSEEN (255),
- * which is outside the run and therefore not road, so the caller needs no
- * special case for it. */
+ * which is outside the run and therefore not road. That is enough to keep a
+ * band off it only while FOG_EDGE_ALL_TERRAIN is 0, which is not how the game
+ * is built: with the switch at 1 this function is not consulted at all, so a
+ * caller that can produce an unseen square has to drop it itself. The full
+ * screen map does, beside the same test its terrain pass makes. */
 static inline int fogRoadIsRoadTile(unsigned char tile) {
     return tile >= (unsigned char)ROAD_HORZ && tile <= (unsigned char)ROAD_SIDE4;
 }
@@ -132,6 +135,30 @@ static inline int fogEdgeTileWantsBand(unsigned char tile) {
 #endif
 }
 
+/* Which sides of a square face out of the fog, given only its neighbours —
+ * the half of the rule that has nothing to do with what is on the square.
+ * Split out from fogEdges below so a caller walking a whole map can ask the
+ * cheap question first: the answer is 0 for a square well inside the fog,
+ * which is most of a map, and such a square needs no band whatever its
+ * terrain. That lets the walk drop it before reading the terrain at all.
+ *
+ * The four flags are true for a neighbour the fog covers. A caller with no
+ * neighbour to offer — the square is at the edge of the map, or of the grid it
+ * is walking — passes it as fogged, and no band is drawn along that side.
+ *
+ * This is the only place the side bits are worked out. fogEdges is this plus
+ * the two questions about the square itself, so a caller that uses this
+ * directly cannot drift from one that uses fogEdges. */
+static inline unsigned char fogEdgeSides(int leftFogged, int rightFogged,
+                                         int upFogged, int downFogged) {
+    unsigned char edges = 0;
+    if (!leftFogged)  edges |= FOG_ROAD_EDGE_LEFT;
+    if (!rightFogged) edges |= FOG_ROAD_EDGE_RIGHT;
+    if (!upFogged)    edges |= FOG_ROAD_EDGE_TOP;
+    if (!downFogged)  edges |= FOG_ROAD_EDGE_BOTTOM;
+    return edges;
+}
+
 /* The sides of one square that want a band. Three things have to hold: the
  * square is fogged, its terrain is one the band is wanted on, and the side
  * faces a square that is not fogged. So the band lands on the fogged side of
@@ -140,18 +167,19 @@ static inline int fogEdgeTileWantsBand(unsigned char tile) {
  * `fogged` and the four neighbour flags are true for a square the fog covers.
  * A caller with no neighbour to offer — the square is at the edge of the map,
  * or of the grid it is walking — passes it as fogged, and no band is drawn
- * along that side. */
+ * along that side.
+ *
+ * Nothing here rules out a square the player has never seen. The two views
+ * differ on whether they can hand one over: the classic view's buffer always
+ * carries a real tile, and the full screen map has OVERVIEW_UNSEEN for a
+ * square it has drawn nothing on, which it drops before it gets here. See the
+ * note on fogRoadIsRoadTile. */
 static inline unsigned char fogEdges(unsigned char tile, int fogged,
                                      int leftFogged, int rightFogged,
                                      int upFogged, int downFogged) {
-    unsigned char edges = 0;
     if (!fogged) return 0;
     if (!fogEdgeTileWantsBand(tile)) return 0;
-    if (!leftFogged)  edges |= FOG_ROAD_EDGE_LEFT;
-    if (!rightFogged) edges |= FOG_ROAD_EDGE_RIGHT;
-    if (!upFogged)    edges |= FOG_ROAD_EDGE_TOP;
-    if (!downFogged)  edges |= FOG_ROAD_EDGE_BOTTOM;
-    return edges;
+    return fogEdgeSides(leftFogged, rightFogged, upFogged, downFogged);
 }
 
 /* The same answer for every square of a w by h grid, laid out row by row —

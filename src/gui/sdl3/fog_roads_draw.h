@@ -88,6 +88,13 @@ static inline void fogRoadPainterBegin(FogRoadPainter *p, SDL_Renderer *r) {
  * named for. Never thinner than a pixel, or a zoomed-out map would ask for
  * rectangles too thin to land on anything.
  *
+ * A pixel is a floor and not a fit, so it is the caller's business not to ask
+ * for bands on a square too small to hold them: FOG_ROAD_BANDS pixels a side
+ * with something left in the middle wants three times that across. Both
+ * callers are above it. The classic view draws TILE_SIZE_X * an integer zoom,
+ * so sixteen pixels at the smallest, and the full screen map does not run this
+ * pass at all under FOG_ROAD_BANDS * 3.
+ *
  * The bands of two edges overlap at a corner, which leaves the corner a
  * little stronger than the sides. That is what a corner of a road looks
  * like, so it is left alone. */
@@ -100,16 +107,6 @@ static inline void fogRoadPainterSquare(FogRoadPainter *p, unsigned char edges,
 
     t = w / (float)FOG_ROAD_CLASSIC_TILE;
     if (t < 1.0f) t = 1.0f;
-    /* A square too small to hold the whole fade thins its bands rather than
-     * banding over its far side: the outline of a road has to leave road
-     * between its two sides or it is a block. A third of the square is kept
-     * whatever the zoom, which at the classic tile size and above costs
-     * nothing — three one-pixel bands out of sixteen are well inside it. */
-    {
-        float widest = w / (3.0f * (float)FOG_ROAD_BANDS);
-        if (t > widest) t = widest;
-    }
-    if (t <= 0.0f) return;
 
     for (band = 0; band < FOG_ROAD_BANDS; band++) {
         float off = t * (float)band;

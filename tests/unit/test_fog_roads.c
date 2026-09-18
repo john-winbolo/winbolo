@@ -179,9 +179,21 @@ int run_fog_road_edges(void) {
                       !fogRoadIsRoadTile((unsigned char)DEEP_SEA_SOLID),
                   "something that is not a road piece was read as road");
 
-    /* A square that is never seen comes over as 255, which must not band. */
+    /* A square that is never seen comes over as 255, which is not road. That
+     * alone keeps a band off it only in a roads only build; with
+     * FOG_EDGE_ALL_TERRAIN at 1 nothing here looks at the terrain, and it is
+     * the full screen map that drops an unseen square, beside the same test
+     * its terrain pass makes. */
     UT_ASSERT_MSG(!fogRoadIsRoadTile((unsigned char)255),
                   "an unseen square was read as road");
+    UT_ASSERT_MSG(fogEdges((unsigned char)255, FOGD, FOGD, SEEN, FOGD, FOGD) ==
+                      (FOG_EDGE_ALL_TERRAIN ? FOG_ROAD_EDGE_RIGHT : 0),
+                  "an unseen square at the fog line was banded %d, with "
+                  "FOG_EDGE_ALL_TERRAIN %d - if this is 0 in an all terrain "
+                  "build the view no longer needs its own unseen test",
+                  (int)fogEdges((unsigned char)255, FOGD, FOGD, SEEN, FOGD,
+                                FOGD),
+                  (int)FOG_EDGE_ALL_TERRAIN);
 
     /* The case the look is drawn for: a fogged road square with the square to
      * its east in plain sight is banded on its right hand side and nowhere
@@ -255,6 +267,43 @@ int run_fog_road_edges(void) {
     UT_ASSERT_MSG(fogEdges(R, SEEN, SEEN, SEEN, SEEN, SEEN) == 0 &&
                       fogEdges(G, SEEN, SEEN, SEEN, SEEN, SEEN) == 0,
                   "a square in plain sight was banded");
+
+    /* fogEdgeSides is the half of the rule the full screen map asks first, so
+     * that it can drop a square before reading its terrain. It has to give the
+     * same side bits fogEdges does for a fogged square whose terrain wants a
+     * band, or that walk and this one would disagree about where the fog line
+     * is. Every arrangement of the four neighbours is checked, which is only
+     * sixteen. */
+    {
+        int bits; /* Which of the four neighbours are fogged */
+        for (bits = 0; bits < 16; bits++) {
+            int lfg = (bits & 1) != 0, rfg = (bits & 2) != 0;
+            int ufg = (bits & 4) != 0, dfg = (bits & 8) != 0;
+            unsigned char sides = fogEdgeSides(lfg, rfg, ufg, dfg);
+            unsigned char want  = 0;
+            if (!lfg) want |= FOG_ROAD_EDGE_LEFT;
+            if (!rfg) want |= FOG_ROAD_EDGE_RIGHT;
+            if (!ufg) want |= FOG_ROAD_EDGE_TOP;
+            if (!dfg) want |= FOG_ROAD_EDGE_BOTTOM;
+            UT_ASSERT_MSG(sides == want,
+                          "fogEdgeSides(%d,%d,%d,%d) gave %d, expected %d",
+                          lfg, rfg, ufg, dfg, (int)sides, (int)want);
+            /* Road always wants a band, so for road the two agree outright. */
+            UT_ASSERT_MSG(fogEdges(R, FOGD, lfg, rfg, ufg, dfg) == sides,
+                          "fogEdges and fogEdgeSides disagree on road at "
+                          "neighbours %d,%d,%d,%d: %d vs %d",
+                          lfg, rfg, ufg, dfg,
+                          (int)fogEdges(R, FOGD, lfg, rfg, ufg, dfg),
+                          (int)sides);
+        }
+    }
+
+    /* Fog on all four sides is the case the walk leans on: no fog line here,
+     * so the answer is 0 and the caller can drop the square without ever
+     * reading what is on it. */
+    UT_ASSERT_MSG(fogEdgeSides(FOGD, FOGD, FOGD, FOGD) == 0,
+                  "fog on all four sides gave %d, expected none",
+                  (int)fogEdgeSides(FOGD, FOGD, FOGD, FOGD));
 
     return 0;
 }

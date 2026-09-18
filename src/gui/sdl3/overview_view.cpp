@@ -573,29 +573,54 @@ static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
      *
      * Dropped outright once a square is too small to hold the fade, which is
      * where the band would be a line over the whole square rather than an
-     * edge on it — and where there are the most squares to walk. */
+     * edge on it — and where there are the most squares to walk. Three bands
+     * of a pixel each with road left between them needs nine pixels a square;
+     * under that the pass does not run, which is what lets the painter keep
+     * its bands a whole pixel wide rather than thinning them to fit. */
     if (fogLookDrawsFogEdge(style) &&
-        tilePx >= (float)(FOG_ROAD_BANDS * 2)) {
+        tilePx >= (float)(FOG_ROAD_BANDS * 3)) {
         const BYTE *mask = v->fogMask;
         FogRoadPainter painter;
         fogRoadPainterBegin(&painter, r);
-        for (int mx = left; mx <= right; mx++) {
-            for (int my = top; my <= bottom; my++) {
-                size_t here = (size_t)my * OVERVIEW_FOG_MASK_SIDE + (size_t)mx;
-                if (mask[here] == 0) continue;
+        /* y outer, x inner — the other way round from the terrain pass above,
+         * and for the same reason it goes the way it does. The terrain reads
+         * om->tile, which is [x][y]; this reads the fog mask, which is a
+         * texture's worth of rows, so the walk that is contiguous for one is
+         * strided for the other. The mask is what every square is tested
+         * against, so the walk follows the mask and the three rows it needs
+         * are held as pointers rather than recomputed per square. */
+        for (int my = top; my <= bottom; my++) {
+            const BYTE *row  = mask + (size_t)my * OVERVIEW_FOG_MASK_SIDE;
+            const BYTE *rowU = (my > 0) ? row - OVERVIEW_FOG_MASK_SIDE : NULL;
+            const BYTE *rowD = (my < MAP_ARRAY_SIZE - 1)
+                                   ? row + OVERVIEW_FOG_MASK_SIDE : NULL;
+            for (int mx = left; mx <= right; mx++) {
+                if (row[mx] == 0) continue;   /* in plain sight */
+
                 /* Off the map counts as fogged, so no band is drawn along the
                  * map border. The border is deep sea in every map the game
                  * ships, so this is a guard rather than a case that comes
                  * up. */
-                int lf = (mx > 0) ? (mask[here - 1] != 0) : 1;
-                int rf = (mx < MAP_ARRAY_SIZE - 1) ? (mask[here + 1] != 0) : 1;
-                int uf = (my > 0)
-                             ? (mask[here - OVERVIEW_FOG_MASK_SIDE] != 0) : 1;
-                int df = (my < MAP_ARRAY_SIZE - 1)
-                             ? (mask[here + OVERVIEW_FOG_MASK_SIDE] != 0) : 1;
-                unsigned char edges =
-                    fogEdges(om->tile[mx][my], 1, lf, rf, uf, df);
+                int lf = (mx > 0) ? (row[mx - 1] != 0) : 1;
+                int rf = (mx < MAP_ARRAY_SIZE - 1) ? (row[mx + 1] != 0) : 1;
+                int uf = rowU ? (rowU[mx] != 0) : 1;
+                int df = rowD ? (rowD[mx] != 0) : 1;
+
+                /* The cheap half of the rule first. Fog with fog on all four
+                 * sides is not at the fog line and takes no band whatever is
+                 * on it, and that is most of a fogged map — so the square is
+                 * dropped here, before the strided read of om->tile that the
+                 * rest of the rule would need. */
+                unsigned char edges = fogEdgeSides(lf, rf, uf, df);
                 if (edges == 0) continue;
+
+                /* Ground the player has never seen. The terrain pass skips it
+                 * and leaves the black clear showing, so a band here would be
+                 * drawn on nothing. Tested the same way and for the same
+                 * reason it is tested there. */
+                BYTE tile = om->tile[mx][my];
+                if (tile == OVERVIEW_UNSEEN) continue;
+                if (!fogEdgeTileWantsBand(tile)) continue;
 
                 float ex = 0.0f, ey = 0.0f;
                 overviewCameraWorldToScreen(cam, viewW, viewH, (float)mx,
