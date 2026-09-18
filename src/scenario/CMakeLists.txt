@@ -19,6 +19,17 @@
 #                     the server group and a call the other way would not
 #                     resolve.
 #
+#                     A scenario's triggers are run by a router written in
+#                     Lua, scenario_triggers.lua, which loads as a second
+#                     chunk after the author's script and chains on to the
+#                     hooks the triggers name. It ships inside the binary:
+#                     tools/embed_lua.py turns it into scenario_triggers.inc,
+#                     which scenario_host.c includes. The generator is run by
+#                     hand and its output committed, the way the lang table's
+#                     is, so the build needs no Python; the unit case
+#                     scenario_hooks_router_matches_source is what holds the
+#                     two together.
+#
 #                     The files a scenario is made of — the WBSC container,
 #                     manifest.json, the chunk written on to a map — are
 #                     scenario_io_static's under src/scenario_io/, which this

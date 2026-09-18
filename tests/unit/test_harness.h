@@ -2916,6 +2916,15 @@ int run_scenario_hooks_spawn_drain_is_scripted(void);
 int run_scenario_hooks_team_changed_on_difference(void);
 int run_scenario_hooks_tick_and_end(void);
 int run_scenario_hooks_error_counts_and_disables(void);
+int run_scenario_hooks_trigger_runs_after_author(void);
+int run_scenario_hooks_trigger_stopped_by_false(void);
+int run_scenario_hooks_trigger_where_both_ways(void);
+int run_scenario_hooks_trigger_call_reaches_script(void);
+int run_scenario_hooks_router_matches_source(void);
+int run_scenario_hooks_trigger_team_from_owner(void);
+int run_scenario_hooks_trigger_tag_on_item(void);
+int run_scenario_hooks_trigger_tag_ne_and_eq(void);
+int run_scenario_hooks_trigger_region_holds_square(void);
 
 /* What the host derives rather than hears (test_scenario_derived.c): the
  * timers a script sets, the regions it names, and the enter and leave hooks

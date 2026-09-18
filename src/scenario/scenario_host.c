@@ -1620,6 +1620,321 @@ void scnPushManifestGlobal(lua_State *L, const ScenarioManifest *m) {
     lua_pop(L, 2);               /* the globals table, and the table itself */
 }
 
+/* ── The trigger router ───────────────────────────────────────────── */
+
+/* The router's own bytes: src/scenario/scenario_triggers.lua, run through
+ * tools/embed_lua.py and committed. Included here rather than at the head of
+ * the file because this is the one place they are read, which is where
+ * lang.c includes its generated table as well. */
+#include "scenario_triggers.inc"  /* kScnTriggersLua, SCN_TRIGGERS_LUA_LEN */
+
+/* Room for any one hook's fields. The widest row the catalogue holds is
+ * can_build's five parameters and the two their types earn, so this is well
+ * clear of what scenarioLuaFnFields can answer. */
+#define SCN_TRIG_FIELD_MAX 32
+
+/* Which hook a trigger names, as an index into kScnHookNames, or
+ * SCN_HOOK_COUNT for a name that is no hook of this build's.
+ *
+ * The rows scenarioLuaFunctions answers are these same hooks in this same
+ * order and then the policies, so a hook's index here is its row there and
+ * this lookup cannot reach a policy at all. A trigger naming one therefore
+ * goes over with no fields; which names a when may hold is checked before a
+ * round starts, not here. */
+static int scnHookIndexOf(const char *name) {
+    int i;
+
+    for (i = 0; i < (int)SCN_HOOK_COUNT; i++) {
+        if (strcmp(kScnHookNames[i], name) == 0) {
+            return i;
+        }
+    }
+    return (int)SCN_HOOK_COUNT;
+}
+
+/* The triggers as the router reads them. The same data scnPushTriggers puts
+ * in the scenario global, in the shape that is convenient to act on rather
+ * than the shape a file writes: a where-row keyed by what its three parts
+ * are, an action's arguments in a list of their own.
+ *
+ * The values go through scnPushTrigValue, which is what the scenario global
+ * uses, so a long string held on the action's own text arrives as the
+ * argument it belongs to here as well.
+ *
+ * An action's text goes over beside its arguments. Nothing reads it — the
+ * arguments already carry their own strings — but it is the line the struct
+ * holds, and an action carrying one with no argument marked for it is a
+ * shape the JSON emitter and the Lua writer both drop. */
+static void scnPushRouterTriggers(lua_State *L, const ScenarioManifest *m) {
+    int t;
+    int i;
+
+    lua_newtable(L);
+    t = lua_gettop(L);
+    for (i = 0; i < (int)m->numTriggers; i++) {
+        const ScnTrigger *trig = &m->triggers[i];
+        int               e;
+        int               list;
+        int               row;
+        int               args;
+        int               j;
+        int               k;
+
+        lua_newtable(L);
+        e = lua_gettop(L);
+        lua_pushstring(L, trig->when);
+        lua_setfield(L, e, "when");
+
+        lua_newtable(L);
+        list = lua_gettop(L);
+        for (j = 0; j < (int)trig->numWhere; j++) {
+            const ScnTrigCond *c    = &trig->where[j];
+            const char        *name = scnManifestTrigOpName(c->op);
+
+            lua_newtable(L);
+            row = lua_gettop(L);
+            lua_pushstring(L, c->field);
+            lua_setfield(L, row, "field");
+            /* The operator by name, through the table both readers resolve
+               a file's spelling with. A second copy of the seven strings
+               here is how the two would come to disagree. */
+            lua_pushstring(L, name != NULL ? name : "");
+            lua_setfield(L, row, "op");
+            scnPushTrigValue(L, &c->value, NULL);
+            lua_setfield(L, row, "value");
+            lua_rawseti(L, list, j + 1);
+        }
+        lua_setfield(L, e, "where");
+
+        lua_newtable(L);
+        list = lua_gettop(L);
+        for (j = 0; j < (int)trig->numActions; j++) {
+            const ScnTrigAct *a = &trig->actions[j];
+
+            lua_newtable(L);
+            row = lua_gettop(L);
+            lua_pushstring(L, a->op);
+            lua_setfield(L, row, "op");
+
+            lua_newtable(L);
+            args = lua_gettop(L);
+            for (k = 0; k < (int)a->numArgs; k++) {
+                scnPushTrigValue(L, &a->args[k], a);
+                lua_rawseti(L, args, k + 1);
+            }
+            lua_setfield(L, row, "args");
+
+            lua_pushstring(L, a->text);
+            lua_setfield(L, row, "text");
+
+            lua_rawseti(L, list, j + 1);
+        }
+        lua_setfield(L, e, "actions");
+
+        lua_rawseti(L, t, i + 1);
+    }
+}
+
+/* One field's entry, as the router reads it. Every field is a table, the
+ * function's own parameters included, so the router's lookup has one shape
+ * to read rather than a number for some names and a table for others:
+ *
+ *   arg     the 1-based position of the argument the field reads
+ *   derive  absent for a parameter itself; otherwise "team", "tag" or
+ *           "region", which is how the router works the value out
+ *   kind    "pill" or "base", on a tag: the word game.tags is asked with
+ *   arg2    on a region: the position of the y beside the x at arg
+ *
+ * The kind and the second position come from the parameter types behind the
+ * field rather than from the hook's name, so a hook whose parameters move
+ * moves these with them.
+ *
+ * A derived field this build cannot work out is left out altogether, and a
+ * row naming it does not hold — the router's own rule for a field it cannot
+ * read. Nothing here says a field suits the operator beside it; that is
+ * checked before a round starts. */
+static void scnPushRouterField(lua_State *L, int tbl,
+                               const ScnLuaFnRow *row,
+                               const ScnLuaFnField *field) {
+    const char *derive = NULL;
+    const char *kind   = NULL;
+    size_t      second = 0;
+    int         entry;
+
+    if (field->derived) {
+        switch (field->type) {
+        case SCN_PARAM_TEAM:
+            derive = "team";
+            break;
+
+        case SCN_PARAM_TAG:
+            /* Which list game.tags is asked for is the parameter's own
+               type. A pillbox and a base number the same way and the word
+               is the only thing that tells them apart. */
+            if (field->from >= row->paramCount) {
+                return;
+            }
+            if (row->params[field->from].type == SCN_PARAM_PILL) {
+                kind = "pill";
+            } else if (row->params[field->from].type == SCN_PARAM_BASE) {
+                kind = "base";
+            } else {
+                return;
+            }
+            derive = "tag";
+            break;
+
+        case SCN_PARAM_REGION:
+            /* A square is a pair, and the y is the parameter after the x.
+               Held against the row rather than assumed, because a field
+               with no y behind it names no square. */
+            second = field->from + 1;
+            if (second >= row->paramCount ||
+                row->params[second].type != SCN_PARAM_SQUARE_Y) {
+                return;
+            }
+            derive = "region";
+            break;
+
+        default:
+            /* A derivation this build has no rule for. */
+            return;
+        }
+    }
+
+    lua_newtable(L);
+    entry = lua_gettop(L);
+    lua_pushinteger(L, (lua_Integer)(field->from + 1));
+    lua_setfield(L, entry, "arg");
+    if (derive != NULL) {
+        lua_pushstring(L, derive);
+        lua_setfield(L, entry, "derive");
+    }
+    if (kind != NULL) {
+        lua_pushstring(L, kind);
+        lua_setfield(L, entry, "kind");
+    }
+    if (second != 0) {
+        lua_pushinteger(L, (lua_Integer)(second + 1));
+        lua_setfield(L, entry, "arg2");
+    }
+    lua_setfield(L, tbl, field->name);
+}
+
+/* Every field the triggers can read, by the hook that carries it: the names
+ * an author writes in a where-row or a { field = ... } value, each against
+ * what the router needs to work its value out.
+ *
+ * One entry per hook named rather than one per trigger, since several
+ * triggers on a hook all read the same payload. */
+static void scnPushRouterFields(lua_State *L, const ScenarioManifest *m) {
+    const ScnLuaFnRow *catalogue;
+    size_t             catalogueCount = 0;
+    int                t;
+    int                i;
+
+    /* The hooks are the head of this list, in the order kScnHookNames holds
+       them, so a hook's index there is its row here. */
+    catalogue = scenarioLuaFunctions(&catalogueCount);
+
+    lua_newtable(L);
+    t = lua_gettop(L);
+
+    for (i = 0; i < (int)m->numTriggers; i++) {
+        ScnLuaFnField rows[SCN_TRIG_FIELD_MAX];
+        const char   *when = m->triggers[i].when;
+        size_t        count;
+        size_t        j;
+        int           hook;
+        int           e;
+
+        hook = scnHookIndexOf(when);
+        if (hook == (int)SCN_HOOK_COUNT ||
+            (size_t)hook >= catalogueCount) {
+            continue;
+        }
+
+        lua_pushstring(L, when);
+        lua_rawget(L, t);
+        if (!lua_isnil(L, -1)) {
+            lua_pop(L, 1);       /* this hook's fields are already over */
+            continue;
+        }
+        lua_pop(L, 1);
+
+        /* The accessor answers how many the row has and writes at most what
+           it was given room for, so a row with more fields than this holds
+           is clamped rather than read past the end. Five parameters is the
+           widest the catalogue has and each earns at most one field, so ten
+           is the most any row can reach. */
+        count = scenarioLuaFnFields((size_t)hook, rows,
+                                    (size_t)SCN_TRIG_FIELD_MAX);
+        if (count > (size_t)SCN_TRIG_FIELD_MAX) {
+            count = (size_t)SCN_TRIG_FIELD_MAX;
+        }
+
+        lua_newtable(L);
+        e = lua_gettop(L);
+        for (j = 0; j < count; j++) {
+            scnPushRouterField(L, e, &catalogue[hook], &rows[j]);
+        }
+        lua_pushstring(L, when);
+        lua_pushvalue(L, e);
+        lua_rawset(L, t);
+        lua_pop(L, 1);           /* the hook's own table */
+    }
+}
+
+/* The router into the state the author's chunk has just run in.
+ *
+ * A scenario with no triggers loads none of it: there is nothing to chain on
+ * to, and the state is left exactly as the script left it.
+ *
+ * Loaded and called the way scnRunChunk loads and calls the author's bytes,
+ * with the sandbox call guard armed across the load as well as the call. The
+ * router's top level is script code like any other and the one place a loop
+ * in it would show is an attach that never returns.
+ *
+ * It takes its data as two chunk arguments where scnRunChunk's chunk takes
+ * none, which is the whole of the difference between them. Widening
+ * scnRunChunk would reach the validator's call as well, and the validator
+ * checks a script rather than starting a round, so it loads no router.
+ *
+ * The chunk name is the file the bytes came from, so a line in an error
+ * names a line of src/scenario/scenario_triggers.lua. That is what the two
+ * chunks buy: the author's file and this one each keep their own numbering.
+ *
+ * Text only, for the reason scnRunChunk is: these bytes are the build's own,
+ * but the loader that reads them is the one a map file's script reaches. */
+static bool scnInstallTriggers(lua_State *L, const ScenarioManifest *m,
+                               char *err, size_t errLen) {
+    ScnSandboxCall saved;
+    bool           ok = false;
+
+    if (m->numTriggers == 0) {
+        return true;
+    }
+
+    scnSandboxArmCall(L, &saved);
+    if (luaL_loadbufferx(L, (const char *)kScnTriggersLua,
+                         (size_t)SCN_TRIGGERS_LUA_LEN,
+                         "@scenario_triggers.lua", "t") != 0) {
+        scnFmt(err, errLen, "scenario: %s", scnLuaError(L));
+        lua_pop(L, 1);
+    } else {
+        scnPushRouterTriggers(L, m);
+        scnPushRouterFields(L, m);
+        if (lua_pcall(L, 2, 0, 0) != 0) {
+            scnFmt(err, errLen, "scenario: %s", scnLuaError(L));
+            lua_pop(L, 1);
+        } else {
+            ok = true;
+        }
+    }
+    scnSandboxDisarmCall(L, &saved);
+    return ok;
+}
+
 /* What a package whose script restates the table and disagrees with it reads
  * like. scnManifestAgrees writes the sentence saying what differs and the key
  * separately; the key is the line of the table to go and look at, which the
@@ -3182,8 +3497,14 @@ static void scnRoundBootLocked(ScenarioHost *h) {
     if (h->fromPackage) {
         scnPushManifestGlobal(L, &h->pkgManifest);
     }
+    /* The router goes on after the table is read, because the table is what
+       holds the triggers, and before scnHooksResolve below, because that
+       takes a reference to whatever each hook name holds and a router
+       installed after it would be referred to by nobody. Its failure is the
+       scenario's, and reads like a chunk that would not load. */
     if (!scnRunChunk(L, h->src, h->srcLen, h->chunkName, err, sizeof(err)) ||
-        !scnReadManifest(L, &fresh, h->script, err, sizeof(err), &rep)) {
+        !scnReadManifest(L, &fresh, h->script, err, sizeof(err), &rep) ||
+        !scnInstallTriggers(L, &fresh, err, sizeof(err))) {
         scnSay(h->lastError, sizeof(h->lastError), "%s", err);
         scnCloseVm(L);
         scnRoundWithoutScenario(h);
@@ -4259,8 +4580,15 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
     if (from->fromPackage) {
         scnPushManifestGlobal(L, &from->manifest);
     }
+    /* And the router, on the state the attach reads the table in. No hook is
+       dispatched off this one — the hooks belong to a round's VM and the
+       first round start resolves them — so what this settles is that the
+       router loads at all, said here rather than at the first round start.
+       A scenario whose triggers cannot be installed is refused the way one
+       whose chunk will not load is. */
     if (!scnRunChunk(L, from->src, from->srcLen, chunkName, err, errLen) ||
-        !scnReadManifest(L, &m, from->script, err, errLen, &rep)) {
+        !scnReadManifest(L, &m, from->script, err, errLen, &rep) ||
+        !scnInstallTriggers(L, &m, err, errLen)) {
         scnCloseVm(L);
         scnLockDestroy(&h->lock);
         free(h);
@@ -4563,8 +4891,13 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     if (from.fromPackage) {
         scnPushManifestGlobal(L, &from.manifest);
     }
+    /* The router as well, so a reload answers for the whole of what a round
+       start would do with the file rather than for the script alone. This
+       state is closed a few lines down and dispatches nothing, so what the
+       call settles here is that the install goes through. */
     if (!scnRunChunk(L, from.src, from.srcLen, chunkName, err, errLen) ||
-        !scnReadManifest(L, &m, name, err, errLen, &rep)) {
+        !scnReadManifest(L, &m, name, err, errLen, &rep) ||
+        !scnInstallTriggers(L, &m, err, errLen)) {
         scnCloseVm(L);
         scnSourceDrop(&from);
         return false;

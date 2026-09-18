@@ -4392,6 +4392,11 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # The maps the baseline runs play, and the scenario scripts that sit
     # beside them: the validator case reads one from here.
     WB_BASELINE_MAPS_DIR="${CMAKE_SOURCE_DIR}/tests/baseline/maps"
+    # The scenario runtime's own sources. The trigger router is a .lua file
+    # embedded in the binary by tools/embed_lua.py, which is run by hand, so
+    # scenario_hooks_router_matches_source reads the .lua from here and holds
+    # the embedded copy against it.
+    WB_SCENARIO_SRC_DIR="${CMAKE_SOURCE_DIR}/src/scenario"
     # The repository root. unit_test_names_match_cmake reads THIS file and
     # tests/unit/test_main.c out of it and compares the two test rosters, so a
     # case added to one and not the other cannot go unnoticed.
@@ -5784,6 +5789,15 @@ set(_unit_test_names
     scenario_hooks_team_changed_on_difference
     scenario_hooks_tick_and_end
     scenario_hooks_error_counts_and_disables
+    scenario_hooks_trigger_runs_after_author
+    scenario_hooks_trigger_stopped_by_false
+    scenario_hooks_trigger_where_both_ways
+    scenario_hooks_trigger_call_reaches_script
+    scenario_hooks_router_matches_source
+    scenario_hooks_trigger_team_from_owner
+    scenario_hooks_trigger_tag_on_item
+    scenario_hooks_trigger_tag_ne_and_eq
+    scenario_hooks_trigger_region_holds_square
     scenario_derived_timer_fires_on_its_tick
     scenario_derived_timer_cancelled_and_stale
     scenario_derived_timer_limit_boundary

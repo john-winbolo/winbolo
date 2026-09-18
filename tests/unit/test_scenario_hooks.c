@@ -39,6 +39,31 @@
  * run_scenario_hooks_error_counts_and_disables
  *      — a hook that raises counts one toward the limit, and a scenario
  *        switched off runs no more of them
+ * run_scenario_hooks_trigger_runs_after_author
+ *      — the author's own function first, then the hook's triggers in the
+ *        order the table wrote them; a hook no trigger names is untouched
+ * run_scenario_hooks_trigger_stopped_by_false
+ *      — an explicit false from the author's hook stops the triggers;
+ *        returning nothing does not
+ * run_scenario_hooks_trigger_where_both_ways
+ *      — a where-row over a plain payload field, on the payload it names
+ *        and on another
+ * run_scenario_hooks_trigger_call_reaches_script
+ *      — a call action runs a top-level function of the author's script,
+ *        with a payload field and a literal
+ * run_scenario_hooks_router_matches_source
+ *      — the router embedded in the binary is the .lua it was generated
+ *        from
+ * run_scenario_hooks_trigger_team_from_owner
+ *      — a team read off an owner, matching and not, and nil where the
+ *        owner is nobody
+ * run_scenario_hooks_trigger_tag_on_item
+ *      — the tags on a pillbox and on a base, each asked with its own kind
+ *        word
+ * run_scenario_hooks_trigger_tag_ne_and_eq
+ *      — ne on a set is absence; eq on one never holds
+ * run_scenario_hooks_trigger_region_holds_square
+ *      — the region a hook's square pair falls inside, and one outside it
  */
 
 #include <stdint.h>
@@ -132,18 +157,25 @@ static void shkUnwatchConsole(ServerSim *sim) {
 }
 
 /* The script: a scenario table, the note function every hook writes its
- * line with, and the hooks the case wants. */
-static bool shkPut(const char *mapPath, const char *body) {
+ * line with, and the hooks the case wants.
+ *
+ * extra goes inside the scenario table, after the two keys every case
+ * wants. A trigger is stated in the table rather than handed to a host
+ * separately, so a case that wants triggers writes them where a scenario
+ * would. A trailing comma is legal in a Lua table, so "" leaves the table
+ * exactly as it was. */
+static bool shkPutTable(const char *mapPath, const char *extra,
+                        const char *body) {
     char  path[512];
     char  lua[16384];
     FILE *f;
 
     snprintf(lua, sizeof(lua),
-             "scenario = { name = \"Hooks\", api = 1 }\n"
+             "scenario = { name = \"Hooks\", api = 1, %s }\n"
              "local function note(s)\n"
              "  print(\"" SHK_NOTE_MARK "\" .. tostring(s))\n"
              "end\n"
-             "%s", body);
+             "%s", extra, body);
 
     shkScriptFor(mapPath, path, sizeof(path));
     f = fopen(path, "wb");
@@ -153,6 +185,10 @@ static bool shkPut(const char *mapPath, const char *body) {
     fputs(lua, f);
     fclose(f);
     return true;
+}
+
+static bool shkPut(const char *mapPath, const char *body) {
+    return shkPutTable(mapPath, "", body);
 }
 
 static void shkDrop(const char *mapPath) {
@@ -948,6 +984,583 @@ int run_scenario_hooks_error_counts_and_disables(void) {
     UT_ASSERT_MSG(rec[0] == '\0',
                   "a switched-off scenario still ran a hook; the record "
                   "was:\n%s", rec);
+
+    scenarioHostDetach(h);
+    shkUnwatchConsole(sim);
+    serverSimDestroy(sim);
+    shkDrop(kMap);
+    shkReset();
+    return 0;
+}
+
+/* ── 8. Triggers ──────────────────────────────────────────────────── */
+
+/* A scenario's triggers are data in its table, and the router that turns
+ * them into calls is shipped in the binary. These cases boot a host on
+ * fixture trigger data, raise a real event, and assert what the actions
+ * did — the same console record every case above reads, since game.log
+ * writes a line to it.
+ *
+ * The embedded router, for the case that holds it against the file it was
+ * generated from. */
+#include "scenario_triggers.inc"  /* kScnTriggersLua, SCN_TRIGGERS_LUA_LEN */
+
+/* Where the router's source lives. CMake passes the absolute path; the
+ * fallback is the path from the source root, for a run started there. */
+#ifndef WB_SCENARIO_SRC_DIR
+#define WB_SCENARIO_SRC_DIR "src/scenario"
+#endif
+
+/* One player joining, which is on_player_join(p) and the shortest payload a
+ * where-row can test. */
+static void shkPublishJoin(ServerSim *sim, BYTE slot) {
+    ControlEvent evt;
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type                   = CTRL_PLAYER_JOIN;
+    evt.u.playerJoin.playerNum = slot;
+    serverSimPublishControl(sim, &evt);
+}
+
+/* The record, whole and in order. Every case below asserts the exact lines
+ * rather than counting them: what a trigger case is about is which ran and
+ * in what order, and a count can say neither.
+ *
+ * A macro rather than a function because the assertion returns from the case
+ * it failed in. */
+#define SHK_IS(rec, want, what)                                             \
+    UT_ASSERT_MSG(strcmp((rec), (want)) == 0,                               \
+                  "%s\nexpected:\n%s\ngot:\n%s", (what), (want), (rec))
+
+/* The author's function first, then the hook's triggers in the order the
+ * table wrote them, and a hook no trigger names left alone. */
+int run_scenario_hooks_trigger_runs_after_author(void) {
+    static const char *const kMap = "scnhook_trig_order.map";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          rec[2048];
+    char          err[512];
+
+    shkReset();
+    UT_ASSERT(shkPutTable(
+        kMap,
+        "triggers = {\n"
+        "  { when = \"on_player_join\","
+        " actions = { { \"log\", \"" SHK_NOTE_MARK "first\" } } },\n"
+        "  { when = \"on_player_join\","
+        " actions = { { \"log\", \"" SHK_NOTE_MARK "second\" } } },\n"
+        "}",
+        "function on_player_join(p) note(\"author \"..p) end\n"
+        "function on_player_leave(p) note(\"leave \"..p) end\n"));
+    sim = shkSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    serverSimStartGame(sim);
+    shkFlush(sim);
+
+    shkPublishJoin(sim, 11);
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "author 11\nfirst\nsecond\n",
+           "the author's own function runs first, then the hook's triggers "
+           "in the order the table wrote them");
+
+    /* A hook no trigger names is the function the script wrote and nothing
+       around it. */
+    shkReset();
+    {
+        ControlEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.type                    = CTRL_PLAYER_LEAVE;
+        evt.u.playerLeave.playerNum = 12;
+        serverSimPublishControl(sim, &evt);
+    }
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "leave 12\n",
+           "on_player_leave is named by no trigger, so it is left as the "
+           "script wrote it");
+
+    scenarioHostDetach(h);
+    shkUnwatchConsole(sim);
+    serverSimDestroy(sim);
+    shkDrop(kMap);
+    shkReset();
+    return 0;
+}
+
+/* An explicit false from the author's hook stops the triggers. Falling off
+ * the end returns nil and does not, which is what keeps a handler that does
+ * not care about triggers out of their way. */
+int run_scenario_hooks_trigger_stopped_by_false(void) {
+    static const char *const kMap = "scnhook_trig_false.map";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          rec[2048];
+    char          err[512];
+
+    shkReset();
+    UT_ASSERT(shkPutTable(
+        kMap,
+        "triggers = {\n"
+        "  { when = \"on_player_join\","
+        " actions = { { \"log\", \"" SHK_NOTE_MARK "ran\" } } },\n"
+        "}",
+        "function on_player_join(p)\n"
+        "  note(\"author \"..p)\n"
+        "  if p == 5 then return false end\n"
+        "end\n"));
+    sim = shkSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    serverSimStartGame(sim);
+    shkFlush(sim);
+
+    shkPublishJoin(sim, 5);
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "author 5\n",
+           "the author's hook returned false, which stops the trigger");
+
+    shkReset();
+    shkPublishJoin(sim, 6);
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "author 6\nran\n",
+           "the same hook returned nothing, which does not stop the trigger");
+
+    scenarioHostDetach(h);
+    shkUnwatchConsole(sim);
+    serverSimDestroy(sim);
+    shkDrop(kMap);
+    shkReset();
+    return 0;
+}
+
+/* A where-row over a plain payload field, both ways: the trigger fires on
+ * the payload the row names and on no other. */
+int run_scenario_hooks_trigger_where_both_ways(void) {
+    static const char *const kMap = "scnhook_trig_where.map";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          rec[2048];
+    char          err[512];
+
+    shkReset();
+    UT_ASSERT(shkPutTable(
+        kMap,
+        "triggers = {\n"
+        "  { when = \"on_player_join\","
+        " where = { { \"p\", \"eq\", 7 } },"
+        " actions = { { \"log\", \"" SHK_NOTE_MARK "matched\" } } },\n"
+        "}",
+        "function on_player_join(p) note(\"author \"..p) end\n"));
+    sim = shkSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    serverSimStartGame(sim);
+    shkFlush(sim);
+
+    shkPublishJoin(sim, 7);
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "author 7\nmatched\n",
+           "the row holds on slot 7, so the action runs");
+
+    shkReset();
+    shkPublishJoin(sim, 8);
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "author 8\n",
+           "the row does not hold on slot 8, so the action does not run");
+
+    scenarioHostDetach(h);
+    shkUnwatchConsole(sim);
+    serverSimDestroy(sim);
+    shkDrop(kMap);
+    shkReset();
+    return 0;
+}
+
+/* A call action runs a top-level function of the author's own script, and
+ * carries it both a payload field and a literal. The script defines no
+ * on_player_join of its own, so this is also the router installing a hook
+ * where there was nothing to chain on to. */
+int run_scenario_hooks_trigger_call_reaches_script(void) {
+    static const char *const kMap = "scnhook_trig_call.map";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          rec[2048];
+    char          err[512];
+
+    shkReset();
+    UT_ASSERT(shkPutTable(
+        kMap,
+        "triggers = {\n"
+        "  { when = \"on_player_join\","
+        " actions = { { \"call\", \"shout\", { field = \"p\" },"
+        " \"loud\" } } },\n"
+        "}",
+        "function shout(p, word)\n"
+        "  note(\"shout \"..tostring(p)..\" \"..tostring(word))\n"
+        "end\n"));
+    sim = shkSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    serverSimStartGame(sim);
+    shkFlush(sim);
+
+    shkPublishJoin(sim, 9);
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "shout 9 loud\n",
+           "the call reached the script's own function with the joining "
+           "seat off the payload and the literal beside it");
+
+    scenarioHostDetach(h);
+    shkUnwatchConsole(sim);
+    serverSimDestroy(sim);
+    shkDrop(kMap);
+    shkReset();
+    return 0;
+}
+
+/* The router in the binary is the file it was generated from.
+ *
+ * tools/embed_lua.py is run by hand and its output committed, the way the
+ * lang table's generator is, so nothing in the build holds the two
+ * together. This does: a .lua edited without re-running the generator fails
+ * here rather than shipping a binary that runs the previous router. */
+int run_scenario_hooks_router_matches_source(void) {
+    static const char *const kPath =
+        WB_SCENARIO_SRC_DIR "/scenario_triggers.lua";
+    unsigned char *src;
+    long           size;
+    size_t         got;
+    FILE          *f;
+
+    f = fopen(kPath, "rb");
+    UT_ASSERT_MSG(f != NULL, "could not open %s", kPath);
+
+    if (fseek(f, 0, SEEK_END) != 0 || (size = ftell(f)) <= 0 ||
+        fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        UT_ASSERT_MSG(0, "could not measure %s", kPath);
+    }
+
+    src = (unsigned char *)malloc((size_t)size);
+    if (src == NULL) {
+        fclose(f);
+        UT_ASSERT_MSG(0, "no memory for %d bytes of %s", (int)size, kPath);
+    }
+    got = fread(src, 1, (size_t)size, f);
+    fclose(f);
+    if (got != (size_t)size) {
+        free(src);
+        UT_ASSERT_MSG(0, "read %d of %d bytes from %s",
+                      (int)got, (int)size, kPath);
+    }
+
+    if ((size_t)size != SCN_TRIGGERS_LUA_LEN) {
+        free(src);
+        UT_ASSERT_MSG(0,
+                      "the embedded router is %d bytes and %s is %d; re-run "
+                      "tools/embed_lua.py and commit both files",
+                      (int)SCN_TRIGGERS_LUA_LEN, kPath, (int)size);
+    }
+    if (memcmp(src, kScnTriggersLua, (size_t)size) != 0) {
+        free(src);
+        UT_ASSERT_MSG(0,
+                      "the embedded router is %d bytes of something other "
+                      "than %s; re-run tools/embed_lua.py and commit both "
+                      "files", (int)SCN_TRIGGERS_LUA_LEN, kPath);
+    }
+    free(src);
+    return 0;
+}
+
+/* ── 9. Triggers on a derived field ───────────────────────────────── */
+
+/* Three fields a hook carries without being handed them: the team behind a
+ * seat or an owner, the tags on the pillbox or base an event names, and the
+ * region the square pair it carries falls inside. The router works each out
+ * when the trigger fires; none of them is an argument.
+ *
+ * A team is one value and takes the ordinary operators. A tag and a region
+ * are sets and answer one question, which in asks and ne asks the other way
+ * round.
+ *
+ * The teams are the roster's own: server_sim_players.c seats player 0 on
+ * team 1 and player 1 on team 2, and the first case holds the sim to that
+ * rather than assuming it, so a change there reads as a changed default
+ * instead of a trigger that quietly stopped firing. */
+
+/* [new, old, index, quiet, class, mapX, mapY], as the engine's own emit
+ * writes one. The hook takes the item first and the old owner before the
+ * new, so a case naming an owner names it here in the other order. */
+static void shkRaiseCapture(ServerSim *sim, uint8_t type, uint8_t newOwner,
+                            uint8_t oldOwner, uint8_t index) {
+    uint8_t data[7];
+
+    data[0] = newOwner;
+    data[1] = oldOwner;
+    data[2] = index;
+    data[3] = 0;
+    data[4] = (uint8_t)CAPTURE_CLASS_ENEMY;
+    data[5] = 52;
+    data[6] = 53;
+    shkRaise(sim, type, data, sizeof(data));
+}
+
+/* A team off an owner, which is nil where the owner is nobody. */
+int run_scenario_hooks_trigger_team_from_owner(void) {
+    static const char *const kMap = "scnhook_trig_team.map";
+    ServerSim          *sim;
+    ScenarioHost       *h;
+    ServerSimRosterSlot one;
+    ServerSimRosterSlot two;
+    char                rec[2048];
+    char                err[512];
+
+    shkReset();
+    UT_ASSERT(shkPutTable(
+        kMap,
+        "triggers = {\n"
+        "  { when = \"on_base_captured\","
+        " where = { { \"old_team\", \"eq\", 1 } },"
+        " actions = { { \"log\", \"" SHK_NOTE_MARK "team\" } } },\n"
+        "}",
+        "function on_base_captured(n, old, new)\n"
+        "  note(\"cap \"..n..\" \"..old)\n"
+        "end\n"));
+    sim = shkSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    serverSimStartGame(sim);
+    serverSimAddPlayer(sim, 0, "One", false);
+    serverSimAddPlayer(sim, 1, "Two", false);
+    shkFlush(sim);
+
+    UT_ASSERT(serverSimGetRosterSlot(sim, 0, &one));
+    UT_ASSERT(serverSimGetRosterSlot(sim, 1, &two));
+    UT_ASSERT_MSG(one.team == 1 && two.team == 2,
+                  "the roster seated the two players on teams %d and %d, "
+                  "and this case is written against 1 and 2",
+                  (int)one.team, (int)two.team);
+
+    /* Base 4 taken off player 0, who is on the team the row names. */
+    shkRaiseCapture(sim, EVENT_BASE_CAPTURED, 9, 0, 3);
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "cap 4 0\nteam\n",
+           "the old owner is on team 1, so the row holds");
+
+    /* And off player 1, who is not. */
+    shkReset();
+    shkRaiseCapture(sim, EVENT_BASE_CAPTURED, 9, 1, 3);
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "cap 4 1\n",
+           "the old owner is on team 2, so the row does not hold");
+
+    /* And off nobody. An owner may be NEUTRAL, which is the whole reason it
+       is a different type from a seat: there is no team to test, so the row
+       does not hold rather than answering some team. */
+    shkReset();
+    shkRaiseCapture(sim, EVENT_BASE_CAPTURED, 9, NEUTRAL, 3);
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "cap 4 255\n",
+           "the old owner is nobody, so there is no team and the row does "
+           "not hold");
+
+    scenarioHostDetach(h);
+    shkUnwatchConsole(sim);
+    serverSimDestroy(sim);
+    shkDrop(kMap);
+    shkReset();
+    return 0;
+}
+
+/* The tags on the item a hook names, on a pillbox and on a base. The two
+ * carry different tags, so a kind word taken from the wrong parameter finds
+ * nothing and the case fails rather than passing by coincidence. */
+int run_scenario_hooks_trigger_tag_on_item(void) {
+    static const char *const kMap = "scnhook_trig_tag.map";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          rec[2048];
+    char          err[512];
+
+    shkReset();
+    UT_ASSERT(shkPutTable(
+        kMap,
+        "tags = { pills = { [1] = \"outer\" },"
+        " bases = { [1] = \"keep\" } },\n"
+        "triggers = {\n"
+        "  { when = \"on_pill_captured\","
+        " where = { { \"tag\", \"in\", \"outer\" } },"
+        " actions = { { \"log\", \"" SHK_NOTE_MARK "pill\" } } },\n"
+        "  { when = \"on_base_captured\","
+        " where = { { \"tag\", \"in\", \"keep\" } },"
+        " actions = { { \"log\", \"" SHK_NOTE_MARK "base\" } } },\n"
+        "}",
+        "function on_pill_captured(n, old, new) note(\"pillcap \"..n) end\n"
+        "function on_base_captured(n, old, new) note(\"basecap \"..n) end\n"));
+    sim = shkSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    serverSimStartGame(sim);
+    shkFlush(sim);
+
+    /* Pillbox 1 carries outer; the event's index is one below the number a
+       script counts by. */
+    shkRaiseCapture(sim, EVENT_PILL_CAPTURED, 3, 4, 0);
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "pillcap 1\npill\n",
+           "pillbox 1 is tagged outer, so the row holds");
+
+    shkReset();
+    shkRaiseCapture(sim, EVENT_PILL_CAPTURED, 3, 4, 1);
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "pillcap 2\n",
+           "pillbox 2 carries no tag, so the row does not hold");
+
+    shkReset();
+    shkRaiseCapture(sim, EVENT_BASE_CAPTURED, 9, 10, 0);
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "basecap 1\nbase\n",
+           "base 1 is tagged keep, so the row holds — and the kind word came "
+           "off the base parameter rather than the pillbox one");
+
+    shkReset();
+    shkRaiseCapture(sim, EVENT_BASE_CAPTURED, 9, 10, 1);
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "basecap 2\n",
+           "base 2 carries no tag, so the row does not hold");
+
+    scenarioHostDetach(h);
+    shkUnwatchConsole(sim);
+    serverSimDestroy(sim);
+    shkDrop(kMap);
+    shkReset();
+    return 0;
+}
+
+/* ne on a set is "does not hold this", and eq asks a set something it
+ * cannot answer and so never holds. Both triggers sit on one hook, so each
+ * raise puts both questions at once. */
+int run_scenario_hooks_trigger_tag_ne_and_eq(void) {
+    static const char *const kMap = "scnhook_trig_tagne.map";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          rec[2048];
+    char          err[512];
+
+    shkReset();
+    UT_ASSERT(shkPutTable(
+        kMap,
+        "tags = { pills = { [1] = \"outer\" } },\n"
+        "triggers = {\n"
+        "  { when = \"on_pill_captured\","
+        " where = { { \"tag\", \"ne\", \"outer\" } },"
+        " actions = { { \"log\", \"" SHK_NOTE_MARK "absent\" } } },\n"
+        "  { when = \"on_pill_captured\","
+        " where = { { \"tag\", \"eq\", \"outer\" } },"
+        " actions = { { \"log\", \"" SHK_NOTE_MARK "equal\" } } },\n"
+        "}",
+        "function on_pill_captured(n, old, new) note(\"pillcap \"..n) end\n"));
+    sim = shkSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    serverSimStartGame(sim);
+    shkFlush(sim);
+
+    shkRaiseCapture(sim, EVENT_PILL_CAPTURED, 3, 4, 0);
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "pillcap 1\n",
+           "pillbox 1 carries outer, so ne does not hold — and eq does not "
+           "hold on a set whatever it carries");
+
+    shkReset();
+    shkRaiseCapture(sim, EVENT_PILL_CAPTURED, 3, 4, 1);
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "pillcap 2\nabsent\n",
+           "pillbox 2 carries no tag, so ne holds and eq still does not");
+
+    scenarioHostDetach(h);
+    shkUnwatchConsole(sim);
+    serverSimDestroy(sim);
+    shkDrop(kMap);
+    shkReset();
+    return 0;
+}
+
+/* The region a hook's square pair falls inside, asked of one named
+ * rectangle rather than worked out by listing them. */
+int run_scenario_hooks_trigger_region_holds_square(void) {
+    static const char *const kMap = "scnhook_trig_region.map";
+    /* [mx, my, layer] — the layer sits past the event's wire size, which is
+       where the hook reads it from. */
+    static const uint8_t     kInside[3]  = { 62, 62, 0 };
+    static const uint8_t     kOutside[3] = { 10, 10, 0 };
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          rec[2048];
+    char          err[512];
+
+    shkReset();
+    UT_ASSERT(shkPutTable(
+        kMap,
+        "regions = { keep = { x = 60, y = 60, w = 4, h = 4 } },\n"
+        "triggers = {\n"
+        "  { when = \"on_mine_explosion\","
+        " where = { { \"region\", \"in\", \"keep\" } },"
+        " actions = { { \"log\", \"" SHK_NOTE_MARK "inside\" } } },\n"
+        "}",
+        "function on_mine_explosion(mx, my, l)\n"
+        "  note(\"boom \"..mx..\" \"..my)\n"
+        "end\n"));
+    sim = shkSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    serverSimStartGame(sim);
+    shkFlush(sim);
+
+    shkRaise(sim, EVENT_MINE_EXPLODED, kInside, sizeof(kInside));
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "boom 62 62\ninside\n",
+           "the square is inside the keep, so the row holds");
+
+    shkReset();
+    shkRaise(sim, EVENT_MINE_EXPLODED, kOutside, sizeof(kOutside));
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "boom 10 10\n",
+           "the square is outside the keep, so the row does not hold");
 
     scenarioHostDetach(h);
     shkUnwatchConsole(sim);
