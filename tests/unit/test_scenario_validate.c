@@ -91,6 +91,12 @@
  *                                          taking a table, both ways an
  *                                          argument count can be wrong, and
  *                                          call held to none of them
+ * run_scenario_validate_trigger_unknown_operator
+ *                                        — a word that is none of the seven
+ *                                          is refused with the seven listed,
+ *                                          a row that names none at all is
+ *                                          reported once, and the seven
+ *                                          themselves still pass
  */
 
 #include <stdint.h>
@@ -164,6 +170,19 @@ static const ScnValidateIssue *svFind(const ScnValidateResult *r,
         }
     }
     return NULL;
+}
+
+/* How many issues stand under one key. A key is a row rather than a fault,
+ * so more than one under it is the same row reported twice. */
+static int svCount(const ScnValidateResult *r, const char *key) {
+    uint16_t i;
+    int      n = 0;
+    for (i = 0; i < r->count; i++) {
+        if (strcmp(r->issues[i].key, key) == 0) {
+            n++;
+        }
+    }
+    return n;
 }
 
 /* Every issue on one line, for a failure message that says what was actually
@@ -1659,6 +1678,164 @@ int run_scenario_validate_trigger_action(void) {
     }
     if (rc == 0 && !SV_SAYS(r, "triggers[1].actions[1]", "call")) {
         rc = 1;
+    }
+
+    free(r);
+    return rc;
+}
+
+/* ── 27. An operator that is none of the seven ────────────────────── */
+
+/* A misspelled operator used to read as eq, so a row the author got wrong
+   quietly tested something else and there was nothing left for a check to
+   refuse. It now reads as an operator the table cannot name, which is what
+   this refuses.
+
+   The word itself is gone by the time the manifest exists — a condition
+   holds the operator as the enum and not as the author's bytes — so the
+   message names the row through its key and lists the seven instead of
+   quoting back what was written.
+
+   A NULL sim throughout: none of this reads a map. */
+int run_scenario_validate_trigger_unknown_operator(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    /* Row 0 is the typo. Row 1 names an operator that is not a string at
+       all, which the reader reports as naming none; row 2 is one of the
+       seven and stands as the case's evidence that the refusal refuses
+       something rather than everything. */
+    static const char *const kLua =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_player_join\",\n"
+        "      where = { { \"p\", \"equalz\", 7 },\n"
+        "                { \"p\", 7, 7 },\n"
+        "                { \"p\", \"eq\", 7 } },\n"
+        "      actions = { { \"log\", \"joined\" } } },\n"
+        "  },\n"
+        "}\n";
+    /* The six operators that ask about one value, for the second source
+       below. in is the seventh and is asked of a set, so it goes on a
+       trigger of its own there. */
+    static const char *const kScalar[] = {
+        "eq", "ne", "lt", "lte", "gt", "gte"
+    };
+    ScnValidateResult *r;
+    char               seven[2048];
+    size_t             used;
+    size_t             k;
+    int                rc = 0;
+    int                n;
+
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+
+    if (scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL, r)) {
+        fprintf(stderr, "FAIL %s:%d: an operator that is none of the seven "
+                        "said nothing\n", __FILE__, __LINE__);
+        rc = 1;
+    }
+    /* What the script's own table read as, before what was said about it:
+       the word is none of the seven, so the reader keeps it as an operator
+       it cannot name rather than as eq. The row that named none at all is
+       left the same way. */
+    if (rc == 0 && r->haveManifest) {
+        const ScnTrigger *t = &r->manifest.triggers[0];
+        if (t->where[0].op != SCN_TRIG_CMP_UNKNOWN ||
+            t->where[1].op != SCN_TRIG_CMP_UNKNOWN ||
+            t->where[2].op != SCN_TRIG_CMP_EQ) {
+            fprintf(stderr, "FAIL %s:%d: the three rows read as operators "
+                            "%d, %d and %d\n", __FILE__, __LINE__,
+                    (int)t->where[0].op, (int)t->where[1].op,
+                    (int)t->where[2].op);
+            rc = 1;
+        }
+    }
+    /* The typo, and the seven listed for the author to read their row
+       against. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].where[0]", "not one the surface")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].where[0]",
+                            "'eq', 'ne', 'lt', 'lte', 'gt', 'gte' and 'in'")) {
+        rc = 1;
+    }
+    /* A row that named no operator reads the same way, and the reader has
+       already said so. One fault, one report: the reader's is the one that
+       stands, because it says the slot was empty rather than that a word
+       was wrong. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].where[1]", "names no operator")) {
+        rc = 1;
+    }
+    if (rc == 0) {
+        n = svCount(r, "triggers[0].where[1]");
+        if (n != 1) {
+            char seen[1024];
+            svList(r, seen, sizeof(seen));
+            fprintf(stderr, "FAIL %s:%d: a row that names no operator was "
+                            "reported %d times: %s\n",
+                    __FILE__, __LINE__, n, seen);
+            rc = 1;
+        }
+    }
+    /* And the row that is right says nothing. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].where[2]")) {
+        rc = 1;
+    }
+
+    /* Every one of the seven, after the enum moved under them: a source
+       that states each of them and has to check clean.
+
+       The six scalar operators are spread over as many triggers as the cap
+       on one trigger's tests needs, rather than written out on one, so the
+       fixture follows SCN_TRIGGER_CONDS_MAX if it ever moves. Over the cap
+       the reader drops the rows past it and says so, and the case would
+       then be failing on its own input. */
+    used = (size_t)snprintf(seven, sizeof(seven),
+                            "scenario = {\n"
+                            "  api = 1,\n"
+                            "  tags = { bases = { [1] = \"outer\" } },\n"
+                            "  triggers = {\n");
+    for (k = 0; k < sizeof(kScalar) / sizeof(kScalar[0]);
+         k += SCN_TRIGGER_CONDS_MAX) {
+        size_t end = k + SCN_TRIGGER_CONDS_MAX;
+        size_t j;
+
+        if (end > sizeof(kScalar) / sizeof(kScalar[0])) {
+            end = sizeof(kScalar) / sizeof(kScalar[0]);
+        }
+        used += (size_t)snprintf(seven + used, sizeof(seven) - used,
+                                 "    { when = \"on_player_join\",\n"
+                                 "      where = {");
+        for (j = k; j < end; j++) {
+            used += (size_t)snprintf(seven + used, sizeof(seven) - used,
+                                     "%s { \"p\", \"%s\", %d }",
+                                     (j > k) ? "," : "", kScalar[j],
+                                     (int)j + 1);
+        }
+        used += (size_t)snprintf(seven + used, sizeof(seven) - used,
+                                 " },\n"
+                                 "      actions = { { \"log\", \"joined\" "
+                                 "} } },\n");
+    }
+    snprintf(seven + used, sizeof(seven) - used,
+             "    { when = \"on_base_captured\",\n"
+             "      where = { { \"tag\", \"in\", \"outer\" } },\n"
+             "      actions = { { \"log\", \"captured\" } } },\n"
+             "  },\n"
+             "}\n");
+
+    if (rc == 0) {
+        char seen[1024];
+        if (!scenarioValidateSource(NULL, seven, strlen(seven), kName, NULL,
+                                    r)) {
+            svList(r, seen, sizeof(seen));
+            fprintf(stderr, "FAIL %s:%d: the seven operators were refused: "
+                            "%s\n", __FILE__, __LINE__, seen);
+            rc = 1;
+        }
     }
 
     free(r);

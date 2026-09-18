@@ -638,6 +638,24 @@ static bool scnTagCarried(const ScenarioManifest *m, const char *tag) {
            scnTagOnKind(m->startTags, MAX_STARTS, tag);
 }
 
+/* Whether something has already been said about this key. The reader
+ * reports into this same list, under the same key, and runs before any of
+ * the checks below, so a row it could not take whole is one this pass has
+ * nothing to add to. */
+static bool scnSaidAlready(const ScnValidateResult *out, const char *key) {
+    uint16_t i;
+
+    if (out == NULL) {
+        return false;
+    }
+    for (i = 0; i < out->count; i++) {
+        if (strcmp(out->issues[i].key, key) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /* One test of one trigger: the field it names, the operator it asks with,
  * and the name on its right where that name is one the table answers for.
  *
@@ -663,6 +681,25 @@ static void scnCheckTrigCond(const ScenarioManifest *m, const ScnTrigCond *c,
     if (f == NULL) {
         scnIssueAdd(out, key, "'%s' is no field of %s, so this test never "
                               "holds", c->field, when);
+        return;
+    }
+
+    /* What the test asks with, before what it asks about. An operator none
+       of the seven match is stored as one the table cannot name, so there is
+       no word to quote back: the key names the row, and the seven are listed
+       for the author to read their own row against.
+
+       A row that named no operator at all arrives here the same way, and is
+       the reader's report rather than this one's, the way a row that named
+       no field is. Only the reader can tell the two apart, so its having
+       spoken about this row is what says which this is. */
+    if (c->op == SCN_TRIG_CMP_UNKNOWN) {
+        if (!scnSaidAlready(out, key)) {
+            scnIssueAdd(out, key,
+                        "the operator is not one the surface has, so this "
+                        "test never holds; the seven are 'eq', 'ne', 'lt', "
+                        "'lte', 'gt', 'gte' and 'in'");
+        }
         return;
     }
 

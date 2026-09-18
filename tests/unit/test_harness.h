@@ -2842,6 +2842,7 @@ int run_scenario_validate_trigger_hook(void);
 int run_scenario_validate_trigger_field(void);
 int run_scenario_validate_trigger_operator(void);
 int run_scenario_validate_trigger_action(void);
+int run_scenario_validate_trigger_unknown_operator(void);
 
 /* The binding table (test_scenario_lua.c): every row of the registry
  * called once, the three index rules, the nils an absent entity reads
@@ -2930,6 +2931,7 @@ int run_scenario_hooks_trigger_team_from_owner(void);
 int run_scenario_hooks_trigger_tag_on_item(void);
 int run_scenario_hooks_trigger_tag_ne_and_eq(void);
 int run_scenario_hooks_trigger_region_holds_square(void);
+int run_scenario_hooks_trigger_unknown_operator(void);
 
 /* What the host derives rather than hears (test_scenario_derived.c): the
  * timers a script sets, the regions it names, and the enter and leave hooks
@@ -2985,6 +2987,7 @@ int run_scenario_manifest_from_values(void);
 int run_scenario_manifest_json_team_init(void);
 int run_scenario_manifest_json_number_range(void);
 int run_scenario_manifest_json_triggers(void);
+int run_scenario_manifest_json_trigger_operator(void);
 
 /* Where a map file's map data ends (test_scenario_map_body.c): the measure
  * itself, the container found after it, the scripted tag it gives the

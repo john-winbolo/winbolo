@@ -1530,6 +1530,9 @@ static void scnPushTriggers(lua_State *L, const ScenarioManifest *m) {
             lua_newtable(L);
             lua_pushstring(L, c->field);
             lua_rawseti(L, -2, 1);
+            /* "" for an operator the table cannot name, which is what
+               scnReadTriggers reads back as SCN_TRIG_CMP_UNKNOWN. A row
+               that went on unnamed comes off unnamed. */
             lua_pushstring(L, name != NULL ? name : "");
             lua_rawseti(L, -2, 2);
             scnPushTrigValue(L, &c->value, NULL);
@@ -1697,7 +1700,12 @@ static void scnPushRouterTriggers(lua_State *L, const ScenarioManifest *m) {
             lua_setfield(L, row, "field");
             /* The operator by name, through the table both readers resolve
                a file's spelling with. A second copy of the seven strings
-               here is how the two would come to disagree. */
+               here is how the two would come to disagree.
+
+               An operator the table cannot name goes on as "", which is
+               none of the seven the router compares against, so the row
+               never holds. What it must not be is one of the seven: the
+               router would then run a test the author did not write. */
             lua_pushstring(L, name != NULL ? name : "");
             lua_setfield(L, row, "op");
             scnPushTrigValue(L, &c->value, NULL);

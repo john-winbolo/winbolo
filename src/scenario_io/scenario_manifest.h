@@ -205,6 +205,12 @@ typedef struct {
 } ScnTrigValue;
 
 typedef enum {
+    SCN_TRIG_CMP_UNKNOWN,   /* a word that is none of the seven, and what a
+                               row that names no operator is left as: a test
+                               nothing can evaluate, refused before a round
+                               starts and never holding if one is reached.
+                               First, so a condition nobody filled in reads
+                               as this rather than as eq. */
     SCN_TRIG_CMP_EQ, SCN_TRIG_CMP_NE, SCN_TRIG_CMP_LT,
     SCN_TRIG_CMP_LTE, SCN_TRIG_CMP_GT, SCN_TRIG_CMP_GTE, SCN_TRIG_CMP_IN
 } ScnTrigCompare;

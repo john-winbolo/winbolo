@@ -5736,6 +5736,7 @@ set(_unit_test_names
     scenario_validate_trigger_field
     scenario_validate_trigger_operator
     scenario_validate_trigger_action
+    scenario_validate_trigger_unknown_operator
     scenario_lua_every_row_answers
     scenario_lua_op_arguments_match_the_doc
     scenario_lua_read_index_passes_through
@@ -5803,6 +5804,7 @@ set(_unit_test_names
     scenario_hooks_trigger_tag_on_item
     scenario_hooks_trigger_tag_ne_and_eq
     scenario_hooks_trigger_region_holds_square
+    scenario_hooks_trigger_unknown_operator
     scenario_derived_timer_fires_on_its_tick
     scenario_derived_timer_cancelled_and_stale
     scenario_derived_timer_limit_boundary
@@ -5829,6 +5831,7 @@ set(_unit_test_names
     scenario_manifest_json_team_init
     scenario_manifest_json_number_range
     scenario_manifest_json_triggers
+    scenario_manifest_json_trigger_operator
     scenario_map_body_length
     scenario_map_find_container
     scenario_map_has_script_chunk

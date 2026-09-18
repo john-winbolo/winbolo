@@ -457,14 +457,18 @@ static void mjDecodeRegions(const cJSON *root, ScenarioManifest *m,
 /* ── Triggers ─────────────────────────────────────────────────────── */
 
 /* The seven operators a where-row may test with, in the order
- * ScnTrigCompare declares them. */
+ * ScnTrigCompare declares them. Entry 0 is SCN_TRIG_CMP_UNKNOWN, which has
+ * no word: it is what a name none of the seven match reads as, so giving it
+ * one would let it back out as an operator. */
 static const char *const mjTrigOps[] = {
-    "eq", "ne", "lt", "lte", "gt", "gte", "in"
+    NULL, "eq", "ne", "lt", "lte", "gt", "gte", "in"
 };
 
-/* The operator's name, or NULL for one outside the enum. Used by the
- * encoder, which writes back what the decode stored, and by the Lua writer,
- * which writes the same word into a script's own table. */
+/* The operator's name, or NULL for SCN_TRIG_CMP_UNKNOWN and for a value
+ * outside the enum. Used by the encoder, which writes back what the decode
+ * stored, and by the Lua writer, which writes the same word into a script's
+ * own table. Both answer an unnamed operator with "", which reads back as
+ * SCN_TRIG_CMP_UNKNOWN rather than as one of the seven. */
 const char *scnManifestTrigOpName(ScnTrigCompare op) {
     if ((int)op < 0 || (size_t)op >= sizeof(mjTrigOps) / sizeof(mjTrigOps[0])) {
         return NULL;
@@ -472,9 +476,12 @@ const char *scnManifestTrigOpName(ScnTrigCompare op) {
     return mjTrigOps[(int)op];
 }
 
-/* An operator name as the enum, or SCN_TRIG_CMP_EQ for one this does not
- * know. An unknown operator is not refused here: what the vocabulary allows
- * is checked against the catalogue, which this library cannot see.
+/* An operator name as the enum, or SCN_TRIG_CMP_UNKNOWN for one this does
+ * not know and for NULL. An unknown operator is not refused here: what the
+ * vocabulary allows is checked against the catalogue, which this library
+ * cannot see. It is kept apart from the seven so that the check has
+ * something to refuse — read as eq, a misspelled operator would quietly
+ * test something the author did not write.
  *
  * Public because scnReadManifest reads the same seven words out of a
  * script's table. One table of names rather than two keeps the two readers
@@ -483,14 +490,14 @@ ScnTrigCompare scnManifestTrigOpFrom(const char *name) {
     size_t i;
 
     if (name == NULL) {
-        return SCN_TRIG_CMP_EQ;
+        return SCN_TRIG_CMP_UNKNOWN;
     }
-    for (i = 0; i < sizeof(mjTrigOps) / sizeof(mjTrigOps[0]); i++) {
+    for (i = 1; i < sizeof(mjTrigOps) / sizeof(mjTrigOps[0]); i++) {
         if (strcmp(name, mjTrigOps[i]) == 0) {
             return (ScnTrigCompare)i;
         }
     }
-    return SCN_TRIG_CMP_EQ;
+    return SCN_TRIG_CMP_UNKNOWN;
 }
 
 /* One value or argument out of the tree.
@@ -1161,6 +1168,12 @@ static void mjEmitTriggers(cJSON *root, const ScenarioManifest *m) {
             }
             cJSON_AddItemToArray(where, row);
             cJSON_AddItemToArray(row, cJSON_CreateString(c->field));
+            /* An operator the table cannot name goes out as "", which is
+               the one spelling that comes back as SCN_TRIG_CMP_UNKNOWN: it
+               is a string, so the decode does not take the row for one that
+               names no operator, and it matches none of the seven. A row
+               the author got wrong is still wrong after a trip through a
+               file rather than having settled into eq on the way. */
             cJSON_AddItemToArray(row,
                                  cJSON_CreateString(name != NULL ? name : ""));
             cJSON_AddItemToArray(row, mjTrigValueOut(&c->value, NULL));
@@ -1380,8 +1393,8 @@ static bool mjTrigValueSame(const ScnTrigValue *a, const ScnTrigValue *b) {
     }
 }
 
-/* An operator's name for a message, and "" for one outside the enum, which
- * only a struct nobody decoded could hold. */
+/* An operator's name for a message, and "" for one the table cannot name:
+ * SCN_TRIG_CMP_UNKNOWN, or a value outside the enum. */
 static const char *mjOpText(ScnTrigCompare op) {
     const char *name = scnManifestTrigOpName(op);
     return name != NULL ? name : "";

@@ -1569,3 +1569,62 @@ int run_scenario_hooks_trigger_region_holds_square(void) {
     shkReset();
     return 0;
 }
+
+/* ── 10. A row asking with an operator that is none of the seven ──── */
+
+/* The author wrote "equalz". The host cannot place it, so the row goes to
+   the router with no operator name at all, and a row that asks with nothing
+   holds on nothing: the action does not run, on the slot the row names or
+   on any other.
+
+   The point of the case is the slot the row does name. Read as eq — which
+   is what a word the table could not place used to become — the row would
+   hold on slot 7 and the action would run, and the scenario would be doing
+   something the author never wrote. The author's own function runs either
+   way, which is what says the hook itself still fired. */
+int run_scenario_hooks_trigger_unknown_operator(void) {
+    static const char *const kMap = "scnhook_trig_badop.map";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          rec[2048];
+    char          err[512];
+
+    shkReset();
+    UT_ASSERT(shkPutTable(
+        kMap,
+        "triggers = {\n"
+        "  { when = \"on_player_join\","
+        " where = { { \"p\", \"equalz\", 7 } },"
+        " actions = { { \"log\", \"" SHK_NOTE_MARK "matched\" } } },\n"
+        "}",
+        "function on_player_join(p) note(\"author \"..p) end\n"));
+    sim = shkSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    serverSimStartGame(sim);
+    shkFlush(sim);
+
+    /* The slot the row names, which is where reading the word as eq would
+       show. */
+    shkPublishJoin(sim, 7);
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "author 7\n",
+           "the row asks with no operator, so it does not hold on slot 7");
+
+    shkReset();
+    shkPublishJoin(sim, 8);
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "author 8\n",
+           "nor does it hold on any other slot");
+
+    scenarioHostDetach(h);
+    shkUnwatchConsole(sim);
+    serverSimDestroy(sim);
+    shkDrop(kMap);
+    shkReset();
+    return 0;
+}

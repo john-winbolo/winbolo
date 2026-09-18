@@ -220,6 +220,18 @@ end
 
 -- ── Comparing ────────────────────────────────────────────────────────────
 
+-- The seven operators, as a set.
+--
+-- An operator the host could not name is written into a row as "", which is
+-- what a word none of the seven match and a row that named no operator at
+-- all both come through as. Neither states a test, so neither holds. The
+-- author is told about the row before the round starts; here it simply
+-- fails, the same way every other row the router cannot make sense of does.
+local OPERATORS = {
+    eq = true, ne = true, lt = true, lte = true,
+    gt = true, gte = true, ["in"] = true,
+}
+
 -- One where-row's test, on a field that answers a single value. Two values
 -- of different kinds compare false rather than raising, ne included: a row
 -- that cannot be evaluated does not hold, and the alternative would have a
@@ -272,6 +284,12 @@ end
 -- one — so they do not hold on it whatever the value. Which operator suits
 -- which field is refused before a round starts; here the row simply fails.
 local function rowHolds(row, map, ...)
+    -- What the row asks with, before what it asks about: an operator that is
+    -- none of the seven can be evaluated on no field at all.
+    if not OPERATORS[row.op] then
+        return false
+    end
+
     local e = entryOf(map, row.field)
     if e == nil then
         return false

@@ -1215,3 +1215,175 @@ int run_scenario_manifest_json_triggers(void) {
     free(sink);
     return 0;
 }
+
+/* ── An operator that is none of the seven ────────────────────────── */
+
+/* A word the table cannot place, and a row that names no operator at all,
+   both read as SCN_TRIG_CMP_UNKNOWN rather than as eq. Reading them as eq
+   is what used to make a typo silently test something the author did not
+   write, and left the check nothing to refuse.
+
+   The round trip is the other half: an operator the table cannot name is
+   written as "", which comes back as UNKNOWN. A row that is wrong stays
+   wrong through a file rather than settling into eq on the way. */
+int run_scenario_manifest_json_trigger_operator(void) {
+    static const char kBadOp[] =
+        "{\n"
+        "  \"manifest\": 1,\n"
+        "  \"api\": 1,\n"
+        "  \"triggers\": [\n"
+        "    { \"when\": \"on_tick\",\n"
+        "      \"where\": [ [\"tick\", \"equalz\", 1],\n"
+        "                   [\"tick\", 7, 2],\n"
+        "                   [\"tick\", \"eq\", 3] ],\n"
+        "      \"actions\": [ [\"log\", \"tick\"] ] }\n"
+        "  ]\n"
+        "}\n";
+    /* Every one of the seven, to say that moving the enum left each word
+       reading as the value it always did. */
+    static const struct {
+        const char    *name;
+        ScnTrigCompare op;
+    } kSeven[] = {
+        { "eq",  SCN_TRIG_CMP_EQ  }, { "ne",  SCN_TRIG_CMP_NE  },
+        { "lt",  SCN_TRIG_CMP_LT  }, { "lte", SCN_TRIG_CMP_LTE },
+        { "gt",  SCN_TRIG_CMP_GT  }, { "gte", SCN_TRIG_CMP_GTE },
+        { "in",  SCN_TRIG_CMP_IN  },
+    };
+    char               err[256];
+    char               soft[256];
+    ScnManifestDoc    *first;
+    ScnManifestDoc    *again;
+    ScnValidateResult *sink;
+    ScnParseReport     rep;
+    const ScnTrigger  *t;
+    char              *text;
+    size_t             i;
+
+    /* ── The words, both ways ────────────────────────────────────── */
+
+    for (i = 0; i < sizeof(kSeven) / sizeof(kSeven[0]); i++) {
+        const char *name = scnManifestTrigOpName(kSeven[i].op);
+
+        UT_ASSERT_MSG(scnManifestTrigOpFrom(kSeven[i].name) == kSeven[i].op,
+                      "'%s' read as %d", kSeven[i].name,
+                      (int)scnManifestTrigOpFrom(kSeven[i].name));
+        UT_ASSERT_MSG(name != NULL, "%d has no name, expected '%s'",
+                      (int)kSeven[i].op, kSeven[i].name);
+        UT_ASSERT_MSG(strcmp(name, kSeven[i].name) == 0,
+                      "%d named as '%s', expected '%s'", (int)kSeven[i].op,
+                      name, kSeven[i].name);
+    }
+    UT_ASSERT_MSG(scnManifestTrigOpFrom("equalz") == SCN_TRIG_CMP_UNKNOWN,
+                  "a word none of the seven match read as %d",
+                  (int)scnManifestTrigOpFrom("equalz"));
+    UT_ASSERT_MSG(scnManifestTrigOpFrom("") == SCN_TRIG_CMP_UNKNOWN,
+                  "the empty word read as %d",
+                  (int)scnManifestTrigOpFrom(""));
+    UT_ASSERT_MSG(scnManifestTrigOpFrom(NULL) == SCN_TRIG_CMP_UNKNOWN,
+                  "no word at all read as %d",
+                  (int)scnManifestTrigOpFrom(NULL));
+    UT_ASSERT_MSG(scnManifestTrigOpName(SCN_TRIG_CMP_UNKNOWN) == NULL,
+                  "an operator the table cannot name was named '%s'",
+                  scnManifestTrigOpName(SCN_TRIG_CMP_UNKNOWN));
+
+    /* ── Out of a manifest ───────────────────────────────────────── */
+
+    sink = (ScnValidateResult *)malloc(sizeof(*sink));
+    UT_ASSERT(sink != NULL);
+    memset(sink, 0, sizeof(*sink));
+    soft[0]     = '\0';
+    rep.soft    = soft;
+    rep.softLen = sizeof(soft);
+    rep.sink    = sink;
+
+    first = parseText(kBadOp, &rep, err, sizeof(err));
+    if (first == NULL) {
+        free(sink);
+        UT_FAIL("a manifest with a bad operator was refused: %s", err);
+    }
+    t = &scnManifestValues(first)->triggers[0];
+    if (t->numWhere != 3) {
+        scnManifestFree(first);
+        free(sink);
+        UT_FAIL("%u tests were kept, expected 3", (unsigned)t->numWhere);
+    }
+    /* The typo. The decode takes the row and keeps the field and the value;
+       it is the operator alone that could not be placed. */
+    if (t->where[0].op != SCN_TRIG_CMP_UNKNOWN ||
+        strcmp(t->where[0].field, "tick") != 0 ||
+        t->where[0].value.num != 1.0) {
+        scnManifestFree(first);
+        free(sink);
+        UT_FAIL("'equalz' decoded as operator %d", (int)t->where[0].op);
+    }
+    /* A row naming no operator at all, which the decode reports and leaves
+       as the same value. */
+    if (t->where[1].op != SCN_TRIG_CMP_UNKNOWN) {
+        scnManifestFree(first);
+        free(sink);
+        UT_FAIL("a row naming no operator decoded as %d",
+                (int)t->where[1].op);
+    }
+    if (!sawIssue(sink, "triggers[0].where[1]")) {
+        scnManifestFree(first);
+        free(sink);
+        UT_FAIL("a row naming no operator was not reported");
+    }
+    /* A word the table does know is untouched by any of it, and the decode
+       says nothing about the row. */
+    if (t->where[2].op != SCN_TRIG_CMP_EQ) {
+        scnManifestFree(first);
+        free(sink);
+        UT_FAIL("'eq' decoded as %d", (int)t->where[2].op);
+    }
+    if (sawIssue(sink, "triggers[0].where[2]")) {
+        scnManifestFree(first);
+        free(sink);
+        UT_FAIL("a row the decode could take was reported against");
+    }
+
+    /* ── And back through a file ─────────────────────────────────── */
+
+    text = scnManifestWrite(first, err, sizeof(err));
+    if (text == NULL) {
+        scnManifestFree(first);
+        free(sink);
+        UT_FAIL("the manifest could not be written: %s", err);
+    }
+    memset(sink, 0, sizeof(*sink));
+    again = parseText(text, &rep, err, sizeof(err));
+    free(text);
+    scnManifestFree(first);
+    if (again == NULL) {
+        free(sink);
+        UT_FAIL("what was written would not parse: %s", err);
+    }
+    t = &scnManifestValues(again)->triggers[0];
+    if (t->where[0].op != SCN_TRIG_CMP_UNKNOWN ||
+        t->where[1].op != SCN_TRIG_CMP_UNKNOWN) {
+        scnManifestFree(again);
+        free(sink);
+        UT_FAIL("the round trip made the operators %d and %d",
+                (int)t->where[0].op, (int)t->where[1].op);
+    }
+    if (t->where[2].op != SCN_TRIG_CMP_EQ) {
+        scnManifestFree(again);
+        free(sink);
+        UT_FAIL("the round trip made 'eq' %d", (int)t->where[2].op);
+    }
+    /* What went out for an operator with no name is a string, so the row
+       comes back as one the decode could take whole. The refusal is the
+       validator's, once, rather than this reader's a second time. */
+    if (sawIssue(sink, "triggers[0].where[0]") ||
+        sawIssue(sink, "triggers[0].where[1]")) {
+        scnManifestFree(again);
+        free(sink);
+        UT_FAIL("a written-out unnamed operator came back as a row the "
+                "decode could not take");
+    }
+    scnManifestFree(again);
+
+    free(sink);
+    return 0;
+}

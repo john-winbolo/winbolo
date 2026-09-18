@@ -98,9 +98,11 @@ bool scnManifestAgrees(const ScenarioManifest *fromJson,
                        char *err, size_t errLen);
 
 /* The seven operators a where-row tests with, as a name and back. A name
-   this build does not know reads as SCN_TRIG_CMP_EQ rather than being
-   refused: which operator suits which field is the catalogue's business and
-   this library cannot see it. NULL for an op outside the enum.
+   this build does not know, and a NULL name, read as SCN_TRIG_CMP_UNKNOWN
+   rather than being refused here: which operator suits which field is the
+   catalogue's business and this library cannot see it. Keeping it apart
+   from the seven is what leaves the check something to refuse. NULL for
+   SCN_TRIG_CMP_UNKNOWN and for a value outside the enum.
 
    Both forms of a scenario spell these the same way, so the Lua reader in
    scenario_host.c resolves a script's "eq" through the same table the JSON
