@@ -1979,6 +1979,17 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Seul un skin présent dans votre propre dossier de 
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Ce skin possède des graphismes plus fins pour certains sprites seulement, donc « Adapté au zoom » produit les mêmes cases que « Classique ». « Détail élevé » utilise les graphismes plus fins là où le skin les possède.
 STR_DLGSKIN_RECFILTER_LBL=Filtre recommandé :
 STR_DLGSKIN_RECOMMENDED_TAG=(recommandé)
+STR_DLGSKIN_FOGSTYLE=Style de brouillard de guerre
+STR_DLGSKIN_FOGSTYLE_TIP=La façon dont est représenté le terrain que vous ne voyez pas. Cela ne change que l'affichage sur votre propre écran ; le serveur envoie la même carte quel que soit le style choisi.
+STR_DLGSKIN_FOGSTYLE_GREY=Gris
+STR_DLGSKIN_FOGSTYLE_GREY_TIP=Le terrain que vous ne voyez pas est délavé vers le gris, ce qui le rend plus clair que le terrain que vous voyez directement.
+STR_DLGSKIN_FOGSTYLE_DARK=Plus sombre
+STR_DLGSKIN_FOGSTYLE_DARK_TIP=Le terrain que vous ne voyez pas est assombri vers le noir. Les routes sont déjà noires, donc une route sous le brouillard a le même aspect qu'une route bien visible.
+STR_DLGSKIN_FOGSTYLE_DARKROADS=Plus sombre avec bordure de brouillard
+STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP=Plus sombre, avec la ligne de brouillard redessinée en filigrane le long de son tracé. La bande se trouve du côté brumeux de la ligne, sur tous les terrains, si bien que la ligne reste visible même sur une route, qui est noire et que l'assombrissement seul ne peut pas marquer. C'est l'apparence standard.
+STR_DLGSKIN_FOGSTYLE_NONE=Aucun
+STR_DLGSKIN_FOGSTYLE_NONE_TIP=La carte n'est pas du tout ombrée, si bien que le terrain mémorisé a le même aspect que le terrain visible. Cela ne cache rien que les autres styles montrent : quels tanks et obus sont dessinés dépend du serveur, pas de ce réglage.
+STR_DLGSKIN_FOGSTYLE_NONE_NOTE=Note : ceci ne change que votre affichage local, cela ne désactive pas le réglage du brouillard de guerre dans la configuration de la partie. Les tanks et les obus disparaîtront là où le brouillard de guerre serait affiché.
 
 # Vue d'ensemble de la carte et la carte en plein écran
 STR_MENU_MAP_OVERVIEW=Vue d'ensemble de la carte

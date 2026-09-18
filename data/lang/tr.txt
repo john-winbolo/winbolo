@@ -1979,6 +1979,17 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Yalnızca kendi görünüm klasörünüzdeki bir g�
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Bu görünümün yalnızca bazı sprite'lar için daha ince çizimleri var, bu yüzden Yakınlaştırmaya Uydur, Klasik ile aynı karoları oluşturur. Yüksek Detay ise görünümün ince çizimi olduğu yerlerde onu kullanır.
 STR_DLGSKIN_RECFILTER_LBL=Önerilen filtre:
 STR_DLGSKIN_RECOMMENDED_TAG=(önerilen)
+STR_DLGSKIN_FOGSTYLE=Savaş sisi stili
+STR_DLGSKIN_FOGSTYLE_TIP=Göremediğiniz arazinin nasıl çizildiğini belirler. Yalnızca kendi ekranınızdaki görüntüyü değiştirir; hangisini seçerseniz seçin sunucu aynı haritayı gönderir.
+STR_DLGSKIN_FOGSTYLE_GREY=Gri
+STR_DLGSKIN_FOGSTYLE_GREY_TIP=Göremediğiniz arazi griye doğru kaydırılır, böylece açıkça görünen araziden daha açık renkli görünür.
+STR_DLGSKIN_FOGSTYLE_DARK=Daha Koyu
+STR_DLGSKIN_FOGSTYLE_DARK_TIP=Göremediğiniz arazi siyaha doğru kaydırılır. Yollar zaten siyah olduğundan, sis altındaki bir yol açıkça görünen bir yolla aynı görünür.
+STR_DLGSKIN_FOGSTYLE_DARKROADS=Sis Kenarlı Daha Koyu
+STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP=Daha Koyu ile aynı, ama sis sınırını hafifçe belirten ince bir çizgi eklenir. Bu şerit her arazide sınırın sisli tarafında durur, böylece çizgi, siyah olan ve tek başına koyulaştırmanın işaretleyemediği bir yolun üzerinde de görünür. Standart görünüm budur.
+STR_DLGSKIN_FOGSTYLE_NONE=Yok
+STR_DLGSKIN_FOGSTYLE_NONE_TIP=Harita hiç karartılmaz, bu yüzden hatırlanan arazi açıkça görünen araziyle aynı görünür. Diğer stillerin gösterdiği hiçbir şeyi gizlemez: hangi tankların ve mermilerin çizileceğine sunucu karar verir, bu ayar değil.
+STR_DLGSKIN_FOGSTYLE_NONE_NOTE=Not: Bu yalnızca yerel görüntünüzü değiştirir, oyun ayarlarındaki savaş sisi ayarını kapatmaz. Tanklar ve mermiler, savaş sisinin gösterileceği yerde kaybolmaya devam eder.
 
 # Harita Genel Görünümü ve tam ekran harita
 STR_MENU_MAP_OVERVIEW=Harita Genel Görünümü

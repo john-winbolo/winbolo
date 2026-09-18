@@ -55,6 +55,7 @@ static bool              s_smoothShells   = false;
 static GfxTextureFilter  s_textureFilter  = GFX_FILTER_NEAREST;
 static bool              s_simplifiedZoomOut     = true;
 static bool              s_simplifiedOverviewOnly = false;
+static FogStyle          s_fogStyle       = FOG_STYLE_DEFAULT;
 
 GfxTileDetail gfxGetTileDetail(void) { return s_tileDetail; }
 
@@ -100,3 +101,23 @@ void gfxSetSimplifiedZoomOut(bool v) { s_simplifiedZoomOut = v; }
 bool gfxGetSimplifiedOverviewOnly(void) { return s_simplifiedOverviewOnly; }
 
 void gfxSetSimplifiedOverviewOnly(bool v) { s_simplifiedOverviewOnly = v; }
+
+void gfxSettingsResetDefaults(void) {
+    s_tileDetail             = GFX_TILE_DETAIL_CLASSIC;
+    s_animSmoothness         = GFX_ANIM_CLASSIC;
+    s_smoothShells           = false;
+    s_textureFilter          = GFX_FILTER_NEAREST;
+    s_simplifiedZoomOut      = true;
+    s_simplifiedOverviewOnly = false;
+    s_fogStyle               = FOG_STYLE_DEFAULT;
+}
+
+FogStyle gfxGetFogStyle(void) { return s_fogStyle; }
+
+void gfxSetFogStyle(FogStyle v) {
+    int n = (int)v;
+    if (n < (int)FOG_STYLE_GREY || n >= FOG_STYLE_COUNT) {
+        n = (int)FOG_STYLE_DEFAULT;
+    }
+    s_fogStyle = (FogStyle)n;
+}

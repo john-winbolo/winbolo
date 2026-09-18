@@ -1977,6 +1977,17 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Publikovat lze pouze vzhled z tvé vlastní složky
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Tento vzhled má jemnější grafiku jen pro některé sprity, takže Podle přiblížení vytváří stejné dlaždice jako Klasický. Vysoký detail používá jemnější grafiku tam, kde ji vzhled má.
 STR_DLGSKIN_RECFILTER_LBL=Doporučený filtr:
 STR_DLGSKIN_RECOMMENDED_TAG=(doporučeno)
+STR_DLGSKIN_FOGSTYLE=Styl válečné mlhy
+STR_DLGSKIN_FOGSTYLE_TIP=Jak se kreslí terén, do kterého nevidíte. Mění to jen obraz na vaší obrazovce; server odesílá stejnou mapu bez ohledu na to, co vyberete.
+STR_DLGSKIN_FOGSTYLE_GREY=Šedý
+STR_DLGSKIN_FOGSTYLE_GREY_TIP=Terén, do kterého nevidíte, se stírá do šedé, takže je světlejší než terén, který právě vidíte.
+STR_DLGSKIN_FOGSTYLE_DARK=Tmavší
+STR_DLGSKIN_FOGSTYLE_DARK_TIP=Terén, do kterého nevidíte, se stahuje k černé. Silnice jsou už černé, takže silnice ve mlze vypadá stejně jako silnice, kterou právě vidíte.
+STR_DLGSKIN_FOGSTYLE_DARKROADS=Tmavší s hranou mlhy
+STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP=Tmavší, s hranicí mlhy slabě dokreslenou zpět podél ní. Pruh leží na zamlžené straně hranice, na každém terénu, takže hranice je vidět i nad silnicí, která je černá a kterou samo ztmavení nedokáže vyznačit. Toto je výchozí vzhled.
+STR_DLGSKIN_FOGSTYLE_NONE=Žádný
+STR_DLGSKIN_FOGSTYLE_NONE_TIP=Mapa se vůbec nestínuje, takže zapamatovaný terén vypadá stejně jako terén, který právě vidíte. Neskrývá nic, co ukazují ostatní styly: které tanky a granáty se kreslí, určuje server, ne toto nastavení.
+STR_DLGSKIN_FOGSTYLE_NONE_NOTE=Poznámka: tímto se mění jen vaše místní zobrazení, nevypíná se tím nastavení válečné mlhy v konfiguraci hry. Tanky a granáty budou mizet tam, kde by se ukazovala válečná mlha.
 
 # Map Overview and the full screen map
 STR_MENU_MAP_OVERVIEW=Přehled mapy

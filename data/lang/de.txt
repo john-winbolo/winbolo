@@ -1979,6 +1979,17 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Nur ein Skin im eigenen Skin-Ordner kann veröffent
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Dieser Skin hat feinere Grafiken nur für einige Sprites, daher erzeugt "An Zoom anpassen" dieselben Kacheln wie "Klassisch". "Hohes Detail" verwendet die feineren Grafiken, wo der Skin sie hat.
 STR_DLGSKIN_RECFILTER_LBL=Empfohlener Filter:
 STR_DLGSKIN_RECOMMENDED_TAG=(empfohlen)
+STR_DLGSKIN_FOGSTYLE=Kriegsnebelstil
+STR_DLGSKIN_FOGSTYLE_TIP=Wie Gelände dargestellt wird, das nicht eingesehen werden kann. Das ändert nur das Bild auf dem eigenen Bildschirm; der Server sendet unabhängig von der gewählten Einstellung dieselbe Karte.
+STR_DLGSKIN_FOGSTYLE_GREY=Grau
+STR_DLGSKIN_FOGSTYLE_GREY_TIP=Gelände, das nicht eingesehen werden kann, wird ins Graue gezogen und erscheint dadurch heller als Gelände in Sichtweite.
+STR_DLGSKIN_FOGSTYLE_DARK=Dunkler
+STR_DLGSKIN_FOGSTYLE_DARK_TIP=Gelände, das nicht eingesehen werden kann, wird ins Schwarze gezogen. Straßen sind bereits schwarz, daher sieht eine Straße unter Nebel genauso aus wie eine Straße in Sichtweite.
+STR_DLGSKIN_FOGSTYLE_DARKROADS=Dunkler mit Nebelkante
+STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP=Dunkler, wobei die Nebelgrenze schwach wieder eingezeichnet wird. Der Streifen liegt bei jedem Gelände auf der nebligen Seite der Grenze, sodass sie auch über einer Straße sichtbar bleibt, die schwarz ist und die das Verdunkeln allein nicht markieren kann. Das ist die Standardansicht.
+STR_DLGSKIN_FOGSTYLE_NONE=Keine
+STR_DLGSKIN_FOGSTYLE_NONE_TIP=Die Karte wird überhaupt nicht abgedunkelt, sodass sich erinnertes Gelände genauso zeigt wie Gelände in Sichtweite. Das verbirgt nichts, was die anderen Stile zeigen: welche Panzer und Granaten gezeichnet werden, entscheidet der Server, nicht diese Einstellung.
+STR_DLGSKIN_FOGSTYLE_NONE_NOTE=Hinweis: Das ändert nur die eigene Anzeige und schaltet die Einstellung für den Nebel des Krieges im Spielaufbau nicht aus. Panzer und Granaten verschwinden weiterhin dort, wo sonst der Nebel des Krieges zu sehen wäre.
 
 # Map Overview and the full screen map
 STR_MENU_MAP_OVERVIEW=Kartenübersicht

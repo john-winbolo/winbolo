@@ -1977,6 +1977,17 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Somente um skin na sua própria pasta de skins pode
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Este skin tem arte mais detalhada apenas para alguns sprites, então Corresponder ao zoom gera os mesmos tiles que Clássico. Alto detalhe usa a arte mais detalhada onde o skin a possui.
 STR_DLGSKIN_RECFILTER_LBL=Filtro recomendado:
 STR_DLGSKIN_RECOMMENDED_TAG=(recomendado)
+STR_DLGSKIN_FOGSTYLE=Estilo da névoa de guerra
+STR_DLGSKIN_FOGSTYLE_TIP=Como o terreno que você não consegue ver é desenhado. Isso muda apenas a imagem na sua própria tela; o servidor envia o mesmo mapa qualquer que seja a opção escolhida.
+STR_DLGSKIN_FOGSTYLE_GREY=Cinza
+STR_DLGSKIN_FOGSTYLE_GREY_TIP=O terreno que você não consegue ver é puxado para o cinza, ficando mais claro que o terreno em vista direta.
+STR_DLGSKIN_FOGSTYLE_DARK=Mais escuro
+STR_DLGSKIN_FOGSTYLE_DARK_TIP=O terreno que você não consegue ver é puxado para o preto. As estradas já são pretas, então uma estrada sob a névoa fica igual a uma estrada em vista direta.
+STR_DLGSKIN_FOGSTYLE_DARKROADS=Mais escuro com borda da névoa
+STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP=Mais escuro, com a linha da névoa novamente desenhada, de forma sutil, ao longo do limite entre visível e enevoado. A faixa fica do lado enevoado dessa linha, em qualquer terreno, então ela ainda aparece sobre uma estrada, que é preta e que o escurecimento por si só não consegue marcar. Esta é a aparência padrão.
+STR_DLGSKIN_FOGSTYLE_NONE=Nenhum
+STR_DLGSKIN_FOGSTYLE_NONE_TIP=O mapa não recebe nenhum sombreamento, então o terreno lembrado fica igual ao terreno em vista direta. Isso não esconde nada que os outros estilos mostram: quais tanques e projéteis são desenhados é regra do servidor, não desta opção.
+STR_DLGSKIN_FOGSTYLE_NONE_NOTE=Nota: Isso muda apenas a sua exibição local, não desativa a configuração de névoa de guerra nas configurações da partida. Tanques e projéteis vão desaparecer onde a névoa de guerra apareceria.
 
 # Panorama do mapa e o mapa em tela cheia
 STR_MENU_MAP_OVERVIEW=Panorama do mapa

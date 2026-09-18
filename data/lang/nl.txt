@@ -1979,6 +1979,17 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Alleen een skin in je eigen skinsmap kan worden gep
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Deze skin heeft alleen voor een deel van de sprites fijnere artwork, dus Aanpassen aan zoom bouwt dezelfde tegels als Klassiek. Hoog detail gebruikt de fijnere artwork waar de skin die heeft.
 STR_DLGSKIN_RECFILTER_LBL=Aanbevolen filter:
 STR_DLGSKIN_RECOMMENDED_TAG=(aanbevolen)
+STR_DLGSKIN_FOGSTYLE=Oorlogsmiststijl
+STR_DLGSKIN_FOGSTYLE_TIP=Hoe grond die je niet kunt zien wordt getekend. Dit verandert alleen het beeld op je eigen scherm; de server stuurt dezelfde kaart, wat je ook kiest.
+STR_DLGSKIN_FOGSTYLE_GREY=Grijs
+STR_DLGSKIN_FOGSTYLE_GREY_TIP=Grond die je niet kunt zien wordt grijzer getekend, zodat die lichter is dan grond die in het zicht is.
+STR_DLGSKIN_FOGSTYLE_DARK=Donkerder
+STR_DLGSKIN_FOGSTYLE_DARK_TIP=Grond die je niet kunt zien wordt naar zwart toe gebracht. Wegen zijn al zwart, dus een weg onder de mist ziet er hetzelfde uit als een weg in het zicht.
+STR_DLGSKIN_FOGSTYLE_DARKROADS=Donkerder met mistrand
+STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP=Donkerder, met de mistlijn er vaag overheen getekend. Op elk terreintype ligt de band aan de mistkant van de lijn, zodat de lijn ook over een weg zichtbaar blijft, die zwart is en die het verdonkeren alleen niet kan aangeven. Dit is de standaardweergave.
+STR_DLGSKIN_FOGSTYLE_NONE=Geen
+STR_DLGSKIN_FOGSTYLE_NONE_TIP=De kaart wordt helemaal niet gearceerd, zodat onthouden grond er hetzelfde uitziet als grond in het zicht. Het verbergt niets wat de andere stijlen laten zien: welke tanks en granaten getekend worden is de regel van de server, niet van deze instelling.
+STR_DLGSKIN_FOGSTYLE_NONE_NOTE=Let op: dit verandert alleen je eigen weergave, het schakelt de instelling voor oorlogsmist in de spelopzet niet uit. Tanks en granaten verdwijnen waar de oorlogsmist getoond zou worden.
 
 # Map Overview and the full screen map
 STR_MENU_MAP_OVERVIEW=Kaartoverzicht

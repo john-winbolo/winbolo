@@ -1977,6 +1977,17 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=게시할 수 있는 스킨은 자신의 스킨 폴
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=이 스킨은 일부 스프라이트에만 더 정교한 그림이 있어서, 줌에 맞추기는 클래식과 같은 타일을 만들어요. 높은 디테일은 스킨에 정교한 그림이 있는 곳에서 그 그림을 사용해요.
 STR_DLGSKIN_RECFILTER_LBL=추천 필터:
 STR_DLGSKIN_RECOMMENDED_TAG=(추천)
+STR_DLGSKIN_FOGSTYLE=전장의 안개 스타일
+STR_DLGSKIN_FOGSTYLE_TIP=보이지 않는 땅을 어떻게 그릴지예요. 자신의 화면에만 영향을 주며, 무엇을 선택해도 서버가 보내는 맵은 같아요.
+STR_DLGSKIN_FOGSTYLE_GREY=회색
+STR_DLGSKIN_FOGSTYLE_GREY_TIP=보이지 않는 땅은 회색에 가깝게 표시되어, 눈에 보이는 땅보다 더 밝게 나와요.
+STR_DLGSKIN_FOGSTYLE_DARK=더 어둡게
+STR_DLGSKIN_FOGSTYLE_DARK_TIP=보이지 않는 땅은 검은색에 가깝게 표시돼요. 도로는 원래 검은색이라, 안개 속 도로도 눈에 보이는 도로와 똑같이 보여요.
+STR_DLGSKIN_FOGSTYLE_DARKROADS=더 어둡게(경계선 포함)
+STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP=더 어둡게에 안개 경계선을 옅게 다시 그려 넣어요. 이 띠는 모든 지형에서 안개 쪽에 놓이기 때문에, 검은색이라 어둡게 처리만으로는 표시할 수 없는 도로 위에도 경계선이 나타나요. 이것이 기본 모습이에요.
+STR_DLGSKIN_FOGSTYLE_NONE=없음
+STR_DLGSKIN_FOGSTYLE_NONE_TIP=맵에 음영을 전혀 넣지 않아서, 기억하고 있는 땅도 눈에 보이는 땅과 똑같이 보여요. 다른 스타일이 보여주는 것을 감추지는 않아요. 어떤 탱크와 포탄을 그릴지는 이 설정이 아니라 서버가 정하는 규칙이에요.
+STR_DLGSKIN_FOGSTYLE_NONE_NOTE=참고: 이 설정은 내 화면 표시만 바꿀 뿐, 게임 설정의 전장의 안개 옵션을 끄는 것은 아니에요. 전장의 안개가 표시될 위치에서는 탱크와 포탄이 보이지 않게 돼요.
 
 # Map Overview and the full screen map
 STR_MENU_MAP_OVERVIEW=지도 전체 보기
