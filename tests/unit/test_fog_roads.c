@@ -108,6 +108,12 @@ int run_fog_style_setting(void) {
     int i; /* Looping variable */
     FogStyle was = gfxGetFogStyle();
 
+    /* Back to a fresh install first. The store is process-wide, so "what does
+     * a player who has never picked get" can only be asked from a known
+     * state; without this the assertion below would only hold while this case
+     * happened to run before anything else that sets a graphics setting. */
+    gfxSettingsResetDefaults();
+
     /* The default has to be a style, or the store starts in a look neither
      * view can draw and every assertion below is meaningless. */
     UT_ASSERT_MSG((int)FOG_STYLE_DEFAULT >= (int)FOG_STYLE_GREY &&
@@ -117,10 +123,12 @@ int run_fog_style_setting(void) {
 
     /* A player who has never picked gets the default, not style 0. The two
      * parted company when the default moved to Darker with fog edge; Grey
-     * keeps 0 because that number is in prefs files already written. */
-    UT_ASSERT_MSG(was == FOG_STYLE_DEFAULT,
-                  "the fog style starts at %d, expected the default (%d)",
-                  (int)was, (int)FOG_STYLE_DEFAULT);
+     * keeps 0 because that number is in prefs files already written. This is
+     * what catches the store's own initial value drifting from
+     * FOG_STYLE_DEFAULT, which is the drift the constant exists to stop. */
+    UT_ASSERT_MSG(gfxGetFogStyle() == FOG_STYLE_DEFAULT,
+                  "a fresh install starts at %d, expected the default (%d)",
+                  (int)gfxGetFogStyle(), (int)FOG_STYLE_DEFAULT);
 
     for (i = 0; i < FOG_STYLE_COUNT; i++) {
         gfxSetFogStyle((FogStyle)i);

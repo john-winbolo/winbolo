@@ -103,6 +103,19 @@ void              gfxSetSimplifiedOverviewOnly(bool v);
 FogStyle          gfxGetFogStyle(void);
 void              gfxSetFogStyle(FogStyle v);
 
+/* Put every setting above back to the value a fresh install starts at - the
+   same values the declarations here describe, and the ones the prefs loader
+   overwrites when the player has a saved pick.
+
+   The store is one set of file-scope values for the whole process, so a test
+   that wants to assert what a new player gets has no other way back to that
+   state once another test has set something; without this, such a test only
+   passes while it happens to run first.  It is a plain operation rather than
+   test scaffolding: a Restore defaults button in the Settings dialog wants
+   exactly this call.  It writes only this store - nothing is saved to prefs
+   and no view is told, so a caller that wants either does that itself. */
+void              gfxSettingsResetDefaults(void);
+
 #ifdef __cplusplus
 }
 #endif
