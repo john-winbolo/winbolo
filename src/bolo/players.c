@@ -1193,7 +1193,8 @@ void playersMakeScreenLgm(ClientSim *cs, players *plrs, screenLgm *value, BYTE l
            in from a spawn, or out building — so the client still tests the
            LGM's own square. An ally's LGM follows the ally: shown while the
            server's allies-in-trees option is on. */
-        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST) ||
+        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < clientSimGetGameSim(cs)->rules.tree_hide_distance &&
+             conv2 < clientSimGetGameSim(cs)->rules.tree_hide_distance) ||
             (clientSimGetAlliesInTrees(cs) == TRUE && allienceExist(&((*plrs)->item[count].allie), clientSimGetMyPlayerNum(cs)) == TRUE)) {
           screenLgmAddItem(value,(BYTE) ((*plrs)->item[count].lgmMapX - leftPos), (BYTE) ((*plrs)->item[count].lgmMapY - top), (*plrs)->item[count].lgmPixelX, (*plrs)->item[count].lgmPixelY, (*plrs)->item[count].lgmFrame, (BYTE) wx, (BYTE) wy);
         }
@@ -2326,7 +2327,8 @@ void playersGetBrainLgmsInRect(ClientSim *cs, players *plrs, BYTE leftPos, BYTE 
            in from a spawn, or out building — so the client still tests the
            LGM's own square. An ally's LGM follows the ally: shown while the
            server's allies-in-trees option is on. */
-        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || (playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < MIN_TREEHIDE_DIST && conv2 < MIN_TREEHIDE_DIST)) ||
+        if ((*plrs)->item[count].lgmFrame == LGM_HELICOPTER_FRAME || (playersIsItemInTrees(clientSimGetGameSim(cs), MY_TANK(cs), wx, wy) == FALSE || (conv < clientSimGetGameSim(cs)->rules.tree_hide_distance &&
+             conv2 < clientSimGetGameSim(cs)->rules.tree_hide_distance)) ||
             (clientSimGetAlliesInTrees(cs) == TRUE && allienceExist(&((*plrs)->item[count].allie), clientSimGetMyPlayerNum(cs)) == TRUE)) {
           /* In the rectangle */
           /* Object Type */

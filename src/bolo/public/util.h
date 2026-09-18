@@ -122,7 +122,7 @@ BYTE utilGet16Dir(TURNTYPE value);
 *  y         - Y co-ord of shell
 *  angle     - The direction the shell came from
 *********************************************************/
-bool utilIsTankHit(WORLD xTank, WORLD yTank, TURNTYPE tankAngle, WORLD x, WORLD y, TURNTYPE angle);
+bool utilIsTankHit(WORLD xTank, WORLD yTank, TURNTYPE tankAngle, WORLD x, WORLD y, TURNTYPE angle, WORLD hitRadius);
 
 /*********************************************************
 *NAME:          utilCalcAngle

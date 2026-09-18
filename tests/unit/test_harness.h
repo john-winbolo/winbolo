@@ -1768,6 +1768,10 @@ int run_sim_rules_base_regen_seed_follows(void);
 int run_sim_rules_terrain_life_follows(void);
 int run_sim_rules_base_empties_without_wrapping(void);
 int run_sim_rules_pill_empties_without_wrapping(void);
+int run_sim_rules_pill_shell_damage_follows(void);
+int run_sim_rules_pill_angry_divisor_follows(void);
+int run_sim_rules_tank_explosion_follows(void);
+int run_sim_rules_water_loss_follows(void);
 int run_sim_rules_pairs(void);
 int run_sim_rules_capture_threshold_moves(void);
 int run_sim_rules_builder_cost_follows(void);
@@ -3049,6 +3053,13 @@ int run_scn_arm_score_announce_marker(void);
 int run_scenario_rules_codec(void);
 int run_scenario_rules_published(void);
 int run_scenario_rules_reaches_joiner(void);
+
+/* A set too big for one control segment (test_scenario_rules_fragments.c):
+ * the fragments a full set publishes, each through the body codec at the
+ * capacity the delivery path really hands it and back into a client; and
+ * what a reader holds between two fragments and after a stream is cut. */
+int run_scenario_rules_fragments(void);
+int run_scenario_rules_fragments_partial(void);
 
 /* The bot hint (test_scenario_hint.c): the table a fixture brain gets back
  * whole, every refusal the arm answers with, and the record naming the seat

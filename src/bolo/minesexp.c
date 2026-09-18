@@ -262,7 +262,8 @@ void minesExpCheckFill(GameSim *sim, lgm **lgms, BYTE numLgm, BYTE mx, BYTE my, 
     if (sim->isServer && sim->callbacks.mineExploded) {
       sim->callbacks.mineExploded(sim->callbacks.ctx, mx, my, mineLayer);
     }
-    floodAddItem(&sim->ff, mx, my);
+    floodAddItem(&sim->ff, mx, my,
+                       (BYTE) sim->rules.flood_fill_ticks);
     /* Remove Items from grass/swamp/rubble data stuctures */
     switch (pos-MINE_SUBTRACT) {
     case GRASS:

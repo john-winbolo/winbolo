@@ -782,14 +782,14 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 					case TH_KILL_SMALL:
 						returnValue = TRUE;
 						if (outOutcome != NULL) *outOutcome = SHELL_OUTCOME_TANK_KILL;
-						tkExplosionAddItem(sim, *xValue, *yValue, angle, TK_EXPLODE_LENGTH, TK_SMALL_EXPLOSION, targetPlayer);
+						tkExplosionAddItem(sim, *xValue, *yValue, angle, (TURNTYPE) sim->rules.tank_explosion_length, TK_SMALL_EXPLOSION, targetPlayer);
 						sim->callbacks.soundDistTankHit(sim->callbacks.ctx, mapX, mapY, targetPlayer);
 						sim->callbacks.tankKill(sim->callbacks.ctx, owner, targetPlayer, LAST_DEATH_BY_SHELL, 0);
 						break;
 					case TH_KILL_BIG:
 						returnValue = TRUE;
 						if (outOutcome != NULL) *outOutcome = SHELL_OUTCOME_TANK_KILL;
-						tkExplosionAddItem(sim, *xValue, *yValue, angle, TK_EXPLODE_LENGTH, TK_LARGE_EXPLOSION, targetPlayer);
+						tkExplosionAddItem(sim, *xValue, *yValue, angle, (TURNTYPE) sim->rules.tank_explosion_length, TK_LARGE_EXPLOSION, targetPlayer);
 						sim->callbacks.soundDistTankHit(sim->callbacks.ctx, mapX, mapY, targetPlayer);
 						sim->callbacks.tankKill(sim->callbacks.ctx, owner, targetPlayer, LAST_DEATH_BY_SHELL, 0);
 						break;
@@ -895,7 +895,8 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 						newTerrain = grassAddItem(sim, &sim->grs, mapX, mapY);
 						mapSetPos(sim, mp, mapX, mapY, newTerrain, FALSE, FALSE);
 						if (newTerrain == RIVER) {
-							floodAddItem(&sim->ff, mapX, mapY);
+							floodAddItem(&sim->ff, mapX, mapY,
+                       (BYTE) sim->rules.flood_fill_ticks);
 						}
 					}
 					break;
@@ -906,7 +907,8 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 						newTerrain = swampAddItem(sim, &sim->swp, mapX, mapY);
 						mapSetPos(sim, mp, mapX, mapY, newTerrain, FALSE, FALSE);
 						if (newTerrain == RIVER) {
-							floodAddItem(&sim->ff, mapX, mapY);
+							floodAddItem(&sim->ff, mapX, mapY,
+                       (BYTE) sim->rules.flood_fill_ticks);
 						}
 					}
 					break;
@@ -917,7 +919,8 @@ bool shellsCalcCollision(GameSim *sim, tank *tk, WORLD *xValue, WORLD *yValue, T
 						newTerrain = rubbleAddItem(sim, &sim->rbl, mapX, mapY);
 						mapSetPos(sim, mp, mapX, mapY, newTerrain, FALSE, FALSE);
 						if (newTerrain == RIVER) {
-							floodAddItem(&sim->ff, mapX, mapY);
+							floodAddItem(&sim->ff, mapX, mapY,
+                       (BYTE) sim->rules.flood_fill_ticks);
 						}
 					}
 					break;

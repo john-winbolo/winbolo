@@ -1128,14 +1128,19 @@ void serverSimScenarioReplayPanels(
     void *ctx,
     bool withTargeted);
 
-/* Fill a CTRL_SCENARIO_RULES from the set the attached scenario's manifest
- * holds. Always fills: an attached scenario that changes no rule states an
- * empty set, which is a different thing from the event not being sent.
- * Whether to send it at all is the caller's question — the publish sites and
- * the sync replay each ask whether a scenario is attached. Declared here
+/* How many CTRL_SCENARIO_RULES fragments the set the attached scenario's
+ * manifest holds needs. Never 0: an empty set is one fragment carrying no
+ * rows, because an empty set is an answer and no event is a different one. */
+uint8_t serverSimScenarioRulesFragCount(const ServerSim *sim);
+
+/* Fill fragment `seq` of that set. Always fills: an attached scenario that
+ * changes no rule states an empty set, which is a different thing from the
+ * event not being sent. Whether to send it at all is the caller's question —
+ * the publish sites and the sync replay each ask whether a scenario is
+ * attached, and each walks seq from 0 to the fragment count. Declared here
  * rather than on the scenario surface because both callers are the sim's
  * own. */
-void serverSimFillScenarioRulesEvent(const ServerSim *sim,
+void serverSimFillScenarioRulesEvent(const ServerSim *sim, uint8_t seq,
                                      struct ControlEvent *evt);
 
 BOLO_STATIC_ASSERT(MAX_TANKS <= 16, shadowCulledSlots_holds_one_bit_per_slot);
