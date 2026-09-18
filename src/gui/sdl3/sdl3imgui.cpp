@@ -5258,11 +5258,7 @@ static void renderMenuBar(ClientSim *cs) {
         }
 
         ImGui::Separator();
-#ifdef __APPLE__
-        if (ImGui::MenuItem(langGetText(STR_MENU_SETTINGS)))                                                  sdl3ImguiShowSettings();
-#else
-        if (ImGui::MenuItem(langGetText(STR_MENU_SETTINGS), "Ctrl+,"))                                        sdl3ImguiShowSettings();
-#endif
+        if (ImGui::MenuItem(langGetText(STR_MENU_SETTINGS),        KMOD_PRIMARY_LABEL ","))                   sdl3ImguiShowSettings();
         ImGui::EndMenu();
     }
 
