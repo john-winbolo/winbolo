@@ -108,9 +108,19 @@ int run_fog_style_setting(void) {
     int i; /* Looping variable */
     FogStyle was = gfxGetFogStyle();
 
-    UT_ASSERT_MSG(was == FOG_STYLE_GREY,
-                  "the fog style starts at %d, expected Grey (%d)",
-                  (int)was, (int)FOG_STYLE_GREY);
+    /* The default has to be a style, or the store starts in a look neither
+     * view can draw and every assertion below is meaningless. */
+    UT_ASSERT_MSG((int)FOG_STYLE_DEFAULT >= (int)FOG_STYLE_GREY &&
+                      (int)FOG_STYLE_DEFAULT < FOG_STYLE_COUNT,
+                  "FOG_STYLE_DEFAULT is %d, outside the enum",
+                  (int)FOG_STYLE_DEFAULT);
+
+    /* A player who has never picked gets the default, not style 0. The two
+     * parted company when the default moved to Darker with fog edge; Grey
+     * keeps 0 because that number is in prefs files already written. */
+    UT_ASSERT_MSG(was == FOG_STYLE_DEFAULT,
+                  "the fog style starts at %d, expected the default (%d)",
+                  (int)was, (int)FOG_STYLE_DEFAULT);
 
     for (i = 0; i < FOG_STYLE_COUNT; i++) {
         gfxSetFogStyle((FogStyle)i);
@@ -120,14 +130,22 @@ int run_fog_style_setting(void) {
     }
 
     gfxSetFogStyle((FogStyle)FOG_STYLE_COUNT);
-    UT_ASSERT_MSG(gfxGetFogStyle() == FOG_STYLE_GREY,
-                  "a style past the end left %d, expected Grey",
-                  (int)gfxGetFogStyle());
+    UT_ASSERT_MSG(gfxGetFogStyle() == FOG_STYLE_DEFAULT,
+                  "a style past the end left %d, expected the default (%d)",
+                  (int)gfxGetFogStyle(), (int)FOG_STYLE_DEFAULT);
 
     gfxSetFogStyle((FogStyle)99);
-    UT_ASSERT_MSG(gfxGetFogStyle() == FOG_STYLE_GREY,
-                  "a nonsense style left %d, expected Grey",
-                  (int)gfxGetFogStyle());
+    UT_ASSERT_MSG(gfxGetFogStyle() == FOG_STYLE_DEFAULT,
+                  "a nonsense style left %d, expected the default (%d)",
+                  (int)gfxGetFogStyle(), (int)FOG_STYLE_DEFAULT);
+
+    /* Below the enum as well as above it: atoi on a prefs value that is not a
+     * number at all can hand a negative in, and gamefront.c leans on that by
+     * reading the key with "-1" when it is missing. */
+    gfxSetFogStyle((FogStyle)-1);
+    UT_ASSERT_MSG(gfxGetFogStyle() == FOG_STYLE_DEFAULT,
+                  "a negative style left %d, expected the default (%d)",
+                  (int)gfxGetFogStyle(), (int)FOG_STYLE_DEFAULT);
 
     gfxSetFogStyle(was);
     return 0;

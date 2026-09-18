@@ -2046,11 +2046,11 @@ static const LangEntry langTable[] = {
     {2334, "Fog of war style"},
     {2335, "How ground you cannot see into is drawn. It changes the picture on your own screen only; the server sends the same map whichever you pick."},
     {2336, "Grey"},
-    {2337, "Ground you cannot see into is washed towards grey, so it comes out lighter than ground in plain sight. This is the standard look."},
+    {2337, "Ground you cannot see into is washed towards grey, so it comes out lighter than ground in plain sight. This is what the game drew before this setting existed."},
     {2338, "Darker"},
     {2339, "Ground you cannot see into is taken towards black. Roads are already black, so a road under fog looks the same as a road in plain sight."},
     {2340, "Darker with fog edge"},
-    {2341, "Darker, with the fog line drawn faintly back in along it. The band sits on the fogged side of the line, on every terrain, so the line still shows over a road, which is black and which the darkening alone cannot mark."},
+    {2341, "Darker, with the fog line drawn faintly back in along it. The band sits on the fogged side of the line, on every terrain, so the line still shows over a road, which is black and which the darkening alone cannot mark. This is the standard look."},
     {2342, "None"},
     {2343, "The map is not shaded at all, so remembered ground looks the same as ground in plain sight. It hides nothing the other styles show: which tanks and shots are drawn is the server's rule, not this setting's."},
 

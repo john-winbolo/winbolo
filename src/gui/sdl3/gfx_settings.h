@@ -21,11 +21,13 @@
  *   for the code that draws with them.
  *
  *   The first four default to 0, which is what the game did
- *   before these settings existed. The simplified view is
- *   the exception: it defaults to on, because it arrived
+ *   before these settings existed. Two are exceptions. The
+ *   simplified view defaults to on, because it arrived
  *   already switched on and is what the zoomed-out map is
- *   meant to look like. Its sub-option defaults to off,
- *   which leaves it applying everywhere.
+ *   meant to look like; its sub-option defaults to off,
+ *   which leaves it applying everywhere. The fog of war look
+ *   defaults to Darker with fog edge (FOG_STYLE_DEFAULT in
+ *   fog_look.h), not to the Grey that is style 0.
  *********************************************************/
 
 #ifndef GFX_SETTINGS_H
@@ -95,7 +97,9 @@ void              gfxSetSimplifiedOverviewOnly(bool v);
 
 /* What both views wash ground the player cannot see into with.  Read by the
    classic view's tile pass and by the full screen map's fog pass; fog_look.h
-   says what each value looks like. */
+   says what each value looks like, and FOG_STYLE_DEFAULT there is both the
+   value this starts at and where gfxSetFogStyle sends anything outside the
+   enum. */
 FogStyle          gfxGetFogStyle(void);
 void              gfxSetFogStyle(FogStyle v);
 

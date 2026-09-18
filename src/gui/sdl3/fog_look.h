@@ -27,16 +27,22 @@
  *   same squares by the same amount; only the colour changes,
  *   and None does not wash at all:
  *
- *     Grey            a blend towards mid grey. The default,
- *                     and what the game has drawn since the
- *                     dimming was dropped.
+ *     Grey            a blend towards mid grey. What the game
+ *                     drew from the dimming being dropped
+ *                     until this setting arrived, and still
+ *                     style 0, so a prefs file written before
+ *                     the setting existed reads back as the
+ *                     picture it was written against.
  *     Darker          a blend towards black, which is the
  *                     dimming that came before the grey.
  *     Darker with     the same black, plus a faint lift drawn
  *     fog edge        inside the edge of every fogged square
  *                     that faces a square in plain sight,
  *                     which puts the fog line back where the
- *                     black road swallowed it. See
+ *                     black road swallowed it. The default
+ *                     for a new player: it is the one look
+ *                     that marks the fog line on every
+ *                     terrain, the black road included. See
  *                     fog_roads.h.
  *     None            no wash. The terrain reads the same
  *                     fogged or not.
@@ -88,7 +94,8 @@
 
 /* The player's pick. The numbers are written into prefs, so they are fixed:
  * append, never renumber. 0 is what the game drew before the setting
- * existed. */
+ * existed, which is why Grey keeps it even though it is no longer what a new
+ * player gets. */
 typedef enum FogStyle {
     FOG_STYLE_GREY      = 0,
     FOG_STYLE_DARK      = 1,
@@ -97,6 +104,19 @@ typedef enum FogStyle {
 } FogStyle;
 
 #define FOG_STYLE_COUNT 4
+
+/* What a player who has never picked gets, and where a value from outside the
+ * enum lands. One name rather than a literal per site: the prefs read in
+ * gamefront.c, the store's initial value and its clamp in gfx_settings.c all
+ * read this, so there is one answer to "what is the default" and not four that
+ * can drift apart.
+ *
+ * Darker with fog edge rather than the Grey this shipped with first: it is the
+ * only look that marks the fog line on every terrain, because it draws the
+ * line itself rather than relying on the terrain changing colour under a wash,
+ * and a black road does not. A player who has already picked keeps their pick
+ * - this is read only when the key is absent or unreadable. */
+#define FOG_STYLE_DEFAULT FOG_STYLE_DARK_EDGE
 
 /* The colour the wash blends towards, for a look that washes at all. Returns
  * 0 for None, and the caller then draws no fog; the three bytes are left
