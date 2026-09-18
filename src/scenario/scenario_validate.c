@@ -26,6 +26,14 @@
  *  src/bolo/public/ and src/bolo/scenario_api/, and asking
  *  the sim what a set would do is what that surface is for.
  *
+ *  The triggers are held against the same catalogue the
+ *  round runs them from. Nothing the router cannot make
+ *  sense of raises at run time — it is skipped, silently,
+ *  which is right in the middle of a round and useless to
+ *  an author — so a hook, a field, an operator, an op or an
+ *  argument count that will not work is refused here
+ *  instead, before a round is ever started on it.
+ *
  *  The parse's own complaints — a key naming no rule, an
  *  entity index the map could not hold, a fifth tag on an
  *  entity that carries four — arrive here through the report
@@ -51,6 +59,8 @@
 
 #include "scenario_host.h"
 #include "scenario_manifest.h"
+#include "scenario_manifest_json.h" /* scnManifestTrigOpName — an operator's
+                                     * own word in a message about it */
 #include "scenario_lua.h"
 #include "sim_rules_names.h"      /* simRulesRuleName — a rule in a reason */
 #include "scenario_validate.h"
@@ -529,6 +539,307 @@ static void scnCheckBound(const ScenarioManifest *m, ScnValidateResult *out) {
     }
 }
 
+/* ── Triggers ─────────────────────────────────────────────────────── */
+
+/* Every field one catalogue row can earn. Five parameters is the widest the
+ * catalogue has and each earns at most one derived field beside itself, so
+ * ten is the most any row reaches and this has room over. */
+#define SCN_VALIDATE_TRIG_FIELDS 16
+
+/* The names one hook's payload carries, read off the catalogue once per
+ * trigger and then asked about a row at a time. */
+typedef struct {
+    ScnLuaFnField field[SCN_VALIDATE_TRIG_FIELDS];
+    size_t        count;
+} ScnTrigFields;
+
+/* The catalogue row a name answers to, hook or policy, and NULL for a name
+ * the surface has not got. *row comes back as the index scenarioLuaFnFields
+ * takes, which is the position in the same list. */
+static const ScnLuaFnRow *scnFnNamed(const char *name, size_t *row) {
+    const ScnLuaFnRow *rows;
+    size_t             n = 0;
+    size_t             i;
+
+    rows = scenarioLuaFunctions(&n);
+    for (i = 0; i < n; i++) {
+        if (strcmp(rows[i].name, name) == 0) {
+            *row = i;
+            return &rows[i];
+        }
+    }
+    return NULL;
+}
+
+/* The op row a name answers to, and NULL for a name the game table has not
+ * got. */
+static const ScnLuaRow *scnOpNamed(const char *name) {
+    const ScnLuaRow *rows;
+    size_t           n = 0;
+    size_t           i;
+
+    rows = scenarioLuaRows(&n);
+    for (i = 0; i < n; i++) {
+        if (strcmp(rows[i].name, name) == 0) {
+            return &rows[i];
+        }
+    }
+    return NULL;
+}
+
+static void scnTrigFieldsOf(size_t row, ScnTrigFields *out) {
+    out->count = scenarioLuaFnFields(row, out->field,
+                                     (size_t)SCN_VALIDATE_TRIG_FIELDS);
+    if (out->count > (size_t)SCN_VALIDATE_TRIG_FIELDS) {
+        out->count = (size_t)SCN_VALIDATE_TRIG_FIELDS;
+    }
+}
+
+static const ScnLuaFnField *scnTrigFieldNamed(const ScnTrigFields *f,
+                                              const char *name) {
+    size_t i;
+
+    for (i = 0; i < f->count; i++) {
+        if (strcmp(f->field[i].name, name) == 0) {
+            return &f->field[i];
+        }
+    }
+    return NULL;
+}
+
+/* Whether a field answers a set of names rather than one value. It is the
+ * derivation that decides, not the type alone: on_enter_region's own name
+ * parameter is typed as a region and is a plain string the payload carries,
+ * which the router reads through derive == nil as the one value it is. So eq
+ * on it holds, and reading the type alone would refuse a test that runs. */
+static bool scnTrigFieldIsSet(const ScnLuaFnField *f) {
+    return f->derived &&
+           (f->type == SCN_PARAM_TAG || f->type == SCN_PARAM_REGION);
+}
+
+static bool scnTagOnKind(const ScnManifestTags *arr, int maxEntity,
+                         const char *tag) {
+    int e;
+    int i;
+
+    for (e = 1; e <= maxEntity; e++) {
+        for (i = 0; i < (int)arr[e].count; i++) {
+            if (strcmp(arr[e].tag[i], tag) == 0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static bool scnTagCarried(const ScenarioManifest *m, const char *tag) {
+    return scnTagOnKind(m->pillTags, MAX_PILLS, tag) ||
+           scnTagOnKind(m->baseTags, MAX_BASES, tag) ||
+           scnTagOnKind(m->startTags, MAX_STARTS, tag);
+}
+
+/* One test of one trigger: the field it names, the operator it asks with,
+ * and the name on its right where that name is one the table answers for.
+ *
+ * A region a test names is not one of those. game.define_region names a
+ * rectangle for the rest of the round, so a name the table does not carry
+ * may still be a region by the time the trigger fires, and refusing it here
+ * would refuse a scenario that runs. */
+static void scnCheckTrigCond(const ScenarioManifest *m, const ScnTrigCond *c,
+                             const ScnTrigFields *fields, const char *when,
+                             unsigned trig, unsigned at,
+                             ScnValidateResult *out) {
+    const ScnLuaFnField *f;
+    char                 key[SCN_VALIDATE_KEY_LEN];
+
+    /* A row that names no field at all is the reader's report rather than
+       this one's, and saying it twice would be the same fault twice. */
+    if (c->field[0] == '\0') {
+        return;
+    }
+    snprintf(key, sizeof(key), "triggers[%u].where[%u]", trig, at);
+
+    f = scnTrigFieldNamed(fields, c->field);
+    if (f == NULL) {
+        scnIssueAdd(out, key, "'%s' is no field of %s, so this test never "
+                              "holds", c->field, when);
+        return;
+    }
+
+    if (scnTrigFieldIsSet(f)) {
+        if (c->op != SCN_TRIG_CMP_IN && c->op != SCN_TRIG_CMP_NE) {
+            const char *op = scnManifestTrigOpName(c->op);
+            scnIssueAdd(out, key,
+                        "'%s' is a set of names and '%s' asks what a set "
+                        "cannot answer; only 'in' and 'ne' hold on one",
+                        c->field, (op != NULL) ? op : "");
+        }
+    } else if (c->op == SCN_TRIG_CMP_IN) {
+        scnIssueAdd(out, key,
+                    "'in' asks whether a set holds a name and '%s' is one "
+                    "value; a test states one value and never a list",
+                    c->field);
+    }
+
+    /* The right-hand side. A reference is read off the same payload the
+       field is, so it is held to the same set of names. */
+    if (c->value.kind == SCN_TRIG_VAL_FIELD) {
+        if (c->value.text[0] != '\0' &&
+            scnTrigFieldNamed(fields, c->value.text) == NULL) {
+            scnIssueAdd(out, key,
+                        "the value names '%s', which is no field of %s, so "
+                        "this test never holds", c->value.text, when);
+        }
+        return;
+    }
+
+    /* And a tag, which only the table itself answers for: nothing puts one
+       on an entity at run time, so a tag a test names is in the table or
+       nowhere. Only a literal is knowable here — a reference is whatever the
+       payload carries when the trigger fires. */
+    if (c->value.kind != SCN_TRIG_VAL_STRING || c->value.text[0] == '\0') {
+        return;
+    }
+    if (f->type == SCN_PARAM_TAG && !scnTagCarried(m, c->value.text)) {
+        scnIssueAdd(out, key, "nothing is tagged '%s', so this test never "
+                              "holds", c->value.text);
+    }
+}
+
+/* One action of one trigger: the op it names and the arguments it was
+ * given. */
+static void scnCheckTrigAct(const ScnTrigAct *a, unsigned trig, unsigned at,
+                            ScnValidateResult *out) {
+    const ScnLuaRow *op;
+    char             key[SCN_VALIDATE_KEY_LEN];
+    size_t           required = 0;
+    size_t           i;
+
+    /* An action naming no op is the reader's report, as above. */
+    if (a->op[0] == '\0') {
+        return;
+    }
+    snprintf(key, sizeof(key), "triggers[%u].actions[%u]", trig, at);
+
+    /* call runs a top-level function of the author's own script rather than
+       a row of the game table, so none of what an op is held to applies to
+       it. What it can be held to is naming one: the arguments that function
+       takes are the script's own and nothing here can read them. */
+    if (strcmp(a->op, "call") == 0) {
+        if (a->numArgs == 0 ||
+            (a->args[0].kind != SCN_TRIG_VAL_STRING &&
+             a->args[0].kind != SCN_TRIG_VAL_FIELD)) {
+            scnIssueAdd(out, key,
+                        "call runs a function of the script's own, and its "
+                        "first argument is that function's name");
+        }
+        return;
+    }
+
+    op = scnOpNamed(a->op);
+    if (op == NULL) {
+        scnIssueAdd(out, key, "'%s' is no op the game table carries, so this "
+                              "action does nothing", a->op);
+        return;
+    }
+    if (!scenarioLuaOpIsScalar(op)) {
+        scnIssueAdd(out, key,
+                    "%s takes a table or a function, which an action cannot "
+                    "state; a script's own Lua reaches it through the call "
+                    "action", a->op);
+        return;
+    }
+
+    /* The last argument the op insists on. Read as a position rather than a
+       count, so an optional one written before a required one still leaves
+       the required one counted. */
+    for (i = 0; i < op->paramCount; i++) {
+        if (!op->params[i].optional) {
+            required = i + 1;
+        }
+    }
+    if ((size_t)a->numArgs < required ||
+        (size_t)a->numArgs > op->paramCount) {
+        const char *s = (a->numArgs == 1) ? "" : "s";
+
+        if (required == op->paramCount) {
+            scnIssueAdd(out, key, "%s is given %u argument%s and takes %u",
+                        a->op, (unsigned)a->numArgs, s,
+                        (unsigned)op->paramCount);
+        } else {
+            scnIssueAdd(out, key, "%s is given %u argument%s and takes %u to "
+                                  "%u", a->op, (unsigned)a->numArgs, s,
+                        (unsigned)required, (unsigned)op->paramCount);
+        }
+    }
+}
+
+/* Whether a trigger could do anything at all: the hook it listens on, the
+ * fields its tests name, the operators those fields take, the ops its
+ * actions call and the arguments those ops were given.
+ *
+ * The router skips what it cannot make sense of and says nothing about it,
+ * which is right at run time — raising there would spend one of the
+ * scenario's errors on a fault nobody can fix mid-round — and leaves an
+ * author with a trigger that never fires and no reason why. This is where
+ * they are told instead, so every skip the router makes is unreachable by
+ * the time a round starts.
+ *
+ * All of it is answered by the catalogue and the table itself, so an editor
+ * holding a script and no map is told what a server would tell it. A
+ * trigger has no name, so the key is its position, counted from zero as the
+ * two readers count it. */
+static void scnCheckTriggers(const ScenarioManifest *m,
+                             ScnValidateResult *out) {
+    uint8_t i;
+
+    for (i = 0; i < m->numTriggers; i++) {
+        const ScnTrigger  *t     = &m->triggers[i];
+        const ScnLuaFnRow *fn    = NULL;
+        ScnTrigFields      fields;
+        char               key[SCN_VALIDATE_KEY_LEN];
+        size_t             row   = 0;
+        uint8_t            j;
+
+        fields.count = 0;
+        snprintf(key, sizeof(key), "triggers[%u]", (unsigned)i);
+
+        /* A trigger with no when at all is the reader's report. */
+        if (t->when[0] != '\0') {
+            fn = scnFnNamed(t->when, &row);
+            if (fn == NULL) {
+                scnIssueAdd(out, key, "'%s' names no hook, so this trigger "
+                                      "never runs", t->when);
+            } else if (fn->kind == SCN_FN_POLICY) {
+                /* Real name, wrong half of the surface, and the reason is
+                   not the one an unknown name gets: the host asks a policy
+                   a question and reads the answer, and a list of actions
+                   has none to give it. */
+                scnIssueAdd(out, key,
+                            "'%s' is a policy, which answers a question a "
+                            "list of actions cannot, so this trigger never "
+                            "runs", t->when);
+                fn = NULL;
+            } else {
+                scnTrigFieldsOf(row, &fields);
+            }
+        }
+
+        /* The tests are read against the hook's payload, so there is nothing
+           to hold them to until the hook is one. The actions are held to the
+           catalogue either way. */
+        if (fn != NULL) {
+            for (j = 0; j < t->numWhere; j++) {
+                scnCheckTrigCond(m, &t->where[j], &fields, t->when,
+                                 (unsigned)i, (unsigned)j, out);
+            }
+        }
+        for (j = 0; j < t->numActions; j++) {
+            scnCheckTrigAct(&t->actions[j], (unsigned)i, (unsigned)j, out);
+        }
+    }
+}
+
 /* ── The whole check ──────────────────────────────────────────────── */
 
 /* The checks themselves, against source that has already been named and an out
@@ -602,6 +913,13 @@ static bool scnValidateSource(const ServerSim *sim, const char *src,
     }
     scnCheckRegions(&out->manifest, out);
     scnCheckBound(&out->manifest, out);
+    /* The triggers read no map either: a hook, a field, an operator, an op
+       and an argument count are the catalogue's business, and a tag a test
+       names is the table's own. Last of the checks because a
+       table of 64 triggers can report several faults apiece, and the list
+       holds 64 in all — anything after this could be pushed off the end by
+       a trigger table nobody has fixed yet. */
+    scnCheckTriggers(&out->manifest, out);
 
     scnAttributeLines(out, src, srcLen);
 

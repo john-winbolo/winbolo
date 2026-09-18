@@ -5732,6 +5732,10 @@ set(_unit_test_names
     scenario_validate_source_rule_range
     scenario_validate_source_pushed_triggers
     scenario_validate_trigger_caps
+    scenario_validate_trigger_hook
+    scenario_validate_trigger_field
+    scenario_validate_trigger_operator
+    scenario_validate_trigger_action
     scenario_lua_every_row_answers
     scenario_lua_op_arguments_match_the_doc
     scenario_lua_read_index_passes_through

@@ -2838,6 +2838,10 @@ int run_scenario_validate_source_pushed_conflict(void);
 int run_scenario_validate_source_rule_range(void);
 int run_scenario_validate_source_pushed_triggers(void);
 int run_scenario_validate_trigger_caps(void);
+int run_scenario_validate_trigger_hook(void);
+int run_scenario_validate_trigger_field(void);
+int run_scenario_validate_trigger_operator(void);
+int run_scenario_validate_trigger_action(void);
 
 /* The binding table (test_scenario_lua.c): every row of the registry
  * called once, the three index rules, the nils an absent entity reads
