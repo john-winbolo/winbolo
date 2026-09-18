@@ -174,6 +174,9 @@ int run_sim_rules_range_paired(void) {
         { SIM_RULE_lgm_cost_pill_new,        SIM_RULE_tank_full_trees },
         { SIM_RULE_lgm_cost_mine,            SIM_RULE_tank_full_mines },
         { SIM_RULE_pill_repair_amount,       SIM_RULE_pill_max_armour },
+        { SIM_RULE_pill_shell_damage,        SIM_RULE_pill_max_armour },
+        { SIM_RULE_tank_explosion_damage,    SIM_RULE_pill_max_armour },
+        { SIM_RULE_sound_soft_range,         SIM_RULE_sound_none_range },
         { SIM_RULE_gunsight_min,             SIM_RULE_gunsight_max }
     };
     const size_t rows = sizeof(paired) / sizeof(paired[0]);
