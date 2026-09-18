@@ -19,6 +19,12 @@
  *   a C header naming Lua types, so the rows reach this file
  *   as plain text through mapeditor_scenario_fndesc.h.
  *
+ *   Triggers lists the triggers the manifest declares and sets
+ *   which hook each one runs on, off that same catalogue. The
+ *   tests and the actions under a trigger are not drawn here;
+ *   the row counts them instead, so a Remove says what it is
+ *   about to take.
+ *
  *   The tags view lists the map's own pills, bases and
  *   starts, which this file cannot ask the map for: those
  *   lists are bolo internals and nothing here reaches into
@@ -1634,6 +1640,124 @@ static void meScnFunctionsBody(MEScenarioState *st, int *view) {
 }
 
 /* -------------------------------------------------------
+ * Triggers
+ * ------------------------------------------------------- */
+
+/* How wide the hook combo opens: enough for the longest name the catalogue
+ * carries with the arrow beside it, and narrow enough to leave the label and
+ * the Remove button on the same line at the size the panel opens at. */
+static const float kTriggerWhenWidth = 220.0f;
+
+/* The first hook the catalogue carries, which is what Add Trigger seeds a new
+ * trigger with. One is never made blank — the validator refuses a trigger that
+ * names no hook, so a blank one would be born broken — and the row's combo is
+ * where the author picks the one they meant. "" if the catalogue carries no
+ * hook at all, which the form refuses. */
+static const char *meScnFirstHook(void) {
+    const size_t count = meScnFnCount();
+    size_t       row;
+
+    for (row = 0; row < count; row++) {
+        if (meScnFnIsHook(row)) {
+            return meScnFnName(row);
+        }
+    }
+    return "";
+}
+
+/* Which hook one trigger runs on, picked off the catalogue.
+ *
+ * Hooks alone. A policy is a question the host asks and reads the answer to,
+ * which a list of actions has none to give, so a trigger naming one would
+ * never run and the validator refuses it.
+ *
+ * A name the manifest already holds that the list does not offer shows as
+ * itself, the way the metadata view's game type does, so picking from the list
+ * is the only thing that replaces it. */
+static void meScnTriggerWhen(MEScenarioForm *f, int index, const char *when) {
+    const size_t count = meScnFnCount();
+    size_t       row;
+
+    ImGui::SetNextItemWidth(kTriggerWhenWidth);
+    if (!ImGui::BeginCombo(langGetText(STR_MAPEDIT_SCENARIO_TRIGGER_WHEN),
+                           when)) {
+        return;
+    }
+    for (row = 0; row < count; row++) {
+        const char *name = meScnFnName(row);
+
+        if (!meScnFnIsHook(row)) {
+            continue;
+        }
+        ImGui::PushID((int)row);
+        if (ImGui::Selectable(name, strcmp(name, when) == 0)) {
+            meScenarioFormSetTriggerWhen(f, index, name);
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndCombo();
+}
+
+/* The triggers the scenario declares: one row each, saying where it sits, what
+ * it listens on and how much it carries.
+ *
+ * The tests and the actions themselves are not drawn here. The count is, so an
+ * author can see that a trigger has something in it before pressing the button
+ * that throws it away. */
+static void meScnTriggersBody(MEScenarioForm *f) {
+    ScenarioManifest *m        = &f->manifest;
+    int               removeAt = -1;
+    int               i;
+
+    if (m->numTriggers == 0) {
+        meScnHint(langGetText(STR_MAPEDIT_SCENARIO_NO_TRIGGERS));
+    }
+
+    for (i = 0; i < (int)m->numTriggers; i++) {
+        const ScnTrigger *t    = &m->triggers[i];
+        MessageArgs       args = {};
+
+        ImGui::PushID(i);
+        ImGui::Separator();
+
+        /* Where the trigger sits, spelled the way the validator keys it, so a
+           problem read off the issues list under the script names the row the
+           author is looking at. */
+        ImGui::Text("triggers[%d]", i);
+
+        ImGui::SameLine();
+        args.number  = (int)t->numWhere;
+        args.number2 = (int)t->numActions;
+        meScnHint(langGetTextFmt(STR_MAPEDIT_SCENARIO_TRIGGER_ROWS, &args));
+
+        /* The combo and Remove go under that line rather than after it: the
+           four of them on one line run off the right of the window at the size
+           the panel opens at. */
+        ImGui::Indent();
+        meScnTriggerWhen(f, i, t->when);
+        ImGui::SameLine();
+        if (ImGui::Button(langGetText(STR_MAPEDIT_SCENARIO_REMOVE))) {
+            removeAt = i;
+        }
+        ImGui::Unindent();
+        ImGui::PopID();
+    }
+
+    if (removeAt >= 0) {
+        meScenarioFormRemoveTrigger(f, removeAt);
+    }
+
+    ImGui::Separator();
+    if (m->numTriggers >= SCN_TRIGGERS_MAX) {
+        meScnHint(langGetText(STR_MAPEDIT_SCENARIO_TRIGGERS_FULL));
+        return;
+    }
+    if (ImGui::Button(langGetText(STR_MAPEDIT_SCENARIO_ADD_TRIGGER))) {
+        meScenarioFormAddTrigger(f, meScnFirstHook());
+    }
+}
+
+/* -------------------------------------------------------
  * The panel
  * ------------------------------------------------------- */
 void mapEditorImguiScenarioPanel(MEScenarioState *st, MEScenarioForm *form,
@@ -1689,6 +1813,9 @@ void mapEditorImguiScenarioPanel(MEScenarioState *st, MEScenarioForm *form,
     ImGui::SameLine();
     meScnViewButton(view, ME_SCENARIO_VIEW_FUNCTIONS,
                     STR_MAPEDIT_SCENARIO_VIEW_FUNCTIONS);
+    ImGui::SameLine();
+    meScnViewButton(view, ME_SCENARIO_VIEW_TRIGGERS,
+                    STR_MAPEDIT_SCENARIO_VIEW_TRIGGERS);
     ImGui::Separator();
 
     switch (*view) {
@@ -1707,6 +1834,9 @@ void mapEditorImguiScenarioPanel(MEScenarioState *st, MEScenarioForm *form,
             break;
         case ME_SCENARIO_VIEW_FUNCTIONS:
             meScnFunctionsBody(st, view);
+            break;
+        case ME_SCENARIO_VIEW_TRIGGERS:
+            meScnTriggersBody(form);
             break;
         default:
             meScnScriptBody(st, check, mapPath, wantSave, wantReload,

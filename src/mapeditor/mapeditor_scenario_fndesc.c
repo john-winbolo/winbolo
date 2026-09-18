@@ -149,6 +149,15 @@ const char *meScnFnReturns(size_t row) {
     return (r != NULL && r->returns != NULL) ? r->returns : "";
 }
 
+bool meScnFnIsHook(size_t row) {
+    const ScnLuaFnRow *r = meScnFnRowAt(row);
+
+    /* The kind rather than the name: the three hook kinds are what the host
+       dispatches and a policy is what it questions, and a function that moved
+       between the two lists would keep its name. */
+    return r != NULL && r->kind != SCN_FN_POLICY;
+}
+
 size_t meScnFnParamList(size_t row, char *out, size_t outLen) {
     const ScnLuaFnRow *r    = meScnFnRowAt(row);
     size_t             want = 0;

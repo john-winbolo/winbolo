@@ -36,6 +36,7 @@
 #ifndef MAPEDITOR_SCENARIO_FNDESC_H
 #define MAPEDITOR_SCENARIO_FNDESC_H
 
+#include <stdbool.h>
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -59,6 +60,14 @@ const char *meScnFnName(size_t row);
  * hook, which answers nothing, and for a row that is not in the catalogue,
  * so this also tells a policy from a hook. */
 const char *meScnFnReturns(size_t row);
+
+/* Whether row names a hook rather than a policy. A trigger runs on a hook; a
+ * policy is asked a question and a list of actions cannot answer one. False
+ * for a row that is not in the catalogue.
+ *
+ * Read off the row's kind, so a function moved between the two lists changes
+ * sides here with it. */
+bool meScnFnIsHook(size_t row);
 
 /* The parameter list in parentheses, in the author's own names:
  * "(p, mx, my, respawn, scripted)", or "()" for a function that takes none.

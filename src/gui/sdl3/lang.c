@@ -2430,6 +2430,12 @@ static const LangEntry langTable[] = {
     {2477, "written with a colon, so self takes the first argument and every argument after it shifts"},
     {2478, "defined {number} times; the last one is the one that runs"},
     {2479, "out of range —"},
+    {2480, "Triggers"},
+    {2481, "No triggers, so this scenario does only what its script does"},
+    {2482, "Runs on"},
+    {2483, "{number} tests, {number2} actions"},
+    {2484, "Add Trigger"},
+    {2485, "No room for another trigger"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

@@ -27,6 +27,12 @@
 #include <stdint.h>
 #include <string.h>
 
+/* The function catalogue, for the one thing the triggers below ask of it:
+ * whether a name is a hook. It arrives through this header rather than through
+ * scenario_lua.h because that one names Lua types, and this module is compiled
+ * into the embedded editor as well as the standalone one. */
+#include "mapeditor_scenario_fndesc.h"
+
 /* SCENARIO_API_VERSION: the version of the scenario surface this build
  * writes, so a new manifest states the one it was authored against. Only the
  * constant is taken from there: the editor links the scenario runtime and the
@@ -423,6 +429,97 @@ void meScenarioFormRemoveRegion(MEScenarioForm *f, int index) {
 
 int meScenarioFormRegionCount(const MEScenarioForm *f) {
     return (f == NULL) ? 0 : (int)f->manifest.numRegions;
+}
+
+/* ── Triggers ─────────────────────────────────────────────────────── */
+
+/* Whether the catalogue carries that name as a hook, and whether the field a
+ * trigger holds it in has room for it.
+ *
+ * Both halves refuse rather than repair. A name the catalogue has not got is
+ * a hook nothing will ever dispatch, and a policy name is a question a list of
+ * actions cannot answer — scenario_validate.c refuses each of those with a
+ * reason of its own. A name too long for the field would be cut, and a cut
+ * hook name is no longer a hook name, so the length is checked here rather
+ * than truncated at the copy. Every hook the catalogue carries fits with room
+ * over. */
+static bool meScnHookName(const char *when) {
+    size_t count;
+    size_t row;
+
+    if (when == NULL || when[0] == '\0' ||
+        strlen(when) >= SCN_TRIGGER_NAME_LEN) {
+        return false;
+    }
+    count = meScnFnCount();
+    for (row = 0; row < count; row++) {
+        if (strcmp(meScnFnName(row), when) == 0) {
+            return meScnFnIsHook(row);
+        }
+    }
+    return false;
+}
+
+/* The hook a trigger runs on, written over whatever the field held. The whole
+ * field is cleared first, so nothing of the old name is left past the
+ * terminator for a byte-for-byte comparison of two manifests to read as a
+ * difference. */
+static void meScnSetWhen(ScnTrigger *t, const char *when) {
+    const size_t n = strlen(when);
+
+    memset(t->when, 0, sizeof(t->when));
+    memcpy(t->when, when, n);
+}
+
+bool meScenarioFormAddTrigger(MEScenarioForm *f, const char *when) {
+    ScnTrigger *t;
+
+    if (f == NULL || !meScnHookName(when)) {
+        return false;
+    }
+    if (f->manifest.numTriggers >= SCN_TRIGGERS_MAX) {
+        return false;
+    }
+
+    t = &f->manifest.triggers[f->manifest.numTriggers];
+    memset(t, 0, sizeof(*t));
+    meScnSetWhen(t, when);
+    f->manifest.numTriggers++;
+    f->dirty = true;
+    return true;
+}
+
+void meScenarioFormRemoveTrigger(MEScenarioForm *f, int index) {
+    if (f == NULL || index < 0 || index >= (int)f->manifest.numTriggers) {
+        return;
+    }
+    memmove(&f->manifest.triggers[index], &f->manifest.triggers[index + 1],
+            (size_t)((int)f->manifest.numTriggers - index - 1) *
+                sizeof(f->manifest.triggers[0]));
+    f->manifest.numTriggers--;
+    memset(&f->manifest.triggers[f->manifest.numTriggers], 0,
+           sizeof(f->manifest.triggers[0]));
+    f->dirty = true;
+}
+
+bool meScenarioFormSetTriggerWhen(MEScenarioForm *f, int index,
+                                  const char *when) {
+    if (f == NULL || index < 0 || index >= (int)f->manifest.numTriggers) {
+        return false;
+    }
+    if (!meScnHookName(when)) {
+        return false;
+    }
+    /* The tests and the actions are left alone: which hook a trigger listens
+       on is the author's to change without losing what they wrote. A test that
+       named a field of the old hook is what the validator reports. */
+    meScnSetWhen(&f->manifest.triggers[index], when);
+    f->dirty = true;
+    return true;
+}
+
+int meScenarioFormTriggerCount(const MEScenarioForm *f) {
+    return (f == NULL) ? 0 : (int)f->manifest.numTriggers;
 }
 
 bool meScenarioFormDirty(const MEScenarioForm *f) {

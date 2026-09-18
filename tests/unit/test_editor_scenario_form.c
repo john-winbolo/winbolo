@@ -35,22 +35,65 @@
  *                               SCN_REGIONS_MAX bound
  * run_editor_form_dirty_flag  — the flag the editor's unsaved-changes prompt
  *                               reads: clear on an empty form, set by a rule, a
- *                               team, a tag and a region alike, and clear again
- *                               after the reset a map change does
+ *                               team, a tag, a region and a trigger alike, and
+ *                               clear again after the reset a map change does
  * run_editor_form_team_ids    — what the lobby form draws under a team's
  *                               number: nothing for the numbers Add Team hands
  *                               out, a duplicate against the later of two teams
  *                               sharing one, and out of range at either end
+ * run_editor_form_triggers    — a trigger is made naming a hook and never
+ *                               blank; a policy, an unknown name and an index
+ *                               the table has not got are all refused; remove
+ *                               closes the list up; each mutator marks the
+ *                               form edited
+ * run_editor_form_triggers_full — the list fills to its bound and refuses the
+ *                               next trigger rather than overrunning
  */
 
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
 
+#include "mapeditor_scenario_fndesc.h"
 #include "mapeditor_scenario_form.h"
 #include "scenario_host.h"
 #include "sim_rules_names.h"
 #include "test_harness.h"
+
+/* The nth hook the catalogue carries, counting from 0, and "" past the end.
+ * The names are read out of the catalogue rather than written in here, so a
+ * function renamed there does not leave a case naming one nothing carries. */
+static const char *efHookAt(int nth) {
+    const size_t count = meScnFnCount();
+    size_t       row;
+    int          seen = 0;
+
+    for (row = 0; row < count; row++) {
+        if (!meScnFnIsHook(row)) {
+            continue;
+        }
+        if (seen == nth) {
+            return meScnFnName(row);
+        }
+        seen++;
+    }
+    return "";
+}
+
+/* The first policy, which is a real name on the wrong half of the surface: the
+ * host asks a policy a question and reads the answer, and a list of actions has
+ * none to give it. */
+static const char *efPolicy(void) {
+    const size_t count = meScnFnCount();
+    size_t       row;
+
+    for (row = 0; row < count; row++) {
+        if (!meScnFnIsHook(row)) {
+            return meScnFnName(row);
+        }
+    }
+    return "";
+}
 
 int run_editor_form_init(void) {
     MEScenarioForm f;
@@ -516,6 +559,13 @@ int run_editor_form_dirty_flag(void) {
     meScenarioFormReset(&f);
     UT_ASSERT(!meScenarioFormDirty(&f));
 
+    /* A trigger, from the triggers view. */
+    UT_ASSERT(meScenarioFormAddTrigger(&f, efHookAt(0)));
+    UT_ASSERT(meScenarioFormDirty(&f));
+
+    meScenarioFormReset(&f);
+    UT_ASSERT(!meScenarioFormDirty(&f));
+
     return 0;
 }
 
@@ -563,6 +613,161 @@ int run_editor_form_team_ids(void) {
     /* A row the template does not seat has nothing said about it. */
     UT_ASSERT(meScenarioFormTeamIdProblem(&f, 2) == ME_SCENARIO_TEAM_ID_OK);
     UT_ASSERT(meScenarioFormTeamIdProblem(&f, -1) == ME_SCENARIO_TEAM_ID_OK);
+
+    return 0;
+}
+
+int run_editor_form_triggers(void) {
+    char           oversize[SCN_TRIGGER_NAME_LEN * 2];
+    MEScenarioForm f;
+    const char    *first  = efHookAt(0);
+    const char    *second = efHookAt(1);
+    const char    *third  = efHookAt(2);
+    const char    *policy = efPolicy();
+    size_t         row;
+
+    /* The two halves of the catalogue are a partition, and the side a row is
+     * on is the side its kind puts it on: a policy is the row that says what
+     * it answers, a hook the row that answers nothing. That is what makes the
+     * view's combo offerable — it lists the hooks and leaves the policies out
+     * — and what the refusals below rest on. */
+    for (row = 0; row < meScnFnCount(); row++) {
+        UT_ASSERT_MSG(meScnFnIsHook(row) == (meScnFnReturns(row)[0] == '\0'),
+                      "row %d is %s and answers '%s'", (int)row,
+                      meScnFnIsHook(row) ? "a hook" : "a policy",
+                      meScnFnReturns(row));
+    }
+    UT_ASSERT(!meScnFnIsHook(meScnFnCount()));
+
+    UT_ASSERT_MSG(first[0] != '\0' && second[0] != '\0' && third[0] != '\0',
+                  "the catalogue carries fewer than three hooks");
+    UT_ASSERT_MSG(policy[0] != '\0', "the catalogue carries no policy");
+    UT_ASSERT(strcmp(first, second) != 0 && strcmp(second, third) != 0);
+
+    meScenarioFormInit(&f);
+    UT_ASSERT(meScenarioFormTriggerCount(&f) == 0);
+
+    /* A trigger is created already naming the hook it was given, never blank:
+     * the validator refuses one that names no hook. */
+    UT_ASSERT(meScenarioFormAddTrigger(&f, first));
+    UT_ASSERT_MSG(meScenarioFormTriggerCount(&f) == 1, "%d triggers",
+                  meScenarioFormTriggerCount(&f));
+    UT_ASSERT_MSG(strcmp(f.manifest.triggers[0].when, first) == 0,
+                  "the trigger runs on '%s', not '%s'",
+                  f.manifest.triggers[0].when, first);
+    UT_ASSERT(f.manifest.triggers[0].numWhere == 0);
+    UT_ASSERT(f.manifest.triggers[0].numActions == 0);
+    UT_ASSERT(meScenarioFormDirty(&f));
+
+    /* A policy is a name the catalogue carries and a trigger cannot run on. */
+    UT_ASSERT(!meScenarioFormAddTrigger(&f, policy));
+    /* And these are no hook the catalogue has: one nothing is called, nothing
+     * at all, and one too long for the field to hold whole. */
+    UT_ASSERT(!meScenarioFormAddTrigger(&f, "on_nothing_at_all"));
+    UT_ASSERT(!meScenarioFormAddTrigger(&f, ""));
+    UT_ASSERT(!meScenarioFormAddTrigger(&f, NULL));
+    memset(oversize, 'x', sizeof(oversize) - 1);
+    oversize[sizeof(oversize) - 1] = '\0';
+    UT_ASSERT(!meScenarioFormAddTrigger(&f, oversize));
+    UT_ASSERT_MSG(meScenarioFormTriggerCount(&f) == 1, "%d triggers",
+                  meScenarioFormTriggerCount(&f));
+
+    /* Two more, each on a hook of its own, so a removal has something to close
+     * up over and the survivors can be told apart. */
+    UT_ASSERT(meScenarioFormAddTrigger(&f, second));
+    UT_ASSERT(meScenarioFormAddTrigger(&f, third));
+    UT_ASSERT(meScenarioFormTriggerCount(&f) == 3);
+
+    /* What the middle one carries, so the close-up is checked over the whole
+     * row rather than over its hook name alone. */
+    f.manifest.triggers[1].numWhere   = SCN_TRIGGER_CONDS_MAX;
+    f.manifest.triggers[1].numActions = SCN_TRIGGER_ACTIONS_MAX;
+
+    /* Which hook a trigger runs on is the author's to change. */
+    f.dirty = false;
+    UT_ASSERT(meScenarioFormSetTriggerWhen(&f, 0, third));
+    UT_ASSERT(strcmp(f.manifest.triggers[0].when, third) == 0);
+    UT_ASSERT(meScenarioFormDirty(&f));
+    UT_ASSERT(meScenarioFormSetTriggerWhen(&f, 0, first));
+
+    /* An index the table has not got, and every name Add refuses, leave the
+     * trigger running on what it ran on before. */
+    UT_ASSERT(!meScenarioFormSetTriggerWhen(&f, -1, second));
+    UT_ASSERT(!meScenarioFormSetTriggerWhen(&f, 3, second));
+    UT_ASSERT(!meScenarioFormSetTriggerWhen(&f, 0, policy));
+    UT_ASSERT(!meScenarioFormSetTriggerWhen(&f, 0, "on_nothing_at_all"));
+    UT_ASSERT(!meScenarioFormSetTriggerWhen(&f, 0, ""));
+    UT_ASSERT(!meScenarioFormSetTriggerWhen(&f, 0, NULL));
+    UT_ASSERT(!meScenarioFormSetTriggerWhen(&f, 0, oversize));
+    UT_ASSERT_MSG(strcmp(f.manifest.triggers[0].when, first) == 0,
+                  "a refused name left the trigger on '%s'",
+                  f.manifest.triggers[0].when);
+
+    /* Removing the first closes the other two up over it, whole. */
+    f.dirty = false;
+    meScenarioFormRemoveTrigger(&f, 0);
+    UT_ASSERT_MSG(meScenarioFormTriggerCount(&f) == 2, "%d triggers left",
+                  meScenarioFormTriggerCount(&f));
+    UT_ASSERT(meScenarioFormDirty(&f));
+    UT_ASSERT_MSG(strcmp(f.manifest.triggers[0].when, second) == 0,
+                  "the survivor runs on '%s', not '%s'",
+                  f.manifest.triggers[0].when, second);
+    UT_ASSERT(f.manifest.triggers[0].numWhere == SCN_TRIGGER_CONDS_MAX);
+    UT_ASSERT(f.manifest.triggers[0].numActions == SCN_TRIGGER_ACTIONS_MAX);
+    UT_ASSERT(strcmp(f.manifest.triggers[1].when, third) == 0);
+
+    /* The slot past the end is cleared rather than left holding the last row
+     * twice. */
+    UT_ASSERT(f.manifest.triggers[2].when[0] == '\0');
+    UT_ASSERT(f.manifest.triggers[2].numWhere == 0);
+    UT_ASSERT(f.manifest.triggers[2].numActions == 0);
+
+    /* An index off either end changes nothing. */
+    meScenarioFormRemoveTrigger(&f, -1);
+    meScenarioFormRemoveTrigger(&f, 2);
+    UT_ASSERT(meScenarioFormTriggerCount(&f) == 2);
+
+    /* And a form with no triggers answers for one nobody added. */
+    UT_ASSERT(meScenarioFormTriggerCount(NULL) == 0);
+    UT_ASSERT(!meScenarioFormAddTrigger(NULL, first));
+    UT_ASSERT(!meScenarioFormSetTriggerWhen(NULL, 0, first));
+
+    return 0;
+}
+
+int run_editor_form_triggers_full(void) {
+    MEScenarioForm f;
+    const char    *hook  = efHookAt(0);
+    const char    *other = efHookAt(1);
+    int            i;
+
+    UT_ASSERT(hook[0] != '\0' && other[0] != '\0');
+
+    meScenarioFormInit(&f);
+
+    for (i = 0; i < SCN_TRIGGERS_MAX; i++) {
+        UT_ASSERT_MSG(meScenarioFormAddTrigger(&f, hook),
+                      "trigger %d refused below the bound", i);
+    }
+    UT_ASSERT_MSG(meScenarioFormTriggerCount(&f) == SCN_TRIGGERS_MAX,
+                  "%d triggers", meScenarioFormTriggerCount(&f));
+
+    /* One more is refused, and the full list is left as it was. */
+    UT_ASSERT(!meScenarioFormAddTrigger(&f, hook));
+    UT_ASSERT(meScenarioFormTriggerCount(&f) == SCN_TRIGGERS_MAX);
+
+    /* A trigger already in the full list still changes hook, because that
+     * writes no new row. */
+    UT_ASSERT(meScenarioFormSetTriggerWhen(&f, SCN_TRIGGERS_MAX - 1, other));
+    UT_ASSERT(meScenarioFormTriggerCount(&f) == SCN_TRIGGERS_MAX);
+    UT_ASSERT(strcmp(f.manifest.triggers[SCN_TRIGGERS_MAX - 1].when, other) ==
+              0);
+
+    /* And with one row gone there is room again. */
+    meScenarioFormRemoveTrigger(&f, 0);
+    UT_ASSERT(meScenarioFormTriggerCount(&f) == SCN_TRIGGERS_MAX - 1);
+    UT_ASSERT(meScenarioFormAddTrigger(&f, hook));
+    UT_ASSERT(meScenarioFormTriggerCount(&f) == SCN_TRIGGERS_MAX);
 
     return 0;
 }

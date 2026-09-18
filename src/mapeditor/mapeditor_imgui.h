@@ -324,7 +324,8 @@ typedef enum {
     ME_SCENARIO_VIEW_LOBBY,
     ME_SCENARIO_VIEW_RULES,
     ME_SCENARIO_VIEW_TAGS,
-    ME_SCENARIO_VIEW_FUNCTIONS
+    ME_SCENARIO_VIEW_FUNCTIONS,
+    ME_SCENARIO_VIEW_TRIGGERS
 } MEScenarioView;
 
 /* Render the scenario panel: the button row and whichever view it picks.

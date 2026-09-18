@@ -28,6 +28,11 @@
  *   from 0 and the file counts from 1, so editor entity i is
  *   manifest entry i + 1 and that sum is written once, in
  *   meScnTagsAt below.
+ *
+ *   The triggers are here as well, as whole rows: adding one,
+ *   dropping one and setting which hook it runs on. A hook name
+ *   is held against the function catalogue, which this module
+ *   reaches through mapeditor_scenario_fndesc.h.
  *********************************************************/
 
 #ifndef MAPEDITOR_SCENARIO_FORM_H
@@ -151,6 +156,27 @@ void meScenarioFormRemoveRegion(MEScenarioForm *f, int index);
  * a copy with both cleared. */
 int meScenarioFormTagCount(const MEScenarioForm *f);
 int meScenarioFormRegionCount(const MEScenarioForm *f);
+
+/* Appends a trigger set to run on the named hook. False when the table already
+ * holds SCN_TRIGGERS_MAX of them, or the name is not one the catalogue carries
+ * as a hook.
+ *
+ * A trigger is created already naming one, never blank: the validator refuses
+ * a trigger that names no hook, so a blank one would be born broken. A policy
+ * name is refused for the same reason — the host asks a policy a question and
+ * a list of actions has none to give it. */
+bool meScenarioFormAddTrigger(MEScenarioForm *f, const char *when);
+
+/* Drops the trigger at index, keeping the rest of triggers[] packed. */
+void meScenarioFormRemoveTrigger(MEScenarioForm *f, int index);
+
+/* Changes which hook a trigger runs on. False for an index the table has not
+ * got, and for a name the catalogue does not carry as a hook. */
+bool meScenarioFormSetTriggerWhen(MEScenarioForm *f, int index,
+                                  const char *when);
+
+/* How many triggers the manifest carries. */
+int meScenarioFormTriggerCount(const MEScenarioForm *f);
 
 /* What the tags view needs to know about the open map: how many of each entity
  * it holds, where each one sits, and the rectangle the selection tool is

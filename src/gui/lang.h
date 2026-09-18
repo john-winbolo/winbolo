@@ -2563,6 +2563,22 @@
 #define STR_MAPEDIT_SCENARIO_FN_COLON         2477
 #define STR_MAPEDIT_SCENARIO_FN_TWICE         2478
 
+/* The triggers view: the triggers a scenario declares, each one a hook to
+ * listen on with a list of tests and a list of actions under it. The view adds
+ * and drops whole triggers and sets which hook each runs on; the line beside a
+ * trigger counts what it carries, so an author knows what Remove is about to
+ * take away.
+ *
+ * The combo offers hooks alone. A policy is a question the host asks and reads
+ * the answer to, which a list of actions has none to give, so a trigger that
+ * named one would never run. */
+#define STR_MAPEDIT_SCENARIO_VIEW_TRIGGERS    2480
+#define STR_MAPEDIT_SCENARIO_NO_TRIGGERS      2481
+#define STR_MAPEDIT_SCENARIO_TRIGGER_WHEN     2482
+#define STR_MAPEDIT_SCENARIO_TRIGGER_ROWS     2483
+#define STR_MAPEDIT_SCENARIO_ADD_TRIGGER      2484
+#define STR_MAPEDIT_SCENARIO_TRIGGERS_FULL    2485
+
 /* The lobby's rules popup: the button on the scenario line, the window's
  * caption, and the four columns a row is drawn in — the rule, what the
  * classic game plays it at, what the scenario set it to, and what that does

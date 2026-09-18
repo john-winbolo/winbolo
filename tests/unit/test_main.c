@@ -1647,6 +1647,8 @@ static const UnitTestEntry s_tests[] = {
     { "editor_form_regions",                     run_editor_form_regions                     },
     { "editor_form_dirty_flag",                  run_editor_form_dirty_flag                  },
     { "editor_form_team_ids",                    run_editor_form_team_ids                    },
+    { "editor_form_triggers",                    run_editor_form_triggers                    },
+    { "editor_form_triggers_full",               run_editor_form_triggers_full               },
     { "editor_pack_mod_round_trip",              run_editor_pack_mod_round_trip              },
     { "editor_pack_map_round_trip",              run_editor_pack_map_round_trip              },
     { "editor_pack_twice_identical",             run_editor_pack_twice_identical             },
