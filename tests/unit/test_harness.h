@@ -3054,6 +3054,13 @@ int run_scenario_rules_codec(void);
 int run_scenario_rules_published(void);
 int run_scenario_rules_reaches_joiner(void);
 
+/* A set too big for one control segment (test_scenario_rules_fragments.c):
+ * the fragments a full set publishes, each through the body codec at the
+ * capacity the delivery path really hands it and back into a client; and
+ * what a reader holds between two fragments and after a stream is cut. */
+int run_scenario_rules_fragments(void);
+int run_scenario_rules_fragments_partial(void);
+
 /* The bot hint (test_scenario_hint.c): the table a fixture brain gets back
  * whole, every refusal the arm answers with, and the record naming the seat
  * and the verb. */

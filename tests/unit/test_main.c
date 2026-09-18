@@ -1589,6 +1589,8 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_rules_codec",                            run_scenario_rules_codec                            },
     { "scenario_rules_published",                        run_scenario_rules_published                        },
     { "scenario_rules_reaches_joiner",                   run_scenario_rules_reaches_joiner                   },
+    { "scenario_rules_fragments",                        run_scenario_rules_fragments                        },
+    { "scenario_rules_fragments_partial",                run_scenario_rules_fragments_partial                },
     { "scenario_hint_reaches_brain",                     run_scenario_hint_reaches_brain                     },
     { "scenario_hint_refusals",                          run_scenario_hint_refusals                          },
     { "scenario_hint_records",                           run_scenario_hint_records                           },

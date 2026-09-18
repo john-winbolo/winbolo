@@ -1487,15 +1487,38 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
            and the description the lobby settings event already carries.
            The whole set is replaced, so a row the new set does not name is
            gone rather than left behind, and the empty set a detach sends
-           leaves the lobby with nothing to show. */
-        uint8_t n = evt->u.scenarioRules.count;
-        uint8_t kept = 0;
+           leaves the lobby with nothing to show.
+
+           Reassembled from in-order fragments, the way the bot-pool and
+           brain-docs streams are: the set lands in the staging arrays and
+           replaces the live one on the last fragment, so a reader between
+           two fragments is handed the old set whole rather than the new one
+           half-built. Fragments ride the reliable, ordered control channel,
+           so seq is monotonic; any gap or mismatch throws the partial set
+           away rather than splicing two sets together. */
+        uint8_t seq   = evt->u.scenarioRules.seq;
+        uint8_t frags = evt->u.scenarioRules.fragCount;
+        uint8_t n     = evt->u.scenarioRules.count;
         uint8_t i;
-        if (n > (uint8_t)CTRL_SCENARIO_RULES_MAX) {
-            n = (uint8_t)CTRL_SCENARIO_RULES_MAX;
+
+        if (frags == 0) break;   /* no set has no fragments */
+        if (n > (uint8_t)SCN_RULES_FRAG_ROWS) {
+            n = (uint8_t)SCN_RULES_FRAG_ROWS;
         }
-        memset(cs->scenarioRuleIndex, 0, sizeof(cs->scenarioRuleIndex));
-        memset(cs->scenarioRuleValue, 0, sizeof(cs->scenarioRuleValue));
+        if (seq == 0) {
+            cs->scenarioRulesExpected  = frags;
+            cs->scenarioRulesNextSeq   = 0;
+            cs->scenarioRulesStageCount = 0;
+        }
+        if (seq != cs->scenarioRulesNextSeq ||
+            frags != cs->scenarioRulesExpected ||
+            (int)cs->scenarioRulesStageCount + (int)n >
+                (int)CTRL_SCENARIO_RULES_MAX) {
+            cs->scenarioRulesExpected   = 0;   /* abort */
+            cs->scenarioRulesNextSeq    = 0;
+            cs->scenarioRulesStageCount = 0;
+            break;
+        }
         for (i = 0; i < n; i++) {
             /* A row naming no rule is dropped rather than kept, so every
                row a reader is handed names one. The wire decoder refuses
@@ -1505,11 +1528,27 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                 (uint8_t)CTRL_SCENARIO_RULES_MAX) {
                 continue;
             }
-            cs->scenarioRuleIndex[kept] = evt->u.scenarioRules.rule[i];
-            cs->scenarioRuleValue[kept] = evt->u.scenarioRules.value[i];
-            kept++;
+            cs->scenarioRuleStageIndex[cs->scenarioRulesStageCount] =
+                evt->u.scenarioRules.rule[i];
+            cs->scenarioRuleStageValue[cs->scenarioRulesStageCount] =
+                evt->u.scenarioRules.value[i];
+            cs->scenarioRulesStageCount++;
         }
-        cs->scenarioRulesCount = kept;
+        cs->scenarioRulesNextSeq++;
+        if (cs->scenarioRulesNextSeq == frags) {
+            memset(cs->scenarioRuleIndex, 0, sizeof(cs->scenarioRuleIndex));
+            memset(cs->scenarioRuleValue, 0, sizeof(cs->scenarioRuleValue));
+            memcpy(cs->scenarioRuleIndex, cs->scenarioRuleStageIndex,
+                   cs->scenarioRulesStageCount *
+                       sizeof(cs->scenarioRuleIndex[0]));
+            memcpy(cs->scenarioRuleValue, cs->scenarioRuleStageValue,
+                   cs->scenarioRulesStageCount *
+                       sizeof(cs->scenarioRuleValue[0]));
+            cs->scenarioRulesCount      = cs->scenarioRulesStageCount;
+            cs->scenarioRulesExpected   = 0;
+            cs->scenarioRulesNextSeq    = 0;
+            cs->scenarioRulesStageCount = 0;
+        }
         break;
     }
     }

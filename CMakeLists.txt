@@ -3555,6 +3555,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # And the replay that hands the set to a client registering after the
     # attach, so a mid-lobby joiner reads what the host reads.
     tests/unit/test_scenario_rules_reaches_joiner.c
+    # A set too big for one control segment: the fragments a full set
+    # publishes, each encoded into a body the size the delivery path really
+    # hands the encoder and read back into a client, plus what a reader holds
+    # between two fragments and after a stream is cut short.
+    tests/unit/test_scenario_rules_fragments.c
     # The bot hint: the flat table a scenario hands one bot, delivered into
     # that bot's brain VM as on_scenario_hint(table) — the fixture brain gets
     # it back whole, custom keys included — plus every refusal the arm
@@ -5832,6 +5837,8 @@ set(_unit_test_names
     scenario_rules_codec
     scenario_rules_published
     scenario_rules_reaches_joiner
+    scenario_rules_fragments
+    scenario_rules_fragments_partial
     scenario_hint_reaches_brain
     scenario_hint_refusals
     scenario_hint_records

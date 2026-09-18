@@ -680,12 +680,18 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
       break;
 
     case CTRL_SCENARIO_RULES: {
-      /* The rules a scenario's own manifest set. Written out in full: a run
-         over a scripted map is exactly where a reader wants to see which
-         rules the script asked for. A plain map never publishes this event,
-         so a recording of one carries no line of it at all. */
+      /* One fragment of the rules a scenario's own manifest set. Written out
+         in full: a run over a scripted map is exactly where a reader wants to
+         see which rules the script asked for. A plain map never publishes
+         this event, so a recording of one carries no line of it at all.
+
+         seq and frags go out with the rows so a reader can put a split set
+         back together, and so a recording of one that was cut short shows it
+         rather than reading as a short set. */
       unsigned k;
-      fprintf(f, ",\"count\":%u,\"rules\":[",
+      fprintf(f, ",\"seq\":%u,\"frags\":%u,\"count\":%u,\"rules\":[",
+              (unsigned)evt->u.scenarioRules.seq,
+              (unsigned)evt->u.scenarioRules.fragCount,
               (unsigned)evt->u.scenarioRules.count);
       for (k = 0; k < (unsigned)evt->u.scenarioRules.count; k++) {
         fprintf(f, "%s{\"rule\":%u,\"value\":%g}", (k == 0) ? "" : ",",

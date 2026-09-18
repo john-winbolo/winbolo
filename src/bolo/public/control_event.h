@@ -249,22 +249,53 @@ typedef enum {
      * while a scenario is attached, so a mid-lobby joiner reads the same
      * table the host does.
      *
+     * Carried in fragments, like CTRL_LOBBY_BOT_POOL_CHUNK and
+     * CTRL_LOBBY_BRAIN_DOCS_CHUNK: a whole set outgrew one control segment
+     * once the rule list passed 113 rows, so each event is `seq` of
+     * `fragCount` and a reader installs the set on the last of them. An
+     * empty set is still one fragment, because an empty set is an answer.
+     *
      * Appended at the END, like the four above: the tables in
      * transport_control_codec.c are indexed by this enum. */
     CTRL_SCENARIO_RULES,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
-/* How many rows CTRL_SCENARIO_RULES can carry: one per rule there is, taken
- * from SIM_RULE_LIST rather than written out, so a rule added to that list
- * cannot overflow the event. A manifest names each rule at most once, so a
- * set can hold every rule and no more.
+/* How many rows a whole scenario rules set can hold: one per rule there is,
+ * taken from SIM_RULE_LIST rather than written out, so a rule added to that
+ * list cannot overflow the set. A manifest names each rule at most once, so
+ * a set can hold every rule and no more.
  *
- * The count and each row's rule index travel as one byte, which is what the
- * assertion below holds the list to. */
+ * Each row's rule index travels as one byte, which is what the assertion
+ * below holds the list to. */
 #define CTRL_SCENARIO_RULES_MAX SIM_RULE_COUNT
 BOLO_STATIC_ASSERT(CTRL_SCENARIO_RULES_MAX <= 255,
-                   ctrl_scenario_rules_count_and_index_fit_a_byte);
+                   ctrl_scenario_rules_index_fits_a_byte);
+
+/* Rows in ONE fragment, and the number of fragments a whole set needs.
+ *
+ * A row is 9 bytes on the wire ([rule 1][value 8]) and a fragment spends 3
+ * more on seq, fragCount and its own row count, so 64 rows is a 579-byte
+ * body. One control event is one channel segment, and a segment carries
+ * CHANNEL_CONTROL_SEG (1024) bytes less the channel frame's type(1) and
+ * bodyLen(2) — 1021. 579 sits well inside that, the way the 900-byte
+ * fragments of the other two chunked events do; transport_control_codec.c
+ * pins it against the segment, which it can see and this public header
+ * cannot.
+ *
+ * The row cap is a number of its own rather than the rule count because a
+ * fragment has to stay a fixed, modest size while the rule list grows: at
+ * 64 rows the variant is 584 bytes and stays well under the round-stats
+ * member that sets the union's size, and a ServerSim holds 200
+ * ControlEvents in its lobby chat buffer, so every byte the union grows by
+ * is paid two hundred times over on every sim.
+ *
+ * seq and fragCount travel as one byte each, which the assertion holds. */
+#define SCN_RULES_FRAG_ROWS 64
+#define CTRL_SCENARIO_RULES_FRAGS_MAX \
+    ((CTRL_SCENARIO_RULES_MAX + SCN_RULES_FRAG_ROWS - 1) / SCN_RULES_FRAG_ROWS)
+BOLO_STATIC_ASSERT(CTRL_SCENARIO_RULES_FRAGS_MAX <= 255,
+                   ctrl_scenario_rules_seq_and_frag_count_fit_a_byte);
 
 /* Body capacity for CTRL_CHAT.  Worst case is the localized server
  * message: 2 langid + 1 argCount + 4 * (1 lenByte + (PLAYER_NAME_LEN-1)
@@ -918,8 +949,18 @@ typedef struct ControlEvent {
             uint8_t destPlayer;
         } scnMarker;
 
-        /* CTRL_SCENARIO_RULES — the rules a scenario's own manifest sets, as
-         * its author wrote them. Empty when no scenario is attached.
+        /* CTRL_SCENARIO_RULES — fragment `seq` of `fragCount` of the rules a
+         * scenario's own manifest sets, as its author wrote them. Empty when
+         * no scenario is attached, and an empty set is one fragment with no
+         * rows rather than no event.
+         *
+         * count is the rows in THIS fragment, never the whole set: a reader
+         * appends each fragment's rows in order and has the set once it has
+         * taken seq == fragCount - 1. The fragments of one set run 0..
+         * fragCount-1 with no gaps, on a reliable ordered channel, so a
+         * fragment that does not continue the one in hand means the stream
+         * was interrupted and the partial set is thrown away rather than
+         * spliced.
          *
          * rule[i] is a SimRuleIndex, which is the index every other side of
          * the fence names a rule by, and value[i] is what the manifest set
@@ -929,20 +970,21 @@ typedef struct ControlEvent {
          *
          * Two arrays rather than one array of {rule, value} pairs, and it
          * has to stay two: a pair pads to sixteen bytes to carry one byte of
-         * index and eight of value, which would make this variant 1480 bytes
-         * and the largest member of the union. A ServerSim holds 200
-         * ControlEvents in its lobby chat buffer, so every byte the union
-         * grows by is paid two hundred times over on every sim. Split, the
-         * variant is 832 bytes, the union's size stays the one the round
-         * stats summary sets, and the sim pays nothing for this event.
+         * index and eight of value, which would make this variant 1032 bytes
+         * instead of 584. A ServerSim holds 200 ControlEvents in its lobby
+         * chat buffer, so every byte the union grows by is paid two hundred
+         * times over on every sim. Split, the union's size stays the one the
+         * round stats summary sets and the sim pays nothing for this event.
          *
-         * The wire form is the same either way: the body is a count and then
-         * a [rule][value] row per entry, which the encoder builds by walking
-         * the two arrays together. */
+         * The wire form is the same either way: the body is seq, fragCount,
+         * a row count and then a [rule][value] row per entry, which the
+         * encoder builds by walking the two arrays together. */
         struct {
-            uint8_t count;
-            uint8_t rule[CTRL_SCENARIO_RULES_MAX];   /* a SimRuleIndex per row */
-            double  value[CTRL_SCENARIO_RULES_MAX];  /* the value at the same index */
+            uint8_t seq;        /* which fragment, 0-based */
+            uint8_t fragCount;  /* how many make the whole set; never 0 */
+            uint8_t count;      /* rows in THIS fragment */
+            uint8_t rule[SCN_RULES_FRAG_ROWS];   /* a SimRuleIndex per row */
+            double  value[SCN_RULES_FRAG_ROWS];  /* the value at the same index */
         } scenarioRules;
     } u;
 } ControlEvent;
