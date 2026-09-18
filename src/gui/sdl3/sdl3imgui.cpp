@@ -5258,7 +5258,7 @@ static void renderMenuBar(ClientSim *cs) {
         }
 
         ImGui::Separator();
-        if (ImGui::MenuItem(langGetText(STR_MENU_SETTINGS)))                                                  sdl3ImguiShowSettings();
+        if (ImGui::MenuItem(langGetText(STR_MENU_SETTINGS),        KMOD_PRIMARY_LABEL ","))                   sdl3ImguiShowSettings();
         ImGui::EndMenu();
     }
 
@@ -6357,6 +6357,10 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 break;
             case SDL_SCANCODE_K:
                 sdl3ImguiShowKeySetup();
+                break;
+            case SDL_SCANCODE_COMMA:
+                /* Ctrl+, opens Settings, the shortcut most desktop apps use. */
+                sdl3ImguiShowSettings();
                 break;
             case SDL_SCANCODE_S:
                 windowSaveMap(cs);

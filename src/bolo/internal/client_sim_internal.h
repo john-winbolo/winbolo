@@ -758,11 +758,22 @@ struct ClientSim {
      * scenario stays attached across the return to lobby, which is where the
      * presentation is dropped and where this set is read most — the lobby's
      * popup is the only thing that says what a rules-only mod does. Each
-     * event replaces the whole set, and the empty one a detach publishes is
-     * what empties it, so nothing else clears it. */
+     * set replaces the whole of the last one, and the empty one a detach
+     * publishes is what empties it, so nothing else clears it. */
     uint8_t  scenarioRulesCount;
     uint8_t  scenarioRuleIndex[CTRL_SCENARIO_RULES_MAX];
     double   scenarioRuleValue[CTRL_SCENARIO_RULES_MAX];
+
+    /* Where the fragments of the set being taken now are put down, until the
+     * last one lands and the three fields above are replaced in one step.
+     * Staged rather than written straight into them for the reason the
+     * bot-pool and brain-docs blobs are: a reader between two fragments would
+     * otherwise be handed half of the new set under the old set's count. */
+    uint8_t  scenarioRulesStageCount;
+    uint8_t  scenarioRulesExpected;   /* fragCount of the set in hand; 0 = none */
+    uint8_t  scenarioRulesNextSeq;
+    uint8_t  scenarioRuleStageIndex[CTRL_SCENARIO_RULES_MAX];
+    double   scenarioRuleStageValue[CTRL_SCENARIO_RULES_MAX];
 
     /* Most recent server reject — surfaced via toast/log when set.
      * lobbyLastRejectPacket is set to 0 when no pending message. */

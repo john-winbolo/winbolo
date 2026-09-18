@@ -1979,6 +1979,17 @@ STR_DLGSKIN_PUBLISH_NEEDUSER=Endast ett skin i din egen skinmapp kan publiceras.
 STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP=Det här skinnet har finare grafik för endast vissa sprites, så Matcha zoom bygger samma rutor som Klassisk. Hög detalj använder den finare grafiken där skinnet har den.
 STR_DLGSKIN_RECFILTER_LBL=Rekommenderat filter:
 STR_DLGSKIN_RECOMMENDED_TAG=(rekommenderad)
+STR_DLGSKIN_FOGSTYLE=Stil för krigsdimma
+STR_DLGSKIN_FOGSTYLE_TIP=Hur mark du inte kan se in i ritas. Det ändrar bara bilden på din egen skärm; servern skickar samma karta oavsett vilken du väljer.
+STR_DLGSKIN_FOGSTYLE_GREY=Grå
+STR_DLGSKIN_FOGSTYLE_GREY_TIP=Mark du inte kan se in i tonas mot grått, så den blir ljusare än mark som syns just nu.
+STR_DLGSKIN_FOGSTYLE_DARK=Mörkare
+STR_DLGSKIN_FOGSTYLE_DARK_TIP=Mark du inte kan se in i dras mot svart. Vägar är redan svarta, så en väg under dimman ser likadan ut som en väg som syns just nu.
+STR_DLGSKIN_FOGSTYLE_DARKROADS=Mörkare med dimkant
+STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP=Mörkare, med dimgränsen svagt återritad längs den. Bandet ligger på dimmans sida av gränsen, på alla terrängtyper, så gränsen syns även över en väg, som är svart och som mörkläggningen ensam inte kan märka ut. Det här är standardutseendet.
+STR_DLGSKIN_FOGSTYLE_NONE=Ingen
+STR_DLGSKIN_FOGSTYLE_NONE_TIP=Kartan skuggas inte alls, så mark du minns ser likadan ut som mark som syns just nu. Den döljer inget som de andra stilarna visar: vilka tankar och granater som ritas är serverns regel, inte den här inställningens.
+STR_DLGSKIN_FOGSTYLE_NONE_NOTE=Obs: det här ändrar bara din lokala visning, det stänger inte av inställningen för krigsdimma i spelupplägget. Tankar och granater kommer att försvinna där krigsdimman skulle visas.
 
 # Map Overview and the full screen map
 STR_MENU_MAP_OVERVIEW=Kartöversikt

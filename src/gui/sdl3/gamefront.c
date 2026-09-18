@@ -3819,6 +3819,21 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("SETTINGS", "SimplifiedOverviewOnly", "No", buff, FILENAME_MAX);
   gfxSetSimplifiedOverviewOnly(YESNO_TO_TRUEFALSE(buff[0]));
 
+  /* Fog of war look: 0 Grey / 1 Darker / 2 Darker with fog edge / 3 None.
+     The fallback is "-1" rather than a style number so that a missing key and
+     an unreadable one take the same road out - both fail the range check below
+     and land on FOG_STYLE_DEFAULT, which is the one place the default is
+     written down.  A player who has picked keeps their pick: only an absent or
+     out-of-range value is replaced. */
+  prefsGetString("SETTINGS", "FogStyle", "-1", buff, FILENAME_MAX);
+  {
+    int v = atoi(buff);
+    if (v < (int)FOG_STYLE_GREY || v >= FOG_STYLE_COUNT) {
+      v = (int)FOG_STYLE_DEFAULT;
+    }
+    gfxSetFogStyle((FogStyle)v);
+  }
+
   /* Gamepad — Path B rebindable action table.  Start from defaults so
      missing prefs keys leave each action at its historical mapping;
      present keys overlay on top.  inputGamepadInit may run after this
@@ -4507,6 +4522,8 @@ void gameFrontPutPrefs(keyItems *keys) {
                  TRUEFALSE_TO_STR(gfxGetSimplifiedZoomOut()));
   prefsSetString("SETTINGS", "SimplifiedOverviewOnly",
                  TRUEFALSE_TO_STR(gfxGetSimplifiedOverviewOnly()));
+  intToStr((int)gfxGetFogStyle(), buff, sizeof(buff));
+  prefsSetString("SETTINGS", "FogStyle", buff);
 
   /* Gamepad — Path B rebindable action table.  Four keys per action:
      gpb_<name>_pri_{kind,code} and gpb_<name>_sec_{kind,code} where

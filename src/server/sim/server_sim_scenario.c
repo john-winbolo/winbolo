@@ -3874,6 +3874,8 @@ void serverSimSetScenarioRules(ServerSim *sim, const ScnOpSetRule *rules,
                                int count) {
     ControlEvent evt;
     int          i;
+    uint8_t      frags;
+    uint8_t      seq;
 
     if (sim == NULL) return;
     memset(sim->scenarioRules, 0, sizeof(sim->scenarioRules));
@@ -3890,8 +3892,14 @@ void serverSimSetScenarioRules(ServerSim *sim, const ScnOpSetRule *rules,
             sim->scenarioRulesCount++;
         }
     }
-    serverSimFillScenarioRulesEvent(sim, &evt);
-    serverSimPublishControl(sim, &evt);
+    /* Published as the fragments the set needs, in order and back to back: a
+       reader installs the set when the last one lands, so a set split in two
+       reaches the lobby as one replacement rather than two. */
+    frags = serverSimScenarioRulesFragCount(sim);
+    for (seq = 0; seq < frags; seq++) {
+        serverSimFillScenarioRulesEvent(sim, seq, &evt);
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 void serverSimSetScenarioState(ServerSim *sim, void *state) {

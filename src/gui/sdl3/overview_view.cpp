@@ -43,6 +43,7 @@
 
 #include "overview_view.h"
 #include "overview_fog.h"   /* overviewFogBuildMask and the fog's constants */
+#include "fog_roads_draw.h" /* the edge bands the Darker with fog edge look adds */
 #include "key_claims.h"     /* keyIsClaimedByGame */
 #include "build_cursor.h"   /* buildCursorSetTile */
 
@@ -64,6 +65,7 @@ extern "C" {
 #include "tilenum.h"
 #include "mapview.h"         /* MapViewCtx */
 #include "mapview_overlay.h" /* mapViewDrawOverlay — the whole entity layer */
+#include "gfx_settings.h"    /* gfxGetFogStyle — the player's fog of war look */
 #include "../ping_kinds.h"   /* pingDisplayAlpha */
 #include "gfx_settings.h"   /* the simplified view setting */
 #include "map_markers.h"    /* the pill disc and the base square */
@@ -458,9 +460,9 @@ static bool overviewViewEnsureFog(OverviewView *v, SDL_Renderer *r) {
      * keeps the edge where the mask puts it. The view target above is set the
      * same way. */
     SDL_SetTextureScaleMode(v->fog, SDL_SCALEMODE_NEAREST);
-    /* The fog's colour — src is white, so this alone picks it. Grey rather
-     * than black: see fog_look.h for why a darkening had nothing to work on. */
-    SDL_SetTextureColorMod(v->fog, FOG_LOOK_R, FOG_LOOK_G, FOG_LOOK_B);
+    /* The fog's colour is the colour mod — src is white, so that alone picks
+     * it — and the player can change it while the game runs, so it is set per
+     * frame in overviewViewDrawFog rather than once here. */
     v->fogRenderer = r;
     return true;
 }
@@ -517,8 +519,17 @@ static void overviewViewUploadFog(OverviewView *v, const OverviewMap *om) {
  * flags are 64K of bytes. */
 static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
                                 const OverviewCamera *cam, int viewW, int viewH,
-                                const OverviewMap *om) {
+                                const OverviewMap *om,
+                                int left, int top, int right, int bottom) {
+    /* What the player has asked fog to look like. None draws nothing at all,
+     * so the mask is not even rebuilt: the one that is already there stays
+     * good, and picking a look that washes again uses it. */
+    FogStyle      style = gfxGetFogStyle();
+    unsigned char fogR = 0, fogG = 0, fogB = 0;
+
+    if (fogLookColour(style, &fogR, &fogG, &fogB) == 0) return;
     if (!overviewViewEnsureFog(v, r)) return;
+    SDL_SetTextureColorMod(v->fog, fogR, fogG, fogB);
 
     /* With line of sight on, the hidden squares move as the tank drives without
      * any rect moving, so the map's generation is what the mask is held against
@@ -550,6 +561,78 @@ static void overviewViewDrawFog(OverviewView *v, SDL_Renderer *r,
                       tilePx * (float)MAP_ARRAY_SIZE,
                       tilePx * (float)MAP_ARRAY_SIZE };
     SDL_RenderTexture(r, v->fog, NULL, &dst);
+
+    /* The fog line that the Darker with fog edge look draws back in, over the
+     * blit that has just gone down. A second walk of the visible squares
+     * rather than a pass folded into the terrain loop: the mask the bands are
+     * gated on is built here, and a square is only reached at all if the mask
+     * says it is fogged, which most of a zoomed-out map is not.
+     *
+     * The same mask says whether each neighbour is fogged, so the band lands
+     * on exactly the line the blit above draws, on its fogged side.
+     *
+     * Dropped outright once a square is too small to hold the fade, which is
+     * where the band would be a line over the whole square rather than an
+     * edge on it — and where there are the most squares to walk. Three bands
+     * of a pixel each with road left between them needs nine pixels a square;
+     * under that the pass does not run, which is what lets the painter keep
+     * its bands a whole pixel wide rather than thinning them to fit. */
+    if (fogLookDrawsFogEdge(style) &&
+        tilePx >= (float)(FOG_ROAD_BANDS * 3)) {
+        const BYTE *mask = v->fogMask;
+        FogRoadPainter painter;
+        fogRoadPainterBegin(&painter, r);
+        /* y outer, x inner — the other way round from the terrain pass above,
+         * and for the same reason it goes the way it does. The terrain reads
+         * om->tile, which is [x][y]; this reads the fog mask, which is a
+         * texture's worth of rows, so the walk that is contiguous for one is
+         * strided for the other. The mask is what every square is tested
+         * against, so the walk follows the mask and the three rows it needs
+         * are held as pointers rather than recomputed per square. */
+        for (int my = top; my <= bottom; my++) {
+            const BYTE *row  = mask + (size_t)my * OVERVIEW_FOG_MASK_SIDE;
+            const BYTE *rowU = (my > 0) ? row - OVERVIEW_FOG_MASK_SIDE : NULL;
+            const BYTE *rowD = (my < MAP_ARRAY_SIZE - 1)
+                                   ? row + OVERVIEW_FOG_MASK_SIDE : NULL;
+            for (int mx = left; mx <= right; mx++) {
+                if (row[mx] == 0) continue;   /* in plain sight */
+
+                /* Off the map counts as fogged, so no band is drawn along the
+                 * map border. The border is deep sea in every map the game
+                 * ships, so this is a guard rather than a case that comes
+                 * up. */
+                int lf = (mx > 0) ? (row[mx - 1] != 0) : 1;
+                int rf = (mx < MAP_ARRAY_SIZE - 1) ? (row[mx + 1] != 0) : 1;
+                int uf = rowU ? (rowU[mx] != 0) : 1;
+                int df = rowD ? (rowD[mx] != 0) : 1;
+
+                /* The cheap half of the rule first. Fog with fog on all four
+                 * sides is not at the fog line and takes no band whatever is
+                 * on it, and that is most of a fogged map — so the square is
+                 * dropped here, before the strided read of om->tile that the
+                 * rest of the rule would need. */
+                unsigned char edges = fogEdgeSides(lf, rf, uf, df);
+                if (edges == 0) continue;
+
+                /* Ground the player has never seen. The terrain pass skips it
+                 * and leaves the black clear showing, so a band here would be
+                 * drawn on nothing. Tested the same way and for the same
+                 * reason it is tested there. */
+                BYTE tile = om->tile[mx][my];
+                if (tile == OVERVIEW_UNSEEN) continue;
+                if (!fogEdgeTileWantsBand(tile)) continue;
+
+                float ex = 0.0f, ey = 0.0f;
+                overviewCameraWorldToScreen(cam, viewW, viewH, (float)mx,
+                                            (float)my, &ex, &ey);
+                /* Rounded the way the terrain pass rounds, so a band sits on
+                 * the tile it belongs to rather than half a pixel off it. */
+                fogRoadPainterSquare(&painter, edges, SDL_roundf(ex),
+                                     SDL_roundf(ey), tilePx, tilePx);
+            }
+        }
+        fogRoadPainterEnd(&painter);
+    }
 }
 
 /* Black over the finished frame, for as long as the sim says the death is in
@@ -1148,7 +1231,8 @@ extern "C" void overviewViewRenderOffscreen(OverviewView *v, SDL_Renderer *r,
                                        &left, &top, &right, &bottom)) {
             overviewViewDrawTerrain(r, tiles, sheetScale, &v->cam, w, h, om,
                                     left, top, right, bottom, simple);
-            overviewViewDrawFog(v, r, &v->cam, w, h, om);
+            overviewViewDrawFog(v, r, &v->cam, w, h, om,
+                                left, top, right, bottom);
         }
 
         /* Smart pings on the ground, on the same terms the classic view draws

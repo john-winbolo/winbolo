@@ -17,21 +17,25 @@
  * Purpose:
  *   Holds the graphics settings the player picks - tile
  *   detail, animation smoothness, smooth shells, texture
- *   filtering and the simplified view - for the code that
- *   draws with them.
+ *   filtering, the simplified view and the fog of war look -
+ *   for the code that draws with them.
  *
  *   The first four default to 0, which is what the game did
- *   before these settings existed. The simplified view is
- *   the exception: it defaults to on, because it arrived
+ *   before these settings existed. Two are exceptions. The
+ *   simplified view defaults to on, because it arrived
  *   already switched on and is what the zoomed-out map is
- *   meant to look like. Its sub-option defaults to off,
- *   which leaves it applying everywhere.
+ *   meant to look like; its sub-option defaults to off,
+ *   which leaves it applying everywhere. The fog of war look
+ *   defaults to Darker with fog edge (FOG_STYLE_DEFAULT in
+ *   fog_look.h), not to the Grey that is style 0.
  *********************************************************/
 
 #ifndef GFX_SETTINGS_H
 #define GFX_SETTINGS_H
 
 #include <stdbool.h>
+
+#include "fog_look.h" /* FogStyle - what fog over unseen ground looks like */
 
 #ifdef __cplusplus
 extern "C" {
@@ -90,6 +94,27 @@ bool              gfxGetSimplifiedZoomOut(void);
 void              gfxSetSimplifiedZoomOut(bool v);
 bool              gfxGetSimplifiedOverviewOnly(void);
 void              gfxSetSimplifiedOverviewOnly(bool v);
+
+/* What both views wash ground the player cannot see into with.  Read by the
+   classic view's tile pass and by the full screen map's fog pass; fog_look.h
+   says what each value looks like, and FOG_STYLE_DEFAULT there is both the
+   value this starts at and where gfxSetFogStyle sends anything outside the
+   enum. */
+FogStyle          gfxGetFogStyle(void);
+void              gfxSetFogStyle(FogStyle v);
+
+/* Put every setting above back to the value a fresh install starts at - the
+   same values the declarations here describe, and the ones the prefs loader
+   overwrites when the player has a saved pick.
+
+   The store is one set of file-scope values for the whole process, so a test
+   that wants to assert what a new player gets has no other way back to that
+   state once another test has set something; without this, such a test only
+   passes while it happens to run first.  It is a plain operation rather than
+   test scaffolding: a Restore defaults button in the Settings dialog wants
+   exactly this call.  It writes only this store - nothing is saved to prefs
+   and no view is told, so a caller that wants either does that itself. */
+void              gfxSettingsResetDefaults(void);
 
 #ifdef __cplusplus
 }

@@ -819,6 +819,24 @@
 #define STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP  1984
 #define STR_DLGSKIN_RECFILTER_LBL           1985
 #define STR_DLGSKIN_RECOMMENDED_TAG         1986
+/* Fog of war style: the dropdown, its four looks, and a line each saying
+ * what the look does. Sits with the other graphics settings because it is
+ * one - it changes how the client paints ground the player is remembering,
+ * and changes nothing the server sends. */
+#define STR_DLGSKIN_FOGSTYLE                2334
+#define STR_DLGSKIN_FOGSTYLE_TIP            2335
+#define STR_DLGSKIN_FOGSTYLE_GREY           2336
+#define STR_DLGSKIN_FOGSTYLE_GREY_TIP       2337
+#define STR_DLGSKIN_FOGSTYLE_DARK           2338
+#define STR_DLGSKIN_FOGSTYLE_DARK_TIP       2339
+#define STR_DLGSKIN_FOGSTYLE_DARKROADS      2340
+#define STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP  2341
+#define STR_DLGSKIN_FOGSTYLE_NONE           2342
+#define STR_DLGSKIN_FOGSTYLE_NONE_TIP       2343
+/* Shown under the dropdown while None is picked, because None is the one
+ * choice a player could read as switching fog of war off. It does not: the
+ * server still decides what this client is sent and what it may draw. */
+#define STR_DLGSKIN_FOGSTYLE_NONE_NOTE      2344
 
 /* Tracker Setup dialog */
 #define STR_DLGTRACKER_WINTITLE             771
@@ -2605,24 +2623,47 @@
  * the rule as SIM_RULE_LIST spells it, and in that order, so the table in
  * sim_rules_phrase.c is generated from the list rather than written out. A
  * rule's own name is not translated — it is what a manifest, a script and an
- * operator line all spell — so there is no id for it here. */
-#define STR_RULE_DESC_tank_reload_ticks          2334
-#define STR_RULE_DESC_tank_full_shells           2335
-#define STR_RULE_DESC_tank_full_mines            2336
-#define STR_RULE_DESC_tank_full_trees            2337
-#define STR_RULE_DESC_tank_full_armour           2338
-#define STR_RULE_DESC_tank_death_ticks           2339
-#define STR_RULE_DESC_tank_water_ticks           2340
-#define STR_RULE_DESC_shell_damage               2341
-#define STR_RULE_DESC_mine_damage                2342
-#define STR_RULE_DESC_just_fired_ticks           2343
-#define STR_RULE_DESC_gunsight_min               2344
+ * operator line all spell — so there is no id for it here.
+ *
+ * The numbers run in three stretches rather than one. The first eleven rules
+ * had 2334 to 2344, which the fog style strings took as well; moving these
+ * eleven to the end was the smaller change of the two. The last fifty-three
+ * are the rules the table gained after the middle stretch was numbered. The
+ * order of the block is SIM_RULE_LIST's throughout, which is the order that
+ * matters, and a hole in the numbers costs nothing: langTable is searched by
+ * id rather than indexed by it. */
+#define STR_RULE_DESC_tank_reload_ticks          2539
+#define STR_RULE_DESC_tank_full_shells           2540
+#define STR_RULE_DESC_tank_full_mines            2541
+#define STR_RULE_DESC_tank_full_trees            2542
+#define STR_RULE_DESC_tank_full_armour           2543
+#define STR_RULE_DESC_tank_death_ticks           2544
+#define STR_RULE_DESC_tank_water_ticks           2545
+#define STR_RULE_DESC_shell_damage               2546
+#define STR_RULE_DESC_mine_damage                2547
+#define STR_RULE_DESC_mine_damage_range          2486
+#define STR_RULE_DESC_mine_fatal_divisor         2487
+#define STR_RULE_DESC_water_loss_shells          2488
+#define STR_RULE_DESC_water_loss_mines           2489
+#define STR_RULE_DESC_just_fired_ticks           2548
+#define STR_RULE_DESC_tree_hide_distance         2490
+#define STR_RULE_DESC_gunsight_min               2549
 #define STR_RULE_DESC_gunsight_max               2345
 #define STR_RULE_DESC_tank_accel_rate            2346
 #define STR_RULE_DESC_tank_decel_rate            2347
 #define STR_RULE_DESC_tank_brake_rate            2348
 #define STR_RULE_DESC_tank_autoslow_rate         2349
 #define STR_RULE_DESC_tank_min_move              2350
+#define STR_RULE_DESC_tank_hit_radius            2491
+#define STR_RULE_DESC_tank_collision_distance    2492
+#define STR_RULE_DESC_tank_nudge_threshold       2493
+#define STR_RULE_DESC_tank_nudge_amount          2494
+#define STR_RULE_DESC_tank_nudge_iterations      2495
+#define STR_RULE_DESC_tank_bump_decay_shift      2496
+#define STR_RULE_DESC_tank_pill_pickup_inset     2497
+#define STR_RULE_DESC_tank_boat_exit_inset       2498
+#define STR_RULE_DESC_tank_slide_step            2499
+#define STR_RULE_DESC_tank_wall_glide            2500
 #define STR_RULE_DESC_speed_road                 2351
 #define STR_RULE_DESC_speed_grass                2352
 #define STR_RULE_DESC_speed_forest               2353
@@ -2643,6 +2684,16 @@
 #define STR_RULE_DESC_turn_boat                  2368
 #define STR_RULE_DESC_turn_deep_sea              2369
 #define STR_RULE_DESC_turn_refuel_base           2370
+#define STR_RULE_DESC_man_speed_road             2501
+#define STR_RULE_DESC_man_speed_grass            2502
+#define STR_RULE_DESC_man_speed_forest           2503
+#define STR_RULE_DESC_man_speed_river            2504
+#define STR_RULE_DESC_man_speed_swamp            2505
+#define STR_RULE_DESC_man_speed_crater           2506
+#define STR_RULE_DESC_man_speed_rubble           2507
+#define STR_RULE_DESC_man_speed_boat             2508
+#define STR_RULE_DESC_man_speed_deep_sea         2509
+#define STR_RULE_DESC_man_speed_refuel_base      2510
 #define STR_RULE_DESC_shell_life                 2371
 #define STR_RULE_DESC_shell_speed                2372
 #define STR_RULE_DESC_shell_start_add            2373
@@ -2657,12 +2708,22 @@
 #define STR_RULE_DESC_lgm_pill_repair_load       2382
 #define STR_RULE_DESC_lgm_gather_trees           2383
 #define STR_RULE_DESC_lgm_helicopter_speed       2384
+#define STR_RULE_DESC_lgm_arrive_tolerance       2511
+#define STR_RULE_DESC_lgm_return_tolerance       2512
+#define STR_RULE_DESC_lgm_pill_drop_search       2513
+#define STR_RULE_DESC_lgm_boat_leave_offset      2514
+#define STR_RULE_DESC_lgm_boat_return_offset     2515
 #define STR_RULE_DESC_pill_max_armour            2385
 #define STR_RULE_DESC_pill_attack_ticks          2386
 #define STR_RULE_DESC_pill_attack_min_ticks      2387
 #define STR_RULE_DESC_pill_cooldown_ticks        2388
 #define STR_RULE_DESC_pill_repair_amount         2389
 #define STR_RULE_DESC_pill_range                 2390
+#define STR_RULE_DESC_pill_shell_damage          2516
+#define STR_RULE_DESC_pill_angry_divisor         2517
+#define STR_RULE_DESC_pill_fire_length           2518
+#define STR_RULE_DESC_pill_base_defend_range     2519
+#define STR_RULE_DESC_pill_aim_iterations        2520
 #define STR_RULE_DESC_base_full_armour           2391
 #define STR_RULE_DESC_base_full_shells           2392
 #define STR_RULE_DESC_base_full_mines            2393
@@ -2678,14 +2739,32 @@
 #define STR_RULE_DESC_base_refuel_shells_ticks   2403
 #define STR_RULE_DESC_base_refuel_mines_ticks    2404
 #define STR_RULE_DESC_base_regen_ticks           2405
+#define STR_RULE_DESC_base_status_range          2521
+#define STR_RULE_DESC_base_reveal_range          2522
 #define STR_RULE_DESC_building_life              2406
 #define STR_RULE_DESC_rubble_life                2407
 #define STR_RULE_DESC_grass_life                 2408
 #define STR_RULE_DESC_swamp_life                 2409
 #define STR_RULE_DESC_mine_fuse_ticks            2410
 #define STR_RULE_DESC_big_explosion_threshold    2411
+#define STR_RULE_DESC_tank_explosion_damage      2523
+#define STR_RULE_DESC_tank_explosion_length      2524
+#define STR_RULE_DESC_tank_explosion_move        2525
+#define STR_RULE_DESC_tank_explosion_update_ticks 2526
+#define STR_RULE_DESC_tank_explosion_width       2527
+#define STR_RULE_DESC_tank_explosion_height      2528
+#define STR_RULE_DESC_start_tank_range           2529
+#define STR_RULE_DESC_start_pill_range           2530
+#define STR_RULE_DESC_start_base_range           2531
+#define STR_RULE_DESC_start_spawn_separation     2532
+#define STR_RULE_DESC_start_scatter_max          2533
+#define STR_RULE_DESC_start_neutral_threshold_pct 2534
+#define STR_RULE_DESC_sound_soft_range           2535
+#define STR_RULE_DESC_sound_none_range           2536
+#define STR_RULE_DESC_flood_fill_ticks           2537
 #define STR_RULE_DESC_tree_grow_ticks            2412
 #define STR_RULE_DESC_tree_grow_initial_ticks    2413
+#define STR_RULE_DESC_tree_grow_initial_score    2538
 #define STR_RULE_DESC_tree_weight_forest         2414
 #define STR_RULE_DESC_tree_weight_grass          2415
 #define STR_RULE_DESC_tree_weight_river          2416

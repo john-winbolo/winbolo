@@ -3559,6 +3559,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # And the replay that hands the set to a client registering after the
     # attach, so a mid-lobby joiner reads what the host reads.
     tests/unit/test_scenario_rules_reaches_joiner.c
+    # A set too big for one control segment: the fragments a full set
+    # publishes, each encoded into a body the size the delivery path really
+    # hands the encoder and read back into a client, plus what a reader holds
+    # between two fragments and after a stream is cut short.
+    tests/unit/test_scenario_rules_fragments.c
     # The bot hint: the flat table a scenario hands one bot, delivered into
     # that bot's brain VM as on_scenario_hint(table) — the fixture brain gets
     # it back whole, custom keys included — plus every refusal the arm
@@ -3876,6 +3881,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_overview_view_policy.c
     tests/unit/test_overview_camera.cpp
     tests/unit/test_overview_fog.cpp
+    # The fog of war look the player picks and the road outline one of them
+    # draws. Both are header-only arithmetic (fog_look.h, fog_roads.h), so
+    # only the test itself is added here; the setting store it also exercises
+    # comes in with gfx_settings.c above.
+    tests/unit/test_fog_roads.c
     tests/unit/test_overview_hud_layout.cpp
     tests/unit/test_sight.c
     tests/unit/test_sight_shadow.c
@@ -5051,6 +5061,10 @@ set(_unit_test_names
     overview_camera
     overview_scroll
     overview_fog
+    fog_style_looks
+    fog_style_setting
+    fog_road_edges
+    fog_road_edge_masks
     overview_hud_layout
     sight
     sight_shadow
@@ -5106,6 +5120,10 @@ set(_unit_test_names
     sim_rules_terrain_life_follows
     sim_rules_base_empties_without_wrapping
     sim_rules_pill_empties_without_wrapping
+    sim_rules_pill_shell_damage_follows
+    sim_rules_pill_angry_divisor_follows
+    sim_rules_tank_explosion_follows
+    sim_rules_water_loss_follows
     sim_rules_pairs
     sim_rules_capture_threshold_moves
     sim_rules_builder_cost_follows
@@ -5899,6 +5917,8 @@ set(_unit_test_names
     scenario_rules_codec
     scenario_rules_published
     scenario_rules_reaches_joiner
+    scenario_rules_fragments
+    scenario_rules_fragments_partial
     scenario_hint_reaches_brain
     scenario_hint_refusals
     scenario_hint_records

@@ -40,7 +40,11 @@
 #include "grass.h"       /* GRASS_LIFE */
 #include "swamp.h"       /* SWAMP_LIFE */
 #include "minesexp.h"    /* MINES_EXPLOSION_WAIT */
+#include "tankexp.h"     /* TK_DAMAGE and the wreck's shape */
 #include "treegrow.h"    /* TREEGROW_* / TREE_GROW_* */
+#include "floodfill.h"   /* FLOOD_FILL_WAIT */
+#include "sounddist.h"   /* SDIST_SOFT / SDIST_NONE */
+#include "starts.h"      /* START_* — the spawn-safety defaults */
 
 void simRulesClassic(SimRules *out) {
     if (out == NULL) {
@@ -57,7 +61,12 @@ void simRulesClassic(SimRules *out) {
     out->tank_water_ticks    = TANK_WATER_TIME;
     out->shell_damage        = DAMAGE;
     out->mine_damage         = MINE_DAMAGE;
+    out->mine_damage_range   = MINE_DAMAGE_RANGE;
+    out->mine_fatal_divisor  = MINE_FATAL_DIVISOR;
+    out->water_loss_shells   = TANK_WATER_LOSS_SHELLS;
+    out->water_loss_mines    = TANK_WATER_LOSS_MINES;
     out->just_fired_ticks    = JUST_FIRED_TICKS;
+    out->tree_hide_distance  = MIN_TREEHIDE_DIST;
     out->gunsight_min        = GUNSIGHT_MIN;
     out->gunsight_max        = GUNSIGHT_MAX;
     out->tank_accel_rate     = (float) TANK_ACCELERATE_RATE;
@@ -65,6 +74,18 @@ void simRulesClassic(SimRules *out) {
     out->tank_brake_rate     = (float) TANK_SLOWKEY_RATE;
     out->tank_autoslow_rate  = (float) TANK_AUTOSLOW_SPEED;
     out->tank_min_move       = TANK_MIN_MOVE_SPEED;
+
+    /* ---- Tank collision geometry ---- */
+    out->tank_hit_radius         = TANK_HIT_RADIUS;
+    out->tank_collision_distance = TANK_COLLISION_DISTANCE;
+    out->tank_nudge_threshold    = TANK_NUDGE_THRESHOLD;
+    out->tank_nudge_amount       = TANK_NUDGE_AMOUNT;
+    out->tank_nudge_iterations   = TANK_MAX_NUDGE_ITERATIONS;
+    out->tank_bump_decay_shift   = TANK_BUMP_DECAY_SHIFT;
+    out->tank_pill_pickup_inset  = TANK_PILL_PICKUP_INSET;
+    out->tank_boat_exit_inset    = TANK_MOVE_BOAT_SUB;
+    out->tank_slide_step         = TANK_SLIDE;
+    out->tank_wall_glide         = (float) TANK_WALL_GLIDE;
 
     /* ---- Terrain speed caps ---- */
     out->speed_road          = MAP_SPEED_TROAD;
@@ -90,6 +111,18 @@ void simRulesClassic(SimRules *out) {
     out->turn_deep_sea       = (float) MAP_TURN_TDEEPSEA;
     out->turn_refuel_base    = (float) MAP_TURN_TREFBASE;
 
+    /* ---- Builder walk speeds ---- */
+    out->man_speed_road         = MAP_MANSPEED_TROAD;
+    out->man_speed_grass        = MAP_MANSPEED_TGRASS;
+    out->man_speed_forest       = MAP_MANSPEED_TFOREST;
+    out->man_speed_river        = MAP_MANSPEED_TRIVER;
+    out->man_speed_swamp        = MAP_MANSPEED_TSWAMP;
+    out->man_speed_crater       = MAP_MANSPEED_TCRATER;
+    out->man_speed_rubble       = MAP_MANSPEED_TRUBBLE;
+    out->man_speed_boat         = MAP_MANSPEED_TBOAT;
+    out->man_speed_deep_sea     = MAP_MANSPEED_TDEEPSEA;
+    out->man_speed_refuel_base  = MAP_MANSPEED_TREFBASE;
+
     /* ---- Shells ---- */
     out->shell_life          = SHELL_LIFE;
     out->shell_speed         = SHELL_SPEED;
@@ -107,6 +140,11 @@ void simRulesClassic(SimRules *out) {
     out->lgm_pill_repair_load     = LGM_LOAD_PILLREPAIR;
     out->lgm_gather_trees         = LGM_GATHER_TREE;
     out->lgm_helicopter_speed     = LGM_HELICOPTER_SPEED;
+    out->lgm_arrive_tolerance     = LGM_MAX_GOAL;
+    out->lgm_return_tolerance     = LGM_RETURN_MAX_GOAL;
+    out->lgm_pill_drop_search     = LGM_PILL_DROP_SEARCH;
+    out->lgm_boat_leave_offset    = LGM_TANKBOAT_LEAVE;
+    out->lgm_boat_return_offset   = LGM_TANKBOAT_RETURN;
 
     /* ---- Pillbox ----
      * pill_max_armour was PILLS_MAX_ARMOUR and PILL_MAX_HEALTH, two names for
@@ -117,6 +155,11 @@ void simRulesClassic(SimRules *out) {
     out->pill_cooldown_ticks   = PILLBOX_COOLDOWN_TIME;
     out->pill_repair_amount    = PILL_REPAIR_AMOUNT;
     out->pill_range            = PILLBOX_RANGE;
+    out->pill_shell_damage     = PILLBOX_SHELL_DAMAGE;
+    out->pill_angry_divisor    = PILLBOX_ANGRY_DIVISOR;
+    out->pill_fire_length      = (float) PILLBOX_FIRE_DISTANCE;
+    out->pill_base_defend_range = PILL_BASE_HIT_RANGE;
+    out->pill_aim_iterations   = MAX_AIM_ITERATE;
 
     /* ---- Base ---- */
     out->base_full_armour         = BASE_FULL_ARMOUR;
@@ -134,6 +177,8 @@ void simRulesClassic(SimRules *out) {
     out->base_refuel_shells_ticks = (float) BASE_REFUEL_SHELLS;
     out->base_refuel_mines_ticks  = (float) BASE_REFUEL_MINES;
     out->base_regen_ticks         = BASE_TICKS_BETWEEN_REFUEL;
+    out->base_status_range        = BASE_STATUS_RANGE;
+    out->base_reveal_range        = BASE_PREDICT_REVEAL_RANGE;
 
     /* ---- Terrain destruction and explosions ---- */
     out->building_life           = BUILDING_LIFE;
@@ -142,10 +187,32 @@ void simRulesClassic(SimRules *out) {
     out->swamp_life              = SWAMP_LIFE;
     out->mine_fuse_ticks         = MINES_EXPLOSION_WAIT;
     out->big_explosion_threshold = TANK_BIG_EXPLOSION_THRESHOLD;
+    out->tank_explosion_damage       = TK_DAMAGE;
+    out->tank_explosion_length       = TK_EXPLODE_LENGTH;
+    out->tank_explosion_move         = TK_MOVE_AMOUNT;
+    out->tank_explosion_update_ticks = TK_UPDATE_TIME;
+    out->tank_explosion_width        = TK_WIDTH_CHECK;
+    out->tank_explosion_height       = TK_HEIGHT_CHECK;
+
+    /* ---- Spawning ---- */
+    out->start_tank_range          = START_TANK_RANGE;
+    out->start_pill_range          = START_PILL_RANGE;
+    out->start_base_range          = START_BASE_RANGE;
+    out->start_spawn_separation    = START_SPAWN_SEPARATION;
+    out->start_scatter_max         = START_SCATTER_MAX;
+    out->start_neutral_threshold_pct = START_NEUTRAL_THRESHOLD_PCT;
+
+    /* ---- Hearing ---- */
+    out->sound_soft_range          = SDIST_SOFT;
+    out->sound_none_range          = SDIST_NONE;
+
+    /* ---- Terrain flooding ---- */
+    out->flood_fill_ticks          = FLOOD_FILL_WAIT;
 
     /* ---- Tree growth ---- */
     out->tree_grow_ticks           = TREEGROW_TIME;
     out->tree_grow_initial_ticks   = TREEGROW_INITIAL_TIME;
+    out->tree_grow_initial_score   = TREEGROW_INITIAL_SCORE;
     out->tree_weight_forest        = TREE_GROW_FOREST;
     out->tree_weight_grass         = TREE_GROW_GRASS;
     out->tree_weight_river         = TREE_GROW_RIVER;
@@ -346,7 +413,16 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     X(tank_water_ticks,          INT,    1,      255)                        \
     X(shell_damage,              INT,    1,      255)                        \
     X(mine_damage,               INT,    1,      255)                        \
+    /* Zero is a mine that only hurts a tank standing exactly on its centre, \
+       which is a table worth being able to write. */                        \
+    X(mine_damage_range,         INT,    0,      65535)                      \
+    /* One leaves a fatal hit at full strength. */                           \
+    X(mine_fatal_divisor,        INT,    1,      255)                        \
+    X(water_loss_shells,         INT,    0,      255)                        \
+    X(water_loss_mines,          INT,    0,      255)                        \
     X(just_fired_ticks,          INT,    0,      255)                        \
+    /* Zero is a wood that hides nothing, which is a coherent table. */      \
+    X(tree_hide_distance,        INT,    0,      65535)                      \
     X(gunsight_min,              INT,    1,      255)                        \
     X(gunsight_max,              INT,    1,      255)                        \
     X(tank_accel_rate,           FLT,    0.01,   16.0)                       \
@@ -354,6 +430,18 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     X(tank_brake_rate,           FLT,    0.01,   16.0)                       \
     X(tank_autoslow_rate,        FLT,    0.01,   16.0)                       \
     X(tank_min_move,             INT,    0,      255)                        \
+    /* Tank collision geometry */                                            \
+    X(tank_hit_radius,           INT,    1,      255)                        \
+    X(tank_collision_distance,   INT,    0,      65535)                      \
+    X(tank_nudge_threshold,      INT,    0,      65535)                      \
+    X(tank_nudge_amount,         INT,    1,      255)                        \
+    X(tank_nudge_iterations,     INT,    1,      255)                        \
+    /* A shift, so its ceiling is what an int32_t can be shifted by. */      \
+    X(tank_bump_decay_shift,     INT,    0,      31)                         \
+    X(tank_pill_pickup_inset,    INT,    0,      255)                        \
+    X(tank_boat_exit_inset,      INT,    0,      255)                        \
+    X(tank_slide_step,           INT,    0,      255)                        \
+    X(tank_wall_glide,           FLT,    0.0,    1.0)                        \
     /* Terrain speed caps: the players[].speed packing saturates at 63 */    \
     X(speed_road,                INT,    0,      63)                         \
     X(speed_grass,               INT,    0,      63)                         \
@@ -376,6 +464,17 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     X(turn_boat,                 FLT,    0.0,    16.0)                       \
     X(turn_deep_sea,             FLT,    0.0,    16.0)                       \
     X(turn_refuel_base,          FLT,    0.0,    16.0)                       \
+    /* Terrain: the builder's walk, in the window the tank's own caps use */ \
+    X(man_speed_road,            INT,    0,      63)                         \
+    X(man_speed_grass,           INT,    0,      63)                         \
+    X(man_speed_forest,          INT,    0,      63)                         \
+    X(man_speed_river,           INT,    0,      63)                         \
+    X(man_speed_swamp,           INT,    0,      63)                         \
+    X(man_speed_crater,          INT,    0,      63)                         \
+    X(man_speed_rubble,          INT,    0,      63)                         \
+    X(man_speed_boat,            INT,    0,      63)                         \
+    X(man_speed_deep_sea,        INT,    0,      63)                         \
+    X(man_speed_refuel_base,     INT,    0,      63)                         \
     /* Shells */                                                             \
     X(shell_life,                INT,    1,      255)                        \
     X(shell_speed,               INT,    1,      255)                        \
@@ -392,6 +491,13 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     X(lgm_pill_repair_load,      INT,    1,      255)                        \
     X(lgm_gather_trees,          INT,    1,      255)                        \
     X(lgm_helicopter_speed,      INT,    1,      255)                        \
+    /* The tolerances are half-widths: the test takes each either way round  \
+       the goal, which is what the two-signed constants used to spell. */    \
+    X(lgm_arrive_tolerance,      INT,    1,      255)                        \
+    X(lgm_return_tolerance,      INT,    1,      65535)                      \
+    X(lgm_pill_drop_search,      INT,    1,      255)                        \
+    X(lgm_boat_leave_offset,     INT,    0,      255)                        \
+    X(lgm_boat_return_offset,    INT,    0,      255)                        \
     /* Pillbox */                                                            \
     X(pill_max_armour,           INT,    1,      255)                        \
     X(pill_attack_ticks,         INT,    1,      255)                        \
@@ -399,6 +505,22 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     X(pill_cooldown_ticks,       INT,    0,      255)                        \
     X(pill_repair_amount,        INTMIN, 1,      INT32_MAX)                  \
     X(pill_range,                INT,    0,      65535)                      \
+    /* Capped by what a pill can hold, so only its own end is fixed here. A  \
+       shell that takes the whole cap is a pill killed by one hit, which is  \
+       a table a scenario may want; one that takes more is the same thing    \
+       said twice. */                                                        \
+    X(pill_shell_damage,         INTMIN, 1,      INT32_MAX)                  \
+    /* One is a pill that never angers, which is why the floor is one        \
+       rather than two. */                                                   \
+    X(pill_angry_divisor,        INT,    1,      255)                        \
+    /* The shell's own length, in half map squares, the way a tank's is:     \
+       the gunsight rows are bounded the same way. */                        \
+    X(pill_fire_length,          FLT,    0.5,    127.0)                      \
+    /* Zero is a pill that only answers for the square it stands on. */      \
+    X(pill_base_defend_range,    INT,    0,      255)                        \
+    /* The aim solver's step budget. One is a pill that never leads a        \
+       target and fires straight at where it is standing now. */             \
+    X(pill_aim_iterations,       INT,    1,      65535)                      \
     /* Base */                                                               \
     X(base_full_armour,          INT,    0,      255)                        \
     X(base_full_shells,          INT,    0,      255)                        \
@@ -415,6 +537,8 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     X(base_refuel_shells_ticks,  FLT,    0.5,    255.0)                      \
     X(base_refuel_mines_ticks,   FLT,    0.5,    255.0)                      \
     X(base_regen_ticks,          INTMIN, 1,      INT32_MAX)                  \
+    X(base_status_range,         INT,    0,      65535)                      \
+    X(base_reveal_range,         INT,    0,      65535)                      \
     /* Terrain destruction and explosions */                                 \
     X(building_life,             INT,    1,      255)                        \
     X(rubble_life,               INT,    1,      255)                        \
@@ -422,9 +546,35 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     X(swamp_life,                INT,    1,      255)                        \
     X(mine_fuse_ticks,           INT,    1,      255)                        \
     X(big_explosion_threshold,   INT,    0,      510)                        \
+    /* Capped by what a pill can hold, so only its own end is fixed here.    \
+       Zero is a wreck that scorches nothing, which is a table a scenario    \
+       may want. */                                                          \
+    X(tank_explosion_damage,     INTMIN, 0,      INT32_MAX)                  \
+    X(tank_explosion_length,     INT,    1,      255)                        \
+    X(tank_explosion_move,       INT,    0,      255)                        \
+    X(tank_explosion_update_ticks, INT,    1,      255)                      \
+    X(tank_explosion_width,      INT,    0,      255)                        \
+    X(tank_explosion_height,     INT,    0,      255)                        \
+    /* Spawning. Zero on any of the three ranges is a spawn that does not    \
+       care what is standing there. */                                       \
+    X(start_tank_range,          INT,    0,      255)                        \
+    X(start_pill_range,          INT,    0,      255)                        \
+    X(start_base_range,          INT,    0,      255)                        \
+    X(start_spawn_separation,    INT,    0,      255)                        \
+    X(start_scatter_max,         INT,    1,      65535)                      \
+    X(start_neutral_threshold_pct, INT,    0,      100)                      \
+    /* Hearing */                                                            \
+    X(sound_soft_range,          INT,    0,      255)                        \
+    X(sound_none_range,          INT,    0,      255)                        \
+    /* Terrain flooding */                                                   \
+    X(flood_fill_ticks,          INT,    1,      255)                        \
     /* Tree growth */                                                        \
     X(tree_grow_ticks,           INTMIN, 1,      INT32_MAX)                  \
     X(tree_grow_initial_ticks,   INTMIN, 1,      INT32_MAX)                  \
+    /* The score the weighted draw starts and resets from, so how long the   \
+       map waits for its first tree. Negative by design, and the weights     \
+       below share its window. */                                            \
+    X(tree_grow_initial_score,   INT,    -32768, 32767)                      \
     X(tree_weight_forest,        INT,    -32768, 32767)                      \
     X(tree_weight_grass,         INT,    -32768, 32767)                      \
     X(tree_weight_river,         INT,    -32768, 32767)                      \
@@ -458,6 +608,9 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     X(lgm_cost_pill_new,        tank_full_trees)                             \
     X(lgm_cost_mine,            tank_full_mines)                             \
     X(pill_repair_amount,       pill_max_armour)                             \
+    X(pill_shell_damage,        pill_max_armour)                             \
+    X(tank_explosion_damage,    pill_max_armour)                             \
+    X(sound_soft_range,         sound_none_range)                            \
     X(gunsight_min,             gunsight_max)
 
 /* A row's arm, chosen by its shape: the three above are the three bodies,
@@ -619,6 +772,26 @@ static SimRulesFault simRulesCheckRows(const SimRules *rules, bool carriedOnly,
               (long) rules->pill_repair_amount,
               (long) rules->pill_max_armour)
 
+    /* What a pill can be hit by, against what it can hold. A shot taking the
+     * whole cap is a pill killed by one hit, which is a table a scenario may
+     * want; one taking more is the same thing said twice. */
+    RULE_PAIR(PAIR_ASKED2(pill_shell_damage, pill_max_armour),
+              rules->pill_shell_damage <= rules->pill_max_armour,
+              "pill_shell_damage is %ld, above pill_max_armour %ld",
+              (long) rules->pill_shell_damage, (long) rules->pill_max_armour)
+    RULE_PAIR(PAIR_ASKED2(tank_explosion_damage, pill_max_armour),
+              rules->tank_explosion_damage <= rules->pill_max_armour,
+              "tank_explosion_damage is %ld, above pill_max_armour %ld",
+              (long) rules->tank_explosion_damage,
+              (long) rules->pill_max_armour)
+
+    /* The near band sits inside the audible one, or there is no far band
+     * for a sound to land in. */
+    RULE_PAIR(PAIR_ASKED2(sound_soft_range, sound_none_range),
+              rules->sound_soft_range <= rules->sound_none_range,
+              "sound_soft_range is %ld, above sound_none_range %ld",
+              (long) rules->sound_soft_range, (long) rules->sound_none_range)
+
     /* The gunsight is a range the player walks between two ends, so a
      * minimum above the maximum leaves nowhere to stand: tankCreate would
      * start the tank outside it and neither the increase nor the decrease
@@ -738,7 +911,7 @@ BOLO_STATIC_ASSERT(sizeof(simRuleRanges) / sizeof(simRuleRanges[0]) ==
                        (size_t)SIM_RULE_COUNT,
                    sim_rule_bounds_cover_every_rule);
 
-/* The rows a second rule caps, walked rather than indexed: fourteen rows,
+/* The rows a second rule caps, walked rather than indexed: seventeen rows,
  * read by a form rather than by the tick. */
 #define SIM_RULE_CAPPED_BY_ROW(field, cap)                                   \
     { SIM_RULE_##field, SIM_RULE_##cap },

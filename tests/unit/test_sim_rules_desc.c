@@ -49,9 +49,15 @@ static const langid srdDescIds[] = {
 };
 #undef SRD_ID_ROW
 
-/* The block the descriptions were given, either end included. */
-#define SRD_FIRST_ID 2334u
-#define SRD_LAST_ID  2425u
+/* The two stretches of ids the descriptions were given, either end of each
+ * included. They are two rather than one because the first eleven rules'
+ * numbers were taken by the fog style strings and moved to the end of the
+ * file, and because the rules the table gained later were numbered on from
+ * there. See the block comment in lang.h. */
+#define SRD_FIRST_ID  2345u
+#define SRD_LAST_ID   2425u
+#define SRD_FIRST_ID2 2486u
+#define SRD_LAST_ID2  2549u
 
 /* ── 1. A description id per rule ──────────────────────────────────────── */
 
@@ -68,11 +74,14 @@ int run_sim_rules_desc_table(void) {
         const char *name = simRulesRuleName(i);
         const char *desc = simRulesRuleDescription(i);
 
-        UT_ASSERT_MSG(srdDescIds[i] >= SRD_FIRST_ID &&
-                          srdDescIds[i] <= SRD_LAST_ID,
-                      "%s has id %u, outside the %u..%u the descriptions were "
-                      "given",
-                      name, srdDescIds[i], SRD_FIRST_ID, SRD_LAST_ID);
+        UT_ASSERT_MSG((srdDescIds[i] >= SRD_FIRST_ID &&
+                       srdDescIds[i] <= SRD_LAST_ID) ||
+                          (srdDescIds[i] >= SRD_FIRST_ID2 &&
+                           srdDescIds[i] <= SRD_LAST_ID2),
+                      "%s has id %u, outside the %u..%u and %u..%u the "
+                      "descriptions were given",
+                      name, srdDescIds[i], SRD_FIRST_ID, SRD_LAST_ID,
+                      SRD_FIRST_ID2, SRD_LAST_ID2);
         UT_ASSERT_MSG(desc != NULL, "%s answered a NULL description", name);
         UT_ASSERT_MSG(desc[0] != '\0', "%s answered an empty description",
                       name);

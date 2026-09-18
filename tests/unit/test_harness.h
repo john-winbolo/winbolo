@@ -1549,6 +1549,21 @@ int run_overview_scroll(void);
  * the mask, and no regions at all fogs the whole map. */
 int run_overview_fog(void);
 
+/* Fog of war looks (test_fog_roads.c): each of the four styles washes towards
+ * the colour it says it does, None washes at all, only Darker with fog edge
+ * draws the fog line band, the band fade falls to nothing, and the setting
+ * store clamps a value from outside the enum back to Grey. */
+int run_fog_style_looks(void);
+int run_fog_style_setting(void);
+
+/* The fog line's edge mask (test_fog_roads.c): only a fogged square is banded,
+ * only on the sides facing a square in plain sight, so the band marks the fog
+ * line on its fogged side; a square at the edge of the grid has fog beyond it
+ * and is not banded there. Which terrain is banded is the build switch
+ * FOG_EDGE_ALL_TERRAIN, 1 in this build. */
+int run_fog_road_edges(void);
+int run_fog_road_edge_masks(void);
+
 /* Line of sight (test_sight.c): the square the player stands on is seen even
  * when it is itself a building, a building across the line hides everything
  * behind it while the building itself is seen, the same building beside the
@@ -1768,6 +1783,10 @@ int run_sim_rules_base_regen_seed_follows(void);
 int run_sim_rules_terrain_life_follows(void);
 int run_sim_rules_base_empties_without_wrapping(void);
 int run_sim_rules_pill_empties_without_wrapping(void);
+int run_sim_rules_pill_shell_damage_follows(void);
+int run_sim_rules_pill_angry_divisor_follows(void);
+int run_sim_rules_tank_explosion_follows(void);
+int run_sim_rules_water_loss_follows(void);
 int run_sim_rules_pairs(void);
 int run_sim_rules_capture_threshold_moves(void);
 int run_sim_rules_builder_cost_follows(void);
@@ -3105,6 +3124,13 @@ int run_scn_arm_score_announce_marker(void);
 int run_scenario_rules_codec(void);
 int run_scenario_rules_published(void);
 int run_scenario_rules_reaches_joiner(void);
+
+/* A set too big for one control segment (test_scenario_rules_fragments.c):
+ * the fragments a full set publishes, each through the body codec at the
+ * capacity the delivery path really hands it and back into a client; and
+ * what a reader holds between two fragments and after a stream is cut. */
+int run_scenario_rules_fragments(void);
+int run_scenario_rules_fragments_partial(void);
 
 /* The bot hint (test_scenario_hint.c): the table a fixture brain gets back
  * whole, every refusal the arm answers with, and the record naming the seat

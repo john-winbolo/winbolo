@@ -697,20 +697,48 @@ void serverSimFillSimRulesEvent(const ServerSim *sim, ControlEvent *evt) {
 #undef SIM_RULES_FILL_FIELD
 }
 
-/* Fill a CTRL_SCENARIO_RULES from the set the attached scenario's manifest
- * holds. The rows are copied as they were given: this event says what the
- * author wrote, so a value the sim later refused or clamped is still the
- * value the table asked for. */
-void serverSimFillScenarioRulesEvent(const ServerSim *sim, ControlEvent *evt) {
+/* How many fragments the stored set needs. An empty set still needs one, so
+ * that a detach has a fragment to say it on. */
+uint8_t serverSimScenarioRulesFragCount(const ServerSim *sim) {
+    uint8_t rows;
+
+    if (sim == NULL) return 1;
+    rows = sim->scenarioRulesCount;
+    if (rows == 0) return 1;
+    return (uint8_t)((rows + SCN_RULES_FRAG_ROWS - 1) / SCN_RULES_FRAG_ROWS);
+}
+
+/* Fill fragment `seq` of a CTRL_SCENARIO_RULES from the set the attached
+ * scenario's manifest holds. The rows are copied as they were given: this
+ * event says what the author wrote, so a value the sim later refused or
+ * clamped is still the value the table asked for.
+ *
+ * A seq past the last fragment fills an empty one rather than reading off
+ * the end of the stored set; every caller walks the count above, so that is
+ * a guard and not a path. */
+void serverSimFillScenarioRulesEvent(const ServerSim *sim, uint8_t seq,
+                                     ControlEvent *evt) {
+    uint8_t fragCount;
+    uint8_t first;
+    uint8_t rows;
     uint8_t i;
 
     if (sim == NULL || evt == NULL) return;
+    fragCount = serverSimScenarioRulesFragCount(sim);
     memset(evt, 0, sizeof(*evt));
     evt->type = CTRL_SCENARIO_RULES;
-    evt->u.scenarioRules.count = sim->scenarioRulesCount;
-    for (i = 0; i < sim->scenarioRulesCount; i++) {
-        evt->u.scenarioRules.rule[i]  = (uint8_t)sim->scenarioRules[i].rule;
-        evt->u.scenarioRules.value[i] = sim->scenarioRules[i].value;
+    evt->u.scenarioRules.seq       = seq;
+    evt->u.scenarioRules.fragCount = fragCount;
+    if (seq >= fragCount) return;   /* names no fragment — carries no rows */
+
+    first = (uint8_t)(seq * SCN_RULES_FRAG_ROWS);
+    rows  = (uint8_t)(sim->scenarioRulesCount - first);
+    if (rows > SCN_RULES_FRAG_ROWS) rows = SCN_RULES_FRAG_ROWS;
+    evt->u.scenarioRules.count = rows;
+    for (i = 0; i < rows; i++) {
+        evt->u.scenarioRules.rule[i] =
+            (uint8_t)sim->scenarioRules[first + i].rule;
+        evt->u.scenarioRules.value[i] = sim->scenarioRules[first + i].value;
     }
 }
 
@@ -983,8 +1011,12 @@ static void serverSimSyncSubscriber(
      * ahead of the player-join roster for the reason the two above are — the
      * ordering check refuses a non-join event after the first join. */
     if (sim->scenarioIdentity.source != lobbyScenarioNone) {
-        serverSimFillScenarioRulesEvent(sim, &evt);
-        deliver(ctx, &evt);
+        uint8_t frags = serverSimScenarioRulesFragCount(sim);
+        uint8_t seq;
+        for (seq = 0; seq < frags; seq++) {
+            serverSimFillScenarioRulesEvent(sim, seq, &evt);
+            deliver(ctx, &evt);
+        }
     }
 
     for (i = 0; i < MAX_TANKS; i++) {
