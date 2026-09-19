@@ -1785,6 +1785,7 @@ int run_sim_rules_base_empties_without_wrapping(void);
 int run_sim_rules_pill_empties_without_wrapping(void);
 int run_sim_rules_pill_shell_damage_follows(void);
 int run_sim_rules_pill_angry_divisor_follows(void);
+int run_sim_rules_pill_massage_follows(void);
 int run_sim_rules_tank_explosion_follows(void);
 int run_sim_rules_water_loss_follows(void);
 int run_sim_rules_pairs(void);

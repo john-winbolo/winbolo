@@ -262,6 +262,8 @@ int run_sim_rules_classic_defaults(void) {
     SR_FEQ(pill_fire_length, PILLBOX_FIRE_DISTANCE);
     SR_EQ(pill_base_defend_range, PILL_BASE_HIT_RANGE);
     SR_EQ(pill_aim_iterations, MAX_AIM_ITERATE);
+    SR_EQ(pill_massage_range, PILLBOX_MASSAGE_RANGE);
+    SR_FEQ(pill_massage_cosine, PILLBOX_MASSAGE_COSINE);
 
     /* Base */
     SR_EQ(base_full_armour, BASE_FULL_ARMOUR);
@@ -1145,6 +1147,85 @@ int run_sim_rules_pill_angry_divisor_follows(void) {
                   "floor %ld",
                   (unsigned) gs->pb->item[0].speed,
                   (long) gs->rules.pill_attack_min_ticks);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The "pillmassage" aim, which was a build-time switch and is now two rules.
+ * pill_massage_range is the distance the original forward prediction takes
+ * over from the solver inside, and zero — what the classic table holds — is
+ * what takes it out altogether. pill_massage_cosine is how straight at the
+ * pillbox a tank has to be driving to be led properly anyway.
+ *
+ * The tank is put a square and a bit diagonally off the pillbox and driven
+ * along an axis, so the angle between its heading and the line to the
+ * pillbox is 45 degrees whichever way round the engine reckons its bradians:
+ * the cosine the rule is read against is 0.707 either way, which sits between
+ * the two ends this walks it to. */
+int run_sim_rules_pill_massage_follows(void) {
+    ServerSim *sim = ut_make_running_sim("Gunner");
+    GameSim  *gs;
+    pillbox   item;
+    WORLD     px, py;
+    WORLD     tankX, tankY;
+    TURNTYPE  solved;
+    TURNTYPE  aimed;
+
+    UT_ASSERT(sim != NULL);
+    gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    UT_ASSERT_MSG(pillsGetNumPills(&gs->pb) >= 1,
+                  "the map should carry at least one pillbox");
+    memset(&item, 0, sizeof(item));
+    pillsGetPill(&gs->pb, &item, 1);
+    px = (WORLD) ((item.x << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE);
+    py = (WORLD) ((item.y << TANK_SHIFT_MAPSIZE) + MAP_SQUARE_MIDDLE);
+    tankX = (WORLD) (px + 200);
+    tankY = (WORLD) (py + 200);
+
+    solved = pillsTargetTankMove(gs, &gs->mp, &gs->pb, &gs->bs, px, py, tankX,
+                                 tankY, 0.0f, 16, FALSE, 0);
+
+    /* The classic table holds zero, so every tank is led by the solver. */
+    UT_ASSERT_MSG(gs->rules.pill_massage_range == PILLBOX_MASSAGE_RANGE,
+                  "a running sim starts at pill_massage_range %ld, expected %d",
+                  (long) gs->rules.pill_massage_range, PILLBOX_MASSAGE_RANGE);
+    aimed = pillsTargetTank(gs, &gs->mp, &gs->pb, &gs->bs, px, py, tankX, tankY,
+                            0.0f, 16, FALSE, 0);
+    UT_ASSERT_MSG(aimed == solved,
+                  "the classic table aimed at %f, expected the solver's %f",
+                  (double) aimed, (double) solved);
+
+    /* In range, and with a cosine no tank can be straighter than, the old
+       prediction takes over. */
+    gs->rules.pill_massage_range  = 384;
+    gs->rules.pill_massage_cosine = 1.0f;
+    aimed = pillsTargetTank(gs, &gs->mp, &gs->pb, &gs->bs, px, py, tankX, tankY,
+                            0.0f, 16, FALSE, 0);
+    UT_ASSERT_MSG(aimed != solved,
+                  "a massaged pillbox aimed at the solver's %f",
+                  (double) solved);
+
+    /* The same tank at the classic cosine is driving straight enough at the
+       pillbox to be led properly. */
+    gs->rules.pill_massage_cosine = (float) PILLBOX_MASSAGE_COSINE;
+    aimed = pillsTargetTank(gs, &gs->mp, &gs->pb, &gs->bs, px, py, tankX, tankY,
+                            0.0f, 16, FALSE, 0);
+    UT_ASSERT_MSG(aimed == solved,
+                  "a tank at 45 degrees aimed at %f, expected the solver's %f",
+                  (double) aimed, (double) solved);
+
+    /* And a range the tank stands outside leaves it to the solver however
+       the cosine reads. */
+    gs->rules.pill_massage_range  = 200;
+    gs->rules.pill_massage_cosine = 1.0f;
+    aimed = pillsTargetTank(gs, &gs->mp, &gs->pb, &gs->bs, px, py, tankX, tankY,
+                            0.0f, 16, FALSE, 0);
+    UT_ASSERT_MSG(aimed == solved,
+                  "a tank outside the range aimed at %f, expected the "
+                  "solver's %f",
+                  (double) aimed, (double) solved);
 
     serverSimDestroy(sim);
     return 0;

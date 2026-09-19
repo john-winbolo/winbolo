@@ -1364,6 +1364,8 @@ below the tables say which.
 | `pill_cooldown_ticks` | 32 | 0 to 255 | Ticks an angry pillbox waits before its interval eases back by one. |
 | `pill_repair_amount` | 4 | 1 and up | Armour a pillbox gains from one unit of repair. |
 | `pill_range` | 2048 | 0 to 65535 | How far a pillbox looks for a tank to shoot at. |
+| `pill_massage_range` | 0 | 0 to 65535 | How near a tank has to be for a pillbox to aim with the original forward prediction rather than the solver, which misses a tank circling it. Zero, the classic table, is a pillbox that always leads its target properly; 384 is a square and a half, the distance the old build-time switch used. |
+| `pill_massage_cosine` | 0.5 | 0.0 to 1.0 | How straight at a close pillbox a tank has to be driving to be aimed at properly anyway, as the cosine of the angle between its heading and the line to the pillbox. One aims sloppily at every tank inside `pill_massage_range`, zero at none of them. Does nothing while that rule is zero. |
 
 **Base.**
 

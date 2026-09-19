@@ -160,6 +160,8 @@ void simRulesClassic(SimRules *out) {
     out->pill_fire_length      = (float) PILLBOX_FIRE_DISTANCE;
     out->pill_base_defend_range = PILL_BASE_HIT_RANGE;
     out->pill_aim_iterations   = MAX_AIM_ITERATE;
+    out->pill_massage_range    = PILLBOX_MASSAGE_RANGE;
+    out->pill_massage_cosine   = (float) PILLBOX_MASSAGE_COSINE;
 
     /* ---- Base ---- */
     out->base_full_armour         = BASE_FULL_ARMOUR;
@@ -521,6 +523,12 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     /* The aim solver's step budget. One is a pill that never leads a        \
        target and fires straight at where it is standing now. */             \
     X(pill_aim_iterations,       INT,    1,      65535)                      \
+    /* Zero is a pillbox that leads every target with the solver, so it is   \
+       also the switch that takes the sloppy close-range aim out. */         \
+    X(pill_massage_range,        INT,    0,      65535)                      \
+    /* A cosine, so zero is a pillbox that aims true at any close tank and   \
+       one is a pillbox that aims sloppily at all of them. */                \
+    X(pill_massage_cosine,       FLT,    0.0,    1.0)                        \
     /* Base */                                                               \
     X(base_full_armour,          INT,    0,      255)                        \
     X(base_full_shells,          INT,    0,      255)                        \

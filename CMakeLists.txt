@@ -860,9 +860,8 @@ set(IOS_BOLO_SOURCES
     src/bolo/transport_udp_client.c
 )
 
-# Build bolo_static for the iOS branch. iOS doesn't set HAVE_ONNXRUNTIME
-# or ENABLE_PILLMASSAGE_BUG, so bolo_static here has the matching
-# minimal feature set.
+# Build bolo_static for the iOS branch. iOS doesn't set HAVE_ONNXRUNTIME,
+# so bolo_static here has the matching minimal feature set.
 add_subdirectory(src/bolo)
 add_subdirectory(src/server)
 add_subdirectory(src/scenario_io)
@@ -1214,14 +1213,6 @@ else()
 endif()
 
 find_package(OpenMP)
-
-# Classic "pillmassage" bug — pillboxes miss tanks at very close range due to
-# the original Bolo forward-prediction formula breaking down at short distances.
-# Enable for authentic behaviour matching the original game.
-option(ENABLE_PILLMASSAGE_BUG "Enable classic Bolo pillmassage close-range miss bug" OFF)
-if(ENABLE_PILLMASSAGE_BUG)
-    add_compile_definitions(ENABLE_PILLMASSAGE_BUG)
-endif()
 
 # Net-debug instrumentation: per-player sim-executed counters and the
 # netdebug.* repro tests. OFF in every shipping build.
@@ -5122,6 +5113,7 @@ set(_unit_test_names
     sim_rules_pill_empties_without_wrapping
     sim_rules_pill_shell_damage_follows
     sim_rules_pill_angry_divisor_follows
+    sim_rules_pill_massage_follows
     sim_rules_tank_explosion_follows
     sim_rules_water_loss_follows
     sim_rules_pairs

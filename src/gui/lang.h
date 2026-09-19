@@ -2670,10 +2670,12 @@
  * rule's own name is not translated — it is what a manifest, a script and an
  * operator line all spell — so there is no id for it here.
  *
- * The numbers run in three stretches rather than one. The first eleven rules
+ * The numbers run in four stretches rather than one. The first eleven rules
  * had 2334 to 2344, which the fog style strings took as well; moving these
- * eleven to the end was the smaller change of the two. The last fifty-three
- * are the rules the table gained after the middle stretch was numbered. The
+ * eleven to the end was the smaller change of the two. Fifty-three more are
+ * the rules the table gained after the middle stretch was numbered, and the
+ * last pair are the pillmassage rules, which start again past the map
+ * editor's scenario strings because everything up to them was taken. The
  * order of the block is SIM_RULE_LIST's throughout, which is the order that
  * matters, and a hole in the numbers costs nothing: langTable is searched by
  * id rather than indexed by it. */
@@ -2769,6 +2771,8 @@
 #define STR_RULE_DESC_pill_fire_length           2518
 #define STR_RULE_DESC_pill_base_defend_range     2519
 #define STR_RULE_DESC_pill_aim_iterations        2520
+#define STR_RULE_DESC_pill_massage_range         2575
+#define STR_RULE_DESC_pill_massage_cosine        2576
 #define STR_RULE_DESC_base_full_armour           2391
 #define STR_RULE_DESC_base_full_shells           2392
 #define STR_RULE_DESC_base_full_mines            2393

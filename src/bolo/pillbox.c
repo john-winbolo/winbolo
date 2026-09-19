@@ -877,48 +877,41 @@ TURNTYPE pillsTargetTank(GameSim *sim, map *mp, pillboxes *pb, bases *bs, WORLD 
 
   if (speed == 0) {
     returnValue = utilCalcAngle(xValue, yValue, tankX, tankY);
-  } else {
-#ifdef ENABLE_PILLMASSAGE_BUG
-    /* Classic Bolo "pillmassage" bug: at close range the original forward
-       prediction formula (tank_steps = speed * (dist-16) >> 2) produces
-       wildly inaccurate aim, allowing tanks to circle pillboxes without
-       being hit.  Beyond the threshold we fall back to the accurate
-       iterative prediction. */
-    {
-      long diffX = (long)tankX - (long)xValue;
-      long diffY = (long)tankY - (long)yValue;
-      double dist = sqrt((double)(diffX * diffX + diffY * diffY));
-
-      /* 1.5 tiles — 384 WORLD units */
-      if (dist < 384.0) {
-        int tankDirX, tankDirY;
-        utilCalcDistance(&tankDirX, &tankDirY, angle, speed);
-
-        /* Dot product of tank velocity with tank-to-pill vector.
-           If the tank is driving straight at (or away from) the pill
-           the dot product magnitude is large.  The bug only applies
-           when moving tangentially (sliding around the pill). */
-        double dot = (double)tankDirX * (-diffX) + (double)tankDirY * (-diffY);
-        double dirMag = sqrt((double)(tankDirX * tankDirX + tankDirY * tankDirY));
-        double cosAngle = (dirMag > 0.0 && dist > 0.0) ? dot / (dirMag * dist) : 1.0;
-
-        /* Threshold: if |cos| > 0.5 (~60 degrees) the tank is heading
-           roughly toward/away from the pill — use accurate aiming. */
-        if (fabs(cosAngle) > 0.5) {
-          returnValue = pillsTargetTankMove(sim, mp, pb, bs, xValue, yValue, tankX, tankY, angle, speed, onBoat, boatExitSpeed);
-        } else {
-          long tank_steps = ((long)speed * ((long)(dist + 0.5) - 16)) >> 2;
-          long predictedX = (long)tankX + tank_steps * (long)tankDirX;
-          long predictedY = (long)tankY + tank_steps * (long)tankDirY;
-          returnValue = utilCalcAngle(xValue, yValue, (WORLD)predictedX, (WORLD)predictedY);
-        }
-      } else {
-        returnValue = pillsTargetTankMove(sim, mp, pb, bs, xValue, yValue, tankX, tankY, angle, speed, onBoat, boatExitSpeed);
-      }
-    }
-#else
+  } else if (sim->rules.pill_massage_range <= 0) {
     returnValue = pillsTargetTankMove(sim, mp, pb, bs, xValue, yValue, tankX, tankY, angle, speed, onBoat, boatExitSpeed);
-#endif
+  } else {
+    /* The "pillmassage" aim. Inside pill_massage_range the forward
+       prediction the original formula makes (tank_steps = speed *
+       (dist-16) >> 2) is wide enough of the tank that it can circle the
+       pillbox without being hit. It only applies to a tank sliding past:
+       one driving at or away from the pillbox is led by the solver as
+       usual. Beyond that range every tank is. */
+    long diffX = (long)tankX - (long)xValue;
+    long diffY = (long)tankY - (long)yValue;
+    double dist = sqrt((double)(diffX * diffX + diffY * diffY));
+
+    if (dist < (double)sim->rules.pill_massage_range) {
+      int tankDirX, tankDirY;
+      utilCalcDistance(&tankDirX, &tankDirY, angle, speed);
+
+      /* Dot product of tank velocity with tank-to-pill vector.
+         If the tank is driving straight at (or away from) the pill
+         the dot product magnitude is large. */
+      double dot = (double)tankDirX * (-diffX) + (double)tankDirY * (-diffY);
+      double dirMag = sqrt((double)(tankDirX * tankDirX + tankDirY * tankDirY));
+      double cosAngle = (dirMag > 0.0 && dist > 0.0) ? dot / (dirMag * dist) : 1.0;
+
+      if (fabs(cosAngle) > (double)sim->rules.pill_massage_cosine) {
+        returnValue = pillsTargetTankMove(sim, mp, pb, bs, xValue, yValue, tankX, tankY, angle, speed, onBoat, boatExitSpeed);
+      } else {
+        long tank_steps = ((long)speed * ((long)(dist + 0.5) - 16)) >> 2;
+        long predictedX = (long)tankX + tank_steps * (long)tankDirX;
+        long predictedY = (long)tankY + tank_steps * (long)tankDirY;
+        returnValue = utilCalcAngle(xValue, yValue, (WORLD)predictedX, (WORLD)predictedY);
+      }
+    } else {
+      returnValue = pillsTargetTankMove(sim, mp, pb, bs, xValue, yValue, tankX, tankY, angle, speed, onBoat, boatExitSpeed);
+    }
   }
 
   return returnValue;
