@@ -590,12 +590,7 @@ static const ScnTrigger *meScnTriggerOf(const MEScenarioForm *f, int trigger) {
     return meScnTriggerAt((ScenarioManifest *)&f->manifest, trigger);
 }
 
-/* Whether a field answers a set of names rather than one value, which is what
- * decides the operator a new test is made with. The rule is scnTrigFieldIsSet's
- * and is derived and a tag or a region, not the type alone: on_enter_region's
- * name is a region the router hands over as the one string it is, and eq on it
- * holds. */
-static bool meScnFieldIsSet(MEScnParamType type, bool derived) {
+bool meScenarioFormFieldIsSet(MEScnParamType type, bool derived) {
     return derived &&
            (type == ME_SCN_PARAM_TAG || type == ME_SCN_PARAM_REGION);
 }
@@ -617,11 +612,14 @@ static ScnTrigValueKind meScnFieldValueKind(MEScnParamType type) {
     }
 }
 
-/* The first op an action can state that insists on no argument, or -1 when
- * the registry carries none. What a new action names: an op given no
- * arguments where it takes none is the one thing an action can be born right
- * about, and reading it off the registry keeps every op's name out of this
- * file. */
+/* The first op that acts and insists on no argument, or -1 when the registry
+ * carries none. What a new action names: an op given no arguments where it
+ * takes none is the one thing an action can be born right about, and reading
+ * it off the registry keeps every op's name out of this file.
+ *
+ * Only the ops that act are walked. A read accessor takes flat arguments and
+ * answers a value nobody is there to read, so it is no op for an action to
+ * name. */
 static int meScnFirstOpWithoutArgs(void) {
     const size_t count = meScenarioCompletionCount();
     size_t       i;
@@ -631,7 +629,7 @@ static int meScnFirstOpWithoutArgs(void) {
         bool         insists = false;
         size_t       p;
 
-        if (!meScenarioOpIsScalar(i)) {
+        if (!meScenarioOpIsAction(i)) {
             continue;
         }
         for (p = 0; p < params && !insists; p++) {
@@ -676,8 +674,8 @@ bool meScenarioFormAddCond(MEScenarioForm *f, int trigger) {
     meScnCopyName(c->field, sizeof(c->field), field);
     /* in for a field that answers a set of names and eq for one that answers a
        value, which is what scnCheckTrigCond holds a test to either way. */
-    c->op         = meScnFieldIsSet(type, derived) ? SCN_TRIG_CMP_IN
-                                                   : SCN_TRIG_CMP_EQ;
+    c->op         = meScenarioFormFieldIsSet(type, derived) ? SCN_TRIG_CMP_IN
+                                                           : SCN_TRIG_CMP_EQ;
     c->value.kind = meScnFieldValueKind(type);
     t->numWhere++;
     f->dirty = true;

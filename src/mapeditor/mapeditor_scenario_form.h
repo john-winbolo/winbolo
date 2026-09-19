@@ -44,6 +44,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* MEScnParamType: what a field holds, which is what decides both the operator
+ * a test may ask with and the widget the view draws beside it. It arrives
+ * through this header rather than through scenario_lua.h because that one
+ * names Lua types and carries no linkage guard, so no C++ view could include
+ * it. mapeditor_scenario_check.h takes it the same way for the same reason. */
+#include "mapeditor_scenario_fndesc.h"
+
 #include "../scenario_io/scenario_manifest.h"
 
 #ifdef __cplusplus
@@ -193,6 +200,15 @@ ScnTrigCompare meScenarioFormCompareAt(int index);
  * they do not know. "" for SCN_TRIG_CMP_UNKNOWN and for a value outside the
  * enum. */
 const char *meScenarioFormCompareName(ScnTrigCompare op);
+
+/* Whether a field answers a set of names rather than one value, which decides
+ * both the operator a new test is made with and the ones the view offers on
+ * it: a set answers in and ne, and nothing else holds on one.
+ *
+ * The rule is scnTrigFieldIsSet's and is derived and a tag or a region, not
+ * the type alone: on_enter_region's name is a region the router hands over as
+ * the one string it is, and eq on it holds. */
+bool meScenarioFormFieldIsSet(MEScnParamType type, bool derived);
 
 /* ── The tests and actions inside one trigger ────────────────────────
  *

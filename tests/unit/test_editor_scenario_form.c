@@ -60,7 +60,9 @@
  * run_editor_form_trigger_vocabulary — what the view draws a row from: the
  *                               seven operators, a hook's fields and an op's
  *                               arguments, each held against the catalogue the
- *                               accessor read it out of
+ *                               accessor read it out of, the set-valued rule
+ *                               the operator list is filtered by, and the op a
+ *                               new action names
  */
 
 #include <math.h>
@@ -1111,9 +1113,13 @@ int run_editor_form_trigger_row_values(void) {
 
 int run_editor_form_trigger_vocabulary(void) {
     const ScnLuaRow *rows;
+    MEScenarioForm   f;
+    const char      *hook        = efHookAt(0);
     char             name[ME_SCN_FIELD_NAME_LEN];
     size_t           opCount     = 0;
     size_t           row;
+    size_t           opAt;
+    bool             namedAction = false;
     int              i;
     int              j;
     int              scalars     = 0;
@@ -1171,6 +1177,7 @@ int run_editor_form_trigger_vocabulary(void) {
         for (at = 0; at < count; at++) {
             MEScnParamType type    = ME_SCN_PARAM_COUNT;
             bool           derived = false;
+            bool           set     = false;
 
             UT_ASSERT(meScnFnFieldAt(row, at, name, sizeof(name), &type,
                                      &derived));
@@ -1184,9 +1191,21 @@ int run_editor_form_trigger_vocabulary(void) {
                           "row %d field %s holds a type this build has no "
                           "name for", (int)row, name);
             UT_ASSERT(derived == fields[at].derived);
+
+            /* Whether the field answers a set of names, which is what decides
+               the operator a new test is made with and the ones the combo
+               offers on it. Derived and a tag or a region, and not the type
+               alone: on_enter_region's name is a region the router hands over
+               as the one string it is. */
+            set = derived && (type == ME_SCN_PARAM_TAG ||
+                              type == ME_SCN_PARAM_REGION);
+            UT_ASSERT_MSG(meScenarioFormFieldIsSet(type, derived) == set,
+                          "row %d field %s: %d against %d", (int)row, name,
+                          (int)meScenarioFormFieldIsSet(type, derived),
+                          (int)set);
             if (derived) {
                 derivedSeen++;
-                if (type == ME_SCN_PARAM_TAG || type == ME_SCN_PARAM_REGION) {
+                if (set) {
                     setValued++;
                 }
             }
@@ -1270,6 +1289,33 @@ int run_editor_form_trigger_vocabulary(void) {
     UT_ASSERT(!meScenarioOpIsAction(opCount));
     UT_ASSERT(meScenarioOpParamCount(opCount) == 0);
     UT_ASSERT(!meScenarioOpParamAt(opCount, 0, NULL, NULL, NULL));
+
+    /* And the op a new action is born naming, which is where the narrower of
+       the two flags is put to work. The registry index is found by the name
+       the form wrote, so no op's name is written here: a read accessor takes
+       flat arguments and answers a value nobody is there to read, so one of
+       those would be an action that does nothing. */
+    UT_ASSERT_MSG(hook[0] != '\0', "the catalogue carries no hook");
+    meScenarioFormInit(&f);
+    UT_ASSERT(meScenarioFormAddTrigger(&f, hook));
+    UT_ASSERT(meScenarioFormAddAction(&f, 0));
+    UT_ASSERT(f.manifest.triggers[0].numActions == 1);
+
+    for (opAt = 0; opAt < opCount && !namedAction; opAt++) {
+        const char *opName = NULL;
+
+        UT_ASSERT(meScenarioCompletionAt(opAt, &opName, NULL));
+        if (strcmp(opName, f.manifest.triggers[0].actions[0].op) != 0) {
+            continue;
+        }
+        UT_ASSERT_MSG(meScenarioOpIsAction(opAt),
+                      "a new action names '%s', which changes nothing a round "
+                      "can see", opName);
+        namedAction = true;
+    }
+    UT_ASSERT_MSG(namedAction, "a new action names '%s', which the registry "
+                               "has not got",
+                  f.manifest.triggers[0].actions[0].op);
 
     return 0;
 }

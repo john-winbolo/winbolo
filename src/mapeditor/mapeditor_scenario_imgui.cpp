@@ -21,9 +21,11 @@
  *
  *   Triggers lists the triggers the manifest declares and sets
  *   which hook each one runs on, off that same catalogue. The
- *   tests and the actions under a trigger are not drawn here;
- *   the row counts them instead, so a Remove says what it is
- *   about to take.
+ *   tests under a trigger are drawn there too: a field of the
+ *   hook's payload, an operator the field can answer, and a
+ *   value the field's own type says how to state. The actions
+ *   are not drawn here; the trigger's row counts them instead,
+ *   so a Remove says what it is about to take.
  *
  *   The tags view lists the map's own pills, bases and
  *   starts, which this file cannot ask the map for: those
@@ -1698,15 +1700,540 @@ static void meScnTriggerWhen(MEScenarioForm *f, int index, const char *when) {
     ImGui::EndCombo();
 }
 
-/* The triggers the scenario declares: one row each, saying where it sits, what
- * it listens on and how much it carries.
+/* How wide a test's three widgets open. A test is two lines — the field and
+ * the operator on the first, the value, the box beside it and Remove on the
+ * second — and these keep both of those lines inside the window at the size
+ * the panel opens at. */
+static const float kCondFieldWidth = 170.0f;
+static const float kCondOpWidth    = 90.0f;
+static const float kCondValueWidth = 190.0f;
+
+/* The catalogue row a hook name sits on, and meScnFnCount() for a name the
+ * catalogue has not got. A trigger naming one of those has no fields to offer,
+ * and the tests it already holds are drawn with the field combo empty rather
+ * than left out of the view. */
+static size_t meScnCatalogueRow(const char *when) {
+    const size_t count = meScnFnCount();
+    size_t       row;
+
+    for (row = 0; row < count; row++) {
+        if (strcmp(meScnFnName(row), when) == 0) {
+            return row;
+        }
+    }
+    return count;
+}
+
+/* What the field a test names holds, off the trigger's own hook. NONE and not
+ * derived for a name the hook has no field for, which is what a row written by
+ * hand against the wrong hook is drawn as. */
+static void meScnCondFieldType(size_t row, const char *field,
+                               MEScnParamType *type, bool *derived) {
+    const size_t count = meScnFnFieldCount(row);
+    size_t       at;
+
+    for (at = 0; at < count; at++) {
+        char name[ME_SCN_FIELD_NAME_LEN];
+
+        if (meScnFnFieldAt(row, at, name, sizeof(name), type, derived) &&
+            strcmp(name, field) == 0) {
+            return;
+        }
+    }
+    *type    = ME_SCN_PARAM_NONE;
+    *derived = false;
+}
+
+/* The two writes behind every value widget below. Writing one kind clears what
+ * the other kind left behind — a number leaves no text and a string leaves no
+ * number — so a row never carries half of the value it used to hold.
  *
- * The tests and the actions themselves are not drawn here. The count is, so an
- * author can see that a trigger has something in it before pressing the button
- * that throws it away. */
-static void meScnTriggersBody(MEScenarioForm *f) {
-    ScenarioManifest *m        = &f->manifest;
-    int               removeAt = -1;
+ * inText is cleared either way. That flag says a string is on the action's own
+ * text because this slot is too small for it, and only an action has a text to
+ * put one on: a test's value is never inText. */
+static void meScnCondSetNum(ScnTrigValue *v, ScnTrigValueKind kind,
+                            double num) {
+    v->kind    = kind;
+    v->inText  = false;
+    v->num     = num;
+    v->text[0] = '\0';
+}
+
+static void meScnCondSetText(ScnTrigValue *v, ScnTrigValueKind kind,
+                             const char *text) {
+    v->kind   = kind;
+    v->inText = false;
+    v->num    = 0.0;
+    meScnCopy(v->text, sizeof(v->text), text);
+}
+
+/* The kind of value a field of this type is tested against. What an empty
+ * value is made as when the field under a row changes, so a number left behind
+ * by the old field is not read as a name under the new one. */
+static ScnTrigValueKind meScnCondKindFor(MEScnParamType type) {
+    switch (type) {
+        case ME_SCN_PARAM_BOOL:
+            return SCN_TRIG_VAL_BOOL;
+        case ME_SCN_PARAM_WORD:
+        case ME_SCN_PARAM_STRING:
+        case ME_SCN_PARAM_TAG:
+        case ME_SCN_PARAM_REGION:
+            return SCN_TRIG_VAL_STRING;
+        default:
+            return SCN_TRIG_VAL_NUMBER;
+    }
+}
+
+static void meScnCondEmptyValue(ScnTrigValue *v, MEScnParamType type) {
+    memset(v, 0, sizeof(*v));
+    v->kind = meScnCondKindFor(type);
+}
+
+/* A whole number, written back as a NUMBER. The widget behind the fields that
+ * hold a count or an index, and the fall-back under the two pickers that can
+ * find nothing to offer. */
+static bool meScnCondNumber(ScnTrigValue *v) {
+    int n = (int)v->num;
+
+    ImGui::SetNextItemWidth(kCondValueWidth);
+    if (!ImGui::InputInt(langGetText(STR_MAPEDIT_SCENARIO_TEST_VALUE), &n, 0,
+                         0)) {
+        return false;
+    }
+    meScnCondSetNum(v, SCN_TRIG_VAL_NUMBER, (double)n);
+    return true;
+}
+
+/* Every distinct tag the manifest carries, over all three entity kinds. That
+ * is the same set scnTagCarried holds a test against, so a tag picked here is
+ * one the validator accepts. Sorted, and one row per name however many
+ * entities carry it. */
+static bool meScnTagPicker(const MEScenarioForm *f, ScnTrigValue *v) {
+    const MEScenarioTagKind kinds[3] = {ME_SCENARIO_TAG_PILL,
+                                        ME_SCENARIO_TAG_BASE,
+                                        ME_SCENARIO_TAG_START};
+    std::map<std::string, bool> names;
+    bool                        changed = false;
+    int                         k;
+
+    for (k = 0; k < (int)(sizeof(kinds) / sizeof(kinds[0])); k++) {
+        const int cap = meScenarioFormEntityCap(kinds[k]);
+        int       i;
+
+        for (i = 0; i < cap; i++) {
+            const ScnManifestTags *tags = meScenarioFormTags(f, kinds[k], i);
+            int                    t;
+
+            if (tags == NULL) {
+                continue;
+            }
+            for (t = 0; t < (int)tags->count && t < SCN_TAGS_PER_ENTITY; t++) {
+                names[tags->tag[t]] = true;
+            }
+        }
+    }
+
+    ImGui::SetNextItemWidth(kCondValueWidth);
+    if (!ImGui::BeginCombo(langGetText(STR_MAPEDIT_SCENARIO_TEST_VALUE),
+                           v->text)) {
+        return false;
+    }
+    if (names.empty()) {
+        meScnHint(langGetText(STR_MAPEDIT_SCENARIO_NO_TAGS_YET));
+    }
+    for (std::map<std::string, bool>::const_iterator at = names.begin();
+         at != names.end(); ++at) {
+        const char *name = at->first.c_str();
+
+        if (ImGui::Selectable(name, strcmp(name, v->text) == 0)) {
+            meScnCondSetText(v, SCN_TRIG_VAL_STRING, name);
+            changed = true;
+        }
+    }
+    ImGui::EndCombo();
+    return changed;
+}
+
+/* The regions the manifest names, which are not every region a round has.
+ * game.define_region names one while the round runs, so a name this list does
+ * not offer is not a name that is wrong: a stored one the list has no row for
+ * shows as itself, the way the hook combo's does. */
+static bool meScnRegionPicker(const MEScenarioForm *f, ScnTrigValue *v) {
+    const ScenarioManifest *m       = &f->manifest;
+    bool                    changed = false;
+    int                     i;
+
+    ImGui::SetNextItemWidth(kCondValueWidth);
+    if (!ImGui::BeginCombo(langGetText(STR_MAPEDIT_SCENARIO_TEST_VALUE),
+                           v->text)) {
+        return false;
+    }
+    if (m->numRegions == 0) {
+        meScnHint(langGetText(STR_MAPEDIT_SCENARIO_NO_REGIONS_YET));
+    }
+    for (i = 0; i < (int)m->numRegions; i++) {
+        const char *name = m->regions[i].name;
+
+        ImGui::PushID(i);
+        if (ImGui::Selectable(name, strcmp(name, v->text) == 0)) {
+            meScnCondSetText(v, SCN_TRIG_VAL_STRING, name);
+            changed = true;
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndCombo();
+    return changed;
+}
+
+/* The team numbers the lobby template seats. A template that seats none is not
+ * a round with no teams in it — the host fills the lobby from its own settings
+ * — so the fall-back is a box to type a number in rather than a list with
+ * nothing in it. */
+static bool meScnTeamPicker(const MEScenarioForm *f, ScnTrigValue *v) {
+    const ScnManifestLobby *lobby   = &f->manifest.lobby;
+    char                    shown[16];
+    bool                    changed = false;
+    int                     i;
+
+    if (lobby->numTeams == 0) {
+        meScnHint(langGetText(STR_MAPEDIT_SCENARIO_NO_TEAMS_YET));
+        return meScnCondNumber(v);
+    }
+
+    snprintf(shown, sizeof(shown), "%d", (int)v->num);
+    ImGui::SetNextItemWidth(kCondValueWidth);
+    if (!ImGui::BeginCombo(langGetText(STR_MAPEDIT_SCENARIO_TEST_VALUE),
+                           shown)) {
+        return false;
+    }
+    for (i = 0; i < (int)lobby->numTeams; i++) {
+        const int id = (int)lobby->teams[i].id;
+        char      label[16];
+
+        snprintf(label, sizeof(label), "%d", id);
+        ImGui::PushID(i);
+        if (ImGui::Selectable(label, (int)v->num == id)) {
+            meScnCondSetNum(v, SCN_TRIG_VAL_NUMBER, (double)id);
+            changed = true;
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndCombo();
+    return changed;
+}
+
+/* The map's pills or bases, under the numbers the editor shows them by.
+ *
+ * A pill and a base are counted from 1 in a payload, the way a script counts
+ * them, and the editor's own lists are counted from 0. So editor entity i is
+ * shown as i and stored as i + 1, and a stored n reads back as editor entity
+ * n - 1. That sum is written here and nowhere else in this file.
+ *
+ * With no map info, or a map holding none of the kind, there is nothing to
+ * list and the number is typed instead. */
+static bool meScnEntityPicker(const MEScenarioMapInfo *info,
+                              MEScnParamType type, ScnTrigValue *v) {
+    const bool     pills = (type == ME_SCN_PARAM_PILL);
+    const langid   rowId = pills ? STR_MAPEDIT_SCENARIO_PILL_ROW
+                                 : STR_MAPEDIT_SCENARIO_BASE_ROW;
+    const uint8_t *xs    = NULL;
+    const uint8_t *ys    = NULL;
+    const int      cap   = pills ? MAX_PILLS : MAX_BASES;
+    int            count   = 0;
+    int            shown;
+    char           preview[128];
+    MessageArgs    args    = {};
+    bool           changed = false;
+    int            i;
+
+    if (info != NULL) {
+        count = pills ? info->numPills : info->numBases;
+        xs    = pills ? info->pillX : info->baseX;
+        ys    = pills ? info->pillY : info->baseY;
+    }
+    if (count > cap) {
+        count = cap;
+    }
+    if (count <= 0) {
+        meScnHint(langGetText(STR_MAPEDIT_SCENARIO_NO_ENTITIES));
+        return meScnCondNumber(v);
+    }
+
+    shown = (int)v->num - 1;
+    if (shown >= 0 && shown < count) {
+        args.number  = shown;
+        args.number2 = (int)xs[shown];
+        args.number3 = (int)ys[shown];
+        meScnCopy(preview, sizeof(preview), langGetTextFmt(rowId, &args));
+    } else {
+        /* A number the map has no entity for: the number itself, so the author
+           can see what the row is holding. */
+        snprintf(preview, sizeof(preview), "%d", (int)v->num);
+    }
+
+    ImGui::SetNextItemWidth(kCondValueWidth);
+    if (!ImGui::BeginCombo(langGetText(STR_MAPEDIT_SCENARIO_TEST_VALUE),
+                           preview)) {
+        return false;
+    }
+    for (i = 0; i < count; i++) {
+        MessageArgs item = {};
+
+        item.number  = i;
+        item.number2 = (int)xs[i];
+        item.number3 = (int)ys[i];
+
+        ImGui::PushID(i);
+        if (ImGui::Selectable(langGetTextFmt(rowId, &item), i == shown)) {
+            meScnCondSetNum(v, SCN_TRIG_VAL_NUMBER, (double)(i + 1));
+            changed = true;
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndCombo();
+    return changed;
+}
+
+/* The fields of the same hook, as a value. What a test holds when it reads its
+ * right-hand side off the payload the trigger fired on rather than off a name
+ * the author wrote down. */
+static bool meScnCondRefCombo(size_t row, ScnTrigValue *v) {
+    const size_t count   = meScnFnFieldCount(row);
+    bool         changed = false;
+    size_t       at;
+
+    ImGui::SetNextItemWidth(kCondValueWidth);
+    if (!ImGui::BeginCombo(langGetText(STR_MAPEDIT_SCENARIO_TEST_VALUE),
+                           v->text)) {
+        return false;
+    }
+    for (at = 0; at < count; at++) {
+        char name[ME_SCN_FIELD_NAME_LEN];
+
+        if (!meScnFnFieldAt(row, at, name, sizeof(name), NULL, NULL)) {
+            continue;
+        }
+        ImGui::PushID((int)at);
+        if (ImGui::Selectable(name, strcmp(name, v->text) == 0)) {
+            meScnCondSetText(v, SCN_TRIG_VAL_FIELD, name);
+            changed = true;
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndCombo();
+    return changed;
+}
+
+/* The right-hand side of one test: the widget the field's own type calls for,
+ * and the box beside it that swaps the whole side for a reference to another
+ * field of the same payload. row is the catalogue row of the trigger's hook,
+ * which that reference lists the fields of.
+ *
+ * Answers whether the author moved anything. */
+static bool meScnCondValue(const MEScenarioForm *f,
+                           const MEScenarioMapInfo *info, size_t row,
+                           MEScnParamType type, bool derived,
+                           ScnTrigValue *v) {
+    bool changed = false;
+
+    /* The widget follows the type. Whether the field answers a set of names or
+       one value decides the operators beside it and not the widget: in asks
+       whether a set holds a name, and that name is stated the same way. */
+    (void)derived;
+
+    if (v->kind == SCN_TRIG_VAL_FIELD) {
+        changed = meScnCondRefCombo(row, v);
+    } else {
+        switch (type) {
+            case ME_SCN_PARAM_BOOL: {
+                bool on = (v->num != 0.0);
+
+                if (ImGui::Checkbox(
+                        langGetText(STR_MAPEDIT_SCENARIO_TEST_VALUE), &on)) {
+                    meScnCondSetNum(v, SCN_TRIG_VAL_BOOL, on ? 1.0 : 0.0);
+                    changed = true;
+                }
+                break;
+            }
+            case ME_SCN_PARAM_TAG:
+                changed = meScnTagPicker(f, v);
+                break;
+            case ME_SCN_PARAM_REGION:
+                changed = meScnRegionPicker(f, v);
+                break;
+            case ME_SCN_PARAM_TEAM:
+                changed = meScnTeamPicker(f, v);
+                break;
+            case ME_SCN_PARAM_PILL:
+            case ME_SCN_PARAM_BASE:
+                changed = meScnEntityPicker(info, type, v);
+                break;
+            case ME_SCN_PARAM_WORD:
+            case ME_SCN_PARAM_STRING:
+                /* A word is one of a fixed set of strings the surface names,
+                   and the catalogue does not carry that set, so there is no
+                   list to offer and the word is typed. */
+                ImGui::SetNextItemWidth(kCondValueWidth);
+                if (ImGui::InputText(
+                        langGetText(STR_MAPEDIT_SCENARIO_TEST_VALUE), v->text,
+                        SCN_TRIGGER_NAME_LEN)) {
+                    v->kind   = SCN_TRIG_VAL_STRING;
+                    v->inText = false;
+                    v->num    = 0.0;
+                    changed   = true;
+                }
+                break;
+            case ME_SCN_PARAM_SLOT:
+            case ME_SCN_PARAM_OWNER:
+            case ME_SCN_PARAM_ITEM:
+            case ME_SCN_PARAM_SQUARE_X:
+            case ME_SCN_PARAM_SQUARE_Y:
+                changed = meScnCondNumber(v);
+                break;
+            case ME_SCN_PARAM_NUMBER: {
+                double n = v->num;
+
+                ImGui::SetNextItemWidth(kCondValueWidth);
+                if (ImGui::InputDouble(
+                        langGetText(STR_MAPEDIT_SCENARIO_TEST_VALUE), &n, 0.0,
+                        0.0, "%g")) {
+                    meScnCondSetNum(v, SCN_TRIG_VAL_NUMBER, n);
+                    changed = true;
+                }
+                break;
+            }
+            default:
+                /* A field the hook has not got, and one holding a type this
+                   build has no widget for: the label alone, so the row still
+                   draws and its field combo and Remove still work. The value
+                   is left exactly as it was found. */
+                ImGui::TextUnformatted(
+                    langGetText(STR_MAPEDIT_SCENARIO_TEST_VALUE));
+                break;
+        }
+    }
+
+    /* A hook handed nothing has no field to name, so there is nothing to refer
+       to and no box to tick. */
+    if (meScnFnFieldCount(row) == 0) {
+        return changed;
+    }
+
+    bool asRef = (v->kind == SCN_TRIG_VAL_FIELD);
+
+    ImGui::SameLine();
+    if (ImGui::Checkbox(langGetText(STR_MAPEDIT_SCENARIO_VALUE_FROM_PAYLOAD),
+                        &asRef)) {
+        if (asRef) {
+            meScnCondSetText(v, SCN_TRIG_VAL_FIELD, "");
+        } else {
+            meScnCondEmptyValue(v, type);
+        }
+        changed = true;
+    }
+    return changed;
+}
+
+/* Whether a field can answer this operator, which is the pair of refusals
+ * scnCheckTrigCond writes: a set of names answers in and ne and nothing else,
+ * and one value answers everything but in. The combo offers what this says yes
+ * to, so it cannot make a row the validator turns down. */
+static bool meScnCondOpFits(ScnTrigCompare op, MEScnParamType type,
+                            bool derived) {
+    if (op == SCN_TRIG_CMP_UNKNOWN) {
+        return false;   /* a row that named no operator; nothing answers it */
+    }
+    if (meScenarioFormFieldIsSet(type, derived)) {
+        return op == SCN_TRIG_CMP_IN || op == SCN_TRIG_CMP_NE;
+    }
+    return op != SCN_TRIG_CMP_IN;
+}
+
+/* The fields of the trigger's own hook. Picking a different one writes the new
+ * name, empties the value to the new field's kind and moves the operator to
+ * one the new field can answer where the current one cannot — which is what
+ * meScenarioFormAddCond does when it makes a row. A value left behind by the
+ * old field would turn a row the validator passed into one it refuses. */
+static bool meScnCondField(size_t row, ScnTrigCond *c) {
+    const size_t count   = meScnFnFieldCount(row);
+    bool         changed = false;
+    size_t       at;
+
+    ImGui::SetNextItemWidth(kCondFieldWidth);
+    if (!ImGui::BeginCombo(langGetText(STR_MAPEDIT_SCENARIO_TEST_FIELD),
+                           c->field)) {
+        return false;
+    }
+    for (at = 0; at < count; at++) {
+        char           name[ME_SCN_FIELD_NAME_LEN];
+        MEScnParamType type    = ME_SCN_PARAM_NONE;
+        bool           derived = false;
+        bool           holding;
+
+        if (!meScnFnFieldAt(row, at, name, sizeof(name), &type, &derived)) {
+            continue;
+        }
+        holding = (strcmp(name, c->field) == 0);
+
+        ImGui::PushID((int)at);
+        if (ImGui::Selectable(name, holding) && !holding) {
+            meScnCopy(c->field, sizeof(c->field), name);
+            meScnCondEmptyValue(&c->value, type);
+            if (!meScnCondOpFits(c->op, type, derived)) {
+                c->op = meScenarioFormFieldIsSet(type, derived)
+                            ? SCN_TRIG_CMP_IN
+                            : SCN_TRIG_CMP_EQ;
+            }
+            changed = true;
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndCombo();
+    return changed;
+}
+
+/* What the test asks with, out of the operators the field can answer. */
+static bool meScnCondOp(MEScnParamType type, bool derived, ScnTrigCond *c) {
+    const int count   = meScenarioFormCompareCount();
+    bool      changed = false;
+    int       i;
+
+    ImGui::SetNextItemWidth(kCondOpWidth);
+    if (!ImGui::BeginCombo(langGetText(STR_MAPEDIT_SCENARIO_TEST_OP),
+                           meScenarioFormCompareName(c->op))) {
+        return false;
+    }
+    for (i = 0; i < count; i++) {
+        const ScnTrigCompare op = meScenarioFormCompareAt(i);
+
+        if (!meScnCondOpFits(op, type, derived)) {
+            continue;
+        }
+        ImGui::PushID(i);
+        if (ImGui::Selectable(meScenarioFormCompareName(op), op == c->op)) {
+            c->op   = op;
+            changed = true;
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndCombo();
+    return changed;
+}
+
+/* The triggers the scenario declares: one row each, saying where it sits, what
+ * it listens on and how much it carries, with the tests under it.
+ *
+ * The actions themselves are not drawn here. The count is, so an author can
+ * see that a trigger has something in it before pressing the button that
+ * throws it away. */
+static void meScnTriggersBody(MEScenarioForm *f,
+                              const MEScenarioMapInfo *info) {
+    ScenarioManifest *m           = &f->manifest;
+    int               removeAt    = -1;
+    /* A test is dropped after the list has been drawn, so the row being read
+       is never the row being changed. */
+    int               condTrigger = -1;
+    int               condAt      = -1;
     int               i;
 
     if (m->numTriggers == 0) {
@@ -1714,8 +2241,11 @@ static void meScnTriggersBody(MEScenarioForm *f) {
     }
 
     for (i = 0; i < (int)m->numTriggers; i++) {
-        const ScnTrigger *t    = &m->triggers[i];
-        MessageArgs       args = {};
+        const ScnTrigger *t       = &m->triggers[i];
+        const size_t      hookRow = meScnCatalogueRow(t->when);
+        const size_t      fields  = meScnFnFieldCount(hookRow);
+        MessageArgs       args    = {};
+        int               w;
 
         ImGui::PushID(i);
         ImGui::Separator();
@@ -1739,10 +2269,70 @@ static void meScnTriggersBody(MEScenarioForm *f) {
         if (ImGui::Button(langGetText(STR_MAPEDIT_SCENARIO_REMOVE))) {
             removeAt = i;
         }
+
+        /* The tests: all of them have to hold for the actions to run, so a
+           trigger carrying none runs every time its hook does. */
+        ImGui::TextUnformatted(langGetText(STR_MAPEDIT_SCENARIO_TESTS));
+        if (t->numWhere == 0) {
+            meScnHint(langGetText(STR_MAPEDIT_SCENARIO_NO_TESTS));
+        }
+
+        for (w = 0; w < (int)t->numWhere; w++) {
+            /* The row is read out whole, edited as a local and written back
+               whole, which is the contract on the cond accessors: nothing here
+               reaches into the manifest to write a part of one. */
+            ScnTrigCond    cond    = t->where[w];
+            MEScnParamType type    = ME_SCN_PARAM_NONE;
+            bool           derived = false;
+            bool           moved   = false;
+
+            ImGui::PushID(w);
+            moved |= meScnCondField(hookRow, &cond);
+
+            /* Read after the combo, which can have just moved the row on to a
+               different field: the operator and the value below are that
+               field's. */
+            meScnCondFieldType(hookRow, cond.field, &type, &derived);
+
+            ImGui::SameLine();
+            moved |= meScnCondOp(type, derived, &cond);
+
+            /* The value and Remove go under the field and the operator for the
+               reason the combo above goes under its own line: four widgets and
+               a button on one line run off the right of the window. */
+            ImGui::Indent();
+            moved |= meScnCondValue(f, info, hookRow, type, derived,
+                                    &cond.value);
+            ImGui::SameLine();
+            if (ImGui::Button(langGetText(STR_MAPEDIT_SCENARIO_REMOVE))) {
+                condTrigger = i;
+                condAt      = w;
+            }
+            ImGui::Unindent();
+            ImGui::PopID();
+
+            if (moved) {
+                meScenarioFormSetCond(f, i, w, &cond);
+            }
+        }
+
+        if (fields == 0) {
+            /* on_setup, on_start and on_end are handed no payload, so there is
+               no field to name and meScenarioFormAddCond refuses. */
+            meScnHint(langGetText(STR_MAPEDIT_SCENARIO_HOOK_NO_FIELDS));
+        } else if (t->numWhere >= SCN_TRIGGER_CONDS_MAX) {
+            meScnHint(langGetText(STR_MAPEDIT_SCENARIO_TESTS_FULL));
+        } else if (ImGui::Button(langGetText(STR_MAPEDIT_SCENARIO_ADD_TEST))) {
+            meScenarioFormAddCond(f, i);
+        }
+
         ImGui::Unindent();
         ImGui::PopID();
     }
 
+    if (condAt >= 0) {
+        meScenarioFormRemoveCond(f, condTrigger, condAt);
+    }
     if (removeAt >= 0) {
         meScenarioFormRemoveTrigger(f, removeAt);
     }
@@ -1836,7 +2426,7 @@ void mapEditorImguiScenarioPanel(MEScenarioState *st, MEScenarioForm *form,
             meScnFunctionsBody(st, view);
             break;
         case ME_SCENARIO_VIEW_TRIGGERS:
-            meScnTriggersBody(form);
+            meScnTriggersBody(form, mapInfo);
             break;
         default:
             meScnScriptBody(st, check, mapPath, wantSave, wantReload,

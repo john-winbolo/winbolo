@@ -2597,6 +2597,28 @@
 #define STR_MAPEDIT_SCENARIO_ADD_TRIGGER      2484
 #define STR_MAPEDIT_SCENARIO_TRIGGERS_FULL    2485
 
+/* The tests under one trigger: the list itself, the button that adds a row and
+ * the two lines that stand in for it, and the three labels a row is drawn
+ * with — the field of the hook's payload, the operator, and the value it is
+ * held against.
+ *
+ * A value is a literal the author states or a reference to another field of
+ * the same payload, which is what the read-it-off-the-event box switches
+ * between. The three "none yet" lines are what a tag, a region or a team
+ * picker says instead of opening on an empty list. */
+#define STR_MAPEDIT_SCENARIO_TESTS              2550
+#define STR_MAPEDIT_SCENARIO_NO_TESTS           2551
+#define STR_MAPEDIT_SCENARIO_ADD_TEST           2552
+#define STR_MAPEDIT_SCENARIO_TESTS_FULL         2553
+#define STR_MAPEDIT_SCENARIO_HOOK_NO_FIELDS     2554
+#define STR_MAPEDIT_SCENARIO_TEST_FIELD         2555
+#define STR_MAPEDIT_SCENARIO_TEST_OP            2556
+#define STR_MAPEDIT_SCENARIO_TEST_VALUE         2557
+#define STR_MAPEDIT_SCENARIO_VALUE_FROM_PAYLOAD 2558
+#define STR_MAPEDIT_SCENARIO_NO_TAGS_YET        2559
+#define STR_MAPEDIT_SCENARIO_NO_REGIONS_YET     2560
+#define STR_MAPEDIT_SCENARIO_NO_TEAMS_YET       2561
+
 /* The lobby's rules popup: the button on the scenario line, the window's
  * caption, and the four columns a row is drawn in — the rule, what the
  * classic game plays it at, what the scenario set it to, and what that does

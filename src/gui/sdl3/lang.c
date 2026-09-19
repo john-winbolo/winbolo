@@ -2500,6 +2500,18 @@ static const LangEntry langTable[] = {
     {2547, "Armour a mine takes off the tank that sets it off."},
     {2548, "Ticks a tank stays visible in the trees after firing."},
     {2549, "The shortest the gunsight range winds down to."},
+    {2550, "Tests"},
+    {2551, "No tests, so this runs every time the hook does"},
+    {2552, "Add Test"},
+    {2553, "No room for another test"},
+    {2554, "This hook is handed nothing, so there is nothing to test"},
+    {2555, "Field"},
+    {2556, "Is"},
+    {2557, "Value"},
+    {2558, "Read it off the event"},
+    {2559, "Nothing on this map is tagged yet"},
+    {2560, "No regions named yet"},
+    {2561, "The lobby names no teams"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
