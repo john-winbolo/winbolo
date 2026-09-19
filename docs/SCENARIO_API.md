@@ -33,6 +33,9 @@ bug worth reporting.
 - [Showing things on a client](#showing-things-on-a-client)
   - [The panel](#the-panel)
 - [Rules](#rules)
+- [Triggers](#triggers)
+  - [The fields a hook offers](#the-fields-a-hook-offers)
+  - [Writing triggers in the map editor](#writing-triggers-in-the-map-editor)
 - [Test hooks](#test-hooks)
 - [Constants](#constants)
 - [Terrain codes](#terrain-codes)
@@ -337,6 +340,7 @@ scenario = {
   rules        = { ... },
   tags         = { ... },
   regions      = { ... },
+  triggers     = { ... },
 }
 ```
 
@@ -347,6 +351,7 @@ scenario = {
 | `api` | number | The API version you wrote against. Defaults to 1. A server older than the version you name refuses the scenario rather than running it half-understood. |
 | `game` | string | The game type the scenario asks for: `"open"`, `"tournament"` or `"strict"`. The round plays under it — the lobby and both game finders read the type as Scripted, and every part of the engine that picks behaviour from the game type resolves that to the word named here. Left out, the round plays strict tournament. A word that is none of the three also plays strict tournament, and `-validate` reports it by name. Write `game = "open"` for an open round: a scenario that says nothing is not read as asking for one. |
 | `bound` | boolean | True (the default) when the scenario is tied to its map. A scenario that names tags or regions is tied to its map by definition, because tags and regions are the map's own squares and entities. A server can also offer scenarios of its own, which play over whichever map a host has committed; a scenario with `bound` true is not one of those and a host picking it is refused, because over another map its tags, its regions and its entity indices name items that are not there. |
+| `triggers` | array | What the scenario does without a line of Lua: hooks to listen on, tests against what each hook is handed, and calls to make when every test holds. A scenario may carry triggers, a script, or both. See [Triggers](#triggers). |
 | `fill_to_caps` | boolean | False by default. True starts every pillbox and base on the map at the caps your `rules` table leaves in force rather than at the numbers the map file holds. A map file states a number for each pill's armour and each base's stocks and has no way of stating "full", so a scenario that raises `base_full_armour` or `pill_max_armour` would otherwise open with the map's own smaller numbers and climb to the new ones over the round. Raising only: anything already at or above a cap is left where it is, and anything above one is brought down by the rules themselves. A pill's firing rate is not touched. |
 
 ### `scenario.lobby`
@@ -434,6 +439,16 @@ past what the map holds is reported. A tag is at most 31 bytes, and one longer
 than that is cut to 31 without a report, so `game.tagged` with the full name
 would then find nothing.
 
+**The map editor counts these from 0 and this table counts from 1.** The
+editor's pill, base and start lists are its own, numbered the way the rest of
+the editor numbers them, so the pillbox it shows as **pill 0** is `[1]` here.
+Tagging through the editor's own tags view is safe — it converts, and the
+number you see is the number you meant. Writing the table by hand from a
+number read off the editor is where this bites, and it bites quietly: a tag on
+the wrong entity is still a valid table, so nothing is reported and the
+trigger or the `game.tagged` call that wanted it simply never finds it. Count
+from 1 here, and from 1 in every `game.*` call that takes an `n`.
+
 ### `scenario.regions`
 
 Named rectangles of map squares, by name, with an inclusive top-left corner
@@ -453,6 +468,22 @@ cut to 31 without a report, where `define_region` refuses it. A coordinate or
 size is a byte: a value past 255 is not reported here and lands wrapped, so
 keep to the map.
 
+### `scenario.triggers`
+
+What the scenario does, stated as data rather than written as Lua: a list of
+hooks to listen on, tests against what each hook is handed, and calls to make
+when every test holds. A scenario can carry triggers, a script, or both.
+
+```lua
+triggers = {
+  { when    = "on_pill_captured",
+    where   = { { "tag", "in", "keep" } },
+    actions = { { "announce", "The keep has fallen", 5 } } },
+},
+```
+
+Set out in full under [Triggers](#triggers).
+
 ---
 
 ## Hooks
@@ -461,6 +492,15 @@ A hook is a global function the server calls, or a function of the same name
 kept as a field of the `scenario` table; where both exist the global wins.
 Declare the ones you want and leave out the rest; a hook you do not declare
 costs nothing.
+
+**A hook's return value means one thing, and only where the scenario declares
+triggers.** The engine ignores what a hook returns. But a scenario with a
+`triggers` table has a router installed over each hook it listens on, and that
+router calls your own handler first: return **`false`** from it and the
+triggers on that hook do not run for that event. Anything else — a number, a
+string, `nil`, or falling off the end of the function, which is what most
+handlers do — lets them run. A scenario with no triggers has no router, so
+there is nothing for a return to reach. See [Triggers](#triggers).
 
 ### The round's own moments
 
@@ -869,12 +909,12 @@ refused with `SCN_OP_BAD_SQUARE`, the same answer as a square off the map.
 
 | Call | What it does |
 |---|---|
-| `game.set_pill_owner(n, p)` | Hands a pillbox to a seat, or to nobody with `game.NEUTRAL`. A pillbox in a tank answers to whoever is carrying it, so this is refused with `SCN_OP_CARRIED` until it is dropped. |
+| `game.set_pill_owner(n[, p])` | Hands a pillbox to a seat, or to nobody with `game.NEUTRAL` or with no seat named. A pillbox in a tank answers to whoever is carrying it, so this is refused with `SCN_OP_CARRIED` until it is dropped. |
 | `game.set_pill_armour(n, a)` | How much a pillbox has left. 0 is a dead pillbox on the ground. |
 | `game.set_pill_speed(n, s)` | The ticks between a pillbox's shots, counted the way a `_ticks` rule is — about fifty to the second, so 50 is a shot a second. Kept between the rules `pill_attack_min_ticks` and `pill_attack_ticks`; outside them it is refused with `SCN_OP_RANGE`. |
 | `game.move_pill(n, x, y)` | Puts a pillbox on another square. |
-| `game.set_base_owner(n, p[, keep_stock])` | Hands a base to a seat, or to nobody with `game.NEUTRAL`. `keep_stock` leaves what it holds; without it a base changing hands is emptied, as it is in play. |
-| `game.set_base_stock(n, armour, shells, mines)` | What a base holds. A stock left out is left alone, and one past the cap is held there. |
+| `game.set_base_owner(n[, p[, keep_stock]])` | Hands a base to a seat, or to nobody with `game.NEUTRAL` or with no seat named. `keep_stock` leaves what it holds; without it a base changing hands is emptied, as it is in play. |
+| `game.set_base_stock(n[, armour[, shells[, mines]]])` | What a base holds. A stock left out is left alone, and one past the cap is held there. |
 
 A pillbox answers to a **seat**, not to a team. Handing the keep to the
 defenders means handing it to one of them:
@@ -1400,6 +1440,172 @@ The detail a refusal carries names both sides with their numbers.
 
 ---
 
+## Triggers
+
+A trigger is a hook to listen on, some tests against what that hook is handed,
+and some calls to make when every test holds. It is data in the `scenario`
+table rather than a function you write, so a scenario that only wants to say
+"when the keep falls, announce it" needs no Lua at all.
+
+```lua
+scenario = {
+  name = "Hold the Keep",
+  tags = { pills = { [1] = "keep", [2] = "keep" } },
+
+  triggers = {
+    { when    = "on_pill_captured",
+      where   = { { "tag", "in", "keep" } },
+      actions = { { "announce", "The keep has fallen", 5 },
+                  { "sound", "big_explosion_near" } } },
+
+    { when    = "on_tank_killed",
+      where   = { { "victim_team", "eq", 1 } },
+      actions = { { "score", { field = "killer" }, 10 } } },
+  },
+}
+```
+
+Three keys, all optional but `when`:
+
+| Key | What it is |
+|---|---|
+| `when` | The hook to run on, by name. A trigger that names none, or names a policy, never runs. |
+| `where` | The tests, as `{ field, operator, value }` rows. **Every one has to hold**, so no `where` at all means the trigger fires every time its hook does. |
+| `actions` | The calls, as `{ op, argument... }` rows, run in the order written. |
+
+Triggers run in the order the table writes them, and the actions inside one
+run in the order that trigger writes them. A trigger whose tests do not hold
+is skipped and the next is tried; nothing stops at the first miss.
+
+### The fields a hook offers
+
+A `where` row names a **field**, which is either one of the hook's own
+parameters or one derived from it. The parameters are the ones in the
+[Hooks](#hooks) tables, by the names written there. On top of those:
+
+| Derived field | Off | What it answers |
+|---|---|---|
+| `<name>_team` | a seat or an owner | That seat's team. `on_tank_killed` offers `victim_team` and `killer_team`. |
+| `tag` | a pillbox or a base | The tags on that entity — a **set**, not one value. |
+| `region` | a square `x` and the `y` beside it | The regions that square is inside — a **set**. |
+
+So `on_tank_killed(victim, killer, cause)` offers `victim`, `killer`, `cause`,
+`victim_team` and `killer_team`, and `on_pill_captured(n, old, new)` offers
+`n`, `old`, `new`, `tag`, `old_team` and `new_team`.
+
+Three hooks are handed nothing and so offer no field: `on_setup`, `on_start`
+and `on_end`. A trigger on one of those runs every time, and a `where` row
+against it is refused.
+
+A hook's `scripted` flag is **not** a field. It is handed to your own
+handler, but it is added after the declared parameters and the fields come
+from those, so a trigger fires whether the event was the script's doing or the
+round's.
+
+**Seven operators**, and which of them a field takes depends on whether it
+answers one value or a set:
+
+| | Operators |
+|---|---|
+| A field that answers one value | `eq`, `ne`, `lt`, `lte`, `gt`, `gte` |
+| A set — `tag` and `region` | `in` for "holds this name", `ne` for "does not" |
+
+`in` on a single value and `eq` on a set are both refused before the round
+starts, because neither asks a question the other side can answer. The one
+that looks like an exception is not: `on_enter_region`'s own `name` parameter
+is a region, but the hook hands it over as the one name it is rather than as a
+set, so `eq` on it is right and `in` on it is refused.
+
+**A value** is one of four things:
+
+| Written | Means |
+|---|---|
+| `12`, `0.5` | a number |
+| `"keep"` | a string — a tag, a region, or one of the words a field takes |
+| `true`, `false` | a boolean |
+| `{ field = "killer" }` | whatever that field of the **same hook** holds when the trigger fires |
+
+The last one is how two halves of the same event are compared:
+`{ "victim_team", "eq", { field = "killer_team" } }` is a team killing its own.
+
+Values of different kinds compare `false` rather than raising — `ne` included,
+so a row that cannot be worked out never holds either way round. A field that
+reads nothing also does not hold: an owner who is nobody has no team, and a
+seat the roster has nothing in has none either.
+
+**An action** names an op and gives its arguments positionally, using the same
+four kinds of value. It can name any `game.*` call that changes something and
+takes flat arguments — which leaves out the reads, since an action's answer
+goes nowhere, and the handful that take a table or a function, which a row
+cannot write. `game.panel` is the one worth naming: its `list` is a table, so
+it is a script's to call, not a trigger's.
+
+The one action that is not a `game.*` row is **`call`**, which runs a
+top-level function of your own script:
+
+```lua
+{ when    = "on_base_captured",
+  actions = { { "call", "base_taken", { field = "new" }, { field = "n" } } } },
+```
+
+Its first argument is the function's name and the rest are passed to it. The
+function reaches `game.*` exactly as the rest of your script does, and an
+error in it counts against the scenario like any other. Nothing checks what
+arguments it takes — they are yours.
+
+**Your own handler runs first.** Where a scenario declares both a handler and
+a trigger on the same hook, the handler is called before the triggers, and
+returning `false` from it stops them for that event. That is the only meaning
+a hook's return value has.
+
+**What is refused, and what is merely skipped.** Everything a table can be
+held to is checked before a round starts — by `-validate`, and by the map
+editor as you type — and reported against the trigger's position, so
+`triggers[3].actions[0]` names the row you are looking at. Refused: a hook
+that names nothing or names a policy, a field the hook has not got, an
+operator that is none of the seven, an operator the field cannot answer, an
+argument count the op does not take, a tag nothing on the map carries, and a
+`call` that names no function at all.
+
+At run time the router is silent instead: a row it cannot make sense of does
+not hold, and an action it cannot make does not run. Raising there would spend
+one of the scenario's errors on a fault nobody can fix mid-round, which is why
+the check before the round is the one that talks.
+
+Two things only the round finds out, so keep them in mind. **A `call` naming a
+function your script never defined is skipped**, not reported — the check has
+no way to know what the chunk will define, since a script may define a
+function under a condition. And a region a test names may be one
+`game.define_region` makes during the round, so an unknown region name is not
+refused either.
+
+**Limits.** 64 triggers in a scenario, 4 tests and 4 actions on one trigger, 6
+arguments on one action. Going past any of them drops what is past it and says
+so, the way a table with too many regions does. One argument of an action may
+be a line of text up to 128 bytes; every other string is 31.
+
+### Writing triggers in the map editor
+
+The map editor's scenario panel has a **Triggers** view that writes this table
+for you: the hook off a list, the field and operator off what the hook offers,
+and the value drawn as whatever the field holds — a tag picker, a region
+picker, a team, or the map's own pillboxes and bases by the numbers the editor
+shows them under.
+
+The lists are built from the catalogue, so the names and the operators are
+right by construction: a field combo offers that hook's own fields, an
+operator combo offers the ones that field can answer, and an op combo offers
+the ops an action can use rather than every row of the `game` table. What it
+cannot settle is what you put in the values — a tag nothing carries, a number
+outside a range — and those are reported in the panel's own issues list as you
+type, under the same `triggers[3].actions[0]` key `-validate` uses.
+
+It also converts entity numbers, so the pillbox it lists as **pill 0** is
+written out as `[1]` — see [`scenario.tags`](#scenariotags) for why that is
+the one thing worth checking on a table you wrote by hand.
+
+---
+
 ## Test hooks
 
 One call, and it is here because a test needs a server path that a round
@@ -1606,5 +1812,8 @@ Named so you do not spend an afternoon looking for them:
   may put a seat on a team nobody is on is still decided by the
   `allow_extra_teams()` policy alone.
 - **Packaged brains.** `package:NAME` is refused wherever a brain is named.
-- **Triggers.** A `scenario.triggers` table is not read, and a script that
-  carries one is neither parsed nor refused for it.
+- **A trigger's own `scripted` flag.** An event hook is handed one, but it is
+  not a field a `where` row can test: the fields come from the hook's declared
+  parameters and the flag is added after them. A trigger fires whether the
+  event was the script's doing or the round's. Test it in a handler of your
+  own if it matters.
