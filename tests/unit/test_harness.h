@@ -3236,6 +3236,7 @@ int run_editor_form_triggers(void);
 int run_editor_form_triggers_full(void);
 int run_editor_form_trigger_rows(void);
 int run_editor_form_trigger_row_values(void);
+int run_editor_form_trigger_action_text(void);
 int run_editor_form_trigger_vocabulary(void);
 
 /* The editor writing a scenario out (test_editor_scenario_pack.c): the chunk

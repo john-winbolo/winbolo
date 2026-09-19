@@ -2512,6 +2512,19 @@ static const LangEntry langTable[] = {
     {2559, "Nothing on this map is tagged yet"},
     {2560, "No regions named yet"},
     {2561, "The lobby names no teams"},
+    {2562, "Actions"},
+    {2563, "No actions, so this trigger does nothing when it fires"},
+    {2564, "Add Action"},
+    {2565, "No room for another action"},
+    {2566, "Do"},
+    {2567, "Add argument"},
+    {2568, "Drop argument"},
+    {2569, "Function"},
+    {2570, "Runs a function this script defines"},
+    {2571, "This script defines no functions yet"},
+    {2572, "Number"},
+    {2573, "Text"},
+    {2574, "An action carries one long line, and another argument has it"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

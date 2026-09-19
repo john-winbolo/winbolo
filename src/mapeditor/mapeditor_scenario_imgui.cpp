@@ -23,9 +23,10 @@
  *   which hook each one runs on, off that same catalogue. The
  *   tests under a trigger are drawn there too: a field of the
  *   hook's payload, an operator the field can answer, and a
- *   value the field's own type says how to state. The actions
- *   are not drawn here; the trigger's row counts them instead,
- *   so a Remove says what it is about to take.
+ *   value the field's own type says how to state. So are the
+ *   actions: an op the registry offers or call, the line saying
+ *   what that op does, and one widget per argument under the
+ *   registry's own name and type for it.
  *
  *   The tags view lists the map's own pills, bases and
  *   starts, which this file cannot ask the map for: those
@@ -1792,12 +1793,11 @@ static void meScnCondEmptyValue(ScnTrigValue *v, MEScnParamType type) {
 /* A whole number, written back as a NUMBER. The widget behind the fields that
  * hold a count or an index, and the fall-back under the two pickers that can
  * find nothing to offer. */
-static bool meScnCondNumber(ScnTrigValue *v) {
+static bool meScnCondNumber(const char *label, ScnTrigValue *v) {
     int n = (int)v->num;
 
     ImGui::SetNextItemWidth(kCondValueWidth);
-    if (!ImGui::InputInt(langGetText(STR_MAPEDIT_SCENARIO_TEST_VALUE), &n, 0,
-                         0)) {
+    if (!ImGui::InputInt(label, &n, 0, 0)) {
         return false;
     }
     meScnCondSetNum(v, SCN_TRIG_VAL_NUMBER, (double)n);
@@ -1808,7 +1808,8 @@ static bool meScnCondNumber(ScnTrigValue *v) {
  * is the same set scnTagCarried holds a test against, so a tag picked here is
  * one the validator accepts. Sorted, and one row per name however many
  * entities carry it. */
-static bool meScnTagPicker(const MEScenarioForm *f, ScnTrigValue *v) {
+static bool meScnTagPicker(const MEScenarioForm *f, const char *label,
+                           ScnTrigValue *v) {
     const MEScenarioTagKind kinds[3] = {ME_SCENARIO_TAG_PILL,
                                         ME_SCENARIO_TAG_BASE,
                                         ME_SCENARIO_TAG_START};
@@ -1834,8 +1835,7 @@ static bool meScnTagPicker(const MEScenarioForm *f, ScnTrigValue *v) {
     }
 
     ImGui::SetNextItemWidth(kCondValueWidth);
-    if (!ImGui::BeginCombo(langGetText(STR_MAPEDIT_SCENARIO_TEST_VALUE),
-                           v->text)) {
+    if (!ImGui::BeginCombo(label, v->text)) {
         return false;
     }
     if (names.empty()) {
@@ -1858,14 +1858,14 @@ static bool meScnTagPicker(const MEScenarioForm *f, ScnTrigValue *v) {
  * game.define_region names one while the round runs, so a name this list does
  * not offer is not a name that is wrong: a stored one the list has no row for
  * shows as itself, the way the hook combo's does. */
-static bool meScnRegionPicker(const MEScenarioForm *f, ScnTrigValue *v) {
+static bool meScnRegionPicker(const MEScenarioForm *f, const char *label,
+                              ScnTrigValue *v) {
     const ScenarioManifest *m       = &f->manifest;
     bool                    changed = false;
     int                     i;
 
     ImGui::SetNextItemWidth(kCondValueWidth);
-    if (!ImGui::BeginCombo(langGetText(STR_MAPEDIT_SCENARIO_TEST_VALUE),
-                           v->text)) {
+    if (!ImGui::BeginCombo(label, v->text)) {
         return false;
     }
     if (m->numRegions == 0) {
@@ -1889,7 +1889,8 @@ static bool meScnRegionPicker(const MEScenarioForm *f, ScnTrigValue *v) {
  * a round with no teams in it — the host fills the lobby from its own settings
  * — so the fall-back is a box to type a number in rather than a list with
  * nothing in it. */
-static bool meScnTeamPicker(const MEScenarioForm *f, ScnTrigValue *v) {
+static bool meScnTeamPicker(const MEScenarioForm *f, const char *label,
+                            ScnTrigValue *v) {
     const ScnManifestLobby *lobby   = &f->manifest.lobby;
     char                    shown[16];
     bool                    changed = false;
@@ -1897,13 +1898,12 @@ static bool meScnTeamPicker(const MEScenarioForm *f, ScnTrigValue *v) {
 
     if (lobby->numTeams == 0) {
         meScnHint(langGetText(STR_MAPEDIT_SCENARIO_NO_TEAMS_YET));
-        return meScnCondNumber(v);
+        return meScnCondNumber(label, v);
     }
 
     snprintf(shown, sizeof(shown), "%d", (int)v->num);
     ImGui::SetNextItemWidth(kCondValueWidth);
-    if (!ImGui::BeginCombo(langGetText(STR_MAPEDIT_SCENARIO_TEST_VALUE),
-                           shown)) {
+    if (!ImGui::BeginCombo(label, shown)) {
         return false;
     }
     for (i = 0; i < (int)lobby->numTeams; i++) {
@@ -1932,7 +1932,8 @@ static bool meScnTeamPicker(const MEScenarioForm *f, ScnTrigValue *v) {
  * With no map info, or a map holding none of the kind, there is nothing to
  * list and the number is typed instead. */
 static bool meScnEntityPicker(const MEScenarioMapInfo *info,
-                              MEScnParamType type, ScnTrigValue *v) {
+                              MEScnParamType type, const char *label,
+                              ScnTrigValue *v) {
     const bool     pills = (type == ME_SCN_PARAM_PILL);
     const langid   rowId = pills ? STR_MAPEDIT_SCENARIO_PILL_ROW
                                  : STR_MAPEDIT_SCENARIO_BASE_ROW;
@@ -1956,7 +1957,7 @@ static bool meScnEntityPicker(const MEScenarioMapInfo *info,
     }
     if (count <= 0) {
         meScnHint(langGetText(STR_MAPEDIT_SCENARIO_NO_ENTITIES));
-        return meScnCondNumber(v);
+        return meScnCondNumber(label, v);
     }
 
     shown = (int)v->num - 1;
@@ -1972,8 +1973,7 @@ static bool meScnEntityPicker(const MEScenarioMapInfo *info,
     }
 
     ImGui::SetNextItemWidth(kCondValueWidth);
-    if (!ImGui::BeginCombo(langGetText(STR_MAPEDIT_SCENARIO_TEST_VALUE),
-                           preview)) {
+    if (!ImGui::BeginCombo(label, preview)) {
         return false;
     }
     for (i = 0; i < count; i++) {
@@ -1997,14 +1997,14 @@ static bool meScnEntityPicker(const MEScenarioMapInfo *info,
 /* The fields of the same hook, as a value. What a test holds when it reads its
  * right-hand side off the payload the trigger fired on rather than off a name
  * the author wrote down. */
-static bool meScnCondRefCombo(size_t row, ScnTrigValue *v) {
+static bool meScnCondRefCombo(size_t row, const char *label,
+                              ScnTrigValue *v) {
     const size_t count   = meScnFnFieldCount(row);
     bool         changed = false;
     size_t       at;
 
     ImGui::SetNextItemWidth(kCondValueWidth);
-    if (!ImGui::BeginCombo(langGetText(STR_MAPEDIT_SCENARIO_TEST_VALUE),
-                           v->text)) {
+    if (!ImGui::BeginCombo(label, v->text)) {
         return false;
     }
     for (at = 0; at < count; at++) {
@@ -2024,15 +2024,83 @@ static bool meScnCondRefCombo(size_t row, ScnTrigValue *v) {
     return changed;
 }
 
+/* Whether another argument of the same action is already holding its text.
+ * Only one can: an action carries one long line. */
+static bool meScnActTextTaken(const ScnTrigAct *act, const ScnTrigValue *v) {
+    int k;
+
+    for (k = 0; k < (int)act->numArgs && k < SCN_TRIGGER_ARGS_MAX; k++) {
+        if (&act->args[k] != v && act->args[k].inText) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* A string, written where it fits.
+ *
+ * act is the action the value belongs to and NULL for a test's value, which
+ * is the same pair of cases mjTrigValue reads a file's string under. A test
+ * has nowhere to put a long one, so it is held to the slot's own length; an
+ * action has its text, and a string too long for the slot goes there with
+ * inText saying so.
+ *
+ * An action carries one such line, so the second argument to want it is held
+ * to the slot instead and told why. No op the registry carries takes two
+ * strings — message, say, log, score, announce and end_round have one each —
+ * so that only happens under call, whose arguments the author types the kind
+ * of.
+ *
+ * The box is seeded from wherever the string is living, so a long one keeps
+ * its whole length across frames rather than being read back cut. */
+static bool meScnCondString(const char *label, ScnTrigAct *act,
+                            ScnTrigValue *v) {
+    char       buf[SCN_TRIGGER_TEXT_LEN];
+    const bool taken = (act != NULL) && meScnActTextTaken(act, v);
+    const int  room  = (act == NULL || taken) ? SCN_TRIGGER_NAME_LEN
+                                              : SCN_TRIGGER_TEXT_LEN;
+
+    if (taken) {
+        meScnHint(langGetText(STR_MAPEDIT_SCENARIO_TEXT_ONE_LONG));
+    }
+
+    meScnCopy(buf, (size_t)room,
+              (act != NULL && v->inText) ? act->text : v->text);
+
+    ImGui::SetNextItemWidth(kCondValueWidth);
+    if (!ImGui::InputText(label, buf, (size_t)room)) {
+        return false;
+    }
+    if (act != NULL && strlen(buf) >= SCN_TRIGGER_NAME_LEN) {
+        meScnCopy(act->text, sizeof(act->text), buf);
+        v->kind    = SCN_TRIG_VAL_STRING;
+        v->inText  = true;
+        v->num     = 0.0;
+        v->text[0] = '\0';
+        return true;
+    }
+    if (act != NULL && v->inText) {
+        act->text[0] = '\0';   /* this argument was the one holding it */
+    }
+    meScnCondSetText(v, SCN_TRIG_VAL_STRING, buf);
+    return true;
+}
+
 /* The right-hand side of one test: the widget the field's own type calls for,
  * and the box beside it that swaps the whole side for a reference to another
  * field of the same payload. row is the catalogue row of the trigger's hook,
  * which that reference lists the fields of.
  *
+ * label is what the widget is drawn under: a test says Value, and an action's
+ * argument says the name the registry gives it. act is the action the value
+ * belongs to and NULL for a test's value, which is what decides where a long
+ * string can live.
+ *
  * Answers whether the author moved anything. */
 static bool meScnCondValue(const MEScenarioForm *f,
                            const MEScenarioMapInfo *info, size_t row,
                            MEScnParamType type, bool derived,
+                           const char *label, ScnTrigAct *act,
                            ScnTrigValue *v) {
     bool changed = false;
 
@@ -2042,61 +2110,50 @@ static bool meScnCondValue(const MEScenarioForm *f,
     (void)derived;
 
     if (v->kind == SCN_TRIG_VAL_FIELD) {
-        changed = meScnCondRefCombo(row, v);
+        changed = meScnCondRefCombo(row, label, v);
     } else {
         switch (type) {
             case ME_SCN_PARAM_BOOL: {
                 bool on = (v->num != 0.0);
 
-                if (ImGui::Checkbox(
-                        langGetText(STR_MAPEDIT_SCENARIO_TEST_VALUE), &on)) {
+                if (ImGui::Checkbox(label, &on)) {
                     meScnCondSetNum(v, SCN_TRIG_VAL_BOOL, on ? 1.0 : 0.0);
                     changed = true;
                 }
                 break;
             }
             case ME_SCN_PARAM_TAG:
-                changed = meScnTagPicker(f, v);
+                changed = meScnTagPicker(f, label, v);
                 break;
             case ME_SCN_PARAM_REGION:
-                changed = meScnRegionPicker(f, v);
+                changed = meScnRegionPicker(f, label, v);
                 break;
             case ME_SCN_PARAM_TEAM:
-                changed = meScnTeamPicker(f, v);
+                changed = meScnTeamPicker(f, label, v);
                 break;
             case ME_SCN_PARAM_PILL:
             case ME_SCN_PARAM_BASE:
-                changed = meScnEntityPicker(info, type, v);
+                changed = meScnEntityPicker(info, type, label, v);
                 break;
             case ME_SCN_PARAM_WORD:
             case ME_SCN_PARAM_STRING:
                 /* A word is one of a fixed set of strings the surface names,
                    and the catalogue does not carry that set, so there is no
                    list to offer and the word is typed. */
-                ImGui::SetNextItemWidth(kCondValueWidth);
-                if (ImGui::InputText(
-                        langGetText(STR_MAPEDIT_SCENARIO_TEST_VALUE), v->text,
-                        SCN_TRIGGER_NAME_LEN)) {
-                    v->kind   = SCN_TRIG_VAL_STRING;
-                    v->inText = false;
-                    v->num    = 0.0;
-                    changed   = true;
-                }
+                changed = meScnCondString(label, act, v);
                 break;
             case ME_SCN_PARAM_SLOT:
             case ME_SCN_PARAM_OWNER:
             case ME_SCN_PARAM_ITEM:
             case ME_SCN_PARAM_SQUARE_X:
             case ME_SCN_PARAM_SQUARE_Y:
-                changed = meScnCondNumber(v);
+                changed = meScnCondNumber(label, v);
                 break;
             case ME_SCN_PARAM_NUMBER: {
                 double n = v->num;
 
                 ImGui::SetNextItemWidth(kCondValueWidth);
-                if (ImGui::InputDouble(
-                        langGetText(STR_MAPEDIT_SCENARIO_TEST_VALUE), &n, 0.0,
-                        0.0, "%g")) {
+                if (ImGui::InputDouble(label, &n, 0.0, 0.0, "%g")) {
                     meScnCondSetNum(v, SCN_TRIG_VAL_NUMBER, n);
                     changed = true;
                 }
@@ -2107,8 +2164,7 @@ static bool meScnCondValue(const MEScenarioForm *f,
                    build has no widget for: the label alone, so the row still
                    draws and its field combo and Remove still work. The value
                    is left exactly as it was found. */
-                ImGui::TextUnformatted(
-                    langGetText(STR_MAPEDIT_SCENARIO_TEST_VALUE));
+                ImGui::TextUnformatted(label);
                 break;
         }
     }
@@ -2220,20 +2276,248 @@ static bool meScnCondOp(MEScnParamType type, bool derived, ScnTrigCond *c) {
     return changed;
 }
 
+/* How wide the op combo opens, and the box call states a function name in.
+ * Both leave the label and what follows on the same line at the size the
+ * panel opens at. */
+static const float kActionOpWidth = 170.0f;
+static const float kCallNameWidth = 190.0f;
+
+/* Whether an action names call, which is no row of the game table. */
+static bool meScnActionIsCall(const ScnTrigAct *a) {
+    return strcmp(a->op, ME_SCENARIO_CALL_OP) == 0;
+}
+
+/* The registry index an op name sits on, and meScenarioCompletionCount() for
+ * a name the registry has not got — call, and anything a file wrote that the
+ * surface does not carry. */
+static size_t meScnOpRow(const char *op) {
+    const size_t count = meScenarioCompletionCount();
+    size_t       i;
+
+    for (i = 0; i < count; i++) {
+        const char *name = NULL;
+
+        if (meScenarioCompletionAt(i, &name, NULL) && name != NULL &&
+            strcmp(name, op) == 0) {
+            return i;
+        }
+    }
+    return count;
+}
+
+/* The last argument an op insists on, counted as a position rather than as a
+ * number of them: an optional argument written before a required one still
+ * leaves the required one counted, which is how scnCheckTrigAct reads it. 0
+ * for a row the registry has not got. */
+static int meScnOpRequired(size_t row) {
+    const size_t count    = meScenarioOpParamCount(row);
+    int          required = 0;
+    size_t       p;
+
+    for (p = 0; p < count; p++) {
+        bool optional = false;
+
+        if (meScenarioOpParamAt(row, p, NULL, NULL, &optional) && !optional) {
+            required = (int)p + 1;
+        }
+    }
+    return required;
+}
+
+/* What an argument of this op holds. NUMBER for one the registry has no
+ * parameter for, which is every argument of call: nothing types those. */
+static MEScnParamType meScnArgType(size_t row, int at, bool isCall) {
+    MEScnParamType type = ME_SCN_PARAM_NUMBER;
+
+    if (!isCall) {
+        (void)meScenarioOpParamAt(row, (size_t)at, NULL, &type, NULL);
+    }
+    return type;
+}
+
+/* Another argument on the end, emptied to a value of its parameter's kind. */
+static void meScnActionAddArg(ScnTrigAct *a, size_t row, bool isCall) {
+    if (a->numArgs >= SCN_TRIGGER_ARGS_MAX) {
+        return;
+    }
+    meScnCondEmptyValue(&a->args[a->numArgs],
+                        meScnArgType(row, (int)a->numArgs, isCall));
+    a->numArgs++;
+}
+
+/* The last argument off the end. The long line goes with it when it was the
+ * argument holding it, so an action never carries text nothing refers to. */
+static void meScnActionDropArg(ScnTrigAct *a) {
+    if (a->numArgs == 0) {
+        return;
+    }
+    a->numArgs--;
+    if (a->args[a->numArgs].inText) {
+        a->text[0] = '\0';
+    }
+    memset(&a->args[a->numArgs], 0, sizeof(a->args[0]));
+}
+
+/* A different op, and the arguments go with it. numArgs comes down to what
+ * the new op insists on, every argument is emptied to a value of its own
+ * parameter's kind, and the long line is cleared with them: an argument left
+ * behind by the op before would turn a row the validator passed into one it
+ * refuses. call is held to one argument, the function's name. */
+static void meScnActionSetOp(ScnTrigAct *a, const char *op) {
+    size_t row;
+    bool   isCall;
+    int    want;
+    int    p;
+
+    meScnCopy(a->op, sizeof(a->op), op);
+    a->text[0] = '\0';
+    memset(a->args, 0, sizeof(a->args));
+    a->numArgs = 0;
+
+    isCall = meScnActionIsCall(a);
+    row    = meScnOpRow(a->op);
+    want   = isCall ? 1 : meScnOpRequired(row);
+    if (want > SCN_TRIGGER_ARGS_MAX) {
+        want = SCN_TRIGGER_ARGS_MAX;
+    }
+    for (p = 0; p < want; p++) {
+        meScnCondEmptyValue(&a->args[p], meScnArgType(row, p, isCall));
+    }
+    a->numArgs = (uint8_t)want;
+}
+
+/* What the action does: the rows an action can use, and call.
+ *
+ * meScenarioOpIsAction is the narrower of the registry's two flags. It leaves
+ * out the ops that take a table or a function, which an action cannot state,
+ * and the read accessors, which run and answer a value nobody is there to
+ * read. Neither is an op to offer here. */
+static bool meScnActionOp(ScnTrigAct *a) {
+    const size_t count   = meScenarioCompletionCount();
+    bool         changed = false;
+    bool         holding;
+    size_t       i;
+
+    ImGui::SetNextItemWidth(kActionOpWidth);
+    if (!ImGui::BeginCombo(langGetText(STR_MAPEDIT_SCENARIO_ACTION_OP),
+                           a->op)) {
+        return false;
+    }
+    for (i = 0; i < count; i++) {
+        const char *name = NULL;
+
+        if (!meScenarioOpIsAction(i) ||
+            !meScenarioCompletionAt(i, &name, NULL) || name == NULL) {
+            continue;
+        }
+        holding = (strcmp(name, a->op) == 0);
+
+        ImGui::PushID((int)i);
+        if (ImGui::Selectable(name, holding) && !holding) {
+            meScnActionSetOp(a, name);
+            changed = true;
+        }
+        ImGui::PopID();
+    }
+
+    /* call runs a top-level function of the author's own script rather than a
+       row of the game table, so the list is those rows plus this word. */
+    holding = meScnActionIsCall(a);
+    if (ImGui::Selectable(ME_SCENARIO_CALL_OP, holding) && !holding) {
+        meScnActionSetOp(a, ME_SCENARIO_CALL_OP);
+        changed = true;
+    }
+    ImGui::EndCombo();
+    return changed;
+}
+
+/* call's first argument: the name of a top-level function of the script. The
+ * arrow beside the box lists what the script defines, scanned again every
+ * frame the way the functions view scans it, so the list follows an edit made
+ * in the script pane a moment ago. */
+static bool meScnCallName(const char *text, ScnTrigValue *v) {
+    MEScnFoundFn found[ME_SCN_FOUND_MAX];
+    size_t       nFound;
+    bool         changed = false;
+    size_t       i;
+
+    ImGui::SetNextItemWidth(kCallNameWidth);
+    if (ImGui::InputText(langGetText(STR_MAPEDIT_SCENARIO_CALL_FUNCTION),
+                         v->text, SCN_TRIGGER_NAME_LEN)) {
+        v->kind   = SCN_TRIG_VAL_STRING;
+        v->inText = false;
+        v->num    = 0.0;
+        changed   = true;
+    }
+
+    nFound = meScnScanFunctions(text, found, ME_SCN_FOUND_MAX);
+    ImGui::SameLine();
+    if (nFound == 0) {
+        meScnHint(langGetText(STR_MAPEDIT_SCENARIO_CALL_NO_FUNCTIONS));
+        return changed;
+    }
+    if (ImGui::BeginCombo("##pick", "", ImGuiComboFlags_NoPreview)) {
+        for (i = 0; i < nFound; i++) {
+            ImGui::PushID((int)i);
+            if (ImGui::Selectable(found[i].name,
+                                  strcmp(found[i].name, v->text) == 0)) {
+                meScnCondSetText(v, SCN_TRIG_VAL_STRING, found[i].name);
+                changed = true;
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    return changed;
+}
+
+/* Which of the two forms one of call's later arguments takes. Nothing types
+ * them — the script's own function is what receives them, and scenario_
+ * triggers.lua hands over everything past the name — so the author says.
+ *
+ * A value read off the payload is the third form, and the box the value
+ * widget already draws is what says so; the chooser stands down while it is
+ * ticked rather than offering a third answer to the same question. */
+static bool meScnCallArgKind(ScnTrigValue *v) {
+    bool changed = false;
+
+    if (v->kind == SCN_TRIG_VAL_FIELD) {
+        return false;
+    }
+    if (ImGui::RadioButton(langGetText(STR_MAPEDIT_SCENARIO_ARG_NUMBER),
+                           v->kind != SCN_TRIG_VAL_STRING) &&
+        v->kind != SCN_TRIG_VAL_NUMBER) {
+        meScnCondEmptyValue(v, ME_SCN_PARAM_NUMBER);
+        changed = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton(langGetText(STR_MAPEDIT_SCENARIO_ARG_TEXT),
+                           v->kind == SCN_TRIG_VAL_STRING) &&
+        v->kind != SCN_TRIG_VAL_STRING) {
+        meScnCondEmptyValue(v, ME_SCN_PARAM_STRING);
+        changed = true;
+    }
+    return changed;
+}
+
 /* The triggers the scenario declares: one row each, saying where it sits, what
  * it listens on and how much it carries, with the tests under it.
  *
  * The actions themselves are not drawn here. The count is, so an author can
  * see that a trigger has something in it before pressing the button that
  * throws it away. */
-static void meScnTriggersBody(MEScenarioForm *f,
+static void meScnTriggersBody(MEScenarioState *st, MEScenarioForm *f,
                               const MEScenarioMapInfo *info) {
     ScenarioManifest *m           = &f->manifest;
+    /* What the script defines, for the function call names itself. */
+    const char       *text        = (st->script != NULL) ? st->script : "";
     int               removeAt    = -1;
-    /* A test is dropped after the list has been drawn, so the row being read
-       is never the row being changed. */
+    /* A test and an action are dropped after the list has been drawn, so the
+       row being read is never the row being changed. */
     int               condTrigger = -1;
     int               condAt      = -1;
+    int               actTrigger  = -1;
+    int               actAt       = -1;
     int               i;
 
     if (m->numTriggers == 0) {
@@ -2246,6 +2530,7 @@ static void meScnTriggersBody(MEScenarioForm *f,
         const size_t      fields  = meScnFnFieldCount(hookRow);
         MessageArgs       args    = {};
         int               w;
+        int               a;
 
         ImGui::PushID(i);
         ImGui::Separator();
@@ -2302,7 +2587,8 @@ static void meScnTriggersBody(MEScenarioForm *f,
                a button on one line run off the right of the window. */
             ImGui::Indent();
             moved |= meScnCondValue(f, info, hookRow, type, derived,
-                                    &cond.value);
+                                    langGetText(STR_MAPEDIT_SCENARIO_TEST_VALUE),
+                                    NULL, &cond.value);
             ImGui::SameLine();
             if (ImGui::Button(langGetText(STR_MAPEDIT_SCENARIO_REMOVE))) {
                 condTrigger = i;
@@ -2326,10 +2612,133 @@ static void meScnTriggersBody(MEScenarioForm *f,
             meScenarioFormAddCond(f, i);
         }
 
+        /* The actions: what the trigger does once every test above holds. */
+        ImGui::TextUnformatted(langGetText(STR_MAPEDIT_SCENARIO_ACTIONS));
+        if (t->numActions == 0) {
+            meScnHint(langGetText(STR_MAPEDIT_SCENARIO_NO_ACTIONS));
+        }
+
+        /* An id of their own, so an action's widgets and the test's above them
+           do not share one where both sit at the same index. */
+        ImGui::PushID("actions");
+        for (a = 0; a < (int)t->numActions; a++) {
+            /* Read out whole, edited as a local and written back whole, the
+               way a test is. */
+            ScnTrigAct act      = t->actions[a];
+            bool       moved    = false;
+            bool       isCall;
+            size_t     opRow;
+            int        takes;
+            int        required;
+            int        p;
+
+            ImGui::PushID(a);
+            moved |= meScnActionOp(&act);
+
+            /* Everything the op says about itself is read after the combo,
+               which can have just named a different one. */
+            isCall   = meScnActionIsCall(&act);
+            opRow    = meScnOpRow(act.op);
+            required = isCall ? 1 : meScnOpRequired(opRow);
+            takes    = isCall ? SCN_TRIGGER_ARGS_MAX
+                              : (int)meScenarioOpParamCount(opRow);
+            if (takes > SCN_TRIGGER_ARGS_MAX) {
+                takes = SCN_TRIGGER_ARGS_MAX;
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Button(langGetText(STR_MAPEDIT_SCENARIO_REMOVE))) {
+                actTrigger = i;
+                actAt      = a;
+            }
+
+            ImGui::Indent();
+            /* What the op does, so an author reads it without leaving the
+               view. The registry's documents run to a couple of hundred
+               characters, so the line is wrapped at the window's edge rather
+               than left to run past it. call has no registry row to carry
+               one. */
+            ImGui::PushTextWrapPos(0.0f);
+            if (isCall) {
+                meScnHint(langGetText(STR_MAPEDIT_SCENARIO_CALL_RUNS_SCRIPT));
+            } else {
+                const char *doc = NULL;
+
+                if (meScenarioCompletionAt(opRow, NULL, &doc) && doc != NULL) {
+                    meScnHint(doc);
+                }
+            }
+            ImGui::PopTextWrapPos();
+
+            /* The arguments the action states. They are positional, so these
+               are the first numArgs of what the op takes. */
+            for (p = 0; p < (int)act.numArgs && p < takes; p++) {
+                const char    *argName = NULL;
+                MEScnParamType type    = ME_SCN_PARAM_NUMBER;
+
+                ImGui::PushID(p);
+                if (isCall && p == 0) {
+                    /* The function's name. scnCheckTrigAct holds call to
+                       stating one and says nothing else about it: what the
+                       arguments below mean is the script's own business. */
+                    moved |= meScnCallName(text, &act.args[0]);
+                } else if (isCall) {
+                    moved |= meScnCallArgKind(&act.args[p]);
+                    type = (act.args[p].kind == SCN_TRIG_VAL_STRING)
+                               ? ME_SCN_PARAM_STRING
+                               : ME_SCN_PARAM_NUMBER;
+                    moved |= meScnCondValue(f, info, hookRow, type, false,
+                                            "##arg", &act, &act.args[p]);
+                } else if (meScenarioOpParamAt(opRow, (size_t)p, &argName,
+                                               &type, NULL)) {
+                    moved |= meScnCondValue(f, info, hookRow, type, false,
+                                            argName, &act, &act.args[p]);
+                }
+                ImGui::PopID();
+            }
+
+            /* One more while the op takes one, and one less while the op does
+               not insist on the last of them. */
+            if ((int)act.numArgs < takes) {
+                if (ImGui::Button(
+                        langGetText(STR_MAPEDIT_SCENARIO_ADD_ARG))) {
+                    meScnActionAddArg(&act, opRow, isCall);
+                    moved = true;
+                }
+                if ((int)act.numArgs > required) {
+                    ImGui::SameLine();
+                }
+            }
+            if ((int)act.numArgs > required) {
+                if (ImGui::Button(
+                        langGetText(STR_MAPEDIT_SCENARIO_DROP_ARG))) {
+                    meScnActionDropArg(&act);
+                    moved = true;
+                }
+            }
+            ImGui::Unindent();
+            ImGui::PopID();
+
+            if (moved) {
+                meScenarioFormSetAction(f, i, a, &act);
+            }
+        }
+        ImGui::PopID();
+
+        if (t->numActions >= SCN_TRIGGER_ACTIONS_MAX) {
+            meScnHint(langGetText(STR_MAPEDIT_SCENARIO_ACTIONS_FULL));
+        } else if (ImGui::Button(
+                       langGetText(STR_MAPEDIT_SCENARIO_ADD_ACTION))) {
+            meScenarioFormAddAction(f, i);
+        }
+
         ImGui::Unindent();
         ImGui::PopID();
     }
 
+    if (actAt >= 0) {
+        meScenarioFormRemoveAction(f, actTrigger, actAt);
+    }
     if (condAt >= 0) {
         meScenarioFormRemoveCond(f, condTrigger, condAt);
     }
@@ -2426,7 +2835,7 @@ void mapEditorImguiScenarioPanel(MEScenarioState *st, MEScenarioForm *form,
             meScnFunctionsBody(st, view);
             break;
         case ME_SCENARIO_VIEW_TRIGGERS:
-            meScnTriggersBody(form, mapInfo);
+            meScnTriggersBody(st, form, mapInfo);
             break;
         default:
             meScnScriptBody(st, check, mapPath, wantSave, wantReload,

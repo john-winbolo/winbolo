@@ -5945,6 +5945,7 @@ set(_unit_test_names
     editor_form_triggers_full
     editor_form_trigger_rows
     editor_form_trigger_row_values
+    editor_form_trigger_action_text
     editor_form_trigger_vocabulary
     editor_pack_mod_round_trip
     editor_pack_map_round_trip

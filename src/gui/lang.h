@@ -2619,6 +2619,29 @@
 #define STR_MAPEDIT_SCENARIO_NO_REGIONS_YET     2560
 #define STR_MAPEDIT_SCENARIO_NO_TEAMS_YET       2561
 
+/* The actions under one trigger: the list, the button that adds a row and the
+ * line that stands in for it at the cap, the op combo's label, and the two
+ * buttons that state one more of an op's arguments or one less.
+ *
+ * call is the action that runs a function of the author's own script rather
+ * than a row of the game table, so it has a name to state and a list of what
+ * the script defines; nothing types the arguments it passes on, so each says
+ * whether it is a number or text. The last line is what a second argument
+ * wanting the one long line an action carries is told. */
+#define STR_MAPEDIT_SCENARIO_ACTIONS            2562
+#define STR_MAPEDIT_SCENARIO_NO_ACTIONS         2563
+#define STR_MAPEDIT_SCENARIO_ADD_ACTION         2564
+#define STR_MAPEDIT_SCENARIO_ACTIONS_FULL       2565
+#define STR_MAPEDIT_SCENARIO_ACTION_OP          2566
+#define STR_MAPEDIT_SCENARIO_ADD_ARG            2567
+#define STR_MAPEDIT_SCENARIO_DROP_ARG           2568
+#define STR_MAPEDIT_SCENARIO_CALL_FUNCTION      2569
+#define STR_MAPEDIT_SCENARIO_CALL_RUNS_SCRIPT   2570
+#define STR_MAPEDIT_SCENARIO_CALL_NO_FUNCTIONS  2571
+#define STR_MAPEDIT_SCENARIO_ARG_NUMBER         2572
+#define STR_MAPEDIT_SCENARIO_ARG_TEXT           2573
+#define STR_MAPEDIT_SCENARIO_TEXT_ONE_LONG      2574
+
 /* The lobby's rules popup: the button on the scenario line, the window's
  * caption, and the four columns a row is drawn in — the rule, what the
  * classic game plays it at, what the scenario set it to, and what that does

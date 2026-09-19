@@ -57,6 +57,9 @@
  *                               back unchanged, the argument bound, and the
  *                               two names the form passes through for the
  *                               validator to report
+ * run_editor_form_trigger_action_text — where an action's string argument
+ *                               lives: on the argument when it fits the slot,
+ *                               and on the action's own text when it does not
  * run_editor_form_trigger_vocabulary — what the view draws a row from: the
  *                               seven operators, a hook's fields and an op's
  *                               arguments, each held against the catalogue the
@@ -1107,6 +1110,81 @@ int run_editor_form_trigger_row_values(void) {
                   "the form refused an op name the validator reports");
     UT_ASSERT(strcmp(f.manifest.triggers[0].actions[0].op,
                      "no_op_the_table_carries") == 0);
+
+    return 0;
+}
+
+int run_editor_form_trigger_action_text(void) {
+    MEScenarioForm    f;
+    const char       *hook = efHookAt(0);
+    const ScnTrigAct *back;
+    ScnTrigAct        act;
+    char              fits[SCN_TRIGGER_NAME_LEN];
+    char              longer[SCN_TRIGGER_TEXT_LEN];
+
+    UT_ASSERT_MSG(hook[0] != '\0', "the catalogue carries no hook");
+
+    /* Both strings are cut to the caps rather than to the numbers behind
+     * them, so a cap that moves moves the fixture with it. fits is the
+     * longest the slot itself holds; longer is the longest an action's text
+     * holds, and is well past the slot. */
+    memset(fits, 'a', sizeof(fits));
+    fits[SCN_TRIGGER_NAME_LEN - 1] = '\0';
+    memset(longer, 'b', sizeof(longer));
+    longer[SCN_TRIGGER_TEXT_LEN - 1] = '\0';
+    UT_ASSERT(strlen(fits) < SCN_TRIGGER_NAME_LEN);
+    UT_ASSERT(strlen(longer) >= SCN_TRIGGER_NAME_LEN);
+
+    meScenarioFormInit(&f);
+    UT_ASSERT(meScenarioFormAddTrigger(&f, hook));
+    UT_ASSERT(meScenarioFormAddAction(&f, 0));
+    UT_ASSERT(meScenarioFormActionCount(&f, 0) == 1);
+
+    /* A string the slot holds stays on the argument, and the action's text is
+     * left empty. */
+    act = f.manifest.triggers[0].actions[0];
+    memset(act.args, 0, sizeof(act.args));
+    act.numArgs        = 1;
+    act.args[0].kind   = SCN_TRIG_VAL_STRING;
+    act.args[0].inText = false;
+    act.text[0]        = '\0';
+    snprintf(act.args[0].text, sizeof(act.args[0].text), "%s", fits);
+    UT_ASSERT(meScenarioFormSetAction(&f, 0, 0, &act));
+
+    back = &f.manifest.triggers[0].actions[0];
+    UT_ASSERT(back->numArgs == 1);
+    UT_ASSERT(back->args[0].kind == SCN_TRIG_VAL_STRING);
+    UT_ASSERT(!back->args[0].inText);
+    UT_ASSERT_MSG(strcmp(back->args[0].text, fits) == 0, "argument holds '%s'",
+                  back->args[0].text);
+    UT_ASSERT(back->text[0] == '\0');
+
+    /* One the slot does not hold travels on the action's own text, whole:
+     * inText is what says the bytes are over there, and the slot means
+     * nothing while it is set. */
+    act                = *back;
+    memset(act.args, 0, sizeof(act.args));
+    act.numArgs        = 1;
+    act.args[0].kind   = SCN_TRIG_VAL_STRING;
+    act.args[0].inText = true;
+    snprintf(act.text, sizeof(act.text), "%s", longer);
+    UT_ASSERT(meScenarioFormSetAction(&f, 0, 0, &act));
+
+    back = &f.manifest.triggers[0].actions[0];
+    UT_ASSERT(back->args[0].kind == SCN_TRIG_VAL_STRING);
+    UT_ASSERT(back->args[0].inText);
+    UT_ASSERT(back->args[0].text[0] == '\0');
+    UT_ASSERT_MSG(strcmp(back->text, longer) == 0, "action text holds %d "
+                  "bytes", (int)strlen(back->text));
+    UT_ASSERT(strlen(back->text) == SCN_TRIGGER_TEXT_LEN - 1);
+
+    /* And the one thing the form refuses about an action, which is its shape
+     * rather than its meaning: more arguments than there is room for. */
+    act         = *back;
+    act.numArgs = SCN_TRIGGER_ARGS_MAX + 1;
+    UT_ASSERT(!meScenarioFormSetAction(&f, 0, 0, &act));
+    UT_ASSERT(f.manifest.triggers[0].actions[0].numArgs == 1);
+    UT_ASSERT(strcmp(f.manifest.triggers[0].actions[0].text, longer) == 0);
 
     return 0;
 }

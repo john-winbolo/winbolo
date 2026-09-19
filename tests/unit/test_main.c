@@ -1663,6 +1663,7 @@ static const UnitTestEntry s_tests[] = {
     { "editor_form_triggers_full",               run_editor_form_triggers_full               },
     { "editor_form_trigger_rows",                run_editor_form_trigger_rows                },
     { "editor_form_trigger_row_values",          run_editor_form_trigger_row_values          },
+    { "editor_form_trigger_action_text",         run_editor_form_trigger_action_text         },
     { "editor_form_trigger_vocabulary",          run_editor_form_trigger_vocabulary          },
     { "editor_pack_mod_round_trip",              run_editor_pack_mod_round_trip              },
     { "editor_pack_map_round_trip",              run_editor_pack_map_round_trip              },
