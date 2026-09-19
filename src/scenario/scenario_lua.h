@@ -147,6 +147,13 @@ typedef struct {
     const char          *doc;
     const ScnLuaOpParam *params;
     size_t               paramCount;
+    /* Whether the op changes something the round can observe, as against a
+       read accessor that answers a value and leaves the round where it was.
+       The engine draws the same line itself: a state that is checking a file
+       rather than running one turns every acting op down and lets every read
+       answer, so the check-only refusal is what this column is written
+       from. */
+    bool                 acts;
 } ScnLuaRow;
 
 /* One script-visible number that is not a call. */
@@ -402,6 +409,12 @@ const ScnLuaRow *scenarioLuaRows(size_t *count);
  *  told about it.
  *********************************************************/
 bool scenarioLuaOpIsScalar(const ScnLuaRow *row);
+
+/* Whether a trigger's action list has any use for this op: it is expressible
+ * as flat arguments and it changes something. A read accessor is neither
+ * refused nor useful — it runs and answers a value nobody is there to
+ * read. */
+bool scenarioLuaOpIsAction(const ScnLuaRow *row);
 
 /*********************************************************
  *NAME:          scenarioLuaConsts

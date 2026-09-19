@@ -109,6 +109,13 @@ bool   meScenarioCompletionAt(size_t index, const char **name,
  * is for. False for an index past the end. */
 bool meScenarioOpIsScalar(size_t index);
 
+/* Whether a trigger's action list has any use for this op: it is expressible
+ * as flat arguments and it changes something the round can observe. A read
+ * accessor is neither refused nor useful — it runs and answers a value
+ * nobody is there to read — so it is no op to offer an action. False for an
+ * index past the end. */
+bool meScenarioOpIsAction(size_t index);
+
 /* How many arguments the op takes. 0 for an index past the end and for an op
  * that takes none. */
 size_t meScenarioOpParamCount(size_t index);

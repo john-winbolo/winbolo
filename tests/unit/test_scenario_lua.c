@@ -18,6 +18,11 @@
  *                                        with; the ops whose arguments have
  *                                        a shape of their own answer so
  *                                        (at the foot of the file)
+ * run_scenario_lua_acting_rows_refuse_a_check
+ *                                      — every row says whether it changes
+ *                                        anything, and a state that is
+ *                                        checking a file refuses exactly
+ *                                        the rows that say they do
  * run_scenario_lua_read_index_passes_through
  *                                      — the Lua index of a read is the
  *                                        accessor's index, for every pill
@@ -162,6 +167,29 @@ static lua_State *slVm(ScnLuaCtx *ctx, ServerSim *sim, ScenarioManifest *m) {
     ctx->timers    = &slTimers;
     /* Running the file, not checking it: the write rows apply. */
     ctx->checkOnly = false;
+    scenarioLuaInstall(L, ctx);
+    return L;
+}
+
+/* The same state a reload builds to find out whether an edited file loads:
+ * the round's own sim to read, a manifest of its own that is thrown away
+ * afterwards, no timer set, and a context that says it is checking. Spelled
+ * the way scenario_host.c spells it, because what the case at the foot of
+ * the file asks is what that state does with each row.
+ *
+ * slTimers is not reset here: this state is given none. */
+static lua_State *slCheckOnlyVm(ScnLuaCtx *ctx, ServerSim *sim,
+                                ScenarioManifest *m) {
+    lua_State *L = luaL_newstate();
+
+    if (L == NULL) {
+        return NULL;
+    }
+    luaL_openlibs(L);
+    ctx->sim       = sim;
+    ctx->manifest  = m;
+    ctx->timers    = NULL;
+    ctx->checkOnly = true;
     scenarioLuaInstall(L, ctx);
     return L;
 }
@@ -393,9 +421,15 @@ static bool slAskExtraTeams(ServerSim *sim) {
 /* One call per row, by the row's own name, so a row that is in the registry
  * and cannot marshal is caught here whether or not a case below aims at it.
  * The keys are the registry's names: a row added without a line here reads
- * back as nothing at all and fails. */
-static const char *const kSlEveryRow =
-    "local calls = {\n"
+ * back as nothing at all and fails.
+ *
+ * The table is a chunk of its own and calls is a global, because the
+ * check-only case at the foot of the file walks the same calls and asks a
+ * different question of each answer. One set of arguments between the two:
+ * working out what a row will take is the hard half, and neither case has a
+ * reason of its own to differ. */
+static const char *const kSlEveryRowCalls =
+    "calls = {\n"
     "  tick        = function() return game.tick() end,\n"
     "  max_tanks   = function() return game.max_tanks() end,\n"
     "  num_players = function() return game.num_players() end,\n"
@@ -503,7 +537,11 @@ static const char *const kSlEveryRow =
        and a row that runs after it answers that the round is over — which
        is an answer, which is all this case asks for. */
     "  end_round   = function() return game.end_round(\"done\") end,\n"
-    "}\n"
+    "}\n";
+
+/* What each of them answered, as the name of its type — or the raise, with a
+ * bang in front of it. */
+static const char *const kSlEveryRowTypes =
     "results = {}\n"
     "for name, f in pairs(calls) do\n"
     "  local ok, v = pcall(f)\n"
@@ -545,7 +583,9 @@ int run_scenario_lua_every_row_answers(void) {
     L = slVm(&ctx, sim, &m);
     UT_ASSERT(L != NULL);
 
-    UT_ASSERT_MSG(slRun(L, kSlEveryRow, err, sizeof(err)),
+    UT_ASSERT_MSG(slRun(L, kSlEveryRowCalls, err, sizeof(err)),
+                  "the fixture would not run: %s", err);
+    UT_ASSERT_MSG(slRun(L, kSlEveryRowTypes, err, sizeof(err)),
                   "the fixture would not run: %s", err);
 
     rows = scenarioLuaRows(&count);
@@ -2769,5 +2809,148 @@ int run_scenario_lua_op_arguments_match_the_doc(void) {
                       "answer as a call a trigger can write");
     }
 
+    return 0;
+}
+
+/* ── 25. What a checking state turns down ─────────────────────────── */
+
+/* Each row's acts column, held against what the engine itself does with the
+ * row. A state that is checking a file rather than running one refuses every
+ * op that changes something and lets every read answer, so the column and
+ * the refusal have to say the same thing of every row — which is what makes
+ * an action combo built off the column safe.
+ *
+ * The calls are case 1's, so the two cases cannot drift apart over what
+ * arguments a row takes. What is read here is the second return value: a
+ * refusal is nil, the result's own name and a sentence, and the check-only
+ * refusal is the one that answers SCN_OP_WRONG_STATE — the funnel is never
+ * reached in this state, so no other refusal can carry that name. An op
+ * turned down for its arguments carries the name of that instead and is not
+ * read as a yes. */
+static const char *const kSlCheckOnlyDrive =
+    "checked = {}\n"
+    "for name, f in pairs(calls) do\n"
+    "  local ok, a, b = pcall(f)\n"
+    "  if not ok then checked[name] = \"!\" .. tostring(a)\n"
+    "  elseif a == nil then checked[name] = tostring(b)\n"
+    "  else checked[name] = \"answered\" end\n"
+    "end\n";
+
+/* The rows that act and reach no check-only refusal, because they change
+ * what the host holds rather than anything the funnel sees: two name a call
+ * to make later and one names a rectangle.
+ *
+ * A checking state is given no timer set, so timer refuses for that and not
+ * for the check; cancel_timer is handed the id timer just answered, which in
+ * this state is a refusal rather than a number, so the call is about its
+ * argument; and define_region writes the manifest the reload throws away and
+ * answers true. All three act, and the column says so — what cannot be read
+ * off the refusal is that it says so. */
+static const char *const kSlNoCheckRefusal[] = {
+    "timer", "cancel_timer", "define_region"
+};
+
+int run_scenario_lua_acting_rows_refuse_a_check(void) {
+    ServerSim       *sim     = ut_make_running_sim("Seat0");
+    const char      *refusal = scenarioLuaResultName((int)SCN_OP_WRONG_STATE);
+    const size_t     excepts = sizeof(kSlNoCheckRefusal) /
+                               sizeof(kSlNoCheckRefusal[0]);
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    const ScnLuaRow *rows;
+    size_t           count   = 0;
+    size_t           i;
+    size_t           k;
+    size_t           skipped  = 0;
+    int              refused  = 0;
+    int              answered = 0;
+    char             err[512];
+
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+
+    /* Three, and the list is meant to stay that small: one that has grown is
+       a surface the refusal no longer separates, which is the one thing this
+       case rests on. */
+    UT_ASSERT_MSG(excepts <= 3, "%d rows reach no check-only refusal",
+                  (int)excepts);
+    UT_ASSERT_MSG(refusal[0] != '\0', "the refusal has no name");
+
+    memset(&m, 0, sizeof(m));
+    L = slCheckOnlyVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+
+    UT_ASSERT_MSG(slRun(L, kSlEveryRowCalls, err, sizeof(err)),
+                  "the fixture would not run: %s", err);
+    UT_ASSERT_MSG(slRun(L, kSlCheckOnlyDrive, err, sizeof(err)),
+                  "the fixture would not run: %s", err);
+
+    rows = scenarioLuaRows(&count);
+    UT_ASSERT_MSG(rows != NULL && count > 0, "the registry is empty");
+    for (i = 0; i < count; i++) {
+        bool excepted = false;
+        char got[256];
+
+        for (k = 0; k < excepts; k++) {
+            if (strcmp(rows[i].name, kSlNoCheckRefusal[k]) == 0) {
+                excepted = true;
+                break;
+            }
+        }
+        if (excepted) {
+            UT_ASSERT_MSG(rows[i].acts,
+                          "'%s' is written down as reaching no check-only "
+                          "refusal and as changing nothing either, which is "
+                          "no reason to leave it out", rows[i].name);
+            skipped++;
+            continue;
+        }
+
+        got[0] = '\0';
+        lua_getglobal(L, "checked");
+        lua_getfield(L, -1, rows[i].name);
+        if (lua_type(L, -1) == LUA_TSTRING) {
+            snprintf(got, sizeof(got), "%s", lua_tostring(L, -1));
+        }
+        lua_pop(L, 2);
+
+        UT_ASSERT_MSG(got[0] != '\0',
+                      "the fixture never calls game.%s, so nothing here "
+                      "exercises it", rows[i].name);
+        UT_ASSERT_MSG(got[0] != '!', "game.%s raised: %s", rows[i].name,
+                      got + 1);
+
+        if (rows[i].acts) {
+            UT_ASSERT_MSG(strcmp(got, refusal) == 0,
+                          "game.%s is written down as changing something and "
+                          "a checking state answered '%s' rather than %s",
+                          rows[i].name, got, refusal);
+            refused++;
+        } else {
+            UT_ASSERT_MSG(strcmp(got, refusal) != 0,
+                          "game.%s is written down as changing nothing and a "
+                          "checking state turned it down", rows[i].name);
+            answered++;
+        }
+
+        /* And what the editor's combo reads: the two flags together, never a
+           name. */
+        UT_ASSERT_MSG(scenarioLuaOpIsAction(&rows[i]) ==
+                          (rows[i].acts && scenarioLuaOpIsScalar(&rows[i])),
+                      "game.%s answers an action list differently from its "
+                      "two flags", rows[i].name);
+    }
+
+    UT_ASSERT_MSG(skipped == excepts, "%d of the %d left out were reached",
+                  (int)skipped, (int)excepts);
+    /* Both halves are real, so neither branch is passing for want of a row
+       taking it. */
+    UT_ASSERT_MSG(refused > 0 && answered > 0, "%d refused, %d answered",
+                  refused, answered);
+
+    UT_ASSERT(!scenarioLuaOpIsAction(NULL));
+
+    lua_close(L);
+    serverSimDestroy(sim);
     return 0;
 }

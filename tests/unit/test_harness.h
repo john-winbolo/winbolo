@@ -2892,6 +2892,7 @@ int run_scenario_lua_panel_words_and_numbers(void);
 int run_scenario_lua_panel_refusals(void);
 int run_scenario_lua_presentation_targets(void);
 int run_scenario_lua_score_and_announce(void);
+int run_scenario_lua_acting_rows_refuse_a_check(void);
 
 /* The state a scenario runs in (test_scenario_sandbox.c): the names the
  * whitelist takes and the ones it keeps, the precompiled chunk the loader

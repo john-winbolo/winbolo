@@ -1118,6 +1118,8 @@ int run_editor_form_trigger_vocabulary(void) {
     int              j;
     int              scalars     = 0;
     int              nonScalars  = 0;
+    int              actions     = 0;
+    int              nonActions  = 0;
     int              derivedSeen = 0;
     int              setValued   = 0;
 
@@ -1200,20 +1202,32 @@ int run_editor_form_trigger_vocabulary(void) {
                   setValued);
 
     /* The ops, the same way: the editor's answer is the registry's, and the
-     * scalar flag is scenarioLuaOpIsScalar's rather than a list of names. */
+     * scalar and action flags are scenarioLuaOpIsScalar's and
+     * scenarioLuaOpIsAction's rather than a list of names. */
     rows = scenarioLuaRows(&opCount);
     UT_ASSERT(rows != NULL && opCount > 0);
     UT_ASSERT(meScenarioCompletionCount() == opCount);
     for (row = 0; row < opCount; row++) {
         const bool scalar = scenarioLuaOpIsScalar(&rows[row]);
+        const bool action = scenarioLuaOpIsAction(&rows[row]);
         size_t     at;
 
         UT_ASSERT_MSG(meScenarioOpIsScalar(row) == scalar, "op %s",
                       rows[row].name);
+        UT_ASSERT_MSG(meScenarioOpIsAction(row) == action, "op %s",
+                      rows[row].name);
+        /* An op an action can state and that does nothing is a row the combo
+           leaves out, so the two flags are not the one flag twice. */
+        UT_ASSERT_MSG(!action || scalar, "op %s", rows[row].name);
         if (scalar) {
             scalars++;
         } else {
             nonScalars++;
+        }
+        if (action) {
+            actions++;
+        } else {
+            nonActions++;
         }
         UT_ASSERT_MSG(meScenarioOpParamCount(row) == rows[row].paramCount,
                       "op %s takes %d, not %d", rows[row].name,
@@ -1245,8 +1259,15 @@ int run_editor_form_trigger_vocabulary(void) {
        taking a table or a function that it cannot. */
     UT_ASSERT_MSG(scalars > 0 && nonScalars > 0, "%d scalar, %d not", scalars,
                   nonScalars);
+    /* And of the other, which is the narrower list: the read accessors an
+       action has no use for are rows the scalar flag alone would offer. */
+    UT_ASSERT_MSG(actions > 0 && nonActions > 0, "%d to offer, %d not",
+                  actions, nonActions);
+    UT_ASSERT_MSG(actions < scalars, "%d of %d scalar ops act", actions,
+                  scalars);
 
     UT_ASSERT(!meScenarioOpIsScalar(opCount));
+    UT_ASSERT(!meScenarioOpIsAction(opCount));
     UT_ASSERT(meScenarioOpParamCount(opCount) == 0);
     UT_ASSERT(!meScenarioOpParamAt(opCount, 0, NULL, NULL, NULL));
 

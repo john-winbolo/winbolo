@@ -1488,6 +1488,8 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_lua_panel_refusals",                run_scenario_lua_panel_refusals                },
     { "scenario_lua_presentation_targets",          run_scenario_lua_presentation_targets          },
     { "scenario_lua_score_and_announce",            run_scenario_lua_score_and_announce            },
+    { "scenario_lua_acting_rows_refuse_a_check",
+      run_scenario_lua_acting_rows_refuse_a_check                                                  },
     { "scenario_sandbox_removed_names_are_nil",
       run_scenario_sandbox_removed_names_are_nil                                                   },
     { "scenario_sandbox_bytecode_chunk_refused",

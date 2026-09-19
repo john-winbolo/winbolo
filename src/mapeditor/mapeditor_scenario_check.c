@@ -10,10 +10,11 @@
  *   reads the binding registry, for the completion list and
  *   for the ops a trigger's actions are written against.
  *
- *   These calls — scenarioValidateSource, scenarioLuaRows
- *   and scenarioLuaOpIsScalar — are what the editor asks of
- *   scenario_static, along with the script path
- *   mapeditor_scenario.c derives through scnScriptPath.
+ *   These calls — scenarioValidateSource, scenarioLuaRows,
+ *   scenarioLuaOpIsScalar and scenarioLuaOpIsAction — are
+ *   what the editor asks of scenario_static, along with the
+ *   script path mapeditor_scenario.c derives through
+ *   scnScriptPath.
  *   Nothing here creates a ServerSim, attaches a host or
  *   ticks anything.
  *********************************************************/
@@ -95,7 +96,7 @@ bool meScenarioCompletionAt(size_t index, const char **name,
     return true;
 }
 
-/* The registry row at that index, or NULL for one it does not hold. The three
+/* The registry row at that index, or NULL for one it does not hold. The four
  * below go through here, so an index off the end is answered for in one
  * place. */
 static const ScnLuaRow *meScenarioOpAt(size_t index) {
@@ -113,6 +114,15 @@ bool meScenarioOpIsScalar(size_t index) {
        argument drops out of what an action can state without anything here
        being told about it. */
     return row != NULL && scenarioLuaOpIsScalar(row);
+}
+
+bool meScenarioOpIsAction(size_t index) {
+    const ScnLuaRow *row = meScenarioOpAt(index);
+
+    /* Both halves off the registry: an op that stops changing anything, like
+       one that grows a table argument, drops out of what a combo offers
+       without anything here being told about it. */
+    return row != NULL && scenarioLuaOpIsAction(row);
 }
 
 size_t meScenarioOpParamCount(size_t index) {

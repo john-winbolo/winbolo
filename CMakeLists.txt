@@ -5789,6 +5789,7 @@ set(_unit_test_names
     scenario_lua_panel_refusals
     scenario_lua_presentation_targets
     scenario_lua_score_and_announce
+    scenario_lua_acting_rows_refuse_a_check
     scenario_sandbox_removed_names_are_nil
     scenario_sandbox_bytecode_chunk_refused
     scenario_sandbox_collectgarbage_stop_refused
