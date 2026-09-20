@@ -2944,6 +2944,7 @@ int run_scenario_hooks_team_changed_on_difference(void);
 int run_scenario_hooks_tick_and_end(void);
 int run_scenario_hooks_error_counts_and_disables(void);
 int run_scenario_hooks_trigger_runs_after_author(void);
+int run_scenario_hooks_trigger_table_form_handler(void);
 int run_scenario_hooks_trigger_stopped_by_false(void);
 int run_scenario_hooks_trigger_where_both_ways(void);
 int run_scenario_hooks_trigger_call_reaches_script(void);

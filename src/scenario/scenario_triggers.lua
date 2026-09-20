@@ -458,6 +458,24 @@ for i = 1, #named do
     local prior = G[name]
 
     if type(prior) ~= "function" then
+        -- A handler the script kept as a field of the scenario table rather
+        -- than as a global of its own. The host resolves a hook from either
+        -- place, the global first, so without this the function below would
+        -- stand where the author's handler belongs and the author's would
+        -- never run, nor be able to stop the triggers by returning false.
+        --
+        -- Raw, where the read above is not: that one is the script's own
+        -- global, read the way the script itself would read it, while this
+        -- reaches into a table the script owns, and a metatable on that
+        -- table would run script code from here rather than from where the
+        -- author wrote it.
+        local tbl = rawget(G, "scenario")
+        if type(tbl) == "table" then
+            prior = rawget(tbl, name)
+        end
+    end
+
+    if type(prior) ~= "function" then
         prior = nil
     end
 

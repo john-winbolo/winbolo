@@ -1122,6 +1122,68 @@ int run_scenario_hooks_trigger_runs_after_author(void) {
     return 0;
 }
 
+/* The same question of the other spelling: a handler kept as a field of the
+ * scenario table rather than as a global of its own. The host resolves a
+ * hook from either place, so the router has to chain on to either — and the
+ * one it installs is a global, which is what the host resolves first, so a
+ * table-form handler it did not pick up would be shadowed and never run.
+ *
+ * The handler prints its own marked line rather than going through the
+ * note helper: the helper is a local the fixture declares after the
+ * scenario table, so a function stated inside the table cannot close over
+ * it. What it prints is what note would have printed. */
+int run_scenario_hooks_trigger_table_form_handler(void) {
+    static const char *const kMap = "scnhook_trig_table_form.map";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          rec[2048];
+    char          err[512];
+
+    shkReset();
+    UT_ASSERT(shkPutTable(
+        kMap,
+        "on_player_join = function(p)\n"
+        "  print(\"" SHK_NOTE_MARK "author \" .. p)\n"
+        "  if p == 5 then return false end\n"
+        "end,\n"
+        "triggers = {\n"
+        "  { when = \"on_player_join\","
+        " actions = { { \"log\", \"" SHK_NOTE_MARK "first\" } } },\n"
+        "  { when = \"on_player_join\","
+        " actions = { { \"log\", \"" SHK_NOTE_MARK "second\" } } },\n"
+        "}",
+        ""));
+    sim = shkSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    serverSimStartGame(sim);
+    shkFlush(sim);
+
+    shkPublishJoin(sim, 5);
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "author 5\n",
+           "the handler on the scenario table ran and returned false, which "
+           "stops the triggers");
+
+    shkReset();
+    shkPublishJoin(sim, 6);
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "author 6\nfirst\nsecond\n",
+           "the same handler returned nothing, so it runs first and the "
+           "hook's triggers follow in the order the table wrote them");
+
+    scenarioHostDetach(h);
+    shkUnwatchConsole(sim);
+    serverSimDestroy(sim);
+    shkDrop(kMap);
+    shkReset();
+    return 0;
+}
+
 /* An explicit false from the author's hook stops the triggers. Falling off
  * the end returns nil and does not, which is what keeps a handler that does
  * not care about triggers out of their way. */

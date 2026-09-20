@@ -5816,6 +5816,7 @@ set(_unit_test_names
     scenario_hooks_tick_and_end
     scenario_hooks_error_counts_and_disables
     scenario_hooks_trigger_runs_after_author
+    scenario_hooks_trigger_table_form_handler
     scenario_hooks_trigger_stopped_by_false
     scenario_hooks_trigger_where_both_ways
     scenario_hooks_trigger_call_reaches_script

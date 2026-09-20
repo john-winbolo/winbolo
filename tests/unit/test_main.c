@@ -1540,6 +1540,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_hooks_tick_and_end",                     run_scenario_hooks_tick_and_end                     },
     { "scenario_hooks_error_counts_and_disables",        run_scenario_hooks_error_counts_and_disables        },
     { "scenario_hooks_trigger_runs_after_author",        run_scenario_hooks_trigger_runs_after_author        },
+    { "scenario_hooks_trigger_table_form_handler",       run_scenario_hooks_trigger_table_form_handler       },
     { "scenario_hooks_trigger_stopped_by_false",         run_scenario_hooks_trigger_stopped_by_false         },
     { "scenario_hooks_trigger_where_both_ways",          run_scenario_hooks_trigger_where_both_ways          },
     { "scenario_hooks_trigger_call_reaches_script",      run_scenario_hooks_trigger_call_reaches_script      },
