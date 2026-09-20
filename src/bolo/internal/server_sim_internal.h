@@ -329,6 +329,13 @@ struct ServerSim {
                                       * never reports against the old (just-
                                       * quit) server_key. The change is held
                                       * as dirty and flushed on the new key. */
+    uint32_t wbnRegisterJob;       /* id of the server/register job queued
+                                      * for the WinBolo.net worker and not yet
+                                      * answered; 0 when none is out. */
+    bool     wbnRotateDeferred;    /* a round ended while wbnRegisterJob was
+                                      * out: the next quit / upload / register
+                                      * runs when that register's result
+                                      * lands, against the key it installs. */
     uint8_t  mapMd5[16];           /* MD5 of the active map's BMAPBOLO bytes */
     bool     mapMd5Valid;          /* mapMd5 holds a usable hash */
     char     mapMd5Hex[33];        /* mapMd5 as 32 lowercase hex chars + NUL; "" when invalid */

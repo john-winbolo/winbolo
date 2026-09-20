@@ -986,3 +986,65 @@ int run_reauth_web_code_guest_stays_anonymous(void) {
     loopbackHarnessStop(&h);
     return 0;
 }
+
+/* A second reauth while the slot's verify is still out is refused: one verify
+ * per slot on the worker, however many REAUTH datagrams arrive. The token is
+ * the client's to send, and each verify holds the worker for a round trip, so
+ * without the refusal one client could queue a verify per datagram behind the
+ * register and the leaves every other slot depends on. The refusal ends with
+ * the hold: once it lapses (or the result lands) a reauth queues again. */
+int run_reauth_repeat_while_verify_out_refused(void) {
+    LoopbackHarness h;
+    BYTE slot = MAX_TANKS;
+    int i;
+
+    memset(&h, 0, sizeof(h));
+    UT_ASSERT(loopbackHarnessStart(&h, RR_JOIN_NAME, /*lobbyMode*/ true,
+                                   NULL, /*seed*/ 5151));
+    UT_ASSERT(rrSetupHeldReauth(&h, &slot) == 0);
+    UT_ASSERT_MSG(wbnStubVerifyQueueCalls == 1,
+                  "the setup queued %d verifies, expected 1",
+                  wbnStubVerifyQueueCalls);
+
+    /* Five more, straight into the handler the dispatcher calls, with the
+     * first verify still unanswered. */
+    threadsWaitForMutex();
+    for (i = 0; i < 5; i++) {
+        transportUdpServerHandleWbnReauth(h.sim, slot, RR_TOKEN);
+    }
+    threadsReleaseMutex();
+    UT_ASSERT_MSG(wbnStubVerifyQueueCalls == 1,
+                  "%d verifies queued for slot %d with one already "
+                  "outstanding, expected the repeats refused",
+                  wbnStubVerifyQueueCalls, (int)slot);
+    UT_ASSERT_MSG(udpServerReauthVerifyOutstanding(slot, udpServer.tickCount),
+                  "slot %d's pending entry was lost to a refused reauth",
+                  (int)slot);
+
+    /* The hold lapses with no result: the slot may ask again. */
+    threadsWaitForMutex();
+    transportUdpServerExpireReauthHoldForTest(slot);
+    transportUdpServerHandleWbnReauth(h.sim, slot, RR_TOKEN);
+    threadsReleaseMutex();
+    UT_ASSERT_MSG(wbnStubVerifyQueueCalls == 2,
+                  "a reauth after the hold lapsed left %d verifies queued in "
+                  "total, expected 2", wbnStubVerifyQueueCalls);
+
+    /* And that one is the entry: its result stamps the slot. */
+    wbnStubVerifyOk          = TRUE;
+    wbnStubVerifyResultReady = TRUE;
+    loopbackHarnessPump(&h);
+    loopbackHarnessPump(&h);
+    UT_ASSERT_MSG(wbnStubApplyVerifyCalls == 1,
+                  "the replacement verify's result was applied %d times, "
+                  "expected once", wbnStubApplyVerifyCalls);
+    UT_ASSERT_MSG(strcmp(wbnStubPlayerKey[slot], RR_TOKEN) == 0,
+                  "slot %d holds key '%s', expected '%s'",
+                  (int)slot, wbnStubPlayerKey[slot], RR_TOKEN);
+
+    wbnStubRunning = FALSE;
+    wbnStubServerKey[0] = '\0';
+    rrResetStub();
+    loopbackHarnessStop(&h);
+    return 0;
+}

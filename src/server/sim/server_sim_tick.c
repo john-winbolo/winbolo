@@ -684,11 +684,13 @@ static void simRunHalfStep(ServerSim *sim) {
          * one here, and rebasing onto it would run its movement twice and lay
          * a second mine if it carried one. The UDP transport drops such a
          * copy before the queue; the in-process one does not dedup at all. */
-        {
+        if (sim->lastProcessedInput[count] > 0 &&
+            sim->inputDryTicks[count] > STALL_ADVANCE_DRY_TICKS) {
+            /* The queue walk is behind the two cheap tests: a healthy slot
+             * is never this dry, and this runs for every slot every
+             * half-step. */
             uint32_t newestQueued = serverSimNewestQueuedTick(sim, count);
-            if (sim->lastProcessedInput[count] > 0 &&
-                sim->inputDryTicks[count] > STALL_ADVANCE_DRY_TICKS &&
-                newestQueued > 0 &&
+            if (newestQueued > 0 &&
                 newestQueued <= sim->lastProcessedInput[count] &&
                 newestQueued > sim->newestDequeuedTick[count]) {
                 sim->lastProcessedInput[count] = newestQueued - 1;

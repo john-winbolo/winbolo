@@ -5350,8 +5350,10 @@ set(_unit_test_names
     autolock_released_on_return_to_lobby
     no_autolock_stays_open_on_start
     round_transition_tick_does_not_block
+    round_transition_during_rotation_deferred
     reauth_result_after_slot_reuse_discarded
     reauth_result_stamps_slot
+    reauth_repeat_while_verify_out_refused
     reauth_result_outruns_grace_stamps_once
     reauth_result_failure_releases_anonymous_join
     reauth_result_lost_still_announces
@@ -5964,6 +5966,7 @@ add_executable(WinBoloWbnTests
     tests/wbn/test_wbn_worker_outlives_session.c
     tests/wbn/test_wbn_job_results.c
     tests/wbn/test_wbn_log_upload.c
+    tests/wbn/test_wbn_key_at_fire_time.c
     src/bolo/global.c
     src/common/prefs.c
     src/common/prefs_doc.c
@@ -6019,6 +6022,12 @@ set_tests_properties(wbn.job_result_returns PROPERTIES TIMEOUT 180)
 add_test(NAME wbn.log_upload_runs
          COMMAND $<TARGET_FILE:WinBoloWbnTests> log_upload_runs)
 set_tests_properties(wbn.log_upload_runs PROPERTIES TIMEOUT 120)
+
+# Two keyed posts against a listener that holds each answer 3s, the key
+# swapped between them while the first is held: about six seconds.
+add_test(NAME wbn.key_stamped_at_fire_time
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> key_stamped_at_fire_time)
+set_tests_properties(wbn.key_stamped_at_fire_time PROPERTIES TIMEOUT 60)
 
 # ---- Include-rule check: the scenario surface is invisible to a frontend --
 # src/bolo/scenario_api/ is on the include path of scenario_host, sim_owner

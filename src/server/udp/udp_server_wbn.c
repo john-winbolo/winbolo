@@ -235,8 +235,14 @@ typedef struct {
  *
  * One entry per slot is the worst case: the rekey broadcast makes every
  * connected slot re-auth at once, and a slot that re-auths again while its
- * first verify is still out overwrites its own entry.  So the table cannot
- * fill, and a superseded job's result finds no entry and is dropped.
+ * first verify is still out is refused until that verify answers or its
+ * hold lapses (transportUdpServerHandleWbnReauth).  So the table cannot
+ * fill, and at most MAX_TANKS verifies are ever on the worker's queue for
+ * re-auths: the token is the client's to send, and without the refusal one
+ * connected client could queue a verify per datagram behind everything
+ * else the worker has to post.  A reauth that lands after the hold lapsed
+ * replaces the entry, and the lapsed job's result then finds no entry and
+ * is dropped.
  *
  * No reset on transport create: job ids are unique for the life of the
  * process and never reused, so an entry left over from an earlier server
@@ -544,6 +550,19 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
      * a later tick.  A web slot presents a join_code and takes the read-only
      * verify_join_code route; a native one presents a minted player_key.
      * Nothing below this line waits for either. */
+    if (udpServerReauthVerifyOutstanding(slot, udpServer.tickCount)) {
+        /* One verify per slot at a time. The client re-sends on the next
+         * rekey, and a rekey's register result is drained behind the verify
+         * this slot already has out, so a legitimate re-auth never needs to
+         * queue behind one. Without this a client could queue a verify per
+         * datagram, and the worker posts them one at a time with up to 35s
+         * each. */
+        WB_LOG_WARN(WB_LOG_CAT_NET,
+                    "[WBN] re-auth for slot %d ignored: verify job %u is "
+                    "still outstanding",
+                    (int)slot, (unsigned)s_reauthPending[slot].jobId);
+        return;
+    }
     jobId = rc.isWeb ? winbolonetQueueVerifyJoinCode(rc.token)
                      : winbolonetQueueVerifyClientKey(rc.token, rc.verifyName);
     if (jobId == 0) {
@@ -553,8 +572,8 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
                     rc.isWeb ? "client/verify_join_code" : "client/verify");
         return;
     }
-    /* One entry per slot: a second reauth while the first is still out
-     * replaces it, and the first job's result is dropped when it lands. */
+    /* One entry per slot. A reauth arriving after the hold lapsed replaces
+     * the entry, and the lapsed job's result is dropped when it lands. */
     s_reauthPending[slot].jobId         = jobId;
     s_reauthPending[slot].holdUntilTick = udpServer.tickCount +
                                           WBN_REAUTH_HOLD_TICKS;

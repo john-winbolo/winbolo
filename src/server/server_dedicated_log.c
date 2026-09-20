@@ -233,9 +233,17 @@ static void serverDedicatedLogFlushPending(bool queued) {
         char key[WINBOLONET_KEY_LEN];
         winboloNetGetServerKey(key);
         if (key[0] != '\0') {
-            if (queued) {
-                winbolonetThreadAddUpload(s_pendingUploadFile, key);
-            } else {
+            /* A refused enqueue means the worker is not running. There is
+             * no later moment for the upload, so it posts from here rather
+             * than being dropped with the stash. */
+            if (!queued ||
+                winbolonetThreadAddUpload(s_pendingUploadFile, key) == 0) {
+                if (queued) {
+                    fprintf(stderr,
+                            "WinBolo.net worker refused the round-log upload "
+                            "of %s; sending it on this thread\n",
+                            s_pendingUploadFile);
+                }
                 httpSendLogFile(s_pendingUploadFile, key, FALSE);
             }
         }

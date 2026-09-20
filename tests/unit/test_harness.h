@@ -767,12 +767,14 @@ int run_maprotate_vote_return_is_not_terminal(void);
  * the WinBolo.net worker and returns; the rekey and the rotation window wait
  * for the register's reply. */
 int run_round_transition_tick_does_not_block(void);
+int run_round_transition_during_rotation_deferred(void);
 
 /* Re-authentication off the tick thread (test_reauth_result.c). The reauth
  * captures the slot and queues client/verify; the reply stamps the slot on a
  * later tick, and one whose slot was reused meanwhile is dropped. */
 int run_reauth_result_after_slot_reuse_discarded(void);
 int run_reauth_result_stamps_slot(void);
+int run_reauth_repeat_while_verify_out_refused(void);
 /* And the anonymous PLAYER_JOIN fallback's side of it: the sweep defers to an
  * outstanding verify, because the two announcements name different things,
  * and the hold lapses so a lost reply cannot suppress the join for good. */

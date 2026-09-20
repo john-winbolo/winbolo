@@ -101,5 +101,6 @@ bool wbnTestLeaveReturnsAtOnce(void);
 bool wbnTestWorkerOutlivesSession(void);
 bool wbnTestJobResultReturns(void);
 bool wbnTestLogUploadRuns(void);
+bool wbnTestKeyStampedAtFireTime(void);
 
 #endif /* WINBOLO_TEST_WBN_HARNESS_H */

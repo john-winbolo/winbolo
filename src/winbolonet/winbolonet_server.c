@@ -108,8 +108,10 @@ void winbolonetSendLobbyUpdate(void) {
     return;
   }
 
+  /* No server_key here or in the other queued server posts below: the
+   * worker stamps the key that is current when the post fires, so one
+   * queued across a round transition names the session that is live then. */
   body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
   cJSON_AddStringToObject(body, "map", s_lobbyInfo.map);
   cJSON_AddNumberToObject(body, "num_bases", s_lobbyInfo.numBases);
   cJSON_AddNumberToObject(body, "num_pills", s_lobbyInfo.numPills);
@@ -124,7 +126,7 @@ void winbolonetSendLobbyUpdate(void) {
 
   json_str = cJSON_PrintUnformatted(body);
   if (json_str) {
-    winbolonetThreadAddServerRequest("server/lobby_update", json_str);
+    winbolonetThreadAddServerKeyedRequest("server/lobby_update", json_str);
     free(json_str);
   }
   cJSON_Delete(body);
@@ -220,8 +222,9 @@ static bool winbolonetApplyRegisterResponse(int status, cJSON *resp, const char 
     return FALSE;
   }
 
-  strncpy(winboloNetServerKey, keyObj->valuestring, WINBOLONET_KEY_LEN - 1);
-  winboloNetServerKey[WINBOLONET_KEY_LEN - 1] = '\0';
+  /* Through the worker's setter: a queued keyed post reads the key on the
+   * worker when it fires, and this write can land while one is being read. */
+  winbolonetThreadSetServerKey(keyObj->valuestring);
 
   tokenObj = cJSON_GetObjectItem(resp, "server_token");
   if (tokenObj && cJSON_IsString(tokenObj)) {
@@ -254,7 +257,7 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
   serverSimConsoleMessage("WinBolo.net Startup");
   winboloNetRunning = FALSE;
   winbolonetEventsCreate();
-  winboloNetServerKey[0] = '\0';
+  winbolonetThreadSetServerKey(NULL);
   for (count = 0; count < MAX_TANKS; count++) {
     winboloNetPlayerKey[count][0] = '\0';
   }
@@ -304,7 +307,6 @@ void winbolonetServerSendTeams(BYTE *array, BYTE length, BYTE numTeams) {
   char teamId[16];
 
   body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
 
   teams = cJSON_CreateObject();
   snprintf(teamId, sizeof(teamId), "%d", teamIndex);
@@ -335,7 +337,7 @@ void winbolonetServerSendTeams(BYTE *array, BYTE length, BYTE numTeams) {
 
   json_str = cJSON_PrintUnformatted(body);
   if (json_str) {
-    winbolonetThreadAddServerRequest("server/teams", json_str);
+    winbolonetThreadAddServerKeyedRequest("server/teams", json_str);
     free(json_str);
   }
   cJSON_Delete(body);
@@ -503,7 +505,6 @@ void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePill
   staticNumBots = s_lobbyInfo.numBots;
 
   body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
   cJSON_AddNumberToObject(body, "num_players", staticNumPlayers);
   cJSON_AddNumberToObject(body, "num_humans", s_lobbyInfo.numHumans);
   cJSON_AddNumberToObject(body, "num_bots", s_lobbyInfo.numBots);
@@ -539,7 +540,7 @@ void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePill
     /* Queue for background thread (bearer attached at fire time) */
     char *json_str = cJSON_PrintUnformatted(body);
     if (json_str) {
-      winbolonetThreadAddServerRequest("server/update", json_str);
+      winbolonetThreadAddServerKeyedRequest("server/update", json_str);
       free(json_str);
     }
     cJSON_Delete(body);
@@ -547,16 +548,18 @@ void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePill
     /* A flush: queued like the periodic update so the caller's thread does
        not wait on the post. winbolonetGoodbye flushes after the thread has
        already been destroyed and there is no later moment for it to go
-       out, so a refused enqueue falls back to posting here. */
+       out, so a refused enqueue falls back to posting here, with the key
+       the worker would have stamped. */
     char *json_str = cJSON_PrintUnformatted(body);
     bool queued = FALSE;
     if (json_str) {
-      queued = winbolonetThreadAddServerRequest("server/update", json_str);
+      queued = winbolonetThreadAddServerKeyedRequest("server/update", json_str);
       free(json_str);
     }
     if (queued == TRUE) {
       cJSON_Delete(body);
     } else {
+      cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
       wbn_api_call_server("server/update", body, &resp);
       cJSON_Delete(body);
       if (resp) {
@@ -1106,7 +1109,6 @@ void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, 
 
   /* Send leave */
   body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
   cJSON_AddStringToObject(body, "player_key", winboloNetPlayerKey[playerNum]);
   cJSON_AddNumberToObject(body, "num_players", numPlayers);
   cJSON_AddNumberToObject(body, "free_bases", freeBases);
@@ -1116,7 +1118,7 @@ void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, 
      the slot below cannot reach the post. */
   json_str = cJSON_PrintUnformatted(body);
   if (json_str) {
-    winbolonetThreadAddServerRequest("client/leave", json_str);
+    winbolonetThreadAddServerKeyedRequest("client/leave", json_str);
     free(json_str);
   }
   cJSON_Delete(body);
@@ -1141,12 +1143,11 @@ void winboloNetSpectatorLeaveGame(const char *spectatorKey) {
   }
 
   body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
   cJSON_AddStringToObject(body, "player_key", spectatorKey);
 
   json_str = cJSON_PrintUnformatted(body);
   if (json_str) {
-    winbolonetThreadAddServerRequest("client/leave", json_str);
+    winbolonetThreadAddServerKeyedRequest("client/leave", json_str);
     free(json_str);
   }
   cJSON_Delete(body);
@@ -1166,12 +1167,11 @@ void winboloNetSendLock(bool isLocked) {
   }
 
   body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
   cJSON_AddBoolToObject(body, "locked", isLocked);
 
   json_str = cJSON_PrintUnformatted(body);
   if (json_str) {
-    winbolonetThreadAddServerRequest("server/lock", json_str);
+    winbolonetThreadAddServerKeyedRequest("server/lock", json_str);
     free(json_str);
   }
   cJSON_Delete(body);
@@ -1299,11 +1299,13 @@ void winbolonetQueueEndSession(void) {
 
   serverSimConsoleMessage("WinBolo.net: Ending session...");
 
+  /* Keyed at fire time like the rest. The quit fires before the register
+   * behind it, and the register's result is what swaps the key, so it still
+   * names the session being ended. */
   body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
   json_str = cJSON_PrintUnformatted(body);
   if (json_str) {
-    winbolonetThreadAddServerRequest("server/quit", json_str);
+    winbolonetThreadAddServerKeyedRequest("server/quit", json_str);
     free(json_str);
   }
   cJSON_Delete(body);
@@ -1415,12 +1417,11 @@ void winbolonetSendLobbyStatus(bool inLobby) {
   }
 
   body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
   cJSON_AddBoolToObject(body, "in_lobby", inLobby);
 
   json_str = cJSON_PrintUnformatted(body);
   if (json_str) {
-    winbolonetThreadAddServerRequest("server/lobby", json_str);
+    winbolonetThreadAddServerKeyedRequest("server/lobby", json_str);
     free(json_str);
   }
   cJSON_Delete(body);
@@ -1442,7 +1443,6 @@ void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE f
   }
 
   body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
   cJSON_AddStringToObject(body, "map", mapName);
   cJSON_AddNumberToObject(body, "num_bases", numBases);
   cJSON_AddNumberToObject(body, "num_pills", numPills);
@@ -1451,7 +1451,7 @@ void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE f
 
   json_str = cJSON_PrintUnformatted(body);
   if (json_str) {
-    winbolonetThreadAddServerRequest("server/map", json_str);
+    winbolonetThreadAddServerKeyedRequest("server/map", json_str);
     free(json_str);
   }
   cJSON_Delete(body);

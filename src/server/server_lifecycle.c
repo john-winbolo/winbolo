@@ -77,6 +77,62 @@ static void roundLogFlush(void) {
 }
 
 /*********************************************************
+*NAME:          serverLifecycleQueueRotation
+*PURPOSE:
+* Queues one WinBolo.net session rotation for the worker:
+* server/quit for the round that ended, the round-log
+* upload, then server/register for the next round, in that
+* order, which is the order the tracker needs. The three
+* sites that end a round call this; none of them sends
+* anything on the tick.
+*
+* Only one register may be outstanding. If the last one has
+* not answered yet, nothing is queued and the rotation is
+* marked deferred: serverLifecycleWbnResult runs it when that
+* result lands, so the quit names the session the result
+* installs rather than the one before it, and the upload sits
+* between that quit and the next register. The stash the
+* caller made stays pending until then.
+*
+* With WinBolo.net off, the upload flush still runs (it is a
+* no-op with nothing pending) and the window closes here,
+* since no result is coming.
+*********************************************************/
+static void serverLifecycleQueueRotation(ServerSim *sim) {
+  uint32_t registerJob = 0;
+
+  if (winbolonetIsRunning() && sim->wbnRegisterJob != 0) {
+    sim->wbnRotateDeferred = TRUE;
+    WB_LOG_WARN(WB_LOG_CAT_NET,
+                "WinBolo.net rotation deferred: register job %u is still "
+                "outstanding", (unsigned)sim->wbnRegisterJob);
+    return;
+  }
+  if (winbolonetIsRunning()) {
+    winbolonetQueueEndSession();
+  }
+  roundLogFlush();
+  if (winbolonetIsRunning()) {
+    serverSimRefreshWbnLobbyInfo(sim);
+    registerJob = winbolonetQueueBeginSession(
+      sim->mapName, sim->serverPort,
+      (BYTE)gameTypeGet(&sim->sim.game),
+      (BYTE)sim->botAiType,
+      (BYTE)sim->sim.hiddenMines,
+      sim->hasPassword,
+      basesGetNumActive(&sim->sim.bs),
+      pillsGetNumActive(&sim->sim.pb),
+      serverSimGetNumNeutralBases(sim),
+      serverSimGetNumNeutralPills(sim),
+      serverSimGetNumPlayers(sim));
+  }
+  sim->wbnRegisterJob = registerJob;
+  if (registerJob == 0) {
+    sim->wbnSessionRotating = FALSE;
+  }
+}
+
+/*********************************************************
 *NAME:          serverLifecycleWbnResult
 *PURPOSE:
 * Handles one WinBolo.net job result, on the tick thread,
@@ -109,7 +165,30 @@ static void serverLifecycleWbnResult(uint32_t id, uint8_t kind, int status,
     return;
   }
 
+  if (sim->wbnRegisterJob != 0 && id != sim->wbnRegisterJob) {
+    /* Not the register this server is waiting on. Only one is ever out,
+     * so this is a result from before a restart of the transport; the key
+     * it carries is not the one the next rotation quits. */
+    WB_LOG_WARN(WB_LOG_CAT_NET,
+                "WinBolo.net register result %u ignored: waiting on %u",
+                (unsigned)id, (unsigned)sim->wbnRegisterJob);
+    return;
+  }
+  sim->wbnRegisterJob = 0;
+
   if (winbolonetApplyRegisterResult(status, response) == TRUE) {
+    if (sim->wbnRotateDeferred) {
+      /* A round ended while this register was out. Its session is the one
+       * just installed, so quit it now, upload that round's log, and
+       * register the round the server is on. The window stays open until
+       * that register answers; the rekey and the lock re-send below are
+       * for a key that would be replaced straight away. */
+      sim->wbnRotateDeferred = FALSE;
+      serverLifecycleQueueRotation(sim);
+      if (sim->wbnRegisterJob != 0) {
+        return;
+      }
+    }
     /* New key and bearer are installed. Close the rotation window first:
      * everything below reads the key through it. */
     sim->wbnSessionRotating = FALSE;
@@ -126,7 +205,9 @@ static void serverLifecycleWbnResult(uint32_t id, uint8_t kind, int status,
     /* The register failed, so winbolonetApplyRegisterResult has switched
      * WinBolo.net off and cleared the bearer. Close the window anyway — a
      * server stuck rotating holds every later lobby change dirty forever,
-     * which is worse than one with WBN off. */
+     * which is worse than one with WBN off. A deferred rotation has
+     * nothing to register against any more. */
+    sim->wbnRotateDeferred = FALSE;
     sim->wbnSessionRotating = FALSE;
   }
 }
@@ -493,29 +574,8 @@ static void serverLifecycleRotateRound(ServerSim *sim) {
     winbolonetServerUpdate(serverSimGetNumPlayers(sim),
                            serverSimGetNumNeutralBases(sim),
                            serverSimGetNumNeutralPills(sim), TRUE);
-    winbolonetQueueEndSession();
   }
-  roundLogFlush();
-  {
-    uint32_t registerJob = 0;
-    if (winbolonetIsRunning()) {
-      serverSimRefreshWbnLobbyInfo(sim);
-      registerJob = winbolonetQueueBeginSession(
-        sim->mapName, sim->serverPort,
-        (BYTE)gameTypeGet(&sim->sim.game),
-        (BYTE)sim->botAiType,
-        (BYTE)sim->sim.hiddenMines,
-        sim->hasPassword,
-        basesGetNumActive(&sim->sim.bs),
-        pillsGetNumActive(&sim->sim.pb),
-        serverSimGetNumNeutralBases(sim),
-        serverSimGetNumNeutralPills(sim),
-        serverSimGetNumPlayers(sim));
-    }
-    if (registerJob == 0) {
-      sim->wbnSessionRotating = FALSE;
-    }
-  }
+  serverLifecycleQueueRotation(sim);
 
   /* Start the next round's log and push the fresh map to any in-process
    * subscriber (SP host loopback, replay-log writer). serverSimMapRotateRound
@@ -891,31 +951,10 @@ void serverInstanceTick(ServerSim *sim) {
        * The rotation window stays open. serverLifecycleWbnResult closes it
        * when the register result lands, and does the rekey broadcast and the
        * lock re-send there too. With no register queued there is no result
-       * coming, so the window closes here instead. */
-      if (winbolonetIsRunning()) {
-        winbolonetQueueEndSession();
-      }
-      roundLogFlush();
-      {
-        uint32_t registerJob = 0;
-        if (winbolonetIsRunning()) {
-          serverSimRefreshWbnLobbyInfo(sim);
-          registerJob = winbolonetQueueBeginSession(
-            sim->mapName, sim->serverPort,
-            (BYTE)gameTypeGet(&sim->sim.game),
-            (BYTE)sim->botAiType,
-            (BYTE)sim->sim.hiddenMines,
-            sim->hasPassword,
-            basesGetNumActive(&sim->sim.bs),
-            pillsGetNumActive(&sim->sim.pb),
-            serverSimGetNumNeutralBases(sim),
-            serverSimGetNumNeutralPills(sim),
-            serverSimGetNumPlayers(sim));
-        }
-        if (registerJob == 0) {
-          sim->wbnSessionRotating = FALSE;
-        }
-      }
+       * coming, so the window closes in the helper instead. A register
+       * still out from the previous round defers all three until it
+       * answers. */
+      serverLifecycleQueueRotation(sim);
       /* Republish the bot brain catalogue.  Mid-game joiners were gated
        * out of the BrainList during their sync replay (see
        * serverSimSyncSubscriber), so they need it now before the lobby
@@ -1052,29 +1091,7 @@ void serverInstanceTick(ServerSim *sim) {
      * sandwich as the game-over → lobby site (see comment there). */
     /* Same queued rotation as the game-over → lobby site (see the comment
      * there). */
-    if (winbolonetIsRunning()) {
-      winbolonetQueueEndSession();
-    }
-    roundLogFlush();
-    {
-      uint32_t registerJob = 0;
-      if (winbolonetIsRunning()) {
-        registerJob = winbolonetQueueBeginSession(
-          sim->mapName, sim->serverPort,
-          (BYTE)gameTypeGet(&sim->sim.game),
-          (BYTE)sim->botAiType,
-          (BYTE)sim->sim.hiddenMines,
-          sim->hasPassword,
-          basesGetNumActive(&sim->sim.bs),
-          pillsGetNumActive(&sim->sim.pb),
-          serverSimGetNumNeutralBases(sim),
-          serverSimGetNumNeutralPills(sim),
-          serverSimGetNumPlayers(sim));
-      }
-      if (registerJob == 0) {
-        sim->wbnSessionRotating = FALSE;
-      }
-    }
+    serverLifecycleQueueRotation(sim);
     /* Empty-reset bypasses serverSimReturnToLobby, so the lobby phase
      * event is never published from the state machine. Publish it
      * explicitly so handleLobbyEnter fires and starts a fresh log for

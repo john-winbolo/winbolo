@@ -77,6 +77,11 @@
  * the reliable game channel is quiescent before the measured send. */
 #define MF_SETTLE_PUMPS 8
 
+/* Drain passes before the measured send, a millisecond apart, so a datagram
+ * loopback is still delivering from the last settle pump is read out rather
+ * than counted against the send. */
+#define MF_DRAIN_POLLS 5
+
 /* Reliable game events queued for the one measured send. One channel frame
  * holds at most (UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE - 2) / 14 = 99 of them
  * (7 bytes of segment header plus a 7-byte EVENT_PING), and the snapshot
@@ -425,14 +430,19 @@ int run_send_drains_channels_multi_frame(void) {
         mfSendFrame(peer, sock, &serverAddr, ++peerTick, &peerSeq);
     }
 
-    /* Empty the socket so everything counted below came from the one send. */
-    {
+    /* Empty the socket so everything counted below came from the one send.
+     * Polled, not a single pass: loopback does not hand a datagram over
+     * inside sendto, so the last settle pump's snapshot can still be on its
+     * way when the first read finds the socket empty. Without the wait it
+     * lands inside the count below as a second snapshot. */
+    for (i = 0; i < MF_DRAIN_POLLS; i++) {
         uint8_t in[UDP_MAX_PAYLOAD];
         while ((n = loopbackRecvFromServer(sock, in, sizeof(in),
                                            &serverAddr)) > 0) {
             mfIngest(peer, in, n);
         }
         mfDrain(peer, NULL, 0);
+        SDL_Delay(1);
     }
 
     /* ---- Queue more than one frame holds, then run exactly one send. ---- */

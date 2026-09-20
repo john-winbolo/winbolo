@@ -216,3 +216,132 @@ int run_round_transition_tick_does_not_block(void) {
   loopbackHarnessStop(&h);
   return 0;
 }
+
+/* A round that ends while the previous transition's register is still
+ * unanswered must not queue a second quit and register. The quit would carry
+ * the key the outstanding register is about to replace, ending a session
+ * already ended and leaving the one it installs registered for good. The
+ * lifecycle defers the rotation instead: when the register's result lands,
+ * the handler quits the session it just installed, uploads that round's log
+ * and registers again, and the window stays open until that second register
+ * answers. No rekey goes out for the session that is quit straight away. */
+int run_round_transition_during_rotation_deferred(void) {
+  LoopbackHarness h;
+  int slot;
+  int i;
+
+  memset(&h, 0, sizeof(h));
+  UT_ASSERT(loopbackHarnessStart(&h, "Rotator", /*lobbyMode*/ true, NULL,
+                                 /*seed*/ 4243));
+
+  UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, 400, NULL, NULL) > 0,
+                "the client never finished joining");
+  slot = clientSimGetMyPlayerNum(h.cs);
+  UT_ASSERT_MSG(slot >= 0 && slot < MAX_TANKS,
+                "the client has no server slot (got %d)", slot);
+
+  wbnStubRunning = TRUE;
+  SDL_strlcpy(wbnStubServerKey, RT_SERVER_KEY, WINBOLONET_KEY_LEN);
+  serverLifecycleSetRoundLogHooks(rtRoundLogStash, rtRoundLogFlush);
+
+  UT_ASSERT_MSG(loopbackHarnessTriggerGameStart(&h),
+                "the client's slot was never ready for game start");
+  UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, 600, rtStateIsRunning, NULL) > 0,
+                "the first game never reached the running state");
+
+  threadsWaitForMutex();
+  udpServer.clients[slot].wbnWasVerified = true;
+  udpServer.clients[slot].wbnJoin.pending = false;
+  threadsReleaseMutex();
+
+  wbnStubJobCount = 0;
+  wbnStubApplyRegisterCalls = 0;
+  wbnStubApplyRegisterOk = TRUE;
+  wbnStubRegisterResultReady = FALSE;
+  s_stashCalls = 0;
+
+  /* First round ends. Three jobs, register outstanding. */
+  threadsWaitForMutex();
+  serverSimEnterGameOver(h.sim);
+  h.sim->countdownTicks = 1;
+  threadsReleaseMutex();
+  for (i = 0; i < 40 && wbnStubJobCount == 0; i++) loopbackHarnessPump(&h);
+  UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, 200, rtStateIsLobby, NULL) > 0,
+                "the first round never reached the lobby");
+  UT_ASSERT_MSG(wbnStubJobCount == 3,
+                "the first transition queued %d jobs, expected 3",
+                wbnStubJobCount);
+  UT_ASSERT_MSG(h.sim->wbnSessionRotating == TRUE,
+                "the rotation window is not open after the first transition");
+
+  /* Second round, played and ended with that register still unanswered. */
+  UT_ASSERT_MSG(loopbackHarnessTriggerGameStart(&h),
+                "the client's slot was never ready for the second start");
+  UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, 600, rtStateIsRunning, NULL) > 0,
+                "the second game never reached the running state");
+  threadsWaitForMutex();
+  serverSimEnterGameOver(h.sim);
+  h.sim->countdownTicks = 1;
+  threadsReleaseMutex();
+  UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, 240, rtStateIsLobby, NULL) > 0,
+                "the second round never reached the lobby");
+
+  UT_ASSERT_MSG(wbnStubJobCount == 3,
+                "the second transition queued %d jobs in total, expected the "
+                "3 from the first: a quit now would name the key the "
+                "outstanding register is about to replace", wbnStubJobCount);
+  UT_ASSERT_MSG(h.sim->wbnRotateDeferred == TRUE,
+                "the second transition was not deferred");
+  UT_ASSERT_MSG(h.sim->wbnSessionRotating == TRUE,
+                "the rotation window closed with a register still out");
+  UT_ASSERT_MSG(wbnStubApplyRegisterCalls == 0,
+                "the register result was applied %d times before the test "
+                "delivered it", wbnStubApplyRegisterCalls);
+
+  /* The first register answers: its session is quit at once, that round's
+   * log goes up, and the server registers again. Nothing rekeys yet. */
+  wbnStubRegisterResultReady = TRUE;
+  loopbackHarnessPump(&h);
+  loopbackHarnessPump(&h);
+  UT_ASSERT_MSG(wbnStubApplyRegisterCalls == 1,
+                "the first register result was applied %d times, expected "
+                "once", wbnStubApplyRegisterCalls);
+  UT_ASSERT_MSG(wbnStubJobCount == 6,
+                "the deferred rotation queued %d jobs in total, expected 6",
+                wbnStubJobCount);
+  UT_ASSERT_MSG(strcmp(wbnStubJobs[3], "quit") == 0,
+                "job 3 was '%s', expected 'quit'", wbnStubJobs[3]);
+  UT_ASSERT_MSG(strcmp(wbnStubJobs[4], "upload") == 0,
+                "job 4 was '%s', expected 'upload'", wbnStubJobs[4]);
+  UT_ASSERT_MSG(strcmp(wbnStubJobs[5], "register") == 0,
+                "job 5 was '%s', expected 'register'", wbnStubJobs[5]);
+  UT_ASSERT_MSG(h.sim->wbnRotateDeferred == FALSE,
+                "the deferral was not cleared by running it");
+  UT_ASSERT_MSG(h.sim->wbnSessionRotating == TRUE,
+                "the rotation window closed with the second register still "
+                "out");
+  UT_ASSERT_MSG(udpServer.clients[slot].wbnJoin.pending == false,
+                "a rekey reached slot %d for a session that was quit at once",
+                slot);
+
+  /* The second register answers: now the window closes and the rekey goes. */
+  wbnStubRegisterResultReady = TRUE;
+  loopbackHarnessPump(&h);
+  loopbackHarnessPump(&h);
+  UT_ASSERT_MSG(wbnStubApplyRegisterCalls == 2,
+                "the register results were applied %d times, expected 2",
+                wbnStubApplyRegisterCalls);
+  UT_ASSERT_MSG(h.sim->wbnSessionRotating == FALSE,
+                "the second register result must close the rotation window");
+  UT_ASSERT_MSG(udpServer.clients[slot].wbnJoin.pending == true,
+                "no rekey reached slot %d within two pumps of the second "
+                "register result", slot);
+
+  serverLifecycleSetRoundLogHooks(NULL, NULL);
+  wbnStubRunning = FALSE;
+  wbnStubServerKey[0] = '\0';
+  wbnStubJobCount = 0;
+  wbnStubRegisterResultReady = FALSE;
+  loopbackHarnessStop(&h);
+  return 0;
+}

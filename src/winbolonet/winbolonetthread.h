@@ -92,6 +92,11 @@ struct wbnListObj {
   char endpoint[128];     /* API endpoint path */
   char *json_body;        /* Heap-allocated JSON body string */
   bool needs_bearer;      /* Send via wbn_api_post_server (Authorization: Bearer) */
+  /* Add "server_key" to the body when the job fires, not when it was
+     queued. A round transition swaps the key on the tick when the
+     register's result is applied, and a job queued before that swap and
+     fired after it must name the session that is live when it posts. */
+  bool stamp_server_key;
   /* A WBN_JOB_UPLOAD's fields, and NULL on any other kind. Their own
      rather than borrowed: a file name does not fit endpoint, and a reader
      of endpoint or json_body should not have to ask which kind it is
@@ -184,6 +189,43 @@ bool winbolonetThreadAddRequest(const char *endpoint, const char *json_body);
 * json_body - JSON request body string (copied, caller may free)
 *********************************************************/
 bool winbolonetThreadAddServerRequest(const char *endpoint, const char *json_body);
+
+/*********************************************************
+*NAME:          winbolonetThreadAddServerKeyedRequest
+*PURPOSE:
+*  As winbolonetThreadAddServerRequest, for a body that
+*  names the session: the worker adds "server_key" to the
+*  JSON object when the job fires, reading the key that is
+*  current then. The caller leaves the field out. A queued
+*  post that outlives a round transition posts against the
+*  session that is live when it goes out, rather than the
+*  one that was live when it was queued.
+*
+*  Returns TRUE when the request was queued, FALSE when the
+*  thread is not running and nothing was taken.
+*
+*ARGUMENTS:
+* endpoint  - API endpoint path (e.g. "client/leave")
+* json_body - JSON object string without "server_key"
+*             (copied, caller may free)
+*********************************************************/
+bool winbolonetThreadAddServerKeyedRequest(const char *endpoint,
+                                           const char *json_body);
+
+/*********************************************************
+*NAME:          winbolonetThreadSetServerKey
+*PURPOSE:
+*  Installs the server key the worker stamps into a keyed
+*  request when it fires. The one write path for
+*  winboloNetServerKey while the worker can be reading it:
+*  the tick writes it when a register's result is applied,
+*  and the worker reads it inside a post. An empty or NULL
+*  key clears it. Safe with no thread running.
+*
+*ARGUMENTS:
+* key - The session key, or NULL / "" to clear
+*********************************************************/
+void winbolonetThreadSetServerKey(const char *key);
 
 /*********************************************************
 *NAME:          winbolonetThreadAddJob

@@ -432,10 +432,13 @@ int main(int argc, char **argv) {
     ok = wbnTestJobResultReturns();
   } else if (strcmp(name, "log_upload_runs") == 0) {
     ok = wbnTestLogUploadRuns();
+  } else if (strcmp(name, "key_stamped_at_fire_time") == 0) {
+    ok = wbnTestKeyStampedAtFireTime();
   } else {
     fprintf(stderr,
             "usage: %s posts_share_connection|leave_returns_at_once|"
-            "worker_outlives_session|job_result_returns|log_upload_runs\n",
+            "worker_outlives_session|job_result_returns|log_upload_runs|"
+            "key_stamped_at_fire_time\n",
             argv[0]);
     SDL_Quit();
     bolo_net_cleanup();

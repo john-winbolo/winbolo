@@ -36,14 +36,25 @@ typedef SDL_Mutex *HANDLE;
 /* The wake is an SDL semaphore on every platform, including the Windows
  * path above, which otherwise uses Win32 primitives. */
 #include <SDL3/SDL_mutex.h>
+#include <SDL3/SDL_atomic.h>   /* SDL_SpinLock, for the key below */
 #include <string.h>
 #include <stdlib.h>
 #include "global.h"
 #include "http.h"
+#include "cJSON.h"
 #include "../common/wb_log.h"
+#include "winbolonet_core.h"   /* WINBOLONET_KEY_LEN */
 #include "winbolonetthread.h"
 
 HANDLE hWbnMutexHandle = NULL;
+
+/* The session key, defined in winbolonet_core.c. The tick writes it when a
+ * register's result is applied and the worker reads it when a keyed job
+ * fires, so both go through wbnKeyLock below. A spinlock rather than the
+ * queue mutex: it exists before the thread does, and a key can be set with
+ * no thread running. */
+extern char winboloNetServerKey[WINBOLONET_KEY_LEN];
+static SDL_SpinLock wbnKeyLock = 0;
 #ifdef _WIN32
   HANDLE hWbnThread;
   DWORD wbnThreadID;
@@ -351,6 +362,7 @@ static wbnList newJob(uint8_t kind) {
   add->endpoint[0] = '\0';
   add->json_body = NULL;
   add->needs_bearer = FALSE;
+  add->stamp_server_key = FALSE;
   add->file_name = NULL;
   add->upload_key = NULL;
   return add;
@@ -413,7 +425,8 @@ static uint32_t linkJob(wbnList add) {
 *  beforehand.
 *********************************************************/
 static uint32_t enqueueJob(const char *endpoint, const char *json_body,
-                           bool needs_bearer, uint8_t kind) {
+                           bool needs_bearer, bool stamp_server_key,
+                           uint8_t kind) {
   wbnList add;
 
   if (wbnShouldRun != TRUE) {
@@ -424,7 +437,58 @@ static uint32_t enqueueJob(const char *endpoint, const char *json_body,
   add->endpoint[sizeof(add->endpoint) - 1] = '\0';
   add->json_body = strdup(json_body);
   add->needs_bearer = needs_bearer;
+  add->stamp_server_key = stamp_server_key;
   return linkJob(add);
+}
+
+/*********************************************************
+*NAME:          winbolonetThreadSetServerKey
+*PURPOSE:
+*  Writes winboloNetServerKey under the key lock. The
+*  worker reads it under the same lock when a keyed job
+*  fires (see stampServerKey below).
+*********************************************************/
+void winbolonetThreadSetServerKey(const char *key) {
+  SDL_LockSpinlock(&wbnKeyLock);
+  if (key == NULL || key[0] == '\0') {
+    winboloNetServerKey[0] = '\0';
+  } else {
+    strncpy(winboloNetServerKey, key, WINBOLONET_KEY_LEN - 1);
+    winboloNetServerKey[WINBOLONET_KEY_LEN - 1] = '\0';
+  }
+  SDL_UnlockSpinlock(&wbnKeyLock);
+}
+
+/*********************************************************
+*NAME:          stampServerKey
+*PURPOSE:
+*  Returns a heap copy of json_body with "server_key" set
+*  to the key that is current now, or NULL when the body
+*  does not parse as a JSON object, in which case the
+*  caller posts the body as it was queued. Runs on the
+*  worker at fire time.
+*********************************************************/
+static char *stampServerKey(const char *json_body) {
+  char key[WINBOLONET_KEY_LEN];
+  cJSON *body;
+  char *out;
+
+  body = cJSON_Parse(json_body);
+  if (body == NULL || !cJSON_IsObject(body)) {
+    cJSON_Delete(body);
+    return NULL;
+  }
+  SDL_LockSpinlock(&wbnKeyLock);
+  strncpy(key, winboloNetServerKey, WINBOLONET_KEY_LEN - 1);
+  key[WINBOLONET_KEY_LEN - 1] = '\0';
+  SDL_UnlockSpinlock(&wbnKeyLock);
+  /* Replace rather than add, so a caller that stamped one itself is not
+     sent with two. */
+  cJSON_DeleteItemFromObject(body, "server_key");
+  cJSON_AddStringToObject(body, "server_key", key);
+  out = cJSON_PrintUnformatted(body);
+  cJSON_Delete(body);
+  return out;
 }
 
 /*********************************************************
@@ -434,7 +498,7 @@ static uint32_t enqueueJob(const char *endpoint, const char *json_body,
 *  The json_body string is copied internally.
 *********************************************************/
 bool winbolonetThreadAddRequest(const char *endpoint, const char *json_body) {
-  return enqueueJob(endpoint, json_body, FALSE, WBN_JOB_NONE) != 0;
+  return enqueueJob(endpoint, json_body, FALSE, FALSE, WBN_JOB_NONE) != 0;
 }
 
 /*********************************************************
@@ -445,7 +509,18 @@ bool winbolonetThreadAddRequest(const char *endpoint, const char *json_body) {
 *  the Authorization: Bearer header at fire time.
 *********************************************************/
 bool winbolonetThreadAddServerRequest(const char *endpoint, const char *json_body) {
-  return enqueueJob(endpoint, json_body, TRUE, WBN_JOB_NONE) != 0;
+  return enqueueJob(endpoint, json_body, TRUE, FALSE, WBN_JOB_NONE) != 0;
+}
+
+/*********************************************************
+*NAME:          winbolonetThreadAddServerKeyedRequest
+*PURPOSE:
+*  As winbolonetThreadAddServerRequest, with "server_key"
+*  added to the body by the worker when the job fires.
+*********************************************************/
+bool winbolonetThreadAddServerKeyedRequest(const char *endpoint,
+                                           const char *json_body) {
+  return enqueueJob(endpoint, json_body, TRUE, TRUE, WBN_JOB_NONE) != 0;
 }
 
 /*********************************************************
@@ -456,7 +531,7 @@ bool winbolonetThreadAddServerRequest(const char *endpoint, const char *json_bod
 *********************************************************/
 uint32_t winbolonetThreadAddJob(const char *endpoint, const char *json_body,
                                 bool needs_bearer, uint8_t kind) {
-  return enqueueJob(endpoint, json_body, needs_bearer, kind);
+  return enqueueJob(endpoint, json_body, needs_bearer, FALSE, kind);
 }
 
 /*********************************************************
@@ -620,6 +695,8 @@ static void runUpload(wbnList job) {
 *********************************************************/
 static void runJob(wbnList job) {
   char *resp = NULL;
+  char *stamped = NULL;
+  const char *body;
   int status;
 
   if (job->kind == WBN_JOB_UPLOAD) {
@@ -629,12 +706,24 @@ static void runJob(wbnList job) {
     runUpload(job);
     return;
   }
+  body = job->json_body;
+  if (job->stamp_server_key) {
+    stamped = stampServerKey(job->json_body);
+    if (stamped != NULL) {
+      body = stamped;
+    } else {
+      WB_LOG_WARN(WB_LOG_CAT_NET,
+                  "WinBolo.net %s body is not a JSON object; sent unkeyed",
+                  job->endpoint);
+    }
+  }
   if (job->kind == WBN_JOB_NONE) {
-    fireRequest(job->endpoint, job->json_body, job->needs_bearer, NULL);
+    fireRequest(job->endpoint, body, job->needs_bearer, NULL);
+    free(stamped);
     return;
   }
-  status = fireRequest(job->endpoint, job->json_body, job->needs_bearer,
-                       &resp);
+  status = fireRequest(job->endpoint, body, job->needs_bearer, &resp);
+  free(stamped);
   pushResult(job->id, job->kind, status, resp);
 }
 
