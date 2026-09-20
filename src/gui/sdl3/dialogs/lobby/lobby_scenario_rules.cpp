@@ -367,15 +367,27 @@ void lobbyScenarioRulesRenderModal(ClientSim *cs) {
 
     /* Inside the list's own popup, so ImGui finds the popup the row above
        asked for, and so the detail sits over the list rather than beside
-       it. */
+       it. Read before it draws, because the detail's own footer clears
+       s_detailRule on its way out and a test below would find it already
+       gone. */
+    const bool detailWasOpen = (s_detailRule >= 0);
     lobbyScenarioRulesRenderDetail(cs);
 
     /* A real Close button, not only the title-bar X: a controller needs
        something focusable to leave by, and so does a player who has scrolled
        the list. DialogFooter's left slot is its cancel slot and there is
        nothing to confirm here, so the one button sits on the right. */
-    if (WBUI::DialogFooter(NULL, langGetText(STR_CLOSE)) != WBUI::FOOTER_NONE ||
-        !open) {
+    const int footer = WBUI::DialogFooter(NULL, langGetText(STR_CLOSE));
+
+    /* One Escape reaches both footers in the same frame: the detail's closes
+       the detail, and this one sees the same key still pressed and takes the
+       list away behind it, so a single B left nothing on screen. A frame that
+       had the detail up is one this footer says nothing about. The button is
+       still drawn either way — the list is painted behind the modal — and it
+       cannot be clicked while the modal is over it, so there is no press to
+       lose. The title-bar X is the list window's own and is not reachable
+       then at all, so it stays outside. */
+    if ((!detailWasOpen && footer != WBUI::FOOTER_NONE) || !open) {
         s_open = false;
         lobbyScenarioRulesDropDetail();
         ImGui::CloseCurrentPopup();
