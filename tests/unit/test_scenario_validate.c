@@ -28,7 +28,8 @@
  * run_scenario_validate_unknown_rule     — a key that names no rule
  * run_scenario_validate_rule_out_of_range— a value outside its row's bounds
  * run_scenario_validate_rule_pair        — two values that pass alone and
- *                                          break the pair they share
+ *                                          break the pair they share, keyed
+ *                                          on the one that has to move
  * run_scenario_validate_tag_past_map     — an entity index past the map's own
  *                                          count
  * run_scenario_validate_fifth_tag        — a fifth tag on an entity that
@@ -64,6 +65,85 @@
  *                                        — a script that declares its own
  *                                          table overwrites the pushed one, so
  *                                          the two still disagree by key
+ * run_scenario_validate_source_rule_range— a value outside its row's bounds is
+ *                                          refused with no sim to check it
+ *                                          against, and an in-range one passes
+ * run_scenario_validate_source_pushed_triggers
+ *                                        — a manifest's triggers go on with
+ *                                          the rest of the pushed table and
+ *                                          a script that states none reads
+ *                                          back the ones that went on
+ * run_scenario_validate_trigger_caps     — each of the four caps a trigger
+ *                                          table is read under, overflowing
+ *                                          on the Lua side: what is past the
+ *                                          cap is dropped and reported under
+ *                                          the row the author wrote
+ * run_scenario_validate_trigger_hook     — a table of triggers a round could
+ *                                          run says nothing; a when naming no
+ *                                          hook is refused, and one naming a
+ *                                          policy in its own words
+ * run_scenario_validate_trigger_field    — a test naming a field its hook has
+ *                                          not got, a value naming one, and a
+ *                                          tag nothing carries
+ * run_scenario_validate_trigger_operator — an operator a set cannot answer,
+ *                                          and in on a field that is one
+ *                                          value
+ * run_scenario_validate_trigger_action   — an op the table has not got, one
+ *                                          taking a table, one that reads
+ *                                          rather than changes anything,
+ *                                          both ways an argument count can
+ *                                          be wrong, and call held to none
+ *                                          of them
+ * run_scenario_validate_trigger_unknown_operator
+ *                                        — a word that is none of the seven
+ *                                          is refused with the seven listed,
+ *                                          a row that names none at all is
+ *                                          reported once, and the seven
+ *                                          themselves still pass
+ * run_scenario_validate_trigger_action_field
+ *                                        — an argument naming a field its
+ *                                          hook has not got and one naming a
+ *                                          set, under the argument's own
+ *                                          key; a set on the right of a
+ *                                          test; a hook the surface has not
+ *                                          got saying nothing more; and a
+ *                                          reference that is right passing
+ * run_scenario_validate_trigger_call_args— call's own arguments: the name is
+ *                                          written down rather than read off
+ *                                          the payload, and the arguments
+ *                                          after it are held to the hook's
+ *                                          fields the way any other action's
+ *                                          are
+ * run_scenario_validate_rule_pair_key    — two rules that each stand up alone
+ *                                          and break the pair between them
+ *                                          are reported against the rule that
+ *                                          has to move, not against the table
+ * run_scenario_validate_trigger_call_no_name
+ *                                        — a call whose first argument is an
+ *                                          empty name is refused the way one
+ *                                          with no first argument is, and a
+ *                                          name carried on the action's text
+ *                                          still passes
+ * run_scenario_validate_trigger_field_team
+ *                                        — a reference to a seat's team
+ *                                          written into each of the three
+ *                                          parameter types that read a number
+ *                                          as a seat, under the argument's
+ *                                          own key; a seat, a team into a
+ *                                          team and call's own arguments all
+ *                                          pass
+ * run_scenario_validate_trigger_announce_clear
+ *                                        — announce with no seconds is the
+ *                                          clear the binding takes, so nothing
+ *                                          is reported against it
+ * run_scenario_validate_trigger_arg_literal
+ *                                        — a literal of a kind its parameter
+ *                                          does not take, under the
+ *                                          argument's own key, for each of
+ *                                          the three a file can state; the
+ *                                          same three written right passing;
+ *                                          and a target taking both a seat
+ *                                          number and a word
  */
 
 #include <stdint.h>
@@ -137,6 +217,19 @@ static const ScnValidateIssue *svFind(const ScnValidateResult *r,
         }
     }
     return NULL;
+}
+
+/* How many issues stand under one key. A key is a row rather than a fault,
+ * so more than one under it is the same row reported twice. */
+static int svCount(const ScnValidateResult *r, const char *key) {
+    uint16_t i;
+    int      n = 0;
+    for (i = 0; i < r->count; i++) {
+        if (strcmp(r->issues[i].key, key) == 0) {
+            n++;
+        }
+    }
+    return n;
 }
 
 /* Every issue on one line, for a failure message that says what was actually
@@ -430,15 +523,24 @@ int run_scenario_validate_rule_pair(void) {
     UT_ASSERT_MSG(!scenarioValidateMap(sim, kMap, &r),
                   "two rules that break the pair they share were accepted");
     svList(&r, seen, sizeof(seen));
-    issue = svFind(&r, "rules");
+
+    /* Under the rule the reason names, which is the one that has to move.
+       Keyed on the table itself it reached the issues list and never the
+       editor's row, which ties a row to a report by its name and nothing
+       else. */
+    issue = svFind(&r, "rules.base_min_shells");
     UT_ASSERT_MSG(issue != NULL,
-                  "the pair was not reported against the table: %s", seen);
+                  "the pair was not reported against the rule it names: %s",
+                  seen);
     UT_ASSERT_MSG(strstr(issue->message, "base_min_shells") != NULL,
                   "the message does not name the pair: %s", issue->message);
+    UT_ASSERT_MSG(svFind(&r, "rules") == NULL,
+                  "the pair was reported against the table as well: %s", seen);
 
-    /* Neither of them is wrong on its own, so neither is named on its own. */
-    UT_ASSERT_MSG(svFind(&r, "rules.base_full_shells") == NULL &&
-                      svFind(&r, "rules.base_min_shells") == NULL,
+    /* Neither of them is wrong on its own, which is why the one-rule pass
+       said nothing and the whole table had to be asked. The rule this one is
+       measured against stands where it is and is not marked. */
+    UT_ASSERT_MSG(svFind(&r, "rules.base_full_shells") == NULL,
                   "a rule that stands up alone was reported: %s", seen);
 
     serverSimDestroy(sim);
@@ -998,4 +1100,1468 @@ int run_scenario_validate_source_pushed_conflict(void) {
                   "it '%s'", r.manifest.name, pushed.name);
     UT_ASSERT_MSG(strcmp(key, "name") == 0, "the key named is '%s'", key);
     return 0;
+}
+
+/* ── 20. A rule out of range with no sim ──────────────────────────── */
+
+/* The bounds a rule carries belong to the table the field is declared in, not
+   to a game, so the check needs no sim to make it. An editor holds a script
+   and no map; without this it was handed a table nobody had read the rules
+   of, and a value the server would refuse looked clean until the map was
+   hosted. */
+int run_scenario_validate_source_rule_range(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    /* 0..255 is the row's range, and the classic table is what it is stated
+       against. */
+    static const char *const kOver =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  rules = { tank_reload_ticks = 999 },\n"
+        "}\n";
+    static const char *const kIn =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  rules = { tank_reload_ticks = 20 },\n"
+        "}\n";
+    ScnValidateResult       r;
+    const ScnValidateIssue *issue;
+    char                    seen[1024];
+
+    UT_ASSERT_MSG(
+        !scenarioValidateSource(NULL, kOver, strlen(kOver), kName, NULL, &r),
+        "a value past the rule's range was accepted with no sim");
+    svList(&r, seen, sizeof(seen));
+    issue = svFind(&r, "rules.tank_reload_ticks");
+    UT_ASSERT_MSG(issue != NULL, "no issue under the rule's key: %s", seen);
+    UT_ASSERT_MSG(strstr(issue->message, "tank_reload_ticks") != NULL,
+                  "the message does not name the rule: %s", issue->message);
+    UT_ASSERT_MSG(strstr(issue->message, "0..255") != NULL,
+                  "the message does not carry the bounds: %s", issue->message);
+
+    /* Said once, against the rule that carries it, as it is with a sim. */
+    UT_ASSERT_MSG(svFind(&r, "rules") == NULL,
+                  "the range was reported against the whole table as well");
+    UT_ASSERT_MSG(r.count == 1, "%u issues against one rule out of range: %s",
+                  (unsigned)r.count, seen);
+
+    /* And a table the same shape with a value the row holds is clean, so what
+       the check refuses is the value rather than the missing sim. */
+    if (!scenarioValidateSource(NULL, kIn, strlen(kIn), kName, NULL, &r)) {
+        svList(&r, seen, sizeof(seen));
+        UT_FAIL("a rule inside its range was refused: %s", seen);
+    }
+    UT_ASSERT_MSG(r.count == 0, "%u issues against a table with nothing "
+                  "wrong: %s", (unsigned)r.count, seen);
+    return 0;
+}
+
+/* ── 21. A pushed table's triggers, read back ─────────────────────── */
+
+/* A manifest now carries triggers, and a packaged script may state none of
+   its own. The table that goes on the state has to carry them too, or the
+   table read back is short of every trigger the package holds and the two
+   forms are held to disagree at every load.
+
+   The four value kinds and the long line are all here, so the trip covers
+   the argument that lives on the action's text as well as the ones that fit
+   their own slot.
+
+   Both triggers are ones a round could run: the hooks are real, the fields
+   are their hooks' own, the operators suit them and the ops take the
+   arguments given. The validator holds a trigger to all of that, so a
+   fixture written any other way would be reporting faults rather than
+   making the round trip this case is about. The base tag is here for the
+   same reason — a test for a tag nothing carries is one of the faults. */
+static void svPushedTriggers(ScenarioManifest *m) {
+    ScnTrigger *t;
+    ScnTrigAct *a;
+
+    m->numTriggers       = 2;
+    m->baseTags[1].count = 1;
+    snprintf(m->baseTags[1].tag[0], SCN_TAG_LEN, "outer_base");
+
+    t = &m->triggers[0];
+    snprintf(t->when, SCN_TRIGGER_NAME_LEN, "on_base_captured");
+    t->numWhere = 2;
+    snprintf(t->where[0].field, SCN_TRIGGER_NAME_LEN, "new_team");
+    t->where[0].op         = SCN_TRIG_CMP_EQ;
+    t->where[0].value.kind = SCN_TRIG_VAL_NUMBER;
+    t->where[0].value.num  = 1.0;
+    snprintf(t->where[1].field, SCN_TRIGGER_NAME_LEN, "tag");
+    t->where[1].op         = SCN_TRIG_CMP_IN;
+    t->where[1].value.kind = SCN_TRIG_VAL_STRING;
+    snprintf(t->where[1].value.text, SCN_TRIGGER_NAME_LEN, "outer_base");
+
+    t->numActions = 2;
+    a = &t->actions[0];
+    snprintf(a->op, SCN_TRIGGER_NAME_LEN, "announce");
+    a->numArgs        = 2;
+    a->args[0].kind   = SCN_TRIG_VAL_STRING;
+    a->args[0].inText = true;
+    snprintf(a->text, SCN_TRIGGER_TEXT_LEN, "%s",
+             "The ring holds and the wave is turned back short of the keep");
+    a->args[1].kind = SCN_TRIG_VAL_NUMBER;
+    a->args[1].num  = 5.0;
+    a = &t->actions[1];
+    snprintf(a->op, SCN_TRIGGER_NAME_LEN, "score");
+    a->numArgs      = 2;
+    a->args[0].kind = SCN_TRIG_VAL_FIELD;
+    snprintf(a->args[0].text, SCN_TRIGGER_NAME_LEN, "new");
+    a->args[1].kind = SCN_TRIG_VAL_NUMBER;
+    a->args[1].num  = 10.0;
+
+    t = &m->triggers[1];
+    snprintf(t->when, SCN_TRIGGER_NAME_LEN, "on_tank_spawned");
+    t->numWhere = 1;
+    snprintf(t->where[0].field, SCN_TRIGGER_NAME_LEN, "respawn");
+    t->where[0].op         = SCN_TRIG_CMP_EQ;
+    t->where[0].value.kind = SCN_TRIG_VAL_BOOL;
+    t->where[0].value.num  = 0.0;
+    t->numActions          = 1;
+    a                      = &t->actions[0];
+    snprintf(a->op, SCN_TRIGGER_NAME_LEN, "log");
+    a->numArgs      = 1;
+    a->args[0].kind = SCN_TRIG_VAL_STRING;
+    snprintf(a->args[0].text, SCN_TRIGGER_NAME_LEN, "first spawn");
+}
+
+int run_scenario_validate_source_pushed_triggers(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    /* A script that says nothing about itself, so what is read back is
+       exactly what was put on. */
+    static const char *const kLua =
+        "local wave = 0\n"
+        "function on_round_start() wave = wave + 1 end\n";
+    ScenarioManifest  *pushed;
+    ScnValidateResult *r;
+    char               key[SCN_VALIDATE_KEY_LEN];
+    char               why[256];
+    char               seen[1024];
+    int                rc = 0;
+
+    /* Both are large enough now that a case holding one of each is better
+       off not holding it on the stack. */
+    pushed = (ScenarioManifest *)malloc(sizeof(*pushed));
+    r      = (ScnValidateResult *)malloc(sizeof(*r));
+    if (pushed == NULL || r == NULL) {
+        free(pushed);
+        free(r);
+        UT_FAIL("out of memory for the manifest and the result");
+    }
+
+    svPushed(pushed, "Packaged");
+    svPushedTriggers(pushed);
+
+    if (!scenarioValidateSource(NULL, kLua, strlen(kLua), kName, pushed, r)) {
+        svList(r, seen, sizeof(seen));
+        fprintf(stderr,
+                "FAIL %s:%d: a script checked against a pushed manifest was "
+                "refused: %s\n", __FILE__, __LINE__, seen);
+        rc = 1;
+    }
+    if (rc == 0 && !r->haveManifest) {
+        fprintf(stderr, "FAIL %s:%d: the pushed table was not read back\n",
+                __FILE__, __LINE__);
+        rc = 1;
+    }
+    if (rc == 0 && r->manifest.numTriggers != pushed->numTriggers) {
+        fprintf(stderr,
+                "FAIL %s:%d: %u triggers went on and %u came back\n",
+                __FILE__, __LINE__, (unsigned)pushed->numTriggers,
+                (unsigned)r->manifest.numTriggers);
+        rc = 1;
+    }
+    /* Every byte of them, padding included: both the writer and the reader
+       clear a trigger before filling it. */
+    if (rc == 0 &&
+        memcmp(r->manifest.triggers, pushed->triggers,
+               sizeof(ScnTrigger) * pushed->numTriggers) != 0) {
+        fprintf(stderr,
+                "FAIL %s:%d: the triggers read back are not the ones pushed\n",
+                __FILE__, __LINE__);
+        rc = 1;
+    }
+    /* And the comparison a load makes of the two forms is content with
+       them, which is the thing the round trip is for. */
+    if (rc == 0 && !scnManifestAgrees(pushed, &r->manifest, key, sizeof(key),
+                                      why, sizeof(why))) {
+        fprintf(stderr, "FAIL %s:%d: the two forms differ at %s: %s\n",
+                __FILE__, __LINE__, key, why);
+        rc = 1;
+    }
+
+    free(pushed);
+    free(r);
+    return rc;
+}
+
+/* ── 22. More triggers than the struct holds ──────────────────────── */
+
+/* Each of the four caps a trigger table is read under, overflowing on the
+   Lua side. Past every one of them the row is dropped and said to be, under
+   the key of the row the author wrote — the same behaviour manifest.json's
+   decoder has, since a package whose two forms were cut differently would
+   not survive the comparison that follows. */
+int run_scenario_validate_trigger_caps(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    char                    *lua;
+    ScnValidateResult       *r;
+    char                     want[SCN_VALIDATE_KEY_LEN];
+    char                     seen[1024];
+    size_t                   used;
+    int                      i;
+    int                      rc = 0;
+
+    lua = (char *)malloc(1 << 16);
+    r   = (ScnValidateResult *)malloc(sizeof(*r));
+    if (lua == NULL || r == NULL) {
+        free(lua);
+        free(r);
+        UT_FAIL("out of memory building the over-cap table");
+    }
+
+    /* One more trigger than the struct holds. */
+    used = (size_t)snprintf(lua, 1 << 16, "scenario = { api = 1, triggers = {");
+    /* Two past the cap, and one line said: a script decides how long this
+       array is, and a line for each excess row would fill the issue list. */
+    for (i = 0; i <= SCN_TRIGGERS_MAX + 1; i++) {
+        used += (size_t)snprintf(lua + used, (1 << 16) - used,
+                                 " { when = \"on_tick\" },");
+    }
+    snprintf(lua + used, (1 << 16) - used, " } }\n");
+
+    if (scenarioValidateSource(NULL, lua, strlen(lua), kName, NULL, r)) {
+        fprintf(stderr,
+                "FAIL %s:%d: a table past the trigger cap said nothing\n",
+                __FILE__, __LINE__);
+        rc = 1;
+    }
+    if (rc == 0 && r->manifest.numTriggers != SCN_TRIGGERS_MAX) {
+        fprintf(stderr, "FAIL %s:%d: %u triggers were kept, expected %d\n",
+                __FILE__, __LINE__, (unsigned)r->manifest.numTriggers,
+                SCN_TRIGGERS_MAX);
+        rc = 1;
+    }
+    snprintf(want, sizeof(want), "triggers[%d]", SCN_TRIGGERS_MAX);
+    if (rc == 0 && svFind(r, want) == NULL) {
+        svList(r, seen, sizeof(seen));
+        fprintf(stderr,
+                "FAIL %s:%d: nothing was reported under %s: %s\n",
+                __FILE__, __LINE__, want, seen);
+        rc = 1;
+    }
+    snprintf(want, sizeof(want), "triggers[%d]", SCN_TRIGGERS_MAX + 1);
+    if (rc == 0 && (svFind(r, want) != NULL || r->count != 1)) {
+        svList(r, seen, sizeof(seen));
+        fprintf(stderr,
+                "FAIL %s:%d: the cap was said %u times, expected once: %s\n",
+                __FILE__, __LINE__, (unsigned)r->count, seen);
+        rc = 1;
+    }
+
+    /* One more test, one more action and one more argument than a trigger
+       holds, all on the one trigger. */
+    if (rc == 0) {
+        used = (size_t)snprintf(lua, 1 << 16,
+                                "scenario = { api = 1, triggers = { {"
+                                " when = \"on_tick\", where = {");
+        for (i = 0; i <= SCN_TRIGGER_CONDS_MAX; i++) {
+            used += (size_t)snprintf(lua + used, (1 << 16) - used,
+                                     " { \"n\", \"eq\", %d },", i);
+        }
+        used += (size_t)snprintf(lua + used, (1 << 16) - used, " }, actions = {");
+        for (i = 0; i <= SCN_TRIGGER_ACTIONS_MAX; i++) {
+            int j;
+            used += (size_t)snprintf(lua + used, (1 << 16) - used,
+                                     " { \"log\"");
+            /* The first action is the one given more arguments than it
+               holds. */
+            /* Text, because log takes text: the point here is how many
+               arguments an action holds, and a number in one of them would
+               add a report of its own kind to every action below. */
+            for (j = 0; j < ((i == 0) ? SCN_TRIGGER_ARGS_MAX + 1 : 1); j++) {
+                used += (size_t)snprintf(lua + used, (1 << 16) - used,
+                                         ", \"a%d\"", j);
+            }
+            used += (size_t)snprintf(lua + used, (1 << 16) - used, " },");
+        }
+        snprintf(lua + used, (1 << 16) - used, " } } } }\n");
+
+        if (scenarioValidateSource(NULL, lua, strlen(lua), kName, NULL, r)) {
+            fprintf(stderr,
+                    "FAIL %s:%d: a trigger past its caps said nothing\n",
+                    __FILE__, __LINE__);
+            rc = 1;
+        }
+    }
+    if (rc == 0) {
+        const ScnTrigger *t = &r->manifest.triggers[0];
+
+        svList(r, seen, sizeof(seen));
+        if (r->manifest.numTriggers != 1) {
+            fprintf(stderr, "FAIL %s:%d: %u triggers were kept, expected 1\n",
+                    __FILE__, __LINE__, (unsigned)r->manifest.numTriggers);
+            rc = 1;
+        }
+        if (t->numWhere != SCN_TRIGGER_CONDS_MAX) {
+            fprintf(stderr, "FAIL %s:%d: %u tests were kept, expected %d\n",
+                    __FILE__, __LINE__, (unsigned)t->numWhere,
+                    SCN_TRIGGER_CONDS_MAX);
+            rc = 1;
+        }
+        if (t->numActions != SCN_TRIGGER_ACTIONS_MAX) {
+            fprintf(stderr, "FAIL %s:%d: %u actions were kept, expected %d\n",
+                    __FILE__, __LINE__, (unsigned)t->numActions,
+                    SCN_TRIGGER_ACTIONS_MAX);
+            rc = 1;
+        }
+        if (t->actions[0].numArgs != SCN_TRIGGER_ARGS_MAX) {
+            fprintf(stderr, "FAIL %s:%d: %u arguments were kept, expected %d\n",
+                    __FILE__, __LINE__, (unsigned)t->actions[0].numArgs,
+                    SCN_TRIGGER_ARGS_MAX);
+            rc = 1;
+        }
+        snprintf(want, sizeof(want), "triggers[0].where[%d]",
+                 SCN_TRIGGER_CONDS_MAX);
+        if (svFind(r, want) == NULL) {
+            fprintf(stderr, "FAIL %s:%d: nothing under %s: %s\n", __FILE__,
+                    __LINE__, want, seen);
+            rc = 1;
+        }
+        snprintf(want, sizeof(want), "triggers[0].actions[%d]",
+                 SCN_TRIGGER_ACTIONS_MAX);
+        if (svFind(r, want) == NULL) {
+            fprintf(stderr, "FAIL %s:%d: nothing under %s: %s\n", __FILE__,
+                    __LINE__, want, seen);
+            rc = 1;
+        }
+        /* The arguments past the cap are reported against the action that
+           took them, which is where an author would look for them. */
+        if (svFind(r, "triggers[0].actions[0]") == NULL) {
+            fprintf(stderr,
+                    "FAIL %s:%d: nothing under triggers[0].actions[0]: %s\n",
+                    __FILE__, __LINE__, seen);
+            rc = 1;
+        }
+    }
+
+    free(lua);
+    free(r);
+    return rc;
+}
+
+/* ── 23. A trigger that could not run ─────────────────────────────── */
+
+/* The four cases below drive the source entry with a NULL sim, which is what
+   the map editor hands it. A trigger is held to the catalogue and to the
+   table's own tags and regions, none of which is a map, so the editor is
+   told everything a server would tell it. */
+
+/* Whether the issue under key was reported and says what it should. Prints
+   its own failure, with every issue beside it, so a case reads as a list of
+   the refusals it expects rather than a list of blocks. line is the caller's,
+   through the macro below, since __LINE__ here would name this function. */
+static bool svSays(const ScnValidateResult *r, const char *key,
+                   const char *want, int line) {
+    const ScnValidateIssue *issue = svFind(r, key);
+    char                    seen[1024];
+
+    if (issue != NULL && strstr(issue->message, want) != NULL) {
+        return true;
+    }
+    if (issue == NULL) {
+        svList(r, seen, sizeof(seen));
+        fprintf(stderr, "FAIL %s:%d: nothing was reported under %s: %s\n",
+                __FILE__, line, key, seen);
+    } else {
+        fprintf(stderr, "FAIL %s:%d: %s does not say '%s': %s\n",
+                __FILE__, line, key, want, issue->message);
+    }
+    return false;
+}
+
+/* And the other way round: a key nothing was reported under, which is how a
+   case says a check must not fire. */
+static bool svSilent(const ScnValidateResult *r, const char *key, int line) {
+    const ScnValidateIssue *issue = svFind(r, key);
+
+    if (issue == NULL) {
+        return true;
+    }
+    fprintf(stderr, "FAIL %s:%d: %s was reported against: %s\n",
+            __FILE__, line, key, issue->message);
+    return false;
+}
+
+#define SV_SAYS(r, key, want) svSays((r), (key), (want), __LINE__)
+#define SV_SILENT(r, key)     svSilent((r), (key), __LINE__)
+
+/* The hook a trigger listens on: one the surface has not got, and one it has
+   on the half a trigger cannot use. A policy is the second of those and gets
+   its own sentence, because the name is real and "no such hook" would send
+   an author looking for a typo that is not there.
+
+   The table checked first is one a round could run, which is what says the
+   refusals below are refusals of something rather than of everything. */
+int run_scenario_validate_trigger_hook(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    static const char *const kClean =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  tags = { bases = { [1] = \"outer\" } },\n"
+        "  regions = { keep = { x = 10, y = 10, w = 4, h = 4 } },\n"
+        "  triggers = {\n"
+        "    { when = \"on_base_captured\",\n"
+        "      where = { { \"new_team\", \"eq\", 1 },\n"
+        "                { \"tag\", \"in\", \"outer\" } },\n"
+        "      actions = { { \"announce\", \"the outer base falls\", 5 },\n"
+        "                  { \"call\", \"cheer\", { field = \"new\" } } } },\n"
+        "    { when = \"on_tank_killed\",\n"
+        "      where = { { \"killer_team\", \"eq\",\n"
+        "                  { field = \"victim_team\" } } },\n"
+        "      actions = { { \"log\", \"a team kill\" } } },\n"
+        "    { when = \"on_mine_explosion\",\n"
+        "      where = { { \"region\", \"in\", \"keep\" } },\n"
+        "      actions = { { \"log\", \"a mine in the keep\" } } },\n"
+        "  },\n"
+        "}\n";
+    static const char *const kUnknown =
+        "scenario = { api = 1, triggers = {\n"
+        "  { when = \"on_base_taken\", actions = { { \"log\", \"x\" } } },\n"
+        "} }\n";
+    static const char *const kPolicy =
+        "scenario = { api = 1, triggers = {\n"
+        "  { when = \"can_respawn\", actions = { { \"log\", \"x\" } } },\n"
+        "} }\n";
+    ScnValidateResult *r;
+    char               unknown[SCN_VALIDATE_MSG_LEN] = "";
+    char               seen[1024];
+    int                rc = 0;
+
+    /* On the heap: a result carries a whole manifest and the issue list with
+       it, which is more than a case's frame should hold. */
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+
+    if (!scenarioValidateSource(NULL, kClean, strlen(kClean), kName, NULL,
+                                r)) {
+        svList(r, seen, sizeof(seen));
+        fprintf(stderr, "FAIL %s:%d: a table of sound triggers was refused: "
+                        "%s\n", __FILE__, __LINE__, seen);
+        rc = 1;
+    }
+
+    if (rc == 0) {
+        (void)scenarioValidateSource(NULL, kUnknown, strlen(kUnknown), kName,
+                                     NULL, r);
+        if (!SV_SAYS(r, "triggers[0]", "on_base_taken")) {
+            rc = 1;
+        } else {
+            snprintf(unknown, sizeof(unknown), "%s",
+                     svFind(r, "triggers[0]")->message);
+        }
+    }
+
+    if (rc == 0) {
+        (void)scenarioValidateSource(NULL, kPolicy, strlen(kPolicy), kName,
+                                     NULL, r);
+        if (!SV_SAYS(r, "triggers[0]", "policy")) {
+            rc = 1;
+        } else if (strcmp(svFind(r, "triggers[0]")->message, unknown) == 0) {
+            /* The whole point of the second sentence: an author who wrote a
+               real name is not sent looking for a typo. */
+            fprintf(stderr, "FAIL %s:%d: a policy is refused in the same "
+                            "words as a name the surface has not got: %s\n",
+                    __FILE__, __LINE__, unknown);
+            rc = 1;
+        }
+    }
+
+    free(r);
+    return rc;
+}
+
+/* ── 24. A test naming something its hook has not got ─────────────── */
+
+/* The field on the left, the field a value on the right names, and the one
+   name only the table itself can answer for: a tag nothing carries. Nothing
+   puts a tag on an entity at run time, so a tag a test names is in the table
+   or nowhere. */
+int run_scenario_validate_trigger_field(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  tags = { bases = { [1] = \"outer\" } },\n"
+        "  triggers = {\n"
+        "    { when = \"on_base_captured\",\n"
+        "      where = { { \"winner\", \"eq\", 1 },\n"
+        "                { \"new_team\", \"eq\", { field = \"loser\" } },\n"
+        "                { \"tag\", \"in\", \"inner\" } },\n"
+        "      actions = { { \"log\", \"captured\" } } },\n"
+        "  },\n"
+        "}\n";
+    ScnValidateResult *r;
+    int                rc = 0;
+
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+
+    if (scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL, r)) {
+        fprintf(stderr, "FAIL %s:%d: a trigger testing names its hook and "
+                        "its table have not got said nothing\n",
+                __FILE__, __LINE__);
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].where[0]", "winner")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].where[1]", "loser")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].where[2]", "inner")) {
+        rc = 1;
+    }
+
+    free(r);
+    return rc;
+}
+
+/* ── 25. An operator the field it tests cannot answer ─────────────── */
+
+/* A tag and a region are sets of names, and a set answers whether it holds
+   one: in, and ne for the other way round. Every other operator asks a set
+   something it has no answer to. On any other field in is the one that means
+   nothing, since a test states one value and never a list. */
+int run_scenario_validate_trigger_operator(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  tags = { bases = { [1] = \"outer\" } },\n"
+        "  triggers = {\n"
+        "    { when = \"on_base_captured\",\n"
+        "      where = { { \"tag\", \"eq\", \"outer\" },\n"
+        "                { \"tag\", \"lt\", \"outer\" },\n"
+        "                { \"new_team\", \"in\", 1 },\n"
+        "                { \"tag\", \"ne\", \"outer\" } },\n"
+        "      actions = { { \"log\", \"captured\" } } },\n"
+        "  },\n"
+        "}\n";
+    ScnValidateResult *r;
+    int                rc = 0;
+
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+
+    if (scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL, r)) {
+        fprintf(stderr, "FAIL %s:%d: an operator the field cannot answer "
+                        "said nothing\n", __FILE__, __LINE__);
+        rc = 1;
+    }
+    /* Which way round it is, both ways: the set that cannot be compared, and
+       the one value there is nothing to look in. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].where[0]", "'in' and 'ne'")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].where[1]", "'in' and 'ne'")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].where[2]", "one value")) {
+        rc = 1;
+    }
+    /* ne on a set is the other half of the pair and holds. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].where[3]")) {
+        rc = 1;
+    }
+
+    free(r);
+    return rc;
+}
+
+/* ── 26. An action an op could not be made from ───────────────────── */
+
+/* An op the game table has not got, one whose arguments an action cannot
+   state, one that takes them and answers a value rather than changing
+   anything, and the two ways an argument count can be wrong. And call, which
+   is none of those things: it runs a function of the author's own, so what a
+   catalogue row takes says nothing about it and the script's own text is
+   where its target lives. */
+int run_scenario_validate_trigger_action(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    /* The third trigger holds the read accessor and an op that acts, beside
+       each other: the first is what the refusal is of, and the second is
+       what says the refusal refuses something rather than everything. A
+       trigger of their own because a trigger holds four actions and the
+       first already has its four. */
+    static const char *const kLua =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_tick\",\n"
+        "      actions = { { \"set_score\", 1, 2 },\n"
+        "                  { \"panel\", 1, 2 },\n"
+        "                  { \"announce\" },\n"
+        "                  { \"log\", \"a\", \"b\" } } },\n"
+        "    { when = \"on_tick\",\n"
+        "      actions = { { \"call\", \"never_defined\", 1, 2 },\n"
+        "                  { \"call\" } } },\n"
+        "    { when = \"on_tick\",\n"
+        "      actions = { { \"tagged\", \"outer\" },\n"
+        "                  { \"log\", \"fine\" } } },\n"
+        "  },\n"
+        "}\n";
+    ScnValidateResult *r;
+    int                rc = 0;
+
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+
+    if (scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL, r)) {
+        fprintf(stderr, "FAIL %s:%d: an action no op could be made from said "
+                        "nothing\n", __FILE__, __LINE__);
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[0]", "set_score")) {
+        rc = 1;
+    }
+    /* The op named beside the sentence, so an op refused for one reason
+       cannot pass a check written for the other: panel fails the acting test
+       as well, and only the order the two are written in keeps this message
+       on it. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[1]",
+                            "panel takes a table or a function")) {
+        rc = 1;
+    }
+    /* And the way round, which matters: an author told only that panel is
+       refused has nowhere to go, and call is where they go. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[1]", "call action")) {
+        rc = 1;
+    }
+    /* Too few, against an op whose count is a range: announce takes a line,
+       and a time and a target it may be written without. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[2]", "takes 1 to 3")) {
+        rc = 1;
+    }
+    /* And too many, against one whose count is exact. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[3]", "takes 1")) {
+        rc = 1;
+    }
+    /* A call naming a function the script never defines is not a fault the
+       table can be held to: the editor cannot read the script's functions
+       and neither can this. What it is held to is naming one at all. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[1].actions[0]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "triggers[1].actions[1]", "call")) {
+        rc = 1;
+    }
+    /* A read accessor takes flat arguments the way an acting op does, so it
+       reaches the router and runs there, answering a value an action list
+       has nothing to read with. The op is named in what is asserted: three
+       legs matching one loose phrase is how a check went missing here
+       before. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[2].actions[0]",
+                            "tagged reads something and changes nothing")) {
+        rc = 1;
+    }
+    /* And an op that does change something, written right, on the same
+       trigger. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[2].actions[1]")) {
+        rc = 1;
+    }
+
+    free(r);
+    return rc;
+}
+
+/* ── 27. An operator that is none of the seven ────────────────────── */
+
+/* A misspelled operator used to read as eq, so a row the author got wrong
+   quietly tested something else and there was nothing left for a check to
+   refuse. It now reads as an operator the table cannot name, which is what
+   this refuses.
+
+   The word itself is gone by the time the manifest exists — a condition
+   holds the operator as the enum and not as the author's bytes — so the
+   message names the row through its key and lists the seven instead of
+   quoting back what was written.
+
+   A NULL sim throughout: none of this reads a map. */
+int run_scenario_validate_trigger_unknown_operator(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    /* Row 0 is the typo. Row 1 names an operator that is not a string at
+       all, which the reader reports as naming none; row 2 is one of the
+       seven and stands as the case's evidence that the refusal refuses
+       something rather than everything. */
+    static const char *const kLua =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_player_join\",\n"
+        "      where = { { \"p\", \"equalz\", 7 },\n"
+        "                { \"p\", 7, 7 },\n"
+        "                { \"p\", \"eq\", 7 } },\n"
+        "      actions = { { \"log\", \"joined\" } } },\n"
+        "  },\n"
+        "}\n";
+    /* The six operators that ask about one value, for the second source
+       below. in is the seventh and is asked of a set, so it goes on a
+       trigger of its own there. */
+    static const char *const kScalar[] = {
+        "eq", "ne", "lt", "lte", "gt", "gte"
+    };
+    ScnValidateResult *r;
+    char               seven[2048];
+    size_t             used;
+    size_t             k;
+    int                rc = 0;
+    int                n;
+
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+
+    if (scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL, r)) {
+        fprintf(stderr, "FAIL %s:%d: an operator that is none of the seven "
+                        "said nothing\n", __FILE__, __LINE__);
+        rc = 1;
+    }
+    /* What the script's own table read as, before what was said about it:
+       the word is none of the seven, so the reader keeps it as an operator
+       it cannot name rather than as eq. The row that named none at all is
+       left the same way. */
+    if (rc == 0 && r->haveManifest) {
+        const ScnTrigger *t = &r->manifest.triggers[0];
+        if (t->where[0].op != SCN_TRIG_CMP_UNKNOWN ||
+            t->where[1].op != SCN_TRIG_CMP_UNKNOWN ||
+            t->where[2].op != SCN_TRIG_CMP_EQ) {
+            fprintf(stderr, "FAIL %s:%d: the three rows read as operators "
+                            "%d, %d and %d\n", __FILE__, __LINE__,
+                    (int)t->where[0].op, (int)t->where[1].op,
+                    (int)t->where[2].op);
+            rc = 1;
+        }
+    }
+    /* The typo, and the seven listed for the author to read their row
+       against. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].where[0]", "not one the surface")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].where[0]",
+                            "'eq', 'ne', 'lt', 'lte', 'gt', 'gte' and 'in'")) {
+        rc = 1;
+    }
+    /* A row that named no operator reads the same way, and the reader has
+       already said so. One fault, one report: the reader's is the one that
+       stands, because it says the slot was empty rather than that a word
+       was wrong. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].where[1]", "names no operator")) {
+        rc = 1;
+    }
+    if (rc == 0) {
+        n = svCount(r, "triggers[0].where[1]");
+        if (n != 1) {
+            char seen[1024];
+            svList(r, seen, sizeof(seen));
+            fprintf(stderr, "FAIL %s:%d: a row that names no operator was "
+                            "reported %d times: %s\n",
+                    __FILE__, __LINE__, n, seen);
+            rc = 1;
+        }
+    }
+    /* And the row that is right says nothing. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].where[2]")) {
+        rc = 1;
+    }
+
+    /* Every one of the seven, after the enum moved under them: a source
+       that states each of them and has to check clean.
+
+       The six scalar operators are spread over as many triggers as the cap
+       on one trigger's tests needs, rather than written out on one, so the
+       fixture follows SCN_TRIGGER_CONDS_MAX if it ever moves. Over the cap
+       the reader drops the rows past it and says so, and the case would
+       then be failing on its own input. */
+    used = (size_t)snprintf(seven, sizeof(seven),
+                            "scenario = {\n"
+                            "  api = 1,\n"
+                            "  tags = { bases = { [1] = \"outer\" } },\n"
+                            "  triggers = {\n");
+    for (k = 0; k < sizeof(kScalar) / sizeof(kScalar[0]);
+         k += SCN_TRIGGER_CONDS_MAX) {
+        size_t end = k + SCN_TRIGGER_CONDS_MAX;
+        size_t j;
+
+        if (end > sizeof(kScalar) / sizeof(kScalar[0])) {
+            end = sizeof(kScalar) / sizeof(kScalar[0]);
+        }
+        used += (size_t)snprintf(seven + used, sizeof(seven) - used,
+                                 "    { when = \"on_player_join\",\n"
+                                 "      where = {");
+        for (j = k; j < end; j++) {
+            used += (size_t)snprintf(seven + used, sizeof(seven) - used,
+                                     "%s { \"p\", \"%s\", %d }",
+                                     (j > k) ? "," : "", kScalar[j],
+                                     (int)j + 1);
+        }
+        used += (size_t)snprintf(seven + used, sizeof(seven) - used,
+                                 " },\n"
+                                 "      actions = { { \"log\", \"joined\" "
+                                 "} } },\n");
+    }
+    snprintf(seven + used, sizeof(seven) - used,
+             "    { when = \"on_base_captured\",\n"
+             "      where = { { \"tag\", \"in\", \"outer\" } },\n"
+             "      actions = { { \"log\", \"captured\" } } },\n"
+             "  },\n"
+             "}\n");
+
+    if (rc == 0) {
+        char seen[1024];
+        if (!scenarioValidateSource(NULL, seven, strlen(seven), kName, NULL,
+                                    r)) {
+            svList(r, seen, sizeof(seen));
+            fprintf(stderr, "FAIL %s:%d: the seven operators were refused: "
+                            "%s\n", __FILE__, __LINE__, seen);
+            rc = 1;
+        }
+    }
+
+    free(r);
+    return rc;
+}
+
+/* ── 28. A reference naming something the payload cannot answer ───── */
+
+/* An argument may name a field the way a test's right-hand side does, and
+   the router reads both off the payload as the trigger fires. Two names it
+   cannot read: one the hook has not got, and one that answers a set of names
+   rather than the one value either place takes. The router gives up on the
+   whole action for the first and on the whole row for the second, so a
+   score written either way never scores and never says why.
+
+   One case rather than four: it is one check reported under two key shapes,
+   and the reference that is right belongs beside the ones that are not,
+   since that is what says the check refuses something rather than
+   everything.
+
+   on_base_captured(n, old, new) carries n, old and new, the two _team forms
+   and tag, which is derived from the base and so is the set. owner is a name
+   it has not got. on_tank_killed's victim is a seat and is one value, which
+   is the reference that passes. */
+int run_scenario_validate_trigger_action_field(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_base_captured\",\n"
+        "      where = { { \"n\", \"eq\", { field = \"tag\" } } },\n"
+        "      actions = { { \"score\", { field = \"owner\" }, 10 },\n"
+        "                  { \"score\", { field = \"tag\" }, 10 } } },\n"
+        "    { when = \"on_tank_killed\",\n"
+        "      actions = { { \"score\", { field = \"victim\" }, 10 } } },\n"
+        "    { when = \"on_base_taken\",\n"
+        "      actions = { { \"score\", { field = \"owner\" }, 10 } } },\n"
+        "  },\n"
+        "}\n";
+    ScnValidateResult *r;
+    int                rc = 0;
+
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+
+    if (scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL, r)) {
+        fprintf(stderr, "FAIL %s:%d: an action argument naming what its hook "
+                        "cannot answer said nothing\n",
+                __FILE__, __LINE__);
+        rc = 1;
+    }
+    /* The argument's own position, not the action's: an action takes several
+       and the author has to be told which of them is the one. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[0][0]", "owner")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[1][0]", "set of names")) {
+        rc = 1;
+    }
+    /* The action itself stands: the op is real, scalar and given a count it
+       takes, which is what says the refusal is of the argument. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[1]")) {
+        rc = 1;
+    }
+    /* And the same name on the right of a test, under the row's key. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].where[0]", "set of names")) {
+        rc = 1;
+    }
+    /* A seat is one value and the op takes it. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[1].actions[0][0]")) {
+        rc = 1;
+    }
+    /* A hook the surface has not got is one fault and is reported once. The
+       payload is unknown with the hook, so holding the arguments to it would
+       say the same thing again for every one of them. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[2]", "names no hook")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[2].actions[0][0]")) {
+        rc = 1;
+    }
+
+    free(r);
+    return rc;
+}
+
+/* ── 29. What call is held to ─────────────────────────────────────── */
+
+/* call runs a function of the author's own script, so the catalogue says
+   nothing about what it takes. Two things are still the table's to hold.
+
+   The name is written down. Read off the payload, it is whichever function
+   the payload carried when the trigger fired — on a hook handed a line of
+   chat, the player who typed it would be choosing. The router resolves the
+   name through the same value() every other reference goes through and then
+   looks it up on the globals, so a reference there reaches any function the
+   script defines.
+
+   The arguments after the name go the way every other action's do: a name
+   the hook has not got and a name that answers a set are both read as a
+   reference the router cannot make sense of, and it gives up on the whole
+   action. The wording is the same wording, because it is the same fault.
+
+   on_chat(p, text) carries p, text and p_team, none of them a set. The set
+   leg needs a hook that has one, so it goes on on_base_captured, whose tag
+   is derived from the base. */
+int run_scenario_validate_trigger_call_args(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_chat\",\n"
+        "      actions = { { \"call\", { field = \"text\" } },\n"
+        "                  { \"call\", \"my_fn\" },\n"
+        "                  { \"call\", \"my_fn\", { field = \"speaker\" } },\n"
+        "                  { \"call\", \"my_fn\", { field = \"p\" } } } },\n"
+        "    { when = \"on_base_captured\",\n"
+        "      actions = { { \"call\", \"my_fn\", { field = \"tag\" } },\n"
+        "                  { \"call\" } } },\n"
+        "  },\n"
+        "}\n";
+    ScnValidateResult *r;
+    int                rc = 0;
+
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+
+    if (scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL, r)) {
+        fprintf(stderr, "FAIL %s:%d: a call reading its function's name off "
+                        "the payload said nothing\n", __FILE__, __LINE__);
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[0]",
+                            "reads one off the payload")) {
+        rc = 1;
+    }
+    /* The name is the action's own business and not an argument's: one
+       report, under the action, and nothing under the slot. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[0][0]")) {
+        rc = 1;
+    }
+    /* A call written properly says nothing. The function it names is one
+       this cannot read — the script's own — and that is still not a fault. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[1]")) {
+        rc = 1;
+    }
+    /* An argument after the name, held to the hook the way any other
+       action's argument is, and under the argument's own key. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[2][1]",
+                            "no field of on_chat")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[2]")) {
+        rc = 1;
+    }
+    /* And one that is right, which is what says the check refuses something
+       rather than everything. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[3][1]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "triggers[1].actions[0][1]", "set of names")) {
+        rc = 1;
+    }
+    /* A call with no argument at all still gets the sentence it always got:
+       the refusal above is of a name read off the payload, not of every
+       first argument. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[1].actions[1]",
+                            "that function's name")) {
+        rc = 1;
+    }
+
+    free(r);
+    return rc;
+}
+
+/* ── 30. A pair keyed on the rule that has to move ────────────────── */
+
+/* A pair two rules break between them is found by checking the whole table,
+   which answers a sentence and no index: simRulesCheck says what is wrong and
+   which two rules it is about, and nothing else. The report used to be keyed
+   on the table itself, and the editor ties a row to a report by "rules.<name>"
+   and nothing else, so it reached the issues list and never the row the author
+   had to go to.
+
+   base_hit_armour <= base_capture_armour <= base_full_armour, and the classic
+   table plays them at 4, 9 and 90. 8 and 5 are each inside their own row's
+   bounds — both are floors with no fixed ceiling — and each stands up against
+   the classic value of the other, so the one-rule pass says nothing about
+   either and the pair is the whole table's to find. Held the other way round
+   as well: the rule that does not have to move is not marked, and the sentence
+   is said once. */
+int run_scenario_validate_rule_pair_key(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  rules = { base_hit_armour = 8, base_capture_armour = 5 },\n"
+        "}\n";
+    ScnValidateResult *r;
+    int                rc = 0;
+
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+
+    if (scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL, r)) {
+        fprintf(stderr, "FAIL %s:%d: two rules breaking the pair between them "
+                        "were accepted\n", __FILE__, __LINE__);
+        rc = 1;
+    }
+    /* The rule the sentence names first, which is the one an author moves. */
+    if (rc == 0 && !SV_SAYS(r, "rules.base_hit_armour",
+                            "base_capture_armour")) {
+        rc = 1;
+    }
+    /* Never the table itself: that key matches no row. */
+    if (rc == 0 && !SV_SILENT(r, "rules")) {
+        rc = 1;
+    }
+    /* And not the rule it is measured against, which is where it stands. */
+    if (rc == 0 && !SV_SILENT(r, "rules.base_capture_armour")) {
+        rc = 1;
+    }
+    /* Said once. Two reports would mean the one-rule pass caught it too, and
+       the case would be asserting the wrong arm. */
+    if (rc == 0 && r->count != 1) {
+        char seen[1024];
+        svList(r, seen, sizeof(seen));
+        fprintf(stderr, "FAIL %s:%d: %u issues against one broken pair: %s\n",
+                __FILE__, __LINE__, (unsigned)r->count, seen);
+        rc = 1;
+    }
+
+    free(r);
+    return rc;
+}
+
+/* ── 31. A call naming no function ────────────────────────────────── */
+
+/* call's first argument is the name of a function in the script, and the
+   name is written down rather than read off the payload. A name that is
+   there but empty is a name the script has not got: rawget on "" finds
+   nothing and the action does nothing, which is the same dead end as no
+   first argument at all, so it gets the same sentence.
+
+   A name too long to sit in an argument rides on the action's own text and
+   leaves the argument's text empty, which looks exactly like the empty name
+   until the flag is read. The long one here is what says the check reads the
+   flag: it is a name the script could carry and has to pass. */
+int run_scenario_validate_trigger_call_no_name(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_chat\",\n"
+        "      actions = { { \"call\", \"\" },\n"
+        "                  { \"call\", \"my_fn\" },\n"
+        "                  { \"call\",\n"
+        "                    \"a_function_name_far_longer_than_an_argument"
+        "_holds\" } } },\n"
+        "  },\n"
+        "}\n";
+    ScnValidateResult *r;
+    int                rc = 0;
+
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+
+    if (scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL, r)) {
+        fprintf(stderr, "FAIL %s:%d: a call naming no function said "
+                        "nothing\n", __FILE__, __LINE__);
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[0]",
+                            "that function's name")) {
+        rc = 1;
+    }
+    /* The name is the action's own business and not an argument's. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[0][0]")) {
+        rc = 1;
+    }
+    /* A name that fits, which is what says the refusal is of the empty one
+       rather than of every string. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[1]")) {
+        rc = 1;
+    }
+    /* And one carried on the action's text, whose argument reads empty. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[2]")) {
+        rc = 1;
+    }
+
+    free(r);
+    return rc;
+}
+
+/* ── 32. A team written where a seat goes ─────────────────────────── */
+
+/* Every seat on a payload carries the team it is on as a field beside it,
+   typed as a team and answering a team number. An op that takes a seat there
+   is handed that number and scores, teams or messages whichever seat happens
+   to be numbered like the team — a player who was never part of what
+   happened. The action runs, so nothing at run time says a word about it.
+
+   on_tank_killed carries a seat, an owner and the two teams derived from
+   them, so one hook holds every arm. Three parameter types read a bare
+   number as a seat and each has a leg of its own here: score's target is a
+   target, set_team's p is a seat and kill_tank's killer is an owner. One op
+   apiece and not one op for two of them, because a parameter retyped takes
+   its arm's coverage away with it and nothing else would notice.
+
+   The pairs that pass stand beside them: a seat into a seat, and a team
+   into set_team's t, which is a team and is what the derived field is for.
+
+   call is the last arm. What its function expects is the script's own and
+   nothing here knows it, so a team among its arguments passes. It is on a
+   second trigger because four actions is all one holds. */
+int run_scenario_validate_trigger_field_team(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_tank_killed\",\n"
+        "      actions = { { \"score\", { field = \"victim_team\" }, 10 },\n"
+        "                  { \"score\", { field = \"victim\" }, 10 },\n"
+        "                  { \"set_team\", { field = \"victim\" },\n"
+        "                    { field = \"killer_team\" } },\n"
+        "                  { \"kill_tank\", { field = \"victim\" },\n"
+        "                    { field = \"killer_team\" } } } },\n"
+        "    { when = \"on_tank_killed\",\n"
+        "      actions = { { \"call\", \"my_fn\",\n"
+        "                    { field = \"victim_team\" } },\n"
+        "                  { \"set_team\", { field = \"victim_team\" },\n"
+        "                    { field = \"killer_team\" } } } },\n"
+        "  },\n"
+        "}\n";
+    ScnValidateResult *r;
+    int                rc = 0;
+
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+
+    if (scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL, r)) {
+        fprintf(stderr, "FAIL %s:%d: a team written where a seat goes said "
+                        "nothing\n", __FILE__, __LINE__);
+        rc = 1;
+    }
+    /* The argument's own position, and the sentence says which seat it
+       reaches instead. A target takes a word as well as a seat, so the
+       sentence is about what the number means there rather than about all a
+       target takes. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[0][0]",
+                            "score reads its 'target' as a seat")) {
+        rc = 1;
+    }
+    /* The action itself stands: the op is real and takes the count it was
+       given, which is what says the refusal is of the argument. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[0]")) {
+        rc = 1;
+    }
+    /* The seat the hook carries, into the same argument. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[1][0]")) {
+        rc = 1;
+    }
+    /* A team into an argument that is a team, which is what the derived
+       field is for. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[2][0]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[2][1]")) {
+        rc = 1;
+    }
+    /* And an owner, which is a seat by another name. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[3][1]",
+                            "kill_tank reads its 'killer' as a seat")) {
+        rc = 1;
+    }
+    /* call's arguments go to a function of the script's own, so nothing here
+       knows what they are for. It is a trigger of its own because four
+       actions is the cap and a fifth would be dropped rather than read. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[1].actions[0][1]")) {
+        rc = 1;
+    }
+    /* A parameter that is a plain seat, held down by an op of its own: the
+       seat arm's only other leg was score's target, and that is a target
+       now. A retype that takes the seat out of the refusing set fails here
+       rather than passing quietly. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[1].actions[1][0]",
+                            "set_team reads its 'p' as a seat")) {
+        rc = 1;
+    }
+    /* And the team beside it, into the parameter that is a team. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[1].actions[1][1]")) {
+        rc = 1;
+    }
+
+    free(r);
+    return rc;
+}
+
+/* ── 33. The announce that takes a line away ──────────────────────── */
+
+/* Empty text takes the line away rather than putting one up, so there is
+   nothing to hold up and nothing to time: scnLuaAnnounce reads seconds only
+   where the text has something in it. The registry used to call seconds
+   required all the same, which left an editor building the action list off
+   it asking for a number before it would write a clear.
+
+   Three of them: the clear with nothing after it, the clear written with a
+   time anyway, and a line with a time. All three are calls the binding
+   takes, so none of them is reported. */
+int run_scenario_validate_trigger_announce_clear(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_tick\",\n"
+        "      actions = { { \"announce\", \"\" },\n"
+        "                  { \"announce\", \"\", 0 },\n"
+        "                  { \"announce\", \"held\", 5 } } },\n"
+        "  },\n"
+        "}\n";
+    ScnValidateResult *r;
+    int                rc = 0;
+
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+
+    if (!scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL, r)) {
+        char seen[1024];
+        svList(r, seen, sizeof(seen));
+        fprintf(stderr, "FAIL %s:%d: an announce the binding takes was "
+                        "reported: %s\n", __FILE__, __LINE__, seen);
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[0]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[1]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[2]")) {
+        rc = 1;
+    }
+
+    free(r);
+    return rc;
+}
+
+/* ── 34. A literal of the wrong kind for its parameter ────────────── */
+
+/* Every argument a registry row carries says what may be put in it, and a
+   literal written into one is held to that. The three kinds a file can state
+   are a number, text and true or false, and getting one wrong is not a
+   trigger that quietly never fires: the binding raises when it reads the
+   argument, which spends one of the scenario's errors and abandons the
+   triggers standing after it on that hook.
+
+   One trigger for the three that are wrong and one for the same three
+   written right, so the case says the check refuses something rather than
+   everything. log takes text, set_boat takes true or false, and score takes
+   a number as its value.
+
+   target is the fourth arm and the reason the others can be written at all:
+   it takes a seat number or one of the words the surface names, so both a
+   number and a word pass under it while true or false does not. Which word
+   is the op's own business and is not held here, the same way a seat number
+   is not held to the seats a round happens to have.
+
+   colour is the other of the two, on a third trigger. scnArgColour reads a
+   string as the palette's word and anything else as the number behind it,
+   so marker takes 7 and "red" for the same entry and the check has to let
+   both through — a validator that refuses a call the binding makes is worse
+   than one that says nothing. True or false is neither and is refused.
+
+   sound's name is the control: a word and nothing else, read by scnArgWord,
+   which raises on a number. It stands beside the colour legs so that the
+   type added for colour cannot quietly let a number into every word. */
+int run_scenario_validate_trigger_arg_literal(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_tick\",\n"
+        "      actions = { { \"log\", 5 },\n"
+        "                  { \"set_boat\", 0, 1 },\n"
+        "                  { \"score\", 0, \"ten\" },\n"
+        "                  { \"score\", true, 10 } } },\n"
+        "    { when = \"on_tick\",\n"
+        "      actions = { { \"log\", \"a line\" },\n"
+        "                  { \"set_boat\", 0, true },\n"
+        "                  { \"score\", 0, 10 },\n"
+        "                  { \"score\", \"all\", 10 } } },\n"
+        "    { when = \"on_tick\",\n"
+        "      actions = { { \"marker\", 1, 5, 5, 7 },\n"
+        "                  { \"marker\", 2, 5, 5, \"red\" },\n"
+        "                  { \"marker\", 3, 5, 5, true },\n"
+        "                  { \"sound\", 7 } } },\n"
+        "  },\n"
+        "}\n";
+    ScnValidateResult *r;
+    int                rc = 0;
+
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+
+    if (scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL, r)) {
+        fprintf(stderr, "FAIL %s:%d: a literal of the wrong kind said "
+                        "nothing\n", __FILE__, __LINE__);
+        rc = 1;
+    }
+    /* The argument's own position, and the sentence names the parameter and
+       both kinds: what the op wanted and what it was written. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[0][0]",
+                            "takes text as its 'text' and this is a "
+                            "number")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[1][1]",
+                            "takes true or false as its 'on' and this is a "
+                            "number")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[2][1]",
+                            "takes a number as its 'value' and this is "
+                            "text")) {
+        rc = 1;
+    }
+    /* A target takes two kinds and true or false is neither, so the sentence
+       names both of the two rather than one. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[3][0]",
+                            "takes a seat number or a word as its 'target' "
+                            "and this is true or false")) {
+        rc = 1;
+    }
+    /* The argument, never the action: the op is real, scalar and given a
+       count it takes, which is what says the refusal is of what was written
+       into one slot. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[0]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[3]")) {
+        rc = 1;
+    }
+    /* And the argument beside the wrong one, which was written right. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[1][0]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[2][0]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[3][1]")) {
+        rc = 1;
+    }
+
+    /* The same four ops with the kinds the registry asks for, and the two a
+       target takes. Nothing under any of them. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[1].actions[0][0]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[1].actions[1][1]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[1].actions[2][0]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[1].actions[2][1]")) {
+        rc = 1;
+    }
+    /* The word under a target, which is the arm the type was added for. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[1].actions[3][0]")) {
+        rc = 1;
+    }
+    /* Nothing against the whole of the trigger written right. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[1]")) {
+        rc = 1;
+    }
+
+    /* A colour takes two kinds, and the number is the one the declaration
+       used to leave out. Both spellings of a palette entry pass. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[2].actions[0][3]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[2].actions[1][3]")) {
+        rc = 1;
+    }
+    /* And neither of them is true or false, which the reader takes no
+       account of and would raise on. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[2].actions[2][3]",
+                            "marker takes a palette word or a number as its "
+                            "'colour' and this is true or false")) {
+        rc = 1;
+    }
+    /* The arguments beside it, which were written right. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[2].actions[2][0]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[2].actions[2][2]")) {
+        rc = 1;
+    }
+    /* A parameter that is a word and nothing else still refuses a number,
+       so the type added for colour widened one parameter and not the kind
+       it belongs to. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[2].actions[3][0]",
+                            "sound takes text as its 'name' and this is a "
+                            "number")) {
+        rc = 1;
+    }
+
+    free(r);
+    return rc;
 }

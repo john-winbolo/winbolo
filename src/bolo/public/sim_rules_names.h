@@ -19,10 +19,12 @@
  *  value does to it: the editor's rules form, the lobby's
  *  popup and the viewer's rules display see public/ and
  *  none of them sees internal/sim_rules.h or
- *  scenario_api/. Names and units only — the values stay
- *  in simRulesClassic and the ranges stay with the checks
- *  in sim_rules.c, which is the one place a bound is
- *  written down.
+ *  scenario_api/. Names, units and the calls that answer
+ *  a rule's value and its range — never the numbers
+ *  themselves. Those stay in sim_rules.c: simRulesClassic
+ *  holds the defaults, and one bound table feeds both the
+ *  range checks and the simRulesRuleRange declared below,
+ *  so a bound is still written down in one place.
  *
  *  Row order is the field order of SimRules, and that order
  *  is the rule index, so a row and a field cannot be read
@@ -33,6 +35,8 @@
 
 #ifndef SIM_RULES_NAMES_H
 #define SIM_RULES_NAMES_H
+
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -211,6 +215,8 @@ typedef enum {
     X(pill_fire_length, SIM_RULE_VALUE_FLOAT, SIM_RULE_UNIT_COUNT)           \
     X(pill_base_defend_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)       \
     X(pill_aim_iterations, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)          \
+    X(pill_massage_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)           \
+    X(pill_massage_cosine, SIM_RULE_VALUE_FLOAT, SIM_RULE_UNIT_COUNT)        \
     /* Base */                                                               \
     X(base_full_armour, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
     X(base_full_shells, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
@@ -348,6 +354,24 @@ SimRuleValueKind simRulesRuleValueKind(int rule);
  * table simRulesClassic has just filled, so it follows those defaults
  * wherever they are written down and there is no second list of them. */
 double simRulesClassicValue(int rule);
+
+/* The range a value for this rule is accepted in. lo is always stated. hi
+ * is the fixed ceiling and is read only when hasHi; a row with a floor and
+ * no fixed ceiling leaves it false. cappedBy names a rule whose own value
+ * is also a ceiling for this one, or -1 when no single rule is. The two are
+ * independent: a row can have both. */
+typedef struct {
+    double lo;
+    double hi;
+    bool   hasHi;
+    int    cappedBy;
+} SimRuleRange;
+
+/* Fills out with the rule's range. False either way it can fail, and the two
+ * leave different things behind: an index that names no rule leaves out
+ * neutral (0, 0, false, -1), and a NULL out is answered before anything is
+ * written, so nothing is left anywhere. */
+bool simRulesRuleRange(int rule, SimRuleRange *out);
 
 /* What a value does to a rule, against that rule's classic default: the same
  * question the editor's rules form, the lobby's popup and the viewer's rules

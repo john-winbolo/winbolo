@@ -860,9 +860,8 @@ set(IOS_BOLO_SOURCES
     src/bolo/transport_udp_client.c
 )
 
-# Build bolo_static for the iOS branch. iOS doesn't set HAVE_ONNXRUNTIME
-# or ENABLE_PILLMASSAGE_BUG, so bolo_static here has the matching
-# minimal feature set.
+# Build bolo_static for the iOS branch. iOS doesn't set HAVE_ONNXRUNTIME,
+# so bolo_static here has the matching minimal feature set.
 add_subdirectory(src/bolo)
 add_subdirectory(src/server)
 add_subdirectory(src/scenario_io)
@@ -1214,14 +1213,6 @@ else()
 endif()
 
 find_package(OpenMP)
-
-# Classic "pillmassage" bug — pillboxes miss tanks at very close range due to
-# the original Bolo forward-prediction formula breaking down at short distances.
-# Enable for authentic behaviour matching the original game.
-option(ENABLE_PILLMASSAGE_BUG "Enable classic Bolo pillmassage close-range miss bug" OFF)
-if(ENABLE_PILLMASSAGE_BUG)
-    add_compile_definitions(ENABLE_PILLMASSAGE_BUG)
-endif()
 
 # Net-debug instrumentation: per-player sim-executed counters and the
 # netdebug.* repro tests. OFF in every shipping build.
@@ -1602,6 +1593,8 @@ set(CLIENT_SOURCES
     # views, and the vendored text editor widget the script view draws with.
     # LanguageDefinitions.cpp is where that widget keeps its Lua highlighting.
     src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_form.c src/mapeditor/mapeditor_scenario_check.c src/mapeditor/mapeditor_scenario_pack.c src/mapeditor/mapeditor_scenario_imgui.cpp
+    src/mapeditor/mapeditor_scenario_fndesc.c
+    src/mapeditor/mapeditor_scenario_fnscan.c
     src/third_party/ImGuiColorTextEdit/TextEditor.cpp
     src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
     # Embedded editor's "Open from WinBolo.net" dialog — client only, it
@@ -2925,6 +2918,8 @@ set(MAPEDITOR_SOURCES
     # views, and the vendored text editor widget the script view draws with.
     # LanguageDefinitions.cpp is where that widget keeps its Lua highlighting.
     src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_form.c src/mapeditor/mapeditor_scenario_check.c src/mapeditor/mapeditor_scenario_pack.c src/mapeditor/mapeditor_scenario_imgui.cpp
+    src/mapeditor/mapeditor_scenario_fndesc.c
+    src/mapeditor/mapeditor_scenario_fnscan.c
     src/third_party/ImGuiColorTextEdit/TextEditor.cpp
     src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
@@ -3585,6 +3580,21 @@ set(WINBOLO_UNITTESTS_SOURCES
     # regions it names, and the enter and leave hooks the per-tick scan of
     # tank positions produces.
     tests/unit/test_scenario_derived.c
+    # The function catalogue: one row per hook and per policy an author
+    # writes, and the parameter list each row claims held against the
+    # arguments the host pushes at the dispatch site.
+    tests/unit/test_scenario_functions.c
+    # The line the editor shows beside each of those functions, and the stub
+    # it inserts for one that has not been written. The table renders through
+    # langGetText, which test_stubs.c provides here, so the module compiles
+    # in without lang.c.
+    tests/unit/test_scenario_fndesc.c
+    src/mapeditor/mapeditor_scenario_fndesc.c
+    # Which of those functions a script has already written, read off its
+    # text a line at a time. Plain C over a buffer that links no Lua, so it
+    # compiles in here as it stands.
+    tests/unit/test_scenario_fnscan.c
+    src/mapeditor/mapeditor_scenario_fnscan.c
     # The scenario read surface: the roster, pill, base, start, tank and
     # builder accessors, the whole-map terrain copy and the fielded count.
     tests/unit/test_scenario_reads.c
@@ -3699,13 +3709,22 @@ set(WINBOLO_UNITTESTS_SOURCES
     # C and draws nothing, so it is compiled in here directly.
     tests/unit/test_editor_script_file.c
     src/mapeditor/mapeditor_scenario.c
-    # The manifest behind the scenario panel's metadata, lobby, rules and tags
-    # forms: the rule list that never holds one rule twice, the team numbers
-    # the template hands out, both bounds, and the tag accessors that turn the
-    # editor's 0-based entity index into the manifest's 1-based entry. Plain C
-    # that draws nothing, so it is compiled in here the same way.
+    # The manifest behind the scenario panel's metadata, lobby, rules, tags
+    # and triggers forms: the rule list that never holds one rule twice, the
+    # team numbers the template hands out, every bound, the tag accessors that
+    # turn the editor's 0-based entity index into the manifest's 1-based entry,
+    # and the trigger rows that are only ever made naming a hook, down to the
+    # tests and actions inside one. Plain C that draws nothing, so it is
+    # compiled in here the same way.
     tests/unit/test_editor_scenario_form.c
     src/mapeditor/mapeditor_scenario_form.c
+    # Beside it: the editor's reach into the scenario runtime, which is where
+    # the ops a trigger's actions are written against are read. The form asks
+    # it for the op a new action names, and the vocabulary case holds its
+    # answers against the registry itself. It runs no sim and draws nothing,
+    # and the validator and the binding registry it calls are both already
+    # linked here.
+    src/mapeditor/mapeditor_scenario_check.c
     # The editor writing a scenario out: the chunk on to the map and the
     # standalone .scenario a mod is, both read back through the container
     # reader the server uses. Plain C over scenario_io, which this target
@@ -3879,6 +3898,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # test_stubs.c provides here, so it compiles in without lang.c.
     tests/unit/test_sim_rules_describe.c
     src/gui/sdl3/sim_rules_phrase.c
+    # The range behind each rule, against the validator that refuses on it.
+    tests/unit/test_sim_rules_range.c
+    # A description id per rule, and the range in words. The phrase file above
+    # carries the table both accessors read.
+    tests/unit/test_sim_rules_desc.c
     tests/unit/test_screen_bullets_build.c
     tests/unit/test_ping_smoother.c
     tests/unit/test_client_timing.c
@@ -4381,6 +4405,11 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # The maps the baseline runs play, and the scenario scripts that sit
     # beside them: the validator case reads one from here.
     WB_BASELINE_MAPS_DIR="${CMAKE_SOURCE_DIR}/tests/baseline/maps"
+    # The scenario runtime's own sources. The trigger router is a .lua file
+    # embedded in the binary by tools/embed_lua.py, which is run by hand, so
+    # scenario_hooks_router_matches_source reads the .lua from here and holds
+    # the embedded copy against it.
+    WB_SCENARIO_SRC_DIR="${CMAKE_SOURCE_DIR}/src/scenario"
     # The repository root. unit_test_names_match_cmake reads THIS file and
     # tests/unit/test_main.c out of it and compares the two test rosters, so a
     # case added to one and not the other cannot go unnoticed.
@@ -4404,8 +4433,9 @@ target_include_directories(WinBoloUnitTests PRIVATE
     # braintest_loadbrowser.h for the Load Session segment-walk test (the
     # finder TU compiled above); no other braintest source is linked here.
     src/braintest
-    # mapeditor_scenario.h for the editor's script-file test (that one TU is
-    # compiled above); no other mapeditor source is linked here.
+    # mapeditor_scenario*.h for the scenario panel's non-drawing half — the
+    # mapeditor_scenario_*.c TUs compiled above; no other mapeditor source
+    # is linked here.
     src/mapeditor
     ${CMAKE_SOURCE_DIR}/tests/unit
     ${cjson_SOURCE_DIR}
@@ -5087,6 +5117,7 @@ set(_unit_test_names
     sim_rules_pill_empties_without_wrapping
     sim_rules_pill_shell_damage_follows
     sim_rules_pill_angry_divisor_follows
+    sim_rules_pill_massage_follows
     sim_rules_tank_explosion_follows
     sim_rules_water_loss_follows
     sim_rules_pairs
@@ -5104,6 +5135,11 @@ set(_unit_test_names
     sim_rules_describe_ratios
     sim_rules_describe_units
     sim_rules_phrase
+    sim_rules_range_every_rule
+    sim_rules_range_matches_check
+    sim_rules_range_paired
+    sim_rules_desc_table
+    sim_rules_desc_range_phrase
     screen_bullets_build
     ping_smoother
     client_timing
@@ -5668,6 +5704,13 @@ set(_unit_test_names
     scenario_host_api_too_new
     scenario_host_no_script
     scenario_host_manifest_roundtrip
+    scenario_host_trigger_manifest
+    scenario_host_trigger_where_type
+    scenario_host_trigger_action_no_op
+    scenario_host_trigger_where_no_field
+    scenario_host_trigger_text_cut
+    scenario_host_trigger_array_hole
+    scenario_host_trigger_no_when
     scenario_host_team_init_read
     scenario_host_seed_reproducible
     scenario_host_edit_after_attach
@@ -5716,7 +5759,23 @@ set(_unit_test_names
     scenario_validate_source_matches_file
     scenario_validate_source_pushed_manifest
     scenario_validate_source_pushed_conflict
+    scenario_validate_source_rule_range
+    scenario_validate_source_pushed_triggers
+    scenario_validate_trigger_caps
+    scenario_validate_trigger_hook
+    scenario_validate_trigger_field
+    scenario_validate_trigger_operator
+    scenario_validate_trigger_action
+    scenario_validate_trigger_unknown_operator
+    scenario_validate_trigger_action_field
+    scenario_validate_trigger_call_args
+    scenario_validate_trigger_call_no_name
+    scenario_validate_trigger_field_team
+    scenario_validate_trigger_announce_clear
+    scenario_validate_trigger_arg_literal
+    scenario_validate_rule_pair_key
     scenario_lua_every_row_answers
+    scenario_lua_op_arguments_match_the_doc
     scenario_lua_read_index_passes_through
     scenario_lua_op_index_subtracts_one
     scenario_lua_script_index_adds_one
@@ -5740,6 +5799,7 @@ set(_unit_test_names
     scenario_lua_panel_refusals
     scenario_lua_presentation_targets
     scenario_lua_score_and_announce
+    scenario_lua_acting_rows_refuse_a_check
     scenario_sandbox_removed_names_are_nil
     scenario_sandbox_bytecode_chunk_refused
     scenario_sandbox_collectgarbage_stop_refused
@@ -5773,6 +5833,19 @@ set(_unit_test_names
     scenario_hooks_team_changed_on_difference
     scenario_hooks_tick_and_end
     scenario_hooks_error_counts_and_disables
+    scenario_hooks_trigger_runs_after_author
+    scenario_hooks_trigger_table_form_handler
+    scenario_hooks_trigger_stopped_by_false
+    scenario_hooks_trigger_shadowed_base
+    scenario_hooks_trigger_where_both_ways
+    scenario_hooks_trigger_call_reaches_script
+    scenario_hooks_router_matches_source
+    scenario_hooks_trigger_team_from_owner
+    scenario_hooks_trigger_tag_on_item
+    scenario_hooks_trigger_tag_ne_and_eq
+    scenario_hooks_trigger_region_holds_square
+    scenario_hooks_trigger_unknown_operator
+    scenario_hooks_trigger_on_policy_skipped
     scenario_derived_timer_fires_on_its_tick
     scenario_derived_timer_cancelled_and_stale
     scenario_derived_timer_limit_boundary
@@ -5781,6 +5854,13 @@ set(_unit_test_names
     scenario_derived_define_region_adds_replaces_and_expires
     scenario_derived_region_loop_terminates
     scenario_derived_fixture_wins_without_on_tick
+    scenario_functions_table
+    scenario_functions_fields
+    scenario_functions_match_dispatch
+    scenario_fndesc_table
+    scenario_fnstub_forms
+    scenario_fnscan_forms
+    scenario_fnscan_spellings
     scenario_package_round_trip
     scenario_package_bad_framing
     scenario_package_entry_names
@@ -5792,6 +5872,13 @@ set(_unit_test_names
     scenario_manifest_from_values
     scenario_manifest_json_team_init
     scenario_manifest_json_number_range
+    scenario_manifest_json_triggers
+    scenario_manifest_json_trigger_operator
+    scenario_manifest_json_trigger_where_type
+    scenario_manifest_json_trigger_no_when
+    scenario_manifest_json_trigger_action_no_op
+    scenario_manifest_json_trigger_where_no_field
+    scenario_manifest_json_trigger_text_cut
     scenario_map_body_length
     scenario_map_find_container
     scenario_map_has_script_chunk
@@ -5873,6 +5960,12 @@ set(_unit_test_names
     editor_form_regions
     editor_form_dirty_flag
     editor_form_team_ids
+    editor_form_triggers
+    editor_form_triggers_full
+    editor_form_trigger_rows
+    editor_form_trigger_row_values
+    editor_form_trigger_action_text
+    editor_form_trigger_vocabulary
     editor_pack_mod_round_trip
     editor_pack_map_round_trip
     editor_pack_twice_identical

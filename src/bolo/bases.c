@@ -909,6 +909,9 @@ BYTE basesSetOwner(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner, BYTE migr
         (*value)->item[count].owner = owner;
         done = TRUE;
       } else if (owner == NEUTRAL) {
+        /* Nothing is reported: the callback below is for a base being taken
+           and there is no taker here. basesSetBaseOwner is the entry that
+           does report a base going neutral. */
         (*value)->item[count].owner = owner;
         done = TRUE;
       } else if ((*value)->item[count].owner != owner) {
@@ -922,7 +925,8 @@ BYTE basesSetOwner(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner, BYTE migr
         (*value)->item[count].owner = owner;
         logAddEvent(log_BaseSetOwner, count, owner, migrate, 0, 0, NULL);
         /* Report the change, which is what clients get the message from. A
-           base going neutral is reported the same way. */
+           base taken from nobody is reported the same way as one stolen from
+           a player; the class beside it is what tells the two apart. */
         if (migrate == FALSE && sim->isServer) {
           if (sim->callbacks.baseOwnerChanged) {
             BYTE captureClass;

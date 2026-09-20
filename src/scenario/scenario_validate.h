@@ -10,8 +10,9 @@
  *Purpose:
  *  Reads the script beside a map and says what is wrong
  *  with it: the api it asks for, the lobby it seats, the
- *  rules it sets, the entities it tags and the rectangles it
- *  names, each problem as a key, a line and a message.
+ *  rules it sets, the entities it tags, the rectangles it
+ *  names and the triggers it declares, each problem as a
+ *  key, a line and a message.
  *
  *  Nothing here runs a round. The chunk is loaded and run
  *  once, so the scenario table it declares exists, against a
@@ -63,9 +64,9 @@
  *  whether or not issues were found, so a caller that wants
  *  what the table says has it from the same call.
  *
- *  A NULL sim leaves out the two checks that read a map —
- *  the rules against the catalogue and the tags against the
- *  entity lists — and makes every other one as usual.
+ *  A NULL sim leaves out the one check that reads a map —
+ *  the tags against the entity lists — and makes every
+ *  other one as usual.
  *
  *  Each issue carries the line Lua gave where Lua gave one,
  *  and otherwise the first line of the source holding the
@@ -83,8 +84,8 @@ bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
  *NAME:          scenarioValidateScript
  *PURPOSE:
  *  The same checks, against a script named directly rather
- *  than found beside a map. A NULL sim leaves out the two
- *  that read a map, as above.
+ *  than found beside a map. A NULL sim leaves out the one
+ *  that reads a map, as above.
  *
  *  scenarioValidateMap derives the script's name and calls
  *  this, so there is one body and the two report the same
@@ -128,7 +129,7 @@ bool scenarioValidateScript(const ServerSim *sim, const char *scriptPath,
  *  overwrites the global, so the table read back is still the
  *  script's own and still worth holding against the manifest.
  *
- *  A NULL sim leaves out the two checks that read a map, as
+ *  A NULL sim leaves out the one check that reads a map, as
  *  above. A NULL out, a NULL text or a NULL name returns
  *  false.
  *********************************************************/

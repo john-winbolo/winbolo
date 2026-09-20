@@ -133,6 +133,15 @@ BOLO_STATIC_ASSERT(SCN_BRAIN_LEN == SCN_PATH_MAX,
 BOLO_STATIC_ASSERT(SCN_REGIONS_MAX <= 64,
                    region_membership_fits_one_word_per_seat);
 
+/* The one long string an action carries goes to announce, message, log or
+ * end_round, and each of those puts it on the wire as a chat-sized message.
+ * A manifest holding a longer one would only have it cut again down there,
+ * where there is nothing left to say so. scenario_manifest.h restates the
+ * wire's length because it cannot see scenario_defs.h; this is where the two
+ * are visible together. */
+BOLO_STATIC_ASSERT(SCN_TRIGGER_TEXT_LEN == SCN_TEXT_MAX,
+                   trigger_text_matches_the_wire_text_length);
+
 /* What a refusal was, in words. A script author reads these, so each is
  * the reason rather than the enumerator's spelling. */
 static const char *scnResultText(ScnOpResult r) {
@@ -197,7 +206,7 @@ static void scnSay(char *buf, size_t len, const char *fmt, ...) {
  * hear it as they always have; a validator collecting problems gets it as an
  * issue under key, which is the dotted path of the thing at fault.
  *
- * The three readers below go through here rather than through scnSay, because
+ * The four readers below go through here rather than through scnSay, because
  * what they complain about is the file's own content and that is exactly what
  * an author asking for a check wants listed. */
 static void scnReport(ScnParseReport *rep, const char *key,
@@ -289,60 +298,23 @@ static void scnLockLeave(ScnVmLock *l) {
 
 /* ── The hooks ────────────────────────────────────────────────────── */
 
-/* Every function a round may call, in one list: the four lifecycle calls
- * and one per event the host turns into a hook. The name a script writes it
- * under is here and nowhere else, so the name the boot resolves and the name
- * a case defines cannot drift apart.
+/* SCN_HOOK_LIST is in scenario_lua.h, where it carries each hook's kind and
+ * parameter names as well as its name, so the catalogue the editor and the
+ * documentation read and the hooks this file dispatches are one list. What
+ * this file takes from it is the id and the name; the rest of a row is not
+ * the host's business.
  *
- * The four at the top are not events. They are made where the round reaches
- * the point each of them names, and they take no trailing scripted boolean
- * because there is no event behind them to have caused.
- *
- * Nor do the last two, and for the same reason read the other way round.
- * Every hook between them comes off the queue, where the entry carries the
- * mark saying whether the scenario caused the fact. The two region hooks
- * come off no queue at all: the host samples where the tanks are once a
- * tick and compares that against the sample before it, so what it has is a
- * difference between two pictures and not an action anybody took. A
- * boolean there could only be a guess about which of the things that moved
- * a tank since the last sample mattered, and a script reading it would be
- * reading a guess. See scnScanRegions for what bounds the loop instead. */
-#define SCN_HOOK_LIST(X)                                                     \
-    X(SETUP,            "on_setup")                                          \
-    X(START,            "on_start")                                          \
-    X(TICK,             "on_tick")                                           \
-    X(END,              "on_end")                                            \
-    X(LOBBY,            "on_lobby")                                          \
-    X(PLAYER_JOIN,      "on_player_join")                                    \
-    X(PLAYER_LEAVE,     "on_player_leave")                                   \
-    X(TEAM_CHANGED,     "on_team_changed")                                   \
-    X(CHAT,             "on_chat")                                           \
-    X(PING,             "on_ping")                                           \
-    X(TANK_SPAWNED,     "on_tank_spawned")                                   \
-    X(TANK_KILLED,      "on_tank_killed")                                    \
-    X(LGM_DIED,         "on_lgm_died")                                       \
-    X(LGM_LANDED,       "on_lgm_landed")                                     \
-    X(BASE_CAPTURED,    "on_base_captured")                                  \
-    X(BASE_NEUTRALIZED, "on_base_neutralized")                               \
-    X(PILL_CAPTURED,    "on_pill_captured")                                  \
-    X(PILL_PLACED,      "on_pill_placed")                                    \
-    X(PILL_PICKED_UP,   "on_pill_picked_up")                                 \
-    X(PILL_KILLED,      "on_pill_killed")                                    \
-    X(BUILT,            "on_built")                                          \
-    X(MINE_LAID,        "on_mine_laid")                                      \
-    X(MINE_EXPLOSION,   "on_mine_explosion")                                 \
-    X(ENTER_REGION,     "on_enter_region")                                   \
-    X(LEAVE_REGION,     "on_leave_region")
-
+ * The values below are what h->hooks is indexed by, so the order of the
+ * rows in that list is load-bearing here. */
 typedef enum {
-#define SCN_HOOK_ID_ROW(id, name) SCN_HOOK_##id,
+#define SCN_HOOK_ID_ROW(id, name, kind, params) SCN_HOOK_##id,
     SCN_HOOK_LIST(SCN_HOOK_ID_ROW)
 #undef SCN_HOOK_ID_ROW
     SCN_HOOK_COUNT
 } ScnHookId;
 
 static const char *const kScnHookNames[] = {
-#define SCN_HOOK_NAME_ROW(id, name) name,
+#define SCN_HOOK_NAME_ROW(id, name, kind, params) name,
     SCN_HOOK_LIST(SCN_HOOK_NAME_ROW)
 #undef SCN_HOOK_NAME_ROW
 };
@@ -351,6 +323,35 @@ BOLO_STATIC_ASSERT(
     (int)(sizeof(kScnHookNames) / sizeof(kScnHookNames[0])) ==
         (int)SCN_HOOK_COUNT,
     hook_name_table_is_the_whole_hook_list);
+
+/* ── The policies ─────────────────────────────────────────────────── */
+
+/* SCN_POLICY_LIST sits beside the hook list in scenario_lua.h and carries
+ * each policy's parameter names and what it answers as well as its name.
+ * What this file takes from it is the id and the name, so the name a policy
+ * is asked for below is the name the catalogue holds and the editor writes a
+ * stub for.
+ *
+ * Nothing is indexed by these values — a policy is looked up by name at each
+ * call rather than resolved once — so the order of the rows carries no
+ * meaning here. */
+typedef enum {
+#define SCN_POLICY_ID_ROW(id, name, params, returns) SCN_POLICY_##id,
+    SCN_POLICY_LIST(SCN_POLICY_ID_ROW)
+#undef SCN_POLICY_ID_ROW
+    SCN_POLICY_COUNT
+} ScnPolicyId;
+
+static const char *const kScnPolicyNames[] = {
+#define SCN_POLICY_NAME_ROW(id, name, params, returns) name,
+    SCN_POLICY_LIST(SCN_POLICY_NAME_ROW)
+#undef SCN_POLICY_NAME_ROW
+};
+
+BOLO_STATIC_ASSERT(
+    (int)(sizeof(kScnPolicyNames) / sizeof(kScnPolicyNames[0])) ==
+        (int)SCN_POLICY_COUNT,
+    policy_name_table_is_the_whole_policy_list);
 
 /* ── The host ─────────────────────────────────────────────────────── */
 
@@ -1012,11 +1013,381 @@ static void scnReadRegions(lua_State *L, int tbl, ScenarioManifest *m,
     lua_pop(L, 1);
 }
 
+/* ── Triggers ─────────────────────────────────────────────────────── */
+
+/* Every array inside a trigger is walked from 1 to the first empty slot, the
+ * way the trigger array itself is, rather than counted with lua_rawlen. A
+ * table with a hole in it has more than one border and which of them rawlen
+ * answers is the interpreter's business, so two builds can read the same file
+ * as two different scenarios. Walking to the first empty slot is the same
+ * answer everywhere.
+ *
+ * What that costs is knowing there was a hole at all: an empty slot and the
+ * end of the array are one thing to lua_rawgeti, and telling them apart means
+ * asking rawlen, which is the unreliable thing. So this says something only
+ * when it is certain. A border is an index that holds a value, so a border at
+ * or past the slot the walk stopped on is proof of something past the hole
+ * that was not read; a border below it proves nothing either way, and a table
+ * written { a, nil, c } may well answer 1 and go unremarked. Best-effort, and
+ * the walk above is what the file actually means.
+ *
+ * at is the 1-based slot the walk stopped on, key is what the report is filed
+ * under, and what names the array inside it. */
+static void scnReportTrigTail(lua_State *L, int arr, int at, const char *key,
+                              const char *what, ScnParseReport *rep) {
+    if ((int)lua_rawlen(L, arr) >= at) {
+        scnReport(rep, key,
+                  "scenario: %s has an empty slot at %d in its %s and holds "
+                  "more past it; nothing past the empty slot is read",
+                  key, at, what);
+    }
+}
+
+/* One value of a test or an action, at the top of the stack and left there.
+ *
+ * The four kinds a table may state: a number, a string, a boolean, and the
+ * table { field = "<name>" } naming a field of the hook's payload. Anything
+ * else — a nil, a bare list, a table without a field key — is left NONE and
+ * reported, so the row holding it still reads and the author is told which
+ * slot did not.
+ *
+ * text is where a string goes when it fits. One that does not goes on the
+ * action's own text, which is why act is passed: a condition passes NULL and
+ * its oversized string is truncated the way every other name here is. Only
+ * the first oversized string in an action has somewhere to live; a second is
+ * reported and left NONE.
+ *
+ * mjTrigValue in scenario_manifest_json.c reads the same four kinds out of
+ * JSON, down to which of them is reported and what is left behind. */
+static void scnReadTrigValue(lua_State *L, ScnTrigValue *out, ScnTrigAct *act,
+                             const char *where, ScnParseReport *rep) {
+    memset(out, 0, sizeof(*out));
+
+    switch (lua_type(L, -1)) {
+    case LUA_TNUMBER:
+        out->kind = SCN_TRIG_VAL_NUMBER;
+        out->num  = (double)lua_tonumber(L, -1);
+        return;
+    case LUA_TBOOLEAN:
+        out->kind = SCN_TRIG_VAL_BOOL;
+        out->num  = lua_toboolean(L, -1) ? 1.0 : 0.0;
+        return;
+    case LUA_TSTRING: {
+        const char *s = lua_tostring(L, -1);
+        out->kind = SCN_TRIG_VAL_STRING;
+        if (strlen(s) < SCN_TRIGGER_NAME_LEN) {
+            snprintf(out->text, sizeof(out->text), "%s", s);
+            return;
+        }
+        if (act == NULL) {
+            snprintf(out->text, sizeof(out->text), "%s", s);
+            scnReport(rep, where,
+                      "scenario: %s is longer than %d bytes and is cut to fit",
+                      where, SCN_TRIGGER_NAME_LEN - 1);
+            return;
+        }
+        if (act->text[0] != '\0') {
+            out->kind = SCN_TRIG_VAL_NONE;
+            scnReport(rep, where,
+                      "scenario: %s is the second long string on one action, "
+                      "which carries one; dropped", where);
+            return;
+        }
+        out->inText = true;
+        /* The same fault as above at the other size: the action's text is
+           wider than an argument slot, and a line past that is cut too. */
+        if (strlen(s) >= SCN_TRIGGER_TEXT_LEN) {
+            scnReport(rep, where,
+                      "scenario: %s is longer than %d bytes and is cut to fit",
+                      where, SCN_TRIGGER_TEXT_LEN - 1);
+        }
+        snprintf(act->text, sizeof(act->text), "%s", s);
+        return;
+    }
+    case LUA_TTABLE:
+        scnRawField(L, -1, "field");
+        if (lua_type(L, -1) == LUA_TSTRING) {
+            out->kind = SCN_TRIG_VAL_FIELD;
+            snprintf(out->text, sizeof(out->text), "%s", lua_tostring(L, -1));
+            lua_pop(L, 1);
+            return;
+        }
+        lua_pop(L, 1);
+        break;
+    default:
+        break;
+    }
+    scnReport(rep, where,
+              "scenario: %s is not a number, a string, a boolean or a field "
+              "reference; dropped", where);
+}
+
+/* One test: { field, operator, value }, read by index. A row that is not
+ * three entries is reported and dropped, since there is no part of it to
+ * keep. */
+static void scnReadTrigCond(lua_State *L, int row, ScnTrigCond *out,
+                            const char *where, ScnParseReport *rep) {
+    memset(out, 0, sizeof(*out));
+
+    if (!lua_istable(L, row) || (int)lua_rawlen(L, row) != 3) {
+        scnReport(rep, where,
+                  "scenario: %s is not a { field, operator, value } row",
+                  where);
+        return;
+    }
+
+    /* A name that is there but empty goes the same way as a slot holding no
+       string at all: the editor writes one into a row it has just made room
+       for, and a row naming nothing tests nothing. scnCheckTrigCond leaves
+       both to this report. */
+    lua_rawgeti(L, row, 1);
+    if (lua_type(L, -1) == LUA_TSTRING && lua_tostring(L, -1)[0] != '\0') {
+        snprintf(out->field, sizeof(out->field), "%s", lua_tostring(L, -1));
+    } else {
+        scnReport(rep, where, "scenario: %s names no field", where);
+    }
+    lua_pop(L, 1);
+
+    lua_rawgeti(L, row, 2);
+    if (lua_type(L, -1) == LUA_TSTRING) {
+        out->op = scnManifestTrigOpFrom(lua_tostring(L, -1));
+    } else {
+        scnReport(rep, where, "scenario: %s names no operator", where);
+    }
+    lua_pop(L, 1);
+
+    lua_rawgeti(L, row, 3);
+    scnReadTrigValue(L, &out->value, NULL, where, rep);
+    lua_pop(L, 1);
+}
+
+/* One action: { op, argument... }. The op is the first entry and the rest
+ * are its positional arguments, in the order the file wrote them. */
+static void scnReadTrigAct(lua_State *L, int row, ScnTrigAct *out,
+                           const char *where, ScnParseReport *rep) {
+    int i;
+
+    memset(out, 0, sizeof(*out));
+
+    if (!lua_istable(L, row) || (int)lua_rawlen(L, row) < 1) {
+        scnReport(rep, where, "scenario: %s is not an { op, argument... } row",
+                  where);
+        return;
+    }
+
+    /* A name that is there but empty goes the same way as a slot holding no
+       string at all: the editor writes one into an action it has just made
+       room for, and an action naming nothing does nothing. scnCheckTrigAct
+       leaves both to this report. */
+    lua_rawgeti(L, row, 1);
+    if (lua_type(L, -1) == LUA_TSTRING && lua_tostring(L, -1)[0] != '\0') {
+        snprintf(out->op, sizeof(out->op), "%s", lua_tostring(L, -1));
+    } else {
+        scnReport(rep, where, "scenario: %s names no op", where);
+    }
+    lua_pop(L, 1);
+
+    for (i = 2; ; i++) {
+        char slot[SCN_VALIDATE_KEY_LEN];
+
+        lua_rawgeti(L, row, i);
+        if (lua_isnil(L, -1)) {
+            lua_pop(L, 1);
+            scnReportTrigTail(L, row, i, where, "arguments", rep);
+            break;
+        }
+        if (out->numArgs >= SCN_TRIGGER_ARGS_MAX) {
+            lua_pop(L, 1);
+            scnReport(rep, where,
+                      "scenario: %s takes more than %d arguments; the rest "
+                      "dropped", where, SCN_TRIGGER_ARGS_MAX);
+            break;
+        }
+        snprintf(slot, sizeof(slot), "%s[%d]", where, (int)out->numArgs);
+        scnReadTrigValue(L, &out->args[out->numArgs], out, slot, rep);
+        lua_pop(L, 1);
+        out->numArgs++;
+    }
+}
+
+/* Triggers are a sequence rather than a table keyed by name, so they are
+ * read by index from 1 up and stop at the first entry that is not there.
+ * Regions above are keyed and arrive in whatever order the table iterates
+ * in; a trigger has no name to be keyed by and its position is part of what
+ * it is, so lua_next would lose the very thing that identifies it.
+ *
+ * The where and actions arrays inside a trigger are read the same way, for
+ * the reason scnReportTrigTail gives.
+ *
+ * A report goes under the position, counted as the file writes it and from
+ * zero, so triggers[3] is the same trigger here, in manifest.json's decoder
+ * and in the comparison of the two. lobby.teams[0] is the first entry of a
+ * Lua array for the same reason.
+ *
+ * Every cap drops what is past it and says so. Nothing is a refusal: a
+ * table with more triggers than this build holds is still a table, the way
+ * one with more regions is. mjDecodeTriggers reads the same shape out of
+ * JSON and fills the struct identically, which is what lets
+ * scnManifestAgrees hold a package's two forms against each other.
+ *
+ * A trigger whose where is there but is not an array goes the same way. A
+ * trigger with no tests runs on every occurrence of its hook, so keeping
+ * one whose tests could not be read would turn what the author wrote as a
+ * conditional into an unconditional one. A row inside the array is the
+ * other case: a row that cannot be read is kept zeroed, which holds on
+ * nothing, so the tests the author did write still stand and the bad row is
+ * inert beside them.
+ *
+ * A trigger naming no hook is dropped too, and for a plainer reason: there
+ * is no hook to put it on, so it never runs however it is kept, and a slot
+ * held by one is a slot the next trigger cannot have. */
+static void scnReadTriggers(lua_State *L, int tbl, ScenarioManifest *m,
+                            ScnParseReport *rep) {
+    int tt;
+    int n;
+
+    scnRawField(L, tbl, "triggers");
+    if (!lua_istable(L, -1)) {
+        if (!lua_isnil(L, -1)) {
+            scnReport(rep, "triggers", "scenario: triggers is not an array");
+        }
+        lua_pop(L, 1);
+        return;
+    }
+    tt = lua_gettop(L);
+
+    for (n = 0; ; n++) {
+        char        where[32];       /* "triggers[%d]", and a row key
+                                      * built on it always fits its own */
+        ScnTrigger *trig;
+        int         entry;
+        int         rows;
+        int         i;
+
+        lua_rawgeti(L, tt, n + 1);
+        if (lua_isnil(L, -1)) {
+            lua_pop(L, 1);
+            break;
+        }
+        entry = lua_gettop(L);
+        snprintf(where, sizeof(where), "triggers[%d]", n);
+
+        if (!lua_istable(L, entry)) {
+            scnReport(rep, where, "scenario: %s is not a trigger", where);
+            lua_pop(L, 1);
+            continue;
+        }
+        /* Said once, under the first row past the cap, and the walk stops:
+           a script decides how long this array is, and a line per excess row
+           would fill the issue list with the one fact and hide every fault
+           after it. The tests and actions below stop the same way. */
+        if (m->numTriggers >= SCN_TRIGGERS_MAX) {
+            scnReport(rep, where,
+                      "scenario: more than %d triggers; the rest dropped",
+                      SCN_TRIGGERS_MAX);
+            lua_pop(L, 1);
+            break;
+        }
+        trig = &m->triggers[m->numTriggers];
+        m->numTriggers++;
+        memset(trig, 0, sizeof(*trig));
+
+        /* A when that is there but empty names no hook the way a missing one
+           does, and neither leaves anything to run on: the router never
+           reaches the trigger, so keeping it spends a slot and rides through
+           a pack and unpack as an entry that does nothing. It goes the way a
+           bad where goes, and the report names the position. */
+        scnRawField(L, entry, "when");
+        if (lua_type(L, -1) == LUA_TSTRING && lua_tostring(L, -1)[0] != '\0') {
+            snprintf(trig->when, sizeof(trig->when), "%s", lua_tostring(L, -1));
+        } else {
+            scnReport(rep, where,
+                      "scenario: %s names no hook to run on; %s dropped",
+                      where, where);
+            m->numTriggers--;        /* the slot claimed above, given back */
+            lua_pop(L, 2);           /* the when field, and the trigger */
+            continue;
+        }
+        lua_pop(L, 1);
+
+        scnRawField(L, entry, "where");
+        if (!lua_isnil(L, -1) && !lua_istable(L, -1)) {
+            scnReport(rep, where,
+                      "scenario: %s's where is not an array; %s dropped",
+                      where, where);
+            m->numTriggers--;        /* the slot claimed above, given back */
+            lua_pop(L, 2);           /* the where field, and the trigger */
+            continue;
+        }
+        if (lua_istable(L, -1)) {
+            rows = lua_gettop(L);
+            for (i = 0; ; i++) {
+                char slot[SCN_VALIDATE_KEY_LEN];
+
+                lua_rawgeti(L, rows, i + 1);
+                if (lua_isnil(L, -1)) {
+                    lua_pop(L, 1);
+                    scnReportTrigTail(L, rows, i + 1, where, "where", rep);
+                    break;
+                }
+                snprintf(slot, sizeof(slot), "%s.where[%d]", where, i);
+                if (trig->numWhere >= SCN_TRIGGER_CONDS_MAX) {
+                    lua_pop(L, 1);
+                    scnReport(rep, slot,
+                              "scenario: more than %d tests on one trigger; "
+                              "the rest dropped", SCN_TRIGGER_CONDS_MAX);
+                    break;
+                }
+                scnReadTrigCond(L, lua_gettop(L),
+                                &trig->where[trig->numWhere], slot, rep);
+                lua_pop(L, 1);
+                trig->numWhere++;
+            }
+        }
+        lua_pop(L, 1);
+
+        scnRawField(L, entry, "actions");
+        if (!lua_isnil(L, -1) && !lua_istable(L, -1)) {
+            scnReport(rep, where, "scenario: %s's actions is not an array",
+                      where);
+        } else if (lua_istable(L, -1)) {
+            rows = lua_gettop(L);
+            for (i = 0; ; i++) {
+                char slot[SCN_VALIDATE_KEY_LEN];
+
+                lua_rawgeti(L, rows, i + 1);
+                if (lua_isnil(L, -1)) {
+                    lua_pop(L, 1);
+                    scnReportTrigTail(L, rows, i + 1, where, "actions", rep);
+                    break;
+                }
+                snprintf(slot, sizeof(slot), "%s.actions[%d]", where, i);
+                if (trig->numActions >= SCN_TRIGGER_ACTIONS_MAX) {
+                    lua_pop(L, 1);
+                    scnReport(rep, slot,
+                              "scenario: more than %d actions on one trigger; "
+                              "the rest dropped", SCN_TRIGGER_ACTIONS_MAX);
+                    break;
+                }
+                scnReadTrigAct(L, lua_gettop(L),
+                               &trig->actions[trig->numActions], slot, rep);
+                lua_pop(L, 1);
+                trig->numActions++;
+            }
+        }
+        lua_pop(L, 1);
+
+        lua_pop(L, 1);               /* the trigger */
+    }
+    lua_pop(L, 1);                   /* triggers */
+}
+
 /* The whole table into the struct. A file with no scenario table at all is
  * refused: it ran, but it is not a scenario.
  *
- * triggers is not read. Its schema is not settled, so a script that
- * carries one is neither parsed nor refused for it. */
+ * triggers are read here with the rest, into the same struct manifest.json
+ * fills, so a package carrying both forms can be held to stating the same
+ * thing in each. */
 bool scnReadManifest(lua_State *L, ScenarioManifest *m,
                      const char *path, char *err, size_t errLen,
                      ScnParseReport *rep) {
@@ -1043,6 +1414,7 @@ bool scnReadManifest(lua_State *L, ScenarioManifest *m,
     scnReadRules(L, tbl, m, rep);
     scnReadTags(L, tbl, m, rep);
     scnReadRegions(L, tbl, m, rep);
+    scnReadTriggers(L, tbl, m, rep);
 
     lua_pop(L, 1);
     return true;
@@ -1051,7 +1423,7 @@ bool scnReadManifest(lua_State *L, ScenarioManifest *m,
 /* ── Writing the table ────────────────────────────────────────────── */
 
 /* The struct back out as the table a script would have written it as. The
- * five builders below take one piece each and leave it on the stack;
+ * six builders below take one piece each and leave it on the stack;
  * scnPushManifestGlobal at the end of them is the one the rest of this file
  * calls, and carries what the whole thing is for. */
 static void scnPushTeams(lua_State *L, const ScnManifestLobby *lob) {
@@ -1197,6 +1569,100 @@ static void scnPushRegions(lua_State *L, const ScenarioManifest *m) {
     }
 }
 
+/* One value back out, in the kind it was read as. act is the action the
+ * value belongs to, for a string held on the action's own text, and NULL
+ * for a condition's value.
+ *
+ * A NONE is a slot that did not read. It goes out as an empty table, which
+ * scnReadTrigValue reads back as NONE again — the same round trip
+ * manifest.json's null makes, and for the same reason the emitter writes
+ * one: the row keeps the length the file gave it. A nil cannot serve, since
+ * a sequence ends at its first one and the arguments after it would go. */
+static void scnPushTrigValue(lua_State *L, const ScnTrigValue *v,
+                             const ScnTrigAct *act) {
+    switch (v->kind) {
+    case SCN_TRIG_VAL_NUMBER:
+        lua_pushnumber(L, (lua_Number)v->num);
+        return;
+    case SCN_TRIG_VAL_BOOL:
+        lua_pushboolean(L, v->num != 0.0 ? 1 : 0);
+        return;
+    case SCN_TRIG_VAL_STRING:
+        lua_pushstring(L, (v->inText && act != NULL) ? act->text : v->text);
+        return;
+    case SCN_TRIG_VAL_FIELD:
+        lua_newtable(L);
+        lua_pushstring(L, v->text);
+        lua_setfield(L, -2, "field");
+        return;
+    case SCN_TRIG_VAL_NONE:
+    default:
+        lua_newtable(L);
+        return;
+    }
+}
+
+/* An array, in the order the struct holds them, since that is the order a
+ * trigger is identified by. Each row of where and of actions is an array
+ * too, so what goes on is what scnReadTriggers reads. */
+static void scnPushTriggers(lua_State *L, const ScenarioManifest *m) {
+    int t;
+    int i;
+
+    lua_newtable(L);
+    t = lua_gettop(L);
+    for (i = 0; i < (int)m->numTriggers; i++) {
+        const ScnTrigger *trig = &m->triggers[i];
+        int               e;
+        int               list;
+        int               j;
+        int               k;
+
+        lua_newtable(L);
+        e = lua_gettop(L);
+        lua_pushstring(L, trig->when);
+        lua_setfield(L, e, "when");
+
+        lua_newtable(L);
+        list = lua_gettop(L);
+        for (j = 0; j < (int)trig->numWhere; j++) {
+            const ScnTrigCond *c    = &trig->where[j];
+            const char        *name = scnManifestTrigOpName(c->op);
+
+            lua_newtable(L);
+            lua_pushstring(L, c->field);
+            lua_rawseti(L, -2, 1);
+            /* "" for an operator the table cannot name, which is what
+               scnReadTriggers reads back as SCN_TRIG_CMP_UNKNOWN. A row
+               that went on unnamed comes off unnamed. */
+            lua_pushstring(L, name != NULL ? name : "");
+            lua_rawseti(L, -2, 2);
+            scnPushTrigValue(L, &c->value, NULL);
+            lua_rawseti(L, -2, 3);
+            lua_rawseti(L, list, j + 1);
+        }
+        lua_setfield(L, e, "where");
+
+        lua_newtable(L);
+        list = lua_gettop(L);
+        for (j = 0; j < (int)trig->numActions; j++) {
+            const ScnTrigAct *a = &trig->actions[j];
+
+            lua_newtable(L);
+            lua_pushstring(L, a->op);
+            lua_rawseti(L, -2, 1);
+            for (k = 0; k < (int)a->numArgs; k++) {
+                scnPushTrigValue(L, &a->args[k], a);
+                lua_rawseti(L, -2, k + 2);
+            }
+            lua_rawseti(L, list, j + 1);
+        }
+        lua_setfield(L, e, "actions");
+
+        lua_rawseti(L, t, i + 1);
+    }
+}
+
 /* A package's manifest as the scenario global, in the shape scnReadManifest
  * above reads and Appendix G of the plan specifies. Put on the state before
  * the chunk runs, and only for a script that came out of a container.
@@ -1208,7 +1674,10 @@ static void scnPushRegions(lua_State *L, const ScenarioManifest *m) {
  * exactly what went on, so that comparison has nothing to do. A loose script
  * gets nothing pushed and declares its own table, as it always has.
  *
- * triggers is not built. Nothing reads it and the struct does not carry it.
+ * triggers go over with everything else. scnReadManifest reads them back out
+ * of the same shape, so a packaged script that assigns nothing is read as the
+ * table that went on, triggers and all, and the comparison that follows has
+ * nothing to do.
  *
  * The value goes on through the globals table itself rather than through
  * lua_setglobal, for the reason scnRawGlobal reads through it: a metatable on
@@ -1246,12 +1715,362 @@ void scnPushManifestGlobal(lua_State *L, const ScenarioManifest *m) {
     lua_setfield(L, t, "tags");
     scnPushRegions(L, m);
     lua_setfield(L, t, "regions");
+    scnPushTriggers(L, m);
+    lua_setfield(L, t, "triggers");
 
     scnPushGlobals(L);
     lua_pushstring(L, "scenario");
     lua_pushvalue(L, t);
     lua_rawset(L, -3);
     lua_pop(L, 2);               /* the globals table, and the table itself */
+}
+
+/* ── The trigger router ───────────────────────────────────────────── */
+
+/* The router's own bytes: src/scenario/scenario_triggers.lua, run through
+ * tools/embed_lua.py and committed. Included here rather than at the head of
+ * the file because this is the one place they are read, which is where
+ * lang.c includes its generated table as well. */
+#include "scenario_triggers.inc"  /* kScnTriggersLua, SCN_TRIGGERS_LUA_LEN */
+
+/* Room for any one hook's fields. The widest row the catalogue holds is
+ * can_build's five parameters and the two their types earn, so this is well
+ * clear of what scenarioLuaFnFields can answer. */
+#define SCN_TRIG_FIELD_MAX 32
+
+/* Which hook a trigger names, as an index into kScnHookNames, or
+ * SCN_HOOK_COUNT for a name that is no hook of this build's.
+ *
+ * The rows scenarioLuaFunctions answers are these same hooks in this same
+ * order and then the policies, so a hook's index here is its row there and
+ * this lookup cannot reach a policy at all. A trigger naming one therefore
+ * goes over with no fields; which names a when may hold is checked before a
+ * round starts, not here. */
+static int scnHookIndexOf(const char *name) {
+    int i;
+
+    for (i = 0; i < (int)SCN_HOOK_COUNT; i++) {
+        if (strcmp(kScnHookNames[i], name) == 0) {
+            return i;
+        }
+    }
+    return (int)SCN_HOOK_COUNT;
+}
+
+/* The triggers as the router reads them. The same data scnPushTriggers puts
+ * in the scenario global, in the shape that is convenient to act on rather
+ * than the shape a file writes: a where-row keyed by what its three parts
+ * are, an action's arguments in a list of their own.
+ *
+ * The values go through scnPushTrigValue, which is what the scenario global
+ * uses, so a long string held on the action's own text arrives as the
+ * argument it belongs to here as well.
+ *
+ * An action's text goes over beside its arguments. Nothing reads it — the
+ * arguments already carry their own strings — but it is the line the struct
+ * holds, and an action carrying one with no argument marked for it is a
+ * shape the JSON emitter and the Lua writer both drop.
+ *
+ * A trigger whose when is not a hook of this build does not go over at all.
+ * The router chains a wrapper on to the global its when names, and a name
+ * that is no hook is either a policy or a misspelling: wrapping a policy
+ * replaces the author's own function with one that discards its answer, so
+ * the round would run the classic rule and the trigger's actions on every
+ * ask. The array stays dense across the drops, because the router walks it
+ * to its first hole. */
+static void scnPushRouterTriggers(lua_State *L, const ScenarioManifest *m) {
+    int t;
+    int i;
+    int out = 0;
+
+    lua_newtable(L);
+    t = lua_gettop(L);
+    for (i = 0; i < (int)m->numTriggers; i++) {
+        const ScnTrigger *trig = &m->triggers[i];
+        int               e;
+        int               list;
+        int               row;
+        int               args;
+        int               j;
+        int               k;
+
+        if (scnHookIndexOf(trig->when) == (int)SCN_HOOK_COUNT) {
+            /* A when of no name at all is the reader's complaint, said under
+               this same key as the table was read; saying it again here is
+               the one fault twice. */
+            if (trig->when[0] != '\0') {
+                char key[SCN_VALIDATE_KEY_LEN];
+
+                snprintf(key, sizeof(key), "triggers[%d]", i);
+                scnReport(NULL, key,
+                          "scenario: %s runs on '%s', which is no hook; "
+                          "dropped", key, trig->when);
+            }
+            continue;
+        }
+
+        lua_newtable(L);
+        e = lua_gettop(L);
+        lua_pushstring(L, trig->when);
+        lua_setfield(L, e, "when");
+
+        lua_newtable(L);
+        list = lua_gettop(L);
+        for (j = 0; j < (int)trig->numWhere; j++) {
+            const ScnTrigCond *c    = &trig->where[j];
+            const char        *name = scnManifestTrigOpName(c->op);
+
+            lua_newtable(L);
+            row = lua_gettop(L);
+            lua_pushstring(L, c->field);
+            lua_setfield(L, row, "field");
+            /* The operator by name, through the table both readers resolve
+               a file's spelling with. A second copy of the seven strings
+               here is how the two would come to disagree.
+
+               An operator the table cannot name goes on as "", which is
+               none of the seven the router compares against, so the row
+               never holds. What it must not be is one of the seven: the
+               router would then run a test the author did not write. */
+            lua_pushstring(L, name != NULL ? name : "");
+            lua_setfield(L, row, "op");
+            scnPushTrigValue(L, &c->value, NULL);
+            lua_setfield(L, row, "value");
+            lua_rawseti(L, list, j + 1);
+        }
+        lua_setfield(L, e, "where");
+
+        lua_newtable(L);
+        list = lua_gettop(L);
+        for (j = 0; j < (int)trig->numActions; j++) {
+            const ScnTrigAct *a = &trig->actions[j];
+
+            lua_newtable(L);
+            row = lua_gettop(L);
+            lua_pushstring(L, a->op);
+            lua_setfield(L, row, "op");
+
+            lua_newtable(L);
+            args = lua_gettop(L);
+            for (k = 0; k < (int)a->numArgs; k++) {
+                scnPushTrigValue(L, &a->args[k], a);
+                lua_rawseti(L, args, k + 1);
+            }
+            lua_setfield(L, row, "args");
+
+            lua_pushstring(L, a->text);
+            lua_setfield(L, row, "text");
+
+            lua_rawseti(L, list, j + 1);
+        }
+        lua_setfield(L, e, "actions");
+
+        out++;
+        lua_rawseti(L, t, out);
+    }
+}
+
+/* One field's entry, as the router reads it. Every field is a table, the
+ * function's own parameters included, so the router's lookup has one shape
+ * to read rather than a number for some names and a table for others:
+ *
+ *   arg     the 1-based position of the argument the field reads
+ *   derive  absent for a parameter itself; otherwise "team", "tag" or
+ *           "region", which is how the router works the value out
+ *   kind    "pill" or "base", on a tag: the word game.tags is asked with
+ *   arg2    on a region: the position of the y beside the x at arg
+ *
+ * The kind and the second position come from the parameter types behind the
+ * field rather than from the hook's name, so a hook whose parameters move
+ * moves these with them.
+ *
+ * A derived field this build cannot work out is left out altogether, and a
+ * row naming it does not hold — the router's own rule for a field it cannot
+ * read. Nothing here says a field suits the operator beside it; that is
+ * checked before a round starts. */
+static void scnPushRouterField(lua_State *L, int tbl,
+                               const ScnLuaFnRow *row,
+                               const ScnLuaFnField *field) {
+    const char *derive = NULL;
+    const char *kind   = NULL;
+    size_t      second = 0;
+    int         entry;
+
+    if (field->derived) {
+        switch (field->type) {
+        case SCN_PARAM_TEAM:
+            derive = "team";
+            break;
+
+        case SCN_PARAM_TAG:
+            /* Which list game.tags is asked for is the parameter's own
+               type. A pillbox and a base number the same way and the word
+               is the only thing that tells them apart. */
+            if (field->from >= row->paramCount) {
+                return;
+            }
+            if (row->params[field->from].type == SCN_PARAM_PILL) {
+                kind = "pill";
+            } else if (row->params[field->from].type == SCN_PARAM_BASE) {
+                kind = "base";
+            } else {
+                return;
+            }
+            derive = "tag";
+            break;
+
+        case SCN_PARAM_REGION:
+            /* A square is a pair, and the y is the parameter after the x.
+               Held against the row rather than assumed, because a field
+               with no y behind it names no square. */
+            second = field->from + 1;
+            if (second >= row->paramCount ||
+                row->params[second].type != SCN_PARAM_SQUARE_Y) {
+                return;
+            }
+            derive = "region";
+            break;
+
+        default:
+            /* A derivation this build has no rule for. */
+            return;
+        }
+    }
+
+    lua_newtable(L);
+    entry = lua_gettop(L);
+    lua_pushinteger(L, (lua_Integer)(field->from + 1));
+    lua_setfield(L, entry, "arg");
+    if (derive != NULL) {
+        lua_pushstring(L, derive);
+        lua_setfield(L, entry, "derive");
+    }
+    if (kind != NULL) {
+        lua_pushstring(L, kind);
+        lua_setfield(L, entry, "kind");
+    }
+    if (second != 0) {
+        lua_pushinteger(L, (lua_Integer)(second + 1));
+        lua_setfield(L, entry, "arg2");
+    }
+    lua_setfield(L, tbl, field->name);
+}
+
+/* Every field the triggers can read, by the hook that carries it: the names
+ * an author writes in a where-row or a { field = ... } value, each against
+ * what the router needs to work its value out.
+ *
+ * One entry per hook named rather than one per trigger, since several
+ * triggers on a hook all read the same payload. */
+static void scnPushRouterFields(lua_State *L, const ScenarioManifest *m) {
+    const ScnLuaFnRow *catalogue;
+    size_t             catalogueCount = 0;
+    int                t;
+    int                i;
+
+    /* The hooks are the head of this list, in the order kScnHookNames holds
+       them, so a hook's index there is its row here. */
+    catalogue = scenarioLuaFunctions(&catalogueCount);
+
+    lua_newtable(L);
+    t = lua_gettop(L);
+
+    for (i = 0; i < (int)m->numTriggers; i++) {
+        ScnLuaFnField rows[SCN_TRIG_FIELD_MAX];
+        const char   *when = m->triggers[i].when;
+        size_t        count;
+        size_t        j;
+        int           hook;
+        int           e;
+
+        hook = scnHookIndexOf(when);
+        if (hook == (int)SCN_HOOK_COUNT ||
+            (size_t)hook >= catalogueCount) {
+            continue;
+        }
+
+        lua_pushstring(L, when);
+        lua_rawget(L, t);
+        if (!lua_isnil(L, -1)) {
+            lua_pop(L, 1);       /* this hook's fields are already over */
+            continue;
+        }
+        lua_pop(L, 1);
+
+        /* The accessor answers how many the row has and writes at most what
+           it was given room for, so a row with more fields than this holds
+           is clamped rather than read past the end. Five parameters is the
+           widest the catalogue has and each earns at most one field, so ten
+           is the most any row can reach. */
+        count = scenarioLuaFnFields((size_t)hook, rows,
+                                    (size_t)SCN_TRIG_FIELD_MAX);
+        if (count > (size_t)SCN_TRIG_FIELD_MAX) {
+            count = (size_t)SCN_TRIG_FIELD_MAX;
+        }
+
+        lua_newtable(L);
+        e = lua_gettop(L);
+        for (j = 0; j < count; j++) {
+            scnPushRouterField(L, e, &catalogue[hook], &rows[j]);
+        }
+        lua_pushstring(L, when);
+        lua_pushvalue(L, e);
+        lua_rawset(L, t);
+        lua_pop(L, 1);           /* the hook's own table */
+    }
+}
+
+/* The router into the state the author's chunk has just run in.
+ *
+ * A scenario with no triggers loads none of it: there is nothing to chain on
+ * to, and the state is left exactly as the script left it.
+ *
+ * Loaded and called the way scnRunChunk loads and calls the author's bytes,
+ * with the sandbox call guard armed across the load as well as the call. The
+ * router's top level is script code like any other and the one place a loop
+ * in it would show is an attach that never returns.
+ *
+ * It takes its data as three chunk arguments where scnRunChunk's chunk
+ * takes none, which is the whole of the difference between them. Widening
+ * scnRunChunk would reach the validator's call as well, and the validator
+ * checks a script rather than starting a round, so it loads no router. The
+ * third argument is the sandbox's own copies of the base functions the
+ * router calls: the author's globals are whatever the script left them.
+ *
+ * The chunk name is the file the bytes came from, so a line in an error
+ * names a line of src/scenario/scenario_triggers.lua. That is what the two
+ * chunks buy: the author's file and this one each keep their own numbering.
+ *
+ * Text only, for the reason scnRunChunk is: these bytes are the build's own,
+ * but the loader that reads them is the one a map file's script reaches. */
+static bool scnInstallTriggers(lua_State *L, const ScenarioManifest *m,
+                               char *err, size_t errLen) {
+    ScnSandboxCall saved;
+    bool           ok = false;
+
+    if (m->numTriggers == 0) {
+        return true;
+    }
+
+    scnSandboxArmCall(L, &saved);
+    if (luaL_loadbufferx(L, (const char *)kScnTriggersLua,
+                         (size_t)SCN_TRIGGERS_LUA_LEN,
+                         "@scenario_triggers.lua", "t") != 0) {
+        scnFmt(err, errLen, "scenario: %s", scnLuaError(L));
+        lua_pop(L, 1);
+    } else {
+        scnPushRouterTriggers(L, m);
+        scnPushRouterFields(L, m);
+        scnSandboxPushBase(L);
+        if (lua_pcall(L, 3, 0, 0) != 0) {
+            scnFmt(err, errLen, "scenario: %s", scnLuaError(L));
+            lua_pop(L, 1);
+        } else {
+            ok = true;
+        }
+    }
+    scnSandboxDisarmCall(L, &saved);
+    return ok;
 }
 
 /* What a package whose script restates the table and disagrees with it reads
@@ -2402,8 +3221,9 @@ static bool scnAllowExtraTeams(void *ctx) {
         return true;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "allow_extra_teams")) {
-        allow = scnPolicyBool(h, "allow_extra_teams", 0, true);
+    if (scnPolicyBegin(h, kScnPolicyNames[SCN_POLICY_ALLOW_EXTRA_TEAMS])) {
+        allow = scnPolicyBool(h, kScnPolicyNames[SCN_POLICY_ALLOW_EXTRA_TEAMS],
+                              0, true);
     }
     scnLockLeave(&h->lock);
     return allow;
@@ -2419,8 +3239,9 @@ static bool scnAllowBaseWin(void *ctx) {
         return true;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "allow_base_win")) {
-        allow = scnPolicyBool(h, "allow_base_win", 0, true);
+    if (scnPolicyBegin(h, kScnPolicyNames[SCN_POLICY_ALLOW_BASE_WIN])) {
+        allow = scnPolicyBool(h, kScnPolicyNames[SCN_POLICY_ALLOW_BASE_WIN], 0,
+                              true);
     }
     scnLockLeave(&h->lock);
     return allow;
@@ -2436,9 +3257,10 @@ static bool scnCanRespawn(void *ctx, BYTE player) {
         return true;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "can_respawn")) {
+    if (scnPolicyBegin(h, kScnPolicyNames[SCN_POLICY_CAN_RESPAWN])) {
         lua_pushinteger(h->L, (lua_Integer)player);
-        may = scnPolicyBool(h, "can_respawn", 1, true);
+        may = scnPolicyBool(h, kScnPolicyNames[SCN_POLICY_CAN_RESPAWN], 1,
+                            true);
     }
     scnLockLeave(&h->lock);
     return may;
@@ -2458,13 +3280,13 @@ static bool scnCanBuild(void *ctx, BYTE player, BYTE action, BYTE x, BYTE y,
         return true;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "can_build")) {
+    if (scnPolicyBegin(h, kScnPolicyNames[SCN_POLICY_CAN_BUILD])) {
         lua_pushinteger(h->L, (lua_Integer)player);
         lua_pushstring(h->L, word);
         lua_pushinteger(h->L, (lua_Integer)x);
         lua_pushinteger(h->L, (lua_Integer)y);
         scnPushItemIndex(h, idx, MAX_PILLS);
-        may = scnPolicyBool(h, "can_build", 5, true);
+        may = scnPolicyBool(h, kScnPolicyNames[SCN_POLICY_CAN_BUILD], 5, true);
     }
     scnLockLeave(&h->lock);
     return may;
@@ -2481,12 +3303,13 @@ static bool scnCanCapture(void *ctx, BYTE kind, BYTE idx, BYTE player) {
         return true;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "can_capture")) {
+    if (scnPolicyBegin(h, kScnPolicyNames[SCN_POLICY_CAN_CAPTURE])) {
         lua_pushstring(h->L, word);
         scnPushItemIndex(h, idx,
                          (kind == CAPTURE_KIND_PILL) ? MAX_PILLS : MAX_BASES);
         lua_pushinteger(h->L, (lua_Integer)player);
-        may = scnPolicyBool(h, "can_capture", 3, true);
+        may = scnPolicyBool(h, kScnPolicyNames[SCN_POLICY_CAN_CAPTURE], 3,
+                            true);
     }
     scnLockLeave(&h->lock);
     return may;
@@ -2505,7 +3328,7 @@ static bool scnAnnounce(void *ctx, BYTE kind, BYTE subject, BYTE actor) {
         return true;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "announce")) {
+    if (scnPolicyBegin(h, kScnPolicyNames[SCN_POLICY_ANNOUNCE])) {
         lua_pushstring(h->L, word);
         if (kind == ANNOUNCE_KIND_BASE_CAPTURED) {
             scnPushItemIndex(h, subject, MAX_BASES);
@@ -2515,7 +3338,7 @@ static bool scnAnnounce(void *ctx, BYTE kind, BYTE subject, BYTE actor) {
             lua_pushinteger(h->L, (lua_Integer)subject);
         }
         lua_pushinteger(h->L, (lua_Integer)actor);
-        show = scnPolicyBool(h, "announce", 3, true);
+        show = scnPolicyBool(h, kScnPolicyNames[SCN_POLICY_ANNOUNCE], 3, true);
     }
     scnLockLeave(&h->lock);
     return show;
@@ -2535,7 +3358,7 @@ static bool scnCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
         return true;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "can_die")) {
+    if (scnPolicyBegin(h, kScnPolicyNames[SCN_POLICY_CAN_DIE])) {
         lua_pushstring(h->L, word);
         if (kind == DIE_KIND_PILL) {
             scnPushItemIndex(h, index, MAX_PILLS);
@@ -2546,7 +3369,7 @@ static bool scnCanDie(void *ctx, BYTE kind, BYTE index, BYTE killer,
         scnPushWord(h, (kind == DIE_KIND_TANK)
                            ? scenarioLuaDeathCauseWord((int)cause)
                            : scenarioLuaDamageSourceWord((int)cause));
-        may = scnPolicyBool(h, "can_die", 4, true);
+        may = scnPolicyBool(h, kScnPolicyNames[SCN_POLICY_CAN_DIE], 4, true);
     }
     scnLockLeave(&h->lock);
     return may;
@@ -2568,15 +3391,17 @@ static bool scnChooseStart(void *ctx, BYTE player, BYTE *startIdx) {
         return false;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "on_choose_start")) {
+    if (scnPolicyBegin(h, kScnPolicyNames[SCN_POLICY_ON_CHOOSE_START])) {
         lua_pushinteger(h->L, (lua_Integer)player);
-        if (scnPolicyAnswer(h, "on_choose_start", 1)) {
+        if (scnPolicyAnswer(h, kScnPolicyNames[SCN_POLICY_ON_CHOOSE_START],
+                            1)) {
             ServerSimStartInfo info;
             long               n    = 0;
             BYTE               read = 0;
 
             if (!scnPolicyWhole(h->L, &n)) {
-                scnPolicyBadAnswer(h, "on_choose_start",
+                scnPolicyBadAnswer(h,
+                                   kScnPolicyNames[SCN_POLICY_ON_CHOOSE_START],
                                    "with no start number");
             } else {
                 read = scenarioLuaIndexToRead((lua_Integer)n);
@@ -2618,9 +3443,9 @@ static bool scnSpawnLoadout(void *ctx, BYTE player, ScnLoadout *out) {
     }
     memset(out, 0, sizeof(*out));
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "spawn_loadout")) {
+    if (scnPolicyBegin(h, kScnPolicyNames[SCN_POLICY_SPAWN_LOADOUT])) {
         lua_pushinteger(h->L, (lua_Integer)player);
-        if (scnPolicyAnswer(h, "spawn_loadout", 1)) {
+        if (scnPolicyAnswer(h, kScnPolicyNames[SCN_POLICY_SPAWN_LOADOUT], 1)) {
             if (lua_type(h->L, -1) == LUA_TSTRING) {
                 const char *answer = lua_tostring(h->L, -1);
                 int         type   = 0;
@@ -2647,12 +3472,14 @@ static bool scnSpawnLoadout(void *ctx, BYTE player, ScnLoadout *out) {
                     answered = true;
                     scnErrorCleared(h);
                 } else {
-                    scnPolicyBadAnswer(h, "spawn_loadout",
-                                       "with a table that is not four amounts "
-                                       "of 0 to 255");
+                    scnPolicyBadAnswer(
+                        h, kScnPolicyNames[SCN_POLICY_SPAWN_LOADOUT],
+                        "with a table that is not four amounts "
+                        "of 0 to 255");
                 }
             } else {
-                scnPolicyBadAnswer(h, "spawn_loadout",
+                scnPolicyBadAnswer(h,
+                                   kScnPolicyNames[SCN_POLICY_SPAWN_LOADOUT],
                                    "with neither a loadout word nor a table "
                                    "of amounts");
             }
@@ -2685,18 +3512,19 @@ static int scnDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause) {
         return 100;
     }
     scnLockEnter(&h->lock);
-    if (scnPolicyBegin(h, "damage_scale")) {
+    if (scnPolicyBegin(h, kScnPolicyNames[SCN_POLICY_DAMAGE_SCALE])) {
         lua_pushinteger(h->L, (lua_Integer)attacker);
         lua_pushinteger(h->L, (lua_Integer)victim);
         lua_pushstring(h->L, word);
-        if (scnPolicyAnswer(h, "damage_scale", 3)) {
+        if (scnPolicyAnswer(h, kScnPolicyNames[SCN_POLICY_DAMAGE_SCALE], 3)) {
             long v = 0;
             if (scnPolicyWhole(h->L, &v) && v >= 0 &&
                 v <= SCN_DAMAGE_SCALE_MAX) {
                 pct = (int)v;
                 scnErrorCleared(h);
             } else {
-                scnPolicyBadAnswer(h, "damage_scale",
+                scnPolicyBadAnswer(h,
+                                   kScnPolicyNames[SCN_POLICY_DAMAGE_SCALE],
                                    "with no percent between 0 and "
                                    "a hundredfold");
             }
@@ -2767,7 +3595,7 @@ static void scnSeedTeams(ScenarioHost *h) {
  * placement onward. */
 static void scnRoundBootLocked(ScenarioHost *h) {
     lua_State       *L;
-    ScenarioManifest fresh;
+    ScenarioManifest *fresh;
     ScnParseReport   rep;
     char             err[SCN_ERR_LEN];
     char             why[SCN_ERR_LEN];
@@ -2798,6 +3626,17 @@ static void scnRoundBootLocked(ScenarioHost *h) {
         scnRoundWithoutScenario(h);
         return;
     }
+    /* The table this round reads, off the stack: a manifest is more than a
+       tick's frame should hold, and h->manifest stays the last round's until
+       every check below has passed. */
+    fresh = (ScenarioManifest *)malloc(sizeof(*fresh));
+    if (fresh == NULL) {
+        scnSay(h->lastError, sizeof(h->lastError),
+               "scenario: no memory for this round's table");
+        scnCloseVm(L);
+        scnRoundWithoutScenario(h);
+        return;
+    }
     rep.soft    = h->lastError;
     rep.softLen = sizeof(h->lastError);
     rep.sink    = NULL;
@@ -2807,9 +3646,16 @@ static void scnRoundBootLocked(ScenarioHost *h) {
     if (h->fromPackage) {
         scnPushManifestGlobal(L, &h->pkgManifest);
     }
+    /* The router goes on after the table is read, because the table is what
+       holds the triggers, and before scnHooksResolve below, because that
+       takes a reference to whatever each hook name holds and a router
+       installed after it would be referred to by nobody. Its failure is the
+       scenario's, and reads like a chunk that would not load. */
     if (!scnRunChunk(L, h->src, h->srcLen, h->chunkName, err, sizeof(err)) ||
-        !scnReadManifest(L, &fresh, h->script, err, sizeof(err), &rep)) {
+        !scnReadManifest(L, fresh, h->script, err, sizeof(err), &rep) ||
+        !scnInstallTriggers(L, fresh, err, sizeof(err))) {
         scnSay(h->lastError, sizeof(h->lastError), "%s", err);
+        free(fresh);
         scnCloseVm(L);
         scnRoundWithoutScenario(h);
         return;
@@ -2818,18 +3664,20 @@ static void scnRoundBootLocked(ScenarioHost *h) {
        attach made this same test, so a round reaching it is one whose script
        computes its table rather than writing it down. */
     if (h->fromPackage &&
-        !scnManifestAgrees(&h->pkgManifest, &fresh, key, sizeof(key),
+        !scnManifestAgrees(&h->pkgManifest, fresh, key, sizeof(key),
                            why, sizeof(why))) {
         scnDisagreed(err, sizeof(err), why, key);
         scnSay(h->lastError, sizeof(h->lastError), "%s", err);
+        free(fresh);
         scnCloseVm(L);
         scnRoundWithoutScenario(h);
         return;
     }
-    if (fresh.api > SCENARIO_API_VERSION) {
+    if (fresh->api > SCENARIO_API_VERSION) {
         scnSay(h->lastError, sizeof(h->lastError),
                "scenario: %s asks for api %d and this server is api %d",
-               h->script, fresh.api, SCENARIO_API_VERSION);
+               h->script, fresh->api, SCENARIO_API_VERSION);
+        free(fresh);
         scnCloseVm(L);
         scnRoundWithoutScenario(h);
         return;
@@ -2842,7 +3690,8 @@ static void scnRoundBootLocked(ScenarioHost *h) {
     /* The whole table, read from the script's bytes again — which is how a
        region the last round defined stops existing without anything here
        having to remove it. */
-    h->manifest = fresh;
+    h->manifest = *fresh;
+    free(fresh);
     scnHooksResolve(h, L);
 
     /* Off for a round is off for that round alone. This one starts with the
@@ -3426,17 +4275,21 @@ typedef struct {
     char            *src;        /* the script; the caller frees it */
     size_t           srcLen;
     bool             fromPackage;
-    /* The container's manifest, for a script that came out of one. Zero for a
-     * loose script, which has no manifest but the table it declares. */
-    ScenarioManifest manifest;
+    /* The container's manifest, for a script that came out of one, and NULL
+     * for a loose script, which has no manifest but the table it declares.
+     * On the heap rather than in the struct: a manifest is more than a frame
+     * should hold, and this struct is a local in every caller. */
+    ScenarioManifest *manifest;
     char             script[SCN_SCRIPT_PATH_MAX];   /* the file that was read */
     char             entry[SCN_MANIFEST_ENTRY_LEN]; /* "" for a loose script */
 } ScnScriptSource;
 
 static void scnSourceDrop(ScnScriptSource *s) {
     free(s->src);
-    s->src    = NULL;
-    s->srcLen = 0;
+    free(s->manifest);
+    s->src      = NULL;
+    s->srcLen   = 0;
+    s->manifest = NULL;
 }
 
 /* The name Lua puts at the front of every message the chunk raises. The
@@ -3589,11 +4442,16 @@ static bool scnScriptFromPackage(ScnPackage *p, const char *from,
 
     /* scnPackageReadEntry hands back a malloc'd buffer with a 0 past the
        content, which is what the script's bytes are kept as either way. */
+    out->manifest = (ScenarioManifest *)malloc(sizeof(*out->manifest));
+    if (out->manifest == NULL) {
+        scnFmt(err, errLen, "scenario: out of memory");
+        goto done;
+    }
+    *out->manifest   = *scnManifestValues(doc);
     out->src         = (char *)luaBytes;
     out->srcLen      = luaLen;
     luaBytes         = NULL;
     out->fromPackage = true;
-    out->manifest    = *scnManifestValues(doc);
     snprintf(out->script, sizeof(out->script), "%s", from);
     snprintf(out->entry, sizeof(out->entry), "%s", entry);
     ok = true;
@@ -3816,7 +4674,6 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
     char             soft[SCN_ERR_LEN];
     char             why[SCN_ERR_LEN];
     char             key[SCN_VALIDATE_KEY_LEN];
-    ScenarioManifest m;
     ScnParseReport   rep;
     ScenarioHost    *h;
     lua_State       *L;
@@ -3882,10 +4739,20 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
        one may therefore declare no table of its own; a loose script gets
        nothing pushed and declares its own, as it always has. */
     if (from->fromPackage) {
-        scnPushManifestGlobal(L, &from->manifest);
+        scnPushManifestGlobal(L, from->manifest);
     }
+    /* The table is read straight into the host: it is this call's own until
+       the registrations at the bottom, and every path out before them frees
+       it, so nothing sees a half-read table and no second copy is held.
+       And the router, on the state the attach reads the table in. No hook is
+       dispatched off this one — the hooks belong to a round's VM and the
+       first round start resolves them — so what this settles is that the
+       router loads at all, said here rather than at the first round start.
+       A scenario whose triggers cannot be installed is refused the way one
+       whose chunk will not load is. */
     if (!scnRunChunk(L, from->src, from->srcLen, chunkName, err, errLen) ||
-        !scnReadManifest(L, &m, from->script, err, errLen, &rep)) {
+        !scnReadManifest(L, &h->manifest, from->script, err, errLen, &rep) ||
+        !scnInstallTriggers(L, &h->manifest, err, errLen)) {
         scnCloseVm(L);
         scnLockDestroy(&h->lock);
         free(h);
@@ -3898,7 +4765,7 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
        refused here, by key, rather than playing a scenario the package does
        not describe. */
     if (from->fromPackage &&
-        !scnManifestAgrees(&from->manifest, &m, key, sizeof(key), why,
+        !scnManifestAgrees(from->manifest, &h->manifest, key, sizeof(key), why,
                            sizeof(why))) {
         scnDisagreed(err, errLen, why, key);
         scnCloseVm(L);
@@ -3907,11 +4774,11 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
         scnSourceDrop(from);
         return NULL;
     }
-    if (m.api > SCENARIO_API_VERSION) {
+    if (h->manifest.api > SCENARIO_API_VERSION) {
         scnFmt(err, errLen,
                "scenario: %s asks for api %d and this server is api %d — "
                "the server is too old to run it",
-               from->script, m.api, SCENARIO_API_VERSION);
+               from->script, h->manifest.api, SCENARIO_API_VERSION);
         scnCloseVm(L);
         scnLockDestroy(&h->lock);
         free(h);
@@ -3926,7 +4793,7 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
        the one place every other way in — a console, a startup flag, a test —
        meets the same answer. A map's own scenario is untouched: it is bound
        precisely because it belongs to the map it arrived with. */
-    if (source == lobbyScenarioMod && m.bound) {
+    if (source == lobbyScenarioMod && h->manifest.bound) {
         scnFmt(err, errLen,
                "scenario: %s is bound to its own map, so it cannot be played "
                "over another one", from->script);
@@ -3938,11 +4805,14 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
     }
 
     h->L           = L;
-    h->manifest    = m;
     h->src         = from->src;
     h->srcLen      = from->srcLen;
     h->fromPackage = from->fromPackage;
-    h->pkgManifest = from->manifest;
+    if (from->manifest != NULL) {
+        h->pkgManifest = *from->manifest;
+        free(from->manifest);
+        from->manifest = NULL;
+    }
     h->active      = true;
     snprintf(h->lastError, sizeof(h->lastError), "%s", soft);
 
@@ -3974,7 +4844,7 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
        script has the loop the server console already has. */
     serverSimSetScenarioReload(sim, scnReloadCb, h);
     serverSimSetScenarioPolicy(sim, &h->policy);
-    scnHandLobbyOver(sim, &m, source, scnFileNameOf(h->script));
+    scnHandLobbyOver(sim, &h->manifest, source, scnFileNameOf(h->script));
 
     /* The bus, in three steps and in this order. Registration hands the new
        subscriber the whole of the current server state through the control
@@ -4099,7 +4969,7 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     char             chunkName[SCN_SCRIPT_PATH_MAX + 2];
     const char      *name;
     ScnScriptSource  from;
-    ScenarioManifest m;
+    ScenarioManifest *m;
     ScnParseReport   rep;
     ScnLuaCtx        check;
     lua_State       *L;
@@ -4166,14 +5036,21 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
        out whether the file loads, and a file that reads the sim as it loads
        has to be able to. The console command holds the server mutex across
        the whole reload, so those reads see one picture of the round. */
-    memset(&m, 0, sizeof(m));   /* the chunk can read it before it is read */
+    /* Off the stack, and zeroed: the chunk can read it before it is read. */
+    m = (ScenarioManifest *)calloc(1, sizeof(*m));
+    if (m == NULL) {
+        scnFmt(err, errLen, "scenario: no memory for the table");
+        scnSourceDrop(&from);
+        return false;
+    }
     check.sim       = h->sim;
-    check.manifest  = &m;
+    check.manifest  = m;
     check.timers    = NULL;
     check.checkOnly = true;
     L = scnBootVmWith(&check);
     if (L == NULL) {
         scnFmt(err, errLen, "scenario: no memory for a Lua state");
+        free(m);
         scnSourceDrop(&from);
         return false;
     }
@@ -4186,27 +5063,35 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
        state does, so a packaged script that declares none is checked as it
        will be run rather than turned down for a table it never writes. */
     if (from.fromPackage) {
-        scnPushManifestGlobal(L, &from.manifest);
+        scnPushManifestGlobal(L, from.manifest);
     }
+    /* The router as well, so a reload answers for the whole of what a round
+       start would do with the file rather than for the script alone. This
+       state is closed a few lines down and dispatches nothing, so what the
+       call settles here is that the install goes through. */
     if (!scnRunChunk(L, from.src, from.srcLen, chunkName, err, errLen) ||
-        !scnReadManifest(L, &m, name, err, errLen, &rep)) {
+        !scnReadManifest(L, m, name, err, errLen, &rep) ||
+        !scnInstallTriggers(L, m, err, errLen)) {
+        free(m);
         scnCloseVm(L);
         scnSourceDrop(&from);
         return false;
     }
     if (from.fromPackage &&
-        !scnManifestAgrees(&from.manifest, &m, key, sizeof(key), why,
+        !scnManifestAgrees(from.manifest, m, key, sizeof(key), why,
                            sizeof(why))) {
         scnDisagreed(err, errLen, why, key);
+        free(m);
         scnCloseVm(L);
         scnSourceDrop(&from);
         return false;
     }
-    if (m.api > SCENARIO_API_VERSION) {
+    if (m->api > SCENARIO_API_VERSION) {
         scnFmt(err, errLen,
                "scenario: %s asks for api %d and this server is api %d — "
                "the server is too old to run it",
-               name, m.api, SCENARIO_API_VERSION);
+               name, m->api, SCENARIO_API_VERSION);
+        free(m);
         scnCloseVm(L);
         scnSourceDrop(&from);
         return false;
@@ -4215,10 +5100,11 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
        map is committed, and a mod edited on disk to say it is bound was
        written for a map of its own. Without this a reload would seat over any
        map a table the attach would have turned away. */
-    if (h->source == lobbyScenarioMod && m.bound) {
+    if (h->source == lobbyScenarioMod && m->bound) {
         scnFmt(err, errLen,
                "scenario: %s is bound to its own map, so it cannot be played "
                "over another one", name);
+        free(m);
         scnCloseVm(L);
         scnSourceDrop(&from);
         return false;
@@ -4244,7 +5130,11 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     h->src         = from.src;
     h->srcLen      = from.srcLen;
     h->fromPackage = from.fromPackage;
-    h->pkgManifest = from.manifest;
+    if (from.manifest != NULL) {
+        h->pkgManifest = *from.manifest;
+    } else {
+        memset(&h->pkgManifest, 0, sizeof(h->pkgManifest));
+    }
     snprintf(h->script, sizeof(h->script), "%s", from.script);
     scnChunkNameOf(&from, from.script, h->chunkName, sizeof(h->chunkName));
     snprintf(h->lastError, sizeof(h->lastError), "%s", soft);
@@ -4261,7 +5151,9 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
        the table it started with, and the round start reads the new one from
        the bytes swapped above. What changes here is what the lobby is told,
        which is not the running round's to keep. */
-    scnHandLobbyOver(h->sim, &m, h->source, scnFileNameOf(from.script));
+    scnHandLobbyOver(h->sim, m, h->source, scnFileNameOf(from.script));
+    free(m);
+    free(from.manifest);
     /* Seated only from the lobby. The template is data either way and goes
        over above whatever the server is doing, but building the seats and
        moving the game type onto a round already running would change a game

@@ -114,6 +114,13 @@ static inline bool    pillPosCurrentFromByte(uint8_t b) {
 /* Added to fix the rare tank run away bug so the shell will never hit the tank */
 #define MAX_AIM_ITERATE 200
 
+/* How near a tank has to be for a pillbox to aim with the original forward
+   prediction rather than the solver, and how straight at the pillbox that
+   tank has to be driving to be aimed at properly anyway. Zero is a pillbox
+   that always uses the solver, which is what the classic table plays. */
+#define PILLBOX_MASSAGE_RANGE  0
+#define PILLBOX_MASSAGE_COSINE 0.5
+
 /* Brain stuff */
 /* Bases Brain stuff */
 #define PILLS_BRAIN_FRIENDLY 0

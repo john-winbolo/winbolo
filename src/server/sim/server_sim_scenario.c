@@ -3401,6 +3401,38 @@ static ScnOpResult scenarioOpShellExpired(ServerSim *sim,
     return SCN_OP_OK;
 }
 
+/* The whole set written into the caller's table and the table checked once
+ * when they are all in. The base the copy started from is the caller's
+ * business: a round's own table where there is a round, and the classic one
+ * where there is not. */
+static ScnOpResult scenarioCheckRulesAgainst(SimRules *copy,
+                                             const uint16_t *rules,
+                                             const double *values,
+                                             uint16_t count,
+                                             char *why, size_t whyLen) {
+    SimRulesFault fault;
+    uint16_t      i;
+    char          reason[SIM_RULES_WHY_LEN];
+
+    if (count > 0 && (rules == NULL || values == NULL)) {
+        return SCN_OP_BAD_CALL;
+    }
+
+    for (i = 0; i < count; i++) {
+        double      written = 0.0;
+        ScnOpResult r = scenarioRuleWrite(copy, rules[i], values[i], &written);
+        if (r != SCN_OP_OK) {
+            return r;
+        }
+    }
+
+    fault = simRulesCheck(copy, reason, sizeof(reason));
+    if (fault != SIM_RULES_OK && why != NULL && whyLen > 0) {
+        SDL_snprintf(why, whyLen, "%s", reason);
+    }
+    return scenarioRuleFaultResult(fault);
+}
+
 /* The same question the arm asks, without the answer landing anywhere. The
  * whole set is written into the copy before the check reads it, so a pair two
  * of the values break together is found although each of them passes alone —
@@ -3411,10 +3443,7 @@ ScnOpResult serverSimCheckScenarioRules(const ServerSim *sim,
                                         const double *values,
                                         uint16_t count,
                                         char *why, size_t whyLen) {
-    SimRules      copy;
-    SimRulesFault fault;
-    uint16_t      i;
-    char          reason[SIM_RULES_WHY_LEN];
+    SimRules copy;
 
     if (why != NULL && whyLen > 0) {
         why[0] = '\0';
@@ -3422,24 +3451,34 @@ ScnOpResult serverSimCheckScenarioRules(const ServerSim *sim,
     if (sim == NULL) {
         return SCN_OP_BAD_CALL;
     }
-    if (count > 0 && (rules == NULL || values == NULL)) {
-        return SCN_OP_BAD_CALL;
-    }
 
     copy = sim->sim.rules;
-    for (i = 0; i < count; i++) {
-        double      written = 0.0;
-        ScnOpResult r = scenarioRuleWrite(&copy, rules[i], values[i], &written);
-        if (r != SCN_OP_OK) {
-            return r;
-        }
+    return scenarioCheckRulesAgainst(&copy, rules, values, count, why, whyLen);
+}
+
+/* The same check with no round behind it. The classic table is what a rule's
+ * bounds are stated against in the first place, so a value outside its row is
+ * outside it whether or not a game is running.
+ *
+ * Where the two differ is the pairs. serverSimCheckScenarioRules above writes
+ * the set into the running table and asks there, so a pair is judged against
+ * whatever the lobby has already moved its other half to; this writes the set
+ * into the classic table and asks there instead. A table the editor passes
+ * can therefore be refused by one and taken by the other, in either
+ * direction. The editor has no sim to ask, and classic is the only base it
+ * can honestly name, so this is the base it uses. */
+ScnOpResult scenarioCheckRulesFromClassic(const uint16_t *rules,
+                                          const double *values,
+                                          uint16_t count,
+                                          char *why, size_t whyLen) {
+    SimRules copy;
+
+    if (why != NULL && whyLen > 0) {
+        why[0] = '\0';
     }
 
-    fault = simRulesCheck(&copy, reason, sizeof(reason));
-    if (fault != SIM_RULES_OK && why != NULL && whyLen > 0) {
-        SDL_snprintf(why, whyLen, "%s", reason);
-    }
-    return scenarioRuleFaultResult(fault);
+    simRulesClassic(&copy);
+    return scenarioCheckRulesAgainst(&copy, rules, values, count, why, whyLen);
 }
 
 #undef SCN_RULE_WRITE_CASE

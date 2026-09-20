@@ -21,9 +21,10 @@
  *  schema grow without an older build throwing away what it
  *  could not read.
  *
- *  triggers is not decoded. Its schema is not settled, so
- *  the parser reads nothing from it and it is kept the way
- *  any other unknown key is kept.
+ *  triggers is decoded like the rest, and unlike the rest it
+ *  is written back from the struct rather than from the tree:
+ *  a trigger goes out whole or not at all, so the array a
+ *  file gets is the array the struct holds.
  *
  *  scnManifestAgrees is the check that keeps the two forms
  *  honest where a package carries both: the manifest is
@@ -95,5 +96,18 @@ bool scnManifestAgrees(const ScenarioManifest *fromJson,
                        const ScenarioManifest *fromLua,
                        char *key, size_t keyLen,
                        char *err, size_t errLen);
+
+/* The seven operators a where-row tests with, as a name and back. A name
+   this build does not know, and a NULL name, read as SCN_TRIG_CMP_UNKNOWN
+   rather than being refused here: which operator suits which field is the
+   catalogue's business and this library cannot see it. Keeping it apart
+   from the seven is what leaves the check something to refuse. NULL for
+   SCN_TRIG_CMP_UNKNOWN and for a value outside the enum.
+
+   Both forms of a scenario spell these the same way, so the Lua reader in
+   scenario_host.c resolves a script's "eq" through the same table the JSON
+   decoder resolves the manifest's through. */
+ScnTrigCompare scnManifestTrigOpFrom(const char *name);
+const char    *scnManifestTrigOpName(ScnTrigCompare op);
 
 #endif /* SCENARIO_MANIFEST_JSON_H */

@@ -76,6 +76,31 @@ ScnOpResult serverSimCheckScenarioRules(const ServerSim *sim,
                                         char *why, size_t whyLen);
 
 /*********************************************************
+ *NAME:          scenarioCheckRulesFromClassic
+ *PURPOSE:
+ *  The same question as above, asked against the classic
+ *  table rather than against a round in progress. A rule's
+ *  bounds and the pairs it sits in belong to the table the
+ *  field is declared in, not to a game, so a set of values
+ *  can be checked with no sim to check it against.
+ *
+ *  This is what a check with no game running has to use: a
+ *  map editor holds a script and no ServerSim, and the
+ *  entry above answers SCN_OP_BAD_CALL to a NULL one.
+ *
+ *  The answers are the entry above's, less the refusal for
+ *  a NULL sim: SCN_OP_OK, SCN_OP_RANGE, SCN_OP_PAIR,
+ *  SCN_OP_NO_SUCH_ITEM, and SCN_OP_BAD_CALL for a count
+ *  with no arrays behind it. why takes the reason the check
+ *  gave on a fault and "" otherwise; it may be NULL only
+ *  when whyLen is 0.
+ *********************************************************/
+ScnOpResult scenarioCheckRulesFromClassic(const uint16_t *rules,
+                                          const double *values,
+                                          uint16_t count,
+                                          char *why, size_t whyLen);
+
+/*********************************************************
  *NAME:          serverSimScenarioFillWorldToRules
  *PURPOSE:
  *  Starts every pill and base at the caps the sim's table

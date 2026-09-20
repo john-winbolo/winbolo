@@ -15,8 +15,10 @@
  *   writer. The editor differs in where the two come from —
  *   the manifest is the forms' and the source is the pane's,
  *   neither of which has to be on disk — and in building no
- *   ServerSim, so the checks that read a map are the ones
- *   the round itself makes.
+ *   ServerSim, which leaves out the one check that reads a
+ *   map: the tags, which ask how many pills, bases and starts
+ *   the map carries. The rules are checked either way, against
+ *   the classic table.
  *********************************************************/
 
 #include "mapeditor_scenario_pack.h"
@@ -345,7 +347,7 @@ bool meScenarioPackIntoMap(const ScenarioManifest *m, const char *script,
 bool meScenarioWriteMod(const ScenarioManifest *m, const char *script,
                         size_t scriptLen, const char *modPath,
                         char *err, size_t errLen) {
-    ScenarioManifest mod;
+    ScenarioManifest *mod;
     ScnManifestDoc  *doc       = NULL;
     char            *json      = NULL;
     uint8_t         *container = NULL;
@@ -367,9 +369,16 @@ bool meScenarioWriteMod(const ScenarioManifest *m, const char *script,
         return false;
     }
 
-    meScenarioModManifest(m, &mod);
-
-    doc = scnManifestFromValues(&mod, err, errLen);
+    /* The mod's copy lives only as long as it takes to build the document,
+       and on the heap: a manifest is more than this frame should hold. */
+    mod = (ScenarioManifest *)malloc(sizeof(*mod));
+    if (mod == NULL) {
+        mePackErr(err, errLen, "out of memory");
+        return false;
+    }
+    meScenarioModManifest(m, mod);
+    doc = scnManifestFromValues(mod, err, errLen);
+    free(mod);
     if (doc == NULL) {
         return false;
     }
