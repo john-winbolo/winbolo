@@ -3424,6 +3424,16 @@ foreach(_name IN LISTS _baseline_udp)
                          FIXTURES_REQUIRED warm_binaries)
 endforeach()
 
+# Longer than the 60s the rest get. This entry plays a scenario out to its own
+# end rather than stopping on a tick count, and then has to see the client off.
+# Where the interrupt that stops the server cannot be delivered — Windows —
+# the client leaves on a dead link instead, and that wait is CLIENT_TIMEOUT_TICKS
+# of the client's own ticks, which stretches well past ten seconds on a machine
+# busy running the rest of a -j suite. run.sh bounds its own waits at 97.5s in
+# the worst case; this leaves room for it to report a failure with its logs
+# rather than being killed mid-line, which prints nothing at all.
+set_tests_properties(baseline.wave_swap_udp PROPERTIES TIMEOUT 150)
+
 # ---------------------------------------------------------------------------
 # WinBoloUnitTests — in-process tests of bolo_static / server_sim_static
 # / server_static without the SDL3 GUI. Each test is a registered name

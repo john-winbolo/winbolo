@@ -520,8 +520,8 @@ run_scenario_fast() {
 # below allows.
 #
 # So the run ends on the round's own word. The helper watches the client's
-# event log for the line the scenario ends with, then interrupts the server,
-# which is the clean quit — it publishes the shutdown the client leaves on.
+# event log for the line the scenario ends with, then tells the server to
+# quit on its console, which publishes the shutdown the client leaves on.
 #
 # -ai yesfull is what lets a wave field a seat at all: the spawn arm refuses
 # on a server that runs no bots, and the dedicated server's default is none.
@@ -577,9 +577,36 @@ run_scenario_swap_udp() {
   fi
   export WINBOLO_LOG="net=error,sim=info"
 
-  ds_bin -map "$map" -port 0 -gametype open \
+  # The server is given a live stdin and is not launched -quiet, which puts
+  # processKeys on the branch that reads the console. That is the one road to
+  # a clean stop that works on every platform this suite runs on. A SIGINT
+  # sent from Git-bash to a native Windows process is never delivered, so the
+  # interrupt flag the console loop breaks on is never set there. A "quit"
+  # line breaks the same loop, and the shutdown that follows publishes
+  # CTRL_SERVER_SHUTDOWN with its broadcast - which is what the client leaves
+  # on, about a second later.
+  #
+  # The writer says nothing until the teardown below creates the sentinel
+  # file, and holds the pipe open either way: were it to end first, the
+  # server's reader thread would see EOF and no later line could reach it.
+  # Its own bound is past every wait in this helper, and it goes on its own a
+  # few seconds after it has spoken.
+  #
+  # $! after a background pipeline is the last process in it, which is the
+  # server, and ds_bin execs when it runs in a subshell - so this is the
+  # server's own pid, not a shell wrapping it.
+  local quit_file="$ACTUAL/$name.quit"
+  rm -f "$quit_file"
+  { qw=0
+    while [ ! -f "$quit_file" ] && [ "$qw" -lt 600 ]; do
+      sleep 0.2
+      qw=$((qw + 1))
+    done
+    echo quit
+    sleep 5
+  } | ds_bin -map "$map" -port 0 -gametype open \
             -ai yesfull -brain "$brain" \
-            -nowinbolonet -quiet -threads 1 \
+            -nowinbolonet -threads 1 \
             -logfile "$ACTUAL/$name.dslog" \
             > "$ACTUAL/$name.ds.out" 2> "$ACTUAL/$name.ds.err" &
   local ds_pid=$!
@@ -640,49 +667,36 @@ run_scenario_swap_udp() {
   fi
 
   if [ "$ended" -eq 1 ]; then
-    # The clean quit. SIGINT sets the interrupt the server's console loop
-    # breaks on, and the shutdown that follows publishes CTRL_SERVER_SHUTDOWN
-    # with its broadcast — which is what the client leaves on.
-    kill -INT "$ds_pid" 2>/dev/null || true
-
-    # Windows has no road for that signal. A SIGINT sent from Git-bash to a
-    # native process leaves it running: the console loop's interrupt flag is
-    # never set and no shutdown is broadcast. The server is also launched
-    # -quiet here, which is the processKeys branch that reads no stdin at
-    # all, so there is no "quit" line to send it either.
-    #
-    # So: give the clean quit a couple of seconds, and take the server down
-    # outright if it is still up. The client then leaves on the dead link
-    # instead of on the broadcast, about ten seconds later, which is what the
-    # wait below is sized for. Every check this entry makes has already been
-    # written by the time either road is taken — how the server stopped is
-    # teardown, not what is being measured.
-    #
-    # SIGKILL and not SIGTERM, and only on this road. A plain SIGTERM does
-    # end the server from Git-bash on its own, but one sent after the SIGINT
-    # above does nothing: the server stays up, the client sits waiting for
-    # it, and the wait for the server below never returns. SIGKILL is the one
-    # that still lands. On a platform where the interrupt landed the loop has
-    # already seen the server go, so this line is reached with nothing left
-    # to kill.
+    # Ask the server to quit. The line goes down the pipe opened at launch,
+    # the console loop breaks on it, and the shutdown that follows broadcasts
+    # CTRL_SERVER_SHUTDOWN, which is what the client leaves on.
+    : > "$quit_file"
     local quitWaited=0
-    while kill -0 "$ds_pid" 2>/dev/null && [ "$quitWaited" -lt 2 ]; do
+    while kill -0 "$ds_pid" 2>/dev/null && [ "$quitWaited" -lt 15 ]; do
       sleep 1
       quitWaited=$((quitWaited + 1))
     done
+    # Last resort, and SIGKILL rather than SIGTERM: a server still up after
+    # that is one nothing gentler will stop either, and a SIGTERM that follows
+    # a signal Windows never delivered is swallowed outright. The client then
+    # leaves on the dead link instead, which is slower but still ends the run.
+    # Every check this entry makes has already been written by the time either
+    # road is taken - how the server stopped is teardown, not what is being
+    # measured.
     kill -9 "$ds_pid" 2>/dev/null || true
   fi
 
-  # Shorter than the 40s default, because this entry has already spent the
-  # wait above: 35s of waiting for the end line plus 40s of waiting for the
-  # client is more than the 60s CTest allows the whole entry, and a run killed
-  # by CTest takes the entry's own half-written line with it and prints no
-  # diagnostics at all. 20s covers both roads out — a client leaving on the
-  # shutdown broadcast takes about a second, one leaving on a dead link about
-  # ten — and 35 + 2 + 20 plus the settle still fits inside 60.
-  # await_client reads this by name when it is called, so the caller's local
-  # is the value it uses.
-  local CLIENT_WAIT_LIMIT=20
+  # Sized for the slower of the two roads out. A client leaving on the
+  # shutdown broadcast takes about a second, and that is the road the quit
+  # above takes. One leaving on a dead link instead waits
+  # CLIENT_TIMEOUT_TICKS, which is 1000 of its own ticks and not a wall-clock
+  # span: ten seconds on an idle machine, and considerably longer on a busy
+  # one, because a headless sharing a machine with the rest of a -j run pumps
+  # slower. 60s covers the first road many times over and gives the second a
+  # chance, and this entry carries a CTest timeout of its own to fit it (see
+  # the set_tests_properties beside its add_test). await_client reads this by
+  # name when it is called, so the caller's local is the value it uses.
+  local CLIENT_WAIT_LIMIT=60
   local rc=0
   await_client "$c_pid" "client" || rc=$?
 
@@ -1500,25 +1514,27 @@ dispatch_scenario() {
     # counted at 100/s, so waiting there costs more idle time than the client
     # wait allows. Both were tried and both failed that way.
     #
-    # So the helper waits for the line the scenario ends with and then
-    # interrupts the server, and the client leaves on the shutdown that
-    # follows. The round decides the length of the run. Where the interrupt
-    # cannot be delivered — Windows, where MSYS turns every signal it will
-    # deliver to a native process into TerminateProcess and drops the rest —
-    # the helper takes the server down outright a couple of seconds later and
-    # the client leaves on the dead link instead. See the comment there.
+    # So the helper waits for the line the scenario ends with and then tells
+    # the server to quit on its console, and the client leaves on the shutdown
+    # that follows. The round decides the length of the run. A signal cannot
+    # do that job here: on Windows MSYS turns the few signals it will deliver
+    # to a native process into TerminateProcess and drops the rest, so a
+    # SIGINT never sets the interrupt flag the console loop breaks on, and a
+    # SIGTERM sent after one is swallowed as well. A "quit" line on stdin
+    # breaks the same loop and needs no signal at all, so both platforms take
+    # the same road and the client leaves the same way on each.
     #
     # End to end: about 3s for the client to ready, a 5s countdown, 14s of
-    # scenario, and the shutdown round trip — roughly 27s where the interrupt
-    # lands, about 38s where it does not, against a 60s CTest timeout.
+    # scenario, and the shutdown round trip — roughly 27s.
     #
     # The worst case matters as much as the healthy one, because a run CTest
     # kills prints nothing: the entry's own line is half-written and still in
     # the buffer. The helper's waits are the whole of it — a 0.5s settle after
     # the server reports its port, then up to 35s for the round's end line,
-    # then up to 2s for the interrupted server to go, then up to 20s for the
-    # client to leave. That is 57.5s at the outside, so even a run that hits
-    # every bound reports its own failure with its logs before the 60s is up.
+    # then up to 15s for the quitting server to go, then up to 60s for the
+    # client to leave. That is 110.5s at the outside, so even a run that hits
+    # every bound reports its own failure with its logs inside the 150s the
+    # entry is given.
     #
     # The client's --ticks is a ceiling, not the exit. The headless alternates
     # a keys pass and a game pass at GAME_TICK_LENGTH 10ms, so its game-tick
