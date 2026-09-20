@@ -644,17 +644,45 @@ run_scenario_swap_udp() {
     # breaks on, and the shutdown that follows publishes CTRL_SERVER_SHUTDOWN
     # with its broadcast — which is what the client leaves on.
     kill -INT "$ds_pid" 2>/dev/null || true
+
+    # Windows has no road for that signal. A SIGINT sent from Git-bash to a
+    # native process leaves it running: the console loop's interrupt flag is
+    # never set and no shutdown is broadcast. The server is also launched
+    # -quiet here, which is the processKeys branch that reads no stdin at
+    # all, so there is no "quit" line to send it either.
+    #
+    # So: give the clean quit a couple of seconds, and take the server down
+    # outright if it is still up. The client then leaves on the dead link
+    # instead of on the broadcast, about ten seconds later, which is what the
+    # wait below is sized for. Every check this entry makes has already been
+    # written by the time either road is taken — how the server stopped is
+    # teardown, not what is being measured.
+    #
+    # SIGKILL and not SIGTERM, and only on this road. A plain SIGTERM does
+    # end the server from Git-bash on its own, but one sent after the SIGINT
+    # above does nothing: the server stays up, the client sits waiting for
+    # it, and the wait for the server below never returns. SIGKILL is the one
+    # that still lands. On a platform where the interrupt landed the loop has
+    # already seen the server go, so this line is reached with nothing left
+    # to kill.
+    local quitWaited=0
+    while kill -0 "$ds_pid" 2>/dev/null && [ "$quitWaited" -lt 2 ]; do
+      sleep 1
+      quitWaited=$((quitWaited + 1))
+    done
+    kill -9 "$ds_pid" 2>/dev/null || true
   fi
 
   # Shorter than the 40s default, because this entry has already spent the
   # wait above: 35s of waiting for the end line plus 40s of waiting for the
   # client is more than the 60s CTest allows the whole entry, and a run killed
   # by CTest takes the entry's own half-written line with it and prints no
-  # diagnostics at all. 12s is well past what a client needs to leave on the
-  # shutdown broadcast, and 35 + 12 plus the settle still fits inside 60.
+  # diagnostics at all. 20s covers both roads out — a client leaving on the
+  # shutdown broadcast takes about a second, one leaving on a dead link about
+  # ten — and 35 + 2 + 20 plus the settle still fits inside 60.
   # await_client reads this by name when it is called, so the caller's local
   # is the value it uses.
-  local CLIENT_WAIT_LIMIT=12
+  local CLIENT_WAIT_LIMIT=20
   local rc=0
   await_client "$c_pid" "client" || rc=$?
 
@@ -1474,19 +1502,23 @@ dispatch_scenario() {
     #
     # So the helper waits for the line the scenario ends with and then
     # interrupts the server, and the client leaves on the shutdown that
-    # follows. The round decides the length of the run.
+    # follows. The round decides the length of the run. Where the interrupt
+    # cannot be delivered — Windows, where MSYS turns every signal it will
+    # deliver to a native process into TerminateProcess and drops the rest —
+    # the helper takes the server down outright a couple of seconds later and
+    # the client leaves on the dead link instead. See the comment there.
     #
     # End to end: about 3s for the client to ready, a 5s countdown, 14s of
-    # scenario, and the shutdown round trip — roughly 27s, against a 60s CTest
-    # timeout.
+    # scenario, and the shutdown round trip — roughly 27s where the interrupt
+    # lands, about 38s where it does not, against a 60s CTest timeout.
     #
     # The worst case matters as much as the healthy one, because a run CTest
     # kills prints nothing: the entry's own line is half-written and still in
     # the buffer. The helper's waits are the whole of it — a 0.5s settle after
     # the server reports its port, then up to 35s for the round's end line,
-    # then up to 12s for the client to leave on the shutdown. That is 47.5s at
-    # the outside, so even a run that hits every bound reports its own failure
-    # with its logs before the 60s is up.
+    # then up to 2s for the interrupted server to go, then up to 20s for the
+    # client to leave. That is 57.5s at the outside, so even a run that hits
+    # every bound reports its own failure with its logs before the 60s is up.
     #
     # The client's --ticks is a ceiling, not the exit. The headless alternates
     # a keys pass and a game pass at GAME_TICK_LENGTH 10ms, so its game-tick
