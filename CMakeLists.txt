@@ -3867,6 +3867,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_mapview_overlay.c
     tests/unit/test_map_colours.c
     tests/unit/test_stall_lockout_rebase.c
+    # The catch-up loop behind a hitch, driven without a sim through
+    # serverTickCatchUp (server_lifecycle.c, in with server_static).
+    tests/unit/test_hitch_logged.c
     tests/unit/test_input_catchup.c
     tests/unit/test_input_tick_offset.c
     tests/unit/test_build_harvest_stale.c
@@ -5075,6 +5078,7 @@ set(_unit_test_names
     stall_long_dry_advances
     stall_lockout_rebase
     stall_lockout_rebase_once_per_tick
+    hitch_logged
     input_catchup
     catchup_ignores_redundant_duplicates
     input_tick_offset_adopts_jump

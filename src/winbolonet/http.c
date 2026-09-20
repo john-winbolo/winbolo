@@ -48,6 +48,7 @@
 #include <time.h>
 #include <curl/curl.h>
 #include <SDL3/SDL_thread.h>
+#include <SDL3/SDL_timer.h>
 #include "tweetnacl.h"
 #include "cJSON.h"
 #include "wbn_signing_key.h"
@@ -88,6 +89,27 @@ static long s_logUploadTimeoutOverride = 0;
  * their own per-call handles. */
 static CURL        *s_workerCurl = NULL;
 static SDL_ThreadID s_workerCurlThread = 0;
+
+/* A post or an upload slower than this leaves one line in the log. The
+ * thread is in the line on purpose: these calls belong on the WinBolo.net
+ * worker, and one that ran on the server tick thread stalls the tick for
+ * every connected client for as long as it takes. */
+#define WBN_SLOW_CALL_WARN_MS 100u
+
+/* Report a curl_easy_perform that ran long. startMs is SDL_GetTicks taken
+ * immediately before the perform. */
+static void wbnLogSlowCall(const char *what, Uint64 startMs) {
+  Uint64 elapsedMs = SDL_GetTicks() - startMs;
+  if (elapsedMs > WBN_SLOW_CALL_WARN_MS) {
+    SDL_ThreadID self = SDL_GetCurrentThreadID();
+    WB_LOG_WARN(WB_LOG_CAT_NET, "slow WBN call [%s]: %llu ms on thread %llu%s",
+                what,
+                (unsigned long long)elapsedMs,
+                (unsigned long long)self,
+                (s_workerCurlThread != 0 && self == s_workerCurlThread)
+                    ? " (wbn worker)" : "");
+  }
+}
 
 /*********************************************************
 *NAME:          buildBaseUrl
@@ -503,7 +525,9 @@ static int wbn_api_post_impl(const char *endpoint, const char *json_body,
   WB_LOG_DEBUG(WB_LOG_CAT_NET, "wbn_api_post: POST %s", url);
   wbnLogRedactedJsonDebug(WB_LOG_CAT_NET, "wbn_api_post: body=", json_body);
 
+  Uint64 performStartMs = SDL_GetTicks();
   CURLcode res = curl_easy_perform(curl);
+  wbnLogSlowCall(endpoint, performStartMs);
 
   long http_code = 0;
   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
@@ -760,7 +784,9 @@ bool httpSendLogFile(const char *fileName, char *key, bool wantFeedback) {
     curl_easy_setopt(curl, CURLOPT_INTERFACE, altIpAddress);
   }
 
+  Uint64 performStartMs = SDL_GetTicks();
   CURLcode res = curl_easy_perform(curl);
+  wbnLogSlowCall("log.php upload", performStartMs);
   long httpCode = 0;
   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
   curl_mime_free(mime);
@@ -1039,7 +1065,11 @@ static int wbn_prefs_request_impl(const char *bearerToken, bool is_put,
 
   WB_LOG_DEBUG(WB_LOG_CAT_NET, "wbn_prefs: %s %s", is_put ? "PUT" : "GET", url);
 
+  Uint64 performStartMs = SDL_GetTicks();
   CURLcode res = curl_easy_perform(curl);
+  if (is_put) {
+    wbnLogSlowCall("prefs PUT", performStartMs);
+  }
 
   long http_code = 0;
   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);

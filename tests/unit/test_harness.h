@@ -1702,6 +1702,12 @@ int run_stall_long_dry_advances(void);
 int run_stall_lockout_rebase(void);
 int run_stall_lockout_rebase_once_per_tick(void);
 
+/* Hitch diagnostics (test_hitch_logged.c): the catch-up loop lifted out of
+ * serverGameTimer runs every tick the wall clock owes, logs one line when a
+ * burst is long enough to lock a slot out, logs nothing at the normal
+ * cadence, and stops where a step refuses — the shutdown handshake's shape. */
+int run_hitch_logged(void);
+
 /* Backlog catch-up (test_input_catchup.c): a standing input queue above the
  * jitter target bleeds at +1 input per sub-tick (cap 2 applies/sub-tick) so a
  * jitter-spike backlog drains in ~1s instead of ratcheting input latency;

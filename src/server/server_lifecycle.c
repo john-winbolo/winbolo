@@ -39,6 +39,7 @@
 #include "brain_record.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../common/mp_diag_log.h"
+#include "../common/wb_log.h"
 #include "../winbolonet/winbolonet_server.h"
 #include "threads.h"
 #include "server_sim_internal.h"
@@ -164,6 +165,49 @@ void serverLifecycleGetTickPeak(double *outPeakMs,
 void serverLifecycleResetTickPeak(void) {
   s_peakTickMs      = 0.0;
   s_ticksOverBudget = 0;
+}
+
+uint32_t serverTickCatchUp(uint32_t nowMs, uint32_t *oldTick, uint32_t *ticks,
+                           ServerTickStepFn step, void *ctx) {
+  if (oldTick == NULL || step == NULL) {
+    return 0;
+  }
+
+  /* The debt as it stood on entry, so the warning reports what the callback
+   * was handed rather than the remainder it left behind. */
+  uint32_t debtMs   = nowMs - *oldTick;
+  uint32_t ran      = 0;
+  uint32_t worstMs  = 0;
+
+  while ((nowMs - *oldTick) > SERVER_TICK_LENGTH) {
+    Uint64 stepStart = SDL_GetTicks();
+    uint32_t stepMs;
+    /* The step answers the shutdown flag before it runs anything, so a
+     * teardown raised mid-burst stops here with neither the counter nor
+     * oldTick moved for a tick that did not happen. */
+    if (!step(ctx)) {
+      break;
+    }
+    stepMs = (uint32_t)(SDL_GetTicks() - stepStart);
+    if (stepMs > worstMs) {
+      worstMs = stepMs;
+    }
+    ran++;
+    if (ticks != NULL) {
+      (*ticks)++;
+    }
+    *oldTick += SERVER_TICK_LENGTH;
+  }
+
+  /* One line for the whole burst, outside the loop: a hitch must not turn
+   * into a per-tick write that costs more than the hitch it reports. */
+  if (ran > SERVER_HITCH_WARN_TICKS) {
+    WB_LOG_WARN(WB_LOG_CAT_NET,
+                "tick catch-up: debt %u ms, ran %u ticks, slowest tick %u ms",
+                (unsigned)debtMs, (unsigned)ran, (unsigned)worstMs);
+  }
+
+  return ran;
 }
 
 static void serverLifecycleRecordSimMs(double ms) {
