@@ -779,6 +779,12 @@ int run_reauth_result_stamps_slot(void);
 int run_reauth_result_outruns_grace_stamps_once(void);
 int run_reauth_result_failure_releases_anonymous_join(void);
 int run_reauth_result_lost_still_announces(void);
+/* And the web slot's join code, the last WinBolo.net call that ran on the
+ * tick: resolved off it, cached and stamped when the reply lands, dropped
+ * when the slot was reused meanwhile. */
+int run_reauth_web_code_verified_off_tick(void);
+int run_reauth_web_code_after_slot_reuse_discarded(void);
+int run_reauth_web_code_guest_stays_anonymous(void);
 
 /* Deferred WBN PLAYER_JOIN core (test_wbn_deferred_join.c). The join
  * event is held until the slot's identity is known for the session —

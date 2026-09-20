@@ -5355,6 +5355,9 @@ set(_unit_test_names
     reauth_result_outruns_grace_stamps_once
     reauth_result_failure_releases_anonymous_join
     reauth_result_lost_still_announces
+    reauth_web_code_verified_off_tick
+    reauth_web_code_after_slot_reuse_discarded
+    reauth_web_code_guest_stays_anonymous
     maprotate_restarts_round_and_rearms
     maprotate_boot_does_not_rotate_while_empty
     maprotate_gameover_is_not_terminal

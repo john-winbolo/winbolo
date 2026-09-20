@@ -790,41 +790,54 @@ bool winbolonetApplyVerifyResult(int status, const char *response,
 }
 
 /*********************************************************
-*NAME:          winboloNetVerifyJoinCode
+*NAME:          winbolonetBuildVerifyJoinCodeBody
 *PURPOSE:
-* Resolves a join_code via POST
-* /api/v1/client/verify_join_code. Read-only: it does not
-* consume the code and stores nothing in the slot-keyed
-* winboloNetPlayerKey[] array. On acceptance it reports the
-* resolved player name, login state, country and user id.
+* Builds the client/verify_join_code request body. Shared by
+* the synchronous resolve and the queued one so the two send
+* the same request.
+*
+*ARGUMENTS:
+* joinCode - The code the web client presented
 *********************************************************/
-bool winboloNetVerifyJoinCode(const char *joinCode,
-                              char  *playerNameOut,   /* >= PACKET_MAX_PLAYER_NAME */
-                              bool  *isLoggedInOut,
-                              char  *countryOut,      /* >= 3 (ISO-2 + NUL) */
-                              int   *userIdOut,       /* -1 when null */
-                              char  *errorMsg) {      /* >= 256 */
-  cJSON *body = NULL;
-  cJSON *resp = NULL;
-  int status;
+static cJSON *winbolonetBuildVerifyJoinCodeBody(const char *joinCode) {
+  cJSON *body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
+  cJSON_AddStringToObject(body, "join_code", joinCode);
+  return body;
+}
+
+/*********************************************************
+*NAME:          applyVerifyJoinCodeResponse
+*PURPOSE:
+* Reads one client/verify_join_code reply. Shared by the
+* synchronous winboloNetVerifyJoinCode and the queued
+* winbolonetApplyVerifyJoinCodeResult so the two cannot
+* drift.
+*
+* Read-only: nothing is stored against a slot here, so this
+* is safe to run on whichever thread drains the result. The
+* caller places what comes back.
+*
+*ARGUMENTS:
+* status        - HTTP status, or -1 when the post never sent
+* resp          - Parsed reply, or NULL
+* playerNameOut - Resolved name (>= PACKET_MAX_PLAYER_NAME)
+* isLoggedInOut - Whether the code names an account
+* countryOut    - ISO-2 country (>= 3)
+* userIdOut     - WBN user id, or -1
+* errorMsg      - Filled on refusal (>= 256)
+*********************************************************/
+static bool applyVerifyJoinCodeResponse(int status, cJSON *resp,
+                                        char *playerNameOut,
+                                        bool *isLoggedInOut,
+                                        char *countryOut, int *userIdOut,
+                                        char *errorMsg) {
   bool ok = FALSE;
 
   if (isLoggedInOut) *isLoggedInOut = FALSE;
   if (userIdOut) *userIdOut = -1;
   if (playerNameOut) playerNameOut[0] = '\0';
   if (countryOut) countryOut[0] = '\0';
-
-  if (winboloNetRunning != TRUE || winboloNetServerKey[0] == '\0') {
-    strcpy(errorMsg, "WinBolo.net not running");
-    return FALSE;
-  }
-
-  body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
-  cJSON_AddStringToObject(body, "join_code", joinCode);
-
-  status = wbn_api_call("client/verify_join_code", body, &resp);
-  cJSON_Delete(body);
 
   if (status == 200 && resp) {
     /* "ok" gates acceptance; treat its absence as success so a lean
@@ -872,6 +885,134 @@ bool winboloNetVerifyJoinCode(const char *joinCode,
   } else {
     strcpy(errorMsg, "No response from WinBolo.net");
   }
+
+  return ok;
+}
+
+/*********************************************************
+*NAME:          winboloNetVerifyJoinCode
+*PURPOSE:
+* Resolves a join_code via POST
+* /api/v1/client/verify_join_code. Read-only: it does not
+* consume the code and stores nothing in the slot-keyed
+* winboloNetPlayerKey[] array. On acceptance it reports the
+* resolved player name, login state, country and user id.
+*
+* Posts on the calling thread. Callers on the server tick
+* use winbolonetQueueVerifyJoinCode instead.
+*********************************************************/
+bool winboloNetVerifyJoinCode(const char *joinCode,
+                              char  *playerNameOut,   /* >= PACKET_MAX_PLAYER_NAME */
+                              bool  *isLoggedInOut,
+                              char  *countryOut,      /* >= 3 (ISO-2 + NUL) */
+                              int   *userIdOut,       /* -1 when null */
+                              char  *errorMsg) {      /* >= 256 */
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
+  int status;
+  bool ok;
+
+  if (isLoggedInOut) *isLoggedInOut = FALSE;
+  if (userIdOut) *userIdOut = -1;
+  if (playerNameOut) playerNameOut[0] = '\0';
+  if (countryOut) countryOut[0] = '\0';
+
+  if (winboloNetRunning != TRUE || winboloNetServerKey[0] == '\0') {
+    strcpy(errorMsg, "WinBolo.net not running");
+    return FALSE;
+  }
+
+  body = winbolonetBuildVerifyJoinCodeBody(joinCode);
+  status = wbn_api_call("client/verify_join_code", body, &resp);
+  cJSON_Delete(body);
+
+  ok = applyVerifyJoinCodeResponse(status, resp, playerNameOut, isLoggedInOut,
+                                   countryOut, userIdOut, errorMsg);
+
+  cJSON_Delete(resp);
+  return ok;
+}
+
+/*********************************************************
+*NAME:          winbolonetQueueVerifyJoinCode
+*PURPOSE:
+* Queues the client/verify_join_code winboloNetVerifyJoinCode
+* would post. The reply arrives through
+* winbolonetThreadDrainResults with kind WBN_JOB_VERIFY and
+* is read with winbolonetApplyVerifyJoinCodeResult.
+*
+* Sent without the bearer, as the synchronous resolve is.
+* Nothing is stored against a slot here, so the caller keeps
+* whatever it needs to place the reply.
+*
+* Returns the job id, or 0 when nothing was queued, in which
+* case no result is coming.
+*
+*ARGUMENTS:
+* joinCode - The code the web client presented
+*********************************************************/
+uint32_t winbolonetQueueVerifyJoinCode(const char *joinCode) {
+  cJSON *body = NULL;
+  char *json_str = NULL;
+  uint32_t id = 0;
+
+  if (winboloNetRunning != TRUE || winboloNetServerKey[0] == '\0') {
+    return 0;
+  }
+
+  body = winbolonetBuildVerifyJoinCodeBody(joinCode);
+  json_str = cJSON_PrintUnformatted(body);
+  if (json_str) {
+    id = winbolonetThreadAddJob("client/verify_join_code", json_str,
+                                /*needs_bearer*/ FALSE, WBN_JOB_VERIFY);
+    free(json_str);
+  }
+  cJSON_Delete(body);
+
+  return id;
+}
+
+/*********************************************************
+*NAME:          winbolonetApplyVerifyJoinCodeResult
+*PURPOSE:
+* Reads the reply to a queued client/verify_join_code,
+* exactly as winboloNetVerifyJoinCode reads its own. Stores
+* nothing: the caller places the resolved identity on the
+* slot it queued for, on the thread that drains the result.
+*
+*ARGUMENTS:
+* status        - HTTP status the worker got, or -1
+* response      - Reply body, or NULL
+* playerNameOut - Resolved name (>= PACKET_MAX_PLAYER_NAME)
+* isLoggedInOut - Whether the code names an account
+* countryOut    - ISO-2 country (>= 3)
+* userIdOut     - WBN user id, or -1
+* errorMsg      - Filled on refusal (>= 256)
+*********************************************************/
+bool winbolonetApplyVerifyJoinCodeResult(int status, const char *response,
+                                         char *playerNameOut,
+                                         bool *isLoggedInOut,
+                                         char *countryOut, int *userIdOut,
+                                         char *errorMsg) {
+  cJSON *resp = NULL;
+  bool ok;
+
+  if (isLoggedInOut) *isLoggedInOut = FALSE;
+  if (userIdOut) *userIdOut = -1;
+  if (playerNameOut) playerNameOut[0] = '\0';
+  if (countryOut) countryOut[0] = '\0';
+
+  if (winboloNetRunning != TRUE) {
+    strcpy(errorMsg, "WinBolo.net not running");
+    return FALSE;
+  }
+
+  if (response != NULL) {
+    resp = cJSON_Parse(response);
+  }
+
+  ok = applyVerifyJoinCodeResponse(status, resp, playerNameOut, isLoggedInOut,
+                                   countryOut, userIdOut, errorMsg);
 
   cJSON_Delete(resp);
   return ok;

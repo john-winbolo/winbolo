@@ -17,10 +17,12 @@
  *      code, and stamping the verified name, country and
  *      flags that come back onto its slot.
  *    - The reauth that follows a rekey, including the
- *      provisional name claim it settles.  Its client/verify
- *      runs on the WinBolo.net worker, so the reauth captures
- *      the slot and returns and the stamp happens on a later
- *      tick, out of udpServerApplyReauthResult.
+ *      provisional name claim it settles.  Its verify runs on
+ *      the WinBolo.net worker — client/verify for a native
+ *      slot's player_key, client/verify_join_code for a web
+ *      slot's code — so the reauth captures the slot and
+ *      returns and the stamp happens on a later tick, out of
+ *      udpServerApplyReauthResult.
  *    - Serving a completed round's log: the registered
  *      source the packet handler reads, the per-slot
  *      request limits, and the refusal reply.
@@ -60,9 +62,10 @@
                                                  * WINBOLONET_KEY_LEN,
                                                  * WINBOLO_NET_EVENT_PLAYER_JOIN,
                                                  * WINBOLO_NET_NO_PLAYER */
-#include "../../winbolonet/winbolonet_server.h" /* winboloNetVerifyJoinCode,
-                                                 * winbolonetQueueVerifyClientKey,
+#include "../../winbolonet/winbolonet_server.h" /* winbolonetQueueVerifyClientKey,
                                                  * winbolonetApplyVerifyResult,
+                                                 * winbolonetQueueVerifyJoinCode,
+                                                 * winbolonetApplyVerifyJoinCodeResult,
                                                  * winboloNetIsPlayerParticipant */
 
 /* The registered round-log source. Held outside udpServer so a transport
@@ -171,47 +174,6 @@ void transportUdpServerBroadcastWbnRekey(ServerSim *sim) {
         wbnJoinArm(&udpServer.clients[i].wbnJoin,
                    udpServer.tickCount, WBN_JOIN_REGISTER_GRACE_TICKS);
     }
-}
-
-/* Resolve a WEB (CLIENT_TYPE_WEB) slot's WBN identity from its join_code.
- * Verifies once per connection via the read-only join-code route and caches
- * the result on the slot; later reauths re-stamp from cache with no network
- * call (the code expires at TTL and the server_key rotates between rounds, so
- * a re-verify would fail).  Returns true iff the slot holds a logged-in WBN
- * identity.  WEB joiners are never Steam/supporter-bearing. */
-static bool udpServerResolveWebIdentity(BYTE slot, const char *joinCode,
-                                        bool *isLoggedInOut, bool *hasSteamOut,
-                                        bool *isSupporterOut) {
-    if (hasSteamOut)    *hasSteamOut = FALSE;
-    if (isSupporterOut) *isSupporterOut = FALSE;
-    if (!udpServer.clients[slot].wbnWebIdentityCached) {
-        char nameBuf[PACKET_MAX_PLAYER_NAME];
-        char countryBuf[3];
-        char errorMsg[512];
-        bool isLoggedIn = FALSE;
-        int  userId = -1;
-        nameBuf[0] = '\0';
-        countryBuf[0] = '\0';
-        errorMsg[0] = '\0';
-        if (!winboloNetVerifyJoinCode(joinCode, nameBuf, &isLoggedIn,
-                                      countryBuf, &userId, errorMsg)) {
-            /* Invalid/expired/wrong-server code: fall back to anonymous,
-             * exactly like an empty wbnJoinKey.  Not cached, so a later
-             * reauth with a still-valid code can still succeed. */
-            if (isLoggedInOut) *isLoggedInOut = FALSE;
-            return false;
-        }
-        udpServer.clients[slot].wbnWebIdentityCached = true;
-        udpServer.clients[slot].wbnWebIsLoggedIn = isLoggedIn;
-        snprintf(udpServer.clients[slot].wbnWebName,
-                 PACKET_MAX_PLAYER_NAME, "%s", nameBuf);
-        udpServer.clients[slot].wbnWebCountry[0] = countryBuf[0];
-        udpServer.clients[slot].wbnWebCountry[1] = countryBuf[1];
-        udpServer.clients[slot].wbnWebCountry[2] = '\0';
-        udpServer.clients[slot].wbnWebUserId = userId;
-    }
-    if (isLoggedInOut) *isLoggedInOut = udpServer.clients[slot].wbnWebIsLoggedIn;
-    return udpServer.clients[slot].wbnWebIsLoggedIn;
 }
 
 /* Stamp a logged-in WEB slot's verified identity onto the sim + transport slot
@@ -492,11 +454,42 @@ void udpServerApplyReauthResult(ServerSim *sim, uint32_t id, int status,
     }
 
     errorMsg[0] = '\0';
-    /* The key write winboloNetVerifyClientKey used to do on the calling
-     * thread happens in here, on the tick. */
-    verifyOk = winbolonetApplyVerifyResult(status, response, rc.token, rc.slot,
-                                           errorMsg, &hasSteam,
-                                           &wbnIsSupporter);
+    if (rc.isWeb) {
+        /* The join_code route resolves an identity rather than confirming a
+         * key.  What comes back is the slot's, so it is cached here, on the
+         * tick, the way the key write below is. */
+        char nameBuf[PACKET_MAX_PLAYER_NAME];
+        char countryBuf[3];
+        bool isLoggedIn = FALSE;
+        int  userId = -1;
+        nameBuf[0]    = '\0';
+        countryBuf[0] = '\0';
+        if (winbolonetApplyVerifyJoinCodeResult(status, response, nameBuf,
+                                                &isLoggedIn, countryBuf,
+                                                &userId, errorMsg)) {
+            udpServer.clients[rc.slot].wbnWebIdentityCached = true;
+            udpServer.clients[rc.slot].wbnWebIsLoggedIn = isLoggedIn;
+            snprintf(udpServer.clients[rc.slot].wbnWebName,
+                     PACKET_MAX_PLAYER_NAME, "%s", nameBuf);
+            udpServer.clients[rc.slot].wbnWebCountry[0] = countryBuf[0];
+            udpServer.clients[rc.slot].wbnWebCountry[1] = countryBuf[1];
+            udpServer.clients[rc.slot].wbnWebCountry[2] = '\0';
+            udpServer.clients[rc.slot].wbnWebUserId = userId;
+            /* A code that resolves to a guest verified fine; it just names
+             * nobody, which the stamp reports as the anonymous case. */
+            verifyOk = isLoggedIn;
+        } else {
+            /* Invalid, expired or wrong-server code: leave the slot uncached
+             * so a later reauth with a still-valid code can still succeed. */
+            verifyOk = FALSE;
+        }
+    } else {
+        /* The key write winboloNetVerifyClientKey used to do on the calling
+         * thread happens in here, on the tick. */
+        verifyOk = winbolonetApplyVerifyResult(status, response, rc.token,
+                                               rc.slot, errorMsg, &hasSteam,
+                                               &wbnIsSupporter);
+    }
     udpServerStampReauth(sim, &rc, verifyOk, hasSteam, wbnIsSupporter,
                          errorMsg);
 }
@@ -535,26 +528,29 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
              rc.isPendingClaim ? udpServer.clients[slot].claimDesiredName
                                : udpServer.clients[slot].playerName);
 
-    if (rc.isWeb) {
-        /* WEB clients present a join_code (not a minted player_key); verify it
-         * read-only and cache the identity for the connection's lifetime. */
-        bool hasSteam = FALSE;
-        bool wbnIsSupporter = FALSE;
-        bool verifyOk = udpServerResolveWebIdentity(slot, token, NULL,
-                                                    &hasSteam,
-                                                    &wbnIsSupporter);
-        udpServerStampReauth(sim, &rc, verifyOk, hasSteam, wbnIsSupporter, "");
+    /* A WEB slot's identity is resolved once per connection and cached: the
+     * join_code is single-use and the server_key rotates between rounds, so a
+     * re-verify would fail.  A later reauth re-stamps from the cache and never
+     * reaches the network at all. */
+    if (rc.isWeb && udpServer.clients[slot].wbnWebIdentityCached) {
+        udpServerStampReauth(sim, &rc,
+                             udpServer.clients[slot].wbnWebIsLoggedIn,
+                             /*hasSteam*/ FALSE, /*wbnIsSupporter*/ FALSE, "");
         return;
     }
 
-    /* client/verify is an HTTPS round trip, so it goes to the WinBolo.net
+    /* Both verifies are an HTTPS round trip, so they go to the WinBolo.net
      * worker and the outcome comes back through udpServerApplyReauthResult on
-     * a later tick.  Nothing below this line waits for it. */
-    jobId = winbolonetQueueVerifyClientKey(rc.token, rc.verifyName);
+     * a later tick.  A web slot presents a join_code and takes the read-only
+     * verify_join_code route; a native one presents a minted player_key.
+     * Nothing below this line waits for either. */
+    jobId = rc.isWeb ? winbolonetQueueVerifyJoinCode(rc.token)
+                     : winbolonetQueueVerifyClientKey(rc.token, rc.verifyName);
     if (jobId == 0) {
         WB_LOG_WARN(WB_LOG_CAT_NET,
-                    "[WBN] re-auth for slot %d not queued: client/verify was "
-                    "not taken", (int)slot);
+                    "[WBN] re-auth for slot %d not queued: %s was not taken",
+                    (int)slot,
+                    rc.isWeb ? "client/verify_join_code" : "client/verify");
         return;
     }
     /* One entry per slot: a second reauth while the first is still out

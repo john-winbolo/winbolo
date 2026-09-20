@@ -231,6 +231,49 @@ bool winbolonetApplyVerifyResult(int status, const char *response,
 bool winboloNetVerifyJoinCode(const char *joinCode, char *playerNameOut, bool *isLoggedInOut, char *countryOut, int *userIdOut, char *errorMsg);
 
 /*********************************************************
+*NAME:          winbolonetQueueVerifyJoinCode
+*PURPOSE:
+* Queues the client/verify_join_code winboloNetVerifyJoinCode
+* would post. The reply arrives through
+* winbolonetThreadDrainResults with kind WBN_JOB_VERIFY and
+* is read with winbolonetApplyVerifyJoinCodeResult. Read-only
+* like the synchronous form: nothing is stored against a
+* slot, so the caller keeps what it needs to place the reply.
+*
+* Returns the job id, or 0 when nothing was queued, in which
+* case no result is coming.
+*
+*ARGUMENTS:
+* joinCode - join_code string to resolve
+*********************************************************/
+uint32_t winbolonetQueueVerifyJoinCode(const char *joinCode);
+
+/*********************************************************
+*NAME:          winbolonetApplyVerifyJoinCodeResult
+*PURPOSE:
+* Reads the reply to a queued client/verify_join_code,
+* exactly as winboloNetVerifyJoinCode reads its own, and
+* stores nothing. The caller places the resolved identity on
+* the slot it queued for.
+*
+*ARGUMENTS:
+* status        - HTTP status the worker got, or -1
+* response      - Reply body, or NULL
+* playerNameOut - Output: resolved player name, buffer must be
+*                 >= PACKET_MAX_PLAYER_NAME; set to "" on entry
+* isLoggedInOut - Output: TRUE iff the code belongs to a
+*                 logged-in account; FALSE on entry; may be NULL
+* countryOut    - Output: ISO-2 country code, buffer >= 3
+* userIdOut     - Output: WBN user id, or -1; may be NULL
+* errorMsg      - Buffer (>= 256) for error message on failure
+*********************************************************/
+bool winbolonetApplyVerifyJoinCodeResult(int status, const char *response,
+                                         char *playerNameOut,
+                                         bool *isLoggedInOut,
+                                         char *countryOut, int *userIdOut,
+                                         char *errorMsg);
+
+/*********************************************************
 *NAME:          winboloNetVerifySpectatorKey
 *PURPOSE:
 * Validates a spectator_key received on the JOIN wire via

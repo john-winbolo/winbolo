@@ -719,6 +719,55 @@ uint32_t winbolonetThreadAddUpload(const char *fileName, const char *key) {
   return wbnStubRecordJob("upload");
 }
 
+/* ── client/verify_join_code queue spy (test_reauth_result.c) ───────────
+ * A web slot's reauth presents a join_code and takes the read-only
+ * verify_join_code route, queued for the worker like the key route and
+ * placed by the same handler. Shares wbnStubVerifyJobId and the verify
+ * result-ready flag, so the drain below delivers either kind.
+ *
+ * wbnStubJoinCodeOk defaults FALSE, which is what winboloNetVerifyJoinCode
+ * has always answered here. */
+int      wbnStubJoinCodeQueueCalls = 0;
+char     wbnStubJoinCodeLast[128] = "";
+int      wbnStubApplyJoinCodeCalls = 0;
+bool     wbnStubJoinCodeOk = FALSE;
+bool     wbnStubJoinCodeLoggedIn = FALSE;
+char     wbnStubJoinCodeName[PACKET_MAX_PLAYER_NAME] = "";
+char     wbnStubJoinCodeCountry[3] = "";
+
+uint32_t winbolonetQueueVerifyJoinCode(const char *joinCode) {
+  wbnStubJoinCodeQueueCalls++;
+  SDL_strlcpy(wbnStubJoinCodeLast, joinCode ? joinCode : "",
+              sizeof(wbnStubJoinCodeLast));
+  wbnStubVerifyJobId = wbnStubNextJobId++;
+  return wbnStubVerifyJobId;
+}
+
+bool winbolonetApplyVerifyJoinCodeResult(int status, const char *response,
+                                         char *playerNameOut,
+                                         bool *isLoggedInOut,
+                                         char *countryOut, int *userIdOut,
+                                         char *errorMsg) {
+  (void)status; (void)response;
+  wbnStubApplyJoinCodeCalls++;
+  if (playerNameOut) playerNameOut[0] = '\0';
+  if (isLoggedInOut) *isLoggedInOut   = FALSE;
+  if (countryOut)    countryOut[0]    = '\0';
+  if (userIdOut)    *userIdOut        = -1;
+  if (errorMsg)      errorMsg[0]      = '\0';
+  if (wbnStubJoinCodeOk != TRUE) {
+    if (errorMsg) SDL_strlcpy(errorMsg, "stub join code refused", 256);
+    return FALSE;
+  }
+  if (playerNameOut) {
+    SDL_strlcpy(playerNameOut, wbnStubJoinCodeName, PACKET_MAX_PLAYER_NAME);
+  }
+  if (isLoggedInOut) *isLoggedInOut = wbnStubJoinCodeLoggedIn;
+  if (countryOut)    SDL_strlcpy(countryOut, wbnStubJoinCodeCountry, 3);
+  if (userIdOut)    *userIdOut = 4242;
+  return TRUE;
+}
+
 void winbolonetThreadDrainResults(WbnResultHandler handler, void *ctx) {
   if (handler == NULL) {
     return;

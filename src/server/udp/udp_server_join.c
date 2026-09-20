@@ -872,6 +872,16 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
         char spectatorKey[WINBOLONET_KEY_LEN];
         uint8_t wbnFlags = 0;
         spectatorKey[0] = '\0';
+        /* The guard below cannot currently be true, for the same reason the
+         * player verify's cannot: a spectator_key is minted against the server
+         * key, and a viewer is given an empty one — gamefront.c passes "" for
+         * both the API token and the server key on the spectator connect, and
+         * the mint in transport_udp_client.c requires a non-empty server key.
+         * So wbnJoinKey rides the spectator JOIN empty and every viewer is
+         * admitted anonymously.  Before any handshake change lets a spectator
+         * arrive with a key, this call has to become a job on the WinBolo.net
+         * worker the way the reauth's verify is: it is a synchronous HTTPS
+         * round trip and this is the tick thread. */
         if (winbolonetIsRunning() && wbnJoinKey[0] != '\0') {
             char errorMsg[512];
             bool loggedIn = false;
@@ -973,7 +983,18 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
      * learns the key from the PACKET_WBN_REKEY that follows JOIN_ACCEPT.
      * Before any handshake change lets a key ride the JOIN, this call has to
      * become a job on the WinBolo.net worker, the way the reauth's verify is:
-     * it is a synchronous HTTPS round trip and this is the tick thread. */
+     * it is a synchronous HTTPS round trip and this is the tick thread.
+     *
+     * Such a change also has to reckon with incomingWillAuth, which comes from
+     * JOIN_FLAG_WILL_AUTHENTICATE and is set from the client's wbnApiToken
+     * alone — so a key and that flag can disagree.  A key arriving with the
+     * flag clear breaks two things.  The join announcement below publishes an
+     * immediate anonymous PLAYER_JOIN, and the verify result then publishes a
+     * second keyed one on an arm that was never raised; the hold that keeps
+     * those two apart covers only the grace sweep, and this announcement does
+     * not go through it.  And the joiner's collision drops from an immediate
+     * preempt to JOIN_COLLISION_REJECT_IN_USE, which turns it away instead of
+     * seating it. */
     if (wbnJoinKey[0] != '\0' && winbolonetIsRunning()) {
         char errorMsg[512];
         errorMsg[0] = '\0';

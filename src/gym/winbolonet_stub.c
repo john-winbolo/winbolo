@@ -98,6 +98,28 @@ bool winbolonetApplyVerifyResult(int status, const char *response,
   return FALSE;
 }
 
+/* A web slot's join_code takes the same route: queued for the worker and
+   placed when the reply lands. The gym has no WinBolo.net and no web
+   clients, so nothing is queued and no result ever arrives. */
+uint32_t winbolonetQueueVerifyJoinCode(const char *joinCode) {
+  (void)joinCode;
+  return 0;
+}
+
+bool winbolonetApplyVerifyJoinCodeResult(int status, const char *response,
+                                         char *playerNameOut,
+                                         bool *isLoggedInOut,
+                                         char *countryOut, int *userIdOut,
+                                         char *errorMsg) {
+  (void)status; (void)response;
+  if (playerNameOut) playerNameOut[0] = '\0';
+  if (isLoggedInOut) *isLoggedInOut   = FALSE;
+  if (countryOut)    countryOut[0]    = '\0';
+  if (userIdOut)    *userIdOut        = -1;
+  if (errorMsg)      errorMsg[0]      = '\0';
+  return FALSE;
+}
+
 bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey, char *playerKeyOut, char *errorMsg) {
   (void)apiToken; (void)serverKey; (void)errorMsg;
   if (playerKeyOut) playerKeyOut[0] = '\0';

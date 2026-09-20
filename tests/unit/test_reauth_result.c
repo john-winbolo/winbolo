@@ -98,6 +98,13 @@ extern char     wbnStubPlayerKey[][WINBOLONET_KEY_LEN];
 extern int      wbnStubJoinEventCalls;
 extern uint16_t wbnStubJoinEventMask;
 extern char     wbnStubLastJoinKey[];
+extern int      wbnStubJoinCodeQueueCalls;
+extern char     wbnStubJoinCodeLast[];
+extern int      wbnStubApplyJoinCodeCalls;
+extern bool     wbnStubJoinCodeOk;
+extern bool     wbnStubJoinCodeLoggedIn;
+extern char     wbnStubJoinCodeName[];
+extern char     wbnStubJoinCodeCountry[];
 extern int      wbnStubVerifyQueueCalls;
 extern uint32_t wbnStubVerifyJobId;
 extern char     wbnStubVerifyLastKey[];
@@ -143,6 +150,13 @@ static void rrResetStub(void) {
     wbnStubJoinEventCalls    = 0;
     wbnStubJoinEventMask     = 0;
     wbnStubLastJoinKey[0]    = '\0';
+    wbnStubJoinCodeQueueCalls = 0;
+    wbnStubApplyJoinCodeCalls = 0;
+    wbnStubJoinCodeOk         = FALSE;
+    wbnStubJoinCodeLoggedIn   = FALSE;
+    wbnStubJoinCodeLast[0]    = '\0';
+    wbnStubJoinCodeName[0]    = '\0';
+    wbnStubJoinCodeCountry[0] = '\0';
     wbnStubVerifyLastKey[0]  = '\0';
     wbnStubVerifyLastName[0] = '\0';
     for (i = 0; i < MAX_TANKS; i++) {
@@ -670,6 +684,300 @@ int run_reauth_result_lost_still_announces(void) {
     UT_ASSERT_MSG(wbnStubJoinEventCalls == 1,
                   "the fallback published %d joins in total, expected once - a "
                   "lapsed hold must announce once, not once per tick",
+                  wbnStubJoinEventCalls);
+
+    wbnStubRunning = FALSE;
+    wbnStubServerKey[0] = '\0';
+    rrResetStub();
+    loopbackHarnessStop(&h);
+    return 0;
+}
+
+/* ================================================================ */
+/* The web slot's join code                                          */
+/* ================================================================ */
+
+/* A web client has no libcurl and cannot mint a player_key, so it presents
+ * the single-use join_code it was launched with, raw, in the reauth token.
+ * The server resolves it through the read-only client/verify_join_code route,
+ * which is the last WinBolo.net call that ran on the tick thread. It now takes
+ * the same road as the key route: captured, queued, and placed by
+ * udpServerApplyReauthResult when the reply lands.
+ *
+ * The code resolves an identity rather than confirming a key, so what comes
+ * back is the slot's name and country — WBN-authoritative, because a web
+ * client never sends a name for the backend to bind against. The handler
+ * caches it on the slot, which is why the connId check now matters here: it
+ * did not before, when nothing could move between the resolve and the stamp.
+ *
+ * The join_code the cases present. Nothing parses it; it only has to come back
+ * out of the stub unchanged, which is how the capture is observed. */
+#define RR_JOIN_CODE "jc-0123456789abcdef"
+
+/* The name WinBolo.net resolves the code to. It must be a name the sim will
+ * accept: no -unverified suffix, which playerNameValidate reserves. */
+#define RR_WEB_NAME "Webby"
+#define RR_WEB_COUNTRY "NZ"
+
+static bool rrJoinCodeQueued(LoopbackHarness *h, void *user) {
+    (void)h; (void)user;
+    return wbnStubJoinCodeQueueCalls > 0;
+}
+
+/* Turn the harness client into a web slot and send a reauth carrying a join
+ * code. On return the code is queued and nothing has been stamped. */
+static int rrSetupWebReauth(LoopbackHarness *h, BYTE *outSlot) {
+    ClientCommand cmd;
+    BYTE slot;
+
+    UT_ASSERT_MSG(loopbackHarnessPumpUntil(h, RR_CONNECT_PUMPS,
+                                           rrClientJoined, NULL) > 0,
+                  "the client never finished joining: connect state %d",
+                  (int)clientSimGetConnectState(h->cs));
+    slot = clientSimGetMyPlayerNum(h->cs);
+    UT_ASSERT_MSG(slot < MAX_TANKS,
+                  "the client has no server slot (got %d)", (int)slot);
+
+    rrResetStub();
+    wbnStubRunning = TRUE;
+    SDL_strlcpy(wbnStubServerKey, RR_SERVER_KEY, WINBOLONET_KEY_LEN);
+
+    /* The server reads the slot's clientType to tell a web reauth from a
+     * native one. The harness client reports its own platform, so the slot is
+     * marked here rather than pretending the wire said so. */
+    threadsWaitForMutex();
+    udpServer.clients[slot].clientType = CLIENT_TYPE_WEB;
+    wbnJoinArm(&udpServer.clients[slot].wbnJoin, udpServer.tickCount,
+               WBN_JOIN_REGISTER_GRACE_TICKS);
+    threadsReleaseMutex();
+    wbnStubJoinEventCalls = 0;
+    wbnStubJoinEventMask  = 0;
+
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type = CMD_WBN_REAUTH;
+    SDL_strlcpy(cmd.u.wbnReauth.token, RR_JOIN_CODE,
+                sizeof(cmd.u.wbnReauth.token));
+    clientSimSubmitCommand(h->cs, &cmd);
+
+    UT_ASSERT_MSG(loopbackHarnessPumpUntil(h, 200, rrJoinCodeQueued, NULL) > 0,
+                  "the web REAUTH never reached the server: %d join codes "
+                  "queued", wbnStubJoinCodeQueueCalls);
+
+    *outSlot = slot;
+    return 0;
+}
+
+/* The code is resolved off the tick, and the identity it names is stamped when
+ * the reply lands — not before. */
+int run_reauth_web_code_verified_off_tick(void) {
+    LoopbackHarness h;
+    BYTE slot = MAX_TANKS;
+    uint8_t flags;
+    char nameAfter[PACKET_MAX_PLAYER_NAME];
+    int i;
+
+    memset(&h, 0, sizeof(h));
+    UT_ASSERT(loopbackHarnessStart(&h, RR_JOIN_NAME, /*lobbyMode*/ true,
+                                   NULL, /*seed*/ 6301));
+    UT_ASSERT(rrSetupWebReauth(&h, &slot) == 0);
+
+    /* Queued verbatim, and down the join-code road rather than the key one. */
+    UT_ASSERT_MSG(strcmp(wbnStubJoinCodeLast, RR_JOIN_CODE) == 0,
+                  "client/verify_join_code was queued with '%s', expected '%s'",
+                  wbnStubJoinCodeLast, RR_JOIN_CODE);
+    UT_ASSERT_MSG(wbnStubVerifyQueueCalls == 0,
+                  "a web reauth queued %d client/verify posts, expected none - "
+                  "a join code must not take the player_key route",
+                  wbnStubVerifyQueueCalls);
+
+    /* Nothing stamped on the tick that queued it. */
+    threadsWaitForMutex();
+    flags = playersGetClientFlags(&serverSimGetGameSim(h.sim)->plyrs, slot);
+    threadsReleaseMutex();
+    UT_ASSERT_MSG((flags & PLAYER_FLAG_WBN_VERIFIED) == 0,
+                  "slot %d was stamped verified on the tick that queued the "
+                  "join code (flags 0x%02x)", (int)slot, (unsigned)flags);
+    UT_ASSERT_MSG(udpServer.clients[slot].wbnWebIdentityCached == false,
+                  "slot %d cached a web identity before the reply came back",
+                  (int)slot);
+    UT_ASSERT_MSG(wbnStubJoinEventCalls == 0,
+                  "the deferred join fired %d times before the reply came back",
+                  wbnStubJoinEventCalls);
+
+    /* WinBolo.net resolves the code to a logged-in account. */
+    wbnStubJoinCodeOk       = TRUE;
+    wbnStubJoinCodeLoggedIn = TRUE;
+    SDL_strlcpy(wbnStubJoinCodeName, RR_WEB_NAME, PACKET_MAX_PLAYER_NAME);
+    SDL_strlcpy(wbnStubJoinCodeCountry, RR_WEB_COUNTRY, 3);
+    wbnStubVerifyResultReady = TRUE;
+    loopbackHarnessPump(&h);
+    loopbackHarnessPump(&h);
+
+    UT_ASSERT_MSG(wbnStubApplyJoinCodeCalls == 1,
+                  "the join-code reply was read %d times, expected once",
+                  wbnStubApplyJoinCodeCalls);
+
+    threadsWaitForMutex();
+    flags = playersGetClientFlags(&serverSimGetGameSim(h.sim)->plyrs, slot);
+    SDL_strlcpy(nameAfter, udpServer.clients[slot].playerName,
+                sizeof(nameAfter));
+    threadsReleaseMutex();
+
+    UT_ASSERT_MSG(udpServer.clients[slot].wbnWebIdentityCached == true,
+                  "slot %d did not cache the resolved web identity", (int)slot);
+    UT_ASSERT_MSG(udpServer.clients[slot].wbnWebIsLoggedIn == true,
+                  "slot %d was not recorded as logged in", (int)slot);
+    UT_ASSERT_MSG((flags & PLAYER_FLAG_WBN_VERIFIED) != 0,
+                  "slot %d did not gain PLAYER_FLAG_WBN_VERIFIED within two "
+                  "pumps of the reply (flags 0x%02x)",
+                  (int)slot, (unsigned)flags);
+    UT_ASSERT_MSG(strcmp(nameAfter, RR_WEB_NAME) == 0,
+                  "slot %d is named '%s', expected the WBN-resolved '%s' - the "
+                  "server, not the client, decides a web slot's name",
+                  (int)slot, nameAfter, RR_WEB_NAME);
+    UT_ASSERT_MSG(strcmp(udpServer.clients[slot].countryCode,
+                         RR_WEB_COUNTRY) == 0,
+                  "slot %d has country '%s', expected '%s'",
+                  (int)slot, udpServer.clients[slot].countryCode,
+                  RR_WEB_COUNTRY);
+    UT_ASSERT_MSG(wbnStubJoinEventCalls == 1,
+                  "the deferred PLAYER_JOIN fired %d times, expected once",
+                  wbnStubJoinEventCalls);
+
+    for (i = 0; i < 10; i++) loopbackHarnessPump(&h);
+    UT_ASSERT_MSG(wbnStubJoinEventCalls == 1,
+                  "the join was published %d times in total, expected once",
+                  wbnStubJoinEventCalls);
+
+    wbnStubRunning = FALSE;
+    wbnStubServerKey[0] = '\0';
+    rrResetStub();
+    loopbackHarnessStop(&h);
+    return 0;
+}
+
+/* The slot can be freed and handed to somebody else while the code is out.
+ * Stamping the previous occupant's WinBolo.net identity onto the new player is
+ * what the connId check prevents — a check this path did not need while the
+ * resolve ran inline on one tick. */
+int run_reauth_web_code_after_slot_reuse_discarded(void) {
+    LoopbackHarness h;
+    BYTE slot = MAX_TANKS;
+    uint8_t flags;
+    int i;
+
+    memset(&h, 0, sizeof(h));
+    UT_ASSERT(loopbackHarnessStart(&h, RR_JOIN_NAME, /*lobbyMode*/ true,
+                                   NULL, /*seed*/ 6302));
+    UT_ASSERT(rrSetupWebReauth(&h, &slot) == 0);
+
+    threadsWaitForMutex();
+    flags = playersGetClientFlags(&serverSimGetGameSim(h.sim)->plyrs, slot);
+    udpServer.clients[slot].connId ^= 0xa5a5a5a5ULL;   /* a new occupant */
+    threadsReleaseMutex();
+
+    wbnStubJoinCodeOk       = TRUE;
+    wbnStubJoinCodeLoggedIn = TRUE;
+    SDL_strlcpy(wbnStubJoinCodeName, RR_WEB_NAME, PACKET_MAX_PLAYER_NAME);
+    SDL_strlcpy(wbnStubJoinCodeCountry, RR_WEB_COUNTRY, 3);
+    wbnStubVerifyResultReady = TRUE;
+
+    rrCaptureBegin();
+    loopbackHarnessPump(&h);
+    loopbackHarnessPump(&h);
+    rrCaptureEnd();
+
+    UT_ASSERT_MSG(wbnStubApplyJoinCodeCalls == 0,
+                  "the connId check must run before the reply is read (the "
+                  "reply was read %d times)", wbnStubApplyJoinCodeCalls);
+    UT_ASSERT_MSG(udpServer.clients[slot].wbnWebIdentityCached == false,
+                  "slot %d cached a web identity from a discarded result",
+                  (int)slot);
+    UT_ASSERT_MSG(strcmp(udpServer.clients[slot].playerName,
+                         RR_WEB_NAME) != 0,
+                  "slot %d was renamed to '%s' by a discarded result",
+                  (int)slot, udpServer.clients[slot].playerName);
+    UT_ASSERT_MSG(s_netWarnings == 1,
+                  "the discard must write exactly one log line (wrote %d, last "
+                  "'%s')", s_netWarnings, s_lastWarning);
+
+    for (i = 0; i < 5; i++) loopbackHarnessPump(&h);
+    {
+        uint8_t flagsAfter;
+        threadsWaitForMutex();
+        flagsAfter = playersGetClientFlags(&serverSimGetGameSim(h.sim)->plyrs,
+                                           slot);
+        threadsReleaseMutex();
+        UT_ASSERT_MSG(flagsAfter == flags,
+                      "slot %d flags changed on a discarded result: "
+                      "0x%02x -> 0x%02x",
+                      (int)slot, (unsigned)flags, (unsigned)flagsAfter);
+    }
+
+    wbnStubRunning = FALSE;
+    wbnStubServerKey[0] = '\0';
+    rrResetStub();
+    loopbackHarnessStop(&h);
+    return 0;
+}
+
+/* A code that resolves to a guest verified fine — it just names nobody. The
+ * slot caches that (so a later reauth does not re-ask) and stays unverified,
+ * and the join is announced the way an unidentified one always was. */
+int run_reauth_web_code_guest_stays_anonymous(void) {
+    LoopbackHarness h;
+    BYTE slot = MAX_TANKS;
+    uint8_t flags;
+    int i;
+
+    memset(&h, 0, sizeof(h));
+    UT_ASSERT(loopbackHarnessStart(&h, RR_JOIN_NAME, /*lobbyMode*/ true,
+                                   NULL, /*seed*/ 6303));
+    UT_ASSERT(rrSetupWebReauth(&h, &slot) == 0);
+
+    /* Put the anonymous deadline on this tick so the fallback is free to fire
+     * the moment the hold lifts. */
+    threadsWaitForMutex();
+    wbnJoinArm(&udpServer.clients[slot].wbnJoin, udpServer.tickCount, 0);
+    threadsReleaseMutex();
+
+    for (i = 0; i < 10; i++) loopbackHarnessPump(&h);
+    UT_ASSERT_MSG(wbnStubJoinEventCalls == 0,
+                  "the fallback published %d joins while the join code was "
+                  "still outstanding, expected none", wbnStubJoinEventCalls);
+
+    /* Resolved, but to a guest. */
+    wbnStubJoinCodeOk       = TRUE;
+    wbnStubJoinCodeLoggedIn = FALSE;
+    wbnStubVerifyResultReady = TRUE;
+    for (i = 0; i < 3; i++) loopbackHarnessPump(&h);
+
+    UT_ASSERT_MSG(wbnStubApplyJoinCodeCalls == 1,
+                  "the join-code reply was read %d times, expected once",
+                  wbnStubApplyJoinCodeCalls);
+    UT_ASSERT_MSG(udpServer.clients[slot].wbnWebIdentityCached == true,
+                  "slot %d must cache a guest resolve too - a later reauth "
+                  "must not re-ask", (int)slot);
+    UT_ASSERT_MSG(udpServer.clients[slot].wbnWebIsLoggedIn == false,
+                  "slot %d was recorded as logged in for a guest code",
+                  (int)slot);
+
+    threadsWaitForMutex();
+    flags = playersGetClientFlags(&serverSimGetGameSim(h.sim)->plyrs, slot);
+    threadsReleaseMutex();
+    UT_ASSERT_MSG((flags & PLAYER_FLAG_WBN_VERIFIED) == 0,
+                  "slot %d was stamped verified by a guest code (flags 0x%02x)",
+                  (int)slot, (unsigned)flags);
+    UT_ASSERT_MSG(wbnStubJoinEventCalls == 1,
+                  "the fallback published %d joins after the guest resolve, "
+                  "expected once", wbnStubJoinEventCalls);
+    UT_ASSERT_MSG(wbnStubLastJoinKey[0] == '\0',
+                  "the join went out under key '%s', expected none - a guest "
+                  "names no account", wbnStubLastJoinKey);
+
+    for (i = 0; i < 10; i++) loopbackHarnessPump(&h);
+    UT_ASSERT_MSG(wbnStubJoinEventCalls == 1,
+                  "the join was published %d times in total, expected once",
                   wbnStubJoinEventCalls);
 
     wbnStubRunning = FALSE;
