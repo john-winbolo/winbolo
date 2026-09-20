@@ -347,7 +347,7 @@ bool meScenarioPackIntoMap(const ScenarioManifest *m, const char *script,
 bool meScenarioWriteMod(const ScenarioManifest *m, const char *script,
                         size_t scriptLen, const char *modPath,
                         char *err, size_t errLen) {
-    ScenarioManifest mod;
+    ScenarioManifest *mod;
     ScnManifestDoc  *doc       = NULL;
     char            *json      = NULL;
     uint8_t         *container = NULL;
@@ -369,9 +369,16 @@ bool meScenarioWriteMod(const ScenarioManifest *m, const char *script,
         return false;
     }
 
-    meScenarioModManifest(m, &mod);
-
-    doc = scnManifestFromValues(&mod, err, errLen);
+    /* The mod's copy lives only as long as it takes to build the document,
+       and on the heap: a manifest is more than this frame should hold. */
+    mod = (ScenarioManifest *)malloc(sizeof(*mod));
+    if (mod == NULL) {
+        mePackErr(err, errLen, "out of memory");
+        return false;
+    }
+    meScenarioModManifest(m, mod);
+    doc = scnManifestFromValues(mod, err, errLen);
+    free(mod);
     if (doc == NULL) {
         return false;
     }

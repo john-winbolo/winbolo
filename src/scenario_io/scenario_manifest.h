@@ -157,9 +157,10 @@ typedef struct {
  * shape a file states, not a statement that the file is playable. */
 
 /* How many triggers one scenario may declare, and how many tests and actions
- * one of them carries. Sized against what the whole struct costs: it is held
- * by value in eight places and a validate result holding one is a stack local
- * in two. */
+ * one of them carries. Sized against what the whole struct costs, which at
+ * this cap is some 180 KB: the host, the editor's form and a validate result
+ * each hold one by value, and every one of those lives on the heap. A frame
+ * that needs a manifest of its own allocates it rather than declaring it. */
 #define SCN_TRIGGERS_MAX         64
 #define SCN_TRIGGER_CONDS_MAX     4
 #define SCN_TRIGGER_ACTIONS_MAX   4

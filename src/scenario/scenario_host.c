@@ -3595,7 +3595,7 @@ static void scnSeedTeams(ScenarioHost *h) {
  * placement onward. */
 static void scnRoundBootLocked(ScenarioHost *h) {
     lua_State       *L;
-    ScenarioManifest fresh;
+    ScenarioManifest *fresh;
     ScnParseReport   rep;
     char             err[SCN_ERR_LEN];
     char             why[SCN_ERR_LEN];
@@ -3626,6 +3626,17 @@ static void scnRoundBootLocked(ScenarioHost *h) {
         scnRoundWithoutScenario(h);
         return;
     }
+    /* The table this round reads, off the stack: a manifest is more than a
+       tick's frame should hold, and h->manifest stays the last round's until
+       every check below has passed. */
+    fresh = (ScenarioManifest *)malloc(sizeof(*fresh));
+    if (fresh == NULL) {
+        scnSay(h->lastError, sizeof(h->lastError),
+               "scenario: no memory for this round's table");
+        scnCloseVm(L);
+        scnRoundWithoutScenario(h);
+        return;
+    }
     rep.soft    = h->lastError;
     rep.softLen = sizeof(h->lastError);
     rep.sink    = NULL;
@@ -3641,9 +3652,10 @@ static void scnRoundBootLocked(ScenarioHost *h) {
        installed after it would be referred to by nobody. Its failure is the
        scenario's, and reads like a chunk that would not load. */
     if (!scnRunChunk(L, h->src, h->srcLen, h->chunkName, err, sizeof(err)) ||
-        !scnReadManifest(L, &fresh, h->script, err, sizeof(err), &rep) ||
-        !scnInstallTriggers(L, &fresh, err, sizeof(err))) {
+        !scnReadManifest(L, fresh, h->script, err, sizeof(err), &rep) ||
+        !scnInstallTriggers(L, fresh, err, sizeof(err))) {
         scnSay(h->lastError, sizeof(h->lastError), "%s", err);
+        free(fresh);
         scnCloseVm(L);
         scnRoundWithoutScenario(h);
         return;
@@ -3652,18 +3664,20 @@ static void scnRoundBootLocked(ScenarioHost *h) {
        attach made this same test, so a round reaching it is one whose script
        computes its table rather than writing it down. */
     if (h->fromPackage &&
-        !scnManifestAgrees(&h->pkgManifest, &fresh, key, sizeof(key),
+        !scnManifestAgrees(&h->pkgManifest, fresh, key, sizeof(key),
                            why, sizeof(why))) {
         scnDisagreed(err, sizeof(err), why, key);
         scnSay(h->lastError, sizeof(h->lastError), "%s", err);
+        free(fresh);
         scnCloseVm(L);
         scnRoundWithoutScenario(h);
         return;
     }
-    if (fresh.api > SCENARIO_API_VERSION) {
+    if (fresh->api > SCENARIO_API_VERSION) {
         scnSay(h->lastError, sizeof(h->lastError),
                "scenario: %s asks for api %d and this server is api %d",
-               h->script, fresh.api, SCENARIO_API_VERSION);
+               h->script, fresh->api, SCENARIO_API_VERSION);
+        free(fresh);
         scnCloseVm(L);
         scnRoundWithoutScenario(h);
         return;
@@ -3676,7 +3690,8 @@ static void scnRoundBootLocked(ScenarioHost *h) {
     /* The whole table, read from the script's bytes again — which is how a
        region the last round defined stops existing without anything here
        having to remove it. */
-    h->manifest = fresh;
+    h->manifest = *fresh;
+    free(fresh);
     scnHooksResolve(h, L);
 
     /* Off for a round is off for that round alone. This one starts with the
@@ -4260,17 +4275,21 @@ typedef struct {
     char            *src;        /* the script; the caller frees it */
     size_t           srcLen;
     bool             fromPackage;
-    /* The container's manifest, for a script that came out of one. Zero for a
-     * loose script, which has no manifest but the table it declares. */
-    ScenarioManifest manifest;
+    /* The container's manifest, for a script that came out of one, and NULL
+     * for a loose script, which has no manifest but the table it declares.
+     * On the heap rather than in the struct: a manifest is more than a frame
+     * should hold, and this struct is a local in every caller. */
+    ScenarioManifest *manifest;
     char             script[SCN_SCRIPT_PATH_MAX];   /* the file that was read */
     char             entry[SCN_MANIFEST_ENTRY_LEN]; /* "" for a loose script */
 } ScnScriptSource;
 
 static void scnSourceDrop(ScnScriptSource *s) {
     free(s->src);
-    s->src    = NULL;
-    s->srcLen = 0;
+    free(s->manifest);
+    s->src      = NULL;
+    s->srcLen   = 0;
+    s->manifest = NULL;
 }
 
 /* The name Lua puts at the front of every message the chunk raises. The
@@ -4423,11 +4442,16 @@ static bool scnScriptFromPackage(ScnPackage *p, const char *from,
 
     /* scnPackageReadEntry hands back a malloc'd buffer with a 0 past the
        content, which is what the script's bytes are kept as either way. */
+    out->manifest = (ScenarioManifest *)malloc(sizeof(*out->manifest));
+    if (out->manifest == NULL) {
+        scnFmt(err, errLen, "scenario: out of memory");
+        goto done;
+    }
+    *out->manifest   = *scnManifestValues(doc);
     out->src         = (char *)luaBytes;
     out->srcLen      = luaLen;
     luaBytes         = NULL;
     out->fromPackage = true;
-    out->manifest    = *scnManifestValues(doc);
     snprintf(out->script, sizeof(out->script), "%s", from);
     snprintf(out->entry, sizeof(out->entry), "%s", entry);
     ok = true;
@@ -4650,7 +4674,6 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
     char             soft[SCN_ERR_LEN];
     char             why[SCN_ERR_LEN];
     char             key[SCN_VALIDATE_KEY_LEN];
-    ScenarioManifest m;
     ScnParseReport   rep;
     ScenarioHost    *h;
     lua_State       *L;
@@ -4716,17 +4739,20 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
        one may therefore declare no table of its own; a loose script gets
        nothing pushed and declares its own, as it always has. */
     if (from->fromPackage) {
-        scnPushManifestGlobal(L, &from->manifest);
+        scnPushManifestGlobal(L, from->manifest);
     }
-    /* And the router, on the state the attach reads the table in. No hook is
+    /* The table is read straight into the host: it is this call's own until
+       the registrations at the bottom, and every path out before them frees
+       it, so nothing sees a half-read table and no second copy is held.
+       And the router, on the state the attach reads the table in. No hook is
        dispatched off this one — the hooks belong to a round's VM and the
        first round start resolves them — so what this settles is that the
        router loads at all, said here rather than at the first round start.
        A scenario whose triggers cannot be installed is refused the way one
        whose chunk will not load is. */
     if (!scnRunChunk(L, from->src, from->srcLen, chunkName, err, errLen) ||
-        !scnReadManifest(L, &m, from->script, err, errLen, &rep) ||
-        !scnInstallTriggers(L, &m, err, errLen)) {
+        !scnReadManifest(L, &h->manifest, from->script, err, errLen, &rep) ||
+        !scnInstallTriggers(L, &h->manifest, err, errLen)) {
         scnCloseVm(L);
         scnLockDestroy(&h->lock);
         free(h);
@@ -4739,7 +4765,7 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
        refused here, by key, rather than playing a scenario the package does
        not describe. */
     if (from->fromPackage &&
-        !scnManifestAgrees(&from->manifest, &m, key, sizeof(key), why,
+        !scnManifestAgrees(from->manifest, &h->manifest, key, sizeof(key), why,
                            sizeof(why))) {
         scnDisagreed(err, errLen, why, key);
         scnCloseVm(L);
@@ -4748,11 +4774,11 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
         scnSourceDrop(from);
         return NULL;
     }
-    if (m.api > SCENARIO_API_VERSION) {
+    if (h->manifest.api > SCENARIO_API_VERSION) {
         scnFmt(err, errLen,
                "scenario: %s asks for api %d and this server is api %d — "
                "the server is too old to run it",
-               from->script, m.api, SCENARIO_API_VERSION);
+               from->script, h->manifest.api, SCENARIO_API_VERSION);
         scnCloseVm(L);
         scnLockDestroy(&h->lock);
         free(h);
@@ -4767,7 +4793,7 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
        the one place every other way in — a console, a startup flag, a test —
        meets the same answer. A map's own scenario is untouched: it is bound
        precisely because it belongs to the map it arrived with. */
-    if (source == lobbyScenarioMod && m.bound) {
+    if (source == lobbyScenarioMod && h->manifest.bound) {
         scnFmt(err, errLen,
                "scenario: %s is bound to its own map, so it cannot be played "
                "over another one", from->script);
@@ -4779,11 +4805,14 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
     }
 
     h->L           = L;
-    h->manifest    = m;
     h->src         = from->src;
     h->srcLen      = from->srcLen;
     h->fromPackage = from->fromPackage;
-    h->pkgManifest = from->manifest;
+    if (from->manifest != NULL) {
+        h->pkgManifest = *from->manifest;
+        free(from->manifest);
+        from->manifest = NULL;
+    }
     h->active      = true;
     snprintf(h->lastError, sizeof(h->lastError), "%s", soft);
 
@@ -4815,7 +4844,7 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
        script has the loop the server console already has. */
     serverSimSetScenarioReload(sim, scnReloadCb, h);
     serverSimSetScenarioPolicy(sim, &h->policy);
-    scnHandLobbyOver(sim, &m, source, scnFileNameOf(h->script));
+    scnHandLobbyOver(sim, &h->manifest, source, scnFileNameOf(h->script));
 
     /* The bus, in three steps and in this order. Registration hands the new
        subscriber the whole of the current server state through the control
@@ -4940,7 +4969,7 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     char             chunkName[SCN_SCRIPT_PATH_MAX + 2];
     const char      *name;
     ScnScriptSource  from;
-    ScenarioManifest m;
+    ScenarioManifest *m;
     ScnParseReport   rep;
     ScnLuaCtx        check;
     lua_State       *L;
@@ -5007,14 +5036,21 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
        out whether the file loads, and a file that reads the sim as it loads
        has to be able to. The console command holds the server mutex across
        the whole reload, so those reads see one picture of the round. */
-    memset(&m, 0, sizeof(m));   /* the chunk can read it before it is read */
+    /* Off the stack, and zeroed: the chunk can read it before it is read. */
+    m = (ScenarioManifest *)calloc(1, sizeof(*m));
+    if (m == NULL) {
+        scnFmt(err, errLen, "scenario: no memory for the table");
+        scnSourceDrop(&from);
+        return false;
+    }
     check.sim       = h->sim;
-    check.manifest  = &m;
+    check.manifest  = m;
     check.timers    = NULL;
     check.checkOnly = true;
     L = scnBootVmWith(&check);
     if (L == NULL) {
         scnFmt(err, errLen, "scenario: no memory for a Lua state");
+        free(m);
         scnSourceDrop(&from);
         return false;
     }
@@ -5027,32 +5063,35 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
        state does, so a packaged script that declares none is checked as it
        will be run rather than turned down for a table it never writes. */
     if (from.fromPackage) {
-        scnPushManifestGlobal(L, &from.manifest);
+        scnPushManifestGlobal(L, from.manifest);
     }
     /* The router as well, so a reload answers for the whole of what a round
        start would do with the file rather than for the script alone. This
        state is closed a few lines down and dispatches nothing, so what the
        call settles here is that the install goes through. */
     if (!scnRunChunk(L, from.src, from.srcLen, chunkName, err, errLen) ||
-        !scnReadManifest(L, &m, name, err, errLen, &rep) ||
-        !scnInstallTriggers(L, &m, err, errLen)) {
+        !scnReadManifest(L, m, name, err, errLen, &rep) ||
+        !scnInstallTriggers(L, m, err, errLen)) {
+        free(m);
         scnCloseVm(L);
         scnSourceDrop(&from);
         return false;
     }
     if (from.fromPackage &&
-        !scnManifestAgrees(&from.manifest, &m, key, sizeof(key), why,
+        !scnManifestAgrees(from.manifest, m, key, sizeof(key), why,
                            sizeof(why))) {
         scnDisagreed(err, errLen, why, key);
+        free(m);
         scnCloseVm(L);
         scnSourceDrop(&from);
         return false;
     }
-    if (m.api > SCENARIO_API_VERSION) {
+    if (m->api > SCENARIO_API_VERSION) {
         scnFmt(err, errLen,
                "scenario: %s asks for api %d and this server is api %d — "
                "the server is too old to run it",
-               name, m.api, SCENARIO_API_VERSION);
+               name, m->api, SCENARIO_API_VERSION);
+        free(m);
         scnCloseVm(L);
         scnSourceDrop(&from);
         return false;
@@ -5061,10 +5100,11 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
        map is committed, and a mod edited on disk to say it is bound was
        written for a map of its own. Without this a reload would seat over any
        map a table the attach would have turned away. */
-    if (h->source == lobbyScenarioMod && m.bound) {
+    if (h->source == lobbyScenarioMod && m->bound) {
         scnFmt(err, errLen,
                "scenario: %s is bound to its own map, so it cannot be played "
                "over another one", name);
+        free(m);
         scnCloseVm(L);
         scnSourceDrop(&from);
         return false;
@@ -5090,7 +5130,11 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     h->src         = from.src;
     h->srcLen      = from.srcLen;
     h->fromPackage = from.fromPackage;
-    h->pkgManifest = from.manifest;
+    if (from.manifest != NULL) {
+        h->pkgManifest = *from.manifest;
+    } else {
+        memset(&h->pkgManifest, 0, sizeof(h->pkgManifest));
+    }
     snprintf(h->script, sizeof(h->script), "%s", from.script);
     scnChunkNameOf(&from, from.script, h->chunkName, sizeof(h->chunkName));
     snprintf(h->lastError, sizeof(h->lastError), "%s", soft);
@@ -5107,7 +5151,9 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
        the table it started with, and the round start reads the new one from
        the bytes swapped above. What changes here is what the lobby is told,
        which is not the running round's to keep. */
-    scnHandLobbyOver(h->sim, &m, h->source, scnFileNameOf(from.script));
+    scnHandLobbyOver(h->sim, m, h->source, scnFileNameOf(from.script));
+    free(m);
+    free(from.manifest);
     /* Seated only from the lobby. The template is data either way and goes
        over above whatever the server is doing, but building the seats and
        moving the game type onto a round already running would change a game

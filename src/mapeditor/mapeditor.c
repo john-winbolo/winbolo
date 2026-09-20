@@ -2400,18 +2400,27 @@ static bool meSaveToPath(MapEditorState *ed, const char *path) {
  * whether there is a loose script and leave the form empty for this to fill.
  * A plain map is the ordinary case and says nothing. */
 static void meLoadPackedScenario(MapEditorState *ed, const char *path) {
-    ScenarioManifest packed;
-    char            *script    = NULL;
-    size_t           scriptLen = 0;
-    bool             found     = false;
-    char             err[ME_SCENARIO_PACK_ERR_LEN];
-    char             line[256];
+    ScenarioManifest *packed;
+    char             *script    = NULL;
+    size_t            scriptLen = 0;
+    bool              found     = false;
+    char              err[ME_SCENARIO_PACK_ERR_LEN];
+    char              line[256];
 
     if (path == NULL || path[0] == '\0') {
         return;
     }
 
-    if (!meScenarioReadFromMap(path, &packed, &script, &scriptLen, &found, err,
+    /* On the heap rather than the stack, for the reason meWriteScenario's
+     * copy is: a manifest is more than this frame should hold. */
+    packed = (ScenarioManifest *)malloc(sizeof(*packed));
+    if (packed == NULL) {
+        meScenarioSetStatus(&ed->scn,
+                            langGetText(STR_MAPEDIT_SCENARIO_PACK_READ_FAILED));
+        return;
+    }
+
+    if (!meScenarioReadFromMap(path, packed, &script, &scriptLen, &found, err,
                                sizeof(err))) {
         /* The map itself read, so this is a container that would not open
          * rather than a map that would not. It goes on the panel's status line
@@ -2419,13 +2428,15 @@ static void meLoadPackedScenario(MapEditorState *ed, const char *path) {
         snprintf(line, sizeof(line), "%s: %s",
                  langGetText(STR_MAPEDIT_SCENARIO_PACK_READ_FAILED), err);
         meScenarioSetStatus(&ed->scn, line);
+        free(packed);
         return;
     }
     if (!found) {
+        free(packed);
         return;
     }
 
-    ed->scnForm.manifest = packed;
+    ed->scnForm.manifest = *packed;
     ed->scnForm.dirty    = false;
 
     if (!ed->scn.fileOnDisk && script != NULL) {
@@ -2433,8 +2444,9 @@ static void meLoadPackedScenario(MapEditorState *ed, const char *path) {
     }
     /* Kept so a map save can put the chunk back: mapWrite truncates the file.
      * These are the bytes that were on it, not what the forms now hold. */
-    meScenarioPackedSet(&ed->scnPacked, &packed, script, scriptLen);
+    meScenarioPackedSet(&ed->scnPacked, packed, script, scriptLen);
     free(script);
+    free(packed);
 }
 
 /* -------------------------------------------------------
