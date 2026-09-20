@@ -610,7 +610,12 @@ static void mjTrigAct(const cJSON *row, ScnTrigAct *out, const char *where,
         return;
     }
     op = cJSON_GetArrayItem(row, 0);
-    if (cJSON_IsString(op) && op->valuestring != NULL) {
+    /* A name that is there but empty goes the same way as a slot holding no
+       string at all: the editor writes one into an action it has just made
+       room for, and an action naming nothing does nothing. scnCheckTrigAct
+       leaves both to this report. */
+    if (cJSON_IsString(op) && op->valuestring != NULL &&
+        op->valuestring[0] != '\0') {
         mjCopyStr(out->op, sizeof(out->op), op->valuestring);
     } else {
         mjReport(rep, where, "scenario: %s names no op", where);

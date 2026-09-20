@@ -64,8 +64,8 @@
  *                               seven operators, a hook's fields and an op's
  *                               arguments, each held against the catalogue the
  *                               accessor read it out of, the set-valued rule
- *                               the operator list is filtered by, and the op a
- *                               new action names
+ *                               the operator list is filtered by, and the
+ *                               nothing a new action is born naming
  */
 
 #include <math.h>
@@ -947,14 +947,17 @@ int run_editor_form_trigger_rows(void) {
     UT_ASSERT(meScenarioFormAddCond(&f, 0));
     UT_ASSERT(meScenarioFormCondCount(&f, 0) == SCN_TRIGGER_CONDS_MAX);
 
-    /* The actions, the same way. A new one names an op rather than nothing. */
+    /* The actions, the same way. A new one names nothing rather than an op:
+     * the author picks it, and until they have, both readers say the row
+     * names none. */
     for (i = 0; i < SCN_TRIGGER_ACTIONS_MAX; i++) {
         f.dirty = false;
         UT_ASSERT_MSG(meScenarioFormAddAction(&f, 0),
                       "action %d refused below the bound", i);
         UT_ASSERT(meScenarioFormDirty(&f));
-        UT_ASSERT_MSG(f.manifest.triggers[0].actions[i].op[0] != '\0',
-                      "action %d names no op", i);
+        UT_ASSERT_MSG(f.manifest.triggers[0].actions[i].op[0] == '\0',
+                      "action %d was born naming '%s'", i,
+                      f.manifest.triggers[0].actions[i].op);
         UT_ASSERT(f.manifest.triggers[0].actions[i].numArgs == 0);
     }
     UT_ASSERT(meScenarioFormActionCount(&f, 0) == SCN_TRIGGER_ACTIONS_MAX);
@@ -1196,8 +1199,6 @@ int run_editor_form_trigger_vocabulary(void) {
     char             name[ME_SCN_FIELD_NAME_LEN];
     size_t           opCount     = 0;
     size_t           row;
-    size_t           opAt;
-    bool             namedAction = false;
     int              i;
     int              j;
     int              scalars     = 0;
@@ -1368,32 +1369,20 @@ int run_editor_form_trigger_vocabulary(void) {
     UT_ASSERT(meScenarioOpParamCount(opCount) == 0);
     UT_ASSERT(!meScenarioOpParamAt(opCount, 0, NULL, NULL, NULL));
 
-    /* And the op a new action is born naming, which is where the narrower of
-       the two flags is put to work. The registry index is found by the name
-       the form wrote, so no op's name is written here: a read accessor takes
-       flat arguments and answers a value nobody is there to read, so one of
-       those would be an action that does nothing. */
+    /* And what a new action is born naming, which is nothing at all. An op
+       picked here is one the author did not pick and need not notice: an
+       action born on end_round ends the round the first time its hook is
+       heard. Both readers report an action that names no op, so the row is
+       in the issues list until the author has chosen one. */
     UT_ASSERT_MSG(hook[0] != '\0', "the catalogue carries no hook");
     meScenarioFormInit(&f);
     UT_ASSERT(meScenarioFormAddTrigger(&f, hook));
     UT_ASSERT(meScenarioFormAddAction(&f, 0));
     UT_ASSERT(f.manifest.triggers[0].numActions == 1);
-
-    for (opAt = 0; opAt < opCount && !namedAction; opAt++) {
-        const char *opName = NULL;
-
-        UT_ASSERT(meScenarioCompletionAt(opAt, &opName, NULL));
-        if (strcmp(opName, f.manifest.triggers[0].actions[0].op) != 0) {
-            continue;
-        }
-        UT_ASSERT_MSG(meScenarioOpIsAction(opAt),
-                      "a new action names '%s', which changes nothing a round "
-                      "can see", opName);
-        namedAction = true;
-    }
-    UT_ASSERT_MSG(namedAction, "a new action names '%s', which the registry "
-                               "has not got",
+    UT_ASSERT_MSG(f.manifest.triggers[0].actions[0].op[0] == '\0',
+                  "a new action was born naming '%s'",
                   f.manifest.triggers[0].actions[0].op);
+    UT_ASSERT(f.manifest.triggers[0].actions[0].numArgs == 0);
 
     return 0;
 }

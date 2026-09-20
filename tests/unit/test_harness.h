@@ -2793,6 +2793,7 @@ int run_scenario_host_no_script(void);
 int run_scenario_host_manifest_roundtrip(void);
 int run_scenario_host_trigger_manifest(void);
 int run_scenario_host_trigger_where_type(void);
+int run_scenario_host_trigger_action_no_op(void);
 int run_scenario_host_team_init_read(void);
 int run_scenario_host_seed_reproducible(void);
 int run_scenario_host_edit_after_attach(void);
@@ -3014,6 +3015,7 @@ int run_scenario_manifest_json_number_range(void);
 int run_scenario_manifest_json_triggers(void);
 int run_scenario_manifest_json_trigger_operator(void);
 int run_scenario_manifest_json_trigger_where_type(void);
+int run_scenario_manifest_json_trigger_action_no_op(void);
 
 /* Where a map file's map data ends (test_scenario_map_body.c): the measure
  * itself, the container found after it, the scripted tag it gives the

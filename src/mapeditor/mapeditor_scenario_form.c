@@ -34,11 +34,6 @@
  * standalone one. */
 #include "mapeditor_scenario_fndesc.h"
 
-/* The op registry, through the same kind of header for the same reason: a new
- * action has to name an op, and the op it names is read off the registry
- * rather than written here. */
-#include "mapeditor_scenario_check.h"
-
 /* scnManifestTrigOpName: the seven operator words, out of the table both
  * readers resolve a file's own word through. The editor offers what they
  * accept because it is the same list, not a copy of it. */
@@ -612,40 +607,6 @@ static ScnTrigValueKind meScnFieldValueKind(MEScnParamType type) {
     }
 }
 
-/* The first op that acts and insists on no argument, or -1 when the registry
- * carries none. What a new action names: an op given no arguments where it
- * takes none is the one thing an action can be born right about, and reading
- * it off the registry keeps every op's name out of this file.
- *
- * Only the ops that act are walked. A read accessor takes flat arguments and
- * answers a value nobody is there to read, so it is no op for an action to
- * name. */
-static int meScnFirstOpWithoutArgs(void) {
-    const size_t count = meScenarioCompletionCount();
-    size_t       i;
-
-    for (i = 0; i < count; i++) {
-        const size_t params = meScenarioOpParamCount(i);
-        bool         insists = false;
-        size_t       p;
-
-        if (!meScenarioOpIsAction(i)) {
-            continue;
-        }
-        for (p = 0; p < params && !insists; p++) {
-            bool optional = false;
-
-            if (meScenarioOpParamAt(i, p, NULL, NULL, &optional) && !optional) {
-                insists = true;
-            }
-        }
-        if (!insists) {
-            return (int)i;
-        }
-    }
-    return -1;
-}
-
 int meScenarioFormCondCount(const MEScenarioForm *f, int trigger) {
     const ScnTrigger *t = meScnTriggerOf(f, trigger);
 
@@ -716,24 +677,21 @@ int meScenarioFormActionCount(const MEScenarioForm *f, int trigger) {
 }
 
 bool meScenarioFormAddAction(MEScenarioForm *f, int trigger) {
-    ScnTrigger *t  = (f == NULL) ? NULL
-                                 : meScnTriggerAt(&f->manifest, trigger);
-    const char *op = NULL;
+    ScnTrigger *t = (f == NULL) ? NULL
+                                : meScnTriggerAt(&f->manifest, trigger);
     ScnTrigAct *a;
-    int         row;
 
     if (t == NULL || t->numActions >= SCN_TRIGGER_ACTIONS_MAX) {
         return false;
     }
-    row = meScnFirstOpWithoutArgs();
-    if (row < 0 || !meScenarioCompletionAt((size_t)row, &op, NULL) ||
-        op == NULL) {
-        return false;
-    }
 
+    /* Naming nothing, for the author to name. An op chosen here is one they
+       did not choose and need not notice: an action born on end_round ends
+       the round on the first thing its hook hears. Both readers report an
+       action that names no op, so the row stands in the issues list until it
+       has been filled in. */
     a = &t->actions[t->numActions];
     memset(a, 0, sizeof(*a));
-    meScnCopyName(a->op, sizeof(a->op), op);
     t->numActions++;
     f->dirty = true;
     return true;

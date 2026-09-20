@@ -1032,6 +1032,67 @@ int run_scenario_host_trigger_where_type(void) {
     return 0;
 }
 
+/* ── 7a4. An action that names no op ──────────────────────────────── */
+
+/* The editor makes room for an action before the author has said what it
+ * does, and a pack made before they say it writes the empty name out. An
+ * empty name is a string, so the reader took it and said nothing, and
+ * scnCheckTrigAct leaves an action naming no op to this report — between
+ * them a row reached a server unmentioned and did nothing there.
+ *
+ * Two actions on the one trigger: one naming an op and one naming none. The
+ * first is what says the report costs that row and not the trigger, and the
+ * key is what says which of the two it is about. */
+int run_scenario_host_trigger_action_no_op(void) {
+    static const char *const kMap = "scnhost_no_op.map";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  name = \"No op\",\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_tick\",\n"
+        "      actions = { { \"log\", \"kept\" }, { \"\", \"unsaid\" } } },\n"
+        "  },\n"
+        "}\n";
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    const ScenarioManifest *m;
+    char                    err[512];
+
+    UT_ASSERT(shPut(kMap, kLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL,
+                  "an action naming no op cost the whole script: %s", err);
+
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "names no op") != NULL,
+                  "an empty op was taken without a word: '%s'",
+                  scenarioHostLastError(h));
+    UT_ASSERT_MSG(
+        strstr(scenarioHostLastError(h), "triggers[0].actions[1]") != NULL,
+        "the report does not name the action: '%s'", scenarioHostLastError(h));
+
+    /* The row is kept, empty name and all. A report is not a refusal: the
+       trigger stands and the action beside it still runs. */
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->numTriggers == 1, "%u triggers kept",
+                  (unsigned)m->numTriggers);
+    UT_ASSERT_MSG(m->triggers[0].numActions == 2, "%u actions kept",
+                  (unsigned)m->triggers[0].numActions);
+    UT_ASSERT(strcmp(m->triggers[0].actions[0].op, "log") == 0);
+    UT_ASSERT_MSG(m->triggers[0].actions[1].op[0] == '\0',
+                  "the action came back naming '%s'",
+                  m->triggers[0].actions[1].op);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
 /* ── 7b. A team's init table ──────────────────────────────────────── */
 
 /* The team block's `init` is the table this team's bots are built with, and

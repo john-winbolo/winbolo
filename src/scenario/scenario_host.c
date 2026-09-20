@@ -1128,8 +1128,12 @@ static void scnReadTrigAct(lua_State *L, int row, ScnTrigAct *out,
         return;
     }
 
+    /* A name that is there but empty goes the same way as a slot holding no
+       string at all: the editor writes one into an action it has just made
+       room for, and an action naming nothing does nothing. scnCheckTrigAct
+       leaves both to this report. */
     lua_rawgeti(L, row, 1);
-    if (lua_type(L, -1) == LUA_TSTRING) {
+    if (lua_type(L, -1) == LUA_TSTRING && lua_tostring(L, -1)[0] != '\0') {
         snprintf(out->op, sizeof(out->op), "%s", lua_tostring(L, -1));
     } else {
         scnReport(rep, where, "scenario: %s names no op", where);

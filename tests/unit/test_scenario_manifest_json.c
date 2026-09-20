@@ -923,6 +923,19 @@ static bool sawIssue(const ScnValidateResult *sink, const char *key) {
     return false;
 }
 
+/* And what it said, for a key that can carry more than one reading. */
+static bool issueSays(const ScnValidateResult *sink, const char *key,
+                      const char *want) {
+    int i;
+    for (i = 0; i < (int)sink->count; i++) {
+        if (strcmp(sink->issues[i].key, key) == 0 &&
+            strstr(sink->issues[i].message, want) != NULL) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /* What the two triggers of kTriggerManifest have to decode to. Held apart
    from the round trip so the same reading is made of the text this build
    wrote and of the text it was given. */
@@ -1296,6 +1309,79 @@ int run_scenario_manifest_json_trigger_where_type(void) {
         free(sink);
         UT_FAIL("an issue was filed against triggers[1], which is the slot "
                 "the third trigger fell in and the position of the one kept");
+    }
+    scnManifestFree(doc);
+    free(sink);
+    return 0;
+}
+
+/* ── An action that names no op ───────────────────────────────────── */
+
+/* The editor makes room for an action before the author has said what it
+   does, and a pack made before they say it writes the empty name out. An
+   empty name is a string, so the reader took it and said nothing, and
+   scnCheckTrigAct leaves an action naming no op to this report — between
+   them a row reached a server unmentioned and did nothing there.
+
+   Two actions on the one trigger, one naming an op and one naming none, so
+   the key says which of the two the issue is about. The Lua reader is held
+   to the same wording under the same key by a case of its own. */
+int run_scenario_manifest_json_trigger_action_no_op(void) {
+    static const char kNoOp[] =
+        "{\n"
+        "  \"manifest\": 1,\n"
+        "  \"api\": 1,\n"
+        "  \"triggers\": [\n"
+        "    { \"when\": \"on_tick\",\n"
+        "      \"actions\": [ [\"log\", \"kept\"], [\"\", \"unsaid\"] ] }\n"
+        "  ]\n"
+        "}\n";
+    char                    err[256];
+    char                    soft[256];
+    ScnManifestDoc         *doc;
+    ScnValidateResult      *sink;
+    ScnParseReport          rep;
+    const ScenarioManifest *m;
+
+    sink = (ScnValidateResult *)malloc(sizeof(*sink));
+    UT_ASSERT(sink != NULL);
+    memset(sink, 0, sizeof(*sink));
+    soft[0]     = '\0';
+    rep.soft    = soft;
+    rep.softLen = sizeof(soft);
+    rep.sink    = sink;
+
+    doc = parseText(kNoOp, &rep, err, sizeof(err));
+    if (doc == NULL) {
+        free(sink);
+        UT_FAIL("an action naming no op was refused: %s", err);
+    }
+    if (!issueSays(sink, "triggers[0].actions[1]", "names no op")) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("an empty op was taken without a word under the action");
+    }
+    if (sawIssue(sink, "triggers[0].actions[0]")) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the action that names an op was reported against as well");
+    }
+
+    /* The row is kept, empty name and all. An issue is not a refusal: the
+       trigger stands and the action beside it still runs. */
+    m = scnManifestValues(doc);
+    if (m->numTriggers != 1 || m->triggers[0].numActions != 2) {
+        int kept = (int)m->triggers[0].numActions;
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("%d actions were kept, expected both", kept);
+    }
+    if (strcmp(m->triggers[0].actions[0].op, "log") != 0 ||
+        m->triggers[0].actions[1].op[0] != '\0') {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the two actions came back naming '%s' and '%s'",
+                m->triggers[0].actions[0].op, m->triggers[0].actions[1].op);
     }
     scnManifestFree(doc);
     free(sink);
