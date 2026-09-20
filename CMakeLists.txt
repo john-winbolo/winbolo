@@ -4430,8 +4430,9 @@ target_include_directories(WinBoloUnitTests PRIVATE
     # braintest_loadbrowser.h for the Load Session segment-walk test (the
     # finder TU compiled above); no other braintest source is linked here.
     src/braintest
-    # mapeditor_scenario.h for the editor's script-file test (that one TU is
-    # compiled above); no other mapeditor source is linked here.
+    # mapeditor_scenario*.h for the scenario panel's non-drawing half — the
+    # mapeditor_scenario_*.c TUs compiled above; no other mapeditor source
+    # is linked here.
     src/mapeditor
     ${CMAKE_SOURCE_DIR}/tests/unit
     ${cjson_SOURCE_DIR}

@@ -15,8 +15,10 @@
  *   writer. The editor differs in where the two come from —
  *   the manifest is the forms' and the source is the pane's,
  *   neither of which has to be on disk — and in building no
- *   ServerSim, so the checks that read a map are the ones
- *   the round itself makes.
+ *   ServerSim, which leaves out the one check that reads a
+ *   map: the tags, which ask how many pills, bases and starts
+ *   the map carries. The rules are checked either way, against
+ *   the classic table.
  *********************************************************/
 
 #include "mapeditor_scenario_pack.h"
