@@ -3959,6 +3959,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_interp_jitter_e2e.c
     tests/unit/test_join_version_gate.c
     tests/unit/test_join_rate_limit.c
+    # A password-protected server: the INFO ping flag, the incorrect-password
+    # reject's langid at the client, and a join with the right password.
+    tests/unit/test_loopback_password.c
     tests/unit/test_cookie_handshake.c
     tests/unit/test_map_amp_gate.c
     tests/unit/test_map_reask_throttle.c
@@ -5151,6 +5154,7 @@ set(_unit_test_names
     tkexp_lgm_pairing
     loopback_join
     loopback_join_loss
+    loopback_password
     loopback_lobby_running_loss
     loopback_quiet_lobby_control_loss
     loopback_command_liveness

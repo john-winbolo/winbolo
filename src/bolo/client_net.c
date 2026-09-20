@@ -111,6 +111,7 @@ static void clientSimRenderLocalJoinReject(ClientSim *cs, LocalJoinResult res) {
   }
   rendered = langGetText(id);
   clientSimSetConnectErrorReason(cs, rendered ? rendered : "Connection rejected");
+  clientSimSetConnectErrorId(cs, id);
 }
 
 /* Shared body for the active / passive local-connect paths. Runs the
@@ -377,6 +378,11 @@ ClientConnectState clientSimGetConnectState(const ClientSim *cs) {
 const char *clientSimGetConnectErrorReason(const ClientSim *cs) {
   if (cs == NULL || cs->connectErrorReason[0] == '\0') return NULL;
   return cs->connectErrorReason;
+}
+
+langid clientSimGetConnectErrorLangId(const ClientSim *cs) {
+  if (cs == NULL || cs->connectErrorReason[0] == '\0') return 0;
+  return cs->connectErrorId;
 }
 
 BYTE clientSimGetServerPlayerNum(const ClientSim *cs) {

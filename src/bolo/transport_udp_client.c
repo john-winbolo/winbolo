@@ -2277,6 +2277,9 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          * frontend's clientSimGetConnectErrorReason call returns the
          * same rendered string for both local and UDP rejects. */
         clientSimSetConnectErrorReason(c->clientSim, c->joinRejectReason);
+        /* id is 0 when the payload failed to decode, which reads as "no
+         * langid" at the accessor. */
+        clientSimSetConnectErrorId(c->clientSim, id);
         c->joinState = UDP_CLIENT_ERROR;
         break;
     }

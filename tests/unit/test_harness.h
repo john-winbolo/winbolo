@@ -1841,6 +1841,7 @@ int run_error_smoothing(void);
  * client endpoint. Convergence-bounded, never exact-trace. */
 int run_loopback_join(void);
 int run_loopback_join_loss(void);
+int run_loopback_password(void);
 int run_loopback_lobby_running_loss(void);
 /* Quiet-lobby reliable control delivery under loss with no input flowing:
  * proves control acks ride the standalone PACKET_CHANNEL trailer. */

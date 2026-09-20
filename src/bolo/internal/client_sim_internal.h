@@ -845,6 +845,12 @@ struct ClientSim {
      * directly here; UDP JOIN_REJECT mirrors its reason here too. The
      * clientSimGetConnectErrorReason accessor reads from this field. */
     char      connectErrorReason[256];
+    /* The langid the reason above was rendered from, or 0 when the reason
+     * came as plain text. Lets a frontend tell an incorrect-password reject
+     * from every other reject without comparing rendered strings. Cleared
+     * by clientSimSetConnectErrorReason; set by clientSimSetConnectErrorId
+     * straight after it. */
+    unsigned int connectErrorId;
 
     SubscriberHandle autoSubHandle;    /* Returned by serverSimRegisterClientSubscriber
                                         * inside clientSimConnectLocal{,Passive}; cleared
@@ -927,6 +933,7 @@ BOLO_STATIC_ASSERT(offsetof(struct ClientSim, sim) == 0,
 void                    clientSimSetBoundServerSim(ClientSim *cs, struct ServerSim *sim);
 struct ServerSim       *clientSimGetBoundServerSim(const ClientSim *cs);
 void                    clientSimSetConnectErrorReason(ClientSim *cs, const char *str);
+void                    clientSimSetConnectErrorId(ClientSim *cs, unsigned int id);
 
 /* One bit per player slot: the remote tanks this client currently believes
  * are alive. The client holds no tanks[] object for anyone but itself, so a
