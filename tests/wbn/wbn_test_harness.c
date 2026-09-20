@@ -418,10 +418,12 @@ int main(int argc, char **argv) {
     ok = wbnTestLeaveReturnsAtOnce();
   } else if (strcmp(name, "worker_outlives_session") == 0) {
     ok = wbnTestWorkerOutlivesSession();
+  } else if (strcmp(name, "job_result_returns") == 0) {
+    ok = wbnTestJobResultReturns();
   } else {
     fprintf(stderr,
             "usage: %s posts_share_connection|leave_returns_at_once|"
-            "worker_outlives_session\n",
+            "worker_outlives_session|job_result_returns\n",
             argv[0]);
     SDL_Quit();
     bolo_net_cleanup();

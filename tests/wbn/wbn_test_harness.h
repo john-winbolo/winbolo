@@ -90,5 +90,6 @@ int wbnTestWaitForRequests(WbnTestListener *ln, int want, int timeoutMs);
 bool wbnTestPostsShareConnection(void);
 bool wbnTestLeaveReturnsAtOnce(void);
 bool wbnTestWorkerOutlivesSession(void);
+bool wbnTestJobResultReturns(void);
 
 #endif /* WINBOLO_TEST_WBN_HARNESS_H */

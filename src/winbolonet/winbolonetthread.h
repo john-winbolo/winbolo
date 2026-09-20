@@ -47,13 +47,52 @@
 #define WBN_WAIT_THREAD_EXIT 1000
 
 
+/* A job's kind says what its response is for. The worker keeps the response
+   for every kind but this one and hands it back through
+   winbolonetThreadDrainResults; what the kinds mean is the caller's, so
+   nothing in the thread knows any of them.
+
+   WBN_JOB_NONE is fire-and-forget: the response is discarded as it is sent
+   and no result is kept. It is what winbolonetThreadAddRequest and
+   winbolonetThreadAddServerRequest queue, and what every caller that does
+   not read a reply wants. */
+#define WBN_JOB_NONE 0
+
+/* Results held for a caller that has not drained them yet. A drain runs on
+   the thread that queued the work, so the normal depth is one; the cap is
+   what stops the list growing for the life of the server if a kind is ever
+   added with no drain wired up. Past it the oldest is dropped and the drop
+   is logged. */
+#define WBN_MAX_RESULTS 64
+
 typedef struct wbnListObj *wbnList;
 struct wbnListObj {
   wbnList next;           /* Next item */
+  uint32_t id;            /* Job id: unique for the process, never 0 */
+  uint8_t kind;           /* WBN_JOB_NONE, or what the response is for */
   char endpoint[128];     /* API endpoint path */
   char *json_body;        /* Heap-allocated JSON body string */
   bool needs_bearer;      /* Send via wbn_api_post_server (Authorization: Bearer) */
 };
+
+/*********************************************************
+*NAME:          WbnResultHandler
+*PURPOSE:
+*  Called once per completed job by
+*  winbolonetThreadDrainResults, on the draining thread.
+*  response is the reply body, or NULL when the post never
+*  sent; it belongs to the drain and is freed as soon as the
+*  handler returns, so anything kept must be copied.
+*
+*ARGUMENTS:
+* id       - The id winbolonetThreadAddJob returned
+* kind     - The kind the job was queued with
+* status   - HTTP status, or -1 when the post never sent
+* response - Reply body, or NULL
+* ctx      - The pointer handed to winbolonetThreadDrainResults
+*********************************************************/
+typedef void (*WbnResultHandler)(uint32_t id, uint8_t kind, int status,
+                                 const char *response, void *ctx);
 
 
 /*********************************************************
@@ -120,6 +159,44 @@ bool winbolonetThreadAddRequest(const char *endpoint, const char *json_body);
 * json_body - JSON request body string (copied, caller may free)
 *********************************************************/
 bool winbolonetThreadAddServerRequest(const char *endpoint, const char *json_body);
+
+/*********************************************************
+*NAME:          winbolonetThreadAddJob
+*PURPOSE:
+*  Adds a request whose response is kept for the caller.
+*  The json_body string is copied internally. The worker
+*  posts it as the two calls above do, then holds the status
+*  and the reply until winbolonetThreadDrainResults hands
+*  them over.
+*
+*  Returns the job id, which is never 0, or 0 when the
+*  thread is not running and nothing was taken.
+*
+*ARGUMENTS:
+* endpoint     - API endpoint path (e.g. "client/verify")
+* json_body    - JSON request body string (copied, caller may free)
+* needs_bearer - Send via wbn_api_post_server
+* kind         - What the response is for. WBN_JOB_NONE keeps
+*                nothing and is the same as the calls above.
+*********************************************************/
+uint32_t winbolonetThreadAddJob(const char *endpoint, const char *json_body,
+                                bool needs_bearer, uint8_t kind);
+
+/*********************************************************
+*NAME:          winbolonetThreadDrainResults
+*PURPOSE:
+*  Hands every completed job's result to handler on the
+*  calling thread, oldest first, and frees it. The worker's
+*  mutex is not held while handler runs, so a handler is
+*  free to take whatever locks the server code it calls
+*  needs. Does nothing when there is nothing to hand over,
+*  and when there is no thread.
+*
+*ARGUMENTS:
+* handler - Called once per result
+* ctx     - Passed through to handler
+*********************************************************/
+void winbolonetThreadDrainResults(WbnResultHandler handler, void *ctx);
 
 /*********************************************************
 *NAME:          winbolonetThreadRun
