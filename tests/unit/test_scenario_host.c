@@ -1306,6 +1306,84 @@ int run_scenario_host_trigger_array_hole(void) {
     return 0;
 }
 
+/* ── 7a8. A trigger that names no hook ────────────────────────────── */
+
+/* A trigger is put on the router by the hook it names, so one naming none is
+ * never reached: keeping it spends a slot against the trigger cap and writes
+ * a dead entry into every pack made from the table afterwards. The trigger
+ * goes, and the report names the position.
+ *
+ * Both spellings of naming none: a trigger with no when at all, and one whose
+ * when is a string with nothing in it. The editor writes neither — it only
+ * ever gives a trigger a hook the catalogue carries — so both arrive from a
+ * script written by hand.
+ *
+ * Three triggers: a bad one, a sound one, and a bad one. The sound one is
+ * what says the drop costs that trigger and no more. The second bad one is
+ * what says which number the report carries — with the first already gone it
+ * sits in slot 1 and at position 2, so the two possible keys are different
+ * numbers and the case can tell them apart. */
+int run_scenario_host_trigger_no_when(void) {
+    static const char *const kMap = "scnhost_no_when.map";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  name = \"No when\",\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { actions = { { \"log\", \"never\" } } },\n"
+        "    { when = \"on_player_join\",\n"
+        "      actions = { { \"log\", \"kept\" } } },\n"
+        "    { when = \"\", actions = { { \"log\", \"nor this\" } } },\n"
+        "  },\n"
+        "}\n";
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    const ScenarioManifest *m;
+    char                    err[512];
+
+    UT_ASSERT(shPut(kMap, kLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "a trigger naming no hook cost the whole script: "
+                             "%s", err);
+
+    /* The last of the two drops, which is the third trigger the file wrote.
+       By then the first has already gone, so the slot it would have landed
+       in is 1 and the position the file wrote it at is 2. Naming it
+       triggers[2] is what says the key is the position.
+
+       Only the last line is readable here — the soft report holds one at a
+       time — so the drop of the first trigger is asserted in the manifest
+       count below rather than in a report of its own. */
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "names no hook") != NULL,
+                  "the drop does not say what was wrong: '%s'",
+                  scenarioHostLastError(h));
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "triggers[2]") != NULL,
+                  "the report does not name the file position: '%s'",
+                  scenarioHostLastError(h));
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "triggers[1]") == NULL,
+                  "the report is keyed off the slot rather than the "
+                  "position: '%s'", scenarioHostLastError(h));
+
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->numTriggers == 1,
+                  "%u triggers kept, expected the 1 that names a hook",
+                  (unsigned)m->numTriggers);
+    UT_ASSERT_MSG(strcmp(m->triggers[0].when, "on_player_join") == 0,
+                  "the trigger kept runs on '%s'", m->triggers[0].when);
+    UT_ASSERT_MSG(m->triggers[0].numActions == 1,
+                  "the trigger kept holds %u actions",
+                  (unsigned)m->triggers[0].numActions);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
 /* ── 7b. A team's init table ──────────────────────────────────────── */
 
 /* The team block's `init` is the table this team's bots are built with, and

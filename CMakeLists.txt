@@ -5706,6 +5706,7 @@ set(_unit_test_names
     scenario_host_trigger_where_no_field
     scenario_host_trigger_text_cut
     scenario_host_trigger_array_hole
+    scenario_host_trigger_no_when
     scenario_host_team_init_read
     scenario_host_seed_reproducible
     scenario_host_edit_after_attach
@@ -5869,6 +5870,7 @@ set(_unit_test_names
     scenario_manifest_json_triggers
     scenario_manifest_json_trigger_operator
     scenario_manifest_json_trigger_where_type
+    scenario_manifest_json_trigger_no_when
     scenario_manifest_json_trigger_action_no_op
     scenario_manifest_json_trigger_where_no_field
     scenario_manifest_json_trigger_text_cut

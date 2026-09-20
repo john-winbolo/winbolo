@@ -1236,7 +1236,11 @@ static void scnReadTrigAct(lua_State *L, int row, ScnTrigAct *out,
  * conditional into an unconditional one. A row inside the array is the
  * other case: a row that cannot be read is kept zeroed, which holds on
  * nothing, so the tests the author did write still stand and the bad row is
- * inert beside them. */
+ * inert beside them.
+ *
+ * A trigger naming no hook is dropped too, and for a plainer reason: there
+ * is no hook to put it on, so it never runs however it is kept, and a slot
+ * held by one is a slot the next trigger cannot have. */
 static void scnReadTriggers(lua_State *L, int tbl, ScenarioManifest *m,
                             ScnParseReport *rep) {
     int tt;
@@ -1282,12 +1286,21 @@ static void scnReadTriggers(lua_State *L, int tbl, ScenarioManifest *m,
         m->numTriggers++;
         memset(trig, 0, sizeof(*trig));
 
+        /* A when that is there but empty names no hook the way a missing one
+           does, and neither leaves anything to run on: the router never
+           reaches the trigger, so keeping it spends a slot and rides through
+           a pack and unpack as an entry that does nothing. It goes the way a
+           bad where goes, and the report names the position. */
         scnRawField(L, entry, "when");
-        if (lua_type(L, -1) == LUA_TSTRING) {
+        if (lua_type(L, -1) == LUA_TSTRING && lua_tostring(L, -1)[0] != '\0') {
             snprintf(trig->when, sizeof(trig->when), "%s", lua_tostring(L, -1));
         } else {
-            scnReport(rep, where, "scenario: %s names no hook to run on",
-                      where);
+            scnReport(rep, where,
+                      "scenario: %s names no hook to run on; %s dropped",
+                      where, where);
+            m->numTriggers--;        /* the slot claimed above, given back */
+            lua_pop(L, 2);           /* the when field, and the trigger */
+            continue;
         }
         lua_pop(L, 1);
 

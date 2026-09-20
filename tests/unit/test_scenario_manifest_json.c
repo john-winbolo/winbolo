@@ -1315,6 +1315,92 @@ int run_scenario_manifest_json_trigger_where_type(void) {
     return 0;
 }
 
+/* ── A trigger that names no hook ─────────────────────────────────── */
+
+/* A trigger is put on the router by the hook it names, so one naming none is
+   never reached: keeping it spends a slot against the trigger cap and writes
+   a dead entry back out on the next pack. The trigger goes, and the issue is
+   filed under the position the file wrote it at.
+
+   Both spellings of naming none: a trigger with no when at all, and one
+   whose when is a string with nothing in it.
+
+   Three triggers: a bad one, a sound one, and a bad one. The sound one is
+   what says the drop costs that trigger and no more. The second bad one is
+   what says which number the issue carries — with the first already gone it
+   sits in slot 1 and at position 2, so the two possible keys are different
+   numbers and the case can tell them apart. The Lua reader is held to the
+   same wording under the same key by a case of its own. */
+int run_scenario_manifest_json_trigger_no_when(void) {
+    static const char kNoWhen[] =
+        "{\n"
+        "  \"manifest\": 1,\n"
+        "  \"api\": 1,\n"
+        "  \"triggers\": [\n"
+        "    { \"actions\": [ [\"log\", \"never\"] ] },\n"
+        "    { \"when\": \"on_player_join\",\n"
+        "      \"actions\": [ [\"log\", \"kept\"] ] },\n"
+        "    { \"when\": \"\", \"actions\": [ [\"log\", \"nor this\"] ] }\n"
+        "  ]\n"
+        "}\n";
+    char                    err[256];
+    char                    soft[256];
+    ScnManifestDoc         *doc;
+    ScnValidateResult      *sink;
+    ScnParseReport          rep;
+    const ScenarioManifest *m;
+
+    sink = (ScnValidateResult *)malloc(sizeof(*sink));
+    UT_ASSERT(sink != NULL);
+    memset(sink, 0, sizeof(*sink));
+    soft[0]     = '\0';
+    rep.soft    = soft;
+    rep.softLen = sizeof(soft);
+    rep.sink    = sink;
+
+    doc = parseText(kNoWhen, &rep, err, sizeof(err));
+    if (doc == NULL) {
+        free(sink);
+        UT_FAIL("a trigger naming no hook was refused: %s", err);
+    }
+    m = scnManifestValues(doc);
+    if (m->numTriggers != 1) {
+        int kept = (int)m->numTriggers;
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("%d triggers were kept, expected the 1 that names a hook",
+                kept);
+    }
+    if (strcmp(m->triggers[0].when, "on_player_join") != 0) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the trigger kept runs on '%s'", m->triggers[0].when);
+    }
+    if (!issueSays(sink, "triggers[0]", "names no hook")) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the first trigger was dropped without a word under its "
+                "position");
+    }
+    /* The second drop, keyed by where the file wrote it rather than by the
+       slot it would have landed in once the first had gone. */
+    if (!issueSays(sink, "triggers[2]", "names no hook")) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the third trigger was dropped without a word under its "
+                "position");
+    }
+    if (sawIssue(sink, "triggers[1]")) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("an issue was filed against triggers[1], which is the slot "
+                "the third trigger fell in and the position of the one kept");
+    }
+    scnManifestFree(doc);
+    free(sink);
+    return 0;
+}
+
 /* ── An action that names no op ───────────────────────────────────── */
 
 /* The editor makes room for an action before the author has said what it

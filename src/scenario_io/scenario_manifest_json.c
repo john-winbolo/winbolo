@@ -669,6 +669,10 @@ static void mjTrigAct(const cJSON *row, ScnTrigAct *out, const char *where,
  * nothing, so the tests the file does state still stand and the bad row is
  * inert beside them.
  *
+ * A trigger naming no hook is dropped too, and for a plainer reason: there
+ * is no hook to put it on, so it never runs however it is kept, and a slot
+ * held by one is a slot the next trigger cannot have.
+ *
  * scnReadTriggers reads the same shape out of a Lua table and drops on the
  * same terms, which is what lets scnManifestAgrees hold a package's two
  * forms against each other. */
@@ -708,12 +712,21 @@ static void mjDecodeTriggers(const cJSON *root, ScenarioManifest *m,
         m->numTriggers++;
         memset(trig, 0, sizeof(*trig));
 
+        /* A when that is there but empty names no hook the way a missing one
+           does, and neither leaves anything to run on: the router never
+           reaches the trigger, so keeping it spends a slot and rides through
+           a pack and unpack as an entry that does nothing. It goes the way a
+           bad where goes, and the issue is filed under the position. */
         when = cJSON_GetObjectItemCaseSensitive(entry, "when");
-        if (cJSON_IsString(when) && when->valuestring != NULL) {
+        if (cJSON_IsString(when) && when->valuestring != NULL &&
+            when->valuestring[0] != '\0') {
             mjCopyStr(trig->when, sizeof(trig->when), when->valuestring);
         } else {
-            mjReport(rep, where, "scenario: %s names no hook to run on",
-                     where);
+            mjReport(rep, where,
+                     "scenario: %s names no hook to run on; %s dropped",
+                     where, where);
+            m->numTriggers--;           /* the slot claimed above, given back */
+            continue;
         }
 
         list = cJSON_GetObjectItemCaseSensitive(entry, "where");
