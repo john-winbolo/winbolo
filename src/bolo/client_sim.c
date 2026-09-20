@@ -2503,12 +2503,18 @@ struct ServerSim *clientSimGetBoundServerSim(const ClientSim *cs) {
 
 void clientSimSetConnectErrorReason(ClientSim *cs, const char *str) {
   if (cs == NULL) return;
+  cs->connectErrorId = 0;
   if (str == NULL || str[0] == '\0') {
     cs->connectErrorReason[0] = '\0';
     return;
   }
   strncpy(cs->connectErrorReason, str, sizeof(cs->connectErrorReason) - 1);
   cs->connectErrorReason[sizeof(cs->connectErrorReason) - 1] = '\0';
+}
+
+void clientSimSetConnectErrorId(ClientSim *cs, unsigned int id) {
+  if (cs == NULL) return;
+  cs->connectErrorId = id;
 }
 
 /* Reset the transient game world to a clean slate on entering the

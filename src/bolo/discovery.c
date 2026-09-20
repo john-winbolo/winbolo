@@ -379,6 +379,7 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
   out->numBots = 0;
   out->maxPlayers = 0;
   out->timeLimit = 0;
+  out->password = false;
   out->hasRichInfo = false;
   out->hasViewInfo = false;
 
@@ -459,6 +460,9 @@ bool discoveryPingServer(const char *address, unsigned short port, DiscoveryPing
     out->versionMinor = info->h.versionMinor;
     out->versionRevision = info->h.versionRevision;
     out->timeLimit       = info->time_limit;
+    /* has_password sits inside the legacy 76-byte prefix, so it is read
+     * unconditionally, the same as discoveryFillServerFromInfoPacket. */
+    out->password        = (info->has_password != 0);
     /* map_md5 is 32 fixed-width hex chars with no NUL on the wire; a leading
      * '\0' means "no md5" (random/unknown map). This path does not zero out,
      * so NUL-init before the conditional copy. */

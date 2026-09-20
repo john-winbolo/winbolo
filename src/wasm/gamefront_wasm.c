@@ -341,6 +341,44 @@ static void wasmLockToggleCallback(bool allow) {
   clientSimNetSendLockToggle(humanSim, allow);
 }
 
+/* Ask the browser for the join password with window.prompt, the only
+ * blocking text entry this build has before the game loop runs. wrongBefore
+ * adds the incorrect-password line above the request. Returns FALSE on
+ * Cancel and leaves the password global as it was; otherwise the entry
+ * replaces it. The reply comes back with a one-letter prefix so an empty
+ * entry and a cancelled prompt read differently. */
+static bool wasmAskJoinPassword(bool wrongBefore) {
+  char msg[512];
+  char js[1024];
+  char escaped[1024];
+  const char *reply;
+  size_t i, o = 0;
+  if (wrongBefore) {
+    snprintf(msg, sizeof(msg), "%s\n\n%s",
+             langGetText(NETERR_PASSWORDWRONG),
+             langGetText(STR_DLGPASSWORD_BLURB));
+  } else {
+    snprintf(msg, sizeof(msg), "%s", langGetText(STR_DLGPASSWORD_BLURB));
+  }
+  /* JS string literal escape: backslash, quote, newline. */
+  for (i = 0; msg[i] != '\0' && o + 2 < sizeof(escaped); i++) {
+    char c = msg[i];
+    if (c == '\\' || c == '\'') { escaped[o++] = '\\'; escaped[o++] = c; }
+    else if (c == '\n') { escaped[o++] = '\\'; escaped[o++] = 'n'; }
+    else if (c == '\r') { /* dropped */ }
+    else escaped[o++] = c;
+  }
+  escaped[o] = '\0';
+  snprintf(js, sizeof(js),
+    "(function(){ var r = window.prompt('%s'); return r === null ? 'C' : 'P' + r; })()",
+    escaped);
+  reply = emscripten_run_script_string(js);
+  if (reply == NULL || reply[0] != 'P') return FALSE;
+  strncpy(password, reply + 1, sizeof(password) - 1);
+  password[sizeof(password) - 1] = '\0';
+  return TRUE;
+}
+
 /* -------------------------------------------------------
  * gameFrontStart — skip all dialogs, start practice game
  * ------------------------------------------------------- */
@@ -500,6 +538,16 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
       printf("[WASM] network play: join name=%s\n", gameFrontName);
     }
 
+    /* Join password. A ?password= parameter on the launch URL seeds it (a
+     * dev/LAN proxy link can carry one); otherwise it starts empty and an
+     * incorrect-password reject below asks through the browser and retries.
+     * The loop only repeats for that retry. */
+    {
+      const char *urlPw = gameFrontGetUrlParam("password");
+      strncpy(password, urlPw, sizeof(password) - 1);
+      password[sizeof(password) - 1] = '\0';
+    }
+    for (;;) {
     /* Mint the single-use join code from the game_key just before connecting.
      * A fresh code is minted on every (re)connect: a page refresh or relay
      * failover re-runs this path and mints again, so a consumed code is never
@@ -550,10 +598,28 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     if (!clientFrontAwaitJoin(humanSim, 1500)) {
       const char *reason = clientSimGetConnectErrorReason(humanSim);
       printf("[WASM] Join failed: %s\n", reason ? reason : "timeout");
+      if (clientSimGetConnectErrorLangId(humanSim) == STR_REJECT_INCORRECT_PASSWORD) {
+        /* The first reject means the game has a password; a later one
+         * means the entry was wrong. Retry on a fresh ClientSim, with a
+         * fresh join code: the rejected request never reached re-auth,
+         * but the mint is cheap and a new code is always valid. */
+        bool wrongBefore = (password[0] != '\0');
+        if (wasmAskJoinPassword(wrongBefore)) {
+          clientSimDisconnect(humanSim);
+          clientSimDestroy(humanSim);
+          humanSim = clientSimAlloc();
+          clientSimCreate(humanSim);
+          frontEndSetActiveClientSim(humanSim);
+          clientSimSetMyLastPlayerName(humanSim, gameFrontName);
+          continue;
+        }
+      }
       wasmReportConnectFailure(
           reason && reason[0] ? reason
                               : langGetText(STR_WEB_JOIN_NO_RESPONSE));
       return FALSE;
+    }
+    break;
     }
 
     wasmPlayerNum = clientSimGetServerPlayerNum(humanSim);
@@ -771,7 +837,6 @@ void gameFrontSetUdpOptions(char *pn, char *add,
   gameFrontTargetUdp = theirUdp;
 }
 
-void gameFrontGetPassword(char *pword) { strcpy(pword, password); }
 void gameFrontGetPlayerName(char *pn)  { strcpy(pn, gameFrontName); }
 void gameFrontSetPlayerName(char *pn)  { strcpy(gameFrontName, pn); }
 
