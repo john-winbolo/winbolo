@@ -1458,6 +1458,8 @@ static const UnitTestEntry s_tests[] = {
       run_scenario_validate_trigger_action                                                         },
     { "scenario_validate_trigger_unknown_operator",
       run_scenario_validate_trigger_unknown_operator                                               },
+    { "scenario_validate_trigger_action_field",
+      run_scenario_validate_trigger_action_field                                                   },
     { "scenario_lua_every_row_answers",             run_scenario_lua_every_row_answers             },
     { "scenario_lua_op_arguments_match_the_doc",
       run_scenario_lua_op_arguments_match_the_doc                                                  },

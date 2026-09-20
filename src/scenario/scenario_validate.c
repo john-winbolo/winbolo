@@ -719,13 +719,23 @@ static void scnCheckTrigCond(const ScenarioManifest *m, const ScnTrigCond *c,
     }
 
     /* The right-hand side. A reference is read off the same payload the
-       field is, so it is held to the same set of names. */
+       field is, so it is held to the same set of names, and to answering one
+       value: a set has none to be compared against, and the router gives up
+       on the row rather than guess which of the names was meant. */
     if (c->value.kind == SCN_TRIG_VAL_FIELD) {
-        if (c->value.text[0] != '\0' &&
-            scnTrigFieldNamed(fields, c->value.text) == NULL) {
-            scnIssueAdd(out, key,
-                        "the value names '%s', which is no field of %s, so "
-                        "this test never holds", c->value.text, when);
+        if (c->value.text[0] != '\0') {
+            const ScnLuaFnField *v = scnTrigFieldNamed(fields, c->value.text);
+
+            if (v == NULL) {
+                scnIssueAdd(out, key,
+                            "the value names '%s', which is no field of %s, "
+                            "so this test never holds", c->value.text, when);
+            } else if (scnTrigFieldIsSet(v)) {
+                scnIssueAdd(out, key,
+                            "the value names '%s', which is a set of names "
+                            "and not one value, so this test never holds",
+                            c->value.text);
+            }
         }
         return;
     }
@@ -744,8 +754,15 @@ static void scnCheckTrigCond(const ScenarioManifest *m, const ScnTrigCond *c,
 }
 
 /* One action of one trigger: the op it names and the arguments it was
- * given. */
-static void scnCheckTrigAct(const ScnTrigAct *a, unsigned trig, unsigned at,
+ * given.
+ *
+ * fields is the hook's payload and when its name, or both NULL where the
+ * hook is one the surface has not got. An argument naming a field is read
+ * off that payload as the trigger fires, so there is nothing to hold one to
+ * until the hook is known, and the trigger's own key has already been told
+ * that it is not. */
+static void scnCheckTrigAct(const ScnTrigAct *a, const ScnTrigFields *fields,
+                            const char *when, unsigned trig, unsigned at,
                             ScnValidateResult *out) {
     const ScnLuaRow *op;
     char             key[SCN_VALIDATE_KEY_LEN];
@@ -809,6 +826,40 @@ static void scnCheckTrigAct(const ScnTrigAct *a, unsigned trig, unsigned at,
                         (unsigned)required, (unsigned)op->paramCount);
         }
     }
+
+    /* And what the arguments name, where one refers to the payload rather
+       than stating a value. The router reads a reference as the trigger
+       fires and gives up on the whole action where it cannot — a name the
+       hook has not got, and a name that answers a set rather than the one
+       value an argument is — so an action written either way does nothing
+       and says nothing about it.
+
+       The key is the argument's own position, spelled as both readers spell
+       it: the action's key with the position on the end, counted from
+       zero. */
+    if (fields == NULL) {
+        return;
+    }
+    for (i = 0; i < (size_t)a->numArgs; i++) {
+        const ScnLuaFnField *f;
+        char                 slot[SCN_VALIDATE_KEY_LEN];
+
+        if (a->args[i].kind != SCN_TRIG_VAL_FIELD ||
+            a->args[i].text[0] == '\0') {
+            continue;
+        }
+        snprintf(slot, sizeof(slot), "%s[%u]", key, (unsigned)i);
+
+        f = scnTrigFieldNamed(fields, a->args[i].text);
+        if (f == NULL) {
+            scnIssueAdd(out, slot, "'%s' is no field of %s, so this action "
+                                   "never runs", a->args[i].text, when);
+        } else if (scnTrigFieldIsSet(f)) {
+            scnIssueAdd(out, slot,
+                        "'%s' is a set of names and an argument is one "
+                        "value, so this action never runs", a->args[i].text);
+        }
+    }
 }
 
 /* Whether a trigger could do anything at all: the hook it listens on, the
@@ -864,7 +915,8 @@ static void scnCheckTriggers(const ScenarioManifest *m,
 
         /* The tests are read against the hook's payload, so there is nothing
            to hold them to until the hook is one. The actions are held to the
-           catalogue either way. */
+           catalogue either way, and to the payload as well where there is
+           one: an argument may name a field the way a test does. */
         if (fn != NULL) {
             for (j = 0; j < t->numWhere; j++) {
                 scnCheckTrigCond(m, &t->where[j], &fields, t->when,
@@ -872,7 +924,9 @@ static void scnCheckTriggers(const ScenarioManifest *m,
             }
         }
         for (j = 0; j < t->numActions; j++) {
-            scnCheckTrigAct(&t->actions[j], (unsigned)i, (unsigned)j, out);
+            scnCheckTrigAct(&t->actions[j], (fn != NULL) ? &fields : NULL,
+                            (fn != NULL) ? t->when : NULL, (unsigned)i,
+                            (unsigned)j, out);
         }
     }
 }

@@ -97,6 +97,14 @@
  *                                          a row that names none at all is
  *                                          reported once, and the seven
  *                                          themselves still pass
+ * run_scenario_validate_trigger_action_field
+ *                                        — an argument naming a field its
+ *                                          hook has not got and one naming a
+ *                                          set, under the argument's own
+ *                                          key; a set on the right of a
+ *                                          test; a hook the surface has not
+ *                                          got saying nothing more; and a
+ *                                          reference that is right passing
  */
 
 #include <stdint.h>
@@ -1836,6 +1844,89 @@ int run_scenario_validate_trigger_unknown_operator(void) {
                             "%s\n", __FILE__, __LINE__, seen);
             rc = 1;
         }
+    }
+
+    free(r);
+    return rc;
+}
+
+/* ── 28. A reference naming something the payload cannot answer ───── */
+
+/* An argument may name a field the way a test's right-hand side does, and
+   the router reads both off the payload as the trigger fires. Two names it
+   cannot read: one the hook has not got, and one that answers a set of names
+   rather than the one value either place takes. The router gives up on the
+   whole action for the first and on the whole row for the second, so a
+   score written either way never scores and never says why.
+
+   One case rather than four: it is one check reported under two key shapes,
+   and the reference that is right belongs beside the ones that are not,
+   since that is what says the check refuses something rather than
+   everything.
+
+   on_base_captured(n, old, new) carries n, old and new, the two _team forms
+   and tag, which is derived from the base and so is the set. owner is a name
+   it has not got. on_tank_killed's victim is a seat and is one value, which
+   is the reference that passes. */
+int run_scenario_validate_trigger_action_field(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_base_captured\",\n"
+        "      where = { { \"n\", \"eq\", { field = \"tag\" } } },\n"
+        "      actions = { { \"score\", { field = \"owner\" }, 10 },\n"
+        "                  { \"score\", { field = \"tag\" }, 10 } } },\n"
+        "    { when = \"on_tank_killed\",\n"
+        "      actions = { { \"score\", { field = \"victim\" }, 10 } } },\n"
+        "    { when = \"on_base_taken\",\n"
+        "      actions = { { \"score\", { field = \"owner\" }, 10 } } },\n"
+        "  },\n"
+        "}\n";
+    ScnValidateResult *r;
+    int                rc = 0;
+
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+
+    if (scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL, r)) {
+        fprintf(stderr, "FAIL %s:%d: an action argument naming what its hook "
+                        "cannot answer said nothing\n",
+                __FILE__, __LINE__);
+        rc = 1;
+    }
+    /* The argument's own position, not the action's: an action takes several
+       and the author has to be told which of them is the one. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[0][0]", "owner")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[1][0]", "set of names")) {
+        rc = 1;
+    }
+    /* The action itself stands: the op is real, scalar and given a count it
+       takes, which is what says the refusal is of the argument. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[1]")) {
+        rc = 1;
+    }
+    /* And the same name on the right of a test, under the row's key. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].where[0]", "set of names")) {
+        rc = 1;
+    }
+    /* A seat is one value and the op takes it. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[1].actions[0][0]")) {
+        rc = 1;
+    }
+    /* A hook the surface has not got is one fault and is reported once. The
+       payload is unknown with the hook, so holding the arguments to it would
+       say the same thing again for every one of them. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[2]", "names no hook")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[2].actions[0][0]")) {
+        rc = 1;
     }
 
     free(r);
