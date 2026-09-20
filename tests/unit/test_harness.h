@@ -768,6 +768,18 @@ int run_maprotate_vote_return_is_not_terminal(void);
  * for the register's reply. */
 int run_round_transition_tick_does_not_block(void);
 
+/* Re-authentication off the tick thread (test_reauth_result.c). The reauth
+ * captures the slot and queues client/verify; the reply stamps the slot on a
+ * later tick, and one whose slot was reused meanwhile is dropped. */
+int run_reauth_result_after_slot_reuse_discarded(void);
+int run_reauth_result_stamps_slot(void);
+/* And the anonymous PLAYER_JOIN fallback's side of it: the sweep defers to an
+ * outstanding verify, because the two announcements name different things,
+ * and the hold lapses so a lost reply cannot suppress the join for good. */
+int run_reauth_result_outruns_grace_stamps_once(void);
+int run_reauth_result_failure_releases_anonymous_join(void);
+int run_reauth_result_lost_still_announces(void);
+
 /* Deferred WBN PLAYER_JOIN core (test_wbn_deferred_join.c). The join
  * event is held until the slot's identity is known for the session —
  * keyed on reauth, anonymous on grace expiry — and re-fires per round.

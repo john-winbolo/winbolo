@@ -70,6 +70,12 @@
    one. */
 #define WBN_JOB_REGISTER 2
 
+/* A re-authenticating client's client/verify. Posted and kept like any
+   other JSON job; who the reply belongs to is the server transport's
+   business, which holds the slot and connection it was queued for and
+   looks them up by the job id. */
+#define WBN_JOB_VERIFY 3
+
 /* Results held for a caller that has not drained them yet. A drain runs on
    the thread that queued the work, so the normal depth is one; the cap is
    what stops the list growing for the life of the server if a kind is ever

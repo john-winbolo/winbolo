@@ -586,34 +586,52 @@ bool winboloNetIsPlayerParticipant(BYTE playerNum) {
 }
 
 /*********************************************************
-*NAME:          winboloNetVerifyClientKey
+*NAME:          winbolonetBuildVerifyBody
 *PURPOSE:
-* Validates a player_key received off the wire via
-* POST /api/v1/client/verify. On success, copies the
-* player_key into the player's slot in winboloNetPlayerKey
-* so subsequent events/leaves can identify the player.
+* Builds the client/verify request body. Shared by the
+* synchronous verify and the queued one so the two send the
+* same request.
+*
+*ARGUMENTS:
+* playerKey  - The key the client presented
+* playerName - Name to verify and attribute under
 *********************************************************/
-bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BYTE playerNum, char *errorMsg, bool *hasSteam, bool *isSupporter) {
-  cJSON *body = NULL;
-  cJSON *resp = NULL;
-  int status;
+static cJSON *winbolonetBuildVerifyBody(const char *playerKey,
+                                        const char *playerName) {
+  cJSON *body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
+  cJSON_AddStringToObject(body, "player_key", playerKey);
+  cJSON_AddStringToObject(body, "player_name", playerName);
+  return body;
+}
+
+/*********************************************************
+*NAME:          applyVerifyResponse
+*PURPOSE:
+* Reads one client/verify reply. Shared by the synchronous
+* winboloNetVerifyClientKey and the queued
+* winbolonetApplyVerifyResult so the two cannot drift.
+*
+* Writes winboloNetPlayerKey[playerNum] on acceptance, so
+* whichever thread calls this is the thread the slot's key
+* is written on.
+*
+*ARGUMENTS:
+* status      - HTTP status, or -1 when the post never sent
+* resp        - Parsed reply, or NULL
+* playerKey   - The key that was presented
+* playerNum   - Slot the key belongs to
+* errorMsg    - Filled on refusal (>= 256)
+* hasSteam    - Set from the reply, or FALSE
+* isSupporter - Set from the reply, or FALSE
+*********************************************************/
+static bool applyVerifyResponse(int status, cJSON *resp, const char *playerKey,
+                                BYTE playerNum, char *errorMsg,
+                                bool *hasSteam, bool *isSupporter) {
   bool ok = FALSE;
 
   if (hasSteam) *hasSteam = FALSE;
   if (isSupporter) *isSupporter = FALSE;
-
-  if (winboloNetRunning != TRUE || winboloNetServerKey[0] == '\0') {
-    strcpy(errorMsg, "WinBolo.net not running");
-    return FALSE;
-  }
-
-  body = cJSON_CreateObject();
-  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
-  cJSON_AddStringToObject(body, "player_key", playerKey);
-  cJSON_AddStringToObject(body, "player_name", playerName);
-
-  status = wbn_api_call("client/verify", body, &resp);
-  cJSON_Delete(body);
 
   if (status == 200 && resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
@@ -647,6 +665,125 @@ bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BY
   } else {
     strcpy(errorMsg, "No response from WinBolo.net");
   }
+
+  return ok;
+}
+
+/*********************************************************
+*NAME:          winboloNetVerifyClientKey
+*PURPOSE:
+* Validates a player_key received off the wire via
+* POST /api/v1/client/verify. On success, copies the
+* player_key into the player's slot in winboloNetPlayerKey
+* so subsequent events/leaves can identify the player.
+*
+* Posts on the calling thread. Callers on the server tick
+* use winbolonetQueueVerifyClientKey instead.
+*********************************************************/
+bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BYTE playerNum, char *errorMsg, bool *hasSteam, bool *isSupporter) {
+  cJSON *body = NULL;
+  cJSON *resp = NULL;
+  int status;
+  bool ok;
+
+  if (hasSteam) *hasSteam = FALSE;
+  if (isSupporter) *isSupporter = FALSE;
+
+  if (winboloNetRunning != TRUE || winboloNetServerKey[0] == '\0') {
+    strcpy(errorMsg, "WinBolo.net not running");
+    return FALSE;
+  }
+
+  body = winbolonetBuildVerifyBody(playerKey, playerName);
+  status = wbn_api_call("client/verify", body, &resp);
+  cJSON_Delete(body);
+
+  ok = applyVerifyResponse(status, resp, playerKey, playerNum, errorMsg,
+                           hasSteam, isSupporter);
+
+  cJSON_Delete(resp);
+  return ok;
+}
+
+/*********************************************************
+*NAME:          winbolonetQueueVerifyClientKey
+*PURPOSE:
+* Queues a client/verify as a job whose reply comes back
+* through winbolonetThreadDrainResults with kind
+* WBN_JOB_VERIFY. The caller applies it with
+* winbolonetApplyVerifyResult, which is where the slot's
+* key is written.
+*
+* Sent without the bearer, as the synchronous verify is.
+*
+* Returns the job id, or 0 when nothing was queued — in
+* which case no result is coming.
+*
+*ARGUMENTS:
+* playerKey  - The key the client presented
+* playerName - Name to verify and attribute under
+*********************************************************/
+uint32_t winbolonetQueueVerifyClientKey(const char *playerKey,
+                                        const char *playerName) {
+  cJSON *body = NULL;
+  char *json_str = NULL;
+  uint32_t id = 0;
+
+  if (winboloNetRunning != TRUE || winboloNetServerKey[0] == '\0') {
+    return 0;
+  }
+
+  body = winbolonetBuildVerifyBody(playerKey, playerName);
+  json_str = cJSON_PrintUnformatted(body);
+  if (json_str) {
+    id = winbolonetThreadAddJob("client/verify", json_str,
+                                /*needs_bearer*/ FALSE, WBN_JOB_VERIFY);
+    free(json_str);
+  }
+  cJSON_Delete(body);
+
+  return id;
+}
+
+/*********************************************************
+*NAME:          winbolonetApplyVerifyResult
+*PURPOSE:
+* Applies the reply to a queued client/verify. Same reading
+* as the synchronous winboloNetVerifyClientKey, which is why
+* both run through the same apply, and the same write of
+* winboloNetPlayerKey[playerNum] on acceptance — so the slot
+* key is written on whichever thread drains the result.
+*
+*ARGUMENTS:
+* status      - HTTP status the worker got, or -1
+* response    - Reply body, or NULL
+* playerKey   - The key the client presented
+* playerNum   - Slot the key belongs to
+* errorMsg    - Filled on refusal (>= 256)
+* hasSteam    - Set from the reply, or FALSE
+* isSupporter - Set from the reply, or FALSE
+*********************************************************/
+bool winbolonetApplyVerifyResult(int status, const char *response,
+                                 const char *playerKey, BYTE playerNum,
+                                 char *errorMsg, bool *hasSteam,
+                                 bool *isSupporter) {
+  cJSON *resp = NULL;
+  bool ok;
+
+  if (hasSteam) *hasSteam = FALSE;
+  if (isSupporter) *isSupporter = FALSE;
+
+  if (winboloNetRunning != TRUE) {
+    strcpy(errorMsg, "WinBolo.net not running");
+    return FALSE;
+  }
+
+  if (response != NULL) {
+    resp = cJSON_Parse(response);
+  }
+
+  ok = applyVerifyResponse(status, resp, playerKey, playerNum, errorMsg,
+                           hasSteam, isSupporter);
 
   cJSON_Delete(resp);
   return ok;

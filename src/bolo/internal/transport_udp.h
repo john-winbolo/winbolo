@@ -613,6 +613,11 @@ uint16_t transportUdpServerGetClientPing(BYTE playerNum);
  * written by the PONG handler. No-op for an out-of-range or unconnected slot. */
 void transportUdpServerSetClientPingForTest(BYTE playerNum, uint16_t pingMs);
 
+/* Age an outstanding verify's hold on the anonymous PLAYER_JOIN fallback to
+ * this tick, so the sweep stops deferring to it. Lets a case reach the
+ * lapsed-hold path without running WBN_REAUTH_HOLD_TICKS ticks of clock. */
+void transportUdpServerExpireReauthHoldForTest(BYTE playerNum);
+
 /* Test seam: read a slot's high-ping enforcement tally. Deliberately NOT gated
  * on the slot being connected — the thing worth asserting is that a freed slot
  * carries no strikes into its next occupant. Any out pointer may be NULL.
@@ -647,6 +652,16 @@ bool transportUdpServerStartBalanceRequest(struct ServerSim *sim,
 void transportUdpServerHandleWbnReauth(struct ServerSim *sim,
                                        BYTE slot,
                                        const char *token);
+
+/* The tail of the above, once its client/verify comes back off the
+ * WinBolo.net worker. Runs on the tick thread out of
+ * winbolonetThreadDrainResults, for a result whose kind is
+ * WBN_JOB_VERIFY. id names the job the reauth was queued as; the slot
+ * and connection it was queued for are held in the server transport and
+ * looked up from it. A result whose slot has since been freed or reused
+ * is dropped. */
+void udpServerApplyReauthResult(struct ServerSim *sim, uint32_t id,
+                                int status, const char *response);
 
 /* Lock/unlock the game to prevent new players from joining.
  * Broadcasts a server message event to all clients. */

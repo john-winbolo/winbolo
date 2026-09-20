@@ -79,6 +79,25 @@ bool winboloNetVerifyJoinCode(const char *joinCode, char *playerNameOut, bool *i
   return FALSE;
 }
 
+/* The reauth path queues client/verify for the worker and stamps the slot
+   when the reply comes back. The gym has no WinBolo.net, so nothing is
+   queued and no result ever arrives. */
+uint32_t winbolonetQueueVerifyClientKey(const char *playerKey, const char *playerName) {
+  (void)playerKey; (void)playerName;
+  return 0;
+}
+
+bool winbolonetApplyVerifyResult(int status, const char *response,
+                                 const char *playerKey, BYTE playerNum,
+                                 char *errorMsg, bool *hasSteam,
+                                 bool *isSupporter) {
+  (void)status; (void)response; (void)playerKey; (void)playerNum;
+  if (errorMsg)    errorMsg[0]  = '\0';
+  if (hasSteam)    *hasSteam    = FALSE;
+  if (isSupporter) *isSupporter = FALSE;
+  return FALSE;
+}
+
 bool winbolonetClientJoinSession(const char *apiToken, const char *serverKey, char *playerKeyOut, char *errorMsg) {
   (void)apiToken; (void)serverKey; (void)errorMsg;
   if (playerKeyOut) playerKeyOut[0] = '\0';

@@ -3801,6 +3801,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_wbn_session_rotation.c
     tests/unit/test_maprotate_rotation.c
     tests/unit/test_round_transition_tick.c
+    tests/unit/test_reauth_result.c
     tests/unit/test_wbn_deferred_join.c
     tests/unit/test_join_collision.c
     tests/unit/test_base_refuel_timers.c
@@ -5349,6 +5350,11 @@ set(_unit_test_names
     autolock_released_on_return_to_lobby
     no_autolock_stays_open_on_start
     round_transition_tick_does_not_block
+    reauth_result_after_slot_reuse_discarded
+    reauth_result_stamps_slot
+    reauth_result_outruns_grace_stamps_once
+    reauth_result_failure_releases_anonymous_join
+    reauth_result_lost_still_announces
     maprotate_restarts_round_and_rearms
     maprotate_boot_does_not_rotate_while_empty
     maprotate_gameover_is_not_terminal

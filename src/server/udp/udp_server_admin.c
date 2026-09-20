@@ -312,6 +312,10 @@ void serverDisconnectClient(ServerSim *sim, int idx, bool graceful) {
     /* Drop any owed PLAYER_JOIN — the player left before it resolved, so
      * no orphan anonymous join (and no leave it would need to pair with). */
     wbnJoinClear(&udpServer.clients[idx].wbnJoin);
+    /* And any verify still out for the leaver: its result is already dropped
+     * on the connId check, and a live entry here would defer the next
+     * occupant's announcement to a reply that is no longer for this slot. */
+    udpServerClearReauthPending((BYTE)idx);
     /* Slot is free; a fresh occupant re-establishes WBN status at its join. */
     udpServer.clients[idx].wbnWasVerified = false;
     udpServer.clients[idx].wbnWebIdentityCached = false;

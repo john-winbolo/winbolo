@@ -80,22 +80,32 @@ static void roundLogFlush(void) {
 *NAME:          serverLifecycleWbnResult
 *PURPOSE:
 * Handles one WinBolo.net job result, on the tick thread,
-* out of winbolonetThreadDrainResults. Only the round
-* transition's server/register has a result today.
+* out of winbolonetThreadDrainResults. Two kinds have a
+* result: the round transition's server/register, handled
+* below, and a re-authenticating client's client/verify,
+* which the server transport places by job id.
 *
-* Everything here is what the tick used to run straight
-* after winbolonetBeginSession returned. It waits for the
-* register because all of it depends on the new session key:
-* the held lobby_update would name the finished round, and
-* the rekey would hand clients a key that is about to be
-* replaced.
+* The register tail here is what the tick used to run
+* straight after winbolonetBeginSession returned. It waits
+* for the register because all of it depends on the new
+* session key: the held lobby_update would name the finished
+* round, and the rekey would hand clients a key that is about
+* to be replaced.
 *********************************************************/
 static void serverLifecycleWbnResult(uint32_t id, uint8_t kind, int status,
                                      const char *response, void *ctx) {
   ServerSim *sim = (ServerSim *)ctx;
 
-  (void)id;
-  if (kind != WBN_JOB_REGISTER || sim == NULL) {
+  if (sim == NULL) {
+    return;
+  }
+
+  if (kind == WBN_JOB_VERIFY) {
+    udpServerApplyReauthResult(sim, id, status, response);
+    return;
+  }
+
+  if (kind != WBN_JOB_REGISTER) {
     return;
   }
 

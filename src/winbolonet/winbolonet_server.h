@@ -162,6 +162,50 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
 bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BYTE playerNum, char *errorMsg, bool *hasSteam, bool *isSupporter);
 
 /*********************************************************
+*NAME:          winbolonetQueueVerifyClientKey
+*PURPOSE:
+* Queues the client/verify winboloNetVerifyClientKey would
+* post. The reply arrives through
+* winbolonetThreadDrainResults with kind WBN_JOB_VERIFY and
+* is applied with winbolonetApplyVerifyResult, which is
+* where winboloNetPlayerKey[] is written. Nothing is stored
+* against a slot here, so the caller keeps whatever it needs
+* to place the reply.
+*
+* Returns the job id, or 0 when nothing was queued, in which
+* case no result is coming.
+*
+*ARGUMENTS:
+* playerKey  - 33-byte player_key from the REAUTH packet
+* playerName - Name to verify and attribute under
+*********************************************************/
+uint32_t winbolonetQueueVerifyClientKey(const char *playerKey,
+                                        const char *playerName);
+
+/*********************************************************
+*NAME:          winbolonetApplyVerifyResult
+*PURPOSE:
+* Applies the reply to a queued client/verify. Reads it
+* exactly as winboloNetVerifyClientKey reads its own, and
+* stores the player_key at winboloNetPlayerKey[playerNum] on
+* acceptance — so the slot's key is written on the thread
+* that drains the result, not on the worker.
+*
+*ARGUMENTS:
+* status      - HTTP status the worker got, or -1
+* response    - Reply body, or NULL
+* playerKey   - The key the client presented
+* playerNum   - Player slot number
+* errorMsg    - Buffer (>= 256) for error message on failure
+* hasSteam    - Output: as winboloNetVerifyClientKey
+* isSupporter - Output: as winboloNetVerifyClientKey
+*********************************************************/
+bool winbolonetApplyVerifyResult(int status, const char *response,
+                                 const char *playerKey, BYTE playerNum,
+                                 char *errorMsg, bool *hasSteam,
+                                 bool *isSupporter);
+
+/*********************************************************
 *NAME:          winboloNetVerifyJoinCode
 *PURPOSE:
 * Resolves a join_code via POST
