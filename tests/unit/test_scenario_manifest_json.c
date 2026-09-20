@@ -1216,6 +1216,92 @@ int run_scenario_manifest_json_triggers(void) {
     return 0;
 }
 
+/* ── A where that is not an array ─────────────────────────────────── */
+
+/* A trigger holding no tests runs on every occurrence of its hook, so a
+   where that is there and is not an array cannot leave the trigger
+   standing: what the file states as a conditional would run
+   unconditionally. The trigger goes with its tests, and the issue is filed
+   under the position the file wrote it at.
+
+   Three triggers: a bad one, a sound one, and a bad one. The sound one is
+   what says the drop costs that trigger and no more. The second bad one is
+   what says which number the issue carries — with the first already gone it
+   sits in slot 1 and at position 2, so the two possible keys are different
+   numbers and the case can tell them apart. A file whose only bad trigger
+   is the first cannot: both are 0. */
+int run_scenario_manifest_json_trigger_where_type(void) {
+    static const char kBadWhere[] =
+        "{\n"
+        "  \"manifest\": 1,\n"
+        "  \"api\": 1,\n"
+        "  \"triggers\": [\n"
+        "    { \"when\": \"on_tick\", \"where\": {},\n"
+        "      \"actions\": [ [\"log\", \"never\"] ] },\n"
+        "    { \"when\": \"on_player_join\",\n"
+        "      \"actions\": [ [\"log\", \"kept\"] ] },\n"
+        "    { \"when\": \"on_tick\", \"where\": {},\n"
+        "      \"actions\": [ [\"log\", \"nor this\"] ] }\n"
+        "  ]\n"
+        "}\n";
+    char                    err[256];
+    char                    soft[256];
+    ScnManifestDoc         *doc;
+    ScnValidateResult      *sink;
+    ScnParseReport          rep;
+    const ScenarioManifest *m;
+
+    sink = (ScnValidateResult *)malloc(sizeof(*sink));
+    UT_ASSERT(sink != NULL);
+    memset(sink, 0, sizeof(*sink));
+    soft[0]     = '\0';
+    rep.soft    = soft;
+    rep.softLen = sizeof(soft);
+    rep.sink    = sink;
+
+    doc = parseText(kBadWhere, &rep, err, sizeof(err));
+    if (doc == NULL) {
+        free(sink);
+        UT_FAIL("a trigger whose where is not an array was refused: %s", err);
+    }
+    m = scnManifestValues(doc);
+    if (m->numTriggers != 1) {
+        int kept = (int)m->numTriggers;
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("%d triggers were kept, expected the 1 whose where reads",
+                kept);
+    }
+    if (strcmp(m->triggers[0].when, "on_player_join") != 0) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the trigger kept runs on '%s'", m->triggers[0].when);
+    }
+    if (!sawIssue(sink, "triggers[0]")) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the first trigger was dropped without a word under its "
+                "position");
+    }
+    /* The second drop, keyed by where the file wrote it rather than by the
+       slot it would have landed in once the first had gone. */
+    if (!sawIssue(sink, "triggers[2]")) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the third trigger was dropped without a word under its "
+                "position");
+    }
+    if (sawIssue(sink, "triggers[1]")) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("an issue was filed against triggers[1], which is the slot "
+                "the third trigger fell in and the position of the one kept");
+    }
+    scnManifestFree(doc);
+    free(sink);
+    return 0;
+}
+
 /* ── An operator that is none of the seven ────────────────────────── */
 
 /* A word the table cannot place, and a row that names no operator at all,

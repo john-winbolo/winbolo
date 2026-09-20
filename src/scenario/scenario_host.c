@@ -1169,7 +1169,15 @@ static void scnReadTrigAct(lua_State *L, int row, ScnTrigAct *out,
  * table with more triggers than this build holds is still a table, the way
  * one with more regions is. mjDecodeTriggers reads the same shape out of
  * JSON and fills the struct identically, which is what lets
- * scnManifestAgrees hold a package's two forms against each other. */
+ * scnManifestAgrees hold a package's two forms against each other.
+ *
+ * A trigger whose where is there but is not an array goes the same way. A
+ * trigger with no tests runs on every occurrence of its hook, so keeping
+ * one whose tests could not be read would turn what the author wrote as a
+ * conditional into an unconditional one. A row inside the array is the
+ * other case: a row that cannot be read is kept zeroed, which holds on
+ * nothing, so the tests the author did write still stand and the bad row is
+ * inert beside them. */
 static void scnReadTriggers(lua_State *L, int tbl, ScenarioManifest *m,
                             ScnParseReport *rep) {
     int tt;
@@ -1227,9 +1235,14 @@ static void scnReadTriggers(lua_State *L, int tbl, ScenarioManifest *m,
 
         scnRawField(L, entry, "where");
         if (!lua_isnil(L, -1) && !lua_istable(L, -1)) {
-            scnReport(rep, where, "scenario: %s's where is not an array",
-                      where);
-        } else if (lua_istable(L, -1)) {
+            scnReport(rep, where,
+                      "scenario: %s's where is not an array; %s dropped",
+                      where, where);
+            m->numTriggers--;        /* the slot claimed above, given back */
+            lua_pop(L, 2);           /* the where field, and the trigger */
+            continue;
+        }
+        if (lua_istable(L, -1)) {
             rows  = lua_gettop(L);
             count = (int)lua_rawlen(L, rows);
             for (i = 0; i < count; i++) {

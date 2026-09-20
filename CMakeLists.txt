@@ -5700,6 +5700,7 @@ set(_unit_test_names
     scenario_host_no_script
     scenario_host_manifest_roundtrip
     scenario_host_trigger_manifest
+    scenario_host_trigger_where_type
     scenario_host_team_init_read
     scenario_host_seed_reproducible
     scenario_host_edit_after_attach
@@ -5854,6 +5855,7 @@ set(_unit_test_names
     scenario_manifest_json_number_range
     scenario_manifest_json_triggers
     scenario_manifest_json_trigger_operator
+    scenario_manifest_json_trigger_where_type
     scenario_map_body_length
     scenario_map_find_container
     scenario_map_has_script_chunk

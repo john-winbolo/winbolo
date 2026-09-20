@@ -958,6 +958,80 @@ int run_scenario_host_trigger_manifest(void) {
     return 0;
 }
 
+/* ── 7a3. A where the reader cannot take ──────────────────────────── */
+
+/* A trigger holding no tests runs on every occurrence of its hook, so a
+ * where that is there and is not an array cannot leave the trigger
+ * standing: what the script wrote as a conditional would run
+ * unconditionally. The trigger goes with its tests, and the report names
+ * the position.
+ *
+ * Three triggers: a bad one, a sound one, and a bad one. The sound one is
+ * what says the drop costs that trigger and no more. The second bad one is
+ * what says which number the report carries — with the first already gone
+ * it sits in slot 1 and at position 2, so the two possible keys are
+ * different numbers and the case can tell them apart. A file whose only
+ * bad trigger is the first cannot: both are 0. */
+int run_scenario_host_trigger_where_type(void) {
+    static const char *const kMap = "scnhost_where_type.map";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  name = \"Bad where\",\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_tick\", where = \"x\",\n"
+        "      actions = { { \"log\", \"never\" } } },\n"
+        "    { when = \"on_player_join\",\n"
+        "      actions = { { \"log\", \"kept\" } } },\n"
+        "    { when = \"on_tick\", where = \"y\",\n"
+        "      actions = { { \"log\", \"nor this\" } } },\n"
+        "  },\n"
+        "}\n";
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    const ScenarioManifest *m;
+    char                    err[512];
+
+    UT_ASSERT(shPut(kMap, kLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "one bad where cost the whole script: %s", err);
+
+    /* The last of the two drops, which is the third trigger the file wrote.
+       By then the first has already gone, so the slot it would have landed
+       in is 1 and the position the file wrote it at is 2. Naming it
+       triggers[2] is what says the key is the position; naming it
+       triggers[1] would say the key had quietly become the slot.
+
+       Only the last line is readable here — the soft report holds one at a
+       time — so the drop of the first trigger is asserted in the manifest
+       count below rather than in a report of its own. */
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "triggers[2]") != NULL,
+                  "the report does not name the file position: '%s'",
+                  scenarioHostLastError(h));
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "triggers[1]") == NULL,
+                  "the report is keyed off the slot rather than the "
+                  "position: '%s'", scenarioHostLastError(h));
+
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->numTriggers == 1,
+                  "%u triggers kept, expected the 1 whose where reads",
+                  (unsigned)m->numTriggers);
+    UT_ASSERT_MSG(strcmp(m->triggers[0].when, "on_player_join") == 0,
+                  "the trigger kept runs on '%s'", m->triggers[0].when);
+    UT_ASSERT_MSG(m->triggers[0].numActions == 1,
+                  "the trigger kept holds %u actions",
+                  (unsigned)m->triggers[0].numActions);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
 /* ── 7b. A team's init table ──────────────────────────────────────── */
 
 /* The team block's `init` is the table this team's bots are built with, and

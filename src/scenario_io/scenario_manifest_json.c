@@ -642,7 +642,19 @@ static void mjTrigAct(const cJSON *row, ScnTrigAct *out, const char *where,
  *
  * Every cap here drops what is past it and says so. Nothing is a refusal:
  * a manifest with more triggers than this build holds is still a manifest,
- * the way one with more regions is. */
+ * the way one with more regions is.
+ *
+ * A trigger whose where is there but is not an array goes the same way. A
+ * trigger with no tests runs on every occurrence of its hook, so keeping
+ * one whose tests could not be read would turn what the file states as a
+ * conditional into an unconditional one. A row inside the array is the
+ * other case: a row that cannot be read is kept zeroed, which holds on
+ * nothing, so the tests the file does state still stand and the bad row is
+ * inert beside them.
+ *
+ * scnReadTriggers reads the same shape out of a Lua table and drops on the
+ * same terms, which is what lets scnManifestAgrees hold a package's two
+ * forms against each other. */
 static void mjDecodeTriggers(const cJSON *root, ScenarioManifest *m,
                              ScnParseReport *rep) {
     const cJSON *arr = cJSON_GetObjectItemCaseSensitive(root, "triggers");
@@ -689,9 +701,13 @@ static void mjDecodeTriggers(const cJSON *root, ScenarioManifest *m,
 
         list = cJSON_GetObjectItemCaseSensitive(entry, "where");
         if (list != NULL && !cJSON_IsArray(list)) {
-            mjReport(rep, where, "scenario: %s's where is not an array",
-                     where);
-        } else if (list != NULL) {
+            mjReport(rep, where,
+                     "scenario: %s's where is not an array; %s dropped",
+                     where, where);
+            m->numTriggers--;           /* the slot claimed above, given back */
+            continue;
+        }
+        if (list != NULL) {
             int w = 0;
             cJSON_ArrayForEach(row, list) {
                 char slot[SCN_VALIDATE_KEY_LEN];
