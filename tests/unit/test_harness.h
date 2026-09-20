@@ -1851,6 +1851,12 @@ int run_loopback_command_liveness(void);
 /* Parallel channel layer over the loopback transport: empty-flow inertness
  * plus a synthetic message round-trip under loss + jitter + dup. */
 int run_loopback_channel(void);
+/* A slot locked out by a server hitch recovers over the real transport under
+ * an 80ms one-way delay (test_loopback_hitch.c): the client keeps producing
+ * while the server stops, the server pays the debt in one burst, and a button
+ * value no substitute can invent has to reach the server again and keep
+ * reaching it as the client changes it. */
+int run_loopback_hitch_recovers(void);
 /* Server lock/unlock notice over CHANNEL_GAME (test_lock_channel.c): the
  * "locked to new players" message now rides the reliable game channel, not the
  * snapshot reliable tail. */

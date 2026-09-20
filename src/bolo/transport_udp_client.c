@@ -443,6 +443,29 @@ typedef struct {
  * keeps the declaration off MSVC's C89 mixed-decl-and-statement path. */
 static int udpClientLoggedLocalPort = 0;
 
+/* Clock the impairment layer reads. net_impair.c is pure — it takes nowMs as
+ * a parameter and never reads a clock of its own — so a caller can hand it a
+ * counter it advances itself, which makes a delay= spec deterministic and
+ * free of wall-clock scheduling. The four impairment call sites below are
+ * guarded at runtime by netImpairEnabled rather than by WB_ENABLE_NETIMPAIR,
+ * so they are compiled into every build and need a definition in both arms;
+ * only the settable form exists where the tooling is switched on. */
+#if WB_ENABLE_NETIMPAIR
+static uint64_t (*s_impairClock)(void) = NULL;
+
+void transportUdpClientSetImpairClock(uint64_t (*fn)(void)) {
+    s_impairClock = fn;
+}
+
+static uint64_t udpClientImpairNow(void) {
+    return (s_impairClock != NULL) ? s_impairClock() : (uint64_t)SDL_GetTicks();
+}
+#else
+static uint64_t udpClientImpairNow(void) {
+    return (uint64_t)SDL_GetTicks();
+}
+#endif
+
 /* Client send wrapper — tracks packet and byte counters */
 static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int len) {
     /* When outbound impairment is enabled, hand the datagram to the layer
@@ -452,7 +475,7 @@ static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int le
      * either way, here at offer/send time. */
     if (netImpairEnabled(&c->impairOut) &&
         netImpairOffer(&c->impairOut, buf, len, &c->serverAddr,
-                       (uint64_t)SDL_GetTicks())) {
+                       udpClientImpairNow())) {
         c->packetsSentThisSec++;
         c->bytesSentThisSec += len;
         return;
@@ -3395,7 +3418,7 @@ static void udpClientDrainSnapshots(TransportUdpClientCtx *c) {
     while ((len = udpRecvFrom(c->sock, buf, sizeof(buf), &fromAddr)) > 0) {
         if (netImpairEnabled(&c->impairIn)) {
             netImpairOffer(&c->impairIn, buf, len, &fromAddr,
-                           (uint64_t)SDL_GetTicks());
+                           udpClientImpairNow());
         } else {
             udpClientProcessPacket(c, buf, len);
         }
@@ -3407,7 +3430,7 @@ static void udpClientDrainSnapshots(TransportUdpClientCtx *c) {
     {
         uint8_t pbuf[NET_IMPAIR_MAX_PACKET];
         struct sockaddr_in paddr;
-        uint64_t now = (uint64_t)SDL_GetTicks();
+        uint64_t now = udpClientImpairNow();
         int plen;
         while ((plen = netImpairPop(&c->impairIn, pbuf, sizeof(pbuf),
                                     &paddr, now)) > 0) {
@@ -3486,7 +3509,7 @@ static bool udpClientTick(void *ctx) {
     {
         uint8_t pbuf[NET_IMPAIR_MAX_PACKET];
         struct sockaddr_in paddr;
-        uint64_t now = (uint64_t)SDL_GetTicks();
+        uint64_t now = udpClientImpairNow();
         int plen;
         while ((plen = netImpairPop(&c->impairOut, pbuf, sizeof(pbuf),
                                     &paddr, now)) > 0) {

@@ -850,6 +850,7 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_quiet_lobby_control_loss",       run_loopback_quiet_lobby_control_loss       },
     { "loopback_command_liveness",               run_loopback_command_liveness               },
     { "loopback_channel",                        run_loopback_channel                        },
+    { "loopback_hitch_recovers",                 run_loopback_hitch_recovers                 },
     { "lock_channel",                            run_lock_channel                            },
     { "loopback_map_preview",                    run_loopback_map_preview                    },
     { "loopback_map_upload",                     run_loopback_map_upload                     },
