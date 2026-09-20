@@ -1834,6 +1834,49 @@ libraries to satisfy the symbol surface; it now resolves the
 surface through `src/gym/winbolonet_stub.c` instead, dropping
 the libcurl, cjson, and tweetnacl dependencies it never exercised.
 
+### The worker and its jobs
+
+Nothing on the server tick posts to WinBolo.net. `winbolonetthread.c`
+runs one worker for the life of the process (created after the first
+`server/register`, drained rather than destroyed at a round boundary,
+so its pooled connection carries across rounds), and every post is a
+job on its queue: an endpoint, a body, whether the bearer is attached,
+and a **kind** — `WBN_JOB_NONE` for a post nobody reads the reply to,
+`WBN_JOB_REGISTER`, `WBN_JOB_VERIFY`, `WBN_JOB_UPLOAD`. A kinded job is
+queued with `winbolonetThreadAddJob`, which returns a **job id** unique
+for the process, and its reply is held until the tick collects it:
+`serverInstanceTick` calls `winbolonetThreadDrainResults`, which hands
+each result to `serverLifecycleWbnResult` on the tick thread. That
+handler owns the register; it passes a verify to the server transport,
+which matches it to the slot and connection the re-auth captured, by
+job id. A `WBN_JOB_NONE` job answers TRUE or FALSE at the queue
+instead: FALSE means the worker is not running, or that its waiting
+queue already holds `WBN_WAITING_NONE_MAX` fire-and-forget posts, and
+the caller sends the post itself or drops it.
+
+A body that names the session leaves `server_key` out and is queued
+through `winbolonetThreadAddServerKeyedRequest`; the worker stamps the
+key that is current when the job **fires**. A round transition swaps
+the key on the tick between a post being queued and it going out, and
+a post that named the old session was refused.
+
+The round transition is three jobs in one order —
+`server/quit`, the round-log upload, `server/register` — queued by
+`serverLifecycleQueueRotation` at each of the three sites that end a
+round. Everything that needs the new key (the lobby update held dirty,
+the rekey broadcast to every participating client, the lock re-send)
+waits for the register's completion handler, not for the tick that
+queued it. Only one register may be outstanding: a round that ends
+while one is out marks the rotation deferred, and the handler runs it
+against the key it has just installed.
+
+One verify per slot: the re-auth handler refuses a second
+`client/verify` for a slot while its first is outstanding. The packet
+that carries a re-auth bypasses the command-sequence dedup, and the
+worker posts one job at a time, so without that rule one client could
+put a verify per datagram ahead of the register every other slot is
+waiting on.
+
 ### Recipe — adding a new WBN endpoint
 
 Two shapes, depending on which side of the tracker the new endpoint

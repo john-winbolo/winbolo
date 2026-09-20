@@ -433,6 +433,11 @@ void transportUdpServerFuzzInit(ServerSim *sim) {
     udpServer.sock = INVALID_SOCKET;
     udpServer.running = true;
     udpServer.tickCount = 0;
+    /* The pending re-auth table is a static of its own, so the memset above
+     * does not reach it. tickCount restarts at 0 here, so a verify hold an
+     * earlier server on this process left behind names a deadline this
+     * counter will not reach for a long time. */
+    udpServerClearAllReauthPending();
     udpServer.uploadMaxFiles        = 64;
     udpServer.uploadMaxStorageBytes = 8u * 1024u * 1024u;
     udpServer.compressedMapSize = 0;

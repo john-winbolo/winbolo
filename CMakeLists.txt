@@ -5088,6 +5088,7 @@ set(_unit_test_names
     stall_long_dry_advances
     stall_lockout_rebase
     stall_lockout_rebase_once_per_tick
+    stall_recovery_no_gap_fill
     hitch_logged
     input_catchup
     catchup_ignores_redundant_duplicates
@@ -5152,6 +5153,8 @@ set(_unit_test_names
     loopback_quit_keeps_peer
     send_drains_channels_multi_frame
     best_effort_not_dropped
+    effect_burst_not_starved_by_reliable
+    post_game_segment_applied
     quit_burst_all_delivered
     player_mute_mask_roundtrip
     lock_channel
@@ -5351,6 +5354,7 @@ set(_unit_test_names
     no_autolock_stays_open_on_start
     round_transition_tick_does_not_block
     round_transition_during_rotation_deferred
+    round_transition_worker_down_sends_inline
     reauth_result_after_slot_reuse_discarded
     reauth_result_stamps_slot
     reauth_repeat_while_verify_out_refused
@@ -5967,6 +5971,7 @@ add_executable(WinBoloWbnTests
     tests/wbn/test_wbn_job_results.c
     tests/wbn/test_wbn_log_upload.c
     tests/wbn/test_wbn_key_at_fire_time.c
+    tests/wbn/test_wbn_queue_cap.c
     src/bolo/global.c
     src/common/prefs.c
     src/common/prefs_doc.c
@@ -6028,6 +6033,14 @@ set_tests_properties(wbn.log_upload_runs PROPERTIES TIMEOUT 120)
 add_test(NAME wbn.key_stamped_at_fire_time
          COMMAND $<TARGET_FILE:WinBoloWbnTests> key_stamped_at_fire_time)
 set_tests_properties(wbn.key_stamped_at_fire_time PROPERTIES TIMEOUT 60)
+
+# Seventy fire-and-forget posts against a listener that holds its one answer,
+# then a register and a session quit with the queue full. The listener is
+# stopped before the worker, so the queued posts fail their connect at once
+# instead of being held: a few seconds in all.
+add_test(NAME wbn.queue_cap_refuses_posts
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> queue_cap_refuses_posts)
+set_tests_properties(wbn.queue_cap_refuses_posts PROPERTIES TIMEOUT 120)
 
 # ---- Include-rule check: the scenario surface is invisible to a frontend --
 # src/bolo/scenario_api/ is on the include path of scenario_host, sim_owner

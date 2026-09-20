@@ -612,8 +612,6 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
   return FALSE;
 }
 
-void winbolonetEndSession(void) { }
-
 /* ── Round-transition queue spy (test_round_transition_tick.c) ──────────
  * The lifecycle queues server/quit, the round-log upload and
  * server/register for the WinBolo.net worker instead of posting them, and
@@ -640,8 +638,29 @@ static uint32_t wbnStubRecordJob(const char *what) {
   return wbnStubNextJobId++;
 }
 
-void winbolonetQueueEndSession(void) {
+/* The synchronous pair the lifecycle falls back to when the worker refuses
+ * the rotation (serverLifecycleQueueRotation). Both record themselves in
+ * the same job list as the queued forms, so a test reads one order for
+ * either path. */
+int  wbnStubEndSessionCalls = 0;
+int  wbnStubBeginSessionCalls = 0;
+bool wbnStubBeginSessionOk = FALSE;
+bool wbnStubWorkerRefuses = FALSE;
+
+void winbolonetEndSession(uint32_t drainMaxMs) {
+  (void)drainMaxMs;
+  wbnStubEndSessionCalls++;
   wbnStubRecordJob("quit");
+}
+
+bool winbolonetQueueEndSession(void) {
+  if (wbnStubWorkerRefuses == TRUE) {
+    /* What the real call answers with no worker: nothing queued, and the
+     * caller sends the rotation itself. */
+    return FALSE;
+  }
+  wbnStubRecordJob("quit");
+  return TRUE;
 }
 
 uint32_t winbolonetQueueBeginSession(char *mapName, unsigned short port,
@@ -652,6 +671,10 @@ uint32_t winbolonetQueueBeginSession(char *mapName, unsigned short port,
   (void)mapName; (void)port; (void)gameType; (void)ai; (void)mines;
   (void)password; (void)numBases; (void)numPills; (void)freeBases;
   (void)freePills; (void)numPlayers;
+  if (wbnStubWorkerRefuses == TRUE) {
+    wbnStubRegisterJobId = 0;
+    return 0;
+  }
   wbnStubRegisterJobId = wbnStubRecordJob("register");
   return wbnStubRegisterJobId;
 }
@@ -715,8 +738,16 @@ bool winbolonetApplyVerifyResult(int status, const char *response,
 }
 
 uint32_t winbolonetThreadAddUpload(const char *fileName, const char *key) {
+  uint32_t id;
   (void)fileName; (void)key;
-  return wbnStubRecordJob("upload");
+  /* Recorded either way: the queued upload and the one the dedicated log
+   * posts itself when this is refused are the same step of the rotation,
+   * and a test reads the order, not which thread sent it. */
+  id = wbnStubRecordJob("upload");
+  if (wbnStubWorkerRefuses == TRUE) {
+    return 0;
+  }
+  return id;
 }
 
 /* ── client/verify_join_code queue spy (test_reauth_result.c) ───────────
@@ -789,7 +820,9 @@ bool winbolonetBeginSession(char *mapName, unsigned short port, BYTE gameType, B
                             BYTE freeBases, BYTE freePills, BYTE numPlayers) {
   (void)mapName; (void)port; (void)gameType; (void)ai; (void)mines; (void)password;
   (void)numBases; (void)numPills; (void)freeBases; (void)freePills; (void)numPlayers;
-  return FALSE;
+  wbnStubBeginSessionCalls++;
+  wbnStubRecordJob("register");
+  return wbnStubBeginSessionOk;
 }
 
 void winbolonetSendLobbyStatus(bool inLobby) { (void)inLobby; }

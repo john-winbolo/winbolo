@@ -183,8 +183,17 @@ struct ClientSim {
     uint32_t    inputTickOffset;
 /* Half-steps of headroom past the server's last-processed tick when the
  * offset is set, so the jump lands ahead of where the server will be when
- * the packet arrives rather than exactly on it. */
-#define CLIENT_INPUT_JUMP_MARGIN_HALFSTEPS 4
+ * the packet arrives rather than exactly on it.
+ *
+ * Held above the server's gap-fill window (the `gap < 8` test in
+ * serverSimApplyOneInput). The server stall-advances through roughly the
+ * round trip while the jumped packet is in flight, so what is left when it
+ * is applied is this margin - and a gap inside that window is filled, half
+ * a step at a time, with the buttons the client held before the hitch. The
+ * client never predicted that movement, so each jump cost a position
+ * correction. A margin past the window is applied as the jump it is. The
+ * two constants are a pair: move one and read the other. */
+#define CLIENT_INPUT_JUMP_MARGIN_HALFSTEPS 10
 /* Cap on the round-trip contribution to the jump. CLIENT_INPUT_HISTORY_SIZE
  * is 256, so an uncapped ping would let one jump approach the ring's length
  * and the replay would skip almost everything in it. 64 half-steps is 640ms,

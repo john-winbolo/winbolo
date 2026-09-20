@@ -609,6 +609,23 @@ static cJSON *winbolonetBuildVerifyBody(const char *playerKey,
 }
 
 /*********************************************************
+*NAME:          copyWireError
+*PURPOSE:
+* Copies a WinBolo.net-supplied error string into a
+* caller's error buffer, bounded. The strings come off the
+* wire and the buffer is contracted at 256 bytes, so the
+* copy is capped at 255 characters plus the terminator.
+*
+*ARGUMENTS:
+* errorMsg - Caller's buffer (>= 256)
+* src      - The "error" string from the reply
+*********************************************************/
+static void copyWireError(char *errorMsg, const char *src) {
+  strncpy(errorMsg, src, 255);
+  errorMsg[255] = '\0';
+}
+
+/*********************************************************
 *NAME:          applyVerifyResponse
 *PURPOSE:
 * Reads one client/verify reply. Shared by the synchronous
@@ -639,7 +656,7 @@ static bool applyVerifyResponse(int status, cJSON *resp, const char *playerKey,
   if (status == 200 && resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
     if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
+      copyWireError(errorMsg, errObj->valuestring);
     } else {
       strncpy(winboloNetPlayerKey[playerNum], playerKey, WINBOLONET_KEY_LEN - 1);
       winboloNetPlayerKey[playerNum][WINBOLONET_KEY_LEN - 1] = '\0';
@@ -661,7 +678,7 @@ static bool applyVerifyResponse(int status, cJSON *resp, const char *playerKey,
   } else if (resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
     if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
+      copyWireError(errorMsg, errObj->valuestring);
     } else {
       strcpy(errorMsg, "WinBolo.net verification failed");
     }
@@ -871,9 +888,7 @@ static bool applyVerifyJoinCodeResponse(int status, cJSON *resp,
     } else {
       cJSON *errObj = cJSON_GetObjectItem(resp, "error");
       if (errObj && cJSON_IsString(errObj)) {
-        /* Backend-controlled string into a fixed (>=256) buffer: bound it. */
-        strncpy(errorMsg, errObj->valuestring, 255);
-        errorMsg[255] = '\0';
+        copyWireError(errorMsg, errObj->valuestring);
       } else {
         strcpy(errorMsg, "WinBolo.net join code verification rejected");
       }
@@ -881,7 +896,7 @@ static bool applyVerifyJoinCodeResponse(int status, cJSON *resp,
   } else if (resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
     if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
+      copyWireError(errorMsg, errObj->valuestring);
     } else {
       strcpy(errorMsg, "WinBolo.net join code verification failed");
     }
@@ -1054,7 +1069,7 @@ bool winboloNetVerifySpectatorKey(const char *spectatorKey, const char *playerNa
   if (status == 200 && resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
     if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
+      copyWireError(errorMsg, errObj->valuestring);
     } else {
       /* "ok" gates acceptance; treat its absence as success so a
        * lean backend response still verifies, mirroring the player
@@ -1076,7 +1091,7 @@ bool winboloNetVerifySpectatorKey(const char *spectatorKey, const char *playerNa
   } else if (resp) {
     cJSON *errObj = cJSON_GetObjectItem(resp, "error");
     if (errObj && cJSON_IsString(errObj)) {
-      strcpy(errorMsg, errObj->valuestring);
+      copyWireError(errorMsg, errObj->valuestring);
     } else {
       strcpy(errorMsg, "WinBolo.net spectator verification failed");
     }
@@ -1193,7 +1208,7 @@ void winboloNetSendLock(bool isLocked) {
 * session, so the upload has to follow the server/quit
 * POST but precede server/register's key swap).
 *********************************************************/
-void winbolonetEndSession(void) {
+void winbolonetEndSession(uint32_t drainMaxMs) {
   BYTE count;
   cJSON *body = NULL;
   cJSON *resp = NULL;
@@ -1205,8 +1220,11 @@ void winbolonetEndSession(void) {
   serverSimConsoleMessage("WinBolo.net: Ending session...");
 
   /* Empty the queue before the bearer below is cleared, so nothing
-   * queued against this session fires against the next one. */
-  winbolonetThreadDrain();
+   * queued against this session fires against the next one. A caller
+   * that cannot wait out an unreachable WinBolo.net gives a deadline;
+   * what is still queued when it passes is posted against the next
+   * session, which is the cost of not holding the caller. */
+  winbolonetThreadDrainFor(drainMaxMs);
 
   /* server/quit carries the still-valid bearer for this POST. */
   body = cJSON_CreateObject();
@@ -1287,25 +1305,35 @@ bool winbolonetBeginSession(char *mapName, unsigned short port, BYTE gameType, B
 * both when its result is applied. Pairs with
 * winbolonetQueueBeginSession, and the caller puts the
 * upload between the two.
+*
+* Returns TRUE when the worker took the quit, FALSE when it
+* is not running. The answer is the caller's signal for the
+* whole rotation: the register behind this would be refused
+* the same way, so a FALSE means the round transition has to
+* be sent on the calling thread.
 *********************************************************/
-void winbolonetQueueEndSession(void) {
+bool winbolonetQueueEndSession(void) {
   BYTE count;
   cJSON *body = NULL;
   char *json_str = NULL;
+  bool queued = FALSE;
 
   if (winboloNetRunning != TRUE) {
-    return;
+    return FALSE;
   }
 
   serverSimConsoleMessage("WinBolo.net: Ending session...");
 
   /* Keyed at fire time like the rest. The quit fires before the register
    * behind it, and the register's result is what swaps the key, so it still
-   * names the session being ended. */
+   * names the session being ended. Queued through the session form so a
+   * full waiting queue cannot refuse it: a dropped quit leaves the finished
+   * session listed, and the refusal here is what sends the whole rotation
+   * down the synchronous path. */
   body = cJSON_CreateObject();
   json_str = cJSON_PrintUnformatted(body);
   if (json_str) {
-    winbolonetThreadAddServerKeyedRequest("server/quit", json_str);
+    queued = winbolonetThreadAddSessionRequest("server/quit", json_str);
     free(json_str);
   }
   cJSON_Delete(body);
@@ -1316,6 +1344,8 @@ void winbolonetQueueEndSession(void) {
 
   winbolonetEventsDestroy();
   winbolonetEventsCreate();
+
+  return queued;
 }
 
 /*********************************************************

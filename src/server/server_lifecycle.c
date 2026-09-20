@@ -77,6 +77,29 @@ static void roundLogFlush(void) {
 }
 
 /*********************************************************
+*NAME:          serverLifecycleRegisterTail
+*PURPOSE:
+* The work that follows a successful server/register, on the
+* tick: close the rotation window, push the lobby change
+* that was held dirty while it was open, hand every
+* WBN-participating client the new key, and tell the new
+* session about the lock the old one was told about.
+*
+* Run from the register's result handler for a queued
+* register, and straight after the call for a synchronous
+* one.
+*********************************************************/
+static void serverLifecycleRegisterTail(ServerSim *sim) {
+  /* First: everything below reads the key through the window. */
+  sim->wbnSessionRotating = FALSE;
+  serverSimWbnLobbyTick(sim);
+  transportUdpServerBroadcastWbnRekey(sim);
+  /* The new session knows nothing about the lock the old one was told
+   * about. An idempotent state push, and it carries no player key. */
+  winboloNetSendLock(transportUdpServerGetLock());
+}
+
+/*********************************************************
 *NAME:          serverLifecycleQueueRotation
 *PURPOSE:
 * Queues one WinBolo.net session rotation for the worker:
@@ -97,6 +120,16 @@ static void roundLogFlush(void) {
 * With WinBolo.net off, the upload flush still runs (it is a
 * no-op with nothing pending) and the window closes here,
 * since no result is coming.
+*
+* When the worker refuses the quit it is not running at all
+* (winbolonetThreadCreate failed at boot, and nothing
+* recreates it), so the register behind it would be refused
+* too and the round would end with no quit, no upload and no
+* register - the finished session listed on WinBolo.net for
+* good. The three then go out on this thread instead, in the
+* same order. That is the blocking round transition this
+* server otherwise never does, and it is the lesser cost:
+* with no worker there is no later moment to send them.
 *********************************************************/
 static void serverLifecycleQueueRotation(ServerSim *sim) {
   uint32_t registerJob = 0;
@@ -108,24 +141,61 @@ static void serverLifecycleQueueRotation(ServerSim *sim) {
                 "outstanding", (unsigned)sim->wbnRegisterJob);
     return;
   }
-  if (winbolonetIsRunning()) {
-    winbolonetQueueEndSession();
+
+  if (!winbolonetIsRunning()) {
+    /* Nothing to rotate. The flush is a no-op with nothing pending, and
+     * with WinBolo.net off it goes nowhere in any case. */
+    roundLogFlush();
+    sim->wbnRegisterJob = 0;
+    sim->wbnSessionRotating = FALSE;
+    return;
   }
-  roundLogFlush();
-  if (winbolonetIsRunning()) {
+
+  if (winbolonetQueueEndSession() != TRUE) {
+    WB_LOG_WARN(WB_LOG_CAT_NET,
+                "WinBolo.net worker refused the session quit; sending the "
+                "round transition on this thread");
+    /* The quit first, so the upload that follows is accepted: WinBolo.net
+     * refuses a round log for a session that is still live. The flush hook
+     * is the queued one, and its own enqueue is refused the same way, so it
+     * posts the log from here as well. */
+    winbolonetEndSession(/*drainMaxMs*/ 0);
+    roundLogFlush();
     serverSimRefreshWbnLobbyInfo(sim);
-    registerJob = winbolonetQueueBeginSession(
-      sim->mapName, sim->serverPort,
-      (BYTE)gameTypeGet(&sim->sim.game),
-      (BYTE)sim->botAiType,
-      (BYTE)sim->sim.hiddenMines,
-      sim->hasPassword,
-      basesGetNumActive(&sim->sim.bs),
-      pillsGetNumActive(&sim->sim.pb),
-      serverSimGetNumNeutralBases(sim),
-      serverSimGetNumNeutralPills(sim),
-      serverSimGetNumPlayers(sim));
+    sim->wbnRegisterJob = 0;
+    if (winbolonetBeginSession(
+          sim->mapName, sim->serverPort,
+          (BYTE)gameTypeGet(&sim->sim.game),
+          (BYTE)sim->botAiType,
+          (BYTE)sim->sim.hiddenMines,
+          sim->hasPassword,
+          basesGetNumActive(&sim->sim.bs),
+          pillsGetNumActive(&sim->sim.pb),
+          serverSimGetNumNeutralBases(sim),
+          serverSimGetNumNeutralPills(sim),
+          serverSimGetNumPlayers(sim)) == TRUE) {
+      serverLifecycleRegisterTail(sim);
+    } else {
+      /* winbolonetBeginSession has switched WinBolo.net off and cleared the
+       * bearer, as a failed queued register does. Close the window anyway. */
+      sim->wbnSessionRotating = FALSE;
+    }
+    return;
   }
+
+  roundLogFlush();
+  serverSimRefreshWbnLobbyInfo(sim);
+  registerJob = winbolonetQueueBeginSession(
+    sim->mapName, sim->serverPort,
+    (BYTE)gameTypeGet(&sim->sim.game),
+    (BYTE)sim->botAiType,
+    (BYTE)sim->sim.hiddenMines,
+    sim->hasPassword,
+    basesGetNumActive(&sim->sim.bs),
+    pillsGetNumActive(&sim->sim.pb),
+    serverSimGetNumNeutralBases(sim),
+    serverSimGetNumNeutralPills(sim),
+    serverSimGetNumPlayers(sim));
   sim->wbnRegisterJob = registerJob;
   if (registerJob == 0) {
     sim->wbnSessionRotating = FALSE;
@@ -189,18 +259,9 @@ static void serverLifecycleWbnResult(uint32_t id, uint8_t kind, int status,
         return;
       }
     }
-    /* New key and bearer are installed. Close the rotation window first:
-     * everything below reads the key through it. */
-    sim->wbnSessionRotating = FALSE;
-    /* The lobby change held dirty while the window was open now names the
-     * right session. */
-    serverSimWbnLobbyTick(sim);
-    /* Push the rotated server_key to every WBN-participating client so they
-     * can mint a fresh player_key and re-auth. */
-    transportUdpServerBroadcastWbnRekey(sim);
-    /* The new session knows nothing about the lock the old one was told
-     * about. An idempotent state push, and it carries no player key. */
-    winboloNetSendLock(transportUdpServerGetLock());
+    /* New key and bearer are installed: close the window, push the held
+     * lobby change, rekey every participating client and re-send the lock. */
+    serverLifecycleRegisterTail(sim);
   } else {
     /* The register failed, so winbolonetApplyRegisterResult has switched
      * WinBolo.net off and cleared the bearer. Close the window anyway — a

@@ -226,7 +226,6 @@ typedef struct {
     char     verifyName[PACKET_MAX_PLAYER_NAME];
     bool     isWeb;
     bool     isPendingClaim;
-    bool     wasParticipant;
 } WbnReauthCtx;
 
 /* Re-authentications waiting on their client/verify job, one entry per slot.
@@ -244,10 +243,11 @@ typedef struct {
  * replaces the entry, and the lapsed job's result then finds no entry and
  * is dropped.
  *
- * No reset on transport create: job ids are unique for the life of the
- * process and never reused, so an entry left over from an earlier server
- * cannot match a later result, and the next reauth for that slot replaces
- * it. */
+ * Transport create, destroy and the fuzz init each clear the whole table.
+ * Job ids are unique for the life of the process and never reused, so an
+ * entry left over from an earlier server cannot match a later result, but
+ * its hold names a tick number the next server's counter (restarted at 0)
+ * will not reach for a long time, which would refuse that slot's re-auths. */
 static struct {
     uint32_t     jobId;          /* 0 when the entry is free */
     uint32_t     holdUntilTick;  /* the grace sweep defers to this entry until here */
@@ -294,10 +294,18 @@ void transportUdpServerExpireReauthHoldForTest(BYTE slot) {
  * PLAYER_JOIN, the lobby publish and the provisional-claim resolve.  Runs on
  * the tick thread in every case — from the completion handler for a native
  * slot, and straight from the reauth for a web slot, whose join_code verify
- * is read-only and cached for the connection. */
+ * is read-only and cached for the connection.
+ *
+ * wasParticipant is the slot's keyed state read immediately before the key
+ * was written, not when the re-auth was queued: a session rotation clears
+ * every key, so a value read at queue time can say "already a participant"
+ * for a slot that is registering into a new session, which reads a genuine
+ * absent-to-present transition as an idempotent rekey resend and swallows
+ * the PLAYER_JOIN. */
 static void udpServerStampReauth(ServerSim *sim, const WbnReauthCtx *rc,
-                                 bool verifyOk, bool hasSteam,
-                                 bool wbnIsSupporter, const char *errorMsg) {
+                                 bool wasParticipant, bool verifyOk,
+                                 bool hasSteam, bool wbnIsSupporter,
+                                 const char *errorMsg) {
     BYTE slot = rc->slot;
 
     if (verifyOk) {
@@ -337,7 +345,7 @@ static void udpServerStampReauth(ServerSim *sim, const WbnReauthCtx *rc,
          * participant) does not.  This also satisfies the anonymous
          * fallback armed at join, so the grace sweep won't fire too. */
         if (wbnJoinOnReauth(&udpServer.clients[slot].wbnJoin,
-                            rc->wasParticipant)) {
+                            wasParticipant)) {
             winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
                                slot, WINBOLO_NET_NO_PLAYER, FALSE, FALSE);
         }
@@ -435,6 +443,7 @@ void udpServerApplyReauthResult(ServerSim *sim, uint32_t id, int status,
     char errorMsg[512];
     bool hasSteam = FALSE;
     bool wbnIsSupporter = FALSE;
+    bool wasParticipant;
     bool verifyOk;
     int  idx;
 
@@ -458,6 +467,12 @@ void udpServerApplyReauthResult(ServerSim *sim, uint32_t id, int status,
                     (unsigned long long)udpServer.clients[rc.slot].connId);
         return;
     }
+
+    /* Read the slot's keyed state now, a few lines ahead of the key write
+     * below, rather than carrying a copy from when the verify was queued.
+     * A session rotation between the two clears every key, so a stale copy
+     * would report a fresh registration as a rekey resend. */
+    wasParticipant = winboloNetIsPlayerParticipant(rc.slot);
 
     errorMsg[0] = '\0';
     if (rc.isWeb) {
@@ -496,8 +511,8 @@ void udpServerApplyReauthResult(ServerSim *sim, uint32_t id, int status,
                                                rc.slot, errorMsg, &hasSteam,
                                                &wbnIsSupporter);
     }
-    udpServerStampReauth(sim, &rc, verifyOk, hasSteam, wbnIsSupporter,
-                         errorMsg);
+    udpServerStampReauth(sim, &rc, wasParticipant, verifyOk, hasSteam,
+                         wbnIsSupporter, errorMsg);
 }
 
 void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
@@ -517,10 +532,6 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
     rc.slot   = slot;
     rc.connId = udpServer.clients[slot].connId;
     snprintf(rc.token, sizeof(rc.token), "%s", token);
-    /* Capture the slot's keyed state *before* the verify fills the key,
-     * so the deferred-join core can tell a fresh registration (key
-     * absent->present) from an idempotent rekey resend. */
-    rc.wasParticipant = winboloNetIsPlayerParticipant(slot);
     rc.isWeb = (udpServer.clients[slot].clientType == CLIENT_TYPE_WEB);
     /* Web slots take their verified name from WBN, not the wire, so the native
      * provisional-claim dance (temp -unverified[-N] names, squatter preemption)
@@ -539,7 +550,9 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
      * re-verify would fail.  A later reauth re-stamps from the cache and never
      * reaches the network at all. */
     if (rc.isWeb && udpServer.clients[slot].wbnWebIdentityCached) {
-        udpServerStampReauth(sim, &rc,
+        /* The slot's keyed state as it is now. Nothing has been queued for
+         * this path, so now is also immediately before the stamp. */
+        udpServerStampReauth(sim, &rc, winboloNetIsPlayerParticipant(slot),
                              udpServer.clients[slot].wbnWebIsLoggedIn,
                              /*hasSteam*/ FALSE, /*wbnIsSupporter*/ FALSE, "");
         return;

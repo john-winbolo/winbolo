@@ -83,6 +83,17 @@
    is logged. */
 #define WBN_MAX_RESULTS 64
 
+/* The most fire-and-forget posts (WBN_JOB_NONE) the worker will hold at
+   once. Each one takes up to 35s on the wire, so a queue that grows without
+   bound is a queue nothing at the back of it will ever reach; the caller is
+   told the post was not taken and takes its own FALSE path instead. Only
+   WBN_JOB_NONE is counted and only it is ever refused: a register, a verify
+   and an upload are the round transition and the join path, which have no
+   other way through, and so is the session quit
+   (winbolonetThreadAddSessionRequest). The oldest is never dropped to make
+   room either - it could be that quit or a round-log upload. */
+#define WBN_WAITING_NONE_MAX 64
+
 typedef struct wbnListObj *wbnList;
 struct wbnListObj {
   wbnList next;           /* Next item */
@@ -147,6 +158,22 @@ bool winbolonetThreadCreate(void);
 void winbolonetThreadDrain(void);
 
 /*********************************************************
+*NAME:          winbolonetThreadDrainFor
+*PURPOSE:
+*  winbolonetThreadDrain with a deadline. Returns TRUE when
+*  the queue emptied, FALSE when maxMs elapsed first and the
+*  rest of the queue is still there. For a caller on a path
+*  a person is waiting on: one post can take up to 35s, so
+*  an unbounded drain is that long for each one queued.
+*  maxMs 0 means no deadline, which is what
+*  winbolonetThreadDrain does.
+*
+*ARGUMENTS:
+* maxMs - Milliseconds to wait, or 0 for no deadline
+*********************************************************/
+bool winbolonetThreadDrainFor(uint32_t maxMs);
+
+/*********************************************************
 *NAME:          winbolonetThreadDestroy
 *PURPOSE:
 *  Destroys the WBN update thread. Drains the queue first,
@@ -162,10 +189,11 @@ void winbolonetThreadDestroy(void);
 *  The json_body string is copied internally. Sent via
 *  wbn_api_post (no Authorization header).
 *
-*  Returns TRUE when the request was queued, FALSE when the
-*  thread is not running and nothing was taken. A caller
-*  that must not lose the post acts on the FALSE by sending
-*  it itself.
+*  Returns TRUE when the request was queued, FALSE when
+*  nothing was taken: the thread is not running, or its
+*  waiting queue already holds the most fire-and-forget
+*  posts it will take. A caller that must not lose the post
+*  acts on the FALSE by sending it itself.
 *
 *ARGUMENTS:
 * endpoint  - API endpoint path (e.g. "server/update")
@@ -181,8 +209,9 @@ bool winbolonetThreadAddRequest(const char *endpoint, const char *json_body);
 *  wbn_api_post_server). Use for queued server/ endpoints
 *  that need the bearer attached when the thread fires.
 *
-*  Returns TRUE when the request was queued, FALSE when the
-*  thread is not running and nothing was taken.
+*  Returns TRUE when the request was queued, FALSE when
+*  nothing was taken: the thread is not running, or its
+*  waiting queue is full.
 *
 *ARGUMENTS:
 * endpoint  - API endpoint path (e.g. "server/lobby")
@@ -201,8 +230,9 @@ bool winbolonetThreadAddServerRequest(const char *endpoint, const char *json_bod
 *  session that is live when it goes out, rather than the
 *  one that was live when it was queued.
 *
-*  Returns TRUE when the request was queued, FALSE when the
-*  thread is not running and nothing was taken.
+*  Returns TRUE when the request was queued, FALSE when
+*  nothing was taken: the thread is not running, or its
+*  waiting queue is full.
 *
 *ARGUMENTS:
 * endpoint  - API endpoint path (e.g. "client/leave")
@@ -211,6 +241,23 @@ bool winbolonetThreadAddServerRequest(const char *endpoint, const char *json_bod
 *********************************************************/
 bool winbolonetThreadAddServerKeyedRequest(const char *endpoint,
                                            const char *json_body);
+
+/*********************************************************
+*NAME:          winbolonetThreadAddSessionRequest
+*PURPOSE:
+*  As winbolonetThreadAddServerKeyedRequest, for a post the
+*  round transition cannot do without (server/quit). The
+*  backlog cap the three calls above answer FALSE on does not
+*  apply here, so a FALSE means one thing: the worker is not
+*  running, and the caller sends the rotation itself.
+*
+*ARGUMENTS:
+* endpoint  - API endpoint path (e.g. "server/quit")
+* json_body - JSON object string without "server_key"
+*             (copied, caller may free)
+*********************************************************/
+bool winbolonetThreadAddSessionRequest(const char *endpoint,
+                                       const char *json_body);
 
 /*********************************************************
 *NAME:          winbolonetThreadSetServerKey

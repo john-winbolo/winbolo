@@ -46,6 +46,13 @@
  * after the burst is queued, and a burst sized to the ring exactly would have
  * its oldest entry dropped by the first one of those.
  *
+ * ── run_effect_burst_not_starved_by_reliable ─────────────────────────────
+ * The same tick raises more reliable game events than one snapshot drain
+ * takes, plus a burst of effects, and the tick after it raises a second burst.
+ * The two channels used to share one drain cap, so the effects of a busy tick
+ * were never reached and the second burst evicted them from the client's
+ * receive ring. Both bursts have to be applied in full.
+ *
  * ── run_quit_burst_all_delivered ─────────────────────────────────────────
  * Two clients. Client 2 holds every pillbox and base on the map and quits. Its
  * departure migrates all of them at once, which is the ownership burst the
@@ -116,6 +123,7 @@
 #include "global.h"                        /* MAX_TANKS, BYTE, NEUTRAL */
 #include "server_sim.h"
 #include "server_sim_internal.h"           /* ServerSim::sim, for the pill/base setup */
+#include "server_sim_lifecycle.h"          /* serverSimEnterGameOver */
 #include "client_sim.h"
 #include "client_net.h"                    /* clientSimNetReceiveVoice */
 #include "client_connect_state.h"
@@ -176,6 +184,35 @@
 #define BE_MARK         0xA5u
 #define BE_MARK_FILLER  0x01u
 #define BE_MARK_EFFECT  0x02u
+#define BE_MARK_EFFECT2 0x03u
+#define BE_MARK_POSTGAME 0x04u
+
+/* ── post_game_segment_applied ───────────────────────────────────────────
+ * Pumps run after game over before the segment is queued, so the client
+ * has gone without a snapshot for longer than the drain waits before it
+ * hands the order back (SNAPSHOT_ORDER_IDLE_TICKS, 20 local ticks, one per
+ * pump). */
+#define BE_POSTGAME_QUIET 30
+
+/* Pumps the segment then gets. Far below the game-over hold
+ * (GAMEOVER_HOLD_TICKS, 150 server ticks), so a pass cannot come from the
+ * lobby phase event arriving and flipping the gate that way. */
+#define BE_POSTGAME_MAX   15
+
+/* ── effect_burst_not_starved_by_reliable ────────────────────────────────
+ * Reliable game events queued on the measured tick. The client's snapshot
+ * drain takes at most MAX_SNAPSHOT_EVENTS (128) reliable events per
+ * snapshot, and this is well past that, so a drain that shared one cap
+ * across both channels had nothing left for the effect channel. The server
+ * frames all of these across the tick's four frames (about 96 each), so
+ * they are all at the client by the drain that follows. */
+#define BE_CAP_FILLER   240
+
+/* Effect events in each of the two bursts. The client's best-effort receive
+ * ring is CHANNEL_GAME_EFFECT_WINDOW (64) deep and evicts its oldest entry
+ * rather than waiting, so a first burst left undrained is what the second
+ * one pushes out. */
+#define BE_CAP_EFFECTS  48
 
 /* The injected voice frame: a payload short enough to leave the frame
  * arithmetic above uncluttered, and a sequence number no real frame would carry
@@ -288,6 +325,19 @@ static bool beBothServerReady(LoopbackHarness *h, void *user) {
                (int)clientSimGetMyPlayerNum(h->cs)) &&
            transportUdpServerTestDownloadComplete(
                (int)clientSimGetMyPlayerNum(h->cs2));
+}
+
+/* The server is running the round. */
+static bool beRunning(LoopbackHarness *h, void *user) {
+    (void)user;
+    return serverSimGetState(h->sim) == serverStateRunning;
+}
+
+/* And the client has been told: CTRL_GAME_PHASE_RUNNING clears inLobby,
+ * which is one of the three tests the snapshot-order gate makes. */
+static bool beClientInGame(LoopbackHarness *h, void *user) {
+    (void)user;
+    return !clientSimIsInLobby(h->cs);
 }
 
 static bool beHaveTank(LoopbackHarness *h, void *user) {
@@ -552,6 +602,301 @@ int run_best_effort_not_dropped(void) {
         UT_FAIL("best-effort traffic was left behind after the burst was "
                 "delivered: effect skips %u, voice skips %u",
                 (unsigned)fxSkip, (unsigned)vxSkip);
+    }
+
+    loopbackHarnessStop(&h);
+    return 0;
+}
+
+/* ── effect_burst_not_starved_by_reliable ───────────────────────────────
+ *
+ * The snapshot drain used to take the reliable game channel and the
+ * best-effort effect channel into one array with one cap of
+ * MAX_SNAPSHOT_EVENTS (128). A tick that sends more reliable events than
+ * that - which the multi-frame send loop made possible - filled the array
+ * before the effect channel was reached, and nothing holds a best-effort
+ * segment for the next snapshot: the client's 64-deep receive ring drops
+ * its oldest entry when the next tick's burst arrives over it. The effects
+ * of a busy tick were silently lost at the client, having survived the
+ * whole way across the wire.
+ *
+ * The effect channel is drained separately now, after the snapshot is
+ * applied, with the ring as its only bound.
+ *
+ * The fixture: one tick queues BE_CAP_FILLER reliable events and a first
+ * burst of BE_CAP_EFFECTS effects, the next tick queues a second burst of
+ * the same size, and every event of both bursts has to reach the client.
+ * Before the split the first burst is the one that loses events, because
+ * the second burst is what evicts it.
+ */
+int run_effect_burst_not_starved_by_reliable(void) {
+    LoopbackHarness h;
+    bool firstSeen[BE_CAP_EFFECTS];
+    bool secondSeen[BE_CAP_EFFECTS];
+    BYTE slot;
+    int at, i;
+    int deliveredAt = -1;
+
+    memset(firstSeen, 0, sizeof(firstSeen));
+    memset(secondSeen, 0, sizeof(secondSeen));
+    memset(&h, 0, sizeof(h));
+
+    if (!loopbackHarnessStart(&h, "EffectCapHost", /*lobbyMode*/ false,
+                              /*impairSpec*/ NULL, BE_SEED)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("harness start (effect burst not starved) failed");
+    }
+
+    at = loopbackHarnessPumpUntil(&h, BE_CONNECT_MAX, beConnected, NULL);
+    if (at < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client never reached CONNECTED within %d pumps (state=%d)",
+                BE_CONNECT_MAX, (int)clientSimGetConnectState(h.cs));
+    }
+    at = loopbackHarnessPumpUntil(&h, BE_READY_MAX, beServerReady, NULL);
+    if (at < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client's map download never completed within %d pumps",
+                BE_READY_MAX);
+    }
+    at = loopbackHarnessPumpUntil(&h, BE_TANK_MAX, beHaveTank, NULL);
+    if (at < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client never got a tank within %d pumps", BE_TANK_MAX);
+    }
+
+    slot = clientSimGetMyPlayerNum(h.cs);
+    if (slot >= MAX_TANKS) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client holds no slot, so there is no mux to queue onto");
+    }
+
+    loopbackHarnessPumpUntil(&h, BE_SETTLE, NULL, NULL);
+    clientSimSetBrainEventCount(h.cs, 0);
+
+    /* Tick one: more reliable events than one drain takes, and the first
+     * effect burst behind them. */
+    threadsWaitForMutex();
+    for (i = 0; i < BE_CAP_FILLER; i++) {
+        GameEvent ev;
+        beMakePing(&ev, slot, i, BE_MARK_FILLER);
+        if (!transportUdpServerTestAddGameEvent((int)slot, &ev)) {
+            threadsReleaseMutex();
+            loopbackHarnessStop(&h);
+            UT_FAIL("the reliable game channel refused filler event %d of %d - "
+                    "the window is %d deep, so the fixture is wrong, not the "
+                    "server", i, BE_CAP_FILLER, CHANNEL_GAME_WINDOW);
+        }
+    }
+    for (i = 0; i < BE_CAP_EFFECTS; i++) {
+        GameEvent ev;
+        beMakePing(&ev, slot, i, BE_MARK_EFFECT);
+        if (!transportUdpServerTestAddEffectEvent((int)slot, &ev)) {
+            threadsReleaseMutex();
+            loopbackHarnessStop(&h);
+            UT_FAIL("the effect channel refused event %d of the first burst",
+                    i);
+        }
+    }
+    threadsReleaseMutex();
+    loopbackHarnessPump(&h);
+
+    /* Tick two: the burst that evicts whatever of the first one the client
+     * has not drained. */
+    threadsWaitForMutex();
+    for (i = 0; i < BE_CAP_EFFECTS; i++) {
+        GameEvent ev;
+        beMakePing(&ev, slot, i, BE_MARK_EFFECT2);
+        if (!transportUdpServerTestAddEffectEvent((int)slot, &ev)) {
+            threadsReleaseMutex();
+            loopbackHarnessStop(&h);
+            UT_FAIL("the effect channel refused event %d of the second burst",
+                    i);
+        }
+    }
+    threadsReleaseMutex();
+    loopbackHarnessPump(&h);
+
+    for (i = 1; i <= BE_DELIVER_MAX; i++) {
+        loopbackHarnessPump(&h);
+        beCollectPings(h.cs, BE_MARK_EFFECT, firstSeen, BE_CAP_EFFECTS);
+        beCollectPings(h.cs, BE_MARK_EFFECT2, secondSeen, BE_CAP_EFFECTS);
+        clientSimSetBrainEventCount(h.cs, 0);
+        if (beCountMissing(firstSeen, BE_CAP_EFFECTS) == 0 &&
+            beCountMissing(secondSeen, BE_CAP_EFFECTS) == 0) {
+            deliveredAt = i;
+            break;
+        }
+    }
+
+    fprintf(stderr, "  effect cap: %d reliable + 2 x %d effect; client applied "
+                    "%d/%d then %d/%d after %d pump(s) of %d\n",
+            BE_CAP_FILLER, BE_CAP_EFFECTS,
+            BE_CAP_EFFECTS - beCountMissing(firstSeen, BE_CAP_EFFECTS),
+            BE_CAP_EFFECTS,
+            BE_CAP_EFFECTS - beCountMissing(secondSeen, BE_CAP_EFFECTS),
+            BE_CAP_EFFECTS, deliveredAt < 0 ? BE_DELIVER_MAX : deliveredAt,
+            BE_DELIVER_MAX);
+
+    if (beCountMissing(firstSeen, BE_CAP_EFFECTS) != 0) {
+        int miss = beCountMissing(firstSeen, BE_CAP_EFFECTS);
+        int first = beFirstMissing(firstSeen, BE_CAP_EFFECTS);
+        loopbackHarnessStop(&h);
+        UT_FAIL("%d of the %d effect event(s) sent alongside %d reliable "
+                "event(s) never reached the client (first missing index %d) - "
+                "the snapshot drain takes at most %d events, and an effect "
+                "segment it has no room for is evicted from the receive ring "
+                "by the next tick's burst rather than waiting",
+                miss, BE_CAP_EFFECTS, BE_CAP_FILLER, first,
+                MAX_SNAPSHOT_EVENTS);
+    }
+    if (beCountMissing(secondSeen, BE_CAP_EFFECTS) != 0) {
+        int miss = beCountMissing(secondSeen, BE_CAP_EFFECTS);
+        int first = beFirstMissing(secondSeen, BE_CAP_EFFECTS);
+        loopbackHarnessStop(&h);
+        UT_FAIL("%d of the %d effect event(s) in the second burst never "
+                "reached the client (first missing index %d)",
+                miss, BE_CAP_EFFECTS, first);
+    }
+
+    loopbackHarnessStop(&h);
+    return 0;
+}
+
+/* ── post_game_segment_applied ──────────────────────────────────────────
+ *
+ * The snapshot drain owns the order the game, effect and map channels apply
+ * in while a round is running. The three tests that said so - joined, not in
+ * the lobby, map installed - all stay true through the whole post-game
+ * window, and the client's inLobby flips only on CTRL_GAME_PHASE_LOBBY,
+ * which arrives at the end of it. The server stops sending snapshots the
+ * moment the round ends, so for the length of the game-over hold the client
+ * ingested standalone frames and drained nothing from those three channels:
+ * the server resent the unacked tail over and over into a client that was
+ * holding it for a drain that had stopped.
+ *
+ * The gate now also asks whether a snapshot has been applied recently. This
+ * ends a round, lets the quiet settle, sends one reliable game event and
+ * requires it to be applied while the server is still in game over.
+ */
+int run_post_game_segment_applied(void) {
+    LoopbackHarness h;
+    bool seen[1];
+    BYTE slot;
+    int at, i;
+    int appliedAt = -1;
+
+    memset(seen, 0, sizeof(seen));
+    memset(&h, 0, sizeof(h));
+
+    if (!loopbackHarnessStart(&h, "PostGameHost", /*lobbyMode*/ true,
+                              /*impairSpec*/ NULL, BE_SEED)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("harness start (post game segment) failed");
+    }
+
+    at = loopbackHarnessPumpUntil(&h, BE_CONNECT_MAX, beConnected, NULL);
+    if (at < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client never reached CONNECTED within %d pumps (state=%d)",
+                BE_CONNECT_MAX, (int)clientSimGetConnectState(h.cs));
+    }
+    if (!loopbackHarnessTriggerGameStart(&h)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client's slot was never ready for game start");
+    }
+    at = loopbackHarnessPumpUntil(&h, BE_READY_MAX, beRunning, NULL);
+    if (at < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the game never reached the running state within %d pumps",
+                BE_READY_MAX);
+    }
+    at = loopbackHarnessPumpUntil(&h, BE_READY_MAX, beClientInGame, NULL);
+    if (at < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client never left the lobby within %d pumps",
+                BE_READY_MAX);
+    }
+    at = loopbackHarnessPumpUntil(&h, BE_READY_MAX, beServerReady, NULL);
+    if (at < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client's map download never completed within %d pumps",
+                BE_READY_MAX);
+    }
+    at = loopbackHarnessPumpUntil(&h, BE_TANK_MAX, beHaveTank, NULL);
+    if (at < 0) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client never got a tank within %d pumps", BE_TANK_MAX);
+    }
+
+    slot = clientSimGetMyPlayerNum(h.cs);
+    if (slot >= MAX_TANKS) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client holds no slot, so there is no mux to queue onto");
+    }
+    loopbackHarnessPumpUntil(&h, BE_SETTLE, NULL, NULL);
+
+    /* End the round. The server stops sending snapshots here and holds in
+     * game over for GAMEOVER_HOLD_TICKS before the lobby phase event. */
+    threadsWaitForMutex();
+    serverSimEnterGameOver(h.sim);
+    threadsReleaseMutex();
+    for (i = 0; i < BE_POSTGAME_QUIET; i++) {
+        loopbackHarnessPump(&h);
+    }
+    if (serverSimGetState(h.sim) != serverStateGameOver) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the server left game over after %d pump(s) (state %d), so the "
+                "window this case measures was never open", BE_POSTGAME_QUIET,
+                (int)serverSimGetState(h.sim));
+    }
+
+    /* The premise: the client still believes it is in the round, so the
+     * three original tests in the gate all hold and only the quiet is left
+     * to break the tie. The lobby phase event is what flips this, and it is
+     * still ahead of us. */
+    if (clientSimIsInLobby(h.cs)) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("the client is already in the lobby %d pump(s) after game "
+                "over, so the gate this case measures was already open",
+                BE_POSTGAME_QUIET);
+    }
+
+    clientSimSetBrainEventCount(h.cs, 0);
+    {
+        GameEvent ev;
+        beMakePing(&ev, slot, 0, BE_MARK_POSTGAME);
+        threadsWaitForMutex();
+        if (!transportUdpServerTestAddGameEvent((int)slot, &ev)) {
+            threadsReleaseMutex();
+            loopbackHarnessStop(&h);
+            UT_FAIL("the reliable game channel refused the post-game event");
+        }
+        threadsReleaseMutex();
+    }
+
+    for (i = 1; i <= BE_POSTGAME_MAX; i++) {
+        loopbackHarnessPump(&h);
+        beCollectPings(h.cs, BE_MARK_POSTGAME, seen, 1);
+        clientSimSetBrainEventCount(h.cs, 0);
+        if (seen[0]) {
+            appliedAt = i;
+            break;
+        }
+    }
+
+    fprintf(stderr, "  post game: server state %d, event applied at pump %d of "
+                    "%d\n", (int)serverSimGetState(h.sim), appliedAt,
+            BE_POSTGAME_MAX);
+
+    if (!seen[0]) {
+        int state = (int)serverSimGetState(h.sim);
+        loopbackHarnessStop(&h);
+        UT_FAIL("a reliable game event sent after game over was not applied "
+                "within %d pump(s) (server state %d) - with no snapshot "
+                "flowing there is no snapshot drain to hold it for, and the "
+                "server goes on resending the tail until the round ends",
+                BE_POSTGAME_MAX, state);
     }
 
     loopbackHarnessStop(&h);

@@ -37,6 +37,7 @@ typedef SDL_Mutex *HANDLE;
  * path above, which otherwise uses Win32 primitives. */
 #include <SDL3/SDL_mutex.h>
 #include <SDL3/SDL_atomic.h>   /* SDL_SpinLock, for the key below */
+#include <SDL3/SDL_timer.h>    /* SDL_GetTicks, for the drain deadline */
 #include <string.h>
 #include <stdlib.h>
 #include "global.h"
@@ -90,6 +91,10 @@ static int wbnResultCount = 0;
 /* Set while a job is out of the queue and being posted, so a drain does not
  * read an empty queue with a post still in flight. */
 static bool wbnJobInFlight = FALSE;
+
+/* NONE jobs queued and not yet sent, against WBN_WAITING_NONE_MAX. */
+static int  wbnWaitingNone = 0;
+static bool wbnWaitingNoneWarned = FALSE;  /* one warning per fill */
 
 /* Job ids, handed out under the mutex below. Never 0, which is what a
  * caller reads as "not queued", and not reset by a create, so an id names
@@ -168,6 +173,8 @@ bool winbolonetThreadCreate(void) {
   wbnResultsTail = NULL;
   wbnResultCount = 0;
   wbnJobInFlight = FALSE;
+  wbnWaitingNone = 0;
+  wbnWaitingNoneWarned = FALSE;
   wbnShouldRun = TRUE;
   wbnFinished = FALSE;
 
@@ -220,7 +227,7 @@ bool winbolonetThreadCreate(void) {
 }
 
 /*********************************************************
-*NAME:          winbolonetThreadDrain
+*NAME:          winbolonetThreadDrainFor
 *PURPOSE:
 *  Waits until every queued request has been sent, leaving
 *  the thread running and taking nothing on. A session
@@ -228,12 +235,30 @@ bool winbolonetThreadCreate(void) {
 *  so the worker keeps its pooled connection across a round.
 *  Returns at once when nothing is queued, and when no
 *  thread was ever created.
+*
+*  maxMs bounds the wait: once it has elapsed the call
+*  returns with the rest of the queue still there, for a
+*  caller that cannot sit behind an unreachable WinBolo.net.
+*  Each post can take up to 35s, so an unbounded wait is a
+*  wait for as many of those as are queued. 0 means no
+*  deadline.
+*
+*RETURNS:
+*  TRUE when the queue was emptied, FALSE when the deadline
+*  passed first.
+*
+*ARGUMENTS:
+* maxMs - Milliseconds to wait, or 0 for no deadline
 *********************************************************/
-void winbolonetThreadDrain(void) {
+bool winbolonetThreadDrainFor(uint32_t maxMs) {
   bool busy;
+  uint64_t deadline = 0;
 
   if (hWbnMutexHandle == NULL) {
-    return;
+    return TRUE;
+  }
+  if (maxMs > 0) {
+    deadline = SDL_GetTicks() + (uint64_t)maxMs;
   }
 
   /* The wake goes out before the wait: the loop parks on the semaphore
@@ -254,10 +279,26 @@ void winbolonetThreadDrain(void) {
             wbnJobInFlight == TRUE);
     wbnQueueUnlock();
     if (busy == FALSE) {
-      return;
+      return TRUE;
+    }
+    if (deadline != 0 && SDL_GetTicks() >= deadline) {
+      WB_LOG_WARN(WB_LOG_CAT_NET,
+                  "WinBolo.net drain gave up after %u ms with posts still "
+                  "queued", (unsigned int)maxMs);
+      return FALSE;
     }
     wbnSleep();
   }
+}
+
+/*********************************************************
+*NAME:          winbolonetThreadDrain
+*PURPOSE:
+*  winbolonetThreadDrainFor with no deadline: waits for the
+*  whole queue however long it takes.
+*********************************************************/
+void winbolonetThreadDrain(void) {
+  winbolonetThreadDrainFor(0);
 }
 
 /*********************************************************
@@ -324,6 +365,8 @@ void winbolonetThreadDestroy(void) {
     wbnResultsTail = NULL;
     wbnResultCount = 0;
     wbnJobInFlight = FALSE;
+    wbnWaitingNone = 0;
+    wbnWaitingNoneWarned = FALSE;
 
 #ifdef _WIN32
     ReleaseMutex(hWbnMutexHandle);
@@ -401,6 +444,9 @@ static uint32_t linkJob(wbnList add) {
   add->id = id;
   add->next = wbnWaiting;
   wbnWaiting = add;
+  if (add->kind == WBN_JOB_NONE) {
+    wbnWaitingNone++;
+  }
   wbnQueueUnlock();
 
   /* After the mutex is released: the loop wakes, takes the mutex and swaps
@@ -492,12 +538,51 @@ static char *stampServerKey(const char *json_body) {
 }
 
 /*********************************************************
+*NAME:          wbnBacklogRefuses
+*PURPOSE:
+*  Answers whether the waiting queue already holds
+*  WBN_WAITING_NONE_MAX fire-and-forget posts, in which case
+*  another one is refused and the caller takes its FALSE
+*  path. Warns once per fill rather than once per refusal:
+*  the callers that fill it are per-tick.
+*
+*ARGUMENTS:
+* endpoint - The endpoint being refused, for the warning
+*********************************************************/
+static bool wbnBacklogRefuses(const char *endpoint) {
+  bool full;
+  bool warn = FALSE;
+
+  wbnQueueLock();
+  full = (wbnWaitingNone >= WBN_WAITING_NONE_MAX);
+  if (full) {
+    if (wbnWaitingNoneWarned != TRUE) {
+      wbnWaitingNoneWarned = TRUE;
+      warn = TRUE;
+    }
+  } else {
+    wbnWaitingNoneWarned = FALSE;
+  }
+  wbnQueueUnlock();
+
+  if (warn) {
+    WB_LOG_WARN(WB_LOG_CAT_NET,
+                "WinBolo.net queue full at %d posts; refusing %s and further "
+                "posts until it drains", WBN_WAITING_NONE_MAX, endpoint);
+  }
+  return full;
+}
+
+/*********************************************************
 *NAME:          winbolonetThreadAddRequest
 *PURPOSE:
 *  Adds a JSON API request to the background queue.
 *  The json_body string is copied internally.
 *********************************************************/
 bool winbolonetThreadAddRequest(const char *endpoint, const char *json_body) {
+  if (wbnBacklogRefuses(endpoint)) {
+    return FALSE;
+  }
   return enqueueJob(endpoint, json_body, FALSE, FALSE, WBN_JOB_NONE) != 0;
 }
 
@@ -509,6 +594,9 @@ bool winbolonetThreadAddRequest(const char *endpoint, const char *json_body) {
 *  the Authorization: Bearer header at fire time.
 *********************************************************/
 bool winbolonetThreadAddServerRequest(const char *endpoint, const char *json_body) {
+  if (wbnBacklogRefuses(endpoint)) {
+    return FALSE;
+  }
   return enqueueJob(endpoint, json_body, TRUE, FALSE, WBN_JOB_NONE) != 0;
 }
 
@@ -520,6 +608,22 @@ bool winbolonetThreadAddServerRequest(const char *endpoint, const char *json_bod
 *********************************************************/
 bool winbolonetThreadAddServerKeyedRequest(const char *endpoint,
                                            const char *json_body) {
+  if (wbnBacklogRefuses(endpoint)) {
+    return FALSE;
+  }
+  return enqueueJob(endpoint, json_body, TRUE, TRUE, WBN_JOB_NONE) != 0;
+}
+
+/*********************************************************
+*NAME:          winbolonetThreadAddSessionRequest
+*PURPOSE:
+*  As winbolonetThreadAddServerKeyedRequest, for a post the
+*  round transition cannot do without. The backlog cap does
+*  not apply, so FALSE means one thing: the worker is not
+*  running and the caller has to send the rotation itself.
+*********************************************************/
+bool winbolonetThreadAddSessionRequest(const char *endpoint,
+                                       const char *json_body) {
   return enqueueJob(endpoint, json_body, TRUE, TRUE, WBN_JOB_NONE) != 0;
 }
 
@@ -776,10 +880,15 @@ static wbnList takeOldestJob(void) {
 *  in-flight flag.
 *********************************************************/
 static void finishedJob(wbnList job) {
+  uint8_t kind = job->kind;
+
   freeJob(job);
 
   wbnQueueLock();
   wbnJobInFlight = FALSE;
+  if (kind == WBN_JOB_NONE && wbnWaitingNone > 0) {
+    wbnWaitingNone--;
+  }
   wbnQueueUnlock();
 }
 

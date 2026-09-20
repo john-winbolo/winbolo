@@ -279,6 +279,11 @@ void transportUdpServerDestroy(void) {
         }
     }
     udpServer.running = false;
+    /* Drop any verify still waiting on a result. The slots it names are gone
+     * with this transport, and a later server on this process starts its
+     * tick counter at 0 again, so a leftover hold would name a deadline that
+     * counter will not reach for a long time. */
+    udpServerClearAllReauthPending();
 
     udpServerPublicIp[0] = '\0';
     udpServerPublicPort  = 0;

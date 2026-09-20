@@ -183,6 +183,11 @@ static bool sendAnswer(bolo_socket_t s, const char *path) {
 *********************************************************/
 static bool answerRequests(WbnTestListener *ln, WbnTestConn *c) {
   for (;;) {
+    /* The buffer is kept NUL-terminated by the reader, so this search stops
+     * at the first NUL byte in it. Every request this harness is sent is a
+     * JSON body or a multipart upload of text, so there is no NUL to stop
+     * on. A test that posts a body with a NUL byte in it would hide the
+     * request that follows, and would want a memmem over c->used instead. */
     char *hdrEnd = strstr(c->buf, "\r\n\r\n");
     char path[WBN_TEST_PATH_LEN];
     size_t hdrLen;
@@ -434,11 +439,13 @@ int main(int argc, char **argv) {
     ok = wbnTestLogUploadRuns();
   } else if (strcmp(name, "key_stamped_at_fire_time") == 0) {
     ok = wbnTestKeyStampedAtFireTime();
+  } else if (strcmp(name, "queue_cap_refuses_posts") == 0) {
+    ok = wbnTestQueueCapRefusesPosts();
   } else {
     fprintf(stderr,
             "usage: %s posts_share_connection|leave_returns_at_once|"
             "worker_outlives_session|job_result_returns|log_upload_runs|"
-            "key_stamped_at_fire_time\n",
+            "key_stamped_at_fire_time|queue_cap_refuses_posts\n",
             argv[0]);
     SDL_Quit();
     bolo_net_cleanup();

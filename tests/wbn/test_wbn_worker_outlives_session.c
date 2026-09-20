@@ -136,7 +136,7 @@ bool wbnTestWorkerOutlivesSession(void) {
   /* The session boundary, as the lifecycle runs it: quit the old session,
    * then register the next one. The round-log upload the lifecycle puts
    * between the two is not this case's subject. */
-  winbolonetEndSession();
+  winbolonetEndSession(/*drainMaxMs*/ 0);
   if (!outlivesRegister(/*begin*/ TRUE)) {
     fprintf(stderr, "workerOutlivesSession: winbolonetBeginSession failed\n");
     ok = FALSE;

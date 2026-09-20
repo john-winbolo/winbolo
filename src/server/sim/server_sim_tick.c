@@ -217,7 +217,24 @@ static void serverSimApplyOneInput(ServerSim *sim, BYTE count,
     /* Fill in gap ticks lost to packet loss.  When a UDP packet
      * is dropped, the dequeued tick jumps ahead (e.g. 98 → 101).
      * The missing ticks must still run so the turn ramp (firstLeft/
-     * firstRight) stays in sync with the client's prediction. */
+     * firstRight) stays in sync with the client's prediction.
+     *
+     * The window is what keeps a networked client's recovery jump out of
+     * this. A client whose counter fell behind numbers its next input
+     * lastProcessedInput + the round trip + CLIENT_INPUT_JUMP_MARGIN_HALFSTEPS
+     * (client_snapshot.c); the server stall-advances through about the round
+     * trip while that packet is in flight, so what is left when it lands is
+     * the margin, and the margin is held above this window on purpose. A
+     * jump filled here would run the margin's worth of half-steps with the
+     * pre-hitch held buttons, which the client never predicted, and cost a
+     * position correction on every jump. The two constants are a pair: move
+     * one and read the other.
+     *
+     * The fill itself stays for every producer, and is what the in-process
+     * ones need: a local producer supplies one input per two half-steps, so
+     * the number it sends after a dry run is genuinely a half-step or two
+     * past the last one the server ran, and those half-steps have to
+     * happen. */
     {
         uint32_t expected = sim->lastProcessedInput[count] + 1;
         uint32_t gap = applied.tick - expected;
@@ -675,16 +692,24 @@ static void simRunHalfStep(ServerSim *sim) {
          * queue holds nothing this dequeue would take, move lastProcessedInput
          * back under the newest queued tick so that one entry is taken as
          * fresh. Only that one: the dequeue still drops every entry below it
-         * as stale, so a tick a substitute already moved the tank through is
-         * not executed a second time. The apply resets inputDryTicks, which
-         * closes this branch until the next dry run.
+         * as stale, so a tick already dequeued is not taken a second time.
+         * The rebased tick itself is one a substitute has already moved the
+         * tank through, so the overshoot guarantee is given up for it. That
+         * is the trade: one tick of movement re-run against a dry run that
+         * otherwise never ends. The apply resets inputDryTicks, which closes
+         * this branch until the next dry run.
          *
          * newestDequeuedTick keeps a redundancy duplicate out of it. A resent
          * copy of an already-applied tick looks exactly like a never-taken
          * one here, and rebasing onto it would run its movement twice and lay
          * a second mine if it carried one. The UDP transport drops such a
-         * copy before the queue; the in-process one does not dedup at all. */
+         * copy before the queue; the in-process one does not dedup at all.
+         *
+         * A slot with no tank is left alone: loop 2 skips it, so nothing
+         * would apply the rebased input and the rewound lastProcessedInput
+         * would stay rewound. */
         if (sim->lastProcessedInput[count] > 0 &&
+            sim->sim.tanks[count] != NULL &&
             sim->inputDryTicks[count] > STALL_ADVANCE_DRY_TICKS) {
             /* The queue walk is behind the two cheap tests: a healthy slot
              * is never this dry, and this runs for every slot every

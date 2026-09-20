@@ -395,8 +395,18 @@ void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE f
 * serverDedicatedLogFlushPendingUpload between the two so
 * the upload runs after WBN accepts that the session is
 * over and before server/register issues a new key.
+*
+* drainMaxMs bounds the wait for the worker's queue before
+* the quit goes out. 0 waits for the whole queue however
+* long it takes, which is what a shutdown wants; a caller on
+* a path a person is waiting on passes a short one and
+* leaves whatever is still queued for the worker.
+*
+*ARGUMENTS:
+* drainMaxMs - Milliseconds to drain for, or 0 for no
+*              deadline
 *********************************************************/
-void winbolonetEndSession(void);
+void winbolonetEndSession(uint32_t drainMaxMs);
 
 /*********************************************************
 *NAME:          winbolonetBeginSession
@@ -439,8 +449,13 @@ bool winbolonetBeginSession(char *mapName, unsigned short port, BYTE gameType, B
 * winbolonetQueueBeginSession, which is the order WinBolo.net
 * requires; the worker sends them in the order they were
 * queued.
+*
+* Returns TRUE when the worker took the quit. FALSE means the
+* worker is not running and nothing of this rotation can be
+* queued, so the caller has to send the three itself; the cap
+* on the worker's waiting queue never refuses this post.
 *********************************************************/
-void winbolonetQueueEndSession(void);
+bool winbolonetQueueEndSession(void);
 
 /*********************************************************
 *NAME:          winbolonetQueueBeginSession

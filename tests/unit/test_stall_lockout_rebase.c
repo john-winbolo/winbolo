@@ -52,6 +52,7 @@
 #include "server_sim_internal.h"   /* direct field access: lastProcessedInput etc. */
 #include "game_sim.h"              /* GameSim.tanks[] */
 #include "tank.h"                  /* tankSetMines / tankGetMines */
+#include "client_sim_internal.h"   /* CLIENT_INPUT_JUMP_MARGIN_HALFSTEPS */
 #include "input_packet.h"
 #include "test_harness.h"
 
@@ -456,6 +457,107 @@ int run_stall_lockout_rebase_once_per_tick(void) {
     UT_ASSERT_MSG((BYTE)(minesBefore - minesAfter) <= 1,
                   "the mine on the rebased tick was laid more than once "
                   "(mines %u -> %u)", minesBefore, minesAfter);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* A client's recovery jump is not gap-filled.
+ *
+ * A client whose counter fell behind numbers its next input the server's
+ * last-processed tick plus the round trip plus
+ * CLIENT_INPUT_JUMP_MARGIN_HALFSTEPS (client_snapshot.c). The server keeps
+ * substituting while that packet is in flight, so what is left of the jump
+ * when it is applied is the margin. A gap inside the apply's fill window
+ * (`gap < 8` in serverSimApplyOneInput) is filled a half-step at a time
+ * with the buttons held before the hitch - movement the client never
+ * predicted, and a position correction on every jump. The margin is held
+ * above that window so the jump is applied as the jump it is.
+ *
+ * This feeds the shape the jump makes - the margin above the tick the
+ * substitutes reached - and pins statGapFillTicks at zero across the apply,
+ * then pins that a real hole in a running stream still fills. The second
+ * half is what says the margin was raised rather than the fill removed:
+ * every producer that supplies one input per two half-steps depends on it.
+ */
+int run_stall_recovery_no_gap_fill(void) {
+    ServerSim *sim = ut_make_running_sim("NoGapFill");
+    uint32_t lpiAfterBurst, jumpTick, gapBefore, gapAfter;
+    uint32_t lossTick;
+    int frame, i;
+
+    UT_ASSERT_MSG(sim != NULL, "ut_make_running_sim returned NULL");
+
+    slr_establish(sim);
+    UT_ASSERT_MSG(sim->inputBufferFilled[SLR_SLOT], "stream not established");
+
+    /* The hitch, as the other cases stage it. */
+    for (frame = 0; frame < SLR_HITCH_FRAMES; frame++) {
+        serverSimTick(sim);
+    }
+    lpiAfterBurst = sim->lastProcessedInput[SLR_SLOT];
+    UT_ASSERT_MSG(sim->inputDryTicks[SLR_SLOT] > STALL_ADVANCE_DRY_TICKS,
+                  "the hitch left the slot out of a stall-advance run "
+                  "(inputDryTicks %u)", sim->inputDryTicks[SLR_SLOT]);
+
+    /* The jump: the first input lands CLIENT_INPUT_JUMP_MARGIN_HALFSTEPS
+     * above the tick the server has reached, which is what the margin leaves
+     * once the flight time has been substituted through. The ones behind it
+     * are the rest of the client's stream, and they are what fills the
+     * jitter buffer so the first one is dequeued on the next tick rather
+     * than after the substitutes have walked past it. */
+    jumpTick = lpiAfterBurst + CLIENT_INPUT_JUMP_MARGIN_HALFSTEPS;
+    for (i = 0; i < JITTER_BUFFER_MAX + 2; i++) {
+        slr_feed(sim, jumpTick + (uint32_t)i, SLR_CLIENT_BUTTONS, 0);
+    }
+
+    gapBefore = sim->statGapFillTicks[SLR_SLOT];
+    serverSimTick(sim);
+    gapAfter = sim->statGapFillTicks[SLR_SLOT];
+
+    UT_ASSERT_MSG(sim->lastProcessedInput[SLR_SLOT] >= jumpTick,
+                  "the jumped input was not applied: lastProcessedInput %u, "
+                  "jump tick %u", sim->lastProcessedInput[SLR_SLOT], jumpTick);
+    UT_ASSERT_MSG(gapAfter == gapBefore,
+                  "the jumped input gap-filled %u half-step(s) - "
+                  "CLIENT_INPUT_JUMP_MARGIN_HALFSTEPS (%d) has to stay above "
+                  "the apply's fill window, or every recovery jump runs the "
+                  "margin with the pre-hitch held buttons the client never "
+                  "predicted", gapAfter - gapBefore,
+                  CLIENT_INPUT_JUMP_MARGIN_HALFSTEPS);
+
+    /* And the other half: with the stream running again, a hole left by a
+     * dropped packet is still filled. Drain what is left of the burst first
+     * - an entry still queued is contiguous with the last applied one, so
+     * the hole has to be the next thing the dequeue sees - and feed it
+     * straight away, before a dry run past STALL_ADVANCE_DRY_TICKS starts
+     * substituting again. */
+    for (i = 0; i < 8; i++) {
+        if (sim->inputQueueHead[SLR_SLOT] == sim->inputQueueTail[SLR_SLOT]) {
+            break;
+        }
+        serverSimTick(sim);
+    }
+    UT_ASSERT_MSG(sim->inputQueueHead[SLR_SLOT] ==
+                      sim->inputQueueTail[SLR_SLOT],
+                  "the fed burst had not drained after %d ticks", i);
+    UT_ASSERT_MSG(sim->inputDryTicks[SLR_SLOT] <= STALL_ADVANCE_DRY_TICKS,
+                  "the drain left the slot substituting again (inputDryTicks "
+                  "%u)", sim->inputDryTicks[SLR_SLOT]);
+    lossTick = sim->lastProcessedInput[SLR_SLOT] + 3;
+    for (i = 0; i < JITTER_BUFFER_MAX + 2; i++) {
+        slr_feed(sim, lossTick + (uint32_t)i, SLR_CLIENT_BUTTONS, 0);
+    }
+    gapBefore = sim->statGapFillTicks[SLR_SLOT];
+    serverSimTick(sim);
+    gapAfter = sim->statGapFillTicks[SLR_SLOT];
+    UT_ASSERT_MSG(sim->lastProcessedInput[SLR_SLOT] >= lossTick,
+                  "the input past the hole was not applied: lastProcessedInput "
+                  "%u, tick %u", sim->lastProcessedInput[SLR_SLOT], lossTick);
+    UT_ASSERT_MSG(gapAfter > gapBefore,
+                  "a real two-tick hole in a running stream was not gap-filled "
+                  "- the fill is what an in-process producer's under-supply "
+                  "needs, and only the jump is meant to land outside it");
 
     serverSimDestroy(sim);
     return 0;

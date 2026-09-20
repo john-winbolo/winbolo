@@ -63,14 +63,23 @@ extern char     wbnStubJobs[][16];
 extern bool     wbnStubRegisterResultReady;
 extern int      wbnStubApplyRegisterCalls;
 extern bool     wbnStubApplyRegisterOk;
+extern bool     wbnStubWorkerRefuses;
+extern int      wbnStubEndSessionCalls;
+extern int      wbnStubBeginSessionCalls;
+extern bool     wbnStubBeginSessionOk;
 
 /* A key for the finished round. transportUdpServerSendWbnRekey drops the
  * broadcast when the server holds no key, so the stub has to answer with one
  * for the rekey to be observable at all. */
 #define RT_SERVER_KEY "0123456789abcdef0123456789abcdef"
 
-/* The tick that queues the transition has to come back in well under a frame.
- * A single synchronous WinBolo.net call could not. */
+/* A sanity bound on the transition tick, not the proof. WinBolo.net is fully
+ * stubbed in this binary, so nothing here can do a real HTTPS call and the
+ * tick would come in under this even if the transition still ran the three
+ * calls inline. What actually pins the behaviour is the ordering of the three
+ * queued jobs and the rotation window staying open until the register result
+ * is delivered; the bound only catches a transition that started sleeping or
+ * spinning on the tick. */
 #define RT_TICK_MAX_MS 50.0
 
 /* Round-log hooks. The dedicated-log module installs its own pair on a real
@@ -338,6 +347,116 @@ int run_round_transition_during_rotation_deferred(void) {
                 "register result", slot);
 
   serverLifecycleSetRoundLogHooks(NULL, NULL);
+  wbnStubRunning = FALSE;
+  wbnStubServerKey[0] = '\0';
+  wbnStubJobCount = 0;
+  wbnStubRegisterResultReady = FALSE;
+  loopbackHarnessStop(&h);
+  return 0;
+}
+
+/* The worker is not running - winbolonetThreadCreate failed at boot and
+ * nothing recreates it - so every queued post is refused. Without a fallback
+ * the round would end with no quit, no upload and no register, and the
+ * finished session would stay listed on WinBolo.net for good. The lifecycle
+ * sends the three on the tick instead, in the same order, and runs the
+ * register tail itself: the window closes and the rekey goes out without a
+ * result to wait for.
+ *
+ * The stub refuses the queued forms the way a worker that was never created
+ * does, and records the synchronous pair in the same job list, so the order
+ * this reads is the order WinBolo.net is given. */
+int run_round_transition_worker_down_sends_inline(void) {
+  LoopbackHarness h;
+  int slot;
+  int i;
+  int transitionPump = -1;
+
+  memset(&h, 0, sizeof(h));
+  UT_ASSERT(loopbackHarnessStart(&h, "Rotator", /*lobbyMode*/ true, NULL,
+                                 /*seed*/ 4244));
+
+  UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, 400, NULL, NULL) > 0,
+                "the client never finished joining");
+  slot = clientSimGetMyPlayerNum(h.cs);
+  UT_ASSERT_MSG(slot >= 0 && slot < MAX_TANKS,
+                "the client has no server slot (got %d)", slot);
+
+  wbnStubRunning = TRUE;
+  SDL_strlcpy(wbnStubServerKey, RT_SERVER_KEY, WINBOLONET_KEY_LEN);
+  serverLifecycleSetRoundLogHooks(rtRoundLogStash, rtRoundLogFlush);
+
+  UT_ASSERT_MSG(loopbackHarnessTriggerGameStart(&h),
+                "the client's slot was never ready for game start");
+  UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, 600, rtStateIsRunning, NULL) > 0,
+                "the game never reached the running state");
+
+  threadsWaitForMutex();
+  udpServer.clients[slot].wbnWasVerified = true;
+  udpServer.clients[slot].wbnJoin.pending = false;
+  threadsReleaseMutex();
+
+  wbnStubJobCount = 0;
+  wbnStubApplyRegisterCalls = 0;
+  wbnStubApplyRegisterOk = TRUE;
+  wbnStubRegisterResultReady = FALSE;
+  wbnStubEndSessionCalls = 0;
+  wbnStubBeginSessionCalls = 0;
+  wbnStubBeginSessionOk = TRUE;
+  wbnStubWorkerRefuses = TRUE;
+  s_stashCalls = 0;
+
+  threadsWaitForMutex();
+  serverSimEnterGameOver(h.sim);
+  h.sim->countdownTicks = 1;
+  threadsReleaseMutex();
+
+  for (i = 0; i < 40 && transitionPump < 0; i++) {
+    loopbackHarnessPump(&h);
+    if (wbnStubJobCount > 0) {
+      transitionPump = i;
+    }
+  }
+  UT_ASSERT_MSG(transitionPump >= 0,
+                "the round transition never ran: state %d",
+                (int)serverSimGetState(h.sim));
+  UT_ASSERT_MSG(loopbackHarnessPumpUntil(&h, 200, rtStateIsLobby, NULL) > 0,
+                "the game never reached the lobby");
+
+  UT_ASSERT_MSG(wbnStubEndSessionCalls == 1,
+                "the session was quit %d times on this thread, expected once",
+                wbnStubEndSessionCalls);
+  UT_ASSERT_MSG(wbnStubBeginSessionCalls == 1,
+                "the next session was registered %d times on this thread, "
+                "expected once", wbnStubBeginSessionCalls);
+  UT_ASSERT_MSG(wbnStubJobCount == 3,
+                "the transition sent %d posts, expected 3 (quit, upload, "
+                "register)", wbnStubJobCount);
+  UT_ASSERT_MSG(strcmp(wbnStubJobs[0], "quit") == 0,
+                "post 0 was '%s', expected 'quit'", wbnStubJobs[0]);
+  UT_ASSERT_MSG(strcmp(wbnStubJobs[1], "upload") == 0,
+                "post 1 was '%s', expected 'upload' - WinBolo.net refuses a "
+                "round log for a session that is still live", wbnStubJobs[1]);
+  UT_ASSERT_MSG(strcmp(wbnStubJobs[2], "register") == 0,
+                "post 2 was '%s', expected 'register'", wbnStubJobs[2]);
+
+  /* No result is coming, so the tail cannot wait for one. */
+  UT_ASSERT_MSG(h.sim->wbnSessionRotating == FALSE,
+                "the rotation window is still open with no register queued");
+  UT_ASSERT_MSG(h.sim->wbnRegisterJob == 0,
+                "the lifecycle is waiting on register job %u that was never "
+                "queued", (unsigned)h.sim->wbnRegisterJob);
+  UT_ASSERT_MSG(wbnStubApplyRegisterCalls == 0,
+                "a queued register result was applied %d times with no job "
+                "queued", wbnStubApplyRegisterCalls);
+  loopbackHarnessPump(&h);
+  UT_ASSERT_MSG(udpServer.clients[slot].wbnJoin.pending == true,
+                "no rekey reached slot %d after the synchronous register",
+                slot);
+
+  serverLifecycleSetRoundLogHooks(NULL, NULL);
+  wbnStubWorkerRefuses = FALSE;
+  wbnStubBeginSessionOk = FALSE;
   wbnStubRunning = FALSE;
   wbnStubServerKey[0] = '\0';
   wbnStubJobCount = 0;

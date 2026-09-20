@@ -175,13 +175,13 @@ bool winbolonetServerRequestBalance(uint8_t totalPlayers, uint8_t teamSize,
   return FALSE;
 }
 
-void winbolonetEndSession(void) { }
+void winbolonetEndSession(uint32_t drainMaxMs) { (void)drainMaxMs; }
 
 /* The round transition queues these instead of posting, and picks the
  * register's reply up through the drain. server_lifecycle.c calls all four;
  * the gym has no WinBolo.net, so the register result never arrives and the
  * lifecycle closes its own rotation window on the 0 returned below. */
-void winbolonetQueueEndSession(void) { }
+bool winbolonetQueueEndSession(void) { return FALSE; }
 
 uint32_t winbolonetQueueBeginSession(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
   (void)mapName; (void)port; (void)gameType; (void)ai; (void)mines; (void)password;

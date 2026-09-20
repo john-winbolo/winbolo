@@ -768,6 +768,7 @@ int run_maprotate_vote_return_is_not_terminal(void);
  * for the register's reply. */
 int run_round_transition_tick_does_not_block(void);
 int run_round_transition_during_rotation_deferred(void);
+int run_round_transition_worker_down_sends_inline(void);
 
 /* Re-authentication off the tick thread (test_reauth_result.c). The reauth
  * captures the slot and queues client/verify; the reply stamps the slot on a
@@ -1727,6 +1728,7 @@ int run_stall_long_dry_advances(void);
  * the redundant copies of that tick rebase nothing further. */
 int run_stall_lockout_rebase(void);
 int run_stall_lockout_rebase_once_per_tick(void);
+int run_stall_recovery_no_gap_fill(void);
 
 /* Hitch diagnostics (test_hitch_logged.c): the catch-up loop lifted out of
  * serverGameTimer runs every tick the wall clock owes, logs one line when a
@@ -1905,6 +1907,8 @@ int run_send_drains_channels_multi_frame(void);
  * a real client within two pumps of that tick, and the server's mux reports no
  * ring drop and nothing left behind by the budget. */
 int run_best_effort_not_dropped(void);
+int run_effect_burst_not_starved_by_reliable(void);
+int run_post_game_segment_applied(void);
 /* A quitting player's ownership burst reaches the peer (test_best_effort_burst.c):
  * client 2 holds every pillbox and base and quits, and client 1 is told the new
  * owner of every one of them, plus the leave, within two pumps of the tick that

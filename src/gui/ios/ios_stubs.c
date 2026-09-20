@@ -328,7 +328,7 @@ WbnSyncOutcome wbnPrefsSyncOnce(const char *userToken, const char *uploadSnapsho
     return out;
 }
 
-void winbolonetEndSession(void) {}
+void winbolonetEndSession(uint32_t drainMaxMs) { (void)drainMaxMs; }
 
 const char *winbolonetGetCountryCode(void) { return ""; }
 

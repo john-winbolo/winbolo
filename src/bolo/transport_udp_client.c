@@ -145,6 +145,10 @@ typedef struct {
     GameEvent snapshotEvents[MAX_SNAPSHOT_EVENTS];
     uint32_t lastSnapshotSeq;  /* Sequence number of latest snapshot */
     uint32_t lastSnapshotTick; /* Local tick when last snapshot arrived (for timeout) */
+    /* localTick of the last snapshot actually applied, and only that: the
+     * field above is refreshed by any valid packet, so it cannot answer
+     * whether snapshots are still flowing. 0 until the first one lands. */
+    uint32_t lastSnapshotApplyTick;
 
     /* Reliable map-event dedup */
     uint32_t mapEventAck;       /* Next expected reliable map event seq (init to 1) */
@@ -1437,6 +1441,13 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
     clientSimApplyControl(c->clientSim, evt);
 }
 
+/* How long after the last applied snapshot the snapshot drain still owns the
+ * order the game, effect and map channels apply in. localTick runs at 100/s
+ * and a running server sends a snapshot every other tick, so 20 is ten
+ * snapshots' worth: long enough that a burst of loss does not hand the order
+ * back, short enough that the post-game window does not sit undrained. */
+#define SNAPSHOT_ORDER_IDLE_TICKS 20
+
 /* Map resync (desync recovery) timing/limits. localTick runs at 100/s. */
 #define MAP_RESYNC_REQUEST_RESEND_TICKS 75   /* ~0.75s between request resends */
 #define MAP_RESYNC_GRACE_TICKS         1000  /* ~10s = 2 full-sync intervals */
@@ -2609,10 +2620,14 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          * baseline lift already ran, so a previous-game straggler is gone and
          * only current-game events drain here.  The channel guarantees in-order
          * exactly-once delivery, so no per-event ack or dedup is applied.
-         * Ephemeral events arrive on the best-effort channel and merge into the
-         * same game-event set: order between the reliable and best-effort sets
-         * does not affect correctness, so they share chanGameEv[] and the
-         * splice below. */
+         * Ephemeral events arrive on the best-effort channel and are drained
+         * separately, after this snapshot is applied: order between the
+         * reliable and best-effort sets does not affect correctness, and
+         * sharing this array made the two compete for one cap of
+         * MAX_SNAPSHOT_EVENTS. A running tick can send about twice that
+         * across the two channels, and what a drain leaves in the effect
+         * channel's 64-deep ring is evicted by the next tick's burst rather
+         * than waiting like a reliable segment does. */
         {
             GameEvent chanGameEv[MAX_SNAPSHOT_EVENTS];
             uint8_t chanBuf[CHANNEL_MAX_SEG];
@@ -2621,14 +2636,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             int mapTailCount;
             while (chanCount < MAX_SNAPSHOT_EVENTS &&
                    channelReceive(&c->channelMux, CHANNEL_GAME, chanBuf, &chanLen)) {
-                if (unpackGameEvent(chanBuf, chanLen, &chanGameEv[chanCount]) > 0) {
-                    chanCount++;
-                }
-            }
-            /* Drain the best-effort game-effect channel into the same array. */
-            while (chanCount < MAX_SNAPSHOT_EVENTS &&
-                   channelReceiveBestEffort(&c->channelMux, CHANNEL_GAME_EFFECT,
-                                            chanBuf, &chanLen)) {
                 if (unpackGameEvent(chanBuf, chanLen, &chanGameEv[chanCount]) > 0) {
                     chanCount++;
                 }
@@ -2666,6 +2673,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         c->hasSnapshot = true;
         c->lastSnapshotSeq = seq;
         c->lastSnapshotTick = c->localTick;
+        c->lastSnapshotApplyTick = c->localTick;
 
         /* Apply the freshly-staged snapshot directly onto the ClientSim.
          * The frontend's per-frame clientSimNetSyncSnapshot also reads
@@ -2683,6 +2691,30 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         c->hasSnapshot = false;   /* Consumed inline — per-frame
                                    * syncSnapshot no-ops until the
                                    * next arrival. */
+
+        /* The best-effort effect channel, drained to the end and applied one
+         * at a time, the way the standalone-frame path applies it. Its own
+         * drain rather than a share of the snapshot's event array: nothing
+         * holds an effect segment for the next snapshot, so one left here is
+         * dropped by the next tick's burst over the 64-deep ring. The ring
+         * bounds this loop.
+         *
+         * After the snapshot, not before: these are the same events the
+         * snapshot's own state already agrees with (both come off one server
+         * tick), and applying them here leaves the order among the reliable
+         * game events the snapshot carries exactly as it was. */
+        {
+            uint8_t fxBuf[CHANNEL_MAX_SEG];
+            uint16_t fxLen;
+            GameEvent fxEv;
+            while (channelReceiveBestEffort(&c->channelMux, CHANNEL_GAME_EFFECT,
+                                            fxBuf, &fxLen)) {
+                if (unpackGameEvent(fxBuf, fxLen, &fxEv) > 0) {
+                    clientSimApplyGameEvents(c->clientSim, &fxEv, 1,
+                                             c->playerNum);
+                }
+            }
+        }
         break;
     }
 
@@ -2731,9 +2763,26 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                  * to nobody else: a spectator's feed is CHANNEL_BULK and a
                  * downloader's snapshots are gated, so both keep draining
                  * everything here. */
+                /* And only while they are actually flowing. The three tests
+                 * above stay true through the whole post-game window: the
+                 * client's inLobby flips on CTRL_GAME_PHASE_LOBBY, which is
+                 * itself a control event, and the server stops sending
+                 * snapshots when the round ends - so game, effect and map
+                 * segments sat undrained for as long as the game-over
+                 * countdown ran, and the server resent the reliable tail
+                 * into a client that was ignoring it. A drain that has
+                 * stopped cannot own an order, so the standalone path takes
+                 * it back. Stragglers then apply before
+                 * CTRL_GAME_PHASE_LOBBY resets the world rather than after
+                 * it, which is where the round they belong to is. */
+                bool snapshotsFlowing =
+                    c->lastSnapshotApplyTick != 0 &&
+                    (uint32_t)(c->localTick - c->lastSnapshotApplyTick) <=
+                        SNAPSHOT_ORDER_IDLE_TICKS;
                 bool snapshotOwnsOrder = (c->joinState == UDP_CLIENT_CONNECTED &&
                                           !c->clientSim->inLobby &&
-                                          c->mapInstalled);
+                                          c->mapInstalled &&
+                                          snapshotsFlowing);
                 while (channelReceive(&c->channelMux, CHANNEL_CONTROL,
                                       chanBuf, &chanLen)) {
                     uint8_t type;
@@ -2774,19 +2823,26 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     }
                     clientSimApplyControlOrdered(c, &evt, 0);
                 }
+                /* The best-effort game-effect channel is drained here in
+                 * every state, snapshots flowing or not. Nothing holds an
+                 * effect segment: its receive ring is 64 deep and drops its
+                 * oldest entry when the next burst arrives over it, so one
+                 * left for the next snapshot's drain is one a second tick's
+                 * burst can evict. Order costs nothing to take it early -
+                 * these are ephemeral events (sounds, explosions, pill and
+                 * base deltas) and the reliable sets they interleave with
+                 * are not ordered against them either way. */
+                while (channelReceiveBestEffort(&c->channelMux,
+                                                CHANNEL_GAME_EFFECT,
+                                                chanBuf, &chanLen)) {
+                    if (unpackGameEvent(chanBuf, chanLen, &gev) > 0) {
+                        clientSimApplyGameEvents(c->clientSim, &gev, 1,
+                                                 c->playerNum);
+                    }
+                }
                 if (!snapshotOwnsOrder) {
                     while (channelReceive(&c->channelMux, CHANNEL_GAME,
                                           chanBuf, &chanLen)) {
-                        if (unpackGameEvent(chanBuf, chanLen, &gev) > 0) {
-                            clientSimApplyGameEvents(c->clientSim, &gev, 1,
-                                                     c->playerNum);
-                        }
-                    }
-                    /* Best-effort game-effect channel (ephemeral events). Order
-                     * relative to the reliable game/map drains does not matter. */
-                    while (channelReceiveBestEffort(&c->channelMux,
-                                                    CHANNEL_GAME_EFFECT,
-                                                    chanBuf, &chanLen)) {
                         if (unpackGameEvent(chanBuf, chanLen, &gev) > 0) {
                             clientSimApplyGameEvents(c->clientSim, &gev, 1,
                                                      c->playerNum);
