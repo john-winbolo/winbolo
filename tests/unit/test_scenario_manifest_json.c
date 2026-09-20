@@ -1110,7 +1110,9 @@ int run_scenario_manifest_json_triggers(void) {
         UT_FAIL("out of memory building the over-cap manifest");
     }
     used = (size_t)snprintf(big, 1 << 16, "{ \"manifest\": 1, \"triggers\": [");
-    for (i = 0; i <= SCN_TRIGGERS_MAX; i++) {
+    /* Two past the cap, and one line said: a file decides how long this array
+       is, and a line for each excess row would fill the issue list. */
+    for (i = 0; i <= SCN_TRIGGERS_MAX + 1; i++) {
         used += (size_t)snprintf(big + used, (1 << 16) - used,
                                  "%s{ \"when\": \"on_tick\" }",
                                  (i > 0) ? ", " : "");
@@ -1139,6 +1141,14 @@ int run_scenario_manifest_json_triggers(void) {
             free(big);
             free(sink);
             UT_FAIL("the trigger past the cap was dropped without a word");
+        }
+        snprintf(want, sizeof(want), "triggers[%d]", SCN_TRIGGERS_MAX + 1);
+        if (sawIssue(sink, want) || sink->count != 1) {
+            rc = (int)sink->count;
+            scnManifestFree(first);
+            free(big);
+            free(sink);
+            UT_FAIL("the cap was said %d times, expected once", rc);
         }
     }
     scnManifestFree(first);

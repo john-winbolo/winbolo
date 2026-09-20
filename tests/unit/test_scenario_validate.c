@@ -1322,7 +1322,9 @@ int run_scenario_validate_trigger_caps(void) {
 
     /* One more trigger than the struct holds. */
     used = (size_t)snprintf(lua, 1 << 16, "scenario = { api = 1, triggers = {");
-    for (i = 0; i <= SCN_TRIGGERS_MAX; i++) {
+    /* Two past the cap, and one line said: a script decides how long this
+       array is, and a line for each excess row would fill the issue list. */
+    for (i = 0; i <= SCN_TRIGGERS_MAX + 1; i++) {
         used += (size_t)snprintf(lua + used, (1 << 16) - used,
                                  " { when = \"on_tick\" },");
     }
@@ -1346,6 +1348,14 @@ int run_scenario_validate_trigger_caps(void) {
         fprintf(stderr,
                 "FAIL %s:%d: nothing was reported under %s: %s\n",
                 __FILE__, __LINE__, want, seen);
+        rc = 1;
+    }
+    snprintf(want, sizeof(want), "triggers[%d]", SCN_TRIGGERS_MAX + 1);
+    if (rc == 0 && (svFind(r, want) != NULL || r->count != 1)) {
+        svList(r, seen, sizeof(seen));
+        fprintf(stderr,
+                "FAIL %s:%d: the cap was said %u times, expected once: %s\n",
+                __FILE__, __LINE__, (unsigned)r->count, seen);
         rc = 1;
     }
 

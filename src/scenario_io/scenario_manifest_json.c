@@ -690,7 +690,8 @@ static void mjDecodeTriggers(const cJSON *root, ScenarioManifest *m,
         return;
     }
     cJSON_ArrayForEach(entry, arr) {
-        char         where[SCN_VALIDATE_KEY_LEN];
+        char         where[32];      /* "triggers[%d]", and a row key
+                                      * built on it always fits its own */
         ScnTrigger  *trig;
         const cJSON *when;
         const cJSON *list;
@@ -703,10 +704,16 @@ static void mjDecodeTriggers(const cJSON *root, ScenarioManifest *m,
                      where);
             continue;
         }
+        /* Said once, under the first row past the cap, and the walk stops,
+           the way lobby.teams stops above: a file decides how long this
+           array is, and a line per excess row would fill the issue list
+           with the one fact and hide every fault after it. The tests and
+           actions below stop the same way. */
         if (m->numTriggers >= SCN_TRIGGERS_MAX) {
-            mjReport(rep, where, "scenario: more than %d triggers; %s dropped",
-                     SCN_TRIGGERS_MAX, where);
-            continue;
+            mjReport(rep, where,
+                     "scenario: more than %d triggers; the rest dropped",
+                     SCN_TRIGGERS_MAX);
+            break;
         }
         trig = &m->triggers[m->numTriggers];
         m->numTriggers++;
@@ -745,8 +752,8 @@ static void mjDecodeTriggers(const cJSON *root, ScenarioManifest *m,
                 if (trig->numWhere >= SCN_TRIGGER_CONDS_MAX) {
                     mjReport(rep, slot,
                              "scenario: more than %d tests on one trigger; "
-                             "%s dropped", SCN_TRIGGER_CONDS_MAX, slot);
-                    continue;
+                             "the rest dropped", SCN_TRIGGER_CONDS_MAX);
+                    break;
                 }
                 mjTrigCond(row, &trig->where[trig->numWhere], slot, rep);
                 trig->numWhere++;
@@ -765,8 +772,8 @@ static void mjDecodeTriggers(const cJSON *root, ScenarioManifest *m,
                 if (trig->numActions >= SCN_TRIGGER_ACTIONS_MAX) {
                     mjReport(rep, slot,
                              "scenario: more than %d actions on one trigger; "
-                             "%s dropped", SCN_TRIGGER_ACTIONS_MAX, slot);
-                    continue;
+                             "the rest dropped", SCN_TRIGGER_ACTIONS_MAX);
+                    break;
                 }
                 mjTrigAct(row, &trig->actions[trig->numActions], slot, rep);
                 trig->numActions++;

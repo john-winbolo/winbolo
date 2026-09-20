@@ -1257,7 +1257,8 @@ static void scnReadTriggers(lua_State *L, int tbl, ScenarioManifest *m,
     tt = lua_gettop(L);
 
     for (n = 0; ; n++) {
-        char        where[SCN_VALIDATE_KEY_LEN];
+        char        where[32];       /* "triggers[%d]", and a row key
+                                      * built on it always fits its own */
         ScnTrigger *trig;
         int         entry;
         int         rows;
@@ -1276,11 +1277,16 @@ static void scnReadTriggers(lua_State *L, int tbl, ScenarioManifest *m,
             lua_pop(L, 1);
             continue;
         }
+        /* Said once, under the first row past the cap, and the walk stops:
+           a script decides how long this array is, and a line per excess row
+           would fill the issue list with the one fact and hide every fault
+           after it. The tests and actions below stop the same way. */
         if (m->numTriggers >= SCN_TRIGGERS_MAX) {
-            scnReport(rep, where, "scenario: more than %d triggers; %s dropped",
-                      SCN_TRIGGERS_MAX, where);
+            scnReport(rep, where,
+                      "scenario: more than %d triggers; the rest dropped",
+                      SCN_TRIGGERS_MAX);
             lua_pop(L, 1);
-            continue;
+            break;
         }
         trig = &m->triggers[m->numTriggers];
         m->numTriggers++;
@@ -1329,8 +1335,8 @@ static void scnReadTriggers(lua_State *L, int tbl, ScenarioManifest *m,
                     lua_pop(L, 1);
                     scnReport(rep, slot,
                               "scenario: more than %d tests on one trigger; "
-                              "%s dropped", SCN_TRIGGER_CONDS_MAX, slot);
-                    continue;
+                              "the rest dropped", SCN_TRIGGER_CONDS_MAX);
+                    break;
                 }
                 scnReadTrigCond(L, lua_gettop(L),
                                 &trig->where[trig->numWhere], slot, rep);
@@ -1360,8 +1366,8 @@ static void scnReadTriggers(lua_State *L, int tbl, ScenarioManifest *m,
                     lua_pop(L, 1);
                     scnReport(rep, slot,
                               "scenario: more than %d actions on one trigger; "
-                              "%s dropped", SCN_TRIGGER_ACTIONS_MAX, slot);
-                    continue;
+                              "the rest dropped", SCN_TRIGGER_ACTIONS_MAX);
+                    break;
                 }
                 scnReadTrigAct(L, lua_gettop(L),
                                &trig->actions[trig->numActions], slot, rep);
