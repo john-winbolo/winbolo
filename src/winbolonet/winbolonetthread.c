@@ -245,6 +245,10 @@ int winbolonetThreadRun(void *data) {
   wbnList prev;
   char *resp = NULL;
 
+  /* One libcurl handle for the life of this thread, so the queued posts
+   * below reuse a connection instead of opening one each time. */
+  httpWorkerPoolBegin();
+
   while (wbnShouldRun == TRUE) {
 
 #ifdef _WIN32
@@ -299,6 +303,7 @@ int winbolonetThreadRun(void *data) {
     SDL_Delay(WBN_THREAD_SLEEP_TIME);
 #endif
   }
+  httpWorkerPoolEnd();
   wbnFinished = TRUE;
   return 0;
 }

@@ -5907,6 +5907,50 @@ foreach(_name IN LISTS _unit_test_names)
                          FIXTURES_REQUIRED warm_binaries)
 endforeach()
 
+# ---------------------------------------------------------------------------
+# WinBoloWbnTests -- the WinBolo.net HTTP layer against a local TCP listener.
+#
+# Its own target rather than a case in WinBoloUnitTests: that binary links
+# tests/unit/test_stubs.c, which stubs WinBolo.net out and links no libcurl,
+# so nothing in it can show whether an HTTP call opened a connection or
+# reused one. This target links the real http.c and winbolonetthread.c out of
+# winbolonet_core, and its own main.
+#
+# The loose sources close the link rather than pulling in bolo_static:
+# prefs.c / prefs_doc.c are the two preference calls http.c makes when no
+# host override is set, global.c the New / Dispose allocator the thread queue
+# uses, and tweetnacl.c the Ed25519 signing, compiled per consumer the same
+# way LogViewer and the client do. winbolonet_server.c's one call back into
+# the server, serverSimConsoleMessage, is stubbed in the test file.
+# ---------------------------------------------------------------------------
+add_executable(WinBoloWbnTests
+    tests/wbn/test_wbn_connection_reuse.c
+    src/bolo/global.c
+    src/common/prefs.c
+    src/common/prefs_doc.c
+    src/third_party/tweetnacl/tweetnacl.c
+)
+target_include_directories(WinBoloWbnTests PRIVATE
+    src
+    src/winbolonet
+    ${cjson_SOURCE_DIR}
+    src/third_party/tweetnacl
+)
+bolo_apply_include_rules(WinBoloWbnTests runtime_only)
+target_link_libraries(WinBoloWbnTests PRIVATE
+    winbolonet_core winbolonet_server cjson CURL::libcurl SDL3::SDL3)
+target_compile_options(WinBoloWbnTests PRIVATE -fcommon)
+if(WIN32)
+    target_link_libraries(WinBoloWbnTests PRIVATE ws2_32)
+else()
+    target_link_libraries(WinBoloWbnTests PRIVATE ${MATH_LIB} pthread)
+endif()
+set_flat_output(WinBoloWbnTests "${CMAKE_BINARY_DIR}")
+
+add_test(NAME wbn.posts_share_connection
+         COMMAND $<TARGET_FILE:WinBoloWbnTests>)
+set_tests_properties(wbn.posts_share_connection PROPERTIES TIMEOUT 60)
+
 # ---- Include-rule check: the scenario surface is invisible to a frontend --
 # src/bolo/scenario_api/ is on the include path of scenario_host, sim_owner
 # and unittests alone, so a gui translation unit that includes the funnel
