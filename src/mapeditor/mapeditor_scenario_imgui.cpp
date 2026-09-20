@@ -2471,13 +2471,34 @@ static bool meScnActionOp(ScnTrigAct *a) {
     return changed;
 }
 
+/* Whether call can reach a definition written that way. The router looks a
+ * call's name up with rawget on the globals table and nowhere else, so a
+ * global is the only spelling it ever finds — see act() in
+ * scenario_triggers.lua.
+ *
+ * This is narrower than what the host resolves for a hook, which is read off
+ * the globals and then off the scenario table. A field of the scenario table
+ * is a hook the host runs and a name call reaches nothing with, so the two
+ * questions cannot share an answer. */
+static bool meScnCallReaches(const MEScnFoundFn *fn) {
+    return fn->form == ME_SCN_FORM_GLOBAL;
+}
+
 /* call's first argument: the name of a top-level function of the script. The
  * arrow beside the box lists what the script defines, scanned again every
  * frame the way the functions view scans it, so the list follows an edit made
- * in the script pane a moment ago. */
+ * in the script pane a moment ago.
+ *
+ * Only the names call can reach. A local, a field of the scenario table and a
+ * field of any other table are all definitions the author can see in their
+ * own script and the router will never find, so offering one is offering an
+ * action that does nothing. The box beside the arrow still takes any name
+ * typed into it: the list is what the editor vouches for, not what it
+ * allows. */
 static bool meScnCallName(const char *text, ScnTrigValue *v) {
     MEScnFoundFn found[ME_SCN_FOUND_MAX];
     size_t       nFound;
+    size_t       nReach = 0;
     bool         changed = false;
     size_t       i;
 
@@ -2491,13 +2512,24 @@ static bool meScnCallName(const char *text, ScnTrigValue *v) {
     }
 
     nFound = meScnScanFunctions(text, found, ME_SCN_FOUND_MAX);
+    for (i = 0; i < nFound; i++) {
+        if (meScnCallReaches(&found[i])) {
+            nReach++;
+        }
+    }
     ImGui::SameLine();
-    if (nFound == 0) {
+    /* A script whose every definition is one call cannot reach has nothing to
+       put in the list, and lands on the same line as a script that has
+       defined nothing yet: there is no name here to pick. */
+    if (nReach == 0) {
         meScnHint(langGetText(STR_MAPEDIT_SCENARIO_CALL_NO_FUNCTIONS));
         return changed;
     }
     if (ImGui::BeginCombo("##pick", "", ImGuiComboFlags_NoPreview)) {
         for (i = 0; i < nFound; i++) {
+            if (!meScnCallReaches(&found[i])) {
+                continue;
+            }
             ImGui::PushID((int)i);
             if (ImGui::Selectable(found[i].name,
                                   strcmp(found[i].name, v->text) == 0)) {
