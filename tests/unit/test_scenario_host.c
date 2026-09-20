@@ -1093,6 +1093,69 @@ int run_scenario_host_trigger_action_no_op(void) {
     return 0;
 }
 
+/* ── 7a5. A where-row that names no field ─────────────────────────── */
+
+/* The same shape one row over. The editor makes room for a test before the
+ * author has said what it looks at, and a pack made before they say it
+ * writes the empty name out. An empty name is a string, so the reader took
+ * it and said nothing, and scnCheckTrigCond leaves a row naming no field to
+ * this report — between them a test reached a server unmentioned and never
+ * held.
+ *
+ * Two rows on the one trigger: one naming a field and one naming none. The
+ * first is what says the report costs that row and not the trigger, and the
+ * key is what says which of the two it is about. */
+int run_scenario_host_trigger_where_no_field(void) {
+    static const char *const kMap = "scnhost_no_field.map";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  name = \"No field\",\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_tick\",\n"
+        "      where = { { \"tick\", \"eq\", 1 }, { \"\", \"eq\", 1 } },\n"
+        "      actions = { { \"log\", \"kept\" } } },\n"
+        "  },\n"
+        "}\n";
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    const ScenarioManifest *m;
+    char                    err[512];
+
+    UT_ASSERT(shPut(kMap, kLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL,
+                  "a test naming no field cost the whole script: %s", err);
+
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "names no field") != NULL,
+                  "an empty field name was taken without a word: '%s'",
+                  scenarioHostLastError(h));
+    UT_ASSERT_MSG(
+        strstr(scenarioHostLastError(h), "triggers[0].where[1]") != NULL,
+        "the report does not name the row: '%s'", scenarioHostLastError(h));
+
+    /* The row is kept, empty name and all. A report is not a refusal: the
+       trigger stands and the test beside it still holds. */
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->numTriggers == 1, "%u triggers kept",
+                  (unsigned)m->numTriggers);
+    UT_ASSERT_MSG(m->triggers[0].numWhere == 2, "%u tests kept",
+                  (unsigned)m->triggers[0].numWhere);
+    UT_ASSERT(strcmp(m->triggers[0].where[0].field, "tick") == 0);
+    UT_ASSERT_MSG(m->triggers[0].where[1].field[0] == '\0',
+                  "the row came back naming '%s'",
+                  m->triggers[0].where[1].field);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
 /* ── 7b. A team's init table ──────────────────────────────────────── */
 
 /* The team block's `init` is the table this team's bots are built with, and

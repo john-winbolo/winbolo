@@ -1147,7 +1147,7 @@ exist.
 |---|---|
 | `game.panel(id, list[, target])` | Draws panel `id` from a list of primitives. An empty list clears it. |
 | `game.score(target, value[, label])` | The scenario's own score for one seat with a number, or for a team with `{ team = t }`. `label` is the short word shown beside it, up to 15 bytes. |
-| `game.announce(text, seconds[, target])` | A line across the centre of the screen for that many seconds. Empty text takes the line away. |
+| `game.announce(text[, seconds[, target]])` | A line across the centre of the screen for that many seconds. Empty text takes the line away. |
 | `game.marker(id, x, y[, colour[, target]])` | Puts mark `id` on a map square. |
 | `game.marker_follow(id, p[, colour[, target]])` | Puts mark `id` on seat `p`, where it rides the tank rather than the ground. |
 | `game.clear_marker(id[, target])` | Takes mark `id` off the map. |

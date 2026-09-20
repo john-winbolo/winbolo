@@ -116,6 +116,22 @@
  *                                          and break the pair between them
  *                                          are reported against the rule that
  *                                          has to move, not against the table
+ * run_scenario_validate_trigger_call_no_name
+ *                                        — a call whose first argument is an
+ *                                          empty name is refused the way one
+ *                                          with no first argument is, and a
+ *                                          name carried on the action's text
+ *                                          still passes
+ * run_scenario_validate_trigger_field_team
+ *                                        — a reference to a seat's team
+ *                                          written where the op takes a seat,
+ *                                          under the argument's own key; a
+ *                                          seat, a team into a team and call's
+ *                                          own arguments all pass
+ * run_scenario_validate_trigger_announce_clear
+ *                                        — announce with no seconds is the
+ *                                          clear the binding takes, so nothing
+ *                                          is reported against it
  */
 
 #include <stdint.h>
@@ -1660,7 +1676,7 @@ int run_scenario_validate_trigger_action(void) {
         "    { when = \"on_tick\",\n"
         "      actions = { { \"set_score\", 1, 2 },\n"
         "                  { \"panel\", 1, 2 },\n"
-        "                  { \"announce\", \"held\" },\n"
+        "                  { \"announce\" },\n"
         "                  { \"log\", \"a\", \"b\" } } },\n"
         "    { when = \"on_tick\",\n"
         "      actions = { { \"call\", \"never_defined\", 1, 2 },\n"
@@ -1692,9 +1708,12 @@ int run_scenario_validate_trigger_action(void) {
     if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[1]", "call action")) {
         rc = 1;
     }
-    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[2]", "takes 2 to 3")) {
+    /* Too few, against an op whose count is a range: announce takes a line,
+       and a time and a target it may be written without. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[2]", "takes 1 to 3")) {
         rc = 1;
     }
+    /* And too many, against one whose count is exact. */
     if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[3]", "takes 1")) {
         rc = 1;
     }
@@ -2101,6 +2120,205 @@ int run_scenario_validate_rule_pair_key(void) {
         svList(r, seen, sizeof(seen));
         fprintf(stderr, "FAIL %s:%d: %u issues against one broken pair: %s\n",
                 __FILE__, __LINE__, (unsigned)r->count, seen);
+        rc = 1;
+    }
+
+    free(r);
+    return rc;
+}
+
+/* ── 31. A call naming no function ────────────────────────────────── */
+
+/* call's first argument is the name of a function in the script, and the
+   name is written down rather than read off the payload. A name that is
+   there but empty is a name the script has not got: rawget on "" finds
+   nothing and the action does nothing, which is the same dead end as no
+   first argument at all, so it gets the same sentence.
+
+   A name too long to sit in an argument rides on the action's own text and
+   leaves the argument's text empty, which looks exactly like the empty name
+   until the flag is read. The long one here is what says the check reads the
+   flag: it is a name the script could carry and has to pass. */
+int run_scenario_validate_trigger_call_no_name(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_chat\",\n"
+        "      actions = { { \"call\", \"\" },\n"
+        "                  { \"call\", \"my_fn\" },\n"
+        "                  { \"call\",\n"
+        "                    \"a_function_name_far_longer_than_an_argument"
+        "_holds\" } } },\n"
+        "  },\n"
+        "}\n";
+    ScnValidateResult *r;
+    int                rc = 0;
+
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+
+    if (scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL, r)) {
+        fprintf(stderr, "FAIL %s:%d: a call naming no function said "
+                        "nothing\n", __FILE__, __LINE__);
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[0]",
+                            "that function's name")) {
+        rc = 1;
+    }
+    /* The name is the action's own business and not an argument's. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[0][0]")) {
+        rc = 1;
+    }
+    /* A name that fits, which is what says the refusal is of the empty one
+       rather than of every string. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[1]")) {
+        rc = 1;
+    }
+    /* And one carried on the action's text, whose argument reads empty. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[2]")) {
+        rc = 1;
+    }
+
+    free(r);
+    return rc;
+}
+
+/* ── 32. A team written where a seat goes ─────────────────────────── */
+
+/* Every seat on a payload carries the team it is on as a field beside it,
+   typed as a team and answering a team number. An op that takes a seat there
+   is handed that number and scores, teams or messages whichever seat happens
+   to be numbered like the team — a player who was never part of what
+   happened. The action runs, so nothing at run time says a word about it.
+
+   on_tank_killed carries a seat, an owner and the two teams derived from
+   them; score takes a seat first, set_team takes a seat and then a team and
+   kill_tank takes a seat and then an owner, so one hook holds every arm: a
+   team into a seat, a seat into a seat, a team into a team and a team into
+   an owner.
+
+   call is the last arm, on a second trigger because four actions is all one
+   holds. What its function expects is the script's own and nothing here
+   knows it, so a team among its arguments passes. */
+int run_scenario_validate_trigger_field_team(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_tank_killed\",\n"
+        "      actions = { { \"score\", { field = \"victim_team\" }, 10 },\n"
+        "                  { \"score\", { field = \"victim\" }, 10 },\n"
+        "                  { \"set_team\", { field = \"victim\" },\n"
+        "                    { field = \"killer_team\" } },\n"
+        "                  { \"kill_tank\", { field = \"victim\" },\n"
+        "                    { field = \"killer_team\" } } } },\n"
+        "    { when = \"on_tank_killed\",\n"
+        "      actions = { { \"call\", \"my_fn\",\n"
+        "                    { field = \"victim_team\" } } } },\n"
+        "  },\n"
+        "}\n";
+    ScnValidateResult *r;
+    int                rc = 0;
+
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+
+    if (scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL, r)) {
+        fprintf(stderr, "FAIL %s:%d: a team written where a seat goes said "
+                        "nothing\n", __FILE__, __LINE__);
+        rc = 1;
+    }
+    /* The argument's own position, and the sentence says which seat it
+       reaches instead. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[0][0]",
+                            "takes a seat")) {
+        rc = 1;
+    }
+    /* The action itself stands: the op is real and takes the count it was
+       given, which is what says the refusal is of the argument. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[0]")) {
+        rc = 1;
+    }
+    /* The seat the hook carries, into the same argument. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[1][0]")) {
+        rc = 1;
+    }
+    /* A team into an argument that is a team, which is what the derived
+       field is for. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[2][0]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[2][1]")) {
+        rc = 1;
+    }
+    /* And an owner, which is a seat by another name. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[3][1]", "takes a seat")) {
+        rc = 1;
+    }
+    /* call's arguments go to a function of the script's own, so nothing here
+       knows what they are for. It is a trigger of its own because four
+       actions is the cap and a fifth would be dropped rather than read. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[1].actions[0][1]")) {
+        rc = 1;
+    }
+
+    free(r);
+    return rc;
+}
+
+/* ── 33. The announce that takes a line away ──────────────────────── */
+
+/* Empty text takes the line away rather than putting one up, so there is
+   nothing to hold up and nothing to time: scnLuaAnnounce reads seconds only
+   where the text has something in it. The registry used to call seconds
+   required all the same, which left an editor building the action list off
+   it asking for a number before it would write a clear.
+
+   Three of them: the clear with nothing after it, the clear written with a
+   time anyway, and a line with a time. All three are calls the binding
+   takes, so none of them is reported. */
+int run_scenario_validate_trigger_announce_clear(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_tick\",\n"
+        "      actions = { { \"announce\", \"\" },\n"
+        "                  { \"announce\", \"\", 0 },\n"
+        "                  { \"announce\", \"held\", 5 } } },\n"
+        "  },\n"
+        "}\n";
+    ScnValidateResult *r;
+    int                rc = 0;
+
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+
+    if (!scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL, r)) {
+        char seen[1024];
+        svList(r, seen, sizeof(seen));
+        fprintf(stderr, "FAIL %s:%d: an announce the binding takes was "
+                        "reported: %s\n", __FILE__, __LINE__, seen);
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[0]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[1]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[2]")) {
         rc = 1;
     }
 

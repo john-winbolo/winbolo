@@ -581,7 +581,12 @@ static void mjTrigCond(const cJSON *row, ScnTrigCond *out,
     field = cJSON_GetArrayItem(row, 0);
     op    = cJSON_GetArrayItem(row, 1);
 
-    if (cJSON_IsString(field) && field->valuestring != NULL) {
+    /* A name that is there but empty goes the same way as a slot holding no
+       string at all: the editor writes one into a row it has just made room
+       for, and a row naming nothing tests nothing. scnCheckTrigCond leaves
+       both to this report. */
+    if (cJSON_IsString(field) && field->valuestring != NULL &&
+        field->valuestring[0] != '\0') {
         mjCopyStr(out->field, sizeof(out->field), field->valuestring);
     } else {
         mjReport(rep, where, "scenario: %s names no field", where);

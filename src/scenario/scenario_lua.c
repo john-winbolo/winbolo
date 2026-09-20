@@ -4167,7 +4167,10 @@ static const ScnLuaOpParam kScnOpArgs_score[] = {
 };
 static const ScnLuaOpParam kScnOpArgs_announce[] = {
     { "text", SCN_PARAM_STRING, false },
-    { "seconds", SCN_PARAM_NUMBER, false },
+    /* The clear leaves it out: empty text takes a line away rather than
+       putting one up, so there is nothing to time. scnLuaAnnounce reads it
+       only where the text has something in it. */
+    { "seconds", SCN_PARAM_NUMBER, true },
     { "target", SCN_PARAM_SLOT, true }, SCN_OP_ARG_END
 };
 /* A colour is the palette's word or the number behind it, which is what
@@ -4508,7 +4511,7 @@ static const ScnLuaRow kScnLuaRows[] = {
       "short word shown beside it.",
       SCN_OP_PARAMS(score), SCN_OP_ACTS },
     { "announce", scnLuaAnnounce,
-      "announce(text, seconds[, target]) — a line across the centre of the "
+      "announce(text[, seconds[, target]]) — a line across the centre of the "
       "screen for that many seconds; empty text takes the line away.",
       SCN_OP_PARAMS(announce), SCN_OP_ACTS },
     { "marker", scnLuaMarker,

@@ -834,11 +834,17 @@ static void scnCheckTrigCond(const ScenarioManifest *m, const ScnTrigCond *c,
  *
  * fields is NULL where the hook is one the surface has not got: there is
  * nothing to hold a reference to until the hook is known, and the trigger's
- * own key has already been told that it is not. */
+ * own key has already been told that it is not.
+ *
+ * op is the row the action names, for the one place a reference's own type
+ * has to answer to the argument it is written into: every seat on a payload
+ * carries the team it is on as a field beside it, and a team written where a
+ * seat goes is a small number the op reads as a seat. It is NULL for call,
+ * whose function is the script's own and takes whatever the script reads. */
 static void scnCheckTrigActArgs(const ScnTrigAct *a,
                                 const ScnTrigFields *fields, const char *when,
-                                const char *key, size_t from,
-                                ScnValidateResult *out) {
+                                const ScnLuaRow *op, const char *key,
+                                size_t from, ScnValidateResult *out) {
     size_t i;
 
     if (fields == NULL) {
@@ -862,6 +868,15 @@ static void scnCheckTrigActArgs(const ScnTrigAct *a,
             scnIssueAdd(out, slot,
                         "'%s' is a set of names and an argument is one "
                         "value, so this action never runs", a->args[i].text);
+        } else if (op != NULL && i < op->paramCount &&
+                   f->type == SCN_PARAM_TEAM &&
+                   (op->params[i].type == SCN_PARAM_SLOT ||
+                    op->params[i].type == SCN_PARAM_OWNER)) {
+            scnIssueAdd(out, slot,
+                        "'%s' is a team and %s takes a seat as its '%s', so "
+                        "this action reaches the seat numbered like that "
+                        "team rather than the player meant", a->args[i].text,
+                        a->op, op->params[i].name);
         }
     }
 }
@@ -893,7 +908,13 @@ static void scnCheckTrigAct(const ScnTrigAct *a, const ScnTrigFields *fields,
        player who typed it pick. What that function does with the arguments
        after the name is the script's own business, but a reference among them
        is read off the payload like any other and is held to the same
-       fields. */
+       fields.
+
+       A name that is there but empty names no function, the way no first
+       argument at all names none, so the two share a sentence. A name too
+       long to sit in an argument rides on the action's own text and leaves
+       the argument's empty, which is why the flag is read and not the
+       bytes. */
     if (strcmp(a->op, "call") == 0) {
         if (a->numArgs > 0 && a->args[0].kind == SCN_TRIG_VAL_FIELD) {
             scnIssueAdd(out, key,
@@ -901,12 +922,13 @@ static void scnCheckTrigAct(const ScnTrigAct *a, const ScnTrigFields *fields,
                         "'%s' reads one off the payload as the trigger fires; "
                         "the name is written here instead", a->args[0].text);
         } else if (a->numArgs == 0 ||
-                   a->args[0].kind != SCN_TRIG_VAL_STRING) {
+                   a->args[0].kind != SCN_TRIG_VAL_STRING ||
+                   (!a->args[0].inText && a->args[0].text[0] == '\0')) {
             scnIssueAdd(out, key,
                         "call runs a function of the script's own, and its "
                         "first argument is that function's name");
         }
-        scnCheckTrigActArgs(a, fields, when, key, 1, out);
+        scnCheckTrigActArgs(a, fields, when, NULL, key, 1, out);
         return;
     }
 
@@ -949,7 +971,7 @@ static void scnCheckTrigAct(const ScnTrigAct *a, const ScnTrigFields *fields,
 
     /* And every argument, from the first: an op of the game table names its
        function here rather than in an argument. */
-    scnCheckTrigActArgs(a, fields, when, key, 0, out);
+    scnCheckTrigActArgs(a, fields, when, op, key, 0, out);
 }
 
 /* Whether a trigger could do anything at all: the hook it listens on, the

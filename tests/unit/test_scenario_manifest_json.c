@@ -1388,6 +1388,81 @@ int run_scenario_manifest_json_trigger_action_no_op(void) {
     return 0;
 }
 
+/* ── A where-row that names no field ──────────────────────────────── */
+
+/* The same shape one row over. The editor makes room for a test before the
+   author has said what it looks at, and a pack made before they say it
+   writes the empty name out. An empty name is a string, so the reader took
+   it and said nothing, and scnCheckTrigCond leaves a row naming no field to
+   this report — between them a test reached a server unmentioned and never
+   held.
+
+   Two rows on the one trigger, one naming a field and one naming none, so
+   the key says which of the two the issue is about. The Lua reader is held
+   to the same wording under the same key by a case of its own. */
+int run_scenario_manifest_json_trigger_where_no_field(void) {
+    static const char kNoField[] =
+        "{\n"
+        "  \"manifest\": 1,\n"
+        "  \"api\": 1,\n"
+        "  \"triggers\": [\n"
+        "    { \"when\": \"on_tick\",\n"
+        "      \"where\": [ [\"tick\", \"eq\", 1], [\"\", \"eq\", 1] ],\n"
+        "      \"actions\": [ [\"log\", \"kept\"] ] }\n"
+        "  ]\n"
+        "}\n";
+    char                    err[256];
+    char                    soft[256];
+    ScnManifestDoc         *doc;
+    ScnValidateResult      *sink;
+    ScnParseReport          rep;
+    const ScenarioManifest *m;
+
+    sink = (ScnValidateResult *)malloc(sizeof(*sink));
+    UT_ASSERT(sink != NULL);
+    memset(sink, 0, sizeof(*sink));
+    soft[0]     = '\0';
+    rep.soft    = soft;
+    rep.softLen = sizeof(soft);
+    rep.sink    = sink;
+
+    doc = parseText(kNoField, &rep, err, sizeof(err));
+    if (doc == NULL) {
+        free(sink);
+        UT_FAIL("a test naming no field was refused: %s", err);
+    }
+    if (!issueSays(sink, "triggers[0].where[1]", "names no field")) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("an empty field name was taken without a word under the row");
+    }
+    if (sawIssue(sink, "triggers[0].where[0]")) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the row that names a field was reported against as well");
+    }
+
+    /* The row is kept, empty name and all. An issue is not a refusal: the
+       trigger stands and the test beside it still holds. */
+    m = scnManifestValues(doc);
+    if (m->numTriggers != 1 || m->triggers[0].numWhere != 2) {
+        int kept = (int)m->triggers[0].numWhere;
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("%d tests were kept, expected both", kept);
+    }
+    if (strcmp(m->triggers[0].where[0].field, "tick") != 0 ||
+        m->triggers[0].where[1].field[0] != '\0') {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the two rows came back naming '%s' and '%s'",
+                m->triggers[0].where[0].field, m->triggers[0].where[1].field);
+    }
+    scnManifestFree(doc);
+    free(sink);
+    return 0;
+}
+
 /* ── An operator that is none of the seven ────────────────────────── */
 
 /* A word the table cannot place, and a row that names no operator at all,
