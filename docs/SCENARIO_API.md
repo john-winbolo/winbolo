@@ -1461,7 +1461,10 @@ scenario = {
                   { "sound", "big_explosion_near" } } },
 
     { when    = "on_tank_killed",
-      where   = { { "victim_team", "eq", 1 } },
+      -- killer is an owner, and a drowning has none: the test on its team
+      -- is what keeps the owner who is nobody out of score's seat.
+      where   = { { "victim_team", "eq", 1 },
+                  { "killer_team", "gte", 0 } },
       actions = { { "score", { field = "killer" }, 10 } } },
   },
 }
@@ -1474,6 +1477,14 @@ Three keys, all optional but `when`:
 | `when` | The hook to run on, by name. A trigger that names none, or names a policy, never runs. |
 | `where` | The tests, as `{ field, operator, value }` rows. **Every one has to hold**, so no `where` at all means the trigger fires every time its hook does. |
 | `actions` | The calls, as `{ op, argument... }` rows, run in the order written. |
+
+A trigger the router never sees says so at load. A `when` the build has no
+hook for — a typo, or a policy — is left out when the triggers are handed
+over, and a `where` that is there but is not an array takes its trigger with
+it as the table is read: one kept with tests that could not be read would
+fire every time its hook did. Each gets a line on the console under its own
+position, `triggers[3]`, so a table written by hand says what it lost without
+waiting for `-validate`.
 
 Triggers run in the order the table writes them, and the actions inside one
 run in the order that trigger writes them. A trigger whose tests do not hold
@@ -1542,6 +1553,20 @@ goes nowhere, and the handful that take a table or a function, which a row
 cannot write. `game.panel` is the one worth naming: its `list` is a table, so
 it is a script's to call, not a trigger's.
 
+**Who an action can address.** An op's `target` takes a seat number or one of
+the words the surface names — `"all"` is the one — and from a trigger nothing
+else: the third form the ops themselves take, `{ team = t }`, is a table, and
+a trigger's argument is only a number, a string, a boolean or a `{ field = }`
+reference. A trigger that has to address a team does it through `call`, whose
+function is your own Lua and can write the table. `game.score` is the one
+`target` that refuses `"all"`, a score being one seat's or one team's, so a
+trigger's score is a seat's.
+
+A `target` is one of the two arguments that take either a number or a word.
+The other is the `colour` on `marker` and `marker_follow`, which is the
+palette's word or the number behind it: both spellings of red are the same
+argument.
+
 The one action that is not a `game.*` row is **`call`**, which runs a
 top-level function of your own script:
 
@@ -1558,21 +1583,39 @@ arguments it takes — they are yours.
 **Your own handler runs first.** Where a scenario declares both a handler and
 a trigger on the same hook, the handler is called before the triggers, and
 returning `false` from it stops them for that event. That is the only meaning
-a hook's return value has.
+a hook's return value has. A handler written as a field of the `scenario`
+table — `scenario = { on_player_join = function(p) … end }` — is picked up
+the same way a global of that name is, and where both are written the global
+is the one that runs.
 
 **What is refused, and what is merely skipped.** Everything a table can be
 held to is checked before a round starts — by `-validate`, and by the map
 editor as you type — and reported against the trigger's position, so
-`triggers[3].actions[0]` names the row you are looking at. Refused: a hook
-that names nothing or names a policy, a field the hook has not got, an
-operator that is none of the seven, an operator the field cannot answer, an
-argument count the op does not take, a tag nothing on the map carries, and a
-`call` that names no function at all.
+`triggers[3].actions[0]` names the row you are looking at.
+
+Refused for what a row names: a hook that names nothing or names a policy, a
+test that names no field, an action that names no op — a name that is there
+but empty counts as none — a field the hook has not got, an operator that is
+none of the seven, an operator the field cannot answer, an argument count the
+op does not take, and a `call` that names no function at all or reads the
+name off the payload, which would let whatever the hook was handed pick which
+of your functions runs.
+
+Refused for what a value in it holds: a tag nothing on the map carries, a
+literal of the wrong kind for the argument it sits in — a number where text
+is wanted — a `{ field = }` naming a set, which is neither the one value a
+test compares against nor the one an argument passes, and a `{ field = }`
+naming a team where the op reads that argument as a seat, which would reach
+the seat numbered like that team rather than the player meant.
 
 At run time the router is silent instead: a row it cannot make sense of does
-not hold, and an action it cannot make does not run. Raising there would spend
-one of the scenario's errors on a fault nobody can fix mid-round, which is why
-the check before the round is the one that talks.
+not hold, and an action it cannot make does not run. An action is not made in
+part: an argument that reads nothing takes the whole action with it rather
+than reaching the op as a nil, and `{ field = "killer_team" }` on a kill
+nobody did is the case to keep in mind, since an owner who is nobody has no
+team. Raising there would spend one of the scenario's errors on a fault
+nobody can fix mid-round, which is why the check before the round is the one
+that talks.
 
 Two things only the round finds out, so keep them in mind. **A `call` naming a
 function your script never defined is skipped**, not reported — the check has
@@ -1584,7 +1627,14 @@ refused either.
 **Limits.** 64 triggers in a scenario, 4 tests and 4 actions on one trigger, 6
 arguments on one action. Going past any of them drops what is past it and says
 so, the way a table with too many regions does. One argument of an action may
-be a line of text up to 128 bytes; every other string is 31.
+be a line of text up to 128 bytes; every other string is 31. A string past
+either length is cut to fit and says so as well, under the slot it was
+written in.
+
+A key inside a trigger that is none of the three is not kept. The rest of a
+manifest keeps what it did not read, but a trigger is written back out of
+what was read, so anything else you put in one is gone after a trip through
+the editor or a pack.
 
 ### Writing triggers in the map editor
 
@@ -1598,9 +1648,12 @@ The lists are built from the catalogue, so the names and the operators are
 right by construction: a field combo offers that hook's own fields, an
 operator combo offers the ones that field can answer, and an op combo offers
 the ops an action can use rather than every row of the `game` table. What it
-cannot settle is what you put in the values — a tag nothing carries, a number
-outside a range — and those are reported in the panel's own issues list as you
-type, under the same `triggers[3].actions[0]` key `-validate` uses.
+cannot settle is what you put in the values — a tag nothing carries, a
+literal of the wrong kind for the argument it sits in — and those are
+reported in the panel's own issues list as you type, under the same
+`triggers[3].actions[0]` key `-validate` uses. A number of the right kind but
+outside the op's own range is not among them: a range is the op's business,
+and is answered when the action runs.
 
 It also converts entity numbers, so the pillbox it lists as **pill 0** is
 written out as `[1]` — see [`scenario.tags`](#scenariotags) for why that is
