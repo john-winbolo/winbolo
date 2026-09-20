@@ -2564,13 +2564,15 @@
  * Add and for the filter box are the rules view's, which already say them
  * in this panel.
  *
- * The last three are what a definition the scanner found can be wrong
- * about. A colon puts an implicit self in front of the parameters while the
- * host calls the field with the hook's own arguments, so every argument
- * shifts by one and a hook that looks written behaves wrongly. Two
- * definitions of one name are both live Lua and the later one silently
- * replaces the earlier, so the row says there are two rather than showing
- * one of them. */
+ * The last five are what a definition the scanner found can be wrong about.
+ * A colon puts an implicit self in front of the parameters while the host
+ * calls the field with the hook's own arguments, so every argument shifts
+ * by one and a hook that looks written behaves wrongly. Two definitions of
+ * one name are both live Lua and the later one silently replaces the
+ * earlier, so the row says there are two rather than showing one of them.
+ * The other two are hooks the host never finds at all: it reads a hook off
+ * the globals and off the scenario table, so a local and a field of any
+ * other table are written, listed and never run. */
 #define STR_MAPEDIT_SCENARIO_VIEW_FUNCTIONS   2470
 #define STR_MAPEDIT_SCENARIO_FN_GOTO          2471
 #define STR_MAPEDIT_SCENARIO_FN_IN_SCRIPT     2472
@@ -2580,6 +2582,8 @@
 #define STR_MAPEDIT_SCENARIO_FN_AT_LINE       2476
 #define STR_MAPEDIT_SCENARIO_FN_COLON         2477
 #define STR_MAPEDIT_SCENARIO_FN_TWICE         2478
+#define STR_MAPEDIT_SCENARIO_FN_LOCAL         2577
+#define STR_MAPEDIT_SCENARIO_FN_TABLE         2578
 
 /* The triggers view: the triggers a scenario declares, each one a hook to
  * listen on with a list of tests and a list of actions under it. The view adds

@@ -1574,6 +1574,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_fndesc_table",                           run_scenario_fndesc_table                           },
     { "scenario_fnstub_forms",                           run_scenario_fnstub_forms                           },
     { "scenario_fnscan_forms",                           run_scenario_fnscan_forms                           },
+    { "scenario_fnscan_spellings",                       run_scenario_fnscan_spellings                       },
     { "scenario_package_round_trip",                     run_scenario_package_round_trip                     },
     { "scenario_package_bad_framing",                    run_scenario_package_bad_framing                    },
     { "scenario_package_entry_names",                    run_scenario_package_entry_names                    },

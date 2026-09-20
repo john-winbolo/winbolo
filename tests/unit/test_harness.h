@@ -2990,8 +2990,10 @@ int run_scenario_fnstub_forms(void);
 
 /* The definitions a script already holds (test_scenario_fnscan.c): the four
  * spellings a definition takes, the line each is on, and what a line scan
- * over the text does not see. */
+ * over the text does not see. The second is which spelling wrote each one,
+ * since the host reaches only a global and a field of the scenario table. */
 int run_scenario_fnscan_forms(void);
+int run_scenario_fnscan_spellings(void);
 
 /* The WBSC container (test_scenario_package.c): the framing round trip,
  * the refusals a malformed buffer gets, the entry and brain lists, two

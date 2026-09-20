@@ -14,6 +14,11 @@
  *      — the four spellings a definition takes, the comment that hides one,
  *        repeats, the bounds of the answer, and the names that are nobody's
  *        hook
+ *
+ * run_scenario_fnscan_spellings
+ *      — which spelling each definition was written in, since only two of
+ *        them reach the host, and the line endings and the spacing the scan
+ *        has to read them through
  */
 
 #include <stddef.h>
@@ -38,6 +43,39 @@ static int sfsRowIs(const MEScnFoundFn *rows, size_t count, size_t at,
         fprintf(stderr, "        row %d is '%s' on line %d, expected '%s' on "
                         "line %d\n", (int)at, rows[at].name, rows[at].line,
                 name, line);
+        return 0;
+    }
+    return 1;
+}
+
+/* A spelling by the name this file calls it, so a failure reads as the Lua
+ * that was written rather than as a number. */
+static const char *sfsFormName(MEScnFnForm form) {
+    switch (form) {
+    case ME_SCN_FORM_GLOBAL:
+        return "a global";
+    case ME_SCN_FORM_SCENARIO:
+        return "a scenario field";
+    case ME_SCN_FORM_COLON:
+        return "the colon form";
+    case ME_SCN_FORM_LOCAL:
+        return "a local";
+    case ME_SCN_FORM_TABLE:
+        return "another table's field";
+    }
+    return "no spelling this file knows";
+}
+
+/* The row at that index says this name, on this line, written this way. */
+static int sfsRowSpelled(const MEScnFoundFn *rows, size_t count, size_t at,
+                         const char *name, int line, MEScnFnForm form) {
+    if (!sfsRowIs(rows, count, at, name, line)) {
+        return 0;
+    }
+    if (rows[at].form != form) {
+        fprintf(stderr, "        row %d ('%s') came back as %s, expected "
+                        "%s\n", (int)at, rows[at].name,
+                sfsFormName(rows[at].form), sfsFormName(form));
         return 0;
     }
     return 1;
@@ -196,6 +234,173 @@ int run_scenario_fnscan_forms(void) {
                   "no room answered definitions");
     UT_ASSERT_MSG(meScnScanFunctions("", rows, 16) == 0,
                   "an empty script answered definitions");
+
+    return 0;
+}
+
+int run_scenario_fnscan_spellings(void) {
+    /* The keyword spelling, one definition per pair of lines and a name of
+       its own for each, so a row read off the wrong line cannot pass for
+       the right answer. The host resolves the first two of these and none
+       of the last three. */
+    static const char *const kDefined =
+        "function on_setup()\n"                 /* 1  a global */
+        "end\n"                                 /* 2 */
+        "function scenario.on_start()\n"        /* 3  a scenario field */
+        "end\n"                                 /* 4 */
+        "function scenario:on_tick(tick)\n"     /* 5  the colon form */
+        "end\n"                                 /* 6 */
+        "local function on_chat(p, text)\n"     /* 7  a local */
+        "end\n"                                 /* 8 */
+        "function M.on_end()\n"                 /* 9  another table */
+        "end\n";                                /* 10 */
+
+    /* The assignment spelling, which takes four of the five: a colon is
+       part of the keyword form's sugar and cannot be written on the left
+       of an =. */
+    static const char *const kAssigned =
+        "on_setup = function()\n"               /* 1  a global */
+        "end\n"                                 /* 2 */
+        "scenario.on_start = function()\n"      /* 3  a scenario field */
+        "end\n"                                 /* 4 */
+        "local on_chat = function(p, text)\n"   /* 5  a local */
+        "end\n"                                 /* 6 */
+        "M.on_end = function()\n"               /* 7  another table */
+        "end\n";                                /* 8 */
+
+    /* A colon on a table the host does not read, and a table made local on
+       the line that defines the field. Both answer the table form: a hook
+       the host never finds is the first thing wrong with either, and the
+       scan cannot tell a local table from a global one anyway. */
+    static const char *const kTableFirst =
+        "function M:on_tick(tick) end\n"        /* 1 */
+        "local M = {} function M.on_end() end\n";  /* 2 */
+
+    /* A local declared on one line and given its body on another. The line
+       with the body on it says nothing about where the name came from, so
+       the scan reads it as a global — the limit written down at the top of
+       mapeditor_scenario_fnscan.c. */
+    static const char *const kForwardLocal =
+        "local on_tick\n"                       /* 1 */
+        "on_tick = function(tick) end\n";       /* 2 */
+
+    /* Written on Windows, where every line carries a return in front of its
+       newline. */
+    static const char *const kCrlf =
+        "function on_setup()\r\n"               /* 1 */
+        "end\r\n"                               /* 2 */
+        "local function on_tick(tick)\r\n"      /* 3 */
+        "end\r\n"                               /* 4 */
+        "scenario.on_end = function()\r\n"      /* 5 */
+        "end\r\n";                              /* 6 */
+
+    /* The last line of a file an editor left without a newline on the end
+       of it. */
+    static const char *const kNoNewline =
+        "function on_setup() end\n"             /* 1 */
+        "local function on_tick(tick) end";     /* 2, and no newline */
+
+    /* An = with nothing either side of it, which is how plenty of authors
+       write one. */
+    static const char *const kTight =
+        "on_tick=function(tick) end\n"          /* 1 */
+        "scenario.on_end=function() end\n"      /* 2 */
+        "local on_chat=function(p, t) end\n"    /* 3 */
+        "M.on_setup=function() end\n";          /* 4 */
+
+    MEScnFoundFn rows[16];
+    size_t       count;
+
+    /* ── The five spellings of a definition ─────────────────────── */
+
+    memset(rows, 0, sizeof(rows));
+    count = meScnScanFunctions(kDefined, rows, 16);
+    UT_ASSERT_MSG(count == 5, "the five spellings answered %d definitions",
+                  (int)count);
+    UT_ASSERT(sfsRowSpelled(rows, count, 0, "on_setup", 1,
+                            ME_SCN_FORM_GLOBAL));
+    UT_ASSERT(sfsRowSpelled(rows, count, 1, "on_start", 3,
+                            ME_SCN_FORM_SCENARIO));
+    UT_ASSERT(sfsRowSpelled(rows, count, 2, "on_tick",  5,
+                            ME_SCN_FORM_COLON));
+    UT_ASSERT(sfsRowSpelled(rows, count, 3, "on_chat",  7,
+                            ME_SCN_FORM_LOCAL));
+    UT_ASSERT(sfsRowSpelled(rows, count, 4, "on_end",   9,
+                            ME_SCN_FORM_TABLE));
+
+    /* ── The same spellings written as an assignment ─────────────── */
+
+    memset(rows, 0, sizeof(rows));
+    count = meScnScanFunctions(kAssigned, rows, 16);
+    UT_ASSERT_MSG(count == 4, "the assigned spellings answered %d "
+                              "definitions", (int)count);
+    UT_ASSERT(sfsRowSpelled(rows, count, 0, "on_setup", 1,
+                            ME_SCN_FORM_GLOBAL));
+    UT_ASSERT(sfsRowSpelled(rows, count, 1, "on_start", 3,
+                            ME_SCN_FORM_SCENARIO));
+    UT_ASSERT(sfsRowSpelled(rows, count, 2, "on_chat",  5,
+                            ME_SCN_FORM_LOCAL));
+    UT_ASSERT(sfsRowSpelled(rows, count, 3, "on_end",   7,
+                            ME_SCN_FORM_TABLE));
+
+    /* ── A table in front of the name settles it ─────────────────── */
+
+    memset(rows, 0, sizeof(rows));
+    count = meScnScanFunctions(kTableFirst, rows, 16);
+    UT_ASSERT_MSG(count == 2, "the table fixture answered %d definitions",
+                  (int)count);
+    UT_ASSERT(sfsRowSpelled(rows, count, 0, "on_tick", 1,
+                            ME_SCN_FORM_TABLE));
+    UT_ASSERT(sfsRowSpelled(rows, count, 1, "on_end",  2,
+                            ME_SCN_FORM_TABLE));
+
+    /* ── A local the definition's own line does not carry ────────── */
+
+    memset(rows, 0, sizeof(rows));
+    count = meScnScanFunctions(kForwardLocal, rows, 16);
+    UT_ASSERT_MSG(count == 1, "the forward local answered %d definitions",
+                  (int)count);
+    UT_ASSERT(sfsRowSpelled(rows, count, 0, "on_tick", 2,
+                            ME_SCN_FORM_GLOBAL));
+
+    /* ── Lines that end with a return ────────────────────────────── */
+
+    memset(rows, 0, sizeof(rows));
+    count = meScnScanFunctions(kCrlf, rows, 16);
+    UT_ASSERT_MSG(count == 3, "the CRLF fixture answered %d definitions",
+                  (int)count);
+    UT_ASSERT(sfsRowSpelled(rows, count, 0, "on_setup", 1,
+                            ME_SCN_FORM_GLOBAL));
+    UT_ASSERT(sfsRowSpelled(rows, count, 1, "on_tick",  3,
+                            ME_SCN_FORM_LOCAL));
+    UT_ASSERT(sfsRowSpelled(rows, count, 2, "on_end",   5,
+                            ME_SCN_FORM_SCENARIO));
+
+    /* ── A last line with no newline after it ────────────────────── */
+
+    memset(rows, 0, sizeof(rows));
+    count = meScnScanFunctions(kNoNewline, rows, 16);
+    UT_ASSERT_MSG(count == 2, "the fixture with no trailing newline answered "
+                              "%d definitions", (int)count);
+    UT_ASSERT(sfsRowSpelled(rows, count, 0, "on_setup", 1,
+                            ME_SCN_FORM_GLOBAL));
+    UT_ASSERT(sfsRowSpelled(rows, count, 1, "on_tick",  2,
+                            ME_SCN_FORM_LOCAL));
+
+    /* ── No spaces around the = ──────────────────────────────────── */
+
+    memset(rows, 0, sizeof(rows));
+    count = meScnScanFunctions(kTight, rows, 16);
+    UT_ASSERT_MSG(count == 4, "the fixture with no spaces around the = "
+                              "answered %d definitions", (int)count);
+    UT_ASSERT(sfsRowSpelled(rows, count, 0, "on_tick",  1,
+                            ME_SCN_FORM_GLOBAL));
+    UT_ASSERT(sfsRowSpelled(rows, count, 1, "on_end",   2,
+                            ME_SCN_FORM_SCENARIO));
+    UT_ASSERT(sfsRowSpelled(rows, count, 2, "on_chat",  3,
+                            ME_SCN_FORM_LOCAL));
+    UT_ASSERT(sfsRowSpelled(rows, count, 3, "on_setup", 4,
+                            ME_SCN_FORM_TABLE));
 
     return 0;
 }

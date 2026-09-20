@@ -5846,6 +5846,7 @@ set(_unit_test_names
     scenario_fndesc_table
     scenario_fnstub_forms
     scenario_fnscan_forms
+    scenario_fnscan_spellings
     scenario_package_round_trip
     scenario_package_bad_framing
     scenario_package_entry_names

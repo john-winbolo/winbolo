@@ -1413,118 +1413,54 @@ static const float kFnChooserWidth = 300.0f;
  * more than this has the rest left off the list and off the chooser. */
 #define ME_SCN_FOUND_MAX 128
 
-static bool meScnFnIsNameChar(char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-           (c >= '0' && c <= '9') || c == '_';
-}
-
-/* One line of the script, by the number the scanner gave it, cut where the
- * scanner cuts a line: at the first --, which is where the code stops. The
- * rule is written again here rather than reached for, because it belongs to
- * the scan and the scan answers names and lines, not text. NULL for a line
- * the text does not have. */
-static const char *meScnFnLineAt(const char *text, int lineNo, size_t *len) {
-    const char *p  = text;
-    const char *eol;
-    int         at = 1;
-    size_t      i;
-
-    if (text == NULL || lineNo < 1) {
-        return NULL;
-    }
-    while (at < lineNo) {
-        eol = strchr(p, '\n');
-        if (eol == NULL) {
-            return NULL;
-        }
-        p = eol + 1;
-        at++;
-    }
-    eol  = strchr(p, '\n');
-    *len = (eol != NULL) ? (size_t)(eol - p) : strlen(p);
-    for (i = 0; i + 1 < *len; i++) {
-        if (p[i] == '-' && p[i + 1] == '-') {
-            *len = i;
-            break;
-        }
-    }
-    return p;
-}
-
-/* Whether the definition on that line is the colon form — the
- * function scenario:on_tick(tick) spelling.
- *
- * The scanner reports that line as defining on_tick, which is right: the
- * field is defined either way. What it does not report is which spelling
- * did it, and the difference is the whole of what this is for. A colon puts
- * an implicit self in front of the parameters, while the host calls the
- * field with the hook's own arguments, so self swallows the first of them
- * and every argument after it shifts. The author has a hook that is there
- * and behaves wrongly. So the line the scanner named is read again, for the
- * name with a colon in front of it and a parameter list after it. */
-static bool meScnFnColonForm(const char *text, const char *name, int lineNo) {
-    size_t      len     = 0;
-    const char *line    = meScnFnLineAt(text, lineNo, &len);
-    const size_t nameLen = strlen(name);
-    size_t      i;
-
-    if (line == NULL || nameLen == 0) {
-        return false;
-    }
-    for (i = 0; i + nameLen <= len; i++) {
-        size_t j;
-
-        if (memcmp(line + i, name, nameLen) != 0) {
-            continue;
-        }
-        /* The name a parameter list opens on, rather than one mentioned in
-           passing or the tail of a longer one. */
-        if (i + nameLen < len && meScnFnIsNameChar(line[i + nameLen])) {
-            continue;
-        }
-        j = i + nameLen;
-        while (j < len && (line[j] == ' ' || line[j] == '\t')) {
-            j++;
-        }
-        if (j >= len || line[j] != '(') {
-            continue;
-        }
-        /* And what stands in front of it, past whatever spaces. A colon
-           there is the form; a dot or the keyword itself is not. */
-        j = i;
-        while (j > 0 && (line[j - 1] == ' ' || line[j - 1] == '\t')) {
-            j--;
-        }
-        if (j > 0 && line[j - 1] == ':') {
-            return true;
-        }
-    }
-    return false;
-}
-
 /* How many of the definitions found are of that name, which line the first
- * of them is on, and whether any of them is the colon form. */
-static int meScnFnDefinedAs(const char *text, const MEScnFoundFn *found,
-                            size_t nFound, const char *name, int *firstLine,
-                            bool *colon) {
+ * of them is on, and how that first one was written.
+ *
+ * One name written twice in two spellings is possible, and the spelling
+ * answered is the first definition's — the same one firstLine names and Go
+ * to jumps at, so the line the row draws is about the line the row points
+ * at. That there is more than one is the next line's business. */
+static int meScnFnDefinedAs(const MEScnFoundFn *found, size_t nFound,
+                            const char *name, int *firstLine,
+                            MEScnFnForm *form) {
     int    n = 0;
     size_t i;
 
     *firstLine = 0;
-    *colon     = false;
+    *form      = ME_SCN_FORM_GLOBAL;
     for (i = 0; i < nFound; i++) {
         if (strcmp(found[i].name, name) != 0) {
             continue;
         }
         if (n == 0) {
             *firstLine = found[i].line;
+            *form      = found[i].form;
         }
         n++;
-        if (meScnFnColonForm(text, name, found[i].line)) {
-            *colon = true;
-        }
     }
     return n;
+}
+
+/* What is wrong with a definition written that way, or NULL for one the
+ * host resolves and calls with the arguments the author wrote.
+ *
+ * A colon puts an implicit self in front of the parameters while the host
+ * calls the field with the hook's own arguments, so self swallows the first
+ * of them and every argument after it shifts: the hook is there and behaves
+ * wrongly. The other two are not there at all as far as the host is
+ * concerned — it reads a hook off the globals and off the scenario table,
+ * so a local and a field of another table are never found and never run. */
+static const char *meScnFnFormNote(MEScnFnForm form) {
+    switch (form) {
+    case ME_SCN_FORM_COLON:
+        return langGetText(STR_MAPEDIT_SCENARIO_FN_COLON);
+    case ME_SCN_FORM_LOCAL:
+        return langGetText(STR_MAPEDIT_SCENARIO_FN_LOCAL);
+    case ME_SCN_FORM_TABLE:
+        return langGetText(STR_MAPEDIT_SCENARIO_FN_TABLE);
+    default:
+        return NULL;
+    }
 }
 
 /* Every function a scenario may define, what each is for, and which of them
@@ -1569,14 +1505,14 @@ static void meScnFunctionsBody(MEScenarioState *st, int *view) {
             const char *name    = meScnFnName(i);
             const char *returns = meScnFnReturns(i);
             int         firstLine = 0;
-            bool        colon     = false;
+            MEScnFnForm form      = ME_SCN_FORM_GLOBAL;
             int         defined;
 
             if (!meScnContains(name, s_filter)) {
                 continue;
             }
-            defined = meScnFnDefinedAs(text, found, nFound, name, &firstLine,
-                                       &colon);
+            defined = meScnFnDefinedAs(found, nFound, name, &firstLine,
+                                       &form);
 
             ImGui::PushID((int)i);
             if (defined > 0) {
@@ -1616,12 +1552,16 @@ static void meScnFunctionsBody(MEScenarioState *st, int *view) {
                                          &args));
             }
 
-            /* The two ways a definition that is there can still be wrong.
-               Drawn in the ordinary colour rather than the hint colour,
-               because neither is a note about the function. */
-            if (colon) {
-                ImGui::TextUnformatted(
-                    langGetText(STR_MAPEDIT_SCENARIO_FN_COLON));
+            /* The ways a definition that is there can still be wrong: how
+               it was written, and how many times. Drawn in the ordinary
+               colour rather than the hint colour, because neither is a
+               note about the function. */
+            if (defined > 0) {
+                const char *note = meScnFnFormNote(form);
+
+                if (note != NULL) {
+                    ImGui::TextUnformatted(note);
+                }
             }
             if (defined > 1) {
                 MessageArgs args = {};

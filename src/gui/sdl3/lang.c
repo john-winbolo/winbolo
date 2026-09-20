@@ -2527,6 +2527,8 @@ static const LangEntry langTable[] = {
     {2574, "An action carries one long line, and another argument has it"},
     {2575, "How near a tank has to be for a pillbox to aim the old sloppy way. Zero is a pillbox that always leads its target properly."},
     {2576, "How straight at a close pillbox a tank has to be driving to be aimed at properly anyway. One is a pillbox that aims sloppily at every close tank."},
+    {2577, "written as a local, so the host never finds it and it never runs"},
+    {2578, "written on a table other than scenario, so the host never finds it and it never runs"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
