@@ -5952,6 +5952,7 @@ add_executable(WinBoloWbnTests
     tests/wbn/test_wbn_leave_returns_at_once.c
     tests/wbn/test_wbn_worker_outlives_session.c
     tests/wbn/test_wbn_job_results.c
+    tests/wbn/test_wbn_log_upload.c
     src/bolo/global.c
     src/common/prefs.c
     src/common/prefs_doc.c
@@ -5964,6 +5965,12 @@ target_include_directories(WinBoloWbnTests PRIVATE
     src/third_party/tweetnacl
 )
 bolo_apply_include_rules(WinBoloWbnTests runtime_only)
+target_compile_definitions(WinBoloWbnTests PRIVATE
+    # Root for the log the upload case writes, under the BUILD dir rather
+    # than the source tree or /tmp, for the reason scratch_dir.c gives: two
+    # worktrees then cannot pick the same path. The case adds a pid to the
+    # file name and removes it when it is done.
+    WB_TEST_SCRATCH_DIR="${CMAKE_BINARY_DIR}/test-scratch")
 target_link_libraries(WinBoloWbnTests PRIVATE
     winbolonet_core winbolonet_server cjson CURL::libcurl SDL3::SDL3)
 target_compile_options(WinBoloWbnTests PRIVATE -fcommon)
@@ -5996,6 +6003,11 @@ set_tests_properties(wbn.worker_outlives_session PROPERTIES TIMEOUT 60)
 add_test(NAME wbn.job_result_returns
          COMMAND $<TARGET_FILE:WinBoloWbnTests> job_result_returns)
 set_tests_properties(wbn.job_result_returns PROPERTIES TIMEOUT 180)
+
+# One multipart upload against a listener that holds its answer 3s.
+add_test(NAME wbn.log_upload_runs
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> log_upload_runs)
+set_tests_properties(wbn.log_upload_runs PROPERTIES TIMEOUT 120)
 
 # ---- Include-rule check: the scenario surface is invisible to a frontend --
 # src/bolo/scenario_api/ is on the include path of scenario_host, sim_owner

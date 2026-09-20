@@ -38,6 +38,13 @@
 #define WBN_TEST_MAX_PATHS 16
 #define WBN_TEST_PATH_LEN  96
 
+/* Body bytes kept per request. A case that needs to see what was sent reads
+   these; bodyLen says how many bytes actually arrived, so a body cut off
+   here is told apart from a short one. Kept NUL-terminated, which suits the
+   JSON and multipart bodies these cases send and would not suit a body with
+   a NUL in it. */
+#define WBN_TEST_BODY_LEN 2048
+
 /* Connections served at once. A case that needs more than this stalls on the
  * accept rather than failing outright, so the number is generous: the most
  * any case holds open together is the worker's pooled one plus a caller's
@@ -63,6 +70,8 @@ typedef struct {
     SDL_AtomicInt connections;  /* TCP connections accepted */
     SDL_AtomicInt requests;     /* complete requests answered */
     char          path[WBN_TEST_MAX_PATHS][WBN_TEST_PATH_LEN];
+    char          body[WBN_TEST_MAX_PATHS][WBN_TEST_BODY_LEN];
+    int           bodyLen[WBN_TEST_MAX_PATHS]; /* bytes sent, before truncation */
     /* Accept order number of the connection each request came in on, so a
      * case can tell a reused connection from a fresh one. Written by the
      * listener thread; read after wbnTestListenerStop has joined it. */
@@ -91,5 +100,6 @@ bool wbnTestPostsShareConnection(void);
 bool wbnTestLeaveReturnsAtOnce(void);
 bool wbnTestWorkerOutlivesSession(void);
 bool wbnTestJobResultReturns(void);
+bool wbnTestLogUploadRuns(void);
 
 #endif /* WINBOLO_TEST_WBN_HARNESS_H */

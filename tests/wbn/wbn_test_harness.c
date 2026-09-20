@@ -187,6 +187,8 @@ static bool answerRequests(WbnTestListener *ln, WbnTestConn *c) {
     char path[WBN_TEST_PATH_LEN];
     size_t hdrLen;
     size_t total;
+    size_t bodyLen;
+    size_t kept;
     int    index;
 
     if (hdrEnd == NULL) {
@@ -199,10 +201,18 @@ static bool answerRequests(WbnTestListener *ln, WbnTestConn *c) {
     }
 
     extractPath(c->buf, hdrLen, path, sizeof(path));
+    bodyLen = total - hdrLen;
     index = SDL_GetAtomicInt(&ln->requests);
     if (index >= 0 && index < WBN_TEST_MAX_PATHS) {
       memcpy(ln->path[index], path, strlen(path) + 1);
       ln->conn[index] = c->index;
+      kept = bodyLen;
+      if (kept > WBN_TEST_BODY_LEN - 1) {
+        kept = WBN_TEST_BODY_LEN - 1;
+      }
+      memcpy(ln->body[index], c->buf + hdrLen, kept);
+      ln->body[index][kept] = '\0';
+      ln->bodyLen[index] = (int)bodyLen;
     }
     /* The hold goes before the answer, not before the read: the point
      * is to make the caller wait on the reply. */
@@ -420,10 +430,12 @@ int main(int argc, char **argv) {
     ok = wbnTestWorkerOutlivesSession();
   } else if (strcmp(name, "job_result_returns") == 0) {
     ok = wbnTestJobResultReturns();
+  } else if (strcmp(name, "log_upload_runs") == 0) {
+    ok = wbnTestLogUploadRuns();
   } else {
     fprintf(stderr,
             "usage: %s posts_share_connection|leave_returns_at_once|"
-            "worker_outlives_session|job_result_returns\n",
+            "worker_outlives_session|job_result_returns|log_upload_runs\n",
             argv[0]);
     SDL_Quit();
     bolo_net_cleanup();

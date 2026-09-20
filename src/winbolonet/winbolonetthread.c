@@ -85,6 +85,10 @@ static bool wbnJobInFlight = FALSE;
  * the same job for the life of the process. */
 static uint32_t wbnNextJobId = 1;
 
+/* Defined below beside the rest of the job handling. winbolonetThreadDestroy
+   comes first in the file and empties the queues with it. */
+static void freeJob(wbnList job);
+
 /*********************************************************
 *NAME:          wbnQueueLock
 *PURPOSE:
@@ -290,14 +294,12 @@ void winbolonetThreadDestroy(void) {
     while (NonEmpty(wbnProcessing)) {
       del = wbnProcessing;
       wbnProcessing = wbnProcessing->next;
-      free(del->json_body);
-      Dispose(del);
+      freeJob(del);
     }
     while (NonEmpty(wbnWaiting)) {
       del = wbnWaiting;
       wbnWaiting = wbnWaiting->next;
-      free(del->json_body);
-      Dispose(del);
+      freeJob(del);
     }
 
     /* And any result nobody came back for, so the thread leaves nothing
@@ -332,32 +334,50 @@ void winbolonetThreadDestroy(void) {
 
 
 /*********************************************************
-*NAME:          enqueueJob
+*NAME:          newJob
 *PURPOSE:
-*  Shared queue-add. needs_bearer chooses between the
-*  bare wbn_api_post and the bearer-bearing
-*  wbn_api_post_server at thread-fire time; kind decides
-*  whether the reply is kept for the caller.
-*  Returns the job's id, or 0 when the worker is not running
-*  and nothing was taken. The answer is the one the caller
-*  acts on, so it is given by the call that would have
-*  queued the work rather than by a separate question asked
-*  beforehand.
+*  Allocates a job of the given kind with every field of
+*  both shapes cleared, so whichever one the caller fills
+*  in, the other reads as absent and freeJob has nothing to
+*  free that was never set.
 *********************************************************/
-static uint32_t enqueueJob(const char *endpoint, const char *json_body,
-                           bool needs_bearer, uint8_t kind) {
+static wbnList newJob(uint8_t kind) {
   wbnList add;
-  uint32_t id;
 
-  if (wbnShouldRun != TRUE) {
-    return 0;
-  }
   New(add);
-  strncpy(add->endpoint, endpoint, sizeof(add->endpoint) - 1);
-  add->endpoint[sizeof(add->endpoint) - 1] = '\0';
-  add->json_body = strdup(json_body);
-  add->needs_bearer = needs_bearer;
+  add->next = NULL;
+  add->id = 0;
   add->kind = kind;
+  add->endpoint[0] = '\0';
+  add->json_body = NULL;
+  add->needs_bearer = FALSE;
+  add->file_name = NULL;
+  add->upload_key = NULL;
+  return add;
+}
+
+/*********************************************************
+*NAME:          freeJob
+*PURPOSE:
+*  Frees a job and everything it holds. free ignores a NULL,
+*  so the fields the job's kind never used cost nothing.
+*********************************************************/
+static void freeJob(wbnList job) {
+  free(job->json_body);
+  free(job->file_name);
+  free(job->upload_key);
+  Dispose(job);
+}
+
+/*********************************************************
+*NAME:          linkJob
+*PURPOSE:
+*  Gives a job its id, links it onto the waiting queue and
+*  wakes the worker. Returns the id. Shared by every
+*  enqueue, so an id is handed out in one place.
+*********************************************************/
+static uint32_t linkJob(wbnList add) {
+  uint32_t id;
 
   wbnQueueLock();
   id = wbnNextJobId;
@@ -377,6 +397,34 @@ static uint32_t enqueueJob(const char *endpoint, const char *json_body,
     SDL_SignalSemaphore(wbnWake);
   }
   return id;
+}
+
+/*********************************************************
+*NAME:          enqueueJob
+*PURPOSE:
+*  Shared queue-add. needs_bearer chooses between the
+*  bare wbn_api_post and the bearer-bearing
+*  wbn_api_post_server at thread-fire time; kind decides
+*  whether the reply is kept for the caller.
+*  Returns the job's id, or 0 when the worker is not running
+*  and nothing was taken. The answer is the one the caller
+*  acts on, so it is given by the call that would have
+*  queued the work rather than by a separate question asked
+*  beforehand.
+*********************************************************/
+static uint32_t enqueueJob(const char *endpoint, const char *json_body,
+                           bool needs_bearer, uint8_t kind) {
+  wbnList add;
+
+  if (wbnShouldRun != TRUE) {
+    return 0;
+  }
+  add = newJob(kind);
+  strncpy(add->endpoint, endpoint, sizeof(add->endpoint) - 1);
+  add->endpoint[sizeof(add->endpoint) - 1] = '\0';
+  add->json_body = strdup(json_body);
+  add->needs_bearer = needs_bearer;
+  return linkJob(add);
 }
 
 /*********************************************************
@@ -409,6 +457,24 @@ bool winbolonetThreadAddServerRequest(const char *endpoint, const char *json_bod
 uint32_t winbolonetThreadAddJob(const char *endpoint, const char *json_body,
                                 bool needs_bearer, uint8_t kind) {
   return enqueueJob(endpoint, json_body, needs_bearer, kind);
+}
+
+/*********************************************************
+*NAME:          winbolonetThreadAddUpload
+*PURPOSE:
+*  Adds the round-log upload to the background queue.
+*  Returns the job id, or 0 when nothing was taken.
+*********************************************************/
+uint32_t winbolonetThreadAddUpload(const char *fileName, const char *key) {
+  wbnList add;
+
+  if (wbnShouldRun != TRUE || fileName == NULL || key == NULL) {
+    return 0;
+  }
+  add = newJob(WBN_JOB_UPLOAD);
+  add->file_name = strdup(fileName);
+  add->upload_key = strdup(key);
+  return linkJob(add);
 }
 
 /*********************************************************
@@ -530,6 +596,23 @@ static int fireRequest(const char *endpoint, const char *json_body,
 }
 
 /*********************************************************
+*NAME:          runUpload
+*PURPOSE:
+*  Sends one round-log upload. The job itself is the
+*  caller's to free.
+*********************************************************/
+static void runUpload(wbnList job) {
+  /* httpSendLogFile takes the key as char * — the signature predates this,
+     and the copy handed to it is the job's own. It opens a handle of its
+     own rather than the worker's pooled one, which is where the multipart
+     upload has always run from. */
+  if (httpSendLogFile(job->file_name, job->upload_key, FALSE) != TRUE) {
+    WB_LOG_WARN(WB_LOG_CAT_NET, "WinBolo.net log upload of %s failed",
+                job->file_name);
+  }
+}
+
+/*********************************************************
 *NAME:          runJob
 *PURPOSE:
 *  Posts one job, keeping the reply when its kind asks for
@@ -539,6 +622,13 @@ static void runJob(wbnList job) {
   char *resp = NULL;
   int status;
 
+  if (job->kind == WBN_JOB_UPLOAD) {
+    /* No result: nothing reads the outcome of an upload, and one that
+       nobody drains would sit against the results cap and push out a
+       result that is read. The failure is logged in runUpload. */
+    runUpload(job);
+    return;
+  }
   if (job->kind == WBN_JOB_NONE) {
     fireRequest(job->endpoint, job->json_body, job->needs_bearer, NULL);
     return;
@@ -597,8 +687,7 @@ static wbnList takeOldestJob(void) {
 *  in-flight flag.
 *********************************************************/
 static void finishedJob(wbnList job) {
-  free(job->json_body);
-  Dispose(job);
+  freeJob(job);
 
   wbnQueueLock();
   wbnJobInFlight = FALSE;

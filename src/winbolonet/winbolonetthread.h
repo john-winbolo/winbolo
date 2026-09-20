@@ -58,6 +58,12 @@
    not read a reply wants. */
 #define WBN_JOB_NONE 0
 
+/* The round-log upload. The one kind the thread carries out itself rather
+   than handing back: it is not a JSON POST, so the worker posts it with
+   httpSendLogFile instead of wbn_api_post. Every other kind is the
+   caller's, and the thread never looks at one. */
+#define WBN_JOB_UPLOAD 1
+
 /* Results held for a caller that has not drained them yet. A drain runs on
    the thread that queued the work, so the normal depth is one; the cap is
    what stops the list growing for the life of the server if a kind is ever
@@ -70,9 +76,16 @@ struct wbnListObj {
   wbnList next;           /* Next item */
   uint32_t id;            /* Job id: unique for the process, never 0 */
   uint8_t kind;           /* WBN_JOB_NONE, or what the response is for */
+  /* A JSON POST's fields. Empty and NULL on a WBN_JOB_UPLOAD. */
   char endpoint[128];     /* API endpoint path */
   char *json_body;        /* Heap-allocated JSON body string */
   bool needs_bearer;      /* Send via wbn_api_post_server (Authorization: Bearer) */
+  /* A WBN_JOB_UPLOAD's fields, and NULL on any other kind. Their own
+     rather than borrowed: a file name does not fit endpoint, and a reader
+     of endpoint or json_body should not have to ask which kind it is
+     looking at. */
+  char *file_name;        /* Heap-allocated path of the log to upload */
+  char *upload_key;       /* Heap-allocated server key the upload runs against */
 };
 
 /*********************************************************
@@ -181,6 +194,30 @@ bool winbolonetThreadAddServerRequest(const char *endpoint, const char *json_bod
 *********************************************************/
 uint32_t winbolonetThreadAddJob(const char *endpoint, const char *json_body,
                                 bool needs_bearer, uint8_t kind);
+
+/*********************************************************
+*NAME:          winbolonetThreadAddUpload
+*PURPOSE:
+*  Adds the round-log upload to the background queue. The
+*  worker sends it with httpSendLogFile, which opens a
+*  handle of its own rather than the pooled one, and keeps
+*  no result: nothing reads the outcome, and a failure is
+*  logged where it happens.
+*
+*  Both strings are copied internally. The upload is ordered
+*  against the posts around it the way every other job is,
+*  oldest first, so a caller that needs it to land between
+*  two posts queues it between them.
+*
+*  Returns the job id, which is never 0, or 0 when the
+*  thread is not running, or either argument is missing, and
+*  nothing was taken.
+*
+*ARGUMENTS:
+* fileName - Path of the log file (copied, caller may free)
+* key      - Server key to upload against (copied, caller may free)
+*********************************************************/
+uint32_t winbolonetThreadAddUpload(const char *fileName, const char *key);
 
 /*********************************************************
 *NAME:          winbolonetThreadDrainResults
