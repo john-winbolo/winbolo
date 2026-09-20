@@ -1695,6 +1695,13 @@ int run_stall_never_fires(void);
 int run_stall_brief_trough_no_advance(void);
 int run_stall_long_dry_advances(void);
 
+/* Stall-advance lockout (test_stall_lockout_rebase.c): a slot stall-advanced
+ * past everything the client has produced takes the newest stale input it has
+ * ever seen, moving lastProcessedInput back under it so the stream recovers;
+ * the redundant copies of that tick rebase nothing further. */
+int run_stall_lockout_rebase(void);
+int run_stall_lockout_rebase_once_per_tick(void);
+
 /* Backlog catch-up (test_input_catchup.c): a standing input queue above the
  * jitter target bleeds at +1 input per sub-tick (cap 2 applies/sub-tick) so a
  * jitter-spike backlog drains in ~1s instead of ratcheting input latency;

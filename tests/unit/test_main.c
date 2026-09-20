@@ -794,6 +794,8 @@ static const UnitTestEntry s_tests[] = {
     { "stall_never_fires",                       run_stall_never_fires                       },
     { "stall_brief_trough_no_advance",           run_stall_brief_trough_no_advance           },
     { "stall_long_dry_advances",                 run_stall_long_dry_advances                 },
+    { "stall_lockout_rebase",                    run_stall_lockout_rebase                    },
+    { "stall_lockout_rebase_once_per_tick",      run_stall_lockout_rebase_once_per_tick      },
     { "input_catchup",                           run_input_catchup                           },
     { "catchup_ignores_redundant_duplicates",    run_catchup_ignores_redundant_duplicates    },
     { "build_harvest_stale",                     run_build_harvest_stale                     },

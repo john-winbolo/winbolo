@@ -411,6 +411,20 @@ static uint32_t serverSimFreshBacklog(ServerSim *sim, BYTE count) {
     return newest - lpi;
 }
 
+/* Largest tick among `count`'s queued entries, or 0 when the queue is empty.
+ * Unlike serverSimFreshBacklog this does not clamp to lastProcessedInput, so
+ * it still names a tick when everything queued is stale. */
+static uint32_t serverSimNewestQueuedTick(const ServerSim *sim, BYTE count) {
+    uint32_t newest = 0;
+    uint8_t i = sim->inputQueueTail[count];
+    while (i != sim->inputQueueHead[count]) {
+        uint32_t t = sim->inputQueue[count][i & (SERVER_INPUT_QUEUE_SIZE - 1)].tick;
+        if (t > newest) newest = t;
+        i++;
+    }
+    return newest;
+}
+
 /* Pop entries for `count` until a fresh input (tick > lastProcessedInput)
  * or the queue empties. Stale entries are dropped with one-shot harvest.
  * Returns TRUE with *out filled on fresh; FALSE on empty. */
@@ -419,6 +433,12 @@ static bool serverSimDequeueFresh(ServerSim *sim, BYTE count, InputPacket *out) 
         uint8_t tail = sim->inputQueueTail[count] & (SERVER_INPUT_QUEUE_SIZE - 1);
         *out = sim->inputQueue[count][tail];
         sim->inputQueueTail[count]++;
+        /* Newest tick ever popped, whichever way this entry goes below. The
+         * boundary rebase reads it to tell an entry it has never taken from
+         * a redundancy duplicate of one it has already applied. */
+        if (out->tick > sim->newestDequeuedTick[count]) {
+            sim->newestDequeuedTick[count] = out->tick;
+        }
         if (out->tick > sim->lastProcessedInput[count]) {
             return TRUE;
         }
@@ -646,6 +666,33 @@ static void simRunHalfStep(ServerSim *sim) {
                 continue;  /* Still filling to adaptive target */
             }
             sim->inputBufferFilled[count] = 1;
+        }
+
+        /* Break a stall-advance lockout. A dry run past the threshold
+         * substitutes a tick every half-step, which lifts lastProcessedInput
+         * past tick numbers the client has not produced yet, so everything
+         * that then arrives is stale and the dry run never ends. When the
+         * queue holds nothing this dequeue would take, move lastProcessedInput
+         * back under the newest queued tick so that one entry is taken as
+         * fresh. Only that one: the dequeue still drops every entry below it
+         * as stale, so a tick a substitute already moved the tank through is
+         * not executed a second time. The apply resets inputDryTicks, which
+         * closes this branch until the next dry run.
+         *
+         * newestDequeuedTick keeps a redundancy duplicate out of it. A resent
+         * copy of an already-applied tick looks exactly like a never-taken
+         * one here, and rebasing onto it would run its movement twice and lay
+         * a second mine if it carried one. The UDP transport drops such a
+         * copy before the queue; the in-process one does not dedup at all. */
+        {
+            uint32_t newestQueued = serverSimNewestQueuedTick(sim, count);
+            if (sim->lastProcessedInput[count] > 0 &&
+                sim->inputDryTicks[count] > STALL_ADVANCE_DRY_TICKS &&
+                newestQueued > 0 &&
+                newestQueued <= sim->lastProcessedInput[count] &&
+                newestQueued > sim->newestDequeuedTick[count]) {
+                sim->lastProcessedInput[count] = newestQueued - 1;
+            }
         }
 
         /* Dequeue one input, skipping duplicates/stale */
@@ -1225,6 +1272,32 @@ void serverSimTick(ServerSim *sim) {
     }
 }
 
+/* Should intake admit this input although it is stale?
+ *
+ * A slot whose stream has fallen behind is stall-advanced every half-step
+ * (see the stall branch in simRunHalfStep), which keeps lifting
+ * lastProcessedInput past tick numbers the client has not produced yet.
+ * Everything the client then sends is renumbered off a lastProcessedInput
+ * that is half a round trip old, arrives at or below the current one, and is
+ * dropped as stale — and only a fresh apply resets inputDryTicks, so the run
+ * never ends on its own. The input that has to reach the queue is the newest
+ * one the slot has ever seen, arriving stale while that run is going on: the
+ * transport drops anything not strictly newer than lastProcessedInput, so
+ * without this it never gets that far.
+ *
+ * This answers admission only. The rebase itself — moving lastProcessedInput
+ * back under the newest queued tick — happens at the tick boundary in
+ * simRunHalfStep, on one entry per dry run. Strictly newer than
+ * newestInputTick, so the redundancy resends of one tick are admitted once. */
+bool serverSimInputWouldRebase(const ServerSim *sim, BYTE n, uint32_t tick) {
+    if (sim == NULL || n >= MAX_TANKS || !sim->playerConnected[n]) {
+        return FALSE;
+    }
+    return tick > sim->newestInputTick[n] &&
+           tick <= sim->lastProcessedInput[n] &&
+           sim->inputDryTicks[n] > STALL_ADVANCE_DRY_TICKS;
+}
+
 void serverSimApplyInput(ServerSim *sim, const InputPacket *input) {
     BYTE p = input->playerNum;
     uint8_t head, next;
@@ -1249,6 +1322,17 @@ void serverSimApplyInput(ServerSim *sim, const InputPacket *input) {
         }
         /* Mask off any undefined bits (keep only autoslow + gunsight) */
         sanitized.flags &= (INPUT_FLAG_AUTOSLOW | INPUT_FLAG_GUNSIGHT_MASK);
+    }
+
+    /* Newest tick ever received for this slot, whatever becomes of the input
+     * afterwards. Intake asks serverSimInputWouldRebase against it so the
+     * redundancy resends of one tick cannot each be admitted past a stale
+     * check and flood the queue; the rebase that call is named for happens at
+     * the tick boundary, in the dequeue loop. Maintained ahead of the
+     * queue-full check below so an input dropped for want of room still
+     * counts as received. */
+    if (sanitized.tick > sim->newestInputTick[p]) {
+        sim->newestInputTick[p] = sanitized.tick;
     }
 
     head = sim->inputQueueHead[p];

@@ -132,8 +132,13 @@ void serverHandleInput(const uint8_t *buf, int len,
          * control events CHANNEL_CONTROL, both acked on the channel frame
          * trailer ingested below. */
 
-        /* Only apply if this is a newer input than what we last processed */
-        if (pkt.tick > serverSimGetLastProcessedInput(sim, clientIdx)) {
+        /* Only apply if this is a newer input than what we last processed,
+         * or if it is the one that breaks a stall-advance lockout: a tick
+         * this client has never sent before, arriving stale because the slot
+         * has been stall-advanced past everything the client has produced.
+         * Dropping that one here is what makes the lockout permanent. */
+        if (pkt.tick > serverSimGetLastProcessedInput(sim, clientIdx) ||
+            serverSimInputWouldRebase(sim, (BYTE)clientIdx, pkt.tick)) {
             if (udpServer.clients[clientIdx].inputsThisTick >= INPUT_REDUNDANCY_COUNT) break;
             serverSimApplyInput(sim, &pkt);
             udpServer.clients[clientIdx].inputsThisTick++;

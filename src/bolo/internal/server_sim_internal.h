@@ -478,6 +478,10 @@ struct ServerSim {
     uint8_t      inputQueueTail[MAX_TANKS];  /* Next slot to read */
     bool         playerConnected[MAX_TANKS];
     uint32_t     lastProcessedInput[MAX_TANKS];  /* Tick of last processed input per player */
+    uint32_t     newestInputTick[MAX_TANKS];     /* Newest input tick ever received per
+                                                  * player, accepted or rebased */
+    uint32_t     newestDequeuedTick[MAX_TANKS];  /* Newest input tick ever taken from
+                                                  * the queue, applied or dropped */
     uint8_t      lastInputButtons[MAX_TANKS];    /* Last button bitmask for stall continuity */
     uint32_t     lastActionAppliedTick[MAX_TANKS]; /* newest input tick whose one-shot
                                                     * action (fire/mine/build) was
@@ -519,7 +523,7 @@ struct ServerSim {
     uint8_t  jitterStallCount[MAX_TANKS];  /* Consecutive ticks queue was empty when expected */
     uint8_t  jitterStarveCount[MAX_TANKS]; /* Recent drain events (queue emptied when input expected) */
     uint16_t jitterStableTicks[MAX_TANKS]; /* Ticks since last stall */
-    uint8_t inputDryTicks[MAX_TANKS]; /* consecutive half-steps with no fresh
+    uint32_t inputDryTicks[MAX_TANKS]; /* consecutive half-steps with no fresh
                                        * input; gates stall-advance vs wait */
 
     /* Per-player input-pipeline instrumentation — window counters reset

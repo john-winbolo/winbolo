@@ -3866,6 +3866,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_mapview_sprite_scale.c
     tests/unit/test_mapview_overlay.c
     tests/unit/test_map_colours.c
+    tests/unit/test_stall_lockout_rebase.c
     tests/unit/test_input_catchup.c
     tests/unit/test_build_harvest_stale.c
     tests/unit/test_lgm_request_valid.c
@@ -5065,6 +5066,8 @@ set(_unit_test_names
     stall_never_fires
     stall_brief_trough_no_advance
     stall_long_dry_advances
+    stall_lockout_rebase
+    stall_lockout_rebase_once_per_tick
     input_catchup
     catchup_ignores_redundant_duplicates
     build_harvest_stale
