@@ -77,11 +77,16 @@ void winbolonetThreadDestroy(void);
 *  The json_body string is copied internally. Sent via
 *  wbn_api_post (no Authorization header).
 *
+*  Returns TRUE when the request was queued, FALSE when the
+*  thread is not running and nothing was taken. A caller
+*  that must not lose the post acts on the FALSE by sending
+*  it itself.
+*
 *ARGUMENTS:
 * endpoint  - API endpoint path (e.g. "server/update")
 * json_body - JSON request body string (copied, caller may free)
 *********************************************************/
-void winbolonetThreadAddRequest(const char *endpoint, const char *json_body);
+bool winbolonetThreadAddRequest(const char *endpoint, const char *json_body);
 
 /*********************************************************
 *NAME:          winbolonetThreadAddServerRequest
@@ -91,11 +96,14 @@ void winbolonetThreadAddRequest(const char *endpoint, const char *json_body);
 *  wbn_api_post_server). Use for queued server/ endpoints
 *  that need the bearer attached when the thread fires.
 *
+*  Returns TRUE when the request was queued, FALSE when the
+*  thread is not running and nothing was taken.
+*
 *ARGUMENTS:
 * endpoint  - API endpoint path (e.g. "server/lobby")
 * json_body - JSON request body string (copied, caller may free)
 *********************************************************/
-void winbolonetThreadAddServerRequest(const char *endpoint, const char *json_body);
+bool winbolonetThreadAddServerRequest(const char *endpoint, const char *json_body);
 
 /*********************************************************
 *NAME:          winbolonetThreadRun

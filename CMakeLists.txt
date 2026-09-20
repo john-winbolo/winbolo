@@ -5925,10 +5925,16 @@ endforeach()
 # host override is set, global.c the New / Dispose allocator the thread queue
 # uses, and tweetnacl.c the Ed25519 signing, compiled per consumer the same
 # way LogViewer and the client do. winbolonet_server.c's one call back into
-# the server, serverSimConsoleMessage, is stubbed in the test file.
+# the server, serverSimConsoleMessage, is stubbed in the harness.
+#
+# One binary, one case per run: each case owns a listener and the process-wide
+# HTTP layer, so the name on the command line picks which one runs.
 # ---------------------------------------------------------------------------
 add_executable(WinBoloWbnTests
+    # The listener the cases post at, and the runner that picks one by name.
+    tests/wbn/wbn_test_harness.c
     tests/wbn/test_wbn_connection_reuse.c
+    tests/wbn/test_wbn_leave_returns_at_once.c
     src/bolo/global.c
     src/common/prefs.c
     src/common/prefs_doc.c
@@ -5952,8 +5958,14 @@ endif()
 set_flat_output(WinBoloWbnTests "${CMAKE_BINARY_DIR}")
 
 add_test(NAME wbn.posts_share_connection
-         COMMAND $<TARGET_FILE:WinBoloWbnTests>)
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> posts_share_connection)
 set_tests_properties(wbn.posts_share_connection PROPERTIES TIMEOUT 60)
+
+# Four posts against a listener that holds every answer 3s: about twelve
+# seconds of draining, so this row gets more room than the one above.
+add_test(NAME wbn.leave_returns_at_once
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> leave_returns_at_once)
+set_tests_properties(wbn.leave_returns_at_once PROPERTIES TIMEOUT 180)
 
 # ---- Include-rule check: the scenario surface is invisible to a frontend --
 # src/bolo/scenario_api/ is on the include path of scenario_host, sim_owner

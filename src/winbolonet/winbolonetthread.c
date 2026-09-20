@@ -33,10 +33,14 @@
 typedef SDL_Mutex *HANDLE;
 /* DWORD is now uint32_t from platform_types.h — no local typedef needed */
 #endif
+/* The wake is an SDL semaphore on every platform, including the Windows
+ * path above, which otherwise uses Win32 primitives. */
+#include <SDL3/SDL_mutex.h>
 #include <string.h>
 #include <stdlib.h>
 #include "global.h"
 #include "http.h"
+#include "../common/wb_log.h"
 #include "winbolonetthread.h"
 
 HANDLE hWbnMutexHandle = NULL;
@@ -51,6 +55,11 @@ wbnList wbnProcessing;
 wbnList wbnWaiting;
 bool wbnShouldRun;
 bool wbnFinished;
+
+/* Signalled when a request is queued and when the stop flag is set, so the
+ * loop below picks a post up as it arrives rather than at the end of its
+ * next wait, and shutdown does not have to wait one out. */
+static SDL_Semaphore *wbnWake = NULL;
 
 /*********************************************************
 *NAME:          winbolonetThreadCreate
@@ -68,6 +77,14 @@ bool winbolonetThreadCreate(void) {
   wbnWaiting = NULL;
   wbnShouldRun = TRUE;
   wbnFinished = FALSE;
+
+  wbnWake = SDL_CreateSemaphore(0);
+  if (wbnWake == NULL) {
+    /* Clear the flag before returning: enqueueRequest reads it as "there is
+       a queue to link into", and there is not. */
+    wbnShouldRun = FALSE;
+    return FALSE;
+  }
 
 #ifdef _WIN32
   sprintf(name, "%s%d", "WBNUPDATE", GetTickCount());
@@ -100,6 +117,12 @@ bool winbolonetThreadCreate(void) {
   }
 #endif
 
+  if (returnValue == FALSE) {
+    SDL_DestroySemaphore(wbnWake);
+    wbnWake = NULL;
+    wbnShouldRun = FALSE;
+  }
+
   return returnValue;
 }
 
@@ -124,8 +147,13 @@ void winbolonetThreadDestroy(void) {
 #endif
     }
 
-    /* Wait for current to finish */
+    /* Wait for current to finish. The wake goes out after the flag so a
+       loop parked on the semaphore returns now rather than at the end of
+       its timeout. */
     wbnShouldRun = FALSE;
+    if (wbnWake != NULL) {
+      SDL_SignalSemaphore(wbnWake);
+    }
     while (wbnFinished == FALSE) {
 #ifdef _WIN32
       Sleep(WBN_SHUTDOWN_SLEEP_TIME);
@@ -177,6 +205,12 @@ void winbolonetThreadDestroy(void) {
 
     hWbnMutexHandle = NULL;
   }
+
+  /* After the join above: nothing is left to wait on it. */
+  if (wbnWake != NULL) {
+    SDL_DestroySemaphore(wbnWake);
+    wbnWake = NULL;
+  }
 }
 
 
@@ -186,12 +220,17 @@ void winbolonetThreadDestroy(void) {
 *  Shared queue-add. needs_bearer chooses between the
 *  bare wbn_api_post and the bearer-bearing
 *  wbn_api_post_server at thread-fire time.
+*  Returns TRUE when the item was linked in, FALSE when the
+*  worker is not running and nothing was taken. The answer
+*  is the one the caller acts on, so it is given by the
+*  call that would have queued the work rather than by a
+*  separate question asked beforehand.
 *********************************************************/
-static void enqueueRequest(const char *endpoint, const char *json_body, bool needs_bearer) {
+static bool enqueueRequest(const char *endpoint, const char *json_body, bool needs_bearer) {
   wbnList add;
 
   if (wbnShouldRun != TRUE) {
-    return;
+    return FALSE;
   }
   New(add);
   strncpy(add->endpoint, endpoint, sizeof(add->endpoint) - 1);
@@ -209,6 +248,12 @@ static void enqueueRequest(const char *endpoint, const char *json_body, bool nee
   wbnWaiting = add;
   SDL_UnlockMutex(hWbnMutexHandle);
 #endif
+  /* After the mutex is released: the loop wakes, takes the mutex and swaps
+     the queue, so signalling under it would only make it wait. */
+  if (wbnWake != NULL) {
+    SDL_SignalSemaphore(wbnWake);
+  }
+  return TRUE;
 }
 
 /*********************************************************
@@ -217,8 +262,8 @@ static void enqueueRequest(const char *endpoint, const char *json_body, bool nee
 *  Adds a JSON API request to the background queue.
 *  The json_body string is copied internally.
 *********************************************************/
-void winbolonetThreadAddRequest(const char *endpoint, const char *json_body) {
-  enqueueRequest(endpoint, json_body, FALSE);
+bool winbolonetThreadAddRequest(const char *endpoint, const char *json_body) {
+  return enqueueRequest(endpoint, json_body, FALSE);
 }
 
 /*********************************************************
@@ -228,10 +273,32 @@ void winbolonetThreadAddRequest(const char *endpoint, const char *json_body) {
 *  to send through wbn_api_post_server so the thread attaches
 *  the Authorization: Bearer header at fire time.
 *********************************************************/
-void winbolonetThreadAddServerRequest(const char *endpoint, const char *json_body) {
-  enqueueRequest(endpoint, json_body, TRUE);
+bool winbolonetThreadAddServerRequest(const char *endpoint, const char *json_body) {
+  return enqueueRequest(endpoint, json_body, TRUE);
 }
 
+
+/*********************************************************
+*NAME:          fireRequest
+*PURPOSE:
+*  Posts one queued request. The response is discarded —
+*  no caller of a queued endpoint reads one — so a failure
+*  is reported here instead.
+*********************************************************/
+static void fireRequest(const char *endpoint, const char *json_body, bool needs_bearer) {
+  char *resp = NULL;
+  int status;
+
+  if (needs_bearer) {
+    status = wbn_api_post_server(endpoint, json_body, &resp);
+  } else {
+    status = wbn_api_post(endpoint, json_body, &resp);
+  }
+  if (status < 200 || status > 299) {
+    WB_LOG_WARN(WB_LOG_CAT_NET, "WinBolo.net %s failed: HTTP %d", endpoint, status);
+  }
+  free(resp);
+}
 
 /*********************************************************
 *NAME:          winbolonetThreadRun
@@ -243,7 +310,6 @@ int winbolonetThreadRun(void *data) {
   (void)data;
   wbnList q;
   wbnList prev;
-  char *resp = NULL;
 
   /* One libcurl handle for the life of this thread, so the queued posts
    * below reuse a connection instead of opening one each time. */
@@ -267,13 +333,8 @@ int winbolonetThreadRun(void *data) {
       /* Get last entry (oldest) */
       if (wbnProcessing->next == NULL) {
         /* Only one entry */
-        if (wbnProcessing->needs_bearer) {
-          wbn_api_post_server(wbnProcessing->endpoint, wbnProcessing->json_body, &resp);
-        } else {
-          wbn_api_post(wbnProcessing->endpoint, wbnProcessing->json_body, &resp);
-        }
-        free(resp);
-        resp = NULL;
+        fireRequest(wbnProcessing->endpoint, wbnProcessing->json_body,
+                    wbnProcessing->needs_bearer);
         free(wbnProcessing->json_body);
         Dispose(wbnProcessing);
         wbnProcessing = NULL;
@@ -286,22 +347,14 @@ int winbolonetThreadRun(void *data) {
         }
         /* Got last entry */
         prev->next = NULL;
-        if (q->needs_bearer) {
-          wbn_api_post_server(q->endpoint, q->json_body, &resp);
-        } else {
-          wbn_api_post(q->endpoint, q->json_body, &resp);
-        }
-        free(resp);
-        resp = NULL;
+        fireRequest(q->endpoint, q->json_body, q->needs_bearer);
         free(q->json_body);
         Dispose(q);
       }
     }
-#ifdef _WIN32
-    Sleep(WBN_THREAD_SLEEP_TIME);
-#else
-    SDL_Delay(WBN_THREAD_SLEEP_TIME);
-#endif
+    /* The old sleep value, now the longest this waits with nothing queued:
+       an enqueue or the stop flag returns it at once. */
+    SDL_WaitSemaphoreTimeout(wbnWake, WBN_THREAD_SLEEP_TIME);
   }
   httpWorkerPoolEnd();
   wbnFinished = TRUE;

@@ -296,7 +296,7 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
 *********************************************************/
 void winbolonetServerSendTeams(BYTE *array, BYTE length, BYTE numTeams) {
   cJSON *body = NULL;
-  cJSON *resp = NULL;
+  char *json_str = NULL;
   cJSON *teams = NULL;
   cJSON *currentTeam = NULL;
   BYTE arrayPos;
@@ -333,9 +333,12 @@ void winbolonetServerSendTeams(BYTE *array, BYTE length, BYTE numTeams) {
 
   cJSON_AddItemToObject(body, "teams", teams);
 
-  wbn_api_call_server("server/teams", body, &resp);
+  json_str = cJSON_PrintUnformatted(body);
+  if (json_str) {
+    winbolonetThreadAddServerRequest("server/teams", json_str);
+    free(json_str);
+  }
   cJSON_Delete(body);
-  cJSON_Delete(resp);
 }
 
 /*********************************************************
@@ -541,15 +544,28 @@ void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePill
     }
     cJSON_Delete(body);
   } else {
-    /* Send immediately */
-    wbn_api_call_server("server/update", body, &resp);
-    cJSON_Delete(body);
-    if (resp) {
-      cJSON *errObj = cJSON_GetObjectItem(resp, "error");
-      if (errObj && cJSON_IsString(errObj)) {
-        fprintf(stderr, "WinBolo.net update error: %s\n", errObj->valuestring);
+    /* A flush: queued like the periodic update so the caller's thread does
+       not wait on the post. winbolonetGoodbye flushes after the thread has
+       already been destroyed and there is no later moment for it to go
+       out, so a refused enqueue falls back to posting here. */
+    char *json_str = cJSON_PrintUnformatted(body);
+    bool queued = FALSE;
+    if (json_str) {
+      queued = winbolonetThreadAddServerRequest("server/update", json_str);
+      free(json_str);
+    }
+    if (queued == TRUE) {
+      cJSON_Delete(body);
+    } else {
+      wbn_api_call_server("server/update", body, &resp);
+      cJSON_Delete(body);
+      if (resp) {
+        cJSON *errObj = cJSON_GetObjectItem(resp, "error");
+        if (errObj && cJSON_IsString(errObj)) {
+          fprintf(stderr, "WinBolo.net update error: %s\n", errObj->valuestring);
+        }
+        cJSON_Delete(resp);
       }
-      cJSON_Delete(resp);
     }
   }
 
@@ -800,7 +816,7 @@ bool winboloNetVerifySpectatorKey(const char *spectatorKey, const char *playerNa
 *********************************************************/
 void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, BYTE freePills) {
   cJSON *body = NULL;
-  cJSON *resp = NULL;
+  char *json_str = NULL;
 
   winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_LEAVE, TRUE, playerNum, WINBOLO_NET_NO_PLAYER, FALSE, FALSE);
   if (winboloNetPlayerKey[playerNum][0] == '\0' || winboloNetRunning != TRUE) {
@@ -818,15 +834,14 @@ void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, 
   cJSON_AddNumberToObject(body, "free_bases", freeBases);
   cJSON_AddNumberToObject(body, "free_pills", freePills);
 
-  wbn_api_call_server("client/leave", body, &resp);
-  cJSON_Delete(body);
-  if (resp) {
-    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
-    if (errObj && cJSON_IsString(errObj)) {
-      fprintf(stderr, "WinBolo.net leave error: %s\n", errObj->valuestring);
-    }
-    cJSON_Delete(resp);
+  /* The key is copied into the body above and serialised here, so clearing
+     the slot below cannot reach the post. */
+  json_str = cJSON_PrintUnformatted(body);
+  if (json_str) {
+    winbolonetThreadAddServerRequest("client/leave", json_str);
+    free(json_str);
   }
+  cJSON_Delete(body);
 
   winboloNetPlayerKey[playerNum][0] = '\0';
 }
@@ -841,7 +856,7 @@ void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, 
 *********************************************************/
 void winboloNetSpectatorLeaveGame(const char *spectatorKey) {
   cJSON *body = NULL;
-  cJSON *resp = NULL;
+  char *json_str = NULL;
 
   if (spectatorKey == NULL || spectatorKey[0] == '\0' || winboloNetRunning != TRUE) {
     return;
@@ -851,15 +866,12 @@ void winboloNetSpectatorLeaveGame(const char *spectatorKey) {
   cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
   cJSON_AddStringToObject(body, "player_key", spectatorKey);
 
-  wbn_api_call_server("client/leave", body, &resp);
-  cJSON_Delete(body);
-  if (resp) {
-    cJSON *errObj = cJSON_GetObjectItem(resp, "error");
-    if (errObj && cJSON_IsString(errObj)) {
-      fprintf(stderr, "WinBolo.net spectator leave error: %s\n", errObj->valuestring);
-    }
-    cJSON_Delete(resp);
+  json_str = cJSON_PrintUnformatted(body);
+  if (json_str) {
+    winbolonetThreadAddServerRequest("client/leave", json_str);
+    free(json_str);
   }
+  cJSON_Delete(body);
 }
 
 /*********************************************************
@@ -869,7 +881,7 @@ void winboloNetSpectatorLeaveGame(const char *spectatorKey) {
 *********************************************************/
 void winboloNetSendLock(bool isLocked) {
   cJSON *body = NULL;
-  cJSON *resp = NULL;
+  char *json_str = NULL;
 
   if (winboloNetRunning != TRUE) {
     return;
@@ -879,9 +891,12 @@ void winboloNetSendLock(bool isLocked) {
   cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
   cJSON_AddBoolToObject(body, "locked", isLocked);
 
-  wbn_api_call_server("server/lock", body, &resp);
+  json_str = cJSON_PrintUnformatted(body);
+  if (json_str) {
+    winbolonetThreadAddServerRequest("server/lock", json_str);
+    free(json_str);
+  }
   cJSON_Delete(body);
-  cJSON_Delete(resp);
 }
 
 /*********************************************************
