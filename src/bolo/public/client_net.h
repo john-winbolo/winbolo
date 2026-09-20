@@ -23,6 +23,7 @@
 
 #include "client_sim.h"
 #include "client_connect_state.h"
+#include "lang_message.h"        /* langid */
 #include "input_packet.h"        /* SnapshotHeader, TankSnapshot, etc. */
 #include "gametype.h"
 
@@ -107,6 +108,11 @@ void clientSimRenderPrepare(ClientSim *cs, uint32_t nowMs);
 /* === State queries === */
 ClientConnectState clientSimGetConnectState(const ClientSim *cs);
 const char *clientSimGetConnectErrorReason(const ClientSim *cs);
+/* The langid behind clientSimGetConnectErrorReason, or 0 when the reason
+ * was not rendered from one (transport failure, plain-text fallback). A
+ * frontend compares it with STR_REJECT_INCORRECT_PASSWORD to decide whether
+ * to ask for the password again. */
+langid      clientSimGetConnectErrorLangId(const ClientSim *cs);
 BYTE        clientSimGetServerPlayerNum(const ClientSim *cs);
 const BYTE *clientSimGetServerMapData(const ClientSim *cs, int *outLen);
 /* serverTick of the frame interp is currently displaying (second-newest applied

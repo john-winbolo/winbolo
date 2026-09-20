@@ -2265,10 +2265,6 @@ static bool parseArgs(int argc, char **argv) {
 
 /* These are called by the network module during join — kept as stubs
  * since the new transport doesn't use the old network.c callbacks. */
-void gameFrontGetPassword(char *pword) {
-  strcpy(pword, optPassword);
-}
-
 void gameFrontGetPlayerName(char *pn) {
   strcpy(pn, optName);
 }

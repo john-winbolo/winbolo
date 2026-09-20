@@ -167,15 +167,6 @@ void sdl3ImguiShowAllianceRequest(const char *playerName,
                                   unsigned char playerNum);
 
 /*********************************************************
-*NAME:          sdl3ImguiShowPassword
-*PURPOSE:
-*  Open the password-entry modal for joining a protected
-*  game.  On OK calls gameFrontSetGameOptions with the
-*  entered password.
-*********************************************************/
-void sdl3ImguiShowPassword(void);
-
-/*********************************************************
 *NAME:          sdl3ImguiShowKeySetup
 *PURPOSE:
 *  Open the Key Setup modal dialog allowing the user to
