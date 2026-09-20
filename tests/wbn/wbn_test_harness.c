@@ -19,12 +19,15 @@ void serverSimConsoleMessage(const char *msg) {
 
 #define WBN_TEST_REQUEST_MAX 16384
 
-static const char kResponse[] =
-    "HTTP/1.1 200 OK\r\n"
-    "Content-Type: application/json\r\n"
-    "Content-Length: 2\r\n"
-    "\r\n"
-    "{}";
+/* One accepted connection: its socket, the accept order number a case reads
+ * back to tell a reused connection from a fresh one, and the bytes read on
+ * it that do not yet make a whole request. */
+typedef struct {
+  bolo_socket_t sock;
+  int           index;
+  size_t        used;
+  char          buf[WBN_TEST_REQUEST_MAX];
+} WbnTestConn;
 
 /*********************************************************
 *NAME:          socketWouldBlock
@@ -84,21 +87,19 @@ static size_t headerContentLength(const char *buf, size_t hdrLen) {
 }
 
 /*********************************************************
-*NAME:          recordPath
+*NAME:          extractPath
 *PURPOSE:
-* Stores the path out of a request line ("POST /a/b HTTP/1.1")
-* at slot `index`, so a case can assert what arrived and in
-* what order.
+* Copies the path out of a request line
+* ("POST /a/b HTTP/1.1") into out. Leaves out empty when
+* there is no path to read.
 *********************************************************/
-static void recordPath(WbnTestListener *ln, int index, const char *buf,
-                       size_t hdrLen) {
+static void extractPath(const char *buf, size_t hdrLen, char *out,
+                        size_t outLen) {
   const char *start;
   const char *end;
   size_t len;
 
-  if (index < 0 || index >= WBN_TEST_MAX_PATHS) {
-    return;
-  }
+  out[0] = '\0';
   start = memchr(buf, ' ', hdrLen);
   if (start == NULL) {
     return;
@@ -109,11 +110,11 @@ static void recordPath(WbnTestListener *ln, int index, const char *buf,
     return;
   }
   len = (size_t)(end - start);
-  if (len >= WBN_TEST_PATH_LEN) {
-    len = WBN_TEST_PATH_LEN - 1;
+  if (len >= outLen) {
+    len = outLen - 1;
   }
-  memcpy(ln->path[index], start, len);
-  ln->path[index][len] = '\0';
+  memcpy(out, start, len);
+  out[len] = '\0';
 }
 
 /*********************************************************
@@ -139,87 +140,170 @@ static bool sendAll(bolo_socket_t s, const char *data, size_t len) {
 }
 
 /*********************************************************
+*NAME:          sendAnswer
+*PURPOSE:
+* Answers one request with a 200 and a JSON body. A
+* server/register gets the key and token pair the register
+* apply path reads; everything else gets {}. No
+* Connection: close, so the client decides whether the
+* connection is kept.
+*********************************************************/
+static bool sendAnswer(bolo_socket_t s, const char *path) {
+  char body[256];
+  char msg[512];
+  int len;
+
+  if (strstr(path, "server/register") != NULL) {
+    snprintf(body, sizeof(body),
+             "{\"server_key\":\"%s\",\"server_token\":\"%s\"}",
+             WBN_TEST_REGISTER_KEY, WBN_TEST_REGISTER_TOKEN);
+  } else {
+    snprintf(body, sizeof(body), "{}");
+  }
+  len = snprintf(msg, sizeof(msg),
+                 "HTTP/1.1 200 OK\r\n"
+                 "Content-Type: application/json\r\n"
+                 "Content-Length: %u\r\n"
+                 "\r\n"
+                 "%s",
+                 (unsigned int)strlen(body), body);
+  if (len <= 0) {
+    return FALSE;
+  }
+  return sendAll(s, msg, (size_t)len);
+}
+
+/*********************************************************
+*NAME:          answerRequests
+*PURPOSE:
+* Answers every complete request sitting in the
+* connection's buffer, recording each one's path and the
+* connection it came in on. Returns FALSE when the peer is
+* gone and the connection should be dropped.
+*********************************************************/
+static bool answerRequests(WbnTestListener *ln, WbnTestConn *c) {
+  for (;;) {
+    char *hdrEnd = strstr(c->buf, "\r\n\r\n");
+    char path[WBN_TEST_PATH_LEN];
+    size_t hdrLen;
+    size_t total;
+    int    index;
+
+    if (hdrEnd == NULL) {
+      return TRUE;
+    }
+    hdrLen = (size_t)(hdrEnd - c->buf) + 4;
+    total = hdrLen + headerContentLength(c->buf, hdrLen);
+    if (c->used < total) {
+      return TRUE;
+    }
+
+    extractPath(c->buf, hdrLen, path, sizeof(path));
+    index = SDL_GetAtomicInt(&ln->requests);
+    if (index >= 0 && index < WBN_TEST_MAX_PATHS) {
+      memcpy(ln->path[index], path, strlen(path) + 1);
+      ln->conn[index] = c->index;
+    }
+    /* The hold goes before the answer, not before the read: the point
+     * is to make the caller wait on the reply. */
+    if (ln->holdMs > 0) {
+      SDL_Delay((Uint32)ln->holdMs);
+    }
+    if (!sendAnswer(c->sock, path)) {
+      return FALSE;
+    }
+    SDL_AddAtomicInt(&ln->requests, 1);
+    memmove(c->buf, c->buf + total, c->used - total);
+    c->used -= total;
+    c->buf[c->used] = '\0';
+  }
+}
+
+/*********************************************************
 *NAME:          listenerRun
 *PURPOSE:
-* Accepts one connection at a time, answers every complete
-* request on it, and counts both. Holds the connection open
-* until the client closes it, so a reused connection and a
-* fresh one are told apart by the accept count.
+* Accepts connections up to WBN_TEST_MAX_CONNS, answers
+* every complete request on each, and counts both. Holds a
+* connection open until the client closes it, so a reused
+* connection and a fresh one are told apart by the accept
+* order number recorded against each request.
 *********************************************************/
 static int listenerRun(void *data) {
   WbnTestListener *ln = (WbnTestListener *)data;
-  bolo_socket_t conn = BOLO_INVALID_SOCKET;
-  char buf[WBN_TEST_REQUEST_MAX];
-  size_t used = 0;
+  WbnTestConn *conns;
+  int nconns = 0;
+  int i;
+
+  conns = (WbnTestConn *)malloc(sizeof(WbnTestConn) * WBN_TEST_MAX_CONNS);
+  if (conns == NULL) {
+    fprintf(stderr, "listenerRun: out of memory\n");
+    return 1;
+  }
 
   while (SDL_GetAtomicInt(&ln->stop) == 0) {
-    int n;
+    bool worked = FALSE;
 
-    if (conn == BOLO_INVALID_SOCKET) {
+    if (nconns < WBN_TEST_MAX_CONNS) {
       bolo_socket_t accepted = accept(ln->listenSock, NULL, NULL);
-      if (accepted == BOLO_INVALID_SOCKET) {
-        SDL_Delay(WBN_TEST_POLL_MS);
-        continue;
+      if (accepted != BOLO_INVALID_SOCKET) {
+        socketSetNonBlocking(accepted);
+        conns[nconns].sock = accepted;
+        conns[nconns].used = 0;
+        conns[nconns].buf[0] = '\0';
+        /* SDL_AddAtomicInt answers with the value before the add, which is
+         * this connection's 0-based place in the accept order. */
+        conns[nconns].index = SDL_AddAtomicInt(&ln->connections, 1);
+        nconns++;
+        worked = TRUE;
       }
-      socketSetNonBlocking(accepted);
-      conn = accepted;
-      used = 0;
-      SDL_AddAtomicInt(&ln->connections, 1);
     }
 
-    n = (int)recv(conn, buf + used, (int)(sizeof(buf) - used - 1), 0);
-    if (n > 0) {
-      used += (size_t)n;
-      buf[used] = '\0';
+    i = 0;
+    while (i < nconns) {
+      WbnTestConn *c = &conns[i];
+      bool drop = FALSE;
+      int n;
 
-      /* Answer every complete request sitting in the buffer. */
-      for (;;) {
-        char *hdrEnd = strstr(buf, "\r\n\r\n");
-        size_t hdrLen;
-        size_t total;
-        int    index;
-
-        if (hdrEnd == NULL) {
-          break;
+      n = (int)recv(c->sock, c->buf + c->used,
+                    (int)(WBN_TEST_REQUEST_MAX - c->used - 1), 0);
+      if (n > 0) {
+        worked = TRUE;
+        c->used += (size_t)n;
+        c->buf[c->used] = '\0';
+        if (!answerRequests(ln, c)) {
+          drop = TRUE;
+        } else if (c->used >= WBN_TEST_REQUEST_MAX - 1) {
+          /* A request larger than the buffer: drop the connection rather
+           * than spin. The request count then falls short and the case
+           * fails. */
+          drop = TRUE;
         }
-        hdrLen = (size_t)(hdrEnd - buf) + 4;
-        total = hdrLen + headerContentLength(buf, hdrLen);
-        if (used < total) {
-          break;
-        }
-        index = SDL_GetAtomicInt(&ln->requests);
-        recordPath(ln, index, buf, hdrLen);
-        /* The hold goes before the answer, not before the read: the point
-         * is to make the caller wait on the reply. */
-        if (ln->holdMs > 0) {
-          SDL_Delay((Uint32)ln->holdMs);
-        }
-        if (!sendAll(conn, kResponse, sizeof(kResponse) - 1)) {
-          break;
-        }
-        SDL_AddAtomicInt(&ln->requests, 1);
-        memmove(buf, buf + total, used - total);
-        used -= total;
-        buf[used] = '\0';
+      } else if (n < 0 && socketWouldBlock()) {
+        /* Nothing on this one yet. */
+      } else {
+        drop = TRUE;
       }
 
-      if (used >= sizeof(buf) - 1) {
-        /* A request larger than the buffer: drop the connection rather than
-         * spin. The request count then falls short and the case fails. */
-        closesocket(conn);
-        conn = BOLO_INVALID_SOCKET;
+      if (drop) {
+        closesocket(c->sock);
+        nconns--;
+        if (i != nconns) {
+          memcpy(c, &conns[nconns], sizeof(WbnTestConn));
+        }
+        continue; /* the slot holds a different connection now */
       }
-    } else if (n < 0 && socketWouldBlock()) {
+      i++;
+    }
+
+    if (!worked) {
       SDL_Delay(WBN_TEST_POLL_MS);
-    } else {
-      closesocket(conn);
-      conn = BOLO_INVALID_SOCKET;
     }
   }
 
-  if (conn != BOLO_INVALID_SOCKET) {
-    closesocket(conn);
+  for (i = 0; i < nconns; i++) {
+    closesocket(conns[i].sock);
   }
+  free(conns);
   return 0;
 }
 
@@ -228,12 +312,16 @@ bool wbnTestListenerStart(WbnTestListener *ln, unsigned short *port,
   struct sockaddr_in addr;
   socklen_t addrLen = sizeof(addr);
   int on = 1;
+  int i;
 
   memset(ln, 0, sizeof(*ln));
   ln->holdMs = holdMs;
   SDL_SetAtomicInt(&ln->connections, 0);
   SDL_SetAtomicInt(&ln->requests, 0);
   SDL_SetAtomicInt(&ln->stop, 0);
+  for (i = 0; i < WBN_TEST_MAX_PATHS; i++) {
+    ln->conn[i] = -1;
+  }
 
   ln->listenSock = socket(AF_INET, SOCK_STREAM, 0);
   if (ln->listenSock == BOLO_INVALID_SOCKET) {
@@ -328,8 +416,12 @@ int main(int argc, char **argv) {
     ok = wbnTestPostsShareConnection();
   } else if (strcmp(name, "leave_returns_at_once") == 0) {
     ok = wbnTestLeaveReturnsAtOnce();
+  } else if (strcmp(name, "worker_outlives_session") == 0) {
+    ok = wbnTestWorkerOutlivesSession();
   } else {
-    fprintf(stderr, "usage: %s posts_share_connection|leave_returns_at_once\n",
+    fprintf(stderr,
+            "usage: %s posts_share_connection|leave_returns_at_once|"
+            "worker_outlives_session\n",
             argv[0]);
     SDL_Quit();
     bolo_net_cleanup();

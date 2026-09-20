@@ -5950,6 +5950,7 @@ add_executable(WinBoloWbnTests
     tests/wbn/wbn_test_harness.c
     tests/wbn/test_wbn_connection_reuse.c
     tests/wbn/test_wbn_leave_returns_at_once.c
+    tests/wbn/test_wbn_worker_outlives_session.c
     src/bolo/global.c
     src/common/prefs.c
     src/common/prefs_doc.c
@@ -5981,6 +5982,12 @@ set_tests_properties(wbn.posts_share_connection PROPERTIES TIMEOUT 60)
 add_test(NAME wbn.leave_returns_at_once
          COMMAND $<TARGET_FILE:WinBoloWbnTests> leave_returns_at_once)
 set_tests_properties(wbn.leave_returns_at_once PROPERTIES TIMEOUT 180)
+
+# A register, a queued post, a session boundary and a second queued post,
+# none of them held: the same order of magnitude as the row above it.
+add_test(NAME wbn.worker_outlives_session
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> worker_outlives_session)
+set_tests_properties(wbn.worker_outlives_session PROPERTIES TIMEOUT 60)
 
 # ---- Include-rule check: the scenario surface is invisible to a frontend --
 # src/bolo/scenario_api/ is on the include path of scenario_host, sim_owner

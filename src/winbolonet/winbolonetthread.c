@@ -65,12 +65,22 @@ static SDL_Semaphore *wbnWake = NULL;
 *NAME:          winbolonetThreadCreate
 *PURPOSE:
 *  Creates the winbolonet update thread. Returns success.
+*  Reports success and changes nothing when the thread is
+*  already running.
 *********************************************************/
 bool winbolonetThreadCreate(void) {
   bool returnValue;        /* Value to return */
 #ifdef _WIN32
   char name[FILENAME_MAX]; /* Used in Mutex creation */
 #endif
+
+  /* Already up. The session boundary drains the worker instead of
+     destroying it, so the create after the first server/register is the
+     only one; a second create would orphan the running thread, leak its
+     mutex and semaphore, and drop whatever was queued. */
+  if (hWbnMutexHandle != NULL) {
+    return TRUE;
+  }
 
   returnValue = TRUE;
   wbnProcessing = NULL;
@@ -127,6 +137,38 @@ bool winbolonetThreadCreate(void) {
 }
 
 /*********************************************************
+*NAME:          winbolonetThreadDrain
+*PURPOSE:
+*  Waits until every queued request has been sent, leaving
+*  the thread running and taking nothing on. A session
+*  boundary uses this where it used to destroy the thread,
+*  so the worker keeps its pooled connection across a round.
+*  Returns at once when nothing is queued, and when no
+*  thread was ever created.
+*********************************************************/
+void winbolonetThreadDrain(void) {
+  if (hWbnMutexHandle == NULL) {
+    return;
+  }
+
+  /* The wake goes out before the wait: the loop parks on the semaphore
+     between passes, so a queue handed to it a moment ago would otherwise
+     sit there until the end of that wait. */
+  if (wbnWake != NULL) {
+    SDL_SignalSemaphore(wbnWake);
+  }
+
+  /* Wait for all events to be sent... */
+  while (wbnProcessing != NULL || wbnWaiting != NULL) {
+#ifdef _WIN32
+    Sleep(WBN_SHUTDOWN_SLEEP_TIME);
+#else
+    SDL_Delay(WBN_SHUTDOWN_SLEEP_TIME);
+#endif
+  }
+}
+
+/*********************************************************
 *NAME:          winbolonetThreadDestroy
 *PURPOSE:
 *  Destroys the WBN update thread.
@@ -138,14 +180,7 @@ void winbolonetThreadDestroy(void) {
 #endif
 
   if (hWbnMutexHandle != NULL) {
-    /* Wait for all events to be sent... */
-    while (wbnProcessing != NULL || wbnWaiting != NULL) {
-#ifdef _WIN32
-      Sleep(WBN_SHUTDOWN_SLEEP_TIME);
-#else
-      SDL_Delay(WBN_SHUTDOWN_SLEEP_TIME);
-#endif
-    }
+    winbolonetThreadDrain();
 
     /* Wait for current to finish. The wake goes out after the flag so a
        loop parked on the semaphore returns now rather than at the end of

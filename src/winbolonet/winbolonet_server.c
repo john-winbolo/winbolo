@@ -904,9 +904,12 @@ void winboloNetSendLock(bool isLocked) {
 *PURPOSE:
 * Ends the current WBN session: drains the background
 * thread, POSTs server/quit, clears the bearer + per-slot
-* player keys, and resets the event queue. The HTTP layer
-* stays alive so a subsequent winbolonetBeginSession can
-* re-register (and so the per-round log uploader can fire
+* player keys, and resets the event queue. The worker is
+* drained, not destroyed: it runs for the server's life, so
+* its pooled connection carries into the next session. The
+* HTTP layer stays alive so a subsequent
+* winbolonetBeginSession can re-register (and so the
+* per-round log uploader can fire
 * httpSendLogFile in between, against the still-valid
 * winboloNetServerKey — WBN rejects uploads to an active
 * session, so the upload has to follow the server/quit
@@ -923,7 +926,9 @@ void winbolonetEndSession(void) {
 
   serverSimConsoleMessage("WinBolo.net: Ending session...");
 
-  winbolonetThreadDestroy();
+  /* Empty the queue before the bearer below is cleared, so nothing
+   * queued against this session fires against the next one. */
+  winbolonetThreadDrain();
 
   /* server/quit carries the still-valid bearer for this POST. */
   body = cJSON_CreateObject();
@@ -955,9 +960,10 @@ void winbolonetEndSession(void) {
 /*********************************************************
 *NAME:          winbolonetBeginSession
 *PURPOSE:
-* Registers a fresh WBN session for the next round and
-* restarts the background thread. Pairs with
-* winbolonetEndSession at round boundaries.
+* Registers a fresh WBN session for the next round. The
+* background thread is not started here: it is created once
+* after the first server/register and runs for the server's
+* life. Pairs with winbolonetEndSession at round boundaries.
 *********************************************************/
 bool winbolonetBeginSession(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
   cJSON *body = NULL;
@@ -983,7 +989,6 @@ bool winbolonetBeginSession(char *mapName, unsigned short port, BYTE gameType, B
 
   cJSON_Delete(resp);
 
-  winbolonetThreadCreate();
   winboloNetLastSent = time(NULL);
 
   return TRUE;

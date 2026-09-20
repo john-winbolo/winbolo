@@ -315,9 +315,10 @@ void winbolonetEndSession(void);
 *NAME:          winbolonetBeginSession
 *PURPOSE:
 * Registers a fresh WBN session with the supplied
-* map/settings, stores the new server_key + bearer, and
-* restarts the background thread. Pairs with
-* winbolonetEndSession at round boundaries.
+* map/settings and stores the new server_key + bearer. The
+* background thread is not started here: it is created once
+* after the first server/register and runs for the server's
+* life. Pairs with winbolonetEndSession at round boundaries.
 * Returns TRUE on success, FALSE on registration failure
 * (sets winboloNetRunning=FALSE on failure).
 *

@@ -60,13 +60,29 @@ struct wbnListObj {
 *NAME:          winbolonetThreadCreate
 *PURPOSE:
 *  Creates the winbolonet update thread. Returns success.
+*  Reports success and changes nothing when the thread is
+*  already running, so a second caller cannot orphan it.
 *********************************************************/
 bool winbolonetThreadCreate(void);
 
 /*********************************************************
+*NAME:          winbolonetThreadDrain
+*PURPOSE:
+*  Waits until the queued requests have all been sent and
+*  returns with the thread still running. Use at a session
+*  boundary, where the queue has to be empty before the
+*  caller's own post goes out but the worker is wanted for
+*  the next session. Returns at once when the queue is
+*  empty, and when there is no thread.
+*********************************************************/
+void winbolonetThreadDrain(void);
+
+/*********************************************************
 *NAME:          winbolonetThreadDestroy
 *PURPOSE:
-*  Destroys the WBN update thread.
+*  Destroys the WBN update thread. Drains the queue first,
+*  as winbolonetThreadDrain does, then stops and joins the
+*  thread.
 *********************************************************/
 void winbolonetThreadDestroy(void);
 
