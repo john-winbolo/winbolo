@@ -24,10 +24,13 @@
  * to stand for a slot the server has stall-advanced past.
  *
  * The no-measured-ping case is pinned separately because it is a different
- * population: a local-transport producer supplies one input per net tick
- * while the server runs two half-steps, so it lands here in perfect
- * conditions with no flight time to cover, and anything past the next
- * unprocessed tick number is input latency the bot did not have before.
+ * population on its own branch: a local-transport producer supplies one input
+ * per net tick while the server runs two half-steps, so it lands here in
+ * perfect conditions with no flight time to cover, and anything past the next
+ * unprocessed tick number is input latency the bot did not have before. That
+ * branch is the minimal renumber off lastProcessedInput and is deliberately
+ * offset-free — it neither reads nor writes inputTickOffset — so the last part
+ * pins the offset staying 0 as well as the tick numbers.
  */
 
 #include <stdint.h>
@@ -163,9 +166,12 @@ int run_input_tick_offset_adopts_jump(void) {
     /* --- The local producer, no measured round trip -------------------- */
     /* projectionPingMs 0 is the local transport (headless, the gym, an
      * in-process host), which under-supplies structurally rather than being
-     * locked out. The target is the next tick number the server has not
-     * processed — 501 — parity-corrected: already odd for a keys tick, bumped
-     * to the even 502 for a game tick. */
+     * locked out. Its branch renumbers the packet to the next tick number the
+     * server has not processed — 501 — parity-corrected: already odd for a
+     * keys tick, bumped to the even 502 for a game tick. It stores nothing:
+     * an offset would carry the producer past lastProcessedInput on a later
+     * packet, which is exactly the queue latency this branch exists to avoid,
+     * so the offset must still read 0 after both calls. */
     cs->inputTickOffset = 0;
     clientSimSetProjectionPing(cs, 0);
     clientBuildInputPacket(cs, &pkt, 0, false, false, false, false, 0, 10);
@@ -174,16 +180,19 @@ int run_input_tick_offset_adopts_jump(void) {
                   "under-supplying local producer waits in the queue for the "
                   "difference",
                   (unsigned)pkt.tick, (unsigned)(OFS_SERVER_LPI + 1u));
-    UT_ASSERT_MSG(cs->inputTickOffset == OFS_SERVER_LPI + 1u - 10u,
-                  "offset %u does not carry the ping-0 keys jump (expected %u)",
-                  (unsigned)cs->inputTickOffset,
-                  (unsigned)(OFS_SERVER_LPI + 1u - 10u));
+    UT_ASSERT_MSG(cs->inputTickOffset == 0u,
+                  "ping-0 keys tick stored offset %u — a producer with no "
+                  "measured round trip stores no offset",
+                  (unsigned)cs->inputTickOffset);
 
-    cs->inputTickOffset = 0;
     clientBuildInputPacket(cs, &pkt, 0, false, false, false, true, 0, 10);
     UT_ASSERT_MSG(pkt.tick == OFS_SERVER_LPI + 2u,
                   "ping-0 game tick landed at %u, expected %u",
                   (unsigned)pkt.tick, (unsigned)(OFS_SERVER_LPI + 2u));
+    UT_ASSERT_MSG(cs->inputTickOffset == 0u,
+                  "ping-0 game tick stored offset %u — a producer with no "
+                  "measured round trip stores no offset",
+                  (unsigned)cs->inputTickOffset);
 
     clientSimDisconnect(cs);
     clientSimDestroy(cs);
