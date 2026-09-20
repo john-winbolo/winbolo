@@ -10,8 +10,9 @@
  *Purpose:
  *  Reads the script beside a map and says what is wrong
  *  with it: the api it asks for, the lobby it seats, the
- *  rules it sets, the entities it tags and the rectangles it
- *  names, each problem as a key, a line and a message.
+ *  rules it sets, the entities it tags, the rectangles it
+ *  names and the triggers it declares, each problem as a
+ *  key, a line and a message.
  *
  *  Nothing here runs a round. The chunk is loaded and run
  *  once, so the scenario table it declares exists, against a
@@ -37,30 +38,10 @@
 #include <stdint.h>
 
 #include "server_sim.h"        /* ServerSim, and the entity counts */
+#include "scenario_host.h"     /* ScenarioHost — scenarioHostManifest below */
 #include "scenario_manifest.h" /* ScenarioManifest */
-
-#define SCN_VALIDATE_ISSUES_MAX 64
-#define SCN_VALIDATE_KEY_LEN    64
-#define SCN_VALIDATE_MSG_LEN    192
-
-/* One problem the validator found. key is the dotted path of the thing at
- * fault ("api", "lobby.teams[2].bots", "rules.tank_reload_ticks",
- * "regions.keep"), "" where no key applies. line is 1-based and 0 when the
- * key could not be found in the source. */
-typedef struct {
-    char key[SCN_VALIDATE_KEY_LEN];
-    int  line;
-    char message[SCN_VALIDATE_MSG_LEN];
-} ScnValidateIssue;
-
-typedef struct {
-    bool             haveManifest;   /* false when no script, or it failed to run */
-    uint16_t         count;
-    uint16_t         dropped;        /* problems past SCN_VALIDATE_ISSUES_MAX */
-    ScnValidateIssue issues[SCN_VALIDATE_ISSUES_MAX];
-    ScenarioManifest manifest;       /* what the table parsed to; also what
-                                      * a package is written from */
-} ScnValidateResult;
+#include "scenario_issues.h"   /* ScnValidateIssue, ScnValidateResult,
+                                * scnIssueAdd, ScnParseReport */
 
 /*********************************************************
  *NAME:          scenarioValidateMap
@@ -83,9 +64,9 @@ typedef struct {
  *  whether or not issues were found, so a caller that wants
  *  what the table says has it from the same call.
  *
- *  A NULL sim leaves out the two checks that read a map —
- *  the rules against the catalogue and the tags against the
- *  entity lists — and makes every other one as usual.
+ *  A NULL sim leaves out the one check that reads a map —
+ *  the tags against the entity lists — and makes every
+ *  other one as usual.
  *
  *  Each issue carries the line Lua gave where Lua gave one,
  *  and otherwise the first line of the source holding the
@@ -100,27 +81,74 @@ bool scenarioValidateMap(const ServerSim *sim, const char *mapPath,
                          ScnValidateResult *out);
 
 /*********************************************************
- *NAME:          scnIssueAdd
+ *NAME:          scenarioValidateScript
  *PURPOSE:
- *  Appends one problem to the list, with line 0 for the
- *  attribution pass to fill in. key may be "" where no key
- *  applies. A NULL out is a no-op; a list already full
- *  counts the problem in dropped and keeps the ones it has.
+ *  The same checks, against a script named directly rather
+ *  than found beside a map. A NULL sim leaves out the one
+ *  that reads a map, as above.
+ *
+ *  scenarioValidateMap derives the script's name and calls
+ *  this, so there is one body and the two report the same
+ *  things. This is the entry a scenario directory uses: a
+ *  loose Fast Reload.lua is the script, and deriving a name
+ *  beside it would ask for Fast Reload.lua.scenario.lua.
  *********************************************************/
-void scnIssueAdd(ScnValidateResult *out, const char *key,
-                 const char *fmt, ...);
+bool scenarioValidateScript(const ServerSim *sim, const char *scriptPath,
+                            ScnValidateResult *out);
+
+/*********************************************************
+ *NAME:          scenarioValidateSource
+ *PURPOSE:
+ *  The same checks again, against len bytes the caller is
+ *  already holding rather than a file. This is the entry an
+ *  editor uses: the text in its pane may never have been on
+ *  disk, and the copy on disk is a save behind whatever the
+ *  author is looking at.
+ *
+ *  name is what the chunk is called, so it is what Lua writes
+ *  ahead of the line in a syntax error and what a message
+ *  that has to name the script names. The script's path where
+ *  there is one, and a stand-in where the map has no file
+ *  yet.
+ *
+ *  scenarioValidateScript reads the file and comes through
+ *  here, so the two report the same things about the same
+ *  bytes. The one behaviour that is not shared is an absent
+ *  file, which only the file entry can meet and which it
+ *  answers true with no issues; an empty buffer handed over
+ *  here is a script that is empty, not a script that is not
+ *  there.
+ *
+ *  push is the manifest to put on the state as the scenario
+ *  global before the chunk runs, the way a host does it for a
+ *  script that came out of a container, and NULL for none. An
+ *  editor holding a manifest in its forms passes it, so a
+ *  script that declares no table of its own is checked as the
+ *  pair will be loaded rather than refused for a table the
+ *  package already carries. A script that does declare one
+ *  overwrites the global, so the table read back is still the
+ *  script's own and still worth holding against the manifest.
+ *
+ *  A NULL sim leaves out the one check that reads a map, as
+ *  above. A NULL out, a NULL text or a NULL name returns
+ *  false.
+ *********************************************************/
+bool scenarioValidateSource(const ServerSim *sim, const char *text, size_t len,
+                            const char *name, const ScenarioManifest *push,
+                            ScnValidateResult *out);
 
 /* ── The parse, which the host and the validator share ──────────────── */
 
-/* Where a problem the parse found is said: one line to the operator and a
- * copy in soft for whoever asked, and an issue on sink when a validator is
- * collecting them. Each of the three is optional — the host passes a soft
- * buffer and no sink, and a caller that wants neither passes nothing. */
-typedef struct {
-    char              *soft;
-    size_t             softLen;
-    ScnValidateResult *sink;
-} ScnParseReport;
+/*********************************************************
+ *NAME:          scenarioHostManifest
+ *PURPOSE:
+ *  The table the host last read, for the library's own code
+ *  and for the tests that check the parse. NULL for a NULL
+ *  host. Defined in scenario_host.c; declared here rather
+ *  than on scenario_host.h because it answers a
+ *  scenario_io type, and that header names none.
+ *********************************************************/
+const ScenarioManifest *scenarioHostManifest(const ScenarioHost *h);
 
 /* Named rather than included: nothing else on this header names a Lua type,
  * and a frontend reading the result of a validation has no Lua headers on its
@@ -172,6 +200,26 @@ struct lua_State *scnNewVm(void);
  *  close.
  *********************************************************/
 void scnCloseVm(struct lua_State *L);
+
+/*********************************************************
+ *NAME:          scnPushManifestGlobal
+ *PURPOSE:
+ *  Puts m on the state as the scenario global, in the shape
+ *  scnReadManifest reads, before the chunk is run.
+ *
+ *  A script that came out of a container may then declare no
+ *  table of its own and still be a scenario, because what the
+ *  chunk leaves behind is this one; a script that restates the
+ *  table overwrites the global, so scnReadManifest still reads
+ *  the script's own and the two are held against each other
+ *  afterwards. A loose script gets nothing pushed.
+ *
+ *  The host does this at attach, at every round start and at
+ *  the package check. The validator does it for a caller that
+ *  holds a manifest, so a script is checked the way it will be
+ *  loaded.
+ *********************************************************/
+void scnPushManifestGlobal(struct lua_State *L, const ScenarioManifest *m);
 
 /*********************************************************
  *NAME:          scnRunChunk

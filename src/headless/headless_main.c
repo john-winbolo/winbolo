@@ -143,6 +143,8 @@ static char optMap[512] = "";
 static bool optStdin = FALSE;
 /* Run the map plainly, whatever script sits beside it. */
 static bool optNoScenarios = false;
+/* Run a map that came from an upload plainly, whatever it carries. */
+static bool optNoUploadScripts = false;
 static bool optLogBinary = FALSE;
 static uint64_t optSeed = 0;
 static bool optSeedSet = FALSE;
@@ -339,6 +341,7 @@ static const char *logEventsTypeName(int type) {
     case CTRL_LOBBY_BOT_CONFIG:      return "CTRL_LOBBY_BOT_CONFIG";
     case CTRL_LOBBY_BOT_BRAIN:       return "CTRL_LOBBY_BOT_BRAIN";
     case CTRL_LOBBY_BRAIN_LIST:      return "CTRL_LOBBY_BRAIN_LIST";
+    case CTRL_LOBBY_BRAIN_DOCS_CHUNK: return "CTRL_LOBBY_BRAIN_DOCS_CHUNK";
     case CTRL_GAME_VOTE_STATE:       return "CTRL_GAME_VOTE_STATE";
     case CTRL_SERVER_TEXT:           return "CTRL_SERVER_TEXT";
     case CTRL_COMMAND_REJECTED:      return "CTRL_COMMAND_REJECTED";
@@ -350,6 +353,11 @@ static const char *logEventsTypeName(int type) {
     case CTRL_ENTITY_CHANGE:         return "CTRL_ENTITY_CHANGE";
     case CTRL_ENTITY_SYNC:           return "CTRL_ENTITY_SYNC";
     case CTRL_SIM_RULES:             return "CTRL_SIM_RULES";
+    case CTRL_SCN_PANEL:             return "CTRL_SCN_PANEL";
+    case CTRL_SCN_SCORE:             return "CTRL_SCN_SCORE";
+    case CTRL_SCN_ANNOUNCE:          return "CTRL_SCN_ANNOUNCE";
+    case CTRL_SCN_MARKER:            return "CTRL_SCN_MARKER";
+    case CTRL_SCENARIO_RULES:        return "CTRL_SCENARIO_RULES";
     default:                         return NULL;
   }
 }
@@ -367,6 +375,11 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
    * fragment count tracks data/bot_names.json — so drop it from the captured
    * stream to keep the baselines stable and content-independent. */
   if (evt->type == CTRL_LOBBY_BOT_POOL_CHUNK) return;
+
+  /* Same story for the per-brain lobby texts (announce.txt/commands.txt):
+   * they are lobby display data whose fragment count depends on which
+   * brains exist on the machine the baseline runs on. */
+  if (evt->type == CTRL_LOBBY_BRAIN_DOCS_CHUNK) return;
 
   /* Tick numbers come from the ClientSim's last-server-tick counter,
    * which both modes agree on (set by snapshot ingestion in --fast
@@ -661,6 +674,33 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
       fprintf(f, ",\"talking\":%u",
               (unsigned)evt->u.voiceTalking.talking);
       break;
+
+    case CTRL_LOBBY_BRAIN_DOCS_CHUNK:
+      /* Dropped above; never reaches the body writer. */
+      break;
+
+    case CTRL_SCENARIO_RULES: {
+      /* One fragment of the rules a scenario's own manifest set. Written out
+         in full: a run over a scripted map is exactly where a reader wants to
+         see which rules the script asked for. A plain map never publishes
+         this event, so a recording of one carries no line of it at all.
+
+         seq and frags go out with the rows so a reader can put a split set
+         back together, and so a recording of one that was cut short shows it
+         rather than reading as a short set. */
+      unsigned k;
+      fprintf(f, ",\"seq\":%u,\"frags\":%u,\"count\":%u,\"rules\":[",
+              (unsigned)evt->u.scenarioRules.seq,
+              (unsigned)evt->u.scenarioRules.fragCount,
+              (unsigned)evt->u.scenarioRules.count);
+      for (k = 0; k < (unsigned)evt->u.scenarioRules.count; k++) {
+        fprintf(f, "%s{\"rule\":%u,\"value\":%g}", (k == 0) ? "" : ",",
+                (unsigned)evt->u.scenarioRules.rule[k],
+                evt->u.scenarioRules.value[k]);
+      }
+      fputc(']', f);
+      break;
+    }
 
     case CTRL_EVENT_TYPE_COUNT:
       /* Sentinel — never actually delivered. */
@@ -2003,6 +2043,10 @@ static void printUsage(const char *prog) {
     "  --noscenarios     Do not load the scenario script beside the map. Every\n"
     "                    map, including one committed later, plays plainly. A map\n"
     "                    that has a script says which one was not loaded\n"
+    "  --nouploadscripts Do not run a script carried by a map a client uploaded.\n"
+    "                    Maps in the uploads directory play plainly, whether the\n"
+    "                    script is packed into the file or sits beside it; every\n"
+    "                    other map is unaffected\n"
     "\n"
     "Visibility options (apply to the fast-mode server sim):\n"
     "  --pillview MODE   Pillbox visibility: always, key (default), decay, off\n"
@@ -2154,6 +2198,8 @@ static bool parseArgs(int argc, char **argv) {
       optClassicMode = true;
     } else if (strcmp(argv[i], "--noscenarios") == 0) {
       optNoScenarios = true;
+    } else if (strcmp(argv[i], "--nouploadscripts") == 0) {
+      optNoUploadScripts = true;
     } else if (strcmp(argv[i], "--map") == 0 && i + 1 < argc) {
       strncpy(optMap, argv[++i], sizeof(optMap) - 1);
     } else if (strcmp(argv[i], "-nocrashreporting") == 0) {
@@ -2219,10 +2265,6 @@ static bool parseArgs(int argc, char **argv) {
 
 /* These are called by the network module during join — kept as stubs
  * since the new transport doesn't use the old network.c callbacks. */
-void gameFrontGetPassword(char *pword) {
-  strcpy(pword, optPassword);
-}
-
 void gameFrontGetPlayerName(char *pn) {
   strcpy(pn, optName);
 }
@@ -2459,11 +2501,21 @@ static int runFastMode(void) {
   if (optNoScenarios) {
     scenarioHostSetEnabled(false);
   }
+  /* --nouploadscripts: the narrower one. A map a client sent plays plainly
+     whatever it carries, and the operator's own maps are untouched. */
+  if (optNoUploadScripts) {
+    scenarioHostSetUploadScriptsEnabled(false);
+  }
   /* And the question the map lister asks, registered here rather than at the
      attach below: an attach answers nothing for a map with no script, so a
      run on a plain map would report every scripted map in the directory as
      plain. */
   scenarioHostRegisterMapScripted(fastServerSim);
+  /* And the read of the scenarios directory, for the same reason: what a
+     server offers on its own has nothing to do with the map it is running.
+     The headless run takes the built-in default, having no switch of its
+     own. */
+  scenarioHostRegisterScenarioLister(fastServerSim);
   {
     char scenarioErr[512];
     scenarioHost = scenarioHostAttach(fastServerSim, optMap,

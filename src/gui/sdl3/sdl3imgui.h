@@ -167,15 +167,6 @@ void sdl3ImguiShowAllianceRequest(const char *playerName,
                                   unsigned char playerNum);
 
 /*********************************************************
-*NAME:          sdl3ImguiShowPassword
-*PURPOSE:
-*  Open the password-entry modal for joining a protected
-*  game.  On OK calls gameFrontSetGameOptions with the
-*  entered password.
-*********************************************************/
-void sdl3ImguiShowPassword(void);
-
-/*********************************************************
 *NAME:          sdl3ImguiShowKeySetup
 *PURPOSE:
 *  Open the Key Setup modal dialog allowing the user to
@@ -566,6 +557,21 @@ void renderPlayerMicCell(struct ClientSim *cs, int playerNum, uint8_t clientFlag
 *********************************************************/
 void renderPlayerPingMuteCell(struct ClientSim *cs, int playerNum, bool isSelf,
                               float size);
+
+/* The size the badge run beside a player name draws at — the platform icon,
+ * the WBN shield, the Steam mark, the bot chip, the smart-ping mute cell and
+ * the mic cell. One font size, which is what the config cog beside the run
+ * and the tank badge in front of it already use, so every glyph on the row
+ * comes out the same height at every UI scale. Call inside a frame: it reads
+ * the active context's font, so the lobby's dialog context and the in-game
+ * one each get their own. */
+float sdl3ImguiWbnIconPx(void);
+
+/* The country flag's drawn size in that same run. A flag is wider than it is
+ * tall, so it keeps its own proportion rather than going square: the 16x11
+ * artwork scaled by whatever sdl3ImguiWbnIconPx is against a 14 px badge.
+ * Either out pointer may be NULL. */
+void sdl3ImguiFlagSize(float *outW, float *outH);
 
 /* Draws the country flag for an alpha-2 code and, on hover, a localized
  * country-name tooltip. Returns true iff a flag image was drawn (false for

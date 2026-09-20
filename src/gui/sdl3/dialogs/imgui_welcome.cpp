@@ -291,12 +291,7 @@ extern "C" int imguiWelcomeShow(void) {
             if (dialogHandleDevicePresetEvent(window, &ev)) continue;
             dialogHandleWindowMoveResize(window, &ev);
             if (dialogHandleUrlDropEvent(&ev)) { result = (int)openInternetManual; running = false; continue; }
-            if (ev.type == SDL_EVENT_QUIT) {
-                result = RESULT_QUIT;
-                running = false;
-            }
-            if (ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
-                ev.window.windowID == SDL_GetWindowID(window)) {
+            if (dialogHandleQuitEvent(window, &ev)) {
                 result = RESULT_QUIT;
                 running = false;
             }
@@ -412,24 +407,31 @@ extern "C" int imguiWelcomeShow(void) {
              * handler dispatches by rawLabel string rather than setting
              * result/running. Display text still goes through
              * langGetText(labelId) whenever labelId is non-zero; rawLabel
-             * is only used as the visible text when labelId == 0. */
+             * is only used as the visible text when labelId == 0.
+             *
+             * Spelled out as nullptr on every exit row rather than left off
+             * the end. The value is the same either way — an omitted member is
+             * value-initialised — but the click handler reads rawLabel to
+             * decide what a row does, so the rows that do nothing with it are
+             * worth seeing rather than inferring, and it drops eight
+             * -Wmissing-field-initializers warnings. */
             struct { langid labelId; int code; bool show; const char* rawLabel; } miniModes[] = {
-                { STR_DLGSETTINGS_TUTORIAL, RESULT_TUTORIAL,     showTutorial },
-                { STR_DLGWELCOME_SINGLE,    RESULT_SINGLEPLAYER, true },
-                { STR_DLGWELCOME_INTERNET,  RESULT_INTERNET,     true },
-                { STR_DLGWELCOME_LOCAL,     RESULT_LAN,          true },
+                { STR_DLGSETTINGS_TUTORIAL, RESULT_TUTORIAL,     showTutorial,     nullptr },
+                { STR_DLGWELCOME_SINGLE,    RESULT_SINGLEPLAYER, true,             nullptr },
+                { STR_DLGWELCOME_INTERNET,  RESULT_INTERNET,     true,             nullptr },
+                { STR_DLGWELCOME_LOCAL,     RESULT_LAN,          true,             nullptr },
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
-                { STR_DLGWELCOME_MAPEDITOR, RESULT_MAPEDITOR,    showDesktopTools },
-                { STR_DLGWELCOME_LOGVIEWER, RESULT_LOGVIEWER,    showDesktopTools },
+                { STR_DLGWELCOME_MAPEDITOR, RESULT_MAPEDITOR,    showDesktopTools, nullptr },
+                { STR_DLGWELCOME_LOGVIEWER, RESULT_LOGVIEWER,    showDesktopTools, nullptr },
 #endif
-                { STR_DLGSETTINGS_TITLE,    RESULT_SETTINGS,     true },
+                { STR_DLGSETTINGS_TITLE,    RESULT_SETTINGS,     true,             nullptr },
 #if !BOLO_MOBILE && !defined(__EMSCRIPTEN__)
                 { fullScreenLabel,          0,                   showFullScreenToggle,
                                                                  "FullScreen" },
 #endif
 #if !BOLO_MOBILE
-                { STR_DLGWELCOME_NEWS,      0,                   true, "News" },
-                { STR_DLGOPENING_BUTTON2,   RESULT_QUIT,         true },
+                { STR_DLGWELCOME_NEWS,      0,                   true,             "News" },
+                { STR_DLGOPENING_BUTTON2,   RESULT_QUIT,         true,             nullptr },
 #endif
             };
             int miniCount = sizeof(miniModes) / sizeof(miniModes[0]);

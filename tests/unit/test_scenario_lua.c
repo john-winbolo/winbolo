@@ -11,6 +11,18 @@
  * run_scenario_lua_every_row_answers   — a script calls every row in the
  *                                        registry once and none of them
  *                                        raises or is missing
+ * run_scenario_lua_op_arguments_match_the_doc
+ *                                      — every row says what arguments it
+ *                                        takes, and says the same as the
+ *                                        signature its doc string opens
+ *                                        with; the ops whose arguments have
+ *                                        a shape of their own answer so
+ *                                        (at the foot of the file)
+ * run_scenario_lua_acting_rows_refuse_a_check
+ *                                      — every row says whether it changes
+ *                                        anything, and a state that is
+ *                                        checking a file refuses exactly
+ *                                        the rows that say they do
  * run_scenario_lua_read_index_passes_through
  *                                      — the Lua index of a read is the
  *                                        accessor's index, for every pill
@@ -71,6 +83,30 @@
  *                                      — a scripted round reads back the base
  *                                        game it plays, never "scripted"
  *
+ * and the presentation rows, whose answers are read at a subscriber because
+ * what the payload's one target byte meant is what the arm unpacked it into:
+ *
+ * run_scenario_lua_panel_builds_bytes  — one of each primitive reaches the
+ *                                        arm as the bytes the layout spells,
+ *                                        and the shared parser takes them
+ *                                        back apart
+ * run_scenario_lua_panel_words_and_numbers
+ *                                      — a colour, size, alignment and timer
+ *                                        mode written as words build the same
+ *                                        list as the numbers they stand for
+ * run_scenario_lua_panel_refusals      — an empty list clears, a list past
+ *                                        the count is refused, and a bad word
+ *                                        or a missing operand raises
+ * run_scenario_lua_presentation_targets
+ *                                      — everyone, a team and a seat reach
+ *                                        the arm as the pair each packs to,
+ *                                        for a panel, a line and a marker
+ * run_scenario_lua_score_and_announce  — the target chooses the score's kind,
+ *                                        a label with no room for its
+ *                                        terminator is refused, seconds
+ *                                        become ticks and an empty line
+ *                                        clears
+ *
  * and, run from the lobby case because it is the same subject: a row with a
  * state guard answers the state before its own arguments, while a row over
  * the map's own lists works in a lobby and in a round alike.
@@ -94,6 +130,8 @@
 #include "server_sim_lifecycle.h"  /* serverSimSetLobbyEnabled */
 #include "server_sim_scenario.h"   /* the funnel, for the removal case */
 #include "everard_map.h"
+#include "control_event.h"         /* what a presentation row published */
+#include "scenario_panel.h"        /* scnPanelParse — the bytes, read back */
 #include "scenario_host.h"
 #include "scenario_manifest.h"
 #include "scenario_lua.h"
@@ -129,6 +167,29 @@ static lua_State *slVm(ScnLuaCtx *ctx, ServerSim *sim, ScenarioManifest *m) {
     ctx->timers    = &slTimers;
     /* Running the file, not checking it: the write rows apply. */
     ctx->checkOnly = false;
+    scenarioLuaInstall(L, ctx);
+    return L;
+}
+
+/* The same state a reload builds to find out whether an edited file loads:
+ * the round's own sim to read, a manifest of its own that is thrown away
+ * afterwards, no timer set, and a context that says it is checking. Spelled
+ * the way scenario_host.c spells it, because what the case at the foot of
+ * the file asks is what that state does with each row.
+ *
+ * slTimers is not reset here: this state is given none. */
+static lua_State *slCheckOnlyVm(ScnLuaCtx *ctx, ServerSim *sim,
+                                ScenarioManifest *m) {
+    lua_State *L = luaL_newstate();
+
+    if (L == NULL) {
+        return NULL;
+    }
+    luaL_openlibs(L);
+    ctx->sim       = sim;
+    ctx->manifest  = m;
+    ctx->timers    = NULL;
+    ctx->checkOnly = true;
     scenarioLuaInstall(L, ctx);
     return L;
 }
@@ -360,9 +421,15 @@ static bool slAskExtraTeams(ServerSim *sim) {
 /* One call per row, by the row's own name, so a row that is in the registry
  * and cannot marshal is caught here whether or not a case below aims at it.
  * The keys are the registry's names: a row added without a line here reads
- * back as nothing at all and fails. */
-static const char *const kSlEveryRow =
-    "local calls = {\n"
+ * back as nothing at all and fails.
+ *
+ * The table is a chunk of its own and calls is a global, because the
+ * check-only case at the foot of the file walks the same calls and asks a
+ * different question of each answer. One set of arguments between the two:
+ * working out what a row will take is the hard half, and neither case has a
+ * reason of its own to differ. */
+static const char *const kSlEveryRowCalls =
+    "calls = {\n"
     "  tick        = function() return game.tick() end,\n"
     "  max_tanks   = function() return game.max_tanks() end,\n"
     "  num_players = function() return game.num_players() end,\n"
@@ -439,19 +506,43 @@ static const char *const kSlEveryRow =
     "  lobby_add_bot = function() return game.lobby_add_bot({team=2}) end,\n"
     "  lobby_remove_bot = function() return game.lobby_remove_bot(9) end,\n"
     "  lobby_set_team = function() return game.lobby_set_team(9, 2) end,\n"
+    /* Seat 9 is empty, so the hint row is exercised and refused before
+       anything looks for a brain to hand the table to. */
+    "  hint        = function() return game.hint(9, {verb=\"hold\"}) end,\n"
     "  message     = function() return game.message(\"hello\") end,\n"
+    /* Seat 9 is empty, so the row is exercised and refused before the line
+       reaches the chat dispatcher, which this fixture has no round for. */
+    "  say         = function() return game.say(9, \"hello\") end,\n"
     "  sound       = function() return game.sound(\"shoot_self\") end,\n"
     "  log         = function() return game.log(\"hello\") end,\n"
+    /* The presentation rows. Panel 0 is cleared rather than drawn to, and
+       the rest are aimed at seat 0 and a square well inside the map, so each
+       one is taken rather than refused. */
+    "  panel       = function() return game.panel(0, {}) end,\n"
+    "  score       = function() return game.score(0, 1, \"pts\") end,\n"
+    "  announce    = function() return game.announce(\"hello\", 1) end,\n"
+    "  marker      = function() return game.marker(0, 100, 100) end,\n"
+    "  marker_follow = function() return game.marker_follow(1, 0) end,\n"
+    "  clear_marker = function() return game.clear_marker(0) end,\n"
     "  set_game_time = function() return game.set_game_time(1000) end,\n"
     "  add_game_time = function() return game.add_game_time(10) end,\n"
     "  set_rule    = function() return game.set_rule(\"tank_reload_ticks\", 12) end,\n"
+    /* The test hook. Seat 9 is empty, so the row is exercised and refused
+       before the three-shot detector is handed anything — which is what the
+       other write rows aimed at an empty seat do, and an answer is all this
+       case asks for. */
+    "  shell_expired = function() return game.shell_expired(9, 100, 100) end,\n"
     /* The calls run in whatever order the table iterates in, which is not
        the same order under the two Lua builds, so no row here leans on
        another having run. This one ends the round the rest are working in,
        and a row that runs after it answers that the round is over — which
        is an answer, which is all this case asks for. */
     "  end_round   = function() return game.end_round(\"done\") end,\n"
-    "}\n"
+    "}\n";
+
+/* What each of them answered, as the name of its type — or the raise, with a
+ * bang in front of it. */
+static const char *const kSlEveryRowTypes =
     "results = {}\n"
     "for name, f in pairs(calls) do\n"
     "  local ok, v = pcall(f)\n"
@@ -493,7 +584,9 @@ int run_scenario_lua_every_row_answers(void) {
     L = slVm(&ctx, sim, &m);
     UT_ASSERT(L != NULL);
 
-    UT_ASSERT_MSG(slRun(L, kSlEveryRow, err, sizeof(err)),
+    UT_ASSERT_MSG(slRun(L, kSlEveryRowCalls, err, sizeof(err)),
+                  "the fixture would not run: %s", err);
+    UT_ASSERT_MSG(slRun(L, kSlEveryRowTypes, err, sizeof(err)),
                   "the fixture would not run: %s", err);
 
     rows = scenarioLuaRows(&count);
@@ -1992,8 +2085,9 @@ int run_scenario_lua_spawn_bot_refuses_bad_start(void) {
 /* A scripted round's own game type is gameScripted, and a script that feeds
    game.game_type() into a spawn's loadout would have that word refused: the
    loadout table holds "open", "tournament" and "strict" and nothing else. So
-   the row resolves, and a round that declared no base game reads "open".
-   With a base game declared the row reads that instead. */
+   the row resolves, and a round that declared no base game reads "strict",
+   which is what such a round plays. With a base game declared the row reads
+   that instead. */
 int run_scenario_lua_game_type_resolves_scripted(void) {
     ServerSim       *sim = ut_make_running_sim("Seat0");
     ScenarioManifest m;
@@ -2011,7 +2105,7 @@ int run_scenario_lua_game_type_resolves_scripted(void) {
     UT_ASSERT_MSG(slRun(L, "word = game.game_type()\n", err, sizeof(err)),
                   "the fixture would not run: %s", err);
     slGlobalStr(L, "word", word, sizeof(word));
-    UT_ASSERT_MSG(strcmp(word, "open") == 0,
+    UT_ASSERT_MSG(strcmp(word, "strict") == 0,
                   "a scripted round declaring no game read '%s'", word);
 
     /* The base game the lobby template carried reaches the row the same way
@@ -2031,6 +2125,831 @@ int run_scenario_lua_game_type_resolves_scripted(void) {
     slGlobalStr(L, "word", word, sizeof(word));
     UT_ASSERT_MSG(strcmp(word, "tournament") == 0,
                   "a table naming tournament read '%s'", word);
+
+    lua_close(L);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 19. The panel's bytes ────────────────────────────────────────── */
+
+/* What a presentation row published, caught at a subscriber. The events
+ * carry the destination pair the arm unpacked the op's target byte into, so
+ * a case reads the packing back through the one thing that undoes it. */
+typedef struct {
+    int          panels;
+    int          scores;
+    int          announces;
+    int          markers;
+    ControlEvent panel;
+    ControlEvent score;
+    ControlEvent announce;
+    ControlEvent marker;
+} SlCapture;
+
+static void slCaptureCb(void *ctx, const ControlEvent *evt) {
+    SlCapture *c = (SlCapture *)ctx;
+
+    switch (evt->type) {
+        case CTRL_SCN_PANEL:    c->panels++;    c->panel = *evt;    break;
+        case CTRL_SCN_SCORE:    c->scores++;    c->score = *evt;    break;
+        case CTRL_SCN_ANNOUNCE: c->announces++; c->announce = *evt; break;
+        case CTRL_SCN_MARKER:   c->markers++;   c->marker = *evt;   break;
+        default: break;
+    }
+}
+
+/* Registering replays the state the sim already holds, so the capture is
+ * emptied afterwards and counts only what the script does next. */
+static void slWatch(ServerSim *sim, SlCapture *c) {
+    memset(c, 0, sizeof(*c));
+    (void)serverSimRegisterSubscriber(sim, slCaptureCb, c);
+    memset(c, 0, sizeof(*c));
+}
+
+/* One of each primitive, written the way an author would: colours, sizes,
+ * alignments and the timer's mode as words. */
+static const char *const kSlOneOfEach =
+    "ok = game.panel(0, {\n"
+    "  { \"rect\",   1, 2, 3, 4, \"red\", true },\n"
+    "  { \"line\",   5, 6, 7, 8, \"blue\" },\n"
+    "  { \"text\",   9, 10, \"white\", \"small\", \"centre\", \"Hi\" },\n"
+    "  { \"name\",   11, 12, \"green\", \"normal\", \"right\", 0 },\n"
+    "  { \"sprite\", 13, 14, 15 },\n"
+    "  { \"bar\",    16, 17, 18, 19, \"cyan\", 300, 400 },\n"
+    "  { \"timer\",  20, 21, \"yellow\", \"normal\", \"left\", \"down\", 70000 },\n"
+    "})\n";
+
+/* The same list with every word written as the number it stands for. */
+static const char *const kSlOneOfEachNumbers =
+    "ok = game.panel(0, {\n"
+    "  { \"rect\",   1, 2, 3, 4, 5, 1 },\n"
+    "  { \"line\",   5, 6, 7, 8, 7 },\n"
+    "  { \"text\",   9, 10, 2, 0, 1, \"Hi\" },\n"
+    "  { \"name\",   11, 12, 6, 1, 2, 0 },\n"
+    "  { \"sprite\", 13, 14, 15 },\n"
+    "  { \"bar\",    16, 17, 18, 19, 10, 300, 400 },\n"
+    "  { \"timer\",  20, 21, 8, 1, 0, 0, 70000 },\n"
+    "})\n";
+
+/* The bytes those two lists are, written out here rather than asked of the
+ * writer: one opcode byte and its operands, multi-byte fields big-endian.
+ * A change to the layout has to be made twice — here and in the writer — or
+ * this case says so. */
+static const uint8_t kSlOneOfEachBytes[] = {
+    /* rect   */ 1, 1, 2, 3, 4, 5, 1,
+    /* line   */ 2, 5, 6, 7, 8, 7,
+    /* text   */ 3, 9, 10, 2, 0, 1, 2, 'H', 'i',
+    /* name   */ 4, 11, 12, 6, 1, 2, 0,
+    /* sprite */ 5, 13, 14, 15,
+    /* bar    */ 6, 16, 17, 18, 19, 10, 0x01, 0x2C, 0x01, 0x90,
+    /* timer  */ 7, 20, 21, 8, 1, 0, 0, 0x00, 0x01, 0x11, 0x70
+};
+
+/* Every primitive at the values the list above writes, so the parse is held
+ * against what the script asked for rather than against itself. */
+int run_scenario_lua_panel_builds_bytes(void) {
+    ServerSim       *sim = ut_make_running_sim("Seat0");
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    SlCapture        cap;
+    ScnPanelList     back;
+    char             err[512];
+
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+    slWatch(sim, &cap);
+
+    UT_ASSERT_MSG(slRun(L, kSlOneOfEach, err, sizeof(err)),
+                  "the chunk would not run: %s", err);
+    UT_ASSERT_MSG(slGlobalBool(L, "ok"),
+                  "a list of one of each primitive was not taken");
+    UT_ASSERT_MSG(cap.panels == 1, "the arm published %d panels, expected 1",
+                  cap.panels);
+    UT_ASSERT_MSG(cap.panel.u.scnPanel.len == sizeof(kSlOneOfEachBytes),
+                  "the list is %u bytes, expected %u",
+                  (unsigned)cap.panel.u.scnPanel.len,
+                  (unsigned)sizeof(kSlOneOfEachBytes));
+    UT_ASSERT_MSG(memcmp(cap.panel.u.scnPanel.bytes, kSlOneOfEachBytes,
+                         sizeof(kSlOneOfEachBytes)) == 0,
+                  "the bytes are not the ones the list spells");
+
+    /* And they are a list, not just the right bytes: the parser every
+       frontend draws through takes them back apart. */
+    memset(&back, 0, sizeof(back));
+    UT_ASSERT_MSG(scnPanelParse(cap.panel.u.scnPanel.bytes,
+                                cap.panel.u.scnPanel.len, &back) ==
+                      SCN_PANEL_OK,
+                  "the parser refused the bytes the row built");
+    UT_ASSERT_MSG(back.count == 7, "the list decoded to %u primitives",
+                  (unsigned)back.count);
+    UT_ASSERT(back.items[0].op == SCN_PANEL_OP_RECT);
+    UT_ASSERT_MSG(back.items[0].u.rect.colour == SCN_PANEL_COLOUR_RED &&
+                      back.items[0].u.rect.fill == 1,
+                  "the rect came back colour %u fill %u",
+                  (unsigned)back.items[0].u.rect.colour,
+                  (unsigned)back.items[0].u.rect.fill);
+    UT_ASSERT_MSG(back.items[2].u.text.len == 2 &&
+                      strcmp(back.items[2].u.text.text, "Hi") == 0,
+                  "the text came back as '%s'", back.items[2].u.text.text);
+    UT_ASSERT_MSG(back.items[2].u.text.size == SCN_PANEL_SIZE_SMALL &&
+                      back.items[2].u.text.align == SCN_PANEL_ALIGN_CENTRE,
+                  "the text's size and alignment came back %u and %u",
+                  (unsigned)back.items[2].u.text.size,
+                  (unsigned)back.items[2].u.text.align);
+    UT_ASSERT_MSG(back.items[5].u.bar.value == 300 &&
+                      back.items[5].u.bar.max == 400,
+                  "the bar came back %u over %u",
+                  (unsigned)back.items[5].u.bar.value,
+                  (unsigned)back.items[5].u.bar.max);
+    UT_ASSERT_MSG(back.items[6].u.timer.tick == 70000,
+                  "the timer came back at tick %lu",
+                  (unsigned long)back.items[6].u.timer.tick);
+
+    lua_close(L);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 20. A word and its number are the same list ──────────────────── */
+
+/* Two panels in one tick, so the coalescing rule — one update per panel per
+ * audience per tick — leaves both alone. */
+int run_scenario_lua_panel_words_and_numbers(void) {
+    ServerSim       *sim = ut_make_running_sim("Seat0");
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    SlCapture        cap;
+    uint8_t          words[SCN_PANEL_MAX];
+    uint16_t         wordsLen;
+    char             err[512];
+
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+    slWatch(sim, &cap);
+
+    UT_ASSERT_MSG(slRun(L, kSlOneOfEach, err, sizeof(err)),
+                  "the words chunk would not run: %s", err);
+    UT_ASSERT_MSG(slGlobalBool(L, "ok"), "the words list was not taken");
+    UT_ASSERT(cap.panels == 1);
+    wordsLen = cap.panel.u.scnPanel.len;
+    memcpy(words, cap.panel.u.scnPanel.bytes, wordsLen);
+
+    /* The next tick, because both chunks write the one panel for everyone and
+       the arm takes one update per (panel, target) in a tick. */
+    sim->tick++;
+
+    UT_ASSERT_MSG(slRun(L, kSlOneOfEachNumbers, err, sizeof(err)),
+                  "the numbers chunk would not run: %s", err);
+    UT_ASSERT_MSG(slGlobalBool(L, "ok"), "the numbers list was not taken");
+    UT_ASSERT_MSG(cap.panels == 2, "the arm published %d panels, expected 2",
+                  cap.panels);
+    UT_ASSERT_MSG(cap.panel.u.scnPanel.len == wordsLen,
+                  "the numbers list is %u bytes and the words list is %u",
+                  (unsigned)cap.panel.u.scnPanel.len, (unsigned)wordsLen);
+    UT_ASSERT_MSG(memcmp(cap.panel.u.scnPanel.bytes, words, wordsLen) == 0,
+                  "a colour, size, alignment and mode written as words do not "
+                  "reach the same bytes as the numbers they stand for");
+
+    lua_close(L);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 21. What a list is refused for, and what it raises for ───────── */
+
+/* The empty list is the one to get wrong: the writer answers 0 both for a
+ * list it would not take and for one with nothing in it, so a row reading
+ * that 0 as a refusal would leave a script no way to clear a panel. */
+int run_scenario_lua_panel_refusals(void) {
+    ServerSim       *sim = ut_make_running_sim("Seat0");
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    SlCapture        cap;
+    char             err[512];
+    char             code[64];
+    char             detail[256];
+    char             raised[256];
+
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+    slWatch(sim, &cap);
+
+    UT_ASSERT_MSG(slRun(L, "ok = game.panel(0, {})\n", err, sizeof(err)),
+                  "the clear would not run: %s", err);
+    UT_ASSERT_MSG(slGlobalBool(L, "ok"),
+                  "an empty list was answered as a failure rather than "
+                  "clearing the panel");
+    UT_ASSERT_MSG(cap.panels == 1, "the clear published %d panels", cap.panels);
+    UT_ASSERT_MSG(cap.panel.u.scnPanel.len == 0,
+                  "the cleared panel carries %u bytes",
+                  (unsigned)cap.panel.u.scnPanel.len);
+
+    /* One primitive past what a list holds. */
+    UT_ASSERT_MSG(slRun(L,
+                        "local big = {}\n"
+                        "for i = 1, 129 do big[i] = { \"sprite\", 1, 1, 1 } end\n"
+                        "res, code, detail = game.panel(0, big)\n",
+                        err, sizeof(err)),
+                  "the long list would not run: %s", err);
+    UT_ASSERT_MSG(slGlobalIsNil(L, "res"),
+                  "a list of 129 primitives was taken");
+    slGlobalStr(L, "code", code, sizeof(code));
+    UT_ASSERT_MSG(strcmp(code, scenarioLuaResultName(SCN_OP_TOO_BIG)) == 0,
+                  "the long list answered '%s'", code);
+    slGlobalStr(L, "detail", detail, sizeof(detail));
+    UT_ASSERT_MSG(strstr(detail, "128") != NULL,
+                  "the refusal does not name the limit: %s", detail);
+
+    /* A word that names no primitive, and an operand that is not there: both
+       are the script written wrong, so both raise. */
+    UT_ASSERT_MSG(slRun(L,
+                        "word_ok, word_err = pcall(function()\n"
+                        "  return game.panel(0, { { \"blob\", 1, 2 } })\n"
+                        "end)\n"
+                        "short_ok, short_err = pcall(function()\n"
+                        "  return game.panel(0, { { \"rect\", 1, 2, 3, 4, \"red\" } })\n"
+                        "end)\n"
+                        "flat_ok, flat_err = pcall(function()\n"
+                        "  return game.panel(0, { 7 })\n"
+                        "end)\n",
+                        err, sizeof(err)),
+                  "the raising chunk would not run: %s", err);
+
+    UT_ASSERT_MSG(!slGlobalBool(L, "word_ok"),
+                  "\"blob\" was taken as a primitive");
+    slGlobalStr(L, "word_err", raised, sizeof(raised));
+    UT_ASSERT_MSG(strstr(raised, "not a panel primitive") != NULL,
+                  "the raise does not say what the word should have been: %s",
+                  raised);
+
+    UT_ASSERT_MSG(!slGlobalBool(L, "short_ok"),
+                  "a rect with no fill was taken");
+    slGlobalStr(L, "short_err", raised, sizeof(raised));
+    UT_ASSERT_MSG(strstr(raised, "fill") != NULL &&
+                      strstr(raised, "entry 1") != NULL,
+                  "the raise names neither the entry nor the operand: %s",
+                  raised);
+
+    UT_ASSERT_MSG(!slGlobalBool(L, "flat_ok"),
+                  "a number was taken as a primitive");
+
+    lua_close(L);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 22. The three ways a presentation op is addressed ────────────── */
+
+/* Everyone, one team and one seat, through the one byte the payload carries
+ * and the pair the arm unpacks it into. Read at the event, because the
+ * unpacker is the only thing that says what the byte meant. */
+int run_scenario_lua_presentation_targets(void) {
+    static const struct {
+        const char *what;
+        const char *lua;
+        BYTE        team;
+        BYTE        player;
+    } rows[] = {
+        { "a panel to everyone",
+          "ok = game.panel(0, { { \"sprite\", 1, 1, 1 } })\n", 0, 0xFF },
+        { "a panel to a team",
+          "ok = game.panel(0, { { \"sprite\", 1, 1, 1 } }, { team = 3 })\n",
+          3, 0xFF },
+        { "a panel to a seat",
+          "ok = game.panel(0, { { \"sprite\", 1, 1, 1 } }, 0)\n", 0, 0 },
+        { "an announcement to everyone",
+          "ok = game.announce(\"go\", 1)\n", 0, 0xFF },
+        { "an announcement to a team",
+          "ok = game.announce(\"go\", 1, { team = 3 })\n", 3, 0xFF },
+        { "an announcement to a seat",
+          "ok = game.announce(\"go\", 1, 0)\n", 0, 0 },
+        { "a marker to everyone",
+          "ok = game.marker(0, 100, 100)\n", 0, 0xFF },
+        { "a marker to a team",
+          "ok = game.marker(0, 100, 100, \"red\", { team = 3 })\n", 3, 0xFF },
+        { "a marker to a seat",
+          "ok = game.marker(0, 100, 100, \"red\", 0)\n", 0, 0 },
+    };
+    ServerSim       *sim = ut_make_running_sim("Seat0");
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    SlCapture        cap;
+    char             err[512];
+    size_t           i;
+
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+    slWatch(sim, &cap);
+
+    for (i = 0; i < sizeof(rows) / sizeof(rows[0]); i++) {
+        BYTE team   = 0xEE;
+        BYTE player = 0xEE;
+
+        memset(&cap, 0, sizeof(cap));
+        UT_ASSERT_MSG(slRun(L, rows[i].lua, err, sizeof(err)),
+                      "%s: the chunk would not run: %s", rows[i].what, err);
+        UT_ASSERT_MSG(slGlobalBool(L, "ok"), "%s: was not taken",
+                      rows[i].what);
+
+        if (cap.panels == 1) {
+            team   = cap.panel.u.scnPanel.destTeam;
+            player = cap.panel.u.scnPanel.destPlayer;
+        } else if (cap.announces == 1) {
+            team   = cap.announce.u.scnAnnounce.destTeam;
+            player = cap.announce.u.scnAnnounce.destPlayer;
+        } else if (cap.markers == 1) {
+            team   = cap.marker.u.scnMarker.destTeam;
+            player = cap.marker.u.scnMarker.destPlayer;
+        } else {
+            UT_FAIL("%s: nothing was published", rows[i].what);
+        }
+        UT_ASSERT_MSG(team == rows[i].team && player == rows[i].player,
+                      "%s: reached the arm as team %u player %u, expected "
+                      "team %u player %u", rows[i].what, (unsigned)team,
+                      (unsigned)player, (unsigned)rows[i].team,
+                      (unsigned)rows[i].player);
+    }
+
+    lua_close(L);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 23. Scores, labels and how long a line stays up ──────────────── */
+
+/* Seconds are the unit a script counts in and the payload's is the server's
+ * own tick, which runs at GAME_NUMTOTALTICKS_SEC — the rate game.timer
+ * converts at and the one the client measures the line against. */
+int run_scenario_lua_score_and_announce(void) {
+    ServerSim       *sim = ut_make_running_sim("Seat0");
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    SlCapture        cap;
+    char             err[512];
+    char             code[64];
+    char             detail[256];
+
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+    memset(&m, 0, sizeof(m));
+    L = slVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+    slWatch(sim, &cap);
+
+    /* A team's score, and then a seat's: the target chooses the kind. */
+    UT_ASSERT_MSG(slRun(L, "ok = game.score({ team = 3 }, 42, \"pts\")\n", err,
+                        sizeof(err)),
+                  "the team score would not run: %s", err);
+    UT_ASSERT_MSG(slGlobalBool(L, "ok"), "a team score was not taken");
+    UT_ASSERT(cap.scores == 1);
+    UT_ASSERT_MSG(cap.score.u.scnScore.kind == SCN_SCORE_KIND_TEAM &&
+                      cap.score.u.scnScore.target == 3,
+                  "the team score reached the arm as kind %u target %u",
+                  (unsigned)cap.score.u.scnScore.kind,
+                  (unsigned)cap.score.u.scnScore.target);
+    UT_ASSERT_MSG(cap.score.u.scnScore.score == 42 &&
+                      strcmp(cap.score.u.scnScore.label, "pts") == 0,
+                  "the team score is %d labelled '%s'",
+                  (int)cap.score.u.scnScore.score,
+                  cap.score.u.scnScore.label);
+
+    UT_ASSERT_MSG(slRun(L, "ok = game.score(0, -7)\n", err, sizeof(err)),
+                  "the player score would not run: %s", err);
+    UT_ASSERT_MSG(slGlobalBool(L, "ok"), "a player score was not taken");
+    UT_ASSERT_MSG(cap.score.u.scnScore.kind == SCN_SCORE_KIND_PLAYER &&
+                      cap.score.u.scnScore.target == 0 &&
+                      cap.score.u.scnScore.score == -7,
+                  "the player score reached the arm as kind %u target %u "
+                  "score %d", (unsigned)cap.score.u.scnScore.kind,
+                  (unsigned)cap.score.u.scnScore.target,
+                  (int)cap.score.u.scnScore.score);
+
+    /* Sixteen bytes of label fill the field and leave the terminator
+       nowhere to go, so the row turns it down rather than handing the arm
+       a label it would refuse for the same reason. */
+    UT_ASSERT_MSG(slRun(L,
+                        "res, code, detail = game.score(0, 1, "
+                        "\"0123456789abcdef\")\n",
+                        err, sizeof(err)),
+                  "the long label would not run: %s", err);
+    UT_ASSERT_MSG(slGlobalIsNil(L, "res"), "a 16-byte label was taken");
+    slGlobalStr(L, "code", code, sizeof(code));
+    UT_ASSERT_MSG(strcmp(code, scenarioLuaResultName(SCN_OP_TOO_BIG)) == 0,
+                  "the long label answered '%s'", code);
+    slGlobalStr(L, "detail", detail, sizeof(detail));
+    UT_ASSERT_MSG(strstr(detail, "15") != NULL,
+                  "the refusal does not name the limit: %s", detail);
+
+    /* Seconds to ticks. */
+    UT_ASSERT_MSG(slRun(L, "ok = game.announce(\"go\", 2)\n", err,
+                        sizeof(err)),
+                  "the announcement would not run: %s", err);
+    UT_ASSERT_MSG(slGlobalBool(L, "ok"), "an announcement was not taken");
+    UT_ASSERT(cap.announces == 1);
+    UT_ASSERT_MSG(cap.announce.u.scnAnnounce.ticks ==
+                      2 * GAME_NUMTOTALTICKS_SEC,
+                  "two seconds reached the arm as %u ticks, expected %u",
+                  (unsigned)cap.announce.u.scnAnnounce.ticks,
+                  (unsigned)(2 * GAME_NUMTOTALTICKS_SEC));
+    UT_ASSERT_MSG(strcmp(cap.announce.u.scnAnnounce.text, "go") == 0,
+                  "the line reached the arm as '%s'",
+                  cap.announce.u.scnAnnounce.text);
+
+    /* A line with nothing in it is the clear, and it does not need a time to
+       be up for. */
+    UT_ASSERT_MSG(slRun(L, "ok = game.announce(\"\")\n", err, sizeof(err)),
+                  "the clear would not run: %s", err);
+    UT_ASSERT_MSG(slGlobalBool(L, "ok"),
+                  "an empty announcement was not taken, so a script has no "
+                  "way to take a line away");
+    UT_ASSERT_MSG(cap.announces == 2, "the clear published %d announcements",
+                  cap.announces);
+    UT_ASSERT_MSG(cap.announce.u.scnAnnounce.text[0] == '\0',
+                  "the clear carries '%s'", cap.announce.u.scnAnnounce.text);
+
+    /* And a line that does have something in it needs one: a fraction of a
+       second is no ticks at all, which the arm turns down. */
+    UT_ASSERT_MSG(slRun(L, "res, code = game.announce(\"go\", 0)\n", err,
+                        sizeof(err)),
+                  "the zero-second line would not run: %s", err);
+    UT_ASSERT_MSG(slGlobalIsNil(L, "res"),
+                  "a line with no time to be up in was taken");
+    slGlobalStr(L, "code", code, sizeof(code));
+    UT_ASSERT_MSG(strcmp(code, scenarioLuaResultName(SCN_OP_RANGE)) == 0,
+                  "the zero-second line answered '%s'", code);
+
+    lua_close(L);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 24. What every op takes ──────────────────────────────────────── */
+
+/* A row's doc string opens with the call's own signature and the argument
+ * array beside it says the same thing as data. This holds the two against
+ * each other, name for name and bracket for bracket: a row whose array
+ * drifts from its sentence is one a validator and a document would disagree
+ * about, and neither reader would know which of them was wrong.
+ *
+ * Room for any row's arguments and for the longest name on the surface.
+ * The widest the registry holds is add_base's six. */
+#define SL_OP_ARG_MAX  16
+#define SL_OP_NAME_MAX 32
+
+/* One argument as a doc string writes it: the name, and whether the doc put
+ * it inside square brackets. */
+typedef struct {
+    char name[SL_OP_NAME_MAX];
+    bool optional;
+} SlDocArg;
+
+/* The signature a doc string opens with, taken apart. False for a doc that
+ * opens with no signature at all, one whose brackets do not close, and one
+ * carrying more arguments or a longer name than there is room for here.
+ *
+ * A name ends at a space, a comma, a bracket or the closing parenthesis, so
+ * an argument is optional exactly when it starts inside a bracket. The depth
+ * is read where the name starts rather than where it ends, which is what
+ * makes the y of "y[, x]" required and the x optional. */
+static bool slDocSignature(const char *doc, char *name, size_t nameMax,
+                           SlDocArg *args, size_t argMax, size_t *count) {
+    const char *open = strchr(doc, '(');
+    const char *p;
+    size_t      nameLen;
+    size_t      depth    = 0;
+    size_t      tokenLen = 0;
+    size_t      tokenAt  = 0;
+    char        token[SL_OP_NAME_MAX];
+    bool        done     = false;
+
+    *count = 0;
+    if (open == NULL || open == doc) {
+        return false;
+    }
+    nameLen = (size_t)(open - doc);
+    if (nameLen >= nameMax) {
+        return false;
+    }
+    memcpy(name, doc, nameLen);
+    name[nameLen] = '\0';
+
+    for (p = open + 1; !done; p++) {
+        bool ended = true;
+
+        switch (*p) {
+            case '\0':
+                return false;   /* the signature never closes */
+            case ')':
+                done = true;
+                break;
+            case '[':
+                depth++;
+                break;
+            case ']':
+                if (depth == 0) {
+                    return false;
+                }
+                depth--;
+                break;
+            case ',':
+            case ' ':
+                break;
+            default:
+                ended = false;
+                if (tokenLen == 0) {
+                    tokenAt = depth;
+                }
+                if (tokenLen + 1 >= sizeof(token)) {
+                    return false;
+                }
+                token[tokenLen] = *p;
+                tokenLen++;
+                break;
+        }
+        if (ended && tokenLen > 0) {
+            token[tokenLen] = '\0';
+            if (*count >= argMax) {
+                return false;
+            }
+            snprintf(args[*count].name, sizeof(args[*count].name), "%s",
+                     token);
+            args[*count].optional = (tokenAt > 0);
+            (*count)++;
+            tokenLen = 0;
+        }
+    }
+    return depth == 0;
+}
+
+/* The ops a trigger's action list cannot write out, because one of their
+   arguments has a shape of its own: six take a table of named fields, panel
+   takes a list of primitives, and timer takes a function. An author reaches
+   these through a scenario's own Lua. */
+static const char *const kSlShapedOps[] = {
+    "panel", "spawn_bot", "lobby_add_bot", "hint", "set_stocks",
+    "add_stocks", "set_modifiers", "timer"
+};
+
+static const ScnLuaRow *slRowNamed(const char *name) {
+    const ScnLuaRow *rows;
+    size_t           count = 0;
+    size_t           i;
+
+    rows = scenarioLuaRows(&count);
+    for (i = 0; rows != NULL && i < count; i++) {
+        if (strcmp(rows[i].name, name) == 0) {
+            return &rows[i];
+        }
+    }
+    return NULL;
+}
+
+int run_scenario_lua_op_arguments_match_the_doc(void) {
+    const ScnLuaRow *rows;
+    size_t           count = 0;
+    size_t           i;
+    size_t           j;
+
+    rows = scenarioLuaRows(&count);
+    UT_ASSERT_MSG(rows != NULL && count > 0, "the registry is empty");
+
+    for (i = 0; i < count; i++) {
+        const ScnLuaRow *r = &rows[i];
+        SlDocArg         doc[SL_OP_ARG_MAX];
+        char             docName[SL_OP_NAME_MAX];
+        size_t           docCount = 0;
+        size_t           walked   = 0;
+
+        /* The names run to the terminator the array was built with, and the
+           count is how many there are. */
+        UT_ASSERT_MSG(r->params != NULL, "'%s' has no argument array",
+                      r->name);
+        while (walked <= r->paramCount && r->params[walked].name != NULL) {
+            UT_ASSERT_MSG(r->params[walked].name[0] != '\0',
+                          "'%s' names an empty argument at %d", r->name,
+                          (int)walked);
+            /* The terminator's type and nothing else: a real argument left
+               untyped would be read as the end of the array. */
+            UT_ASSERT_MSG(r->params[walked].type != SCN_PARAM_NONE,
+                          "'%s' gives its argument '%s' no type", r->name,
+                          r->params[walked].name);
+            walked++;
+        }
+        UT_ASSERT_MSG(walked == r->paramCount,
+                      "'%s' claims %d arguments and names %d", r->name,
+                      (int)r->paramCount, (int)walked);
+
+        /* An argument a call may leave out cannot come before one it has to
+           write: there would be no way to reach the second. */
+        for (j = 1; j < r->paramCount; j++) {
+            UT_ASSERT_MSG(!(r->params[j - 1].optional &&
+                            !r->params[j].optional),
+                          "'%s' takes the optional '%s' before the required "
+                          "'%s'", r->name, r->params[j - 1].name,
+                          r->params[j].name);
+        }
+
+        /* And the sentence says the same thing. */
+        UT_ASSERT_MSG(slDocSignature(r->doc, docName, sizeof(docName), doc,
+                                     SL_OP_ARG_MAX, &docCount),
+                      "'%s' opens with no signature this case can read: %s",
+                      r->name, r->doc);
+        UT_ASSERT_MSG(strcmp(docName, r->name) == 0,
+                      "the row '%s' carries the doc for '%s'", r->name,
+                      docName);
+        UT_ASSERT_MSG(docCount == r->paramCount,
+                      "'%s' takes %d arguments and its doc writes %d",
+                      r->name, (int)r->paramCount, (int)docCount);
+        for (j = 0; j < docCount; j++) {
+            UT_ASSERT_MSG(strcmp(doc[j].name, r->params[j].name) == 0,
+                          "'%s' argument %d is '%s' and its doc calls it "
+                          "'%s'", r->name, (int)j, r->params[j].name,
+                          doc[j].name);
+            UT_ASSERT_MSG(doc[j].optional == r->params[j].optional,
+                          "'%s' takes '%s' as %s and its doc writes it %s",
+                          r->name, r->params[j].name,
+                          r->params[j].optional ? "optional" : "required",
+                          doc[j].optional ? "in brackets"
+                                          : "outside brackets");
+        }
+    }
+
+    /* What a trigger may call is read off the types. The shaped ones answer
+       no. */
+    for (i = 0; i < sizeof(kSlShapedOps) / sizeof(kSlShapedOps[0]); i++) {
+        const ScnLuaRow *r = slRowNamed(kSlShapedOps[i]);
+
+        UT_ASSERT_MSG(r != NULL, "the registry has no row '%s'",
+                      kSlShapedOps[i]);
+        UT_ASSERT_MSG(!scenarioLuaOpIsScalar(r),
+                      "'%s' answers that every argument it takes is a flat "
+                      "scalar", kSlShapedOps[i]);
+    }
+
+    /* And an ordinary one answers yes, so the test above is not passing for
+       want of anything answering true. */
+    {
+        const ScnLuaRow *r = slRowNamed("give_pill");
+
+        UT_ASSERT_MSG(r != NULL, "the registry has no row 'give_pill'");
+        UT_ASSERT_MSG(scenarioLuaOpIsScalar(r),
+                      "give_pill takes a seat and a pillbox and does not "
+                      "answer as a call a trigger can write");
+    }
+
+    return 0;
+}
+
+/* ── 25. What a checking state turns down ─────────────────────────── */
+
+/* Each row's acts column, held against what the engine itself does with the
+ * row. A state that is checking a file rather than running one refuses every
+ * op that changes something and lets every read answer, so the column and
+ * the refusal have to say the same thing of every row — which is what makes
+ * an action combo built off the column safe.
+ *
+ * The calls are case 1's, so the two cases cannot drift apart over what
+ * arguments a row takes. What is read here is the second return value: a
+ * refusal is nil, the result's own name and a sentence, and the check-only
+ * refusal is the one that answers SCN_OP_WRONG_STATE — the funnel is never
+ * reached in this state, so no other refusal can carry that name. An op
+ * turned down for its arguments carries the name of that instead and is not
+ * read as a yes. */
+static const char *const kSlCheckOnlyDrive =
+    "checked = {}\n"
+    "for name, f in pairs(calls) do\n"
+    "  local ok, a, b = pcall(f)\n"
+    "  if not ok then checked[name] = \"!\" .. tostring(a)\n"
+    "  elseif a == nil then checked[name] = tostring(b)\n"
+    "  else checked[name] = \"answered\" end\n"
+    "end\n";
+
+/* The rows that act and reach no check-only refusal, because they change
+ * what the host holds rather than anything the funnel sees: two name a call
+ * to make later and one names a rectangle.
+ *
+ * A checking state is given no timer set, so timer refuses for that and not
+ * for the check; cancel_timer is handed the id timer just answered, which in
+ * this state is a refusal rather than a number, so the call is about its
+ * argument; and define_region writes the manifest the reload throws away and
+ * answers true. All three act, and the column says so — what cannot be read
+ * off the refusal is that it says so. */
+static const char *const kSlNoCheckRefusal[] = {
+    "timer", "cancel_timer", "define_region"
+};
+
+int run_scenario_lua_acting_rows_refuse_a_check(void) {
+    ServerSim       *sim     = ut_make_running_sim("Seat0");
+    const char      *refusal = scenarioLuaResultName((int)SCN_OP_WRONG_STATE);
+    const size_t     excepts = sizeof(kSlNoCheckRefusal) /
+                               sizeof(kSlNoCheckRefusal[0]);
+    ScenarioManifest m;
+    ScnLuaCtx        ctx;
+    lua_State       *L;
+    const ScnLuaRow *rows;
+    size_t           count   = 0;
+    size_t           i;
+    size_t           k;
+    size_t           skipped  = 0;
+    int              refused  = 0;
+    int              answered = 0;
+    char             err[512];
+
+    if (sim == NULL) UT_FAIL("could not build a running sim");
+
+    /* Three, and the list is meant to stay that small: one that has grown is
+       a surface the refusal no longer separates, which is the one thing this
+       case rests on. */
+    UT_ASSERT_MSG(excepts <= 3, "%d rows reach no check-only refusal",
+                  (int)excepts);
+    UT_ASSERT_MSG(refusal[0] != '\0', "the refusal has no name");
+
+    memset(&m, 0, sizeof(m));
+    L = slCheckOnlyVm(&ctx, sim, &m);
+    UT_ASSERT(L != NULL);
+
+    UT_ASSERT_MSG(slRun(L, kSlEveryRowCalls, err, sizeof(err)),
+                  "the fixture would not run: %s", err);
+    UT_ASSERT_MSG(slRun(L, kSlCheckOnlyDrive, err, sizeof(err)),
+                  "the fixture would not run: %s", err);
+
+    rows = scenarioLuaRows(&count);
+    UT_ASSERT_MSG(rows != NULL && count > 0, "the registry is empty");
+    for (i = 0; i < count; i++) {
+        bool excepted = false;
+        char got[256];
+
+        for (k = 0; k < excepts; k++) {
+            if (strcmp(rows[i].name, kSlNoCheckRefusal[k]) == 0) {
+                excepted = true;
+                break;
+            }
+        }
+        if (excepted) {
+            UT_ASSERT_MSG(rows[i].acts,
+                          "'%s' is written down as reaching no check-only "
+                          "refusal and as changing nothing either, which is "
+                          "no reason to leave it out", rows[i].name);
+            skipped++;
+            continue;
+        }
+
+        got[0] = '\0';
+        lua_getglobal(L, "checked");
+        lua_getfield(L, -1, rows[i].name);
+        if (lua_type(L, -1) == LUA_TSTRING) {
+            snprintf(got, sizeof(got), "%s", lua_tostring(L, -1));
+        }
+        lua_pop(L, 2);
+
+        UT_ASSERT_MSG(got[0] != '\0',
+                      "the fixture never calls game.%s, so nothing here "
+                      "exercises it", rows[i].name);
+        UT_ASSERT_MSG(got[0] != '!', "game.%s raised: %s", rows[i].name,
+                      got + 1);
+
+        if (rows[i].acts) {
+            UT_ASSERT_MSG(strcmp(got, refusal) == 0,
+                          "game.%s is written down as changing something and "
+                          "a checking state answered '%s' rather than %s",
+                          rows[i].name, got, refusal);
+            refused++;
+        } else {
+            UT_ASSERT_MSG(strcmp(got, refusal) != 0,
+                          "game.%s is written down as changing nothing and a "
+                          "checking state turned it down", rows[i].name);
+            answered++;
+        }
+
+        /* And what the editor's combo reads: the two flags together, never a
+           name. */
+        UT_ASSERT_MSG(scenarioLuaOpIsAction(&rows[i]) ==
+                          (rows[i].acts && scenarioLuaOpIsScalar(&rows[i])),
+                      "game.%s answers an action list differently from its "
+                      "two flags", rows[i].name);
+    }
+
+    UT_ASSERT_MSG(skipped == excepts, "%d of the %d left out were reached",
+                  (int)skipped, (int)excepts);
+    /* Both halves are real, so neither branch is passing for want of a row
+       taking it. */
+    UT_ASSERT_MSG(refused > 0 && answered > 0, "%d refused, %d answered",
+                  refused, answered);
+
+    UT_ASSERT(!scenarioLuaOpIsAction(NULL));
 
     lua_close(L);
     serverSimDestroy(sim);

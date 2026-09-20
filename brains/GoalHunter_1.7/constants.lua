@@ -4122,6 +4122,172 @@ M.KILL_ME_EXECUTE_TILES = 12
 M.ALLY_CLAIMED_STEAL_FRAC_KILLME = 0.10
 
 -- ══════════════════════════════════════════════════════════════════════════
+-- BOT COMMANDS (chat orders) — stage 1
+-- ══════════════════════════════════════════════════════════════════════════
+-- A human ally types "attack 5", "all defend 3", "socrates retreat" in
+-- team (or all) chat.  Every bot on the team hears the same line, prices the
+-- trip and the cheapest one takes the job; while it holds the order every
+-- OTHER strategic goal is stamped REJECTED in the pool (chip "order") so the
+-- pool visualizer still shows what lost and why.  Reactive goals (kill_lgm,
+-- take_cover, refuel, escape) keep bidding, so an order never stops the bot
+-- defending itself.  See orders.lua for the wire protocol and the auction.
+--
+-- MASTER SWITCH.  With it false nothing in this block is read: no chat line
+-- is parsed, no /info ob* verb is sent, no pool row is rejected.
+M.BOT_COMMANDS_ENABLED  = true   -- keel false
+-- How long one order holds the bot before goal selection is free again.
+-- 3000 ticks = 60 s at 50 ticks/s.  A repeat of the same line refreshes it.
+M.ORDER_FOCUS_TICKS     = 3000   -- keel 3000 (moot; master off)
+-- A GO-THERE ORDER HOLDS FOR THIS LONG AFTER IT ARRIVES (Andrew, Sep 15).
+-- The 60 s focus above is the TRAVEL budget: it bounds the drive, and an
+-- order that never gets there lapses on it the way it always did.  The moment
+-- the tank is on (or beside) the square the clock is replaced by this one, so
+-- "go there" means about ten seconds of standing on the spot rather than
+-- whatever is left of a minute.  500 ticks = 10 s at 50 ticks/s.  The bot
+-- says the number when it arrives, so this knob is what it promises.
+M.ORDER_GOTO_HOLD_TICKS = 500    -- keel 500 (moot; master off)
+-- THE HOLD PHASE STILL FIGHTS.  While the hold runs the hard goto lock comes
+-- off and goal selection runs again, so attack_tank and kill_lgm can win --
+-- but the tank must not DRIVE anywhere: it was sent to that square.  These
+-- are the goal kinds M.steer parks on (no throttle, turning and shooting
+-- only) and the two stuck detectors read as deliberate.  A goal that only
+-- works by moving (take_cover, escape_water, a flee) is NOT in here, so
+-- survival still drives.  A table, so it is not a preset entry; the master
+-- switch already turns the whole feature off.
+M.ORDER_HOLD_PARK_KINDS = {
+  goto_tile = true, attack_tank = true, kill_lgm = true, none = true,
+}
+-- Auction window.  The design said 6 ticks; a brain thinks every 2 game
+-- ticks and a bid is seen on the ally's NEXT think, so 6 is tight -- 10
+-- gives every ally one full round trip.  The auction still ends EARLY the
+-- moment every active ally has answered, so the window is only a cap.
+M.ORDER_AUCTION_TICKS   = 10     -- keel 10 (moot; master off)
+-- Steal hysteresis: a free bot takes a live order off its holder only when
+-- its own travel price is lower by BOTH of these, and only after the holder
+-- has had the job for ORDER_STEAL_HOLD_TICKS.
+M.ORDER_STEAL_PCT       = 0.20   -- keel 0.20 (moot; master off)
+M.ORDER_STEAL_MIN_TILES = 2      -- keel 2 (moot; master off)
+M.ORDER_STEAL_HOLD_TICKS = 100   -- keel 100 (moot; master off)
+-- Bids are Dijkstra COST units, not tiles, so the min-tiles rule above is
+-- converted with this "what one plain tile costs" scale.
+M.ORDER_TILE_COST       = 4      -- keel 4 (moot; master off)
+-- `nearby <verb> <target>`: every bot within this many tiles OF THE TARGET
+-- (never of the sender -- distance is always measured to the target so every
+-- bot computes the same answer).
+M.ORDER_NEARBY_TILES    = 10     -- keel 10 (moot; master off)
+-- THREE SHOTS = COME HERE.  The server's "!goto <mx> <my> <sx> <sy>" line
+-- carries the SHOOTER's tile, and only a bot inside the shooter's screen
+-- takes the order: this is how far that reaches, measured the way a screen
+-- is (the larger of the two axes), so 14 is the 29x29 view.  A "!goto x y"
+-- with no shooter tile -- a human typing it -- keeps ORDER_NEARBY_TILES.
+M.ORDER_SHOT_VIEW_TILES = 14     -- keel 14 (moot; master off)
+-- A line of only bot names SELECTS them; the sender's next order goes to the
+-- selected set with no auction.  The selection lapses after this.
+M.ORDER_SELECT_TICKS    = 500    -- keel 500 (moot; master off)
+-- The same order said again to a bot that already holds it refreshes the
+-- focus AND gets one "Still on it." line back.  This is the floor between
+-- two of those lines, so a key held down cannot fill the chat with them.
+-- 50 ticks = 1 s.
+M.ORDER_REPEAT_ACK_TICKS = 50    -- keel 50 (moot; master off)
+-- `attack <tank name>`: how long the named tank may be missing before the
+-- order ends.  From inside the brain a dead tank and one that drove out of
+-- sight look the same -- it drops out of the object scan and its remembered
+-- ghost ages out -- so one timer covers both.  Long enough that a blink
+-- behind a forest is not the end of the job.  500 ticks = 10 s.
+M.ORDER_TANK_LOST_TICKS = 500    -- keel 500 (moot; master off)
+-- Price of an ordered goal the pools did not offer this tick (a defend_pill
+-- with no alarm, a take_cover with no trigger, an attack_tank out of engage
+-- range).  Low enough to beat the rejected strategic field, high enough that
+-- a real emergency (flee at critical armour, a builder in reach) still wins.
+M.ORDER_INJECT_COST     = 20     -- keel 20 (moot; master off)
+-- Orders that do NOT need shells (sweeping a dead pill, retreating, taking a
+-- neutral base) send the bot straight there: the refuel row is rejected too
+-- while armour is above the escape line.  false = refuel competes as usual.
+M.ORDER_REFUEL_SKIP_NO_SHELLS = true   -- keel false
+-- Goal kinds that keep bidding under an order.  Everything NOT in here is
+-- STRATEGIC and gets the "order" reject while the slot is live.  A knob so
+-- the split can be retuned without touching goal selection.
+-- NOT in PRESETS.keel: a preset entry must be a scalar (_cfg_set refuses
+-- tables), and the master switch above already turns the whole feature off.
+M.ORDER_REACTIVE_KINDS = {
+  attack_tank = true, kill_lgm = true, take_cover = true,
+  refuel_at_base = true, flee_to_base = true, flee_pill = true,
+  escape_water = true, rescue_lgm = true, kill_me_wait = true,
+  mine_crater = true, none = true,
+}
+-- "A stuck escape in progress" for busy().  The old test read
+-- state._stuck_escape_count, which counts CONSECUTIVE stuck recoveries at one
+-- tile and is only ever zeroed when it reaches its own hard-escape threshold
+-- or on respawn -- so one stuck moment early in a game left the bot "busy"
+-- for the rest of it and it could never take an order.  state.stuck_for is
+-- the live counter (zeroed the moment the tank moves or fires), and 150 is
+-- the same tile-stuck limit steering.lua uses to fire its escape.
+M.ORDER_STUCK_BUSY_TICKS = 150   -- keel 150 (moot; master off)
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- BOT COMMANDS — stage 2 (pings, focus, reposition switch, the speaking bot)
+-- ══════════════════════════════════════════════════════════════════════════
+-- PINGS.  The engine already delivers a teammate's smart ping to the brain as
+-- an EVENT_PING; orders.lua turns the BOT COMMAND kind into an order and the
+-- CAUTION kind into a cancel/retreat.  The tile the ping lands on picks the
+-- verb (enemy live pill -> attack, dead pill -> sweep, enemy/neutral base ->
+-- capture, our own pill/base -> defend, an ally bot -> select it, an enemy
+-- tank -> attack_tank, open ground -> go there and hold).
+-- A ping resolves to whatever sits on the EXACT tile; only when that tile is
+-- empty is the 3x3 ring searched, and then the nearer candidate wins (ties on
+-- player number).  This is the ring radius, in tiles.
+M.ORDER_PING_RING = 1            -- keel 1 (moot; master off)
+-- How long a ping order's anchor tile stays matchable, so a repeat ping in
+-- the same 3x3 ADDS a bot to the same order instead of opening a new one.
+-- Same clock as the focus timer.
+M.ORDER_PING_MATCH_TICKS = 3000  -- keel 3000 (moot; master off)
+
+-- FOCUS.  "focus bases" / "take bases" / "focus pills" / "take pills" /
+-- "focus off" in chat.  Team-wide, for the whole game or until changed, and
+-- `cancel all` does not touch it.  It works by PRICING, not by rejecting: the
+-- OTHER class pays this multiplier and the focused class keeps its real price,
+-- so a pill never becomes artificially cheap next to attack_tank, refuel,
+-- escape or take_cover and survival still wins when it should.
+--   focus bases -> every PILL goal pays it
+--                  (attack_pill, capture_pill, defend_pill, repair_pill,
+--                   reposition, place_pill_strategic)
+--   focus pills -> every BASE goal pays it (capture_base, attack_base)
+-- Applied at ONE choke point, the assembled-pool pass in goal_selection right
+-- beside the pill-suicider surcharge, and shown in every affected row's term
+-- breakdown as "|focus: x3.0 (bases)" so the panel stays hand-computable.
+M.FOCUS_OTHER_COST_MULT = 3.0    -- keel 1.0 (no focus factor at all)
+-- The speaking bot re-broadcasts the team's focus and reposition settings on
+-- this period so a bot that joined or respawned late latches the same values.
+-- The settings ride their own /info verbs (obf / obp) rather than the state
+-- slate, which is already close to the 124-byte batch budget.
+M.ORDER_LATCH_REBROADCAST_TICKS = 1500   -- keel 1500 (moot; master off) 30 s
+
+-- BOT PINGS.  When a team turns this on, a bot puts an ATTACK marker on the
+-- map every time it takes an attack_pill or attack_tank goal, so the team can
+-- see what the bots are going for without reading chat.  OFF by default: it
+-- is map clutter until somebody asks for it.  The team setting is
+-- "bot pings on" / "bot pings off"; this is the value a game starts at.
+--
+-- The ON_MY_WAY marker a bot places when it takes an ORDER is NOT covered by
+-- this switch.  That one answers a person who just gave the order, so it is
+-- always sent.
+M.BOT_PINGS_DEFAULT      = false  -- keel false
+-- Shortest gap between two ATTACK markers from the SAME bot about the SAME
+-- target.  A bot re-plans the same goal often, and without this every replan
+-- would put another marker on the same pill.  1500 ticks is 30 s.
+M.ORDER_PING_REPEAT_TICKS = 1500  -- keel 1500 (moot; master off) 30 s
+
+-- How far the seat a bot is escorting may drift from where the bot was last
+-- sent before the escort re-aims.  A hint may name its own `distance`; this
+-- is what one that does not gets.  Three squares keeps the pair together
+-- without re-running the order every think as the escorted tank rolls.
+--
+-- NO `keel` ENTRY.  Scenario hints did not exist in the keel baseline, so
+-- there is no pre-change value for a keel bot to reproduce: it is never
+-- hinted and never reads this.
+M.ORDER_HINT_ESCORT_TILES = 3
+
+-- ══════════════════════════════════════════════════════════════════════════
 -- PRESETS — named bundles of constant overrides, applied per bot
 -- ══════════════════════════════════════════════════════════════════════════
 -- A bot given the BRAIN_INIT_ARG token "preset=NAME" has every entry of
@@ -4351,6 +4517,38 @@ M.PRESETS = {
     --   fight loop.  This one flag turns the whole feature off; every other
     --   KILL_ME_* knob is unread while it is false.
     KILL_ME_ENABLED               = false,
+    --   and there were no chat orders at all: no line was parsed, no /info
+    --   ob* verb went out, no pool row carried an "order" reject.  This one
+    --   flag turns the whole feature off; the rest are pinned at their
+    --   defaults only so a later tweak to one cannot leak into the baseline.
+    --   ORDER_REACTIVE_KINDS is a TABLE and cannot ride a preset, but it is
+    --   unread while the master is false.
+    BOT_COMMANDS_ENABLED          = false,
+    ORDER_FOCUS_TICKS             = 3000,
+    ORDER_GOTO_HOLD_TICKS         = 500,
+    ORDER_AUCTION_TICKS           = 10,
+    ORDER_STEAL_PCT               = 0.20,
+    ORDER_STEAL_MIN_TILES         = 2,
+    ORDER_STEAL_HOLD_TICKS        = 100,
+    ORDER_TILE_COST               = 4,
+    ORDER_NEARBY_TILES            = 10,
+    ORDER_SHOT_VIEW_TILES         = 14,
+    ORDER_SELECT_TICKS            = 500,
+    ORDER_REPEAT_ACK_TICKS        = 50,
+    ORDER_TANK_LOST_TICKS         = 500,
+    ORDER_INJECT_COST             = 20,
+    ORDER_REFUEL_SKIP_NO_SHELLS   = false,
+    ORDER_STUCK_BUSY_TICKS        = 150,
+    ORDER_PING_RING               = 1,
+    ORDER_PING_MATCH_TICKS        = 3000,
+    ORDER_LATCH_REBROADCAST_TICKS = 1500,
+    BOT_PINGS_DEFAULT             = false,
+    ORDER_PING_REPEAT_TICKS       = 1500,
+    --   FOCUS_OTHER_COST_MULT is the one stage-2 knob that is NOT covered by
+    --   the master switch: the focus multiplier sits inside the cost
+    --   competition, so its keel value has to be the identity, 1.0, for the
+    --   baseline pool numbers to come out unchanged.
+    FOCUS_OTHER_COST_MULT         = 1.0,
   },
   -- nolgm_off: RUDDER as it stood BEFORE the loaded, builder-less work
   -- (2026-09-08) -- every knob that work added, at its pre-change value, and

@@ -32,7 +32,9 @@
 #include "server_sim_internal.h"
 #include "server_sim_lifecycle.h"   /* lobbyAutoUnreadyOnChange */
 #include "server_sim_join.h"        /* serverSimAssignLobbyStartOnJoin — start reconcile after a map change */
+#include "server_sim_scenario.h"    /* serverSimScenarioListDir — what the public scenario enumeration copies from */
 #include "bolo_rand.h"              /* bolo_rand_below — the rotation's random pick */
+#include "bolo_map_validate.h"      /* boloMapBodyLength — where the preview's read stops */
 #include "client_sim.h"             /* clientSimGetGameSim — the in-process client map reload */
 #include "../../common/md5.h"       /* the compressed-map hash the preview paths compare */
 #include "../../common/mp_diag_log.h"
@@ -293,6 +295,37 @@ const char *serverSimGetMapDirRoot(const ServerSim *sim) {
         return sim->mapDirPath;
     }
     return "data/maps";
+}
+
+void serverSimSetScenarioDir(ServerSim *sim, const char *dir) {
+    if (sim == NULL) return;
+    if (dir != NULL) {
+        SDL_strlcpy(sim->scenarioDirPath, dir, sizeof(sim->scenarioDirPath));
+    } else {
+        sim->scenarioDirPath[0] = '\0';
+    }
+}
+
+const char *serverSimGetScenarioDir(const ServerSim *sim) {
+    if (sim != NULL && sim->scenarioDirPath[0] != '\0') {
+        return sim->scenarioDirPath;
+    }
+    return "data/scenarios";
+}
+
+void serverSimSetSelectedScenario(ServerSim *sim, const char *file) {
+    if (sim == NULL) return;
+    if (file != NULL) {
+        SDL_strlcpy(sim->scenarioSelectedFile, file,
+                    sizeof(sim->scenarioSelectedFile));
+    } else {
+        sim->scenarioSelectedFile[0] = '\0';
+    }
+}
+
+const char *serverSimGetSelectedScenario(const ServerSim *sim) {
+    if (sim == NULL) return "";
+    return sim->scenarioSelectedFile;
 }
 
 void serverSimSetUploadPersistDir(ServerSim *sim, const char *dir) {
@@ -905,9 +938,15 @@ static bool relPathIsSafe(const char *p) {
  * virtual "Uploads" folder (and "Uploads/<name>") redirects to the configured
  * persist directory when the sim has one set; every other path — and the unset
  * case — resolves under the map-dir root as before. relPath must already have
- * passed relPathIsSafe. out holds at least FILENAME_MAX bytes. */
-static void serverSimResolveMapPath(const ServerSim *sim, const char *relPath,
-                                     char *out, size_t outSize) {
+ * passed relPathIsSafe. out holds at least FILENAME_MAX bytes.
+ *
+ * Not static: the lobby's set-map command and the upload preview's use-local
+ * path name a map by the same relPath a listing gave, and each used to build
+ * "<map root>/<relPath>" for itself. With a persist directory configured that
+ * opens a different file from the one the client picked, so both come through
+ * here instead. Declared in server_sim_shared.h. */
+void serverSimResolveMapPath(const ServerSim *sim, const char *relPath,
+                             char *out, size_t outSize) {
     const char *persist =
         (sim && sim->uploadPersistDir[0] != '\0') ? sim->uploadPersistDir : NULL;
     if (persist != NULL && relPath != NULL) {
@@ -926,6 +965,20 @@ static void serverSimResolveMapPath(const ServerSim *sim, const char *relPath,
     } else {
         SDL_snprintf(out, outSize, "%s/%s", root, relPath);
     }
+}
+
+void serverSimGetUploadsDir(const ServerSim *sim, char *out, size_t outLen) {
+    if (out == NULL || outLen == 0) {
+        return;
+    }
+    out[0] = '\0';
+    if (sim == NULL) {
+        return;
+    }
+    /* The virtual folder's own name, resolved the way any map path under it
+       is, so the prefix a caller compares against is the one the resolve
+       would have produced. */
+    serverSimResolveMapPath(sim, "Uploads", out, outLen);
 }
 
 int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
@@ -989,6 +1042,47 @@ int serverSimEnumerateMapDir(ServerSim *sim, const char *relPath,
     }
 
     return count;
+}
+
+/* The public entry and the scenario library's hold the same three lengths.
+   They are stated twice because a gui translation unit reads public/ and
+   cannot reach scenario_api/; this file sees both, and is where a change to
+   one without the other fails to build. */
+BOLO_STATIC_ASSERT(SERVER_SCENARIO_FILE_LEN == SCN_DIR_FILE_LEN,
+                   server_scenario_file_matches_the_directory_entry);
+BOLO_STATIC_ASSERT(SERVER_SCENARIO_NAME_LEN == SCN_DIR_NAME_LEN,
+                   server_scenario_name_matches_the_directory_entry);
+BOLO_STATIC_ASSERT(SERVER_SCENARIO_DESC_LEN == SCN_DIR_DESC_LEN,
+                   server_scenario_description_matches_the_directory_entry);
+
+int serverSimEnumerateScenarioDir(ServerSim *sim,
+                                  ServerScenarioEntry *entries,
+                                  int maxEntries) {
+    ScnDirEntry *dirRows;
+    int          got;
+    int          i;
+
+    if (entries == NULL || maxEntries <= 0) return 0;
+
+    /* Read into heap rather than a stack array: an entry carries a
+       description, so a full listing runs to tens of kilobytes and this is
+       called from a UI thread as readily as a server one. */
+    dirRows = (ScnDirEntry *)calloc((size_t)maxEntries, sizeof(*dirRows));
+    if (dirRows == NULL) return 0;
+
+    got = serverSimScenarioListDir(sim, dirRows, maxEntries);
+    for (i = 0; i < got; i++) {
+        ServerScenarioEntry *e = &entries[i];
+        SDL_strlcpy(e->file, dirRows[i].file, sizeof(e->file));
+        SDL_strlcpy(e->name, dirRows[i].name, sizeof(e->name));
+        SDL_strlcpy(e->description, dirRows[i].description,
+                    sizeof(e->description));
+        e->maxPlayers = dirRows[i].maxPlayers;
+        e->bots       = dirRows[i].bots;
+        e->bound      = dirRows[i].bound;
+    }
+    free(dirRows);
+    return got;
 }
 
 static void searchDirRecursive(const char *fullRoot,
@@ -1215,14 +1309,46 @@ bool serverSimReadMapFile(ServerSim *sim, const char *relPath,
     if (!fp) return false;
     if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); return false; }
     long sz = ftell(fp);
-    if (sz <= 0 || (size_t)sz > LOBBY_MAP_UPLOAD_MAX_BYTES) { fclose(fp); return false; }
+    if (sz <= 0) { fclose(fp); return false; }
     if (fseek(fp, 0, SEEK_SET) != 0) { fclose(fp); return false; }
-    uint8_t *buf = (uint8_t *)malloc((size_t)sz);
+
+    /* A file inside the cap is read whole; one over it is read as a prefix
+       that large. A whole plain map fits inside the cap, so the front of an
+       over-cap file still holds its map however large whatever follows it
+       is — which is how a map with a scenario chunk appended gets read at
+       all, where sizing the read off the file would refuse it outright. */
+    bool   overCap = (size_t)sz > LOBBY_MAP_UPLOAD_MAX_BYTES;
+    size_t want    = overCap ? (size_t)LOBBY_MAP_UPLOAD_MAX_BYTES : (size_t)sz;
+
+    uint8_t *buf = (uint8_t *)malloc(want);
     if (!buf) { fclose(fp); return false; }
-    size_t got = fread(buf, 1, (size_t)sz, fp);
+    size_t got = fread(buf, 1, want, fp);
     fclose(fp);
-    if (got != (size_t)sz) { free(buf); return false; }
+    if (got != want) { free(buf); return false; }
+
+    /* Where the map stops is where this read stops: a chunk appended after a
+       map is the server's business rather than a client's, and the preview
+       only ever wants the map.
+
+       What is not a map is handed back as it was read. This function reads
+       bytes for a caller and does not judge them, and a file that does not
+       parse is a file with no chunk in it to keep back. The one exception is
+       the over-cap file, which only ever got this far because its front
+       might have been a map: with no map in it there is nothing to trim it
+       to, so it is refused, as an over-cap file always has been. */
+    size_t bodyLen = 0;
+    if (boloMapBodyLength(buf, got, &bodyLen)) {
+        if (bodyLen < got) {
+            uint8_t *trimmed = (uint8_t *)realloc(buf, bodyLen);
+            if (trimmed != NULL) buf = trimmed;
+        }
+        got = bodyLen;
+    } else if (overCap) {
+        free(buf);
+        return false;
+    }
+
     *outBytes = buf;
-    *outLen   = (size_t)sz;
+    *outLen   = got;
     return true;
 }

@@ -38,6 +38,7 @@ struct MeMenuState {
     bool showOverview;
     bool showStats;
     bool showStampLibrary;
+    bool showScenario;
     /* Recent files — paths are borrowed; the shim copies only what it
      * needs each frame (basename for the label, full path for tooltip). */
     int  numRecent;

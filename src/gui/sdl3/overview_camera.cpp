@@ -26,8 +26,9 @@
 #include "overview_camera.h"
 
 /* Discrete zoom ladder. 0.5x is the floor (8 px squares — a window smaller
- * than the 2048 px map pans rather than switching to colour blocks) and 4x
- * the ceiling (64 px squares). */
+ * than the 2048 px map pans rather than zooming out further) and 4x the
+ * ceiling (64 px squares). The two rungs under 1x are where the view stops
+ * drawing sprites and fills each square with its map colour instead. */
 static const float kOverviewZoomSteps[] = {
     0.5f, 0.75f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f
 };
@@ -148,21 +149,42 @@ void overviewCameraSetZoomScale(OverviewCamera *cam, float scale) {
     overviewCameraClamp(cam);
 }
 
+/* View pixel of map square 0,0's top-left corner, snapped to a whole pixel.
+ * The camera is continuous, so the corner can land on a fraction; rounding it
+ * once here, and adding whole tiles to it everywhere else, is what keeps every
+ * consumer on the same grid. Rounding per square would not: neighbours can
+ * fall on opposite sides of a half-pixel and either leave a gap or overlap by
+ * one, and a sprite placed from the unrounded corner can straddle two snapped
+ * squares. tilePx is a whole number at every rung and mapX * tilePx is at most
+ * 16384, so origin + mapX * tilePx is exact in float and squares abut. */
+static void overviewOriginPx(const OverviewCamera *cam, int viewW, int viewH,
+                             float *outOX, float *outOY) {
+    float tilePx = overviewTilePx(cam);
+    *outOX = roundf(-cam->cx * tilePx + (float)viewW * 0.5f);
+    *outOY = roundf(-cam->cy * tilePx + (float)viewH * 0.5f);
+}
+
 void overviewCameraWorldToScreen(const OverviewCamera *cam, int viewW, int viewH,
                                  float mapX, float mapY,
                                  float *outSX, float *outSY) {
     if (!cam) return;
     float tilePx = overviewTilePx(cam);
-    if (outSX) *outSX = (mapX - cam->cx) * tilePx + (float)viewW * 0.5f;
-    if (outSY) *outSY = (mapY - cam->cy) * tilePx + (float)viewH * 0.5f;
+    float ox = 0.0f, oy = 0.0f;
+    overviewOriginPx(cam, viewW, viewH, &ox, &oy);
+    if (outSX) *outSX = ox + mapX * tilePx;
+    if (outSY) *outSY = oy + mapY * tilePx;
 }
 
 bool overviewCameraScreenToWorld(const OverviewCamera *cam, int viewW, int viewH,
                                  float sx, float sy, int *outMapX, int *outMapY) {
     if (!cam) return false;
+    /* The inverse of overviewCameraWorldToScreen, from the same snapped
+     * origin, so the square under a pixel is the square drawn there. */
     float tilePx = overviewTilePx(cam);
-    float worldX = (sx - (float)viewW * 0.5f) / tilePx + cam->cx;
-    float worldY = (sy - (float)viewH * 0.5f) / tilePx + cam->cy;
+    float ox = 0.0f, oy = 0.0f;
+    overviewOriginPx(cam, viewW, viewH, &ox, &oy);
+    float worldX = (sx - ox) / tilePx;
+    float worldY = (sy - oy) / tilePx;
     int mx = overviewFloorToInt(worldX);
     int my = overviewFloorToInt(worldY);
     /* Written even when off the map, so an edge drag can read the

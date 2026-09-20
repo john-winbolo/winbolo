@@ -64,6 +64,38 @@ void brainCoreRegisterConstants(lua_State *L);
  *********************************************************/
 void brainCoreSetInitTable(lua_State *L, const ScnTable *init);
 
+/* What became of a hint handed to one brain. */
+typedef enum {
+  BRAIN_HINT_DELIVERED = 0, /* the brain has a handler and it returned */
+  BRAIN_HINT_NO_HANDLER,    /* the brain does not take hints */
+  BRAIN_HINT_ERROR          /* the handler raised */
+} BrainHintResult;
+
+/*********************************************************
+ *NAME:          brainCoreCallScenarioHint
+ *PURPOSE:
+ *  Calls the brain's on_scenario_hint global with the
+ *  hint table's pairs as one Lua table of string values.
+ *  The table is built on the VM's stack pair by pair, so
+ *  nothing a scenario wrote is ever compiled as Lua.
+ *
+ *  A brain with no on_scenario_hint answers
+ *  BRAIN_HINT_NO_HANDLER and its VM is left as it was
+ *  found: a scenario names a seat and cannot know which
+ *  brain a server runs it with, so that is not a failure.
+ *  A handler that raises answers BRAIN_HINT_ERROR and
+ *  writes the message into err when one is asked for.
+ *  The stack is balanced whichever way it ends.
+ *
+ *ARGUMENTS:
+ *  L      - the brain's Lua state
+ *  hint   - the pairs to hand it; NULL is an empty table
+ *  err    - where a handler's error message goes, or NULL
+ *  errCap - how much room err has
+ *********************************************************/
+BrainHintResult brainCoreCallScenarioHint(lua_State *L, const ScnTable *hint,
+                                          char *err, size_t errCap);
+
 /*********************************************************
  *NAME:          brainCoreUpdateInitTable
  *PURPOSE:

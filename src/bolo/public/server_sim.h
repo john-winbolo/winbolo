@@ -727,6 +727,91 @@ void serverSimSetMessageLogFile(ServerSim *sim, const char *path);
 void serverSimSetQuiet(ServerSim *sim, bool quiet);
 
 /*********************************************************
+ *NAME:          serverSimSetScenarioDir
+ *               serverSimGetScenarioDir
+ *PURPOSE:
+ *  The directory of scenarios this server offers on their
+ *  own, independently of any map: -scenariodir on the
+ *  dedicated server, the "Scenario Dir" preference on a
+ *  desktop host. The getter falls back to the built-in
+ *  "data/scenarios" the way the map root falls back to
+ *  "data/maps"; NULL or "" to the setter goes back to that
+ *  default. No trailing slash.
+ *
+ *  Public rather than beside the map root in
+ *  server_sim_lifecycle.h: a desktop host sets this one from
+ *  its own preferences, and a GUI translation unit sees
+ *  public/ only.
+ *
+ *  Setting it reads nothing. The directory is read when a
+ *  client asks for the list, through the lister registered
+ *  with serverSimSetScenarioLister, and a directory that is
+ *  not there answers an empty list rather than an error —
+ *  a server offering no scenarios of its own is the
+ *  ordinary case.
+ *
+ *ARGUMENTS:
+ *  sim - Pointer to the ServerSim
+ *  dir - The directory, or NULL for the built-in default
+ *********************************************************/
+void        serverSimSetScenarioDir(ServerSim *sim, const char *dir);
+const char *serverSimGetScenarioDir(const ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimGetUploadsDir
+ *PURPOSE:
+ *  Where an uploaded map lands on disk: the configured
+ *  persist directory, or "<map root>/Uploads" when none is
+ *  configured. This is the same answer the virtual
+ *  "Uploads" folder resolves to, so a map file sitting
+ *  under it is a map a client sent this server.
+ *
+ *  Public because the scenario library asks it. A map's
+ *  path is the only record that it arrived as an upload —
+ *  the bytes are written straight to their final name and
+ *  nothing is stamped on the file — so the switch that
+ *  decides whether an uploaded map's script may run has
+ *  this prefix to compare against and nothing else.
+ *
+ *  out is left empty when sim is NULL.
+ *
+ *ARGUMENTS:
+ *  sim    - Pointer to the ServerSim
+ *  out    - Buffer the directory is written to, no
+ *           trailing slash
+ *  outLen - Size of out; FILENAME_MAX holds every answer
+ *********************************************************/
+void        serverSimGetUploadsDir(const ServerSim *sim, char *out,
+                                   size_t outLen);
+
+/*********************************************************
+ *NAME:          serverSimGetSelectedScenario
+ *PURPOSE:
+ *  Which scenario from that directory the lobby host has
+ *  picked, by the file name the directory listing gave.
+ *  Empty is none — the ordinary state of a server whose host
+ *  has picked nothing.
+ *
+ *  Never answers NULL: a sim with no selection answers "",
+ *  so a caller can print or compare it without a guard.
+ *  There is no fallback the way the directory has one; no
+ *  selection is a state, not a missing setting.
+ *
+ *  Public because the scenario library reads it back to
+ *  decide what plays: a pick beats the committed map's own
+ *  script, and none hands the map its own back. Changing it
+ *  is the sim's own business and lives on
+ *  server_sim_lifecycle.h — a frontend that wants a
+ *  different scenario sends CMD_LOBBY_SET_SCENARIO, which is
+ *  what asks for that decision again and publishes the
+ *  result.
+ *
+ *ARGUMENTS:
+ *  sim  - Pointer to the ServerSim
+ *********************************************************/
+const char *serverSimGetSelectedScenario(const ServerSim *sim);
+
+/*********************************************************
  *NAME:          serverSimSetQuitOnWin
  *PURPOSE:
  *  Configures whether the server should quit after
@@ -1731,6 +1816,32 @@ void serverSimFillLobbyBotConfigEvent(ServerSim *sim, BYTE slot, struct ControlE
 void serverSimFillLobbyBotBrainEvent(const ServerSim *sim, BYTE slot, struct ControlEvent *evt);
 void serverSimFillLobbyBrainListEvent(const ServerSim *sim, struct ControlEvent *evt);
 
+/* Read every brain's LOBBY TEXTS (announce.txt + commands.txt) off disk into
+ * the sim's cache, skipping any brain whose two files have not changed since
+ * the last read. Called once where the brains are scanned, and again when a
+ * round hands the lobby back, which is the seam an operator would have edited
+ * a brain's texts across. Never on the tick path. */
+void serverSimRefreshBrainDocs(ServerSim *sim);
+
+/* Drops the cache serverSimRefreshBrainDocs built. serverSimDestroy calls it;
+ * nothing else needs to. */
+void serverSimFreeBrainDocs(ServerSim *sim);
+
+/* Stream every brain's LOBBY TEXTS as CTRL_LOBBY_BRAIN_DOCS_CHUNK events
+ * through `deliver`, out of the cache above — one stream per brain, and only
+ * for brains that ship at least one of the two files, so a server whose
+ * brains carry none emits nothing and a sim that never refreshed emits
+ * nothing either.
+ *
+ * Called beside the brain list, on the two paths where a real client is
+ * listening: a joiner's (or spectator's) sync replay, and the broadcast bus
+ * when a round hands the lobby back. NOT from the delayed spectator ring's
+ * control snapshot — that is rebuilt per keyframe and has a size cap these
+ * fragments would push it past. */
+void serverSimEmitBrainDocs(const ServerSim *sim,
+                            void (*deliver)(void *, const struct ControlEvent *),
+                            void *ctx);
+
 /*********************************************************
  * Read accessors.
  *
@@ -1948,6 +2059,47 @@ int serverSimSearchMapDir(ServerSim *sim, const char *relPath,
  * uses for the Upload tab. */
 bool serverSimReadMapFile(ServerSim *sim, const char *relPath,
                            uint8_t **outBytes, size_t *outLen);
+
+/* ── Server-side scenario directory enumeration ─────────────────────
+ *
+ * The scenarios this server offers on their own, read out of the
+ * directory serverSimSetScenarioDir named. Here for the reason
+ * serverSimEnumerateMapDir is here: the lobby's scenario chooser is a
+ * gui translation unit, which sees public/ only, and the scenario
+ * surface that does this work is in scenario_api/.
+ *
+ * entries:    Caller-allocated output array.
+ * maxEntries: Capacity of entries[]; the function writes at most this
+ *             many; if the directory holds more, the extras are
+ *             dropped and the function returns maxEntries.
+ *
+ * Returns the number of entries written. 0 for a server with no
+ * scenarios directory, nothing in it, or no scenario library in this
+ * build — none of the three is a fault, so none is told apart, and
+ * there is no failure return. File-name order, case-insensitive.
+ *
+ * The three lengths below mirror SCN_DIR_FILE_LEN / _NAME_LEN /
+ * _DESC_LEN in src/bolo/scenario_api/scenario_defs.h, which this
+ * header does not include because a gui translation unit reads this
+ * one and cannot reach that one. The implementation sees both and
+ * holds each pair against the other, so the two cannot drift and a
+ * copy into this shape cannot cut a name or a description short. */
+#define SERVER_SCENARIO_FILE_LEN 128
+#define SERVER_SCENARIO_NAME_LEN 64
+#define SERVER_SCENARIO_DESC_LEN 256
+typedef struct {
+    char    file[SERVER_SCENARIO_FILE_LEN];  /* the name in the scenarios
+                                                directory */
+    char    name[SERVER_SCENARIO_NAME_LEN];  /* the manifest's, or "" */
+    char    description[SERVER_SCENARIO_DESC_LEN];
+    uint8_t maxPlayers;  /* 0 = the server's own cap */
+    uint8_t bots;        /* seats the template asks for */
+    bool    bound;       /* belongs to one map; not selectable as a mod */
+} ServerScenarioEntry;
+
+int serverSimEnumerateScenarioDir(ServerSim *sim,
+                                  ServerScenarioEntry *entries,
+                                  int maxEntries);
 
 /* autoLockOnGameStart — when true, sets allowNewPlayers=false the
  * moment the lobby transitions out of serverStateLobby. */

@@ -689,6 +689,8 @@ else()
         src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
         src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp
         src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
+        src/gui/sdl3/dialogs/lobby/lobby_scenario_rules.cpp
         src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
         src/gui/sdl3/wbn_map_source.cpp
         PROPERTIES COMPILE_OPTIONS "-Werror=undef;${LOBBY_MISSING_DECL_OPTION}"
@@ -858,11 +860,11 @@ set(IOS_BOLO_SOURCES
     src/bolo/transport_udp_client.c
 )
 
-# Build bolo_static for the iOS branch. iOS doesn't set HAVE_ONNXRUNTIME
-# or ENABLE_PILLMASSAGE_BUG, so bolo_static here has the matching
-# minimal feature set.
+# Build bolo_static for the iOS branch. iOS doesn't set HAVE_ONNXRUNTIME,
+# so bolo_static here has the matching minimal feature set.
 add_subdirectory(src/bolo)
 add_subdirectory(src/server)
+add_subdirectory(src/scenario_io)
 add_subdirectory(src/scenario)
 add_subdirectory(brains)
 
@@ -880,6 +882,8 @@ set(IOS_SERVER_SOURCES
 set(IOS_GUI_SOURCES
     src/gui/sdl3/clientmutex.c
     src/gui/sdl3/sdl3imgui.cpp
+    src/gui/sdl3/scenario_panel_draw.cpp
+    src/gui/sdl3/scenario_marker.c
     src/gui/sdl3/imgui_steam_nav.cpp
     src/gui/sdl3/sdl3imgui_tablet.cpp
     src/gui/sdl3/sdl3draw.c
@@ -887,6 +891,8 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/tank_label.c
     src/gui/sdl3/mapview.c
     src/gui/sdl3/mapview_overlay.c
+    src/gui/sdl3/map_colours.c
+    src/gui/sdl3/map_markers.c
     src/gui/sdl3/sprite_positions.c
     src/gui/sdl3/tileloader.c
     src/gui/sdl3/skin_source.c
@@ -895,6 +901,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/sound.c
     src/gui/sdl3/sound_variants.c
     src/gui/sdl3/lang.c
+    src/gui/sdl3/sim_rules_phrase.c
     src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/bg_game.c
     src/gui/sdl3/minimap_render.c
@@ -935,6 +942,8 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/lobby/lobby_recap.cpp
     src/gui/sdl3/dialogs/lobby/lobby_reel.cpp
     src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp
+    src/gui/sdl3/dialogs/lobby/lobby_scenario_rules.cpp
     src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp
     src/gui/sdl3/dialogs/imgui_settings.cpp
     src/gui/sdl3/dialogs/imgui_keysetup.cpp
@@ -948,6 +957,7 @@ set(IOS_GUI_SOURCES
     src/gui/sdl3/dialogs/imgui_about.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
+    src/gui/sdl3/dialogs/dialog_quit.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/lobby_start_list.cpp
     src/gui/sdl3/map_preview_view.cpp
@@ -1204,14 +1214,6 @@ endif()
 
 find_package(OpenMP)
 
-# Classic "pillmassage" bug — pillboxes miss tanks at very close range due to
-# the original Bolo forward-prediction formula breaking down at short distances.
-# Enable for authentic behaviour matching the original game.
-option(ENABLE_PILLMASSAGE_BUG "Enable classic Bolo pillmassage close-range miss bug" OFF)
-if(ENABLE_PILLMASSAGE_BUG)
-    add_compile_definitions(ENABLE_PILLMASSAGE_BUG)
-endif()
-
 # Net-debug instrumentation: per-player sim-executed counters and the
 # netdebug.* repro tests. OFF in every shipping build.
 option(WB_NETDEBUG "Build net-debug instrumentation and netdebug tests" OFF)
@@ -1463,6 +1465,7 @@ endif()
 
 add_subdirectory(src/bolo)
 add_subdirectory(src/server)
+add_subdirectory(src/scenario_io)
 add_subdirectory(src/scenario)
 add_subdirectory(brains)
 
@@ -1538,12 +1541,21 @@ set(CLIENT_SOURCES
     src/gui/ui_mode.c
     src/gui/visibility_presets.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/sdl3imgui.cpp src/gui/sdl3/imgui_steam_nav.cpp src/gui/sdl3/sdl3imgui_tablet.cpp src/gui/sdl3/luabrainshandler.c src/gui/sdl3/wb_theme.cpp
+    # The scenario panel's display list, drawn with ImGui's own 2D calls.
+    # Written against ImGui, public/scenario_panel.h and the tile lookup in
+    # sprite_positions.c alone, so the log viewer and the wasm target can
+    # compile it unchanged when their own slots are wired up.
+    src/gui/sdl3/scenario_panel_draw.cpp
+    # A scenario's map markers, drawn with the SDL renderer beside the smart
+    # ping's. Its colours come out of the drawer above rather than a second
+    # copy of the palette.
+    src/gui/sdl3/scenario_marker.c
     src/gui/sdl3/cursor.c src/gui/sdl3/flags.c src/gui/sdl3/dns_lookups.c
     src/gui/sdl3/winbolo.c src/gui/sdl3/gamefront.c
     src/client_frontend/client_frontend_connect.c
     src/client_frontend/client_frontend_tick.c
     src/client_frontend/client_frontend_common.c
-    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
+    src/gui/sdl3/dialog_backend.c src/gui/sdl3/dialogs/imgui_welcome.cpp src/gui/sdl3/dialogs/imgui_mapchooser.cpp src/gui/sdl3/dialogs/imgui_udpsetup.cpp src/gui/sdl3/dialogs/imgui_gamebrowser.cpp src/gui/sdl3/dialogs/imgui_setname.cpp src/gui/sdl3/dialogs/imgui_trackersetup.cpp src/gui/sdl3/dialogs/imgui_winbolonet.cpp src/gui/sdl3/dialogs/imgui_messagebox.cpp src/gui/sdl3/dialogs/imgui_keycap.cpp src/gui/sdl3/dialogs/imgui_lobby.cpp src/gui/sdl3/dialogs/lobby/lobby_assets.cpp src/gui/sdl3/dialogs/lobby/lobby_chat.cpp src/gui/sdl3/dialogs/lobby/lobby_settings.cpp src/gui/sdl3/dialogs/lobby/lobby_status.cpp src/gui/sdl3/dialogs/lobby/lobby_players.cpp src/gui/sdl3/dialogs/lobby/lobby_map_preview.cpp src/gui/sdl3/dialogs/lobby/lobby_commands.cpp src/gui/sdl3/dialogs/lobby/lobby_recap.cpp src/gui/sdl3/dialogs/lobby/lobby_rating.cpp src/gui/sdl3/dialogs/lobby/lobby_reel.cpp src/gui/sdl3/dialogs/lobby/lobby_clip_gif.cpp src/gui/sdl3/dialogs/lobby/lobby_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_chooser.cpp src/gui/sdl3/dialogs/lobby/lobby_scenario_rules.cpp src/gui/sdl3/dialogs/lobby/lobby_wbn_maps.cpp src/gui/sdl3/dialogs/imgui_settings.cpp src/gui/sdl3/dialogs/imgui_keysetup.cpp src/gui/sdl3/dialogs/imgui_deck_pause.cpp src/gui/sdl3/dialogs/imgui_tutorial_overlay.cpp src/gui/sdl3/dialogs/imgui_keyboard.cpp src/gui/sdl3/dialogs/imgui_quickchat.cpp src/gui/sdl3/dialogs/imgui_controller_prompt.cpp src/gui/sdl3/dialogs/imgui_controller_disconnect.cpp src/gui/sdl3/dialogs/imgui_onboarding.cpp src/gui/sdl3/dialogs/imgui_nav_outline.cpp src/gui/sdl3/dialogs/dialog_quit.cpp src/gui/sdl3/dialogs/imgui_wbn_browser.cpp src/gui/sdl3/dialogs/imgui_news.cpp src/gui/sdl3/dialogs/imgui_about.cpp src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/map_preview_popup.cpp
     src/gui/sdl3/lobby_start_list.cpp
@@ -1562,18 +1574,29 @@ set(CLIENT_SOURCES
     src/gui/sdl3/ping_marker.c
     src/gui/sdl3/ring_band.c
     src/gui/sdl3/minimap_render.c
-    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/mapview_overlay.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
+    src/gui/sdl3/bg_game.c src/gui/sdl3/mapview.c src/gui/sdl3/mapview_overlay.c src/gui/sdl3/map_colours.c src/gui/sdl3/map_markers.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/skin_preview.c src/gui/sdl3/gfx_settings.c src/gui/sdl3/sdl3draw.c src/gui/sdl3/sdl3draw_status.c src/gui/sdl3/tank_label.c src/gui/sdl3/sdl_bmp.c src/gui/sdl3/input.c src/gui/sdl3/input_touch.c src/gui/sdl3/input_joystick.c src/gui/sdl3/input_gamepad.c src/gui/sdl3/glyphs.c src/gui/sdl3/build_cursor.c src/gui/sdl3/input_source.c
     # Real bodies for the spectator_input.h seam: the embedded LogViewer's
     # spectatorRun reads the controller through it for overview pan/zoom. Reads
     # the singleton gamepad input_gamepad.c owns. The standalone LogViewer links
     # spectator_input_stub.c instead.
     src/gui/sdl3/spectator_input.c
     src/gui/sdl3/tutorial_text.c
-    src/gui/sdl3/lang.c src/gui/sdl3/sound.c src/gui/sdl3/sound_variants.c
+    src/gui/sdl3/lang.c src/gui/sdl3/sim_rules_phrase.c
+    src/gui/sdl3/sound.c src/gui/sdl3/sound_variants.c
     src/client_frontend/voice_core.c
     src/client_frontend/voice_client.c
     src/gui/sdl3/voice.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
+    # The scenario panel: the script buffer and the file handling in C, the
+    # manifest its metadata, lobby and rules forms edit, the container that
+    # manifest is read from and written back to, the panel that draws all four
+    # views, and the vendored text editor widget the script view draws with.
+    # LanguageDefinitions.cpp is where that widget keeps its Lua highlighting.
+    src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_form.c src/mapeditor/mapeditor_scenario_check.c src/mapeditor/mapeditor_scenario_pack.c src/mapeditor/mapeditor_scenario_imgui.cpp
+    src/mapeditor/mapeditor_scenario_fndesc.c
+    src/mapeditor/mapeditor_scenario_fnscan.c
+    src/third_party/ImGuiColorTextEdit/TextEditor.cpp
+    src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
     # Embedded editor's "Open from WinBolo.net" dialog — client only, it
     # sits on the chooser + wbn_map_source stack the standalone MapEditor
     # doesn't link (see MAPEDITOR_WBN_OPEN below).
@@ -1723,6 +1746,8 @@ target_include_directories(WinBolo PRIVATE
     ${cjson_SOURCE_DIR}
     src/third_party/tweetnacl
     src/third_party/imgui_markdown
+    # TextEditor.h for the map editor's scenario script pane.
+    src/third_party/ImGuiColorTextEdit
 )
 bolo_apply_include_rules(WinBolo gui)
 # bg_game.c: dev-mode lobby-background animation that assigns bot
@@ -1749,6 +1774,11 @@ if(WIN32)
         # Suppress warnings in third-party sources that MSVC treats as errors
         set_source_files_properties(src/third_party/tweetnacl/tweetnacl.c
             PROPERTIES COMPILE_FLAGS "/wd4132 /wd4146 /wd4018 /wd4295")
+        # The text editor widget counts in int and measures in size_t, so it
+        # trips the conversion and signed/unsigned warnings throughout.
+        set_source_files_properties(src/third_party/ImGuiColorTextEdit/TextEditor.cpp
+            src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
+            PROPERTIES COMPILE_FLAGS "/wd4018 /wd4244 /wd4245 /wd4267 /wd4389")
         # Suppress C4505 (unreferenced static function) in mapgen_imgui.cpp
         set_source_files_properties(src/mapeditor/mapgen_imgui.cpp
             PROPERTIES COMPILE_FLAGS "/wd4505")
@@ -2295,6 +2325,7 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
+    src/gui/sdl3/dialogs/dialog_quit.cpp
     src/gui/sdl3/mapview.c
     src/gui/sdl3/sdl3draw_status.c
     src/gui/sdl3/tank_label.c
@@ -2311,6 +2342,7 @@ set(LOGVIEWER_WBN_BROWSER_SOURCES
     src/gui/sdl3/dialogs/imgui_star_rating.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
+    src/gui/sdl3/dialogs/dialog_quit.cpp
     src/gui/sdl3/dialogs/imgui_keyboard.cpp
     src/logviewer/imgui/imgui_lv_browser_stubs.cpp
 )
@@ -2354,6 +2386,8 @@ add_executable(LogViewer
     # spectates, so these resolve the seam symbols here.
     src/logviewer/spectator_input_stub.c
     src/gui/sdl3/lang.c
+    # Not sim_rules_phrase.c beside it: the phrase calls
+    # simRulesDescribeChange in bolo_static, which this target does not link.
     src/gui/sdl3/gamefront_stubs.c
     # The replay draws the same smart-ping glyphs the game does, out of the
     # same loose files.
@@ -2365,6 +2399,11 @@ add_executable(LogViewer
     src/gui/sdl3/tileloader.c
     src/gui/sdl3/skin_source.c
     src/gui/sdl3/gfx_settings.c
+    # The zoomed-out ground colours, which draw.c fills a square with below
+    # 1x, and the shapes it draws on top of them. Plain SDL, the tile numbers
+    # and ring_band.c, all of which this target already has.
+    src/gui/sdl3/map_colours.c
+    src/gui/sdl3/map_markers.c
     src/gui/ui_mode.c
     src/steam/steam_wrapper_stub.c
 )
@@ -2859,14 +2898,33 @@ set(MAPEDITOR_SOURCES
     src/bolo/transport_udp_client.c
     src/gui/sdl3/clientmutex.c src/gui/sdl3/luabrainshandler.c
     src/gui/sdl3/minimap_render.c
+    # The editor's own drawing uses minimap_render.c above; these three are
+    # here for the map chooser it shares with the game (map_preview_view.cpp),
+    # which draws pillbox and base marks. ring_band.c is what a disc is built
+    # from.
+    src/gui/sdl3/map_colours.c
+    src/gui/sdl3/map_markers.c
+    src/gui/sdl3/ring_band.c
     src/gui/sdl3/lang.c
+    src/gui/sdl3/sim_rules_phrase.c
     src/gui/sdl3/gamefront_stubs.c
     src/gui/sdl3/mapview.c src/gui/sdl3/sprite_positions.c src/gui/sdl3/tileloader.c src/gui/sdl3/skin_source.c src/gui/sdl3/gfx_settings.c
     src/lzw/ecodlzw.c src/lzw/dcodlzw.c
     src/server/server_stubs.c
     src/mapeditor/mapeditor.c src/mapeditor/mapeditor_imgui.cpp src/mapeditor/mapgen_imgui.cpp src/mapeditor/mapeditor_undo.c src/mapeditor/mapeditor_validate.c src/mapeditor/mapeditor_symmetry.c src/mapeditor/mapeditor_text.c src/mapeditor/mapeditor_fonts.c src/mapeditor/mapeditor_stats.c src/mapeditor/mapeditor_image.c src/mapeditor/mapeditor_stamp.c src/mapeditor/mapeditor_export.c
+    # The scenario panel: the script buffer and the file handling in C, the
+    # manifest its metadata, lobby and rules forms edit, the container that
+    # manifest is read from and written back to, the panel that draws all four
+    # views, and the vendored text editor widget the script view draws with.
+    # LanguageDefinitions.cpp is where that widget keeps its Lua highlighting.
+    src/mapeditor/mapeditor_scenario.c src/mapeditor/mapeditor_scenario_form.c src/mapeditor/mapeditor_scenario_check.c src/mapeditor/mapeditor_scenario_pack.c src/mapeditor/mapeditor_scenario_imgui.cpp
+    src/mapeditor/mapeditor_scenario_fndesc.c
+    src/mapeditor/mapeditor_scenario_fnscan.c
+    src/third_party/ImGuiColorTextEdit/TextEditor.cpp
+    src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
     src/gui/sdl3/dialogs/dialog_footer.cpp
     src/gui/sdl3/dialogs/imgui_nav_outline.cpp
+    src/gui/sdl3/dialogs/dialog_quit.cpp
     src/third_party/stb/stb_image_write_impl.c
     src/mapeditor/mapeditor_main.c
     src/braintest/braintest_frontend.c
@@ -2917,6 +2975,8 @@ target_include_directories(MapEditor PRIVATE
     src/server
     src/mapeditor
     ${cjson_SOURCE_DIR}
+    # TextEditor.h for the scenario script pane.
+    src/third_party/ImGuiColorTextEdit
 )
 bolo_apply_include_rules(MapEditor mapeditor)
 
@@ -2924,12 +2984,26 @@ if(WIN32)
     target_sources(MapEditor PRIVATE src/res/mapeditor.rc)
     target_link_libraries(MapEditor PRIVATE ws2_32 winmm user32)
     target_compile_options(MapEditor PRIVATE -fcommon)
+    if(MSVC)
+        # Suppress warnings in third-party sources that MSVC treats as errors.
+        # The text editor widget counts in int and measures in size_t, so it
+        # trips the conversion and signed/unsigned warnings throughout.
+        set_source_files_properties(src/third_party/ImGuiColorTextEdit/TextEditor.cpp
+            src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
+            PROPERTIES COMPILE_FLAGS "/wd4018 /wd4244 /wd4245 /wd4267 /wd4389")
+    endif()
 else()
     target_link_libraries(MapEditor PRIVATE ${MATH_LIB} pthread)
     target_compile_options(MapEditor PRIVATE -fcommon)
 endif()
 
-target_link_libraries(MapEditor PRIVATE bolo_static server_sim_static bot_brains_static threads_static)
+target_link_libraries(MapEditor PRIVATE
+    bolo_static
+    # Ahead of the server group: scenario_static calls the funnel and the
+    # round-start registration, which the group provides. The editor links it
+    # to check a script and to list game.* for completion; it boots no host.
+    scenario_static
+    server_sim_static bot_brains_static threads_static)
 target_link_libraries(MapEditor PRIVATE
     winbolonet_core winbolonet_client
     SDL3::SDL3 SDL3_ttf::SDL3_ttf imgui_backends minizip lua_static
@@ -3418,8 +3492,77 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The validator: a script read in a stub VM and checked against the map,
     # the lobby template and the rule catalogue, without a round being run.
     tests/unit/test_scenario_validate.c
+    # The WBSC container: a container written and read back through minizip's
+    # memory I/O, the refusals a malformed buffer gets, the entry and brain
+    # lists, and two containers open at the same time.
+    tests/unit/test_scenario_package.c
+    # manifest.json: the version 1 schema decoded into the same struct the
+    # Lua reader fills, written back out with the keys this build does not
+    # read still in it, and the comparison that holds a package's manifest
+    # against the table its script declared.
+    tests/unit/test_scenario_manifest_json.c
+    # Where a map file's map data ends: the measure over synthetic BMAPs, the
+    # container found after one, the scripted tag a packed map gets, and the
+    # lobby preview that stops at the end of the map.
+    tests/unit/test_scenario_map_body.c
+    # A scenario carried inside the map file: the container's script run in
+    # place of a loose one, the loose script that overrides it, the manifest
+    # handed to a script that declares no table of its own, and the refusal
+    # one that restates it and disagrees gets.
+    tests/unit/test_scenario_packed_map.c
+    # A map's scenario written into the map: what the container holds, the
+    # manifest derived from the script's own table, the second pack that
+    # replaces the first, and the map with nothing to pack.
+    tests/unit/test_scenario_pack.c
+    # The brain a scenario names: the name a team writes reaching the seat as
+    # that brain's init.lua, the name this server has not got falling back to
+    # the server's own brain, the path refused where a name belongs, and the
+    # two roster ops that resolve a name of their own.
+    tests/unit/test_scenario_brain_name.c
+    # The scenarios directory: a .scenario package listed from its manifest
+    # with no Lua run, a loose .lua listed through the validator's stub VM,
+    # what is skipped, and the list encoded into the SCENARIO_LIST_RSP shape
+    # against committed golden bytes and decoded back.
+    tests/unit/test_scenario_dir.c
+    # Which scenario plays when a map and a mod both have a claim, and the
+    # points the template is applied at.
+    tests/unit/test_scenario_precedence.c
+    # The panel's display list: the byte layout decoded from a hand-written
+    # list, the refusal each malformed list gets, the caps at their edges,
+    # and a decoded list written back out and parsed again.
+    tests/unit/test_scenario_panel.c
+    # The four presentation control events: their body codecs against
+    # hand-written bytes, the refusals a malformed body gets, and the
+    # recipient filter the in-process subscriber applies before storing.
+    tests/unit/test_scenario_presentation_codec.c
+    # The four presentation ops: the panel list published, recorded, replayed
+    # to a joiner and pared back to the everyone-addressed lists in the
+    # spectator ring's snapshot, the one-update-per-tick key, every refusal,
+    # and the score, announcement and marker arms.
+    tests/unit/test_scenario_presentation_arms.c
+    # The rules a scenario's own manifest sets, as the lobby's popup reads
+    # them: the body codec against hand-written bytes and every refusal a
+    # malformed body gets.
+    tests/unit/test_scenario_rules_codec.c
+    # The set published when a scenario attaches, emptied when one detaches,
+    # and never written at all on a map that has never had one.
+    tests/unit/test_scenario_rules_published.c
+    # And the replay that hands the set to a client registering after the
+    # attach, so a mid-lobby joiner reads what the host reads.
+    tests/unit/test_scenario_rules_reaches_joiner.c
+    # A set too big for one control segment: the fragments a full set
+    # publishes, each encoded into a body the size the delivery path really
+    # hands the encoder and read back into a client, plus what a reader holds
+    # between two fragments and after a stream is cut short.
+    tests/unit/test_scenario_rules_fragments.c
+    # The bot hint: the flat table a scenario hands one bot, delivered into
+    # that bot's brain VM as on_scenario_hint(table) — the fixture brain gets
+    # it back whole, custom keys included — plus every refusal the arm
+    # answers with and the record naming the seat and the verb.
+    tests/unit/test_scenario_hint.c
     # The binding table: the game table a script reads the sim through, the
-    # three index rules and what an absent entity reads as.
+    # three index rules, what an absent entity reads as, and the bytes and
+    # audiences the presentation rows build.
     tests/unit/test_scenario_lua.c
     # The state a scenario runs in: the names the whitelist takes and the
     # ones it keeps, the precompiled chunk the loader refuses, where a
@@ -3437,6 +3580,21 @@ set(WINBOLO_UNITTESTS_SOURCES
     # regions it names, and the enter and leave hooks the per-tick scan of
     # tank positions produces.
     tests/unit/test_scenario_derived.c
+    # The function catalogue: one row per hook and per policy an author
+    # writes, and the parameter list each row claims held against the
+    # arguments the host pushes at the dispatch site.
+    tests/unit/test_scenario_functions.c
+    # The line the editor shows beside each of those functions, and the stub
+    # it inserts for one that has not been written. The table renders through
+    # langGetText, which test_stubs.c provides here, so the module compiles
+    # in without lang.c.
+    tests/unit/test_scenario_fndesc.c
+    src/mapeditor/mapeditor_scenario_fndesc.c
+    # Which of those functions a script has already written, read off its
+    # text a line at a time. Plain C over a buffer that links no Lua, so it
+    # compiles in here as it stands.
+    tests/unit/test_scenario_fnscan.c
+    src/mapeditor/mapeditor_scenario_fnscan.c
     # The scenario read surface: the roster, pill, base, start, tank and
     # builder accessors, the whole-map terrain copy and the fielded count.
     tests/unit/test_scenario_reads.c
@@ -3494,6 +3652,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # decoder addresses a rebuilt line to every recipient, and the in-process
     # filter reads 0xFF as everyone at a client that is not slot 0.
     tests/unit/test_scenario_comms_arms.c
+    # Three shots = go there: the shell-expiry detector that turns three
+    # full-range shells on one open square into an order line in every
+    # allied bot's inbox — which squares count, the window, and the count
+    # that starts again after one.
+    tests/unit/test_three_shot_order.c
     # The flow ops: a scripted end to the round — its state, its reason, the
     # line it leaves the returning lobby and the WinBolo.net crediting it does
     # not do — and the game-time change, the four lengths it refuses, and the
@@ -3506,6 +3669,11 @@ set(WINBOLO_UNITTESTS_SOURCES
     # puts in a recording — its bytes on disk and both of the viewer's
     # readers over them.
     tests/unit/test_scenario_rule_arms.c
+    # fill_to_caps: a mod that raises a cap and asks for the map's pills and
+    # bases to start at it rather than at the numbers the map file holds — a
+    # base stock, a pill's armour, the same mod with the key left out, and
+    # what the fill moved read back out of a recording.
+    tests/unit/test_scenario_fill_caps.c
     # The six lifecycle and lobby policy pointers: the start a tank is given,
     # the base sweep, the team write in both lobby arms that make one, the
     # player cap, the loadout at all three places one is handed out, and the
@@ -3542,6 +3710,34 @@ set(WINBOLO_UNITTESTS_SOURCES
     # New data for a bot already playing: game.bot_init's op, its refusals,
     # and the brain call that rebuilds BRAIN_INIT and rings Brain.on_init.
     tests/unit/test_scenario_bot_init.c
+    # The map editor's scenario script file: the path a script takes beside a
+    # map, which has to stay the path the server looks for, and the read and
+    # write behind the pane's Save and Reload. The module under test is plain
+    # C and draws nothing, so it is compiled in here directly.
+    tests/unit/test_editor_script_file.c
+    src/mapeditor/mapeditor_scenario.c
+    # The manifest behind the scenario panel's metadata, lobby, rules, tags
+    # and triggers forms: the rule list that never holds one rule twice, the
+    # team numbers the template hands out, every bound, the tag accessors that
+    # turn the editor's 0-based entity index into the manifest's 1-based entry,
+    # and the trigger rows that are only ever made naming a hook, down to the
+    # tests and actions inside one. Plain C that draws nothing, so it is
+    # compiled in here the same way.
+    tests/unit/test_editor_scenario_form.c
+    src/mapeditor/mapeditor_scenario_form.c
+    # Beside it: the editor's reach into the scenario runtime, which is where
+    # the ops a trigger's actions are written against are read. The form asks
+    # it for the op a new action names, and the vocabulary case holds its
+    # answers against the registry itself. It runs no sim and draws nothing,
+    # and the validator and the binding registry it calls are both already
+    # linked here.
+    src/mapeditor/mapeditor_scenario_check.c
+    # The editor writing a scenario out: the chunk on to the map and the
+    # standalone .scenario a mod is, both read back through the container
+    # reader the server uses. Plain C over scenario_io, which this target
+    # already links, so the module is compiled in here too.
+    tests/unit/test_editor_scenario_pack.c
+    src/mapeditor/mapeditor_scenario_pack.c
     # The per-tank modifier set: the op that writes it, the snapshot group
     # under the ninth presence bit, and when the values are cleared.
     tests/unit/test_tank_modifiers.c
@@ -3577,6 +3773,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The lobby's reload request: who may ask, when, and what a lobby with
     # no scenario answers.
     tests/unit/test_lobby_reload_scenario.c
+    # The lobby's scenario pick: who may pick, when, and which names the
+    # scenarios directory makes good.
+    tests/unit/test_lobby_set_scenario.c
     tests/unit/test_wbn_bearer_state.c
     tests/unit/test_wbn_rekey_codec.c
     tests/unit/test_wbn_news_parse.cpp
@@ -3588,6 +3787,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_brain_crash_log.c
     tests/unit/test_brain_inbox.c
     tests/unit/test_brain_list_scan.c
+    tests/unit/test_brain_list_texts.c
+    tests/unit/test_unit_test_registry.c
+    tests/unit/test_lobby_brain_docs_gate.c
     tests/unit/test_brain_modes.c
     tests/unit/test_brain_view_data.c
     tests/unit/test_bolo_rand.c
@@ -3618,6 +3820,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_net_impair.c
     tests/unit/test_lobby_runtime_fixes.c
     tests/unit/test_bot_chat_routing.c
+    tests/unit/test_bot_ping.c
     tests/unit/test_brain_internal_msg_routing.c
     tests/unit/test_subscriber_arm_orphans.c
     tests/unit/test_identity_survives_reset.c
@@ -3676,17 +3879,37 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_overview_view_policy.c
     tests/unit/test_overview_camera.cpp
     tests/unit/test_overview_fog.cpp
+    # The fog of war look the player picks and the road outline one of them
+    # draws. Both are header-only arithmetic (fog_look.h, fog_roads.h), so
+    # only the test itself is added here; the setting store it also exercises
+    # comes in with gfx_settings.c above.
+    tests/unit/test_fog_roads.c
     tests/unit/test_overview_hud_layout.cpp
     tests/unit/test_sight.c
+    tests/unit/test_sight_shadow.c
+    tests/unit/test_sight_shadow_overflow.c
     tests/unit/test_overview_snapshot.c
     tests/unit/test_mapview_sprite_scale.c
     tests/unit/test_mapview_overlay.c
+    tests/unit/test_map_colours.c
     tests/unit/test_input_catchup.c
     tests/unit/test_build_harvest_stale.c
     tests/unit/test_lgm_request_valid.c
+    tests/unit/test_lgm_quit_pill.c
     tests/unit/test_jitter_buffer_grow.c
     tests/unit/test_shell_projection.c
     tests/unit/test_sim_rules.c
+    # The rule list a frontend reads: the names, the classic value behind
+    # each one, and what a value does to a rule against that default. The
+    # phrase file renders that answer through langGetText, which
+    # test_stubs.c provides here, so it compiles in without lang.c.
+    tests/unit/test_sim_rules_describe.c
+    src/gui/sdl3/sim_rules_phrase.c
+    # The range behind each rule, against the validator that refuses on it.
+    tests/unit/test_sim_rules_range.c
+    # A description id per rule, and the range in words. The phrase file above
+    # carries the table both accessors read.
+    tests/unit/test_sim_rules_desc.c
     tests/unit/test_screen_bullets_build.c
     tests/unit/test_ping_smoother.c
     tests/unit/test_client_timing.c
@@ -3743,6 +3966,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_interp_jitter_e2e.c
     tests/unit/test_join_version_gate.c
     tests/unit/test_join_rate_limit.c
+    # A password-protected server: the INFO ping flag, the incorrect-password
+    # reject's langid at the client, and a join with the right password.
+    tests/unit/test_loopback_password.c
     tests/unit/test_cookie_handshake.c
     tests/unit/test_map_amp_gate.c
     tests/unit/test_map_reask_throttle.c
@@ -3898,6 +4124,16 @@ set(WINBOLO_UNITTESTS_SOURCES
     # length, strict bsearch sort order, and name round-trips — pins the
     # off-by-one that crashed resolveName's bsearch on startup.
     tests/unit/test_lang_name_table.c
+    # What a quit inside a dialog means, and where it goes. The same
+    # decision is made in eleven dialog poll loops with nothing to check
+    # that a new one makes it; telling a real close request from the one
+    # the gamepad's B button forges is the difference between cancelling a
+    # dialog and ending the application under the player.
+    tests/unit/test_dialog_quit.c
+    # dialogQuitClassify and the handler registration, for the test above. A
+    # leaf under the "Linked GUI sources" rule in docs/ARCHITECTURE.md:
+    # plain SDL, no ImGui, and it opens no window, renderer or device.
+    src/gui/sdl3/dialogs/dialog_quit.cpp
     # Bot difficulty plumbing: the "difficulty=<word>" BRAIN_INIT_ARG token
     # assembly (whole-token-or-nothing when the buffer is tight) and the
     # difficulty <-> word round trip -difficulty and the preference share.
@@ -3982,6 +4218,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     src/gui/sdl3/overview_fog.cpp
     src/gui/sdl3/overview_hud_layout.cpp
     src/gui/sdl3/sprite_positions.c
+    # map_colours.c qualifies on the same footing: its includes are SDL3 for
+    # the colour types, tilenum.h and global.h for the tile numbers, and
+    # skin_source.h to read a skin's [MapPalette] — whose skin_source.c this
+    # target already builds for its own tests — and its functions are a tile
+    # number in and a colour out. test_map_colours.c drives it directly.
+    src/gui/sdl3/map_colours.c
     # The threaded news fetcher itself (not just the pure parser): the
     # free-during-fetch lifetime test drives its real worker thread. Its
     # network GET is reached through a test seam, so no libcurl is pulled in
@@ -4173,6 +4415,15 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # The shipped maps and their scripts: the Survival lobby-round case
     # starts a round on data/maps/Survival.map with the script beside it.
     WB_DATA_MAPS_DIR="${CMAKE_SOURCE_DIR}/data/maps"
+    # The scenario runtime's own sources. The trigger router is a .lua file
+    # embedded in the binary by tools/embed_lua.py, which is run by hand, so
+    # scenario_hooks_router_matches_source reads the .lua from here and holds
+    # the embedded copy against it.
+    WB_SCENARIO_SRC_DIR="${CMAKE_SOURCE_DIR}/src/scenario"
+    # The repository root. unit_test_names_match_cmake reads THIS file and
+    # tests/unit/test_main.c out of it and compares the two test rosters, so a
+    # case added to one and not the other cannot go unnoticed.
+    WB_REPO_ROOT_DIR="${CMAKE_SOURCE_DIR}"
 )
 
 target_include_directories(WinBoloUnitTests PRIVATE
@@ -4192,6 +4443,10 @@ target_include_directories(WinBoloUnitTests PRIVATE
     # braintest_loadbrowser.h for the Load Session segment-walk test (the
     # finder TU compiled above); no other braintest source is linked here.
     src/braintest
+    # mapeditor_scenario*.h for the scenario panel's non-drawing half — the
+    # mapeditor_scenario_*.c TUs compiled above; no other mapeditor source
+    # is linked here.
+    src/mapeditor
     ${CMAKE_SOURCE_DIR}/tests/unit
     ${cjson_SOURCE_DIR}
 )
@@ -4270,6 +4525,12 @@ set(_unit_test_names
     lobby_bot_config_codec_and_apply
     lobby_bot_brain_codec_and_apply
     lobby_brain_list_codec_and_apply
+    lobby_brain_docs_chunk_codec_roundtrip
+    lobby_brain_docs_chunk_len_is_exact
+    lobby_brain_list_clears_stale_texts
+    lobby_chat_line_format_is_what_is_appended
+    lobby_brain_docs_stay_out_of_the_control_snapshot
+    lobby_brain_docs_reach_a_joining_subscriber
     lobby_sync_complete_codec_roundtrip
     lobby_rating_posted_codec_roundtrip
     command_codec_roundtrip_variants
@@ -4357,6 +4618,7 @@ set(_unit_test_names
     mine_kill_publishes_event
     mine_kill_on_boat_publishes_event
     mine_kill_own_mine_names_self
+    mine_blast_range
     awards_basic_winners
     awards_tiebreak
     awards_omission
@@ -4366,8 +4628,10 @@ set(_unit_test_names
     awards_subset_deterministic
     round_stats_codec_roundtrip
     round_stats_codec_worstcase
+    round_stats_scenario_score_codec
     round_stats_codec_rejects_bad_key
     round_stats_build_summary
+    round_stats_scenario_score_filled
     round_stats_summary_highlights
     round_stats_client_ingest
     round_stats_track_records
@@ -4465,6 +4729,13 @@ set(_unit_test_names
     lobby_reload_scenario_no_scenario
     lobby_reload_scenario_calls_back
     lobby_reload_scenario_cooldown
+    lobby_set_scenario_selects
+    lobby_set_scenario_none
+    lobby_set_scenario_refuses_unknown
+    lobby_set_scenario_refuses_shape
+    lobby_set_scenario_refuses_bound
+    lobby_set_scenario_cooldown
+    lobby_set_scenario_unreadies
     lobby_map_search_chunked
     wbn_bearer_state
     wbn_rekey_codec
@@ -4487,6 +4758,8 @@ set(_unit_test_names
     brain_inbox_legacy_drain_fifo
     brain_inbox_clear_resets
     brain_list_scan_path_resolves
+    brain_list_texts_read
+    unit_test_names_match_cmake
     brain_modes_manifest_parses
     brain_modes_missing_falls_back
     brain_modes_malformed_lines_skipped
@@ -4522,6 +4795,13 @@ set(_unit_test_names
     bot_chat_send_to_other_bot_lands_in_recipient_inbox
     bot_chat_receive_from_human_lands_in_bot_inbox
     bot_chat_receive_from_other_bot_via_broadcast
+    bot_chat_enemy_broadcast_is_not_an_order
+    bot_chat_enemy_unicast_still_lands
+    bot_chat_mid_round_bot_reads_server_alliances
+    bot_ping_queue_becomes_cmd_ping_from_bot_slot
+    bot_ping_rate_limit_drops_extras
+    bot_ping_ignores_bad_slot
+    bot_ping_ignores_a_slot_that_is_not_a_bot
     internal_msg_reaches_allied_bot
     internal_msg_skips_sender_self
     internal_msg_skips_non_allied_bot
@@ -4580,6 +4860,8 @@ set(_unit_test_names
     replay_v1_pill_health_nibble
     brainrec_version_rejects_old
     lv_tank_stocks_from_snapshot
+    lv_team_colours_from_snapshot
+    lv_team_colours_events
     lv_tank_stocks_snapshot_without_tail
     lv_tank_stocks_from_record
     lv_hostile_item_counts
@@ -4784,8 +5066,15 @@ set(_unit_test_names
     overview_camera
     overview_scroll
     overview_fog
+    fog_style_looks
+    fog_style_setting
+    fog_road_edges
+    fog_road_edge_masks
     overview_hud_layout
     sight
+    sight_shadow
+    sight_shadow_cost
+    sight_shadow_overflow
     overview_dead_tank
     overview_entities
     overview_removed_item_has_no_region
@@ -4804,6 +5093,11 @@ set(_unit_test_names
     mapview_overlay_tank_label
     mapview_overlay_cursor
     mapview_overlay_item_labels
+    map_colours_item_kind
+    map_colours_terrain
+    map_colours_markers
+    map_colours_palette_key
+    map_colours_team
     stall_advances_processed_tick
     stall_mine_late_lays_once
     stall_mine_duplicate_not_relaid
@@ -4818,6 +5112,8 @@ set(_unit_test_names
     build_harvest_busy_queues
     lgm_request_valid
     lgm_request_quiet
+    lgm_quit_drops_carried_pill
+    lgm_unfield_drops_carried_pill
     jitter_buffer_grow
     shell_projection
     sim_rules_classic_defaults
@@ -4829,6 +5125,11 @@ set(_unit_test_names
     sim_rules_terrain_life_follows
     sim_rules_base_empties_without_wrapping
     sim_rules_pill_empties_without_wrapping
+    sim_rules_pill_shell_damage_follows
+    sim_rules_pill_angry_divisor_follows
+    sim_rules_pill_massage_follows
+    sim_rules_tank_explosion_follows
+    sim_rules_water_loss_follows
     sim_rules_pairs
     sim_rules_capture_threshold_moves
     sim_rules_builder_cost_follows
@@ -4839,6 +5140,16 @@ set(_unit_test_names
     sim_rules_worldsim_pill_follows
     sim_rules_boat_speed_follows
     sim_rules_obs_reload_follows
+    sim_rules_describe_names
+    sim_rules_describe_reload
+    sim_rules_describe_ratios
+    sim_rules_describe_units
+    sim_rules_phrase
+    sim_rules_range_every_rule
+    sim_rules_range_matches_check
+    sim_rules_range_paired
+    sim_rules_desc_table
+    sim_rules_desc_range_phrase
     screen_bullets_build
     ping_smoother
     client_timing
@@ -4853,6 +5164,7 @@ set(_unit_test_names
     tkexp_lgm_pairing
     loopback_join
     loopback_join_loss
+    loopback_password
     loopback_lobby_running_loss
     loopback_quiet_lobby_control_loss
     loopback_command_liveness
@@ -4984,6 +5296,7 @@ set(_unit_test_names
     game_settings_blob
     ping_network
     lang_name_table
+    dialog_quit
     screencalc_river_road_counts_as_water
     screencalc_river_arms_of_road_centred_cross
     screencalc_river_copies_agree
@@ -5084,6 +5397,7 @@ set(_unit_test_names
     skin_source_dir_and_zip
     skin_active_vs_requested
     skin_workshop_id_roundtrip
+    skin_map_palette
     skin_density_scan
     sheet_bleed_edges
     sheet_no_key_under_alpha
@@ -5116,6 +5430,7 @@ set(_unit_test_names
     tank_mod_dealt_kills_in_half_the_hits
     tank_mod_taken_takes_more_hits
     tank_mod_mine_damage_scales_with_layer
+    mine_damage_fatal_reduction
     tank_mod_neutral_owner_deals_classic
     tank_mod_boat_exit_at_half_speed
     tank_mod_pill_leads_half_speed_boat
@@ -5237,6 +5552,7 @@ set(_unit_test_names
     lobby_template_reset_reseats
     lobby_template_preview_is_inert
     lobby_template_plain_map_clears
+    lobby_template_map_commit_drops_prior_bots
     lobby_template_caps_humans_only
     lobby_template_cap_seats_human_above_bots
     lobby_template_cap_refuses_extra_human
@@ -5248,8 +5564,12 @@ set(_unit_test_names
     lobby_template_cancel_restores_path_inmem
     lobby_template_cancel_restores_path_random
     lobby_template_seat_carries_init
+    lobby_template_seat_carries_mode
+    lobby_template_mode_unknown_key_kept
+    lobby_template_no_mode_leaves_config
+    lobby_template_add_bot_takes_template
     scripted_game_type_loadout_follows_base
-    scripted_game_type_no_base_is_open
+    scripted_game_type_no_base_is_strict
     scripted_game_type_strict_ignores_base
     scripted_game_type_start_follows_base
     scripted_game_type_plain_map_clears_base
@@ -5301,6 +5621,21 @@ set(_unit_test_names
     scenario_comms_msg_player
     scenario_comms_sound
     scenario_comms_log
+    scenario_comms_say
+    three_shot_order_orders_allied_bots
+    three_shot_order_ignores_closed_ground
+    three_shot_order_needs_one_square
+    three_shot_order_window_and_reset
+    three_shot_order_needs_quiet_before
+    three_shot_order_quiet_counts_hits
+    three_shot_order_needs_quiet_after
+    three_shot_order_quiet_after_sees_a_shell_still_flying
+    three_shot_order_quiet_before_sees_a_shell_still_flying
+    three_shot_order_uses_the_server_tick
+    three_shot_order_server_tick_quiet_after
+    three_shot_order_ignores_a_forged_fire_tick
+    three_shot_order_rejects_off_map_squares
+    three_shot_order_scenario_refuses_off_map
     scenario_comms_arm_records
     scenario_comms_decoder_dest_player
     scenario_comms_apply_non_zero_slot
@@ -5317,6 +5652,10 @@ set(_unit_test_names
     scenario_rule_arm_records
     scenario_rule_clamps_world
     scenario_rule_clamp_records
+    scenario_fill_caps_raises_bases
+    scenario_fill_caps_raises_pills
+    scenario_fill_caps_off_changes_nothing
+    scenario_fill_caps_records
     scenario_policy_choose_start
     scenario_policy_choose_start_out_of_range
     scenario_policy_allow_base_win
@@ -5386,6 +5725,13 @@ set(_unit_test_names
     scenario_host_api_too_new
     scenario_host_no_script
     scenario_host_manifest_roundtrip
+    scenario_host_trigger_manifest
+    scenario_host_trigger_where_type
+    scenario_host_trigger_action_no_op
+    scenario_host_trigger_where_no_field
+    scenario_host_trigger_text_cut
+    scenario_host_trigger_array_hole
+    scenario_host_trigger_no_when
     scenario_host_team_init_read
     scenario_host_seed_reproducible
     scenario_host_edit_after_attach
@@ -5429,7 +5775,28 @@ set(_unit_test_names
     scenario_validate_lines_point_at_the_key
     scenario_validate_wave_defense
     scenario_validate_unknown_game
+    scenario_validate_source_syntax_error
+    scenario_validate_source_bad_key
+    scenario_validate_source_matches_file
+    scenario_validate_source_pushed_manifest
+    scenario_validate_source_pushed_conflict
+    scenario_validate_source_rule_range
+    scenario_validate_source_pushed_triggers
+    scenario_validate_trigger_caps
+    scenario_validate_trigger_hook
+    scenario_validate_trigger_field
+    scenario_validate_trigger_operator
+    scenario_validate_trigger_action
+    scenario_validate_trigger_unknown_operator
+    scenario_validate_trigger_action_field
+    scenario_validate_trigger_call_args
+    scenario_validate_trigger_call_no_name
+    scenario_validate_trigger_field_team
+    scenario_validate_trigger_announce_clear
+    scenario_validate_trigger_arg_literal
+    scenario_validate_rule_pair_key
     scenario_lua_every_row_answers
+    scenario_lua_op_arguments_match_the_doc
     scenario_lua_read_index_passes_through
     scenario_lua_op_index_subtracts_one
     scenario_lua_script_index_adds_one
@@ -5448,6 +5815,12 @@ set(_unit_test_names
     scenario_lua_teleport_start_refuses_bad_index
     scenario_lua_spawn_bot_refuses_bad_start
     scenario_lua_game_type_resolves_scripted
+    scenario_lua_panel_builds_bytes
+    scenario_lua_panel_words_and_numbers
+    scenario_lua_panel_refusals
+    scenario_lua_presentation_targets
+    scenario_lua_score_and_announce
+    scenario_lua_acting_rows_refuse_a_check
     scenario_sandbox_removed_names_are_nil
     scenario_sandbox_bytecode_chunk_refused
     scenario_sandbox_collectgarbage_stop_refused
@@ -5481,6 +5854,19 @@ set(_unit_test_names
     scenario_hooks_team_changed_on_difference
     scenario_hooks_tick_and_end
     scenario_hooks_error_counts_and_disables
+    scenario_hooks_trigger_runs_after_author
+    scenario_hooks_trigger_table_form_handler
+    scenario_hooks_trigger_stopped_by_false
+    scenario_hooks_trigger_shadowed_base
+    scenario_hooks_trigger_where_both_ways
+    scenario_hooks_trigger_call_reaches_script
+    scenario_hooks_router_matches_source
+    scenario_hooks_trigger_team_from_owner
+    scenario_hooks_trigger_tag_on_item
+    scenario_hooks_trigger_tag_ne_and_eq
+    scenario_hooks_trigger_region_holds_square
+    scenario_hooks_trigger_unknown_operator
+    scenario_hooks_trigger_on_policy_skipped
     scenario_derived_timer_fires_on_its_tick
     scenario_derived_timer_cancelled_and_stale
     scenario_derived_timer_limit_boundary
@@ -5489,9 +5875,126 @@ set(_unit_test_names
     scenario_derived_define_region_adds_replaces_and_expires
     scenario_derived_region_loop_terminates
     scenario_derived_fixture_wins_without_on_tick
+    scenario_functions_table
+    scenario_functions_fields
+    scenario_functions_match_dispatch
+    scenario_fndesc_table
+    scenario_fnstub_forms
+    scenario_fnscan_forms
+    scenario_fnscan_spellings
+    scenario_package_round_trip
+    scenario_package_bad_framing
+    scenario_package_entry_names
+    scenario_package_two_open
+    scenario_package_entry_cap
+    scenario_manifest_json_round_trip
+    scenario_manifest_json_refusals
+    scenario_manifest_agrees
+    scenario_manifest_from_values
+    scenario_manifest_json_team_init
+    scenario_manifest_json_number_range
+    scenario_manifest_json_triggers
+    scenario_manifest_json_trigger_operator
+    scenario_manifest_json_trigger_where_type
+    scenario_manifest_json_trigger_no_when
+    scenario_manifest_json_trigger_action_no_op
+    scenario_manifest_json_trigger_where_no_field
+    scenario_manifest_json_trigger_text_cut
+    scenario_map_body_length
+    scenario_map_find_container
+    scenario_map_has_script_chunk
+    scenario_map_preview_truncates
+    scenario_map_preview_passes_plain_bytes
+    scenario_map_body_use_local_compare
+    scenario_map_has_script_cached
+    scenario_packed_map_script_runs
+    scenario_packed_map_loose_overrides
+    scenario_packed_map_script_omits_table
+    scenario_packed_map_table_disagrees
+    scenario_packed_map_round_start_keeps_it
+    scenario_packed_map_upload_switch
+    scenario_packed_map_team_init
+    scenario_pack_writes_container
+    scenario_pack_manifest_agrees
+    scenario_pack_replaces_trailer
+    scenario_pack_refuses_unscripted
+    scenario_brain_name_resolves
+    scenario_brain_name_missing
+    scenario_brain_name_rejects_path
+    scenario_brain_op_resolves
+    scenario_brain_name_op_missing_refused
+    scenario_dir_lists_package
+    scenario_dir_lists_loose_script
+    scenario_dir_skips_junk
+    scenario_dir_skips_subdirectory
+    scenario_dir_list_cached
+    scenario_dir_entry_roundtrip
+    scenario_dir_chunk_not_in_flight
+    scenario_precedence_mod_over_map
+    scenario_precedence_none_restores_map
+    scenario_precedence_plain_map_keeps_mod
+    scenario_precedence_template_seats
+    scenario_precedence_reset_reapplies
+    scenario_precedence_reload_reseats
+    scenario_precedence_no_game_plays_strict
+    scenario_precedence_open_game_plays_open
+    scenario_precedence_reload_refuses_bound
+    scenario_panel_parses_each_primitive
+    scenario_panel_refuses_malformed
+    scenario_panel_boundaries
+    scenario_panel_roundtrip
+    scenario_panel_timer_text
+    scenario_announce_remaining
+    scn_presentation_codec_bodies
+    scn_presentation_codec_refuses_short
+    scn_presentation_decoder_sets_broadcast
+    scn_presentation_client_filters
+    scn_arm_panel_publishes_and_records
+    scn_arm_panel_refusals
+    scn_arm_panel_one_update_per_tick
+    scn_arm_panel_replayed_to_joiner
+    scn_arm_panel_snapshot_bounded
+    scn_arm_score_announce_marker
+    scenario_rules_codec
+    scenario_rules_published
+    scenario_rules_reaches_joiner
+    scenario_rules_fragments
+    scenario_rules_fragments_partial
+    scenario_hint_reaches_brain
+    scenario_hint_refusals
+    scenario_hint_records
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table
+    scenario_bot_init_lands
+    scenario_bot_init_refusals
+    brain_on_init_update
+    editor_script_path
+    editor_script_round_trip
+    editor_script_missing
+    editor_script_over_cap
+    editor_script_follows_save_as
+    editor_form_init
+    editor_form_rules
+    editor_form_rules_full
+    editor_form_teams
+    editor_form_rule_change
+    editor_form_tag_indices
+    editor_form_tags
+    editor_form_regions
+    editor_form_dirty_flag
+    editor_form_team_ids
+    editor_form_triggers
+    editor_form_triggers_full
+    editor_form_trigger_rows
+    editor_form_trigger_row_values
+    editor_form_trigger_action_text
+    editor_form_trigger_vocabulary
+    editor_pack_mod_round_trip
+    editor_pack_map_round_trip
+    editor_pack_twice_identical
+    editor_pack_refuses_unbound
+    editor_pack_survives_map_save
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via

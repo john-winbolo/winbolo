@@ -29,6 +29,7 @@
  *********************************************************/
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <SDL3/SDL.h>
 #include "client_sim_control.h"
@@ -49,6 +50,39 @@
 #include "../common/wb_log.h"
 #include "../common/mp_diag_log.h"
 
+/* The recipient test the three targeted CTRL_SCN_* events share with
+ * CTRL_SERVER_TEXT: destTeam 0 means everyone, destPlayer 0xFF means
+ * everyone. In-process subscribers (SP-host, bots) receive every
+ * publish, so the comparison has to happen here; the wire path was
+ * already filtered by udpClientDeliverControl and arrives addressed to
+ * this client. 0 is a real slot, which is why 0xFF rather than 0 is
+ * what means "everybody". */
+static bool clientSimScnAddressedToMe(const ClientSim *cs, uint8_t destTeam,
+                                      uint8_t destPlayer) {
+    BYTE myPN = clientSimGetMyPlayerNum(cs);
+    if (destTeam != 0) {
+        const ClientLobbySlot *ms = clientSimGetLobbySlot(cs, myPN);
+        if (ms == NULL || ms->teamNumber != destTeam) return false;
+    }
+    if (destPlayer != 0xFF && myPN != destPlayer) return false;
+    return true;
+}
+
+/* Drop everything a scenario was presenting. Called from the
+ * CTRL_GAME_PHASE_LOBBY arm, beside the rest of that reset: a panel,
+ * announcement, marker or score belongs to the round it was sent in. */
+static void clientSimScnClearPresentation(ClientSim *cs) {
+    memset(cs->scnPanels, 0, sizeof(cs->scnPanels));
+    memset(cs->scnPanelValid, 0, sizeof(cs->scnPanelValid));
+    cs->scnPanelRejects = 0;
+    cs->scnAnnounceText[0] = '\0';
+    cs->scnAnnounceTicks = 0;
+    cs->scnAnnounceArrivedTick = 0;
+    memset(cs->scnMarkers, 0, sizeof(cs->scnMarkers));
+    memset(cs->scnPlayerScores, 0, sizeof(cs->scnPlayerScores));
+    memset(cs->scnTeamScores, 0, sizeof(cs->scnTeamScores));
+}
+
 /* Localized lobby team label: the host-assigned team name, or "Team N"
  * when the team is unnamed (matching the lobby roster header). */
 static void clientSimLobbyTeamLabel(const ClientSim *cs, BYTE team,
@@ -62,6 +96,44 @@ static void clientSimLobbyTeamLabel(const ClientSim *cs, BYTE team,
     memset(&args, 0, sizeof(args));
     args.number = team;
     SDL_strlcpy(out, langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &args), outLen);
+}
+
+/* Install one brain's reassembled lobby-text blob.
+ *
+ * Blob layout, written by the server:
+ *   [announceLen 2 BE][announce bytes][docsLen 2 BE][docs bytes]
+ * Either length may be 0. A blob that does not parse leaves both strings of
+ * that brain as they were, so a malformed stream cannot half-replace a text.
+ *
+ * The whole table is allocated on first use: almost no ClientSim ever meets a
+ * brain that ships these files, and the table is ~264 KB. */
+static void clientSimInstallBrainTexts(ClientSim *cs, uint8_t brainIdx,
+                                       const uint8_t *blob, uint32_t len) {
+    uint32_t pos = 0;
+    uint16_t aLen, dLen;
+    if (cs == NULL || blob == NULL || brainIdx >= BRAIN_LIST_MAX) return;
+    if (len < 4) return;
+    aLen = (uint16_t)(((uint16_t)blob[0] << 8) | blob[1]);
+    pos = 2;
+    if (aLen > BRAIN_ANNOUNCE_MAX || pos + aLen + 2u > len) return;
+    pos += aLen;
+    dLen = (uint16_t)(((uint16_t)blob[pos] << 8) | blob[pos + 1]);
+    pos += 2;
+    if (dLen > BRAIN_DOCS_MAX || pos + dLen > len) return;
+
+    if (cs->lobbyBrainTexts == NULL) {
+        cs->lobbyBrainTexts =
+            (struct ClientBrainTexts *)calloc(1, sizeof(*cs->lobbyBrainTexts));
+        if (cs->lobbyBrainTexts == NULL) return;
+    }
+    if (aLen > 0) memcpy(cs->lobbyBrainTexts->announce[brainIdx], blob + 2, aLen);
+    cs->lobbyBrainTexts->announce[brainIdx][aLen] = '\0';
+    if (dLen > 0) memcpy(cs->lobbyBrainTexts->docs[brainIdx], blob + pos, dLen);
+    cs->lobbyBrainTexts->docs[brainIdx][dLen] = '\0';
+
+    WB_LOG_INFO(WB_LOG_CAT_CLIENT,
+                "brain %u lobby texts installed: announce %u B, docs %u B",
+                (unsigned)brainIdx, (unsigned)aLen, (unsigned)dLen);
 }
 
 void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
@@ -425,7 +497,9 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * because that is where gameTypeResolve reads it — the loadout this
          * client predicts its first life with, the start it predicts, and
          * the tournament stat block at game over all go through there. A
-         * plain lobby leaves 0, which resolves as open. */
+         * plain lobby leaves 0, and 0 is read only while the lobby type says
+         * scripted: a scripted round whose scenario declared no game plays
+         * strict tournament, the same answer the server resolves. */
         cs->sim.scenarioBaseGame =
             (gameType)evt->u.lobbySettings.scenarioBaseGame;
         cs->uploadPolicy             = evt->u.lobbySettings.uploadPolicy;
@@ -519,6 +593,21 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
 
     case CTRL_LOBBY_BRAIN_LIST:
         cs->lobbyBrainList = evt->u.lobbyBrainList.list;
+        /* A NEW list means the old texts belong to nobody: they are held by
+         * catalogue INDEX, and the next server's index 3 is a different
+         * brain from this one's. Left standing, a reconnect to another
+         * server showed the previous server's announce line under the new
+         * server's brain name. The fragments that go with the new list
+         * follow this event, so clearing here costs nothing that arrives.
+         * The partial-reassembly state goes too — a stream cut off by the
+         * list change must not splice onto the next one. */
+        if (cs->lobbyBrainTexts != NULL) {
+            free(cs->lobbyBrainTexts);
+            cs->lobbyBrainTexts = NULL;
+        }
+        cs->lobbyBrainDocsExpected = 0;
+        cs->lobbyBrainDocsNextSeq  = 0;
+        cs->lobbyBrainDocsBlobLen  = 0;
         break;
 
     case CTRL_ROUND_STATS:
@@ -618,6 +707,48 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             cs->lobbyPoolChunkExpected = 0;
             cs->lobbyPoolNextSeq = 0;
             cs->lobbyPoolBlobLen = 0;
+        }
+        break;
+    }
+
+    case CTRL_LOBBY_BRAIN_DOCS_CHUNK: {
+        /* Reassemble ONE brain's lobby texts. Same in-order rule the bot-pool
+         * stream uses, plus the brain index: a stream is (brainIdx, seq
+         * 0..count-1), and a fragment that does not continue the one in hand
+         * throws the partial blob away rather than splicing two brains'
+         * texts together. */
+        uint8_t  idx   = evt->u.lobbyBrainDocsChunk.brainIdx;
+        uint8_t  seq   = evt->u.lobbyBrainDocsChunk.seq;
+        uint8_t  count = evt->u.lobbyBrainDocsChunk.count;
+        uint16_t fl    = evt->u.lobbyBrainDocsChunk.fragLen;
+        if (count == 0 || idx >= BRAIN_LIST_MAX) break;
+        if (seq == 0) {
+            cs->lobbyBrainDocsIdx      = idx;
+            cs->lobbyBrainDocsExpected = count;
+            cs->lobbyBrainDocsNextSeq  = 0;
+            cs->lobbyBrainDocsBlobLen  = 0;
+        }
+        if (seq != cs->lobbyBrainDocsNextSeq ||
+            count != cs->lobbyBrainDocsExpected ||
+            idx != cs->lobbyBrainDocsIdx ||
+            cs->lobbyBrainDocsBlobLen + fl > sizeof(cs->lobbyBrainDocsBlob)) {
+            cs->lobbyBrainDocsExpected = 0;   /* abort */
+            cs->lobbyBrainDocsNextSeq  = 0;
+            cs->lobbyBrainDocsBlobLen  = 0;
+            break;
+        }
+        if (fl > 0) {
+            memcpy(cs->lobbyBrainDocsBlob + cs->lobbyBrainDocsBlobLen,
+                   evt->u.lobbyBrainDocsChunk.frag, fl);
+            cs->lobbyBrainDocsBlobLen += fl;
+        }
+        cs->lobbyBrainDocsNextSeq++;
+        if (cs->lobbyBrainDocsNextSeq == count) {
+            clientSimInstallBrainTexts(cs, idx, cs->lobbyBrainDocsBlob,
+                                       cs->lobbyBrainDocsBlobLen);
+            cs->lobbyBrainDocsExpected = 0;
+            cs->lobbyBrainDocsNextSeq  = 0;
+            cs->lobbyBrainDocsBlobLen  = 0;
         }
         break;
     }
@@ -789,6 +920,10 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * CTRL_LOBBY_MAP_CHANGE path, not here. Runs identically on SP,
          * host, and remote clients since it hangs off this one event. */
         clientSimResetWorld(cs);
+        /* And whatever the scenario was presenting over it: a panel,
+         * announcement, marker or score belongs to the round that has
+         * just ended, and the next one states its own. */
+        clientSimScnClearPresentation(cs);
         break;
     case CTRL_GAME_PHASE_COUNTDOWN:
         cs->netStat = netLobbyCountdown;
@@ -1033,7 +1168,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                 clientSimAppendLobbyTeamChat(
                     cs, clientSimGetLobbySlot(cs, fromPlayer)->playerName, msg);
             } else {
-                clientSimIncomingMessage(cs, fromPlayer, msg);
+                clientSimIncomingMessage(cs, fromPlayer, destPlayer, msg);
             }
             /* One play for both lobby sub-branches; in-game chat (not in
              * lobby) stays silent, and the join replay burst is gated out. */
@@ -1261,6 +1396,159 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
            is the same question asked the other way round, and it is
            idempotent, so records already inside the new caps are untouched. */
         mapClampToRules(&cs->sim);
+        break;
+    }
+
+    case CTRL_SCN_PANEL: {
+        uint8_t panel = evt->u.scnPanel.panel;
+        if (!clientSimScnAddressedToMe(cs, evt->u.scnPanel.destTeam,
+                                       evt->u.scnPanel.destPlayer)) {
+            break;
+        }
+        if (panel >= SCN_PANEL_IDS) break;
+        /* Parsed straight into the stored list: scnPanelParse writes its
+           output only when it takes a list whole, so a list this client
+           cannot read leaves the panel showing exactly what it had. The
+           refusal is counted rather than logged per event — a scenario
+           sending a bad list usually sends it every time it updates. */
+        if (scnPanelParse(evt->u.scnPanel.bytes, evt->u.scnPanel.len,
+                          &cs->scnPanels[panel]) != SCN_PANEL_OK) {
+            cs->scnPanelRejects++;
+            break;
+        }
+        cs->scnPanelValid[panel] = true;
+        break;
+    }
+
+    case CTRL_SCN_SCORE: {
+        /* Broadcast, so no recipient test: target says whose score this
+           is, not who is meant to see it. */
+        ClientScnScore *row;
+        if (evt->u.scnScore.target >= MAX_TANKS) break;
+        if (evt->u.scnScore.kind == SCN_SCORE_KIND_PLAYER) {
+            row = &cs->scnPlayerScores[evt->u.scnScore.target];
+        } else if (evt->u.scnScore.kind == SCN_SCORE_KIND_TEAM) {
+            row = &cs->scnTeamScores[evt->u.scnScore.target];
+        } else {
+            break;   /* a kind this build does not keep a row for */
+        }
+        row->valid = true;
+        row->score = evt->u.scnScore.score;
+        memcpy(row->label, evt->u.scnScore.label, sizeof(row->label));
+        row->label[sizeof(row->label) - 1] = '\0';
+        break;
+    }
+
+    case CTRL_SCN_ANNOUNCE:
+        if (!clientSimScnAddressedToMe(cs, evt->u.scnAnnounce.destTeam,
+                                       evt->u.scnAnnounce.destPlayer)) {
+            break;
+        }
+        SDL_strlcpy(cs->scnAnnounceText, evt->u.scnAnnounce.text,
+                    sizeof(cs->scnAnnounceText));
+        cs->scnAnnounceTicks = evt->u.scnAnnounce.ticks;
+        /* The tick this client was last told about, so the drawer counts
+           the line down against the clock the scenario set it by rather
+           than against wall time. */
+        cs->scnAnnounceArrivedTick = cs->lastServerTick;
+        break;
+
+    case CTRL_SCN_MARKER: {
+        ClientScnMarker *m;
+        if (!clientSimScnAddressedToMe(cs, evt->u.scnMarker.destTeam,
+                                       evt->u.scnMarker.destPlayer)) {
+            break;
+        }
+        if (evt->u.scnMarker.id >= SCN_MARKERS_MAX) break;
+        m = &cs->scnMarkers[evt->u.scnMarker.id];
+        if (evt->u.scnMarker.kind == SCN_MARKER_KIND_CLEAR) {
+            memset(m, 0, sizeof(*m));   /* active false: the id is gone */
+            break;
+        }
+        if (evt->u.scnMarker.kind != SCN_MARKER_KIND_SQUARE &&
+            evt->u.scnMarker.kind != SCN_MARKER_KIND_FOLLOW) {
+            break;   /* a kind this build has no way to draw */
+        }
+        if (evt->u.scnMarker.kind == SCN_MARKER_KIND_FOLLOW &&
+            evt->u.scnMarker.slot >= MAX_TANKS) {
+            break;   /* nothing to follow */
+        }
+        m->active = true;
+        m->kind   = evt->u.scnMarker.kind;
+        m->x      = evt->u.scnMarker.x;
+        m->y      = evt->u.scnMarker.y;
+        m->slot   = evt->u.scnMarker.slot;
+        m->colour = evt->u.scnMarker.colour;
+        break;
+    }
+
+    case CTRL_SCENARIO_RULES: {
+        /* Broadcast: a scenario's own rules table is as public as the name
+           and the description the lobby settings event already carries.
+           The whole set is replaced, so a row the new set does not name is
+           gone rather than left behind, and the empty set a detach sends
+           leaves the lobby with nothing to show.
+
+           Reassembled from in-order fragments, the way the bot-pool and
+           brain-docs streams are: the set lands in the staging arrays and
+           replaces the live one on the last fragment, so a reader between
+           two fragments is handed the old set whole rather than the new one
+           half-built. Fragments ride the reliable, ordered control channel,
+           so seq is monotonic; any gap or mismatch throws the partial set
+           away rather than splicing two sets together. */
+        uint8_t seq   = evt->u.scenarioRules.seq;
+        uint8_t frags = evt->u.scenarioRules.fragCount;
+        uint8_t n     = evt->u.scenarioRules.count;
+        uint8_t i;
+
+        if (frags == 0) break;   /* no set has no fragments */
+        if (n > (uint8_t)SCN_RULES_FRAG_ROWS) {
+            n = (uint8_t)SCN_RULES_FRAG_ROWS;
+        }
+        if (seq == 0) {
+            cs->scenarioRulesExpected  = frags;
+            cs->scenarioRulesNextSeq   = 0;
+            cs->scenarioRulesStageCount = 0;
+        }
+        if (seq != cs->scenarioRulesNextSeq ||
+            frags != cs->scenarioRulesExpected ||
+            (int)cs->scenarioRulesStageCount + (int)n >
+                (int)CTRL_SCENARIO_RULES_MAX) {
+            cs->scenarioRulesExpected   = 0;   /* abort */
+            cs->scenarioRulesNextSeq    = 0;
+            cs->scenarioRulesStageCount = 0;
+            break;
+        }
+        for (i = 0; i < n; i++) {
+            /* A row naming no rule is dropped rather than kept, so every
+               row a reader is handed names one. The wire decoder refuses
+               such a body outright; an in-process publish does not go
+               through it, which is why this asks as well. */
+            if (evt->u.scenarioRules.rule[i] >=
+                (uint8_t)CTRL_SCENARIO_RULES_MAX) {
+                continue;
+            }
+            cs->scenarioRuleStageIndex[cs->scenarioRulesStageCount] =
+                evt->u.scenarioRules.rule[i];
+            cs->scenarioRuleStageValue[cs->scenarioRulesStageCount] =
+                evt->u.scenarioRules.value[i];
+            cs->scenarioRulesStageCount++;
+        }
+        cs->scenarioRulesNextSeq++;
+        if (cs->scenarioRulesNextSeq == frags) {
+            memset(cs->scenarioRuleIndex, 0, sizeof(cs->scenarioRuleIndex));
+            memset(cs->scenarioRuleValue, 0, sizeof(cs->scenarioRuleValue));
+            memcpy(cs->scenarioRuleIndex, cs->scenarioRuleStageIndex,
+                   cs->scenarioRulesStageCount *
+                       sizeof(cs->scenarioRuleIndex[0]));
+            memcpy(cs->scenarioRuleValue, cs->scenarioRuleStageValue,
+                   cs->scenarioRulesStageCount *
+                       sizeof(cs->scenarioRuleValue[0]));
+            cs->scenarioRulesCount      = cs->scenarioRulesStageCount;
+            cs->scenarioRulesExpected   = 0;
+            cs->scenarioRulesNextSeq    = 0;
+            cs->scenarioRulesStageCount = 0;
+        }
         break;
     }
     }

@@ -67,6 +67,85 @@
  * plausible tick, so it doubles as the "not latched yet" flag. */
 #define ROUND_LOG_START_UNSET     0xFFFFFFFFu
 
+/* THREE SHOTS = GO THERE.
+ *
+ * Three of one player's shells that run their full range — no pill, tank,
+ * base, wall, building or forest in the way — and land on the SAME open
+ * square inside a short window are an order to the bots on that player's
+ * team: go to that square and hold there.
+ *
+ * The detector keeps the last three expiry squares per player. SHOT_ORDER_
+ * SHOTS is how many make an order, and SHOT_ORDER_WINDOW_TICKS is how long
+ * the three have to be FIRED in: ticks count 100 a second (the keys/game
+ * half-step alternation), so 200 is the two seconds the design asks for.
+ *
+ * EVERY TIMING TEST IS ON THE SERVER FIRE TICK, NOT THE LANDING. A shell
+ * lands later than it was fired — 104 server ticks later at full range, see
+ * shellsAddItem — and three shells fired in a burst can land in a different
+ * order than they left the gun when the ranges differ. The server's own
+ * tick at the moment the shell was created rides with the shell (shells.h
+ * serverFireTick) and the shell-death callback hands it back, so the
+ * detector reads the three shots the way the player fired them. The landing
+ * square is still what names the place.
+ *
+ * THE SERVER'S TICK, NOT THE CLIENT'S. A shell also carries the client
+ * input tick that fired it (shells.h fireTick), and that number belongs to
+ * the client: a player who joined mid-round has a counter starting near
+ * zero, so its burst would read as fired a thousand ticks ago and the quiet
+ * second after it would already be over; a modified client could send any
+ * tick it wanted and order the bots about at will. Bots stamp the server
+ * tick, which is why they never showed the fault. Nothing here reads the
+ * client's number.
+ *
+ * The order also has to be DELIBERATE, which is a quiet second either side:
+ * nothing of that player's fired in SHOT_ORDER_QUIET_TICKS before the first
+ * of the three, and nothing fired in the same stretch after the third. The
+ * second half cannot be known when the third shell lands, so the third shot
+ * only ARMS the order; the per-tick poll (serverSimShotOrderTick) sends it
+ * a quiet second after the third shot left the gun, and any shell fired in
+ * between takes the armed order away again — that shot may start a run of
+ * its own instead.
+ *
+ * SHOT_ORDER_FIRE_LOG is how many of a player's recent shells the quiet
+ * tests have to look back over. A gun reloads far slower than that, so the
+ * log covers both quiet seconds several times over.
+ *
+ * Constants rather than sim rules: the detector is server-side only, so
+ * there is nothing for a client to agree with, and a rule would put a new
+ * field on the wire for numbers nobody tunes per round.
+ *
+ * Ticks are read from the sim alone, never from a clock, so a seeded run
+ * fires the order on the same tick every time. */
+#define SHOT_ORDER_SHOTS        3
+#define SHOT_ORDER_WINDOW_TICKS 200
+#define SHOT_ORDER_QUIET_TICKS  100
+#define SHOT_ORDER_FIRE_LOG     16
+
+typedef struct {
+    /* The last three full-range landings, oldest first. tick[] is the
+     * SERVER fire tick of each, which is what the window and the quiet
+     * second read. */
+    BYTE     mx[SHOT_ORDER_SHOTS];    /* oldest first; [SHOTS-1] is the last */
+    BYTE     my[SHOT_ORDER_SHOTS];
+    uint32_t tick[SHOT_ORDER_SHOTS];
+    uint8_t  count;                   /* filled slots, held at SHOT_ORDER_SHOTS */
+
+    /* Every shell of this player's the server has heard of, by SERVER fire
+     * tick — a shell that HIT something counts here, because the player
+     * still fired it. This is what the two quiet seconds are read off. */
+    uint32_t fire[SHOT_ORDER_FIRE_LOG];
+    uint8_t  fireCount;               /* filled slots, held at the cap */
+    uint8_t  fireNext;                /* where the next fire tick goes */
+
+    /* The order waiting out its quiet second. armFireTick is the SERVER
+     * fire tick of the third shot: the poll sends the order at armFireTick +
+     * SHOT_ORDER_QUIET_TICKS and a shell fired before then cancels it. The
+     * poll compares it against sim->tick, so both sides are server ticks. */
+    bool     armed;
+    BYTE     armMx, armMy;
+    uint32_t armFireTick;
+} ShotOrderRing;
+
 /* One roster change waiting its turn. A spawn carries the whole payload
  * because the seat, the brain and the init table are all read when it
  * lands rather than when it was asked for; a removal needs only the slot;
@@ -86,6 +165,29 @@ typedef struct {
     BYTE                removeSlot;   /* read for SCN_ROSTER_REMOVE */
     ScnOpRosterBotInit  botInit;      /* read for SCN_ROSTER_BOT_INIT */
 } ScnRosterQueueEntry;
+
+/* The destinations a presentation event can be addressed to, as one flat
+ * index: 0 is everyone, 1..MAX_TANKS-1 is that team number, and
+ * MAX_TANKS + slot is that 0-based player slot. Thirty-two in all. */
+#define SCN_PANEL_TARGETS (2 * MAX_TANKS)
+
+/* One panel's last list for one destination. bytes sits last and the three
+ * fields ahead of it total seven, so the struct is exactly 1024 bytes and
+ * the array of them carries no padding between entries. */
+typedef struct {
+    uint32_t tick;                  /* the sim tick the list was stored at */
+    uint16_t len;                   /* bytes of the list, 0 for a cleared panel */
+    bool     valid;                 /* a list has been stored for this key */
+    uint8_t  bytes[SCN_PANEL_MAX];
+} ScnPanelStore;
+
+/* One score row. valid tells a reader a scenario set this row apart from a
+ * row that still reads zero because nothing has. */
+typedef struct {
+    bool    valid;
+    int32_t score;
+    char    label[16];
+} ScnScoreRow;
 
 struct ServerSim {
     GameSim      sim;    /* MUST be first member */
@@ -188,6 +290,12 @@ struct ServerSim {
 
     BotManager      botMgr;  /* per-sim bot manager — initialised by botManagerInitInSim */
 
+    /* The last three expired shells of each player, for the three-shot
+     * order above. Zeroed when the sim is built, when a round starts and
+     * when a player leaves, so a slot never inherits the shots of whoever
+     * sat in it before. */
+    ShotOrderRing   shotOrder[MAX_TANKS];
+
     /* Per-bot brain selection as an index into brainList. 0xFF means
      * "use the global botBrainPath" (the CLI-configured default). The
      * lobby AiConfig dropdown writes here via
@@ -205,6 +313,23 @@ struct ServerSim {
      * brainList.entries[i]). Kept off the public catalogue so the path
      * never appears on the public API or the wire. */
     char            brainPaths[BRAIN_LIST_MAX][BRAIN_LIST_PATH_LEN];
+
+    /* The brains' lobby texts, read off disk ONCE and kept as the wire blob
+     * the CTRL_LOBBY_BRAIN_DOCS_CHUNK fragments are cut from.
+     *
+     * These used to be read at the moment they were sent. The send is inside
+     * serverSimSyncSubscriber, which the delayed spectator ring's control
+     * snapshot also runs — and that snapshot is rebuilt on every lobby
+     * keyframe, for a WinBoloDS that defaults to 16 spectator slots. Two
+     * files per brain, nine brains, both multiplied by the ring's keyframe
+     * rate, on the tick thread.
+     *
+     * ~271 KB, so it is allocated on first fill and freed with the sim
+     * rather than sitting in every ServerSim that never hosts a lobby.
+     * serverSimRefreshBrainDocs fills it and re-reads a brain whose files
+     * have a newer mtime, so an operator editing a brain's announce.txt
+     * between rounds still sees the change without a restart. */
+    struct ServerBrainDocsCache *brainDocs;
 
     /* Layout A lobby flags — all persist across rounds. */
     bool     openHost;             /* anyone can edit when true */
@@ -665,6 +790,23 @@ struct ServerSim {
      * PERSIST-policy uploads. Empty → "<mapDirPath>/Uploads". Set from
      * ServerInstanceConfig.uploadPersistDir at startup. */
     char         uploadPersistDir[FILENAME_MAX];
+    /* The scenarios this server offers on their own, independently of any
+     * map: the -scenariodir CLI arg on the dedicated server and the
+     * "Scenario Dir" preference on a desktop host. Empty → the built-in
+     * "data/scenarios". A directory that is not there is not an error — it
+     * means the server offers no scenarios of its own. Read by the lobby
+     * scenario-list handler, which hands it to scnDirList. */
+    char         scenarioDirPath[FILENAME_MAX];
+    /* Which of the scenarios in that directory the host has picked, by the
+       file name the lister reported; empty means none. Written by the
+       CMD_LOBBY_SET_SCENARIO case and read back through
+       serverSimGetSelectedScenario, which is what whoever owns the scenario
+       asks when it decides what plays: a pick here beats the committed map's
+       own script, and empty hands the map its own back. Survives a lobby
+       reset, so the scenario the host chose is still the one playing when
+       the next player arrives. SCN_DIR_FILE_LEN because that is the width of
+       the ScnDirEntry.file it is copied from. */
+    char         scenarioSelectedFile[SCN_DIR_FILE_LEN];
 
     /* Random map generation (for -randommap mode) */
     bool         randomMapEnabled;       /* true when using -randommap */
@@ -759,6 +901,12 @@ struct ServerSim {
        scripted. NULL means nothing registered and every map reads plain. */
     bool                 (*scenarioMapScripted)(void *ctx, const char *mapPath);
     void                  *scenarioMapScriptedCtx;
+    /* Reads the scenarios directory into the list a client is told about.
+       NULL means nothing registered and the directory reads empty, which is
+       what a build with no scenario library offers. */
+    int                  (*scenarioLister)(void *ctx, const char *dir,
+                                           ScnDirEntry *out, int max);
+    void                  *scenarioListerCtx;
     /* What a lobby host's reload request runs. NULL means no scenario is
        attached and a request answers so. */
     bool                 (*scenarioReload)(void *ctx, char *err, size_t errLen);
@@ -774,6 +922,16 @@ struct ServerSim {
        commands, costs one read of the script a second. Ticks, not wall
        clock, and the lobby advances them like any other state. */
     uint32_t               scenarioReloadTick;
+    /* The same for a pick. Written and read exactly as the reload's is, and
+       held to the same gap, because what a pick costs is the same work: it
+       reads the scenarios directory to find out whether the name is one the
+       server offers, and reading that directory means opening every file in
+       it and running the top level of every loose script. Counted apart from
+       the reload rather than sharing one tick, so a host who re-reads a script
+       and then picks a different one is not told the second is too soon after
+       the first — they are different requests and neither makes the other's
+       work cheaper. */
+    uint32_t               scenarioPickTick;
     void                 (*scenarioMapChanged)(void *ctx, ServerSim *sim,
                                                const char *mapPath);
     void                  *scenarioMapChangedCtx;
@@ -800,6 +958,19 @@ struct ServerSim {
         char                description[LOBBY_SCENARIO_DESC_LEN];
         bool                extraTeams;
     } scenarioIdentity;
+    /* The rules the attached scenario's own manifest sets, as its author
+     * wrote them, so the lobby can say what a mod changes without opening
+     * the file. Not the table the round is running on: sim.rules is that,
+     * and a scenario changing a rule mid-round moves it and leaves this
+     * alone. Held beside the identity because it is set and cleared with
+     * it — a scenario attaching states its set and one detaching empties
+     * it — rather than with the presentation, which the return to lobby
+     * drops while the scenario is still attached.
+     *
+     * A manifest names each rule at most once, so the array holds every
+     * rule there is and rows past the count name none. */
+    ScnOpSetRule           scenarioRules[CTRL_SCENARIO_RULES_MAX];
+    uint8_t                scenarioRulesCount;
     /* What the lobby was set to when a scripted map displaced it: the game
      * type gameScripted took the place of, the ranked flag a scripted round
      * cannot run under, and the AI policy and bot AI type that aiNone was
@@ -857,6 +1028,34 @@ struct ServerSim {
     ScnRosterQueueEntry    scenarioRoster[SCN_ROSTER_QUEUE_MAX];
     uint8_t                scenarioRosterHead;   /* the next one to drain */
     uint8_t                scenarioRosterCount;
+
+    /* The last display list each panel was sent, per destination, so a
+     * subscriber registering mid-round is given what the panels already
+     * hold. Every update replaces the whole list, so one list per key is
+     * the whole of the state.
+     *
+     * The key is the pair (panel id, destination), because a scenario
+     * giving each of sixteen players its own panel is ordinary and the two
+     * of them must not overwrite each other. tick is the sim tick the list
+     * was stored at, which is what refuses a second update for the same
+     * pair in the same tick; valid says a list has been stored at all, so
+     * a cleared store admits an update at tick 0. */
+    ScnPanelStore          scenarioPanels[SCN_PANEL_IDS][SCN_PANEL_TARGETS];
+
+    /* Where the panel arm decodes an arriving list to find out whether it
+     * decodes. It lives here to keep 7.7 KB off the funnel's frame, and
+     * because a sim's working space belongs to the sim: nothing reads it
+     * once the parse has answered, and two sims in one process each have
+     * their own. */
+    ScnPanelList           scenarioPanelScratch;
+
+    /* A scenario's own score for each player slot and each team, as the
+     * score op last set it. Nothing reads these yet: the lobby's round
+     * stats are what will. Player rows are keyed by a 0-based slot, team
+     * rows by the team number, which runs 1..MAX_TANKS-1, so row 0 of the
+     * team array names no team and is never written. */
+    ScnScoreRow            scenarioPlayerScores[MAX_TANKS];
+    ScnScoreRow            scenarioTeamScores[MAX_TANKS];
 
     /* Spectator roster enumerator (registered by the transport layer). Invoked
      * during sync-replay to emit one CTRL_SPECTATOR_SLOT per connected
@@ -928,6 +1127,50 @@ bool serverSimWarmOneHeldSeat(ServerSim *sim);
  * rather than spawning into the next one. Called at the game starts in
  * server_sim_round.c, beside the fill reset. */
 void serverSimScenarioResetRoster(ServerSim *sim);
+
+/* Forget every stored panel list and every score row. What a scenario was
+ * presenting belongs to the round and the scenario that put it up, so both
+ * the return to lobby and a detach drop the lot; a joiner arriving after
+ * either is given nothing rather than the last round's panels. Called from
+ * serverSimResetGameWorld, beside the fill and roster resets, and from the
+ * detach arm of serverSimSetScenarioIdentity. */
+void serverSimScenarioResetPresentation(ServerSim *sim);
+
+/* Hand the stored panel lists to a joining subscriber's callback, as the
+ * events that published them. The recipient filters run on the delivery side
+ * for a replayed event exactly as they do for a live one, so with
+ * withTargeted this replays every list and lets the filter decide which of
+ * them the joiner keeps.
+ *
+ * withTargeted false replays the everyone-addressed list of each panel and
+ * nothing else. That is what the delayed spectator ring's control snapshot
+ * asks for: a spectator belongs to no team and holds no slot, so the lists
+ * held to one of either reach nobody down that path, and leaving them out
+ * keeps the keyframe inside LOG_CONTROL_SNAPSHOT_MAX.
+ *
+ * Called from the sync replay in server_sim_control.c; declared here rather
+ * than on the scenario surface because the caller is the sim's own join
+ * path, not a scenario. */
+void serverSimScenarioReplayPanels(
+    ServerSim *sim,
+    void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx,
+    bool withTargeted);
+
+/* How many CTRL_SCENARIO_RULES fragments the set the attached scenario's
+ * manifest holds needs. Never 0: an empty set is one fragment carrying no
+ * rows, because an empty set is an answer and no event is a different one. */
+uint8_t serverSimScenarioRulesFragCount(const ServerSim *sim);
+
+/* Fill fragment `seq` of that set. Always fills: an attached scenario that
+ * changes no rule states an empty set, which is a different thing from the
+ * event not being sent. Whether to send it at all is the caller's question —
+ * the publish sites and the sync replay each ask whether a scenario is
+ * attached, and each walks seq from 0 to the fragment count. Declared here
+ * rather than on the scenario surface because both callers are the sim's
+ * own. */
+void serverSimFillScenarioRulesEvent(const ServerSim *sim, uint8_t seq,
+                                     struct ControlEvent *evt);
 
 BOLO_STATIC_ASSERT(MAX_TANKS <= 16, shadowCulledSlots_holds_one_bit_per_slot);
 

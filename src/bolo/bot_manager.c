@@ -41,8 +41,8 @@
 #include "starts.h"
 #include "tank.h"
 #include "players.h"
-#include "messages.h"      /* messageInboxPush for botManagerDeliverInternalMessage */
-#include "util.h"          /* utilCtoPString for the inbox payload */
+#include "messages.h"      /* messageInboxPushLine for botManagerDeliverInternalMessage */
+#include "util.h"
 #include "allience.h"
 #include "mines.h"
 #include "client_sim.h"
@@ -59,6 +59,7 @@
 #include "bot_worker_pool.h"
 #include "brain_list.h"    /* brainListLoadModesForPath — the mode/level keys */
 #include "brain_worldsim.h"
+#include "braincore.h"  /* brainCoreCallScenarioHint — the hint's stack work */
 #include <lua.h>
 #include <lauxlib.h>   /* luaL_loadstring for botManagerExecLua */
 #include "../common/wb_log.h"
@@ -1963,19 +1964,6 @@ void botManagerDeliverInternalMessage(ServerSim *sim, BYTE fromPlayer,
      * skip the self bit below. */
     PlayerBitMap allies = playersGetAlliesBitMap(&gs->plyrs, fromPlayer);
 
-    /* Pre-build the inbox payload once; messageInboxPush copies it
-     * into each receiver's ring slot. Clamp at the inbox buffer in
-     * case a brain ever sends past PACKET_MAX_CHAT_MESSAGE — the
-     * wire path enforces the same cap but this path skips that. */
-    char pbuf[BRAIN_INBOX_MSG_LEN];
-    size_t mlen = strlen(msg);
-    if (mlen > BRAIN_INBOX_MSG_LEN - 2) {
-        mlen = BRAIN_INBOX_MSG_LEN - 2;
-    }
-    pbuf[0] = (char)mlen;
-    memcpy(pbuf + 1, msg, mlen);
-    pbuf[mlen + 1] = '\0';
-
     int delivered = 0;
     for (BYTE i = 0; i < MAX_TANKS; i++) {
         if (i == fromPlayer) continue;
@@ -1988,7 +1976,10 @@ void botManagerDeliverInternalMessage(ServerSim *sim, BYTE fromPlayer,
         if (!bc->active || bc->cs == NULL) continue;
         MessageState *ms = clientSimGetMessages(bc->cs);
         if (ms == NULL) continue;
-        messageInboxPush(ms, fromPlayer, pbuf);
+        /* messageInboxPushLine does the Pascal-stringify and the clamp — the
+         * one producer messages.c and the server's stub file also call,
+         * rather than a fourth hand-written copy of it here. */
+        messageInboxPushLine(ms, fromPlayer, msg);
         delivered++;
     }
     /* Audit hook: shows whether the internal fan-out actually reached anyone.
@@ -2046,6 +2037,63 @@ void botManagerQueueInternalMessage(ServerSim *sim, BYTE fromPlayer,
     SDL_strlcpy(j->pendingInternalMsg[j->pendingInternalMsgCount], msg,
                 BRAIN_INBOX_MSG_LEN);
     j->pendingInternalMsgCount++;
+}
+
+/* A bot's own smart ping. Worker-safe in the same way the chat callback
+ * above is: it writes only into this bot's job slot and its own BotContext,
+ * and Stage 3 hands the queued command to serverSimApplyCommand on the
+ * producer thread. From there the ping is a ping — the dispatcher does not
+ * ask whether the sender is a bot, so the marker is filtered to the team,
+ * drawn and recorded exactly like a person's. */
+void botManagerQueuePing(ServerSim *sim, BYTE fromPlayer,
+                         uint8_t kind, uint16_t worldX, uint16_t worldY) {
+    BotJobCtx  *j;
+    BotContext *bot;
+    uint32_t    now;
+
+    if (sim == NULL) return;
+    if (fromPlayer >= MAX_TANKS) return;
+
+    bot = &sim->botMgr.bots[fromPlayer];
+    /* The slot has to BE a hosted bot. The brain API reaches this through a
+     * ClientSim, and a human running a local brain on a client-hosted game
+     * has a ClientSim of its own in a slot the bot manager never filled —
+     * without this test its ping would write lastPingTick and a pending
+     * command into another seat's bot-manager state, where nothing on the
+     * producer side is ever going to drain them. */
+    if (!bot->active) return;
+    /* Reading the sim tick from a worker thread, which is safe for the same
+     * reason runBotThinkJobImpl's own reads are (it stamps both InputPackets
+     * with serverSimGetTick a few lines above its dispatch): sim->tick is
+     * written only by the producer thread, in serverSimTick, and while the
+     * brains are thinking that thread is parked inside botWorkerPoolRun
+     * waiting for every worker to finish. Nothing advances the tick for the
+     * length of Stage 2, so every worker reads the same number the producer
+     * left there. */
+    now = serverSimGetTick(sim);
+    /* Stored as tick+1 so zero can mean "never": tick 0 is a real tick. */
+    if (bot->lastPingTick != 0 &&
+        (now + 1 - bot->lastPingTick) < BOT_PING_MIN_GAP_TICKS) {
+        return;
+    }
+
+    j = &sim->botMgr.jobs[fromPlayer];
+    if (j->pendingCmdCount >= BOT_PENDING_CMD_MAX) {
+        /* Queue full. A dropped marker is better than an unbounded queue,
+         * and the brain will ask again when it still wants to. */
+        return;
+    }
+
+    bot->lastPingTick = now + 1;
+
+    {
+        ClientCommand *cmd = &j->pendingCmds[j->pendingCmdCount++];
+        memset(cmd, 0, sizeof(*cmd));
+        cmd->type = CMD_PING;
+        cmd->u.ping.kind   = kind;
+        cmd->u.ping.worldX = worldX;
+        cmd->u.ping.worldY = worldY;
+    }
 }
 
 void botManagerRemoveBot(ServerSim *sim, BYTE playerNum) {
@@ -2387,6 +2435,35 @@ bool botManagerExecLua(ServerSim *sim, BYTE playerNum, const char *src) {
         return false;
     }
     return true;
+}
+
+bool botManagerScenarioHint(ServerSim *sim, BYTE playerNum,
+                            const ScnTable *hint) {
+    char err[256];
+    if (sim == NULL || playerNum >= MAX_TANKS) return false;
+    if (!sim->botMgr.bots[playerNum].active) return false;
+    if (!sim->botMgr.bots[playerNum].brain.running) return false;
+    lua_State *L = sim->botMgr.bots[playerNum].brain.L;
+    if (!L || !hint) return false;
+    /* The same four guards and the same VM lookup botManagerExecLua makes
+     * above, and then the opposite of what it does with them: the pairs are
+     * pushed onto the stack and on_scenario_hint is called with the table
+     * they built, never compiled as a source chunk. The keys and the values
+     * are a scenario author's bytes, and a chunk composed out of them would
+     * be an author's text running as code inside this bot's VM. */
+    switch (brainCoreCallScenarioHint(L, hint, err, sizeof(err))) {
+        case BRAIN_HINT_DELIVERED:
+            return true;
+        case BRAIN_HINT_ERROR:
+            WB_LOG_WARN(WB_LOG_CAT_LUA, "brain %d: on_scenario_hint error: %s",
+                        playerNum, err);
+            return false;
+        case BRAIN_HINT_NO_HANDLER:
+        default:
+            /* A brain that does not take hints. Said nowhere: a server runs
+               whatever brains it has, and most will never define one. */
+            return false;
+    }
 }
 
 bool botManagerSetLuaGlobalString(ServerSim *sim, BYTE playerNum,

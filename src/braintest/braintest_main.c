@@ -122,7 +122,6 @@ bool isInMenu = FALSE;
 /* ------------------------------------------------------------------ */
 /* gameFront* stubs                                                    */
 /* ------------------------------------------------------------------ */
-void gameFrontGetPassword(char *pword) { pword[0] = '\0'; }
 void gameFrontGetPlayerName(char *pn) { strcpy(pn, "BrainTest"); }
 void gameFrontSetPlayerName(char *pn) { (void)pn; }
 void gameFrontSetAIType(aiType ait) { (void)ait; }

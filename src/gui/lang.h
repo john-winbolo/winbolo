@@ -733,6 +733,7 @@
 #define STR_DLGLOBBY_LASTROUND_BTN          1896
 #define STR_DLGLOBBY_LASTROUND_COL_LGMK     1897
 #define STR_DLGLOBBY_LASTROUND_COL_LGMD     1898
+#define STR_DLGLOBBY_LASTROUND_COL_SCNSCORE 2327  /* scenario score column, untitled */
 
 /* Lobby "Last round" panel — the round's highlight clips. */
 #define STR_DLGLOBBY_HL_HEADER               1922
@@ -818,6 +819,24 @@
 #define STR_DLGSKIN_TILEDETAIL_PARTIAL_TIP  1984
 #define STR_DLGSKIN_RECFILTER_LBL           1985
 #define STR_DLGSKIN_RECOMMENDED_TAG         1986
+/* Fog of war style: the dropdown, its four looks, and a line each saying
+ * what the look does. Sits with the other graphics settings because it is
+ * one - it changes how the client paints ground the player is remembering,
+ * and changes nothing the server sends. */
+#define STR_DLGSKIN_FOGSTYLE                2334
+#define STR_DLGSKIN_FOGSTYLE_TIP            2335
+#define STR_DLGSKIN_FOGSTYLE_GREY           2336
+#define STR_DLGSKIN_FOGSTYLE_GREY_TIP       2337
+#define STR_DLGSKIN_FOGSTYLE_DARK           2338
+#define STR_DLGSKIN_FOGSTYLE_DARK_TIP       2339
+#define STR_DLGSKIN_FOGSTYLE_DARKROADS      2340
+#define STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP  2341
+#define STR_DLGSKIN_FOGSTYLE_NONE           2342
+#define STR_DLGSKIN_FOGSTYLE_NONE_TIP       2343
+/* Shown under the dropdown while None is picked, because None is the one
+ * choice a player could read as switching fog of war off. It does not: the
+ * server still decides what this client is sent and what it may draw. */
+#define STR_DLGSKIN_FOGSTYLE_NONE_NOTE      2344
 
 /* Tracker Setup dialog */
 #define STR_DLGTRACKER_WINTITLE             771
@@ -1532,6 +1551,15 @@
 /* Bot AiConfig: the Mode dropdown's label. The mode NAMES themselves are
  * data (brains/<brain>/modes.txt), not strings, so this is the only one. */
 #define STR_DLGLOBBY_BOTCFG_MODE            2171
+
+/* Title of the dialog a bot's announce line in lobby team chat opens: the
+ * brain's own commands.txt. {string1} = the brain's name ("GoalHunter"). */
+#define STR_DLGLOBBY_BOT_DOCS_TITLE         2214
+
+/* A general "Copy" button label, for any dialog that puts its body on the
+ * clipboard. STR_LV_COPY is the same word but belongs to the log viewer's
+ * events panel; this one is not tied to a screen. */
+#define STR_COPY                            2215
 
 /* Lobby — Balance/Reject/Lock/RankedShape */
 /* Balance from WBN */
@@ -2332,6 +2360,535 @@
  * again before the server will take another. */
 #define STR_DLGLOBBY_REJECT_SCENARIO        2201
 #define STR_DLGLOBBY_REJECT_COOLDOWN        2202
+
+/* The lobby's scenario chooser: the button on the scenario line that opens
+ * it, the dialog's own title, the row that picks none, the two states the
+ * list can be in before it has rows, the reason an entry tied to its own map
+ * cannot be picked, and the two numbers a row carries. ON_MAP is the line
+ * that names the committed map and the scenario a host picked to play over
+ * it, rather than naming the scenario alone. */
+#define STR_DLGLOBBY_CHOOSE_SCENARIO        2204
+#define STR_DLGLOBBY_SCENARIO_TITLE         2205
+#define STR_DLGLOBBY_SCENARIO_NONE          2206
+#define STR_DLGLOBBY_SCENARIO_WAITING       2207
+#define STR_DLGLOBBY_SCENARIO_EMPTY         2208
+#define STR_DLGLOBBY_SCENARIO_BOUND         2209
+#define STR_DLGLOBBY_SCENARIO_MAXPLAYERS    2210
+#define STR_DLGLOBBY_SCENARIO_BOTS          2211
+#define STR_DLGLOBBY_SCENARIO_ON_MAP        2212
+
+/* The two hosting settings that go with a scenario carried inside a map: the
+ * switch that decides whether a map a player uploaded may bring one, and the
+ * directory of scenarios this host offers on their own. */
+#define STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS 2213
+#define STR_DLGSETTINGS_HOSTING_SCENARIODIR  2216
+
+/* Rule change descriptions */
+
+/* What a simulation rule's value does to it, beside the number: the words
+ * simRulesPhrase renders a SimRuleChange as. {string1} rather than {number}
+ * because a multiple can be 2.6 and {number} is an integer. */
+#define STR_RULE_UNCHANGED                  2217
+#define STR_RULE_FASTER                     2218
+#define STR_RULE_SLOWER                     2219
+#define STR_RULE_MORE                       2220
+#define STR_RULE_FEWER                      2221
+#define STR_RULE_TWICE                      2222
+#define STR_RULE_HALF                       2223
+#define STR_RULE_ON                         2224
+#define STR_RULE_OFF                        2225
+
+/* The log viewer's own "back to WinBolo" wording, which is not the map
+ * editor's STR_MAPEDIT_MENU_RETURN ("Return to Menu"): embedded, the viewer
+ * returns to the main menu and the editor to the screen that opened it. */
+#define STR_LV_RETURN_MAIN_MENU             2226
+
+/* Map view — the simplified view when zoomed out */
+#define STR_DLGSETTINGS_MAPVIEW             2227
+#define STR_DLGSETTINGS_SIMPLEZOOM          2228
+#define STR_DLGSETTINGS_SIMPLEZOOM_TIP      2229
+#define STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW 2230
+#define STR_DLGSETTINGS_SIMPLEZOOM_OVERVIEW_TIP 2231
+
+/* The map editor's scenario script pane: the window and its Window-menu
+ * entry, the toolbar above the text, and the line the pane shows for
+ * whatever the last read or write did. A script is a loose X.scenario.lua
+ * beside X.map, so a map with no file yet has nowhere to keep one. */
+#define STR_MAPEDIT_SCENARIO_TITLE          2232
+#define STR_MAPEDIT_SCENARIO_NO_MAP         2233
+#define STR_MAPEDIT_SCENARIO_SAVE           2234
+#define STR_MAPEDIT_SCENARIO_RELOAD         2235
+#define STR_MAPEDIT_SCENARIO_UNSAVED        2236
+#define STR_MAPEDIT_SCENARIO_LOADED         2237
+#define STR_MAPEDIT_SCENARIO_NO_SCRIPT      2238
+#define STR_MAPEDIT_SCENARIO_SAVED          2239
+#define STR_MAPEDIT_SCENARIO_READ_FAILED    2240
+#define STR_MAPEDIT_SCENARIO_WRITE_FAILED   2241
+#define STR_MAPEDIT_SCENARIO_TOO_BIG        2242
+#define STR_MAPEDIT_SCENARIO_SAVE_REFUSED   2243
+
+/* The rest of the scenario panel: the row of buttons that picks which view
+ * the body shows, and the three forms over the manifest the editor holds in
+ * memory — what the scenario is called and how it plays, the lobby template
+ * it seats, and the simulation rules the author set. The words for the game
+ * type itself are STR_DLGGAMEINFO_OPEN / _TOURN / _STRICT, which already say
+ * them everywhere else. */
+#define STR_MAPEDIT_SCENARIO_VIEW_SCRIPT     2244
+#define STR_MAPEDIT_SCENARIO_VIEW_METADATA   2245
+#define STR_MAPEDIT_SCENARIO_VIEW_LOBBY      2246
+#define STR_MAPEDIT_SCENARIO_VIEW_RULES      2247
+#define STR_MAPEDIT_SCENARIO_NAME            2248
+#define STR_MAPEDIT_SCENARIO_DESCRIPTION     2249
+#define STR_MAPEDIT_SCENARIO_API             2250
+#define STR_MAPEDIT_SCENARIO_GAME            2251
+#define STR_MAPEDIT_SCENARIO_GAME_NONE       2252
+#define STR_MAPEDIT_SCENARIO_BOUND           2253
+#define STR_MAPEDIT_SCENARIO_BOUND_NOTE      2254
+#define STR_MAPEDIT_SCENARIO_FILL_TO_CAPS    2255
+#define STR_MAPEDIT_SCENARIO_MAX_PLAYERS     2256
+#define STR_MAPEDIT_SCENARIO_MAX_PLAYERS_ANY 2257
+#define STR_MAPEDIT_SCENARIO_EXTRA_TEAMS     2258
+#define STR_MAPEDIT_SCENARIO_TEAM            2259
+#define STR_MAPEDIT_SCENARIO_TEAM_ID         2260
+#define STR_MAPEDIT_SCENARIO_TEAM_BOTS       2261
+#define STR_MAPEDIT_SCENARIO_TEAM_MAX_BOTS   2262
+#define STR_MAPEDIT_SCENARIO_TEAM_FIELDED    2263
+#define STR_MAPEDIT_SCENARIO_TEAM_BRAIN      2264
+#define STR_MAPEDIT_SCENARIO_BRAIN_IS_NAME   2265
+#define STR_MAPEDIT_SCENARIO_INIT            2266
+#define STR_MAPEDIT_SCENARIO_INIT_KEY        2267
+#define STR_MAPEDIT_SCENARIO_INIT_VALUE      2268
+#define STR_MAPEDIT_SCENARIO_ADD_PAIR        2269
+#define STR_MAPEDIT_SCENARIO_INIT_FULL       2270
+#define STR_MAPEDIT_SCENARIO_ADD_TEAM        2271
+#define STR_MAPEDIT_SCENARIO_REMOVE_TEAM     2272
+#define STR_MAPEDIT_SCENARIO_TEAMS_FULL      2273
+#define STR_MAPEDIT_SCENARIO_NO_TEAMS        2274
+#define STR_MAPEDIT_SCENARIO_REMOVE          2275
+#define STR_MAPEDIT_SCENARIO_CLASSIC         2276
+#define STR_MAPEDIT_SCENARIO_NO_RULES        2277
+#define STR_MAPEDIT_SCENARIO_ADD_RULE        2278
+#define STR_MAPEDIT_SCENARIO_FILTER          2279
+#define STR_MAPEDIT_SCENARIO_RULES_FULL      2280
+#define STR_MAPEDIT_SCENARIO_ADD             2429
+#define STR_MAPEDIT_SCENARIO_RANGE           2430
+#define STR_MAPEDIT_SCENARIO_RULE_NO_SEL     2431
+/* Written before the range on a row whose value is outside it. Only a row
+ * that is wrong carries it, so it reads as a mark and not as a column. */
+#define STR_MAPEDIT_SCENARIO_RULE_RANGE_BAD  2479
+
+/* The script pane's check: the button that runs the validator, the list of
+ * what it found under the editor, and the popup that lists the game.* calls a
+ * script may make. The one line about tags is there because the editor hands
+ * the validator no sim — it makes none — so the one check that reads a map
+ * does not run here. */
+#define STR_MAPEDIT_SCENARIO_VALIDATE        2281
+#define STR_MAPEDIT_SCENARIO_ISSUES          2282
+#define STR_MAPEDIT_SCENARIO_NO_ISSUES       2283
+#define STR_MAPEDIT_SCENARIO_NO_SIM_CHECKS   2284
+#define STR_MAPEDIT_SCENARIO_ISSUES_DROPPED  2285
+#define STR_MAPEDIT_SCENARIO_CALLS           2286
+
+/* Saving the scenario itself: the chunk written on to the map file, the
+ * standalone .scenario a mod is, and what stopped either of them. The line
+ * after a successful pack says the loose script still wins, because an author
+ * who packs and then tests is otherwise running the file beside the map
+ * without being told. */
+#define STR_MAPEDIT_SCENARIO_PACK_MAP         2287
+#define STR_MAPEDIT_SCENARIO_SAVE_MOD         2288
+#define STR_MAPEDIT_SCENARIO_PACK_NO_MAP      2289
+#define STR_MAPEDIT_SCENARIO_PACKED           2290
+#define STR_MAPEDIT_SCENARIO_MOD_SAVED        2291
+#define STR_MAPEDIT_SCENARIO_PACK_ISSUES      2292
+#define STR_MAPEDIT_SCENARIO_PACK_CONFLICT    2293
+#define STR_MAPEDIT_SCENARIO_PACK_FAILED      2294
+#define STR_MAPEDIT_SCENARIO_FROM_PACKAGE     2295
+#define STR_MAPEDIT_SCENARIO_PACK_READ_FAILED 2296
+#define STR_MAPEDIT_SCENARIO_CHUNK_KEPT       2297
+#define STR_MAPEDIT_SCENARIO_CHUNK_LOST       2298
+
+/* The tags view: the named tags an author puts on this map's pills, bases and
+ * starts, and the named rectangles of squares drawn beside them. A row names
+ * the entity the editor numbers it as, which is one less than the number the
+ * manifest and a script spell it with. A region's bounds come from the
+ * selection tool, so the line about selecting first is what an empty selection
+ * says. The last line is what Save as Mod leaves out: a mod plays over a map
+ * it has never seen, so it can carry neither. */
+#define STR_MAPEDIT_SCENARIO_VIEW_TAGS        2299
+#define STR_MAPEDIT_SCENARIO_PILLS            2300
+#define STR_MAPEDIT_SCENARIO_BASES            2301
+#define STR_MAPEDIT_SCENARIO_STARTS           2302
+#define STR_MAPEDIT_SCENARIO_NO_ENTITIES      2303
+#define STR_MAPEDIT_SCENARIO_ADD_TAG          2304
+#define STR_MAPEDIT_SCENARIO_TAG              2305
+#define STR_MAPEDIT_SCENARIO_TAGS_FULL        2306
+#define STR_MAPEDIT_SCENARIO_PILL_ROW         2307
+#define STR_MAPEDIT_SCENARIO_BASE_ROW         2308
+#define STR_MAPEDIT_SCENARIO_START_ROW        2309
+#define STR_MAPEDIT_SCENARIO_REGIONS          2310
+#define STR_MAPEDIT_SCENARIO_NO_REGIONS       2311
+#define STR_MAPEDIT_SCENARIO_REGION_NAME      2312
+#define STR_MAPEDIT_SCENARIO_ADD_REGION       2313
+#define STR_MAPEDIT_SCENARIO_REGION_FROM_SEL  2314
+#define STR_MAPEDIT_SCENARIO_REGION_NO_SEL    2315
+#define STR_MAPEDIT_SCENARIO_REGIONS_FULL     2316
+#define STR_MAPEDIT_SCENARIO_REGION_X         2317
+#define STR_MAPEDIT_SCENARIO_REGION_Y         2318
+#define STR_MAPEDIT_SCENARIO_REGION_W         2319
+#define STR_MAPEDIT_SCENARIO_REGION_H         2320
+#define STR_MAPEDIT_SCENARIO_REGIONS_ON_MAP   2321
+#define STR_MAPEDIT_SCENARIO_MOD_DROPS        2322
+
+/* What Reload does, on the button in the script pane's toolbar. The button is
+ * live whenever the pane knows where the script goes, with or without a file
+ * behind it, so the line says that a script written beside the map after the
+ * map was opened is read by pressing it. */
+#define STR_MAPEDIT_SCENARIO_RELOAD_TIP       2323
+
+/* The issues list read against text that has moved on. The check keeps what it
+ * found while the author types, because the other problems are still worth
+ * reading, so this line says the numbers beside them were the numbers in the
+ * script as it stood when the check ran. */
+#define STR_MAPEDIT_SCENARIO_CHECK_STALE      2324
+
+/* A team number the lobby form will hold and the scenario cannot use: one
+ * outside 1 to MAX_TANKS - 1, or one another team in the template already has.
+ * The validator reports both when the scenario is packed; these two say it
+ * under the field while the number is being typed. */
+#define STR_MAPEDIT_SCENARIO_TEAM_ID_RANGE    2325
+#define STR_MAPEDIT_SCENARIO_TEAM_ID_TAKEN    2326
+
+/* The functions view: every hook and policy a scenario may define, which of
+ * them this script has written, and the two things an author does from the
+ * list — start one that is not there, or go to one that is. The words for
+ * Add and for the filter box are the rules view's, which already say them
+ * in this panel.
+ *
+ * The last five are what a definition the scanner found can be wrong about.
+ * A colon puts an implicit self in front of the parameters while the host
+ * calls the field with the hook's own arguments, so every argument shifts
+ * by one and a hook that looks written behaves wrongly. Two definitions of
+ * one name are both live Lua and the later one silently replaces the
+ * earlier, so the row says there are two rather than showing one of them.
+ * The other two are hooks the host never finds at all: it reads a hook off
+ * the globals and off the scenario table, so a local and a field of any
+ * other table are written, listed and never run. */
+#define STR_MAPEDIT_SCENARIO_VIEW_FUNCTIONS   2470
+#define STR_MAPEDIT_SCENARIO_FN_GOTO          2471
+#define STR_MAPEDIT_SCENARIO_FN_IN_SCRIPT     2472
+#define STR_MAPEDIT_SCENARIO_FN_ANSWERS       2473
+#define STR_MAPEDIT_SCENARIO_FN_GOTO_ONE      2474
+#define STR_MAPEDIT_SCENARIO_FN_NONE_YET      2475
+#define STR_MAPEDIT_SCENARIO_FN_AT_LINE       2476
+#define STR_MAPEDIT_SCENARIO_FN_COLON         2477
+#define STR_MAPEDIT_SCENARIO_FN_TWICE         2478
+#define STR_MAPEDIT_SCENARIO_FN_LOCAL         2577
+#define STR_MAPEDIT_SCENARIO_FN_TABLE         2578
+
+/* The triggers view: the triggers a scenario declares, each one a hook to
+ * listen on with a list of tests and a list of actions under it. The view adds
+ * and drops whole triggers and sets which hook each runs on; the line beside a
+ * trigger counts what it carries, so an author knows what Remove is about to
+ * take away.
+ *
+ * The combo offers hooks alone. A policy is a question the host asks and reads
+ * the answer to, which a list of actions has none to give, so a trigger that
+ * named one would never run. */
+#define STR_MAPEDIT_SCENARIO_VIEW_TRIGGERS    2480
+#define STR_MAPEDIT_SCENARIO_NO_TRIGGERS      2481
+#define STR_MAPEDIT_SCENARIO_TRIGGER_WHEN     2482
+#define STR_MAPEDIT_SCENARIO_TRIGGER_ROWS     2483
+#define STR_MAPEDIT_SCENARIO_ADD_TRIGGER      2484
+#define STR_MAPEDIT_SCENARIO_TRIGGERS_FULL    2485
+
+/* The tests under one trigger: the list itself, the button that adds a row and
+ * the two lines that stand in for it, and the three labels a row is drawn
+ * with — the field of the hook's payload, the operator, and the value it is
+ * held against.
+ *
+ * A value is a literal the author states or a reference to another field of
+ * the same payload, which is what the read-it-off-the-event box switches
+ * between. The three "none yet" lines are what a tag, a region or a team
+ * picker says instead of opening on an empty list. */
+#define STR_MAPEDIT_SCENARIO_TESTS              2550
+#define STR_MAPEDIT_SCENARIO_NO_TESTS           2551
+#define STR_MAPEDIT_SCENARIO_ADD_TEST           2552
+#define STR_MAPEDIT_SCENARIO_TESTS_FULL         2553
+#define STR_MAPEDIT_SCENARIO_HOOK_NO_FIELDS     2554
+#define STR_MAPEDIT_SCENARIO_TEST_FIELD         2555
+#define STR_MAPEDIT_SCENARIO_TEST_OP            2556
+#define STR_MAPEDIT_SCENARIO_TEST_VALUE         2557
+#define STR_MAPEDIT_SCENARIO_VALUE_FROM_PAYLOAD 2558
+#define STR_MAPEDIT_SCENARIO_NO_TAGS_YET        2559
+#define STR_MAPEDIT_SCENARIO_NO_REGIONS_YET     2560
+#define STR_MAPEDIT_SCENARIO_NO_TEAMS_YET       2561
+
+/* The actions under one trigger: the list, the button that adds a row and the
+ * line that stands in for it at the cap, the op combo's label, and the two
+ * buttons that state one more of an op's arguments or one less.
+ *
+ * call is the action that runs a function of the author's own script rather
+ * than a row of the game table, so it has a name to state and a list of what
+ * the script defines; nothing types the arguments it passes on, so each says
+ * whether it is a number or text. The last line is what a second argument
+ * wanting the one long line an action carries is told. */
+#define STR_MAPEDIT_SCENARIO_ACTIONS            2562
+#define STR_MAPEDIT_SCENARIO_NO_ACTIONS         2563
+#define STR_MAPEDIT_SCENARIO_ADD_ACTION         2564
+#define STR_MAPEDIT_SCENARIO_ACTIONS_FULL       2565
+#define STR_MAPEDIT_SCENARIO_ACTION_OP          2566
+#define STR_MAPEDIT_SCENARIO_ADD_ARG            2567
+#define STR_MAPEDIT_SCENARIO_DROP_ARG           2568
+#define STR_MAPEDIT_SCENARIO_CALL_FUNCTION      2569
+#define STR_MAPEDIT_SCENARIO_CALL_RUNS_SCRIPT   2570
+#define STR_MAPEDIT_SCENARIO_CALL_NO_FUNCTIONS  2571
+#define STR_MAPEDIT_SCENARIO_ARG_NUMBER         2572
+#define STR_MAPEDIT_SCENARIO_ARG_TEXT           2573
+#define STR_MAPEDIT_SCENARIO_TEXT_ONE_LONG      2574
+
+/* The lobby's rules popup: the button on the scenario line, the window's
+ * caption, and the four columns a row is drawn in — the rule, what the
+ * classic game plays it at, what the scenario set it to, and what that does
+ * to it in words. */
+#define STR_DLGLOBBY_SCENARIO_RULES         2328
+#define STR_DLGLOBBY_SCENARIO_RULES_TITLE   2329
+#define STR_DLGLOBBY_RULES_COL_RULE         2330
+#define STR_DLGLOBBY_RULES_COL_CLASSIC      2331
+#define STR_DLGLOBBY_RULES_COL_SCENARIO     2332
+#define STR_DLGLOBBY_RULES_COL_CHANGE       2333
+
+/* The same popup's per-rule detail: the button on a row that opens it, the
+ * caption naming the rule as the manifest spells it, and the one label the
+ * four columns above do not already provide. The other three lines in there
+ * are labelled with the column ids, which are the same words. */
+#define STR_DLGLOBBY_RULE_DETAIL_TITLE      2432
+#define STR_DLGLOBBY_RULES_INFO             2433
+#define STR_DLGLOBBY_RULES_RANGE            2434
+
+/* Rule descriptions */
+
+/* What each simulation rule governs, one line apiece, shown wherever a rule
+ * is named: the editor's rules form and the lobby's rules popup. Named for
+ * the rule as SIM_RULE_LIST spells it, and in that order, so the table in
+ * sim_rules_phrase.c is generated from the list rather than written out. A
+ * rule's own name is not translated — it is what a manifest, a script and an
+ * operator line all spell — so there is no id for it here.
+ *
+ * The numbers run in four stretches rather than one. The first eleven rules
+ * had 2334 to 2344, which the fog style strings took as well; moving these
+ * eleven to the end was the smaller change of the two. Fifty-three more are
+ * the rules the table gained after the middle stretch was numbered, and the
+ * last pair are the pillmassage rules, which start again past the map
+ * editor's scenario strings because everything up to them was taken. The
+ * order of the block is SIM_RULE_LIST's throughout, which is the order that
+ * matters, and a hole in the numbers costs nothing: langTable is searched by
+ * id rather than indexed by it. */
+#define STR_RULE_DESC_tank_reload_ticks          2539
+#define STR_RULE_DESC_tank_full_shells           2540
+#define STR_RULE_DESC_tank_full_mines            2541
+#define STR_RULE_DESC_tank_full_trees            2542
+#define STR_RULE_DESC_tank_full_armour           2543
+#define STR_RULE_DESC_tank_death_ticks           2544
+#define STR_RULE_DESC_tank_water_ticks           2545
+#define STR_RULE_DESC_shell_damage               2546
+#define STR_RULE_DESC_mine_damage                2547
+#define STR_RULE_DESC_mine_damage_range          2486
+#define STR_RULE_DESC_mine_fatal_divisor         2487
+#define STR_RULE_DESC_water_loss_shells          2488
+#define STR_RULE_DESC_water_loss_mines           2489
+#define STR_RULE_DESC_just_fired_ticks           2548
+#define STR_RULE_DESC_tree_hide_distance         2490
+#define STR_RULE_DESC_gunsight_min               2549
+#define STR_RULE_DESC_gunsight_max               2345
+#define STR_RULE_DESC_tank_accel_rate            2346
+#define STR_RULE_DESC_tank_decel_rate            2347
+#define STR_RULE_DESC_tank_brake_rate            2348
+#define STR_RULE_DESC_tank_autoslow_rate         2349
+#define STR_RULE_DESC_tank_min_move              2350
+#define STR_RULE_DESC_tank_hit_radius            2491
+#define STR_RULE_DESC_tank_collision_distance    2492
+#define STR_RULE_DESC_tank_nudge_threshold       2493
+#define STR_RULE_DESC_tank_nudge_amount          2494
+#define STR_RULE_DESC_tank_nudge_iterations      2495
+#define STR_RULE_DESC_tank_bump_decay_shift      2496
+#define STR_RULE_DESC_tank_pill_pickup_inset     2497
+#define STR_RULE_DESC_tank_boat_exit_inset       2498
+#define STR_RULE_DESC_tank_slide_step            2499
+#define STR_RULE_DESC_tank_wall_glide            2500
+#define STR_RULE_DESC_speed_road                 2351
+#define STR_RULE_DESC_speed_grass                2352
+#define STR_RULE_DESC_speed_forest               2353
+#define STR_RULE_DESC_speed_river                2354
+#define STR_RULE_DESC_speed_swamp                2355
+#define STR_RULE_DESC_speed_crater               2356
+#define STR_RULE_DESC_speed_rubble               2357
+#define STR_RULE_DESC_speed_boat                 2358
+#define STR_RULE_DESC_speed_deep_sea             2359
+#define STR_RULE_DESC_speed_refuel_base          2360
+#define STR_RULE_DESC_turn_road                  2361
+#define STR_RULE_DESC_turn_grass                 2362
+#define STR_RULE_DESC_turn_forest                2363
+#define STR_RULE_DESC_turn_river                 2364
+#define STR_RULE_DESC_turn_swamp                 2365
+#define STR_RULE_DESC_turn_crater                2366
+#define STR_RULE_DESC_turn_rubble                2367
+#define STR_RULE_DESC_turn_boat                  2368
+#define STR_RULE_DESC_turn_deep_sea              2369
+#define STR_RULE_DESC_turn_refuel_base           2370
+#define STR_RULE_DESC_man_speed_road             2501
+#define STR_RULE_DESC_man_speed_grass            2502
+#define STR_RULE_DESC_man_speed_forest           2503
+#define STR_RULE_DESC_man_speed_river            2504
+#define STR_RULE_DESC_man_speed_swamp            2505
+#define STR_RULE_DESC_man_speed_crater           2506
+#define STR_RULE_DESC_man_speed_rubble           2507
+#define STR_RULE_DESC_man_speed_boat             2508
+#define STR_RULE_DESC_man_speed_deep_sea         2509
+#define STR_RULE_DESC_man_speed_refuel_base      2510
+#define STR_RULE_DESC_shell_life                 2371
+#define STR_RULE_DESC_shell_speed                2372
+#define STR_RULE_DESC_shell_start_add            2373
+#define STR_RULE_DESC_lgm_build_ticks            2374
+#define STR_RULE_DESC_lgm_cost_road              2375
+#define STR_RULE_DESC_lgm_cost_building          2376
+#define STR_RULE_DESC_lgm_cost_repair_building   2377
+#define STR_RULE_DESC_lgm_cost_pill_repair       2378
+#define STR_RULE_DESC_lgm_cost_boat              2379
+#define STR_RULE_DESC_lgm_cost_pill_new          2380
+#define STR_RULE_DESC_lgm_cost_mine              2381
+#define STR_RULE_DESC_lgm_pill_repair_load       2382
+#define STR_RULE_DESC_lgm_gather_trees           2383
+#define STR_RULE_DESC_lgm_helicopter_speed       2384
+#define STR_RULE_DESC_lgm_arrive_tolerance       2511
+#define STR_RULE_DESC_lgm_return_tolerance       2512
+#define STR_RULE_DESC_lgm_pill_drop_search       2513
+#define STR_RULE_DESC_lgm_boat_leave_offset      2514
+#define STR_RULE_DESC_lgm_boat_return_offset     2515
+#define STR_RULE_DESC_pill_max_armour            2385
+#define STR_RULE_DESC_pill_attack_ticks          2386
+#define STR_RULE_DESC_pill_attack_min_ticks      2387
+#define STR_RULE_DESC_pill_cooldown_ticks        2388
+#define STR_RULE_DESC_pill_repair_amount         2389
+#define STR_RULE_DESC_pill_range                 2390
+#define STR_RULE_DESC_pill_shell_damage          2516
+#define STR_RULE_DESC_pill_angry_divisor         2517
+#define STR_RULE_DESC_pill_fire_length           2518
+#define STR_RULE_DESC_pill_base_defend_range     2519
+#define STR_RULE_DESC_pill_aim_iterations        2520
+#define STR_RULE_DESC_pill_massage_range         2575
+#define STR_RULE_DESC_pill_massage_cosine        2576
+#define STR_RULE_DESC_base_full_armour           2391
+#define STR_RULE_DESC_base_full_shells           2392
+#define STR_RULE_DESC_base_full_mines            2393
+#define STR_RULE_DESC_base_capture_armour        2394
+#define STR_RULE_DESC_base_hit_armour            2395
+#define STR_RULE_DESC_base_min_armour            2396
+#define STR_RULE_DESC_base_min_shells            2397
+#define STR_RULE_DESC_base_min_mines             2398
+#define STR_RULE_DESC_base_armour_give           2399
+#define STR_RULE_DESC_base_shells_give           2400
+#define STR_RULE_DESC_base_mines_give            2401
+#define STR_RULE_DESC_base_refuel_armour_ticks   2402
+#define STR_RULE_DESC_base_refuel_shells_ticks   2403
+#define STR_RULE_DESC_base_refuel_mines_ticks    2404
+#define STR_RULE_DESC_base_regen_ticks           2405
+#define STR_RULE_DESC_base_status_range          2521
+#define STR_RULE_DESC_base_reveal_range          2522
+#define STR_RULE_DESC_building_life              2406
+#define STR_RULE_DESC_rubble_life                2407
+#define STR_RULE_DESC_grass_life                 2408
+#define STR_RULE_DESC_swamp_life                 2409
+#define STR_RULE_DESC_mine_fuse_ticks            2410
+#define STR_RULE_DESC_big_explosion_threshold    2411
+#define STR_RULE_DESC_tank_explosion_damage      2523
+#define STR_RULE_DESC_tank_explosion_length      2524
+#define STR_RULE_DESC_tank_explosion_move        2525
+#define STR_RULE_DESC_tank_explosion_update_ticks 2526
+#define STR_RULE_DESC_tank_explosion_width       2527
+#define STR_RULE_DESC_tank_explosion_height      2528
+#define STR_RULE_DESC_start_tank_range           2529
+#define STR_RULE_DESC_start_pill_range           2530
+#define STR_RULE_DESC_start_base_range           2531
+#define STR_RULE_DESC_start_spawn_separation     2532
+#define STR_RULE_DESC_start_scatter_max          2533
+#define STR_RULE_DESC_start_neutral_threshold_pct 2534
+#define STR_RULE_DESC_sound_soft_range           2535
+#define STR_RULE_DESC_sound_none_range           2536
+#define STR_RULE_DESC_flood_fill_ticks           2537
+#define STR_RULE_DESC_tree_grow_ticks            2412
+#define STR_RULE_DESC_tree_grow_initial_ticks    2413
+#define STR_RULE_DESC_tree_grow_initial_score    2538
+#define STR_RULE_DESC_tree_weight_forest         2414
+#define STR_RULE_DESC_tree_weight_grass          2415
+#define STR_RULE_DESC_tree_weight_river          2416
+#define STR_RULE_DESC_tree_weight_boat           2417
+#define STR_RULE_DESC_tree_weight_deep_sea       2418
+#define STR_RULE_DESC_tree_weight_swamp          2419
+#define STR_RULE_DESC_tree_weight_rubble         2420
+#define STR_RULE_DESC_tree_weight_building       2421
+#define STR_RULE_DESC_tree_weight_half_building  2422
+#define STR_RULE_DESC_tree_weight_crater         2423
+#define STR_RULE_DESC_tree_weight_road           2424
+#define STR_RULE_DESC_tree_weight_mine           2425
+
+/* Rule range wording */
+
+/* The range a rule accepts, in words: the two ends of a fixed range, a floor
+ * with no ceiling of its own, and the wrapper for a rule another rule also
+ * caps. {string1} and {string2} rather than {number} because an end can be
+ * 0.01 and because the second half of the wrapper is a rule's name. */
+#define STR_RULE_RANGE_BETWEEN                   2426
+#define STR_RULE_RANGE_FROM                      2427
+#define STR_RULE_RANGE_CAPPED                    2428
+
+/* Scenario function descriptions */
+
+/* One line per function a scenario author writes, for the list the editor
+ * shows them in: the 25 hooks, then the 10 policies, in the order
+ * SCN_HOOK_LIST and SCN_POLICY_LIST hold them.
+ *
+ * The tail of each symbol is the catalogue's own id column rather than the
+ * function's name, because that is the token the description table pastes
+ * onto. For a hook the id is the name without its on_ prefix, so
+ * STR_SCNFN_DESC_TANK_KILLED is on_tank_killed's; for a policy it is the
+ * name in upper case. The names themselves are in SCN_HOOK_LIST and
+ * SCN_POLICY_LIST in scenario_lua.h, and docs/SCENARIO_API.md is where each
+ * one is set out at length. */
+#define STR_SCNFN_DESC_SETUP                 2435
+#define STR_SCNFN_DESC_START                 2436
+#define STR_SCNFN_DESC_TICK                  2437
+#define STR_SCNFN_DESC_END                   2438
+#define STR_SCNFN_DESC_LOBBY                 2439
+#define STR_SCNFN_DESC_PLAYER_JOIN           2440
+#define STR_SCNFN_DESC_PLAYER_LEAVE          2441
+#define STR_SCNFN_DESC_TEAM_CHANGED          2442
+#define STR_SCNFN_DESC_CHAT                  2443
+#define STR_SCNFN_DESC_PING                  2444
+#define STR_SCNFN_DESC_TANK_SPAWNED          2445
+#define STR_SCNFN_DESC_TANK_KILLED           2446
+#define STR_SCNFN_DESC_LGM_DIED              2447
+#define STR_SCNFN_DESC_LGM_LANDED            2448
+#define STR_SCNFN_DESC_BASE_CAPTURED         2449
+#define STR_SCNFN_DESC_BASE_NEUTRALIZED      2450
+#define STR_SCNFN_DESC_PILL_CAPTURED         2451
+#define STR_SCNFN_DESC_PILL_PLACED           2452
+#define STR_SCNFN_DESC_PILL_PICKED_UP        2453
+#define STR_SCNFN_DESC_PILL_KILLED           2454
+#define STR_SCNFN_DESC_BUILT                 2455
+#define STR_SCNFN_DESC_MINE_LAID             2456
+#define STR_SCNFN_DESC_MINE_EXPLOSION        2457
+#define STR_SCNFN_DESC_ENTER_REGION          2458
+#define STR_SCNFN_DESC_LEAVE_REGION          2459
+#define STR_SCNFN_DESC_ALLOW_EXTRA_TEAMS     2460
+#define STR_SCNFN_DESC_ALLOW_BASE_WIN        2461
+#define STR_SCNFN_DESC_CAN_RESPAWN           2462
+#define STR_SCNFN_DESC_CAN_BUILD             2463
+#define STR_SCNFN_DESC_CAN_CAPTURE           2464
+#define STR_SCNFN_DESC_ANNOUNCE              2465
+#define STR_SCNFN_DESC_CAN_DIE               2466
+#define STR_SCNFN_DESC_ON_CHOOSE_START       2467
+#define STR_SCNFN_DESC_SPAWN_LOADOUT         2468
+#define STR_SCNFN_DESC_DAMAGE_SCALE          2469
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

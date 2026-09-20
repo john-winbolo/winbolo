@@ -47,6 +47,18 @@ struct ClientSim;
 #define PILLBOX_COOLDOWN_TIME 32
 #define PILLBOX_MAX_FIRERATE 6 /* 6 */
 
+/* What a shell takes off a pillbox. A shell takes shell_damage off a tank
+ * and off a base; against a pill it has always taken one, which is why this
+ * is its own number rather than the same one. */
+#define PILLBOX_SHELL_DAMAGE 1
+
+/* What a hurt pillbox divides its firing interval by. The interval starts at
+ * PILLBOX_ATTACK_NORMAL and is floored at PILLBOX_MAX_FIRERATE; this is the
+ * step it takes between the two each time it is hit, so 1 is a pill that
+ * never angers and a number above the whole span is one that angers fully on
+ * the first shell. */
+#define PILLBOX_ANGRY_DIVISOR 2
+
 #define PILLS_MAX_ARMOUR 15
 
 /* A pill's flags byte. Armour travels in a byte of its own; this byte carries
@@ -90,11 +102,10 @@ static inline bool    pillPosCurrentFromByte(uint8_t b) {
 /* Pillbox not found return Value */
 #define PILL_NOT_FOUND 254
 
-/* A pillbox has to be within 9 squares of a base to get angry if it is shot */
-#define PILL_BASE_HIT_LEFT -9
-#define PILL_BASE_HIT_RIGHT 9
-#define PILL_BASE_HIT_TOP -9
-#define PILL_BASE_HIT_BOTTOM 9
+/* A pillbox has to be within this many squares of a base, on each axis, to
+   get angry when that base is shot. Was four constants spelling the same 9
+   with two signs; the test takes it either way round. */
+#define PILL_BASE_HIT_RANGE 9
 
 /* Amount of damage each tree unit repairs */
 #define PILL_REPAIR_AMOUNT 4
@@ -102,6 +113,13 @@ static inline bool    pillPosCurrentFromByte(uint8_t b) {
 /* The maximum amount of time we will iterate to aim a shell to hit a tank */
 /* Added to fix the rare tank run away bug so the shell will never hit the tank */
 #define MAX_AIM_ITERATE 200
+
+/* How near a tank has to be for a pillbox to aim with the original forward
+   prediction rather than the solver, and how straight at the pillbox that
+   tank has to be driving to be aimed at properly anyway. Zero is a pillbox
+   that always uses the solver, which is what the classic table plays. */
+#define PILLBOX_MASSAGE_RANGE  0
+#define PILLBOX_MASSAGE_COSINE 0.5
 
 /* Brain stuff */
 /* Bases Brain stuff */
@@ -1037,6 +1055,10 @@ void pillsValidate(pillboxes *value);
 /* Clamps every pillbox against the sim's gameplay caps. Called by
    mapClampToRules once a sim owns the records; see bolo_map.h. */
 void pillsClampToRules(struct GameSim *sim, pillboxes *value);
+/* Raises every pillbox to the sim's armour cap — the same walk the other way
+   round, for a scenario that raises the cap and asks for the map to start at
+   it. Called by serverSimScenarioFillWorldToRules, which writes the records. */
+void pillsFillToRules(struct GameSim *sim, pillboxes *value);
 
 
 #endif /* PILLBOX_H */

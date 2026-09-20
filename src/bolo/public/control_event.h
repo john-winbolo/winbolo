@@ -36,6 +36,9 @@
 #include "upload_policy.h" /* UploadPolicy in lobbySettings */
 #include "view_policy.h"   /* ViewPolicy / VIEW_CATEGORY_COUNT in lobbySettings */
 #include "server_voice_mode.h" /* ServerVoiceMode in lobbySettings */
+#include "scenario_panel.h" /* SCN_PANEL_MAX for the panel event's byte list */
+#include "sim_rules_names.h" /* SIM_RULE_COUNT — the scenario rules event's
+                             * row cap, taken from the rule list itself */
 
 #ifndef LOBBY_TEAM_NAME_LEN
 #define LOBBY_TEAM_NAME_LEN 32
@@ -201,8 +204,98 @@ typedef enum {
      * and replayed into a joining client's sync so it arrives with the
      * table the round is already using. */
     CTRL_SIM_RULES,
+    /* CTRL_LOBBY_BRAIN_DOCS_CHUNK — one fragment of ONE brain's lobby
+     * texts: its announce.txt line and its commands.txt docs. Sent per
+     * BRAIN, not per bot, alongside the brain list, and only for the
+     * brains that ship the files. The client reassembles fragments
+     * seq 0..count-1 for brainIdx, then installs both strings.
+     *
+     * Appended at the END of this enum on purpose: the tables in
+     * transport_control_codec.c are indexed by it, so a new type goes
+     * last rather than shifting the ones already there. */
+    CTRL_LOBBY_BRAIN_DOCS_CHUNK,
+    /* The four a scenario presents with. Each is body-only on
+     * CHANNEL_CONTROL, as CTRL_ENTITY_SYNC and CTRL_SIM_RULES are:
+     * there is no full-packet wrapper and no PACKET_* type.
+     *
+     * The codecs are recipient-agnostic. Three of the four carry a
+     * destTeam/destPlayer pair that never travels; udpClientDeliverControl
+     * filters on it the way it filters CTRL_SERVER_TEXT, and
+     * client_sim_control.c applies the same test for in-process
+     * subscribers. CTRL_SCN_SCORE has no pair: it is broadcast, and its
+     * target says whose score it is, not who receives it.
+     *
+     * Appended at the END, like CTRL_LOBBY_BRAIN_DOCS_CHUNK above: the
+     * tables in transport_control_codec.c are indexed by this enum, so
+     * a new type goes last rather than shifting the ones already there. */
+    CTRL_SCN_PANEL,
+    CTRL_SCN_SCORE,
+    CTRL_SCN_ANNOUNCE,
+    CTRL_SCN_MARKER,
+    /* CTRL_SCENARIO_RULES — the rules a scenario's own manifest sets, so a
+     * host can answer "what do these mods change?" without opening the file.
+     * The author's table rather than the table the round is running on: a
+     * scenario changing a rule mid-round moves the second and not this one,
+     * and CTRL_SIM_RULES is what says what the simulation is reading now.
+     *
+     * Published beside the identity, so a scenario that attaches states its
+     * set and one that detaches states an empty one. A map that has never
+     * had a scenario publishes neither: an empty set says a scenario has
+     * just gone, and a map with none never had one to go.
+     *
+     * Broadcast and body-only on CHANNEL_CONTROL, as CTRL_SIM_RULES is:
+     * the manifest is as public as the name and the description the lobby
+     * settings event already carries. Replayed into a joining client's sync
+     * while a scenario is attached, so a mid-lobby joiner reads the same
+     * table the host does.
+     *
+     * Carried in fragments, like CTRL_LOBBY_BOT_POOL_CHUNK and
+     * CTRL_LOBBY_BRAIN_DOCS_CHUNK: a whole set outgrew one control segment
+     * once the rule list passed 113 rows, so each event is `seq` of
+     * `fragCount` and a reader installs the set on the last of them. An
+     * empty set is still one fragment, because an empty set is an answer.
+     *
+     * Appended at the END, like the four above: the tables in
+     * transport_control_codec.c are indexed by this enum. */
+    CTRL_SCENARIO_RULES,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
+
+/* How many rows a whole scenario rules set can hold: one per rule there is,
+ * taken from SIM_RULE_LIST rather than written out, so a rule added to that
+ * list cannot overflow the set. A manifest names each rule at most once, so
+ * a set can hold every rule and no more.
+ *
+ * Each row's rule index travels as one byte, which is what the assertion
+ * below holds the list to. */
+#define CTRL_SCENARIO_RULES_MAX SIM_RULE_COUNT
+BOLO_STATIC_ASSERT(CTRL_SCENARIO_RULES_MAX <= 255,
+                   ctrl_scenario_rules_index_fits_a_byte);
+
+/* Rows in ONE fragment, and the number of fragments a whole set needs.
+ *
+ * A row is 9 bytes on the wire ([rule 1][value 8]) and a fragment spends 3
+ * more on seq, fragCount and its own row count, so 64 rows is a 579-byte
+ * body. One control event is one channel segment, and a segment carries
+ * CHANNEL_CONTROL_SEG (1024) bytes less the channel frame's type(1) and
+ * bodyLen(2) — 1021. 579 sits well inside that, the way the 900-byte
+ * fragments of the other two chunked events do; transport_control_codec.c
+ * pins it against the segment, which it can see and this public header
+ * cannot.
+ *
+ * The row cap is a number of its own rather than the rule count because a
+ * fragment has to stay a fixed, modest size while the rule list grows: at
+ * 64 rows the variant is 584 bytes and stays well under the round-stats
+ * member that sets the union's size, and a ServerSim holds 200
+ * ControlEvents in its lobby chat buffer, so every byte the union grows by
+ * is paid two hundred times over on every sim.
+ *
+ * seq and fragCount travel as one byte each, which the assertion holds. */
+#define SCN_RULES_FRAG_ROWS 64
+#define CTRL_SCENARIO_RULES_FRAGS_MAX \
+    ((CTRL_SCENARIO_RULES_MAX + SCN_RULES_FRAG_ROWS - 1) / SCN_RULES_FRAG_ROWS)
+BOLO_STATIC_ASSERT(CTRL_SCENARIO_RULES_FRAGS_MAX <= 255,
+                   ctrl_scenario_rules_seq_and_frag_count_fit_a_byte);
 
 /* Body capacity for CTRL_CHAT.  Worst case is the localized server
  * message: 2 langid + 1 argCount + 4 * (1 lenByte + (PLAYER_NAME_LEN-1)
@@ -216,6 +309,17 @@ typedef enum {
  * ceil(65536/900) ≈ 73 fragments (< 255, the seq/count cap). */
 #define LOBBY_BOT_POOL_CHUNK_FRAG_MAX 900
 
+/* Per-fragment payload cap for CTRL_LOBBY_BRAIN_DOCS_CHUNK, and the size
+ * of one brain's whole text blob on the wire:
+ *   [announceLen 2 BE][announce][docsLen 2 BE][docs]
+ * The blob is at most 2 + 512 + 2 + 16384 = 16900 bytes, so at 900 bytes a
+ * fragment the worst case is ceil(16900/900) = 19 fragments per brain and
+ * the seq/count byte is never near its limit. The fragment cap itself does
+ * NOT move with BRAIN_DOCS_MAX: it is what makes one fragment plus its
+ * header fit a single control datagram. */
+#define LOBBY_BRAIN_DOCS_FRAG_MAX 900
+#define LOBBY_BRAIN_DOCS_WIRE_MAX (2 + BRAIN_ANNOUNCE_MAX + 2 + BRAIN_DOCS_MAX)
+
 /* Which of the three item lists a CTRL_ENTITY_CHANGE names. The values
  * ride the wire, so they are written out rather than left to the order
  * of the members. */
@@ -228,9 +332,9 @@ typedef enum {
 /* Where the lobby's scenario came from. The values ride the wire, so they
  * are written out. None is 0, so a lobby with no scenario is the zeroed
  * event and writes no scenario bytes at all. A scenario read from beside
- * the map is lobbyScenarioMap; lobbyScenarioMod is a scenario the host
- * picked for itself, which nothing selects yet — it is named here so the
- * wire form does not move when something does. */
+ * the map is lobbyScenarioMap; lobbyScenarioMod is one the host picked from
+ * the server's scenarios directory, which plays over whichever map is
+ * committed and stands in place of that map's own scenario. */
 typedef enum {
     lobbyScenarioNone = 0,
     lobbyScenarioMap  = 1,
@@ -242,9 +346,22 @@ typedef enum {
  * and chosen to match them: the name and the description are the manifest's,
  * and the file name is a name rather than a path, so a server's disk layout
  * does not travel. Longer text is truncated where the sim is told, not on
- * the wire. */
+ * the wire.
+ *
+ * The file length is the scenarios directory's own (SCN_DIR_FILE_LEN, 128),
+ * so a file name that a listing shows in full is the same name this event
+ * carries in full rather than one cut to fit. It costs no wire bytes to hold
+ * the wider figure: the tail is written only when a scenario is attached, and
+ * each of the three strings is a length byte and that many bytes, so a
+ * 20-character file name travels as 21 bytes either way.
+ *
+ * transport_udp_client.c is where the three file lengths — this one, the
+ * client list accumulator's LOBBY_SCENARIO_LIST_FILE_LEN and the public
+ * SERVER_SCENARIO_FILE_LEN the directory entry is copied through — are held
+ * against each other, because it is the translation unit that sees all
+ * three. */
 #define LOBBY_SCENARIO_NAME_LEN 64
-#define LOBBY_SCENARIO_FILE_LEN 64
+#define LOBBY_SCENARIO_FILE_LEN 128
 #define LOBBY_SCENARIO_DESC_LEN 256
 
 /* Which rules CTRL_SIM_RULES carries, and how wide each one goes.
@@ -274,29 +391,34 @@ typedef enum {
  * variant's members, the encoder, the decoder, the server's fill and the
  * client's apply are all written from these lists, so a rule cannot be
  * encoded and not decoded, or sent and not applied. */
-#define CTRL_SIM_RULES_U8_FIELDS(F)                                          \
-    F(tank_reload_ticks) F(tank_full_shells) F(tank_full_mines)              \
-    F(tank_full_trees) F(tank_full_armour) F(tank_water_ticks)               \
-    F(shell_damage) F(mine_damage) F(just_fired_ticks)                       \
-    F(gunsight_min) F(gunsight_max) F(tank_min_move)                         \
-    F(speed_road) F(speed_grass) F(speed_forest) F(speed_river)              \
-    F(speed_swamp) F(speed_crater) F(speed_rubble) F(speed_boat)             \
-    F(speed_deep_sea) F(speed_refuel_base)                                   \
-    F(shell_life) F(shell_speed)                                             \
-    F(pill_max_armour) F(pill_attack_ticks) F(pill_attack_min_ticks)         \
-    F(pill_cooldown_ticks)                                                   \
-    F(base_full_armour) F(base_full_shells) F(base_full_mines)               \
-    F(base_capture_armour) F(base_hit_armour)
+#define CTRL_SIM_RULES_U8_FIELDS(F)                                      \
+    F(tank_reload_ticks) F(tank_full_shells) F(tank_full_mines)          \
+    F(tank_full_trees) F(tank_full_armour) F(tank_water_ticks)           \
+    F(shell_damage) F(mine_damage) F(mine_fatal_divisor)                 \
+    F(water_loss_shells) F(water_loss_mines) F(just_fired_ticks)         \
+    F(gunsight_min) F(gunsight_max) F(tank_min_move) F(tank_hit_radius)  \
+    F(tank_nudge_amount) F(tank_nudge_iterations)                        \
+    F(tank_bump_decay_shift) F(tank_pill_pickup_inset)                   \
+    F(tank_boat_exit_inset) F(tank_slide_step) F(speed_road)             \
+    F(speed_grass) F(speed_forest) F(speed_river) F(speed_swamp)         \
+    F(speed_crater) F(speed_rubble) F(speed_boat) F(speed_deep_sea)      \
+    F(speed_refuel_base) F(shell_life) F(shell_speed) F(pill_max_armour) \
+    F(pill_attack_ticks) F(pill_attack_min_ticks) F(pill_cooldown_ticks) \
+    F(base_full_armour) F(base_full_shells) F(base_full_mines)           \
+    F(base_capture_armour) F(base_hit_armour) F(sound_soft_range)        \
+    F(sound_none_range)
 
-#define CTRL_SIM_RULES_U16_FIELDS(F)                                         \
-    F(tank_death_ticks)
+#define CTRL_SIM_RULES_U16_FIELDS(F)                                     \
+    F(tank_death_ticks) F(mine_damage_range) F(tree_hide_distance)       \
+    F(tank_collision_distance) F(tank_nudge_threshold)                   \
+    F(base_status_range) F(base_reveal_range)
 
 #define CTRL_SIM_RULES_U32_FIELDS(F)                                         \
     F(shell_start_add) F(base_regen_ticks) F(tree_grow_initial_ticks)
 
 #define CTRL_SIM_RULES_F32_FIELDS(F)                                         \
     F(tank_accel_rate) F(tank_decel_rate) F(tank_brake_rate)                 \
-    F(tank_autoslow_rate)                                                    \
+    F(tank_autoslow_rate) F(tank_wall_glide)                                 \
     F(turn_road) F(turn_grass) F(turn_forest) F(turn_river) F(turn_swamp)    \
     F(turn_crater) F(turn_rubble) F(turn_boat) F(turn_deep_sea)              \
     F(turn_refuel_base)
@@ -578,6 +700,18 @@ typedef struct ControlEvent {
             uint8_t  frag[LOBBY_BOT_POOL_CHUNK_FRAG_MAX];
         } lobbyBotPoolChunk;
 
+        /* CTRL_LOBBY_BRAIN_DOCS_CHUNK — fragment `seq` of `count` of the
+         * lobby texts belonging to brain `brainIdx` (an index into the
+         * brain catalogue CTRL_LOBBY_BRAIN_LIST carries). fragLen bytes
+         * live in frag[]. */
+        struct {
+            uint8_t  brainIdx;
+            uint8_t  seq;
+            uint8_t  count;
+            uint16_t fragLen;
+            uint8_t  frag[LOBBY_BRAIN_DOCS_FRAG_MAX];
+        } lobbyBrainDocsChunk;
+
         /* CTRL_SERVER_TEXT — server-originated chat broadcast.
          * Mirrors what UDP clients receive as
          * PACKET_CHAT_BROADCAST(fromPlayer=0xFE). Lets in-process
@@ -769,6 +903,89 @@ typedef struct ControlEvent {
             CTRL_SIM_RULES_U32_FIELDS(CTRL_SIM_RULES_INT_MEMBER)
             CTRL_SIM_RULES_F32_FIELDS(CTRL_SIM_RULES_FLT_MEMBER)
         } simRules;
+
+        /* CTRL_SCN_PANEL — one panel's display list, replacing whatever
+         * that panel held. An empty list clears it. The bytes are the
+         * primitives scenario_panel.h describes; nothing on this path
+         * parses them, because the arm validates a list on the way out
+         * and the drawer does on the way in. */
+        struct {
+            uint8_t  panel;      /* 0..3 */
+            uint16_t len;
+            uint8_t  bytes[SCN_PANEL_MAX];
+            uint8_t  destTeam;   /* 0 = everyone; 1..15 = only that team. Server-side
+                                    recipient filter; not sent on the wire. */
+            uint8_t  destPlayer; /* 0xFF = everyone; otherwise only that slot. Same,
+                                    and 0 is a real slot, so every producer — the
+                                    publishers and the body decoder — sets 0xFF. */
+        } scnPanel;
+
+        /* CTRL_SCN_SCORE — a scenario's own score for one slot or one
+         * team. Broadcast: target is whose score it is, not who
+         * receives it, so this variant carries no recipient pair. */
+        struct {
+            uint8_t kind;        /* a slot's score, or a team's */
+            uint8_t target;      /* the slot, or the team */
+            int32_t score;
+            char    label[16];
+        } scnScore;
+
+        /* CTRL_SCN_ANNOUNCE — a line drawn across the centre of the screen. */
+        struct {
+            char     text[PACKET_MAX_CHAT_MESSAGE + 1];
+            uint16_t ticks;      /* how long it stays up */
+            uint8_t  destTeam;
+            uint8_t  destPlayer;
+        } scnAnnounce;
+
+        /* CTRL_SCN_MARKER — a mark on the map, kept by id. */
+        struct {
+            uint8_t id;
+            uint8_t kind;        /* square, follow a player, or clear */
+            uint8_t x, y;        /* square kind */
+            uint8_t slot;        /* follow-player kind */
+            uint8_t colour;
+            uint8_t destTeam;
+            uint8_t destPlayer;
+        } scnMarker;
+
+        /* CTRL_SCENARIO_RULES — fragment `seq` of `fragCount` of the rules a
+         * scenario's own manifest sets, as its author wrote them. Empty when
+         * no scenario is attached, and an empty set is one fragment with no
+         * rows rather than no event.
+         *
+         * count is the rows in THIS fragment, never the whole set: a reader
+         * appends each fragment's rows in order and has the set once it has
+         * taken seq == fragCount - 1. The fragments of one set run 0..
+         * fragCount-1 with no gaps, on a reliable ordered channel, so a
+         * fragment that does not continue the one in hand means the stream
+         * was interrupted and the partial set is thrown away rather than
+         * spliced.
+         *
+         * rule[i] is a SimRuleIndex, which is the index every other side of
+         * the fence names a rule by, and value[i] is what the manifest set
+         * that rule to — a double because sixteen of the rules are
+         * float-valued and the rest are whole numbers a double carries
+         * exactly. Entries at or above count name no rule and read zero.
+         *
+         * Two arrays rather than one array of {rule, value} pairs, and it
+         * has to stay two: a pair pads to sixteen bytes to carry one byte of
+         * index and eight of value, which would make this variant 1032 bytes
+         * instead of 584. A ServerSim holds 200 ControlEvents in its lobby
+         * chat buffer, so every byte the union grows by is paid two hundred
+         * times over on every sim. Split, the union's size stays the one the
+         * round stats summary sets and the sim pays nothing for this event.
+         *
+         * The wire form is the same either way: the body is seq, fragCount,
+         * a row count and then a [rule][value] row per entry, which the
+         * encoder builds by walking the two arrays together. */
+        struct {
+            uint8_t seq;        /* which fragment, 0-based */
+            uint8_t fragCount;  /* how many make the whole set; never 0 */
+            uint8_t count;      /* rows in THIS fragment */
+            uint8_t rule[SCN_RULES_FRAG_ROWS];   /* a SimRuleIndex per row */
+            double  value[SCN_RULES_FRAG_ROWS];  /* the value at the same index */
+        } scenarioRules;
     } u;
 } ControlEvent;
 

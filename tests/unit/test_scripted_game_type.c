@@ -7,7 +7,7 @@
  * the scenario declared. That value reaches the sim on the lobby template
  * the host hands over, and the sim keeps it as scenarioBaseGame, beside
  * the start a scenario names. Nothing declared leaves it 0, and 0 plays
- * open.
+ * strict tournament: an author who wants an open round names one.
  *
  * The two sites a spawning tank goes through are covered here: the
  * loadout (gameTypeGetItems) and the start (startsGetStart). Both are
@@ -18,8 +18,8 @@
  * run_scripted_game_type_loadout_follows_base
  *                                — open, tournament and strict each reach
  *                                  a scripted spawn through the mirror
- * run_scripted_game_type_no_base_is_open
- *                                — nothing declared spawns as open
+ * run_scripted_game_type_no_base_is_strict
+ *                                — nothing declared spawns as strict
  * run_scripted_game_type_strict_ignores_base
  *                                — a declared base changes no other type
  * run_scripted_game_type_start_follows_base
@@ -132,11 +132,12 @@ int run_scripted_game_type_loadout_follows_base(void) {
     return 0;
 }
 
-/* ── Nothing declared plays open ──────────────────────────────────── */
+/* ── Nothing declared plays strict tournament ─────────────────────── */
 
-int run_scripted_game_type_no_base_is_open(void) {
+int run_scripted_game_type_no_base_is_strict(void) {
     ServerSim *sim = ut_make_running_sim("Scripted");
     GameSim   *gs;
+    SgItems    strict;
     SgItems    open;
     SgItems    scripted;
 
@@ -144,22 +145,27 @@ int run_scripted_game_type_no_base_is_open(void) {
     gs = serverSimGetGameSim(sim);
     UT_ASSERT(gs != NULL);
 
+    sgItems(gs, gameStrictTournament, &strict);
     sgItems(gs, gameOpen, &open);
     gs->scenarioBaseGame = (gameType)0;
     sgItems(gs, gameScripted, &scripted);
 
-    UT_ASSERT_MSG(sgSameItems(&open, &scripted),
+    UT_ASSERT_MSG(sgSameItems(&strict, &scripted),
                   "a scripted round declaring nothing was handed %u shells, "
-                  "%u mines and %u trees; an open round is handed %u/%u/%u",
+                  "%u mines and %u trees; a strict round is handed %u/%u/%u",
                   (unsigned)scripted.shells, (unsigned)scripted.mines,
                   (unsigned)scripted.trees,
-                  (unsigned)open.shells, (unsigned)open.mines,
-                  (unsigned)open.trees);
+                  (unsigned)strict.shells, (unsigned)strict.mines,
+                  (unsigned)strict.trees);
     /* Pinned as amounts too, so a change that emptied both would be seen. */
-    UT_ASSERT_MSG(scripted.shells == (BYTE)gs->rules.tank_full_shells,
+    UT_ASSERT_MSG(scripted.shells == 0,
                   "a scripted round declaring nothing got %u shells, expected "
-                  "the open game's %ld",
-                  (unsigned)scripted.shells, (long)gs->rules.tank_full_shells);
+                  "the strict game's none",
+                  (unsigned)scripted.shells);
+    /* And not the open amounts, which is what it used to be handed. */
+    UT_ASSERT_MSG(!sgSameItems(&open, &scripted),
+                  "open and strict hand out the same %u shells here, so this "
+                  "case cannot tell them apart", (unsigned)open.shells);
 
     serverSimDestroy(sim);
     return 0;
@@ -273,16 +279,16 @@ int run_scripted_game_type_plain_map_clears_base(void) {
                   "%d behind",
                   (int)gs->scenarioBaseGame);
 
-    /* And a scripted spawn on it is open again. */
+    /* And a scripted spawn on it declares nothing again, which is strict. */
     {
-        SgItems open;
+        SgItems strict;
         SgItems scripted;
-        sgItems(gs, gameOpen, &open);
+        sgItems(gs, gameStrictTournament, &strict);
         sgItems(gs, gameScripted, &scripted);
-        UT_ASSERT_MSG(sgSameItems(&open, &scripted),
+        UT_ASSERT_MSG(sgSameItems(&strict, &scripted),
                       "after a plain map a scripted spawn got %u shells, "
-                      "expected the open game's %u",
-                      (unsigned)scripted.shells, (unsigned)open.shells);
+                      "expected the strict game's %u",
+                      (unsigned)scripted.shells, (unsigned)strict.shells);
     }
 
     serverSimDestroy(sim);
@@ -356,8 +362,8 @@ int run_scripted_game_type_client_follows_settings(void) {
                   (unsigned)scripted.armour, (unsigned)scripted.trees,
                   (unsigned)strict.shells, (unsigned)strict.mines,
                   (unsigned)strict.armour, (unsigned)strict.trees);
-    /* And not the open amounts it would have predicted with nothing on the
-       tail — the two differ, so the case above is not passing by accident. */
+    /* And not the open amounts — the two games differ here, so the case above
+       is not passing by accident. */
     sgItems(gs, gameOpen, &open);
     UT_ASSERT_MSG(!sgSameItems(&scripted, &open),
                   "strict and open hand out the same %u shells here, so this "
@@ -365,8 +371,9 @@ int run_scripted_game_type_client_follows_settings(void) {
                   (unsigned)open.shells);
 
     /* The same client told about a plain map. That body carries no scenario
-       tail at all, so the base game has to go back to 0 and the prediction
-       back to open. */
+       tail at all, so the base game has to go back to 0 — and a scripted
+       round asked for on top of that predicts strict, the way the server
+       resolves it. */
     {
         ControlEvent plainIn;
         ControlEvent plainOut;
@@ -391,11 +398,11 @@ int run_scripted_game_type_client_follows_settings(void) {
                       "a plain map left the base game type %d on the client",
                       (int)gs->scenarioBaseGame);
         sgItems(gs, gameScripted, &scripted);
-        sgItems(gs, gameOpen, &open);
-        UT_ASSERT_MSG(sgSameItems(&scripted, &open),
+        sgItems(gs, gameStrictTournament, &strict);
+        UT_ASSERT_MSG(sgSameItems(&scripted, &strict),
                       "after a plain map the client predicted %u shells for a "
-                      "scripted round, expected the open game's %u",
-                      (unsigned)scripted.shells, (unsigned)open.shells);
+                      "scripted round, expected the strict game's %u",
+                      (unsigned)scripted.shells, (unsigned)strict.shells);
     }
 
     clientSimDestroy(cs);

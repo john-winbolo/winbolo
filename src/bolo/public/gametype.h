@@ -111,7 +111,7 @@ void gameTypeGetItems(struct GameSim *sim, gameType *gmeType, BYTE *shellsAmount
 * answers the base game type the scenario declared, which
 * the sim holds in scenarioBaseGame; nothing declared, or
 * something that is not one of the three the engine has
-* behaviour for, answers gameOpen.
+* behaviour for, answers gameStrictTournament.
 *
 *ARGUMENTS:
 *  sim   - The game being played

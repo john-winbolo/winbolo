@@ -83,6 +83,9 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
     sim->statDroppedStaleInputs[playerNum] = 0;
     sim->statCatchupTicks[playerNum] = 0;
     sim->statLastRewindTicks[playerNum] = 0;
+    /* Nobody arrives mid-order: a seat starts with no shells counted toward
+     * a three-shot order. */
+    serverSimShotOrderClear(sim, playerNum);
 
     sim->playerConnected[playerNum] = TRUE;
     sim->hadPlayersEver = TRUE;
@@ -423,6 +426,14 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
         sim->sim.tanks[playerNum] = NULL;
     }
     if (sim->sim.lgmen[playerNum] != NULL) {
+        /* Put down the pillbox he was carrying before he goes. tankDestroy
+         * above drops the tank's own cargo, but a pillbox handed to the man
+         * has already left that list — it exists only in his hands, and
+         * deleting him without this loses it for the rest of the round: the
+         * record stays marked as carried, so it is neither on the map nor
+         * anyone's to pick up. Ahead of the pill ownership migration below,
+         * so the one he leaves behind passes to an ally with the rest. */
+        lgmDropCarriedPill(&sim->sim, &sim->sim.lgmen[playerNum]);
         lgmDestroy(&sim->sim.lgmen[playerNum]);
         sim->sim.lgmen[playerNum] = NULL;
     }
@@ -447,6 +458,9 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->statDroppedStaleInputs[playerNum] = 0;
     sim->statCatchupTicks[playerNum] = 0;
     sim->statLastRewindTicks[playerNum] = 0;
+    /* The shells this slot had in flight toward a three-shot order go with
+     * it, so whoever sits here next starts its count from nothing. */
+    serverSimShotOrderClear(sim, playerNum);
 
     /* Post-game stats: a mid-round leaver is dropped from the round summary as
      * if never present. Zero this slot's accumulator row, clear every other

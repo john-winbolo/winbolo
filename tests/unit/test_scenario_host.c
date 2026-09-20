@@ -21,6 +21,9 @@
  * run_scenario_host_api_too_new       — an api above this server's is
  *                                       refused; equal and below are not
  * run_scenario_host_no_script        — no script is not an error
+ * run_scenario_host_trigger_manifest — the triggers a script's table states,
+ *                                      filling the struct with what the same
+ *                                      two fill from manifest.json
  * run_scenario_host_manifest_roundtrip— tags, regions and several teams
  * run_scenario_host_team_init_read    — a team's init table reaches the
  *                                       manifest and the sim's template, and
@@ -152,6 +155,9 @@
                                            * through */
 #include "scenario_host.h"
 #include "scenario_manifest.h"
+#include "scenario_manifest_json.h" /* scnManifestParse — the other form of
+                                     * the table the trigger case reads */
+#include "scenario_validate.h"    /* scenarioHostManifest */
 #include "test_harness.h"
 
 /* ── Fixtures ─────────────────────────────────────────────────────── */
@@ -781,6 +787,596 @@ int run_scenario_host_manifest_roundtrip(void) {
                       reg->h == 40,
                   "'moat' read as x %u y %u w %u h %u", (unsigned)reg->x,
                   (unsigned)reg->y, (unsigned)reg->w, (unsigned)reg->h);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* ── 7a2. Triggers, in both forms ─────────────────────────────────── */
+
+/* The line an announce carries, past SCN_TRIGGER_NAME_LEN so that it lands
+   on the action's own text rather than in the argument slot. */
+static const char kShLongLine[] =
+    "The ring holds and the wave is turned back short of the keep";
+
+/* The same two triggers written both ways: the scenario table a script
+   declares, and the manifest.json a package carries. Between them they hold
+   all four value kinds, an in and an eq, and the long line.
+
+   The point of the case is that the two spellings mean one thing, so both
+   are stated here rather than one being reached for across files. */
+static const char *const kShTriggerLua =
+    "scenario = {\n"
+    "  name = \"Trigger trial\", api = 1,\n"
+    "  triggers = {\n"
+    "    { when = \"on_base_captured\",\n"
+    "      where = { { \"new_team\", \"eq\", 1 },\n"
+    "                { \"tag\", \"in\", \"outer_base\" } },\n"
+    "      actions = { { \"announce\",\n"
+    "                    \"The ring holds and the wave is turned back short "
+    "of the keep\",\n"
+    "                    5 },\n"
+    "                  { \"set_score\", { field = \"new\" }, 10 } } },\n"
+    "    { when = \"on_tick\",\n"
+    "      where = { { \"scripted\", \"eq\", false } },\n"
+    "      actions = { { \"log\", \"tick\" } } },\n"
+    "  },\n"
+    "}\n";
+
+static const char kShTriggerJson[] =
+    "{\n"
+    "  \"manifest\": 1,\n"
+    "  \"api\": 1,\n"
+    "  \"name\": \"Trigger trial\",\n"
+    "  \"triggers\": [\n"
+    "    { \"when\": \"on_base_captured\",\n"
+    "      \"where\": [ [\"new_team\", \"eq\", 1],\n"
+    "                   [\"tag\", \"in\", \"outer_base\"] ],\n"
+    "      \"actions\": [ [\"announce\",\n"
+    "                      \"The ring holds and the wave is turned back short "
+    "of the keep\", 5],\n"
+    "                     [\"set_score\", { \"field\": \"new\" }, 10] ] },\n"
+    "    { \"when\": \"on_tick\",\n"
+    "      \"where\": [ [\"scripted\", \"eq\", false] ],\n"
+    "      \"actions\": [ [\"log\", \"tick\"] ] }\n"
+    "  ]\n"
+    "}\n";
+
+int run_scenario_host_trigger_manifest(void) {
+    static const char *const kMap = "scnhost_triggers.map";
+    ServerSim               *sim;
+    ScenarioHost            *h;
+    const ScenarioManifest  *m;
+    const ScnTrigger        *t;
+    const ScnTrigAct        *a;
+    ScnManifestDoc          *doc;
+    char                     err[512];
+
+    UT_ASSERT(shPut(kMap, kShTriggerLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+
+    UT_ASSERT_MSG(m->numTriggers == 2, "%u triggers, expected 2",
+                  (unsigned)m->numTriggers);
+
+    /* The first: a number against eq, a short string against in. */
+    t = &m->triggers[0];
+    UT_ASSERT_MSG(strcmp(t->when, "on_base_captured") == 0,
+                  "the first trigger runs on '%s'", t->when);
+    UT_ASSERT_MSG(t->numWhere == 2, "the first trigger holds %u tests",
+                  (unsigned)t->numWhere);
+    UT_ASSERT(strcmp(t->where[0].field, "new_team") == 0);
+    UT_ASSERT(t->where[0].op == SCN_TRIG_CMP_EQ);
+    UT_ASSERT(t->where[0].value.kind == SCN_TRIG_VAL_NUMBER);
+    UT_ASSERT_MSG(t->where[0].value.num == 1.0, "new_team read as %g",
+                  t->where[0].value.num);
+    UT_ASSERT(strcmp(t->where[1].field, "tag") == 0);
+    UT_ASSERT_MSG(t->where[1].op == SCN_TRIG_CMP_IN, "tag is tested with %d",
+                  (int)t->where[1].op);
+    UT_ASSERT(t->where[1].value.kind == SCN_TRIG_VAL_STRING);
+    UT_ASSERT(!t->where[1].value.inText);
+    UT_ASSERT(strcmp(t->where[1].value.text, "outer_base") == 0);
+
+    /* The long line is on the action and the slot says so rather than
+       carrying the bytes, which is the rule manifest.json reads by. */
+    UT_ASSERT_MSG(t->numActions == 2, "the first trigger holds %u actions",
+                  (unsigned)t->numActions);
+    a = &t->actions[0];
+    UT_ASSERT(strcmp(a->op, "announce") == 0);
+    UT_ASSERT_MSG(a->numArgs == 2, "announce took %u arguments",
+                  (unsigned)a->numArgs);
+    UT_ASSERT(a->args[0].kind == SCN_TRIG_VAL_STRING);
+    UT_ASSERT_MSG(a->args[0].inText,
+                  "the long line was not moved to the action's text");
+    UT_ASSERT(a->args[0].text[0] == '\0');
+    UT_ASSERT_MSG(strcmp(a->text, kShLongLine) == 0,
+                  "the action's text is '%s'", a->text);
+    UT_ASSERT(a->args[1].kind == SCN_TRIG_VAL_NUMBER);
+    UT_ASSERT(a->args[1].num == 5.0);
+
+    /* A field reference: { field = "new" } is the Lua spelling of the
+       manifest's {"field": "new"}. */
+    a = &t->actions[1];
+    UT_ASSERT(strcmp(a->op, "set_score") == 0);
+    UT_ASSERT_MSG(a->numArgs == 2, "set_score took %u arguments",
+                  (unsigned)a->numArgs);
+    UT_ASSERT(a->args[0].kind == SCN_TRIG_VAL_FIELD);
+    UT_ASSERT(strcmp(a->args[0].text, "new") == 0);
+    UT_ASSERT(a->args[1].kind == SCN_TRIG_VAL_NUMBER);
+    UT_ASSERT(a->args[1].num == 10.0);
+    UT_ASSERT_MSG(a->text[0] == '\0',
+                  "an action with no long string carries '%s'", a->text);
+
+    /* And a boolean. */
+    t = &m->triggers[1];
+    UT_ASSERT(strcmp(t->when, "on_tick") == 0);
+    UT_ASSERT_MSG(t->numWhere == 1, "the second trigger holds %u tests",
+                  (unsigned)t->numWhere);
+    UT_ASSERT(strcmp(t->where[0].field, "scripted") == 0);
+    UT_ASSERT(t->where[0].value.kind == SCN_TRIG_VAL_BOOL);
+    UT_ASSERT_MSG(t->where[0].value.num == 0.0, "false read as %g",
+                  t->where[0].value.num);
+    UT_ASSERT_MSG(t->numActions == 1, "the second trigger holds %u actions",
+                  (unsigned)t->numActions);
+    UT_ASSERT(strcmp(t->actions[0].op, "log") == 0);
+    UT_ASSERT(t->actions[0].args[0].kind == SCN_TRIG_VAL_STRING);
+    UT_ASSERT(strcmp(t->actions[0].args[0].text, "tick") == 0);
+
+    /* The whole array against what the same two triggers fill from JSON.
+       Both readers clear a trigger before filling it, so the padding
+       compares clean and a difference is a difference in the content. */
+    doc = scnManifestParse((const uint8_t *)kShTriggerJson,
+                           strlen(kShTriggerJson), NULL, err, sizeof(err));
+    if (doc == NULL) {
+        scenarioHostDetach(h);
+        serverSimDestroy(sim);
+        shDrop(kMap);
+        UT_FAIL("the manifest form was refused: %s", err);
+    }
+    if (scnManifestValues(doc)->numTriggers != m->numTriggers ||
+        memcmp(scnManifestValues(doc)->triggers, m->triggers,
+               sizeof(ScnTrigger) * m->numTriggers) != 0) {
+        scnManifestFree(doc);
+        scenarioHostDetach(h);
+        serverSimDestroy(sim);
+        shDrop(kMap);
+        UT_FAIL("the script's table and manifest.json fill the triggers "
+                "differently");
+    }
+    scnManifestFree(doc);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* ── 7a3. A where the reader cannot take ──────────────────────────── */
+
+/* A trigger holding no tests runs on every occurrence of its hook, so a
+ * where that is there and is not an array cannot leave the trigger
+ * standing: what the script wrote as a conditional would run
+ * unconditionally. The trigger goes with its tests, and the report names
+ * the position.
+ *
+ * Three triggers: a bad one, a sound one, and a bad one. The sound one is
+ * what says the drop costs that trigger and no more. The second bad one is
+ * what says which number the report carries — with the first already gone
+ * it sits in slot 1 and at position 2, so the two possible keys are
+ * different numbers and the case can tell them apart. A file whose only
+ * bad trigger is the first cannot: both are 0. */
+int run_scenario_host_trigger_where_type(void) {
+    static const char *const kMap = "scnhost_where_type.map";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  name = \"Bad where\",\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_tick\", where = \"x\",\n"
+        "      actions = { { \"log\", \"never\" } } },\n"
+        "    { when = \"on_player_join\",\n"
+        "      actions = { { \"log\", \"kept\" } } },\n"
+        "    { when = \"on_tick\", where = \"y\",\n"
+        "      actions = { { \"log\", \"nor this\" } } },\n"
+        "  },\n"
+        "}\n";
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    const ScenarioManifest *m;
+    char                    err[512];
+
+    UT_ASSERT(shPut(kMap, kLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "one bad where cost the whole script: %s", err);
+
+    /* The last of the two drops, which is the third trigger the file wrote.
+       By then the first has already gone, so the slot it would have landed
+       in is 1 and the position the file wrote it at is 2. Naming it
+       triggers[2] is what says the key is the position; naming it
+       triggers[1] would say the key had quietly become the slot.
+
+       Only the last line is readable here — the soft report holds one at a
+       time — so the drop of the first trigger is asserted in the manifest
+       count below rather than in a report of its own. */
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "triggers[2]") != NULL,
+                  "the report does not name the file position: '%s'",
+                  scenarioHostLastError(h));
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "triggers[1]") == NULL,
+                  "the report is keyed off the slot rather than the "
+                  "position: '%s'", scenarioHostLastError(h));
+
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->numTriggers == 1,
+                  "%u triggers kept, expected the 1 whose where reads",
+                  (unsigned)m->numTriggers);
+    UT_ASSERT_MSG(strcmp(m->triggers[0].when, "on_player_join") == 0,
+                  "the trigger kept runs on '%s'", m->triggers[0].when);
+    UT_ASSERT_MSG(m->triggers[0].numActions == 1,
+                  "the trigger kept holds %u actions",
+                  (unsigned)m->triggers[0].numActions);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* ── 7a4. An action that names no op ──────────────────────────────── */
+
+/* The editor makes room for an action before the author has said what it
+ * does, and a pack made before they say it writes the empty name out. An
+ * empty name is a string, so the reader took it and said nothing, and
+ * scnCheckTrigAct leaves an action naming no op to this report — between
+ * them a row reached a server unmentioned and did nothing there.
+ *
+ * Two actions on the one trigger: one naming an op and one naming none. The
+ * first is what says the report costs that row and not the trigger, and the
+ * key is what says which of the two it is about. */
+int run_scenario_host_trigger_action_no_op(void) {
+    static const char *const kMap = "scnhost_no_op.map";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  name = \"No op\",\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_tick\",\n"
+        "      actions = { { \"log\", \"kept\" }, { \"\", \"unsaid\" } } },\n"
+        "  },\n"
+        "}\n";
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    const ScenarioManifest *m;
+    char                    err[512];
+
+    UT_ASSERT(shPut(kMap, kLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL,
+                  "an action naming no op cost the whole script: %s", err);
+
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "names no op") != NULL,
+                  "an empty op was taken without a word: '%s'",
+                  scenarioHostLastError(h));
+    UT_ASSERT_MSG(
+        strstr(scenarioHostLastError(h), "triggers[0].actions[1]") != NULL,
+        "the report does not name the action: '%s'", scenarioHostLastError(h));
+
+    /* The row is kept, empty name and all. A report is not a refusal: the
+       trigger stands and the action beside it still runs. */
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->numTriggers == 1, "%u triggers kept",
+                  (unsigned)m->numTriggers);
+    UT_ASSERT_MSG(m->triggers[0].numActions == 2, "%u actions kept",
+                  (unsigned)m->triggers[0].numActions);
+    UT_ASSERT(strcmp(m->triggers[0].actions[0].op, "log") == 0);
+    UT_ASSERT_MSG(m->triggers[0].actions[1].op[0] == '\0',
+                  "the action came back naming '%s'",
+                  m->triggers[0].actions[1].op);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* ── 7a5. A where-row that names no field ─────────────────────────── */
+
+/* The same shape one row over. The editor makes room for a test before the
+ * author has said what it looks at, and a pack made before they say it
+ * writes the empty name out. An empty name is a string, so the reader took
+ * it and said nothing, and scnCheckTrigCond leaves a row naming no field to
+ * this report — between them a test reached a server unmentioned and never
+ * held.
+ *
+ * Two rows on the one trigger: one naming a field and one naming none. The
+ * first is what says the report costs that row and not the trigger, and the
+ * key is what says which of the two it is about. */
+int run_scenario_host_trigger_where_no_field(void) {
+    static const char *const kMap = "scnhost_no_field.map";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  name = \"No field\",\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_tick\",\n"
+        "      where = { { \"tick\", \"eq\", 1 }, { \"\", \"eq\", 1 } },\n"
+        "      actions = { { \"log\", \"kept\" } } },\n"
+        "  },\n"
+        "}\n";
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    const ScenarioManifest *m;
+    char                    err[512];
+
+    UT_ASSERT(shPut(kMap, kLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL,
+                  "a test naming no field cost the whole script: %s", err);
+
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "names no field") != NULL,
+                  "an empty field name was taken without a word: '%s'",
+                  scenarioHostLastError(h));
+    UT_ASSERT_MSG(
+        strstr(scenarioHostLastError(h), "triggers[0].where[1]") != NULL,
+        "the report does not name the row: '%s'", scenarioHostLastError(h));
+
+    /* The row is kept, empty name and all. A report is not a refusal: the
+       trigger stands and the test beside it still holds. */
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->numTriggers == 1, "%u triggers kept",
+                  (unsigned)m->numTriggers);
+    UT_ASSERT_MSG(m->triggers[0].numWhere == 2, "%u tests kept",
+                  (unsigned)m->triggers[0].numWhere);
+    UT_ASSERT(strcmp(m->triggers[0].where[0].field, "tick") == 0);
+    UT_ASSERT_MSG(m->triggers[0].where[1].field[0] == '\0',
+                  "the row came back naming '%s'",
+                  m->triggers[0].where[1].field);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* ── 7a6. A line too long for the action's text ───────────────────── */
+
+/* An argument past the argument slot goes on the action's own text, which is
+ * wider but is still a fixed width. A line past that width was cut with
+ * nothing said, so a script could reach a server holding a shorter line than
+ * its author wrote and no word anywhere about where the rest went.
+ *
+ * It is the same fault as a name past the argument slot and says the same
+ * sentence, with the other number in it. manifest.json's reader is held to
+ * that wording under the same key by a case of its own: a package whose two
+ * forms were cut differently would not survive scnManifestAgrees.
+ *
+ * The line is built rather than typed, so the cap it is measured against is
+ * the one the build holds. */
+int run_scenario_host_trigger_text_cut(void) {
+    static const char *const kMap = "scnhost_text_cut.map";
+    char                     line[SCN_TRIGGER_TEXT_LEN + 32];
+    char                     lua[SCN_TRIGGER_TEXT_LEN + 256];
+    ServerSim               *sim;
+    ScenarioHost            *h;
+    const ScenarioManifest  *m;
+    char                     err[512];
+
+    memset(line, 'x', sizeof(line) - 1);
+    line[sizeof(line) - 1] = '\0';
+    UT_ASSERT(strlen(line) >= SCN_TRIGGER_TEXT_LEN);
+
+    snprintf(lua, sizeof(lua),
+             "scenario = {\n"
+             "  name = \"Long line\",\n"
+             "  api = 1,\n"
+             "  triggers = {\n"
+             "    { when = \"on_tick\",\n"
+             "      actions = { { \"log\", \"%s\" } } },\n"
+             "  },\n"
+             "}\n", line);
+
+    UT_ASSERT(shPut(kMap, lua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "a line past the action's text cost the whole "
+                             "script: %s", err);
+
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "is cut to fit") != NULL,
+                  "a line past the action's text was cut without a word: "
+                  "'%s'", scenarioHostLastError(h));
+    UT_ASSERT_MSG(
+        strstr(scenarioHostLastError(h), "triggers[0].actions[0][0]") != NULL,
+        "the report does not name the argument: '%s'",
+        scenarioHostLastError(h));
+
+    /* Cut and kept, not dropped: the action still runs, with as much of the
+       line as there is room for. */
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->numTriggers == 1 && m->triggers[0].numActions == 1,
+                  "%u triggers and %u actions kept",
+                  (unsigned)m->numTriggers,
+                  (unsigned)m->triggers[0].numActions);
+    UT_ASSERT(m->triggers[0].actions[0].args[0].inText);
+    UT_ASSERT_MSG(
+        strlen(m->triggers[0].actions[0].text) == SCN_TRIGGER_TEXT_LEN - 1,
+        "the action's text holds %d bytes",
+        (int)strlen(m->triggers[0].actions[0].text));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* ── 7a7. An empty slot inside a trigger's arrays ─────────────────── */
+
+/* Every array inside a trigger is read from 1 to the first empty slot, the
+ * way the trigger array itself is. lua_rawlen used to say how far to go, and
+ * over a table with a hole in it lua_rawlen may answer any of several
+ * borders, so the same file could read as two different scenarios on two
+ * builds. Stopping at the empty slot is one answer everywhere.
+ *
+ * All three arrays at once: the tests, the actions, and one action's
+ * arguments. Each holds something, then an empty slot, then something more,
+ * so what is kept says where the walk stopped and what is missing says it
+ * did not carry on past it.
+ *
+ * What is not asserted is the report. scnReportTrigTail says something only
+ * when lua_rawlen answers a border past the stop, which for these tables is
+ * the interpreter's business rather than this build's; asserting it would be
+ * asserting something the case cannot know. The walk is the part that has to
+ * be the same everywhere, and the walk is what is held here. */
+int run_scenario_host_trigger_array_hole(void) {
+    static const char *const kMap = "scnhost_array_hole.map";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  name = \"Hole\",\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_tick\",\n"
+        "      where = { { \"tick\", \"eq\", 1 }, nil,\n"
+        "                { \"tick\", \"eq\", 2 } },\n"
+        "      actions = { { \"log\", \"a\", nil, \"c\" }, nil,\n"
+        "                  { \"log\", \"b\" } } },\n"
+        "  },\n"
+        "}\n";
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    const ScenarioManifest *m;
+    char                    err[512];
+
+    UT_ASSERT(shPut(kMap, kLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "an array with an empty slot cost the whole "
+                             "script: %s", err);
+
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->numTriggers == 1, "%u triggers kept",
+                  (unsigned)m->numTriggers);
+
+    /* The tests: the one before the empty slot, and not the one after. */
+    UT_ASSERT_MSG(m->triggers[0].numWhere == 1, "%u tests kept",
+                  (unsigned)m->triggers[0].numWhere);
+    UT_ASSERT_MSG(strcmp(m->triggers[0].where[0].field, "tick") == 0,
+                  "the test kept reads '%s'", m->triggers[0].where[0].field);
+    UT_ASSERT_MSG(m->triggers[0].where[0].value.num == 1.0,
+                  "the test kept is the one past the empty slot");
+
+    /* The actions, the same way. */
+    UT_ASSERT_MSG(m->triggers[0].numActions == 1, "%u actions kept",
+                  (unsigned)m->triggers[0].numActions);
+    UT_ASSERT(strcmp(m->triggers[0].actions[0].op, "log") == 0);
+
+    /* And that action's own arguments, where the empty slot is third. */
+    UT_ASSERT_MSG(m->triggers[0].actions[0].numArgs == 1, "%u arguments kept",
+                  (unsigned)m->triggers[0].actions[0].numArgs);
+    UT_ASSERT_MSG(
+        strcmp(m->triggers[0].actions[0].args[0].text, "a") == 0,
+        "the argument kept holds '%s'",
+        m->triggers[0].actions[0].args[0].text);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* ── 7a8. A trigger that names no hook ────────────────────────────── */
+
+/* A trigger is put on the router by the hook it names, so one naming none is
+ * never reached: keeping it spends a slot against the trigger cap and writes
+ * a dead entry into every pack made from the table afterwards. The trigger
+ * goes, and the report names the position.
+ *
+ * Both spellings of naming none: a trigger with no when at all, and one whose
+ * when is a string with nothing in it. The editor writes neither — it only
+ * ever gives a trigger a hook the catalogue carries — so both arrive from a
+ * script written by hand.
+ *
+ * Three triggers: a bad one, a sound one, and a bad one. The sound one is
+ * what says the drop costs that trigger and no more. The second bad one is
+ * what says which number the report carries — with the first already gone it
+ * sits in slot 1 and at position 2, so the two possible keys are different
+ * numbers and the case can tell them apart. */
+int run_scenario_host_trigger_no_when(void) {
+    static const char *const kMap = "scnhost_no_when.map";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  name = \"No when\",\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { actions = { { \"log\", \"never\" } } },\n"
+        "    { when = \"on_player_join\",\n"
+        "      actions = { { \"log\", \"kept\" } } },\n"
+        "    { when = \"\", actions = { { \"log\", \"nor this\" } } },\n"
+        "  },\n"
+        "}\n";
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    const ScenarioManifest *m;
+    char                    err[512];
+
+    UT_ASSERT(shPut(kMap, kLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "a trigger naming no hook cost the whole script: "
+                             "%s", err);
+
+    /* The last of the two drops, which is the third trigger the file wrote.
+       By then the first has already gone, so the slot it would have landed
+       in is 1 and the position the file wrote it at is 2. Naming it
+       triggers[2] is what says the key is the position.
+
+       Only the last line is readable here — the soft report holds one at a
+       time — so the drop of the first trigger is asserted in the manifest
+       count below rather than in a report of its own. */
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "names no hook") != NULL,
+                  "the drop does not say what was wrong: '%s'",
+                  scenarioHostLastError(h));
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "triggers[2]") != NULL,
+                  "the report does not name the file position: '%s'",
+                  scenarioHostLastError(h));
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "triggers[1]") == NULL,
+                  "the report is keyed off the slot rather than the "
+                  "position: '%s'", scenarioHostLastError(h));
+
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->numTriggers == 1,
+                  "%u triggers kept, expected the 1 that names a hook",
+                  (unsigned)m->numTriggers);
+    UT_ASSERT_MSG(strcmp(m->triggers[0].when, "on_player_join") == 0,
+                  "the trigger kept runs on '%s'", m->triggers[0].when);
+    UT_ASSERT_MSG(m->triggers[0].numActions == 1,
+                  "the trigger kept holds %u actions",
+                  (unsigned)m->triggers[0].numActions);
 
     scenarioHostDetach(h);
     serverSimDestroy(sim);

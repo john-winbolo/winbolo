@@ -111,6 +111,7 @@ static void clientSimRenderLocalJoinReject(ClientSim *cs, LocalJoinResult res) {
   }
   rendered = langGetText(id);
   clientSimSetConnectErrorReason(cs, rendered ? rendered : "Connection rejected");
+  clientSimSetConnectErrorId(cs, id);
 }
 
 /* Shared body for the active / passive local-connect paths. Runs the
@@ -379,6 +380,11 @@ const char *clientSimGetConnectErrorReason(const ClientSim *cs) {
   return cs->connectErrorReason;
 }
 
+langid clientSimGetConnectErrorLangId(const ClientSim *cs) {
+  if (cs == NULL || cs->connectErrorReason[0] == '\0') return 0;
+  return cs->connectErrorId;
+}
+
 BYTE clientSimGetServerPlayerNum(const ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return 0;
   return transportUdpClientGetPlayerNum((Transport *)&cs->transport);
@@ -618,6 +624,21 @@ void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath) {
   clientSimSubmitCommand(cs, &cmd);
 }
 
+void clientSimNetSendLobbySetScenario(ClientSim *cs, const char *relPath) {
+  if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
+  if (relPath == NULL) return;
+  size_t pl = strlen(relPath);
+  if (pl > 255) return;
+  /* An empty path is a message and not a caller's mistake: it is how the
+     host selects no scenario, so it goes out where the map wrapper above
+     would return. */
+  ClientCommand cmd = { .type = CMD_LOBBY_SET_SCENARIO };
+  cmd.u.lobbySetScenario.relPathLen = (uint8_t)pl;
+  if (pl > 0) memcpy(cmd.u.lobbySetScenario.relPath, relPath, pl);
+  clientSimSubmitCommand(cs, &cmd);
+}
+
 void clientSimNetSendLobbyPreviewCancel(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport) return;
   if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
@@ -655,6 +676,11 @@ void clientSimNetSendLobbyMapListRequest(ClientSim *cs,
                                          const char *relPath) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
   transportUdpClientSendLobbyMapListRequest(&cs->transport, relPath);
+}
+
+void clientSimNetSendLobbyScenarioListRequest(ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientSendLobbyScenarioListRequest(&cs->transport);
 }
 
 void clientSimNetSendLobbyMapPreviewRequest(ClientSim *cs,

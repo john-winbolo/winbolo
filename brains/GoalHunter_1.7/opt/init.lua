@@ -364,6 +364,10 @@ local pill_table = require("pill_table")
 local PP = require("pill_portfolio")
 local lgm_registry = require("lgm_registry")
 local circles = require("circles")
+-- Chat orders (bot commands). ONE table name for the whole feature: Brain.think
+-- is a couple of slots off Lua's 60-upvalue cap, so everything hangs off this
+-- module and off state.orders. See orders.lua.
+local ORD = require("orders")
 lgm_registry.init()
 
 local Brain = {}
@@ -2092,6 +2096,16 @@ function Brain.think(info)
     -- block on purpose: the resets below wipe state.goal, and the whole point
     -- of the line is to name the goal we died pursuing.
     state.goal = { kind = "none", mx = 0, my = 0, wx = 0, wy = 0 }
+    -- HAND THE CHAT ORDER BACK.  This block returns before ORD.update is ever
+    -- reached, so nothing cleared the order slot on a death: a bot killed
+    -- while holding a "go there and hold" came back with the hold flag still
+    -- set and stood parked on its RESPAWN square for the rest of the hold,
+    -- doing nothing at all (Andrew's peer review, Sep 16). The job itself
+    -- still stands, so this is a release and not a cancel -- the obr goes out
+    -- with the first message slot after we respawn and the next cheapest bot
+    -- takes it. It also drops the goto lock, so the command goal cannot
+    -- survive the death either.
+    if C.BOT_COMMANDS_ENABLED then ORD.on_death(state, info) end
     -- Wipe EVERY blitz/squad coordination field (negotiation, offers, rejects,
     -- roster, watchdog, broadcast latches, and the call registry) so we respawn
     -- with a clean slate instead of resuming a dead life's blitz. The registry
@@ -3453,7 +3467,7 @@ function Brain.think(info)
 
   local open_msg_this_tick = false
   if state.send_open_msg then
-    send_msg = state.paused and C.BRAIN_NAME .. " loaded (PAUSED — use 'start' to begin)."
+    send_msg = state.paused and C.BRAIN_NAME .. " loaded (PAUSED — use '!start' to begin)."
                              or C.BRAIN_NAME .. " loaded."
     msg_dest = bit.lshift(1, state.player_number)
     state.send_open_msg = false
@@ -3485,7 +3499,28 @@ function Brain.think(info)
           comms.process_message(m.sender, m.text, now, state)
         end
 
-        local cmd = cmds.parse(m.text)
+        -- Chat ORDERS first ("attack 5", "all defend 3", "socrates
+        -- retreat"). The old operator commands below now need a leading "!"
+        -- too, and orders.lua hands any "!" line it has no verb for straight
+        -- through, so the two parsers cannot both claim a line. The TEAM
+        -- CHECK is _from_ally: an enemy typing
+        -- "attack 5" in all chat is ignored in silence.
+        local _ord_took = false
+        if C.BOT_COMMANDS_ENABLED then
+          _ord_took = ORD.on_chat(state, world, info, m.sender, m.text, now,
+                                  _from_ally,
+                                  bit.band(info.player_bots or 0,
+                                           bit.lshift(1, (m.sender or 0))) ~= 0)
+        end
+
+        -- THE OLD OPERATOR COMMANDS ARE ALLY-ONLY TOO.  This call sat outside
+        -- the _from_ally test that guards everything else on this path, so an
+        -- ENEMY typing "!stop" in all chat would have frozen the whole team --
+        -- the one hard lock in the brain, handed to the other side (Andrew's
+        -- peer review, Sep 16).  An operator command is a harder order than a
+        -- chat order, so it gets the same team check, and the check itself
+        -- lives in cmds.parse beside the parse it guards.
+        local cmd = (not _ord_took) and cmds.parse(m.text, _from_ally) or nil
         if cmd then
           log.event("cmd_recv", m.text)
           local reply = cmds.execute(cmd, state, world)
@@ -3537,6 +3572,18 @@ function Brain.think(info)
       state._kw_resync_cd = now + (C.KW_RESYNC_COOLDOWN or 150)
     end
   end
+
+  -- Bot-command PINGS. The engine hands a teammate's smart ping to the brain
+  -- as an EVENT_PING in info.events (the same array world.process_events and
+  -- hearing.lua read); this is the one call that turns the BOT COMMAND kind
+  -- into an order and the CAUTION kind into a cancel or a retreat. It runs
+  -- before ORD.update so a ping's bid goes out on the same tick.
+  ORD.on_events(state, world, info, now)
+
+  -- Chat orders: drain the inbound bids/claims/releases, settle any auction
+  -- that is due, expire a finished order, and publish the live slot on
+  -- state._order. Runs BEFORE goal selection so the pool sees it this tick.
+  ORD.update(state, world, info, now)
   W.collect_kw_changes(world, now)
 
   -- Paused: accept commands but do nothing else
@@ -3544,14 +3591,17 @@ function Brain.think(info)
     log.log_tick(state, info, state.goal, 0, 0, nil)
     if state._instr_prof_on then prof.stop(state.server_tick or state.tick or 0) end
     state._think_attempt = nil   -- reached an exit: this think was not killed
-    return {
+    -- ORD.out_ping adds this think's one smart ping, if the bot queued one.
+    -- A paused bot still answers an order, so its "on my way" marker has to
+    -- leave on this path too.
+    return ORD.out_ping(state, {
       holdkeys    = 0,
       tapkeys     = 0,
       build       = nil,
       wantallies  = info.allies,
       messagedest = msg_dest,
       sendmessage = send_msg,
-    }
+    })
   end
 
   -- Pick up deferred arrival reply
@@ -3593,6 +3643,11 @@ function Brain.think(info)
     state.stuck_for = 0
     state._kw_send_query = true   -- re-acquire team's known world after respawn
     state._tank_track = nil   -- drop pre-death ghosts (fallback if info.dead was missed)
+    -- The order slot, for the same reason and as the same fallback: a death
+    -- whose info.dead tick we never ran (GC pause, a long think, a Lua error)
+    -- would otherwise leave a held order -- and a held "go there and hold" in
+    -- its hold phase -- pointing at a life that is over.
+    if C.BOT_COMMANDS_ENABLED then ORD.on_death(state, info) end
     -- Full blitz/squad wipe + registry re-discover. Fallback for when the
     -- info.dead death-tick reset was missed (GC pause / long think / Lua error):
     -- its distances are off the pre-death-rooted slate, so far calls look cheap
@@ -3777,6 +3832,17 @@ function Brain.think(info)
     -- kill_me_wait parks for the same reason: standing still on an advertised
     -- tile IS the goal, so the stuck detector must not read it as wedged.
     or state.goal.kind == "kill_me_wait"
+    -- goto_tile is a place order ("go there and hold"). Once the tank is on
+    -- the square it stands there until the order ends, so the hold must not
+    -- read as a wedge either.
+    or (state.goal.kind == "goto_tile"
+        and U.mdist(cur_mx, cur_my, state.goal.mx or -99, state.goal.my or -99) <= 1)
+    -- The HOLD phase of that same place order: the tank is parked by
+    -- steering.M.steer while it shoots whatever came to it, so standing still
+    -- with an attack_tank or a kill_lgm goal is deliberate too.
+    or (C.BOT_COMMANDS_ENABLED and state._order and state._order.hold
+        and state._order.kind == "goto_tile"
+        and (C.ORDER_HOLD_PARK_KINDS or {})[state.goal.kind] ~= nil)
   local attack_at_standoff = intentionally_stationary
 
   -- Long-term desperation: track total ticks at the same tile.
@@ -3940,7 +4006,14 @@ function Brain.think(info)
             C.BRAIN_NAME .. ": STUCK trying to reach %s #%d at (%d,%d) -- giving up",
             state.command_goal.kind, state.command_goal.id,
             state.command_goal.mx, state.command_goal.my)
+          local was_goto = (state.command_goal.kind == "goto_tile")
           state.command_goal = nil
+          -- A PLACE ORDER that cannot be reached is OVER. The command goal is
+          -- re-asserted from the order slot every think, so dropping the goal
+          -- alone would put it straight back and the bot would grind here for
+          -- the whole 60 s. The give-up line above is said once; the release
+          -- is quiet so there is no second line.
+          if was_goto then ORD.release_held(state, info, nil, true) end
         end
         attack.clear_attack_goal(state, "stuck (nav)")
       end
@@ -5858,6 +5931,12 @@ function Brain.think(info)
         end
         state.goal = new_goal
         state.goal_set_tick = now
+        -- ATTACK MARKER. This is the one point where the goal takes a new
+        -- kind or a new target, whether the bot was ordered to it or picked
+        -- it for itself, so it is the one place the marker belongs. The
+        -- "bot pings" team setting and the per-target repeat gap are both
+        -- inside the call; it does nothing when the team has not asked.
+        ORD.attack_ping(state, new_goal, now)
         state.pf.status = "idle"
         state.pf_fail_logged = false
         state.pf_fail_count = 0
@@ -7982,6 +8061,50 @@ function Brain.think(info)
     -- state._repo_outbox, drained into the batch below.
     reposition_vote.update(state, world, info, now)
 
+    -- ── Who owns this think's one chat slot: the human or the bots? ──
+    -- A brain says at most one thing per think. The internal channel (the
+    -- /info state slate, the known-world digest, the vote and blitz verbs)
+    -- used to take that slot every think on a busy map, so an order ack and
+    -- the "Leaving pill 5 for pill 7" line queued in state.orders.say never
+    -- got out for the rest of the round: the brain log showed the order
+    -- taken and released, and the player heard nothing. The design asks for
+    -- one line per order, so the human line goes first.
+    --
+    -- Deferring the internal traffic is safe because every producer below
+    -- only clears its "needs send" flag when try_send accepts, so a refusal
+    -- costs it a think and nothing else. One sender still outranks a say
+    -- line: an order VERB (obd/obc/obr) queued this think. The auction those
+    -- verbs run is what makes the ack correct, so they keep their place and
+    -- the say line waits a think.
+    --
+    -- The deferral is ONE think, never two in a row: a think that pushed the
+    -- internal traffic aside sets _chat_yielded_internal, and the next think
+    -- hands the slot straight back. So no internal send is ever more than a
+    -- think (2 ticks) later than it would have been, which is what keeps the
+    -- deadlines intact:
+    --   * the 30 s slate heartbeat fires at 1500 ticks and an ally only drops
+    --     our slot at SQUAD_ALLY_MAX_AGE (1750), so 2 ticks spends 2 of a
+    --     250-tick margin;
+    --   * the reposition vote closes its window at 10 ticks
+    --     (C.REPOSITION_VOTE_WINDOW_TICKS), so a ballot held 2 ticks still
+    --     lands inside it — where a six-line burst draining one line per
+    --     think would have held it 12 ticks and let a bad reposition pass
+    --     unopposed.
+    -- A burst therefore alternates: say line, internal traffic, say line.
+    local _say_first = false
+    local _internal_deferred = false
+    do
+      local _ord     = state.orders
+      local _ord_out = _ord and _ord.out
+      local _ord_say = _ord and _ord.say
+      if (not send_msg)
+         and _ord_say and #_ord_say > 0 and (info.allies or 0) ~= 0
+         and not (_ord_out and #_ord_out > 0)
+         and not state._chat_yielded_internal then
+        _say_first = true
+      end
+    end
+
     local _batch, _batch_used = {}, 0
     local _BATCH_MAX = C.MSG_BATCH_MAX or 124
     local function try_send(msg, dest)
@@ -7994,6 +8117,10 @@ function Brain.think(info)
         send_msg = msg; msg_dest = dest
         return true
       end
+      -- A human-facing order line owns the slot this think (see _say_first).
+      -- Refusing here is what defers the internal traffic: every caller keeps
+      -- its payload and offers it again next think.
+      if _say_first then _internal_deferred = true; return false end
       local sep = (#_batch > 0) and #comms.MSG_SEP or 0
       -- The FIRST message is always accepted, even if it alone exceeds the cap
       -- (matches pre-batch behavior — the wire truncates and the *_OVERFLOW
@@ -8022,6 +8149,20 @@ function Brain.think(info)
         end
       end
       state._repo_outbox = kept
+    end
+
+    -- Bot-command order verbs (obd/obc/obr) queued by ORD.update / ORD.on_chat.
+    -- Same keep-and-retry rule as the vote ballots: a dropped bid would leave
+    -- an auction waiting on an ally that already answered.
+    if state.orders and state.orders.out and #state.orders.out > 0 then
+      local kept
+      for _, m in ipairs(state.orders.out) do
+        if try_send(m, 0) then
+        else
+          kept = kept or {}; kept[#kept + 1] = m
+        end
+      end
+      state.orders.out = kept or {}
     end
 
     -- Steal-negotiation verbs (stq/sta/str) queued by the ally-claimed sync
@@ -8341,16 +8482,23 @@ function Brain.think(info)
     -- build_kw_message DRAINS the entries it packs, so only build it when the
     -- batch is empty (it'll definitely fit as the first message) — otherwise a
     -- failed try_send would silently lose the drained changes.
+    -- Same reason we skip it when a say line owns the slot (_say_first): the
+    -- try_send would refuse and the drained changes would be gone.
     if world._kw_dirty and next(world._kw_dirty) ~= nil then
-      if #_batch == 0 then
+      if #_batch == 0 and not _say_first then
         local kwmsg = W.build_kw_message(world)
         if kwmsg and try_send(kwmsg, 0) then
           local rem = 0; for _ in pairs(world._kw_dirty) do rem = rem + 1 end
         end
       else
+        if _say_first then _internal_deferred = true end
         local pend = 0; for _ in pairs(world._kw_dirty) do pend = pend + 1 end
       end
     end
+
+    -- Record whether we pushed internal traffic aside, so the next think
+    -- hands the slot back to it (see _say_first above).
+    state._chat_yielded_internal = _internal_deferred
 
     -- Finalize the internal-channel batch into the single outbound buffer.
     -- Anything that didn't fit left its producer's "needs send" flag set and
@@ -8380,6 +8528,18 @@ function Brain.think(info)
     -- info.allies leaves humans on our team. If a busy tick prevents
     -- the announcement going out, we defer; the next tick's slate
     -- heartbeat is at most 30 s away so the slot frees up quickly.
+    -- Order acks / status lines. Sent to the ALLIES mask (humans AND bots)
+    -- rather than the internal channel so a human -- or a test seat -- sees
+    -- them. ONE per think, always: _say_first above only clears the slot for
+    -- the line, it does not let a second one out. The rest wait for the next
+    -- think (the list is short and holds at most 6 entries, see orders.lua
+    -- say(), which now drops the OLDEST line when it overflows).
+    if not send_msg and state.orders and state.orders.say
+       and #state.orders.say > 0 and (info.allies or 0) ~= 0 then
+      send_msg = table.remove(state.orders.say, 1)
+      msg_dest = info.allies
+    end
+
     if not send_msg and state.pending_human_goal_msg then
       local allies = info.allies or 0
       local bots   = info.player_bots or 0
@@ -8528,15 +8688,18 @@ function Brain.think(info)
   -- Anything still set at the next think's top means that think was killed.
   state._think_attempt = nil
 
-  -- Output
-  return {
+  -- Output. ORD.out_ping takes ONE queued smart ping off state.orders and
+  -- writes ping_kind / ping_x / ping_y into this table; the engine turns it
+  -- into a CMD_PING from this bot's own player slot. It is written as a call
+  -- around the table so think needs no extra local and no extra upvalue.
+  return ORD.out_ping(state, {
     holdkeys    = keys,
     tapkeys     = taps,
     build       = build_cmd,
     wantallies  = info.allies,
     messagedest = msg_dest,
     sendmessage = send_msg,
-  }
+  })
 end
 
 
@@ -8559,8 +8722,9 @@ function Brain.debug_info()
   local amy = g.approach_my or -1
   local swx, swy = smx * 256 + 128, smy * 256 + 128
   local sdist = math.sqrt((i.tankx - swx)^2 + (i.tanky - swy)^2)
-  return string.format("sub=%s tank=(%d,%d) standoff=(%d,%d) approach=(%d,%d) sdist=%.0f",
-    tostring(g.substate), tmx, tmy, smx, smy, amx, amy, sdist)
+  return string.format("sub=%s tank=(%d,%d) standoff=(%d,%d) approach=(%d,%d) sdist=%.0f%s",
+    tostring(g.substate), tmx, tmy, smx, smy, amx, amy, sdist,
+    ORD.panel_line(state, i))
 end
 
 function Brain.set_manual_mode(on)

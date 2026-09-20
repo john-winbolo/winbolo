@@ -66,6 +66,8 @@
 #include "server_console.h"
 #include "wire_limits.h"
 #include "../scenario/scenario_host.h"
+#include "../scenario/scenario_pack.h"
+#include "../scenario_io/scenario_package.h"
 #include "../scenario/scenario_validate.h"
 #include "cJSON.h"
 
@@ -640,13 +642,27 @@ void printArgs() {
   fprintf(stderr, "                -randommap <seed> — reproduce a specific map from its seed.\n");
   fprintf(stderr, "                -randommap tournament <seed> — type with specific seed.\n");
   fprintf(stderr, "                Map name shown as 'rand_<seed>' in server info.\n");
+  fprintf(stderr, "-scenariodir <Dir> - Directory of scenarios this server offers on their own,\n");
+  fprintf(stderr, "                independently of any map: .scenario packages and loose .lua\n");
+  fprintf(stderr, "                scripts (default: data/scenarios). A directory that is not\n");
+  fprintf(stderr, "                there means the server offers none, which is not an error.\n");
   fprintf(stderr, "-noscenarios  - Do not load the scenario script beside a map. Every map,\n");
   fprintf(stderr, "                including one committed later, plays plainly. A map that\n");
   fprintf(stderr, "                has a script says which one was not loaded.\n");
+  fprintf(stderr, "-nouploadscripts - Do not run a script carried by a map a client uploaded.\n");
+  fprintf(stderr, "                Maps in the uploads directory play plainly, whether the\n");
+  fprintf(stderr, "                script is packed into the file or sits beside it; every\n");
+  fprintf(stderr, "                other map is unaffected. Each upload turned down is named.\n");
   fprintf(stderr, "-validate <File> - Check the scenario script beside a map and exit without\n");
   fprintf(stderr, "                starting a server. Each problem is printed as\n");
   fprintf(stderr, "                file:line: key: message. Exits 0 when the map is\n");
   fprintf(stderr, "                playable, 1 when it is not.\n");
+  fprintf(stderr, "-pack <File>  - Write the scenario script beside a map into the map file\n");
+  fprintf(stderr, "                itself and exit without starting a server. The manifest\n");
+  fprintf(stderr, "                comes from the script's own scenario table, and a\n");
+  fprintf(stderr, "                container already on the map is replaced. A script with\n");
+  fprintf(stderr, "                problems against it is not packed. Exits 0 when the map\n");
+  fprintf(stderr, "                was packed, 1 when it was not.\n");
 
   fprintf(stderr, "\nGame rules:\n");
   fprintf(stderr, "-gametype <T> - Specifies the game type: \"Open\" or \"Tournament\" or \"Strict\"\n");
@@ -1334,7 +1350,7 @@ static const char *overviewWindowArgWord(OverviewWindow window) {
    nothing it does starts anything. */
 static int validateMapAndReport(char *mapPath) {
   ServerSim *sim;
-  ScnValidateResult result;
+  ScnValidateResult *result;
   char script[SCN_SCRIPT_PATH_MAX];
   bool ok;
   uint16_t i;
@@ -1362,10 +1378,19 @@ static int validateMapAndReport(char *mapPath) {
     return 1;
   }
 
-  ok = scenarioValidateMap(sim, mapPath, &result);
+  /* On the heap rather than the stack: a result carries the whole manifest and
+     the issue list with it, which is more than this frame should hold. */
+  result = (ScnValidateResult *)malloc(sizeof(*result));
+  if (result == NULL) {
+    fprintf(stderr, "%s: out of memory reading the script\n", mapPath);
+    serverSimDestroy(sim);
+    return 1;
+  }
 
-  for (i = 0; i < result.count; i++) {
-    const ScnValidateIssue *issue = &result.issues[i];
+  ok = scenarioValidateMap(sim, mapPath, result);
+
+  for (i = 0; i < result->count; i++) {
+    const ScnValidateIssue *issue = &result->issues[i];
     if (issue->line > 0) {
       fprintf(stderr, "%s:%d: %s: %s\n", script, issue->line, issue->key,
               issue->message);
@@ -1374,20 +1399,94 @@ static int validateMapAndReport(char *mapPath) {
     }
   }
 
-  if (result.haveManifest == FALSE && result.count == 0) {
+  if (result->haveManifest == FALSE && result->count == 0) {
     fprintf(stderr, "%s: no scenario script beside it\n", mapPath);
   } else if (ok == TRUE) {
     fprintf(stderr, "%s: no problems\n", script);
-  } else if (result.dropped > 0) {
+  } else if (result->dropped > 0) {
     fprintf(stderr, "%s: %u problems, and %u more than the list holds\n",
-            script, (unsigned)result.count, (unsigned)result.dropped);
+            script, (unsigned)result->count, (unsigned)result->dropped);
   } else {
-    fprintf(stderr, "%s: %u problem%s\n", script, (unsigned)result.count,
-            (result.count == 1) ? "" : "s");
+    fprintf(stderr, "%s: %u problem%s\n", script, (unsigned)result->count,
+            (result->count == 1) ? "" : "s");
   }
 
+  free(result);
   serverSimDestroy(sim);
   return (ok == TRUE) ? 0 : 1;
+}
+
+/* How many bytes of the container -pack just wrote, read back off the file so
+   the line below says what landed rather than what was meant to. 0 when the
+   file cannot be read again, which is not a reason to call a pack that
+   succeeded a failure. */
+static size_t packedContainerLen(char *mapPath) {
+  FILE *fp;
+  long size;
+  uint8_t *buf;
+  size_t got;
+  const uint8_t *chunk = NULL;
+  size_t chunkLen = 0;
+
+  fp = fopen(mapPath, "rb");
+  if (fp == NULL) {
+    return 0;
+  }
+  if (fseek(fp, 0, SEEK_END) != 0 || (size = ftell(fp)) <= 0 ||
+      fseek(fp, 0, SEEK_SET) != 0) {
+    fclose(fp);
+    return 0;
+  }
+  buf = (uint8_t *)malloc((size_t)size);
+  if (buf == NULL) {
+    fclose(fp);
+    return 0;
+  }
+  got = fread(buf, 1, (size_t)size, fp);
+  fclose(fp);
+  if (got != (size_t)size ||
+      scnPackageFindInMap(buf, got, &chunk, &chunkLen) == FALSE) {
+    chunkLen = 0;
+  }
+  free(buf);
+  return chunkLen;
+}
+
+/* One map's scenario written into the map, for -pack. Returns what the process
+   exits with: 0 for a map that was packed, 1 for one that was not. Nothing
+   else in the server is running by the time this is called, and nothing it
+   does starts anything. */
+static int packMapAndReport(char *mapPath) {
+  char err[512];
+  size_t containerLen;
+
+#ifdef USING_SDL
+  /* The sim the pack reads the map through builds its locks through SDL.
+     Nothing here needs a subsystem. */
+  if (!SDL_Init(0)) {
+    fprintf(stderr, "Error starting SDL - %s\n", SDL_GetError());
+    return 1;
+  }
+#endif
+  /* The debug file the server opens is a server's; a pack writes nothing to
+     it. */
+  setWriteToDebugFileStream(-1);
+
+  err[0] = '\0';
+  if (scnPackMap(mapPath, err, sizeof(err)) == FALSE) {
+    fprintf(stderr, "%s\n",
+            (err[0] != '\0') ? err : "the map could not be packed");
+    return 1;
+  }
+
+  containerLen = packedContainerLen(mapPath);
+  if (containerLen > 0) {
+    fprintf(stderr, "%s: packed, %lu bytes of scenario on the end of it\n",
+            mapPath, (unsigned long)containerLen);
+  } else {
+    fprintf(stderr, "%s: packed\n", mapPath);
+  }
+  return 0;
 }
 
 int main(int argc, char **argv) {
@@ -1403,14 +1502,19 @@ int main(int argc, char **argv) {
   wb_log_init("WinBolo", "WinBoloDS", "winbolods.log");
   atexit(wb_log_shutdown);
 
-  /* -validate <map> checks a map's scenario script and exits. It is answered
-     here, ahead of the argument checks a server start needs, so a map can be
-     checked without a port and a game type to go with it — and before any of
+  /* -validate <map> checks a map's scenario script and exits, and -pack <map>
+     writes that script into the map file and exits. Both are answered here,
+     ahead of the argument checks a server start needs, so a map can be checked
+     or packed without a port and a game type to go with it — and before any of
      the network, the tracker, mDNS or a window is brought up. */
   {
     int validateArg = findArg(argc, argv, "validate");
+    int packArg = findArg(argc, argv, "pack");
     if (validateArg != ARG_NOT_FOUND) {
       return validateMapAndReport((char *) argv[validateArg]);
+    }
+    if (packArg != ARG_NOT_FOUND) {
+      return packMapAndReport((char *) argv[packArg]);
     }
   }
 
@@ -1729,12 +1833,34 @@ int main(int argc, char **argv) {
   if (argExist(argc, argv, "noscenarios") == TRUE) {
     scenarioHostSetEnabled(false);
   }
+  /* -nouploadscripts: the narrower one. A map a client sent plays plainly
+     whatever it carries, and the operator's own maps are untouched. Set in
+     the same place and before the first attach for the same reason. */
+  if (argExist(argc, argv, "nouploadscripts") == TRUE) {
+    scenarioHostSetUploadScriptsEnabled(false);
+  }
   /* And the question the map lister asks of every map it finds, so the list
      a player picks from says which maps are scripted. Registered here rather
      than at the attach below: an attach answers NULL for a map with no
      script, so a server whose own map is plain would report every scripted
      map in its directory as plain. */
   scenarioHostRegisterMapScripted(serverSim);
+  /* And the read of the scenarios directory, so a client asking what this
+     server offers on its own is answered. Registered in the same place and
+     for the same reason: what the list holds has nothing to do with whichever
+     map is loaded.
+
+     -scenariodir names that directory; without it the sim's own default,
+     data/scenarios, stands. A directory that is not there is not an error —
+     it means this server offers no scenarios of its own, which is the
+     ordinary case. */
+  {
+    int argNum = findArg(argc, argv, "scenariodir");
+    if (argNum != ARG_NOT_FOUND) {
+      serverSimSetScenarioDir(serverSim, argv[argNum]);
+    }
+  }
+  scenarioHostRegisterScenarioLister(serverSim);
 
   /* A scenario script beside the map, when the map came from a file and one
      is there. No script is the ordinary case and says nothing; a script

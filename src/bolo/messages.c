@@ -242,80 +242,10 @@ static void messageQueuePush(MessageState *ms, uint32_t topCp, uint32_t botCp) {
   ms->queueCount++;
 }
 
-/* Brain inbox ring (see internal/messages.h). Same drop-oldest-on-full
- * policy as the codepoint queue above. text is Pascal-stringified
- * already (byte 0 = length); we copy length+1 bytes plus a NUL guard. */
-void messageInboxPush(MessageState *ms, BYTE from, const char *pascalText) {
-  size_t plen;
-  size_t copyLen;
-
-  if (ms == NULL || pascalText == NULL) {
-    return;
-  }
-  if (ms->inboxCount >= BRAIN_INBOX_CAP) {
-    ms->inboxHead = (ms->inboxHead + 1) % BRAIN_INBOX_CAP;
-    ms->inboxCount--;
-  }
-  /* Pascal string length is in byte 0. Clamp to the per-slot
-   * buffer to be defensive against malformed inputs — the wire
-   * already caps at PACKET_MAX_CHAT_MESSAGE but local callers
-   * could in theory pass longer. */
-  plen = (size_t)((unsigned char)pascalText[0]);
-  if (plen + 2 > BRAIN_INBOX_MSG_LEN) {
-    plen = BRAIN_INBOX_MSG_LEN - 2;
-  }
-  copyLen = plen + 1;  /* length byte + body bytes */
-  memcpy(ms->inboxText[ms->inboxTail], pascalText, copyLen);
-  ms->inboxText[ms->inboxTail][copyLen] = '\0';
-  ms->inboxText[ms->inboxTail][0]       = (char)plen;  /* enforce clamp */
-  ms->inboxFrom[ms->inboxTail]          = from;
-  ms->inboxTail = (ms->inboxTail + 1) % BRAIN_INBOX_CAP;
-  ms->inboxCount++;
-}
-
-int messageInboxCount(const MessageState *ms) {
-  return (ms != NULL) ? ms->inboxCount : 0;
-}
-
-BYTE messageInboxPeek(const MessageState *ms, int i, char *dest) {
-  int slot;
-  size_t plen;
-
-  if (dest == NULL) {
-    return 0;
-  }
-  if (ms == NULL || i < 0 || i >= ms->inboxCount) {
-    dest[0] = '\0';
-    return 0;
-  }
-  slot = (ms->inboxHead + i) % BRAIN_INBOX_CAP;
-  plen = (size_t)((unsigned char)ms->inboxText[slot][0]);
-  if (plen + 2 > BRAIN_INBOX_MSG_LEN) {
-    plen = BRAIN_INBOX_MSG_LEN - 2;
-  }
-  memcpy(dest, ms->inboxText[slot], plen + 1);
-  dest[plen + 1] = '\0';
-  return ms->inboxFrom[slot];
-}
-
-void messageInboxClear(MessageState *ms) {
-  if (ms == NULL) return;
-  ms->inboxHead = 0;
-  ms->inboxTail = 0;
-  ms->inboxCount = 0;
-}
-
-
-/* Helper: stringifies bottom into a Pascal string and pushes it onto
- * the brain inbox for sender `from`. Used by every playerNMessage
- * case below in place of the pre-change pattern that overwrote
- * newMessage/newMessageFrom in place (and silently dropped the
- * previous chat in the same tick). */
-static void inboxPushFromBottom(MessageState *ms, BYTE from, const char *bottom) {
-  char pbuf[BRAIN_INBOX_MSG_LEN];
-  utilCtoPString((char *)bottom, pbuf);
-  messageInboxPush(ms, from, pbuf);
-}
+/* The brain inbox ring and messageInboxPushLine, which the playerNMessage
+ * arms below feed, live in src/bolo/message_inbox.c. They are not here
+ * because this file draws the message HUD and so cannot be linked by a
+ * dedicated server, which needs the ring all the same. */
 
 void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bottom) {
   switch (msgType) {
@@ -360,7 +290,7 @@ void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bo
     }
     break;
     case player0Message:
-      inboxPushFromBottom(ms, BASE_0, bottom);
+      messageInboxPushLine(ms, BASE_0, bottom);
       if (ms->lastMessage != player0Message) {
         messageAddItem(ms, top,bottom);
       } else {
@@ -369,7 +299,7 @@ void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bo
       ms->lastMessage = player0Message;
       break;
     case player1Message:
-      inboxPushFromBottom(ms, BASE_1, bottom);
+      messageInboxPushLine(ms, BASE_1, bottom);
       if (ms->lastMessage != player1Message) {
         messageAddItem(ms, top,bottom);
       } else {
@@ -378,7 +308,7 @@ void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bo
       ms->lastMessage = player1Message;
       break;
     case player2Message:
-      inboxPushFromBottom(ms, BASE_2, bottom);
+      messageInboxPushLine(ms, BASE_2, bottom);
       if (ms->lastMessage != player2Message) {
         messageAddItem(ms, top,bottom);
       } else {
@@ -387,7 +317,7 @@ void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bo
       ms->lastMessage = player2Message;
       break;
     case player3Message:
-      inboxPushFromBottom(ms, BASE_3, bottom);
+      messageInboxPushLine(ms, BASE_3, bottom);
       if (ms->lastMessage != player3Message) {
         messageAddItem(ms, top,bottom);
       } else {
@@ -396,7 +326,7 @@ void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bo
       ms->lastMessage = player3Message;
       break;
     case player4Message:
-      inboxPushFromBottom(ms, BASE_4, bottom);
+      messageInboxPushLine(ms, BASE_4, bottom);
       if (ms->lastMessage != player4Message) {
         messageAddItem(ms, top,bottom);
       } else {
@@ -405,7 +335,7 @@ void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bo
       ms->lastMessage = player4Message;
       break;
     case player5Message:
-      inboxPushFromBottom(ms, BASE_5, bottom);
+      messageInboxPushLine(ms, BASE_5, bottom);
       if (ms->lastMessage != player5Message) {
         messageAddItem(ms, top,bottom);
       } else {
@@ -414,7 +344,7 @@ void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bo
       ms->lastMessage = player5Message;
       break;
     case player6Message:
-      inboxPushFromBottom(ms, BASE_6, bottom);
+      messageInboxPushLine(ms, BASE_6, bottom);
       if (ms->lastMessage != player6Message) {
         messageAddItem(ms, top,bottom);
       } else {
@@ -423,7 +353,7 @@ void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bo
       ms->lastMessage = player6Message;
       break;
     case player7Message:
-      inboxPushFromBottom(ms, BASE_7, bottom);
+      messageInboxPushLine(ms, BASE_7, bottom);
       if (ms->lastMessage != player7Message) {
         messageAddItem(ms, top,bottom);
       } else {
@@ -432,7 +362,7 @@ void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bo
       ms->lastMessage = player7Message;
       break;
     case player8Message:
-      inboxPushFromBottom(ms, BASE_8, bottom);
+      messageInboxPushLine(ms, BASE_8, bottom);
       if (ms->lastMessage != player8Message) {
         messageAddItem(ms, top,bottom);
       } else {
@@ -441,7 +371,7 @@ void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bo
       ms->lastMessage = player8Message;
       break;
     case player9Message:
-      inboxPushFromBottom(ms, BASE_9, bottom);
+      messageInboxPushLine(ms, BASE_9, bottom);
       if (ms->lastMessage != player9Message) {
         messageAddItem(ms, top,bottom);
       } else {
@@ -450,7 +380,7 @@ void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bo
       ms->lastMessage = player9Message;
       break;
     case player10Message:
-      inboxPushFromBottom(ms, BASE_10, bottom);
+      messageInboxPushLine(ms, BASE_10, bottom);
       if (ms->lastMessage != player10Message) {
         messageAddItem(ms, top,bottom);
       } else {
@@ -459,7 +389,7 @@ void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bo
       ms->lastMessage = player10Message;
       break;
     case player11Message:
-      inboxPushFromBottom(ms, BASE_11, bottom);
+      messageInboxPushLine(ms, BASE_11, bottom);
       if (ms->lastMessage != player11Message) {
         messageAddItem(ms, top,bottom);
       } else {
@@ -468,7 +398,7 @@ void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bo
       ms->lastMessage = player11Message;
       break;
     case player12Message:
-      inboxPushFromBottom(ms, BASE_12, bottom);
+      messageInboxPushLine(ms, BASE_12, bottom);
       if (ms->lastMessage != player12Message) {
         messageAddItem(ms, top,bottom);
       } else {
@@ -477,7 +407,7 @@ void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bo
       ms->lastMessage = player12Message;
       break;
     case player13Message:
-      inboxPushFromBottom(ms, BASE_13, bottom);
+      messageInboxPushLine(ms, BASE_13, bottom);
       if (ms->lastMessage != player13Message) {
         messageAddItem(ms, top,bottom);
       } else {
@@ -486,7 +416,7 @@ void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bo
       ms->lastMessage = player13Message;
       break;
     case player14Message:
-      inboxPushFromBottom(ms, BASE_14, bottom);
+      messageInboxPushLine(ms, BASE_14, bottom);
       if (ms->lastMessage != player14Message) {
         messageAddItem(ms, top,bottom);
       } else {
@@ -495,7 +425,7 @@ void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bo
       ms->lastMessage = player14Message;
       break;
     case player15Message:
-      inboxPushFromBottom(ms, BASE_15, bottom);
+      messageInboxPushLine(ms, BASE_15, bottom);
       if (ms->lastMessage != player15Message) {
         messageAddItem(ms, top,bottom);
       } else {

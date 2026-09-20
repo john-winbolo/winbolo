@@ -23,6 +23,7 @@
 
 #include "client_sim.h"
 #include "client_connect_state.h"
+#include "lang_message.h"        /* langid */
 #include "input_packet.h"        /* SnapshotHeader, TankSnapshot, etc. */
 #include "gametype.h"
 
@@ -107,6 +108,11 @@ void clientSimRenderPrepare(ClientSim *cs, uint32_t nowMs);
 /* === State queries === */
 ClientConnectState clientSimGetConnectState(const ClientSim *cs);
 const char *clientSimGetConnectErrorReason(const ClientSim *cs);
+/* The langid behind clientSimGetConnectErrorReason, or 0 when the reason
+ * was not rendered from one (transport failure, plain-text fallback). A
+ * frontend compares it with STR_REJECT_INCORRECT_PASSWORD to decide whether
+ * to ask for the password again. */
+langid      clientSimGetConnectErrorLangId(const ClientSim *cs);
 BYTE        clientSimGetServerPlayerNum(const ClientSim *cs);
 const BYTE *clientSimGetServerMapData(const ClientSim *cs, int *outLen);
 /* serverTick of the frame interp is currently displaying (second-newest applied
@@ -183,6 +189,15 @@ void clientSimNetSendLobbySetBotBrain(ClientSim *cs, BYTE slot,
  * Windows drive letters before opening the file. */
 void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath);
 
+/* Host (or openHost / admin) only — pick one of the scenarios the server
+ * offers on its own. relPath is the file name the scenario list gave, and
+ * "" selects none; NULL is a no-op. The server rejects "..", absolute
+ * paths, Windows drive letters and a name its scenarios directory does not
+ * hold. Picking is a commit and not a preview: the scenario it names takes
+ * effect at once, over the committed map's own script if that map has one,
+ * and the lobby settings event says which is playing. */
+void clientSimNetSendLobbySetScenario(ClientSim *cs, const char *relPath);
+
 /* Lobby preview cycle. SET_MAP and a completed upload auto-stash
  * the previous committed map; these two close the loop:
  *   - Cancel: roll back to the stashed map (server re-broadcasts).
@@ -206,6 +221,14 @@ void clientSimNetSendLobbyPreviewRandom(ClientSim *cs, const char *seedStr);
  * (lobbyMapList* fields). Any lobby client may request — read-only. */
 void clientSimNetSendLobbyMapListRequest(ClientSim *cs,
                                          const char *relPath);
+
+/* Ask what scenarios the server offers on their own, independently of any
+ * map. No path: the scenarios directory is flat, unlike the map chooser's
+ * tree. The response arrives async via PACKET_LOBBY_SCENARIO_LIST_RSP and is
+ * stored on the ClientSim; read it back through the
+ * clientSimGetLobbyScenario* accessors in client_sim.h. Any lobby client may
+ * ask — read-only. No-op without a UDP transport. */
+void clientSimNetSendLobbyScenarioListRequest(ClientSim *cs);
 
 /* Recursive search variant. Response stored on lobbyMapSearch*. */
 void clientSimNetSendLobbyMapSearchRequest(ClientSim *cs,

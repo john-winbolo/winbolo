@@ -51,6 +51,12 @@
  * serverLifecycleSetRoundLogHooks. NULL on every other binary that
  * links server_static, so the lifecycle's stash/flush calls become
  * no-ops there. */
+/* Adapter: serverSimEmitBrainDocs hands each fragment to a deliver
+ * callback; the return-to-lobby path wants them on the broadcast bus. */
+static void serverSimPublishBrainDocsCb(void *ctx, const ControlEvent *evt) {
+  serverSimPublishControl((ServerSim *)ctx, evt);
+}
+
 static void (*s_roundLogStash)(void) = NULL;
 static void (*s_roundLogFlush)(void) = NULL;
 
@@ -810,6 +816,13 @@ void serverInstanceTick(ServerSim *sim) {
         memset(&evt, 0, sizeof(evt));
         serverSimFillLobbyBrainListEvent(sim, &evt);
         serverSimPublishControl(sim, &evt);
+        /* ... and the brains' lobby texts that go with it, so the returning
+         * lobby can announce a bot's brain the same way a fresh join does.
+         * The refresh first: this seam between rounds is where an operator
+         * would have edited a brain's announce.txt, and it is off the tick
+         * path, so a re-read costs nothing anybody feels. */
+        serverSimRefreshBrainDocs(sim);
+        serverSimEmitBrainDocs(sim, serverSimPublishBrainDocsCb, sim);
       }
       /* Republish lobby state so every client's mirror reflects the
        * fresh lobby. serverSimReturnToLobby's contract says the caller

@@ -25,6 +25,8 @@
 #include "server_sim.h"
 #include "server_sim_internal.h" /* PlayerRoundStats, serverSimGetRoundStats — T2 */
 #include "server_sim_lifecycle.h"
+#include "server_sim_scenario.h" /* serverSimApplyScenarioOp — the score op's funnel */
+#include "scenario_panel.h"      /* SCN_SCORE_KIND_PLAYER / SCN_SCORE_KIND_TEAM */
 #include "round_stats.h"         /* AwardId, AwardResult, PlayerRoundStats */
 #include "round_stats_derive.h"  /* computeAwards, roundStatsApplyRecord, roundStatsRecordSize */
 #include "control_event.h"       /* ControlEvent, CTRL_ROUND_STATS */
@@ -1218,6 +1220,19 @@ int run_round_stats_codec_worstcase(void) {
         h->value = 0xFFFFFFFFu; h->score = 0xFFFFFFFFu;
     }
 
+    /* A scenario scoreboard with the widest title the field holds, every bit
+     * of both masks set and every entry of both arrays filled, which is what
+     * the group costs at most. */
+    s->hasScenarioScore = true;
+    memset(s->scenarioScoreLabel, 'S', ROUND_STATS_SCN_LABEL_LEN - 1);
+    s->scenarioScoreLabel[ROUND_STATS_SCN_LABEL_LEN - 1] = '\0';
+    s->scenarioScoreMask     = 0xFFFFu;
+    s->scenarioTeamScoreMask = 0xFFFFu;
+    for (int i = 0; i < MAX_TANKS; i++) {
+        s->scenarioScore[i]     = -2147483647 - 1;
+        s->scenarioTeamScore[i] = 2147483647;
+    }
+
     uint8_t buf[MAX_CONTROL_PACKET];
     size_t outLen = 0;
     ControlEncodeFn enc = transportControlCodecEncoder(CTRL_ROUND_STATS);
@@ -1227,15 +1242,191 @@ int run_round_stats_codec_worstcase(void) {
     UT_ASSERT_MSG(outLen <= MAX_CONTROL_PACKET,
                   "worst case fits one packet, got %zu", outLen);
 
-    /* Packet size, pinned so a field added to any of the three repeated blocks
-     * has to come past this line. This encoder emits the header too, so the
-     * count matches the codec's own static assert:
-     * 8 + 1 + 16*20 + 1 + 18*8 + 1 + 32 + 1 + 12*26 = 820. */
+    /* Packet size, pinned so a field added to any of the repeated blocks has
+     * to come past this line. This encoder emits the header too, so the count
+     * matches the codec's own static assert:
+     * 8 + 1 + 16*20 + 1 + 18*8 + 1 + 32 + 1 + 12*26 = 820 up to the clips,
+     * and + 1 + 1 + 15 + 4 + 16*8 = 969 with the scenario scoreboard. */
     UT_ASSERT_MSG(outLen == (size_t)(PACKET_HEADER_SIZE + 1 + MAX_TANKS * 20 +
                                      1 + AWARD_COUNT * 8 + 1 +
                                      (ROUND_STATS_LOGKEY_LEN - 1) + 1 +
-                                     ROUND_STATS_HIGHLIGHTS_WIRE_MAX * 26),
+                                     ROUND_STATS_HIGHLIGHTS_WIRE_MAX * 26 +
+                                     1 + 1 + (ROUND_STATS_SCN_LABEL_LEN - 1) +
+                                     4 + MAX_TANKS * 8),
                   "worst-case packet size, got %zu", outLen);
+
+    return 0;
+}
+
+/* One big-endian signed 32-bit field, written out by hand: a test of the wire
+ * shape must not borrow the packer the encoder under test uses. */
+static size_t putBE32(uint8_t *buf, size_t off, int32_t v) {
+    uint32_t u = (uint32_t)v;
+    buf[off++] = (uint8_t)((u >> 24) & 0xFFu);
+    buf[off++] = (uint8_t)((u >> 16) & 0xFFu);
+    buf[off++] = (uint8_t)((u >> 8) & 0xFFu);
+    buf[off++] = (uint8_t)(u & 0xFFu);
+    return off;
+}
+
+/* Counts the set bits of a mask, so the assertions below say how many rows
+ * were scored rather than checking the one row they expect. */
+static int maskBits(uint16_t mask) {
+    int n = 0;
+    for (int i = 0; i < 16; i++) {
+        if (mask & (uint16_t)(1u << i)) n++;
+    }
+    return n;
+}
+
+/* The scenario's scoreboard rides on the end of the body: its own bytes when
+ * a scenario scored, one zero byte when none did. The group's bytes are
+ * composed here rather than read back through the encoder, so a shape the
+ * encoder and the decoder agree on but the format does not is still caught. */
+int run_round_stats_scenario_score_codec(void) {
+    ControlEvent in, out;
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_ROUND_STATS;
+    RoundStatsSummary *s = &in.u.roundStats;
+
+    /* Two rows, no awards, no log key and no clips, so where the group starts
+     * is arithmetic anyone can follow: 1 + 2*20 + 1 + 1 + 1 past the header. */
+    s->playerCount = 2;
+    s->players[0].slot = 0;
+    s->players[1].slot = 3;
+
+    s->hasScenarioScore = true;
+    strncpy(s->scenarioScoreLabel, "Flags",
+            sizeof(s->scenarioScoreLabel) - 1);
+    /* Three rows in each mask, one of them negative — a scenario is as free
+     * to take points away as to give them — and one of them zero. The zero
+     * is the row that matters: slot 7 was scored and the number is 0, slot 9
+     * was never scored and its entry is 0 too, so the only thing that can
+     * tell them apart on the wire is the mask. */
+    s->scenarioScoreMask    = (uint16_t)((1u << 0) | (1u << 3) | (1u << 7));
+    s->scenarioScore[0]     = 5;
+    s->scenarioScore[3]     = -2;
+    s->scenarioScore[7]     = 0;
+    s->scenarioTeamScoreMask =
+        (uint16_t)((1u << 2) | (1u << 4) | (1u << 5));
+    s->scenarioTeamScore[2] = 41;
+    s->scenarioTeamScore[4] = 0;
+    s->scenarioTeamScore[5] = -1000;
+
+    uint8_t buf[MAX_CONTROL_PACKET];
+    size_t outLen = 0;
+    ControlEncodeFn enc = transportControlCodecEncoder(CTRL_ROUND_STATS);
+    UT_ASSERT(enc != NULL);
+    UT_ASSERT_MSG(enc(&in, NULL, buf, sizeof(buf), &outLen) == ENCODE_OK,
+                  "the scoreboard would not encode");
+
+    uint8_t want[1 + 1 + 5 + 4 + MAX_TANKS * 8];
+    size_t w = 0;
+    want[w++] = 1;                             /* the group follows */
+    want[w++] = 5;                             /* the title's length */
+    memcpy(want + w, "Flags", 5); w += 5;
+    want[w++] = 0x00; want[w++] = 0x89;        /* slots 0, 3 and 7 */
+    want[w++] = 0x00; want[w++] = 0x34;        /* teams 2, 4 and 5 */
+    for (int i = 0; i < MAX_TANKS; i++) {
+        w = putBE32(want, w, i == 0 ? 5 : i == 3 ? -2 : 0);
+    }
+    for (int i = 0; i < MAX_TANKS; i++) {
+        w = putBE32(want, w, i == 2 ? 41 : i == 5 ? -1000 : 0);
+    }
+    UT_ASSERT(w == sizeof(want));
+
+    const size_t groupAt = (size_t)PACKET_HEADER_SIZE + 1 + 2 * 20 + 1 + 1 + 1;
+    UT_ASSERT_MSG(outLen == groupAt + sizeof(want),
+                  "packet length with a scoreboard, got %zu", outLen);
+    UT_ASSERT_MSG(memcmp(buf + groupAt, want, sizeof(want)) == 0,
+                  "the scoreboard's bytes are not the ones the format says");
+
+    ControlDecodeFn dec = transportControlCodecDecoder(PACKET_ROUND_STATS);
+    UT_ASSERT(dec != NULL);
+    memset(&out, 0xAB, sizeof(out));
+    UT_ASSERT_MSG(dec(buf + PACKET_HEADER_SIZE, outLen - PACKET_HEADER_SIZE,
+                      &out),
+                  "the body with a scoreboard was refused");
+    const RoundStatsSummary *d = &out.u.roundStats;
+    UT_ASSERT_MSG(d->hasScenarioScore, "the decoded event carries no scoreboard");
+    UT_ASSERT_MSG(strcmp(d->scenarioScoreLabel, "Flags") == 0,
+                  "the title, got '%s'", d->scenarioScoreLabel);
+    UT_ASSERT_MSG(maskBits(d->scenarioScoreMask) == 3,
+                  "%d slots were scored, expected 3",
+                  maskBits(d->scenarioScoreMask));
+    UT_ASSERT_MSG(maskBits(d->scenarioTeamScoreMask) == 3,
+                  "%d teams were scored, expected 3",
+                  maskBits(d->scenarioTeamScoreMask));
+    UT_ASSERT_MSG(d->scenarioScoreMask == s->scenarioScoreMask &&
+                      d->scenarioTeamScoreMask == s->scenarioTeamScoreMask,
+                  "the masks round-trip, got 0x%04X and 0x%04X",
+                  (unsigned)d->scenarioScoreMask,
+                  (unsigned)d->scenarioTeamScoreMask);
+    UT_ASSERT_MSG(d->scenarioScore[0] == 5 && d->scenarioScore[3] == -2,
+                  "the slot scores, got %d and %d", (int)d->scenarioScore[0],
+                  (int)d->scenarioScore[3]);
+    UT_ASSERT_MSG(d->scenarioTeamScore[2] == 41 &&
+                      d->scenarioTeamScore[5] == -1000,
+                  "the team scores, got %d and %d",
+                  (int)d->scenarioTeamScore[2], (int)d->scenarioTeamScore[5]);
+
+    /* The pair the mask exists for. Slot 7 and slot 9 both read 0, and only
+     * the mask says one of them was scored and the other was not; the same
+     * for team 4 against a team nobody scored. */
+    UT_ASSERT_MSG(d->scenarioScore[7] == 0 && d->scenarioScore[9] == 0,
+                  "both zero slots stay zero, got %d and %d",
+                  (int)d->scenarioScore[7], (int)d->scenarioScore[9]);
+    UT_ASSERT_MSG((d->scenarioScoreMask & (uint16_t)(1u << 7)) != 0,
+                  "slot 7 was scored zero and reads as unscored");
+    UT_ASSERT_MSG((d->scenarioScoreMask & (uint16_t)(1u << 9)) == 0,
+                  "slot 9 was never scored and reads as scored");
+    UT_ASSERT_MSG(d->scenarioTeamScore[4] == 0 &&
+                      (d->scenarioTeamScoreMask & (uint16_t)(1u << 4)) != 0,
+                  "team 4 was scored zero, got %d with mask 0x%04X",
+                  (int)d->scenarioTeamScore[4],
+                  (unsigned)d->scenarioTeamScoreMask);
+
+    /* The same summary with the flag down. The numbers are still on it, so
+     * this also pins that the flag alone decides whether they go out. */
+    s->hasScenarioScore = false;
+    outLen = 0;
+    UT_ASSERT(enc(&in, NULL, buf, sizeof(buf), &outLen) == ENCODE_OK);
+    UT_ASSERT_MSG(outLen == groupAt + 1,
+                  "an absent scoreboard costs one byte, got %zu", outLen);
+    UT_ASSERT_MSG(buf[groupAt] == 0, "the absent marker, got %u",
+                  (unsigned)buf[groupAt]);
+
+    /* Decoded into an event already holding a scoreboard. What comes off the
+     * wire has to replace it and not sit on top of it — a round with no
+     * scenario must never show the last one's numbers. */
+    memset(&out, 0xAB, sizeof(out));
+    RoundStatsSummary *stale = &out.u.roundStats;
+    stale->hasScenarioScore      = true;
+    stale->scenarioScoreMask     = 0xFFFFu;
+    stale->scenarioTeamScoreMask = 0xFFFFu;
+    strncpy(stale->scenarioScoreLabel, "Stale",
+            sizeof(stale->scenarioScoreLabel) - 1);
+    for (int i = 0; i < MAX_TANKS; i++) {
+        stale->scenarioScore[i]     = 7;
+        stale->scenarioTeamScore[i] = 9;
+    }
+    UT_ASSERT_MSG(dec(buf + PACKET_HEADER_SIZE, outLen - PACKET_HEADER_SIZE,
+                      &out),
+                  "the body without a scoreboard was refused");
+    UT_ASSERT_MSG(!d->hasScenarioScore,
+                  "an absent scoreboard decoded as present");
+    UT_ASSERT_MSG(d->scenarioScoreLabel[0] == '\0',
+                  "the title survived, got '%s'", d->scenarioScoreLabel);
+    UT_ASSERT_MSG(d->scenarioScoreMask == 0 && d->scenarioTeamScoreMask == 0,
+                  "the masks survived, got 0x%04X and 0x%04X",
+                  (unsigned)d->scenarioScoreMask,
+                  (unsigned)d->scenarioTeamScoreMask);
+    int left = 0;
+    for (int i = 0; i < MAX_TANKS; i++) {
+        if (d->scenarioScore[i] != 0)     left++;
+        if (d->scenarioTeamScore[i] != 0) left++;
+    }
+    UT_ASSERT_MSG(left == 0, "%d stale numbers survived the decode", left);
 
     return 0;
 }
@@ -1281,6 +1472,90 @@ int run_round_stats_build_summary(void) {
     UT_ASSERT_MSG(mk != NULL, "Most Kills award present");
     UT_ASSERT_MSG(mk->winnerSlot == 0, "Most Kills winner, got %u", mk->winnerSlot);
     UT_ASSERT_MSG(mk->value == 5, "Most Kills value, got %u", mk->value);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The summary takes a scenario's own scoreboard off the sim: the numbers the
+ * score op stored, each at the base it stored them under, a mask bit per row
+ * the op wrote, and one title for the column. A round nothing scored leaves
+ * the flag down, the masks empty and the arrays empty, which is what keeps
+ * the recap's column off a plain round. */
+int run_round_stats_scenario_score_filled(void) {
+    ServerSim *sim = make_sim_running();
+    UT_ASSERT(sim != NULL);
+
+    serverSimAddPlayer(sim, 0, "P0", false);
+    serverSimAddPlayer(sim, 1, "P1", false);
+
+    RoundStatsSummary summary;
+    serverSimBuildRoundStatsSummary(sim, &summary);
+    UT_ASSERT_MSG(!summary.hasScenarioScore,
+                  "a round with no scenario score claims one");
+    UT_ASSERT_MSG(summary.scenarioScoreMask == 0 &&
+                      summary.scenarioTeamScoreMask == 0,
+                  "a cleared store set a mask bit: 0x%04X and 0x%04X",
+                  (unsigned)summary.scenarioScoreMask,
+                  (unsigned)summary.scenarioTeamScoreMask);
+    int idle = 0;
+    for (int i = 0; i < MAX_TANKS; i++) {
+        if (summary.scenarioScore[i] != 0)     idle++;
+        if (summary.scenarioTeamScore[i] != 0) idle++;
+    }
+    UT_ASSERT_MSG(idle == 0, "a cleared store left %d numbers behind", idle);
+
+    /* One seat's score and one team's, both through the op funnel. */
+    ScenarioOp op;
+    memset(&op, 0, sizeof(op));
+    op.type           = SCN_OP_SCORE;
+    op.u.score.kind   = SCN_SCORE_KIND_PLAYER;
+    op.u.score.target = 1;
+    op.u.score.score  = -4;
+    strncpy(op.u.score.label, "Flags", sizeof(op.u.score.label) - 1);
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK,
+                  "the seat's score was refused");
+
+    /* The team's score is zero, and its mask bit is the only thing that says
+     * it was scored at all — a fill that read the number instead of the
+     * store's own valid bit loses this row and nothing else here would
+     * notice. */
+    memset(&op, 0, sizeof(op));
+    op.type           = SCN_OP_SCORE;
+    op.u.score.kind   = SCN_SCORE_KIND_TEAM;
+    op.u.score.target = 2;
+    op.u.score.score  = 0;
+    strncpy(op.u.score.label, "Flags", sizeof(op.u.score.label) - 1);
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_OK,
+                  "the team's score was refused");
+
+    serverSimBuildRoundStatsSummary(sim, &summary);
+    UT_ASSERT_MSG(summary.hasScenarioScore,
+                  "the summary carries no scenario scoreboard");
+    UT_ASSERT_MSG(strcmp(summary.scenarioScoreLabel, "Flags") == 0,
+                  "the column's title, got '%s'", summary.scenarioScoreLabel);
+
+    /* Counted, not found. Exactly one bit is set in each mask, so a fill that
+     * marked a neighbouring index fails here instead of passing on the one
+     * row it did get right. The two masks are keyed differently — seat 1 is
+     * bit 1 of the player mask, team 2 is bit 2 of the team mask — and bit 0
+     * of the team mask names no team at all. */
+    UT_ASSERT_MSG(maskBits(summary.scenarioScoreMask) == 1,
+                  "%d seats were scored, expected 1",
+                  maskBits(summary.scenarioScoreMask));
+    UT_ASSERT_MSG(maskBits(summary.scenarioTeamScoreMask) == 1,
+                  "%d teams were scored, expected 1",
+                  maskBits(summary.scenarioTeamScoreMask));
+    UT_ASSERT_MSG(summary.scenarioScoreMask == (uint16_t)(1u << 1),
+                  "the seat mask names seat 1, got 0x%04X",
+                  (unsigned)summary.scenarioScoreMask);
+    UT_ASSERT_MSG(summary.scenarioTeamScoreMask == (uint16_t)(1u << 2),
+                  "the team mask names team 2, got 0x%04X",
+                  (unsigned)summary.scenarioTeamScoreMask);
+    UT_ASSERT_MSG(summary.scenarioScore[1] == -4, "seat 1's score, got %d",
+                  (int)summary.scenarioScore[1]);
+    UT_ASSERT_MSG(summary.scenarioTeamScore[2] == 0, "team 2's score, got %d",
+                  (int)summary.scenarioTeamScore[2]);
 
     serverSimDestroy(sim);
     return 0;

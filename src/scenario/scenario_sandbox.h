@@ -186,4 +186,18 @@ void scnSandboxOpenLibs(lua_State *L);
  *********************************************************/
 void scnSandboxSealRandom(lua_State *L);
 
+/*********************************************************
+ *NAME:          scnSandboxPushBase
+ *PURPOSE:
+ *  Pushes a table holding type, select and rawget as
+ *  scnSandboxOpenLibs installed them. The trigger router
+ *  takes it as a chunk argument: it loads after the
+ *  author's script has run, and a script that assigned
+ *  one of those three names would otherwise take the
+ *  router down with it. On a state this file did not
+ *  open the table is empty and the router reads the
+ *  globals.
+ *********************************************************/
+void scnSandboxPushBase(lua_State *L);
+
 #endif /* SCENARIO_SANDBOX_H */

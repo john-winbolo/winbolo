@@ -24,6 +24,7 @@
 
 #include "mapview.h"
 #include "fog_look.h"
+#include "fog_roads_draw.h"
 #include "../tiles.h"
 #include "tilenum.h"
 #include "screencalc.h"
@@ -50,6 +51,13 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
                       int edgeX, int edgeY) {
   int ss = ctx->sheetScale;
   bool haveHidden = (hiddenView != NULL && *hiddenView != NULL);
+  /* What the player has asked fog to look like. Read once: it cannot change
+     part way through a frame, and the edge pass below has to agree with the
+     wash about which look is being drawn. */
+  FogStyle fogStyle = gfxGetFogStyle();
+  BYTE fogR = 0, fogG = 0, fogB = 0;
+  bool fogWashes = fogLookColour(fogStyle, &fogR, &fogG, &fogB) != 0;
+  bool fogEdge = fogLookDrawsFogEdge(fogStyle) != 0;
   /* The hidden squares, kept as the tiles go down and washed over in one call
      once they are all down. Collected rather than drawn a square at a time so
      the tile blits stay one run the renderer can batch, and because the wash
@@ -58,6 +66,14 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
      walk below can mark. */
   SDL_FRect fog[MAIN_BACK_BUFFER_SIZE_X * MAIN_BACK_BUFFER_SIZE_Y];
   int fogCount = 0;
+  /* The tiles themselves, and which of them are hidden, for the fog edge pass.
+     Only the Darker with fog edge look needs them, so they are only filled for it:
+     that look has to know what is beside a square as well as what is on it,
+     which the blit loop does not otherwise ask. The hidden flags are the same
+     ones the wash above is drawn from, so the band lands exactly on the line
+     the wash draws. Row-major, the way fogEdgeMasks wants it. */
+  BYTE edgeTiles[MAIN_BACK_BUFFER_SIZE_X * MAIN_BACK_BUFFER_SIZE_Y];
+  BYTE edgeHidden[MAIN_BACK_BUFFER_SIZE_X * MAIN_BACK_BUFFER_SIZE_Y];
   BYTE x = 0, y = 0;
   bool done = FALSE;
   while (!done) {
@@ -81,6 +97,11 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
       SDL_RenderTexture(ctx->renderer, ctx->tilesTex, &mineSrc, &dest);
     }
     if (hidden) fog[fogCount++] = dest;
+    if (fogEdge) {
+      int slot = (int)y * MAIN_BACK_BUFFER_SIZE_X + (int)x;
+      edgeTiles[slot] = pos;
+      edgeHidden[slot] = (BYTE)(hidden ? 1 : 0);
+    }
 
     x++;
     if (x == MAIN_BACK_BUFFER_SIZE_X) {
@@ -91,15 +112,43 @@ void mapViewDrawTiles(MapViewCtx *ctx, screen *value, screenMines *mineView,
 
   /* The blend mode is put back rather than left on: the callers that draw
      rectangles after this one set the colour they want but not always the
-     mode, and one of them runs with blending off. */
-  if (fogCount > 0) {
+     mode, and one of them runs with blending off. Nothing is drawn at all
+     under the None look, which leaves remembered ground reading exactly like
+     ground in plain sight. */
+  if (fogCount > 0 && fogWashes) {
     SDL_BlendMode was = SDL_BLENDMODE_NONE;
     SDL_GetRenderDrawBlendMode(ctx->renderer, &was);
     SDL_SetRenderDrawBlendMode(ctx->renderer, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColor(ctx->renderer, FOG_LOOK_R, FOG_LOOK_G, FOG_LOOK_B,
-                           FOG_LOOK_ALPHA);
+    SDL_SetRenderDrawColor(ctx->renderer, fogR, fogG, fogB, FOG_LOOK_ALPHA);
     SDL_RenderFillRects(ctx->renderer, fog, fogCount);
     SDL_SetRenderDrawBlendMode(ctx->renderer, was);
+  }
+
+  /* The fog line itself, after the wash so the wash cannot take it back down.
+     Only the hidden square right against a square in plain sight is banded,
+     and the band is inside the hidden one: that is the line the darkening
+     swallows over road, and firms up over everything else. fogEdgeMasks reads
+     the hidden flags collected above, so the pass below only has to place the
+     squares. */
+  if (fogCount > 0 && fogEdge) {
+    BYTE edges[MAIN_BACK_BUFFER_SIZE_X * MAIN_BACK_BUFFER_SIZE_Y];
+    FogRoadPainter painter;
+    int gx, gy; /* Looping variables */
+
+    fogEdgeMasks(edgeTiles, edgeHidden, MAIN_BACK_BUFFER_SIZE_X,
+                 MAIN_BACK_BUFFER_SIZE_Y, edges);
+    fogRoadPainterBegin(&painter, ctx->renderer);
+    for (gy = 0; gy < MAIN_BACK_BUFFER_SIZE_Y; gy++) {
+      for (gx = 0; gx < MAIN_BACK_BUFFER_SIZE_X; gx++) {
+        int slot = gy * MAIN_BACK_BUFFER_SIZE_X + gx;
+        if (edges[slot] == 0) continue;
+        fogRoadPainterSquare(&painter, edges[slot],
+                             (float)(originX + (gx - 1) * tileW - edgeX),
+                             (float)(originY + (gy - 1) * tileH - edgeY),
+                             (float)tileW, (float)tileH);
+      }
+    }
+    fogRoadPainterEnd(&painter);
   }
 }
 

@@ -11,8 +11,8 @@
 # Built with the sim_owner include-rule profile, so TUs see public/,
 # internal/, and the flat src/bolo/ tree. Compile defs are inherited
 # from the parent project's variables: WINBOLO_VERSION and
-# BOLO_VERSION_MAJOR/MINOR/REVISION are mandatory; ENABLE_PILLMASSAGE_BUG
-# and HAVE_ONNXRUNTIME flip on optional code paths.
+# BOLO_VERSION_MAJOR/MINOR/REVISION are mandatory; HAVE_ONNXRUNTIME
+# flips on an optional code path.
 
 add_library(bolo_static STATIC
     allience.c
@@ -58,6 +58,7 @@ add_library(bolo_static STATIC
     log.c
     mapgen.c
     mapgen_maze.c
+    message_inbox.c
     messages.c
     mines.c
     minesexp.c
@@ -74,6 +75,7 @@ add_library(bolo_static STATIC
     position_history.c
     round_stats_derive.c
     rubble.c
+    scenario_panel.c
     scenario_table.c
     screenbrainmap.c
     screenbullet.c
@@ -130,10 +132,6 @@ target_compile_definitions(bolo_static PRIVATE
     BOLO_VERSION_MINOR=${BOLO_VERSION_MINOR}
     BOLO_VERSION_REVISION=${BOLO_VERSION_REVISION}
 )
-
-if(ENABLE_PILLMASSAGE_BUG)
-    target_compile_definitions(bolo_static PRIVATE ENABLE_PILLMASSAGE_BUG)
-endif()
 
 if(HAVE_ONNXRUNTIME)
     target_compile_definitions(bolo_static PRIVATE HAVE_ONNXRUNTIME=1)

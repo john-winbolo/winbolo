@@ -129,53 +129,15 @@ bool messageIsNewMessage(MessageState *ms) { (void)ms; return FALSE; }
 BYTE messageGetNewMessage(MessageState *ms, char *dest, uint32_t **playerBitmap) {
   (void)ms; if (dest) dest[0] = '\0'; if (playerBitmap) *playerBitmap = NULL; return 0;
 }
-/* messageInbox* — brain-side per-tick chat inbox helpers reached from
- * brain_data.c's BrainInfo.messages population. These are REAL here (not
- * stubs): the inbox is bot-to-bot COORDINATION data, not a chat HUD — the
- * server hosts the bots, so they must actually receive each other's /info
- * messages. The old stubs (no-ops + Count==0) silently killed all bot comms
- * on WinBoloDS: botManagerDeliverInternalMessage "delivered" into a no-op push,
- * and every receiver saw Count==0. The bodies below are pure MessageState ring
- * operations (no GUI/archive deps), so they don't pull in messages.c.o and
- * don't conflict with the messageCreate/Destroy/etc. display stubs above. Keep
- * them byte-for-byte in sync with the canonical ring in src/bolo/messages.c. */
-void messageInboxPush(MessageState *ms, BYTE from, const char *pascalText) {
-  size_t plen, copyLen;
-  if (ms == NULL || pascalText == NULL) return;
-  if (ms->inboxCount >= BRAIN_INBOX_CAP) {
-    ms->inboxHead = (ms->inboxHead + 1) % BRAIN_INBOX_CAP;
-    ms->inboxCount--;
-  }
-  plen = (size_t)((unsigned char)pascalText[0]);
-  if (plen + 2 > BRAIN_INBOX_MSG_LEN) plen = BRAIN_INBOX_MSG_LEN - 2;
-  copyLen = plen + 1;
-  memcpy(ms->inboxText[ms->inboxTail], pascalText, copyLen);
-  ms->inboxText[ms->inboxTail][copyLen] = '\0';
-  ms->inboxText[ms->inboxTail][0]       = (char)plen;
-  ms->inboxFrom[ms->inboxTail]          = from;
-  ms->inboxTail = (ms->inboxTail + 1) % BRAIN_INBOX_CAP;
-  ms->inboxCount++;
-}
-int  messageInboxCount(const MessageState *ms) {
-  return (ms != NULL) ? ms->inboxCount : 0;
-}
-BYTE messageInboxPeek(const MessageState *ms, int i, char *dest) {
-  int slot; size_t plen;
-  if (dest == NULL) return 0;
-  if (ms == NULL || i < 0 || i >= ms->inboxCount) { dest[0] = '\0'; return 0; }
-  slot = (ms->inboxHead + i) % BRAIN_INBOX_CAP;
-  plen = (size_t)((unsigned char)ms->inboxText[slot][0]);
-  if (plen + 2 > BRAIN_INBOX_MSG_LEN) plen = BRAIN_INBOX_MSG_LEN - 2;
-  memcpy(dest, ms->inboxText[slot], plen + 1);
-  dest[plen + 1] = '\0';
-  return ms->inboxFrom[slot];
-}
-void messageInboxClear(MessageState *ms) {
-  if (ms == NULL) return;
-  ms->inboxHead = 0;
-  ms->inboxTail = 0;
-  ms->inboxCount = 0;
-}
+/* messageInbox* — the brain inbox ring — are NOT stubbed and are no longer
+ * copied here either. They live in src/bolo/message_inbox.c, a translation
+ * unit with no GUI dependency that every build links, so the server gets the
+ * same ring the client runs rather than a hand-synced second copy of it. The
+ * inbox is bot-to-bot COORDINATION data, not a chat HUD: the server hosts the
+ * bots, so they must actually receive each other's /info messages. The old
+ * stubs (no-ops + Count==0) silently killed all bot comms on WinBoloDS, and
+ * the copy that replaced them was the same failure one edit away. */
+
 /* scrollCreate/scrollSetScrollType/scrollCenterObject/scrollManual are no
  * longer stubbed here. client_sim.c now references scrollGetMechanism /
  * scrollSetMechanism, which pulls scroll.c.o out of bolo_static, so the
@@ -188,7 +150,29 @@ void messageInboxClear(MessageState *ms) {
 /* clientBuildInputPacket lives in client_snapshot.c; brainDataMakeInfo
    and brainDataExtractInfo live in brain_data.c (both linked into
    WinBoloDS). */
-void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bottom) { (void)ms; (void)msgType; (void)top; (void)bottom; }
+/* clientMessageAdd — the display streams are stubbed, the brain inbox is not.
+ *
+ * A line from a player slot (player0Message .. player15Message) is chat one
+ * seat said to another, and on a hosted bot that is not a HUD line: it is the
+ * order the bot was given. The canonical clientMessageAdd in src/bolo/
+ * messages.c pushes those into the brain inbox before it draws anything, and
+ * dropping the whole call on the server build dropped the push with it — so
+ * every human order typed at a bot on a dedicated server arrived at the
+ * ClientSim, passed its delivery filter, and went nowhere. Bot-to-bot /info
+ * traffic never showed the hole, because botManagerDeliverInternalMessage
+ * pushes into the inbox itself and never comes through here.
+ *
+ * The four display streams above a player slot — newswire, assistant, AI and
+ * network — stay no-ops: those really are HUD lines, and the server draws no
+ * HUD. The push itself is NOT written out again: messageInboxPushLine in
+ * src/bolo/message_inbox.c is the one producer both builds call, so this arm
+ * and the matching arm in messages.c cannot drift apart. */
+void clientMessageAdd(MessageState *ms, messageType msgType, char *top, char *bottom) {
+  (void)top;
+  if (ms == NULL || bottom == NULL) return;
+  if (msgType < player0Message || msgType > player15Message) return;
+  messageInboxPushLine(ms, (BYTE)(msgType - player0Message), bottom);
+}
 void clientSoundDist(GameSim *sim, sndEffects value, BYTE tier, BYTE dir) { (void)sim; (void)value; (void)tier; (void)dir; }
 void clientSoundDistLocal(GameSim *sim, sndEffects value, BYTE mx, BYTE my) { (void)sim; (void)value; (void)mx; (void)my; }
 

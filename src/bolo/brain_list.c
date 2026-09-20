@@ -25,9 +25,11 @@
 
 #if defined(_WIN32)
 #  include <windows.h>
+#  define BRAIN_LIST_SEP '\\'
 #else
 #  include <dirent.h>
 #  include <unistd.h>
+#  define BRAIN_LIST_SEP '/'
 #endif
 
 /* Walk one brain's directory and accumulate the maximum mtime over
@@ -256,9 +258,9 @@ static void brainListSplitMeta(const char *blob,
 
 /* Try to read "<parent>/<name>/<file>" into buf; returns bytes read (0 if
  * absent/empty). buf is always NUL-terminated. */
-static size_t brainListReadBrainFile(const char *parent, const char *name,
-                                     const char *file,
-                                     char *buf, size_t bufSz) {
+static size_t brainListReadSidecar(const char *parent, const char *name,
+                                   const char *file,
+                                   char *buf, size_t bufSz) {
     char path[1024];
     SDL_snprintf(path, sizeof(path), "%s%c%s%c%s", parent,
 #if defined(_WIN32)
@@ -275,31 +277,96 @@ static size_t brainListReadBrainFile(const char *parent, const char *name,
     return n;
 }
 
-/* Read "<name>/<file>" from the first brains parent that has it (working
- * directory brains/ and Brains/, then the ones beside the executable).
- * Every brain ships with its own about.txt / modes.txt, so this is a local
- * read on each machine — none of it goes over the wire. */
-static size_t brainListReadBrainFileAny(const char *name, const char *file,
-                                        char *blob, size_t blobSz) {
-    size_t got = brainListReadBrainFile("brains", name, file, blob, blobSz);
-    if (!got) got = brainListReadBrainFile("Brains", name, file, blob, blobSz);
-    if (!got) {
-        const char *base = SDL_GetBasePath();
-        if (base) {
-            char p[1024];
-            SDL_snprintf(p, sizeof(p), "%sbrains", base);
-            got = brainListReadBrainFile(p, name, file, blob, blobSz);
-            if (!got) {
-                SDL_snprintf(p, sizeof(p), "%sBrains", base);
-                got = brainListReadBrainFile(p, name, file, blob, blobSz);
-            }
-        }
+/* The directories a brain is looked for under, in search order: the working
+ * directory's brains/ and Brains/, then the same two beside the executable,
+ * which covers an installed build whose exe lives somewhere other than the
+ * brains tree, and last the writable prefs path's Brains/, which is where a
+ * player drops brains of their own on a platform whose app directory is
+ * read-only.
+ *
+ * One list, read by the per-brain file reads below, by brainListResolve and
+ * by brainListScan, so a brain one of them finds is a brain the others find.
+ * The prefs path used to be the scan's alone, which listed a brain installed
+ * only there in the lobby and then failed to resolve it for a scenario.
+ * Fills out[] and returns how many parents it wrote. */
+#define BRAIN_LIST_PARENT_MAX 5
+#define BRAIN_LIST_PARENT_LEN 1024
+
+static int brainListParents(char (*out)[BRAIN_LIST_PARENT_LEN]) {
+    const char *base;
+    char       *pref;
+    int         n = 0;
+
+    SDL_strlcpy(out[n++], "brains", BRAIN_LIST_PARENT_LEN);
+    SDL_strlcpy(out[n++], "Brains", BRAIN_LIST_PARENT_LEN);
+    base = SDL_GetBasePath();
+    if (base) {
+        SDL_snprintf(out[n++], BRAIN_LIST_PARENT_LEN, "%sbrains", base);
+        SDL_snprintf(out[n++], BRAIN_LIST_PARENT_LEN, "%sBrains", base);
+    }
+    /* SDL_GetPrefPath returns a trailing separator and a string the caller
+       frees. ~/Library/Application Support/WinBolo/WinBolo/Brains on macOS,
+       where the app bundle is read-only and code-signed. */
+    pref = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (pref) {
+        SDL_snprintf(out[n++], BRAIN_LIST_PARENT_LEN, "%sBrains", pref);
+        SDL_free(pref);
+    }
+    return n;
+}
+
+/* Read "<name>/<file>" from the first brains parent that has it. Every brain
+ * ships with its own about.txt / modes.txt, so this is a local read on each
+ * machine — none of it goes over the wire. */
+static size_t brainListReadSidecarAny(const char *name, const char *file,
+                                      char *blob, size_t blobSz) {
+    char   parents[BRAIN_LIST_PARENT_MAX][BRAIN_LIST_PARENT_LEN];
+    int    count = brainListParents(parents);
+    size_t got   = 0;
+    int    i;
+
+    for (i = 0; i < count && got == 0; i++) {
+        got = brainListReadSidecar(parents[i], name, file, blob, blobSz);
     }
     return got;
 }
 
+bool brainListResolve(const char *name, char *outPath, size_t outLen) {
+    char parents[BRAIN_LIST_PARENT_MAX][BRAIN_LIST_PARENT_LEN];
+    int  count;
+    int  i;
+
+    if (outPath == NULL || outLen == 0) return false;
+    outPath[0] = '\0';
+    if (name == NULL || name[0] == '\0') return false;
+    /* One directory under a brains parent, and never the parent itself: a
+       value that paths anywhere, and one that opens with a dot, are not names
+       the scan would have catalogued either. */
+    if (strpbrk(name, "/\\") != NULL || name[0] == '.') return false;
+
+    count = brainListParents(parents);
+    for (i = 0; i < count; i++) {
+        char dir[BRAIN_LIST_PARENT_LEN];
+        int  n;
+
+        SDL_snprintf(dir, sizeof(dir), "%s%c%s", parents[i], BRAIN_LIST_SEP,
+                     name);
+        if (!brainListHasInit(dir)) continue;
+        n = SDL_snprintf(outPath, outLen, "%s%cinit.lua", dir,
+                         BRAIN_LIST_SEP);
+        /* A path that did not fit is no answer: half of one opens nothing,
+           and a caller told false falls back to the server's own brain. */
+        if (n < 0 || (size_t)n >= outLen) {
+            outPath[0] = '\0';
+            return false;
+        }
+        return true;
+    }
+    return false;
+}
+
 static size_t brainListReadAboutAny(const char *name, char *blob, size_t blobSz) {
-    return brainListReadBrainFileAny(name, "about.txt", blob, blobSz);
+    return brainListReadSidecarAny(name, "about.txt", blob, blobSz);
 }
 
 /* Is this line of about.txt a "color:" key line? Points *value past the
@@ -380,6 +447,131 @@ bool brainListLoadColor(const char *name, uint32_t *rgb) {
         line = eol;
     }
     return false;
+}
+
+/* ── announce.txt / commands.txt ─────────────────────────────────────
+ *
+ * Read out of a brain DIRECTORY rather than by catalogue name: the server
+ * already holds the disk path of every brain it found (brainPaths[]), and it
+ * is the server that ships these two texts to clients, so no parent search
+ * is wanted here. */
+
+/* Drop every CR from a NUL-terminated buffer, in place. A brain edited on
+ * Windows (or checked out with CRLF line endings) would otherwise put a
+ * stray carriage return in front of every newline the lobby draws. */
+static void brainListStripCR(char *s) {
+    char *src = s, *dst = s;
+    while (*src) {
+        if (*src != '\r') *dst++ = *src;
+        src++;
+    }
+    *dst = '\0';
+}
+
+/* Read "<dir>/<file>" whole into buf. Returns bytes kept (0 when the file is
+ * absent or empty); buf is always NUL-terminated. *over is set true when the
+ * file held MORE bytes than buf could take, so a caller can say the text was
+ * cut rather than shipping a silently shortened one. */
+static size_t brainListReadDirFile(const char *dir, const char *file,
+                                   char *buf, size_t bufSz, bool *over) {
+    char path[1024];
+    FILE *f;
+    size_t n;
+    if (over) *over = false;
+    if (!dir || !dir[0] || !buf || bufSz < 2) return 0;
+#if defined(_WIN32)
+    SDL_snprintf(path, sizeof(path), "%s\\%s", dir, file);
+#else
+    SDL_snprintf(path, sizeof(path), "%s/%s", dir, file);
+#endif
+    f = fopen(path, "rb");
+    if (!f) return 0;
+    n = fread(buf, 1, bufSz - 1, f);
+    buf[n] = '\0';
+    if (n == bufSz - 1) {
+        /* One byte past a full buffer is how we learn the file did not fit. */
+        char extra;
+        if (fread(&extra, 1, 1, f) == 1 && over) *over = true;
+    }
+    fclose(f);
+    brainListStripCR(buf);
+    return strlen(buf);
+}
+
+bool brainListLoadTexts(const char *brainDir,
+                        char *announce, size_t announceSz,
+                        char *docs, size_t docsSz,
+                        bool *truncated) {
+    bool overA = false, overD = false;
+    size_t a = 0, d = 0;
+    if (announce && announceSz) announce[0] = '\0';
+    if (docs && docsSz) docs[0] = '\0';
+    if (truncated) *truncated = false;
+    if (!brainDir || !brainDir[0]) return false;
+    if (announce && announceSz > 1) {
+        a = brainListReadDirFile(brainDir, "announce.txt",
+                                 announce, announceSz, &overA);
+    }
+    if (docs && docsSz > 1) {
+        d = brainListReadDirFile(brainDir, "commands.txt",
+                                 docs, docsSz, &overD);
+    }
+    if (truncated) *truncated = (overA || overD);
+    return (a > 0 || d > 0);
+}
+
+/* "<dir>/init.lua" -> "<dir>". False when the path carries no directory part
+ * or will not fit. The catalogue stores the init.lua (brainListScanParent),
+ * and the two texts sit beside it. */
+static bool brainListDirOfPath(const char *brainPath, char *dir, size_t dirSz) {
+    const char *fname;
+    size_t dirLen;
+    if (!brainPath || !brainPath[0]) return false;
+    fname = brainPath + strlen(brainPath);
+    while (fname > brainPath && fname[-1] != '/' && fname[-1] != '\\') {
+        fname--;
+    }
+    if (fname == brainPath) return false;      /* no directory part */
+    dirLen = (size_t)(fname - 1 - brainPath);  /* drop the separator */
+    if (dirLen == 0 || dirLen >= dirSz) return false;
+    memcpy(dir, brainPath, dirLen);
+    dir[dirLen] = '\0';
+    return true;
+}
+
+bool brainListLoadTextsForPath(const char *brainPath,
+                               char *announce, size_t announceSz,
+                               char *docs, size_t docsSz,
+                               bool *truncated) {
+    char dir[1024];
+    if (announce && announceSz) announce[0] = '\0';
+    if (docs && docsSz) docs[0] = '\0';
+    if (truncated) *truncated = false;
+    if (!brainListDirOfPath(brainPath, dir, sizeof(dir))) return false;
+    return brainListLoadTexts(dir, announce, announceSz, docs, docsSz,
+                              truncated);
+}
+
+int64_t brainListTextsMtimeForPath(const char *brainPath) {
+    char dir[1024];
+    char path[1024];
+    int64_t best = 0;
+    int i;
+    static const char *const names[2] = { "announce.txt", "commands.txt" };
+
+    if (!brainListDirOfPath(brainPath, dir, sizeof(dir))) return 0;
+    for (i = 0; i < 2; i++) {
+        SDL_PathInfo info;
+#if defined(_WIN32)
+        SDL_snprintf(path, sizeof(path), "%s\\%s", dir, names[i]);
+#else
+        SDL_snprintf(path, sizeof(path), "%s/%s", dir, names[i]);
+#endif
+        if (!SDL_GetPathInfo(path, &info)) continue;
+        if (info.type != SDL_PATHTYPE_FILE) continue;
+        if (info.modify_time > best) best = info.modify_time;
+    }
+    return best;
 }
 
 /* ── modes.txt: a brain's own list of modes and difficulty levels ──── */
@@ -516,7 +708,7 @@ bool brainListLoadModes(const char *name, BrainModes *out) {
     if (!name || !name[0]) return false;
 
     char blob[4096];
-    if (!brainListReadBrainFileAny(name, "modes.txt", blob, sizeof(blob))) {
+    if (!brainListReadSidecarAny(name, "modes.txt", blob, sizeof(blob))) {
         return false;
     }
 
@@ -648,32 +840,19 @@ void brainListScan(BrainList *out, char (*paths)[BRAIN_LIST_PATH_LEN]) {
     memset(out, 0, sizeof(*out));
     if (paths) memset(paths, 0, sizeof(paths[0]) * BRAIN_LIST_MAX);
 
-    /* Working directory's brains/ — covers running from the repo. */
-    brainListScanParent(out, paths, "brains");
-    brainListScanParent(out, paths, "Brains");
+    /* The same parents brainListResolve and the per-brain file reads walk, in
+     * the same order, so a brain this listing shows is a brain a scenario
+     * that names it can resolve. The scan used to keep its own copy of the
+     * list with the prefs path on the end of it, which listed a brain
+     * installed only there and then could not resolve it. */
+    {
+        char parents[BRAIN_LIST_PARENT_MAX][BRAIN_LIST_PARENT_LEN];
+        int  count = brainListParents(parents);
+        int  i;
 
-    /* SDL_GetBasePath()/brains — covers installed builds where the
-     * exe lives somewhere other than the brains tree. */
-    const char *base = SDL_GetBasePath();
-    if (base) {
-        char p[1024];
-        SDL_snprintf(p, sizeof(p), "%sbrains", base);
-        brainListScanParent(out, paths, p);
-        SDL_snprintf(p, sizeof(p), "%sBrains", base);
-        brainListScanParent(out, paths, p);
-    }
-
-    /* SDL_GetPrefPath("WinBolo","WinBolo")/Brains —
-     * ~/Library/Application Support/WinBolo/WinBolo/Brains on macOS. The app
-     * bundle is read-only/code-signed, so this is the writable location where
-     * players drop their own brains. Mirrors luaBrainLoadBrains() in the GUI
-     * client so user brains appear in the lobby bot list too. */
-    char *pref = SDL_GetPrefPath("WinBolo", "WinBolo");
-    if (pref) {
-        char p[1024];
-        SDL_snprintf(p, sizeof(p), "%sBrains", pref);
-        brainListScanParent(out, paths, p);
-        SDL_free(pref);
+        for (i = 0; i < count; i++) {
+            brainListScanParent(out, paths, parents[i]);
+        }
     }
 
     if (out->count > 1) {
