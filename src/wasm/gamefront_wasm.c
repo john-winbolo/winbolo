@@ -349,8 +349,10 @@ static void wasmLockToggleCallback(bool allow) {
  * entry and a cancelled prompt read differently. */
 static bool wasmAskJoinPassword(bool wrongBefore) {
   char msg[512];
-  char js[1024];
   char escaped[1024];
+  /* Room for a fully escaped msg plus the wrapper, so a long localised
+   * message cannot truncate the script mid string literal. */
+  char js[sizeof(escaped) + 96];
   const char *reply;
   size_t i, o = 0;
   if (wrongBefore) {

@@ -5118,6 +5118,7 @@ set(_unit_test_names
     tkexp_lgm_pairing
     loopback_join
     loopback_join_loss
+    loopback_password
     loopback_lobby_running_loss
     loopback_quiet_lobby_control_loss
     loopback_command_liveness
