@@ -52,6 +52,7 @@ void meScenarioCheckRun(MEScenarioCheck *c, const char *text, size_t len,
     memset(&c->result, 0, sizeof(c->result));
     c->hasRun       = true;
     c->pushToWidget = true;
+    c->runs++;
     /* What follows was found in the text handed in here, so the issues stand
        on the script as it is until the next edit. */
     c->stale        = false;

@@ -63,6 +63,11 @@ extern "C" {
 typedef struct MEScenarioForm {
     ScenarioManifest manifest;
     bool             dirty;
+    unsigned         edits;   /* counts up on every change to the manifest,
+                               * dirty or not. The panel compares it with the
+                               * count the last check saw, which is how an
+                               * edit through a form marks the check's issues
+                               * stale the way an edit to the text does. */
 } MEScenarioForm;
 
 /* An empty manifest: the API version this build writes, bound to its map,

@@ -52,13 +52,19 @@ typedef struct MEScenarioCheck {
                                      * looked at" */
     bool              pushToWidget; /* the view must re-apply its markers, the
                                      * way MEScenarioState re-seeds its text */
-    bool              stale;        /* the script has been edited since the
-                                     * check ran, so the lines the issues name
-                                     * are the lines the text had then. Set by
-                                     * the view, which is where an edit is
-                                     * seen; the issues themselves are kept,
-                                     * because a problem the author has not
-                                     * reached yet is still a problem. */
+    bool              stale;        /* the script or the table has been edited
+                                     * since the check ran, so the lines the
+                                     * issues name are the lines the text had
+                                     * then, and a row they name may be gone.
+                                     * Set by the view, which is where an edit
+                                     * is seen; the issues themselves are
+                                     * kept, because a problem the author has
+                                     * not reached yet is still a problem. */
+    unsigned          runs;         /* counts up on every run. The panel reads
+                                     * it to notice a run it has not seen and
+                                     * take the form's edit count at that
+                                     * moment; a later edit is then a change
+                                     * the check did not see. */
 } MEScenarioCheck;
 
 /* An empty check that has not run. */

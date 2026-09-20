@@ -2889,6 +2889,24 @@ void mapEditorImguiScenarioPanel(MEScenarioState *st, MEScenarioForm *form,
                     STR_MAPEDIT_SCENARIO_VIEW_TRIGGERS);
     ImGui::Separator();
 
+    /* A change to the table since the check ran leaves the issues describing
+       a table that is gone, the way an edit to the text leaves them naming
+       lines that have moved. Every form's change counts up form->edits, so
+       one comparison here covers the rules, the tags and the triggers alike:
+       the count is taken when a run is first seen, and a count that has moved
+       on since is an edit the check did not see. */
+    {
+        static unsigned s_runSeen    = 0;
+        static unsigned s_editsAtRun = 0;
+
+        if (check->runs != s_runSeen) {
+            s_runSeen    = check->runs;
+            s_editsAtRun = form->edits;
+        } else if (check->hasRun && form->edits != s_editsAtRun) {
+            check->stale = true;
+        }
+    }
+
     switch (*view) {
         case ME_SCENARIO_VIEW_METADATA:
             meScnMetadataBody(form, st, mapPath, wantPack, wantSaveMod);

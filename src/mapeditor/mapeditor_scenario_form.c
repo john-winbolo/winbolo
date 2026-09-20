@@ -86,6 +86,7 @@ bool meScenarioFormSetRule(MEScenarioForm *f, int rule, double value) {
     if (at >= 0) {
         f->manifest.rules[at].value = value;
         f->dirty                    = true;
+        f->edits++;
         return true;
     }
 
@@ -96,6 +97,7 @@ bool meScenarioFormSetRule(MEScenarioForm *f, int rule, double value) {
     f->manifest.rules[f->manifest.numRules].value = value;
     f->manifest.numRules++;
     f->dirty = true;
+    f->edits++;
     return true;
 }
 
@@ -112,6 +114,7 @@ void meScenarioFormRemoveRule(MEScenarioForm *f, int index) {
     memset(&f->manifest.rules[f->manifest.numRules], 0,
            sizeof(f->manifest.rules[0]));
     f->dirty = true;
+    f->edits++;
 }
 
 bool meScenarioFormAddTeam(MEScenarioForm *f) {
@@ -157,6 +160,7 @@ bool meScenarioFormAddTeam(MEScenarioForm *f) {
     team->fielded = false;
     lob->numTeams++;
     f->dirty = true;
+    f->edits++;
     return true;
 }
 
@@ -175,6 +179,7 @@ void meScenarioFormRemoveTeam(MEScenarioForm *f, int index) {
     lob->numTeams--;
     memset(&lob->teams[lob->numTeams], 0, sizeof(lob->teams[0]));
     f->dirty = true;
+    f->edits++;
 }
 
 MEScenarioTeamIdProblem meScenarioFormTeamIdProblem(const MEScenarioForm *f,
@@ -287,6 +292,7 @@ bool meScenarioFormAddTag(MEScenarioForm *f, MEScenarioTagKind kind,
     tags->tag[tags->count][n] = '\0';
     tags->count++;
     f->dirty = true;
+    f->edits++;
     return true;
 }
 
@@ -306,6 +312,7 @@ void meScenarioFormRemoveTag(MEScenarioForm *f, MEScenarioTagKind kind,
     tags->count--;
     memset(tags->tag[tags->count], 0, sizeof(tags->tag[0]));
     f->dirty = true;
+    f->edits++;
 }
 
 int meScenarioFormTagCount(const MEScenarioForm *f) {
@@ -399,6 +406,7 @@ bool meScenarioFormAddRegion(MEScenarioForm *f, const char *name, int x, int y,
     r->h       = (uint8_t)h;
     f->manifest.numRegions++;
     f->dirty = true;
+    f->edits++;
     return true;
 }
 
@@ -417,6 +425,7 @@ bool meScenarioFormSetRegionRect(MEScenarioForm *f, int index, int x, int y,
     r->w     = (uint8_t)w;
     r->h     = (uint8_t)h;
     f->dirty = true;
+    f->edits++;
     return true;
 }
 
@@ -431,6 +440,7 @@ void meScenarioFormRemoveRegion(MEScenarioForm *f, int index) {
     memset(&f->manifest.regions[f->manifest.numRegions], 0,
            sizeof(f->manifest.regions[0]));
     f->dirty = true;
+    f->edits++;
 }
 
 int meScenarioFormRegionCount(const MEScenarioForm *f) {
@@ -505,6 +515,7 @@ bool meScenarioFormAddTrigger(MEScenarioForm *f, const char *when) {
     meScnSetWhen(t, when);
     f->manifest.numTriggers++;
     f->dirty = true;
+    f->edits++;
     return true;
 }
 
@@ -519,6 +530,7 @@ void meScenarioFormRemoveTrigger(MEScenarioForm *f, int index) {
     memset(&f->manifest.triggers[f->manifest.numTriggers], 0,
            sizeof(f->manifest.triggers[0]));
     f->dirty = true;
+    f->edits++;
 }
 
 bool meScenarioFormSetTriggerWhen(MEScenarioForm *f, int index,
@@ -534,6 +546,7 @@ bool meScenarioFormSetTriggerWhen(MEScenarioForm *f, int index,
        named a field of the old hook is what the validator reports. */
     meScnSetWhen(&f->manifest.triggers[index], when);
     f->dirty = true;
+    f->edits++;
     return true;
 }
 
@@ -640,6 +653,7 @@ bool meScenarioFormAddCond(MEScenarioForm *f, int trigger) {
     c->value.kind = meScnFieldValueKind(type);
     t->numWhere++;
     f->dirty = true;
+    f->edits++;
     return true;
 }
 
@@ -655,6 +669,7 @@ void meScenarioFormRemoveCond(MEScenarioForm *f, int trigger, int index) {
     t->numWhere--;
     memset(&t->where[t->numWhere], 0, sizeof(t->where[0]));
     f->dirty = true;
+    f->edits++;
 }
 
 bool meScenarioFormSetCond(MEScenarioForm *f, int trigger, int index,
@@ -667,6 +682,7 @@ bool meScenarioFormSetCond(MEScenarioForm *f, int trigger, int index,
     }
     t->where[index] = *cond;
     f->dirty        = true;
+    f->edits++;
     return true;
 }
 
@@ -694,6 +710,7 @@ bool meScenarioFormAddAction(MEScenarioForm *f, int trigger) {
     memset(a, 0, sizeof(*a));
     t->numActions++;
     f->dirty = true;
+    f->edits++;
     return true;
 }
 
@@ -709,6 +726,7 @@ void meScenarioFormRemoveAction(MEScenarioForm *f, int trigger, int index) {
     t->numActions--;
     memset(&t->actions[t->numActions], 0, sizeof(t->actions[0]));
     f->dirty = true;
+    f->edits++;
 }
 
 bool meScenarioFormSetAction(MEScenarioForm *f, int trigger, int index,
@@ -728,6 +746,7 @@ bool meScenarioFormSetAction(MEScenarioForm *f, int trigger, int index,
     }
     t->actions[index] = *act;
     f->dirty          = true;
+    f->edits++;
     return true;
 }
 
