@@ -1463,6 +1463,8 @@ static const UnitTestEntry s_tests[] = {
       run_scenario_validate_trigger_action_field                                                   },
     { "scenario_validate_trigger_call_args",
       run_scenario_validate_trigger_call_args                                                      },
+    { "scenario_validate_rule_pair_key",
+      run_scenario_validate_rule_pair_key                                                          },
     { "scenario_lua_every_row_answers",             run_scenario_lua_every_row_answers             },
     { "scenario_lua_op_arguments_match_the_doc",
       run_scenario_lua_op_arguments_match_the_doc                                                  },

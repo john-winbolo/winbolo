@@ -2867,6 +2867,7 @@ int run_scenario_validate_trigger_action(void);
 int run_scenario_validate_trigger_unknown_operator(void);
 int run_scenario_validate_trigger_action_field(void);
 int run_scenario_validate_trigger_call_args(void);
+int run_scenario_validate_rule_pair_key(void);
 
 /* The binding table (test_scenario_lua.c): every row of the registry
  * called once, the three index rules, the nils an absent entity reads

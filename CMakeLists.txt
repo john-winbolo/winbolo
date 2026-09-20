@@ -5760,6 +5760,7 @@ set(_unit_test_names
     scenario_validate_trigger_unknown_operator
     scenario_validate_trigger_action_field
     scenario_validate_trigger_call_args
+    scenario_validate_rule_pair_key
     scenario_lua_every_row_answers
     scenario_lua_op_arguments_match_the_doc
     scenario_lua_read_index_passes_through

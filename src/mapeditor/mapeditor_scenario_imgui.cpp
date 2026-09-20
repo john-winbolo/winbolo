@@ -923,6 +923,21 @@ static const ScnValidateIssue *meScnRuleIssue(const MEScenarioCheck *chk,
     return NULL;
 }
 
+/* What one rule is set to as the table stands: the manifest's own value where
+ * it sets that rule, and the classic default where it does not. That is what
+ * the check reads for a rule a scenario leaves alone, so a ceiling read off
+ * this row is the ceiling the check will hold the table to. */
+static double meScnRuleValueNow(const ScenarioManifest *m, int rule) {
+    int i;
+
+    for (i = 0; i < (int)m->numRules; i++) {
+        if ((int)m->rules[i].rule == rule) {
+            return m->rules[i].value;
+        }
+    }
+    return simRulesClassicValue(rule);
+}
+
 static void meScnRulesBody(MEScenarioForm *f, const MEScenarioCheck *chk) {
     /* What the author has typed into the Add Rule filter, and which row of the
      * list they are reading about. One panel, so one box and one selection,
@@ -992,6 +1007,15 @@ static void meScnRulesBody(MEScenarioForm *f, const MEScenarioCheck *chk) {
             if (simRulesRuleRange(rule, &rng)) {
                 bad = m->rules[i].value < rng.lo ||
                       (rng.hasHi && m->rules[i].value > rng.hi);
+                /* And the ceiling another rule carries, where one does. A
+                   rule can have both that and a fixed ceiling, so it is asked
+                   either way, and the partner's value is read as the table
+                   stands rather than off the last check — so a row marks as
+                   the author types into either of the two. */
+                if (!bad && rng.cappedBy >= 0) {
+                    bad = m->rules[i].value >
+                          meScnRuleValueNow(m, rng.cappedBy);
+                }
             }
             if (!bad) {
                 /* Two rules that each sit inside their own bounds can still

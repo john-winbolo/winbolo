@@ -28,7 +28,8 @@
  * run_scenario_validate_unknown_rule     — a key that names no rule
  * run_scenario_validate_rule_out_of_range— a value outside its row's bounds
  * run_scenario_validate_rule_pair        — two values that pass alone and
- *                                          break the pair they share
+ *                                          break the pair they share, keyed
+ *                                          on the one that has to move
  * run_scenario_validate_tag_past_map     — an entity index past the map's own
  *                                          count
  * run_scenario_validate_fifth_tag        — a fifth tag on an entity that
@@ -111,6 +112,10 @@
  *                                          after it are held to the hook's
  *                                          fields the way any other action's
  *                                          are
+ * run_scenario_validate_rule_pair_key    — two rules that each stand up alone
+ *                                          and break the pair between them
+ *                                          are reported against the rule that
+ *                                          has to move, not against the table
  */
 
 #include <stdint.h>
@@ -490,15 +495,24 @@ int run_scenario_validate_rule_pair(void) {
     UT_ASSERT_MSG(!scenarioValidateMap(sim, kMap, &r),
                   "two rules that break the pair they share were accepted");
     svList(&r, seen, sizeof(seen));
-    issue = svFind(&r, "rules");
+
+    /* Under the rule the reason names, which is the one that has to move.
+       Keyed on the table itself it reached the issues list and never the
+       editor's row, which ties a row to a report by its name and nothing
+       else. */
+    issue = svFind(&r, "rules.base_min_shells");
     UT_ASSERT_MSG(issue != NULL,
-                  "the pair was not reported against the table: %s", seen);
+                  "the pair was not reported against the rule it names: %s",
+                  seen);
     UT_ASSERT_MSG(strstr(issue->message, "base_min_shells") != NULL,
                   "the message does not name the pair: %s", issue->message);
+    UT_ASSERT_MSG(svFind(&r, "rules") == NULL,
+                  "the pair was reported against the table as well: %s", seen);
 
-    /* Neither of them is wrong on its own, so neither is named on its own. */
-    UT_ASSERT_MSG(svFind(&r, "rules.base_full_shells") == NULL &&
-                      svFind(&r, "rules.base_min_shells") == NULL,
+    /* Neither of them is wrong on its own, which is why the one-rule pass
+       said nothing and the whole table had to be asked. The rule this one is
+       measured against stands where it is and is not marked. */
+    UT_ASSERT_MSG(svFind(&r, "rules.base_full_shells") == NULL,
                   "a rule that stands up alone was reported: %s", seen);
 
     serverSimDestroy(sim);
@@ -2024,6 +2038,69 @@ int run_scenario_validate_trigger_call_args(void) {
        first argument. */
     if (rc == 0 && !SV_SAYS(r, "triggers[1].actions[1]",
                             "that function's name")) {
+        rc = 1;
+    }
+
+    free(r);
+    return rc;
+}
+
+/* ── 30. A pair keyed on the rule that has to move ────────────────── */
+
+/* A pair two rules break between them is found by checking the whole table,
+   which answers a sentence and no index: simRulesCheck says what is wrong and
+   which two rules it is about, and nothing else. The report used to be keyed
+   on the table itself, and the editor ties a row to a report by "rules.<name>"
+   and nothing else, so it reached the issues list and never the row the author
+   had to go to.
+
+   base_hit_armour <= base_capture_armour <= base_full_armour, and the classic
+   table plays them at 4, 9 and 90. 8 and 5 are each inside their own row's
+   bounds — both are floors with no fixed ceiling — and each stands up against
+   the classic value of the other, so the one-rule pass says nothing about
+   either and the pair is the whole table's to find. Held the other way round
+   as well: the rule that does not have to move is not marked, and the sentence
+   is said once. */
+int run_scenario_validate_rule_pair_key(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  rules = { base_hit_armour = 8, base_capture_armour = 5 },\n"
+        "}\n";
+    ScnValidateResult *r;
+    int                rc = 0;
+
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+
+    if (scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL, r)) {
+        fprintf(stderr, "FAIL %s:%d: two rules breaking the pair between them "
+                        "were accepted\n", __FILE__, __LINE__);
+        rc = 1;
+    }
+    /* The rule the sentence names first, which is the one an author moves. */
+    if (rc == 0 && !SV_SAYS(r, "rules.base_hit_armour",
+                            "base_capture_armour")) {
+        rc = 1;
+    }
+    /* Never the table itself: that key matches no row. */
+    if (rc == 0 && !SV_SILENT(r, "rules")) {
+        rc = 1;
+    }
+    /* And not the rule it is measured against, which is where it stands. */
+    if (rc == 0 && !SV_SILENT(r, "rules.base_capture_armour")) {
+        rc = 1;
+    }
+    /* Said once. Two reports would mean the one-rule pass caught it too, and
+       the case would be asserting the wrong arm. */
+    if (rc == 0 && r->count != 1) {
+        char seen[1024];
+        svList(r, seen, sizeof(seen));
+        fprintf(stderr, "FAIL %s:%d: %u issues against one broken pair: %s\n",
+                __FILE__, __LINE__, (unsigned)r->count, seen);
         rc = 1;
     }
 

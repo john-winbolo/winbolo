@@ -399,6 +399,61 @@ static ScnOpResult scnCheckRuleSet(const ServerSim *sim, const uint16_t *rules,
     return serverSimCheckScenarioRules(sim, rules, values, count, why, whyLen);
 }
 
+/* Whether a character can stand inside a rule's name. The names are lower
+ * case, digits and underscore, so anything else either side of a match ends
+ * the word. */
+static bool scnRuleNameChar(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+/* Where a rule's name stands in text as a word of its own, or NULL. A pair's
+ * reason names both of its rules, and one name can be the tail of another, so
+ * a bare substring would match inside the longer one and tie the report to
+ * the wrong row. */
+static const char *scnNameWholeIn(const char *text, const char *name) {
+    const size_t len = strlen(name);
+    const char  *at  = text;
+
+    if (len == 0) {
+        return NULL;
+    }
+    while ((at = strstr(at, name)) != NULL) {
+        if ((at == text || !scnRuleNameChar(at[-1])) &&
+            !scnRuleNameChar(at[len])) {
+            return at;
+        }
+        at++;
+    }
+    return NULL;
+}
+
+/* The rule of the table that a reason names first. simRulesCheck answers a
+ * fault and a sentence and nothing else, so which rule broke is read back out
+ * of the sentence: a pair states the rule that has to move ahead of the one
+ * it is measured against, so the first name in it is the row an author has to
+ * go to. -1 where the sentence names none of the table's rules, which leaves
+ * the caller to key the report on the table itself. */
+static int scnRuleNamedFirst(const ScenarioManifest *m, const char *why) {
+    const char *first = NULL;
+    int         rule  = -1;
+    uint16_t    i;
+
+    for (i = 0; i < m->numRules && i < SCN_MANIFEST_RULES_MAX; i++) {
+        const char *name = simRulesRuleName((int)m->rules[i].rule);
+        const char *at;
+
+        if (name == NULL || name[0] == '\0') {
+            continue;
+        }
+        at = scnNameWholeIn(why, name);
+        if (at != NULL && (first == NULL || at < first)) {
+            first = at;
+            rule  = (int)m->rules[i].rule;
+        }
+    }
+    return rule;
+}
+
 /* Every rule the table sets, one at a time and then all at once. One at a
  * time says which rule an author has to move; all at once is what finds a
  * pair two of them break between them, where each on its own stands up. */
@@ -443,7 +498,19 @@ static void scnCheckRules(const ServerSim *sim, const ScenarioManifest *m,
        is stated against the rule that carries it, and saying it again here
        under the whole table would be the same fault twice. */
     if (r == SCN_OP_PAIR && !sawPair && why[0] != '\0') {
-        scnIssueAdd(out, "rules", "%s", why);
+        const int named = scnRuleNamedFirst(m, why);
+
+        /* Under the rule the reason names, so the editor's row for the rule
+           that has to move is the row the mark lands on: the form ties a row
+           to a report by "rules.<name>" and nothing else, and a report keyed
+           on the table itself can never match one. That key is what is left
+           when the sentence names no rule the table sets. */
+        if (named >= 0) {
+            snprintf(key, sizeof(key), "rules.%s", simRulesRuleName(named));
+            scnIssueAdd(out, key, "%s", why);
+        } else {
+            scnIssueAdd(out, "rules", "%s", why);
+        }
     }
 }
 
