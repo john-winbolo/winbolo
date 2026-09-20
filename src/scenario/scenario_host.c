@@ -1456,6 +1456,17 @@ static void scnPushTeams(lua_State *L, const ScnManifestLobby *lob) {
         lua_setfield(L, e, "fielded");
         lua_pushstring(L, team->brain);
         lua_setfield(L, e, "brain");
+        /* The mode and the level, which scnReadLobby reads and this has to
+           write back for the same reason the brain is written back: a
+           package whose script leaves the lobby table to the manifest is
+           read back through here, and a field dropped on the way out is a
+           field the two forms are then held to disagree about. Both go over
+           whether or not they are set, "" meaning "leave the lobby's" here
+           exactly as it does in the table a file writes. */
+        lua_pushstring(L, team->mode);
+        lua_setfield(L, e, "mode");
+        lua_pushstring(L, team->difficulty);
+        lua_setfield(L, e, "difficulty");
         /* And the init the team's bots are built with, which was missing
            here: a packaged manifest that declares one, in a package whose
            script leaves the table to the manifest, would be read back with

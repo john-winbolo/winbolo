@@ -3088,6 +3088,7 @@ int run_scenario_brain_name_missing(void);
 int run_scenario_brain_name_rejects_path(void);
 int run_scenario_brain_op_resolves(void);
 int run_scenario_brain_name_op_missing_refused(void);
+int run_scenario_brain_name_mode_falls_back(void);
 
 /* The scenarios directory (test_scenario_dir.c): a .scenario package listed
  * from its manifest with no Lua run, a loose .lua listed through the

@@ -1650,6 +1650,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_brain_op_resolves",                      run_scenario_brain_op_resolves                      },
     { "scenario_dir_lists_package",                      run_scenario_dir_lists_package                      },
     { "scenario_brain_name_op_missing_refused",          run_scenario_brain_name_op_missing_refused          },
+    { "scenario_brain_name_mode_falls_back",             run_scenario_brain_name_mode_falls_back             },
     { "scenario_dir_lists_loose_script",                 run_scenario_dir_lists_loose_script                 },
     { "scenario_dir_skips_junk",                         run_scenario_dir_skips_junk                         },
     { "scenario_dir_skips_subdirectory",                 run_scenario_dir_skips_subdirectory                 },

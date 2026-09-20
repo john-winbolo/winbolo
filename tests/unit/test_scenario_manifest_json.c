@@ -69,6 +69,7 @@ static const char kFullManifest[] =
     "    \"teams\": [\n"
     "      { \"id\": 2, \"bots\": 10, \"max_bots\": 12, \"fielded\": false,\n"
     "        \"brain\": \"package:raiders\",\n"
+    "        \"mode\": \"survival\", \"difficulty\": \"hard\",\n"
     "        \"init\": { \"stance\": \"hold\", \"deprive\": 100 } },\n"
     "      { \"id\": 3, \"bots\": 1, \"max_bots\": 4, \"fielded\": true,\n"
     "        \"brain\": \"\" }\n"
@@ -150,6 +151,8 @@ static int fullManifestIsRight(const ScnManifestDoc *d) {
     UT_ASSERT(m->lobby.teams[0].maxBots == 12);
     UT_ASSERT(!m->lobby.teams[0].fielded);
     UT_ASSERT(strcmp(m->lobby.teams[0].brain, "package:raiders") == 0);
+    UT_ASSERT(strcmp(m->lobby.teams[0].mode, "survival") == 0);
+    UT_ASSERT(strcmp(m->lobby.teams[0].difficulty, "hard") == 0);
     UT_ASSERT_MSG(m->lobby.teams[0].init.count == 2, "team 0 holds %d pairs",
                   (int)m->lobby.teams[0].init.count);
     UT_ASSERT(mjInitIs(&m->lobby.teams[0].init, "stance", "hold"));
@@ -162,6 +165,10 @@ static int fullManifestIsRight(const ScnManifestDoc *d) {
     UT_ASSERT(m->lobby.teams[1].maxBots == 4);
     UT_ASSERT(m->lobby.teams[1].fielded);
     UT_ASSERT(m->lobby.teams[1].brain[0] == '\0');
+    /* A team that names neither keeps neither, which is what says "leave
+       the lobby's" rather than any particular mode. */
+    UT_ASSERT(m->lobby.teams[1].mode[0] == '\0');
+    UT_ASSERT(m->lobby.teams[1].difficulty[0] == '\0');
     UT_ASSERT_MSG(m->lobby.teams[1].init.count == 0, "team 1 holds %d pairs",
                   (int)m->lobby.teams[1].init.count);
 
@@ -356,6 +363,10 @@ static void fillBase(ScenarioManifest *m) {
     m->lobby.teams[0].fielded = false;
     snprintf(m->lobby.teams[0].brain, sizeof(m->lobby.teams[0].brain),
              "package:raiders");
+    snprintf(m->lobby.teams[0].mode, sizeof(m->lobby.teams[0].mode),
+             "survival");
+    snprintf(m->lobby.teams[0].difficulty,
+             sizeof(m->lobby.teams[0].difficulty), "hard");
     scnTableSet(&m->lobby.teams[0].init, "stance", "hold");
     scnTableSet(&m->lobby.teams[0].init, "deprive", "100");
     m->lobby.teams[1].id = 3;
@@ -431,6 +442,24 @@ int run_scenario_manifest_agrees(void) {
              "package:swarm");
     UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
     UT_ASSERT_MSG(strcmp(key, "lobby.teams[0].brain") == 0,
+                  "the key was '%s'", key);
+
+    /* The mode and the level travel with the brain and are held to
+       agreeing the same way. The second of these is a team dropping a key
+       the other side states: "" is a value here — it says "leave the
+       lobby's" — so the two forms disagree rather than one of them
+       simply saying less. */
+    fillBase(&b);
+    snprintf(b.lobby.teams[0].mode, sizeof(b.lobby.teams[0].mode),
+             "assault");
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "lobby.teams[0].mode") == 0,
+                  "the key was '%s'", key);
+
+    fillBase(&b);
+    b.lobby.teams[0].difficulty[0] = '\0';
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "lobby.teams[0].difficulty") == 0,
                   "the key was '%s'", key);
 
     /* An init table is keyed, so the order its pairs sit in is Lua's own

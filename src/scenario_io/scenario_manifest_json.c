@@ -295,6 +295,13 @@ static void mjDecodeLobby(const cJSON *root, ScnManifestLobby *lob,
         }
         team->fielded = mjBool(t, "fielded", true);
         mjString(t, "brain", team->brain, sizeof(team->brain));
+        /* The brain mode this team's bots play in and the level inside it,
+           on the same footing as the brain itself: a key the script's table
+           can state, so a package that carries the table in JSON has to be
+           able to carry these too. Left out is "", which leaves the seats on
+           whatever mode the lobby would have given them. */
+        mjString(t, "mode", team->mode, sizeof(team->mode));
+        mjString(t, "difficulty", team->difficulty, sizeof(team->difficulty));
         mjDecodeInit(t, team);
     }
 }
@@ -1116,6 +1123,8 @@ static void mjEmitTeams(cJSON *lobby, const ScnManifestLobby *lob) {
         mjPutNumber(t, "max_bots", lob->teams[i].maxBots);
         mjPutBool(t, "fielded", lob->teams[i].fielded);
         mjPutString(t, "brain", lob->teams[i].brain);
+        mjPutString(t, "mode", lob->teams[i].mode);
+        mjPutString(t, "difficulty", lob->teams[i].difficulty);
         mjEmitInit(t, &lob->teams[i].init);
     }
     while (cJSON_GetArraySize(teams) > (int)lob->numTeams) {
@@ -1594,6 +1603,24 @@ bool scnManifestAgrees(const ScenarioManifest *fromJson,
                             "scenario: the manifest gives this team brain '%s' "
                             "and the script's table gives it '%s'",
                             a->brain, b->brain);
+        }
+        /* An empty key is a real answer here rather than a missing one — it
+           says "leave the lobby's" — so "" against a key is a disagreement
+           like any other and is reported with the empty side shown as such. */
+        if (strcmp(a->mode, b->mode) != 0) {
+            snprintf(where, sizeof(where), "lobby.teams[%d].mode", i);
+            return mjDiffer(key, keyLen, err, errLen, where,
+                            "scenario: the manifest puts this team in mode "
+                            "'%s' and the script's table puts it in '%s'",
+                            a->mode, b->mode);
+        }
+        if (strcmp(a->difficulty, b->difficulty) != 0) {
+            snprintf(where, sizeof(where), "lobby.teams[%d].difficulty", i);
+            return mjDiffer(key, keyLen, err, errLen, where,
+                            "scenario: the manifest gives this team "
+                            "difficulty '%s' and the script's table gives it "
+                            "'%s'",
+                            a->difficulty, b->difficulty);
         }
         bad = mjInitDiffers(&a->init, &b->init);
         if (bad != NULL) {

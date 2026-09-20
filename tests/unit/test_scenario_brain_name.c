@@ -39,6 +39,12 @@
  *                                        holds is refused SCN_OP_NOT_FOUND
  *                                        and seats nothing, so the raw name
  *                                        never reaches the sim as a path
+ * run_scenario_brain_name_mode_falls_back
+ *                                      — a team naming a mode and a brain
+ *                                        this server has not got has its
+ *                                        mode asked of the server's own
+ *                                        brain, which is the one its seats
+ *                                        take
  *
  * Reads the ServerSim struct directly; the unittests profile permits it.
  */
@@ -105,9 +111,44 @@ static bool bnInstallBrain(const char *tag) {
     return true;
 }
 
+/* A modes.txt in the brain installed above, for the one case that names a
+ * mode. brain_list.c reads it by the name of the directory holding init.lua,
+ * so it belongs beside that file and not anywhere else. The two modes and
+ * their three levels are written out here rather than borrowed from a
+ * shipped brain, so the case says what it expects and an edit to
+ * GoalHunter's own modes.txt cannot move it. */
+static char bnModes[256];
+
+static bool bnInstallModes(void) {
+    FILE *f;
+
+    snprintf(bnModes, sizeof(bnModes), "%s%cmodes.txt", bnDir, BN_SEP);
+    f = fopen(bnModes, "wb");
+    if (f == NULL) {
+        return false;
+    }
+    fputs("[default]\n"
+          "label = Default\n"
+          "levels = easy:Easy:1, medium:Medium:2, hard:Hard:3\n"
+          "default = hard\n"
+          "\n"
+          "[survival]\n"
+          "label = Survival\n"
+          "levels = easy:Easy:1, medium:Medium:2, hard:Hard:3\n"
+          "default = hard\n", f);
+    fclose(f);
+    return true;
+}
+
 /* The brain's file and its own directory, and not the brains/ parent: a case
- * running beside this one may be looking in that. */
+ * running beside this one may be looking in that. The modes.txt goes first
+ * where one was installed, because a directory still holding it cannot be
+ * removed. */
 static void bnRemoveBrain(void) {
+    if (bnModes[0] != '\0') {
+        remove(bnModes);
+        bnModes[0] = '\0';
+    }
     if (bnPath[0] != '\0') {
         remove(bnPath);
     }
@@ -169,6 +210,23 @@ static void bnTeamScript(char *out, size_t outLen, const char *brain) {
              "    },\n"
              "  },\n"
              "}\n", BN_TEAM, brain);
+}
+
+/* The same, with the mode the team's bots are to play in and the level
+ * inside it. Both go on the team beside the brain, which is where a file
+ * writes them. */
+static void bnTeamScriptMode(char *out, size_t outLen, const char *brain,
+                             const char *mode, const char *level) {
+    snprintf(out, outLen,
+             "scenario = {\n"
+             "  name = \"Named\", api = 1,\n"
+             "  lobby = {\n"
+             "    teams = {\n"
+             "      { id = %d, bots = 1, max_bots = 2, fielded = false,\n"
+             "        brain = \"%s\", mode = \"%s\", difficulty = \"%s\" },\n"
+             "    },\n"
+             "  },\n"
+             "}\n", BN_TEAM, brain, mode, level);
 }
 
 /* ── The sims ─────────────────────────────────────────────────────── */
@@ -723,6 +781,82 @@ int run_scenario_brain_name_op_missing_refused(void) {
     serverSimDestroy(sim);
     ut_brain_stub_arm(false);
     bnDrop(kOpMap);
+    bnRemoveBrain();
+    return 0;
+}
+
+/* ── 6. A mode on a team whose brain does not resolve ─────────────── */
+
+/* The mode and the level a team names are asked of the brain that will run
+   its bots. Where the name the team gave resolves to nothing, that brain is
+   the server's own: a name this server has not got costs the team neither
+   its seats nor its keys, and the seats run the server's brain. So the
+   validator asks the server's brain rather than leaving the question out.
+
+   Leaving it out was the alternative, and it is the wrong one. It would
+   pass a template whose keys the seating then refuses — the seating asks
+   the same question of the same brain through the same call — and a
+   -validate that passes what the round will not take is worth nothing.
+
+   Two halves against one installed brain and one name it does not hold: a
+   mode the server's brain lists, which draws no problem of its own, and one
+   it does not, which draws a problem naming that brain. */
+int run_scenario_brain_name_mode_falls_back(void) {
+    static const char *const kMap = "scnbrain_modefallback.map";
+    char              lua[640];
+    char              missing[96];
+    char              seen[1024];
+    ServerSim        *sim;
+    ScnValidateResult r;
+
+    UT_ASSERT(bnInstallBrain("modefallback"));
+    UT_ASSERT(bnInstallModes());
+    snprintf(missing, sizeof(missing), "%s_NotInstalled", bnName);
+
+    /* A mode the server's own brain lists. The team's brain is still
+       reported, because the server has not got it, and the mode is not,
+       because the brain the seats will take knows it. */
+    bnTeamScriptMode(lua, sizeof(lua), missing, "survival", "hard");
+    UT_ASSERT(bnPut(kMap, lua));
+
+    sim = bnRoundSim();
+    UT_ASSERT(sim != NULL);
+    serverSimSetBotBrainPath(sim, bnPath);
+    UT_ASSERT_MSG(!scenarioValidateMap(sim, kMap, &r),
+                  "a team naming a brain this server has not got was "
+                  "passed without a word");
+    bnList(&r, seen, sizeof(seen));
+    UT_ASSERT_MSG(bnFind(&r, "lobby.teams[1].brain") != NULL,
+                  "no problem against the team's brain: %s", seen);
+    UT_ASSERT_MSG(bnFind(&r, "lobby.teams[1].mode") == NULL,
+                  "a mode the server's own brain lists was reported as a "
+                  "problem; the check has to fall back to that brain, not "
+                  "to nothing: %s", seen);
+    UT_ASSERT_MSG(bnFind(&r, "lobby.teams[1].difficulty") == NULL,
+                  "a level that brain lists was reported as a problem: %s",
+                  seen);
+    serverSimDestroy(sim);
+
+    /* And a mode it does not list, which is reported against the team's own
+       key and names the brain the question was asked of. */
+    bnTeamScriptMode(lua, sizeof(lua), missing, "nosuchmode", "hard");
+    UT_ASSERT(bnPut(kMap, lua));
+
+    sim = bnRoundSim();
+    UT_ASSERT(sim != NULL);
+    serverSimSetBotBrainPath(sim, bnPath);
+    UT_ASSERT(!scenarioValidateMap(sim, kMap, &r));
+    bnList(&r, seen, sizeof(seen));
+    UT_ASSERT_MSG(bnFind(&r, "lobby.teams[1].mode") != NULL,
+                  "a mode no brain in this test lists went unreported, so "
+                  "the check was skipped rather than asked of the "
+                  "server's brain: %s", seen);
+    UT_ASSERT_MSG(strstr(bnFind(&r, "lobby.teams[1].mode")->message,
+                         bnName) != NULL,
+                  "the problem does not name the brain it asked: %s", seen);
+    serverSimDestroy(sim);
+
+    bnDrop(kMap);
     bnRemoveBrain();
     return 0;
 }
