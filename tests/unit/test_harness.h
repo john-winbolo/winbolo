@@ -2953,6 +2953,7 @@ int run_scenario_hooks_trigger_tag_on_item(void);
 int run_scenario_hooks_trigger_tag_ne_and_eq(void);
 int run_scenario_hooks_trigger_region_holds_square(void);
 int run_scenario_hooks_trigger_unknown_operator(void);
+int run_scenario_hooks_trigger_on_policy_skipped(void);
 
 /* What the host derives rather than hears (test_scenario_derived.c): the
  * timers a script sets, the regions it names, and the enter and leave hooks

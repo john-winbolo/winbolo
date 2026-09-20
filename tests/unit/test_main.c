@@ -1549,6 +1549,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_hooks_trigger_tag_ne_and_eq",            run_scenario_hooks_trigger_tag_ne_and_eq            },
     { "scenario_hooks_trigger_region_holds_square",      run_scenario_hooks_trigger_region_holds_square      },
     { "scenario_hooks_trigger_unknown_operator",         run_scenario_hooks_trigger_unknown_operator         },
+    { "scenario_hooks_trigger_on_policy_skipped",        run_scenario_hooks_trigger_on_policy_skipped        },
     { "scenario_derived_timer_fires_on_its_tick",        run_scenario_derived_timer_fires_on_its_tick        },
     { "scenario_derived_timer_cancelled_and_stale",      run_scenario_derived_timer_cancelled_and_stale      },
     { "scenario_derived_timer_limit_boundary",           run_scenario_derived_timer_limit_boundary           },

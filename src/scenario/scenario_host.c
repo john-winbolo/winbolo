@@ -1667,10 +1667,19 @@ static int scnHookIndexOf(const char *name) {
  * An action's text goes over beside its arguments. Nothing reads it — the
  * arguments already carry their own strings — but it is the line the struct
  * holds, and an action carrying one with no argument marked for it is a
- * shape the JSON emitter and the Lua writer both drop. */
+ * shape the JSON emitter and the Lua writer both drop.
+ *
+ * A trigger whose when is not a hook of this build does not go over at all.
+ * The router chains a wrapper on to the global its when names, and a name
+ * that is no hook is either a policy or a misspelling: wrapping a policy
+ * replaces the author's own function with one that discards its answer, so
+ * the round would run the classic rule and the trigger's actions on every
+ * ask. The array stays dense across the drops, because the router walks it
+ * to its first hole. */
 static void scnPushRouterTriggers(lua_State *L, const ScenarioManifest *m) {
     int t;
     int i;
+    int out = 0;
 
     lua_newtable(L);
     t = lua_gettop(L);
@@ -1682,6 +1691,21 @@ static void scnPushRouterTriggers(lua_State *L, const ScenarioManifest *m) {
         int               args;
         int               j;
         int               k;
+
+        if (scnHookIndexOf(trig->when) == (int)SCN_HOOK_COUNT) {
+            /* A when of no name at all is the reader's complaint, said under
+               this same key as the table was read; saying it again here is
+               the one fault twice. */
+            if (trig->when[0] != '\0') {
+                char key[SCN_VALIDATE_KEY_LEN];
+
+                snprintf(key, sizeof(key), "triggers[%d]", i);
+                scnReport(NULL, key,
+                          "scenario: %s runs on '%s', which is no hook; "
+                          "dropped", key, trig->when);
+            }
+            continue;
+        }
 
         lua_newtable(L);
         e = lua_gettop(L);
@@ -1739,7 +1763,8 @@ static void scnPushRouterTriggers(lua_State *L, const ScenarioManifest *m) {
         }
         lua_setfield(L, e, "actions");
 
-        lua_rawseti(L, t, i + 1);
+        out++;
+        lua_rawseti(L, t, out);
     }
 }
 

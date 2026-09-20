@@ -253,6 +253,37 @@ static void shkFlush(ServerSim *sim) {
     shkReset();
 }
 
+/* ── The questions the sim asks ───────────────────────────────────── */
+
+/* A policy, asked the way the sim asks it: through the registered vtable
+   with the sim's policy depth held across the call. Both answer the classic
+   rule where the host registered no row, which is what the sim does. */
+static bool shkAskRespawn(ServerSim *sim, BYTE player) {
+    bool may;
+
+    if (sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->canRespawn == NULL) {
+        return true;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    may = sim->scenarioPolicy->canRespawn(sim->scenarioPolicy->ctx, player);
+    serverSimScenarioPolicyLeave(sim);
+    return may;
+}
+
+static bool shkAskExtraTeams(ServerSim *sim) {
+    bool allow;
+
+    if (sim->scenarioPolicy == NULL ||
+        sim->scenarioPolicy->allowExtraTeams == NULL) {
+        return true;
+    }
+    serverSimScenarioPolicyEnter(sim);
+    allow = sim->scenarioPolicy->allowExtraTeams(sim->scenarioPolicy->ctx);
+    serverSimScenarioPolicyLeave(sim);
+    return allow;
+}
+
 /* ── Raising one fact ─────────────────────────────────────────────── */
 
 /* A game event, built byte by byte and put on the channel the engine's own
@@ -1625,6 +1656,90 @@ int run_scenario_hooks_trigger_unknown_operator(void) {
     shkUnwatchConsole(sim);
     serverSimDestroy(sim);
     shkDrop(kMap);
+    shkReset();
+    return 0;
+}
+
+/* ── 11. A trigger naming a policy rather than a hook ─────────────── */
+
+/* The author wrote a trigger on can_respawn, which is a policy: the host
+   asks it a question and reads the answer back. A wrapper chained on to it
+   would call the author's function, throw its answer away and return
+   nothing, and the host reading nothing answers the classic rule — so every
+   respawn would be allowed and the trigger's actions would run on every
+   ask. The trigger does not go to the router at all, and the policy is the
+   function the author wrote.
+
+   Two scenarios, one after the other, because the round is only half of it.
+   allow_extra_teams is asked before a round exists, off the VM the attach
+   itself booted, so the second half is what says the drop happens where the
+   triggers are installed rather than where a round starts. */
+int run_scenario_hooks_trigger_on_policy_skipped(void) {
+    static const char *const kRespawn = "scnhook_trig_policy_respawn.map";
+    static const char *const kTeams   = "scnhook_trig_policy_teams.map";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          rec[2048];
+    char          err[512];
+
+    shkReset();
+    UT_ASSERT(shkPutTable(
+        kRespawn,
+        "triggers = {\n"
+        "  { when = \"can_respawn\","
+        " actions = { { \"log\", \"" SHK_NOTE_MARK "ran\" } } },\n"
+        "}",
+        "function can_respawn(p) return false end\n"));
+    sim = shkSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kRespawn, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    serverSimStartGame(sim);
+    shkFlush(sim);
+
+    UT_ASSERT_MSG(!shkAskRespawn(sim, 3),
+                  "the author's can_respawn is still the function the host "
+                  "asks, so the slot is held where it is");
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "",
+           "the trigger names a policy, so it was never installed and its "
+           "action did not run on the ask");
+
+    scenarioHostDetach(h);
+    shkUnwatchConsole(sim);
+    serverSimDestroy(sim);
+    shkDrop(kRespawn);
+
+    /* The same thing before a round, on the question the lobby puts. */
+    shkReset();
+    UT_ASSERT(shkPutTable(
+        kTeams,
+        "triggers = {\n"
+        "  { when = \"allow_extra_teams\","
+        " actions = { { \"log\", \"" SHK_NOTE_MARK "ran\" } } },\n"
+        "}",
+        "function allow_extra_teams()\n"
+        "  note(\"asked\")\n"
+        "  return false\n"
+        "end\n"));
+    sim = shkSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kTeams, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    UT_ASSERT_MSG(!shkAskExtraTeams(sim),
+                  "the author's allow_extra_teams is still the function the "
+                  "lobby asks, with no round started");
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "asked\n",
+           "the author's own function ran and the trigger's action did not");
+
+    scenarioHostDetach(h);
+    shkUnwatchConsole(sim);
+    serverSimDestroy(sim);
+    shkDrop(kTeams);
     shkReset();
     return 0;
 }
