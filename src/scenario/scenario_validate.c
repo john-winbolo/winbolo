@@ -753,14 +753,57 @@ static void scnCheckTrigCond(const ScenarioManifest *m, const ScnTrigCond *c,
     }
 }
 
+/* The arguments of one action from `from` on, where one names a field rather
+ * than stating a value. The router reads a reference as the trigger fires and
+ * gives up on the whole action where it cannot — a name the hook has not got,
+ * and a name that answers a set rather than the one value an argument is — so
+ * an action written either way does nothing and says nothing about it.
+ *
+ * key is the action's own, and a report goes under the argument's position on
+ * the end of it, spelled as both readers spell it and counted from zero. from
+ * is 0 for an op of the game table and 1 for call, whose first argument is a
+ * function's name and is held to being written down rather than read off the
+ * payload.
+ *
+ * fields is NULL where the hook is one the surface has not got: there is
+ * nothing to hold a reference to until the hook is known, and the trigger's
+ * own key has already been told that it is not. */
+static void scnCheckTrigActArgs(const ScnTrigAct *a,
+                                const ScnTrigFields *fields, const char *when,
+                                const char *key, size_t from,
+                                ScnValidateResult *out) {
+    size_t i;
+
+    if (fields == NULL) {
+        return;
+    }
+    for (i = from; i < (size_t)a->numArgs; i++) {
+        const ScnLuaFnField *f;
+        char                 slot[SCN_VALIDATE_KEY_LEN];
+
+        if (a->args[i].kind != SCN_TRIG_VAL_FIELD ||
+            a->args[i].text[0] == '\0') {
+            continue;
+        }
+        snprintf(slot, sizeof(slot), "%s[%u]", key, (unsigned)i);
+
+        f = scnTrigFieldNamed(fields, a->args[i].text);
+        if (f == NULL) {
+            scnIssueAdd(out, slot, "'%s' is no field of %s, so this action "
+                                   "never runs", a->args[i].text, when);
+        } else if (scnTrigFieldIsSet(f)) {
+            scnIssueAdd(out, slot,
+                        "'%s' is a set of names and an argument is one "
+                        "value, so this action never runs", a->args[i].text);
+        }
+    }
+}
+
 /* One action of one trigger: the op it names and the arguments it was
  * given.
  *
  * fields is the hook's payload and when its name, or both NULL where the
- * hook is one the surface has not got. An argument naming a field is read
- * off that payload as the trigger fires, so there is nothing to hold one to
- * until the hook is known, and the trigger's own key has already been told
- * that it is not. */
+ * hook is one the surface has not got. */
 static void scnCheckTrigAct(const ScnTrigAct *a, const ScnTrigFields *fields,
                             const char *when, unsigned trig, unsigned at,
                             ScnValidateResult *out) {
@@ -777,16 +820,26 @@ static void scnCheckTrigAct(const ScnTrigAct *a, const ScnTrigFields *fields,
 
     /* call runs a top-level function of the author's own script rather than
        a row of the game table, so none of what an op is held to applies to
-       it. What it can be held to is naming one: the arguments that function
-       takes are the script's own and nothing here can read them. */
+       it. Two things do. The name is one the author writes down: read off the
+       payload instead, it is whichever function the payload happened to carry
+       when the trigger fired, and a hook handed a line of chat would let the
+       player who typed it pick. What that function does with the arguments
+       after the name is the script's own business, but a reference among them
+       is read off the payload like any other and is held to the same
+       fields. */
     if (strcmp(a->op, "call") == 0) {
-        if (a->numArgs == 0 ||
-            (a->args[0].kind != SCN_TRIG_VAL_STRING &&
-             a->args[0].kind != SCN_TRIG_VAL_FIELD)) {
+        if (a->numArgs > 0 && a->args[0].kind == SCN_TRIG_VAL_FIELD) {
+            scnIssueAdd(out, key,
+                        "call states the name of the function it runs, and "
+                        "'%s' reads one off the payload as the trigger fires; "
+                        "the name is written here instead", a->args[0].text);
+        } else if (a->numArgs == 0 ||
+                   a->args[0].kind != SCN_TRIG_VAL_STRING) {
             scnIssueAdd(out, key,
                         "call runs a function of the script's own, and its "
                         "first argument is that function's name");
         }
+        scnCheckTrigActArgs(a, fields, when, key, 1, out);
         return;
     }
 
@@ -827,39 +880,9 @@ static void scnCheckTrigAct(const ScnTrigAct *a, const ScnTrigFields *fields,
         }
     }
 
-    /* And what the arguments name, where one refers to the payload rather
-       than stating a value. The router reads a reference as the trigger
-       fires and gives up on the whole action where it cannot — a name the
-       hook has not got, and a name that answers a set rather than the one
-       value an argument is — so an action written either way does nothing
-       and says nothing about it.
-
-       The key is the argument's own position, spelled as both readers spell
-       it: the action's key with the position on the end, counted from
-       zero. */
-    if (fields == NULL) {
-        return;
-    }
-    for (i = 0; i < (size_t)a->numArgs; i++) {
-        const ScnLuaFnField *f;
-        char                 slot[SCN_VALIDATE_KEY_LEN];
-
-        if (a->args[i].kind != SCN_TRIG_VAL_FIELD ||
-            a->args[i].text[0] == '\0') {
-            continue;
-        }
-        snprintf(slot, sizeof(slot), "%s[%u]", key, (unsigned)i);
-
-        f = scnTrigFieldNamed(fields, a->args[i].text);
-        if (f == NULL) {
-            scnIssueAdd(out, slot, "'%s' is no field of %s, so this action "
-                                   "never runs", a->args[i].text, when);
-        } else if (scnTrigFieldIsSet(f)) {
-            scnIssueAdd(out, slot,
-                        "'%s' is a set of names and an argument is one "
-                        "value, so this action never runs", a->args[i].text);
-        }
-    }
+    /* And every argument, from the first: an op of the game table names its
+       function here rather than in an argument. */
+    scnCheckTrigActArgs(a, fields, when, key, 0, out);
 }
 
 /* Whether a trigger could do anything at all: the hook it listens on, the

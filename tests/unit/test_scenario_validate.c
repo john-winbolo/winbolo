@@ -105,6 +105,12 @@
  *                                          test; a hook the surface has not
  *                                          got saying nothing more; and a
  *                                          reference that is right passing
+ * run_scenario_validate_trigger_call_args— call's own arguments: the name is
+ *                                          written down rather than read off
+ *                                          the payload, and the arguments
+ *                                          after it are held to the hook's
+ *                                          fields the way any other action's
+ *                                          are
  */
 
 #include <stdint.h>
@@ -1926,6 +1932,98 @@ int run_scenario_validate_trigger_action_field(void) {
         rc = 1;
     }
     if (rc == 0 && !SV_SILENT(r, "triggers[2].actions[0][0]")) {
+        rc = 1;
+    }
+
+    free(r);
+    return rc;
+}
+
+/* ── 29. What call is held to ─────────────────────────────────────── */
+
+/* call runs a function of the author's own script, so the catalogue says
+   nothing about what it takes. Two things are still the table's to hold.
+
+   The name is written down. Read off the payload, it is whichever function
+   the payload carried when the trigger fired — on a hook handed a line of
+   chat, the player who typed it would be choosing. The router resolves the
+   name through the same value() every other reference goes through and then
+   looks it up on the globals, so a reference there reaches any function the
+   script defines.
+
+   The arguments after the name go the way every other action's do: a name
+   the hook has not got and a name that answers a set are both read as a
+   reference the router cannot make sense of, and it gives up on the whole
+   action. The wording is the same wording, because it is the same fault.
+
+   on_chat(p, text) carries p, text and p_team, none of them a set. The set
+   leg needs a hook that has one, so it goes on on_base_captured, whose tag
+   is derived from the base. */
+int run_scenario_validate_trigger_call_args(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_chat\",\n"
+        "      actions = { { \"call\", { field = \"text\" } },\n"
+        "                  { \"call\", \"my_fn\" },\n"
+        "                  { \"call\", \"my_fn\", { field = \"speaker\" } },\n"
+        "                  { \"call\", \"my_fn\", { field = \"p\" } } } },\n"
+        "    { when = \"on_base_captured\",\n"
+        "      actions = { { \"call\", \"my_fn\", { field = \"tag\" } },\n"
+        "                  { \"call\" } } },\n"
+        "  },\n"
+        "}\n";
+    ScnValidateResult *r;
+    int                rc = 0;
+
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+
+    if (scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL, r)) {
+        fprintf(stderr, "FAIL %s:%d: a call reading its function's name off "
+                        "the payload said nothing\n", __FILE__, __LINE__);
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[0]",
+                            "reads one off the payload")) {
+        rc = 1;
+    }
+    /* The name is the action's own business and not an argument's: one
+       report, under the action, and nothing under the slot. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[0][0]")) {
+        rc = 1;
+    }
+    /* A call written properly says nothing. The function it names is one
+       this cannot read — the script's own — and that is still not a fault. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[1]")) {
+        rc = 1;
+    }
+    /* An argument after the name, held to the hook the way any other
+       action's argument is, and under the argument's own key. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[2][1]",
+                            "no field of on_chat")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[2]")) {
+        rc = 1;
+    }
+    /* And one that is right, which is what says the check refuses something
+       rather than everything. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[3][1]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "triggers[1].actions[0][1]", "set of names")) {
+        rc = 1;
+    }
+    /* A call with no argument at all still gets the sentence it always got:
+       the refusal above is of a name read off the payload, not of every
+       first argument. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[1].actions[1]",
+                            "that function's name")) {
         rc = 1;
     }
 
