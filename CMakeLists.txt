@@ -5766,6 +5766,7 @@ set(_unit_test_names
     scenario_validate_trigger_call_no_name
     scenario_validate_trigger_field_team
     scenario_validate_trigger_announce_clear
+    scenario_validate_trigger_arg_literal
     scenario_validate_rule_pair_key
     scenario_lua_every_row_answers
     scenario_lua_op_arguments_match_the_doc

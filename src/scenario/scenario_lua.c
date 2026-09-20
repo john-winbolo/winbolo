@@ -4139,16 +4139,17 @@ static const ScnLuaOpParam kScnOpArgs_hint[] = {
     { "p", SCN_PARAM_SLOT, false }, { "t", SCN_PARAM_TABLE, false },
     SCN_OP_ARG_END
 };
-/* A target is a seat, and the other two forms a target takes are the whole
-   game, which is the argument left out, and { team = t }, which a form
-   cannot write. A trigger addresses a seat or everyone. */
+/* A target is a seat or one of the words the surface names, which is what
+   SCN_PARAM_TARGET says. The third form a binding takes, { team = t }, is a
+   table: a call can write one and a trigger's argument cannot, so an action
+   addresses a seat or whatever wider audience a word names. */
 static const ScnLuaOpParam kScnOpArgs_message[] = {
-    { "text", SCN_PARAM_STRING, false }, { "target", SCN_PARAM_SLOT, true },
+    { "text", SCN_PARAM_STRING, false }, { "target", SCN_PARAM_TARGET, true },
     SCN_OP_ARG_END
 };
 static const ScnLuaOpParam kScnOpArgs_say[] = {
     { "p", SCN_PARAM_SLOT, false }, { "text", SCN_PARAM_STRING, false },
-    { "target", SCN_PARAM_SLOT, true }, SCN_OP_ARG_END
+    { "target", SCN_PARAM_TARGET, true }, SCN_OP_ARG_END
 };
 static const ScnLuaOpParam kScnOpArgs_sound[] = {
     { "name", SCN_PARAM_WORD, false }, { "x", SCN_PARAM_SQUARE_X, true },
@@ -4159,10 +4160,11 @@ static const ScnLuaOpParam kScnOpArgs_log[] = {
 };
 static const ScnLuaOpParam kScnOpArgs_panel[] = {
     { "id", SCN_PARAM_NUMBER, false }, { "list", SCN_PARAM_TABLE, false },
-    { "target", SCN_PARAM_SLOT, true }, SCN_OP_ARG_END
+    { "target", SCN_PARAM_TARGET, true }, SCN_OP_ARG_END
 };
 static const ScnLuaOpParam kScnOpArgs_score[] = {
-    { "target", SCN_PARAM_SLOT, false }, { "value", SCN_PARAM_NUMBER, false },
+    { "target", SCN_PARAM_TARGET, false },
+    { "value", SCN_PARAM_NUMBER, false },
     { "label", SCN_PARAM_STRING, true }, SCN_OP_ARG_END
 };
 static const ScnLuaOpParam kScnOpArgs_announce[] = {
@@ -4171,22 +4173,25 @@ static const ScnLuaOpParam kScnOpArgs_announce[] = {
        putting one up, so there is nothing to time. scnLuaAnnounce reads it
        only where the text has something in it. */
     { "seconds", SCN_PARAM_NUMBER, true },
-    { "target", SCN_PARAM_SLOT, true }, SCN_OP_ARG_END
+    { "target", SCN_PARAM_TARGET, true }, SCN_OP_ARG_END
 };
 /* A colour is the palette's word or the number behind it, which is what
-   every other colour argument on the surface takes. */
+   SCN_PARAM_COLOUR says and what scnArgColour reads. Not SCN_PARAM_WORD:
+   that one is a word and nothing else, and a colour written as its number
+   is a call the binding takes. */
 static const ScnLuaOpParam kScnOpArgs_marker[] = {
     { "id", SCN_PARAM_NUMBER, false }, { "x", SCN_PARAM_SQUARE_X, false },
-    { "y", SCN_PARAM_SQUARE_Y, false }, { "colour", SCN_PARAM_WORD, true },
-    { "target", SCN_PARAM_SLOT, true }, SCN_OP_ARG_END
+    { "y", SCN_PARAM_SQUARE_Y, false },
+    { "colour", SCN_PARAM_COLOUR, true },
+    { "target", SCN_PARAM_TARGET, true }, SCN_OP_ARG_END
 };
 static const ScnLuaOpParam kScnOpArgs_marker_follow[] = {
     { "id", SCN_PARAM_NUMBER, false }, { "p", SCN_PARAM_SLOT, false },
-    { "colour", SCN_PARAM_WORD, true }, { "target", SCN_PARAM_SLOT, true },
-    SCN_OP_ARG_END
+    { "colour", SCN_PARAM_COLOUR, true },
+    { "target", SCN_PARAM_TARGET, true }, SCN_OP_ARG_END
 };
 static const ScnLuaOpParam kScnOpArgs_clear_marker[] = {
-    { "id", SCN_PARAM_NUMBER, false }, { "target", SCN_PARAM_SLOT, true },
+    { "id", SCN_PARAM_NUMBER, false }, { "target", SCN_PARAM_TARGET, true },
     SCN_OP_ARG_END
 };
 static const ScnLuaOpParam kScnOpArgs_end_round[] = {

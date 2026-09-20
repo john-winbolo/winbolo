@@ -1755,6 +1755,17 @@ static ScnTrigValueKind meScnCondKindFor(MEScnParamType type) {
         case ME_SCN_PARAM_TAG:
         case ME_SCN_PARAM_REGION:
             return SCN_TRIG_VAL_STRING;
+        case ME_SCN_PARAM_TARGET:
+            /* Either kind is right, so an empty one is the seat: a target
+               written as a number is the common case, and the chooser beside
+               the widget is how the author asks for the other. */
+            return SCN_TRIG_VAL_NUMBER;
+        case ME_SCN_PARAM_COLOUR:
+            /* The number, for the same reason and one more: an empty text
+               box is a word the palette has not got and the binding would
+               raise on it, while 0 is a palette entry. An author who wants
+               the word picks Text and types it. */
+            return SCN_TRIG_VAL_NUMBER;
         default:
             return SCN_TRIG_VAL_NUMBER;
     }
@@ -2061,6 +2072,46 @@ static bool meScnCondString(const char *label, ScnTrigAct *act,
     return true;
 }
 
+/* Which of the two forms an argument takes where its parameter takes either:
+ * a target, which is a seat number or one of the words the surface names for
+ * a wider audience, and a colour, which is the palette's word or the number
+ * behind it. Both spellings are right, so the author says which, the same way
+ * one of call's arguments is chosen between.
+ *
+ * One chooser rather than one per type, because the question and the answer
+ * are the same either way: the widget below follows what the value holds, and
+ * nothing here needs to know which parameter asked.
+ *
+ * The words themselves are not offered. Which of them an argument may name is
+ * the op's own — "all" everywhere the shared target reader is used, "all" or
+ * "team" on say, the palette for a colour — and the registry does not carry
+ * those sets, so a word is typed the way any other word on this panel is.
+ *
+ * A value read off the payload is the third form, and the box the value
+ * widget already draws is what says so; the chooser stands down while it is
+ * ticked. */
+static bool meScnNumberOrTextArg(ScnTrigValue *v) {
+    bool changed = false;
+
+    if (v->kind == SCN_TRIG_VAL_FIELD) {
+        return false;
+    }
+    if (ImGui::RadioButton(langGetText(STR_MAPEDIT_SCENARIO_ARG_NUMBER),
+                           v->kind != SCN_TRIG_VAL_STRING) &&
+        v->kind != SCN_TRIG_VAL_NUMBER) {
+        meScnCondEmptyValue(v, ME_SCN_PARAM_NUMBER);
+        changed = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton(langGetText(STR_MAPEDIT_SCENARIO_ARG_TEXT),
+                           v->kind == SCN_TRIG_VAL_STRING) &&
+        v->kind != SCN_TRIG_VAL_STRING) {
+        meScnCondEmptyValue(v, ME_SCN_PARAM_STRING);
+        changed = true;
+    }
+    return changed;
+}
+
 /* The right-hand side of one test: the widget the field's own type calls for,
  * and the box beside it that swaps the whole side for a reference to another
  * field of the same payload. row is the catalogue row of the trigger's hook,
@@ -2117,6 +2168,20 @@ static bool meScnCondValue(const MEScenarioForm *f,
                    list to offer and the word is typed. */
                 changed = meScnCondString(label, act, v);
                 break;
+            case ME_SCN_PARAM_TARGET:
+            case ME_SCN_PARAM_COLOUR: {
+                /* A seat or a word, a palette word or its number, and the
+                   chooser above says which. The widget follows what the
+                   value holds, so the box drawn is the box that writes the
+                   kind the author asked for. */
+                const bool picked = meScnNumberOrTextArg(v);
+
+                changed = (v->kind == SCN_TRIG_VAL_STRING)
+                              ? meScnCondString(label, act, v)
+                              : meScnCondNumber(label, v);
+                changed = changed || picked;
+                break;
+            }
             case ME_SCN_PARAM_SLOT:
             case ME_SCN_PARAM_OWNER:
             case ME_SCN_PARAM_ITEM:

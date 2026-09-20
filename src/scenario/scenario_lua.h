@@ -116,6 +116,22 @@ typedef enum {
     SCN_PARAM_SQUARE_X,  /* a map square's x */
     SCN_PARAM_SQUARE_Y,  /* a map square's y */
     SCN_PARAM_WORD,      /* one of a fixed set of strings the surface names */
+    SCN_PARAM_TARGET,    /* who a line is addressed to: a seat number, or one
+                            of the words the surface names for a wider
+                            audience. A number or a word and nothing else —
+                            the third form a binding takes, { team = t }, is
+                            a table, and this type does not promise it. A
+                            trigger's argument cannot be a table at all, so
+                            an action addresses a seat or everyone. */
+    SCN_PARAM_COLOUR,    /* the palette's word, or the number behind it.
+                            scnArgColour is the reader: a string goes to the
+                            palette's word set and anything else is read as
+                            the index, so both spellings of red are the same
+                            argument. Left out, it takes the row's own
+                            default, which is why every colour is optional.
+                            SCN_PARAM_WORD is the narrower one beside it —
+                            a word and nothing else, which is what every
+                            other word argument on the surface takes. */
     SCN_PARAM_NUMBER,
     SCN_PARAM_STRING,    /* free text */
     SCN_PARAM_BOOL,

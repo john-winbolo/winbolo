@@ -820,6 +820,108 @@ static void scnCheckTrigCond(const ScenarioManifest *m, const ScnTrigCond *c,
     }
 }
 
+/* Which of the three kinds a literal may be, by the parameter it sits in.
+ * Two types take more than one: a target is a seat number or a word, and a
+ * colour is the palette's word or the number behind it. Both are what their
+ * readers take, so a call written either way is a call the binding accepts
+ * and nothing here may refuse it.
+ *
+ * The words a WORD, a TARGET or a COLOUR names are not held to a set: which
+ * of them an op takes is the op's own and the registry does not carry it,
+ * the way a number's range is the op's own.
+ *
+ * TABLE and FUNCTION cannot arise — scenarioLuaOpIsScalar has already
+ * refused an op that takes one — and NONE ends a row's array rather than
+ * naming a parameter. All three answer every kind, so a type this does not
+ * know holds a literal to nothing rather than to a guess. */
+#define SCN_LIT_NUM  1u
+#define SCN_LIT_STR  2u
+#define SCN_LIT_BOOL 4u
+
+static unsigned scnParamLiterals(ScnLuaParamType type) {
+    switch (type) {
+        case SCN_PARAM_SLOT:
+        case SCN_PARAM_OWNER:
+        case SCN_PARAM_TEAM:
+        case SCN_PARAM_PILL:
+        case SCN_PARAM_BASE:
+        case SCN_PARAM_ITEM:
+        case SCN_PARAM_SQUARE_X:
+        case SCN_PARAM_SQUARE_Y:
+        case SCN_PARAM_NUMBER:
+            return SCN_LIT_NUM;
+
+        case SCN_PARAM_WORD:
+        case SCN_PARAM_STRING:
+        case SCN_PARAM_TAG:
+        case SCN_PARAM_REGION:
+            return SCN_LIT_STR;
+
+        case SCN_PARAM_BOOL:
+            return SCN_LIT_BOOL;
+
+        case SCN_PARAM_TARGET:
+        case SCN_PARAM_COLOUR:
+            return SCN_LIT_NUM | SCN_LIT_STR;
+
+        case SCN_PARAM_NONE:
+        case SCN_PARAM_TABLE:
+        case SCN_PARAM_FUNCTION:
+        default:
+            return SCN_LIT_NUM | SCN_LIT_STR | SCN_LIT_BOOL;
+    }
+}
+
+/* The kind a value holds, and none for a reference, which is read off the
+ * payload as the trigger fires and held to the fields above instead, and for
+ * an argument with nothing in it. */
+static unsigned scnValueLiteral(const ScnTrigValue *v) {
+    switch (v->kind) {
+        case SCN_TRIG_VAL_NUMBER:
+            return SCN_LIT_NUM;
+        case SCN_TRIG_VAL_STRING:
+            return SCN_LIT_STR;
+        case SCN_TRIG_VAL_BOOL:
+            return SCN_LIT_BOOL;
+        case SCN_TRIG_VAL_NONE:
+        case SCN_TRIG_VAL_FIELD:
+        default:
+            return 0u;
+    }
+}
+
+/* One kind in the words an author writes it in. What was written is always
+ * one of the three, so this is the side of the sentence that says what the
+ * argument holds. */
+static const char *scnLiteralWords(unsigned kind) {
+    switch (kind) {
+        case SCN_LIT_NUM:
+            return "a number";
+        case SCN_LIT_STR:
+            return "text";
+        case SCN_LIT_BOOL:
+            return "true or false";
+        default:
+            return "";
+    }
+}
+
+/* And the other side: what the parameter takes. The two that take more than
+ * one kind name both, in the terms their own reader uses rather than as a
+ * list of Lua types — a colour's two spellings are one palette entry, and
+ * saying so is what tells an author the number is allowed on purpose. The
+ * rest hold the one kind the table above gives them. */
+static const char *scnParamWords(ScnLuaParamType type) {
+    switch (type) {
+        case SCN_PARAM_TARGET:
+            return "a seat number or a word";
+        case SCN_PARAM_COLOUR:
+            return "a palette word or a number";
+        default:
+            return scnLiteralWords(scnParamLiterals(type));
+    }
+}
+
 /* The arguments of one action from `from` on, where one names a field rather
  * than stating a value. The router reads a reference as the trigger fires and
  * gives up on the whole action where it cannot — a name the hook has not got,
@@ -836,11 +938,17 @@ static void scnCheckTrigCond(const ScenarioManifest *m, const ScnTrigCond *c,
  * nothing to hold a reference to until the hook is known, and the trigger's
  * own key has already been told that it is not.
  *
- * op is the row the action names, for the one place a reference's own type
- * has to answer to the argument it is written into: every seat on a payload
- * carries the team it is on as a field beside it, and a team written where a
- * seat goes is a small number the op reads as a seat. It is NULL for call,
- * whose function is the script's own and takes whatever the script reads. */
+ * op is the row the action names, and it answers for both of the things an
+ * argument is held to: what kind a literal may be, through the table above,
+ * and what a reference's own type is worth in the argument it was written
+ * into. Every seat on a payload carries the team it is on as a field beside
+ * it, and a team written where a seat goes is a small number the op reads as
+ * a seat. Three parameter types read a bare number that way and all three
+ * refuse it: a seat, an owner, and a target. A target is in the set for the
+ * same reason and not a weaker one — it takes a word as well as a seat, but
+ * a reference resolves to a number and a number in a target is a seat. op is
+ * NULL for call, whose function is the script's own and takes whatever the
+ * script reads. */
 static void scnCheckTrigActArgs(const ScnTrigAct *a,
                                 const ScnTrigFields *fields, const char *when,
                                 const ScnLuaRow *op, const char *key,
@@ -854,11 +962,35 @@ static void scnCheckTrigActArgs(const ScnTrigAct *a,
         const ScnLuaFnField *f;
         char                 slot[SCN_VALIDATE_KEY_LEN];
 
-        if (a->args[i].kind != SCN_TRIG_VAL_FIELD ||
-            a->args[i].text[0] == '\0') {
+        snprintf(slot, sizeof(slot), "%s[%u]", key, (unsigned)i);
+
+        /* A literal, held to the parameter it was written into. An argument
+           past the end of the op's list is one the count check above has
+           already reported, and call's are typed by nothing at all, which is
+           the NULL op. */
+        if (a->args[i].kind != SCN_TRIG_VAL_FIELD) {
+            unsigned takes;
+            unsigned given;
+
+            if (op == NULL || i >= op->paramCount) {
+                continue;
+            }
+            takes = scnParamLiterals(op->params[i].type);
+            given = scnValueLiteral(&a->args[i]);
+            if (given != 0u && (given & takes) == 0u) {
+                scnIssueAdd(out, slot,
+                            "%s takes %s as its '%s' and this is %s, so the "
+                            "action raises when it runs and the triggers "
+                            "after it on %s do not run", a->op,
+                            scnParamWords(op->params[i].type),
+                            op->params[i].name,
+                            scnLiteralWords(given), when);
+            }
             continue;
         }
-        snprintf(slot, sizeof(slot), "%s[%u]", key, (unsigned)i);
+        if (a->args[i].text[0] == '\0') {
+            continue;
+        }
 
         f = scnTrigFieldNamed(fields, a->args[i].text);
         if (f == NULL) {
@@ -871,9 +1003,13 @@ static void scnCheckTrigActArgs(const ScnTrigAct *a,
         } else if (op != NULL && i < op->paramCount &&
                    f->type == SCN_PARAM_TEAM &&
                    (op->params[i].type == SCN_PARAM_SLOT ||
-                    op->params[i].type == SCN_PARAM_OWNER)) {
+                    op->params[i].type == SCN_PARAM_OWNER ||
+                    op->params[i].type == SCN_PARAM_TARGET)) {
+            /* "reads its '%s' as a seat" rather than "takes a seat": a
+               target takes a word too, and it is what the number means
+               there that makes this wrong. */
             scnIssueAdd(out, slot,
-                        "'%s' is a team and %s takes a seat as its '%s', so "
+                        "'%s' is a team and %s reads its '%s' as a seat, so "
                         "this action reaches the seat numbered like that "
                         "team rather than the player meant", a->args[i].text,
                         a->op, op->params[i].name);

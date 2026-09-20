@@ -2873,6 +2873,7 @@ int run_scenario_validate_trigger_call_args(void);
 int run_scenario_validate_trigger_call_no_name(void);
 int run_scenario_validate_trigger_field_team(void);
 int run_scenario_validate_trigger_announce_clear(void);
+int run_scenario_validate_trigger_arg_literal(void);
 int run_scenario_validate_rule_pair_key(void);
 
 /* The binding table (test_scenario_lua.c): every row of the registry

@@ -124,14 +124,24 @@
  *                                          still passes
  * run_scenario_validate_trigger_field_team
  *                                        — a reference to a seat's team
- *                                          written where the op takes a seat,
- *                                          under the argument's own key; a
- *                                          seat, a team into a team and call's
- *                                          own arguments all pass
+ *                                          written into each of the three
+ *                                          parameter types that read a number
+ *                                          as a seat, under the argument's
+ *                                          own key; a seat, a team into a
+ *                                          team and call's own arguments all
+ *                                          pass
  * run_scenario_validate_trigger_announce_clear
  *                                        — announce with no seconds is the
  *                                          clear the binding takes, so nothing
  *                                          is reported against it
+ * run_scenario_validate_trigger_arg_literal
+ *                                        — a literal of a kind its parameter
+ *                                          does not take, under the
+ *                                          argument's own key, for each of
+ *                                          the three a file can state; the
+ *                                          same three written right passing;
+ *                                          and a target taking both a seat
+ *                                          number and a word
  */
 
 #include <stdint.h>
@@ -1354,9 +1364,12 @@ int run_scenario_validate_trigger_caps(void) {
                                      " { \"log\"");
             /* The first action is the one given more arguments than it
                holds. */
+            /* Text, because log takes text: the point here is how many
+               arguments an action holds, and a number in one of them would
+               add a report of its own kind to every action below. */
             for (j = 0; j < ((i == 0) ? SCN_TRIGGER_ARGS_MAX + 1 : 1); j++) {
-                used += (size_t)snprintf(lua + used, (1 << 16) - used, ", %d",
-                                         j);
+                used += (size_t)snprintf(lua + used, (1 << 16) - used,
+                                         ", \"a%d\"", j);
             }
             used += (size_t)snprintf(lua + used, (1 << 16) - used, " },");
         }
@@ -2197,14 +2210,18 @@ int run_scenario_validate_trigger_call_no_name(void) {
    happened. The action runs, so nothing at run time says a word about it.
 
    on_tank_killed carries a seat, an owner and the two teams derived from
-   them; score takes a seat first, set_team takes a seat and then a team and
-   kill_tank takes a seat and then an owner, so one hook holds every arm: a
-   team into a seat, a seat into a seat, a team into a team and a team into
-   an owner.
+   them, so one hook holds every arm. Three parameter types read a bare
+   number as a seat and each has a leg of its own here: score's target is a
+   target, set_team's p is a seat and kill_tank's killer is an owner. One op
+   apiece and not one op for two of them, because a parameter retyped takes
+   its arm's coverage away with it and nothing else would notice.
 
-   call is the last arm, on a second trigger because four actions is all one
-   holds. What its function expects is the script's own and nothing here
-   knows it, so a team among its arguments passes. */
+   The pairs that pass stand beside them: a seat into a seat, and a team
+   into set_team's t, which is a team and is what the derived field is for.
+
+   call is the last arm. What its function expects is the script's own and
+   nothing here knows it, so a team among its arguments passes. It is on a
+   second trigger because four actions is all one holds. */
 int run_scenario_validate_trigger_field_team(void) {
     static const char *const kName = "untitled.scenario.lua";
     static const char *const kLua =
@@ -2220,7 +2237,9 @@ int run_scenario_validate_trigger_field_team(void) {
         "                    { field = \"killer_team\" } } } },\n"
         "    { when = \"on_tank_killed\",\n"
         "      actions = { { \"call\", \"my_fn\",\n"
-        "                    { field = \"victim_team\" } } } },\n"
+        "                    { field = \"victim_team\" } },\n"
+        "                  { \"set_team\", { field = \"victim_team\" },\n"
+        "                    { field = \"killer_team\" } } } },\n"
         "  },\n"
         "}\n";
     ScnValidateResult *r;
@@ -2237,9 +2256,11 @@ int run_scenario_validate_trigger_field_team(void) {
         rc = 1;
     }
     /* The argument's own position, and the sentence says which seat it
-       reaches instead. */
+       reaches instead. A target takes a word as well as a seat, so the
+       sentence is about what the number means there rather than about all a
+       target takes. */
     if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[0][0]",
-                            "takes a seat")) {
+                            "score reads its 'target' as a seat")) {
         rc = 1;
     }
     /* The action itself stands: the op is real and takes the count it was
@@ -2260,13 +2281,26 @@ int run_scenario_validate_trigger_field_team(void) {
         rc = 1;
     }
     /* And an owner, which is a seat by another name. */
-    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[3][1]", "takes a seat")) {
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[3][1]",
+                            "kill_tank reads its 'killer' as a seat")) {
         rc = 1;
     }
     /* call's arguments go to a function of the script's own, so nothing here
        knows what they are for. It is a trigger of its own because four
        actions is the cap and a fifth would be dropped rather than read. */
     if (rc == 0 && !SV_SILENT(r, "triggers[1].actions[0][1]")) {
+        rc = 1;
+    }
+    /* A parameter that is a plain seat, held down by an op of its own: the
+       seat arm's only other leg was score's target, and that is a target
+       now. A retype that takes the seat out of the refusing set fails here
+       rather than passing quietly. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[1].actions[1][0]",
+                            "set_team reads its 'p' as a seat")) {
+        rc = 1;
+    }
+    /* And the team beside it, into the parameter that is a team. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[1].actions[1][1]")) {
         rc = 1;
     }
 
@@ -2319,6 +2353,173 @@ int run_scenario_validate_trigger_announce_clear(void) {
         rc = 1;
     }
     if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[2]")) {
+        rc = 1;
+    }
+
+    free(r);
+    return rc;
+}
+
+/* ── 34. A literal of the wrong kind for its parameter ────────────── */
+
+/* Every argument a registry row carries says what may be put in it, and a
+   literal written into one is held to that. The three kinds a file can state
+   are a number, text and true or false, and getting one wrong is not a
+   trigger that quietly never fires: the binding raises when it reads the
+   argument, which spends one of the scenario's errors and abandons the
+   triggers standing after it on that hook.
+
+   One trigger for the three that are wrong and one for the same three
+   written right, so the case says the check refuses something rather than
+   everything. log takes text, set_boat takes true or false, and score takes
+   a number as its value.
+
+   target is the fourth arm and the reason the others can be written at all:
+   it takes a seat number or one of the words the surface names, so both a
+   number and a word pass under it while true or false does not. Which word
+   is the op's own business and is not held here, the same way a seat number
+   is not held to the seats a round happens to have.
+
+   colour is the other of the two, on a third trigger. scnArgColour reads a
+   string as the palette's word and anything else as the number behind it,
+   so marker takes 7 and "red" for the same entry and the check has to let
+   both through — a validator that refuses a call the binding makes is worse
+   than one that says nothing. True or false is neither and is refused.
+
+   sound's name is the control: a word and nothing else, read by scnArgWord,
+   which raises on a number. It stands beside the colour legs so that the
+   type added for colour cannot quietly let a number into every word. */
+int run_scenario_validate_trigger_arg_literal(void) {
+    static const char *const kName = "untitled.scenario.lua";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_tick\",\n"
+        "      actions = { { \"log\", 5 },\n"
+        "                  { \"set_boat\", 0, 1 },\n"
+        "                  { \"score\", 0, \"ten\" },\n"
+        "                  { \"score\", true, 10 } } },\n"
+        "    { when = \"on_tick\",\n"
+        "      actions = { { \"log\", \"a line\" },\n"
+        "                  { \"set_boat\", 0, true },\n"
+        "                  { \"score\", 0, 10 },\n"
+        "                  { \"score\", \"all\", 10 } } },\n"
+        "    { when = \"on_tick\",\n"
+        "      actions = { { \"marker\", 1, 5, 5, 7 },\n"
+        "                  { \"marker\", 2, 5, 5, \"red\" },\n"
+        "                  { \"marker\", 3, 5, 5, true },\n"
+        "                  { \"sound\", 7 } } },\n"
+        "  },\n"
+        "}\n";
+    ScnValidateResult *r;
+    int                rc = 0;
+
+    r = (ScnValidateResult *)malloc(sizeof(*r));
+    if (r == NULL) {
+        UT_FAIL("out of memory for the result");
+    }
+
+    if (scenarioValidateSource(NULL, kLua, strlen(kLua), kName, NULL, r)) {
+        fprintf(stderr, "FAIL %s:%d: a literal of the wrong kind said "
+                        "nothing\n", __FILE__, __LINE__);
+        rc = 1;
+    }
+    /* The argument's own position, and the sentence names the parameter and
+       both kinds: what the op wanted and what it was written. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[0][0]",
+                            "takes text as its 'text' and this is a "
+                            "number")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[1][1]",
+                            "takes true or false as its 'on' and this is a "
+                            "number")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[2][1]",
+                            "takes a number as its 'value' and this is "
+                            "text")) {
+        rc = 1;
+    }
+    /* A target takes two kinds and true or false is neither, so the sentence
+       names both of the two rather than one. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[3][0]",
+                            "takes a seat number or a word as its 'target' "
+                            "and this is true or false")) {
+        rc = 1;
+    }
+    /* The argument, never the action: the op is real, scalar and given a
+       count it takes, which is what says the refusal is of what was written
+       into one slot. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[0]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[3]")) {
+        rc = 1;
+    }
+    /* And the argument beside the wrong one, which was written right. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[1][0]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[2][0]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[0].actions[3][1]")) {
+        rc = 1;
+    }
+
+    /* The same four ops with the kinds the registry asks for, and the two a
+       target takes. Nothing under any of them. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[1].actions[0][0]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[1].actions[1][1]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[1].actions[2][0]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[1].actions[2][1]")) {
+        rc = 1;
+    }
+    /* The word under a target, which is the arm the type was added for. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[1].actions[3][0]")) {
+        rc = 1;
+    }
+    /* Nothing against the whole of the trigger written right. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[1]")) {
+        rc = 1;
+    }
+
+    /* A colour takes two kinds, and the number is the one the declaration
+       used to leave out. Both spellings of a palette entry pass. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[2].actions[0][3]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[2].actions[1][3]")) {
+        rc = 1;
+    }
+    /* And neither of them is true or false, which the reader takes no
+       account of and would raise on. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[2].actions[2][3]",
+                            "marker takes a palette word or a number as its "
+                            "'colour' and this is true or false")) {
+        rc = 1;
+    }
+    /* The arguments beside it, which were written right. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[2].actions[2][0]")) {
+        rc = 1;
+    }
+    if (rc == 0 && !SV_SILENT(r, "triggers[2].actions[2][2]")) {
+        rc = 1;
+    }
+    /* A parameter that is a word and nothing else still refuses a number,
+       so the type added for colour widened one parameter and not the kind
+       it belongs to. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[2].actions[3][0]",
+                            "sound takes text as its 'name' and this is a "
+                            "number")) {
         rc = 1;
     }
 

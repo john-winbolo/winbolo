@@ -64,8 +64,8 @@ extern "C" {
  * failing case as soon as a row uses the new type. */
 #define ME_SCN_PARAM_LIST(X)                                                 \
     X(NONE) X(SLOT) X(OWNER) X(TEAM) X(PILL) X(BASE) X(ITEM)                 \
-    X(SQUARE_X) X(SQUARE_Y) X(WORD) X(NUMBER) X(STRING) X(BOOL)              \
-    X(TAG) X(REGION) X(TABLE) X(FUNCTION)
+    X(SQUARE_X) X(SQUARE_Y) X(WORD) X(TARGET) X(COLOUR) X(NUMBER) X(STRING)  \
+    X(BOOL) X(TAG) X(REGION) X(TABLE) X(FUNCTION)
 
 typedef enum {
 #define ME_SCN_PARAM_ROW(id) ME_SCN_PARAM_##id,
