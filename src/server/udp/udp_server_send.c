@@ -57,7 +57,8 @@
                               * serverSimGetLastProcessedInput,
                               * serverSimBuildSnapshot */
 #include "channel_mux.h"     /* channelRecvFrame, channelSend, channelTick,
-                              * channelBuildFrame, CHANNEL_MAP */
+                              * channelBuildFrame, CHANNEL_MAP,
+                              * channelChargeBestEffortLeftover */
 #include "bulk_transfer.h"   /* bulkSenderPump */
 #include "../../common/wb_log.h" /* WB_LOG_INFO, WB_LOG_WARN, WB_LOG_CAT_NET */
 
@@ -394,6 +395,17 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
             srvSendTo(cbuf, PACKET_HEADER_SIZE + frameLen, &client->addr);
         }
     }
+
+    /* Every frame this tick has for this client is now built, so whatever is
+     * still pending on a best-effort channel is what the tick could not carry.
+     * Charged here rather than in channelTick because the producers run before
+     * the frames do — transportUdpServerDrainEvents publishes this tick's
+     * effects and serverPumpVoice forwards this tick's voice, both ahead of
+     * the channelTick above — so a charge at the tick boundary would count
+     * everything the tick produced instead of what it lost. This is the only
+     * caller, so the counter describes the running path; the lobby and
+     * map-download carriers do not charge. */
+    channelChargeBestEffortLeftover(&udpServer.channelMux[clientIdx]);
 }
 
 /* Send snapshots and check timeouts */

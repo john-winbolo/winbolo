@@ -1873,6 +1873,17 @@ int run_loopback_quit_keeps_peer(void);
  * transportUdpServerSend has to put every one of them on the wire — the
  * snapshot plus at most SNAPSHOT_EXTRA_CHANNEL_FRAMES standalone frames. */
 int run_send_drains_channels_multi_frame(void);
+/* A burst of best-effort traffic survives the tick it was raised on
+ * (test_best_effort_burst.c): effect events and a voice frame queued on one
+ * tick, with the snapshot trailer already filled by reliable traffic, all reach
+ * a real client within two pumps of that tick, and the server's mux reports no
+ * ring drop and nothing left behind by the budget. */
+int run_best_effort_not_dropped(void);
+/* A quitting player's ownership burst reaches the peer (test_best_effort_burst.c):
+ * client 2 holds every pillbox and base and quits, and client 1 is told the new
+ * owner of every one of them, plus the leave, within two pumps of the tick that
+ * published them. */
+int run_quit_burst_all_delivered(void);
 /* Server lock/unlock notice over CHANNEL_GAME (test_lock_channel.c): the
  * "locked to new players" message now rides the reliable game channel, not the
  * snapshot reliable tail. */

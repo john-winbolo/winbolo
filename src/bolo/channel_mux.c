@@ -154,15 +154,18 @@ void channelMuxInit(ChannelMux *m) {
 }
 
 void channelTick(ChannelMux *m, uint32_t tick, uint32_t rttMs) {
+    if (m == NULL) {
+        return;
+    }
+    m->curTick = tick;
+    m->rttMs = rttMs;
+}
+
+void channelChargeBestEffortLeftover(ChannelMux *m) {
     int ch;
     if (m == NULL) {
         return;
     }
-    /* Anything still pending on a best-effort channel as a tick opens was left
-     * behind by the whole of the previous tick — every frame that tick built
-     * ran out of budget before reaching it. Counted here rather than where the
-     * budget runs out, because a tick builds several frames and a segment the
-     * first one could not carry usually goes out on the next. */
     for (ch = 0; ch < CHANNEL_COUNT; ch++) {
         ChannelState *c = &m->ch[ch];
         if (!c->bestEffort) {
@@ -170,8 +173,6 @@ void channelTick(ChannelMux *m, uint32_t tick, uint32_t rttMs) {
         }
         m->beBudgetSkipped[ch] += (c->nextSeq - c->txNext);
     }
-    m->curTick = tick;
-    m->rttMs = rttMs;
 }
 
 bool channelSend(ChannelMux *m, uint8_t ch, const uint8_t *msg, uint16_t len) {

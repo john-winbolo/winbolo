@@ -915,6 +915,13 @@ uint32_t transportUdpServerTestMapQueueOutstanding(int slot);
  * (e.g. one left unacked across game start). False on a bad slot/event or a
  * full window. */
 bool transportUdpServerTestAddGameEvent(int slot, const GameEvent *ev);
+/* Queue one whole game event on a slot's best-effort effect channel
+ * (CHANNEL_GAME_EFFECT), as the real producer does for an ephemeral event —
+ * lets a test stage the sound/explosion burst a busy tick raises. Returns what
+ * the enqueue reported: false on a bad slot/event or an oversized segment. A
+ * full ring still returns true (the oldest pending segment is dropped to make
+ * room), so read channelGetBestEffortStats for that loss. */
+bool transportUdpServerTestAddEffectEvent(int slot, const GameEvent *ev);
 /* Fabricate a connected slot with a fresh channel mux so a server unit test can
  * drive transportUdpServerOnGameStart over two distinct slots without sockets. */
 void transportUdpServerTestForceConnect(int slot, BYTE playerNum);

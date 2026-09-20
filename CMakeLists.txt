@@ -3924,6 +3924,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # given more reliable game events than one channel frame holds, and every
     # one of them has to leave in that send.
     tests/unit/test_send_multi_frame.c
+    # The same tick from the client's side: a burst of best-effort effect
+    # events and a voice frame have to be applied at a real client, and a
+    # quitting player's ownership burst has to reach the peer.
+    tests/unit/test_best_effort_burst.c
     tests/unit/test_player_mute.c
     tests/unit/test_lock_channel.c
     tests/unit/test_loopback_preview.c
@@ -5145,6 +5149,8 @@ set(_unit_test_names
     loopback_hitch_recovers
     loopback_quit_keeps_peer
     send_drains_channels_multi_frame
+    best_effort_not_dropped
+    quit_burst_all_delivered
     player_mute_mask_roundtrip
     lock_channel
     loopback_map_preview

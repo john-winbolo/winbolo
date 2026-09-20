@@ -206,8 +206,9 @@ typedef struct ChannelMux {
      * the protocol: the ring drops its oldest entry to make room, and a frame
      * that runs out of packet budget leaves the rest behind. A tick builds
      * several frames, so most of the latter goes out later in the same tick;
-     * what is still pending when the next tick opens is what the tick as a
-     * whole could not carry, and channelTick counts that. Voice is framed
+     * what is still pending once the tick's last frame is built is what the
+     * tick as a whole could not carry, and channelChargeBestEffortLeftover
+     * counts that where the sender calls it. Voice is framed
      * after every reliable channel, so a run of busy ticks can starve it for
      * longer than the ring is deep and the two become the same loss. Counted
      * per channel because that is the only way to see it happen. */
@@ -285,11 +286,24 @@ uint32_t channelResetSend(ChannelMux *m, uint8_t ch);
  * expectedSeq is a no-op. */
 void channelResetExpected(ChannelMux *m, uint8_t ch, uint32_t newExpected);
 
-/* Open a tick: advance the retransmit clock and charge each best-effort
- * channel for whatever the previous tick's frames left pending. tick is the
- * current tick; rttMs is the current RTT estimate used to derive the
- * retransmit timeout. Called once per tick, before the tick's frames are
- * built — calling it twice would double-advance the clock. */
+/* Open a tick: advance the retransmit clock. tick is the current tick; rttMs
+ * is the current RTT estimate used to derive the retransmit timeout. Called
+ * once per tick, before the tick's frames are built — calling it twice would
+ * double-advance the clock. */
 void channelTick(ChannelMux *m, uint32_t tick, uint32_t rttMs);
+
+/* Charge each best-effort channel for whatever its frames left behind: add
+ * (nextSeq - txNext) to that channel's beBudgetSkipped.
+ *
+ * Call this after the last frame of a tick, not at the tick boundary. A tick
+ * builds several frames, and a segment the first one had no budget for
+ * usually goes out on one of the rest, so only what is still pending once the
+ * last frame is built was actually lost to the budget. Charging it as a tick
+ * opens would instead charge everything the tick itself produced, because the
+ * producer runs before the frames do.
+ *
+ * Only the running send path calls this, so the counter describes a running
+ * game. The lobby and map-download carriers leave it alone. */
+void channelChargeBestEffortLeftover(ChannelMux *m);
 
 #endif /* CHANNEL_MUX_H */

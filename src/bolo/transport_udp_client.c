@@ -3540,6 +3540,15 @@ static bool udpClientTick(void *ctx) {
                 udpClientSendTo(c, cbuf, PACKET_HEADER_SIZE + frameLen);
             }
         }
+        /* This is the tick's last frame — the input trailer built earlier drains
+         * into the same mux — so whatever is still pending on the voice channel
+         * is what the tick could not carry. That is what
+         * transportUdpClientGetVoiceChannelStats reports, and the charge has to
+         * sit after the last frame rather than at the tick boundary: the
+         * frontend queues a 20 ms frame whenever the encoder produces one, so a
+         * charge at the boundary would count the frames the tick is about to
+         * send. */
+        channelChargeBestEffortLeftover(&c->channelMux);
     }
 
     /* Release any impaired OUTBOUND datagrams now due onto the wire (to their

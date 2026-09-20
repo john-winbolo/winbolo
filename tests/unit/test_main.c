@@ -854,6 +854,8 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_hitch_recovers",                 run_loopback_hitch_recovers                 },
     { "loopback_quit_keeps_peer",                run_loopback_quit_keeps_peer                },
     { "send_drains_channels_multi_frame",        run_send_drains_channels_multi_frame        },
+    { "best_effort_not_dropped",                 run_best_effort_not_dropped                 },
+    { "quit_burst_all_delivered",                run_quit_burst_all_delivered                },
     { "lock_channel",                            run_lock_channel                            },
     { "loopback_map_preview",                    run_loopback_map_preview                    },
     { "loopback_map_upload",                     run_loopback_map_upload                     },

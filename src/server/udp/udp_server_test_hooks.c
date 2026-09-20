@@ -26,7 +26,8 @@
 
 #include "transport_udp_internal.h"        /* eventQueueHasSpace, unpackU16, packGameEvent */
 #include "transport_udp_server_internal.h" /* udpServer and the per-slot types held in it */
-#include "channel_mux.h"                   /* channelSend, channelMuxInit */
+#include "channel_mux.h"                   /* channelSend, channelSendBestEffort,
+                                              channelMuxInit */
 #include "control_event.h"                 /* ControlEvent, CTRL_CHANNEL_RESET */
 #include "transport_control_codec.h"       /* transportControlCodecBodyDecoder */
 #include "bolo_map.h"                      /* mapSetPos */
@@ -247,6 +248,28 @@ bool transportUdpServerTestAddGameEvent(int slot, const GameEvent *ev) {
     if (evLen <= 0) return false;
     return channelSend(&udpServer.channelMux[slot], CHANNEL_GAME, evBuf,
                        (uint16_t)evLen);
+}
+
+/* Test-only: queue one whole game event on a slot's best-effort effect channel
+ * (CHANNEL_GAME_EFFECT), exactly as the real producer does for an ephemeral
+ * event in transportUdpServerDrainEvents — pack the GameEvent and
+ * channelSendBestEffort it. The sibling above stages reliable traffic; this
+ * stages the sounds and explosions a busy tick raises, which is what the
+ * per-tick frame budget used to throw away.
+ *
+ * Returns what the enqueue reported: false for a bad slot, a NULL or
+ * unpackable event, or a segment too large for the channel. A full ring is not
+ * a failure here — channelSendBestEffort drops the oldest pending segment to
+ * make room and still returns true — so a caller measuring loss reads
+ * channelGetBestEffortStats' ring-drop count rather than this return. */
+bool transportUdpServerTestAddEffectEvent(int slot, const GameEvent *ev) {
+    uint8_t evBuf[GAME_EVENT_MAX_WIRE_SIZE];
+    int evLen;
+    if (slot < 0 || slot >= MAX_TANKS || ev == NULL) return false;
+    evLen = packGameEvent(evBuf, ev);
+    if (evLen <= 0) return false;
+    return channelSendBestEffort(&udpServer.channelMux[slot],
+                                 CHANNEL_GAME_EFFECT, evBuf, (uint16_t)evLen);
 }
 
 /* Test-only: fabricate a connected slot with a fresh channel mux, so a server
