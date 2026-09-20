@@ -1487,7 +1487,10 @@ over, and a `where` that is there but is not an array takes its trigger with
 it as the table is read: one kept with tests that could not be read would
 fire every time its hook did. Each gets a line on the console under its own
 position, `triggers[3]`, so a table written by hand says what it lost without
-waiting for `-validate`.
+waiting for `-validate`. Positions count from zero, as the file writes them:
+`triggers[0]` is the first trigger in the table, and `triggers[0].actions[1]`
+is the second action of it. That is one less than the index Lua gives the same
+entry, so `triggers[3]` is the fourth row of your table, not the third.
 
 Triggers run in the order the table writes them, and the actions inside one
 run in the order that trigger writes them. A trigger whose tests do not hold
