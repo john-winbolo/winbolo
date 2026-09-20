@@ -89,9 +89,11 @@
  *                                          and in on a field that is one
  *                                          value
  * run_scenario_validate_trigger_action   — an op the table has not got, one
- *                                          taking a table, both ways an
- *                                          argument count can be wrong, and
- *                                          call held to none of them
+ *                                          taking a table, one that reads
+ *                                          rather than changes anything,
+ *                                          both ways an argument count can
+ *                                          be wrong, and call held to none
+ *                                          of them
  * run_scenario_validate_trigger_unknown_operator
  *                                        — a word that is none of the seven
  *                                          is refused with the seven listed,
@@ -1676,12 +1678,18 @@ int run_scenario_validate_trigger_operator(void) {
 /* ── 26. An action an op could not be made from ───────────────────── */
 
 /* An op the game table has not got, one whose arguments an action cannot
-   state, and the two ways an argument count can be wrong. And call, which is
-   none of those things: it runs a function of the author's own, so what a
+   state, one that takes them and answers a value rather than changing
+   anything, and the two ways an argument count can be wrong. And call, which
+   is none of those things: it runs a function of the author's own, so what a
    catalogue row takes says nothing about it and the script's own text is
    where its target lives. */
 int run_scenario_validate_trigger_action(void) {
     static const char *const kName = "untitled.scenario.lua";
+    /* The third trigger holds the read accessor and an op that acts, beside
+       each other: the first is what the refusal is of, and the second is
+       what says the refusal refuses something rather than everything. A
+       trigger of their own because a trigger holds four actions and the
+       first already has its four. */
     static const char *const kLua =
         "scenario = {\n"
         "  api = 1,\n"
@@ -1694,6 +1702,9 @@ int run_scenario_validate_trigger_action(void) {
         "    { when = \"on_tick\",\n"
         "      actions = { { \"call\", \"never_defined\", 1, 2 },\n"
         "                  { \"call\" } } },\n"
+        "    { when = \"on_tick\",\n"
+        "      actions = { { \"tagged\", \"outer\" },\n"
+        "                  { \"log\", \"fine\" } } },\n"
         "  },\n"
         "}\n";
     ScnValidateResult *r;
@@ -1712,8 +1723,12 @@ int run_scenario_validate_trigger_action(void) {
     if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[0]", "set_score")) {
         rc = 1;
     }
-    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[1]", "table or a "
-                                                         "function")) {
+    /* The op named beside the sentence, so an op refused for one reason
+       cannot pass a check written for the other: panel fails the acting test
+       as well, and only the order the two are written in keeps this message
+       on it. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[0].actions[1]",
+                            "panel takes a table or a function")) {
         rc = 1;
     }
     /* And the way round, which matters: an author told only that panel is
@@ -1737,6 +1752,20 @@ int run_scenario_validate_trigger_action(void) {
         rc = 1;
     }
     if (rc == 0 && !SV_SAYS(r, "triggers[1].actions[1]", "call")) {
+        rc = 1;
+    }
+    /* A read accessor takes flat arguments the way an acting op does, so it
+       reaches the router and runs there, answering a value an action list
+       has nothing to read with. The op is named in what is asserted: three
+       legs matching one loose phrase is how a check went missing here
+       before. */
+    if (rc == 0 && !SV_SAYS(r, "triggers[2].actions[0]",
+                            "tagged reads something and changes nothing")) {
+        rc = 1;
+    }
+    /* And an op that does change something, written right, on the same
+       trigger. */
+    if (rc == 0 && !SV_SILENT(r, "triggers[2].actions[1]")) {
         rc = 1;
     }
 

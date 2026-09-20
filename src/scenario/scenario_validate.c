@@ -1081,6 +1081,22 @@ static void scnCheckTrigAct(const ScnTrigAct *a, const ScnTrigFields *fields,
                     "action", a->op);
         return;
     }
+    /* And the other half of what an action needs, after the half above: a
+       read accessor takes flat arguments, so the scalar test passes it and
+       the router runs it, and the value it answers goes nowhere because an
+       action list has nothing to read one with.
+
+       The scalar test is first because an op taking a table fails both, and
+       "takes a table or a function" is the more particular thing to be told
+       about it. */
+    if (!scenarioLuaOpIsAction(op)) {
+        scnIssueAdd(out, key,
+                    "%s reads something and changes nothing, so this action "
+                    "runs and answers a value nobody is there to read; a "
+                    "script's own Lua reads it through the call action",
+                    a->op);
+        return;
+    }
 
     /* The last argument the op insists on. Read as a position rather than a
        count, so an optional one written before a required one still leaves
