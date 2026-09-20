@@ -995,6 +995,133 @@ bool winbolonetBeginSession(char *mapName, unsigned short port, BYTE gameType, B
 }
 
 /*********************************************************
+*NAME:          winbolonetQueueEndSession
+*PURPOSE:
+* Ends the current WBN session without waiting on it.
+* Queues server/quit for the worker, then clears the
+* per-slot player keys and resets the event queue, as
+* winbolonetEndSession does.
+*
+* What it deliberately does not clear is the bearer and
+* winboloNetServerKey. The queued quit needs the bearer at
+* fire time, the round-log upload queued behind it needs the
+* key, and the server/register queued behind that replaces
+* both when its result is applied. Pairs with
+* winbolonetQueueBeginSession, and the caller puts the
+* upload between the two.
+*********************************************************/
+void winbolonetQueueEndSession(void) {
+  BYTE count;
+  cJSON *body = NULL;
+  char *json_str = NULL;
+
+  if (winboloNetRunning != TRUE) {
+    return;
+  }
+
+  serverSimConsoleMessage("WinBolo.net: Ending session...");
+
+  body = cJSON_CreateObject();
+  cJSON_AddStringToObject(body, "server_key", winboloNetServerKey);
+  json_str = cJSON_PrintUnformatted(body);
+  if (json_str) {
+    winbolonetThreadAddServerRequest("server/quit", json_str);
+    free(json_str);
+  }
+  cJSON_Delete(body);
+
+  for (count = 0; count < MAX_TANKS; count++) {
+    winboloNetPlayerKey[count][0] = '\0';
+  }
+
+  winbolonetEventsDestroy();
+  winbolonetEventsCreate();
+}
+
+/*********************************************************
+*NAME:          winbolonetQueueBeginSession
+*PURPOSE:
+* Queues the next round's server/register as a job whose
+* reply comes back through winbolonetThreadDrainResults with
+* kind WBN_JOB_REGISTER. The caller applies it with
+* winbolonetApplyRegisterResult.
+*
+* Sent without the bearer, as the synchronous register is:
+* the reply is what issues the next one.
+*
+* Returns the job id, or 0 when nothing was queued — in
+* which case no result is coming and the caller owns the
+* tail itself.
+*
+*ARGUMENTS:
+* As winbolonetCreateServer.
+*********************************************************/
+uint32_t winbolonetQueueBeginSession(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers) {
+  cJSON *body = NULL;
+  char *json_str = NULL;
+  uint32_t id = 0;
+
+  if (winboloNetRunning != TRUE) {
+    return 0;
+  }
+
+  body = winbolonetBuildRegisterBody(mapName, port, gameType, ai, mines, password, numBases, numPills, freeBases, freePills, numPlayers);
+  json_str = cJSON_PrintUnformatted(body);
+  if (json_str) {
+    id = winbolonetThreadAddJob("server/register", json_str,
+                                /*needs_bearer*/ FALSE, WBN_JOB_REGISTER);
+    free(json_str);
+  }
+  cJSON_Delete(body);
+
+  return id;
+}
+
+/*********************************************************
+*NAME:          winbolonetApplyRegisterResult
+*PURPOSE:
+* Applies the reply to a queued server/register, installing
+* the new server key and bearer. Same handling as the
+* synchronous winbolonetBeginSession, which is why it runs
+* through the same apply.
+*
+* Returns TRUE when the new session is live. On FALSE the
+* old session is gone and no new one replaced it, so
+* WinBolo.net is switched off and the bearer the old session
+* was issued cleared.
+*
+*ARGUMENTS:
+* status   - HTTP status the worker got, or -1
+* response - Reply body, or NULL
+*********************************************************/
+bool winbolonetApplyRegisterResult(int status, const char *response) {
+  cJSON *resp = NULL;
+  bool ok;
+
+  if (winboloNetRunning != TRUE) {
+    return FALSE;
+  }
+
+  if (response != NULL) {
+    resp = cJSON_Parse(response);
+  }
+  ok = winbolonetApplyRegisterResponse(status, resp,
+                                       "\tWinBolo.net: New session registered",
+                                       "Error: WinBolo.net re-registration failed",
+                                       "Error: WinBolo.net re-registration failed - WBN disabled");
+  cJSON_Delete(resp);
+
+  if (ok != TRUE) {
+    httpClearServerBearerToken();
+    winboloNetRunning = FALSE;
+    return FALSE;
+  }
+
+  winboloNetLastSent = time(NULL);
+  return TRUE;
+}
+
+/*********************************************************
 *NAME:          winbolonetSendLobbyStatus
 *PURPOSE:
 * Notifies WinBolo.net whether this server is currently in

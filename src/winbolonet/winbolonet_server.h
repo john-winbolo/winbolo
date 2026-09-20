@@ -338,6 +338,55 @@ void winbolonetEndSession(void);
 bool winbolonetBeginSession(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers);
 
 /*********************************************************
+*NAME:          winbolonetQueueEndSession
+*PURPOSE:
+* Ends the current WBN session without waiting on it:
+* queues server/quit for the background worker, clears the
+* per-slot player keys and resets the event queue.
+*
+* The bearer and winboloNetServerKey are left in place — the
+* queued quit needs the bearer at fire time, an upload
+* queued behind it needs the key, and the queued
+* server/register replaces both when its result is applied.
+* Callers put the round-log upload between this and
+* winbolonetQueueBeginSession, which is the order WinBolo.net
+* requires; the worker sends them in the order they were
+* queued.
+*********************************************************/
+void winbolonetQueueEndSession(void);
+
+/*********************************************************
+*NAME:          winbolonetQueueBeginSession
+*PURPOSE:
+* Queues the next round's server/register. The reply arrives
+* through winbolonetThreadDrainResults with kind
+* WBN_JOB_REGISTER and is applied with
+* winbolonetApplyRegisterResult.
+*
+* Returns the job id, or 0 when nothing was queued, in which
+* case no result is coming.
+*
+*ARGUMENTS:
+* As winbolonetBeginSession.
+*********************************************************/
+uint32_t winbolonetQueueBeginSession(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers);
+
+/*********************************************************
+*NAME:          winbolonetApplyRegisterResult
+*PURPOSE:
+* Applies the reply to a queued server/register, installing
+* the new server key and bearer. Returns TRUE when the new
+* session is live; on FALSE WinBolo.net has been switched
+* off and the old bearer cleared, exactly as the synchronous
+* winbolonetBeginSession does on a failed register.
+*
+*ARGUMENTS:
+* status   - HTTP status the worker got, or -1
+* response - Reply body, or NULL
+*********************************************************/
+bool winbolonetApplyRegisterResult(int status, const char *response);
+
+/*********************************************************
 *NAME:          winbolonetSendLobbyStatus
 *PURPOSE:
 * Notifies WinBolo.net whether this server is currently in

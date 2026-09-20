@@ -472,6 +472,7 @@ static const UnitTestEntry s_tests[] = {
     { "return_to_lobby_drops_wbn_keeps_identity", run_return_to_lobby_drops_wbn_keeps_identity },
     { "wbn_lobby_update_deferred_during_rotation", run_wbn_lobby_update_deferred_during_rotation },
     { "wbn_lobby_update_sends_when_not_rotating",  run_wbn_lobby_update_sends_when_not_rotating  },
+    { "round_transition_tick_does_not_block",      run_round_transition_tick_does_not_block      },
     { "maprotate_restarts_round_and_rearms",       run_maprotate_restarts_round_and_rearms       },
     { "maprotate_defers_wbn_update_until_key_rotated", run_maprotate_defers_wbn_update_until_key_rotated },
     { "maprotate_gameover_is_not_terminal",        run_maprotate_gameover_is_not_terminal        },

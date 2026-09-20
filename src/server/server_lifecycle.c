@@ -41,6 +41,7 @@
 #include "../common/mp_diag_log.h"
 #include "../common/wb_log.h"
 #include "../winbolonet/winbolonet_server.h"
+#include "../winbolonet/winbolonetthread.h"
 #include "threads.h"
 #include "server_sim_internal.h"
 #include "server_sim_lifecycle.h"
@@ -73,6 +74,51 @@ static void roundLogStash(void) {
 
 static void roundLogFlush(void) {
   if (s_roundLogFlush != NULL) s_roundLogFlush();
+}
+
+/*********************************************************
+*NAME:          serverLifecycleWbnResult
+*PURPOSE:
+* Handles one WinBolo.net job result, on the tick thread,
+* out of winbolonetThreadDrainResults. Only the round
+* transition's server/register has a result today.
+*
+* Everything here is what the tick used to run straight
+* after winbolonetBeginSession returned. It waits for the
+* register because all of it depends on the new session key:
+* the held lobby_update would name the finished round, and
+* the rekey would hand clients a key that is about to be
+* replaced.
+*********************************************************/
+static void serverLifecycleWbnResult(uint32_t id, uint8_t kind, int status,
+                                     const char *response, void *ctx) {
+  ServerSim *sim = (ServerSim *)ctx;
+
+  (void)id;
+  if (kind != WBN_JOB_REGISTER || sim == NULL) {
+    return;
+  }
+
+  if (winbolonetApplyRegisterResult(status, response) == TRUE) {
+    /* New key and bearer are installed. Close the rotation window first:
+     * everything below reads the key through it. */
+    sim->wbnSessionRotating = FALSE;
+    /* The lobby change held dirty while the window was open now names the
+     * right session. */
+    serverSimWbnLobbyTick(sim);
+    /* Push the rotated server_key to every WBN-participating client so they
+     * can mint a fresh player_key and re-auth. */
+    transportUdpServerBroadcastWbnRekey(sim);
+    /* The new session knows nothing about the lock the old one was told
+     * about. An idempotent state push, and it carries no player key. */
+    winboloNetSendLock(transportUdpServerGetLock());
+  } else {
+    /* The register failed, so winbolonetApplyRegisterResult has switched
+     * WinBolo.net off and cleared the bearer. Close the window anyway — a
+     * server stuck rotating holds every later lobby change dirty forever,
+     * which is worse than one with WBN off. */
+    sim->wbnSessionRotating = FALSE;
+  }
 }
 
 static char  instanceTrackerAddr[FILENAME_MAX] = "";
@@ -424,8 +470,10 @@ static void serverLifecycleRotateRound(ServerSim *sim) {
    * key, flush the upload, then register the next round's session — which
    * overwrites winboloNetServerKey with the freshly-picked map's key. Same
    * sandwich as the gameOver->lobby and empty-reset sites. Done after
-   * serverSimMapRotateRound so BeginSession reports the new map / base / pill
-   * counts, not the round that just ended. */
+   * serverSimMapRotateRound so the register reports the new map / base / pill
+   * counts, not the round that just ended. All three are queued, not sent
+   * here — see the gameOver->lobby site for what that means for the rotation
+   * window. */
   if (winbolonetIsRunning()) {
     /* Flush any WBN events still queued from the finished round (win
      * crediting, final kills) against the live key before tearing the
@@ -435,29 +483,29 @@ static void serverLifecycleRotateRound(ServerSim *sim) {
     winbolonetServerUpdate(serverSimGetNumPlayers(sim),
                            serverSimGetNumNeutralBases(sim),
                            serverSimGetNumNeutralPills(sim), TRUE);
-    winbolonetEndSession();
+    winbolonetQueueEndSession();
   }
   roundLogFlush();
-  if (winbolonetIsRunning()) {
-    serverSimRefreshWbnLobbyInfo(sim);
-    winbolonetBeginSession(
-      sim->mapName, sim->serverPort,
-      (BYTE)gameTypeGet(&sim->sim.game),
-      (BYTE)sim->botAiType,
-      (BYTE)sim->sim.hiddenMines,
-      sim->hasPassword,
-      basesGetNumActive(&sim->sim.bs),
-      pillsGetNumActive(&sim->sim.pb),
-      serverSimGetNumNeutralBases(sim),
-      serverSimGetNumNeutralPills(sim),
-      serverSimGetNumPlayers(sim));
-    /* Clients were just booted, so this is a no-op here; kept for symmetry
-     * with the other rotation sites (gated inside on connected clients). */
-    transportUdpServerBroadcastWbnRekey(sim);
+  {
+    uint32_t registerJob = 0;
+    if (winbolonetIsRunning()) {
+      serverSimRefreshWbnLobbyInfo(sim);
+      registerJob = winbolonetQueueBeginSession(
+        sim->mapName, sim->serverPort,
+        (BYTE)gameTypeGet(&sim->sim.game),
+        (BYTE)sim->botAiType,
+        (BYTE)sim->sim.hiddenMines,
+        sim->hasPassword,
+        basesGetNumActive(&sim->sim.bs),
+        pillsGetNumActive(&sim->sim.pb),
+        serverSimGetNumNeutralBases(sim),
+        serverSimGetNumNeutralPills(sim),
+        serverSimGetNumPlayers(sim));
+    }
+    if (registerJob == 0) {
+      sim->wbnSessionRotating = FALSE;
+    }
   }
-  /* New key installed (or WBN off) — close the rotation window so any deferred
-   * lobby_update flushes against the right session on the next WBN tick. */
-  sim->wbnSessionRotating = FALSE;
 
   /* Start the next round's log and push the fresh map to any in-process
    * subscriber (SP host loopback, replay-log writer). serverSimMapRotateRound
@@ -613,6 +661,11 @@ void serverInstanceTick(ServerSim *sim) {
    * queue overflow). Done here, after recv processing and outside any
    * publish, so serverSimRemovePlayer can safely fan its events out. */
   transportUdpServerDrainPendingRemovals(sim);
+
+  /* Hand back whatever the WinBolo.net worker finished since the last tick.
+   * Alongside the removal drain above for the same reason: deferred work
+   * that has to run on this thread, before the sim does. */
+  winbolonetThreadDrainResults(serverLifecycleWbnResult, sim);
 
   if (sim->state == serverStateRunning) {
     /* First running tick of this game → open a fresh recording session
@@ -816,40 +869,43 @@ void serverInstanceTick(ServerSim *sim) {
       }
       /* End the round's WBN session, upload the round log against the
        * just-quit key (WBN rejects uploads to an active session), then
-       * register a fresh session for the next round. The upload has to
-       * sit between End and Begin — End sends server/quit so WBN will
-       * accept the upload, Begin overwrites winboloNetServerKey with
-       * the new round's key. handleGameOver already stashed the
-       * round's filename when the GAME_OVER phase fired; Flush is a
-       * no-op when there's nothing pending or when WBN is offline. */
+       * register a fresh session for the next round. handleGameOver already
+       * stashed the round's filename when the GAME_OVER phase fired; the
+       * flush is a no-op when there's nothing pending or when WBN is offline.
+       *
+       * All three are queued for the worker rather than sent here. It sends
+       * them in the order they were queued, which is the order WinBolo.net
+       * needs — quit before the upload, upload before the key swap — and
+       * none of the three costs this tick anything.
+       *
+       * The rotation window stays open. serverLifecycleWbnResult closes it
+       * when the register result lands, and does the rekey broadcast and the
+       * lock re-send there too. With no register queued there is no result
+       * coming, so the window closes here instead. */
       if (winbolonetIsRunning()) {
-        winbolonetEndSession();
+        winbolonetQueueEndSession();
       }
       roundLogFlush();
-      if (winbolonetIsRunning()) {
-        serverSimRefreshWbnLobbyInfo(sim);
-        winbolonetBeginSession(
-          sim->mapName, sim->serverPort,
-          (BYTE)gameTypeGet(&sim->sim.game),
-          (BYTE)sim->botAiType,
-          (BYTE)sim->sim.hiddenMines,
-          sim->hasPassword,
-          basesGetNumActive(&sim->sim.bs),
-          pillsGetNumActive(&sim->sim.pb),
-          serverSimGetNumNeutralBases(sim),
-          serverSimGetNumNeutralPills(sim),
-          serverSimGetNumPlayers(sim));
-        /* Push the freshly rotated server_key to every WBN-participating
-         * client so they can mint a new player_key and re-auth.  Gated
-         * inside; no-op when WBN isn't running. */
-        transportUdpServerBroadcastWbnRekey(sim);
+      {
+        uint32_t registerJob = 0;
+        if (winbolonetIsRunning()) {
+          serverSimRefreshWbnLobbyInfo(sim);
+          registerJob = winbolonetQueueBeginSession(
+            sim->mapName, sim->serverPort,
+            (BYTE)gameTypeGet(&sim->sim.game),
+            (BYTE)sim->botAiType,
+            (BYTE)sim->sim.hiddenMines,
+            sim->hasPassword,
+            basesGetNumActive(&sim->sim.bs),
+            pillsGetNumActive(&sim->sim.pb),
+            serverSimGetNumNeutralBases(sim),
+            serverSimGetNumNeutralPills(sim),
+            serverSimGetNumPlayers(sim));
+        }
+        if (registerJob == 0) {
+          sim->wbnSessionRotating = FALSE;
+        }
       }
-      /* Close the rotation window: the new session's server_key is now
-       * installed, so the deferred lobby_update (held dirty by
-       * serverSimReturnToLobby's map pick) flushes against the right
-       * key on the next WBN tick. Cleared unconditionally so a WBN-off
-       * run doesn't leave the flag stuck. */
-      sim->wbnSessionRotating = FALSE;
       /* Republish the bot brain catalogue.  Mid-game joiners were gated
        * out of the BrainList during their sync replay (see
        * serverSimSyncSubscriber), so they need it now before the lobby
@@ -984,27 +1040,31 @@ void serverInstanceTick(ServerSim *sim) {
     /* End the WBN session, upload the round's log against the just-
      * quit key, then begin a new session for the next round. Same
      * sandwich as the game-over → lobby site (see comment there). */
+    /* Same queued rotation as the game-over → lobby site (see the comment
+     * there). */
     if (winbolonetIsRunning()) {
-      winbolonetEndSession();
+      winbolonetQueueEndSession();
     }
     roundLogFlush();
-    if (winbolonetIsRunning()) {
-      winbolonetBeginSession(
-        sim->mapName, sim->serverPort,
-        (BYTE)gameTypeGet(&sim->sim.game),
-        (BYTE)sim->botAiType,
-        (BYTE)sim->sim.hiddenMines,
-        sim->hasPassword,
-        basesGetNumActive(&sim->sim.bs),
-        pillsGetNumActive(&sim->sim.pb),
-        serverSimGetNumNeutralBases(sim),
-        serverSimGetNumNeutralPills(sim),
-        serverSimGetNumPlayers(sim));
-      /* Same rotation push as the game-over → lobby site. */
-      transportUdpServerBroadcastWbnRekey(sim);
+    {
+      uint32_t registerJob = 0;
+      if (winbolonetIsRunning()) {
+        registerJob = winbolonetQueueBeginSession(
+          sim->mapName, sim->serverPort,
+          (BYTE)gameTypeGet(&sim->sim.game),
+          (BYTE)sim->botAiType,
+          (BYTE)sim->sim.hiddenMines,
+          sim->hasPassword,
+          basesGetNumActive(&sim->sim.bs),
+          pillsGetNumActive(&sim->sim.pb),
+          serverSimGetNumNeutralBases(sim),
+          serverSimGetNumNeutralPills(sim),
+          serverSimGetNumPlayers(sim));
+      }
+      if (registerJob == 0) {
+        sim->wbnSessionRotating = FALSE;
+      }
     }
-    /* Close the rotation window — new key installed (or WBN off). */
-    sim->wbnSessionRotating = FALSE;
     /* Empty-reset bypasses serverSimReturnToLobby, so the lobby phase
      * event is never published from the state machine. Publish it
      * explicitly so handleLobbyEnter fires and starts a fresh log for

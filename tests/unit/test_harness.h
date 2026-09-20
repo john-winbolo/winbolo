@@ -762,6 +762,12 @@ int run_maprotate_gameover_is_not_terminal(void);
 int run_maprotate_boot_does_not_rotate_while_empty(void);
 int run_maprotate_vote_return_is_not_terminal(void);
 
+/* Round transition off the tick thread (test_round_transition_tick.c). The
+ * boundary queues server/quit, the round-log upload and server/register for
+ * the WinBolo.net worker and returns; the rekey and the rotation window wait
+ * for the register's reply. */
+int run_round_transition_tick_does_not_block(void);
+
 /* Deferred WBN PLAYER_JOIN core (test_wbn_deferred_join.c). The join
  * event is held until the slot's identity is known for the session —
  * keyed on reauth, anonymous on grace expiry — and re-fires per round.

@@ -17,6 +17,7 @@
 #include "server_sim.h"
 #include "../../src/winbolonet/winbolonet_server.h"
 #include "../../src/winbolonet/winbolonet_core.h"  /* WINBOLO_NET_EVENT_* */
+#include "../../src/winbolonet/winbolonetthread.h" /* WbnResultHandler, WBN_JOB_REGISTER */
 #include "luabrainshandler.h"
 #include "lang_message.h"
 #include "nat_portmap.h"
@@ -483,7 +484,17 @@ void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE player
     wbnStubLastLgmKilled = playerB;
   }
 }
-void winboloNetGetServerKey(char *keyBuff) { if (keyBuff) keyBuff[0] = '\0'; }
+/* The session key the server is holding. Empty unless a test sets one, which
+ * keeps every case that never looks at it reading exactly as it did. The
+ * round-transition case needs a non-empty one: transportUdpServerSendWbnRekey
+ * drops the broadcast when the server has no key. */
+char wbnStubServerKey[WINBOLONET_KEY_LEN] = "";
+
+void winboloNetGetServerKey(char *keyBuff) {
+  if (keyBuff) {
+    SDL_strlcpy(keyBuff, wbnStubServerKey, WINBOLONET_KEY_LEN);
+  }
+}
 void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, BYTE freePills) {
   (void)playerNum; (void)numPlayers; (void)freeBases; (void)freePills;
 }
@@ -570,6 +581,68 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
 }
 
 void winbolonetEndSession(void) { }
+
+/* ── Round-transition queue spy (test_round_transition_tick.c) ──────────
+ * The lifecycle queues server/quit, the round-log upload and
+ * server/register for the WinBolo.net worker instead of posting them, and
+ * picks the register's reply up later through winbolonetThreadDrainResults.
+ * These record what was queued and in what order, and hold the reply until
+ * a test releases it. */
+#define WBN_STUB_MAX_JOBS 8
+int      wbnStubJobCount = 0;
+char     wbnStubJobs[WBN_STUB_MAX_JOBS][16];
+uint32_t wbnStubRegisterJobId = 0;
+bool     wbnStubRegisterResultReady = FALSE;
+int      wbnStubRegisterResultStatus = 200;
+int      wbnStubApplyRegisterCalls = 0;
+bool     wbnStubApplyRegisterOk = TRUE;
+
+static uint32_t wbnStubNextJobId = 1;
+
+static uint32_t wbnStubRecordJob(const char *what) {
+  if (wbnStubJobCount >= 0 && wbnStubJobCount < WBN_STUB_MAX_JOBS) {
+    SDL_strlcpy(wbnStubJobs[wbnStubJobCount], what,
+                sizeof(wbnStubJobs[wbnStubJobCount]));
+  }
+  wbnStubJobCount++;
+  return wbnStubNextJobId++;
+}
+
+void winbolonetQueueEndSession(void) {
+  wbnStubRecordJob("quit");
+}
+
+uint32_t winbolonetQueueBeginSession(char *mapName, unsigned short port,
+                                     BYTE gameType, BYTE ai, bool mines,
+                                     bool password, BYTE numBases,
+                                     BYTE numPills, BYTE freeBases,
+                                     BYTE freePills, BYTE numPlayers) {
+  (void)mapName; (void)port; (void)gameType; (void)ai; (void)mines;
+  (void)password; (void)numBases; (void)numPills; (void)freeBases;
+  (void)freePills; (void)numPlayers;
+  wbnStubRegisterJobId = wbnStubRecordJob("register");
+  return wbnStubRegisterJobId;
+}
+
+bool winbolonetApplyRegisterResult(int status, const char *response) {
+  (void)status; (void)response;
+  wbnStubApplyRegisterCalls++;
+  return wbnStubApplyRegisterOk;
+}
+
+uint32_t winbolonetThreadAddUpload(const char *fileName, const char *key) {
+  (void)fileName; (void)key;
+  return wbnStubRecordJob("upload");
+}
+
+void winbolonetThreadDrainResults(WbnResultHandler handler, void *ctx) {
+  if (handler == NULL || wbnStubRegisterResultReady != TRUE) {
+    return;
+  }
+  wbnStubRegisterResultReady = FALSE;
+  handler(wbnStubRegisterJobId, WBN_JOB_REGISTER, wbnStubRegisterResultStatus,
+          "{}", ctx);
+}
 
 bool winbolonetBeginSession(char *mapName, unsigned short port, BYTE gameType, BYTE ai,
                             bool mines, bool password, BYTE numBases, BYTE numPills,

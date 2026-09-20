@@ -64,6 +64,12 @@
    caller's, and the thread never looks at one. */
 #define WBN_JOB_UPLOAD 1
 
+/* The round transition's server/register. The thread does not act on this
+   one — it posts it like any other JSON job and keeps the reply — but the
+   number lives here with the rest so two callers cannot pick the same
+   one. */
+#define WBN_JOB_REGISTER 2
+
 /* Results held for a caller that has not drained them yet. A drain runs on
    the thread that queued the work, so the normal depth is one; the cap is
    what stops the list growing for the life of the server if a kind is ever
