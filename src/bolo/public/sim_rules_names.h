@@ -367,8 +367,10 @@ typedef struct {
     int    cappedBy;
 } SimRuleRange;
 
-/* Fills out with the rule's range. False for an index that names no rule,
- * or a NULL out; out is left neutral (0, 0, false, -1) in both cases. */
+/* Fills out with the rule's range. False either way it can fail, and the two
+ * leave different things behind: an index that names no rule leaves out
+ * neutral (0, 0, false, -1), and a NULL out is answered before anything is
+ * written, so nothing is left anywhere. */
 bool simRulesRuleRange(int rule, SimRuleRange *out);
 
 /* What a value does to a rule, against that rule's classic default: the same

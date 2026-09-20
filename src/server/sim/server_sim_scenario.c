@@ -3458,7 +3458,15 @@ ScnOpResult serverSimCheckScenarioRules(const ServerSim *sim,
 
 /* The same check with no round behind it. The classic table is what a rule's
  * bounds are stated against in the first place, so a value outside its row is
- * outside it whether or not a game is running. */
+ * outside it whether or not a game is running.
+ *
+ * Where the two differ is the pairs. serverSimCheckScenarioRules above writes
+ * the set into the running table and asks there, so a pair is judged against
+ * whatever the lobby has already moved its other half to; this writes the set
+ * into the classic table and asks there instead. A table the editor passes
+ * can therefore be refused by one and taken by the other, in either
+ * direction. The editor has no sim to ask, and classic is the only base it
+ * can honestly name, so this is the base it uses. */
 ScnOpResult scenarioCheckRulesFromClassic(const uint16_t *rules,
                                           const double *values,
                                           uint16_t count,

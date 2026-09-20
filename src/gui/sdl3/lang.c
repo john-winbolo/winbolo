@@ -2400,7 +2400,7 @@ static const LangEntry langTable[] = {
     {2447, "A builder was killed; the square is where he died, before the respawn moves him."},
     {2448, "A builder finished his flight back and landed on a square."},
     {2449, "A base changed hands."},
-    {2450, "A base stopped belonging to anyone: its owner left with no ally to take it, or a script cleared it."},
+    {2450, "A base stopped belonging to anyone; only a script clearing it raises this, since an owner leaving hands the base on."},
     {2451, "Every change of a pillbox's owner, nobody taking it included."},
     {2452, "A carried pillbox reached the map, by a builder finishing it or by a corpse dropping it."},
     {2453, "A pillbox was taken off the map into a tank."},

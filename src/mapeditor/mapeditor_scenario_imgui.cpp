@@ -50,6 +50,9 @@
 #include <WinSock2.h>
 #endif
 
+#include <SDL3/SDL.h>  /* SDL_snprintf — a number written into UI text reads
+                        * the same whatever locale the process is in */
+
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -250,8 +253,8 @@ static void meScnIssuesList(TextEditor *editor, const MEScenarioCheck *chk,
             const ScnValidateIssue *iss = &chk->result.issues[i];
 
             if (iss->line > 0) {
-                snprintf(row, sizeof(row), "%d  %s  %s", iss->line, iss->key,
-                         iss->message);
+                SDL_snprintf(row, sizeof(row), "%d  %s  %s", iss->line,
+                             iss->key, iss->message);
             } else {
                 snprintf(row, sizeof(row), "-  %s  %s", iss->key,
                          iss->message);
@@ -327,8 +330,12 @@ static void meScnCallsPopup(TextEditor *editor, MEScenarioState *st,
             ImGui::PushID((int)i);
             if (ImGui::Selectable(name)) {
                 editor->InsertTextAtCursor(name);
-                /* The insert adds no undo record, so the watch on the undo
-                   index in the body below will not see it. The text is read
+                /* InsertTextAtCursor writes no undo record, because the
+                   vendored widget keeps AddUndo private and nothing outside
+                   it can add one. So the name cannot be taken back as a unit
+                   — an undo from here steps through whatever the widget
+                   recorded before it — and the watch on the undo index in the
+                   body below does not see the insert either. The text is read
                    back here instead; without this the buffer keeps what it
                    held before the insert and a save writes that. */
                 const std::string text = editor->GetText();
@@ -391,10 +398,14 @@ static void meScnAskGoTo(int line, int *view) {
  * than split around it. A blank line follows it, and the cursor is left at
  * the end of the function line, which is where the body gets typed.
  *
- * InsertTextAtCursor adds no undo record, so the watch on the undo index in
- * the body below will not see it. The text is read back here for the same
- * reason the completion popup reads it back: without that the buffer keeps
- * what it held before the insert and a save writes that. */
+ * InsertTextAtCursor writes no undo record, because the vendored widget keeps
+ * AddUndo private and nothing outside it can add one. So the stub cannot be
+ * taken back as a unit — an undo from here steps through whatever the widget
+ * recorded before it — and the watch on the undo index in the body below does
+ * not see the insert either. The text is read back here for the same reason
+ * the completion popup reads it back: without that the buffer keeps what it
+ * held before the insert and a save writes that. Both inserts are the same
+ * shape, and it is the widget's rather than this file's. */
 static void meScnApplyPending(TextEditor *editor, MEScenarioState *st,
                               MEScenarioCheck *chk) {
     if (s_pendingStub[0] != '\0') {
@@ -986,9 +997,9 @@ static void meScnRulesBody(MEScenarioForm *f, const MEScenarioCheck *chk) {
          * beside it does to the rule. Both are read again every frame, so
          * the words follow the box as the author types. */
         ImGui::SameLine();
-        snprintf(classic, sizeof(classic), "%s %g",
-                 langGetText(STR_MAPEDIT_SCENARIO_CLASSIC),
-                 simRulesClassicValue(rule));
+        SDL_snprintf(classic, sizeof(classic), "%s %g",
+                     langGetText(STR_MAPEDIT_SCENARIO_CLASSIC),
+                     simRulesClassicValue(rule));
         meScnHint(classic);
 
         ImGui::SameLine();
@@ -1117,10 +1128,10 @@ static void meScnRulesBody(MEScenarioForm *f, const MEScenarioCheck *chk) {
     ImGui::TextWrapped("%s", simRulesRuleDescription(s_selected));
 
     simRulesRangePhrase(s_selected, range, sizeof(range));
-    snprintf(detail, sizeof(detail), "%s %g   %s %s",
-             langGetText(STR_MAPEDIT_SCENARIO_CLASSIC),
-             simRulesClassicValue(s_selected),
-             langGetText(STR_MAPEDIT_SCENARIO_RANGE), range);
+    SDL_snprintf(detail, sizeof(detail), "%s %g   %s %s",
+                 langGetText(STR_MAPEDIT_SCENARIO_CLASSIC),
+                 simRulesClassicValue(s_selected),
+                 langGetText(STR_MAPEDIT_SCENARIO_RANGE), range);
     meScnHint(detail);
 
     if (addSelected) {
@@ -1865,18 +1876,18 @@ static bool meScnTeamPicker(const MEScenarioForm *f, const char *label,
         return meScnCondNumber(label, v);
     }
 
-    snprintf(shown, sizeof(shown), "%d", (int)v->num);
+    SDL_snprintf(shown, sizeof(shown), "%d", (int)v->num);
     ImGui::SetNextItemWidth(kCondValueWidth);
     if (!ImGui::BeginCombo(label, shown)) {
         return false;
     }
     for (i = 0; i < (int)lobby->numTeams; i++) {
         const int id = (int)lobby->teams[i].id;
-        char      label[16];
+        char      idText[16];
 
-        snprintf(label, sizeof(label), "%d", id);
+        SDL_snprintf(idText, sizeof(idText), "%d", id);
         ImGui::PushID(i);
-        if (ImGui::Selectable(label, (int)v->num == id)) {
+        if (ImGui::Selectable(idText, (int)v->num == id)) {
             meScnCondSetNum(v, SCN_TRIG_VAL_NUMBER, (double)id);
             changed = true;
         }
@@ -1933,7 +1944,7 @@ static bool meScnEntityPicker(const MEScenarioMapInfo *info,
     } else {
         /* A number the map has no entity for: the number itself, so the author
            can see what the row is holding. */
-        snprintf(preview, sizeof(preview), "%d", (int)v->num);
+        SDL_snprintf(preview, sizeof(preview), "%d", (int)v->num);
     }
 
     ImGui::SetNextItemWidth(kCondValueWidth);

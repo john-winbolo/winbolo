@@ -42,6 +42,9 @@
  * run_scenario_hooks_trigger_runs_after_author
  *      — the author's own function first, then the hook's triggers in the
  *        order the table wrote them; a hook no trigger names is untouched
+ * run_scenario_hooks_trigger_table_form_handler
+ *      — the same chaining on to a handler kept as a field of the scenario
+ *        table rather than as a global of its own
  * run_scenario_hooks_trigger_stopped_by_false
  *      — an explicit false from the author's hook stops the triggers;
  *        returning nothing does not
@@ -64,6 +67,12 @@
  *      — ne on a set is absence; eq on one never holds
  * run_scenario_hooks_trigger_region_holds_square
  *      — the region a hook's square pair falls inside, and one outside it
+ * run_scenario_hooks_trigger_unknown_operator
+ *      — a row asking with a word the table cannot place holds on nothing,
+ *        on the slot it names and on any other
+ * run_scenario_hooks_trigger_on_policy_skipped
+ *      — a trigger naming a policy is dropped rather than chained on to,
+ *        before a round and inside one; the policy stays the author's
  */
 
 #include <stdint.h>
@@ -1042,6 +1051,15 @@ int run_scenario_hooks_error_counts_and_disables(void) {
 #define WB_SCENARIO_SRC_DIR "src/scenario"
 #endif
 
+static const char *shkSrcDir(void) {
+    const char *dir = getenv("WB_SCENARIO_SRC_DIR");
+
+    if (dir == NULL || dir[0] == '\0') {
+        dir = WB_SCENARIO_SRC_DIR;
+    }
+    return dir;
+}
+
 /* One player joining, which is on_player_join(p) and the shortest payload a
  * where-row can test. */
 static void shkPublishJoin(ServerSim *sim, BYTE slot) {
@@ -1333,33 +1351,34 @@ int run_scenario_hooks_trigger_call_reaches_script(void) {
  * together. This does: a .lua edited without re-running the generator fails
  * here rather than shipping a binary that runs the previous router. */
 int run_scenario_hooks_router_matches_source(void) {
-    static const char *const kPath =
-        WB_SCENARIO_SRC_DIR "/scenario_triggers.lua";
+    char           path[512];
     unsigned char *src;
     long           size;
     size_t         got;
     FILE          *f;
 
-    f = fopen(kPath, "rb");
-    UT_ASSERT_MSG(f != NULL, "could not open %s", kPath);
+    snprintf(path, sizeof(path), "%s/scenario_triggers.lua", shkSrcDir());
+
+    f = fopen(path, "rb");
+    UT_ASSERT_MSG(f != NULL, "could not open %s", path);
 
     if (fseek(f, 0, SEEK_END) != 0 || (size = ftell(f)) <= 0 ||
         fseek(f, 0, SEEK_SET) != 0) {
         fclose(f);
-        UT_ASSERT_MSG(0, "could not measure %s", kPath);
+        UT_ASSERT_MSG(0, "could not measure %s", path);
     }
 
     src = (unsigned char *)malloc((size_t)size);
     if (src == NULL) {
         fclose(f);
-        UT_ASSERT_MSG(0, "no memory for %d bytes of %s", (int)size, kPath);
+        UT_ASSERT_MSG(0, "no memory for %d bytes of %s", (int)size, path);
     }
     got = fread(src, 1, (size_t)size, f);
     fclose(f);
     if (got != (size_t)size) {
         free(src);
         UT_ASSERT_MSG(0, "read %d of %d bytes from %s",
-                      (int)got, (int)size, kPath);
+                      (int)got, (int)size, path);
     }
 
     if ((size_t)size != SCN_TRIGGERS_LUA_LEN) {
@@ -1367,14 +1386,14 @@ int run_scenario_hooks_router_matches_source(void) {
         UT_ASSERT_MSG(0,
                       "the embedded router is %d bytes and %s is %d; re-run "
                       "tools/embed_lua.py and commit both files",
-                      (int)SCN_TRIGGERS_LUA_LEN, kPath, (int)size);
+                      (int)SCN_TRIGGERS_LUA_LEN, path, (int)size);
     }
     if (memcmp(src, kScnTriggersLua, (size_t)size) != 0) {
         free(src);
         UT_ASSERT_MSG(0,
                       "the embedded router is %d bytes of something other "
                       "than %s; re-run tools/embed_lua.py and commit both "
-                      "files", (int)SCN_TRIGGERS_LUA_LEN, kPath);
+                      "files", (int)SCN_TRIGGERS_LUA_LEN, path);
     }
     free(src);
     return 0;
