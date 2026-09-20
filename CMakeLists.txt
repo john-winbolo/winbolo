@@ -3868,6 +3868,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_map_colours.c
     tests/unit/test_stall_lockout_rebase.c
     tests/unit/test_input_catchup.c
+    tests/unit/test_input_tick_offset.c
     tests/unit/test_build_harvest_stale.c
     tests/unit/test_lgm_request_valid.c
     tests/unit/test_lgm_quit_pill.c
@@ -5070,6 +5071,7 @@ set(_unit_test_names
     stall_lockout_rebase_once_per_tick
     input_catchup
     catchup_ignores_redundant_duplicates
+    input_tick_offset_adopts_jump
     build_harvest_stale
     build_harvest_valid
     build_harvest_busy_queues

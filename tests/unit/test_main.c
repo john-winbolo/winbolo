@@ -798,6 +798,7 @@ static const UnitTestEntry s_tests[] = {
     { "stall_lockout_rebase_once_per_tick",      run_stall_lockout_rebase_once_per_tick      },
     { "input_catchup",                           run_input_catchup                           },
     { "catchup_ignores_redundant_duplicates",    run_catchup_ignores_redundant_duplicates    },
+    { "input_tick_offset_adopts_jump",           run_input_tick_offset_adopts_jump           },
     { "build_harvest_stale",                     run_build_harvest_stale                     },
     { "build_harvest_valid",                     run_build_harvest_valid                     },
     { "build_harvest_busy_queues",               run_build_harvest_busy_queues               },

@@ -176,6 +176,21 @@ struct ClientSim {
      * path anchors forward-projection to it rather than the display ping. */
     uint16_t    projectionPingMs;
 
+    /* Forward offset added to every input tick this client produces. A
+     * producer whose counter has fallen behind the server's consumption
+     * adopts the jump once and keeps it, so it catches up in one round trip
+     * rather than one snapshot. Only ever grows. */
+    uint32_t    inputTickOffset;
+/* Half-steps of headroom past the server's last-processed tick when the
+ * offset is set, so the jump lands ahead of where the server will be when
+ * the packet arrives rather than exactly on it. */
+#define CLIENT_INPUT_JUMP_MARGIN_HALFSTEPS 4
+/* Cap on the round-trip contribution to the jump. CLIENT_INPUT_HISTORY_SIZE
+ * is 256, so an uncapped ping would let one jump approach the ring's length
+ * and the replay would skip almost everything in it. 64 half-steps is 640ms,
+ * past any playable ping and far short of the ring. */
+#define CLIENT_INPUT_JUMP_MAX_RTT_HALFSTEPS 64
+
     /* Per-slot conditioning for the ping the player rows render — smoothing,
      * repaint deadband and colour-band hysteresis over the raw RTT each
      * snapshot carries. Display only; projectionPingMs above is what the

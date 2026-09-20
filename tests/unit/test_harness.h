@@ -1709,6 +1709,13 @@ int run_stall_lockout_rebase_once_per_tick(void);
 int run_input_catchup(void);
 int run_catchup_ignores_redundant_duplicates(void);
 
+/* Forward input-tick offset (test_input_tick_offset.c): a producer whose
+ * counter has fallen behind the server's consumption jumps past
+ * lastProcessedInput by the round trip plus a margin, keeps that jump as a
+ * per-ClientSim offset every later packet carries, leaves a caught-up
+ * producer alone, and caps the round-trip contribution. */
+int run_input_tick_offset_adopts_jump(void);
+
 /* Stale build-order harvest (test_build_harvest_stale.c): a build commanded on
  * a stall-substituted tick is stashed with its target tile frozen, so the
  * replay must re-check that tile against the current map — a now-invalid one is
