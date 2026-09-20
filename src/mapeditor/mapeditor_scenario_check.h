@@ -13,12 +13,13 @@
  *   against, read there for their arguments as well as
  *   their names.
  *
- *   Both calls live behind this header so the panel code
- *   names no scenario header. The check runs no sim
- *   and boots no host — it loads the chunk once in a Lua
- *   state of its own and reads the table it declared, which
- *   is what keeps the editor's privileged exception in
- *   docs/ARCHITECTURE.md intact.
+ *   All four calls live behind this header — the validator,
+ *   and the three reads of the registry behind those rows —
+ *   so the panel code names no scenario header. The check
+ *   runs no sim and boots no host — it loads the chunk once
+ *   in a Lua state of its own and reads the table it
+ *   declared, which is what keeps the editor's privileged
+ *   exception in docs/ARCHITECTURE.md intact.
  *********************************************************/
 
 #ifndef MAPEDITOR_SCENARIO_CHECK_H

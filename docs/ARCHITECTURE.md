@@ -22,8 +22,8 @@ document is the stable reference for the rules themselves.
 |---|---|---|
 | `src/bolo/` | T1 + T2 + T3 + T4 | Owns T2; contributes to all tiers. |
 | `src/bolo/scenario_api/` | T1 + T4 | A third header directory beside `public/` and `internal/`. Holds the scenario write funnel (`serverSimApplyScenarioOp`), the policy vtable and tick registrations, and the POD types those calls take. Read by the `scenario_host` profile (the scenario runtime), by `sim_owner` to implement the funnel, and by `unittests` to drive it; nothing else sees it. Not in `public/` because these are server-authoritative entry points on the same footing as the lifecycle start functions — a frontend that wants to change the world sends a command, and a scenario is the one caller whose intent is applied to the sim directly. See "Privileged exceptions". |
-| `src/scenario/` | T1 + T4 + `scenario_api/` | The scenario runtime, `scenario_static`, the one target built under the `scenario_host` profile. Finds the Lua file beside a map, boots the VM, parses the `scenario` table, marshals `game.*` calls onto the funnel and T1 reads, queues bus events and drains them into hooks, and checks a script for `-validate`. Sees `public/` plus `scenario_api/` and nothing in `internal/` or `src/server/`; a binding that needs sim state it cannot read gets a T1 accessor, never an include. Links `lua_static` PRIVATE. Frontends see only `scenario_host.h` (attach, detach, follow the map, is-active, name, description, script path, reload, last error, the scripts switch `scenarioHostSetEnabled` and the narrower `scenarioHostSetUploadScriptsEnabled` beside it, the map-has-script question `scenarioHostMapHasScript`, and `scenarioHostRegisterMapScripted`, which hands that question to a sim so its map lister can ask it), which includes `server_sim.h` alone and names no `scenario_api/` type, so a `gui`-profile file can include it. Both of those are the rule a call added here has to satisfy, not just a description of the calls there now: `server_sim.h` and the C standard headers are the whole of what this header may include, and every parameter and return type has to be a plain type or `ServerSim` / `ScenarioHost`. A call that would need a `scenario_api/` type in its signature belongs behind the funnel instead. Links `scenario_io_static` PUBLIC and holds no file format of its own: the container, `manifest.json` and the chunk written on to a map are that library's, and `scenario_pack.c` here is the half that has to validate a script first. Linked into every binary that hosts a `ServerSim` from a map file: WinBoloDS, WinBoloHeadless, WinBolo, WinBoloIOS, Android `main`, WinBoloUnitTests. Not wasm (never hosts), gym, braintest or the log viewer. MapEditor links it too, and is the one binary that links it without hosting anything: the scenario panel calls `scenarioValidateSource` to check the script in its pane, `scenarioLuaRows` to build the `game.*` completion list and `scnScriptPath` for where a script sits beside a map, and nothing else in this library. It creates no `ServerSim`, attaches no host and ticks nothing — the check loads a script's top level once in a Lua state of its own against a stub `game` table, and is handed a NULL sim, which leaves out the two checks that read a map. On MapEditor's link line it sits ahead of the server group for the same reason it does everywhere else. |
-| `src/scenario_io/` | T1 only | A scenario's files, `scenario_io_static`, built under the `runtime_only` profile. Reads and writes the WBSC container a scenario ships in and the `manifest.json` inside it, from a byte buffer rather than a path, and writes that container on to a map file. Holds the shape the two halves share: `ScenarioManifest` and the issue list a check fills. No Lua, no `scenario_api/`, no `internal/` — it sees `public/` and nothing else, and it reads no sim state, so nothing here can depend on a round being in progress. `scenario_static` links it PUBLIC, so the six binaries that host a `ServerSim` get it without naming it. The log viewer is expected to link it directly and nothing else from `src/scenario/`: it reads a scenario's files and never starts a round. The map editor reads and writes those files on the same footing, and also links `scenario_static` for the three calls named in the row above — still without starting a round. |
+| `src/scenario/` | T1 + T4 + `scenario_api/` | The scenario runtime, `scenario_static`, the one target built under the `scenario_host` profile. Finds the Lua file beside a map, boots the VM, parses the `scenario` table and the triggers in it — a trigger being data rather than code: a hook to run on, a list of tests and a list of actions — marshals `game.*` calls onto the funnel and T1 reads, queues bus events and drains them into hooks, runs those triggers through a router written in Lua, and checks a script for `-validate`. The router is `src/scenario/scenario_triggers.lua`, turned into `src/scenario/scenario_triggers.inc` by `tools/embed_lua.py`, which is run by hand and its output committed so the build needs no Python; the unit case `scenario_hooks_router_matches_source` is what holds the two together. It loads as a second chunk into the state the author's script has already run in rather than being concatenated on to it, so the author's file keeps its own line numbers in an error. The library also holds the function catalogue the editor is written from — one row per hook and per policy, with the parameters each takes. Sees `public/` plus `scenario_api/` and nothing in `internal/` or `src/server/`; a binding that needs sim state it cannot read gets a T1 accessor, never an include. Links `lua_static` PRIVATE. Frontends see only `scenario_host.h` (attach, detach, follow the map, is-active, name, description, script path, reload, last error, the scripts switch `scenarioHostSetEnabled` and the narrower `scenarioHostSetUploadScriptsEnabled` beside it, the map-has-script question `scenarioHostMapHasScript`, and `scenarioHostRegisterMapScripted`, which hands that question to a sim so its map lister can ask it), which includes `server_sim.h` alone and names no `scenario_api/` type, so a `gui`-profile file can include it. Both of those are the rule a call added here has to satisfy, not just a description of the calls there now: `server_sim.h` and the C standard headers are the whole of what this header may include, and every parameter and return type has to be a plain type or `ServerSim` / `ScenarioHost`. A call that would need a `scenario_api/` type in its signature belongs behind the funnel instead. Links `scenario_io_static` PUBLIC and holds no file format of its own: the container, `manifest.json` and the chunk written on to a map are that library's, and `scenario_pack.c` here is the half that has to validate a script first. Linked into every binary that hosts a `ServerSim` from a map file: WinBoloDS, WinBoloHeadless, WinBolo, WinBoloIOS, Android `main`, WinBoloUnitTests. Not wasm (never hosts), gym, braintest or the log viewer. MapEditor links it too, and is the one binary that links it without hosting anything: the scenario panel calls seven things here — `scenarioValidateSource` to check the script in its pane, `scenarioLuaRows` for the `game.*` completion list and for the ops a trigger's actions are written against, `scenarioLuaOpIsScalar` and `scenarioLuaOpIsAction` to ask what one of those ops takes and whether it changes anything, `scenarioLuaFunctions` and `scenarioLuaFnFields` for the function catalogue and the payload fields each of its rows reaches, and `scnScriptPath` for where a script sits beside a map — and nothing else in this library. It also expands `SCN_HOOK_LIST` and `SCN_POLICY_LIST` at compile time, which is a reach of a different kind and not a call: the editor's own description table is pasted out of those two lists, so a hook or a policy added to either without a line of its own does not compile. It creates no `ServerSim`, attaches no host and ticks nothing — the check loads a script's top level once in a Lua state of its own against a stub `game` table, and is handed a NULL sim, which leaves out the one check that reads a map. The rules are checked either way: with no sim they go to `scenarioCheckRulesFromClassic`, and a rule's bounds belong to the field it is declared in rather than to a round, so the answer an editor gets is the answer the server gives. The tags are the check that genuinely reads a map, because it asks how many pills, bases and starts this one carries. On MapEditor's link line it sits ahead of the server group for the same reason it does everywhere else. |
+| `src/scenario_io/` | T1 only | A scenario's files, `scenario_io_static`, built under the `runtime_only` profile. Reads and writes the WBSC container a scenario ships in and the `manifest.json` inside it, from a byte buffer rather than a path, and writes that container on to a map file. Holds the shape the two halves share: `ScenarioManifest`, the two enums a trigger's values and operators are stored as — `ScnTrigValueKind`, which says whether a value is a number, a string, a bool or the name of a payload field read when the trigger fires, and `ScnTrigCompare`, the seven tests plus the unknown that a word matching none of them reads as — the one table of operator names both readers resolve a file's spelling through, `scnManifestTrigOpName` out of it and `scnManifestTrigOpFrom` into it, so the JSON decoder and the script reader cannot drift apart over which word means which test, and the issue list a check fills. No Lua, no `scenario_api/`, no `internal/` — it sees `public/` and nothing else, and it reads no sim state, so nothing here can depend on a round being in progress. `scenario_static` links it PUBLIC, so the six binaries that host a `ServerSim` get it without naming it. The log viewer is expected to link it directly and nothing else from `src/scenario/`: it reads a scenario's files and never starts a round. The map editor reads and writes those files on the same footing, and also links `scenario_static` for the seven calls named in the row above — still without starting a round. |
 | `src/gui/` | T1 + T3 + T4 | The desktop renderer. Cannot reach into sim internals. |
 | `src/mapeditor/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — full T2 access for map-data editing. |
 | `src/braintest/` | T1 + T2 + T3 + T4 | Privileged exception (see below) — dev visualisation tool, not shipped to players. |
@@ -2035,13 +2035,17 @@ at that point mapeditor joins the T1+T3+T4 group and the map-data
 access moves behind T1 accessors.
 
 The editor links `scenario_static` to check the script in its
-scenario panel and to list the `game.*` calls for completion, and
-that does not disturb any of the above. The check makes no
-`ServerSim`: it is handed NULL where one would go, which is why
-the two checks that read a map do not run in the editor and the
-panel says so. A check that wanted those two would have to build
-a sim, and that is the in-editor playtest this exception is
-written against — so it is not a thing to add quietly here.
+scenario panel, to list the `game.*` calls for completion, and to
+read the function catalogue and the op signatures behind its
+trigger and function panes — seven calls, named in the
+`src/scenario/` row above — and that does not disturb any of the
+above. The check makes no `ServerSim`: it is handed NULL where one
+would go, which is why the one check that reads a map — the tag
+check, which asks how many pills, bases and starts the map
+carries — does not run in the editor and the panel says so. A
+check that wanted it would have to build a sim, and that is the
+in-editor playtest this exception is written against — so it is
+not a thing to add quietly here.
 
 ### `src/braintest/`
 
@@ -2168,6 +2172,24 @@ the category, and the answer is to split the leaf back out — the
 link break is the signal, not a build problem to route around by
 widening the test binary. A twelfth file joins only on the same
 test: callable with no display attached, or it does not go in.
+
+Six `src/mapeditor` files ride the same rule from a different
+directory and are not on that list: `mapeditor_scenario.c`,
+`mapeditor_scenario_form.c`, `mapeditor_scenario_check.c`,
+`mapeditor_scenario_pack.c`, `mapeditor_scenario_fndesc.c` and
+`mapeditor_scenario_fnscan.c`. Between them they hold the scenario
+panel's non-drawing half: the script file beside a map, the manifest
+behind the metadata, lobby, rules, tags and trigger forms, the check
+over the pane's text, the container the editor writes, the description
+and stub text shown beside each function, and the scan for which
+functions a script has already written. Each is plain C that draws
+nothing and opens no window, renderer or device, so each meets the
+same test the eleven do. `mapeditor_scenario_check.c` is the one of
+the six that reaches the scenario library's Lua-facing side:
+`scenarioValidateSource` loads the pane's text in a Lua state of its
+own, which none of the other five do. `mapeditor_scenario_fndesc.c`
+reads the same function catalogue through `scenarioLuaFunctions`, but
+reads it out of a table and opens no state.
 
 ### `src/bolo/scenario_api/`
 
@@ -2326,7 +2348,13 @@ that also links `lua_static` could include `scenario_lua.h`,
 library's and the unit tests' by intent — each names Lua types, which
 is the line `scenario_host.h` stays the other side of — and a frontend
 that reaches for one is reaching past `scenario_host.h` for a reason
-that wants a T1 accessor instead. `scenario_manifest.h` is the other
+that wants a T1 accessor instead. The map editor is the one frontend
+that reads one of the three on purpose: `mapeditor_scenario_check.c`
+includes `scenario_lua.h` for the `game.*` rows and
+`mapeditor_scenario_fndesc.c` for the two function lists, which is the
+linkage the editor's own exception a few sections up already settles.
+It touches neither of the other two, and for every frontend but that
+one the warning stands as written. `scenario_manifest.h` is the other
 kind: it belongs to `scenario_io_static`, names no Lua type, and a map
 editor or a log viewer is meant to include it.
 
