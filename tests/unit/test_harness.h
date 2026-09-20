@@ -1857,6 +1857,10 @@ int run_loopback_channel(void);
  * value no substitute can invent has to reach the server again and keep
  * reaching it as the client changes it. */
 int run_loopback_hitch_recovers(void);
+/* One client quits while another keeps playing (test_loopback_quit_keeps_peer.c):
+ * the peer sees the slot leave its roster, stays connected for 600 pumps, and
+ * its own inputs keep being applied on tick numbers it actually sent. */
+int run_loopback_quit_keeps_peer(void);
 /* Server lock/unlock notice over CHANNEL_GAME (test_lock_channel.c): the
  * "locked to new players" message now rides the reliable game channel, not the
  * snapshot reliable tail. */

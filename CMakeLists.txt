@@ -3914,6 +3914,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # A server hitch and its catch-up burst, over an impaired path: the slot
     # it locks out has to start applying real inputs again and keep doing it.
     tests/unit/test_loopback_hitch.c
+    # A client-initiated quit while a peer is playing: the peer keeps its
+    # session and its inputs keep applying.
+    tests/unit/test_loopback_quit_keeps_peer.c
     tests/unit/test_player_mute.c
     tests/unit/test_lock_channel.c
     tests/unit/test_loopback_preview.c
@@ -5132,6 +5135,7 @@ set(_unit_test_names
     loopback_command_liveness
     loopback_channel
     loopback_hitch_recovers
+    loopback_quit_keeps_peer
     player_mute_mask_roundtrip
     lock_channel
     loopback_map_preview
