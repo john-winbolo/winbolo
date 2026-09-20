@@ -2024,10 +2024,12 @@ static void scnPushRouterFields(lua_State *L, const ScenarioManifest *m) {
  * router's top level is script code like any other and the one place a loop
  * in it would show is an attach that never returns.
  *
- * It takes its data as two chunk arguments where scnRunChunk's chunk takes
- * none, which is the whole of the difference between them. Widening
+ * It takes its data as three chunk arguments where scnRunChunk's chunk
+ * takes none, which is the whole of the difference between them. Widening
  * scnRunChunk would reach the validator's call as well, and the validator
- * checks a script rather than starting a round, so it loads no router.
+ * checks a script rather than starting a round, so it loads no router. The
+ * third argument is the sandbox's own copies of the base functions the
+ * router calls: the author's globals are whatever the script left them.
  *
  * The chunk name is the file the bytes came from, so a line in an error
  * names a line of src/scenario/scenario_triggers.lua. That is what the two
@@ -2053,7 +2055,8 @@ static bool scnInstallTriggers(lua_State *L, const ScenarioManifest *m,
     } else {
         scnPushRouterTriggers(L, m);
         scnPushRouterFields(L, m);
-        if (lua_pcall(L, 2, 0, 0) != 0) {
+        scnSandboxPushBase(L);
+        if (lua_pcall(L, 3, 0, 0) != 0) {
             scnFmt(err, errLen, "scenario: %s", scnLuaError(L));
             lua_pop(L, 1);
         } else {

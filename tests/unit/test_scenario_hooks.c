@@ -1252,6 +1252,61 @@ int run_scenario_hooks_trigger_stopped_by_false(void) {
     return 0;
 }
 
+/* The router keeps working when the script has written over the base
+ * functions it calls. The author's chunk runs first and may assign anything
+ * to the globals type, select and rawget; the router reads its copies from
+ * the sandbox instead, so a trigger with a test to evaluate and an action to
+ * run still does both, and the script is not charged an error. */
+int run_scenario_hooks_trigger_shadowed_base(void) {
+    static const char *const kMap = "scnhook_trig_shadow.map";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          rec[2048];
+    char          err[512];
+
+    shkReset();
+    UT_ASSERT(shkPutTable(
+        kMap,
+        "triggers = {\n"
+        "  { when = \"on_player_join\","
+        " where = { { \"p\", \"eq\", 5 } },"
+        " actions = { { \"log\", \"" SHK_NOTE_MARK "ran\" } } },\n"
+        "}",
+        "type = \"ctf\"\n"
+        "select = nil\n"
+        "rawget = 1\n"
+        "function on_player_join(p) note(\"author \"..p) end\n"));
+    sim = shkSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    serverSimStartGame(sim);
+    shkFlush(sim);
+
+    shkPublishJoin(sim, 5);
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "author 5\nran\n",
+           "the trigger ran with type, select and rawget written over");
+    UT_ASSERT_MSG(scenarioHostIsActive(h),
+                  "the router's raise was charged to the script: %s",
+                  scenarioHostLastError(h));
+
+    shkReset();
+    shkPublishJoin(sim, 6);
+    serverSimTick(sim);
+    shkRead(rec, sizeof(rec));
+    SHK_IS(rec, "author 6\n", "the test still holds off a payload it names");
+
+    scenarioHostDetach(h);
+    shkUnwatchConsole(sim);
+    serverSimDestroy(sim);
+    shkDrop(kMap);
+    shkReset();
+    return 0;
+}
+
 /* A where-row over a plain payload field, both ways: the trigger fires on
  * the payload the row names and on no other. */
 int run_scenario_hooks_trigger_where_both_ways(void) {

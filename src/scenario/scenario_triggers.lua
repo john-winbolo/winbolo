@@ -35,6 +35,14 @@
 --             and otherwise "team", "tag" or "region". A hook with no
 --             readable fields is an empty table rather than absent.
 --
+--   base      { type = , select = , rawget = }: the three base functions
+--             this file calls, as the sandbox opened them. They are taken
+--             from here rather than from the globals because the author's
+--             chunk has already run by the time this one loads, and a
+--             script that wrote `type = "ctf"` at its top level would
+--             otherwise raise inside every trigger on every hook. Read at
+--             the top, once, so nothing below reaches a global by name.
+--
 -- A value is a number, a string, a boolean, or a table { field = "<name>" }
 -- naming a payload field to read when the trigger fires.
 --
@@ -48,7 +56,12 @@
 -- scenario's errors on something the operator has already been told about.
 -- =========================================================================
 
-local triggers, fields = ...
+local triggers, fields, base = ...
+
+base = base or {}
+local type   = base.type   or type
+local select = base.select or select
+local rawget = base.rawget or rawget
 
 -- The op surface, taken once. This is the table the host installed before
 -- either chunk ran, which is what an action's op is dispatched on. A call
