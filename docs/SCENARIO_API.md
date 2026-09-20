@@ -559,12 +559,12 @@ applied around it; one bad row does not cost a scenario its other rules.
 | `on_lgm_died(p, killer, mx, my, scripted)` | The square is where the man died, captured before the respawn moves him. |
 | `on_lgm_landed(p, mx, my, scripted)` | The builder `on_lgm_died` reported has finished his flight back and touched down. `mx`, `my` are the square he reached — where his tank stood when he died, unless `builder_parachute` aimed him somewhere else — and he walks to the tank from there rather than arriving in it. |
 | `on_base_captured(n, old, new, scripted)` | `old` and `new` are owners: `old` is `game.NEUTRAL` for a base nobody held, and `new` is always a seat, because a base changing to nobody's raises `on_base_neutralized` below instead. Neither hook fires when a base passes to an ally or falls to nobody because its owner left — that hand-over raises no event at all. |
-| `on_base_neutralized(n, old, scripted)` | A base that changed to nobody's. |
+| `on_base_neutralized(n, old, scripted)` | A base that changed to nobody's. No play reaches it: the engine's own path for a base going neutral raises no event, the same silence `on_base_captured` describes above, so the only thing that fires this hook is `game.set_base_owner` clearing one — which makes `scripted` always true. |
 | `on_pill_captured(n, old, new, scripted)` | Every change of a pillbox's owner, with `game.NEUTRAL` as `new` where nobody took it. |
 | `on_pill_placed(n, p, armour, scripted)` | The pillbox first, then who placed it. Fires for every way a carried pillbox reaches the map, not only a builder finishing the job: a tank sinking or being destroyed puts its cargo down, a builder dying puts the one in his hands down, and a player leaving does both. `armour` is what tells them apart — a built pillbox arrives at the sim's cap, every other route arrives dead at `0` — so test it, not `p`, before treating one as a live gun. `p` is whoever was carrying it, which on a leave is a slot on its way out. |
 | `on_pill_picked_up(n, p, scripted)` | The same order. |
 | `on_pill_killed(n, by, scripted)` | `by` is the seat credited with the blow, or `game.NEUTRAL` where none can be: a blast that caught the pillbox, and a shell another pillbox fired, both name nobody. |
-| `on_built(p, action, x, y, scripted)` | `action` is `"trees"`, `"road"`, `"building"`, `"repair"`, `"mine"` or `"boat"`. A build of kind pill on this hook is always a repair — a new pillbox going down is `on_pill_placed`. |
+| `on_built(p, action, x, y, scripted)` | `action` is `"trees"`, `"road"`, `"building"`, `"repair"` or `"boat"`. A build of kind pill on this hook is always a repair — a new pillbox going down is `on_pill_placed`. `"mine"` is a word the surface spells and this hook never sends: laying one raises `on_mine_laid` instead, so a test for it here never holds. |
 | `on_mine_laid(p, mx, my, scripted)` | `p` is the seat whose tank dropped the mine or whose builder laid it. A scenario's own `place_mine` does not reach this hook, so nothing here is `scripted`. |
 | `on_mine_explosion(mx, my, layer, scripted)` | `layer` is who laid the mine, not a layer of the map: the seat that put it down, or `game.NEUTRAL` for a mine the map came with or one whose owner has since left. It is read before the mine leaves the square, and it is kept off the wire — no client is told whose minefield it drove into. |
 
@@ -1433,6 +1433,9 @@ below the tables say which.
   `tank_full_trees`; `lgm_cost_mine` at most `tank_full_mines`.
 - `lgm_pill_repair_load` times `pill_repair_amount` at least `pill_max_armour`,
   and `pill_repair_amount` at most `pill_max_armour`.
+- `pill_shell_damage` and `tank_explosion_damage` at most `pill_max_armour`.
+- `sound_soft_range` at most `sound_none_range`, so there is a far band left
+  for a sound to land in.
 - `gunsight_min` at most `gunsight_max`; `shell_start_add` at most half of
   `shell_life` times `gunsight_min`, so the shortest shot still travels; and
   half of `shell_life` times `gunsight_max`, less `shell_start_add`, plus 1,
@@ -1616,6 +1619,13 @@ nobody did is the case to keep in mind, since an owner who is nobody has no
 team. Raising there would spend one of the scenario's errors on a fault
 nobody can fix mid-round, which is why the check before the round is the one
 that talks.
+
+A literal of the wrong kind is the fault that does not go quietly, and it is
+what that check earns its keep on. Reaching a round through a table nothing
+checked, it raises inside the op that reads it, and the raise takes the rest
+of that trigger's actions and every trigger after it on that hook for that
+event. The server counts one error against the script, and a script that
+keeps failing is switched off for the rest of the round.
 
 Two things only the round finds out, so keep them in mind. **A `call` naming a
 function your script never defined is skipped**, not reported — the check has

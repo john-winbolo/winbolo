@@ -2229,6 +2229,17 @@ something a frontend legitimately makes — at that point the calls
 that qualify move to `public/` under the ordinary T1 rule and the
 directory keeps only what is left.
 
+**The one call that qualifies and stays.**
+`scenarioCheckRulesFromClassic` takes no `ServerSim` — it is the
+rules check the map editor makes holding a script and no round — so
+the rule above would send it to `public/`. Its return type is what
+keeps it here: it answers `ScnOpResult`, which is declared in
+`scenario_defs.h`, and moving the declaration out would put a
+`scenario_api/` type in the tier every target sees. It is the
+`ScnTable` condition read the other way round — a type a public call
+takes cannot live behind this door, and a call that answers a type
+behind this door cannot move out in front of it.
+
 **The consumer: `src/scenario/`.** `scenario_static` is the one
 target under the `scenario_host` profile and the proof that the two
 headers build against `public/` alone. Its shape follows from the

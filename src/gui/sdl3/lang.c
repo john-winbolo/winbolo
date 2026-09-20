@@ -2525,8 +2525,8 @@ static const LangEntry langTable[] = {
     {2572, "Number"},
     {2573, "Text"},
     {2574, "An action carries one long line, and another argument has it"},
-    {2575, "How near a tank has to be for a pillbox to aim the old sloppy way. Zero is a pillbox that always leads its target properly."},
-    {2576, "How straight at a close pillbox a tank has to be driving to be aimed at properly anyway. One is a pillbox that aims sloppily at every close tank."},
+    {2575, "How near a tank has to be for a pillbox to aim with the original forward prediction rather than the solver, which misses a tank circling it. Zero, the classic table, is a pillbox that always leads its target properly; 384 is a square and a half, the distance the old build-time switch used."},
+    {2576, "How straight at a close pillbox a tank has to be driving to be aimed at properly anyway, as the cosine of the angle between its heading and the line to the pillbox. One aims sloppily at every tank inside pill_massage_range, zero at none of them. Does nothing while that rule is zero."},
     {2577, "written as a local, so the host never finds it and it never runs"},
     {2578, "written on a table other than scenario, so the host never finds it and it never runs"},
 };
