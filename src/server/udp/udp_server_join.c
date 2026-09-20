@@ -62,8 +62,7 @@
 #include "../../winbolonet/winbolonet_core.h"   /* winbolonetIsRunning, winbolonetAddEvent,
                                                  * WINBOLONET_KEY_LEN */
 #include "../../winbolonet/winbolonet_server.h" /* winboloNetVerifyClientKey,
-                                                 * winboloNetVerifySpectatorKey,
-                                                 * winboloNetClientLeaveGame */
+                                                 * winboloNetVerifySpectatorKey */
 
 /* OS cryptographic RNG, used to seed the address-proof cookie secret. Kept
  * below the headers above: bcrypt.h uses the Windows base types without
@@ -968,6 +967,13 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
     bool incomingIsWBN = false;
     bool wbnHasSteam = false;
     bool wbnIsSupporter = false;
+    /* The guard below cannot currently be true: wbnJoinKey rides the JOIN
+     * empty, because minting a player_key needs the server key and a client
+     * is given an empty one at every clientSimConnectUdp call site — it
+     * learns the key from the PACKET_WBN_REKEY that follows JOIN_ACCEPT.
+     * Before any handshake change lets a key ride the JOIN, this call has to
+     * become a job on the WinBolo.net worker, the way the reauth's verify is:
+     * it is a synchronous HTTPS round trip and this is the tick thread. */
     if (wbnJoinKey[0] != '\0' && winbolonetIsRunning()) {
         char errorMsg[512];
         errorMsg[0] = '\0';
@@ -1006,74 +1012,18 @@ void serverHandleJoinRequest(const uint8_t *buf, int len,
                 (playersGetClientFlags(&serverSimGetGameSim(sim)->plyrs, (BYTE)i)
                  & PLAYER_FLAG_WBN_VERIFIED) != 0;
 
-            /* An already-verified joiner (incomingIsWBN) takes the inline
-             * verified-priority arms below.  These are dead under today's
-             * handshake — the client never holds a server key at join — but
-             * if incomingIsWBN is ever true the joiner must take the
-             * immediate-preempt path: routing a verified slot to provisional
-             * admission would strand it on a temp name forever, since a
-             * verified slot never sends a reauth. */
-            if (incomingIsWBN) {
-                if (existingIsWBN) {
-                    /* Two verified users with the same display name — Decision 7
-                     * says reject the second joiner rather than preempt. */
-                    char consoleMsg[200];
-                    snprintf(consoleMsg, sizeof(consoleMsg),
-                             "WARNING: verified-vs-verified collision for '%s'; "
-                             "rejecting joiner", name);
-                    serverSimConsoleMessage(consoleMsg);
-                    /* Roll back the WBN client/join we recorded above. */
-                    winboloNetClientLeaveGame(
-                        (BYTE)slot, serverSimGetNumPlayers(sim),
-                        serverSimGetNumNeutralBases(sim),
-                        serverSimGetNumNeutralPills(sim));
-                    serverSendJoinReject(fromAddr,
-                                         STR_NAME_TAKEN_BY_OTHER_VERIFIED, 0, NULL);
-                    return;
-                }
-
-                /* incomingIsWBN && !existingIsWBN — preempt. */
-
-                if (udpServer.clients[i].nameStickySuffix) {
-                    /* In practice unreachable: a sticky slot already stores
-                     * "<base>-unverified[-N]" so playerNameCompare wouldn't
-                     * have matched the bare incoming name.  Guard defensively
-                     * — never re-preempt a slot that has already been
-                     * suffix-renamed. */
-                    continue;
-                }
-
-                /* Find a unique -unverified[-N] candidate for the victim. */
-                char chosenName[PACKET_MAX_PLAYER_NAME];
-                bool chosenFound = serverChooseUnverifiedSuffix(
-                    udpServer.clients[i].playerName, i,
-                    chosenName, sizeof(chosenName));
-
-                if (!chosenFound) {
-                    /* Suffix pool exhausted.  Never preempt a verified
-                     * player even transitively (Decision 4 implication);
-                     * also never preempt twice — reject the verified joiner
-                     * instead. */
-                    char consoleMsg[200];
-                    snprintf(consoleMsg, sizeof(consoleMsg),
-                             "WARNING: -unverified suffix pool exhausted for "
-                             "'%s'; rejecting verified joiner", name);
-                    serverSimConsoleMessage(consoleMsg);
-                    winboloNetClientLeaveGame(
-                        (BYTE)slot, serverSimGetNumPlayers(sim),
-                        serverSimGetNumNeutralBases(sim),
-                        serverSimGetNumNeutralPills(sim));
-                    serverSendJoinReject(fromAddr,
-                                         STR_REJECT_NAME_POOL_EXHAUSTED, 0, NULL);
-                    return;
-                }
-
-                /* Apply the rename + broadcasts + newswire. */
-                serverPreemptRename(sim, i, chosenName, name, incomingCountry);
-                break; /* terminate the duplicate-search loop on first match */
-            }
-
-            /* !incomingIsWBN — consult the pure verdict core. */
+            /* The joiner is always the unverified class here.  A client
+             * does not hold the server key at join: clientSimConnectUdp is
+             * given an empty one at every call site, and the key a player_key
+             * is minted against only arrives afterwards, on the
+             * PACKET_WBN_REKEY the server sends once the join is accepted.
+             * So wbnJoinKey rides the JOIN empty, the verify above never runs
+             * and incomingIsWBN is never true.  A joiner's WinBolo.net
+             * identity is established later, by the reauth that follows the
+             * rekey, and the provisional claim recorded below is what carries
+             * the name it asked for across to that point.
+             *
+             * Consult the pure verdict core. */
             JoinCollisionVerdict verdict =
                 joinCollisionDecide(incomingWillAuth, existingIsWBN);
 
