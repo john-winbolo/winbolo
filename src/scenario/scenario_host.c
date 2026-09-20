@@ -133,6 +133,15 @@ BOLO_STATIC_ASSERT(SCN_BRAIN_LEN == SCN_PATH_MAX,
 BOLO_STATIC_ASSERT(SCN_REGIONS_MAX <= 64,
                    region_membership_fits_one_word_per_seat);
 
+/* The one long string an action carries goes to announce, message, log or
+ * end_round, and each of those puts it on the wire as a chat-sized message.
+ * A manifest holding a longer one would only have it cut again down there,
+ * where there is nothing left to say so. scenario_manifest.h restates the
+ * wire's length because it cannot see scenario_defs.h; this is where the two
+ * are visible together. */
+BOLO_STATIC_ASSERT(SCN_TRIGGER_TEXT_LEN == SCN_TEXT_MAX,
+                   trigger_text_matches_the_wire_text_length);
+
 /* What a refusal was, in words. A script author reads these, so each is
  * the reason rather than the enumerator's spelling. */
 static const char *scnResultText(ScnOpResult r) {
@@ -1006,6 +1015,34 @@ static void scnReadRegions(lua_State *L, int tbl, ScenarioManifest *m,
 
 /* ── Triggers ─────────────────────────────────────────────────────── */
 
+/* Every array inside a trigger is walked from 1 to the first empty slot, the
+ * way the trigger array itself is, rather than counted with lua_rawlen. A
+ * table with a hole in it has more than one border and which of them rawlen
+ * answers is the interpreter's business, so two builds can read the same file
+ * as two different scenarios. Walking to the first empty slot is the same
+ * answer everywhere.
+ *
+ * What that costs is knowing there was a hole at all: an empty slot and the
+ * end of the array are one thing to lua_rawgeti, and telling them apart means
+ * asking rawlen, which is the unreliable thing. So this says something only
+ * when it is certain. A border is an index that holds a value, so a border at
+ * or past the slot the walk stopped on is proof of something past the hole
+ * that was not read; a border below it proves nothing either way, and a table
+ * written { a, nil, c } may well answer 1 and go unremarked. Best-effort, and
+ * the walk above is what the file actually means.
+ *
+ * at is the 1-based slot the walk stopped on, key is what the report is filed
+ * under, and what names the array inside it. */
+static void scnReportTrigTail(lua_State *L, int arr, int at, const char *key,
+                              const char *what, ScnParseReport *rep) {
+    if ((int)lua_rawlen(L, arr) >= at) {
+        scnReport(rep, key,
+                  "scenario: %s has an empty slot at %d in its %s and holds "
+                  "more past it; nothing past the empty slot is read",
+                  key, at, what);
+    }
+}
+
 /* One value of a test or an action, at the top of the stack and left there.
  *
  * The four kinds a table may state: a number, a string, a boolean, and the
@@ -1057,6 +1094,13 @@ static void scnReadTrigValue(lua_State *L, ScnTrigValue *out, ScnTrigAct *act,
             return;
         }
         out->inText = true;
+        /* The same fault as above at the other size: the action's text is
+           wider than an argument slot, and a line past that is cut too. */
+        if (strlen(s) >= SCN_TRIGGER_TEXT_LEN) {
+            scnReport(rep, where,
+                      "scenario: %s is longer than %d bytes and is cut to fit",
+                      where, SCN_TRIGGER_TEXT_LEN - 1);
+        }
         snprintf(act->text, sizeof(act->text), "%s", s);
         return;
     }
@@ -1121,7 +1165,6 @@ static void scnReadTrigCond(lua_State *L, int row, ScnTrigCond *out,
  * are its positional arguments, in the order the file wrote them. */
 static void scnReadTrigAct(lua_State *L, int row, ScnTrigAct *out,
                            const char *where, ScnParseReport *rep) {
-    int n;
     int i;
 
     memset(out, 0, sizeof(*out));
@@ -1144,18 +1187,23 @@ static void scnReadTrigAct(lua_State *L, int row, ScnTrigAct *out,
     }
     lua_pop(L, 1);
 
-    n = (int)lua_rawlen(L, row);
-    for (i = 2; i <= n; i++) {
+    for (i = 2; ; i++) {
         char slot[SCN_VALIDATE_KEY_LEN];
 
+        lua_rawgeti(L, row, i);
+        if (lua_isnil(L, -1)) {
+            lua_pop(L, 1);
+            scnReportTrigTail(L, row, i, where, "arguments", rep);
+            break;
+        }
         if (out->numArgs >= SCN_TRIGGER_ARGS_MAX) {
+            lua_pop(L, 1);
             scnReport(rep, where,
                       "scenario: %s takes more than %d arguments; the rest "
                       "dropped", where, SCN_TRIGGER_ARGS_MAX);
             break;
         }
         snprintf(slot, sizeof(slot), "%s[%d]", where, (int)out->numArgs);
-        lua_rawgeti(L, row, i);
         scnReadTrigValue(L, &out->args[out->numArgs], out, slot, rep);
         lua_pop(L, 1);
         out->numArgs++;
@@ -1167,6 +1215,9 @@ static void scnReadTrigAct(lua_State *L, int row, ScnTrigAct *out,
  * Regions above are keyed and arrive in whatever order the table iterates
  * in; a trigger has no name to be keyed by and its position is part of what
  * it is, so lua_next would lose the very thing that identifies it.
+ *
+ * The where and actions arrays inside a trigger are read the same way, for
+ * the reason scnReportTrigTail gives.
  *
  * A report goes under the position, counted as the file writes it and from
  * zero, so triggers[3] is the same trigger here, in manifest.json's decoder
@@ -1206,7 +1257,6 @@ static void scnReadTriggers(lua_State *L, int tbl, ScenarioManifest *m,
         ScnTrigger *trig;
         int         entry;
         int         rows;
-        int         count;
         int         i;
 
         lua_rawgeti(L, tt, n + 1);
@@ -1251,18 +1301,24 @@ static void scnReadTriggers(lua_State *L, int tbl, ScenarioManifest *m,
             continue;
         }
         if (lua_istable(L, -1)) {
-            rows  = lua_gettop(L);
-            count = (int)lua_rawlen(L, rows);
-            for (i = 0; i < count; i++) {
+            rows = lua_gettop(L);
+            for (i = 0; ; i++) {
                 char slot[SCN_VALIDATE_KEY_LEN];
+
+                lua_rawgeti(L, rows, i + 1);
+                if (lua_isnil(L, -1)) {
+                    lua_pop(L, 1);
+                    scnReportTrigTail(L, rows, i + 1, where, "where", rep);
+                    break;
+                }
                 snprintf(slot, sizeof(slot), "%s.where[%d]", where, i);
                 if (trig->numWhere >= SCN_TRIGGER_CONDS_MAX) {
+                    lua_pop(L, 1);
                     scnReport(rep, slot,
                               "scenario: more than %d tests on one trigger; "
                               "%s dropped", SCN_TRIGGER_CONDS_MAX, slot);
                     continue;
                 }
-                lua_rawgeti(L, rows, i + 1);
                 scnReadTrigCond(L, lua_gettop(L),
                                 &trig->where[trig->numWhere], slot, rep);
                 lua_pop(L, 1);
@@ -1276,18 +1332,24 @@ static void scnReadTriggers(lua_State *L, int tbl, ScenarioManifest *m,
             scnReport(rep, where, "scenario: %s's actions is not an array",
                       where);
         } else if (lua_istable(L, -1)) {
-            rows  = lua_gettop(L);
-            count = (int)lua_rawlen(L, rows);
-            for (i = 0; i < count; i++) {
+            rows = lua_gettop(L);
+            for (i = 0; ; i++) {
                 char slot[SCN_VALIDATE_KEY_LEN];
+
+                lua_rawgeti(L, rows, i + 1);
+                if (lua_isnil(L, -1)) {
+                    lua_pop(L, 1);
+                    scnReportTrigTail(L, rows, i + 1, where, "actions", rep);
+                    break;
+                }
                 snprintf(slot, sizeof(slot), "%s.actions[%d]", where, i);
                 if (trig->numActions >= SCN_TRIGGER_ACTIONS_MAX) {
+                    lua_pop(L, 1);
                     scnReport(rep, slot,
                               "scenario: more than %d actions on one trigger; "
                               "%s dropped", SCN_TRIGGER_ACTIONS_MAX, slot);
                     continue;
                 }
-                lua_rawgeti(L, rows, i + 1);
                 scnReadTrigAct(L, lua_gettop(L),
                                &trig->actions[trig->numActions], slot, rep);
                 lua_pop(L, 1);

@@ -548,6 +548,13 @@ static void mjTrigValue(const cJSON *v, ScnTrigValue *out, ScnTrigAct *act,
             return;
         }
         out->inText = true;
+        /* The same fault as above at the other size: the action's text is
+           wider than an argument slot, and a line past that is cut too. */
+        if (strlen(v->valuestring) >= SCN_TRIGGER_TEXT_LEN) {
+            mjReport(rep, where,
+                     "scenario: %s is longer than %d bytes and is cut to "
+                     "fit", where, SCN_TRIGGER_TEXT_LEN - 1);
+        }
         mjCopyStr(act->text, sizeof(act->text), v->valuestring);
         return;
     }

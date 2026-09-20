@@ -1463,6 +1463,88 @@ int run_scenario_manifest_json_trigger_where_no_field(void) {
     return 0;
 }
 
+/* ── A line too long for the action's text ────────────────────────── */
+
+/* An argument past the argument slot goes on the action's own text, which is
+   wider but is still a fixed width. A line past that width was cut with
+   nothing said, so a package could reach a server holding a shorter line than
+   its author wrote and no word anywhere about where the rest went.
+
+   It is the same fault as a name past the argument slot and says the same
+   sentence, with the other number in it. The Lua reader is held to that
+   wording under the same key by a case of its own: a package whose two forms
+   were cut differently would not survive scnManifestAgrees.
+
+   The line is built rather than typed, so the cap it is measured against is
+   the one the build holds. */
+int run_scenario_manifest_json_trigger_text_cut(void) {
+    char                    line[SCN_TRIGGER_TEXT_LEN + 32];
+    char                    text[SCN_TRIGGER_TEXT_LEN + 256];
+    char                    err[256];
+    char                    soft[256];
+    ScnManifestDoc         *doc;
+    ScnValidateResult      *sink;
+    ScnParseReport          rep;
+    const ScenarioManifest *m;
+
+    memset(line, 'x', sizeof(line) - 1);
+    line[sizeof(line) - 1] = '\0';
+    UT_ASSERT(strlen(line) >= SCN_TRIGGER_TEXT_LEN);
+
+    snprintf(text, sizeof(text),
+             "{\n"
+             "  \"manifest\": 1,\n"
+             "  \"api\": 1,\n"
+             "  \"triggers\": [\n"
+             "    { \"when\": \"on_tick\",\n"
+             "      \"actions\": [ [\"log\", \"%s\"] ] }\n"
+             "  ]\n"
+             "}\n", line);
+
+    sink = (ScnValidateResult *)malloc(sizeof(*sink));
+    UT_ASSERT(sink != NULL);
+    memset(sink, 0, sizeof(*sink));
+    soft[0]     = '\0';
+    rep.soft    = soft;
+    rep.softLen = sizeof(soft);
+    rep.sink    = sink;
+
+    doc = parseText(text, &rep, err, sizeof(err));
+    if (doc == NULL) {
+        free(sink);
+        UT_FAIL("a line past the action's text was refused: %s", err);
+    }
+    if (!issueSays(sink, "triggers[0].actions[0][0]", "is cut to fit")) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("a line past the action's text was cut without a word under "
+                "the argument");
+    }
+
+    /* Cut and kept, not dropped: the action still runs, with as much of the
+       line as there is room for. */
+    m = scnManifestValues(doc);
+    if (m->numTriggers != 1 || m->triggers[0].numActions != 1) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the trigger did not survive the cut");
+    }
+    if (!m->triggers[0].actions[0].args[0].inText) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the line did not move to the action's text");
+    }
+    if (strlen(m->triggers[0].actions[0].text) != SCN_TRIGGER_TEXT_LEN - 1) {
+        int held = (int)strlen(m->triggers[0].actions[0].text);
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the action's text holds %d bytes", held);
+    }
+    scnManifestFree(doc);
+    free(sink);
+    return 0;
+}
+
 /* ── An operator that is none of the seven ────────────────────────── */
 
 /* A word the table cannot place, and a row that names no operator at all,

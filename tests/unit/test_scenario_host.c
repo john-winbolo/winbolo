@@ -1156,6 +1156,156 @@ int run_scenario_host_trigger_where_no_field(void) {
     return 0;
 }
 
+/* ── 7a6. A line too long for the action's text ───────────────────── */
+
+/* An argument past the argument slot goes on the action's own text, which is
+ * wider but is still a fixed width. A line past that width was cut with
+ * nothing said, so a script could reach a server holding a shorter line than
+ * its author wrote and no word anywhere about where the rest went.
+ *
+ * It is the same fault as a name past the argument slot and says the same
+ * sentence, with the other number in it. manifest.json's reader is held to
+ * that wording under the same key by a case of its own: a package whose two
+ * forms were cut differently would not survive scnManifestAgrees.
+ *
+ * The line is built rather than typed, so the cap it is measured against is
+ * the one the build holds. */
+int run_scenario_host_trigger_text_cut(void) {
+    static const char *const kMap = "scnhost_text_cut.map";
+    char                     line[SCN_TRIGGER_TEXT_LEN + 32];
+    char                     lua[SCN_TRIGGER_TEXT_LEN + 256];
+    ServerSim               *sim;
+    ScenarioHost            *h;
+    const ScenarioManifest  *m;
+    char                     err[512];
+
+    memset(line, 'x', sizeof(line) - 1);
+    line[sizeof(line) - 1] = '\0';
+    UT_ASSERT(strlen(line) >= SCN_TRIGGER_TEXT_LEN);
+
+    snprintf(lua, sizeof(lua),
+             "scenario = {\n"
+             "  name = \"Long line\",\n"
+             "  api = 1,\n"
+             "  triggers = {\n"
+             "    { when = \"on_tick\",\n"
+             "      actions = { { \"log\", \"%s\" } } },\n"
+             "  },\n"
+             "}\n", line);
+
+    UT_ASSERT(shPut(kMap, lua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "a line past the action's text cost the whole "
+                             "script: %s", err);
+
+    UT_ASSERT_MSG(strstr(scenarioHostLastError(h), "is cut to fit") != NULL,
+                  "a line past the action's text was cut without a word: "
+                  "'%s'", scenarioHostLastError(h));
+    UT_ASSERT_MSG(
+        strstr(scenarioHostLastError(h), "triggers[0].actions[0][0]") != NULL,
+        "the report does not name the argument: '%s'",
+        scenarioHostLastError(h));
+
+    /* Cut and kept, not dropped: the action still runs, with as much of the
+       line as there is room for. */
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->numTriggers == 1 && m->triggers[0].numActions == 1,
+                  "%u triggers and %u actions kept",
+                  (unsigned)m->numTriggers,
+                  (unsigned)m->triggers[0].numActions);
+    UT_ASSERT(m->triggers[0].actions[0].args[0].inText);
+    UT_ASSERT_MSG(
+        strlen(m->triggers[0].actions[0].text) == SCN_TRIGGER_TEXT_LEN - 1,
+        "the action's text holds %d bytes",
+        (int)strlen(m->triggers[0].actions[0].text));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
+/* ── 7a7. An empty slot inside a trigger's arrays ─────────────────── */
+
+/* Every array inside a trigger is read from 1 to the first empty slot, the
+ * way the trigger array itself is. lua_rawlen used to say how far to go, and
+ * over a table with a hole in it lua_rawlen may answer any of several
+ * borders, so the same file could read as two different scenarios on two
+ * builds. Stopping at the empty slot is one answer everywhere.
+ *
+ * All three arrays at once: the tests, the actions, and one action's
+ * arguments. Each holds something, then an empty slot, then something more,
+ * so what is kept says where the walk stopped and what is missing says it
+ * did not carry on past it.
+ *
+ * What is not asserted is the report. scnReportTrigTail says something only
+ * when lua_rawlen answers a border past the stop, which for these tables is
+ * the interpreter's business rather than this build's; asserting it would be
+ * asserting something the case cannot know. The walk is the part that has to
+ * be the same everywhere, and the walk is what is held here. */
+int run_scenario_host_trigger_array_hole(void) {
+    static const char *const kMap = "scnhost_array_hole.map";
+    static const char *const kLua =
+        "scenario = {\n"
+        "  name = \"Hole\",\n"
+        "  api = 1,\n"
+        "  triggers = {\n"
+        "    { when = \"on_tick\",\n"
+        "      where = { { \"tick\", \"eq\", 1 }, nil,\n"
+        "                { \"tick\", \"eq\", 2 } },\n"
+        "      actions = { { \"log\", \"a\", nil, \"c\" }, nil,\n"
+        "                  { \"log\", \"b\" } } },\n"
+        "  },\n"
+        "}\n";
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    const ScenarioManifest *m;
+    char                    err[512];
+
+    UT_ASSERT(shPut(kMap, kLua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "an array with an empty slot cost the whole "
+                             "script: %s", err);
+
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->numTriggers == 1, "%u triggers kept",
+                  (unsigned)m->numTriggers);
+
+    /* The tests: the one before the empty slot, and not the one after. */
+    UT_ASSERT_MSG(m->triggers[0].numWhere == 1, "%u tests kept",
+                  (unsigned)m->triggers[0].numWhere);
+    UT_ASSERT_MSG(strcmp(m->triggers[0].where[0].field, "tick") == 0,
+                  "the test kept reads '%s'", m->triggers[0].where[0].field);
+    UT_ASSERT_MSG(m->triggers[0].where[0].value.num == 1.0,
+                  "the test kept is the one past the empty slot");
+
+    /* The actions, the same way. */
+    UT_ASSERT_MSG(m->triggers[0].numActions == 1, "%u actions kept",
+                  (unsigned)m->triggers[0].numActions);
+    UT_ASSERT(strcmp(m->triggers[0].actions[0].op, "log") == 0);
+
+    /* And that action's own arguments, where the empty slot is third. */
+    UT_ASSERT_MSG(m->triggers[0].actions[0].numArgs == 1, "%u arguments kept",
+                  (unsigned)m->triggers[0].actions[0].numArgs);
+    UT_ASSERT_MSG(
+        strcmp(m->triggers[0].actions[0].args[0].text, "a") == 0,
+        "the argument kept holds '%s'",
+        m->triggers[0].actions[0].args[0].text);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}
+
 /* ── 7b. A team's init table ──────────────────────────────────────── */
 
 /* The team block's `init` is the table this team's bots are built with, and

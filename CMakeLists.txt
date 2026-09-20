@@ -5703,6 +5703,8 @@ set(_unit_test_names
     scenario_host_trigger_where_type
     scenario_host_trigger_action_no_op
     scenario_host_trigger_where_no_field
+    scenario_host_trigger_text_cut
+    scenario_host_trigger_array_hole
     scenario_host_team_init_read
     scenario_host_seed_reproducible
     scenario_host_edit_after_attach
@@ -5867,6 +5869,7 @@ set(_unit_test_names
     scenario_manifest_json_trigger_where_type
     scenario_manifest_json_trigger_action_no_op
     scenario_manifest_json_trigger_where_no_field
+    scenario_manifest_json_trigger_text_cut
     scenario_map_body_length
     scenario_map_find_container
     scenario_map_has_script_chunk
