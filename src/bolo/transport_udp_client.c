@@ -2687,26 +2687,53 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     }
 
     case PACKET_CHANNEL:
-        /* Standalone channel frame (server → client, sent when no snapshot
-         * rides this tick).  Body is one frame directly after the header. */
+        /* Standalone channel frame (server → client).  Body is one frame
+         * directly after the header. */
         if (channelRecvFrame(&c->channelMux, buf + PACKET_HEADER_SIZE,
                              len - PACKET_HEADER_SIZE) >= 0) {
             c->channelFramesRx++;
             /* This is the carrier voice rides in the lobby, where no
-             * snapshot flows. */
+             * snapshot flows, and it carries voice while running too. */
             clientDrainVoice(c);
             /* Drain reliable control events from channel 2 first, then game
              * (channel 0) and map (channel 1) events, applying them directly.
              * Control is applied ordered ahead of game/map to match the
-             * snapshot path's "control before game/map tails".  A standalone
-             * frame is only sent while the game is not running, so it never
-             * coincides with an in-frame running-flip and needs no map-install
-             * gating.  The channel guarantees in-order exactly-once delivery, so
-             * no dedup is added. */
+             * snapshot path's "control before game/map tails".  The channel
+             * guarantees in-order exactly-once delivery, so no dedup is added.
+             *
+             * The game, effect and map channels are the exception: a running
+             * tick sends several of these frames alongside the snapshot,
+             * carrying what the snapshot trailer had no room for, and the
+             * snapshot drain owns the order those three apply in — base state
+             * before game events, and the map-install check.  Draining them
+             * here would apply game events ahead of the snapshot that should
+             * order them, so while snapshots are flowing to this client they
+             * are ingested and left for the next snapshot's drain.
+             *
+             * Control, bulk and voice keep draining here in every state.  The
+             * snapshot drain stops the moment the server leaves running — it
+             * is the running branch of the tick that sends snapshots — and the
+             * phase change itself arrives on CHANNEL_CONTROL, so a control
+             * event held for a drain that has stopped would never be applied
+             * and the client would never learn the round had ended.  Draining
+             * control here costs no ordering: the snapshot path applies
+             * control ahead of game/map too, so the relative order is the same
+             * one either way.  Game, effect and map held over a phase change
+             * are not stranded — control flips the phase, and the next frame
+             * drains them; a previous round's stragglers are discarded by the
+             * CTRL_CHANNEL_RESET baseline lift at game start as they are
+             * today. */
             if (c->clientSim != NULL) {
                 uint8_t chanBuf[CHANNEL_MAX_SEG];
                 uint16_t chanLen;
                 GameEvent gev;
+                /* Snapshots flow to a joined player past its map download and
+                 * to nobody else: a spectator's feed is CHANNEL_BULK and a
+                 * downloader's snapshots are gated, so both keep draining
+                 * everything here. */
+                bool snapshotOwnsOrder = (c->joinState == UDP_CLIENT_CONNECTED &&
+                                          !c->clientSim->inLobby &&
+                                          c->mapInstalled);
                 while (channelReceive(&c->channelMux, CHANNEL_CONTROL,
                                       chanBuf, &chanLen)) {
                     uint8_t type;
@@ -2747,36 +2774,38 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     }
                     clientSimApplyControlOrdered(c, &evt, 0);
                 }
-                while (channelReceive(&c->channelMux, CHANNEL_GAME,
-                                      chanBuf, &chanLen)) {
-                    if (unpackGameEvent(chanBuf, chanLen, &gev) > 0) {
-                        clientSimApplyGameEvents(c->clientSim, &gev, 1,
-                                                 c->playerNum);
+                if (!snapshotOwnsOrder) {
+                    while (channelReceive(&c->channelMux, CHANNEL_GAME,
+                                          chanBuf, &chanLen)) {
+                        if (unpackGameEvent(chanBuf, chanLen, &gev) > 0) {
+                            clientSimApplyGameEvents(c->clientSim, &gev, 1,
+                                                     c->playerNum);
+                        }
                     }
-                }
-                /* Best-effort game-effect channel (ephemeral events). Order
-                 * relative to the reliable game/map drains does not matter. */
-                while (channelReceiveBestEffort(&c->channelMux,
-                                                CHANNEL_GAME_EFFECT,
-                                                chanBuf, &chanLen)) {
-                    if (unpackGameEvent(chanBuf, chanLen, &gev) > 0) {
-                        clientSimApplyGameEvents(c->clientSim, &gev, 1,
-                                                 c->playerNum);
+                    /* Best-effort game-effect channel (ephemeral events). Order
+                     * relative to the reliable game/map drains does not matter. */
+                    while (channelReceiveBestEffort(&c->channelMux,
+                                                    CHANNEL_GAME_EFFECT,
+                                                    chanBuf, &chanLen)) {
+                        if (unpackGameEvent(chanBuf, chanLen, &gev) > 0) {
+                            clientSimApplyGameEvents(c->clientSim, &gev, 1,
+                                                     c->playerNum);
+                        }
                     }
-                }
-                /* Channel 1 (map) events, applied after the game events
-                 * (game-then-map order). Payload [gen u32][GameEvent]; drop any
-                 * tagged older than the installed map generation. */
-                while (channelReceive(&c->channelMux, CHANNEL_MAP,
-                                      chanBuf, &chanLen)) {
-                    uint32_t evGen;
-                    if (chanLen < 4) continue;
-                    evGen = unpackU32(chanBuf);
-                    if (evGen < c->installedMapGen) continue;
-                    if (unpackGameEvent(chanBuf + 4, (size_t)(chanLen - 4),
-                                        &gev) > 0) {
-                        clientSimApplyGameEvents(c->clientSim, &gev, 1,
-                                                 c->playerNum);
+                    /* Channel 1 (map) events, applied after the game events
+                     * (game-then-map order). Payload [gen u32][GameEvent]; drop
+                     * any tagged older than the installed map generation. */
+                    while (channelReceive(&c->channelMux, CHANNEL_MAP,
+                                          chanBuf, &chanLen)) {
+                        uint32_t evGen;
+                        if (chanLen < 4) continue;
+                        evGen = unpackU32(chanBuf);
+                        if (evGen < c->installedMapGen) continue;
+                        if (unpackGameEvent(chanBuf + 4, (size_t)(chanLen - 4),
+                                            &gev) > 0) {
+                            clientSimApplyGameEvents(c->clientSim, &gev, 1,
+                                                     c->playerNum);
+                        }
                     }
                 }
                 /* Bulk-channel stream fragments (map preview) ride the same

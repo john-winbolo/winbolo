@@ -1867,6 +1867,12 @@ int run_loopback_hitch_recovers(void);
  * the peer sees the slot leave its roster, stays connected for 600 pumps, and
  * its own inputs keep being applied on tick numbers it actually sent. */
 int run_loopback_quit_keeps_peer(void);
+/* One running tick carries more than one channel frame
+ * (test_send_multi_frame.c): a raw-socket client joined past map download is
+ * given more reliable game events than one frame holds, and a single
+ * transportUdpServerSend has to put every one of them on the wire — the
+ * snapshot plus at most SNAPSHOT_EXTRA_CHANNEL_FRAMES standalone frames. */
+int run_send_drains_channels_multi_frame(void);
 /* Server lock/unlock notice over CHANNEL_GAME (test_lock_channel.c): the
  * "locked to new players" message now rides the reliable game channel, not the
  * snapshot reliable tail. */

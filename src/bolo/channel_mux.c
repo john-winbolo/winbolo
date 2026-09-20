@@ -154,8 +154,21 @@ void channelMuxInit(ChannelMux *m) {
 }
 
 void channelTick(ChannelMux *m, uint32_t tick, uint32_t rttMs) {
+    int ch;
     if (m == NULL) {
         return;
+    }
+    /* Anything still pending on a best-effort channel as a tick opens was left
+     * behind by the whole of the previous tick — every frame that tick built
+     * ran out of budget before reaching it. Counted here rather than where the
+     * budget runs out, because a tick builds several frames and a segment the
+     * first one could not carry usually goes out on the next. */
+    for (ch = 0; ch < CHANNEL_COUNT; ch++) {
+        ChannelState *c = &m->ch[ch];
+        if (!c->bestEffort) {
+            continue;
+        }
+        m->beBudgetSkipped[ch] += (c->nextSeq - c->txNext);
     }
     m->curTick = tick;
     m->rttMs = rttMs;
@@ -329,11 +342,7 @@ int channelBuildFrame(ChannelMux *m, uint8_t *buf, int budget) {
                 uint16_t slen = c->sendLen[idx];
                 if (segCount == 255 ||
                     pos + CHANNEL_SEG_HEADER_SIZE + slen > budget) {
-                    /* Tight budget — the rest drain next frame. Counted per
-                     * segment left behind: the ring is shallow, so a run of
-                     * frames that all end here loses the oldest of them. */
-                    m->beBudgetSkipped[ch] += (c->nextSeq - seq);
-                    break;
+                    break; /* tight budget — the rest drain on a later frame */
                 }
                 buf[pos] = (uint8_t)ch;
                 packU32(buf + pos + 1, seq);

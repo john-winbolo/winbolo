@@ -358,7 +358,9 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     /* Parallel channel layer rides as a trailer on the snapshot: tick the
      * mux on this client's clock+RTT, then append one channel frame after
      * the event tails, keeping the datagram within UDP_MAX_PAYLOAD.  The
-     * client recovers it as the bytes past the snapshot's parsed end. */
+     * client recovers it as the bytes past the snapshot's parsed end.
+     * Anything the trailer had no room for goes out in the standalone frames
+     * after the send below. */
     bulkSenderPump(&udpServer.bulkSend[clientIdx], &udpServer.channelMux[clientIdx]);
     channelTick(&udpServer.channelMux[clientIdx], udpServer.tickCount,
                 client->pingMs);
@@ -372,6 +374,26 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
 
     /* wire-only: per-tick snapshot — high-volume delta-encoded path with its own reliability discipline */
     srvSendTo(buf, pos, &client->addr);
+
+    /* The trailer above took whatever the snapshot left; these carry what did
+     * not fit, so a burst of effects is not thrown away on the tick it
+     * happened. Same loop shape as the map-download carrier below. The mux is
+     * NOT ticked again — it was ticked once before the trailer was built, and
+     * a second tick would double-advance the channel's clock. On a retransmit
+     * tick the rewound cursor means these carry resend rather than new data,
+     * which the unacked window bounds. */
+    {
+        int frames;
+        for (frames = 0; frames < SNAPSHOT_EXTRA_CHANNEL_FRAMES; frames++) {
+            uint8_t cbuf[UDP_MAX_PAYLOAD];
+            int frameLen = channelBuildFrame(
+                &udpServer.channelMux[clientIdx], cbuf + PACKET_HEADER_SIZE,
+                UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE);
+            if (frameLen <= 2) break;   /* nothing left to carry this tick */
+            packHeader(cbuf, PACKET_CHANNEL, client->outSequence++);
+            srvSendTo(cbuf, PACKET_HEADER_SIZE + frameLen, &client->addr);
+        }
+    }
 }
 
 /* Send snapshots and check timeouts */

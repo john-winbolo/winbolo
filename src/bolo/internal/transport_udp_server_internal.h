@@ -62,6 +62,18 @@
  * src/server/udp/udp_server_spectator.c. */
 #define MAP_DOWNLOAD_FRAMES_PER_TICK 24
 
+/* Standalone PACKET_CHANNEL frames a running client gets after its snapshot,
+ * on top of the one frame the snapshot trailer carries. The trailer takes
+ * whatever is left of the datagram once the snapshot is packed, which on a
+ * busy tick is a few dozen bytes; these carry what did not fit. Reliable
+ * channels were never lost to that budget — they stay queued — but the
+ * best-effort effect and voice rings are shallow and drop what they cannot
+ * hand over, so a burst of sounds, explosions or voice was thrown away on the
+ * tick it happened.
+ *
+ * Read by serverSendSnapshot in src/server/udp/udp_server_send.c. */
+#define SNAPSHOT_EXTRA_CHANNEL_FRAMES 3
+
 typedef struct {
     uint8_t data[UDP_MAX_PAYLOAD];
     int     len;

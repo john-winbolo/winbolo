@@ -204,9 +204,11 @@ typedef struct ChannelMux {
     /* What became of each best-effort channel's traffic. Nothing acks these
      * channels, so a segment that never reaches the wire leaves no trace in
      * the protocol: the ring drops its oldest entry to make room, and a frame
-     * that runs out of packet budget leaves the rest behind. One frame's
-     * worth of the latter is caught up on the next frame, but voice is framed
-     * after every reliable channel, so a run of busy frames can starve it for
+     * that runs out of packet budget leaves the rest behind. A tick builds
+     * several frames, so most of the latter goes out later in the same tick;
+     * what is still pending when the next tick opens is what the tick as a
+     * whole could not carry, and channelTick counts that. Voice is framed
+     * after every reliable channel, so a run of busy ticks can starve it for
      * longer than the ring is deep and the two become the same loss. Counted
      * per channel because that is the only way to see it happen. */
     uint32_t beSent[CHANNEL_COUNT];
@@ -229,9 +231,9 @@ bool channelSend(ChannelMux *m, uint8_t ch, const uint8_t *msg, uint16_t len);
  * is dropped to make room. Returns false only on a usage error (not a
  * best-effort channel, bad id, oversized message). */
 /* Read back what became of one best-effort channel's traffic: segments framed
- * onto the wire, segments the ring dropped to make room, and frames that ran
- * out of packet budget before this channel's turn. Any out pointer may be
- * NULL. A reliable channel or a bad id reports zeroes. */
+ * onto the wire, segments the ring dropped to make room, and segments a whole
+ * tick's frames ran out of packet budget before reaching. Any out pointer may
+ * be NULL. A reliable channel or a bad id reports zeroes. */
 void channelGetBestEffortStats(const ChannelMux *m, uint8_t ch,
                                uint32_t *outSent, uint32_t *outRingDropped,
                                uint32_t *outBudgetSkipped);
@@ -283,8 +285,11 @@ uint32_t channelResetSend(ChannelMux *m, uint8_t ch);
  * expectedSeq is a no-op. */
 void channelResetExpected(ChannelMux *m, uint8_t ch, uint32_t newExpected);
 
-/* Advance the retransmit clock. tick is the current tick; rttMs is the
- * current RTT estimate used to derive the retransmit timeout. */
+/* Open a tick: advance the retransmit clock and charge each best-effort
+ * channel for whatever the previous tick's frames left pending. tick is the
+ * current tick; rttMs is the current RTT estimate used to derive the
+ * retransmit timeout. Called once per tick, before the tick's frames are
+ * built — calling it twice would double-advance the clock. */
 void channelTick(ChannelMux *m, uint32_t tick, uint32_t rttMs);
 
 #endif /* CHANNEL_MUX_H */

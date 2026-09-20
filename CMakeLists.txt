@@ -3920,6 +3920,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # A client-initiated quit while a peer is playing: the peer keeps its
     # session and its inputs keep applying.
     tests/unit/test_loopback_quit_keeps_peer.c
+    # One running tick's send loop: a raw-socket client past map download is
+    # given more reliable game events than one channel frame holds, and every
+    # one of them has to leave in that send.
+    tests/unit/test_send_multi_frame.c
     tests/unit/test_player_mute.c
     tests/unit/test_lock_channel.c
     tests/unit/test_loopback_preview.c
@@ -5140,6 +5144,7 @@ set(_unit_test_names
     loopback_channel
     loopback_hitch_recovers
     loopback_quit_keeps_peer
+    send_drains_channels_multi_frame
     player_mute_mask_roundtrip
     lock_channel
     loopback_map_preview
