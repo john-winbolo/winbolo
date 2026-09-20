@@ -553,6 +553,12 @@ static bool wbnBacklogRefuses(const char *endpoint) {
   bool full;
   bool warn = FALSE;
 
+  /* No thread, no queue and no mutex: the enqueue behind this refuses on
+     its own, so there is nothing to count and no lock to take. */
+  if (wbnShouldRun != TRUE) {
+    return FALSE;
+  }
+
   wbnQueueLock();
   full = (wbnWaitingNone >= WBN_WAITING_NONE_MAX);
   if (full) {

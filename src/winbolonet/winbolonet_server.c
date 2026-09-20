@@ -1322,8 +1322,6 @@ bool winbolonetQueueEndSession(void) {
     return FALSE;
   }
 
-  serverSimConsoleMessage("WinBolo.net: Ending session...");
-
   /* Keyed at fire time like the rest. The quit fires before the register
    * behind it, and the register's result is what swaps the key, so it still
    * names the session being ended. Queued through the session form so a
@@ -1337,6 +1335,11 @@ bool winbolonetQueueEndSession(void) {
     free(json_str);
   }
   cJSON_Delete(body);
+  /* Only once the quit is on the queue: a refusal sends the caller to
+     winbolonetEndSession, which announces the same session's end itself. */
+  if (queued) {
+    serverSimConsoleMessage("WinBolo.net: Ending session...");
+  }
 
   for (count = 0; count < MAX_TANKS; count++) {
     winboloNetPlayerKey[count][0] = '\0';
