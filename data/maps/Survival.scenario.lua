@@ -92,7 +92,7 @@ scenario = {
     teams = {
       { id = 1, bots = 0,  max_bots = 6 },
       { id = 2, bots = 10, max_bots = 10, fielded = false,
-        brain = "brains/GoalHunter_1.7/init.lua",
+        brain = "GoalHunter_1.7",
         -- The horde's mode and difficulty, named here as well as on every
         -- wave spawn below. This is the half the LOBBY reads: without it a
         -- held seat carries whatever the lobby happened to give it, every
