@@ -35,12 +35,18 @@
 #define LOOPBACK_EMAP_LEN 5097
 
 /* Virtual impairment clock. The transport hands net_impair.c whatever clock
- * transportUdpClientSetImpairClock installed, and the module is pure — it
+ * transportUdpClientSetVirtualClock installed, and the module is pure — it
  * takes nowMs as a parameter — so a counter the pump advances a fixed amount
  * per tick turns a delay= spec into an exact pump count. Off unless a test
  * asks for it: the bundled impaired tests keep the wall clock and the timing
  * they were written against. */
-#define LOOPBACK_VIRTUAL_STEP_MS 10   /* one half-step at 100Hz, per pump */
+
+/* Game time in one pump. A pump runs serverInstanceTick once, which advances
+ * the sim by one 20ms frame — serverSimTick runs both half-steps inside it —
+ * so the step is the frame, not a half-step. Pace it off a half-step and the
+ * clock runs at half the rate of the sim it is pacing, which costs a delay=
+ * spec twice the game time it names. */
+#define LOOPBACK_VIRTUAL_STEP_MS 20
 
 #if WB_ENABLE_NETIMPAIR
 static bool     loopbackVirtualClockOn = false;
@@ -73,9 +79,9 @@ void loopbackHarnessUseVirtualClock(LoopbackHarness *h, bool on) {
          * stamped off the wall clock and would not come due for hours of
          * virtual time. */
         loopbackVirtualNowMs = 0;
-        transportUdpClientSetImpairClock(loopbackVirtualNow);
+        transportUdpClientSetVirtualClock(loopbackVirtualNow);
     } else {
-        transportUdpClientSetImpairClock(NULL);
+        transportUdpClientSetVirtualClock(NULL);
     }
 #else
     (void)on;

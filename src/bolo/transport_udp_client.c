@@ -443,25 +443,35 @@ typedef struct {
  * keeps the declaration off MSVC's C89 mixed-decl-and-statement path. */
 static int udpClientLoggedLocalPort = 0;
 
-/* Clock the impairment layer reads. net_impair.c is pure — it takes nowMs as
- * a parameter and never reads a clock of its own — so a caller can hand it a
- * counter it advances itself, which makes a delay= spec deterministic and
- * free of wall-clock scheduling. The four impairment call sites below are
- * guarded at runtime by netImpairEnabled rather than by WB_ENABLE_NETIMPAIR,
- * so they are compiled into every build and need a definition in both arms;
- * only the settable form exists where the tooling is switched on. */
+/* The clock a caller can substitute, and the only one two things read: the
+ * impairment layer's delivery times, and the client's own round-trip
+ * measurement (the PING stamp and the PONG that subtracts it). They have to
+ * share a clock. Put a simulated delay on a counter and leave the ping on the
+ * wall clock and the two disagree — the layer holds a datagram for the
+ * configured delay while the measurement reports how long the caller's pumps
+ * happened to take, so projectionPingMs describes a path the client is not on
+ * and everything sized off it is sized wrong.
+ *
+ * net_impair.c is pure — it takes nowMs as a parameter and reads no clock of
+ * its own — so a counter advanced a fixed amount per tick makes a delay= spec
+ * cost an exact number of ticks and no real time. The six call sites are
+ * guarded at runtime (netImpairEnabled, and the ping's own cadence) rather
+ * than by WB_ENABLE_NETIMPAIR, so they compile into every build and need a
+ * definition in both arms; only the settable form exists where the tooling is
+ * switched on. Nothing else in this file moves: join retries, the lobby-alone
+ * timer, the command queue and the upload pump are real timing. */
 #if WB_ENABLE_NETIMPAIR
-static uint64_t (*s_impairClock)(void) = NULL;
+static uint64_t (*s_virtualClock)(void) = NULL;
 
-void transportUdpClientSetImpairClock(uint64_t (*fn)(void)) {
-    s_impairClock = fn;
+void transportUdpClientSetVirtualClock(uint64_t (*fn)(void)) {
+    s_virtualClock = fn;
 }
 
-static uint64_t udpClientImpairNow(void) {
-    return (s_impairClock != NULL) ? s_impairClock() : (uint64_t)SDL_GetTicks();
+static uint64_t udpClientVirtualNow(void) {
+    return (s_virtualClock != NULL) ? s_virtualClock() : (uint64_t)SDL_GetTicks();
 }
 #else
-static uint64_t udpClientImpairNow(void) {
+static uint64_t udpClientVirtualNow(void) {
     return (uint64_t)SDL_GetTicks();
 }
 #endif
@@ -475,7 +485,7 @@ static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int le
      * either way, here at offer/send time. */
     if (netImpairEnabled(&c->impairOut) &&
         netImpairOffer(&c->impairOut, buf, len, &c->serverAddr,
-                       udpClientImpairNow())) {
+                       udpClientVirtualNow())) {
         c->packetsSentThisSec++;
         c->bytesSentThisSec += len;
         return;
@@ -2779,7 +2789,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     case PACKET_PONG:
         if (len >= PACKET_HEADER_SIZE + 8) {
             uint32_t clientTime = unpackU32(buf + PACKET_HEADER_SIZE);
-            uint32_t now = SDL_GetTicks();
+            uint32_t now = (uint32_t)udpClientVirtualNow();
             if (now >= clientTime) {
                 uint16_t sample = (uint16_t)(now - clientTime);
                 c->pingMs = pingMinWindowPush(&c->pingMinWin, sample);
@@ -3418,7 +3428,7 @@ static void udpClientDrainSnapshots(TransportUdpClientCtx *c) {
     while ((len = udpRecvFrom(c->sock, buf, sizeof(buf), &fromAddr)) > 0) {
         if (netImpairEnabled(&c->impairIn)) {
             netImpairOffer(&c->impairIn, buf, len, &fromAddr,
-                           udpClientImpairNow());
+                           udpClientVirtualNow());
         } else {
             udpClientProcessPacket(c, buf, len);
         }
@@ -3430,7 +3440,7 @@ static void udpClientDrainSnapshots(TransportUdpClientCtx *c) {
     {
         uint8_t pbuf[NET_IMPAIR_MAX_PACKET];
         struct sockaddr_in paddr;
-        uint64_t now = udpClientImpairNow();
+        uint64_t now = udpClientVirtualNow();
         int plen;
         while ((plen = netImpairPop(&c->impairIn, pbuf, sizeof(pbuf),
                                     &paddr, now)) > 0) {
@@ -3509,7 +3519,7 @@ static bool udpClientTick(void *ctx) {
     {
         uint8_t pbuf[NET_IMPAIR_MAX_PACKET];
         struct sockaddr_in paddr;
-        uint64_t now = udpClientImpairNow();
+        uint64_t now = udpClientVirtualNow();
         int plen;
         while ((plen = netImpairPop(&c->impairOut, pbuf, sizeof(pbuf),
                                     &paddr, now)) > 0) {
@@ -3732,14 +3742,16 @@ static bool udpClientTick(void *ctx) {
         }
     }
 
-    /* Periodic ping — bypasses delay so RTT measurement is accurate
-     * (measures real network RTT, not simulated RTT) */
+    /* Periodic ping. The stamp here and the subtraction in the PONG handler
+     * are one measurement and read one clock, the same one the impairment
+     * layer delivers on: the datagram travels the simulated path, so the
+     * round trip reported is the one the client is actually on. */
     if (c->joinState == UDP_CLIENT_CONNECTED) {
         if (!c->suppressPing &&
             c->localTick - c->lastPingSentTick >= PING_INTERVAL_TICKS) {
             uint8_t pbuf[PACKET_HEADER_SIZE + 8];
             packHeader(pbuf, PACKET_PING, c->outSequence++);
-            packU32(pbuf + PACKET_HEADER_SIZE, SDL_GetTicks());
+            packU32(pbuf + PACKET_HEADER_SIZE, (uint32_t)udpClientVirtualNow());
             packU32(pbuf + PACKET_HEADER_SIZE + 4, 0);  /* echo handled in PONG handler */
             udpClientSendTo(c, pbuf, sizeof(pbuf));
             c->lastPingSentTick = c->localTick;

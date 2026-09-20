@@ -35,8 +35,10 @@
  * surviving datagram is due immediately regardless of wall-clock — the tight
  * pump loop never needs SDL_GetTicks() to advance for a packet to deliver.
  * A test that does want a delay= spec calls loopbackHarnessUseVirtualClock,
- * which puts the impairment layer on a counter the pump advances 10ms per
- * tick: the delay then costs a fixed number of pumps and no real time.
+ * which puts the impairment layer and the client's round-trip measurement on
+ * a counter the pump advances 20ms per tick — one serverInstanceTick, which
+ * is one 20ms frame of two half-steps, so virtual time runs at the sim's
+ * rate. The delay then costs a fixed number of pumps and no real time.
  *
  * ── Lifecycle ───────────────────────────────────────────────────────────
  *   loopbackHarnessStart(&h, name, lobbyMode, impairSpec, seed)

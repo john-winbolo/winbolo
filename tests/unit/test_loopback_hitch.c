@@ -20,11 +20,16 @@
  * (test_input_tick_offset covers that against one ClientSim).
  *
  * What this case pins:
- *   - The client reaches the hitch with a MEASURED round trip. F2 has two
- *     branches and only the projectionPingMs > 0 one belongs to a networked
- *     client; a run that reached the hitch with the ping still at 0 would
- *     exercise the local-producer renumber and prove nothing here, so the
- *     non-zero ping is asserted before the hitch rather than assumed.
+ *   - The client reaches the hitch with a MEASURED round trip, and one that
+ *     matches the path it is on. clientBuildInputPacket has two branches and
+ *     only the projectionPingMs > 0 one belongs to a networked client; a run
+ *     that reached the hitch with the ping still at 0 would exercise the
+ *     local-producer renumber and prove nothing here. The measurement is also
+ *     checked against the delay= spec: the PING stamp, the PONG that
+ *     subtracts it and the impairment layer's delivery times all read
+ *     udpClientVirtualNow, so a round trip nowhere near the simulated one
+ *     means they have come off the same clock and the forward jump is being
+ *     sized off a path the client is not on.
  *   - After the burst, a button value the client has never sent reaches the
  *     server's lastInputButtons. A substitute is synthesised from
  *     lastInputButtons (the stall branch in simRunHalfStep), so it can only
@@ -55,10 +60,11 @@
  * different scenario.
  *
  * The client runs on delay=80 with the harness virtual clock, so the
- * impairment layer is driven by a counter the pump advances 10ms per tick:
- * the delay is exactly 8 pumps each way and costs no real time. Server state
- * is read off the ServerSim struct (the unittests profile permits internal
- * access).
+ * impairment layer is driven by a counter the pump advances 20ms per tick,
+ * one frame: the delay is exactly 4 pumps each way and costs no real time,
+ * and the ping measured across it reports that same simulated round trip.
+ * Server state is read off the ServerSim struct (the unittests profile
+ * permits internal access).
  */
 
 #include <stdint.h>
@@ -80,11 +86,26 @@
 #include "loopback_harness.h"
 
 /* One-way delay. Past the 60ms the issue's own table says a slot never
- * recovers from, and an exact 8 pumps under the virtual clock. */
+ * recovers from, and an exact 4 pumps under the virtual clock. */
 #define HITCH_SPEC "delay=80"
 #define HITCH_SEED 0x817C4u
 
-/* Join handshake plus the map download, each leg 8 pumps. The clean-path
+/* What that spec makes the client measure. Both legs are held 80ms — 4 pumps
+ * each — so the round trip is 160ms, and the client's own turnaround (it
+ * reads the PONG out of the socket on the pump after the one the layer
+ * released it on) adds a pump, so a settled sample is about 180ms.
+ *
+ * The bounds are wide because this pins a clock, not a number. One pump under
+ * the 160ms floor, so nothing about exactly when the pump advances the counter
+ * can fail it, and still several times the few tens of milliseconds a
+ * wall-clock measurement of the same pumps would report, which is the drift it
+ * exists to catch. Three pumps of slack above, and pingMinWindowPush returns
+ * the smallest sample in its window, so one late delivery never sets the
+ * value. */
+#define HITCH_PING_MIN_MS 140u
+#define HITCH_PING_MAX_MS 240u
+
+/* Join handshake plus the map download, each leg 4 pumps. The clean-path
  * cases budget 2000 pumps with no delay at all and the lossy ones 8000; the
  * map is ~20 CHANNEL_BULK segments, so this is one window and a handful of
  * round trips, with room for the recv thread to be late. */
@@ -92,12 +113,12 @@
 
 /* Reach a tank, a measured round trip and an established input stream. The
  * ping is the long pole: the client sends one every PING_INTERVAL_TICKS (20)
- * client ticks and the reply is 16 pumps behind it, so a first sample is
- * ~40 pumps away. An order of magnitude over that. */
+ * client ticks and the reply is 9 pumps behind it, so a first sample is
+ * ~30 pumps away. An order of magnitude over that. */
 #define HITCH_ESTABLISH_MAX 600
 
 /* Steady state before the baseline is taken, so the jitter buffer has settled
- * at whatever depth this path drives it to rather than still climbing. Two
+ * at whatever depth this path drives it to rather than still climbing. Four
  * ping intervals and several round trips. */
 #define HITCH_SETTLE 80
 
@@ -111,14 +132,14 @@
 #define HITCH_PUMPS 40
 
 /* Pumps allowed for the first real apply after the burst. The client's own
- * packets need 8 pumps to reach the server; the rebase is gated on the dry
+ * packets need 4 pumps to reach the server; the rebase is gated on the dry
  * run being past the threshold, so a packet arriving just after an apply
  * waits a few half-steps for the next one. That is tens of pumps, not
  * hundreds — this is a convergence bound, not an estimate. */
 #define HITCH_RECOVER_MAX 400
 
 /* Further button changes, and the bound on each. Each one costs the same
- * 8-pump flight plus the dry-run wait as the first, so the same order. */
+ * 4-pump flight plus the dry-run wait as the first, so the same order. */
 #define HITCH_CYCLES 4
 #define HITCH_CHANGE_MAX 200
 
@@ -276,6 +297,15 @@ int run_loopback_hitch_recovers(void) {
         loopbackHarnessStop(&h);
         UT_FAIL("projectionPingMs fell back to 0 before the hitch — the "
                 "local-producer branch would be under test, not the lockout");
+    }
+    if (pingBefore < HITCH_PING_MIN_MS || pingBefore > HITCH_PING_MAX_MS) {
+        loopbackHarnessStop(&h);
+        UT_FAIL("measured round trip %ums is outside %u-%ums for a %s path "
+                "(160ms both legs): the ping measurement and the impairment "
+                "layer are no longer reading the same clock, so the forward "
+                "jump is sized off a path this client is not on",
+                (unsigned)pingBefore, HITCH_PING_MIN_MS, HITCH_PING_MAX_MS,
+                HITCH_SPEC);
     }
     lpiBefore = h.sim->lastProcessedInput[slot];
     fprintf(stderr, "  loopback hitch: established after %d pump(s), "

@@ -960,15 +960,18 @@ void transportUdpClientTestResyncState(Transport *t, bool *resyncActive,
 #if WB_ENABLE_NETIMPAIR
 void transportUdpClientTestUploadTimeout(Transport *t);
 void transportUdpClientTestDropUploadReply(Transport *t, uint8_t packet_type);
-/* Hand the client's impairment layer a clock of the caller's own instead of
- * SDL_GetTicks. net_impair.c takes nowMs as a parameter and reads no clock
- * itself, so a caller that advances a counter a fixed amount per tick makes a
- * delay= spec deliver on an exact tick count and cost no real time. Process
- * wide, and it covers both directions (impairIn and impairOut) on every
- * client in the process. NULL restores the wall clock. Only the impairment
- * layer reads it — ping measurement, join retries and every other timer in
- * the transport keep SDL_GetTicks. */
-void transportUdpClientSetImpairClock(uint64_t (*fn)(void));
+/* Hand the client a clock of the caller's own instead of SDL_GetTicks. Two
+ * things read it and they have to agree: the impairment layer's delivery
+ * times, and the client's own round-trip measurement (the PING stamp and the
+ * PONG that subtracts it). net_impair.c takes nowMs as a parameter and reads
+ * no clock itself, so a caller that advances a counter a fixed amount per
+ * tick makes a delay= spec deliver on an exact tick count, cost no real time,
+ * and be the round trip the client then measures across it. Process wide, and
+ * it covers both directions (impairIn and impairOut) on every client in the
+ * process. NULL restores the wall clock. Nothing else moves — join retries,
+ * the lobby-alone timer, the command queue and the upload pump keep
+ * SDL_GetTicks. */
+void transportUdpClientSetVirtualClock(uint64_t (*fn)(void));
 #endif
 /* Read a connected spectator's armed seed blob (the spectator-owned copy of the
  * delayed ring keyframe). Returns the blob pointer with *outLen set to its
