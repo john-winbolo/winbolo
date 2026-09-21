@@ -1073,6 +1073,8 @@ void serverSimResetGameWorld(ServerSim *sim) {
         sim->inputQueueHead[i] = 0;
         sim->inputQueueTail[i] = 0;
         sim->lastProcessedInput[i] = 0;
+        sim->newestInputTick[i] = 0;
+        sim->newestDequeuedTick[i] = 0;
         sim->lastInputButtons[i] = 0;
         sim->lastActionAppliedTick[i] = 0;
         sim->pendingHarvestActions[i] = 0;

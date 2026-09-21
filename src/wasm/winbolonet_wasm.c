@@ -48,7 +48,7 @@ BYTE winbolonetEventsRemove(char *a, char *b, bool *aIsBot, bool *bIsBot)  { (vo
  * ------------------------------------------------------- */
 bool winbolonetThreadCreate(void)                                  { return FALSE; }
 void winbolonetThreadDestroy(void)                                 { }
-void winbolonetThreadAddRequest(const char *ep, const char *jb)    { (void)ep; (void)jb; }
+bool winbolonetThreadAddRequest(const char *ep, const char *jb)    { (void)ep; (void)jb; return FALSE; }
 int  winbolonetThreadRun(void *data)                                { (void)data; return 0; }
 
 /* -------------------------------------------------------

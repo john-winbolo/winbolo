@@ -1903,6 +1903,15 @@ const char *serverSimGetServerMessageLogFile(const ServerSim *sim);
 const LobbyPlayer *serverSimGetLobbyPlayer(const ServerSim *sim, BYTE n);
 bool               serverSimIsPlayerConnected(const ServerSim *sim, BYTE n);
 uint32_t           serverSimGetLastProcessedInput(const ServerSim *sim, BYTE n);
+
+/* True when this input is the one that breaks a stall-advance lockout: a tick
+ * strictly newer than anything the slot has ever received, arriving at or
+ * below the last processed tick while the slot is being stall-advanced.
+ * Taking it moves the slot's last processed tick back under it, so the
+ * dequeue sees it fresh and the stall-advance run ends. The input intake path
+ * asks this alongside its own newer-than check — an input that answers true
+ * would otherwise be dropped before it ever reaches the sim. */
+bool serverSimInputWouldRebase(const ServerSim *sim, BYTE n, uint32_t tick);
 bool               serverSimIsMapSkipVote(const ServerSim *sim, BYTE n);
 
 /* The lobby's view of one seat, in one call: who holds it, which team

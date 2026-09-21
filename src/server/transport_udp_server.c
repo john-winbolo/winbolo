@@ -186,6 +186,10 @@ bool transportUdpServerCreate(unsigned short port,
         (unsigned)serverSimGetMaxPlayers(sim),
         (password && *password) ? "yes" : "no");
     udpServer.compressedMapSize = 0;
+    /* tickCount restarted at 0 above, so any verify hold an earlier server on
+     * this process left behind names a deadline this counter will not reach
+     * for a long time. */
+    udpServerClearAllReauthPending();
 
     for (i = 0; i < MAX_TANKS; i++) {
         udpServer.clients[i].connected = false;
@@ -275,6 +279,11 @@ void transportUdpServerDestroy(void) {
         }
     }
     udpServer.running = false;
+    /* Drop any verify still waiting on a result. The slots it names are gone
+     * with this transport, and a later server on this process starts its
+     * tick counter at 0 again, so a leftover hold would name a deadline that
+     * counter will not reach for a long time. */
+    udpServerClearAllReauthPending();
 
     udpServerPublicIp[0] = '\0';
     udpServerPublicPort  = 0;
@@ -921,8 +930,16 @@ void transportUdpServerCheckTimeouts(ServerSim *sim) {
 
         /* Anonymous-fallback for a deferred WBN PLAYER_JOIN: the joiner's
          * reauth never landed within the grace window (direct-IP, not
-         * signed in, or WBN unreachable), so announce the join un-keyed. */
-        if (wbnJoinOnTick(&udpServer.clients[i].wbnJoin, udpServer.tickCount)) {
+         * signed in, or WBN unreachable), so announce the join un-keyed.
+         *
+         * Not while that slot's client/verify is still outstanding. The two
+         * announcements differ: this one carries no player_a, and the one the
+         * verify result publishes carries the account's key, so publishing
+         * both credits the account with a round it never joined. While a
+         * verify can still answer, the announcement is its to make; the query
+         * lapses the deference so a lost result cannot hold it for good. */
+        if (!udpServerReauthVerifyOutstanding((BYTE)i, udpServer.tickCount) &&
+            wbnJoinOnTick(&udpServer.clients[i].wbnJoin, udpServer.tickCount)) {
             winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
                                (BYTE)i, WINBOLO_NET_NO_PLAYER, FALSE, FALSE);
         }

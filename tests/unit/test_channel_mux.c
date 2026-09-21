@@ -678,6 +678,114 @@ static int stripChannelSegments(const uint8_t *in, int len, uint8_t dropCh,
     return op;
 }
 
+/* ---- a live bulk transfer does not starve the best-effort channels ----
+ *
+ * Frames used to fill in channel id order, which puts CHANNEL_BULK (3) ahead
+ * of CHANNEL_GAME_EFFECT (4) and CHANNEL_VOICE (5). A map download has as
+ * many stream segments ready as every frame of the tick will hold, so the
+ * two best-effort channels were framed only when bulk ran out - which during
+ * a download is never. Their rings are 64 and 8 deep and neither waits: what
+ * is not framed is dropped by the next burst over it.
+ *
+ * channelBuildFrame now frames bulk last. This queues a stream big enough to
+ * fill several frames, one tick's worth of effect segments and one voice
+ * frame, and asserts the first frame carries the best-effort traffic - and
+ * still carries bulk with what is left, so the ordering did not simply move
+ * the starvation. */
+
+/* Segments for one channel in a frame we built, or -1 when it will not
+ * parse. */
+static int countChannelSegments(const uint8_t *buf, int len, uint8_t want) {
+    int pos = 0;
+    int i;
+    uint8_t ackCount;
+    uint8_t segCount;
+    int n = 0;
+
+    if (len < 1) {
+        return -1;
+    }
+    ackCount = buf[pos++];
+    if (pos + ackCount * 9 + 1 > len) {
+        return -1;
+    }
+    pos += ackCount * 9;
+    segCount = buf[pos++];
+    for (i = 0; i < segCount; i++) {
+        int slen;
+        if (pos + 7 > len) {
+            return -1;
+        }
+        slen = u16be(buf + pos + 5);
+        if (pos + 7 + slen > len) {
+            return -1;
+        }
+        if (buf[pos] == want) {
+            n++;
+        }
+        pos += 7 + slen;
+    }
+    return n;
+}
+
+static int t_best_effort_not_starved_by_bulk(void) {
+    ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
+    uint8_t *blob = (uint8_t *)malloc(32768);
+    uint8_t frame[MAXFRAME];
+    uint8_t seg[16];
+    int rc = 1;
+    int i;
+    int len;
+    int fxSegs = 0, vxSegs = 0, bulkSegs = 0;
+
+    if (!a || !blob) {
+        goto done;
+    }
+    channelMuxInit(a);
+    memset(blob, 0x5A, 32768);
+
+    /* A transfer with more ready than any one frame can carry. */
+    if (!channelStreamSend(a, CHANNEL_BULK, blob, 32768)) {
+        goto done;
+    }
+    /* One tick's burst of effects, and one voice frame, as a running tick
+     * raises them. */
+    for (i = 0; i < 16; i++) {
+        memset(seg, (uint8_t)i, sizeof(seg));
+        if (!channelSendBestEffort(a, CHANNEL_GAME_EFFECT, seg,
+                                   (uint16_t)sizeof(seg))) {
+            goto done;
+        }
+    }
+    memset(seg, 0xC0, sizeof(seg));
+    if (!channelSendBestEffort(a, CHANNEL_VOICE, seg, (uint16_t)sizeof(seg))) {
+        goto done;
+    }
+
+    channelTick(a, 1, LINK_RTT_MS);
+    len = channelBuildFrame(a, frame, FRAME_BUDGET);
+    if (len < 2) {
+        goto done;
+    }
+    fxSegs   = countChannelSegments(frame, len, CHANNEL_GAME_EFFECT);
+    vxSegs   = countChannelSegments(frame, len, CHANNEL_VOICE);
+    bulkSegs = countChannelSegments(frame, len, CHANNEL_BULK);
+    if (fxSegs != 16 || vxSegs != 1 || bulkSegs <= 0) {
+        goto done;
+    }
+    rc = 0;
+done:
+    free(a);
+    free(blob);
+    if (rc) {
+        UT_FAIL("one frame with a live bulk transfer carried %d of 16 effect "
+                "segment(s), %d of 1 voice segment(s) and %d bulk segment(s) - "
+                "the best-effort channels are framed before bulk, and bulk "
+                "takes what is left", fxSegs, vxSegs, bulkSegs);
+    }
+    return 0;
+}
+
 static int t_multichannel_independence(void) {
     ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
     ChannelMux *b = (ChannelMux *)malloc(sizeof(*b));
@@ -2567,6 +2675,9 @@ int run_channel_mux(void) {
         return 1;
     }
     if (t_best_effort_no_hol()) {
+        return 1;
+    }
+    if (t_best_effort_not_starved_by_bulk()) {
         return 1;
     }
     if (t_best_effort_overflow_drops_oldest()) {

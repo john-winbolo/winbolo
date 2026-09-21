@@ -3819,6 +3819,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_identity_survives_reset.c
     tests/unit/test_wbn_session_rotation.c
     tests/unit/test_maprotate_rotation.c
+    tests/unit/test_round_transition_tick.c
+    tests/unit/test_reauth_result.c
     tests/unit/test_wbn_deferred_join.c
     tests/unit/test_join_collision.c
     tests/unit/test_base_refuel_timers.c
@@ -3885,7 +3887,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_mapview_sprite_scale.c
     tests/unit/test_mapview_overlay.c
     tests/unit/test_map_colours.c
+    tests/unit/test_stall_lockout_rebase.c
+    # The catch-up loop behind a hitch, driven without a sim through
+    # serverTickCatchUp (server_lifecycle.c, in with server_static).
+    tests/unit/test_hitch_logged.c
     tests/unit/test_input_catchup.c
+    tests/unit/test_input_tick_offset.c
     tests/unit/test_build_harvest_stale.c
     tests/unit/test_lgm_request_valid.c
     tests/unit/test_lgm_quit_pill.c
@@ -3933,6 +3940,20 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_loopback_quiet_lobby_control_loss.c
     tests/unit/test_loopback_command_liveness.c
     tests/unit/test_loopback_channel.c
+    # A server hitch and its catch-up burst, over an impaired path: the slot
+    # it locks out has to start applying real inputs again and keep doing it.
+    tests/unit/test_loopback_hitch.c
+    # A client-initiated quit while a peer is playing: the peer keeps its
+    # session and its inputs keep applying.
+    tests/unit/test_loopback_quit_keeps_peer.c
+    # One running tick's send loop: a raw-socket client past map download is
+    # given more reliable game events than one channel frame holds, and every
+    # one of them has to leave in that send.
+    tests/unit/test_send_multi_frame.c
+    # The same tick from the client's side: a burst of best-effort effect
+    # events and a voice frame have to be applied at a real client, and a
+    # quitting player's ownership burst has to reach the peer.
+    tests/unit/test_best_effort_burst.c
     tests/unit/test_player_mute.c
     tests/unit/test_lock_channel.c
     tests/unit/test_loopback_preview.c
@@ -5095,8 +5116,13 @@ set(_unit_test_names
     stall_never_fires
     stall_brief_trough_no_advance
     stall_long_dry_advances
+    stall_lockout_rebase
+    stall_lockout_rebase_once_per_tick
+    stall_recovery_no_gap_fill
+    hitch_logged
     input_catchup
     catchup_ignores_redundant_duplicates
+    input_tick_offset_adopts_jump
     build_harvest_stale
     build_harvest_valid
     build_harvest_busy_queues
@@ -5159,6 +5185,13 @@ set(_unit_test_names
     loopback_quiet_lobby_control_loss
     loopback_command_liveness
     loopback_channel
+    loopback_hitch_recovers
+    loopback_quit_keeps_peer
+    send_drains_channels_multi_frame
+    best_effort_not_dropped
+    effect_burst_not_starved_by_reliable
+    post_game_segment_applied
+    quit_burst_all_delivered
     player_mute_mask_roundtrip
     lock_channel
     loopback_map_preview
@@ -5355,6 +5388,18 @@ set(_unit_test_names
     autolock_lobby_stays_open
     autolock_released_on_return_to_lobby
     no_autolock_stays_open_on_start
+    round_transition_tick_does_not_block
+    round_transition_during_rotation_deferred
+    round_transition_worker_down_sends_inline
+    reauth_result_after_slot_reuse_discarded
+    reauth_result_stamps_slot
+    reauth_repeat_while_verify_out_refused
+    reauth_result_outruns_grace_stamps_once
+    reauth_result_failure_releases_anonymous_join
+    reauth_result_lost_still_announces
+    reauth_web_code_verified_off_tick
+    reauth_web_code_after_slot_reuse_discarded
+    reauth_web_code_guest_stays_anonymous
     maprotate_restarts_round_and_rearms
     maprotate_boot_does_not_rotate_while_empty
     maprotate_gameover_is_not_terminal
@@ -5990,6 +6035,105 @@ foreach(_name IN LISTS _unit_test_names)
                          TIMEOUT 60
                          FIXTURES_REQUIRED warm_binaries)
 endforeach()
+
+# ---------------------------------------------------------------------------
+# WinBoloWbnTests -- the WinBolo.net HTTP layer against a local TCP listener.
+#
+# Its own target rather than a case in WinBoloUnitTests: that binary links
+# tests/unit/test_stubs.c, which stubs WinBolo.net out and links no libcurl,
+# so nothing in it can show whether an HTTP call opened a connection or
+# reused one. This target links the real http.c and winbolonetthread.c out of
+# winbolonet_core, and its own main.
+#
+# The loose sources close the link rather than pulling in bolo_static:
+# prefs.c / prefs_doc.c are the two preference calls http.c makes when no
+# host override is set, global.c the New / Dispose allocator the thread queue
+# uses, and tweetnacl.c the Ed25519 signing, compiled per consumer the same
+# way LogViewer and the client do. winbolonet_server.c's one call back into
+# the server, serverSimConsoleMessage, is stubbed in the harness.
+#
+# One binary, one case per run: each case owns a listener and the process-wide
+# HTTP layer, so the name on the command line picks which one runs.
+# ---------------------------------------------------------------------------
+add_executable(WinBoloWbnTests
+    # The listener the cases post at, and the runner that picks one by name.
+    tests/wbn/wbn_test_harness.c
+    tests/wbn/test_wbn_connection_reuse.c
+    tests/wbn/test_wbn_leave_returns_at_once.c
+    tests/wbn/test_wbn_worker_outlives_session.c
+    tests/wbn/test_wbn_job_results.c
+    tests/wbn/test_wbn_log_upload.c
+    tests/wbn/test_wbn_key_at_fire_time.c
+    tests/wbn/test_wbn_queue_cap.c
+    src/bolo/global.c
+    src/common/prefs.c
+    src/common/prefs_doc.c
+    src/third_party/tweetnacl/tweetnacl.c
+)
+target_include_directories(WinBoloWbnTests PRIVATE
+    src
+    src/winbolonet
+    ${cjson_SOURCE_DIR}
+    src/third_party/tweetnacl
+)
+bolo_apply_include_rules(WinBoloWbnTests runtime_only)
+target_compile_definitions(WinBoloWbnTests PRIVATE
+    # Root for the log the upload case writes, under the BUILD dir rather
+    # than the source tree or /tmp, for the reason scratch_dir.c gives: two
+    # worktrees then cannot pick the same path. The case adds a pid to the
+    # file name and removes it when it is done.
+    WB_TEST_SCRATCH_DIR="${CMAKE_BINARY_DIR}/test-scratch")
+target_link_libraries(WinBoloWbnTests PRIVATE
+    winbolonet_core winbolonet_server cjson CURL::libcurl SDL3::SDL3)
+target_compile_options(WinBoloWbnTests PRIVATE -fcommon)
+if(WIN32)
+    target_link_libraries(WinBoloWbnTests PRIVATE ws2_32)
+else()
+    target_link_libraries(WinBoloWbnTests PRIVATE ${MATH_LIB} pthread)
+endif()
+set_flat_output(WinBoloWbnTests "${CMAKE_BINARY_DIR}")
+
+add_test(NAME wbn.posts_share_connection
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> posts_share_connection)
+set_tests_properties(wbn.posts_share_connection PROPERTIES TIMEOUT 60)
+
+# Four posts against a listener that holds every answer 3s: about twelve
+# seconds of draining, so this row gets more room than the one above.
+add_test(NAME wbn.leave_returns_at_once
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> leave_returns_at_once)
+set_tests_properties(wbn.leave_returns_at_once PROPERTIES TIMEOUT 180)
+
+# A register, a queued post, a session boundary and a second queued post,
+# none of them held: the same order of magnitude as the row above it.
+add_test(NAME wbn.worker_outlives_session
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> worker_outlives_session)
+set_tests_properties(wbn.worker_outlives_session PROPERTIES TIMEOUT 60)
+
+# Three posts against a listener that holds every answer 3s, drained one at a
+# time: about nine seconds, so this row gets the same room as the held one
+# above it.
+add_test(NAME wbn.job_result_returns
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> job_result_returns)
+set_tests_properties(wbn.job_result_returns PROPERTIES TIMEOUT 180)
+
+# One multipart upload against a listener that holds its answer 3s.
+add_test(NAME wbn.log_upload_runs
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> log_upload_runs)
+set_tests_properties(wbn.log_upload_runs PROPERTIES TIMEOUT 120)
+
+# Two keyed posts against a listener that holds each answer 3s, the key
+# swapped between them while the first is held: about six seconds.
+add_test(NAME wbn.key_stamped_at_fire_time
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> key_stamped_at_fire_time)
+set_tests_properties(wbn.key_stamped_at_fire_time PROPERTIES TIMEOUT 60)
+
+# Seventy fire-and-forget posts against a listener that holds its one answer,
+# then a register and a session quit with the queue full. The listener is
+# stopped before the worker, so the queued posts fail their connect at once
+# instead of being held: a few seconds in all.
+add_test(NAME wbn.queue_cap_refuses_posts
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> queue_cap_refuses_posts)
+set_tests_properties(wbn.queue_cap_refuses_posts PROPERTIES TIMEOUT 120)
 
 # ---- Include-rule check: the scenario surface is invisible to a frontend --
 # src/bolo/scenario_api/ is on the include path of scenario_host, sim_owner

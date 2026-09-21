@@ -329,6 +329,13 @@ struct ServerSim {
                                       * never reports against the old (just-
                                       * quit) server_key. The change is held
                                       * as dirty and flushed on the new key. */
+    uint32_t wbnRegisterJob;       /* id of the server/register job queued
+                                      * for the WinBolo.net worker and not yet
+                                      * answered; 0 when none is out. */
+    bool     wbnRotateDeferred;    /* a round ended while wbnRegisterJob was
+                                      * out: the next quit / upload / register
+                                      * runs when that register's result
+                                      * lands, against the key it installs. */
     uint8_t  mapMd5[16];           /* MD5 of the active map's BMAPBOLO bytes */
     bool     mapMd5Valid;          /* mapMd5 holds a usable hash */
     char     mapMd5Hex[33];        /* mapMd5 as 32 lowercase hex chars + NUL; "" when invalid */
@@ -478,6 +485,10 @@ struct ServerSim {
     uint8_t      inputQueueTail[MAX_TANKS];  /* Next slot to read */
     bool         playerConnected[MAX_TANKS];
     uint32_t     lastProcessedInput[MAX_TANKS];  /* Tick of last processed input per player */
+    uint32_t     newestInputTick[MAX_TANKS];     /* Newest input tick ever received per
+                                                  * player, accepted or rebased */
+    uint32_t     newestDequeuedTick[MAX_TANKS];  /* Newest input tick ever taken from
+                                                  * the queue, applied or dropped */
     uint8_t      lastInputButtons[MAX_TANKS];    /* Last button bitmask for stall continuity */
     uint32_t     lastActionAppliedTick[MAX_TANKS]; /* newest input tick whose one-shot
                                                     * action (fire/mine/build) was
@@ -519,7 +530,7 @@ struct ServerSim {
     uint8_t  jitterStallCount[MAX_TANKS];  /* Consecutive ticks queue was empty when expected */
     uint8_t  jitterStarveCount[MAX_TANKS]; /* Recent drain events (queue emptied when input expected) */
     uint16_t jitterStableTicks[MAX_TANKS]; /* Ticks since last stall */
-    uint8_t inputDryTicks[MAX_TANKS]; /* consecutive half-steps with no fresh
+    uint32_t inputDryTicks[MAX_TANKS]; /* consecutive half-steps with no fresh
                                        * input; gates stall-advance vs wait */
 
     /* Per-player input-pipeline instrumentation — window counters reset

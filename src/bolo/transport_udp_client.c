@@ -145,6 +145,10 @@ typedef struct {
     GameEvent snapshotEvents[MAX_SNAPSHOT_EVENTS];
     uint32_t lastSnapshotSeq;  /* Sequence number of latest snapshot */
     uint32_t lastSnapshotTick; /* Local tick when last snapshot arrived (for timeout) */
+    /* localTick of the last snapshot actually applied, and only that: the
+     * field above is refreshed by any valid packet, so it cannot answer
+     * whether snapshots are still flowing. 0 until the first one lands. */
+    uint32_t lastSnapshotApplyTick;
 
     /* Reliable map-event dedup */
     uint32_t mapEventAck;       /* Next expected reliable map event seq (init to 1) */
@@ -443,6 +447,39 @@ typedef struct {
  * keeps the declaration off MSVC's C89 mixed-decl-and-statement path. */
 static int udpClientLoggedLocalPort = 0;
 
+/* The clock a caller can substitute, and the only one two things read: the
+ * impairment layer's delivery times, and the client's own round-trip
+ * measurement (the PING stamp and the PONG that subtracts it). They have to
+ * share a clock. Put a simulated delay on a counter and leave the ping on the
+ * wall clock and the two disagree — the layer holds a datagram for the
+ * configured delay while the measurement reports how long the caller's pumps
+ * happened to take, so projectionPingMs describes a path the client is not on
+ * and everything sized off it is sized wrong.
+ *
+ * net_impair.c is pure — it takes nowMs as a parameter and reads no clock of
+ * its own — so a counter advanced a fixed amount per tick makes a delay= spec
+ * cost an exact number of ticks and no real time. The six call sites are
+ * guarded at runtime (netImpairEnabled, and the ping's own cadence) rather
+ * than by WB_ENABLE_NETIMPAIR, so they compile into every build and need a
+ * definition in both arms; only the settable form exists where the tooling is
+ * switched on. Nothing else in this file moves: join retries, the lobby-alone
+ * timer, the command queue and the upload pump are real timing. */
+#if WB_ENABLE_NETIMPAIR
+static uint64_t (*s_virtualClock)(void) = NULL;
+
+void transportUdpClientSetVirtualClock(uint64_t (*fn)(void)) {
+    s_virtualClock = fn;
+}
+
+static uint64_t udpClientVirtualNow(void) {
+    return (s_virtualClock != NULL) ? s_virtualClock() : (uint64_t)SDL_GetTicks();
+}
+#else
+static uint64_t udpClientVirtualNow(void) {
+    return (uint64_t)SDL_GetTicks();
+}
+#endif
+
 /* Client send wrapper — tracks packet and byte counters */
 static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int len) {
     /* When outbound impairment is enabled, hand the datagram to the layer
@@ -452,7 +489,7 @@ static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int le
      * either way, here at offer/send time. */
     if (netImpairEnabled(&c->impairOut) &&
         netImpairOffer(&c->impairOut, buf, len, &c->serverAddr,
-                       (uint64_t)SDL_GetTicks())) {
+                       udpClientVirtualNow())) {
         c->packetsSentThisSec++;
         c->bytesSentThisSec += len;
         return;
@@ -1403,6 +1440,13 @@ static void clientSimApplyControlOrdered(TransportUdpClientCtx *c,
     /* Default path — identical to the legacy direct-dispatch route. */
     clientSimApplyControl(c->clientSim, evt);
 }
+
+/* How long after the last applied snapshot the snapshot drain still owns the
+ * order the game, effect and map channels apply in. localTick runs at 100/s
+ * and a running server sends a snapshot every other tick, so 20 is ten
+ * snapshots' worth: long enough that a burst of loss does not hand the order
+ * back, short enough that the post-game window does not sit undrained. */
+#define SNAPSHOT_ORDER_IDLE_TICKS 20
 
 /* Map resync (desync recovery) timing/limits. localTick runs at 100/s. */
 #define MAP_RESYNC_REQUEST_RESEND_TICKS 75   /* ~0.75s between request resends */
@@ -2576,10 +2620,14 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
          * baseline lift already ran, so a previous-game straggler is gone and
          * only current-game events drain here.  The channel guarantees in-order
          * exactly-once delivery, so no per-event ack or dedup is applied.
-         * Ephemeral events arrive on the best-effort channel and merge into the
-         * same game-event set: order between the reliable and best-effort sets
-         * does not affect correctness, so they share chanGameEv[] and the
-         * splice below. */
+         * Ephemeral events arrive on the best-effort channel and are drained
+         * separately, after this snapshot is applied: order between the
+         * reliable and best-effort sets does not affect correctness, and
+         * sharing this array made the two compete for one cap of
+         * MAX_SNAPSHOT_EVENTS. A running tick can send about twice that
+         * across the two channels, and what a drain leaves in the effect
+         * channel's 64-deep ring is evicted by the next tick's burst rather
+         * than waiting like a reliable segment does. */
         {
             GameEvent chanGameEv[MAX_SNAPSHOT_EVENTS];
             uint8_t chanBuf[CHANNEL_MAX_SEG];
@@ -2588,14 +2636,6 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             int mapTailCount;
             while (chanCount < MAX_SNAPSHOT_EVENTS &&
                    channelReceive(&c->channelMux, CHANNEL_GAME, chanBuf, &chanLen)) {
-                if (unpackGameEvent(chanBuf, chanLen, &chanGameEv[chanCount]) > 0) {
-                    chanCount++;
-                }
-            }
-            /* Drain the best-effort game-effect channel into the same array. */
-            while (chanCount < MAX_SNAPSHOT_EVENTS &&
-                   channelReceiveBestEffort(&c->channelMux, CHANNEL_GAME_EFFECT,
-                                            chanBuf, &chanLen)) {
                 if (unpackGameEvent(chanBuf, chanLen, &chanGameEv[chanCount]) > 0) {
                     chanCount++;
                 }
@@ -2633,6 +2673,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         c->hasSnapshot = true;
         c->lastSnapshotSeq = seq;
         c->lastSnapshotTick = c->localTick;
+        c->lastSnapshotApplyTick = c->localTick;
 
         /* Apply the freshly-staged snapshot directly onto the ClientSim.
          * The frontend's per-frame clientSimNetSyncSnapshot also reads
@@ -2650,30 +2691,98 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
         c->hasSnapshot = false;   /* Consumed inline — per-frame
                                    * syncSnapshot no-ops until the
                                    * next arrival. */
+
+        /* The best-effort effect channel, drained to the end and applied one
+         * at a time, the way the standalone-frame path applies it. Its own
+         * drain rather than a share of the snapshot's event array: nothing
+         * holds an effect segment for the next snapshot, so one left here is
+         * dropped by the next tick's burst over the 64-deep ring. The ring
+         * bounds this loop.
+         *
+         * After the snapshot, not before: these are the same events the
+         * snapshot's own state already agrees with (both come off one server
+         * tick), and applying them here leaves the order among the reliable
+         * game events the snapshot carries exactly as it was. */
+        {
+            uint8_t fxBuf[CHANNEL_MAX_SEG];
+            uint16_t fxLen;
+            GameEvent fxEv;
+            while (channelReceiveBestEffort(&c->channelMux, CHANNEL_GAME_EFFECT,
+                                            fxBuf, &fxLen)) {
+                if (unpackGameEvent(fxBuf, fxLen, &fxEv) > 0) {
+                    clientSimApplyGameEvents(c->clientSim, &fxEv, 1,
+                                             c->playerNum);
+                }
+            }
+        }
         break;
     }
 
     case PACKET_CHANNEL:
-        /* Standalone channel frame (server → client, sent when no snapshot
-         * rides this tick).  Body is one frame directly after the header. */
+        /* Standalone channel frame (server → client).  Body is one frame
+         * directly after the header. */
         if (channelRecvFrame(&c->channelMux, buf + PACKET_HEADER_SIZE,
                              len - PACKET_HEADER_SIZE) >= 0) {
             c->channelFramesRx++;
             /* This is the carrier voice rides in the lobby, where no
-             * snapshot flows. */
+             * snapshot flows, and it carries voice while running too. */
             clientDrainVoice(c);
             /* Drain reliable control events from channel 2 first, then game
              * (channel 0) and map (channel 1) events, applying them directly.
              * Control is applied ordered ahead of game/map to match the
-             * snapshot path's "control before game/map tails".  A standalone
-             * frame is only sent while the game is not running, so it never
-             * coincides with an in-frame running-flip and needs no map-install
-             * gating.  The channel guarantees in-order exactly-once delivery, so
-             * no dedup is added. */
+             * snapshot path's "control before game/map tails".  The channel
+             * guarantees in-order exactly-once delivery, so no dedup is added.
+             *
+             * The game, effect and map channels are the exception: a running
+             * tick sends several of these frames alongside the snapshot,
+             * carrying what the snapshot trailer had no room for, and the
+             * snapshot drain owns the order those three apply in — base state
+             * before game events, and the map-install check.  Draining them
+             * here would apply game events ahead of the snapshot that should
+             * order them, so while snapshots are flowing to this client they
+             * are ingested and left for the next snapshot's drain.
+             *
+             * Control, bulk and voice keep draining here in every state.  The
+             * snapshot drain stops the moment the server leaves running — it
+             * is the running branch of the tick that sends snapshots — and the
+             * phase change itself arrives on CHANNEL_CONTROL, so a control
+             * event held for a drain that has stopped would never be applied
+             * and the client would never learn the round had ended.  Draining
+             * control here costs no ordering: the snapshot path applies
+             * control ahead of game/map too, so the relative order is the same
+             * one either way.  Game, effect and map held over a phase change
+             * are not stranded — control flips the phase, and the next frame
+             * drains them; a previous round's stragglers are discarded by the
+             * CTRL_CHANNEL_RESET baseline lift at game start as they are
+             * today. */
             if (c->clientSim != NULL) {
                 uint8_t chanBuf[CHANNEL_MAX_SEG];
                 uint16_t chanLen;
                 GameEvent gev;
+                /* Snapshots flow to a joined player past its map download and
+                 * to nobody else: a spectator's feed is CHANNEL_BULK and a
+                 * downloader's snapshots are gated, so both keep draining
+                 * everything here. */
+                /* And only while they are actually flowing. The three tests
+                 * above stay true through the whole post-game window: the
+                 * client's inLobby flips on CTRL_GAME_PHASE_LOBBY, which is
+                 * itself a control event, and the server stops sending
+                 * snapshots when the round ends - so game, effect and map
+                 * segments sat undrained for as long as the game-over
+                 * countdown ran, and the server resent the reliable tail
+                 * into a client that was ignoring it. A drain that has
+                 * stopped cannot own an order, so the standalone path takes
+                 * it back. Stragglers then apply before
+                 * CTRL_GAME_PHASE_LOBBY resets the world rather than after
+                 * it, which is where the round they belong to is. */
+                bool snapshotsFlowing =
+                    c->lastSnapshotApplyTick != 0 &&
+                    (uint32_t)(c->localTick - c->lastSnapshotApplyTick) <=
+                        SNAPSHOT_ORDER_IDLE_TICKS;
+                bool snapshotOwnsOrder = (c->joinState == UDP_CLIENT_CONNECTED &&
+                                          !c->clientSim->inLobby &&
+                                          c->mapInstalled &&
+                                          snapshotsFlowing);
                 while (channelReceive(&c->channelMux, CHANNEL_CONTROL,
                                       chanBuf, &chanLen)) {
                     uint8_t type;
@@ -2714,15 +2823,15 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                     }
                     clientSimApplyControlOrdered(c, &evt, 0);
                 }
-                while (channelReceive(&c->channelMux, CHANNEL_GAME,
-                                      chanBuf, &chanLen)) {
-                    if (unpackGameEvent(chanBuf, chanLen, &gev) > 0) {
-                        clientSimApplyGameEvents(c->clientSim, &gev, 1,
-                                                 c->playerNum);
-                    }
-                }
-                /* Best-effort game-effect channel (ephemeral events). Order
-                 * relative to the reliable game/map drains does not matter. */
+                /* The best-effort game-effect channel is drained here in
+                 * every state, snapshots flowing or not. Nothing holds an
+                 * effect segment: its receive ring is 64 deep and drops its
+                 * oldest entry when the next burst arrives over it, so one
+                 * left for the next snapshot's drain is one a second tick's
+                 * burst can evict. Order costs nothing to take it early -
+                 * these are ephemeral events (sounds, explosions, pill and
+                 * base deltas) and the reliable sets they interleave with
+                 * are not ordered against them either way. */
                 while (channelReceiveBestEffort(&c->channelMux,
                                                 CHANNEL_GAME_EFFECT,
                                                 chanBuf, &chanLen)) {
@@ -2731,19 +2840,28 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
                                                  c->playerNum);
                     }
                 }
-                /* Channel 1 (map) events, applied after the game events
-                 * (game-then-map order). Payload [gen u32][GameEvent]; drop any
-                 * tagged older than the installed map generation. */
-                while (channelReceive(&c->channelMux, CHANNEL_MAP,
-                                      chanBuf, &chanLen)) {
-                    uint32_t evGen;
-                    if (chanLen < 4) continue;
-                    evGen = unpackU32(chanBuf);
-                    if (evGen < c->installedMapGen) continue;
-                    if (unpackGameEvent(chanBuf + 4, (size_t)(chanLen - 4),
-                                        &gev) > 0) {
-                        clientSimApplyGameEvents(c->clientSim, &gev, 1,
-                                                 c->playerNum);
+                if (!snapshotOwnsOrder) {
+                    while (channelReceive(&c->channelMux, CHANNEL_GAME,
+                                          chanBuf, &chanLen)) {
+                        if (unpackGameEvent(chanBuf, chanLen, &gev) > 0) {
+                            clientSimApplyGameEvents(c->clientSim, &gev, 1,
+                                                     c->playerNum);
+                        }
+                    }
+                    /* Channel 1 (map) events, applied after the game events
+                     * (game-then-map order). Payload [gen u32][GameEvent]; drop
+                     * any tagged older than the installed map generation. */
+                    while (channelReceive(&c->channelMux, CHANNEL_MAP,
+                                          chanBuf, &chanLen)) {
+                        uint32_t evGen;
+                        if (chanLen < 4) continue;
+                        evGen = unpackU32(chanBuf);
+                        if (evGen < c->installedMapGen) continue;
+                        if (unpackGameEvent(chanBuf + 4, (size_t)(chanLen - 4),
+                                            &gev) > 0) {
+                            clientSimApplyGameEvents(c->clientSim, &gev, 1,
+                                                     c->playerNum);
+                        }
                     }
                 }
                 /* Bulk-channel stream fragments (map preview) ride the same
@@ -2756,7 +2874,7 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     case PACKET_PONG:
         if (len >= PACKET_HEADER_SIZE + 8) {
             uint32_t clientTime = unpackU32(buf + PACKET_HEADER_SIZE);
-            uint32_t now = SDL_GetTicks();
+            uint32_t now = (uint32_t)udpClientVirtualNow();
             if (now >= clientTime) {
                 uint16_t sample = (uint16_t)(now - clientTime);
                 c->pingMs = pingMinWindowPush(&c->pingMinWin, sample);
@@ -3395,7 +3513,7 @@ static void udpClientDrainSnapshots(TransportUdpClientCtx *c) {
     while ((len = udpRecvFrom(c->sock, buf, sizeof(buf), &fromAddr)) > 0) {
         if (netImpairEnabled(&c->impairIn)) {
             netImpairOffer(&c->impairIn, buf, len, &fromAddr,
-                           (uint64_t)SDL_GetTicks());
+                           udpClientVirtualNow());
         } else {
             udpClientProcessPacket(c, buf, len);
         }
@@ -3407,7 +3525,7 @@ static void udpClientDrainSnapshots(TransportUdpClientCtx *c) {
     {
         uint8_t pbuf[NET_IMPAIR_MAX_PACKET];
         struct sockaddr_in paddr;
-        uint64_t now = (uint64_t)SDL_GetTicks();
+        uint64_t now = udpClientVirtualNow();
         int plen;
         while ((plen = netImpairPop(&c->impairIn, pbuf, sizeof(pbuf),
                                     &paddr, now)) > 0) {
@@ -3478,6 +3596,15 @@ static bool udpClientTick(void *ctx) {
                 udpClientSendTo(c, cbuf, PACKET_HEADER_SIZE + frameLen);
             }
         }
+        /* This is the tick's last frame — the input trailer built earlier drains
+         * into the same mux — so whatever is still pending on the voice channel
+         * is what the tick could not carry. That is what
+         * transportUdpClientGetVoiceChannelStats reports, and the charge has to
+         * sit after the last frame rather than at the tick boundary: the
+         * frontend queues a 20 ms frame whenever the encoder produces one, so a
+         * charge at the boundary would count the frames the tick is about to
+         * send. */
+        channelChargeBestEffortLeftover(&c->channelMux);
     }
 
     /* Release any impaired OUTBOUND datagrams now due onto the wire (to their
@@ -3486,7 +3613,7 @@ static bool udpClientTick(void *ctx) {
     {
         uint8_t pbuf[NET_IMPAIR_MAX_PACKET];
         struct sockaddr_in paddr;
-        uint64_t now = (uint64_t)SDL_GetTicks();
+        uint64_t now = udpClientVirtualNow();
         int plen;
         while ((plen = netImpairPop(&c->impairOut, pbuf, sizeof(pbuf),
                                     &paddr, now)) > 0) {
@@ -3709,14 +3836,16 @@ static bool udpClientTick(void *ctx) {
         }
     }
 
-    /* Periodic ping — bypasses delay so RTT measurement is accurate
-     * (measures real network RTT, not simulated RTT) */
+    /* Periodic ping. The stamp here and the subtraction in the PONG handler
+     * are one measurement and read one clock, the same one the impairment
+     * layer delivers on: the datagram travels the simulated path, so the
+     * round trip reported is the one the client is actually on. */
     if (c->joinState == UDP_CLIENT_CONNECTED) {
         if (!c->suppressPing &&
             c->localTick - c->lastPingSentTick >= PING_INTERVAL_TICKS) {
             uint8_t pbuf[PACKET_HEADER_SIZE + 8];
             packHeader(pbuf, PACKET_PING, c->outSequence++);
-            packU32(pbuf + PACKET_HEADER_SIZE, SDL_GetTicks());
+            packU32(pbuf + PACKET_HEADER_SIZE, (uint32_t)udpClientVirtualNow());
             packU32(pbuf + PACKET_HEADER_SIZE + 4, 0);  /* echo handled in PONG handler */
             udpClientSendTo(c, pbuf, sizeof(pbuf));
             c->lastPingSentTick = c->localTick;

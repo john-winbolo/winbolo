@@ -118,7 +118,7 @@ bool winbolonetAuthValidate(const char *token, char *playerNameOut, int *rankOut
 
 bool winbolonetThreadCreate(void) { return true; }
 void winbolonetThreadDestroy(void) {}
-void winbolonetThreadAddRequest(const char *ep, const char *jb) { (void)ep; (void)jb; }
+bool winbolonetThreadAddRequest(const char *ep, const char *jb) { (void)ep; (void)jb; return false; }
 
 /* ---- winbolonet events stubs ---- */
 
@@ -328,7 +328,7 @@ WbnSyncOutcome wbnPrefsSyncOnce(const char *userToken, const char *uploadSnapsho
     return out;
 }
 
-void winbolonetEndSession(void) {}
+void winbolonetEndSession(uint32_t drainMaxMs) { (void)drainMaxMs; }
 
 const char *winbolonetGetCountryCode(void) { return ""; }
 
