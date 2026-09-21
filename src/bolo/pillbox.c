@@ -1734,10 +1734,8 @@ void pillsBaseHit(GameSim *sim, pillboxes *value, BYTE mx, BYTE my, BYTE baseOwn
     xDist = ((*value)->item[count].x) - mx;
     yDist = ((*value)->item[count].y) - my;
     if ((*value)->active[count] != FALSE &&
-        xDist >= -sim->rules.pill_base_defend_range &&
-        xDist <= sim->rules.pill_base_defend_range &&
-        yDist >= -sim->rules.pill_base_defend_range &&
-        yDist <= sim->rules.pill_base_defend_range &&
+        xDist * xDist + yDist * yDist <
+            sim->rules.pill_base_defend_range * sim->rules.pill_base_defend_range &&
         (*value)->item[count].owner != NEUTRAL && (playersIsAllie(&sim->plyrs, baseOwner, (*value)->item[count].owner) == TRUE) && (*value)->item[count].armour > 0) {
       /* It is in range make it angry */
       (*value)->item[count].coolDown = (BYTE) sim->rules.pill_cooldown_ticks;

@@ -158,7 +158,7 @@ typedef struct SimRules {
     int32_t pill_shell_damage;      /* what one shell takes off a pill */
     int32_t pill_angry_divisor;     /* the step from normal toward min */
     float   pill_fire_length;       /* how far the shell a pill fires flies */
-    int32_t pill_base_defend_range; /* how near a shot base angers a pill */
+    int32_t pill_base_defend_range; /* exclusive radius in map squares around a shot base */
     int32_t pill_aim_iterations;    /* how hard a pill works to lead a target */
     int32_t pill_massage_range;     /* how near the old sloppy aim takes over */
     float   pill_massage_cosine;    /* how straight at the pill still aims true */

@@ -2516,6 +2516,7 @@ int run_scenario_entity_add_out_null(void);
  * scaled across pill_max_armour, and the client capping the armour a server
  * states about a pill. */
 int run_pill_armour_scale_classic_cap(void);
+int run_pill_base_anger_radius(void);
 int run_pill_armour_scale_raised_cap(void);
 int run_pill_armour_scale_client_caps(void);
 
