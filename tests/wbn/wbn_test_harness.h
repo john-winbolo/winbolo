@@ -103,5 +103,6 @@ bool wbnTestJobResultReturns(void);
 bool wbnTestLogUploadRuns(void);
 bool wbnTestKeyStampedAtFireTime(void);
 bool wbnTestQueueCapRefusesPosts(void);
+bool wbnTestForcedUpdateFullQueue(void);
 
 #endif /* WINBOLO_TEST_WBN_HARNESS_H */

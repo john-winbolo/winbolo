@@ -89,9 +89,11 @@
    told the post was not taken and takes its own FALSE path instead. Only
    WBN_JOB_NONE is counted and only it is ever refused: a register, a verify
    and an upload are the round transition and the join path, which have no
-   other way through, and so is the session quit
-   (winbolonetThreadAddSessionRequest). The oldest is never dropped to make
-   room either - it could be that quit or a round-log upload. */
+   other way through, and neither are the posts that go through
+   winbolonetThreadAddSessionRequest - the session quit and the forced
+   server/update flush the round transition sends before it. The oldest is
+   never dropped to make room either - it could be one of those or a
+   round-log upload. */
 #define WBN_WAITING_NONE_MAX 64
 
 typedef struct wbnListObj *wbnList;
@@ -246,10 +248,12 @@ bool winbolonetThreadAddServerKeyedRequest(const char *endpoint,
 *NAME:          winbolonetThreadAddSessionRequest
 *PURPOSE:
 *  As winbolonetThreadAddServerKeyedRequest, for a post the
-*  round transition cannot do without (server/quit). The
-*  backlog cap the three calls above answer FALSE on does not
-*  apply here, so a FALSE means one thing: the worker is not
-*  running, and the caller sends the rotation itself.
+*  round transition cannot do without: server/quit, and the
+*  forced server/update flush winbolonetServerUpdate sends
+*  from the tick just before it. The backlog cap the three
+*  calls above answer FALSE on does not apply here, so a
+*  FALSE means one thing: the worker is not running, and the
+*  caller sends the post itself.
 *
 *ARGUMENTS:
 * endpoint  - API endpoint path (e.g. "server/quit")
