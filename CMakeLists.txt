@@ -400,6 +400,27 @@ if(WINBOLO_LUAJIT)
                 COMMAND           lipo -create ${_lj_slices} -output "${_lj_lib}"
                 INSTALL_COMMAND   ""
                 BUILD_BYPRODUCTS  "${_lj_lib}")
+
+            # The build step above runs once and is then held off by its stamp,
+            # and everything it produces lives in the shared _deps source tree
+            # (BUILD_IN_SOURCE) -- so if another build over this checkout
+            # overwrites the fat archive with a single-arch one, nothing here
+            # notices and every universal link fails on the missing arch. Check
+            # it on every build and re-lipo from the slices already on disk.
+            string(REPLACE ";" "|" _lj_archs_arg  "${CMAKE_OSX_ARCHITECTURES}")
+            string(REPLACE ";" "|" _lj_slices_arg "${_lj_slices}")
+            ExternalProject_Get_Property(luajit_ext STAMP_DIR)
+            ExternalProject_Add_Step(luajit_ext verify_fat
+                COMMENT   "Checking the universal LuaJIT archive"
+                DEPENDEES build
+                DEPENDERS install
+                ALWAYS    TRUE
+                COMMAND   ${CMAKE_COMMAND}
+                          "-DLJ_FAT=${_lj_lib}"
+                          "-DLJ_ARCHS=${_lj_archs_arg}"
+                          "-DLJ_SLICES=${_lj_slices_arg}"
+                          "-DLJ_STAMP_DIR=${STAMP_DIR}"
+                          -P "${CMAKE_SOURCE_DIR}/cmake/luajit_fat_check.cmake")
         else()
             set(_lj_lib "${_lj_src}/src/libluajit.a")
             ExternalProject_Add(luajit_ext
