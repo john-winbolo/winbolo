@@ -441,11 +441,14 @@ int main(int argc, char **argv) {
     ok = wbnTestKeyStampedAtFireTime();
   } else if (strcmp(name, "queue_cap_refuses_posts") == 0) {
     ok = wbnTestQueueCapRefusesPosts();
+  } else if (strcmp(name, "forced_update_full_queue") == 0) {
+    ok = wbnTestForcedUpdateFullQueue();
   } else {
     fprintf(stderr,
             "usage: %s posts_share_connection|leave_returns_at_once|"
             "worker_outlives_session|job_result_returns|log_upload_runs|"
-            "key_stamped_at_fire_time|queue_cap_refuses_posts\n",
+            "key_stamped_at_fire_time|queue_cap_refuses_posts|"
+            "forced_update_full_queue\n",
             argv[0]);
     SDL_Quit();
     bolo_net_cleanup();

@@ -624,9 +624,11 @@ bool winbolonetThreadAddServerKeyedRequest(const char *endpoint,
 *NAME:          winbolonetThreadAddSessionRequest
 *PURPOSE:
 *  As winbolonetThreadAddServerKeyedRequest, for a post the
-*  round transition cannot do without. The backlog cap does
-*  not apply, so FALSE means one thing: the worker is not
-*  running and the caller has to send the rotation itself.
+*  round transition cannot do without: server/quit and the
+*  forced server/update flush sent from the tick before it.
+*  The backlog cap does not apply, so FALSE means one thing:
+*  the worker is not running and the caller has to send the
+*  post itself.
 *********************************************************/
 bool winbolonetThreadAddSessionRequest(const char *endpoint,
                                        const char *json_body) {

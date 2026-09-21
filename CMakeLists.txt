@@ -6086,6 +6086,7 @@ add_executable(WinBoloWbnTests
     tests/wbn/test_wbn_log_upload.c
     tests/wbn/test_wbn_key_at_fire_time.c
     tests/wbn/test_wbn_queue_cap.c
+    tests/wbn/test_wbn_forced_update_full_queue.c
     src/bolo/global.c
     src/common/prefs.c
     src/common/prefs_doc.c
@@ -6155,6 +6156,13 @@ set_tests_properties(wbn.key_stamped_at_fire_time PROPERTIES TIMEOUT 60)
 add_test(NAME wbn.queue_cap_refuses_posts
          COMMAND $<TARGET_FILE:WinBoloWbnTests> queue_cap_refuses_posts)
 set_tests_properties(wbn.queue_cap_refuses_posts PROPERTIES TIMEOUT 120)
+
+# The queue filled as above, then a forced server/update and a session quit
+# on top of it. The listener is stopped before the worker, so the queued
+# posts fail their connect at once: a few seconds in all.
+add_test(NAME wbn.forced_update_full_queue
+         COMMAND $<TARGET_FILE:WinBoloWbnTests> forced_update_full_queue)
+set_tests_properties(wbn.forced_update_full_queue PROPERTIES TIMEOUT 120)
 
 # ---- Include-rule check: the scenario surface is invisible to a frontend --
 # src/bolo/scenario_api/ is on the include path of scenario_host, sim_owner

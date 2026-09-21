@@ -546,14 +546,19 @@ void winbolonetServerUpdate(BYTE numPlayers, BYTE numFreeBases, BYTE numFreePill
     cJSON_Delete(body);
   } else {
     /* A flush: queued like the periodic update so the caller's thread does
-       not wait on the post. winbolonetGoodbye flushes after the thread has
-       already been destroyed and there is no later moment for it to go
-       out, so a refused enqueue falls back to posting here, with the key
-       the worker would have stamped. */
+       not wait on the post. It goes in through
+       winbolonetThreadAddSessionRequest, which the backlog cap does not
+       apply to: both round transitions make this call from the game tick,
+       and a full queue used to refuse it and send the post here, stopping
+       the game for as long as it took. A FALSE therefore means the worker
+       is not running, which is the case winbolonetGoodbye is in - it
+       flushes after the thread has been destroyed and there is no later
+       moment for the post to go out - so the fallback posts here, with the
+       key the worker would have stamped. */
     char *json_str = cJSON_PrintUnformatted(body);
     bool queued = FALSE;
     if (json_str) {
-      queued = winbolonetThreadAddServerKeyedRequest("server/update", json_str);
+      queued = winbolonetThreadAddSessionRequest("server/update", json_str);
       free(json_str);
     }
     if (queued == TRUE) {

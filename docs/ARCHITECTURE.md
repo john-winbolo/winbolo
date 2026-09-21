@@ -1854,6 +1854,15 @@ instead: FALSE means the worker is not running, or that its waiting
 queue already holds `WBN_WAITING_NONE_MAX` fire-and-forget posts, and
 the caller sends the post itself or drops it.
 
+The cap counts and refuses `WBN_JOB_NONE` posts alone. A register, a
+verify and an upload carry a kind and are never refused, and neither
+are the two posts queued through `winbolonetThreadAddSessionRequest`:
+the round transition's `server/quit` and the forced `server/update`
+flush the tick sends just before it. Both of those have a caller that
+posts on the tick thread when the queue says no, so counting them
+against the cap would put an HTTP post in the game loop rather than
+keep one out of it.
+
 A body that names the session leaves `server_key` out and is queued
 through `winbolonetThreadAddServerKeyedRequest`; the worker stamps the
 key that is current when the job **fires**. A round transition swaps
