@@ -99,8 +99,19 @@ static void tank_square(GameSim *gs, BYTE slot, int *mx, int *my) {
     *my = (int)(wy >> M_W_SHIFT_SIZE);
 }
 
+/* How many of the slots first..first+count-1 sit west of midX. */
+static int count_west(const int *mx, int first, int count, int midX) {
+    int west = 0;
+    int i;
+    for (i = first; i < first + count; i++) {
+        if (mx[i] < midX) west++;
+    }
+    return west;
+}
+
 /* Every team-1 tank north of the bbox midline, every team-2 tank south
- * of it, all sixteen on distinct squares. */
+ * of it, all sixteen on distinct squares — and each team spread across
+ * both of its side's corners rather than piled into one of them. */
 static int check_split(ServerSim *sim, const char *what) {
     GameSim *gs = &sim->sim;
     int leftPos;
@@ -108,6 +119,8 @@ static int check_split(ServerSim *sim, const char *what) {
     int topPos;
     int bottomPos;
     int midY;
+    int midX;
+    int west;
     int mx[MAX_TANKS];
     int my[MAX_TANKS];
     int i;
@@ -115,6 +128,7 @@ static int check_split(ServerSim *sim, const char *what) {
 
     startsGetMaxs(&gs->ss, &leftPos, &rightPos, &topPos, &bottomPos);
     midY = (topPos + bottomPos) / 2;
+    midX = (leftPos + rightPos) / 2;
 
     for (i = 0; i < MAX_TANKS; i++) {
         UT_ASSERT_MSG(gs->tanks[i] != NULL, "%s: slot %d has no tank", what, i);
@@ -137,6 +151,25 @@ static int check_split(ServerSim *sim, const char *what) {
                           what, j, i, mx[i], my[i]);
         }
     }
+
+    /* Team 1 has four players and eight north starts, four in each north
+       corner, so its side can hold every one of them: two go north-west
+       and two north-east. Piling all four into one corner is the bug this
+       pins — the side rules alone are happy with it. */
+    west = count_west(mx, 0, 4, midX);
+    UT_ASSERT_MSG(west == 2,
+                  "%s: team 1 (north) put %d of its 4 tanks west of %d, expected 2 in each north corner",
+                  what, west, midX);
+
+    /* Team 2 has twelve players for eight south starts, so four of them
+       ride a start a team-mate already holds. However the riders land, the
+       team still has to use both south corners; an even 6/6 is what the
+       spread and the rider balance give, but the corners only have to be
+       used, not matched exactly. */
+    west = count_west(mx, 4, 12, midX);
+    UT_ASSERT_MSG(west >= 4 && west <= 8,
+                  "%s: team 2 (south) put %d of its 12 tanks west of %d, expected both south corners used",
+                  what, west, midX);
     return 0;
 }
 

@@ -958,11 +958,14 @@ static void startsSideMasks(starts *value, BYTE *sideMask) {
   }
 }
 
-/* Distance from start idx to the nearest claimed start, or MAP_ARRAY_SIZE
- * when nothing is claimed so that every start ties. */
-static int startsBatchMinDistToClaimed(starts *value, BYTE numStarts,
-                                       const bool *startClaimed, BYTE idx) {
+/* Distance from start idx to the claimed starts: the nearest one in
+ * outMin, the total in outSum. Nothing claimed leaves outMin at
+ * MAP_ARRAY_SIZE and outSum at 0, so every start ties. */
+static void startsBatchSpreadDist(starts *value, BYTE numStarts,
+                                  const bool *startClaimed, BYTE idx,
+                                  int *outMin, int *outSum) {
   int minD = INT_MAX;
+  int sumD = 0;
   BYTE j;
   for (j = 0; j < numStarts; j++) {
     int d;
@@ -971,9 +974,41 @@ static int startsBatchMinDistToClaimed(starts *value, BYTE numStarts,
     d = startsMapDistance((*value)->item[idx].x, (*value)->item[idx].y,
                           (*value)->item[j].x, (*value)->item[j].y);
     if (d < minD) minD = d;
+    sumD += d;
   }
   if (minD == INT_MAX) minD = MAP_ARRAY_SIZE;
+  *outMin = minD;
+  *outSum = sumD;
+}
+
+/* Distance from start idx to the nearest claimed start, or MAP_ARRAY_SIZE
+ * when nothing is claimed so that every start ties. */
+static int startsBatchMinDistToClaimed(starts *value, BYTE numStarts,
+                                       const bool *startClaimed, BYTE idx) {
+  int minD;
+  int sumD;
+  startsBatchSpreadDist(value, numStarts, startClaimed, idx, &minD, &sumD);
   return minD;
+}
+
+/* How many claimed starts belong to team tn. Reads the team off the slot
+ * startToPlayer names for each start, so a start locked by a lobby
+ * reservation counts the same as one this pass handed out — that is what
+ * lets a team's last unreserved member spread away from team-mates who
+ * came in holding starts. Team 0 is not a team and never has any. */
+static int startsBatchTeamClaimCount(BYTE numStarts, const bool *startClaimed,
+                                     const BYTE *startToPlayer,
+                                     const BYTE *teamNumber, BYTE tn) {
+  int n = 0;
+  BYTE j;
+  if (tn == 0 || tn > MAX_TANKS) return 0;
+  for (j = 0; j < numStarts; j++) {
+    if (!startClaimed[j]) continue;
+    if (startToPlayer[j] >= MAX_TANKS) continue;
+    if (teamNumber[startToPlayer[j]] != tn) continue;
+    n++;
+  }
+  return n;
 }
 
 /*********************************************************
@@ -1547,13 +1582,61 @@ void startsAssignBatch(GameSim *sim, starts *value,
       for (p = 0; p < teamClaim[g]; p++) {
       int bestStart = -1;
       int bestScore = -1;
+      int bestRank = -1;
+      int bestMin = -1;
+      int bestSum = -1;
       BYTE rep = groups[g].players[0];
+      /* A team that chose a side spreads across it: once it holds a start
+       * its next member takes the one farthest from what is already
+       * claimed rather than the one nearest the team anchor. The anchor
+       * sits at the centroid of the side's starts, which on a map with a
+       * cluster in each corner is the empty middle of the side's edge —
+       * every corner is the same distance from it, so nearest-to-anchor
+       * put the whole team in whichever corner the start list happened to
+       * name first. The team's first member still takes the anchor, which
+       * is what puts the team on its side to begin with. */
+      bool spread = (groupSide[g] != START_SIDE_ANY) &&
+                    startsBatchTeamClaimCount(numStarts, startClaimed, startToPlayer,
+                                              teamNumber, teamNumber[rep]) > 0;
       for (i = 0; i < numStarts; i++) {
         int dist;
         int score;
         if (startClaimed[i]) continue;
         if (startsIsUsable(sim, value, (BYTE)i) == FALSE) continue;
         if (!startSideEligible(sideMask[i], groupSide[g], groupOtherMask[g])) continue;
+        if (spread) {
+          /* Same precedence the score below gives, as whole ranks rather
+           * than distance penalties: the side's own starts before ones
+           * another team's side also covers before the centre, and within
+           * each of those a start with no hostile pill or base near it
+           * before one with. Distance only breaks a tie inside a rank, so
+           * spreading never buys room by leaving the side or by parking
+           * somebody next to an enemy pillbox. */
+          int rank = 0;
+          int minD;
+          int sumD;
+          if ((sideMask[i] & groupOtherMask[g]) != 0) rank = 1;
+          if (startSideIsCentre(sideMask[i])) rank = 2;
+          rank *= 2;
+          if (startsHasHostileNearAtStart(sim, value, i, rep)) rank++;
+          /* Measured against every claimed start, not just this team's, so
+           * two teams that both chose the same side interleave instead of
+           * each spreading onto the other. Farthest from the nearest, and
+           * on a tie farthest from all of them together — in a corner the
+           * nearest claimed start is a few squares away whichever corner
+           * it is, and the total is what tells a filled corner from an
+           * empty one. */
+          startsBatchSpreadDist(value, numStarts, startClaimed, (BYTE)i, &minD, &sumD);
+          if (bestStart < 0 || rank < bestRank ||
+              (rank == bestRank && (minD > bestMin ||
+                                    (minD == bestMin && sumD > bestSum)))) {
+            bestStart = i;
+            bestRank = rank;
+            bestMin = minD;
+            bestSum = sumD;
+          }
+          continue;
+        }
         dist = startsMapDistance((*value)->item[i].x, (*value)->item[i].y,
                                  groups[g].anchorX, groups[g].anchorY);
         score = dist;
@@ -1831,10 +1914,22 @@ BYTE startsPickIncremental(struct GameSim *sim, starts *value,
 
   for (tier = 1; tier <= 3 && bestStart < 0; tier++) {
     if (usableRefs > 0) {
-      /* Cluster: smallest distance to the nearest teammate reservation. */
+      /* Teammates are already placed. A team that chose a side spreads
+       * across it — the start whose nearest teammate is farthest away —
+       * so the second player to pick north lands in the other north
+       * corner instead of beside the first. A team with no side still
+       * clusters, which is what a team that never asked for a side has
+       * always got. Both run inside the tier loop, so the side's own
+       * starts are still used up before a shared one and a shared one
+       * before the centre: spreading picks among equals, it never buys
+       * distance by leaving the side. */
+      bool spread = (ownBits != 0);
       int bestDist = INT_MAX;
+      int bestMin = -1;
+      int bestSum = -1;
       for (i = 0; i < numStarts; i++) {
         int minD = INT_MAX;
+        int sumD = 0;
         if (startTier[i] != tier) continue;
         for (j = 0; j < teammateCount; j++) {
           BYTE t0 = teammateStarts0[j];
@@ -1845,8 +1940,22 @@ BYTE startsPickIncremental(struct GameSim *sim, starts *value,
           d = startsMapDistance((*value)->item[i].x, (*value)->item[i].y,
                                 (*value)->item[t0].x, (*value)->item[t0].y);
           if (d < minD) minD = d;
+          sumD += d;
         }
-        if (bestStart < 0 || minD < bestDist) {
+        if (spread) {
+          /* Farthest from the nearest teammate, and on a tie the farthest
+           * from all of them together. The tie is the normal case once a
+           * side's corners are opened: every start still free sits a few
+           * squares from a teammate in its own corner, so the nearest
+           * teammate alone cannot tell the crowded corner from the empty
+           * one and the total is what does. */
+          if (bestStart < 0 || minD > bestMin ||
+              (minD == bestMin && sumD > bestSum)) {
+            bestMin = minD;
+            bestSum = sumD;
+            bestStart = i;
+          }
+        } else if (bestStart < 0 || minD < bestDist) {
           bestDist = minD;
           bestStart = i;
         }

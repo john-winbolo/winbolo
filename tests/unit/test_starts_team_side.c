@@ -142,6 +142,22 @@ static bool is_south(GameSim *gs, BYTE idx) {
     return is_placed(gs, idx) && (mask_of(gs, idx) & START_SIDE_BIT_S) != 0;
 }
 
+static bool is_west(GameSim *gs, BYTE idx) {
+    return is_placed(gs, idx) && (mask_of(gs, idx) & START_SIDE_BIT_W) != 0;
+}
+
+/* How many of the slots first..first+count-1 hold a start on the west of
+ * the box. On the corner layout that is "in one of the two west corners",
+ * which is how a team spread across its side is counted. */
+static int count_west(GameSim *gs, const BYTE *out, int first, int count) {
+    int west = 0;
+    int i;
+    for (i = first; i < first + count; i++) {
+        if (is_west(gs, out[i])) west++;
+    }
+    return west;
+}
+
 /* Number of slots in first..first+count-1 whose index repeats an earlier
  * slot's in the same range. */
 static int count_repeats(const BYTE *out, int first, int count) {
@@ -555,6 +571,183 @@ int run_starts_side_any_team_kept_off_chosen_side(void) {
     bolo_srand(11);
     startsAssignBatch(gs, &gs->ss, connected, team, out, NULL, side);
     UT_ASSERT(check_four_v_twelve(gs, out, "team 2 side S") == 0);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* (12) A side has two corners and the team has two players: one goes to
+ *      each. Both corners accept the side, so the side rules alone are
+ *      happy to put the pair in whichever corner the start list names
+ *      first — this is the placement that sent a whole north team into
+ *      the north-west. */
+int run_starts_side_spreads_across_corners(void) {
+    ServerSim *sim = ut_make_running_sim("SideSpread");
+    UT_ASSERT(sim != NULL);
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    begin_layout(gs);
+    add_starts(gs, k_corners, 16, true);
+
+    bool connected[MAX_TANKS];
+    BYTE team[MAX_TANKS];
+    BYTE reserved[MAX_TANKS];
+    BYTE side[MAX_TANKS + 1];
+    BYTE out[MAX_TANKS];
+    int i;
+    reset_inputs(connected, team, reserved, side);
+    add_team(connected, team, 0, 2, 1);
+    add_team(connected, team, 2, 2, 2);
+    side[1] = START_SIDE_N;
+    side[2] = START_SIDE_S;
+
+    bolo_srand(11);
+    startsAssignBatch(gs, &gs->ss, connected, team, out, NULL, side);
+
+    for (i = 0; i < 2; i++) {
+        UT_ASSERT_MSG(is_north(gs, out[i]),
+                      "team 1 (side N) slot %d landed on %u, not a north start",
+                      i, (unsigned)out[i]);
+    }
+    for (i = 2; i < 4; i++) {
+        UT_ASSERT_MSG(is_south(gs, out[i]),
+                      "team 2 (side S) slot %d landed on %u, not a south start",
+                      i, (unsigned)out[i]);
+    }
+    UT_ASSERT_MSG(count_distinct(out, 0, 4) == 4,
+                  "four players should hold four distinct starts: %u %u %u %u",
+                  (unsigned)out[0], (unsigned)out[1], (unsigned)out[2], (unsigned)out[3]);
+    UT_ASSERT_MSG(count_west(gs, out, 0, 2) == 1,
+                  "team 1 put %d of its 2 tanks in the west, expected one north corner each",
+                  count_west(gs, out, 0, 2));
+    UT_ASSERT_MSG(count_west(gs, out, 2, 2) == 1,
+                  "team 2 put %d of its 2 tanks in the west, expected one south corner each",
+                  count_west(gs, out, 2, 2));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* (13) Four players on a side whose two corners hold four starts each:
+ *      two to a corner, not three and one. The nearest claimed start ties
+ *      for every start still free once both corners are open, so this is
+ *      what the total-distance tie-break buys. */
+int run_starts_side_spread_balances_corners(void) {
+    ServerSim *sim = ut_make_running_sim("SideBalance");
+    UT_ASSERT(sim != NULL);
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    begin_layout(gs);
+    add_starts(gs, k_corners, 16, true);
+
+    bool connected[MAX_TANKS];
+    BYTE team[MAX_TANKS];
+    BYTE reserved[MAX_TANKS];
+    BYTE side[MAX_TANKS + 1];
+    BYTE out[MAX_TANKS];
+    int i;
+    reset_inputs(connected, team, reserved, side);
+    add_team(connected, team, 0, 4, 1);
+    side[1] = START_SIDE_N;
+
+    bolo_srand(11);
+    startsAssignBatch(gs, &gs->ss, connected, team, out, NULL, side);
+
+    for (i = 0; i < 4; i++) {
+        UT_ASSERT_MSG(is_north(gs, out[i]),
+                      "slot %d landed on %u, not a north start", i, (unsigned)out[i]);
+    }
+    UT_ASSERT_MSG(count_distinct(out, 0, 4) == 4,
+                  "eight north starts for four players should give four distinct: %u %u %u %u",
+                  (unsigned)out[0], (unsigned)out[1], (unsigned)out[2], (unsigned)out[3]);
+    UT_ASSERT_MSG(count_west(gs, out, 0, 4) == 2,
+                  "team put %d of its 4 tanks in the north-west, expected an even two and two",
+                  count_west(gs, out, 0, 4));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* (14) Spreading picks among equals, it never buys room by leaving the
+ *      side. Four due-north starts within 50 squares of each other and two
+ *      centre starts 85 squares south of them: the centre is by far the
+ *      farthest thing from the first pick, and the second player must
+ *      still take a north start. */
+int run_starts_side_spread_keeps_its_tier(void) {
+    ServerSim *sim = ut_make_running_sim("SideTier");
+    UT_ASSERT(sim != NULL);
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    begin_layout(gs);
+    add_starts(gs, &k_column[K_COL_N_A], 4, true);
+    add_starts(gs, &k_column[K_COL_S], 4, true);
+    add_starts(gs, k_centre, 2, true);
+
+    bool connected[MAX_TANKS];
+    BYTE team[MAX_TANKS];
+    BYTE reserved[MAX_TANKS];
+    BYTE side[MAX_TANKS + 1];
+    BYTE out[MAX_TANKS];
+    int i;
+    reset_inputs(connected, team, reserved, side);
+    add_team(connected, team, 0, 2, 1);
+    side[1] = START_SIDE_N;
+
+    bolo_srand(11);
+    startsAssignBatch(gs, &gs->ss, connected, team, out, NULL, side);
+
+    for (i = 0; i < 2; i++) {
+        UT_ASSERT_MSG(is_north(gs, out[i]),
+                      "slot %d landed on %u, a centre or south start, not a north one",
+                      i, (unsigned)out[i]);
+        UT_ASSERT_MSG(!startSideIsCentre(mask_of(gs, out[i])),
+                      "slot %d landed on centre start %u while north starts were free",
+                      i, (unsigned)out[i]);
+    }
+    UT_ASSERT_MSG(out[0] != out[1],
+                  "both slots took start %u", (unsigned)out[0]);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* (15) Two teams that both chose north share the side's eight starts, and
+ *      each spreads across both north corners rather than one team taking
+ *      a corner the other has already opened. The spread measures against
+ *      every claimed start, not just the team's own, which is what keeps
+ *      the second team off the first team's corner. */
+int run_starts_side_spread_two_teams_one_side(void) {
+    ServerSim *sim = ut_make_running_sim("SideShared");
+    UT_ASSERT(sim != NULL);
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    begin_layout(gs);
+    add_starts(gs, k_corners, 16, true);
+
+    bool connected[MAX_TANKS];
+    BYTE team[MAX_TANKS];
+    BYTE reserved[MAX_TANKS];
+    BYTE side[MAX_TANKS + 1];
+    BYTE out[MAX_TANKS];
+    int i;
+    reset_inputs(connected, team, reserved, side);
+    add_team(connected, team, 0, 2, 1);
+    add_team(connected, team, 2, 2, 2);
+    side[1] = START_SIDE_N;
+    side[2] = START_SIDE_N;
+
+    bolo_srand(11);
+    startsAssignBatch(gs, &gs->ss, connected, team, out, NULL, side);
+
+    for (i = 0; i < 4; i++) {
+        UT_ASSERT_MSG(is_north(gs, out[i]),
+                      "slot %d landed on %u, not a north start", i, (unsigned)out[i]);
+    }
+    UT_ASSERT_MSG(count_distinct(out, 0, 4) == 4,
+                  "two teams on one side should hold four distinct starts: %u %u %u %u",
+                  (unsigned)out[0], (unsigned)out[1], (unsigned)out[2], (unsigned)out[3]);
+    UT_ASSERT_MSG(count_west(gs, out, 0, 2) == 1,
+                  "team 1 put %d of its 2 tanks in the west, expected one corner each",
+                  count_west(gs, out, 0, 2));
+    UT_ASSERT_MSG(count_west(gs, out, 2, 2) == 1,
+                  "team 2 put %d of its 2 tanks in the west, expected one corner each",
+                  count_west(gs, out, 2, 2));
     serverSimDestroy(sim);
     return 0;
 }

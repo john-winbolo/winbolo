@@ -4996,6 +4996,7 @@ set(_unit_test_names
     starts_pick_cluster_nearest_teammate
     starts_pick_farthest_when_solo
     starts_pick_none_when_all_taken
+    starts_pick_spreads_on_side
     starts_batch_reserved_lands_exact
     starts_batch_unreserved_avoids_reserved
     starts_batch_stale_reservation_falls_through
@@ -5027,6 +5028,10 @@ set(_unit_test_names
     starts_side_empty_side_falls_back
     starts_side_quota_capped_by_eligible
     starts_side_any_team_kept_off_chosen_side
+    starts_side_spreads_across_corners
+    starts_side_spread_balances_corners
+    starts_side_spread_keeps_its_tier
+    starts_side_spread_two_teams_one_side
     lobby_team_side_clamps_and_rejects_non_host
     lobby_side_change_repicks_everyone
     lobby_unassign_and_team_side_claims
