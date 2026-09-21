@@ -1595,7 +1595,7 @@ void startsAssignBatch(GameSim *sim, starts *value,
        * put the whole team in whichever corner the start list happened to
        * name first. The team's first member still takes the anchor, which
        * is what puts the team on its side to begin with. */
-      bool spread = (groupSide[g] != START_SIDE_ANY) &&
+      bool spread = (groupSide[g] != START_SIDE_ANY || groupOtherMask[g] != 0) &&
                     startsBatchTeamClaimCount(numStarts, startClaimed, startToPlayer,
                                               teamNumber, teamNumber[rep]) > 0;
       for (i = 0; i < numStarts; i++) {
@@ -1615,8 +1615,10 @@ void startsAssignBatch(GameSim *sim, starts *value,
           int rank = 0;
           int minD;
           int sumD;
-          if ((sideMask[i] & groupOtherMask[g]) != 0) rank = 1;
-          if (startSideIsCentre(sideMask[i])) rank = 2;
+          if (groupSide[g] != START_SIDE_ANY) {
+            if ((sideMask[i] & groupOtherMask[g]) != 0) rank = 1;
+            if (startSideIsCentre(sideMask[i])) rank = 2;
+          }
           rank *= 2;
           if (startsHasHostileNearAtStart(sim, value, i, rep)) rank++;
           /* Measured against every claimed start, not just this team's, so
@@ -1923,7 +1925,14 @@ BYTE startsPickIncremental(struct GameSim *sim, starts *value,
        * starts are still used up before a shared one and a shared one
        * before the centre: spreading picks among equals, it never buys
        * distance by leaving the side. */
-      bool spread = (ownBits != 0);
+      /* A team is spread when the sides in play confine it to a region,
+       * which it can be without having chosen one: a team with no side is
+       * kept off every side the other teams did choose, so one team
+       * picking east leaves the other only the west and it should spread
+       * over that just as the east team spreads over its own. Only a game
+       * where nobody chose a side leaves a team free of all this, and
+       * there a team still clusters. */
+      bool spread = (ownBits != 0) || (closedMask != 0);
       int bestDist = INT_MAX;
       int bestMin = -1;
       int bestSum = -1;

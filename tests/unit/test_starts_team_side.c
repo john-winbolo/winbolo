@@ -751,3 +751,54 @@ int run_starts_side_spread_two_teams_one_side(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* (16) Only one team names a side. The other never chose one, but the
+ *      choice made against it leaves it just the west, so it is on a side
+ *      in everything but name and spreads over it the same way. Leaving it
+ *      clustered was the first report back from a real game: the team that
+ *      picked east split across the two east corners and the team that had
+ *      picked nothing put both its players in one west corner. */
+int run_starts_side_spread_unsided_team_confined(void) {
+    ServerSim *sim = ut_make_running_sim("SideUnsided");
+    UT_ASSERT(sim != NULL);
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    begin_layout(gs);
+    add_starts(gs, k_corners, 16, true);
+
+    bool connected[MAX_TANKS];
+    BYTE team[MAX_TANKS];
+    BYTE reserved[MAX_TANKS];
+    BYTE side[MAX_TANKS + 1];
+    BYTE out[MAX_TANKS];
+    int i;
+    reset_inputs(connected, team, reserved, side);
+    add_team(connected, team, 0, 2, 1);
+    add_team(connected, team, 2, 2, 2);
+    side[1] = START_SIDE_N;          /* team 2 is left on no side at all */
+
+    bolo_srand(11);
+    startsAssignBatch(gs, &gs->ss, connected, team, out, NULL, side);
+
+    for (i = 0; i < 2; i++) {
+        UT_ASSERT_MSG(is_north(gs, out[i]),
+                      "team 1 (side N) slot %d landed on %u, not a north start",
+                      i, (unsigned)out[i]);
+    }
+    for (i = 2; i < 4; i++) {
+        UT_ASSERT_MSG(!is_north(gs, out[i]),
+                      "team 2 (no side) slot %d landed on north start %u, the side team's own",
+                      i, (unsigned)out[i]);
+    }
+    UT_ASSERT_MSG(count_distinct(out, 0, 4) == 4,
+                  "four players should hold four distinct starts: %u %u %u %u",
+                  (unsigned)out[0], (unsigned)out[1], (unsigned)out[2], (unsigned)out[3]);
+    UT_ASSERT_MSG(count_west(gs, out, 0, 2) == 1,
+                  "team 1 put %d of its 2 tanks in the west, expected one north corner each",
+                  count_west(gs, out, 0, 2));
+    UT_ASSERT_MSG(count_west(gs, out, 2, 2) == 1,
+                  "team 2 put %d of its 2 tanks in the west, expected one south corner each",
+                  count_west(gs, out, 2, 2));
+    serverSimDestroy(sim);
+    return 0;
+}

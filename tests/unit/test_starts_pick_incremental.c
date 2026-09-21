@@ -176,11 +176,26 @@ int run_starts_pick_spreads_on_side(void) {
                   "side N pick landed on start %u, in the team-mate's own north-west corner",
                   (unsigned)picked);
 
-    /* Same layout, same team-mate, no side: the neighbouring start wins. */
+    /* The team never chose a side, but the east team's choice leaves it
+       only the west, so it spreads over that: from a team-mate in the
+       north-west it takes a south-west start, not the one next door. This
+       is the case a real game hit first — one team picks a side and the
+       other is left alone, which is the ordinary way a lobby is set up. */
+    picked = startsPickIncremental(gs, &gs->ss, taken, teammates, 1,
+                                   START_SIDE_ANY, START_SIDE_BIT_E);
+    UT_ASSERT_MSG(picked < 16, "confined pick came back unplaced (%u)", (unsigned)picked);
+    UT_ASSERT_MSG((corner_mask(gs, picked) & START_SIDE_BIT_E) == 0,
+                  "a team kept off the east landed on east start %u", (unsigned)picked);
+    UT_ASSERT_MSG((corner_mask(gs, picked) & START_SIDE_BIT_S) != 0,
+                  "confined pick landed on start %u, in the team-mate's own north-west corner",
+                  (unsigned)picked);
+
+    /* Nobody chose a side anywhere: the pick still clusters onto the start
+       next door, which is what a team in an ordinary game has always had. */
     picked = startsPickIncremental(gs, &gs->ss, taken, teammates, 1,
                                    START_SIDE_ANY, 0);
     UT_ASSERT_MSG(picked == 1,
-                  "with no side the pick should cluster onto start 1, got %u",
+                  "with no side in play the pick should cluster onto start 1, got %u",
                   (unsigned)picked);
     serverSimDestroy(sim);
     return 0;

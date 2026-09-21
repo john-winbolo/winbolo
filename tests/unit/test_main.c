@@ -679,6 +679,8 @@ static const UnitTestEntry s_tests[] = {
     { "starts_side_spread_balances_corners",     run_starts_side_spread_balances_corners     },
     { "starts_side_spread_keeps_its_tier",       run_starts_side_spread_keeps_its_tier       },
     { "starts_side_spread_two_teams_one_side",   run_starts_side_spread_two_teams_one_side   },
+    { "starts_side_spread_unsided_team_confined",
+                                                 run_starts_side_spread_unsided_team_confined },
     { "lobby_team_side_clamps_and_rejects_non_host",
                                                  run_lobby_team_side_clamps_and_rejects_non_host },
     { "lobby_side_change_repicks_everyone",      run_lobby_side_change_repicks_everyone      },

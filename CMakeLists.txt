@@ -5032,6 +5032,7 @@ set(_unit_test_names
     starts_side_spread_balances_corners
     starts_side_spread_keeps_its_tier
     starts_side_spread_two_teams_one_side
+    starts_side_spread_unsided_team_confined
     lobby_team_side_clamps_and_rejects_non_host
     lobby_side_change_repicks_everyone
     lobby_unassign_and_team_side_claims
