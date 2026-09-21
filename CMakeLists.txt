@@ -585,6 +585,25 @@ if(NOT MSVC)
     target_compile_options(stb_image PRIVATE -Wno-unused-function)
 endif()
 
+# ImGuiColorTextEdit — vendored text editor widget, used by the map editor's
+# scenario script pane and the WinBolo build. Upstream leaves && unparenthesised
+# inside || and keeps several bound-but-unread locals, so -Wall -Wextra is loud
+# on a file we do not want to diverge from upstream. MSVC's equivalent
+# suppressions are set alongside the WinBolo and MapEditor targets below.
+# Source file properties are directory-scoped, so setting them once here covers
+# every target in this file that compiles the widget.
+if(NOT MSVC)
+    set(WB_TEXTEDIT_WARN_FLAGS "-Wno-unused-variable")
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        string(APPEND WB_TEXTEDIT_WARN_FLAGS " -Wno-logical-op-parentheses")
+    else()
+        string(APPEND WB_TEXTEDIT_WARN_FLAGS " -Wno-parentheses")
+    endif()
+    set_source_files_properties(src/third_party/ImGuiColorTextEdit/TextEditor.cpp
+        src/third_party/ImGuiColorTextEdit/LanguageDefinitions.cpp
+        PROPERTIES COMPILE_FLAGS "${WB_TEXTEDIT_WARN_FLAGS}")
+endif()
+
 # utf8proc — Unicode normalization + property tables (vendored, MIT)
 # Compiled as a static lib to avoid duplicating its ~2MB Unicode table
 # across every target that links the bolo sources.

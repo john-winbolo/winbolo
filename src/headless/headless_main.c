@@ -705,6 +705,12 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
     case CTRL_EVENT_TYPE_COUNT:
       /* Sentinel — never actually delivered. */
       break;
+
+    default:
+      /* Event types carrying no payload this dumper reports. The header
+         written above already gives tick and type, and an unrecognised
+         type falls back to "UNKNOWN" plus the raw value. */
+      break;
   }
 
   fputs("}\n", f);
