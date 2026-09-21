@@ -49,8 +49,9 @@
 #define MAIN_BACK_BUFFER_SIZE_Y (MAIN_SCREEN_SIZE_Y + 2)
 /* The game timer is 20 milliseconds between events */
 #define GAME_TICK_LENGTH 10 /* 20 */
-#define GAME_NUMTOTALTICKS_SEC (1000 / GAME_TICK_LENGTH);
-#define GAME_NUMGAMETICKS_SEC (1000 / 20);
+/* GAME_NUMTOTALTICKS_SEC / GAME_NUMGAMETICKS_SEC come from the engine's
+ * global.h. The copies that used to live here carried a stray trailing
+ * semicolon, so they were not identical redefinitions. */
 
 
 /* The different types of games there are */

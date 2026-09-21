@@ -229,7 +229,7 @@ void lv_efree(Generic object);
 #define MILLISECONDS 1000
 
 #define UNLIMITED_GAME_TIME -1
-#define GAME_NUMGAMETICKS_SEC (1000 / 20);
+#define GAME_NUMGAMETICKS_SEC (1000 / 20)
 #define NUM_SECONDS_MINUTE 60
 
 /** Player teams are 0-15 : 16 is neutral */
