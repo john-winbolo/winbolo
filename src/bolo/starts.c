@@ -1053,10 +1053,14 @@ static bool startsSideAnchor(GameSim *sim, starts *value, const BYTE *sideMask,
 }
 
 /* The usable start this team may take that is farthest from every anchor
- * already placed. A team with a side chooses among the starts its side
- * accepts, so two teams on the same side end up at opposite ends of it; a
- * team with none chooses among whatever the chosen sides leave open.
- * Returns -1 when the team may take nothing. */
+ * already placed. A team with a side chooses among the starts carrying its
+ * side's bit, so two teams on the same side end up at opposite ends of it.
+ * The centre band is left out even though the side accepts it: the centre
+ * is often farther from the side's centroid than the side's own far end,
+ * and a team anchored there would be placed in the middle of the map while
+ * starts on the side it chose were still free. A team with no side chooses
+ * among whatever the chosen sides leave open, centre included. Returns -1
+ * when the team may take nothing. */
 static int startsSpreadAnchorPick(GameSim *sim, starts *value, const BYTE *sideMask,
                                   BYTE side, BYTE closedMask, const bool *anchored,
                                   const StartsTeamAnchors *out, int tn) {
@@ -1068,7 +1072,7 @@ static int startsSpreadAnchorPick(GameSim *sim, starts *value, const BYTE *sideM
     int other;
     if (startsIsUsable(sim, value, i) == FALSE) continue;
     if (startSideBits(side) != 0) {
-      if (!startSideAccepts(sideMask[i], side)) continue;
+      if ((sideMask[i] & startSideBits(side)) == 0) continue;
     } else if (!startSideEligible(sideMask[i], START_SIDE_ANY, closedMask)) {
       continue;
     }
@@ -1137,9 +1141,16 @@ bool startsComputeTeamAnchors(GameSim *sim, starts *value,
     if (shared) {
       int idx = startsSpreadAnchorPick(sim, value, sideMask, teamSide[tn],
                                        closedMask, anchored, out, tn);
-      if (idx < 0) continue;
-      out->x[tn] = (*value)->item[idx].x;
-      out->y[tn] = (*value)->item[idx].y;
+      if (idx >= 0) {
+        out->x[tn] = (*value)->item[idx].x;
+        out->y[tn] = (*value)->item[idx].y;
+      } else {
+        /* The side has no usable start of its own. Anchor where the first
+         * team on it was anchored, the centre band or the box centre,
+         * rather than leaving a present team at the origin, which would
+         * hand it the north-west of the map as its region. */
+        startsSideAnchor(sim, value, sideMask, teamSide[tn], &out->x[tn], &out->y[tn]);
+      }
     } else {
       startsSideAnchor(sim, value, sideMask, teamSide[tn], &out->x[tn], &out->y[tn]);
     }
@@ -1855,8 +1866,9 @@ void startsAssignBatch(GameSim *sim, starts *value,
           rank *= 2;
           if (startsHasHostileNearAtStart(sim, value, i, rep)) rank++;
           /* Measured against every claimed start, not just this team's, so
-           * two teams that both chose the same side interleave instead of
-           * each spreading onto the other. Farthest from the nearest, and
+           * a team spreads away from the other teams' starts as well as its
+           * own; two teams that chose the same side are kept apart by the
+           * region rank above this. Farthest from the nearest, and
            * on a tie farthest from all of them together — in a corner the
            * nearest claimed start is a few squares away whichever corner
            * it is, and the total is what tells a filled corner from an

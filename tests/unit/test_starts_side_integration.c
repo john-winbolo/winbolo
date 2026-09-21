@@ -206,7 +206,7 @@ int run_starts_side_end_to_end_four_v_twelve(void) {
  *      own team's ground than any other team's. Two bugs reached a real
  *      game before this existed, both because a team's region was worked
  *      out negatively — "any start not on a side someone else chose" — and
- *      the shape of a negative region depends on the shape of the map. Six
+ *      the shape of a negative region depends on the shape of the map. Seven
  *      shapes here and twelve line-ups, so a new map shape is covered
  *      before somebody plays it rather than after. */
 typedef struct { const char *name; int n; BYTE x[24]; BYTE y[24]; } SweepLayout;

@@ -995,6 +995,7 @@ int run_starts_side_spread_keeps_its_tier(void);
 int run_starts_side_spread_two_teams_one_side(void);
 int run_starts_side_spread_unsided_team_confined(void);
 int run_starts_side_unsided_team_takes_far_side(void);
+int run_starts_side_shared_side_anchor_stays_on_side(void);
 
 /* Team start sides on the lobby server (test_lobby_team_side_dispatch.c).
  * The team-meta side clamp and its client mirror, the re-pick of every

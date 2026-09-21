@@ -875,3 +875,51 @@ int run_starts_side_unsided_team_takes_far_side(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* (18) Two teams both chose north on a map whose north row is narrow and
+ *      whose centre band holds starts. The second team on the side anchors
+ *      at the far end of the side, and that has to mean a north start: the
+ *      side accepts the centre band too, and the centre is 85 squares from
+ *      the north row's centroid where the row's own far end is 25, so a
+ *      pick among everything the side accepts would anchor the second
+ *      team in the middle of the map and place it there while north starts
+ *      were free. Four north starts for four players, so nobody should
+ *      reach the centre at all. */
+int run_starts_side_shared_side_anchor_stays_on_side(void) {
+    ServerSim *sim = ut_make_running_sim("SideSharedCentre");
+    UT_ASSERT(sim != NULL);
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    begin_layout(gs);
+    add_starts(gs, &k_column[K_COL_N_A], 4, true);
+    add_starts(gs, &k_column[K_COL_S], 4, true);
+    add_starts(gs, k_centre, 2, true);
+
+    bool connected[MAX_TANKS];
+    BYTE team[MAX_TANKS];
+    BYTE reserved[MAX_TANKS];
+    BYTE side[MAX_TANKS + 1];
+    BYTE out[MAX_TANKS];
+    int i;
+    reset_inputs(connected, team, reserved, side);
+    add_team(connected, team, 0, 2, 1);
+    add_team(connected, team, 2, 2, 2);
+    side[1] = START_SIDE_N;
+    side[2] = START_SIDE_N;
+
+    bolo_srand(11);
+    startsAssignBatch(gs, &gs->ss, connected, team, out, NULL, side);
+
+    for (i = 0; i < 4; i++) {
+        UT_ASSERT_MSG(is_north(gs, out[i]),
+                      "slot %d landed on %u, not a north start", i, (unsigned)out[i]);
+        UT_ASSERT_MSG(!startSideIsCentre(mask_of(gs, out[i])),
+                      "slot %d landed on centre start %u while north starts were free",
+                      i, (unsigned)out[i]);
+    }
+    UT_ASSERT_MSG(count_distinct(out, 0, 4) == 4,
+                  "four north starts for four players should give four distinct: %u %u %u %u",
+                  (unsigned)out[0], (unsigned)out[1], (unsigned)out[2], (unsigned)out[3]);
+    serverSimDestroy(sim);
+    return 0;
+}
