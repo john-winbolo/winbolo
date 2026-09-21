@@ -418,7 +418,9 @@ static void simRulesWhyFloat(char *why, size_t whyLen, const char *field,
     /* Zero is a mine that only hurts a tank standing exactly on its centre, \
        which is a table worth being able to write. */                        \
     X(mine_damage_range,         INT,    0,      65535)                      \
-    /* One leaves a fatal hit at full strength. */                           \
+    /* The blow keeps all but one part in this many, so a big divisor        \
+       leaves a fatal hit at nearly full strength and one takes the whole    \
+       of it off. */                                                         \
     X(mine_fatal_divisor,        INT,    1,      255)                        \
     X(water_loss_shells,         INT,    0,      255)                        \
     X(water_loss_mines,          INT,    0,      255)                        \
