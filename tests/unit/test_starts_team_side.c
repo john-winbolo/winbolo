@@ -78,6 +78,23 @@ static const LayoutStart k_corners[16] = {
     { 200, 200, true }, { 210, 200, true }, { 200, 210, true }, { 210, 210, true },
 };
 
+/* Ring layout: sixteen starts around the edge of the box, two each of W,
+ * NW, N, NE, E, SE, S and SW — the shape of Everard Island, where the
+ * starts circle the island rather than sitting in corner clusters. What is
+ * not the east here is a horseshoe of west, north and south that comes
+ * back to meet the east at both ends, so "off the east" is not the same
+ * thing as "on the west". bbox x 76..184, y 100..156. */
+static const LayoutStart k_ring[16] = {
+    {  76, 140, true }, {  76, 124, true },   /* W  */
+    {  92, 100, true }, { 108, 100, true },   /* NW */
+    { 124, 100, true }, { 140, 100, true },   /* N  */
+    { 156, 100, true }, { 172, 100, true },   /* NE */
+    { 184, 124, true }, { 184, 140, true },   /* E  */
+    { 172, 156, true }, { 156, 156, true },   /* SE */
+    { 140, 156, true }, { 124, 156, true },   /* S  */
+    { 108, 156, true }, {  92, 156, true },   /* SW */
+};
+
 static void begin_layout(GameSim *gs) {
     gs->pb->numPills = 0;   /* no pills near the synthetic starts */
     gs->bs->numBases = 0;   /* no owned/neutral bases to steer anchors */
@@ -799,6 +816,56 @@ int run_starts_side_spread_unsided_team_confined(void) {
     UT_ASSERT_MSG(count_west(gs, out, 2, 2) == 1,
                   "team 2 put %d of its 2 tanks in the west, expected one south corner each",
                   count_west(gs, out, 2, 2));
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* (17) A map whose starts ring the island, one team on the east and the
+ *      other left alone. Being kept off the east is not on its own the
+ *      other side of the map: everything but the east runs west, north and
+ *      south and comes back to the east at both ends, so a team spread
+ *      over the whole of that puts somebody on a due-north start next to
+ *      the east team. The team with no side takes the far side of the map
+ *      instead, so both of its players carry the west bit. */
+int run_starts_side_unsided_team_takes_far_side(void) {
+    ServerSim *sim = ut_make_running_sim("SideRing");
+    UT_ASSERT(sim != NULL);
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    begin_layout(gs);
+    add_starts(gs, k_ring, 16, true);
+
+    bool connected[MAX_TANKS];
+    BYTE team[MAX_TANKS];
+    BYTE reserved[MAX_TANKS];
+    BYTE side[MAX_TANKS + 1];
+    BYTE out[MAX_TANKS];
+    int i;
+    reset_inputs(connected, team, reserved, side);
+    add_team(connected, team, 0, 2, 1);
+    add_team(connected, team, 2, 4, 2);
+    side[1] = START_SIDE_E;          /* team 2 is left on no side at all */
+
+    bolo_srand(11);
+    startsAssignBatch(gs, &gs->ss, connected, team, out, NULL, side);
+
+    for (i = 0; i < 2; i++) {
+        UT_ASSERT_MSG((mask_of(gs, out[i]) & START_SIDE_BIT_E) != 0,
+                      "team 1 (side E) slot %d landed on %u, not an east start",
+                      i, (unsigned)out[i]);
+    }
+    /* Four players and six starts carrying the west bit (two W, two NW,
+       two SW), so the whole team fits on the far side and none of it has
+       to reach round the ring to the north or the south. */
+    for (i = 2; i < 6; i++) {
+        UT_ASSERT_MSG(is_west(gs, out[i]),
+                      "team 2 (no side) slot %d landed on start %u, which is off the east but not on the west",
+                      i, (unsigned)out[i]);
+    }
+    UT_ASSERT_MSG(count_distinct(out, 0, 6) == 6,
+                  "six players should hold six distinct starts: %u %u %u %u %u %u",
+                  (unsigned)out[0], (unsigned)out[1], (unsigned)out[2],
+                  (unsigned)out[3], (unsigned)out[4], (unsigned)out[5]);
     serverSimDestroy(sim);
     return 0;
 }

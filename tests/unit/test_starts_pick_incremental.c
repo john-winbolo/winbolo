@@ -200,3 +200,67 @@ int run_starts_pick_spreads_on_side(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* Ring layout: sixteen starts around the edge, two each of W, NW, N, NE,
+ * E, SE, S and SW — the shape of Everard Island. bbox x 76..184,
+ * y 100..156. */
+static const BYTE k_rx[16] = {  76,  76,  92, 108, 124, 140, 156, 172,
+                               184, 184, 172, 156, 140, 124, 108,  92 };
+static const BYTE k_ry[16] = { 140, 124, 100, 100, 100, 100, 100, 100,
+                               124, 140, 156, 156, 156, 156, 156, 156 };
+
+static void build_ring_starts(GameSim *gs) {
+    int i;
+    gs->pb->numPills = 0;
+    gs->bs->numBases = 0;
+    for (i = 0; i < 16; i++) {
+        mapSetPos(gs, &gs->mp, k_rx[i], k_ry[i], DEEP_SEA, FALSE, TRUE);
+        gs->ss->item[i].x = k_rx[i];
+        gs->ss->item[i].y = k_ry[i];
+        gs->ss->item[i].dir = 0;
+    }
+    startsSetNumStarts(&gs->ss, 16);
+}
+
+/* (e) On a map whose starts ring the island, a team kept off the east is
+ *     not thereby on the west: the rest of the ring runs north and south
+ *     and comes back to the east at both ends. Both picks of a team with
+ *     no side take the far side of the map, so neither lands on a
+ *     due-north start beside the east team. */
+int run_starts_pick_unsided_takes_far_side(void) {
+    ServerSim *sim = ut_make_running_sim("RingFarSide");
+    UT_ASSERT(sim != NULL);
+    GameSim *gs = serverSimGetGameSim(sim);
+    UT_ASSERT(gs != NULL);
+    build_ring_starts(gs);
+
+    bool taken[MAX_STARTS] = {false};
+    BYTE mates[2];
+    BYTE first;
+    BYTE second;
+
+    /* The east team holds its two starts: index 6 (156,100) is NE and
+       index 10 (172,156) is SE. */
+    taken[6] = true;
+    taken[10] = true;
+
+    first = startsPickIncremental(gs, &gs->ss, taken, NULL, 0,
+                                  START_SIDE_ANY, START_SIDE_BIT_E);
+    UT_ASSERT_MSG(first < 16, "first confined pick came back unplaced (%u)", (unsigned)first);
+    UT_ASSERT_MSG((corner_mask(gs, first) & START_SIDE_BIT_W) != 0,
+                  "first confined pick landed on start %u, off the east but not on the west",
+                  (unsigned)first);
+    taken[first] = true;
+    mates[0] = first;
+
+    second = startsPickIncremental(gs, &gs->ss, taken, mates, 1,
+                                   START_SIDE_ANY, START_SIDE_BIT_E);
+    UT_ASSERT_MSG(second < 16, "second confined pick came back unplaced (%u)", (unsigned)second);
+    UT_ASSERT_MSG((corner_mask(gs, second) & START_SIDE_BIT_W) != 0,
+                  "second confined pick landed on start %u, off the east but not on the west",
+                  (unsigned)second);
+    UT_ASSERT_MSG(second != first,
+                  "both confined picks took start %u", (unsigned)first);
+    serverSimDestroy(sim);
+    return 0;
+}

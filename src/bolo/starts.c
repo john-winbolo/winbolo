@@ -1618,6 +1618,12 @@ void startsAssignBatch(GameSim *sim, starts *value,
           if (groupSide[g] != START_SIDE_ANY) {
             if ((sideMask[i] & groupOtherMask[g]) != 0) rank = 1;
             if (startSideIsCentre(sideMask[i])) rank = 2;
+          } else {
+            BYTE away = startSideOppositeBits(groupOtherMask[g]);
+            if (away != 0) {
+              if (!startSideIsCentre(sideMask[i]) && (sideMask[i] & away) == 0) rank = 1;
+              if (startSideIsCentre(sideMask[i])) rank = 2;
+            }
           }
           rank *= 2;
           if (startsHasHostileNearAtStart(sim, value, i, rep)) rank++;
@@ -1651,6 +1657,17 @@ void startsAssignBatch(GameSim *sim, starts *value,
            * another team's side also covers, then the centre. */
           if ((sideMask[i] & groupOtherMask[g]) != 0) score += START_SIDE_SHARED_PENALTY;
           if (startSideIsCentre(sideMask[i])) score += START_SIDE_CENTRE_PENALTY;
+        } else {
+          /* A team with no side takes the far side of the map from the
+           * sides the other teams chose, before the rest of what is left
+           * to it, before the centre. */
+          BYTE away = startSideOppositeBits(groupOtherMask[g]);
+          if (away != 0) {
+            if (!startSideIsCentre(sideMask[i]) && (sideMask[i] & away) == 0) {
+              score += START_SIDE_SHARED_PENALTY;
+            }
+            if (startSideIsCentre(sideMask[i])) score += START_SIDE_CENTRE_PENALTY;
+          }
         }
         if (bestStart < 0 || score < bestScore) {
           bestStart = i;
@@ -1895,7 +1912,20 @@ BYTE startsPickIncremental(struct GameSim *sim, starts *value,
     if (startsIsUsable(sim, value, (BYTE)i) == FALSE) continue;
     if (!startSideEligible(sideMask[i], side, closedMask)) continue;
     if (ownBits == 0) {
-      startTier[i] = 1;
+      /* No side of its own. Where other teams have chosen sides it is
+       * confined to what is left, and the far side of the map from them
+       * comes first: only then the rest of what it may take, and the
+       * centre last. With nobody having chosen, every start is equal. */
+      BYTE away = startSideOppositeBits(closedMask);
+      if (away == 0) {
+        startTier[i] = 1;
+      } else if (startSideIsCentre(sideMask[i])) {
+        startTier[i] = 3;
+      } else if ((sideMask[i] & away) != 0) {
+        startTier[i] = 1;
+      } else {
+        startTier[i] = 2;
+      }
     } else if (startSideIsCentre(sideMask[i])) {
       startTier[i] = 3;
     } else if ((sideMask[i] & closedMask & (BYTE)~ownBits) != 0) {

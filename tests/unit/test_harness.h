@@ -920,6 +920,7 @@ int run_starts_pick_cluster_nearest_teammate(void);
 int run_starts_pick_farthest_when_solo(void);
 int run_starts_pick_none_when_all_taken(void);
 int run_starts_pick_spreads_on_side(void);
+int run_starts_pick_unsided_takes_far_side(void);
 
 /* Batch start-assignment reservations (test_starts_assign_batch.c). The
  * reservedStartIdx0 lock that honors lobby start picks at game start:
@@ -993,6 +994,7 @@ int run_starts_side_spread_balances_corners(void);
 int run_starts_side_spread_keeps_its_tier(void);
 int run_starts_side_spread_two_teams_one_side(void);
 int run_starts_side_spread_unsided_team_confined(void);
+int run_starts_side_unsided_team_takes_far_side(void);
 
 /* Team start sides on the lobby server (test_lobby_team_side_dispatch.c).
  * The team-meta side clamp and its client mirror, the re-pick of every

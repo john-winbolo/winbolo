@@ -82,6 +82,22 @@ static inline bool startSideIsCentre(BYTE mask) {
     return mask == 0;
 }
 
+/* The bits facing the ones in mask: north against south, east against
+ * west. Used to point a team with no side at the far side of the map from
+ * the sides the other teams chose. Being off a chosen side is not on its
+ * own the other side of the map: on a map whose starts ring the island,
+ * everything but the east is a horseshoe running west, north and south
+ * that comes back to meet the east at both ends, and a team spread over
+ * the whole of it puts somebody next to the team it is playing. */
+static inline BYTE startSideOppositeBits(BYTE mask) {
+    BYTE out = 0;
+    if (mask & START_SIDE_BIT_N) out |= START_SIDE_BIT_S;
+    if (mask & START_SIDE_BIT_S) out |= START_SIDE_BIT_N;
+    if (mask & START_SIDE_BIT_E) out |= START_SIDE_BIT_W;
+    if (mask & START_SIDE_BIT_W) out |= START_SIDE_BIT_E;
+    return out;
+}
+
 /* Whether a start with this mask is on a team's chosen side. A team with
  * no side takes any start; a centre start is open to every team. */
 static inline bool startSideAccepts(BYTE mask, BYTE side) {
