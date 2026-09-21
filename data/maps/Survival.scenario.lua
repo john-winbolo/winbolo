@@ -127,6 +127,14 @@ local WAVE_LIMIT_S = 300   -- 5 min: leftover attackers vanish at this mark
 -- line has just said the same thing. See warn_gap.
 local WAVE_WARN_S = { 30, 10 }
 
+-- How often the status panel is redrawn. Once a second is enough: the only
+-- thing on it that moves faster is the countdown, and the client counts that
+-- down itself off one `timer` primitive. The surface refuses a second update
+-- to the same panel in the same tick, so this is a floor as well as a rate.
+-- It is also the rate the threat line throbs at, so shortening it makes that
+-- a flicker.
+local PANEL_PERIOD_S = 1
+
 -- Wave bots arrive one at a time and leave one at a time, this far apart.
 --
 -- ARRIVALS ARE FREE NOW, so the spacing on them is zero and a whole wave
@@ -761,6 +769,126 @@ local function defender_pills()
     end
   end
   return out
+end
+
+-- ---------------------------------------------------------------------
+-- The status panel.
+--
+-- Everything this round says otherwise goes out as newswire lines, which
+-- scroll away: a player who was looking at their tank when the last wave
+-- died has no way to find out how long the quiet lasts. The panel is the
+-- standing answer to "where am I" -- which wave, what the horde is doing,
+-- and how long until it does it again.
+--
+-- It is a square of 128 logical units, origin top-left, and the frontend
+-- decides where that square goes and how big it is drawn. Nothing here is a
+-- pixel. Normal text is 11 units tall and small text is 8, which is what the
+-- row positions below are spaced against.
+--
+-- The countdown is one `timer` primitive rather than a number this script
+-- rewrites: the client works it out against its own clock, so a five-minute
+-- wave costs one message instead of three hundred.
+
+-- What the panel says in each of its four states. The wave-numbered tables
+-- are indexed by wave, so the line a player reads is fixed by which wave it
+-- is and not by chance -- nothing here touches math.random, which the round
+-- shares with the spawner and the seizure.
+--
+-- Every line is upper case and short on purpose. Small text is 8 units tall
+-- in a proportional font, so about 26 characters fit across the square, and
+-- a line past that is clipped by the frontend rather than wrapped.
+local PANEL_LINE_GRACE = "SOMETHING IS IN THE WATER"
+
+local PANEL_LINE_WAVE = {
+  "THEY CAME ASHORE",
+  "MORE OF THEM THIS TIME",
+  "THE SHORE KEEPS GIVING",
+  "THEY ARE NOT TIRED",
+  "THE LAST OF THEM. PROBABLY",
+}
+
+-- Said while the wave that just ended walks back into the sea, one attacker
+-- at a time.
+local PANEL_LINE_LEAVING = "ONE BY ONE"
+
+-- And said through the breather, about the wave that was just survived.
+local PANEL_LINE_BREATHER = {
+  "THAT WAS THE POLITE ONE",
+  "THEY WENT TO GET FRIENDS",
+  "COUNT YOUR PILLBOXES",
+  "THEY KNOW THE MAP NOW",
+}
+
+local panel_next_at = nil
+-- Flipped on every redraw. The threat lines sit on it and change colour once
+-- a second, which reads as a slow throb rather than a flicker -- the panel is
+-- only redrawn at PANEL_PERIOD_S, so this cannot go faster than that.
+local panel_pulse   = false
+
+local function panel_draw()
+  panel_pulse = not panel_pulse
+
+  local list = {
+    { "rect", 0, 0, 128, 16, "grey_dark", true },
+    { "text", 64, 3, "white", "normal", "centre", "SURVIVAL" },
+  }
+
+  -- The four states, and the two flags that tell them apart. next_wave_at is
+  -- set exactly while no wave is live; wave_ends_at is set exactly while one
+  -- is running. Neither is set in the window between the wave clock running
+  -- out and the last attacker actually being gone.
+  --
+  -- `wave == 0` is asked first rather than `next_wave_at ~= nil and
+  -- wave == 0`, because on_tick draws the panel before it arms the grace
+  -- clock: on the round's very first tick both flags are nil, and a test on
+  -- next_wave_at would drop that tick into the leaving branch and open the
+  -- round on "THEY ARE LEAVING" for a whole second. A nil target just leaves
+  -- the countdown off until the clock is armed.
+  local head, head_colour, line1, line2, line_colour, label, target
+  if wave == 0 then
+    head        = "GET READY!"
+    head_colour = "yellow"
+    line1       = PANEL_LINE_GRACE
+    line_colour = panel_pulse and "red" or "orange"
+    label       = "FIRST WAVE IN"
+    target      = next_wave_at
+  elseif next_wave_at ~= nil then
+    head        = string.format("WAVE %d/%d SURVIVED", wave, WAVES)
+    head_colour = "green"
+    line1       = PANEL_LINE_BREATHER[wave] or "THEY ARE STILL OUT THERE"
+    -- The seizure that opens the next wave is the one thing a player can
+    -- still do something about while the field is empty, so it is on the
+    -- panel and not only in the newswire line that scrolls away.
+    line2       = string.format("UP TO %d PILLS WILL TURN", wave + 1)
+    line_colour = "grey"
+    label       = "THE HORDE RETURNS IN"
+    target      = next_wave_at
+  elseif wave_ends_at ~= nil then
+    head        = string.format("WAVE %d/%d", wave, WAVES)
+    head_colour = "red"
+    line1       = PANEL_LINE_WAVE[wave] or "THEY KEEP COMING"
+    line_colour = panel_pulse and "red" or "orange"
+    label       = "WAVE ENDS IN"
+    target      = wave_ends_at
+  else
+    head        = "THEY ARE LEAVING"
+    head_colour = "yellow"
+    line1       = PANEL_LINE_LEAVING
+    line_colour = "grey"
+  end
+
+  list[#list + 1] = { "text", 64, 26, head_colour, "normal", "centre", head }
+  list[#list + 1] = { "text", 64, 48, line_colour, "small", "centre", line1 }
+  if line2 ~= nil then
+    list[#list + 1] = { "text", 64, 59, line_colour, "small", "centre", line2 }
+  end
+  if target ~= nil then
+    list[#list + 1] = { "text", 64, 86, "grey", "small", "centre", label }
+    list[#list + 1] =
+      { "timer", 64, 98, "white", "normal", "centre", "down", target }
+  end
+
+  game.panel(0, list)
 end
 
 -- Once the whole wave is ashore: seize up to `wave` defender pills,
@@ -1609,6 +1737,15 @@ function on_tick(tick)
         WAVE_TEAM)
       return
     end
+  end
+
+  -- The status panel, on the same footing as the tree ring below: ahead of
+  -- every early return, so it keeps its cadence whatever the round is doing,
+  -- and after the loss check, so a fallen centre does not draw one last
+  -- frame on its way out.
+  if panel_next_at == nil or tick >= panel_next_at then
+    panel_next_at = tick + secs(PANEL_PERIOD_S)
+    panel_draw()
   end
 
   -- The tree ring, on its own steady clock. Ahead of every early return
