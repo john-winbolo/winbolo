@@ -1013,6 +1013,7 @@ int run_lobby_any_team_claim_kept_off_chosen_side(void);
  * team's tanks north and a larger south team's tanks south, on distinct
  * squares. */
 int run_starts_side_end_to_end_four_v_twelve(void);
+int run_starts_side_region_sweep(void);
 
 /* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
  * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed

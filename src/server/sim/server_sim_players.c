@@ -921,6 +921,7 @@ void serverSimAssignLobbyStartOnJoin(ServerSim *sim, BYTE slot) {
     int  teammateCount = 0;
     BYTE myTeam;
     BYTE picked;
+    StartsTeamAnchors anchors;
     BYTE i;
     BYTE k;
 
@@ -952,10 +953,30 @@ void serverSimAssignLobbyStartOnJoin(ServerSim *sim, BYTE slot) {
         }
     }
 
+    /* Every team present gets a region of its own, so a team that shares
+       a side with another, or was left the same part of the map as
+       another, is not placed on top of it. */
+    {
+        BYTE teamSide[MAX_TANKS + 1];
+        bool teamPresent[MAX_TANKS + 1];
+        memset(teamSide, START_SIDE_ANY, sizeof(teamSide));
+        memset(teamPresent, 0, sizeof(teamPresent));
+        for (k = 0; k < MAX_TANKS; k++) {
+            BYTE t;
+            if (!sim->playerConnected[k]) continue;
+            t = sim->lobbyPlayers[k].teamNumber;
+            if (t == 0 || t > MAX_TANKS) continue;
+            teamPresent[t] = true;
+            teamSide[t] = sim->teams[t].startSide;
+        }
+        startsComputeTeamAnchors(&sim->sim, &sim->sim.ss, teamSide, teamPresent, &anchors);
+    }
+
     picked = startsPickIncremental(&sim->sim, &sim->sim.ss, taken,
                                    teammateStarts0, teammateCount,
                                    lobbySlotSide(sim, slot),
-                                   serverSimLobbyClosedMaskFor(sim, slot));
+                                   serverSimLobbyClosedMaskFor(sim, slot),
+                                   &anchors, myTeam);
     if (picked >= numStarts) {
         sim->lobbyPlayers[slot].startIdx = 0xFF;
     } else {

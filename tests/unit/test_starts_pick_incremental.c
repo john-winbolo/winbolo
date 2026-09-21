@@ -66,7 +66,8 @@ int run_starts_pick_cluster_nearest_teammate(void) {
     taken[0] = true;                 /* teammate sits on start 0 */
     BYTE teammates[1] = {0};         /* 0-based teammate reservation */
     BYTE picked = startsPickIncremental(gs, &gs->ss, taken, teammates, 1,
-                                        START_SIDE_ANY, 0);
+                                        START_SIDE_ANY, 0,
+                                        NULL, 0);
 
     UT_ASSERT_MSG(picked == 1,
                   "cluster should pick start 1 (nearest to teammate), got %u",
@@ -87,7 +88,7 @@ int run_starts_pick_farthest_when_solo(void) {
     bool taken[MAX_STARTS] = {false};
     taken[0] = true;                 /* only start 0 is taken */
     BYTE picked = startsPickIncremental(gs, &gs->ss, taken, NULL, 0,
-                                        START_SIDE_ANY, 0);
+                                        START_SIDE_ANY, 0, NULL, 0);
 
     UT_ASSERT_MSG(picked == 2,
                   "farthest-first should pick start 2 (max distance), got %u",
@@ -108,7 +109,7 @@ int run_starts_pick_none_when_all_taken(void) {
     int i;
     for (i = 0; i < MAX_STARTS; i++) taken[i] = true;
     BYTE picked = startsPickIncremental(gs, &gs->ss, taken, NULL, 0,
-                                        START_SIDE_ANY, 0);
+                                        START_SIDE_ANY, 0, NULL, 0);
 
     UT_ASSERT_MSG(picked == MAX_STARTS,
                   "all-taken should return MAX_STARTS (%u), got %u",
@@ -167,7 +168,8 @@ int run_starts_pick_spreads_on_side(void) {
     taken[0] = true;                 /* team-mate on the north-west start 0 */
     BYTE teammates[1] = {0};
     BYTE picked = startsPickIncremental(gs, &gs->ss, taken, teammates, 1,
-                                        START_SIDE_N, START_SIDE_BIT_S);
+                                        START_SIDE_N, START_SIDE_BIT_S,
+                                        NULL, 0);
 
     UT_ASSERT_MSG(picked < 16, "side pick came back unplaced (%u)", (unsigned)picked);
     UT_ASSERT_MSG((corner_mask(gs, picked) & START_SIDE_BIT_N) != 0,
@@ -182,7 +184,8 @@ int run_starts_pick_spreads_on_side(void) {
        is the case a real game hit first — one team picks a side and the
        other is left alone, which is the ordinary way a lobby is set up. */
     picked = startsPickIncremental(gs, &gs->ss, taken, teammates, 1,
-                                   START_SIDE_ANY, START_SIDE_BIT_E);
+                                   START_SIDE_ANY, START_SIDE_BIT_E,
+                                        NULL, 0);
     UT_ASSERT_MSG(picked < 16, "confined pick came back unplaced (%u)", (unsigned)picked);
     UT_ASSERT_MSG((corner_mask(gs, picked) & START_SIDE_BIT_E) == 0,
                   "a team kept off the east landed on east start %u", (unsigned)picked);
@@ -193,7 +196,8 @@ int run_starts_pick_spreads_on_side(void) {
     /* Nobody chose a side anywhere: the pick still clusters onto the start
        next door, which is what a team in an ordinary game has always had. */
     picked = startsPickIncremental(gs, &gs->ss, taken, teammates, 1,
-                                   START_SIDE_ANY, 0);
+                                   START_SIDE_ANY, 0,
+                                        NULL, 0);
     UT_ASSERT_MSG(picked == 1,
                   "with no side in play the pick should cluster onto start 1, got %u",
                   (unsigned)picked);
@@ -245,7 +249,7 @@ int run_starts_pick_unsided_takes_far_side(void) {
     taken[10] = true;
 
     first = startsPickIncremental(gs, &gs->ss, taken, NULL, 0,
-                                  START_SIDE_ANY, START_SIDE_BIT_E);
+                                  START_SIDE_ANY, START_SIDE_BIT_E, NULL, 0);
     UT_ASSERT_MSG(first < 16, "first confined pick came back unplaced (%u)", (unsigned)first);
     UT_ASSERT_MSG((corner_mask(gs, first) & START_SIDE_BIT_W) != 0,
                   "first confined pick landed on start %u, off the east but not on the west",
@@ -254,7 +258,8 @@ int run_starts_pick_unsided_takes_far_side(void) {
     mates[0] = first;
 
     second = startsPickIncremental(gs, &gs->ss, taken, mates, 1,
-                                   START_SIDE_ANY, START_SIDE_BIT_E);
+                                   START_SIDE_ANY, START_SIDE_BIT_E,
+                                        NULL, 0);
     UT_ASSERT_MSG(second < 16, "second confined pick came back unplaced (%u)", (unsigned)second);
     UT_ASSERT_MSG((corner_mask(gs, second) & START_SIDE_BIT_W) != 0,
                   "second confined pick landed on start %u, off the east but not on the west",

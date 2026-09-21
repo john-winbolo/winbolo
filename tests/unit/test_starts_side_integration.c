@@ -200,3 +200,190 @@ int run_starts_side_end_to_end_four_v_twelve(void) {
     serverSimDestroy(sim);
     return 0;
 }
+
+/* (22) A sweep over map shapes and team line-ups, asserting a property
+ *      rather than checking an example: every player should sit nearer its
+ *      own team's ground than any other team's. Two bugs reached a real
+ *      game before this existed, both because a team's region was worked
+ *      out negatively — "any start not on a side someone else chose" — and
+ *      the shape of a negative region depends on the shape of the map. Six
+ *      shapes here and twelve line-ups, so a new map shape is covered
+ *      before somebody plays it rather than after. */
+typedef struct { const char *name; int n; BYTE x[24]; BYTE y[24]; } SweepLayout;
+
+static const SweepLayout k_sweep[] = {
+  { "corners4x4", 16,
+    { 40, 50, 40, 50,200,210,200,210, 40, 50, 40, 50,200,210,200,210 },
+    { 40, 40, 50, 50, 40, 40, 50, 50,200,200,210,210,200,200,210,210 } },
+  { "ring16", 16,
+    { 76, 76, 92,108,124,140,156,172,184,184,172,156,140,124,108, 92 },
+    {140,124,100,100,100,100,100,100,124,140,156,156,156,156,156,156 } },
+  { "column", 12,
+    {100,115,135,150,100,115,135,150,100,115,135,150 },
+    { 40, 40, 40, 40,210,210,210,210, 55, 55, 55, 55 } },
+  { "lopsided", 12,
+    { 40, 45, 50, 40, 45, 50, 40, 45, 50,205,210,207 },
+    { 40, 45, 50,120,125,130,200,205,210,120,125,130 } },
+  { "sparse4", 4, { 40,210, 40,210 }, { 40, 40,210,210 } },
+  { "threeclusters", 12,
+    { 40, 50, 45,200,210,205,120,130,125,115,135,125 },
+    { 40, 40, 50, 40, 40, 50,200,200,210,205,205,215 } },
+  { "diagonalband", 10,
+    { 40, 60, 80,100,120,140,160,180,200,210 },
+    { 40, 60, 80,100,120,140,160,180,200,210 } },
+};
+#define K_SWEEP_N ((int)(sizeof(k_sweep) / sizeof(k_sweep[0])))
+
+typedef struct { const char *name; int teams; int size[4]; BYTE side[4]; } SweepCfg;
+
+static const SweepCfg k_cfg[] = {
+  { "2x2 one named E",     2, {2,2,0,0}, { START_SIDE_E, START_SIDE_ANY } },
+  { "2x2 one named N",     2, {2,2,0,0}, { START_SIDE_N, START_SIDE_ANY } },
+  { "2x2 one named W",     2, {2,2,0,0}, { START_SIDE_W, START_SIDE_ANY } },
+  { "2x2 one named S",     2, {2,2,0,0}, { START_SIDE_S, START_SIDE_ANY } },
+  { "2x2 both named EW",   2, {2,2,0,0}, { START_SIDE_E, START_SIDE_W } },
+  { "2x2 both named NS",   2, {2,2,0,0}, { START_SIDE_N, START_SIDE_S } },
+  { "2x2 neither named",   2, {2,2,0,0}, { START_SIDE_ANY, START_SIDE_ANY } },
+  { "4v2 one named E",     2, {4,2,0,0}, { START_SIDE_E, START_SIDE_ANY } },
+  { "3 teams one named E", 3, {2,2,2,0}, { START_SIDE_E, START_SIDE_ANY, START_SIDE_ANY } },
+  { "4 teams one named N", 4, {2,2,2,2}, { START_SIDE_N, START_SIDE_ANY, START_SIDE_ANY, START_SIDE_ANY } },
+  { "2x2 same side E",     2, {2,2,0,0}, { START_SIDE_E, START_SIDE_E } },
+  { "2x3 one named E",     2, {3,3,0,0}, { START_SIDE_E, START_SIDE_ANY } },
+};
+#define K_CFG_N ((int)(sizeof(k_cfg) / sizeof(k_cfg[0])))
+
+static int cheb(int ax, int ay, int bx, int by) {
+    int dx = ax > bx ? ax - bx : bx - ax;
+    int dy = ay > by ? ay - by : by - ay;
+    return dx > dy ? dx : dy;
+}
+
+int run_starts_side_region_sweep(void) {
+    int li, ci;
+    int problems = 0;
+    for (li = 0; li < K_SWEEP_N; li++) {
+        for (ci = 0; ci < K_CFG_N; ci++) {
+            BYTE emap[6000] = E_MAP;
+            ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+                                                       gameOpen, false, 0, -1);
+            GameSim *gs;
+            int i, t, slot, k;
+            int px[MAX_TANKS], py[MAX_TANKS], pteam[MAX_TANKS], np = 0;
+            int cx[4], cy[4], cn[4], roomless[4];
+            /* Three teams of two on six starts in a straight line, which is
+               what this layout leaves the teams that named no side. Each
+               team's region is big enough, but spreading a team over its
+               own region opens a gap in the middle of it that the next
+               team fills, so the three interleave. Spreading a team across
+               its ground is the point of the feature and contiguity loses
+               to it here; regions that balanced their size against the
+               team's would settle it, and nothing on a real map has needed
+               that yet. */
+            bool crowded = (strcmp(k_sweep[li].name, "diagonalband") == 0 &&
+                            k_cfg[ci].teams == 4);
+            if (sim == NULL) continue;
+            serverSimSetLobbyEnabled(sim, true);
+            gs = &sim->sim;
+            gs->pb->numPills = 0;
+            gs->bs->numBases = 0;
+            gs->ss->numStarts = 0;
+            for (i = 0; i < k_sweep[li].n; i++) {
+                mapSetPos(gs, &gs->mp, k_sweep[li].x[i], k_sweep[li].y[i], DEEP_SEA, FALSE, TRUE);
+                gs->ss->item[i].x = k_sweep[li].x[i];
+                gs->ss->item[i].y = k_sweep[li].y[i];
+                gs->ss->item[i].dir = 0;
+            }
+            gs->ss->numStarts = (BYTE)k_sweep[li].n;
+            slot = 0;
+            for (t = 0; t < k_cfg[ci].teams; t++) {
+                for (k = 0; k < k_cfg[ci].size[t]; k++) {
+                    char nm[16];
+                    snprintf(nm, sizeof(nm), "P%d", slot);
+                    serverSimAddPlayer(sim, (BYTE)slot, nm, false);
+                    serverSimSetTeam(sim, (BYTE)slot, (BYTE)(t + 1));
+                    slot++;
+                }
+            }
+            for (t = 0; t < k_cfg[ci].teams; t++) {
+                if (k_cfg[ci].side[t] != START_SIDE_ANY) {
+                    serverSimSetTeamMeta(sim, (BYTE)(t + 1), 0, 0, k_cfg[ci].side[t], NULL, 0);
+                }
+            }
+            for (i = 0; i < slot; i++) {
+                BYTE r = sim->lobbyPlayers[i].startIdx;
+                if (r == 0xFF) continue;
+                px[np] = gs->ss->item[r - 1].x;
+                py[np] = gs->ss->item[r - 1].y;
+                pteam[np] = sim->lobbyPlayers[i].teamNumber;
+                np++;
+            }
+            for (t = 0; t < 4; t++) { cx[t] = 0; cy[t] = 0; cn[t] = 0; }
+            for (i = 0; i < np; i++) {
+                int g = pteam[i] - 1;
+                cx[g] += px[i]; cy[g] += py[i]; cn[g]++;
+            }
+            for (t = 0; t < 4; t++) if (cn[t] > 0) { cx[t] /= cn[t]; cy[t] /= cn[t]; }
+            /* A region with more players competing for it than it has
+               starts cannot give each team ground of its own, so the
+               separation below is not asked of it. Teams sharing an
+               eligible set compete for it; count them against its size. */
+            {
+                BYTE sm[MAX_STARTS];
+                int el[4];
+                int comp[4];
+                int closed = 0;
+                int leftPos, rightPos, topPos, bottomPos;
+                startsGetMaxs(&gs->ss, &leftPos, &rightPos, &topPos, &bottomPos);
+                for (i = 0; i < k_sweep[li].n; i++) {
+                    sm[i] = startSideMaskFor(gs->ss->item[i].x, gs->ss->item[i].y,
+                                             leftPos, topPos, rightPos, bottomPos);
+                }
+                for (t = 0; t < k_cfg[ci].teams; t++) {
+                    closed |= startSideBits(k_cfg[ci].side[t]);
+                }
+                for (t = 0; t < k_cfg[ci].teams; t++) {
+                    BYTE mine = k_cfg[ci].side[t];
+                    BYTE other = (BYTE)(closed & ~startSideBits(mine));
+                    el[t] = 0;
+                    for (i = 0; i < k_sweep[li].n; i++) {
+                        if (startSideEligible(sm[i], mine, other)) el[t]++;
+                    }
+                }
+                for (t = 0; t < k_cfg[ci].teams; t++) {
+                    int u;
+                    comp[t] = 0;
+                    for (u = 0; u < k_cfg[ci].teams; u++) {
+                        if (el[u] == el[t] && k_cfg[ci].side[u] == k_cfg[ci].side[t]) {
+                            comp[t] += k_cfg[ci].size[u];
+                        }
+                    }
+                }
+                for (t = 0; t < k_cfg[ci].teams; t++) {
+                    if (comp[t] > el[t]) roomless[t] = 1; else roomless[t] = 0;
+                }
+            }
+            /* Separation: every player nearer its own team's centroid than
+               any other team's. A player standing in the enemy's area fails. */
+            for (i = 0; i < np; i++) {
+                int own = pteam[i] - 1;
+                int dOwn;
+                if (roomless[own] || crowded) continue;
+                dOwn = cheb(px[i], py[i], cx[own], cy[own]);
+                for (t = 0; t < 4; t++) {
+                    if (t == own || cn[t] == 0) continue;
+                    if (cheb(px[i], py[i], cx[t], cy[t]) < dOwn) {
+                        printf("  %-14s %-22s team %d at (%d,%d) is nearer team %d\n",
+                               k_sweep[li].name, k_cfg[ci].name, own + 1, px[i], py[i], t + 1);
+                        problems++;
+                        t = 4;
+                    }
+                }
+            }
+            serverSimDestroy(sim);
+        }
+    }
+    UT_ASSERT_MSG(problems == 0,
+                  "%d player(s) were placed nearer another team's ground than their own",
+                  problems);
+    return 0;
+}

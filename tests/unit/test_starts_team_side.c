@@ -724,11 +724,13 @@ int run_starts_side_spread_keeps_its_tier(void) {
     return 0;
 }
 
-/* (15) Two teams that both chose north share the side's eight starts, and
- *      each spreads across both north corners rather than one team taking
- *      a corner the other has already opened. The spread measures against
- *      every claimed start, not just the team's own, which is what keeps
- *      the second team off the first team's corner. */
+/* (15) Two teams both chose north and share the side's eight starts. Each
+ *      is given a region of its own inside the side — one north corner
+ *      each — and spreads across the four starts of it. Straddling both
+ *      corners with both teams would spread each team more widely, but it
+ *      would also leave the two of them interleaved, which is the thing a
+ *      side is chosen to avoid: a team's own ground comes before spreading
+ *      further over it. */
 int run_starts_side_spread_two_teams_one_side(void) {
     ServerSim *sim = ut_make_running_sim("SideShared");
     UT_ASSERT(sim != NULL);
@@ -759,12 +761,16 @@ int run_starts_side_spread_two_teams_one_side(void) {
     UT_ASSERT_MSG(count_distinct(out, 0, 4) == 4,
                   "two teams on one side should hold four distinct starts: %u %u %u %u",
                   (unsigned)out[0], (unsigned)out[1], (unsigned)out[2], (unsigned)out[3]);
-    UT_ASSERT_MSG(count_west(gs, out, 0, 2) == 1,
-                  "team 1 put %d of its 2 tanks in the west, expected one corner each",
-                  count_west(gs, out, 0, 2));
-    UT_ASSERT_MSG(count_west(gs, out, 2, 2) == 1,
-                  "team 2 put %d of its 2 tanks in the west, expected one corner each",
-                  count_west(gs, out, 2, 2));
+    {
+        int w1 = count_west(gs, out, 0, 2);
+        int w2 = count_west(gs, out, 2, 2);
+        UT_ASSERT_MSG(w1 == 0 || w1 == 2,
+                      "team 1 straddles the two north corners (%d of 2 in the west)", w1);
+        UT_ASSERT_MSG(w2 == 0 || w2 == 2,
+                      "team 2 straddles the two north corners (%d of 2 in the west)", w2);
+        UT_ASSERT_MSG(w1 != w2,
+                      "both teams took the same north corner (%d and %d in the west)", w1, w2);
+    }
     serverSimDestroy(sim);
     return 0;
 }

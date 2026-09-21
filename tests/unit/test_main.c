@@ -692,6 +692,7 @@ static const UnitTestEntry s_tests[] = {
     { "lobby_non_host_off_side_claim_rejected",  run_lobby_non_host_off_side_claim_rejected  },
     { "lobby_any_team_claim_kept_off_chosen_side", run_lobby_any_team_claim_kept_off_chosen_side },
     { "starts_side_end_to_end_four_v_twelve",    run_starts_side_end_to_end_four_v_twelve    },
+    { "starts_side_region_sweep",                run_starts_side_region_sweep                },
     { "input_redundancy",                        run_input_redundancy                        },
     { "edge_send_predicate",                     run_edge_send_predicate                     },
     { "bases_closest_for_player",                run_bases_closest_for_player                },
