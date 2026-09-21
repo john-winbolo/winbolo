@@ -1292,7 +1292,7 @@ below the tables say which.
 | `shell_damage` | 5 | 1 to 255 | Armour a shell takes off the tank or base it hits. |
 | `mine_damage` | 15 | 1 to 255 | Armour a mine takes off the tank that sets it off. |
 | `mine_damage_range` | 256 | 0 to 65535 | How far off the mine's centre a tank is still caught, in world units, tested on each axis so it is a box rather than a circle. The classic 256 is one map square each way; 0 is a mine that catches nobody. |
-| `mine_fatal_divisor` | 3 | 1 to 255 | A mine blow big enough to kill has one part in this many taken back off it, so the tank keeps facing the rest, rounded in its favour. The classic 3 is the two-thirds a fatal mine hit deals. Bigger is harsher, not softer: 255 leaves a fatal blow at almost its full size, and 1 takes the whole thing off and leaves a fatal mine dealing nothing at all. |
+| `mine_fatal_divisor` | 3 | 1 to 255 | A mine blow big enough to kill has one part in this many taken back off it, so the tank keeps facing the rest, rounded up. The classic 3 is the two-thirds a fatal mine hit deals. Bigger is harsher, not softer: 255 leaves a fatal blow at almost its full size, and 1 takes the whole thing off and leaves a fatal mine dealing nothing at all. |
 | `water_loss_shells` | 1 | 0 to 255 | Shells a wading tank loses each `tank_water_ticks`. |
 | `water_loss_mines` | 1 | 0 to 255 | Mines a wading tank loses each `tank_water_ticks`. |
 | `just_fired_ticks` | 101 | 0 to 255 | Ticks a tank stays visible in the trees after firing. |
@@ -1476,14 +1476,15 @@ as too near a tank, a pillbox or a base, all in map squares.
 | `start_scatter_max` | 1000 | 1 to 65535 | How long the spiral search looks before it gives up and takes what it has. |
 | `start_neutral_threshold_pct` | 20 | 0 to 100 | The share of bases still neutral below which a player's own base is preferred to a neutral one. |
 
-**Hearing.** How far a sound carries, in map squares. Inside the soft range it
-is played near, past the none range it is not played at all, and between the
-two it is played far.
+**Hearing.** How far a sound carries, in map squares, tested on each axis so
+the bands are boxes rather than circles. Inside the soft range it is played
+near, at or past the none range it is not played at all, and between the two
+it is played far.
 
 | Rule | Classic | Range | Description |
 |---|---|---|---|
 | `sound_soft_range` | 15 | 0 to 255 | Inside this a sound is played near. |
-| `sound_none_range` | 40 | 0 to 255 | Past this a sound is not played at all. |
+| `sound_none_range` | 40 | 0 to 255 | At or past this a sound is not played at all. |
 
 **Terrain flooding.**
 
