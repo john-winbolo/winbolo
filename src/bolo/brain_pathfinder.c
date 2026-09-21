@@ -343,10 +343,6 @@ static inline uint32_t get_parent(const BrainPathfinder *pf, int i) {
   return (pf->epoch[i] == pf->current_epoch) ? pf->parent[i] : PARENT_NONE;
 }
 
-static inline uint8_t get_dir_at(const BrainPathfinder *pf, int i) {
-  return (pf->epoch[i] == pf->current_epoch) ? pf->dir_at[i] : (uint8_t)0xFF;
-}
-
 /* ------------------------------------------------------------------ */
 /* Direction helpers                                                    */
 /* ------------------------------------------------------------------ */

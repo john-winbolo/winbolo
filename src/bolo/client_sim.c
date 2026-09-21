@@ -4141,7 +4141,7 @@ bool clientSimTankScroll(ClientSim *cs) {
   }
 
   /* When autoscroll is on, scrollAutoScroll (called from clientUiOnTick)
-   * is the sole owner of *xValue/*yValue and subPosX/Y. The legacy
+   * is the sole owner of *xValue / *yValue and subPosX/Y. The legacy
    * per-tank-tick scrollManual call here stomps on subPos (resets to 0)
    * mid-frame, producing a visible flicker — the renderer at 60Hz can
    * sample between the zero-out and the next scrollAutoScroll. Skip it. */
