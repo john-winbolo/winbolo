@@ -400,6 +400,27 @@ if(WINBOLO_LUAJIT)
                 COMMAND           lipo -create ${_lj_slices} -output "${_lj_lib}"
                 INSTALL_COMMAND   ""
                 BUILD_BYPRODUCTS  "${_lj_lib}")
+
+            # The build step above runs once and is then held off by its stamp,
+            # and everything it produces lives in the shared _deps source tree
+            # (BUILD_IN_SOURCE) -- so if another build over this checkout
+            # overwrites the fat archive with a single-arch one, nothing here
+            # notices and every universal link fails on the missing arch. Check
+            # it on every build and re-lipo from the slices already on disk.
+            string(REPLACE ";" "|" _lj_archs_arg  "${CMAKE_OSX_ARCHITECTURES}")
+            string(REPLACE ";" "|" _lj_slices_arg "${_lj_slices}")
+            ExternalProject_Get_Property(luajit_ext STAMP_DIR)
+            ExternalProject_Add_Step(luajit_ext verify_fat
+                COMMENT   "Checking the universal LuaJIT archive"
+                DEPENDEES build
+                DEPENDERS install
+                ALWAYS    TRUE
+                COMMAND   ${CMAKE_COMMAND}
+                          "-DLJ_FAT=${_lj_lib}"
+                          "-DLJ_ARCHS=${_lj_archs_arg}"
+                          "-DLJ_SLICES=${_lj_slices_arg}"
+                          "-DLJ_STAMP_DIR=${STAMP_DIR}"
+                          -P "${CMAKE_SOURCE_DIR}/cmake/luajit_fat_check.cmake")
         else()
             set(_lj_lib "${_lj_src}/src/libluajit.a")
             ExternalProject_Add(luajit_ext
@@ -4975,6 +4996,8 @@ set(_unit_test_names
     starts_pick_cluster_nearest_teammate
     starts_pick_farthest_when_solo
     starts_pick_none_when_all_taken
+    starts_pick_spreads_on_side
+    starts_pick_unsided_takes_far_side
     starts_batch_reserved_lands_exact
     starts_batch_unreserved_avoids_reserved
     starts_batch_stale_reservation_falls_through
@@ -5006,6 +5029,13 @@ set(_unit_test_names
     starts_side_empty_side_falls_back
     starts_side_quota_capped_by_eligible
     starts_side_any_team_kept_off_chosen_side
+    starts_side_spreads_across_corners
+    starts_side_spread_balances_corners
+    starts_side_spread_keeps_its_tier
+    starts_side_spread_two_teams_one_side
+    starts_side_spread_unsided_team_confined
+    starts_side_unsided_team_takes_far_side
+    starts_side_shared_side_anchor_stays_on_side
     lobby_team_side_clamps_and_rejects_non_host
     lobby_side_change_repicks_everyone
     lobby_unassign_and_team_side_claims
@@ -5013,6 +5043,7 @@ set(_unit_test_names
     lobby_non_host_off_side_claim_rejected
     lobby_any_team_claim_kept_off_chosen_side
     starts_side_end_to_end_four_v_twelve
+    starts_side_region_sweep
     input_redundancy
     bases_closest_for_player
     base_stock_visibility

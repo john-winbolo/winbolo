@@ -958,11 +958,14 @@ static void startsSideMasks(starts *value, BYTE *sideMask) {
   }
 }
 
-/* Distance from start idx to the nearest claimed start, or MAP_ARRAY_SIZE
- * when nothing is claimed so that every start ties. */
-static int startsBatchMinDistToClaimed(starts *value, BYTE numStarts,
-                                       const bool *startClaimed, BYTE idx) {
+/* Distance from start idx to the claimed starts: the nearest one in
+ * outMin, the total in outSum. Nothing claimed leaves outMin at
+ * MAP_ARRAY_SIZE and outSum at 0, so every start ties. */
+static void startsBatchSpreadDist(starts *value, BYTE numStarts,
+                                  const bool *startClaimed, BYTE idx,
+                                  int *outMin, int *outSum) {
   int minD = INT_MAX;
+  int sumD = 0;
   BYTE j;
   for (j = 0; j < numStarts; j++) {
     int d;
@@ -971,9 +974,242 @@ static int startsBatchMinDistToClaimed(starts *value, BYTE numStarts,
     d = startsMapDistance((*value)->item[idx].x, (*value)->item[idx].y,
                           (*value)->item[j].x, (*value)->item[j].y);
     if (d < minD) minD = d;
+    sumD += d;
   }
   if (minD == INT_MAX) minD = MAP_ARRAY_SIZE;
+  *outMin = minD;
+  *outSum = sumD;
+}
+
+/* Distance from start idx to the nearest claimed start, or MAP_ARRAY_SIZE
+ * when nothing is claimed so that every start ties. */
+static int startsBatchMinDistToClaimed(starts *value, BYTE numStarts,
+                                       const bool *startClaimed, BYTE idx) {
+  int minD;
+  int sumD;
+  startsBatchSpreadDist(value, numStarts, startClaimed, idx, &minD, &sumD);
   return minD;
+}
+
+/* How many claimed starts belong to team tn. Reads the team off the slot
+ * startToPlayer names for each start, so a start locked by a lobby
+ * reservation counts the same as one this pass handed out — that is what
+ * lets a team's last unreserved member spread away from team-mates who
+ * came in holding starts. Team 0 is not a team and never has any. */
+static int startsBatchTeamClaimCount(BYTE numStarts, const bool *startClaimed,
+                                     const BYTE *startToPlayer,
+                                     const BYTE *teamNumber, BYTE tn) {
+  int n = 0;
+  BYTE j;
+  if (tn == 0 || tn > MAX_TANKS) return 0;
+  for (j = 0; j < numStarts; j++) {
+    if (!startClaimed[j]) continue;
+    if (startToPlayer[j] >= MAX_TANKS) continue;
+    if (teamNumber[startToPlayer[j]] != tn) continue;
+    n++;
+  }
+  return n;
+}
+
+/* Centroid of the usable starts a side accepts, or of the centre band
+ * when the side has none of its own, or the bounding box centre when it
+ * has neither. Returns FALSE only when the map has no usable start. */
+static bool startsSideAnchor(GameSim *sim, starts *value, const BYTE *sideMask,
+                             BYTE side, int *outX, int *outY) {
+  BYTE bits = startSideBits(side);
+  int sumX = 0;
+  int sumY = 0;
+  int cnt = 0;
+  int centreSumX = 0;
+  int centreSumY = 0;
+  int centreCnt = 0;
+  int leftPos;
+  int rightPos;
+  int topPos;
+  int bottomPos;
+  BYTE i;
+  for (i = 0; i < (*value)->numStarts; i++) {
+    if (startsIsUsable(sim, value, i) == FALSE) continue;
+    if ((sideMask[i] & bits) != 0) {
+      sumX += (*value)->item[i].x;
+      sumY += (*value)->item[i].y;
+      cnt++;
+    } else if (startSideIsCentre(sideMask[i])) {
+      centreSumX += (*value)->item[i].x;
+      centreSumY += (*value)->item[i].y;
+      centreCnt++;
+    }
+  }
+  if (cnt == 0) { sumX = centreSumX; sumY = centreSumY; cnt = centreCnt; }
+  if (cnt > 0) {
+    *outX = sumX / cnt;
+    *outY = sumY / cnt;
+    return TRUE;
+  }
+  startsGetMaxs(value, &leftPos, &rightPos, &topPos, &bottomPos);
+  *outX = (leftPos + rightPos) / 2;
+  *outY = (topPos + bottomPos) / 2;
+  return TRUE;
+}
+
+/* The usable start this team may take that is farthest from every anchor
+ * already placed. A team with a side chooses among the starts carrying its
+ * side's bit, so two teams on the same side end up at opposite ends of it.
+ * The centre band is left out even though the side accepts it: the centre
+ * is often farther from the side's centroid than the side's own far end,
+ * and a team anchored there would be placed in the middle of the map while
+ * starts on the side it chose were still free. A team with no side chooses
+ * among whatever the chosen sides leave open, centre included. Returns -1
+ * when the team may take nothing. */
+static int startsSpreadAnchorPick(GameSim *sim, starts *value, const BYTE *sideMask,
+                                  BYTE side, BYTE closedMask, const bool *anchored,
+                                  const StartsTeamAnchors *out, int tn) {
+  int bestIdx = -1;
+  int bestMin = -1;
+  BYTE i;
+  for (i = 0; i < (*value)->numStarts; i++) {
+    int minD = INT_MAX;
+    int other;
+    if (startsIsUsable(sim, value, i) == FALSE) continue;
+    if (startSideBits(side) != 0) {
+      if ((sideMask[i] & startSideBits(side)) == 0) continue;
+    } else if (!startSideEligible(sideMask[i], START_SIDE_ANY, closedMask)) {
+      continue;
+    }
+    for (other = 1; other <= MAX_TANKS; other++) {
+      int d;
+      if (other == tn || !anchored[other]) continue;
+      d = startsMapDistance((*value)->item[i].x, (*value)->item[i].y,
+                            out->x[other], out->y[other]);
+      if (d < minD) minD = d;
+    }
+    if (minD == INT_MAX) minD = MAP_ARRAY_SIZE;
+    if (bestIdx < 0 || minD > bestMin) { bestMin = minD; bestIdx = i; }
+  }
+  return bestIdx;
+}
+
+/*********************************************************
+*NAME:          startsComputeTeamAnchors
+*AUTHOR:        John Morrison
+*CREATION DATE: 22/9/26
+*LAST MODIFIED: 22/9/26
+*PURPOSE:
+*  Gives every present team a point on the map to be placed
+*  around. See the comment on StartsTeamAnchors in starts.h.
+*********************************************************/
+bool startsComputeTeamAnchors(GameSim *sim, starts *value,
+                              const BYTE *teamSide, const bool *teamPresent,
+                              StartsTeamAnchors *out) {
+  BYTE sideMask[MAX_STARTS];
+  bool anchored[MAX_TANKS + 1];
+  BYTE closedMask = 0;
+  int placed = 0;
+  int tn;
+  BYTE i;
+
+  memset(out, 0, sizeof(*out));
+  for (tn = 0; tn <= MAX_TANKS; tn++) anchored[tn] = FALSE;
+  if (value == NULL || *value == NULL || (*value)->numStarts == 0) {
+    return FALSE;
+  }
+  for (tn = 1; tn <= MAX_TANKS; tn++) {
+    if (!teamPresent[tn]) continue;
+    out->present[tn] = TRUE;
+    closedMask |= startSideBits(teamSide[tn]);
+  }
+  /* No side chosen anywhere: nothing puts a team in one place rather than
+   * another, so the caller keeps the behaviour it has without sides. */
+  if (closedMask == 0) {
+    return FALSE;
+  }
+  startsSideMasks(value, sideMask);
+
+  /* Teams that named a side go first, so the teams that named none are
+   * placed against them rather than the other way round. The first team on
+   * a side takes the middle of it; a second team naming the same side
+   * takes the far end of it instead, so the two do not share one region
+   * and leave the later team with nothing of its own. */
+  for (tn = 1; tn <= MAX_TANKS; tn++) {
+    bool shared = FALSE;
+    int other;
+    if (!out->present[tn]) continue;
+    if (startSideBits(teamSide[tn]) == 0) continue;
+    for (other = 1; other < tn; other++) {
+      if (out->present[other] && teamSide[other] == teamSide[tn]) shared = TRUE;
+    }
+    if (shared) {
+      int idx = startsSpreadAnchorPick(sim, value, sideMask, teamSide[tn],
+                                       closedMask, anchored, out, tn);
+      if (idx >= 0) {
+        out->x[tn] = (*value)->item[idx].x;
+        out->y[tn] = (*value)->item[idx].y;
+      } else {
+        /* The side has no usable start of its own. Anchor where the first
+         * team on it was anchored, the centre band or the box centre,
+         * rather than leaving a present team at the origin, which would
+         * hand it the north-west of the map as its region. */
+        startsSideAnchor(sim, value, sideMask, teamSide[tn], &out->x[tn], &out->y[tn]);
+      }
+    } else {
+      startsSideAnchor(sim, value, sideMask, teamSide[tn], &out->x[tn], &out->y[tn]);
+    }
+    anchored[tn] = TRUE;
+    placed++;
+  }
+
+  /* Then a team with no side, each one to the part of the map farthest
+   * from everything anchored so far. Team-number order, so every peer
+   * works out the same regions. */
+  for (tn = 1; tn <= MAX_TANKS; tn++) {
+    int idx;
+    if (!out->present[tn]) continue;
+    if (startSideBits(teamSide[tn]) != 0) continue;
+    idx = startsSpreadAnchorPick(sim, value, sideMask, START_SIDE_ANY,
+                                 closedMask, anchored, out, tn);
+    if (idx < 0) {
+      /* Every start the chosen sides leave open is unusable: anchor it
+       * somewhere real rather than at the origin. */
+      for (i = 0; i < (*value)->numStarts && idx < 0; i++) {
+        if (startsIsUsable(sim, value, i)) idx = i;
+      }
+    }
+    if (idx < 0) continue;
+    out->x[tn] = (*value)->item[idx].x;
+    out->y[tn] = (*value)->item[idx].y;
+    anchored[tn] = TRUE;
+    placed++;
+  }
+  out->inUse = (placed > 0);
+  return out->inUse;
+}
+
+/*********************************************************
+*NAME:          startsAnchorOwns
+*AUTHOR:        John Morrison
+*CREATION DATE: 22/9/26
+*LAST MODIFIED: 22/9/26
+*PURPOSE:
+*  Whether a start falls in one team's region. See starts.h.
+*********************************************************/
+bool startsAnchorOwns(starts *value, const StartsTeamAnchors *anchors,
+                      BYTE tn, BYTE idx) {
+  int bestD = INT_MAX;
+  int bestTn = 0;
+  int other;
+  if (anchors == NULL || !anchors->inUse) return TRUE;
+  if (tn == 0 || tn > MAX_TANKS || !anchors->present[tn]) return TRUE;
+  for (other = 1; other <= MAX_TANKS; other++) {
+    int d;
+    if (!anchors->present[other]) continue;
+    d = startsMapDistance((*value)->item[idx].x, (*value)->item[idx].y,
+                          anchors->x[other], anchors->y[other]);
+    if (d < bestD) {           /* a tie keeps the lower team number */
+      bestD = d;
+      bestTn = other;
+    }
+  }
+  return bestTn == 0 || bestTn == tn;
 }
 
 /*********************************************************
@@ -1060,6 +1296,9 @@ void startsAssignBatch(GameSim *sim, starts *value,
   BYTE groupSide[MAX_TANKS];        /* per-group START_SIDE_*, after the no-valid-start fallback */
   BYTE groupOtherMask[MAX_TANKS];   /* per-group union of the other teams' chosen sides */
   BYTE closedMask;                  /* union of every present team's chosen side */
+  StartsTeamAnchors anchors;        /* a region per team, when sides are in play */
+  BYTE anchorSide[MAX_TANKS + 1];
+  bool anchorPresent[MAX_TANKS + 1];
   int leftPos;
   int rightPos;
   int topPos;
@@ -1124,6 +1363,22 @@ void startsAssignBatch(GameSim *sim, starts *value,
       if (tn > 0 && tn <= MAX_TANKS) closedMask |= startSideBits(teamStartSide[tn]);
     }
   }
+
+  /* A region per present team, so two teams that share a side, or two
+   * teams the chosen sides left the same ground, are not placed on top of
+   * each other. Not in use when no team named a side, and then every step
+   * below behaves as it did before. */
+  memset(anchorSide, START_SIDE_ANY, sizeof(anchorSide));
+  memset(anchorPresent, 0, sizeof(anchorPresent));
+  for (i = 0; i < MAX_TANKS; i++) {
+    BYTE tn;
+    if (!connected[i]) continue;
+    tn = teamNumber[i];
+    if (tn == 0 || tn > MAX_TANKS) continue;
+    anchorPresent[tn] = TRUE;
+    if (teamStartSide != NULL) anchorSide[tn] = teamStartSide[tn];
+  }
+  startsComputeTeamAnchors(sim, value, anchorSide, anchorPresent, &anchors);
 
   /* Step 1: build groups (reserved slots are placed by the lock below, not
    * by the cluster passes, so they stay out of the groups). */
@@ -1276,6 +1531,23 @@ void startsAssignBatch(GameSim *sim, starts *value,
       groups[g].anchored = TRUE;
       groups[g].anchorX = sumX / cnt;
       groups[g].anchorY = sumY / cnt;
+    }
+  }
+
+  /* Step 2c: where the shared regions are in use they decide a team's
+   * anchor, so the batch and the lobby picker put a team in the same place.
+   * This is what anchors a team that named no side but was confined by the
+   * teams that did: the stripes below would put it wherever the map's own
+   * halves fall, which is not its region. */
+  if (anchors.inUse) {
+    for (g = 0; g < numGroups; g++) {
+      BYTE tn;
+      if (groups[g].isSolo) continue;
+      tn = teamNumber[groups[g].players[0]];
+      if (tn == 0 || tn > MAX_TANKS || !anchors.present[tn]) continue;
+      groups[g].anchored = TRUE;
+      groups[g].anchorX = anchors.x[tn];
+      groups[g].anchorY = anchors.y[tn];
     }
   }
 
@@ -1547,16 +1819,78 @@ void startsAssignBatch(GameSim *sim, starts *value,
       for (p = 0; p < teamClaim[g]; p++) {
       int bestStart = -1;
       int bestScore = -1;
+      int bestRank = -1;
+      int bestMin = -1;
+      int bestSum = -1;
       BYTE rep = groups[g].players[0];
+      /* A team that chose a side spreads across it: once it holds a start
+       * its next member takes the one farthest from what is already
+       * claimed rather than the one nearest the team anchor. The anchor
+       * sits at the centroid of the side's starts, which on a map with a
+       * cluster in each corner is the empty middle of the side's edge —
+       * every corner is the same distance from it, so nearest-to-anchor
+       * put the whole team in whichever corner the start list happened to
+       * name first. The team's first member still takes the anchor, which
+       * is what puts the team on its side to begin with. */
+      bool spread = (groupSide[g] != START_SIDE_ANY || groupOtherMask[g] != 0) &&
+                    startsBatchTeamClaimCount(numStarts, startClaimed, startToPlayer,
+                                              teamNumber, teamNumber[rep]) > 0;
       for (i = 0; i < numStarts; i++) {
         int dist;
         int score;
         if (startClaimed[i]) continue;
         if (startsIsUsable(sim, value, (BYTE)i) == FALSE) continue;
         if (!startSideEligible(sideMask[i], groupSide[g], groupOtherMask[g])) continue;
+        if (spread) {
+          /* Same precedence the score below gives, as whole ranks rather
+           * than distance penalties: the side's own starts before ones
+           * another team's side also covers before the centre, and within
+           * each of those a start with no hostile pill or base near it
+           * before one with. Distance only breaks a tie inside a rank, so
+           * spreading never buys room by leaving the side or by parking
+           * somebody next to an enemy pillbox. */
+          int rank = 0;
+          int minD;
+          int sumD;
+          if (!startsAnchorOwns(value, &anchors, teamNumber[rep], (BYTE)i)) rank = 3;
+          if (groupSide[g] != START_SIDE_ANY) {
+            if ((sideMask[i] & groupOtherMask[g]) != 0) rank += 1;
+            if (startSideIsCentre(sideMask[i])) rank += 2;
+          } else {
+            BYTE away = startSideOppositeBits(groupOtherMask[g]);
+            if (away != 0) {
+              if (!startSideIsCentre(sideMask[i]) && (sideMask[i] & away) == 0) rank += 1;
+              if (startSideIsCentre(sideMask[i])) rank += 2;
+            }
+          }
+          rank *= 2;
+          if (startsHasHostileNearAtStart(sim, value, i, rep)) rank++;
+          /* Measured against every claimed start, not just this team's, so
+           * a team spreads away from the other teams' starts as well as its
+           * own; two teams that chose the same side are kept apart by the
+           * region rank above this. Farthest from the nearest, and
+           * on a tie farthest from all of them together — in a corner the
+           * nearest claimed start is a few squares away whichever corner
+           * it is, and the total is what tells a filled corner from an
+           * empty one. */
+          startsBatchSpreadDist(value, numStarts, startClaimed, (BYTE)i, &minD, &sumD);
+          if (bestStart < 0 || rank < bestRank ||
+              (rank == bestRank && (minD > bestMin ||
+                                    (minD == bestMin && sumD > bestSum)))) {
+            bestStart = i;
+            bestRank = rank;
+            bestMin = minD;
+            bestSum = sumD;
+          }
+          continue;
+        }
         dist = startsMapDistance((*value)->item[i].x, (*value)->item[i].y,
                                  groups[g].anchorX, groups[g].anchorY);
         score = dist;
+        if (!startsAnchorOwns(value, &anchors, teamNumber[rep], (BYTE)i)) {
+          /* Another team's region: behind everything in this team's own. */
+          score += MAP_ARRAY_SIZE * 16;
+        }
         if (startsHasHostileNearAtStart(sim, value, i, rep)) {
           /* Push hostile-near candidates well below distance ranking */
           score += MAP_ARRAY_SIZE * 2;
@@ -1566,6 +1900,17 @@ void startsAssignBatch(GameSim *sim, starts *value,
            * another team's side also covers, then the centre. */
           if ((sideMask[i] & groupOtherMask[g]) != 0) score += START_SIDE_SHARED_PENALTY;
           if (startSideIsCentre(sideMask[i])) score += START_SIDE_CENTRE_PENALTY;
+        } else {
+          /* A team with no side takes the far side of the map from the
+           * sides the other teams chose, before the rest of what is left
+           * to it, before the centre. */
+          BYTE away = startSideOppositeBits(groupOtherMask[g]);
+          if (away != 0) {
+            if (!startSideIsCentre(sideMask[i]) && (sideMask[i] & away) == 0) {
+              score += START_SIDE_SHARED_PENALTY;
+            }
+            if (startSideIsCentre(sideMask[i])) score += START_SIDE_CENTRE_PENALTY;
+          }
         }
         if (bestStart < 0 || score < bestScore) {
           bestStart = i;
@@ -1785,12 +2130,14 @@ void startsAssignBatch(GameSim *sim, starts *value,
 BYTE startsPickIncremental(struct GameSim *sim, starts *value,
                            const bool *taken,
                            const BYTE *teammateStarts0, int teammateCount,
-                           BYTE side, BYTE closedMask) {
+                           BYTE side, BYTE closedMask,
+                           const StartsTeamAnchors *anchors, BYTE myTeam) {
   BYTE numStarts;
   BYTE sideMask[MAX_STARTS];
   BYTE startTier[MAX_STARTS]; /* 1 own side only, 2 shared with another side, 3 centre; 0 not a candidate */
   BYTE ownBits;
   int usableRefs;
+  int region;
   int tier;
   int j;
   BYTE i;
@@ -1810,7 +2157,20 @@ BYTE startsPickIncremental(struct GameSim *sim, starts *value,
     if (startsIsUsable(sim, value, (BYTE)i) == FALSE) continue;
     if (!startSideEligible(sideMask[i], side, closedMask)) continue;
     if (ownBits == 0) {
-      startTier[i] = 1;
+      /* No side of its own. Where other teams have chosen sides it is
+       * confined to what is left, and the far side of the map from them
+       * comes first: only then the rest of what it may take, and the
+       * centre last. With nobody having chosen, every start is equal. */
+      BYTE away = startSideOppositeBits(closedMask);
+      if (away == 0) {
+        startTier[i] = 1;
+      } else if (startSideIsCentre(sideMask[i])) {
+        startTier[i] = 3;
+      } else if ((sideMask[i] & away) != 0) {
+        startTier[i] = 1;
+      } else {
+        startTier[i] = 2;
+      }
     } else if (startSideIsCentre(sideMask[i])) {
       startTier[i] = 3;
     } else if ((sideMask[i] & closedMask & (BYTE)~ownBits) != 0) {
@@ -1829,13 +2189,59 @@ BYTE startsPickIncremental(struct GameSim *sim, starts *value,
         startSideAccepts(sideMask[t0], side)) usableRefs++;
   }
 
+  /* Two passes: the starts in this team's own region first, then the rest.
+   * A region is what stops two teams that share a side, or two teams that
+   * named no side and were both left the same part of the map, from
+   * taking each other's ground: eligibility alone cannot tell them apart,
+   * because it is the same set for both. With no anchors in play
+   * startsAnchorOwns is TRUE everywhere and the first pass sees the whole
+   * candidate set, exactly as before. */
+  for (region = 0; region < 2 && bestStart < 0; region++) {
   for (tier = 1; tier <= 3 && bestStart < 0; tier++) {
-    if (usableRefs > 0) {
-      /* Cluster: smallest distance to the nearest teammate reservation. */
+    if (region == 1 && anchors != NULL && anchors->inUse &&
+        myTeam >= 1 && myTeam <= MAX_TANKS && anchors->present[myTeam]) {
+      /* Nothing left in its own region: there are more teams than the map
+       * has room to keep apart. What matters then is staying as near its
+       * own ground as it can, not spreading further from it — a team that
+       * goes on spreading out here ends up with one player in one team's
+       * region and one in another's. */
       int bestDist = INT_MAX;
       for (i = 0; i < numStarts; i++) {
-        int minD = INT_MAX;
+        int d;
         if (startTier[i] != tier) continue;
+        d = startsMapDistance((*value)->item[i].x, (*value)->item[i].y,
+                              anchors->x[myTeam], anchors->y[myTeam]);
+        if (bestStart < 0 || d < bestDist) {
+          bestDist = d;
+          bestStart = i;
+        }
+      }
+    } else if (usableRefs > 0) {
+      /* Teammates are already placed. A team that chose a side spreads
+       * across it — the start whose nearest teammate is farthest away —
+       * so the second player to pick north lands in the other north
+       * corner instead of beside the first. A team with no side still
+       * clusters, which is what a team that never asked for a side has
+       * always got. Both run inside the tier loop, so the side's own
+       * starts are still used up before a shared one and a shared one
+       * before the centre: spreading picks among equals, it never buys
+       * distance by leaving the side. */
+      /* A team is spread when the sides in play confine it to a region,
+       * which it can be without having chosen one: a team with no side is
+       * kept off every side the other teams did choose, so one team
+       * picking east leaves the other only the west and it should spread
+       * over that just as the east team spreads over its own. Only a game
+       * where nobody chose a side leaves a team free of all this, and
+       * there a team still clusters. */
+      bool spread = (ownBits != 0) || (closedMask != 0);
+      int bestDist = INT_MAX;
+      int bestMin = -1;
+      int bestSum = -1;
+      for (i = 0; i < numStarts; i++) {
+        int minD = INT_MAX;
+        int sumD = 0;
+        if (startTier[i] != tier) continue;
+        if (region == 0 && !startsAnchorOwns(value, anchors, myTeam, i)) continue;
         for (j = 0; j < teammateCount; j++) {
           BYTE t0 = teammateStarts0[j];
           int d;
@@ -1845,8 +2251,22 @@ BYTE startsPickIncremental(struct GameSim *sim, starts *value,
           d = startsMapDistance((*value)->item[i].x, (*value)->item[i].y,
                                 (*value)->item[t0].x, (*value)->item[t0].y);
           if (d < minD) minD = d;
+          sumD += d;
         }
-        if (bestStart < 0 || minD < bestDist) {
+        if (spread) {
+          /* Farthest from the nearest teammate, and on a tie the farthest
+           * from all of them together. The tie is the normal case once a
+           * side's corners are opened: every start still free sits a few
+           * squares from a teammate in its own corner, so the nearest
+           * teammate alone cannot tell the crowded corner from the empty
+           * one and the total is what does. */
+          if (bestStart < 0 || minD > bestMin ||
+              (minD == bestMin && sumD > bestSum)) {
+            bestMin = minD;
+            bestSum = sumD;
+            bestStart = i;
+          }
+        } else if (bestStart < 0 || minD < bestDist) {
           bestDist = minD;
           bestStart = i;
         }
@@ -1857,6 +2277,7 @@ BYTE startsPickIncremental(struct GameSim *sim, starts *value,
       for (i = 0; i < numStarts; i++) {
         int minD = INT_MAX;
         if (startTier[i] != tier) continue;
+        if (region == 0 && !startsAnchorOwns(value, anchors, myTeam, i)) continue;
         for (j = 0; j < numStarts; j++) {
           int d;
           if (!taken[j]) continue;
@@ -1872,6 +2293,8 @@ BYTE startsPickIncremental(struct GameSim *sim, starts *value,
         }
       }
     }
+  }
+
   }
 
   if (bestStart < 0) {

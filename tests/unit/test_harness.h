@@ -919,6 +919,8 @@ int run_entity_sync_wire_corpus_fixture(void);
 int run_starts_pick_cluster_nearest_teammate(void);
 int run_starts_pick_farthest_when_solo(void);
 int run_starts_pick_none_when_all_taken(void);
+int run_starts_pick_spreads_on_side(void);
+int run_starts_pick_unsided_takes_far_side(void);
 
 /* Batch start-assignment reservations (test_starts_assign_batch.c). The
  * reservedStartIdx0 lock that honors lobby start picks at game start:
@@ -983,6 +985,17 @@ int run_starts_side_reservation_beats_side(void);
 int run_starts_side_empty_side_falls_back(void);
 int run_starts_side_quota_capped_by_eligible(void);
 int run_starts_side_any_team_kept_off_chosen_side(void);
+/* ...and it spreads across the side it chose rather than filling one
+ * corner of it: one player per corner, an even split when the side has
+ * more, inside the side's own starts, and shared properly when two teams
+ * pick the same side. */
+int run_starts_side_spreads_across_corners(void);
+int run_starts_side_spread_balances_corners(void);
+int run_starts_side_spread_keeps_its_tier(void);
+int run_starts_side_spread_two_teams_one_side(void);
+int run_starts_side_spread_unsided_team_confined(void);
+int run_starts_side_unsided_team_takes_far_side(void);
+int run_starts_side_shared_side_anchor_stays_on_side(void);
 
 /* Team start sides on the lobby server (test_lobby_team_side_dispatch.c).
  * The team-meta side clamp and its client mirror, the re-pick of every
@@ -1001,6 +1014,7 @@ int run_lobby_any_team_claim_kept_off_chosen_side(void);
  * team's tanks north and a larger south team's tanks south, on distinct
  * squares. */
 int run_starts_side_end_to_end_four_v_twelve(void);
+int run_starts_side_region_sweep(void);
 
 /* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
  * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed
