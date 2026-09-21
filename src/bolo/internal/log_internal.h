@@ -34,6 +34,7 @@
 #include "spectator_ring.h"
 #include "transport_control_codec.h"  /* MAX_CONTROL_PACKET for the bound below */
 #include "scenario_panel.h"            /* SCN_PANEL_IDS, for the same bound */
+#include "control_event.h"             /* CTRL_SCENARIO_RULES_FRAGS_MAX, same */
 
 /* Upper bound on the plaintext snapshot body (everything after the
  * LOG_EVENT_SNAPSHOT marker). startDelay and timeLeft are 4 bytes each; the
@@ -51,10 +52,12 @@
  * that the expression counts: one game-phase, one lobby-settings, one
  * brain-list, up to MAX_TANKS lobby slots, up to MAX_TANKS-1 team metas, up
  * to 2*MAX_TANKS bot config+brain, up to two vote states, one balance, one
- * map-skip, one stats seed, one entity sync, one scenario-rules, up to
- * SCN_PANEL_IDS scenario panels and up to MAX_TANKS player-joins — (9 +
- * SCN_PANEL_IDS + 5*MAX_TANKS) events, each charged a 4-byte [u16 type]
- * [u16 bodyLen] header plus a body of MAX_CONTROL_PACKET.
+ * map-skip, one stats seed, one entity sync, up to
+ * CTRL_SCENARIO_RULES_FRAGS_MAX scenario-rules fragments, up to
+ * SCN_PANEL_IDS scenario panels and up to MAX_TANKS player-joins — (8 +
+ * CTRL_SCENARIO_RULES_FRAGS_MAX + SCN_PANEL_IDS + 5*MAX_TANKS) events, each
+ * charged a 4-byte [u16 type] [u16 bodyLen] header plus a body of
+ * MAX_CONTROL_PACKET.
  *
  * Those terms are not the whole replay, so this is a size taken from the
  * ones listed rather than a bound proved over all of them. The same replay
@@ -72,7 +75,8 @@
  * because a spectator is on neither and serverSpectatorDeliverControl would
  * drop them. */
 #define LOG_CONTROL_SNAPSHOT_MAX                                                \
-  ((9 + SCN_PANEL_IDS + 5 * MAX_TANKS) * (MAX_CONTROL_PACKET + 4))
+  ((8 + CTRL_SCENARIO_RULES_FRAGS_MAX + SCN_PANEL_IDS + 5 * MAX_TANKS) *        \
+   (MAX_CONTROL_PACKET + 4))
 
 /* Register a spectator ring fed by the log writer. While a ring is
  * registered, each logWriteTick records one ring tick for the registered

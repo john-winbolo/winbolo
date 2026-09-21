@@ -17,7 +17,12 @@
  *      code, and stamping the verified name, country and
  *      flags that come back onto its slot.
  *    - The reauth that follows a rekey, including the
- *      provisional name claim it settles.
+ *      provisional name claim it settles.  Its verify runs on
+ *      the WinBolo.net worker — client/verify for a native
+ *      slot's player_key, client/verify_join_code for a web
+ *      slot's code — so the reauth captures the slot and
+ *      returns and the stamp happens on a later tick, out of
+ *      udpServerApplyReauthResult.
  *    - Serving a completed round's log: the registered
  *      source the packet handler reads, the per-slot
  *      request limits, and the refusal reply.
@@ -57,8 +62,10 @@
                                                  * WINBOLONET_KEY_LEN,
                                                  * WINBOLO_NET_EVENT_PLAYER_JOIN,
                                                  * WINBOLO_NET_NO_PLAYER */
-#include "../../winbolonet/winbolonet_server.h" /* winboloNetVerifyJoinCode,
-                                                 * winboloNetVerifyClientKey,
+#include "../../winbolonet/winbolonet_server.h" /* winbolonetQueueVerifyClientKey,
+                                                 * winbolonetApplyVerifyResult,
+                                                 * winbolonetQueueVerifyJoinCode,
+                                                 * winbolonetApplyVerifyJoinCodeResult,
                                                  * winboloNetIsPlayerParticipant */
 
 /* The registered round-log source. Held outside udpServer so a transport
@@ -169,47 +176,6 @@ void transportUdpServerBroadcastWbnRekey(ServerSim *sim) {
     }
 }
 
-/* Resolve a WEB (CLIENT_TYPE_WEB) slot's WBN identity from its join_code.
- * Verifies once per connection via the read-only join-code route and caches
- * the result on the slot; later reauths re-stamp from cache with no network
- * call (the code expires at TTL and the server_key rotates between rounds, so
- * a re-verify would fail).  Returns true iff the slot holds a logged-in WBN
- * identity.  WEB joiners are never Steam/supporter-bearing. */
-static bool udpServerResolveWebIdentity(BYTE slot, const char *joinCode,
-                                        bool *isLoggedInOut, bool *hasSteamOut,
-                                        bool *isSupporterOut) {
-    if (hasSteamOut)    *hasSteamOut = FALSE;
-    if (isSupporterOut) *isSupporterOut = FALSE;
-    if (!udpServer.clients[slot].wbnWebIdentityCached) {
-        char nameBuf[PACKET_MAX_PLAYER_NAME];
-        char countryBuf[3];
-        char errorMsg[512];
-        bool isLoggedIn = FALSE;
-        int  userId = -1;
-        nameBuf[0] = '\0';
-        countryBuf[0] = '\0';
-        errorMsg[0] = '\0';
-        if (!winboloNetVerifyJoinCode(joinCode, nameBuf, &isLoggedIn,
-                                      countryBuf, &userId, errorMsg)) {
-            /* Invalid/expired/wrong-server code: fall back to anonymous,
-             * exactly like an empty wbnJoinKey.  Not cached, so a later
-             * reauth with a still-valid code can still succeed. */
-            if (isLoggedInOut) *isLoggedInOut = FALSE;
-            return false;
-        }
-        udpServer.clients[slot].wbnWebIdentityCached = true;
-        udpServer.clients[slot].wbnWebIsLoggedIn = isLoggedIn;
-        snprintf(udpServer.clients[slot].wbnWebName,
-                 PACKET_MAX_PLAYER_NAME, "%s", nameBuf);
-        udpServer.clients[slot].wbnWebCountry[0] = countryBuf[0];
-        udpServer.clients[slot].wbnWebCountry[1] = countryBuf[1];
-        udpServer.clients[slot].wbnWebCountry[2] = '\0';
-        udpServer.clients[slot].wbnWebUserId = userId;
-    }
-    if (isLoggedInOut) *isLoggedInOut = udpServer.clients[slot].wbnWebIsLoggedIn;
-    return udpServer.clients[slot].wbnWebIsLoggedIn;
-}
-
 /* Stamp a logged-in WEB slot's verified identity onto the sim + transport slot
  * from its cached join-code result.  The WBN-resolved name and country are
  * AUTHORITATIVE: a web client presents only a join_code, and the verify call
@@ -249,47 +215,101 @@ static void udpServerApplyWebIdentity(ServerSim *sim, BYTE slot) {
     }
 }
 
-void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
-                                       const char *token) {
-    if (!winbolonetIsRunning() || token == NULL || token[0] == '\0') {
-        WB_LOG_WARN(WB_LOG_CAT_NET,
-                    "[WBN] re-auth for slot %d ignored: running=%d tokenLen=%d",
-                    (int)slot, winbolonetIsRunning() ? 1 : 0,
-                    token ? (int)strlen(token) : -1);
-        return;
+/* Everything about the slot that re-authenticated, captured when the reauth
+ * arrived so the stamp below can run a round trip later without re-reading
+ * state that may have moved on.  connId is what says the slot still belongs
+ * to the same player when the result lands. */
+typedef struct {
+    BYTE     slot;
+    uint64_t connId;
+    char     token[WBN_JOIN_KEY_WIRE_LEN];
+    char     verifyName[PACKET_MAX_PLAYER_NAME];
+    bool     isWeb;
+    bool     isPendingClaim;
+} WbnReauthCtx;
+
+/* Re-authentications waiting on their client/verify job, one entry per slot.
+ * The context lives here rather than on the job because nothing on the
+ * WinBolo.net worker may name a slot, a connection or the sim.
+ *
+ * One entry per slot is the worst case: the rekey broadcast makes every
+ * connected slot re-auth at once, and a slot that re-auths again while its
+ * first verify is still out is refused until that verify answers or its
+ * hold lapses (transportUdpServerHandleWbnReauth).  So the table cannot
+ * fill, and at most MAX_TANKS verifies are ever on the worker's queue for
+ * re-auths: the token is the client's to send, and without the refusal one
+ * connected client could queue a verify per datagram behind everything
+ * else the worker has to post.  A reauth that lands after the hold lapsed
+ * replaces the entry, and the lapsed job's result then finds no entry and
+ * is dropped.
+ *
+ * Transport create, destroy and the fuzz init each clear the whole table.
+ * Job ids are unique for the life of the process and never reused, so an
+ * entry left over from an earlier server cannot match a later result, but
+ * its hold names a tick number the next server's counter (restarted at 0)
+ * will not reach for a long time, which would refuse that slot's re-auths. */
+static struct {
+    uint32_t     jobId;          /* 0 when the entry is free */
+    uint32_t     holdUntilTick;  /* the grace sweep defers to this entry until here */
+    WbnReauthCtx ctx;
+} s_reauthPending[MAX_TANKS];
+
+/* The pending entry a completed verify belongs to, or -1 when it was
+ * superseded, already applied, or never ours. */
+static int udpServerFindReauthPending(uint32_t jobId) {
+    int i;
+    if (jobId == 0) return -1;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (s_reauthPending[i].jobId == jobId) return i;
     }
-    char errorMsg[512];
-    bool hasSteam = FALSE;
-    bool wbnIsSupporter = FALSE;
-    /* Capture the slot's keyed state *before* the verify fills the key,
-     * so the deferred-join core can tell a fresh registration (key
-     * absent->present) from an idempotent rekey resend. */
-    bool wasParticipant = winboloNetIsPlayerParticipant(slot);
-    /* For a pending provisional claim the slot's display name is the temp
-     * -unverified[-N] handed out at join; WBN must verify and attribute
-     * under the real account display name, which is the stored desired bare
-     * name.  Non-claim reauths verify under the slot's own name as before. */
-    bool isWeb = (udpServer.clients[slot].clientType == CLIENT_TYPE_WEB);
-    /* Web slots take their verified name from WBN, not the wire, so the native
-     * provisional-claim dance (temp -unverified[-N] names, squatter preemption)
-     * does not apply to them. */
-    bool isPendingClaim = !isWeb && udpServer.clients[slot].claimPending;
-    const char *verifyName = isPendingClaim
-        ? udpServer.clients[slot].claimDesiredName
-        : udpServer.clients[slot].playerName;
-    errorMsg[0] = '\0';
-    bool verifyOk;
-    if (isWeb) {
-        /* WEB clients present a join_code (not a minted player_key); verify it
-         * read-only and cache the identity for the connection's lifetime. */
-        verifyOk = udpServerResolveWebIdentity(slot, token, NULL,
-                                               &hasSteam, &wbnIsSupporter);
-    } else {
-        verifyOk = winboloNetVerifyClientKey(token, verifyName, slot, errorMsg,
-                                             &hasSteam, &wbnIsSupporter);
+    return -1;
+}
+
+bool udpServerReauthVerifyOutstanding(BYTE slot, uint32_t nowTick) {
+    if (slot >= MAX_TANKS) return false;
+    if (s_reauthPending[slot].jobId == 0) return false;
+    /* Wrap-safe compare, as wbnJoinOnTick does it: lapsed once nowTick has
+     * reached the deadline. */
+    if ((int32_t)(nowTick - s_reauthPending[slot].holdUntilTick) >= 0) {
+        return false;
     }
+    return true;
+}
+
+void udpServerClearReauthPending(BYTE slot) {
+    if (slot >= MAX_TANKS) return;
+    s_reauthPending[slot].jobId = 0;
+}
+
+void udpServerClearAllReauthPending(void) {
+    memset(s_reauthPending, 0, sizeof(s_reauthPending));
+}
+
+void transportUdpServerExpireReauthHoldForTest(BYTE slot) {
+    if (slot >= MAX_TANKS) return;
+    s_reauthPending[slot].holdUntilTick = udpServer.tickCount;
+}
+
+/* Apply one re-authentication's outcome to its slot: the flags, the deferred
+ * PLAYER_JOIN, the lobby publish and the provisional-claim resolve.  Runs on
+ * the tick thread in every case — from the completion handler for a native
+ * slot, and straight from the reauth for a web slot, whose join_code verify
+ * is read-only and cached for the connection.
+ *
+ * wasParticipant is the slot's keyed state read immediately before the key
+ * was written, not when the re-auth was queued: a session rotation clears
+ * every key, so a value read at queue time can say "already a participant"
+ * for a slot that is registering into a new session, which reads a genuine
+ * absent-to-present transition as an idempotent rekey resend and swallows
+ * the PLAYER_JOIN. */
+static void udpServerStampReauth(ServerSim *sim, const WbnReauthCtx *rc,
+                                 bool wasParticipant, bool verifyOk,
+                                 bool hasSteam, bool wbnIsSupporter,
+                                 const char *errorMsg) {
+    BYTE slot = rc->slot;
+
     if (verifyOk) {
-        if (isWeb) {
+        if (rc->isWeb) {
             /* Web slot: stamp the WBN-authoritative identity (name, country,
              * flags) from the cached join-code result. */
             udpServerApplyWebIdentity(sim, slot);
@@ -324,7 +344,8 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
          * (key was absent) emits; an idempotent rekey resend (already a
          * participant) does not.  This also satisfies the anonymous
          * fallback armed at join, so the grace sweep won't fire too. */
-        if (wbnJoinOnReauth(&udpServer.clients[slot].wbnJoin, wasParticipant)) {
+        if (wbnJoinOnReauth(&udpServer.clients[slot].wbnJoin,
+                            wasParticipant)) {
             winbolonetAddEvent(WINBOLO_NET_EVENT_PLAYER_JOIN, TRUE,
                                slot, WINBOLO_NET_NO_PLAYER, FALSE, FALSE);
         }
@@ -336,7 +357,7 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
         /* Resolve a pending provisional claim: verify ran under the desired
          * bare name above, so attribution is correct; now reconcile the local
          * display.  Three outcomes by who holds the bare name now. */
-        if (isPendingClaim) {
+        if (rc->isPendingClaim) {
             const char *desired = udpServer.clients[slot].claimDesiredName;
             int s;
             int holder = -1;
@@ -403,7 +424,7 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
             udpServer.clients[slot].claimPending = false;
             udpServer.clients[slot].claimDesiredName[0] = '\0';
         }
-    } else if (isWeb && udpServer.clients[slot].wbnWebIdentityCached) {
+    } else if (rc->isWeb && udpServer.clients[slot].wbnWebIdentityCached) {
         /* A web slot whose code verified but resolved to a guest (not logged
          * in) returns false here — that is the expected anonymous case, not a
          * failure, so log it at info and don't emit a scary warning. */
@@ -414,6 +435,162 @@ void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
         WB_LOG_WARN(WB_LOG_CAT_NET,
                     "[WBN] Player %d re-auth failed: %s", (int)slot, errorMsg);
     }
+}
+
+void udpServerApplyReauthResult(ServerSim *sim, uint32_t id, int status,
+                                const char *response) {
+    WbnReauthCtx rc;
+    char errorMsg[512];
+    bool hasSteam = FALSE;
+    bool wbnIsSupporter = FALSE;
+    bool wasParticipant;
+    bool verifyOk;
+    int  idx;
+
+    if (sim == NULL) return;
+    idx = udpServerFindReauthPending(id);
+    if (idx < 0) return;
+    rc = s_reauthPending[idx].ctx;
+    s_reauthPending[idx].jobId = 0;
+
+    /* Before anything else: the slot may have been freed and handed to
+     * somebody else while the verify was out, and stamping the previous
+     * occupant's identity onto the new player is what this check exists to
+     * prevent. */
+    if (!udpServer.clients[rc.slot].connected ||
+        udpServer.clients[rc.slot].connId != rc.connId) {
+        WB_LOG_WARN(WB_LOG_CAT_NET,
+                    "[WBN] re-auth result for slot %d dropped: verified "
+                    "connection %llu, slot now holds %llu",
+                    (int)rc.slot,
+                    (unsigned long long)rc.connId,
+                    (unsigned long long)udpServer.clients[rc.slot].connId);
+        return;
+    }
+
+    /* Read the slot's keyed state now, a few lines ahead of the key write
+     * below, rather than carrying a copy from when the verify was queued.
+     * A session rotation between the two clears every key, so a stale copy
+     * would report a fresh registration as a rekey resend. */
+    wasParticipant = winboloNetIsPlayerParticipant(rc.slot);
+
+    errorMsg[0] = '\0';
+    if (rc.isWeb) {
+        /* The join_code route resolves an identity rather than confirming a
+         * key.  What comes back is the slot's, so it is cached here, on the
+         * tick, the way the key write below is. */
+        char nameBuf[PACKET_MAX_PLAYER_NAME];
+        char countryBuf[3];
+        bool isLoggedIn = FALSE;
+        int  userId = -1;
+        nameBuf[0]    = '\0';
+        countryBuf[0] = '\0';
+        if (winbolonetApplyVerifyJoinCodeResult(status, response, nameBuf,
+                                                &isLoggedIn, countryBuf,
+                                                &userId, errorMsg)) {
+            udpServer.clients[rc.slot].wbnWebIdentityCached = true;
+            udpServer.clients[rc.slot].wbnWebIsLoggedIn = isLoggedIn;
+            snprintf(udpServer.clients[rc.slot].wbnWebName,
+                     PACKET_MAX_PLAYER_NAME, "%s", nameBuf);
+            udpServer.clients[rc.slot].wbnWebCountry[0] = countryBuf[0];
+            udpServer.clients[rc.slot].wbnWebCountry[1] = countryBuf[1];
+            udpServer.clients[rc.slot].wbnWebCountry[2] = '\0';
+            udpServer.clients[rc.slot].wbnWebUserId = userId;
+            /* A code that resolves to a guest verified fine; it just names
+             * nobody, which the stamp reports as the anonymous case. */
+            verifyOk = isLoggedIn;
+        } else {
+            /* Invalid, expired or wrong-server code: leave the slot uncached
+             * so a later reauth with a still-valid code can still succeed. */
+            verifyOk = FALSE;
+        }
+    } else {
+        /* The key write winboloNetVerifyClientKey used to do on the calling
+         * thread happens in here, on the tick. */
+        verifyOk = winbolonetApplyVerifyResult(status, response, rc.token,
+                                               rc.slot, errorMsg, &hasSteam,
+                                               &wbnIsSupporter);
+    }
+    udpServerStampReauth(sim, &rc, wasParticipant, verifyOk, hasSteam,
+                         wbnIsSupporter, errorMsg);
+}
+
+void transportUdpServerHandleWbnReauth(ServerSim *sim, BYTE slot,
+                                       const char *token) {
+    WbnReauthCtx rc;
+    uint32_t jobId;
+
+    if (!winbolonetIsRunning() || token == NULL || token[0] == '\0') {
+        WB_LOG_WARN(WB_LOG_CAT_NET,
+                    "[WBN] re-auth for slot %d ignored: running=%d tokenLen=%d",
+                    (int)slot, winbolonetIsRunning() ? 1 : 0,
+                    token ? (int)strlen(token) : -1);
+        return;
+    }
+
+    memset(&rc, 0, sizeof(rc));
+    rc.slot   = slot;
+    rc.connId = udpServer.clients[slot].connId;
+    snprintf(rc.token, sizeof(rc.token), "%s", token);
+    rc.isWeb = (udpServer.clients[slot].clientType == CLIENT_TYPE_WEB);
+    /* Web slots take their verified name from WBN, not the wire, so the native
+     * provisional-claim dance (temp -unverified[-N] names, squatter preemption)
+     * does not apply to them. */
+    rc.isPendingClaim = !rc.isWeb && udpServer.clients[slot].claimPending;
+    /* For a pending provisional claim the slot's display name is the temp
+     * -unverified[-N] handed out at join; WBN must verify and attribute
+     * under the real account display name, which is the stored desired bare
+     * name.  Non-claim reauths verify under the slot's own name as before. */
+    snprintf(rc.verifyName, sizeof(rc.verifyName), "%s",
+             rc.isPendingClaim ? udpServer.clients[slot].claimDesiredName
+                               : udpServer.clients[slot].playerName);
+
+    /* A WEB slot's identity is resolved once per connection and cached: the
+     * join_code is single-use and the server_key rotates between rounds, so a
+     * re-verify would fail.  A later reauth re-stamps from the cache and never
+     * reaches the network at all. */
+    if (rc.isWeb && udpServer.clients[slot].wbnWebIdentityCached) {
+        /* The slot's keyed state as it is now. Nothing has been queued for
+         * this path, so now is also immediately before the stamp. */
+        udpServerStampReauth(sim, &rc, winboloNetIsPlayerParticipant(slot),
+                             udpServer.clients[slot].wbnWebIsLoggedIn,
+                             /*hasSteam*/ FALSE, /*wbnIsSupporter*/ FALSE, "");
+        return;
+    }
+
+    /* Both verifies are an HTTPS round trip, so they go to the WinBolo.net
+     * worker and the outcome comes back through udpServerApplyReauthResult on
+     * a later tick.  A web slot presents a join_code and takes the read-only
+     * verify_join_code route; a native one presents a minted player_key.
+     * Nothing below this line waits for either. */
+    if (udpServerReauthVerifyOutstanding(slot, udpServer.tickCount)) {
+        /* One verify per slot at a time. The client re-sends on the next
+         * rekey, and a rekey's register result is drained behind the verify
+         * this slot already has out, so a legitimate re-auth never needs to
+         * queue behind one. Without this a client could queue a verify per
+         * datagram, and the worker posts them one at a time with up to 35s
+         * each. */
+        WB_LOG_WARN(WB_LOG_CAT_NET,
+                    "[WBN] re-auth for slot %d ignored: verify job %u is "
+                    "still outstanding",
+                    (int)slot, (unsigned)s_reauthPending[slot].jobId);
+        return;
+    }
+    jobId = rc.isWeb ? winbolonetQueueVerifyJoinCode(rc.token)
+                     : winbolonetQueueVerifyClientKey(rc.token, rc.verifyName);
+    if (jobId == 0) {
+        WB_LOG_WARN(WB_LOG_CAT_NET,
+                    "[WBN] re-auth for slot %d not queued: %s was not taken",
+                    (int)slot,
+                    rc.isWeb ? "client/verify_join_code" : "client/verify");
+        return;
+    }
+    /* One entry per slot. A reauth arriving after the hold lapsed replaces
+     * the entry, and the lapsed job's result is dropped when it lands. */
+    s_reauthPending[slot].jobId         = jobId;
+    s_reauthPending[slot].holdUntilTick = udpServer.tickCount +
+                                          WBN_REAUTH_HOLD_TICKS;
+    s_reauthPending[slot].ctx           = rc;
 }
 
 /* Turn away a PACKET_ROUND_LOG_REQ. Every gate that refuses one sends this,

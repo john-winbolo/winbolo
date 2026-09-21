@@ -44,16 +44,9 @@
 #include "start_sides.h"
 #include "lobby_shared_starts.h"  /* lobbySharedStartsEnabled — duplicate reservations */
 
-/* Distance thresholds in map squares */
-#define START_TANK_RANGE 1
-#define START_PILL_RANGE 9
-#define START_BASE_RANGE 9
-/* Minimum distance a scattered spawn keeps from another live tank */
-#define START_SPAWN_SEPARATION 2
-/* Maximum spiral search steps */
-#define START_SCATTER_MAX 1000
-/* Fraction of neutral bases before we treat neutral same as own */
-#define START_NEUTRAL_THRESHOLD_PCT 20
+/* The six spawn-safety numbers are the classic defaults of the start_*
+ * rules and live in internal/starts.h, where simRulesClassic can read
+ * them. */
 /* Batch placement score penalties for a team with a chosen side. Both are
  * larger than the hostile-near penalty (MAP_ARRAY_SIZE * 2), so a start on
  * the team's own side always outranks one it shares with another team's
@@ -408,7 +401,7 @@ static int startsMapDistance(int x1, int y1, int x2, int y2);
 *LAST MODIFIED: 8/9/26
 *PURPOSE:
 *  Returns whether a map square is at least
-*  START_SPAWN_SEPARATION squares from every live tank
+*  start_spawn_separation squares from every live tank
 *  other than the one being placed.
 *
 *ARGUMENTS:
@@ -428,7 +421,7 @@ static bool startsIsClearOfTanks(GameSim *sim, BYTE mx, BYTE my, BYTE playerNum)
       continue;
     }
     tankGetWorld(&sim->tanks[count], &wx, &wy);
-    if (startsMapDistance(mx, my, wx >> M_W_SHIFT_SIZE, wy >> M_W_SHIFT_SIZE) < START_SPAWN_SEPARATION) {
+    if (startsMapDistance(mx, my, wx >> M_W_SHIFT_SIZE, wy >> M_W_SHIFT_SIZE) < sim->rules.start_spawn_separation) {
       return FALSE;
     }
   }
@@ -444,8 +437,8 @@ static bool startsIsClearOfTanks(GameSim *sim, BYTE mx, BYTE my, BYTE playerNum)
 *  Spiral-searches outward from a centre position to find
 *  a valid deep-sea square with no mine. Two passes over
 *  the same spiral: the first also requires the square to
-*  be at least START_SPAWN_SEPARATION squares from every
-*  other live tank; if nothing within START_SCATTER_MAX
+*  be at least start_spawn_separation squares from every
+*  other live tank; if nothing within start_scatter_max
 *  steps satisfies that, the second pass drops the
 *  separation rule so a crowded map still places the tank.
 *  Falls back to the centre itself if both passes fail.
@@ -471,7 +464,7 @@ static void startsScatterFind(GameSim *sim, BYTE centreX, BYTE centreY, BYTE *ou
 
   for (pass = 0; pass < 2; pass++) {
     keepClear = (pass == 0);
-    for (step = 0; step < START_SCATTER_MAX; step++) {
+    for (step = 0; step < sim->rules.start_scatter_max; step++) {
       utilSpiralOffset(step, &dx, &dy);
       sx = (int)centreX + dx;
       sy = (int)centreY + dy;
@@ -604,7 +597,7 @@ static void startsGetStartOpen(GameSim *sim, starts *value, BYTE *x, BYTE *y, TU
       }
       tankGetWorld(&sim->tanks[tankCount], &tankWX, &tankWY);
       dist = startsMapDistance(sx, sy, tankWX >> M_W_SHIFT_SIZE, tankWY >> M_W_SHIFT_SIZE);
-      if (dist <= START_TANK_RANGE) {
+      if (dist <= sim->rules.start_tank_range) {
         anyTankNearby = TRUE;
         if (playersIsAllie(&sim->plyrs, playerNum, tankCount) == FALSE) {
           hostileTankNearby = TRUE;
@@ -619,7 +612,7 @@ static void startsGetStartOpen(GameSim *sim, starts *value, BYTE *x, BYTE *y, TU
         continue;
       }
       dist = startsMapDistance(sx, sy, sim->pb->item[pillCount].x, sim->pb->item[pillCount].y);
-      if (dist <= START_PILL_RANGE) {
+      if (dist <= sim->rules.start_pill_range) {
         pillOwner = sim->pb->item[pillCount].owner;
         if (startsIsOwnerFriendly(sim, pillOwner, playerNum) == FALSE) {
           /* Neutral or enemy: disqualifies "ideal" */
@@ -746,7 +739,7 @@ static void startsGetStartTournament(GameSim *sim, starts *value, BYTE *x, BYTE 
       neutralCount++;
     }
   }
-  neutralPreferred = (liveBases > 0 && (neutralCount * 100 / liveBases) > START_NEUTRAL_THRESHOLD_PCT);
+  neutralPreferred = (liveBases > 0 && (neutralCount * 100 / liveBases) > sim->rules.start_neutral_threshold_pct);
 
   for (count = 0; count < numStarts; count++) {
     if ((*value)->active[count] == FALSE) {
@@ -772,7 +765,7 @@ static void startsGetStartTournament(GameSim *sim, starts *value, BYTE *x, BYTE 
       }
       tankGetWorld(&sim->tanks[tankCount], &tankWX, &tankWY);
       dist = startsMapDistance(sx, sy, tankWX >> M_W_SHIFT_SIZE, tankWY >> M_W_SHIFT_SIZE);
-      if (dist <= START_TANK_RANGE) {
+      if (dist <= sim->rules.start_tank_range) {
         anyTankNearby = TRUE;
         if (playersIsAllie(&sim->plyrs, playerNum, tankCount) == FALSE) {
           hostileTankNearby = TRUE;
@@ -786,7 +779,7 @@ static void startsGetStartTournament(GameSim *sim, starts *value, BYTE *x, BYTE 
         continue;
       }
       dist = startsMapDistance(sx, sy, sim->pb->item[pillCount].x, sim->pb->item[pillCount].y);
-      if (dist <= START_PILL_RANGE) {
+      if (dist <= sim->rules.start_pill_range) {
         anyPillNearby = TRUE;
         pillOwner = sim->pb->item[pillCount].owner;
         if (pillOwner != NEUTRAL && startsIsOwnerFriendly(sim, pillOwner, playerNum) == FALSE) {
@@ -804,7 +797,7 @@ static void startsGetStartTournament(GameSim *sim, starts *value, BYTE *x, BYTE 
         continue;
       }
       dist = startsMapDistance(sx, sy, sim->bs->item[baseCount].x, sim->bs->item[baseCount].y);
-      if (dist <= START_BASE_RANGE) {
+      if (dist <= sim->rules.start_base_range) {
         baseOwner = sim->bs->item[baseCount].owner;
         if (baseOwner == NEUTRAL) {
           hasNeutralBase = TRUE;
@@ -902,7 +895,7 @@ static bool startsHasHostileNearAtStart(GameSim *sim, starts *value, BYTE startI
       continue;
     }
     dist = startsMapDistance(sx, sy, sim->pb->item[i].x, sim->pb->item[i].y);
-    if (dist > START_PILL_RANGE) continue;
+    if (dist > sim->rules.start_pill_range) continue;
     owner = sim->pb->item[i].owner;
     if (owner != NEUTRAL && startsIsOwnerFriendly(sim, owner, playerNum) == FALSE) {
       return TRUE;
@@ -912,7 +905,7 @@ static bool startsHasHostileNearAtStart(GameSim *sim, starts *value, BYTE startI
     if (sim->bs->active[i] == FALSE) continue;
     if (sim->bs->item[i].armour <= sim->rules.base_capture_armour) continue;
     dist = startsMapDistance(sx, sy, sim->bs->item[i].x, sim->bs->item[i].y);
-    if (dist > START_BASE_RANGE) continue;
+    if (dist > sim->rules.start_base_range) continue;
     owner = sim->bs->item[i].owner;
     if (owner != NEUTRAL && startsIsOwnerFriendly(sim, owner, playerNum) == FALSE) {
       return TRUE;

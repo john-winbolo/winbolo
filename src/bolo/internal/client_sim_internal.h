@@ -176,6 +176,30 @@ struct ClientSim {
      * path anchors forward-projection to it rather than the display ping. */
     uint16_t    projectionPingMs;
 
+    /* Forward offset added to every input tick this client produces. A
+     * producer whose counter has fallen behind the server's consumption
+     * adopts the jump once and keeps it, so it catches up in one round trip
+     * rather than one snapshot. Only ever grows. */
+    uint32_t    inputTickOffset;
+/* Half-steps of headroom past the server's last-processed tick when the
+ * offset is set, so the jump lands ahead of where the server will be when
+ * the packet arrives rather than exactly on it.
+ *
+ * Held above the server's gap-fill window (the `gap < 8` test in
+ * serverSimApplyOneInput). The server stall-advances through roughly the
+ * round trip while the jumped packet is in flight, so what is left when it
+ * is applied is this margin - and a gap inside that window is filled, half
+ * a step at a time, with the buttons the client held before the hitch. The
+ * client never predicted that movement, so each jump cost a position
+ * correction. A margin past the window is applied as the jump it is. The
+ * two constants are a pair: move one and read the other. */
+#define CLIENT_INPUT_JUMP_MARGIN_HALFSTEPS 10
+/* Cap on the round-trip contribution to the jump. CLIENT_INPUT_HISTORY_SIZE
+ * is 256, so an uncapped ping would let one jump approach the ring's length
+ * and the replay would skip almost everything in it. 64 half-steps is 640ms,
+ * past any playable ping and far short of the ring. */
+#define CLIENT_INPUT_JUMP_MAX_RTT_HALFSTEPS 64
+
     /* Per-slot conditioning for the ping the player rows render — smoothing,
      * repaint deadband and colour-band hysteresis over the raw RTT each
      * snapshot carries. Display only; projectionPingMs above is what the
@@ -758,11 +782,22 @@ struct ClientSim {
      * scenario stays attached across the return to lobby, which is where the
      * presentation is dropped and where this set is read most — the lobby's
      * popup is the only thing that says what a rules-only mod does. Each
-     * event replaces the whole set, and the empty one a detach publishes is
-     * what empties it, so nothing else clears it. */
+     * set replaces the whole of the last one, and the empty one a detach
+     * publishes is what empties it, so nothing else clears it. */
     uint8_t  scenarioRulesCount;
     uint8_t  scenarioRuleIndex[CTRL_SCENARIO_RULES_MAX];
     double   scenarioRuleValue[CTRL_SCENARIO_RULES_MAX];
+
+    /* Where the fragments of the set being taken now are put down, until the
+     * last one lands and the three fields above are replaced in one step.
+     * Staged rather than written straight into them for the reason the
+     * bot-pool and brain-docs blobs are: a reader between two fragments would
+     * otherwise be handed half of the new set under the old set's count. */
+    uint8_t  scenarioRulesStageCount;
+    uint8_t  scenarioRulesExpected;   /* fragCount of the set in hand; 0 = none */
+    uint8_t  scenarioRulesNextSeq;
+    uint8_t  scenarioRuleStageIndex[CTRL_SCENARIO_RULES_MAX];
+    double   scenarioRuleStageValue[CTRL_SCENARIO_RULES_MAX];
 
     /* Most recent server reject — surfaced via toast/log when set.
      * lobbyLastRejectPacket is set to 0 when no pending message. */
@@ -834,6 +869,12 @@ struct ClientSim {
      * directly here; UDP JOIN_REJECT mirrors its reason here too. The
      * clientSimGetConnectErrorReason accessor reads from this field. */
     char      connectErrorReason[256];
+    /* The langid the reason above was rendered from, or 0 when the reason
+     * came as plain text. Lets a frontend tell an incorrect-password reject
+     * from every other reject without comparing rendered strings. Cleared
+     * by clientSimSetConnectErrorReason; set by clientSimSetConnectErrorId
+     * straight after it. */
+    unsigned int connectErrorId;
 
     SubscriberHandle autoSubHandle;    /* Returned by serverSimRegisterClientSubscriber
                                         * inside clientSimConnectLocal{,Passive}; cleared
@@ -916,6 +957,7 @@ BOLO_STATIC_ASSERT(offsetof(struct ClientSim, sim) == 0,
 void                    clientSimSetBoundServerSim(ClientSim *cs, struct ServerSim *sim);
 struct ServerSim       *clientSimGetBoundServerSim(const ClientSim *cs);
 void                    clientSimSetConnectErrorReason(ClientSim *cs, const char *str);
+void                    clientSimSetConnectErrorId(ClientSim *cs, unsigned int id);
 
 /* One bit per player slot: the remote tanks this client currently believes
  * are alive. The client holds no tanks[] object for anyone but itself, so a

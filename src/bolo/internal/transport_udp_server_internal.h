@@ -50,6 +50,21 @@
  * (direct-IP / not signed in / WBN unreachable).  ~5 s @ 50 Hz. */
 #define WBN_JOIN_REGISTER_GRACE_TICKS 250
 
+/* Ceiling on how long the anonymous fallback above defers to an outstanding
+ * client/verify.  The verify runs on the WinBolo.net worker, and
+ * wbn_api_post_impl caps one call at 30 s of transfer; after that the worker
+ * pushes a result either way and the next drain delivers it.  1750 ticks is
+ * 35 s @ 50 Hz: the 30 s cap, plus five for the worker to wake on a queued
+ * job, connect, and for the tick to drain the result.
+ *
+ * It is a backstop, not a proof that no result arrives later — the worker is
+ * single-threaded and oldest-first, so a verify queued behind another slow
+ * post can take longer.  What it guarantees is that a result which is lost or
+ * arbitrarily delayed cannot take the announcement with it: past here the
+ * join is announced un-keyed, which is what would have happened with no hold
+ * at all. */
+#define WBN_REAUTH_HOLD_TICKS 1750
+
 /* Standalone PACKET_CHANNEL frames a downloading client gets per tick while
  * snapshots are gated (no snapshot trailer to carry the bulk stream). One
  * frame carries ~5 segments under the datagram budget, so this clears a full
@@ -61,6 +76,18 @@
  * src/server/transport_udp_server.c, and by the spectator carrier in
  * src/server/udp/udp_server_spectator.c. */
 #define MAP_DOWNLOAD_FRAMES_PER_TICK 24
+
+/* Standalone PACKET_CHANNEL frames a running client gets after its snapshot,
+ * on top of the one frame the snapshot trailer carries. The trailer takes
+ * whatever is left of the datagram once the snapshot is packed, which on a
+ * busy tick is a few dozen bytes; these carry what did not fit. Reliable
+ * channels were never lost to that budget — they stay queued — but the
+ * best-effort effect and voice rings are shallow and drop what they cannot
+ * hand over, so a burst of sounds, explosions or voice was thrown away on the
+ * tick it happened.
+ *
+ * Read by serverSendSnapshot in src/server/udp/udp_server_send.c. */
+#define SNAPSHOT_EXTRA_CHANNEL_FRAMES 3
 
 typedef struct {
     uint8_t data[UDP_MAX_PAYLOAD];
@@ -648,5 +675,36 @@ void serverSendRoundLogErr(uint32_t reqSeq, uint8_t code,
                            const struct sockaddr_in *toAddr);
 void transportUdpServerSendWbnRekey(UdpServerClient *c);
 void udpServerResetRoundLogLimits(int idx);
+
+/* Is a client/verify still outstanding for this slot, as of nowTick?
+ *
+ * The grace sweep's anonymous PLAYER_JOIN and the keyed one a verify result
+ * publishes are not the same event.  winbolonetAddEvent resolves the slot's
+ * key when it is called, and winbolonetServerUpdate leaves player_a out when
+ * that key is empty, so the sweep announces an unidentified join and the
+ * result announces the account's.  Exactly one of the two may go out, and
+ * while a verify can still answer, the announcement is the verify's to make:
+ * publishing the sweep's would leave the account with keyed kills, wins and a
+ * leave against no join.
+ *
+ * The verify used to run on the tick, so nowTick could not advance while one
+ * was outstanding and the sweep could not reach a slot waiting on one.  This
+ * states that rule rather than leaving it to depend on the call blocking.
+ *
+ * nowTick bounds the deference: past WBN_REAUTH_HOLD_TICKS the hold lapses
+ * and the sweep announces as it otherwise would.  The sweep asks; it does not
+ * read the table. */
+bool udpServerReauthVerifyOutstanding(BYTE slot, uint32_t nowTick);
+
+/* Drop any outstanding verify recorded for this slot, releasing the hold
+ * above.  The disconnect path runs it beside wbnJoinClear: the slot is about
+ * to be handed to somebody else, and a stale entry would defer the new
+ * occupant's announcement. */
+void udpServerClearReauthPending(BYTE slot);
+
+/* Same, for every slot.  transportUdpServerCreate runs it: tickCount restarts
+ * at 0 there, so an entry left by an earlier server on this process would
+ * carry a deadline the new tick counter cannot reach for a long time. */
+void udpServerClearAllReauthPending(void);
 
 #endif /* TRANSPORT_UDP_SERVER_INTERNAL_H */

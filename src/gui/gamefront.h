@@ -345,20 +345,6 @@ void gameFrontGetUdpOptions(char *pn, char *add, unsigned short *theirUdp, unsig
 void gameFrontSetUdpOptions(char *pn, char *add, unsigned short theirUdp, unsigned short myUdp);
 
 /*********************************************************
-*NAME:          gameFrontGetPassword
-*AUTHOR:        John Morrison
-*CREATION DATE: 24/2/99
-*LAST MODIFIED: 24/2/99
-*PURPOSE:
-* The network module has tried to join a game with a
-* password, request it here.
-*
-*ARGUMENTS:
-* pword - Password slected
-*********************************************************/
-void gameFrontGetPassword(char *pword);
-
-/*********************************************************
 *NAME:          gameFrontGetPlayerName
 *AUTHOR:        John Morrison
 *CREATION DATE: 24/2/99

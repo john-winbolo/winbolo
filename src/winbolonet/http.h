@@ -69,6 +69,27 @@ bool httpCreate(void);
 void httpDestroy(void);
 
 /*********************************************************
+*NAME:          httpWorkerPoolBegin
+*PURPOSE:
+* Creates a libcurl handle that the calling thread keeps
+* between posts, so its queued posts reuse one connection
+* instead of opening a new one each time. Call it on the
+* WinBolo.net worker thread, from that thread. Every other
+* thread keeps taking a per-call handle.
+*********************************************************/
+void httpWorkerPoolBegin(void);
+
+/*********************************************************
+*NAME:          httpWorkerPoolEnd
+*PURPOSE:
+* Destroys the kept handle and clears its owning thread.
+* Call it on the same thread that called
+* httpWorkerPoolBegin, once that thread has stopped
+* posting.
+*********************************************************/
+void httpWorkerPoolEnd(void);
+
+/*********************************************************
 *NAME:          wbn_api_post
 *PURPOSE:
 * Low-level POST of a JSON string to a WinBolo.net API

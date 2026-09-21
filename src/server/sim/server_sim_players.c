@@ -66,6 +66,8 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
     sim->inputQueueHead[playerNum] = 0;
     sim->inputQueueTail[playerNum] = 0;
     sim->lastProcessedInput[playerNum] = 0;
+    sim->newestInputTick[playerNum] = 0;
+    sim->newestDequeuedTick[playerNum] = 0;
     sim->lastInputButtons[playerNum] = 0;
     sim->lastActionAppliedTick[playerNum] = 0;
     sim->pendingHarvestActions[playerNum] = 0;
@@ -440,6 +442,8 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->inputQueueHead[playerNum] = 0;
     sim->inputQueueTail[playerNum] = 0;
     sim->lastProcessedInput[playerNum] = 0;
+    sim->newestInputTick[playerNum] = 0;
+    sim->newestDequeuedTick[playerNum] = 0;
     sim->lastInputButtons[playerNum] = 0;
     sim->lastActionAppliedTick[playerNum] = 0;
     sim->pendingHarvestActions[playerNum] = 0;

@@ -3890,256 +3890,662 @@ static int scnLuaCancelTimer(lua_State *L) {
 
 /* ── The registry ─────────────────────────────────────────────────── */
 
+/* One argument array per row of the registry below, in the order the rows
+ * name them. The name and whether a call may leave it out are the doc
+ * string's own — a case holds the two against each other, name for name and
+ * bracket for bracket — and the type is what the row's reader does with the
+ * argument.
+ *
+ * An array ends on a terminator naming nothing, so a row's count is the
+ * array's length less that terminator and the two cannot disagree. An op
+ * that takes no arguments holds only the terminator. */
+#define SCN_OP_ARG_END { NULL, SCN_PARAM_NONE, false }
+
+/* The array a row points at and the count derived from it. */
+#define SCN_OP_PARAMS(id)                                                    \
+    kScnOpArgs_##id,                                                         \
+    sizeof(kScnOpArgs_##id) / sizeof(kScnOpArgs_##id[0]) - 1
+
+/* The last cell of a row, written as the word for what it says rather than
+ * as a bare true or false. An op acts when it changes something the round
+ * can observe, which is the line a check-only state draws for itself: it
+ * refuses every acting op and lets every read answer. */
+#define SCN_OP_ACTS  true
+#define SCN_OP_READS false
+
+static const ScnLuaOpParam kScnOpArgs_tick[]        = { SCN_OP_ARG_END };
+static const ScnLuaOpParam kScnOpArgs_max_tanks[]   = { SCN_OP_ARG_END };
+static const ScnLuaOpParam kScnOpArgs_num_players[] = { SCN_OP_ARG_END };
+static const ScnLuaOpParam kScnOpArgs_num_humans[]  = { SCN_OP_ARG_END };
+static const ScnLuaOpParam kScnOpArgs_team_size[] = {
+    { "t", SCN_PARAM_TEAM, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_game_type[] = { SCN_OP_ARG_END };
+static const ScnLuaOpParam kScnOpArgs_map_name[]  = { SCN_OP_ARG_END };
+static const ScnLuaOpParam kScnOpArgs_map_tile[] = {
+    { "x", SCN_PARAM_SQUARE_X, false }, { "y", SCN_PARAM_SQUARE_Y, false },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_is_mine[] = {
+    { "x", SCN_PARAM_SQUARE_X, false }, { "y", SCN_PARAM_SQUARE_Y, false },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_terrain[]    = { SCN_OP_ARG_END };
+static const ScnLuaOpParam kScnOpArgs_num_pills[]  = { SCN_OP_ARG_END };
+static const ScnLuaOpParam kScnOpArgs_pill[] = {
+    { "n", SCN_PARAM_PILL, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_num_bases[]  = { SCN_OP_ARG_END };
+static const ScnLuaOpParam kScnOpArgs_base[] = {
+    { "n", SCN_PARAM_BASE, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_num_starts[] = { SCN_OP_ARG_END };
+/* A start index is an item rather than a kind of its own: the catalogue
+   splits pills and bases out because a hook's payload names one or the
+   other, and no derived field is built off a start. */
+static const ScnLuaOpParam kScnOpArgs_start[] = {
+    { "n", SCN_PARAM_ITEM, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_tank[] = {
+    { "p", SCN_PARAM_SLOT, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_builder[] = {
+    { "p", SCN_PARAM_SLOT, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_lobby_slot[] = {
+    { "p", SCN_PARAM_SLOT, false }, SCN_OP_ARG_END
+};
+/* A rule name is matched against the rules table and a name that spells none
+   raises, so it is a word out of a fixed set rather than free text. */
+static const ScnLuaOpParam kScnOpArgs_rule[] = {
+    { "name", SCN_PARAM_WORD, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_tags[] = {
+    { "kind", SCN_PARAM_WORD, false }, { "n", SCN_PARAM_ITEM, false },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_tagged[] = {
+    { "tag", SCN_PARAM_TAG, false }, { "kind", SCN_PARAM_WORD, true },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_region[] = {
+    { "name", SCN_PARAM_REGION, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_regions[] = { SCN_OP_ARG_END };
+static const ScnLuaOpParam kScnOpArgs_in_region[] = {
+    { "name", SCN_PARAM_REGION, false }, { "mx", SCN_PARAM_SQUARE_X, false },
+    { "my", SCN_PARAM_SQUARE_Y, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_timer[] = {
+    { "seconds", SCN_PARAM_NUMBER, false },
+    { "fn", SCN_PARAM_FUNCTION, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_cancel_timer[] = {
+    { "id", SCN_PARAM_NUMBER, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_define_region[] = {
+    { "name", SCN_PARAM_REGION, false }, { "x", SCN_PARAM_SQUARE_X, false },
+    { "y", SCN_PARAM_SQUARE_Y, false }, { "w", SCN_PARAM_NUMBER, false },
+    { "h", SCN_PARAM_NUMBER, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_set_stocks[] = {
+    { "p", SCN_PARAM_SLOT, false }, { "t", SCN_PARAM_TABLE, false },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_add_stocks[] = {
+    { "p", SCN_PARAM_SLOT, false }, { "t", SCN_PARAM_TABLE, false },
+    SCN_OP_ARG_END
+};
+/* A killer left out arrives at the payload as the byte NEUTRAL, which is
+   what a script writing game.NEUTRAL sends, so the argument is an owner. */
+static const ScnLuaOpParam kScnOpArgs_kill_tank[] = {
+    { "p", SCN_PARAM_SLOT, false }, { "killer", SCN_PARAM_OWNER, true },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_teleport[] = {
+    { "p", SCN_PARAM_SLOT, false }, { "x", SCN_PARAM_SQUARE_X, false },
+    { "y", SCN_PARAM_SQUARE_Y, false }, { "dir", SCN_PARAM_NUMBER, true },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_teleport_to_start[] = {
+    { "p", SCN_PARAM_SLOT, false }, { "n", SCN_PARAM_ITEM, true },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_set_boat[] = {
+    { "p", SCN_PARAM_SLOT, false }, { "on", SCN_PARAM_BOOL, false },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_give_pill[] = {
+    { "p", SCN_PARAM_SLOT, false }, { "n", SCN_PARAM_PILL, false },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_drop_pill[] = {
+    { "p", SCN_PARAM_SLOT, false }, { "n", SCN_PARAM_PILL, false },
+    { "x", SCN_PARAM_SQUARE_X, true }, { "y", SCN_PARAM_SQUARE_Y, true },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_set_modifiers[] = {
+    { "p", SCN_PARAM_SLOT, false }, { "t", SCN_PARAM_TABLE, false },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_builder_order[] = {
+    { "p", SCN_PARAM_SLOT, false }, { "action", SCN_PARAM_WORD, false },
+    { "x", SCN_PARAM_SQUARE_X, false }, { "y", SCN_PARAM_SQUARE_Y, false },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_builder_recall[] = {
+    { "p", SCN_PARAM_SLOT, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_kill_lgm[] = {
+    { "p", SCN_PARAM_SLOT, false }, { "killer", SCN_PARAM_OWNER, true },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_builder_parachute[] = {
+    { "p", SCN_PARAM_SLOT, false }, { "x", SCN_PARAM_SQUARE_X, true },
+    { "y", SCN_PARAM_SQUARE_Y, true }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_set_builder_carried[] = {
+    { "p", SCN_PARAM_SLOT, false }, { "trees", SCN_PARAM_NUMBER, true },
+    { "mines", SCN_PARAM_NUMBER, true }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_set_pill_owner[] = {
+    { "n", SCN_PARAM_PILL, false }, { "p", SCN_PARAM_OWNER, true },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_set_pill_armour[] = {
+    { "n", SCN_PARAM_PILL, false }, { "a", SCN_PARAM_NUMBER, false },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_set_pill_speed[] = {
+    { "n", SCN_PARAM_PILL, false }, { "s", SCN_PARAM_NUMBER, false },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_move_pill[] = {
+    { "n", SCN_PARAM_PILL, false }, { "x", SCN_PARAM_SQUARE_X, false },
+    { "y", SCN_PARAM_SQUARE_Y, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_set_base_owner[] = {
+    { "n", SCN_PARAM_BASE, false }, { "p", SCN_PARAM_OWNER, true },
+    { "keep_stock", SCN_PARAM_BOOL, true }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_set_base_stock[] = {
+    { "n", SCN_PARAM_BASE, false }, { "armour", SCN_PARAM_NUMBER, true },
+    { "shells", SCN_PARAM_NUMBER, true }, { "mines", SCN_PARAM_NUMBER, true },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_add_pill[] = {
+    { "x", SCN_PARAM_SQUARE_X, false }, { "y", SCN_PARAM_SQUARE_Y, false },
+    { "owner", SCN_PARAM_OWNER, true }, { "armour", SCN_PARAM_NUMBER, true },
+    { "speed", SCN_PARAM_NUMBER, true }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_remove_pill[] = {
+    { "n", SCN_PARAM_PILL, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_add_base[] = {
+    { "x", SCN_PARAM_SQUARE_X, false }, { "y", SCN_PARAM_SQUARE_Y, false },
+    { "owner", SCN_PARAM_OWNER, true }, { "armour", SCN_PARAM_NUMBER, true },
+    { "shells", SCN_PARAM_NUMBER, true }, { "mines", SCN_PARAM_NUMBER, true },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_remove_base[] = {
+    { "n", SCN_PARAM_BASE, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_add_start[] = {
+    { "x", SCN_PARAM_SQUARE_X, false }, { "y", SCN_PARAM_SQUARE_Y, false },
+    { "dir", SCN_PARAM_NUMBER, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_remove_start[] = {
+    { "n", SCN_PARAM_ITEM, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_set_tile[] = {
+    { "x", SCN_PARAM_SQUARE_X, false }, { "y", SCN_PARAM_SQUARE_Y, false },
+    { "t", SCN_PARAM_NUMBER, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_fill_rect[] = {
+    { "x0", SCN_PARAM_SQUARE_X, false }, { "y0", SCN_PARAM_SQUARE_Y, false },
+    { "x1", SCN_PARAM_SQUARE_X, false }, { "y1", SCN_PARAM_SQUARE_Y, false },
+    { "t", SCN_PARAM_NUMBER, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_place_mine[] = {
+    { "x", SCN_PARAM_SQUARE_X, false }, { "y", SCN_PARAM_SQUARE_Y, false },
+    { "owner", SCN_PARAM_OWNER, true }, { "visible", SCN_PARAM_BOOL, true },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_remove_mine[] = {
+    { "x", SCN_PARAM_SQUARE_X, false }, { "y", SCN_PARAM_SQUARE_Y, false },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_spawn_bot[] = {
+    { "t", SCN_PARAM_TABLE, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_remove_bot[] = {
+    { "p", SCN_PARAM_SLOT, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_set_team[] = {
+    { "p", SCN_PARAM_SLOT, false }, { "t", SCN_PARAM_TEAM, false },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_lobby_add_bot[] = {
+    { "t", SCN_PARAM_TABLE, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_lobby_remove_bot[] = {
+    { "p", SCN_PARAM_SLOT, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_lobby_set_team[] = {
+    { "p", SCN_PARAM_SLOT, false }, { "t", SCN_PARAM_TEAM, false },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_hint[] = {
+    { "p", SCN_PARAM_SLOT, false }, { "t", SCN_PARAM_TABLE, false },
+    SCN_OP_ARG_END
+};
+/* A target is a seat or one of the words the surface names, which is what
+   SCN_PARAM_TARGET says. The third form a binding takes, { team = t }, is a
+   table: a call can write one and a trigger's argument cannot, so an action
+   addresses a seat or whatever wider audience a word names. */
+static const ScnLuaOpParam kScnOpArgs_message[] = {
+    { "text", SCN_PARAM_STRING, false }, { "target", SCN_PARAM_TARGET, true },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_say[] = {
+    { "p", SCN_PARAM_SLOT, false }, { "text", SCN_PARAM_STRING, false },
+    { "target", SCN_PARAM_TARGET, true }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_sound[] = {
+    { "name", SCN_PARAM_WORD, false }, { "x", SCN_PARAM_SQUARE_X, true },
+    { "y", SCN_PARAM_SQUARE_Y, true }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_log[] = {
+    { "text", SCN_PARAM_STRING, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_panel[] = {
+    { "id", SCN_PARAM_NUMBER, false }, { "list", SCN_PARAM_TABLE, false },
+    { "target", SCN_PARAM_TARGET, true }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_score[] = {
+    { "target", SCN_PARAM_TARGET, false },
+    { "value", SCN_PARAM_NUMBER, false },
+    { "label", SCN_PARAM_STRING, true }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_announce[] = {
+    { "text", SCN_PARAM_STRING, false },
+    /* The clear leaves it out: empty text takes a line away rather than
+       putting one up, so there is nothing to time. scnLuaAnnounce reads it
+       only where the text has something in it. */
+    { "seconds", SCN_PARAM_NUMBER, true },
+    { "target", SCN_PARAM_TARGET, true }, SCN_OP_ARG_END
+};
+/* A colour is the palette's word or the number behind it, which is what
+   SCN_PARAM_COLOUR says and what scnArgColour reads. Not SCN_PARAM_WORD:
+   that one is a word and nothing else, and a colour written as its number
+   is a call the binding takes. */
+static const ScnLuaOpParam kScnOpArgs_marker[] = {
+    { "id", SCN_PARAM_NUMBER, false }, { "x", SCN_PARAM_SQUARE_X, false },
+    { "y", SCN_PARAM_SQUARE_Y, false },
+    { "colour", SCN_PARAM_COLOUR, true },
+    { "target", SCN_PARAM_TARGET, true }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_marker_follow[] = {
+    { "id", SCN_PARAM_NUMBER, false }, { "p", SCN_PARAM_SLOT, false },
+    { "colour", SCN_PARAM_COLOUR, true },
+    { "target", SCN_PARAM_TARGET, true }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_clear_marker[] = {
+    { "id", SCN_PARAM_NUMBER, false }, { "target", SCN_PARAM_TARGET, true },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_end_round[] = {
+    { "text", SCN_PARAM_STRING, true },
+    { "winner_team", SCN_PARAM_TEAM, true }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_set_game_time[] = {
+    { "ticks", SCN_PARAM_NUMBER, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_add_game_time[] = {
+    { "ticks", SCN_PARAM_NUMBER, false }, SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_set_rule[] = {
+    { "name", SCN_PARAM_WORD, false }, { "value", SCN_PARAM_NUMBER, false },
+    SCN_OP_ARG_END
+};
+static const ScnLuaOpParam kScnOpArgs_shell_expired[] = {
+    { "p", SCN_PARAM_SLOT, false }, { "x", SCN_PARAM_SQUARE_X, false },
+    { "y", SCN_PARAM_SQUARE_Y, false },
+    { "fire_tick", SCN_PARAM_NUMBER, true }, SCN_OP_ARG_END
+};
+
 /* One row per script-visible function. The doc column is what
  * docs/SCENARIO_API.md and the editor's completion list are written from, so
- * a row added without one is a row nothing can describe. */
+ * a row added without one is a row nothing can describe; the arguments
+ * beside it are that sentence's own signature as data, for whatever has to
+ * count a call's arguments rather than read about them. */
 static const ScnLuaRow kScnLuaRows[] = {
     { "tick", scnLuaTick,
-      "tick() — the tick the round is on." },
+      "tick() — the tick the round is on.",
+      SCN_OP_PARAMS(tick), SCN_OP_READS },
     { "max_tanks", scnLuaMaxTanks,
-      "max_tanks() — how many seats a game has." },
+      "max_tanks() — how many seats a game has.",
+      SCN_OP_PARAMS(max_tanks), SCN_OP_READS },
     { "num_players", scnLuaNumPlayers,
-      "num_players() — how many seats are playing the round, bots included." },
+      "num_players() — how many seats are playing the round, bots included.",
+      SCN_OP_PARAMS(num_players), SCN_OP_READS },
     { "num_humans", scnLuaNumHumans,
-      "num_humans() — how many of the players are people." },
+      "num_humans() — how many of the players are people.",
+      SCN_OP_PARAMS(num_humans), SCN_OP_READS },
     { "team_size", scnLuaTeamSize,
       "team_size(t) — how many seats sit on team t, playing the round or "
-      "not." },
+      "not.",
+      SCN_OP_PARAMS(team_size), SCN_OP_READS },
     { "game_type", scnLuaGameType,
       "game_type() — the rules the humans play under, as one of \"open\", "
       "\"tournament\" and \"strict\": the game type the table names, or the "
-      "one the round is playing when it names none." },
+      "one the round is playing when it names none.",
+      SCN_OP_PARAMS(game_type), SCN_OP_READS },
     { "map_name", scnLuaMapName,
-      "map_name() — what the map is called." },
+      "map_name() — what the map is called.",
+      SCN_OP_PARAMS(map_name), SCN_OP_READS },
     { "map_tile", scnLuaMapTile,
       "map_tile(x, y) — the terrain code at a square, or nil for a square "
-      "off the map." },
+      "off the map.",
+      SCN_OP_PARAMS(map_tile), SCN_OP_READS },
     { "is_mine", scnLuaIsMine,
-      "is_mine(x, y) — whether a square holds a mine." },
+      "is_mine(x, y) — whether a square holds a mine.",
+      SCN_OP_PARAMS(is_mine), SCN_OP_READS },
     { "terrain", scnLuaTerrain,
       "terrain() — every square as one 65,536-byte string, the square at "
-      "(x, y) at byte y * 256 + x + 1." },
+      "(x, y) at byte y * 256 + x + 1.",
+      SCN_OP_PARAMS(terrain), SCN_OP_READS },
     { "num_pills", scnLuaNumPills,
-      "num_pills() — how many pill slots the map has, live or not." },
+      "num_pills() — how many pill slots the map has, live or not.",
+      SCN_OP_PARAMS(num_pills), SCN_OP_READS },
     { "pill", scnLuaPill,
       "pill(n) — pill n as { x, y, owner, armour, speed, in_tank }, or nil "
-      "for a slot no live pill holds." },
+      "for a slot no live pill holds.",
+      SCN_OP_PARAMS(pill), SCN_OP_READS },
     { "num_bases", scnLuaNumBases,
-      "num_bases() — how many base slots the map has, live or not." },
+      "num_bases() — how many base slots the map has, live or not.",
+      SCN_OP_PARAMS(num_bases), SCN_OP_READS },
     { "base", scnLuaBase,
       "base(n) — base n as { x, y, owner, armour, shells, mines }, or nil "
-      "for a slot no live base holds." },
+      "for a slot no live base holds.",
+      SCN_OP_PARAMS(base), SCN_OP_READS },
     { "num_starts", scnLuaNumStarts,
-      "num_starts() — how many start slots the map has, live or not." },
+      "num_starts() — how many start slots the map has, live or not.",
+      SCN_OP_PARAMS(num_starts), SCN_OP_READS },
     { "start", scnLuaStart,
       "start(n) — start n as { x, y, dir }, or nil for a slot no live start "
-      "holds." },
+      "holds.",
+      SCN_OP_PARAMS(start), SCN_OP_READS },
     { "tank", scnLuaTank,
       "tank(p) — player p's tank as { mx, my, wx, wy, dir, armour, shells, "
       "mines, trees, pills, boat, dead, name, bot, kills, deaths, mods }, "
-      "or nil when the seat is empty or has no tank." },
+      "or nil when the seat is empty or has no tank.",
+      SCN_OP_PARAMS(tank), SCN_OP_READS },
     { "builder", scnLuaBuilder,
       "builder(p) — player p's builder as { state, mx, my, wx, wy, job, "
-      "trees, mines }, or nil when the seat has none." },
+      "trees, mines }, or nil when the seat has none.",
+      SCN_OP_PARAMS(builder), SCN_OP_READS },
     { "lobby_slot", scnLuaLobbySlot,
       "lobby_slot(p) — seat p as { connected, bot, team, name, ready, "
-      "fielded, alive }, or nil for an empty seat." },
+      "fielded, alive }, or nil for an empty seat.",
+      SCN_OP_PARAMS(lobby_slot), SCN_OP_READS },
     { "rule", scnLuaRule,
       "rule(name) — what a gameplay rule is set to; a name that spells no "
-      "rule raises." },
+      "rule raises.",
+      SCN_OP_PARAMS(rule), SCN_OP_READS },
     { "tags", scnLuaTags,
       "tags(kind, n) — the tags the scenario put on a \"pill\", \"base\" or "
-      "\"start\", as an array of strings." },
+      "\"start\", as an array of strings.",
+      SCN_OP_PARAMS(tags), SCN_OP_READS },
     { "tagged", scnLuaTagged,
       "tagged(tag[, kind]) — everything carrying a tag as an array of "
       "{ kind, n }, or of n when a kind is named; pills, then bases, then "
-      "starts." },
+      "starts.",
+      SCN_OP_PARAMS(tagged), SCN_OP_READS },
     { "region", scnLuaRegion,
       "region(name) — a declared rectangle as { x, y, w, h }, or nil when "
-      "nothing is declared by that name." },
+      "nothing is declared by that name.",
+      SCN_OP_PARAMS(region), SCN_OP_READS },
     { "regions", scnLuaRegions,
-      "regions() — the name of every declared region, in name order." },
+      "regions() — the name of every declared region, in name order.",
+      SCN_OP_PARAMS(regions), SCN_OP_READS },
     { "in_region", scnLuaInRegion,
       "in_region(name, mx, my) — whether a square is inside a named "
-      "region." },
+      "region.",
+      SCN_OP_PARAMS(in_region), SCN_OP_READS },
 
     /* The three that change nothing on the sim: what the host holds for the
        rest of the round. */
     { "timer", scnLuaTimer,
       "timer(seconds, fn) → id — run fn once, on the first tick at or after "
       "seconds from now; cancel it with the id. At most 64 wait at a time, "
-      "and none outlives its round." },
+      "and none outlives its round.",
+      SCN_OP_PARAMS(timer), SCN_OP_ACTS },
     { "cancel_timer", scnLuaCancelTimer,
       "cancel_timer(id) — stop a timer that has not run yet; false when the "
-      "id names none, which is what an id that has already run names." },
+      "id names none, which is what an id that has already run names.",
+      SCN_OP_PARAMS(cancel_timer), SCN_OP_ACTS },
     { "define_region", scnLuaDefineRegion,
       "define_region(name, x, y, w, h) — name a rectangle for the rest of "
       "the round, replacing one of that name; it shares the 64 the scenario "
-      "table's own regions come out of." },
+      "table's own regions come out of.",
+      SCN_OP_PARAMS(define_region), SCN_OP_ACTS },
 
     /* The writes. Each answers true, or nil with the refusal's name and one
        sentence saying what it was about. */
     { "set_stocks", scnLuaSetStocks,
       "set_stocks(p, t) — set any of t.shells, t.mines, t.armour and "
       "t.trees on player p's tank; a stock the table leaves out is left "
-      "alone." },
+      "alone.",
+      SCN_OP_PARAMS(set_stocks), SCN_OP_ACTS },
     { "add_stocks", scnLuaAddStocks,
       "add_stocks(p, t) — the same four as amounts to add, negative to take "
-      "away; each is held at the cap and at zero rather than refused." },
+      "away; each is held at the cap and at zero rather than refused.",
+      SCN_OP_PARAMS(add_stocks), SCN_OP_ACTS },
     { "kill_tank", scnLuaKillTank,
       "kill_tank(p[, killer]) — kill player p's tank; killer is a seat, and "
-      "without one the death is the scenario's own." },
+      "without one the death is the scenario's own.",
+      SCN_OP_PARAMS(kill_tank), SCN_OP_ACTS },
     { "teleport", scnLuaTeleport,
       "teleport(p, x, y[, dir]) — put player p's tank on a square, facing "
-      "dir from 0 to 255; without dir it keeps the way it faces." },
+      "dir from 0 to 255; without dir it keeps the way it faces.",
+      SCN_OP_PARAMS(teleport), SCN_OP_ACTS },
     { "teleport_to_start", scnLuaTeleportToStart,
       "teleport_to_start(p[, n]) — put player p's tank on start n, or on "
-      "the one the engine would have chosen." },
+      "the one the engine would have chosen.",
+      SCN_OP_PARAMS(teleport_to_start), SCN_OP_ACTS },
     { "set_boat", scnLuaSetBoat,
       "set_boat(p, on) — put player p's tank on a boat or take it off one; "
-      "the square under it has to be water." },
+      "the square under it has to be water.",
+      SCN_OP_PARAMS(set_boat), SCN_OP_ACTS },
     { "give_pill", scnLuaGivePill,
       "give_pill(p, n) — put pill n into player p's tank, however armoured "
-      "and whoever held it." },
+      "and whoever held it.",
+      SCN_OP_PARAMS(give_pill), SCN_OP_ACTS },
     { "drop_pill", scnLuaDropPill,
       "drop_pill(p, n[, x, y]) — put a pill player p is carrying back on "
-      "the map, on a square or under the tank." },
+      "the map, on a square or under the tank.",
+      SCN_OP_PARAMS(drop_pill), SCN_OP_ACTS },
     { "set_modifiers", scnLuaSetModifiers,
       "set_modifiers(p, t) — replace player p's speed, accel, turn, reload, "
       "dealt and taken percentages; a field the table leaves out goes back "
-      "to the classic tank." },
+      "to the classic tank.",
+      SCN_OP_PARAMS(set_modifiers), SCN_OP_ACTS },
     { "builder_order", scnLuaBuilderOrder,
       "builder_order(p, action, x, y) — send player p's builder out to do "
       "one of \"trees\", \"road\", \"building\", \"pill\", \"mine\" or "
       "\"boat\" on a square; the engine repairs rather than builds where "
-      "the square already holds one." },
+      "the square already holds one.",
+      SCN_OP_PARAMS(builder_order), SCN_OP_ACTS },
     { "builder_recall", scnLuaBuilderRecall,
-      "builder_recall(p) — call player p's builder back to the tank." },
+      "builder_recall(p) — call player p's builder back to the tank.",
+      SCN_OP_PARAMS(builder_recall), SCN_OP_ACTS },
     { "kill_lgm", scnLuaKillLgm,
-      "kill_lgm(p[, killer]) — kill player p's builder; killer is a seat." },
+      "kill_lgm(p[, killer]) — kill player p's builder; killer is a seat.",
+      SCN_OP_PARAMS(kill_lgm), SCN_OP_ACTS },
     { "builder_parachute", scnLuaBuilderParachute,
       "builder_parachute(p[, x, y]) — drop a dead builder back in, on a "
-      "square or at the tank." },
+      "square or at the tank.",
+      SCN_OP_PARAMS(builder_parachute), SCN_OP_ACTS },
     { "set_builder_carried", scnLuaSetBuilderCarried,
       "set_builder_carried(p[, trees[, mines]]) — what player p's builder "
-      "is carrying; a count left out is left alone." },
+      "is carrying; a count left out is left alone.",
+      SCN_OP_PARAMS(set_builder_carried), SCN_OP_ACTS },
     { "set_pill_owner", scnLuaSetPillOwner,
-      "set_pill_owner(n, p) — hand pill n to a seat, or to nobody with "
-      "game.NEUTRAL." },
+      "set_pill_owner(n[, p]) — hand pill n to a seat, or to nobody with "
+      "game.NEUTRAL or with no seat named.",
+      SCN_OP_PARAMS(set_pill_owner), SCN_OP_ACTS },
     { "set_pill_armour", scnLuaSetPillArmour,
       "set_pill_armour(n, a) — how much pill n has left; 0 is a dead pill "
-      "on the ground." },
+      "on the ground.",
+      SCN_OP_PARAMS(set_pill_armour), SCN_OP_ACTS },
     { "set_pill_speed", scnLuaSetPillSpeed,
-      "set_pill_speed(n, s) — the ticks between pill n's shots." },
+      "set_pill_speed(n, s) — the ticks between pill n's shots.",
+      SCN_OP_PARAMS(set_pill_speed), SCN_OP_ACTS },
     { "move_pill", scnLuaMovePill,
-      "move_pill(n, x, y) — put pill n on another square." },
+      "move_pill(n, x, y) — put pill n on another square.",
+      SCN_OP_PARAMS(move_pill), SCN_OP_ACTS },
     { "set_base_owner", scnLuaSetBaseOwner,
-      "set_base_owner(n, p[, keep_stock]) — hand base n to a seat, or to "
-      "nobody with game.NEUTRAL; keep_stock leaves what it holds." },
+      "set_base_owner(n[, p[, keep_stock]]) — hand base n to a seat, or to "
+      "nobody with game.NEUTRAL or with no seat named; keep_stock leaves "
+      "what it holds.",
+      SCN_OP_PARAMS(set_base_owner), SCN_OP_ACTS },
     { "set_base_stock", scnLuaSetBaseStock,
-      "set_base_stock(n, armour, shells, mines) — what base n holds; a "
-      "stock left out is left alone and one past the cap is held there." },
+      "set_base_stock(n[, armour[, shells[, mines]]]) — what base n holds; a "
+      "stock left out is left alone and one past the cap is held there.",
+      SCN_OP_PARAMS(set_base_stock), SCN_OP_ACTS },
     { "add_pill", scnLuaAddPill,
       "add_pill(x, y[, owner[, armour[, speed]]]) → n — put a new pill on "
       "the map and answer which one it is; nobody's, dead, and firing at "
-      "the round's own rate unless told otherwise." },
+      "the round's own rate unless told otherwise.",
+      SCN_OP_PARAMS(add_pill), SCN_OP_ACTS },
     { "remove_pill", scnLuaRemovePill,
       "remove_pill(n) — take pill n off the map; the slot stays, so the "
-      "pills above it keep their numbers." },
+      "pills above it keep their numbers.",
+      SCN_OP_PARAMS(remove_pill), SCN_OP_ACTS },
     { "add_base", scnLuaAddBase,
       "add_base(x, y[, owner[, armour, shells, mines]]) → n — put a new "
       "base on the map and answer which one it is; nobody's and empty "
-      "unless told otherwise." },
+      "unless told otherwise.",
+      SCN_OP_PARAMS(add_base), SCN_OP_ACTS },
     { "remove_base", scnLuaRemoveBase,
-      "remove_base(n) — take base n off the map; the slot stays." },
+      "remove_base(n) — take base n off the map; the slot stays.",
+      SCN_OP_PARAMS(remove_base), SCN_OP_ACTS },
     { "add_start", scnLuaAddStart,
       "add_start(x, y, dir) → n — put a new start on a deep-sea square, "
-      "facing dir from 0 to 15." },
+      "facing dir from 0 to 15.",
+      SCN_OP_PARAMS(add_start), SCN_OP_ACTS },
     { "remove_start", scnLuaRemoveStart,
       "remove_start(n) — take start n off the map; the last one is "
-      "refused." },
+      "refused.",
+      SCN_OP_PARAMS(remove_start), SCN_OP_ACTS },
     { "set_tile", scnLuaSetTile,
       "set_tile(x, y, t) — write one square's terrain, by a game.TERRAIN "
-      "code." },
+      "code.",
+      SCN_OP_PARAMS(set_tile), SCN_OP_ACTS },
     { "fill_rect", scnLuaFillRect,
       "fill_rect(x0, y0, x1, y1, t) — write a rectangle of terrain; one "
       "too big for a tick's budget answers true and \"queued\" and finishes "
-      "over the ticks after it." },
+      "over the ticks after it.",
+      SCN_OP_PARAMS(fill_rect), SCN_OP_ACTS },
     { "place_mine", scnLuaPlaceMine,
       "place_mine(x, y[, owner[, visible]]) — lay a mine on a square; "
-      "visible shows it to everyone rather than to its owner's side." },
+      "visible shows it to everyone rather than to its owner's side.",
+      SCN_OP_PARAMS(place_mine), SCN_OP_ACTS },
     { "remove_mine", scnLuaRemoveMine,
       "remove_mine(x, y) — take a mine off a square without setting it "
-      "off." },
+      "off.",
+      SCN_OP_PARAMS(remove_mine), SCN_OP_ACTS },
     { "spawn_bot", scnLuaSpawnBot,
       "spawn_bot(t) → p, \"queued\" — put a bot into the running round; t "
       "takes name, brain, team, slot, start, loadout and a flat init "
-      "table, all of them optional." },
+      "table, all of them optional.",
+      SCN_OP_PARAMS(spawn_bot), SCN_OP_ACTS },
     { "remove_bot", scnLuaRemoveBot,
       "remove_bot(p) → true, \"queued\" — take a bot out of the running "
-      "round; a human seat is refused." },
+      "round; a human seat is refused.",
+      SCN_OP_PARAMS(remove_bot), SCN_OP_ACTS },
     { "set_team", scnLuaSetTeam,
-      "set_team(p, t) — move a seat to another team mid-round." },
+      "set_team(p, t) — move a seat to another team mid-round.",
+      SCN_OP_PARAMS(set_team), SCN_OP_ACTS },
     { "lobby_add_bot", scnLuaLobbyAddBot,
       "lobby_add_bot(t) → p — seat a bot in the lobby and answer which seat "
-      "it took; t takes name, brain, team, slot and fielded." },
+      "it took; t takes name, brain, team, slot and fielded.",
+      SCN_OP_PARAMS(lobby_add_bot), SCN_OP_ACTS },
     { "lobby_remove_bot", scnLuaLobbyRemoveBot,
       "lobby_remove_bot(p) — take a bot out of the lobby; a human seat is "
-      "refused." },
+      "refused.",
+      SCN_OP_PARAMS(lobby_remove_bot), SCN_OP_ACTS },
     { "lobby_set_team", scnLuaLobbySetTeam,
-      "lobby_set_team(p, t) — move a lobby seat to another team." },
+      "lobby_set_team(p, t) — move a lobby seat to another team.",
+      SCN_OP_PARAMS(lobby_set_team), SCN_OP_ACTS },
     { "hint", scnLuaHint,
       "hint(p, t) — hand bot p's brain an order: a flat table with a verb "
       "and whatever else the brain reads. Values may be strings, numbers or "
       "true/false and all reach the brain as text. A brain that takes no "
-      "hints ignores it." },
+      "hints ignores it.",
+      SCN_OP_PARAMS(hint), SCN_OP_ACTS },
     { "message", scnLuaMessage,
       "message(text[, target]) — a line to everyone, to one seat with a "
-      "number, or to a team with { team = t }." },
+      "number, or to a team with { team = t }.",
+      SCN_OP_PARAMS(message), SCN_OP_ACTS },
     { "say", scnLuaSay,
       "say(p, text[, target]) — a chat line seat p says: to its own team "
       "with no target, to everyone with \"all\", or to one seat with a "
       "number. Unlike message, which is the server talking, this reaches a "
-      "bot's inbox and fires on_chat." },
+      "bot's inbox and fires on_chat.",
+      SCN_OP_PARAMS(say), SCN_OP_ACTS },
     { "sound", scnLuaSound,
       "sound(name[, x, y]) — play one of the server's sounds, at a square "
-      "or everywhere." },
+      "or everywhere.",
+      SCN_OP_PARAMS(sound), SCN_OP_ACTS },
     { "log", scnLuaLog,
       "log(text) — write a line to the server's console; no player sees "
-      "it." },
+      "it.",
+      SCN_OP_PARAMS(log), SCN_OP_ACTS },
     { "panel", scnLuaPanel,
       "panel(id, list[, target]) — draw a panel from a list of primitives, "
       "each an array with its name first: { \"rect\", x, y, w, h, colour, "
       "fill }, { \"text\", x, y, colour, size, align, s } and so on. An "
       "empty list clears the panel, and one update per panel per audience "
-      "per tick is taken." },
+      "per tick is taken.",
+      SCN_OP_PARAMS(panel), SCN_OP_ACTS },
     { "score", scnLuaScore,
       "score(target, value[, label]) — the scenario's own score for one "
       "seat with a number, or for a team with { team = t }; label is the "
-      "short word shown beside it." },
+      "short word shown beside it.",
+      SCN_OP_PARAMS(score), SCN_OP_ACTS },
     { "announce", scnLuaAnnounce,
-      "announce(text, seconds[, target]) — a line across the centre of the "
-      "screen for that many seconds; empty text takes the line away." },
+      "announce(text[, seconds[, target]]) — a line across the centre of the "
+      "screen for that many seconds; empty text takes the line away.",
+      SCN_OP_PARAMS(announce), SCN_OP_ACTS },
     { "marker", scnLuaMarker,
       "marker(id, x, y[, colour[, target]]) — put mark id on a map square; "
-      "a second marker on the same id replaces the first." },
+      "a second marker on the same id replaces the first.",
+      SCN_OP_PARAMS(marker), SCN_OP_ACTS },
     { "marker_follow", scnLuaMarkerFollow,
       "marker_follow(id, p[, colour[, target]]) — put mark id on seat p, "
-      "where it rides the tank rather than a square." },
+      "where it rides the tank rather than a square.",
+      SCN_OP_PARAMS(marker_follow), SCN_OP_ACTS },
     { "clear_marker", scnLuaClearMarker,
-      "clear_marker(id[, target]) — take mark id off the map." },
+      "clear_marker(id[, target]) — take mark id off the map.",
+      SCN_OP_PARAMS(clear_marker), SCN_OP_ACTS },
     { "end_round", scnLuaEndRound,
       "end_round([text[, winner_team]]) — end the round now, with the line "
-      "the lobby shows and the team that won it." },
+      "the lobby shows and the team that won it.",
+      SCN_OP_PARAMS(end_round), SCN_OP_ACTS },
     { "set_game_time", scnLuaSetGameTime,
-      "set_game_time(ticks) — how long the round has left." },
+      "set_game_time(ticks) — how long the round has left.",
+      SCN_OP_PARAMS(set_game_time), SCN_OP_ACTS },
     { "add_game_time", scnLuaAddGameTime,
       "add_game_time(ticks) — add to what the round has left, or take away "
-      "with a negative." },
+      "with a negative.",
+      SCN_OP_PARAMS(add_game_time), SCN_OP_ACTS },
     { "set_rule", scnLuaSetRule,
       "set_rule(name, value) — write one of the gameplay rules; a name that "
       "spells no rule raises, and a value the table will not take is "
-      "refused." },
+      "refused.",
+      SCN_OP_PARAMS(set_rule), SCN_OP_ACTS },
     { "shell_expired", scnLuaShellExpired,
       "shell_expired(p, x, y [, fire_tick]) — post one of seat p's shells as "
       "having run its full range and died over square (x, y) with nothing "
@@ -4147,7 +4553,8 @@ static const ScnLuaRow kScnLuaRows[] = {
       "either side, are the three-shot order the bots read. fire_tick is "
       "when the shell left the gun, which is the tick every timing rule "
       "reads; left out, it counts as fired now. A test hook: nothing else "
-      "about the shell happens." },
+      "about the shell happens.",
+      SCN_OP_PARAMS(shell_expired), SCN_OP_ACTS },
 };
 
 static const ScnLuaConst kScnLuaConsts[] = {
@@ -4194,11 +4601,179 @@ static const ScnLuaWordTable kScnLuaWordTables[] = {
       sizeof(kScnTimerModeWords) / sizeof(kScnTimerModeWords[0]) },
 };
 
+/* ── The functions the author writes ──────────────────────────────── */
+
+/* One parameter array per row, built from the two lists in scenario_lua.h:
+ * a name and the type of what the host puts in it, for each. Each array ends
+ * on a terminator naming nothing, so a row's count below is the array's
+ * length less that terminator and the two cannot disagree. */
+#define SCN_FN_HOOK_PARAMS(id, name, kind, params)                            \
+    static const ScnLuaFnParam kScnFnHook_##id[] = {                          \
+        params { NULL, SCN_PARAM_NONE }                                       \
+    };
+SCN_HOOK_LIST(SCN_FN_HOOK_PARAMS)
+#undef SCN_FN_HOOK_PARAMS
+
+#define SCN_FN_POLICY_PARAMS(id, name, params, returns)                       \
+    static const ScnLuaFnParam kScnFnPolicy_##id[] = {                        \
+        params { NULL, SCN_PARAM_NONE }                                       \
+    };
+SCN_POLICY_LIST(SCN_FN_POLICY_PARAMS)
+#undef SCN_FN_POLICY_PARAMS
+
+/* The hooks first, in the order scenario_host.c dispatches them, then the
+ * policies. Both halves are the same row, so whatever reads this — a
+ * document, the editor's list of what a scenario may define — walks one
+ * table and reads the kind to tell a question from a fact. */
+static const ScnLuaFnRow kScnLuaFunctions[] = {
+#define SCN_FN_HOOK_ROW(id, name, kind, params)                               \
+    { name, kind, kScnFnHook_##id,                                            \
+      sizeof(kScnFnHook_##id) / sizeof(kScnFnHook_##id[0]) - 1, NULL },
+    SCN_HOOK_LIST(SCN_FN_HOOK_ROW)
+#undef SCN_FN_HOOK_ROW
+#define SCN_FN_POLICY_ROW(id, name, params, returns)                          \
+    { name, SCN_FN_POLICY, kScnFnPolicy_##id,                                 \
+      sizeof(kScnFnPolicy_##id) / sizeof(kScnFnPolicy_##id[0]) - 1, returns },
+    SCN_POLICY_LIST(SCN_FN_POLICY_ROW)
+#undef SCN_FN_POLICY_ROW
+};
+
+/* The table is the two lists and nothing else. The hook half is the tally
+ * ScnHookId ends on — scenario_host.c makes SCN_HOOK_COUNT from this same
+ * list — so a hook added there arrives here with its parameters or does not
+ * compile at all, the row macro having too few arguments. This holds the
+ * table against a row written in by hand underneath them, which would be
+ * the one way to have a function here the lists do not name.
+ *
+ * SCN_HOOK_COUNT itself belongs to the enum in scenario_host.c and is not
+ * visible from this file; scenario_functions_table is where the two are
+ * held together by name at run time. */
+#define SCN_FN_HOOK_TALLY(id, name, kind, params) +1
+#define SCN_FN_POLICY_TALLY(id, name, params, returns) +1
+BOLO_STATIC_ASSERT(
+    (int)(sizeof(kScnLuaFunctions) / sizeof(kScnLuaFunctions[0])) ==
+        (0 SCN_HOOK_LIST(SCN_FN_HOOK_TALLY)) +
+        (0 SCN_POLICY_LIST(SCN_FN_POLICY_TALLY)),
+    function_table_is_the_hook_list_and_the_policy_list);
+#undef SCN_FN_HOOK_TALLY
+#undef SCN_FN_POLICY_TALLY
+
+const ScnLuaFnRow *scenarioLuaFunctions(size_t *count) {
+    if (count != NULL) {
+        *count = sizeof(kScnLuaFunctions) / sizeof(kScnLuaFunctions[0]);
+    }
+    return kScnLuaFunctions;
+}
+
+/* One field on to the end of what has been counted, written only where the
+ * caller left room for it. The tally rises either way, so a caller that
+ * asked for none still learns how many there are. A name too long for the
+ * field is cut rather than written past the end of it. */
+static void scnFnFieldAdd(ScnLuaFnField *out, size_t outMax, size_t *count,
+                          const char *name, ScnLuaParamType type, size_t from,
+                          bool derived) {
+    if (out != NULL && *count < outMax) {
+        ScnLuaFnField *f = &out[*count];
+
+        memset(f, 0, sizeof(*f));
+        snprintf(f->name, sizeof(f->name), "%s", name);
+        f->type    = type;
+        f->from    = from;
+        f->derived = derived;
+    }
+    (*count)++;
+}
+
+/* The parameters of a row, and then what their types are worth on top of
+ * them: a seat and an owner each carry the team they are on, a pillbox and a
+ * base each carry the tag the scenario put on them, and a square's two
+ * halves together carry whichever region holds them.
+ *
+ * The derived names follow the parameters rather than sitting beside them,
+ * so the first paramCount fields are always the function's own arguments in
+ * the order it takes them. _team is prefixed with the parameter's name
+ * because a function may take more than one seat; tag and region are bare
+ * because no function in the catalogue takes two items or two squares. */
+size_t scenarioLuaFnFields(size_t row, ScnLuaFnField *out, size_t outMax) {
+    const ScnLuaFnRow *r;
+    size_t             count = 0;
+    size_t             i;
+
+    if (row >= sizeof(kScnLuaFunctions) / sizeof(kScnLuaFunctions[0])) {
+        return 0;
+    }
+    r = &kScnLuaFunctions[row];
+
+    for (i = 0; i < r->paramCount; i++) {
+        scnFnFieldAdd(out, outMax, &count, r->params[i].name,
+                      r->params[i].type, i, false);
+    }
+    for (i = 0; i < r->paramCount; i++) {
+        char derived[SCN_FN_FIELD_NAME_LEN];
+
+        switch (r->params[i].type) {
+            case SCN_PARAM_SLOT:
+            case SCN_PARAM_OWNER:
+                snprintf(derived, sizeof(derived), "%s_team",
+                         r->params[i].name);
+                scnFnFieldAdd(out, outMax, &count, derived, SCN_PARAM_TEAM, i,
+                              true);
+                break;
+
+            case SCN_PARAM_PILL:
+            case SCN_PARAM_BASE:
+                scnFnFieldAdd(out, outMax, &count, "tag", SCN_PARAM_TAG, i,
+                              true);
+                break;
+
+            case SCN_PARAM_SQUARE_X:
+                /* The pair, not the half: an x with no y behind it names no
+                   square and so holds no region. */
+                if (i + 1 < r->paramCount &&
+                    r->params[i + 1].type == SCN_PARAM_SQUARE_Y) {
+                    scnFnFieldAdd(out, outMax, &count, "region",
+                                  SCN_PARAM_REGION, i, true);
+                }
+                break;
+
+            default:
+                break;
+        }
+    }
+    return count;
+}
+
 const ScnLuaRow *scenarioLuaRows(size_t *count) {
     if (count != NULL) {
         *count = sizeof(kScnLuaRows) / sizeof(kScnLuaRows[0]);
     }
     return kScnLuaRows;
+}
+
+/* Read off the types rather than off a list of names, so an op that grows a
+ * table argument leaves the list a trigger may call by that alone. A row
+ * with no arguments at all is a call anything can write, so it answers
+ * true. */
+bool scenarioLuaOpIsScalar(const ScnLuaRow *row) {
+    size_t i;
+
+    if (row == NULL || row->params == NULL) {
+        return false;
+    }
+    for (i = 0; i < row->paramCount; i++) {
+        if (row->params[i].type == SCN_PARAM_TABLE ||
+            row->params[i].type == SCN_PARAM_FUNCTION) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* The two flags and nothing else, so a row that grows a table argument and a
+ * row that stops changing anything each leave the list without a second
+ * edit. */
+bool scenarioLuaOpIsAction(const ScnLuaRow *row) {
+    return row != NULL && row->acts && scenarioLuaOpIsScalar(row);
 }
 
 const ScnLuaConst *scenarioLuaConsts(size_t *count) {

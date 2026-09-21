@@ -785,9 +785,6 @@ static bool alliancePendingGet(const char **nameOut, BYTE *numOut) {
 }
 static void allianceClearPending(void) { s_allianceVisible = false; }
 
-static bool s_showPasswordOpen   = false;
-static char s_passwordBuf[36]    = "";  /* MAP_STR_SIZE = 36 */
-
 /* "Join Game?" confirmation when a winbolo:// URL is received mid-game */
 static bool s_showJoinConfirm       = false;
 static char s_joinConfirmUrl[512]   = "";
@@ -4600,50 +4597,6 @@ static void renderAllianceRequest(ClientSim *cs) {
 }
 
 /* -------------------------------------------------------
- * Password modal — shown when joining a protected game
- * ------------------------------------------------------- */
-static void renderPasswordModal(void) {
-    char title[128];
-    snprintf(title, sizeof(title), "%s###passwordreq", langGetText(STR_DLGPASSWORD_TITLE));
-    if (s_showPasswordOpen) {
-        ImGui::OpenPopup(title);
-        s_showPasswordOpen  = false;
-        s_passwordBuf[0]   = '\0';
-    }
-    static float s_fadePassword = 0.0f;
-    bool passOpen = true;
-    ImGuiIO &io = ImGui::GetIO();
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
-                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    if (ImGui::BeginPopupModal(title, &passOpen,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::PushStyleVar(ImGuiStyleVar_Alpha,
-                            imguiPopupFadeAlpha(&s_fadePassword));
-        if (s_closeAllPopups) { ImGui::PopStyleVar(); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); return; }
-        ImGui::TextUnformatted(langGetText(STR_DLGPASSWORD_BLURB));
-        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(0);
-        ImGui::SetNextItemWidth(270);
-        bool enter = ImGui::InputText("##pass", s_passwordBuf,
-                                      sizeof(s_passwordBuf),
-                                      ImGuiInputTextFlags_Password |
-                                      ImGuiInputTextFlags_EnterReturnsTrue);
-        int f = WBUI::DialogFooter(langGetText(STR_CANCEL),
-                                   langGetText(STR_OK),
-                                   /*enterConfirms*/ true);
-        if (f == WBUI::FOOTER_CONFIRM || enter) {
-            /* gameOpen=1, aiNone=0, justPass=TRUE */
-            gameFrontSetGameOptions(s_passwordBuf, (gameType)1, false, (aiType)0, 0, 0, true);
-            ImGui::CloseCurrentPopup();
-        } else if (f == WBUI::FOOTER_CANCEL) {
-            /* Abort the join attempt. */
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::PopStyleVar();
-        ImGui::EndPopup();
-    }
-}
-
-/* -------------------------------------------------------
  * Gamepad binding helpers — orphaned from their original host
  * popup (renderKeySetupModal, removed when main moved the in-game
  * Key Setup popup to imgui_keysetup.cpp:imguiKeySetupRenderInGamePopup).
@@ -5258,7 +5211,7 @@ static void renderMenuBar(ClientSim *cs) {
         }
 
         ImGui::Separator();
-        if (ImGui::MenuItem(langGetText(STR_MENU_SETTINGS)))                                                  sdl3ImguiShowSettings();
+        if (ImGui::MenuItem(langGetText(STR_MENU_SETTINGS),        KMOD_PRIMARY_LABEL ","))                   sdl3ImguiShowSettings();
         ImGui::EndMenu();
     }
 
@@ -6357,6 +6310,10 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                 break;
             case SDL_SCANCODE_K:
                 sdl3ImguiShowKeySetup();
+                break;
+            case SDL_SCANCODE_COMMA:
+                /* Ctrl+, opens Settings, the shortcut most desktop apps use. */
+                sdl3ImguiShowSettings();
                 break;
             case SDL_SCANCODE_S:
                 windowSaveMap(cs);
@@ -7469,7 +7426,6 @@ void sdl3ImguiPumpAndRender(ClientSim *cs) {
     /* Surface in-game CMD_REJECT_NAME_* rejects through the message
      * overlay. The lobby toast handles the in-lobby case. */
     drainInGameNameReject(cs);
-    renderPasswordModal();
     imguiKeySetupRenderInGamePopup(cs);
     renderJoinConfirmModal();
 
@@ -8132,10 +8088,6 @@ void sdl3ImguiShowAllianceRequest(const char *playerName, unsigned char playerNu
     s_alliancePlayerName[sizeof(s_alliancePlayerName) - 1] = '\0';
     s_alliancePlayerNum  = playerNum;
     s_showAllianceOpen   = true;
-}
-
-void sdl3ImguiShowPassword(void) {
-    s_showPasswordOpen = true;
 }
 
 void sdl3ImguiSetPlayer(unsigned char playerNum, const char *name, const char *countryCode) {

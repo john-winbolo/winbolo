@@ -148,23 +148,63 @@ void clientBuildInputPacket(ClientSim *csPtr, InputPacket *pkt, tankButton tb, b
    * runs two half-steps; the wasm client drops its sim backlog after a tab
    * background; a GUI hitch that doesn't catch up) would otherwise emit tick
    * numbers the server has already passed, and every such input would arrive
-   * stale forever. If the supplied tick has fallen at or behind the server's
-   * last-processed tick, renumber it to the smallest value past
-   * lastProcessedInput whose parity matches the input's INTENT (isGameTick:
-   * even = game, odd = keys) — taken from the parameter, never derived from the
-   * stale tick. Prediction, the input history, and the send all consume this
-   * same packet, so they pick up the jump automatically. When the producer
-   * keeps pace (normal desktop/UDP, where the client predicts ahead of the
-   * ack) tick > lastProcessedInput and this is a no-op. */
+   * stale forever. Two populations arrive here and they are answered
+   * separately, selected on whether the transport has measured a round trip.
+   * Both give the packet the parity matching the input's INTENT (isGameTick:
+   * even = game, odd = keys), taken from the parameter, never derived from the
+   * stale tick.
+   *
+   *   projectionPingMs > 0 — a networked client whose counter fell behind
+   *     after a hitch. Its packet is half a round trip old on arrival, so it
+   *     jumps past lastProcessedInput by the round trip in half-steps plus a
+   *     margin — where the server will be when the packet lands — and keeps
+   *     that jump as inputTickOffset, which every later packet adds. The
+   *     stream catches up in one round trip instead of one snapshot, because
+   *     the jump is adopted once rather than recomputed against a
+   *     lastProcessedInput that only moves when a snapshot arrives.
+   *
+   *   projectionPingMs == 0 — a producer on the local transport (headless,
+   *     the gym, an in-process host), which supplies one input per net tick
+   *     while the server runs two half-steps. It is not behind after a hitch,
+   *     it under-supplies structurally, so this fires in perfect conditions.
+   *     It takes the next tick number the server has not processed and stores
+   *     nothing: there is no flight time to cover, and pushing the packet
+   *     further out would only park it in the queue ahead of its half-step.
+   *
+   * Prediction, the input history, and the send all consume this same packet,
+   * so they pick up the new number automatically, and the producer's counter
+   * keeps running on wall time — none of the five producers change. When a
+   * networked producer keeps pace (normal desktop/UDP, where the client
+   * predicts ahead of the ack) tick + offset > lastProcessedInput and that
+   * branch is a no-op. */
   {
     uint32_t lpi = csPtr->clientState.serverLastProcessedInput;
-    if (pkt->tick <= lpi) {
-      uint32_t renum = lpi + 1;
-      /* game tick wants an even number, keys tick an odd one */
-      if (((renum % 2) == 0) != isGameTick) {
-        renum++;
+    if (csPtr->projectionPingMs == 0) {
+      if (pkt->tick <= lpi) {
+        uint32_t renum = lpi + 1;
+        /* game tick wants an even number, keys tick an odd one */
+        if (((renum % 2) == 0) != isGameTick) {
+          renum++;
+        }
+        pkt->tick = renum;
       }
-      pkt->tick = renum;
+    } else {
+      uint32_t want = tick + csPtr->inputTickOffset;
+      if (want <= lpi) {
+        uint32_t rttHalfSteps = (uint32_t)(csPtr->projectionPingMs / 10);
+        uint32_t target;
+        if (rttHalfSteps > CLIENT_INPUT_JUMP_MAX_RTT_HALFSTEPS) {
+          rttHalfSteps = CLIENT_INPUT_JUMP_MAX_RTT_HALFSTEPS;
+        }
+        target = lpi + rttHalfSteps + CLIENT_INPUT_JUMP_MARGIN_HALFSTEPS;
+        /* game tick wants an even number, keys tick an odd one */
+        if (((target % 2) == 0) != isGameTick) {
+          target++;
+        }
+        csPtr->inputTickOffset = target - tick;
+        want = target;
+      }
+      pkt->tick = want;
     }
   }
 

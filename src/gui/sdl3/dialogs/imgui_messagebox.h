@@ -21,6 +21,7 @@
 #ifndef IMGUI_MESSAGEBOX_H
 #define IMGUI_MESSAGEBOX_H
 
+#include <stddef.h>
 #include "../tutorial_text.h"
 
 #ifdef __cplusplus
@@ -63,6 +64,16 @@ int imguiMessageBoxRich(const char *title,
 
 /* Convenience: blocking OK-only info message box (legacy API). */
 void imguiMessageBox(const char *message, const char *title);
+
+/* Show a blocking password prompt: the message above one masked text
+ * field, with Cancel / OK. Runs its own frame loop on a private ImGui
+ * context the same way imguiMessageBoxEx does, so it can be called from
+ * the dialog flow before any in-game frame loop exists. On OK the entry
+ * is copied into out (outCap bytes, NUL-terminated) and the result is
+ * IMGUI_MSG_RESULT_OK; Cancel, Escape and a window close leave out
+ * untouched and return IMGUI_MSG_RESULT_CANCEL. */
+int imguiPasswordPrompt(const char *title, const char *message,
+                        char *out, size_t outCap);
 
 /* Render the rich (segment) body plus a centred OK button into the
  * CURRENT ImGui window/popup, using the current (main) context — the

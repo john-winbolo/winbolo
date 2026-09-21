@@ -16,7 +16,9 @@
  * run_scenario_manifest_agrees
  *      — two forms of the same scenario agree whatever order their rules
  *        and regions are in, and each field that can differ is refused
- *        with the key an author would look for
+ *        with the key an author would look for; triggers are compared in
+ *        order, having no name to be matched by, so the key naming one is
+ *        its position
  * run_scenario_manifest_from_values
  *      — a struct with no JSON behind it goes out as text and comes back
  *        as the same struct
@@ -32,6 +34,13 @@
  *        the default, an api that is negative or has no finite value is
  *        refused outright, and a manifest whose numbers are in range is
  *        untouched
+ * run_scenario_manifest_json_triggers
+ *      — two triggers holding all four value kinds, an in and an eq, and an
+ *        action whose long line lands on the action rather than in the
+ *        argument slot, out to text and back unchanged; a triggers key that
+ *        is not an array and an entry that is not an object are reported
+ *        rather than refused; and each of the four caps drops what is past
+ *        it and says which row went
  */
 
 #include <stdint.h>
@@ -324,6 +333,10 @@ int run_scenario_manifest_json_refusals(void) {
     return 0;
 }
 
+/* The pair of triggers both forms hold. Filled in the Triggers section
+   below, beside the JSON stating the same two. */
+static void fillTriggers(ScenarioManifest *m);
+
 /* One scenario, as both forms would hold it. */
 static void fillBase(ScenarioManifest *m) {
     memset(m, 0, sizeof(*m));
@@ -373,6 +386,8 @@ static void fillBase(ScenarioManifest *m) {
     m->regions[1].y = 5;
     m->regions[1].w = 6;
     m->regions[1].h = 7;
+
+    fillTriggers(m);
 }
 
 int run_scenario_manifest_agrees(void) {
@@ -476,6 +491,50 @@ int run_scenario_manifest_agrees(void) {
     b.pillTags[3].count = 0;
     UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
     UT_ASSERT_MSG(strcmp(key, "tags.pills[3]") == 0, "the key was '%s'", key);
+
+    /* Triggers. A trigger has no name to match one against another by, so
+       the two forms are compared in order and the key is the position —
+       which is the position both readers report under. */
+    fillBase(&b);
+    b.numTriggers = 1;
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "triggers") == 0, "the key was '%s'", key);
+
+    fillBase(&b);
+    snprintf(b.triggers[1].when, SCN_TRIGGER_NAME_LEN, "on_round_start");
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "triggers[1]") == 0, "the key was '%s'", key);
+
+    fillBase(&b);
+    snprintf(b.triggers[0].where[1].value.text, SCN_TRIGGER_NAME_LEN,
+             "inner_base");
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "triggers[0].where[1]") == 0,
+                  "the key was '%s'", key);
+
+    fillBase(&b);
+    b.triggers[0].actions[1].args[1].num = 11.0;
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "triggers[0].actions[1][1]") == 0,
+                  "the key was '%s'", key);
+
+    /* The long line an action carries is the action's, not the argument
+       slot's, and is held against the other form there. */
+    fillBase(&b);
+    snprintf(b.triggers[0].actions[0].text, SCN_TRIGGER_TEXT_LEN,
+             "The ring gives and the wave is through the keep before dawn");
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "triggers[0].actions[0]") == 0,
+                  "the key was '%s'", key);
+
+    /* A value differing only in the kind it was read as, which a comparison
+       reading num alone would pass: 0 as a number and false as a boolean
+       both carry 0.0. */
+    fillBase(&b);
+    b.triggers[1].where[0].value.kind = SCN_TRIG_VAL_NUMBER;
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "triggers[1].where[0]") == 0,
+                  "the key was '%s'", key);
 
     return 0;
 }
@@ -769,5 +828,987 @@ int run_scenario_manifest_json_number_range(void) {
                       (unsigned)m->lobby.teams[0].maxBots);
         scnManifestFree(d);
     }
+    return 0;
+}
+
+/* ── Triggers ─────────────────────────────────────────────────────── */
+
+/* The long line an announce carries: past SCN_TRIGGER_NAME_LEN, so it lands
+   on the action's text rather than in the argument slot. */
+static const char kLongLine[] =
+    "The ring holds and the wave is turned back short of the keep";
+
+/* Two triggers between them holding all four value kinds, an in and an eq,
+   and an action whose first argument is too long for an argument slot. */
+static const char kTriggerManifest[] =
+    "{\n"
+    "  \"manifest\": 1,\n"
+    "  \"api\": 1,\n"
+    "  \"name\": \"Trigger trial\",\n"
+    "  \"triggers\": [\n"
+    "    { \"when\": \"on_base_captured\",\n"
+    "      \"where\": [ [\"new_team\", \"eq\", 1],\n"
+    "                   [\"tag\", \"in\", \"outer_base\"] ],\n"
+    "      \"actions\": [ [\"announce\",\n"
+    "                   \"The ring holds and the wave is turned back short "
+    "of the keep\", 5],\n"
+    "                  [\"set_score\", { \"field\": \"new\" }, 10] ] },\n"
+    "    { \"when\": \"on_tick\",\n"
+    "      \"where\": [ [\"scripted\", \"eq\", false] ],\n"
+    "      \"actions\": [ [\"log\", \"tick\"] ] }\n"
+    "  ]\n"
+    "}\n";
+
+/* The same two triggers again, straight into the struct: what
+   kTriggerManifest above decodes to, for the cases that start from a struct
+   rather than from text. */
+static void fillTriggers(ScenarioManifest *m) {
+    ScnTrigger *t;
+    ScnTrigAct *a;
+
+    m->numTriggers = 2;
+
+    t = &m->triggers[0];
+    snprintf(t->when, SCN_TRIGGER_NAME_LEN, "on_base_captured");
+    t->numWhere = 2;
+    snprintf(t->where[0].field, SCN_TRIGGER_NAME_LEN, "new_team");
+    t->where[0].op         = SCN_TRIG_CMP_EQ;
+    t->where[0].value.kind = SCN_TRIG_VAL_NUMBER;
+    t->where[0].value.num  = 1.0;
+    snprintf(t->where[1].field, SCN_TRIGGER_NAME_LEN, "tag");
+    t->where[1].op         = SCN_TRIG_CMP_IN;
+    t->where[1].value.kind = SCN_TRIG_VAL_STRING;
+    snprintf(t->where[1].value.text, SCN_TRIGGER_NAME_LEN, "outer_base");
+
+    t->numActions = 2;
+    a = &t->actions[0];
+    snprintf(a->op, SCN_TRIGGER_NAME_LEN, "announce");
+    a->numArgs        = 2;
+    a->args[0].kind   = SCN_TRIG_VAL_STRING;
+    a->args[0].inText = true;          /* the line is on the action below */
+    snprintf(a->text, SCN_TRIGGER_TEXT_LEN, "%s", kLongLine);
+    a->args[1].kind = SCN_TRIG_VAL_NUMBER;
+    a->args[1].num  = 5.0;
+    a = &t->actions[1];
+    snprintf(a->op, SCN_TRIGGER_NAME_LEN, "set_score");
+    a->numArgs      = 2;
+    a->args[0].kind = SCN_TRIG_VAL_FIELD;
+    snprintf(a->args[0].text, SCN_TRIGGER_NAME_LEN, "new");
+    a->args[1].kind = SCN_TRIG_VAL_NUMBER;
+    a->args[1].num  = 10.0;
+
+    t = &m->triggers[1];
+    snprintf(t->when, SCN_TRIGGER_NAME_LEN, "on_tick");
+    t->numWhere = 1;
+    snprintf(t->where[0].field, SCN_TRIGGER_NAME_LEN, "scripted");
+    t->where[0].op         = SCN_TRIG_CMP_EQ;
+    t->where[0].value.kind = SCN_TRIG_VAL_BOOL;
+    t->where[0].value.num  = 0.0;
+    t->numActions          = 1;
+    a                      = &t->actions[0];
+    snprintf(a->op, SCN_TRIGGER_NAME_LEN, "log");
+    a->numArgs      = 1;
+    a->args[0].kind = SCN_TRIG_VAL_STRING;
+    snprintf(a->args[0].text, SCN_TRIGGER_NAME_LEN, "tick");
+}
+
+/* Is a key among the issues the parse collected? */
+static bool sawIssue(const ScnValidateResult *sink, const char *key) {
+    int i;
+    for (i = 0; i < (int)sink->count; i++) {
+        if (strcmp(sink->issues[i].key, key) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* And what it said, for a key that can carry more than one reading. */
+static bool issueSays(const ScnValidateResult *sink, const char *key,
+                      const char *want) {
+    int i;
+    for (i = 0; i < (int)sink->count; i++) {
+        if (strcmp(sink->issues[i].key, key) == 0 &&
+            strstr(sink->issues[i].message, want) != NULL) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* What the two triggers of kTriggerManifest have to decode to. Held apart
+   from the round trip so the same reading is made of the text this build
+   wrote and of the text it was given. */
+static int triggerManifestIsRight(const ScenarioManifest *m) {
+    const ScnTrigger *t;
+    const ScnTrigAct *a;
+
+    UT_ASSERT_MSG(m->numTriggers == 2, "trigger count is %u",
+                  (unsigned)m->numTriggers);
+
+    t = &m->triggers[0];
+    UT_ASSERT(strcmp(t->when, "on_base_captured") == 0);
+    UT_ASSERT_MSG(t->numWhere == 2, "trigger 0 holds %u tests",
+                  (unsigned)t->numWhere);
+    UT_ASSERT_MSG(t->numActions == 2, "trigger 0 holds %u actions",
+                  (unsigned)t->numActions);
+
+    /* A number against eq. */
+    UT_ASSERT(strcmp(t->where[0].field, "new_team") == 0);
+    UT_ASSERT(t->where[0].op == SCN_TRIG_CMP_EQ);
+    UT_ASSERT(t->where[0].value.kind == SCN_TRIG_VAL_NUMBER);
+    UT_ASSERT_MSG(t->where[0].value.num == 1.0, "new_team is %g",
+                  t->where[0].value.num);
+
+    /* A short string against in: short enough for the slot's own text. */
+    UT_ASSERT(strcmp(t->where[1].field, "tag") == 0);
+    UT_ASSERT(t->where[1].op == SCN_TRIG_CMP_IN);
+    UT_ASSERT(t->where[1].value.kind == SCN_TRIG_VAL_STRING);
+    UT_ASSERT(!t->where[1].value.inText);
+    UT_ASSERT(strcmp(t->where[1].value.text, "outer_base") == 0);
+
+    /* The long line is on the action, and the slot that holds it says so
+       rather than carrying the bytes. */
+    a = &t->actions[0];
+    UT_ASSERT(strcmp(a->op, "announce") == 0);
+    UT_ASSERT_MSG(a->numArgs == 2, "announce took %u arguments",
+                  (unsigned)a->numArgs);
+    UT_ASSERT(a->args[0].kind == SCN_TRIG_VAL_STRING);
+    UT_ASSERT_MSG(a->args[0].inText,
+                  "the long line was not moved to the action's text");
+    UT_ASSERT(a->args[0].text[0] == '\0');
+    UT_ASSERT_MSG(strcmp(a->text, kLongLine) == 0,
+                  "the action's text is '%s'", a->text);
+    UT_ASSERT(a->args[1].kind == SCN_TRIG_VAL_NUMBER);
+    UT_ASSERT(a->args[1].num == 5.0);
+
+    /* A field reference, and a number beside it. */
+    a = &t->actions[1];
+    UT_ASSERT(strcmp(a->op, "set_score") == 0);
+    UT_ASSERT_MSG(a->numArgs == 2, "set_score took %u arguments",
+                  (unsigned)a->numArgs);
+    UT_ASSERT(a->args[0].kind == SCN_TRIG_VAL_FIELD);
+    UT_ASSERT(strcmp(a->args[0].text, "new") == 0);
+    UT_ASSERT(a->args[1].kind == SCN_TRIG_VAL_NUMBER);
+    UT_ASSERT(a->args[1].num == 10.0);
+    UT_ASSERT_MSG(a->text[0] == '\0',
+                  "an action with no long string carries '%s'", a->text);
+
+    /* A boolean. */
+    t = &m->triggers[1];
+    UT_ASSERT(strcmp(t->when, "on_tick") == 0);
+    UT_ASSERT_MSG(t->numWhere == 1, "trigger 1 holds %u tests",
+                  (unsigned)t->numWhere);
+    UT_ASSERT(strcmp(t->where[0].field, "scripted") == 0);
+    UT_ASSERT(t->where[0].value.kind == SCN_TRIG_VAL_BOOL);
+    UT_ASSERT_MSG(t->where[0].value.num == 0.0, "false decoded as %g",
+                  t->where[0].value.num);
+    UT_ASSERT_MSG(t->numActions == 1, "trigger 1 holds %u actions",
+                  (unsigned)t->numActions);
+    UT_ASSERT(strcmp(t->actions[0].op, "log") == 0);
+    UT_ASSERT(t->actions[0].args[0].kind == SCN_TRIG_VAL_STRING);
+    UT_ASSERT(strcmp(t->actions[0].args[0].text, "tick") == 0);
+    return 0;
+}
+
+int run_scenario_manifest_json_triggers(void) {
+    char               err[256];
+    char               soft[256];
+    ScnManifestDoc    *first;
+    ScnManifestDoc    *again;
+    ScnValidateResult *sink;
+    ScnParseReport     rep;
+    char              *text;
+    char              *big;
+    size_t             used;
+    int                i;
+    int                rc;
+
+    /* ── The round trip ──────────────────────────────────────────── */
+
+    first = parseText(kTriggerManifest, NULL, err, sizeof(err));
+    UT_ASSERT_MSG(first != NULL, "the manifest was refused: %s", err);
+
+    rc = triggerManifestIsRight(scnManifestValues(first));
+    if (rc != 0) {
+        scnManifestFree(first);
+        return rc;
+    }
+
+    text = scnManifestWrite(first, err, sizeof(err));
+    if (text == NULL) {
+        scnManifestFree(first);
+        UT_FAIL("the manifest could not be written: %s", err);
+    }
+    again = parseText(text, NULL, err, sizeof(err));
+    free(text);
+    if (again == NULL) {
+        scnManifestFree(first);
+        UT_FAIL("what was written would not parse: %s", err);
+    }
+
+    rc = triggerManifestIsRight(scnManifestValues(again));
+    if (rc == 0 &&
+        memcmp(scnManifestValues(first)->triggers,
+               scnManifestValues(again)->triggers,
+               sizeof(ScnTrigger) * 2) != 0) {
+        fprintf(stderr, "FAIL %s:%d: the round trip changed the triggers\n",
+                __FILE__, __LINE__);
+        rc = 1;
+    }
+    scnManifestFree(first);
+    scnManifestFree(again);
+    if (rc != 0) {
+        return rc;
+    }
+
+    /* ── A triggers key that is not a list of objects ─────────────── */
+
+    sink = (ScnValidateResult *)malloc(sizeof(*sink));
+    UT_ASSERT(sink != NULL);
+    memset(sink, 0, sizeof(*sink));
+    soft[0]     = '\0';
+    rep.soft    = soft;
+    rep.softLen = sizeof(soft);
+    rep.sink    = sink;
+
+    first = parseText("{ \"manifest\": 1, \"triggers\": 7 }", &rep, err,
+                      sizeof(err));
+    if (first == NULL) {
+        free(sink);
+        UT_FAIL("a triggers key that is not an array was refused: %s", err);
+    }
+    if (scnManifestValues(first)->numTriggers != 0 ||
+        !sawIssue(sink, "triggers")) {
+        scnManifestFree(first);
+        free(sink);
+        UT_FAIL("a triggers key that is not an array was not reported");
+    }
+    scnManifestFree(first);
+
+    memset(sink, 0, sizeof(*sink));
+    first = parseText("{ \"manifest\": 1, \"triggers\": [ 7, \"no\" ] }", &rep,
+                      err, sizeof(err));
+    if (first == NULL) {
+        free(sink);
+        UT_FAIL("a triggers entry that is not an object was refused: %s", err);
+    }
+    if (scnManifestValues(first)->numTriggers != 0 ||
+        !sawIssue(sink, "triggers[0]") || !sawIssue(sink, "triggers[1]")) {
+        scnManifestFree(first);
+        free(sink);
+        UT_FAIL("a triggers entry that is not an object was not reported");
+    }
+    scnManifestFree(first);
+
+    /* ── Each of the four caps ───────────────────────────────────── */
+
+    /* One more trigger than the struct holds. */
+    big = (char *)malloc(1 << 16);
+    if (big == NULL) {
+        free(sink);
+        UT_FAIL("out of memory building the over-cap manifest");
+    }
+    used = (size_t)snprintf(big, 1 << 16, "{ \"manifest\": 1, \"triggers\": [");
+    /* Two past the cap, and one line said: a file decides how long this array
+       is, and a line for each excess row would fill the issue list. */
+    for (i = 0; i <= SCN_TRIGGERS_MAX + 1; i++) {
+        used += (size_t)snprintf(big + used, (1 << 16) - used,
+                                 "%s{ \"when\": \"on_tick\" }",
+                                 (i > 0) ? ", " : "");
+    }
+    snprintf(big + used, (1 << 16) - used, "] }");
+
+    memset(sink, 0, sizeof(*sink));
+    first = parseText(big, &rep, err, sizeof(err));
+    if (first == NULL) {
+        free(big);
+        free(sink);
+        UT_FAIL("more triggers than the cap was refused: %s", err);
+    }
+    if (scnManifestValues(first)->numTriggers != SCN_TRIGGERS_MAX) {
+        rc = (int)scnManifestValues(first)->numTriggers;
+        scnManifestFree(first);
+        free(big);
+        free(sink);
+        UT_FAIL("%d triggers were kept, expected %d", rc, SCN_TRIGGERS_MAX);
+    }
+    {
+        char want[SCN_VALIDATE_KEY_LEN];
+        snprintf(want, sizeof(want), "triggers[%d]", SCN_TRIGGERS_MAX);
+        if (!sawIssue(sink, want)) {
+            scnManifestFree(first);
+            free(big);
+            free(sink);
+            UT_FAIL("the trigger past the cap was dropped without a word");
+        }
+        snprintf(want, sizeof(want), "triggers[%d]", SCN_TRIGGERS_MAX + 1);
+        if (sawIssue(sink, want) || sink->count != 1) {
+            rc = (int)sink->count;
+            scnManifestFree(first);
+            free(big);
+            free(sink);
+            UT_FAIL("the cap was said %d times, expected once", rc);
+        }
+    }
+    scnManifestFree(first);
+
+    /* One more test, one more action and one more argument than a trigger
+       holds, all on the one trigger. */
+    used = (size_t)snprintf(
+        big, 1 << 16,
+        "{ \"manifest\": 1, \"triggers\": [ { \"when\": \"on_tick\","
+        " \"where\": [");
+    for (i = 0; i <= SCN_TRIGGER_CONDS_MAX; i++) {
+        used += (size_t)snprintf(big + used, (1 << 16) - used,
+                                 "%s[\"n\", \"eq\", %d]", (i > 0) ? ", " : "",
+                                 i);
+    }
+    used += (size_t)snprintf(big + used, (1 << 16) - used, "], \"actions\": [");
+    for (i = 0; i <= SCN_TRIGGER_ACTIONS_MAX; i++) {
+        int j;
+        used += (size_t)snprintf(big + used, (1 << 16) - used, "%s[\"log\"",
+                                 (i > 0) ? ", " : "");
+        /* The first action is the one given more arguments than it holds. */
+        for (j = 0; j < ((i == 0) ? SCN_TRIGGER_ARGS_MAX + 1 : 1); j++) {
+            used += (size_t)snprintf(big + used, (1 << 16) - used, ", %d", j);
+        }
+        used += (size_t)snprintf(big + used, (1 << 16) - used, "]");
+    }
+    snprintf(big + used, (1 << 16) - used, "] } ] }");
+
+    memset(sink, 0, sizeof(*sink));
+    first = parseText(big, &rep, err, sizeof(err));
+    free(big);
+    if (first == NULL) {
+        free(sink);
+        UT_FAIL("a trigger past its caps was refused: %s", err);
+    }
+    {
+        const ScnTrigger *t = &scnManifestValues(first)->triggers[0];
+        bool              ok = true;
+        char              want[SCN_VALIDATE_KEY_LEN];
+
+        if (t->numWhere != SCN_TRIGGER_CONDS_MAX) {
+            fprintf(stderr, "FAIL %s:%d: %u tests were kept, expected %d\n",
+                    __FILE__, __LINE__, (unsigned)t->numWhere,
+                    SCN_TRIGGER_CONDS_MAX);
+            ok = false;
+        }
+        if (t->numActions != SCN_TRIGGER_ACTIONS_MAX) {
+            fprintf(stderr, "FAIL %s:%d: %u actions were kept, expected %d\n",
+                    __FILE__, __LINE__, (unsigned)t->numActions,
+                    SCN_TRIGGER_ACTIONS_MAX);
+            ok = false;
+        }
+        if (t->actions[0].numArgs != SCN_TRIGGER_ARGS_MAX) {
+            fprintf(stderr, "FAIL %s:%d: %u arguments were kept, expected %d\n",
+                    __FILE__, __LINE__, (unsigned)t->actions[0].numArgs,
+                    SCN_TRIGGER_ARGS_MAX);
+            ok = false;
+        }
+        snprintf(want, sizeof(want), "triggers[0].where[%d]",
+                 SCN_TRIGGER_CONDS_MAX);
+        if (!sawIssue(sink, want)) {
+            fprintf(stderr, "FAIL %s:%d: the test past the cap said nothing\n",
+                    __FILE__, __LINE__);
+            ok = false;
+        }
+        snprintf(want, sizeof(want), "triggers[0].actions[%d]",
+                 SCN_TRIGGER_ACTIONS_MAX);
+        if (!sawIssue(sink, want)) {
+            fprintf(stderr,
+                    "FAIL %s:%d: the action past the cap said nothing\n",
+                    __FILE__, __LINE__);
+            ok = false;
+        }
+        if (!sawIssue(sink, "triggers[0].actions[0]")) {
+            fprintf(stderr,
+                    "FAIL %s:%d: the argument past the cap said nothing\n",
+                    __FILE__, __LINE__);
+            ok = false;
+        }
+        scnManifestFree(first);
+        if (!ok) {
+            free(sink);
+            return 1;
+        }
+    }
+
+    free(sink);
+    return 0;
+}
+
+/* ── A where that is not an array ─────────────────────────────────── */
+
+/* A trigger holding no tests runs on every occurrence of its hook, so a
+   where that is there and is not an array cannot leave the trigger
+   standing: what the file states as a conditional would run
+   unconditionally. The trigger goes with its tests, and the issue is filed
+   under the position the file wrote it at.
+
+   Three triggers: a bad one, a sound one, and a bad one. The sound one is
+   what says the drop costs that trigger and no more. The second bad one is
+   what says which number the issue carries — with the first already gone it
+   sits in slot 1 and at position 2, so the two possible keys are different
+   numbers and the case can tell them apart. A file whose only bad trigger
+   is the first cannot: both are 0. */
+int run_scenario_manifest_json_trigger_where_type(void) {
+    static const char kBadWhere[] =
+        "{\n"
+        "  \"manifest\": 1,\n"
+        "  \"api\": 1,\n"
+        "  \"triggers\": [\n"
+        "    { \"when\": \"on_tick\", \"where\": {},\n"
+        "      \"actions\": [ [\"log\", \"never\"] ] },\n"
+        "    { \"when\": \"on_player_join\",\n"
+        "      \"actions\": [ [\"log\", \"kept\"] ] },\n"
+        "    { \"when\": \"on_tick\", \"where\": {},\n"
+        "      \"actions\": [ [\"log\", \"nor this\"] ] }\n"
+        "  ]\n"
+        "}\n";
+    char                    err[256];
+    char                    soft[256];
+    ScnManifestDoc         *doc;
+    ScnValidateResult      *sink;
+    ScnParseReport          rep;
+    const ScenarioManifest *m;
+
+    sink = (ScnValidateResult *)malloc(sizeof(*sink));
+    UT_ASSERT(sink != NULL);
+    memset(sink, 0, sizeof(*sink));
+    soft[0]     = '\0';
+    rep.soft    = soft;
+    rep.softLen = sizeof(soft);
+    rep.sink    = sink;
+
+    doc = parseText(kBadWhere, &rep, err, sizeof(err));
+    if (doc == NULL) {
+        free(sink);
+        UT_FAIL("a trigger whose where is not an array was refused: %s", err);
+    }
+    m = scnManifestValues(doc);
+    if (m->numTriggers != 1) {
+        int kept = (int)m->numTriggers;
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("%d triggers were kept, expected the 1 whose where reads",
+                kept);
+    }
+    if (strcmp(m->triggers[0].when, "on_player_join") != 0) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the trigger kept runs on '%s'", m->triggers[0].when);
+    }
+    if (!sawIssue(sink, "triggers[0]")) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the first trigger was dropped without a word under its "
+                "position");
+    }
+    /* The second drop, keyed by where the file wrote it rather than by the
+       slot it would have landed in once the first had gone. */
+    if (!sawIssue(sink, "triggers[2]")) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the third trigger was dropped without a word under its "
+                "position");
+    }
+    if (sawIssue(sink, "triggers[1]")) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("an issue was filed against triggers[1], which is the slot "
+                "the third trigger fell in and the position of the one kept");
+    }
+    scnManifestFree(doc);
+    free(sink);
+    return 0;
+}
+
+/* ── A trigger that names no hook ─────────────────────────────────── */
+
+/* A trigger is put on the router by the hook it names, so one naming none is
+   never reached: keeping it spends a slot against the trigger cap and writes
+   a dead entry back out on the next pack. The trigger goes, and the issue is
+   filed under the position the file wrote it at.
+
+   Both spellings of naming none: a trigger with no when at all, and one
+   whose when is a string with nothing in it.
+
+   Three triggers: a bad one, a sound one, and a bad one. The sound one is
+   what says the drop costs that trigger and no more. The second bad one is
+   what says which number the issue carries — with the first already gone it
+   sits in slot 1 and at position 2, so the two possible keys are different
+   numbers and the case can tell them apart. The Lua reader is held to the
+   same wording under the same key by a case of its own. */
+int run_scenario_manifest_json_trigger_no_when(void) {
+    static const char kNoWhen[] =
+        "{\n"
+        "  \"manifest\": 1,\n"
+        "  \"api\": 1,\n"
+        "  \"triggers\": [\n"
+        "    { \"actions\": [ [\"log\", \"never\"] ] },\n"
+        "    { \"when\": \"on_player_join\",\n"
+        "      \"actions\": [ [\"log\", \"kept\"] ] },\n"
+        "    { \"when\": \"\", \"actions\": [ [\"log\", \"nor this\"] ] }\n"
+        "  ]\n"
+        "}\n";
+    char                    err[256];
+    char                    soft[256];
+    ScnManifestDoc         *doc;
+    ScnValidateResult      *sink;
+    ScnParseReport          rep;
+    const ScenarioManifest *m;
+
+    sink = (ScnValidateResult *)malloc(sizeof(*sink));
+    UT_ASSERT(sink != NULL);
+    memset(sink, 0, sizeof(*sink));
+    soft[0]     = '\0';
+    rep.soft    = soft;
+    rep.softLen = sizeof(soft);
+    rep.sink    = sink;
+
+    doc = parseText(kNoWhen, &rep, err, sizeof(err));
+    if (doc == NULL) {
+        free(sink);
+        UT_FAIL("a trigger naming no hook was refused: %s", err);
+    }
+    m = scnManifestValues(doc);
+    if (m->numTriggers != 1) {
+        int kept = (int)m->numTriggers;
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("%d triggers were kept, expected the 1 that names a hook",
+                kept);
+    }
+    if (strcmp(m->triggers[0].when, "on_player_join") != 0) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the trigger kept runs on '%s'", m->triggers[0].when);
+    }
+    if (!issueSays(sink, "triggers[0]", "names no hook")) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the first trigger was dropped without a word under its "
+                "position");
+    }
+    /* The second drop, keyed by where the file wrote it rather than by the
+       slot it would have landed in once the first had gone. */
+    if (!issueSays(sink, "triggers[2]", "names no hook")) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the third trigger was dropped without a word under its "
+                "position");
+    }
+    if (sawIssue(sink, "triggers[1]")) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("an issue was filed against triggers[1], which is the slot "
+                "the third trigger fell in and the position of the one kept");
+    }
+    scnManifestFree(doc);
+    free(sink);
+    return 0;
+}
+
+/* ── An action that names no op ───────────────────────────────────── */
+
+/* The editor makes room for an action before the author has said what it
+   does, and a pack made before they say it writes the empty name out. An
+   empty name is a string, so the reader took it and said nothing, and
+   scnCheckTrigAct leaves an action naming no op to this report — between
+   them a row reached a server unmentioned and did nothing there.
+
+   Two actions on the one trigger, one naming an op and one naming none, so
+   the key says which of the two the issue is about. The Lua reader is held
+   to the same wording under the same key by a case of its own. */
+int run_scenario_manifest_json_trigger_action_no_op(void) {
+    static const char kNoOp[] =
+        "{\n"
+        "  \"manifest\": 1,\n"
+        "  \"api\": 1,\n"
+        "  \"triggers\": [\n"
+        "    { \"when\": \"on_tick\",\n"
+        "      \"actions\": [ [\"log\", \"kept\"], [\"\", \"unsaid\"] ] }\n"
+        "  ]\n"
+        "}\n";
+    char                    err[256];
+    char                    soft[256];
+    ScnManifestDoc         *doc;
+    ScnValidateResult      *sink;
+    ScnParseReport          rep;
+    const ScenarioManifest *m;
+
+    sink = (ScnValidateResult *)malloc(sizeof(*sink));
+    UT_ASSERT(sink != NULL);
+    memset(sink, 0, sizeof(*sink));
+    soft[0]     = '\0';
+    rep.soft    = soft;
+    rep.softLen = sizeof(soft);
+    rep.sink    = sink;
+
+    doc = parseText(kNoOp, &rep, err, sizeof(err));
+    if (doc == NULL) {
+        free(sink);
+        UT_FAIL("an action naming no op was refused: %s", err);
+    }
+    if (!issueSays(sink, "triggers[0].actions[1]", "names no op")) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("an empty op was taken without a word under the action");
+    }
+    if (sawIssue(sink, "triggers[0].actions[0]")) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the action that names an op was reported against as well");
+    }
+
+    /* The row is kept, empty name and all. An issue is not a refusal: the
+       trigger stands and the action beside it still runs. */
+    m = scnManifestValues(doc);
+    if (m->numTriggers != 1 || m->triggers[0].numActions != 2) {
+        int kept = (int)m->triggers[0].numActions;
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("%d actions were kept, expected both", kept);
+    }
+    if (strcmp(m->triggers[0].actions[0].op, "log") != 0 ||
+        m->triggers[0].actions[1].op[0] != '\0') {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the two actions came back naming '%s' and '%s'",
+                m->triggers[0].actions[0].op, m->triggers[0].actions[1].op);
+    }
+    scnManifestFree(doc);
+    free(sink);
+    return 0;
+}
+
+/* ── A where-row that names no field ──────────────────────────────── */
+
+/* The same shape one row over. The editor makes room for a test before the
+   author has said what it looks at, and a pack made before they say it
+   writes the empty name out. An empty name is a string, so the reader took
+   it and said nothing, and scnCheckTrigCond leaves a row naming no field to
+   this report — between them a test reached a server unmentioned and never
+   held.
+
+   Two rows on the one trigger, one naming a field and one naming none, so
+   the key says which of the two the issue is about. The Lua reader is held
+   to the same wording under the same key by a case of its own. */
+int run_scenario_manifest_json_trigger_where_no_field(void) {
+    static const char kNoField[] =
+        "{\n"
+        "  \"manifest\": 1,\n"
+        "  \"api\": 1,\n"
+        "  \"triggers\": [\n"
+        "    { \"when\": \"on_tick\",\n"
+        "      \"where\": [ [\"tick\", \"eq\", 1], [\"\", \"eq\", 1] ],\n"
+        "      \"actions\": [ [\"log\", \"kept\"] ] }\n"
+        "  ]\n"
+        "}\n";
+    char                    err[256];
+    char                    soft[256];
+    ScnManifestDoc         *doc;
+    ScnValidateResult      *sink;
+    ScnParseReport          rep;
+    const ScenarioManifest *m;
+
+    sink = (ScnValidateResult *)malloc(sizeof(*sink));
+    UT_ASSERT(sink != NULL);
+    memset(sink, 0, sizeof(*sink));
+    soft[0]     = '\0';
+    rep.soft    = soft;
+    rep.softLen = sizeof(soft);
+    rep.sink    = sink;
+
+    doc = parseText(kNoField, &rep, err, sizeof(err));
+    if (doc == NULL) {
+        free(sink);
+        UT_FAIL("a test naming no field was refused: %s", err);
+    }
+    if (!issueSays(sink, "triggers[0].where[1]", "names no field")) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("an empty field name was taken without a word under the row");
+    }
+    if (sawIssue(sink, "triggers[0].where[0]")) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the row that names a field was reported against as well");
+    }
+
+    /* The row is kept, empty name and all. An issue is not a refusal: the
+       trigger stands and the test beside it still holds. */
+    m = scnManifestValues(doc);
+    if (m->numTriggers != 1 || m->triggers[0].numWhere != 2) {
+        int kept = (int)m->triggers[0].numWhere;
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("%d tests were kept, expected both", kept);
+    }
+    if (strcmp(m->triggers[0].where[0].field, "tick") != 0 ||
+        m->triggers[0].where[1].field[0] != '\0') {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the two rows came back naming '%s' and '%s'",
+                m->triggers[0].where[0].field, m->triggers[0].where[1].field);
+    }
+    scnManifestFree(doc);
+    free(sink);
+    return 0;
+}
+
+/* ── A line too long for the action's text ────────────────────────── */
+
+/* An argument past the argument slot goes on the action's own text, which is
+   wider but is still a fixed width. A line past that width was cut with
+   nothing said, so a package could reach a server holding a shorter line than
+   its author wrote and no word anywhere about where the rest went.
+
+   It is the same fault as a name past the argument slot and says the same
+   sentence, with the other number in it. The Lua reader is held to that
+   wording under the same key by a case of its own: a package whose two forms
+   were cut differently would not survive scnManifestAgrees.
+
+   The line is built rather than typed, so the cap it is measured against is
+   the one the build holds. */
+int run_scenario_manifest_json_trigger_text_cut(void) {
+    char                    line[SCN_TRIGGER_TEXT_LEN + 32];
+    char                    text[SCN_TRIGGER_TEXT_LEN + 256];
+    char                    err[256];
+    char                    soft[256];
+    ScnManifestDoc         *doc;
+    ScnValidateResult      *sink;
+    ScnParseReport          rep;
+    const ScenarioManifest *m;
+
+    memset(line, 'x', sizeof(line) - 1);
+    line[sizeof(line) - 1] = '\0';
+    UT_ASSERT(strlen(line) >= SCN_TRIGGER_TEXT_LEN);
+
+    snprintf(text, sizeof(text),
+             "{\n"
+             "  \"manifest\": 1,\n"
+             "  \"api\": 1,\n"
+             "  \"triggers\": [\n"
+             "    { \"when\": \"on_tick\",\n"
+             "      \"actions\": [ [\"log\", \"%s\"] ] }\n"
+             "  ]\n"
+             "}\n", line);
+
+    sink = (ScnValidateResult *)malloc(sizeof(*sink));
+    UT_ASSERT(sink != NULL);
+    memset(sink, 0, sizeof(*sink));
+    soft[0]     = '\0';
+    rep.soft    = soft;
+    rep.softLen = sizeof(soft);
+    rep.sink    = sink;
+
+    doc = parseText(text, &rep, err, sizeof(err));
+    if (doc == NULL) {
+        free(sink);
+        UT_FAIL("a line past the action's text was refused: %s", err);
+    }
+    if (!issueSays(sink, "triggers[0].actions[0][0]", "is cut to fit")) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("a line past the action's text was cut without a word under "
+                "the argument");
+    }
+
+    /* Cut and kept, not dropped: the action still runs, with as much of the
+       line as there is room for. */
+    m = scnManifestValues(doc);
+    if (m->numTriggers != 1 || m->triggers[0].numActions != 1) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the trigger did not survive the cut");
+    }
+    if (!m->triggers[0].actions[0].args[0].inText) {
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the line did not move to the action's text");
+    }
+    if (strlen(m->triggers[0].actions[0].text) != SCN_TRIGGER_TEXT_LEN - 1) {
+        int held = (int)strlen(m->triggers[0].actions[0].text);
+        scnManifestFree(doc);
+        free(sink);
+        UT_FAIL("the action's text holds %d bytes", held);
+    }
+    scnManifestFree(doc);
+    free(sink);
+    return 0;
+}
+
+/* ── An operator that is none of the seven ────────────────────────── */
+
+/* A word the table cannot place, and a row that names no operator at all,
+   both read as SCN_TRIG_CMP_UNKNOWN rather than as eq. Reading them as eq
+   is what used to make a typo silently test something the author did not
+   write, and left the check nothing to refuse.
+
+   The round trip is the other half: an operator the table cannot name is
+   written as "", which comes back as UNKNOWN. A row that is wrong stays
+   wrong through a file rather than settling into eq on the way. */
+int run_scenario_manifest_json_trigger_operator(void) {
+    static const char kBadOp[] =
+        "{\n"
+        "  \"manifest\": 1,\n"
+        "  \"api\": 1,\n"
+        "  \"triggers\": [\n"
+        "    { \"when\": \"on_tick\",\n"
+        "      \"where\": [ [\"tick\", \"equalz\", 1],\n"
+        "                   [\"tick\", 7, 2],\n"
+        "                   [\"tick\", \"eq\", 3] ],\n"
+        "      \"actions\": [ [\"log\", \"tick\"] ] }\n"
+        "  ]\n"
+        "}\n";
+    /* Every one of the seven, to say that moving the enum left each word
+       reading as the value it always did. */
+    static const struct {
+        const char    *name;
+        ScnTrigCompare op;
+    } kSeven[] = {
+        { "eq",  SCN_TRIG_CMP_EQ  }, { "ne",  SCN_TRIG_CMP_NE  },
+        { "lt",  SCN_TRIG_CMP_LT  }, { "lte", SCN_TRIG_CMP_LTE },
+        { "gt",  SCN_TRIG_CMP_GT  }, { "gte", SCN_TRIG_CMP_GTE },
+        { "in",  SCN_TRIG_CMP_IN  },
+    };
+    char               err[256];
+    char               soft[256];
+    ScnManifestDoc    *first;
+    ScnManifestDoc    *again;
+    ScnValidateResult *sink;
+    ScnParseReport     rep;
+    const ScnTrigger  *t;
+    char              *text;
+    size_t             i;
+
+    /* ── The words, both ways ────────────────────────────────────── */
+
+    for (i = 0; i < sizeof(kSeven) / sizeof(kSeven[0]); i++) {
+        const char *name = scnManifestTrigOpName(kSeven[i].op);
+
+        UT_ASSERT_MSG(scnManifestTrigOpFrom(kSeven[i].name) == kSeven[i].op,
+                      "'%s' read as %d", kSeven[i].name,
+                      (int)scnManifestTrigOpFrom(kSeven[i].name));
+        UT_ASSERT_MSG(name != NULL, "%d has no name, expected '%s'",
+                      (int)kSeven[i].op, kSeven[i].name);
+        UT_ASSERT_MSG(strcmp(name, kSeven[i].name) == 0,
+                      "%d named as '%s', expected '%s'", (int)kSeven[i].op,
+                      name, kSeven[i].name);
+    }
+    UT_ASSERT_MSG(scnManifestTrigOpFrom("equalz") == SCN_TRIG_CMP_UNKNOWN,
+                  "a word none of the seven match read as %d",
+                  (int)scnManifestTrigOpFrom("equalz"));
+    UT_ASSERT_MSG(scnManifestTrigOpFrom("") == SCN_TRIG_CMP_UNKNOWN,
+                  "the empty word read as %d",
+                  (int)scnManifestTrigOpFrom(""));
+    UT_ASSERT_MSG(scnManifestTrigOpFrom(NULL) == SCN_TRIG_CMP_UNKNOWN,
+                  "no word at all read as %d",
+                  (int)scnManifestTrigOpFrom(NULL));
+    UT_ASSERT_MSG(scnManifestTrigOpName(SCN_TRIG_CMP_UNKNOWN) == NULL,
+                  "an operator the table cannot name was named '%s'",
+                  scnManifestTrigOpName(SCN_TRIG_CMP_UNKNOWN));
+
+    /* ── Out of a manifest ───────────────────────────────────────── */
+
+    sink = (ScnValidateResult *)malloc(sizeof(*sink));
+    UT_ASSERT(sink != NULL);
+    memset(sink, 0, sizeof(*sink));
+    soft[0]     = '\0';
+    rep.soft    = soft;
+    rep.softLen = sizeof(soft);
+    rep.sink    = sink;
+
+    first = parseText(kBadOp, &rep, err, sizeof(err));
+    if (first == NULL) {
+        free(sink);
+        UT_FAIL("a manifest with a bad operator was refused: %s", err);
+    }
+    t = &scnManifestValues(first)->triggers[0];
+    if (t->numWhere != 3) {
+        scnManifestFree(first);
+        free(sink);
+        UT_FAIL("%u tests were kept, expected 3", (unsigned)t->numWhere);
+    }
+    /* The typo. The decode takes the row and keeps the field and the value;
+       it is the operator alone that could not be placed. */
+    if (t->where[0].op != SCN_TRIG_CMP_UNKNOWN ||
+        strcmp(t->where[0].field, "tick") != 0 ||
+        t->where[0].value.num != 1.0) {
+        scnManifestFree(first);
+        free(sink);
+        UT_FAIL("'equalz' decoded as operator %d", (int)t->where[0].op);
+    }
+    /* A row naming no operator at all, which the decode reports and leaves
+       as the same value. */
+    if (t->where[1].op != SCN_TRIG_CMP_UNKNOWN) {
+        scnManifestFree(first);
+        free(sink);
+        UT_FAIL("a row naming no operator decoded as %d",
+                (int)t->where[1].op);
+    }
+    if (!sawIssue(sink, "triggers[0].where[1]")) {
+        scnManifestFree(first);
+        free(sink);
+        UT_FAIL("a row naming no operator was not reported");
+    }
+    /* A word the table does know is untouched by any of it, and the decode
+       says nothing about the row. */
+    if (t->where[2].op != SCN_TRIG_CMP_EQ) {
+        scnManifestFree(first);
+        free(sink);
+        UT_FAIL("'eq' decoded as %d", (int)t->where[2].op);
+    }
+    if (sawIssue(sink, "triggers[0].where[2]")) {
+        scnManifestFree(first);
+        free(sink);
+        UT_FAIL("a row the decode could take was reported against");
+    }
+
+    /* ── And back through a file ─────────────────────────────────── */
+
+    text = scnManifestWrite(first, err, sizeof(err));
+    if (text == NULL) {
+        scnManifestFree(first);
+        free(sink);
+        UT_FAIL("the manifest could not be written: %s", err);
+    }
+    memset(sink, 0, sizeof(*sink));
+    again = parseText(text, &rep, err, sizeof(err));
+    free(text);
+    scnManifestFree(first);
+    if (again == NULL) {
+        free(sink);
+        UT_FAIL("what was written would not parse: %s", err);
+    }
+    t = &scnManifestValues(again)->triggers[0];
+    if (t->where[0].op != SCN_TRIG_CMP_UNKNOWN ||
+        t->where[1].op != SCN_TRIG_CMP_UNKNOWN) {
+        scnManifestFree(again);
+        free(sink);
+        UT_FAIL("the round trip made the operators %d and %d",
+                (int)t->where[0].op, (int)t->where[1].op);
+    }
+    if (t->where[2].op != SCN_TRIG_CMP_EQ) {
+        scnManifestFree(again);
+        free(sink);
+        UT_FAIL("the round trip made 'eq' %d", (int)t->where[2].op);
+    }
+    /* What went out for an operator with no name is a string, so the row
+       comes back as one the decode could take whole. The refusal is the
+       validator's, once, rather than this reader's a second time. */
+    if (sawIssue(sink, "triggers[0].where[0]") ||
+        sawIssue(sink, "triggers[0].where[1]")) {
+        scnManifestFree(again);
+        free(sink);
+        UT_FAIL("a written-out unnamed operator came back as a row the "
+                "decode could not take");
+    }
+    scnManifestFree(again);
+
+    free(sink);
     return 0;
 }

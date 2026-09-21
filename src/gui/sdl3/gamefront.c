@@ -429,6 +429,32 @@ static bool s_isLanOnly = FALSE;
  * moment the outer loop notices it. */
 static bool s_joinAttemptFailed = FALSE;
 
+/* Ask the player for the password of the game being joined and store it in
+ * the password global that clientSimConnectUdp sends. wrongBefore adds the
+ * incorrect-password line above the request, for a retry after the server
+ * rejected the previous entry. Returns FALSE when the player cancelled, in
+ * which case the global is left as it was. Runs before any in-game frame
+ * loop exists, so it uses the blocking prompt beside imguiMessageBoxEx
+ * rather than an in-frame modal. */
+static bool gameFrontAskJoinPassword(bool wrongBefore) {
+  char msg[512];
+  char entry[MAP_STR_SIZE];
+  if (wrongBefore) {
+    SDL_snprintf(msg, sizeof(msg), "%s\n\n%s",
+                 langGetText(NETERR_PASSWORDWRONG),
+                 langGetText(STR_DLGPASSWORD_BLURB));
+  } else {
+    SDL_strlcpy(msg, langGetText(STR_DLGPASSWORD_BLURB), sizeof(msg));
+  }
+  entry[0] = '\0';
+  if (imguiPasswordPrompt(langGetText(STR_DLGPASSWORD_TITLE), msg,
+                          entry, sizeof(entry)) != IMGUI_MSG_RESULT_OK) {
+    return FALSE;
+  }
+  SDL_strlcpy(password, entry, sizeof(password));
+  return TRUE;
+}
+
 /* Server-authoritative single-player state */
 static ServerSim *spServerSim = NULL;
 /* The scenario attached to spServerSim, if the map it was built from has
@@ -1269,74 +1295,98 @@ static bool gameFrontDialogs(void) {
        * the Spectate button fired (same path Join uses). The tracker is
        * gated like a join (Internet uses it for NAT traversal, LAN doesn't);
        * no WBN token — a spectator registers no identity. */
-      ClientSim *spectatorSim = clientSimAlloc();
-      clientSimCreate(spectatorSim);
-      clientSimConnectUdp(spectatorSim, gameFrontUdpAddress, gameFrontTargetUdp,
-                          gameFrontName, winbolonetGetCountryCode(), password,
-                          "", "", FALSE,
-                          !s_isLanOnly ? gameFrontTrackerAddr : "",
-                          gameFrontTrackerPort,
-                          /*spectator*/ TRUE);
-      if (clientSimGetConnectState(spectatorSim) == CLIENT_CONNECT_ERROR) {
-        const char *reason = clientSimGetConnectErrorReason(spectatorSim);
-        imguiMessageBoxEx(DIALOG_BOX_TITLE,
-                          (reason && reason[0]) ? reason
-                                                : langGetText(NETERR_SERVERCONNECT),
-                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-      } else {
-        /* clientSimConnectUdp only fires the JOIN; the spectator accept — which
-         * carries the initial live/delayed mode byte — lands on a later
-         * transport tick. Pump until the handshake reaches SPECTATING (so the
-         * mode bit is known before the first view is chosen) or it fails, the
-         * same wait the join path runs before entering the lobby. */
-        int specWaitTicks = 0;
-        while (specWaitTicks < 1500) {  /* 30 second timeout */
-          ClientConnectState ss = clientSimGetConnectState(spectatorSim);
-          if (ss == CLIENT_CONNECT_SPECTATING) break;
-          if (ss == CLIENT_CONNECT_ERROR ||
-              ss == CLIENT_CONNECT_SERVER_SHUTDOWN ||
-              ss == CLIENT_CONNECT_KICKED) {
-            break;
-          }
-          clientSimNetTick(spectatorSim);
-          SDL_Delay(20);
-          specWaitTicks++;
-        }
-
-        if (clientSimGetConnectState(spectatorSim) != CLIENT_CONNECT_SPECTATING) {
+      /* A spectator passes the server's password check like a player. The
+       * browser's Spectate button runs no INFO pre-flight, so the first
+       * request goes out with an empty password and the incorrect-password
+       * reject is what asks for one; a wrong entry asks again. A spectator
+       * is never the host, so the global always starts empty here. */
+      password[0] = '\0';
+      ClientSim *spectatorSim;
+      for (;;) {
+        spectatorSim = clientSimAlloc();
+        clientSimCreate(spectatorSim);
+        clientSimConnectUdp(spectatorSim, gameFrontUdpAddress, gameFrontTargetUdp,
+                            gameFrontName, winbolonetGetCountryCode(), password,
+                            "", "", FALSE,
+                            !s_isLanOnly ? gameFrontTrackerAddr : "",
+                            gameFrontTrackerPort,
+                            /*spectator*/ TRUE);
+        if (clientSimGetConnectState(spectatorSim) == CLIENT_CONNECT_ERROR) {
           const char *reason = clientSimGetConnectErrorReason(spectatorSim);
           imguiMessageBoxEx(DIALOG_BOX_TITLE,
                             (reason && reason[0]) ? reason
                                                   : langGetText(NETERR_SERVERCONNECT),
                             IMGUI_MSG_ERROR, IMGUI_MSG_OK);
         } else {
-          /* Dual-mode session: the live read-only lobby while the server is in
-           * lobby/countdown, the delayed game once it starts. The mode follows
-           * which feed is arriving (clientSimSpectatorIsLiveLobby — seeded from
-           * the accept byte, flipped by the feeding channel). imguiLobbyShow
-           * returns 1 when the delayed feed begins at game start (a spectator
-           * never reaches the RUNNING phase the player path keys on, since the
-           * server unsubscribes it before that publish); spectatorRun returns
-           * true when live lobby control resumes after the delayed game drains.
-           * Any other return (user left / lost connection / quit) ends it. */
-          for (;;) {
-            if (clientSimSpectatorIsLiveLobby(spectatorSim)) {
-              if (imguiLobbyShow(spectatorSim) != 1) break;
-            } else if (!spectatorRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(),
-                                     spectatorSim, gameFrontUdpAddress,
-                                     gameFrontTargetUdp)) {
+          /* clientSimConnectUdp only fires the JOIN; the spectator accept — which
+           * carries the initial live/delayed mode byte — lands on a later
+           * transport tick. Pump until the handshake reaches SPECTATING (so the
+           * mode bit is known before the first view is chosen) or it fails, the
+           * same wait the join path runs before entering the lobby. */
+          int specWaitTicks = 0;
+          while (specWaitTicks < 1500) {  /* 30 second timeout */
+            ClientConnectState ss = clientSimGetConnectState(spectatorSim);
+            if (ss == CLIENT_CONNECT_SPECTATING) break;
+            if (ss == CLIENT_CONNECT_ERROR ||
+                ss == CLIENT_CONNECT_SERVER_SHUTDOWN ||
+                ss == CLIENT_CONNECT_KICKED) {
               break;
             }
+            clientSimNetTick(spectatorSim);
+            SDL_Delay(20);
+            specWaitTicks++;
           }
-          /* spectatorRun retitles the borrowed window for the live session;
-           * restore the normal app title now that the session has ended. */
-          SDL_SetWindowTitle(sdl3DrawGetWindow(), WIND_TITLE);
+
+          if (clientSimGetConnectState(spectatorSim) != CLIENT_CONNECT_SPECTATING) {
+            const char *reason = clientSimGetConnectErrorReason(spectatorSim);
+            if (clientSimGetConnectErrorLangId(spectatorSim) == STR_REJECT_INCORRECT_PASSWORD) {
+              /* First reject means "this game has a password"; a later one
+               * means the entry was wrong. Cancel falls out with no box. */
+              bool wrongBefore = (password[0] != '\0');
+              clientSimDisconnect(spectatorSim);
+              clientSimDestroy(spectatorSim);
+              if (gameFrontAskJoinPassword(wrongBefore)) continue;
+              spectatorSim = NULL;
+            } else {
+              imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                                (reason && reason[0]) ? reason
+                                                      : langGetText(NETERR_SERVERCONNECT),
+                                IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+            }
+          } else {
+            /* Dual-mode session: the live read-only lobby while the server is in
+             * lobby/countdown, the delayed game once it starts. The mode follows
+             * which feed is arriving (clientSimSpectatorIsLiveLobby — seeded from
+             * the accept byte, flipped by the feeding channel). imguiLobbyShow
+             * returns 1 when the delayed feed begins at game start (a spectator
+             * never reaches the RUNNING phase the player path keys on, since the
+             * server unsubscribes it before that publish); spectatorRun returns
+             * true when live lobby control resumes after the delayed game drains.
+             * Any other return (user left / lost connection / quit) ends it. */
+            for (;;) {
+              if (clientSimSpectatorIsLiveLobby(spectatorSim)) {
+                if (imguiLobbyShow(spectatorSim) != 1) break;
+              } else if (!spectatorRun(sdl3DrawGetWindow(), sdl3DrawGetRenderer(),
+                                       spectatorSim, gameFrontUdpAddress,
+                                       gameFrontTargetUdp)) {
+                break;
+              }
+            }
+            /* spectatorRun retitles the borrowed window for the live session;
+             * restore the normal app title now that the session has ended. */
+            SDL_SetWindowTitle(sdl3DrawGetWindow(), WIND_TITLE);
+          }
         }
+        break;
       }
       /* Caller owns the ClientSim lifetime (spectatorRun never disconnects):
-       * tear it down so the socket/transport is released before returning. */
-      clientSimDisconnect(spectatorSim);
-      clientSimDestroy(spectatorSim);
+       * tear it down so the socket/transport is released before returning.
+       * NULL when the password prompt was cancelled: that path already
+       * tore its ClientSim down before asking. */
+      if (spectatorSim != NULL) {
+        clientSimDisconnect(spectatorSim);
+        clientSimDestroy(spectatorSim);
+      }
       /* Same as the editor and the viewer above: spectatorRun owns the loop
        * while it is up, so a quit taken there stops with it.  Asked after the
        * disconnect so the socket is released either way. */
@@ -1543,117 +1593,148 @@ bool gameFrontSetDlgState(openingStates newState) {
         s_joinAttemptFailed = TRUE;
         return FALSE;
       }
+      /* The password global is only meaningful for a host joining its own
+       * server (set by the game setup dialog and sent with the server
+       * config). For a remote join it starts empty, so a password entered
+       * for an earlier host or join never rides this JOIN_REQUEST. The
+       * same INFO reply that carried the version says whether the server
+       * wants a password: ask now, before the join, rather than sending an
+       * empty one and reading the reject. Cancel ends the attempt quietly,
+       * like the version and reachability failures above but with no
+       * error box. */
+      password[0] = '\0';
+      if (dpr.password && !gameFrontAskJoinPassword(FALSE)) {
+        gameFrontShutdownServer();
+        dlgState = prevState;
+        s_joinAttemptFailed = TRUE;
+        return FALSE;
+      }
     }
 
     prefsFlush();
     gameFrontValidateWbnBeforeJoin();
-    humanSim = clientSimAlloc(); clientSimCreate(humanSim);
-    clientSimSetIsLanOnly(humanSim, s_isLanOnly);
-    frontEndSetActiveClientSim(humanSim);
-    if (gameFrontRemeber) clientSimSetMyLastPlayerName(humanSim, gameFrontName);
-    fprintf(stderr, "[gameFront] openUdpJoin: addr=%s port=%u myPort=%u\n",
-            gameFrontUdpAddress, (unsigned)gameFrontTargetUdp, (unsigned)gameFrontMyUdp);
-    fflush(stderr);
+    /* One pass per join attempt. The loop only repeats when the server
+     * rejected the password and the player typed another one; every other
+     * outcome leaves through a break. */
+    for (;;) {
+      const char *failFallback = NULL;
+      bool joined = FALSE;
+      humanSim = clientSimAlloc(); clientSimCreate(humanSim);
+      clientSimSetIsLanOnly(humanSim, s_isLanOnly);
+      frontEndSetActiveClientSim(humanSim);
+      if (gameFrontRemeber) clientSimSetMyLastPlayerName(humanSim, gameFrontName);
+      fprintf(stderr, "[gameFront] openUdpJoin: addr=%s port=%u myPort=%u\n",
+              gameFrontUdpAddress, (unsigned)gameFrontTargetUdp, (unsigned)gameFrontMyUdp);
+      fflush(stderr);
 
-    /* Create UDP client transport. The transport drives the JOIN
-     * handshake, map download + install, and inline snapshot apply
-     * by itself — the frontend only ticks it until the join state
-     * settles or inLobby flips true. */
-    /* Match the Internet-host config in gameFrontSetupServer: an Internet
-     * join turns the tracker on (NAT traversal + external-address
-     * resolution) and, if the player is signed in, sends the WBN identity
-     * token. LAN joins and SP/tutorial stay private — no tracker, no WBN.
-     * Gated on s_isLanOnly (false only for Internet games), not on the old
-     * buried default-off "Use Tracker" checkbox. WBN from the join side
-     * carries only the player's own identity — there is no server being
-     * registered here — so it follows the sign-in state. */
-    clientSimConnectUdp(humanSim, gameFrontUdpAddress,
-                        gameFrontTargetUdp,
-                        gameFrontName,
-                        winbolonetGetCountryCode(),
-                        password,
-                        (!s_isLanOnly && gameFrontWbnUse) ? gameFrontWbnToken : "",
-                        "",
-                        wantRejoin,
-                        !s_isLanOnly ? gameFrontTrackerAddr : "",
-                        gameFrontTrackerPort,
-                        /*spectator*/ false);
-    if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
-      const char *reason = clientSimGetConnectErrorReason(humanSim);
-      imguiMessageBoxEx(DIALOG_BOX_TITLE,
-                        (reason && reason[0]) ? reason : langGetText(STR_GAMEFRONTERR_JOINGAME),
-                        IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-      clientSimDestroy(humanSim);
-      humanSim = NULL;
+      /* Create UDP client transport. The transport drives the JOIN
+       * handshake, map download + install, and inline snapshot apply
+       * by itself — the frontend only ticks it until the join state
+       * settles or inLobby flips true. */
+      /* Match the Internet-host config in gameFrontSetupServer: an Internet
+       * join turns the tracker on (NAT traversal + external-address
+       * resolution) and, if the player is signed in, sends the WBN identity
+       * token. LAN joins and SP/tutorial stay private — no tracker, no WBN.
+       * Gated on s_isLanOnly (false only for Internet games), not on the old
+       * buried default-off "Use Tracker" checkbox. WBN from the join side
+       * carries only the player's own identity — there is no server being
+       * registered here — so it follows the sign-in state. */
+      clientSimConnectUdp(humanSim, gameFrontUdpAddress,
+                          gameFrontTargetUdp,
+                          gameFrontName,
+                          winbolonetGetCountryCode(),
+                          password,
+                          (!s_isLanOnly && gameFrontWbnUse) ? gameFrontWbnToken : "",
+                          "",
+                          wantRejoin,
+                          !s_isLanOnly ? gameFrontTrackerAddr : "",
+                          gameFrontTrackerPort,
+                          /*spectator*/ false);
+      if (clientSimGetConnectState(humanSim) == CLIENT_CONNECT_ERROR) {
+        failFallback = langGetText(STR_GAMEFRONTERR_JOINGAME);
+      } else {
+        /* Wait for the join handshake (30s timeout). Landing accepts either a
+         * running game or entry into the server lobby — see clientFrontAwaitJoin. */
+        if (clientFrontAwaitJoin(humanSim, 1500)) {
+          joined = TRUE;
+          udpPlayerNum = clientSimGetServerPlayerNum(humanSim);
+          udpTransportActive = TRUE;
+
+          /* Store server address in ClientSim for brain info */
+          {
+            struct sockaddr_in saddr;
+            memset(&saddr, 0, sizeof(saddr));
+            saddr.sin_family = AF_INET;
+            saddr.sin_addr.s_addr = inet_addr(gameFrontUdpAddress);
+            if (saddr.sin_addr.s_addr == INADDR_NONE) {
+              bolo_resolve_ipv4(gameFrontUdpAddress, &saddr.sin_addr);
+            }
+            clientSimSetServerAddress(humanSim, saddr.sin_addr);
+            clientSimSetServerPort(humanSim, gameFrontTargetUdp);
+          }
+
+          clientSimSetChatSendFunc(humanSim, gameFrontChatSendCallback);
+          clientSimSetNameChangeSendFunc(humanSim, gameFrontNameChangeSendCallback);
+          clientSimSetAllianceRequestFunc(humanSim, gameFrontAllianceRequestCallback);
+          clientSimSetAllianceAcceptFunc(humanSim, gameFrontAllianceAcceptCallback);
+          clientSimSetAllianceLeaveFunc(humanSim, gameFrontAllianceLeaveCallback);
+          clientSimSetLockToggleSendFunc(humanSim, gameFrontLockToggleCallback);
+
+          /* The lobby landing (netLobby — lobby UI, map downloads in the
+           * background, ready button gated on the real mapDownloadComplete) is
+           * settled inside clientFrontAwaitJoin. Only the no-lobby path has extra
+           * work: the transport already installed the map inline on MAP_DOWNLOAD
+           * completion, and the first snapshot apply fires the viewport
+           * finalisation — update Steam presence now that we're in a game. */
+          if (!clientSimIsInLobby(humanSim)) {
+            gameFrontUpdateSteamPresence(humanSim);
+          }
+          /* Hosting our own game on a map with a scenario: seat the lobby the
+           * scenario asks for, now that the host's own join has landed. Its
+           * template reached the sim at the attach in gameFrontSetupServer,
+           * and the settings that go with it were applied there; the seating
+           * waits until here because a seat takes the first free slot and the
+           * host has to hold slot 0 — the lobby's host role starts there, and
+           * a seat sitting in it would leave the host unable to change a
+           * setting or start the game. spServerSimActive tells a host joining
+           * its own server from somebody joining another one — a single-player
+           * game sets it too, but never comes through openUdpJoin. Under the
+           * mutex: the host timer is already ticking the sim. */
+          if (spServerSimActive && spScenarioHost != NULL) {
+            threadsWaitForMutex();
+            serverSimScenarioSeatLobby(spServerSim);
+            threadsReleaseMutex();
+          }
+          dlgState = openFinished;
+        } else {
+          failFallback = langGetText(NETERR_SERVERCONNECT);
+        }
+      }
+      if (joined) break;
+
+      /* The join failed. An incorrect-password reject on a remote join asks
+       * again and retries with a fresh ClientSim; the host joining its own
+       * server sent the password it configured, so a reject there is an
+       * error like any other. Cancel at the prompt ends the attempt without
+       * an error box: the player already knows why. */
+      if (!spServerSimActive &&
+          clientSimGetConnectErrorLangId(humanSim) == STR_REJECT_INCORRECT_PASSWORD) {
+        clientSimDestroy(humanSim);
+        humanSim = NULL;
+        if (gameFrontAskJoinPassword(TRUE)) continue;
+      } else {
+        const char *reason = clientSimGetConnectErrorReason(humanSim);
+        imguiMessageBoxEx(DIALOG_BOX_TITLE,
+                          (reason && reason[0]) ? reason : failFallback,
+                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
+        clientSimDestroy(humanSim);
+        humanSim = NULL;
+      }
       gameFrontShutdownServer();
       dlgState = prevState;
       s_joinAttemptFailed = TRUE;
       returnValue = FALSE;
-    } else {
-      /* Wait for the join handshake (30s timeout). Landing accepts either a
-       * running game or entry into the server lobby — see clientFrontAwaitJoin. */
-      if (clientFrontAwaitJoin(humanSim, 1500)) {
-        udpPlayerNum = clientSimGetServerPlayerNum(humanSim);
-        udpTransportActive = TRUE;
-
-        /* Store server address in ClientSim for brain info */
-        {
-          struct sockaddr_in saddr;
-          memset(&saddr, 0, sizeof(saddr));
-          saddr.sin_family = AF_INET;
-          saddr.sin_addr.s_addr = inet_addr(gameFrontUdpAddress);
-          if (saddr.sin_addr.s_addr == INADDR_NONE) {
-            bolo_resolve_ipv4(gameFrontUdpAddress, &saddr.sin_addr);
-          }
-          clientSimSetServerAddress(humanSim, saddr.sin_addr);
-          clientSimSetServerPort(humanSim, gameFrontTargetUdp);
-        }
-
-        clientSimSetChatSendFunc(humanSim, gameFrontChatSendCallback);
-        clientSimSetNameChangeSendFunc(humanSim, gameFrontNameChangeSendCallback);
-        clientSimSetAllianceRequestFunc(humanSim, gameFrontAllianceRequestCallback);
-        clientSimSetAllianceAcceptFunc(humanSim, gameFrontAllianceAcceptCallback);
-        clientSimSetAllianceLeaveFunc(humanSim, gameFrontAllianceLeaveCallback);
-        clientSimSetLockToggleSendFunc(humanSim, gameFrontLockToggleCallback);
-
-        /* The lobby landing (netLobby — lobby UI, map downloads in the
-         * background, ready button gated on the real mapDownloadComplete) is
-         * settled inside clientFrontAwaitJoin. Only the no-lobby path has extra
-         * work: the transport already installed the map inline on MAP_DOWNLOAD
-         * completion, and the first snapshot apply fires the viewport
-         * finalisation — update Steam presence now that we're in a game. */
-        if (!clientSimIsInLobby(humanSim)) {
-          gameFrontUpdateSteamPresence(humanSim);
-        }
-        /* Hosting our own game on a map with a scenario: seat the lobby the
-         * scenario asks for, now that the host's own join has landed. Its
-         * template reached the sim at the attach in gameFrontSetupServer,
-         * and the settings that go with it were applied there; the seating
-         * waits until here because a seat takes the first free slot and the
-         * host has to hold slot 0 — the lobby's host role starts there, and
-         * a seat sitting in it would leave the host unable to change a
-         * setting or start the game. spServerSimActive tells a host joining
-         * its own server from somebody joining another one — a single-player
-         * game sets it too, but never comes through openUdpJoin. Under the
-         * mutex: the host timer is already ticking the sim. */
-        if (spServerSimActive && spScenarioHost != NULL) {
-          threadsWaitForMutex();
-          serverSimScenarioSeatLobby(spServerSim);
-          threadsReleaseMutex();
-        }
-        dlgState = openFinished;
-      } else {
-        const char *reason = clientSimGetConnectErrorReason(humanSim);
-        imguiMessageBoxEx(DIALOG_BOX_TITLE,
-                          (reason && reason[0]) ? reason : langGetText(NETERR_SERVERCONNECT),
-                          IMGUI_MSG_ERROR, IMGUI_MSG_OK);
-        clientSimDestroy(humanSim);
-        humanSim = NULL;
-        gameFrontShutdownServer();
-        dlgState = prevState;
-        s_joinAttemptFailed = TRUE;
-        returnValue = FALSE;
-      }
+      break;
     }
   } else if ((dlgState == openInternetManual || dlgState == openInternetSetup) &&
              newState == openWelcome) {
@@ -2153,14 +2234,6 @@ void gameFrontSetUdpOptions(char *pn, char *add, unsigned short theirUdp, unsign
   strcpy(gameFrontUdpAddress, add);
   gameFrontMyUdp = myUdp;
   gameFrontTargetUdp = theirUdp;
-}
-
-void gameFrontGetPassword(char *pword) {
-  password[0] = '\0';
-  sdl3ImguiShowPassword();
-  /* TODO: this needs to block until the ImGui modal returns.
-   * For now just return the current password. */
-  strcpy(pword, password);
 }
 
 void gameFrontGetPlayerName(char *pn) {
@@ -2995,7 +3068,10 @@ void gameFrontShutdownServer(void) {
    * stalling the leave. serverInstanceShutdown's own quit follows harmlessly. */
   serverDedicatedLogStashCurrentRound();
   if (serverDedicatedLogHasPendingUpload() && winbolonetIsRunning()) {
-    winbolonetEndSession();
+    /* A bounded drain: the host is waiting on this leave, and an
+     * unreachable WinBolo.net would otherwise hold it for as long as the
+     * queue is deep. Whatever is left rides the next session. */
+    winbolonetEndSession(/*drainMaxMs*/ 2000);
     httpSetLogUploadTimeout(10);
     serverDedicatedLogFlushPendingUpload();
     httpSetLogUploadTimeout(0);
@@ -3819,6 +3895,21 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("SETTINGS", "SimplifiedOverviewOnly", "No", buff, FILENAME_MAX);
   gfxSetSimplifiedOverviewOnly(YESNO_TO_TRUEFALSE(buff[0]));
 
+  /* Fog of war look: 0 Grey / 1 Darker / 2 Darker with fog edge / 3 None.
+     The fallback is "-1" rather than a style number so that a missing key and
+     an unreadable one take the same road out - both fail the range check below
+     and land on FOG_STYLE_DEFAULT, which is the one place the default is
+     written down.  A player who has picked keeps their pick: only an absent or
+     out-of-range value is replaced. */
+  prefsGetString("SETTINGS", "FogStyle", "-1", buff, FILENAME_MAX);
+  {
+    int v = atoi(buff);
+    if (v < (int)FOG_STYLE_GREY || v >= FOG_STYLE_COUNT) {
+      v = (int)FOG_STYLE_DEFAULT;
+    }
+    gfxSetFogStyle((FogStyle)v);
+  }
+
   /* Gamepad — Path B rebindable action table.  Start from defaults so
      missing prefs keys leave each action at its historical mapping;
      present keys overlay on top.  inputGamepadInit may run after this
@@ -4507,6 +4598,8 @@ void gameFrontPutPrefs(keyItems *keys) {
                  TRUEFALSE_TO_STR(gfxGetSimplifiedZoomOut()));
   prefsSetString("SETTINGS", "SimplifiedOverviewOnly",
                  TRUEFALSE_TO_STR(gfxGetSimplifiedOverviewOnly()));
+  intToStr((int)gfxGetFogStyle(), buff, sizeof(buff));
+  prefsSetString("SETTINGS", "FogStyle", buff);
 
   /* Gamepad — Path B rebindable action table.  Four keys per action:
      gpb_<name>_pri_{kind,code} and gpb_<name>_sec_{kind,code} where

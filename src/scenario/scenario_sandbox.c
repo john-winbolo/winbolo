@@ -114,6 +114,10 @@ typedef struct {
    Lua's own ud, which is neither ours to free nor ours to count in. A script
    cannot reach the registry — debug is not among the libraries opened. */
 #define SCN_SANDBOX_STATE_KEY "winbolo.scenario.state"
+/* The base functions the trigger router calls, kept as the opener installed
+ * them. A script is free to reassign the globals of the same names, and the
+ * router loads after the script has run. */
+#define SCN_SANDBOX_BASE_KEY  "winbolo.scenario.base"
 
 static ScnSandboxState *scnSandboxStateOf(lua_State *L) {
     ScnSandboxState *s;
@@ -848,6 +852,22 @@ void scnSandboxOpenLibs(lua_State *L) {
 
     scnSandboxTrimGlobals(L);
 
+    /* The copies the router reads its base functions from. Taken now, off
+       the whitelist just applied and before any chunk has run, so what the
+       router calls under these names is what the opener installed whatever
+       the script later assigns to the globals. */
+    {
+        static const char *const kBase[] = { "type", "select", "rawget" };
+        size_t i;
+
+        lua_createtable(L, 0, (int)(sizeof(kBase) / sizeof(kBase[0])));
+        for (i = 0; i < sizeof(kBase) / sizeof(kBase[0]); i++) {
+            lua_getglobal(L, kBase[i]);
+            lua_setfield(L, -2, kBase[i]);
+        }
+        lua_setfield(L, LUA_REGISTRYINDEX, SCN_SANDBOX_BASE_KEY);
+    }
+
     /* The other half of the loaders: dump turns a function back into
        bytecode, which the chunk loader refuses to take. */
     scnSandboxClearField(L, LUA_STRLIBNAME, "dump");
@@ -890,4 +910,14 @@ void scnSandboxOpenLibs(lua_State *L) {
 
 void scnSandboxSealRandom(lua_State *L) {
     scnSandboxClearField(L, LUA_MATHLIBNAME, "randomseed");
+}
+
+void scnSandboxPushBase(lua_State *L) {
+    lua_getfield(L, LUA_REGISTRYINDEX, SCN_SANDBOX_BASE_KEY);
+    if (!lua_istable(L, -1)) {
+        /* A state opened some other way: the router falls back to the
+           globals, which is what it did before the copies were kept. */
+        lua_pop(L, 1);
+        lua_newtable(L);
+    }
 }

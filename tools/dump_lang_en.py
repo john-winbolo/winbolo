@@ -63,7 +63,7 @@ def parse_lang_h(path):
     # short, so the table looks internally consistent and the string is gone.
     # That is how STR_DLGGAMESETUP_RADIO4 was lost once already.
     define_re = re.compile(
-        r"^\s*#define\s+([A-Z][A-Z0-9_]*)\s+(\d+)\s*(?:/\*.*?\*/|//.*)?\s*$")
+        r"^\s*#define\s+([A-Z][A-Za-z0-9_]*)\s+(\d+)\s*(?:/\*.*?\*/|//.*)?\s*$")
     comment_re = re.compile(r"^\s*/\*\s*(.+?)\s*\*/\s*$")
 
     id_to_name = {}

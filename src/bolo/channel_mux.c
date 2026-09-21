@@ -161,6 +161,20 @@ void channelTick(ChannelMux *m, uint32_t tick, uint32_t rttMs) {
     m->rttMs = rttMs;
 }
 
+void channelChargeBestEffortLeftover(ChannelMux *m) {
+    int ch;
+    if (m == NULL) {
+        return;
+    }
+    for (ch = 0; ch < CHANNEL_COUNT; ch++) {
+        ChannelState *c = &m->ch[ch];
+        if (!c->bestEffort) {
+            continue;
+        }
+        m->beBudgetSkipped[ch] += (c->nextSeq - c->txNext);
+    }
+}
+
 bool channelSend(ChannelMux *m, uint8_t ch, const uint8_t *msg, uint16_t len) {
     if (m == NULL || ch >= CHANNEL_COUNT || ch == CHANNEL_BULK) {
         return false; /* usage error: bad id or wrong flavor */
@@ -317,8 +331,28 @@ int channelBuildFrame(ChannelMux *m, uint8_t *buf, int budget) {
     uint8_t segCount = 0;
 
     uint32_t rto = channelRtoTicks(m);
-    for (ch = 0; ch < CHANNEL_COUNT; ch++) {
-        ChannelState *c = &m->ch[ch];
+    /* Segment order, and the one place it is decided. Not channel id order:
+     * that puts CHANNEL_BULK (3) ahead of the two best-effort channels
+     * (4 effect, 5 voice), and a live map transfer has as many segments
+     * ready as the budget of every frame in the tick will hold, so effect
+     * and voice were framed only once bulk ran out - which during a
+     * download is never. Bulk is the one channel whose work is always
+     * waiting and never urgent, so it is framed last and takes what the
+     * others leave.
+     *
+     * This is an ordering inside one frame, not a change to any channel's
+     * delivery: every segment carries its own channel id and sequence, each
+     * channel keeps its own window, and a bulk segment that misses a frame
+     * is framed by the next one. */
+    static const uint8_t frameOrder[CHANNEL_COUNT] = {
+        CHANNEL_GAME, CHANNEL_MAP, CHANNEL_CONTROL,
+        CHANNEL_GAME_EFFECT, CHANNEL_VOICE, CHANNEL_BULK
+    };
+    int orderIdx;
+    for (orderIdx = 0; orderIdx < CHANNEL_COUNT; orderIdx++) {
+        ChannelState *c;
+        ch = frameOrder[orderIdx];
+        c = &m->ch[ch];
         if (c->bestEffort) {
             /* Drain-and-clear: frame each pending segment once, free its ring
              * slot, advance the cursor. No ack listing, no RTO, no retransmit
@@ -329,11 +363,7 @@ int channelBuildFrame(ChannelMux *m, uint8_t *buf, int budget) {
                 uint16_t slen = c->sendLen[idx];
                 if (segCount == 255 ||
                     pos + CHANNEL_SEG_HEADER_SIZE + slen > budget) {
-                    /* Tight budget — the rest drain next frame. Counted per
-                     * segment left behind: the ring is shallow, so a run of
-                     * frames that all end here loses the oldest of them. */
-                    m->beBudgetSkipped[ch] += (c->nextSeq - seq);
-                    break;
+                    break; /* tight budget — the rest drain on a later frame */
                 }
                 buf[pos] = (uint8_t)ch;
                 packU32(buf + pos + 1, seq);

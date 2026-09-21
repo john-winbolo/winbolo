@@ -28,9 +28,10 @@
  *  scenario_host.c, which sees both, is where an index
  *  becomes an op.
  *
- *  triggers is deliberately not here. Its schema is not
- *  settled, so the parser reads nothing from it and a script
- *  that carries one is not refused for having it.
+ *  triggers are carried here and both readers fill them:
+ *  scnReadManifest out of a script's own table and the JSON
+ *  decoder out of manifest.json. A package stating them in
+ *  both forms is held to stating the same thing in each.
  *********************************************************/
 
 #ifndef SCENARIO_MANIFEST_H
@@ -83,8 +84,12 @@
 #define SCN_BRAIN_LEN 256
 
 /* Room for every rule the table can name. scenario_host.c checks this
- * covers the rule list, so a rule added to the list cannot overflow it. */
-#define SCN_MANIFEST_RULES_MAX 128
+ * covers the rule list, so a rule added to the list cannot overflow it.
+ * Held well clear of the list's own length rather than trimmed to it: the
+ * check is a static assertion, so a run of rules that outgrew this number
+ * would stop the build rather than fail anything at runtime, and the array
+ * it sizes is sixteen bytes a row. */
+#define SCN_MANIFEST_RULES_MAX 256
 
 /* One rule the table sets: which rule, and what it was set to. The value
  * is a double because sixteen of the rules are float-valued and the rest
@@ -136,6 +141,109 @@ typedef struct {
     uint8_t w, h;
 } ScnManifestRegion;
 
+/* ── Triggers ──────────────────────────────────────────────────────
+ *
+ * One trigger is a hook to listen on, a list of tests against that hook's
+ * payload, and a list of actions to run when every test holds.
+ *
+ * Names are held as text rather than as resolved indices. The catalogue that
+ * would resolve them is src/scenario/scenario_lua.h, which this library is
+ * not built to see: scenario_io_static uses the runtime_only include profile
+ * and scenario_static links this one rather than the other way round. rules[]
+ * above holds a resolved index only because simRulesRuleIndex is in public/.
+ *
+ * Nothing here checks that a name exists, that an operator suits the field it
+ * tests, or that an action was given the arguments its op takes. This is the
+ * shape a file states, not a statement that the file is playable. */
+
+/* How many triggers one scenario may declare, and how many tests and actions
+ * one of them carries. Sized against what the whole struct costs, which at
+ * this cap is some 180 KB: the host, the editor's form and a validate result
+ * each hold one by value, and every one of those lives on the heap. A frame
+ * that needs a manifest of its own allocates it rather than declaring it. */
+#define SCN_TRIGGERS_MAX         64
+#define SCN_TRIGGER_CONDS_MAX     4
+#define SCN_TRIGGER_ACTIONS_MAX   4
+
+/* add_base(x, y, owner, armour, shells, mines) is the widest op the
+ * vocabulary has. */
+#define SCN_TRIGGER_ARGS_MAX      6
+
+/* A hook name, an op name, a field name, or a value's own string — a tag, a
+ * region, or the name of a payload field a value refers to. Every one of
+ * those is a short name and 32 covers the longest the catalogue holds with
+ * room over. */
+#define SCN_TRIGGER_NAME_LEN     32
+
+/* The one long string an action may carry: the line announce, message, log
+ * and end_round take. This restates SCN_TEXT_MAX from
+ * src/bolo/scenario_api/scenario_defs.h, which this header cannot see —
+ * the same reason SCN_SCENARIO_NAME_LEN restates SCN_DIR_NAME_LEN above. */
+#define SCN_TRIGGER_TEXT_LEN    129
+
+typedef enum {
+    SCN_TRIG_VAL_NONE,
+    SCN_TRIG_VAL_NUMBER,
+    SCN_TRIG_VAL_STRING,
+    SCN_TRIG_VAL_BOOL,
+    SCN_TRIG_VAL_FIELD   /* {"field": "<name>"}: read off the hook's payload
+                            when the trigger fires, not at authoring time */
+} ScnTrigValueKind;
+
+/* One value: a literal, or a reference to a payload field. num carries a
+ * NUMBER, and a BOOL as 0 or 1. text carries a STRING and a FIELD's name.
+ *
+ * A STRING too long for text lives on the action's own text instead, and
+ * inText is what says so: text is then "" and means nothing. Only an action's
+ * argument can be in that state, because only an action has a text to put it
+ * on — a condition's value is never inText. Reading text for a string value
+ * without checking inText gets "" for the longest strings a file can state,
+ * which is why the flag is its own field rather than something inferred from
+ * an empty text. */
+typedef struct {
+    ScnTrigValueKind kind;
+    bool             inText;  /* STRING only: the bytes are on the action's
+                                 text, this slot being too small to hold
+                                 them */
+    double           num;
+    char             text[SCN_TRIGGER_NAME_LEN];
+} ScnTrigValue;
+
+typedef enum {
+    SCN_TRIG_CMP_UNKNOWN,   /* a word that is none of the seven, and what a
+                               row that names no operator is left as: a test
+                               nothing can evaluate, refused before a round
+                               starts and never holding if one is reached.
+                               First, so a condition nobody filled in reads
+                               as this rather than as eq. */
+    SCN_TRIG_CMP_EQ, SCN_TRIG_CMP_NE, SCN_TRIG_CMP_LT,
+    SCN_TRIG_CMP_LTE, SCN_TRIG_CMP_GT, SCN_TRIG_CMP_GTE, SCN_TRIG_CMP_IN
+} ScnTrigCompare;
+
+/* One test: a field of the hook's payload against a value. */
+typedef struct {
+    char           field[SCN_TRIGGER_NAME_LEN];
+    ScnTrigCompare op;
+    ScnTrigValue   value;
+} ScnTrigCond;
+
+/* One action: an op and its positional arguments. text is the one long
+ * string an op may take and is "" for an op that takes none. */
+typedef struct {
+    char         op[SCN_TRIGGER_NAME_LEN];
+    uint8_t      numArgs;
+    ScnTrigValue args[SCN_TRIGGER_ARGS_MAX];
+    char         text[SCN_TRIGGER_TEXT_LEN];
+} ScnTrigAct;
+
+typedef struct {
+    char        when[SCN_TRIGGER_NAME_LEN];
+    uint8_t     numWhere;
+    uint8_t     numActions;
+    ScnTrigCond where[SCN_TRIGGER_CONDS_MAX];
+    ScnTrigAct  actions[SCN_TRIGGER_ACTIONS_MAX];
+} ScnTrigger;
+
 typedef struct {
     char name[SCN_SCENARIO_NAME_LEN];
     char description[SCN_SCENARIO_DESC_LEN];
@@ -163,6 +271,9 @@ typedef struct {
 
     uint8_t           numRegions;
     ScnManifestRegion regions[SCN_REGIONS_MAX];
+
+    uint8_t    numTriggers;
+    ScnTrigger triggers[SCN_TRIGGERS_MAX];
 } ScenarioManifest;
 
 /* Nothing here reaches up into the runtime. The table a host last read is

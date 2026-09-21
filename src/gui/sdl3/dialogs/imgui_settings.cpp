@@ -1650,6 +1650,61 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
             }
             imguiHelpTooltip(langGetText(STR_DLGSKIN_TEXFILTER_TIP));
         }
+
+        /* Fog of war style.  Read where each view washes its hidden squares,
+           so a pick shows on the next frame with no rebuild of anything.  Not
+           greyed by what the server allows: the wash is this client painting
+           ground it is already being sent, and the pick changes the colour of
+           that paint and nothing else. */
+        {
+            const char *fogLabels[FOG_STYLE_COUNT] = {
+                langGetText(STR_DLGSKIN_FOGSTYLE_GREY),
+                langGetText(STR_DLGSKIN_FOGSTYLE_DARK),
+                langGetText(STR_DLGSKIN_FOGSTYLE_DARKROADS),
+                langGetText(STR_DLGSKIN_FOGSTYLE_NONE),
+            };
+            const char *fogTips[FOG_STYLE_COUNT] = {
+                langGetText(STR_DLGSKIN_FOGSTYLE_GREY_TIP),
+                langGetText(STR_DLGSKIN_FOGSTYLE_DARK_TIP),
+                langGetText(STR_DLGSKIN_FOGSTYLE_DARKROADS_TIP),
+                langGetText(STR_DLGSKIN_FOGSTYLE_NONE_TIP),
+            };
+            int fsIdx = (int)gfxGetFogStyle();
+            if (fsIdx < 0 || fsIdx >= FOG_STYLE_COUNT) fsIdx = 0;
+
+            ImGui::TextUnformatted(langGetText(STR_DLGSKIN_FOGSTYLE));
+            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.0f);
+            if (ImGui::BeginCombo("##fogstyle", fogLabels[fsIdx])) {
+                for (int i = 0; i < FOG_STYLE_COUNT; i++) {
+                    bool sel = (fsIdx == i);
+                    if (ImGui::Selectable(fogLabels[i], sel) && i != fsIdx) {
+                        gfxSetFogStyle((FogStyle)i);
+                        gameFrontSaveCurrentPrefs();
+                    }
+                    /* One line each, on the entry it is about, so the list
+                       says what it is offering without a tip per row in the
+                       closed control. */
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+                        ImGui::SetTooltip("%s", fogTips[i]);
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            imguiHelpTooltip(langGetText(STR_DLGSKIN_FOGSTYLE_TIP));
+
+            /* None is the one entry a player could read as switching fog of
+               war off, so it says plainly that it has not.  Read back from
+               the store rather than from fsIdx above, which was taken before
+               the combo and is a frame behind a pick made in it.  Wrapped and
+               dimmed the way the other notes in this dialog are. */
+            if (gfxGetFogStyle() == FOG_STYLE_NONE) {
+                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() +
+                                       ImGui::GetFontSize() * 20.0f);
+                ImGui::TextDisabled(
+                    "%s", langGetText(STR_DLGSKIN_FOGSTYLE_NONE_NOTE));
+                ImGui::PopTextWrapPos();
+            }
+        }
     }
 }
 

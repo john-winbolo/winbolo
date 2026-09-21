@@ -19,10 +19,12 @@
  *  value does to it: the editor's rules form, the lobby's
  *  popup and the viewer's rules display see public/ and
  *  none of them sees internal/sim_rules.h or
- *  scenario_api/. Names and units only — the values stay
- *  in simRulesClassic and the ranges stay with the checks
- *  in sim_rules.c, which is the one place a bound is
- *  written down.
+ *  scenario_api/. Names, units and the calls that answer
+ *  a rule's value and its range — never the numbers
+ *  themselves. Those stay in sim_rules.c: simRulesClassic
+ *  holds the defaults, and one bound table feeds both the
+ *  range checks and the simRulesRuleRange declared below,
+ *  so a bound is still written down in one place.
  *
  *  Row order is the field order of SimRules, and that order
  *  is the rule index, so a row and a field cannot be read
@@ -33,6 +35,8 @@
 
 #ifndef SIM_RULES_NAMES_H
 #define SIM_RULES_NAMES_H
+
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -88,8 +92,13 @@ typedef enum {
       SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
     X(shell_damage, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)                 \
     X(mine_damage, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)                  \
+    X(mine_damage_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)            \
+    X(mine_fatal_divisor, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)           \
+    X(water_loss_shells, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)            \
+    X(water_loss_mines, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
     X(just_fired_ticks, SIM_RULE_VALUE_INT,                                  \
       SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
+    X(tree_hide_distance, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)           \
     X(gunsight_min, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)                 \
     X(gunsight_max, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)                 \
     X(tank_accel_rate, SIM_RULE_VALUE_FLOAT,                                 \
@@ -101,6 +110,17 @@ typedef enum {
     X(tank_autoslow_rate, SIM_RULE_VALUE_FLOAT,                              \
       SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                                  \
     X(tank_min_move, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)                \
+    /* Tank collision geometry */                                           \
+    X(tank_hit_radius, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)              \
+    X(tank_collision_distance, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)      \
+    X(tank_nudge_threshold, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \
+    X(tank_nudge_amount, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)            \
+    X(tank_nudge_iterations, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)        \
+    X(tank_bump_decay_shift, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)        \
+    X(tank_pill_pickup_inset, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)       \
+    X(tank_boat_exit_inset, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \
+    X(tank_slide_step, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)              \
+    X(tank_wall_glide, SIM_RULE_VALUE_FLOAT, SIM_RULE_UNIT_COUNT)            \
     /* Terrain: the cap a tank's speed clamps to */                          \
     X(speed_road, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)  \
     X(speed_grass, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER) \
@@ -136,6 +156,27 @@ typedef enum {
       SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                                  \
     X(turn_refuel_base, SIM_RULE_VALUE_FLOAT,                                \
       SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                                  \
+    /* Terrain: the cap the builder's walk clamps to */                      \
+    X(man_speed_road, SIM_RULE_VALUE_INT,                                \
+      SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                              \
+    X(man_speed_grass, SIM_RULE_VALUE_INT,                               \
+      SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                              \
+    X(man_speed_forest, SIM_RULE_VALUE_INT,                              \
+      SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                              \
+    X(man_speed_river, SIM_RULE_VALUE_INT,                               \
+      SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                              \
+    X(man_speed_swamp, SIM_RULE_VALUE_INT,                               \
+      SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                              \
+    X(man_speed_crater, SIM_RULE_VALUE_INT,                              \
+      SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                              \
+    X(man_speed_rubble, SIM_RULE_VALUE_INT,                              \
+      SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                              \
+    X(man_speed_boat, SIM_RULE_VALUE_INT,                                \
+      SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                              \
+    X(man_speed_deep_sea, SIM_RULE_VALUE_INT,                            \
+      SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                              \
+    X(man_speed_refuel_base, SIM_RULE_VALUE_INT,                         \
+      SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                              \
     /* Shells */                                                             \
     X(shell_life, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)                   \
     X(shell_speed, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER) \
@@ -154,6 +195,11 @@ typedef enum {
     X(lgm_gather_trees, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
     X(lgm_helicopter_speed, SIM_RULE_VALUE_INT,                              \
       SIM_RULE_UNIT_SPEED_HIGHER_IS_FASTER)                                  \
+    X(lgm_arrive_tolerance, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \
+    X(lgm_return_tolerance, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \
+    X(lgm_pill_drop_search, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \
+    X(lgm_boat_leave_offset, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)        \
+    X(lgm_boat_return_offset, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)       \
     /* Pillbox */                                                            \
     X(pill_max_armour, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)              \
     X(pill_attack_ticks, SIM_RULE_VALUE_INT,                                 \
@@ -164,6 +210,13 @@ typedef enum {
       SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
     X(pill_repair_amount, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)           \
     X(pill_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)                   \
+    X(pill_shell_damage, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)            \
+    X(pill_angry_divisor, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)           \
+    X(pill_fire_length, SIM_RULE_VALUE_FLOAT, SIM_RULE_UNIT_COUNT)           \
+    X(pill_base_defend_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)       \
+    X(pill_aim_iterations, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)          \
+    X(pill_massage_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)           \
+    X(pill_massage_cosine, SIM_RULE_VALUE_FLOAT, SIM_RULE_UNIT_COUNT)        \
     /* Base */                                                               \
     X(base_full_armour, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
     X(base_full_shells, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
@@ -184,6 +237,8 @@ typedef enum {
       SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
     X(base_regen_ticks, SIM_RULE_VALUE_INT,                                  \
       SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
+    X(base_status_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)            \
+    X(base_reveal_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)            \
     /* Terrain destruction and explosions */                                 \
     X(building_life, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)                \
     X(rubble_life, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)                  \
@@ -192,11 +247,34 @@ typedef enum {
     X(mine_fuse_ticks, SIM_RULE_VALUE_INT,                                   \
       SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
     X(big_explosion_threshold, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)      \
+    X(tank_explosion_damage, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)        \
+    X(tank_explosion_length, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)        \
+    X(tank_explosion_move, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)          \
+    X(tank_explosion_update_ticks, SIM_RULE_VALUE_INT,                       \
+      SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
+    X(tank_explosion_width, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)         \
+    X(tank_explosion_height, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)        \
+    /* Spawning */                                                           \
+    X(start_tank_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
+    X(start_pill_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
+    X(start_base_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
+    X(start_spawn_separation, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)       \
+    X(start_scatter_max, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)            \
+    X(start_neutral_threshold_pct, SIM_RULE_VALUE_INT,                       \
+      SIM_RULE_UNIT_PERCENT)                                                 \
+    /* Hearing */                                                            \
+    X(sound_soft_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
+    X(sound_none_range, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)             \
+    /* Terrain flooding */                                                   \
+    X(flood_fill_ticks, SIM_RULE_VALUE_INT,                                  \
+      SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
     /* Tree growth */                                                        \
     X(tree_grow_ticks, SIM_RULE_VALUE_INT,                                   \
       SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
     X(tree_grow_initial_ticks, SIM_RULE_VALUE_INT,                           \
       SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                   \
+    X(tree_grow_initial_score, SIM_RULE_VALUE_INT,                           \
+      SIM_RULE_UNIT_CONSTANT_BY_DESIGN)                                      \
     X(tree_weight_forest, SIM_RULE_VALUE_INT,                                \
       SIM_RULE_UNIT_CONSTANT_BY_DESIGN)                                      \
     X(tree_weight_grass, SIM_RULE_VALUE_INT,                                 \
@@ -276,6 +354,24 @@ SimRuleValueKind simRulesRuleValueKind(int rule);
  * table simRulesClassic has just filled, so it follows those defaults
  * wherever they are written down and there is no second list of them. */
 double simRulesClassicValue(int rule);
+
+/* The range a value for this rule is accepted in. lo is always stated. hi
+ * is the fixed ceiling and is read only when hasHi; a row with a floor and
+ * no fixed ceiling leaves it false. cappedBy names a rule whose own value
+ * is also a ceiling for this one, or -1 when no single rule is. The two are
+ * independent: a row can have both. */
+typedef struct {
+    double lo;
+    double hi;
+    bool   hasHi;
+    int    cappedBy;
+} SimRuleRange;
+
+/* Fills out with the rule's range. False either way it can fail, and the two
+ * leave different things behind: an index that names no rule leaves out
+ * neutral (0, 0, false, -1), and a NULL out is answered before anything is
+ * written, so nothing is left anywhere. */
+bool simRulesRuleRange(int rule, SimRuleRange *out);
 
 /* What a value does to a rule, against that rule's classic default: the same
  * question the editor's rules form, the lobby's popup and the viewer's rules

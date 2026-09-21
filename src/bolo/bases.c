@@ -909,6 +909,9 @@ BYTE basesSetOwner(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner, BYTE migr
         (*value)->item[count].owner = owner;
         done = TRUE;
       } else if (owner == NEUTRAL) {
+        /* Nothing is reported: the callback below is for a base being taken
+           and there is no taker here. basesSetBaseOwner is the entry that
+           does report a base going neutral. */
         (*value)->item[count].owner = owner;
         done = TRUE;
       } else if ((*value)->item[count].owner != owner) {
@@ -922,7 +925,8 @@ BYTE basesSetOwner(GameSim *sim, BYTE xValue, BYTE yValue, BYTE owner, BYTE migr
         (*value)->item[count].owner = owner;
         logAddEvent(log_BaseSetOwner, count, owner, migrate, 0, 0, NULL);
         /* Report the change, which is what clients get the message from. A
-           base going neutral is reported the same way. */
+           base taken from nobody is reported the same way as one stolen from
+           a player; the class beside it is what tells the two apart. */
         if (migrate == FALSE && sim->isServer) {
           if (sim->callbacks.baseOwnerChanged) {
             BYTE captureClass;
@@ -1262,7 +1266,8 @@ void basesRefueling(GameSim *sim, tank *tnk, BYTE baseNum) {
 *  yValue - Y Map Location of the tank
 *********************************************************/
 BYTE basesGetClosest(GameSim *sim, WORLD tankX, WORLD tankY) {
-  return basesGetClosestForPlayer(sim, sim->viewPlayer, tankX, tankY, BASE_STATUS_RANGE);
+  return basesGetClosestForPlayer(sim, sim->viewPlayer, tankX, tankY,
+                                  (WORLD) sim->rules.base_status_range);
 }
 
 /*********************************************************
@@ -1545,11 +1550,13 @@ bool basesArmourVisibleToPlayer(GameSim *sim, BYTE baseIdx, BYTE player) {
   gapY = abs((int)tankY - baseY);
   /* Bound both axes before squaring so the multiply cannot overflow on a
      full-size map; never rejects a base that is genuinely in range. */
-  if (gapX >= BASE_PREDICT_REVEAL_RANGE || gapY >= BASE_PREDICT_REVEAL_RANGE) {
+  if (gapX >= sim->rules.base_reveal_range ||
+      gapY >= sim->rules.base_reveal_range) {
     return FALSE;
   }
   return (gapX * gapX + gapY * gapY) <
-         (BASE_PREDICT_REVEAL_RANGE * BASE_PREDICT_REVEAL_RANGE);
+         ((int64_t) sim->rules.base_reveal_range *
+          sim->rules.base_reveal_range);
 }
 
 /*********************************************************

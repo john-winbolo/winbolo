@@ -805,18 +805,21 @@ BYTE mapGetManSpeed(GameSim *sim, map *value, pillboxes *pb, bases *bs, BYTE xVa
   BYTE terrain;     /* The current Terrain */
   bool done;        /* Are we done ? */
 
-  returnValue = MAP_MANSPEED_TDEEPSEA;
+  returnValue = (BYTE) sim->rules.man_speed_deep_sea;
   done = FALSE;
   if ((pillsExistPos(pb,xValue,yValue)) == TRUE) {
     /* Check for PB */
     if (pillsDeadPos(pb, xValue, yValue) == FALSE) {
+      /* A live pillbox keeps its constant, the way it does in mapGetSpeed:
+         what stops a man walking onto one is the square being occupied, not
+         the speed being zero. */
       returnValue = MAP_MANSPEED_TPILLBOX;
       done = TRUE;
     }
   } else if ((basesExistPos(bs,xValue,yValue)) == TRUE) {
     /* Check for owned base */
     if (basesCantDrive(sim, xValue, yValue, playerNum) == FALSE) {
-      returnValue = MAP_MANSPEED_TREFBASE;
+      returnValue = (BYTE) sim->rules.man_speed_refuel_base;
     } else {
       returnValue = 0;
     }
@@ -829,37 +832,37 @@ BYTE mapGetManSpeed(GameSim *sim, map *value, pillboxes *pb, bases *bs, BYTE xVa
     }
     switch (terrain) {
     case DEEP_SEA:
-      returnValue = MAP_MANSPEED_TDEEPSEA;
+      returnValue = (BYTE) sim->rules.man_speed_deep_sea;
       break;
     case BUILDING:
       returnValue = MAP_MANSPEED_TBUILDING;
       break;
     case RIVER:
-      returnValue = MAP_MANSPEED_TRIVER;
+      returnValue = (BYTE) sim->rules.man_speed_river;
       break;
     case SWAMP:
-      returnValue = MAP_MANSPEED_TSWAMP;
+      returnValue = (BYTE) sim->rules.man_speed_swamp;
       break;
     case CRATER:
-      returnValue = MAP_MANSPEED_TCRATER;
+      returnValue = (BYTE) sim->rules.man_speed_crater;
       break;
     case ROAD:
-      returnValue = MAP_MANSPEED_TROAD;
+      returnValue = (BYTE) sim->rules.man_speed_road;
       break;
     case FOREST:
-      returnValue = MAP_MANSPEED_TFOREST;
+      returnValue = (BYTE) sim->rules.man_speed_forest;
       break;
     case RUBBLE:
-      returnValue = MAP_MANSPEED_TRUBBLE;
+      returnValue = (BYTE) sim->rules.man_speed_rubble;
       break;
     case GRASS:
-      returnValue = MAP_MANSPEED_TGRASS;
+      returnValue = (BYTE) sim->rules.man_speed_grass;
       break;
     case HALFBUILDING:
       returnValue = MAP_MANSPEED_THALFBUILDING;
       break;
     case BOAT:
-      returnValue = MAP_MANSPEED_TBOAT;
+      returnValue = (BYTE) sim->rules.man_speed_boat;
       break;
     }
   }
