@@ -552,8 +552,14 @@ void lobbyRenderAllowNewPlayersRow(ClientSim *cs,
 
 /* Copy src into out, truncating with a trailing "..." if it's wider than
  * maxW pixels. Keeps long player names from overflowing the name column and
- * pushing the start dropdown into the Ready button on small windows. */
-static void lobbyTruncateName(const char *src, float maxW, char *out, size_t outSz) {
+ * pushing the start dropdown into the Ready button on small windows.
+ *
+ * Shared with the Mods dialog, whose rows have the same problem for the same
+ * reason: a name, a tag and an arrow on one row, and a name long enough to
+ * push the other two off it. Its rows used to be Selectables, which clip
+ * their own label; they are links now, and a link draws whatever it is
+ * given. */
+void lobbyTruncateName(const char *src, float maxW, char *out, size_t outSz) {
     if (outSz == 0) return;
     if (!src) { out[0] = '\0'; return; }
     if (maxW <= 1.0f || ImGui::CalcTextSize(src).x <= maxW) {
@@ -2103,44 +2109,25 @@ void lobbyRenderTeamGroupedPlayers(ClientSim *cs,
                 }
 
 
-                /* Inline tag pills after the name. Drawn via
-                 * WindowDrawList so we can size them tightly and
-                 * tint each one independently (HOST = yellow,
-                 * BOT = muted blue-gray). Same pill recipe as the
-                 * READY/NOT READY badge but at 70% font size. */
+                /* Inline tag pills after the name, tinted one at a time
+                 * (HOST = yellow, BOT = muted blue-gray).
+                 *
+                 * The chip itself is lobbyDrawNameTag (lobby_assets.cpp),
+                 * shared with the Mods dialog's Mod / Scenario tags so the
+                 * two cannot become two different chips. What is left here is
+                 * this row's placing of it, which is the half the Mods dialog
+                 * does differently: the gap before it, and the row-centred y
+                 * a Mods row has no row height to compute. */
                 auto drawNameTag = [&](const char *lbl, ImU32 bg, ImU32 fg,
                                        ImU32 border = 0) {
-                    const float tagScale = 0.70f;
-                    float tagFontSz = ImGui::GetFontSize() * tagScale;
-                    ImVec2 baseSz = ImGui::CalcTextSize(lbl);
-                    ImVec2 textSz(baseSz.x * tagScale, tagFontSz);
-                    float padX = 6.0f * s;
-                    float padY = 2.0f * s;
-                    float pillW = textSz.x + padX * 2.0f;
-                    float pillH = textSz.y + padY * 2.0f;
                     ImGui::SameLine(0.0f, 6.0f * s);
-                    cyAbs(pillH);
+                    cyAbs(lobbyNameTagHeight(s));
                     /* Nudge HOST / BOT / ADMIN name-tags up 1px so
                      * they sit a touch above the row centerline,
                      * which lines them up better with the cap-height
                      * of the player name. */
                     ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 1.0f);
-                    ImVec2 pos = ImGui::GetCursorScreenPos();
-                    ImDrawList *dl = ImGui::GetWindowDrawList();
-                    /* Square corners on the name tags so they read as
-                     * "labels", not status pills like READY. */
-                    dl->AddRectFilled(pos,
-                                      ImVec2(pos.x + pillW, pos.y + pillH),
-                                      bg, 0.0f);
-                    if (border != 0) {
-                        dl->AddRect(pos,
-                                    ImVec2(pos.x + pillW, pos.y + pillH),
-                                    border, 0.0f, 0, 1.0f);
-                    }
-                    dl->AddText(ImGui::GetFont(), tagFontSz,
-                                ImVec2(pos.x + padX, pos.y + padY),
-                                fg, lbl);
-                    ImGui::Dummy(ImVec2(pillW, pillH));
+                    lobbyDrawNameTag(lbl, bg, fg, border, s);
                 };
                 /* A tag's hover: an ordinary tooltip. The row's bot tags are
                  * abbreviations — "GH", three chips, a one-word mode — so the

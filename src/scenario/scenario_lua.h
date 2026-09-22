@@ -44,11 +44,19 @@
  * ref is LUA_NOREF for a free entry and is the only thing that says an entry
  * is taken. It is a registry reference because the function has to survive
  * every collection between the call that set it and the tick it runs on.
- * Whoever takes the entry out owns the reference and has to release it. */
+ * Whoever takes the entry out owns the reference and has to release it.
+ *
+ * owner is the table of the script that set the timer, read off the context
+ * at the moment it was set. The set is one id space for the whole list, so
+ * without this the tick that runs a timer would not know whose function it
+ * is calling, and the row that has to know — see running below — would have
+ * no answer at all. NULL where the timer was set from a file's top level, or
+ * from a state that has no list behind it. */
 typedef struct {
-    uint32_t id;
-    uint32_t dueTick;
-    int      ref;
+    uint32_t                id;
+    uint32_t                dueTick;
+    int                     ref;
+    const ScenarioManifest *owner;
 } ScnTimer;
 
 /* The timers of one round.
@@ -72,6 +80,71 @@ typedef struct {
  * round's own copy of the table — a round start reads the script's bytes
  * over it — so what a script defines lasts the round and no longer.
  *
+ * running is the table of the one script whose own code is on the stack, and
+ * it is a different question from manifest. manifest is the composite the
+ * whole list adds up to; running is the entry the host is inside a call into.
+ * A state runs several scripts and the two differ whenever the caller is not
+ * the base: the composite's kind is the base's, so a row that has to know
+ * whether a mod is calling it has to read this one. The host writes it around
+ * every call it makes into a script's code and puts back what was there
+ * before, so a hook that leads to another hook leaves it where it found it.
+ *
+ * There is no falling back to manifest. The composite says what the round
+ * is, not who is calling it, and on any list holding a scenario it says
+ * "scenario" for every mod on that list — which is the whole of the defect
+ * this field was added for.
+ *
+ * NULL means no script's own code is running. That is a file's top level:
+ * the chunk runs before scnReadManifest has read its table out of its
+ * globals, so the kind is not known and cannot be. A row that has to know
+ * which script is calling has no answer at that moment, and each such row
+ * decides for itself what to make of that. The win-condition guard refuses
+ * there rather than guessing, which is scnNotTheDecider in
+ * src/scenario/scenario_lua.c. Refusing is not the only right answer: a row
+ * that filters by the calling script may read NULL as no filter at all.
+ *
+ * runningOwner is which entry of the list that same script is, in the
+ * encoding SCN_OWNER_OF_ENTRY spells. It answers the question running
+ * answers, but as a position rather than as a table, and the region rows are
+ * what want it that way: a composed round may hold two regions under one
+ * name, one per script, and the rectangle a lookup means is the asking
+ * script's own. scenarioLuaRegionFind below is the whole rule.
+ *
+ * It is written wider than running is, and deliberately so. The host sets it
+ * around every call it makes into a script, the way it sets running, and it
+ * also sets it across a file's own top level, where running is NULL and has
+ * to be: the chunk runs before scnReadManifest has read the table out of its
+ * globals, so what kind of file it is is not known yet, while which entry of
+ * the list it is has been known since the host picked the list. That is what
+ * lets game.define_region called at a top level land on the right owner
+ * rather than on nobody. No row reads this field as "a script is running";
+ * the win-condition guard reads running for that and still refuses at a top
+ * level.
+ *
+ * SCN_OWNER_NONE means the asker is not one of the round's scripts — a call
+ * the engine made rather than a script, or a state with no list behind it.
+ * A region lookup made with it takes the first region of that name whoever
+ * owns it.
+ *
+ * runningFile is the same script said a third way: where its bytes came
+ * from, as the host holds the path. It is set and put back in step with
+ * runningOwner, in the same places and across the same calls, so a row that
+ * has one has the other.
+ *
+ * Only one row reads it, and it is the reason the field exists at all:
+ * game.define_region needs the key a region's bit is worked out from, and
+ * that key is the naming file's own name rather than its position on the
+ * list — a position moves when a host reorders the list and a file name
+ * does not. runningOwner cannot stand in for it, because it is exactly the
+ * position. The path is what is carried and not the name, because the host
+ * holds the path; scenarioLuaRegionBit takes the name off the end of it, so
+ * two servers that keep their scenarios in different directories work out
+ * the same bit for the same script.
+ *
+ * NULL is a call from no script of the round's, and hashes as an empty
+ * name. Nothing else reads it, so a caller that has a file and no use for
+ * one may leave it NULL.
+ *
  * timers may be NULL, which leaves a state with no timers: the row refuses
  * rather than reaching through nothing.
  *
@@ -83,10 +156,13 @@ typedef struct {
  * funnel refuses while it is set, and the rows that read answer as they
  * always do, which is what the check is for. */
 typedef struct {
-    ServerSim        *sim;
-    ScenarioManifest *manifest;
-    ScnTimerSet      *timers;
-    bool              checkOnly;
+    ServerSim              *sim;
+    ScenarioManifest       *manifest;
+    const ScenarioManifest *running;
+    uint8_t                 runningOwner;
+    const char             *runningFile;
+    ScnTimerSet            *timers;
+    bool                    checkOnly;
 } ScnLuaCtx;
 
 /* What one parameter holds, beside the name the author writes it under. A
@@ -432,6 +508,41 @@ bool scenarioLuaOpIsScalar(const ScnLuaRow *row);
  * read. */
 bool scenarioLuaOpIsAction(const ScnLuaRow *row);
 
+/* Whether this op decides the round: which side wins it, or when it is over.
+ * A file whose manifest says kind = "mod" leaves the win condition alone, so
+ * an op this answers true for raises when a mod calls it.
+ *
+ * The list behind it is in scenario_lua.c, in one place because three
+ * readers want the same answer: the op itself raises, the host refuses to
+ * start a round for a mod whose declared trigger action names one, and the
+ * map editor leaves them off the action list it offers while the form says
+ * mod. Taking a name rather than a row is what lets the last two ask, since
+ * a trigger's action states the op it calls as text.
+ *
+ * The name is the op's own, as the registry spells it — "end_round", not
+ * "game.end_round". NULL answers false. */
+bool scenarioLuaOpDecidesRound(const char *name);
+
+/* The same list to walk rather than to ask of: the index'th name, and NULL
+ * once there are no more, so a caller building a sentence or a menu needs no
+ * count of its own. */
+const char *scenarioLuaRoundDeciderAt(size_t index);
+
+/* Whether the round reads this function's answer to decide an ending, so a
+ * file whose manifest says kind = "mod" is not offered it and is told when it
+ * writes one anyway. One function answers true — allow_base_win, the only
+ * policy whose answer takes an ending out of a round — and every hook answers
+ * false, a hook returning nothing the host reads.
+ *
+ * The name is the one an author writes the function under, as SCN_POLICY_LIST
+ * spells it. NULL answers false.
+ *
+ * Both readers are the map editor's: the catalogue of functions leaves this
+ * row out while the form says mod, and the editor's check flags a mod that
+ * defines it. The host makes the same decision at the one call site instead,
+ * where it knows which policy it is asking; see scnAllowBaseWin. */
+bool scenarioLuaFnDecidesRound(const char *name);
+
 /*********************************************************
  *NAME:          scenarioLuaConsts
  *PURPOSE:
@@ -548,9 +659,31 @@ lua_Integer scenarioLuaIndexToScript(int n);
  *  The region of that name, or NULL for a name nothing
  *  carries. Declared and defined regions are one list, so
  *  this finds either.
+ *
+ *  asking is the script doing the looking, in the encoding
+ *  SCN_OWNER_OF_ENTRY spells, and SCN_OWNER_NONE for a
+ *  caller that is no script of the round's.
+ *
+ *  A composed round may hold two regions under one name,
+ *  because two scripts on the list may each name one and
+ *  neither is refused any more. The rule that picks between
+ *  them: the asking script's own region of that name where
+ *  it has one, and otherwise the last one on the list
+ *  whoever owns it.
+ *
+ *  Both halves of that are what makes a list of scripts
+ *  play together. A script that names its own "spawn"
+ *  always gets its own rectangle and no mod can reach into
+ *  it. A script that only reads "spawn" and never names one
+ *  still finds the rectangle that exists, so a mod written
+ *  to read a scenario's regions goes on working. The
+ *  fallback takes the first rather than the last for the
+ *  reason the rules do: the top of the list is the
+ *  precedence end, and a host orders the list deliberately.
  *********************************************************/
 const ScnManifestRegion *scenarioLuaRegionFind(const ScenarioManifest *m,
-                                               const char *name);
+                                               const char *name,
+                                               uint8_t asking);
 
 /*********************************************************
  *NAME:          scenarioLuaRegionHolds
@@ -565,6 +698,48 @@ const ScnManifestRegion *scenarioLuaRegionFind(const ScenarioManifest *m,
  *  disagrees about.
  *********************************************************/
 bool scenarioLuaRegionHolds(const ScnManifestRegion *r, int mx, int my);
+
+/*********************************************************
+ *NAME:          scenarioLuaRegionBit
+ *PURPOSE:
+ *  Which bit of the round's region mask a region belongs
+ *  on, worked out from the file that named it and the name
+ *  it was given. The one place a bit is handed out: the
+ *  compose calls it for every region it appends and
+ *  game.define_region calls it for every region a script
+ *  names while the round runs.
+ *
+ *  path is where the naming script's bytes came from and
+ *  name is the region's own. Only the last segment of the
+ *  path is hashed, so a server that keeps its scenarios in
+ *  one directory and a server that keeps them in another
+ *  work out the same bit for the same script — which they
+ *  must, because a headless test game is expected to play
+ *  the same round on two machines. NULL for either is
+ *  hashed as an empty string rather than refused.
+ *
+ *  The file has to be in the key. Two scripts on one list
+ *  may each name a region "spawn" and the compose keeps
+ *  both, so the name alone does not tell one rectangle from
+ *  the other.
+ *
+ *  The hash is FNV-1a over those bytes, folded into the
+ *  0..SCN_REGIONS_MAX-1 the mask has room for, and two keys
+ *  that want one bit are separated by walking forward to
+ *  the next bit no region of m is already on. m is read for
+ *  that and for nothing else, so a caller passing the table
+ *  it is about to append to gets a bit nothing in that
+ *  table holds.
+ *
+ *  The walk is bounded by SCN_REGIONS_MAX and cannot spin:
+ *  a table with every bit taken is a table already holding
+ *  SCN_REGIONS_MAX regions, which both callers refuse
+ *  before they ask. Reached anyway, it answers the bit the
+ *  hash named and lets the caller's own limit be what says
+ *  no.
+ *********************************************************/
+uint8_t scenarioLuaRegionBit(const ScenarioManifest *m, const char *path,
+                             const char *name);
 
 /* ── Timers ─────────────────────────────────────────────────────────── */
 
@@ -602,11 +777,18 @@ void scenarioLuaTimersDrop(lua_State *L, ScnTimerSet *t);
  *  and cannot spin inside one, which is the rule the event
  *  drain follows.
  *
+ *  owners takes the table of the script that set each one,
+ *  in the same order, so the caller can say which script is
+ *  running across the call it is about to make. It may be
+ *  NULL where the caller does not need that, and an entry
+ *  of it is NULL where the timer was set outside any
+ *  script's own code.
+ *
  *  Returns how many were taken. The caller owns each
  *  reference and must release it.
  *********************************************************/
 int scenarioLuaTimersTakeDue(ScnTimerSet *t, uint32_t now, int *out,
-                             int outMax);
+                             const ScenarioManifest **owners, int outMax);
 
 /* ── The words an event's payload reads as ──────────────────────────── */
 

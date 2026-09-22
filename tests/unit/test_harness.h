@@ -339,6 +339,9 @@ int run_classic_mode_lock_blocks_dispatch(void);
 int run_classic_mode_lobby_reset(void);
 int run_allies_in_trees_defaults(void);
 int run_allies_in_trees_classic_mode(void);
+int run_lobby_mods_enabled_defaults(void);
+int run_lobby_mods_enabled_dispatch(void);
+int run_lobby_mods_enabled_codec(void);
 int run_fog_settings_defaults(void);
 int run_fog_settings_classic_mode_preset(void);
 int run_fog_settings_lock_implied(void);
@@ -428,6 +431,16 @@ int run_lobby_set_scenario_refuses_shape(void);
 int run_lobby_set_scenario_refuses_bound(void);
 int run_lobby_set_scenario_cooldown(void);
 int run_lobby_set_scenario_unreadies(void);
+
+/* The lobby's ordered script list (test_lobby_script_list.c): one scenario
+ * deciding the round and mods behind it. The chunked control event and the
+ * whole-list command against hand-written bytes, the dispatcher's gates, and
+ * the chunks reassembled into the accessors a chooser reads. */
+int run_script_list_control_codec(void);
+int run_script_list_command_codec(void);
+int run_script_list_dispatch(void);
+int run_script_list_lists_once(void);
+int run_script_list_client_apply(void);
 int run_lobby_map_search_chunked(void);
 int run_wbn_bearer_state(void);
 int run_wbn_rekey_codec(void);
@@ -2629,11 +2642,16 @@ int run_lobby_scenario_nolobby_boot_seats_template(void);
  * comes back from a round against what the host did to it, and leaving a
  * preview and a plain map alone. */
 int run_lobby_template_map_commit_seats(void);
+int run_survival_lobby_round(void);
+int run_survival_lobby_round_full(void);
+int run_survival_lobby_round_ds_order(void);
+int run_loopback_unfield_tank(void);
 int run_lobby_template_return_reconciles(void);
 int run_lobby_template_return_unfields(void);
 int run_lobby_template_reset_reseats(void);
 int run_lobby_template_preview_is_inert(void);
 int run_lobby_template_plain_map_clears(void);
+int run_lobby_template_map_commit_drops_prior_bots(void);
 int run_lobby_template_caps_humans_only(void);
 int run_lobby_template_cap_seats_human_above_bots(void);
 int run_lobby_template_cap_refuses_extra_human(void);
@@ -2645,6 +2663,10 @@ int run_lobby_template_commit_keeps_new_lobby(void);
 int run_lobby_template_cancel_restores_path_inmem(void);
 int run_lobby_template_cancel_restores_path_random(void);
 int run_lobby_template_seat_carries_init(void);
+int run_lobby_template_seat_carries_mode(void);
+int run_lobby_template_mode_unknown_key_kept(void);
+int run_lobby_template_no_mode_leaves_config(void);
+int run_lobby_template_add_bot_takes_template(void);
 
 /* The scripted game type (test_scripted_game_type.c): gameScripted resolving
  * through the base game the scenario declared, at the loadout and at the
@@ -2693,7 +2715,9 @@ int run_scenario_wave_cost_destroy_releases(void);
 int run_scenario_wave_cost_countdown_warms_seats(void);
 int run_scenario_wave_cost_warm_is_one_a_frame(void);
 int run_scenario_wave_cost_warmed_field_is_free(void);
+int run_scenario_wave_cost_warmed_seat_takes_session_dir(void);
 int run_scenario_wave_cost_warmed_init_rebuilds(void);
+int run_scenario_wave_cost_bot_init_keeps_park(void);
 int run_scenario_wave_cost_template_init_warms(void);
 int run_scenario_wave_cost_warm_skips_bad_brain(void);
 int run_scenario_wave_cost_failed_build_leaves_nothing(void);
@@ -2927,6 +2951,16 @@ int run_scenario_host_chunk_events_reach_hooks(void);
 int run_scenario_host_metatable_raises(void);
 int run_scenario_host_metatable_not_read(void);
 int run_scenario_host_hook_via_global_metatable(void);
+int run_scenario_host_script_env_is_its_own(void);
+int run_scenario_host_manifest_read_from_its_own_env(void);
+int run_scenario_host_errors_counted_per_script(void);
+
+/* What a file that declared scenario.kind = "mod" may not do
+ * (test_scenario_host.c): the rows it is held back from at run time, the
+ * same rows written down, and the four things the key itself can say. */
+int run_scenario_host_mod_round_op_raises(void);
+int run_scenario_host_mod_load_refusals(void);
+int run_scenario_host_kind_word(void);
 
 /* The scripts-off switch (test_scenario_host.c): what an attach does with
    it off, with and without a script beside the map, and with it back on. */
@@ -3121,6 +3155,7 @@ int run_scenario_manifest_agrees(void);
 int run_scenario_manifest_from_values(void);
 int run_scenario_manifest_json_team_init(void);
 int run_scenario_manifest_json_number_range(void);
+int run_scenario_manifest_json_kind(void);
 int run_scenario_manifest_json_triggers(void);
 int run_scenario_manifest_json_trigger_operator(void);
 int run_scenario_manifest_json_trigger_where_type(void);
@@ -3172,6 +3207,8 @@ int run_scenario_brain_name_missing(void);
 int run_scenario_brain_name_rejects_path(void);
 int run_scenario_brain_op_resolves(void);
 int run_scenario_brain_name_op_missing_refused(void);
+int run_scenario_brain_name_mode_falls_back(void);
+int run_scenario_brain_name_mode_no_brain(void);
 
 /* The scenarios directory (test_scenario_dir.c): a .scenario package listed
  * from its manifest with no Lua run, a loose .lua listed through the
@@ -3184,8 +3221,22 @@ int run_scenario_dir_lists_loose_script(void);
 int run_scenario_dir_skips_junk(void);
 int run_scenario_dir_skips_subdirectory(void);
 int run_scenario_dir_list_cached(void);
+int run_scenario_dir_merges_shipped_mods(void);
 int run_scenario_dir_entry_roundtrip(void);
 int run_scenario_dir_chunk_not_in_flight(void);
+
+/* The three directories a mod can come from (test_scenario_mod_dirs.c): the
+ * one the host was given, the player's own under SDL_GetPrefPath and the
+ * mods that ship beside the executable, merged into one listing with the
+ * order of that list as the precedence. */
+int run_scenario_mod_dirs_user_dir_offered(void);
+int run_scenario_mod_dirs_shipped_offered(void);
+int run_scenario_mod_dirs_configured_wins(void);
+int run_scenario_mod_dirs_user_beats_shipped(void);
+int run_scenario_mod_dirs_merged_and_sorted(void);
+int run_scenario_mod_dirs_same_dir_once(void);
+int run_scenario_mod_dirs_all_missing_is_quiet(void);
+int run_scenario_mod_dirs_attach_reads_shipped(void);
 
 /* Which scenario plays when a map and a mod both have a claim
  * (test_scenario_precedence.c): the three rules, the four points the
@@ -3199,6 +3250,38 @@ int run_scenario_precedence_reload_reseats(void);
 int run_scenario_precedence_no_game_plays_strict(void);
 int run_scenario_precedence_open_game_plays_open(void);
 int run_scenario_precedence_reload_refuses_bound(void);
+
+/* A round that plays more than one script at once
+ * (test_scenario_compose.c): a map's own scenario with two mods behind
+ * it, what the composite carries from each, what a pick does and does
+ * not take off, and a reload of the whole list. Then what a composed
+ * round does at the calls the host makes into it: the three rows a mod
+ * is refused and its base is not, a policy-only mod asked behind a
+ * scenario, two scripts on one predicate, two halving one blow, and the
+ * one policy the list is not asked. And what two scripts asking for one
+ * thing come to: a rule the later one wins and a rule only the earlier
+ * one set, a region name each keeps its own rectangle under, the enter
+ * hook staying inside the script that named it, and the record of both
+ * clashes. And the map own script composed where the host list puts it,
+ * with every region keeping the bit it had at the front. */
+int run_scenario_compose_map_and_mods(void);
+int run_scenario_compose_keeps_map_scenario(void);
+int run_scenario_compose_mod_rules_load(void);
+int run_scenario_compose_region_clash_loads(void);
+int run_scenario_compose_reload_list(void);
+int run_scenario_compose_mod_guard(void);
+int run_scenario_compose_policy_mod_asked(void);
+int run_scenario_compose_policy_any_false(void);
+int run_scenario_compose_policy_damage_scale(void);
+int run_scenario_compose_policy_base_win(void);
+int run_scenario_compose_policy_first_answer(void);
+int run_scenario_compose_rules_first_wins(void);
+int run_scenario_compose_rules_keeps_earlier(void);
+int run_scenario_compose_region_own_first(void);
+int run_scenario_compose_region_borrowed(void);
+int run_scenario_compose_region_hook_own(void);
+int run_scenario_compose_conflicts_recorded(void);
+int run_scenario_compose_map_script_placed(void);
 
 /* The panel's display list (test_scenario_panel.c): the byte layout
  * decoded from a hand-written list, the refusal each malformed list
@@ -3267,6 +3350,16 @@ int run_bot_init_table_two_bots_keep_own(void);
 int run_bot_init_table_empty_when_none(void);
 int run_bot_init_arg_text_to_table(void);
 
+/* New data for a bot already playing (test_scenario_bot_init.c): the op
+ * lands a tick later and replaces the table whole, every refusal in the
+ * row's contract answers under its own code, a seat off the field takes one
+ * on the runner parked behind it, and the brain's BRAIN_INIT is rebuilt with
+ * Brain.on_init called about it. */
+int run_scenario_bot_init_lands(void);
+int run_scenario_bot_init_refusals(void);
+int run_scenario_bot_init_parked_seat(void);
+int run_brain_on_init_update(void);
+
 int run_console_kick_and_host(void);
 int run_console_kick_host_without_newline(void);
 int run_console_read_reports_eof(void);
@@ -3318,6 +3411,14 @@ int ut_brain_stub_creates(int player_num);
  * handed an instance and no player number, so there is no slot to file them
  * under. Both counts are reset by ut_brain_stub_arm. */
 int ut_brain_stub_destroys(void);
+/* Give every brain the stub makes from here on a real, bare lua_State, and
+ * mark it running, so a test can watch what the sim writes INTO a brain —
+ * a global published to it, a chunk run in it. Off by default and reset by
+ * ut_brain_stub_arm, because every other case wants the cheap stub whose
+ * instance has no VM at all and whose brain-facing paths are skipped. The
+ * state holds no brain: no libraries are opened and nothing is loaded into
+ * it, so a tick still does nothing. Destroyed with the instance. */
+void ut_brain_stub_lua(bool withState);
 
 /* The map editor's scenario script file (test_editor_script_file.c): where a
  * script sits beside a map, the round trip Save and re-opening the map make,
@@ -3358,6 +3459,13 @@ int run_editor_form_trigger_rows(void);
 int run_editor_form_trigger_row_values(void);
 int run_editor_form_trigger_action_text(void);
 int run_editor_form_trigger_vocabulary(void);
+
+/* Beside them, the one function a file that says it is a mod is not offered
+ * (test_editor_scenario_form.c): the catalogue row the editor withholds, held
+ * to the name the runtime keeps, and the line the check writes for a mod that
+ * defines it anyway. */
+int run_editor_form_mod_hides_base_win(void);
+int run_editor_form_kind_line_survives_full_list(void);
 
 /* The editor writing a scenario out (test_editor_scenario_pack.c): the chunk
  * on to the map and the standalone .scenario a mod is, both read back through

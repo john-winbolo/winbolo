@@ -37,11 +37,23 @@
 #include "client_command.h"
 
 /* Stack-allocation upper bound for any single ClientCommand's wire
- * encoding. Largest variants are CMD_LOBBY_SET_MAP and
+ * encoding. The largest variant is CMD_SET_SCRIPT_LIST, which carries a
+ * whole script list: header(8) + cmdSeq(4) + count(1) +
+ * CMD_SCRIPT_LIST_MAX * (1 + CMD_SCRIPT_LIST_FILE_LEN - 1) =
+ * 13 + 10 * 128 = 1293. Behind it are CMD_LOBBY_SET_MAP and
  * CMD_LOBBY_SET_SCENARIO (header + 1 + 256 = 265) and CMD_CHAT
- * (header + 1 + 128 = 137). 512 leaves comfortable headroom below
- * the UDP datagram cap. */
-#define COMMAND_MAX_WIRE_BYTES 512
+ * (header + 1 + 128 = 137).
+ *
+ * 1400 rather than 1293 so this stays one number a reader can hold against
+ * the datagram cap, which is also 1400. The queue drain in
+ * transport_udp_client.c packs entries into a 1400-byte PACKET_COMMAND_TICK
+ * behind an 8-byte header, a count byte and a 2-byte length per entry, so
+ * the worst-case command lands at 1304 of those 1400 and rides alone in its
+ * datagram; the drain loop's own `pos + 2 + entryLen > sizeof(buf)` test is
+ * what makes the next one wait for the following tick. This is a stack
+ * bound and not a queue bound: two of these buffers exist at a time, one in
+ * buildInputPacket's caller and one in the drain loop. */
+#define COMMAND_MAX_WIRE_BYTES 1400
 
 /* Encode a ClientCommand into a complete wire packet (header +
  * body). On success writes `buf[0..*outLen)` and returns true.

@@ -186,6 +186,19 @@ bool scnPanelColourRGBA(uint8_t index, uint8_t *r, uint8_t *g, uint8_t *b,
  * scale is screen pixels per panel unit: one at the game's zoom 1, and the
  * zoom from there.
  *
+ * alpha is how solid the frontend wants the scenario's drawing, from 0 for
+ * gone to 1 for as the script asked. It multiplies the alpha channel of
+ * every colour this file resolves, so it fades what was drawn and never
+ * touches a pixel nothing was drawn on: a square the script left empty is
+ * as transparent at 0.2 as it is at 1. It is the scenario's drawing only.
+ * A frontend's own chrome around the square — a border, a grip, a settings
+ * window — is not on this list and does not fade with it, or a panel taken
+ * to nothing would leave the player nothing to take it back with.
+ *
+ * There is no "unset": a zeroed env is a panel that draws nothing at all,
+ * so a frontend that builds one of these must fill this in. 1.0f is the
+ * value that means "as it was before this existed".
+ *
  * tiles is the skin's tile sheet as the frontend's ImGui backend takes it —
  * the SDL_Texture the desktop client and the log viewer each keep their own
  * accessor for, which is why it arrives here rather than being fetched. NULL
@@ -198,6 +211,7 @@ typedef struct {
     void       *ctx;
     uint32_t    tick;
     float       scale;
+    float       alpha;
     void       *tiles;
 } ScnPanelDrawEnv;
 

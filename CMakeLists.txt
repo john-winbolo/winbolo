@@ -3464,6 +3464,18 @@ foreach(_name IN LISTS _baseline_udp)
                          FIXTURES_REQUIRED warm_binaries)
 endforeach()
 
+# Longer than the 60s the rest get. This entry plays a scenario out to its own
+# end rather than stopping on a tick count, and then has to see the client off.
+# The server is stopped by a "quit" line on its console rather than by a
+# signal, and the shutdown that follows broadcasts CTRL_SERVER_SHUTDOWN, which
+# is what the client leaves on about a second later. A client that does not
+# get it leaves on a dead link instead, and that wait is CLIENT_TIMEOUT_TICKS
+# of the client's own ticks, which stretches well past ten seconds on a machine
+# busy running the rest of a -j suite. run.sh bounds its own waits at 110.5s in
+# the worst case; this leaves room for it to report a failure with its logs
+# rather than being killed mid-line, which prints nothing at all.
+set_tests_properties(baseline.wave_swap_udp PROPERTIES TIMEOUT 150)
+
 # ---------------------------------------------------------------------------
 # WinBoloUnitTests — in-process tests of bolo_static / server_sim_static
 # / server_static without the SDL3 GUI. Each test is a registered name
@@ -3564,9 +3576,14 @@ set(WINBOLO_UNITTESTS_SOURCES
     # what is skipped, and the list encoded into the SCENARIO_LIST_RSP shape
     # against committed golden bytes and decoded back.
     tests/unit/test_scenario_dir.c
+    tests/unit/test_scenario_mod_dirs.c
     # Which scenario plays when a map and a mod both have a claim, and the
     # points the template is applied at.
     tests/unit/test_scenario_precedence.c
+    # A round that plays more than one script at once: a map's own
+    # scenario with mods behind it, what the composite carries from each,
+    # the refusals a mod gets, and a reload of the whole list.
+    tests/unit/test_scenario_compose.c
     # The panel's display list: the byte layout decoded from a hand-written
     # list, the refusal each malformed list gets, the caps at their edges,
     # and a decoded list written back out and parsed again.
@@ -3668,6 +3685,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # commit, reconciling them when a round comes back, re-seating them when
     # an emptied lobby resets, and leaving a preview and a plain map alone.
     tests/unit/test_lobby_template.c
+    tests/unit/test_survival_lobby_round.c
+    # What a real client draws when a held seat is taken off the field: the
+    # tank has to go with it, though the roster row stays.
+    tests/unit/test_loopback_unfield_tank.c
     # The scripted game type: the fourth value resolving through the base game
     # a scenario declared, at the loadout and at the start, and that value
     # going when the template does.
@@ -3743,6 +3764,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # empty one when the creator passed none, and the -bot-init [arg]
     # text that fills one.
     tests/unit/test_bot_init_table.c
+    # New data for a bot already playing: game.bot_init's op, its refusals,
+    # and the brain call that rebuilds BRAIN_INIT and rings Brain.on_init.
+    tests/unit/test_scenario_bot_init.c
     # The map editor's scenario script file: the path a script takes beside a
     # map, which has to stay the path the server looks for, and the read and
     # write behind the pane's Save and Reload. The module under test is plain
@@ -3788,6 +3812,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_view_policy_settings.c
     tests/unit/test_classic_mode_settings.c
     tests/unit/test_allies_in_trees_settings.c
+    tests/unit/test_lobby_mods_enabled.c
     tests/unit/test_fog_settings.c
     # The named visibility sets the lobby offers, and the match that reads
     # a live set of settings back as one of them.
@@ -3809,6 +3834,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The lobby's scenario pick: who may pick, when, and which names the
     # scenarios directory makes good.
     tests/unit/test_lobby_set_scenario.c
+    # The lobby's ordered script list: the chunked control event, the
+    # whole-list command, the dispatcher's gates and the client's reassembly.
+    tests/unit/test_lobby_script_list.c
     tests/unit/test_wbn_bearer_state.c
     tests/unit/test_wbn_rekey_codec.c
     tests/unit/test_wbn_news_parse.cpp
@@ -4467,6 +4495,9 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # The maps the baseline runs play, and the scenario scripts that sit
     # beside them: the validator case reads one from here.
     WB_BASELINE_MAPS_DIR="${CMAKE_SOURCE_DIR}/tests/baseline/maps"
+    # The shipped maps and their scripts: the Survival lobby-round case
+    # starts a round on data/maps/Survival.map with the script beside it.
+    WB_DATA_MAPS_DIR="${CMAKE_SOURCE_DIR}/data/maps"
     # The scenario runtime's own sources. The trigger router is a .lua file
     # embedded in the binary by tools/embed_lua.py, which is run by hand, so
     # scenario_hooks_router_matches_source reads the .lua from here and holds
@@ -4476,6 +4507,17 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     # tests/unit/test_main.c out of it and compares the two test rosters, so a
     # case added to one and not the other cannot go unnoticed.
     WB_REPO_ROOT_DIR="${CMAKE_SOURCE_DIR}"
+)
+
+# The shipped mods, staged beside the test binary rather than only beside
+# WinBolo: run_scenario_dir_merges_shipped_mods lists data/mods under
+# SDL_GetBasePath() the way the host does, so the directory has to be here
+# whether or not the GUI has been built.
+add_custom_command(TARGET WinBoloUnitTests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/data/mods"
+        "$<TARGET_FILE_DIR:WinBoloUnitTests>/data/mods"
+    COMMENT "Copying shipped mods to WinBoloUnitTests output directory"
 )
 
 target_include_directories(WinBoloUnitTests PRIVATE
@@ -4736,6 +4778,9 @@ set(_unit_test_names
     classic_mode_lobby_reset
     allies_in_trees_defaults
     allies_in_trees_classic_mode
+    lobby_mods_enabled_defaults
+    lobby_mods_enabled_dispatch
+    lobby_mods_enabled_codec
     fog_settings_defaults
     fog_settings_classic_mode_preset
     fog_settings_lock_implied
@@ -4788,6 +4833,11 @@ set(_unit_test_names
     lobby_set_scenario_refuses_bound
     lobby_set_scenario_cooldown
     lobby_set_scenario_unreadies
+    script_list_control_codec
+    script_list_command_codec
+    script_list_dispatch
+    script_list_lists_once
+    script_list_client_apply
     lobby_map_search_chunked
     wbn_bearer_state
     wbn_rekey_codec
@@ -5633,11 +5683,16 @@ set(_unit_test_names
     scenario_roster_spawn_loadout_without_policy
     scenario_roster_spawn_loadout_not_next_life
     lobby_template_map_commit_seats
+    survival_lobby_round
+    survival_lobby_round_full
+    survival_lobby_round_ds_order
+    loopback_unfield_tank
     lobby_template_return_reconciles
     lobby_template_return_unfields
     lobby_template_reset_reseats
     lobby_template_preview_is_inert
     lobby_template_plain_map_clears
+    lobby_template_map_commit_drops_prior_bots
     lobby_template_caps_humans_only
     lobby_template_cap_seats_human_above_bots
     lobby_template_cap_refuses_extra_human
@@ -5649,6 +5704,10 @@ set(_unit_test_names
     lobby_template_cancel_restores_path_inmem
     lobby_template_cancel_restores_path_random
     lobby_template_seat_carries_init
+    lobby_template_seat_carries_mode
+    lobby_template_mode_unknown_key_kept
+    lobby_template_no_mode_leaves_config
+    lobby_template_add_bot_takes_template
     scripted_game_type_loadout_follows_base
     scripted_game_type_no_base_is_strict
     scripted_game_type_strict_ignores_base
@@ -5689,10 +5748,12 @@ set(_unit_test_names
     scenario_wave_cost_countdown_warms_seats
     scenario_wave_cost_warm_is_one_a_frame
     scenario_wave_cost_warmed_field_is_free
+    scenario_wave_cost_warmed_seat_takes_session_dir
     scenario_wave_cost_warm_skips_bad_brain
     scenario_wave_cost_failed_build_leaves_nothing
     scenario_wave_cost_abort_countdown_releases
     scenario_wave_cost_warmed_init_rebuilds
+    scenario_wave_cost_bot_init_keeps_park
     scenario_wave_cost_template_init_warms
     scenario_wave_cost_all_ready_clears_skips
     scenario_comms_msg_all
@@ -5836,9 +5897,15 @@ set(_unit_test_names
     scenario_host_metatable_raises
     scenario_host_metatable_not_read
     scenario_host_hook_via_global_metatable
+    scenario_host_script_env_is_its_own
+    scenario_host_manifest_read_from_its_own_env
+    scenario_host_errors_counted_per_script
     scenario_host_disabled_refuses_script
     scenario_host_disabled_plain_map
     scenario_host_enabled_again
+    scenario_host_kind_word
+    scenario_host_mod_load_refusals
+    scenario_host_mod_round_op_raises
     scenario_validate_clean
     scenario_validate_api_too_new
     scenario_validate_lobby_shape
@@ -5975,6 +6042,7 @@ set(_unit_test_names
     scenario_manifest_json_triggers
     scenario_manifest_json_trigger_operator
     scenario_manifest_json_trigger_where_type
+    scenario_manifest_json_kind
     scenario_manifest_json_trigger_no_when
     scenario_manifest_json_trigger_action_no_op
     scenario_manifest_json_trigger_where_no_field
@@ -6002,13 +6070,24 @@ set(_unit_test_names
     scenario_brain_name_rejects_path
     scenario_brain_op_resolves
     scenario_brain_name_op_missing_refused
+    scenario_brain_name_mode_falls_back
+    scenario_brain_name_mode_no_brain
     scenario_dir_lists_package
     scenario_dir_lists_loose_script
     scenario_dir_skips_junk
     scenario_dir_skips_subdirectory
     scenario_dir_list_cached
+    scenario_dir_merges_shipped_mods
     scenario_dir_entry_roundtrip
     scenario_dir_chunk_not_in_flight
+    scenario_mod_dirs_user_dir_offered
+    scenario_mod_dirs_shipped_offered
+    scenario_mod_dirs_configured_wins
+    scenario_mod_dirs_user_beats_shipped
+    scenario_mod_dirs_merged_and_sorted
+    scenario_mod_dirs_same_dir_once
+    scenario_mod_dirs_all_missing_is_quiet
+    scenario_mod_dirs_attach_reads_shipped
     scenario_precedence_mod_over_map
     scenario_precedence_none_restores_map
     scenario_precedence_plain_map_keeps_mod
@@ -6018,6 +6097,24 @@ set(_unit_test_names
     scenario_precedence_no_game_plays_strict
     scenario_precedence_open_game_plays_open
     scenario_precedence_reload_refuses_bound
+    scenario_compose_map_and_mods
+    scenario_compose_keeps_map_scenario
+    scenario_compose_mod_rules_load
+    scenario_compose_region_clash_loads
+    scenario_compose_reload_list
+    scenario_compose_mod_guard
+    scenario_compose_policy_mod_asked
+    scenario_compose_policy_any_false
+    scenario_compose_policy_damage_scale
+    scenario_compose_policy_base_win
+    scenario_compose_policy_first_answer
+    scenario_compose_rules_first_wins
+    scenario_compose_rules_keeps_earlier
+    scenario_compose_region_own_first
+    scenario_compose_region_borrowed
+    scenario_compose_region_hook_own
+    scenario_compose_conflicts_recorded
+    scenario_compose_map_script_placed
     scenario_panel_parses_each_primitive
     scenario_panel_refuses_malformed
     scenario_panel_boundaries
@@ -6045,6 +6142,10 @@ set(_unit_test_names
     bot_init_table_two_bots_keep_own
     bot_init_table_empty_when_none
     bot_init_arg_text_to_table
+    scenario_bot_init_lands
+    scenario_bot_init_refusals
+    scenario_bot_init_parked_seat
+    brain_on_init_update
     editor_script_path
     editor_script_round_trip
     editor_script_missing
@@ -6066,6 +6167,8 @@ set(_unit_test_names
     editor_form_trigger_row_values
     editor_form_trigger_action_text
     editor_form_trigger_vocabulary
+    editor_form_mod_hides_base_win
+    editor_form_kind_line_survives_full_list
     editor_pack_mod_round_trip
     editor_pack_map_round_trip
     editor_pack_twice_identical

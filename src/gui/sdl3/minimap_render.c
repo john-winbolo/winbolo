@@ -189,17 +189,27 @@ void minimapDrawObjects(uint8_t *pixels,
     const struct startsObj *ss = clientMapPreviewStarts(view);
 
     if (pillColor && pb) {
+        /* The map file records an owner for every pill, NEUTRAL on all but
+           a speciality map. Both callers here — the map chooser and the map
+           editor — draw a map nobody is playing, so there is no viewer for
+           a colour to be "own" relative to; this only distinguishes a pill
+           the file hands to a player at load from a neutral one. A scripted
+           map that starts its players with pills in hand (Survival's
+           centre) says so in the preview, and a plain map, whose pills are
+           all neutral, is drawn as before. */
+        static const uint8_t ownedCol[3] = {255, 0, 255}; /* magenta */
         for (i = 0; i < pb->numPills; i++) {
             int px = pb->item[i].x;
             int py = pb->item[i].y;
+            const uint8_t *col = (pb->item[i].owner != NEUTRAL) ? ownedCol : pillColor;
             for (dy = -1; dy <= 1; dy++) {
                 for (dx = -1; dx <= 1; dx++) {
                     int nx = px + dx, ny = py + dy;
                     if (nx >= 0 && nx < MINIMAP_SIZE && ny >= 0 && ny < MINIMAP_SIZE) {
                         int idx = (ny * MINIMAP_SIZE + nx) * 4;
-                        pixels[idx]   = pillColor[0];
-                        pixels[idx+1] = pillColor[1];
-                        pixels[idx+2] = pillColor[2];
+                        pixels[idx]   = col[0];
+                        pixels[idx+1] = col[1];
+                        pixels[idx+2] = col[2];
                         pixels[idx+3] = 255;
                     }
                 }

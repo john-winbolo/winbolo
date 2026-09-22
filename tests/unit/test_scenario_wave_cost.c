@@ -120,6 +120,7 @@
                                     * botManagerIsBot, botManagerDestroy */
 #include "client_sim_internal.h"   /* ClientSim.clientState and the err offset —
                                     * what the refield has to put back */
+#include "brain_record.h"        /* the recording block a warmed seat must be told about */
 #include "scenario_table.h"        /* scnTableSet — the init table a spawn carries */
 #include "game_sim.h"
 #include "everard_map.h"
@@ -1307,6 +1308,100 @@ int run_scenario_wave_cost_warmed_field_is_free(void) {
     return 0;
 }
 
+/* And the warmed seat is told where the round's debug files go.
+ *
+ * A -brain-debug run opens a recording block on the round's first running
+ * tick and publishes DEBUG_SESSION_DIR into every bot as it opens. Both
+ * halves of that missed a seat the COUNTDOWN had warmed:
+ *
+ *   * the publish goes through botManagerSetLuaGlobalString, which used to
+ *     refuse any seat that was not `active`. A warmed runner is parked, so
+ *     every held seat was silently skipped.
+ *   * and the mid-round hand-off that catches a bot born after the block
+ *     opened sat past the early return a resume takes, so the fielding did
+ *     not make up for it either.
+ *
+ * A lobby-hosted round therefore recorded a block with a .btr and a perf log
+ * in it and not one print2_bot*.log, because every bot that took the field
+ * in it came back on a warmed runner. Both halves are held here: the write
+ * lands in the parked VM, and the resume publishes the dir on its own.
+ *
+ * The fixture brain is given a real lua_State for this case — the cheap stub
+ * has none, and a global published into nothing cannot be read back. */
+int run_scenario_wave_cost_warmed_seat_takes_session_dir(void) {
+    ServerSim  *sim;
+    ScenarioOp  op;
+    const BYTE  seat = WC_FIRST_SEAT;
+    const char *dir  = "debug_sessions/ut_warmed_session_dir";
+    char       *got;
+    bool        wrote;
+
+    UT_ASSERT(wcMakeBrainFile("warmed_seat_takes_session_dir"));
+    ut_brain_stub_arm(true);
+    ut_brain_stub_lua(true);
+    sim = wcLobbySim();
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT(wcSeatTeam(sim));
+    wcRunCountdown(sim, WC_SEATS + 1);
+    UT_ASSERT(sim->state == serverStateRunning);
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].parked,
+                  "the countdown left seat %d without a runner", (int)seat);
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].brain.L != NULL,
+                  "the fixture brain for seat %d has no Lua state, so this "
+                  "case cannot see what is written into it", (int)seat);
+
+    /* A recording block, as the lifecycle opens one. */
+    brainRecordSetEnabled(true);
+    brainRecordSetSessionDir(dir);
+
+    /* (a) THE PUBLISH REACHES A PARKED RUNNER. This is the call
+           serverLifecycleOpenBraindbgBlock makes for every bot seat as the
+           block opens, and a held seat is a bot seat. Written under a name
+           of this case's own so it cannot be confused with the hand-off
+           below, which writes the real one. */
+    wrote = serverSimBotSetLuaGlobalString(sim, seat, "WB_UT_BLOCK_OPEN",
+                                           "yes");
+    UT_ASSERT_MSG(wrote,
+                  "the block-open publish was refused for seat %d, which is "
+                  "parked on a warmed runner", (int)seat);
+
+    /* The wave fields it, which is a resume. Nothing has published
+       DEBUG_SESSION_DIR to this seat: the resume has to do it. */
+    wcSpawnOp(&op, seat);
+    UT_ASSERT(wcApplyOne(sim, &op));
+    UT_ASSERT_MSG(sim->lobbyPlayers[seat].fielded,
+                  "the wave did not field the warmed seat");
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 1,
+                  "the fielding made %d brain(s) for seat %d in all; this "
+                  "case is only about a RESUME", ut_brain_stub_creates(seat),
+                  (int)seat);
+
+    /* (a), read back out of the VM the resume carried over. */
+    got = serverSimBotEvalLuaString(sim, seat,
+                                    "return WB_UT_BLOCK_OPEN or ''");
+    UT_ASSERT_MSG(got != NULL && strcmp(got, "yes") == 0,
+                  "the block-open publish did not land in seat %d's brain: "
+                  "it reads '%s'", (int)seat, got != NULL ? got : "(nothing)");
+    free(got);
+
+    /* (b) AND THE RESUME HANDED OVER THE SESSION DIR ITSELF. */
+    got = serverSimBotEvalLuaString(sim, seat,
+                                    "return DEBUG_SESSION_DIR or ''");
+    UT_ASSERT_MSG(got != NULL && strcmp(got, dir) == 0,
+                  "seat %d came back on its warmed runner with "
+                  "DEBUG_SESSION_DIR '%s', expected '%s': its print2 log "
+                  "would land outside the recording block",
+                  (int)seat, got != NULL ? got : "(nothing)", dir);
+    free(got);
+
+    brainRecordSetSessionDir("");
+    brainRecordSetEnabled(false);
+    ut_brain_stub_lua(false);
+    serverSimDestroy(sim);
+    wcDropBrainFile();
+    return 0;
+}
+
 /* The warm builds a held seat's runner with the seat's own init table, and
  * these seats were made by hand with no team behind them, so that table is
  * empty. A wave whose spawn names one of those seats WITH an init table cannot
@@ -1930,6 +2025,101 @@ int run_scenario_wave_cost_all_ready_clears_skips(void) {
     UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 1,
                   "seat %d had %d brains made for it by the first countdown "
                   "frame, expected 1", (int)seat, ut_brain_stub_creates(seat));
+
+    serverSimDestroy(sim);
+    wcDropBrainFile();
+    return 0;
+}
+
+/* ── A seat told new orders keeps its runner ──────────────────────── */
+
+/* The shape Survival's waves have: a team gives its held seats an init table,
+ * the countdown warms a runner per seat with it, and each wave fields a seat
+ * with a spawn that carries NO table of its own — which matches the seat's and
+ * resumes — then hands that bot the wave's own values through game.bot_init.
+ *
+ * The question this case asks is what the NEXT wave costs. bot_init replaces
+ * the live init table, and the live table used to be what a park was keyed on,
+ * so the next wave's spawn was measured against wave 1's orders rather than
+ * against what the VM was built reading: it missed, every attacker paid for a
+ * fresh brain, and the ten runners the countdown bought were thrown away one a
+ * wave. The park is keyed on builtInit now, which nothing but a build writes.
+ *
+ * Three brains would say the bug is back: the warm's, wave 1's and wave 2's.
+ * One says every fielding after the warm was a resume. */
+int run_scenario_wave_cost_bot_init_keeps_park(void) {
+    ServerSim *sim;
+    ScenarioOp op;
+    ScnTable   team;
+    ScnTable   wave;
+    const BYTE seat = WC_FIRST_SEAT;
+
+    UT_ASSERT(wcMakeBrainFile("bot_init_keeps_park"));
+    ut_brain_stub_arm(true);
+    sim = wcLobbySim();
+    UT_ASSERT(sim != NULL);
+
+    /* A team that gives its seats a table, as the horde's does. */
+    memset(&team, 0, sizeof(team));
+    UT_ASSERT(scnTableSet(&team, "blitz", "2/4"));
+    UT_ASSERT(wcSeatFromTemplate(sim, &team));
+    wcRunCountdown(sim, WC_SEATS + 1);
+    UT_ASSERT_MSG(sim->state == serverStateRunning,
+                  "the countdown did not start the round, state %d",
+                  (int)sim->state);
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].parked,
+                  "the countdown left seat %d without a runner", (int)seat);
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 1,
+                  "the warm made %d brains for seat %d, expected 1",
+                  ut_brain_stub_creates(seat), (int)seat);
+
+    /* Wave 1 fields it with no table of its own, which is the team's. */
+    wcSpawnOp(&op, seat);
+    UT_ASSERT(wcApplyOne(sim, &op));
+    UT_ASSERT_MSG(sim->lobbyPlayers[seat].fielded,
+                  "the first wave's spawn did not field the seat");
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 1,
+                  "the seat has had %d brains made for it, expected 1 — a "
+                  "spawn carrying no table of its own is the seat's own table "
+                  "and resumes the warm", ut_brain_stub_creates(seat));
+
+    /* And is then told the wave's own orders. */
+    memset(&wave, 0, sizeof(wave));
+    UT_ASSERT(scnTableSet(&wave, "blitz", "3/4"));
+    UT_ASSERT(scnTableSet(&wave, "noblitz", "1"));
+    memset(&op, 0, sizeof(op));
+    op.type = SCN_OP_ROSTER_BOT_INIT;
+    op.u.rosterBotInit.slot = seat;
+    op.u.rosterBotInit.init = wave;
+    UT_ASSERT(wcApplyOne(sim, &op));
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].initTable.count == 2,
+                  "the bot's live table holds %u entries after bot_init, "
+                  "expected the wave's 2",
+                  (unsigned)sim->botMgr.bots[seat].initTable.count);
+
+    /* The wave ends: the seat comes off the field and its runner parks. */
+    wcRemoveOp(&op, seat);
+    UT_ASSERT(wcApplyOne(sim, &op));
+    UT_ASSERT_MSG(!sim->lobbyPlayers[seat].fielded,
+                  "the removal left the seat on the field");
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].parked,
+                  "the removal did not park seat %d's runner", (int)seat);
+
+    /* Wave 2, the same spawn. It must resume the runner wave 1 parked,
+       whatever wave 1 told that bot afterwards. */
+    wcSpawnOp(&op, seat);
+    UT_ASSERT(wcApplyOne(sim, &op));
+    UT_ASSERT_MSG(sim->lobbyPlayers[seat].fielded,
+                  "the second wave's spawn did not field the seat");
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 1,
+                  "the seat has had %d brains made for it, expected 1 — the "
+                  "orders wave 1 gave it must not cost wave 2 a new one",
+                  ut_brain_stub_creates(seat));
+    UT_ASSERT_MSG(ut_brain_stub_destroys() == 0,
+                  "%d brains were destroyed, expected 0",
+                  ut_brain_stub_destroys());
+    UT_ASSERT_MSG(!sim->botMgr.bots[seat].parked,
+                  "the refielded seat still reads as parked");
 
     serverSimDestroy(sim);
     wcDropBrainFile();

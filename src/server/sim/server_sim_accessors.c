@@ -801,6 +801,7 @@ uint32_t serverSimGetSettingLockBit(uint8_t lstSettingType) {
         case LST_OVERVIEW_WINDOW:   return LOBBY_LOCK_OVERVIEW_WINDOW;
         case LST_LINE_OF_SIGHT:     return LOBBY_LOCK_LINE_OF_SIGHT;
         case LST_SMART_PINGS_OFF:   return LOBBY_LOCK_SMART_PINGS;
+        case LST_MODS_OFF:          return LOBBY_LOCK_MODS;
         default:                    return 0xFFFFFFFFu;  /* unknown setting */
     }
 }
@@ -994,6 +995,24 @@ void serverSimSetSmartPingsOff(ServerSim *sim, bool off) {
 
 bool serverSimGetSmartPingsOff(const ServerSim *sim) {
     return sim ? sim->smartPingsOff : false;
+}
+
+/* Negative sense throughout as well — see the field in
+ * server_sim_internal.h. false is "the mods run", which is what a sim
+ * nobody has configured holds and what a NULL sim answers.
+ *
+ * The setter does not recompose. Which scripts play is decided in
+ * scnDecideScenario and the lobby asks for that decision again through
+ * lobbyScenarioReselect (src/server/server_command_dispatch.c), which is
+ * where the pick paths already ask for it — a setter that recomposed would
+ * do it twice for a host click and once for every test that only wanted the
+ * value set. */
+void serverSimSetModsOff(ServerSim *sim, bool off) {
+    if (sim) sim->modsOff = off;
+}
+
+bool serverSimGetModsOff(const ServerSim *sim) {
+    return sim ? sim->modsOff : false;
 }
 
 void serverSimSetState(ServerSim *sim, ServerState s) {

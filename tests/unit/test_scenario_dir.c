@@ -34,6 +34,10 @@
  *                                        answered from the last result without
  *                                        booting a Lua state, and a file added
  *                                        to it makes the next read a fresh one
+ * run_scenario_dir_merges_shipped_mods — the same lister also reads the mods
+ *                                        shipped beside the executable, and a
+ *                                        name in both directories resolves to
+ *                                        the player's file
  * run_scenario_dir_entry_roundtrip     — a list encoded into the RSP shape
  *                                        matches committed golden bytes and
  *                                        decodes back to the same entries,
@@ -511,12 +515,17 @@ int run_scenario_dir_list_cached(void) {
        is the stamp the cache is about to keep. */
     UT_ASSERT(SDL_GetPathInfo(sdDir, &cached));
 
+    /* The lister merges the shipped mods directory in behind the player's
+       own, so what comes back is this directory's files and whatever is
+       installed beside the executable. The cases below therefore ask whether
+       a file is in the list rather than how long the list is: an installed
+       mod appearing or going would otherwise fail a case about caching. */
     n = serverSimScenarioListDir(sim, list, 8);
-    UT_ASSERT_MSG(n == 1, "%d entries on the first read, expected 1", n);
-    UT_ASSERT_MSG(strcmp(list[0].file, "marked.lua") == 0,
-                  "the first read listed \"%s\"", list[0].file);
-    UT_ASSERT_MSG(strcmp(list[0].name, "Marked") == 0,
-                  "the first read named it '%s'", list[0].name);
+    UT_ASSERT_MSG(sdFind(list, n, "marked.lua") != NULL,
+                  "the first read did not list the file in the directory");
+    UT_ASSERT_MSG(strcmp(sdFind(list, n, "marked.lua")->name, "Marked") == 0,
+                  "the first read named it '%s'",
+                  sdFind(list, n, "marked.lua")->name);
     UT_ASSERT_MSG(strstr(sdSaid, SD_MARK) != NULL,
                   "the first read never ran the script's top level, so this "
                   "case cannot tell a fresh read from a cached one");
@@ -525,12 +534,12 @@ int run_scenario_dir_list_cached(void) {
     sdSaid[0] = '\0';
     memset(list, 0, sizeof(list));
     n = serverSimScenarioListDir(sim, list, 8);
-    UT_ASSERT_MSG(n == 1, "%d entries on the second read, expected 1", n);
-    UT_ASSERT_MSG(strcmp(list[0].file, "marked.lua") == 0,
-                  "the second read listed \"%s\"", list[0].file);
-    UT_ASSERT_MSG(strcmp(list[0].name, "Marked") == 0,
+    UT_ASSERT_MSG(sdFind(list, n, "marked.lua") != NULL,
+                  "the second read did not list the file in the directory");
+    UT_ASSERT_MSG(strcmp(sdFind(list, n, "marked.lua")->name, "Marked") == 0,
                   "the second read named it '%s', so the rows it handed back "
-                  "are not the ones the first read found", list[0].name);
+                  "are not the ones the first read found",
+                  sdFind(list, n, "marked.lua")->name);
     UT_ASSERT_MSG(strstr(sdSaid, SD_MARK) == NULL,
                   "the second read booted a Lua state and ran the script "
                   "again: the listing was not answered from the last one");
@@ -544,7 +553,11 @@ int run_scenario_dir_list_cached(void) {
                   "first read kept, so there is nothing here to invalidate "
                   "the cache with");
     n = serverSimScenarioListDir(sim, list, 8);
-    UT_ASSERT_MSG(n == 2, "%d entries after a file was added, expected 2", n);
+    UT_ASSERT_MSG(sdFind(list, n, "hold.lua") != NULL,
+                  "the file that was added is not in the list, so the cache "
+                  "was not invalidated");
+    UT_ASSERT_MSG(sdFind(list, n, "marked.lua") != NULL,
+                  "the file that was already there fell out of the list");
     UT_ASSERT_MSG(strstr(sdSaid, SD_MARK) != NULL,
                   "a directory that gained a file was still answered from the "
                   "cache");
@@ -555,7 +568,114 @@ int run_scenario_dir_list_cached(void) {
     return 0;
 }
 
-/* ── 6. The chunk, byte for byte and back ─────────────────────────── */
+/* ── 6. The player's directory and the shipped one, merged ───────── */
+
+/* The lister the host registers reads two directories: the one the player
+ * drops files into, and the mods shipped beside the executable. Both are
+ * offered as one list, and a name in both resolves to the player's file —
+ * that is how a player replaces a shipped mod with their own edit of it.
+ *
+ * The shipped directory is found here the same way the host finds it, from
+ * SDL_GetBasePath, so a change to where the host looks fails this case rather
+ * than quietly listing nothing from the second directory.
+ */
+/* Room for both directories at once. The other cases here list one small
+ * fixture directory and take 8; this one also carries whatever the build
+ * staged under data/mods. */
+#define SD_MERGE_MAX 32
+
+int run_scenario_dir_merges_shipped_mods(void) {
+    ScnDirEntry  shipped[SD_MERGE_MAX];
+    ScnDirEntry  list[SD_MERGE_MAX];
+    char         shippedDir[512];
+    const char  *base;
+    ServerSim   *sim;
+    char         seen[1024];
+    int          shippedCount;
+    int          n;
+    int          i;
+
+    base = SDL_GetBasePath();
+    UT_ASSERT_MSG(base != NULL,
+                  "SDL cannot say where the executable is, so this case "
+                  "cannot find the directory the host would read");
+    snprintf(shippedDir, sizeof(shippedDir), "%sdata/mods", base);
+    shippedCount = scnDirList(shippedDir, shipped, SD_MERGE_MAX);
+    if (shippedCount < 0) shippedCount = 0;
+    UT_ASSERT_MSG(shippedCount > 0,
+                  "no scenarios under \"%s\": the build did not stage "
+                  "data/mods, so there is nothing to merge and this case "
+                  "would pass without testing anything", shippedDir);
+
+    UT_ASSERT(sdMakeDir("merge"));
+    /* One file only the player has, and one under a shipped mod's own name. */
+    UT_ASSERT(sdWriteText("hold.lua", kSdLooseScript));
+    UT_ASSERT(sdWriteText(shipped[0].file, kSdLooseScript));
+
+    sim = ut_make_running_sim("Host");
+    UT_ASSERT(sim != NULL);
+    serverSimSetActive(sim);
+    serverSimSetScenarioDir(sim, sdDir);
+    scenarioHostRegisterScenarioLister(sim);
+
+    /* The player's own directory is one of the three a listing reads, and on
+       a developer's machine it is a real one in their home directory.
+       Pointed at this case's own directory, which the list then holds once,
+       so what is listed is the two directories this case wrote and nothing
+       the machine happens to hold. The third directory is tested on its own
+       in test_scenario_mod_dirs.c. */
+#ifdef _WIN32
+    _putenv_s("WB_MOD_DIR_USER", sdDir);
+#else
+    setenv("WB_MOD_DIR_USER", sdDir, 1);
+#endif
+    n = serverSimScenarioListDir(sim, list, SD_MERGE_MAX);
+#ifdef _WIN32
+    _putenv_s("WB_MOD_DIR_USER", "");
+#else
+    unsetenv("WB_MOD_DIR_USER");
+#endif
+    sdNames(list, (n > 0) ? n : 0, seen, sizeof(seen));
+    UT_ASSERT_MSG(sdFind(list, n, "hold.lua") != NULL,
+                  "the player's own file fell out of the merged list: %s",
+                  seen);
+    for (i = 0; i < shippedCount; i++) {
+        UT_ASSERT_MSG(sdFind(list, n, shipped[i].file) != NULL,
+                      "the shipped mod \"%s\" is not in the merged list: %s",
+                      shipped[i].file, seen);
+    }
+
+    /* The colliding name appears once, and it is the player's file. A merge
+       that appended both would offer the same name twice and the lobby would
+       pick whichever it reached first. */
+    {
+        int hits = 0;
+        for (i = 0; i < n; i++) {
+            if (strcmp(list[i].file, shipped[0].file) == 0) hits++;
+        }
+        UT_ASSERT_MSG(hits == 1,
+                      "\"%s\" is in the merged list %d times: %s",
+                      shipped[0].file, hits, seen);
+    }
+    UT_ASSERT_MSG(strcmp(sdFind(list, n, shipped[0].file)->name,
+                         "Loose Hold") == 0,
+                  "the name in both directories resolved to \"%s\", so the "
+                  "shipped copy won over the player's",
+                  sdFind(list, n, shipped[0].file)->name);
+
+    /* And the merged list is in file-name order, not player-then-shipped: a
+       chooser draws it in the order it is handed. */
+    for (i = 1; i < n; i++) {
+        UT_ASSERT_MSG(SDL_strcasecmp(list[i - 1].file, list[i].file) <= 0,
+                      "the merged list is not in file-name order: %s", seen);
+    }
+
+    serverSimDestroy(sim);
+    sdCleanup();
+    return 0;
+}
+
+/* ── 7. The chunk, byte for byte and back ─────────────────────────── */
 
 /* The two entries the golden bytes below describe. */
 #define SD_E0_FILE "alpha.scenario"
@@ -569,6 +689,7 @@ int run_scenario_dir_list_cached(void) {
  * header for those two, in wire order:
  *   [final][count] then per entry
  *   [fileLen][file][nameLen][name][descLen][desc][maxPlayers][bots][bound]
+ *   [keepsWinCondition]
  *
  * Committed rather than computed: a round trip passes even when both halves
  * change together, and these bytes are what catches a wire change nobody
@@ -578,16 +699,16 @@ static const uint8_t kSdGolden[] = {
     0x0E, 'a','l','p','h','a','.','s','c','e','n','a','r','i','o',
     0x05, 'A','l','p','h','a',
     0x05, 'F','i','r','s','t',
-    0x08, 0x03, 0x00,                       /* maxPlayers, bots, bound   */
+    0x08, 0x03, 0x00, 0x01,   /* maxPlayers, bots, bound, keepsWinCondition */
     0x08, 'b','e','t','a','.','l','u','a',
     0x04, 'B','e','t','a',
     0x06, 'S','e','c','o','n','d',
-    0x00, 0x00, 0x01                        /* maxPlayers, bots, bound   */
+    0x00, 0x00, 0x01, 0x00    /* maxPlayers, bots, bound, keepsWinCondition */
 };
 
 static void sdFill(ScnDirEntry *e, const char *file, const char *name,
                    const char *desc, uint8_t maxPlayers, uint8_t bots,
-                   bool bound) {
+                   bool bound, bool keepsWinCondition) {
     memset(e, 0, sizeof(*e));
     SDL_strlcpy(e->file, file, sizeof(e->file));
     SDL_strlcpy(e->name, name, sizeof(e->name));
@@ -595,6 +716,7 @@ static void sdFill(ScnDirEntry *e, const char *file, const char *name,
     e->maxPlayers = maxPlayers;
     e->bots       = bots;
     e->bound      = bound;
+    e->keepsWinCondition = keepsWinCondition;
 }
 
 /* A client with a scenario-list request in flight, which is what the
@@ -622,8 +744,8 @@ int run_scenario_dir_entry_roundtrip(void) {
     int         next = 0;
     int         i;
 
-    sdFill(&entries[0], SD_E0_FILE, SD_E0_NAME, SD_E0_DESC, 8, 3, false);
-    sdFill(&entries[1], SD_E1_FILE, SD_E1_NAME, SD_E1_DESC, 0, 0, true);
+    sdFill(&entries[0], SD_E0_FILE, SD_E0_NAME, SD_E0_DESC, 8, 3, false, true);
+    sdFill(&entries[1], SD_E1_FILE, SD_E1_NAME, SD_E1_DESC, 0, 0, true, false);
 
     /* ── The golden bytes ─────────────────────────────────────────── */
     memset(buf, 0, sizeof(buf));
@@ -664,16 +786,27 @@ int run_scenario_dir_entry_roundtrip(void) {
                   (unsigned)cs->lobbyScenarioListBots[0]);
     UT_ASSERT_MSG(!cs->lobbyScenarioListBound[0],
                   "entry 0 read as bound");
+    UT_ASSERT_MSG(cs->lobbyScenarioListKeepsWin[0],
+                  "entry 0 read as a scenario, and the fixture says a mod");
     UT_ASSERT(strcmp(cs->lobbyScenarioListFiles[1], SD_E1_FILE) == 0);
     UT_ASSERT(strcmp(cs->lobbyScenarioListNames[1], SD_E1_NAME) == 0);
     UT_ASSERT(strcmp(cs->lobbyScenarioListDescs[1], SD_E1_DESC) == 0);
     UT_ASSERT_MSG(cs->lobbyScenarioListBound[1],
                   "entry 1 read as unbound, and the fixture says bound");
+    UT_ASSERT_MSG(!cs->lobbyScenarioListKeepsWin[1],
+                  "entry 1 read as a mod, and the fixture says a scenario");
     /* Read back through the public accessors too, which is how a chooser will
        see it. */
     UT_ASSERT(strcmp(clientSimGetLobbyScenarioListFile(cs, 0),
                      SD_E0_FILE) == 0);
     UT_ASSERT(clientSimGetLobbyScenarioListBots(cs, 0) == 3);
+    /* The two flags answer different questions, which is why both are on the
+       wire: entry 0 is unbound and a mod, entry 1 is bound and a scenario. */
+    UT_ASSERT(clientSimGetLobbyScenarioListKeepsWinCondition(cs, 0));
+    UT_ASSERT(!clientSimGetLobbyScenarioListBound(cs, 0));
+    UT_ASSERT(!clientSimGetLobbyScenarioListKeepsWinCondition(cs, 1));
+    UT_ASSERT(clientSimGetLobbyScenarioListBound(cs, 1));
+    UT_ASSERT(!clientSimGetLobbyScenarioListKeepsWinCondition(cs, 2));
     UT_ASSERT(clientSimGetLobbyScenarioListCount(cs) == 2);
     UT_ASSERT(clientSimGetLobbyScenarioListReady(cs));
     /* An index off the end answers rather than reading past the list. */
@@ -692,7 +825,7 @@ int run_scenario_dir_entry_roundtrip(void) {
     UT_ASSERT_MSG(strlen(longDesc) == 255,
                   "the fixture description is %d bytes, expected 255",
                   (int)strlen(longDesc));
-    sdFill(&entries[2], "wide.lua", "Wide", longDesc, 16, 255, false);
+    sdFill(&entries[2], "wide.lua", "Wide", longDesc, 16, 255, false, false);
 
     memset(buf, 0, sizeof(buf));
     next = 0;
@@ -772,8 +905,8 @@ int run_scenario_dir_chunk_not_in_flight(void) {
     int         len;
     int         next = 0;
 
-    sdFill(&entries[0], SD_E0_FILE, SD_E0_NAME, SD_E0_DESC, 8, 3, false);
-    sdFill(&entries[1], SD_E1_FILE, SD_E1_NAME, SD_E1_DESC, 0, 0, true);
+    sdFill(&entries[0], SD_E0_FILE, SD_E0_NAME, SD_E0_DESC, 8, 3, false, true);
+    sdFill(&entries[1], SD_E1_FILE, SD_E1_NAME, SD_E1_DESC, 0, 0, true, false);
 
     memset(buf, 0, sizeof(buf));
     len = udpServerPackScenarioListChunk(buf, (int)sizeof(buf), entries, 2, 0,

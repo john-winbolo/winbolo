@@ -93,6 +93,19 @@ struct WbTheme {
     ImU32 diffHardTagBg;
     ImU32 diffHardTagBorder;
     ImU32 diffHardTagText;
+    /* Mod and Scenario tags — the two kinds a script can be, worn by every
+     * row of the Mods dialog and by that dialog's own header. Their own
+     * colours rather than the HOST/BOT khaki, because these say what a thing
+     * IS where the row tags say who a player is, so the two read as separate
+     * families. The blue and the amber are the hues the rounded pill they
+     * replaced carried, kept because a host already tells the two apart by
+     * colour and a new pair would make them read that again. */
+    ImU32 modTagBg;
+    ImU32 modTagBorder;
+    ImU32 modTagText;
+    ImU32 scenarioTagBg;
+    ImU32 scenarioTagBorder;
+    ImU32 scenarioTagText;
 };
 
 /* Single global theme pointer. Swapped on theme change. */

@@ -799,6 +799,15 @@ void        serverSimGetUploadsDir(const ServerSim *sim, char *out,
  *  Empty is none — the ordinary state of a server whose host
  *  has picked nothing.
  *
+ *  Or the committed map's own script, where the host's list
+ *  names that row at the front. The row is on the list to
+ *  say where the round composes the script, and it names a
+ *  file the map brought rather than one the directory
+ *  holds, so a caller that means to open it in the
+ *  scenarios directory reads the row rather than this name.
+ *  serverSimGetScript answers the rows, and bound is what
+ *  tells the two kinds apart.
+ *
  *  Never answers NULL: a sim with no selection answers "",
  *  so a caller can print or compare it without a guard.
  *  There is no fallback the way the directory has one; no
@@ -1781,6 +1790,12 @@ bool serverSimIsScenarioActing(const ServerSim *sim);
  *********************************************************/
 void serverSimScenarioSeatLobby(ServerSim *sim);
 
+/* True when the map's script declared a lobby of its own, the one
+ * serverSimScenarioSeatLobby lays down. A host that would otherwise seed a
+ * bot of its own asks this first: a script that describes the lobby is the
+ * one that says who sits in it. */
+bool serverSimScenarioHasLobbyTemplate(const ServerSim *sim);
+
 /*********************************************************
  *NAME:          serverSimScenarioApplyLobbyRules
  *PURPOSE:
@@ -2105,6 +2120,10 @@ typedef struct {
     uint8_t maxPlayers;  /* 0 = the server's own cap */
     uint8_t bots;        /* seats the template asks for */
     bool    bound;       /* belongs to one map; not selectable as a mod */
+    bool    keepsWinCondition;  /* keeps the round's win condition, which is
+                                   what a mod does and a scenario does not.
+                                   Not the same question as bound: a mod and
+                                   an unbound scenario are both unbound. */
 } ServerScenarioEntry;
 
 int serverSimEnumerateScenarioDir(ServerSim *sim,
@@ -2209,6 +2228,29 @@ uint8_t     serverSimGetLineOfSight(const ServerSim *sim);
 void        serverSimSetSmartPingsOff(ServerSim *sim, bool off);
 bool        serverSimGetSmartPingsOff(const ServerSim *sim);
 
+/* Mods — whether the round composes the mods on the lobby's pick list. The
+ * host owns it from the lobby (LST_MODS_OFF), and scnDecideScenario
+ * (src/scenario/scenario_host.c) is the one reader: it skips every pick
+ * whose manifest says kind = "mod" while this is set.
+ *
+ * Mods only. A scenario on the pick list and the map's own script both
+ * still play, because neither is a mod — the question a mod answers about
+ * itself is scnManifestKeepsWinCondition, and that is the only test here.
+ *
+ * The pick list is not touched. Turning the setting off is not the same as
+ * emptying the list: the entries stay in the order the host put them in and
+ * come back composed the moment it goes on again, the same way the lobby's
+ * password box keeps its text while the box beside it is unchecked.
+ *
+ * Named and stored in the negative sense on purpose, matching smart pings
+ * above: false means the mods RUN. That is what every build before the
+ * setting existed did, and it is what a zeroed sim, an absent wire byte and
+ * a NULL sim all read as. The lobby UI reads it through the positive
+ * accessor clientSimGetLobbyModsEnabled, so no display code deals in
+ * negatives. */
+void        serverSimSetModsOff(ServerSim *sim, bool off);
+bool        serverSimGetModsOff(const ServerSim *sim);
+
 /* Voice mode — how the server handles the voice its clients send it.
  * serverVoiceOff forwards nothing; serverVoiceProximity is not
  * implemented and forwards like serverVoiceOn. Set once from
@@ -2296,10 +2338,13 @@ void serverSimSetCountdownTicks(ServerSim *sim, int32_t ticks);
  *
  *   1. the caller's base (the lobby default, or single player's own
  *      chosen level);
- *   2. what the map requires for the bot's side (the scenario's bot_mode
- *      hook) — on Survival, the team's bots are survival mode at Hard;
- *   3. what the host last picked BY HAND, when the caller honours it —
- *      the difficulty only when step 2 fixed the mode, both otherwise.
+ *   2. what the map requires for the bot's side — the attached scenario's
+ *      lobby template, read for that team; on Survival, the horde's seats
+ *      are survival mode at Hard;
+ *   3. what a person last picked BY HAND, when the caller honours it — on a
+ *      team step 2 configured, the level last chosen on a seat of that team
+ *      and never the mode; on every other team, the one pair the lobby
+ *      remembers, which may set both.
  *
  * Bots that first appear on a map (the seed, single player's setup bots)
  * do not honour step 3; the Add Bot button does. See server_sim_lobby.c. */
@@ -2312,6 +2357,48 @@ bool serverSimResolveNewBotConfig(const ServerSim *sim, int team,
                                   const char *brainPath,
                                   bool honourManualPick,
                                   uint8_t *ioMode, uint8_t *ioLevel);
+
+/* ── A scenario's own mode and difficulty ──────────────────────────────
+ *
+ * A scenario names the two by KEY — the words in the brain's own modes.txt
+ * ("survival", "hard") — because a script cannot know what index a brain
+ * puts them at, and the two bytes the lobby carries are indices. This turns
+ * one pair of keys into that pair of indices.
+ *
+ * Both keys are optional and "" means "leave this one alone", which is what
+ * every scenario written before the two fields existed says. A mode key that
+ * moves the seat to a different mode takes that mode's own default level
+ * unless a level key names one, because a level index only means something
+ * inside one mode's list.
+ *
+ * Case-insensitive, as brainModesFindMode and brainModeFindLevel are. */
+typedef enum {
+    BOT_CFG_KEYS_OK = 0,      /* applied, or neither key was given */
+    BOT_CFG_KEYS_NO_MANIFEST, /* the brain ships no modes.txt to ask */
+    BOT_CFG_KEYS_NO_MODE,     /* the mode key names no mode of this brain */
+    BOT_CFG_KEYS_NO_LEVEL     /* the level key names no level of that mode */
+} BotConfigKeyResult;
+
+/* Resolve `modeKey` / `levelKey` against the brain at `brainPath`.
+ * *ioMode / *ioLevel carry the current pair in and the answer out, and are
+ * left untouched on any answer but BOT_CFG_KEYS_OK. Writes no config and
+ * publishes nothing — the caller does both, because the order matters: the
+ * config has to be in the slot BEFORE the brain is created. */
+BotConfigKeyResult serverSimResolveBotConfigKeys(const char *brainPath,
+                                                 const char *modeKey,
+                                                 const char *levelKey,
+                                                 uint8_t *ioMode,
+                                                 uint8_t *ioLevel);
+
+/* Write a slot's mode and difficulty and queue the bot-config event that
+ * shows them, without the publish-now, the rename and the auto-unready
+ * serverSimSetBotConfig carries. For a seat that does not exist yet: the
+ * two bytes have to be in botConfigs before the brain is created, and a
+ * publish to a slot no client has heard of yet describes nothing. Queue the
+ * publish again once the seat is connected — the flush drops the queued bit
+ * for a slot that is not. */
+void serverSimSetBotConfigQuiet(ServerSim *sim, BYTE slot,
+                                uint8_t mode, uint8_t difficulty);
 
 /* Give a lobby bot joining `team` its mode and difficulty — the lobby
  * default as the base, then serverSimResolveNewBotConfig — and queue the

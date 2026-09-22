@@ -294,7 +294,8 @@ static void scnCheckGame(const ScenarioManifest *m, ScnValidateResult *out) {
 /* The template the lobby is seated from: the human cap, and per team the
  * number it is, the bots it asks for, the brain it names them with and the
  * init table they are built with. */
-static void scnCheckLobby(const ScenarioManifest *m, ScnValidateResult *out) {
+static void scnCheckLobby(const ServerSim *sim, const ScenarioManifest *m,
+                          ScnValidateResult *out) {
     const ScnManifestLobby *lob = &m->lobby;
     char                    key[SCN_VALIDATE_KEY_LEN];
     uint8_t                 i;
@@ -309,6 +310,14 @@ static void scnCheckLobby(const ScenarioManifest *m, ScnValidateResult *out) {
 
     for (i = 0; i < lob->numTeams; i++) {
         const ScnManifestTeam *t = &lob->teams[i];
+        /* The team's brain as the loader will open it: the name resolved
+           against this server's brains/, or "" for a team that named none
+           and for one whose name this server does not have. The mode check
+           below reads the modes.txt beside a brain, so it needs the path and
+           not the name. */
+        char                   brainPath[SCN_PATH_MAX];
+
+        brainPath[0] = '\0';
 
         /* One below MAX_TANKS is the top the engine seats: the template drops
            an id at MAX_TANKS or above, and the sim's team table is keyed by
@@ -351,8 +360,6 @@ static void scnCheckLobby(const ScenarioManifest *m, ScnValidateResult *out) {
            like any other and is reported as a brain this server does not have,
            which is what it is. */
         if (t->brain[0] != '\0') {
-            char path[SCN_PATH_MAX];
-
             snprintf(key, sizeof(key), "lobby.teams[%u].brain",
                      (unsigned)(i + 1));
             if (strpbrk(t->brain, "/\\") != NULL) {
@@ -360,10 +367,64 @@ static void scnCheckLobby(const ScenarioManifest *m, ScnValidateResult *out) {
                             "'%s' is a path; a scenario names a brain, which "
                             "is the directory under the server's brains/ — "
                             "'GoalHunter_1.7', not a path to it", t->brain);
-            } else if (!brainListResolve(t->brain, path, sizeof(path))) {
+            } else if (!brainListResolve(t->brain, brainPath,
+                                         sizeof(brainPath))) {
+                brainPath[0] = '\0';
                 scnIssueAdd(out, key,
                             "'%s' names no brain this server has; the team's "
                             "seats take the server's own brain", t->brain);
+            }
+        }
+
+        /* The mode and the level the team's bots play at, asked of the brain
+           that will run them — the team's, or the server's both when the team
+           named none and when the name it gave resolved to nothing, which is
+           the brain those seats take. This is the same question the seating
+           asks, through the same resolver, so a template that validates is
+           one the seating will take. A brain with no modes.txt has no key to
+           name, and that reads here as the key naming nothing, which is what
+           it does. */
+        if (t->mode[0] != '\0' || t->difficulty[0] != '\0') {
+            const char *brain = (brainPath[0] != '\0')
+                              ? brainPath
+                              : ((sim != NULL) ? serverSimGetBotBrainPath(sim)
+                                               : NULL);
+            /* And nothing to ask where there is no brain to ask it of: the
+               team named none and there is no sim here to give the server's,
+               which is the editor's case. The round will run these seats on
+               whatever brain the server is configured with, so the pair is
+               the server's question rather than the file's, and WinBoloDS
+               -validate is where it gets asked. Reporting it here would name
+               brain '' on a file WinBoloDS takes. */
+            if (brain != NULL) {
+                uint8_t mode  = 0;
+                uint8_t level = 0;
+                BotConfigKeyResult kr =
+                    serverSimResolveBotConfigKeys(brain, t->mode,
+                                                  t->difficulty, &mode,
+                                                  &level);
+                if (kr == BOT_CFG_KEYS_NO_MODE) {
+                    snprintf(key, sizeof(key), "lobby.teams[%u].mode",
+                             (unsigned)(i + 1));
+                    scnIssueAdd(out, key, "'%s' is no mode of brain '%s'",
+                                t->mode, brain);
+                } else if (kr == BOT_CFG_KEYS_NO_LEVEL) {
+                    snprintf(key, sizeof(key), "lobby.teams[%u].difficulty",
+                             (unsigned)(i + 1));
+                    scnIssueAdd(out, key,
+                                "'%s' is no difficulty of mode '%s' of brain "
+                                "'%s'",
+                                t->difficulty,
+                                (t->mode[0] != '\0') ? t->mode : "default",
+                                brain);
+                } else if (kr == BOT_CFG_KEYS_NO_MANIFEST) {
+                    snprintf(key, sizeof(key), "lobby.teams[%u].mode",
+                             (unsigned)(i + 1));
+                    scnIssueAdd(out, key,
+                                "brain '%s' declares no modes, so it has "
+                                "neither a mode nor a difficulty to name",
+                                brain);
+                }
             }
         }
 
@@ -1216,6 +1277,7 @@ static bool scnValidateSource(const ServerSim *sim, const char *src,
     char           err[SCN_VALIDATE_LINE_LEN];
     lua_State     *L;
     ScnParseReport rep;
+    size_t         before;
 
     L = scnNewVm();
     if (L == NULL) {
@@ -1226,17 +1288,27 @@ static bool scnValidateSource(const ServerSim *sim, const char *src,
 
     /* The manifest the caller holds, before the chunk, exactly where the host
        puts it. A script that declares no table of its own then reads back this
-       one; a script that declares one replaces it. */
+       one; a script that declares one replaces it.
+
+       LUA_NOREF here and at the two calls below: the host gives each script
+       on its list a table of its own to keep the scripts apart, and this
+       state checks one script and is thrown away, so there is nothing to
+       keep it apart from. The state's real globals are what it reads. */
     if (push != NULL) {
-        scnPushManifestGlobal(L, push);
+        scnPushManifestGlobal(L, LUA_NOREF, push);
     }
 
     /* The top level and no further. What the chunk defines is what the table
        below is read out of; the functions it left behind are never called. */
     snprintf(chunkName, sizeof(chunkName), "@%s", name);
-    if (!scnRunChunk(L, src, srcLen, chunkName, err, sizeof(err))) {
+    if (!scnRunChunk(L, LUA_NOREF, src, srcLen, chunkName, err,
+                     sizeof(err))) {
+        before = out->count;
         scnIssueAdd(out, "", "%s", err);
-        if (out->count > 0) {
+        /* Only where the add took. A full list drops the issue and leaves the
+           count where it was, and stamping on that count would put this line
+           number on whatever unrelated issue is last. */
+        if (out->count > before) {
             out->issues[out->count - 1].line = scnLineFromLuaError(err, name);
         }
         scnCloseVm(L);
@@ -1246,7 +1318,8 @@ static bool scnValidateSource(const ServerSim *sim, const char *src,
     rep.soft    = NULL;
     rep.softLen = 0;
     rep.sink    = out;
-    if (!scnReadManifest(L, &out->manifest, name, err, sizeof(err), &rep)) {
+    if (!scnReadManifest(L, LUA_NOREF, &out->manifest, name, err,
+                         sizeof(err), &rep)) {
         scnIssueAdd(out, "", "%s", err);
         scnCloseVm(L);
         return false;
@@ -1255,7 +1328,7 @@ static bool scnValidateSource(const ServerSim *sim, const char *src,
 
     scnCheckApi(&out->manifest, out);
     scnCheckGame(&out->manifest, out);
-    scnCheckLobby(&out->manifest, out);
+    scnCheckLobby(sim, &out->manifest, out);
     /* The rules are checked whether or not there is a map: a rule's bounds
        and the pairs it sits in are the table's own, so the classic table
        stands in for a round's. The tags are the check that genuinely reads

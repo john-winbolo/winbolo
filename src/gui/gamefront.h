@@ -985,15 +985,82 @@ extern float gameFrontOverviewZoom;     /* camera scale, e.g. 1.0 */
 extern bool  gameFrontOverviewFollow;
 extern bool  gameFrontShowMapOverview;  /* open when the last game ended */
 
-/* Where the scenario panel sits ([WINDOW] section). The panel is an ImGui
- * window inside the main one rather than an OS window of its own, so this is
+/* The size the scenario panel is held to, as a percent of the size the
+ * game's own zoom gives it. The drag is clamped to this range and so is a
+ * value read out of the preferences file, because a file somebody has edited
+ * by hand must not be able to open the panel larger than the screen or so
+ * small there is nothing left to get a pointer onto. */
+#define SCN_PANEL_SCALE_MIN 25
+#define SCN_PANEL_SCALE_MAX 300
+
+/* Where the scenario panel sits, how big the player has made it and how
+ * opaque it is drawn ([WINDOW] section). These four are the layout of the
+ * panel the player touched last, and they are the fallback: a scenario the
+ * player has never laid out opens its panel from them, so somebody who likes
+ * the panel small and out of the way gets it that way the first time they
+ * meet a new scenario. A scenario that has been laid out keeps its own four
+ * numbers in a row of its own under [SCENARIO PANEL], written and read by
+ * gameFrontSetScnPanelLayout / gameFrontGetScnPanelLayout below, and those
+ * are what the panel is placed from while that scenario is the one on screen.
+ *
+ * The panel is an ImGui window
+ * inside the main one rather than an OS window of its own, so the position is
  * a position in the main window's own render coordinates, not a desktop one.
- * -1 for either means the player has never moved it, and it opens at the
- * top-right of the game view; a position saved on a larger display is
- * clamped back inside the window it is restored into. Written through the
- * debounced gameFrontSaveWindowSettings path as the player drags it. */
+ * -1 for either coordinate means the player has never moved it, and it opens
+ * at the top-right of the game view; a position saved on a larger display is
+ * clamped back inside the window it is restored into.
+ *
+ * The scale is a percent rather than a size in pixels so that the saved value
+ * keeps its meaning at every zoom: 100 is the size the game's zoom alone
+ * gives the panel, which is the size it had before it could be resized. -1
+ * means it has never been resized, and a loaded value is clamped to
+ * SCN_PANEL_SCALE_MIN..SCN_PANEL_SCALE_MAX, the same range the resize drag
+ * is clamped to.
+ *
+ * The alpha is a percent of opaque, and it fades everything the panel puts
+ * on screen: the black backing it is drawn on and every primitive the
+ * scenario drew, together, so the panel stays one object at every setting.
+ * It reaches no pixel that was not drawn on — the empty parts of the square
+ * are as clear at 10 as they are at 100 — and it does not reach the border
+ * or the corner grips, which are the frontend's own and have to stay
+ * findable. It scales what the panel already looked like rather than setting
+ * it outright, so 100 is the panel as it was before there was a slider — a
+ * dim backing with the scenario's drawing at full strength on top — and that
+ * is also what -1, never touched, resolves to. 0 leaves the square empty but
+ * for those grips. A loaded value is clamped to 0..100.
+ *
+ * All four are written through the debounced gameFrontSaveWindowSettings
+ * path, and only as a drag ends: a drag is a burst of values and only the one
+ * it finishes on is worth a write. */
 extern int   gameFrontScnPanelX;        /* -1 = never moved */
 extern int   gameFrontScnPanelY;
+extern int   gameFrontScnPanelScale;    /* percent, -1 = never resized */
+extern int   gameFrontScnPanelAlpha;    /* percent, -1 = never set */
+
+/* The longest scenario string the pair below is asked to key a row on. The
+ * caller passes the scenario's file name where there is one, because two
+ * scenarios can carry the same display name and the file name is what the
+ * host actually loaded, so this is LOBBY_SCENARIO_FILE_LEN from
+ * control_event.h and not the shorter name length. Both buffers are sized
+ * from it and a longer string is truncated rather than refused. */
+#define SCN_PANEL_SCENARIO_LEN 128
+
+/* One scenario's own scenario-panel layout, kept under "SCENARIO PANEL" /
+ * the scenario ("Survival.scenario.lua") as "x,y,scale,alpha", so each
+ * scenario remembers where its overlay sat, how big it was and how opaque.
+ * The four numbers mean exactly what the globals above mean, -1 and all, and
+ * are clamped on the way out of the file the same way those are: the
+ * preferences file is a text file a player can edit, and a bad row must not
+ * open the panel off screen or too small to get a pointer onto.
+ *
+ * Get returns false, and leaves all four alone, when no row is remembered
+ * yet or when the row does not read as four whole numbers — the caller keeps
+ * the [WINDOW] fallback in that case. Set does nothing for a scenario with
+ * no name, which is a game with no scenario behind it. */
+bool gameFrontGetScnPanelLayout(const char *scenario, int *x, int *y,
+                                int *scale, int *alpha);
+void gameFrontSetScnPanelLayout(const char *scenario, int x, int y,
+                                int scale, int alpha);
 
 /* App full screen mode ([MENU] section). While it is on the main window is
  * full screen everywhere — menus, lobby and game — and every game opens in
@@ -1067,8 +1134,11 @@ void gameFrontSetHostingVoiceMode(int mode);
 
 /* Visibility rules a hosted game starts with ([GAME OPTIONS] section).
  * Read by gameFrontGetPrefs and pushed onto the sim with
- * serverSimSetViewPolicy in gameFrontSetupServer. Each policy global
- * holds a ViewPolicy value; the decay globals hold seconds in the
+ * serverSimSetViewPolicy by every path here that creates a server — the
+ * listen server in gameFrontSetupServer and the single-player game in the
+ * dialog state machine — because both open a lobby whose Visibility
+ * dropdown has to start on what this player last chose. Each policy
+ * global holds a ViewPolicy value; the decay globals hold seconds in the
  * VIEW_DECAY_MIN_SECS..VIEW_DECAY_MAX_SECS range. Each starts on the
  * rules an unconfigured server runs, so hosting with an untouched INI
  * leaves the sim as serverSimInit created it. */

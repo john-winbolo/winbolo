@@ -185,8 +185,8 @@ static uint8_t scnDirBots(const ScenarioManifest *m) {
     return (uint8_t)total;
 }
 
-static void scnDirFill(ScnDirEntry *e, const char *file,
-                       const ScenarioManifest *m) {
+void scnDirEntryFromManifest(ScnDirEntry *e, const char *file,
+                             const ScenarioManifest *m) {
     memset(e, 0, sizeof(*e));
     SDL_strlcpy(e->file, file, sizeof(e->file));
     SDL_strlcpy(e->name, m->name, sizeof(e->name));
@@ -194,6 +194,11 @@ static void scnDirFill(ScnDirEntry *e, const char *file,
     e->maxPlayers = m->lobby.maxPlayers;
     e->bots       = scnDirBots(m);
     e->bound      = m->bound;
+    /* Read off the manifest kind rather than stored separately, so a file
+       that changes kind cannot say one thing here and another when it is
+       loaded. The lobby script list carries this per entry: it is how a
+       chooser knows which rows may sit together. */
+    e->keepsWinCondition = scnManifestKeepsWinCondition(m);
 }
 
 /* File-name order. Two scenarios may share a manifest name and two files in
@@ -282,7 +287,7 @@ int scnDirList(const char *dir, ScnDirEntry *out, int max) {
         }
 
         if (ok) {
-            scnDirFill(&out[n], name, &check->manifest);
+            scnDirEntryFromManifest(&out[n], name, &check->manifest);
             n++;
         }
     }

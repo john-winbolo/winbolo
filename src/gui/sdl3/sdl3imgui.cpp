@@ -38,6 +38,7 @@
 #include <SDL3/SDL.h>
 
 #include <cctype>   /* toupper — country-code normalization */
+#include <cmath>    /* lroundf, fabsf — the scenario panel's resize drag */
 #include <cstdlib>  /* bsearch — country-name lookup */
 #include <cstring>  /* strcmp — bsearch comparator */
 
@@ -404,6 +405,13 @@ static SDL_Texture *s_iconSkull[ICON_SLOT_COUNT] = {};
  * state. */
 static SDL_Texture *s_iconPing[ICON_SLOT_COUNT]      = {};
 static SDL_Texture *s_iconPingMuted[ICON_SLOT_COUNT] = {};
+/* The gear in the scenario panel's top-right corner, which opens that
+ * panel's settings window. data/ui/settings.svg, the same gear the tablet
+ * frontend puts on its settings tab, so one build does not say "settings"
+ * with two different shapes. A white alpha mask like the skull, because the
+ * corner grips tint themselves dim or bright from whether the pointer is on
+ * them and a tint multiplier cannot brighten an authored colour. */
+static SDL_Texture *s_iconScnPanelGear[ICON_SLOT_COUNT] = {};
 #if defined(WINBOLO_VOICE)
 /* Voice state icons for the players panel. Which shape is drawn says which
  * end the state belongs to: a speaker for the states about playback here —
@@ -515,6 +523,11 @@ static void ensureWbnIconsLoaded(void) {
                                                   WBN_ICON_RASTER_PX);
     s_iconPingMuted[slot] = imguiLoadSvgIconWhite(r, "data/ui/ping/standard-muted.svg",
                                                   WBN_ICON_RASTER_PX);
+    /* The scenario panel's settings grip, outside the voice guard with the
+     * skull and the ping for the same reason: a scenario panel is drawn in
+     * every build. */
+    s_iconScnPanelGear[slot] = imguiLoadSvgIconWhite(r, "data/ui/settings.svg",
+                                                     WBN_ICON_RASTER_PX);
 #if defined(WINBOLO_VOICE)
     s_iconMic[slot]          = imguiLoadSvgIconWhite(r, "data/ui/mic.svg",           WBN_ICON_RASTER_PX);
     s_iconMicMuted[slot]     = imguiLoadSvgIconWhite(r, "data/ui/mic-muted.svg",     WBN_ICON_RASTER_PX);
@@ -735,6 +748,7 @@ static void destroyIconSlot(int slot) {
      * every build too. */
     if (s_iconPing[slot]) { SDL_DestroyTexture(s_iconPing[slot]); s_iconPing[slot] = nullptr; }
     if (s_iconPingMuted[slot]) { SDL_DestroyTexture(s_iconPingMuted[slot]); s_iconPingMuted[slot] = nullptr; }
+    if (s_iconScnPanelGear[slot]) { SDL_DestroyTexture(s_iconScnPanelGear[slot]); s_iconScnPanelGear[slot] = nullptr; }
 #if defined(WINBOLO_VOICE)
     if (s_iconMic[slot]) { SDL_DestroyTexture(s_iconMic[slot]); s_iconMic[slot] = nullptr; }
     if (s_iconMicMuted[slot]) { SDL_DestroyTexture(s_iconMicMuted[slot]); s_iconMicMuted[slot] = nullptr; }
@@ -3817,6 +3831,66 @@ static void renderPlayersPanel(ClientSim *cs) {
    first time it is shown, in panel units so the inset scales with it. */
 #define SCN_PANEL_DEFAULT_INSET 4.0f
 
+/* The smallest the panel is ever drawn, in screen pixels. Small enough to
+   tuck out of the way in a corner, large enough that the two corner handles
+   are still something a pointer can be put on: below this the handles, which
+   are a quarter of the side each, stop being separable. */
+#define SCN_PANEL_MIN_PX 32.0f
+
+/* How close the resize drag has to come to a cardinal size before the panel
+   jumps to it, in screen pixels. Three is about one step of a pointer being
+   moved deliberately, so a drag travelling past a cardinal at speed is not
+   caught by it and a drag being eased onto one lands on it. */
+#define SCN_PANEL_SNAP_PX 3.0f
+
+/* The resize grip at the bottom right, in screen pixels. Never more than a
+   quarter of the side, so a panel shrunk to SCN_PANEL_MIN_PX is not simply
+   handles with no panel between them. */
+#define SCN_PANEL_HANDLE_PX 14.0f
+
+/* The title bar across the top of the panel, in screen pixels. It is where
+   the panel is dragged from and it carries the settings button at its right
+   end, which is what a title bar on any other window does. Clamped to a
+   quarter of the side for the reason the resize grip is, so a panel taken
+   down to SCN_PANEL_MIN_PX still has panel under its bar. */
+#define SCN_PANEL_BAR_PX 20.0f
+
+/* The panel's opacity for a player who has never opened the settings window,
+   as a percent. 43 percent of 255 is 110, which is the alpha the backing was
+   drawn with before the setting existed.
+
+   The percent is a multiplier over the panel's own look rather than a
+   replacement for it, which is what lets the default be a hundred and still
+   be the panel everybody already had. The backing has always been dim and
+   the writing on it has always been full strength; at a hundred both are
+   exactly that, and the slider takes the pair of them down together. */
+#define SCN_PANEL_ALPHA_DEFAULT 100
+
+/* The backing's own alpha at full opacity, out of 255. This is the value the
+   panel was drawn with before there was a slider: dim enough that the map
+   under it stays readable, solid enough that the writing on it has something
+   to sit on. The slider scales it; it does not replace it, so a panel left
+   alone looks the way it always did. */
+#define SCN_PANEL_BACKING_ALPHA 110
+
+/* How far off the gear the settings window first appears, in screen pixels.
+   Clear of the panel rather than on top of it: the whole point of the window
+   is to watch the panel change while the opacity slider moves, and a window
+   sitting over the square would hide the thing being adjusted. */
+#define SCN_PANEL_DIALOG_GAP 6.0f
+
+/* How wide the opacity slider is drawn, in screen pixels. Set rather than
+   left to ImGui, which gives an auto-resizing window's item the whole
+   remaining content width: with one short row that comes out as a stubby
+   grab that is hard to place a percent with. */
+#define SCN_PANEL_DIALOG_SLIDER_W 160.0f
+
+/* The sizes the resize drag snaps to, as percents of the size the game's own
+   zoom gives the panel. A hundred is that size exactly, which is the size
+   every scenario was laid out against and the one worth being able to get
+   back to by feel. */
+static const int scnPanelCardinals[] = {25, 50, 75, 100, 125, 150, 200, 300};
+
 /* The name a seat is playing under, for the list's name primitive. NULL for
    a seat nobody holds, which is what makes that primitive draw nothing. */
 static const char *scnPanelPlayerName(void *ctx, uint8_t slot) {
@@ -3827,6 +3901,119 @@ static const char *scnPanelPlayerName(void *ctx, uint8_t slot) {
     return name;
 }
 
+/* The scenario the panel on screen is laid out for, which is the row its
+   position, size and opacity are kept under. Empty until a panel with a
+   scenario behind it is drawn, and empty again for one without: that panel
+   uses the [WINDOW] numbers and writes no row of its own.
+
+   At file scope rather than inside the panel because the settings window
+   below is a function of its own and writes the opacity through the same
+   path. */
+static char s_scnPanelScenario[SCN_PANEL_SCENARIO_LEN] = "";
+
+/* The one place the panel's four numbers reach the preferences file, called
+   as each of the three gestures that change them ends.
+
+   Two rows are written, not one. The scenario's own row is what its panel
+   opens from the next time it is played, and the [WINDOW] pair is what a
+   scenario nobody has laid out yet inherits, so it has to keep following
+   whichever panel was touched last. */
+static void scnPanelPersistLayout(void) {
+    gameFrontSaveWindowSettings();
+    if (s_scnPanelScenario[0] != '\0') {
+        gameFrontSetScnPanelLayout(s_scnPanelScenario, gameFrontScnPanelX,
+                                   gameFrontScnPanelY, gameFrontScnPanelScale,
+                                   gameFrontScnPanelAlpha);
+    }
+}
+
+/* The scenario panel's settings window, and the alpha percent it edits.
+   Opened by the gear in the panel's top-right corner and closed by that gear
+   again or by its own close button, so `open` is owned by the caller and
+   written back through the pointer.
+
+   A window rather than a popup, because a popup closes the moment the
+   pointer goes anywhere else and the whole point of an opacity control is to
+   watch the panel while it moves. Submitted after the panel's End for the
+   plain reason that one ImGui window cannot be opened inside another.
+
+   The panel reads alphaPct every frame, for its backing and for the alpha
+   it hands the list drawer, so the slider is live: the square behind the
+   window fades as the grab is dragged, and only the value the drag finishes
+   on reaches the preferences file. */
+static void renderScenarioPanelSettings(bool *open, float gearX, float gearY,
+                                        int *alphaPct) {
+    if (!*open) return;
+
+    /* Beside the gear the first time it is opened, and the player's to move
+       after that, which is what Appearing rather than Always buys. */
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(gearX + SCN_PANEL_DIALOG_GAP,
+                                   gearY + SCN_PANEL_DIALOG_GAP),
+                            ImGuiCond_Appearing);
+
+    char title[128];
+    snprintf(title, sizeof(title), "%s###scnpanelsettings",
+             langGetText(STR_SCNPANEL_SETTINGS_TITLE));
+
+    /* AlwaysAutoResize because there is one row in it and a window sized to
+       its contents needs no resize grip of its own to argue with the panel's.
+       NoSavedSettings because this is a transient thing opened off a grip:
+       remembering where it sat in a previous session would put it somewhere
+       with no relation to where the panel is now. */
+    if (ImGui::Begin(title, open,
+                     ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoSavedSettings |
+                     ImGuiWindowFlags_NoDocking |
+                     ImGuiWindowFlags_NoCollapse)) {
+        /* Held inside the main window, for the reason the panel itself is:
+           a window whose title bar is off screen has nothing left to grab to
+           drag it back. Clamped here rather than before Begin because the
+           window sizes itself to its contents and its size is not known
+           until it has been laid out, and clamped every frame rather than
+           only on the first because the gear can be near an edge, the main
+           window can be made smaller, and ImGui re-clamps neither. */
+        const ImVec2 winPos  = ImGui::GetWindowPos();
+        const ImVec2 winSize = ImGui::GetWindowSize();
+        float keepX = winPos.x, keepY = winPos.y;
+        if (keepX > display.x - winSize.x) keepX = display.x - winSize.x;
+        if (keepY > display.y - winSize.y) keepY = display.y - winSize.y;
+        if (keepX < 0.0f) keepX = 0.0f;
+        if (keepY < 0.0f) keepY = 0.0f;
+        if (keepX != winPos.x || keepY != winPos.y) {
+            ImGui::SetWindowPos(ImVec2(keepX, keepY));
+        }
+
+        char sliderLbl[128];
+        snprintf(sliderLbl, sizeof(sliderLbl), "%s###scnAlpha",
+                 langGetText(STR_SCNPANEL_OPACITY_LBL));
+        ImGui::SetNextItemWidth(SCN_PANEL_DIALOG_SLIDER_W);
+        ImGui::SliderInt(sliderLbl, alphaPct, 0, 100, "%d%%");
+        /* Written when the grab is let go and not on every frame it moves,
+           the same as the panel's position and size: a drag is a burst of
+           values and only the one it ends on is worth a preferences write.
+           DeactivatedAfterEdit rather than Deactivated, so a click that
+           lands on the slider and changes nothing writes nothing. */
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            if (*alphaPct < 0) *alphaPct = 0;
+            if (*alphaPct > 100) *alphaPct = 100;
+            if (*alphaPct != gameFrontScnPanelAlpha) {
+                gameFrontScnPanelAlpha = *alphaPct;
+                scnPanelPersistLayout();
+            }
+        }
+        /* What the number means, because "opacity" alone does not say what
+           it is the opacity of. It is everything the panel puts on screen,
+           its backing and the scenario's drawing together, and it is nothing
+           else: the square's empty parts stay as clear as they are now, and
+           the border, the title bar and the resize grip keep their own alpha
+           so a panel taken to zero can still be found and turned back up. */
+        ImGui::TextDisabled("%s", langGetText(STR_SCNPANEL_OPACITY_LINE1));
+        ImGui::TextDisabled("%s", langGetText(STR_SCNPANEL_OPACITY_LINE2));
+    }
+    ImGui::End();
+}
+
 static void renderScenarioPanel(ClientSim *cs) {
     /* Whether ImGui is already holding a position for the window. Cleared
        whenever the panel is not drawn, so the next list to arrive places it
@@ -3834,16 +4021,107 @@ static void renderScenarioPanel(ClientSim *cs) {
        shared this window id happened to sit. */
     static bool s_scnPanelPlaced = false;
 
+    /* The side the resize drag is really on, before the snap. The snap is
+       applied to what is shown and to what is stored, never back into this:
+       a value that has been pulled onto a cardinal cannot leave it without
+       the pointer covering the snap distance twice, which feels like the
+       panel is stuck. Accumulate raw, show snapped. */
+    static float s_scnPanelRawSide = 0.0f;
+
+    /* Whether the resize handle was being dragged on the frame before this
+       one. The window's size has to be set before Begin, so a drag read
+       inside the window lands on the next frame and this is what carries it
+       across. */
+    static bool s_scnPanelResizing = false;
+
+    /* Whether the settings window the gear opens is up, and the opacity
+       percent it edits.
+
+       The percent is taken from the preference once, the first time a panel
+       is drawn, and belongs to the settings window after that. Re-reading the
+       preference every frame would be wrong now that the edit happens in a
+       window submitted later in the same frame: the read at the top would
+       stamp the stored value back over the live one before the player had
+       seen a single frame of what they were dragging. */
+    static bool s_scnPanelSettingsOpen = false;
+    static bool s_scnPanelAlphaSeeded  = false;
+    static int  s_scnPanelAlphaPct     = SCN_PANEL_ALPHA_DEFAULT;
+
     const ScnPanelList *list =
         (cs != nullptr) ? clientSimGetScnPanel(cs, 0) : nullptr;
 
     /* Tablet mode is the mobile frontends. They map the square into a slot
        of their own rather than into a window the player drags, so this one
-       stays out of their way. */
+       stays out of their way, grips and settings window and all.
+
+       The settings window is closed on the way out rather than left standing.
+       It is the panel's own window and there is no panel: left open it would
+       be a stray box with a slider in it, adjusting something that is not on
+       screen and with no gear anywhere to shut it again. */
     if (cs == nullptr || uiModeIsTablet() || list == nullptr ||
         list->count == 0) {
-        s_scnPanelPlaced = false;
+        s_scnPanelPlaced        = false;
+        s_scnPanelResizing      = false;
+        s_scnPanelSettingsOpen  = false;
         return;
+    }
+
+    /* Which scenario's panel this is, and so which row its layout comes out
+       of. The file name is the identity to key on: it is what the host
+       actually loaded, and two scenarios can carry the same display name.
+       The display name is there for one that arrived without a file name,
+       and both empty is a game with no scenario behind the panel at all —
+       that one keeps the [WINDOW] numbers and never writes a row.
+
+       Truncated into a buffer of the same size as the one it is compared
+       against, so a name too long to hold is cut the same way on both sides.
+       A name that compared unequal every frame would re-place the panel
+       every frame, and a panel being placed cannot be dragged. */
+    char scnKey[SCN_PANEL_SCENARIO_LEN];
+    {
+        const char *scnName = clientSimGetLobbyScenarioFileName(cs);
+        if (scnName[0] == '\0') scnName = clientSimGetLobbyScenarioName(cs);
+        SDL_snprintf(scnKey, sizeof(scnKey), "%s", scnName);
+    }
+
+    if (strcmp(scnKey, s_scnPanelScenario) != 0) {
+        SDL_snprintf(s_scnPanelScenario, sizeof(s_scnPanelScenario), "%s",
+                     scnKey);
+        /* A scenario with no row of its own leaves the globals holding
+           whatever the last panel left there, which is deliberate: it is the
+           layout the player last chose, and it is a better guess at what
+           they want than the top-right corner at full size. */
+        int savedX, savedY, savedScale, savedAlpha;
+        if (gameFrontGetScnPanelLayout(s_scnPanelScenario, &savedX, &savedY,
+                                       &savedScale, &savedAlpha)) {
+            gameFrontScnPanelX     = savedX;
+            gameFrontScnPanelY     = savedY;
+            gameFrontScnPanelScale = savedScale;
+            gameFrontScnPanelAlpha = savedAlpha;
+        }
+        /* Lay the panel out again from those numbers instead of leaving it
+           where the last scenario's panel sat. The position is only pushed
+           at ImGui while Placed is down and the opacity is only taken from
+           the preference while Seeded is, so both have to come down here. A
+           drag cannot cross the change either: the grip it started on
+           belongs to a panel that is gone. */
+        s_scnPanelPlaced      = false;
+        s_scnPanelAlphaSeeded = false;
+        s_scnPanelResizing    = false;
+        s_scnPanelRawSide     = 0.0f;
+    }
+
+    /* The gear's artwork, through the same per-renderer icon slots every
+       other SVG badge here uses. */
+    ensureWbnIconsLoaded();
+
+    if (!s_scnPanelAlphaSeeded) {
+        s_scnPanelAlphaSeeded = true;
+        s_scnPanelAlphaPct    = (gameFrontScnPanelAlpha >= 0)
+                                    ? gameFrontScnPanelAlpha
+                                    : SCN_PANEL_ALPHA_DEFAULT;
+        if (s_scnPanelAlphaPct < 0) s_scnPanelAlphaPct = 0;
+        if (s_scnPanelAlphaPct > 100) s_scnPanelAlphaPct = 100;
     }
 
     /* The game's own zoom, as the pixels it actually comes out at on screen:
@@ -3856,7 +4134,58 @@ static void renderScenarioPanel(ClientSim *cs) {
     sdl3DrawGetGameRect(nullptr, nullptr, nullptr, nullptr, &gameScale);
     if (gameScale <= 0.0f) gameScale = 1.0f;
     const float scale = (float)rawZoom * gameScale;
-    const float side  = (float)SCN_PANEL_UNITS * scale;
+
+    /* The size the zoom alone gives the panel, which is what the player's own
+       scale is a percent of. */
+    const float baseSide = (float)SCN_PANEL_UNITS * scale;
+
+    /* The main window, which is what everything below is kept inside: the
+       size the panel may grow to and the positions it may be left at. */
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+
+    /* What the drag is allowed to reach. The floor and the ceiling are the
+       tighter of two things each: the panel must stay big enough to hold its
+       handles and small enough to fit the shorter side of the display, and it
+       must also stay inside the percent range the preference is stored in, or
+       letting go of the drag would jerk the panel back to the nearest percent
+       the file can hold. A display small enough to put the ceiling under the
+       floor gets the ceiling for both. */
+    float sideMin = ImMax(SCN_PANEL_MIN_PX,
+                          baseSide * (float)SCN_PANEL_SCALE_MIN / 100.0f);
+    float sideMax = ImMin(ImMin(display.x, display.y),
+                          baseSide * (float)SCN_PANEL_SCALE_MAX / 100.0f);
+    if (sideMax < SCN_PANEL_MIN_PX) sideMax = SCN_PANEL_MIN_PX;
+    if (sideMin > sideMax) sideMin = sideMax;
+
+    /* The size the player has dialled in. -1 is a player who has never
+       resized it, which is the size the zoom alone gives, the size the panel
+       had before it could be resized at all. */
+    const float percent = (gameFrontScnPanelScale >= 0)
+                              ? (float)gameFrontScnPanelScale
+                              : 100.0f;
+    float side = baseSide * percent / 100.0f;
+
+    /* True while the resize drag is sitting on a cardinal size. Nothing about
+       the panel says what size it is, so the snap would be invisible without
+       something to show it, and this is what the border reads. */
+    bool snapped = false;
+
+    if (s_scnPanelResizing) {
+        /* Mid-drag the accumulated raw side is the size, snapped on the way
+           to the screen and no further. */
+        side = s_scnPanelRawSide;
+        for (size_t i = 0; i < sizeof(scnPanelCardinals) / sizeof(int); i++) {
+            const float cardinal =
+                baseSide * (float)scnPanelCardinals[i] / 100.0f;
+            if (fabsf(side - cardinal) <= SCN_PANEL_SNAP_PX) {
+                side    = cardinal;
+                snapped = true;
+                break;
+            }
+        }
+    }
+    if (side < sideMin) side = sideMin;
+    if (side > sideMax) side = sideMax;
 
     /* Where it goes when nothing has been saved: the top-right of the game
        view, inset a little. Render coordinates, which is what ImGui draws
@@ -3875,8 +4204,10 @@ static void renderScenarioPanel(ClientSim *cs) {
 
     /* A position saved on a larger display would put the panel off screen,
        where there is nothing to grab to drag it back, so a restored one is
-       brought inside the window it is restored into. */
-    const ImVec2 display = ImGui::GetIO().DisplaySize;
+       brought inside the window it is restored into. Against the side the
+       panel is at now, not the side the zoom alone would give it: a panel
+       that has been resized next to an edge has to be free to come away from
+       where the old boundary was. */
     float wantX = (gameFrontScnPanelX >= 0) ? (float)gameFrontScnPanelX : defX;
     float wantY = (gameFrontScnPanelY >= 0) ? (float)gameFrontScnPanelY : defY;
     if (wantX > display.x - side) wantX = display.x - side;
@@ -3890,15 +4221,46 @@ static void renderScenarioPanel(ClientSim *cs) {
     }
     ImGui::SetNextWindowSize(ImVec2(side, side), ImGuiCond_Always);
 
+    /* Where the gear ended up, read again after the panel window has been
+       closed so the settings window can open beside it. The settings window
+       is a window of its own and one ImGui window cannot be submitted inside
+       another, so it goes after the End below. */
+    float gearX = 0.0f;
+    float gearY = 0.0f;
+
     /* No padding, so the window's own rect is the square the list is drawn
        in and one panel unit is one pixel at zoom 1. The backing is dim
        rather than opaque: the map under the panel stays readable, and what
-       the script draws reads on top of it. */
+       the script draws reads on top of it. How dim is the player's, through
+       the opacity slider in the settings window, which scales the backing's
+       own SCN_PANEL_BACKING_ALPHA rather than standing in for it — a hundred
+       percent is the backing the panel has always had, not a black box.
+
+       The same percent goes to the backing here and to env.alpha below, so
+       the slider fades the whole of the panel's drawing at once and not the
+       backing out from under writing that stayed. It never reaches a pixel
+       nothing was drawn on: a square the script left empty is as clear at
+       ten percent as it is at a hundred. */
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 110));
+    /* No window border either. The theme gives every window a one pixel one,
+       and ImGui clips a window's draw list to the inside of that border, so
+       the panel's own border below would be clipped away by the border it is
+       replacing. The hand-drawn one is the one that changes colour on a
+       snap, and it has to be at the very edge of the square. */
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(
+        ImGuiCol_WindowBg,
+        IM_COL32(0, 0, 0,
+                 (int)lroundf((float)s_scnPanelAlphaPct *
+                              (float)SCN_PANEL_BACKING_ALPHA / 100.0f)));
+    /* NoMove as well as NoResize: the whole body used to be a drag area,
+       and a scenario draws to the edges of its square, so every pixel of what
+       it drew was also a place a stray drag picked the panel up. The two
+       corner handles below are the only things that move or resize it now. */
     const bool open = ImGui::Begin("##scenariopanel", nullptr,
                                    ImGuiWindowFlags_NoTitleBar |
                                    ImGuiWindowFlags_NoResize |
+                                   ImGuiWindowFlags_NoMove |
                                    ImGuiWindowFlags_NoScrollbar |
                                    ImGuiWindowFlags_NoScrollWithMouse |
                                    ImGuiWindowFlags_NoCollapse |
@@ -3908,19 +4270,129 @@ static void renderScenarioPanel(ClientSim *cs) {
                                    ImGuiWindowFlags_NoNav);
     if (open) {
         const ImVec2 pos = ImGui::GetWindowPos();
+        ImDrawList *dl   = ImGui::GetWindowDrawList();
 
-        /* The window is movable, so this is also where a drag is read back.
-           Clamped again here for the main window having been made smaller
-           since the panel was placed, which ImGui does not do on its own.
-           The clamp lands on the next frame — the background was submitted
-           at pos already, and the list is drawn on top of that background
-           rather than half a frame ahead of it. */
-        float keepX = pos.x, keepY = pos.y;
+        /* A quarter of the side at most each, so the bar and the resize grip
+           never meet in the middle of a panel that has been shrunk right
+           down. */
+        const float handle = ImMin(SCN_PANEL_HANDLE_PX, side * 0.25f);
+        const float bar    = ImMin(SCN_PANEL_BAR_PX, side * 0.25f);
+
+        /* The bar and both grips are submitted on every frame whether or not
+           they are drawn. An invisible button that stops being submitted
+           stops being the active item, so a drag that wanders off the panel
+           — which every resize that shrinks it does — would die halfway
+           through the gesture. Drawing them is the part that waits for the
+           pointer.
+
+           The title bar: the full width of the panel bar the square the
+           settings button takes at its right end. The two do not overlap, so
+           which one the pointer is on never depends on the order they are
+           submitted in. */
+        ImGui::SetCursorScreenPos(pos);
+        ImGui::InvisibleButton("##scnpanelmove", ImVec2(side - bar, bar));
+        const bool moveHot    = ImGui::IsItemHovered();
+        const bool moveActive = ImGui::IsItemActive();
+        if (moveHot || moveActive) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+        }
+        if (moveActive) {
+            const ImVec2 drag = ImGui::GetIO().MouseDelta;
+            if (drag.x != 0.0f || drag.y != 0.0f) {
+                ImGui::SetWindowPos(ImVec2(pos.x + drag.x, pos.y + drag.y));
+            }
+        }
+
+        /* The settings button, on the right end of the bar, where the button
+           that opens a window's settings sits on any other window. A click
+           toggles: the gear that opened the window closes it again, which is
+           what a player who has lost the window behind something else will
+           try first. */
+        gearX = pos.x + side - bar;
+        gearY = pos.y;
+        ImGui::SetCursorScreenPos(ImVec2(gearX, gearY));
+        ImGui::InvisibleButton("##scnpanelsettings", ImVec2(bar, bar));
+        const bool gearHot = ImGui::IsItemHovered();
+        if (gearHot || ImGui::IsItemActive()) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        }
+        if (ImGui::IsItemClicked()) {
+            s_scnPanelSettingsOpen = !s_scnPanelSettingsOpen;
+        }
+
+        ImGui::SetCursorScreenPos(
+            ImVec2(pos.x + side - handle, pos.y + side - handle));
+        ImGui::InvisibleButton("##scnpanelresize", ImVec2(handle, handle));
+        const bool resizeHot    = ImGui::IsItemHovered();
+        const bool resizeActive = ImGui::IsItemActive();
+        if (resizeHot || resizeActive) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
+        }
+        if (ImGui::IsItemActivated()) {
+            /* Start the raw side from what is on screen, snap and all, so
+               the panel does not jump on the first pixel of the drag. */
+            s_scnPanelRawSide = side;
+        }
+        if (resizeActive) {
+            /* The square stays square, so one number has to come out of a
+               two-axis drag: whichever axis moved further, with its sign
+               kept. Down and right grow it, up and left shrink it, which is
+               what a corner grip on anything else does. */
+            const ImVec2 drag = ImGui::GetIO().MouseDelta;
+            s_scnPanelRawSide +=
+                (fabsf(drag.x) >= fabsf(drag.y)) ? drag.x : drag.y;
+            if (s_scnPanelRawSide < sideMin) s_scnPanelRawSide = sideMin;
+            if (s_scnPanelRawSide > sideMax) s_scnPanelRawSide = sideMax;
+        }
+        if (ImGui::IsItemDeactivated()) {
+            /* Let go: the size that was on screen, which is the snapped one,
+               becomes the size that is kept. Written here and not on every
+               frame of the drag, the way the position is. */
+            int pct = (int)lroundf(side / baseSide * 100.0f);
+            if (pct < SCN_PANEL_SCALE_MIN) pct = SCN_PANEL_SCALE_MIN;
+            if (pct > SCN_PANEL_SCALE_MAX) pct = SCN_PANEL_SCALE_MAX;
+            if (pct != gameFrontScnPanelScale) {
+                gameFrontScnPanelScale = pct;
+                scnPanelPersistLayout();
+            }
+        }
+        s_scnPanelResizing = resizeActive;
+
+        /* The bar and the resize grip appear only while the pointer is on
+           the panel, while one of them is being dragged, or while the
+           settings window is up. The bar covers the top of what the scenario
+           drew while it is up, which is the price of having it only when it
+           is wanted: a bar that was always there would cost those pixels for
+           the whole round.
+
+           That last case matters: with the settings window open the panel is
+           being worked on, and chrome that vanished the moment the pointer
+           left the square to reach the slider would make the panel look
+           inert while its own settings are on screen, with no lit gear to
+           say where the window came from.
+
+           AllowWhenBlockedByActiveItem, or the moment a grip becomes the
+           active item the window stops counting as hovered and the thing
+           being dragged disappears from under the pointer. */
+        const bool handlesVisible =
+            ImGui::IsWindowHovered(
+                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) ||
+            moveActive || resizeActive || s_scnPanelSettingsOpen;
+
+        /* Where the window is after the move handle has had this frame's
+           drag. Clamped again here for the main window having been made
+           smaller since the panel was placed, which ImGui does not do on its
+           own, and against the side the panel is at now. The clamp, and the
+           move with it, lands on the next frame — the background was
+           submitted at pos already, and the list is drawn on top of that
+           background rather than half a frame ahead of it. */
+        const ImVec2 moved = ImGui::GetWindowPos();
+        float keepX = moved.x, keepY = moved.y;
         if (keepX > display.x - side) keepX = display.x - side;
         if (keepY > display.y - side) keepY = display.y - side;
         if (keepX < 0.0f) keepX = 0.0f;
         if (keepY < 0.0f) keepY = 0.0f;
-        if (keepX != pos.x || keepY != pos.y) {
+        if (keepX != moved.x || keepY != moved.y) {
             ImGui::SetWindowPos(ImVec2(keepX, keepY));
         }
 
@@ -3931,7 +4403,7 @@ static void renderScenarioPanel(ClientSim *cs) {
             (int)keepY != gameFrontScnPanelY) {
             gameFrontScnPanelX = (int)keepX;
             gameFrontScnPanelY = (int)keepY;
-            gameFrontSaveWindowSettings();
+            scnPanelPersistLayout();
         }
 
         ScnPanelDrawEnv env;
@@ -3940,13 +4412,126 @@ static void renderScenarioPanel(ClientSim *cs) {
         /* The tick a ClientSim last heard from the server — the clock the
            scenario counted its timer's tick on. */
         env.tick       = clientSimGetLastServerTick(cs);
-        env.scale      = scale;
+        /* The scale the square is really being drawn at, which is the side
+           the player has dragged it to over the 128 units a list is written
+           in. The game's zoom on its own would leave the window resizing and
+           the drawing inside it staying the size it was. */
+        env.scale      = side / (float)SCN_PANEL_UNITS;
+        /* The opacity slider, on what the scenario drew. The same percent
+           the backing is pushed through ImGuiCol_WindowBg at above, so the
+           two fade together and the panel stays one object rather than
+           writing that floats over a backing that has left without it.
+
+           The border, the title bar and the resize grip below are drawn
+           after this at their own alpha and are deliberately not on this
+           list: they are the frontend's chrome. A panel at nothing has to
+           keep a gear to click and a bar to grab, or there is no way back
+           from it. */
+        env.alpha      = (float)s_scnPanelAlphaPct / 100.0f;
         env.tiles      = (void *)sdl3DrawGetTilesTexture();
         scnPanelDraw(list, pos.x, pos.y, &env);
+
+        /* The border, and the grips on top of it, drawn after the list so
+           that a scenario filling its square does not bury them.
+
+           The border goes on every frame and not only while the pointer is
+           there: it is the only thing that says where the panel ends when the
+           script has drawn nothing near an edge. While a resize drag is
+           sitting on a cardinal size it goes a shade brighter and cooler,
+           which is the only sign there is that the snap happened. A colour
+           change and nothing else — a thicker line would push the content
+           about under it.
+
+           A pixel in from the far corner, the same as the resize grip below.
+           A window's draw list is clipped to the window's own rect, and a
+           line drawn at pos + side sits on that boundary: the top and the
+           left survive it and the right and the bottom are clipped away,
+           leaving a border down two sides of the square. */
+        dl->AddRect(pos, ImVec2(pos.x + side - 1.0f, pos.y + side - 1.0f),
+                    snapped ? IM_COL32(140, 220, 255, 110)
+                            : IM_COL32(255, 255, 255, 40));
+
+        if (handlesVisible) {
+            /* The title bar, grey, right across the top of the panel. It is
+               the whole drag area: a bar reads as something to take hold of
+               at a glance, where a small mark in a corner has to be found
+               first. Solid rather than translucent, so what it covers does
+               not show through it and read as a smear over the scenario's
+               own drawing.
+
+               A pixel in on the right for the reason the border is: the
+               window's draw list is clipped to the window's own rect, so a
+               fill that reached pos.x + side would lose its last column. */
+            const ImU32 barCol = (moveHot || moveActive)
+                                     ? IM_COL32(150, 150, 150, 235)
+                                     : IM_COL32(112, 112, 112, 205);
+            dl->AddRectFilled(pos, ImVec2(pos.x + side - 1.0f, pos.y + bar),
+                              barCol);
+            /* A line under it, so the bar has an edge against whatever the
+               scenario drew below it rather than fading into it. */
+            dl->AddLine(ImVec2(pos.x, pos.y + bar),
+                        ImVec2(pos.x + side - 1.0f, pos.y + bar),
+                        IM_COL32(0, 0, 0, 90));
+
+            /* The settings button: the gear, on the right end of the bar,
+               dim until the pointer is on it and brought forward while the
+               window it opens is up so the panel says where that window came
+               from. It is drawn straight on the bar with no plate of its own
+               — the bar is the plate.
+
+               Inset by a pixel on the far side for the reason the border is:
+               the window's draw list is clipped to the window's own rect, and
+               art that reached pos.x + side would lose its right-hand column.
+
+               The gear is an asset and an asset can be missing, so there is a
+               fallback. It has to be drawn, not skipped: the invisible button
+               under it is submitted whatever happens, and a corner that takes
+               clicks while showing nothing is worse than a crude glyph. Three
+               short bars, a sliders shape, which is the other thing a settings
+               control is drawn as. */
+            const ImU32 gearCol = (gearHot || s_scnPanelSettingsOpen)
+                                      ? IM_COL32(255, 255, 255, 245)
+                                      : IM_COL32(235, 235, 235, 170);
+            SDL_Texture *gearTex = s_iconScnPanelGear[activeIconSlot()];
+            const float gx1 = pos.x + side - 1.0f;
+            if (gearTex != nullptr) {
+                dl->AddImage((ImTextureID)gearTex, ImVec2(gx1 - bar, pos.y),
+                             ImVec2(gx1, pos.y + bar), ImVec2(0.0f, 0.0f),
+                             ImVec2(1.0f, 1.0f), gearCol);
+            } else {
+                const float tickH = ImMax(1.0f, bar * 0.12f);
+                const float tickW = bar * 0.62f;
+                const float tickX = gx1 - bar * 0.5f - tickW * 0.5f;
+                for (int i = 0; i < 3; i++) {
+                    const float tickY =
+                        pos.y + bar * (0.28f + 0.22f * (float)i) -
+                        tickH * 0.5f;
+                    dl->AddRectFilled(ImVec2(tickX, tickY),
+                                      ImVec2(tickX + tickW, tickY + tickH),
+                                      gearCol);
+                }
+            }
+
+            /* The resize grip: three diagonals stepping out of the corner,
+               which is the grip every other window in the world uses. */
+            const ImU32 resizeCol = (resizeHot || resizeActive)
+                                        ? IM_COL32(255, 255, 255, 200)
+                                        : IM_COL32(255, 255, 255, 110);
+            const float brX = pos.x + side - 1.0f;
+            const float brY = pos.y + side - 1.0f;
+            for (int i = 1; i <= 3; i++) {
+                const float off = handle * (float)i / 3.5f;
+                dl->AddLine(ImVec2(brX - off, brY), ImVec2(brX, brY - off),
+                            resizeCol);
+            }
+        }
     }
     ImGui::End();
     ImGui::PopStyleColor();
-    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(2);
+
+    renderScenarioPanelSettings(&s_scnPanelSettingsOpen, gearX, gearY,
+                                &s_scnPanelAlphaPct);
 }
 
 /* -------------------------------------------------------
@@ -8218,6 +8803,10 @@ bool sdl3ImguiPlayerIsSelf(unsigned char playerNum) {
 bool sdl3ImguiPlayerIsAlly(unsigned char playerNum) {
     if (playerNum >= MAX_PLAYERS) return false;
     return s_playerIsAlly[playerNum];
+}
+
+bool sdl3ImguiTankLabelsLong(void) {
+    return labelTank == lblLong;
 }
 
 bool sdl3ImguiPlayerIsBot(unsigned char playerNum) {

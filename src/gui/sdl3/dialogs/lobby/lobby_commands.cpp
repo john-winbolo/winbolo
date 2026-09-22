@@ -505,9 +505,20 @@ static void lobbySendAddBot(ClientSim *cs,
          * no harder than one the game gave them. */
         {
           const char *spBrain = serverSimGetBotBrainPath(sim);
-          uint8_t spMode = gameFrontSpBotMode(spBrain);
-          serverSimSetBotConfig(sim, slot, spMode,
-                                gameFrontSpBotLevel(spBrain, spMode),
+          uint8_t spMode  = gameFrontSpBotMode(spBrain);
+          uint8_t spLevel = gameFrontSpBotLevel(spBrain, spMode);
+          /* The player's own choice is only the BASE. Where the map
+           * configures the team this bot is joining — a scenario lobby
+           * template naming a mode or a difficulty — the server's rule
+           * overrides it, so the brain is BUILT in the right mode rather
+           * than moved into it a moment later by the block below. Asked of
+           * the same resolver the networked Add Bot asks, which is what
+           * keeps the two paths on one answer. */
+          if (teamNumber > 0 && teamNumber < MAX_TANKS) {
+            (void)serverSimResolveNewBotConfig(sim, (int)teamNumber, spBrain,
+                                               true, &spMode, &spLevel);
+          }
+          serverSimSetBotConfig(sim, slot, spMode, spLevel,
                                 0 /* personality: normal */, NULL);
         }
         serverSimCreateBot(sim, slot, serverSimGetBotBrainPath(sim), botName,

@@ -83,6 +83,15 @@
  * holds the two against each other where it can see both. */
 #define SCN_BRAIN_LEN 256
 
+/* A bot mode key or a level key, as a team template or a bot op names it.
+ * These are matched against the keys in the brain's own modes.txt, so the
+ * room is that file's: BRAIN_MODE_KEY_LEN in public/brain_list.h. Written
+ * out rather than included, because this header sees public/ alone and that
+ * one is not on its include path; SCN_BOT_KEY_MAX in
+ * scenario_api/scenario_defs.h holds the same number for the ops, and
+ * server_sim_lobby.c is where all three meet. */
+#define SCN_BOT_KEY_LEN 16
+
 /* Room for every rule the table can name. scenario_host.c checks this
  * covers the rule list, so a rule added to the list cannot overflow it.
  * Held well clear of the list's own length rather than trimmed to it: the
@@ -103,6 +112,12 @@ typedef struct {
  * for, max_bots the ceiling a host may raise it to, fielded whether those
  * seats start with a tank or sit as roster entries.
  *
+ * mode and difficulty are the brain mode this team's bots play in and the
+ * level inside it, by the keys the brain's own modes.txt lists. "" for
+ * either leaves that one as the lobby would have had it. A key the brain
+ * does not list is refused: the validator names it, and the seating leaves
+ * the seat's config alone and says so in the server log.
+ *
  * init is the table the team's bots are built with, read once when a VM is
  * built, empty for none. initBadKey names the pair the read of it stopped on
  * and is "" when the whole table was taken: the pairs read before a bad one
@@ -115,6 +130,8 @@ typedef struct {
     bool     fielded;
     char     brain[SCN_BRAIN_LEN];   /* the brain's name, as the file wrote
                                       * it; "" = the server's own */
+    char     mode[SCN_BOT_KEY_LEN];        /* "" = leave the lobby's */
+    char     difficulty[SCN_BOT_KEY_LEN];  /* "" = leave the lobby's */
     ScnTable init;
     char     initBadKey[SCN_TABLE_KEY_LEN];
 } ScnManifestTeam;
@@ -134,11 +151,59 @@ typedef struct {
     char    tag[SCN_TAGS_PER_ENTITY][SCN_TAG_LEN];
 } ScnManifestTags;
 
-/* A named rectangle of map squares: an inclusive top-left and a size. */
+/* Which script of a composed list named a thing, written as that script's
+ * position on the list plus one. Zero is nobody.
+ *
+ * Plus one rather than the bare index, so that the value a memset leaves
+ * means nobody rather than the first script. A manifest that was never
+ * composed — one the JSON reader filled, one the map editor's form holds,
+ * one entry's own table straight out of its file — carries no owner at all,
+ * and none of its regions can be read as the first script's.
+ *
+ * The same encoding is what a caller says it is with, so an owner and an
+ * asker compare directly. SCN_SCRIPTS_MAX in scenario_host.h bounds the
+ * list, and this header does not see it: the values here run 1 to however
+ * many scripts that number allows. */
+#define SCN_OWNER_NONE 0
+#define SCN_OWNER_OF_ENTRY(i) ((uint8_t)((i) + 1))
+
+/* A named rectangle of map squares: an inclusive top-left and a size.
+ *
+ * owner is which script of the composed list named it. Two scripts may now
+ * both name "spawn" — the composite holds both rectangles and this is what
+ * tells them apart — so a lookup by name is answered with the asking
+ * script's own where it has one. See scenarioLuaRegionFind in
+ * src/scenario/scenario_lua.h for the whole rule.
+ *
+ * bit is which bit of the round's region mask this rectangle answers to, and
+ * it is the region's identity for as long as the round lasts. The host
+ * remembers who is standing inside what as one uint64_t a seat, and it is
+ * this number that indexes those bits rather than the region's place in the
+ * array below. The two used to be the same number, which is what tied a
+ * region's identity to where its script sat on the host's list and stopped
+ * the map's own script from being anywhere but the front of it. It is worked
+ * out from the file that named the region and the region's own name, so
+ * reordering the list moves the rectangles about in the array and leaves
+ * every bit meaning what it meant. scenarioLuaRegionBit in
+ * src/scenario/scenario_lua.h is where the number comes from, and says how
+ * two keys that want one bit are told apart.
+ *
+ * It is a number in 0..SCN_REGIONS_MAX-1 rather than the mask value, so that
+ * a reader shifting by it is doing the same thing everywhere it is read.
+ *
+ * Both are runtime only. scnComposeInto writes them as it builds a round's
+ * table and game.define_region writes them for a region a script names
+ * while the round runs; nothing else does. manifest.json neither reads nor
+ * writes either one, so a package is the same bytes on disk and on the wire
+ * whether or not the server that wrote it knew about owners or bits — and a
+ * manifest that was never composed carries a bit of zero for every region,
+ * which means nothing and is never shifted by. */
 typedef struct {
     char    name[SCN_REGION_NAME_LEN];
     uint8_t x, y;
     uint8_t w, h;
+    uint8_t owner;
+    uint8_t bit;
 } ScnManifestRegion;
 
 /* ── Triggers ──────────────────────────────────────────────────────
@@ -244,12 +309,51 @@ typedef struct {
     ScnTrigAct  actions[SCN_TRIGGER_ACTIONS_MAX];
 } ScnTrigger;
 
+/* ── What kind of file this is ─────────────────────────────────────
+ *
+ * scenario.kind says whether the file may decide the win condition. The
+ * author states it; nothing here works it out. A static read of a script
+ * cannot tell the two apart, because game.end_round is an ordinary call a
+ * script makes from whatever hook it likes: Survival ends its round from
+ * on_tick, so a scan of the triggers it declares would read it as the kind
+ * that never ends one.
+ *
+ * The words are the author's, and the identifiers are deliberately not:
+ * lobbyScenarioMod in src/bolo/public/control_event.h already means
+ * something else — where a script was loaded from — and the two would be
+ * read for each other on sight. Everything in C is named for the thing this
+ * field actually decides, which is whether the round is the script's to
+ * end.
+ *
+ * scnKindScenario is zero so a manifest nobody filled in is a scenario,
+ * which is what every file written before this key existed is. That is the
+ * other way round from ScnTrigCompare above, whose unknown is first for the
+ * opposite reason: an unfilled comparison must not read as eq, while an
+ * unfilled kind must read as the kind that keeps today's meaning.
+ *
+ * scnKindUnknown is what a lookup answers for a word that is neither, and
+ * is never stored: both readers report the word and keep the scenario kind
+ * rather than leaving a manifest in a state nothing can act on. */
+typedef enum {
+    scnKindScenario = 0,      /* kind = "scenario": the round is its to end */
+    scnKindKeepsWinCondition, /* kind = "mod": it changes how the game plays
+                               * and leaves winning and losing alone */
+    scnKindUnknown            /* a word that is neither; a lookup's answer
+                               * and never a manifest's value */
+} ScnManifestKind;
+
 typedef struct {
     char name[SCN_SCENARIO_NAME_LEN];
     char description[SCN_SCENARIO_DESC_LEN];
+    ScnManifestKind kind;           /* what the file is allowed to decide */
     int  api;                       /* the version the file was written to */
     char game[SCN_GAME_NAME_LEN];   /* the game type it asks for; "" = none */
-    bool bound;                     /* true = tied to its map; false = a mod */
+
+    /* True when the file was written for one map and false when it plays
+     * over any of them. Read together with kind above and the two are easy
+     * to confuse, so: this one is about which map, and kind is about the win
+     * condition. A file can be either of these and either of those. */
+    bool bound;
 
     /* Start the map's pills and bases at the caps this table sets rather
      * than at the numbers the map file holds. A map file states a number
@@ -275,6 +379,25 @@ typedef struct {
     uint8_t    numTriggers;
     ScnTrigger triggers[SCN_TRIGGERS_MAX];
 } ScenarioManifest;
+
+/* Does this file leave the win condition alone? True only for one that
+ * declared kind = "mod", which is the file every win-deciding thing is held
+ * back from: the ops that end or time a round raise when it calls them, a
+ * declared trigger that names one of those ops is refused before the round
+ * starts, the game type its table asks for is not applied, and an
+ * allow_base_win it answers is not read.
+ *
+ * Written the way round, rather than as "may end the round", so that a
+ * manifest nobody filled in and a NULL one both answer false and nothing is
+ * held back from them. A caller with no manifest is a caller with no script,
+ * and a round with no script has always been the sim's own to end.
+ *
+ * Inline rather than a call, because this is read on the op path and the
+ * struct is already in the caller's hands: a target holding a manifest can
+ * ask without linking anything. */
+static inline bool scnManifestKeepsWinCondition(const ScenarioManifest *m) {
+    return m != NULL && m->kind == scnKindKeepsWinCondition;
+}
 
 /* Nothing here reaches up into the runtime. The table a host last read is
  * scenarioHostManifest, declared in src/scenario/scenario_validate.h with

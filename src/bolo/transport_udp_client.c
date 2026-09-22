@@ -932,7 +932,7 @@ static bool udpClientReadLenStr(const uint8_t *buf, int len, int *pos,
  * Wire format:
  *   [header 8] [final 1] [count 1]
  *   per entry: [fileLen 1][file M][nameLen 1][name N][descLen 1][desc D]
- *              [maxPlayers 1][bots 1][bound 1]
+ *              [maxPlayers 1][bots 1][bound 1][keepsWinCondition 1]
  *
  * No path, unlike the map list: the scenarios directory is flat, so there is
  * nothing to ask about and nothing to recognise a stale response by. The
@@ -1004,12 +1004,12 @@ void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
             !udpClientReadLenStr(buf, len, &pos, desc, sizeof(desc))) {
             break;
         }
-        if (pos + 3 > len) break;
+        if (pos + 4 > len) break;
         /* Read into locals first, so a chunk that arrives past the cap is
            still walked to its end rather than leaving the position stranded
            mid-entry. */
         if (cs->lobbyScenarioListCount >= LOBBY_SCENARIO_LIST_MAX) {
-            pos += 3;
+            pos += 4;
             continue;
         }
         idx = cs->lobbyScenarioListCount++;
@@ -1022,6 +1022,7 @@ void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
         cs->lobbyScenarioListMaxPlayers[idx] = buf[pos++];
         cs->lobbyScenarioListBots[idx]       = buf[pos++];
         cs->lobbyScenarioListBound[idx]      = buf[pos++] ? true : false;
+        cs->lobbyScenarioListKeepsWin[idx]   = buf[pos++] ? true : false;
     }
 
     if (finalFlag) {
@@ -1220,6 +1221,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_SCN_ANNOUNCE:     return "SCN_ANNOUNCE";
     case CTRL_SCN_MARKER:       return "SCN_MARKER";
     case CTRL_SCENARIO_RULES:   return "SCENARIO_RULES";
+    case CTRL_LOBBY_SCRIPT_LIST: return "LOBBY_SCRIPT_LIST";
     default:                    return "<unknown>";
     }
 }

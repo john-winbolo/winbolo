@@ -224,6 +224,23 @@ void serverSimShotOrderTick(ServerSim *sim);
  * starts. */
 void serverSimShotOrderClear(ServerSim *sim, BYTE playerNum);
 
+/* Defined in server_sim_lobby.c — the body of serverSimResolveBotConfigKeys,
+ * taking the brain's modes already loaded instead of a path to read them
+ * from. The public path form is the wrapper around this one and answers
+ * exactly the same; NULL modes is what a brain with no modes.txt looks like
+ * here, and gives BOT_CFG_KEYS_NO_MANIFEST as the load failing does.
+ *
+ * It exists so a caller applying several seats on one brain reads modes.txt
+ * once for the lot: the scenario reseat in server_sim_scenario.c walks every
+ * seat a template holds, and the lobby's own Add Bot already has the modes in
+ * hand by the time it asks. */
+BotConfigKeyResult serverSimResolveBotConfigKeysFromModes(
+        const BrainModes *modes,
+        const char *modeKey,
+        const char *levelKey,
+        uint8_t *ioMode,
+        uint8_t *ioLevel);
+
 /* Defined in server_sim.c — the entries owned by the parent rather than by a
  * source in this directory. */
 

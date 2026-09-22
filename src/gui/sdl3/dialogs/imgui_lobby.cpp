@@ -801,6 +801,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             lobbyRenderSmartPingSummary(cs, s);
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_AI_LBL), lobbyAiTypeStr(clientSimGetLobbyAiType(cs)));
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_TIME_LBL), timeStr);
+            /* Own line again, and in the same place in the run as on the
+             * desktop: whether the round runs mods is a host-only setting
+             * everywhere else, so this is where a joiner or spectator is
+             * told, and the hover is where the names are. */
+            lobbyRenderModsSummary(cs, s);
             /* Own line, like the labels above it — the view policies are
              * the one part of the settings a joiner or spectator can see. */
             lobbyRenderVisibilitySummary(cs, s);
@@ -860,6 +865,13 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_AI_LBL), lobbyAiTypeStr(clientSimGetLobbyAiType(cs)));
             ImGui::SameLine(0, 16);
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_TIME_LBL), timeStr);
+            /* Whether the round runs mods, on the same terms as the two
+             * entries either side of it: the Mods Enabled checkbox and the
+             * row that lists the names are both in the host-only settings
+             * column, so everybody else reads the answer here and gets the
+             * names off the hover. */
+            ImGui::SameLine(0, 16);
+            lobbyRenderModsSummary(cs, s);
             /* The view policies belong on this line because it is the one
              * place a joiner or spectator sees the host's settings — the
              * settings panel below is host-only. Before the connectivity
@@ -968,10 +980,18 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             /* The recap tab exists only while a stored end-of-round
              * summary does (set at game over, cleared on countdown). */
             const bool haveLastRound = lobbyShowLastRound;
-            /* Also stood down while the scenario chooser is up. That dialog is
-               drawn from the Map tab's own body, so a cycle away from that tab
-               would leave it open with nothing drawing it and no way back. */
-            if (!lobbyChooser()->open && !lobbyScenarioChooserIsOpen()) {
+            /* Also stood down while the scenario chooser is up, for the same
+               reason as the Choose Map window above: a trigger press belongs
+               to the dialog in front of the player, not to the tabs behind it.
+               Losing the dialog is not the risk — it is drawn from the lobby's
+               own frame rather than from any one tab's body, so it survives a
+               tab change. The risk is the press going somewhere the player is
+               not looking. */
+            /* And while the details dialog is up. It is a modal, so it holds
+               the pointer and the keyboard on its own, but a shoulder button
+               is read here as a raw key and would cycle the tabs behind it. */
+            if (!lobbyChooser()->open && !lobbyScenarioChooserIsOpen() &&
+                !lobbyScenarioDetailsIsOpen()) {
                 const ClientLobbySlot *myTabSlot =
                     clientSimGetLobbySlot(cs, myPlayerNum);
                 bool onTeam = !spectator && myTabSlot && myTabSlot->teamNumber != 0;
@@ -1293,7 +1313,15 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                     ImGui::Spacing();
                     ImGui::Text("%s - %dP %dB %dS", clientSimGetMapName(cs), clientSimGetLobbyPillCount(cs), clientSimGetLobbyBaseCount(cs), clientSimGetLobbyStartCount(cs));
 
-                    lobbyRenderScenarioLine(cs);
+                    /* What is playing, under what is loaded, for everyone —
+                     * host included. These are the read-only lines and not
+                     * the settings form's editable ones, which is what lets
+                     * a host have both without reading the same thing twice:
+                     * this panel says what the round is running, and the
+                     * Server Settings column is where they change it. The
+                     * Details button under them is the only way into the
+                     * chooser a non-host has, so it comes with them here. */
+                    lobbyRenderScenarioInfoLines(cs, s);
 
                     /* Skip-map vote is gated by LOBBY_LOCK_MAP — locking
                      * the map blocks both manual change and skip-vote. */
@@ -2200,7 +2228,13 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_PILLBOXES), clientSimGetLobbyPillCount(cs));
                 ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_BASES), clientSimGetLobbyBaseCount(cs));
                 ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_STARTS), clientSimGetLobbyStartCount(cs));
-                lobbyRenderScenarioLine(cs);
+                /* Same as the Map tab above, and directly under the start
+                 * count for the same reason: the scenario and the mods are
+                 * the last of what is loaded, and everyone reads them here
+                 * whether or not they are the one who can change them, and
+                 * everyone reaches the chooser from the Details button the
+                 * lines end in. */
+                lobbyRenderScenarioInfoLines(cs, s);
 
                 lobbyRenderMapSkipVote(cs, spectator, hasTransport, s, false);
             }
@@ -2306,9 +2340,18 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
 
         /* --- The scenario's rules, opened from the scenario line. Here for
            the same reason as the docs modal above: the Rules button is drawn
-           inside the Map tab, and BeginPopupModal only finds a popup opened
-           at its own scope. --- */
+           inside the settings form's Server Settings column, and
+           BeginPopupModal only finds a popup opened at its own scope. --- */
         lobbyScenarioRulesRenderModal(cs);
+
+        /* --- What one scenario or mod is, opened from the icon on either of
+           the two script lines or from a row of the chooser. Here because no
+           one scope sees all three: the two lines are drawn inside the
+           settings form and inside the map panel, and the chooser is a
+           top-level window of its own drawn after this window has ended, so
+           none of them can call OpenPopup where BeginPopupModal would find
+           it. Each sets a flag and this is what turns it into a popup. --- */
+        lobbyScenarioDetailsRenderModal(cs, s);
 
         /* --- Leave confirmation popup --- */
         char leavePopupModalId[64];
@@ -2458,9 +2501,15 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
         lobbyChooseMapRenderWindow(cs, renderer, s, winW, winH);
 
         /* The scenario chooser, drawn here for the same reason and from the
-         * same live winW/winH. Opened by the Choose button on the scenario
-         * line, which sits inside the Map tab — drawing the dialog from
-         * there would lose it the moment the player changed tab. */
+         * same live winW/winH. Two buttons open it: the Details button on the
+         * mods row inside the settings form's Server Settings column, which
+         * only an effective host is shown, and the Details button under the
+         * map panel's script lines, which everybody is shown — the dialog
+         * draws itself read-only for a client that may not reorder the list.
+         * Both of those sit inside something that can stop being drawn, a tab
+         * on one layout and a collapsing header on the other, so drawing the
+         * dialog from either would lose it the moment the player changed tab
+         * or folded the settings header away. */
         lobbyScenarioChooserRenderWindow(cs, s, winW, winH);
 
 #if !BOLO_MOBILE

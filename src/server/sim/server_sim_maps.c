@@ -313,19 +313,176 @@ const char *serverSimGetScenarioDir(const ServerSim *sim) {
     return "data/scenarios";
 }
 
+/* The pick, kept as the first entry of the script list. A caller with only
+   a file name to give is every caller this has: the command arm that knows
+   more than the name calls serverSimSetScriptList instead, and what this one
+   writes leaves the manifest's name and the two flags empty, which is
+   honest — it has not read the directory and does not know them. */
 void serverSimSetSelectedScenario(ServerSim *sim, const char *file) {
+    ScnDirEntry entry;
+
     if (sim == NULL) return;
-    if (file != NULL) {
-        SDL_strlcpy(sim->scenarioSelectedFile, file,
-                    sizeof(sim->scenarioSelectedFile));
-    } else {
-        sim->scenarioSelectedFile[0] = '\0';
+    if (file == NULL || file[0] == '\0') {
+        serverSimSetScriptList(sim, NULL, 0);
+        return;
+    }
+    memset(&entry, 0, sizeof(entry));
+    SDL_strlcpy(entry.file, file, sizeof(entry.file));
+    serverSimSetScriptList(sim, &entry, 1);
+}
+
+/* Entry 0 and not the whole list, because what this answers is the one
+   question it has always answered: which script the round is decided by.
+   The entries behind it are mods, and whoever loads them reads the list.
+
+   Entry 0 may now be the committed map's own script, where the host has put
+   that row at the front of the list rather than leaving it off. That is the
+   same answer said a different way — the map's script is what decides that
+   round — and it is still a file name a caller can print or compare. */
+const char *serverSimGetSelectedScenario(const ServerSim *sim) {
+    if (sim == NULL || sim->scenarioScriptCount <= 0) return "";
+    return sim->scenarioScripts[0].file;
+}
+
+void serverSimSetScriptList(ServerSim *sim, const ScnDirEntry *entries,
+                            int count) {
+    int i;
+
+    if (sim == NULL) return;
+    if (entries == NULL || count <= 0) {
+        count = 0;
+    } else if (count > LOBBY_SCRIPT_LIST_MAX) {
+        count = LOBBY_SCRIPT_LIST_MAX;
+    }
+    /* The whole array and not the rows in use: a shorter list must not leave
+       the tail of a longer one behind it, since anything reading past the
+       count would then find a script nobody picked. */
+    memset(sim->scenarioScripts, 0, sizeof(sim->scenarioScripts));
+    for (i = 0; i < count; i++) {
+        sim->scenarioScripts[i] = entries[i];
+    }
+    sim->scenarioScriptCount = count;
+}
+
+int serverSimGetScriptCount(const ServerSim *sim) {
+    if (sim == NULL) return 0;
+    return sim->scenarioScriptCount;
+}
+
+const ScnDirEntry *serverSimGetScript(const ServerSim *sim, int i) {
+    if (sim == NULL || i < 0 || i >= sim->scenarioScriptCount) return NULL;
+    return &sim->scenarioScripts[i];
+}
+
+/* Where the picks hold the map's own row, or -1 for a list that does not.
+   bound is what says so and nothing else does: every pick is a file out of
+   the scenarios directory and the command bus refuses a bound one, so the one
+   bound row a list can carry is the row the map brought. A host who leaves it
+   on the list is saying where on the list the map's own script goes; a host
+   who takes it off is saying the map's script plays ahead of the picks, which
+   is where it has always played. */
+static int scriptListMapOwnAt(const ServerSim *sim) {
+    int i;
+
+    for (i = 0; i < sim->scenarioScriptCount; i++) {
+        if (sim->scenarioScripts[i].bound) return i;
+    }
+    return -1;
+}
+
+void serverSimSetMapScript(ServerSim *sim, const ScnDirEntry *entry) {
+    int at;
+
+    if (sim == NULL) return;
+    at = scriptListMapOwnAt(sim);
+    if (entry == NULL || entry->file[0] == '\0') {
+        memset(&sim->scenarioMapScript, 0, sizeof(sim->scenarioMapScript));
+        /* And the place the host kept for it, which now names a script no
+           map brings. A row that stayed would draw the last map's scenario
+           in the lobby list and would be handed to the compose again at the
+           next pick, so the position goes with the script. The rows behind
+           it close up, which keeps the order of everything the host chose
+           for itself. */
+        if (at >= 0) {
+            int i;
+
+            for (i = at; i + 1 < sim->scenarioScriptCount; i++) {
+                sim->scenarioScripts[i] = sim->scenarioScripts[i + 1];
+            }
+            sim->scenarioScriptCount--;
+            memset(&sim->scenarioScripts[sim->scenarioScriptCount], 0,
+                   sizeof(sim->scenarioScripts[0]));
+        }
+        return;
+    }
+    sim->scenarioMapScript = *entry;
+    /* Whatever the manifest said. A script that came with the map is tied to
+       it in the one sense the lobby cares about: the host cannot take it off
+       without changing the map, which is what a chooser reads this to know.
+       An unbound script that happens to sit beside a map is still that map's
+       for as long as the map is committed. */
+    sim->scenarioMapScript.bound = true;
+    /* And the list's own copy of the row, where the host gave the map's
+       script a place. The two are one row said twice and they have to agree:
+       a commit of another scripted map would otherwise leave the lobby
+       drawing the old map's name at that position, and the next pick would
+       hand the compose a row naming a file that is no longer anybody's. The
+       place is the host's and stays; only what sits in it is replaced. */
+    if (at >= 0) {
+        sim->scenarioScripts[at] = sim->scenarioMapScript;
     }
 }
 
-const char *serverSimGetSelectedScenario(const ServerSim *sim) {
-    if (sim == NULL) return "";
-    return sim->scenarioSelectedFile;
+const ScnDirEntry *serverSimGetMapScript(const ServerSim *sim) {
+    if (sim == NULL || sim->scenarioMapScript.file[0] == '\0') return NULL;
+    return &sim->scenarioMapScript;
+}
+
+/* The two together, which is the list the lobby is told and a chooser draws:
+   the map's own row where it belongs, then the picks in order.
+
+   Where it belongs is the host's answer where the host has given one. A list
+   that carries the map's row has already said where that row goes, and the
+   picks alone are the whole of the list — prepending a second copy would draw
+   the same script twice and a chooser would offer to remove one of them. A
+   list that does not carry it gets it at the front, which is where the round
+   composes it for a host who never said otherwise and is what every list
+   built before the row could be moved looks like.
+
+   The front, rather than the back, because that is where the round loads it:
+   a chooser draws the rows in the order it is given them and the order is
+   load order.
+
+   Held at LOBBY_SCRIPT_LIST_MAX, which is what a client can take: one that is
+   sent more rows than that keeps the list it had. The picks are what the cap
+   takes off, because the map's row is not the host's to lose. A host who has
+   picked the full ten and then commits a map with a script of its own
+   therefore sees the last pick drop out of the list, and the round composes
+   the same ten. */
+int serverSimGetLobbyScriptCount(const ServerSim *sim) {
+    int n;
+
+    if (sim == NULL) return 0;
+    n = sim->scenarioScriptCount;
+    if (sim->scenarioMapScript.file[0] != '\0' &&
+        scriptListMapOwnAt(sim) < 0) {
+        n++;
+    }
+    if (n > LOBBY_SCRIPT_LIST_MAX) n = LOBBY_SCRIPT_LIST_MAX;
+    return n;
+}
+
+const ScnDirEntry *serverSimGetLobbyScript(const ServerSim *sim, int i) {
+    if (sim == NULL || i < 0 || i >= serverSimGetLobbyScriptCount(sim)) {
+        return NULL;
+    }
+    if (sim->scenarioMapScript.file[0] != '\0' &&
+        scriptListMapOwnAt(sim) < 0) {
+        if (i == 0) return &sim->scenarioMapScript;
+        i--;
+    }
+    if (i >= sim->scenarioScriptCount) return NULL;
+    return &sim->scenarioScripts[i];
 }
 
 void serverSimSetUploadPersistDir(ServerSim *sim, const char *dir) {
@@ -1080,6 +1237,7 @@ int serverSimEnumerateScenarioDir(ServerSim *sim,
         e->maxPlayers = dirRows[i].maxPlayers;
         e->bots       = dirRows[i].bots;
         e->bound      = dirRows[i].bound;
+        e->keepsWinCondition = dirRows[i].keepsWinCondition;
     }
     free(dirRows);
     return got;
@@ -1271,6 +1429,12 @@ static void serverSimApplyMapChange(ServerSim *sim) {
        template they leave; the settings publish below then carries a lobby
        that is already the new map's. */
     serverSimScenarioOnMapChanged(sim, sim->mapFilePath);
+    /* And the list the lobby draws, because the map commit has just changed
+       it: the row for the map's own script is the committed map's, and the
+       decision above is what set or cleared it. The picks are untouched by a
+       commit, so until the list carried the map's own row there was nothing
+       here for a commit to publish. */
+    serverSimPublishScriptList(sim);
 
     /* Whoever owns the scenario has just attached the new map's or let the
        previous one go, so the identity above is the new map's and this is

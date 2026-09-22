@@ -661,6 +661,81 @@ static bool commandDecodeLobbySetScenario(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CMD_SET_SCRIPT_LIST - PACKET_SET_SCRIPT_LIST
+ * Wire: [header 8] [cmdSeq 4] [count 1] then count * [fileLen 1] [file N]
+ *
+ * The whole list in one command. An index-and-file shape would be smaller,
+ * but two hosts editing at the same moment would then interleave into a list
+ * neither of them asked for; with the whole list the later command simply
+ * wins, and the server's state is an assignment rather than a splice.
+ *
+ * Each name is a one-byte length and that many bytes with no terminator, the
+ * shape CMD_LOBBY_SET_SCENARIO uses beside it. A count past
+ * CMD_SCRIPT_LIST_MAX is refused rather than trimmed on both sides: a list
+ * the encoder cut short is a different list, and the caller would never
+ * learn which scripts it lost. */
+static bool commandEncodeSetScriptList(const ClientCommand *cmd,
+                                       uint8_t *buf, size_t bufCap,
+                                       size_t *outLen) {
+    size_t pos;
+    size_t i;
+    size_t count = cmd->u.setScriptList.count;
+
+    if (count > (size_t)CMD_SCRIPT_LIST_MAX) return false;
+    if (bufCap < CMD_PACKET_BODY_OFFSET + 1) return false;
+    packHeader(buf, PACKET_SET_SCRIPT_LIST, 0);
+    pos = CMD_PACKET_BODY_OFFSET;
+    buf[pos++] = (uint8_t)count;
+    for (i = 0; i < count; i++) {
+        size_t fileLen = strnlen(cmd->u.setScriptList.files[i],
+                                 CMD_SCRIPT_LIST_FILE_LEN - 1);
+        if (bufCap < pos + 1 + fileLen) return false;
+        buf[pos++] = (uint8_t)fileLen;
+        if (fileLen > 0) {
+            memcpy(buf + pos, cmd->u.setScriptList.files[i], fileLen);
+            pos += fileLen;
+        }
+    }
+    *outLen = pos;
+    return true;
+}
+
+static bool commandDecodeSetScriptList(const uint8_t *buf, size_t len,
+                                       ClientCommand *cmd) {
+    size_t  pos;
+    size_t  i;
+    uint8_t count;
+
+    if (len < CMD_PACKET_BODY_OFFSET + 1) return false;
+    count = buf[CMD_PACKET_BODY_OFFSET];
+    if (count > CMD_SCRIPT_LIST_MAX) return false;
+    /* Zeroed first: the names above count have to be empty, or a shorter
+       list would leave the tail of a longer one behind it for anything that
+       reads past the count. */
+    memset(&cmd->u.setScriptList, 0, sizeof(cmd->u.setScriptList));
+    cmd->type = CMD_SET_SCRIPT_LIST;
+    cmd->u.setScriptList.count = count;
+    pos = CMD_PACKET_BODY_OFFSET + 1;
+    for (i = 0; i < count; i++) {
+        uint8_t fileLen;
+        if (len < pos + 1) return false;
+        fileLen = buf[pos++];
+        if (fileLen > CMD_SCRIPT_LIST_FILE_LEN - 1) return false;
+        if (len < pos + fileLen) return false;
+        if (fileLen > 0) {
+            memcpy(cmd->u.setScriptList.files[i], buf + pos, fileLen);
+        }
+        cmd->u.setScriptList.files[i][fileLen] = '\0';
+        pos += fileLen;
+    }
+    /* Exactly the names it said it had, the check the control side's own
+       body decoder ends on. Trailing bytes mean the sender and this reader
+       disagree about the entry shape, and a list read off a body neither of
+       them agrees on is one to drop. */
+    if (pos != len) return false;
+    return true;
+}
+
 /* CMD_LOBBY_PREVIEW_CANCEL — PACKET_LOBBY_PREVIEW_CANCEL
  * Wire: [header 8] (no body) */
 static bool commandEncodeLobbyPreviewCancel(const ClientCommand *cmd,
@@ -1141,6 +1216,7 @@ bool commandCodecEncode(const ClientCommand *cmd,
         case CMD_LOBBY_ADD_BOT:         ok = commandEncodeLobbyAddBot(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_SET_MAP:         ok = commandEncodeLobbySetMap(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_SET_SCENARIO:    ok = commandEncodeLobbySetScenario(cmd, buf, bufCap, outLen); break;
+        case CMD_SET_SCRIPT_LIST:       ok = commandEncodeSetScriptList(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_PREVIEW_CANCEL:  ok = commandEncodeLobbyPreviewCancel(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_RELOAD_SCENARIO: ok = commandEncodeLobbyReloadScenario(cmd, buf, bufCap, outLen); break;
         case CMD_LOBBY_PREVIEW_COMMIT:  ok = commandEncodeLobbyPreviewCommit(cmd, buf, bufCap, outLen); break;
@@ -1195,6 +1271,7 @@ bool commandCodecDecode(const uint8_t *buf, size_t len,
         case PACKET_LOBBY_ADD_BOT:         return commandDecodeLobbyAddBot(buf, len, cmd);
         case PACKET_LOBBY_SET_MAP:         return commandDecodeLobbySetMap(buf, len, cmd);
         case PACKET_LOBBY_SET_SCENARIO:    return commandDecodeLobbySetScenario(buf, len, cmd);
+        case PACKET_SET_SCRIPT_LIST:       return commandDecodeSetScriptList(buf, len, cmd);
         case PACKET_LOBBY_PREVIEW_CANCEL:  return commandDecodeLobbyPreviewCancel(buf, len, cmd);
         case PACKET_LOBBY_RELOAD_SCENARIO: return commandDecodeLobbyReloadScenario(buf, len, cmd);
         case PACKET_LOBBY_PREVIEW_COMMIT:  return commandDecodeLobbyPreviewCommit(buf, len, cmd);

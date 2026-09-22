@@ -662,7 +662,7 @@ int udpServerPackScenarioListChunk(uint8_t *buf, int bufLen,
         if (fileLen > 255) fileLen = 255;
         if (nameLen > 255) nameLen = 255;
         if (descLen > 255) descLen = 255;
-        need = 1 + (int)fileLen + 1 + (int)nameLen + 1 + (int)descLen + 3;
+        need = 1 + (int)fileLen + 1 + (int)nameLen + 1 + (int)descLen + 4;
         if (pos + need > bufLen) break;
 
         pos = scnListPackStr(buf, pos, e->file);
@@ -671,6 +671,11 @@ int udpServerPackScenarioListChunk(uint8_t *buf, int bufLen,
         buf[pos++] = e->maxPlayers;
         buf[pos++] = e->bots;
         buf[pos++] = e->bound ? 1 : 0;
+        /* The manifest kind, as one byte beside bound. A chooser has to tell
+           a mod from an unbound scenario, and bound does not answer that:
+           both are false for the two of them. Set means the script keeps the
+           round's win condition, which is what a mod does. */
+        buf[pos++] = e->keepsWinCondition ? 1 : 0;
         written++;
     }
 

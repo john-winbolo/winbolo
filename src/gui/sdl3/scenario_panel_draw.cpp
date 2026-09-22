@@ -79,13 +79,46 @@ bool scnPanelColourRGBA(uint8_t index, uint8_t *r, uint8_t *g, uint8_t *b,
     return true;
 }
 
+/* The frontend's opacity, on one packed colour.
+ *
+ * This is the only place in the file where env->alpha is read, and every
+ * colour that reaches a draw call goes through it — the palette below, and
+ * the white a sprite is tinted with, which is a colour this table has no
+ * entry for. One funnel rather than a multiply at each call, so a primitive
+ * added later cannot quietly opt out of the setting.
+ *
+ * The alpha channel only. The player asked for the panel's drawing to fade,
+ * not for it to wash out towards the ground under it, and a pixel the
+ * script never drew on is untouched at every setting because there is no
+ * colour there to put through this.
+ */
+static ImU32 panelFade(const ScnPanelDrawEnv *env, ImU32 col) {
+    float a;
+    int   faded;
+
+    if (env->alpha >= 1.0f) return col;
+    if (env->alpha <= 0.0f) return 0;
+
+    a     = (float)((col >> IM_COL32_A_SHIFT) & 0xFFu) * env->alpha;
+    faded = (int)(a + 0.5f);
+    if (faded < 0) faded = 0;
+    if (faded > 255) faded = 255;
+
+    return (col & ~((ImU32)0xFFu << IM_COL32_A_SHIFT)) |
+           ((ImU32)faded << IM_COL32_A_SHIFT);
+}
+
 /* The colour an index stands for as ImGui takes it, or 0 for one that draws
  * nothing — index 0, a reserved entry, and an index past the palette, which
- * the parser turns down but which costs nothing to hold here too. */
-static ImU32 panelColour(uint8_t index) {
+ * the parser turns down but which costs nothing to hold here too.
+ *
+ * An entry that draws nothing stays nothing whatever the opacity is, and an
+ * opacity of nothing turns every entry into one: both ends come out as a
+ * zero alpha, which is what panelColourDraws below turns away. */
+static ImU32 panelColour(const ScnPanelDrawEnv *env, uint8_t index) {
     uint8_t r = 0, g = 0, b = 0, a = 0;
     if (!scnPanelColourRGBA(index, &r, &g, &b, &a)) return 0;
-    return IM_COL32(r, g, b, a);
+    return panelFade(env, IM_COL32(r, g, b, a));
 }
 
 /* Whether a colour is worth drawing at all: a fully transparent entry is
@@ -134,7 +167,7 @@ static void drawString(ImDrawList *dl, const ScnPanelDrawEnv *env,
     ImVec2  measured;
 
     if (text == NULL || text[0] == '\0') return;
-    col = panelColour(colour);
+    col = panelColour(env, colour);
     if (!panelColourDraws(col)) return;
 
     font = ImGui::GetFont();
@@ -158,7 +191,7 @@ static void drawString(ImDrawList *dl, const ScnPanelDrawEnv *env,
 
 static void drawRect(ImDrawList *dl, const ScnPanelDrawEnv *env,
                      float originX, float originY, const ScnPanelItem *it) {
-    ImU32 col = panelColour(it->u.rect.colour);
+    ImU32 col = panelColour(env, it->u.rect.colour);
     float x0, y0, x1, y1;
 
     if (!panelColourDraws(col)) return;
@@ -195,7 +228,7 @@ static void drawRect(ImDrawList *dl, const ScnPanelDrawEnv *env,
 
 static void drawLine(ImDrawList *dl, const ScnPanelDrawEnv *env,
                      float originX, float originY, const ScnPanelItem *it) {
-    ImU32 col = panelColour(it->u.line.colour);
+    ImU32 col = panelColour(env, it->u.line.colour);
 
     if (!panelColourDraws(col)) return;
 
@@ -267,15 +300,21 @@ static void drawSprite(ImDrawList *dl, const ScnPanelDrawEnv *env,
         ImDrawCallback nearest = ImGui::GetPlatformIO().DrawCallback_SetSamplerNearest;
         ImDrawCallback linear  = ImGui::GetPlatformIO().DrawCallback_SetSamplerLinear;
         if (nearest) dl->AddCallback(nearest, NULL);
+        /* White is the tint that leaves the tile's own art alone, and it
+           goes through the fade for the same reason a rect's colour does:
+           a sprite is part of what the scenario drew. The tile's own
+           transparent corners are untouched — they have no alpha to
+           multiply — so a faded sprite thins out and does not turn into a
+           square. */
         dl->AddImage((ImTextureID)(size_t)env->tiles, ImVec2(x0, y0), ImVec2(x1, y1),
-                     uv0, uv1, IM_COL32_WHITE);
+                     uv0, uv1, panelFade(env, IM_COL32_WHITE));
         if (linear) dl->AddCallback(linear, NULL);
     }
 }
 
 static void drawBar(ImDrawList *dl, const ScnPanelDrawEnv *env,
                     float originX, float originY, const ScnPanelItem *it) {
-    ImU32 col = panelColour(it->u.bar.colour);
+    ImU32 col = panelColour(env, it->u.bar.colour);
     float x0, y0, x1, y1, t, h;
 
     if (!panelColourDraws(col)) return;
@@ -330,6 +369,11 @@ void scnPanelDraw(const ScnPanelList *list, float originX, float originY,
 
     if (list == NULL || list->count == 0 || env == NULL) return;
     if (env->scale <= 0.0f) return;
+    /* An opacity of nothing fades every colour to nothing, so the loop
+       below would walk the list to draw a list of invisible things. Said
+       once here instead, which also keeps the sprite's sampler callbacks
+       off the draw list for a panel the player has turned right down. */
+    if (env->alpha <= 0.0f) return;
 
     dl = ImGui::GetWindowDrawList();
     if (dl == NULL) return;

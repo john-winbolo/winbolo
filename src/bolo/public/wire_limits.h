@@ -98,6 +98,7 @@
 #define LOBBY_LOCK_OVERVIEW_WINDOW   (1u << 14)
 #define LOBBY_LOCK_LINE_OF_SIGHT     (1u << 15)
 #define LOBBY_LOCK_SMART_PINGS       (1u << 16)
+#define LOBBY_LOCK_MODS              (1u << 17)
 
 /* LST_TIME_MINUTES accepted range. Surfaced publicly so the lobby
  * UI can validate the user's value before sending. Authoritative
@@ -149,13 +150,29 @@ typedef enum {
                                  * player seeing inside that block.
                                  * Classic mode forces it off and refuses
                                  * an edit while it stays on. */
-    LST_SMART_PINGS_OFF   = 15  /* 1 byte bool, carried in the NEGATIVE
+    LST_SMART_PINGS_OFF   = 15, /* 1 byte bool, carried in the NEGATIVE
                                  * sense: non-zero means the server refuses
                                  * smart pings. Allowing them is the legacy
                                  * behaviour, and every optional field on
                                  * this wire reads as zero when the sender
                                  * never learned it, so refusing them is the
                                  * value that has to cost a byte to say. */
+    LST_MODS_OFF          = 16  /* 1 byte bool, carried in the NEGATIVE
+                                 * sense for the same reason as
+                                 * LST_SMART_PINGS_OFF above: non-zero means
+                                 * the round composes none of the mods the
+                                 * host has picked. Running them is what
+                                 * every build before this one did, so it is
+                                 * the zero, and a server or client that
+                                 * never writes the byte behaves as it did.
+                                 *
+                                 * Mods only. An entry whose manifest says
+                                 * kind = "mod" is skipped when this is set;
+                                 * a scenario on the list and the map's own
+                                 * script both still play. The pick list is
+                                 * not touched, so checking the box back on
+                                 * brings the same mods back in the same
+                                 * order. */
 } LobbySettingType;
 
 #endif /* WIRE_LIMITS_H */

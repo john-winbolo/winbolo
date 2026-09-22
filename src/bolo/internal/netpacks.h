@@ -803,6 +803,28 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               empty path is carried rather
                                               than refused. */
 
+#define PACKET_SET_SCRIPT_LIST         226  /* client -> server
+                                              { count 1, then count entries
+                                                of { fileLen 1, file N } }
+                                              the whole ordered script list
+                                              the lobby is to run, at most
+                                              CMD_SCRIPT_LIST_MAX entries.
+                                              The whole list and not one
+                                              index, so two hosts editing at
+                                              once cannot interleave into a
+                                              list neither of them asked for,
+                                              and the server's state is a
+                                              straight assignment rather than
+                                              a splice. count 0 clears the
+                                              list, which is what
+                                              SET_SCENARIO with pathLen 0
+                                              does for the one-script case.
+                                              Worst case on the wire is
+                                              8 + 4 + 1 + 10 * (1 + 127)
+                                              = 1293 bytes, which is why
+                                              COMMAND_MAX_WIRE_BYTES is
+                                              1400. */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2

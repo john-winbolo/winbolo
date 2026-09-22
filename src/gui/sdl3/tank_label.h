@@ -52,6 +52,7 @@ typedef struct TankLabelCache {
     float         fontSize;             /* size the textures were rendered at */
     SDL_Texture  *nameTex[MAX_TANKS];
     SDL_Texture  *iconTex[MAX_TANKS];   /* flag or brain icon, NULL for none */
+    bool          longLabels[MAX_TANKS]; /* label length the icon was decided under */
     char          str[MAX_TANKS][TANK_LABEL_NAME_LEN];
 #if defined(WINBOLO_VOICE)
     /* The two voice glyphs a label can carry, built on demand and kept

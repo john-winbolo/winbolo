@@ -49,6 +49,13 @@
  * resolved to before the sim is handed it. */
 #define SCN_PATH_MAX 256
 
+/* A bot mode key or a level key, as a team template or a bot op names it,
+ * matched against the keys in the brain's own modes.txt. The same number
+ * BRAIN_MODE_KEY_LEN holds in public/brain_list.h and SCN_BOT_KEY_LEN holds
+ * on the host's side of the wall; server_sim_lobby.c is where all three
+ * meet, and it is the one file that sees every one of them. */
+#define SCN_BOT_KEY_MAX 16
+
 /* One team a scenario's lobby seats, as the sim reads it.
  *
  * bots is how many seats the engine creates when it seats the template;
@@ -58,6 +65,11 @@
  * spawn names one. brain is the path those bots run, or "" for the server's
  * own; the scenario names a brain and the host resolves that name to this
  * path, so what reaches the sim is always a file to open.
+ *
+ * mode and difficulty name the brain mode these bots play in and the level
+ * inside it, by the keys the brain's modes.txt lists. "" for either leaves
+ * the seat's config as the lobby would have had it, which is what every
+ * template before these two fields said.
  *
  * init is the table the team's bots are built with, read once when a VM is
  * built, empty for none. It is what the countdown warms a held seat's runner
@@ -69,6 +81,8 @@ typedef struct {
     uint8_t  maxBots;
     bool     fielded;
     char     brain[SCN_PATH_MAX];
+    char     mode[SCN_BOT_KEY_MAX];        /* "" = leave the lobby's */
+    char     difficulty[SCN_BOT_KEY_MAX];  /* "" = leave the lobby's */
     ScnTable init;
 } ScnLobbyTeam;
 
@@ -120,7 +134,10 @@ typedef struct {
  * bots is the seats its lobby template asks for, summed over its teams and
  * held at 255 because it travels in one byte. bound true says the scenario is
  * tied to the map it was written against, which is what makes it no use as a
- * mod. */
+ * mod. keepsWinCondition true says the file declares itself a mod: it changes
+ * how the game plays and leaves the win condition alone, so several of them
+ * can run at once behind one scenario. The two are separate questions and a
+ * file may answer either way to both. */
 typedef struct {
     char    file[SCN_DIR_FILE_LEN];  /* the name in the directory */
     char    name[SCN_DIR_NAME_LEN];  /* the manifest's */
@@ -128,6 +145,7 @@ typedef struct {
     uint8_t maxPlayers;
     uint8_t bots;
     bool    bound;
+    bool    keepsWinCondition;
 } ScnDirEntry;
 
 /* How many roster changes may be outstanding at once. Spawns and
@@ -214,6 +232,7 @@ typedef enum {
     SCN_OP_ROSTER_SPAWN_BOT,
     SCN_OP_ROSTER_REMOVE_BOT,
     SCN_OP_ROSTER_SET_TEAM,
+    SCN_OP_ROSTER_BOT_INIT,
 
     /* Roster, lobby */
     SCN_OP_LOBBY_ADD_BOT,
@@ -431,6 +450,10 @@ typedef struct {
     BYTE     team;
     BYTE     start;                  /* 0xFF = let the engine choose */
     BYTE     loadout;                /* 0 = ask the policy */
+    /* The brain mode and the level inside it, by the keys the brain's
+     * modes.txt lists; "" leaves the seat's config alone. */
+    char     mode[SCN_BOT_KEY_MAX];
+    char     difficulty[SCN_BOT_KEY_MAX];
     ScnTable init;
 } ScnOpRosterSpawnBot;
 
@@ -443,6 +466,15 @@ typedef struct {
     BYTE team;
 } ScnOpRosterSetTeam;
 
+/* New data for a bot that is already playing. The same flat table a spawn
+ * hands a bot at its first breath, handed to one in the middle of a round:
+ * the bot's BRAIN_INIT is rebuilt from it and the brain is told, so a script
+ * can change a bot's orders rather than only choose them once. */
+typedef struct {
+    BYTE     slot;
+    ScnTable init;
+} ScnOpRosterBotInit;
+
 /* ── Roster, lobby ─────────────────────────────────────────────── */
 
 typedef struct {
@@ -451,6 +483,12 @@ typedef struct {
     char brain[SCN_PATH_MAX];   /* resolved the same way a spawn's is */
     BYTE team;
     bool fielded;
+    /* The brain mode and the level inside it, by the keys the brain's
+     * modes.txt lists; "" leaves the seat's config alone. A held seat takes
+     * them too — nothing loads a brain for it yet, and the spawn that fields
+     * it later reads the config off the seat. */
+    char mode[SCN_BOT_KEY_MAX];
+    char difficulty[SCN_BOT_KEY_MAX];
 } ScnOpLobbyAddBot;
 
 typedef struct {
@@ -658,6 +696,7 @@ typedef struct {
         ScnOpRosterSpawnBot    rosterSpawnBot;
         ScnOpRosterRemoveBot   rosterRemoveBot;
         ScnOpRosterSetTeam     rosterSetTeam;
+        ScnOpRosterBotInit     rosterBotInit;
         ScnOpLobbyAddBot       lobbyAddBot;
         ScnOpLobbyRemoveBot    lobbyRemoveBot;
         ScnOpLobbySetTeam      lobbySetTeam;
@@ -700,6 +739,7 @@ typedef enum {
     SCN_OP_RATE,            /* a second panel update in one tick, or a budget */
     SCN_OP_NOT_FOUND,       /* a brain that does not resolve: a name this server does not have, a path where a name belongs, or a "package:" the funnel refuses */
     SCN_OP_NO_STOCK,        /* a builder order the tank cannot pay for */
+    SCN_OP_NO_RUNNER,       /* a bot seat with no brain behind it: never fielded, or its runner released */
     SCN_OP_BAD_CALL         /* no sim or no op: the call itself is malformed */
 } ScnOpResult;
 
