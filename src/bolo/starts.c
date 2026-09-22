@@ -1438,14 +1438,24 @@ void startsAssignBatch(GameSim *sim, starts *value,
     if (groupSide[g] == START_SIDE_ANY && groupOtherMask[g] != 0) {
       found = FALSE;
       for (i = 0; i < numStarts && !found; i++) {
-        if (reservedLocked[i]) continue;
+        /* A start a team-mate already holds counts here. The team can ride
+           one, and riding its own ground beats being handed a start on a
+           side another team chose, so the closed set is dropped only when
+           the sides leave the team no start at all — not merely no free
+           one. Skipping the reserved starts was how the last member of a
+           team whose starts were all taken ended up on the far side of the
+           map: every start it could use was held by its own team-mates, the
+           scan found nothing free, every side was opened, and the claim
+           below handed it the one start still going, which belonged to the
+           other team's side. Placing it is the rider pass's job, and a
+           rider takes a start its own team holds. */
         if (startSideEligible(sideMask[i], START_SIDE_ANY, groupOtherMask[g]) &&
             startsIsUsable(sim, value, (BYTE)i)) {
           found = TRUE;
         }
       }
       if (!found) {
-        WB_LOG_DEBUG(WB_LOG_CAT_SIM, "[starts] team %d: every unclaimed start is on a chosen side, opening them all",
+        WB_LOG_DEBUG(WB_LOG_CAT_SIM, "[starts] team %d: no start at all is off the chosen sides, opening them all",
                      teamNumber[groups[g].players[0]]);
         groupOtherMask[g] = 0;
       }

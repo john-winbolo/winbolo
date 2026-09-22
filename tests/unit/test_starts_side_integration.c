@@ -13,6 +13,8 @@
  *
  *   (21) sixteen corner starts, four players north against twelve south,
  *        with the sides set before the players join and again after.
+ *   (23) eight starts in four corners, a team that named no side kept off
+ *        the side another team named, its last member included.
  */
 
 #include <stdbool.h>
@@ -385,5 +387,128 @@ int run_starts_side_region_sweep(void) {
     UT_ASSERT_MSG(problems == 0,
                   "%d player(s) were placed nearer another team's ground than their own",
                   problems);
+    return 0;
+}
+
+/* Eight starts, two to a corner — the shape of Baringi, the map this was
+   found on. The bbox is 100..150 on both axes, so the halves split at
+   y = 125 and the corners sit well clear of it. */
+static const LayoutStart k_eight[8] = {
+    { 104, 104 }, { 105, 103 },     /* north-west */
+    { 149, 104 }, { 150, 105 },     /* north-east */
+    { 149, 149 }, { 148, 150 },     /* south-east */
+    { 104, 149 }, { 103, 148 },     /* south-west */
+};
+
+/* Everard with the eight-start layout in place of its own, its pills and
+   bases cleared, every start square deep sea. */
+static ServerSim *make_eight_start_lobby(void) {
+    BYTE emap[6000] = E_MAP;
+    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+                                               gameOpen, false, 0, -1);
+    GameSim *gs;
+    int i;
+    if (sim == NULL) return NULL;
+    serverSimSetLobbyEnabled(sim, true);
+    gs = &sim->sim;
+    gs->pb->numPills = 0;
+    gs->bs->numBases = 0;
+    gs->ss->numStarts = 0;
+    for (i = 0; i < 8; i++) {
+        BYTE idx = gs->ss->numStarts++;
+        mapSetPos(gs, &gs->mp, k_eight[i].x, k_eight[i].y, DEEP_SEA, FALSE, TRUE);
+        gs->ss->item[idx].x = k_eight[i].x;
+        gs->ss->item[idx].y = k_eight[i].y;
+        gs->ss->item[idx].dir = 0;
+    }
+    return sim;
+}
+
+/* Every tank of a team that named no side sits south of the midline — the
+   half left to it once another team has taken the north. */
+static int check_unsided_stays_south(ServerSim *sim, int firstSlot, int lastSlot,
+                                     const char *what) {
+    GameSim *gs = &sim->sim;
+    int leftPos;
+    int rightPos;
+    int topPos;
+    int bottomPos;
+    int midY;
+    int i;
+
+    startsGetMaxs(&gs->ss, &leftPos, &rightPos, &topPos, &bottomPos);
+    midY = (topPos + bottomPos) / 2;
+    for (i = firstSlot; i <= lastSlot; i++) {
+        int mx;
+        int my;
+        UT_ASSERT_MSG(gs->tanks[i] != NULL, "%s: slot %d has no tank", what, i);
+        tank_square(gs, (BYTE)i, &mx, &my);
+        UT_ASSERT_MSG(my > midY,
+                      "%s: slot %d (team %u, no side) spawned at (%d,%d), north of "
+                      "the midline %d — the side team 1 chose",
+                      what, i, (unsigned)sim->lobbyPlayers[i].teamNumber,
+                      mx, my, midY);
+    }
+    return 0;
+}
+
+/* (23) A team that named no side is kept off the side another team named,
+ *      including its last member, the one with no start of its own.
+ *
+ *      Found in a single-player game on Baringi: three players took north
+ *      and five were left on Any, which put four of them on the four
+ *      southern starts and sent the fifth to sea. The batch works a
+ *      side-less team's ground out as "every start off the sides the other
+ *      teams chose", then re-checks that the team has somewhere to go — and
+ *      that check only counted starts no reservation held. Every southern
+ *      start was held by that team's own members, so it read as shut out,
+ *      every side was opened to it, and the claim pass handed its last
+ *      member the one start still free, which was northern. It spawned in
+ *      the middle of the other team.
+ *
+ *      Riding is the answer for a member with no start of its own, and a
+ *      rider takes a start its own team holds, which is southern. Two
+ *      shapes here: two teams, and three teams where the two side-less ones
+ *      have to share what is left. The three-team shape is the one no
+ *      "give the other team the opposite side" rule in the lobby can cover.
+ */
+int run_starts_side_unsided_team_kept_off_chosen_side(void) {
+    ServerSim *sim;
+    BYTE s;
+
+    /* Two teams: three north, five with no side and only four starts. */
+    sim = make_eight_start_lobby();
+    UT_ASSERT(sim != NULL);
+    for (s = 0; s < 8; s++) {
+        char name[16];
+        snprintf(name, sizeof(name), "P%u", (unsigned)s);
+        serverSimAddPlayer(sim, s, name, false);
+        serverSimSetTeam(sim, s, (BYTE)(s < 3 ? 1 : 2));
+    }
+    serverSimSetTeamMeta(sim, 1, 0, 0, START_SIDE_N, NULL, 0);
+    /* Team 2 names no side at all, which is the state every team starts in. */
+    bolo_srand(11);
+    serverSimStartGameInPlace(sim);
+    UT_ASSERT(serverSimGetState(sim) == serverStateRunning);
+    UT_ASSERT(check_unsided_stays_south(sim, 3, 7, "two teams") == 0);
+    serverSimDestroy(sim);
+
+    /* Three teams: three north, then three and two with no side between
+       them. The fifth side-less player again has no start of its own. */
+    sim = make_eight_start_lobby();
+    UT_ASSERT(sim != NULL);
+    for (s = 0; s < 8; s++) {
+        char name[16];
+        BYTE team = (BYTE)(s < 3 ? 1 : (s < 6 ? 2 : 3));
+        snprintf(name, sizeof(name), "P%u", (unsigned)s);
+        serverSimAddPlayer(sim, s, name, false);
+        serverSimSetTeam(sim, s, team);
+    }
+    serverSimSetTeamMeta(sim, 1, 0, 0, START_SIDE_N, NULL, 0);
+    bolo_srand(11);
+    serverSimStartGameInPlace(sim);
+    UT_ASSERT(serverSimGetState(sim) == serverStateRunning);
+    UT_ASSERT(check_unsided_stays_south(sim, 3, 7, "three teams") == 0);
+    serverSimDestroy(sim);
     return 0;
 }
