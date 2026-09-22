@@ -189,16 +189,19 @@ void minimapDrawObjects(uint8_t *pixels,
     const struct startsObj *ss = clientMapPreviewStarts(view);
 
     if (pillColor && pb) {
-        /* A pill the map file hands to player 0 is the host's from the
-           first tick, so it reads as the viewer's own here as it will on
-           the field: green. A scripted map that starts its players with
-           pills in hand (Survival's centre) says so in the preview, and a
-           plain map, whose pills are all neutral, is drawn as before. */
-        static const uint8_t ownCol[3] = {0, 200, 0};
+        /* The map file records an owner for every pill, NEUTRAL on all but
+           a speciality map. Both callers here — the map chooser and the map
+           editor — draw a map nobody is playing, so there is no viewer for
+           a colour to be "own" relative to; this only distinguishes a pill
+           the file hands to a player at load from a neutral one. A scripted
+           map that starts its players with pills in hand (Survival's
+           centre) says so in the preview, and a plain map, whose pills are
+           all neutral, is drawn as before. */
+        static const uint8_t ownedCol[3] = {255, 0, 255}; /* magenta */
         for (i = 0; i < pb->numPills; i++) {
             int px = pb->item[i].x;
             int py = pb->item[i].y;
-            const uint8_t *col = (pb->item[i].owner == 0) ? ownCol : pillColor;
+            const uint8_t *col = (pb->item[i].owner != NEUTRAL) ? ownedCol : pillColor;
             for (dy = -1; dy <= 1; dy++) {
                 for (dx = -1; dx <= 1; dx++) {
                     int nx = px + dx, ny = py + dy;
