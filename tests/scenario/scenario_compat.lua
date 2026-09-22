@@ -41,12 +41,16 @@ local compat_installed = {}
 -- does is read after this and wins, because the later assignment is the one
 -- that stands.
 --
--- The game type is left out on purpose: the runner passes -gametype and the
--- arenas were written against what it passes, so a scenario.game here would
--- quietly overrule the flag the arena's own GATE line asked for.
+-- The game type has to be named here. A scenario that names no game is
+-- played as strict tournament whatever -gametype was passed, and a strict
+-- tournament draws the tank's shells, mines and trees from the neutral share
+-- of the bases, which on a map the arena has already taken every base of is
+-- nothing at all. The word is the one the runner took its -gametype from, so
+-- the table and the flag always name the same game.
 scenario = {
   name        = GATE_NAME or "arena",
   description = "A bot-behaviour arena from tests/scenario.",
+  game        = GATE_GAMETYPE or "open",
   api         = 1,
 }
 

@@ -223,12 +223,15 @@ class Job(object):
             body = f.read()
         out = os.path.join(self.work, self.name + ".scenario.lua")
         with open(out, "w", encoding="utf-8", newline="\n") as f:
-            # What the runner knows and the arena does not: its own name, and
-            # the tick the server will stop at. The prelude's deadline is
-            # taken off the second so an arena that only states a check still
-            # gets asked before the round is cut off.
-            f.write('GATE_NAME = "%s"\nGATE_TICKS = %s\n\n'
-                    % (self.name, self.opts["ticks"]))
+            # What the runner knows and the arena does not: its own name, the
+            # tick the server will stop at, and the game type it is started
+            # with. The prelude's deadline is taken off the second so an arena
+            # that only states a check still gets asked before the round is
+            # cut off. The third is what the prelude declares as scenario.game,
+            # so the table and the -gametype flag name the same game.
+            f.write('GATE_NAME = "%s"\nGATE_TICKS = %s\n'
+                    'GATE_GAMETYPE = "%s"\n\n'
+                    % (self.name, self.opts["ticks"], self.opts["gametype"]))
             f.write(self.head)
             f.write("\n-- ===== the arena =====\n")
             f.write(body)
