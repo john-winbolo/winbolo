@@ -484,6 +484,7 @@ void tankCreate(GameSim *sim, tank *value) {
   }
   (*value)->bumpX = 0;
   (*value)->bumpY = 0;
+  (*value)->bumpWait = 0;
   (*value)->residualSpeed = 0;
   /* The only place the modifiers are cleared. A respawn reuses the tank
      object and leaves them alone; the lobby return destroys every tank, so
@@ -1382,6 +1383,29 @@ void tankSetWorld(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angle, b
   }
 }
 
+/* Mac Bolo's shove grows linearly with armour missing BEFORE the hit.
+ * The default rules approximate its initial step: 28 WU at full armour,
+ * rising to 60 at zero armour. Keep our trig rather than duplicating the
+ * Mac lookup table. A new hit replaces the previous shove. */
+static void tankShellKnockback(GameSim *sim, tank *value, TURNTYPE angle,
+                               BYTE armourBefore) {
+  int capacity = sim->rules.tank_full_armour;
+  int missing = capacity > armourBefore ? capacity - armourBefore : 0;
+  int step = sim->rules.tank_slide_step;
+  int newX, newY;
+
+  /* A zero base step disables knockback, including the armour bonus. */
+  if (step > 0) {
+    step += capacity > 0
+        ? sim->rules.tank_slide_armour_bonus * missing / capacity
+        : sim->rules.tank_slide_armour_bonus;
+  }
+  utilCalcDistance(&newX, &newY, angle, step);
+  (*value)->bumpX = newX * 512;
+  (*value)->bumpY = newY * 512;
+  (*value)->bumpWait = 0;
+}
+
 /*********************************************************
 *NAME:          tankIsTankHit
 *AUTHOR:        John Morrison
@@ -1405,8 +1429,6 @@ void tankSetWorld(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angle, b
 tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angle, BYTE owner) {
 	bool isServer = sim->isServer;
 	tankHit returnValue; /* Value to return */
-	int newX;            /* Amount to add because the tank has been hit */
-	int newY;
 
 
 	returnValue = TH_MISSED;
@@ -1484,10 +1506,7 @@ tankHit tankIsTankHit(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angl
 			/*      netSendNow = TRUE; */
 			tankDropPills(sim, value);
 		} else {
-			/* Tank was hit and survived — set bump for gradual knockback */
-			utilCalcDistance(&newX, &newY, angle, (TURNTYPE) sim->rules.tank_slide_step);
-			(*value)->bumpX = newX * 512;
-			(*value)->bumpY = newY * 512;
+			tankShellKnockback(sim, value, angle, armourBefore);
 		}
 		if (!isServer) {
 			frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);
@@ -1648,6 +1667,7 @@ void tankDeath(GameSim *sim, tank *value) {
     (*value)->speed = 0;
     (*value)->bumpX = 0;
     (*value)->bumpY = 0;
+    (*value)->bumpWait = 0;
     (*value)->residualSpeed = 0;
     (*value)->waterCount = 0;
     /* Get the start position */
@@ -1705,6 +1725,7 @@ void tankDeath(GameSim *sim, tank *value) {
     (*value)->speed = 0;
     (*value)->bumpX = 0;
     (*value)->bumpY = 0;
+    (*value)->bumpWait = 0;
     (*value)->residualSpeed = 0;
     (*value)->waterCount = 0;
     if (sim->isTutorial && sim->tutorialStartIdx == 1) {
@@ -1871,12 +1892,18 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
     (*value)->residualSpeed = 0;
   }
 
-  /* Step 3 — Apply bump effect (shell knockback with decay) */
-  (*value)->x += (*value)->bumpX >> 9;
-  (*value)->y += (*value)->bumpY >> 9;
-  if (!(*value)->destroyed) {
+  /* Step 3 — Step and decay together at the configured interval. The
+   * default is every other 50 Hz update (40 ms), matching the Mac logs.
+   * Ordinary driving still runs every update. A per-tank wait also works
+   * during input replay/catch-up, independently of the server's clock. */
+  if ((*value)->bumpWait > 0) {
+    (*value)->bumpWait--;
+  } else if ((*value)->bumpX != 0 || (*value)->bumpY != 0) {
+    (*value)->x += (*value)->bumpX >> 9;
+    (*value)->y += (*value)->bumpY >> 9;
     (*value)->bumpX -= ((*value)->bumpX >> sim->rules.tank_bump_decay_shift) + ((*value)->bumpX > 0 ? 1 : 0);
     (*value)->bumpY -= ((*value)->bumpY >> sim->rules.tank_bump_decay_shift) + ((*value)->bumpY > 0 ? 1 : 0);
+    (*value)->bumpWait = (BYTE)(sim->rules.tank_bump_interval - 1);
   }
 
   /* Step 4 — Building nudge */
@@ -3978,8 +4005,6 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
                                  TURNTYPE angle, BYTE owner) {
 	bool isServer = sim->isServer;
 	tankHit returnValue; /* Value to return */
-	int newX;            /* Amount to add because the tank has been hit */
-	int newY;
 
 
 	returnValue = TH_MISSED;
@@ -4051,10 +4076,7 @@ tankHit tankIsTankHitAtPosition(GameSim *sim, tank *value,
 
 			tankDropPills(sim, value);
 		} else {
-			/* Tank was hit and survived — set bump for gradual knockback */
-			utilCalcDistance(&newX, &newY, angle, (TURNTYPE) sim->rules.tank_slide_step);
-			(*value)->bumpX = newX * 512;
-			(*value)->bumpY = newY * 512;
+			tankShellKnockback(sim, value, angle, armourBefore);
 		}
 		if (!isServer) {
 			frontEndUpdateTankStatusBars(clientSimFromSim(sim), (*value)->shells, (*value)->mines, (*value)->armour, (*value)->trees);

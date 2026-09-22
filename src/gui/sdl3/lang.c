@@ -2446,10 +2446,10 @@ static const LangEntry langTable[] = {
     {2493, "What decides which axis a shove between two tanks takes."},
     {2494, "How far one shove moves a tank."},
     {2495, "How many shoves are tried in a tick."},
-    {2496, "A right shift: a bump loses that much of itself each tick, so a bigger number is slower."},
+    {2496, "A right shift: knockback loses that fraction of itself each bump update. A bigger number means slower decay; 2 removes a quarter per update, with integer rounding."},
     {2497, "The reach a tank picks up a pillbox from."},
     {2498, "How far inside the bank a boat is held."},
-    {2499, "World units a knocked tank slides."},
+    {2499, "Initial shell knockback step at full armour, in world units per bump update. Missing pre-hit armour adds a proportional tank_slide_armour_bonus. Zero disables shell knockback."},
     {2500, "How a tank comes off a wall it hits: 0 slides along it, 1 glides free."},
     {2501, "The fastest the builder may walk on a road."},
     {2502, "The fastest the builder may walk on grass."},
@@ -2529,6 +2529,8 @@ static const LangEntry langTable[] = {
     {2576, "How straight at a close pillbox a tank has to be driving to be aimed at properly anyway, as the cosine of the angle between its heading and the line to the pillbox. One aims sloppily at every tank inside pill_massage_range, zero at none of them. Does nothing while that rule is zero."},
     {2577, "written as a local, so the host never finds it and it never runs"},
     {2578, "written on a table other than scenario, so the host never finds it and it never runs"},
+    {2579, "Game ticks between knockback movement and decay updates. Each tick is 20 ms; the default 2 gives 40 ms. Driving continues every tick."},
+    {2580, "Extra initial knockback step at zero armour, in world units. Scales with the fraction of armour missing before the shell hit. Zero makes all armour levels receive the same shove."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

@@ -406,7 +406,7 @@ typedef enum {
     F(pill_attack_ticks) F(pill_attack_min_ticks) F(pill_cooldown_ticks) \
     F(base_full_armour) F(base_full_shells) F(base_full_mines)           \
     F(base_capture_armour) F(base_hit_armour) F(sound_soft_range)        \
-    F(sound_none_range)
+    F(sound_none_range) F(tank_bump_interval) F(tank_slide_armour_bonus)
 
 #define CTRL_SIM_RULES_U16_FIELDS(F)                                     \
     F(tank_death_ticks) F(mine_damage_range) F(tree_hide_distance)       \

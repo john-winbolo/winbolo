@@ -1326,6 +1326,10 @@ int run_tank_alliance_unfielded_status_tile(void);
 int run_tank_damage_exact_armour_survives(void);
 int run_tank_damage_overkill_destroys(void);
 int run_tank_damage_partial_survives(void);
+int run_tank_knockback_armour_paths(void);
+int run_tank_knockback_timing_drive(void);
+int run_tank_knockback_replaces_mines(void);
+int run_tank_knockback_rules_respawn(void);
 int run_tank_destroyed_snapshot_round_trip(void);
 
 /* The destroyed state on the wire (test_tank_status_wire.c): tankStatus

@@ -298,7 +298,10 @@ typedef enum {
     X(tree_weight_road, SIM_RULE_VALUE_INT,                                  \
       SIM_RULE_UNIT_CONSTANT_BY_DESIGN)                                      \
     X(tree_weight_mine, SIM_RULE_VALUE_INT,                                  \
-      SIM_RULE_UNIT_CONSTANT_BY_DESIGN)
+      SIM_RULE_UNIT_CONSTANT_BY_DESIGN)                                      \
+    X(tank_bump_interval, SIM_RULE_VALUE_INT,                                \
+      SIM_RULE_UNIT_TICKS_LOWER_IS_FASTER)                                    \
+    X(tank_slide_armour_bonus, SIM_RULE_VALUE_INT, SIM_RULE_UNIT_COUNT)
 
 /* One member per rule, in the struct's own field order. SIM_RULE_COUNT is
  * one past the last, and an index at or above it names no rule. A rule's

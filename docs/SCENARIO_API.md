@@ -1316,10 +1316,12 @@ square.
 | `tank_nudge_threshold` | 96 | 0 to 65535 | Which way a shove goes. Two tanks are pushed apart along x when their x gap is over this and along y otherwise, so a smaller number sends more shoves sideways. |
 | `tank_nudge_amount` | 16 | 1 to 255 | How far one shove moves a tank. |
 | `tank_nudge_iterations` | 5 | 1 to 255 | How many shoves are tried in a tick before the pair is left where it is. |
-| `tank_bump_decay_shift` | 2 | 0 to 31 | A right shift: a knockback loses that fraction of itself each tick, plus one. A bigger number is a slower decay, not a faster one — 2 takes off a quarter a tick, 31 takes off only the one. |
+| `tank_bump_decay_shift` | 2 | 0 to 31 | A right shift: knockback loses that fraction of itself each bump update. A bigger number means slower decay; 2 removes a quarter per update, with integer rounding. |
 | `tank_pill_pickup_inset` | 16 | 0 to 255 | How far off its centre a tank reaches to pick a dead pillbox up. |
 | `tank_boat_exit_inset` | 64 | 0 to 255 | How far inside the bank a boat is held when a tank leaves one. |
-| `tank_slide_step` | 32 | 0 to 255 | How far a knocked tank slides per step. |
+| `tank_slide_step` | 28 | 0 to 255 | Initial shell knockback step at full armour, in world units per bump update. Missing pre-hit armour adds a proportional tank_slide_armour_bonus. Zero disables shell knockback. |
+| `tank_bump_interval` | 2 | 1 to 255 | Game ticks between knockback movement and decay updates. Each tick is 20 ms; the default 2 gives 40 ms. Driving continues every tick. |
+| `tank_slide_armour_bonus` | 32 | 0 to 255 | Extra initial knockback step at zero armour, in world units. Scales with the fraction of armour missing before the shell hit. Zero makes all armour levels receive the same shove. |
 | `tank_wall_glide` | 0.0 | 0.0 to 1.0 | 0 slides a tank along a wall it hits; 1 lets it glide off free. |
 
 **Terrain: the cap a tank's speed clamps to.**

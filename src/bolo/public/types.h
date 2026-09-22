@@ -236,8 +236,10 @@ struct tankObj {
   BYTE shellNearFrames;
   vectorBody vectorBodyTank; /* Holds tank's actual moving direction and component vectors (x and y axis speed) */
   vectorBody vectorBodyCollide; /* Holds physics stuff for what hit the tank */
-  int16_t bumpX;            /* X bump effect from collisions/shells (>>9 applied per tick) */
-  int16_t bumpY;            /* Y bump effect from collisions/shells (>>9 applied per tick) */
+  /* Wide enough for armour-scaled knockback with custom slide rules. */
+  int32_t bumpX;            /* X shell knockback (>>9 applied per bump update) */
+  int32_t bumpY;            /* Y shell knockback (>>9 applied per bump update) */
+  BYTE bumpWait;            /* Game ticks until the next knockback step */
   BYTE residualSpeed;       /* Accumulated sub-tick movement */
   BYTE leavingBoatTimer;    /* Ticks remaining in LeavingBoat before returning to InBoat */
   BYTE leavingBoatAxis;     /* Bank-crossing axis bitmask (1=X, 2=Y); only checked for pastGrace */

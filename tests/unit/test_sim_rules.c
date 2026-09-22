@@ -189,6 +189,8 @@ int run_sim_rules_classic_defaults(void) {
     SR_EQ(tank_pill_pickup_inset, TANK_PILL_PICKUP_INSET);
     SR_EQ(tank_boat_exit_inset, TANK_MOVE_BOAT_SUB);
     SR_EQ(tank_slide_step, TANK_SLIDE);
+    SR_EQ(tank_bump_interval, TANK_BUMP_INTERVAL);
+    SR_EQ(tank_slide_armour_bonus, TANK_SLIDE_ARMOUR_BONUS);
     SR_FEQ(tank_wall_glide, TANK_WALL_GLIDE);
 
     /* Terrain speed caps */

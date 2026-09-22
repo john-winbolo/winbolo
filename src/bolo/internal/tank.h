@@ -54,8 +54,10 @@ struct GameSim;
 /* There are 16 tank frames (or viewing angles the tank can take */
 #define TANK_FRAMES 16
 
-/* how many world coordinates to move per tank slide update */
-#define TANK_SLIDE 32
+/* Shell knockback defaults: WU per bump update, scaled by missing armour. */
+#define TANK_SLIDE 28
+#define TANK_SLIDE_ARMOUR_BONUS 32
+#define TANK_BUMP_INTERVAL 2 /* 50 Hz game ticks: 40 ms between bump updates */
 
 /* Knockback slide: exponential decay parameters */
 #define TANK_SLIDE_INITIAL_SPEED 26.0f  /* WU/tick initial knockback speed */
@@ -274,7 +276,7 @@ typedef struct {
 #define TANK_GRID_LOW_MASK        0x000F /* Bitmask: sub-pixel bits (round up via OR) */
 #define TANK_MIN_MOVE_SPEED       6      /* Minimum residual speed before movement occurs */
 #define TANK_MAX_NUDGE_ITERATIONS 5      /* Max building nudge correction passes per tick */
-#define TANK_BUMP_DECAY_SHIFT     2      /* Bump decay rate: >>2 = 25% reduction per tick */
+#define TANK_BUMP_DECAY_SHIFT     2      /* Bump decay: >>2 = 25% reduction per bump update */
 #define TANK_PILL_PICKUP_INSET    16     /* Pill-pickup reach from tank centre in WORLD units (16 = 1 pixel tolerance past the centre tile) */
 
 typedef enum {

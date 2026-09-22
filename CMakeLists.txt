@@ -3891,6 +3891,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_base_death_prediction.c
     tests/unit/test_tank_alliance_unfielded.c
     tests/unit/test_tank_death_state.c
+    tests/unit/test_tank_knockback.c
     tests/unit/test_tank_status_wire.c
     tests/unit/test_voice_flags.c
     tests/unit/test_voice_talking_codec.c
@@ -5061,6 +5062,10 @@ set(_unit_test_names
     tank_damage_exact_armour_survives
     tank_damage_overkill_destroys
     tank_damage_partial_survives
+    tank_knockback_armour_paths
+    tank_knockback_timing_drive
+    tank_knockback_replaces_mines
+    tank_knockback_rules_respawn
     tank_destroyed_snapshot_round_trip
     tank_status_wire_bits
     tank_status_wire_start_find_round_trip

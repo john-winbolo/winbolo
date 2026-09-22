@@ -78,7 +78,7 @@ typedef struct SimRules {
     int32_t tank_bump_decay_shift;   /* how fast a bump dies away */
     int32_t tank_pill_pickup_inset;  /* the reach a tank picks a pill up from */
     int32_t tank_boat_exit_inset;    /* how far inside a bank a boat is held */
-    int32_t tank_slide_step;         /* world units a knocked tank slides */
+    int32_t tank_slide_step;         /* initial knockback WU per bump update at full armour */
     float   tank_wall_glide;         /* 0 slides along a wall, 1 glides free */
 
     /* ---- Terrain: the cap a tank's speed clamps to ----
@@ -235,6 +235,10 @@ typedef struct SimRules {
     int32_t tree_weight_crater;
     int32_t tree_weight_road;
     int32_t tree_weight_mine;
+
+    /* Appended to preserve existing scenario rule indices. */
+    int32_t tank_bump_interval;      /* game ticks between knockback updates */
+    int32_t tank_slide_armour_bonus; /* extra initial WU at zero armour */
 } SimRules;
 
 /*********************************************************
