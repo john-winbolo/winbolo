@@ -62,8 +62,8 @@ static const langid srdDescIds[] = {
 #define SRD_LAST_ID2  2549u
 #define SRD_FIRST_ID3 2575u
 #define SRD_LAST_ID3  2576u
-#define SRD_FIRST_ID4 2623u
-#define SRD_LAST_ID4  2623u
+#define SRD_FIRST_ID4 2622u
+#define SRD_LAST_ID4  2622u
 
 /* ── 1. A description id per rule ──────────────────────────────────────── */
 

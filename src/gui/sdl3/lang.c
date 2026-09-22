@@ -2572,7 +2572,7 @@ static const LangEntry langTable[] = {
     {2619, "Opacity"},
     {2620, "Fades what the panel draws."},
     {2621, "Empty parts of it stay clear."},
-    {2623, "Extra reference 40 ms knockback step at zero armour, in world units. Scales with the fraction of armour missing before the shell hit. Zero makes all armour levels receive the same shove."},
+    {2622, "Extra reference 40 ms knockback step at zero armour, in world units. Scales with the fraction of armour missing before the shell hit. Zero makes all armour levels receive the same shove."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

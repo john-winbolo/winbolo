@@ -2968,7 +2968,7 @@
 #define STR_RULE_DESC_tree_weight_crater         2423
 #define STR_RULE_DESC_tree_weight_road           2424
 #define STR_RULE_DESC_tree_weight_mine           2425
-#define STR_RULE_DESC_tank_slide_armour_bonus    2623
+#define STR_RULE_DESC_tank_slide_armour_bonus    2622
 
 /* Rule range wording */
 
