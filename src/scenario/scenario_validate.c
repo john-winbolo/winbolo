@@ -1277,6 +1277,7 @@ static bool scnValidateSource(const ServerSim *sim, const char *src,
     char           err[SCN_VALIDATE_LINE_LEN];
     lua_State     *L;
     ScnParseReport rep;
+    size_t         before;
 
     L = scnNewVm();
     if (L == NULL) {
@@ -1302,8 +1303,12 @@ static bool scnValidateSource(const ServerSim *sim, const char *src,
     snprintf(chunkName, sizeof(chunkName), "@%s", name);
     if (!scnRunChunk(L, LUA_NOREF, src, srcLen, chunkName, err,
                      sizeof(err))) {
+        before = out->count;
         scnIssueAdd(out, "", "%s", err);
-        if (out->count > 0) {
+        /* Only where the add took. A full list drops the issue and leaves the
+           count where it was, and stamping on that count would put this line
+           number on whatever unrelated issue is last. */
+        if (out->count > before) {
             out->issues[out->count - 1].line = scnLineFromLuaError(err, name);
         }
         scnCloseVm(L);

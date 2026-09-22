@@ -589,12 +589,18 @@ run_scenario_swap_udp() {
   # The writer says nothing until the teardown below creates the sentinel
   # file, and holds the pipe open either way: were it to end first, the
   # server's reader thread would see EOF and no later line could reach it.
-  # Its own bound is past every wait in this helper, and it goes on its own a
-  # few seconds after it has spoken.
+  # Its own bound is 600 turns of 0.2s, which is 120s and past every wait in
+  # this helper. On a run that ends early - a NO END - the sentinel is never
+  # written, so left alone the writer would sit in that loop for the rest of
+  # the two minutes and then take a SIGPIPE on a line nobody is reading. The
+  # teardown stops it by name instead, beside the server and the client.
   #
   # $! after a background pipeline is the last process in it, which is the
   # server, and ds_bin execs when it runs in a subshell - so this is the
-  # server's own pid, not a shell wrapping it.
+  # server's own pid, not a shell wrapping it. The writer is the FIRST process
+  # of that pipeline, and its pid is the one `jobs -p` reports for the job, so
+  # the two are picked up separately. A shell that reports nothing leaves
+  # w_pid empty, and kill walks past an empty argument to the pids after it.
   local quit_file="$ACTUAL/$name.quit"
   rm -f "$quit_file"
   { qw=0
@@ -610,12 +616,15 @@ run_scenario_swap_udp() {
             -logfile "$ACTUAL/$name.dslog" \
             > "$ACTUAL/$name.ds.out" 2> "$ACTUAL/$name.ds.err" &
   local ds_pid=$!
+  local w_pid
+  w_pid=$(jobs -p %% 2>/dev/null || true)
   if [ "$had_log" -eq 1 ]; then
     export WINBOLO_LOG="$old_log"
   else
     unset WINBOLO_LOG
   fi
-  trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
+  trap 'kill "$w_pid" "$ds_pid" 2>/dev/null || true; \
+        wait "$w_pid" "$ds_pid" 2>/dev/null || true' EXIT
 
   port=$(await_ds_port "$ACTUAL/$name.ds.err" "$ds_pid") || return 1
   sleep 0.5  # settle; see await_ds_port
@@ -626,8 +635,8 @@ run_scenario_swap_udp() {
          --log-events "$ACTUAL/$name.jsonl" --quiet \
          > "$ACTUAL/$name.out" 2> "$ACTUAL/$name.err" &
   local c_pid=$!
-  trap 'kill "$ds_pid" "$c_pid" 2>/dev/null || true; \
-        wait "$ds_pid" "$c_pid" 2>/dev/null || true' EXIT
+  trap 'kill "$w_pid" "$ds_pid" "$c_pid" 2>/dev/null || true; \
+        wait "$w_pid" "$ds_pid" "$c_pid" 2>/dev/null || true' EXIT
 
   # Wait for the round to say it is over. The client flushes its event log
   # after every event, so the line lands there as soon as it is delivered.
@@ -656,8 +665,8 @@ run_scenario_swap_udp() {
   done
 
   if [ "$ended" -eq 0 ] && [ "$gone" -eq 0 ]; then
-    kill "$ds_pid" "$c_pid" 2>/dev/null || true
-    wait "$ds_pid" "$c_pid" 2>/dev/null || true
+    kill "$w_pid" "$ds_pid" "$c_pid" 2>/dev/null || true
+    wait "$w_pid" "$ds_pid" "$c_pid" 2>/dev/null || true
     trap - EXIT
     echo "NO END"
     echo "    the round never said: $held"
@@ -700,8 +709,8 @@ run_scenario_swap_udp() {
   local rc=0
   await_client "$c_pid" "client" || rc=$?
 
-  kill "$ds_pid" 2>/dev/null || true
-  wait "$ds_pid" 2>/dev/null || true
+  kill "$w_pid" "$ds_pid" 2>/dev/null || true
+  wait "$w_pid" "$ds_pid" 2>/dev/null || true
   trap - EXIT
 
   if [ "$rc" -ne 0 ]; then

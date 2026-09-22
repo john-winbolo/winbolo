@@ -171,6 +171,12 @@ static void ltDropModesBrain(void) {
     remove(path);
     remove(ltModesBrain);
     SDL_RemovePath(ltModesDir);
+    /* And brains/ itself, which ltMakeModesBrain creates when it is not
+       already there. SDL_RemovePath removes a file or an EMPTY directory and
+       fails on anything else, so this takes back the one this case made and
+       leaves a working directory that has brains of its own — a build
+       directory, where brains/ is a CMake output — untouched. */
+    SDL_RemovePath("brains");
 }
 
 /* A lobby taking part, with one human in slot 0 and a server that runs

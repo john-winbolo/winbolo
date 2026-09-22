@@ -3426,10 +3426,12 @@ endforeach()
 
 # Longer than the 60s the rest get. This entry plays a scenario out to its own
 # end rather than stopping on a tick count, and then has to see the client off.
-# Where the interrupt that stops the server cannot be delivered — Windows —
-# the client leaves on a dead link instead, and that wait is CLIENT_TIMEOUT_TICKS
+# The server is stopped by a "quit" line on its console rather than by a
+# signal, and the shutdown that follows broadcasts CTRL_SERVER_SHUTDOWN, which
+# is what the client leaves on about a second later. A client that does not
+# get it leaves on a dead link instead, and that wait is CLIENT_TIMEOUT_TICKS
 # of the client's own ticks, which stretches well past ten seconds on a machine
-# busy running the rest of a -j suite. run.sh bounds its own waits at 97.5s in
+# busy running the rest of a -j suite. run.sh bounds its own waits at 110.5s in
 # the worst case; this leaves room for it to report a failure with its logs
 # rather than being killed mid-line, which prints nothing at all.
 set_tests_properties(baseline.wave_swap_udp PROPERTIES TIMEOUT 150)

@@ -113,10 +113,8 @@
    fields them, so the first CTRL_LOBBY_SLOT that says a horde seat is on the
    field is the wave landing, and it arrives on the tick it happens. */
 typedef struct {
-    int      count;
     uint32_t digInTick;
     uint32_t waveTick;     /* the tick the wave's first attacker was fielded */
-    uint32_t wonTick;      /* the tick the script declared the defenders' win */
 } SlrSeen;
 
 static ServerSim *slrSim  = NULL;
@@ -137,14 +135,9 @@ static void slrWatchCb(void *ctx, const ControlEvent *evt) {
         return;
     }
     if (evt->type != CTRL_SERVER_TEXT) return;
-    slrSeen->count++;
     if (strstr(evt->u.serverText.text, "SURVIVAL: dig in!") != NULL &&
         slrSeen->digInTick == SLR_NO_TICK) {
         slrSeen->digInTick = slrSim != NULL ? slrSim->tick : 0;
-    }
-    if (strstr(evt->u.serverText.text, "waves survived") != NULL &&
-        slrSeen->wonTick == SLR_NO_TICK) {
-        slrSeen->wonTick = slrSim != NULL ? slrSim->tick : 0;
     }
 }
 
@@ -174,7 +167,6 @@ static int slrRound(int bots, bool inPlace) {
 
     memset(&seen, 0, sizeof(seen));
     seen.digInTick = SLR_NO_TICK;
-    seen.wonTick   = SLR_NO_TICK;
     seen.waveTick  = SLR_NO_TICK;
 
     snprintf(mapPath, sizeof(mapPath), "%s/Survival.map", WB_DATA_MAPS_DIR);
@@ -400,7 +392,7 @@ static int slrRound(int bots, bool inPlace) {
     UT_ASSERT_MSG(seen.digInTick != SLR_NO_TICK,
                   "the round opened without the \"dig in\" line");
 
-    /* (d) The grace is a real 30 seconds: no horde seat on the field before
+    /* (d) The grace is a real 10 seconds: no horde seat on the field before
            it and one just after. Ticked in two stretches so a wave that
            landed early is caught where it happened rather than at the end. */
     fieldedAtStart   = serverSimGetNumFielded(sim);
@@ -416,7 +408,7 @@ static int slrRound(int bots, bool inPlace) {
                       (unsigned)seen.waveTick, (unsigned)graceFrom);
         UT_ASSERT_MSG(serverSimGetNumFielded(sim) == fieldedAtStart,
                       "an attacker took the field by tick %u, inside the "
-                      "30 s grace", (unsigned)sim->tick);
+                      "10 s grace", (unsigned)sim->tick);
         UT_ASSERT_MSG(sim->state == serverStateRunning,
                       "the round ended on tick %u, inside the grace",
                       (unsigned)sim->tick);
@@ -843,7 +835,6 @@ int run_survival_lobby_round_ds_order(void) {
 
     memset(&seen, 0, sizeof(seen));
     seen.digInTick = SLR_NO_TICK;
-    seen.wonTick   = SLR_NO_TICK;
     seen.waveTick  = SLR_NO_TICK;
 
     snprintf(mapPath, sizeof(mapPath), "%s/Survival.map", WB_DATA_MAPS_DIR);
