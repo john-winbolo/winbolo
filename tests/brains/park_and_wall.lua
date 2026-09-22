@@ -1,4 +1,4 @@
--- park_and_wall.lua -- the ENEMY for tests/defend_alarm_test.py arenas B and B2.
+-- park_and_wall.lua -- the ENEMY for the defend_alarm B and B2 arenas.
 --
 -- Two jobs, chosen by BRAIN_INIT_ARG (spawn_bot's 5th argument):
 --

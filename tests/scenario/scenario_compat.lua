@@ -27,7 +27,7 @@
 -- called by a host that calls `on_tick(tick)`. It also flushes the roster
 -- ops the head had to defer, and it carries the verdict deadline.
 --
--- PORT_MAP.md explains each shim and why it is the shape it is.
+-- tests/scenario/README.md carries the traps these shims leave behind.
 -- =========================================================================
 
 -- Rows the head installs itself. The tail must not wrap these with a `game`
@@ -309,8 +309,8 @@ end
 -- So a roster op issued from on_setup is queued here and flushed at the top
 -- of on_start, which the tail installs. The teams settle on the round's
 -- first running tick rather than before it; nothing we have reads a team
--- before its first tick, and PORT_MAP.md says so out loud because it is the
--- one behaviour difference the port makes on purpose.
+-- before its first tick. It is written down here because it is the one
+-- behaviour difference the prelude makes on purpose.
 
 local in_setup = false
 local deferred = {}

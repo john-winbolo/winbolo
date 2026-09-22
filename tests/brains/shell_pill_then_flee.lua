@@ -1,4 +1,5 @@
--- shell_pill_then_flee.lua -- the shooter for tests/defend_repair_test.py.
+-- shell_pill_then_flee.lua -- the shooter for defend_alarm, its C and D
+-- variants, and defend_repair.
 --
 -- Job, in three phases:
 --   approach  drive NORTH off the start pond until the tank is at

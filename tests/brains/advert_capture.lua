@@ -1,9 +1,9 @@
 -- advert_capture.lua — a scripted ALLY that only ever talks.
 --
--- Companion to tests/ally_capture_guard_test.py variants C and D.  It never
--- moves; its whole job is to put a controlled `/info state` slate on the
--- internal bot channel so the bot under test's ally_state slot for this slot
--- says exactly what the test wants, at exactly the tick the test wants.
+-- Companion to the ally_capture_guard B, C and D arenas.  It never moves;
+-- its whole job is to put a controlled `/info state` slate on the internal
+-- bot channel so the bot under test's ally_state slot for this slot says
+-- exactly what the test wants, at exactly the tick the test wants.
 --
 -- WHY A SCRIPT AND NOT A SECOND GoalHunter.  Variant A already uses a real 1.7
 -- ally, which is the honest end-to-end case but gives no control over WHEN the

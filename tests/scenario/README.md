@@ -1,13 +1,12 @@
 # The scenario arenas
 
-Ninety small maps, each with a scenario script beside it, each built to make
-one bot decision happen on purpose and then say whether the bot made it.
+Ninety-five small maps, each with a scenario script beside it, each built to
+make one bot decision happen on purpose and then say whether the bot made it.
 
 They came from the branch `survival-scenario-bot-improvements-merged`, where
 they ran on a server-side scenario host that no longer exists. They run here
 on the host that is on main — `src/scenario/`, documented in
 [../../docs/SCENARIO_API.md](../../docs/SCENARIO_API.md).
-[../../PORT_MAP.md](../../PORT_MAP.md) is the key that moved them.
 
 ## What is here
 
@@ -20,17 +19,18 @@ on the host that is on main — `src/scenario/`, documented in
 
 ## Running them
 
-From the repository root, with `build-own` built:
+From the repository root, with `<dir>` the build directory `WinBoloDS` was
+built into — left out, `--build` looks in `build-own`:
 
 ```
-C:\Python310\python.exe tests/scenario/run_gate.py
+python3 tests/scenario/run_gate.py --build <dir>
 ```
 
 and to run one family, or one arena:
 
 ```
-C:\Python310\python.exe tests/scenario/run_gate.py --only heat_pill
-C:\Python310\python.exe tests/scenario/run_gate.py --only water_pills --jobs 1
+python3 tests/scenario/run_gate.py --build <dir> --only heat_pill
+python3 tests/scenario/run_gate.py --build <dir> --only water_pills --jobs 1
 ```
 
 `--build <dir>` points it at a different build directory, `--jobs N` caps how
@@ -46,14 +46,17 @@ meant to pass passed.
 ### Playing Survival headless, outside the gate
 
 Not an arena — the shipped map and its script, run by hand to watch a whole
-round go past. From `build-own`:
+round go past. From the build directory:
 
 ```
-WinBoloDS.exe -map ../data/maps/Survival.map -port 50290 -gametype open \
+WinBoloDS.exe -map ../data/maps/Survival.map -port 0 -gametype open \
   -nolobby -bots 4 -allybots 1 -brain ../brains/GoalHunter_1.7/init.lua \
   -ai yes -seed 42 -ticks 6000 -asap -brain-no-budget-kill \
   -brain-lua-seed 42 -nowinbolonet -threads 12
 ```
+
+`-port 0` lets the machine pick one. The port to join is the N in the
+server's `[UDP SERVER] listening on UDP port N` line.
 
 **`-allybots 1` is not optional.** `-nolobby` seats its `-bots` on no team at
 all, and team 0 is no team: the script's own test for a defender asks which
@@ -65,7 +68,8 @@ the host seats the template and the Add Bot button puts each bot on a team.
 
 The map and the script both have to be beside the binary, so copy them over
 after editing either: `data/maps/Survival.map` and
-`data/maps/Survival.scenario.lua` into `build-own/data/maps/`.
+`data/maps/Survival.scenario.lua` into the build directory's own
+`data/maps/`.
 
 ## How one arena runs
 
@@ -176,3 +180,24 @@ tick number carried over from the old host means half the time it used to.
 asserted on brain debug output — goal traces, decision lines a brain printed.
 None of that reaches a scenario, so those assertions did not move. Each arena
 that lost one says which one, in its own comments, and is marked `skip`.
+
+## Known gaps
+
+**A bot the lobby seats gets no `init`.** The old host asked a script for each
+team's brain mode and difficulty. The host here reaches the same place for a
+bot a script spawns — `spawn_bot{ init = { mode = ..., difficulty = ... } }` —
+but a bot the lobby seats (`scenario.lobby.teams[].bots` with
+`fielded = true`) is built with no init at all. Survival works around it by
+seating its horde `fielded = false` and fielding every one of them through
+`spawn_bot`, which carries the init.
+
+**How many bots the enemy side gets is a constant.** The old host called a
+script to ask how many AI seats the enemy side should have.
+`scenario.lobby.teams[].bots` here is a number in a table, decided when the
+chunk runs, so what is shipped is a constant.
+
+**Nothing can see a bot think.** The old python drivers asserted on the
+brain's own printed reasoning — the goal pool for a tick and what each
+candidate was priced at, the builder pool's dispatch and denial rows, the
+blitz and heat lines. None of that reaches a scenario, which is why a dozen
+arenas stay marked `skip`.

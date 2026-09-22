@@ -1,4 +1,5 @@
--- farm_beside.lua -- the ENEMY BUILDER for tests/capture_lgm_hunt_test.py.
+-- farm_beside.lua -- the ENEMY BUILDER for the capture_lgm_hunt and
+-- capture_lgm_priority arenas.
 --
 -- ONE JOB: park, and keep a hostile LGM standing on a named tile beside the
 -- corpse our bot is driving at.  That is the whole precondition of the

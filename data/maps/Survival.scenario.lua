@@ -43,8 +43,7 @@
 --     all-6-inner-bases check in on_tick.
 --
 -- PORTED (2026-09-15) from the old server-side host onto the scenario host
--- on main. What changed, and why, is in PORT_MAP.md. The four differences
--- that show in this file:
+-- on main. The four differences that show in this file:
 --
 --   * The horde is TEN HELD SEATS, not ten lobby bots that have to be
 --     pulled off the field at the round's start. scenario.lobby asks for

@@ -110,8 +110,8 @@ end
 --
 -- There is no world state to fall back on: the arena's whole answer is a
 -- PRICE, and both bases end the round the same way whichever one was cheaper.
--- To move this the host would need a way to read a bot's goal scores -- see
--- PORT_MAP.md. The ground below is left standing and working so the arena is
+-- To move this the host would need a way to read a bot's goal scores, and it
+-- has none. The ground below is left standing and working so the arena is
 -- ready the day that exists.
 --
 -- GATE: skip=the driver asserts on pool-7 candidate rows in print2; the arena's answer is a price, not a world state

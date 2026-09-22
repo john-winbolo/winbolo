@@ -1,11 +1,17 @@
--- park_at.lua -- "drive to one tile and then sit there", the filler tank for
--- tests/defend_alarm_test.py arenas W and W2.
+-- park_at.lua -- "drive to one tile and then sit there", a filler tank that
+-- drives to the tile its init names and then holds it.
+--
+-- NO ARENA IN THIS REPOSITORY LOADS IT.  It was written for the defend_alarm
+-- W and WC variants, and defend_alarm_B records why they are NOT BUILT: they
+-- need six seats and four more park_at destinations, and nothing about the
+-- count they exist to produce is visible to a scenario.  What follows
+-- describes those variants.
 --
 -- Arena W needs bodies in known places and nothing else: two ALLIED tanks
 -- parked inside DEFEND_WELL_DEFENDED_RADIUS of our pill (so alarm mode's
 -- condition 4 counts them and rejects the pill as already held), and two
 -- enemy tanks far from the pill whose only job is to make the teams 3v3 so
--- R = ceil(their_team / our_team) is 1.  W2 is the same run with the two
+-- R = ceil(their_team / our_team) is 1.  WC is the same run with the two
 -- allies parked FAR from the pill instead, which is the whole control.
 --
 -- BRAIN_INIT_ARG (spawn_bot's 5th argument) is "mx,my" -- the tile to sit on.

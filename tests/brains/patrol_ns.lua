@@ -1,5 +1,5 @@
--- patrol_ns.lua -- the moving-danger source for
--- tests/refuel_lowstock_test.py.
+-- patrol_ns.lua -- the moving-danger source for mine_hoard_A and
+-- mine_hoard_B.
 --
 -- It does exactly one thing: keep a hostile tank MOVING up and down a lane
 -- that runs past two friendly bases, so goals.lua contested_penalty (which

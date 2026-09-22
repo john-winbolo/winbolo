@@ -1,5 +1,4 @@
--- shell_tank_then_flee.lua -- the shooter for tests/builder_pool_test.py
--- variant B2.
+-- shell_tank_then_flee.lua -- the shooter for the builder_pool B2 arena.
 --
 -- Sibling of shell_pill_then_flee.lua, with one difference that is the whole
 -- point of it: this one shoots at the enemy TANK, not at a pill.  B2 is about
