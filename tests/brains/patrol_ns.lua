@@ -5,13 +5,12 @@
 -- that runs past two friendly bases, so goals.lua contested_penalty (which
 -- only counts enemy tanks with speed > 0) charges first one base and then the
 -- other.  That alternating surcharge keeps both bases' prices LIVE, so the
--- low-stock markup under test sits on top of a real, moving price.
+-- mine surcharge under test sits on top of a real, moving price.
 --
--- It lives on an island across an uncrossable moat (see
--- tests/generate_refuel_lowstock_map.py), and the arena is TOURNAMENT with
--- zero neutral bases, so it holds no shells at all.  It therefore cannot be
--- reached, cannot kill the bot, cannot shoot a base down, and cannot capture
--- anything.  Pure motion.
+-- Both arenas run gametype=tournament and take every base in on_setup, so
+-- this tank spawns with no shells and no mines to fire.  The rest is the
+-- map's job: the arena has to stand it where it cannot reach the bot, kill
+-- it, or capture anything.  Pure motion.
 --
 -- Phases:
 --   leave    drive SOUTH off the one-tile spawn pond until we are inside the
