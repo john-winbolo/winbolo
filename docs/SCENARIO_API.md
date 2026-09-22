@@ -1324,6 +1324,13 @@ square.
 | `tank_slide_armour_bonus` | 32 | 0 to 255 | Extra initial knockback step at zero armour, in world units. Scales with the fraction of armour missing before the shell hit. Zero makes all armour levels receive the same shove. |
 | `tank_wall_glide` | 0.0 | 0.0 to 1.0 | 0 slides a tank along a wall it hits; 1 lets it glide off free. |
 
+Knockback movement rounds to the nearest world unit, and decay rounds its
+magnitude toward zero symmetrically. Opposite directions therefore receive
+equal shoves. With the default rules, unobstructed cardinal displacement is
+about 7 pixels at full armour, rising to 14 pixels on the last surviving
+shell hit (5 armour before impact). This deliberately averages Mac Bolo's
+direction-dependent rounding.
+
 **Terrain: the cap a tank's speed clamps to.**
 
 | Rule | Classic | Range | Description |

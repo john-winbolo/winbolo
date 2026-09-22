@@ -1383,6 +1383,23 @@ void tankSetWorld(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angle, b
   }
 }
 
+/* Round displacement to nearest WU and decay the magnitude toward zero.
+ * Doing both on the magnitude makes opposite shoves exact mirrors, without
+ * the Mac's extra north/west travel from arithmetic right shifts. Legal
+ * slide rules keep the velocity far below INT32_MAX. */
+static int tankStepKnockback(int32_t *velocity, int decayShift) {
+  int32_t before = *velocity;
+  int32_t magnitude = before < 0 ? -before : before;
+  int step = (magnitude + 256) / 512;
+
+  if (magnitude > 0) {
+    /* Ceiling division by 2^shift, including shifts 0 and 31. */
+    magnitude -= ((magnitude - 1) >> decayShift) + 1;
+  }
+  *velocity = before < 0 ? -magnitude : magnitude;
+  return before < 0 ? -step : step;
+}
+
 /* Mac Bolo's shove grows linearly with armour missing BEFORE the hit.
  * The default rules approximate its initial step: 28 WU at full armour,
  * rising to 60 at zero armour. Keep our trig rather than duplicating the
@@ -1899,10 +1916,13 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
   if ((*value)->bumpWait > 0) {
     (*value)->bumpWait--;
   } else if ((*value)->bumpX != 0 || (*value)->bumpY != 0) {
-    (*value)->x += (*value)->bumpX >> 9;
-    (*value)->y += (*value)->bumpY >> 9;
-    (*value)->bumpX -= ((*value)->bumpX >> sim->rules.tank_bump_decay_shift) + ((*value)->bumpX > 0 ? 1 : 0);
-    (*value)->bumpY -= ((*value)->bumpY >> sim->rules.tank_bump_decay_shift) + ((*value)->bumpY > 0 ? 1 : 0);
+    /* tankObj is packed; use aligned locals for the in/out arguments. */
+    int32_t bumpX = (*value)->bumpX;
+    int32_t bumpY = (*value)->bumpY;
+    (*value)->x += tankStepKnockback(&bumpX, sim->rules.tank_bump_decay_shift);
+    (*value)->y += tankStepKnockback(&bumpY, sim->rules.tank_bump_decay_shift);
+    (*value)->bumpX = bumpX;
+    (*value)->bumpY = bumpY;
     (*value)->bumpWait = (BYTE)(sim->rules.tank_bump_interval - 1);
   }
 

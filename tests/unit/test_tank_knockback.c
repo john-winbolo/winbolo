@@ -57,21 +57,21 @@ static void kb_advance(GameSim *gs, int frames) {
 int run_tank_knockback_armour_paths(void) {
     ServerSim *sim = ut_make_running_sim("Knockback");
     GameSim *gs;
-    /* Observed cardinal displacement at full, four and two pre-hit HP.
+    /* Deliberately use the midpoint of Mac's opposite-direction distances:
+     * 7 px at full armour to 14 px on the last surviving shell hit.
      * WinBolo's armour is five units per displayed Mac armour bar. */
-    const BYTE armour[] = {40, 15, 5};
-    const int negative_pixels[] = {8, 13, 15};
-    const int positive_pixels[] = {6, 11, 13};
+    const BYTE armour[] = {40, 35, 30, 25, 20, 15, 10, 5};
+    const int pixels[] = {7, 8, 9, 10, 11, 12, 13, 14};
     const TURNTYPE angles[] = {TANK_NORTH, TANK_EAST, TANK_SOUTH, TANK_WEST};
     int a, d, route;
     UT_ASSERT(sim != NULL);
     gs = serverSimGetGameSim(sim);
-    for (a = 0; a < 3; a++) {
+    for (a = 0; a < 8; a++) {
         for (d = 0; d < 4; d++) {
             int direct_dx = 0, direct_dy = 0;
             for (route = 0; route < 2; route++) {
                 int dx, dy, along, across;
-                int expected = (d == 0 || d == 3) ? negative_pixels[a] : positive_pixels[a];
+                int expected = pixels[a];
                 kb_place(gs, armour[a]);
                 UT_ASSERT(kb_hit(gs, angles[d], route != 0) == TH_HIT);
                 UT_ASSERT(gs->tanks[0]->x == KB_ORIGIN && gs->tanks[0]->y == KB_ORIGIN);
@@ -80,7 +80,7 @@ int run_tank_knockback_armour_paths(void) {
                 dy = (int)gs->tanks[0]->y - KB_ORIGIN;
                 along = d == 0 ? -dy : d == 1 ? dx : d == 2 ? dy : -dx;
                 across = (d == 0 || d == 2) ? dx : dy;
-                UT_ASSERT_MSG(abs(along - expected * 16) <= 16,
+                UT_ASSERT_MSG(abs(along - expected * 16) <= 2,
                               "armour %u dir %d route %d moved %d WU, expected about %d",
                               armour[a], d, route, along, expected * 16);
                 UT_ASSERT(across == 0);
@@ -99,6 +99,44 @@ int run_tank_knockback_armour_paths(void) {
     UT_ASSERT(gs->tanks[0]->x > KB_ORIGIN + 48);
     UT_ASSERT(gs->tanks[0]->y < KB_ORIGIN - 48);
     UT_ASSERT(gs->tanks[0]->angle == TANK_EAST);
+
+    /* Opposite headings must mirror every step and the decaying vector,
+     * including oblique angles and the legal decay-shift boundaries. */
+    {
+        const int shifts[] = {0, 2, 31};
+        int dx[80], dy[80];
+        int32_t vx[80], vy[80];
+        int s, heading, frame;
+        for (s = 0; s < 3; s++) {
+            int frames = shifts[s] == 31 ? 8 : 80;
+            gs->rules.tank_bump_decay_shift = shifts[s];
+            for (heading = 0; heading < 128; heading++) {
+                kb_place(gs, 5);
+                UT_ASSERT(kb_hit(gs, (TURNTYPE)heading, FALSE) == TH_HIT);
+                for (frame = 0; frame < frames; frame++) {
+                    kb_advance(gs, 1);
+                    dx[frame] = (int)gs->tanks[0]->x - KB_ORIGIN;
+                    dy[frame] = (int)gs->tanks[0]->y - KB_ORIGIN;
+                    vx[frame] = gs->tanks[0]->bumpX;
+                    vy[frame] = gs->tanks[0]->bumpY;
+                }
+                kb_place(gs, 5);
+                UT_ASSERT(kb_hit(gs, (TURNTYPE)(heading + 128), TRUE) == TH_HIT);
+                for (frame = 0; frame < frames; frame++) {
+                    kb_advance(gs, 1);
+                    UT_ASSERT_MSG((int)gs->tanks[0]->x - KB_ORIGIN == -dx[frame] &&
+                                  (int)gs->tanks[0]->y - KB_ORIGIN == -dy[frame] &&
+                                  gs->tanks[0]->bumpX == -vx[frame] &&
+                                  gs->tanks[0]->bumpY == -vy[frame],
+                                  "heading %d shift %d frame %d is not mirrored",
+                                  heading, shifts[s], frame);
+                }
+                if (shifts[s] != 31) {
+                    UT_ASSERT(gs->tanks[0]->bumpX == 0 && gs->tanks[0]->bumpY == 0);
+                }
+            }
+        }
+    }
     serverSimDestroy(sim);
     return 0;
 }
