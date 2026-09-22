@@ -824,6 +824,15 @@ struct ClientSim {
     bool     lobbyScriptBound[LOBBY_SCRIPT_LIST_MAX];
     int      lobbyScriptPendingCount;
     LobbyScriptEntry lobbyScriptPending[LOBBY_SCRIPT_LIST_MAX];
+    /* Set when a run of chunks is thrown away for overrunning the cap, and
+     * held until that run's last chunk. Zeroing the pending count is not
+     * enough on its own: zero is exactly where a fresh list starts, so the
+     * chunks behind the dropped one would append from there and the one
+     * carrying final would install a piece of the list as though it were the
+     * whole of it. Cleared on the chunk with final set, because the list is
+     * published as a back-to-back run on a reliable ordered channel and the
+     * chunk after a final one is always the start of the next list. */
+    bool     lobbyScriptPendingDropped;
     /* Ticked on each whole list installed, so a chooser can re-read without
      * comparing the rows itself, the way lobbyScenarioListSeq is used. */
     uint32_t lobbyScriptSeq;

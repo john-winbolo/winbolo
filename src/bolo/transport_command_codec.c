@@ -728,6 +728,11 @@ static bool commandDecodeSetScriptList(const uint8_t *buf, size_t len,
         cmd->u.setScriptList.files[i][fileLen] = '\0';
         pos += fileLen;
     }
+    /* Exactly the names it said it had, the check the control side's own
+       body decoder ends on. Trailing bytes mean the sender and this reader
+       disagree about the entry shape, and a list read off a body neither of
+       them agrees on is one to drop. */
+    if (pos != len) return false;
     return true;
 }
 

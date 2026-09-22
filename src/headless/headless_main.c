@@ -712,12 +712,25 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
          final goes out with the rows because a list arrives in chunks and a
          reader has no other way to tell a whole list from the front of one.
          There is no seq to write: the channel is reliable and ordered, so
-         the chunk after a final one starts the next list. */
+         the chunk after a final one starts the next list.
+
+         The rows are bounded by the entries array rather than by the count
+         byte. A chunk decoded off the wire cannot claim more than
+         LOBBY_SCRIPT_LIST_CHUNK — transport_control_codec.c refuses such a
+         body outright — but in --fast mode the event comes straight from the
+         in-process subscriber and nothing decodes it, so the bound is this
+         dumper's to apply. count is written out as it arrived rather than
+         clamped: a chunk claiming more rows than it can hold then shows up
+         in the log as the mismatch it is. */
       unsigned k;
+      unsigned n = (unsigned)evt->u.lobbyScriptList.count;
+      if (n > (unsigned)LOBBY_SCRIPT_LIST_CHUNK) {
+        n = (unsigned)LOBBY_SCRIPT_LIST_CHUNK;
+      }
       fprintf(f, ",\"final\":%s,\"count\":%u,\"entries\":[",
               evt->u.lobbyScriptList.final ? "true" : "false",
               (unsigned)evt->u.lobbyScriptList.count);
-      for (k = 0; k < (unsigned)evt->u.lobbyScriptList.count; k++) {
+      for (k = 0; k < n; k++) {
         const LobbyScriptEntry *e = &evt->u.lobbyScriptList.entries[k];
         fprintf(f, "%s{\"file\":", (k == 0) ? "" : ",");
         logEventsJsonStr(f, e->file, sizeof(e->file));

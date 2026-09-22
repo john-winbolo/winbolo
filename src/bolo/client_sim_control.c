@@ -759,19 +759,43 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
 
     case CTRL_LOBBY_SCRIPT_LIST: {
         /* One chunk of the lobby's script list. The chunks of a list arrive
-           in order and back to back on the reliable control channel, so the
-           chunk after a final one is the start of the next list and there is
-           no fragment number to check; what is checked is the total, because
-           a run that would overrun the cap is the one way a sender and this
-           reader could disagree about the list at all.
+           in order and back to back on the reliable control channel — the
+           list is published as one run inside one call under the sim mutex —
+           so the chunk after a final one is always the start of the next
+           list and there is no fragment number to check; what is checked is
+           the total, because a run that would overrun the cap is the one way
+           a sender and this reader could disagree about the list at all.
 
            Installed only on the chunk with final set, so a chooser never
-           draws half of one list and half of the next. */
+           draws half of one list and half of the next.
+
+           count is bounded by the entries array before it is used. A chunk
+           decoded off the wire cannot claim more than
+           LOBBY_SCRIPT_LIST_CHUNK — transport_control_codec.c refuses such a
+           body outright — but the in-process subscriber hands this event
+           over as a struct and nothing decodes it, so the bound is this
+           reader's to apply.
+
+           A run that overruns the cap is dropped whole, and
+           lobbyScriptPendingDropped is what makes the drop stick: zeroing
+           the pending count alone leaves exactly the state a fresh list
+           starts from, so the rest of the same run would append from there
+           and its final chunk would install a piece of the list as though it
+           were the whole of it. The flag clears on the chunk carrying final,
+           which is where the run ends by the same ordering above. The last
+           whole list stands untouched throughout. */
         uint8_t n = evt->u.lobbyScriptList.count;
         int     i;
 
-        if (cs->lobbyScriptPendingCount + (int)n > LOBBY_SCRIPT_LIST_MAX) {
-            cs->lobbyScriptPendingCount = 0;   /* abort, keep the last list */
+        if (n > LOBBY_SCRIPT_LIST_CHUNK) {
+            n = (uint8_t)LOBBY_SCRIPT_LIST_CHUNK;
+        }
+
+        if (cs->lobbyScriptPendingDropped ||
+            cs->lobbyScriptPendingCount + (int)n > LOBBY_SCRIPT_LIST_MAX) {
+            /* Abort, keep the last list. */
+            cs->lobbyScriptPendingCount   = 0;
+            cs->lobbyScriptPendingDropped = !evt->u.lobbyScriptList.final;
             break;
         }
         for (i = 0; i < (int)n; i++) {

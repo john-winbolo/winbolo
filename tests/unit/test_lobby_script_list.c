@@ -12,15 +12,18 @@
  *   script_list_control_codec  — one chunk encoded from a filled event and
  *       compared against bytes written out by hand, then decoded from those
  *       same hand-written bytes and checked field by field. The same case
- *       refuses a count past the chunk cap, a body that stops inside an
- *       entry, and a body with a byte left over; checks that the decode
- *       zeroes the entries above the count; and measures a full chunk of
+ *       refuses a count past the chunk cap, a fileLen or nameLen past the
+ *       field it is copied into, a body that stops inside an entry, and a
+ *       body with a byte left over; checks that the decode zeroes the
+ *       entries above the count; and measures a full chunk of
  *       longest-possible entries against the control segment it has to ride
  *       in, which is the ceiling delivery applies.
  *   script_list_command_codec  — the whole list up the wire: a round trip
  *       through the production encoder and decoder, the worst case measured
- *       against COMMAND_MAX_WIRE_BYTES, and a count past the cap refused on
- *       both sides.
+ *       against COMMAND_MAX_WIRE_BYTES, a count past the cap refused on
+ *       both sides, and the three bodies the decoder has to refuse — one cut
+ *       a byte short, one with a byte left over, one with a fileLen past the
+ *       field it is copied into.
  *   script_list_dispatch       — the CMD_SET_SCRIPT_LIST case in
  *       server_command_dispatch.c: who may set a list, what it refuses, and
  *       that a refusal leaves the previous list alone. Including the one
@@ -31,7 +34,10 @@
  *       once too.
  *   script_list_client_apply   — a two-chunk list reassembled into a
  *       ClientSim and read back through the accessors the lobby chooser
- *       uses, including a run that would overrun the cap.
+ *       uses, including a run that would overrun the cap: nothing of that
+ *       run installs, not even off the chunk carrying final, and the list
+ *       after it installs normally. And a chunk claiming more entries than
+ *       the array holds, which only the in-process subscriber can deliver.
  *
  * The segment and not MAX_CONTROL_PACKET is the ceiling that matters for the
  * chunk: one control event is one channel segment, and the encoder is handed
@@ -168,6 +174,55 @@ int run_script_list_control_codec(void) {
         evt.u.lobbyScriptList.count = 2;
     }
 
+    /* A length past the field it is copied into, on each of the two strings
+       an entry carries. Both bodies are otherwise whole and end where they
+       say they do, so the refusal is the bound talking and not a short read
+       or a byte left over. */
+    {
+        uint8_t over[2 + 1 + 1 + LOBBY_SCENARIO_FILE_LEN + 1 + 4];
+        size_t  p = 0;
+        over[p++] = 0x01;                              /* final */
+        over[p++] = 0x01;                              /* one entry */
+        over[p++] = 0x00;                              /* no flags */
+        over[p++] = (uint8_t)LOBBY_SCENARIO_FILE_LEN;  /* one too long */
+        memset(over + p, 'f', LOBBY_SCENARIO_FILE_LEN);
+        p += LOBBY_SCENARIO_FILE_LEN;
+        over[p++] = 0x04;
+        memcpy(over + p, "Name", 4);
+        p += 4;
+        UT_ASSERT(p == sizeof(over));
+        memset(&back, 0, sizeof(back));
+        UT_ASSERT_MSG(!slDecodeBody(over, p, &back),
+                      "a fileLen of %d decoded, and the name it copies does "
+                      "not fit the %d-byte field with its terminator",
+                      (int)LOBBY_SCENARIO_FILE_LEN,
+                      (int)LOBBY_SCENARIO_FILE_LEN);
+        UT_ASSERT_MSG(back.u.lobbyScriptList.entries[0].file[0] == '\0',
+                      "the refused entry's file was copied anyway");
+    }
+    {
+        uint8_t over[2 + 1 + 1 + 4 + 1 + LOBBY_SCENARIO_NAME_LEN];
+        size_t  p = 0;
+        over[p++] = 0x01;                              /* final */
+        over[p++] = 0x01;                              /* one entry */
+        over[p++] = 0x00;                              /* no flags */
+        over[p++] = 0x04;
+        memcpy(over + p, "wave", 4);
+        p += 4;
+        over[p++] = (uint8_t)LOBBY_SCENARIO_NAME_LEN;  /* one too long */
+        memset(over + p, 'n', LOBBY_SCENARIO_NAME_LEN);
+        p += LOBBY_SCENARIO_NAME_LEN;
+        UT_ASSERT(p == sizeof(over));
+        memset(&back, 0, sizeof(back));
+        UT_ASSERT_MSG(!slDecodeBody(over, p, &back),
+                      "a nameLen of %d decoded, and the name it copies does "
+                      "not fit the %d-byte field with its terminator",
+                      (int)LOBBY_SCENARIO_NAME_LEN,
+                      (int)LOBBY_SCENARIO_NAME_LEN);
+        UT_ASSERT_MSG(back.u.lobbyScriptList.entries[0].name[0] == '\0',
+                      "the refused entry's name was copied anyway");
+    }
+
     /* A body that stops inside an entry, and one with a byte left over. */
     UT_ASSERT(!slDecodeBody(kSlBody, sizeof(kSlBody) - 1, &back));
     {
@@ -278,6 +333,52 @@ int run_script_list_command_codec(void) {
     UT_ASSERT(commandCodecEncode(&cmd, buf, sizeof(buf), &len));
     buf[PACKET_HEADER_SIZE + 4] = CMD_SCRIPT_LIST_MAX + 1;
     UT_ASSERT(!commandCodecDecode(buf, len, &back));
+
+    /* A body one byte short of its last name, and one with a byte left over.
+       Both are built off a whole command that decodes, so the length is the
+       only thing wrong with either of them. */
+    memset(&cmd.u.setScriptList, 0, sizeof(cmd.u.setScriptList));
+    cmd.u.setScriptList.count = 2;
+    snprintf(cmd.u.setScriptList.files[0],
+             sizeof(cmd.u.setScriptList.files[0]), "%s", "wave.scenario");
+    snprintf(cmd.u.setScriptList.files[1],
+             sizeof(cmd.u.setScriptList.files[1]), "%s", "nolgm.lua");
+    UT_ASSERT(commandCodecEncode(&cmd, buf, sizeof(buf), &len));
+    UT_ASSERT(commandCodecDecode(buf, len, &back));
+    UT_ASSERT_MSG(!commandCodecDecode(buf, len - 1, &back),
+                  "a body one byte short of its last name decoded");
+    UT_ASSERT_MSG(len + 1 <= sizeof(buf),
+                  "no room to append a byte to a %d-byte command", (int)len);
+    buf[len] = 0x00;
+    UT_ASSERT_MSG(!commandCodecDecode(buf, len + 1, &back),
+                  "a body with a byte left over decoded, so the sender and "
+                  "this reader disagree about the entry shape and nothing "
+                  "says so");
+
+    /* A fileLen past the field it is copied into. The body is otherwise
+       whole and ends where it says it does, so the refusal is the bound
+       talking and not a length the decoder caught first. */
+    {
+        uint8_t over[PACKET_HEADER_SIZE + 4 + 1 + 1 +
+                     CMD_SCRIPT_LIST_FILE_LEN];
+        memset(&cmd.u.setScriptList, 0, sizeof(cmd.u.setScriptList));
+        cmd.u.setScriptList.count = 1;
+        memset(cmd.u.setScriptList.files[0], 'f',
+               CMD_SCRIPT_LIST_FILE_LEN - 1);
+        UT_ASSERT(commandCodecEncode(&cmd, buf, sizeof(buf), &len));
+        UT_ASSERT(len == sizeof(over) - 1);
+        memcpy(over, buf, len);
+        over[PACKET_HEADER_SIZE + 4 + 1] = (uint8_t)CMD_SCRIPT_LIST_FILE_LEN;
+        over[len] = 'f';
+        memset(&back, 0, sizeof(back));
+        UT_ASSERT_MSG(!commandCodecDecode(over, sizeof(over), &back),
+                      "a fileLen of %d decoded, and the name it copies does "
+                      "not fit the %d-byte field with its terminator",
+                      (int)CMD_SCRIPT_LIST_FILE_LEN,
+                      (int)CMD_SCRIPT_LIST_FILE_LEN);
+        UT_ASSERT_MSG(back.u.setScriptList.files[0][0] == '\0',
+                      "the refused entry's file was copied anyway");
+    }
     return 0;
 }
 
@@ -680,6 +781,59 @@ int run_script_list_client_apply(void) {
     }
     UT_ASSERT_MSG(clientSimGetLobbyScriptCount(cs) == 4,
                   "a run past the cap replaced the list that was there");
+
+    /* And the chunk carrying final ends that run without installing what is
+       left of it. Zeroing the pending count is not enough on its own: zero
+       is where a fresh list starts, so the chunks behind the dropped one
+       would append from there and this one would install a piece of the run
+       as though it were the whole list. */
+    {
+        uint32_t seq = clientSimGetLobbyScriptSeq(cs);
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_LOBBY_SCRIPT_LIST;
+        evt.u.lobbyScriptList.count = 2;
+        evt.u.lobbyScriptList.final = 1;
+        clientSimApplyControl(cs, &evt);
+        UT_ASSERT_MSG(clientSimGetLobbyScriptCount(cs) == 4,
+                      "the chunk carrying final installed %d entries out of "
+                      "a run already thrown away",
+                      clientSimGetLobbyScriptCount(cs));
+        UT_ASSERT_MSG(clientSimGetLobbyScriptSeq(cs) == seq,
+                      "the sequence moved on a list that never installed");
+        UT_ASSERT(strcmp(clientSimGetLobbyScriptFile(cs, 0), "s0") == 0);
+
+        /* The next list installs, so the drop ended with the run it belonged
+           to rather than swallowing the list behind it. */
+        slFillChunk(&evt, 2, 0);
+        clientSimApplyControl(cs, &evt);
+        UT_ASSERT_MSG(clientSimGetLobbyScriptCount(cs) == 2,
+                      "the list after a dropped run did not install, so the "
+                      "drop outlived its run");
+        UT_ASSERT(clientSimGetLobbyScriptSeq(cs) == seq + 1);
+    }
+
+    /* A chunk claiming more entries than the array holds. A chunk decoded
+       off the wire cannot — transport_control_codec.c refuses such a body
+       outright — so this is the in-process subscriber's event, handed over
+       as a struct with nothing decoding it. */
+    {
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_LOBBY_SCRIPT_LIST;
+        evt.u.lobbyScriptList.count = (uint8_t)(LOBBY_SCRIPT_LIST_CHUNK + 2);
+        evt.u.lobbyScriptList.final = 1;
+        for (i = 0; i < LOBBY_SCRIPT_LIST_CHUNK; i++) {
+            snprintf(evt.u.lobbyScriptList.entries[i].file,
+                     sizeof(evt.u.lobbyScriptList.entries[i].file), "c%d", i);
+        }
+        clientSimApplyControl(cs, &evt);
+        UT_ASSERT_MSG(clientSimGetLobbyScriptCount(cs) ==
+                          LOBBY_SCRIPT_LIST_CHUNK,
+                      "a chunk claiming %d entries installed %d, and the "
+                      "entries array holds %d",
+                      LOBBY_SCRIPT_LIST_CHUNK + 2,
+                      clientSimGetLobbyScriptCount(cs),
+                      LOBBY_SCRIPT_LIST_CHUNK);
+    }
 
     clientSimDestroy(cs);
     return 0;
