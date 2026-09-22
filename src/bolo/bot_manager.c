@@ -721,7 +721,7 @@ static void botManagerStageInitArg(struct ServerSim *sim, BYTE playerNum,
     SDL_strlcpy(arg, (staged != NULL) ? staged : "", sizeof(arg));
     /* Only a brain that SHIPS a modes.txt gets the tokens. The manifest is
      * the brain saying "I read mode= and difficulty=". A brain without one
-     * (the scripted tests/brains/*.lua, a third-party brain) may treat its
+     * (the scripted tests/brains/ *.lua, a third-party brain) may treat its
      * whole init arg as one opaque value — park_at.lua parses "mx,my" and
      * nothing else — and appending to it would break that parse. Such a
      * brain still shows the synthesized Default mode in the lobby; picking
