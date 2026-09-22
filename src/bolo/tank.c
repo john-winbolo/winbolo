@@ -1875,12 +1875,27 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
     (*value)->residualSpeed = 0;
   }
 
-  /* Step 3 — Apply bump effect (shell knockback with decay) */
-  (*value)->x += (*value)->bumpX >> 9;
-  (*value)->y += (*value)->bumpY >> 9;
+  /* Step 3 — Apply bump effect (shell knockback with decay).
+   * bumpX/bumpY are signed, and C's >> on a negative value rounds toward
+   * -infinity, not toward zero — so a plain ">> 9" (or ">> decay_shift")
+   * kept an extra world unit per tick on a negative component that a
+   * positive one of the same magnitude discarded. That made a push with a
+   * west or north component settle noticeably further than the same push
+   * east or south. Shifting the magnitude and restoring the sign makes the
+   * move and the decay symmetric regardless of direction. */
+  (*value)->x += (*value)->bumpX >= 0 ? ((*value)->bumpX >> 9) : -((-(*value)->bumpX) >> 9);
+  (*value)->y += (*value)->bumpY >= 0 ? ((*value)->bumpY >> 9) : -((-(*value)->bumpY) >> 9);
   if (!(*value)->destroyed) {
-    (*value)->bumpX -= ((*value)->bumpX >> sim->rules.tank_bump_decay_shift) + ((*value)->bumpX > 0 ? 1 : 0);
-    (*value)->bumpY -= ((*value)->bumpY >> sim->rules.tank_bump_decay_shift) + ((*value)->bumpY > 0 ? 1 : 0);
+    if ((*value)->bumpX >= 0) {
+      (*value)->bumpX -= ((*value)->bumpX >> sim->rules.tank_bump_decay_shift) + 1;
+    } else {
+      (*value)->bumpX += ((-(*value)->bumpX) >> sim->rules.tank_bump_decay_shift) + 1;
+    }
+    if ((*value)->bumpY >= 0) {
+      (*value)->bumpY -= ((*value)->bumpY >> sim->rules.tank_bump_decay_shift) + 1;
+    } else {
+      (*value)->bumpY += ((-(*value)->bumpY) >> sim->rules.tank_bump_decay_shift) + 1;
+    }
   }
 
   /* Step 4 — Building nudge */
