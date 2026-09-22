@@ -4772,6 +4772,7 @@ set(_unit_test_names
     script_list_control_codec
     script_list_command_codec
     script_list_dispatch
+    script_list_lists_once
     script_list_client_apply
     lobby_map_search_chunked
     wbn_bearer_state

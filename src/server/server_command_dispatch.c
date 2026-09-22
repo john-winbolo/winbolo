@@ -1065,6 +1065,9 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         int                scenarios = 0;
         const ScnDirEntry *mapOwn;
         ScnDirEntry        rows[CMD_SCRIPT_LIST_MAX];
+        ScnDirEntry       *dirRows;
+        int                dirCount;
+        CmdResult          result = CMD_OK;
 
         if (!serverSimIsLobbyEnabled(sim) ||
             serverSimGetState(sim) != serverStateLobby) {
@@ -1076,12 +1079,22 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
            the local transport never met it, and this arm is the one place
            both paths pass through. */
         if (count > CMD_SCRIPT_LIST_MAX) return CMD_REJECT_INVALID;
-        /* An empty list clears, and is the one value that needs no checks:
-           there is no name to test the shape of or look up, and no ranked
-           question, so a host who turned ranked on with scripts picked can
-           still put the list back to empty. The same order the set-scenario
-           arm clears in. */
+        /* An empty list clears, and is the one value that needs no name
+           checks: there is no name to test the shape of or look up. It is
+           exempt from the ranked refusal too, so a host who turned ranked on
+           with scripts picked can still put the list back to empty. The same
+           order the set-scenario arm clears in.
+
+           It is not exempt from the tick gap. No directory is read for it,
+           but it recomposes like any other list, and that is the work the gap
+           spaces out. */
         if (count <= 0) {
+            if (sim->scenarioPickTick != 0 &&
+                sim->tick + 1 - sim->scenarioPickTick <
+                    SCENARIO_RELOAD_GAP_TICKS) {
+                return CMD_REJECT_COOLDOWN;
+            }
+            sim->scenarioPickTick = sim->tick + 1;
             serverSimSetScriptList(sim, NULL, 0);
             lobbyScenarioReselect(sim);
             return CMD_OK;
@@ -1094,8 +1107,8 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         /* One list a second, per sim, before the directory is read, and on
            the same clock the single pick and the reload share: looking a name
            up means listing the scenarios directory, which opens every file in
-           it and runs the top level of every loose script on this thread. A
-           list asks for that work once per name. */
+           it and runs the top level of every loose script on this thread. One
+           reading serves the whole list, and this is what spaces those out. */
         if (sim->scenarioPickTick != 0 &&
             sim->tick + 1 - sim->scenarioPickTick < SCENARIO_RELOAD_GAP_TICKS) {
             return CMD_REJECT_COOLDOWN;
@@ -1110,10 +1123,33 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
            src/scenario/scenario_host.c for what the row does once it is
            recorded. */
         mapOwn = serverSimGetMapScript(sim);
+        /* One listing for the whole command, matched against every name on
+           it. Reading the directory opens every file in it and runs the top
+           level of every loose script, on this thread and under the sim lock,
+           and it answers the same for the tenth name as for the first.
+
+           On the heap for the reason lobbyScenarioDirHolds puts it there: an
+           entry carries a description, so a full listing runs to ~58 KB,
+           which is more than a command handler a client's datagram reaches
+           should put on the stack. No memory to read the directory into is no
+           listing, which answers the same as a name the directory does not
+           hold — so the allocation failing is not a separate refusal. */
+        dirRows = (ScnDirEntry *)calloc((size_t)LOBBY_SCENARIO_LIST_MAX,
+                                        sizeof(*dirRows));
+        dirCount = dirRows != NULL
+                       ? serverSimScenarioListDir(sim, dirRows,
+                                                  LOBBY_SCENARIO_LIST_MAX)
+                       : 0;
         for (i = 0; i < count; i++) {
             const char *file = cmd->u.setScriptList.files[i];
-            if (file[0] == '\0') return CMD_REJECT_INVALID;
-            if (!lobbyScenarioNameShapeOk(file)) return CMD_REJECT_INVALID;
+            if (file[0] == '\0') {
+                result = CMD_REJECT_INVALID;
+                goto scriptListDone;
+            }
+            if (!lobbyScenarioNameShapeOk(file)) {
+                result = CMD_REJECT_INVALID;
+                goto scriptListDone;
+            }
             if (mapOwn != NULL && strcmp(mapOwn->file, file) == 0) {
                 /* The map's own script, recorded from the row the server
                    published rather than looked up: the file sits beside the
@@ -1128,8 +1164,26 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
                    along with every other repeated name. */
                 rows[i] = *mapOwn;
             } else {
-                if (!lobbyScenarioDirHolds(sim, file, &rows[i])) {
-                    return CMD_REJECT_INVALID;
+                int  k;
+                bool held = false;
+
+                memset(&rows[i], 0, sizeof(rows[i]));
+                for (k = 0; k < dirCount; k++) {
+                    if (strcmp(dirRows[k].file, file) == 0) {
+                        /* The directory's row rather than the wire's name, so
+                           what is recorded is what the lister reported: the
+                           file, the manifest's name and both flags, which is
+                           what the list event publishes. */
+                        rows[i] = dirRows[k];
+                        held    = true;
+                        break;
+                    }
+                }
+                /* A name the directory does not carry is not one a host could
+                   have picked. */
+                if (!held) {
+                    result = CMD_REJECT_INVALID;
+                    goto scriptListDone;
                 }
                 /* Any other bound script belongs to a map that is not the
                    committed one: its tags, its regions and its entity indices
@@ -1137,7 +1191,10 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
                    not there. It arrives with its own map and plays when that
                    map is committed, which leaves nothing here for a host to
                    pick. */
-                if (rows[i].bound) return CMD_REJECT_INVALID;
+                if (rows[i].bound) {
+                    result = CMD_REJECT_INVALID;
+                    goto scriptListDone;
+                }
             }
             if (!rows[i].keepsWinCondition) scenarios++;
             /* The same file twice would load the same script twice, with two
@@ -1145,7 +1202,8 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
                Refused rather than folded, so the host is told. */
             for (j = 0; j < i; j++) {
                 if (strcmp(rows[j].file, rows[i].file) == 0) {
-                    return CMD_REJECT_INVALID;
+                    result = CMD_REJECT_INVALID;
+                    goto scriptListDone;
                 }
             }
         }
@@ -1160,10 +1218,17 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
            still playing. Dropping the map's row from the list is how a host
            says the picked scenario replaces it — which is what leaving it off
            the list has always meant. */
-        if (scenarios > 1) return CMD_REJECT_INVALID;
+        if (scenarios > 1) {
+            result = CMD_REJECT_INVALID;
+            goto scriptListDone;
+        }
         serverSimSetScriptList(sim, rows, count);
         lobbyScenarioReselect(sim);
-        return CMD_OK;
+scriptListDone:
+        /* Every refusal above reaches here, so the one listing the arm read
+           is freed whichever way it leaves. */
+        free(dirRows);
+        return result;
     }
     case CMD_LOBBY_RELOAD_SCENARIO: {
         /* The edit-reload-play loop the dedicated server's console already

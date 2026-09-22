@@ -439,6 +439,7 @@ int run_lobby_set_scenario_unreadies(void);
 int run_script_list_control_codec(void);
 int run_script_list_command_codec(void);
 int run_script_list_dispatch(void);
+int run_script_list_lists_once(void);
 int run_script_list_client_apply(void);
 int run_lobby_map_search_chunked(void);
 int run_wbn_bearer_state(void);

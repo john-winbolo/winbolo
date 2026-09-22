@@ -355,6 +355,7 @@ static const UnitTestEntry s_tests[] = {
     { "script_list_control_codec",               run_script_list_control_codec               },
     { "script_list_command_codec",               run_script_list_command_codec               },
     { "script_list_dispatch",                    run_script_list_dispatch                    },
+    { "script_list_lists_once",                  run_script_list_lists_once                  },
     { "script_list_client_apply",                run_script_list_client_apply                },
     { "wbn_bearer_state",                        run_wbn_bearer_state                        },
     { "wbn_rekey_codec",                         run_wbn_rekey_codec                         },

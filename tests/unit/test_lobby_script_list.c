@@ -26,6 +26,9 @@
  *       that a refusal leaves the previous list alone. Including the one
  *       bound name it lets through, which is the committed map's own script
  *       and is how a host says where on the list that script is composed.
+ *   script_list_lists_once     — a full list of ten names reads the mod
+ *       directories once, not once per name, and a refused list reads them
+ *       once too.
  *   script_list_client_apply   — a two-chunk list reassembled into a
  *       ClientSim and read back through the accessors the lobby chooser
  *       uses, including a run that would overrun the cap.
@@ -281,13 +284,16 @@ int run_script_list_command_codec(void) {
 /* ── 3. The dispatcher's arm ──────────────────────────────────────── */
 
 /* The directory these cases offer. bound and keepsWinCondition are per entry,
- * as the real lister fills them from each manifest. */
+ * as the real lister fills them from each manifest. Room for a full command's
+ * worth, so a case can offer as many names as one can carry; slLobby fills
+ * the first five and leaves the rest empty. `calls` is how many times the arm
+ * asked, which is what the one-listing case reads. */
 typedef struct {
     int         calls;
     int         count;
-    const char *files[5];
-    bool        bound[5];
-    bool        keepsWin[5];
+    const char *files[CMD_SCRIPT_LIST_MAX];
+    bool        bound[CMD_SCRIPT_LIST_MAX];
+    bool        keepsWin[CMD_SCRIPT_LIST_MAX];
 } SlDir;
 
 static int slList(void *ctx, const char *dir, ScnDirEntry *out, int max) {
@@ -498,13 +504,80 @@ int run_script_list_dispatch(void) {
         UT_ASSERT(serverSimGetScriptCount(sim) == 2);
     }
 
-    /* An empty list clears, and needs no cooldown: there is no directory to
-       read for it. */
+    /* An empty list needs no name checks and no ranked question, but it
+       recomposes like any other list, so it waits for the gap the same way. */
+    UT_ASSERT_MSG(slApply(sim, 0, NULL, 0) == CMD_REJECT_COOLDOWN,
+                  "a clear inside the tick gap recomposed anyway");
+    slPastCooldown(sim);
     UT_ASSERT_MSG(slApply(sim, 0, NULL, 0) == CMD_OK,
                   "clearing the list was refused");
     UT_ASSERT_MSG(serverSimGetScriptCount(sim) == 0,
                   "the list was not cleared");
     UT_ASSERT(serverSimGetSelectedScenario(sim)[0] == '\0');
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* The arm reads the mod directories once per command and matches every name
+ * against that one reading. It used to ask per name, so a full list of ten
+ * read them ten times — on the tick thread and under the sim lock, each one
+ * opening every file in the directories and running the top level of every
+ * loose script in them. */
+int run_script_list_lists_once(void) {
+    ServerSim  *sim;
+    SlDir       d;
+    char        files[CMD_SCRIPT_LIST_MAX][32];
+    const char *names[CMD_SCRIPT_LIST_MAX];
+    int         i;
+
+    sim = slLobby(&d);
+    UT_ASSERT(sim != NULL);
+
+    /* A full command's worth on offer and all of it named. Mods rather than
+       scenarios: only one script on a list may end the round, and what is
+       being counted here is directory reads, not what the list holds. */
+    d.count = CMD_SCRIPT_LIST_MAX;
+    for (i = 0; i < CMD_SCRIPT_LIST_MAX; i++) {
+        snprintf(files[i], sizeof(files[i]), "mod%d.lua", i);
+        d.files[i]    = files[i];
+        d.bound[i]    = false;
+        d.keepsWin[i] = true;
+        names[i]      = files[i];
+    }
+
+    /* Past the gap, then zeroed: what the fixture's own set-up read does not
+       count against the one reading this command is allowed. */
+    slPastCooldown(sim);
+    d.calls = 0;
+    UT_ASSERT_MSG(slApply(sim, 0, names, CMD_SCRIPT_LIST_MAX) == CMD_OK,
+                  "a full list of ten valid names was refused");
+    UT_ASSERT_MSG(d.calls == 1,
+                  "%d names read the mod directories %d times, wanted one "
+                  "reading for the whole command", CMD_SCRIPT_LIST_MAX,
+                  d.calls);
+    UT_ASSERT_MSG(serverSimGetScriptCount(sim) == CMD_SCRIPT_LIST_MAX,
+                  "%d entries recorded, wanted %d",
+                  serverSimGetScriptCount(sim), CMD_SCRIPT_LIST_MAX);
+    /* The rows came off that one reading and carry what the lister reported,
+       not names rebuilt off the wire. */
+    UT_ASSERT(strcmp(serverSimGetScript(sim, 0)->file, files[0]) == 0);
+    UT_ASSERT(strcmp(serverSimGetScript(sim, 0)->name, "Script 0") == 0);
+    UT_ASSERT(strcmp(serverSimGetScript(sim, CMD_SCRIPT_LIST_MAX - 1)->file,
+                     files[CMD_SCRIPT_LIST_MAX - 1]) == 0);
+
+    /* A refusal reads once too: the name that is not there is found missing
+       in the listing the arm already has. */
+    {
+        const char *unknown[2] = { "mod0.lua", "absent.lua" };
+
+        slPastCooldown(sim);
+        d.calls = 0;
+        UT_ASSERT(slApply(sim, 0, unknown, 2) == CMD_REJECT_INVALID);
+        UT_ASSERT_MSG(d.calls == 1,
+                      "a refused list read the mod directories %d times",
+                      d.calls);
+    }
 
     serverSimDestroy(sim);
     return 0;

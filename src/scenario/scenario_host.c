@@ -5962,6 +5962,16 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out, int max) {
    A directory that is not there says nothing, which is the ordinary case
    for all three of them. */
 
+/* SDL_GetPrefPath allocates and creates the directory on every call, and a
+   listing asks for it once per directory it merges, so the prefix it answers
+   is resolved once and kept. Under scnDirCacheLock, which the directory cache
+   above already takes and for the same reason: this is read on the tick
+   thread for a server's own listing, and on the UI thread when a client
+   hosting in process fills the chooser through serverSimEnumerateScenarioDir.
+   Nothing is kept allocated, so there is nothing to free at shutdown. */
+static char scnModUserDir[SCN_SCRIPT_PATH_MAX];
+static bool scnModUserDirKnown;
+
 /* The player's own. ~/Library/Application Support/WinBolo/WinBolo/Mods on
    macOS, and whatever SDL_GetPrefPath answers elsewhere — the same writable
    place brain_list.c reads Brains from, and named the same way.
@@ -5972,24 +5982,44 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out, int max) {
 static bool scnModDirUser(char *out, size_t outLen) {
     const char *env;
     char       *pref;
+    bool        locked;
     bool        ok;
 
     if (out == NULL || outLen == 0) return false;
     out[0] = '\0';
 
     /* The tests name it here: a case that wrote to the real preferences
-       directory would leave files in the home directory of whoever ran it. */
+       directory would leave files in the home directory of whoever ran it.
+       Read on every call and never kept, because the cases set and clear it
+       between themselves. */
     env = getenv("WB_MOD_DIR_USER");
     if (env != NULL && env[0] != '\0') {
         return (size_t)snprintf(out, outLen, "%s", env) < outLen;
     }
 
-    /* SDL_GetPrefPath returns a trailing separator and a string the caller
-       frees. */
-    pref = SDL_GetPrefPath("WinBolo", "WinBolo");
-    if (pref == NULL) return false;
-    ok = (size_t)snprintf(out, outLen, "%sMods", pref) < outLen;
-    SDL_free(pref);
+    /* No lock until the lister is registered, the way scnDirListCached reads
+       its own head: nothing else is running yet to race with. */
+    locked = scnDirCacheLock.m != NULL;
+    if (locked) scnLockEnter(&scnDirCacheLock);
+    if (!scnModUserDirKnown) {
+        /* SDL_GetPrefPath returns a trailing separator and a string the caller
+           frees. A path SDL cannot name, or one too long to hold, is not
+           recorded, so a later call asks again rather than answering "" for
+           the life of the process. */
+        pref = SDL_GetPrefPath("WinBolo", "WinBolo");
+        if (pref != NULL) {
+            if ((size_t)snprintf(scnModUserDir, sizeof(scnModUserDir), "%sMods",
+                                 pref) < sizeof(scnModUserDir)) {
+                scnModUserDirKnown = true;
+            } else {
+                scnModUserDir[0] = '\0';
+            }
+            SDL_free(pref);
+        }
+    }
+    ok = scnModUserDirKnown &&
+         (size_t)snprintf(out, outLen, "%s", scnModUserDir) < outLen;
+    if (locked) scnLockLeave(&scnDirCacheLock);
     if (!ok) out[0] = '\0';
     return ok;
 }
