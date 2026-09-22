@@ -43,11 +43,11 @@
 #include "transport_control_codec.h"
 #include "test_harness.h"
 
-/* What the four width groups add up to: 47 one-byte rules, seven two-byte
+/* What the four width groups add up to: 46 one-byte rules, seven two-byte
  * rules, three four-byte rules and fifteen four-byte rates. Written out
  * rather than taken from the macro, so a rule added to the event without a
  * thought about the control segment fails here and is looked at. */
-#define SR_EXPECTED_BODY_LEN 133
+#define SR_EXPECTED_BODY_LEN 132
 
 /* ── 1. Round trip ─────────────────────────────────────────────────────── */
 
@@ -175,20 +175,20 @@ int run_sim_rules_codec_roundtrip(void) {
 /* The body the values below must produce, byte for byte.
  *
  * The one-byte rules carry their own 1-based position in the wire order, so
- * the first 47 bytes read 0x01..0x2F and a rule that moves in the list moves
+ * the first 46 bytes read 0x01..0x2E and a rule that moves in the list moves
  * a byte here. Then the seven two-byte rules big-endian, the three four-byte
  * rules big-endian, and the fifteen rates as their IEEE-754 bit patterns,
  * most significant byte first. Every value below is a power-of-two fraction
  * or a small whole number, so each bit pattern is exact and was written out
  * by hand rather than taken from the encoder. */
 static const uint8_t kSrGolden[SR_EXPECTED_BODY_LEN] = {
-    /* the 47 one-byte rules, in wire order */
+    /* the 46 one-byte rules, in wire order */
     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
     0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
     0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
     0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20,
     0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
-    0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
+    0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E,
     /* tank_death_ticks        = 0x0102 */
     0x01, 0x02,
     /* mine_damage_range       = 0x0304 */
@@ -286,8 +286,7 @@ int run_sim_rules_codec_golden(void) {
     in.u.simRules.base_hit_armour        = 43;
     in.u.simRules.sound_soft_range       = 44;
     in.u.simRules.sound_none_range       = 45;
-    in.u.simRules.tank_bump_interval      = 46;
-    in.u.simRules.tank_slide_armour_bonus = 47;
+    in.u.simRules.tank_slide_armour_bonus = 46;
 
     in.u.simRules.tank_death_ticks        = 0x0102;
     in.u.simRules.mine_damage_range       = 0x0304;
@@ -334,9 +333,9 @@ int run_sim_rules_codec_golden(void) {
     UT_ASSERT_MSG(dec(kSrGolden, sizeof(kSrGolden), &out),
                   "the decoder refused the golden body");
     UT_ASSERT_MSG(out.u.simRules.tank_reload_ticks == 1 &&
-                      out.u.simRules.tank_slide_armour_bonus == 47,
+                      out.u.simRules.tank_slide_armour_bonus == 46,
                   "the golden body decoded its first one-byte rule as %ld and "
-                  "its last as %ld, expected 1 and 47",
+                  "its last as %ld, expected 1 and 46",
                   (long)out.u.simRules.tank_reload_ticks,
                   (long)out.u.simRules.tank_slide_armour_bonus);
     UT_ASSERT_MSG(out.u.simRules.tank_death_ticks == 0x0102 &&

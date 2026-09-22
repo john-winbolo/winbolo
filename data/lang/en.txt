@@ -2433,10 +2433,10 @@ STR_RULE_DESC_tank_collision_distance=How close two tanks come before they shove
 STR_RULE_DESC_tank_nudge_threshold=What decides which axis a shove between two tanks takes.
 STR_RULE_DESC_tank_nudge_amount=How far one shove moves a tank.
 STR_RULE_DESC_tank_nudge_iterations=How many shoves are tried in a tick.
-STR_RULE_DESC_tank_bump_decay_shift=A right shift: knockback loses that fraction of itself each bump update. A bigger number means slower decay; 2 removes a quarter per update, with integer rounding.
+STR_RULE_DESC_tank_bump_decay_shift=Knockback loses 1 / 2^this of its remaining displacement per reference 40 ms. A bigger number means slower decay and more total travel. Movement runs every 20 ms with the equivalent decay; 2 retains about 86.6% per tick.
 STR_RULE_DESC_tank_pill_pickup_inset=The reach a tank picks up a pillbox from.
 STR_RULE_DESC_tank_boat_exit_inset=How far inside the bank a boat is held.
-STR_RULE_DESC_tank_slide_step=Initial shell knockback step at full armour, in world units per bump update. Missing pre-hit armour adds a proportional tank_slide_armour_bonus. Zero disables shell knockback.
+STR_RULE_DESC_tank_slide_step=Reference 40 ms shell knockback step at full armour, in world units. Missing pre-hit armour adds a proportional tank_slide_armour_bonus. Applied smoothly every 20 ms. Zero disables shell knockback.
 STR_RULE_DESC_tank_wall_glide=How a tank comes off a wall it hits: 0 slides along it, 1 glides free.
 STR_RULE_DESC_speed_road=The fastest a tank may drive on a road.
 STR_RULE_DESC_speed_grass=The fastest a tank may drive on grass.
@@ -2553,8 +2553,7 @@ STR_RULE_DESC_tree_weight_half_building=What a damaged wall counts for in a squa
 STR_RULE_DESC_tree_weight_crater=What a crater counts for in a square's tree growing score.
 STR_RULE_DESC_tree_weight_road=What a road counts for in a square's tree growing score; a pill or base square counts the same.
 STR_RULE_DESC_tree_weight_mine=What a laid mine adds to a square's tree growing score, on top of the terrain under it.
-STR_RULE_DESC_tank_bump_interval=Game ticks between knockback movement and decay updates. Each tick is 20 ms; the default 2 gives 40 ms. Driving continues every tick.
-STR_RULE_DESC_tank_slide_armour_bonus=Extra initial knockback step at zero armour, in world units. Scales with the fraction of armour missing before the shell hit. Zero makes all armour levels receive the same shove.
+STR_RULE_DESC_tank_slide_armour_bonus=Extra reference 40 ms knockback step at zero armour, in world units. Scales with the fraction of armour missing before the shell hit. Zero makes all armour levels receive the same shove.
 
 # Rule range wording
 STR_RULE_RANGE_BETWEEN={string1} to {string2}

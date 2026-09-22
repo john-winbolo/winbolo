@@ -484,7 +484,7 @@ void tankCreate(GameSim *sim, tank *value) {
   }
   (*value)->bumpX = 0;
   (*value)->bumpY = 0;
-  (*value)->bumpWait = 0;
+  (*value)->bumpRetention = 0;
   (*value)->residualSpeed = 0;
   /* The only place the modifiers are cleared. A respawn reuses the tank
      object and leaves them alone; the lobby return destroys every tank, so
@@ -1383,25 +1383,23 @@ void tankSetWorld(GameSim *sim, tank *value, WORLD x, WORLD y, TURNTYPE angle, b
   }
 }
 
-/* Round displacement to nearest WU and decay the magnitude toward zero.
- * Doing both on the magnitude makes opposite shoves exact mirrors, without
- * the Mac's extra north/west travel from arithmetic right shifts. Legal
- * slide rules keep the velocity far below INT32_MAX. */
-static int tankStepKnockback(int32_t *velocity, int decayShift) {
-  int32_t before = *velocity;
-  int32_t magnitude = before < 0 ? -before : before;
-  int step = (magnitude + 256) / 512;
+/* Store the displacement still to come, including fractions of a world
+ * unit. Subtracting rounded endpoints carries those fractions between
+ * updates without directional bias or losing distance to repeated rounding. */
+static int tankStepKnockback(double *remaining, double retention) {
+  double before = *remaining;
+  double after = before * retention;
 
-  if (magnitude > 0) {
-    /* Ceiling division by 2^shift, including shifts 0 and 31. */
-    magnitude -= ((magnitude - 1) >> decayShift) + 1;
-  }
-  *velocity = before < 0 ? -magnitude : magnitude;
-  return before < 0 ? -step : step;
+  /* Less than half a world unit cannot produce any more rounded movement. */
+  if (fabs(after) < 0.5) after = 0;
+  *remaining = after;
+  /* round() returns double: custom slow-decay rules can make the remaining
+   * distance exceed INT32_MAX, though a single step still fits an int. */
+  return (int)(round(before) - round(after));
 }
 
 /* Mac Bolo's shove grows linearly with armour missing BEFORE the hit.
- * The default rules approximate its initial step: 28 WU at full armour,
+ * The rules specify a reference 40 ms step: 28 WU at full armour,
  * rising to 60 at zero armour. Keep our trig rather than duplicating the
  * Mac lookup table. A new hit replaces the previous shove. */
 static void tankShellKnockback(GameSim *sim, tank *value, TURNTYPE angle,
@@ -1418,9 +1416,13 @@ static void tankShellKnockback(GameSim *sim, tank *value, TURNTYPE angle,
         : sim->rules.tank_slide_armour_bonus;
   }
   utilCalcDistance(&newX, &newY, angle, step);
-  (*value)->bumpX = newX * 512;
-  (*value)->bumpY = newY * 512;
-  (*value)->bumpWait = 0;
+  /* A reference step with decay fraction 2^-shift travels step * 2^shift
+   * in total. Keep that distance while applying smaller steps at 50 Hz. */
+  (*value)->bumpX = ldexp((double)newX, sim->rules.tank_bump_decay_shift);
+  (*value)->bumpY = ldexp((double)newY, sim->rules.tank_bump_decay_shift);
+  /* Capture decay with the impulse: later rule changes affect the next hit,
+   * rather than suddenly consuming a long-lived shove's remaining distance. */
+  (*value)->bumpRetention = sqrt(1.0 - ldexp(1.0, -sim->rules.tank_bump_decay_shift));
 }
 
 /*********************************************************
@@ -1684,7 +1686,7 @@ void tankDeath(GameSim *sim, tank *value) {
     (*value)->speed = 0;
     (*value)->bumpX = 0;
     (*value)->bumpY = 0;
-    (*value)->bumpWait = 0;
+    (*value)->bumpRetention = 0;
     (*value)->residualSpeed = 0;
     (*value)->waterCount = 0;
     /* Get the start position */
@@ -1742,7 +1744,7 @@ void tankDeath(GameSim *sim, tank *value) {
     (*value)->speed = 0;
     (*value)->bumpX = 0;
     (*value)->bumpY = 0;
-    (*value)->bumpWait = 0;
+    (*value)->bumpRetention = 0;
     (*value)->residualSpeed = 0;
     (*value)->waterCount = 0;
     if (sim->isTutorial && sim->tutorialStartIdx == 1) {
@@ -1909,21 +1911,18 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
     (*value)->residualSpeed = 0;
   }
 
-  /* Step 3 — Step and decay together at the configured interval. The
-   * default is every other 50 Hz update (40 ms), matching the Mac logs.
-   * Ordinary driving still runs every update. A per-tank wait also works
-   * during input replay/catch-up, independently of the server's clock. */
-  if ((*value)->bumpWait > 0) {
-    (*value)->bumpWait--;
-  } else if ((*value)->bumpX != 0 || (*value)->bumpY != 0) {
+  /* Step 3 — Knockback advances every 20 ms, alongside driving. The rules
+   * retain their 40 ms reference scale: two applications of this multiplier
+   * give the configured decay (sqrt(0.75) per tick with the default shift). */
+  if ((*value)->bumpX != 0 || (*value)->bumpY != 0) {
+    double retention = (*value)->bumpRetention;
     /* tankObj is packed; use aligned locals for the in/out arguments. */
-    int32_t bumpX = (*value)->bumpX;
-    int32_t bumpY = (*value)->bumpY;
-    (*value)->x += tankStepKnockback(&bumpX, sim->rules.tank_bump_decay_shift);
-    (*value)->y += tankStepKnockback(&bumpY, sim->rules.tank_bump_decay_shift);
+    double bumpX = (*value)->bumpX;
+    double bumpY = (*value)->bumpY;
+    (*value)->x += tankStepKnockback(&bumpX, retention);
+    (*value)->y += tankStepKnockback(&bumpY, retention);
     (*value)->bumpX = bumpX;
     (*value)->bumpY = bumpY;
-    (*value)->bumpWait = (BYTE)(sim->rules.tank_bump_interval - 1);
   }
 
   /* Step 4 — Building nudge */
