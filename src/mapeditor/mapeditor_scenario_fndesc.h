@@ -108,6 +108,16 @@ const char *meScnFnReturns(size_t row);
  * sides here with it. */
 bool meScnFnIsHook(size_t row);
 
+/* Whether the round reads this row's answer to decide an ending, which is the
+ * one thing a file that says it is a mod may not have a hand in. A row this
+ * answers true for is left out of the list a mod is offered, so no stub for
+ * it is ever inserted into a mod's script. False for a row that is not in the
+ * catalogue.
+ *
+ * The runtime's own answer, in scenario_lua.c, so the editor cannot come to
+ * offer a mod a function the round will not read. */
+bool meScnFnDecidesRound(size_t row);
+
 /* The parameter list in parentheses, in the author's own names:
  * "(p, mx, my, respawn, scripted)", or "()" for a function that takes none.
  * An event hook's list ends with the scripted flag the host hands it, which

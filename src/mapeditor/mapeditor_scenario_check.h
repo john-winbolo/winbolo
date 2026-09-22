@@ -123,6 +123,13 @@ bool meScenarioOpIsScalar(size_t index);
  * index past the end. */
 bool meScenarioOpIsAction(size_t index);
 
+/* Whether this op decides the round — which side wins it, or when it is over
+ * — so a file that declared kind = "mod" may not call it and the action
+ * combo must not offer it while the form says mod. The list behind it is the
+ * runtime's own, in scenario_lua.c, so the editor cannot come to offer an
+ * action the round will raise on. False for an index past the end. */
+bool meScenarioOpDecidesRound(size_t index);
+
 /* How many arguments the op takes. 0 for an index past the end and for an op
  * that takes none. */
 size_t meScenarioOpParamCount(size_t index);

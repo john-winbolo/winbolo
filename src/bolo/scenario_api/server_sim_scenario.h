@@ -330,13 +330,24 @@ void serverSimSetScenarioLobbyTemplate(ServerSim *sim,
  *  fileName    - The file it came from, a name and not a path
  *  description - What it says about itself
  *  extraTeams  - Whether it lets a host add teams of its own
+ *  keepsWinCondition - True when the script declared itself a
+ *                mod, so it changes how the game plays and
+ *                leaves winning and losing alone. False for a
+ *                scenario, which may end the round.
+ *  bound       - True when the script is tied to the one map it
+ *                was written against. A lobby cannot take a
+ *                bound script off on its own: changing it means
+ *                changing the map, which is what a chooser reads
+ *                this to know.
  *********************************************************/
 void serverSimSetScenarioIdentity(ServerSim *sim,
                                   LobbyScenarioSource source,
                                   const char *name,
                                   const char *fileName,
                                   const char *description,
-                                  bool extraTeams);
+                                  bool extraTeams,
+                                  bool keepsWinCondition,
+                                  bool bound);
 
 /*********************************************************
  *NAME:          serverSimSetScenarioRules
@@ -441,5 +452,113 @@ void serverSimSetScenarioState(ServerSim *sim, void *state);
  *  NULL when no scenario is attached.
  *********************************************************/
 void *serverSimGetScenarioState(const ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimGetScriptCount / serverSimGetScript
+ *PURPOSE:
+ *  The list the lobby host wrote, in the order it wrote it,
+ *  as CMD_SET_SCRIPT_LIST recorded it. serverSimGetScript
+ *  answers NULL for an index outside the count.
+ *
+ *  This is what whoever owns the scenario reads when it
+ *  decides what a round plays.
+ *
+ *  One row of it may be the committed map's own script,
+ *  and that row is the host saying where on the list the
+ *  map's script is composed. bound is what marks it: every
+ *  other row is a file out of the scenarios directory and
+ *  the command bus refuses a bound name that is not the
+ *  committed map's. A list that carries no bound row is a
+ *  host who never said, and the map's own script composes
+ *  at the front of these, which is where it has always
+ *  composed.
+ *
+ *  serverSimSetMapScript keeps that row and the map's own
+ *  row in step, so a caller reading this never finds a
+ *  bound row naming a script the committed map does not
+ *  bring.
+ *
+ *  The whole ScnDirEntry and not the file name alone,
+ *  because the chooser's row carries the manifest's name
+ *  and its two flags and re-reading the directory to
+ *  answer would open every file in it.
+ *********************************************************/
+int  serverSimGetScriptCount(const ServerSim *sim);
+const ScnDirEntry *serverSimGetScript(const ServerSim *sim, int i);
+
+/*********************************************************
+ *NAME:          serverSimSetMapScript
+ *PURPOSE:
+ *  Records the committed map's own script as a row of the
+ *  published list, so a chooser can show it above the
+ *  host's picks and say it came with the map.
+ *
+ *  Called by whoever owns the scenario as it decides what
+ *  plays, which is the one caller that knows both that the
+ *  map had a script and that it loaded. entry NULL clears
+ *  it, and a clear is what a map with no script of its own
+ *  passes.
+ *
+ *  bound on the row means what it means on the attached
+ *  scenario: this one came with the map and is not the
+ *  host's to remove. A map's own script is bound whether or
+ *  not its manifest says so, because a host who wants it
+ *  gone changes the map.
+ *
+ *  The host's list is brought into line at the same time,
+ *  because the map's row may also sit on that list and the
+ *  two are one row said twice. Where it does, the new
+ *  script replaces what was in that place and the place
+ *  itself is left alone; a clear takes the row off and
+ *  closes the list up behind it. A host who put the map's
+ *  script third on the list and then committed another
+ *  scripted map therefore still has it third.
+ *
+ *  Recording only. The publish is the caller's, as it is
+ *  for the picks, so a map commit sends one list rather
+ *  than one per step.
+ *********************************************************/
+void serverSimSetMapScript(ServerSim *sim, const ScnDirEntry *entry);
+
+/*********************************************************
+ *NAME:          serverSimGetMapScript
+ *PURPOSE:
+ *  The row serverSimSetMapScript recorded, or NULL when the
+ *  committed map brought no script.
+ *********************************************************/
+const ScnDirEntry *serverSimGetMapScript(const ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimGetLobbyScriptCount /
+ *               serverSimGetLobbyScript
+ *PURPOSE:
+ *  The list as the lobby is told it, in load order. This is
+ *  what CTRL_LOBBY_SCRIPT_LIST carries and what a chooser
+ *  draws.
+ *
+ *  It is the host's own list where that list carries the
+ *  map's own row, because the host has already said where
+ *  the map's script goes and prepending a second copy would
+ *  draw the same script twice. Where the list does not
+ *  carry it, the map's own script comes first and the
+ *  host's list follows, which is where the round composes
+ *  it for a host who never said otherwise.
+ *
+ *  Held at LOBBY_SCRIPT_LIST_MAX rows, which is the whole
+ *  list a client can take in: a client that is sent more
+ *  keeps the list it already had and shows nothing new.
+ *  The map's own row is the one that cannot be dropped, so
+ *  a host with a full list of picks loses the last of them
+ *  on a map that brings a script of its own.
+ *
+ *  serverSimGetScriptCount above is the other question —
+ *  what the host wrote — and the two answers are the same
+ *  list except where the map's script is playing and the
+ *  host's list does not name it. A caller that wants the
+ *  rows the host may reorder asks that one; a caller
+ *  drawing the lobby asks this one.
+ *********************************************************/
+int  serverSimGetLobbyScriptCount(const ServerSim *sim);
+const ScnDirEntry *serverSimGetLobbyScript(const ServerSim *sim, int i);
 
 #endif /* SERVER_SIM_SCENARIO_H */

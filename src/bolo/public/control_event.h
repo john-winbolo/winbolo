@@ -258,6 +258,37 @@ typedef enum {
      * Appended at the END, like the four above: the tables in
      * transport_control_codec.c are indexed by this enum. */
     CTRL_SCENARIO_RULES,
+    /* CTRL_LOBBY_SCRIPT_LIST — the ordered list of scripts this lobby will
+     * run: number one first and highest priority, at most one of them a
+     * scenario and the rest mods.
+     *
+     * Its own event rather than more of the CTRL_LOBBY_SETTINGS tail, and
+     * that is a measurement rather than a preference. A whole list at the
+     * cap is 1 + 10 * 192 = 1921 body bytes, which is past the 1021 a
+     * control segment carries, so it has to be chunked whichever event it
+     * rides. Chunking the settings tail would put a fragment number on every
+     * lobby change, and the settings variant would have to hold the widest
+     * fragment by value: at LOBBY_CHAT_BUFFER_MAX ControlEvents per sim,
+     * growing that union member is paid two hundred times over on every sim.
+     * This variant is 967 bytes, under the 1108 the round-stats member
+     * already spends, so the union does not grow at all and the settings
+     * event is left the size it was.
+     *
+     * Chunked as { final, count, entries }, the shape
+     * PACKET_LOBBY_SCENARIO_LIST_RSP uses for the same kind of list. The
+     * reader appends each chunk and installs the list when one arrives with
+     * final set; the control channel is reliable and ordered, so the chunks
+     * of one list cannot interleave with another's, and an empty list is one
+     * chunk with count 0 and final set.
+     *
+     * Broadcast and body-only on CHANNEL_CONTROL, as CTRL_SCENARIO_RULES is:
+     * what a lobby is about to run is as public as the scenario name the
+     * settings event already carries. Replayed into a joining client's sync
+     * beside the settings, so a mid-lobby joiner reads the same list.
+     *
+     * Appended at the END, like every type above it: the tables in
+     * transport_control_codec.c are indexed by this enum. */
+    CTRL_LOBBY_SCRIPT_LIST,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -363,6 +394,73 @@ typedef enum {
 #define LOBBY_SCENARIO_NAME_LEN 64
 #define LOBBY_SCENARIO_FILE_LEN 128
 #define LOBBY_SCENARIO_DESC_LEN 256
+
+/* How many scripts one lobby may run at once.
+ *
+ * Independent of the scenario host's own SCN_SCRIPTS_MAX for the reason the
+ * three lengths above are independent of the scenarios directory's: a public
+ * header cannot reach into src/scenario/. The two are held against each
+ * other in scenario_host.c, which is the translation unit that sees both, so
+ * one moving without the other is a build failure rather than a list the
+ * host truncates in silence.
+ *
+ * Ten, which is Andrew's number: one scenario deciding the round and nine
+ * mods changing how it plays. Nothing on the wire binds it — the event that
+ * carries the list is chunked, and the command that sets it was measured
+ * against COMMAND_MAX_WIRE_BYTES and fits at ten with room over. What it
+ * does bind is memory: the command's in-union buffer is
+ * LOBBY_SCRIPT_LIST_MAX * LOBBY_SCENARIO_FILE_LEN bytes, which is 1280 at
+ * ten. See CmdSetScriptList in client_command.h for what that costs. */
+#define LOBBY_SCRIPT_LIST_MAX 10
+
+/* How many entries one CTRL_LOBBY_SCRIPT_LIST chunk carries, and this is
+ * measured rather than chosen.
+ *
+ * One entry is at worst [flags 1][fileLen 1][file 127][nameLen 1][name 63]
+ * = 193 bytes, and a body spends 2 more on final and count. The flags byte
+ * is a byte and not a bool, so the two flags an entry carries — keeps the
+ * win condition, bound to a map — are bits in it and the entry does not
+ * widen when a third one arrives. A control event
+ * is one channel segment, which is CHANNEL_CONTROL_SEG (1024) less the
+ * channel frame's type(1) and bodyLen(2) — 1021 bytes. So:
+ *
+ *   5 entries: 2 + 5 * 193 =  967   fits, 54 bytes spare
+ *   6 entries: 2 + 6 * 193 = 1160   139 over, and a body past the segment is
+ *                                   logged and dropped with nothing visible
+ *                                   to the client
+ *
+ * Five it is. transport_control_codec.c pins it against the segment, which
+ * it can see and this public header cannot. A whole list at
+ * LOBBY_SCRIPT_LIST_MAX is therefore two chunks. */
+#define LOBBY_SCRIPT_LIST_CHUNK 5
+
+/* One script on the list, as CTRL_LOBBY_SCRIPT_LIST carries it and as a
+ * client holds it afterwards.
+ *
+ * No description. One would be 257 bytes on top of the 193 here and would
+ * cut a chunk to two entries, and a client already has every description it
+ * needs: PACKET_LOBBY_SCENARIO_LIST_RSP carries them for the whole
+ * directory and the chooser already fetches it, keyed by this same file
+ * name. A second request/response pair for text a client is holding would
+ * be bytes nobody reads. */
+typedef struct LobbyScriptEntry {
+    char file[LOBBY_SCENARIO_FILE_LEN];  /* the name in the directory */
+    char name[LOBBY_SCENARIO_NAME_LEN];  /* the manifest's */
+    /* Whether this script leaves the win condition alone, which is the kind
+     * split read as a flag: true is a mod, false is a scenario. Held this
+     * way round rather than as "isScenario" so it matches
+     * scenarioManifestKeepsWinCondition, which is what the server reads it
+     * from, and so a zeroed entry does not claim to be a mod. */
+    bool keepsWinCondition;
+    /* Whether the script is tied to one particular map, which is the
+     * manifest's own bound flag. A bound script is not something a chooser
+     * removes on its own: the map decides it, so changing it means changing
+     * the map. An unbound one is added and dropped freely. Carried per entry
+     * rather than looked up from the directory listing because a list may
+     * name a file the listing no longer holds, and a row that cannot say
+     * whether it is removable is worse than one row of wire. */
+    bool bound;
+} LobbyScriptEntry;
 
 /* Which rules CTRL_SIM_RULES carries, and how wide each one goes.
  *
@@ -581,6 +679,14 @@ typedef struct ControlEvent {
                                             * reads as "pings allowed" — what
                                             * every server did before the field
                                             * existed. */
+            bool     lobbyModsOff;         /* the round composes none of the
+                                            * picked mods. Held in the negative
+                                            * sense for the same reason as
+                                            * lobbySmartPingsOff above: the zero
+                                            * a decoder leaves for an absent
+                                            * byte has to read as "mods run",
+                                            * which is what every server did
+                                            * before the field existed. */
             /* The scenario this lobby is running, if any. scenarioSource
              * none means there is none and the five fields below are empty:
              * a lobby with no scenario writes none of these bytes, so a
@@ -599,6 +705,27 @@ typedef struct ControlEvent {
              * client needs it to predict its first life's loadout and its
              * start before the first snapshot lands. */
             uint8_t  scenarioBaseGame;
+            /* True when the script says it is a mod: it changes how the game
+             * plays and leaves the win condition alone, so the ops that end
+             * or decide a round raise when it calls them. False for a
+             * scenario and false when there is no script at all, so a reader
+             * telling those two apart tests scenarioSource first. Held this
+             * way round rather than the other because the tail is
+             * append-only and a decoder leaves zero for a byte the sender
+             * never wrote: every server that predates this field sent
+             * scenarios, and false is what a scenario reads as. */
+            bool     scenarioKeepsWinCondition;
+            /* True when the attached script is tied to one particular map.
+             * The catalogue rows already carry this — PACKET_LOBBY_SCENARIO_
+             * LIST_RSP packs a bound byte per entry — but the attached script
+             * is not a catalogue row, and a lobby has to know whether the one
+             * it is running may be taken off or only replaced by changing the
+             * map. Appended behind the byte above for the same reason that
+             * one was: the tail is append-only and a decoder leaves zero for
+             * a byte the sender never wrote, and false is what every script
+             * that predates this field should read as, since an unbound
+             * script is the one a host can still remove. */
+            bool     scenarioBound;
         } lobbySettings;
 
         /* CTRL_LOBBY_MAP_CHANGE — no payload fields needed */
@@ -986,6 +1113,30 @@ typedef struct ControlEvent {
             uint8_t rule[SCN_RULES_FRAG_ROWS];   /* a SimRuleIndex per row */
             double  value[SCN_RULES_FRAG_ROWS];  /* the value at the same index */
         } scenarioRules;
+
+        /* CTRL_LOBBY_SCRIPT_LIST — one chunk of the lobby's ordered script
+         * list, entries[0..count) in list order.
+         *
+         * count is the entries in THIS chunk and never the whole list; a
+         * reader appends them and installs the list when it takes a chunk
+         * with final set. final is on the last chunk of a list and on that
+         * one alone, so an empty list arrives as one chunk with count 0 and
+         * final 1 rather than as no event at all — a host clearing the list
+         * has something to say and a client has to hear it.
+         *
+         * No seq/fragCount pair, unlike CTRL_SCENARIO_RULES beside it. That
+         * pair exists there so a reader can tell a continuation from a
+         * restart on a stream it may join partway; this list is published as
+         * a back-to-back run inside one call under the sim mutex, on a
+         * reliable ordered channel, so the chunk after a final one is always
+         * the start of the next list. The reader still throws away a partial
+         * list that would overrun LOBBY_SCRIPT_LIST_MAX, which is the only
+         * way the two could ever disagree. */
+        struct {
+            uint8_t          final;  /* 1 on the last chunk of a list */
+            uint8_t          count;  /* entries in THIS chunk */
+            LobbyScriptEntry entries[LOBBY_SCRIPT_LIST_CHUNK];
+        } lobbyScriptList;
     } u;
 } ControlEvent;
 

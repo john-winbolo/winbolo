@@ -485,6 +485,9 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
          * a plain lobby needs no branch. */
         cs->lobbyScenarioSource = (uint8_t)evt->u.lobbySettings.scenarioSource;
         cs->lobbyScenarioExtraTeams = evt->u.lobbySettings.scenarioExtraTeams;
+        cs->lobbyScenarioKeepsWinCondition =
+            evt->u.lobbySettings.scenarioKeepsWinCondition;
+        cs->lobbyScenarioBound = evt->u.lobbySettings.scenarioBound;
         SDL_strlcpy(cs->lobbyScenarioName, evt->u.lobbySettings.scenarioName,
                     sizeof(cs->lobbyScenarioName));
         SDL_strlcpy(cs->lobbyScenarioFileName,
@@ -530,6 +533,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                               ? evt->u.lobbySettings.lobbyLineOfSight
                               : (uint8_t)lineOfSightOff;
         cs->lobbySmartPingsOff = evt->u.lobbySettings.lobbySmartPingsOff;
+        cs->lobbyModsOff       = evt->u.lobbySettings.lobbyModsOff;
         cs->serverVoiceMode = evt->u.lobbySettings.voiceMode;
         /* Adopt the server's authoritative game-timing settings. The
          * server's lobbyTimeLimit field carries its current remaining
@@ -749,6 +753,47 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
             cs->lobbyBrainDocsExpected = 0;
             cs->lobbyBrainDocsNextSeq  = 0;
             cs->lobbyBrainDocsBlobLen  = 0;
+        }
+        break;
+    }
+
+    case CTRL_LOBBY_SCRIPT_LIST: {
+        /* One chunk of the lobby's script list. The chunks of a list arrive
+           in order and back to back on the reliable control channel, so the
+           chunk after a final one is the start of the next list and there is
+           no fragment number to check; what is checked is the total, because
+           a run that would overrun the cap is the one way a sender and this
+           reader could disagree about the list at all.
+
+           Installed only on the chunk with final set, so a chooser never
+           draws half of one list and half of the next. */
+        uint8_t n = evt->u.lobbyScriptList.count;
+        int     i;
+
+        if (cs->lobbyScriptPendingCount + (int)n > LOBBY_SCRIPT_LIST_MAX) {
+            cs->lobbyScriptPendingCount = 0;   /* abort, keep the last list */
+            break;
+        }
+        for (i = 0; i < (int)n; i++) {
+            cs->lobbyScriptPending[cs->lobbyScriptPendingCount + i] =
+                evt->u.lobbyScriptList.entries[i];
+        }
+        cs->lobbyScriptPendingCount += (int)n;
+        if (evt->u.lobbyScriptList.final) {
+            cs->lobbyScriptCount = cs->lobbyScriptPendingCount;
+            for (i = 0; i < cs->lobbyScriptCount; i++) {
+                SDL_strlcpy(cs->lobbyScriptFiles[i],
+                            cs->lobbyScriptPending[i].file,
+                            sizeof(cs->lobbyScriptFiles[i]));
+                SDL_strlcpy(cs->lobbyScriptNames[i],
+                            cs->lobbyScriptPending[i].name,
+                            sizeof(cs->lobbyScriptNames[i]));
+                cs->lobbyScriptKeepsWin[i] =
+                    cs->lobbyScriptPending[i].keepsWinCondition;
+                cs->lobbyScriptBound[i] = cs->lobbyScriptPending[i].bound;
+            }
+            cs->lobbyScriptPendingCount = 0;
+            cs->lobbyScriptSeq++;
         }
         break;
     }

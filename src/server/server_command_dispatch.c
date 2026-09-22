@@ -145,9 +145,10 @@ static bool lobbySlotMayHoldStart(ServerSim *sim, BYTE slot, BYTE idx1) {
    directory belongs to the scenario library, which src/server/ does not
    name.
 
-   bound takes the matched entry's own flag, which is the other thing the
-   caller has to know about a name it found: a scenario that belongs to a map
-   is no use over a different one.
+   The whole matched entry goes back rather than the spelling and one flag.
+   What the caller records is the row the list event publishes — the file,
+   the manifest's name and both flags — and a second lookup to fetch the rest
+   would read the directory twice.
 
    The cap is the one the list packet and the client's chooser already share,
    so every scenario a host can see is one the server will accept.
@@ -159,14 +160,14 @@ static bool lobbySlotMayHoldStart(ServerSim *sim, BYTE slot, BYTE idx1) {
    read is no listing, which answers the same as a name the directory does not
    hold. */
 static bool lobbyScenarioDirHolds(const ServerSim *sim, const char *file,
-                                  char *out, size_t outLen, bool *bound) {
+                                  ScnDirEntry *out) {
     ScnDirEntry *entries;
     int          got;
     int          i;
     bool         found = false;
 
-    if (bound != NULL) {
-        *bound = false;
+    if (out != NULL) {
+        memset(out, 0, sizeof(*out));
     }
     entries = (ScnDirEntry *)calloc((size_t)LOBBY_SCENARIO_LIST_MAX,
                                     sizeof(*entries));
@@ -176,13 +177,10 @@ static bool lobbyScenarioDirHolds(const ServerSim *sim, const char *file,
     got = serverSimScenarioListDir(sim, entries, LOBBY_SCENARIO_LIST_MAX);
     for (i = 0; i < got; i++) {
         if (strcmp(entries[i].file, file) == 0) {
-            /* The directory's spelling rather than the wire's, so what is
+            /* The directory's row rather than the wire's name, so what is
                recorded is what the lister reported. */
-            if (out != NULL && outLen > 0) {
-                SDL_strlcpy(out, entries[i].file, outLen);
-            }
-            if (bound != NULL) {
-                *bound = entries[i].bound;
+            if (out != NULL) {
+                *out = entries[i];
             }
             found = true;
             break;
@@ -191,6 +189,43 @@ static bool lobbyScenarioDirHolds(const ServerSim *sim, const char *file,
     free(entries);
     return found;
 }
+
+/* The three path shapes the map command refuses, refused the same way: an
+   absolute path, a Windows drive letter, and a ".." segment. A scenario is
+   picked by a name in a flat directory, so any of the three means the sender
+   is asking for a file somewhere else. */
+static bool lobbyScenarioNameShapeOk(const char *relPath) {
+    const char *s;
+
+    if (relPath[0] == '/' || relPath[0] == '\\') return false;
+    if (relPath[0] != '\0' && relPath[1] == ':') return false;
+    for (s = relPath; *s;) {
+        if (s[0] == '.' && s[1] == '.' &&
+            (s[2] == '\0' || s[2] == '/' || s[2] == '\\')) {
+            return false;
+        }
+        while (*s && *s != '/' && *s != '\\') s++;
+        while (*s == '/' || *s == '\\') s++;
+    }
+    return true;
+}
+
+/* The widths this file holds against each other. client_command.h keeps its
+   own copies of the list cap and the file length because a header on the gui
+   include path cannot reach control_event.h, and control_event.h keeps its
+   own because a public header cannot reach src/scenario/. This translation
+   unit is the one that sees all three, so a number moving alone is a build
+   failure here rather than a list that is silently cut somewhere on the way
+   through. The same pattern control_event.h documents for the three scenario
+   string lengths. */
+BOLO_STATIC_ASSERT(CMD_SCRIPT_LIST_MAX == LOBBY_SCRIPT_LIST_MAX,
+                   cmd_script_list_max_matches_lobby_script_list_max);
+BOLO_STATIC_ASSERT(CMD_SCRIPT_LIST_FILE_LEN == LOBBY_SCENARIO_FILE_LEN,
+                   cmd_script_list_file_len_matches_lobby_scenario_file_len);
+BOLO_STATIC_ASSERT(SCN_DIR_FILE_LEN == LOBBY_SCENARIO_FILE_LEN,
+                   scn_dir_file_len_matches_lobby_scenario_file_len);
+BOLO_STATIC_ASSERT(SCN_DIR_NAME_LEN == LOBBY_SCENARIO_NAME_LEN,
+                   scn_dir_name_len_matches_lobby_scenario_name_len);
 
 /* The selection changed, so which scenario plays is decided again. The same
    three calls a map commit makes, in the same order: whoever owns the
@@ -207,6 +242,11 @@ static void lobbyScenarioReselect(ServerSim *sim) {
     serverSimScenarioOnMapChanged(sim, sim->mapFilePath);
     serverSimScenarioApplyLobbyRules(sim);
     serverSimPublishLobbySettings(sim);
+    /* And the list itself, behind the settings that name its first entry.
+       Both go out on every pick, because a chooser draws its rows from the
+       list and its attached-scenario detail from the settings, and a lobby
+       that had only one of them would show the two disagreeing. */
+    serverSimPublishScriptList(sim);
     /* And everyone who was ready is ready no longer, as a map commit does it
        at the end of the same sequence. A pick changes the rules the round
        runs, the seats the lobby holds and the game it is played by, so a
@@ -449,8 +489,25 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
         /* The Result form, so a setting the map's scenario fixes comes back
            as that rather than as a bare invalid: those three were the host's
            to set a map ago and the toast has to say what took them away. */
-        return serverSimApplyLobbySettingResult(sim, p->settingType, p->value,
-                                                p->valueLen);
+        {
+            CmdResult r = serverSimApplyLobbySettingResult(
+                sim, p->settingType, p->value, p->valueLen);
+
+            /* LST_MODS_OFF decides which scripts compose, so the decision is
+               asked again — the same call a pick makes, because the question
+               is the same one. Without it the mods the host just turned off
+               would stay attached until the next map commit.
+
+               Only on a setting that took: a refused edit changed nothing,
+               and recomposing after one would unready the lobby over a click
+               the server turned down. Only for this id, because every other
+               setting on this arm is a value the round reads rather than a
+               change to what the round is made of. */
+            if (r == CMD_OK && p->settingType == LST_MODS_OFF) {
+                lobbyScenarioReselect(sim);
+            }
+            return r;
+        }
     }
     case CMD_CHAT: {
         const CmdChat *p = &cmd->u.chat;
@@ -931,25 +988,24 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             lobbyScenarioReselect(sim);
             return CMD_OK;
         }
+        /* A ranked game runs no script of any kind, scenario or mod: the
+           point of ranked is that every round was played by the same rules,
+           and a script is there to change them. The other direction is
+           already answered — LST_RANKED is refused while a scenario is
+           attached, and committing a scripted map clears ranked at the
+           commit — so this is that same rule read the other way round, for
+           the one path that had nothing saying it.
+
+           After the clear above and not before it, so a host who turned
+           ranked on with a scenario already picked can still put the
+           selection back to none and is not stuck with it. */
+        if (serverSimGetRanked(sim)) {
+            return CMD_REJECT_BAD_STATE;
+        }
         char relPath[256];
         memcpy(relPath, p->relPath, p->relPathLen);
         relPath[p->relPathLen] = '\0';
-        /* The three shapes the map command refuses, refused the same way:
-           an absolute path, a Windows drive letter, and a ".." segment. */
-        bool safe = true;
-        if (relPath[0] == '/' || relPath[0] == '\\') safe = false;
-        else if (relPath[0] != '\0' && relPath[1] == ':') safe = false;
-        else {
-            for (const char *s = relPath; *s;) {
-                if (s[0] == '.' && s[1] == '.' &&
-                    (s[2] == '\0' || s[2] == '/' || s[2] == '\\')) {
-                    safe = false; break;
-                }
-                while (*s && *s != '/' && *s != '\\') s++;
-                while (*s == '/' || *s == '\\') s++;
-            }
-        }
-        if (!safe) return CMD_REJECT_INVALID;
+        if (!lobbyScenarioNameShapeOk(relPath)) return CMD_REJECT_INVALID;
         /* One pick a second, per sim, before the directory is read: finding
            out whether this name is one the server offers means listing the
            scenarios directory, which opens every file in it and runs the top
@@ -964,10 +1020,8 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
             return CMD_REJECT_COOLDOWN;
         }
         sim->scenarioPickTick = sim->tick + 1;
-        char picked[SCN_DIR_FILE_LEN];
-        bool pickedBound = false;
-        if (!lobbyScenarioDirHolds(sim, relPath, picked, sizeof(picked),
-                                   &pickedBound)) {
+        ScnDirEntry picked;
+        if (!lobbyScenarioDirHolds(sim, relPath, &picked)) {
             return CMD_REJECT_INVALID;
         }
         /* A scenario that says it is bound belongs to the map it was written
@@ -975,11 +1029,139 @@ static CmdResult applyCommandInner(ServerSim *sim, int senderSlot,
            map's, so over another map they name items that are not there. It
            arrives with its own map and plays when that map is committed,
            which leaves nothing here for a host to pick. Refused rather than
-           accepted and quietly ignored, so the host is told. */
-        if (pickedBound) {
+           accepted and quietly ignored, so the host is told.
+
+           Every bound file and not all but one, which is where this arm and
+           the list arm below it part company. The list arm lets the committed
+           map's own script be named, because naming it is how a host says
+           where on the list it goes. This arm replaces the whole list with
+           one row, and a one-row list holding only the map's own script is
+           the same round an empty list plays: the map's script and nothing
+           else. There is no position for a single pick to state, so there is
+           nothing for the map's own script to be picked for here. */
+        if (picked.bound) {
             return CMD_REJECT_INVALID;
         }
-        serverSimSetSelectedScenario(sim, picked);
+        /* The whole row and not the name: the list event carries the
+           manifest's name and both flags per entry, and this is where they
+           are known without reading the directory again. */
+        serverSimSetScriptList(sim, &picked, 1);
+        lobbyScenarioReselect(sim);
+        return CMD_OK;
+    }
+    case CMD_SET_SCRIPT_LIST: {
+        /* The whole script list at once: one scenario deciding the round and
+           mods behind it changing how it plays. The same gates as
+           CMD_LOBBY_SET_SCENARIO beside it, for the same reasons, and one
+           more that only a list can break — two scenarios in it.
+
+           A list and not an index-and-file pair: two hosts editing at the
+           same moment would otherwise interleave into a list neither asked
+           for, and the state here would be a splice rather than an
+           assignment. */
+        int                count;
+        int                i;
+        int                j;
+        int                scenarios = 0;
+        const ScnDirEntry *mapOwn;
+        ScnDirEntry        rows[CMD_SCRIPT_LIST_MAX];
+
+        if (!serverSimIsLobbyEnabled(sim) ||
+            serverSimGetState(sim) != serverStateLobby) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        if (!lobbyClientMayEdit(sim, senderSlot)) return CMD_REJECT_NOT_HOST;
+        count = (int)cmd->u.setScriptList.count;
+        /* The wire decoder refuses this already; a command submitted through
+           the local transport never met it, and this arm is the one place
+           both paths pass through. */
+        if (count > CMD_SCRIPT_LIST_MAX) return CMD_REJECT_INVALID;
+        /* An empty list clears, and is the one value that needs no checks:
+           there is no name to test the shape of or look up, and no ranked
+           question, so a host who turned ranked on with scripts picked can
+           still put the list back to empty. The same order the set-scenario
+           arm clears in. */
+        if (count <= 0) {
+            serverSimSetScriptList(sim, NULL, 0);
+            lobbyScenarioReselect(sim);
+            return CMD_OK;
+        }
+        /* A ranked game runs no script of any kind. Read the other way round
+           from LST_RANKED, which is refused while a script is attached. */
+        if (serverSimGetRanked(sim)) {
+            return CMD_REJECT_BAD_STATE;
+        }
+        /* One list a second, per sim, before the directory is read, and on
+           the same clock the single pick and the reload share: looking a name
+           up means listing the scenarios directory, which opens every file in
+           it and runs the top level of every loose script on this thread. A
+           list asks for that work once per name. */
+        if (sim->scenarioPickTick != 0 &&
+            sim->tick + 1 - sim->scenarioPickTick < SCENARIO_RELOAD_GAP_TICKS) {
+            return CMD_REJECT_COOLDOWN;
+        }
+        sim->scenarioPickTick = sim->tick + 1;
+        /* The committed map's own script, or NULL for a map that brought
+           none. It is the one bound file a list may name, and naming it is
+           how a host says where on the list it goes: the round used to
+           compose it at position 0 whatever the host did, because a region's
+           identity was its place in the composed list, and a region now
+           carries an identity of its own. See scnDecideScenario in
+           src/scenario/scenario_host.c for what the row does once it is
+           recorded. */
+        mapOwn = serverSimGetMapScript(sim);
+        for (i = 0; i < count; i++) {
+            const char *file = cmd->u.setScriptList.files[i];
+            if (file[0] == '\0') return CMD_REJECT_INVALID;
+            if (!lobbyScenarioNameShapeOk(file)) return CMD_REJECT_INVALID;
+            if (mapOwn != NULL && strcmp(mapOwn->file, file) == 0) {
+                /* The map's own script, recorded from the row the server
+                   published rather than looked up: the file sits beside the
+                   .map or inside it, so the scenarios directory does not hold
+                   it and lobbyScenarioDirHolds would turn the whole list
+                   down. The row is taken whole, which keeps its name, its
+                   kind and its bound flag exactly as the attach read them —
+                   and bound is what tells this row from a pick everywhere it
+                   is read afterwards.
+
+                   Named twice, it is refused by the duplicate test below
+                   along with every other repeated name. */
+                rows[i] = *mapOwn;
+            } else {
+                if (!lobbyScenarioDirHolds(sim, file, &rows[i])) {
+                    return CMD_REJECT_INVALID;
+                }
+                /* Any other bound script belongs to a map that is not the
+                   committed one: its tags, its regions and its entity indices
+                   are that map's, so over this map they name items that are
+                   not there. It arrives with its own map and plays when that
+                   map is committed, which leaves nothing here for a host to
+                   pick. */
+                if (rows[i].bound) return CMD_REJECT_INVALID;
+            }
+            if (!rows[i].keepsWinCondition) scenarios++;
+            /* The same file twice would load the same script twice, with two
+               sets of its timers and its state running against each other.
+               Refused rather than folded, so the host is told. */
+            for (j = 0; j < i; j++) {
+                if (strcmp(rows[j].file, rows[i].file) == 0) {
+                    return CMD_REJECT_INVALID;
+                }
+            }
+        }
+        /* At most one script that may end the round. Two of them would each
+           believe the round is theirs to decide, and which one won would come
+           down to the order they were called in.
+
+           The map's own row counts here like any other. A list holding it and
+           a picked scenario is two scenarios, which the compose would refuse
+           anyway once it had read both files; refusing it here means the host
+           is told at the moment of asking and the list that was playing is
+           still playing. Dropping the map's row from the list is how a host
+           says the picked scenario replaces it — which is what leaving it off
+           the list has always meant. */
+        if (scenarios > 1) return CMD_REJECT_INVALID;
+        serverSimSetScriptList(sim, rows, count);
         lobbyScenarioReselect(sim);
         return CMD_OK;
     }

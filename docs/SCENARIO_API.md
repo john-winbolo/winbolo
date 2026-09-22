@@ -333,6 +333,7 @@ scenario = {
   name         = "Wave Defense",
   description  = "Hold the four pillboxes at the centre of the map.",
   api          = 1,
+  kind         = "scenario",
   game         = "open",
   bound        = true,
   fill_to_caps = false,
@@ -349,6 +350,7 @@ scenario = {
 | `name` | string | What the scenario is called. |
 | `description` | string | One or two sentences for a host reading a list. |
 | `api` | number | The API version you wrote against. Defaults to 1. A server older than the version you name refuses the scenario rather than running it half-understood. |
+| `kind` | string | What the file is allowed to decide: `"scenario"` (the default) or `"mod"`. A scenario decides the win condition — it can end the round and say who won. A mod changes how the game plays and leaves winning and losing where the map and the server's rules left them, so `game.end_round`, `game.set_game_time`, `game.add_game_time` and `game.score` all raise when a mod calls them, a mod that names `game` or declares a trigger action calling one of those four is refused as the file loads, and a mod's `allow_base_win` is not read. Left out, the file is a scenario, which is what every file written before this key existed is. A word that is neither is reported and read as a scenario. |
 | `game` | string | The game type the scenario asks for: `"open"`, `"tournament"` or `"strict"`. The round plays under it — the lobby and both game finders read the type as Scripted, and every part of the engine that picks behaviour from the game type resolves that to the word named here. Left out, the round plays strict tournament. A word that is none of the three also plays strict tournament, and `-validate` reports it by name. Write `game = "open"` for an open round: a scenario that says nothing is not read as asking for one. |
 | `bound` | boolean | True (the default) when the scenario is tied to its map. A scenario that names tags or regions is tied to its map by definition, because tags and regions are the map's own squares and entities. A server can also offer scenarios of its own, which play over whichever map a host has committed; a scenario with `bound` true is not one of those and a host picking it is refused, because over another map its tags, its regions and its entity indices name items that are not there. |
 | `triggers` | array | What the scenario does without a line of Lua: hooks to listen on, tests against what each hook is handed, and calls to make when every test holds. A scenario may carry triggers, a script, or both. See [Triggers](#triggers). |

@@ -44,9 +44,9 @@
  *      * the human still holds at least one pill and every one of them is
  *        dead on the ground
  *      * the round opens with the "dig in" line
- *      * the first wave's line, and its first attacker, land after the grace
+ *      * the first wave's first attacker takes the field after the grace
  *        (GRACE_S = 10) and not before, and the whole wave is ashore inside
- *        a second of the tick it was called on
+ *        a second of that tick
  *      * the wave's spawns RESUME the runners behind the held seats instead
  *        of building Lua VMs: zero builds at wave 1 where the countdown
  *        warmed them, and zero at wave 2 where wave 1 parked them
@@ -89,40 +89,61 @@
 #define SLR_MAX_BOTS     5
 #define SLR_HORDE_SEATS  10   /* scenario.lobby team 2: ten seats HELD */
 
-/* Every line the whole game was told, with the tick it was told on. The
-   script's own announcements come down this channel (game.message is server
-   text), so this is where the round's clock is read off. */
+/* What the round told the whole game, and the tick it told it on. Two
+   channels feed this.
+
+   CTRL_SERVER_TEXT carries the script's own lines (game.message is server
+   text), which is where the round's opener is read off.
+
+   CTRL_LOBBY_SLOT carries a seat going on or off the field, which is where
+   the start of a wave is read off. The script used to announce every wave
+   on the newswire ("Wave 1/5: 10 attackers inbound!") and this watched for
+   that line; the round now has a 128x128 status panel that shows the wave
+   number and a live countdown all the time, so the announcement is gone and
+   only an operator-log line is left, which a unit test cannot see.
+
+   The roster event was picked over the two other ways of spotting a wave.
+   The panel event (CTRL_SCN_PANEL) says "WAVE 1/5" in as many words, but it
+   is only redrawn once a second, so the tick it arrives on is up to 100
+   ticks after the wave was called and every "how fast did the wave land"
+   measurement below would go slack. Polling the roster would work too, but
+   these two cases tick the sim from eighteen places and every one of them
+   would have to carry the same poll. A wave's seats are HELD until the wave
+   fields them, so the first CTRL_LOBBY_SLOT that says a horde seat is on the
+   field is the wave landing, and it arrives on the tick it happens. */
 typedef struct {
     int      count;
-    int      ashoreLines;   /* "[wave] attacker N ashore at ..." */
     uint32_t digInTick;
-    uint32_t waveTick;
+    uint32_t waveTick;     /* the tick the wave's first attacker was fielded */
     uint32_t wonTick;      /* the tick the script declared the defenders' win */
-} SlrText;
+} SlrSeen;
 
 static ServerSim *slrSim  = NULL;
-static SlrText   *slrSeen = NULL;
+static SlrSeen   *slrSeen = NULL;
 
 #define SLR_NO_TICK 0xFFFFFFFFu
 
-static void slrTextCb(void *ctx, const ControlEvent *evt) {
+static void slrWatchCb(void *ctx, const ControlEvent *evt) {
     (void)ctx;
-    if (slrSeen == NULL || evt->type != CTRL_SERVER_TEXT) return;
+    if (slrSeen == NULL) return;
+    if (evt->type == CTRL_LOBBY_SLOT) {
+        if (evt->u.lobbySlot.slot.connected &&
+            evt->u.lobbySlot.slot.teamNumber == SLR_WAVE_TEAM &&
+            evt->u.lobbySlot.slot.fielded &&
+            slrSeen->waveTick == SLR_NO_TICK) {
+            slrSeen->waveTick = slrSim != NULL ? slrSim->tick : 0;
+        }
+        return;
+    }
+    if (evt->type != CTRL_SERVER_TEXT) return;
     slrSeen->count++;
     if (strstr(evt->u.serverText.text, "SURVIVAL: dig in!") != NULL &&
         slrSeen->digInTick == SLR_NO_TICK) {
         slrSeen->digInTick = slrSim != NULL ? slrSim->tick : 0;
     }
-    if (strstr(evt->u.serverText.text, "attackers inbound!") != NULL &&
-        slrSeen->waveTick == SLR_NO_TICK) {
-        slrSeen->waveTick = slrSim != NULL ? slrSim->tick : 0;
-    }
     if (strstr(evt->u.serverText.text, "waves survived") != NULL &&
         slrSeen->wonTick == SLR_NO_TICK) {
         slrSeen->wonTick = slrSim != NULL ? slrSim->tick : 0;
-    }
-    if (strstr(evt->u.serverText.text, " ashore at ") != NULL) {
-        slrSeen->ashoreLines++;
     }
 }
 
@@ -139,7 +160,7 @@ static int slrRound(int bots, bool inPlace) {
     char          err[512];
     ServerSim    *sim;
     ScenarioHost *host;
-    SlrText       seen;
+    SlrSeen       seen;
     int           i;
     int           hordeLow  = 0;    /* horde seats below the first defender */
     int           humanSlot = 0;
@@ -210,7 +231,7 @@ static int slrRound(int bots, bool inPlace) {
                   "the first defender bot landed in slot %d, inside the range "
                   "the old rule read as the defenders", botSlot[0]);
 
-    (void)serverSimRegisterSubscriber(sim, slrTextCb, NULL);
+    (void)serverSimRegisterSubscriber(sim, slrWatchCb, NULL);
     slrSeen = &seen;
 
     /* Start it the way the lobby does. In place is the no-countdown path a
@@ -378,10 +399,9 @@ static int slrRound(int bots, bool inPlace) {
     UT_ASSERT_MSG(seen.digInTick != SLR_NO_TICK,
                   "the round opened without the \"dig in\" line");
 
-    /* (d) The grace is a real 30 seconds: no attacker on the field and no
-           wave line before it, and both just after. Ticked in two stretches
-           so a wave that landed early is caught where it happened rather
-           than at the end. */
+    /* (d) The grace is a real 30 seconds: no horde seat on the field before
+           it and one just after. Ticked in two stretches so a wave that
+           landed early is caught where it happened rather than at the end. */
     fieldedAtStart   = serverSimGetNumFielded(sim);
     buildsBeforeWave = botManagerRunnerBuildCount(sim);
     for (;;) {
@@ -390,7 +410,7 @@ static int slrRound(int bots, bool inPlace) {
            is inside the grace and must be quiet. */
         if (sim->tick >= graceFrom + SLR_GRACE_TICKS) break;
         UT_ASSERT_MSG(seen.waveTick == SLR_NO_TICK,
-                      "wave 1 was called on tick %u, inside the grace "
+                      "a horde seat was fielded on tick %u, inside the grace "
                       "that began on tick %u",
                       (unsigned)seen.waveTick, (unsigned)graceFrom);
         UT_ASSERT_MSG(serverSimGetNumFielded(sim) == fieldedAtStart,
@@ -407,10 +427,10 @@ static int slrRound(int bots, bool inPlace) {
         serverSimTick(sim);
     }
     UT_ASSERT_MSG(seen.waveTick != SLR_NO_TICK,
-                  "no wave was called by tick %u, 4 s past the grace",
+                  "no wave landed by tick %u, 4 s past the grace",
                   (unsigned)sim->tick);
     UT_ASSERT_MSG(seen.waveTick >= graceFrom + SLR_GRACE_TICKS,
-                  "wave 1 was called on tick %u, before the grace that began "
+                  "wave 1 landed on tick %u, before the grace that began "
                   "on tick %u was out",
                   (unsigned)seen.waveTick, (unsigned)graceFrom);
     UT_ASSERT_MSG(serverSimGetNumFielded(sim) > fieldedAtStart,
@@ -466,10 +486,14 @@ static int slrRound(int bots, bool inPlace) {
         uint32_t buildsAfterW1;
         uint32_t ashoreBy;
 
-        /* The whole wave is ashore inside a second of the tick it was called
-           on: the spacing is gone and the roster queue's one-op-a-tick is
-           the only pacing left. Ten attackers and their ten init tables is
-           twenty ops, and a frame is two ticks. */
+        /* The whole wave is ashore inside a second of the tick its first
+           attacker landed on: the spacing is gone and the roster queue's
+           one-op-a-tick is the only pacing left. Ten attackers and their ten
+           init tables is twenty ops, and a frame is two ticks. Measured from
+           the first attacker rather than from the call, because the call is
+           an operator-log line now and only the roster is visible here; the
+           call is one tick earlier, so this window is a tick tighter than it
+           reads. */
         while (serverSimGetNumFielded(sim) < (BYTE)(1 + bots + SLR_HORDE_SEATS) &&
                sim->tick < seen.waveTick + 100) {
             serverSimTick(sim);
@@ -478,7 +502,7 @@ static int slrRound(int bots, bool inPlace) {
         UT_ASSERT_MSG(serverSimGetNumFielded(sim) ==
                           (BYTE)(1 + bots + SLR_HORDE_SEATS),
                       "only %u of the %d seats were on the field a second "
-                      "after wave 1 was called",
+                      "after wave 1 landed",
                       (unsigned)serverSimGetNumFielded(sim),
                       1 + bots + SLR_HORDE_SEATS);
         UT_ASSERT_MSG(ashoreBy <= seen.waveTick + 100,
@@ -810,7 +834,7 @@ int run_survival_lobby_round_ds_order(void) {
     char          err[512];
     ServerSim    *sim;
     ScenarioHost *host;
-    SlrText       seen;
+    SlrSeen       seen;
     int           i;
     int           humanSlot[SLR_DS_HUMANS];
     int           hordeSeen = 0;
@@ -899,7 +923,7 @@ int run_survival_lobby_round_ds_order(void) {
                   "%d horde seat(s) are in the roster after the trim, "
                   "expected %d", hordeSeen, SLR_DS_KEPT);
 
-    (void)serverSimRegisterSubscriber(sim, slrTextCb, NULL);
+    (void)serverSimRegisterSubscriber(sim, slrWatchCb, NULL);
     slrSeen = &seen;
 
     sim->worldPreLoaded = FALSE;
@@ -920,7 +944,7 @@ int run_survival_lobby_round_ds_order(void) {
         serverSimTick(sim);
     }
     UT_ASSERT_MSG(seen.waveTick != SLR_NO_TICK,
-                  "no wave was called by tick %u", (unsigned)sim->tick);
+                  "no wave landed by tick %u", (unsigned)sim->tick);
     for (i = 0; i < 200; i++) serverSimTick(sim);
 
     /* The people are in the keep. */
@@ -935,7 +959,20 @@ int run_survival_lobby_round_ds_order(void) {
     }
 
     /* And every attacker is out on the ocean ring, not in the puddle with
-       them. */
+       them.
+
+       This is also where "the round said where each of them landed" is now
+       checked. The script used to put one "[wave] attacker N ashore at
+       (x,y)" line per attacker on the newswire, and this case counted them:
+       a recording of the owner's own server carried no position at all, so a
+       wave that came ashore in the wrong place could only be argued about.
+       That line is an operator-log line now — the panel is what a player
+       reads, and a square and a start number is nothing a defender acts on —
+       and a unit test cannot see the log. The roster is the better source
+       anyway: the loop below reads each attacker's real position and holds
+       it against the ring, where counting lines only held the script to
+       having mentioned a position. `ashore == SLR_DS_KEPT` closes the other
+       half, that no attacker was skipped. */
     {
         int       ashore = 0;
         uint16_t  horde  = 0;
@@ -966,14 +1003,6 @@ int run_survival_lobby_round_ds_order(void) {
                       "%d attacker(s) reached the field, expected %d",
                       ashore, SLR_DS_KEPT);
     }
-
-    /* And the round SAID where each of them landed. A recording of the
-       owner's own server carried no position at all, so a wave that came
-       ashore in the wrong place could only be argued about; one line per
-       attacker per wave is what turns that into a fact. */
-    UT_ASSERT_MSG(seen.ashoreLines == SLR_DS_KEPT,
-                  "the round put out %d arrival line(s) for %d attacker(s)",
-                  seen.ashoreLines, SLR_DS_KEPT);
 
     slrSeen = NULL;
     slrSim  = NULL;

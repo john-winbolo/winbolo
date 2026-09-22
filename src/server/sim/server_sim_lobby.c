@@ -114,6 +114,7 @@ void serverSimApplyInstanceConfig(ServerSim *sim, const ServerInstanceConfig *cf
   sim->originalLobbySettings.overviewWindow      = sim->overviewWindow;
   sim->originalLobbySettings.lineOfSight         = sim->lineOfSight;
   sim->originalLobbySettings.smartPingsOff       = sim->smartPingsOff;
+  sim->originalLobbySettings.modsOff             = sim->modsOff;
 }
 
 /* ────────────────────────────────────────────────────────────────
@@ -598,8 +599,13 @@ static bool lobbySettingScenarioFixes(const ServerSim *sim, uint8_t lst,
     switch (lst) {
         /* Every value the handler admits would take the lobby off
            gameScripted, so with a scenario attached none of them is the
-           host's to send. */
-        case LST_GAME_TYPE: return value[0] >= 1 && value[0] <= 3;
+           host's to send. A mod is not a scenario: it keeps the round's win
+           condition, names no game of its own and never moved the lobby onto
+           gameScripted in the first place, so the type stays the host's for
+           as long as mods are all that is attached. */
+        case LST_GAME_TYPE:
+            if (sim->scenarioIdentity.keepsWinCondition) return false;
+            return value[0] >= 1 && value[0] <= 3;
         case LST_RANKED:    return value[0] != 0;
         case LST_AI_POLICY: return (aiType)value[0] == aiNone;
         default:            return false;
@@ -752,6 +758,22 @@ static bool serverSimApplyLobbySettingInner(ServerSim *sim,
              * counts. Classic mode does not own it: what a player may
              * point at is not one of the visibility rules. */
             serverSimSetSmartPingsOff(sim, value[0] != 0);
+            return true;
+        }
+        case LST_MODS_OFF: {
+            if (len != 1) return false;
+            /* A plain bool like LST_SMART_PINGS_OFF above, so any non-zero
+             * byte counts. The pick list is left alone: this decides whether
+             * the mods on it compose, not whether they are on it.
+             *
+             * Nothing is recomposed here. The caller in
+             * server_command_dispatch.c asks for that through
+             * lobbyScenarioReselect, which is the same call every pick path
+             * makes and is what sends the script list and the seats out with
+             * it. This translation unit cannot reach that static, and a
+             * second copy of it here would be a second thing to keep in
+             * step. */
+            serverSimSetModsOff(sim, value[0] != 0);
             return true;
         }
         case LST_PILL_VIEW:

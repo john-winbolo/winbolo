@@ -20,9 +20,12 @@
  *                and restore across the post-game view's
  *                edge — plus the form body that renders the
  *                game type, computer-player policy, hidden
- *                mines, time limit, visibility, open-host
- *                and password controls and dispatches each
- *                edit to the host. Visibility is a row of
+ *                mines, visibility, open-host, time limit,
+ *                password and scenario controls and
+ *                dispatches each edit to the host. The last
+ *                three are the Server Settings column, which
+ *                is where the scenario line now lives rather
+ *                than under the map. Visibility is a row of
  *                named sets plus a Details table that holds
  *                the seven settings behind them.
  *********************************************************/
@@ -68,8 +71,8 @@ static int s_visSelectedPreset = -1;
 static bool s_visHostPickedCustom = false;
 
 /* ── Layout A — editable game settings panel ──────────────────────
- * Renders the four mockup setting groups (Game Type / AI / Other /
- * Time Limit). Locked settings render disabled with a lock badge.
+ * Renders the four setting groups (Game Type / AI / Other / Server
+ * Settings). Locked settings render disabled with a lock badge.
  * Edits dispatch as PACKET_LOBBY_SET_SETTING via the new wire
  * commands. Host-only or anyone if openHost. */
 /* Forward decl — the form body is defined just after the panel, but the
@@ -1296,10 +1299,252 @@ void lobbyRenderGameSettingsPanel(ClientSim *cs,
     lobbyRenderGameSettingsBody(cs, myPlayerNum, s);
 }
 
-/* The game-settings form proper (game type / AI policy / mines / time
- * limit / password). Split out of lobbyRenderGameSettingsPanel so the
- * controller Settings tab can render it flat, without the desktop
- * collapsing-header chrome. Host-gated by every caller. */
+/* The password box. Named because the Server Settings column has to be
+   measured before it is drawn and the two have to agree. */
+static const float kLobbyPasswordBoxW = 180.0f;
+
+/* A checkbox and a radio button measure the same way: a square one framed
+   row high, the inner gap, then the label. Neither wraps and neither
+   shrinks, so this is the width the row has to be given. */
+static float lobbySettingsTickRowW(int stringId) {
+    return ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x
+         + ImGui::CalcTextSize(langGetText(stringId)).x;
+}
+
+static float lobbySettingsWidestTickRow(const int *ids, int count) {
+    float widest = 0.0f;
+    for (int i = 0; i < count; i++) {
+        float row = lobbySettingsTickRowW(ids[i]);
+        if (row > widest) widest = row;
+    }
+    return widest;
+}
+
+/* The three pieces of the Visibility row, measured the one way so the row
+   and the column that has to hold it cannot drift apart. The label carries
+   its trailing gap; the combo is as wide as the longest set it lists, which
+   is what the shared combo works out for itself when it is given no width. */
+static void lobbySettingsVisRowParts(char *lbl, int lblSize, float *labelW,
+                                     float *comboW, float *detailsW) {
+    const ImGuiStyle &st = ImGui::GetStyle();
+    SDL_snprintf(lbl, (size_t)lblSize, "%s:",
+                 langGetText(STR_DLGLOBBY_VISIBILITY_LBL));
+    *labelW = ImGui::CalcTextSize(lbl).x + st.ItemSpacing.x;
+    *detailsW = ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_VIS_DETAILS_BTN)).x
+              + st.FramePadding.x * 2.0f;
+    float w = ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_PRESET_CUSTOM)).x;
+    for (int p = 0; p < (int)VISIBILITY_PRESET_COUNT; p++) {
+        float pw = ImGui::CalcTextSize(
+            langGetText(visibilityPresetNameId((VisibilityPreset)p))).x;
+        if (pw > w) w = pw;
+    }
+    *comboW = w + st.FramePadding.x * 2.0f + ImGui::GetFrameHeight();
+}
+
+/* ── How the four columns share the form's width ───────
+ * Four equal quarters do not work. The columns hold very different things
+ * and a column clips what it cannot hold rather than wrapping it, so the
+ * equal split cut the longest game type ("Strict Tournament (no free
+ * ammo)"), the longest odds-and-ends label ("Allow all players to change
+ * settings") and the widest visibility set name, while Computer Players sat
+ * on width it was not using.
+ *
+ * So each column is measured and then given what the measurement says. Two
+ * numbers per column:
+ *
+ *   want  — every row of that column on one line.
+ *   floor — the narrowest the column still reads at, which is the same
+ *           number for a column of plain checkbox rows and a smaller one
+ *           for a column whose rows know how to drop onto a second line.
+ *
+ * Every floor is paid first, so no column is ever cut into. What is left
+ * over goes to the columns that are still short of their want, in the order
+ * the share-out below sets, and anything still unspent once every column is
+ * at its want is spread evenly.
+ *
+ * At the lobby's own 1024px this does not reach every want: the four wants
+ * still come to more content than the roughly 963px of usable width there
+ * is. The form clips nothing even so, because the width that is missing
+ * comes out of the rows that can take it — the time limit and the password
+ * each drop their input under the checkbox.
+ *
+ * The scenario line at the foot of Server Settings ended in three buttons,
+ * and the Rules one had to start a row of its own. Reload script is gone
+ * from that line, which took one button and one spacing off this column's
+ * want. No other column gained that width: Server Settings is first in the
+ * share-out order and was the column the missing width was coming out of,
+ * so the saving is spent inside it, on getting Choose and Rules onto one
+ * row. The floor did not move at all. The password box (180px scaled) is
+ * wider than any of the three buttons was, so the window width below which
+ * the form starts clipping is the same as it was. */
+/* What of text fits in avail, with an ellipsis where it was cut. Used by a
+ * row whose text is not the lobby's own word — a scenario names itself and
+ * the name can be any length, where every other label in this form is one
+ * the column was measured against.
+ *
+ * Cut by whole characters from the end, which is enough for a name: the
+ * alternative is a binary search over CalcTextSize and this runs on a row
+ * that draws once a frame with a string of about forty bytes. */
+static void lobbySettingsFitText(const char *text, char *out, size_t outLen,
+                                 float avail) {
+    size_t n = SDL_strlen(text);
+
+    if (n + 1 > outLen) n = outLen - 1;
+    SDL_memcpy(out, text, n);
+    out[n] = '\0';
+    if (ImGui::CalcTextSize(out).x <= avail) return;
+    while (n > 1) {
+        n--;
+        SDL_strlcpy(out + n - 1, "...", outLen - (n - 1));
+        if (ImGui::CalcTextSize(out).x <= avail) return;
+    }
+}
+
+static void lobbySettingsShareColumns(float s) {
+    const ImGuiStyle &st = ImGui::GetStyle();
+    const float gap = st.ItemSpacing.x;
+    /* What a column costs before it holds anything. ImGui starts a column's
+       content one item spacing in from its left edge and ends it one item
+       spacing before its right edge, so the content that fits is the column
+       width less two of them. */
+    const float pad = gap * 2.0f;
+
+    float want[4];
+    float floorW[4];
+
+    /* Game Type — four radio rows, nothing that can wrap. The Scenario row
+       is measured whether or not this lobby shows it: it is far from the
+       widest, so it costs nothing, and the column then does not change
+       width when a scenario map is committed. The scenario's name sits
+       beside that row and is not measured here: it is a script author's
+       word, it can be any length, and a column sized to it would take its
+       width off the three beside it. It is trimmed to the room it gets
+       instead, and its hover says the whole of it. */
+    {
+        const int ids[] = { STR_DLGGAMESETUP_RADIO1, STR_DLGGAMESETUP_RADIO2,
+                            STR_DLGGAMESETUP_RADIO3, STR_DLGGAMEINFO_SCRIPTED };
+        want[0] = floorW[0] = lobbySettingsWidestTickRow(ids, 4);
+    }
+
+    /* Computer Players — same shape. */
+    {
+        const int ids[] = { STR_DLGLOBBY_AI_NONE, STR_DLGLOBBY_AI_ALLOW,
+                            STR_DLGLOBBY_AI_ADVANTAGE, STR_DLGLOBBY_AI_FULLADV };
+        want[1] = floorW[1] = lobbySettingsWidestTickRow(ids, 4);
+    }
+
+    /* Other — three checkbox rows that cannot wrap, and the Visibility row,
+       which drops its label onto a line of its own when it has to. The
+       openHost row is measured whether or not this lobby draws it, so the
+       column does not change width when a player is made an admin. */
+    {
+        const int ids[] = { STR_DLGGAMESETUP_HIDDENMINES,
+                            STR_DLGLOBBY_SMART_PINGS_CB,
+                            STR_DLGLOBBY_OPENHOST_CB };
+        float ticks = lobbySettingsWidestTickRow(ids, 3);
+        char  lbl[64];
+        float labelW, comboW, detailsW;
+        lobbySettingsVisRowParts(lbl, (int)sizeof(lbl), &labelW, &comboW,
+                                 &detailsW);
+        want[2]   = ImMax(ticks, labelW + comboW + gap + detailsW);
+        floorW[2] = ImMax(ticks, comboW + gap + detailsW);
+    }
+
+    /* Server Settings — every row here has a second line to fall back on,
+       which is why this is the column the share-out squeezes hardest. */
+    {
+        float tlCheck = lobbySettingsTickRowW(STR_DLGGAMESETUP_TIMELIMIT);
+        float tlBox   = lobbyStepInputWidth("0000");
+        float tlUnit  = ImGui::CalcTextSize(
+                            langGetText(STR_DLGLOBBY_TIMELIMIT_MIN)).x;
+        float tlOne   = tlCheck + gap + tlBox + gap + tlUnit;
+        float tlTwo   = ImMax(tlCheck, tlBox + gap + tlUnit);
+
+        float pwCheck = lobbySettingsTickRowW(STR_DLGLOBBY_PASSWORD_CB);
+        float pwBox   = kLobbyPasswordBoxW * s;
+        float pwOne   = pwCheck + gap + pwBox;
+        float pwTwo   = ImMax(pwCheck, pwBox);
+
+        /* The button the scenario line still draws. Reload script used to be
+           the first and the widest of three and Choose was the second; both
+           are gone from the line, so measuring either here would reserve
+           width for a button that never appears. This array is the line's own
+           row and has to be kept the same as it. */
+        const int btns[] = { STR_DLGLOBBY_SCENARIO_RULES };
+        const int btnCount = (int)(sizeof(btns) / sizeof(btns[0]));
+        float btnRow = 0.0f, btnWidest = 0.0f;
+        for (int i = 0; i < btnCount; i++) {
+            float w = ImGui::CalcTextSize(langGetText(btns[i])).x
+                    + st.FramePadding.x * 2.0f;
+            btnRow += (i > 0 ? gap : 0.0f) + w;
+            if (w > btnWidest) btnWidest = w;
+        }
+
+        /* The mods row: the box and Details, which sit together on one line
+           and stay together. It is the one row in this column with no second
+           line to fall back on, so what it asks for is also what it will
+           take. The summary after it wraps and asks for nothing. */
+        float modsCheck = lobbySettingsTickRowW(STR_DLGLOBBY_MODS_ENABLED_CB);
+        float modsDet   = ImGui::CalcTextSize(
+                              langGetText(STR_DLGLOBBY_SCENARIO_DETAILS)).x
+                        + st.FramePadding.x * 2.0f;
+        float modsRow   = modsCheck + gap + modsDet;
+
+        want[3]   = ImMax(ImMax(tlOne, pwOne), ImMax(btnRow, modsRow));
+        floorW[3] = ImMax(ImMax(tlTwo, pwTwo), ImMax(btnWidest, modsRow));
+    }
+
+    /* Column 0 starts at the form's left edge and column 4 is its right
+       edge, so this is all the content width there is to share. */
+    float budget = ImGui::GetColumnOffset(4) - ImGui::GetColumnOffset(0)
+                 - pad * 4.0f;
+
+    float floorSum = 0.0f;
+    for (int i = 0; i < 4; i++) floorSum += floorW[i];
+
+    float give[4];
+    if (budget <= floorSum) {
+        /* Narrower than the form's own floor — a window this small has no
+           split that clips nothing. Cut every column in the same proportion
+           rather than starving one of them. */
+        float k = (floorSum > 0.0f) ? (budget / floorSum) : 1.0f;
+        for (int i = 0; i < 4; i++) give[i] = floorW[i] * k;
+    } else {
+        /* Floors are paid. What is left goes to Server Settings first and to
+           Other second, each up to its want. In order, rather than spread
+           evenly, because a column reads better for crossing one whole row's
+           width than for gaining a few pixels: what there is to hand out at
+           the lobby's own size is enough to put the scenario line's two
+           buttons on one row and not nearly enough to un-stack anything
+           else. Game Type and Computer Players ask for nothing here - their
+           want is their floor. */
+        static const int order[4] = { 3, 2, 0, 1 };
+        float slack = budget - floorSum;
+        for (int i = 0; i < 4; i++) give[i] = floorW[i];
+        for (int k = 0; k < 4 && slack > 0.0f; k++) {
+            int i = order[k];
+            float take = want[i] - give[i];
+            if (take > slack) take = slack;
+            give[i] += take;
+            slack   -= take;
+        }
+        /* Every column at its want and width to spare — share it out so no
+           column is pinned to the exact length of its longest label. */
+        if (slack > 0.0f) {
+            for (int i = 0; i < 4; i++) give[i] += slack * 0.25f;
+        }
+    }
+
+    /* Only the first three widths are set. The last column is whatever they
+       leave, so rounding cannot push the form past its right edge. */
+    for (int i = 0; i < 3; i++) ImGui::SetColumnWidth(i, give[i] + pad);
+}
+
+/* The game-settings form proper: four columns, game type / AI policy /
+ * odds and ends / server settings. Split out of
+ * lobbyRenderGameSettingsPanel so the controller Settings tab can render
+ * it flat, without the desktop collapsing-header chrome. Host-gated by
+ * every caller. */
 void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
     const bool spectator = clientSimIsSpectator(cs);
     /* The one machine actually running the server, which is not the same
@@ -1326,16 +1571,17 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
     lobbyVisibilityRemember(cs, myPlayerNum);
 
     /* Settings body uses a smaller font than the rest of the lobby so
-     * the 3-column form doesn't dominate the visual hierarchy. */
+     * the 4-column form doesn't dominate the visual hierarchy. */
     float settingsOldScale = ImGui::GetCurrentWindow()->FontWindowScale;
     ImGui::SetWindowFontScale(settingsOldScale * 0.85f);
 
     ImGui::Spacing();
-    /* Set by the Visibility button under the time limit below. The popup is
+    /* Set by the Visibility button in the Other column below. The popup is
      * opened after the columns close, next to the BeginPopupModal that
      * answers it. */
     bool openVisibility = false;
-    ImGui::Columns(3, "##settingsCols", false);
+    ImGui::Columns(4, "##settingsCols", false);
+    lobbySettingsShareColumns(s);
 
     /* ── Game Type ──────────────────────────────────────────── */
     bool gtLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_GAME_TYPE) != 0;
@@ -1374,16 +1620,24 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             /* Ranked games forbid the "Open" type — grey it out. */
             bool optDisabled = rankedNow && (gameType)enumVal == gameOpen;
             if ((gameType)enumVal == gameScripted) optDisabled = true;
-            /* A scripted lobby is on the type its map commit set, and the
+            /* A scenario lobby is on the type its map commit set, and the
                server refuses every other value while the scenario is there.
                Greying the whole group says so, rather than letting a row be
                picked and snap back when the refusal arrives.
+
                Keyed on the scenario, which is what the server's own refusal
                reads: the type and the scenario can disagree for a moment —
                a lobby that has a scenario but has not been committed onto it
                yet — and the client would then offer a row the server turns
-               down. */
-            if (clientSimGetLobbyScenarioSource(cs) != 0) {
+               down.
+
+               A mod is not a scenario. It keeps the round's win condition,
+               names no game of its own and leaves the lobby on whatever type
+               the host picked, so a lobby running mods alone goes on
+               offering every row. keepsWinCondition is the composed list's
+               answer and is true only when every script attached is a mod. */
+            if (clientSimGetLobbyScenarioSource(cs) != 0 &&
+                !clientSimGetLobbyScenarioKeepsWinCondition(cs)) {
                 optDisabled = true;
             }
             if (optDisabled) ImGui::BeginDisabled();
@@ -1395,6 +1649,44 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                 lobbySendSetting(cs, LST_GAME_TYPE, &v, 1);
             }
             if (optDisabled) ImGui::EndDisabled();
+            /* The scenario's own name beside the row that says the round is
+               one, as the link that opens its details. This is the only
+               place the lobby names the scenario to a host now: the Server
+               Settings column used to say the same thing four columns over
+               and no longer does.
+
+               Outside the group's own disable. The row is greyed because
+               the type cannot be changed, and reading what the scenario
+               does is not changing it — a link under BeginDisabled cannot be pressed at
+               all. optDisabled is not unwound here: its EndDisabled is on
+               the line above this block and a second one is one too many.
+               Trimmed to what the column has left, because this is the
+               first thing in the form whose width is a script author's to
+               decide and a column clips what it cannot hold. */
+            if ((gameType)enumVal == gameScripted) {
+                const char *nm = clientSimGetLobbyScenarioName(cs);
+
+                if (nm != NULL && nm[0] != '\0') {
+                    char fit[96];
+
+                    if (disable) ImGui::EndDisabled();
+                    ImGui::SameLine(0.0f,
+                                    ImGui::GetStyle().ItemInnerSpacing.x);
+                    lobbySettingsFitText(nm, fit, sizeof(fit),
+                                         ImGui::GetContentRegionAvail().x);
+                    ImGui::PushID("gtScenarioName");
+                    if (ImGui::TextLink(fit)) {
+                        lobbyScenarioDetailsOpenScript(
+                            cs, lobbyScriptRowIndexOfKind(cs, false));
+                    }
+                    imguiHandOnHover();
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", nm);
+                    }
+                    ImGui::PopID();
+                    if (disable) ImGui::BeginDisabled();
+                }
+            }
         }
         if (disable) ImGui::EndDisabled();
     }
@@ -1439,7 +1731,7 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
     }
     ImGui::NextColumn();
 
-    /* ── Other (mines / time limit / autoLockOnGameStart) ────── */
+    /* ── Other (mines / smart pings / open host / visibility) ── */
     {
         ImGui::Text("%s", langGetText(STR_DLGLOBBY_OTHER_LBL));
 
@@ -1504,37 +1796,8 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             }
         }
 
-        bool timeLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_TIME_LIMIT) != 0;
-        bool timeV = clientSimGetLobbyTimeLimit(cs) > 0;
-        bool timeDisabled = !effectiveHost || timeLocked;
-        if (timeDisabled) ImGui::BeginDisabled();
-        if (ImGui::Checkbox(langGetText(STR_DLGGAMESETUP_TIMELIMIT), &timeV)) {
-            uint8_t v = timeV ? 1 : 0;
-            lobbySendSetting(cs, LST_TIME_LIMIT, &v, 1);
-        }
-        if (timeV) {
-            int mins = clientSimGetLobbyTimeLimit(cs) > 0
-                ? (int)(clientSimGetLobbyTimeLimit(cs) / (50 * 60))
-                : 30;
-            ImGui::SameLine();
-            /* LOBBY_TIME_MINUTES_MAX is four digits. */
-            ImGui::SetNextItemWidth(lobbyStepInputWidth("0000"));
-            if (ImGui::InputInt("##tmin", &mins, 1, 5,
-                                ImGuiInputTextFlags_EnterReturnsTrue)) {
-                if (mins < LOBBY_TIME_MINUTES_MIN) mins = LOBBY_TIME_MINUTES_MIN;
-                if (mins > LOBBY_TIME_MINUTES_MAX) mins = LOBBY_TIME_MINUTES_MAX;
-                uint8_t v[2] = { (uint8_t)((mins >> 8) & 0xFF),
-                                 (uint8_t)(mins & 0xFF) };
-                lobbySendSetting(cs, LST_TIME_MINUTES, v, 2);
-            }
-            ImGui::SameLine();
-            ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_TIMELIMIT_MIN));
-        }
-        if (timeDisabled) ImGui::EndDisabled();
-        if (timeLocked) lobbyRenderLockBadge();
-
-        /* Visibility, under the time limit and in the column the rest of
-         * the odds and ends sit in. The five named sets are on the form
+        /* Visibility, under the rest of the odds and ends and in the same
+         * column as them. The five named sets are on the form
          * itself, because picking one is the whole job for most hosts;
          * Details opens the popup with every setting in it. The popup is
          * opened after the columns close, where it is declared.
@@ -1549,25 +1812,16 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
 
             const char *detailsLbl = langGetText(STR_DLGLOBBY_VIS_DETAILS_BTN);
             const ImGuiStyle &st = ImGui::GetStyle();
-            float detailsW = ImGui::CalcTextSize(detailsLbl).x
-                           + st.FramePadding.x * 2.0f;
             float avail    = ImGui::GetContentRegionAvail().x;
+            /* The same three measurements the column share-out used to
+             * decide how wide this column is, taken from the one place so
+             * the row and the width it was given cannot disagree. The combo
+             * is only as wide as the entries it actually lists; a fixed
+             * width would leave a hole beside "Classic". */
             char visLbl[64];
-            SDL_snprintf(visLbl, sizeof(visLbl), "%s:",
-                         langGetText(STR_DLGLOBBY_VISIBILITY_LBL));
-            float labelW = ImGui::CalcTextSize(visLbl).x + st.ItemSpacing.x;
-
-            /* Only as wide as the entries it actually lists, which the
-             * shared combo works out for itself when it is given no width.
-             * A fixed width would leave a hole beside "Classic". */
-            float comboW = ImGui::CalcTextSize(
-                langGetText(STR_DLGLOBBY_PRESET_CUSTOM)).x;
-            for (int p = 0; p < (int)VISIBILITY_PRESET_COUNT; p++) {
-                float w = ImGui::CalcTextSize(
-                    langGetText(visibilityPresetNameId((VisibilityPreset)p))).x;
-                if (w > comboW) comboW = w;
-            }
-            comboW += st.FramePadding.x * 2.0f + ImGui::GetFrameHeight();
+            float labelW, comboW, detailsW;
+            lobbySettingsVisRowParts(visLbl, (int)sizeof(visLbl), &labelW,
+                                     &comboW, &detailsW);
 
             /* Narrow column: the label drops to its own line to buy the
              * combo back its width, and past that the combo gives up what
@@ -1598,6 +1852,72 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             }
         }
 
+        /* "Allow new players" / "Disallow new players once game has
+         * started" moved to the team-list header (right of "+ Add Team")
+         * so all join-related controls live in one row. See
+         * lobbyRenderTeamGroupedPlayers. */
+
+    }
+    ImGui::NextColumn();
+
+    /* ── Server Settings ──────────────────────────────────────
+     * What the machine running the game is set to rather than what the
+     * round is played by: how long it lasts, who may connect and which
+     * scenario is loaded. The first two came out of the Other column and
+     * the scenario line out of the map panel, because a host setting up a
+     * server reaches for the three of them together.
+     *
+     * One style reference for both rows below. Four columns at this font
+     * scale leave about a quarter of the form's width each, which is less
+     * than either row measures, so both work out whether they fit on one
+     * line before they draw and drop the control to a second line when
+     * they do not — the same answer the Visibility row above gives. */
+    {
+        const ImGuiStyle &st = ImGui::GetStyle();
+        ImGui::Text("%s", langGetText(STR_DLGLOBBY_SERVER_SECTION_LBL));
+
+        bool timeLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_TIME_LIMIT) != 0;
+        bool timeV = clientSimGetLobbyTimeLimit(cs) > 0;
+        bool timeDisabled = !effectiveHost || timeLocked;
+        /* Measured before the checkbox is drawn, because the answer decides
+         * whether a SameLine follows it and there is no undoing one. The
+         * checkbox's own width is how ImGui::Checkbox sizes itself: the
+         * square, the inner spacing and the label. */
+        float tlBoxW   = lobbyStepInputWidth("0000");
+        float tlUnitW  = ImGui::CalcTextSize(
+                             langGetText(STR_DLGLOBBY_TIMELIMIT_MIN)).x;
+        float tlCheckW = ImGui::GetFrameHeight() + st.ItemInnerSpacing.x
+                       + ImGui::CalcTextSize(
+                             langGetText(STR_DLGGAMESETUP_TIMELIMIT)).x;
+        bool  tlStack  = (tlCheckW + st.ItemSpacing.x + tlBoxW
+                          + st.ItemSpacing.x + tlUnitW)
+                         > ImGui::GetContentRegionAvail().x;
+        if (timeDisabled) ImGui::BeginDisabled();
+        if (ImGui::Checkbox(langGetText(STR_DLGGAMESETUP_TIMELIMIT), &timeV)) {
+            uint8_t v = timeV ? 1 : 0;
+            lobbySendSetting(cs, LST_TIME_LIMIT, &v, 1);
+        }
+        if (timeV) {
+            int mins = clientSimGetLobbyTimeLimit(cs) > 0
+                ? (int)(clientSimGetLobbyTimeLimit(cs) / (50 * 60))
+                : 30;
+            if (!tlStack) ImGui::SameLine();
+            /* LOBBY_TIME_MINUTES_MAX is four digits. */
+            ImGui::SetNextItemWidth(tlBoxW);
+            if (ImGui::InputInt("##tmin", &mins, 1, 5,
+                                ImGuiInputTextFlags_EnterReturnsTrue)) {
+                if (mins < LOBBY_TIME_MINUTES_MIN) mins = LOBBY_TIME_MINUTES_MIN;
+                if (mins > LOBBY_TIME_MINUTES_MAX) mins = LOBBY_TIME_MINUTES_MAX;
+                uint8_t v[2] = { (uint8_t)((mins >> 8) & 0xFF),
+                                 (uint8_t)(mins & 0xFF) };
+                lobbySendSetting(cs, LST_TIME_MINUTES, v, 2);
+            }
+            ImGui::SameLine();
+            ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_TIMELIMIT_MIN));
+        }
+        if (timeDisabled) ImGui::EndDisabled();
+        if (timeLocked) lobbyRenderLockBadge();
+
         /* Password protection — host or admin only (NOT openHost;
          * we don't want random connected players to be able to lock
          * the host out of their own server). MP only — SP has no
@@ -1620,6 +1940,23 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                 static char s_pwBuf[200] = {0};
                 static bool s_pwOn       = false;
 
+                /* Same measurement as the time limit above, and the same
+                 * two steps down as the Visibility row: the box drops
+                 * under the checkbox when the pair does not fit on one
+                 * line, and past that gives up width rather than running
+                 * off the column's right edge. Only reached when the
+                 * setting is unlocked, so it never has the lock badge to
+                 * leave room for. */
+                float pwAvail  = ImGui::GetContentRegionAvail().x;
+                float pwCheckW = ImGui::GetFrameHeight() + st.ItemInnerSpacing.x
+                               + ImGui::CalcTextSize(
+                                     langGetText(STR_DLGLOBBY_PASSWORD_CB)).x;
+                float pwBoxW   = kLobbyPasswordBoxW * s;
+                float pwRoom   = pwAvail - pwCheckW - st.ItemSpacing.x;
+                bool  pwStack  = (pwBoxW > pwRoom);
+                if (pwStack) pwRoom = pwAvail;
+                if (pwBoxW > pwRoom) pwBoxW = pwRoom;
+
                 bool pwLocked = (clientSimGetLobbyServerLocks(cs) & LOBBY_LOCK_PASSWORD) != 0;
                 if (pwLocked) ImGui::BeginDisabled();
                 if (ImGui::Checkbox(langGetText(STR_DLGLOBBY_PASSWORD_CB), &s_pwOn)) {
@@ -1640,8 +1977,8 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
                     }
                 }
                 if (s_pwOn && !pwLocked) {
-                    ImGui::SameLine();
-                    ImGui::SetNextItemWidth(180.0f * s);
+                    if (!pwStack) ImGui::SameLine();
+                    ImGui::SetNextItemWidth(pwBoxW);
                     if (ImGui::InputText("##serverpw", s_pwBuf,
                                          sizeof(s_pwBuf),
                                          ImGuiInputTextFlags_Password |
@@ -1658,19 +1995,22 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             }
         }
 
-        /* "Allow new players" / "Disallow new players once game has
-         * started" moved to the team-list header (right of "+ Add Team")
-         * so all join-related controls live in one row. See
-         * lobbyRenderTeamGroupedPlayers. */
-
+        /* Which scenario is loaded, and the way in to change it. The line
+         * is prose plus its own buttons, so it goes under the two rows
+         * above rather than beside them. */
+        ImGui::Spacing();
+        /* effectiveHost goes down with it: the mods row holds a real setting
+           and its checkbox is disabled on the same test as the two rows
+           above. */
+        lobbyRenderScenarioLine(cs, effectiveHost);
     }
 
     ImGui::Columns(1);
 
     /* ── Visibility (pillboxes / bases / allied tanks) ─────────────
-     * The editor behind the button under the time limit, because the three
-     * rows took more room on the lobby surface than the rest of the form
-     * put together. The rows themselves are unchanged, they just live
+     * The editor behind the Details button in the Other column, because the
+     * three rows took more room in the lobby form than the rest of the
+     * form put together. The rows themselves are unchanged, they just live
      * in the popup now: one per category, a 4-way combo plus a
      * decay-seconds input that is only enabled while that row's combo reads
      * Decay, each edit sending the 3-byte [policy][decay hi][decay lo]

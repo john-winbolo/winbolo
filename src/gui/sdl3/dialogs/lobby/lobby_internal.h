@@ -470,6 +470,38 @@ bool lobbyScenarioChooserIsOpen(void);
 void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
                                       int screenW, int screenH);
 
+/* scenariodetails — what one scenario or mod is, behind the icon on the
+ * lobby's two script lines and behind the name on every row of the chooser.
+ * One dialog for all three, because the question is the same one.
+ *
+ * OpenScript describes one row of the lobby's ordered script list, which is
+ * what the two lobby lines are drawn from: the scenario icon opens the
+ * scenario row and the mods icon the first mod row, so the two icons on a
+ * round running both do not describe the same script. OpenAttached is the
+ * same dialog for the one attached script, for a client whose server has
+ * sent no list. The chooser's rows open it on a listing entry instead, which
+ * it snapshots. The modal must be rendered at the lobby window's own id
+ * scope, the way the rules and the bot docs dialogs are: none of the buttons
+ * that open it is at that scope, so the ask is a flag and this call is what
+ * turns it into an OpenPopup.
+ *
+ * IsOpen is what the lobby reads so its own Escape stands aside. */
+void lobbyScenarioDetailsReset(void);
+void lobbyScenarioDetailsOpenAttached(ClientSim *cs);
+void lobbyScenarioDetailsOpenScript(ClientSim *cs, int idx);
+
+/* Which row of that list is the scenario, and which the first mod. -1 for
+ * none of that kind. Lives beside the two renderers that classify the list,
+ * in lobby_assets.cpp, so the lines and the icons agree about which row is
+ * which. */
+int  lobbyScriptRowIndexOfKind(ClientSim *cs, bool mod);
+bool lobbyScenarioDetailsIsOpen(void);
+/* s is the lobby's own dialog scale, needed because the header's kind tag is
+ * the same chip the chooser's rows draw and that chip is sized in scaled
+ * pixels. The modal is rendered from the lobby's frame, which is where that
+ * scale is, so it is handed down rather than worked out again here. */
+void lobbyScenarioDetailsRenderModal(ClientSim *cs, float s);
+
 /* scenariorules — the popup behind the Rules button on the scenario line:
  * one row per rule the attached scenario's manifest sets, named, with the
  * classic value beside the scenario's and what the change does in words.
@@ -547,14 +579,61 @@ SDL_Texture *lobbyBuildMapPreview(SDL_Renderer *renderer,
                                   const uint8_t *startOwners, int ownerCount);
 
 /* assets */
+/* One name tag: a square chip with a themed fill, an optional 1px border and
+ * its label at 70% of the font size. The player list wears these beside a
+ * name as HOST / ADMIN / BOT and the Mods dialog wears them on every row as
+ * Mod / Scenario, so the geometry lives here and neither of them owns a copy
+ * of it.
+ *
+ * It places nothing of its own. The caller does its SameLine and its vertical
+ * nudge first, because the two callers centre the chip on different things —
+ * a player row on the row's midline, a Mods row on the name beside it — and
+ * a SameLine inside here would undo whichever of the two ran before it. The
+ * chip is drawn at the cursor and its space booked with a Dummy, so whatever
+ * follows starts after it. A border of 0 draws none. s is the caller's own
+ * dialog scale, the same one every other `X * s` in that dialog uses.
+ *
+ * The two measurements are that same geometry read without drawing it, for a
+ * caller that has to lay out the room around the chip before either is
+ * drawn. */
+void  lobbyDrawNameTag(const char *label, ImU32 bg, ImU32 text, ImU32 border,
+                       float s);
+float lobbyNameTagWidth(const char *label, float s);
+float lobbyNameTagHeight(float s);
 const char *lobbyGameTypeStr(gameType gt);
-/* What scenario is playing — its name and its description, or the map's name
- * and the mod playing over it — plus, for a host, the reload and Choose
- * buttons. For a host who has the scripts preference switched off, a line
- * saying so instead. Draws nothing for a joiner on a map with no scenario.
- * The Choose button asks for the chooser dialog; the lobby's own frame is
- * what draws it. */
-void lobbyRenderScenarioLine(ClientSim *cs);
+/* What is playing, in two shapes for the two places that ask.
+ *
+ * Line is the settings form's Server Settings column: the scenario named by
+ * the game type it puts the round into, the mods row, and a host's Choose and
+ * Rules buttons under them. The mods row is drawn even at none, because this
+ * is where the control to change them lives. For a host who has the scripts
+ * preference switched off, one line saying so and no buttons.
+ *
+ * effectiveHost is the caller's own answer to whether this viewer may edit
+ * lobby state, handed down rather than worked out again here: the mods row
+ * holds a real setting and its checkbox has to be disabled on the same test
+ * as the time-limit and password rows beside it in that column.
+ *
+ * InfoLines is the map panel, for everyone: the same two facts read-only,
+ * each line dropped where it has nothing to name. No buttons — an icon on
+ * each line opens the details dialog and that is the whole of it.
+ *
+ * Two renderers rather than one with a flag: they word the same facts
+ * differently and disagree about the empty case on purpose. Both only ask
+ * for their dialogs; the lobby's own frame is what draws them. */
+void lobbyRenderScenarioLine(ClientSim *cs, bool effectiveHost);
+void lobbyRenderScenarioInfoLines(ClientSim *cs);
+/* The icon those lines end in, and the icon on every row of the chooser.
+ * Shared rather than written twice so the three read as one control: the
+ * same glyph, the same tooltip and the same fallback where the icon did not
+ * load. It puts its own SameLine in front of itself, so a caller draws the
+ * text and then calls this. id carries a visible "i" before its ##, which
+ * only the fallback draws. */
+bool lobbyScenarioInfoButton(const char *id);
+/* Whether this client may change which scripts play: the host, and not a
+ * spectator. The Choose button's own test, shared with the chooser the button
+ * opens so the two cannot drift apart. */
+bool lobbyScenarioMayChoose(ClientSim *cs);
 const char *lobbyAiTypeStr(uint8_t ai);
 void lobbyFormatTimeLimit(int32_t ticks, char *buf, int bufSize);
 SDL_Texture *lobbyGetTankSelf04Texture(SDL_Renderer *renderer);
@@ -568,6 +647,9 @@ void lobbyLoadStatusIconsOnce(SDL_Renderer *renderer, float scale);
 
 /* players */
 void lobbyPlayersReset(void);
+/* src into out, cut short with a trailing "..." where it is wider than maxW
+ * pixels. A maxW of 1 or less is "no limit" and copies the lot. */
+void lobbyTruncateName(const char *src, float maxW, char *out, size_t outSz);
 LobbyRankedEligibility lobbyComputeRankedEligibility(ClientSim *cs);
 void lobbyRankedShapeTooltip(const LobbyRankedEligibility &r);
 bool lobbyIsHost(ClientSim *cs, int myPlayerNum);

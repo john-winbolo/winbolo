@@ -2032,13 +2032,14 @@ int main(int argc, char **argv) {
         else if (strcmp(lo, "overviewwindow") == 0) serverLocks |= LOBBY_LOCK_OVERVIEW_WINDOW;
         else if (strcmp(lo, "lineofsight") == 0) serverLocks |= LOBBY_LOCK_LINE_OF_SIGHT;
         else if (strcmp(lo, "smartpings") == 0) serverLocks |= LOBBY_LOCK_SMART_PINGS;
+        else if (strcmp(lo, "mods") == 0)      serverLocks |= LOBBY_LOCK_MODS;
         else {
           fprintf(stderr,
                   "Warning: unknown -lock name '%s' (valid: gametype, "
                   "ai, mines, timelimit, autolock, password, ranked, "
                   "openhost, map, pillview, baseview, allyview, "
                   "classicmode, alliesintrees, overviewwindow, "
-                  "lineofsight, smartpings)\n", lo);
+                  "lineofsight, smartpings, mods)\n", lo);
         }
       }
       /* Locking any visibility setting locks classicmode too, because

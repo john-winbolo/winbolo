@@ -12,7 +12,8 @@
  *
  *  The decode is the twin of scnReadManifest in
  *  scenario_host.c: the same fields, the same defaults —
- *  api 1, bound true, fill_to_caps false, a team fielded
+ *  api 1, bound true, fill_to_caps false, kind "scenario",
+ *  a team fielded
  *  unless it says otherwise — and the same soft reports through
  *  ScnParseReport for the same shapes, so a rule name that
  *  names no rule reads the same whether an author wrote it
@@ -507,6 +508,38 @@ ScnTrigCompare scnManifestTrigOpFrom(const char *name) {
     return SCN_TRIG_CMP_UNKNOWN;
 }
 
+/* The word for each kind, in enum order, so a kind indexes its own name.
+ * scnKindUnknown has no row: it is what a word neither of these matches
+ * reads as, and a name for it would let it back out as a kind. */
+static const char *const mjKinds[] = {
+    "scenario", "mod"
+};
+
+const char *scnManifestKindName(ScnManifestKind kind) {
+    if ((int)kind < 0 ||
+        (size_t)kind >= sizeof(mjKinds) / sizeof(mjKinds[0])) {
+        /* Including scnKindUnknown, which no manifest holds. Written as the
+           word an absent key reads as, so nothing a file could be left in
+           comes back out as a kind nobody wrote. */
+        return mjKinds[scnKindScenario];
+    }
+    return mjKinds[(int)kind];
+}
+
+ScnManifestKind scnManifestKindFrom(const char *name) {
+    size_t i;
+
+    if (name == NULL) {
+        return scnKindUnknown;
+    }
+    for (i = 0; i < sizeof(mjKinds) / sizeof(mjKinds[0]); i++) {
+        if (strcmp(name, mjKinds[i]) == 0) {
+            return (ScnManifestKind)i;
+        }
+    }
+    return scnKindUnknown;
+}
+
 /* One value or argument out of the tree.
  *
  * The four kinds a file may state: a number, a string, a boolean, and the
@@ -812,6 +845,42 @@ static void mjDecodeBrains(const cJSON *root, ScnManifestDoc *d,
     }
 }
 
+/* Which kind of file the package says this is, and the twin of scnReadKind
+ * in scenario_host.c: the same two words, the same default and the same
+ * report for anything else.
+ *
+ * Absent reads as a scenario. A manifest written before this key existed
+ * meant a file that ends its own round, because that is what every file
+ * could do then, and reading it any other way would take that away from it
+ * silently.
+ *
+ * A key that is there and is neither word is reported and read as a scenario
+ * too. That is the side to fail towards: the mod kind is the one things are
+ * held back from, so a word nobody could read leaves the file able to do what
+ * it always could rather than quietly stripping it. */
+static ScnManifestKind mjDecodeKind(const cJSON *root, ScnParseReport *rep) {
+    const cJSON    *it = cJSON_GetObjectItemCaseSensitive(root, "kind");
+    ScnManifestKind kind;
+
+    if (it == NULL || cJSON_IsNull(it)) {
+        return scnKindScenario;
+    }
+    if (!cJSON_IsString(it) || it->valuestring == NULL) {
+        mjReport(rep, "kind",
+                 "scenario: kind is not a word, and a kind is \"scenario\" "
+                 "or \"mod\"");
+        return scnKindScenario;
+    }
+    kind = scnManifestKindFrom(it->valuestring);
+    if (kind == scnKindUnknown) {
+        mjReport(rep, "kind",
+                 "scenario: kind is '%s', and a kind is \"scenario\" or "
+                 "\"mod\"", it->valuestring);
+        return scnKindScenario;
+    }
+    return kind;
+}
+
 /* The api version the scenario was written against.
  *
  * Every other number in the manifest carries something a round can go on
@@ -869,6 +938,7 @@ static bool mjDecode(ScnManifestDoc *d, ScnParseReport *rep,
 
     mjString(d->root, "name", m->name, sizeof(m->name));
     mjString(d->root, "description", m->description, sizeof(m->description));
+    m->kind = mjDecodeKind(d->root, rep);
     mjString(d->root, "game", m->game, sizeof(m->game));
     if (!mjDecodeApi(d->root, &m->api, err, errLen)) {
         return false;
@@ -1274,6 +1344,7 @@ static void mjEmit(cJSON *root, const ScnManifestDoc *d) {
     mjPutNumber(root, "api", m->api);
     mjPutString(root, "name", m->name);
     mjPutString(root, "description", m->description);
+    mjPutString(root, "kind", scnManifestKindName(m->kind));
     mjPutString(root, "game", m->game);
     mjPutBool(root, "bound", m->bound);
     mjPutBool(root, "fill_to_caps", m->fillToCaps);
@@ -1516,6 +1587,17 @@ bool scnManifestAgrees(const ScenarioManifest *fromJson,
         return mjDiffer(key, keyLen, err, errLen, "description",
                         "scenario: the manifest and the script's table "
                         "describe this differently");
+    }
+    /* The kind is held to agreeing like every other field, and it matters
+       more than most: it is what decides whether the ops that end a round
+       raise when this file calls them. A package whose two forms disagreed
+       about it would be one thing in the lobby and another in the round. */
+    if (fromJson->kind != fromLua->kind) {
+        return mjDiffer(key, keyLen, err, errLen, "kind",
+                        "scenario: the manifest says kind '%s' and the "
+                        "script's table says '%s'",
+                        scnManifestKindName(fromJson->kind),
+                        scnManifestKindName(fromLua->kind));
     }
     if (fromJson->api != fromLua->api) {
         return mjDiffer(key, keyLen, err, errLen, "api",

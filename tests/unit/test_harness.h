@@ -339,6 +339,9 @@ int run_classic_mode_lock_blocks_dispatch(void);
 int run_classic_mode_lobby_reset(void);
 int run_allies_in_trees_defaults(void);
 int run_allies_in_trees_classic_mode(void);
+int run_lobby_mods_enabled_defaults(void);
+int run_lobby_mods_enabled_dispatch(void);
+int run_lobby_mods_enabled_codec(void);
 int run_fog_settings_defaults(void);
 int run_fog_settings_classic_mode_preset(void);
 int run_fog_settings_lock_implied(void);
@@ -428,6 +431,15 @@ int run_lobby_set_scenario_refuses_shape(void);
 int run_lobby_set_scenario_refuses_bound(void);
 int run_lobby_set_scenario_cooldown(void);
 int run_lobby_set_scenario_unreadies(void);
+
+/* The lobby's ordered script list (test_lobby_script_list.c): one scenario
+ * deciding the round and mods behind it. The chunked control event and the
+ * whole-list command against hand-written bytes, the dispatcher's gates, and
+ * the chunks reassembled into the accessors a chooser reads. */
+int run_script_list_control_codec(void);
+int run_script_list_command_codec(void);
+int run_script_list_dispatch(void);
+int run_script_list_client_apply(void);
 int run_lobby_map_search_chunked(void);
 int run_wbn_bearer_state(void);
 int run_wbn_rekey_codec(void);
@@ -2843,6 +2855,16 @@ int run_scenario_host_chunk_events_reach_hooks(void);
 int run_scenario_host_metatable_raises(void);
 int run_scenario_host_metatable_not_read(void);
 int run_scenario_host_hook_via_global_metatable(void);
+int run_scenario_host_script_env_is_its_own(void);
+int run_scenario_host_manifest_read_from_its_own_env(void);
+int run_scenario_host_errors_counted_per_script(void);
+
+/* What a file that declared scenario.kind = "mod" may not do
+ * (test_scenario_host.c): the rows it is held back from at run time, the
+ * same rows written down, and the four things the key itself can say. */
+int run_scenario_host_mod_round_op_raises(void);
+int run_scenario_host_mod_load_refusals(void);
+int run_scenario_host_kind_word(void);
 
 /* The scripts-off switch (test_scenario_host.c): what an attach does with
    it off, with and without a script beside the map, and with it back on. */
@@ -3037,6 +3059,7 @@ int run_scenario_manifest_agrees(void);
 int run_scenario_manifest_from_values(void);
 int run_scenario_manifest_json_team_init(void);
 int run_scenario_manifest_json_number_range(void);
+int run_scenario_manifest_json_kind(void);
 int run_scenario_manifest_json_triggers(void);
 int run_scenario_manifest_json_trigger_operator(void);
 int run_scenario_manifest_json_trigger_where_type(void);
@@ -3101,6 +3124,7 @@ int run_scenario_dir_lists_loose_script(void);
 int run_scenario_dir_skips_junk(void);
 int run_scenario_dir_skips_subdirectory(void);
 int run_scenario_dir_list_cached(void);
+int run_scenario_dir_merges_shipped_mods(void);
 int run_scenario_dir_entry_roundtrip(void);
 int run_scenario_dir_chunk_not_in_flight(void);
 
@@ -3116,6 +3140,38 @@ int run_scenario_precedence_reload_reseats(void);
 int run_scenario_precedence_no_game_plays_strict(void);
 int run_scenario_precedence_open_game_plays_open(void);
 int run_scenario_precedence_reload_refuses_bound(void);
+
+/* A round that plays more than one script at once
+ * (test_scenario_compose.c): a map's own scenario with two mods behind
+ * it, what the composite carries from each, what a pick does and does
+ * not take off, and a reload of the whole list. Then what a composed
+ * round does at the calls the host makes into it: the three rows a mod
+ * is refused and its base is not, a policy-only mod asked behind a
+ * scenario, two scripts on one predicate, two halving one blow, and the
+ * one policy the list is not asked. And what two scripts asking for one
+ * thing come to: a rule the later one wins and a rule only the earlier
+ * one set, a region name each keeps its own rectangle under, the enter
+ * hook staying inside the script that named it, and the record of both
+ * clashes. And the map own script composed where the host list puts it,
+ * with every region keeping the bit it had at the front. */
+int run_scenario_compose_map_and_mods(void);
+int run_scenario_compose_keeps_map_scenario(void);
+int run_scenario_compose_mod_rules_load(void);
+int run_scenario_compose_region_clash_loads(void);
+int run_scenario_compose_reload_list(void);
+int run_scenario_compose_mod_guard(void);
+int run_scenario_compose_policy_mod_asked(void);
+int run_scenario_compose_policy_any_false(void);
+int run_scenario_compose_policy_damage_scale(void);
+int run_scenario_compose_policy_base_win(void);
+int run_scenario_compose_policy_first_answer(void);
+int run_scenario_compose_rules_first_wins(void);
+int run_scenario_compose_rules_keeps_earlier(void);
+int run_scenario_compose_region_own_first(void);
+int run_scenario_compose_region_borrowed(void);
+int run_scenario_compose_region_hook_own(void);
+int run_scenario_compose_conflicts_recorded(void);
+int run_scenario_compose_map_script_placed(void);
 
 /* The panel's display list (test_scenario_panel.c): the byte layout
  * decoded from a hand-written list, the refusal each malformed list
@@ -3291,6 +3347,12 @@ int run_editor_form_trigger_rows(void);
 int run_editor_form_trigger_row_values(void);
 int run_editor_form_trigger_action_text(void);
 int run_editor_form_trigger_vocabulary(void);
+
+/* Beside them, the one function a file that says it is a mod is not offered
+ * (test_editor_scenario_form.c): the catalogue row the editor withholds, held
+ * to the name the runtime keeps, and the line the check writes for a mod that
+ * defines it anyway. */
+int run_editor_form_mod_hides_base_win(void);
 
 /* The editor writing a scenario out (test_editor_scenario_pack.c): the chunk
  * on to the map and the standalone .scenario a mod is, both read back through

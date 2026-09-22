@@ -66,6 +66,7 @@ int run_lobby_lock_bit_lookup(void) {
     UT_ASSERT(serverSimGetSettingLockBit(LST_OVERVIEW_WINDOW)   == LOBBY_LOCK_OVERVIEW_WINDOW);
     UT_ASSERT(serverSimGetSettingLockBit(LST_LINE_OF_SIGHT)     == LOBBY_LOCK_LINE_OF_SIGHT);
     UT_ASSERT(serverSimGetSettingLockBit(LST_SMART_PINGS_OFF)   == LOBBY_LOCK_SMART_PINGS);
+    UT_ASSERT(serverSimGetSettingLockBit(LST_MODS_OFF)          == LOBBY_LOCK_MODS);
 
     /* Unknown setting ids must return 0xFFFFFFFF so the packet handler
      * can silently drop them (forward-compat) instead of treating them
@@ -82,10 +83,11 @@ int run_lobby_lock_bit_lookup(void) {
         LOBBY_LOCK_MAP | LOBBY_LOCK_PILL_VIEW | LOBBY_LOCK_BASE_VIEW |
         LOBBY_LOCK_ALLY_VIEW | LOBBY_LOCK_CLASSIC_MODE |
         LOBBY_LOCK_ALLIES_IN_TREES | LOBBY_LOCK_OVERVIEW_WINDOW |
-        LOBBY_LOCK_LINE_OF_SIGHT | LOBBY_LOCK_SMART_PINGS;
+        LOBBY_LOCK_LINE_OF_SIGHT | LOBBY_LOCK_SMART_PINGS |
+        LOBBY_LOCK_MODS;
     int popcount = 0;
     for (int i = 0; i < 32; i++) if (allBits & (1u << i)) popcount++;
-    UT_ASSERT_MSG(popcount == 17, "every defined LOBBY_LOCK_* bit must be distinct");
+    UT_ASSERT_MSG(popcount == 18, "every defined LOBBY_LOCK_* bit must be distinct");
 
     return 0;
 }

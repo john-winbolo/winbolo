@@ -3537,6 +3537,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # Which scenario plays when a map and a mod both have a claim, and the
     # points the template is applied at.
     tests/unit/test_scenario_precedence.c
+    # A round that plays more than one script at once: a map's own
+    # scenario with mods behind it, what the composite carries from each,
+    # the refusals a mod gets, and a reload of the whole list.
+    tests/unit/test_scenario_compose.c
     # The panel's display list: the byte layout decoded from a hand-written
     # list, the refusal each malformed list gets, the caps at their edges,
     # and a decoded list written back out and parsed again.
@@ -3765,6 +3769,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_view_policy_settings.c
     tests/unit/test_classic_mode_settings.c
     tests/unit/test_allies_in_trees_settings.c
+    tests/unit/test_lobby_mods_enabled.c
     tests/unit/test_fog_settings.c
     # The named visibility sets the lobby offers, and the match that reads
     # a live set of settings back as one of them.
@@ -3786,6 +3791,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The lobby's scenario pick: who may pick, when, and which names the
     # scenarios directory makes good.
     tests/unit/test_lobby_set_scenario.c
+    # The lobby's ordered script list: the chunked control event, the
+    # whole-list command, the dispatcher's gates and the client's reassembly.
+    tests/unit/test_lobby_script_list.c
     tests/unit/test_wbn_bearer_state.c
     tests/unit/test_wbn_rekey_codec.c
     tests/unit/test_wbn_news_parse.cpp
@@ -4694,6 +4702,9 @@ set(_unit_test_names
     classic_mode_lobby_reset
     allies_in_trees_defaults
     allies_in_trees_classic_mode
+    lobby_mods_enabled_defaults
+    lobby_mods_enabled_dispatch
+    lobby_mods_enabled_codec
     fog_settings_defaults
     fog_settings_classic_mode_preset
     fog_settings_lock_implied
@@ -4746,6 +4757,10 @@ set(_unit_test_names
     lobby_set_scenario_refuses_bound
     lobby_set_scenario_cooldown
     lobby_set_scenario_unreadies
+    script_list_control_codec
+    script_list_command_codec
+    script_list_dispatch
+    script_list_client_apply
     lobby_map_search_chunked
     wbn_bearer_state
     wbn_rekey_codec
@@ -5767,9 +5782,15 @@ set(_unit_test_names
     scenario_host_metatable_raises
     scenario_host_metatable_not_read
     scenario_host_hook_via_global_metatable
+    scenario_host_script_env_is_its_own
+    scenario_host_manifest_read_from_its_own_env
+    scenario_host_errors_counted_per_script
     scenario_host_disabled_refuses_script
     scenario_host_disabled_plain_map
     scenario_host_enabled_again
+    scenario_host_kind_word
+    scenario_host_mod_load_refusals
+    scenario_host_mod_round_op_raises
     scenario_validate_clean
     scenario_validate_api_too_new
     scenario_validate_lobby_shape
@@ -5906,6 +5927,7 @@ set(_unit_test_names
     scenario_manifest_json_triggers
     scenario_manifest_json_trigger_operator
     scenario_manifest_json_trigger_where_type
+    scenario_manifest_json_kind
     scenario_manifest_json_trigger_no_when
     scenario_manifest_json_trigger_action_no_op
     scenario_manifest_json_trigger_where_no_field
@@ -5939,6 +5961,7 @@ set(_unit_test_names
     scenario_dir_skips_junk
     scenario_dir_skips_subdirectory
     scenario_dir_list_cached
+    scenario_dir_merges_shipped_mods
     scenario_dir_entry_roundtrip
     scenario_dir_chunk_not_in_flight
     scenario_precedence_mod_over_map
@@ -5950,6 +5973,24 @@ set(_unit_test_names
     scenario_precedence_no_game_plays_strict
     scenario_precedence_open_game_plays_open
     scenario_precedence_reload_refuses_bound
+    scenario_compose_map_and_mods
+    scenario_compose_keeps_map_scenario
+    scenario_compose_mod_rules_load
+    scenario_compose_region_clash_loads
+    scenario_compose_reload_list
+    scenario_compose_mod_guard
+    scenario_compose_policy_mod_asked
+    scenario_compose_policy_any_false
+    scenario_compose_policy_damage_scale
+    scenario_compose_policy_base_win
+    scenario_compose_policy_first_answer
+    scenario_compose_rules_first_wins
+    scenario_compose_rules_keeps_earlier
+    scenario_compose_region_own_first
+    scenario_compose_region_borrowed
+    scenario_compose_region_hook_own
+    scenario_compose_conflicts_recorded
+    scenario_compose_map_script_placed
     scenario_panel_parses_each_primitive
     scenario_panel_refuses_malformed
     scenario_panel_boundaries
@@ -6001,6 +6042,7 @@ set(_unit_test_names
     editor_form_trigger_row_values
     editor_form_trigger_action_text
     editor_form_trigger_vocabulary
+    editor_form_mod_hides_base_win
     editor_pack_mod_round_trip
     editor_pack_map_round_trip
     editor_pack_twice_identical

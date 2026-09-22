@@ -2104,20 +2104,37 @@ void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
    allows them plainly. A policy that already allows bots is the operator's
    or the host's and is left alone.
 
+   Only a scenario takes the game type. A mod keeps the round's win
+   condition, names no game of its own — scnModHoldsBack refuses a mod that
+   writes one — and is played over whatever game the host set up, so a lobby
+   running mods alone stays on the type the host picked and the host may go
+   on changing it. keepsWinCondition is the composed list's answer, and it is
+   true only when every script in the list is a mod.
+
    All three are remembered and all three are given back, so a lobby that was
-   ranked with no bots is ranked with no bots again once a plain map is
-   committed. They are remembered together, under the same test that decides
-   the game type: the lobby already being on gameScripted is what says a
-   scenario displaced these settings earlier in this run, and the values from
-   the first scripted commit are the ones a plain map has to give back. */
+   ranked with no bots is ranked with no bots again once the last script goes.
+   They are remembered together, on the first script of a run whether or not
+   it is the kind that moves the game type: a mod turns ranked off as surely
+   as a scenario does, and what it turned off has to come back the same way.
+   preScenarioGameType holds nothing until then, which is what says whether
+   there is anything to give back. A lobby already on gameScripted when that
+   first script arrives has no earlier type worth keeping — no host can pick
+   that type and no plain map is ever on it — so gameOpen is held instead,
+   which is where such a lobby used to land anyway. */
 void serverSimScenarioApplyLobbyRules(ServerSim *sim) {
     if (sim == NULL) return;
     if (sim->scenarioIdentity.source != lobbyScenarioNone) {
-        if (gameTypeGet(&sim->sim.game) != gameScripted) {
-            sim->preScenarioGameType = gameTypeGet(&sim->sim.game);
+        if (sim->preScenarioGameType == (gameType)0) {
+            gameType was = gameTypeGet(&sim->sim.game);
+
+            sim->preScenarioGameType =
+                (was == gameScripted) ? gameOpen : was;
             sim->preScenarioRanked   = serverSimGetRanked(sim);
             sim->preScenarioAiPolicy = sim->aiPolicy;
             sim->preScenarioAiType   = serverSimGetBotAiType(sim);
+        }
+        if (!sim->scenarioIdentity.keepsWinCondition &&
+            gameTypeGet(&sim->sim.game) != gameScripted) {
             serverSimSetGameType(sim, gameScripted);
         }
         if (serverSimGetRanked(sim)) {
@@ -2127,22 +2144,20 @@ void serverSimScenarioApplyLobbyRules(ServerSim *sim) {
             serverSimSetAiPolicy(sim, (uint8_t)aiYes);
             serverSimSetBotAiType(sim, aiYes);
         }
-    } else if (gameTypeGet(&sim->sim.game) == gameScripted) {
-        /* Nothing held means a lobby that reached gameScripted without going
-           through the arm above; there is no earlier state to give back, so
-           the type falls to open and the other two stay as they are. */
-        if (sim->preScenarioGameType != (gameType)0) {
-            serverSimSetGameType(sim, sim->preScenarioGameType);
-            serverSimSetRanked(sim, sim->preScenarioRanked);
-            serverSimSetAiPolicy(sim, sim->preScenarioAiPolicy);
-            serverSimSetBotAiType(sim, sim->preScenarioAiType);
-        } else {
-            serverSimSetGameType(sim, gameOpen);
-        }
+    } else if (sim->preScenarioGameType != (gameType)0) {
+        serverSimSetGameType(sim, sim->preScenarioGameType);
+        serverSimSetRanked(sim, sim->preScenarioRanked);
+        serverSimSetAiPolicy(sim, sim->preScenarioAiPolicy);
+        serverSimSetBotAiType(sim, sim->preScenarioAiType);
         sim->preScenarioGameType = (gameType)0;
         sim->preScenarioRanked   = false;
         sim->preScenarioAiPolicy = 0;
         sim->preScenarioAiType   = aiNone;
+    } else if (gameTypeGet(&sim->sim.game) == gameScripted) {
+        /* On the scripted type with no script and nothing held: a lobby that
+           got there without going through the arm above. There is no earlier
+           state to give back, so the type falls to open. */
+        serverSimSetGameType(sim, gameOpen);
     }
 }
 
@@ -4086,7 +4101,9 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
                                   const char *name,
                                   const char *fileName,
                                   const char *description,
-                                  bool extraTeams) {
+                                  bool extraTeams,
+                                  bool keepsWinCondition,
+                                  bool bound) {
     if (sim == NULL) return;
     memset(&sim->scenarioIdentity, 0, sizeof(sim->scenarioIdentity));
     if (source == lobbyScenarioNone) {
@@ -4104,8 +4121,10 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
         serverSimScenarioResetPresentation(sim);
         return;
     }
-    sim->scenarioIdentity.source     = source;
-    sim->scenarioIdentity.extraTeams = extraTeams;
+    sim->scenarioIdentity.source            = source;
+    sim->scenarioIdentity.extraTeams        = extraTeams;
+    sim->scenarioIdentity.keepsWinCondition = keepsWinCondition;
+    sim->scenarioIdentity.bound             = bound;
     scnCopyIdentityText(sim->scenarioIdentity.name,
                         sizeof(sim->scenarioIdentity.name), name);
     scnCopyIdentityText(sim->scenarioIdentity.fileName,

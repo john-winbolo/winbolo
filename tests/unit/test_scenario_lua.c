@@ -164,6 +164,13 @@ static lua_State *slVm(ScnLuaCtx *ctx, ServerSim *sim, ScenarioManifest *m) {
     scenarioLuaTimersReset(&slTimers);
     ctx->sim       = sim;
     ctx->manifest  = m;
+    /* One file and no host, so the file that is running is that same one.
+       The host writes this per call because a round runs a list of them;
+       here there is nothing to tell apart. Left at NULL these cases would
+       read as no script calling at all, and the rows that ask which file is
+       calling refuse there. Written here because the caller's context is a
+       local. */
+    ctx->running   = m;
     ctx->timers    = &slTimers;
     /* Running the file, not checking it: the write rows apply. */
     ctx->checkOnly = false;
@@ -188,6 +195,10 @@ static lua_State *slCheckOnlyVm(ScnLuaCtx *ctx, ServerSim *sim,
     luaL_openlibs(L);
     ctx->sim       = sim;
     ctx->manifest  = m;
+    /* The one file being checked, as in slVm above: what this case asks is
+       what each row does while checkOnly is set, and a state with no caller
+       would refuse the round-deciding rows before they reached that. */
+    ctx->running   = m;
     ctx->timers    = NULL;
     ctx->checkOnly = true;
     scenarioLuaInstall(L, ctx);

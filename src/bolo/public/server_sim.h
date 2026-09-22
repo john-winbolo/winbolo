@@ -792,6 +792,15 @@ void        serverSimGetUploadsDir(const ServerSim *sim, char *out,
  *  Empty is none — the ordinary state of a server whose host
  *  has picked nothing.
  *
+ *  Or the committed map's own script, where the host's list
+ *  names that row at the front. The row is on the list to
+ *  say where the round composes the script, and it names a
+ *  file the map brought rather than one the directory
+ *  holds, so a caller that means to open it in the
+ *  scenarios directory reads the row rather than this name.
+ *  serverSimGetScript answers the rows, and bound is what
+ *  tells the two kinds apart.
+ *
  *  Never answers NULL: a sim with no selection answers "",
  *  so a caller can print or compare it without a guard.
  *  There is no fallback the way the directory has one; no
@@ -2095,6 +2104,10 @@ typedef struct {
     uint8_t maxPlayers;  /* 0 = the server's own cap */
     uint8_t bots;        /* seats the template asks for */
     bool    bound;       /* belongs to one map; not selectable as a mod */
+    bool    keepsWinCondition;  /* keeps the round's win condition, which is
+                                   what a mod does and a scenario does not.
+                                   Not the same question as bound: a mod and
+                                   an unbound scenario are both unbound. */
 } ServerScenarioEntry;
 
 int serverSimEnumerateScenarioDir(ServerSim *sim,
@@ -2198,6 +2211,29 @@ uint8_t     serverSimGetLineOfSight(const ServerSim *sim);
  * clientSimIsLobbyAllowSmartPings, so no display code deals in negatives. */
 void        serverSimSetSmartPingsOff(ServerSim *sim, bool off);
 bool        serverSimGetSmartPingsOff(const ServerSim *sim);
+
+/* Mods — whether the round composes the mods on the lobby's pick list. The
+ * host owns it from the lobby (LST_MODS_OFF), and scnDecideScenario
+ * (src/scenario/scenario_host.c) is the one reader: it skips every pick
+ * whose manifest says kind = "mod" while this is set.
+ *
+ * Mods only. A scenario on the pick list and the map's own script both
+ * still play, because neither is a mod — the question a mod answers about
+ * itself is scnManifestKeepsWinCondition, and that is the only test here.
+ *
+ * The pick list is not touched. Turning the setting off is not the same as
+ * emptying the list: the entries stay in the order the host put them in and
+ * come back composed the moment it goes on again, the same way the lobby's
+ * password box keeps its text while the box beside it is unchecked.
+ *
+ * Named and stored in the negative sense on purpose, matching smart pings
+ * above: false means the mods RUN. That is what every build before the
+ * setting existed did, and it is what a zeroed sim, an absent wire byte and
+ * a NULL sim all read as. The lobby UI reads it through the positive
+ * accessor clientSimGetLobbyModsEnabled, so no display code deals in
+ * negatives. */
+void        serverSimSetModsOff(ServerSim *sim, bool off);
+bool        serverSimGetModsOff(const ServerSim *sim);
 
 /* Voice mode — how the server handles the voice its clients send it.
  * serverVoiceOff forwards nothing; serverVoiceProximity is not

@@ -29,6 +29,7 @@
 
 #include "server_sim_shared.h"      /* serverSimTrackAppend, serverSimSetActive, and the serverSimFillMapSkipStateEvent declaration */
 #include "server_sim_internal.h"
+#include "server_sim_scenario.h"   /* serverSimGetLobbyScript — the list as the lobby is told it */
 #include "round_stats_derive.h"     /* roundStatsApplyRecord — serverSimAddEvent's per-round stats funnel */
 #include "lobby_bot_pools.h"        /* lobbyBotPoolsSerialize — the bot-pool catalog streamed during sync */
 #include "brain_list.h"            /* brainListLoadTextsForPath — the brains' lobby texts */
@@ -301,6 +302,7 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.lobbyOverviewWindow = sim->overviewWindow;
     evt->u.lobbySettings.lobbyLineOfSight    = sim->lineOfSight;
     evt->u.lobbySettings.lobbySmartPingsOff  = sim->smartPingsOff;
+    evt->u.lobbySettings.lobbyModsOff        = sim->modsOff;
     /* What the lobby's scenario is, straight off what whoever attached it
        told the sim. A lobby with none leaves the source at lobbyScenarioNone
        and the strings empty, which is what keeps those bytes off the wire. */
@@ -320,6 +322,78 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
        such a round, and a client that only had that would predict its first
        life as open. */
     evt->u.lobbySettings.scenarioBaseGame = (uint8_t)sim->sim.scenarioBaseGame;
+    /* And what kind of script it is, so a client can say what the round's
+       script may do. False with no script attached, which is the same thing
+       the source beside it already says. */
+    evt->u.lobbySettings.scenarioKeepsWinCondition =
+        sim->scenarioIdentity.keepsWinCondition;
+    /* And whether the map decides it. A chooser reads this to know whether
+       the running script is one it may offer to remove; the catalogue rows
+       carry the same flag, but the attached script is not a catalogue row
+       and may not be in the directory at all. */
+    evt->u.lobbySettings.scenarioBound = sim->scenarioIdentity.bound;
+}
+
+/* How many CTRL_LOBBY_SCRIPT_LIST chunks the list needs. Never 0: an empty
+   list is one chunk carrying no entries, because a host that has cleared its
+   list has something to say and a client that hears nothing would go on
+   showing the old one.
+
+   The list as the lobby is told it, which is the map's own script and then
+   the picks. The picks alone are what the host may edit and are asked for
+   somewhere else; what goes out here is what plays. */
+uint8_t serverSimScriptListChunkCount(const ServerSim *sim) {
+    int count = serverSimGetLobbyScriptCount(sim);
+
+    if (count <= 0) return 1;
+    return (uint8_t)((count + LOBBY_SCRIPT_LIST_CHUNK - 1) /
+                     LOBBY_SCRIPT_LIST_CHUNK);
+}
+
+void serverSimFillScriptListEvent(const ServerSim *sim, uint8_t chunk,
+                                  ControlEvent *evt) {
+    int total = serverSimGetLobbyScriptCount(sim);
+    int first = (int)chunk * LOBBY_SCRIPT_LIST_CHUNK;
+    int n     = total - first;
+    int i;
+
+    memset(evt, 0, sizeof(*evt));
+    evt->type = CTRL_LOBBY_SCRIPT_LIST;
+    if (n < 0) n = 0;
+    if (n > LOBBY_SCRIPT_LIST_CHUNK) n = LOBBY_SCRIPT_LIST_CHUNK;
+    evt->u.lobbyScriptList.count = (uint8_t)n;
+    evt->u.lobbyScriptList.final =
+        (chunk + 1 >= serverSimScriptListChunkCount(sim)) ? 1 : 0;
+    for (i = 0; i < n; i++) {
+        const ScnDirEntry *src = serverSimGetLobbyScript(sim, first + i);
+        LobbyScriptEntry  *dst = &evt->u.lobbyScriptList.entries[i];
+        if (src == NULL) continue;
+        /* snprintf and not a straight copy: the two widths are held equal by
+           the asserts in server_command_dispatch.c, and a truncation here
+           would be a name that no longer matches the directory. */
+        snprintf(dst->file, sizeof(dst->file), "%s", src->file);
+        snprintf(dst->name, sizeof(dst->name), "%s", src->name);
+        dst->keepsWinCondition = src->keepsWinCondition;
+        dst->bound             = src->bound;
+    }
+}
+
+/* The whole list, as the chunks it needs, in order and back to back. That
+   run is what lets the reader do without a fragment number: it installs the
+   list when it takes a chunk with final set, and the next chunk it sees
+   after that one starts a new list. Published under the sim's own lock by
+   every caller, so nothing can interleave between the chunks. */
+void serverSimPublishScriptList(ServerSim *sim) {
+    ControlEvent evt;
+    uint8_t      chunks;
+    uint8_t      i;
+
+    if (sim == NULL) return;
+    chunks = serverSimScriptListChunkCount(sim);
+    for (i = 0; i < chunks; i++) {
+        serverSimFillScriptListEvent(sim, i, &evt);
+        serverSimPublishControl(sim, &evt);
+    }
 }
 
 void serverSimFillLobbySlotEvent(ServerSim *sim, BYTE i, ControlEvent *evt) {
@@ -851,6 +925,21 @@ static void serverSimSyncSubscriber(
     memset(&evt, 0, sizeof(evt));
     serverSimFillLobbySettingsEvent(sim, &evt);
     deliver(ctx, &evt);
+
+    /* The lobby's script list, straight behind the settings that name its
+     * first entry. Always sent, even when the list is empty: a joiner has
+     * nothing of its own to fall back on, so one chunk saying there are no
+     * scripts is the answer and no event at all is a different one. Walked
+     * here rather than published because a replay delivers to the one
+     * joining subscriber. */
+    {
+        uint8_t chunks = serverSimScriptListChunkCount(sim);
+        uint8_t chunk;
+        for (chunk = 0; chunk < chunks; chunk++) {
+            serverSimFillScriptListEvent(sim, chunk, &evt);
+            deliver(ctx, &evt);
+        }
+    }
 
     /* The gameplay numbers this sim is running on. A joiner's own table
      * starts classic, and the round it is joining may not be on the classic

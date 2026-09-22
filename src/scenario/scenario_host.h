@@ -34,6 +34,70 @@
  * than this is refused rather than half-understood. */
 #define SCENARIO_API_VERSION 1
 
+/* How many scripts one host composes into its round: one scenario deciding
+ * the round and up to nine mods changing how it plays.
+ *
+ * Everything below it — the per-script environments, the load cycle, the
+ * hook chain and the per-script error counts — is built against this number
+ * rather than against a literal, so the array walks and the loop bounds
+ * follow it without having to be found again.
+ *
+ * Ten rather than the four an earlier measurement suggested. That four was
+ * the widest list that fits inside the CTRL_LOBBY_SETTINGS tail in one
+ * control segment, and the list does not ride that tail: it has a chunked
+ * control event of its own (CTRL_LOBBY_SCRIPT_LIST), bounded per chunk
+ * rather than per list, and a command of its own measured against
+ * COMMAND_MAX_WIRE_BYTES. The wire stopped being what binds the number.
+ *
+ * Held against the public LOBBY_SCRIPT_LIST_MAX in scenario_host.c, which
+ * is the translation unit that sees both: the wire has to be able to name
+ * every script a host can compose, and a public header cannot reach in here
+ * to read this one. */
+#define SCN_SCRIPTS_MAX 10
+
+/* ── What two scripts of one list disagreed about ──────────────────
+ *
+ * Composing a list no longer refuses a rule two scripts both set or a region
+ * two scripts both name. The earlier script wins the rule, both regions are
+ * kept and told apart by which script named them, and neither is an error.
+ * A host who ordered the list meant the order to decide, which is the whole
+ * reason the list is ordered.
+ *
+ * Something decided quietly is still something a host wants to see, so each
+ * one is written down here as it is resolved and a frontend can say so. The
+ * record belongs to the composite: composing the list again fills it from
+ * nothing.
+ *
+ * Ten rows, and a marker saying there were more. Ten is not a guess. The
+ * whole list read out as text — one byte of kind, three strings and their
+ * terminators — comes to at most 10 x (1 + 32 + 32 + 32 + 3) = 970 bytes,
+ * which fits inside one control body with room over, so the list a host is
+ * shown is the list the host holds rather than the first instalment of one.
+ * A list that runs past ten says so and stops: a round where ten pairs of
+ * scripts disagree has a larger problem than its eleventh pair.
+ *
+ * The lengths: 32 covers every region name (SCN_REGION_NAME_LEN in
+ * scenario_manifest.h, which this header does not include) and every rule
+ * name the sim has, the longest of which is 27 bytes. The file is the
+ * script's own file name and not the path it was found at, for the reason
+ * the lobby is told a file name — where a server keeps its scenarios is the
+ * server's own business. A longer name is cut rather than dropped. */
+#define SCN_CONFLICTS_MAX      10
+#define SCN_CONFLICT_NAME_LEN  32
+#define SCN_CONFLICT_FILE_LEN  32
+
+typedef enum {
+    scnConflictRule = 0,  /* two scripts set one rule in their tables */
+    scnConflictRegion     /* two scripts named one region */
+} ScnConflictKind;
+
+typedef struct {
+    ScnConflictKind kind;
+    char            name[SCN_CONFLICT_NAME_LEN];    /* the rule or region */
+    char            winner[SCN_CONFLICT_FILE_LEN];  /* the file that won */
+    char            loser[SCN_CONFLICT_FILE_LEN];   /* the file that lost */
+} ScnComposeConflict;
+
 /* How many timers a round may have waiting at once. A timer holds a Lua
  * function across ticks, so the count is what bounds both the table the host
  * walks each tick and the functions a round can keep from collection. The
@@ -475,5 +539,43 @@ const char *scenarioHostScriptPath(const ScenarioHost *h);
  *  here, because a failed attach returns no host to ask.
  *********************************************************/
 const char *scenarioHostLastError(const ScenarioHost *h);
+
+/*********************************************************
+ *NAME:          scenarioHostConflictCount
+ *PURPOSE:
+ *  How many things two scripts of the round's list
+ *  disagreed about and the compose settled: a rule they
+ *  both set, or a region they both named. Zero for a NULL
+ *  host, for a round with no script and for the ordinary
+ *  round where the scripts do not overlap.
+ *
+ *  Never more than SCN_CONFLICTS_MAX. A list that had more
+ *  than that says so through scenarioHostConflictsOverflowed
+ *  below, rather than by counting past the array.
+ *********************************************************/
+int scenarioHostConflictCount(const ScenarioHost *h);
+
+/*********************************************************
+ *NAME:          scenarioHostConflict
+ *PURPOSE:
+ *  One of them, in the order the compose settled them:
+ *  what kind of thing it was, what it was called, the file
+ *  whose value the round runs, and the file whose value it
+ *  does not. NULL for an index outside the count.
+ *
+ *  The row is the host's own and lives until the list is
+ *  composed again, which is at every round start.
+ *********************************************************/
+const ScnComposeConflict *scenarioHostConflict(const ScenarioHost *h, int i);
+
+/*********************************************************
+ *NAME:          scenarioHostConflictsOverflowed
+ *PURPOSE:
+ *  Whether there were more of them than the host kept. The
+ *  ones it kept are the first SCN_CONFLICTS_MAX in the
+ *  order they were settled; anything past that was resolved
+ *  the same way and simply not written down.
+ *********************************************************/
+bool scenarioHostConflictsOverflowed(const ScenarioHost *h);
 
 #endif /* SCENARIO_HOST_H */

@@ -134,7 +134,10 @@ typedef struct {
  * bots is the seats its lobby template asks for, summed over its teams and
  * held at 255 because it travels in one byte. bound true says the scenario is
  * tied to the map it was written against, which is what makes it no use as a
- * mod. */
+ * mod. keepsWinCondition true says the file declares itself a mod: it changes
+ * how the game plays and leaves the win condition alone, so several of them
+ * can run at once behind one scenario. The two are separate questions and a
+ * file may answer either way to both. */
 typedef struct {
     char    file[SCN_DIR_FILE_LEN];  /* the name in the directory */
     char    name[SCN_DIR_NAME_LEN];  /* the manifest's */
@@ -142,6 +145,7 @@ typedef struct {
     uint8_t maxPlayers;
     uint8_t bots;
     bool    bound;
+    bool    keepsWinCondition;
 } ScnDirEntry;
 
 /* How many roster changes may be outstanding at once. Spawns and

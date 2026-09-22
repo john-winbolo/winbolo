@@ -1606,6 +1606,7 @@
 #define STR_DLGLOBBY_TIMELIMIT_MIN          1379
 #define STR_DLGLOBBY_PASSWORD_CB            1380
 #define STR_DLGLOBBY_PASSWORD_TOOLTIP       1381
+#define STR_DLGLOBBY_SERVER_SECTION_LBL     2585
 /* Desktop header */
 #define STR_DLGLOBBY_SERVERDISP_SP          1382
 #define STR_DLGLOBBY_SERVERDISP_INTERNET    1383
@@ -2377,6 +2378,107 @@
 #define STR_DLGLOBBY_SCENARIO_BOTS          2211
 #define STR_DLGLOBBY_SCENARIO_ON_MAP        2212
 
+/* The two lines the lobby draws about what is running, and the dialog behind
+ * the icon on each of them. Two lines rather than one because a round has at
+ * most one scenario and any number of mods, and the two are not the same
+ * question: the scenario arrives with the committed map, so changing it means
+ * changing the map, while the mods are what the host picked and are the only
+ * half a host edits from here.
+ *
+ * MODS_LBL is the map panel's, which lists the names and nothing else and
+ * goes away when there are none — that panel is a summary of what is loaded
+ * and an empty line there is noise. NONE and ACTIVE are the Server Settings
+ * column's, which says "none" out loud instead, because that is where the
+ * control to change it lives and a button with no label over it explains
+ * nothing. ACTIVE carries the count as well as the names, so a host who has
+ * stacked more mods than the line has room for still reads how many are
+ * running. The count is the whole number and the names stop at the last one
+ * that fits, which is why the count is there and not a total taken from the
+ * names shown.
+ *
+ * Both are the summary half of the Server Settings row and neither names
+ * mods any more: ENABLED_CB is the checkbox label at the head of that row
+ * and says the word once. ACTIVE opens with the dash that binds the two, in
+ * the string rather than drawn beside it so a language that joins them
+ * differently can move it.
+ *
+ * FILTER is the chooser's name box, NO_MATCH what the list says when nothing
+ * matches it, and DETAILS / DETAILS_TITLE the icon's tooltip and the caption
+ * of the dialog it opens. DETAILS is the Server Settings row's button label
+ * as well, which opens the chooser rather than that dialog — the word is the
+ * same and the row has no icon to hang a tooltip on, so MODS_DETAILS_TIP is
+ * what says which of the two it opens. */
+#define STR_DLGLOBBY_MODS_LBL               2586
+#define STR_DLGLOBBY_MODS_NONE              2587
+#define STR_DLGLOBBY_MODS_ACTIVE            2588
+#define STR_DLGLOBBY_SCENARIO_FILTER        2589
+#define STR_DLGLOBBY_SCENARIO_NO_MATCH      2590
+#define STR_DLGLOBBY_SCENARIO_DETAILS       2591
+#define STR_DLGLOBBY_SCENARIO_DETAILS_TITLE 2592
+#define STR_DLGLOBBY_MODS_ENABLED_CB        2609
+#define STR_DLGLOBBY_MODS_DETAILS_TIP       2610
+/* The note under the round column's heading, which says what the order of
+ * that list means. A host can see the list is ordered and cannot see which
+ * end of it wins, and the answer is not guessable: the round runs the files
+ * top to bottom, and the first one to answer a question is the one whose
+ * answer stands. */
+#define STR_DLGLOBBY_SCENARIO_ORDER_NOTE    2611
+/* What the left column says when the server offers nothing it has not
+ * already handed to the round. A row in the round is taken off that column
+ * rather than drawn and refused, so with a short directory the column can
+ * empty out, and "this server offers nothing" would be a lie about a
+ * server whose whole catalogue is in play. */
+#define STR_DLGLOBBY_SCENARIO_ALL_IN_ROUND  2612
+
+/* The two-column chooser. OFFERED heads the catalogue on the left and ROUND
+ * heads the round's own list on the right, so the two columns say what they
+ * are rather than leaving a host to work it out from what is in them.
+ *
+ * ADD, DROP, EARLIER and LATER are the four arrow buttons' tooltips. They are
+ * worded as what the arrow does and not as where it points, because a
+ * left-pointing arrow beside a row is only obvious once you already know the
+ * two columns are one list each.
+ *
+ * IN_ROUND, ROUND_FULL, MAP_LOCK and REPLACES are the four things the chooser
+ * has to say about a row the host is reaching for. The first three are
+ * reasons a row cannot move over and are shown on the disabled arrow; the
+ * fourth is what the arrow says when the move will work but will also drop
+ * the scenario already there.
+ *
+ * MAP_LOCK is also the note under the round's locked row, which is the
+ * committed map's own scenario. A host who wants a different one changes the
+ * map, so that is what it says.
+ *
+ * ROUND_NONE is what the right column says when the round runs nothing. Said
+ * out loud for the reason the empty catalogue is: an empty column cannot tell
+ * a round with nothing picked from a column that failed to draw. */
+#define STR_DLGLOBBY_SCENARIO_OFFERED       2593
+#define STR_DLGLOBBY_SCENARIO_ROUND         2594
+#define STR_DLGLOBBY_SCENARIO_ADD           2595
+#define STR_DLGLOBBY_SCENARIO_DROP          2596
+#define STR_DLGLOBBY_SCENARIO_EARLIER       2597
+#define STR_DLGLOBBY_SCENARIO_LATER         2598
+#define STR_DLGLOBBY_SCENARIO_MAP_LOCK      2599
+#define STR_DLGLOBBY_SCENARIO_IN_ROUND      2600
+#define STR_DLGLOBBY_SCENARIO_ROUND_NONE    2601
+#define STR_DLGLOBBY_SCENARIO_REPLACES      2602
+#define STR_DLGLOBBY_SCENARIO_ROUND_FULL    2603
+
+/* The one-word tag after a row's name, and in the details dialog beside the
+ * name it describes. One word and not a sentence: it is read at a glance
+ * beside forty other rows, and the sentence that explains the difference is
+ * the map editor's, where an author is setting the field rather than reading
+ * it.
+ *
+ * KIND_ALL, KIND_MODS and KIND_SCENARIOS are the three settings of the
+ * catalogue's kind filter, which is the box beside the name filter. All is
+ * first because it is what the column opens on. */
+#define STR_DLGLOBBY_SCENARIO_TAG_MOD       2604
+#define STR_DLGLOBBY_SCENARIO_TAG_SCENARIO  2605
+#define STR_DLGLOBBY_SCENARIO_KIND_ALL      2606
+#define STR_DLGLOBBY_SCENARIO_KIND_MODS     2607
+#define STR_DLGLOBBY_SCENARIO_KIND_SCENARIOS 2608
+
 /* The two hosting settings that go with a scenario carried inside a map: the
  * switch that decides whether a map a player uploaded may bring one, and the
  * directory of scenarios this host offers on their own. */
@@ -2889,6 +2991,22 @@
 #define STR_SCNFN_DESC_ON_CHOOSE_START       2467
 #define STR_SCNFN_DESC_SPAWN_LOADOUT         2468
 #define STR_SCNFN_DESC_DAMAGE_SCALE          2469
+
+/* The scenario panel's kind control: what the file being edited is allowed
+ * to decide. Not the same question as "Built for this map", which is which
+ * map the file was written for. */
+#define STR_MAPEDIT_SCENARIO_KIND            2579
+#define STR_MAPEDIT_SCENARIO_KIND_SCENARIO   2580
+#define STR_MAPEDIT_SCENARIO_KIND_MOD        2581
+#define STR_MAPEDIT_SCENARIO_KIND_NOTE       2582
+#define STR_MAPEDIT_SCENARIO_GAME_MOD        2583
+
+/* What stands where a win-deciding control has gone while the kind says Mod.
+ * The game type above is one; this is the other, in the functions view, where
+ * the one function whose answer ends a round is left out of the list.
+ * {string1} is that function's name, read off the catalogue rather than
+ * written into the line. */
+#define STR_MAPEDIT_SCENARIO_FN_MOD          2584
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

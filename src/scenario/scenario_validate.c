@@ -1276,15 +1276,21 @@ static bool scnValidateSource(const ServerSim *sim, const char *src,
 
     /* The manifest the caller holds, before the chunk, exactly where the host
        puts it. A script that declares no table of its own then reads back this
-       one; a script that declares one replaces it. */
+       one; a script that declares one replaces it.
+
+       LUA_NOREF here and at the two calls below: the host gives each script
+       on its list a table of its own to keep the scripts apart, and this
+       state checks one script and is thrown away, so there is nothing to
+       keep it apart from. The state's real globals are what it reads. */
     if (push != NULL) {
-        scnPushManifestGlobal(L, push);
+        scnPushManifestGlobal(L, LUA_NOREF, push);
     }
 
     /* The top level and no further. What the chunk defines is what the table
        below is read out of; the functions it left behind are never called. */
     snprintf(chunkName, sizeof(chunkName), "@%s", name);
-    if (!scnRunChunk(L, src, srcLen, chunkName, err, sizeof(err))) {
+    if (!scnRunChunk(L, LUA_NOREF, src, srcLen, chunkName, err,
+                     sizeof(err))) {
         scnIssueAdd(out, "", "%s", err);
         if (out->count > 0) {
             out->issues[out->count - 1].line = scnLineFromLuaError(err, name);
@@ -1296,7 +1302,8 @@ static bool scnValidateSource(const ServerSim *sim, const char *src,
     rep.soft    = NULL;
     rep.softLen = 0;
     rep.sink    = out;
-    if (!scnReadManifest(L, &out->manifest, name, err, sizeof(err), &rep)) {
+    if (!scnReadManifest(L, LUA_NOREF, &out->manifest, name, err,
+                         sizeof(err), &rep)) {
         scnIssueAdd(out, "", "%s", err);
         scnCloseVm(L);
         return false;

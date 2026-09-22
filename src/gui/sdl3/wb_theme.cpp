@@ -74,6 +74,21 @@ static const WbTheme s_themeDark = {
     /* diffHardTagBg      */ IM_COL32( 73,  76,  72, 255),
     /* diffHardTagBorder  */ IM_COL32(170,  85,  60, 255),  /* Hard. red    */
     /* diffHardTagText    */ IM_COL32(242, 135, 100, 255),
+    /* Mod is an ocean blue and Scenario a burnt amber — the two hues the
+     * rounded pill in the Mods dialog used before it became a square chip.
+     * Both fills are taken well down from those pill colours so the label on
+     * top reads at 70% of the font size, and both borders are lifted well
+     * above their fill, which is the same shape the triples above use.
+     * Neither collides with the row tags: HOST and BOT fill with a near-black
+     * khaki, ADMIN with teal and the bot mode chip with indigo, so the only
+     * near neighbour is indigo against Mod, and Mod is the greener of the
+     * two by a clear margin. */
+    /* modTagBg           */ IM_COL32( 34,  74, 112, 255),  /* deep ocean    */
+    /* modTagBorder       */ IM_COL32( 86, 156, 210, 255),  /* bright sky    */
+    /* modTagText         */ IM_COL32(190, 222, 250, 255),  /* pale sky      */
+    /* scenarioTagBg      */ IM_COL32( 92,  62,  30, 255),  /* burnt amber   */
+    /* scenarioTagBorder  */ IM_COL32(190, 136,  62, 255),  /* bright amber  */
+    /* scenarioTagText    */ IM_COL32(246, 210, 156, 255),  /* pale amber    */
 };
 
 /* The single live theme pointer. Defaults to Dark; swap-then-apply

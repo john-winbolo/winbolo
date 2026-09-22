@@ -34,6 +34,11 @@
  *        the default, an api that is negative or has no finite value is
  *        refused outright, and a manifest whose numbers are in range is
  *        untouched
+ * run_scenario_manifest_json_kind
+ *      — the key that says whether the package may decide the round: both
+ *        words in and out, a package that states none read as the scenario
+ *        every package written before the key was one, and a word that is
+ *        neither reported and read the same way
  * run_scenario_manifest_json_triggers
  *      — two triggers holding all four value kinds, an in and an eq, and an
  *        action whose long line lands on the action rather than in the
@@ -60,6 +65,7 @@ static const char kFullManifest[] =
     "  \"api\": 1,\n"
     "  \"name\": \"Survival\",\n"
     "  \"description\": \"Hold the centre through five waves.\",\n"
+    "  \"kind\": \"scenario\",\n"
     "  \"game\": \"tournament\",\n"
     "  \"bound\": true,\n"
     "  \"lobby\": {\n"
@@ -138,6 +144,7 @@ static int fullManifestIsRight(const ScnManifestDoc *d) {
     UT_ASSERT(strcmp(m->name, "Survival") == 0);
     UT_ASSERT(strcmp(m->description,
                      "Hold the centre through five waves.") == 0);
+    UT_ASSERT_MSG(m->kind == scnKindScenario, "kind is %d", (int)m->kind);
     UT_ASSERT(strcmp(m->game, "tournament") == 0);
     UT_ASSERT(m->bound);
 
@@ -351,6 +358,7 @@ static void fillBase(ScenarioManifest *m) {
     snprintf(m->description, sizeof(m->description),
              "Hold the centre through five waves.");
     m->api = 1;
+    m->kind = scnKindScenario;
     snprintf(m->game, sizeof(m->game), "tournament");
     m->bound = true;
 
@@ -425,6 +433,16 @@ int run_scenario_manifest_agrees(void) {
     UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
     UT_ASSERT_MSG(strcmp(key, "name") == 0, "the key was '%s'", key);
     UT_ASSERT(err[0] != '\0');
+
+    /* The kind is the one field where the two forms disagreeing changes
+       what the round may do rather than only how it reads, so it is held to
+       agreeing like the rest of them. */
+    fillBase(&b);
+    b.kind = scnKindKeepsWinCondition;
+    UT_ASSERT(!scnManifestAgrees(&a, &b, key, sizeof(key), err, sizeof(err)));
+    UT_ASSERT_MSG(strcmp(key, "kind") == 0, "the key was '%s'", key);
+    UT_ASSERT_MSG(strstr(err, "scenario") != NULL && strstr(err, "mod") != NULL,
+                  "the message does not say which form said which: %s", err);
 
     fillBase(&b);
     b.bound = false;
@@ -1839,5 +1857,144 @@ int run_scenario_manifest_json_trigger_operator(void) {
     scnManifestFree(again);
 
     free(sink);
+    return 0;
+}
+
+/* ── What the package may decide ──────────────────────────────────── */
+
+/* The key a package states what it may decide with. Four things it can say:
+ * the two words, nothing at all, and something that is neither.
+ *
+ * Nothing at all is the case that carries the weight. Every package written
+ * before the key existed states none, and all of them have to go on reading
+ * as the scenario they have always been, so an absent key is not a default
+ * chosen for tidiness but the one answer that keeps them working.
+ *
+ * Something that is neither is reported and read as a scenario rather than
+ * refused, for the same reason: the round the package describes is one an
+ * author has been running, and a server that cannot read one word of the
+ * file should not be the thing that stops it.
+ *
+ * The write is checked as well as the read, because the kind is one of the
+ * fields the host holds the two forms of a package to agreeing on, and a
+ * writer that dropped the key would turn every package it wrote into a
+ * scenario the next time the file was opened. */
+int run_scenario_manifest_json_kind(void) {
+    /* The smallest package that parses, with the kind written in by the
+       case. Nothing else in it reads on the kind, so the rest is the same
+       across all five. */
+    static const char *const kFmt =
+        "{ \"manifest\": 1, \"api\": 1, \"name\": \"Kinds\"%s }\n";
+    static const struct {
+        const char     *line;     /* what goes where the kind would */
+        ScnManifestKind want;     /* and what the read has to make of it */
+        const char     *says;     /* a word the report carries, or NULL for
+                                   * a case that is not reported at all */
+    } kCases[] = {
+        { ", \"kind\": \"scenario\"", scnKindScenario, NULL },
+        { ", \"kind\": \"mod\"", scnKindKeepsWinCondition, NULL },
+        { "", scnKindScenario, NULL },
+        { ", \"kind\": \"banana\"", scnKindScenario, "banana" },
+        { ", \"kind\": 7", scnKindScenario, "not a word" },
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(kCases) / sizeof(kCases[0]); i++) {
+        char                    text[256];
+        char                    err[256];
+        char                    soft[256];
+        ScnParseReport          rep;
+        ScnValidateResult      *sink;
+        ScnManifestDoc         *d;
+        const ScenarioManifest *m;
+        ScnManifestKind         got;
+        bool                    said;
+
+        /* The result is a big struct and this is a stack in a loop, so it is
+           taken from the heap the way the other reporting cases here take
+           it. */
+        sink = (ScnValidateResult *)malloc(sizeof(*sink));
+        UT_ASSERT(sink != NULL);
+        memset(sink, 0, sizeof(*sink));
+        soft[0]     = '\0';
+        rep.soft    = soft;
+        rep.softLen = sizeof(soft);
+        rep.sink    = sink;
+
+        snprintf(text, sizeof(text), kFmt, kCases[i].line);
+        err[0] = '\0';
+        d      = parseText(text, &rep, err, sizeof(err));
+        if (d == NULL) {
+            free(sink);
+            UT_FAIL("case %d was refused outright: %s", (int)i, err);
+        }
+        m = scnManifestValues(d);
+        if (m == NULL) {
+            scnManifestFree(d);
+            free(sink);
+            UT_FAIL("case %d parsed to no values at all", (int)i);
+        }
+        got  = m->kind;
+        said = (kCases[i].says == NULL)
+                   ? !sawIssue(sink, "kind")
+                   : issueSays(sink, "kind", kCases[i].says);
+        scnManifestFree(d);
+        free(sink);
+
+        UT_ASSERT_MSG(got == kCases[i].want,
+                      "case %d ('%s') read as kind %d, expected %d", (int)i,
+                      kCases[i].line, (int)got, (int)kCases[i].want);
+        if (kCases[i].says == NULL) {
+            UT_ASSERT_MSG(said, "case %d ('%s') was reported against", (int)i,
+                          kCases[i].line);
+        } else {
+            UT_ASSERT_MSG(said,
+                          "case %d ('%s') was not reported under 'kind' "
+                          "saying '%s'", (int)i, kCases[i].line,
+                          kCases[i].says);
+        }
+    }
+
+    /* And out to text and back, for both words. What the writer writes is
+       what the struct holds rather than what the file it came from said, so
+       a package that stated no kind comes back stating the scenario the read
+       made of it. */
+    for (i = 0; i < 2; i++) {
+        ScenarioManifest        in;
+        char                    err[256];
+        char                   *text;
+        ScnManifestDoc         *made;
+        ScnManifestDoc         *back;
+        const ScenarioManifest *m;
+        ScnManifestKind         got;
+        bool                    wrote;
+
+        memset(&in, 0, sizeof(in));
+        in.api  = 1;
+        in.kind = (i == 0) ? scnKindScenario : scnKindKeepsWinCondition;
+        snprintf(in.name, sizeof(in.name), "Kinds");
+
+        made = scnManifestFromValues(&in, err, sizeof(err));
+        UT_ASSERT_MSG(made != NULL, "a doc could not be built: %s", err);
+        text = scnManifestWrite(made, err, sizeof(err));
+        scnManifestFree(made);
+        UT_ASSERT_MSG(text != NULL, "the manifest could not be written: %s",
+                      err);
+
+        wrote = strstr(text, "\"kind\"") != NULL;
+        back  = parseText(text, NULL, err, sizeof(err));
+        free(text);
+        UT_ASSERT_MSG(wrote, "the writer dropped the key for kind %d",
+                      (int)in.kind);
+        UT_ASSERT_MSG(back != NULL, "what was written would not parse: %s",
+                      err);
+        m = scnManifestValues(back);
+        got = (m == NULL) ? scnKindUnknown : m->kind;
+        scnManifestFree(back);
+
+        UT_ASSERT_MSG(got == in.kind,
+                      "kind %d went out and came back as %d", (int)in.kind,
+                      (int)got);
+    }
     return 0;
 }

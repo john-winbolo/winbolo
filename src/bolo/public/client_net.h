@@ -198,6 +198,28 @@ void clientSimNetSendLobbySetMap(ClientSim *cs, const char *mapRelPath);
  * and the lobby settings event says which is playing. */
 void clientSimNetSendLobbySetScenario(ClientSim *cs, const char *relPath);
 
+/* Host (or openHost / admin) only - set the lobby's whole script list: one
+ * scenario deciding the round and mods behind it, in load order. files is
+ * `count` file names as the scenario list gave them; count 0 clears the list
+ * and is a message rather than a mistake.
+ *
+ * The whole list and not one entry, so two hosts editing at the same moment
+ * cannot interleave into a list neither asked for - the later command simply
+ * wins. The server refuses the list outright, changing nothing, if any name
+ * is one its scenarios directory does not hold, is a path rather than a
+ * name, is bound to a map, or repeats an earlier one, or if more than one
+ * entry is a scenario rather than a mod. Refused as a whole and not entry by
+ * entry: a list half applied is one the host never asked for.
+ *
+ * A no-op here, sending nothing, when count is outside 0..CMD_SCRIPT_LIST_MAX
+ * or a name is empty or too long for the field to carry.
+ *
+ * The result comes back as the lobby settings event and the script list
+ * event together, which is what the clientSimGetLobbyScript* accessors
+ * answer from. */
+void clientSimNetSendSetScriptList(ClientSim *cs,
+                                   const char *const *files, int count);
+
 /* Lobby preview cycle. SET_MAP and a completed upload auto-stash
  * the previous committed map; these two close the loop:
  *   - Cancel: roll back to the stashed map (server re-broadcasts).
