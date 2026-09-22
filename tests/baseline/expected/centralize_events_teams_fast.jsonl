@@ -13,9 +13,12 @@
 {"tick":4,"type":"CTRL_PLAYER_JOIN","playerNum":1,"name":"Bot 1","country":"XX","clientType":0,"clientFlags":32,"allies":[1]}
 {"tick":6,"type":"CTRL_PLAYER_JOIN","playerNum":2,"name":"Bot 2","country":"XX","clientType":0,"clientFlags":32,"allies":[2]}
 {"tick":10,"type":"CTRL_ALLIANCE_RESET","allies":[1,2,4,0,0,0,0,0,0,0,0,0,0,0,0,0]}
+{"tick":10,"type":"CTRL_LOBBY_SLOT","playerNum":0,"slot":{"connected":true,"playerName":"HeadlessBot","teamNumber":1,"ready":false,"isBot":false,"pingMs":0,"countryCode":"XX","clientFlags":0,"clientType":0}}
 {"tick":12,"type":"CTRL_ALLIANCE_RESET","allies":[1,2,4,0,0,0,0,0,0,0,0,0,0,0,0,0]}
 {"tick":14,"type":"CTRL_ALLIANCE_RESET","allies":[5,2,5,0,0,0,0,0,0,0,0,0,0,0,0,0]}
+{"tick":14,"type":"CTRL_LOBBY_SLOT","playerNum":2,"slot":{"connected":true,"playerName":"Bot 2","teamNumber":1,"ready":true,"isBot":true,"pingMs":0,"countryCode":"XX","clientFlags":32,"clientType":0}}
 {"tick":20,"type":"CTRL_ALLIANCE_RESET","allies":[7,7,7,0,0,0,0,0,0,0,0,0,0,0,0,0]}
+{"tick":20,"type":"CTRL_LOBBY_SLOT","playerNum":1,"slot":{"connected":true,"playerName":"Bot 1","teamNumber":1,"ready":true,"isBot":true,"pingMs":0,"countryCode":"XX","clientFlags":32,"clientType":0}}
 {"tick":40,"type":"CTRL_ALLIANCE_LEAVE","playerNum":0}
 {"tick":40,"type":"CTRL_ALLIANCE_LEAVE","playerNum":1}
 {"tick":40,"type":"CTRL_ALLIANCE_LEAVE","playerNum":2}
