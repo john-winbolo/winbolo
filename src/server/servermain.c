@@ -642,10 +642,12 @@ void printArgs() {
   fprintf(stderr, "                -randommap <seed> — reproduce a specific map from its seed.\n");
   fprintf(stderr, "                -randommap tournament <seed> — type with specific seed.\n");
   fprintf(stderr, "                Map name shown as 'rand_<seed>' in server info.\n");
-  fprintf(stderr, "-scenariodir <Dir> - Directory of scenarios this server offers on their own,\n");
-  fprintf(stderr, "                independently of any map: .scenario packages and loose .lua\n");
-  fprintf(stderr, "                scripts (default: data/scenarios). A directory that is not\n");
-  fprintf(stderr, "                there means the server offers none, which is not an error.\n");
+  fprintf(stderr, "-moddir <Dir> - Directory of mods and scenarios this server offers on their\n");
+  fprintf(stderr, "                own, independently of any map: .scenario packages and loose\n");
+  fprintf(stderr, "                .lua scripts. Read on top of the mods that ship with the\n");
+  fprintf(stderr, "                build, which are always offered. A directory that is not\n");
+  fprintf(stderr, "                there means the server offers none of its own, which is not\n");
+  fprintf(stderr, "                an error. -scenariodir is the old name for this argument.\n");
   fprintf(stderr, "-noscenarios  - Do not load the scenario script beside a map. Every map,\n");
   fprintf(stderr, "                including one committed later, plays plainly. A map that\n");
   fprintf(stderr, "                has a script says which one was not loaded.\n");
@@ -1850,12 +1852,20 @@ int main(int argc, char **argv) {
      for the same reason: what the list holds has nothing to do with whichever
      map is loaded.
 
-     -scenariodir names that directory; without it the sim's own default,
-     data/scenarios, stands. A directory that is not there is not an error —
-     it means this server offers no scenarios of its own, which is the
-     ordinary case. */
+     -moddir names that directory; without it the sim's own default,
+     data/scenarios, stands. Either way the mods that ship with the build are
+     read behind it, so a server that names nothing still offers those. A
+     directory that is not there is not an error — it means this server
+     offers none of its own, which is the ordinary case.
+
+     -scenariodir is what this argument was called before mods and scenarios
+     were one directory. Still taken, so a startup script written against it
+     keeps working; -moddir wins when both are given. */
   {
-    int argNum = findArg(argc, argv, "scenariodir");
+    int argNum = findArg(argc, argv, "moddir");
+    if (argNum == ARG_NOT_FOUND) {
+      argNum = findArg(argc, argv, "scenariodir");
+    }
     if (argNum != ARG_NOT_FOUND) {
       serverSimSetScenarioDir(serverSim, argv[argNum]);
     }

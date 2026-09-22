@@ -131,8 +131,15 @@ static char scDir[256];
 static char scFiles[SC_MAX_FILES][128];
 static int  scFileCount;
 
+/* Under this test's own scratch directory, not the working directory: these
+   cases are separate ctest tests and run at the same time as each other, so
+   a path shared by two of them is a file one deletes while the other is
+   still reading it. */
 static bool scMakeDir(const char *tag) {
-    snprintf(scDir, sizeof(scDir), "wbtest_scn_comp_%s", tag);
+    char leaf[128];
+
+    snprintf(leaf, sizeof(leaf), "wbtest_scn_comp_%s", tag);
+    if (!utScratchPath(scDir, sizeof(scDir), leaf)) return false;
     scFileCount = 0;
     /* A directory left over from a run that was killed is not a failure: the
        files below are written over whatever is in it. */
@@ -179,7 +186,20 @@ static void scDropDir(void) {
 
 /* ── The map's own script ─────────────────────────────────────────── */
 
-#define SC_MAP "wbtest_scn_comp.map"
+#define SC_MAP_LEAF "wbtest_scn_comp.map"
+
+/* The map the cases pretend to have loaded, and the script beside it. One
+   leaf name, but a path of this test's own for the reason scMakeDir gives:
+   every case in this file writes and removes this script, and they run
+   together. */
+static const char *scMapPath(void) {
+    static char path[512];
+
+    if (!utScratchPath(path, sizeof(path), SC_MAP_LEAF)) {
+        path[0] = '\0';
+    }
+    return path;
+}
 
 static void scScriptFor(const char *mapPath, char *out, size_t outLen) {
     size_t n = strlen(mapPath);
@@ -193,7 +213,7 @@ static bool scPutMapScript(const char *text) {
     char  path[512];
     FILE *f;
 
-    scScriptFor(SC_MAP, path, sizeof(path));
+    scScriptFor(scMapPath(), path, sizeof(path));
     f = fopen(path, "wb");
     if (f == NULL) return false;
     fputs(text, f);
@@ -203,7 +223,7 @@ static bool scPutMapScript(const char *text) {
 
 static void scDropMapScript(void) {
     char path[512];
-    scScriptFor(SC_MAP, path, sizeof(path));
+    scScriptFor(scMapPath(), path, sizeof(path));
     remove(path);
 }
 
@@ -396,8 +416,10 @@ static void scDestroy(ServerSim *sim) {
 
 /* A map commit, the way the sim makes it after loading the new map. */
 static void scCommit(ServerSim *sim) {
-    SDL_strlcpy(sim->mapFilePath, SC_MAP, sizeof(sim->mapFilePath));
-    serverSimScenarioOnMapChanged(sim, SC_MAP);
+    const char *mapPath = scMapPath();
+
+    SDL_strlcpy(sim->mapFilePath, mapPath, sizeof(sim->mapFilePath));
+    serverSimScenarioOnMapChanged(sim, mapPath);
     serverSimScenarioApplyLobbyRules(sim);
 }
 
@@ -1786,7 +1808,9 @@ int run_scenario_compose_conflicts_recorded(void) {
     UT_ASSERT(scMakeDir("conflicts"));
     UT_ASSERT(scWrite("bothmod.lua", kScBothMod));
     UT_ASSERT(scPutMapScript(kScBothBase));
-    scScriptFor(SC_MAP, mapFile, sizeof(mapFile));
+    /* The leaf, not the path: a conflict row holds the script's own file
+       name, which is what scnFileNameOf cut it down to. */
+    scScriptFor(SC_MAP_LEAF, mapFile, sizeof(mapFile));
 
     sim = scRunningSim(picks, 1);
     UT_ASSERT(sim != NULL);

@@ -3128,6 +3128,19 @@ int run_scenario_dir_merges_shipped_mods(void);
 int run_scenario_dir_entry_roundtrip(void);
 int run_scenario_dir_chunk_not_in_flight(void);
 
+/* The three directories a mod can come from (test_scenario_mod_dirs.c): the
+ * one the host was given, the player's own under SDL_GetPrefPath and the
+ * mods that ship beside the executable, merged into one listing with the
+ * order of that list as the precedence. */
+int run_scenario_mod_dirs_user_dir_offered(void);
+int run_scenario_mod_dirs_shipped_offered(void);
+int run_scenario_mod_dirs_configured_wins(void);
+int run_scenario_mod_dirs_user_beats_shipped(void);
+int run_scenario_mod_dirs_merged_and_sorted(void);
+int run_scenario_mod_dirs_same_dir_once(void);
+int run_scenario_mod_dirs_all_missing_is_quiet(void);
+int run_scenario_mod_dirs_attach_reads_shipped(void);
+
 /* Which scenario plays when a map and a mod both have a claim
  * (test_scenario_precedence.c): the three rules, the four points the
  * template is applied at, and the game a round is played by. */

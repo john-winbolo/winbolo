@@ -5839,15 +5839,19 @@ void scenarioHostRegisterMapScripted(ServerSim *sim) {
  * caller with room for the rest.
  *
  * One cache per directory rather than one for the process, because a listing
- * merges two of them: the player's own scenarios directory and the mods
- * shipped beside the executable. Two slots is exactly what that needs, and a
- * third directory is not a thing the lister has — with two directories that
- * alternate, each finds its own slot once both are filled, so nothing
- * evicts. It is held under a lock because the read is not the tick thread's
+ * merges the mod directories: the one this host was given, the player's own
+ * under SDL_GetPrefPath, and the mods shipped beside the executable. A slot
+ * each and one spare, so every directory of a listing finds its own slot
+ * once they are filled and nothing evicts. It is held under a lock because
+ * the read is not the tick thread's
  * alone — a client hosting in process reads it from the UI thread through
  * serverSimEnumerateScenarioDir. The lock and the rows live as long as the
  * process; there is nothing to free them at, and nothing that would grow
  * them past two directories' worth. */
+/* How many directories a listing merges. The three scnModDirs builds:
+   the one this host was given, the player's own, and the shipped one. */
+#define SCN_MOD_DIRS_MAX 3
+
 typedef struct {
     bool         valid;
     char         dir[SCN_SCRIPT_PATH_MAX];
@@ -5856,7 +5860,7 @@ typedef struct {
     int          count;
 } ScnDirCache;
 
-#define SCN_DIR_CACHE_SLOTS 2
+#define SCN_DIR_CACHE_SLOTS (SCN_MOD_DIRS_MAX + 1)
 
 static ScnVmLock   scnDirCacheLock;   /* m is NULL until the lister is
                                          registered; guards every slot */
@@ -5941,6 +5945,55 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out, int max) {
     return n;
 }
 
+/* ── Where mods are read from ─────────────────────────────────────── */
+
+/* Three directories, in the order a name clash resolves between them:
+   the one this host was given, the player's own, and the mods that ship
+   with the build. The same shape brainListParents gives brains, and for the
+   same reason — a player who drops a file in their own directory is offered
+   it, and one who does nothing is still offered what the build came with.
+
+   The order is the precedence. A file name in two directories resolves to
+   the one further up this list and the others are left out, so replacing a
+   shipped mod means putting a file of that name in a directory above it.
+   That is the way round a player can act on; there is nothing they could do
+   about it if it went the other way.
+
+   A directory that is not there says nothing, which is the ordinary case
+   for all three of them. */
+
+/* The player's own. ~/Library/Application Support/WinBolo/WinBolo/Mods on
+   macOS, and whatever SDL_GetPrefPath answers elsewhere — the same writable
+   place brain_list.c reads Brains from, and named the same way.
+
+   False when SDL cannot name it, which is not an error: it means a machine
+   with no place of its own for mods, and the other two directories are the
+   whole of the answer. */
+static bool scnModDirUser(char *out, size_t outLen) {
+    const char *env;
+    char       *pref;
+    bool        ok;
+
+    if (out == NULL || outLen == 0) return false;
+    out[0] = '\0';
+
+    /* The tests name it here: a case that wrote to the real preferences
+       directory would leave files in the home directory of whoever ran it. */
+    env = getenv("WB_MOD_DIR_USER");
+    if (env != NULL && env[0] != '\0') {
+        return (size_t)snprintf(out, outLen, "%s", env) < outLen;
+    }
+
+    /* SDL_GetPrefPath returns a trailing separator and a string the caller
+       frees. */
+    pref = SDL_GetPrefPath("WinBolo", "WinBolo");
+    if (pref == NULL) return false;
+    ok = (size_t)snprintf(out, outLen, "%sMods", pref) < outLen;
+    SDL_free(pref);
+    if (!ok) out[0] = '\0';
+    return ok;
+}
+
 /* The mods that ship with the build, which live in data/mods beside the
    executable. Resolved from SDL_GetBasePath rather than from the working
    directory, the way data/lang and data/maps are: a dedicated server is
@@ -5948,15 +6001,20 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out, int max) {
    the base path is the GUI's own doing and not something this can lean on.
 
    False when SDL cannot name the base path, which is not an error: it means
-   a build with no shipped mods to offer, and the player's own directory is
-   then the whole of the answer. */
-static bool scnShippedModsDir(char *out, size_t outLen) {
-    const char *base = SDL_GetBasePath();
+   a build with no shipped mods to offer. */
+static bool scnModDirShipped(char *out, size_t outLen) {
+    const char *base;
+    const char *env;
 
-    if (out == NULL || outLen == 0) {
-        return false;
-    }
+    if (out == NULL || outLen == 0) return false;
     out[0] = '\0';
+
+    env = getenv("WB_MOD_DIR_SHIPPED");
+    if (env != NULL && env[0] != '\0') {
+        return (size_t)snprintf(out, outLen, "%s", env) < outLen;
+    }
+
+    base = SDL_GetBasePath();
     if (base == NULL || base[0] == '\0') {
         return false;
     }
@@ -5966,6 +6024,35 @@ static bool scnShippedModsDir(char *out, size_t outLen) {
         return false;
     }
     return true;
+}
+
+/* One directory on the end of the list, unless it is empty, too long to
+   hold, or a directory already on it — a host whose own directory is the
+   shipped one would otherwise be offered every file in it twice. */
+static void scnModDirAdd(char dirs[][SCN_SCRIPT_PATH_MAX], int *count,
+                         const char *dir) {
+    int i;
+
+    if (dir == NULL || dir[0] == '\0' || *count >= SCN_MOD_DIRS_MAX) return;
+    if (strlen(dir) >= SCN_SCRIPT_PATH_MAX) return;
+    for (i = 0; i < *count; i++) {
+        if (strcmp(dirs[i], dir) == 0) return;
+    }
+    snprintf(dirs[*count], SCN_SCRIPT_PATH_MAX, "%s", dir);
+    (*count)++;
+}
+
+/* The whole list, highest precedence first. `configured` is what this host
+   was given: the -moddir argument on a dedicated server, the "Mod Dir"
+   preference on a desktop host. */
+static int scnModDirs(char dirs[][SCN_SCRIPT_PATH_MAX], const char *configured) {
+    char one[SCN_SCRIPT_PATH_MAX];
+    int  count = 0;
+
+    scnModDirAdd(dirs, &count, configured);
+    if (scnModDirUser(one, sizeof(one)))    scnModDirAdd(dirs, &count, one);
+    if (scnModDirShipped(one, sizeof(one))) scnModDirAdd(dirs, &count, one);
+    return count;
 }
 
 /* File-name order over the merged list, which is the order each directory
@@ -5983,76 +6070,63 @@ static int scnDirMergedCmp(const void *a, const void *b) {
    the same reason the map question carries none: what is in a directory is a
    fact about that directory and about nothing else.
 
-   Two directories and not one. `dir` is the player's own — the -scenariodir
-   argument on a dedicated server, the "Scenario Dir" preference on a desktop
-   host, and on the GUI always a writable directory under SDL_GetPrefPath —
-   and behind it comes data/mods beside the executable, which is where the
-   mods that ship with the build live. A player who drops a file in their own
-   directory is offered it; one who does nothing is still offered what the
-   build came with.
+   `dir` is what this host was given and the head of the list scnModDirs
+   builds; the player's own directory and the shipped one come behind it.
+   Each is read in turn and a file name already taken by a directory above is
+   left out, so the rows are the union of the directories with the higher
+   precedence copy of a clashing name.
 
-   A name in both directories resolves to the player's copy and the shipped
-   one is left out. That is the way round a player can act on: replacing a
-   shipped mod means putting a file of the same name in their own directory,
-   and there is nothing they could do about it if it went the other way.
-
-   The shipped directory not being there is not an error and says nothing.
-   Neither is the player's: a server with no scenarios directory is the
-   ordinary case, and scnDirList answers -1 for it, which is read here as no
-   rows rather than as a failure so the shipped ones still come through. */
+   A directory that cannot be read answers -1, which is read here as no rows
+   rather than as a failure: a host with no mod directory of its own is the
+   ordinary case, and the rest of the list still comes through. */
 static int scnDirListCb(void *ctx, const char *dir, ScnDirEntry *out,
                         int max) {
-    char shipped[SCN_SCRIPT_PATH_MAX];
-    int  n;
-    int  extra;
-    int  i;
-    int  j;
+    char dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
+    int  count;
+    int  n = 0;
+    int  d;
     (void)ctx;
 
     if (out == NULL || max <= 0) {
         return scnDirListCached(dir, out, max);
     }
-    n = scnDirListCached(dir, out, max);
-    if (n < 0) {
-        n = 0;
-    }
-    if (n >= max || !scnShippedModsDir(shipped, sizeof(shipped))) {
-        return n;
-    }
-    /* A host whose own scenarios directory is the shipped one would
-       otherwise be offered every file in it twice. */
-    if (dir != NULL && strcmp(dir, shipped) == 0) {
-        return n;
-    }
-    extra = scnDirListCached(shipped, out + n, max - n);
-    if (extra <= 0) {
-        return n;
-    }
-    /* The player's rows are out[0..n) and the shipped ones out[n..n+extra).
-       Anything in the second half whose file name is already in the first is
-       dropped by pulling the rest of the second half down over it. */
-    for (i = 0; i < extra;) {
-        bool dup = false;
-        for (j = 0; j < n; j++) {
-            if (SDL_strcasecmp(out[j].file, out[n + i].file) == 0) {
-                dup = true;
-                break;
-            }
-        }
-        if (!dup) {
-            i++;
+    count = scnModDirs(dirs, dir);
+    for (d = 0; d < count && n < max; d++) {
+        int extra = scnDirListCached(dirs[d], out + n, max - n);
+        int i;
+
+        if (extra <= 0) {
             continue;
         }
-        if (i + 1 < extra) {
-            memmove(&out[n + i], &out[n + i + 1],
-                    (size_t)(extra - i - 1) * sizeof(out[0]));
+        /* The rows kept so far are out[0..n) and this directory's are
+           out[n..n+extra). Anything in the second half whose file name is
+           already in the first is dropped by pulling the rest of the second
+           half down over it. */
+        for (i = 0; i < extra;) {
+            bool dup = false;
+            int  j;
+
+            for (j = 0; j < n; j++) {
+                if (SDL_strcasecmp(out[j].file, out[n + i].file) == 0) {
+                    dup = true;
+                    break;
+                }
+            }
+            if (!dup) {
+                i++;
+                continue;
+            }
+            if (i + 1 < extra) {
+                memmove(&out[n + i], &out[n + i + 1],
+                        (size_t)(extra - i - 1) * sizeof(out[0]));
+            }
+            extra--;
         }
-        extra--;
+        n += extra;
     }
-    n += extra;
     /* Sorted again over the whole list: each directory arrived in file-name
        order, and a caller reading a chooser's rows should not be able to tell
-       that two reads made them. */
+       that more than one read made them. */
     if (n > 1) {
         qsort(out, (size_t)n, sizeof(out[0]), scnDirMergedCmp);
     }
@@ -6853,24 +6927,30 @@ static bool scnModSource(const char *dir, const char *file,
                file);
         return false;
     }
-    snprintf(path, sizeof(path), "%s/%s", dir, file);
-    /* The same two directories the listing merges, in the same order: what
-       the player's own directory holds wins, and the mods that ship with the
-       build are behind it. Tested rather than tried-and-failed so a mod that
-       is only in the shipped directory does not report the player's path in
-       its error. */
+    /* The same directories the listing merges, in the same order, so the file
+       a host picked off the list is the file that loads. Tested rather than
+       tried-and-failed: a mod that is only in the shipped directory would
+       otherwise report the player's path in its error. */
     {
-        SDL_PathInfo info;
-        if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE) {
-            char shipped[SCN_SCRIPT_PATH_MAX];
-            char alt[SCN_SCRIPT_PATH_MAX];
-            if (scnShippedModsDir(shipped, sizeof(shipped))) {
-                snprintf(alt, sizeof(alt), "%s/%s", shipped, file);
-                if (SDL_GetPathInfo(alt, &info) &&
-                    info.type == SDL_PATHTYPE_FILE) {
-                    snprintf(path, sizeof(path), "%s", alt);
-                }
+        char dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
+        int  count = scnModDirs(dirs, dir);
+        int  d;
+
+        path[0] = '\0';
+        for (d = 0; d < count && path[0] == '\0'; d++) {
+            SDL_PathInfo info;
+            char         one[SCN_SCRIPT_PATH_MAX];
+
+            snprintf(one, sizeof(one), "%s/%s", dirs[d], file);
+            if (SDL_GetPathInfo(one, &info) &&
+                info.type == SDL_PATHTYPE_FILE) {
+                snprintf(path, sizeof(path), "%s", one);
             }
+        }
+        /* No directory has it. The path the host asked for is the one to
+           name in the error scnModScript is about to make. */
+        if (path[0] == '\0') {
+            snprintf(path, sizeof(path), "%s/%s", dir, file);
         }
     }
     return scnModScript(path, out, err, errLen);

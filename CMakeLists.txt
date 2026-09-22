@@ -3534,6 +3534,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # what is skipped, and the list encoded into the SCENARIO_LIST_RSP shape
     # against committed golden bytes and decoded back.
     tests/unit/test_scenario_dir.c
+    tests/unit/test_scenario_mod_dirs.c
     # Which scenario plays when a map and a mod both have a claim, and the
     # points the template is applied at.
     tests/unit/test_scenario_precedence.c
@@ -5964,6 +5965,14 @@ set(_unit_test_names
     scenario_dir_merges_shipped_mods
     scenario_dir_entry_roundtrip
     scenario_dir_chunk_not_in_flight
+    scenario_mod_dirs_user_dir_offered
+    scenario_mod_dirs_shipped_offered
+    scenario_mod_dirs_configured_wins
+    scenario_mod_dirs_user_beats_shipped
+    scenario_mod_dirs_merged_and_sorted
+    scenario_mod_dirs_same_dir_once
+    scenario_mod_dirs_all_missing_is_quiet
+    scenario_mod_dirs_attach_reads_shipped
     scenario_precedence_mod_over_map
     scenario_precedence_none_restores_map
     scenario_precedence_plain_map_keeps_mod

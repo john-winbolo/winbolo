@@ -618,7 +618,23 @@ int run_scenario_dir_merges_shipped_mods(void) {
     serverSimSetScenarioDir(sim, sdDir);
     scenarioHostRegisterScenarioLister(sim);
 
+    /* The player's own directory is one of the three a listing reads, and on
+       a developer's machine it is a real one in their home directory.
+       Pointed at this case's own directory, which the list then holds once,
+       so what is listed is the two directories this case wrote and nothing
+       the machine happens to hold. The third directory is tested on its own
+       in test_scenario_mod_dirs.c. */
+#ifdef _WIN32
+    _putenv_s("WB_MOD_DIR_USER", sdDir);
+#else
+    setenv("WB_MOD_DIR_USER", sdDir, 1);
+#endif
     n = serverSimScenarioListDir(sim, list, SD_MERGE_MAX);
+#ifdef _WIN32
+    _putenv_s("WB_MOD_DIR_USER", "");
+#else
+    unsetenv("WB_MOD_DIR_USER");
+#endif
     sdNames(list, (n > 0) ? n : 0, seen, sizeof(seen));
     UT_ASSERT_MSG(sdFind(list, n, "hold.lua") != NULL,
                   "the player's own file fell out of the merged list: %s",

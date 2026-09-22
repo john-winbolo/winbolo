@@ -2177,7 +2177,7 @@ static const LangEntry langTable[] = {
     {2211, "{number} bot seats"},
     {2212, "Mod: {string2} (on {string1})"},
     {2213, "Run scripts in uploaded maps"},
-    {2216, "Scenario Directory"},
+    {2216, "Mod Directory"},
     {2217, "unchanged"},
     {2218, "{string1}x faster"},
     {2219, "{string1}x slower"},

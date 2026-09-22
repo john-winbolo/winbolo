@@ -2445,7 +2445,7 @@ void gameFrontSetHostingLogDir(const char *dir) {
 void gameFrontSetHostingScenarioDir(const char *dir) {
   SDL_strlcpy(gameFrontHostingScenarioDir, dir ? dir : "",
               sizeof(gameFrontHostingScenarioDir));
-  prefsSetString("HOSTING", "Scenario Dir", gameFrontHostingScenarioDir);
+  prefsSetString("HOSTING", "Mod Dir", gameFrontHostingScenarioDir);
 }
 
 void gameFrontSetHostingServeReplays(bool serve) {
@@ -3744,21 +3744,42 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     prefsGetString("HOSTING", "Upload Dir", def, gameFrontHostingUploadDir,
                    FILENAME_MAX);
   }
-  /* The scenarios directory, defaulted under the writable prefs path for the
+  /* The mod directory, defaulted under the writable prefs path for the
    * reason the upload dir is: the app's own data directory is inside the
    * read-only bundle, and this is a place a player drops files into.
-   * SDL_GetPrefPath returns a trailing separator, so append "scenarios"
-   * directly. A directory that is not there is not an error — it means this
-   * host offers no scenarios of its own. */
+   * SDL_GetPrefPath returns a trailing separator, so append "Mods" directly,
+   * spelled the way brain_list.c spells Brains beside it. A directory that
+   * is not there is not an error — the host is still offered the mods that
+   * ship with the build.
+   *
+   * This is the same directory scnModDirs reads on its own, so leaving the
+   * preference alone changes nothing about what a host is offered. It is
+   * still a preference because a player who keeps their mods somewhere else
+   * — a shared drive, a checkout — has to be able to say so.
+   *
+   * "Mod Dir" and not the "Scenario Dir" this key was called before. A
+   * settings file written by an older build still has the old key, so it is
+   * what the new one defaults to: a player who had pointed it somewhere
+   * keeps pointing there, and the value moves to the new key the next time
+   * the settings are written. */
   {
     const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    char        old[FILENAME_MAX];
+
     if (prefDir) {
-      snprintf(def, FILENAME_MAX, "%sscenarios", prefDir);
+      snprintf(def, FILENAME_MAX, "%sMods", prefDir);
       SDL_free((void *)prefDir);
     } else {
-      snprintf(def, FILENAME_MAX, "%s", "scenarios");
+      snprintf(def, FILENAME_MAX, "%s", "Mods");
     }
-    prefsGetString("HOSTING", "Scenario Dir", def,
+    /* Made if it is not there, unlike the directories above it: this is the
+     * one a player is told to drop files into, and a folder that has to be
+     * created before it can be used is a folder most players never find. It
+     * succeeding is not required — a read-only home directory means no mods
+     * of their own, which the listing already says nothing about. */
+    (void)SDL_CreateDirectory(def);
+    prefsGetString("HOSTING", "Scenario Dir", def, old, FILENAME_MAX);
+    prefsGetString("HOSTING", "Mod Dir", old,
                    gameFrontHostingScenarioDir, FILENAME_MAX);
   }
   prefsGetString("HOSTING", "Logging", "Yes", buff, FILENAME_MAX);
@@ -4610,7 +4631,7 @@ void gameFrontPutPrefs(keyItems *keys) {
   intToStr(gameFrontHostingUploadMaxStorage, buff, sizeof(buff));
   prefsSetString("HOSTING", "Upload Max Storage", buff);
   prefsSetString("HOSTING", "Upload Dir", gameFrontHostingUploadDir);
-  prefsSetString("HOSTING", "Scenario Dir", gameFrontHostingScenarioDir);
+  prefsSetString("HOSTING", "Mod Dir", gameFrontHostingScenarioDir);
   prefsSetString("HOSTING", "Logging",
                             TRUEFALSE_TO_STR(gameFrontHostingLogging));
   prefsSetString("HOSTING", "Log Dir", gameFrontHostingLogDir);
