@@ -3352,10 +3352,12 @@ int run_bot_init_arg_text_to_table(void);
 
 /* New data for a bot already playing (test_scenario_bot_init.c): the op
  * lands a tick later and replaces the table whole, every refusal in the
- * row's contract answers under its own code, and the brain's BRAIN_INIT is
- * rebuilt with Brain.on_init called about it. */
+ * row's contract answers under its own code, a seat off the field takes one
+ * on the runner parked behind it, and the brain's BRAIN_INIT is rebuilt with
+ * Brain.on_init called about it. */
 int run_scenario_bot_init_lands(void);
 int run_scenario_bot_init_refusals(void);
+int run_scenario_bot_init_parked_seat(void);
 int run_brain_on_init_update(void);
 
 int run_console_kick_and_host(void);

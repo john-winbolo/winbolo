@@ -739,6 +739,7 @@ typedef enum {
     SCN_OP_RATE,            /* a second panel update in one tick, or a budget */
     SCN_OP_NOT_FOUND,       /* a brain that does not resolve: a name this server does not have, a path where a name belongs, or a "package:" the funnel refuses */
     SCN_OP_NO_STOCK,        /* a builder order the tank cannot pay for */
+    SCN_OP_NO_RUNNER,       /* a bot seat with no brain behind it: never fielded, or its runner released */
     SCN_OP_BAD_CALL         /* no sim or no op: the call itself is malformed */
 } ScnOpResult;
 

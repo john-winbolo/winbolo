@@ -3764,7 +3764,9 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
    * settings file written by an older build still has the old key, so it is
    * what the new one defaults to: a player who had pointed it somewhere
    * keeps pointing there, and the value moves to the new key the next time
-   * the settings are written. */
+   * the settings are written. The old key stays in the file and is never
+   * read again once "Mod Dir" is there, because it is only ever consulted as
+   * that key's default. */
   {
     const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
     char        old[FILENAME_MAX];
@@ -3775,15 +3777,21 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     } else {
       snprintf(def, FILENAME_MAX, "%s", "Mods");
     }
+    prefsGetString("HOSTING", "Scenario Dir", def, old, FILENAME_MAX);
+    prefsGetString("HOSTING", "Mod Dir", old,
+                   gameFrontHostingScenarioDir, FILENAME_MAX);
     /* Made if it is not there, unlike the directories above it: this is the
      * one a player is told to drop files into, and a folder that has to be
      * created before it can be used is a folder most players never find. It
      * succeeding is not required — a read-only home directory means no mods
-     * of their own, which the listing already says nothing about. */
-    (void)SDL_CreateDirectory(def);
-    prefsGetString("HOSTING", "Scenario Dir", def, old, FILENAME_MAX);
-    prefsGetString("HOSTING", "Mod Dir", old,
-                   gameFrontHostingScenarioDir, FILENAME_MAX);
+     * of their own, which the listing already says nothing about.
+     *
+     * The one the preference settled on, and after the reads rather than
+     * before them: a player who keeps their mods on a shared drive named it
+     * here, and making the default under the prefs path as well would leave
+     * an empty Mods folder they never asked for in their home directory
+     * every time the settings are read. */
+    (void)SDL_CreateDirectory(gameFrontHostingScenarioDir);
   }
   prefsGetString("HOSTING", "Logging", "Yes", buff, FILENAME_MAX);
   gameFrontHostingLogging = YESNO_TO_TRUEFALSE(buff[0]);

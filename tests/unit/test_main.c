@@ -1783,6 +1783,7 @@ static const UnitTestEntry s_tests[] = {
     { "bot_init_arg_text_to_table",              run_bot_init_arg_text_to_table              },
     { "scenario_bot_init_lands",                 run_scenario_bot_init_lands                 },
     { "scenario_bot_init_refusals",              run_scenario_bot_init_refusals              },
+    { "scenario_bot_init_parked_seat",           run_scenario_bot_init_parked_seat           },
     { "brain_on_init_update",                    run_brain_on_init_update                    },
     { "editor_script_path",                      run_editor_script_path                      },
     { "editor_script_round_trip",                run_editor_script_round_trip                },

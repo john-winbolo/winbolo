@@ -1007,7 +1007,7 @@ A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
 | `game.spawn_bot(t)` | Puts a bot into the running round. Answers the seat and `"queued"` when the call named a seat, and `true, "queued"` when the server is choosing one. |
 | `game.remove_bot(p)` | Takes a bot out of the running round. A human seat is refused with `SCN_OP_IS_HUMAN`. |
 | `game.set_team(p, t)` | Moves a seat to another team mid-round. |
-| `game.bot_init(p, t)` | Hands a bot already in the round a new init table. A human seat is refused with `SCN_OP_IS_HUMAN` and an empty one with `SCN_OP_NO_SUCH_PLAYER`. |
+| `game.bot_init(p, t)` | Hands a bot a new init table. A seat that has been fielded takes one whether it is on the field now or not: a seat taken off keeps its brain, and the table is waiting in it when the seat is fielded again. A human seat is refused with `SCN_OP_IS_HUMAN`, an empty one with `SCN_OP_NO_SUCH_PLAYER`, and a held seat that has never been fielded — which has no brain yet to hold the table — with `SCN_OP_NO_RUNNER`. |
 | `game.lobby_add_bot(t)` | Seats a bot in the lobby and answers which seat it took. |
 | `game.lobby_remove_bot(p)` | Takes a bot out of the lobby. A human seat is refused. |
 | `game.lobby_set_team(p, t)` | Moves a lobby seat to another team. |
@@ -1054,7 +1054,7 @@ per wave in the log.
 
 **Changing a bot's orders while it plays.** `bot_init` takes the same table
 `spawn_bot`'s `init` field takes — flat, names to strings or numbers, at most
-16 pairs — and hands it to a bot that is already on the field:
+16 pairs — and hands it to a bot that has been fielded:
 
 ```lua
 game.bot_init(p, { noblitz = "1", cfg = "PILL_REPOSITION_ENABLED=false" })
@@ -1093,6 +1093,15 @@ change land.
 A bot whose brain is not running yet still keeps the table: the record is what
 its next brain is built from, so nothing the script asked for is lost.
 
+A seat that is off the field takes the table the same way. An unfielded seat
+keeps the brain it was fielded with rather than throwing it away, so the
+global is rebuilt where the brain waits and the seat comes back onto the field
+already carrying the new pairs. This is how a wave-based scenario retunes its
+seats between waves, and it costs the next wave nothing: the seat is fielded
+again on the brain it already had. Only a held seat that has never been
+fielded is refused, with `SCN_OP_NO_RUNNER` — there is no brain there yet to
+hold the table, so field it first and then write into it.
+
 **The seat cycle.** A seat the `scenario` table seated and a wave fielded goes
 back to being held when `remove_bot` names it, rather than being emptied — so
 the next wave has it again. A seat that was not the template's is emptied, as a
@@ -1108,9 +1117,14 @@ first breath. The brain's own state goes with it: a bot fielded for the second
 wave keeps whatever its script stored during the first, and is told the tank is
 new the way a respawn is. A spawn naming either differently gets a runner built
 for it instead, which is what a wave transition costs when it is paid, and a
-line in the server log saying which of the two differed. The `init` table is
-read once, when the VM is built, so it is not the place for orders that change
-from one wave to the next; `game.hint` below is.
+line in the server log saying which of the two differed. A **spawn's** `init`
+table is therefore not the place for orders that change from one wave to the
+next — varying it is what buys the rebuild. To retune a held seat between
+waves, spawn it with the same table every time and write the new one with
+`bot_init` while it is off the field: what a spawn is matched against is the
+table its VM was built with, which `bot_init` does not touch, so the seat
+still comes back onto the runner it already had. `game.hint` below is the
+other way to tell a bot something mid-round.
 
 The roster ops are the six above, `set_team` and `lobby_set_team` included.
 All of them are refused inside `on_setup`: the round is still being built
@@ -2003,6 +2017,7 @@ The `code` a refused write answers, as a string.
 | `SCN_OP_RATE` | A budget for the tick is spent, or a second `fill_rect` was asked for while one is still landing. |
 | `SCN_OP_NOT_FOUND` | A brain that does not resolve: a name this server does not have, a path written where a name belongs, or a `package:NAME`. |
 | `SCN_OP_NO_STOCK` | A builder order the tank cannot pay for. |
+| `SCN_OP_NO_RUNNER` | The seat is a bot's, but no brain is behind it: a held seat that has never been fielded. A seat off the field keeps its brain and is not this. |
 | `SCN_OP_BAD_CALL` | The call itself is malformed. |
 
 ---

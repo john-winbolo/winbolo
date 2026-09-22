@@ -2497,18 +2497,27 @@ bool botManagerSetLuaGlobalString(ServerSim *sim, BYTE playerNum,
  * the brain-think stage: the VM being written into is theirs for that
  * window.
  *
+ * A seat off the field is written too, so long as its runner is still here:
+ * the unfielding parks the runner and leaves the VM standing, so the global
+ * is rebuilt where it sits and the refield finds it already carrying the new
+ * table. That refield still resumes rather than rebuilds, because what it
+ * compares itself against is builtInit — the table the VM was made with —
+ * and this writes initTable, which is the live record. A wave that retunes a
+ * seat between fieldings therefore costs nothing.
+ *
  * A bot whose brain is not running keeps the table and is answered true: the
  * record is what the next VM is built from, so the script's change is not
- * lost. False means the seat holds no bot of ours, or the brain refused the
- * call — its on_init raised — and the console carries the reason. */
+ * lost. False means the seat has no runner to hold the table for, or the
+ * brain refused the call — its on_init raised — and the console carries the
+ * reason. */
 bool botManagerSetBotInitTable(ServerSim *sim, BYTE playerNum,
                                const ScnTable *init) {
     BotContext *bot;
     char        why[256];
 
     if (sim == NULL || playerNum >= MAX_TANKS) return false;
+    if (!botManagerHasRunner(sim, playerNum)) return false;
     bot = &sim->botMgr.bots[playerNum];
-    if (!bot->active) return false;
 
     if (init != NULL) {
         bot->initTable = *init;
@@ -2542,7 +2551,10 @@ bool botManagerSetBotInitTable(ServerSim *sim, BYTE playerNum,
 
 const ScnTable *botManagerGetBotInitTable(ServerSim *sim, BYTE playerNum) {
     if (sim == NULL || playerNum >= MAX_TANKS) return NULL;
-    if (!sim->botMgr.bots[playerNum].active) return NULL;
+    /* The same seats the setter takes. A parked runner holds its table as
+       much as a fielded one does, and a reader that could be written to but
+       not read back would be the odd one out. */
+    if (!botManagerHasRunner(sim, playerNum)) return NULL;
     return &sim->botMgr.bots[playerNum].initTable;
 }
 

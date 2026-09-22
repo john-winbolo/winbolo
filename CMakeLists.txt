@@ -6144,6 +6144,7 @@ set(_unit_test_names
     bot_init_arg_text_to_table
     scenario_bot_init_lands
     scenario_bot_init_refusals
+    scenario_bot_init_parked_seat
     brain_on_init_update
     editor_script_path
     editor_script_round_trip

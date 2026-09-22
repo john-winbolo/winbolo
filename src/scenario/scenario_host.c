@@ -176,6 +176,7 @@ static const char *scnResultText(ScnOpResult r) {
         case SCN_OP_RATE:           return "over the tick's budget";
         case SCN_OP_NOT_FOUND:      return "not found";
         case SCN_OP_NO_STOCK:       return "not enough stock";
+        case SCN_OP_NO_RUNNER:      return "that seat has no brain behind it";
         case SCN_OP_BAD_CALL:       return "malformed call";
     }
     return "refused";

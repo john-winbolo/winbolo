@@ -1888,6 +1888,25 @@ static ScnOpResult scenarioRemovableBot(ServerSim *sim, BYTE slot) {
     return SCN_OP_OK;
 }
 
+/* The slot a bot_init names, which is the removal's question and one more:
+ * something has to be there to hold the table. A fielded bot holds it and so
+ * does a seat whose runner is parked — the VM is still standing behind an
+ * unfielded seat, and the refield resumes onto it. A held seat that has never
+ * been fielded has no runner at all, and a table written for it would go
+ * nowhere, so the script hears that rather than an acceptance.
+ *
+ * Its own question and not scenarioRemovableBot's: a held seat is legitimately
+ * removable and legitimately moved between teams, and the two arms that ask
+ * that must keep taking it. */
+static ScnOpResult scenarioBotInitTarget(ServerSim *sim, BYTE slot) {
+    ScnOpResult r = scenarioRemovableBot(sim, slot);
+    if (r != SCN_OP_OK) return r;
+    if (!botManagerHasRunner(sim, slot)) {
+        return SCN_OP_NO_RUNNER;
+    }
+    return SCN_OP_OK;
+}
+
 /* Take the bot out of a seat a script named. A seat that was seeded to be
  * held — the kind a wave fields and refields — goes back to being held
  * rather than being emptied, so the next wave still has it; every other seat
@@ -2459,9 +2478,9 @@ static ScnOpResult scenarioOpRosterRemoveBot(ServerSim *sim,
 /* Hand a bot already in the round a new init table.
  *
  * The payload is checked here, as the spawn's is, so a script hears about a
- * table that will not fit or a seat that holds no bot of ours at the moment
+ * table that will not fit or a seat that has nothing to hold it at the moment
  * it asks. What the seat holds is asked again as the change lands, because
- * by then the bot may have died, left or been taken off the field.
+ * by then the bot may have died or left.
  *
  * It queues with the spawns and the removals rather than writing into the
  * brain's Lua state where it stands. A script calls from inside a hook,
@@ -2477,9 +2496,8 @@ static ScnOpResult scenarioOpRosterBotInit(ServerSim *sim,
     r = scenarioRequireRunning(sim);
     if (r != SCN_OP_OK) return r;
     /* An empty seat and a human seat, under the same two codes the removal
-       row answers with: it is the same question about the same kind of
-       seat. */
-    r = scenarioRemovableBot(sim, p->slot);
+       row answers with, and a seat with no runner under one of its own. */
+    r = scenarioBotInitTarget(sim, p->slot);
     if (r != SCN_OP_OK) return r;
     /* The table reaches a Lua VM, so every string in it must end inside its
        own field, as a spawn's must. */
@@ -2703,20 +2721,19 @@ static void scenarioRosterRemoveNow(ServerSim *sim, BYTE slot) {
     scenarioTakeBotOut(sim, slot);
 }
 
-/* Make a queued init table. The seat is asked about again — a bot that died,
- * left or went back to being a held seat between the ask and the landing is
- * no longer one to write into — and then the table goes to the bot manager,
- * which is what owns the brain's Lua state.
+/* Make a queued init table. The seat is asked about again — a bot that died
+ * or left between the ask and the landing is no longer one to write into —
+ * and then the table goes to the bot manager, which is what owns the brain's
+ * Lua state.
  *
- * A bot whose brain is not running takes the table without the brain being
- * told: the record is kept on the bot either way, so nothing about what the
- * script asked for is lost. */
+ * A seat taken off the field in that window is still written: the unfielding
+ * parks its runner rather than releasing it, so the VM the table is for is
+ * still there and the refield resumes onto it. What is refused here is the
+ * seat that lost its runner altogether, which is the same thing the queue-time
+ * check refuses and is why the drop needs no line of its own. */
 static void scenarioRosterBotInitNow(ServerSim *sim,
                                      const ScnOpRosterBotInit *p) {
-    if (scenarioRemovableBot(sim, p->slot) != SCN_OP_OK) {
-        WB_LOG_WARN(WB_LOG_CAT_SIM,
-                    "scenario: queued bot_init dropped, seat %d holds no bot "
-                    "of ours", (int)p->slot);
+    if (scenarioBotInitTarget(sim, p->slot) != SCN_OP_OK) {
         return;
     }
     if (!botManagerSetBotInitTable(sim, p->slot, &p->init)) {

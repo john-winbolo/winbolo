@@ -10,7 +10,8 @@
  * The two halves are tested apart, because the unit binary has no Lua brain
  * — luabrainshandler.c stays out of its dependency closure, so
  * luaBrainInstanceCreate is the fixture in test_stubs.c and a bot here has
- * no lua_State at all.
+ * no lua_State unless a case asks for one with ut_brain_stub_lua, which gets
+ * it a bare state with no libraries in it.
  *
  *   - the op half is driven through serverSimApplyScenarioOp on a running
  *     sim with a stub-brained bot in a seat, and read back off the bot with
@@ -24,6 +25,12 @@
  * run_scenario_bot_init_refusals  — a human seat, an empty seat, a seat off
  *                                   the end, a table too big, and a setup
  *                                   window; and none of them writes
+ * run_scenario_bot_init_parked_seat
+ *                                 — a seat taken off the field takes one too,
+ *                                   on the runner parked behind it, and the
+ *                                   refield comes back onto that runner
+ *                                   carrying it; a seat nothing has fielded
+ *                                   yet has no runner and is refused
  * run_brain_on_init_update        — the global is rebuilt either way, and
  *                                   on_init is called when it is there and
  *                                   its error is survived when it raises
@@ -120,6 +127,85 @@ static void biInitOp(ScenarioOp *op, BYTE slot) {
     memset(op, 0, sizeof(*op));
     op->type                 = SCN_OP_ROSTER_BOT_INIT;
     op->u.rosterBotInit.slot = slot;
+}
+
+/* ── A seat fielded, taken off and fielded again ──────────────────── */
+
+/* The team the held seat is on. Any team but the human's will do; the seat
+ * needs one because a wave's seats are on one. */
+#define BI_TEAM 3
+
+/* The spawn a wave makes onto a held seat: the seat by number, its own team
+ * and brain, and the one init table every wave fields it with. The table is
+ * the same each time on purpose — a spawn carrying a different one is what
+ * costs the seat a fresh runner, and this case is about the write that does
+ * not. */
+static void biFieldOp(ScenarioOp *op, BYTE slot) {
+    memset(op, 0, sizeof(*op));
+    op->type                   = SCN_OP_ROSTER_SPAWN_BOT;
+    op->u.rosterSpawnBot.slot  = slot;
+    op->u.rosterSpawnBot.start = SCN_NONE;
+    biPair(&op->u.rosterSpawnBot.init, "role", "scout");
+}
+
+static void biRemoveOp(ScenarioOp *op, BYTE slot) {
+    memset(op, 0, sizeof(*op));
+    op->type                   = SCN_OP_ROSTER_REMOVE_BOT;
+    op->u.rosterRemoveBot.slot = slot;
+}
+
+/* Queue one op and give the drain the tick it makes its one roster change
+ * in. */
+static bool biApplyOne(ServerSim *sim, const ScenarioOp *op) {
+    if (serverSimApplyScenarioOp(sim, op, NULL) != SCN_OP_QUEUED) return false;
+    serverSimTick(sim);
+    return true;
+}
+
+/* A running round holding one seat the scenario keeps: the shape a wave-based
+ * scenario plays in, where a seat is fielded, taken off the field and fielded
+ * again. Built here rather than off biRunningSim because a held seat is a
+ * lobby seat and that fixture runs with the lobby off. */
+static ServerSim *biHeldSeatSim(BYTE seat) {
+    BYTE       emap[6000] = E_MAP;
+    ServerSim *sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+                                               gameOpen, false, 0, -1);
+
+    if (sim == NULL) return NULL;
+    serverSimSetLobbyEnabled(sim, true);
+    serverSimAddPlayer(sim, 0, "Human", false);
+    sim->lobbyPlayers[0].ready = true;
+    serverSimSetBotAiType(sim, aiFull);
+    serverSimSetBotBrainPath(sim, biBrainPath);
+    if (!serverSimAddUnfieldedSeat(sim, seat, "Raider1", BI_TEAM)) {
+        serverSimDestroy(sim);
+        return NULL;
+    }
+    serverSimStartGame(sim);
+    if (sim->state != serverStateRunning) {
+        serverSimDestroy(sim);
+        return NULL;
+    }
+    return sim;
+}
+
+/* One key of a VM's BRAIN_INIT, as text; "" when the global is not a table or
+ * does not hold the key. Read through the C API rather than by running a
+ * chunk, because the state behind a bot in this binary is opened with no
+ * libraries in it — there is no tostring to call. */
+static void biBrainInitValue(lua_State *L, const char *key, char *out,
+                             size_t cap) {
+    const char *s;
+
+    out[0] = '\0';
+    lua_getglobal(L, "BRAIN_INIT");
+    if (lua_istable(L, -1)) {
+        lua_getfield(L, -1, key);
+        s = lua_tostring(L, -1);
+        if (s != NULL) snprintf(out, cap, "%s", s);
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
 }
 
 /* The op lands a tick after it is asked for, like every other roster
@@ -251,6 +337,118 @@ int run_scenario_bot_init_refusals(void) {
                   "a refused bot_init wrote something: %d pairs",
                   (int)held->count);
     UT_ASSERT(scnTableGet(held, "role") != NULL);
+
+    serverSimDestroy(sim);
+    biDropBrainFile();
+    return 0;
+}
+
+/* A seat off the field is still one a script may write into, and a seat that
+ * has never been on it is not.
+ *
+ * Taking a bot off the field parks its runner rather than tearing it down, so
+ * the VM the table is for is still standing behind the seat: the write lands
+ * on it where it waits, and the refield comes back onto the same runner
+ * already carrying the new pairs. A held seat that nothing has fielded yet has
+ * no runner at all, and hears about it at the moment it asks.
+ *
+ * This case needs a Lua state behind the bot, which the cheap stub does not
+ * make — what it is checking is what reached the VM, not only what the bot
+ * manager wrote down. */
+int run_scenario_bot_init_parked_seat(void) {
+    ServerSim      *sim;
+    ScenarioOp      op;
+    const ScnTable *held;
+    lua_State      *L;
+    char            seen[128];
+    const BYTE      seat = 1;
+
+    UT_ASSERT(biMakeBrainFile("parked_seat"));
+    ut_brain_stub_arm(true);
+    ut_brain_stub_lua(true);
+    sim = biHeldSeatSim(seat);
+    UT_ASSERT(sim != NULL);
+
+    /* Nothing has fielded the seat, so there is no brain behind it to hold a
+       table. The script hears that here rather than having the op accepted
+       and thrown away a tick later. */
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 0,
+                  "the held seat has had %d brains made for it before anything "
+                  "fielded it, expected 0", ut_brain_stub_creates(seat));
+    biInitOp(&op, seat);
+    biPair(&op.u.rosterBotInit.init, "noblitz", "1");
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_NO_RUNNER,
+                  "a seat with no runner should be refused as such");
+
+    /* Field it, and take hold of the VM the fielding built. */
+    biFieldOp(&op, seat);
+    UT_ASSERT(biApplyOne(sim, &op));
+    UT_ASSERT_MSG(sim->lobbyPlayers[seat].fielded,
+                  "the spawn did not field the seat");
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 1,
+                  "fielding the seat made %d brains for it, expected 1",
+                  ut_brain_stub_creates(seat));
+    L = sim->botMgr.bots[seat].brain.L;
+    UT_ASSERT_MSG(L != NULL, "the fielded seat has no Lua state behind it");
+
+    /* Off the field: the runner parks and the VM stays where it is. */
+    biRemoveOp(&op, seat);
+    UT_ASSERT(biApplyOne(sim, &op));
+    UT_ASSERT_MSG(!sim->lobbyPlayers[seat].fielded,
+                  "the removal left the seat on the field");
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].parked,
+                  "the unfielded seat does not read as parked");
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].brain.L == L,
+                  "the park took the seat's Lua state with it");
+
+    /* The write itself, onto the seat while it is off the field. */
+    biInitOp(&op, seat);
+    biPair(&op.u.rosterBotInit.init, "noblitz", "1");
+    UT_ASSERT_MSG(serverSimApplyScenarioOp(sim, &op, NULL) == SCN_OP_QUEUED,
+                  "bot_init on a parked seat should queue like any other");
+    serverSimTick(sim);
+
+    held = botManagerGetBotInitTable(sim, seat);
+    UT_ASSERT_MSG(held != NULL, "the parked seat is holding no table");
+    UT_ASSERT_MSG(held->count == 1,
+                  "the parked seat holds %d pairs, expected the new table "
+                  "whole", (int)held->count);
+    UT_ASSERT_MSG(strcmp(held->kv[0].key, "noblitz") == 0,
+                  "the parked seat holds '%s'", held->kv[0].key);
+    UT_ASSERT_MSG(scnTableGet(held, "role") == NULL,
+                  "the table the spawn gave it should be gone");
+
+    /* And on the VM, which is where a brain reads it: rebuilt where the runner
+       waits, not held back until the seat is fielded again. */
+    biBrainInitValue(L, "noblitz", seen, sizeof(seen));
+    UT_ASSERT_MSG(strcmp(seen, "1") == 0,
+                  "the parked VM's BRAIN_INIT reads noblitz='%s'", seen);
+
+    /* Field it again, with the table the first wave carried. The spawn is
+       matched against the table the VM was BUILT with, which bot_init does not
+       touch, so this is the same runner and not a new one. */
+    biFieldOp(&op, seat);
+    UT_ASSERT(biApplyOne(sim, &op));
+    UT_ASSERT_MSG(sim->lobbyPlayers[seat].fielded,
+                  "the second spawn did not field the seat");
+    UT_ASSERT_MSG(ut_brain_stub_creates(seat) == 1,
+                  "the seat has had %d brains made for it over a field, an "
+                  "unfield, a bot_init and a refield, expected 1 — writing a "
+                  "table while it was parked must not cost it a rebuild",
+                  ut_brain_stub_creates(seat));
+    UT_ASSERT_MSG(sim->botMgr.bots[seat].brain.L == L,
+                  "the refielded seat is running on a different Lua state");
+
+    /* What it came back holding is what was written while it was off. */
+    held = botManagerGetBotInitTable(sim, seat);
+    UT_ASSERT(held != NULL);
+    UT_ASSERT_MSG(held->count == 1 &&
+                      strcmp(held->kv[0].key, "noblitz") == 0,
+                  "the refielded seat is not holding the table written while "
+                  "it was parked");
+    biBrainInitValue(L, "noblitz", seen, sizeof(seen));
+    UT_ASSERT_MSG(strcmp(seen, "1") == 0,
+                  "the refielded VM's BRAIN_INIT reads noblitz='%s'", seen);
 
     serverSimDestroy(sim);
     biDropBrainFile();

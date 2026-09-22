@@ -1128,15 +1128,19 @@ bool botManagerSetLuaGlobalString(struct ServerSim *sim, BYTE playerNum,
 /*********************************************************
  *NAME:          botManagerSetBotInitTable
  *PURPOSE:
- *  Replace a running bot's init table: the bot's own copy
- *  (what a later brain swap rebuilds its VM from) and,
- *  when the brain is running, the BRAIN_INIT global plus a
- *  call to the brain's Brain.on_init(t).
+ *  Replace a bot's init table: the bot's own copy (what a
+ *  later brain swap rebuilds its VM from) and, when the
+ *  brain is running, the BRAIN_INIT global plus a call to
+ *  the brain's Brain.on_init(t).
+ *
+ *  A seat off the field takes it too while its runner is
+ *  parked: the VM is still standing, so the global is
+ *  written where it sits and the refield resumes onto it.
  *
  *  Producer thread only, between ticks — the brain's Lua
  *  state belongs to a worker during the think stage.
  *
- *  Returns false when the seat holds no bot of ours, or
+ *  Returns false when the seat has no runner at all, or
  *  when the brain's on_init raised (which is logged, not
  *  fatal).
  *
@@ -1152,8 +1156,8 @@ bool botManagerSetBotInitTable(struct ServerSim *sim, BYTE playerNum,
  *PURPOSE:
  *  The init table a bot is holding now — the one it was
  *  created with, or the last one handed to it. NULL when
- *  the seat holds no bot. The pointer is the bot's own and
- *  lives as long as the bot does.
+ *  the seat has no runner, fielded or parked. The pointer
+ *  is the bot's own and lives as long as the runner does.
  *********************************************************/
 const ScnTable *botManagerGetBotInitTable(struct ServerSim *sim,
                                           BYTE playerNum);
