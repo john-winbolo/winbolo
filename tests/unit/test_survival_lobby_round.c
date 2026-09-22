@@ -67,6 +67,7 @@
 #include "server_sim_internal.h"   /* state, lobbyPlayers, the pill list */
 #include "server_sim_lifecycle.h"  /* StartGame / the ready check / bot config */
 #include "server_sim_scenario.h"   /* serverSimScenarioSeatLobby */
+#include "server_sim_join.h"       /* serverSimFindFreeSlot */
 #include "tank.h"                 /* tankKillNow: an attacker dies mid-wave */
 #include "control_event.h"
 #include "scenario_host.h"

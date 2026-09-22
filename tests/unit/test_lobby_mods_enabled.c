@@ -45,6 +45,7 @@
 #include "global.h"
 #include "client_command.h"               /* CMD_LOBBY_SETTING, CmdResult */
 #include "client_sim.h"
+#include "client_sim_control.h"           /* clientSimApplyControl */
 #include "control_event.h"
 #include "transport_control_codec.h"
 #include "server_sim.h"

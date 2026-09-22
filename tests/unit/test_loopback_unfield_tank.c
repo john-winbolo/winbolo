@@ -42,7 +42,8 @@
 #include "client_enums.h"
 #include "server_sim.h"
 #include "server_sim_internal.h"   /* lobbyPlayers — the seat's fielded flag */
-#include "server_sim_lifecycle.h"  /* AddUnfieldedSeat / UnfieldBot / bot cfg */
+#include "server_sim_lifecycle.h"  /* serverSimSetBotAiType */
+#include "server_sim_scenario.h"   /* AddUnfieldedSeat / UnfieldBot */
 #include "input_packet.h"
 #include "screentank.h"
 #include "test_harness.h"
