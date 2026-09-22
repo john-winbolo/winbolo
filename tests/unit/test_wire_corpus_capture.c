@@ -11,7 +11,7 @@
  *   WB_FIXTURE_DIR=tests/fixtures/wire \
  *       ./WinBoloUnitTests --test wire_corpus_capture
  *
- * then commit the changed tests/fixtures/wire/*.hex.
+ * then commit the changed tests/fixtures/wire/ *.hex.
  */
 #include <stdint.h>
 #include <stdio.h>
