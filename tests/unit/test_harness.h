@@ -3044,7 +3044,8 @@ int run_scenario_lua_acting_rows_refuse_a_check(void);
  * memory cap a script is refused at, the instruction budget one call is cut
  * off at, the two catchers that are not allowed to keep the error it raises,
  * the os.date format that is read before it reaches strftime, and the console
- * lines one call may print. */
+ * lines one call may print, and the strings the library's C functions may
+ * build or search. */
 int run_scenario_sandbox_removed_names_are_nil(void);
 int run_scenario_sandbox_bytecode_chunk_refused(void);
 int run_scenario_sandbox_collectgarbage_stop_refused(void);
@@ -3060,6 +3061,8 @@ int run_scenario_sandbox_budget_survives_a_coroutine(void);
 int run_scenario_sandbox_os_date_refuses_a_bad_format(void);
 int run_scenario_sandbox_print_bounded_in_one_call(void);
 int run_scenario_sandbox_print_allowance_returns(void);
+int run_scenario_sandbox_string_cap_on_results(void);
+int run_scenario_sandbox_string_cap_on_subjects(void);
 
 /* The bus events (test_scenario_events.c): the subscriber that only
  * queues, the bounded drain at the end of each tick, and what a full

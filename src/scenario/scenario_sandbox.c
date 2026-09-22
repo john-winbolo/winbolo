@@ -24,6 +24,16 @@
  *  it, because pcall, xpcall and coroutine.resume are given
  *  to it wrapped in a closure that raises it again.
  *
+ *  The count cannot see inside a C function, so a string.rep
+ *  that builds a string of a gigabyte is one instruction to
+ *  it, and only the memory cap would stand in the way. So
+ *  the functions that build a string as long as the script
+ *  asks — string.rep, string.format and table.concat — and
+ *  the four that run a pattern over one — find, match,
+ *  gmatch and gsub — are wrapped too, and refuse a string
+ *  over SCN_STRING_MAX with an ordinary error the script is
+ *  free to catch.
+ *
  *  Opening them one at a time is what takes io, package,
  *  debug and, under LuaJIT, ffi, jit and bit away: none of
  *  them is ever created, so there is nothing to strip. What
@@ -758,6 +768,282 @@ static int scnSandboxDate(lua_State *L) {
     return lua_gettop(L);
 }
 
+/* ── The strings a C function may build ───────────────────────────── */
+
+/* Each of the seven below is a closure over the original, which is upvalue
+ * 1 as collectgarbage's is, and over the name a script knows it by, which is
+ * upvalue 2 and is what a refusal is worded with. */
+static int scnSandboxStringForward(lua_State *L) {
+    int n = lua_gettop(L);
+
+    lua_pushvalue(L, lua_upvalueindex(1));
+    lua_insert(L, 1);
+    lua_call(L, n, LUA_MULTRET);
+    return lua_gettop(L);
+}
+
+/* An ordinary error, and not the budget's: the latch is left alone, so a
+   script that catches this keeps what it caught and may try something
+   shorter. The length is written through snprintf because the two VMs'
+   lua_pushfstring do not agree on how to print a number that is not an
+   int, and one refused here can be past what an int holds. */
+static int scnSandboxStringRefuse(lua_State *L, const char *what,
+                                  double len) {
+    char said[192];
+
+    snprintf(said, sizeof(said),
+             "%s %s %.15g bytes, and %u is as long as one may be",
+             lua_tostring(L, lua_upvalueindex(2)), what, len,
+             (unsigned)SCN_STRING_MAX);
+    return luaL_error(L, "%s", said);
+}
+
+/* The same for string.rep's count, where the length would say nothing:
+   copies of an empty string come to no bytes however many there are. */
+static int scnSandboxStringRefuseCount(lua_State *L, double count) {
+    char said[192];
+
+    snprintf(said, sizeof(said),
+             "%s was asked for %.15g copies, and %u is as many as one may "
+             "make", lua_tostring(L, lua_upvalueindex(2)), count,
+             (unsigned)SCN_STRING_MAX);
+    return luaL_error(L, "%s", said);
+}
+
+/* The length the string or number at idx has as a string. A number is
+   converted on a copy, so the argument the original reads is the one the
+   script passed. False for anything else, which is left to the original to
+   refuse in its own words. */
+static bool scnSandboxStringLen(lua_State *L, int idx, size_t *len) {
+    int t = lua_type(L, idx);
+
+    if (t != LUA_TSTRING && t != LUA_TNUMBER) {
+        return false;
+    }
+    lua_pushvalue(L, idx);
+    lua_tolstring(L, -1, len);
+    lua_pop(L, 1);
+    return true;
+}
+
+/* string.rep, refused before anything is built. The result is n copies with
+ * n - 1 separators between them, and 5.4 and LuaJIT 2.1 both take the
+ * separator.
+ *
+ * The count is rounded up rather than down, so a fractional one is judged by
+ * the longest thing a VM could make of it: LuaJIT truncates and 5.4 refuses
+ * one outright, and either way nothing longer than what is checked here is
+ * built. A count of zero or less builds "", and a NaN is the original's to
+ * answer, so both go straight through.
+ *
+ * A count over SCN_STRING_MAX is refused whatever the strings are, empty ones
+ * included: 5.4 runs its copy loop once per copy even when there is nothing
+ * to copy, and the hook cannot see that loop either. Where the strings have a
+ * byte in them the refusal gives the length they would have come to; where
+ * they are empty it gives the count, since the length would be nothing.
+ *
+ * Nothing here can overflow. A count past SCN_STRING_MAX + 1 is refused
+ * before it is converted. Below that the count fits in seventeen bits, and
+ * each length is checked against the cap before it is multiplied, so the
+ * product is well inside 64 bits. */
+static int scnSandboxStringRep(lua_State *L) {
+    size_t     len    = 0;
+    size_t     seplen = 0;
+    lua_Number want;
+    uint64_t   n;
+    uint64_t   total;
+
+    if (!scnSandboxStringLen(L, 1, &len) || !lua_isnumber(L, 2) ||
+        (!lua_isnoneornil(L, 3) && !scnSandboxStringLen(L, 3, &seplen))) {
+        return scnSandboxStringForward(L);
+    }
+    want = lua_tonumber(L, 2);
+    if (!(want >= 1.0)) {
+        return scnSandboxStringForward(L);
+    }
+    if (want > (lua_Number)SCN_STRING_MAX + 1.0) {
+        if (len > 0 || seplen > 0) {
+            return scnSandboxStringRefuse(
+                L, "would build a string of",
+                (double)want * (double)len +
+                    ((double)want - 1.0) * (double)seplen);
+        }
+        return scnSandboxStringRefuseCount(L, (double)want);
+    }
+    n = (uint64_t)want;
+    if ((lua_Number)n < want) {
+        n++;
+    }
+    if (n > 1 && seplen > (size_t)SCN_STRING_MAX) {
+        return scnSandboxStringRefuse(L, "would build a string of more than",
+                                      (double)seplen);
+    }
+    if (len > (size_t)SCN_STRING_MAX) {
+        return scnSandboxStringRefuse(L, "would build a string of more than",
+                                      (double)len);
+    }
+    total = n * (uint64_t)len + (n - 1) * (uint64_t)seplen;
+    if (total > (uint64_t)SCN_STRING_MAX) {
+        return scnSandboxStringRefuse(L, "would build a string of",
+                                      (double)total);
+    }
+    if (n > (uint64_t)SCN_STRING_MAX) {
+        return scnSandboxStringRefuseCount(L, (double)n);
+    }
+    return scnSandboxStringForward(L);
+}
+
+/* table.concat, refused before anything is built. The walk reads the same
+ * range the original will: i from the third argument or 1, j from the fourth
+ * or the table's length. LuaJIT reads both as 32-bit integers and takes the
+ * length raw; 5.4 reads them as lua_Integer and takes the length through
+ * luaL_len, which honours __len.
+ *
+ * Each element is read the way that VM's original reads it: raw under
+ * LuaJIT, and through lua_geti under 5.4, which honours __index — a table
+ * whose elements come from __index would otherwise pass the walk empty and be
+ * built in full by the original. An __index function is script code, so it
+ * runs under the count like any other, and an error it raises goes to the
+ * caller as it would from the original.
+ *
+ * The walk stops as soon as the running total is over the cap, so a table of
+ * any size costs no more than the cap's worth of elements to judge. Each
+ * addition is made against the room remaining, so the total never passes the
+ * cap and nothing can overflow. An element that is neither a string nor a
+ * number ends the walk and is left to the original, which refuses it in its
+ * own words. */
+static int scnSandboxTableConcat(lua_State *L) {
+    size_t   seplen = 0;
+    size_t   len;
+    uint64_t total  = 0;
+    bool     ok;
+#ifdef WINBOLO_LUAJIT
+    int         i;
+    int         j;
+    int         k;
+#else
+    lua_Integer i;
+    lua_Integer j;
+    lua_Integer k;
+#endif
+
+    if (!lua_istable(L, 1) ||
+        (!lua_isnoneornil(L, 2) && !scnSandboxStringLen(L, 2, &seplen))) {
+        return scnSandboxStringForward(L);
+    }
+#ifdef WINBOLO_LUAJIT
+    i = luaL_optint(L, 3, 1);
+    j = lua_isnoneornil(L, 4) ? (int)lua_objlen(L, 1) : luaL_checkint(L, 4);
+#else
+    i = luaL_optinteger(L, 3, 1);
+    j = lua_isnoneornil(L, 4) ? luaL_len(L, 1) : luaL_checkinteger(L, 4);
+#endif
+    if (i <= j) {
+        /* Stepped by hand rather than with k <= j, which never ends when j is
+           the largest integer there is. */
+        for (k = i;; k++) {
+#ifdef WINBOLO_LUAJIT
+            lua_rawgeti(L, 1, k);
+#else
+            lua_geti(L, 1, k);
+#endif
+            ok = scnSandboxStringLen(L, -1, &len);
+            lua_pop(L, 1);
+            if (!ok) {
+                return scnSandboxStringForward(L);
+            }
+            if (k != i) {
+                if (seplen > (size_t)SCN_STRING_MAX - total) {
+                    return scnSandboxStringRefuse(
+                        L, "would build a string of at least",
+                        (double)total + (double)seplen);
+                }
+                total += seplen;
+            }
+            if (len > (size_t)SCN_STRING_MAX - total) {
+                return scnSandboxStringRefuse(
+                    L, "would build a string of at least",
+                    (double)total + (double)len);
+            }
+            total += len;
+            if (k == j) {
+                break;
+            }
+        }
+    }
+    return scnSandboxStringForward(L);
+}
+
+/* string.format, refused up front where the format or a string argument is
+ * already over the cap, and otherwise once the original has answered. Its
+ * result is bounded by what it was given — a width or a precision stops at
+ * two digits — so this is the one of the three that may build first and look
+ * after. The string it built is dropped with the error and collected like
+ * any other. */
+static int scnSandboxStringFormat(lua_State *L) {
+    int    n   = lua_gettop(L);
+    size_t len = 0;
+    int    a;
+
+    for (a = 1; a <= n; a++) {
+        if (lua_type(L, a) == LUA_TSTRING) {
+            lua_tolstring(L, a, &len);
+            if (len > (size_t)SCN_STRING_MAX) {
+                return scnSandboxStringRefuse(
+                    L, a == 1 ? "was given a format of"
+                              : "was given a string of",
+                    (double)len);
+            }
+        }
+    }
+    scnSandboxStringForward(L);
+    if (lua_type(L, 1) == LUA_TSTRING) {
+        lua_tolstring(L, 1, &len);
+        if (len > (size_t)SCN_STRING_MAX) {
+            return scnSandboxStringRefuse(L, "built a string of",
+                                          (double)len);
+        }
+    }
+    return lua_gettop(L);
+}
+
+/* find, match, gmatch and gsub, refused before the pattern runs. Only a
+ * string subject is measured: a number's text is a couple of dozen bytes at
+ * most, and anything else is the original's to refuse. */
+static int scnSandboxStringSubject(lua_State *L) {
+    size_t len = 0;
+
+    if (lua_type(L, 1) == LUA_TSTRING) {
+        lua_tolstring(L, 1, &len);
+        if (len > (size_t)SCN_STRING_MAX) {
+            return scnSandboxStringRefuse(L, "was given a subject of",
+                                          (double)len);
+        }
+    }
+    return scnSandboxStringForward(L);
+}
+
+/* One field of a library table replaced by one of the closures above, as
+   scnSandboxGuardField does for the catchers, with the name a refusal reads
+   beside the original. */
+static void scnSandboxStringField(lua_State *L, const char *table,
+                                  const char *key, lua_CFunction wrap) {
+    lua_getglobal(L, table);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        return;
+    }
+    lua_getfield(L, -1, key);
+    if (lua_isfunction(L, -1)) {
+        lua_pushfstring(L, "%s.%s", table, key);
+        lua_pushcclosure(L, wrap, 2);
+        lua_setfield(L, -2, key);
+    } else {
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+}
+
 /* ── The one error a script may not keep ──────────────────────────── */
 
 /* pcall, xpcall and coroutine.resume, each over the original.
@@ -898,6 +1184,21 @@ void scnSandboxOpenLibs(lua_State *L) {
         }
     }
     lua_pop(L, 1);
+
+    /* string is also the __index of the string metatable, so replacing the
+       fields here covers a method call such as ("x"):rep(n) as well. */
+    scnSandboxStringField(L, LUA_STRLIBNAME, "rep", scnSandboxStringRep);
+    scnSandboxStringField(L, LUA_STRLIBNAME, "format",
+                          scnSandboxStringFormat);
+    scnSandboxStringField(L, LUA_TABLIBNAME, "concat",
+                          scnSandboxTableConcat);
+    scnSandboxStringField(L, LUA_STRLIBNAME, "find", scnSandboxStringSubject);
+    scnSandboxStringField(L, LUA_STRLIBNAME, "match",
+                          scnSandboxStringSubject);
+    scnSandboxStringField(L, LUA_STRLIBNAME, "gmatch",
+                          scnSandboxStringSubject);
+    scnSandboxStringField(L, LUA_STRLIBNAME, "gsub",
+                          scnSandboxStringSubject);
 
     /* Last, so each of these closes over the function its own opener
        installed rather than over something replaced afterwards. coroutine is

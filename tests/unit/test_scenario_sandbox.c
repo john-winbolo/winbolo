@@ -48,6 +48,12 @@
  * run_scenario_sandbox_print_allowance_returns
  *      — a hook printing modestly is never cut, over enough ticks that a
  *        count climbing across the round would show
+ * run_scenario_sandbox_string_cap_on_results
+ *      — rep, format and concat build a string of exactly the cap and
+ *        refuse one a byte longer, rep through a method call as well
+ * run_scenario_sandbox_string_cap_on_subjects
+ *      — find, match, gmatch and gsub search a subject of exactly the cap
+ *        and refuse one a byte longer
  */
 
 #include <stdint.h>
@@ -1226,6 +1232,291 @@ int run_scenario_sandbox_print_allowance_returns(void) {
     UT_ASSERT_MSG(strstr(sbLines, "raised") == NULL,
                   "a call inside both bounds was counted as an error. The "
                   "console holds:\n%s", sbLines);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+    return 0;
+}
+
+/* ── The string cap, for the two cases below ──────────────────────── */
+
+/* Whether the console line that begins with prefix also carries needle
+   before it ends. A refusal is one line, so this is what says the error
+   named the function rather than some other line having done so. */
+static bool sbLineHas(const char *prefix, const char *needle) {
+    const char *p = strstr(sbLines, prefix);
+    const char *end;
+    const char *hit;
+
+    if (p == NULL) {
+        return false;
+    }
+    end = strchr(p, '\n');
+    hit = strstr(p, needle);
+    return hit != NULL && (end == NULL || hit < end);
+}
+
+/* What one refusal is expected to say: the line's label, the function its
+   error names, and whether the length it gives is the cap plus one. */
+typedef struct {
+    const char *label;
+    const char *fn;
+    bool        byOne;
+} SbRefusal;
+
+/* The attach, the round and the ticks both cases share. The script's lines
+   are left in sbLines; the round is checked still running before this
+   hands the sim back. */
+static int sbRunCap(const char *map, const char *lua, ServerSim **simOut,
+                    ScenarioHost **hOut) {
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+    int           i;
+
+    UT_ASSERT(sbPutText(map, lua));
+    sim = sbSim();
+    UT_ASSERT(sim != NULL);
+
+    sbWatchConsole(sim);
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, map, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    serverSimStartGame(sim);
+    serverSimTick(sim);              /* the first running tick: on_start */
+    for (i = 0; i < 5; i++) {
+        serverSimTick(sim);          /* and the round after it */
+    }
+    sbUnwatchConsole(sim);
+
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "the round is in state %d, expected it to still be running "
+                  "after the refusals", (int)serverSimGetState(sim));
+    *simOut = sim;
+    *hOut   = h;
+    return 0;
+}
+
+/* Every refusal is there once, names its function, and — where the case
+   built it to be one byte over — gives that length. The two counts are what
+   say nothing else was refused and nothing at the cap was: every line the
+   script prints begins with one of the two. */
+static int sbCheckCap(const char *const *oks, size_t nOk, const char *okTail,
+                      const SbRefusal *nos, size_t nNo) {
+    char   want[96];
+    char   over[32];
+    size_t i;
+
+    UT_ASSERT_MSG(sbCount("cap ok ") == (int)nOk,
+                  "%d strings at the cap were built, expected %d. The "
+                  "console holds:\n%s", sbCount("cap ok "), (int)nOk,
+                  sbLines);
+    UT_ASSERT_MSG(sbCount("cap no ") == (int)nNo,
+                  "%d strings were refused, expected %d. The console "
+                  "holds:\n%s", sbCount("cap no "), (int)nNo, sbLines);
+    for (i = 0; i < nOk; i++) {
+        snprintf(want, sizeof(want), "cap ok %s%s\n", oks[i], okTail);
+        UT_ASSERT_MSG(sbCount(want) == 1,
+                      "no line \"%s\": a string of exactly %u bytes was "
+                      "refused or came out another length. The console "
+                      "holds:\n%s", oks[i], (unsigned)SCN_STRING_MAX,
+                      sbLines);
+    }
+    snprintf(over, sizeof(over), " %u bytes", (unsigned)SCN_STRING_MAX + 1u);
+    for (i = 0; i < nNo; i++) {
+        snprintf(want, sizeof(want), "cap no %s: ", nos[i].label);
+        UT_ASSERT_MSG(sbCount(want) == 1,
+                      "\"%s\" was not refused. The console holds:\n%s",
+                      nos[i].label, sbLines);
+        UT_ASSERT_MSG(sbLineHas(want, nos[i].fn),
+                      "the refusal of \"%s\" does not name %s. The console "
+                      "holds:\n%s", nos[i].label, nos[i].fn, sbLines);
+        if (nos[i].byOne) {
+            UT_ASSERT_MSG(sbLineHas(want, over),
+                          "the refusal of \"%s\" does not give the length "
+                          "%u. The console holds:\n%s", nos[i].label,
+                          (unsigned)SCN_STRING_MAX + 1u, sbLines);
+        }
+    }
+    UT_ASSERT_MSG(strstr(sbLines, "raised") == NULL,
+                  "a refusal the script caught was counted as an error "
+                  "against it. The console holds:\n%s", sbLines);
+    return 0;
+}
+
+/* ── 16. The strings a C function may build ───────────────────────── */
+
+/* rep, format and concat, each asked for a string of exactly the cap and for
+ * one a byte longer, every call inside a pcall so a refusal is a line rather
+ * than the end of the hook. rep is asked through a method call as well, which
+ * reaches it through the string metatable's __index rather than through the
+ * global, and with a separator, which the length has to count: the separated
+ * case with many copies would be far under the cap without it.
+ *
+ * format is refused both ways it can be: a result over the cap built from
+ * arguments under it, and an argument already over it. concat is asked once
+ * more with a number among its elements, which counts by the length of its
+ * text. The one string over the cap the script starts from is built with ..,
+ * which the cap does not cover.
+ *
+ * rep is refused a count far past the cap with an empty string, which comes
+ * to no bytes but is a copy loop in C all the same. concat is asked for two
+ * elements that only __index supplies: 5.4 reads through it and is refused
+ * by the cap, LuaJIT reads raw and refuses the empty slot itself, and either
+ * way it is one refusal line. */
+int run_scenario_sandbox_string_cap_on_results(void) {
+    static const char *const kMap = "scnsand_strres.map";
+    static const char *const kOk[] = {
+        "rep at", "method at", "sep at", "format at", "concat at"
+    };
+    static const SbRefusal kNo[] = {
+        { "rep over",           "string.rep",   true  },
+        { "method over",        "string.rep",   true  },
+        { "sep over",           "string.rep",   true  },
+        { "sep many over",      "string.rep",   false },
+        { "format over",        "string.format", true },
+        { "format arg",         "string.format", true },
+        { "concat over",        "table.concat", true  },
+        { "concat number over", "table.concat", true  },
+        { "rep empty many",     "string.rep",   false },
+#ifdef WINBOLO_LUAJIT
+        /* LuaJIT's concat reads raw, so it never sees what __index would
+           answer and refuses the empty slot in its own words. */
+        { "concat index over",  "invalid value", false },
+#else
+        { "concat index over",  "table.concat", false },
+#endif
+    };
+    ServerSim    *sim = NULL;
+    ScenarioHost *h   = NULL;
+    char          lua[4096];
+
+    snprintf(lua, sizeof(lua),
+             "scenario = { name = \"Long results\", api = 1 }\n"
+             "local MAX = %u\n"
+             "local function try(label, f)\n"
+             "  local ok, r = pcall(f)\n"
+             "  if ok then print(\"cap ok \" .. label .. \" \" .. #r)\n"
+             "  else print(\"cap no \" .. label .. \": \" .. tostring(r)) end\n"
+             "end\n"
+             "function on_start()\n"
+             "  local q   = math.floor(MAX / 4)\n"
+             "  local big = string.rep(\"x\", MAX) .. \"y\"\n"
+             "  try(\"rep at\", function() return string.rep(\"x\", MAX) end)\n"
+             "  try(\"rep over\", function()\n"
+             "    return string.rep(\"x\", MAX + 1) end)\n"
+             "  try(\"method at\", function() return (\"x\"):rep(MAX) end)\n"
+             "  try(\"method over\", function()\n"
+             "    return (\"x\"):rep(MAX + 1) end)\n"
+             "  try(\"sep at\", function() return string.rep(\n"
+             "    string.rep(\"x\", q), 2, string.rep(\"-\", MAX - 2 * q)) end)\n"
+             "  try(\"sep over\", function() return string.rep(\n"
+             "    string.rep(\"x\", q), 2, string.rep(\"-\", MAX - 2 * q + 1))\n"
+             "    end)\n"
+             "  try(\"sep many over\", function()\n"
+             "    return string.rep(\"x\", math.floor(MAX / 2) + 1, \",\") end)\n"
+             "  try(\"format at\", function()\n"
+             "    return string.format(\"%%s\", string.rep(\"x\", MAX)) end)\n"
+             "  try(\"format over\", function()\n"
+             "    return string.format(\"%%s!\", string.rep(\"x\", MAX)) end)\n"
+             "  try(\"format arg\", function()\n"
+             "    return string.format(\"%%d\", 1, big) end)\n"
+             "  try(\"concat at\", function() return table.concat(\n"
+             "    { string.rep(\"x\", q), string.rep(\"y\", MAX - q - 1) },\n"
+             "    \",\") end)\n"
+             "  try(\"concat over\", function() return table.concat(\n"
+             "    { string.rep(\"x\", q), string.rep(\"y\", MAX - q) }, \",\")\n"
+             "    end)\n"
+             "  try(\"concat number over\", function() return table.concat(\n"
+             "    { string.rep(\"x\", MAX - 3), 1234 }) end)\n"
+             "  try(\"rep empty many\", function()\n"
+             "    return string.rep(\"\", 1e18) end)\n"
+             "  try(\"concat index over\", function()\n"
+             "    local t = setmetatable({}, { __index = function()\n"
+             "      return string.rep(\"x\", MAX) end })\n"
+             "    return table.concat(t, \"\", 1, 2) end)\n"
+             "end\n", (unsigned)SCN_STRING_MAX);
+
+    UT_ASSERT(sbRunCap(kMap, lua, &sim, &h) == 0);
+    UT_ASSERT_MSG(sbCount("cap ok rep at") == 1,
+                  "the hook never printed, so nothing here was tested. The "
+                  "console holds:\n%s", sbLines);
+    {
+        char okTail[32];
+
+        snprintf(okTail, sizeof(okTail), " %u", (unsigned)SCN_STRING_MAX);
+        UT_ASSERT(sbCheckCap(kOk, sizeof(kOk) / sizeof(kOk[0]), okTail,
+                             kNo, sizeof(kNo) / sizeof(kNo[0])) == 0);
+    }
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+    return 0;
+}
+
+/* ── 17. The strings a pattern may run over ───────────────────────── */
+
+/* find, match, gmatch and gsub, each given a subject of exactly the cap and
+ * one a byte longer. The pattern is a byte the subject does not hold, so an
+ * accepted call reads every byte of it and answers nothing. gsub is asked
+ * through a method call too. The subject over the cap is built with .., which
+ * the cap does not cover, so the script has one to pass. */
+int run_scenario_sandbox_string_cap_on_subjects(void) {
+    static const char *const kMap = "scnsand_strsub.map";
+    static const char *const kOk[] = {
+        "find at", "match at", "gmatch at", "gsub at", "method at"
+    };
+    static const SbRefusal kNo[] = {
+        { "find over",   "string.find",   true },
+        { "match over",  "string.match",  true },
+        { "gmatch over", "string.gmatch", true },
+        { "gsub over",   "string.gsub",   true },
+        { "method over", "string.gsub",   true },
+    };
+    ServerSim    *sim = NULL;
+    ScenarioHost *h   = NULL;
+    char          lua[4096];
+
+    snprintf(lua, sizeof(lua),
+             "scenario = { name = \"Long subjects\", api = 1 }\n"
+             "local MAX = %u\n"
+             "local function try(label, f)\n"
+             "  local ok, r = pcall(f)\n"
+             "  if ok then print(\"cap ok \" .. label)\n"
+             "  else print(\"cap no \" .. label .. \": \" .. tostring(r)) end\n"
+             "end\n"
+             "function on_start()\n"
+             "  local at   = string.rep(\"x\", MAX)\n"
+             "  local over = at .. \"x\"\n"
+             "  local function each(s) for w in string.gmatch(s, \"y\") do\n"
+             "    end end\n"
+             "  try(\"find at\", function() return string.find(at, \"y\") end)\n"
+             "  try(\"find over\", function()\n"
+             "    return string.find(over, \"y\") end)\n"
+             "  try(\"match at\", function()\n"
+             "    return string.match(at, \"y\") end)\n"
+             "  try(\"match over\", function()\n"
+             "    return string.match(over, \"y\") end)\n"
+             "  try(\"gmatch at\", function() each(at) end)\n"
+             "  try(\"gmatch over\", function() each(over) end)\n"
+             "  try(\"gsub at\", function()\n"
+             "    return string.gsub(at, \"y\", \"z\") end)\n"
+             "  try(\"gsub over\", function()\n"
+             "    return string.gsub(over, \"y\", \"z\") end)\n"
+             "  try(\"method at\", function() return at:gsub(\"y\", \"z\") end)\n"
+             "  try(\"method over\", function()\n"
+             "    return over:gsub(\"y\", \"z\") end)\n"
+             "end\n", (unsigned)SCN_STRING_MAX);
+
+    UT_ASSERT(sbRunCap(kMap, lua, &sim, &h) == 0);
+    UT_ASSERT_MSG(sbCount("cap ok find at") == 1,
+                  "the hook never printed, so nothing here was tested. The "
+                  "console holds:\n%s", sbLines);
+    UT_ASSERT(sbCheckCap(kOk, sizeof(kOk) / sizeof(kOk[0]), "",
+                         kNo, sizeof(kNo) / sizeof(kNo[0])) == 0);
 
     scenarioHostDetach(h);
     serverSimDestroy(sim);

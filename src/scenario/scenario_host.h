@@ -212,6 +212,19 @@ typedef struct {
  * A starting value, as the per-call one is. */
 #define SCN_PRINT_PER_TICK 64
 
+/* The longest string a script may have the library's C functions build or
+ * search: string.rep, string.format and table.concat refuse a result longer
+ * than this, and string.find, match, gmatch and gsub a subject longer than it.
+ *
+ * The count hook cannot see inside a C function, so one string.rep is one
+ * instruction to it however much it builds, and a pattern run over a long
+ * subject is the same. Without this, SCN_VM_MEMORY_MAX is all that stands
+ * between a script and a string or pattern that holds the tick.
+ *
+ * 64 KiB is far longer than anything a scenario prints or matches. A starting
+ * value; a measurement may want it somewhere else. */
+#define SCN_STRING_MAX 65536u
+
 /* How many events the host holds between one tick and the next, across
  * both of the server's channels. Each of the two subscriber callbacks
  * copies an event in and returns; the one drain at the end of the tick

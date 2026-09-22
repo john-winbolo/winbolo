@@ -150,6 +150,14 @@ A million is a great deal — an `on_tick` that reads a few dozen tanks and
 decides something spends a few thousand. If you are near it, you are looping
 over the map rather than over what changed.
 
+The count cannot see inside the library's C functions, so seven of them are
+bounded by length instead: `string.rep`, `string.format` and `table.concat`
+refuse to build a string over 64 KiB, and `string.find`, `string.match`,
+`string.gmatch` and `string.gsub` refuse to search one. That refusal is an
+ordinary error, unlike the budget's — a `pcall` catches it and your script
+carries on. A longer string built with `..` is not refused here; the memory
+cap is what counts that.
+
 The count is taken by a Lua debug hook, and a state that carries one does not
 use LuaJIT's compiler, so **your script runs interpreted** on a LuaJIT host.
 That is worth knowing before you time anything: what you measure here is not

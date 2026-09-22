@@ -5982,6 +5982,8 @@ set(_unit_test_names
     scenario_sandbox_os_date_refuses_a_bad_format
     scenario_sandbox_print_bounded_in_one_call
     scenario_sandbox_print_allowance_returns
+    scenario_sandbox_string_cap_on_results
+    scenario_sandbox_string_cap_on_subjects
     scenario_events_queued_then_drained
     scenario_events_drain_reads_the_length_once
     scenario_events_queued_during_a_drain_waits
