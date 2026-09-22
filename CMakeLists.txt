@@ -4445,6 +4445,17 @@ target_compile_definitions(WinBoloUnitTests PRIVATE
     WB_REPO_ROOT_DIR="${CMAKE_SOURCE_DIR}"
 )
 
+# The shipped mods, staged beside the test binary rather than only beside
+# WinBolo: run_scenario_dir_merges_shipped_mods lists data/mods under
+# SDL_GetBasePath() the way the host does, so the directory has to be here
+# whether or not the GUI has been built.
+add_custom_command(TARGET WinBoloUnitTests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/data/mods"
+        "$<TARGET_FILE_DIR:WinBoloUnitTests>/data/mods"
+    COMMENT "Copying shipped mods to WinBoloUnitTests output directory"
+)
+
 target_include_directories(WinBoloUnitTests PRIVATE
     src/gui/sdl3
     src/gui/sdl3/dialogs
