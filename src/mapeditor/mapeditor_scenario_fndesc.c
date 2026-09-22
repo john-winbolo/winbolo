@@ -68,9 +68,15 @@ const char *meScnFnDescription(size_t row) {
 
 /* One assert per member, pasted onto the same name at both ends, so a type
  * renamed in the catalogue does not compile here and one renumbered or
- * inserted does not pass. */
+ * inserted does not pass.
+ *
+ * Spelled as a difference of zero rather than `(int)a == (int)b`: MSVC 14.44
+ * (cl 19.44) raises C5287 "operands are different enum types" on the `==`
+ * form and looks straight through the casts it tells you to add, so under
+ * /W4 /WX the file does not build. The casts survive the subtraction, so
+ * this says the same thing and still fails when the values differ. */
 #define ME_SCN_PARAM_ASSERT(id)                                              \
-    BOLO_STATIC_ASSERT((int)ME_SCN_PARAM_##id == (int)SCN_PARAM_##id,        \
+    BOLO_STATIC_ASSERT((int)ME_SCN_PARAM_##id - (int)SCN_PARAM_##id == 0,    \
                        scenario_param_##id##_is_the_editors_own_value);
 
 ME_SCN_PARAM_LIST(ME_SCN_PARAM_ASSERT)
