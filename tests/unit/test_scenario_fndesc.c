@@ -142,7 +142,7 @@ static int sfdTakesScripted(const char *stub) {
 
 int run_scenario_fnstub_forms(void) {
     char   stub[ME_SCN_FN_STUB_MAX];
-    char   small[ME_SCN_FN_STUB_MAX];
+    char   short_buffer[ME_SCN_FN_STUB_MAX];
     size_t count = 0;
     size_t want;
     size_t i;
@@ -227,32 +227,32 @@ int run_scenario_fnstub_forms(void) {
        terminated, and the answer is what a complete one would have taken,
        which is how a caller tells the two apart. */
     want = meScnFnStub(sfdRowOf("on_tank_spawned"), stub, sizeof(stub));
-    UT_ASSERT_MSG(want > 1 && want < sizeof(small),
+    UT_ASSERT_MSG(want > 1 && want < sizeof(short_buffer),
                   "on_tank_spawned wanted %d bytes", (int)want);
-    small[0] = 'x';
-    UT_ASSERT_MSG(meScnFnStub(sfdRowOf("on_tank_spawned"), small, want) ==
+    short_buffer[0] = 'x';
+    UT_ASSERT_MSG(meScnFnStub(sfdRowOf("on_tank_spawned"), short_buffer, want) ==
                       want,
                   "a short buffer changed what the answer said was wanted");
-    UT_ASSERT_MSG(strlen(small) == want - 1,
+    UT_ASSERT_MSG(strlen(short_buffer) == want - 1,
                   "a buffer of %d holds %d bytes and %d were written",
-                  (int)want, (int)want - 1, (int)strlen(small));
-    UT_ASSERT_MSG(strncmp(small, stub, want - 1) == 0,
+                  (int)want, (int)want - 1, (int)strlen(short_buffer));
+    UT_ASSERT_MSG(strncmp(short_buffer, stub, want - 1) == 0,
                   "the truncated stub \"%s\" is not the start of \"%s\"",
-                  small, stub);
+                  short_buffer, stub);
 
     /* And the smallest buffer of all, which holds the terminator alone. */
-    small[0] = 'x';
-    UT_ASSERT_MSG(meScnFnStub(sfdRowOf("on_setup"), small, 1) > 0,
+    short_buffer[0] = 'x';
+    UT_ASSERT_MSG(meScnFnStub(sfdRowOf("on_setup"), short_buffer, 1) > 0,
                   "a one-byte buffer answered that nothing was wanted");
-    UT_ASSERT_MSG(small[0] == '\0', "a one-byte buffer was not terminated");
+    UT_ASSERT_MSG(short_buffer[0] == '\0', "a one-byte buffer was not terminated");
 
     /* The parameter list on its own is the same list the stub carries, so
        the row a list draws and the stub it inserts cannot disagree. */
-    want = meScnFnParamList(sfdRowOf("on_chat"), small, sizeof(small));
-    UT_ASSERT_MSG(strcmp(small, "(p, text, scripted)") == 0,
-                  "on_chat's parameter list is \"%s\"", small);
-    UT_ASSERT_MSG(want == strlen(small), "the list answered %d for %d bytes",
-                  (int)want, (int)strlen(small));
+    want = meScnFnParamList(sfdRowOf("on_chat"), short_buffer, sizeof(short_buffer));
+    UT_ASSERT_MSG(strcmp(short_buffer, "(p, text, scripted)") == 0,
+                  "on_chat's parameter list is \"%s\"", short_buffer);
+    UT_ASSERT_MSG(want == strlen(short_buffer), "the list answered %d for %d bytes",
+                  (int)want, (int)strlen(short_buffer));
 
     /* A policy says what it answers and a hook does not, which is what a
        row shows the difference with. */
