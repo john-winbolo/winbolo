@@ -757,6 +757,15 @@ void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
      * slot, so the headless/batch drivers are unaffected. Callers republish
      * the slot themselves. */
     serverSimAssignLobbyStartOnJoin(sim, playerNum);
+    /* The slot that moved is not the only one the move can affect. A side
+     * is closed to the other teams from the moment the team holding it has
+     * a player, so a team gaining its first member puts every other slot's
+     * reservation on a side that is now somebody's, and a team losing its
+     * last one opens a side back up. Re-examine them all: an off-side
+     * reservation goes back, and a slot holding none takes one if the move
+     * has left it something it may have. This is the release-and-backfill
+     * the map-change reconcile runs, for the same reason. */
+    serverSimReleaseIneligibleStartsAndBackfill(sim);
 }
 
 void serverSimSetLobbyStartIdx(ServerSim *sim, BYTE slot, BYTE idx) {
@@ -1045,6 +1054,24 @@ void serverSimBackfillLobbyStarts(ServerSim *sim) {
     BYTE before[MAX_TANKS];
     if (sim == NULL) return;
     snapshotLobbyStarts(sim, before);
+    backfillLobbyStarts(sim);
+    publishLobbyStartDiff(sim, before);
+}
+
+/* Drop every connected slot's reservation that its side rules no longer
+ * allow, then re-pick every slot without one, publishing what moves. A
+ * slot whose reservation is still eligible keeps it, so a start a player
+ * chose by hand survives anything that does not actually invalidate it.
+ * No-op outside lobby state, where there are no reservations to keep. */
+void serverSimReleaseIneligibleStartsAndBackfill(ServerSim *sim) {
+    BYTE before[MAX_TANKS];
+    BYTE k;
+    if (sim == NULL || sim->state != serverStateLobby) return;
+    snapshotLobbyStarts(sim, before);
+    for (k = 0; k < MAX_TANKS; k++) {
+        if (!sim->playerConnected[k]) continue;
+        serverSimReleaseIneligibleStart(sim, k);
+    }
     backfillLobbyStarts(sim);
     publishLobbyStartDiff(sim, before);
 }

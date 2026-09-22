@@ -5046,6 +5046,7 @@ set(_unit_test_names
     starts_side_region_sweep
     starts_side_unsided_kept_off_chosen_side
     starts_side_two_team_lobby_mirrors
+    starts_side_team_change_repicks_stale
     input_redundancy
     bases_closest_for_player
     base_stock_visibility

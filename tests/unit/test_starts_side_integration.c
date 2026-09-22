@@ -16,6 +16,8 @@
  *   (23) eight starts in four corners, a team that named no side kept off
  *        the side another team named, its last member included.
  *   (24) naming a side in a two-team lobby names the other team's.
+ *   (25) a team change re-examines every slot's reservation, not only
+ *        the slot that moved.
  */
 
 #include <stdbool.h>
@@ -590,6 +592,87 @@ int run_starts_side_two_team_lobby_mirrors(void) {
     UT_ASSERT_MSG(sim->teams[2].startSide == START_SIDE_ANY,
                   "one team: team 2 has nobody on it and was given side %u",
                   (unsigned)sim->teams[2].startSide);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* (25) A team change re-examines every slot's reservation, not only the
+ *      slot that moved.
+ *
+ *      A side is closed to the other teams from the moment the team
+ *      holding it has a player, so the slot that changes team is not the
+ *      only one whose reservation the change can invalidate: a team
+ *      gaining its first member closes its side to everyone else, and the
+ *      reservations they took before that are suddenly on it. Only the
+ *      slot that moved was re-picked, so the rest kept starts they were no
+ *      longer entitled to and spawned among the team that owns them.
+ */
+int run_starts_side_team_change_repicks_stale(void) {
+    ServerSim *sim;
+    GameSim *gs;
+    int leftPos;
+    int rightPos;
+    int topPos;
+    int bottomPos;
+    int midY;
+    BYTE s;
+
+    sim = make_eight_start_lobby();
+    UT_ASSERT(sim != NULL);
+    gs = &sim->sim;
+
+    /* The host names north for team 1 before anybody is on it — the map's
+       own header does the same on the maps that carry one. */
+    serverSimSetTeamMeta(sim, 1, 0, 0, START_SIDE_N, NULL, 0);
+
+    /* Two players in the lobby on no team. With no team holding a side yet
+       nothing is closed, so they take whatever is farthest apart, north
+       included. */
+    for (s = 0; s < 2; s++) {
+        char name[16];
+        snprintf(name, sizeof(name), "P%u", (unsigned)s);
+        serverSimAddPlayer(sim, s, name, false);
+        serverSimSetTeam(sim, s, 0);
+    }
+
+    /* Now somebody joins team 1. North is team 1's from here, so the two
+       above may no longer sit on it. */
+    serverSimAddPlayer(sim, 2, "P2", false);
+    serverSimSetTeam(sim, 2, 1);
+
+    startsGetMaxs(&gs->ss, &leftPos, &rightPos, &topPos, &bottomPos);
+    midY = (topPos + bottomPos) / 2;
+    for (s = 0; s < 2; s++) {
+        BYTE r = sim->lobbyPlayers[s].startIdx;
+        BYTE mask;
+        UT_ASSERT_MSG(sim->lobbyPlayers[s].teamNumber == 0,
+                      "slot %u should still be on no team, is on %u",
+                      (unsigned)s, (unsigned)sim->lobbyPlayers[s].teamNumber);
+        if (r == 0xFF) continue;    /* nothing left for it is a fair answer */
+        mask = startSideMaskFor(gs->ss->item[r - 1].x, gs->ss->item[r - 1].y,
+                                leftPos, topPos, rightPos, bottomPos);
+        UT_ASSERT_MSG((mask & START_SIDE_BIT_N) == 0,
+                      "slot %u (no team) kept start %u (%u,%u) on team 1's north "
+                      "after team 1 gained a player",
+                      (unsigned)s, (unsigned)r,
+                      (unsigned)gs->ss->item[r - 1].x,
+                      (unsigned)gs->ss->item[r - 1].y);
+    }
+
+    /* And it holds through to the tanks. */
+    bolo_srand(11);
+    serverSimStartGameInPlace(sim);
+    UT_ASSERT(serverSimGetState(sim) == serverStateRunning);
+    for (s = 0; s < 2; s++) {
+        int mx;
+        int my;
+        UT_ASSERT_MSG(gs->tanks[s] != NULL, "slot %u has no tank", (unsigned)s);
+        tank_square(gs, s, &mx, &my);
+        UT_ASSERT_MSG(my > midY,
+                      "slot %u (no team) spawned at (%d,%d), north of the midline "
+                      "%d — the side team 1 named",
+                      (unsigned)s, mx, my, midY);
+    }
     serverSimDestroy(sim);
     return 0;
 }

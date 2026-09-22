@@ -74,6 +74,15 @@ bool serverSimReleaseIneligibleStart(ServerSim *sim, BYTE slot);
  * whose reservation changed. Called after a departure and a map change. */
 void serverSimBackfillLobbyStarts(ServerSim *sim);
 
+/* Drops every connected slot's reservation its side rules no longer allow
+ * and re-picks the slots left without one, publishing what moved. A
+ * reservation that is still eligible is kept, so a start a player chose by
+ * hand survives. Called when a slot changes team: the slot that moved is
+ * re-picked on its own, but the move can close a side to every other slot
+ * (the team gained its first member) or open one back up (it lost its
+ * last). */
+void serverSimReleaseIneligibleStartsAndBackfill(ServerSim *sim);
+
 /* Clears every connected slot's reservation and re-picks them all the way
  * serverSimBackfillLobbyStarts does, publishing the slots whose reservation
  * ended up different. Called when a team's start side changes. */

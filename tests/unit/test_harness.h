@@ -1017,6 +1017,7 @@ int run_starts_side_end_to_end_four_v_twelve(void);
 int run_starts_side_region_sweep(void);
 int run_starts_side_unsided_team_kept_off_chosen_side(void);
 int run_starts_side_two_team_lobby_mirrors(void);
+int run_starts_side_team_change_repicks_stale(void);
 
 /* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
  * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed
