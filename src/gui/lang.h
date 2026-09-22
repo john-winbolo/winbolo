@@ -2452,6 +2452,20 @@
 #define STR_DLGLOBBY_MODS_TIP_NONE          2616
 #define STR_DLGLOBBY_MODS_OFF_NOTE          2617
 
+/* The settings window opened off the scenario panel's gear, and the one row
+ * in it. TITLE names the panel the window belongs to rather than the setting
+ * it holds, because the window is placed beside the gear it was opened from
+ * and has to say which panel that was once two are on screen.
+ *
+ * OPACITY_LBL labels the slider. LINE1 and LINE2 are the two lines under it,
+ * kept apart so each wraps on its own: the first says what the number fades
+ * and the second says what it leaves alone, and a language that needs two
+ * lines for either still gets a break in the same place. */
+#define STR_SCNPANEL_SETTINGS_TITLE         2618
+#define STR_SCNPANEL_OPACITY_LBL            2619
+#define STR_SCNPANEL_OPACITY_LINE1          2620
+#define STR_SCNPANEL_OPACITY_LINE2          2621
+
 /* The two-column chooser. OFFERED heads the catalogue on the left and ROUND
  * heads the round's own list on the right, so the two columns say what they
  * are rather than leaving a host to work it out from what is in them.

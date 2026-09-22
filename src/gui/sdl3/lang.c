@@ -2568,6 +2568,10 @@ static const LangEntry langTable[] = {
     {2615, "Mods are switched off. These are picked for the round, but will not run:"},
     {2616, "No mods are loaded for this round."},
     {2617, "(switched off, will not run)"},
+    {2618, "Scenario Panel"},
+    {2619, "Opacity"},
+    {2620, "Fades what the panel draws."},
+    {2621, "Empty parts of it stay clear."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

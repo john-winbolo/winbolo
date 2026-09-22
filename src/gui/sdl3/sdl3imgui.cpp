@@ -3952,12 +3952,16 @@ static void renderScenarioPanelSettings(bool *open, float gearX, float gearY,
                                    gearY + SCN_PANEL_DIALOG_GAP),
                             ImGuiCond_Appearing);
 
+    char title[128];
+    snprintf(title, sizeof(title), "%s###scnpanelsettings",
+             langGetText(STR_SCNPANEL_SETTINGS_TITLE));
+
     /* AlwaysAutoResize because there is one row in it and a window sized to
        its contents needs no resize grip of its own to argue with the panel's.
        NoSavedSettings because this is a transient thing opened off a grip:
        remembering where it sat in a previous session would put it somewhere
        with no relation to where the panel is now. */
-    if (ImGui::Begin("Scenario Panel", open,
+    if (ImGui::Begin(title, open,
                      ImGuiWindowFlags_AlwaysAutoResize |
                      ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoDocking |
@@ -3980,8 +3984,11 @@ static void renderScenarioPanelSettings(bool *open, float gearX, float gearY,
             ImGui::SetWindowPos(ImVec2(keepX, keepY));
         }
 
+        char sliderLbl[128];
+        snprintf(sliderLbl, sizeof(sliderLbl), "%s###scnAlpha",
+                 langGetText(STR_SCNPANEL_OPACITY_LBL));
         ImGui::SetNextItemWidth(SCN_PANEL_DIALOG_SLIDER_W);
-        ImGui::SliderInt("Opacity", alphaPct, 0, 100, "%d%%");
+        ImGui::SliderInt(sliderLbl, alphaPct, 0, 100, "%d%%");
         /* Written when the grab is let go and not on every frame it moves,
            the same as the panel's position and size: a drag is a burst of
            values and only the one it ends on is worth a preferences write.
@@ -4001,8 +4008,8 @@ static void renderScenarioPanelSettings(bool *open, float gearX, float gearY,
            else: the square's empty parts stay as clear as they are now, and
            the border, the title bar and the resize grip keep their own alpha
            so a panel taken to zero can still be found and turned back up. */
-        ImGui::TextDisabled("Fades what the panel draws.");
-        ImGui::TextDisabled("Empty parts of it stay clear.");
+        ImGui::TextDisabled("%s", langGetText(STR_SCNPANEL_OPACITY_LINE1));
+        ImGui::TextDisabled("%s", langGetText(STR_SCNPANEL_OPACITY_LINE2));
     }
     ImGui::End();
 }
