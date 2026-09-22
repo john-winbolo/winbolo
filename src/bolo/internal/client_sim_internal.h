@@ -394,12 +394,16 @@ struct ClientSim {
                                      * the lobby's pick list; raw mirror of the
                                      * lobby-settings event. Held in the
                                      * NEGATIVE sense for the same reason as
-                                     * lobbySmartPingsOff above: false has to
-                                     * mean the mods RUN, so a server that
-                                     * predates the byte reads as "mods run"
-                                     * rather than as "mods off". Read it
+                                     * lobbySmartPingsOff above, and read
                                      * through the positive accessor
-                                     * clientSimGetLobbyModsEnabled. */
+                                     * clientSimGetLobbyModsEnabled.
+                                     *
+                                     * Its byte went into the fixed part of
+                                     * the settings body, ahead of the
+                                     * scenario tail, so adding it moved that
+                                     * tail down: a body written without the
+                                     * byte is not readable by a build that
+                                     * has it, and nothing attempts that. */
     ServerVoiceMode  serverVoiceMode; /* what the server does with the voice
                                        * its clients send it; raw mirror of
                                        * the lobby-settings event. Zero is

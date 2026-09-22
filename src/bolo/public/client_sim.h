@@ -617,10 +617,14 @@ bool         clientSimIsLobbyHiddenMines(const ClientSim *cs);
 bool         clientSimIsLobbyAllowSmartPings(const ClientSim *cs);
 /* Whether the round composes the mods on the lobby's pick list. Positive
  * for the same reason as the accessor above: the value is stored and sent
- * in the negative sense (see lobbyModsOff), so a server that predates the
- * setting reads as composing them, and this is where that flips back so no
- * UI code has to think in negatives. Answers true for a NULL sim and until
- * the first lobby-settings event lands.
+ * in the negative sense (see lobbyModsOff), and this is where that flips
+ * back so no UI code has to think in negatives. Answers true for a NULL sim
+ * and until the first lobby-settings event lands.
+ *
+ * The byte itself sits in the fixed part of the settings body, ahead of the
+ * scenario tail, so adding it moved that tail down rather than extending the
+ * body's end. A body written by a build without the byte does not decode
+ * against one that has it, and the project does not mix the two.
  *
  * Mods only. A scenario on the pick list plays whatever this answers, so a
  * lobby reading false is not a lobby running nothing. */
@@ -1096,12 +1100,12 @@ bool        clientSimGetLobbyScenarioBound(const ClientSim *cs);
  *
  * clientSimGetLobbyScriptSeq ticks once per whole list installed, so a
  * chooser can tell a list has changed without comparing the rows. */
-int         clientSimGetLobbyScriptCount(ClientSim *cs);
-const char *clientSimGetLobbyScriptFile(ClientSim *cs, int i);
-const char *clientSimGetLobbyScriptName(ClientSim *cs, int i);
-bool        clientSimGetLobbyScriptKeepsWinCondition(ClientSim *cs, int i);
-bool        clientSimGetLobbyScriptBound(ClientSim *cs, int i);
-uint32_t    clientSimGetLobbyScriptSeq(ClientSim *cs);
+int         clientSimGetLobbyScriptCount(const ClientSim *cs);
+const char *clientSimGetLobbyScriptFile(const ClientSim *cs, int i);
+const char *clientSimGetLobbyScriptName(const ClientSim *cs, int i);
+bool        clientSimGetLobbyScriptKeepsWinCondition(const ClientSim *cs, int i);
+bool        clientSimGetLobbyScriptBound(const ClientSim *cs, int i);
+uint32_t    clientSimGetLobbyScriptSeq(const ClientSim *cs);
 
 /* The rules that scenario's own manifest sets, mirrored via
  * CTRL_SCENARIO_RULES: which rule, and what the author set it to. The rule

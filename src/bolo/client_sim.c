@@ -2953,26 +2953,26 @@ bool clientSimGetLobbyScenarioListKeepsWinCondition(const ClientSim *cs,
  * behind it are mods. The same NULL and range tolerance the catalogue
  * accessors above have, and for the same reason: a chooser reads these a
  * frame at a time while a new list may land between two reads. */
-int clientSimGetLobbyScriptCount(ClientSim *cs) {
+int clientSimGetLobbyScriptCount(const ClientSim *cs) {
   return cs ? cs->lobbyScriptCount : 0;
 }
-const char *clientSimGetLobbyScriptFile(ClientSim *cs, int i) {
+const char *clientSimGetLobbyScriptFile(const ClientSim *cs, int i) {
   if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) return "";
   return cs->lobbyScriptFiles[i];
 }
-const char *clientSimGetLobbyScriptName(ClientSim *cs, int i) {
+const char *clientSimGetLobbyScriptName(const ClientSim *cs, int i) {
   if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) return "";
   return cs->lobbyScriptNames[i];
 }
-bool clientSimGetLobbyScriptKeepsWinCondition(ClientSim *cs, int i) {
+bool clientSimGetLobbyScriptKeepsWinCondition(const ClientSim *cs, int i) {
   if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) return false;
   return cs->lobbyScriptKeepsWin[i];
 }
-bool clientSimGetLobbyScriptBound(ClientSim *cs, int i) {
+bool clientSimGetLobbyScriptBound(const ClientSim *cs, int i) {
   if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) return false;
   return cs->lobbyScriptBound[i];
 }
-uint32_t clientSimGetLobbyScriptSeq(ClientSim *cs) {
+uint32_t clientSimGetLobbyScriptSeq(const ClientSim *cs) {
   return cs ? cs->lobbyScriptSeq : 0;
 }
 
@@ -4179,7 +4179,7 @@ bool clientSimTankScroll(ClientSim *cs) {
   }
 
   /* When autoscroll is on, scrollAutoScroll (called from clientUiOnTick)
-   * is the sole owner of *xValue/*yValue and subPosX/Y. The legacy
+   * is the sole owner of *xValue / *yValue and subPosX/Y. The legacy
    * per-tank-tick scrollManual call here stomps on subPos (resets to 0)
    * mid-frame, producing a visible flicker — the renderer at 60Hz can
    * sample between the zero-out and the next scrollAutoScroll. Skip it. */

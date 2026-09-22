@@ -682,11 +682,18 @@ typedef struct ControlEvent {
             bool     lobbyModsOff;         /* the round composes none of the
                                             * picked mods. Held in the negative
                                             * sense for the same reason as
-                                            * lobbySmartPingsOff above: the zero
-                                            * a decoder leaves for an absent
-                                            * byte has to read as "mods run",
-                                            * which is what every server did
-                                            * before the field existed. */
+                                            * lobbySmartPingsOff above, and read
+                                            * back through the positive accessor
+                                            * clientSimGetLobbyModsEnabled.
+                                            *
+                                            * Its byte is in the fixed part of
+                                            * the settings body, ahead of the
+                                            * scenario tail: adding it grew the
+                                            * fixed part and moved that tail
+                                            * down, so a body written by a build
+                                            * without the byte does not decode
+                                            * against one that has it. Nothing
+                                            * here tries to read one. */
             /* The scenario this lobby is running, if any. scenarioSource
              * none means there is none and the five fields below are empty:
              * a lobby with no scenario writes none of these bytes, so a

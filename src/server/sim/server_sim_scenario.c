@@ -2083,7 +2083,13 @@ void serverSimScenarioReconcileLobby(ServerSim *sim) {
        The host's dropdown stays usable during a lobby — a round is where the
        script's word is restored, which is the same rule bots and maxBots
        follow just above: what a host did inside one lobby stands, and the
-       template describes the lobby each round opens with. */
+       template describes the lobby each round opens with.
+
+       So a level the host picked by hand in the previous lobby is overwritten
+       here, unlike the seat counts above, which are left where the host put
+       them. That is consistent rather than an exception: serverSimReturnToLobby
+       clears lastTeamBotLevelKey, so the hand-picked level is not carried
+       across the round by the other path either. Both halves forget it. */
     modesCache.count = 0;
     for (t = 0; t < sim->scenarioLobby.numTeams; t++) {
         const ScnLobbyTeam *team = &sim->scenarioLobby.teams[t];

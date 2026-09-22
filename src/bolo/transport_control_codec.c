@@ -2543,9 +2543,11 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.lobbySmartPingsOff = buf[pos++] ? true : false;
     }
-    /* Absent means the sender predates the setting, and every such server
-     * composed the mods it was given — so the zero this arm leaves in place
-     * is the right answer here too, not a guess. */
+    /* The mods byte, in the fixed part of the body and ahead of the scenario
+     * tail below. Adding it grew the fixed part and moved that tail down, so
+     * a body written by a build without the byte does not decode against this
+     * arm; the project does not mix builds across a wire change. The length
+     * test below is a bounds check on a short body, not a version test. */
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.lobbyModsOff = buf[pos++] ? true : false;
     }
