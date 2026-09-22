@@ -333,6 +333,7 @@ scenario = {
   name         = "Wave Defense",
   description  = "Hold the four pillboxes at the centre of the map.",
   api          = 1,
+  kind         = "scenario",
   game         = "open",
   bound        = true,
   fill_to_caps = false,
@@ -349,6 +350,7 @@ scenario = {
 | `name` | string | What the scenario is called. |
 | `description` | string | One or two sentences for a host reading a list. |
 | `api` | number | The API version you wrote against. Defaults to 1. A server older than the version you name refuses the scenario rather than running it half-understood. |
+| `kind` | string | What the file is allowed to decide: `"scenario"` (the default) or `"mod"`. A scenario decides the win condition — it can end the round and say who won. A mod changes how the game plays and leaves winning and losing where the map and the server's rules left them, so `game.end_round`, `game.set_game_time`, `game.add_game_time` and `game.score` all raise when a mod calls them, a mod that names `game` or declares a trigger action calling one of those four is refused as the file loads, and a mod's `allow_base_win` is not read. Left out, the file is a scenario, which is what every file written before this key existed is. A word that is neither is reported and read as a scenario. |
 | `game` | string | The game type the scenario asks for: `"open"`, `"tournament"` or `"strict"`. The round plays under it — the lobby and both game finders read the type as Scripted, and every part of the engine that picks behaviour from the game type resolves that to the word named here. Left out, the round plays strict tournament. A word that is none of the three also plays strict tournament, and `-validate` reports it by name. Write `game = "open"` for an open round: a scenario that says nothing is not read as asking for one. |
 | `bound` | boolean | True (the default) when the scenario is tied to its map. A scenario that names tags or regions is tied to its map by definition, because tags and regions are the map's own squares and entities. A server can also offer scenarios of its own, which play over whichever map a host has committed; a scenario with `bound` true is not one of those and a host picking it is refused, because over another map its tags, its regions and its entity indices name items that are not there. |
 | `triggers` | array | What the scenario does without a line of Lua: hooks to listen on, tests against what each hook is handed, and calls to make when every test holds. A scenario may carry triggers, a script, or both. See [Triggers](#triggers). |
@@ -373,6 +375,8 @@ Each team:
 | `max_bots` | number | The ceiling a host may raise `bots` to. 0 means no ceiling stated, which is not the same as no bots allowed. |
 | `fielded` | boolean | True (the default) puts a bot in the seat at the start of the round. False holds the seat without one: it is in the roster, it takes no tank, and no bot plays in it until a `spawn_bot` names it. Its runner is built ahead of the round, as the two paragraphs below this table describe. |
 | `brain` | string | The brain this team's bots run, **named**: the directory under the server's `brains/`, such as `GoalHunter_1.7`. Empty means the server's own. A name this server does not have leaves the team's seats on the server's own brain, says one line on the console, and is reported by `-validate` before a round is ever started. A value with `/` or `\` in it is a path, not a name, and is refused as such — a scenario shared with a server knows nothing of that server's layout, which is why it names the brain and lets the server find it. `package:NAME`, a brain carried inside the scenario, is still refused with `SCN_OP_NOT_FOUND`. |
+| `mode` | string | The brain mode this team's bots play in, by the key the brain's own `modes.txt` lists — `"survival"`, say. Left out, the seats keep whatever mode the lobby would have given them. |
+| `difficulty` | string | The level inside that mode, by the key the same file lists — `"hard"`. Left out, the seats keep the lobby's level, except that a team naming a `mode` and no `difficulty` lands on that mode's own default level. |
 | `init` | table | A flat table of names to strings or numbers, handed to this team's bots when their VM is built. A `spawn_bot` that names one of these seats and carries no `init` of its own gets this one. |
 
 The server's own `-brain` switch is still a path, and deliberately: that is an
@@ -383,6 +387,53 @@ against its own `brains/` — the same directories the lobby's bot list is built
 from. Ship a scenario that needs `GoalHunter_1.7` and every server that has
 `GoalHunter_1.7` runs it; one that does not gets a reported problem and a
 playable round.
+
+**`mode` and `difficulty` are the half the lobby reads.** They are matched
+against the brain's `modes.txt` — case does not matter — and written into the
+seat's own config, which is three things at once: the difficulty chips on the
+seat's row in the players list, the mode tag beside its name, and the `mode=`
+/ `difficulty=` tokens the server builds the brain's init string from. A seat
+whose team says nothing here carries whatever the lobby gave it, which is the
+behaviour every scenario written before these two fields had.
+
+A key neither file lists is a problem `-validate` reports by name. The seating
+does not refuse the seat over it: the seat is made and keeps the lobby's own
+mode and level, with a line in the server log saying which key was not
+recognised. The bot ops below are stricter, because there the refusal costs
+nothing: `spawn_bot` and `lobby_add_bot` answer `SCN_OP_NO_SUCH_ITEM` rather
+than seating a bot at a level nobody asked for.
+
+**The host's dropdown still works on these seats.** A host may change a
+scripted seat's mode and difficulty from the players list for as long as that
+lobby lasts, the same way the host may trim the seats the template asked for.
+The template's values are re-applied when the lobby is built from the map and
+again when a lobby comes back from a round — which is the rule `bots` and
+`max_bots` already follow: what a host does inside one lobby stands, and the
+template describes the lobby each round opens with.
+
+**Add Bot on one of these teams reads the template too.** A seat the host
+adds to a team the template named a `mode` or a `difficulty` on is not a
+plain lobby bot: the server resolves it the same way the seating does, so
+Survival's horde grows in survival mode however the lobby's own default is
+set. The level is the first of these that exists:
+
+1. the most recent difficulty a **person** set on a seat of **that team**,
+   through the difficulty dropdown, this lobby session;
+2. the team's own `difficulty`;
+3. the default level of the mode the team named;
+4. Hard.
+
+The mode is always the template's — a host who moves one horde seat out of
+survival mode has moved that seat and nothing else, and the next Add Bot on
+that team is back in survival. A team the template does not name, or names
+neither key on, keeps the ordinary lobby rule, where the last pair a person
+chose by hand sets the mode as well as the level.
+
+The memory is per team and lasts one lobby session. It is cleared with every
+other lobby-session memory when a round ends and when the last person leaves,
+so the lobby a map opens with is the template's and not last round's. The
+resolution is done on the server for both roads in — the host's Add Bot over
+the wire, and single player's own — so the two always agree.
 
 `max_bots` is a memory ceiling as well as a seating one. A seat keeps the runner
 behind it — one ClientSim and one brain VM — across the unfielding that takes
@@ -956,6 +1007,7 @@ A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
 | `game.spawn_bot(t)` | Puts a bot into the running round. Answers the seat and `"queued"` when the call named a seat, and `true, "queued"` when the server is choosing one. |
 | `game.remove_bot(p)` | Takes a bot out of the running round. A human seat is refused with `SCN_OP_IS_HUMAN`. |
 | `game.set_team(p, t)` | Moves a seat to another team mid-round. |
+| `game.bot_init(p, t)` | Hands a bot a new init table. A seat that has been fielded takes one whether it is on the field now or not: a seat taken off keeps its brain, and the table is waiting in it when the seat is fielded again. A human seat is refused with `SCN_OP_IS_HUMAN`, an empty one with `SCN_OP_NO_SUCH_PLAYER`, and a held seat that has never been fielded — which has no brain yet to hold the table — with `SCN_OP_NO_RUNNER`. |
 | `game.lobby_add_bot(t)` | Seats a bot in the lobby and answers which seat it took. |
 | `game.lobby_remove_bot(p)` | Takes a bot out of the lobby. A human seat is refused. |
 | `game.lobby_set_team(p, t)` | Moves a lobby seat to another team. |
@@ -970,10 +1022,85 @@ A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
 | `team` | The team to join. A held seat keeps the team it was seated with. |
 | `start` | The start to come in on, 1-based. Left out, the engine chooses. |
 | `loadout` | What this one bot comes in with: `"open"`, `"tournament"` or `"strict"` for that game type's amounts. A word that is none of the three stops the call the way any bad argument does. It outranks `spawn_loadout`, which is not asked about this tank at all, and it is spent on the tank the spawn builds — the bot's next life is fuelled the way every other tank's is. Left out, `spawn_loadout` answers, and failing that the round's own game type. |
+| `mode` | The brain mode this bot plays in, by the key the brain's own `modes.txt` lists. Left out, the seat's config stands — which for a seat the template made is what the template gave it. A key the brain does not list is refused with `SCN_OP_NO_SUCH_ITEM`. |
+| `difficulty` | The level inside that mode, by the key the same file lists. Left out with a `mode` named, the new mode's own default level is taken; left out with no `mode` named, the seat's level stands. A key the mode does not list is refused with `SCN_OP_NO_SUCH_ITEM`. |
 | `init` | A flat table of names to strings or numbers, handed to the brain at its first breath. Left out, the seat's own is used — the one its team was written with. |
 
-`lobby_add_bot` takes `name`, `brain`, `team`, `slot` and `fielded`, where
-`fielded = false` asks for the seat without the bot.
+`lobby_add_bot` takes `name`, `brain`, `team`, `slot`, `fielded`, `mode` and
+`difficulty`, where `fielded = false` asks for the seat without the bot. A
+held seat takes `mode` and `difficulty` too: no brain loads for it yet, but
+the seat's row shows them from the moment it appears and the spawn that
+fields it later reads them off the seat.
+
+**`mode` and `difficulty` land in the seat's config, not in the init table.**
+That is what puts them on the lobby row and what the server turns into the
+brain's `mode=` / `difficulty=` tokens. A scenario may also write the same
+pair into its `init` table, which reaches the brain by a different road: the
+brain flattens the table onto the end of the same token string and takes the
+last write. Writing both is not wrong — the two roads serve different bots,
+the template's pair being what a seat the lobby shows carries and the table's
+what a bot spawned into a seat no template described gets. Two identical
+values are one value applied twice. Two different ones are not: the table's
+wins at the brain, and the lobby row still shows the seat's.
+
+Survival writes them on the **template only**. Every seat it fields is one of
+the template's own held seats, so the seat's config already carries the pair
+by the time a VM is built for it, and a wave's table would be a second copy
+of a value nothing had changed. There is a stronger reason not to put them in
+a wave's table: a wave table goes to a brain through `bot_init`, which reaches
+a brain that is **already running**, and `mode=` and `difficulty=` are refused
+at runtime — so they would buy nothing and cost one "unsupported" line per bot
+per wave in the log.
+
+**Changing a bot's orders while it plays.** `bot_init` takes the same table
+`spawn_bot`'s `init` field takes — flat, names to strings or numbers, at most
+16 pairs — and hands it to a bot that has been fielded:
+
+```lua
+game.bot_init(p, { noblitz = "1", cfg = "PILL_REPOSITION_ENABLED=false" })
+```
+
+The table **replaces** the bot's, whole. What the spawn's table said and this
+one does not say is gone, because the brain's table is rebuilt rather than
+merged into. Values are text and numbers, as a spawn's are, so a flag a brain
+reads as on or off is written `"1"` and `"0"` rather than `true` and `false`.
+GoalHunter treats only its known flag words that way (`noblitz`, `suicider`,
+`nosuicider`, `noclaimdead`, `normal`, `ammoless`); a valued token such as
+`blitzsuiciders = "1"` keeps its value.
+
+What the bot does with it is the brain's business, and there are two levels
+to it:
+
+- **Every brain** gets its `BRAIN_INIT` global rebuilt from the table. A brain
+  that reads the global somewhere other than at its first breath reads the new
+  pairs from the next time it looks.
+- **A brain that has written a `Brain.on_init(t)`** is called with that same
+  table as well, which is how a brain acts on the change rather than waiting
+  to be asked. The call is made between ticks, never while the brain is
+  thinking. A brain whose `on_init` raises has the error logged on the server
+  and carries on playing — a scenario changing a bot's orders cannot kill it.
+
+GoalHunter, the brain that ships with the server, writes one: it re-reads the
+whole token string, so `cfg=NAME=VALUE` and `preset=` change its constants
+there and then, and the bare flags (`noblitz`, `suicider`, `nosuicider`,
+`noclaimdead`, `normal`, `ammoless`) change the bot's behaviour from the next
+tick. `difficulty=` and `mode=` are **not** applied at runtime — those choose a
+whole bundle of values at load and a second bundle cannot unset the first — so
+the brain logs them as unsupported and leaves them. It also says one line to
+its team, `init updated: <n> tokens`, so a human on the same side can see the
+change land.
+
+A bot whose brain is not running yet still keeps the table: the record is what
+its next brain is built from, so nothing the script asked for is lost.
+
+A seat that is off the field takes the table the same way. An unfielded seat
+keeps the brain it was fielded with rather than throwing it away, so the
+global is rebuilt where the brain waits and the seat comes back onto the field
+already carrying the new pairs. This is how a wave-based scenario retunes its
+seats between waves, and it costs the next wave nothing: the seat is fielded
+again on the brain it already had. Only a held seat that has never been
+fielded is refused, with `SCN_OP_NO_RUNNER` — there is no brain there yet to
+hold the table, so field it first and then write into it.
 
 **The seat cycle.** A seat the `scenario` table seated and a wave fielded goes
 back to being held when `remove_bot` names it, rather than being emptied — so
@@ -990,14 +1117,22 @@ first breath. The brain's own state goes with it: a bot fielded for the second
 wave keeps whatever its script stored during the first, and is told the tank is
 new the way a respawn is. A spawn naming either differently gets a runner built
 for it instead, which is what a wave transition costs when it is paid, and a
-line in the server log saying which of the two differed. The `init` table is
-read once, when the VM is built, so it is not the place for orders that change
-from one wave to the next; `game.hint` below is.
+line in the server log saying which of the two differed. A **spawn's** `init`
+table is therefore not the place for orders that change from one wave to the
+next — varying it is what buys the rebuild. To retune a held seat between
+waves, spawn it with the same table every time and write the new one with
+`bot_init` while it is off the field: what a spawn is matched against is the
+table its VM was built with, which `bot_init` does not touch, so the seat
+still comes back onto the runner it already had. `game.hint` below is the
+other way to tell a bot something mid-round.
 
 The roster ops are the six above, `set_team` and `lobby_set_team` included.
 All of them are refused inside `on_setup`: the round is still being built
 there, and a roster edit would re-enter the machinery that is building it.
-Field your first wave, and move seats between teams, from `on_start`.
+`bot_init` is refused there with them, for the other half of the same reason
+— inside a start the bots and their brains are still being built, so there is
+no settled brain to write into. Field your first wave, move seats between
+teams, and change a bot's orders from `on_start` onwards.
 
 ---
 
@@ -1891,6 +2026,7 @@ The `code` a refused write answers, as a string.
 | `SCN_OP_RATE` | A budget for the tick is spent, or a second `fill_rect` was asked for while one is still landing. |
 | `SCN_OP_NOT_FOUND` | A brain that does not resolve: a name this server does not have, a path written where a name belongs, or a `package:NAME`. |
 | `SCN_OP_NO_STOCK` | A builder order the tank cannot pay for. |
+| `SCN_OP_NO_RUNNER` | The seat is a bot's, but no brain is behind it: a held seat that has never been fielded. A seat off the field keeps its brain and is not this. |
 | `SCN_OP_BAD_CALL` | The call itself is malformed. |
 
 ---
@@ -1909,7 +2045,7 @@ The `code` a refused write answers, as a string.
 | Bytes in one panel list | 1017 |
 | A panel text primitive | 48 bytes |
 | A score label | 15 bytes |
-| A bot's `init` table | 16 pairs |
+| A bot's `init` table | 16 pairs, whether it comes from `spawn_bot` or `bot_init` |
 | A hint table | 16 pairs; a name 23 bytes, a value 63 |
 | Events queued for one frame | 256 |
 | Roster changes outstanding at once | 32 |
@@ -1920,9 +2056,9 @@ The `code` a refused write answers, as a string.
 | `scenario.game` | 23 bytes |
 | A team's `brain` name | 255 bytes |
 
-Going past one of the counts is reported and refused. Spawns and removals
-share the one roster queue and the sim drains one a tick, so a script that
-asks for ten bots gets them over ten ticks; the one past the last is refused
+Going past one of the counts is reported and refused. Spawns, removals and
+`bot_init` share the one roster queue and the sim drains one a tick, so a
+script that asks for ten bots gets them over ten ticks; the one past the last is refused
 rather than displacing something already accepted. A rectangle bigger than a
 tick's tile budget applies what the budget allows and carries the rest on
 later ticks, one budget each — a whole-map fill takes 256 of them.

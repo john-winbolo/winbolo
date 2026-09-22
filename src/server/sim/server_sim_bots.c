@@ -69,6 +69,15 @@ bool serverSimAddBot(ServerSim *sim, BYTE playerNum,
             sim->sim.lgmen[playerNum] = lgmCreate(playerNum);
             basesUpdateTimer(&sim->sim, playerNum);
         }
+        /* And say so, which is the half serverSimUnfieldBot already does.
+           There is no join to announce — the seat was announced when it was
+           seated — but `fielded` has just changed, and it is the only thing
+           a client is told about a held seat going on and off the field.
+           Clients read it back through clientSimSlotIsUnfielded, which
+           decides whether the seat is drawn as a tank at all: without this
+           publish a seat comes back for its wave and stays a roster row with
+           no tank on every screen but the server's. */
+        serverSimPublishLobbySlot(sim, playerNum);
         return true;
     }
 
@@ -129,6 +138,12 @@ bool serverSimAddUnfieldedSeat(ServerSim *sim, BYTE playerNum,
     }
     basesRemoveTimer(&sim->sim, (int)playerNum);
     serverSimPublishLobbySlot(sim, playerNum);
+    /* And the seat's mode and difficulty, which the slot event does not
+       carry. Without this nothing ever publishes a held seat's config, and
+       every client goes on showing the zero its own table was created with
+       — Easy — whatever the server holds. Queued rather than published, so
+       ten seats cost two events a tick instead of ten in one. */
+    serverSimQueueBotConfigPublish(sim, playerNum);
     return true;
 }
 

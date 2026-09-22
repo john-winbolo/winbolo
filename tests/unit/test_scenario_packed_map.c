@@ -37,8 +37,9 @@
  *        scripts in uploaded maps on and attaches nothing with them off,
  *        while the same bytes outside that directory attach either way
  * run_scenario_packed_map_team_init
- *      — a container whose team declares an init, in a package whose script
- *        declares no table, attaches, and the init reaches the template
+ *      — a container whose team declares an init, a mode and a level, in a
+ *        package whose script declares no table, attaches, and all three
+ *        reach the template
  */
 
 #include <stdint.h>
@@ -631,17 +632,19 @@ int run_scenario_packed_map_upload_switch(void) {
     return 0;
 }
 
-/* ── 7. A manifest team with an init, and a script with no table ──── */
+/* ── 7. A manifest team with an init, a mode and a level ──────────── */
 
 /* The host pushes the container's manifest into the state as a `scenario`
  * global before the chunk runs, so a packaged script that declares no table
  * of its own is checked against what was pushed. Everything a team carries
- * went over except its init, which meant a manifest declaring one was held
- * to disagree with the script at every load: the read-back table had no init
- * and the container's had one, and mjInitDiffers named the first key.
+ * has to go over. Two rounds of that have been missing: the init, which
+ * made a manifest declaring one disagree with the script at every load, and
+ * the mode and the level, which went the other way and said nothing — the
+ * comparison did not read them either, so the two forms agreed and the team
+ * simply reached the template with neither.
  *
  * The script here declares nothing, which is the whole point — the manifest
- * is the only place the init is written, and the load has to survive it. */
+ * is the only place any of this is written, and the load has to carry it. */
 int run_scenario_packed_map_team_init(void) {
     static const char kInitManifest[] =
         "{\n"
@@ -654,6 +657,7 @@ int run_scenario_packed_map_team_init(void) {
         "  \"lobby\": {\n"
         "    \"teams\": [\n"
         "      { \"id\": 2, \"bots\": 1, \"max_bots\": 1, \"fielded\": false,\n"
+        "        \"mode\": \"survival\", \"difficulty\": \"hard\",\n"
         "        \"init\": { \"waves\": \"3\", \"style\": \"rush\" } }\n"
         "    ]\n"
         "  }\n"
@@ -711,6 +715,19 @@ int run_scenario_packed_map_team_init(void) {
             UT_ASSERT_MSG(scnTableGet(init, "style") != NULL &&
                           strcmp(scnTableGet(init, "style"), "rush") == 0,
                           "the team's init lost 'style'");
+            /* And the pair the seating reads to put this team's bots in
+               a mode. A team that reaches the template with these empty
+               plays whatever the lobby would have given it, which for a
+               scenario built around one mode is the wrong game. */
+            UT_ASSERT_MSG(
+                strcmp(sim->scenarioLobby.teams[i].mode, "survival") == 0,
+                "the team reached the template in mode '%s', expected "
+                "'survival'", sim->scenarioLobby.teams[i].mode);
+            UT_ASSERT_MSG(
+                strcmp(sim->scenarioLobby.teams[i].difficulty, "hard") == 0,
+                "the team reached the template at difficulty '%s', "
+                "expected 'hard'",
+                sim->scenarioLobby.teams[i].difficulty);
         }
         UT_ASSERT_MSG(seen, "the manifest's team never reached the template");
     }

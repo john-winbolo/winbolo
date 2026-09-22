@@ -61,6 +61,28 @@ void meScenarioFormReset(MEScenarioForm *f) {
 
 void meScenarioFormInit(MEScenarioForm *f) { meScenarioFormReset(f); }
 
+ScnManifestKind meScenarioFormKind(const MEScenarioForm *f) {
+    return (f == NULL) ? scnKindScenario : f->manifest.kind;
+}
+
+void meScenarioFormSetKind(MEScenarioForm *f, ScnManifestKind kind) {
+    if (f == NULL || kind == scnKindUnknown || f->manifest.kind == kind) {
+        return;
+    }
+    /* Only the kind. The game type and anything else a mod may not use stay
+       in the manifest: the author typed them, and a form that emptied a
+       field because a combo moved would lose work on a mis-click. They stop
+       being offered and the check refuses the file while they are set, which
+       says the same thing without throwing anything away. */
+    f->manifest.kind = kind;
+    f->dirty         = true;
+    f->edits++;
+}
+
+bool meScenarioFormKeepsWinCondition(const MEScenarioForm *f) {
+    return f != NULL && scnManifestKeepsWinCondition(&f->manifest);
+}
+
 int meScenarioFormFindRule(const MEScenarioForm *f, int rule) {
     uint16_t i;
 

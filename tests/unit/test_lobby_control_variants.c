@@ -108,6 +108,7 @@ int run_lobby_settings_codec_and_apply(void) {
     in.u.lobbySettings.lobbyLineOfSight                =
         (uint8_t)lineOfSightBuildingsAndTrees;
     in.u.lobbySettings.lobbySmartPingsOff              = true;
+    in.u.lobbySettings.lobbyModsOff                    = true;
 
     UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_SETTINGS, &in, &out) == 0,
                   "codec_roundtrip failed");
@@ -167,14 +168,16 @@ int run_lobby_settings_codec_and_apply(void) {
                   (unsigned)out.u.lobbySettings.lobbyLineOfSight);
     UT_ASSERT_MSG(out.u.lobbySettings.lobbySmartPingsOff == true,
                   "smart-pings-off did not survive codec round-trip");
+    UT_ASSERT_MSG(out.u.lobbySettings.lobbyModsOff == true,
+                  "mods-off did not survive codec round-trip");
 
     /* A sender that stops before the view tail (the payload shape from
      * before these fields existed) must still decode, leaving the view
      * fields at their zero-init values rather than reading past the
      * buffer. Encode a full event, then hand the decoder a body length
-     * that is fifteen bytes shorter (3 policies + 3 u16 decay values +
+     * that is sixteen bytes shorter (3 policies + 3 u16 decay values +
      * classic mode + allies in trees + voice mode + overview window +
-     * line of sight + smart pings off). */
+     * line of sight + smart pings off + mods off). */
     {
         uint8_t buf[MAX_CONTROL_PACKET];
         size_t encLen = 0;
@@ -185,7 +188,7 @@ int run_lobby_settings_codec_and_apply(void) {
         UT_ASSERT(dec != NULL);
 
         ControlEvent shortOut;
-        size_t shortBody = encLen - PACKET_HEADER_SIZE - 15;
+        size_t shortBody = encLen - PACKET_HEADER_SIZE - 16;
         UT_ASSERT_MSG(dec(buf + PACKET_HEADER_SIZE, shortBody, &shortOut),
                       "short lobby-settings payload failed to decode");
         UT_ASSERT_MSG(shortOut.u.lobbySettings.hostSlot == 3,
@@ -219,6 +222,12 @@ int run_lobby_settings_codec_and_apply(void) {
         UT_ASSERT_MSG(shortOut.u.lobbySettings.lobbySmartPingsOff == false,
                       "a payload with no smart-ping byte must read as "
                       "pings ALLOWED");
+        /* The same pin for the mods byte. The event that was encoded had the
+         * mods OFF; a sender that stops before the byte must still read as
+         * composing them, because that is what every server did before the
+         * setting existed. */
+        UT_ASSERT_MSG(shortOut.u.lobbySettings.lobbyModsOff == false,
+                      "a payload with no mods byte must read as mods ON");
     }
 
     /* The voice mode over the body tables, which is what the reliable
@@ -246,9 +255,9 @@ int run_lobby_settings_codec_and_apply(void) {
                           "body round-trip lost voice mode %d (got %d)",
                           (int)modes[m], (int)bout.u.lobbySettings.voiceMode);
 
-            /* The mode is the fourth byte from the end: the overview
-             * window, line of sight and smart-pings-off follow it. */
-            body[bodyLen - 4] = 0x7F;
+            /* The mode is the fifth byte from the end: the overview window,
+             * line of sight, smart-pings-off and mods-off follow it. */
+            body[bodyLen - 5] = 0x7F;
             memset(&bout, 0, sizeof(bout));
             UT_ASSERT(bdec(body, bodyLen, &bout));
             UT_ASSERT_MSG(bout.u.lobbySettings.voiceMode == serverVoiceOn,

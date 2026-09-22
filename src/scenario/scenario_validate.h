@@ -150,10 +150,56 @@ bool scenarioValidateSource(const ServerSim *sim, const char *text, size_t len,
  *********************************************************/
 const ScenarioManifest *scenarioHostManifest(const ScenarioHost *h);
 
+/*********************************************************
+ *NAME:          scenarioHostScriptCount
+ *PURPOSE:
+ *  How many scripts the host's current round loaded, which
+ *  is one until the list can be selected and sent. Zero for
+ *  a NULL host and for a round playing no scenario.
+ *********************************************************/
+int scenarioHostScriptCount(const ScenarioHost *h);
+
+/*********************************************************
+ *NAME:          scenarioHostScriptErrors
+ *PURPOSE:
+ *  How many errors in a row script i of that list has to its
+ *  own name, and whether it has been switched off for the
+ *  rest of the round. False where i names no script the round
+ *  loaded, and either out-parameter may be NULL.
+ *
+ *  Read-only, and the tests are what read it: the count is
+ *  per script so that one script's successes cannot put
+ *  another's failures back to zero, and that is a fact about
+ *  the host's own book-keeping with nothing to see from
+ *  outside while the list holds one script.
+ *********************************************************/
+bool scenarioHostScriptErrors(const ScenarioHost *h, int i, unsigned *errors,
+                              bool *disabled);
+
 /* Named rather than included: nothing else on this header names a Lua type,
  * and a frontend reading the result of a validation has no Lua headers on its
  * include path. */
 struct lua_State;
+
+/*********************************************************
+ *NAME:          scnEnvNew
+ *PURPOSE:
+ *  A table for one script's globals to live in, held in the
+ *  registry and answered as a reference. LUA_NOREF where
+ *  there was no memory for one.
+ *
+ *  It starts out holding everything the state's real globals
+ *  hold, one level deep, with _G set to itself. A script that
+ *  runs in it therefore has the whole sandbox by name while
+ *  what it writes, its scenario table and its hooks included,
+ *  stays out of every other script's reach.
+ *
+ *  The host makes one per script on its list and hands the
+ *  reference to the three calls below. A caller running one
+ *  script in a state of its own has nothing to keep it apart
+ *  from and passes LUA_NOREF instead.
+ *********************************************************/
+int scnEnvNew(struct lua_State *L);
 
 /*********************************************************
  *NAME:          scnScriptPath
@@ -218,8 +264,14 @@ void scnCloseVm(struct lua_State *L);
  *  the package check. The validator does it for a caller that
  *  holds a manifest, so a script is checked the way it will be
  *  loaded.
+ *
+ *  envRef is the registry reference to the table the script
+ *  runs its globals in, from the host's own list, or LUA_NOREF
+ *  for the state's real globals — which is what a caller with
+ *  one script and no list to isolate wants.
  *********************************************************/
-void scnPushManifestGlobal(struct lua_State *L, const ScenarioManifest *m);
+void scnPushManifestGlobal(struct lua_State *L, int envRef,
+                           const ScenarioManifest *m);
 
 /*********************************************************
  *NAME:          scnRunChunk
@@ -229,9 +281,13 @@ void scnPushManifestGlobal(struct lua_State *L, const ScenarioManifest *m);
  *  the chunk raises, so err carries it through rather than
  *  summarising it. chunkName carries the leading '@' that
  *  tells Lua the name is a file.
+ *
+ *  envRef is the table the chunk's own globals go in, or
+ *  LUA_NOREF for the state's real ones.
  *********************************************************/
-bool scnRunChunk(struct lua_State *L, const char *src, size_t srcLen,
-                 const char *chunkName, char *err, size_t errLen);
+bool scnRunChunk(struct lua_State *L, int envRef, const char *src,
+                 size_t srcLen, const char *chunkName, char *err,
+                 size_t errLen);
 
 /*********************************************************
  *NAME:          scnReadManifest
@@ -247,8 +303,13 @@ bool scnRunChunk(struct lua_State *L, const char *src, size_t srcLen,
  *  not cost an author every other line.
  *
  *  rep may be NULL, which says the problems nowhere.
+ *
+ *  envRef is the table the chunk ran its globals in, so what
+ *  is read back is the table that chunk declared and not one
+ *  a later chunk left behind. LUA_NOREF reads the state's real
+ *  globals.
  *********************************************************/
-bool scnReadManifest(struct lua_State *L, ScenarioManifest *m,
+bool scnReadManifest(struct lua_State *L, int envRef, ScenarioManifest *m,
                      const char *path, char *err, size_t errLen,
                      ScnParseReport *rep);
 

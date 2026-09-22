@@ -414,6 +414,20 @@ struct ClientSim {
                                      * "pings allowed", never "pings banned".
                                      * Read it through the positive accessor
                                      * clientSimIsLobbyAllowSmartPings. */
+    bool             lobbyModsOff;  /* the round composes none of the mods on
+                                     * the lobby's pick list; raw mirror of the
+                                     * lobby-settings event. Held in the
+                                     * NEGATIVE sense for the same reason as
+                                     * lobbySmartPingsOff above, and read
+                                     * through the positive accessor
+                                     * clientSimGetLobbyModsEnabled.
+                                     *
+                                     * Its byte went into the fixed part of
+                                     * the settings body, ahead of the
+                                     * scenario tail, so adding it moved that
+                                     * tail down: a body written without the
+                                     * byte is not readable by a build that
+                                     * has it, and nothing attempts that. */
     ServerVoiceMode  serverVoiceMode; /* what the server does with the voice
                                        * its clients send it; raw mirror of
                                        * the lobby-settings event. Zero is
@@ -658,6 +672,11 @@ struct ClientSim {
     /* Tied to the map it was written against, so no use as a mod. Carried so
        a chooser can say why a scenario it can see is not one it may pick. */
     bool     lobbyScenarioListBound[LOBBY_SCENARIO_LIST_MAX];
+    /* The script keeps the round's win condition, which is what a mod does
+       and what a scenario does not. bound does not answer this: a mod and an
+       unbound scenario are both unbound, and a chooser that sorts the two
+       into different columns needs the kind as well. */
+    bool     lobbyScenarioListKeepsWin[LOBBY_SCENARIO_LIST_MAX];
     bool     lobbyScenarioListReady;    /* true once a response arrives */
     bool     lobbyScenarioListInFlight; /* true after send, false on response */
     /* False until the first chunk of the response in flight lands, which is
@@ -776,6 +795,47 @@ struct ClientSim {
     char     lobbyScenarioFileName[LOBBY_SCENARIO_FILE_LEN];
     char     lobbyScenarioDescription[LOBBY_SCENARIO_DESC_LEN];
     bool     lobbyScenarioExtraTeams;
+    /* True when that script declared itself a mod, so the round is not its
+     * to end. False for a scenario and false when lobbyScenarioSource says
+     * there is no script at all, which is why a reader telling those two
+     * apart reads the source first. */
+    bool     lobbyScenarioKeepsWinCondition;
+    /* True when that script is tied to the one map it was written against,
+     * so a chooser may not offer to take it off: changing it means changing
+     * the map. The catalogue rows carry the same flag in
+     * lobbyScenarioListBound, but the attached script is not a catalogue row
+     * and need not be in the directory at all. */
+    bool     lobbyScenarioBound;
+
+    /* The lobby's ordered script list, from CTRL_LOBBY_SCRIPT_LIST. Entry 0
+     * is the one the round is decided by and is the same file the identity
+     * above names; the rest are mods behind it.
+     *
+     * Two copies: `pending` is what the chunks of the list now arriving are
+     * appended to, and `lobbyScript*` is the last whole list, which is what
+     * the accessors answer. A list installed a chunk at a time would leave a
+     * chooser drawing half of one list and half of the next every time a
+     * host edited it. Sized by the wire's own cap, so a list that would
+     * overrun it is thrown away rather than cut. */
+    int      lobbyScriptCount;
+    char     lobbyScriptFiles[LOBBY_SCRIPT_LIST_MAX][LOBBY_SCENARIO_FILE_LEN];
+    char     lobbyScriptNames[LOBBY_SCRIPT_LIST_MAX][LOBBY_SCENARIO_NAME_LEN];
+    bool     lobbyScriptKeepsWin[LOBBY_SCRIPT_LIST_MAX];
+    bool     lobbyScriptBound[LOBBY_SCRIPT_LIST_MAX];
+    int      lobbyScriptPendingCount;
+    LobbyScriptEntry lobbyScriptPending[LOBBY_SCRIPT_LIST_MAX];
+    /* Set when a run of chunks is thrown away for overrunning the cap, and
+     * held until that run's last chunk. Zeroing the pending count is not
+     * enough on its own: zero is exactly where a fresh list starts, so the
+     * chunks behind the dropped one would append from there and the one
+     * carrying final would install a piece of the list as though it were the
+     * whole of it. Cleared on the chunk with final set, because the list is
+     * published as a back-to-back run on a reliable ordered channel and the
+     * chunk after a final one is always the start of the next list. */
+    bool     lobbyScriptPendingDropped;
+    /* Ticked on each whole list installed, so a chooser can re-read without
+     * comparing the rows itself, the way lobbyScenarioListSeq is used. */
+    uint32_t lobbyScriptSeq;
 
     /* The rules that scenario's own manifest sets, from CTRL_SCENARIO_RULES.
      * Here beside the identity rather than with the presentation below: a

@@ -334,6 +334,10 @@ static void serverSimInit(ServerSim *sim, gameType game, bool hiddenMines, int32
      * are: the field is stored in the negative sense, so the line has to
      * say which way round "false" reads. */
     sim->smartPingsOff  = FALSE;
+    /* And the mods on the pick list compose until a host says otherwise,
+     * written out for the same reason: the field is stored in the negative
+     * sense, so the line has to say which way round "false" reads. */
+    sim->modsOff        = FALSE;
     sim->maxPlayers          = MAX_TANKS;
     sim->maxSpectators       = 0;
     sim->specDelayTicks      = 0;

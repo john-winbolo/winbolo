@@ -54,7 +54,7 @@ static const langid srdDescIds[] = {
  * numbers were taken by the fog style strings and moved to the end of the
  * file, because the rules the table gained later were numbered on from
  * there, and because the pillmassage pair start again past the map editor's
- * scenario strings. The knockback pair follows two more editor strings.
+ * scenario strings. The knockback pair follows the scenario editor and lobby strings.
  * See the block comment in lang.h. */
 #define SRD_FIRST_ID  2345u
 #define SRD_LAST_ID   2425u
@@ -62,8 +62,8 @@ static const langid srdDescIds[] = {
 #define SRD_LAST_ID2  2549u
 #define SRD_FIRST_ID3 2575u
 #define SRD_LAST_ID3  2576u
-#define SRD_FIRST_ID4 2579u
-#define SRD_LAST_ID4  2580u
+#define SRD_FIRST_ID4 2622u
+#define SRD_LAST_ID4  2623u
 
 /* ── 1. A description id per rule ──────────────────────────────────────── */
 

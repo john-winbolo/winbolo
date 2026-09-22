@@ -694,7 +694,20 @@ static void meScnMetadataBody(MEScenarioForm *f, MEScenarioState *st,
     };
     const int kGameCount = (int)(sizeof(kGames) / sizeof(kGames[0]));
 
+    /* What the file may decide, and the word the manifest writes each one
+     * as. Two rows and no None: a file that says nothing is a scenario, so
+     * there is no third answer to offer. */
+    static const struct {
+        ScnManifestKind kind;
+        langid          label;
+    } kKinds[] = {
+        {scnKindScenario, STR_MAPEDIT_SCENARIO_KIND_SCENARIO},
+        {scnKindKeepsWinCondition, STR_MAPEDIT_SCENARIO_KIND_MOD},
+    };
+    const int kKindCount = (int)(sizeof(kKinds) / sizeof(kKinds[0]));
+
     ScenarioManifest *m = &f->manifest;
+    const bool        isMod = meScenarioFormKeepsWinCondition(f);
     int               i;
     int               chosen = -1;
     const char       *preview;
@@ -717,24 +730,62 @@ static void meScnMetadataBody(MEScenarioForm *f, MEScenarioState *st,
         f->dirty = true;
     }
 
-    /* A word the manifest already holds that is none of the four shows as
-     * itself, so picking from the list is the only thing that replaces it. */
-    for (i = 0; i < kGameCount; i++) {
-        if (strcmp(m->game, kGames[i].word) == 0) {
+    /* What the file may decide, ahead of the fields it decides them with,
+     * because it is what says whether those fields are offered at all. */
+    chosen = 0;
+    for (i = 0; i < kKindCount; i++) {
+        if (m->kind == kKinds[i].kind) {
             chosen = i;
             break;
         }
     }
-    preview = (chosen >= 0) ? langGetText(kGames[chosen].label) : m->game;
-    ImGui::SetNextItemWidth(260.0f);
-    if (ImGui::BeginCombo(langGetText(STR_MAPEDIT_SCENARIO_GAME), preview)) {
-        for (i = 0; i < kGameCount; i++) {
-            if (ImGui::Selectable(langGetText(kGames[i].label), i == chosen)) {
-                meScnCopy(m->game, sizeof(m->game), kGames[i].word);
-                f->dirty = true;
+    ImGui::SetNextItemWidth(360.0f);
+    if (ImGui::BeginCombo(langGetText(STR_MAPEDIT_SCENARIO_KIND),
+                          langGetText(kKinds[chosen].label))) {
+        for (i = 0; i < kKindCount; i++) {
+            if (ImGui::Selectable(langGetText(kKinds[i].label), i == chosen)) {
+                meScenarioFormSetKind(f, kKinds[i].kind);
             }
         }
         ImGui::EndCombo();
+    }
+    meScnHint(langGetText(STR_MAPEDIT_SCENARIO_KIND_NOTE));
+
+    /* The game type is win-deciding: open, tournament and strict end a round
+     * on different things, and it is the only way a file picks between them.
+     * So a mod is not shown the combo at all, rather than being shown one it
+     * would fail the check on. Hidden and not disabled, because the rows here
+     * are a plain stack and taking one out leaves no hole; a line in its
+     * place says why it has gone.
+     *
+     * What the author already typed stays in the manifest either way, so
+     * moving the kind back brings the answer back with it. */
+    if (isMod) {
+        meScnHint(langGetText(STR_MAPEDIT_SCENARIO_GAME_MOD));
+    } else {
+        /* A word the manifest already holds that is none of the four shows as
+         * itself, so picking from the list is the only thing that replaces
+         * it. */
+        chosen = -1;
+        for (i = 0; i < kGameCount; i++) {
+            if (strcmp(m->game, kGames[i].word) == 0) {
+                chosen = i;
+                break;
+            }
+        }
+        preview = (chosen >= 0) ? langGetText(kGames[chosen].label) : m->game;
+        ImGui::SetNextItemWidth(260.0f);
+        if (ImGui::BeginCombo(langGetText(STR_MAPEDIT_SCENARIO_GAME),
+                              preview)) {
+            for (i = 0; i < kGameCount; i++) {
+                if (ImGui::Selectable(langGetText(kGames[i].label),
+                                      i == chosen)) {
+                    meScnCopy(m->game, sizeof(m->game), kGames[i].word);
+                    f->dirty = true;
+                }
+            }
+            ImGui::EndCombo();
+        }
     }
 
     if (ImGui::Checkbox(langGetText(STR_MAPEDIT_SCENARIO_BOUND), &m->bound)) {
@@ -1481,8 +1532,12 @@ static const char *meScnFnFormNote(MEScnFnForm form) {
  * Add here would write a function the author would never see run.
  *
  * Neither button touches the script itself. Both leave the action for the
- * script view and switch to it — see meScnApplyPending. */
-static void meScnFunctionsBody(MEScenarioState *st, int *view) {
+ * script view and switch to it — see meScnApplyPending.
+ *
+ * The form comes in for one question: whether the file says it is a mod,
+ * which takes the round-deciding function out of what is offered. */
+static void meScnFunctionsBody(MEScenarioState *st, const MEScenarioForm *f,
+                               int *view) {
     /* What the author has typed into the filter. One panel, so one box, and
      * it survives a switch away and back. */
     static char s_filter[64] = "";
@@ -1490,6 +1545,7 @@ static void meScnFunctionsBody(MEScenarioState *st, int *view) {
     MEScnFoundFn found[ME_SCN_FOUND_MAX];
     const char  *text  = (st->script != NULL) ? st->script : "";
     const size_t count = meScnFnCount();
+    const bool   isMod = meScenarioFormKeepsWinCondition(f);
     size_t       nFound;
     size_t       i;
     char         params[ME_SCN_FN_STUB_MAX];
@@ -1524,6 +1580,31 @@ static void meScnFunctionsBody(MEScenarioState *st, int *view) {
             }
             defined = meScnFnDefinedAs(found, nFound, name, &firstLine,
                                        &form);
+
+            /* A mod leaves the win condition alone, so the one function whose
+               answer decides an ending is not offered to one: the row goes and
+               the Add button with it, which is the only way into a script this
+               view has. A line in its place says why, the way the metadata
+               view's game type does, so an author looking for the function
+               finds the reason rather than a gap.
+               A file that has written it anyway keeps its row, the same way an
+               action already naming a round-deciding op still shows in its
+               combo: the Go to button is how the author reaches the thing the
+               check is complaining about, and the row carries no Add. */
+            if (isMod && defined == 0 && meScnFnDecidesRound(i)) {
+                MessageArgs args = {};
+
+                meScnCopy(args.string1, sizeof(args.string1), name);
+                /* Where the name would have been, and wrapped at the window's
+                   edge the way the descriptions under each row are: the line
+                   is a sentence rather than a label. */
+                ImGui::Indent(kFnButtonWidth);
+                ImGui::PushTextWrapPos(0.0f);
+                meScnHint(langGetTextFmt(STR_MAPEDIT_SCENARIO_FN_MOD, &args));
+                ImGui::PopTextWrapPos();
+                ImGui::Unindent(kFnButtonWidth);
+                continue;
+            }
 
             ImGui::PushID((int)i);
             if (defined > 0) {
@@ -2431,8 +2512,16 @@ static void meScnActionSetOp(ScnTrigAct *a, const char *op) {
  * meScenarioOpIsAction is the narrower of the registry's two flags. It leaves
  * out the ops that take a table or a function, which an action cannot state,
  * and the read accessors, which run and answer a value nobody is there to
- * read. Neither is an op to offer here. */
-static bool meScnActionOp(ScnTrigAct *a) {
+ * read. Neither is an op to offer here.
+ *
+ * isMod leaves out one more set: the ops that decide the round, which a file
+ * that says it is a mod may not call. Not offered rather than offered and
+ * refused later, because the host will not start a round for a mod whose
+ * trigger names one, and an author should not be able to pick a thing the
+ * round will not take. An action that already names one stays in the row and
+ * shows in the box, which is how the author sees what has to change; the
+ * check says so in the issues list. */
+static bool meScnActionOp(ScnTrigAct *a, bool isMod) {
     const size_t count   = meScenarioCompletionCount();
     bool         changed = false;
     bool         holding;
@@ -2447,6 +2536,7 @@ static bool meScnActionOp(ScnTrigAct *a) {
         const char *name = NULL;
 
         if (!meScenarioOpIsAction(i) ||
+            (isMod && meScenarioOpDecidesRound(i)) ||
             !meScenarioCompletionAt(i, &name, NULL) || name == NULL) {
             continue;
         }
@@ -2705,7 +2795,7 @@ static void meScnTriggersBody(MEScenarioState *st, MEScenarioForm *f,
             int        p;
 
             ImGui::PushID(a);
-            moved |= meScnActionOp(&act);
+            moved |= meScnActionOp(&act, meScenarioFormKeepsWinCondition(f));
 
             /* Everything the op says about itself is read after the combo,
                which can have just named a different one. */
@@ -2922,7 +3012,7 @@ void mapEditorImguiScenarioPanel(MEScenarioState *st, MEScenarioForm *form,
                           clickedIndex, panX, panY);
             break;
         case ME_SCENARIO_VIEW_FUNCTIONS:
-            meScnFunctionsBody(st, view);
+            meScnFunctionsBody(st, form, view);
             break;
         case ME_SCENARIO_VIEW_TRIGGERS:
             meScnTriggersBody(st, form, mapInfo);

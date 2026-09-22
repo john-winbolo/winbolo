@@ -188,6 +188,15 @@ bool meScnFnIsHook(size_t row) {
     return r != NULL && r->kind != SCN_FN_POLICY;
 }
 
+bool meScnFnDecidesRound(size_t row) {
+    const ScnLuaFnRow *r = meScnFnRowAt(row);
+
+    /* By name here, unlike the kind above, because that is how the runtime
+       writes the answer down: one place says what a mod may not decide, and
+       the editor asks it rather than keeping a copy of its own to drift. */
+    return r != NULL && r->name != NULL && scenarioLuaFnDecidesRound(r->name);
+}
+
 size_t meScnFnParamList(size_t row, char *out, size_t outLen) {
     const ScnLuaFnRow *r    = meScnFnRowAt(row);
     size_t             want = 0;

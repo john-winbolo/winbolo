@@ -2136,6 +2136,10 @@ bool clientSimIsLobbyHiddenMines(const ClientSim *cs)     { return cs->lobbyHidd
  * question every caller actually asks. A server that never sends the byte
  * leaves lobbySmartPingsOff false, so it reads as allowed. */
 bool clientSimIsLobbyAllowSmartPings(const ClientSim *cs) { return cs ? !cs->lobbySmartPingsOff : true; }
+/* The same turn round for the mods, and the same reason: a server that
+ * never sends the byte leaves lobbyModsOff false, so it reads as composing
+ * them, which is what every server did before the setting existed. */
+bool clientSimGetLobbyModsEnabled(const ClientSim *cs)   { return cs ? !cs->lobbyModsOff : true; }
 bool clientSimIsBalanceProposalActive(const ClientSim *cs){ return cs->balanceProposalActive; }
 uint64_t clientSimGetLastBalanceProposalArrivedMs(const ClientSim *cs) {
     return cs ? cs->lastBalanceProposalArrivedMs : 0;
@@ -2743,6 +2747,8 @@ const char *clientSimGetLobbyScenarioName(const ClientSim *cs)       { return cs
 const char *clientSimGetLobbyScenarioFileName(const ClientSim *cs)   { return cs ? cs->lobbyScenarioFileName : ""; }
 const char *clientSimGetLobbyScenarioDescription(const ClientSim *cs){ return cs ? cs->lobbyScenarioDescription : ""; }
 bool     clientSimGetLobbyScenarioExtraTeams(const ClientSim *cs)    { return cs ? cs->lobbyScenarioExtraTeams : false; }
+bool     clientSimGetLobbyScenarioKeepsWinCondition(const ClientSim *cs) { return cs ? cs->lobbyScenarioKeepsWinCondition : false; }
+bool     clientSimGetLobbyScenarioBound(const ClientSim *cs) { return cs ? cs->lobbyScenarioBound : false; }
 
 /* The rules that scenario's manifest sets. Bounded on the stored count
    rather than on the array, so a row above it — one an earlier, longer set
@@ -2938,6 +2944,40 @@ bool clientSimGetLobbyScenarioListBound(const ClientSim *cs, int idx) {
   if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return false;
   return cs->lobbyScenarioListBound[idx];
 }
+bool clientSimGetLobbyScenarioListKeepsWinCondition(const ClientSim *cs,
+                                                    int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return false;
+  return cs->lobbyScenarioListKeepsWin[idx];
+}
+/* The lobby's ordered script list: what the host has picked, in the order
+ * the round will load it. Entry 0 is the script the round is decided by and
+ * is the same file the attached-scenario accessors describe; the entries
+ * behind it are mods. The same NULL and range tolerance the catalogue
+ * accessors above have, and for the same reason: a chooser reads these a
+ * frame at a time while a new list may land between two reads. */
+int clientSimGetLobbyScriptCount(const ClientSim *cs) {
+  return cs ? cs->lobbyScriptCount : 0;
+}
+const char *clientSimGetLobbyScriptFile(const ClientSim *cs, int i) {
+  if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) return "";
+  return cs->lobbyScriptFiles[i];
+}
+const char *clientSimGetLobbyScriptName(const ClientSim *cs, int i) {
+  if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) return "";
+  return cs->lobbyScriptNames[i];
+}
+bool clientSimGetLobbyScriptKeepsWinCondition(const ClientSim *cs, int i) {
+  if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) return false;
+  return cs->lobbyScriptKeepsWin[i];
+}
+bool clientSimGetLobbyScriptBound(const ClientSim *cs, int i) {
+  if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) return false;
+  return cs->lobbyScriptBound[i];
+}
+uint32_t clientSimGetLobbyScriptSeq(const ClientSim *cs) {
+  return cs ? cs->lobbyScriptSeq : 0;
+}
+
 bool clientSimGetLobbyScenarioListReady(const ClientSim *cs) {
   return cs ? cs->lobbyScenarioListReady : false;
 }

@@ -62,8 +62,23 @@ typedef struct {
     /* The init table this bot was created with, handed to its brain VM
      * as BRAIN_INIT. Kept for the life of the bot so a brain swap
      * (botManagerSetBrainIdx) hands the new VM the same configuration
-     * the first one got. Empty when the creator passed none. */
+     * the first one got. Empty when the creator passed none.
+     *
+     * This is the LIVE record: game.bot_init replaces it mid-life, and what
+     * it holds is what the brain's BRAIN_INIT says now. It is therefore not
+     * what a park is keyed on — see builtInit. */
     ScnTable        initTable;
+    /* The table the VM in this context was actually BUILT with, written
+     * once where the brain instance is created and never again.
+     *
+     * The park test compares a spawn against this rather than against
+     * initTable, because the two answer different questions. initTable says
+     * what the brain was last told; builtInit says what this VM came into
+     * the world reading, which is the only thing that decides whether a new
+     * VM is needed. A script that warms its seats with a team table and then
+     * tunes each life with game.bot_init would otherwise mismatch on the
+     * next fielding and pay for a VM it already has. */
+    ScnTable        builtInit;
     BYTE            playerNum;
     bool            active;
     /* The runner is built and idle, with cs, transport, controlSub, brain,
@@ -239,6 +254,16 @@ typedef struct BotManager {
 
     BotContext   bots[MAX_TANKS];
     int          numBots;
+
+    /* Runners built since this manager was initialised: one per brain VM
+     * this server has paid for. Monotonic, never reset by a round.
+     *
+     * A resume costs none of it, so the difference across a wave is the
+     * plain answer to "did the spawns reuse the warmed runners or rebuild
+     * them?" — which is otherwise only visible as a WARN in the log and as
+     * lag on the wave that paid. Read by the tests through
+     * botManagerRunnerBuildCount. */
+    uint32_t     runnerBuilds;
 
     /* Slot+1 of the bot currently mid-teardown in botManagerRemoveBot
      * (0 = none). The teardown deactivates the context BEFORE calling
@@ -1022,6 +1047,20 @@ uint32_t botManagerGetClientAllieRow(const struct ServerSim *sim,
 void botManagerSyncClientAlliances(struct ServerSim *sim);
 
 /*********************************************************
+*NAME:          botManagerRunnerBuildCount
+*PURPOSE:
+*  How many brain runners this server has built, counting
+*  from the manager's own start. A resumed park costs none,
+*  so the difference across a wave says whether its spawns
+*  reused the warmed runners or paid for new VMs.
+*
+*  Monotonic and never reset by a round, so a caller takes
+*  the reading it wants to measure from and subtracts.
+*  Zero for a NULL sim.
+*********************************************************/
+uint32_t botManagerRunnerBuildCount(const struct ServerSim *sim);
+
+/*********************************************************
  *NAME:          botManagerGetPoolStats
  *PURPOSE:
  *  Fills `out` with pool-wide telemetry: worker count,
@@ -1085,6 +1124,43 @@ int botManagerActiveBotCountForLua(struct lua_State *L);
  *********************************************************/
 bool botManagerSetLuaGlobalString(struct ServerSim *sim, BYTE playerNum,
                                   const char *name, const char *value);
+
+/*********************************************************
+ *NAME:          botManagerSetBotInitTable
+ *PURPOSE:
+ *  Replace a bot's init table: the bot's own copy (what a
+ *  later brain swap rebuilds its VM from) and, when the
+ *  brain is running, the BRAIN_INIT global plus a call to
+ *  the brain's Brain.on_init(t).
+ *
+ *  A seat off the field takes it too while its runner is
+ *  parked: the VM is still standing, so the global is
+ *  written where it sits and the refield resumes onto it.
+ *
+ *  Producer thread only, between ticks — the brain's Lua
+ *  state belongs to a worker during the think stage.
+ *
+ *  Returns false when the seat has no runner at all, or
+ *  when the brain's on_init raised (which is logged, not
+ *  fatal).
+ *
+ *ARGUMENTS:
+ *  playerNum - Bot slot
+ *  init      - The new table; NULL empties it
+ *********************************************************/
+bool botManagerSetBotInitTable(struct ServerSim *sim, BYTE playerNum,
+                               const ScnTable *init);
+
+/*********************************************************
+ *NAME:          botManagerGetBotInitTable
+ *PURPOSE:
+ *  The init table a bot is holding now — the one it was
+ *  created with, or the last one handed to it. NULL when
+ *  the seat has no runner, fielded or parked. The pointer
+ *  is the bot's own and lives as long as the runner does.
+ *********************************************************/
+const ScnTable *botManagerGetBotInitTable(struct ServerSim *sim,
+                                          BYTE playerNum);
 
 /*********************************************************
  *NAME:          botManagerEvalLuaString

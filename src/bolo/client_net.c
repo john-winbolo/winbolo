@@ -639,6 +639,32 @@ void clientSimNetSendLobbySetScenario(ClientSim *cs, const char *relPath) {
   clientSimSubmitCommand(cs, &cmd);
 }
 
+void clientSimNetSendSetScriptList(ClientSim *cs,
+                                   const char *const *files, int count) {
+  int i;
+  if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
+  if (count < 0 || count > CMD_SCRIPT_LIST_MAX) return;
+  if (count > 0 && files == NULL) return;
+  /* Nothing here asks the server anything: the command carries the whole
+     list, and every name in it is checked against the scenarios directory in
+     the dispatcher, which is the only side that can. What this does refuse is
+     what would not survive the trip: a name longer than the field, which
+     would arrive cut and name a different file. An empty list is a message
+     and not a mistake — it is how a host clears the list — so count 0 goes
+     out where a caller's mistake would return. */
+  ClientCommand cmd = { .type = CMD_SET_SCRIPT_LIST };
+  cmd.u.setScriptList.count = (uint8_t)count;
+  for (i = 0; i < count; i++) {
+    size_t fl;
+    if (files[i] == NULL) return;
+    fl = strlen(files[i]);
+    if (fl == 0 || fl >= CMD_SCRIPT_LIST_FILE_LEN) return;
+    memcpy(cmd.u.setScriptList.files[i], files[i], fl + 1);
+  }
+  clientSimSubmitCommand(cs, &cmd);
+}
+
 void clientSimNetSendLobbyPreviewCancel(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport) return;
   if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */

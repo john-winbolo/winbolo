@@ -520,8 +520,8 @@ run_scenario_fast() {
 # below allows.
 #
 # So the run ends on the round's own word. The helper watches the client's
-# event log for the line the scenario ends with, then interrupts the server,
-# which is the clean quit — it publishes the shutdown the client leaves on.
+# event log for the line the scenario ends with, then tells the server to
+# quit on its console, which publishes the shutdown the client leaves on.
 #
 # -ai yesfull is what lets a wave field a seat at all: the spawn arm refuses
 # on a server that runs no bots, and the dedicated server's default is none.
@@ -577,18 +577,54 @@ run_scenario_swap_udp() {
   fi
   export WINBOLO_LOG="net=error,sim=info"
 
-  ds_bin -map "$map" -port 0 -gametype open \
+  # The server is given a live stdin and is not launched -quiet, which puts
+  # processKeys on the branch that reads the console. That is the one road to
+  # a clean stop that works on every platform this suite runs on. A SIGINT
+  # sent from Git-bash to a native Windows process is never delivered, so the
+  # interrupt flag the console loop breaks on is never set there. A "quit"
+  # line breaks the same loop, and the shutdown that follows publishes
+  # CTRL_SERVER_SHUTDOWN with its broadcast - which is what the client leaves
+  # on, about a second later.
+  #
+  # The writer says nothing until the teardown below creates the sentinel
+  # file, and holds the pipe open either way: were it to end first, the
+  # server's reader thread would see EOF and no later line could reach it.
+  # Its own bound is 600 turns of 0.2s, which is 120s and past every wait in
+  # this helper. On a run that ends early - a NO END - the sentinel is never
+  # written, so left alone the writer would sit in that loop for the rest of
+  # the two minutes and then take a SIGPIPE on a line nobody is reading. The
+  # teardown stops it by name instead, beside the server and the client.
+  #
+  # $! after a background pipeline is the last process in it, which is the
+  # server, and ds_bin execs when it runs in a subshell - so this is the
+  # server's own pid, not a shell wrapping it. The writer is the FIRST process
+  # of that pipeline, and its pid is the one `jobs -p` reports for the job, so
+  # the two are picked up separately. A shell that reports nothing leaves
+  # w_pid empty, and kill walks past an empty argument to the pids after it.
+  local quit_file="$ACTUAL/$name.quit"
+  rm -f "$quit_file"
+  { qw=0
+    while [ ! -f "$quit_file" ] && [ "$qw" -lt 600 ]; do
+      sleep 0.2
+      qw=$((qw + 1))
+    done
+    echo quit
+    sleep 5
+  } | ds_bin -map "$map" -port 0 -gametype open \
             -ai yesfull -brain "$brain" \
-            -nowinbolonet -quiet -threads 1 \
+            -nowinbolonet -threads 1 \
             -logfile "$ACTUAL/$name.dslog" \
             > "$ACTUAL/$name.ds.out" 2> "$ACTUAL/$name.ds.err" &
   local ds_pid=$!
+  local w_pid
+  w_pid=$(jobs -p %% 2>/dev/null || true)
   if [ "$had_log" -eq 1 ]; then
     export WINBOLO_LOG="$old_log"
   else
     unset WINBOLO_LOG
   fi
-  trap 'kill "$ds_pid" 2>/dev/null || true; wait "$ds_pid" 2>/dev/null || true' EXIT
+  trap 'kill "$w_pid" "$ds_pid" 2>/dev/null || true; \
+        wait "$w_pid" "$ds_pid" 2>/dev/null || true' EXIT
 
   port=$(await_ds_port "$ACTUAL/$name.ds.err" "$ds_pid") || return 1
   sleep 0.5  # settle; see await_ds_port
@@ -599,8 +635,8 @@ run_scenario_swap_udp() {
          --log-events "$ACTUAL/$name.jsonl" --quiet \
          > "$ACTUAL/$name.out" 2> "$ACTUAL/$name.err" &
   local c_pid=$!
-  trap 'kill "$ds_pid" "$c_pid" 2>/dev/null || true; \
-        wait "$ds_pid" "$c_pid" 2>/dev/null || true' EXIT
+  trap 'kill "$w_pid" "$ds_pid" "$c_pid" 2>/dev/null || true; \
+        wait "$w_pid" "$ds_pid" "$c_pid" 2>/dev/null || true' EXIT
 
   # Wait for the round to say it is over. The client flushes its event log
   # after every event, so the line lands there as soon as it is delivered.
@@ -629,8 +665,8 @@ run_scenario_swap_udp() {
   done
 
   if [ "$ended" -eq 0 ] && [ "$gone" -eq 0 ]; then
-    kill "$ds_pid" "$c_pid" 2>/dev/null || true
-    wait "$ds_pid" "$c_pid" 2>/dev/null || true
+    kill "$w_pid" "$ds_pid" "$c_pid" 2>/dev/null || true
+    wait "$w_pid" "$ds_pid" "$c_pid" 2>/dev/null || true
     trap - EXIT
     echo "NO END"
     echo "    the round never said: $held"
@@ -640,26 +676,41 @@ run_scenario_swap_udp() {
   fi
 
   if [ "$ended" -eq 1 ]; then
-    # The clean quit. SIGINT sets the interrupt the server's console loop
-    # breaks on, and the shutdown that follows publishes CTRL_SERVER_SHUTDOWN
-    # with its broadcast — which is what the client leaves on.
-    kill -INT "$ds_pid" 2>/dev/null || true
+    # Ask the server to quit. The line goes down the pipe opened at launch,
+    # the console loop breaks on it, and the shutdown that follows broadcasts
+    # CTRL_SERVER_SHUTDOWN, which is what the client leaves on.
+    : > "$quit_file"
+    local quitWaited=0
+    while kill -0 "$ds_pid" 2>/dev/null && [ "$quitWaited" -lt 15 ]; do
+      sleep 1
+      quitWaited=$((quitWaited + 1))
+    done
+    # Last resort, and SIGKILL rather than SIGTERM: a server still up after
+    # that is one nothing gentler will stop either, and a SIGTERM that follows
+    # a signal Windows never delivered is swallowed outright. The client then
+    # leaves on the dead link instead, which is slower but still ends the run.
+    # Every check this entry makes has already been written by the time either
+    # road is taken - how the server stopped is teardown, not what is being
+    # measured.
+    kill -9 "$ds_pid" 2>/dev/null || true
   fi
 
-  # Shorter than the 40s default, because this entry has already spent the
-  # wait above: 35s of waiting for the end line plus 40s of waiting for the
-  # client is more than the 60s CTest allows the whole entry, and a run killed
-  # by CTest takes the entry's own half-written line with it and prints no
-  # diagnostics at all. 12s is well past what a client needs to leave on the
-  # shutdown broadcast, and 35 + 12 plus the settle still fits inside 60.
-  # await_client reads this by name when it is called, so the caller's local
-  # is the value it uses.
-  local CLIENT_WAIT_LIMIT=12
+  # Sized for the slower of the two roads out. A client leaving on the
+  # shutdown broadcast takes about a second, and that is the road the quit
+  # above takes. One leaving on a dead link instead waits
+  # CLIENT_TIMEOUT_TICKS, which is 1000 of its own ticks and not a wall-clock
+  # span: ten seconds on an idle machine, and considerably longer on a busy
+  # one, because a headless sharing a machine with the rest of a -j run pumps
+  # slower. 60s covers the first road many times over and gives the second a
+  # chance, and this entry carries a CTest timeout of its own to fit it (see
+  # the set_tests_properties beside its add_test). await_client reads this by
+  # name when it is called, so the caller's local is the value it uses.
+  local CLIENT_WAIT_LIMIT=60
   local rc=0
   await_client "$c_pid" "client" || rc=$?
 
-  kill "$ds_pid" 2>/dev/null || true
-  wait "$ds_pid" 2>/dev/null || true
+  kill "$w_pid" "$ds_pid" 2>/dev/null || true
+  wait "$w_pid" "$ds_pid" 2>/dev/null || true
   trap - EXIT
 
   if [ "$rc" -ne 0 ]; then
@@ -1472,21 +1523,27 @@ dispatch_scenario() {
     # counted at 100/s, so waiting there costs more idle time than the client
     # wait allows. Both were tried and both failed that way.
     #
-    # So the helper waits for the line the scenario ends with and then
-    # interrupts the server, and the client leaves on the shutdown that
-    # follows. The round decides the length of the run.
+    # So the helper waits for the line the scenario ends with and then tells
+    # the server to quit on its console, and the client leaves on the shutdown
+    # that follows. The round decides the length of the run. A signal cannot
+    # do that job here: on Windows MSYS turns the few signals it will deliver
+    # to a native process into TerminateProcess and drops the rest, so a
+    # SIGINT never sets the interrupt flag the console loop breaks on, and a
+    # SIGTERM sent after one is swallowed as well. A "quit" line on stdin
+    # breaks the same loop and needs no signal at all, so both platforms take
+    # the same road and the client leaves the same way on each.
     #
     # End to end: about 3s for the client to ready, a 5s countdown, 14s of
-    # scenario, and the shutdown round trip — roughly 27s, against a 60s CTest
-    # timeout.
+    # scenario, and the shutdown round trip — roughly 27s.
     #
     # The worst case matters as much as the healthy one, because a run CTest
     # kills prints nothing: the entry's own line is half-written and still in
     # the buffer. The helper's waits are the whole of it — a 0.5s settle after
     # the server reports its port, then up to 35s for the round's end line,
-    # then up to 12s for the client to leave on the shutdown. That is 47.5s at
-    # the outside, so even a run that hits every bound reports its own failure
-    # with its logs before the 60s is up.
+    # then up to 15s for the quitting server to go, then up to 60s for the
+    # client to leave. That is 110.5s at the outside, so even a run that hits
+    # every bound reports its own failure with its logs inside the 150s the
+    # entry is given.
     #
     # The client's --ticks is a ceiling, not the exit. The headless alternates
     # a keys pass and a game pass at GAME_TICK_LENGTH 10ms, so its game-tick

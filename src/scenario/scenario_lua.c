@@ -100,7 +100,8 @@
     X(SCN_OP_BAD_SQUARE)     X(SCN_OP_BAD_TERRAIN) X(SCN_OP_RANGE)           \
     X(SCN_OP_PAIR)           X(SCN_OP_CARRIED)     X(SCN_OP_FULL)            \
     X(SCN_OP_ALREADY)        X(SCN_OP_TOO_BIG)     X(SCN_OP_RATE)            \
-    X(SCN_OP_NOT_FOUND)      X(SCN_OP_NO_STOCK)    X(SCN_OP_BAD_CALL)
+    X(SCN_OP_NOT_FOUND)      X(SCN_OP_NO_STOCK)    X(SCN_OP_NO_RUNNER)       \
+    X(SCN_OP_BAD_CALL)
 
 static const struct {
     int         result;
@@ -908,13 +909,51 @@ static int scnLuaTagged(lua_State *L) {
     return 1;
 }
 
+/* Where this script's own region of that name sits in the table, and -1 for
+ * a script that has not named one. The one place the "its own" half of the
+ * lookup rule is written: the read below answers from it, and so does
+ * game.define_region, which has to replace the asker's own rectangle rather
+ * than another script's.
+ *
+ * SCN_OWNER_NONE never matches. A caller that is no script of the round's
+ * owns nothing, and the regions a manifest carries that nobody owns — an
+ * entry's own table straight out of its file, which was never composed —
+ * are not its to claim either. */
+static int scnRegionOwnIndex(const ScenarioManifest *m, const char *name,
+                             uint8_t asking) {
+    int i;
+
+    if (m == NULL || name == NULL || asking == SCN_OWNER_NONE) {
+        return -1;
+    }
+    for (i = 0; i < (int)m->numRegions; i++) {
+        if (m->regions[i].owner == asking &&
+            strcmp(m->regions[i].name, name) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 const ScnManifestRegion *scenarioLuaRegionFind(const ScenarioManifest *m,
-                                               const char *name) {
+                                               const char *name,
+                                               uint8_t asking) {
+    int own;
     int i;
 
     if (m == NULL || name == NULL) {
         return NULL;
     }
+    own = scnRegionOwnIndex(m, name, asking);
+    if (own >= 0) {
+        return &m->regions[own];
+    }
+    /* Nothing of the asker's under that name, so the list decides. The first
+       match and not the last: the scripts are appended in list order, so the
+       first one is the furthest up the list, which is the one a host who
+       ordered the list meant to have the say. A round whose scripts name no
+       region twice has one match either way, which is every round written
+       before two of them were allowed to. */
     for (i = 0; i < (int)m->numRegions; i++) {
         if (strcmp(m->regions[i].name, name) == 0) {
             return &m->regions[i];
@@ -931,10 +970,113 @@ bool scenarioLuaRegionHolds(const ScnManifestRegion *r, int mx, int my) {
            my >= (int)r->y && my < (int)r->y + (int)r->h;
 }
 
+/* The last segment of a path, which is the half of it that is the same on
+ * every machine. A server started from a checkout, one started from an
+ * install and one started from a test's temporary directory all read the
+ * same script under three different paths, and a bit worked out from the
+ * whole of one of them would differ between the three. Both separators are
+ * cut on, because a path on Windows may hold either.
+ *
+ * scnFileNameOf in src/scenario/scenario_host.c is the same walk, written
+ * for the lines that name a file to an operator. It is written twice rather
+ * than shared because that one is static to a file this one cannot see, and
+ * the two answer the same question for different readers. */
+static const char *scnRegionKeyFile(const char *path) {
+    const char *at = path;
+    const char *s;
+
+    if (path == NULL) {
+        return "";
+    }
+    for (s = path; *s != '\0'; s++) {
+        if (*s == '/' || *s == '\\') {
+            at = s + 1;
+        }
+    }
+    return at;
+}
+
+/* FNV-1a over one string, continued from a hash already running, so that the
+ * key below is hashed as its parts rather than pasted into a buffer first.
+ *
+ * FNV-1a, and written out here rather than taken from somewhere: the two
+ * numbers are the published ones, the arithmetic is unsigned 32-bit and
+ * therefore wraps the same way under every compiler this builds with, and
+ * nothing in it reads a pointer, a clock or a seed. That is the whole of
+ * what is wanted — two machines composing one list have to agree on the
+ * bits, because a headless game is replayed from its list and its seed and
+ * is expected to play out the same both times. A collision costs one step
+ * of the walk below and nothing else, so there is no reason to pay for a
+ * wider hash. */
+static uint32_t scnRegionKeyHash(uint32_t hash, const char *s) {
+    if (s == NULL) {
+        return hash;
+    }
+    for (; *s != '\0'; s++) {
+        hash ^= (uint32_t)(unsigned char)*s;
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+uint8_t scenarioLuaRegionBit(const ScenarioManifest *m, const char *path,
+                             const char *name) {
+    uint32_t hash  = 2166136261u;   /* FNV-1a's offset basis */
+    uint64_t taken = 0;
+    int      start;
+    int      i;
+
+    hash = scnRegionKeyHash(hash, scnRegionKeyFile(path));
+    /* One zero byte hashed between the two halves, so that a file called
+       "ab" naming "c" and a file called "a" naming "bc" are two keys and not
+       one. Only the multiply is written: the exclusive-or half of an FNV-1a
+       step against a zero byte leaves the hash where it was, and a line
+       saying so would be a line that does nothing. Neither a file name nor a
+       region name can hold a zero byte, so no key reaches this the other way
+       round and loses its separator. */
+    hash *= 16777619u;
+    hash = scnRegionKeyHash(hash, name);
+
+    /* Every bit the table has already handed out. A region whose bit was
+       never assigned reads as zero, which makes bit zero look taken and
+       costs one step of the walk; it cannot put two regions on one bit,
+       because all of them read as the same zero. Nothing composed is in
+       that state — both callers of this went through it — and the tables
+       that are, the map editor's form and the one the JSON reader fills,
+       have no round behind them to hold a bit for.
+
+       A bit outside the mask is not one, and is stepped over rather than
+       shifted by: the field is a byte and the mask is sixty-four bits wide,
+       so a table filled by hand with a number this never handed out would
+       otherwise shift past the end of a uint64_t. */
+    if (m != NULL) {
+        for (i = 0; i < (int)m->numRegions; i++) {
+            if (m->regions[i].bit < SCN_REGIONS_MAX) {
+                taken |= (uint64_t)1 << m->regions[i].bit;
+            }
+        }
+    }
+    start = (int)(hash % (uint32_t)SCN_REGIONS_MAX);
+    for (i = 0; i < SCN_REGIONS_MAX; i++) {
+        int at = (start + i) % SCN_REGIONS_MAX;
+
+        if ((taken & ((uint64_t)1 << at)) == 0) {
+            return (uint8_t)at;
+        }
+    }
+    /* Every bit taken, which is a table already holding the SCN_REGIONS_MAX
+       regions a round may name. Both callers refuse at that count before
+       they ask, so this is unreachable; it answers the bit the hash named
+       rather than looping, so that a caller that one day forgets the limit
+       gets a wrong bit instead of a hung tick. */
+    return (uint8_t)start;
+}
+
 static int scnLuaRegion(lua_State *L) {
     const ScnLuaCtx         *c    = scnCtx(L);
     const char              *name = scnArgStr(L, 1, "name");
-    const ScnManifestRegion *r    = scenarioLuaRegionFind(c->manifest, name);
+    const ScnManifestRegion *r    = scenarioLuaRegionFind(c->manifest, name,
+                                                          c->runningOwner);
 
     if (r == NULL) {
         lua_pushnil(L);
@@ -951,12 +1093,21 @@ static int scnLuaRegion(lua_State *L) {
 /* The names, in name order. The manifest holds regions in whatever order the
  * script's table iterated in, which is not the same order under the two Lua
  * builds, so the array a script walks is sorted here and a script reading it
- * gets the same round twice. */
+ * gets the same round twice.
+ *
+ * One entry per name and not per region. Two scripts on the list may each
+ * name "spawn", so the composite may hold two rectangles under it, and a
+ * name listed twice would have a script that walks the list and reads each
+ * name do the same work twice on the same rectangle — game.region answers
+ * one rectangle for a name however many carry it. The sort is what makes the
+ * duplicates adjacent, so the skip below is a comparison with the name
+ * before it. */
 static int scnLuaRegions(lua_State *L) {
     const ScnLuaCtx        *c = scnCtx(L);
     const ScenarioManifest *m = c->manifest;
     uint8_t                 order[SCN_REGIONS_MAX];
     int                     n = (m != NULL) ? (int)m->numRegions : 0;
+    int                     out = 0;
     int                     i, j;
 
     for (i = 0; i < n; i++) {
@@ -975,8 +1126,14 @@ static int scnLuaRegions(lua_State *L) {
 
     lua_newtable(L);
     for (i = 0; i < n; i++) {
-        lua_pushstring(L, m->regions[order[i]].name);
-        lua_rawseti(L, -2, i + 1);
+        const char *name = m->regions[order[i]].name;
+
+        if (i > 0 && strcmp(m->regions[order[i - 1]].name, name) == 0) {
+            continue;
+        }
+        out++;
+        lua_pushstring(L, name);
+        lua_rawseti(L, -2, out);
     }
     return 1;
 }
@@ -993,7 +1150,8 @@ static int scnLuaInRegion(lua_State *L) {
     const char              *name = scnArgStr(L, 1, "name");
     lua_Integer              mx   = scnArgInt(L, 2, "mx");
     lua_Integer              my   = scnArgInt(L, 3, "my");
-    const ScnManifestRegion *r    = scenarioLuaRegionFind(c->manifest, name);
+    const ScnManifestRegion *r    = scenarioLuaRegionFind(c->manifest, name,
+                                                          c->runningOwner);
 
     lua_pushboolean(L, scenarioLuaRegionHolds(r, (int)mx, (int)my) ? 1 : 0);
     return 1;
@@ -1312,6 +1470,151 @@ static bool scnCheckingOnly(lua_State *L) {
     const ScnLuaCtx *c = scnCtx(L);
 
     return c != NULL && c->checkOnly;
+}
+
+/* ── What a mod may not do ────────────────────────────────────────── */
+
+/* The rows that decide the round: which side wins it, and when it is over.
+ * A file that declared scenario.kind = "mod" said it changes how the game
+ * plays and leaves winning and losing where the map and the server's rules
+ * left them, so these are the rows it is held back from.
+ *
+ * One list in one place, because three readers want it. This file raises
+ * when a mod calls one of these rows. scenario_host.c walks the triggers a
+ * file declares and refuses to start a round for a mod whose action names
+ * one of them, which is the same refusal made early, because a declared
+ * action is visible before anything runs. The map editor leaves these off
+ * the action list it offers while the form says mod, so an author is never
+ * shown a thing the round will not take.
+ *
+ * Kept as names rather than as a column on the rows further down, because
+ * the two readers outside this file have a name in hand and no row: a
+ * trigger's action states the row it calls as text. */
+static const char *const kScnRoundDeciders[] = {
+    "end_round",     /* ends the round outright */
+    "set_game_time", /* sets what is left of the clock, and a clock that runs
+                      * out ends the round */
+    "add_game_time", /* the same clock, moved rather than set */
+    "score"          /* the scenario's own score for a seat or a team, which
+                      * is the number a player reads as who is winning */
+};
+
+bool scenarioLuaOpDecidesRound(const char *name) {
+    size_t i;
+
+    if (name == NULL) {
+        return false;
+    }
+    for (i = 0; i < sizeof(kScnRoundDeciders) / sizeof(kScnRoundDeciders[0]);
+         i++) {
+        if (strcmp(name, kScnRoundDeciders[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+const char *scenarioLuaRoundDeciderAt(size_t index) {
+    if (index >= sizeof(kScnRoundDeciders) / sizeof(kScnRoundDeciders[0])) {
+        return NULL;
+    }
+    return kScnRoundDeciders[index];
+}
+
+/* The other half of the same rule, on the functions a file writes rather than
+ * the rows it calls: allow_base_win.
+ *
+ * One name and not a list, because one is all SCN_POLICY_LIST holds. Every
+ * other policy answers a question about how the game plays — whether a seat
+ * may sit on a team of its own, whether a dead tank comes back, what a hit
+ * costs — and how the game plays is what a mod is for. A hook answers
+ * nothing at all: the host reads a return value off a policy and off no hook,
+ * which is why only the policy half of the catalogue was worth reading
+ * through. A second policy whose answer ends a round is a second name here,
+ * and this becomes a list the way the ops above are one.
+ *
+ * Spelled here and held to the row by a test rather than pasted out of the
+ * list, because picking one row out of an X-macro takes more machinery than
+ * the one name is worth. editor_form_mod_hides_base_win walks the catalogue
+ * and fails if no row answers to this, so a rename in SCN_POLICY_LIST cannot
+ * leave this pointing at a policy that is gone.
+ *
+ * The host does not ask this. scnAllowBaseWin knows which policy it is about
+ * to ask and makes the check at the call site, and it ignores the answer
+ * rather than raising: the script did not call anything, the sim called the
+ * script. The readers are the editor's — the catalogue does not offer the
+ * stub while the form says mod, and the check flags a mod that wrote the
+ * function anyway. */
+static const char *const kScnRoundDecidingFn = "allow_base_win";
+
+bool scenarioLuaFnDecidesRound(const char *name) {
+    return name != NULL && strcmp(name, kScnRoundDecidingFn) == 0;
+}
+
+/* Why the file that is calling may not decide the round, or NULL when it
+ * may. The tail of a sentence the row's own name goes on the front of, so
+ * the three rows that ask say the same thing in the same words.
+ *
+ * The tables the context points at are the round's own, read again at every
+ * round start, so this answers for the files that are playing now. A file
+ * that declared no kind answers NULL, which is what every scenario written
+ * before the key existed needs it to answer.
+ *
+ * The calling file, and never the round. A round runs several scripts in one
+ * state, and c->manifest is the composite: scnComposeInto in
+ * src/scenario/scenario_host.c copies the declarative half from the base
+ * entry, kind with it, so on any list holding a scenario the composite says
+ * "scenario" for every mod on that list. Reading the composite is what this
+ * used to do, and it let a mod call game.end_round for as long as a scenario
+ * was listed with it. The composite is not read here at all, not even as a
+ * fallback: it answers what the round is, which is a different question from
+ * who is calling.
+ *
+ * c->running is the entry whose own code is on the stack. The host writes it
+ * around every call it makes into a script — scnHookCall, scnPolicyBool,
+ * scnPolicyAnswer and scnRunTimers in src/scenario/scenario_host.c are all
+ * of them — and puts back what was there before, so a call that leads to
+ * another call leaves it where it found it.
+ *
+ * NULL means no script's own code is running, and the three rows are refused
+ * there. That is a file's top level: scnReadManifest reads the script's
+ * table out of its globals after the chunk has returned, so while the chunk
+ * runs the kind is not known and cannot be. Refused rather than guessed at,
+ * and refused rather than allowed, because a top level has no round to end,
+ * no score to keep and no clock to move — the boot running the chunk has not
+ * started one. Nothing in data/ calls one of the three from a top level;
+ * every call to them is from inside a function. A state with no context at
+ * all answers the same way, for the same reason: nothing has said which file
+ * is calling. */
+static const char *scnNotTheDecider(lua_State *L) {
+    const ScnLuaCtx *c = scnCtx(L);
+
+    if (c == NULL || c->running == NULL) {
+        return "decides the round, and no script is running that could "
+               "decide one: a file's own top level is read before the round "
+               "starts. Call it from a hook";
+    }
+    if (scnManifestKeepsWinCondition(c->running)) {
+        return "decides the round and this file is a mod, which leaves the "
+               "win condition alone; write scenario.kind = \"scenario\" if "
+               "it is meant to decide rounds";
+    }
+    return NULL;
+}
+
+/* What a round-deciding row does when its caller may not call it. A raise
+ * rather than a refusal, because the call is wrong rather than the moment:
+ * the file said it does not decide rounds and then asked to, and an author
+ * wants that on the error log with a line number, the way a misspelled rule
+ * name is. The host counts it with every other raise, so a mod that keeps
+ * asking is switched off for the round at SCN_ERROR_LIMIT the way any other
+ * repeatedly raising script is.
+ *
+ * The sentence names the row and then says why, which scnNotTheDecider above
+ * wrote. For a mod that is what a mod is and the one line to write if
+ * deciding the round is what the file actually means to do. */
+static int scnDecidesRefusal(lua_State *L, const char *op, const char *why) {
+    return luaL_error(L, "%s %s", op, why);
 }
 
 /* What such a row answers, spelled once so every one of them says the same
@@ -2450,6 +2753,21 @@ static int scnLuaSpawnBot(lua_State *L) {
     if (refused != 0) {
         return refused;
     }
+    /* The brain mode and the level inside it, by the keys the brain's own
+       modes.txt lists. Taken as text and matched by the sim, which is the
+       side that has the brain and can say what keys it has. */
+    if (!scnFieldText(L, 1, "mode", op.u.rosterSpawnBot.mode,
+                      sizeof(op.u.rosterSpawnBot.mode), &len)) {
+        return scnRefused(L, SCN_OP_TOO_BIG, "mode is %d bytes, limit %d",
+                          (int)len,
+                          (int)sizeof(op.u.rosterSpawnBot.mode) - 1);
+    }
+    if (!scnFieldText(L, 1, "difficulty", op.u.rosterSpawnBot.difficulty,
+                      sizeof(op.u.rosterSpawnBot.difficulty), &len)) {
+        return scnRefused(L, SCN_OP_TOO_BIG,
+                          "difficulty is %d bytes, limit %d", (int)len,
+                          (int)sizeof(op.u.rosterSpawnBot.difficulty) - 1);
+    }
     team = scnFieldInt(L, 1, "team", 0);
     if (!scnFitsByte(team)) {
         return scnRefused(L, SCN_OP_RANGE, "team is %d", (int)team);
@@ -2532,6 +2850,58 @@ static int scnLuaSetTeam(lua_State *L) {
     return scnDone(L, &op, "player %d to team %d", (int)p, (int)t);
 }
 
+/* New data for a bot already in the round. The table is the one a spawn's
+ * init is: flat, names to text, and no larger than a spawn's, because it is
+ * the same table on the other side — the bot's BRAIN_INIT is rebuilt from
+ * it whole, so what is not in the table is not in the bot's any more.
+ *
+ * The seat has to hold a bot this server runs. A human is refused, an empty
+ * seat is refused, and both say so under the codes the removal row already
+ * answers with, because they are the same two questions asked of the same
+ * kind of seat.
+ *
+ * It rides the roster queue with the spawns and the removals, so the write
+ * into the brain's own Lua state happens where every other change to a bot
+ * happens: on the producer thread, between ticks, never while the brain is
+ * thinking. */
+static int scnLuaBotInit(lua_State *L) {
+    ScenarioOp  op;
+    lua_Integer p = scnArgInt(L, 1, "p");
+    char        badKey[SCN_TABLE_KEY_LEN + 1];
+
+    if (!scnFitsByte(p)) {
+        return scnRefused(L, SCN_OP_NO_SUCH_PLAYER, "player %d is not a seat",
+                          (int)p);
+    }
+    scnArgTable(L, 2, "t");
+    memset(&op, 0, sizeof(op));
+    op.type                 = SCN_OP_ROSTER_BOT_INIT;
+    op.u.rosterBotInit.slot = (BYTE)p;
+    badKey[0]               = '\0';
+    /* The reader takes a field of a table, so the argument is set as the
+       one field of a table made for it: the same walk, the same limits and
+       the same wording as spawn_bot's init field. */
+    {
+        char         why[SCN_TABLE_WHY_LEN];
+        ScnTableRead r;
+
+        lua_createtable(L, 0, 1);
+        lua_pushvalue(L, 2);
+        lua_setfield(L, -2, "t");
+        r = scenarioLuaReadTable(L, lua_gettop(L), "t",
+                                 &op.u.rosterBotInit.init, badKey,
+                                 sizeof(badKey), why, sizeof(why));
+        lua_pop(L, 1);
+        if (r == SCN_TABLE_READ_NO_ROOM) {
+            return scnTableTooBig(L, "init", badKey);
+        }
+        if (r != SCN_TABLE_READ_OK) {
+            luaL_argerror(L, 2, lua_pushfstring(L, "t%s", why));
+        }
+    }
+    return scnDone(L, &op, "player %d", (int)p);
+}
+
 static int scnLuaLobbyAddBot(lua_State *L) {
     ScenarioOp  op;
     ScnOpOut    out;
@@ -2561,6 +2931,18 @@ static int scnLuaLobbyAddBot(lua_State *L) {
                                 sizeof(op.u.lobbyAddBot.brain));
     if (refused != 0) {
         return refused;
+    }
+    /* The brain mode and the level inside it, as spawn_bot takes them. */
+    if (!scnFieldText(L, 1, "mode", op.u.lobbyAddBot.mode,
+                      sizeof(op.u.lobbyAddBot.mode), &len)) {
+        return scnRefused(L, SCN_OP_TOO_BIG, "mode is %d bytes, limit %d",
+                          (int)len, (int)sizeof(op.u.lobbyAddBot.mode) - 1);
+    }
+    if (!scnFieldText(L, 1, "difficulty", op.u.lobbyAddBot.difficulty,
+                      sizeof(op.u.lobbyAddBot.difficulty), &len)) {
+        return scnRefused(L, SCN_OP_TOO_BIG,
+                          "difficulty is %d bytes, limit %d", (int)len,
+                          (int)sizeof(op.u.lobbyAddBot.difficulty) - 1);
     }
     team = scnFieldInt(L, 1, "team", 0);
     if (!scnFitsByte(team)) {
@@ -3314,10 +3696,21 @@ static int scnLuaPanel(lua_State *L) {
 static int scnLuaScore(lua_State *L) {
     ScenarioOp       op;
     lua_Integer      to    = 0;
-    ScnLuaTargetKind kind  = scnArgTarget(L, 1, &to);
-    lua_Number       value = scnArgNumber(L, 2, "value");
+    ScnLuaTargetKind kind;
+    lua_Number       value;
     const char      *label = "";
+    const char      *why;
     size_t           len   = 0;
+
+    /* The scenario's own score is the number a player reads as who is
+       winning, and a scenario that keeps one usually ends the round on it,
+       so a mod does not get to write one. */
+    why = scnNotTheDecider(L);
+    if (why != NULL) {
+        return scnDecidesRefusal(L, "game.score", why);
+    }
+    kind  = scnArgTarget(L, 1, &to);
+    value = scnArgNumber(L, 2, "value");
 
     /* A score is one seat's or one team's. There is no everyone's, so the
        two forms scnArgTarget reads as "the whole game" are the call being
@@ -3512,9 +3905,16 @@ static int scnLuaClearMarker(lua_State *L) {
 
 static int scnLuaEndRound(lua_State *L) {
     ScenarioOp  op;
+    const char *why;
     size_t      len = 0;
     lua_Integer team;
 
+    /* Asked before the arguments are read, so a mod is told the row is not
+       its to call rather than told its winner_team is out of range. */
+    why = scnNotTheDecider(L);
+    if (why != NULL) {
+        return scnDecidesRefusal(L, "game.end_round", why);
+    }
     memset(&op, 0, sizeof(op));
     op.type = SCN_OP_END_ROUND;
     if (!lua_isnoneornil(L, 1)) {
@@ -3535,8 +3935,19 @@ static int scnLuaEndRound(lua_State *L) {
 
 static int scnGameTime(lua_State *L, bool relative) {
     ScenarioOp  op;
-    lua_Integer ticks = scnArgInt(L, 1, "ticks");
+    const char *why;
+    lua_Integer ticks;
 
+    /* The clock decides when the round is over, so both rows that move it
+       are the scenario's alone. Named for the row the script actually
+       called, because a sentence naming the other one would send an author
+       looking in the wrong place. */
+    why = scnNotTheDecider(L);
+    if (why != NULL) {
+        return scnDecidesRefusal(L, relative ? "game.add_game_time"
+                                             : "game.set_game_time", why);
+    }
+    ticks = scnArgInt(L, 1, "ticks");
     memset(&op, 0, sizeof(op));
     op.type                    = SCN_OP_SET_GAME_TIME;
     op.u.setGameTime.ticks     = (int32_t)ticks;
@@ -3638,11 +4049,33 @@ static int scnLuaShellExpired(lua_State *L) {
 
 /* One region named for the rest of the round.
  *
- * A name already in the list is replaced where it stands, which costs no
- * room and keeps the index a region sits at: the host's per-tick scan
- * remembers who is inside which region by that index, so replacing a
- * rectangle moves the tanks in and out of the new one rather than making a
- * second region nobody was ever in.
+ * A name this script already has in the list is replaced where it stands,
+ * which costs no room and keeps the bit a region answers to: the host's
+ * per-tick scan remembers who is inside which region by that bit, so
+ * replacing a rectangle moves the tanks in and out of the new one rather
+ * than making a second region nobody was ever in.
+ *
+ * A name it has not got is appended, and takes a bit of its own from
+ * scenarioLuaRegionBit — the same call the compose makes, keyed the same
+ * way, on this script's own file and the name it has just been given. The
+ * bit is worked out before the count goes up, so the region being added is
+ * not counted among the ones whose bits are already spoken for.
+ *
+ * This script's own and not any of that name, which is the half that had to
+ * change when two scripts were allowed to name one region. A mod that
+ * redefines "spawn" now moves its own rectangle and leaves the scenario's
+ * where it is; before, it would have moved a rectangle belonging to a file
+ * its author never read.
+ *
+ * The owner is read off the context, which the host sets across a file's own
+ * top level as well as across every call it makes into one — see
+ * runningOwner in scenario_lua.h. A call that somehow reaches here with no
+ * owner at all writes SCN_OWNER_NONE, and a region owned by nobody behaves
+ * predictably rather than oddly: no script's lookup ever prefers it, every
+ * script's lookup can still reach it through the last-on-the-list fallback,
+ * and a second define of the same name from the same nowhere appends a
+ * second region rather than replacing the first. Nothing under data/ is in
+ * that state and nothing the host runs can be.
  *
  * Declared and defined regions share the one list and the one limit. What a
  * script defines lasts the round: the next round start reads the file's
@@ -3655,7 +4088,9 @@ static int scnLuaDefineRegion(lua_State *L) {
     lua_Integer        w    = scnArgInt(L, 4, "w");
     lua_Integer        h    = scnArgInt(L, 5, "h");
     ScenarioManifest  *m    = c->manifest;
-    ScnManifestRegion *slot = NULL;
+    /* reg and not slot, because slot is a player's seat everywhere else in
+       the round and a region's own number is its bit. */
+    ScnManifestRegion *reg  = NULL;
     size_t             len;
     int                i;
 
@@ -3684,27 +4119,33 @@ static int scnLuaDefineRegion(lua_State *L) {
                           (int)w, (int)h);
     }
 
-    for (i = 0; i < (int)m->numRegions; i++) {
-        if (strcmp(m->regions[i].name, name) == 0) {
-            slot = &m->regions[i];
-            break;
-        }
-    }
-    if (slot == NULL) {
+    i = scnRegionOwnIndex(m, name, c->runningOwner);
+    if (i >= 0) {
+        reg = &m->regions[i];
+    } else {
+        uint8_t at;
+
         if (m->numRegions >= SCN_REGIONS_MAX) {
             return scnRefused(L, SCN_OP_FULL,
                               "the round already names %d regions, which is "
                               "the limit", (int)m->numRegions);
         }
-        slot = &m->regions[m->numRegions];
+        /* Before the count goes up, so that the row about to be filled is
+           not read as a region already holding a bit: the array is not
+           cleared behind the count, and the bytes sitting there are
+           whatever the table was copied from. */
+        at  = scenarioLuaRegionBit(m, c->runningFile, name);
+        reg = &m->regions[m->numRegions];
         m->numRegions++;
-        memcpy(slot->name, name, len);
-        slot->name[len] = '\0';
+        memcpy(reg->name, name, len);
+        reg->name[len] = '\0';
+        reg->owner = c->runningOwner;
+        reg->bit   = at;
     }
-    slot->x = (uint8_t)x;
-    slot->y = (uint8_t)y;
-    slot->w = (uint8_t)w;
-    slot->h = (uint8_t)h;
+    reg->x = (uint8_t)x;
+    reg->y = (uint8_t)y;
+    reg->w = (uint8_t)w;
+    reg->h = (uint8_t)h;
 
     lua_pushboolean(L, 1);
     return 1;
@@ -3733,6 +4174,7 @@ void scenarioLuaTimersReset(ScnTimerSet *t) {
         t->entries[i].id      = 0;
         t->entries[i].dueTick = 0;
         t->entries[i].ref     = LUA_NOREF;
+        t->entries[i].owner   = NULL;
     }
     /* nextId is left where it is. It rises for the life of the host, so an
        id from the round just finished matches nothing in this one. */
@@ -3751,11 +4193,12 @@ void scenarioLuaTimersDrop(lua_State *L, ScnTimerSet *t) {
         t->entries[i].id      = 0;
         t->entries[i].dueTick = 0;
         t->entries[i].ref     = LUA_NOREF;
+        t->entries[i].owner   = NULL;
     }
 }
 
 int scenarioLuaTimersTakeDue(ScnTimerSet *t, uint32_t now, int *out,
-                             int outMax) {
+                             const ScenarioManifest **owners, int outMax) {
     int taken[SCN_TIMERS_MAX];
     int n = 0;
     int i, j;
@@ -3786,9 +4229,13 @@ int scenarioLuaTimersTakeDue(ScnTimerSet *t, uint32_t now, int *out,
     for (i = 0; i < n; i++) {
         ScnTimer *e = &t->entries[taken[i]];
         out[i]      = e->ref;
+        if (owners != NULL) {
+            owners[i] = e->owner;
+        }
         e->ref      = LUA_NOREF;
         e->id       = 0;
         e->dueTick  = 0;
+        e->owner    = NULL;
     }
     return n;
 }
@@ -3854,6 +4301,13 @@ static int scnLuaTimer(lua_State *L) {
     lua_pushvalue(L, 2);
     t->entries[free_at].ref     = luaL_ref(L, LUA_REGISTRYINDEX);
     t->entries[free_at].dueTick = (uint32_t)due;
+    /* And whose it is. Read here, where the script that is asking is on the
+       stack; by the tick it runs on there is nothing left to read it from,
+       because the set is one id space for the whole list. Without it a
+       scenario's own timer would run as no script in particular, and the
+       rows a scenario may call and a mod may not would be closed to it —
+       see scnNotTheDecider above. */
+    t->entries[free_at].owner   = c->running;
     t->nextId++;
     t->entries[free_at].id      = t->nextId;
 
@@ -4123,6 +4577,13 @@ static const ScnLuaOpParam kScnOpArgs_remove_bot[] = {
 };
 static const ScnLuaOpParam kScnOpArgs_set_team[] = {
     { "p", SCN_PARAM_SLOT, false }, { "t", SCN_PARAM_TEAM, false },
+    SCN_OP_ARG_END
+};
+/* The seat, and the table that replaces what the bot was spawned with. The
+   same pair hint takes, and for the same reason: a flat table is the one
+   shape a brain is handed anything in. */
+static const ScnLuaOpParam kScnOpArgs_bot_init[] = {
+    { "p", SCN_PARAM_SLOT, false }, { "t", SCN_PARAM_TABLE, false },
     SCN_OP_ARG_END
 };
 static const ScnLuaOpParam kScnOpArgs_lobby_add_bot[] = {
@@ -4458,8 +4919,8 @@ static const ScnLuaRow kScnLuaRows[] = {
       SCN_OP_PARAMS(remove_mine), SCN_OP_ACTS },
     { "spawn_bot", scnLuaSpawnBot,
       "spawn_bot(t) → p, \"queued\" — put a bot into the running round; t "
-      "takes name, brain, team, slot, start, loadout and a flat init "
-      "table, all of them optional.",
+      "takes name, brain, team, slot, start, loadout, mode, difficulty and "
+      "a flat init table, all of them optional.",
       SCN_OP_PARAMS(spawn_bot), SCN_OP_ACTS },
     { "remove_bot", scnLuaRemoveBot,
       "remove_bot(p) → true, \"queued\" — take a bot out of the running "
@@ -4468,9 +4929,15 @@ static const ScnLuaRow kScnLuaRows[] = {
     { "set_team", scnLuaSetTeam,
       "set_team(p, t) — move a seat to another team mid-round.",
       SCN_OP_PARAMS(set_team), SCN_OP_ACTS },
+    { "bot_init", scnLuaBotInit,
+      "bot_init(p, t) — hand a bot already in the round a new init table; "
+      "it replaces the one the bot was spawned with and the brain is told "
+      "about it.",
+      SCN_OP_PARAMS(bot_init), SCN_OP_ACTS },
     { "lobby_add_bot", scnLuaLobbyAddBot,
       "lobby_add_bot(t) → p — seat a bot in the lobby and answer which seat "
-      "it took; t takes name, brain, team, slot and fielded.",
+      "it took; t takes name, brain, team, slot, fielded, mode and "
+      "difficulty.",
       SCN_OP_PARAMS(lobby_add_bot), SCN_OP_ACTS },
     { "lobby_remove_bot", scnLuaLobbyRemoveBot,
       "lobby_remove_bot(p) — take a bot out of the lobby; a human seat is "

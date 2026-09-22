@@ -615,6 +615,20 @@ bool         clientSimIsLobbyHiddenMines(const ClientSim *cs);
  * where that flips back so no UI code has to think in negatives. Answers
  * true for a NULL sim and until the first lobby-settings event lands. */
 bool         clientSimIsLobbyAllowSmartPings(const ClientSim *cs);
+/* Whether the round composes the mods on the lobby's pick list. Positive
+ * for the same reason as the accessor above: the value is stored and sent
+ * in the negative sense (see lobbyModsOff), and this is where that flips
+ * back so no UI code has to think in negatives. Answers true for a NULL sim
+ * and until the first lobby-settings event lands.
+ *
+ * The byte itself sits in the fixed part of the settings body, ahead of the
+ * scenario tail, so adding it moved that tail down rather than extending the
+ * body's end. A body written by a build without the byte does not decode
+ * against one that has it, and the project does not mix the two.
+ *
+ * Mods only. A scenario on the pick list plays whatever this answers, so a
+ * lobby reading false is not a lobby running nothing. */
+bool         clientSimGetLobbyModsEnabled(const ClientSim *cs);
 bool         clientSimIsBalanceProposalActive(const ClientSim *cs);
 /* SDL_GetTicks() at the most recent non-empty CTRL_BALANCE_PROPOSAL
  * arrival — used by the lobby's "Teams balanced" status label so the
@@ -1037,6 +1051,62 @@ const char *clientSimGetLobbyScenarioFileName(const ClientSim *cs);
 const char *clientSimGetLobbyScenarioDescription(const ClientSim *cs);
 bool        clientSimGetLobbyScenarioExtraTeams(const ClientSim *cs);
 
+/* True when that script declared itself a mod — scenario.kind = "mod" in
+ * its manifest — which means it changes how the game plays and leaves
+ * winning and losing where the map and the server's rules left them. The
+ * engine holds it to that: the ops that end or decide a round raise when a
+ * mod calls them.
+ *
+ * False in two different situations, so it is not read on its own.
+ * clientSimGetLobbyScenarioSource(cs) == 0 means there is no script at all.
+ * A non-zero source with this false means a scenario, which may end the
+ * round. So the three states a caller can tell apart are: source 0, no
+ * script; source non-zero and this false, a scenario; source non-zero and
+ * this true, a mod. */
+bool        clientSimGetLobbyScenarioKeepsWinCondition(const ClientSim *cs);
+
+/* True when that script is tied to the one map it was written against.
+ * A bound script is not one a lobby may take off on its own: it arrives with
+ * its map and goes when the map does, so a chooser showing it locks the row
+ * rather than offering a remove that the server would refuse. An unbound one
+ * is added and dropped freely.
+ *
+ * Read after the source, like the flag above it: false with
+ * clientSimGetLobbyScenarioSource(cs) == 0 means there is no script at all
+ * rather than an unbound one.
+ *
+ * clientSimGetLobbyScenarioListBound answers the same question for a row of
+ * the server's catalogue. This one answers it for the script actually
+ * attached, which need not be in that catalogue at all — a map's own script
+ * is not in the scenarios directory. */
+bool        clientSimGetLobbyScenarioBound(const ClientSim *cs);
+
+/* The lobby's ordered script list: one scenario deciding the round and mods
+ * behind it changing how it plays, in the order they load. Mirrored from
+ * CTRL_LOBBY_SCRIPT_LIST, which the server publishes whole on every change,
+ * so these answer the last complete list and never a half-installed one.
+ *
+ * Entry 0 is the script the round is decided by and names the same file the
+ * attached-scenario accessors above describe. Every one of these tolerates a
+ * NULL cs and an index out of range, because a chooser reads them a frame at
+ * a time while a new list may land between two reads: the string accessors
+ * answer "" and the flags answer false.
+ *
+ * KeepsWinCondition and Bound are the same two questions
+ * clientSimGetLobbyScenarioKeepsWinCondition and
+ * clientSimGetLobbyScenarioBound ask about the attached script, asked per
+ * row. There is no description here: the catalogue response carries every
+ * description, keyed by the same file name, and a chooser already holds it.
+ *
+ * clientSimGetLobbyScriptSeq ticks once per whole list installed, so a
+ * chooser can tell a list has changed without comparing the rows. */
+int         clientSimGetLobbyScriptCount(const ClientSim *cs);
+const char *clientSimGetLobbyScriptFile(const ClientSim *cs, int i);
+const char *clientSimGetLobbyScriptName(const ClientSim *cs, int i);
+bool        clientSimGetLobbyScriptKeepsWinCondition(const ClientSim *cs, int i);
+bool        clientSimGetLobbyScriptBound(const ClientSim *cs, int i);
+uint32_t    clientSimGetLobbyScriptSeq(const ClientSim *cs);
+
 /* The rules that scenario's own manifest sets, mirrored via
  * CTRL_SCENARIO_RULES: which rule, and what the author set it to. The rule
  * is a SimRuleIndex (public/sim_rules_names.h), which is what names it and
@@ -1186,6 +1256,12 @@ int         clientSimGetLobbyScenarioListMaxPlayers(const ClientSim *cs,
                                                     int idx);
 int         clientSimGetLobbyScenarioListBots(const ClientSim *cs, int idx);
 bool        clientSimGetLobbyScenarioListBound(const ClientSim *cs, int idx);
+/* The script keeps the round's win condition, which is what a mod does and a
+ * scenario does not. Read with Bound rather than instead of it: a mod and an
+ * unbound scenario are both unbound, so Bound alone cannot tell them apart,
+ * and a chooser listing the two separately reads this one. */
+bool        clientSimGetLobbyScenarioListKeepsWinCondition(const ClientSim *cs,
+                                                           int idx);
 bool        clientSimGetLobbyScenarioListReady(const ClientSim *cs);
 bool        clientSimGetLobbyScenarioListInFlight(const ClientSim *cs);
 /* Ticked on each completed response, so a caller holding its own last-seen

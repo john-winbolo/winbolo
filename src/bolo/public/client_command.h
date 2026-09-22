@@ -80,7 +80,8 @@ typedef enum {
     CMD_VOICE_STATE,
     CMD_PING,
     CMD_PLAYER_PING_MUTE,
-    CMD_LOBBY_RELOAD_SCENARIO
+    CMD_LOBBY_RELOAD_SCENARIO,
+    CMD_SET_SCRIPT_LIST
 } ClientCommandType;
 
 /* Reject codes returned by serverSimApplyCommand. The dispatcher
@@ -298,6 +299,41 @@ typedef struct {
     char    relPath[256];
 } CmdLobbySetScenario;
 
+/* How many scripts CMD_SET_SCRIPT_LIST carries, and how long each name may
+ * be. Both are this header's own copies of numbers that live elsewhere —
+ * LOBBY_SCRIPT_LIST_MAX and LOBBY_SCENARIO_FILE_LEN in control_event.h, and
+ * SCN_DIR_FILE_LEN in the scenario library — for the reason the lengths in
+ * control_event.h are its own: a header on the gui include path cannot reach
+ * into another layer to read a number. server_command_dispatch.c is where
+ * all of them are held against each other, because it is the translation
+ * unit that sees both sides. */
+#define CMD_SCRIPT_LIST_MAX      10
+#define CMD_SCRIPT_LIST_FILE_LEN 128
+
+/* CMD_SET_SCRIPT_LIST — the host setting the whole ordered list of scripts
+ * the lobby will run, number one first and highest priority. Each name is a
+ * file in one of the server's scenario directories, not a path; count 0
+ * clears the list.
+ *
+ * The whole list in one command, not a per-index edit. Two admins editing a
+ * lobby cannot then race on an index, a move and a remove and a reorder are
+ * all one round trip, and the server's state is a straight assignment rather
+ * than a splice it has to get right.
+ *
+ * files[] is a fixed rectangle rather than a packed blob, which is what
+ * makes the whole union 1284 bytes instead of 264. That is paid in two
+ * places and nowhere else: the UDP client's outbound command queue
+ * (OUT_CMD_QUEUE_CAP is 64, so about 65 KB once per connected client) and a
+ * bot job's pending commands (BOT_PENDING_CMD_MAX is 6, so about 6 KB per
+ * bot). A packed blob would save most of that and cost a hidden cap — ten
+ * names at the full 127 characters would not fit a buffer sized for the
+ * ordinary case, and the refusal would land in the encoder where nobody can
+ * see it. The rectangle cannot refuse a list the host can build. */
+typedef struct {
+    uint8_t count;   /* 0..CMD_SCRIPT_LIST_MAX */
+    char    files[CMD_SCRIPT_LIST_MAX][CMD_SCRIPT_LIST_FILE_LEN];
+} CmdSetScriptList;
+
 typedef struct {
     uint8_t _unused;
 } CmdLobbyPreviewCancel;
@@ -507,6 +543,7 @@ typedef struct ClientCommand {
         CmdVoiceState          voiceState;
         CmdPing                ping;
         CmdPlayerPingMute      playerPingMute;
+        CmdSetScriptList       setScriptList;
     } u;
 } ClientCommand;
 

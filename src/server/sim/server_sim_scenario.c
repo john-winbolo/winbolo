@@ -40,6 +40,7 @@
 #include "server_sim_lifecycle.h"  /* serverSimSetTeam, lobbyAutoUnreadyOnChange, serverSimEnterGameOver */
 #include "server_sim_join.h"       /* serverSimFindFreeSlot — the first free seat */
 #include "netpacks.h"      /* lobbyBotNameAcceptable — the lobby's own name check */
+#include "brain_list.h"    /* BrainModes, brainListLoadModesForPath — the seat loops' one read per brain */
 #include "bot_manager.h"   /* botManagerScenarioHint — the hint arm's delivery */
 #include "../../common/wb_log.h"   /* the line a dropped roster change leaves */
 #include "channel_mux.h"   /* CHANNEL_CONTROL_SEG — the panel cap is derived from it */
@@ -1601,6 +1602,167 @@ static ScnOpResult scenarioBrainPath(ServerSim *sim, const char *asked,
     return SCN_OP_OK;
 }
 
+/* ── The mode and the difficulty a scenario names ─────────────────────
+ *
+ * A script names both by KEY, out of the brain's own modes.txt, because the
+ * two bytes a seat carries are indices into lists only the brain knows. Both
+ * are optional and "" leaves that one as the lobby had it, so a template or
+ * an op written before these fields existed behaves exactly as it did.
+ *
+ * Asked BEFORE anything is seated: an op whose keys name nothing is refused
+ * rather than half-applied, which is the rule every other field of these ops
+ * follows. SCN_OP_NO_SUCH_ITEM is the answer, the same one a start or a
+ * region index that names nothing gets. */
+static ScnOpResult scenarioCheckBotConfigKeys(const char *brainPath,
+                                              const char *modeKey,
+                                              const char *levelKey) {
+    uint8_t mode  = 0;
+    uint8_t level = 0;
+
+    if ((modeKey == NULL || modeKey[0] == '\0') &&
+        (levelKey == NULL || levelKey[0] == '\0')) {
+        return SCN_OP_OK;
+    }
+    switch (serverSimResolveBotConfigKeys(brainPath, modeKey, levelKey,
+                                          &mode, &level)) {
+        case BOT_CFG_KEYS_OK:
+            return SCN_OP_OK;
+        case BOT_CFG_KEYS_NO_MANIFEST:
+            /* The brain ships no modes.txt, so it has no mode to name and
+               no level either. A path that named a brain and a brain that
+               names no modes are two different problems; the op hears the
+               one it can do something about. */
+            return SCN_OP_NO_SUCH_ITEM;
+        default:
+            return SCN_OP_NO_SUCH_ITEM;
+    }
+}
+
+/* Write what the keys resolve to into the seat's config, and queue the event
+ * that tells every client. Called BEFORE the brain is created, because
+ * botManagerStageInitArg reads botConfigs there to build the brain's
+ * "mode=" / "difficulty=" tokens; the queued publish is re-queued by the
+ * caller once the seat is connected, since the flush drops a bit for a slot
+ * no client has heard of.
+ *
+ * Keys that name nothing leave the config alone and say so in the log. The
+ * op arms refuse those before they get here, so this is the template's path:
+ * a seat is worth more than a key, and -validate is where an author is told.
+ *
+ * This is the form the seat loops call, with the brain's modes already read.
+ * NULL modes is a brain with no modes.txt, which the resolver refuses the
+ * same way a failed read does, so the log line below is the same one either
+ * way. */
+static void scenarioApplyBotConfigKeysFromModes(ServerSim *sim, BYTE slot,
+                                                const BrainModes *modes,
+                                                const char *brainPath,
+                                                const char *modeKey,
+                                                const char *levelKey) {
+    uint8_t mode;
+    uint8_t level;
+
+    if (slot >= MAX_TANKS) return;
+    if ((modeKey == NULL || modeKey[0] == '\0') &&
+        (levelKey == NULL || levelKey[0] == '\0')) {
+        return;
+    }
+    mode  = sim->botConfigs[slot].mode;
+    level = sim->botConfigs[slot].difficulty;
+    if (serverSimResolveBotConfigKeysFromModes(modes, modeKey, levelKey,
+                                               &mode, &level)
+            != BOT_CFG_KEYS_OK) {
+        WB_LOG_WARN(WB_LOG_CAT_SIM,
+                    "scenario: seat %d asked for mode '%s' difficulty '%s', "
+                    "which brain '%s' does not list; the seat keeps what the "
+                    "lobby gave it",
+                    (int)slot, (modeKey != NULL) ? modeKey : "",
+                    (levelKey != NULL) ? levelKey : "",
+                    (brainPath != NULL) ? brainPath : "");
+        return;
+    }
+    serverSimSetBotConfigQuiet(sim, slot, mode, level);
+}
+
+/* One seat, reading the brain's modes for it. The op arms apply a single
+ * seat each, so there is nothing for them to amortise and this is what they
+ * call. */
+static void scenarioApplyBotConfigKeys(ServerSim *sim, BYTE slot,
+                                       const char *brainPath,
+                                       const char *modeKey,
+                                       const char *levelKey) {
+    BrainModes modes;
+    bool       haveModes;
+
+    if (slot >= MAX_TANKS) return;
+    if ((modeKey == NULL || modeKey[0] == '\0') &&
+        (levelKey == NULL || levelKey[0] == '\0')) {
+        return;
+    }
+    haveModes = (brainPath != NULL && brainPath[0] != '\0' &&
+                 brainListLoadModesForPath(brainPath, &modes));
+    scenarioApplyBotConfigKeysFromModes(sim, slot,
+                                        haveModes ? &modes : NULL,
+                                        brainPath, modeKey, levelKey);
+}
+
+/* ── One read of modes.txt per brain, for the length of one reseat ──────
+ *
+ * Seating a lobby and reconciling one both walk every seat a template holds,
+ * and every seat on a team names the same brain. Read once per brain here and
+ * the walk costs one parse rather than one per seat.
+ *
+ * It is a local of the loop that builds it and dies with it: nothing about a
+ * brain's modes.txt is remembered from one reseat to the next, so editing a
+ * manifest and reselecting the scenario still picks the edit up.
+ *
+ * A handful of entries rather than one per seat. A lobby's teams nearly
+ * always name one brain between them, and the entries here cover a server
+ * default plus a few teams that name their own; a lobby that names more
+ * distinct brains than this holds answers exactly the same and pays one
+ * extra read for the ones past the end. Size is the reason it is not wider:
+ * BrainModes is close to 4 KB on its own, and a reseat is reached from the
+ * lobby command dispatcher — CMD_SET_SCRIPT_LIST through the reselect — so
+ * this frame sits on top of that whole chain. */
+#define SCN_BRAIN_MODES_CACHED 4
+
+typedef struct {
+    char       path[SCN_PATH_MAX];
+    BrainModes modes;
+    bool       haveModes;      /* the brain ships a modes.txt */
+} ScnBrainModesEntry;
+
+typedef struct {
+    ScnBrainModesEntry entry[SCN_BRAIN_MODES_CACHED];
+    int                count;
+} ScnBrainModesCache;
+
+/* The modes for brainPath, read the first time this cache is asked for it.
+ * NULL for a brain with no modes.txt, which is what the resolver reads as
+ * "no manifest" — the same answer scenarioApplyBotConfigKeys gets when the
+ * load fails there. */
+static const BrainModes *scenarioBrainModes(ScnBrainModesCache *cache,
+                                            const char *brainPath) {
+    ScnBrainModesEntry *e;
+    int i;
+
+    if (brainPath == NULL || brainPath[0] == '\0') return NULL;
+    for (i = 0; i < cache->count; i++) {
+        if (strcmp(cache->entry[i].path, brainPath) == 0) {
+            return cache->entry[i].haveModes ? &cache->entry[i].modes : NULL;
+        }
+    }
+    /* A path that arrives with the cache full re-uses the last entry rather
+       than being refused: the answer is the same one it would get from an
+       entry of its own, and the cost is another read of modes.txt for each
+       brain a lobby names past the ones the cache holds. */
+    i = (cache->count < SCN_BRAIN_MODES_CACHED) ? cache->count++
+                                                : SCN_BRAIN_MODES_CACHED - 1;
+    e = &cache->entry[i];
+    SDL_strlcpy(e->path, brainPath, sizeof(e->path));
+    e->haveModes = brainListLoadModesForPath(brainPath, &e->modes);
+    return e->haveModes ? &e->modes : NULL;
+}
+
 /* The seat a spawn takes. 0xFF asks for the first free one, which is
  * chosen as the spawn lands and not as it is queued: ten spawns asked for
  * in one tick would otherwise every one of them name the same seat. */
@@ -1726,6 +1888,25 @@ static ScnOpResult scenarioRemovableBot(ServerSim *sim, BYTE slot) {
     return SCN_OP_OK;
 }
 
+/* The slot a bot_init names, which is the removal's question and one more:
+ * something has to be there to hold the table. A fielded bot holds it and so
+ * does a seat whose runner is parked — the VM is still standing behind an
+ * unfielded seat, and the refield resumes onto it. A held seat that has never
+ * been fielded has no runner at all, and a table written for it would go
+ * nowhere, so the script hears that rather than an acceptance.
+ *
+ * Its own question and not scenarioRemovableBot's: a held seat is legitimately
+ * removable and legitimately moved between teams, and the two arms that ask
+ * that must keep taking it. */
+static ScnOpResult scenarioBotInitTarget(ServerSim *sim, BYTE slot) {
+    ScnOpResult r = scenarioRemovableBot(sim, slot);
+    if (r != SCN_OP_OK) return r;
+    if (!botManagerHasRunner(sim, slot)) {
+        return SCN_OP_NO_RUNNER;
+    }
+    return SCN_OP_OK;
+}
+
 /* Take the bot out of a seat a script named. A seat that was seeded to be
  * held — the kind a wave fields and refields — goes back to being held
  * rather than being emptied, so the next wave still has it; every other seat
@@ -1793,7 +1974,8 @@ void serverSimScenarioClearSeats(ServerSim *sim) {
 /* Seat one of a team's bots. An unfielded team gets the seat and no bot; a
  * fielded one gets both. Answers false when there was nowhere to put it,
  * which stops the team's loop rather than spinning on a full roster. */
-static bool scenarioSeatOne(ServerSim *sim, const ScnLobbyTeam *team) {
+static bool scenarioSeatOne(ServerSim *sim, const ScnLobbyTeam *team,
+                            ScnBrainModesCache *modesCache) {
     char name[PLAYER_NAME_LEN];
     int  slot;
 
@@ -1804,6 +1986,19 @@ static bool scenarioSeatOne(ServerSim *sim, const ScnLobbyTeam *team) {
     if (slot < 0) return false;
     if (scenarioBotName("", (BYTE)slot, name, sizeof(name)) != SCN_OP_OK) {
         return false;
+    }
+
+    /* The mode and the difficulty the template named, in the seat's config
+       before anything is built with it. A held seat takes them here too: it
+       loads no brain yet, but the spawn that fields it later reads the pair
+       off this config, and the lobby row shows it from the moment the seat
+       appears. */
+    {
+        const char *cfgBrain = (team->brain[0] != '\0')
+                             ? team->brain : serverSimGetBotBrainPath(sim);
+        scenarioApplyBotConfigKeysFromModes(
+            sim, (BYTE)slot, scenarioBrainModes(modesCache, cfgBrain),
+            cfgBrain, team->mode, team->difficulty);
     }
 
     if (!team->fielded) {
@@ -1833,6 +2028,13 @@ static bool scenarioSeatOne(ServerSim *sim, const ScnLobbyTeam *team) {
     SDL_strlcpy(sim->seatBrain[slot], team->brain,
                 sizeof(sim->seatBrain[slot]));
     sim->seatInit[slot] = team->init;
+    /* Now the seat is connected, ask for the bot-config event again: the
+       flush drops a queued bit for a slot no client has heard of, and the
+       write above happened before the seat existed. Queued whether or not
+       the template named a mode, because a seat NOBODY publishes for leaves
+       every client showing the zero its table was created with — which is
+       Easy, whatever the server actually holds. */
+    serverSimQueueBotConfigPublish(sim, (BYTE)slot);
     if (team->id > 0 && team->id < MAX_TANKS && !sim->teams[team->id].in_use) {
         sim->teams[team->id].in_use = 1;
         if (sim->teams[team->id].name[0] == '\0') {
@@ -1848,16 +2050,18 @@ static bool scenarioSeatOne(ServerSim *sim, const ScnLobbyTeam *team) {
  * plain map over a scenario one leaves no held seats behind, and a scenario
  * with no template of its own leaves an ordinary lobby. */
 void serverSimScenarioSeatLobby(ServerSim *sim) {
+    ScnBrainModesCache modesCache;
     BYTE t;
     if (sim == NULL) return;
     serverSimScenarioClearSeats(sim);
     if (!sim->scenarioLobbyValid) return;
+    modesCache.count = 0;
     for (t = 0; t < sim->scenarioLobby.numTeams; t++) {
         const ScnLobbyTeam *team = &sim->scenarioLobby.teams[t];
         BYTE n;
         if (team->id == 0 || team->id >= MAX_TANKS) continue;
         for (n = 0; n < team->bots; n++) {
-            if (!scenarioSeatOne(sim, team)) break;
+            if (!scenarioSeatOne(sim, team, &modesCache)) break;
         }
     }
 }
@@ -1877,6 +2081,7 @@ void serverSimScenarioSeatLobby(ServerSim *sim) {
  * to being held, so the next round starts from the lobby the template
  * describes rather than from wherever the last round's waves left it. */
 void serverSimScenarioReconcileLobby(ServerSim *sim) {
+    ScnBrainModesCache modesCache;
     BYTE t, i;
     if (sim == NULL || !sim->scenarioLobbyValid) return;
 
@@ -1892,6 +2097,35 @@ void serverSimScenarioReconcileLobby(ServerSim *sim) {
         if (team->maxBots == 0) continue;
         scenarioTrimTeamTo(sim, team->id, team->maxBots);
     }
+
+    /* And the template's mode and difficulty over every seat it still holds.
+       The host's dropdown stays usable during a lobby — a round is where the
+       script's word is restored, which is the same rule bots and maxBots
+       follow just above: what a host did inside one lobby stands, and the
+       template describes the lobby each round opens with.
+
+       So a level the host picked by hand in the previous lobby is overwritten
+       here, unlike the seat counts above, which are left where the host put
+       them. That is consistent rather than an exception: serverSimReturnToLobby
+       clears lastTeamBotLevelKey, so the hand-picked level is not carried
+       across the round by the other path either. Both halves forget it. */
+    modesCache.count = 0;
+    for (t = 0; t < sim->scenarioLobby.numTeams; t++) {
+        const ScnLobbyTeam *team = &sim->scenarioLobby.teams[t];
+        if (team->id == 0 || team->id >= MAX_TANKS) continue;
+        if (team->mode[0] == '\0' && team->difficulty[0] == '\0') continue;
+        for (i = 0; i < MAX_TANKS; i++) {
+            const char *cfgBrain;
+            if (!scenarioSeatIsTemplates(sim, i)) continue;
+            if (sim->lobbyPlayers[i].teamNumber != team->id) continue;
+            cfgBrain = (sim->seatBrain[i][0] != '\0')
+                     ? sim->seatBrain[i] : serverSimGetBotBrainPath(sim);
+            scenarioApplyBotConfigKeysFromModes(
+                sim, i, scenarioBrainModes(&modesCache, cfgBrain),
+                cfgBrain, team->mode, team->difficulty);
+            serverSimQueueBotConfigPublish(sim, i);
+        }
+    }
 }
 
 /* How many template seats each team holds right now, indexed by team id, for
@@ -1899,6 +2133,10 @@ void serverSimScenarioReconcileLobby(ServerSim *sim) {
  * writes nothing when no template is attached, so the caller can tell that
  * apart from a team recorded at zero: a host who emptied a team on purpose
  * has to come back to an empty one. */
+bool serverSimScenarioHasLobbyTemplate(const ServerSim *sim) {
+    return sim != NULL && sim->scenarioLobbyValid;
+}
+
 bool serverSimScenarioSeatCounts(const ServerSim *sim, BYTE *out) {
     BYTE t;
     if (sim == NULL || out == NULL) return false;
@@ -1929,19 +2167,112 @@ void serverSimScenarioTrimSeatsTo(ServerSim *sim, const BYTE *counts) {
     }
 }
 
-/* A different map has been committed. Whoever owns the scenario is told
- * first, so it can drop the one the previous map had and look for one beside
- * the new file; the template it leaves behind is what the seating below
- * reads. A map with no scenario clears the template, and the seating then
- * empties the seats the previous one left rather than carrying them into a
- * map that knows nothing about them. */
+/* Whether two init tables hold the same keys and values. Only the first
+ * count pairs are meaningful; what is past them is whatever the last table
+ * to use those entries left. */
+static bool scenarioTablesSame(const ScnTable *a, const ScnTable *b) {
+    uint8_t i;
+    if (a->count != b->count) return false;
+    for (i = 0; i < a->count && i < SCN_TABLE_MAX; i++) {
+        if (strncmp(a->kv[i].key, b->kv[i].key,
+                    sizeof(a->kv[i].key)) != 0) return false;
+        if (strncmp(a->kv[i].value, b->kv[i].value,
+                    sizeof(a->kv[i].value)) != 0) return false;
+    }
+    return true;
+}
+
+/* Whether two templates ask for the same lobby.
+ *
+ * Field by field rather than a memcmp of the pair: a template is copied into
+ * the sim by struct assignment and the sim's own copy is not cleared first,
+ * so the bytes past each string's terminator, past a table's count and past
+ * numTeams carry whatever the previous template left there. Two templates
+ * that describe the same lobby differ in those bytes, and a memcmp would
+ * read every change as real. */
+static bool scenarioTemplatesSame(const ScnLobbyTemplate *a,
+                                  const ScnLobbyTemplate *b) {
+    uint8_t t;
+    if (a->maxPlayers   != b->maxPlayers)   return false;
+    if (a->numTeams     != b->numTeams)     return false;
+    if (a->baseGameType != b->baseGameType) return false;
+    for (t = 0; t < a->numTeams && t < MAX_TANKS; t++) {
+        const ScnLobbyTeam *x = &a->teams[t];
+        const ScnLobbyTeam *y = &b->teams[t];
+        if (x->id      != y->id)      return false;
+        if (x->bots    != y->bots)    return false;
+        if (x->maxBots != y->maxBots) return false;
+        if (x->fielded != y->fielded) return false;
+        if (strncmp(x->brain, y->brain, sizeof(x->brain)) != 0) return false;
+        if (strncmp(x->mode, y->mode, sizeof(x->mode)) != 0) return false;
+        if (strncmp(x->difficulty, y->difficulty,
+                    sizeof(x->difficulty)) != 0) return false;
+        if (!scenarioTablesSame(&x->init, &y->init)) return false;
+    }
+    return true;
+}
+
+/* Which scenario plays has been decided again. Whoever owns the scenario is
+ * told first, so it can drop the one the previous selection had and look for
+ * one beside the map file; the template it leaves behind is what the seating
+ * below reads. A selection with no scenario clears the template, and the
+ * seating then empties the seats the previous one left rather than carrying
+ * them into a map that knows nothing about them.
+ *
+ * A map commit is one caller. The lobby's scenario and script-list commands
+ * are the others, and they hand over the committed map's own path because the
+ * map has not changed. */
 void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
+    const char *path;
+
     if (sim == NULL) return;
+    path = (mapPath != NULL) ? mapPath : "";
     if (sim->scenarioMapChanged != NULL) {
-        sim->scenarioMapChanged(sim->scenarioMapChangedCtx, sim,
-                                mapPath != NULL ? mapPath : "");
+        sim->scenarioMapChanged(sim->scenarioMapChangedCtx, sim, path);
+    }
+    /* A lobby a script lays out starts from that lobby, so where the
+       template is not the one the seats already there came from, every bot
+       the lobby had goes first: a single-player game opens on the default
+       map with one seeded enemy, and a host may have added bots to a plain
+       map before choosing a scripted one. Left in, such a bot sits ahead of
+       the script's seats on a side the script never meant, an eleventh
+       attacker where Survival fields ten. A lobby this has never seated is
+       the same case — whatever is in it predates the template attached now.
+
+       A template that did not change keeps them, and that is the half the
+       lobby's own commands depend on: a mod brings no lobby of its own, so
+       turning mods off or reordering the list decides the same template
+       again, and the bots a host put there by hand are theirs to keep. A
+       different map file is a change in its own right even where the two
+       maps ask for the same lobby, which is what the seated map recorded
+       below is held for.
+
+       People stay where they are; the seating below only ever takes the
+       first free slots. */
+    if (sim->scenarioLobbyValid &&
+        (!sim->scenarioLobbySeated ||
+         strcmp(path, sim->scenarioLobbySeatedMap) != 0 ||
+         !scenarioTemplatesSame(&sim->scenarioLobby,
+                                &sim->scenarioLobbySeatedTemplate))) {
+        BYTE i;
+        for (i = 0; i < MAX_TANKS; i++) {
+            if (serverSimIsBot(sim, i)) {
+                serverSimRemoveBot(sim, i);
+            }
+        }
     }
     serverSimScenarioSeatLobby(sim);
+    /* And what the lobby now holds was built from, which is the whole of
+       what the next call asks. Written after the seating rather than before
+       it, because it describes the seats the seating leaves: the template
+       reaches the sim from outside this function — a host sets it in the
+       callback above and a caller may set it before calling at all — so the
+       only moment it is known to be the one the seats came from is the
+       moment they were made from it. */
+    sim->scenarioLobbySeated         = sim->scenarioLobbyValid;
+    sim->scenarioLobbySeatedTemplate = sim->scenarioLobby;
+    SDL_strlcpy(sim->scenarioLobbySeatedMap, path,
+                sizeof(sim->scenarioLobbySeatedMap));
 }
 
 /* The lobby's own settings, brought into line with whatever scenario is
@@ -1970,20 +2301,37 @@ void serverSimScenarioOnMapChanged(ServerSim *sim, const char *mapPath) {
    allows them plainly. A policy that already allows bots is the operator's
    or the host's and is left alone.
 
+   Only a scenario takes the game type. A mod keeps the round's win
+   condition, names no game of its own — scnModHoldsBack refuses a mod that
+   writes one — and is played over whatever game the host set up, so a lobby
+   running mods alone stays on the type the host picked and the host may go
+   on changing it. keepsWinCondition is the composed list's answer, and it is
+   true only when every script in the list is a mod.
+
    All three are remembered and all three are given back, so a lobby that was
-   ranked with no bots is ranked with no bots again once a plain map is
-   committed. They are remembered together, under the same test that decides
-   the game type: the lobby already being on gameScripted is what says a
-   scenario displaced these settings earlier in this run, and the values from
-   the first scripted commit are the ones a plain map has to give back. */
+   ranked with no bots is ranked with no bots again once the last script goes.
+   They are remembered together, on the first script of a run whether or not
+   it is the kind that moves the game type: a mod turns ranked off as surely
+   as a scenario does, and what it turned off has to come back the same way.
+   preScenarioGameType holds nothing until then, which is what says whether
+   there is anything to give back. A lobby already on gameScripted when that
+   first script arrives has no earlier type worth keeping — no host can pick
+   that type and no plain map is ever on it — so gameOpen is held instead,
+   which is where such a lobby used to land anyway. */
 void serverSimScenarioApplyLobbyRules(ServerSim *sim) {
     if (sim == NULL) return;
     if (sim->scenarioIdentity.source != lobbyScenarioNone) {
-        if (gameTypeGet(&sim->sim.game) != gameScripted) {
-            sim->preScenarioGameType = gameTypeGet(&sim->sim.game);
+        if (sim->preScenarioGameType == (gameType)0) {
+            gameType was = gameTypeGet(&sim->sim.game);
+
+            sim->preScenarioGameType =
+                (was == gameScripted) ? gameOpen : was;
             sim->preScenarioRanked   = serverSimGetRanked(sim);
             sim->preScenarioAiPolicy = sim->aiPolicy;
             sim->preScenarioAiType   = serverSimGetBotAiType(sim);
+        }
+        if (!sim->scenarioIdentity.keepsWinCondition &&
+            gameTypeGet(&sim->sim.game) != gameScripted) {
             serverSimSetGameType(sim, gameScripted);
         }
         if (serverSimGetRanked(sim)) {
@@ -1993,22 +2341,20 @@ void serverSimScenarioApplyLobbyRules(ServerSim *sim) {
             serverSimSetAiPolicy(sim, (uint8_t)aiYes);
             serverSimSetBotAiType(sim, aiYes);
         }
-    } else if (gameTypeGet(&sim->sim.game) == gameScripted) {
-        /* Nothing held means a lobby that reached gameScripted without going
-           through the arm above; there is no earlier state to give back, so
-           the type falls to open and the other two stay as they are. */
-        if (sim->preScenarioGameType != (gameType)0) {
-            serverSimSetGameType(sim, sim->preScenarioGameType);
-            serverSimSetRanked(sim, sim->preScenarioRanked);
-            serverSimSetAiPolicy(sim, sim->preScenarioAiPolicy);
-            serverSimSetBotAiType(sim, sim->preScenarioAiType);
-        } else {
-            serverSimSetGameType(sim, gameOpen);
-        }
+    } else if (sim->preScenarioGameType != (gameType)0) {
+        serverSimSetGameType(sim, sim->preScenarioGameType);
+        serverSimSetRanked(sim, sim->preScenarioRanked);
+        serverSimSetAiPolicy(sim, sim->preScenarioAiPolicy);
+        serverSimSetBotAiType(sim, sim->preScenarioAiType);
         sim->preScenarioGameType = (gameType)0;
         sim->preScenarioRanked   = false;
         sim->preScenarioAiPolicy = 0;
         sim->preScenarioAiType   = aiNone;
+    } else if (gameTypeGet(&sim->sim.game) == gameScripted) {
+        /* On the scripted type with no script and nothing held: a lobby that
+           got there without going through the arm above. There is no earlier
+           state to give back, so the type falls to open. */
+        serverSimSetGameType(sim, gameOpen);
     }
 }
 
@@ -2093,9 +2439,12 @@ static ScnOpResult scenarioOpRosterSpawnBot(ServerSim *sim,
     if (r != SCN_OP_OK) return r;
     r = scenarioBrainPath(sim, p->brain, slot, &brain);
     if (r != SCN_OP_OK) return r;
+    /* The mode and the level keys, against the brain this spawn will run. */
+    r = scenarioCheckBotConfigKeys(brain, p->mode, p->difficulty);
+    if (r != SCN_OP_OK) return r;
 
     memset(&entry, 0, sizeof(entry));
-    entry.isSpawn = true;
+    entry.kind  = SCN_ROSTER_SPAWN;
     entry.spawn = *p;
     r = scenarioRosterQueue(sim, &entry);
     if (r != SCN_OP_QUEUED) return r;
@@ -2121,8 +2470,50 @@ static ScnOpResult scenarioOpRosterRemoveBot(ServerSim *sim,
     if (r != SCN_OP_OK) return r;
 
     memset(&entry, 0, sizeof(entry));
-    entry.isSpawn = false;
+    entry.kind       = SCN_ROSTER_REMOVE;
     entry.removeSlot = p->slot;
+    return scenarioRosterQueue(sim, &entry);
+}
+
+/* Hand a bot already in the round a new init table.
+ *
+ * The payload is checked here, as the spawn's is, so a script hears about a
+ * table that will not fit or a seat that has nothing to hold it at the moment
+ * it asks. What the seat holds is asked again as the change lands, because
+ * by then the bot may have died or left.
+ *
+ * It queues with the spawns and the removals rather than writing into the
+ * brain's Lua state where it stands. A script calls from inside a hook,
+ * which runs from the tick's event drain; the brain's state is the worker
+ * threads' during the think phase, and only the producer touches it between
+ * ticks. The queue is where that difference is already settled. */
+static ScnOpResult scenarioOpRosterBotInit(ServerSim *sim,
+                                           const ScnOpRosterBotInit *p) {
+    ScnRosterQueueEntry entry;
+    ScnOpResult         r;
+    BYTE                k;
+
+    r = scenarioRequireRunning(sim);
+    if (r != SCN_OP_OK) return r;
+    /* An empty seat and a human seat, under the same two codes the removal
+       row answers with, and a seat with no runner under one of its own. */
+    r = scenarioBotInitTarget(sim, p->slot);
+    if (r != SCN_OP_OK) return r;
+    /* The table reaches a Lua VM, so every string in it must end inside its
+       own field, as a spawn's must. */
+    if (p->init.count > SCN_TABLE_MAX) {
+        return SCN_OP_TOO_BIG;
+    }
+    for (k = 0; k < p->init.count; k++) {
+        if (!scenarioTextTerminated(p->init.kv[k].key, SCN_TABLE_KEY_LEN) ||
+            !scenarioTextTerminated(p->init.kv[k].value, SCN_TABLE_VALUE_LEN)) {
+            return SCN_OP_TOO_BIG;
+        }
+    }
+
+    memset(&entry, 0, sizeof(entry));
+    entry.kind    = SCN_ROSTER_BOT_INIT;
+    entry.botInit = *p;
     return scenarioRosterQueue(sim, &entry);
 }
 
@@ -2181,11 +2572,16 @@ static ScnOpResult scenarioOpLobbyAddBot(ServerSim *sim,
     r = scenarioBotName(p->name, 0, name, sizeof(name));
     if (r != SCN_OP_OK) return r;
     /* A seat held without a bot in it loads no brain, so there is no path to
-       resolve here: the spawn that fields the seat brings one. */
-    if (p->fielded) {
+       resolve here: the spawn that fields the seat brings one. A mode or a
+       difficulty names a key of one brain's modes.txt, though, so an add that
+       asks for either has to resolve the path whether it fields or not —
+       there is nothing else to ask what the key means. */
+    if (p->fielded || p->mode[0] != '\0' || p->difficulty[0] != '\0') {
         /* No seat yet, so no seat brain to prefer — the op's or the
            server's. */
         r = scenarioBrainPath(sim, p->brain, SCN_NONE, &brain);
+        if (r != SCN_OP_OK) return r;
+        r = scenarioCheckBotConfigKeys(brain, p->mode, p->difficulty);
         if (r != SCN_OP_OK) return r;
     }
     /* The seat the op names, or the first free one, by the rule the spawn
@@ -2195,6 +2591,11 @@ static ScnOpResult scenarioOpLobbyAddBot(ServerSim *sim,
     /* Again with the seat, because an op that named no name is given the
        lobby's default for the one it got. */
     (void)scenarioBotName(p->name, slot, name, sizeof(name));
+
+    /* Into the seat's config before the brain is built with it, as the
+       template's seating does. The keys were checked above, so this only
+       writes. */
+    scenarioApplyBotConfigKeys(sim, slot, brain, p->mode, p->difficulty);
 
     if (!p->fielded) {
         if (!serverSimAddUnfieldedSeat(sim, slot, name, p->team)) {
@@ -2213,6 +2614,7 @@ static ScnOpResult scenarioOpLobbyAddBot(ServerSim *sim,
         /* The path named a file and the file would not load as a brain. */
         return SCN_OP_NOT_FOUND;
     }
+    serverSimQueueBotConfigPublish(sim, slot);
     serverSimPublishLobbyBotBrain(sim, slot);
     lobbyAutoUnreadyOnChange(sim);
     if (out != NULL) {
@@ -2291,6 +2693,12 @@ static void scenarioRosterSpawnNow(ServerSim *sim,
     if (p->loadout != 0) {
         sim->sim.scenarioSpawnLoadout[slot] = p->loadout;
     }
+    /* The mode and the difficulty this spawn named, into the seat's config
+       before the brain is built: that is where botManagerStageInitArg reads
+       the pair it turns into the brain's mode= / difficulty= tokens. Asked
+       again here rather than trusted from the accept, like every other
+       question this drain re-asks — the brain may have changed since. */
+    scenarioApplyBotConfigKeys(sim, slot, brain, p->mode, p->difficulty);
     if (!scenarioAddBotInSeat(sim, slot, brain, name, p->team, &p->init)) {
         sim->sim.scenarioStartIdx[slot] = MAX_STARTS;
         sim->sim.scenarioSpawnLoadout[slot] = 0;
@@ -2311,6 +2719,28 @@ static void scenarioRosterRemoveNow(ServerSim *sim, BYTE slot) {
         return;
     }
     scenarioTakeBotOut(sim, slot);
+}
+
+/* Make a queued init table. The seat is asked about again — a bot that died
+ * or left between the ask and the landing is no longer one to write into —
+ * and then the table goes to the bot manager, which is what owns the brain's
+ * Lua state.
+ *
+ * A seat taken off the field in that window is still written: the unfielding
+ * parks its runner rather than releasing it, so the VM the table is for is
+ * still there and the refield resumes onto it. What is refused here is the
+ * seat that lost its runner altogether, which is the same thing the queue-time
+ * check refuses and is why the drop needs no line of its own. */
+static void scenarioRosterBotInitNow(ServerSim *sim,
+                                     const ScnOpRosterBotInit *p) {
+    if (scenarioBotInitTarget(sim, p->slot) != SCN_OP_OK) {
+        return;
+    }
+    if (!botManagerSetBotInitTable(sim, p->slot, &p->init)) {
+        WB_LOG_WARN(WB_LOG_CAT_SIM,
+                    "scenario: bot_init for seat %d would not apply",
+                    (int)p->slot);
+    }
 }
 
 void serverSimScenarioDrainRoster(ServerSim *sim) {
@@ -2340,10 +2770,16 @@ void serverSimScenarioDrainRoster(ServerSim *sim) {
        tank spawn it publishes on the way in are all the script's doing. */
     was                 = sim->scenarioActing;
     sim->scenarioActing = true;
-    if (entry.isSpawn) {
-        scenarioRosterSpawnNow(sim, &entry.spawn);
-    } else {
-        scenarioRosterRemoveNow(sim, entry.removeSlot);
+    switch (entry.kind) {
+        case SCN_ROSTER_SPAWN:
+            scenarioRosterSpawnNow(sim, &entry.spawn);
+            break;
+        case SCN_ROSTER_REMOVE:
+            scenarioRosterRemoveNow(sim, entry.removeSlot);
+            break;
+        case SCN_ROSTER_BOT_INIT:
+            scenarioRosterBotInitNow(sim, &entry.botInit);
+            break;
     }
     sim->scenarioActing = was;
 }
@@ -3508,16 +3944,24 @@ bool serverSimGetScenarioRule(const ServerSim *sim, uint16_t rule,
 
 #undef SCN_RULE_READ_CASE
 
-/* The six ops that change who is in the round. The start-in-progress guard
- * below exists for exactly these: a roster edit made from inside a start
+/* The ops the setup window does not admit, and the one place the set is
+ * written down.
+ *
+ * Six of them change who is in the round, and the start-in-progress guard
+ * below exists for exactly those: a roster edit made from inside a start
  * re-enters the all-ready detector with every player still ready, which
- * would begin a second round on top of the one being set up. They are
- * therefore the ops the setup window does not admit, and this is the one
- * place the set is written down. */
+ * would begin a second round on top of the one being set up.
+ *
+ * The seventh, bot_init, changes no membership. It is held here for the
+ * other half of the same reason: inside a start the bots and their brains
+ * are being built, so there is no settled Lua state to write a table into.
+ * It is also what a script author reads off the row's neighbours — the
+ * roster rows answer alike from a setup. */
 static bool scenarioOpIsRoster(ScenarioOpType t) {
     return t == SCN_OP_ROSTER_SPAWN_BOT ||
            t == SCN_OP_ROSTER_REMOVE_BOT ||
            t == SCN_OP_ROSTER_SET_TEAM ||
+           t == SCN_OP_ROSTER_BOT_INIT ||
            t == SCN_OP_LOBBY_ADD_BOT ||
            t == SCN_OP_LOBBY_REMOVE_BOT ||
            t == SCN_OP_LOBBY_SET_TEAM;
@@ -3620,6 +4064,8 @@ static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
             return scenarioOpRosterRemoveBot(sim, &op->u.rosterRemoveBot);
         case SCN_OP_ROSTER_SET_TEAM:
             return scenarioOpRosterSetTeam(sim, &op->u.rosterSetTeam);
+        case SCN_OP_ROSTER_BOT_INIT:
+            return scenarioOpRosterBotInit(sim, &op->u.rosterBotInit);
         case SCN_OP_LOBBY_ADD_BOT:
             return scenarioOpLobbyAddBot(sim, &op->u.lobbyAddBot, out);
         case SCN_OP_LOBBY_REMOVE_BOT:
@@ -3850,7 +4296,9 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
                                   const char *name,
                                   const char *fileName,
                                   const char *description,
-                                  bool extraTeams) {
+                                  bool extraTeams,
+                                  bool keepsWinCondition,
+                                  bool bound) {
     if (sim == NULL) return;
     memset(&sim->scenarioIdentity, 0, sizeof(sim->scenarioIdentity));
     if (source == lobbyScenarioNone) {
@@ -3868,8 +4316,10 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
         serverSimScenarioResetPresentation(sim);
         return;
     }
-    sim->scenarioIdentity.source     = source;
-    sim->scenarioIdentity.extraTeams = extraTeams;
+    sim->scenarioIdentity.source            = source;
+    sim->scenarioIdentity.extraTeams        = extraTeams;
+    sim->scenarioIdentity.keepsWinCondition = keepsWinCondition;
+    sim->scenarioIdentity.bound             = bound;
     scnCopyIdentityText(sim->scenarioIdentity.name,
                         sizeof(sim->scenarioIdentity.name), name);
     scnCopyIdentityText(sim->scenarioIdentity.fileName,

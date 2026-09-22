@@ -721,7 +721,7 @@ static void botManagerStageInitArg(struct ServerSim *sim, BYTE playerNum,
     SDL_strlcpy(arg, (staged != NULL) ? staged : "", sizeof(arg));
     /* Only a brain that SHIPS a modes.txt gets the tokens. The manifest is
      * the brain saying "I read mode= and difficulty=". A brain without one
-     * (the scripted tests/brains/*.lua, a third-party brain) may treat its
+     * (the scripted tests/brains/ *.lua, a third-party brain) may treat its
      * whole init arg as one opaque value — park_at.lua parses "mx,my" and
      * nothing else — and appending to it would break that parse. Such a
      * brain still shows the synthesized Default mode in the lobby; picking
@@ -898,8 +898,12 @@ static bool botParkedRunnerMatches(const BotContext *bot,
         memset(&none, 0, sizeof(none));
         init = &none;
     }
-    if (!botInitTablesSame(&bot->initTable, init)) {
-        if (bot->warmed && bot->initTable.count == 0 && init->count != 0) {
+    /* Against the table the VM was BUILT with, not the one it was last told.
+       game.bot_init replaces the live record mid-life — which is the whole
+       point of it — and a script that tunes a seat each time it fields it
+       would otherwise never match its own warmed runner again. */
+    if (!botInitTablesSame(&bot->builtInit, init)) {
+        if (bot->warmed && bot->builtInit.count == 0 && init->count != 0) {
             WB_LOG_INFO(WB_LOG_CAT_SIM,
                     "botManager: seat %d was warmed without the table the "
                     "spawn carries; building its runner now",
@@ -913,6 +917,39 @@ static bool botParkedRunnerMatches(const BotContext *bot,
         return false;
     }
     return true;
+}
+
+/* Hand one bot the recording block that is open now.
+ *
+ * A recording block publishes DEBUG_SESSION_DIR to every bot as it OPENS
+ * (server_lifecycle.c, serverLifecycleOpenBraindbgBlock). A bot that reaches
+ * the field after that publish missed it, and a brain with no session dir
+ * scatters its print2 and jsonl files into the cwd instead of the block,
+ * where BrainTest's session browser never finds them.
+ *
+ * Two kinds of bot miss it, and both come through here: one BUILT mid-round
+ * (a host's Add Bot, a scenario spawn onto an empty seat) and one RESUMED
+ * from a runner the countdown warmed. The warmed one missed the publish for
+ * a second reason as well — its runner was parked rather than active when
+ * the block opened — which is why the resume calls this and not only the
+ * build. Without it a lobby-hosted round with held seats recorded a block
+ * holding a .btr and a perf log and not one print2_bot*.log: every bot that
+ * took the field in that round was a resume. */
+static void botHandLiveSessionDir(ServerSim *sim, BotContext *bot,
+                                  BYTE playerNum) {
+    const char *sdir;
+
+    if (!brainRecordIsEnabled() || bot->brain.L == NULL) {
+        return;
+    }
+    sdir = brainRecordGetSessionDir();
+    if (sdir == NULL || sdir[0] == '\0') {
+        return;
+    }
+    botManagerSetLuaGlobalString(sim, playerNum, "DEBUG_SESSION_DIR", sdir);
+    botManagerExecLua(sim, playerNum,
+        "local ok,p=pcall(require,'print2'); "
+        "if ok and p.reset_log then p.reset_log() end");
 }
 
 /* Hand a parked runner back to the seat it belongs to. The ClientSim, the
@@ -1022,6 +1059,17 @@ static bool botResumeParkedRunner(ServerSim *sim, BotContext *bot,
     bot->warmed = false;
     bot->active = true;
     sim->botMgr.numBots++;
+
+    /* The server's alliance matrix, for the same reason the fresh build
+       takes it below: a resume is a seat coming back onto the field mid-round
+       and its ClientSim's matrix is as old as the park. The seat may also
+       have changed sides while it was off. */
+    botManagerSyncClientAlliances(sim);
+
+    /* And the recording block, for the same reason the fresh build takes it:
+       this VM was warmed before the block opened, so it has never been told
+       where the round's debug files go. */
+    botHandLiveSessionDir(sim, bot, playerNum);
 
     WB_LOG_INFO(WB_LOG_CAT_SIM,
             "botManager: bot %d back on the field on its parked runner",
@@ -1208,6 +1256,13 @@ static bool botBuildRunner(ServerSim *sim, BotContext *bot,
     if (bot->brain.worldsim != NULL) {
         brainWorldSimSetAbortFlag(bot->brain.worldsim, &bot->abort_flag);
     }
+
+    /* The table this VM came into the world reading, kept apart from the
+       live one so a later game.bot_init cannot move the park key out from
+       under the next fielding of the same seat. Written here because this is
+       the one place a VM is created, and read only by the park test. */
+    bot->builtInit = bot->initTable;
+    sim->botMgr.runnerBuilds++;
     return true;
 }
 
@@ -1307,22 +1362,31 @@ bool botManagerAddBot(ServerSim *sim, BYTE playerNum,
     bot->active = true;
     sim->botMgr.numBots++;
 
-    /* A recording block may already be open (server_lifecycle publishes
-     * DEBUG_SESSION_DIR to every bot when the block OPENS) — a bot born
-     * mid-round (scenario spawn_bot waves, host mid-game adds) missed
-     * that publish and would scatter its print2/jsonl debug files into
-     * the cwd instead of the session dir, invisible to BrainTest's
-     * session browser. Hand the newborn the live session dir directly. */
-    if (brainRecordIsEnabled() && bot->brain.L != NULL) {
-        const char *sdir = brainRecordGetSessionDir();
-        if (sdir != NULL && sdir[0] != '\0') {
-            botManagerSetLuaGlobalString(sim, playerNum,
-                                         "DEBUG_SESSION_DIR", sdir);
-            botManagerExecLua(sim, playerNum,
-                "local ok,p=pcall(require,'print2'); "
-                "if ok and p.reset_log then p.reset_log() end");
-        }
-    }
+    /* The server's alliance matrix into the ClientSim this add just built.
+     *
+     * A bot decides who is an enemy from its OWN client-side players object,
+     * not from the server's, and the two only meet where something copies
+     * one into the other. At a round start that is
+     * serverSimReapplyTeamAlliances, which ends in this same call — but a
+     * bot born MID-ROUND (a scenario wave fielding a held seat, a host's Add
+     * Bot during play) is built long after the last one, and nothing else
+     * fills its matrix in.
+     *
+     * The subscriber replay does not: it hands the new ClientSim one
+     * CTRL_PLAYER_JOIN per player carrying that player's allies, and
+     * playersSetPlayer (players.c, the `iMyPlayerNum == iPlayerNum` branch)
+     * stores only the location for the client's OWN slot — the row a bot
+     * reads to answer "who is on my side" is the one row the replay cannot
+     * write. A wave attacker therefore came ashore believing it was allied
+     * with nobody, and shot its own team's tanks and the pillboxes they had
+     * built.
+     *
+     * Every active bot rather than this one alone, which is what the round
+     * start does too: the matrix is the server's either way, so a bot
+     * already holding it is written the same bits back. */
+    botManagerSyncClientAlliances(sim);
+
+    botHandLiveSessionDir(sim, bot, playerNum);
 
     WB_LOG_INFO(WB_LOG_CAT_SIM, "botManager: bot %d started with brain '%s'",
             playerNum, brainName);
@@ -2151,6 +2215,11 @@ bool botManagerHasAnyBot(const ServerSim *sim) {
  * reads item[count].allie of cs->sim.plyrs), NOT the server matrix — so
  * the allies-rendered-red bug needs both sides watched. Returns 0 for
  * missing bot / row out of range. */
+uint32_t botManagerRunnerBuildCount(const ServerSim *sim) {
+    if (sim == NULL) return 0;
+    return sim->botMgr.runnerBuilds;
+}
+
 uint32_t botManagerGetClientAllieRow(const ServerSim *sim, BYTE botPlayer, BYTE row) {
     if (sim == NULL || botPlayer >= MAX_TANKS || row >= MAX_TANKS) return 0;
     const BotContext *bot = &sim->botMgr.bots[botPlayer];
@@ -2342,7 +2411,15 @@ bool botManagerToggleAllBrainDebugMode(ServerSim *sim) {
 
 bool botManagerExecLua(ServerSim *sim, BYTE playerNum, const char *src) {
     if (sim == NULL || playerNum >= MAX_TANKS) return false;
-    if (!sim->botMgr.bots[playerNum].active) return false;
+    /* A PARKED runner counts. Its VM is as real as an active one — the park
+       keeps the whole Lua state so the next fielding can resume it — and the
+       one thing that reaches a bot between rounds is exactly this: the
+       recording block publishing DEBUG_SESSION_DIR to every seat as it
+       opens. Asking only for `active` dropped that publish on every seat the
+       countdown had warmed, and the round then recorded no print2 log for
+       any of them. The two lines below are what actually decide whether
+       there is a state to run in. */
+    if (!botManagerHasRunner(sim, playerNum)) return false;
     if (!sim->botMgr.bots[playerNum].brain.running) return false;
     lua_State *L = sim->botMgr.bots[playerNum].brain.L;
     if (!L || !src) return false;
@@ -2392,7 +2469,9 @@ bool botManagerScenarioHint(ServerSim *sim, BYTE playerNum,
 bool botManagerSetLuaGlobalString(ServerSim *sim, BYTE playerNum,
                                   const char *name, const char *value) {
     if (sim == NULL || playerNum >= MAX_TANKS) return false;
-    if (!sim->botMgr.bots[playerNum].active) return false;
+    /* Parked counts here too, and for the same reason: see botManagerExecLua
+       above. This is the call the session-dir publish actually goes through. */
+    if (!botManagerHasRunner(sim, playerNum)) return false;
     if (!sim->botMgr.bots[playerNum].brain.running) return false;
     lua_State *L = sim->botMgr.bots[playerNum].brain.L;
     if (!L || !name || !value) return false;
@@ -2403,6 +2482,80 @@ bool botManagerSetLuaGlobalString(ServerSim *sim, BYTE playerNum,
     lua_pushstring(L, value);
     lua_setglobal(L, name);
     return true;
+}
+
+/* Hand a bot that is already playing a new init table.
+ *
+ * Two things happen and both matter. The bot's own copy is replaced, so a
+ * brain swap later in the round builds its VM from the table the bot holds
+ * NOW rather than from the one it was spawned with. Then the running VM is
+ * told: BRAIN_INIT is rebuilt and the brain's Brain.on_init is called with
+ * it, which is what makes the change act rather than merely be readable.
+ *
+ * Called on the producer thread from the scenario's roster drain, which runs
+ * between ticks. Nothing here may be called while the worker threads are in
+ * the brain-think stage: the VM being written into is theirs for that
+ * window.
+ *
+ * A seat off the field is written too, so long as its runner is still here:
+ * the unfielding parks the runner and leaves the VM standing, so the global
+ * is rebuilt where it sits and the refield finds it already carrying the new
+ * table. That refield still resumes rather than rebuilds, because what it
+ * compares itself against is builtInit — the table the VM was made with —
+ * and this writes initTable, which is the live record. A wave that retunes a
+ * seat between fieldings therefore costs nothing.
+ *
+ * A bot whose brain is not running keeps the table and is answered true: the
+ * record is what the next VM is built from, so the script's change is not
+ * lost. False means the seat has no runner to hold the table for, or the
+ * brain refused the call — its on_init raised — and the console carries the
+ * reason. */
+bool botManagerSetBotInitTable(ServerSim *sim, BYTE playerNum,
+                               const ScnTable *init) {
+    BotContext *bot;
+    char        why[256];
+
+    if (sim == NULL || playerNum >= MAX_TANKS) return false;
+    if (!botManagerHasRunner(sim, playerNum)) return false;
+    bot = &sim->botMgr.bots[playerNum];
+
+    if (init != NULL) {
+        bot->initTable = *init;
+    } else {
+        scnTableClear(&bot->initTable);
+    }
+
+    if (!bot->brain.running || bot->brain.L == NULL) {
+        return true;
+    }
+    if (brainCoreUpdateInitTable(bot->brain.L, &bot->initTable, why,
+                                 sizeof(why))) {
+        WB_LOG_INFO(WB_LOG_CAT_LUA,
+                    "brain %d: init table replaced, on_init ran",
+                    (int)playerNum);
+        return true;
+    }
+    if (why[0] != '\0') {
+        WB_LOG_WARN(WB_LOG_CAT_LUA,
+                    "brain %d: on_init raised: %s", (int)playerNum, why);
+        return false;
+    }
+    /* No on_init: the global is the whole contract for this brain, and it is
+       written. Worth a line either way, because "the brain was not told" is
+       the first thing anybody debugging a bot_init wants to know. */
+    WB_LOG_INFO(WB_LOG_CAT_LUA,
+                "brain %d: init table replaced, the brain has no on_init",
+                (int)playerNum);
+    return true;
+}
+
+const ScnTable *botManagerGetBotInitTable(ServerSim *sim, BYTE playerNum) {
+    if (sim == NULL || playerNum >= MAX_TANKS) return NULL;
+    /* The same seats the setter takes. A parked runner holds its table as
+       much as a fielded one does, and a reader that could be written to but
+       not read back would be the odd one out. */
+    if (!botManagerHasRunner(sim, playerNum)) return NULL;
+    return &sim->botMgr.bots[playerNum].initTable;
 }
 
 char *botManagerEvalLuaString(ServerSim *sim, BYTE playerNum, const char *src) {

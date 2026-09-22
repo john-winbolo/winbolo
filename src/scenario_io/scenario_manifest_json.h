@@ -110,4 +110,21 @@ bool scnManifestAgrees(const ScenarioManifest *fromJson,
 ScnTrigCompare scnManifestTrigOpFrom(const char *name);
 const char    *scnManifestTrigOpName(ScnTrigCompare op);
 
+/* The two words scenario.kind takes, as a name and back, and here for the
+   same reason the operators are: a script writes the word in Lua and a
+   package writes it in JSON, and the two have to spell it the same way.
+
+   scnManifestKindFrom answers scnKindUnknown for a word this build does not
+   know and for NULL. Both readers report that word and store scnKindScenario
+   instead, so the author is told and a file nobody could classify keeps the
+   meaning every file had before the key existed.
+
+   scnManifestKindName never answers NULL. The operator table above keeps ""
+   for a word it cannot name, because a row that names no operator has to come
+   back as one; a kind has no third spelling to come back as, so a value from
+   outside the enum is written as the word an absent key reads as, and a
+   manifest that went out and came back says what it said. */
+ScnManifestKind scnManifestKindFrom(const char *name);
+const char     *scnManifestKindName(ScnManifestKind kind);
+
 #endif /* SCENARIO_MANIFEST_JSON_H */

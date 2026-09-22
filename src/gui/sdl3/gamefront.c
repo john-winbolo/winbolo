@@ -379,6 +379,8 @@ int   gameFrontOverviewX = -1;
 int   gameFrontOverviewY = -1;
 int   gameFrontScnPanelX = -1;
 int   gameFrontScnPanelY = -1;
+int   gameFrontScnPanelScale = -1;
+int   gameFrontScnPanelAlpha = -1;
 float gameFrontOverviewZoom = 2.0f;
 bool  gameFrontOverviewFollow = TRUE;
 bool  gameFrontShowMapOverview = FALSE;
@@ -1004,6 +1006,51 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   gameFrontShutdownServer();
   isServer = FALSE;
   clientMutexRelease();
+}
+
+/* The visibility rules a game this machine hosts starts on, taken from the
+ * [GAME OPTIONS] prefs and pushed onto the sim after create. They do not
+ * travel in ServerInstanceConfig, which has no field for them.
+ *
+ * Every path here that creates a server calls this: the listen server in
+ * gameFrontSetupServer and the single-player game in the dialog state
+ * machine below. Both open a lobby with the Visibility dropdown in it, and
+ * both have to open it on whatever this player last chose. The
+ * single-player path had no push of its own, so it always opened on the
+ * values serverSimCreate left, whatever the prefs said and whatever the
+ * player had picked in the lobby the game before.
+ *
+ * Call it before serverInstanceStartup. That is where
+ * serverSimApplyInstanceConfig takes the snapshot
+ * serverSimResetLobbyToDefaults restores from, so a push made after it
+ * would leave the snapshot holding the created values and hand an emptied
+ * lobby back to them. */
+static void gameFrontApplyVisibilityPrefs(ServerSim *sim) {
+  if (sim == NULL) return;
+  serverSimSetViewPolicy(sim, viewCategoryPill,
+                         (ViewPolicy)gameFrontViewPillPolicy,
+                         (uint16_t)gameFrontViewPillDecaySecs);
+  serverSimSetViewPolicy(sim, viewCategoryBase,
+                         (ViewPolicy)gameFrontViewBasePolicy,
+                         (uint16_t)gameFrontViewBaseDecaySecs);
+  serverSimSetViewPolicy(sim, viewCategoryAlly,
+                         (ViewPolicy)gameFrontViewAllyPolicy,
+                         (uint16_t)gameFrontViewAllyDecaySecs);
+  /* After the three policies, so classic mode wins over them when both
+   * are set, and allies in trees before classic mode, which forces it
+   * back off. Both only pushed when on — off is what the sim was
+   * created with. */
+  if (gameFrontAlliesInTrees) {
+    serverSimSetAlliesInTrees(sim, true);
+  }
+  /* These two go on whatever they hold, not only when on: either value
+   * is a real choice, and the expanded window is not what the sim was
+   * created with. Still before classic mode, which writes both. */
+  serverSimSetOverviewWindow(sim, (uint8_t)gameFrontOverviewWindow);
+  serverSimSetLineOfSight(sim, (uint8_t)gameFrontLineOfSight);
+  if (gameFrontClassicMode) {
+    serverSimSetClassicMode(sim, true);
+  }
 }
 
 /* -------------------------------------------------------
@@ -1779,7 +1826,7 @@ bool gameFrontSetDlgState(openingStates newState) {
         /* Seed one enemy bot when the launch carried no bot setup: human
          * on team 1, the bot on team 2 so they oppose each other. A setup
          * the user already configured (count > 0) is left untouched. */
-                if (!isTutorial && gameFrontBotSetupData.count == 0) {
+        if (!isTutorial && gameFrontBotSetupData.count == 0) {
           memset(&gameFrontBotSetupData, 0, sizeof(gameFrontBotSetupData));
           gameFrontBotSetupData.count              = 1;
           gameFrontBotSetupData.playerTeamNumber   = 1;
@@ -1844,6 +1891,21 @@ bool gameFrontSetDlgState(openingStates newState) {
           }
           /* And from here on the scenario follows the committed map. */
           scenarioHostFollowMap(spServerSim, &spScenarioHost);
+          /* The visibility rules this player last chose, from the [GAME
+             OPTIONS] prefs, the same push the listen server makes. A
+             single-player game opens a lobby with the Visibility dropdown
+             in it, so it has to open on the set the player left the last
+             lobby on rather than on the stock set serverSimCreate made.
+             Before gameFrontStartServerSim, so the lobby snapshot behind
+             serverSimResetLobbyToDefaults is taken from these values.
+
+             Not for the tutorial. That runs with skipLobby, so it never
+             shows the dropdown and nobody can change what it plays on;
+             it keeps the plain view it has always had, the same way it
+             ignores every other setting left over from an earlier game. */
+          if (!isTutorial) {
+            gameFrontApplyVisibilityPrefs(spServerSim);
+          }
           /* Tutorial: mark the freshly-created sim authoritative-tutorial and
              reset the respawn start to 0 (sea) BEFORE the host player is added
              in gameFrontStartServerSim below.  startsGetStart only takes the
@@ -2037,8 +2099,20 @@ bool gameFrontSetDlgState(openingStates newState) {
              * sim via cfg above; here we only need brainPath as a
              * per-bot default for the serverSimCreateBot loop. */
             bool haveBrain = (spBrainPath[0] != '\0');
-                        if (spAiPolicy != aiNone && gameFrontBotSetupData.count > 0 && haveBrain) {
-              for (int bi = 0; bi < gameFrontBotSetupData.count && bi < MAX_BOT_SLOTS; bi++) {
+            /* No setup bot at all in a lobby the map's script lays out
+             * itself (Survival seats its whole horde): the script says who
+             * sits in that lobby, and a bot made here, the seeded enemy or
+             * one from the player's own settings, takes a slot ahead of the
+             * script's seats and lands on a side the script never meant.
+             * The player adds their own team's bots in the lobby by hand,
+             * which is a different path and untouched. Only the bot loop
+             * is skipped: the human's own team and the alliance pass below
+             * still run, so the player lands on the defenders' side. */
+            bool scriptSeats = (spScenarioHost != NULL) &&
+                               serverSimScenarioHasLobbyTemplate(spServerSim);
+            int botsToMake = scriptSeats ? 0 : gameFrontBotSetupData.count;
+            if (spAiPolicy != aiNone && gameFrontBotSetupData.count > 0 && haveBrain) {
+              for (int bi = 0; bi < botsToMake && bi < MAX_BOT_SLOTS; bi++) {
                 BYTE slot = (BYTE)(bi + 1);
                 char botName[32];
                 snprintf(botName, sizeof(botName), "Bot %d", slot);
@@ -2371,7 +2445,7 @@ void gameFrontSetHostingLogDir(const char *dir) {
 void gameFrontSetHostingScenarioDir(const char *dir) {
   SDL_strlcpy(gameFrontHostingScenarioDir, dir ? dir : "",
               sizeof(gameFrontHostingScenarioDir));
-  prefsSetString("HOSTING", "Scenario Dir", gameFrontHostingScenarioDir);
+  prefsSetString("HOSTING", "Mod Dir", gameFrontHostingScenarioDir);
 }
 
 void gameFrontSetHostingServeReplays(bool serve) {
@@ -3224,6 +3298,79 @@ void gameFrontSetBotTagColor(const char *botName, uint32_t rgb) {
   prefsSetString("BOT", key, val);
 }
 
+/* Per-scenario scenario-panel layout, kept under "SCENARIO PANEL" / the
+ * scenario as one "x,y,scale,alpha" row. One row rather than four keys keeps
+ * a scenario's numbers together and keeps the file short enough to read, and
+ * the scenario is the whole key so a player scanning the section sees the
+ * scenarios they have played by name.
+ *
+ * The key is copied a character at a time rather than with SDL_snprintf
+ * because a control character in a scenario's name would reach the
+ * preferences file as an escape and make the row impossible to match up by
+ * eye. Anything below a space becomes an underscore here, and it does so in
+ * the read and the write alike, so both still name the same row. A byte
+ * above 0x7F is left as it is: those are the middle of a UTF-8 character in
+ * a name somebody chose, not a control code. */
+static void gameFrontScnPanelLayoutKey(const char *scenario, char *key,
+                                       size_t keySz) {
+  size_t i = 0;
+  if (keySz == 0) return;
+  while (scenario[i] != '\0' && i + 1 < keySz) {
+    key[i] = ((unsigned char)scenario[i] >= 0x20) ? scenario[i] : '_';
+    i++;
+  }
+  key[i] = '\0';
+}
+
+bool gameFrontGetScnPanelLayout(const char *scenario, int *x, int *y,
+                                int *scale, int *alpha) {
+  char key[SCN_PANEL_SCENARIO_LEN], buff[64];
+  int rx, ry, rscale, ralpha;
+  if (!scenario || !scenario[0] || !x || !y || !scale || !alpha) return false;
+  gameFrontScnPanelLayoutKey(scenario, key, sizeof(key));
+  prefsGetString("SCENARIO PANEL", key, "", buff, sizeof(buff));
+  /* All four or none: a half-written row says nothing about where the panel
+     belongs, and the caller's fallback is a whole layout of its own rather
+     than something to fill the gaps in this one with. */
+  if (SDL_sscanf(buff, "%d,%d,%d,%d", &rx, &ry, &rscale, &ralpha) != 4) {
+    return false;
+  }
+  /* Clamped the way the [WINDOW] load clamps, and for the same reason: a
+     scale out of range would open the panel bigger than the screen or too
+     small to get a pointer onto a corner of. -1 is not a size or an opacity,
+     it is "never touched", so it passes through. The coordinates pass
+     through too — the panel clamps a position against the window it is
+     restored into, which is the only place the screen size is known. */
+  if (rscale != -1) {
+    if (rscale < SCN_PANEL_SCALE_MIN) {
+      rscale = SCN_PANEL_SCALE_MIN;
+    } else if (rscale > SCN_PANEL_SCALE_MAX) {
+      rscale = SCN_PANEL_SCALE_MAX;
+    }
+  }
+  if (ralpha != -1) {
+    if (ralpha < 0) {
+      ralpha = 0;
+    } else if (ralpha > 100) {
+      ralpha = 100;
+    }
+  }
+  *x = rx;
+  *y = ry;
+  *scale = rscale;
+  *alpha = ralpha;
+  return true;
+}
+
+void gameFrontSetScnPanelLayout(const char *scenario, int x, int y,
+                                int scale, int alpha) {
+  char key[SCN_PANEL_SCENARIO_LEN], val[64];
+  if (!scenario || !scenario[0]) return;
+  gameFrontScnPanelLayoutKey(scenario, key, sizeof(key));
+  SDL_snprintf(val, sizeof(val), "%d,%d,%d,%d", x, y, scale, alpha);
+  prefsSetString("SCENARIO PANEL", key, val);
+}
+
 bool gameFrontGetChosenBotDifficulty(uint8_t *out) {
   char buff[32];
   if (!out) return false;
@@ -3328,32 +3475,10 @@ bool gameFrontSetupServer(void) {
   /* And from here on the scenario follows the committed map. */
   scenarioHostFollowMap(spServerSim, &spScenarioHost);
 
-  /* Visibility rules from the [GAME OPTIONS] prefs, pushed onto the sim
-   * after create rather than through ServerInstanceConfig. */
-  serverSimSetViewPolicy(spServerSim, viewCategoryPill,
-                         (ViewPolicy)gameFrontViewPillPolicy,
-                         (uint16_t)gameFrontViewPillDecaySecs);
-  serverSimSetViewPolicy(spServerSim, viewCategoryBase,
-                         (ViewPolicy)gameFrontViewBasePolicy,
-                         (uint16_t)gameFrontViewBaseDecaySecs);
-  serverSimSetViewPolicy(spServerSim, viewCategoryAlly,
-                         (ViewPolicy)gameFrontViewAllyPolicy,
-                         (uint16_t)gameFrontViewAllyDecaySecs);
-  /* After the three policies, so classic mode wins over them when both
-   * are set, and allies in trees before classic mode, which forces it
-   * back off. Both only pushed when on — off is what the sim was
-   * created with. */
-  if (gameFrontAlliesInTrees) {
-    serverSimSetAlliesInTrees(spServerSim, true);
-  }
-  /* These two go on whatever they hold, not only when on: either value
-   * is a real choice, and the expanded window is not what the sim was
-   * created with. Still before classic mode, which writes both. */
-  serverSimSetOverviewWindow(spServerSim, (uint8_t)gameFrontOverviewWindow);
-  serverSimSetLineOfSight(spServerSim, (uint8_t)gameFrontLineOfSight);
-  if (gameFrontClassicMode) {
-    serverSimSetClassicMode(spServerSim, true);
-  }
+  /* The visibility rules this host last chose, from the [GAME OPTIONS]
+   * prefs. Shared with the single-player path, which opens the same
+   * lobby and has to open it on the same settings. */
+  gameFrontApplyVisibilityPrefs(spServerSim);
 
   /* Resolve a brain path so the lobby's "Add Bot" works regardless of
    * whether the host set compTanks at startup. The AI Policy can be
@@ -3622,22 +3747,51 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     prefsGetString("HOSTING", "Upload Dir", def, gameFrontHostingUploadDir,
                    FILENAME_MAX);
   }
-  /* The scenarios directory, defaulted under the writable prefs path for the
+  /* The mod directory, defaulted under the writable prefs path for the
    * reason the upload dir is: the app's own data directory is inside the
    * read-only bundle, and this is a place a player drops files into.
-   * SDL_GetPrefPath returns a trailing separator, so append "scenarios"
-   * directly. A directory that is not there is not an error — it means this
-   * host offers no scenarios of its own. */
+   * SDL_GetPrefPath returns a trailing separator, so append "Mods" directly,
+   * spelled the way brain_list.c spells Brains beside it. A directory that
+   * is not there is not an error — the host is still offered the mods that
+   * ship with the build.
+   *
+   * This is the same directory scnModDirs reads on its own, so leaving the
+   * preference alone changes nothing about what a host is offered. It is
+   * still a preference because a player who keeps their mods somewhere else
+   * — a shared drive, a checkout — has to be able to say so.
+   *
+   * "Mod Dir" and not the "Scenario Dir" this key was called before. A
+   * settings file written by an older build still has the old key, so it is
+   * what the new one defaults to: a player who had pointed it somewhere
+   * keeps pointing there, and the value moves to the new key the next time
+   * the settings are written. The old key stays in the file and is never
+   * read again once "Mod Dir" is there, because it is only ever consulted as
+   * that key's default. */
   {
     const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+    char        old[FILENAME_MAX];
+
     if (prefDir) {
-      snprintf(def, FILENAME_MAX, "%sscenarios", prefDir);
+      snprintf(def, FILENAME_MAX, "%sMods", prefDir);
       SDL_free((void *)prefDir);
     } else {
-      snprintf(def, FILENAME_MAX, "%s", "scenarios");
+      snprintf(def, FILENAME_MAX, "%s", "Mods");
     }
-    prefsGetString("HOSTING", "Scenario Dir", def,
+    prefsGetString("HOSTING", "Scenario Dir", def, old, FILENAME_MAX);
+    prefsGetString("HOSTING", "Mod Dir", old,
                    gameFrontHostingScenarioDir, FILENAME_MAX);
+    /* Made if it is not there, unlike the directories above it: this is the
+     * one a player is told to drop files into, and a folder that has to be
+     * created before it can be used is a folder most players never find. It
+     * succeeding is not required — a read-only home directory means no mods
+     * of their own, which the listing already says nothing about.
+     *
+     * The one the preference settled on, and after the reads rather than
+     * before them: a player who keeps their mods on a shared drive named it
+     * here, and making the default under the prefs path as well would leave
+     * an empty Mods folder they never asked for in their home directory
+     * every time the settings are read. */
+    (void)SDL_CreateDirectory(gameFrontHostingScenarioDir);
   }
   prefsGetString("HOSTING", "Logging", "Yes", buff, FILENAME_MAX);
   gameFrontHostingLogging = YESNO_TO_TRUEFALSE(buff[0]);
@@ -4339,13 +4493,40 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
   prefsGetString("WINDOW", "Overview Follow", "Yes", buff, FILENAME_MAX);
   gameFrontOverviewFollow = YESNO_TO_TRUEFALSE(buff[0]);
 
-  /* The scenario panel's place inside the main window. -1 for either
+  /* The scenario panel's place inside the main window, the size the player
+     has dragged it to and how opaque its backing is. -1 for either
      coordinate means it has never been moved, so it opens at the top-right
-     of the game view. */
+     of the game view; -1 for the scale or the alpha means that one has never
+     been touched, so the panel opens at the size the game's zoom alone gives
+     it and at the backing it has always had.
+
+     The scale and the alpha are clamped here and not only on the drag that
+     writes them. The preferences file is a text file a player can edit, and a
+     scale out of range would open the panel bigger than the screen or too
+     small to get a pointer onto a corner of, neither of which leaves anything
+     to drag it back with. */
   prefsGetString("WINDOW", "Scenario Panel X", "-1", buff, FILENAME_MAX);
   gameFrontScnPanelX = atoi(buff);
   prefsGetString("WINDOW", "Scenario Panel Y", "-1", buff, FILENAME_MAX);
   gameFrontScnPanelY = atoi(buff);
+  prefsGetString("WINDOW", "Scenario Panel Scale", "-1", buff, FILENAME_MAX);
+  gameFrontScnPanelScale = atoi(buff);
+  if (gameFrontScnPanelScale != -1) {
+    if (gameFrontScnPanelScale < SCN_PANEL_SCALE_MIN) {
+      gameFrontScnPanelScale = SCN_PANEL_SCALE_MIN;
+    } else if (gameFrontScnPanelScale > SCN_PANEL_SCALE_MAX) {
+      gameFrontScnPanelScale = SCN_PANEL_SCALE_MAX;
+    }
+  }
+  prefsGetString("WINDOW", "Scenario Panel Alpha", "-1", buff, FILENAME_MAX);
+  gameFrontScnPanelAlpha = atoi(buff);
+  if (gameFrontScnPanelAlpha != -1) {
+    if (gameFrontScnPanelAlpha < 0) {
+      gameFrontScnPanelAlpha = 0;
+    } else if (gameFrontScnPanelAlpha > 100) {
+      gameFrontScnPanelAlpha = 100;
+    }
+  }
 
   prefsGetString("MENU", "Message Label Size", "1", buff, FILENAME_MAX);
   labelMsg = atoi(buff);
@@ -4461,7 +4642,7 @@ void gameFrontPutPrefs(keyItems *keys) {
   intToStr(gameFrontHostingUploadMaxStorage, buff, sizeof(buff));
   prefsSetString("HOSTING", "Upload Max Storage", buff);
   prefsSetString("HOSTING", "Upload Dir", gameFrontHostingUploadDir);
-  prefsSetString("HOSTING", "Scenario Dir", gameFrontHostingScenarioDir);
+  prefsSetString("HOSTING", "Mod Dir", gameFrontHostingScenarioDir);
   prefsSetString("HOSTING", "Logging",
                             TRUEFALSE_TO_STR(gameFrontHostingLogging));
   prefsSetString("HOSTING", "Log Dir", gameFrontHostingLogDir);
@@ -4829,6 +5010,10 @@ void gameFrontFlushWindowSettings(void) {
   prefsSetString("WINDOW", "Scenario Panel X", buff);
   intToStr(gameFrontScnPanelY, buff, sizeof(buff));
   prefsSetString("WINDOW", "Scenario Panel Y", buff);
+  intToStr(gameFrontScnPanelScale, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Scenario Panel Scale", buff);
+  intToStr(gameFrontScnPanelAlpha, buff, sizeof(buff));
+  prefsSetString("WINDOW", "Scenario Panel Alpha", buff);
 
   s_windowSettingsDirty = false;
 }

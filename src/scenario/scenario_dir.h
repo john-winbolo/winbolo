@@ -37,6 +37,10 @@
 #include "scenario_defs.h" /* ScnDirEntry and its three lengths: the sim is
                             * handed these, so the type is the shared one
                             * rather than one of this library's own */
+#include "scenario_manifest.h" /* ScenarioManifest — one row is filled from
+                                * one, and the type is a typedef of an
+                                * unnamed struct, so it cannot be named
+                                * ahead of itself */
 
 /* The two extensions a scenario is offered as. */
 #define SCN_SCENARIO_PACKAGE_EXT ".scenario"
@@ -56,5 +60,23 @@
  *  files after it are still listed.
  *********************************************************/
 int scnDirList(const char *dir, ScnDirEntry *out, int max);
+
+/*********************************************************
+ *NAME:          scnDirEntryFromManifest
+ *PURPOSE:
+ *  One row of the list, filled from a manifest already in
+ *  hand. The listing above is one caller; the other is the
+ *  committed map's own script, which is published as a row
+ *  of the lobby's list and is in no directory.
+ *
+ *  file is the name the row carries, and is a file name
+ *  rather than a path.
+ *
+ *  Here rather than written twice so that the row a map's
+ *  script shows is the row the same file would show if it
+ *  sat in the scenarios directory.
+ *********************************************************/
+void scnDirEntryFromManifest(ScnDirEntry *e, const char *file,
+                             const ScenarioManifest *m);
 
 #endif /* SCENARIO_DIR_H */

@@ -382,6 +382,11 @@ bool sdl3ImguiPlayerIsSelf(unsigned char playerNum);
 *********************************************************/
 bool sdl3ImguiPlayerIsBot(unsigned char playerNum);
 
+/* Whether tank labels are the long kind, name and location. The bot chip
+ * beside a name rides with the location: a short label is the bare name
+ * for a person and a bot alike. */
+bool sdl3ImguiTankLabelsLong(void);
+
 /*********************************************************
 *NAME:          sdl3ImguiGetPlatformIcon
 *PURPOSE:

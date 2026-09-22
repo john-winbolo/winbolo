@@ -83,6 +83,7 @@ const char *mpDiagCtrlName(int type) {
     case CTRL_SCN_ANNOUNCE:     return "SCN_ANNOUNCE";
     case CTRL_SCN_MARKER:       return "SCN_MARKER";
     case CTRL_SCENARIO_RULES:   return "SCENARIO_RULES";
+    case CTRL_LOBBY_SCRIPT_LIST: return "LOBBY_SCRIPT_LIST";
     default:                    return "<unknown>";
     }
 }

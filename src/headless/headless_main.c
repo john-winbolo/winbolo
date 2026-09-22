@@ -358,6 +358,7 @@ static const char *logEventsTypeName(int type) {
     case CTRL_SCN_ANNOUNCE:          return "CTRL_SCN_ANNOUNCE";
     case CTRL_SCN_MARKER:            return "CTRL_SCN_MARKER";
     case CTRL_SCENARIO_RULES:        return "CTRL_SCENARIO_RULES";
+    case CTRL_LOBBY_SCRIPT_LIST:     return "CTRL_LOBBY_SCRIPT_LIST";
     default:                         return NULL;
   }
 }
@@ -697,6 +698,47 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
         fprintf(f, "%s{\"rule\":%u,\"value\":%g}", (k == 0) ? "" : ",",
                 (unsigned)evt->u.scenarioRules.rule[k],
                 evt->u.scenarioRules.value[k]);
+      }
+      fputc(']', f);
+      break;
+    }
+
+    case CTRL_LOBBY_SCRIPT_LIST: {
+      /* One chunk of the lobby's ordered script list. Written out in full,
+         in list order: the order is the message, so a recording that showed
+         only how many scripts there were would not say what the round is
+         about to run.
+
+         final goes out with the rows because a list arrives in chunks and a
+         reader has no other way to tell a whole list from the front of one.
+         There is no seq to write: the channel is reliable and ordered, so
+         the chunk after a final one starts the next list.
+
+         The rows are bounded by the entries array rather than by the count
+         byte. A chunk decoded off the wire cannot claim more than
+         LOBBY_SCRIPT_LIST_CHUNK — transport_control_codec.c refuses such a
+         body outright — but in --fast mode the event comes straight from the
+         in-process subscriber and nothing decodes it, so the bound is this
+         dumper's to apply. count is written out as it arrived rather than
+         clamped: a chunk claiming more rows than it can hold then shows up
+         in the log as the mismatch it is. */
+      unsigned k;
+      unsigned n = (unsigned)evt->u.lobbyScriptList.count;
+      if (n > (unsigned)LOBBY_SCRIPT_LIST_CHUNK) {
+        n = (unsigned)LOBBY_SCRIPT_LIST_CHUNK;
+      }
+      fprintf(f, ",\"final\":%s,\"count\":%u,\"entries\":[",
+              evt->u.lobbyScriptList.final ? "true" : "false",
+              (unsigned)evt->u.lobbyScriptList.count);
+      for (k = 0; k < n; k++) {
+        const LobbyScriptEntry *e = &evt->u.lobbyScriptList.entries[k];
+        fprintf(f, "%s{\"file\":", (k == 0) ? "" : ",");
+        logEventsJsonStr(f, e->file, sizeof(e->file));
+        fputs(",\"name\":", f);
+        logEventsJsonStr(f, e->name, sizeof(e->name));
+        fprintf(f, ",\"keepsWinCondition\":%s,\"bound\":%s}",
+                e->keepsWinCondition ? "true" : "false",
+                e->bound ? "true" : "false");
       }
       fputc(']', f);
       break;

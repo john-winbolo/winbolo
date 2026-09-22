@@ -89,6 +89,7 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
         sim->overviewWindow      = sim->originalLobbySettings.overviewWindow;
         sim->lineOfSight         = sim->originalLobbySettings.lineOfSight;
         sim->smartPingsOff       = sim->originalLobbySettings.smartPingsOff;
+        sim->modsOff             = sim->originalLobbySettings.modsOff;
     }
 
     /* A fresh lobby always starts with slot 0 as host, regardless of who
@@ -121,6 +122,7 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
      * occupants inherit nothing from the last ones. */
     sim->lastBotModeKey[0]  = '\0';
     sim->lastBotLevelKey[0] = '\0';
+    memset(sim->lastTeamBotLevelKey, 0, sizeof(sim->lastTeamBotLevelKey));
     sim->botConfigPublishPending = 0;
 
     /* Unlock the lobby to new players: clear both the host-toggled
@@ -810,11 +812,14 @@ void serverSimReturnToLobby(ServerSim *sim) {
      * by picking a difficulty, not a constraint — clear it in
      * serverSimApplyMapChange too if it turns out hosts expect otherwise.
      *
-     * The map's own rule — a scenario that fixes a team's mode — is applied
-     * by serverSimResolveNewBotConfig regardless of what is remembered here,
-     * so it is unaffected either way. */
+     * The map's own rule — a scenario template that names a team's mode — is
+     * applied by serverSimResolveNewBotConfig regardless of what is
+     * remembered here, so the next lobby's Add Bot on that team is back at
+     * the template's own difficulty, not at the one somebody set last
+     * round. The per-team memory goes with the pair for the same reason. */
     sim->lastBotModeKey[0]  = '\0';
     sim->lastBotLevelKey[0] = '\0';
+    memset(sim->lastTeamBotLevelKey, 0, sizeof(sim->lastTeamBotLevelKey));
 
     /* Auto-lock only closes the server while a round is running, so coming
      * back to the lobby must lift it. When a round that had human players ends

@@ -302,6 +302,34 @@ typedef struct MEScenarioMapInfo {
     int     selW, selH;          /* and its size, at least 1 by 1 */
 } MEScenarioMapInfo;
 
+/* ── What kind of file this is ───────────────────────────────
+ *
+ * scenario.kind, which says whether the file may decide the win condition.
+ * A scenario may end the round and say who won it; a file that declared
+ * kind = "mod" changes how the game plays and leaves winning and losing
+ * alone, and the engine holds it to that by raising when it calls one of
+ * the ops that decide a round.
+ *
+ * Not the same question as bound above, which is about which map the file
+ * was written for. The two words read alike and mean different things: a
+ * file can be bound or not and either kind. */
+
+/* What the manifest says it is. */
+ScnManifestKind meScenarioFormKind(const MEScenarioForm *f);
+
+/* Says it is something else. The author's other answers are left where they
+ * are: a game type typed in while the file was a scenario stays in the
+ * manifest when the kind moves to mod, so moving it back brings the answer
+ * back with it. What changes is that the form stops offering the fields a
+ * mod may not use, and the check refuses the file while one of them is
+ * filled in. */
+void meScenarioFormSetKind(MEScenarioForm *f, ScnManifestKind kind);
+
+/* True while the file is a mod, which is what every control that sets
+ * something win-deciding reads to know it must not be offered. False for a
+ * NULL form, so nothing is held back from one. */
+bool meScenarioFormKeepsWinCondition(const MEScenarioForm *f);
+
 /* True when the manifest has been edited since it was last emptied. */
 bool meScenarioFormDirty(const MEScenarioForm *f);
 
