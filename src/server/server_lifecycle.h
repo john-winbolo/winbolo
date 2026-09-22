@@ -280,4 +280,27 @@ void serverLifecycleResetTickPeak(void);
  * serverInstanceTick after the final mutex release. */
 void serverLifecycleRecordTickMs(double ms);
 
+/* A single catch-up burst that runs more owed ticks than this leaves one
+ * warning line in the log. Five ticks is 100 ms of debt, the point at which
+ * a slot that has fallen behind stops recovering on its own. */
+#define SERVER_HITCH_WARN_TICKS 5
+
+/* Runs one owed tick. Returns false to stop the catch-up immediately —
+ * the shutdown handshake uses this. */
+typedef bool (*ServerTickStepFn)(void *ctx);
+
+/* Runs the ticks the wall clock owes, advancing *oldTick by
+ * SERVER_TICK_LENGTH and *ticks by one per tick run. Returns how many ran.
+ *
+ * The debt is (nowMs - *oldTick) and a tick is owed while that is strictly
+ * greater than SERVER_TICK_LENGTH, so the burst stops with one tick length
+ * still on the clock. Uncapped on purpose: the server's tick clock stays
+ * aligned with wall time, which every client's input counter assumes.
+ * A burst longer than SERVER_HITCH_WARN_TICKS logs one line carrying the
+ * debt, the tick count and the slowest single step.
+ *
+ * ticks may be NULL; oldTick and step may not. */
+uint32_t serverTickCatchUp(uint32_t nowMs, uint32_t *oldTick, uint32_t *ticks,
+                           ServerTickStepFn step, void *ctx);
+
 #endif /* SERVER_LIFECYCLE_H */

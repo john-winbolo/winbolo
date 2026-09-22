@@ -7,18 +7,20 @@
 
 #include <string.h>
 
+#ifdef HAVE_SENTRY
+#include <stdio.h>
+#include <stdlib.h>
+#include <sentry.h>
+#include <SDL3/SDL.h>
+
+#ifdef SENTRY_DSN
 static int hasArg(int argc, char *argv[], const char *flag) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], flag) == 0) return 1;
     }
     return 0;
 }
-
-#ifdef HAVE_SENTRY
-#include <stdio.h>
-#include <stdlib.h>
-#include <sentry.h>
-#include <SDL3/SDL.h>
+#endif
 
 int sentryInit(const char *executable_name, int argc, char *argv[]) {
 #ifndef SENTRY_DSN

@@ -1411,8 +1411,13 @@ below the tables say which.
 | `tank_death_ticks` | 255 | 0 to 65535 | Ticks a destroyed tank waits before it comes back. |
 | `tank_water_ticks` | 15 | 1 to 255 | Ticks a tank wades in a river before the water costs it a shell and a mine. |
 | `shell_damage` | 5 | 1 to 255 | Armour a shell takes off the tank or base it hits. |
-| `mine_damage` | 15 | 1 to 255; fatal tank hits use two-thirds of the modified damage, rounded up | Armour a mine takes off the tank that sets it off. |
+| `mine_damage` | 15 | 1 to 255 | Armour a mine takes off the tank that sets it off. |
+| `mine_damage_range` | 256 | 0 to 65535 | How far off the mine's centre a tank is still caught, in world units, tested on each axis so it is a box rather than a circle. The classic 256 is one map square each way; 0 is a mine that catches nobody. |
+| `mine_fatal_divisor` | 3 | 1 to 255 | A mine blow big enough to kill has one part in this many taken back off it, so the tank keeps facing the rest, rounded up. The classic 3 is the two-thirds a fatal mine hit deals. Bigger is harsher, not softer: 255 leaves a fatal blow at almost its full size, and 1 takes the whole thing off and leaves a fatal mine dealing nothing at all. |
+| `water_loss_shells` | 1 | 0 to 255 | Shells a wading tank loses each `tank_water_ticks`. |
+| `water_loss_mines` | 1 | 0 to 255 | Mines a wading tank loses each `tank_water_ticks`. |
 | `just_fired_ticks` | 101 | 0 to 255 | Ticks a tank stays visible in the trees after firing. |
+| `tree_hide_distance` | 768 | 0 to 65535 | How far off a tank sitting in forest stops being drawn for somebody else, in world units — the classic 768 is three squares. 0 is a wood that hides nobody. |
 | `gunsight_min` | 2 | 1 to 255 | The shortest the gunsight range winds down to. |
 | `gunsight_max` | 14 | 1 to 255 | The longest the gunsight range winds out to. |
 | `tank_accel_rate` | 0.25 | 0.01 to 16.0 | Speed a tank gains each tick while the accelerate key is held. |
@@ -1420,6 +1425,23 @@ below the tables say which.
 | `tank_brake_rate` | 0.25 | 0.01 to 16.0 | Speed a tank loses each tick while the slow key is held. |
 | `tank_autoslow_rate` | 0.25 | 0.01 to 16.0 | Speed a tank loses each tick when auto-slowdown is on and no key is held. |
 | `tank_min_move` | 6 | 0 to 255 | Speed a tank has to build up before it moves a step. |
+
+**Tank collision geometry.** What a tank is, as a shape, to a shell and to
+the world it drives through. Distances here are world units, 256 to the map
+square.
+
+| Rule | Classic | Range | Description |
+|---|---|---|---|
+| `tank_hit_radius` | 112 | 1 to 255 | The circle a shell has to reach, and the one the building resolver pushes a tank out of. Squared where it is used, which is why it stops at 255. |
+| `tank_collision_distance` | 256 | 0 to 65535 | How far apart two tanks have to get for the shoving to stop, measured as the x gap plus the y gap rather than as a straight line. 0 is tanks that pass through one another. |
+| `tank_nudge_threshold` | 96 | 0 to 65535 | Which way a shove goes. Two tanks are pushed apart along x when their x gap is over this and along y otherwise, so a smaller number sends more shoves sideways. |
+| `tank_nudge_amount` | 16 | 1 to 255 | How far one shove moves a tank. |
+| `tank_nudge_iterations` | 5 | 1 to 255 | How many shoves are tried in a tick before the pair is left where it is. |
+| `tank_bump_decay_shift` | 2 | 0 to 31 | A right shift: a knockback loses that fraction of itself each tick, plus one. A bigger number is a slower decay, not a faster one — 2 takes off a quarter a tick, 31 takes off only the one. |
+| `tank_pill_pickup_inset` | 16 | 0 to 255 | How far off its centre a tank reaches to pick a dead pillbox up. |
+| `tank_boat_exit_inset` | 64 | 0 to 255 | How far inside the bank a boat is held when a tank leaves one. |
+| `tank_slide_step` | 32 | 0 to 255 | How far a knocked tank slides per step. |
+| `tank_wall_glide` | 0.0 | 0.0 to 1.0 | 0 slides a tank along a wall it hits; 1 lets it glide off free. |
 
 **Terrain: the cap a tank's speed clamps to.**
 
@@ -1451,6 +1473,25 @@ below the tables say which.
 | `turn_deep_sea` | 0.5 | 0.0 to 16.0 | How fast a tank turns on deep sea. |
 | `turn_refuel_base` | 1 | 0.0 to 16.0 | How fast a tank turns on a base it is allowed onto. |
 
+**Terrain: the cap the builder's walk clamps to.** A man is on his own table,
+not the tank's: he crosses swamp and rubble faster than a tank does and
+cannot cross a river at all. Building, half-building and pillbox are absent
+for the reason they are absent above — they are impassable by terrain type
+rather than by having no speed.
+
+| Rule | Classic | Range | Description |
+|---|---|---|---|
+| `man_speed_road` | 16 | 0 to 63 | The cap the builder's walk clamps to on a road. |
+| `man_speed_grass` | 16 | 0 to 63 | The cap on grass. |
+| `man_speed_forest` | 8 | 0 to 63 | The cap in forest. |
+| `man_speed_river` | 0 | 0 to 63 | The cap in a river; 0 is the classic man, who cannot wade one. |
+| `man_speed_swamp` | 4 | 0 to 63 | The cap in swamp. |
+| `man_speed_crater` | 4 | 0 to 63 | The cap in a crater. |
+| `man_speed_rubble` | 4 | 0 to 63 | The cap on rubble. |
+| `man_speed_boat` | 16 | 0 to 63 | The cap on a boat. |
+| `man_speed_deep_sea` | 0 | 0 to 63 | The cap in deep sea. |
+| `man_speed_refuel_base` | 16 | 0 to 63 | The cap on a refuelling base. |
+
 **Shells.**
 
 | Rule | Classic | Range | Description |
@@ -1473,7 +1514,19 @@ below the tables say which.
 | `lgm_cost_mine` | 1 | 0 and up | Mines the builder spends to lay a mine. |
 | `lgm_pill_repair_load` | 4 | 1 to 255 | Units of pillbox repair the builder carries in one trip. |
 | `lgm_gather_trees` | 4 | 1 to 255 | Trees the builder brings back from one square of forest. |
-| `lgm_helicopter_speed` | 3 | 1 to 255 | How far the builder travels each tick while he parachutes in. |
+| `lgm_helicopter_speed` | 3 | 1 to 255 | How far the builder travels each tick while he parachutes in, so it is also how long he is in the air: the drop is the distance over this. The rule's name is the one the code has always carried for the drop; everything a player meets calls it a parachute, `game.builder_parachute` included. See the note below the table before you raise it. |
+| `lgm_arrive_tolerance` | 16 | 1 to 255 | How near his goal counts as arrived, as a half-width taken either way round it on both axes. The job itself is done on the square that was ordered, not the one he stopped on. |
+| `lgm_return_tolerance` | 128 | 1 to 65535 | The same, coming back to the tank. |
+| `lgm_pill_drop_search` | 10 | 1 to 255 | How many squares of a column the search for somewhere to put a pillbox down walks. |
+| `lgm_boat_leave_offset` | 144 | 0 to 255 | How far out he steps when he boards a boat. |
+| `lgm_boat_return_offset` | 160 | 0 to 255 | How far in he steps coming off one. |
+
+**Raising `lgm_helicopter_speed` means raising `lgm_arrive_tolerance` with
+it.** The drop steps straight at the tank and counts as landed once both axes
+are inside the arrival tolerance, so a step wider than that window steps over
+it and the man circles his tank without ever touching down. At the classic
+tolerance of 16, a speed of 90 fails to land on more than half its flights. A
+tolerance at or above the step lands every one of them.
 
 **Pillbox.**
 
@@ -1485,6 +1538,11 @@ below the tables say which.
 | `pill_cooldown_ticks` | 32 | 0 to 255 | Ticks an angry pillbox waits before its interval eases back by one. |
 | `pill_repair_amount` | 4 | 1 and up | Armour a pillbox gains from one unit of repair. |
 | `pill_range` | 2048 | 0 to 65535 | How far a pillbox looks for a tank to shoot at. |
+| `pill_shell_damage` | 1 | 1 and up, at most `pill_max_armour` | What one shell takes off a pillbox. Setting it to the cap is a pillbox killed by a single hit. |
+| `pill_angry_divisor` | 2 | 1 to 255 | An angered pillbox divides its firing interval by this and is held at `pill_attack_min_ticks`, so the classic 2 is the twice as fast it fires when hurt and 1 is a pillbox that never gets angry. |
+| `pill_fire_length` | 8.5 | 0.5 to 127.0 | How far a pillbox's shell flies, in half map squares, the way the gunsight rows are counted. |
+| `pill_base_defend_range` | 7 | 0 to 255 | How near a base being shot at has to be to anger an allied pillbox, as a radius in map squares measured as a circle and taken strictly: a pillbox exactly this far off is not angered. 0 is a pillbox that never answers for a base at all. |
+| `pill_aim_iterations` | 200 | 1 to 65535 | The step budget the aim solver gets to lead a moving target. 1 is a pillbox that never leads and fires at where the target is standing now. |
 | `pill_massage_range` | 0 | 0 to 65535 | How near a tank has to be for a pillbox to aim with the original forward prediction rather than the solver, which misses a tank circling it. Zero, the classic table, is a pillbox that always leads its target properly; 384 is a square and a half, the distance the old build-time switch used. |
 | `pill_massage_cosine` | 0.5 | 0.0 to 1.0 | How straight at a close pillbox a tank has to be driving to be aimed at properly anyway, as the cosine of the angle between its heading and the line to the pillbox. One aims sloppily at every tank inside `pill_massage_range`, zero at none of them. Does nothing while that rule is zero. |
 
@@ -1507,6 +1565,8 @@ below the tables say which.
 | `base_refuel_shells_ticks` | 7.5 | 0.5 to 255.0 | Ticks a base waits between handing out one lot of shells and the next. |
 | `base_refuel_mines_ticks` | 7.5 | 0.5 to 255.0 | Ticks a base waits between handing out one lot of mines and the next. |
 | `base_regen_ticks` | 1000 | 1 and up | Ticks between a base adding one armour, one shell and one mine to its own stock. |
+| `base_status_range` | 1792 | 0 to 65535 | How near a base has to be for a player to be shown what it is holding, in world units — the classic 1792 is seven squares. |
+| `base_reveal_range` | 1024 | 0 to 65535 | How near before a base's armour is worth predicting for the player, in world units and measured as a circle — the classic 1024 is four squares. |
 
 **Terrain destruction and explosions.**
 
@@ -1518,6 +1578,40 @@ below the tables say which.
 | `swamp_life` | 3 | 1 to 255 | Shell hits swamp stands before it turns to river. |
 | `mine_fuse_ticks` | 10 | 1 to 255 | Ticks between a mine being set off and it going up. |
 | `big_explosion_threshold` | 20 | 0 to 510 | Shells and mines a dying tank has to be carrying to go up in a big explosion. |
+| `tank_explosion_damage` | 5 | 0 and up, at most `pill_max_armour` | The splash a dying tank deals a pillbox it goes up next to. 0 is a wreck that scorches nothing. |
+| `tank_explosion_length` | 40 | 1 to 255 | How many steps the wreck travels before it stops. |
+| `tank_explosion_move` | 48 | 0 to 255 | How far the wreck moves in one of those steps, in world units. |
+| `tank_explosion_update_ticks` | 2 | 1 to 255 | Ticks between the steps. |
+| `tank_explosion_width` | 24 | 0 to 255 | Half the wreck's collision box across, in world units. |
+| `tank_explosion_height` | 32 | 0 to 255 | Half the wreck's collision box down, in world units. |
+
+**Spawning.** How a respawn picks its start. The three ranges are what counts
+as too near a tank, a pillbox or a base, all in map squares.
+
+| Rule | Classic | Range | Description |
+|---|---|---|---|
+| `start_tank_range` | 1 | 0 to 255 | How near a live tank is too near to start on. 0 on any of the three is a spawn that does not care what is standing there. |
+| `start_pill_range` | 9 | 0 to 255 | How near an enemy pillbox is too near. |
+| `start_base_range` | 9 | 0 to 255 | How near an enemy base is too near. |
+| `start_spawn_separation` | 2 | 0 to 255 | How far a scattered spawn keeps from another live tank. |
+| `start_scatter_max` | 1000 | 1 to 65535 | How long the spiral search looks before it gives up and takes what it has. |
+| `start_neutral_threshold_pct` | 20 | 0 to 100 | The share of bases still neutral below which a player's own base is preferred to a neutral one. |
+
+**Hearing.** How far a sound carries, in map squares, tested on each axis so
+the bands are boxes rather than circles. Inside the soft range it is played
+near, at or past the none range it is not played at all, and between the two
+it is played far.
+
+| Rule | Classic | Range | Description |
+|---|---|---|---|
+| `sound_soft_range` | 15 | 0 to 255 | Inside this a sound is played near. |
+| `sound_none_range` | 40 | 0 to 255 | At or past this a sound is not played at all. |
+
+**Terrain flooding.**
+
+| Rule | Classic | Range | Description |
+|---|---|---|---|
+| `flood_fill_ticks` | 16 | 1 to 255 | Ticks water takes to claim a square next to it. |
 
 **Tree growth.**
 
@@ -1525,6 +1619,7 @@ below the tables say which.
 |---|---|---|---|
 | `tree_grow_ticks` | 3000 | 1 and up | Ticks before the best square found so far grows its tree. |
 | `tree_grow_initial_ticks` | 30000 | 1 and up | Ticks before the first tree of a round grows. |
+| `tree_grow_initial_score` | -10000 | -32768 to 32767 | What the weighted draw below starts and resets from, so how long a map waits for its first tree. Negative by design, and it shares its window with the weights. |
 | `tree_weight_forest` | 100 | -32768 to 32767 | What forest counts for in a square's tree growing score. |
 | `tree_weight_grass` | 25 | -32768 to 32767 | What grass counts for in a square's tree growing score. |
 | `tree_weight_river` | 2 | -32768 to 32767 | What a river counts for in a square's tree growing score. |
@@ -1917,7 +2012,7 @@ The `code` a refused write answers, as a string.
 | | |
 |---|---|
 | Script file | 1 MiB |
-| Rules in the `scenario` table | 128 |
+| Rules in the `scenario` table | 256 |
 | Tags per entity | 4, each 31 bytes |
 | Regions | 64, declared and defined together; names 31 bytes |
 | Timers waiting at once | 64 |

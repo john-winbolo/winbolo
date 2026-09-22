@@ -66,6 +66,8 @@ void addPlayerInternal(ServerSim *sim, BYTE playerNum, const char *playerName,
     sim->inputQueueHead[playerNum] = 0;
     sim->inputQueueTail[playerNum] = 0;
     sim->lastProcessedInput[playerNum] = 0;
+    sim->newestInputTick[playerNum] = 0;
+    sim->newestDequeuedTick[playerNum] = 0;
     sim->lastInputButtons[playerNum] = 0;
     sim->lastActionAppliedTick[playerNum] = 0;
     sim->pendingHarvestActions[playerNum] = 0;
@@ -440,6 +442,8 @@ void serverSimRemovePlayer(ServerSim *sim, BYTE playerNum) {
     sim->inputQueueHead[playerNum] = 0;
     sim->inputQueueTail[playerNum] = 0;
     sim->lastProcessedInput[playerNum] = 0;
+    sim->newestInputTick[playerNum] = 0;
+    sim->newestDequeuedTick[playerNum] = 0;
     sim->lastInputButtons[playerNum] = 0;
     sim->lastActionAppliedTick[playerNum] = 0;
     sim->pendingHarvestActions[playerNum] = 0;
@@ -745,14 +749,28 @@ void serverSimSetTeamBatch(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
 void serverSimSetTeam(ServerSim *sim, BYTE playerNum, BYTE teamNumber) {
     serverSimSetTeamBatch(sim, playerNum, teamNumber);
     serverSimReapplyTeamAlliances(sim);
-    /* Re-cluster the slot's reserved start to its new team now the team is
-     * written. The helper frees the slot's own current reservation back into
-     * the candidate pool (so the existing start can be re-chosen) and clusters
-     * toward same-team holders, or falls to farthest-first when the new team
-     * has no other members. No-ops outside lobby state or for an unconnected
-     * slot, so the headless/batch drivers are unaffected. Callers republish
-     * the slot themselves. */
-    serverSimAssignLobbyStartOnJoin(sim, playerNum);
+    /* The slot that moved is not the only one the move can affect. A side
+     * is closed to the other teams from the moment the team holding it has
+     * a player, so a team gaining its first member puts every other slot's
+     * reservation on a side that is now somebody's, and a team losing its
+     * last one opens a side back up.
+     *
+     * So: every connected slot's reservation is re-examined and an off-side
+     * one dropped, then the slot that moved is re-picked, then every slot
+     * left holding nothing takes a start if the move has left it one it may
+     * have. Releasing first matters for the moved slot — a start another
+     * slot is about to lose is free by the time the moved slot chooses, so
+     * it is not passed over as held.
+     *
+     * The moved slot is always re-picked, whether its own reservation was
+     * still eligible or not: serverSimAssignLobbyStartOnJoin frees the
+     * slot's current reservation back into the candidate pool and clusters
+     * toward same-team holders, or falls to farthest-first when the new
+     * team has no other members, so the start it ends up on belongs to the
+     * team it has just joined. No-ops outside lobby state or for an
+     * unconnected slot, so the headless/batch drivers are unaffected.
+     * Callers republish the moved slot themselves. */
+    serverSimReleaseIneligibleStartsAndBackfill(sim, playerNum);
 }
 
 void serverSimSetLobbyStartIdx(ServerSim *sim, BYTE slot, BYTE idx) {
@@ -917,6 +935,7 @@ void serverSimAssignLobbyStartOnJoin(ServerSim *sim, BYTE slot) {
     int  teammateCount = 0;
     BYTE myTeam;
     BYTE picked;
+    StartsTeamAnchors anchors;
     BYTE i;
     BYTE k;
 
@@ -948,10 +967,30 @@ void serverSimAssignLobbyStartOnJoin(ServerSim *sim, BYTE slot) {
         }
     }
 
+    /* Every team present gets a region of its own, so a team that shares
+       a side with another, or was left the same part of the map as
+       another, is not placed on top of it. */
+    {
+        BYTE teamSide[MAX_TANKS + 1];
+        bool teamPresent[MAX_TANKS + 1];
+        memset(teamSide, START_SIDE_ANY, sizeof(teamSide));
+        memset(teamPresent, 0, sizeof(teamPresent));
+        for (k = 0; k < MAX_TANKS; k++) {
+            BYTE t;
+            if (!sim->playerConnected[k]) continue;
+            t = sim->lobbyPlayers[k].teamNumber;
+            if (t == 0 || t > MAX_TANKS) continue;
+            teamPresent[t] = true;
+            teamSide[t] = sim->teams[t].startSide;
+        }
+        startsComputeTeamAnchors(&sim->sim, &sim->sim.ss, teamSide, teamPresent, &anchors);
+    }
+
     picked = startsPickIncremental(&sim->sim, &sim->sim.ss, taken,
                                    teammateStarts0, teammateCount,
                                    lobbySlotSide(sim, slot),
-                                   serverSimLobbyClosedMaskFor(sim, slot));
+                                   serverSimLobbyClosedMaskFor(sim, slot),
+                                   &anchors, myTeam);
     if (picked >= numStarts) {
         sim->lobbyPlayers[slot].startIdx = 0xFF;
     } else {
@@ -1020,6 +1059,33 @@ void serverSimBackfillLobbyStarts(ServerSim *sim) {
     BYTE before[MAX_TANKS];
     if (sim == NULL) return;
     snapshotLobbyStarts(sim, before);
+    backfillLobbyStarts(sim);
+    publishLobbyStartDiff(sim, before);
+}
+
+/* Drop every connected slot's reservation that its side rules no longer
+ * allow, re-pick repickSlot whether its reservation was dropped or not,
+ * then re-pick every slot still without one, publishing what moves. A
+ * slot whose reservation is still eligible keeps it, so a start a player
+ * chose by hand survives anything that does not actually invalidate it.
+ * repickSlot is 0xFF when no one slot needs re-picking.
+ *
+ * The releases run before repickSlot is re-picked so that it chooses from
+ * the full set of starts: a reservation another slot is about to lose is
+ * back in the pool by then, rather than still held and passed over.
+ * No-op outside lobby state, where there are no reservations to keep. */
+void serverSimReleaseIneligibleStartsAndBackfill(ServerSim *sim, BYTE repickSlot) {
+    BYTE before[MAX_TANKS];
+    BYTE k;
+    if (sim == NULL || sim->state != serverStateLobby) return;
+    snapshotLobbyStarts(sim, before);
+    for (k = 0; k < MAX_TANKS; k++) {
+        if (!sim->playerConnected[k]) continue;
+        serverSimReleaseIneligibleStart(sim, k);
+    }
+    if (repickSlot < MAX_TANKS && sim->playerConnected[repickSlot]) {
+        serverSimAssignLobbyStartOnJoin(sim, repickSlot);
+    }
     backfillLobbyStarts(sim);
     publishLobbyStartDiff(sim, before);
 }

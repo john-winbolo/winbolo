@@ -158,6 +158,13 @@ typedef struct {
   uint8_t color;        /* index into client-side kTeamColors[] */
   uint8_t namingPool;   /* index into client-side bot pool table */
   uint8_t startSide;    /* START_SIDE_* choice (start_sides.h); START_SIDE_ANY = no side */
+  /* 1 when startSide was filled in for this team because the one other team
+     in a two-team lobby named the opposite side, 0 when a player named it (or
+     named no side). Server-side only: it is on no wire packet and no
+     ControlEvent, and the client never sees it. The lobby reads it to decide
+     whether a later change by that other team may rewrite this side — a side
+     a player named is never written over. */
+  uint8_t sideAutoFilled;
   char    name[LOBBY_TEAM_NAME_LEN];
 } TeamMetadata;
 
@@ -1918,6 +1925,15 @@ const char *serverSimGetServerMessageLogFile(const ServerSim *sim);
 const LobbyPlayer *serverSimGetLobbyPlayer(const ServerSim *sim, BYTE n);
 bool               serverSimIsPlayerConnected(const ServerSim *sim, BYTE n);
 uint32_t           serverSimGetLastProcessedInput(const ServerSim *sim, BYTE n);
+
+/* True when this input is the one that breaks a stall-advance lockout: a tick
+ * strictly newer than anything the slot has ever received, arriving at or
+ * below the last processed tick while the slot is being stall-advanced.
+ * Taking it moves the slot's last processed tick back under it, so the
+ * dequeue sees it fresh and the stall-advance run ends. The input intake path
+ * asks this alongside its own newer-than check — an input that answers true
+ * would otherwise be dropped before it ever reaches the sim. */
+bool serverSimInputWouldRebase(const ServerSim *sim, BYTE n, uint32_t tick);
 bool               serverSimIsMapSkipVote(const ServerSim *sim, BYTE n);
 
 /* The lobby's view of one seat, in one call: who holds it, which team

@@ -3580,6 +3580,22 @@ function Brain.think(info)
   -- before ORD.update so a ping's bid goes out on the same tick.
   ORD.on_events(state, world, info, now)
 
+  -- Scenario hints. The orders a script gave this seat since the last think,
+  -- in the order they were given, and then one step of whatever standing
+  -- instruction is running (a patrol advancing, an escort re-aiming). Beside
+  -- the ping call for the same reason: an order either of them raises goes
+  -- out on this tick's bid rather than the next one.
+  if C.BOT_COMMANDS_ENABLED then
+    local q = state.scenario_hints
+    if q and #q > 0 then
+      for i = 1, #q do
+        ORD.on_scenario_hint(state, world, info, q[i], now)
+      end
+      state.scenario_hints = nil
+    end
+    ORD.hint_update(state, world, info, now)
+  end
+
   -- Chat orders: drain the inbound bids/claims/releases, settle any auction
   -- that is due, expire a finished order, and publish the live slot on
   -- state._order. Runs BEFORE goal selection so the pool sees it this tick.
@@ -8876,6 +8892,28 @@ function Brain.close(info)
   state.blocked      = nil
   world.bases        = nil
   world.pills        = nil
+end
+
+-- =========================================================================
+-- SCENARIO HINTS
+-- =========================================================================
+-- The server calls this global on a bot's VM when a scenario script hands
+-- that seat an order: one flat table, a `verb` and whatever other keys the
+-- script wrote, every value text.  It is called from the server's own tick
+-- and NOT from inside a think, so `world` and `info` are last think's and
+-- there is no engine tick to act on.  So the table is only queued here and
+-- the think drains it, where both are fresh and an order raised on the spot
+-- bids on that tick.
+--
+-- The queue is capped and drops the OLDEST when it overflows: a later hint
+-- is the script's newer word about this bot, and it must not be kept out by
+-- a backlog of orders nobody could act on.
+function on_scenario_hint(t)
+  if type(t) ~= "table" then return end
+  local q = state.scenario_hints
+  if not q then q = {} state.scenario_hints = q end
+  q[#q + 1] = t
+  while #q > 8 do table.remove(q, 1) end
 end
 
 -- Register Brain.think with debugger so it can snapshot upvalues from C

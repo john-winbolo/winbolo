@@ -162,6 +162,50 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
 bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BYTE playerNum, char *errorMsg, bool *hasSteam, bool *isSupporter);
 
 /*********************************************************
+*NAME:          winbolonetQueueVerifyClientKey
+*PURPOSE:
+* Queues the client/verify winboloNetVerifyClientKey would
+* post. The reply arrives through
+* winbolonetThreadDrainResults with kind WBN_JOB_VERIFY and
+* is applied with winbolonetApplyVerifyResult, which is
+* where winboloNetPlayerKey[] is written. Nothing is stored
+* against a slot here, so the caller keeps whatever it needs
+* to place the reply.
+*
+* Returns the job id, or 0 when nothing was queued, in which
+* case no result is coming.
+*
+*ARGUMENTS:
+* playerKey  - 33-byte player_key from the REAUTH packet
+* playerName - Name to verify and attribute under
+*********************************************************/
+uint32_t winbolonetQueueVerifyClientKey(const char *playerKey,
+                                        const char *playerName);
+
+/*********************************************************
+*NAME:          winbolonetApplyVerifyResult
+*PURPOSE:
+* Applies the reply to a queued client/verify. Reads it
+* exactly as winboloNetVerifyClientKey reads its own, and
+* stores the player_key at winboloNetPlayerKey[playerNum] on
+* acceptance — so the slot's key is written on the thread
+* that drains the result, not on the worker.
+*
+*ARGUMENTS:
+* status      - HTTP status the worker got, or -1
+* response    - Reply body, or NULL
+* playerKey   - The key the client presented
+* playerNum   - Player slot number
+* errorMsg    - Buffer (>= 256) for error message on failure
+* hasSteam    - Output: as winboloNetVerifyClientKey
+* isSupporter - Output: as winboloNetVerifyClientKey
+*********************************************************/
+bool winbolonetApplyVerifyResult(int status, const char *response,
+                                 const char *playerKey, BYTE playerNum,
+                                 char *errorMsg, bool *hasSteam,
+                                 bool *isSupporter);
+
+/*********************************************************
 *NAME:          winboloNetVerifyJoinCode
 *PURPOSE:
 * Resolves a join_code via POST
@@ -185,6 +229,49 @@ bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName, BY
 * errorMsg      - Buffer (>= 256) for error message on failure
 *********************************************************/
 bool winboloNetVerifyJoinCode(const char *joinCode, char *playerNameOut, bool *isLoggedInOut, char *countryOut, int *userIdOut, char *errorMsg);
+
+/*********************************************************
+*NAME:          winbolonetQueueVerifyJoinCode
+*PURPOSE:
+* Queues the client/verify_join_code winboloNetVerifyJoinCode
+* would post. The reply arrives through
+* winbolonetThreadDrainResults with kind WBN_JOB_VERIFY and
+* is read with winbolonetApplyVerifyJoinCodeResult. Read-only
+* like the synchronous form: nothing is stored against a
+* slot, so the caller keeps what it needs to place the reply.
+*
+* Returns the job id, or 0 when nothing was queued, in which
+* case no result is coming.
+*
+*ARGUMENTS:
+* joinCode - join_code string to resolve
+*********************************************************/
+uint32_t winbolonetQueueVerifyJoinCode(const char *joinCode);
+
+/*********************************************************
+*NAME:          winbolonetApplyVerifyJoinCodeResult
+*PURPOSE:
+* Reads the reply to a queued client/verify_join_code,
+* exactly as winboloNetVerifyJoinCode reads its own, and
+* stores nothing. The caller places the resolved identity on
+* the slot it queued for.
+*
+*ARGUMENTS:
+* status        - HTTP status the worker got, or -1
+* response      - Reply body, or NULL
+* playerNameOut - Output: resolved player name, buffer must be
+*                 >= PACKET_MAX_PLAYER_NAME; set to "" on entry
+* isLoggedInOut - Output: TRUE iff the code belongs to a
+*                 logged-in account; FALSE on entry; may be NULL
+* countryOut    - Output: ISO-2 country code, buffer >= 3
+* userIdOut     - Output: WBN user id, or -1; may be NULL
+* errorMsg      - Buffer (>= 256) for error message on failure
+*********************************************************/
+bool winbolonetApplyVerifyJoinCodeResult(int status, const char *response,
+                                         char *playerNameOut,
+                                         bool *isLoggedInOut,
+                                         char *countryOut, int *userIdOut,
+                                         char *errorMsg);
 
 /*********************************************************
 *NAME:          winboloNetVerifySpectatorKey
@@ -308,16 +395,27 @@ void winbolonetSendMapChange(char *mapName, BYTE numBases, BYTE numPills, BYTE f
 * serverDedicatedLogFlushPendingUpload between the two so
 * the upload runs after WBN accepts that the session is
 * over and before server/register issues a new key.
+*
+* drainMaxMs bounds the wait for the worker's queue before
+* the quit goes out. 0 waits for the whole queue however
+* long it takes, which is what a shutdown wants; a caller on
+* a path a person is waiting on passes a short one and
+* leaves whatever is still queued for the worker.
+*
+*ARGUMENTS:
+* drainMaxMs - Milliseconds to drain for, or 0 for no
+*              deadline
 *********************************************************/
-void winbolonetEndSession(void);
+void winbolonetEndSession(uint32_t drainMaxMs);
 
 /*********************************************************
 *NAME:          winbolonetBeginSession
 *PURPOSE:
 * Registers a fresh WBN session with the supplied
-* map/settings, stores the new server_key + bearer, and
-* restarts the background thread. Pairs with
-* winbolonetEndSession at round boundaries.
+* map/settings and stores the new server_key + bearer. The
+* background thread is not started here: it is created once
+* after the first server/register and runs for the server's
+* life. Pairs with winbolonetEndSession at round boundaries.
 * Returns TRUE on success, FALSE on registration failure
 * (sets winboloNetRunning=FALSE on failure).
 *
@@ -335,6 +433,60 @@ void winbolonetEndSession(void);
 * numPlayers - Number of players in the game
 *********************************************************/
 bool winbolonetBeginSession(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers);
+
+/*********************************************************
+*NAME:          winbolonetQueueEndSession
+*PURPOSE:
+* Ends the current WBN session without waiting on it:
+* queues server/quit for the background worker, clears the
+* per-slot player keys and resets the event queue.
+*
+* The bearer and winboloNetServerKey are left in place — the
+* queued quit needs the bearer at fire time, an upload
+* queued behind it needs the key, and the queued
+* server/register replaces both when its result is applied.
+* Callers put the round-log upload between this and
+* winbolonetQueueBeginSession, which is the order WinBolo.net
+* requires; the worker sends them in the order they were
+* queued.
+*
+* Returns TRUE when the worker took the quit. FALSE means the
+* worker is not running and nothing of this rotation can be
+* queued, so the caller has to send the three itself; the cap
+* on the worker's waiting queue never refuses this post.
+*********************************************************/
+bool winbolonetQueueEndSession(void);
+
+/*********************************************************
+*NAME:          winbolonetQueueBeginSession
+*PURPOSE:
+* Queues the next round's server/register. The reply arrives
+* through winbolonetThreadDrainResults with kind
+* WBN_JOB_REGISTER and is applied with
+* winbolonetApplyRegisterResult.
+*
+* Returns the job id, or 0 when nothing was queued, in which
+* case no result is coming.
+*
+*ARGUMENTS:
+* As winbolonetBeginSession.
+*********************************************************/
+uint32_t winbolonetQueueBeginSession(char *mapName, unsigned short port, BYTE gameType, BYTE ai, bool mines, bool password, BYTE numBases, BYTE numPills, BYTE freeBases, BYTE freePills, BYTE numPlayers);
+
+/*********************************************************
+*NAME:          winbolonetApplyRegisterResult
+*PURPOSE:
+* Applies the reply to a queued server/register, installing
+* the new server key and bearer. Returns TRUE when the new
+* session is live; on FALSE WinBolo.net has been switched
+* off and the old bearer cleared, exactly as the synchronous
+* winbolonetBeginSession does on a failed register.
+*
+*ARGUMENTS:
+* status   - HTTP status the worker got, or -1
+* response - Reply body, or NULL
+*********************************************************/
+bool winbolonetApplyRegisterResult(int status, const char *response);
 
 /*********************************************************
 *NAME:          winbolonetSendLobbyStatus

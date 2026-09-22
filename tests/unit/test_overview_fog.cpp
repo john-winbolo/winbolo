@@ -11,6 +11,10 @@
 
 #define ARRAY_LEN(a) ((int)(sizeof(a) / sizeof((a)[0])))
 
+/* OverviewRect literals below carry the trailing originX, originY explicitly.
+   The fog builder never reads them, so they stay zero; naming them keeps the
+   initialisers complete rather than relying on the tail being zero-filled. */
+
 /* The mask plus a tail the builder has no business touching: every write it
  * makes is driven by a rect, and a rect at the map edge that failed to clamp
  * would run off the end of the last row into this. */
@@ -61,7 +65,7 @@ static int fogGuardIntact(void) {
 /* A live square is clear, ground away from the region is fully fogged, and the
  * region's own edge square is clear too. */
 static int fog_live_is_clear_and_far_is_fogged(void) {
-    OverviewRect live = { 100, 100, 120, 120, 255 };
+    OverviewRect live = { 100, 100, 120, 120, 255, 0, 0 };
 
     fogBuild(&live, 1);
 
@@ -82,7 +86,7 @@ static int fog_live_is_clear_and_far_is_fogged(void) {
  * the whole of the fog, with nothing part way between them. The same step on
  * all four sides, so the lit area does not drift off the region. */
 static int fog_steps_to_full_outside_the_region(void) {
-    OverviewRect live = { 100, 100, 120, 120, 255 };
+    OverviewRect live = { 100, 100, 120, 120, 255, 0, 0 };
 
     fogBuild(&live, 1);
 
@@ -117,7 +121,7 @@ static int fog_steps_to_full_outside_the_region(void) {
  * ring just outside the rect. Nothing outside the region is ever part lit,
  * whichever way it lies from it. */
 static int fog_corners_are_as_sharp_as_the_sides(void) {
-    OverviewRect live = { 100, 100, 120, 120, 255 };
+    OverviewRect live = { 100, 100, 120, 120, 255, 0, 0 };
 
     fogBuild(&live, 1);
 
@@ -156,8 +160,8 @@ static int fog_corners_are_as_sharp_as_the_sides(void) {
  * brightest answer has to win. A square another region has live must come out
  * clear however far outside this one it sits. */
 static int fog_overlapping_regions_take_the_brightest(void) {
-    OverviewRect live[2] = { { 100, 100, 120, 120, 255 },
-                             { 118, 118, 130, 130, 255 } };
+    OverviewRect live[2] = { { 100, 100, 120, 120, 255, 0, 0 },
+                             { 118, 118, 130, 130, 255, 0, 0 } };
 
     fogBuild(live, ARRAY_LEN(live));
 
@@ -170,8 +174,8 @@ static int fog_overlapping_regions_take_the_brightest(void) {
 
     /* Two regions with ground between them: each is clear to its own edge and
      * the gap is in full fog, rather than the two running into one lit patch. */
-    OverviewRect pair[2] = { { 100, 100, 120, 120, 255 },
-                             { 124, 100, 140, 120, 255 } };
+    OverviewRect pair[2] = { { 100, 100, 120, 120, 255, 0, 0 },
+                             { 124, 100, 140, 120, 255, 0, 0 } };
     fogBuild(pair, ARRAY_LEN(pair));
 
     UT_ASSERT_MSG(fogAt(120, 110) == 0 && fogAt(124, 110) == 0,
@@ -192,10 +196,10 @@ static int fog_overlapping_regions_take_the_brightest(void) {
  * the end of the mask getting there. */
 static int fog_regions_clamp_to_the_map(void) {
     static const OverviewRect kCorners[] = {
-        { 0, 0, 10, 10, 255 },
-        { 245, 245, 255, 255, 255 },
-        { 0, 245, 10, 255, 255 },
-        { 245, 0, 255, 10, 255 }
+        { 0, 0, 10, 10, 255, 0, 0 },
+        { 245, 245, 255, 255, 255, 0, 0 },
+        { 0, 245, 10, 255, 255, 0, 0 },
+        { 245, 0, 255, 10, 255, 0, 0 }
     };
 
     for (int i = 0; i < ARRAY_LEN(kCorners); i++) {
@@ -218,7 +222,7 @@ static int fog_regions_clamp_to_the_map(void) {
 /* No regions at all is a real state — a dead tank holding no block and no
  * pill to see through — and fogs the whole map rather than clearing it. */
 static int fog_no_regions_fogs_the_map(void) {
-    OverviewRect live = { 100, 100, 120, 120, 255 };
+    OverviewRect live = { 100, 100, 120, 120, 255, 0, 0 };
 
     fogBuild(&live, 0);
     UT_ASSERT_MSG(fogAt(110, 110) == OVERVIEW_FOG_ALPHA,
@@ -239,7 +243,7 @@ static int fog_no_regions_fogs_the_map(void) {
  * covers is clear, corners and edges included, and the ground immediately
  * outside it is in full fog on all four sides. */
 static int fog_full_alpha_is_clear_inside_and_fogged_outside(void) {
-    OverviewRect live = { 100, 100, 120, 120, 255 };
+    OverviewRect live = { 100, 100, 120, 120, 255, 0, 0 };
 
     fogBuild(&live, 1);
 
@@ -270,7 +274,7 @@ static int fog_full_alpha_is_clear_inside_and_fogged_outside(void) {
  * and has to leave the map exactly as it found it — the block is gone rather
  * than sitting there at one byte under full fog. */
 static int fog_faded_out_region_is_not_there(void) {
-    OverviewRect live = { 100, 100, 120, 120, 0 };
+    OverviewRect live = { 100, 100, 120, 120, 0, 0, 0 };
 
     fogBuild(&live, 1);
 
@@ -287,7 +291,7 @@ static int fog_faded_out_region_is_not_there(void) {
  * the same part-way value, the ground outside it is in full fog as it is round
  * any region, and a region still at full alpha over the top wins. */
 static int fog_mid_fade_dims_the_whole_block(void) {
-    OverviewRect live = { 100, 100, 120, 120, 128 };
+    OverviewRect live = { 100, 100, 120, 120, 128, 0, 0 };
 
     fogBuild(&live, 1);
 
@@ -314,8 +318,8 @@ static int fog_mid_fade_dims_the_whole_block(void) {
                   (unsigned)inside);
 
     /* A pill going dark under the tank's block must not dim it. */
-    OverviewRect pair[2] = { { 100, 100, 120, 120, 128 },
-                             { 110, 110, 114, 114, 255 } };
+    OverviewRect pair[2] = { { 100, 100, 120, 120, 128, 0, 0 },
+                             { 110, 110, 114, 114, 255, 0, 0 } };
     fogBuild(pair, ARRAY_LEN(pair));
 
     UT_ASSERT_MSG(fogAt(112, 112) == 0,
@@ -335,8 +339,8 @@ static int fog_mid_fade_dims_the_whole_block(void) {
  * moved the half-lit one would have to move the block the map has always drawn
  * with it to pass. */
 static int fog_half_alpha_lifts_half_way(void) {
-    OverviewRect full = { 100, 100, 120, 120, 255 };
-    OverviewRect half = { 100, 100, 120, 120, 128 };
+    OverviewRect full = { 100, 100, 120, 120, 255, 0, 0 };
+    OverviewRect half = { 100, 100, 120, 120, 128, 0, 0 };
 
     fogBuild(&full, 1);
     BYTE fullFog = fogAt(110, 110);
@@ -362,7 +366,7 @@ static int fog_lower_alpha_never_brightens(void) {
     BYTE prev = 0;
 
     for (int a = 255; a >= 0; a--) {
-        OverviewRect live = { 100, 100, 120, 120, (BYTE)a };
+        OverviewRect live = { 100, 100, 120, 120, (BYTE)a, 0, 0 };
 
         fogBuild(&live, 1);
 
@@ -410,7 +414,7 @@ static const BYTE *fogDarkOne(int x, int y, BYTE value) {
  * clear and something has to put the fog back over it. This is that: the
  * darkest answer wins, over a region at full alpha included. */
 static int fog_dark_wins_over_a_region(void) {
-    OverviewRect live = { 100, 100, 120, 120, 255 };
+    OverviewRect live = { 100, 100, 120, 120, 255, 0, 0 };
 
     fogBuild(&live, 1);
     UT_ASSERT_MSG(fogAt(110, 110) == 0,
@@ -438,7 +442,7 @@ static int fog_dark_wins_over_a_region(void) {
 /* Nothing hidden is the map the regions alone draw, byte for byte — which is
  * what says sight being off costs the picture nothing. */
 static int fog_no_dark_is_the_mask_without_it(void) {
-    OverviewRect live = { 100, 100, 120, 120, 255 };
+    OverviewRect live = { 100, 100, 120, 120, 255, 0, 0 };
     int rc; /* Result of the whole-mask check */
 
     fogBuildDark(&live, 1, NULL);

@@ -57,7 +57,8 @@
                               * serverSimGetLastProcessedInput,
                               * serverSimBuildSnapshot */
 #include "channel_mux.h"     /* channelRecvFrame, channelSend, channelTick,
-                              * channelBuildFrame, CHANNEL_MAP */
+                              * channelBuildFrame, CHANNEL_MAP,
+                              * channelChargeBestEffortLeftover */
 #include "bulk_transfer.h"   /* bulkSenderPump */
 #include "../../common/wb_log.h" /* WB_LOG_INFO, WB_LOG_WARN, WB_LOG_CAT_NET */
 
@@ -132,8 +133,13 @@ void serverHandleInput(const uint8_t *buf, int len,
          * control events CHANNEL_CONTROL, both acked on the channel frame
          * trailer ingested below. */
 
-        /* Only apply if this is a newer input than what we last processed */
-        if (pkt.tick > serverSimGetLastProcessedInput(sim, clientIdx)) {
+        /* Only apply if this is a newer input than what we last processed,
+         * or if it is the one that breaks a stall-advance lockout: a tick
+         * this client has never sent before, arriving stale because the slot
+         * has been stall-advanced past everything the client has produced.
+         * Dropping that one here is what makes the lockout permanent. */
+        if (pkt.tick > serverSimGetLastProcessedInput(sim, clientIdx) ||
+            serverSimInputWouldRebase(sim, (BYTE)clientIdx, pkt.tick)) {
             if (udpServer.clients[clientIdx].inputsThisTick >= INPUT_REDUNDANCY_COUNT) break;
             serverSimApplyInput(sim, &pkt);
             udpServer.clients[clientIdx].inputsThisTick++;
@@ -353,7 +359,9 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
     /* Parallel channel layer rides as a trailer on the snapshot: tick the
      * mux on this client's clock+RTT, then append one channel frame after
      * the event tails, keeping the datagram within UDP_MAX_PAYLOAD.  The
-     * client recovers it as the bytes past the snapshot's parsed end. */
+     * client recovers it as the bytes past the snapshot's parsed end.
+     * Anything the trailer had no room for goes out in the standalone frames
+     * after the send below. */
     bulkSenderPump(&udpServer.bulkSend[clientIdx], &udpServer.channelMux[clientIdx]);
     channelTick(&udpServer.channelMux[clientIdx], udpServer.tickCount,
                 client->pingMs);
@@ -367,6 +375,37 @@ static void serverSendSnapshot(ServerSim *sim, int clientIdx) {
 
     /* wire-only: per-tick snapshot — high-volume delta-encoded path with its own reliability discipline */
     srvSendTo(buf, pos, &client->addr);
+
+    /* The trailer above took whatever the snapshot left; these carry what did
+     * not fit, so a burst of effects is not thrown away on the tick it
+     * happened. Same loop shape as the map-download carrier below. The mux is
+     * NOT ticked again — it was ticked once before the trailer was built, and
+     * a second tick would double-advance the channel's clock. On a retransmit
+     * tick the rewound cursor means these carry resend rather than new data,
+     * which the unacked window bounds. */
+    {
+        int frames;
+        for (frames = 0; frames < SNAPSHOT_EXTRA_CHANNEL_FRAMES; frames++) {
+            uint8_t cbuf[UDP_MAX_PAYLOAD];
+            int frameLen = channelBuildFrame(
+                &udpServer.channelMux[clientIdx], cbuf + PACKET_HEADER_SIZE,
+                UDP_MAX_PAYLOAD - PACKET_HEADER_SIZE);
+            if (frameLen <= 2) break;   /* nothing left to carry this tick */
+            packHeader(cbuf, PACKET_CHANNEL, client->outSequence++);
+            srvSendTo(cbuf, PACKET_HEADER_SIZE + frameLen, &client->addr);
+        }
+    }
+
+    /* Every frame this tick has for this client is now built, so whatever is
+     * still pending on a best-effort channel is what the tick could not carry.
+     * Charged here rather than in channelTick because the producers run before
+     * the frames do — transportUdpServerDrainEvents publishes this tick's
+     * effects and serverPumpVoice forwards this tick's voice, both ahead of
+     * the channelTick above — so a charge at the tick boundary would count
+     * everything the tick produced instead of what it lost. This is the only
+     * caller, so the counter describes the running path; the lobby and
+     * map-download carriers do not charge. */
+    channelChargeBestEffortLeftover(&udpServer.channelMux[clientIdx]);
 }
 
 /* Send snapshots and check timeouts */

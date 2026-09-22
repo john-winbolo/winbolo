@@ -19,6 +19,9 @@
 #include "server_sim.h"
 #include "../../src/winbolonet/winbolonet_server.h"
 #include "../../src/winbolonet/winbolonet_core.h"  /* WINBOLO_NET_EVENT_* */
+#include "../../src/winbolonet/winbolonetthread.h" /* WbnResultHandler,
+                                                    WBN_JOB_REGISTER,
+                                                    WBN_JOB_VERIFY */
 #include "luabrainshandler.h"
 #include "lang_message.h"
 #include "nat_portmap.h"
@@ -483,6 +486,25 @@ int  wbnStubLgmKillCalls = 0;
 BYTE wbnStubLastLgmKiller = 0xFF;
 BYTE wbnStubLastLgmKilled = 0xFF;
 
+/* The per-slot WinBolo.net keys the real winbolonet_core owns. Empty until a
+ * verify is accepted, which only winbolonetApplyVerifyResult below does, so
+ * every case that never settles a verify reads exactly as it did: no key, and
+ * winboloNetIsPlayerParticipant FALSE. */
+char wbnStubPlayerKey[MAX_TANKS][WINBOLONET_KEY_LEN];
+
+/* winbolonetAddEvent PLAYER_JOIN spy: the reauth cases watch these to prove
+ * a verified re-authentication emits the deferred join exactly once, and for
+ * which slot.
+ *
+ * wbnStubLastJoinKey is the slot's key AT PUBLISH TIME, which is what says
+ * whether the join announced an account or an unidentified player: the real
+ * winbolonetAddEvent reads winboloNetPlayerKey[playerA] when it is called and
+ * winbolonetServerUpdate leaves player_a out when that key is empty. Empty
+ * here means the join went out un-keyed. */
+int      wbnStubJoinEventCalls = 0;
+uint16_t wbnStubJoinEventMask  = 0;   /* bit i = a join emitted for slot i */
+char     wbnStubLastJoinKey[WINBOLONET_KEY_LEN] = "";
+
 bool winbolonetIsRunning(void) { return wbnStubRunning; }
 void winbolonetDestroy(bool isServer) { (void)isServer; }
 void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE playerB, bool aIsBot, bool bIsBot) {
@@ -503,9 +525,27 @@ void winbolonetAddEvent(BYTE eventType, bool isServer, BYTE playerA, BYTE player
     wbnStubLgmKillCalls++;
     wbnStubLastLgmKiller = playerA;
     wbnStubLastLgmKilled = playerB;
+  } else if (eventType == WINBOLO_NET_EVENT_PLAYER_JOIN) {
+    wbnStubJoinEventCalls++;
+    wbnStubLastJoinKey[0] = '\0';
+    if (playerA < MAX_TANKS) {
+      wbnStubJoinEventMask |= (uint16_t)(1u << playerA);
+      SDL_strlcpy(wbnStubLastJoinKey, wbnStubPlayerKey[playerA],
+                  WINBOLONET_KEY_LEN);
+    }
   }
 }
-void winboloNetGetServerKey(char *keyBuff) { if (keyBuff) keyBuff[0] = '\0'; }
+/* The session key the server is holding. Empty unless a test sets one, which
+ * keeps every case that never looks at it reading exactly as it did. The
+ * round-transition case needs a non-empty one: transportUdpServerSendWbnRekey
+ * drops the broadcast when the server has no key. */
+char wbnStubServerKey[WINBOLONET_KEY_LEN] = "";
+
+void winboloNetGetServerKey(char *keyBuff) {
+  if (keyBuff) {
+    SDL_strlcpy(keyBuff, wbnStubServerKey, WINBOLONET_KEY_LEN);
+  }
+}
 void winboloNetClientLeaveGame(BYTE playerNum, BYTE numPlayers, BYTE freeBases, BYTE freePills) {
   (void)playerNum; (void)numPlayers; (void)freeBases; (void)freePills;
 }
@@ -513,7 +553,10 @@ void winboloNetSendLock(bool isLocked) {
   wbnStubSendLockCalls++;
   wbnStubLastLockReported = isLocked;
 }
-bool winboloNetIsPlayerParticipant(BYTE playerNum) { (void)playerNum; return FALSE; }
+bool winboloNetIsPlayerParticipant(BYTE playerNum) {
+  if (playerNum >= MAX_TANKS) return FALSE;
+  return wbnStubPlayerKey[playerNum][0] != '\0' ? TRUE : FALSE;
+}
 bool winboloNetVerifyClientKey(const char *playerKey, const char *playerName,
                                BYTE playerNum, char *errorMsg,
                                bool *hasSteam, bool *isSupporter) {
@@ -591,14 +634,217 @@ bool winbolonetCreateServer(char *mapName, unsigned short port, BYTE gameType, B
   return FALSE;
 }
 
-void winbolonetEndSession(void) { }
+/* ── Round-transition queue spy (test_round_transition_tick.c) ──────────
+ * The lifecycle queues server/quit, the round-log upload and
+ * server/register for the WinBolo.net worker instead of posting them, and
+ * picks the register's reply up later through winbolonetThreadDrainResults.
+ * These record what was queued and in what order, and hold the reply until
+ * a test releases it. */
+#define WBN_STUB_MAX_JOBS 8
+int      wbnStubJobCount = 0;
+char     wbnStubJobs[WBN_STUB_MAX_JOBS][16];
+uint32_t wbnStubRegisterJobId = 0;
+bool     wbnStubRegisterResultReady = FALSE;
+int      wbnStubRegisterResultStatus = 200;
+int      wbnStubApplyRegisterCalls = 0;
+bool     wbnStubApplyRegisterOk = TRUE;
+
+static uint32_t wbnStubNextJobId = 1;
+
+static uint32_t wbnStubRecordJob(const char *what) {
+  if (wbnStubJobCount >= 0 && wbnStubJobCount < WBN_STUB_MAX_JOBS) {
+    SDL_strlcpy(wbnStubJobs[wbnStubJobCount], what,
+                sizeof(wbnStubJobs[wbnStubJobCount]));
+  }
+  wbnStubJobCount++;
+  return wbnStubNextJobId++;
+}
+
+/* The synchronous pair the lifecycle falls back to when the worker refuses
+ * the rotation (serverLifecycleQueueRotation). Both record themselves in
+ * the same job list as the queued forms, so a test reads one order for
+ * either path. */
+int  wbnStubEndSessionCalls = 0;
+int  wbnStubBeginSessionCalls = 0;
+bool wbnStubBeginSessionOk = FALSE;
+bool wbnStubWorkerRefuses = FALSE;
+
+void winbolonetEndSession(uint32_t drainMaxMs) {
+  (void)drainMaxMs;
+  wbnStubEndSessionCalls++;
+  wbnStubRecordJob("quit");
+}
+
+bool winbolonetQueueEndSession(void) {
+  if (wbnStubWorkerRefuses == TRUE) {
+    /* What the real call answers with no worker: nothing queued, and the
+     * caller sends the rotation itself. */
+    return FALSE;
+  }
+  wbnStubRecordJob("quit");
+  return TRUE;
+}
+
+uint32_t winbolonetQueueBeginSession(char *mapName, unsigned short port,
+                                     BYTE gameType, BYTE ai, bool mines,
+                                     bool password, BYTE numBases,
+                                     BYTE numPills, BYTE freeBases,
+                                     BYTE freePills, BYTE numPlayers) {
+  (void)mapName; (void)port; (void)gameType; (void)ai; (void)mines;
+  (void)password; (void)numBases; (void)numPills; (void)freeBases;
+  (void)freePills; (void)numPlayers;
+  if (wbnStubWorkerRefuses == TRUE) {
+    wbnStubRegisterJobId = 0;
+    return 0;
+  }
+  wbnStubRegisterJobId = wbnStubRecordJob("register");
+  return wbnStubRegisterJobId;
+}
+
+bool winbolonetApplyRegisterResult(int status, const char *response) {
+  (void)status; (void)response;
+  wbnStubApplyRegisterCalls++;
+  return wbnStubApplyRegisterOk;
+}
+
+/* ── client/verify queue spy (test_reauth_result.c) ─────────────────────
+ * The reauth path queues client/verify for the worker and stamps the slot
+ * from udpServerApplyReauthResult when the reply lands. These record the
+ * enqueue, hold the reply until a test releases it, and decide what the
+ * reply says.
+ *
+ * wbnStubVerifyOk defaults FALSE, which is what winboloNetVerifyClientKey
+ * has always answered here, so a case that never sets it sees the failure
+ * arm exactly as before. */
+int      wbnStubVerifyQueueCalls = 0;
+uint32_t wbnStubVerifyJobId = 0;
+char     wbnStubVerifyLastKey[96] = "";   /* >= WBN_JOIN_KEY_WIRE_LEN */
+char     wbnStubVerifyLastName[96] = "";  /* >= PACKET_MAX_PLAYER_NAME */
+bool     wbnStubVerifyResultReady = FALSE;
+int      wbnStubVerifyResultStatus = 200;
+int      wbnStubApplyVerifyCalls = 0;
+bool     wbnStubVerifyOk = FALSE;
+bool     wbnStubVerifyHasSteam = FALSE;
+bool     wbnStubVerifySupporter = FALSE;
+
+uint32_t winbolonetQueueVerifyClientKey(const char *playerKey,
+                                        const char *playerName) {
+  wbnStubVerifyQueueCalls++;
+  SDL_strlcpy(wbnStubVerifyLastKey, playerKey ? playerKey : "",
+              sizeof(wbnStubVerifyLastKey));
+  SDL_strlcpy(wbnStubVerifyLastName, playerName ? playerName : "",
+              sizeof(wbnStubVerifyLastName));
+  wbnStubVerifyJobId = wbnStubNextJobId++;
+  return wbnStubVerifyJobId;
+}
+
+bool winbolonetApplyVerifyResult(int status, const char *response,
+                                 const char *playerKey, BYTE playerNum,
+                                 char *errorMsg, bool *hasSteam,
+                                 bool *isSupporter) {
+  (void)status; (void)response;
+  wbnStubApplyVerifyCalls++;
+  if (errorMsg)    errorMsg[0]  = '\0';
+  if (hasSteam)    *hasSteam    = wbnStubVerifyHasSteam;
+  if (isSupporter) *isSupporter = wbnStubVerifySupporter;
+  if (wbnStubVerifyOk != TRUE) {
+    if (errorMsg) SDL_strlcpy(errorMsg, "stub verify refused", 256);
+    return FALSE;
+  }
+  /* The real apply writes the slot's key here, on the draining thread. */
+  if (playerNum < MAX_TANKS) {
+    SDL_strlcpy(wbnStubPlayerKey[playerNum], playerKey ? playerKey : "",
+                WINBOLONET_KEY_LEN);
+  }
+  return TRUE;
+}
+
+uint32_t winbolonetThreadAddUpload(const char *fileName, const char *key) {
+  uint32_t id;
+  (void)fileName; (void)key;
+  /* Recorded either way: the queued upload and the one the dedicated log
+   * posts itself when this is refused are the same step of the rotation,
+   * and a test reads the order, not which thread sent it. */
+  id = wbnStubRecordJob("upload");
+  if (wbnStubWorkerRefuses == TRUE) {
+    return 0;
+  }
+  return id;
+}
+
+/* ── client/verify_join_code queue spy (test_reauth_result.c) ───────────
+ * A web slot's reauth presents a join_code and takes the read-only
+ * verify_join_code route, queued for the worker like the key route and
+ * placed by the same handler. Shares wbnStubVerifyJobId and the verify
+ * result-ready flag, so the drain below delivers either kind.
+ *
+ * wbnStubJoinCodeOk defaults FALSE, which is what winboloNetVerifyJoinCode
+ * has always answered here. */
+int      wbnStubJoinCodeQueueCalls = 0;
+char     wbnStubJoinCodeLast[128] = "";
+int      wbnStubApplyJoinCodeCalls = 0;
+bool     wbnStubJoinCodeOk = FALSE;
+bool     wbnStubJoinCodeLoggedIn = FALSE;
+char     wbnStubJoinCodeName[PACKET_MAX_PLAYER_NAME] = "";
+char     wbnStubJoinCodeCountry[3] = "";
+
+uint32_t winbolonetQueueVerifyJoinCode(const char *joinCode) {
+  wbnStubJoinCodeQueueCalls++;
+  SDL_strlcpy(wbnStubJoinCodeLast, joinCode ? joinCode : "",
+              sizeof(wbnStubJoinCodeLast));
+  wbnStubVerifyJobId = wbnStubNextJobId++;
+  return wbnStubVerifyJobId;
+}
+
+bool winbolonetApplyVerifyJoinCodeResult(int status, const char *response,
+                                         char *playerNameOut,
+                                         bool *isLoggedInOut,
+                                         char *countryOut, int *userIdOut,
+                                         char *errorMsg) {
+  (void)status; (void)response;
+  wbnStubApplyJoinCodeCalls++;
+  if (playerNameOut) playerNameOut[0] = '\0';
+  if (isLoggedInOut) *isLoggedInOut   = FALSE;
+  if (countryOut)    countryOut[0]    = '\0';
+  if (userIdOut)    *userIdOut        = -1;
+  if (errorMsg)      errorMsg[0]      = '\0';
+  if (wbnStubJoinCodeOk != TRUE) {
+    if (errorMsg) SDL_strlcpy(errorMsg, "stub join code refused", 256);
+    return FALSE;
+  }
+  if (playerNameOut) {
+    SDL_strlcpy(playerNameOut, wbnStubJoinCodeName, PACKET_MAX_PLAYER_NAME);
+  }
+  if (isLoggedInOut) *isLoggedInOut = wbnStubJoinCodeLoggedIn;
+  if (countryOut)    SDL_strlcpy(countryOut, wbnStubJoinCodeCountry, 3);
+  if (userIdOut)    *userIdOut = 4242;
+  return TRUE;
+}
+
+void winbolonetThreadDrainResults(WbnResultHandler handler, void *ctx) {
+  if (handler == NULL) {
+    return;
+  }
+  if (wbnStubRegisterResultReady == TRUE) {
+    wbnStubRegisterResultReady = FALSE;
+    handler(wbnStubRegisterJobId, WBN_JOB_REGISTER, wbnStubRegisterResultStatus,
+            "{}", ctx);
+  }
+  if (wbnStubVerifyResultReady == TRUE) {
+    wbnStubVerifyResultReady = FALSE;
+    handler(wbnStubVerifyJobId, WBN_JOB_VERIFY, wbnStubVerifyResultStatus,
+            "{}", ctx);
+  }
+}
 
 bool winbolonetBeginSession(char *mapName, unsigned short port, BYTE gameType, BYTE ai,
                             bool mines, bool password, BYTE numBases, BYTE numPills,
                             BYTE freeBases, BYTE freePills, BYTE numPlayers) {
   (void)mapName; (void)port; (void)gameType; (void)ai; (void)mines; (void)password;
   (void)numBases; (void)numPills; (void)freeBases; (void)freePills; (void)numPlayers;
-  return FALSE;
+  wbnStubBeginSessionCalls++;
+  wbnStubRecordJob("register");
+  return wbnStubBeginSessionOk;
 }
 
 void winbolonetSendLobbyStatus(bool inLobby) { (void)inLobby; }

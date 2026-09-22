@@ -775,6 +775,33 @@ int run_maprotate_gameover_is_not_terminal(void);
 int run_maprotate_boot_does_not_rotate_while_empty(void);
 int run_maprotate_vote_return_is_not_terminal(void);
 
+/* Round transition off the tick thread (test_round_transition_tick.c). The
+ * boundary queues server/quit, the round-log upload and server/register for
+ * the WinBolo.net worker and returns; the rekey and the rotation window wait
+ * for the register's reply. */
+int run_round_transition_tick_does_not_block(void);
+int run_round_transition_during_rotation_deferred(void);
+int run_round_transition_worker_down_sends_inline(void);
+
+/* Re-authentication off the tick thread (test_reauth_result.c). The reauth
+ * captures the slot and queues client/verify; the reply stamps the slot on a
+ * later tick, and one whose slot was reused meanwhile is dropped. */
+int run_reauth_result_after_slot_reuse_discarded(void);
+int run_reauth_result_stamps_slot(void);
+int run_reauth_repeat_while_verify_out_refused(void);
+/* And the anonymous PLAYER_JOIN fallback's side of it: the sweep defers to an
+ * outstanding verify, because the two announcements name different things,
+ * and the hold lapses so a lost reply cannot suppress the join for good. */
+int run_reauth_result_outruns_grace_stamps_once(void);
+int run_reauth_result_failure_releases_anonymous_join(void);
+int run_reauth_result_lost_still_announces(void);
+/* And the web slot's join code, the last WinBolo.net call that ran on the
+ * tick: resolved off it, cached and stamped when the reply lands, dropped
+ * when the slot was reused meanwhile. */
+int run_reauth_web_code_verified_off_tick(void);
+int run_reauth_web_code_after_slot_reuse_discarded(void);
+int run_reauth_web_code_guest_stays_anonymous(void);
+
 /* Deferred WBN PLAYER_JOIN core (test_wbn_deferred_join.c). The join
  * event is held until the slot's identity is known for the session —
  * keyed on reauth, anonymous on grace expiry — and re-fires per round.
@@ -905,6 +932,8 @@ int run_entity_sync_wire_corpus_fixture(void);
 int run_starts_pick_cluster_nearest_teammate(void);
 int run_starts_pick_farthest_when_solo(void);
 int run_starts_pick_none_when_all_taken(void);
+int run_starts_pick_spreads_on_side(void);
+int run_starts_pick_unsided_takes_far_side(void);
 
 /* Batch start-assignment reservations (test_starts_assign_batch.c). The
  * reservedStartIdx0 lock that honors lobby start picks at game start:
@@ -969,6 +998,17 @@ int run_starts_side_reservation_beats_side(void);
 int run_starts_side_empty_side_falls_back(void);
 int run_starts_side_quota_capped_by_eligible(void);
 int run_starts_side_any_team_kept_off_chosen_side(void);
+/* ...and it spreads across the side it chose rather than filling one
+ * corner of it: one player per corner, an even split when the side has
+ * more, inside the side's own starts, and shared properly when two teams
+ * pick the same side. */
+int run_starts_side_spreads_across_corners(void);
+int run_starts_side_spread_balances_corners(void);
+int run_starts_side_spread_keeps_its_tier(void);
+int run_starts_side_spread_two_teams_one_side(void);
+int run_starts_side_spread_unsided_team_confined(void);
+int run_starts_side_unsided_team_takes_far_side(void);
+int run_starts_side_shared_side_anchor_stays_on_side(void);
 
 /* Team start sides on the lobby server (test_lobby_team_side_dispatch.c).
  * The team-meta side clamp and its client mirror, the re-pick of every
@@ -987,6 +1027,10 @@ int run_lobby_any_team_claim_kept_off_chosen_side(void);
  * team's tanks north and a larger south team's tanks south, on distinct
  * squares. */
 int run_starts_side_end_to_end_four_v_twelve(void);
+int run_starts_side_region_sweep(void);
+int run_starts_side_unsided_team_kept_off_chosen_side(void);
+int run_starts_side_two_team_lobby_mirrors(void);
+int run_starts_side_team_change_repicks_stale(void);
 
 /* CTRL_ALLIANCE_RESET batched alliance event (test_alliance_reset.c).
  * Replaces the O(N²) per-pair CTRL_ALLIANCE_ACCEPT burst that overflowed
@@ -1708,12 +1752,33 @@ int run_stall_never_fires(void);
 int run_stall_brief_trough_no_advance(void);
 int run_stall_long_dry_advances(void);
 
+/* Stall-advance lockout (test_stall_lockout_rebase.c): a slot stall-advanced
+ * past everything the client has produced takes the newest stale input it has
+ * ever seen, moving lastProcessedInput back under it so the stream recovers;
+ * the redundant copies of that tick rebase nothing further. */
+int run_stall_lockout_rebase(void);
+int run_stall_lockout_rebase_once_per_tick(void);
+int run_stall_recovery_no_gap_fill(void);
+
+/* Hitch diagnostics (test_hitch_logged.c): the catch-up loop lifted out of
+ * serverGameTimer runs every tick the wall clock owes, logs one line when a
+ * burst is long enough to lock a slot out, logs nothing at the normal
+ * cadence, and stops where a step refuses — the shutdown handshake's shape. */
+int run_hitch_logged(void);
+
 /* Backlog catch-up (test_input_catchup.c): a standing input queue above the
  * jitter target bleeds at +1 input per sub-tick (cap 2 applies/sub-tick) so a
  * jitter-spike backlog drains in ~1s instead of ratcheting input latency;
  * steady state never triggers it. Always built (no WB_NETDEBUG gate). */
 int run_input_catchup(void);
 int run_catchup_ignores_redundant_duplicates(void);
+
+/* Forward input-tick offset (test_input_tick_offset.c): a producer whose
+ * counter has fallen behind the server's consumption jumps past
+ * lastProcessedInput by the round trip plus a margin, keeps that jump as a
+ * per-ClientSim offset every later packet carries, leaves a caught-up
+ * producer alone, and caps the round-trip contribution. */
+int run_input_tick_offset_adopts_jump(void);
 
 /* Stale build-order harvest (test_build_harvest_stale.c): a build commanded on
  * a stall-substituted tick is stashed with its target tile frozen, so the
@@ -1865,6 +1930,35 @@ int run_loopback_command_liveness(void);
 /* Parallel channel layer over the loopback transport: empty-flow inertness
  * plus a synthetic message round-trip under loss + jitter + dup. */
 int run_loopback_channel(void);
+/* A slot locked out by a server hitch recovers over the real transport under
+ * an 80ms one-way delay (test_loopback_hitch.c): the client keeps producing
+ * while the server stops, the server pays the debt in one burst, and a button
+ * value no substitute can invent has to reach the server again and keep
+ * reaching it as the client changes it. */
+int run_loopback_hitch_recovers(void);
+/* One client quits while another keeps playing (test_loopback_quit_keeps_peer.c):
+ * the peer sees the slot leave its roster, stays connected for 600 pumps, and
+ * its own inputs keep being applied on tick numbers it actually sent. */
+int run_loopback_quit_keeps_peer(void);
+/* One running tick carries more than one channel frame
+ * (test_send_multi_frame.c): a raw-socket client joined past map download is
+ * given more reliable game events than one frame holds, and a single
+ * transportUdpServerSend has to put every one of them on the wire — the
+ * snapshot plus at most SNAPSHOT_EXTRA_CHANNEL_FRAMES standalone frames. */
+int run_send_drains_channels_multi_frame(void);
+/* A burst of best-effort traffic survives the tick it was raised on
+ * (test_best_effort_burst.c): effect events and a voice frame queued on one
+ * tick, with the snapshot trailer already filled by reliable traffic, all reach
+ * a real client within two pumps of that tick, and the server's mux reports no
+ * ring drop and nothing left behind by the budget. */
+int run_best_effort_not_dropped(void);
+int run_effect_burst_not_starved_by_reliable(void);
+int run_post_game_segment_applied(void);
+/* A quitting player's ownership burst reaches the peer (test_best_effort_burst.c):
+ * client 2 holds every pillbox and base and quits, and client 1 is told the new
+ * owner of every one of them, plus the leave, within two pumps of the tick that
+ * published them. */
+int run_quit_burst_all_delivered(void);
 /* Server lock/unlock notice over CHANNEL_GAME (test_lock_channel.c): the
  * "locked to new players" message now rides the reliable game channel, not the
  * snapshot reliable tail. */
@@ -2452,6 +2546,7 @@ int run_scenario_entity_add_out_null(void);
  * scaled across pill_max_armour, and the client capping the armour a server
  * states about a pill. */
 int run_pill_armour_scale_classic_cap(void);
+int run_pill_base_anger_radius(void);
 int run_pill_armour_scale_raised_cap(void);
 int run_pill_armour_scale_client_caps(void);
 

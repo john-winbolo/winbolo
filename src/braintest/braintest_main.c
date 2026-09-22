@@ -3752,6 +3752,11 @@ static void mapTileToScreenPrecise(BrainTestApp *app, float tx, float ty,
 /* hud_layout.txt, reloaded each run. Purely a BrainTest debug-UX feature. */
 /* ====================================================================== */
 #define HUD_MAX_VIZ   256
+/* OverlayCmd.viz_idx is a uint8_t, so it indexes the tables below without a
+ * bound check. Assert the table still spans the whole range: shrink it and
+ * the unchecked indexing becomes an overrun, which this catches at build
+ * time rather than at run time. */
+BOLO_STATIC_ASSERT(HUD_MAX_VIZ == 256, hud_viz_tables_span_uint8);
 #define HUD_MAX_RECT  128
 static const char *HUD_LAYOUT_PATH = "hud_layout.txt";
 static bool  g_hudEdit = false;
@@ -4046,7 +4051,7 @@ static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
             }
             /* Apply the persisted drag offset for this overlay (per viz id). */
             if (cmd->viz_idx != OVERLAY_VIZ_IDX_NONE
-                && cmd->viz_idx < HUD_MAX_VIZ && g_hudOff[cmd->viz_idx].set) {
+                && g_hudOff[cmd->viz_idx].set) {
                 sx += g_hudOff[cmd->viz_idx].dx;
                 sy += g_hudOff[cmd->viz_idx].dy;
             }
@@ -4067,7 +4072,7 @@ static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
                     SDL_RenderRect(app->renderer, &br);
                     /* Label the overlay with its viz id at the top-right
                      * corner — once per id (on its first/top line). */
-                    if (cmd->viz_idx < HUD_MAX_VIZ && !g_hudLabeled[cmd->viz_idx]) {
+                    if (!g_hudLabeled[cmd->viz_idx]) {
                         const VizRegistryEntry *ve = vizRegistryGet(cmd->viz_idx);
                         if (ve && ve->id[0] != '\0') {
                             g_hudLabeled[cmd->viz_idx] = true;
@@ -4098,7 +4103,7 @@ static void renderBrainOverlay(BrainTestApp *app, int screenW, int screenH) {
             }
             /* Same per-viz drag offset as the text rows, so bg/border track. */
             if (cmd->viz_idx != OVERLAY_VIZ_IDX_NONE
-                && cmd->viz_idx < HUD_MAX_VIZ && g_hudOff[cmd->viz_idx].set) {
+                && g_hudOff[cmd->viz_idx].set) {
                 sx += g_hudOff[cmd->viz_idx].dx;
                 sy += g_hudOff[cmd->viz_idx].dy;
             }
@@ -4289,9 +4294,6 @@ static void renderHUD(BrainTestApp *app, int screenW, int screenH) {
             const DijkstraSlate *s = pfDij
                 ? brainPathfinderDijkstraGetSlate(pfDij, app->dijViewSlate)
                 : NULL;
-            GameSim *gs = serverSimGetGameSim(app->sim);
-            int in_boat = (gs->tanks[app->followBot] != NULL &&
-                           tankIsOnBoat(&gs->tanks[app->followBot])) ? 1 : 0;
             float dij = 1e30f;
             if (s && s->g_cost) {
                 int ni_base = app->clickMY * 256 + app->clickMX;
@@ -5349,7 +5351,10 @@ static void appRender(BrainTestApp *app) {
             vizDetailSetPlaybackView(pf_->vizDetails, pf_->vizDetailCount);
             {
                 PillContribSnapshot snap;
-                snap.entries = pf_->pillContribPtrs;
+                /* Adding const at nested pointer levels is not an implicit
+                 * conversion in C, so spell the cast out. */
+                snap.entries =
+                    (const PillContribEntry *const *const *)pf_->pillContribPtrs;
                 snap.counts  = pf_->pillContribCounts;
                 pillContribSetPlaybackView(&snap);
             }
@@ -5392,7 +5397,7 @@ static void appRender(BrainTestApp *app) {
         }
 
         MapViewCtx ctx = { app->renderer, app->tilesTex, app->zoomFactor, 1,
-                           (float)app->zoomFactor };
+                           (float)app->zoomFactor, NULL, NULL };
         mapViewRenderCentered(&ctx, app->sim,
                               app->viewCenterX, app->viewCenterY,
                               0, 0, screenW, screenH, app->followBot);

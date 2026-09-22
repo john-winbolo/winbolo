@@ -4668,9 +4668,28 @@ function M.update_attack_substate(goal, state, world, info)
         -- standoff/charge path: the gather_trees pre-flight and the build_walls
         -- entry are both gated on _is_ppt + _shield_scan. The shield.scan
         -- itself is skipped below (its ~20 ms of tick budget goes unspent).
-        if state.is_pill_suicider and goal._is_ppt then
+        --
+        -- A HUMAN TEAM-MATE STANDING CLOSE DOES THE SAME THING, and for a
+        -- different reason: the wall shield costs trees, a gather detour and a
+        -- slow shielded creep, and a person watching from seven squares away
+        -- reads all of that as the bot doing nothing. Close to a human the bot
+        -- goes straight in. Same effect on the take, same one flag, so it
+        -- lands here beside the designated suicider rather than in a branch of
+        -- its own; ORDER_HUMAN_NEAR_SUICIDE_TILES = 0 turns it off.
+        local human_tiles = C.ORDER_HUMAN_NEAR_SUICIDE_TILES or 0
+        local human_near = nil
+        if human_tiles > 0 then
+          human_near = U.human_ally_near(info, bit.rshift(info.tankx or 0, 8),
+                                         bit.rshift(info.tanky or 0, 8), human_tiles)
+        end
+        goal._human_near = human_near
+        if (state.is_pill_suicider or human_near) and goal._is_ppt then
           goal._is_ppt = false
-          if BRAIN_DEBUG_MODE then print2(string.format("PPT_SKIP t=%d reason=pill_suicider pill=(%d,%d) hp=%d", state.tick or 0, pmx, pmy, pill_hp)) end
+          if BRAIN_DEBUG_MODE then print2(string.format("PPT_SKIP t=%d reason=%s pill=(%d,%d) hp=%d",
+            state.tick or 0,
+            state.is_pill_suicider and "pill_suicider"
+              or string.format("human_ally_%d_away", human_near),
+            pmx, pmy, pill_hp)) end
         end
         local scan_radius = goal._is_ppt and C.PPT_STANDOFF
                             or C.ATTACK_PILL_STANDOFF
@@ -4711,7 +4730,11 @@ function M.update_attack_substate(goal, state, world, info)
         -- to plan: skip it outright (leaving _shield_scan nil, exactly the state
         -- the existing DEMOTED(no-shield) path produces) and keep the standoff
         -- the spot-selection pass just chose. Also saves the scan's tick budget.
-        goal._shield_scan_pending = (not state.is_pill_suicider) or nil
+        -- A human standing close skips it for the same reason (see the
+        -- PPT_SKIP block above): nothing will be built, so nothing needs
+        -- planning, and the scan's tick budget goes unspent.
+        goal._shield_scan_pending =
+          (not (state.is_pill_suicider or goal._human_near)) or nil
       else
         if BRAIN_DEBUG_MODE and not goal._plan_logged then
           print(string.format(TAG .. " PLAN: no candidates for pill@(%d,%d), falling back", pmx, pmy))
@@ -5864,6 +5887,23 @@ function M.update_attack_substate(goal, state, world, info)
         if needs_build and not goal._is_ppt then
           needs_build = false
           why_no_build = "no-shield (pill HP below threshold) — no walls needed"
+        end
+        -- A HUMAN TEAM-MATE WHO ARRIVED AFTER THE PLAN. plan_position makes
+        -- the _is_ppt call once for the life of the goal, so a person who
+        -- drove up while the bot was approaching would otherwise still watch
+        -- it stop and build. The distance is re-read here, at the one place
+        -- the walls are actually committed to, so the rule holds whenever the
+        -- human turns up. ORDER_HUMAN_NEAR_SUICIDE_TILES = 0 turns it off.
+        if needs_build and (C.ORDER_HUMAN_NEAR_SUICIDE_TILES or 0) > 0 then
+          local hn = U.human_ally_near(info, bit.rshift(info.tankx or 0, 8),
+                                       bit.rshift(info.tanky or 0, 8),
+                                       C.ORDER_HUMAN_NEAR_SUICIDE_TILES)
+          if hn then
+            needs_build = false
+            goal._is_ppt = false
+            goal._human_near = hn
+            why_no_build = string.format("human ally %d away — going straight in", hn)
+          end
         end
         local trees_needed = needs_build and (#pots * cost_per_wall) or 0
         if needs_build and (info.trees or 0) < trees_needed then

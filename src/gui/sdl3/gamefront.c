@@ -3142,7 +3142,10 @@ void gameFrontShutdownServer(void) {
    * stalling the leave. serverInstanceShutdown's own quit follows harmlessly. */
   serverDedicatedLogStashCurrentRound();
   if (serverDedicatedLogHasPendingUpload() && winbolonetIsRunning()) {
-    winbolonetEndSession();
+    /* A bounded drain: the host is waiting on this leave, and an
+     * unreachable WinBolo.net would otherwise hold it for as long as the
+     * queue is deep. Whatever is left rides the next session. */
+    winbolonetEndSession(/*drainMaxMs*/ 2000);
     httpSetLogUploadTimeout(10);
     serverDedicatedLogFlushPendingUpload();
     httpSetLogUploadTimeout(0);

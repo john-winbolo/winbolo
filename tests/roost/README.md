@@ -128,6 +128,17 @@ bot's ack would be read as the next bot's order.
 
 ## What cannot be tested from here yet
 
+A HUMAN TEAM-MATE. Every seat in a headless round is a bot: the server stamps
+`PLAYER_FLAG_BOT` as it seats one (`server_sim_bots.c`), the flag is
+deliberately trusted and server-only, and no scenario op clears it — the
+roster ops in `docs/SCENARIO_API.md` seat bots and move them between teams,
+and `remove_bot` refuses a human seat rather than making one. So a rule that
+turns on "a HUMAN ally is within N squares", such as
+`ORDER_HUMAN_NEAR_SUICIDE_TILES`, has no round that can set it up. The
+measuring function behind it (`util.human_ally_near`) is pinned in
+`test_orders.lua` instead, including the case that matters most here: a BOT
+team-mate standing on top of the bot must not read as a human.
+
 The bot-command PING — a tile ping that carries a verb, and the caution ping
 that cancels or retreats — has no scenario op behind it. `game.say` puts a
 chat line on the wire and `game.shell_expired` posts a shell expiry, but
@@ -164,4 +175,7 @@ uses `-teams 2,1` in its `.args` to seat two bots on team 1 and one on team 2.
 | `order_enemy_ignored` | The team check is on the SENDER. With `-teams 2,1` the enemy seat says `!attack 0` to everyone and gets nothing back — no ack, no "didn't understand". Then an ALLY says the same line in the same words and it is taken in twenty-four ticks, so the silence was the team check rather than a line nobody could act on. |
 | `order_retreat_busy` | `!<name> retreat` reaches the named bot and it answers with the goal the verb really turns into: "take_cover #", with no number because the goal has nothing to number. A bot that was already busy would answer "Busy (<reason>)" instead, and none of busy's reasons — man out of the tank, a capture in its last phase — can be set up from outside a round, so this one asks only whether a named retreat lands. |
 | `order_death_clears_hold` | A bot killed while HOLDING a place order comes back able to drive. The hold parks the tank — steering takes the throttle away — and nothing used to clear the order slot on a death, so a respawned bot sat frozen on its spawn square for the rest of the hold. Seat 1 says `!goto 128 128`, seat 0 goes and says "holding", the script kills it at once, and the new life has to get two squares from where it came back inside four hundred ticks. The kill is twenty ticks after arriving rather than two hundred because the respawn itself takes five hundred and the whole window has to fit inside the thousand-tick hold. Measured: four squares with the fix, none without it. |
+| `order_count_two` | A NUMBER in front of the verb says how many bots go. `!2 attack 0` on order_all_attack's arena, seats and seed: two bots take it and the group line carries the count — "2 on pill #0" — where a plain `!attack 0` on the same squares (`order_attack_pill`) gives one bot and a solo ack. The count is not a new way of choosing bots; it raises how many of the auction's bids win from one to two, so the two that go are the two nearest the pill. |
+| `order_attack_closest` | `closest` is measured from the SENDER, not from the bot. Two pills: #0 two squares from the speaker and twelve from the bots, #1 four squares from the bots. A bot resolving `closest` against its own tank takes #1; against the sender it takes #0. The ack carries the pill number, so it says outright which rule ran, and the bot then drives past the near pill to the far one's standoff ring. |
+| `order_bot_chat_off` | `bot chat off` stops the bots TALKING, not the bots WORKING. Half A is the control: with chat on, `!attack 0` is acked — which proves the seats, the pill and the message channel all work, so silence in half B is the latch and not a starved slot. Half B cancels, says `!bot chat off` and orders a DIFFERENT pill: not one line comes back, and a bot is at that pill's standoff ring anyway. |
 | `order_enemy_stop_ignored` | An operator command from the other team is not a command. An ally's `!stop` freezes seat 0 (the baseline), the enemy's `!start` has to leave it frozen, and the ally's `!start` has to start it again (without which the round proves nothing). **This one passes on both sides of the Lua fix**: the engine already keeps an enemy's chat out of a bot's inbox — the same seat saying the same word freezes this bot under `-allybots 1` and does not under `-teams 2,1` — so the round guards both layers rather than reproducing the bug. The Lua half is covered by `commands.lua -- only an ally may give an operator command` in `test_orders.lua`, which does fail before the fix. |
