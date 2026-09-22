@@ -405,6 +405,50 @@ static BYTE lobbyLoneOtherTeamWithPlayers(const ServerSim *sim, BYTE teamId) {
     return found;
 }
 
+/* Keep the one other team's filled-in side in step with teamId's, which has
+ * just been written. The other team's row is published here when it changes.
+ *
+ * Only the two-team case has an answer to give. With three teams two would
+ * share a side, or the third would take an east or west that many maps have
+ * no starts on, so nothing is written and the placement rules confine the
+ * unnamed teams instead.
+ *
+ * sideAutoFilled says which sides this may write: one filled in here, or
+ * none at all. A side a player named is left alone, both when the other team
+ * changes its own side and when it drops it. Moving from one real side to
+ * another re-mirrors a filled-in side; dropping to START_SIDE_ANY takes a
+ * filled-in side back to START_SIDE_ANY, because the only reason it was
+ * there has gone.
+ *
+ * in_use is deliberately not set. The side is stored, published and used
+ * whatever in_use says; setting it would tell the client the team has a name
+ * and colour of its own, and a team that never had its meta set has neither,
+ * so the lobby would show an empty name and colour 0 instead of "Team N" and
+ * the team's default colour. */
+static void lobbyMirrorSideToLoneOtherTeam(ServerSim *sim, BYTE teamId,
+                                           uint8_t startSide) {
+    BYTE other = lobbyLoneOtherTeamWithPlayers(sim, teamId);
+    TeamMetadata *ot;
+    uint8_t want;
+    if (other == 0) return;
+    ot = serverSimGetTeamMetaMut(sim, other);
+    if (ot == NULL) return;
+    if (startSide == START_SIDE_ANY) {
+        if (!ot->sideAutoFilled) return;
+        want = START_SIDE_ANY;
+    } else {
+        if (ot->startSide != START_SIDE_ANY && !ot->sideAutoFilled) return;
+        want = lobbyOppositeSide(startSide);
+    }
+    if (ot->startSide == want &&
+        ot->sideAutoFilled == (uint8_t)(want != START_SIDE_ANY)) {
+        return;
+    }
+    ot->startSide      = want;
+    ot->sideAutoFilled = (uint8_t)(want != START_SIDE_ANY ? 1 : 0);
+    serverSimPublishLobbyTeamMeta(sim, other);
+}
+
 void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
                            uint8_t color, uint8_t namingPool,
                            uint8_t startSide,
@@ -418,6 +462,10 @@ void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
     /* A side outside the START_SIDE_* range means no side. */
     if (startSide >= START_SIDE_COUNT) startSide = START_SIDE_ANY;
     t->startSide = startSide;
+    /* This write came in for this team, so the side is the team's own choice
+     * — START_SIDE_ANY included — and the fill-in below never writes over it
+     * again. */
+    t->sideAutoFilled = 0;
     /* Per-team uniqueness on namingPool: if another in_use team
      * already owns this pool, pick the lowest pool index not
      * used by any other team. Falls back to the requested value
@@ -458,29 +506,16 @@ void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
      * player choosing north means south for the only other team, and
      * saying so puts it on that team's row rather than leaving it to be
      * inferred: an unnamed team is kept off the chosen sides either way,
-     * but nothing in the lobby says where it ends up.
-     *
-     * Only the two-team case, and only a team that has not named one of
-     * its own. With three teams there is no answer to give — two would
-     * share a side, or the third would take an east or west that many maps
-     * have no starts on — so they are left unnamed and the placement rules
-     * confine them. Clearing a side does not clear the other team's:
-     * nothing here can tell a side this filled in from one a player
-     * picked, and dropping a deliberate choice is the worse mistake. */
-    if (prevSide != startSide && startSide != START_SIDE_ANY) {
-        BYTE other = lobbyLoneOtherTeamWithPlayers(sim, teamId);
-        if (other != 0) {
-            TeamMetadata *ot = serverSimGetTeamMetaMut(sim, other);
-            if (ot != NULL && ot->startSide == START_SIDE_ANY) {
-                ot->in_use    = 1;
-                ot->startSide = lobbyOppositeSide(startSide);
-                serverSimPublishLobbyTeamMeta(sim, other);
-            }
-        }
+     * but nothing in the lobby says where it ends up. The helper decides
+     * what the other team's row should read, including taking a side it
+     * filled in earlier back off when this team drops its own. */
+    if (prevSide != startSide) {
+        lobbyMirrorSideToLoneOtherTeam(sim, teamId, startSide);
     }
     /* A side change moves every reservation, picks included, so the lobby
      * ends up as if everyone had joined after the sides were set. One
-     * re-pick covers both teams when the fill-in above ran. */
+     * re-pick covers both teams: the other team's side can only change when
+     * this one's did, so the test above is true for either. */
     if (prevSide != startSide) {
         serverSimRepickAllLobbyStarts(sim);
     }
@@ -496,8 +531,13 @@ void serverSimClearTeamMeta(ServerSim *sim, BYTE teamId) {
         memset(t, 0, sizeof(TeamMetadata));
     }
     serverSimPublishLobbyTeamMeta(sim, teamId);
-    /* Zeroing the struct drops the side too; that is a side change. */
+    /* Zeroing the struct drops the side too; that is a side change. It also
+     * takes away the reason the one other team was given the opposite side,
+     * so a side filled in for that team goes back to START_SIDE_ANY — the
+     * same answer as setting this team to START_SIDE_ANY. A side that team
+     * named itself is left alone. */
     if (hadSide) {
+        lobbyMirrorSideToLoneOtherTeam(sim, teamId, START_SIDE_ANY);
         serverSimRepickAllLobbyStarts(sim);
     }
     lobbyAutoUnreadyOnChange(sim);
