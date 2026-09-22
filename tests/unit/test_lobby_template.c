@@ -317,12 +317,13 @@ int run_lobby_template_map_commit_seats(void) {
     return 0;
 }
 
-/* ── A committed scripted map takes the previous map's bots off ──── */
+/* ── A template that changed takes the lobby's own bots off ──────── */
 
 int run_lobby_template_map_commit_drops_prior_bots(void) {
     ServerSim       *sim;
     ScnLobbyTemplate t;
     int              i, bots = 0;
+    int              hostBot;
 
     UT_ASSERT(ltMakeBrainFile("map_commit_drops"));
     ut_brain_stub_arm(true);
@@ -366,6 +367,64 @@ int run_lobby_template_map_commit_drops_prior_bots(void) {
     UT_ASSERT_MSG(bots == 6, "%d bots in the lobby, expected the template's 6",
                   bots);
     UT_ASSERT_MSG(serverSimGetNumPlayers(sim) == 7, "roster %u, expected 7",
+                  (unsigned)serverSimGetNumPlayers(sim));
+
+    /* The host adds one of their own, on a team the template says nothing
+       about. */
+    hostBot = serverSimFindFreeSlot(sim, true);
+    UT_ASSERT(hostBot >= 0);
+    {
+        ServerSimBotConfig cfg;
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.brainPath  = ltBrainPath;
+        cfg.brainName  = "Bot 2";
+        cfg.ai         = aiFull;
+        cfg.gameType   = gameOpen;
+        cfg.teamNumber = 2;
+        UT_ASSERT(serverSimAddBot(sim, (BYTE)hostBot, &cfg));
+    }
+    UT_ASSERT(serverSimIsBot(sim, (BYTE)hostBot));
+
+    /* The selection is decided again and reaches the same template, which is
+       what a mods change does. The host's bot stays and the seats are the
+       template's same six. */
+    serverSimScenarioOnMapChanged(sim, "");
+
+    UT_ASSERT_MSG(serverSimIsBot(sim, (BYTE)hostBot),
+                  "the host's own bot was taken off by an unchanged template");
+    UT_ASSERT_MSG(!sim->lobbyPlayers[hostBot].keepSeat,
+                  "the host's own bot was counted as one of the template's");
+    UT_ASSERT_MSG(sim->lobbyPlayers[hostBot].teamNumber == 2,
+                  "the host's own bot is on team %d, not the 2 it was added to",
+                  (int)sim->lobbyPlayers[hostBot].teamNumber);
+    UT_ASSERT_MSG(ltSeats(sim, LT_RAIDER) == 4,
+                  "seated %d of the raiders, expected the template's 4",
+                  ltSeats(sim, LT_RAIDER));
+    UT_ASSERT_MSG(ltSeats(sim, LT_GUARD) == 2,
+                  "seated %d of the guard, expected the template's 2",
+                  ltSeats(sim, LT_GUARD));
+    UT_ASSERT_MSG(serverSimGetNumPlayers(sim) == 8, "roster %u, expected 8",
+                  (unsigned)serverSimGetNumPlayers(sim));
+
+    /* A different template, and it goes with the rest: the lobby the script
+       lays out is not the one the bot was added to. */
+    ltTemplate(&t, 2, 2, 1, 1);
+    serverSimSetScenarioLobbyTemplate(sim, &t);
+    serverSimScenarioOnMapChanged(sim, "");
+
+    UT_ASSERT_MSG(!(serverSimIsBot(sim, (BYTE)hostBot) &&
+                    !sim->lobbyPlayers[hostBot].keepSeat),
+                  "the host's own bot survived a template change");
+    bots = 0;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (!serverSimIsBot(sim, (BYTE)i)) continue;
+        bots++;
+        UT_ASSERT_MSG(sim->lobbyPlayers[i].keepSeat,
+                      "bot in slot %d is not one of the template's", i);
+    }
+    UT_ASSERT_MSG(bots == 3, "%d bots in the lobby, expected the template's 3",
+                  bots);
+    UT_ASSERT_MSG(serverSimGetNumPlayers(sim) == 4, "roster %u, expected 4",
                   (unsigned)serverSimGetNumPlayers(sim));
 
     serverSimDestroy(sim);
