@@ -33,15 +33,12 @@ python3 tests/scenario/run_gate.py --build <dir> --only heat_pill
 python3 tests/scenario/run_gate.py --build <dir> --only water_pills --jobs 1
 ```
 
-`--build <dir>` points it at a different build directory, `--jobs N` caps how
-many run at once, and `--port-base N` moves where the search for each arena's
-own UDP port starts. Each arena is its own private server on its own port. A
-port something else on the machine is holding is stepped over before the
-arena starts, and an arena whose server still lost the race — the port went
-between the check and the bind — is started again on another port and says
-`RETRY`. Per-arena logs land in
+`--jobs N` caps how many run at once. Each arena is its own private server
+on a port the machine picks, which the server prints as `[UDP SERVER]
+listening on UDP port N` in that arena's own log. Per-arena logs land in
 `<build>/scenario_gate_logs/`. The runner exits 0 when everything that was
-meant to pass passed.
+meant to pass passed, and an arena marked `expect=fail` that passes counts
+against it.
 
 ### Playing Survival headless, outside the gate
 

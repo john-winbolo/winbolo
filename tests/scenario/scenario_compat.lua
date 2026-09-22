@@ -192,11 +192,15 @@ end
 -- A table as the first argument is passed straight through, so a ported file
 -- may be written in the host's own shape.
 --
--- NOTE, and it is the one thing this shim cannot fix: the host hands the
--- init table to the brain as the BRAIN_INIT global, and the GoalHunter
--- brains read BRAIN_INIT_ARG, the string. The tokens therefore do not reach
--- the brain on main. PORT_MAP.md names it as a gap. Every script that
--- depends on a token is marked EXPECTED-FAIL for that reason.
+-- The init table does reach the brain. The host hands it to the bot as the
+-- BRAIN_INIT global, and brains/GoalHunter_1.7/init.lua flattens it into
+-- BRAIN_INIT_ARG -- the "k=v;k=v" string its parse blocks read -- before
+-- either of them runs. Two things about that flattening the arenas depend
+-- on: the keys are sorted, so the same table always builds the same string;
+-- and a value of "1" or true is written as the bare flag word the tick-1
+-- parser matches, while "0" or false is dropped. A string already in
+-- BRAIN_INIT_ARG, which is the command-line path, keeps its place and the
+-- table's tokens follow it.
 
 -- ── a driver's token string, packed into an init table ───────────────────
 -- The python drivers pinned a bot's knobs with one string:
@@ -267,6 +271,35 @@ game.init_tokens = function(text)
   return t
 end
 
+-- ── a brain path, mapped to a brain name ─────────────────────────
+-- An arena names a brain the way the drivers did, by path:
+-- "../brains/GoalHunter_1.7/init.lua", "../tests/brains/idle.lua". This host
+-- takes a NAME -- one directory under a brains parent, holding init.lua --
+-- and refuses any value with a separator in it, so an arena naming a path
+-- gets SCN_OP_NOT_FOUND, the bot is never made, and the arena measures
+-- nothing. The arena bodies are not edited, so the mapping happens here:
+--
+--   <anything>/tests/brains/<stem>.lua   ->  <stem>
+--   <anything>/<name>/init.lua           ->  <name>
+--
+-- which is the layout the resolver itself reads. The gate stages every
+-- tests/brains/*.lua as <build>/Brains/<stem>/init.lua so the first shape
+-- resolves, and CMake stages GoalHunter_1.7 for the second.
+--
+-- Anything else goes through untouched on purpose: a path that is simply
+-- wrong should still be refused by the host rather than quietly turned into
+-- some other brain here. Mapping a name again returns the same name, so a
+-- table handed to two spawns is safe.
+local function brain_name(v)
+  if type(v) ~= "string" then return v end
+  local s = string.gsub(v, "\\", "/")
+  local stem = string.match(s, "tests/brains/([^/]+)%.lua$")
+  if stem then return stem end
+  local dir = string.match(s, "([^/]+)/init%.lua$")
+  if dir then return dir end
+  return v
+end
+
 local raw_spawn_bot = game.spawn_bot
 
 local function init_table_from(text)
@@ -287,10 +320,13 @@ local function init_table_from(text)
 end
 
 game.spawn_bot = function(a, brain, team, mode, init, start)
-  if type(a) == "table" then return raw_spawn_bot(a) end
+  if type(a) == "table" then
+    if a.brain ~= nil then a.brain = brain_name(a.brain) end
+    return raw_spawn_bot(a)
+  end
   local t = {}
   if a     ~= nil then t.name    = a     end
-  if brain ~= nil then t.brain   = brain end
+  if brain ~= nil then t.brain   = brain_name(brain) end
   if team  ~= nil then t.team    = team  end
   if mode  ~= nil then t.loadout = mode  end
   if start ~= nil then t.start   = start end

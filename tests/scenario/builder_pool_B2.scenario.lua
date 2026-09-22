@@ -16,9 +16,9 @@
 
 local OUR_PILL  = { 124, 126 }
 local BASES     = { { 114, 120 }, { 126, 122 } }
--- NOT IN THIS REPOSITORY. tests/brains/ carries idle.lua and the other
--- scripted brains, but never this one, so the spawn below refuses with
--- SCN_OP_NOT_FOUND and no shell is ever fired at our tank.
+-- The gate stages every tests/brains/*.lua under <build>/Brains and the
+-- prelude maps this path to that name, so the spawn below lands and the
+-- shells do fall on our tank.
 local FOE_BRAIN = "../tests/brains/shell_tank_then_flee.lua"
 local FOE_SLOT  = 1
 
@@ -84,21 +84,20 @@ function on_tick(g, tick)
 end
 
 -- ── the verdict ─────────────────────────────────────────────────────────
--- NOT PORTED, and this one cannot even be set up.
+-- NOT PORTED. The arena sets up; nothing here can read its answer.
 --
 -- The arena is the scripted shooter: tests/brains/shell_tank_then_flee.lua
 -- drives to a standoff and puts shells on OUR TANK on a pace, and it is the
--- only thing on the map that makes danger.tank_fire_age move. That file does
--- not exist in this repository, so spawn_bot refuses and the round is just a
--- bot repairing a pill in peace -- which is variant B, not B2.
+-- only thing on the map that makes danger.tank_fire_age move. It is in
+-- tests/brains/ and the spawn below lands, so the shells fall as they should.
 --
--- The assertion is print2 in any case: the dispatch must be DENIED
+-- The assertion is print2: the dispatch must be DENIED
 -- `under_fire(<age>t)` on the ticks the shells are landing, and a denial
 -- reason is a builder-pool log line. There is no world state that separates
 -- "held back while under fire" from "went straight away": the pill comes back
 -- up either way.
 --
--- To repay this: bring tests/brains/shell_tank_then_flee.lua across, and then
--- a host op that exposes a bot's builder-pool verdict -- see PORT_MAP.md.
+-- To repay this: a host op that exposes a bot's builder-pool verdict, which
+-- this host has no read for.
 --
--- GATE: skip=tests/brains/shell_tank_then_flee.lua is not in this repo, and the driver asserts on the under_fire denial in print2
+-- GATE: skip=the answer is the builder pool's under_fire denial line, and no world state separates a held dispatch from a straight one

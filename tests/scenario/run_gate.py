@@ -40,21 +40,21 @@ Anything it leaves out takes the default below. An arena marked
 is reported as SKIP, or as an expected failure that does not turn the gate
 red. Both are debts; keep the reason short and say what would repay it.
 
-USAGE, from the repo root:
+USAGE, from the repo root, where <dir> is the build directory holding
+WinBoloDS (left out, it is build-own):
 
-    C:\\Python310\\python.exe tests/scenario/run_gate.py
-    C:\\Python310\\python.exe tests/scenario/run_gate.py --only heat_pill
-    C:\\Python310\\python.exe tests/scenario/run_gate.py --jobs 1
-    C:\\Python310\\python.exe tests/scenario/run_gate.py --build build-own
+    python3 tests/scenario/run_gate.py --build <dir>
+    python3 tests/scenario/run_gate.py --build <dir> --only heat_pill
+    python3 tests/scenario/run_gate.py --build <dir> --jobs 1
 
 Exit 0 when every arena that was meant to pass passed, 1 otherwise.
 """
 
 import argparse
+import atexit
 import os
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -63,6 +63,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 MAPS = os.path.join(HERE, "maps")
+BRAINS = os.path.join(ROOT, "tests", "brains")
 PRELUDE = os.path.join(HERE, "scenario_compat.lua")
 SCRIPT_MARK = "--@@SCRIPT@@"
 
@@ -79,6 +80,8 @@ DEFAULTS = {
 PER_TEST_TIMEOUT_S = 10 * 60
 GATE_RE = re.compile(r"^\s*--\s*GATE:\s*(.*)$")
 VERDICT_RE = re.compile(r"^VERDICT\s+(PASS|FAIL)\s+(\S+)\s*(.*)$")
+PORT_RE = re.compile(r"listening on UDP port (\d+)")
+BIND_FAILED_RE = re.compile(r"bind\(\) failed on port (\d+)")
 
 
 def load_prelude():
@@ -141,75 +144,62 @@ def gate_options(name):
     return opts
 
 
-# ── Ports ────────────────────────────────────────────────────────────────
+# ── The test brains ───────────────────────────────────────────
 #
-# Every arena is its own private server and wants its own UDP port. They are
-# numbered off --port-base, one each, so two arenas of one run never ask for
-# the same one — and that was never the flake.
+# An arena names a scripted opponent's brain the way the drivers did, by path:
+# "../tests/brains/idle.lua". This host takes a NAME instead -- one directory
+# under a brains parent, holding init.lua -- and refuses a value with a
+# separator in it (scenario_lua.c scnResolveOpBrain). The prelude maps the
+# path to its stem; the stem then has to be findable, which is what this does.
 #
-# The flake is the REST of the machine. The default base sits inside Windows'
-# dynamic port range (49152-65535), so any program on the box may be holding
-# one of these for an outgoing socket at the moment an arena starts; a gate
-# run started while the last one is still shutting down can land on a port its
-# own server has not let go of yet. The server binds EXCLUSIVELY on purpose
-# (transport_udp_server.c asks for SO_EXCLUSIVEADDRUSE, so two hosts on one
-# machine cannot silently share a port and dispatch each other's packets), so
-# a port that is taken is not shared: the bind fails, the server exits, and
-# the arena reports "no verdict" with "[UDP SERVER] bind() failed" in its log.
+# brainListParents (brain_list.c) searches "brains" and "Brains" against the
+# working directory before it looks anywhere else, and every arena's server
+# runs with cwd=<build>, so <build>/Brains/<stem>/init.lua is on the path it
+# already searches.
 #
-# Two things are done about it here, and nothing is done to the server.
-# First, a port is probed the way the server will bind it and handed out only
-# if it is free, and it is handed out at the moment the arena STARTS rather
-# than when the run is planned, so the gap between the check and the bind is
-# as small as it can be made. Second, an arena that still lost the race is
-# started again on another port — see the retry in main(). The probe alone
-# cannot be enough: nothing can stop another process taking the port in
-# between, which is exactly what the one observed failure looked like.
-
-PORT_RETRIES = 2        # how many times one arena may be given another port
-PORT_SEARCH_MAX = 500   # ports probed before the run gives up
+# <build>/Brains is not ours. CMake stages GoalHunter_1.7 into it beside the
+# binary, so only the stems staged here are removed at the end, and the
+# directory itself only when this run made it. Copies, not links: this runs on
+# Windows too.
 
 
-def port_is_free(port):
-    """True when a server could bind `port` right now, asked exclusively."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
-            try:
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-            except OSError:
-                pass
-        s.bind(("", port))
-        return True
-    except OSError:
-        return False
-    finally:
-        s.close()
+def stage_brains(build_dir):
+    """Every tests/brains/*.lua as <build>/Brains/<stem>/init.lua."""
+    parent = os.path.join(build_dir, "Brains")
+    made_parent = not os.path.isdir(parent)
+    if made_parent:
+        os.makedirs(parent)
+    staged = []
+    for f in sorted(os.listdir(BRAINS)):
+        if not f.endswith(".lua"):
+            continue
+        stem = f[: -len(".lua")]
+        if stem == "GoalHunter_1.7":       # never ours to write or remove
+            continue
+        d = os.path.join(parent, stem)
+        mine = not os.path.isdir(d)
+        if mine:
+            os.makedirs(d)
+            staged.append(d)
+        shutil.copy(os.path.join(BRAINS, f), os.path.join(d, "init.lua"))
+    return parent, made_parent, staged
 
 
-class PortPool(object):
-    """Ports from --port-base upward, skipping the ones already taken."""
-
-    def __init__(self, base):
-        self.next = base
-
-    def take(self):
-        for _ in range(PORT_SEARCH_MAX):
-            p = self.next
-            self.next += 1
-            if p > 65000:
-                sys.exit("ran off the top of the port range from --port-base")
-            if port_is_free(p):
-                return p
-        sys.exit("no free UDP port in %d from %d upward"
-                 % (PORT_SEARCH_MAX, self.next - PORT_SEARCH_MAX))
+def unstage_brains(parent, made_parent, staged):
+    """Remove what stage_brains made, and nothing else."""
+    for d in staged:
+        shutil.rmtree(d, ignore_errors=True)
+    if made_parent:
+        try:
+            os.rmdir(parent)
+        except OSError:
+            pass               # something else arrived in it; leave it alone
 
 
 class Job(object):
     def __init__(self, name, opts, head, tail, log_dir):
         self.name = name
-        self.port = None
-        self.tries = 0
+        self.port = None         # read off the server's own listening line
         self.bind_failed = False
         self.opts = opts
         self.head = head
@@ -249,7 +239,7 @@ class Job(object):
         o = self.opts
         cmd = [ds,
                "-map", os.path.join(self.work, self.name + ".map"),
-               "-port", str(self.port),
+               "-port", "0",
                "-nolobby",
                "-gametype", o["gametype"],
                "-bots", str(o["bots"]),
@@ -269,10 +259,8 @@ class Job(object):
             cmd += ["-mines", str(o["mines"])]
         return cmd
 
-    def start(self, ds, build_dir, ports):
+    def start(self, ds, build_dir):
         self.prepare()
-        self.port = ports.take()
-        self.tries += 1
         self.bind_failed = False
         self.log = open(self.log_path, "w", encoding="utf-8", errors="replace")
         cmd = self.command(ds)
@@ -311,13 +299,21 @@ class Job(object):
                 # the reason has to come off this line instead.
                 if "bind() failed on port" in s:
                     self.bind_failed = True
+                    m = BIND_FAILED_RE.search(s)
+                    if m:
+                        self.port = int(m.group(1))
+                m = PORT_RE.search(s)
+                if m:
+                    self.port = int(m.group(1))
                 m = VERDICT_RE.match(s)
                 if m:
                     self.verdict, _, self.why = m.group(1), m.group(2), m.group(3)
                     return
         self.verdict = None
         if self.bind_failed:
-            self.why = "the server could not bind port %d" % self.port
+            self.why = ("the server could not bind port %d" % self.port
+                        if self.port is not None
+                        else "the server could not bind its port")
         else:
             self.why = "no verdict (rc=%s)" % self.rc
 
@@ -342,9 +338,6 @@ def main():
     ap.add_argument("--skip", nargs="*", default=[])
     ap.add_argument("--jobs", default="auto")
     ap.add_argument("--build", default="build-own")
-    ap.add_argument("--port-base", type=int, default=50300,
-                    help="where the search for each arena's own UDP port "
-                         "starts; ports already taken are stepped over")
     ap.add_argument("--run-skipped", action="store_true",
                     help="run the arenas marked skip as well")
     args = ap.parse_args()
@@ -364,8 +357,11 @@ def main():
     if not os.path.isdir(log_dir):
         os.makedirs(log_dir)
 
+    # Staged before the first arena starts and taken away however the run
+    # ends, including a failing one.
+    atexit.register(unstage_brains, *stage_brains(build_dir))
+
     pending, skipped, expected = [], [], {}
-    ports = PortPool(args.port_base)
     for name in arena_names(args.only, args.skip):
         opts = gate_options(name)
         if opts.get("skip") and not args.run_skipped:
@@ -388,19 +384,13 @@ def main():
             if not j.poll():
                 continue
             running.remove(j)
-            # A server that never got its port did not play the arena, so
-            # this says nothing about the arena. Put it back for another
-            # port rather than reporting a failure the code did not cause.
-            if j.bind_failed and j.tries <= PORT_RETRIES:
-                print("  RETRY %-30s port %d was taken; another port"
-                      % (j.name, j.port))
-                sys.stdout.flush()
-                pending.insert(0, j)
-                continue
             done.append(j)
             expect = expected.get(j.name)
             if j.verdict == "PASS":
                 if expect and expect.startswith("fail"):
+                    # Red, like a FAIL, and said differently: the arena is
+                    # fine and the mark on it is not.
+                    failed.append(j.name)
                     print("  UPASS %-30s %6.1fs  (marked expect=fail -- "
                           "the mark is stale)" % (j.name, j.dt))
                 else:
@@ -419,10 +409,9 @@ def main():
 
         while pending and len(running) < jobs_max:
             j = pending.pop(0)
-            j.start(ds, build_dir, ports)
+            j.start(ds, build_dir)
             running.append(j)
-            print("  ....  %-30s port %d  running=%d"
-                  % (j.name, j.port, len(running)))
+            print("  ....  %-30s running=%d" % (j.name, len(running)))
             sys.stdout.flush()
 
         if running:
