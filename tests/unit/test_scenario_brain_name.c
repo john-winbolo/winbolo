@@ -860,3 +860,48 @@ int run_scenario_brain_name_mode_falls_back(void) {
     bnRemoveBrain();
     return 0;
 }
+
+/* ── 7. A mode on a team with no brain, asked with no sim ─────────── */
+
+/* The editor checks a script with no sim, which is the one case where the
+   fallback above has nothing to fall back to: the team named no brain of its
+   own and there is no server to give one. Those seats will run whatever brain
+   the server is configured with, so the mode and the level are the server's
+   question, and WinBoloDS -validate is where it gets asked.
+
+   Asked of no brain at all it resolved to no manifest, and the editor drew
+   "brain '' declares no modes" — the empty quotes being the tell — against a
+   file WinBoloDS takes. No brain is now no question.
+
+   The total is deliberately not asserted on. A template this small may raise
+   something else, and this case is about the absence of that one message
+   rather than about silence. */
+int run_scenario_brain_name_mode_no_brain(void) {
+    static const char *const kName = "scnbrain_nobrain.scenario.lua";
+    char              lua[640];
+    char              seen[1024];
+    ScnValidateResult r;
+    uint16_t          i;
+
+    /* The same team the other scripts here use, with the mode and the level
+       on it and the brain left off entirely. */
+    snprintf(lua, sizeof(lua),
+             "scenario = {\n"
+             "  name = \"Named\", api = 1,\n"
+             "  lobby = {\n"
+             "    teams = {\n"
+             "      { id = %d, bots = 1, max_bots = 2, fielded = false,\n"
+             "        mode = \"survival\", difficulty = \"hard\" },\n"
+             "    },\n"
+             "  },\n"
+             "}\n", BN_TEAM);
+
+    scenarioValidateSource(NULL, lua, strlen(lua), kName, NULL, &r);
+    bnList(&r, seen, sizeof(seen));
+    for (i = 0; i < r.count; i++) {
+        UT_ASSERT_MSG(strstr(r.issues[i].message, "declares no modes") == NULL,
+                      "a team that named no brain was checked against one "
+                      "anyway, with no sim to give the server's: %s", seen);
+    }
+    return 0;
+}

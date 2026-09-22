@@ -5969,6 +5969,7 @@ set(_unit_test_names
     scenario_brain_op_resolves
     scenario_brain_name_op_missing_refused
     scenario_brain_name_mode_falls_back
+    scenario_brain_name_mode_no_brain
     scenario_dir_lists_package
     scenario_dir_lists_loose_script
     scenario_dir_skips_junk
@@ -6064,6 +6065,7 @@ set(_unit_test_names
     editor_form_trigger_action_text
     editor_form_trigger_vocabulary
     editor_form_mod_hides_base_win
+    editor_form_kind_line_survives_full_list
     editor_pack_mod_round_trip
     editor_pack_map_round_trip
     editor_pack_twice_identical

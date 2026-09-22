@@ -85,6 +85,7 @@ static void meScenarioCheckModCalls(MEScenarioCheck *c, const char *text,
                                     size_t len,
                                     const ScenarioManifest *manifest) {
     size_t i;
+    size_t before;
 
     if (!meScnCheckIsMod(c, manifest) || text == NULL || len == 0) {
         return;
@@ -118,6 +119,7 @@ static void meScenarioCheckModCalls(MEScenarioCheck *c, const char *text,
             if (at + opLen < len && meScnNameByte(text[at + opLen])) {
                 continue;
             }
+            before = c->result.count;
             scnIssueAdd(&c->result, "kind",
                         "scenario: this looks like a call to %s, which "
                         "decides the round, and the file says it is a mod. A "
@@ -125,7 +127,10 @@ static void meScenarioCheckModCalls(MEScenarioCheck *c, const char *text,
                         "parsed, so a name in a comment or a string reads the "
                         "same as a call. The round itself raises on the call "
                         "if it is one.", op);
-            if (c->result.count > 0) {
+            /* Only where the add took. A full list drops the issue and leaves
+               the count where it was, and stamping on that count would put
+               this line number on whatever unrelated issue is last. */
+            if (c->result.count > before) {
                 c->result.issues[c->result.count - 1].line = line;
             }
             break;   /* one line per op is enough to say it */
@@ -196,6 +201,7 @@ static void meScenarioCheckModFns(MEScenarioCheck *c, const char *text,
     char        *copy;
     size_t       n;
     size_t       i;
+    size_t       before;
 
     if (!meScnCheckIsMod(c, manifest) || text == NULL || len == 0) {
         return;
@@ -239,12 +245,14 @@ static void meScenarioCheckModFns(MEScenarioCheck *c, const char *text,
         if (said) {
             continue;
         }
+        before = c->result.count;
         scnIssueAdd(&c->result, "kind",
                     "scenario: this file says it is a mod and looks like it "
                     "defines %s, so the round does not read it: a mod leaves "
                     "the win condition alone. A guess: the source is read as "
                     "text.", found[i].name);
-        if (c->result.count > 0) {
+        /* Only where the add took, for the reason the call pass above gives. */
+        if (c->result.count > before) {
             c->result.issues[c->result.count - 1].line = found[i].line;
         }
     }

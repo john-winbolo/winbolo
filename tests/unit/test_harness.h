@@ -3113,6 +3113,7 @@ int run_scenario_brain_name_rejects_path(void);
 int run_scenario_brain_op_resolves(void);
 int run_scenario_brain_name_op_missing_refused(void);
 int run_scenario_brain_name_mode_falls_back(void);
+int run_scenario_brain_name_mode_no_brain(void);
 
 /* The scenarios directory (test_scenario_dir.c): a .scenario package listed
  * from its manifest with no Lua run, a loose .lua listed through the
@@ -3367,6 +3368,7 @@ int run_editor_form_trigger_vocabulary(void);
  * to the name the runtime keeps, and the line the check writes for a mod that
  * defines it anyway. */
 int run_editor_form_mod_hides_base_win(void);
+int run_editor_form_kind_line_survives_full_list(void);
 
 /* The editor writing a scenario out (test_editor_scenario_pack.c): the chunk
  * on to the map and the standalone .scenario a mod is, both read back through

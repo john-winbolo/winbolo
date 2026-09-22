@@ -1535,3 +1535,135 @@ int run_editor_form_mod_hides_base_win(void) {
 
     return 0;
 }
+
+/* The line a trailing addition starts on, counted from the text in front of
+ * it: that text ends in a newline, so the lines it holds are the lines before
+ * this one. Both the scan and the search number from 1. */
+static int efLineAfter(const char *text) {
+    int         n = 1;
+    const char *p;
+
+    for (p = text; *p != '\0'; p++) {
+        if (*p == '\n') {
+            n++;
+        }
+    }
+    return n;
+}
+
+/* The furthest down the source any issue in the list stands. */
+static int efMaxIssueLine(const MEScenarioCheck *c) {
+    int    max = 0;
+    size_t i;
+
+    for (i = 0; i < (size_t)c->result.count; i++) {
+        if (c->result.issues[i].line > max) {
+            max = c->result.issues[i].line;
+        }
+    }
+    return max;
+}
+
+/* Both mod passes stamp the line they found on the issue they have just
+   added, and scnIssueAdd adds nothing once the list is full: it counts the
+   problem in dropped and returns, leaving count where it was. Stamping on
+   that count regardless wrote this pass's line number over whatever unrelated
+   issue happened to be last in the list.
+
+   The list is filled from the regions check, a region with no width being one
+   problem each and both arrays being 64 long. The thing that would draw one
+   more issue is put after the table's closing brace, so the line it stands on
+   is past every line a region can be attributed to, and the test is that no
+   issue in the list has reached that far down. A stamp on a full list is the
+   only way one could.
+
+   Which region issue ends up last is not asked, and must not be: a Lua table's
+   string keys come back in no stated order, so the list fills in whatever
+   order the state felt like. Each pass gets one run of its own for the same
+   reason — two runs are two states and nothing carries between them. */
+int run_editor_form_kind_line_survives_full_list(void) {
+    MEScenarioCheck check;
+    MEScenarioForm  f;
+    char            body[6144];
+    char            script[6400];
+    const char     *op;
+    const char     *held = NULL;
+    const size_t    rows = meScnFnCount();
+    size_t          row;
+    size_t          at;
+    int             trigger;
+    int             i;
+
+    op = scenarioLuaRoundDeciderAt(0);
+    UT_ASSERT(op != NULL && op[0] != '\0');
+    for (row = 0; row < rows; row++) {
+        if (meScnFnDecidesRound(row)) {
+            held = meScnFnName(row);
+            break;
+        }
+    }
+    UT_ASSERT(held != NULL && held[0] != '\0');
+
+    /* kind on the script's own table rather than only on the form, because
+       the passes read the parsed manifest wherever the script declared one
+       and fall back to the form's only when it did not. */
+    at = (size_t)snprintf(body, sizeof(body),
+                          "scenario = {\n"
+                          "  name = \"Named\", api = 1, kind = \"mod\",\n"
+                          "  regions = {\n");
+    for (i = 0; i < SCN_VALIDATE_ISSUES_MAX; i++) {
+        UT_ASSERT(at < sizeof(body));
+        at += (size_t)snprintf(body + at, sizeof(body) - at,
+                               "    r%02d = { x = 1, y = 1, w = 0, h = 4 },\n",
+                               i);
+    }
+    UT_ASSERT(at < sizeof(body));
+    at += (size_t)snprintf(body + at, sizeof(body) - at, "  },\n}\n");
+    UT_ASSERT(at < sizeof(body));
+
+    /* The first line past the table, which is where both triggers below go. */
+    trigger = efLineAfter(body);
+
+    meScenarioFormInit(&f);
+    meScenarioFormSetKind(&f, scnKindKeepsWinCondition);
+
+    /* The call pass, reached through a comment: that search reads the source
+       as text and says so, so a mention does as well as a call and the script
+       still runs no op. */
+    snprintf(script, sizeof(script), "%s-- game.%s\n", body, op);
+    meScenarioCheckInit(&check);
+    meScenarioCheckRun(&check, script, strlen(script), "mod.scenario.lua",
+                       &f.manifest);
+    UT_ASSERT_MSG(check.result.count == SCN_VALIDATE_ISSUES_MAX,
+                  "the fixture filled %d of %d, so nothing is dropped and the "
+                  "case proves nothing", (int)check.result.count,
+                  SCN_VALIDATE_ISSUES_MAX);
+    UT_ASSERT_MSG(check.result.dropped > 0, "a full list refused nothing");
+    UT_ASSERT_MSG(efKindCount(&check) == 0, "an issue went on to a full list");
+    UT_ASSERT_MSG(efMaxIssueLine(&check) < trigger,
+                  "an issue stands on line %d, at or past the line %d the "
+                  "call pass found its op on: the line was stamped on to a "
+                  "list that refused the issue it belonged to",
+                  efMaxIssueLine(&check), trigger);
+
+    /* And the definition pass, the other site, the same way. Defining the
+       function runs nothing; the round never calls it. */
+    snprintf(script, sizeof(script),
+             "%sfunction %s()\n    return false\nend\n", body, held);
+    meScenarioCheckInit(&check);
+    meScenarioCheckRun(&check, script, strlen(script), "mod.scenario.lua",
+                       &f.manifest);
+    UT_ASSERT_MSG(check.result.count == SCN_VALIDATE_ISSUES_MAX,
+                  "the fixture filled %d of %d, so nothing is dropped and the "
+                  "case proves nothing", (int)check.result.count,
+                  SCN_VALIDATE_ISSUES_MAX);
+    UT_ASSERT_MSG(check.result.dropped > 0, "a full list refused nothing");
+    UT_ASSERT_MSG(efKindCount(&check) == 0, "an issue went on to a full list");
+    UT_ASSERT_MSG(efMaxIssueLine(&check) < trigger,
+                  "an issue stands on line %d, at or past the line %d the "
+                  "definition pass found its function on: the line was "
+                  "stamped on to a list that refused the issue it belonged to",
+                  efMaxIssueLine(&check), trigger);
+
+    return 0;
+}

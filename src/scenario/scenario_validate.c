@@ -389,31 +389,42 @@ static void scnCheckLobby(const ServerSim *sim, const ScenarioManifest *m,
                               ? brainPath
                               : ((sim != NULL) ? serverSimGetBotBrainPath(sim)
                                                : NULL);
-            uint8_t mode  = 0;
-            uint8_t level = 0;
-            BotConfigKeyResult kr =
-                serverSimResolveBotConfigKeys(brain, t->mode, t->difficulty,
-                                              &mode, &level);
-            if (kr == BOT_CFG_KEYS_NO_MODE) {
-                snprintf(key, sizeof(key), "lobby.teams[%u].mode",
-                         (unsigned)(i + 1));
-                scnIssueAdd(out, key, "'%s' is no mode of brain '%s'",
-                            t->mode, (brain != NULL) ? brain : "");
-            } else if (kr == BOT_CFG_KEYS_NO_LEVEL) {
-                snprintf(key, sizeof(key), "lobby.teams[%u].difficulty",
-                         (unsigned)(i + 1));
-                scnIssueAdd(out, key,
-                            "'%s' is no difficulty of mode '%s' of brain '%s'",
-                            t->difficulty,
-                            (t->mode[0] != '\0') ? t->mode : "default",
-                            (brain != NULL) ? brain : "");
-            } else if (kr == BOT_CFG_KEYS_NO_MANIFEST) {
-                snprintf(key, sizeof(key), "lobby.teams[%u].mode",
-                         (unsigned)(i + 1));
-                scnIssueAdd(out, key,
-                            "brain '%s' declares no modes, so it has neither "
-                            "a mode nor a difficulty to name",
-                            (brain != NULL) ? brain : "");
+            /* And nothing to ask where there is no brain to ask it of: the
+               team named none and there is no sim here to give the server's,
+               which is the editor's case. The round will run these seats on
+               whatever brain the server is configured with, so the pair is
+               the server's question rather than the file's, and WinBoloDS
+               -validate is where it gets asked. Reporting it here would name
+               brain '' on a file WinBoloDS takes. */
+            if (brain != NULL) {
+                uint8_t mode  = 0;
+                uint8_t level = 0;
+                BotConfigKeyResult kr =
+                    serverSimResolveBotConfigKeys(brain, t->mode,
+                                                  t->difficulty, &mode,
+                                                  &level);
+                if (kr == BOT_CFG_KEYS_NO_MODE) {
+                    snprintf(key, sizeof(key), "lobby.teams[%u].mode",
+                             (unsigned)(i + 1));
+                    scnIssueAdd(out, key, "'%s' is no mode of brain '%s'",
+                                t->mode, brain);
+                } else if (kr == BOT_CFG_KEYS_NO_LEVEL) {
+                    snprintf(key, sizeof(key), "lobby.teams[%u].difficulty",
+                             (unsigned)(i + 1));
+                    scnIssueAdd(out, key,
+                                "'%s' is no difficulty of mode '%s' of brain "
+                                "'%s'",
+                                t->difficulty,
+                                (t->mode[0] != '\0') ? t->mode : "default",
+                                brain);
+                } else if (kr == BOT_CFG_KEYS_NO_MANIFEST) {
+                    snprintf(key, sizeof(key), "lobby.teams[%u].mode",
+                             (unsigned)(i + 1));
+                    scnIssueAdd(out, key,
+                                "brain '%s' declares no modes, so it has "
+                                "neither a mode nor a difficulty to name",
+                                brain);
+                }
             }
         }
 
