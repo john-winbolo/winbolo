@@ -2001,8 +2001,9 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
         ImGui::Spacing();
         /* effectiveHost goes down with it: the mods row holds a real setting
            and its checkbox is disabled on the same test as the two rows
-           above. */
-        lobbyRenderScenarioLine(cs, effectiveHost);
+           above. The scale goes down with it as well, for the kind chip the
+           row's mod names now wear. */
+        lobbyRenderScenarioLine(cs, effectiveHost, s);
     }
 
     ImGui::Columns(1);

@@ -55,7 +55,6 @@
 
 #include "imgui.h"
 #include "lobby_internal.h"
-#include "../../wb_theme.h"  /* g_theme — the Mod and Scenario tags' colours */
 #include "dialog_footer.h"  /* WBUI::DialogFooter — the Close row and its Esc binding */
 extern "C" {
 #include "client_sim.h"     /* the lobby scenario list accessors */
@@ -664,47 +663,13 @@ static void lobbyScenarioHeadNote(const char *text) {
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (slack - top));
 }
 
-/* The word that says which of the two a row is. */
-static const char *lobbyScenarioKindTagText(bool mod) {
-    return langGetText(mod ? STR_DLGLOBBY_SCENARIO_TAG_MOD
-                           : STR_DLGLOBBY_SCENARIO_TAG_SCENARIO);
-}
-
-/* What the tag beside a name will take, the spacing in front of it included,
-   so a row can hand the name what is left before either is drawn. */
-static float lobbyScenarioKindTagWidth(bool mod, float s) {
-    return ImGui::GetStyle().ItemInnerSpacing.x +
-           lobbyNameTagWidth(lobbyScenarioKindTagText(mod), s);
-}
-
-/* The row's kind, in the same square chip the player list wears its HOST and
-   BOT tags in, so the lobby has one kind of tag and not two.
-
-   Nothing to press. The tag used to be the row's way into the details dialog
-   — a rounded pill with an info icon inside it — and the row's name is that
-   way in now, drawn as a link the way every other script name in the lobby
-   is. A word that only says what a thing is has no business carrying a
-   cursor change and a tooltip of its own.
-
-   Centred on the item it follows rather than dropped at the line's top: the
-   chip is shorter than a line of text, and the name beside it is what the
-   eye reads the word against. The name is still the current item here, so
-   its rect is what the middle is taken from. */
-static void lobbyScenarioKindTag(bool mod, float s) {
-    const char *text = lobbyScenarioKindTagText(mod);
-    float       mid  = (ImGui::GetItemRectMin().y +
-                        ImGui::GetItemRectMax().y) * 0.5f;
-    float       h    = lobbyNameTagHeight(s);
-
-    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-    ImGui::SetCursorPosY(ImGui::GetCursorPosY() +
-                         (mid - h * 0.5f - ImGui::GetCursorScreenPos().y));
-    lobbyDrawNameTag(text,
-                     mod ? g_theme->modTagBg     : g_theme->scenarioTagBg,
-                     mod ? g_theme->modTagText   : g_theme->scenarioTagText,
-                     mod ? g_theme->modTagBorder : g_theme->scenarioTagBorder,
-                     s);
-}
+/* The Mod / Scenario chip every row below wears, and the width a row measures
+   its name against before drawing either, are lobbyScenarioKindTag and
+   lobbyScenarioKindTagWidth — declared in lobby_internal.h and defined in
+   lobby_assets.cpp beside the plain name tag they are drawn from. They were
+   written here, and moved when the map panel's script links started wearing
+   the same chip: two copies of one chip's padding and colours are two chips
+   waiting to stop matching each other. */
 
 /* One line of grey prose under a row, wrapped to the dialog's width. The same
  * grey the scenario line itself uses for a description, so the two read as

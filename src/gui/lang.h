@@ -2430,6 +2430,28 @@
  * server whose whole catalogue is in play. */
 #define STR_DLGLOBBY_SCENARIO_ALL_IN_ROUND  2612
 
+/* The header line's mods readout and its hover. The line says "Mods: Yes (3)"
+ * or "Mods: No", built from MODS_LBL and the plain STR_YES / STR_NO, so the
+ * answer is worded the way the smart-ping entry beside it words its own.
+ * HEAD_N is the count that follows the Yes, kept a string of its own because a
+ * language that brackets a number differently has to be able to say so.
+ *
+ * TIP_ON, TIP_OFF and TIP_NONE are the first line of the hover, one per case:
+ * the mods are running, the mods are picked but the setting is off, or there
+ * are none. Each is a sentence rather than a label, because the hover is the
+ * only place a joiner is told which of the three the round is in — the
+ * checkbox that decides it is in the host-only settings panel. The names
+ * follow, numbered, and need no string of their own.
+ *
+ * OFF_NOTE is the same fact on the map panel's Mods: line, which lists the
+ * names whether or not they run. It is short because it sits at the end of a
+ * line of names that may already have wrapped. */
+#define STR_DLGLOBBY_MODS_HEAD_N            2613
+#define STR_DLGLOBBY_MODS_TIP_ON            2614
+#define STR_DLGLOBBY_MODS_TIP_OFF           2615
+#define STR_DLGLOBBY_MODS_TIP_NONE          2616
+#define STR_DLGLOBBY_MODS_OFF_NOTE          2617
+
 /* The two-column chooser. OFFERED heads the catalogue on the left and ROUND
  * heads the round's own list on the right, so the two columns say what they
  * are rather than leaving a host to work it out from what is in them.

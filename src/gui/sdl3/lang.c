@@ -2563,6 +2563,11 @@ static const LangEntry langTable[] = {
     {2610, "Opens the chooser, where mods are added, removed and ordered."},
     {2611, "Load and run order: Higher up has priority."},
     {2612, "Everything this server offers is already in the round."},
+    {2613, "({number})"},
+    {2614, "These mods run this round, in this order:"},
+    {2615, "Mods are switched off. These are picked for the round, but will not run:"},
+    {2616, "No mods are loaded for this round."},
+    {2617, "(switched off, will not run)"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

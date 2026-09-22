@@ -801,6 +801,11 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             lobbyRenderSmartPingSummary(cs, s);
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_AI_LBL), lobbyAiTypeStr(clientSimGetLobbyAiType(cs)));
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_TIME_LBL), timeStr);
+            /* Own line again, and in the same place in the run as on the
+             * desktop: whether the round runs mods is a host-only setting
+             * everywhere else, so this is where a joiner or spectator is
+             * told, and the hover is where the names are. */
+            lobbyRenderModsSummary(cs, s);
             /* Own line, like the labels above it — the view policies are
              * the one part of the settings a joiner or spectator can see. */
             lobbyRenderVisibilitySummary(cs, s);
@@ -860,6 +865,13 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_AI_LBL), lobbyAiTypeStr(clientSimGetLobbyAiType(cs)));
             ImGui::SameLine(0, 16);
             ImGui::Text("%s %s", langGetText(STR_DLGLOBBY_TIME_LBL), timeStr);
+            /* Whether the round runs mods, on the same terms as the two
+             * entries either side of it: the Mods Enabled checkbox and the
+             * row that lists the names are both in the host-only settings
+             * column, so everybody else reads the answer here and gets the
+             * names off the hover. */
+            ImGui::SameLine(0, 16);
+            lobbyRenderModsSummary(cs, s);
             /* The view policies belong on this line because it is the one
              * place a joiner or spectator sees the host's settings — the
              * settings panel below is host-only. Before the connectivity
@@ -1306,8 +1318,10 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                      * the settings form's editable ones, which is what lets
                      * a host have both without reading the same thing twice:
                      * this panel says what the round is running, and the
-                     * Server Settings column is where they change it. */
-                    lobbyRenderScenarioInfoLines(cs);
+                     * Server Settings column is where they change it. The
+                     * Details button under them is the only way into the
+                     * chooser a non-host has, so it comes with them here. */
+                    lobbyRenderScenarioInfoLines(cs, s);
 
                     /* Skip-map vote is gated by LOBBY_LOCK_MAP — locking
                      * the map blocks both manual change and skip-vote. */
@@ -2217,8 +2231,10 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 /* Same as the Map tab above, and directly under the start
                  * count for the same reason: the scenario and the mods are
                  * the last of what is loaded, and everyone reads them here
-                 * whether or not they are the one who can change them. */
-                lobbyRenderScenarioInfoLines(cs);
+                 * whether or not they are the one who can change them, and
+                 * everyone reaches the chooser from the Details button the
+                 * lines end in. */
+                lobbyRenderScenarioInfoLines(cs, s);
 
                 lobbyRenderMapSkipVote(cs, spectator, hasTransport, s, false);
             }
@@ -2485,11 +2501,15 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
         lobbyChooseMapRenderWindow(cs, renderer, s, winW, winH);
 
         /* The scenario chooser, drawn here for the same reason and from the
-         * same live winW/winH. Opened by the Choose button on the scenario
-         * line, which sits inside the settings form's Server Settings column
-         * — the chooser is a host's button, so that is the only place it is
-         * opened from. Drawing the dialog from there would lose it the moment
-         * the player changed tab, or folded the settings header away. */
+         * same live winW/winH. Two buttons open it: the Details button on the
+         * mods row inside the settings form's Server Settings column, which
+         * only an effective host is shown, and the Details button under the
+         * map panel's script lines, which everybody is shown — the dialog
+         * draws itself read-only for a client that may not reorder the list.
+         * Both of those sit inside something that can stop being drawn, a tab
+         * on one layout and a collapsing header on the other, so drawing the
+         * dialog from either would lose it the moment the player changed tab
+         * or folded the settings header away. */
         lobbyScenarioChooserRenderWindow(cs, s, winW, winH);
 
 #if !BOLO_MOBILE
