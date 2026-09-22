@@ -270,8 +270,12 @@ bool serverSimResolveNewBotConfig(const ServerSim *sim, int team,
     if (lt != NULL) {
         uint8_t m = (uint8_t)mode;
         uint8_t l = (uint8_t)level;
-        if (serverSimResolveBotConfigKeys(brainPath, lt->mode, lt->difficulty,
-                                          &m, &l) == BOT_CFG_KEYS_OK) {
+        /* This brain's modes are already in hand from the load above, so the
+         * template's pair is resolved against them rather than reading
+         * modes.txt a second time for the same brain. */
+        if (serverSimResolveBotConfigKeysFromModes(&modes, lt->mode,
+                                                   lt->difficulty, &m, &l)
+                == BOT_CFG_KEYS_OK) {
             mode  = (int)m;
             level = (int)l;
         } else {
@@ -314,13 +318,17 @@ bool serverSimResolveNewBotConfig(const ServerSim *sim, int team,
  * The keys a script writes, turned into the two indices the lobby carries.
  * Everything this knows about a brain comes out of that brain's modes.txt,
  * so a key is right or wrong by the same list the host's dropdown is filled
- * from and the validator asks the same question the seating does. */
-BotConfigKeyResult serverSimResolveBotConfigKeys(const char *brainPath,
-                                                 const char *modeKey,
-                                                 const char *levelKey,
-                                                 uint8_t *ioMode,
-                                                 uint8_t *ioLevel) {
-    BrainModes modes;
+ * from and the validator asks the same question the seating does.
+ *
+ * The answer is written here, against modes already in hand, and the path
+ * form below is the wrapper that reads them off disk first. A caller with
+ * several seats on one brain loads once and calls this for each of them. */
+BotConfigKeyResult serverSimResolveBotConfigKeysFromModes(
+        const BrainModes *modes,
+        const char *modeKey,
+        const char *levelKey,
+        uint8_t *ioMode,
+        uint8_t *ioLevel) {
     int        mode;
     int        level;
     bool       modeAsked  = (modeKey  != NULL && modeKey[0]  != '\0');
@@ -328,32 +336,31 @@ BotConfigKeyResult serverSimResolveBotConfigKeys(const char *brainPath,
 
     if (ioMode == NULL || ioLevel == NULL) return BOT_CFG_KEYS_OK;
     if (!modeAsked && !levelAsked) return BOT_CFG_KEYS_OK;
-    if (brainPath == NULL || brainPath[0] == '\0' ||
-        !brainListLoadModesForPath(brainPath, &modes)) {
-        return BOT_CFG_KEYS_NO_MANIFEST;
-    }
+    /* No modes in hand is a brain with no manifest: it lists no mode to name
+       and no level either. */
+    if (modes == NULL) return BOT_CFG_KEYS_NO_MANIFEST;
 
     /* The pair as it stands, clamped into this brain's lists the way
        serverSimResolveNewBotConfig clamps it. */
     mode = (int)*ioMode;
-    if (mode >= modes.modeCount) mode = 0;
+    if (mode >= modes->modeCount) mode = 0;
     level = (int)*ioLevel;
 
     if (modeAsked) {
-        int mi = brainModesFindMode(&modes, modeKey);
+        int mi = brainModesFindMode(modes, modeKey);
         if (mi < 0) return BOT_CFG_KEYS_NO_MODE;
         /* A level index means something inside ONE mode's list, so a move to
            another mode drops the old index rather than carrying it across:
            the new mode's own default is where a seat lands unless the script
            names a level as well. */
-        if (mi != mode) level = modes.modes[mi].defaultLevel;
+        if (mi != mode) level = modes->modes[mi].defaultLevel;
         mode = mi;
     }
-    if (level >= modes.modes[mode].levelCount) {
-        level = modes.modes[mode].defaultLevel;
+    if (level >= modes->modes[mode].levelCount) {
+        level = modes->modes[mode].defaultLevel;
     }
     if (levelAsked) {
-        int li = brainModeFindLevel(&modes.modes[mode], levelKey);
+        int li = brainModeFindLevel(&modes->modes[mode], levelKey);
         if (li < 0) return BOT_CFG_KEYS_NO_LEVEL;
         level = li;
     }
@@ -361,6 +368,30 @@ BotConfigKeyResult serverSimResolveBotConfigKeys(const char *brainPath,
     *ioMode  = (uint8_t)mode;
     *ioLevel = (uint8_t)level;
     return BOT_CFG_KEYS_OK;
+}
+
+BotConfigKeyResult serverSimResolveBotConfigKeys(const char *brainPath,
+                                                 const char *modeKey,
+                                                 const char *levelKey,
+                                                 uint8_t *ioMode,
+                                                 uint8_t *ioLevel) {
+    BrainModes modes;
+
+    /* The two questions that are answered without looking at a brain at all
+       are asked here as well as in the variant, so a caller that names no key
+       still costs no disk read. */
+    if (ioMode == NULL || ioLevel == NULL) return BOT_CFG_KEYS_OK;
+    if ((modeKey  == NULL || modeKey[0]  == '\0') &&
+        (levelKey == NULL || levelKey[0] == '\0')) {
+        return BOT_CFG_KEYS_OK;
+    }
+    if (brainPath == NULL || brainPath[0] == '\0' ||
+        !brainListLoadModesForPath(brainPath, &modes)) {
+        return serverSimResolveBotConfigKeysFromModes(NULL, modeKey, levelKey,
+                                                      ioMode, ioLevel);
+    }
+    return serverSimResolveBotConfigKeysFromModes(&modes, modeKey, levelKey,
+                                                  ioMode, ioLevel);
 }
 
 void serverSimSetBotConfigQuiet(ServerSim *sim, BYTE slot,
