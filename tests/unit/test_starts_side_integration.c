@@ -15,6 +15,7 @@
  *        with the sides set before the players join and again after.
  *   (23) eight starts in four corners, a team that named no side kept off
  *        the side another team named, its last member included.
+ *   (24) naming a side in a two-team lobby names the other team's.
  */
 
 #include <stdbool.h>
@@ -509,6 +510,86 @@ int run_starts_side_unsided_team_kept_off_chosen_side(void) {
     serverSimStartGameInPlace(sim);
     UT_ASSERT(serverSimGetState(sim) == serverStateRunning);
     UT_ASSERT(check_unsided_stays_south(sim, 3, 7, "three teams") == 0);
+    serverSimDestroy(sim);
+    return 0;
+}
+
+/* (24) Naming a side in a two-team lobby names the other team's. Three
+ *      teams get nothing filled in, and a side a team already named is
+ *      never written over.
+ */
+int run_starts_side_two_team_lobby_mirrors(void) {
+    ServerSim *sim;
+    BYTE s;
+
+    /* Two teams: north on one gives south to the other. */
+    sim = make_eight_start_lobby();
+    UT_ASSERT(sim != NULL);
+    for (s = 0; s < 4; s++) {
+        char name[16];
+        snprintf(name, sizeof(name), "P%u", (unsigned)s);
+        serverSimAddPlayer(sim, s, name, false);
+        serverSimSetTeam(sim, s, (BYTE)(s < 2 ? 1 : 2));
+    }
+    serverSimSetTeamMeta(sim, 1, 0, 0, START_SIDE_N, NULL, 0);
+    UT_ASSERT_MSG(sim->teams[2].startSide == START_SIDE_S,
+                  "two teams: team 1 took north, team 2 has side %u not south",
+                  (unsigned)sim->teams[2].startSide);
+    /* East gives west, and the fill-in runs whichever team names first. */
+    serverSimSetTeamMeta(sim, 2, 0, 0, START_SIDE_ANY, NULL, 0);
+    serverSimSetTeamMeta(sim, 2, 0, 0, START_SIDE_E, NULL, 0);
+    UT_ASSERT_MSG(sim->teams[1].startSide == START_SIDE_N,
+                  "two teams: team 1 named north itself and must keep it, has %u",
+                  (unsigned)sim->teams[1].startSide);
+    serverSimDestroy(sim);
+
+    /* A side a team named itself is not written over. */
+    sim = make_eight_start_lobby();
+    UT_ASSERT(sim != NULL);
+    for (s = 0; s < 4; s++) {
+        char name[16];
+        snprintf(name, sizeof(name), "P%u", (unsigned)s);
+        serverSimAddPlayer(sim, s, name, false);
+        serverSimSetTeam(sim, s, (BYTE)(s < 2 ? 1 : 2));
+    }
+    serverSimSetTeamMeta(sim, 2, 0, 0, START_SIDE_E, NULL, 0);
+    serverSimSetTeamMeta(sim, 1, 0, 0, START_SIDE_N, NULL, 0);
+    UT_ASSERT_MSG(sim->teams[2].startSide == START_SIDE_E,
+                  "two teams: team 2 named east and must keep it, has %u",
+                  (unsigned)sim->teams[2].startSide);
+    serverSimDestroy(sim);
+
+    /* Three teams: nothing is filled in, because there is no answer to
+       give. The placement rules keep the unnamed teams off the north. */
+    sim = make_eight_start_lobby();
+    UT_ASSERT(sim != NULL);
+    for (s = 0; s < 6; s++) {
+        char name[16];
+        snprintf(name, sizeof(name), "P%u", (unsigned)s);
+        serverSimAddPlayer(sim, s, name, false);
+        serverSimSetTeam(sim, s, (BYTE)(s < 2 ? 1 : (s < 4 ? 2 : 3)));
+    }
+    serverSimSetTeamMeta(sim, 1, 0, 0, START_SIDE_N, NULL, 0);
+    UT_ASSERT_MSG(sim->teams[2].startSide == START_SIDE_ANY &&
+                  sim->teams[3].startSide == START_SIDE_ANY,
+                  "three teams: sides %u and %u were filled in, expected neither",
+                  (unsigned)sim->teams[2].startSide,
+                  (unsigned)sim->teams[3].startSide);
+    serverSimDestroy(sim);
+
+    /* A team row nobody is on does not count as the other team. */
+    sim = make_eight_start_lobby();
+    UT_ASSERT(sim != NULL);
+    for (s = 0; s < 2; s++) {
+        char name[16];
+        snprintf(name, sizeof(name), "P%u", (unsigned)s);
+        serverSimAddPlayer(sim, s, name, false);
+        serverSimSetTeam(sim, s, 1);
+    }
+    serverSimSetTeamMeta(sim, 1, 0, 0, START_SIDE_N, NULL, 0);
+    UT_ASSERT_MSG(sim->teams[2].startSide == START_SIDE_ANY,
+                  "one team: team 2 has nobody on it and was given side %u",
+                  (unsigned)sim->teams[2].startSide);
     serverSimDestroy(sim);
     return 0;
 }

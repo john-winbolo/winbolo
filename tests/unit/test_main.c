@@ -697,6 +697,7 @@ static const UnitTestEntry s_tests[] = {
     { "starts_side_region_sweep",                run_starts_side_region_sweep                },
     { "starts_side_unsided_kept_off_chosen_side",
                                                  run_starts_side_unsided_team_kept_off_chosen_side },
+    { "starts_side_two_team_lobby_mirrors",      run_starts_side_two_team_lobby_mirrors      },
     { "input_redundancy",                        run_input_redundancy                        },
     { "edge_send_predicate",                     run_edge_send_predicate                     },
     { "bases_closest_for_player",                run_bases_closest_for_player                },

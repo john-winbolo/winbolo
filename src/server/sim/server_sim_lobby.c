@@ -375,6 +375,36 @@ void serverSimPublishLobbyTeamMeta(ServerSim *sim, BYTE teamId) {
     serverSimPublishControl(sim, &evt);
 }
 
+/* The side facing this one. START_SIDE_ANY, and anything outside the
+ * START_SIDE_* range, has no opposite and comes back unchanged. */
+static uint8_t lobbyOppositeSide(uint8_t side) {
+    switch (side) {
+        case START_SIDE_N: return START_SIDE_S;
+        case START_SIDE_S: return START_SIDE_N;
+        case START_SIDE_E: return START_SIDE_W;
+        case START_SIDE_W: return START_SIDE_E;
+        default:           return START_SIDE_ANY;
+    }
+}
+
+/* The one other team holding players, or 0 when there is not exactly one.
+ * Counted by connected members rather than the in_use flag, so a team row
+ * that exists but nobody is on does not count as present — the same test
+ * the start rules make when they decide which sides are closed. */
+static BYTE lobbyLoneOtherTeamWithPlayers(const ServerSim *sim, BYTE teamId) {
+    BYTE found = 0;
+    BYTE k;
+    for (k = 0; k < MAX_TANKS; k++) {
+        BYTE t;
+        if (!sim->playerConnected[k]) continue;
+        t = sim->lobbyPlayers[k].teamNumber;
+        if (t == 0 || t >= MAX_TANKS || t == teamId) continue;
+        if (found != 0 && found != t) return 0;   /* more than one other team */
+        found = t;
+    }
+    return found;
+}
+
 void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
                            uint8_t color, uint8_t namingPool,
                            uint8_t startSide,
@@ -424,8 +454,33 @@ void serverSimSetTeamMeta(ServerSim *sim, BYTE teamId,
         memcpy(t->name, name, nameLen);
     }
     serverSimPublishLobbyTeamMeta(sim, teamId);
+    /* Naming a side in a two-team lobby names the other team's too. A
+     * player choosing north means south for the only other team, and
+     * saying so puts it on that team's row rather than leaving it to be
+     * inferred: an unnamed team is kept off the chosen sides either way,
+     * but nothing in the lobby says where it ends up.
+     *
+     * Only the two-team case, and only a team that has not named one of
+     * its own. With three teams there is no answer to give — two would
+     * share a side, or the third would take an east or west that many maps
+     * have no starts on — so they are left unnamed and the placement rules
+     * confine them. Clearing a side does not clear the other team's:
+     * nothing here can tell a side this filled in from one a player
+     * picked, and dropping a deliberate choice is the worse mistake. */
+    if (prevSide != startSide && startSide != START_SIDE_ANY) {
+        BYTE other = lobbyLoneOtherTeamWithPlayers(sim, teamId);
+        if (other != 0) {
+            TeamMetadata *ot = serverSimGetTeamMetaMut(sim, other);
+            if (ot != NULL && ot->startSide == START_SIDE_ANY) {
+                ot->in_use    = 1;
+                ot->startSide = lobbyOppositeSide(startSide);
+                serverSimPublishLobbyTeamMeta(sim, other);
+            }
+        }
+    }
     /* A side change moves every reservation, picks included, so the lobby
-     * ends up as if everyone had joined after the sides were set. */
+     * ends up as if everyone had joined after the sides were set. One
+     * re-pick covers both teams when the fill-in above ran. */
     if (prevSide != startSide) {
         serverSimRepickAllLobbyStarts(sim);
     }
