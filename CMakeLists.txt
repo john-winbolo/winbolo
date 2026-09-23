@@ -3887,6 +3887,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_identity_survives_reset.c
     tests/unit/test_wbn_session_rotation.c
     tests/unit/test_maprotate_rotation.c
+    tests/unit/test_autoclose_empty_server.c
     tests/unit/test_round_transition_tick.c
     tests/unit/test_reauth_result.c
     tests/unit/test_wbn_deferred_join.c
@@ -5509,6 +5510,10 @@ set(_unit_test_names
     maprotate_gameover_is_not_terminal
     maprotate_vote_return_is_not_terminal
     maprotate_defers_wbn_update_until_key_rotated
+    autoclose_boot_does_not_close_while_empty
+    autoclose_closes_after_last_player_leaves
+    autoclose_lobby_boot_waits_for_a_joiner
+    autoclose_failed_bot_add_leaves_check_armed
     game_vote_state_codec_surrender_passed
     game_vote_state_codec_back_to_lobby
     game_vote_state_decoder_rejects_short
