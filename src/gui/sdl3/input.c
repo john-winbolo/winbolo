@@ -34,6 +34,7 @@
 #include "../gamefront.h"
 #include "../tiles.h"
 #include "input.h"
+#include "turn_tap.h"
 #include "input_touch.h"
 #include "input_gamepad.h"
 #include "build_cursor.h"
@@ -97,6 +98,8 @@ static uint8_t lastGunsightAdj = 0;
 static bool mineKeyEventDown = FALSE;  /* set by SDL_EVENT_KEY_DOWN/UP */
 static bool mineKeyPhysicalDown = FALSE; /* tracks physical key state for edge detection */
 static bool mineKeyEventsActive = FALSE; /* TRUE once we've seen any event for this key */
+static TurnTapState leftTurnTap;
+static TurnTapState rightTurnTap;
 
 /*********************************************************
 *NAME:          appHasFocus
@@ -568,6 +571,8 @@ void inputResetHeldKeys(void) {
   mineKeyEventDown = FALSE;
   mineKeyPhysicalDown = FALSE;
   mineKeyEventsActive = FALSE;
+  turnTapReset(&leftTurnTap);
+  turnTapReset(&rightTurnTap);
   /* SDL_ResetKeyboard above has already put every key up, so nothing is left
      to swallow — and a key still marked here would otherwise stay dead until
      it was pressed and released again. */
@@ -618,6 +623,8 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
   buildSelect curSelect;
 
   if (isMenu == TRUE || sdl3ImguiWantsKeyboard() || !appHasFocus()) {
+    turnTapReset(&leftTurnTap);
+    turnTapReset(&rightTurnTap);
     inputPushToTalkPoll(setKeys, FALSE);
     muteMicPoll(setKeys, FALSE);
     return TNONE;
@@ -627,21 +634,23 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
 
   tb = TNONE;
 
-  if (KEY_DOWN(setKeys->kiForward) && KEY_DOWN(setKeys->kiRight)) {
+  bool turnLeft = turnTapRead(&leftTurnTap, KEY_DOWN(setKeys->kiLeft));
+  bool turnRight = turnTapRead(&rightTurnTap, KEY_DOWN(setKeys->kiRight));
+  if (KEY_DOWN(setKeys->kiForward) && turnRight) {
     tb = TRIGHTACCEL;
-  } else if (KEY_DOWN(setKeys->kiForward) && KEY_DOWN(setKeys->kiLeft)) {
+  } else if (KEY_DOWN(setKeys->kiForward) && turnLeft) {
     tb = TLEFTACCEL;
-  } else if (KEY_DOWN(setKeys->kiBackward) && KEY_DOWN(setKeys->kiLeft)) {
+  } else if (KEY_DOWN(setKeys->kiBackward) && turnLeft) {
     tb = TLEFTDECEL;
-  } else if (KEY_DOWN(setKeys->kiBackward) && KEY_DOWN(setKeys->kiRight)) {
+  } else if (KEY_DOWN(setKeys->kiBackward) && turnRight) {
     tb = TRIGHTDECEL;
   } else if (KEY_DOWN(setKeys->kiForward)) {
     tb = TACCEL;
   } else if (KEY_DOWN(setKeys->kiBackward)) {
     tb = TDECEL;
-  } else if (KEY_DOWN(setKeys->kiLeft)) {
+  } else if (turnLeft) {
     tb = TLEFT;
-  } else if (KEY_DOWN(setKeys->kiRight)) {
+  } else if (turnRight) {
     tb = TRIGHT;
   }
 
@@ -1003,8 +1012,19 @@ bool inputIsMineKeyPressed(keyItems *setKeys, bool isMenu) {
 *  setKeys  - Structure that holds the key bindings
 *  scancode - SDL_Scancode of the key
 *  newState - true if pressed, false if released
+*  allowTurn - true while a running game can accept turn taps
 *********************************************************/
-void inputButtonInput(keyItems *setKeys, SDL_Scancode scancode, bool newState) {
+void inputButtonInput(keyItems *setKeys, SDL_Scancode scancode, bool newState,
+                      bool allowTurn) {
+  bool acceptTurn = allowTurn && scancode > 0 && scancode < SDL_SCANCODE_COUNT &&
+                    !swallowedKeys[scancode] && appHasFocus() &&
+                    !sdl3ImguiWantsKeyboard();
+  if ((int)scancode == setKeys->kiLeft) {
+    turnTapEvent(&leftTurnTap, newState, acceptTurn);
+  }
+  if ((int)scancode == setKeys->kiRight) {
+    turnTapEvent(&rightTurnTap, newState, acceptTurn);
+  }
   if ((int)scancode == setKeys->kiLayMine) {
     /* Edge detection: only set mineKeyEventDown on a fresh press,
      * not on auto-repeat KEY_DOWN events */

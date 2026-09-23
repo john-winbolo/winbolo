@@ -2210,6 +2210,36 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
   tankNearMines(sim, bmx, bmy, ang);
 }
 
+/* A new press must cross a gunsight pixel boundary. Search in the normal
+ * fine-turn increments, so we add only the smallest nudge that is visible
+ * at this range and heading. This runs in shared simulation code: server,
+ * prediction and replay must choose the same angle.
+ * Keep unusual scenario rules bounded; a zero-rate or destroyed tank
+ * must not acquire the ability to turn from this helper. */
+static TURNTYPE tankVisibleTurn(GameSim *sim, tank *value, TURNTYPE step,
+                                bool left) {
+  BYTE mx, my, px, py;
+  int i;
+  if (step <= 0 || (*value)->destroyed) return step;
+  tankGetGunsightAt(sim, value, (*value)->x, (*value)->y, (*value)->angle,
+                   &mx, &my, &px, &py);
+  for (i = 1; i <= 128; i++) {
+    BYTE nextMX, nextMY, nextPX, nextPY;
+    TURNTYPE amount = step * i;
+    TURNTYPE angle;
+    if (amount > 16) break;
+    angle = (*value)->angle + (left ? -amount : amount);
+    if (angle < 0) angle += BRADIANS_MAX;
+    if (angle > BRADIANS_MAX) angle -= BRADIANS_MAX;
+    tankGetGunsightAt(sim, value, (*value)->x, (*value)->y, angle,
+                     &nextMX, &nextMY, &nextPX, &nextPY);
+    if (nextMX != mx || nextMY != my || nextPX != px || nextPY != py) {
+      return amount;
+    }
+  }
+  return step;
+}
+
 /*********************************************************
 *NAME:          tankTurn
 *AUTHOR:        John Morrison
@@ -2242,6 +2272,9 @@ void tankTurn(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb) {
     if ((*value)->firstLeft < 6) {
       (*value)->firstLeft++;
       turnAmount /= 8;
+      if ((*value)->firstLeft == 1) {
+        turnAmount = tankVisibleTurn(sim, value, turnAmount, TRUE);
+      }
     }
     (*value)->angle -= turnAmount;
     if ((*value)->angle < 0) {
@@ -2256,6 +2289,9 @@ void tankTurn(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb) {
     if ((*value)->firstRight < 6) {
       (*value)->firstRight++;
       turnAmount /= 8;
+      if ((*value)->firstRight == 1) {
+        turnAmount = tankVisibleTurn(sim, value, turnAmount, FALSE);
+      }
     }
     (*value)->angle += turnAmount;
     if ((*value)->angle > BRADIANS_MAX) {

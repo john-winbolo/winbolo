@@ -7031,12 +7031,13 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             continue;
         }
 
-        /* Forward key events to input system for event-driven mine key tracking.
+        /* Forward key events for mine tracking and short turn-tap capture.
          * Must happen before the ImGui swallow so key-up events are never lost. */
         if (ev.type == SDL_EVENT_KEY_DOWN || ev.type == SDL_EVENT_KEY_UP) {
             keyItems ki;
             windowGetKeys(&ki);
-            inputButtonInput(&ki, ev.key.scancode, (ev.type == SDL_EVENT_KEY_DOWN));
+            inputButtonInput(&ki, ev.key.scancode, (ev.type == SDL_EVENT_KEY_DOWN),
+                             cs != nullptr && clientSimIsRunning(cs) && !luaBrainIsRunning());
         }
 
         /* Gamepad capture for the Key Setup modal — intercept button-down
