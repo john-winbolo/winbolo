@@ -2466,12 +2466,6 @@
 #define STR_SCNPANEL_OPACITY_LINE1          2620
 #define STR_SCNPANEL_OPACITY_LINE2          2621
 
-/* The map panel's warning under the scenario and mods lines, shown only when
- * the server was started with -allow-unsafe-scripts. A sentence rather than a
- * tag, because it is the one place a joiner is told that the scripts they are
- * about to play under are not held to the sandbox. */
-#define STR_DLGLOBBY_SCENARIO_UNSAFE        2622
-
 /* The two-column chooser. OFFERED heads the catalogue on the left and ROUND
  * heads the round's own list on the right, so the two columns say what they
  * are rather than leaving a host to work it out from what is in them.
@@ -2834,6 +2828,12 @@
  * Its own id rather than STR_DLGLOBBY_RULES_COL_SCENARIO, which the host's
  * Rules popup still uses, because the dialog shows mods too. */
 #define STR_DLGLOBBY_DETAILS_COL_NEW_VALUE       2632
+
+/* The map panel's warning under the scenario and mods lines, shown only when
+ * the server was started with -allow-unsafe-scripts. A sentence rather than a
+ * tag, because it is the one place a joiner is told that the scripts they are
+ * about to play under are not held to the sandbox. */
+#define STR_DLGLOBBY_SCENARIO_UNSAFE             2633
 
 /* Rule descriptions */
 

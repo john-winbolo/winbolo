@@ -2396,6 +2396,7 @@ static const LangEntry langTable[] = {
     {2630, "Query"},
     {2631, "Trigger"},
     {2632, "New value"},
+    {2633, "This server runs scenario scripts with the full Lua library and no limits."},
     {2435, "Once before the round's first tick, after the scenario's rules are applied: where the map is arranged."},
     {2436, "The round's first running tick, where the tanks exist and the roster has settled."},
     {2437, "Once per frame, fifty times a second; the tick it is handed goes up by two each time."},
@@ -2583,7 +2584,6 @@ static const LangEntry langTable[] = {
     {2619, "Opacity"},
     {2620, "Fades what the panel draws."},
     {2621, "Empty parts of it stay clear."},
-    {2622, "This server runs scenario scripts with the full Lua library and no limits."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
