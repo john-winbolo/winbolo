@@ -106,6 +106,19 @@ scenario = {
         mode = "survival", difficulty = "hard" },
     },
   },
+
+  -- What each callback below does, in a line a player reads: the lobby's
+  -- details dialog lists these under "What this scenario implements:".
+  callbacks = {
+    spawn_loadout = "Attackers always spawn fully stocked; defenders get the normal tournament loadout.",
+    allow_base_win = "Holding every base does not win; the only win is surviving all 5 waves.",
+    allow_extra_teams = "Keeps the round to two teams: the defenders and the horde.",
+    announce = "Silences the newswire for a few seconds while each wave arrives and leaves.",
+    on_choose_start = "Defenders start in the centre puddle; each attacker starts out at sea on its own spoke.",
+    on_setup = "Gives the defenders the centre bases and pillboxes, builds the island's shallow rim and tree ring, and digs in defender bots.",
+    on_start = "Posts the opening \"dig in\" message and notes which seats the horde will use.",
+    on_tick = "Sends 5 waves of 10 attackers, 5 minutes each with 30 s breaks; lose all 6 centre bases and you lose, outlast wave 5 and you win.",
+  },
 }
 
 -- ---------------------------------------------------------------------

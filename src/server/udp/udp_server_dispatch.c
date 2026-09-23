@@ -82,6 +82,8 @@
 #include "server_sim_scenario.h"  /* serverSimScenarioListDir, ScnDirEntry —
                                    * the scenarios this server offers, read
                                    * through the lister registered on the sim */
+#include "scenario_details.h"     /* SCN_DETAILS_MAX — the largest details
+                                   * blob a DETAILS_REQ answers with */
 #include "client_sim_internal.h"  /* LOBBY_MAP_LIST_MAX cap shared with the wire */
 #include "../server_lifecycle.h"  /* serverInstanceRecordProbeReply */
 #include "../../common/md5.h"     /* md5Compute, md5ToHex */
@@ -1171,6 +1173,57 @@ static void handleLobbyMapPreviewReq(ServerSim *sim, uint8_t *buf, int len,
     free(mapBytes);
 }
 
+static void handleLobbyScenarioDetailsReq(ServerSim *sim, uint8_t *buf,
+                                          int len,
+                                          struct sockaddr_in *fromAddr) {
+    /* [header 8] [fileLen 1] [file N]. One script file's details, for the
+     * lobby's details dialog, streamed back over CHANNEL_BULK behind a
+     * BULK_KIND_SCENARIO_DETAILS stream header: the committed map's own
+     * script if the name is its, else the file of that name in the
+     * scenarios directory, else a not-found answer, so the client always
+     * has something to stop waiting on.
+     *
+     * A request that finds this client's bulk stream busy (a preview or a
+     * round log draining) is dropped rather than answered. The client asks
+     * one file at a time and asks again when no answer comes, so a drop
+     * costs one re-ask and a busy server is never made to hold a queue. */
+    int         clientIdx = serverFindClient(fromAddr);
+    int         rpos      = PACKET_HEADER_SIZE;
+    uint8_t     fileLen;
+    char        file[BULK_PATH_MAX + 1];
+    uint8_t    *blob;
+    int         got;
+    BulkStreamHeader sh;
+    static uint32_t s_detailsSeq = 0;
+
+    if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
+        len < PACKET_HEADER_SIZE + 1) return;
+    fileLen = buf[rpos++];
+    if (fileLen == 0 || rpos + fileLen > len) return;
+    memcpy(file, buf + rpos, fileLen);
+    file[fileLen] = '\0';
+    /* A name with a NUL inside it is not a name either list could hold. */
+    if (strlen(file) != fileLen) return;
+    if (bulkSenderBusy(&udpServer.bulkSend[clientIdx])) return;
+
+    blob = (uint8_t *)malloc(1 + SCN_DETAILS_MAX);
+    if (blob == NULL) return;
+    got = serverSimScenarioDetails(sim, file, blob + 1, SCN_DETAILS_MAX);
+    blob[0] = (got >= 0) ? BULK_SCN_DETAILS_FOUND
+                         : BULK_SCN_DETAILS_NOT_FOUND;
+    if (got < 0) got = 0;
+
+    memset(&sh, 0, sizeof(sh));
+    sh.kind      = BULK_KIND_SCENARIO_DETAILS;
+    sh.gen       = ++s_detailsSeq;
+    sh.totalSize = (uint32_t)(1 + got);
+    sh.pathLen   = fileLen;
+    memcpy(sh.path, file, (size_t)fileLen + 1);
+    (void)bulkSenderBegin(&udpServer.bulkSend[clientIdx], &sh, blob,
+                          sh.totalSize);
+    free(blob);   /* bulkSenderBegin copied it into its own buffer */
+}
+
 static void handleRoundLogReq(ServerSim *sim, uint8_t *buf, int len,
                               struct sockaddr_in *fromAddr) {
     /* [header 8] [reqSeq 4 BE]. Hands back the last completed round's
@@ -1398,6 +1451,9 @@ void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         case PACKET_LOBBY_MAP_PREVIEW_REQ:
             handleLobbyMapPreviewReq(sim, buf, len, fromAddr);
+            break;
+        case PACKET_LOBBY_SCENARIO_DETAILS_REQ:
+            handleLobbyScenarioDetailsReq(sim, buf, len, fromAddr);
             break;
         case PACKET_ROUND_LOG_REQ:
             handleRoundLogReq(sim, buf, len, fromAddr);

@@ -1307,6 +1307,42 @@ const uint8_t *clientSimGetLobbyMapPreviewBytes(const ClientSim *cs);
 uint32_t       clientSimGetLobbyMapPreviewLen(const ClientSim *cs);
 void           clientSimClearLobbyMapPreview(ClientSim *cs);
 
+/* One script file's details (scenario_details.h), fetched for the lobby's
+ * details dialog when it opens and kept per file name until the dialog
+ * forgets them.
+ *
+ * Want names a file the dialog needs. Asking again for a file already asked
+ * for, answered, or given up on does nothing, so the dialog can ask every
+ * frame. Over UDP the transport's tick sends the requests, one file at a
+ * time, and asks again when an answer does not come; a file nobody answers
+ * for after a few tries is given up on and reads NONE until Forget.
+ *
+ * Put is the same answer from a caller that read a server in this process
+ * itself, which has no transport to ask over: found false for a file the
+ * server does not know.
+ *
+ * Get answers what is known about a file. FOUND sets *bytes and *len, which
+ * is 0 bytes for a file that sets no rule and describes nothing; the bytes
+ * were checked whole when they came in and stay good until the next Want,
+ * Put or Forget. NONE is a file the server does not know, or one given up
+ * on. */
+typedef enum {
+    CLIENT_SCN_DETAILS_UNKNOWN = 0,  /* never asked for */
+    CLIENT_SCN_DETAILS_WAITING,      /* asked for, no answer yet */
+    CLIENT_SCN_DETAILS_FOUND,
+    CLIENT_SCN_DETAILS_NONE
+} ClientScnDetailsState;
+
+void clientSimLobbyScenarioDetailsWant(ClientSim *cs, const char *file);
+void clientSimLobbyScenarioDetailsPut(ClientSim *cs, const char *file,
+                                      bool found, const uint8_t *bytes,
+                                      size_t len);
+void clientSimLobbyScenarioDetailsForget(ClientSim *cs);
+ClientScnDetailsState clientSimGetLobbyScenarioDetails(const ClientSim *cs,
+                                                       const char *file,
+                                                       const uint8_t **bytes,
+                                                       size_t *len);
+
 /* Spectator feed drain — the session uses these to pull the captured seed and
  * the ordered forward records the bulk sink reassembled while connected as a
  * tankless spectator. The raw bytes are translated/fed to the decoder in a

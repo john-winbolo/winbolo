@@ -286,6 +286,26 @@ void serverSimSetScenarioLister(ServerSim *sim,
 int serverSimScenarioListDir(const ServerSim *sim, ScnDirEntry *out, int max);
 
 /*********************************************************
+ *NAME:          serverSimSetScenarioDetailsReader
+ *PURPOSE:
+ *  Registers the read of one directory file's details
+ *  (scenario_details.h) for serverSimScenarioDetails. A
+ *  callback for the reason the lister above is one, and
+ *  registered beside it. The reader writes the blob into
+ *  out and answers its length, or -1 for a file the
+ *  directory does not hold. dir is the sim's, handed over
+ *  per call as the lister's is.
+ *
+ *  NULL clears it, and with nothing registered only the
+ *  committed map's own script has details to give.
+ *********************************************************/
+void serverSimSetScenarioDetailsReader(ServerSim *sim,
+                                       int (*read)(void *ctx, const char *dir,
+                                                   const char *file,
+                                                   uint8_t *out, size_t cap),
+                                       void *ctx);
+
+/*********************************************************
  *NAME:          serverSimSetScenarioLobbyTemplate
  *PURPOSE:
  *  Hands the sim the lobby a scenario asks for. The sim
@@ -527,6 +547,23 @@ void serverSimSetMapScript(ServerSim *sim, const ScnDirEntry *entry);
  *  committed map brought no script.
  *********************************************************/
 const ScnDirEntry *serverSimGetMapScript(const ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimSetMapScriptDetails
+ *PURPOSE:
+ *  The details (scenario_details.h) of the row
+ *  serverSimSetMapScript just recorded: the rules the map's
+ *  own script sets and what its callbacks do. This is what
+ *  serverSimScenarioDetails answers for that script, which
+ *  is not in the scenarios directory and so has nowhere
+ *  else to be read from.
+ *
+ *  After serverSimSetMapScript, which forgets the last
+ *  row's details. Ignored when no row is recorded, and for
+ *  a blob longer than SCN_DETAILS_MAX.
+ *********************************************************/
+void serverSimSetMapScriptDetails(ServerSim *sim, const uint8_t *details,
+                                  size_t len);
 
 /*********************************************************
  *NAME:          serverSimGetLobbyScriptCount /

@@ -3225,6 +3225,25 @@ int run_scenario_dir_merges_shipped_mods(void);
 int run_scenario_dir_entry_roundtrip(void);
 int run_scenario_dir_chunk_not_in_flight(void);
 
+/* A script's details (test_scenario_callbacks.c): the manifest's callbacks
+ * block kept, cut and warned about at load, the rules and callbacks packed
+ * into one blob per file, fetched by a client one file at a time over the
+ * loopback transport (a directory mod, the Survival and Soccer maps' own
+ * scripts, a file nobody has, a request dropped and asked again, a server
+ * that never answers), and which of two mods wins a rule both set in either
+ * list order. */
+int run_scenario_callbacks_manifest(void);
+int run_scenario_callbacks_over_cap(void);
+int run_scenario_callbacks_json(void);
+int run_scenario_details_blob(void);
+int run_scenario_details_fetch_dir_mod(void);
+int run_scenario_details_fetch_survival(void);
+int run_scenario_details_fetch_soccer(void);
+int run_scenario_details_fetch_not_found(void);
+int run_scenario_details_fetch_retry(void);
+int run_scenario_details_fetch_give_up(void);
+int run_scenario_details_override_order(void);
+
 /* The three directories a mod can come from (test_scenario_mod_dirs.c): the
  * one the host was given, the player's own under SDL_GetPrefPath and the
  * mods that ship beside the executable, merged into one listing with the

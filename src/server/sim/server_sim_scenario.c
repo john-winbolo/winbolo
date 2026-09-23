@@ -4216,6 +4216,16 @@ void serverSimSetScenarioLister(ServerSim *sim,
     sim->scenarioListerCtx = ctx;
 }
 
+void serverSimSetScenarioDetailsReader(ServerSim *sim,
+                                       int (*read)(void *ctx, const char *dir,
+                                                   const char *file,
+                                                   uint8_t *out, size_t cap),
+                                       void *ctx) {
+    if (sim == NULL) return;
+    sim->scenarioDetailsReader = read;
+    sim->scenarioDetailsReaderCtx = ctx;
+}
+
 int serverSimScenarioListDir(const ServerSim *sim, ScnDirEntry *out, int max) {
     if (sim == NULL || out == NULL || max <= 0) {
         return 0;

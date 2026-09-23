@@ -81,6 +81,7 @@
     X(PACKET_LOBBY_RELOAD_SCENARIO, "LOBBY_RELOAD_SCENARIO") \
     X(PACKET_LOBBY_SCENARIO_LIST_REQ, "LOBBY_SCENARIO_LIST_REQ") \
     X(PACKET_LOBBY_SCENARIO_LIST_RSP, "LOBBY_SCENARIO_LIST_RSP") \
+    X(PACKET_LOBBY_SCENARIO_DETAILS_REQ, "LOBBY_SCENARIO_DETAILS_REQ") \
     X(PACKET_LOBBY_PREVIEW_COMMIT, "LOBBY_PREVIEW_COMMIT") \
     X(PACKET_LOBBY_PREVIEW_RANDOM, "LOBBY_PREVIEW_RANDOM") \
     X(PACKET_LOBBY_CLAIM_START, "LOBBY_CLAIM_START") \
@@ -152,7 +153,7 @@ int run_packet_type_names(void) {
         }
     }
 
-    /* 250 is not a defined PACKET_* (the ids in use top out at 225), so it
+    /* 250 is not a defined PACKET_* (the ids in use top out at 227), so it
      * resolves to the default case. */
     UT_ASSERT_MSG(strcmp(packetTypeName(250), "UNKNOWN") == 0,
                   "unmapped packet type should be UNKNOWN");

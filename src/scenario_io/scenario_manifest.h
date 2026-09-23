@@ -48,6 +48,7 @@
 #include "global.h"         /* MAX_TANKS */
 #include "types.h"          /* MAX_PILLS / MAX_BASES / MAX_STARTS */
 #include "scenario_table.h" /* ScnTable — a team's init block below */
+#include "scenario_callbacks.h" /* SCN_CALLBACK_NAME_LEN / _TEXT_LEN */
 
 /* Tags and regions, at the sizes the scenario table is specified with. A
  * tag names a pill, base or start; a region names a rectangle of map
@@ -309,6 +310,45 @@ typedef struct {
     ScnTrigAct  actions[SCN_TRIGGER_ACTIONS_MAX];
 } ScnTrigger;
 
+/* ── What each callback does ───────────────────────────────────────
+ *
+ * scenario.callbacks maps an engine callback the script uses to a sentence
+ * saying what it does in this script, for the lobby's details dialog:
+ *
+ *   callbacks = {
+ *     on_start       = "Sets base recharge to 250 ticks per player.",
+ *     on_player_join = "Works the base recharge out again.",
+ *   }
+ *
+ * A rules table says what a file sets; this says what it does while the
+ * round runs, which a table cannot — a mod that writes a rule from
+ * on_player_join depending on how many are playing has an empty rules block.
+ *
+ * Optional. A file without it loads as it always did. The Lua read checks
+ * the names against the function catalogue in src/scenario/scenario_lua.h
+ * and against what the chunk defined, and warns about the three ways they
+ * can disagree; the names that pass are kept in the catalogue's order, so
+ * the dialog lists them the same way whatever order the file wrote them in.
+ * manifest.json carries the block too, as an object of the same pairs, and
+ * that reader, which cannot see the catalogue, keeps them as written.
+ *
+ * SCN_CALLBACKS_MAX holds every function the catalogue has, which
+ * scenario_host.c asserts, so the count never truncates: a name is kept at
+ * most once and a name the catalogue lacks is not kept at all. What bounds a
+ * block is its packed size, SCN_CALLBACKS_BLOB_MAX in scenario_callbacks.h,
+ * because that is what has to fit the lobby's wire. */
+#define SCN_CALLBACKS_MAX 40
+
+typedef struct {
+    char name[SCN_CALLBACK_NAME_LEN];   /* the catalogue's, e.g. "on_start" */
+    char text[SCN_CALLBACK_TEXT_LEN];   /* the author's sentence */
+    /* No function by this name; a declared trigger's `when` is what defines
+       it. The details dialog's Type column says "Trigger" for it. The Lua
+       read knows; manifest.json does not say, so its reader sets this for a
+       name any trigger it declares hooks, function or no. */
+    bool byTrigger;
+} ScnManifestCallback;
+
 /* ── What kind of file this is ─────────────────────────────────────
  *
  * scenario.kind says whether the file may decide the win condition. The
@@ -378,6 +418,10 @@ typedef struct {
 
     uint8_t    numTriggers;
     ScnTrigger triggers[SCN_TRIGGERS_MAX];
+
+    /* What each callback does, in the catalogue's order. See above. */
+    uint8_t             numCallbacks;
+    ScnManifestCallback callbacks[SCN_CALLBACKS_MAX];
 } ScenarioManifest;
 
 /* Does this file leave the win condition alone? True only for one that
