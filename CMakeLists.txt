@@ -4032,6 +4032,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # holds keeps its owner while a held seat is fielded and taken off again,
     # with no full sync in the middle to cover a migration.
     tests/unit/test_loopback_scenario_seat.c
+    # A second player joining a lobby full of bots: the join replay's control
+    # burst against the control channel's window.
+    tests/unit/test_loopback_join_burst.c
     # The rules table over the wire: a mid-round change reaching a connected
     # client, a joiner arriving on the changed table, a server-only rule
     # publishing nothing, and a new table clamping what the client holds.
@@ -5358,6 +5361,11 @@ set(_unit_test_names
     viewtick_displayed_tick
     wire_corpus
     channel_mux
+    channel_mux_control_queues_past_window
+    channel_mux_control_backlog_delivers_in_order
+    channel_mux_control_backlog_full_refuses
+    channel_mux_game_channel_still_refuses_at_window
+    channel_mux_control_reset_clears_backlog
     spectator_ring
     spectator_ring_nolog
     spectator_replay
@@ -5642,6 +5650,8 @@ set(_unit_test_names
     scenario_entity_add_out_null
     loopback_entity_change
     loopback_scenario_seat_keeps_pills
+    loopback_join_lobby_burst
+    loopback_join_small_lobby
     pill_armour_scale_classic_cap
     pill_base_anger_radius
     pill_armour_scale_raised_cap

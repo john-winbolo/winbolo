@@ -2712,3 +2712,297 @@ int run_channel_mux(void) {
     }
     return 0;
 }
+
+/* ---- the control channel's backlog behind the window ----
+ *
+ * A joiner's lobby replay can put more control events on the channel in one
+ * tick than CHANNEL_CONTROL_WINDOW holds unacked. The control channel queues
+ * what the window cannot take and sends it as acks free room; it refuses a
+ * send only once that queue is full too. Every other reliable channel still
+ * refuses at its window. channelResetSend on the control channel drops the
+ * queue along with the unacked tail.
+ *
+ * These are separate cases rather than steps of run_channel_mux, so each one
+ * reports on its own. */
+
+#define BK_EXTRA   100   /* sends past the window                        */
+#define BK_MAX_LEN  20   /* longest message the backlog cases send        */
+
+/* Message i: its index in the first four bytes, then a length and fill that
+ * both follow from i, so a reordered, dropped, duplicated or altered message
+ * cannot pass for the one expected. */
+static uint16_t bkMake(uint32_t i, uint8_t *msg) {
+    uint16_t len = (uint16_t)(8 + (i % (BK_MAX_LEN - 8 + 1)));
+    uint16_t k;
+    putIdx(msg, i);
+    for (k = 4; k < len; k++) {
+        msg[k] = (uint8_t)(i * 31u + k);
+    }
+    return len;
+}
+
+static bool bkMatches(uint32_t i, const uint8_t *got, uint16_t gotLen) {
+    uint8_t want[BK_MAX_LEN];
+    uint16_t len = bkMake(i, want);
+    return gotLen == len && memcmp(got, want, len) == 0;
+}
+
+/* What the receiver popped, in order. */
+typedef struct {
+    uint32_t count;
+    uint32_t firstBad;     /* position of the first message out of place */
+    bool     anyBad;
+    uint32_t badIdx;       /* the index that message carried             */
+} BkRecv;
+
+/* Pump frames a -> b and acks b -> a on a clean link until `expect`
+ * messages have arrived (then a few ticks more, so a duplicate would show),
+ * or maxTicks pass. Each arrival is checked against bkMake(firstIdx + n). */
+static void bkPump(ChannelMux *a, ChannelMux *b, uint8_t ch, uint32_t firstIdx,
+                   uint32_t expect, int *tickIO, int maxTicks, BkRecv *r) {
+    uint8_t frame[MAXFRAME];
+    uint8_t out[CHANNEL_MAX_SEG];
+    uint16_t olen;
+    int tick = *tickIO;
+    int end = tick + maxTicks;
+    int tail = -1;
+
+    while (tick < end && (tail < 0 || tick < tail)) {
+        channelTick(a, (uint32_t)tick, LINK_RTT_MS);
+        channelTick(b, (uint32_t)tick, LINK_RTT_MS);
+        int la = channelBuildFrame(a, frame, FRAME_BUDGET);
+        channelRecvFrame(b, frame, la);
+        while (channelReceive(b, ch, out, &olen)) {
+            if (!r->anyBad && !bkMatches(firstIdx + r->count, out, olen)) {
+                r->anyBad   = true;
+                r->firstBad = r->count;
+                r->badIdx   = olen >= 4 ? getIdx(out) : 0xFFFFFFFFu;
+            }
+            r->count++;
+        }
+        int lb = channelBuildFrame(b, frame, FRAME_BUDGET);
+        channelRecvFrame(a, frame, lb);
+        tick++;
+        if (tail < 0 && r->count >= expect) {
+            tail = tick + 20;
+        }
+    }
+    *tickIO = tick;
+}
+
+/* Sends past the control window are taken, not refused. */
+int run_channel_mux_control_queues_past_window(void) {
+    ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
+    uint8_t msg[BK_MAX_LEN];
+    uint32_t total;
+    uint32_t i;
+
+    UT_ASSERT(a != NULL);
+    channelMuxInit(a);
+    total = CHANNEL_CONTROL_WINDOW + BK_EXTRA;
+    for (i = 0; i < total; i++) {
+        uint16_t len = bkMake(i, msg);
+        if (!channelSend(a, CHANNEL_CONTROL, msg, len)) {
+            free(a);
+            UT_FAIL("control send %u of %u was refused; the window is %d and "
+                    "sends past it should queue", (unsigned)i,
+                    (unsigned)total, CHANNEL_CONTROL_WINDOW);
+        }
+    }
+    free(a);
+    return 0;
+}
+
+/* What was queued past the window reaches the far side once acks come back:
+ * every message, once, in the order it was sent, byte for byte. */
+int run_channel_mux_control_backlog_delivers_in_order(void) {
+    ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
+    ChannelMux *b = (ChannelMux *)malloc(sizeof(*b));
+    uint8_t msg[BK_MAX_LEN];
+    uint32_t total = CHANNEL_CONTROL_WINDOW + BK_EXTRA;
+    uint32_t accepted = 0;
+    BkRecv r;
+    int tick = 0;
+    uint32_t i;
+
+    if (a == NULL || b == NULL) {
+        free(a);
+        free(b);
+        UT_FAIL("allocation failed");
+    }
+    channelMuxInit(a);
+    channelMuxInit(b);
+
+    /* All sent before any frame moves, as the join replay does. A refused
+       send is counted rather than failed on here, so the case reports what
+       the far side got. */
+    for (i = 0; i < total; i++) {
+        uint16_t len = bkMake(i, msg);
+        if (channelSend(a, CHANNEL_CONTROL, msg, len)) {
+            accepted++;
+        }
+    }
+
+    memset(&r, 0, sizeof(r));
+    bkPump(a, b, CHANNEL_CONTROL, 0, total, &tick, 5000, &r);
+    free(a);
+    free(b);
+
+    UT_ASSERT_MSG(r.count == total,
+                  "the receiver got %u messages of %u sent (%u accepted by "
+                  "channelSend)", (unsigned)r.count, (unsigned)total,
+                  (unsigned)accepted);
+    UT_ASSERT_MSG(!r.anyBad,
+                  "message %u in arrival order was not message %u as sent "
+                  "(it carried index %u)", (unsigned)r.firstBad,
+                  (unsigned)r.firstBad, (unsigned)r.badIdx);
+    return 0;
+}
+
+/* The queue behind the window is bounded: sends go on being taken past the
+ * window, and a send is refused once the queue is full. How deep the queue
+ * is belongs to the channel, so the case only asks that it is deeper than
+ * nothing and not endless. */
+int run_channel_mux_control_backlog_full_refuses(void) {
+    ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
+    uint8_t msg[16];
+    const uint32_t guard = 1u << 20;
+    uint32_t accepted = 0;
+
+    UT_ASSERT(a != NULL);
+    channelMuxInit(a);
+    memset(msg, 0x5A, sizeof(msg));
+    while (accepted < guard) {
+        putIdx(msg, accepted);
+        if (!channelSend(a, CHANNEL_CONTROL, msg, sizeof(msg))) {
+            break;
+        }
+        accepted++;
+    }
+    free(a);
+
+    UT_ASSERT_MSG(accepted > CHANNEL_CONTROL_WINDOW,
+                  "the first refused control send came after %u sends; the "
+                  "window is %d and the queue behind it should take more",
+                  (unsigned)accepted, CHANNEL_CONTROL_WINDOW);
+    UT_ASSERT_MSG(accepted < guard,
+                  "%u control sends were all taken with no acks; the queue "
+                  "behind the window has no bound", (unsigned)accepted);
+    return 0;
+}
+
+/* Only the control channel queues. The game channel still refuses the send
+ * past its window and leaves its state as it was. */
+int run_channel_mux_game_channel_still_refuses_at_window(void) {
+    ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
+    uint8_t msg[8];
+    uint32_t window;
+    uint32_t i;
+
+    UT_ASSERT(a != NULL);
+    channelMuxInit(a);
+    window = a->ch[CHANNEL_GAME].window;
+    for (i = 0; i < window; i++) {
+        memset(msg, 0, sizeof(msg));
+        putIdx(msg, i);
+        if (!channelSend(a, CHANNEL_GAME, msg, sizeof(msg))) {
+            free(a);
+            UT_FAIL("game send %u was refused inside the window of %u",
+                    (unsigned)i, (unsigned)window);
+        }
+    }
+    memset(msg, 0, sizeof(msg));
+    putIdx(msg, window);
+    if (channelSend(a, CHANNEL_GAME, msg, sizeof(msg))) {
+        free(a);
+        UT_FAIL("the game channel took a send past its window of %u",
+                (unsigned)window);
+    }
+    if (a->ch[CHANNEL_GAME].nextSeq != window ||
+        a->ch[CHANNEL_GAME].ackedSeq != 0) {
+        uint32_t next = a->ch[CHANNEL_GAME].nextSeq;
+        uint32_t acked = a->ch[CHANNEL_GAME].ackedSeq;
+        free(a);
+        UT_FAIL("the refused game send moved the channel: nextSeq %u "
+                "ackedSeq %u, expected %u and 0", (unsigned)next,
+                (unsigned)acked, (unsigned)window);
+    }
+    free(a);
+    return 0;
+}
+
+/* A send reset on the control channel drops the queue behind the window as
+ * well as the unacked tail. The receiver, lifted to the returned baseline as
+ * the game-start reset does, gets the one message sent after the reset and
+ * none of those queued before it. */
+int run_channel_mux_control_reset_clears_backlog(void) {
+    ChannelMux *a = (ChannelMux *)malloc(sizeof(*a));
+    ChannelMux *b = (ChannelMux *)malloc(sizeof(*b));
+    uint8_t msg[BK_MAX_LEN];
+    uint8_t strag[MAXFRAME];
+    uint8_t out[CHANNEL_MAX_SEG];
+    uint16_t olen;
+    uint32_t total = CHANNEL_CONTROL_WINDOW + BK_EXTRA;
+    const uint32_t fresh = 0xABCDu;
+    uint32_t baseline;
+    BkRecv r;
+    int tick = 0;
+    int sl;
+    uint32_t i;
+
+    if (a == NULL || b == NULL) {
+        free(a);
+        free(b);
+        UT_FAIL("allocation failed");
+    }
+    channelMuxInit(a);
+    channelMuxInit(b);
+
+    for (i = 0; i < total; i++) {
+        uint16_t len = bkMake(i, msg);
+        if (!channelSend(a, CHANNEL_CONTROL, msg, len)) {
+            free(a);
+            free(b);
+            UT_FAIL("control send %u of %u was refused before the reset; the "
+                    "window is %d and sends past it should queue",
+                    (unsigned)i, (unsigned)total, CHANNEL_CONTROL_WINDOW);
+        }
+    }
+
+    /* One frame of the old tail goes out and is held back: a straggler that
+       reaches the receiver only after the reset. */
+    channelTick(a, (uint32_t)tick, LINK_RTT_MS);
+    sl = channelBuildFrame(a, strag, FRAME_BUDGET);
+    tick++;
+
+    baseline = channelResetSend(a, CHANNEL_CONTROL);
+    channelResetExpected(b, CHANNEL_CONTROL, baseline);
+
+    channelRecvFrame(b, strag, sl);
+    if (channelReceive(b, CHANNEL_CONTROL, out, &olen)) {
+        free(a);
+        free(b);
+        UT_FAIL("a message sent before the reset was delivered after it");
+    }
+
+    uint16_t freshLen = bkMake(fresh, msg);
+    if (!channelSend(a, CHANNEL_CONTROL, msg, freshLen)) {
+        free(a);
+        free(b);
+        UT_FAIL("the first control send after the reset was refused");
+    }
+
+    memset(&r, 0, sizeof(r));
+    bkPump(a, b, CHANNEL_CONTROL, fresh, 1, &tick, 2000, &r);
+    free(a);
+    free(b);
+
+    UT_ASSERT_MSG(r.count == 1,
+                  "the receiver got %u messages after the reset, expected only "
+                  "the one sent after it", (unsigned)r.count);
+    UT_ASSERT_MSG(!r.anyBad,
+                  "the message delivered after the reset carried index %u, "
+                  "not the one sent after it (%u)", (unsigned)r.badIdx,
+                  (unsigned)fresh);
+    return 0;
+}
