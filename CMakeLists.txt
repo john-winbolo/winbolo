@@ -3626,6 +3626,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # script's print ends up, the memory cap it is refused at and the
     # instruction budget one call is cut off at.
     tests/unit/test_scenario_sandbox.c
+    # One hostile script per known way out of the sandbox, each taken through
+    # the real attach and tick and refused or switched off.
+    tests/unit/test_scenario_hostile.c
     # The bus events the host queues and drains: the subscriber, the
     # fixed queue and the bounded drain at the end of each tick.
     tests/unit/test_scenario_events.c
@@ -6005,6 +6008,21 @@ set(_unit_test_names
     scenario_sandbox_unsafe_lifts_the_budgets
     scenario_sandbox_unsafe_loads_bytecode
     scenario_sandbox_unsafe_reaches_the_lobby
+    scenario_hostile_endless_loop
+    scenario_hostile_memory_bomb
+    scenario_hostile_file_open
+    scenario_hostile_process_call
+    scenario_hostile_bytecode_chunk
+    scenario_hostile_debug_call
+    scenario_hostile_ffi_call
+    scenario_hostile_string_bomb
+    scenario_hostile_pattern_bomb
+    scenario_hostile_string_metatable_rewrite
+    scenario_hostile_op_flood
+    scenario_hostile_message_flood
+    scenario_hostile_hook_across_ticks
+    scenario_hostile_loop_behind_pcall
+    scenario_hostile_loop_behind_coroutine_resume
     scenario_events_queued_then_drained
     scenario_events_drain_reads_the_length_once
     scenario_events_queued_during_a_drain_waits

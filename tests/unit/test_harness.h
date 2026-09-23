@@ -3089,6 +3089,24 @@ int run_scenario_sandbox_unsafe_lifts_the_budgets(void);
 int run_scenario_sandbox_unsafe_loads_bytecode(void);
 int run_scenario_sandbox_unsafe_reaches_the_lobby(void);
 
+/* Hostile scripts (test_scenario_hostile.c): one case per known way out of
+ * the sandbox, each refused or switched off with the server still ticking. */
+int run_scenario_hostile_endless_loop(void);
+int run_scenario_hostile_memory_bomb(void);
+int run_scenario_hostile_file_open(void);
+int run_scenario_hostile_process_call(void);
+int run_scenario_hostile_bytecode_chunk(void);
+int run_scenario_hostile_debug_call(void);
+int run_scenario_hostile_ffi_call(void);
+int run_scenario_hostile_string_bomb(void);
+int run_scenario_hostile_pattern_bomb(void);
+int run_scenario_hostile_string_metatable_rewrite(void);
+int run_scenario_hostile_op_flood(void);
+int run_scenario_hostile_message_flood(void);
+int run_scenario_hostile_hook_across_ticks(void);
+int run_scenario_hostile_loop_behind_pcall(void);
+int run_scenario_hostile_loop_behind_coroutine_resume(void);
+
 /* The bus events (test_scenario_events.c): the subscriber that only
  * queues, the bounded drain at the end of each tick, and what a full
  * queue does with the event that finds no room. */
