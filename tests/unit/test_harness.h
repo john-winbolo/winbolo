@@ -3133,6 +3133,7 @@ int run_scenario_hostile_message_flood(void);
 int run_scenario_hostile_hook_across_ticks(void);
 int run_scenario_hostile_loop_behind_pcall(void);
 int run_scenario_hostile_loop_behind_coroutine_resume(void);
+int run_scenario_hostile_print_forged_line(void);
 
 /* The bus events (test_scenario_events.c): the subscriber that only
  * queues, the bounded drain at the end of each tick, and what a full

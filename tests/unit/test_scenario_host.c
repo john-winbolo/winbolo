@@ -3011,7 +3011,7 @@ int run_scenario_host_round_answers_its_own_start(void) {
     static const char *const kMap  = "scnhost_own_start.map";
     static const char *const kBody =
         "scenario = { name = \"Own Start\", api = 1 }\n"
-        "note(\"run\\n\")\n"
+        "note(\"run\")\n"
         "local pick = (game.num_players() == 0) and 1 or game.num_starts()\n"
         "function on_choose_start(p) return pick end\n";
     char          lua[2048];
@@ -3041,7 +3041,7 @@ int run_scenario_host_round_answers_its_own_start(void) {
     h = scenarioHostAttach(sim, kMap, err, sizeof(err));
     UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
     shRead(got, sizeof(got));
-    UT_ASSERT_MSG(strcmp(got, "run\n") == 0,
+    UT_ASSERT_MSG(strcmp(got, "run") == 0,
                   "the attach recorded '%s', expected one run of the chunk",
                   got);
 
@@ -3051,7 +3051,7 @@ int run_scenario_host_round_answers_its_own_start(void) {
 
     serverSimStartGame(sim);
     shRead(got, sizeof(got));
-    UT_ASSERT_MSG(strcmp(got, "run\nrun\n") == 0,
+    UT_ASSERT_MSG(strcmp(got, "runrun") == 0,
                   "the round recorded '%s', expected the chunk run twice — "
                   "once at the attach and once for the round", got);
 

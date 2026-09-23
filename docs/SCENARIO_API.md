@@ -110,6 +110,8 @@ console rather than to the host's stdout, which is how a script says
 something to the operator. It joins its arguments with tabs as stock `print`
 does, and cuts the finished line at 1024 bytes — a line longer than that is
 shortened rather than dropped, so an operator still sees what it was about.
+Control characters in printed text, newlines included, come out as spaces, so
+each `print` is one line. Tabs are kept.
 
 How many lines it will take is bounded twice: 64 from any one call — a hook,
 a timer or a policy answer — and 64 across everything a single tick's calls

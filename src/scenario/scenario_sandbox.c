@@ -58,7 +58,10 @@
  *  console is also what makes it worth counting: a console
  *  line reaches the operator's message log, which is opened
  *  and closed for each line written to it, so the lines one
- *  call and one tick may print are bounded here too.
+ *  call and one tick may print are bounded here too. And a
+ *  print is one console line: control characters in what a
+ *  script prints, newlines among them, reach the console as
+ *  spaces.
  *
  *  os.date is wrapped for a different reason: the format
  *  reaches the host's own strftime, and the C libraries this
@@ -768,7 +771,15 @@ static bool scnSandboxPrintTake(ScnSandboxState *s) {
  * The allowance is asked for before the line is built, so a script past its
  * bound is not paying for the concatenation of output nobody will see — and
  * so a __tostring metamethod, which is script code, is not run for it
- * either. */
+ * either.
+ *
+ * One print is one console line. A script must not be able to write a line
+ * that reads as the server's own, into the console and the operator's
+ * message log, nor send control codes to the operator's terminal, so every
+ * byte below 0x20 but the tab, and 0x7f, goes out as a space. The tab stays
+ * because it is what separates the arguments; bytes from 0x80 up stay so
+ * UTF-8 text is untouched. An unsafe state's print is this one too, and
+ * keeps to the same rule. */
 static int scnSandboxPrint(lua_State *L) {
     char   line[SCN_PRINT_LEN];
     size_t used = 0;
@@ -798,6 +809,12 @@ static int scnSandboxPrint(lua_State *L) {
         lua_pop(L, 1);                  /* what luaL_tolstring pushed */
     }
     line[used] = '\0';
+    for (i = 0; i < (int)used; i++) {
+        unsigned char c = (unsigned char)line[i];
+        if ((c < 0x20 && c != '\t') || c == 0x7f) {
+            line[i] = ' ';
+        }
+    }
     serverSimConsoleMessage(line);
     return 0;
 }

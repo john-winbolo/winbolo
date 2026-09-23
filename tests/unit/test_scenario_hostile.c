@@ -7,7 +7,9 @@
  * is refused (the host counts "<hook> raised: ...", or the funnel answers
  * SCN_OP_RATE, or the load is refused), or the script is switched off ("<name>
  * is off for the rest of the round"). Either way the case then runs the round
- * on and checks the tick counter moved and the round is still running.
+ * on and checks the tick counter moved and the round is still running. The
+ * forged-line case is the one that ends neither way: its print is taken, and
+ * what it checks is the one line that reaches the console.
  *
  * scenario_hostile_endless_loop
  *      — while true do end in a hook, stopped by the call's budget
@@ -41,6 +43,10 @@
  *      — an endless loop inside pcall, raised again rather than caught
  * scenario_hostile_loop_behind_coroutine_resume
  *      — and inside coroutine.resume
+ * scenario_hostile_print_forged_line
+ *      — a print holding a newline and an escape sequence, trying to write a
+ *        line that reads as the server's; it reaches the console as one line
+ *        with spaces where the control bytes were
  *
  * A library added to the sandbox's whitelist, or any function that can catch
  * an error, needs a case here beside these.
@@ -824,4 +830,74 @@ int run_scenario_hostile_loop_behind_coroutine_resume(void) {
                               "print(\"rcatcher caught \" .. tostring(ok))",
                               ""),
                   "rcatcher", "instruction budget", NULL);
+}
+
+/* ── 16. A print that forges a line ───────────────────────────────── */
+
+/* One print whose text holds a newline, a carriage return and an escape
+ * sequence, trying to write a second line that reads as the server's own and
+ * to colour the operator's terminal. print turns each control byte into a
+ * space, so the whole of it reaches the console as one line.
+ *
+ * The console here joins what it is handed with newlines, one per
+ * serverSimConsoleMessage, so a line of it never spans two messages: the line
+ * holding both "forge start" and "forged line" is one message holding both.
+ * Had the newline gone through, the two would sit on separate lines. */
+int run_scenario_hostile_print_forged_line(void) {
+    static const char *const kMap = "scnhostile_print_forged_line.map";
+    static const char *const kLua =
+        "scenario = { name = \"Forger\", api = 1 }\n"
+        "local calls = 0\n"
+        "function on_tick()\n"
+        "  calls = calls + 1\n"
+        "  if calls == 1 then\n"
+        "    print(\"forge start\\nscenario: forged line\\r\\27[31mred\\tend\")\n"
+        "  end\n"
+        "end\n";
+    ServerSim    *sim = NULL;
+    ScenarioHost *h   = NULL;
+    const char   *at;
+    const char   *start;
+    const char   *e;
+    size_t        len;
+    size_t        i;
+
+    UT_ASSERT(hfRun(kMap, kLua, HF_ONCE_TICKS, &sim, &h) == 0);
+
+    UT_ASSERT_MSG(hfCount("forge start") == 1,
+                  "%d console lines hold \"forge start\", expected the one "
+                  "print. The console holds:\n%s", hfCount("forge start"),
+                  hfLines);
+    UT_ASSERT_MSG(hfLinesWith("forge start", "forged line", "red") == 1 &&
+                  hfLinesWith("forge start", "end", NULL) == 1,
+                  "the printed text did not reach the console as one line. "
+                  "The console holds:\n%s", hfLines);
+    UT_ASSERT_MSG(strncmp(hfLines, "scenario: forged line", 21) != 0 &&
+                  hfCount("\nscenario: forged line") == 0,
+                  "a console line begins with the forged text. The console "
+                  "holds:\n%s", hfLines);
+
+    /* The line itself, from its start to the newline the capture put after
+       it. */
+    at    = strstr(hfLines, "forge start");
+    start = at;
+    while (start > hfLines && start[-1] != '\n') {
+        start--;
+    }
+    e   = strchr(at, '\n');
+    len = (e != NULL) ? (size_t)(e - start) : strlen(start);
+    for (i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)start[i];
+        UT_ASSERT_MSG((c >= 0x20 || c == '\t') && c != 0x7f,
+                      "byte %u of the printed line is 0x%02x, a control "
+                      "character that reached the console. The line is:\n%.*s",
+                      (unsigned)i, (unsigned)c, (int)len, start);
+    }
+    UT_ASSERT_MSG(hfHas(start, len, "red\tend"),
+                  "the tab between \"red\" and \"end\" did not survive. The "
+                  "line is:\n%.*s", (int)len, start);
+
+    UT_ASSERT(hfKeepsTicking(sim) == 0);
+    hfFinish(sim, h, kMap);
+    return 0;
 }

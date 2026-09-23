@@ -6039,6 +6039,7 @@ set(_unit_test_names
     scenario_hostile_hook_across_ticks
     scenario_hostile_loop_behind_pcall
     scenario_hostile_loop_behind_coroutine_resume
+    scenario_hostile_print_forged_line
     scenario_events_queued_then_drained
     scenario_events_drain_reads_the_length_once
     scenario_events_queued_during_a_drain_waits
