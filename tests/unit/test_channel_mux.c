@@ -552,26 +552,28 @@ static int t_overflow(void) {
         goto done;
     }
     channelMuxInit(a);
-    const uint32_t window = a->ch[CHANNEL_CONTROL].window;
+    const uint32_t window = a->ch[CHANNEL_GAME].window;
     uint32_t i;
     for (i = 0; i < window; i++) {
         uint8_t msg[8] = {0};
         putIdx(msg, i);
-        if (!channelSend(a, CHANNEL_CONTROL, msg, 8)) {
+        if (!channelSend(a, CHANNEL_GAME, msg, 8)) {
             goto done;
         }
     }
     /* Exceeding the window without acks is the defined false / disconnect
-     * signal — never a silent drop or buffer corruption. */
+     * signal — never a silent drop or buffer corruption. The game channel
+     * carries it; the control channel queues behind its window instead and
+     * refuses only once that backlog is full. */
     uint8_t msg[8] = {0};
     putIdx(msg, window);
-    if (channelSend(a, CHANNEL_CONTROL, msg, 8)) {
+    if (channelSend(a, CHANNEL_GAME, msg, 8)) {
         goto done;
     }
     if (checkSendInvariants(a, window)) {
         goto done; /* invariants must survive the rejected send */
     }
-    if (a->ch[CHANNEL_CONTROL].nextSeq != window) {
+    if (a->ch[CHANNEL_GAME].nextSeq != window) {
         goto done; /* the rejected send must not have advanced state */
     }
     rc = 0;

@@ -293,9 +293,10 @@ static void serverSpectatorDeliverControl(void *ctx, const ControlEvent *evt) {
         packU16(msg + 1, (uint16_t)bodyLen);
         if (!channelSend(&sp->channelMux, CHANNEL_CONTROL,
                          msg, (uint16_t)(3 + bodyLen))) {
-            /* Full window: drop and warn. Do NOT disconnect from inside the
-             * deliver callback — there is no deferred-removal path for
-             * spectators, and tearing the slot down here risks reentrancy. */
+            /* Full backlog behind the window: drop and warn. Do NOT disconnect
+             * from inside the deliver callback — there is no deferred-removal
+             * path for spectators, and tearing the slot down here risks
+             * reentrancy. */
             WB_LOG_WARN(WB_LOG_CAT_NET,
                         "spectator control channel overflow for slot %d, dropping event",
                         idx);
@@ -714,16 +715,17 @@ void serverDisconnectSpectator(ServerSim *sim, int s, bool graceful) {
  * spectator-owned storage at seek time (mirroring serverInitMapDownload's copy
  * of the compressed map); the bulk transfer then drains that copy across ticks. */
 
-/* CHANNEL_CONTROL is a 64-deep reliable window; a cold-start countdown that ran
- * for up to specDelayTicks at one send per tick would overflow it. Resend the
- * countdown status no more than once every this many ticks (~2/s at 50 tick/s). */
+/* CHANNEL_CONTROL is a 64-deep reliable window with a bounded backlog behind
+ * it; a cold-start countdown that ran for up to specDelayTicks at one send per
+ * tick would pile up behind it for no reason. Resend the countdown status no
+ * more than once every this many ticks (~2/s at 50 tick/s). */
 #define SPEC_COUNTDOWN_RESEND_TICKS 25u
 
 /* Arm/refresh a spectator's "spectating begins in X" countdown carrying
  * `remaining` ticks. Updates the state every tick (so a reader sees it track
- * toward zero) but only puts a SPEC_CTRL_COUNTDOWN on the 64-deep CHANNEL_CONTROL
- * window on first entry and then once per SPEC_COUNTDOWN_RESEND_TICKS, so a long
- * wait can't overflow it. Shared by the cutover gate (delayed view not yet at the
+ * toward zero) but only puts a SPEC_CTRL_COUNTDOWN on CHANNEL_CONTROL on first
+ * entry and then once per SPEC_COUNTDOWN_RESEND_TICKS, so a long wait can't
+ * fill its window and backlog. Shared by the cutover gate (delayed view not yet at the
  * game) and the cold-start path (ring not yet holding a full delay of history). */
 static void serverSpectatorArmCountdown(SpectatorConn *sp, uint32_t remaining) {
     bool firstEntry = !sp->inCountdown;

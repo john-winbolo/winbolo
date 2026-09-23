@@ -72,8 +72,10 @@ enum {
 #define CHANNEL_GAME_SEG        16
 #define CHANNEL_MAP_WINDOW     128  /* map events are also GameEvents          */
 #define CHANNEL_MAP_SEG         16
-#define CHANNEL_CONTROL_WINDOW 64   /* covers the join sync-replay burst plus
-                                     * concurrent publishes with margin        */
+#define CHANNEL_CONTROL_WINDOW 64   /* unacked control events in flight; a
+                                     * burst larger than this (the join sync
+                                     * replay) waits in the backlog behind it,
+                                     * see CHANNEL_CONTROL_BACKLOG             */
 #define CHANNEL_CONTROL_SEG   1024  /* one control event = one segment = one
                                      * datagram. Must hold the worst-case
                                      * control message (the full BRAIN_LIST:
@@ -105,6 +107,39 @@ enum {
  * handed to channelStreamSend wait here until the window has room to turn
  * them into segments. */
 #define CHANNEL_STREAM_BUF 65536
+
+/* Capacity in bytes of the control channel's backlog: whole messages that
+ * channelSend has taken for CHANNEL_CONTROL while its window was full, kept
+ * as [len u16][bytes] and moved into the window, oldest first, as acks free
+ * room. A send is refused only when this is full too.
+ *
+ * Sized for the largest join sync replay the caps allow, since the replay
+ * goes onto a joiner's channel in one tick, before anything can be acked.
+ * Each queued message costs 2 (length) + 3 (type, bodyLen) + its body:
+ *
+ *   brain docs: 16 brains x (18 chunks x 910 + one of 710)        273,440
+ *   bot-name catalogue: blob <= 4 + compressBound(64 KiB)
+ *     = 65,573 bytes, 73 chunks (72 x 909 + 782)                    66,230
+ *   settings 538, brain list 902, rules 1,026, script list
+ *     2 x 1,026, scenario rules 2 x 1,026, panels 3 x 1,026          9,648
+ *   116 small records (16 slots, 32 spectator slots, 15 team
+ *     meta, 15 bot config, 15 bot brain, 16 joins, 2 votes,
+ *     balance, map skip, entity sync, phase, sync marker) x 133     15,428
+ *   whole replay                                                   364,746
+ *   less what the window takes first (56 messages, leaving 8
+ *     for events already in flight: 6 leading events + 50 docs)    -50,038
+ *   live publishes during the join, 32 x 1,026                     +32,832
+ *   total                                                          347,540
+ *
+ * rounded up to 340 KiB. The ring is indexed modulo this size, so it need
+ * not be a power of two.
+ *
+ * The cost is real memory, not reserved address space: transportUdpServerCreate
+ * zeroes the whole server struct and channelMuxInit zeroes each mux, so every
+ * backlog is written and resident. It adds about 340 KiB to each mux, about
+ * 16 MiB to a process that runs the UDP server (16 player and 32 spectator
+ * muxes), and 340 KiB to a client. */
+#define CHANNEL_CONTROL_BACKLOG (340u * 1024u)
 
 /* Per-channel reliability state. ackedSeq / expectedSeq are exclusive
  * upper bounds (matching the shipped queue model: "confirmed up to here,
@@ -201,6 +236,13 @@ typedef struct ChannelMux {
     uint32_t streamHead;   /* ring read index                  */
     uint32_t streamCount;  /* bytes waiting to be segmentized   */
 
+    /* Control channel (CHANNEL_CONTROL) backlog ring: whole messages waiting
+     * for room in the window, each stored as [len u16 BE][len bytes]. */
+    uint8_t  controlBacklog[CHANNEL_CONTROL_BACKLOG];
+    uint32_t controlBacklogHead;   /* ring read index                   */
+    uint32_t controlBacklogCount;  /* bytes queued, prefixes included   */
+    uint32_t controlBacklogMsgs;   /* messages queued                   */
+
     /* What became of each best-effort channel's traffic. Nothing acks these
      * channels, so a segment that never reaches the wire leaves no trace in
      * the protocol: the ring drops its oldest entry to make room, and a frame
@@ -224,7 +266,11 @@ void channelMuxInit(ChannelMux *m);
 
 /* Queue one whole message on a message-flavor channel (0-2). Returns
  * false on a usage error (stream channel, oversized message, bad id) or
- * when the window is full without room for another in-flight segment. */
+ * when the window is full without room for another in-flight segment.
+ * CHANNEL_CONTROL is the exception to the second: a message that finds the
+ * window full, or other messages already waiting, goes into the backlog
+ * behind it and keeps its order, and the send is refused only when the
+ * backlog has no room either. */
 bool channelSend(ChannelMux *m, uint8_t ch, const uint8_t *msg, uint16_t len);
 
 /* Queue one whole message on the best-effort channel. Never blocks and never
@@ -274,8 +320,9 @@ bool channelReceiveBestEffort(ChannelMux *m, uint8_t ch, uint8_t *out,
  * unacked send tail (ackedSeq = txNext = nextSeq) and clear those ring
  * entries, so the previous game's undelivered segments are never resent. The
  * sequence space stays monotonic — low seqs are not reused, new channelSends
- * continue from nextSeq. Returns the post-reset nextSeq, the baseline the
- * peer must adopt with channelResetExpected. */
+ * continue from nextSeq. On CHANNEL_CONTROL the backlog is emptied as well,
+ * as the stream channel's pending bytes are. Returns the post-reset nextSeq,
+ * the baseline the peer must adopt with channelResetExpected. */
 uint32_t channelResetSend(ChannelMux *m, uint8_t ch);
 
 /* Truncate the receive side of a channel forward to match a peer's send
