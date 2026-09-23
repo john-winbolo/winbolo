@@ -6092,6 +6092,7 @@ set(_unit_test_names
     scenario_details_fetch_retry
     scenario_details_fetch_give_up
     scenario_details_override_order
+    scenario_details_reload_map_script
     scenario_mod_dirs_user_dir_offered
     scenario_mod_dirs_shipped_offered
     scenario_mod_dirs_configured_wins

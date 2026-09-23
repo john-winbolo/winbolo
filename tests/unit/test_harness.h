@@ -3243,6 +3243,7 @@ int run_scenario_details_fetch_not_found(void);
 int run_scenario_details_fetch_retry(void);
 int run_scenario_details_fetch_give_up(void);
 int run_scenario_details_override_order(void);
+int run_scenario_details_reload_map_script(void);
 
 /* The three directories a mod can come from (test_scenario_mod_dirs.c): the
  * one the host was given, the player's own under SDL_GetPrefPath and the

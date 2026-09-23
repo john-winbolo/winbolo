@@ -53,6 +53,11 @@
  *                                         one loses in either order, and a
  *                                         mod on a server with mods off wins
  *                                         nothing
+ * run_scenario_details_reload_map_script — the committed map's own script
+ *                                         edited on disk and reloaded: the
+ *                                         sim answers the edited rules and
+ *                                         callbacks, not the ones the commit
+ *                                         read
  *
  * Reads the ClientSim and ServerSim structs directly; the unittests profile
  * permits it.
@@ -73,6 +78,8 @@
 #include "client_net.h"                 /* clientSimGetConnectState */
 #include "server_sim.h"
 #include "server_sim_internal.h"        /* the console callback watched here */
+#include "server_sim_lifecycle.h"       /* serverSimSetLobbyEnabled, and the
+                                           commit the reload case makes */
 #include "server_sim_scenario.h"        /* serverSimGetMapScript */
 #include "server/sim/server_sim_shared.h" /* serverSimSetActive */
 #include "bulk_transfer.h"              /* the filler transfer in the retry case */
@@ -83,6 +90,7 @@
 #include "scenario_host.h"
 #include "scenario_package.h"
 #include "sim_rules_names.h"            /* simRulesRuleIndex */
+#include "everard_map.h"                /* the reload case's sim */
 #include "threads.h"
 #include "test_harness.h"
 #include "loopback_harness.h"
@@ -310,7 +318,6 @@ int run_scenario_callbacks_over_cap(void) {
     char                 script[8192];
     char                 text[151];
     char                 rows[4096];
-    const uint8_t       *cb;
     size_t               cbLen;
     size_t               at = 0;
     int                  n;
@@ -341,7 +348,7 @@ int run_scenario_callbacks_over_cap(void) {
     n = scnDirListDetails(scDir, list, det, 4);
     e = scFind(det, n, "wordy.lua");
     UT_ASSERT(e != NULL);
-    cb  = scnDetailsCallbacks(e->bytes, e->len, &cbLen);
+    (void)scnDetailsCallbacks(e->bytes, e->len, &cbLen);
     got = scCallbacks(e->bytes, e->len, rows, sizeof(rows));
     /* Each row costs 2 + name + 150; five fit in 896 and ten do not. */
     UT_ASSERT_MSG(got >= 5 && got < 10, "%d rows kept", got);
@@ -880,6 +887,124 @@ int run_scenario_details_override_order(void) {
     UT_ASSERT(scnDetailsRuleWinner(blobs, lens, -1, shells, &value) == -1);
 
     scNetStop(&h, &slot);
+    scRemoveTree(scDir);
+    return 0;
+}
+
+/* ── 7. The map's own script, reloaded ────────────────────────────── */
+
+/* The script beside the reload case's map, before and after the edit: the
+ * rule value and the on_start sentence both change. */
+static const char kScMapBefore[] =
+    "scenario = { name = \"Reloaded\", api = 1, bound = true,\n"
+    "  rules = { tank_full_shells = 40 },\n"
+    "  callbacks = { on_start = \"Before the edit.\" } }\n"
+    "function on_start() end\n";
+static const char kScMapAfter[] =
+    "scenario = { name = \"Reloaded\", api = 1, bound = true,\n"
+    "  rules = { tank_full_shells = 60 },\n"
+    "  callbacks = { on_start = \"After the edit.\" } }\n"
+    "function on_start() end\n";
+
+/* Write text to the script that sits beside mapPath. */
+static bool scPutBeside(const char *mapPath, const char *text) {
+    char   path[512];
+    size_t n = strlen(mapPath);
+    FILE  *f;
+
+    if (n > 4) n -= 4;                 /* drop ".map" */
+    snprintf(path, sizeof(path), "%.*s%s", (int)n, mapPath,
+             SCN_SCRIPT_SUFFIX);
+    f = fopen(path, "wb");
+    if (f == NULL) return false;
+    fputs(text, f);
+    fclose(f);
+    return true;
+}
+
+/* What the sim answers for file: the shells value and the callbacks rows.
+ * False when it answers nothing or the blob sets no shells value. */
+static bool scMapDetails(ServerSim *sim, const char *file, double *shells,
+                         char *rows, size_t rowsLen) {
+    uint8_t blob[SCN_DETAILS_MAX];
+    int     len;
+
+    len = serverSimScenarioDetails(sim, file, blob, sizeof(blob));
+    if (len <= 0) return false;
+    if (!scnDetailsFindRule(blob, (size_t)len,
+                            simRulesRuleIndex("tank_full_shells"), shells)) {
+        return false;
+    }
+    return scCallbacks(blob, (size_t)len, rows, rowsLen) >= 0;
+}
+
+int run_scenario_details_reload_map_script(void) {
+    BYTE               emap[6000] = E_MAP;
+    ServerSim         *sim;
+    ScenarioHost      *slot = NULL;
+    const ScnDirEntry *row;
+    char               mapPath[512];
+    char               file[SCN_DIR_FILE_LEN];
+    char               rows[1024];
+    char               err[512];
+    double             shells = 0.0;
+    bool               reloaded;
+
+    UT_ASSERT(scMakeDir("reload_map"));   /* an empty scenarios directory */
+    UT_ASSERT(utScratchPath(mapPath, sizeof(mapPath),
+                            "wbtest_scn_cb_reload.map"));
+    UT_ASSERT(scPutBeside(mapPath, kScMapBefore));
+
+    sim = serverSimCreateCompressed(emap, 5097, "Everard Island", gameOpen,
+                                    false, 0, -1);
+    UT_ASSERT(sim != NULL);
+    serverSimSetLobbyEnabled(sim, true);
+    serverSimAddPlayer(sim, 0, "Host", false);
+    serverSimSetState(sim, serverStateLobby);
+    serverSimSetScenarioDir(sim, scDir);
+    scenarioHostRegisterScenarioLister(sim);
+    scenarioHostFollowMap(sim, &slot);
+
+    /* A map commit, the way the sim makes it after loading the new map. */
+    SDL_strlcpy(sim->mapFilePath, mapPath, sizeof(sim->mapFilePath));
+    serverSimScenarioOnMapChanged(sim, mapPath);
+    UT_ASSERT_MSG(slot != NULL, "the map's own script was not attached");
+    row = serverSimGetMapScript(sim);
+    UT_ASSERT_MSG(row != NULL && row->file[0] != '\0',
+                  "the commit published no row for the map's own script");
+    SDL_strlcpy(file, row->file, sizeof(file));
+
+    UT_ASSERT_MSG(scMapDetails(sim, file, &shells, rows, sizeof(rows)),
+                  "the commit left no details for %s", file);
+    UT_ASSERT_MSG(shells == 40.0, "the commit's shells read %g", shells);
+    UT_ASSERT_MSG(strstr(rows, "on_start/E=Before the edit.;") != NULL,
+                  "the commit's callbacks read %s", rows);
+
+    /* The host edits the script on disk and reloads. */
+    UT_ASSERT(scPutBeside(mapPath, kScMapAfter));
+    err[0] = '\0';
+    threadsWaitForMutex();
+    reloaded = scenarioHostReload(slot, err, sizeof(err));
+    threadsReleaseMutex();
+    UT_ASSERT_MSG(reloaded, "the reload was refused: %s", err);
+
+    /* The row keeps its name, and the details asked for by that name are the
+       edited file's. */
+    row = serverSimGetMapScript(sim);
+    UT_ASSERT(row != NULL && strcmp(row->file, file) == 0);
+    shells = 0.0;
+    UT_ASSERT_MSG(scMapDetails(sim, file, &shells, rows, sizeof(rows)),
+                  "the reload left no details for %s", file);
+    UT_ASSERT_MSG(shells == 60.0,
+                  "the details still say shells %g after the reload, wanted "
+                  "the edited 60", shells);
+    UT_ASSERT_MSG(strstr(rows, "on_start/E=After the edit.;") != NULL,
+                  "the details still carry the old callbacks: %s", rows);
+
+    scenarioHostDetach(slot);
+    serverSimDestroy(sim);
+    /* The script beside the map is under utScratchPath's directory, which
+       the process removes at exit. */
     scRemoveTree(scDir);
     return 0;
 }

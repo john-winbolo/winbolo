@@ -1730,6 +1730,7 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_details_fetch_retry",                    run_scenario_details_fetch_retry                    },
     { "scenario_details_fetch_give_up",                  run_scenario_details_fetch_give_up                  },
     { "scenario_details_override_order",                 run_scenario_details_override_order                 },
+    { "scenario_details_reload_map_script",              run_scenario_details_reload_map_script              },
     { "scenario_mod_dirs_user_dir_offered",                 run_scenario_mod_dirs_user_dir_offered                 },
     { "scenario_mod_dirs_shipped_offered",                  run_scenario_mod_dirs_shipped_offered                  },
     { "scenario_mod_dirs_configured_wins",                  run_scenario_mod_dirs_configured_wins                  },

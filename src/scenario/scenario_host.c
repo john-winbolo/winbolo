@@ -1867,6 +1867,7 @@ static void scnReadCallbacks(lua_State *L, int envRef, int tbl,
     for (r = 0; r < count; r++) {
         const char *name = rows[r].name;
         const char *text = NULL;
+        bool        notString = false;
         bool        byTrigger;
         bool        uses = scnScriptUses(L, envRef, m, name, &byTrigger);
 
@@ -1877,14 +1878,17 @@ static void scnReadCallbacks(lua_State *L, int envRef, int tbl,
             } else if (!lua_isnil(L, -1)) {
                 scnWarn(rep, "scenario: %s: callbacks.%s is not a string; "
                              "dropped", path, name);
+                notString = true;
             }
         }
         if (text == NULL || text[0] == '\0') {
             /* A file with no block at all hears this on the console only:
                the soft line is the load's last word, and an older script
                that plays perfectly well should not have its last word be
-               advice it never asked for. */
-            if (uses) {
+               advice it never asked for. A value that is not a string has
+               already been warned about above, so it gets no second
+               warning here. */
+            if (uses && !notString) {
                 scnWarn((cb != 0) ? rep : NULL,
                         "scenario: %s: callbacks does not say what %s does",
                         path, name);
@@ -6415,6 +6419,60 @@ static int scnDirListCb(void *ctx, const char *dir, ScnDirEntry *out,
    read a listing makes and the two share the cache's slot. */
 #define SCN_DIR_DETAILS_ROWS 128
 
+/* What scnDirDetailsOneCached found. */
+typedef enum {
+    SCN_DIR_ONE_UNKNOWN,   /* nothing kept for the directory, or kept from
+                              before it last changed: read it */
+    SCN_DIR_ONE_ABSENT,    /* the kept read has no file of that name */
+    SCN_DIR_ONE_FOUND      /* the kept read has it; *got says what was copied */
+} ScnDirOne;
+
+/* One file's details out of the kept read of dir, copying that one record
+   and nothing else. The same tests scnDirListCached makes before it answers
+   from the cache: the lock exists, the directory is still a directory, and
+   its time is the one the kept read was made at. Anything else answers
+   SCN_DIR_ONE_UNKNOWN and the caller reads the directory through
+   scnDirListCached, which also refills the cache.
+
+   On SCN_DIR_ONE_FOUND, *got is the length copied into out, or -1 when the
+   details do not fit in cap. */
+static ScnDirOne scnDirDetailsOneCached(const char *dir, const char *file,
+                                        int max, uint8_t *out, size_t cap,
+                                        int *got) {
+    SDL_PathInfo info;
+    ScnDirCache *c;
+    ScnDirOne    result = SCN_DIR_ONE_UNKNOWN;
+    int          i;
+
+    *got = -1;
+    if (scnDirCacheLock.m == NULL || dir == NULL || dir[0] == '\0' ||
+        strlen(dir) >= sizeof(scnDirCache[0].dir) ||
+        !SDL_GetPathInfo(dir, &info) ||
+        info.type != SDL_PATHTYPE_DIRECTORY) {
+        return SCN_DIR_ONE_UNKNOWN;
+    }
+
+    scnLockEnter(&scnDirCacheLock);
+    c = scnDirCacheSlot(dir);
+    if (c->valid && c->count <= max && c->modified == info.modify_time &&
+        strcmp(c->dir, dir) == 0) {
+        result = SCN_DIR_ONE_ABSENT;
+        for (i = 0; i < c->count; i++) {
+            if (strcmp(c->details[i].file, file) != 0) {
+                continue;
+            }
+            if (c->details[i].len <= cap) {
+                memcpy(out, c->details[i].bytes, c->details[i].len);
+                *got = (int)c->details[i].len;
+            }
+            result = SCN_DIR_ONE_FOUND;
+            break;
+        }
+    }
+    scnLockLeave(&scnDirCacheLock);
+    return result;
+}
+
 /* One file's details, in the shape serverSimSetScenarioDetailsReader takes.
    The directories are asked in the order the listing merges them, and the
    first that holds the file answers, so the details are those of the file a
@@ -6423,13 +6481,15 @@ static int scnDirListCb(void *ctx, const char *dir, ScnDirEntry *out,
    wire reaches no file the listing does not offer.
 
    Read through the cache, so a dialog asking for a file the lobby has just
-   listed costs a copy and no VM boot; a directory that changed since is read
-   again, which is what the listing would do. */
+   listed costs a copy of that one file's record and no VM boot. The arrays
+   for a whole directory are only allocated when a directory has to be read
+   again because nothing is kept for it or it changed since, which is what
+   the listing would do. */
 static int scnDirDetailsCb(void *ctx, const char *dir, const char *file,
                            uint8_t *out, size_t cap) {
     char           dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
-    ScnDirEntry   *rows;
-    ScnDirDetails *details;
+    ScnDirEntry   *rows    = NULL;
+    ScnDirDetails *details = NULL;
     int            count;
     int            d;
     int            got = -1;
@@ -6438,19 +6498,32 @@ static int scnDirDetailsCb(void *ctx, const char *dir, const char *file,
     if (file == NULL || file[0] == '\0' || out == NULL) {
         return -1;
     }
-    rows    = (ScnDirEntry *)calloc(SCN_DIR_DETAILS_ROWS, sizeof(*rows));
-    details = (ScnDirDetails *)calloc(SCN_DIR_DETAILS_ROWS,
-                                      sizeof(*details));
-    if (rows == NULL || details == NULL) {
-        free(rows);
-        free(details);
-        return -1;
-    }
     count = scnModDirs(dirs, dir);
     for (d = 0; d < count && got < 0; d++) {
-        int n = scnDirListCached(dirs[d], rows, details,
-                                 SCN_DIR_DETAILS_ROWS);
-        int i;
+        ScnDirOne one;
+        int       n;
+        int       i;
+
+        one = scnDirDetailsOneCached(dirs[d], file, SCN_DIR_DETAILS_ROWS,
+                                     out, cap, &got);
+        if (one == SCN_DIR_ONE_FOUND) {
+            /* Found, fitting or not: the search stops here for the same
+               reason it stops on a match in a directory read below. */
+            break;
+        }
+        if (one == SCN_DIR_ONE_ABSENT) {
+            continue;
+        }
+        if (rows == NULL) {
+            rows    = (ScnDirEntry *)calloc(SCN_DIR_DETAILS_ROWS,
+                                            sizeof(*rows));
+            details = (ScnDirDetails *)calloc(SCN_DIR_DETAILS_ROWS,
+                                              sizeof(*details));
+            if (rows == NULL || details == NULL) {
+                break;
+            }
+        }
+        n = scnDirListCached(dirs[d], rows, details, SCN_DIR_DETAILS_ROWS);
 
         for (i = 0; i < n; i++) {
             if (strcmp(details[i].file, file) != 0) {
@@ -7588,6 +7661,34 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
        which is not the running round's to keep. */
     scnHandLobbyOver(h->sim, composed, h->entry[base].source,
                      scnFileNameOf(h->entry[base].script));
+    /* And the map's own script's details, which the lobby's details dialog
+       reads and which were packed from the manifest the attach read. Without
+       this the dialog shows the rules and callbacks the file had before the
+       edit until the next map commit. They are packed from this reload's
+       manifest for the same entry scnPublishMapScript packed them from, and
+       they go over whatever the server is doing, like the template above:
+       they describe what the next round will play and not the running one.
+
+       Only the details bytes. The row itself (serverSimSetMapScript) is left
+       alone: it is also the host's list's copy of the row, its file name is
+       what the list and the details request name the script by, and
+       rewriting it here would change the lobby list outside the lobby-only
+       publish below. The row's name and description therefore stay as the
+       commit left them until the next map commit.
+
+       serverSimSetMapScriptDetails does nothing when no map script row is
+       published, so an entry with no row behind it changes nothing. */
+    for (i = 0; i < n; i++) {
+        if (h->entry[i].source == lobbyScenarioMap &&
+            reloaded[i].manifest != NULL) {
+            uint8_t details[SCN_DETAILS_MAX];
+            size_t  len = scnDirDetailsFromManifest(details, sizeof(details),
+                                                    reloaded[i].manifest);
+
+            serverSimSetMapScriptDetails(h->sim, details, len);
+            break;
+        }
+    }
     /* Seated only from the lobby. The template is data either way and goes
        over above whatever the server is doing, but building the seats and
        moving the game type onto a round already running would change a game

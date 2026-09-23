@@ -1062,13 +1062,15 @@ static void lobbyScenarioDetailsRuleRow(int rule, double value,
  * wins, as the round composes it, and the rows this script loses say so. A
  * mod on a server with mods turned off loads nothing, so it neither wins a
  * rule over another script nor has its own rules play, and a note under its
- * table says so rather than the table going missing. */
+ * table says so rather than the table going missing. A mod that sets no rule
+ * has no table and still gets the note, because the mod does not load
+ * either way. */
 static void lobbyScenarioDetailsRules(ClientSim *cs) {
     LobbyRoundRow  order[LOBBY_ROUND_MAX];
     const uint8_t *blobs[LOBBY_ROUND_MAX];
     size_t         lens[LOBBY_ROUND_MAX];
-    const uint8_t *mine;
-    size_t         mineLen;
+    const uint8_t *mine    = NULL;
+    size_t         mineLen = 0;
     bool           modsOn  = clientSimGetLobbyModsEnabled(cs);
     bool           waiting = false;
     int            n;
@@ -1097,31 +1099,31 @@ static void lobbyScenarioDetailsRules(ClientSim *cs) {
         }
     }
 
-    if (lobbyScenarioDetailsOfFile(cs, s_detailsFile, &mine, &mineLen) !=
+    count = 0;
+    if (lobbyScenarioDetailsOfFile(cs, s_detailsFile, &mine, &mineLen) ==
         CLIENT_SCN_DETAILS_FOUND) {
-        return;
+        count = scnDetailsRuleCount(mine, mineLen);
     }
-    count = scnDetailsRuleCount(mine, mineLen);
-    if (count <= 0) return;
     /* Not drawn until every script ahead of this one has answered, so a row
        is never shown as playing and then, a moment later, as overridden. */
-    if (waiting) return;
+    if (count > 0 && !waiting && lobbyScenarioDetailsRulesBegin()) {
+        for (i = 0; i < count; i++) {
+            int    rule;
+            double value;
+            double winning = 0.0;
+            int    winner;
 
-    if (!lobbyScenarioDetailsRulesBegin()) return;
-    for (i = 0; i < count; i++) {
-        int    rule;
-        double value;
-        double winning = 0.0;
-        int    winner;
-
-        if (!scnDetailsRuleAt(mine, mineLen, i, &rule, &value)) continue;
-        winner = scnDetailsRuleWinner(blobs, lens, self, rule, &winning);
-        lobbyScenarioDetailsRuleRow(rule, value,
-                                    winner >= 0 ? order[winner].name : NULL,
-                                    winning);
+            if (!scnDetailsRuleAt(mine, mineLen, i, &rule, &value)) continue;
+            winner = scnDetailsRuleWinner(blobs, lens, self, rule, &winning);
+            lobbyScenarioDetailsRuleRow(
+                rule, value, winner >= 0 ? order[winner].name : NULL,
+                winning);
+        }
+        ImGui::EndTable();
     }
-    ImGui::EndTable();
 
+    /* Shown whether or not the table is: a mod on a server with mods off
+       loads nothing, rules or not, and that does not wait on any answer. */
     if (!modsOn && s_detailsKind == 1) {
         lobbyScenarioRowNote(langGetText(STR_DLGLOBBY_DETAILS_MODS_OFF));
     }
