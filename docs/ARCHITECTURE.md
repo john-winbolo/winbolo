@@ -1361,9 +1361,12 @@ don't fit fire-and-apply:
   to mint a fresh playerKey before sending; the helper's work
   happens between the join-state guard and the codec encode.
 
-These keep their per-command `transportUdpClientSend*` helper in
-`transport_udp_client.c` and a matching direct-receive
-`case PACKET_*:` arm in `serverProcessPacket`. They are not under
+These keep a direct send in `transport_udp_client.c` — a per-command
+`transportUdpClientSend*` helper for the ones a wrapper sends, and for
+the details request `udpClientSendScnDetailsReq`, which the transport
+tick calls for each WANTED slot — and a matching direct-receive
+`case PACKET_*:` arm in `serverProcessPacket`, which lives in
+`src/server/udp/udp_server_dispatch.c`. They are not under
 the asymmetric-runtime invariant the rest of the up-leg enforces,
 and adding more of them re-opens the bug class — only add to this
 list when fire-and-apply genuinely doesn't fit.
