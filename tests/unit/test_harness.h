@@ -534,6 +534,16 @@ int run_net_impair(void);
  * instances and an in-test frame shuttle. No sockets, no threads. */
 int run_channel_mux(void);
 
+/* The control channel's queue behind its window (test_channel_mux.c): sends
+ * past the window are taken and delivered in order, the queue is bounded,
+ * the game channel still refuses at its window, and a send reset drops the
+ * queue. */
+int run_channel_mux_control_queues_past_window(void);
+int run_channel_mux_control_backlog_delivers_in_order(void);
+int run_channel_mux_control_backlog_full_refuses(void);
+int run_channel_mux_game_channel_still_refuses_at_window(void);
+int run_channel_mux_control_reset_clears_backlog(void);
+
 /* Spectator delayed-stream ring (test_spectator_ring.c): segmentation,
  * keyframe-at-segment-start, mid-interval seek + replay, segment isolation,
  * previous-generation read, cold start and the retention window boundary,
@@ -777,6 +787,15 @@ int run_maprotate_defers_wbn_update_until_key_rotated(void);
 int run_maprotate_gameover_is_not_terminal(void);
 int run_maprotate_boot_does_not_rotate_while_empty(void);
 int run_maprotate_vote_return_is_not_terminal(void);
+
+/* Auto-close on an empty server (test_autoclose_empty_server.c). -autoclose
+ * closes the server once everyone has left, so the latch behind it must read
+ * only real arrivals — neither the no-lobby boot's own round start nor a bot
+ * whose runner fails to build may leave it set on a server nobody joined. */
+int run_autoclose_boot_does_not_close_while_empty(void);
+int run_autoclose_closes_after_last_player_leaves(void);
+int run_autoclose_lobby_boot_waits_for_a_joiner(void);
+int run_autoclose_failed_bot_add_leaves_check_armed(void);
 
 /* Round transition off the tick thread (test_round_transition_tick.c). The
  * boundary queues server/quit, the round-log upload and server/register for
@@ -2569,6 +2588,13 @@ int run_loopback_entity_change(void);
  * while a held seat is fielded and taken off again, with no full sync in the
  * middle to cover a migration. */
 int run_loopback_scenario_seat_keeps_pills(void);
+
+/* A second player joining a lobby full of bots over the real loopback
+ * transport (test_loopback_join_burst.c): the join replay's control burst
+ * against the control channel's window, with every bot seat filled and with
+ * two bots. */
+int run_loopback_join_lobby_burst(void);
+int run_loopback_join_small_lobby(void);
 
 /* The rules table over the real loopback transport
  * (test_loopback_sim_rules.c): a mid-round change reaching a connected
