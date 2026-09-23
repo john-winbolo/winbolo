@@ -4197,19 +4197,18 @@ void scenarioLuaTimersDrop(lua_State *L, ScnTimerSet *t) {
     }
 }
 
-int scenarioLuaTimersTakeDue(ScnTimerSet *t, uint32_t now, int *out,
-                             const ScenarioManifest **owners, int outMax) {
-    int taken[SCN_TIMERS_MAX];
+int scenarioLuaTimersDue(const ScnTimerSet *t, uint32_t now, uint32_t *ids,
+                         int idsMax) {
     int n = 0;
     int i, j;
 
-    if (t == NULL || out == NULL || outMax <= 0) {
+    if (t == NULL || ids == NULL || idsMax <= 0) {
         return 0;
     }
-    /* Read the due set once, before any of it runs. */
-    for (i = 0; i < SCN_TIMERS_MAX && n < outMax; i++) {
+    /* The due set, read once. */
+    for (i = 0; i < SCN_TIMERS_MAX && n < idsMax; i++) {
         if (t->entries[i].ref != LUA_NOREF && t->entries[i].dueTick <= now) {
-            taken[n] = i;
+            ids[n] = t->entries[i].id;
             n++;
         }
     }
@@ -4218,26 +4217,45 @@ int scenarioLuaTimersTakeDue(ScnTimerSet *t, uint32_t now, int *out,
        here rather than left as entry order, which a script cannot see and
        could not predict. */
     for (i = 1; i < n; i++) {
-        int take = taken[i];
+        uint32_t take = ids[i];
         j = i - 1;
-        while (j >= 0 && t->entries[taken[j]].id > t->entries[take].id) {
-            taken[j + 1] = taken[j];
+        while (j >= 0 && ids[j] > take) {
+            ids[j + 1] = ids[j];
             j--;
         }
-        taken[j + 1] = take;
-    }
-    for (i = 0; i < n; i++) {
-        ScnTimer *e = &t->entries[taken[i]];
-        out[i]      = e->ref;
-        if (owners != NULL) {
-            owners[i] = e->owner;
-        }
-        e->ref      = LUA_NOREF;
-        e->id       = 0;
-        e->dueTick  = 0;
-        e->owner    = NULL;
+        ids[j + 1] = take;
     }
     return n;
+}
+
+/* By id rather than by entry, because the entry may have changed hands since
+ * the due set was read: a timer earlier in the run can cancel this one and set
+ * another that lands in the same entry. The id is never reused, so it finds
+ * the timer that was due or nothing. */
+bool scenarioLuaTimersTake(ScnTimerSet *t, uint32_t id, int *ref,
+                           const ScenarioManifest **owner) {
+    int i;
+
+    if (t == NULL || ref == NULL || id == 0) {
+        return false;
+    }
+    for (i = 0; i < SCN_TIMERS_MAX; i++) {
+        ScnTimer *e = &t->entries[i];
+
+        if (e->ref == LUA_NOREF || e->id != id) {
+            continue;
+        }
+        *ref = e->ref;
+        if (owner != NULL) {
+            *owner = e->owner;
+        }
+        e->ref     = LUA_NOREF;
+        e->id      = 0;
+        e->dueTick = 0;
+        e->owner   = NULL;
+        return true;
+    }
+    return false;
 }
 
 static int scnLuaTimer(lua_State *L) {

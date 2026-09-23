@@ -2178,6 +2178,7 @@ STR_SCNPANEL_SETTINGS_TITLE=Scenariopaneel
 STR_SCNPANEL_OPACITY_LBL=Dekking
 STR_SCNPANEL_OPACITY_LINE1=Vervaagt wat het paneel tekent.
 STR_SCNPANEL_OPACITY_LINE2=Lege delen ervan blijven doorzichtig.
+STR_DLGLOBBY_SCENARIO_UNSAFE=Deze server voert scenarioscripts uit met de volledige Lua-bibliotheek en zonder beperkingen.
 STR_DLGLOBBY_SCENARIO_OFFERED=Deze server biedt aan
 STR_DLGLOBBY_SCENARIO_ROUND=Deze ronde draait
 STR_DLGLOBBY_SCENARIO_ADD=Aan deze ronde toevoegen

@@ -495,6 +495,7 @@ int run_scenario_comms_sound(void) {
     UT_ASSERT_MSG(ccSound(sim, (BYTE)bigExplosionNear, 0, 0) ==
                       SCN_OP_BAD_SQUARE,
                   "0,0 is off the map and must be refused SCN_OP_BAD_SQUARE");
+    serverSimScenarioDrainFill(sim);   /* a new frame's message allowance */
     UT_ASSERT_MSG(ccSound(sim, (BYTE)bigExplosionNear, 250, 250) ==
                       SCN_OP_BAD_SQUARE,
                   "250,250 is off the map and must be refused "
@@ -969,6 +970,7 @@ int run_scenario_comms_say(void) {
                   "an empty line must be refused SCN_OP_BAD_CALL");
 
     /* Refusal: a field with no terminator. */
+    serverSimScenarioDrainFill(sim);   /* a new frame's message allowance */
     memset(&op, 0, sizeof(op));
     op.type = SCN_OP_MSG_SAY;
     op.u.msgSay.slot = CC_SLOT_TALKER;

@@ -18,11 +18,30 @@
  *  and raises there instead of taking the server's process
  *  with it, and it carries a count hook, so a script that
  *  loops without end is stopped at SCN_BUDGET_CALL_INSTR
- *  instructions and raises there too. Both land in the
+ *  instructions and raises there too, as does the call that
+ *  takes all of one tick's calls together past
+ *  SCN_BUDGET_TICK_INSTR. All of them land in the
  *  lua_pcall the host makes every call through — and the
- *  budget's error lands there whatever the script does with
- *  it, because pcall, xpcall and coroutine.resume are given
- *  to it wrapped in a closure that raises it again.
+ *  two budgets' errors land there whatever the script does
+ *  with them, because pcall, xpcall and coroutine.resume are
+ *  given to it wrapped in a closure that raises them again.
+ *
+ *  The count cannot see inside a C function, so a string.rep
+ *  that builds a string of a gigabyte is one instruction to
+ *  it, and only the memory cap would stand in the way. So
+ *  the functions that build a string as long as the script
+ *  asks — string.rep, string.format and table.concat — and
+ *  the four that run a pattern over one — find, match,
+ *  gmatch and gsub — are wrapped too, and refuse a string
+ *  over SCN_STRING_MAX with an ordinary error the script is
+ *  free to catch.
+ *
+ *  A short subject is no bound on a pattern, which can
+ *  backtrack for as long as it likes over one. So the four
+ *  pattern functions are not the VM's own: they run the
+ *  matcher in scenario_pattern.c, which charges its steps
+ *  to the budgets through scnSandboxCharge and is stopped
+ *  as a loop in Lua would be.
  *
  *  Opening them one at a time is what takes io, package,
  *  debug and, under LuaJIT, ffi, jit and bit away: none of
@@ -39,7 +58,10 @@
  *  console is also what makes it worth counting: a console
  *  line reaches the operator's message log, which is opened
  *  and closed for each line written to it, so the lines one
- *  call and one tick may print are bounded here too.
+ *  call and one tick may print are bounded here too. And a
+ *  print is one console line: control characters in what a
+ *  script prints, newlines among them, reach the console as
+ *  spaces.
  *
  *  os.date is wrapped for a different reason: the format
  *  reaches the host's own strftime, and the C libraries this
@@ -55,6 +77,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -67,6 +90,7 @@
 #include "server_sim.h"            /* serverSimConsoleMessage */
 
 #include "scenario_host.h"         /* SCN_VM_MEMORY_MAX */
+#include "scenario_pattern.h"      /* scnPatternFind and the other three */
 #include "scenario_sandbox.h"
 
 /* One console line a script's print can produce. A line past this is cut
@@ -96,13 +120,28 @@
 
    The two said flags are what keeps the notice a drop produces to one line a
    window: the count alone would say it again on every line after the first,
-   which is the flood the bound is there to stop. */
+   which is the flood the bound is there to stop.
+
+   tickInstr, tickCharged, tickOpen and tickStopped are the tick's and not a
+   call's. tickInstr is what the tick's total is checked against: what every
+   call the tick has made spent between them, until a trip puts it back to a
+   grace short of the total. tickCharged is what those calls really spent, and
+   a trip does not put it back; it is what scnSandboxTickInstr answers. tickOpen
+   says whether a tick is running at all, and tickStopped is the latch that says
+   the tick's total is spent. The arm and the disarm leave all four alone, since
+   a nested call's instructions are the tick's as much as the outer one's; only
+   the tick reset and the tick close put them back. Outside a tick the window is
+   closed and nothing but the per-call budget applies. */
 typedef struct {
     size_t   used;
     size_t   cap;
     bool     armed;
     bool     stopped;
     uint32_t instr;
+    uint32_t tickInstr;
+    uint32_t tickCharged;
+    bool     tickOpen;
+    bool     tickStopped;
     uint32_t printCall;
     uint32_t printTick;
     bool     printCallSaid;
@@ -172,29 +211,57 @@ static void *scnSandboxAlloc(void *ud, void *ptr, size_t osize, size_t nsize) {
 
 /* ── The instructions one call may spend ──────────────────────────── */
 
-/* Called every SCN_BUDGET_STEP_INSTR instructions the state executes, and
- * counting only while a call into script code is running.
+/* The tick's own total, asked on every step the call's budget has not already
+ * stopped. It raises in whichever call is running when the tick's calls
+ * between them pass SCN_BUDGET_TICK_INSTR — which is the call that went over,
+ * not necessarily the one that spent the most.
  *
- * The flag is what makes that true. Every piece of script code this host
- * runs is inside one of the calls that arm below, but the host also reads
- * the script's own table from C between them; a count left running could
- * then raise with no lua_pcall between it and the state, which is the one
- * error the host answers by ending the process. Armed-only puts that out of
- * reach.
+ * Latched and put back to a grace short of the total for the reasons the
+ * per-call latch is below: pcall, xpcall and coroutine.resume read the latch
+ * and raise the error again, and the grace lets an unwinding metamethod finish
+ * while a script that caught the error and carried on is stopped again soon
+ * after. The host reads the latch too, through scnSandboxTickSpent, and skips
+ * every call the tick had still to make.
  *
- * The hook cannot see inside C, so a call that spends its time in one C
- * function is not what this bounds — it bounds a script looping in Lua,
- * which is what a runaway scenario looks like. */
-static void scnSandboxCountHook(lua_State *L, lua_Debug *ar) {
-    ScnSandboxState *s = scnSandboxStateOf(L);
-
-    (void)ar;
-    if (s == NULL || !s->armed) {
+ * A trip reached inside a nested call — a hook's op asking a policy — counts
+ * two errors: one for the policy that was stopped, and one for the hook that
+ * issued the op when its own next step finds the latch spent past the grace.
+ * That is what the per-call latch does with a caught error too. */
+static void scnSandboxTickCheck(lua_State *L, ScnSandboxState *s) {
+    if (!s->tickOpen || s->tickInstr <= (uint32_t)SCN_BUDGET_TICK_INSTR) {
         return;
     }
-    s->instr += (uint32_t)SCN_BUDGET_STEP_INSTR;
+    s->tickStopped = true;
+    s->tickInstr   = (uint32_t)SCN_BUDGET_TICK_INSTR -
+                     (uint32_t)SCN_BUDGET_GRACE_INSTR;
+    luaL_error(L, "this tick's script calls together ran past the %d "
+                  "instructions one tick may spend between them; this call "
+                  "was stopped and the rest of this tick's calls are skipped",
+               (int)SCN_BUDGET_TICK_INSTR);
+}
+
+/* n instructions spent by the call that is running, counted against its
+ * budget and the tick's, raising where either is passed. The hook spends
+ * through this, and so does scnSandboxCharge for the C work the hook cannot
+ * see, so the two are stopped and latched by the one path. Only reached while
+ * a call is armed. */
+static void scnSandboxSpend(lua_State *L, ScnSandboxState *s, uint32_t n) {
+    s->instr += n;
+    if (s->tickOpen) {
+        s->tickInstr   += n;
+        s->tickCharged += n;
+    }
     if (s->instr <= (uint32_t)SCN_BUDGET_CALL_INSTR) {
+        scnSandboxTickCheck(L, s);
         return;
+    }
+    /* A step that finds both spent is the call's error, and the tick's latch
+       is set with it, so the rest of the tick is skipped rather than its next
+       call being stopped on its first step for a second error. */
+    if (s->tickOpen && s->tickInstr > (uint32_t)SCN_BUDGET_TICK_INSTR) {
+        s->tickStopped = true;
+        s->tickInstr   = (uint32_t)SCN_BUDGET_TICK_INSTR -
+                         (uint32_t)SCN_BUDGET_GRACE_INSTR;
     }
     /* Latched rather than disarmed. Leaving the count off for the rest of the
        call would hand a script that caught this error every instruction it
@@ -217,6 +284,45 @@ static void scnSandboxCountHook(lua_State *L, lua_Debug *ar) {
                   "stopped; work that long belongs across several on_tick "
                   "calls rather than inside one of them",
                (int)SCN_BUDGET_CALL_INSTR);
+}
+
+/* Called every SCN_BUDGET_STEP_INSTR instructions the state executes, and
+ * counting only while a call into script code is running.
+ *
+ * The flag is what makes that true. Every piece of script code this host
+ * runs is inside one of the calls that arm below, but the host also reads
+ * the script's own table from C between them; a count left running could
+ * then raise with no lua_pcall between it and the state, which is the one
+ * error the host answers by ending the process. Armed-only puts that out of
+ * reach.
+ *
+ * The hook cannot see inside C, so a call that spends its time in one C
+ * function is not what this bounds — it bounds a script looping in Lua,
+ * which is what a runaway scenario looks like. The C functions that can run
+ * long for what a script hands them charge their own work through
+ * scnSandboxCharge. */
+static void scnSandboxCountHook(lua_State *L, lua_Debug *ar) {
+    ScnSandboxState *s = scnSandboxStateOf(L);
+
+    (void)ar;
+    if (s == NULL || !s->armed) {
+        return;
+    }
+    scnSandboxSpend(L, s, (uint32_t)SCN_BUDGET_STEP_INSTR);
+}
+
+/* C work the hook cannot see, charged here so the budgets see it: the pattern
+ * matcher counts its own steps and hands them over through this. It raises the
+ * budget's own error and sets the same latch the hook does, so pcall, xpcall
+ * and coroutine.resume raise it again rather than keeping it. Outside an armed
+ * call it does nothing, as the hook does. */
+void scnSandboxCharge(lua_State *L, uint32_t n) {
+    ScnSandboxState *s = scnSandboxStateOf(L);
+
+    if (s == NULL || !s->armed || n == 0) {
+        return;
+    }
+    scnSandboxSpend(L, s, n);
 }
 
 /* Saved and put back rather than set and cleared, because these nest: a
@@ -290,7 +396,12 @@ void scnSandboxDisarmCall(lua_State *L, const ScnSandboxCall *saved) {
  *
  * Nothing here is per call, so this leaves the call counters alone: a call
  * that is running while this is reached — there is none, since the tick resets
- * before it runs anything — keeps whatever it had spent. */
+ * before it runs anything — keeps whatever it had spent.
+ *
+ * It also opens the window the tick's instruction total is counted in, from
+ * zero and with the latch clear. The window stays open until the tick close,
+ * so every call the tick makes before then is counted against the one total
+ * whichever path it arrives by. */
 void scnSandboxTickReset(lua_State *L) {
     ScnSandboxState *s;
 
@@ -303,6 +414,48 @@ void scnSandboxTickReset(lua_State *L) {
     }
     s->printTick     = 0;
     s->printTickSaid = false;
+    s->tickInstr     = 0;
+    s->tickCharged   = 0;
+    s->tickStopped   = false;
+    s->tickOpen      = true;
+}
+
+/* The window shut and the latch cleared, so what the host calls from here to
+ * the next reset — on_end, a policy the engine asks between ticks, the lobby's
+ * asks from the GUI thread — is bounded by its own call's budget alone and is
+ * never skipped for a total an earlier call spent. */
+void scnSandboxTickClose(lua_State *L) {
+    ScnSandboxState *s;
+
+    if (L == NULL) {
+        return;
+    }
+    s = scnSandboxStateOf(L);
+    if (s == NULL) {
+        return;
+    }
+    s->tickOpen    = false;
+    s->tickStopped = false;
+}
+
+bool scnSandboxTickSpent(lua_State *L) {
+    ScnSandboxState *s;
+
+    if (L == NULL) {
+        return false;
+    }
+    s = scnSandboxStateOf(L);
+    return s != NULL && s->tickOpen && s->tickStopped;
+}
+
+uint32_t scnSandboxTickInstr(lua_State *L) {
+    ScnSandboxState *s;
+
+    if (L == NULL) {
+        return 0;
+    }
+    s = scnSandboxStateOf(L);
+    return s != NULL ? s->tickCharged : 0;
 }
 
 /* ── Making and closing one ───────────────────────────────────────── */
@@ -319,6 +472,10 @@ lua_State *scnSandboxNewState(void) {
     s->armed         = false;
     s->stopped       = false;
     s->instr         = 0;
+    s->tickInstr     = 0;
+    s->tickCharged   = 0;
+    s->tickOpen      = false;
+    s->tickStopped   = false;
     s->printCall     = 0;
     s->printTick     = 0;
     s->printCallSaid = false;
@@ -354,11 +511,11 @@ lua_State *scnSandboxNewState(void) {
     lua_pushlightuserdata(L, s);
     lua_setfield(L, LUA_REGISTRYINDEX, SCN_SANDBOX_STATE_KEY);
 
-    /* Set once, here, and never cleared. Under LuaJIT lua_sethook reaches
-       into the compiler, and a state carrying a hook runs interpreted for as
-       long as it has one — so taking it off between calls would buy nothing
-       and cost a flush each time. Whether the count applies is the flag the
-       calls arm, not the presence of the hook. */
+    /* Set once, here, and never cleared. The state runs interpreted on
+       LuaJIT because jit is never opened, and the budget depends on that:
+       compiled code would not run this hook. Taking the hook off between
+       calls would buy nothing, since whether the count applies is the flag
+       the calls arm, not the presence of the hook. */
     lua_sethook(L, scnSandboxCountHook, LUA_MASKCOUNT,
                 (int)SCN_BUDGET_STEP_INSTR);
     return L;
@@ -622,7 +779,15 @@ static bool scnSandboxPrintTake(ScnSandboxState *s) {
  * The allowance is asked for before the line is built, so a script past its
  * bound is not paying for the concatenation of output nobody will see — and
  * so a __tostring metamethod, which is script code, is not run for it
- * either. */
+ * either.
+ *
+ * One print is one console line. A script must not be able to write a line
+ * that reads as the server's own, into the console and the operator's
+ * message log, nor send control codes to the operator's terminal, so every
+ * byte below 0x20 but the tab, and 0x7f, goes out as a space. The tab stays
+ * because it is what separates the arguments; bytes from 0x80 up stay so
+ * UTF-8 text is untouched. An unsafe state's print is this one too, and
+ * keeps to the same rule. */
 static int scnSandboxPrint(lua_State *L) {
     char   line[SCN_PRINT_LEN];
     size_t used = 0;
@@ -652,6 +817,12 @@ static int scnSandboxPrint(lua_State *L) {
         lua_pop(L, 1);                  /* what luaL_tolstring pushed */
     }
     line[used] = '\0';
+    for (i = 0; i < (int)used; i++) {
+        unsigned char c = (unsigned char)line[i];
+        if ((c < 0x20 && c != '\t') || c == 0x7f) {
+            line[i] = ' ';
+        }
+    }
     serverSimConsoleMessage(line);
     return 0;
 }
@@ -758,6 +929,318 @@ static int scnSandboxDate(lua_State *L) {
     return lua_gettop(L);
 }
 
+/* ── The strings a C function may build ───────────────────────────── */
+
+/* Each of the seven below is a closure over the function it runs, which is
+ * upvalue 1 — the original, as collectgarbage's is, for rep, format and
+ * concat, and the port for the four pattern functions — and over the name a
+ * script knows it by, which is upvalue 2 and is what a refusal is worded
+ * with. */
+static int scnSandboxStringForward(lua_State *L) {
+    int n = lua_gettop(L);
+
+    lua_pushvalue(L, lua_upvalueindex(1));
+    lua_insert(L, 1);
+    lua_call(L, n, LUA_MULTRET);
+    return lua_gettop(L);
+}
+
+/* An ordinary error, and not the budget's: the latch is left alone, so a
+   script that catches this keeps what it caught and may try something
+   shorter. The length is written through snprintf because the two VMs'
+   lua_pushfstring do not agree on how to print a number that is not an
+   int, and one refused here can be past what an int holds. */
+static int scnSandboxStringRefuse(lua_State *L, const char *what,
+                                  double len) {
+    char said[192];
+
+    snprintf(said, sizeof(said),
+             "%s %s %.15g bytes, and %u is as long as one may be",
+             lua_tostring(L, lua_upvalueindex(2)), what, len,
+             (unsigned)SCN_STRING_MAX);
+    return luaL_error(L, "%s", said);
+}
+
+/* The same for string.rep's count, where the length would say nothing:
+   copies of an empty string come to no bytes however many there are. */
+static int scnSandboxStringRefuseCount(lua_State *L, double count) {
+    char said[192];
+
+    snprintf(said, sizeof(said),
+             "%s was asked for %.15g copies, and %u is as many as one may "
+             "make", lua_tostring(L, lua_upvalueindex(2)), count,
+             (unsigned)SCN_STRING_MAX);
+    return luaL_error(L, "%s", said);
+}
+
+/* The length the string or number at idx has as a string. A number is
+   converted on a copy, so the argument the original reads is the one the
+   script passed. False for anything else, which is left to the original to
+   refuse in its own words. */
+static bool scnSandboxStringLen(lua_State *L, int idx, size_t *len) {
+    int t = lua_type(L, idx);
+
+    if (t != LUA_TSTRING && t != LUA_TNUMBER) {
+        return false;
+    }
+    lua_pushvalue(L, idx);
+    lua_tolstring(L, -1, len);
+    lua_pop(L, 1);
+    return true;
+}
+
+/* string.rep, refused before anything is built. The result is n copies with
+ * n - 1 separators between them, and 5.4 and LuaJIT 2.1 both take the
+ * separator.
+ *
+ * The count is rounded up rather than down, so a fractional one is judged by
+ * the longest thing a VM could make of it: LuaJIT truncates and 5.4 refuses
+ * one outright, and either way nothing longer than what is checked here is
+ * built. A count of zero or less builds "", and a NaN is the original's to
+ * answer, so both go straight through.
+ *
+ * An infinite count is refused by the count and not by the length, because a
+ * length of inf bytes says nothing a count of inf copies does not say better.
+ *
+ * A count over SCN_STRING_MAX is refused whatever the strings are, empty ones
+ * included: 5.4 runs its copy loop once per copy even when there is nothing
+ * to copy, and the hook cannot see that loop either. Where the strings have a
+ * byte in them the refusal gives the length they would have come to; where
+ * they are empty it gives the count, since the length would be nothing.
+ *
+ * Nothing here can overflow. A count past SCN_STRING_MAX + 1 is refused
+ * before it is converted. Below that the count fits in seventeen bits, and
+ * each length is checked against the cap before it is multiplied, so the
+ * product is well inside 64 bits. */
+static int scnSandboxStringRep(lua_State *L) {
+    size_t     len    = 0;
+    size_t     seplen = 0;
+    lua_Number want;
+    uint64_t   n;
+    uint64_t   total;
+
+    if (!scnSandboxStringLen(L, 1, &len) || !lua_isnumber(L, 2) ||
+        (!lua_isnoneornil(L, 3) && !scnSandboxStringLen(L, 3, &seplen))) {
+        return scnSandboxStringForward(L);
+    }
+    want = lua_tonumber(L, 2);
+    if (!(want >= 1.0)) {
+        return scnSandboxStringForward(L);
+    }
+    if (want > (lua_Number)SCN_STRING_MAX + 1.0) {
+        if (!isinf(want) && (len > 0 || seplen > 0)) {
+            return scnSandboxStringRefuse(
+                L, "would build a string of",
+                (double)want * (double)len +
+                    ((double)want - 1.0) * (double)seplen);
+        }
+        return scnSandboxStringRefuseCount(L, (double)want);
+    }
+    n = (uint64_t)want;
+    if ((lua_Number)n < want) {
+        n++;
+    }
+    if (n > 1 && seplen > (size_t)SCN_STRING_MAX) {
+        return scnSandboxStringRefuse(L, "would build a string of more than",
+                                      (double)seplen);
+    }
+    if (len > (size_t)SCN_STRING_MAX) {
+        return scnSandboxStringRefuse(L, "would build a string of more than",
+                                      (double)len);
+    }
+    total = n * (uint64_t)len + (n - 1) * (uint64_t)seplen;
+    if (total > (uint64_t)SCN_STRING_MAX) {
+        return scnSandboxStringRefuse(L, "would build a string of",
+                                      (double)total);
+    }
+    if (n > (uint64_t)SCN_STRING_MAX) {
+        return scnSandboxStringRefuseCount(L, (double)n);
+    }
+    return scnSandboxStringForward(L);
+}
+
+/* table.concat, refused before anything is built. The walk reads the same
+ * range the original will: i from the third argument or 1, j from the fourth
+ * or the table's length. LuaJIT reads both as 32-bit integers and takes the
+ * length raw; 5.4 reads them as lua_Integer and takes the length through
+ * luaL_len, which honours __len.
+ *
+ * Each element is read the way that VM's original reads it: raw under
+ * LuaJIT, and through lua_geti under 5.4, which honours __index — a table
+ * whose elements come from __index would otherwise pass the walk empty and be
+ * built in full by the original. An __index function is script code, so it
+ * runs under the count like any other, and an error it raises goes to the
+ * caller as it would from the original.
+ *
+ * The walk stops as soon as the running total is over the cap, so a table of
+ * any size costs no more than the cap's worth of elements to judge. Each
+ * addition is made against the room remaining, so the total never passes the
+ * cap and nothing can overflow. An element that is neither a string nor a
+ * number ends the walk and is left to the original, which refuses it in its
+ * own words.
+ *
+ * Empty strings do not add to the total, so the cap alone does not end the
+ * walk over a long table of them. The walk is charged one instruction per
+ * element, so a long table costs the budget what it reads. */
+static int scnSandboxTableConcat(lua_State *L) {
+    size_t   seplen = 0;
+    size_t   len;
+    uint64_t total  = 0;
+    bool     ok;
+#ifdef WINBOLO_LUAJIT
+    int         i;
+    int         j;
+    int         k;
+#else
+    lua_Integer i;
+    lua_Integer j;
+    lua_Integer k;
+#endif
+
+    if (!lua_istable(L, 1) ||
+        (!lua_isnoneornil(L, 2) && !scnSandboxStringLen(L, 2, &seplen))) {
+        return scnSandboxStringForward(L);
+    }
+#ifdef WINBOLO_LUAJIT
+    i = luaL_optint(L, 3, 1);
+    j = lua_isnoneornil(L, 4) ? (int)lua_objlen(L, 1) : luaL_checkint(L, 4);
+#else
+    i = luaL_optinteger(L, 3, 1);
+    j = lua_isnoneornil(L, 4) ? luaL_len(L, 1) : luaL_checkinteger(L, 4);
+#endif
+    if (i <= j) {
+        /* Stepped by hand rather than with k <= j, which never ends when j is
+           the largest integer there is. */
+        for (k = i;; k++) {
+            scnSandboxCharge(L, 1);
+#ifdef WINBOLO_LUAJIT
+            lua_rawgeti(L, 1, k);
+#else
+            lua_geti(L, 1, k);
+#endif
+            ok = scnSandboxStringLen(L, -1, &len);
+            lua_pop(L, 1);
+            if (!ok) {
+                return scnSandboxStringForward(L);
+            }
+            if (k != i) {
+                if (seplen > (size_t)SCN_STRING_MAX - total) {
+                    return scnSandboxStringRefuse(
+                        L, "would build a string of at least",
+                        (double)total + (double)seplen);
+                }
+                total += seplen;
+            }
+            if (len > (size_t)SCN_STRING_MAX - total) {
+                return scnSandboxStringRefuse(
+                    L, "would build a string of at least",
+                    (double)total + (double)len);
+            }
+            total += len;
+            if (k == j) {
+                break;
+            }
+        }
+    }
+    return scnSandboxStringForward(L);
+}
+
+/* string.format, refused up front where the format or a string argument is
+ * already over the cap, and otherwise once the original has answered. Its
+ * result is bounded by what it was given — a width or a precision stops at
+ * two digits — so this is the one of the three that may build first and look
+ * after. The string it built is dropped with the error and collected like
+ * any other. */
+static int scnSandboxStringFormat(lua_State *L) {
+    int    n   = lua_gettop(L);
+    size_t len = 0;
+    int    a;
+
+    for (a = 1; a <= n; a++) {
+        if (lua_type(L, a) == LUA_TSTRING) {
+            lua_tolstring(L, a, &len);
+            if (len > (size_t)SCN_STRING_MAX) {
+                return scnSandboxStringRefuse(
+                    L, a == 1 ? "was given a format of"
+                              : "was given a string of",
+                    (double)len);
+            }
+        }
+    }
+    scnSandboxStringForward(L);
+    if (lua_type(L, 1) == LUA_TSTRING) {
+        lua_tolstring(L, 1, &len);
+        if (len > (size_t)SCN_STRING_MAX) {
+            return scnSandboxStringRefuse(L, "built a string of",
+                                          (double)len);
+        }
+    }
+    return lua_gettop(L);
+}
+
+/* find, match, gmatch and gsub, refused before the pattern runs. Only a
+ * string subject is measured: a number's text is a couple of dozen bytes at
+ * most, and anything else is the matcher's to refuse.
+ *
+ * These four are not closures over the originals. The VMs' own matchers count
+ * no steps, so a pattern that backtracks without end would hold the tick inside
+ * one of them however short the subject; the port in scenario_pattern.c counts
+ * its steps against the budgets instead. Upvalue 1 is the port's function,
+ * called here directly rather than through lua_call, so an argument error it
+ * raises names the function the script called. Upvalue 2 is the name, as for
+ * the three above. */
+static int scnSandboxStringSubject(lua_State *L) {
+    size_t len = 0;
+
+    if (lua_type(L, 1) == LUA_TSTRING) {
+        lua_tolstring(L, 1, &len);
+        if (len > (size_t)SCN_STRING_MAX) {
+            return scnSandboxStringRefuse(L, "was given a subject of",
+                                          (double)len);
+        }
+    }
+    return lua_tocfunction(L, lua_upvalueindex(1))(L);
+}
+
+/* One field of a library table replaced by one of the closures above, as
+   scnSandboxGuardField does for the catchers, with the name a refusal reads
+   beside the original. */
+static void scnSandboxStringField(lua_State *L, const char *table,
+                                  const char *key, lua_CFunction wrap) {
+    lua_getglobal(L, table);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        return;
+    }
+    lua_getfield(L, -1, key);
+    if (lua_isfunction(L, -1)) {
+        lua_pushfstring(L, "%s.%s", table, key);
+        lua_pushcclosure(L, wrap, 2);
+        lua_setfield(L, -2, key);
+    } else {
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+}
+
+/* One of the four pattern functions put in place of the original, which is
+   dropped rather than closed over: nothing a script can reach refers to it
+   afterwards. The string metatable's __index is this same table, so a method
+   call such as s:find(p) reaches the port as well. */
+static void scnSandboxPatternField(lua_State *L, const char *key,
+                                   lua_CFunction port) {
+    lua_getglobal(L, LUA_STRLIBNAME);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        return;
+    }
+    lua_pushcfunction(L, port);
+    lua_pushfstring(L, "%s.%s", LUA_STRLIBNAME, key);
+    lua_pushcclosure(L, scnSandboxStringSubject, 2);
+    lua_setfield(L, -2, key);
+    lua_pop(L, 1);
+}
+
 /* ── The one error a script may not keep ──────────────────────────── */
 
 /* pcall, xpcall and coroutine.resume, each over the original.
@@ -769,8 +1252,8 @@ static int scnSandboxDate(lua_State *L) {
  * prevent that — a loop around a pcall would be cut off and catch it again
  * for as long as it liked.
  *
- * So each asks the latch once the call it protected is over, and raises again
- * where that call failed with the latch set. The inner error having been an
+ * So each asks the latches once the call it protected is over — the call's
+ * and the tick's — and raises again where that call failed with either set. The inner error having been an
  * ordinary one changes nothing: once the hook has latched, this call's budget
  * is spent whatever the protected code failed at.
  *
@@ -796,6 +1279,17 @@ static int scnSandboxGuardCall(lua_State *L) {
                              "give the call its instructions back, so it is "
                              "raised again",
                           (int)SCN_BUDGET_CALL_INSTR);
+    }
+    /* And the tick's latch, for the same reason: a caught error does not
+       give the tick its instructions back either. */
+    if (s != NULL && s->tickStopped && lua_gettop(L) >= 1 &&
+        !lua_toboolean(L, 1)) {
+        return luaL_error(L, "this tick's script calls together ran past the "
+                             "%d instructions one tick may spend between "
+                             "them; catching that error does not give the "
+                             "tick its instructions back, so it is raised "
+                             "again",
+                          (int)SCN_BUDGET_TICK_INSTR);
     }
     return lua_gettop(L);
 }
@@ -899,6 +1393,18 @@ void scnSandboxOpenLibs(lua_State *L) {
     }
     lua_pop(L, 1);
 
+    /* string is also the __index of the string metatable, so replacing the
+       fields here covers a method call such as ("x"):rep(n) as well. */
+    scnSandboxStringField(L, LUA_STRLIBNAME, "rep", scnSandboxStringRep);
+    scnSandboxStringField(L, LUA_STRLIBNAME, "format",
+                          scnSandboxStringFormat);
+    scnSandboxStringField(L, LUA_TABLIBNAME, "concat",
+                          scnSandboxTableConcat);
+    scnSandboxPatternField(L, "find", scnPatternFind);
+    scnSandboxPatternField(L, "match", scnPatternMatch);
+    scnSandboxPatternField(L, "gmatch", scnPatternGmatch);
+    scnSandboxPatternField(L, "gsub", scnPatternGsub);
+
     /* Last, so each of these closes over the function its own opener
        installed rather than over something replaced afterwards. coroutine is
        base's under LuaJIT and its own library under 5.4, and either way it is
@@ -920,4 +1426,9 @@ void scnSandboxPushBase(lua_State *L) {
         lua_pop(L, 1);
         lua_newtable(L);
     }
+}
+
+void scnSandboxOpenPrint(lua_State *L) {
+    lua_pushcfunction(L, scnSandboxPrint);
+    lua_setglobal(L, "print");
 }

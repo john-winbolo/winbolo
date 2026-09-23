@@ -2829,6 +2829,12 @@
  * Rules popup still uses, because the dialog shows mods too. */
 #define STR_DLGLOBBY_DETAILS_COL_NEW_VALUE       2632
 
+/* The map panel's warning under the scenario and mods lines, shown only when
+ * the server was started with -allow-unsafe-scripts. A sentence rather than a
+ * tag, because it is the one place a joiner is told that the scripts they are
+ * about to play under are not held to the sandbox. */
+#define STR_DLGLOBBY_SCENARIO_UNSAFE             2633
+
 /* Rule descriptions */
 
 /* What each simulation rule governs, one line apiece, shown wherever a rule

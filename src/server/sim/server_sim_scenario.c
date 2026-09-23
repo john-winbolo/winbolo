@@ -884,7 +884,14 @@ static void scenarioWriteTile(ServerSim *sim, BYTE x, BYTE y, BYTE terrain) {
     mapSetPos(&sim->sim, &sim->sim.mp, x, y, terrain, TRUE, FALSE);
 }
 
-/* Put one square's terrain where the op says. */
+/* Put one square's terrain where the op says.
+ *
+ * Paid for out of the fill's tile budget, and held to the same two tests the
+ * fill is: a frame's map event buffer drops a change without a signal once it
+ * is full, and the comment on scenarioFillStep below says what that costs a
+ * client. Sharing the one budget is what keeps set_tile and the fill together
+ * inside what the buffer holds. Every set_tile that applies spends a square,
+ * the same terrain written again included. */
 static ScnOpResult scenarioOpMapSetTile(ServerSim *sim,
                                         const ScnOpMapSetTile *p) {
     if (!scenarioSquareOnMap(p->x, p->y)) {
@@ -893,8 +900,13 @@ static ScnOpResult scenarioOpMapSetTile(ServerSim *sim,
     if (!scenarioTerrainIsLegal(p->terrain)) {
         return SCN_OP_RANGE;
     }
+    if (sim->scenarioFillSpent >= SCN_TILES_PER_TICK ||
+        sim->mapEventCount >= MAX_MAP_EVENTS) {
+        return SCN_OP_RATE;
+    }
 
     scenarioWriteTile(sim, p->x, p->y, p->terrain);
+    sim->scenarioFillSpent++;
     return SCN_OP_OK;
 }
 
@@ -1035,6 +1047,10 @@ void serverSimScenarioDrainFill(ServerSim *sim) {
        costs a fill one frame and never lets a frame carry more squares than
        its map event buffer holds, which is the way round to be wrong. */
     sim->scenarioFillSpent = 0;
+    /* The op and message allowances are the frame's too, and come back
+       here for the same reason. */
+    sim->scenarioOpsSpent  = 0;
+    sim->scenarioMsgsSpent = 0;
 }
 
 void serverSimScenarioResetFill(ServerSim *sim) {
@@ -1049,6 +1065,8 @@ void serverSimScenarioResetFill(ServerSim *sim) {
     sim->scenarioFillX = 0;
     sim->scenarioFillY = 0;
     sim->scenarioFillSpent = 0;
+    sim->scenarioOpsSpent = 0;
+    sim->scenarioMsgsSpent = 0;
 }
 
 /* Put a mine on a square. The pairing is the one tankLayMine and the builder's
@@ -3967,12 +3985,25 @@ static bool scenarioOpIsRoster(ScenarioOpType t) {
            t == SCN_OP_LOBBY_SET_TEAM;
 }
 
+/* The ops SCN_MSGS_PER_TICK counts: the four that put a line in front of a
+ * player and the one that plays them a sound. */
+static bool scenarioOpIsMessage(ScenarioOpType t) {
+    return t == SCN_OP_MSG_ALL ||
+           t == SCN_OP_MSG_TEAM ||
+           t == SCN_OP_MSG_PLAYER ||
+           t == SCN_OP_MSG_SAY ||
+           t == SCN_OP_SOUND;
+}
+
 /* The prelude and the handler for one op, with the caller holding the actor
  * mark across the whole of it. Split from the entry point below so the mark
  * goes on once and comes off once however the op ends: every case returns
- * where it stands. */
+ * where it stands.
+ *
+ * counted is false for the host's own ops and true for everything a script
+ * sends. */
 static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
-                                   ScnOpOut *out) {
+                                   ScnOpOut *out, bool counted) {
     /* A policy callback is a question the engine asks mid-operation. It
      * answers and nothing else: an op from inside one would mutate state
      * the caller is halfway through reading. A depth, not a flag, so a
@@ -3998,6 +4029,25 @@ static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
     if (sim->startInProgress &&
         (!sim->scenarioSetupWindow || scenarioOpIsRoster(op->type))) {
         return SCN_OP_WRONG_STATE;
+    }
+
+    /* The tick's allowances, after the prelude so an op it refused costs the
+     * script nothing, and ahead of the handler so an op past them is not
+     * looked at. An op the handler goes on to refuse is still counted: the
+     * script sent it and the handler did the work of reading it. A refusal
+     * here is not counted, or a script past its allowance would push the
+     * count on for as long as it kept asking. */
+    if (counted) {
+        bool message = scenarioOpIsMessage(op->type);
+
+        if (sim->scenarioOpsSpent >= SCN_OPS_PER_TICK ||
+            (message && sim->scenarioMsgsSpent >= SCN_MSGS_PER_TICK)) {
+            return SCN_OP_RATE;
+        }
+        sim->scenarioOpsSpent++;
+        if (message) {
+            sim->scenarioMsgsSpent++;
+        }
     }
 
     switch (op->type) {
@@ -4108,8 +4158,10 @@ static ScnOpResult scenarioApplyOp(ServerSim *sim, const ScenarioOp *op,
     return SCN_OP_UNSUPPORTED;
 }
 
-ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
-                                     ScnOpOut *out) {
+/* The body both entry points share; counted is the only thing between
+ * them. */
+static ScnOpResult scenarioApplyEntry(ServerSim *sim, const ScenarioOp *op,
+                                      ScnOpOut *out, bool counted) {
     ScnOpResult r;
     bool        was;
 
@@ -4136,9 +4188,19 @@ ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
      * op publishes nothing for it to reach. */
     was                 = sim->scenarioActing;
     sim->scenarioActing = true;
-    r                   = scenarioApplyOp(sim, op, out);
+    r                   = scenarioApplyOp(sim, op, out, counted);
     sim->scenarioActing = was;
     return r;
+}
+
+ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
+                                     ScnOpOut *out) {
+    return scenarioApplyEntry(sim, op, out, true);
+}
+
+ScnOpResult serverSimApplyScenarioHostOp(ServerSim *sim, const ScenarioOp *op,
+                                         ScnOpOut *out) {
+    return scenarioApplyEntry(sim, op, out, false);
 }
 
 bool serverSimIsScenarioActing(const ServerSim *sim) {
@@ -4155,6 +4217,40 @@ void serverSimSetScenarioTick(ServerSim *sim, void (*tick)(void *ctx),
     if (sim == NULL) return;
     sim->scenarioTick = tick;
     sim->scenarioTickCtx = ctx;
+}
+
+/* The same weight the server loop gives each tick in its own average, so the
+ * two EWMAs the info prints side by side move at the same pace. */
+static const double kScenarioTickAlpha = 0.1;
+
+void serverSimSetScenarioTickStats(ServerSim *sim, uint32_t instr,
+                                   uint32_t budget, bool tripped, double ms) {
+    if (sim == NULL) return;
+    sim->scenarioTickStats.lastMs = ms;
+    if (sim->scenarioTickStats.ticks == 0) {
+        sim->scenarioTickStats.ewmaMs = ms;
+    } else {
+        sim->scenarioTickStats.ewmaMs =
+            kScenarioTickAlpha * ms +
+            (1.0 - kScenarioTickAlpha) * sim->scenarioTickStats.ewmaMs;
+    }
+    if (ms > sim->scenarioTickStats.peakMs) {
+        sim->scenarioTickStats.peakMs = ms;
+    }
+    sim->scenarioTickStats.lastInstr = instr;
+    if (instr > sim->scenarioTickStats.peakInstr) {
+        sim->scenarioTickStats.peakInstr = instr;
+    }
+    sim->scenarioTickStats.budget = budget;
+    if (tripped) {
+        sim->scenarioTickStats.trips++;
+    }
+    sim->scenarioTickStats.ticks++;
+}
+
+void serverSimScenarioResetTickStats(ServerSim *sim) {
+    if (sim == NULL) return;
+    memset(&sim->scenarioTickStats, 0, sizeof(sim->scenarioTickStats));
 }
 
 void serverSimSetScenarioRoundBoot(ServerSim *sim, void (*roundBoot)(void *ctx),
@@ -4308,7 +4404,8 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
                                   const char *description,
                                   bool extraTeams,
                                   bool keepsWinCondition,
-                                  bool bound) {
+                                  bool bound,
+                                  bool unsafe) {
     if (sim == NULL) return;
     memset(&sim->scenarioIdentity, 0, sizeof(sim->scenarioIdentity));
     if (source == lobbyScenarioNone) {
@@ -4330,6 +4427,7 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
     sim->scenarioIdentity.extraTeams        = extraTeams;
     sim->scenarioIdentity.keepsWinCondition = keepsWinCondition;
     sim->scenarioIdentity.bound             = bound;
+    sim->scenarioIdentity.unsafe            = unsafe;
     scnCopyIdentityText(sim->scenarioIdentity.name,
                         sizeof(sim->scenarioIdentity.name), name);
     scnCopyIdentityText(sim->scenarioIdentity.fileName,

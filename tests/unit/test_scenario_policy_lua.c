@@ -130,7 +130,12 @@ static void plaReset(void) {
 }
 
 /* One console line, kept if a policy wrote it. A record past the buffer is
-   truncated rather than overrunning it. */
+   truncated rather than overrunning it.
+
+   Each print is one console message, and print turns the newline a note
+   ends with into a space, so the trailing spaces are dropped and the message
+   is ended here with a newline instead. The record then reads one note to a
+   line, as the cases expect. */
 static void plaNoteLine(const char *msg) {
     size_t mark = strlen(PLA_NOTE_MARK);
     size_t room;
@@ -139,14 +144,21 @@ static void plaNoteLine(const char *msg) {
     if (msg == NULL || strncmp(msg, PLA_NOTE_MARK, mark) != 0) {
         return;
     }
-    n    = strlen(msg + mark);
+    n = strlen(msg + mark);
+    while (n > 0 && msg[mark + n - 1] == ' ') {
+        n--;
+    }
     room = sizeof(plaNote) - 1 - plaNoteLen;
-    if (n > room) {
-        n = room;
+    if (room == 0) {
+        return;
+    }
+    if (n > room - 1) {
+        n = room - 1;                   /* one byte kept for the newline */
     }
     memcpy(plaNote + plaNoteLen, msg + mark, n);
     plaNoteLen += n;
-    plaNote[plaNoteLen] = '\0';
+    plaNote[plaNoteLen++] = '\n';
+    plaNote[plaNoteLen]   = '\0';
 }
 
 /* Only consoleMessage is replaced, never the ctx beside it, which the sim's

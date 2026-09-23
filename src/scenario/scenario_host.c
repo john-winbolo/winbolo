@@ -79,6 +79,7 @@
 
 #include <lua.h>
 #include <lauxlib.h>
+#include <lualib.h>                /* luaL_openlibs, for an unsafe state */
 
 /* SDL_Mutex, SDL_ThreadID and SDL_GetCurrentThreadID, which the VM lock is
  * built from. server_sim.h brings SDL in as well; named here because this
@@ -428,6 +429,14 @@ typedef struct ScnScriptEntry {
      * limit. Both are the round's: a round start puts them back. */
     unsigned errors;
     bool     disabled;
+
+    /* The count as the tick found it, and the errors counted against this
+     * script since, both written from the tick. A tick that runs out of
+     * instructions puts the count back to the sum of the two, so the calls
+     * that returned before the tick ran out clear nothing — see
+     * scnErrorTickRestore. */
+    unsigned tickSaved;
+    unsigned tickCounted;
 
     /* ── What the script is, as against what this round made of it ──
      *
@@ -838,7 +847,29 @@ static int scnPanic(lua_State *L) {
 }
 
 lua_State *scnNewVm(void) {
-    lua_State *L = scnSandboxNewState();
+    lua_State *L;
+
+    /* An operator who passed -allow-unsafe-scripts has chosen to trust every
+       script this server runs, uploaded ones included, so the state is Lua's
+       own: the default allocator, no count hook, and every library the build
+       has, jit and ffi on LuaJIT among them. There is no per-state record,
+       and every sandbox call the host makes around a script finds none and
+       does nothing. print is the one thing kept, so a script's lines still
+       reach the console the operator reads; with no record it counts none of
+       them. math.randomseed stays, since nothing here is sealed. */
+    if (scenarioHostUnsafeScripts()) {
+        L = luaL_newstate();
+        if (L == NULL) {
+            return NULL;
+        }
+        lua_atpanic(L, scnPanic);
+        luaL_openlibs(L);
+        scnSandboxOpenPrint(L);
+        scnSeedRandom(L);
+        return L;
+    }
+
+    L = scnSandboxNewState();
     if (L == NULL) {
         return NULL;
     }
@@ -849,10 +880,12 @@ lua_State *scnNewVm(void) {
     return L;
 }
 
-/* The other end of it. A state carries its memory count beside it, so every
- * close goes through here rather than through lua_close: the count is on the
- * heap and a plain close would leave it behind. NULL is nothing to close,
- * which is what lets the failure paths below close without asking. */
+/* The other end of it. A sandboxed state carries its memory count beside it,
+ * so every close goes through here rather than through lua_close: the count
+ * is on the heap and a plain close would leave it behind. An unsafe state has
+ * none, and the close finds no record and frees nothing extra. NULL is
+ * nothing to close, which is what lets the failure paths below close without
+ * asking. */
 void scnCloseVm(lua_State *L) {
     scnSandboxCloseState(L);
 }
@@ -906,28 +939,70 @@ static void scnPushGlobals(lua_State *L) {
 #endif
 }
 
+/* A new table holding every field of the table at src, which is an absolute
+ * index, left on top of the stack. depth 1 copies the fields as they are;
+ * depth 2 also copies any field that is itself a table, one level, and so
+ * on. Every read is lua_next and every write lua_rawset, so no metatable on
+ * the source or on anything in it runs.
+ *
+ * Takes 5 stack slots, and 4 more for each level past the first; the caller
+ * checks for them. */
+static void scnCopyTable(lua_State *L, int src, int depth) {
+    lua_newtable(L);                 /* the copy */
+    lua_pushnil(L);
+    while (lua_next(L, src) != 0) {
+        /* Key at -2 and value at -1. The key goes on again for the write,
+           and the value goes on as itself or as a copy of its own. */
+        lua_pushvalue(L, -2);
+        if (depth > 1 && lua_type(L, -2) == LUA_TTABLE) {
+            scnCopyTable(L, lua_gettop(L) - 1, depth - 1);
+        } else {
+            lua_pushvalue(L, -2);
+        }
+        lua_rawset(L, -5);           /* the copy, four slots down */
+        lua_pop(L, 1);
+    }
+}
+
 /* A table for one script's globals to live in, kept in the registry and
  * answered as a reference. LUA_NOREF where there was no memory for it.
  *
- * Every name the state's real globals hold is copied into it, one level
- * deep, and _G is set to the new table. That is the whole of it:
+ * Every name the state's real globals hold is copied into it, and _G is set
+ * to the new table. That is the whole of it:
  *
  *   The copy is what makes the sandbox's library and the game table
- *   reachable by name. The values are shared rather than duplicated — the
- *   same print, the same string table, the same game table — so the copy is
- *   a few dozen slots and nothing else. A script that reassigns one of those
- *   names reassigns its own entry and leaves every other script's alone,
- *   which is the point of the table.
+ *   reachable by name. A value that is not a table — print, pairs,
+ *   _VERSION — goes in as itself. A value that is a table goes in as a copy
+ *   of its own, one level deep: string, table, math, os, coroutine and utf8
+ *   where the VM has it. game is copied two levels deep, so TERRAIN and the
+ *   word tables inside it are each script's own as well. A script that
+ *   writes string.find = nil or game.end_round = nil, or adds a row of its
+ *   own to game, changes its own copy and no other script's.
  *
- *   What the copy does not separate is what those shared values hold. The
- *   game table is one object, so a script writing game.anything writes it
- *   for every script in the list, and a script that clears game.set_rule
- *   takes it away from all of them. The names are each script's own; what
- *   the names point at is not. That is a limit of one level deep, and it is
- *   left where it is on purpose: the scripts a host loads are files that
- *   host installed, not anything arriving from a player, and copying a
- *   level further would hand each script a game table of its own, which the
- *   host would then have to keep several of.
+ *   That matters because the scripts on one list need not come from one
+ *   person. A scenario and the mods behind it may be written by different
+ *   people, and a write one of them makes to a library or to game must not
+ *   reach another.
+ *
+ *   A copy of game is exact because game never changes after
+ *   scenarioLuaInstall builds it: the rows are closures over the host's
+ *   context, and the constants, TERRAIN and the word tables are fixed
+ *   numbers. There is nothing live in it for a copy to fall behind on.
+ *
+ *   What is still shared: the string metatable, whose __index is the state's
+ *   one string table, so a method call such as s:find(p) reaches that table
+ *   and not the script's copy; the world itself, which every script changes
+ *   through the same ops; and the instruction and op limits, which are the
+ *   state's and the tick's rather than a script's.
+ *
+ *   Under -allow-unsafe-scripts none of the tables are copied: each script
+ *   gets its own names, and the tables behind them are shared as they are.
+ *   That state opens debug, and debug.getregistry and debug.getupvalue reach
+ *   any other script's tables whatever was copied, so keeping scripts apart
+ *   cannot hold there. And copying package would break it: require reads
+ *   path, cpath and its searchers off the original package table — an
+ *   upvalue on 5.4, LUA_ENVIRONINDEX on LuaJIT — so a script setting
+ *   package.path on its copy would find require never saw it.
  *
  *   _G is the table itself, which is what a set of globals means by the
  *   name. Without it a script reading _G would be handed the state's real
@@ -935,8 +1010,8 @@ static void scnPushGlobals(lua_State *L) {
  *   router — which takes the author's handler off _G and puts its own
  *   wrapper back — would chain on to the wrong table entirely.
  *
- * The plan this was built from said to leave the table empty and reach the
- * real globals through __index on a metatable. That is neater and it is
+ * The other way to build this is to leave the table empty and reach the real
+ * globals through __index on a metatable. That is neater and it is
  * wrong here, because a script may put a metatable on its own globals: under
  * a chain, the moment one does, every name the sandbox opened goes away with
  * the metatable it replaced. scenario_host_hook_via_global_metatable is that
@@ -949,18 +1024,33 @@ static void scnPushGlobals(lua_State *L) {
  * read below is raw. That, and not the copy, is what stops a metatable a
  * script installs from answering for a hook name or a policy name. */
 int scnEnvNew(lua_State *L) {
-    if (!lua_checkstack(L, 6)) {
+    bool copyTables = !scenarioHostUnsafeScripts();
+    int  globals;
+
+    /* 6 for the walk below, and 4 more for each level a copy goes down:
+       game's two levels come to 14. */
+    if (!lua_checkstack(L, 14)) {
         return LUA_NOREF;
     }
     lua_newtable(L);                 /* the env */
     scnPushGlobals(L);               /* what it starts out holding */
+    globals = lua_gettop(L);
 
     lua_pushnil(L);
-    while (lua_next(L, -2) != 0) {
+    while (lua_next(L, globals) != 0) {
         /* Key at -2 and value at -1, and lua_next wants the key left
-           behind, so both go on again for the write. */
+           behind, so the key goes on again for the write. The globals table
+           itself is left as it is here; _G is written below. */
         lua_pushvalue(L, -2);
-        lua_pushvalue(L, -2);
+        if (copyTables && lua_type(L, -2) == LUA_TTABLE &&
+            !lua_rawequal(L, -2, globals)) {
+            int depth = (lua_type(L, -3) == LUA_TSTRING &&
+                         strcmp(lua_tostring(L, -3), "game") == 0) ? 2 : 1;
+
+            scnCopyTable(L, lua_gettop(L) - 1, depth);
+        } else {
+            lua_pushvalue(L, -2);
+        }
         lua_rawset(L, -6);           /* the env, five slots down */
         lua_pop(L, 1);
     }
@@ -1030,11 +1120,16 @@ static bool scnChunkSetEnv(lua_State *L, int envRef) {
  * Text only. A precompiled chunk is a stream the VM trusts and does not
  * check, so bytes that arrived inside a map file are refused at the load
  * rather than read as instructions. Every state the host boots comes through
- * here, the validator's included, so WinBoloDS -validate refuses one too. */
+ * here, the validator's included, so WinBoloDS -validate refuses one too.
+ *
+ * Except under -allow-unsafe-scripts, where the operator has chosen to trust
+ * every script this server runs, uploaded ones included, and a precompiled
+ * one is taken as well. */
 bool scnRunChunk(lua_State *L, int envRef, const char *src, size_t srcLen,
                  const char *chunkName, char *err, size_t errLen) {
     ScnSandboxCall saved;
-    bool           ok = false;
+    bool           ok   = false;
+    const char    *mode = scenarioHostUnsafeScripts() ? NULL : "t";
 
     /* The chunk's top level is script code like any other, and the one place
        a loop in it would show is here: an attach that never returns. Armed
@@ -1042,7 +1137,7 @@ bool scnRunChunk(lua_State *L, int envRef, const char *src, size_t srcLen,
        executes no instructions to count — and leaves one disarm to reach
        whichever way this goes. */
     scnSandboxArmCall(L, &saved);
-    if (luaL_loadbufferx(L, src, srcLen, chunkName, "t") != 0) {
+    if (luaL_loadbufferx(L, src, srcLen, chunkName, mode) != 0) {
         scnFmt(err, errLen, "scenario: %s", scnLuaError(L));
         lua_pop(L, 1);
     } else if (!scnChunkSetEnv(L, envRef)) {
@@ -2728,12 +2823,15 @@ static void scnPushRouterFields(lua_State *L, const ScenarioManifest *m) {
  * chunks buy: the author's file and this one each keep their own numbering.
  *
  * Text only, for the reason scnRunChunk is: these bytes are the build's own,
- * but the loader that reads them is the one a map file's script reaches. */
+ * but the loader that reads them is the one a map file's script reaches.
+ * Under -allow-unsafe-scripts it takes either, as scnRunChunk's does: the
+ * operator has chosen to trust every script this server runs. */
 static bool scnInstallTriggers(lua_State *L, int envRef,
                                const ScenarioManifest *m,
                                char *err, size_t errLen) {
     ScnSandboxCall saved;
-    bool           ok = false;
+    bool           ok   = false;
+    const char    *mode = scenarioHostUnsafeScripts() ? NULL : "t";
 
     if (m->numTriggers == 0) {
         return true;
@@ -2742,7 +2840,7 @@ static bool scnInstallTriggers(lua_State *L, int envRef,
     scnSandboxArmCall(L, &saved);
     if (luaL_loadbufferx(L, (const char *)kScnTriggersLua,
                          (size_t)SCN_TRIGGERS_LUA_LEN,
-                         "@scenario_triggers.lua", "t") != 0) {
+                         "@scenario_triggers.lua", mode) != 0) {
         scnFmt(err, errLen, "scenario: %s", scnLuaError(L));
         lua_pop(L, 1);
     } else if (!scnChunkSetEnv(L, envRef)) {
@@ -2792,7 +2890,9 @@ static void scnApplyRules(ScenarioHost *h) {
         op.u.setRule.rule  = h->manifest.rules[i].rule;
         op.u.setRule.value = h->manifest.rules[i].value;
 
-        r = serverSimApplyScenarioOp(h->sim, &op, NULL);
+        /* The host's own op, not the script's: a table of more rules than
+           one tick's allowance still applies in full. */
+        r = serverSimApplyScenarioHostOp(h->sim, &op, NULL);
         if (r != SCN_OP_OK) {
             scnSay(h->lastError, sizeof(h->lastError),
                    "scenario: rule '%s' refused: %s",
@@ -2917,16 +3017,61 @@ static void scnDisable(ScenarioHost *h, const char *fmt, ...) {
  * The count cannot wrap. Past the limit the only thing left to do is switch
  * that script off, which the next line does, and a switched-off round still
  * counts the drops its queue goes on taking. */
+static void scnErrorLimit(ScenarioHost *h, int i) {
+    ScnScriptEntry *e = &h->entry[i];
+
+    if (e->errors >= SCN_ERROR_LIMIT) {
+        scnScriptDisable(h, i,
+                         "%.32s is off for the rest of the round: %u errors "
+                         "in a row.", scnScriptSubject(h, i), e->errors);
+    }
+}
+
 static void scnErrorCounted(ScenarioHost *h, int i) {
     ScnScriptEntry *e = &h->entry[i];
 
     if (e->errors < UINT_MAX) {
         e->errors++;
     }
-    if (e->errors >= SCN_ERROR_LIMIT) {
-        scnScriptDisable(h, i,
-                         "%.32s is off for the rest of the round: %u errors "
-                         "in a row.", scnScriptSubject(h, i), e->errors);
+    if (e->tickCounted < UINT_MAX) {
+        e->tickCounted++;
+    }
+    scnErrorLimit(h, i);
+}
+
+/* Each script's count as the tick found it, and none counted since. Made
+ * where the tick opens its instruction window. */
+static void scnErrorTickSave(ScenarioHost *h) {
+    int i;
+
+    for (i = 0; i < h->count; i++) {
+        h->entry[i].tickSaved   = h->entry[i].errors;
+        h->entry[i].tickCounted = 0;
+    }
+}
+
+/* A tick that ran out of instructions may not clear what came before it.
+ *
+ * Every call ahead of the one that went over returned, and a call that returns
+ * puts its script's count back to zero. Left at that, a script spending the
+ * whole total every tick would be counted one error and then cleared by its
+ * own first call of the next tick, for ever, and never reach the limit. So the
+ * count goes back to what the tick found plus what the tick counted, and the
+ * clears it made are undone.
+ *
+ * Counts only: a script switched off during the tick stays off, and one this
+ * takes to the limit is switched off here as the count would have done. A
+ * tick that did not run out does not come here and keeps its clears. */
+static void scnErrorTickRestore(ScenarioHost *h) {
+    int i;
+
+    for (i = 0; i < h->count; i++) {
+        ScnScriptEntry *e = &h->entry[i];
+
+        e->errors = (e->tickCounted > UINT_MAX - e->tickSaved)
+                        ? UINT_MAX
+                        : e->tickSaved + e->tickCounted;
+        scnErrorLimit(h, i);
     }
 }
 
@@ -3241,6 +3386,14 @@ static void scnHookCallTo(ScenarioHost *h, ScnHookId id, int nargs,
         if (h->entry[i].disabled || h->entry[i].hooks[id] == LUA_NOREF ||
             ((to >> i) & 1u) == 0) {
             continue;
+        }
+        /* A tick whose calls have spent SCN_BUDGET_TICK_INSTR between them
+           makes no more: the rest of the drain, the region hooks and on_tick
+           are dropped for this tick. A dropped call is no call at all, so it
+           counts no error and clears none; the one that went over has already
+           been counted. */
+        if (scnSandboxTickSpent(h->L)) {
+            break;
         }
         /* The function and one copy of each argument. Asked for rather than
            assumed: LUA_MINSTACK is twenty and the widest hook takes five,
@@ -3918,7 +4071,9 @@ static void scnSayPending(ScenarioHost *h) {
     memset(&op, 0, sizeof(op));
     op.type = SCN_OP_MSG_ALL;
     snprintf(op.u.msgAll.text, sizeof(op.u.msgAll.text), "%s", h->pending);
-    if (serverSimApplyScenarioOp(h->sim, &op, NULL) == SCN_OP_OK) {
+    /* The host's line, so a script that spent the tick's messages cannot
+       hold it back. */
+    if (serverSimApplyScenarioHostOp(h->sim, &op, NULL) == SCN_OP_OK) {
         h->hasPending = false;
     }
 }
@@ -4483,15 +4638,25 @@ static void scnScanRegions(ScenarioHost *h) {
  * script is running, and a timer is exactly where a survival scenario ends
  * its round from.
  *
+ * Each timer is taken out of the set only as it comes to run, so that a tick
+ * whose calls have spent SCN_BUDGET_TICK_INSTR stops taking and leaves every
+ * timer it has not reached where it was: those run next tick rather than being
+ * lost. Taking one at a time has two consequences a script can see. A timer
+ * cancelled by one earlier in the same run no longer runs, and its cancel
+ * answers true. And the due timers not yet taken still hold their entries
+ * while the run goes on, so a timer set mid-run can find the set fuller than
+ * the run will leave it.
+ *
  * The error count below is still against every running script. Whose a timer
  * is, is now known, so counting it against that one alone is possible and is
  * a separate decision from this one; it is left as it was so that this
  * change moves nothing but the question of who is calling. */
 static void scnRunTimers(ScenarioHost *h) {
     ScnSandboxCall saved;
-    int refs[SCN_TIMERS_MAX];
-    const ScenarioManifest *owners[SCN_TIMERS_MAX];
+    uint32_t ids[SCN_TIMERS_MAX];
+    const ScenarioManifest *owner;
     ScnRunningSave          outer;
+    int ref;
     int n;
     int i;
     int rc;
@@ -4499,14 +4664,26 @@ static void scnRunTimers(ScenarioHost *h) {
     if (h->L == NULL) {
         return;
     }
-    n = scenarioLuaTimersTakeDue(&h->timers, serverSimGetTick(h->sim), refs,
-                                 owners, SCN_TIMERS_MAX);
+    /* The due set, read once: a timer set during the run has an id that is
+       not on this list and waits for the next tick. */
+    n = scenarioLuaTimersDue(&h->timers, serverSimGetTick(h->sim), ids,
+                             SCN_TIMERS_MAX);
     for (i = 0; i < n; i++) {
+        /* Out of instructions for this tick: the rest stay in the set and run
+           next tick. A switched-off scenario runs nothing and so goes on
+           taking, to hand back what the rest were holding. */
+        if (!h->disabled && scnSandboxTickSpent(h->L)) {
+            break;
+        }
+        owner = NULL;
+        if (!scenarioLuaTimersTake(&h->timers, ids[i], &ref, &owner)) {
+            continue;                /* cancelled earlier in this run */
+        }
         /* A scenario switched off part way through the run still has to be
            handed back what the rest of the timers were holding. */
         if (!h->disabled) {
-            lua_rawgeti(h->L, LUA_REGISTRYINDEX, refs[i]);
-            outer = scnRunningEnterTable(h, owners[i]);
+            lua_rawgeti(h->L, LUA_REGISTRYINDEX, ref);
+            outer = scnRunningEnterTable(h, owner);
             scnSandboxArmCall(h->L, &saved);
             rc = lua_pcall(h->L, 0, 0, 0);
             scnSandboxDisarmCall(h->L, &saved);
@@ -4525,7 +4702,7 @@ static void scnRunTimers(ScenarioHost *h) {
                 scnErrorClearedAll(h);
             }
         }
-        luaL_unref(h->L, LUA_REGISTRYINDEX, refs[i]);
+        luaL_unref(h->L, LUA_REGISTRYINDEX, ref);
     }
 }
 
@@ -4578,17 +4755,30 @@ static void scnReportDrops(ScenarioHost *h) {
 static void scnTick(void *ctx) {
     ScenarioHost *h = (ScenarioHost *)ctx;
     ServerState   state;
+    Uint64        start;
+    uint32_t      tickInstr = 0;
+    bool          tickSpent = false;
 
     if (h == NULL) {
         return;
     }
     scnLockEnter(&h->lock);
+    /* Timed from inside the lock, so what the operator's info reads is the
+       script's own work and not a wait on a GUI-thread ask. */
+    start = SDL_GetPerformanceCounter();
     /* First, inside the lock and before anything this tick runs: the console
        lines print may put out are counted per tick as well as per call, and
-       this is the tick they are counted against. */
+       this is the tick they are counted against. It also opens the window
+       SCN_BUDGET_TICK_INSTR is counted in, and each script's error count is
+       noted as the window opens, for the restore below.
+
+       on_start is the first call the window sees, so it always runs: it
+       starts with the whole tick's total and nothing ahead of it can have
+       spent any. */
     if (h->L != NULL) {
         scnSandboxTickReset(h->L);
     }
+    scnErrorTickSave(h);
     if (h->startPending &&
         serverSimGetState(h->sim) == serverStateRunning) {
         h->startPending = false;
@@ -4604,6 +4794,22 @@ static void scnTick(void *ctx) {
         scnHookCall(h, SCN_HOOK_TICK, 1);
     }
 
+    /* The window shuts before on_end, so on_end runs on its own call's
+       budget whatever the tick spent and is never one of the calls a spent
+       tick skips. A tick that ran out puts the error counts back first, so
+       what on_end does with its own count is counted as usual.
+
+       The tick's instructions and whether it ran out are read here too, the
+       last point at which the window still holds them. */
+    if (h->L != NULL) {
+        tickInstr = scnSandboxTickInstr(h->L);
+        tickSpent = scnSandboxTickSpent(h->L);
+        if (tickSpent) {
+            scnErrorTickRestore(h);
+        }
+        scnSandboxTickClose(h->L);
+    }
+
     state = serverSimGetState(h->sim);
     if (state == serverStateGameOver && h->lastState != serverStateGameOver) {
         scnHookRun(h, SCN_HOOK_END);
@@ -4612,6 +4818,16 @@ static void scnTick(void *ctx) {
 
     scnReportDrops(h);
     scnSayPending(h);
+    /* The time covers everything above, on_end included; the instructions
+       are the window's alone. The sim cannot see the budget's header, so the
+       total is handed over with the count. */
+    if (h->L != NULL) {
+        double ms = (double)(SDL_GetPerformanceCounter() - start) * 1000.0 /
+                    (double)SDL_GetPerformanceFrequency();
+        serverSimSetScenarioTickStats(h->sim, tickInstr,
+                                      (uint32_t)SCN_BUDGET_TICK_INSTR,
+                                      tickSpent, ms);
+    }
     scnLockLeave(&h->lock);
 }
 
@@ -4795,6 +5011,11 @@ static int scnPolicyScript(const ScenarioHost *h) {
  * between the two calls. */
 static bool scnPolicyBegin(ScenarioHost *h, int script, const char *name) {
     if (h->disabled || h->L == NULL || !scnScriptLive(h, script)) {
+        return false;
+    }
+    /* A tick that has spent its instructions asks nothing more, and the site
+       takes the classic answer as it does for a script defining no policy. */
+    if (scnSandboxTickSpent(h->L)) {
         return false;
     }
     scnRawGlobal(h->L, h->entry[script].envRef, name);
@@ -5712,6 +5933,20 @@ static bool scnUploadScripts = true;
 
 void scenarioHostSetUploadScriptsEnabled(bool enabled) {
     scnUploadScripts = enabled;
+}
+
+/* And the one that goes the other way: whether a script runs with nothing
+ * held back. One answer for the process, written at startup, and read each
+ * time a state is booted or a chunk is loaded — through the getter, because
+ * those are further up the file than this. */
+static bool scnUnsafeScripts = false;
+
+void scenarioHostSetUnsafeScripts(bool unsafe) {
+    scnUnsafeScripts = unsafe;
+}
+
+bool scenarioHostUnsafeScripts(void) {
+    return scnUnsafeScripts;
 }
 
 /* One character of a path, for the comparison below: separators levelled and
@@ -6948,7 +7183,8 @@ static void scnHandLobbyOver(ServerSim *sim, const ScenarioManifest *m,
        over. */
     serverSimSetScenarioIdentity(sim, source, m->name, fileName,
                                  m->description, m->lobby.extraTeams,
-                                 scnManifestKeepsWinCondition(m), m->bound);
+                                 scnManifestKeepsWinCondition(m), m->bound,
+                                 scenarioHostUnsafeScripts());
     /* And which rules it sets, so the lobby can say what it changes without
        anybody opening the file. The manifest's own pairs, whatever the round
        later makes of them: the table an author wrote is the question the
@@ -8020,7 +8256,7 @@ void scenarioHostDetach(ScenarioHost *h) {
         /* And what it was called, so a lobby left without a scenario says
            it has none. */
         serverSimSetScenarioIdentity(h->sim, lobbyScenarioNone, NULL, NULL,
-                                     NULL, false, false, false);
+                                     NULL, false, false, false, false);
         /* And an empty rules set, which is how a client is told the set it
            was shown has gone. Reached only where a host existed, so a map
            that never had a scenario publishes nothing at all rather than an

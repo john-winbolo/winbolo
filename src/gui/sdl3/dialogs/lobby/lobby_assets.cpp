@@ -737,6 +737,19 @@ void lobbyRenderScenarioInfoLines(ClientSim *cs, float s) {
         }
     }
 
+    /* A server started with -allow-unsafe-scripts runs every script with the
+       full Lua library and no limits, and a joiner is owed that before they
+       play under one. Said under the lines that name the scripts, in the
+       colour a server-imposed setting is drawn in, and not at all on a
+       sandboxed server: the sandbox is what every player expects, so only
+       its absence is news. The server sends the flag only beside an attached
+       script, so a round with none draws nothing here either. */
+    if (clientSimGetLobbyScenarioUnsafe(cs)) {
+        ImGui::PushStyleColor(ImGuiCol_Text, wbThemeColor(g_theme->lockBadge));
+        ImGui::TextWrapped("%s", langGetText(STR_DLGLOBBY_SCENARIO_UNSAFE));
+        ImGui::PopStyleColor();
+    }
+
     /* The door into the chooser, drawn last so the two lines above read as
        what is loaded and this reads as what to do about it. Its own id,
        because the settings column's Details button and the visibility row's

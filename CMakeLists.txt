@@ -3627,6 +3627,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # script's print ends up, the memory cap it is refused at and the
     # instruction budget one call is cut off at.
     tests/unit/test_scenario_sandbox.c
+    # One hostile script per known way out of the sandbox, each taken through
+    # the real attach and tick and refused or switched off.
+    tests/unit/test_scenario_hostile.c
     # The bus events the host queues and drains: the subscriber, the
     # fixed queue and the bounded drain at the end of each tick.
     tests/unit/test_scenario_events.c
@@ -4621,6 +4624,7 @@ set(_unit_test_names
     join_running_phase_not_lobby
     lobby_settings_codec_and_apply
     lobby_settings_scenario_apply
+    lobby_settings_scenario_unsafe_apply
     lobby_team_meta_codec_and_apply
     lobby_bot_config_codec_and_apply
     lobby_bot_brain_codec_and_apply
@@ -5617,6 +5621,11 @@ set(_unit_test_names
     scenario_setup_terrain_raises_map_events
     scenario_setup_terrain_reaches_shadow
     scenario_round_start_clears_seat_holders
+    scenario_funnel_ops_per_tick
+    scenario_funnel_msgs_per_tick
+    scenario_funnel_host_ops_uncounted
+    scenario_funnel_prelude_refusal_uncounted
+    scenario_funnel_set_tile_spends_tile_budget
     scenario_read_roster_slot
     scenario_read_pill_info
     scenario_read_base_info
@@ -5918,6 +5927,7 @@ set(_unit_test_names
     scenario_host_script_env_is_its_own
     scenario_host_manifest_read_from_its_own_env
     scenario_host_errors_counted_per_script
+    scenario_host_many_rules_all_applied
     scenario_host_disabled_refuses_script
     scenario_host_disabled_plain_map
     scenario_host_enabled_again
@@ -6000,6 +6010,39 @@ set(_unit_test_names
     scenario_sandbox_os_date_refuses_a_bad_format
     scenario_sandbox_print_bounded_in_one_call
     scenario_sandbox_print_allowance_returns
+    scenario_sandbox_string_cap_on_results
+    scenario_sandbox_string_cap_on_subjects
+    scenario_sandbox_tick_budget_cuts_a_drain
+    scenario_sandbox_tick_budget_returns
+    scenario_sandbox_tick_budget_survives_a_pcall
+    scenario_sandbox_tick_budget_spares_on_end
+    scenario_sandbox_tick_budget_switches_off
+    scenario_sandbox_pattern_bomb_stopped
+    scenario_sandbox_pattern_bomb_behind_pcall
+    scenario_sandbox_pattern_results
+    scenario_sandbox_pattern_charge_counts
+    scenario_sandbox_interpreted_cost
+    scenario_sandbox_tick_stats_recorded
+    scenario_sandbox_unsafe_opens_full_library
+    scenario_sandbox_unsafe_lifts_the_budgets
+    scenario_sandbox_unsafe_loads_bytecode
+    scenario_sandbox_unsafe_reaches_the_lobby
+    scenario_hostile_endless_loop
+    scenario_hostile_memory_bomb
+    scenario_hostile_file_open
+    scenario_hostile_process_call
+    scenario_hostile_bytecode_chunk
+    scenario_hostile_debug_call
+    scenario_hostile_ffi_call
+    scenario_hostile_string_bomb
+    scenario_hostile_pattern_bomb
+    scenario_hostile_string_metatable_rewrite
+    scenario_hostile_op_flood
+    scenario_hostile_message_flood
+    scenario_hostile_hook_across_ticks
+    scenario_hostile_loop_behind_pcall
+    scenario_hostile_loop_behind_coroutine_resume
+    scenario_hostile_print_forged_line
     scenario_events_queued_then_drained
     scenario_events_drain_reads_the_length_once
     scenario_events_queued_during_a_drain_waits
@@ -6145,6 +6188,12 @@ set(_unit_test_names
     scenario_compose_region_hook_own
     scenario_compose_conflicts_recorded
     scenario_compose_map_script_placed
+    scenario_compose_library_copy_per_script
+    scenario_compose_game_copy_per_script
+    scenario_compose_game_nested_copy
+    scenario_compose_compat_write_stays_local
+    scenario_compose_pairs_game_complete
+    scenario_compose_unsafe_keeps_sharing
     scenario_panel_parses_each_primitive
     scenario_panel_refuses_malformed
     scenario_panel_boundaries

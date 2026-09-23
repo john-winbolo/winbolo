@@ -44,8 +44,9 @@
  *  no memory for a state at all.
  *
  *  It carries the count hook the call budget is kept by, set
- *  here and never cleared, so a state made this way runs
- *  interpreted on a LuaJIT host.
+ *  here and never cleared. On a LuaJIT host it runs
+ *  interpreted because jit is never opened, which the budget
+ *  needs: compiled code would not run the hook.
  *
  *  No libraries and no game table — whoever boots the state
  *  puts those on.
@@ -141,15 +142,83 @@ void scnSandboxDisarmCall(lua_State *L, const ScnSandboxCall *saved);
  *  everything this tick calls go back to SCN_PRINT_PER_TICK.
  *
  *  A tick runs a script's hooks, the timers it set and the
- *  policies it answers, so the per-call bound alone would
+ *  policies those calls ask, so the per-call bound alone would
  *  multiply by however many of those a script arranges. This
  *  is the bound that holds whatever the shape of them.
+ *
+ *  It also opens the tick's window: from here until
+ *  scnSandboxTickClose every armed call's instructions are
+ *  counted against SCN_BUDGET_TICK_INSTR as well as against
+ *  the call's own budget, from zero and with the tick's latch
+ *  clear. The call that takes the total past that is stopped
+ *  with a Lua error, and the latch it sets is what
+ *  scnSandboxTickSpent answers and what pcall, xpcall and
+ *  coroutine.resume raise again for.
  *
  *  Called once per tick, before the tick runs anything, by
  *  whoever drives the scenario's tick. NULL is a round with
  *  no state and nothing to reset.
  *********************************************************/
 void scnSandboxTickReset(lua_State *L);
+
+/*********************************************************
+ *NAME:          scnSandboxTickClose
+ *PURPOSE:
+ *  Closes the tick's window and clears its latch. Every call
+ *  made from here until the next reset is bounded by its own
+ *  call's budget alone and is never skipped for what the tick
+ *  spent: on_end, policies the engine asks between ticks, and
+ *  the lobby's asks from the GUI thread.
+ *
+ *  Called by whoever drives the tick, once the tick's own
+ *  calls are over. NULL is nothing to close.
+ *********************************************************/
+void scnSandboxTickClose(lua_State *L);
+
+/*********************************************************
+ *NAME:          scnSandboxTickSpent
+ *PURPOSE:
+ *  True while the tick's window is open and its total has
+ *  been spent, which is the host's answer to whether a call
+ *  the tick still has to make should be made at all. False
+ *  outside a tick, and for NULL.
+ *********************************************************/
+bool scnSandboxTickSpent(lua_State *L);
+
+/*********************************************************
+ *NAME:          scnSandboxTickInstr
+ *PURPOSE:
+ *  The instructions this tick's calls have been charged so
+ *  far. 0 for NULL, and for a state with no record of its
+ *  own — an unsafe one — since nothing is counted there.
+ *
+ *  Counted in the hook's steps of SCN_BUDGET_STEP_INSTR plus
+ *  whatever the pattern matcher charges, so a tick whose
+ *  calls ran fewer instructions than one step can read 0.
+ *
+ *  A trip does not put this count back, so after one it is
+ *  what the calls really spent, past the tick's total.
+ *********************************************************/
+uint32_t scnSandboxTickInstr(lua_State *L);
+
+/*********************************************************
+ *NAME:          scnSandboxCharge
+ *PURPOSE:
+ *  Charges n instructions to the call that is running, as
+ *  the count hook charges a step: to the call's budget, and
+ *  to the tick's while a tick is open.
+ *
+ *  C work the hook cannot see is charged here so the budgets
+ *  see it. Where the charge takes the call or the tick past
+ *  its budget this raises the budget's own error and sets
+ *  the same latch the hook does, so pcall, xpcall and
+ *  coroutine.resume raise it again rather than keeping it.
+ *  A caller must be able to unwind from that like any other
+ *  Lua error.
+ *
+ *  Does nothing while no call is armed, as the hook does.
+ *********************************************************/
+void scnSandboxCharge(lua_State *L, uint32_t n);
 
 /*********************************************************
  *NAME:          scnSandboxMemoryCapped
@@ -199,5 +268,20 @@ void scnSandboxSealRandom(lua_State *L);
  *  globals.
  *********************************************************/
 void scnSandboxPushBase(lua_State *L);
+
+/*********************************************************
+ *NAME:          scnSandboxOpenPrint
+ *PURPOSE:
+ *  Sets the global print to the sandbox's own, and does
+ *  nothing else. For a state opened with the whole standard
+ *  library rather than through scnSandboxOpenLibs.
+ *
+ *  Such a state has no per-state record beside it, so
+ *  scnSandboxPrintTake lets every line through uncapped.
+ *  The only thing this changes is where the output goes:
+ *  the server console, where the operator and the desktop
+ *  client look, rather than the host's stdout.
+ *********************************************************/
+void scnSandboxOpenPrint(lua_State *L);
 
 #endif /* SCENARIO_SANDBOX_H */

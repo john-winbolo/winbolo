@@ -70,6 +70,15 @@ start of every round, each time in a Lua state of its own. That means:
 
 The file may be up to 1 MiB.
 
+**A scenario and its mods share the state but not the libraries.** A round
+may run a scenario with mods behind it, every script on the list in the one
+state, each with its own globals. In the sandbox each script also has its own
+copies of the standard libraries and of `game`, so changing them — setting
+`string.find` to `nil`, or putting a row of your own on `game` — affects only
+that script. Method calls on strings, such as `s:find(p)`, still share the one
+string library. Under `-allow-unsafe-scripts` the scripts on one list share
+one set of libraries and one `game` table.
+
 **What a script is given.** The state a scenario runs in opens `string`,
 `table`, `math`, `os`, `coroutine` and a named list of base functions, and
 nothing else. The base list is `assert`, `collectgarbage`, `error`,
@@ -101,6 +110,8 @@ console rather than to the host's stdout, which is how a script says
 something to the operator. It joins its arguments with tabs as stock `print`
 does, and cuts the finished line at 1024 bytes — a line longer than that is
 shortened rather than dropped, so an operator still sees what it was about.
+Control characters in printed text, newlines included, come out as spaces, so
+each `print` is one line. Tabs are kept.
 
 How many lines it will take is bounded twice: 64 from any one call — a hook,
 a timer or a policy answer — and 64 across everything a single tick's calls
@@ -146,14 +157,48 @@ call: `while true do` in a hook takes your scenario off the round and nothing
 else, but it does take it off. Work that cannot finish in one call belongs
 spread across `on_tick` calls, keeping its place in a local between them.
 
+**All of one tick's calls share two million instructions** — every hook and
+timer the tick runs, and any policy asked from inside one of those calls (a
+hook's op that asks a policy), added together. A policy the engine asks while
+it steps the world, such as `damage_scale` on a hit, has only its own call's
+budget and is not part of the total. The call that passes the
+total fails with an error, and the rest of that tick's calls are skipped: a
+timer skipped this way runs next tick, but an event or a region change skipped
+this way is not delivered again. `on_end` is not part of the total and always
+runs. The tick costs your script one error however many calls it skipped, and
+`pcall` cannot catch it any more than it can catch the per-call budget, so a
+script that spends the whole total every tick is switched off after twenty
+ticks.
+
 A million is a great deal — an `on_tick` that reads a few dozen tanks and
 decides something spends a few thousand. If you are near it, you are looping
 over the map rather than over what changed.
 
-The count is taken by a Lua debug hook, and a state that carries one does not
-use LuaJIT's compiler, so **your script runs interpreted** on a LuaJIT host.
-That is worth knowing before you time anything: what you measure here is not
-what the same code would do in a brain.
+The count cannot see inside the library's C functions, so seven of them are
+bounded by length instead: `string.rep`, `string.format` and `table.concat`
+refuse to build a string over 64 KiB, and `string.find`, `string.match`,
+`string.gmatch` and `string.gsub` refuse to search one. That refusal is an
+ordinary error, unlike the budget's — a `pcall` catches it and your script
+carries on. A longer string built with `..` is not refused here; the memory
+cap is what counts that.
+
+`string.find`, `string.match`, `string.gmatch` and `string.gsub` follow Lua
+5.4's pattern rules on every host, LuaJIT included: `%g`, `gmatch`'s third
+argument, 5.4's handling of empty matches, and the error for a `%` in a `gsub`
+replacement that is not `%0`–`%9` or `%%` are the same everywhere. A pattern
+that runs too long uses up the call's instruction budget like any loop and is
+stopped the same way, however short the string it runs over — and `pcall`
+cannot keep that error either.
+
+**Your script runs interpreted** on every host: LuaJIT's compiler is never
+switched on for scenario scripts, and that is what lets the budget hold, since
+compiled code would slip past the count. On a debug build the same code ran
+about nine times faster compiled, and counting adds about two thirds on top of
+the interpreter. A typical `on_tick` still costs well under a microsecond, but
+a script that spends its whole two-million-instruction tick total takes a few
+milliseconds of a 20 ms frame on LuaJIT, and over half of one on the Lua 5.4
+build. Under `-allow-unsafe-scripts` the compiler is on and none of this
+applies.
 
 **A scenario is still trusted the way a brain is.** A file beside a map is run
 by whoever hosts that map, at the server's own privilege, so run only scripts
@@ -197,6 +242,41 @@ upload that was turned down, and the map chooser does not tag it as scripted.
 Every other map is unaffected. With it on, one console line names each
 uploaded map whose packed scenario is what runs, so the operator can see when
 a round is being played by a script a player sent.
+
+**Running scripts with nothing held back.** For an operator whose own content
+needs more than the sandbox allows, there is a switch that lifts it, named
+after `-allow-unsafe-brains`. Each host takes both dash forms:
+
+- `-allow-unsafe-scripts` on the dedicated server.
+- `--allow-unsafe-scripts` on the headless runner.
+- `--allow-unsafe-scripts` on the desktop client's command line. There is no
+  preference for it.
+
+With it on, every scenario state the process boots — a script beside a map,
+one packed into an uploaded map, a mod, and the check `-validate` makes — is
+plain Lua:
+
+- the whole standard library, `io`, `os`, `package` and `require`, `debug`,
+  `load`, `dofile` and `string.dump` included, with `loadstring`, `ffi`,
+  `jit` and `bit` on LuaJIT, where the compiler is on as well;
+- no memory cap, no instruction budget per call and none per tick;
+- the VM's own `string` functions, patterns, `pcall`, `xpcall` and coroutines,
+  with none of the length caps above;
+- precompiled chunks accepted, as well as text;
+- `math.randomseed` left in place. The host still seeds `math.random` at
+  each boot;
+- the scripts on one list share the standard libraries and `game` rather
+  than each having copies of its own, so a change one script makes to them
+  reaches every other script on the list.
+
+`print` still goes to the server console, where the operator and the desktop
+client look, with no limit on how many lines.
+
+It applies to uploaded maps' scripts as well. If `-nouploadscripts` is given
+too, that still refuses an uploaded map's script outright. The host prints a
+note at startup saying the switch is on. It exists for content the operator
+trusts as their own; a server open to uploads from strangers should not run
+this way.
 
 **Reloading after an edit.** Two ways in. On a dedicated server the console
 command `reload` reads the file again; in a lobby, the host has a **Reload
@@ -752,6 +832,14 @@ if not ok then
 end
 ```
 
+**A script may send 256 writes a frame, and 8 of them may be messages or
+sounds** — `message`, `say` and `sound`. A write past either count does not
+apply and answers `nil, "SCN_OP_RATE"` instead; the allowance comes back on the
+next frame. This is an answer, not an error, so it does not count toward
+switching your script off. `game.log` counts toward the 256 but not the 8. A
+write refused because it came from inside a policy costs nothing, and neither
+do the rules in your `scenario` table, which the server applies itself.
+
 **A refusal is an answer; a mistake raises.** A missing argument, an argument
 of the wrong type and a word that names nothing are errors in the script and
 raise. A value the world will not take is refused and returned. Test the
@@ -901,6 +989,10 @@ delay: a run that feeds itself cannot spin inside a single frame.
 Ids are never reused, so a stale id is safe to cancel — it matches nothing
 rather than matching whatever has since taken its place.
 
+Timers due on the same frame run oldest first, and one of them may cancel
+another that has not run yet: the cancelled one does not run, and the cancel
+answers `true`.
+
 ```lua
 wave_timer = game.timer(3, wave_over)
 ...
@@ -995,7 +1087,7 @@ A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
 
 | Call | What it does |
 |---|---|
-| `game.set_tile(x, y, t)` | Writes one square's terrain, by a `game.TERRAIN` code. |
+| `game.set_tile(x, y, t)` | Writes one square's terrain, by a `game.TERRAIN` code. `set_tile` and `fill_rect` share 256 changed squares a frame; a `set_tile` past that answers `nil, "SCN_OP_RATE"` and writes nothing. |
 | `game.fill_rect(x0, y0, x1, y1, t)` | Writes a rectangle of terrain. One too big for a frame's budget answers `true, "queued"` and finishes over the frames after it. Only one fill may be in progress: a second asked for while one is still landing is refused with `SCN_OP_RATE`, not queued behind it, so test the answer when you write several. |
 | `game.place_mine(x, y[, owner[, visible]])` | Lays a mine on a square. `visible` shows it to everyone rather than to its owner's side. |
 | `game.remove_mine(x, y)` | Takes a mine off a square without setting it off. |
@@ -2042,7 +2134,9 @@ The `code` a refused write answers, as a string.
 | A hint table | 16 pairs; a name 23 bytes, a value 63 |
 | Events queued for one frame | 256 |
 | Roster changes outstanding at once | 32 |
-| Tiles a fill may change in one tick | 256 |
+| Tiles `fill_rect` and `set_tile` may change in one tick | 256 |
+| Writes a script may send in one tick | 256 |
+| Messages and sounds among them | 8 |
 | Errors in a row before the scenario is switched off | 20 |
 | `scenario.name` | 63 bytes |
 | `scenario.description` | 255 bytes |

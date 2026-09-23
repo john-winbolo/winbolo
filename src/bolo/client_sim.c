@@ -2749,6 +2749,7 @@ const char *clientSimGetLobbyScenarioDescription(const ClientSim *cs){ return cs
 bool     clientSimGetLobbyScenarioExtraTeams(const ClientSim *cs)    { return cs ? cs->lobbyScenarioExtraTeams : false; }
 bool     clientSimGetLobbyScenarioKeepsWinCondition(const ClientSim *cs) { return cs ? cs->lobbyScenarioKeepsWinCondition : false; }
 bool     clientSimGetLobbyScenarioBound(const ClientSim *cs) { return cs ? cs->lobbyScenarioBound : false; }
+bool     clientSimGetLobbyScenarioUnsafe(const ClientSim *cs) { return cs ? cs->lobbyScenarioUnsafe : false; }
 
 /* The rules that scenario's manifest sets. Bounded on the stored count
    rather than on the array, so a row above it — one an earlier, longer set

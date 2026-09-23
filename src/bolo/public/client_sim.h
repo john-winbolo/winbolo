@@ -1081,6 +1081,16 @@ bool        clientSimGetLobbyScenarioKeepsWinCondition(const ClientSim *cs);
  * is not in the scenarios directory. */
 bool        clientSimGetLobbyScenarioBound(const ClientSim *cs);
 
+/* True when the server runs its scenario scripts with the full Lua library
+ * and no limits (-allow-unsafe-scripts) rather than in the sandbox, so a
+ * lobby can warn a player before they play.
+ *
+ * The server only says so beside an attached script, so false with
+ * clientSimGetLobbyScenarioSource(cs) == 0 means there is no script at all,
+ * not that the server sandboxes. A server that predates the field reads as
+ * sandboxed, which it was. */
+bool        clientSimGetLobbyScenarioUnsafe(const ClientSim *cs);
+
 /* The lobby's ordered script list: one scenario deciding the round and mods
  * behind it changing how it plays, in the order they load. Mirrored from
  * CTRL_LOBBY_SCRIPT_LIST, which the server publishes whole on every change,

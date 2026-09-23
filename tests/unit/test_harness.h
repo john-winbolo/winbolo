@@ -116,6 +116,9 @@ int run_lobby_settings_codec_and_apply(void);
 /* The scenario the settings event names, onto the ClientSim and back out
  * through the accessors — with a scenario and then without one. */
 int run_lobby_settings_scenario_apply(void);
+/* Whether the server runs its scripts without the sandbox, onto the
+ * ClientSim and back out through clientSimGetLobbyScenarioUnsafe. */
+int run_lobby_settings_scenario_unsafe_apply(void);
 int run_lobby_team_meta_codec_and_apply(void);
 int run_lobby_bot_config_codec_and_apply(void);
 int run_lobby_bot_brain_codec_and_apply(void);
@@ -2464,7 +2467,9 @@ int run_console_unknown_command_is_inert(void);
 int run_console_say_keeps_case(void);
 
 /* The scenario write door (test_scenario_funnel.c): the op funnel's
- * prelude and its refusals, the policy and per-tick registrations
+ * prelude and its refusals, the tick's op, message and tile allowances
+ * and the host's ops that spend none of them, the policy and per-tick
+ * registrations
  * beside it, and the start-in-progress flag that keeps the all-ready
  * detector out of a start already under way. */
 /* The per-tank modifier set (test_tank_modifiers.c): the op that writes it,
@@ -2517,6 +2522,11 @@ int run_scenario_setup_events_off_the_wire(void);
 int run_scenario_setup_terrain_raises_map_events(void);
 int run_scenario_setup_terrain_reaches_shadow(void);
 int run_scenario_round_start_clears_seat_holders(void);
+int run_scenario_funnel_ops_per_tick(void);
+int run_scenario_funnel_msgs_per_tick(void);
+int run_scenario_funnel_host_ops_uncounted(void);
+int run_scenario_funnel_prelude_refusal_uncounted(void);
+int run_scenario_funnel_set_tile_spends_tile_budget(void);
 
 int run_scenario_read_roster_slot(void);
 int run_scenario_read_pill_info(void);
@@ -2985,6 +2995,7 @@ int run_scenario_host_hook_via_global_metatable(void);
 int run_scenario_host_script_env_is_its_own(void);
 int run_scenario_host_manifest_read_from_its_own_env(void);
 int run_scenario_host_errors_counted_per_script(void);
+int run_scenario_host_many_rules_all_applied(void);
 
 /* What a file that declared scenario.kind = "mod" may not do
  * (test_scenario_host.c): the rows it is held back from at run time, the
@@ -3075,7 +3086,8 @@ int run_scenario_lua_acting_rows_refuse_a_check(void);
  * memory cap a script is refused at, the instruction budget one call is cut
  * off at, the two catchers that are not allowed to keep the error it raises,
  * the os.date format that is read before it reaches strftime, and the console
- * lines one call may print. */
+ * lines one call may print, the strings the library's C functions may build
+ * or search, and the instructions one tick's calls may spend between them. */
 int run_scenario_sandbox_removed_names_are_nil(void);
 int run_scenario_sandbox_bytecode_chunk_refused(void);
 int run_scenario_sandbox_collectgarbage_stop_refused(void);
@@ -3091,6 +3103,42 @@ int run_scenario_sandbox_budget_survives_a_coroutine(void);
 int run_scenario_sandbox_os_date_refuses_a_bad_format(void);
 int run_scenario_sandbox_print_bounded_in_one_call(void);
 int run_scenario_sandbox_print_allowance_returns(void);
+int run_scenario_sandbox_string_cap_on_results(void);
+int run_scenario_sandbox_string_cap_on_subjects(void);
+int run_scenario_sandbox_tick_budget_cuts_a_drain(void);
+int run_scenario_sandbox_tick_budget_returns(void);
+int run_scenario_sandbox_tick_budget_survives_a_pcall(void);
+int run_scenario_sandbox_tick_budget_spares_on_end(void);
+int run_scenario_sandbox_tick_budget_switches_off(void);
+int run_scenario_sandbox_pattern_bomb_stopped(void);
+int run_scenario_sandbox_pattern_bomb_behind_pcall(void);
+int run_scenario_sandbox_pattern_results(void);
+int run_scenario_sandbox_pattern_charge_counts(void);
+int run_scenario_sandbox_interpreted_cost(void);
+int run_scenario_sandbox_tick_stats_recorded(void);
+int run_scenario_sandbox_unsafe_opens_full_library(void);
+int run_scenario_sandbox_unsafe_lifts_the_budgets(void);
+int run_scenario_sandbox_unsafe_loads_bytecode(void);
+int run_scenario_sandbox_unsafe_reaches_the_lobby(void);
+
+/* Hostile scripts (test_scenario_hostile.c): one case per known way out of
+ * the sandbox, each refused or switched off with the server still ticking. */
+int run_scenario_hostile_endless_loop(void);
+int run_scenario_hostile_memory_bomb(void);
+int run_scenario_hostile_file_open(void);
+int run_scenario_hostile_process_call(void);
+int run_scenario_hostile_bytecode_chunk(void);
+int run_scenario_hostile_debug_call(void);
+int run_scenario_hostile_ffi_call(void);
+int run_scenario_hostile_string_bomb(void);
+int run_scenario_hostile_pattern_bomb(void);
+int run_scenario_hostile_string_metatable_rewrite(void);
+int run_scenario_hostile_op_flood(void);
+int run_scenario_hostile_message_flood(void);
+int run_scenario_hostile_hook_across_ticks(void);
+int run_scenario_hostile_loop_behind_pcall(void);
+int run_scenario_hostile_loop_behind_coroutine_resume(void);
+int run_scenario_hostile_print_forged_line(void);
 
 /* The bus events (test_scenario_events.c): the subscriber that only
  * queues, the bounded drain at the end of each tick, and what a full
@@ -3333,6 +3381,12 @@ int run_scenario_compose_region_borrowed(void);
 int run_scenario_compose_region_hook_own(void);
 int run_scenario_compose_conflicts_recorded(void);
 int run_scenario_compose_map_script_placed(void);
+int run_scenario_compose_library_copy_per_script(void);
+int run_scenario_compose_game_copy_per_script(void);
+int run_scenario_compose_game_nested_copy(void);
+int run_scenario_compose_compat_write_stays_local(void);
+int run_scenario_compose_pairs_game_complete(void);
+int run_scenario_compose_unsafe_keeps_sharing(void);
 
 /* The panel's display list (test_scenario_panel.c): the byte layout
  * decoded from a hand-written list, the refusal each malformed list

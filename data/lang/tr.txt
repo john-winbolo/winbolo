@@ -2178,6 +2178,7 @@ STR_SCNPANEL_SETTINGS_TITLE=Senaryo Paneli
 STR_SCNPANEL_OPACITY_LBL=Opaklık
 STR_SCNPANEL_OPACITY_LINE1=Panelin çizdiklerini soluklaştırır.
 STR_SCNPANEL_OPACITY_LINE2=Boş kısımları saydam kalır.
+STR_DLGLOBBY_SCENARIO_UNSAFE=Bu sunucu senaryo betiklerini tam Lua kütüphanesiyle ve hiçbir sınır olmadan çalıştırır.
 STR_DLGLOBBY_SCENARIO_OFFERED=Bu sunucunun sunduğu
 STR_DLGLOBBY_SCENARIO_ROUND=Bu turda çalışan
 STR_DLGLOBBY_SCENARIO_ADD=Bu tura ekle

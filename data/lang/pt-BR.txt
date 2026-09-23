@@ -2176,6 +2176,7 @@ STR_SCNPANEL_SETTINGS_TITLE=Painel de cenário
 STR_SCNPANEL_OPACITY_LBL=Opacidade
 STR_SCNPANEL_OPACITY_LINE1=Esmaece o que o painel desenha.
 STR_SCNPANEL_OPACITY_LINE2=As partes vazias dele permanecem transparentes.
+STR_DLGLOBBY_SCENARIO_UNSAFE=Este servidor executa scripts de cenário com a biblioteca Lua completa e sem limites.
 STR_DLGLOBBY_SCENARIO_OFFERED=Este servidor oferece
 STR_DLGLOBBY_SCENARIO_ROUND=Esta rodada executa
 STR_DLGLOBBY_SCENARIO_ADD=Adicionar a esta rodada

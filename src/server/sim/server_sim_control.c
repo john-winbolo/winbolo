@@ -332,6 +332,9 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
        carry the same flag, but the attached script is not a catalogue row
        and may not be in the directory at all. */
     evt->u.lobbySettings.scenarioBound = sim->scenarioIdentity.bound;
+    /* And whether this server runs its scripts without the sandbox, so a
+       joiner sees it before they play. */
+    evt->u.lobbySettings.scenarioUnsafe = sim->scenarioIdentity.unsafe;
 }
 
 /* How many CTRL_LOBBY_SCRIPT_LIST chunks the list needs. Never 0: an empty

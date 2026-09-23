@@ -2178,6 +2178,7 @@ STR_SCNPANEL_SETTINGS_TITLE=Панель сценарію
 STR_SCNPANEL_OPACITY_LBL=Непрозорість
 STR_SCNPANEL_OPACITY_LINE1=Приглушує те, що малює панель.
 STR_SCNPANEL_OPACITY_LINE2=Його порожні частини залишаються прозорими.
+STR_DLGLOBBY_SCENARIO_UNSAFE=Цей сервер запускає скрипти сценаріїв з повною бібліотекою Lua і без обмежень.
 STR_DLGLOBBY_SCENARIO_OFFERED=Цей сервер пропонує
 STR_DLGLOBBY_SCENARIO_ROUND=Цей раунд запускає
 STR_DLGLOBBY_SCENARIO_ADD=Додати до раунду

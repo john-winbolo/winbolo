@@ -666,6 +666,10 @@ void printArgs() {
   fprintf(stderr, "                Maps in the uploads directory play plainly, whether the\n");
   fprintf(stderr, "                script is packed into the file or sits beside it; every\n");
   fprintf(stderr, "                other map is unaffected. Each upload turned down is named.\n");
+  fprintf(stderr, "-allow-unsafe-scripts - Run scenario scripts with the full Lua standard\n");
+  fprintf(stderr, "                library, no memory cap, no time limits and precompiled chunks\n");
+  fprintf(stderr, "                accepted. Reaches uploaded maps' scripts and -validate too;\n");
+  fprintf(stderr, "                -nouploadscripts still refuses uploads. Only for trusted content.\n");
   fprintf(stderr, "-validate <File> - Check the scenario script beside a map and exit without\n");
   fprintf(stderr, "                starting a server. Each problem is printed as\n");
   fprintf(stderr, "                file:line: key: message. Exits 0 when the map is\n");
@@ -1514,6 +1518,20 @@ int main(int argc, char **argv) {
   atexit(sentryClose);
   wb_log_init("WinBolo", "WinBoloDS", "winbolods.log");
   atexit(wb_log_shutdown);
+
+  /* -allow-unsafe-scripts: scenario scripts run with the full Lua library and
+     no memory or time limits, uploaded maps' scripts included. Set ahead of
+     -validate and -pack below, because the check they make boots a state as
+     well and reads the same switch. Said loudly, as -allow-unsafe-brains is. */
+  if ((argExist(argc, argv, "allow-unsafe-scripts") == TRUE) ||
+      (argExist(argc, argv, "-allow-unsafe-scripts") == TRUE)) {
+    scenarioHostSetUnsafeScripts(true);
+    fprintf(stderr,
+            "Note: -allow-unsafe-scripts — scenario scripts, including those "
+            "in uploaded maps, now run with the full Lua library and no memory "
+            "or time limits. Only run a server this way with content you "
+            "trust.\n");
+  }
 
   /* -validate <map> checks a map's scenario script and exits, and -pack <map>
      writes that script into the map file and exits. Both are answered here,

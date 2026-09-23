@@ -182,6 +182,28 @@ typedef struct {
  * running on uncounted. */
 #define SCN_BUDGET_GRACE_INSTR 20000u
 
+/* The most VM instructions all of one tick's calls into scripts may run for
+ * between them: every hook and timer the tick runs, and any policy asked from
+ * inside one of those calls. A policy the engine asks while it steps the world
+ * (choose_start, spawn_loadout, can_respawn, damage_scale) runs before the
+ * tick's window opens, so it has only its own SCN_BUDGET_CALL_INSTR and is not
+ * counted here.
+ *
+ * The per-call budget alone does not bound a tick. A script may hold sixty-four
+ * timers and each of them gets a whole SCN_BUDGET_CALL_INSTR, so a tick of
+ * legal calls could run for tens of millions of instructions without any one
+ * of them being stopped.
+ *
+ * The call that passes this is stopped where it stands, as one past its own
+ * budget is, and the rest of that tick's calls are skipped: the tick costs one
+ * error however many calls were left. A timer skipped this way runs next tick;
+ * an event or region change is not delivered again. on_end is not counted
+ * against it and always runs.
+ *
+ * Twice the per-call budget, so one long call never trips it alone. A starting
+ * value; a measurement may want it somewhere else. */
+#define SCN_BUDGET_TICK_INSTR 2000000u
+
 /* The console lines one call into a script may print.
  *
  * print goes to the server console rather than to the host's stdout, which is
@@ -211,6 +233,33 @@ typedef struct {
  *
  * A starting value, as the per-call one is. */
 #define SCN_PRINT_PER_TICK 64
+
+/* The longest string a script may have the library's C functions build or
+ * search: string.rep, string.format and table.concat refuse a result longer
+ * than this, and string.find, match, gmatch and gsub a subject longer than it.
+ *
+ * The count hook cannot see inside a C function, so one string.rep is one
+ * instruction to it however much it builds, and a pattern run over a long
+ * subject is the same. Without this, SCN_VM_MEMORY_MAX is all that stands
+ * between a script and a string or pattern that holds the tick.
+ *
+ * 64 KiB is far longer than anything a scenario prints or matches. A starting
+ * value; a measurement may want it somewhere else. */
+#define SCN_STRING_MAX 65536u
+
+/* How many steps the pattern matcher behind string.find, match, gmatch and
+ * gsub takes between charges to the running call. One matcher step is charged
+ * as one instruction, so a pattern that backtracks without end spends the
+ * call's SCN_BUDGET_CALL_INSTR and the tick's SCN_BUDGET_TICK_INSTR as a loop
+ * in Lua would, and is stopped the same way.
+ *
+ * A step is one entry into the matcher's recursive match, one turn of any of
+ * its loops over the subject or a set, or one byte a back-reference or a plain
+ * find compares. The count hook cannot see any of that, so the matcher keeps
+ * its own count and hands it over in lots of this size: the same lot the hook
+ * counts in, so a pattern is stopped within a thousandth of the budget as a
+ * loop is. What is left over when a call ends is charged then. */
+#define SCN_PATTERN_STEP_CHARGE 1000u
 
 /* How many events the host holds between one tick and the next, across
  * both of the server's channels. Each of the two subscriber callbacks
@@ -277,6 +326,38 @@ void scenarioHostSetEnabled(bool enabled);
  *  later reads whatever it last said.
  *********************************************************/
 void scenarioHostSetUploadScriptsEnabled(bool enabled);
+
+/*********************************************************
+ *NAME:          scenarioHostSetUnsafeScripts
+ *PURPOSE:
+ *  Whether scenario scripts run with nothing held back: the
+ *  whole Lua standard library, no memory cap, no instruction
+ *  budgets and precompiled chunks accepted. Off by default.
+ *  The dedicated server's -allow-unsafe-scripts and the
+ *  other hosts' --allow-unsafe-scripts set it.
+ *
+ *  It reaches every script the process runs: one beside a
+ *  map on disk, one packed into an uploaded map, a mod, and
+ *  the check -validate makes. An operator who turns it on
+ *  has chosen to trust all of them.
+ *
+ *  Separate from scenarioHostSetUploadScriptsEnabled, which
+ *  refuses an uploaded map's script outright and still does
+ *  with this on.
+ *
+ *  Set it before the first attach: it is one answer for the
+ *  process, and a state booted later reads whatever it last
+ *  said.
+ *********************************************************/
+void scenarioHostSetUnsafeScripts(bool unsafe);
+
+/*********************************************************
+ *NAME:          scenarioHostUnsafeScripts
+ *PURPOSE:
+ *  What scenarioHostSetUnsafeScripts last said. For the
+ *  lobby settings event, so a joiner can see the mode.
+ *********************************************************/
+bool scenarioHostUnsafeScripts(void);
 
 /*********************************************************
  *NAME:          scenarioHostMapHasScript

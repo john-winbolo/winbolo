@@ -846,6 +846,10 @@ struct ClientSim {
      * lobbyScenarioListBound, but the attached script is not a catalogue row
      * and need not be in the directory at all. */
     bool     lobbyScenarioBound;
+    /* True when the server runs its scenario scripts with the full Lua
+     * library and no limits (-allow-unsafe-scripts). False with no script
+     * attached, since the server only says so beside one. */
+    bool     lobbyScenarioUnsafe;
 
     /* The lobby's ordered script list, from CTRL_LOBBY_SCRIPT_LIST. Entry 0
      * is the one the round is decided by and is the same file the identity

@@ -2178,6 +2178,7 @@ STR_SCNPANEL_SETTINGS_TITLE=Scenariopanel
 STR_SCNPANEL_OPACITY_LBL=Opacitet
 STR_SCNPANEL_OPACITY_LINE1=Tonar ner det panelen ritar.
 STR_SCNPANEL_OPACITY_LINE2=Tomma delar av den förblir genomskinliga.
+STR_DLGLOBBY_SCENARIO_UNSAFE=Den här servern kör scenarioskript med hela Lua-biblioteket och utan begränsningar.
 STR_DLGLOBBY_SCENARIO_OFFERED=Den här servern erbjuder
 STR_DLGLOBBY_SCENARIO_ROUND=Den här omgången kör
 STR_DLGLOBBY_SCENARIO_ADD=Lägg till i den här omgången

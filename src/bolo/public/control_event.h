@@ -733,6 +733,14 @@ typedef struct ControlEvent {
              * that predates this field should read as, since an unbound
              * script is the one a host can still remove. */
             bool     scenarioBound;
+            /* True when this server runs every scenario script with the full
+             * Lua library and no limits (-allow-unsafe-scripts), so a player
+             * can see that before they play. Appended behind scenarioBound
+             * for the same reason: the tail is append-only and a decoder
+             * leaves zero for a byte the sender never wrote, and zero reads
+             * as sandboxed, which every server that predates this field
+             * was. */
+            bool     scenarioUnsafe;
         } lobbySettings;
 
         /* CTRL_LOBBY_MAP_CHANGE — no payload fields needed */
