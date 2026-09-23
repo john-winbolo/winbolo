@@ -37,6 +37,7 @@
 #include "transport_udp.h"  /* MAX_SPECTATORS — subscriber capacity */
 #include "input_packet.h"   /* PING_SPAM_MAX_5S / PING_SPAM_MAX_30S — ping anti-spam caps */
 #include "scenario_defs.h"  /* ScenarioPolicy — the vtable pointer below */
+#include "scenario_details.h" /* SCN_DETAILS_MAX — the map script's details */
 
 /* PlayerRoundStats, NotableType, NotableEvent and NOTABLE_EVENTS_MAX are the
  * shared accumulator/timeline types, defined in round_stats.h (included above)
@@ -871,6 +872,14 @@ struct ServerSim {
        that knows whether the file was there and whether it loaded. An empty
        file name means the committed map brought nothing. */
     ScnDirEntry  scenarioMapScript;
+    /* That script's details (scenario_details.h), which the lobby's details
+       dialog asks for by the row's file name. Kept beside the row rather than
+       in it: every other ScnDirEntry is a directory row, and the directory's
+       details are read one file at a time when a dialog asks, never carried
+       on the listing. Written by serverSimSetMapScriptDetails and forgotten
+       by serverSimSetMapScript. */
+    uint8_t      scenarioMapScriptDetails[SCN_DETAILS_MAX];
+    uint16_t     scenarioMapScriptDetailsLen;
 
     /* Random map generation (for -randommap mode) */
     bool         randomMapEnabled;       /* true when using -randommap */
@@ -971,6 +980,12 @@ struct ServerSim {
     int                  (*scenarioLister)(void *ctx, const char *dir,
                                            ScnDirEntry *out, int max);
     void                  *scenarioListerCtx;
+    /* Reads one directory file's details for serverSimScenarioDetails.
+       NULL means nothing registered and only the map's own script has any. */
+    int                  (*scenarioDetailsReader)(void *ctx, const char *dir,
+                                                  const char *file,
+                                                  uint8_t *out, size_t cap);
+    void                  *scenarioDetailsReaderCtx;
     /* What a lobby host's reload request runs. NULL means no scenario is
        attached and a request answers so. */
     bool                 (*scenarioReload)(void *ctx, char *err, size_t errLen);

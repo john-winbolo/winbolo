@@ -3055,6 +3055,114 @@ void clientSimClearLobbyMapPreview(ClientSim *cs) {
   cs->lobbyMapPreviewReceived   = 0;
 }
 
+/* ---- Script details for the lobby's details dialog ---- */
+
+/* The slot holding file, or -1. */
+static int clientSimScnDetailsFind(const ClientSim *cs, const char *file) {
+  int i;
+  for (i = 0; i < LOBBY_SCN_DETAILS_SLOTS; i++) {
+    if (cs->lobbyScnDetails[i].state != LOBBY_SCN_DETAILS_EMPTY &&
+        strcmp(cs->lobbyScnDetails[i].file, file) == 0) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/* A slot for a file not held yet: an empty one, else one whose answer is in
+ * (FOUND or NONE), which the dialog asks for again if it still needs it.
+ * A slot with a request out is never taken, so an answer always has the
+ * slot it was asked for. -1 when every slot is waiting. */
+static int clientSimScnDetailsTake(ClientSim *cs, const char *file) {
+  int i;
+  int pick = -1;
+  for (i = 0; i < LOBBY_SCN_DETAILS_SLOTS && pick < 0; i++) {
+    if (cs->lobbyScnDetails[i].state == LOBBY_SCN_DETAILS_EMPTY) pick = i;
+  }
+  for (i = 0; i < LOBBY_SCN_DETAILS_SLOTS && pick < 0; i++) {
+    if (cs->lobbyScnDetails[i].state == LOBBY_SCN_DETAILS_FOUND ||
+        cs->lobbyScnDetails[i].state == LOBBY_SCN_DETAILS_NONE) {
+      pick = i;
+    }
+  }
+  if (pick < 0) return -1;
+  memset(&cs->lobbyScnDetails[pick], 0, sizeof(cs->lobbyScnDetails[pick]));
+  SDL_strlcpy(cs->lobbyScnDetails[pick].file, file,
+              sizeof(cs->lobbyScnDetails[pick].file));
+  return pick;
+}
+
+/* A name that fits a slot and a request's one-byte length. */
+static bool clientSimScnDetailsNameOk(const char *file) {
+  size_t n;
+  if (file == NULL || file[0] == '\0') return false;
+  n = strlen(file);
+  return n < LOBBY_SCENARIO_FILE_LEN && n <= 255;
+}
+
+void clientSimLobbyScenarioDetailsWant(ClientSim *cs, const char *file) {
+  int i;
+  if (cs == NULL || !clientSimScnDetailsNameOk(file)) return;
+  if (clientSimScnDetailsFind(cs, file) >= 0) return;
+  i = clientSimScnDetailsTake(cs, file);
+  if (i < 0) return;
+  cs->lobbyScnDetails[i].state = LOBBY_SCN_DETAILS_WANTED;
+}
+
+void clientSimLobbyScenarioDetailsPut(ClientSim *cs, const char *file,
+                                      bool found, const uint8_t *bytes,
+                                      size_t len) {
+  int i;
+  if (cs == NULL || !clientSimScnDetailsNameOk(file)) return;
+  i = clientSimScnDetailsFind(cs, file);
+  if (i < 0) i = clientSimScnDetailsTake(cs, file);
+  if (i < 0) return;
+  /* A blob that is not one reads as a file with nothing known about it,
+     rather than as something the dialog would have to check again. */
+  if (found && (len > SCN_DETAILS_MAX || (len > 0 && bytes == NULL) ||
+                !scnDetailsValid(bytes, len))) {
+    found = false;
+  }
+  cs->lobbyScnDetails[i].state =
+      found ? LOBBY_SCN_DETAILS_FOUND : LOBBY_SCN_DETAILS_NONE;
+  cs->lobbyScnDetails[i].len = found ? (uint16_t)len : 0;
+  if (found && len > 0) memcpy(cs->lobbyScnDetails[i].bytes, bytes, len);
+}
+
+void clientSimLobbyScenarioDetailsForget(ClientSim *cs) {
+  if (cs == NULL) return;
+  memset(cs->lobbyScnDetails, 0, sizeof(cs->lobbyScnDetails));
+  /* An answer still arriving belongs to a slot that is gone; the bulk
+     receiver finishes filling the buffer and the completion drops it. */
+  cs->lobbyScnDetailsRxSlot = 0;
+}
+
+ClientScnDetailsState clientSimGetLobbyScenarioDetails(const ClientSim *cs,
+                                                       const char *file,
+                                                       const uint8_t **bytes,
+                                                       size_t *len) {
+  int i;
+  if (bytes != NULL) *bytes = NULL;
+  if (len != NULL) *len = 0;
+  if (cs == NULL || file == NULL || file[0] == '\0') {
+    return CLIENT_SCN_DETAILS_UNKNOWN;
+  }
+  i = clientSimScnDetailsFind(cs, file);
+  if (i < 0) return CLIENT_SCN_DETAILS_UNKNOWN;
+  switch (cs->lobbyScnDetails[i].state) {
+    case LOBBY_SCN_DETAILS_FOUND:
+      if (len != NULL) *len = cs->lobbyScnDetails[i].len;
+      if (bytes != NULL && cs->lobbyScnDetails[i].len > 0) {
+        *bytes = cs->lobbyScnDetails[i].bytes;
+      }
+      return CLIENT_SCN_DETAILS_FOUND;
+    case LOBBY_SCN_DETAILS_NONE:
+      return CLIENT_SCN_DETAILS_NONE;
+    default:
+      return CLIENT_SCN_DETAILS_WAITING;
+  }
+}
+
 /* ---- Spectator feed: capture (transport-facing) + drain (session-facing) ---- */
 
 void clientSimSpectatorPushSeed(ClientSim *cs, uint8_t *blob, uint32_t len) {

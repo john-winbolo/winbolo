@@ -61,6 +61,7 @@ extern "C" {
 #include "client_net.h"     /* clientSimNetSendLobbyScenarioListRequest / SetScriptList */
 #include "client_command.h" /* CMD_SCRIPT_LIST_MAX — how many names one list may carry */
 #include "server_sim.h"     /* ServerScenarioEntry / serverSimEnumerateScenarioDir — the in-process read */
+#include "scenario_details.h"           /* the rules and callbacks blob the dialog reads */
 #include "sim_rules_names.h"            /* simRulesRuleName / simRulesClassicValue */
 #include "../../../sim_rules_phrase.h"  /* simRulesPhrase — the one wording */
 #include "../../../ui_mode.h"           /* uiShouldUseControllerMode — a controller has no hover */
@@ -483,7 +484,7 @@ static void lobbyRoundSend(ClientSim *cs) {
  * bytes a frame later.
  *
  * attached says the dialog is describing the script the round is running,
- * which is what lets it add that script's rules table. kind is -1 where it
+ * which is where its description comes from. kind is -1 where it
  * is not known: see lobbyScenarioDetailsOpenRow. */
 static bool s_detailsOpen     = false;
 static bool s_detailsWantOpen = false;
@@ -493,11 +494,10 @@ static char s_detailsDesc[SERVER_SCENARIO_DESC_LEN];
 static int  s_detailsMaxPlayers = 0;
 static int  s_detailsBots       = 0;
 static bool s_detailsBound      = false;
-/* True when this dialog describes the same file the lobby holds the rules
-   and the description for, which is the one attached script
-   CTRL_LOBBY_SETTINGS and CTRL_SCENARIO_RULES talk about. A chooser row is
-   never that, and nor is the second script of a round running two: for those
-   the dialog has a name, a file and a kind and no rules table. */
+/* True when this dialog describes the one attached script
+   CTRL_LOBBY_SETTINGS talks about, whose description comes from there
+   rather than from the directory listing. Its rules and callbacks are
+   fetched by file name like every other row's. */
 static bool s_detailsAttached   = false;
 static int  s_detailsKind       = -1;   /* -1 unknown, 0 scenario, 1 mod */
 
@@ -820,10 +820,10 @@ void lobbyScenarioDetailsOpenScript(ClientSim *cs, int idx) {
     name = clientSimGetLobbyScriptName(cs, idx);
     if (name[0] == '\0') name = file;
 
-    /* The description and the rules table both come from the attached-script
-       accessors, which answer for one file. This row is that file or it is
-       not, and where it is not the dialog goes without them rather than
-       showing one script's prose and rules under another's name. */
+    /* The attached-script accessors answer for one file. This row is that
+       file or it is not, and where it is not the description comes from the
+       directory instead. The rules table and the callbacks are fetched by
+       file name for every row (lobbyScenarioDetailsOfFile). */
     same = SDL_strcmp(file, clientSimGetLobbyScenarioFileName(cs)) == 0;
 
     SDL_snprintf(s_detailsFile, sizeof(s_detailsFile), "%s", file);
@@ -864,7 +864,188 @@ static void lobbyScenarioDetailsNumber(double value, char *buf,
     if (len > 0 && buf[len - 1] == '.') buf[--len] = '\0';
 }
 
-/* What the running script's rules table says, folded into this dialog.
+/* The details of a file (scenario_details.h): the file's own rules table and
+ * what its callbacks do, looked up by file name, so the same lookup serves a
+ * row nobody has picked, a row of the host's draft, a row of the round's
+ * committed list and the committed map's own script.
+ *
+ * The ClientSim keeps them per file. A file it has no answer for yet is
+ * asked for: a server in this process is read at once, under the sim mutex,
+ * because a lobby hosted here has no transport to send a request on; a
+ * remote server is sent a request, which the transport resends while no
+ * answer comes and gives up on after a few tries. The dialog forgets every
+ * answer when it opens (lobbyScenarioDetailsRenderModal), so each opening
+ * asks again and a file that got no answer last time gets another chance.
+ *
+ * The state says which answer is in hand. FOUND with *len 0 is a file that
+ * declares nothing; WAITING is one whose answer has not come; NONE is one
+ * the server does not know or that got no answer this opening. The bytes
+ * are NULL unless the state is FOUND and there are some. */
+static ClientScnDetailsState lobbyScenarioDetailsOfFile(ClientSim *cs,
+                                                        const char *file,
+                                                        const uint8_t **bytes,
+                                                        size_t *len) {
+    ClientScnDetailsState state;
+    ServerSim            *sim;
+
+    *bytes = NULL;
+    *len   = 0;
+    if (cs == NULL || file == NULL || file[0] == '\0') {
+        return CLIENT_SCN_DETAILS_NONE;
+    }
+    state = clientSimGetLobbyScenarioDetails(cs, file, bytes, len);
+    if (state != CLIENT_SCN_DETAILS_UNKNOWN) return state;
+
+    sim = gameFrontGetServerSim();
+    if (sim != NULL) {
+        uint8_t blob[SCN_DETAILS_MAX];
+        int     got;
+
+        threadsWaitForMutex();
+        got = serverSimScenarioDetails(sim, file, blob, sizeof(blob));
+        threadsReleaseMutex();
+        clientSimLobbyScenarioDetailsPut(cs, file, got >= 0, blob,
+                                         got > 0 ? (size_t)got : 0);
+    } else {
+        clientSimLobbyScenarioDetailsWant(cs, file);
+    }
+    state = clientSimGetLobbyScenarioDetails(cs, file, bytes, len);
+    /* Every slot waiting on an answer is the one way the ask above is not
+       taken; reading that as waiting asks again on the next frame. */
+    return state == CLIENT_SCN_DETAILS_UNKNOWN ? CLIENT_SCN_DETAILS_WAITING
+                                               : state;
+}
+
+/* The order the dialog judges "overridden" against: the host's draft while
+ * the chooser is open and holding one, since that is the order the host is
+ * looking at and about to send, and the round as the lobby reports it
+ * otherwise. Either way it is load order, first row first. */
+static int lobbyScenarioDetailsOrder(ClientSim *cs, LobbyRoundRow *out,
+                                     int max) {
+    int i;
+
+    if (s_open && s_roundTaken) {
+        for (i = 0; i < s_roundCount && i < max; i++) out[i] = s_round[i];
+        return i;
+    }
+    return lobbyRoundLive(cs, out, max);
+}
+
+/* The width shared by the rules table's three number columns (Classic, New
+ * value, Change), so the three read as one block: wide enough for each header
+ * whole and for the numbers and short phrases the columns hold. A longer
+ * phrase, and the overridden line, wrap inside the Change column. Measured
+ * each frame, because the font and the language can change under the lobby. */
+static float lobbyScenarioDetailsNumberColumnWidth(void) {
+    static const int texts[] = {
+        STR_DLGLOBBY_RULES_COL_CLASSIC,
+        STR_DLGLOBBY_DETAILS_COL_NEW_VALUE,
+        STR_DLGLOBBY_RULES_COL_CHANGE,
+        STR_RULE_UNCHANGED,
+        STR_RULE_ON,
+        STR_RULE_OFF,
+    };
+    MessageArgs args = {};
+    float       w    = ImGui::CalcTextSize("-00000.00").x;
+    size_t      i;
+
+    for (i = 0; i < sizeof(texts) / sizeof(texts[0]); i++) {
+        w = SDL_max(w, ImGui::CalcTextSize(langGetText(texts[i])).x);
+    }
+    /* A multiple, the longest kind of phrase the column holds on one line. */
+    SDL_snprintf(args.string1, sizeof(args.string1), "%s", "2.5");
+    w = SDL_max(w,
+                ImGui::CalcTextSize(langGetTextFmt(STR_RULE_FASTER, &args)).x);
+    return w;
+}
+
+/* The narrowest the dialog may be: a rule name of ordinary length beside the
+ * three number columns, each with its cell padding, inside the window's own
+ * padding and a scrollbar. */
+static float lobbyScenarioDetailsMinWidth(void) {
+    const ImGuiStyle &st = ImGui::GetStyle();
+
+    return ImGui::CalcTextSize("tank_full_shells").x +
+           3.0f * lobbyScenarioDetailsNumberColumnWidth() +
+           8.0f * st.CellPadding.x + 2.0f * st.WindowPadding.x +
+           st.ScrollbarSize + 2.0f * st.ItemSpacing.x;
+}
+
+/* The rules table's header row, shared by both tables below. False when the
+ * table did not begin and nothing more is to be drawn. The rule's name takes
+ * whatever the three equal number columns leave. The value column is headed
+ * "New value" for every kind of script; the host's Rules popup keeps its own
+ * "Scenario" header, which is why the two ids differ. */
+static bool lobbyScenarioDetailsRulesBegin(void) {
+    float w = lobbyScenarioDetailsNumberColumnWidth();
+
+    ImGui::Spacing();
+    ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_SCENARIO_RULES));
+    if (!ImGui::BeginTable("##detailRules", 4,
+                           ImGuiTableFlags_RowBg |
+                               ImGuiTableFlags_BordersInnerH)) {
+        return false;
+    }
+    ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_RULES_COL_RULE),
+                            ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_RULES_COL_CLASSIC),
+                            ImGuiTableColumnFlags_WidthFixed, w);
+    ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_DETAILS_COL_NEW_VALUE),
+                            ImGuiTableColumnFlags_WidthFixed, w);
+    ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_RULES_COL_CHANGE),
+                            ImGuiTableColumnFlags_WidthFixed, w);
+    ImGui::TableHeadersRow();
+    return true;
+}
+
+/* One row of a rules table. overriddenBy is the name of the script whose
+ * value plays instead, or NULL when this row's value is the one that plays;
+ * an overridden row is drawn in the disabled colour and its last column says
+ * who wins and with what. */
+static void lobbyScenarioDetailsRuleRow(int rule, double value,
+                                        const char *overriddenBy,
+                                        double winning) {
+    char classicText[32];
+    char valueText[32];
+    char phrase[96];
+
+    lobbyScenarioDetailsNumber(simRulesClassicValue(rule), classicText,
+                               sizeof(classicText));
+    lobbyScenarioDetailsNumber(value, valueText, sizeof(valueText));
+    simRulesPhrase(rule, value, phrase, sizeof(phrase));
+
+    ImGui::TableNextRow();
+    if (overriddenBy != NULL) {
+        ImGui::PushStyleColor(ImGuiCol_Text,
+                              ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
+    }
+    ImGui::TableSetColumnIndex(0);
+    ImGui::TextUnformatted(simRulesRuleName(rule));
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", simRulesRuleDescription(rule));
+    }
+    ImGui::TableSetColumnIndex(1);
+    /* The classic number is what the row is read against rather than what
+       the script did, so it is the quieter of the two. */
+    ImGui::TextDisabled("%s", classicText);
+    ImGui::TableSetColumnIndex(2);
+    ImGui::TextUnformatted(valueText);
+    ImGui::TableSetColumnIndex(3);
+    if (overriddenBy != NULL) {
+        MessageArgs args = {};
+
+        SDL_snprintf(args.string1, sizeof(args.string1), "%s", overriddenBy);
+        lobbyScenarioDetailsNumber(winning, args.string2,
+                                   sizeof(args.string2));
+        ImGui::TextWrapped("%s",
+                           langGetTextFmt(STR_DLGLOBBY_RULES_OVERRIDDEN, &args));
+        ImGui::PopStyleColor();
+    } else {
+        ImGui::TextWrapped("%s", phrase);
+    }
+}
+
+/* What the script's rules table says, folded into this dialog.
  *
  * The Rules button stayed in the Server Settings column, which is the host's
  * deep view — a row per rule with an Info popup a controller can land on. It
@@ -874,65 +1055,174 @@ static void lobbyScenarioDetailsNumber(double value, char *buf,
  * over a window is more stack than the answer is worth, and the rule's own
  * description is on the row's hover.
  *
- * Only for the attached script. The rules travel on CTRL_SCENARIO_RULES for
- * that one alone, so a listing row has none to show and says nothing rather
- * than showing the running script's by mistake. */
+ * The table is the file's own, as its author wrote it, for every kind of row
+ * the dialog opens on. Which script's value plays where two set the same
+ * rule is worked out here, against the order the host is looking at (see
+ * lobbyScenarioDetailsOrder): the first script on it that sets the rule
+ * wins, as the round composes it, and the rows this script loses say so. A
+ * mod on a server with mods turned off loads nothing, so it neither wins a
+ * rule over another script nor has its own rules play, and a note under its
+ * table says so rather than the table going missing. A mod that sets no rule
+ * has no table and still gets the note, because the mod does not load
+ * either way. */
 static void lobbyScenarioDetailsRules(ClientSim *cs) {
-    int count;
-    int i;
+    LobbyRoundRow  order[LOBBY_ROUND_MAX];
+    const uint8_t *blobs[LOBBY_ROUND_MAX];
+    size_t         lens[LOBBY_ROUND_MAX];
+    const uint8_t *mine    = NULL;
+    size_t         mineLen = 0;
+    bool           modsOn  = clientSimGetLobbyModsEnabled(cs);
+    bool           waiting = false;
+    int            n;
+    int            self = -1;
+    int            count;
+    int            i;
 
-    if (!s_detailsAttached) return;
-    if (!lobbyScenarioRulesAvailable(cs)) return;
+    n = lobbyScenarioDetailsOrder(cs, order, LOBBY_ROUND_MAX);
+    for (i = 0; i < n; i++) {
+        if (SDL_strcmp(order[i].file, s_detailsFile) == 0) {
+            self = i;
+            break;
+        }
+    }
+    /* Every script on the list is asked for, in list order, so the answers
+       the overridden column needs are coming while this one's own is. */
+    for (i = 0; i < n; i++) {
+        blobs[i] = NULL;
+        lens[i]  = 0;
+        if (order[i].mod && !modsOn) continue;
+        if (lobbyScenarioDetailsOfFile(cs, order[i].file, &blobs[i],
+                                       &lens[i]) ==
+                CLIENT_SCN_DETAILS_WAITING &&
+            i < self) {
+            waiting = true;
+        }
+    }
 
-    count = clientSimGetScenarioRulesCount(cs);
+    count = 0;
+    if (lobbyScenarioDetailsOfFile(cs, s_detailsFile, &mine, &mineLen) ==
+        CLIENT_SCN_DETAILS_FOUND) {
+        count = scnDetailsRuleCount(mine, mineLen);
+    }
+    /* Not drawn until every script ahead of this one has answered, so a row
+       is never shown as playing and then, a moment later, as overridden. */
+    if (count > 0 && !waiting && lobbyScenarioDetailsRulesBegin()) {
+        for (i = 0; i < count; i++) {
+            int    rule;
+            double value;
+            double winning = 0.0;
+            int    winner;
+
+            if (!scnDetailsRuleAt(mine, mineLen, i, &rule, &value)) continue;
+            winner = scnDetailsRuleWinner(blobs, lens, self, rule, &winning);
+            lobbyScenarioDetailsRuleRow(
+                rule, value, winner >= 0 ? order[winner].name : NULL,
+                winning);
+        }
+        ImGui::EndTable();
+    }
+
+    /* Shown whether or not the table is: a mod on a server with mods off
+       loads nothing, rules or not, and that does not wait on any answer. */
+    if (!modsOn && s_detailsKind == 1) {
+        lobbyScenarioRowNote(langGetText(STR_DLGLOBBY_DETAILS_MODS_OFF));
+    }
+}
+
+/* The Type column's word for a row's SCN_CB_TYPE_*. */
+static const char *lobbyScenarioCallbackType(uint8_t type) {
+    switch (type) {
+        case SCN_CB_TYPE_QUERY:
+            return langGetText(STR_DLGLOBBY_DETAILS_TYPE_QUERY);
+        case SCN_CB_TYPE_TRIGGER:
+            return langGetText(STR_DLGLOBBY_DETAILS_TYPE_TRIGGER);
+        default:
+            return langGetText(STR_DLGLOBBY_DETAILS_TYPE_EVENT);
+    }
+}
+
+/* What the script implements: one row per callback it describes, from the
+ * callbacks block of its manifest, in the order the load kept them. Method is
+ * the callback's own name, as the author finds it in the file; Type is what
+ * the engine does with it (worked out on the server, see
+ * scenario_callbacks.h); the overview is the author's sentence, wrapped.
+ * Drawn under the rules table, or where it would be for a script that sets no
+ * rule, and not at all for a script that describes nothing.
+ *
+ * The same look as the rules table. Method and Type are as wide as their
+ * longest entry or header, and the overview takes the rest. */
+static void lobbyScenarioDetailsCallbacks(ClientSim *cs) {
+    static const int types[] = {
+        STR_DLGLOBBY_DETAILS_COL_TYPE,
+        STR_DLGLOBBY_DETAILS_TYPE_EVENT,
+        STR_DLGLOBBY_DETAILS_TYPE_QUERY,
+        STR_DLGLOBBY_DETAILS_TYPE_TRIGGER,
+    };
+    const uint8_t *blob;
+    const uint8_t *cb;
+    size_t         len;
+    size_t         cbLen;
+    size_t         t;
+    float          methodW;
+    float          typeW = 0.0f;
+    int            rows;
+    int            i;
+
+    if (lobbyScenarioDetailsOfFile(cs, s_detailsFile, &blob, &len) !=
+        CLIENT_SCN_DETAILS_FOUND) {
+        return;
+    }
+    cb   = scnDetailsCallbacks(blob, len, &cbLen);
+    rows = scnCallbacksBlobCount(cb, cbLen);
+    if (rows <= 0) return;
+
+    methodW =
+        ImGui::CalcTextSize(langGetText(STR_DLGLOBBY_DETAILS_COL_METHOD)).x;
+    for (i = 0; i < rows; i++) {
+        char name[SCN_CALLBACK_NAME_LEN];
+
+        if (scnCallbacksBlobRow(cb, cbLen, i, NULL, name, sizeof(name), NULL,
+                                0)) {
+            methodW = SDL_max(methodW, ImGui::CalcTextSize(name).x);
+        }
+    }
+    for (t = 0; t < sizeof(types) / sizeof(types[0]); t++) {
+        typeW = SDL_max(typeW, ImGui::CalcTextSize(langGetText(types[t])).x);
+    }
 
     ImGui::Spacing();
-    ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_SCENARIO_RULES));
-    if (!ImGui::BeginTable("##detailRules", 4,
+    ImGui::TextUnformatted(
+        langGetText(s_detailsKind == 1
+                        ? STR_DLGLOBBY_DETAILS_IMPLEMENTS_MOD
+                        : STR_DLGLOBBY_DETAILS_IMPLEMENTS_SCENARIO));
+    if (!ImGui::BeginTable("##detailCallbacks", 3,
                            ImGuiTableFlags_RowBg |
                                ImGuiTableFlags_BordersInnerH)) {
         return;
     }
-    ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_RULES_COL_RULE),
-                            ImGuiTableColumnFlags_WidthStretch);
-    ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_RULES_COL_CLASSIC),
-                            ImGuiTableColumnFlags_WidthFixed,
-                            ImGui::CalcTextSize("00000").x);
-    ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_RULES_COL_SCENARIO),
-                            ImGuiTableColumnFlags_WidthFixed,
-                            ImGui::CalcTextSize("00000").x);
-    ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_RULES_COL_CHANGE),
+    ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_DETAILS_COL_METHOD),
+                            ImGuiTableColumnFlags_WidthFixed, methodW);
+    ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_DETAILS_COL_TYPE),
+                            ImGuiTableColumnFlags_WidthFixed, typeW);
+    ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_DETAILS_COL_OVERVIEW),
                             ImGuiTableColumnFlags_WidthStretch);
     ImGui::TableHeadersRow();
+    for (i = 0; i < rows; i++) {
+        char    name[SCN_CALLBACK_NAME_LEN];
+        char    text[SCN_CALLBACK_TEXT_LEN];
+        uint8_t type;
 
-    for (i = 0; i < count; i++) {
-        int    rule  = clientSimGetScenarioRuleIndex(cs, i);
-        double value = clientSimGetScenarioRuleValue(cs, i);
-        char   classicText[32];
-        char   valueText[32];
-        char   phrase[96];
-
-        if (rule < 0) continue;   /* a row naming no rule */
-
-        lobbyScenarioDetailsNumber(simRulesClassicValue(rule), classicText,
-                                   sizeof(classicText));
-        lobbyScenarioDetailsNumber(value, valueText, sizeof(valueText));
-        simRulesPhrase(rule, value, phrase, sizeof(phrase));
-
+        if (!scnCallbacksBlobRow(cb, cbLen, i, &type, name, sizeof(name),
+                                 text, sizeof(text))) {
+            continue;
+        }
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
-        ImGui::TextUnformatted(simRulesRuleName(rule));
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("%s", simRulesRuleDescription(rule));
-        }
+        ImGui::TextUnformatted(name);
         ImGui::TableSetColumnIndex(1);
-        /* The classic number is what the row is read against rather than
-           what the script did, so it is the quieter of the two. */
-        ImGui::TextDisabled("%s", classicText);
+        ImGui::TextUnformatted(lobbyScenarioCallbackType(type));
         ImGui::TableSetColumnIndex(2);
-        ImGui::TextUnformatted(valueText);
-        ImGui::TableSetColumnIndex(3);
-        ImGui::TextUnformatted(phrase);
+        ImGui::TextWrapped("%s", text);
     }
     ImGui::EndTable();
 }
@@ -962,6 +1252,10 @@ void lobbyScenarioDetailsRenderModal(ClientSim *cs, float s) {
 
     if (s_detailsWantOpen) {
         s_detailsWantOpen = false;
+        /* Each opening asks the server afresh (lobbyScenarioDetailsOfFile),
+           so a script edited since, or one whose answer was lost, is right
+           the next time the dialog is opened. */
+        clientSimLobbyScenarioDetailsForget(cs);
         ImGui::OpenPopup(LOBBY_SCENARIO_DETAILS_ID);
     }
     if (!s_detailsOpen) return;
@@ -981,6 +1275,11 @@ void lobbyScenarioDetailsRenderModal(ClientSim *cs, float s) {
         ImGui::SetNextWindowSize(ImVec2(SDL_min(560.0f, vp.x * 0.85f),
                                         SDL_min(420.0f, vp.y * 0.85f)),
                                  ImGuiCond_Appearing);
+        /* No narrower than the rules table needs to show its three number
+           columns and their headers whole, where the screen has the room. */
+        ImGui::SetNextWindowSizeConstraints(
+            ImVec2(SDL_min(lobbyScenarioDetailsMinWidth(), vp.x), 0.0f),
+            ImVec2(FLT_MAX, FLT_MAX));
     }
     if (!ImGui::BeginPopupModal(title, &open, ImGuiWindowFlags_NoCollapse)) {
         /* Not begun means it is closed — by the title-bar X, or by an
@@ -1039,7 +1338,13 @@ void lobbyScenarioDetailsRenderModal(ClientSim *cs, float s) {
                 langGetTextFmt(STR_DLGLOBBY_SCENARIO_BOUND, &args));
         }
 
+        /* Asked on every frame for the reason the description is: a remote
+           server's listing, and each script's details, can land after this
+           dialog opened. Nothing is drawn for a table whose answer has not
+           come. */
+        lobbyScenarioCatalogueEnsure(cs);
         lobbyScenarioDetailsRules(cs);
+        lobbyScenarioDetailsCallbacks(cs);
     }
     ImGui::EndChild();
 

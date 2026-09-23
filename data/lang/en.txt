@@ -2405,6 +2405,19 @@ STR_DLGLOBBY_RULES_COL_CHANGE=Change
 STR_DLGLOBBY_RULE_DETAIL_TITLE=Rule: {string1}
 STR_DLGLOBBY_RULES_INFO=Info
 STR_DLGLOBBY_RULES_RANGE=Range
+STR_DLGLOBBY_RULES_OVERRIDDEN=Overridden by {string1}, which sets {string2}
+
+# Under the rules table of a mod, on a server that has mods turned off.
+STR_DLGLOBBY_DETAILS_MODS_OFF=Mods are turned off on this server, so this mod's rules do not apply.
+STR_DLGLOBBY_DETAILS_IMPLEMENTS_MOD=What this mod implements:
+STR_DLGLOBBY_DETAILS_IMPLEMENTS_SCENARIO=What this scenario implements:
+STR_DLGLOBBY_DETAILS_COL_METHOD=Method
+STR_DLGLOBBY_DETAILS_COL_TYPE=Type
+STR_DLGLOBBY_DETAILS_COL_OVERVIEW=High-level overview
+STR_DLGLOBBY_DETAILS_TYPE_EVENT=Event
+STR_DLGLOBBY_DETAILS_TYPE_QUERY=Query
+STR_DLGLOBBY_DETAILS_TYPE_TRIGGER=Trigger
+STR_DLGLOBBY_DETAILS_COL_NEW_VALUE=New value
 
 # Rule descriptions
 STR_RULE_DESC_tank_reload_ticks=Ticks a tank waits between shots.

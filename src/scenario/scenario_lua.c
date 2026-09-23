@@ -5150,6 +5150,22 @@ const ScnLuaFnRow *scenarioLuaFunctions(size_t *count) {
     return kScnLuaFunctions;
 }
 
+uint8_t scenarioLuaFnCallbackType(const char *name, bool byTrigger) {
+    size_t i;
+
+    for (i = 0; name != NULL &&
+                i < sizeof(kScnLuaFunctions) / sizeof(kScnLuaFunctions[0]);
+         i++) {
+        if (strcmp(kScnLuaFunctions[i].name, name) == 0) {
+            if (kScnLuaFunctions[i].kind == SCN_FN_POLICY) {
+                return SCN_CB_TYPE_QUERY;
+            }
+            break;
+        }
+    }
+    return byTrigger ? SCN_CB_TYPE_TRIGGER : SCN_CB_TYPE_EVENT;
+}
+
 /* One field on to the end of what has been counted, written only where the
  * caller left room for it. The tally rises either way, so a caller that
  * asked for none still learns how many there are. A name too long for the

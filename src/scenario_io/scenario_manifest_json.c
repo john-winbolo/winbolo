@@ -918,6 +918,67 @@ static bool mjDecodeApi(const cJSON *root, int *out, char *err, size_t errLen) {
     return true;
 }
 
+/* The callbacks object into the struct, in the order the file writes it.
+ *
+ * Only the Lua reader can tell which callbacks a script defines, so this
+ * keeps every string row that fits and leaves the check against the script
+ * to the load, which reads the table back through scnReadManifest. A package
+ * -pack wrote holds the rows that read already kept, so the two agree.
+ *
+ * A row that does not fit is dropped with a line to the operator and no
+ * issue: the block describes, it does not decide anything, and a validator
+ * issue would refuse a package over a sentence. */
+static void mjDecodeCallbacks(const cJSON *root, ScenarioManifest *m) {
+    const cJSON *obj = cJSON_GetObjectItemCaseSensitive(root, "callbacks");
+    const cJSON *it;
+    char         line[MJ_LINE_LEN];
+    size_t       used = 0;
+    uint8_t      t;
+
+    if (obj == NULL) {
+        return;
+    }
+    if (!cJSON_IsObject(obj)) {
+        serverSimConsoleMessage("scenario: callbacks is not an object of "
+                                "callback: \"what it does\"");
+        return;
+    }
+    cJSON_ArrayForEach(it, obj) {
+        ScnManifestCallback *row;
+        size_t               nameLen;
+        size_t               n;
+        size_t               at;
+
+        if (it->string == NULL || !cJSON_IsString(it) ||
+            it->valuestring == NULL || it->valuestring[0] == '\0') {
+            continue;
+        }
+        nameLen = strlen(it->string);
+        n  = scnCallbacksTextFit(it->valuestring, strlen(it->valuestring));
+        at = (used == 0) ? 1u : used;
+        if (nameLen == 0 || nameLen >= SCN_CALLBACK_NAME_LEN ||
+            m->numCallbacks >= SCN_CALLBACKS_MAX ||
+            at + scnCallbacksRowCost(nameLen, n) > SCN_CALLBACKS_BLOB_MAX) {
+            snprintf(line, sizeof(line),
+                     "scenario: callbacks.%.40s does not fit; dropped",
+                     it->string);
+            serverSimConsoleMessage(line);
+            continue;
+        }
+        row = &m->callbacks[m->numCallbacks];
+        m->numCallbacks++;
+        used = at + scnCallbacksRowCost(nameLen, n);
+        memcpy(row->name, it->string, nameLen);
+        row->name[nameLen] = '\0';
+        memcpy(row->text, it->valuestring, n);
+        row->text[n] = '\0';
+        row->byTrigger = false;
+        for (t = 0; t < m->numTriggers && !row->byTrigger; t++) {
+            row->byTrigger = strcmp(m->triggers[t].when, row->name) == 0;
+        }
+    }
+}
+
 /* Everything the schema names, out of the tree and into the struct.
  *
  * triggers is read here and written back from the struct, so a key inside a
@@ -951,6 +1012,7 @@ static bool mjDecode(ScnManifestDoc *d, ScnParseReport *rep,
     mjDecodeTags(d->root, m, rep);
     mjDecodeRegions(d->root, m, rep);
     mjDecodeTriggers(d->root, m, rep);
+    mjDecodeCallbacks(d->root, m);
     mjDecodeBrains(d->root, d, rep);
     return true;
 }
@@ -1387,6 +1449,20 @@ static void mjEmit(cJSON *root, const ScnManifestDoc *d) {
 
     mjEmitTriggers(root, m);
 
+    /* Written fresh from the struct, and left out when it is empty: a script
+       with no block gets a manifest with no key rather than an empty one. */
+    cJSON_DeleteItemFromObjectCaseSensitive(root, "callbacks");
+    if (m->numCallbacks > 0) {
+        cJSON *cb = cJSON_AddObjectToObject(root, "callbacks");
+
+        for (i = 0; cb != NULL && i < (int)m->numCallbacks &&
+                    i < SCN_CALLBACKS_MAX;
+             i++) {
+            cJSON_AddStringToObject(cb, m->callbacks[i].name,
+                                    m->callbacks[i].text);
+        }
+    }
+
     mjPutString(root, "script", d->script);
 
     brains = cJSON_CreateArray();
@@ -1558,6 +1634,11 @@ static const char *mjInitDiffers(const ScnTable *a, const ScnTable *b) {
     return NULL;
 }
 
+/* The callbacks block is the one part of the manifest not held here. It
+ * changes nothing about how a round plays, the Lua read drops rows the JSON
+ * read cannot (a callback the script never defines), and a disagreement
+ * would refuse a whole package over a sentence the lobby shows. The load
+ * shows the rows the Lua read kept. */
 bool scnManifestAgrees(const ScenarioManifest *fromJson,
                        const ScenarioManifest *fromLua,
                        char *key, size_t keyLen,

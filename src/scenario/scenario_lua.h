@@ -579,6 +579,19 @@ const ScnLuaWordTable *scenarioLuaWordTables(size_t *count);
  *********************************************************/
 const ScnLuaFnRow *scenarioLuaFunctions(size_t *count);
 
+/*********************************************************
+ *NAME:          scenarioLuaFnCallbackType
+ *PURPOSE:
+ *  The SCN_CB_TYPE_* the lobby's details dialog shows for
+ *  one catalogue name, read off the row's kind so the two
+ *  cannot drift: a policy, whose answer the host uses, is
+ *  a query; a hook, whose return the host throws away, is
+ *  an event, or a trigger when byTrigger says a declared
+ *  trigger rather than a function is what defines it. A
+ *  name the catalogue lacks is an event.
+ *********************************************************/
+uint8_t scenarioLuaFnCallbackType(const char *name, bool byTrigger);
+
 /* Room for a field name and its terminator. The longest a derived name
  * reaches is a parameter's own plus _team, and no parameter in the
  * catalogue is anywhere near long enough to need this much. */

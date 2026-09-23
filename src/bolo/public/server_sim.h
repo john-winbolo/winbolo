@@ -2130,6 +2130,22 @@ int serverSimEnumerateScenarioDir(ServerSim *sim,
                                   ServerScenarioEntry *entries,
                                   int maxEntries);
 
+/* One script file's details (scenario_details.h): the rules its manifest
+ * sets and what its callbacks do, packed into out, which holds cap bytes.
+ * The lobby's details dialog asks for these one file at a time, when it
+ * opens, and a remote client asks for them with
+ * PACKET_LOBBY_SCENARIO_DETAILS_REQ, which the server answers out of this.
+ *
+ * The committed map's own script is looked for first, under the name the
+ * lobby's script list gives it, and the scenarios directory after that, so
+ * a map's script that is not in the directory still answers.
+ *
+ * Returns the blob's length, which is 0 for a file that sets no rule and
+ * describes no callback, or -1 for a file neither place holds (and for a
+ * blob that does not fit cap). */
+int serverSimScenarioDetails(ServerSim *sim, const char *file, uint8_t *out,
+                             size_t cap);
+
 /* autoLockOnGameStart — when true, sets allowNewPlayers=false the
  * moment the lobby transitions out of serverStateLobby. */
 bool        serverSimGetAutoLockOnGameStart(const ServerSim *sim);

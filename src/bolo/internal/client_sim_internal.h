@@ -46,6 +46,7 @@
 #include "transport_udp.h" /* MAX_SPECTATORS */
 #include "input_packet.h"  /* PING_SPAM_MAX_30S — client render backstop ring */
 #include "control_event.h" /* LOBBY_SCENARIO_*_LEN — the scenario mirror below */
+#include "scenario_details.h" /* SCN_DETAILS_MAX — the details cache below */
 
 /* Internal helpers relocated from client_sim.h during the public-header
  * transitive-leak cleanup. These need GameSim's full layout, so they
@@ -736,6 +737,45 @@ struct ClientSim {
     uint32_t lobbyMapPreviewTotal;   /* expected total bytes from the stream header */
     uint32_t lobbyMapPreviewReceived;/* bytes accumulated so far */
     uint8_t  lobbyMapPreviewBytes[LOBBY_MAP_UPLOAD_MAX_BYTES];
+
+    /* Script details (scenario_details.h) the lobby's details dialog asked
+     * for, kept per file name. The dialog names a file with
+     * clientSimLobbyScenarioDetailsWant; the transport's tick asks the
+     * server for one WANTED file at a time with
+     * PACKET_LOBBY_SCENARIO_DETAILS_REQ, and the answer lands here from
+     * CHANNEL_BULK (BULK_KIND_SCENARIO_DETAILS), found or not found. A
+     * request with no answer in LOBBY_SCN_DETAILS_TIMEOUT_TICKS is sent
+     * again, up to LOBBY_SCN_DETAILS_TRIES times, and then the slot gives
+     * up until the dialog forgets it on its next open. A server in this
+     * process has no transport: the dialog reads it directly and puts the
+     * answer here with clientSimLobbyScenarioDetailsPut.
+     *
+     * Enough slots for the file the dialog describes and every script on
+     * the longest list it judges overrides against, with room to spare. */
+#define LOBBY_SCN_DETAILS_SLOTS          24
+#define LOBBY_SCN_DETAILS_TIMEOUT_TICKS  150   /* 1.5 s at the 100/s tick */
+#define LOBBY_SCN_DETAILS_TRIES          5
+/* A slot's state. EMPTY holds no file; WANTED is named and not yet asked
+   for; ASKED has a request out; FOUND holds the details; NONE is a file the
+   server does not know, or one given up on. */
+#define LOBBY_SCN_DETAILS_EMPTY  0
+#define LOBBY_SCN_DETAILS_WANTED 1
+#define LOBBY_SCN_DETAILS_ASKED  2
+#define LOBBY_SCN_DETAILS_FOUND  3
+#define LOBBY_SCN_DETAILS_NONE   4
+    struct {
+        char     file[LOBBY_SCENARIO_FILE_LEN];
+        uint8_t  state;     /* LOBBY_SCN_DETAILS_* above */
+        uint8_t  tries;     /* requests sent for this file */
+        uint32_t sentTick;  /* transport localTick of the last request */
+        uint16_t len;       /* bytes of details once found */
+        uint8_t  bytes[SCN_DETAILS_MAX];
+    } lobbyScnDetails[LOBBY_SCN_DETAILS_SLOTS];
+    /* The bulk receiver's landing buffer for one answer: the status byte and
+     * the details. rxSlot is one more than the slot it is filling, and 0
+     * for none, so a zeroed ClientSim starts with none. */
+    uint8_t  lobbyScnDetailsRx[1 + SCN_DETAILS_MAX];
+    int      lobbyScnDetailsRxSlot;
 
     /* Upload progress — driven by the Upload tab and the
      * PACKET_LOBBY_MAP_UPLOAD_ACK/DONE handlers. status: 0=idle,

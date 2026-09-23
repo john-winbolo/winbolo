@@ -1344,6 +1344,11 @@ int run_base_death_prediction_replay_tick(void);
  * tick: kept while still ahead and one hit from dead, dropped once disproved,
  * and a landing that was waiting on an earlier hit's armour is armed. */
 int run_base_death_prediction_authority(void);
+/* Gunsight reconciliation (test_gunsight_reconciliation.c): unacknowledged
+ * range inputs replay on top of the server's snapshot value so the range does
+ * not snap back. Covers acknowledgement, both tick parities, clamping to the
+ * configured min and max, local-only visibility and a reused ring-buffer slot. */
+int run_gunsight_reconciliation(void);
 
 /* Tank destroyed state (test_tank_death_state.c): armour is a plain
  * 0..TANK_FULL_ARMOUR value that clamps at zero and the destroyed state is
@@ -3298,6 +3303,26 @@ int run_scenario_dir_list_cached(void);
 int run_scenario_dir_merges_shipped_mods(void);
 int run_scenario_dir_entry_roundtrip(void);
 int run_scenario_dir_chunk_not_in_flight(void);
+
+/* A script's details (test_scenario_callbacks.c): the manifest's callbacks
+ * block kept, cut and warned about at load, the rules and callbacks packed
+ * into one blob per file, fetched by a client one file at a time over the
+ * loopback transport (a directory mod, the Survival and Soccer maps' own
+ * scripts, a file nobody has, a request dropped and asked again, a server
+ * that never answers), and which of two mods wins a rule both set in either
+ * list order. */
+int run_scenario_callbacks_manifest(void);
+int run_scenario_callbacks_over_cap(void);
+int run_scenario_callbacks_json(void);
+int run_scenario_details_blob(void);
+int run_scenario_details_fetch_dir_mod(void);
+int run_scenario_details_fetch_survival(void);
+int run_scenario_details_fetch_soccer(void);
+int run_scenario_details_fetch_not_found(void);
+int run_scenario_details_fetch_retry(void);
+int run_scenario_details_fetch_give_up(void);
+int run_scenario_details_override_order(void);
+int run_scenario_details_reload_map_script(void);
 
 /* The three directories a mod can come from (test_scenario_mod_dirs.c): the
  * one the host was given, the player's own under SDL_GetPrefPath and the

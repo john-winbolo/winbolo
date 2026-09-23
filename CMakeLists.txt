@@ -3576,6 +3576,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # what is skipped, and the list encoded into the SCENARIO_LIST_RSP shape
     # against committed golden bytes and decoded back.
     tests/unit/test_scenario_dir.c
+    tests/unit/test_scenario_callbacks.c
     tests/unit/test_scenario_mod_dirs.c
     # Which scenario plays when a map and a mod both have a claim, and the
     # points the template is applied at.
@@ -3921,6 +3922,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_base_stock_visibility.c
     tests/unit/test_base_half_tick.c
     tests/unit/test_base_death_prediction.c
+    tests/unit/test_gunsight_reconciliation.c
     tests/unit/test_tank_alliance_unfielded.c
     tests/unit/test_tank_death_state.c
     tests/unit/test_tank_status_wire.c
@@ -5114,6 +5116,7 @@ set(_unit_test_names
     base_armour_reveal_in_range
     base_death_prediction_replay_tick
     base_death_prediction_authority
+    gunsight_reconciliation
     tank_alliance_unfielded_shows_no_tank
     tank_alliance_unfielded_status_tile
     tank_damage_exact_armour_survives
@@ -6138,6 +6141,18 @@ set(_unit_test_names
     scenario_dir_merges_shipped_mods
     scenario_dir_entry_roundtrip
     scenario_dir_chunk_not_in_flight
+    scenario_callbacks_manifest
+    scenario_callbacks_over_cap
+    scenario_callbacks_json
+    scenario_details_blob
+    scenario_details_fetch_dir_mod
+    scenario_details_fetch_survival
+    scenario_details_fetch_soccer
+    scenario_details_fetch_not_found
+    scenario_details_fetch_retry
+    scenario_details_fetch_give_up
+    scenario_details_override_order
+    scenario_details_reload_map_script
     scenario_mod_dirs_user_dir_offered
     scenario_mod_dirs_shipped_offered
     scenario_mod_dirs_configured_wins

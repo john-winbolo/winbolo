@@ -2809,6 +2809,32 @@
 #define STR_DLGLOBBY_RULES_INFO             2433
 #define STR_DLGLOBBY_RULES_RANGE            2434
 
+/* A row of a script's details table whose rule a script higher on the list
+ * also sets, so this script's value does not play. {string1} = the script
+ * that wins (its name, or its file where it has none), {string2} = the value
+ * that plays. */
+#define STR_DLGLOBBY_RULES_OVERRIDDEN       2622
+
+/* Under the rules table of a mod, on a server that has mods turned off. */
+#define STR_DLGLOBBY_DETAILS_MODS_OFF       2624
+/* The details dialog's table of what a script implements, from the
+ * callbacks block of its manifest: the heading over it (one per kind of
+ * script), its three column headers, and the three words the Type column
+ * uses (SCN_CB_TYPE_* in scenario_callbacks.h: a hook whose return the engine
+ * ignores, a policy whose answer it uses, a hook only a trigger defines). */
+#define STR_DLGLOBBY_DETAILS_IMPLEMENTS_MOD      2623
+#define STR_DLGLOBBY_DETAILS_IMPLEMENTS_SCENARIO 2625
+#define STR_DLGLOBBY_DETAILS_COL_METHOD          2626
+#define STR_DLGLOBBY_DETAILS_COL_TYPE            2627
+#define STR_DLGLOBBY_DETAILS_COL_OVERVIEW        2628
+#define STR_DLGLOBBY_DETAILS_TYPE_EVENT          2629
+#define STR_DLGLOBBY_DETAILS_TYPE_QUERY          2630
+#define STR_DLGLOBBY_DETAILS_TYPE_TRIGGER        2631
+/* The details dialog's rules table: the header over a script's own value.
+ * Its own id rather than STR_DLGLOBBY_RULES_COL_SCENARIO, which the host's
+ * Rules popup still uses, because the dialog shows mods too. */
+#define STR_DLGLOBBY_DETAILS_COL_NEW_VALUE       2632
+
 /* Rule descriptions */
 
 /* What each simulation rule governs, one line apiece, shown wherever a rule
