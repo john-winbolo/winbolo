@@ -2440,7 +2440,9 @@ int run_console_unknown_command_is_inert(void);
 int run_console_say_keeps_case(void);
 
 /* The scenario write door (test_scenario_funnel.c): the op funnel's
- * prelude and its refusals, the policy and per-tick registrations
+ * prelude and its refusals, the tick's op, message and tile allowances
+ * and the host's ops that spend none of them, the policy and per-tick
+ * registrations
  * beside it, and the start-in-progress flag that keeps the all-ready
  * detector out of a start already under way. */
 /* The per-tank modifier set (test_tank_modifiers.c): the op that writes it,
@@ -2493,6 +2495,11 @@ int run_scenario_setup_events_off_the_wire(void);
 int run_scenario_setup_terrain_raises_map_events(void);
 int run_scenario_setup_terrain_reaches_shadow(void);
 int run_scenario_round_start_clears_seat_holders(void);
+int run_scenario_funnel_ops_per_tick(void);
+int run_scenario_funnel_msgs_per_tick(void);
+int run_scenario_funnel_host_ops_uncounted(void);
+int run_scenario_funnel_prelude_refusal_uncounted(void);
+int run_scenario_funnel_set_tile_spends_tile_budget(void);
 
 int run_scenario_read_roster_slot(void);
 int run_scenario_read_pill_info(void);
@@ -2954,6 +2961,7 @@ int run_scenario_host_hook_via_global_metatable(void);
 int run_scenario_host_script_env_is_its_own(void);
 int run_scenario_host_manifest_read_from_its_own_env(void);
 int run_scenario_host_errors_counted_per_script(void);
+int run_scenario_host_many_rules_all_applied(void);
 
 /* What a file that declared scenario.kind = "mod" may not do
  * (test_scenario_host.c): the rows it is held back from at run time, the

@@ -768,6 +768,14 @@ if not ok then
 end
 ```
 
+**A script may send 256 writes a frame, and 8 of them may be messages or
+sounds** — `message`, `say` and `sound`. A write past either count does not
+apply and answers `nil, "SCN_OP_RATE"` instead; the allowance comes back on the
+next frame. This is an answer, not an error, so it does not count toward
+switching your script off. `game.log` counts toward the 256 but not the 8. A
+write refused because it came from inside a policy costs nothing, and neither
+do the rules in your `scenario` table, which the server applies itself.
+
 **A refusal is an answer; a mistake raises.** A missing argument, an argument
 of the wrong type and a word that names nothing are errors in the script and
 raise. A value the world will not take is refused and returned. Test the
@@ -1015,7 +1023,7 @@ A map holds 16 of each at once; the 17th is refused with `SCN_OP_FULL`.
 
 | Call | What it does |
 |---|---|
-| `game.set_tile(x, y, t)` | Writes one square's terrain, by a `game.TERRAIN` code. |
+| `game.set_tile(x, y, t)` | Writes one square's terrain, by a `game.TERRAIN` code. `set_tile` and `fill_rect` share 256 changed squares a frame; a `set_tile` past that answers `nil, "SCN_OP_RATE"` and writes nothing. |
 | `game.fill_rect(x0, y0, x1, y1, t)` | Writes a rectangle of terrain. One too big for a frame's budget answers `true, "queued"` and finishes over the frames after it. Only one fill may be in progress: a second asked for while one is still landing is refused with `SCN_OP_RATE`, not queued behind it, so test the answer when you write several. |
 | `game.place_mine(x, y[, owner[, visible]])` | Lays a mine on a square. `visible` shows it to everyone rather than to its owner's side. |
 | `game.remove_mine(x, y)` | Takes a mine off a square without setting it off. |
@@ -2062,7 +2070,9 @@ The `code` a refused write answers, as a string.
 | A hint table | 16 pairs; a name 23 bytes, a value 63 |
 | Events queued for one frame | 256 |
 | Roster changes outstanding at once | 32 |
-| Tiles a fill may change in one tick | 256 |
+| Tiles `fill_rect` and `set_tile` may change in one tick | 256 |
+| Writes a script may send in one tick | 256 |
+| Messages and sounds among them | 8 |
 | Errors in a row before the scenario is switched off | 20 |
 | `scenario.name` | 63 bytes |
 | `scenario.description` | 255 bytes |

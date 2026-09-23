@@ -5601,6 +5601,11 @@ set(_unit_test_names
     scenario_setup_terrain_raises_map_events
     scenario_setup_terrain_reaches_shadow
     scenario_round_start_clears_seat_holders
+    scenario_funnel_ops_per_tick
+    scenario_funnel_msgs_per_tick
+    scenario_funnel_host_ops_uncounted
+    scenario_funnel_prelude_refusal_uncounted
+    scenario_funnel_set_tile_spends_tile_budget
     scenario_read_roster_slot
     scenario_read_pill_info
     scenario_read_base_info
@@ -5900,6 +5905,7 @@ set(_unit_test_names
     scenario_host_script_env_is_its_own
     scenario_host_manifest_read_from_its_own_env
     scenario_host_errors_counted_per_script
+    scenario_host_many_rules_all_applied
     scenario_host_disabled_refuses_script
     scenario_host_disabled_plain_map
     scenario_host_enabled_again

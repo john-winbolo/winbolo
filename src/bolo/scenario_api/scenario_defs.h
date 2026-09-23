@@ -155,12 +155,15 @@ typedef struct {
  * SCN_OP_FULL rather than displacing anything already accepted. */
 #define SCN_ROSTER_QUEUE_MAX 32
 
-/* How many tiles a fill may change in one tick. A rectangle that
- * changes more than this applies what the budget allows, keeps the
- * remainder and answers SCN_OP_QUEUED; the sim carries the rest on
- * later ticks, one budget each. A fill with no budget left in the
- * tick it arrives in is refused rather than queued, so nothing that
- * cannot move is left on the sim. A whole-map fill takes 256 ticks.
+/* How many tiles a fill and set_tile may change in one tick between
+ * them. A rectangle that changes more than this applies what the
+ * budget allows, keeps the remainder and answers SCN_OP_QUEUED; the
+ * sim carries the rest on later ticks, one budget each. A fill with no
+ * budget left in the tick it arrives in is refused rather than queued,
+ * so nothing that cannot move is left on the sim. A whole-map fill
+ * takes 256 ticks. Every set_tile that applies spends one square of
+ * the same budget, and one that arrives with none left is refused
+ * SCN_OP_RATE.
  *
  * The number is also the depth of the server's per-frame map event
  * buffer, which is a collision rather than a design: a fill spending
@@ -168,6 +171,26 @@ typedef struct {
  * terrain changes are dropped where they are recorded. Lowering this
  * is what would leave them room. */
 #define SCN_TILES_PER_TICK 256
+
+/* How many ops a script may send in one tick, whatever they are. The
+ * one past the last is refused SCN_OP_RATE without being looked at,
+ * and the allowance comes back with the next tick. The host's own ops
+ * — the scenario file's rules at the round start, and the line saying
+ * a script was switched off — are not counted.
+ *
+ * The same as SCN_TILES_PER_TICK and the frame's map event buffer, so
+ * a script redrawing a coast one square at a time is held by the tile
+ * budget rather than by this. A starting value; a measurement may want
+ * it somewhere else. */
+#define SCN_OPS_PER_TICK 256
+
+/* And how many of those may reach the players: SCN_OP_MSG_ALL,
+ * SCN_OP_MSG_TEAM, SCN_OP_MSG_PLAYER, SCN_OP_MSG_SAY and SCN_OP_SOUND,
+ * and no others. The one past the last is refused SCN_OP_RATE, as the
+ * op count's is. SCN_OP_LOG is not among them: it writes the round log
+ * and sends nothing to anybody, so SCN_OPS_PER_TICK is the only thing
+ * that bounds it. A starting value, as the op count is. */
+#define SCN_MSGS_PER_TICK 8
 
 /* ScnKV, ScnTable and the SCN_TABLE_* caps are in
  * public/scenario_table.h: the init table is also a parameter of

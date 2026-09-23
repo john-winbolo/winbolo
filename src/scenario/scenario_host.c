@@ -2579,7 +2579,9 @@ static void scnApplyRules(ScenarioHost *h) {
         op.u.setRule.rule  = h->manifest.rules[i].rule;
         op.u.setRule.value = h->manifest.rules[i].value;
 
-        r = serverSimApplyScenarioOp(h->sim, &op, NULL);
+        /* The host's own op, not the script's: a table of more rules than
+           one tick's allowance still applies in full. */
+        r = serverSimApplyScenarioHostOp(h->sim, &op, NULL);
         if (r != SCN_OP_OK) {
             scnSay(h->lastError, sizeof(h->lastError),
                    "scenario: rule '%s' refused: %s",
@@ -3758,7 +3760,9 @@ static void scnSayPending(ScenarioHost *h) {
     memset(&op, 0, sizeof(op));
     op.type = SCN_OP_MSG_ALL;
     snprintf(op.u.msgAll.text, sizeof(op.u.msgAll.text), "%s", h->pending);
-    if (serverSimApplyScenarioOp(h->sim, &op, NULL) == SCN_OP_OK) {
+    /* The host's line, so a script that spent the tick's messages cannot
+       hold it back. */
+    if (serverSimApplyScenarioHostOp(h->sim, &op, NULL) == SCN_OP_OK) {
         h->hasPending = false;
     }
 }

@@ -43,9 +43,31 @@
  *
  *  out may be NULL. When it is not, an entity add writes the
  *  index it took and a spawn writes the seat it took.
+ *
+ *  Every op through here is a script's, and is counted
+ *  against the tick's allowances: the one past
+ *  SCN_OPS_PER_TICK, or past SCN_MSGS_PER_TICK for a message
+ *  or a sound, is refused SCN_OP_RATE. An op the prelude
+ *  refuses is not counted.
  *********************************************************/
 ScnOpResult serverSimApplyScenarioOp(ServerSim *sim, const ScenarioOp *op,
                                      ScnOpOut *out);
+
+/*********************************************************
+ *NAME:          serverSimApplyScenarioHostOp
+ *PURPOSE:
+ *  serverSimApplyScenarioOp for an op the host sends on its
+ *  own account: the scenario file's rules at the round start,
+ *  and the line saying a script was switched off. Everything
+ *  is the same — the actor mark, the prelude, the handler —
+ *  except that the op is not counted against the tick's
+ *  allowances and spends none of them.
+ *
+ *  Never for anything a script asked for. A script's op
+ *  through here would be a way round the allowances.
+ *********************************************************/
+ScnOpResult serverSimApplyScenarioHostOp(ServerSim *sim, const ScenarioOp *op,
+                                         ScnOpOut *out);
 
 /*********************************************************
  *NAME:          serverSimCheckScenarioRules

@@ -3929,3 +3929,93 @@ int run_scenario_host_errors_counted_per_script(void) {
     shDrop(kMap);
     return 0;
 }
+
+/* ── A rules table longer than one tick's allowance ───────────────── */
+
+/* The host applies a script's rules table itself, at the round start, and
+ * those are its own ops rather than the script's: a table of more rules than
+ * a script may send in a tick still applies in full.
+ *
+ * Seventy rules, each at its classic value — the classic table stands, so no
+ * value here can break a pair — except tank_death_ticks, which is moved so
+ * that reading it back says the table was applied at all. The table's order
+ * is Lua's hash order, so which rules come last is not something the case can
+ * arrange; a refusal of any of them is a console line, and there must be
+ * none. */
+#define SH_MANY_RULES 70
+
+static int shRefusedLines;
+
+static void shCountRefused(const char *msg) {
+    if (strstr(msg, "refused") != NULL) {
+        shRefusedLines++;
+    }
+}
+
+int run_scenario_host_many_rules_all_applied(void) {
+    static const char *const kMap = "scnhost_manyrules.map";
+    static char              lua[8192];
+    ServerSim              *sim;
+    ScenarioHost           *h;
+    const ScenarioManifest *m;
+    char                    err[512];
+    int                     death = simRulesRuleIndex("tank_death_ticks");
+    size_t                  used;
+    int                     i;
+
+    UT_ASSERT_MSG(simRulesRuleCount() >= SH_MANY_RULES,
+                  "only %d rules exist, fewer than the %d this case declares",
+                  simRulesRuleCount(), SH_MANY_RULES);
+    UT_ASSERT_MSG(death >= 0, "no rule is named tank_death_ticks");
+
+    used = (size_t)snprintf(lua, sizeof(lua),
+                            "scenario = {\n"
+                            "  name = \"Many Rules\",\n"
+                            "  api = 1,\n"
+                            "  rules = {\n");
+    for (i = 0; i < SH_MANY_RULES; i++) {
+        double value = (i == death) ? (double)SH_DEATH_SET
+                                    : simRulesClassicValue(i);
+        used += (size_t)snprintf(lua + used, sizeof(lua) - used,
+                                 "    %s = %.17g,\n", simRulesRuleName(i),
+                                 value);
+        UT_ASSERT_MSG(used < sizeof(lua), "the script outgrew its buffer");
+    }
+    if (death >= SH_MANY_RULES) {
+        used += (size_t)snprintf(lua + used, sizeof(lua) - used,
+                                 "    tank_death_ticks = %d,\n", SH_DEATH_SET);
+    }
+    used += (size_t)snprintf(lua + used, sizeof(lua) - used, "  },\n}\n");
+    UT_ASSERT_MSG(used < sizeof(lua), "the script outgrew its buffer");
+
+    UT_ASSERT(shPut(kMap, lua));
+    sim = shSim();
+    UT_ASSERT(sim != NULL);
+
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    m = scenarioHostManifest(h);
+    UT_ASSERT(m != NULL);
+    UT_ASSERT_MSG(m->numRules >= SH_MANY_RULES,
+                  "the table read %u rules, expected at least %d",
+                  (unsigned)m->numRules, SH_MANY_RULES);
+
+    shRefusedLines = 0;
+    shWatchConsole(sim, shCountRefused);
+    serverSimStartGame(sim);
+    shUnwatchConsole(sim);
+
+    UT_ASSERT_MSG(shRefusedLines == 0,
+                  "%d console lines said a rule was refused at the round "
+                  "start; every one of the %u should have applied",
+                  shRefusedLines, (unsigned)m->numRules);
+    UT_ASSERT_MSG(sim->sim.rules.tank_death_ticks == SH_DEATH_SET,
+                  "tank_death_ticks reads %ld after the start, expected the "
+                  "table's %d — the table was not applied",
+                  (long)sim->sim.rules.tank_death_ticks, SH_DEATH_SET);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    shDrop(kMap);
+    return 0;
+}

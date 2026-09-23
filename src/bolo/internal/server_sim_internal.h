@@ -1110,6 +1110,14 @@ struct ServerSim {
     BYTE                   scenarioFillX, scenarioFillY;
     uint16_t               scenarioFillSpent;
 
+    /* The ops a script has sent this tick, and how many of them were
+     * messages or sounds: what SCN_OPS_PER_TICK and SCN_MSGS_PER_TICK are
+     * held against. Handed back where the tile budget is, so an op sent
+     * outside a tick altogether spends the next tick's allowance, as a
+     * fill does. The host's own ops never touch them. */
+    uint16_t               scenarioOpsSpent;
+    uint16_t               scenarioMsgsSpent;
+
     /* Roster changes a scenario has asked for and the sim has not made
      * yet. Adding a bot builds a Lua VM and a ClientSim and removing one
      * tears them down, which is more than a frame should do on demand, so
