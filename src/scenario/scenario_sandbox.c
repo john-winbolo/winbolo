@@ -490,11 +490,11 @@ lua_State *scnSandboxNewState(void) {
     lua_pushlightuserdata(L, s);
     lua_setfield(L, LUA_REGISTRYINDEX, SCN_SANDBOX_STATE_KEY);
 
-    /* Set once, here, and never cleared. Under LuaJIT lua_sethook reaches
-       into the compiler, and a state carrying a hook runs interpreted for as
-       long as it has one — so taking it off between calls would buy nothing
-       and cost a flush each time. Whether the count applies is the flag the
-       calls arm, not the presence of the hook. */
+    /* Set once, here, and never cleared. The state runs interpreted on
+       LuaJIT because jit is never opened, and the budget depends on that:
+       compiled code would not run this hook. Taking the hook off between
+       calls would buy nothing, since whether the count applies is the flag
+       the calls arm, not the presence of the hook. */
     lua_sethook(L, scnSandboxCountHook, LUA_MASKCOUNT,
                 (int)SCN_BUDGET_STEP_INSTR);
     return L;

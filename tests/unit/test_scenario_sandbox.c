@@ -2496,8 +2496,9 @@ static int sbBenchOpenCompiler(lua_State *L) {
  * unhooked — luaL_newstate opened through the same scnSandboxOpenLibs and
  *     sealed the same way, so it has the same library, keep lists and
  *     wrappers, and differs only in having no hook and Lua's own allocator.
- *     scnNewVm sets the hook unconditionally, so the host has no unhooked
- *     state to compare with; this case builds one.
+ *     Without -allow-unsafe-scripts scnNewVm always sets the hook, so the
+ *     host has no unhooked sandboxed state to compare with; this case builds
+ *     one.
  * compiled — LuaJIT only: the unhooked state with LuaJIT's compiler switched
  *     on. It is the only one of the three the compiler runs on.
  *

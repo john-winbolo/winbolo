@@ -44,8 +44,9 @@
  *  no memory for a state at all.
  *
  *  It carries the count hook the call budget is kept by, set
- *  here and never cleared, so a state made this way runs
- *  interpreted on a LuaJIT host.
+ *  here and never cleared. On a LuaJIT host it runs
+ *  interpreted because jit is never opened, which the budget
+ *  needs: compiled code would not run the hook.
  *
  *  No libraries and no game table — whoever boots the state
  *  puts those on.

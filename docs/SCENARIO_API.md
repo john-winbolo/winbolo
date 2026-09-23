@@ -176,10 +176,15 @@ that runs too long uses up the call's instruction budget like any loop and is
 stopped the same way, however short the string it runs over — and `pcall`
 cannot keep that error either.
 
-The count is taken by a Lua debug hook, and a state that carries one does not
-use LuaJIT's compiler, so **your script runs interpreted** on a LuaJIT host.
-That is worth knowing before you time anything: what you measure here is not
-what the same code would do in a brain.
+**Your script runs interpreted** on every host: LuaJIT's compiler is never
+switched on for scenario scripts, and that is what lets the budget hold, since
+compiled code would slip past the count. On a debug build the same code ran
+about nine times faster compiled, and counting adds about two thirds on top of
+the interpreter. A typical `on_tick` still costs well under a microsecond, but
+a script that spends its whole two-million-instruction tick total takes a few
+milliseconds of a 20 ms frame on LuaJIT, and over half of one on the Lua 5.4
+build. Under `-allow-unsafe-scripts` the compiler is on and none of this
+applies.
 
 **A scenario is still trusted the way a brain is.** A file beside a map is run
 by whoever hosts that map, at the server's own privilege, so run only scripts

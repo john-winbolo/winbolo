@@ -880,10 +880,12 @@ lua_State *scnNewVm(void) {
     return L;
 }
 
-/* The other end of it. A state carries its memory count beside it, so every
- * close goes through here rather than through lua_close: the count is on the
- * heap and a plain close would leave it behind. NULL is nothing to close,
- * which is what lets the failure paths below close without asking. */
+/* The other end of it. A sandboxed state carries its memory count beside it,
+ * so every close goes through here rather than through lua_close: the count
+ * is on the heap and a plain close would leave it behind. An unsafe state has
+ * none, and the close finds no record and frees nothing extra. NULL is
+ * nothing to close, which is what lets the failure paths below close without
+ * asking. */
 void scnCloseVm(lua_State *L) {
     scnSandboxCloseState(L);
 }
