@@ -1652,6 +1652,8 @@ static const UnitTestEntry s_tests[] = {
       run_scenario_sandbox_pattern_results                                                         },
     { "scenario_sandbox_pattern_charge_counts",
       run_scenario_sandbox_pattern_charge_counts                                                   },
+    { "scenario_sandbox_interpreted_cost",
+      run_scenario_sandbox_interpreted_cost                                                        },
     { "scenario_events_queued_then_drained",           run_scenario_events_queued_then_drained           },
     { "scenario_events_drain_reads_the_length_once",   run_scenario_events_drain_reads_the_length_once   },
     { "scenario_events_queued_during_a_drain_waits",   run_scenario_events_queued_during_a_drain_waits   },

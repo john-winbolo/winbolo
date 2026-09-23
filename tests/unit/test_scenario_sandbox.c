@@ -75,6 +75,10 @@
  * run_scenario_sandbox_pattern_charge_counts
  *      — pattern work past the budget in one call is stopped, and the same
  *        work spread over several ticks finishes
+ * run_scenario_sandbox_interpreted_cost
+ *      — the same on_tick timed on a state with the count hook, on one
+ *        without, and on LuaJIT on one with the compiler on, printed as one
+ *        bench: line; nothing is asserted about speed
  */
 
 #include <stdint.h>
@@ -95,7 +99,11 @@
                                            * through */
 #include "scenario_host.h"
 #include "scenario_sandbox.h"      /* scnSandboxMemoryCapped */
+#include "scenario_validate.h"     /* scnNewVm, for the bench case */
 #include "test_harness.h"
+
+#include <lauxlib.h>               /* luaL_newstate, luaL_loadbufferx */
+#include <lualib.h>                /* luaopen_jit, for the bench case */
 
 /* ── Fixtures ─────────────────────────────────────────────────────── */
 
@@ -2323,5 +2331,247 @@ int run_scenario_sandbox_pattern_charge_counts(void) {
     scenarioHostDetach(h);
     serverSimDestroy(sim);
     sbDrop(kMap);
+    return 0;
+}
+
+/* ── 27. What running interpreted costs ───────────────────────────── */
+
+/* The calls made before timing starts, so no state is paying for its first
+ * touches of the chunk: the tables' first growth and the caches they warm.
+ *
+ * On the compiled state it is also what gets the code compiled before the
+ * clock starts. LuaJIT's hot counters start at hotloop (56) times two and
+ * lose two for each turn of a loop and one for each call, so on_tick's loop
+ * of sixteen is hot on the fourth call and on_tick itself on about the
+ * hundred-and-twelfth. The branch in the loop wants ten taken exits for a
+ * side trace, which the first few calls give it. Two hundred calls are past
+ * all of that with room to spare. */
+#define SB_BENCH_WARM  200
+/* The calls timed on each state. Around four hundred instructions a call, so
+   the two interpreted states together run about four million, well under a
+   second on a Debug build; the compiled one adds a fraction of that. */
+#define SB_BENCH_CALLS 5000
+
+/* A roster of sixteen tanks and an on_tick that walks it as a script's would:
+ * the squared distance of each to a fixed point, with the tick folded in so
+ * no call can be answered from the one before, a write back into the entry,
+ * a comparison, and a summary table written at the end. Around four hundred
+ * instructions a call, far inside the per-call budget. It returns a number
+ * that depends on every entry and on the tick, which is what the states are
+ * compared on. */
+static const char kSbBenchLua[] =
+    "local roster = {}\n"
+    "for i = 1, 16 do\n"
+    "  roster[i] = { x = i * 7 % 256, y = i * 13 % 256, armour = i % 9,\n"
+    "                team = i % 4 }\n"
+    "end\n"
+    "local summary = { near = 0, far = 0, total = 0 }\n"
+    "local cx, cy = 128, 96\n"
+    "function on_tick(tick)\n"
+    "  local near, total = 0, 0\n"
+    "  for i = 1, #roster do\n"
+    "    local e = roster[i]\n"
+    "    local dx, dy = e.x - cx, e.y - cy\n"
+    "    local d2 = dx * dx + dy * dy + e.armour * tick % 7\n"
+    "    e.d2 = d2\n"
+    "    if d2 < 4096 then near = near + 1 end\n"
+    "    total = total + d2\n"
+    "  end\n"
+    "  summary.near = near\n"
+    "  summary.far = #roster - near\n"
+    "  summary.total = total\n"
+    "  return total + near\n"
+    "end\n";
+
+/* The chunk loaded as text and run, leaving on_tick a global. */
+static int sbBenchLoad(lua_State *L, const char *which) {
+    int rc = luaL_loadbufferx(L, kSbBenchLua, sizeof(kSbBenchLua) - 1,
+                              "=bench", "t");
+    if (rc == 0) {
+        rc = lua_pcall(L, 0, 0, 0);
+    }
+    UT_ASSERT_MSG(rc == 0, "the %s state refused the chunk: %s", which,
+                  lua_tostring(L, -1));
+    return 0;
+}
+
+/* One call of on_tick(tick), made as the host makes one: through lua_pcall,
+   and armed and disarmed around it where the state is the counted one, so
+   the arm, the disarm and every step the hook takes are in the figure. */
+static int sbBenchCall(lua_State *L, bool armed, int tick, const char *which,
+                       lua_Number *out) {
+    ScnSandboxCall saved;
+    int            rc;
+
+    lua_getglobal(L, "on_tick");
+    lua_pushinteger(L, tick);
+    if (armed) {
+        scnSandboxArmCall(L, &saved);
+    }
+    rc = lua_pcall(L, 1, 1, 0);
+    if (armed) {
+        scnSandboxDisarmCall(L, &saved);
+    }
+    UT_ASSERT_MSG(rc == 0, "on_tick raised on the %s state at tick %d: %s",
+                  which, tick, lua_tostring(L, -1));
+    *out = lua_tonumber(L, -1);
+    lua_pop(L, 1);
+    return 0;
+}
+
+/* Warm-up, then SB_BENCH_CALLS timed calls, with microseconds per call and
+   what the last one answered handed back. Every state is given the same
+   ticks, so the last answers match only if they all ran the same code. */
+static int sbBenchRun(lua_State *L, bool armed, const char *which,
+                      double *usOut, lua_Number *lastOut) {
+    Uint64 freq = SDL_GetPerformanceFrequency();
+    Uint64 started;
+    int    i;
+
+    for (i = 1; i <= SB_BENCH_WARM; i++) {
+        UT_ASSERT(sbBenchCall(L, armed, i, which, lastOut) == 0);
+    }
+    started = SDL_GetPerformanceCounter();
+    for (i = 1; i <= SB_BENCH_CALLS; i++) {
+        UT_ASSERT(sbBenchCall(L, armed, SB_BENCH_WARM + i, which,
+                              lastOut) == 0);
+    }
+    *usOut = (double)(SDL_GetPerformanceCounter() - started) * 1000000.0 /
+             (double)freq / (double)SB_BENCH_CALLS;
+    return 0;
+}
+
+/* A state opened as the unhooked one is, with the host's library and the
+   same seal, and not carrying the counting struct. */
+static lua_State *sbBenchPlainState(void) {
+    lua_State *L = luaL_newstate();
+
+    if (L != NULL) {
+        scnSandboxOpenLibs(L);
+        scnSandboxSealRandom(L);
+    }
+    return L;
+}
+
+#ifdef WINBOLO_LUAJIT
+/* LuaJIT's compiler switched on, the one thing luaopen_jit does that the
+ * other states lack, and the jit table taken away again so the script sees
+ * the same globals as on the other two. The opener is called as
+ * scnSandboxOpenOne calls one: pushed, handed its name, and left to set the
+ * global itself, as a 5.1 opener does.
+ *
+ * jit.status() is read before the global goes. A LuaJIT built without its
+ * compiler answers false there, and a figure from that build would be an
+ * interpreted one printed as compiled, so the case fails instead. */
+static int sbBenchOpenCompiler(lua_State *L) {
+    bool on;
+
+    lua_pushcfunction(L, luaopen_jit);
+    lua_pushstring(L, LUA_JITLIBNAME);
+    lua_call(L, 1, 0);
+
+    lua_getglobal(L, LUA_JITLIBNAME);
+    UT_ASSERT_MSG(lua_istable(L, -1), "luaopen_jit left no jit table");
+    lua_getfield(L, -1, "status");
+    UT_ASSERT_MSG(lua_isfunction(L, -1), "the jit table has no status");
+    lua_call(L, 0, 1);
+    on = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 2);
+    UT_ASSERT_MSG(on, "jit.status() says the compiler is off, so this "
+                      "build has none and the compiled figure would be an "
+                      "interpreted one");
+
+    lua_pushnil(L);
+    lua_setglobal(L, LUA_JITLIBNAME);
+    return 0;
+}
+#endif
+
+/* The same on_tick on each of these states:
+ *
+ * hooked — scnNewVm, which is what the host boots: counted allocator, count
+ *     hook, the whitelist and the wrappers, and armed around every call as
+ *     the host arms one.
+ * unhooked — luaL_newstate opened through the same scnSandboxOpenLibs and
+ *     sealed the same way, so it has the same library, keep lists and
+ *     wrappers, and differs only in having no hook and Lua's own allocator.
+ *     scnNewVm sets the hook unconditionally, so the host has no unhooked
+ *     state to compare with; this case builds one.
+ * compiled — LuaJIT only: the unhooked state with LuaJIT's compiler switched
+ *     on. It is the only one of the three the compiler runs on.
+ *
+ * A scenario state runs interpreted on LuaJIT because jit is never opened,
+ * not because of the hook: LuaJIT turns its compiler on in luaopen_jit, and
+ * scnSandboxOpenLibs opens no jit, so the unhooked state is interpreted too.
+ * hooked against unhooked is then the hook's own cost on top of the
+ * interpreter, on either VM, and hooked against compiled is what a scenario
+ * pays compared with the same code compiled.
+ *
+ * The line printed is the result. Nothing is asserted about speed: timings on
+ * a shared machine are not a pass or a fail. What is asserted is that every
+ * state ran every call and gave the same last answer. */
+int run_scenario_sandbox_interpreted_cost(void) {
+    lua_State  *hooked;
+    lua_State  *plain;
+    double      hookedUs   = 0.0;
+    double      plainUs    = 0.0;
+    lua_Number  hookedLast = 0;
+    lua_Number  plainLast  = 0;
+#ifdef WINBOLO_LUAJIT
+    lua_State  *compiled;
+    double      compiledUs   = 0.0;
+    lua_Number  compiledLast = 0;
+#endif
+
+    hooked = scnNewVm();
+    UT_ASSERT(hooked != NULL);
+    plain = sbBenchPlainState();
+    UT_ASSERT(plain != NULL);
+#ifdef WINBOLO_LUAJIT
+    compiled = sbBenchPlainState();
+    UT_ASSERT(compiled != NULL);
+    UT_ASSERT(sbBenchOpenCompiler(compiled) == 0);
+#endif
+
+    UT_ASSERT(sbBenchLoad(hooked, "hooked") == 0);
+    UT_ASSERT(sbBenchLoad(plain, "unhooked") == 0);
+    UT_ASSERT(sbBenchRun(hooked, true, "hooked", &hookedUs,
+                         &hookedLast) == 0);
+    UT_ASSERT(sbBenchRun(plain, false, "unhooked", &plainUs,
+                         &plainLast) == 0);
+    UT_ASSERT_MSG(hookedLast == plainLast,
+                  "the hooked and unhooked states answered %.17g and %.17g "
+                  "on the last call, so they did not run the same code",
+                  (double)hookedLast, (double)plainLast);
+
+#ifdef WINBOLO_LUAJIT
+    UT_ASSERT(sbBenchLoad(compiled, "compiled") == 0);
+    UT_ASSERT(sbBenchRun(compiled, false, "compiled", &compiledUs,
+                         &compiledLast) == 0);
+    UT_ASSERT_MSG(compiledLast == hookedLast,
+                  "the compiled state answered %.17g and the other two "
+                  "%.17g on the last call, so they did not run the same "
+                  "code", (double)compiledLast, (double)hookedLast);
+
+    printf("bench: scenario on_tick hooked=%.2fus unhooked=%.2fus "
+           "compiled=%.2fus hook_ratio=%.2f interp_ratio=%.2f vm=luajit "
+           "calls=%d\n", hookedUs, plainUs, compiledUs,
+           plainUs > 0.0 ? hookedUs / plainUs : 0.0,
+           compiledUs > 0.0 ? hookedUs / compiledUs : 0.0, SB_BENCH_CALLS);
+#else
+    printf("bench: scenario on_tick hooked=%.2fus unhooked=%.2fus "
+           "hook_ratio=%.2f vm=lua54 calls=%d\n", hookedUs, plainUs,
+           plainUs > 0.0 ? hookedUs / plainUs : 0.0, SB_BENCH_CALLS);
+#endif
+    fflush(stdout);
+
+    scnCloseVm(hooked);
+    /* lua_close rather than scnCloseVm for the others: they were not made by
+       scnSandboxNewState, so there is no counting struct beside them for
+       scnSandboxCloseState to find and free. */
+    lua_close(plain);
+#ifdef WINBOLO_LUAJIT
+    lua_close(compiled);
+#endif
     return 0;
 }

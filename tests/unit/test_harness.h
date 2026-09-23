@@ -3080,6 +3080,7 @@ int run_scenario_sandbox_pattern_bomb_stopped(void);
 int run_scenario_sandbox_pattern_bomb_behind_pcall(void);
 int run_scenario_sandbox_pattern_results(void);
 int run_scenario_sandbox_pattern_charge_counts(void);
+int run_scenario_sandbox_interpreted_cost(void);
 
 /* The bus events (test_scenario_events.c): the subscriber that only
  * queues, the bounded drain at the end of each tick, and what a full
