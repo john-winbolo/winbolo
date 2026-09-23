@@ -77,13 +77,13 @@ int run_stall_advances_processed_tick(void) {
     UT_ASSERT_MSG(sim->inputBufferFilled[SA_SLOT], "stream not established");
     UT_ASSERT_MSG(sim->lastProcessedInput[SA_SLOT] > 0, "lastProcessedInput still 0");
 
-    /* The first STALL_ADVANCE_DRY_TICKS dry half-steps repeat-and-wait
+    /* The first STALL_ADVANCE_DRY_TICKS dry half-steps wait without movement
      * (brief-trough handling), so the substitute only starts advancing
      * once the dry run passes the threshold. Prime two empty frames to
      * clear the wait window before measuring the steady +2-per-frame
      * advance below. */
     serverSimTick(sim);  /* dry 1,2: both wait */
-    serverSimTick(sim);  /* dry 3: wait, dry 4: first substitute-advance */
+    serverSimTick(sim);  /* dry 3,4: both wait */
 
     /* Empty frames: each serverSimTick is two half-steps, each of which
      * substitutes one held tick, so lastProcessedInput climbs by 2. */
@@ -105,7 +105,7 @@ int run_stall_advances_processed_tick(void) {
      * afterStall - 1 and the apply puts it straight back at afterStall.
      * Every older entry still drops as stale, and the frame's second
      * half-step finds the dry counter reset below the threshold, so it
-     * repeats and waits. The net advance across the frame is zero. */
+     * waits. The net advance across the frame is zero. */
     uint32_t k, delivered = 0;
     for (k = before + 1; k <= afterStall; k++) {
         sa_feed(sim, k, INPUT_BTN_LEFT, 0, 0, 0, 0);
@@ -143,7 +143,7 @@ int run_stall_mine_late_lays_once(void) {
     uint32_t mineTick = 14;
 
     /* Stall window substitutes past mineTick without ever laying it. The
-     * first STALL_ADVANCE_DRY_TICKS dry half-steps repeat-and-wait, so run
+     * first STALL_ADVANCE_DRY_TICKS dry half-steps wait, so run
      * empty frames until the substitute has advanced past the mine tick. */
     int sf;
     for (sf = 0; sf < 5 && sim->lastProcessedInput[SA_SLOT] < mineTick; sf++) {
@@ -251,7 +251,7 @@ int run_stall_fire_not_harvested(void) {
     sa_establish(sim, INPUT_BTN_LEFT, 0);  /* lastProcessedInput = 12 */
 
     /* Substitute past ticks 13 and 14. The first STALL_ADVANCE_DRY_TICKS
-     * dry half-steps repeat-and-wait, so run empty frames until the
+     * dry half-steps wait, so run empty frames until the
      * substitute has advanced past tick 14. */
     int sf;
     for (sf = 0; sf < 5 && sim->lastProcessedInput[SA_SLOT] < 14; sf++) {
@@ -316,7 +316,7 @@ int run_stall_never_fires(void) {
 
 /* 6. Regression guard: a dry spell no longer than STALL_ADVANCE_DRY_TICKS
  *    half-steps must NOT advance lastProcessedInput and must NOT eat the
- *    in-flight real inputs — the substitutes repeat-and-wait so the late
+ *    in-flight real inputs — the tank waits without advancing so the late
  *    inputs still apply fresh at their true ticks. This is the cadence
  *    trough the regression fix restores: the client batches two inputs per
  *    packet while the server consumes one per half-step, so the queue
@@ -329,28 +329,24 @@ int run_stall_brief_trough_no_advance(void) {
     uint32_t next = sa_establish(sim, INPUT_BTN_LEFT, 0);  /* lpi 12, next 13 */
     UT_ASSERT_MSG(sim->lastProcessedInput[SA_SLOT] > 0, "stream not established");
 
-    /* serverSimTick runs two half-steps, so to land a dry run of exactly
-     * STALL_ADVANCE_DRY_TICKS (== 3, odd) on a frame boundary we offset the
-     * parity with one lone fresh input: its apply lands on the frame's
-     * first half-step and resets the dry counter, leaving that frame's
-     * second half-step as the first dry half-step. (Construction assumes
-     * the threshold is 3; revisit if STALL_ADVANCE_DRY_TICKS changes.) */
+    /* A lone fresh input lands on the first half-step and resets the dry
+     * counter, leaving the second half-step as the first dry half-step. */
     sa_feed(sim, next, INPUT_BTN_LEFT, 0, 0, 0, 0);  /* tick 13 */
     serverSimTick(sim);                              /* applies 13, then dry #1 */
     uint32_t troughBase = sim->lastProcessedInput[SA_SLOT];
     UT_ASSERT_MSG(troughBase == next, "lone fresh input did not apply");
 
-    /* One more empty frame: dry #2 and dry #3. Total dry run is now exactly
-     * STALL_ADVANCE_DRY_TICKS, at the threshold, so it must still wait. */
+    /* One more empty frame: dry #2 and dry #3, still within the four-tick
+     * grace period, so the tank and ACK must still wait. */
     uint32_t staleBefore = sim->statDroppedStaleInputs[SA_SLOT];
     serverSimTick(sim);
     UT_ASSERT_MSG(sim->lastProcessedInput[SA_SLOT] == troughBase,
-                  "a dry run at the threshold advanced lastProcessedInput "
+                  "a brief dry run advanced lastProcessedInput "
                   "(%u -> %u) — a brief trough must wait, not substitute-advance",
                   troughBase, sim->lastProcessedInput[SA_SLOT]);
 
     /* Deliver the real inputs for the tick numbers the trough spanned.
-     * Because the substitutes waited (lpi never advanced past troughBase),
+     * Because the tank waited (lpi never advanced past troughBase),
      * these are all fresh (tick > lpi): they must apply, not drop stale. */
     uint32_t t;
     for (t = troughBase + 1; t <= troughBase + 3; t++) {

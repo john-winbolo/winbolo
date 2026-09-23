@@ -1745,6 +1745,9 @@ int run_map_colours_palette_key(void);
 int run_map_colours_team(void);
 
 int run_stall_advances_processed_tick(void);
+int run_turn_release_no_overshoot(void);
+int run_turn_gap_preserves_ramp(void);
+int run_turn_long_gap_no_duplicate(void);
 int run_stall_mine_late_lays_once(void);
 int run_stall_mine_duplicate_not_relaid(void);
 int run_stall_fire_not_harvested(void);

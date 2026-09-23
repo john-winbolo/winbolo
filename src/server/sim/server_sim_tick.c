@@ -826,11 +826,17 @@ static void simRunHalfStep(ServerSim *sim) {
              * for a half-step or two between packets); advancing there would
              * consume the tick and drop the in-flight real input as stale,
              * making the client reconcile constantly. Below the threshold we
-             * fall through to repeat-and-wait so the late input still applies
-             * at its true tick. Only an established stream past the threshold
-             * is treated as genuine loss and stall-advances. */
-            if (sim->lastProcessedInput[count] > 0 &&
-                sim->inputDryTicks[count] > STALL_ADVANCE_DRY_TICKS) {
+             * wait without advancing the tank so the late input still applies
+             * exactly once at its true tick. Only an established stream past
+             * the threshold is treated as genuine loss and stall-advances. */
+            if (sim->lastProcessedInput[count] > 0) {
+                /* A short gap leaves the ACK unchanged. Advancing the tank
+                 * here would add movement that replay cannot account for,
+                 * then the delayed real input would move it again. Leave
+                 * the whole tank state, including its turn ramp, intact. */
+                if (sim->inputDryTicks[count] <= STALL_ADVANCE_DRY_TICKS) {
+                    continue;
+                }
                 /* Established stream, genuine loss: stall-advance. A
                  * substituted tick is a *processed* tick — synthesise an
                  * input from the last held buttons at the next tick number
@@ -852,13 +858,8 @@ static void simRunHalfStep(ServerSim *sim) {
                 synth.buttons   = sim->lastInputButtons[count];
                 serverSimApplyOneInput(sim, count, &synth, TRUE);
             } else {
-                /* Brief cadence trough on an established stream, or a player
-                 * not yet established (dead/loading/never-streamed): keep
-                 * today's idle simulation without consuming a tick. Repeat
-                 * the last held buttons so the turn ramp (firstLeft/
-                 * firstRight) doesn't reset and pull the angle back. Because
-                 * lastProcessedInput is not advanced here, the in-flight real
-                 * input for this tick still applies fresh when it arrives. */
+                /* A player that has not established an input stream still
+                 * needs the idle simulation for death/respawn and loading. */
 #ifdef WB_NETDEBUG
                 if (netdebugButtonTurns(stallTb)) {
                     sim->dbgExecTurnTicks[count]++;
