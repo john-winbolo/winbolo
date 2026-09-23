@@ -1056,6 +1056,23 @@ struct ServerSim {
          * are. */
         bool                unsafe;
     } scenarioIdentity;
+    /* What the attached scenario's own work cost per tick, as the tick
+     * callback reports it through serverSimSetScenarioTickStats, for the
+     * dedicated server's info. The EWMA is seeded from the first tick, as the
+     * server loop's own tick average is; the peaks and the trip count hold
+     * until the next round start clears the lot. ticks is how many ticks have
+     * been recorded since then, and budget is the tick total the instructions
+     * are measured against. */
+    struct {
+        double              lastMs;
+        double              ewmaMs;
+        double              peakMs;
+        uint32_t            lastInstr;
+        uint32_t            peakInstr;
+        uint32_t            budget;
+        uint32_t            trips;
+        uint32_t            ticks;
+    } scenarioTickStats;
     /* The rules the attached scenario's own manifest sets, as its author
      * wrote them, so the lobby can say what a mod changes without opening
      * the file. Not the table the round is running on: sim.rules is that,
@@ -1233,6 +1250,12 @@ bool serverSimWarmOneHeldSeat(ServerSim *sim);
  * rather than spawning into the next one. Called at the game starts in
  * server_sim_round.c, beside the fill reset. */
 void serverSimScenarioResetRoster(ServerSim *sim);
+
+/* Forget what the scenario's ticks have cost so far. Called at the game starts
+ * in server_sim_round.c, beside the server loop's own tick peak reset, so the
+ * info a round shows is that round's. Declared here rather than on the
+ * scenario surface: the caller is the sim's own round start. */
+void serverSimScenarioResetTickStats(ServerSim *sim);
 
 /* Forget every stored panel list and every score row. What a scenario was
  * presenting belongs to the round and the scenario that put it up, so both

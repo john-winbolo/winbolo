@@ -4477,11 +4477,17 @@ static void scnReportDrops(ScenarioHost *h) {
 static void scnTick(void *ctx) {
     ScenarioHost *h = (ScenarioHost *)ctx;
     ServerState   state;
+    Uint64        start;
+    uint32_t      tickInstr = 0;
+    bool          tickSpent = false;
 
     if (h == NULL) {
         return;
     }
     scnLockEnter(&h->lock);
+    /* Timed from inside the lock, so what the operator's info reads is the
+       script's own work and not a wait on a GUI-thread ask. */
+    start = SDL_GetPerformanceCounter();
     /* First, inside the lock and before anything this tick runs: the console
        lines print may put out are counted per tick as well as per call, and
        this is the tick they are counted against. It also opens the window
@@ -4513,9 +4519,14 @@ static void scnTick(void *ctx) {
     /* The window shuts before on_end, so on_end runs on its own call's
        budget whatever the tick spent and is never one of the calls a spent
        tick skips. A tick that ran out puts the error counts back first, so
-       what on_end does with its own count is counted as usual. */
+       what on_end does with its own count is counted as usual.
+
+       The tick's instructions and whether it ran out are read here too, the
+       last point at which the window still holds them. */
     if (h->L != NULL) {
-        if (scnSandboxTickSpent(h->L)) {
+        tickInstr = scnSandboxTickInstr(h->L);
+        tickSpent = scnSandboxTickSpent(h->L);
+        if (tickSpent) {
             scnErrorTickRestore(h);
         }
         scnSandboxTickClose(h->L);
@@ -4529,6 +4540,16 @@ static void scnTick(void *ctx) {
 
     scnReportDrops(h);
     scnSayPending(h);
+    /* The time covers everything above, on_end included; the instructions
+       are the window's alone. The sim cannot see the budget's header, so the
+       total is handed over with the count. */
+    if (h->L != NULL) {
+        double ms = (double)(SDL_GetPerformanceCounter() - start) * 1000.0 /
+                    (double)SDL_GetPerformanceFrequency();
+        serverSimSetScenarioTickStats(h->sim, tickInstr,
+                                      (uint32_t)SCN_BUDGET_TICK_INSTR,
+                                      tickSpent, ms);
+    }
     scnLockLeave(&h->lock);
 }
 

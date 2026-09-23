@@ -1656,6 +1656,8 @@ static const UnitTestEntry s_tests[] = {
       run_scenario_sandbox_pattern_charge_counts                                                   },
     { "scenario_sandbox_interpreted_cost",
       run_scenario_sandbox_interpreted_cost                                                        },
+    { "scenario_sandbox_tick_stats_recorded",
+      run_scenario_sandbox_tick_stats_recorded                                                     },
     { "scenario_sandbox_unsafe_opens_full_library",
       run_scenario_sandbox_unsafe_opens_full_library                                               },
     { "scenario_sandbox_unsafe_lifts_the_budgets",

@@ -169,6 +169,28 @@ void serverSimSetScenarioTick(ServerSim *sim, void (*tick)(void *ctx),
                               void *ctx);
 
 /*********************************************************
+ *NAME:          serverSimSetScenarioTickStats
+ *PURPOSE:
+ *  Records what the scenario's own work cost in the tick
+ *  that has just run, for the dedicated server's info: the
+ *  instructions the tick's calls were charged, the total
+ *  they may spend between them, whether they ran out of it,
+ *  and the wall-clock time the whole of the tick callback
+ *  took.
+ *
+ *  Called once per tick by the tick callback registered
+ *  above, from inside that tick. The sim keeps the last
+ *  time, its average and the round's worst, the last and
+ *  worst instruction counts, and how many ticks ran out; all
+ *  of them start again at each round start.
+ *
+ *  budget is passed rather than known because the sim cannot
+ *  see the header that sets it.
+ *********************************************************/
+void serverSimSetScenarioTickStats(ServerSim *sim, uint32_t instr,
+                                   uint32_t budget, bool tripped, double ms);
+
+/*********************************************************
  *NAME:          serverSimSetScenarioRoundBoot
  *PURPOSE:
  *  Registers the callback both authoritative round starts

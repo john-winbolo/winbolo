@@ -79,6 +79,9 @@
  *      — the same on_tick timed on a state with the count hook, on one
  *        without, and on LuaJIT on one with the compiler on, printed as one
  *        bench: line; nothing is asserted about speed
+ * run_scenario_sandbox_tick_stats_recorded
+ *      — the instructions and time a scenario's tick cost reach the sim for
+ *        the info to read, and a tick that ran out is counted as a trip
  */
 
 #include <stdint.h>
@@ -2575,6 +2578,82 @@ int run_scenario_sandbox_interpreted_cost(void) {
 #ifdef WINBOLO_LUAJIT
     lua_close(compiled);
 #endif
+    return 0;
+}
+
+/* ── 28. What the info reads of a scenario's tick ─────────────────── */
+
+/* A hundred and fifty thousand turns is 300k to 600k instructions on either
+ * VM, by the calibration of case 8, and it is the only call each tick makes,
+ * so the worst tick recorded has to land in that range. The upper bound is
+ * 650k rather than 600k because the count moves in whole hook steps and
+ * whatever the host's own calls into the state add to it.
+ *
+ * Then the drain of case 18 on a map of its own, which runs out of the tick's
+ * total on the tick on_start runs in: that tick is recorded as a trip. */
+#define SB_STATS_TURNS 150000
+
+int run_scenario_sandbox_tick_stats_recorded(void) {
+    static const char *const kMap     = "scnsand_tickstats.map";
+    static const char *const kTripMap = "scnsand_tickstats_trip.map";
+    ServerSim    *sim = NULL;
+    ScenarioHost *h   = NULL;
+    char          lua[1024];
+
+    snprintf(lua, sizeof(lua),
+             "scenario = { name = \"Measured\", api = 1 }\n"
+             SB_SPIN_LUA
+             "function on_tick()\n"
+             "  spin(%d)\n"
+             "end\n", SB_STATS_TURNS);
+
+    UT_ASSERT(sbRunTicks(kMap, lua, 5, &sim, &h) == 0);
+    UT_ASSERT_MSG(sim->scenarioTickStats.ticks > 0,
+                  "no scenario tick was recorded in five ticks of a round");
+    UT_ASSERT_MSG(sim->scenarioTickStats.peakInstr >= 300000u &&
+                  sim->scenarioTickStats.peakInstr <= 650000u,
+                  "the worst tick was charged %u instructions, expected "
+                  "300000 to 650000 for one call of %d turns",
+                  (unsigned)sim->scenarioTickStats.peakInstr, SB_STATS_TURNS);
+    UT_ASSERT_MSG(sim->scenarioTickStats.budget == SCN_BUDGET_TICK_INSTR,
+                  "the budget recorded is %u, expected the tick's total of %u",
+                  (unsigned)sim->scenarioTickStats.budget,
+                  (unsigned)SCN_BUDGET_TICK_INSTR);
+    UT_ASSERT_MSG(sim->scenarioTickStats.trips == 0,
+                  "%u ticks were recorded as running out, expected none. The "
+                  "console holds:\n%s",
+                  (unsigned)sim->scenarioTickStats.trips, sbLines);
+    UT_ASSERT_MSG(sim->scenarioTickStats.peakMs > 0.0,
+                  "the worst tick took %.3fms, expected some time at all",
+                  sim->scenarioTickStats.peakMs);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+    sim = NULL;
+    h   = NULL;
+
+    snprintf(lua, sizeof(lua),
+             "scenario = { name = \"Tripped\", api = 1 }\n"
+             SB_SPIN_LUA
+             "local heavy = -1\n"
+             "function on_start()\n"
+             "  heavy = game.tick()\n"
+             "  for k = 1, %d do\n"
+             "    game.timer(0, function()\n"
+             "      if game.tick() == heavy then spin(%d) end\n"
+             "    end)\n"
+             "  end\n"
+             "end\n", SB_TICK_TIMERS, SB_TICK_TURNS);
+
+    UT_ASSERT(sbRunTicks(kTripMap, lua, 6, &sim, &h) == 0);
+    UT_ASSERT_MSG(sim->scenarioTickStats.trips >= 1,
+                  "no tick was recorded as running out, though the drain "
+                  "passes the tick's total. The console holds:\n%s", sbLines);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kTripMap);
     return 0;
 }
 

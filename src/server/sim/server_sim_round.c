@@ -306,6 +306,25 @@ void serverSimInformation(ServerSim *sim, bool locked) {
                     "  %-11s last=%.1fms  EWMA=%.1fms\n",
                     "Simulation:", simLast, simEwma);
         }
+        /* What the attached scenario's own work cost, inside the tick the
+         * lines above time. The instructions are in thousands against the
+         * total one tick's script calls may spend, and trips counts the ticks
+         * that ran out of it this round. Printed only under the header above,
+         * and only with a scenario attached. */
+        if ((tickLast > 0.0 || simLast > 0.0) &&
+            sim->scenarioIdentity.source != lobbyScenarioNone) {
+            fprintf(stdout,
+                    "  %-11s last=%.1fms  EWMA=%.1fms  peak=%.1fms  "
+                    "instr last=%uk  peak=%uk of %uk  trips=%u\n",
+                    "Scenario:",
+                    sim->scenarioTickStats.lastMs,
+                    sim->scenarioTickStats.ewmaMs,
+                    sim->scenarioTickStats.peakMs,
+                    (unsigned)(sim->scenarioTickStats.lastInstr / 1000u),
+                    (unsigned)(sim->scenarioTickStats.peakInstr / 1000u),
+                    (unsigned)(sim->scenarioTickStats.budget / 1000u),
+                    (unsigned)sim->scenarioTickStats.trips);
+        }
     }
 
     /* Bot pool summary block — only when at least one bot slot is
@@ -1370,8 +1389,10 @@ void serverSimStartGameInPlace(ServerSim *sim) {
     /* The tick loop's peak and its over-budget count reset here for the same
      * reason the per-bot ones do in botManagerOnGameStart: they describe the
      * current game, not an accumulation across map rotations. Both of the
-     * authoritative starts do it — serverSimStartGame has the twin. */
+     * authoritative starts do it — serverSimStartGame has the twin. The
+     * scenario's own tick costs start again with them. */
     serverLifecycleResetTickPeak();
+    serverSimScenarioResetTickStats(sim);
 
     /* Flush any game-events queued during the lobby before the first
      * running snapshot goes out. The sim doesn't tick in the lobby, so the
@@ -1536,8 +1557,10 @@ void serverSimStartGame(ServerSim *sim) {
     sim->roundHadHuman = false;
 
     /* The twin of the reset in serverSimStartGameInPlace: the round's worst
-     * tick and its over-budget count start empty here too. */
+     * tick and its over-budget count start empty here too, and so do the
+     * scenario's own tick costs. */
     serverLifecycleResetTickPeak();
+    serverSimScenarioResetTickStats(sim);
 
     /* Reset the game world (map, world systems, queues, tick) */
     serverSimResetGameWorld(sim);

@@ -4219,6 +4219,40 @@ void serverSimSetScenarioTick(ServerSim *sim, void (*tick)(void *ctx),
     sim->scenarioTickCtx = ctx;
 }
 
+/* The same weight the server loop gives each tick in its own average, so the
+ * two EWMAs the info prints side by side move at the same pace. */
+static const double kScenarioTickAlpha = 0.1;
+
+void serverSimSetScenarioTickStats(ServerSim *sim, uint32_t instr,
+                                   uint32_t budget, bool tripped, double ms) {
+    if (sim == NULL) return;
+    sim->scenarioTickStats.lastMs = ms;
+    if (sim->scenarioTickStats.ticks == 0) {
+        sim->scenarioTickStats.ewmaMs = ms;
+    } else {
+        sim->scenarioTickStats.ewmaMs =
+            kScenarioTickAlpha * ms +
+            (1.0 - kScenarioTickAlpha) * sim->scenarioTickStats.ewmaMs;
+    }
+    if (ms > sim->scenarioTickStats.peakMs) {
+        sim->scenarioTickStats.peakMs = ms;
+    }
+    sim->scenarioTickStats.lastInstr = instr;
+    if (instr > sim->scenarioTickStats.peakInstr) {
+        sim->scenarioTickStats.peakInstr = instr;
+    }
+    sim->scenarioTickStats.budget = budget;
+    if (tripped) {
+        sim->scenarioTickStats.trips++;
+    }
+    sim->scenarioTickStats.ticks++;
+}
+
+void serverSimScenarioResetTickStats(ServerSim *sim) {
+    if (sim == NULL) return;
+    memset(&sim->scenarioTickStats, 0, sizeof(sim->scenarioTickStats));
+}
+
 void serverSimSetScenarioRoundBoot(ServerSim *sim, void (*roundBoot)(void *ctx),
                                    void *ctx) {
     if (sim == NULL) return;

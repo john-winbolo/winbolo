@@ -186,6 +186,23 @@ void scnSandboxTickClose(lua_State *L);
 bool scnSandboxTickSpent(lua_State *L);
 
 /*********************************************************
+ *NAME:          scnSandboxTickInstr
+ *PURPOSE:
+ *  The instructions this tick's calls have been charged so
+ *  far. 0 for NULL, and for a state with no record of its
+ *  own — an unsafe one — since nothing is counted there.
+ *
+ *  Counted in the hook's steps of SCN_BUDGET_STEP_INSTR plus
+ *  whatever the pattern matcher charges, so a tick whose
+ *  calls ran fewer instructions than one step can read 0.
+ *
+ *  After a trip the count sits a grace short of the tick's
+ *  total, where the trip put it back, rather than at what the
+ *  calls really spent.
+ *********************************************************/
+uint32_t scnSandboxTickInstr(lua_State *L);
+
+/*********************************************************
  *NAME:          scnSandboxCharge
  *PURPOSE:
  *  Charges n instructions to the call that is running, as

@@ -438,6 +438,16 @@ bool scnSandboxTickSpent(lua_State *L) {
     return s != NULL && s->tickOpen && s->tickStopped;
 }
 
+uint32_t scnSandboxTickInstr(lua_State *L) {
+    ScnSandboxState *s;
+
+    if (L == NULL) {
+        return 0;
+    }
+    s = scnSandboxStateOf(L);
+    return s != NULL ? s->tickInstr : 0;
+}
+
 /* ── Making and closing one ───────────────────────────────────────── */
 
 lua_State *scnSandboxNewState(void) {
