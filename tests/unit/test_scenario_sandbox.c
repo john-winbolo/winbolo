@@ -2575,3 +2575,302 @@ int run_scenario_sandbox_interpreted_cost(void) {
 #endif
     return 0;
 }
+
+/* ── -allow-unsafe-scripts ────────────────────────────────────────── */
+
+/* Each case below turns the switch on, runs its body, and turns it off again
+ * whichever way the body returned: the switch is one answer for the process,
+ * and a case that failed with it still on would hand every case after it a
+ * plain state. The bodies are separate functions so that an assertion's early
+ * return lands back here rather than skipping the reset. */
+static int sbUnsafeRun(int (*body)(void)) {
+    int rc;
+
+    scenarioHostSetUnsafeScripts(true);
+    rc = body();
+    scenarioHostSetUnsafeScripts(false);
+    return rc;
+}
+
+/* The names the switch is meant to open, each printed as present or absent
+ * from on_start. ffi is asked through require, because LuaJIT's full open
+ * leaves it in package.preload rather than on a global; with require gone, as
+ * it is in the sandbox, ffi is absent too. */
+static const char kSbUnsafeLibLua[] =
+    "scenario = { name = \"Open\", api = 1 }\n"
+    "local function say(n, v)\n"
+    "  print(\"lib \" .. n .. \" \" .. (v and \"present\" or \"absent\"))\n"
+    "end\n"
+    "function on_start()\n"
+    "  say(\"io.open\", io ~= nil and io.open ~= nil)\n"
+    "  say(\"os.execute\", os ~= nil and os.execute ~= nil)\n"
+    "  say(\"require\", require ~= nil)\n"
+    "  say(\"debug.getinfo\", debug ~= nil and debug.getinfo ~= nil)\n"
+    "  say(\"load\", load ~= nil)\n"
+    "  say(\"string.dump\", string.dump ~= nil)\n"
+    "  say(\"math.randomseed\", math.randomseed ~= nil)\n"
+    "  say(\"jit\", jit ~= nil)\n"
+    "  say(\"ffi\", require ~= nil and (pcall(require, \"ffi\")))\n"
+    "end\n";
+
+static const char *const kSbUnsafeLibNames[] = {
+    "io.open", "os.execute", "require", "debug.getinfo", "load",
+    "string.dump", "math.randomseed",
+#ifdef WINBOLO_LUAJIT
+    "jit", "ffi",
+#endif
+};
+
+/* One attach of the script above on its own map, run into its first tick,
+ * with every name asserted to have come back as want says. */
+static int sbUnsafeLibReport(const char *map, const char *want) {
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+    char          line[96];
+    size_t        n;
+    int           i;
+
+    UT_ASSERT(sbPutText(map, kSbUnsafeLibLua));
+    sim = sbSim();
+    UT_ASSERT(sim != NULL);
+
+    sbWatchConsole(sim);
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, map, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    serverSimStartGame(sim);
+    for (i = 0; i < 3; i++) {
+        serverSimTick(sim);
+    }
+    sbUnwatchConsole(sim);
+
+    for (n = 0; n < sizeof(kSbUnsafeLibNames) / sizeof(kSbUnsafeLibNames[0]);
+         n++) {
+        snprintf(line, sizeof(line), "lib %s %s\n", kSbUnsafeLibNames[n],
+                 want);
+        UT_ASSERT_MSG(sbCount(line) == 1,
+                      "expected '%s' to be %s. The console holds:\n%s",
+                      kSbUnsafeLibNames[n], want, sbLines);
+    }
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(map);
+    return 0;
+}
+
+/* The same script twice: once with the switch on, where every name is there,
+ * and once with it off on a second map, where every one is gone. The second
+ * half is what says the first is the switch's doing rather than a library the
+ * host opens anyway. */
+static int sbUnsafeOpensFullLibrary(void) {
+    UT_ASSERT(sbUnsafeLibReport("scnsand_unsafe_lib.map", "present") == 0);
+    scenarioHostSetUnsafeScripts(false);
+    UT_ASSERT(sbUnsafeLibReport("scnsand_unsafe_lib_off.map", "absent") == 0);
+    return 0;
+}
+
+int run_scenario_sandbox_unsafe_opens_full_library(void) {
+    return sbUnsafeRun(sbUnsafeOpensFullLibrary);
+}
+
+/* Everything the sandbox bounds, done in one call with the switch on.
+ *
+ * Five million turns is between ten and fifteen million instructions by the
+ * per-call case's reckoning, ten times the call's budget and five times the
+ * tick's, and a small fraction of a second whether it runs interpreted or
+ * compiled. The string is one byte past the cap string.rep refuses at. The
+ * getinfo is what says string.find is the VM's own: the sandbox's pattern
+ * functions are a C closure over two upvalues, and the VM's has none. And
+ * twice as many lines as one call may print, every one of which has to
+ * arrive. */
+static int sbUnsafeLiftsTheBudgets(void) {
+    static const char *const kMap = "scnsand_unsafe_budget.map";
+    const int     lines = SCN_PRINT_PER_CALL * 2;
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          lua[1024];
+    char          want[64];
+    char          err[512];
+    int           i;
+
+    snprintf(lua, sizeof(lua),
+             "scenario = { name = \"Unbounded\", api = 1 }\n"
+             "function on_start()\n"
+             "  local x = 0\n"
+             "  for i = 1, 5000000 do x = x + 1 end\n"
+             "  print(\"unsafe loop \" .. x)\n"
+             "  print(\"unsafe rep \" .. #string.rep(\"x\", %u))\n"
+             "  print(\"unsafe find nups \" ..\n"
+             "        debug.getinfo(string.find, \"u\").nups)\n"
+             "  for i = 1, %d do print(\"unsafe line \" .. i) end\n"
+             "end\n", (unsigned)SCN_STRING_MAX + 1u, lines);
+    UT_ASSERT(sbPutText(kMap, lua));
+    sim = sbSim();
+    UT_ASSERT(sim != NULL);
+
+    sbWatchConsole(sim);
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    serverSimStartGame(sim);
+    for (i = 0; i < 3; i++) {
+        serverSimTick(sim);
+    }
+    sbUnwatchConsole(sim);
+
+    UT_ASSERT_MSG(sbCount("unsafe loop 5000000\n") == 1,
+                  "the loop did not run to its end, so a budget still "
+                  "applies. The console holds:\n%s", sbLines);
+    snprintf(want, sizeof(want), "unsafe rep %u\n",
+             (unsigned)SCN_STRING_MAX + 1u);
+    UT_ASSERT_MSG(sbCount(want) == 1,
+                  "string.rep did not build a string past the cap. The "
+                  "console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(sbCount("unsafe find nups 0\n") == 1,
+                  "string.find is not the VM's own. The console holds:\n%s",
+                  sbLines);
+    for (i = 1; i <= lines; i++) {
+        snprintf(want, sizeof(want), "unsafe line %d\n", i);
+        UT_ASSERT_MSG(sbCount(want) == 1,
+                      "line %d of the %d one call printed did not arrive, so "
+                      "the print limit still applies. The console holds:\n%s",
+                      i, lines, sbLines);
+    }
+    UT_ASSERT_MSG(strstr(sbLines, "raised") == NULL,
+                  "a call was counted as an error. The console holds:\n%s",
+                  sbLines);
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "the round is in state %d, expected it to be running",
+                  (int)serverSimGetState(sim));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+    return 0;
+}
+
+int run_scenario_sandbox_unsafe_lifts_the_budgets(void) {
+    return sbUnsafeRun(sbUnsafeLiftsTheBudgets);
+}
+
+/* A chunk dumped into a buffer, for the script file that is bytecode. */
+typedef struct {
+    char   bytes[4096];
+    size_t len;
+    bool   full;
+} SbDump;
+
+static int sbDumpWriter(lua_State *L, const void *p, size_t sz, void *ud) {
+    SbDump *d = (SbDump *)ud;
+
+    (void)L;
+    if (sz > sizeof(d->bytes) - d->len) {
+        d->full = true;
+        return 1;
+    }
+    memcpy(d->bytes + d->len, p, sz);
+    d->len += sz;
+    return 0;
+}
+
+/* Two ways a precompiled chunk arrives. A script that dumps a function and
+ * loads the bytes back, which the sandbox answers by having neither
+ * string.dump nor load; and a script file that is itself bytecode, compiled
+ * here by the same VM the host runs, which the sandbox's loader refuses as
+ * run_scenario_sandbox_bytecode_chunk_refused shows. Both are taken with the
+ * switch on. */
+static int sbUnsafeLoadsBytecode(void) {
+    static const char *const kMap     = "scnsand_unsafe_dump.map";
+    static const char *const kMapComp = "scnsand_unsafe_compiled.map";
+    static const char *const kLua =
+        "scenario = { name = \"Dumper\", api = 1 }\n"
+        "function on_start()\n"
+        "  print(\"unsafe dumped \" ..\n"
+        "        load(string.dump(function() return 7 end))())\n"
+        "end\n";
+    static const char *const kCompiledSrc =
+        "print(\"unsafe precompiled ran\")\n"
+        "scenario = { name = \"Compiled\", api = 1 }\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    lua_State    *C;
+    SbDump        dump;
+    char          err[512];
+    int           rc;
+    int           i;
+
+    UT_ASSERT(sbPutText(kMap, kLua));
+    sim = sbSim();
+    UT_ASSERT(sim != NULL);
+
+    sbWatchConsole(sim);
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    serverSimStartGame(sim);
+    for (i = 0; i < 3; i++) {
+        serverSimTick(sim);
+    }
+    sbUnwatchConsole(sim);
+
+    UT_ASSERT_MSG(sbCount("unsafe dumped 7\n") == 1,
+                  "the dumped function did not load back and answer 7. The "
+                  "console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "raised") == NULL,
+                  "a call was counted as an error. The console holds:\n%s",
+                  sbLines);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+
+    /* The file: the source compiled and dumped by a bare state of the same
+       VM, written beside the second map as it stands. */
+    C = luaL_newstate();
+    UT_ASSERT(C != NULL);
+    dump.len  = 0;
+    dump.full = false;
+    rc = luaL_loadbufferx(C, kCompiledSrc, strlen(kCompiledSrc),
+                          "=compiled", "t");
+    if (rc == 0) {
+#ifdef WINBOLO_LUAJIT
+        rc = lua_dump(C, sbDumpWriter, &dump);
+#else
+        rc = lua_dump(C, sbDumpWriter, &dump, 0);
+#endif
+    }
+    lua_close(C);
+    UT_ASSERT_MSG(rc == 0 && !dump.full && dump.len > 0,
+                  "the source did not compile and dump (rc %d, %u bytes)",
+                  rc, (unsigned)dump.len);
+
+    UT_ASSERT(sbPut(kMapComp, dump.bytes, dump.len));
+    sim = sbSim();
+    UT_ASSERT(sim != NULL);
+
+    sbWatchConsole(sim);
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, kMapComp, err, sizeof(err));
+    sbUnwatchConsole(sim);
+
+    UT_ASSERT_MSG(h != NULL,
+                  "a precompiled script file was refused with the switch "
+                  "on: %s", err);
+    UT_ASSERT_MSG(sbCount("unsafe precompiled ran\n") == 1,
+                  "the precompiled chunk attached without running its top "
+                  "level. The console holds:\n%s", sbLines);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMapComp);
+    return 0;
+}
+
+int run_scenario_sandbox_unsafe_loads_bytecode(void) {
+    return sbUnsafeRun(sbUnsafeLoadsBytecode);
+}

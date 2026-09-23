@@ -224,6 +224,38 @@ Every other map is unaffected. With it on, one console line names each
 uploaded map whose packed scenario is what runs, so the operator can see when
 a round is being played by a script a player sent.
 
+**Running scripts with nothing held back.** For an operator whose own content
+needs more than the sandbox allows, there is a switch that lifts it, named
+after `-allow-unsafe-brains`. Each host takes both dash forms:
+
+- `-allow-unsafe-scripts` on the dedicated server.
+- `--allow-unsafe-scripts` on the headless runner.
+- `--allow-unsafe-scripts` on the desktop client's command line. There is no
+  preference for it.
+
+With it on, every scenario state the process boots — a script beside a map,
+one packed into an uploaded map, a mod, and the check `-validate` makes — is
+plain Lua:
+
+- the whole standard library, `io`, `os`, `package` and `require`, `debug`,
+  `load`, `dofile` and `string.dump` included, with `loadstring`, `ffi`,
+  `jit` and `bit` on LuaJIT, where the compiler is on as well;
+- no memory cap, no instruction budget per call and none per tick;
+- the VM's own `string` functions, patterns, `pcall`, `xpcall` and coroutines,
+  with none of the length caps above;
+- precompiled chunks accepted, as well as text;
+- `math.randomseed` left in place. The host still seeds `math.random` at
+  each boot.
+
+`print` still goes to the server console, where the operator and the desktop
+client look, with no limit on how many lines.
+
+It applies to uploaded maps' scripts as well. If `-nouploadscripts` is given
+too, that still refuses an uploaded map's script outright. The host prints a
+note at startup saying the switch is on. It exists for content the operator
+trusts as their own; a server open to uploads from strangers should not run
+this way.
+
 **Reloading after an edit.** Two ways in. On a dedicated server the console
 command `reload` reads the file again; in a lobby, the host has a **Reload
 script** button beside the scenario's name. The button is the host's alone

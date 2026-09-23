@@ -1384,3 +1384,8 @@ void scnSandboxPushBase(lua_State *L) {
         lua_newtable(L);
     }
 }
+
+void scnSandboxOpenPrint(lua_State *L) {
+    lua_pushcfunction(L, scnSandboxPrint);
+    lua_setglobal(L, "print");
+}

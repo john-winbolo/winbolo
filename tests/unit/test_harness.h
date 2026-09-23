@@ -3081,6 +3081,9 @@ int run_scenario_sandbox_pattern_bomb_behind_pcall(void);
 int run_scenario_sandbox_pattern_results(void);
 int run_scenario_sandbox_pattern_charge_counts(void);
 int run_scenario_sandbox_interpreted_cost(void);
+int run_scenario_sandbox_unsafe_opens_full_library(void);
+int run_scenario_sandbox_unsafe_lifts_the_budgets(void);
+int run_scenario_sandbox_unsafe_loads_bytecode(void);
 
 /* The bus events (test_scenario_events.c): the subscriber that only
  * queues, the bounded drain at the end of each tick, and what a full

@@ -83,6 +83,7 @@
 #include "dialogs/dialog_quit.h"
 #include "../tiles.h"
 #include "luabrainshandler.h"
+#include "../../scenario/scenario_host.h"
 #include "bg_game.h"
 #include "cursor.h"
 
@@ -387,6 +388,20 @@ int main(int argc, char *argv[]) {
     if (strcmp(argv[i], "--allow-unsafe-brains") == 0 ||
         strcmp(argv[i], "-allow-unsafe-brains") == 0) {
       luaBrainsSetAllowUnsafe(1);
+      continue;
+    }
+    /* The same opt-out for the scenario scripts a game this client hosts
+     * runs: the full Lua library and no memory or time limits, uploaded maps'
+     * scripts included. One answer for the process, set here before any game
+     * is hosted. */
+    if (strcmp(argv[i], "--allow-unsafe-scripts") == 0 ||
+        strcmp(argv[i], "-allow-unsafe-scripts") == 0) {
+      scenarioHostSetUnsafeScripts(true);
+      fprintf(stderr,
+              "Note: --allow-unsafe-scripts — scenario scripts, including those "
+              "in uploaded maps, now run with the full Lua library and no "
+              "memory or time limits. Only run a server this way with content "
+              "you trust.\n");
       continue;
     }
     /* The voice capture-chain recorder. Both switches take a value, and both

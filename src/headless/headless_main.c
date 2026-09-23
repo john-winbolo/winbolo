@@ -145,6 +145,8 @@ static bool optStdin = FALSE;
 static bool optNoScenarios = false;
 /* Run a map that came from an upload plainly, whatever it carries. */
 static bool optNoUploadScripts = false;
+/* Run every scenario script with the full Lua library and no limits. */
+static bool optUnsafeScripts = false;
 static bool optLogBinary = FALSE;
 static uint64_t optSeed = 0;
 static bool optSeedSet = FALSE;
@@ -2095,6 +2097,12 @@ static void printUsage(const char *prog) {
     "                    Maps in the uploads directory play plainly, whether the\n"
     "                    script is packed into the file or sits beside it; every\n"
     "                    other map is unaffected\n"
+    "  --allow-unsafe-scripts\n"
+    "                    Run scenario scripts with the full Lua standard\n"
+    "                    library, no memory cap, no time limits and precompiled\n"
+    "                    chunks accepted, uploaded maps' scripts included;\n"
+    "                    --nouploadscripts still refuses uploads. Only for\n"
+    "                    trusted content\n"
     "\n"
     "Visibility options (apply to the fast-mode server sim):\n"
     "  --pillview MODE   Pillbox visibility: always, key (default), decay, off\n"
@@ -2248,6 +2256,9 @@ static bool parseArgs(int argc, char **argv) {
       optNoScenarios = true;
     } else if (strcmp(argv[i], "--nouploadscripts") == 0) {
       optNoUploadScripts = true;
+    } else if (strcmp(argv[i], "--allow-unsafe-scripts") == 0 ||
+               strcmp(argv[i], "-allow-unsafe-scripts") == 0) {
+      optUnsafeScripts = true;
     } else if (strcmp(argv[i], "--map") == 0 && i + 1 < argc) {
       strncpy(optMap, argv[++i], sizeof(optMap) - 1);
     } else if (strcmp(argv[i], "-nocrashreporting") == 0) {
@@ -2553,6 +2564,17 @@ static int runFastMode(void) {
      whatever it carries, and the operator's own maps are untouched. */
   if (optNoUploadScripts) {
     scenarioHostSetUploadScriptsEnabled(false);
+  }
+  /* --allow-unsafe-scripts: the other way. Every script runs with the full
+     Lua library and no limits, uploaded ones included, and it is said
+     loudly. Set before the first attach for the same reason. */
+  if (optUnsafeScripts) {
+    scenarioHostSetUnsafeScripts(true);
+    fprintf(stderr,
+            "Note: --allow-unsafe-scripts — scenario scripts, including those "
+            "in uploaded maps, now run with the full Lua library and no memory "
+            "or time limits. Only run a server this way with content you "
+            "trust.\n");
   }
   /* And the question the map lister asks, registered here rather than at the
      attach below: an attach answers nothing for a map with no script, so a

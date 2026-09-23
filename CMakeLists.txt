@@ -6000,6 +6000,9 @@ set(_unit_test_names
     scenario_sandbox_pattern_results
     scenario_sandbox_pattern_charge_counts
     scenario_sandbox_interpreted_cost
+    scenario_sandbox_unsafe_opens_full_library
+    scenario_sandbox_unsafe_lifts_the_budgets
+    scenario_sandbox_unsafe_loads_bytecode
     scenario_events_queued_then_drained
     scenario_events_drain_reads_the_length_once
     scenario_events_queued_during_a_drain_waits

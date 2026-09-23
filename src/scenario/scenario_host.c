@@ -79,6 +79,7 @@
 
 #include <lua.h>
 #include <lauxlib.h>
+#include <lualib.h>                /* luaL_openlibs, for an unsafe state */
 
 /* SDL_Mutex, SDL_ThreadID and SDL_GetCurrentThreadID, which the VM lock is
  * built from. server_sim.h brings SDL in as well; named here because this
@@ -846,7 +847,29 @@ static int scnPanic(lua_State *L) {
 }
 
 lua_State *scnNewVm(void) {
-    lua_State *L = scnSandboxNewState();
+    lua_State *L;
+
+    /* An operator who passed -allow-unsafe-scripts has chosen to trust every
+       script this server runs, uploaded ones included, so the state is Lua's
+       own: the default allocator, no count hook, and every library the build
+       has, jit and ffi on LuaJIT among them. There is no per-state record,
+       and every sandbox call the host makes around a script finds none and
+       does nothing. print is the one thing kept, so a script's lines still
+       reach the console the operator reads; with no record it counts none of
+       them. math.randomseed stays, since nothing here is sealed. */
+    if (scenarioHostUnsafeScripts()) {
+        L = luaL_newstate();
+        if (L == NULL) {
+            return NULL;
+        }
+        lua_atpanic(L, scnPanic);
+        luaL_openlibs(L);
+        scnSandboxOpenPrint(L);
+        scnSeedRandom(L);
+        return L;
+    }
+
+    L = scnSandboxNewState();
     if (L == NULL) {
         return NULL;
     }
@@ -1038,11 +1061,16 @@ static bool scnChunkSetEnv(lua_State *L, int envRef) {
  * Text only. A precompiled chunk is a stream the VM trusts and does not
  * check, so bytes that arrived inside a map file are refused at the load
  * rather than read as instructions. Every state the host boots comes through
- * here, the validator's included, so WinBoloDS -validate refuses one too. */
+ * here, the validator's included, so WinBoloDS -validate refuses one too.
+ *
+ * Except under -allow-unsafe-scripts, where the operator has chosen to trust
+ * every script this server runs, uploaded ones included, and a precompiled
+ * one is taken as well. */
 bool scnRunChunk(lua_State *L, int envRef, const char *src, size_t srcLen,
                  const char *chunkName, char *err, size_t errLen) {
     ScnSandboxCall saved;
-    bool           ok = false;
+    bool           ok   = false;
+    const char    *mode = scenarioHostUnsafeScripts() ? NULL : "t";
 
     /* The chunk's top level is script code like any other, and the one place
        a loop in it would show is here: an attach that never returns. Armed
@@ -1050,7 +1078,7 @@ bool scnRunChunk(lua_State *L, int envRef, const char *src, size_t srcLen,
        executes no instructions to count — and leaves one disarm to reach
        whichever way this goes. */
     scnSandboxArmCall(L, &saved);
-    if (luaL_loadbufferx(L, src, srcLen, chunkName, "t") != 0) {
+    if (luaL_loadbufferx(L, src, srcLen, chunkName, mode) != 0) {
         scnFmt(err, errLen, "scenario: %s", scnLuaError(L));
         lua_pop(L, 1);
     } else if (!scnChunkSetEnv(L, envRef)) {
@@ -2515,12 +2543,15 @@ static void scnPushRouterFields(lua_State *L, const ScenarioManifest *m) {
  * chunks buy: the author's file and this one each keep their own numbering.
  *
  * Text only, for the reason scnRunChunk is: these bytes are the build's own,
- * but the loader that reads them is the one a map file's script reaches. */
+ * but the loader that reads them is the one a map file's script reaches.
+ * Under -allow-unsafe-scripts it takes either, as scnRunChunk's does: the
+ * operator has chosen to trust every script this server runs. */
 static bool scnInstallTriggers(lua_State *L, int envRef,
                                const ScenarioManifest *m,
                                char *err, size_t errLen) {
     ScnSandboxCall saved;
-    bool           ok = false;
+    bool           ok   = false;
+    const char    *mode = scenarioHostUnsafeScripts() ? NULL : "t";
 
     if (m->numTriggers == 0) {
         return true;
@@ -2529,7 +2560,7 @@ static bool scnInstallTriggers(lua_State *L, int envRef,
     scnSandboxArmCall(L, &saved);
     if (luaL_loadbufferx(L, (const char *)kScnTriggersLua,
                          (size_t)SCN_TRIGGERS_LUA_LEN,
-                         "@scenario_triggers.lua", "t") != 0) {
+                         "@scenario_triggers.lua", mode) != 0) {
         scnFmt(err, errLen, "scenario: %s", scnLuaError(L));
         lua_pop(L, 1);
     } else if (!scnChunkSetEnv(L, envRef)) {
@@ -5601,6 +5632,20 @@ static bool scnUploadScripts = true;
 
 void scenarioHostSetUploadScriptsEnabled(bool enabled) {
     scnUploadScripts = enabled;
+}
+
+/* And the one that goes the other way: whether a script runs with nothing
+ * held back. One answer for the process, written at startup, and read each
+ * time a state is booted or a chunk is loaded — through the getter, because
+ * those are further up the file than this. */
+static bool scnUnsafeScripts = false;
+
+void scenarioHostSetUnsafeScripts(bool unsafe) {
+    scnUnsafeScripts = unsafe;
+}
+
+bool scenarioHostUnsafeScripts(void) {
+    return scnUnsafeScripts;
 }
 
 /* One character of a path, for the comparison below: separators levelled and

@@ -252,4 +252,19 @@ void scnSandboxSealRandom(lua_State *L);
  *********************************************************/
 void scnSandboxPushBase(lua_State *L);
 
+/*********************************************************
+ *NAME:          scnSandboxOpenPrint
+ *PURPOSE:
+ *  Sets the global print to the sandbox's own, and does
+ *  nothing else. For a state opened with the whole standard
+ *  library rather than through scnSandboxOpenLibs.
+ *
+ *  Such a state has no per-state record beside it, so
+ *  scnSandboxPrintTake lets every line through uncapped.
+ *  The only thing this changes is where the output goes:
+ *  the server console, where the operator and the desktop
+ *  client look, rather than the host's stdout.
+ *********************************************************/
+void scnSandboxOpenPrint(lua_State *L);
+
 #endif /* SCENARIO_SANDBOX_H */

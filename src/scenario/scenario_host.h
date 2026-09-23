@@ -324,6 +324,38 @@ void scenarioHostSetEnabled(bool enabled);
 void scenarioHostSetUploadScriptsEnabled(bool enabled);
 
 /*********************************************************
+ *NAME:          scenarioHostSetUnsafeScripts
+ *PURPOSE:
+ *  Whether scenario scripts run with nothing held back: the
+ *  whole Lua standard library, no memory cap, no instruction
+ *  budgets and precompiled chunks accepted. Off by default.
+ *  The dedicated server's -allow-unsafe-scripts and the
+ *  other hosts' --allow-unsafe-scripts set it.
+ *
+ *  It reaches every script the process runs: one beside a
+ *  map on disk, one packed into an uploaded map, a mod, and
+ *  the check -validate makes. An operator who turns it on
+ *  has chosen to trust all of them.
+ *
+ *  Separate from scenarioHostSetUploadScriptsEnabled, which
+ *  refuses an uploaded map's script outright and still does
+ *  with this on.
+ *
+ *  Set it before the first attach: it is one answer for the
+ *  process, and a state booted later reads whatever it last
+ *  said.
+ *********************************************************/
+void scenarioHostSetUnsafeScripts(bool unsafe);
+
+/*********************************************************
+ *NAME:          scenarioHostUnsafeScripts
+ *PURPOSE:
+ *  What scenarioHostSetUnsafeScripts last said. For the
+ *  lobby settings event, so a joiner can see the mode.
+ *********************************************************/
+bool scenarioHostUnsafeScripts(void);
+
+/*********************************************************
  *NAME:          scenarioHostMapHasScript
  *PURPOSE:
  *  Whether picking the map at mapPath here would run a
