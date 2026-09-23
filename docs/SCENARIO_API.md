@@ -70,6 +70,15 @@ start of every round, each time in a Lua state of its own. That means:
 
 The file may be up to 1 MiB.
 
+**A scenario and its mods share the state but not the libraries.** A round
+may run a scenario with mods behind it, every script on the list in the one
+state, each with its own globals. In the sandbox each script also has its own
+copies of the standard libraries and of `game`, so changing them — setting
+`string.find` to `nil`, or putting a row of your own on `game` — affects only
+that script. Method calls on strings, such as `s:find(p)`, still share the one
+string library. Under `-allow-unsafe-scripts` the scripts on one list share
+one set of libraries and one `game` table.
+
 **What a script is given.** The state a scenario runs in opens `string`,
 `table`, `math`, `os`, `coroutine` and a named list of base functions, and
 nothing else. The base list is `assert`, `collectgarbage`, `error`,
@@ -250,7 +259,10 @@ plain Lua:
   with none of the length caps above;
 - precompiled chunks accepted, as well as text;
 - `math.randomseed` left in place. The host still seeds `math.random` at
-  each boot.
+  each boot;
+- the scripts on one list share the standard libraries and `game` rather
+  than each having copies of its own, so a change one script makes to them
+  reaches every other script on the list.
 
 `print` still goes to the server console, where the operator and the desktop
 client look, with no limit on how many lines.

@@ -939,28 +939,70 @@ static void scnPushGlobals(lua_State *L) {
 #endif
 }
 
+/* A new table holding every field of the table at src, which is an absolute
+ * index, left on top of the stack. depth 1 copies the fields as they are;
+ * depth 2 also copies any field that is itself a table, one level, and so
+ * on. Every read is lua_next and every write lua_rawset, so no metatable on
+ * the source or on anything in it runs.
+ *
+ * Takes 5 stack slots, and 4 more for each level past the first; the caller
+ * checks for them. */
+static void scnCopyTable(lua_State *L, int src, int depth) {
+    lua_newtable(L);                 /* the copy */
+    lua_pushnil(L);
+    while (lua_next(L, src) != 0) {
+        /* Key at -2 and value at -1. The key goes on again for the write,
+           and the value goes on as itself or as a copy of its own. */
+        lua_pushvalue(L, -2);
+        if (depth > 1 && lua_type(L, -2) == LUA_TTABLE) {
+            scnCopyTable(L, lua_gettop(L) - 1, depth - 1);
+        } else {
+            lua_pushvalue(L, -2);
+        }
+        lua_rawset(L, -5);           /* the copy, four slots down */
+        lua_pop(L, 1);
+    }
+}
+
 /* A table for one script's globals to live in, kept in the registry and
  * answered as a reference. LUA_NOREF where there was no memory for it.
  *
- * Every name the state's real globals hold is copied into it, one level
- * deep, and _G is set to the new table. That is the whole of it:
+ * Every name the state's real globals hold is copied into it, and _G is set
+ * to the new table. That is the whole of it:
  *
  *   The copy is what makes the sandbox's library and the game table
- *   reachable by name. The values are shared rather than duplicated — the
- *   same print, the same string table, the same game table — so the copy is
- *   a few dozen slots and nothing else. A script that reassigns one of those
- *   names reassigns its own entry and leaves every other script's alone,
- *   which is the point of the table.
+ *   reachable by name. A value that is not a table — print, pairs,
+ *   _VERSION — goes in as itself. A value that is a table goes in as a copy
+ *   of its own, one level deep: string, table, math, os, coroutine and utf8
+ *   where the VM has it. game is copied two levels deep, so TERRAIN and the
+ *   word tables inside it are each script's own as well. A script that
+ *   writes string.find = nil or game.end_round = nil, or adds a row of its
+ *   own to game, changes its own copy and no other script's.
  *
- *   What the copy does not separate is what those shared values hold. The
- *   game table is one object, so a script writing game.anything writes it
- *   for every script in the list, and a script that clears game.set_rule
- *   takes it away from all of them. The names are each script's own; what
- *   the names point at is not. That is a limit of one level deep, and it is
- *   left where it is on purpose: the scripts a host loads are files that
- *   host installed, not anything arriving from a player, and copying a
- *   level further would hand each script a game table of its own, which the
- *   host would then have to keep several of.
+ *   That matters because the scripts on one list need not come from one
+ *   person. A scenario and the mods behind it may be written by different
+ *   people, and a write one of them makes to a library or to game must not
+ *   reach another.
+ *
+ *   A copy of game is exact because game never changes after
+ *   scenarioLuaInstall builds it: the rows are closures over the host's
+ *   context, and the constants, TERRAIN and the word tables are fixed
+ *   numbers. There is nothing live in it for a copy to fall behind on.
+ *
+ *   What is still shared: the string metatable, whose __index is the state's
+ *   one string table, so a method call such as s:find(p) reaches that table
+ *   and not the script's copy; the world itself, which every script changes
+ *   through the same ops; and the instruction and op limits, which are the
+ *   state's and the tick's rather than a script's.
+ *
+ *   Under -allow-unsafe-scripts none of the tables are copied: each script
+ *   gets its own names, and the tables behind them are shared as they are.
+ *   That state opens debug, and debug.getregistry and debug.getupvalue reach
+ *   any other script's tables whatever was copied, so keeping scripts apart
+ *   cannot hold there. And copying package would break it: require reads
+ *   path, cpath and its searchers off the original package table — an
+ *   upvalue on 5.4, LUA_ENVIRONINDEX on LuaJIT — so a script setting
+ *   package.path on its copy would find require never saw it.
  *
  *   _G is the table itself, which is what a set of globals means by the
  *   name. Without it a script reading _G would be handed the state's real
@@ -968,8 +1010,8 @@ static void scnPushGlobals(lua_State *L) {
  *   router — which takes the author's handler off _G and puts its own
  *   wrapper back — would chain on to the wrong table entirely.
  *
- * The plan this was built from said to leave the table empty and reach the
- * real globals through __index on a metatable. That is neater and it is
+ * The other way to build this is to leave the table empty and reach the real
+ * globals through __index on a metatable. That is neater and it is
  * wrong here, because a script may put a metatable on its own globals: under
  * a chain, the moment one does, every name the sandbox opened goes away with
  * the metatable it replaced. scenario_host_hook_via_global_metatable is that
@@ -982,18 +1024,33 @@ static void scnPushGlobals(lua_State *L) {
  * read below is raw. That, and not the copy, is what stops a metatable a
  * script installs from answering for a hook name or a policy name. */
 int scnEnvNew(lua_State *L) {
-    if (!lua_checkstack(L, 6)) {
+    bool copyTables = !scenarioHostUnsafeScripts();
+    int  globals;
+
+    /* 6 for the walk below, and 4 more for each level a copy goes down:
+       game's two levels come to 14. */
+    if (!lua_checkstack(L, 14)) {
         return LUA_NOREF;
     }
     lua_newtable(L);                 /* the env */
     scnPushGlobals(L);               /* what it starts out holding */
+    globals = lua_gettop(L);
 
     lua_pushnil(L);
-    while (lua_next(L, -2) != 0) {
+    while (lua_next(L, globals) != 0) {
         /* Key at -2 and value at -1, and lua_next wants the key left
-           behind, so both go on again for the write. */
+           behind, so the key goes on again for the write. The globals table
+           itself is left as it is here; _G is written below. */
         lua_pushvalue(L, -2);
-        lua_pushvalue(L, -2);
+        if (copyTables && lua_type(L, -2) == LUA_TTABLE &&
+            !lua_rawequal(L, -2, globals)) {
+            int depth = (lua_type(L, -3) == LUA_TSTRING &&
+                         strcmp(lua_tostring(L, -3), "game") == 0) ? 2 : 1;
+
+            scnCopyTable(L, lua_gettop(L) - 1, depth);
+        } else {
+            lua_pushvalue(L, -2);
+        }
         lua_rawset(L, -6);           /* the env, five slots down */
         lua_pop(L, 1);
     }

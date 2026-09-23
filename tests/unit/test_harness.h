@@ -3355,6 +3355,12 @@ int run_scenario_compose_region_borrowed(void);
 int run_scenario_compose_region_hook_own(void);
 int run_scenario_compose_conflicts_recorded(void);
 int run_scenario_compose_map_script_placed(void);
+int run_scenario_compose_library_copy_per_script(void);
+int run_scenario_compose_game_copy_per_script(void);
+int run_scenario_compose_game_nested_copy(void);
+int run_scenario_compose_compat_write_stays_local(void);
+int run_scenario_compose_pairs_game_complete(void);
+int run_scenario_compose_unsafe_keeps_sharing(void);
 
 /* The panel's display list (test_scenario_panel.c): the byte layout
  * decoded from a hand-written list, the refusal each malformed list

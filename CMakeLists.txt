@@ -6172,6 +6172,12 @@ set(_unit_test_names
     scenario_compose_region_hook_own
     scenario_compose_conflicts_recorded
     scenario_compose_map_script_placed
+    scenario_compose_library_copy_per_script
+    scenario_compose_game_copy_per_script
+    scenario_compose_game_nested_copy
+    scenario_compose_compat_write_stays_local
+    scenario_compose_pairs_game_complete
+    scenario_compose_unsafe_keeps_sharing
     scenario_panel_parses_each_primitive
     scenario_panel_refuses_malformed
     scenario_panel_boundaries

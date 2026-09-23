@@ -73,6 +73,25 @@
  *       — two scripts handing a spawning tank different stores: the one
  *       earlier on the list wins, and flipping the list flips the answer.
  *
+ * And what each script on the list is given of the shared tables:
+ *
+ *   scenario_compose_library_copy_per_script
+ *       — a mod clearing string.find, math.floor and table.insert clears its
+ *       own copies; the base still calls all three.
+ *   scenario_compose_game_copy_per_script
+ *       — a mod clearing game.end_round and replacing game.spawn_bot sees
+ *       both changes, and the base keeps the host's rows.
+ *   scenario_compose_game_nested_copy
+ *       — a mod writing game.TERRAIN.road leaves the base's TERRAIN alone.
+ *   scenario_compose_compat_write_stays_local
+ *       — a row a mod adds to game is callable from the mod and absent from
+ *       the base.
+ *   scenario_compose_pairs_game_complete
+ *       — pairs(game) in each script counts every field the host installed.
+ *   scenario_compose_unsafe_keeps_sharing
+ *       — under -allow-unsafe-scripts the scripts share one game, so the
+ *       base calls the row the mod added.
+ *
  * These cases drive the real path end to end: a scratch scenarios directory
  * with real files in it, the host's own directory lister registered on the
  * sim, and the picks made by applying CMD_SET_SCRIPT_LIST. A map is named but
@@ -114,6 +133,8 @@
                                     * sets, and what they are called */
 #include "scenario_defs.h"         /* ScnDirEntry */
 #include "scenario_host.h"
+#include "scenario_lua.h"          /* the rows, constants and word tables
+                                    * scenarioLuaInstall puts on game */
 #include "scenario_manifest.h"     /* ScenarioManifest */
 #include "scenario_validate.h"     /* scenarioHostManifest and
                                     * scenarioHostScriptCount: the
@@ -1975,4 +1996,365 @@ int run_scenario_compose_map_script_placed(void) {
     scDropMapScript();
     scDropDir();
     return 0;
+}
+
+/* ── The scripts the per-script table cases compose ───────────────── */
+
+/* A base that says nothing until the round is ticking, and then calls the
+   three library functions the mod below clears in its own copy. A raise from
+   any of them fails the hook and leaves the line unwritten, which the case
+   reads as the mod's write having reached this script. */
+static const char kScLibBase[] =
+    "scenario = {\n"
+    "  name = \"Library Base\",\n"
+    "  api = 1,\n"
+    "  bound = true,\n"
+    "  game = \"tournament\",\n"
+    "}\n"
+    "local said = false\n"
+    "function on_tick()\n"
+    "  if said then return end\n"
+    "  said = true\n"
+    "  local t = {}\n"
+    "  table.insert(t, 5)\n"
+    "  local at = string.find(\"abc\", \"b\")\n"
+    "  print(\"note:base_find=\" .. tostring(at) .. \";\")\n"
+    "  print(\"note:base_floor=\" .. tostring(math.floor(2.5)) .. \";\")\n"
+    "  print(\"note:base_insert=\" .. tostring(#t) .. \";\")\n"
+    "end\n";
+
+static const char kScLibMod[] =
+    "scenario = {\n"
+    "  name = \"Library Mod\",\n"
+    "  api = 1,\n"
+    "  kind = \"mod\",\n"
+    "  bound = false,\n"
+    "}\n"
+    "string.find = nil\n"
+    "math.floor = nil\n"
+    "table.insert = nil\n"
+    "print(\"note:mod_find_nil=\" .. tostring(string.find == nil) .. \";\")\n"
+    "print(\"note:mod_floor_nil=\" .. tostring(math.floor == nil) .. \";\")\n"
+    "print(\"note:mod_insert_nil=\" .. tostring(table.insert == nil)\n"
+    "      .. \";\")\n";
+
+/* A base that reads back, from on_setup, what the mods below change in their
+   own game. Every mod's top level has run by then, so a write that reached
+   this script would already be showing.
+
+   spawn_bot is called with no argument: the host's row raises for the
+   missing table and does nothing else, and the mod's wrapper would answer
+   "wrapped". Which of the two answered is what tells them apart. */
+static const char kScGameBase[] =
+    "scenario = {\n"
+    "  name = \"Game Base\",\n"
+    "  api = 1,\n"
+    "  bound = true,\n"
+    "  game = \"tournament\",\n"
+    "}\n"
+    "function on_setup()\n"
+    "  print(\"note:base_end=\" .. type(game.end_round) .. \";\")\n"
+    "  local ok, r = pcall(game.spawn_bot)\n"
+    "  print(\"note:base_spawn=\" .. tostring(ok) .. \",\" .. tostring(r)\n"
+    "        .. \";\")\n"
+    "  print(\"note:base_road=\" .. tostring(game.TERRAIN.road) .. \";\")\n"
+    "  print(\"note:base_row=\" .. type(game.my_row) .. \";\")\n"
+    "end\n";
+
+static const char kScGameMod[] =
+    "scenario = {\n"
+    "  name = \"Game Mod\",\n"
+    "  api = 1,\n"
+    "  kind = \"mod\",\n"
+    "  bound = false,\n"
+    "}\n"
+    "game.end_round = nil\n"
+    "game.spawn_bot = function() return \"wrapped\" end\n"
+    "print(\"note:mod_end=\" .. type(game.end_round) .. \";\")\n"
+    "print(\"note:mod_spawn=\" .. tostring(game.spawn_bot()) .. \";\")\n";
+
+static const char kScTerrainMod[] =
+    "scenario = {\n"
+    "  name = \"Terrain Mod\",\n"
+    "  api = 1,\n"
+    "  kind = \"mod\",\n"
+    "  bound = false,\n"
+    "}\n"
+    "game.TERRAIN.road = 999\n"
+    "print(\"note:mod_road=\" .. tostring(game.TERRAIN.road) .. \";\")\n";
+
+/* A row of the script's own on game, which is what the compat prelude in
+   tests/scenario/ does for the rows it adds. */
+static const char kScRowMod[] =
+    "scenario = {\n"
+    "  name = \"Row Mod\",\n"
+    "  api = 1,\n"
+    "  kind = \"mod\",\n"
+    "  bound = false,\n"
+    "}\n"
+    "game.my_row = function() return 7 end\n"
+    "print(\"note:mod_row=\" .. tostring(game.my_row()) .. \";\")\n";
+
+/* Under -allow-unsafe-scripts the base reads the mod's row by calling it,
+   which only answers where the two scripts share one game. */
+static const char kScRowReaderBase[] =
+    "scenario = {\n"
+    "  name = \"Row Reader\",\n"
+    "  api = 1,\n"
+    "  bound = true,\n"
+    "  game = \"tournament\",\n"
+    "}\n"
+    "function on_setup()\n"
+    "  local v = nil\n"
+    "  if type(game.my_row) == \"function\" then v = game.my_row() end\n"
+    "  print(\"note:base_row=\" .. tostring(v) .. \";\")\n"
+    "end\n";
+
+/* How many fields game holds, counted by each script at its top level. */
+#define SC_COUNT_GAME(tag)                                                   \
+    "local n = 0\n"                                                          \
+    "for _ in pairs(game) do n = n + 1 end\n"                                \
+    "print(\"note:" tag "_count=\" .. n .. \";\")\n"
+
+static const char kScCountBase[] =
+    "scenario = {\n"
+    "  name = \"Count Base\",\n"
+    "  api = 1,\n"
+    "  bound = true,\n"
+    "  game = \"tournament\",\n"
+    "}\n"
+    SC_COUNT_GAME("base");
+
+static const char kScCountMod[] =
+    "scenario = {\n"
+    "  name = \"Count Mod\",\n"
+    "  api = 1,\n"
+    "  kind = \"mod\",\n"
+    "  bound = false,\n"
+    "}\n"
+    SC_COUNT_GAME("mod");
+
+/* ── 19. Each script's libraries are its own ──────────────────────── */
+
+int run_scenario_compose_library_copy_per_script(void) {
+    ServerSim  *sim;
+    const char *picks[1] = { "libmod.lua" };
+    char        said[8192];
+
+    UT_ASSERT(scMakeDir("library_copy"));
+    UT_ASSERT(scWrite("libmod.lua", kScLibMod));
+    UT_ASSERT(scPutMapScript(kScLibBase));
+    sim = scRunningSim(picks, 1);
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(scenarioHostScriptCount(scSlot) == 2,
+                  "the round composed %d scripts, wanted the base and the mod",
+                  scenarioHostScriptCount(scSlot));
+    UT_ASSERT_MSG(scTickForTank(sim), "slot 0 never had a tank");
+    scReadNote(said, sizeof(said));
+
+    /* The mod cleared its own three names. */
+    UT_ASSERT_MSG(strstr(said, "mod_find_nil=true;") != NULL &&
+                      strstr(said, "mod_floor_nil=true;") != NULL &&
+                      strstr(said, "mod_insert_nil=true;") != NULL,
+                  "the mod did not see its own writes: %s", said);
+
+    /* And the base still has all three. */
+    UT_ASSERT_MSG(strstr(said, "base_find=2;") != NULL,
+                  "the base lost string.find to the mod: %s", said);
+    UT_ASSERT_MSG(strstr(said, "base_floor=2;") != NULL,
+                  "the base lost math.floor to the mod: %s", said);
+    UT_ASSERT_MSG(strstr(said, "base_insert=1;") != NULL,
+                  "the base lost table.insert to the mod: %s", said);
+
+    scDestroy(sim);
+    scDropMapScript();
+    scDropDir();
+    return 0;
+}
+
+/* ── 20. Each script's game is its own ────────────────────────────── */
+
+int run_scenario_compose_game_copy_per_script(void) {
+    ServerSim  *sim;
+    const char *picks[1] = { "gamemod.lua" };
+    char        said[8192];
+
+    UT_ASSERT(scMakeDir("game_copy"));
+    UT_ASSERT(scWrite("gamemod.lua", kScGameMod));
+    UT_ASSERT(scPutMapScript(kScGameBase));
+    sim = scRunningSim(picks, 1);
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(scenarioHostScriptCount(scSlot) == 2,
+                  "the round composed %d scripts, wanted the base and the mod",
+                  scenarioHostScriptCount(scSlot));
+    scReadNote(said, sizeof(said));
+
+    UT_ASSERT_MSG(strstr(said, "mod_end=nil;") != NULL,
+                  "the mod did not see its own game.end_round cleared: %s",
+                  said);
+    UT_ASSERT_MSG(strstr(said, "mod_spawn=wrapped;") != NULL,
+                  "the mod did not see its own game.spawn_bot: %s", said);
+
+    UT_ASSERT_MSG(strstr(said, "base_end=function;") != NULL,
+                  "the base lost game.end_round to the mod: %s", said);
+    /* The host's row raised for the missing table; the mod's wrapper would
+       have answered. */
+    UT_ASSERT_MSG(strstr(said, "base_spawn=false,") != NULL,
+                  "the base's game.spawn_bot is not the host's row: %s", said);
+    UT_ASSERT_MSG(strstr(said, "base_spawn=true,wrapped;") == NULL,
+                  "the base called the mod's game.spawn_bot: %s", said);
+
+    scDestroy(sim);
+    scDropMapScript();
+    scDropDir();
+    return 0;
+}
+
+/* ── 21. The tables inside game are each script's own ─────────────── */
+
+int run_scenario_compose_game_nested_copy(void) {
+    ServerSim  *sim;
+    const char *picks[1] = { "terrainmod.lua" };
+    char        said[8192];
+    char        want[64];
+
+    UT_ASSERT(scMakeDir("game_nested"));
+    UT_ASSERT(scWrite("terrainmod.lua", kScTerrainMod));
+    UT_ASSERT(scPutMapScript(kScGameBase));
+    sim = scRunningSim(picks, 1);
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(scenarioHostScriptCount(scSlot) == 2,
+                  "the round composed %d scripts, wanted the base and the mod",
+                  scenarioHostScriptCount(scSlot));
+    scReadNote(said, sizeof(said));
+
+    UT_ASSERT_MSG(strstr(said, "mod_road=999;") != NULL,
+                  "the mod did not see its own game.TERRAIN.road: %s", said);
+    snprintf(want, sizeof(want), "base_road=%d;", (int)ROAD);
+    UT_ASSERT_MSG(strstr(said, want) != NULL,
+                  "the base's game.TERRAIN.road is not %d: %s", (int)ROAD,
+                  said);
+
+    scDestroy(sim);
+    scDropMapScript();
+    scDropDir();
+    return 0;
+}
+
+/* ── 22. A row a script adds to game stays its own ────────────────── */
+
+int run_scenario_compose_compat_write_stays_local(void) {
+    ServerSim  *sim;
+    const char *picks[1] = { "rowmod.lua" };
+    char        said[8192];
+
+    UT_ASSERT(scMakeDir("compat_local"));
+    UT_ASSERT(scWrite("rowmod.lua", kScRowMod));
+    UT_ASSERT(scPutMapScript(kScGameBase));
+    sim = scRunningSim(picks, 1);
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(scenarioHostScriptCount(scSlot) == 2,
+                  "the round composed %d scripts, wanted the base and the mod",
+                  scenarioHostScriptCount(scSlot));
+    scReadNote(said, sizeof(said));
+
+    UT_ASSERT_MSG(strstr(said, "mod_row=7;") != NULL,
+                  "the mod could not call the row it added: %s", said);
+    UT_ASSERT_MSG(strstr(said, "base_row=nil;") != NULL,
+                  "the mod's row reached the base: %s", said);
+
+    scDestroy(sim);
+    scDropMapScript();
+    scDropDir();
+    return 0;
+}
+
+/* ── 23. pairs(game) sees every field the host installed ──────────── */
+
+int run_scenario_compose_pairs_game_complete(void) {
+    ServerSim  *sim;
+    const char *picks[1] = { "countmod.lua" };
+    char        said[8192];
+    char        want[64];
+    size_t      rows   = 0;
+    size_t      consts = 0;
+    size_t      words  = 0;
+    size_t      fields;
+
+    /* What scenarioLuaInstall puts on game: a closure per row, a number per
+       constant, TERRAIN, and one table per word table. */
+    (void)scenarioLuaRows(&rows);
+    (void)scenarioLuaConsts(&consts);
+    (void)scenarioLuaWordTables(&words);
+    fields = rows + consts + 1 + words;
+
+    UT_ASSERT(scMakeDir("pairs_game"));
+    UT_ASSERT(scWrite("countmod.lua", kScCountMod));
+    UT_ASSERT(scPutMapScript(kScCountBase));
+    sim = scRunningSim(picks, 1);
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(scenarioHostScriptCount(scSlot) == 2,
+                  "the round composed %d scripts, wanted the base and the mod",
+                  scenarioHostScriptCount(scSlot));
+    scReadNote(said, sizeof(said));
+
+    snprintf(want, sizeof(want), "base_count=%d;", (int)fields);
+    UT_ASSERT_MSG(strstr(said, want) != NULL,
+                  "the base's game does not hold the %d fields installed: %s",
+                  (int)fields, said);
+    snprintf(want, sizeof(want), "mod_count=%d;", (int)fields);
+    UT_ASSERT_MSG(strstr(said, want) != NULL,
+                  "the mod's game does not hold the %d fields installed: %s",
+                  (int)fields, said);
+
+    scDestroy(sim);
+    scDropMapScript();
+    scDropDir();
+    return 0;
+}
+
+/* ── 24. Under -allow-unsafe-scripts game is shared ───────────────── */
+
+/* The switch is one answer for the process, so it is set around the body
+   and cleared whichever way the body returned: an assertion's early return
+   lands back here rather than skipping the reset, as it does for the unsafe
+   cases in test_scenario_sandbox.c. */
+static int scUnsafeRun(int (*body)(void)) {
+    int rc;
+
+    scenarioHostSetUnsafeScripts(true);
+    rc = body();
+    scenarioHostSetUnsafeScripts(false);
+    return rc;
+}
+
+static int scUnsafeKeepsSharing(void) {
+    ServerSim  *sim;
+    const char *picks[1] = { "rowmod.lua" };
+    char        said[8192];
+
+    UT_ASSERT(scMakeDir("unsafe_sharing"));
+    UT_ASSERT(scWrite("rowmod.lua", kScRowMod));
+    UT_ASSERT(scPutMapScript(kScRowReaderBase));
+    sim = scRunningSim(picks, 1);
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(scenarioHostScriptCount(scSlot) == 2,
+                  "the round composed %d scripts, wanted the base and the mod",
+                  scenarioHostScriptCount(scSlot));
+    scReadNote(said, sizeof(said));
+
+    UT_ASSERT_MSG(strstr(said, "mod_row=7;") != NULL,
+                  "the mod could not call the row it added: %s", said);
+    UT_ASSERT_MSG(strstr(said, "base_row=7;") != NULL,
+                  "the base did not see the mod's row on a shared game: %s",
+                  said);
+
+    scDestroy(sim);
+    scDropMapScript();
+    scDropDir();
+    return 0;
+}
+
+int run_scenario_compose_unsafe_keeps_sharing(void) {
+    return scUnsafeRun(scUnsafeKeepsSharing);
 }
