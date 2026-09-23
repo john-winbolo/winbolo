@@ -717,6 +717,7 @@ static const UnitTestEntry s_tests[] = {
     { "base_armour_reveal_in_range",             run_base_armour_reveal_in_range             },
     { "base_death_prediction_replay_tick",       run_base_death_prediction_replay_tick       },
     { "base_death_prediction_authority",         run_base_death_prediction_authority         },
+    { "gunsight_reconciliation",                 run_gunsight_reconciliation                 },
     { "tank_alliance_unfielded_shows_no_tank",   run_tank_alliance_unfielded_shows_no_tank   },
     { "tank_alliance_unfielded_status_tile",     run_tank_alliance_unfielded_status_tile     },
     { "tank_damage_exact_armour_survives",       run_tank_damage_exact_armour_survives       },

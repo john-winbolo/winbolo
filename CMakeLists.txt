@@ -3917,6 +3917,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_base_stock_visibility.c
     tests/unit/test_base_half_tick.c
     tests/unit/test_base_death_prediction.c
+    tests/unit/test_gunsight_reconciliation.c
     tests/unit/test_tank_alliance_unfielded.c
     tests/unit/test_tank_death_state.c
     tests/unit/test_tank_status_wire.c
@@ -5106,6 +5107,7 @@ set(_unit_test_names
     base_armour_reveal_in_range
     base_death_prediction_replay_tick
     base_death_prediction_authority
+    gunsight_reconciliation
     tank_alliance_unfielded_shows_no_tank
     tank_alliance_unfielded_status_tile
     tank_damage_exact_armour_survives
