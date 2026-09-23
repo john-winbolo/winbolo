@@ -70,6 +70,7 @@
 #include "client_sim.h"
 #include "client_sim_internal.h"        /* the details slots and their tries */
 #include "client_connect_state.h"
+#include "client_net.h"                 /* clientSimGetConnectState */
 #include "server_sim.h"
 #include "server_sim_internal.h"        /* the console callback watched here */
 #include "server_sim_scenario.h"        /* serverSimGetMapScript */
