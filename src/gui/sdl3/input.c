@@ -1012,13 +1012,18 @@ bool inputIsMineKeyPressed(keyItems *setKeys, bool isMenu) {
 *  setKeys  - Structure that holds the key bindings
 *  scancode - SDL_Scancode of the key
 *  newState - true if pressed, false if released
+*  repeat   - true for an OS auto-repeat of a held key
 *  allowTurn - true while a running game can accept turn taps
 *********************************************************/
 void inputButtonInput(keyItems *setKeys, SDL_Scancode scancode, bool newState,
-                      bool allowTurn) {
-  bool acceptTurn = allowTurn && scancode > 0 && scancode < SDL_SCANCODE_COUNT &&
-                    !swallowedKeys[scancode] && appHasFocus() &&
-                    !sdl3ImguiWantsKeyboard();
+                      bool repeat, bool allowTurn) {
+  /* An auto-repeat is not a new press. The suspended path of inputGetKeys
+     clears the tap state every sample, so without this a turn key held
+     across a menu would queue a fresh tap from its next repeat and the poll
+     would insert a release into a continuous hold. */
+  bool acceptTurn = allowTurn && !repeat && scancode > 0 &&
+                    scancode < SDL_SCANCODE_COUNT && !swallowedKeys[scancode] &&
+                    appHasFocus() && !sdl3ImguiWantsKeyboard();
   if ((int)scancode == setKeys->kiLeft) {
     turnTapEvent(&leftTurnTap, newState, acceptTurn);
   }

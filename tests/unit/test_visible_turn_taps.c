@@ -146,5 +146,15 @@ int run_turn_tap_input_edges(void) {
 	turnTapEvent(&state, true, true);
 	turnTapReset(&state);
 	UT_ASSERT(!turnTapRead(&state, false));
+	/* A key held across a suspended poll: the reset forgot the physical
+	 * state, so the next OS repeat arrives as if fresh. The caller passes it
+	 * as rejected, and the hold must continue without an inserted release. */
+	turnTapReset(&state);
+	UT_ASSERT(turnTapRead(&state, true));
+	turnTapEvent(&state, true, false);
+	UT_ASSERT(turnTapRead(&state, true));
+	UT_ASSERT(turnTapRead(&state, true));
+	turnTapEvent(&state, false, true);
+	UT_ASSERT(!turnTapRead(&state, false));
 	return 0;
 }
