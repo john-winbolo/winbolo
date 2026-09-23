@@ -938,7 +938,7 @@ public/internal split provides.
 | --- | --- |
 | Backed by a `ControlEventType` variant (state changes — joins, leaves, alliances, chat, lobby, phases, balance, shutdown) | `src/bolo/transport_control_codec.c` (encoder + decoder) |
 | Fixed-layout binary message (per-tick snapshots) | field list in `src/bolo/internal/wire_messages.h` + a `DEFINE_WIRE_CODEC[_MASKED]` line in `src/bolo/transport_udp_common.c` — see "Fixed-layout wire messages" below |
-| Bulk byte transfer (map preview / download / resync) | streamed on `CHANNEL_BULK` behind a bulk-transfer stream header — `src/bolo/bulk_transfer.c`. Download and resync blobs are built per recipient |
+| Bulk byte transfer (map preview / download / resync / scenario details) | streamed on `CHANNEL_BULK` behind a bulk-transfer stream header — `src/bolo/bulk_transfer.c`. Download and resync blobs are built per recipient; the scenario details reply (`BULK_KIND_SCENARIO_DETAILS`) carries one script file's rules and callbacks blob |
 | Per-client handshake / reliability (JOIN_ACCEPT, JOIN_REJECT, NAME_CHANGE_REJECT, PONG) | `src/bolo/transport_udp_server.c` / `src/bolo/transport_udp_client.c` |
 
 These rows say where each payload is *defined*; **how** it is reliably
@@ -1358,15 +1358,24 @@ don't fit fire-and-apply:
   (`PACKET_LOBBY_MAP_PREVIEW_BEGIN/_CHUNK/_ERR`) for the chooser to
   rasterise client-side; it applies nothing to sim state, so it can't
   ride the command bus.
+- `PACKET_LOBBY_SCENARIO_DETAILS_REQ` — sent by the transport tick
+  from the ClientSim's WANTED slots, not by a `clientSimNetSend*`
+  wrapper. It is a read-only request for one script file's details
+  blob; the reply streams on `CHANNEL_BULK`
+  (`BULK_KIND_SCENARIO_DETAILS`) and applies nothing to sim state,
+  the same shape as the map preview.
 - `clientSimNetSendLobbyMapUploadBytes` / `…MapUseLocal` — large
   payload or chunked upload that doesn't fit fire-and-apply.
 - `clientSimNetSendWbnReauth` — synchronous WBN tracker round-trip
   to mint a fresh playerKey before sending; the helper's work
   happens between the join-state guard and the codec encode.
 
-These keep their per-command `transportUdpClientSend*` helper in
-`transport_udp_client.c` and a matching direct-receive
-`case PACKET_*:` arm in `serverProcessPacket`. They are not under
+These keep a direct send in `transport_udp_client.c` — a per-command
+`transportUdpClientSend*` helper for the ones a wrapper sends, and for
+the details request `udpClientSendScnDetailsReq`, which the transport
+tick calls for each WANTED slot — and a matching direct-receive
+`case PACKET_*:` arm in `serverProcessPacket`, which lives in
+`src/server/udp/udp_server_dispatch.c`. They are not under
 the asymmetric-runtime invariant the rest of the up-leg enforces,
 and adding more of them re-opens the bug class — only add to this
 list when fire-and-apply genuinely doesn't fit.

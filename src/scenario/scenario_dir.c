@@ -32,6 +32,7 @@
                            * package is held to everywhere else */
 
 #include "scenario_dir.h"
+#include "scenario_lua.h"      /* scenarioLuaFnCallbackType */
 #include "scenario_manifest.h"
 #include "scenario_manifest_json.h"
 #include "scenario_package.h"
@@ -185,6 +186,42 @@ static uint8_t scnDirBots(const ScenarioManifest *m) {
     return (uint8_t)total;
 }
 
+/* The rules are the file's table as its author wrote it, which is what the
+ * lobby's details dialog shows under the file's name; which of two scripts
+ * wins a rule both set is worked out there, from the list order the dialog
+ * is showing.
+ *
+ * Everything fits a blob of SCN_DETAILS_MAX: a manifest names each rule at
+ * most once and the read held the callbacks to SCN_CALLBACKS_BLOB_MAX, which
+ * is what SCN_DETAILS_MAX is sized from. A row that somehow does not fit is
+ * left off, never half written. */
+size_t scnDirDetailsFromManifest(uint8_t *out, size_t cap,
+                                 const ScenarioManifest *m) {
+    uint8_t  cb[SCN_CALLBACKS_BLOB_MAX];
+    size_t   cbLen = 0;
+    size_t   len;
+    uint16_t r;
+    uint8_t  i;
+
+    if (out == NULL || cap == 0 || m == NULL) return 0;
+    scnDetailsBegin(out, &len);
+    for (r = 0; r < m->numRules && r < SCN_MANIFEST_RULES_MAX; r++) {
+        (void)scnDetailsAddRule(out, cap, &len, (int)m->rules[r].rule,
+                                m->rules[r].value);
+    }
+    for (i = 0; i < m->numCallbacks && i < SCN_CALLBACKS_MAX; i++) {
+        (void)scnCallbacksBlobAppend(cb, sizeof(cb), &cbLen,
+                                     scenarioLuaFnCallbackType(
+                                         m->callbacks[i].name,
+                                         m->callbacks[i].byTrigger),
+                                     m->callbacks[i].name,
+                                     m->callbacks[i].text);
+    }
+    (void)scnDetailsAddCallbacks(out, cap, &len, cb, cbLen);
+    scnDetailsFinish(out, &len);
+    return len;
+}
+
 void scnDirEntryFromManifest(ScnDirEntry *e, const char *file,
                              const ScenarioManifest *m) {
     memset(e, 0, sizeof(*e));
@@ -211,6 +248,11 @@ static int scnDirCmp(const void *a, const void *b) {
 }
 
 int scnDirList(const char *dir, ScnDirEntry *out, int max) {
+    return scnDirListDetails(dir, out, NULL, max);
+}
+
+int scnDirListDetails(const char *dir, ScnDirEntry *out,
+                      ScnDirDetails *details, int max) {
     char             **files;
     int                fileCount = 0;
     int                n         = 0;
@@ -288,6 +330,13 @@ int scnDirList(const char *dir, ScnDirEntry *out, int max) {
 
         if (ok) {
             scnDirEntryFromManifest(&out[n], name, &check->manifest);
+            if (details != NULL) {
+                snprintf(details[n].file, sizeof(details[n].file), "%s",
+                         name);
+                details[n].len = (uint16_t)scnDirDetailsFromManifest(
+                    details[n].bytes, sizeof(details[n].bytes),
+                    &check->manifest);
+            }
             n++;
         }
     }

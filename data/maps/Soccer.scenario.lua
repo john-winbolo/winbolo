@@ -439,4 +439,19 @@ scenario = {
     goal_left  = { x = 101, y = 124, w = 4, h = 8 },   -- RED defends
     goal_right = { x = 151, y = 124, w = 4, h = 8 },   -- BLUE defends
   },
+
+  -- What each callback below does, in a line a player reads: the lobby's
+  -- details dialog lists these under "What this scenario implements:".
+  callbacks = {
+    on_tick = "Moves the ball, bounces it off walls and scores a goal when it crosses a goal line.",
+    can_capture = "Tanks cannot pick up the ball; touching it kicks it instead.",
+    can_build = "Nothing can be built, so builders stay in the tank.",
+    allow_base_win = "Holding bases does not win; only goals count.",
+    spawn_loadout = "Tanks spawn with full armour and no shells, mines or trees.",
+    on_setup = "Keeps one pillbox as the ball and removes the rest.",
+    on_start = "Picks sides, puts the ball on the spot, lines teams up and starts the 5-minute clock.",
+    on_tank_spawned = "Takes a new tank off its boat and puts it at its team's kick-off spot.",
+    on_player_join = "Puts a new player on the smaller team and keeps the score showing.",
+    on_end = "Stops the ball and the scoreboard.",
+  },
 }

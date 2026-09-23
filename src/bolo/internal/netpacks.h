@@ -825,6 +825,26 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               COMMAND_MAX_WIRE_BYTES is
                                               1400. */
 
+#define PACKET_LOBBY_SCENARIO_DETAILS_REQ 227 /* client -> server
+                                              { fileLen 1, file N }
+                                              one script file's details
+                                              (scenario_details.h), asked
+                                              for when the lobby's details
+                                              dialog opens. file is a name
+                                              from the lobby's script list
+                                              or the scenario listing: the
+                                              committed map's own script is
+                                              looked for first, then the
+                                              scenarios directory. The
+                                              answer streams back over
+                                              CHANNEL_BULK as a
+                                              BULK_KIND_SCENARIO_DETAILS
+                                              transfer whose path is the
+                                              file, found or not, so the
+                                              only thing a lost request
+                                              costs is the client's
+                                              re-ask. */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2

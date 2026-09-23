@@ -72,8 +72,20 @@ enum {
      * header's gen echoes the request's reqSeq (a stale reply is droppable),
      * its path carries the log file's basename, and its totalSize is bounded
      * by ROUND_LOG_MAX_BYTES. */
-    BULK_KIND_ROUND_LOG = 8
+    BULK_KIND_ROUND_LOG = 8,
+    /* Server->client, sent in answer to PACKET_LOBBY_SCENARIO_DETAILS_REQ:
+     * one script file's details. The path is the file the request named and
+     * the blob is [status 1] then, for BULK_SCN_DETAILS_FOUND, the details
+     * as scenario_details.h lays them out (which may be no bytes), and
+     * nothing more for BULK_SCN_DETAILS_NOT_FOUND. So totalSize is 1 to
+     * 1 + SCN_DETAILS_MAX, and a file the server does not know still gets an
+     * answer the client can stop waiting on. */
+    BULK_KIND_SCENARIO_DETAILS = 9
 };
+
+/* The status byte that opens a BULK_KIND_SCENARIO_DETAILS blob. */
+#define BULK_SCN_DETAILS_FOUND     0
+#define BULK_SCN_DETAILS_NOT_FOUND 1
 
 /* App-level stream header that precedes a blob on CHANNEL_BULK. Big-endian on
  * the wire: kind(1) gen(4) totalSize(4) pathLen(1) path[pathLen]. */

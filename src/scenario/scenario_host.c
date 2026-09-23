@@ -1759,6 +1759,210 @@ static void scnReadTriggers(lua_State *L, int tbl, ScenarioManifest *m,
     lua_pop(L, 1);                   /* triggers */
 }
 
+/* ── The callbacks block ──────────────────────────────────────────── */
+
+/* Every function the catalogue holds fits the manifest's array, so the read
+ * below can never run out of rows: it keeps each name at most once and only a
+ * name the catalogue has. The same tally the map editor holds its description
+ * table against. */
+#define SCN_CB_HOOK_TALLY(id, name, kind, params) +1
+#define SCN_CB_POLICY_TALLY(id, name, params, returns) +1
+BOLO_STATIC_ASSERT((0 SCN_HOOK_LIST(SCN_CB_HOOK_TALLY)) +
+                           (0 SCN_POLICY_LIST(SCN_CB_POLICY_TALLY)) <=
+                       SCN_CALLBACKS_MAX,
+                   manifest_callbacks_hold_every_catalogue_function);
+#undef SCN_CB_HOOK_TALLY
+#undef SCN_CB_POLICY_TALLY
+
+/* Say one line about a callbacks block. The operator hears it, as every
+ * report does; the soft buffer takes it only while nothing else is there, so
+ * a missing sentence never buries a line about a rule that does not exist.
+ *
+ * Never an issue on a validator's sink, and that is the difference from
+ * scnReport. An issue fails a check: -validate says the script has problems
+ * and -pack refuses it. The block is optional and what it reports is advice
+ * to the author, so it must not turn a script that plays perfectly well into
+ * one that cannot be packed. */
+static void scnWarn(ScnParseReport *rep, const char *fmt, ...) {
+    char    line[SCN_ERR_LEN];
+    va_list ap;
+
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+
+    serverSimConsoleMessage(line);
+    if (rep != NULL && rep->soft != NULL && rep->softLen > 0 &&
+        rep->soft[0] == '\0') {
+        snprintf(rep->soft, rep->softLen, "%s", line);
+    }
+}
+
+/* Whether the script uses this callback: a global function by that name in
+ * its own globals, or a trigger the manifest declares on it. The trigger
+ * counts because the router that runs it is installed after this read, so a
+ * hook a file handles only through triggers has no function behind it yet,
+ * and describing it still describes something the round will do. */
+static bool scnScriptUses(lua_State *L, int envRef, const ScenarioManifest *m,
+                          const char *name, bool *byTrigger) {
+    bool    uses;
+    uint8_t i;
+
+    scnRawGlobal(L, envRef, name);
+    uses = lua_isfunction(L, -1) ? true : false;
+    lua_pop(L, 1);
+    *byTrigger = false;
+    for (i = 0; !uses && i < m->numTriggers; i++) {
+        if (strcmp(m->triggers[i].when, name) == 0) {
+            uses       = true;
+            *byTrigger = true;
+        }
+    }
+    return uses;
+}
+
+/* The callbacks block into the struct: one row per function the script uses
+ * and describes, in the catalogue's order. See scenario_manifest.h for what
+ * the block is for.
+ *
+ * Nothing here refuses the file. Each way the block and the script disagree
+ * is one warning and costs only its own row:
+ *
+ *  - the script uses a callback the block does not describe;
+ *  - the block describes a name the catalogue does not have;
+ *  - the block describes a callback the script never defines.
+ *
+ * The first is said whether or not the file has a block at all, so the
+ * author of an older file hears which sentences the lobby is missing. The
+ * other two drop the row, because a player reading the dialog would be told
+ * about something the round never does.
+ *
+ * A sentence too long for its row is cut to fit. A block whose packed size
+ * would pass SCN_CALLBACKS_BLOB_MAX stops at the row that would take it past,
+ * in the catalogue's order, with one line saying how many went. */
+static void scnReadCallbacks(lua_State *L, int envRef, int tbl,
+                             ScenarioManifest *m, const char *path,
+                             ScnParseReport *rep) {
+    const ScnLuaFnRow *rows;
+    size_t             count        = 0;
+    size_t             r;
+    size_t             used         = 0; /* packed size so far */
+    int                cb           = 0; /* the block's stack slot; 0 = none */
+    int                dropped      = 0;
+    const char        *firstDropped = NULL;
+
+    rows = scenarioLuaFunctions(&count);
+
+    scnRawField(L, tbl, "callbacks");
+    if (lua_istable(L, -1)) {
+        cb = lua_gettop(L);
+    } else {
+        if (!lua_isnil(L, -1)) {
+            scnWarn(rep, "scenario: %s: callbacks is not a table of "
+                         "callback = \"what it does\"", path);
+        }
+        lua_pop(L, 1);
+    }
+
+    for (r = 0; r < count; r++) {
+        const char *name = rows[r].name;
+        const char *text = NULL;
+        bool        notString = false;
+        bool        byTrigger;
+        bool        uses = scnScriptUses(L, envRef, m, name, &byTrigger);
+
+        if (cb != 0) {
+            scnRawField(L, cb, name);
+            if (lua_type(L, -1) == LUA_TSTRING) {
+                text = lua_tostring(L, -1);
+            } else if (!lua_isnil(L, -1)) {
+                scnWarn(rep, "scenario: %s: callbacks.%s is not a string; "
+                             "dropped", path, name);
+                notString = true;
+            }
+        }
+        if (text == NULL || text[0] == '\0') {
+            /* A file with no block at all hears this on the console only:
+               the soft line is the load's last word, and an older script
+               that plays perfectly well should not have its last word be
+               advice it never asked for. A value that is not a string has
+               already been warned about above, so it gets no second
+               warning here. */
+            if (uses && !notString) {
+                scnWarn((cb != 0) ? rep : NULL,
+                        "scenario: %s: callbacks does not say what %s does",
+                        path, name);
+            }
+        } else if (!uses) {
+            scnWarn(rep, "scenario: %s: callbacks describes %s, which the "
+                         "script never defines; dropped", path, name);
+        } else {
+            size_t full = strlen(text);
+            size_t n    = scnCallbacksTextFit(text, full);
+            size_t at   = (used == 0) ? 1u : used; /* the count byte */
+            size_t cost = scnCallbacksRowCost(strlen(name), n);
+
+            if (n < full) {
+                scnWarn(rep, "scenario: %s: callbacks.%s is longer than %d "
+                             "bytes; cut to fit", path, name,
+                        SCN_CALLBACK_TEXT_LEN - 1);
+            }
+            if (dropped > 0 || at + cost > SCN_CALLBACKS_BLOB_MAX ||
+                m->numCallbacks >= SCN_CALLBACKS_MAX) {
+                if (dropped == 0) {
+                    firstDropped = name;
+                }
+                dropped++;
+            } else {
+                ScnManifestCallback *row = &m->callbacks[m->numCallbacks];
+
+                m->numCallbacks++;
+                used = at + cost;
+                snprintf(row->name, sizeof(row->name), "%s", name);
+                memcpy(row->text, text, n);
+                row->text[n] = '\0';
+                row->byTrigger = byTrigger;
+            }
+        }
+        if (cb != 0) {
+            lua_pop(L, 1); /* the field */
+        }
+    }
+    if (dropped > 0) {
+        scnWarn(rep, "scenario: %s: callbacks come to more than %d bytes; "
+                     "%d dropped, from %s on", path, SCN_CALLBACKS_BLOB_MAX,
+                dropped, firstDropped);
+    }
+
+    if (cb == 0) {
+        return;
+    }
+    /* The names the walk above never asked about: the ones the catalogue
+       does not have. The key's type is tested before it is read as a string,
+       as scnReadRules does, so a number key is never converted in place
+       under the traversal. */
+    lua_pushnil(L);
+    while (lua_next(L, cb) != 0) {
+        if (lua_type(L, -2) == LUA_TSTRING) {
+            const char *key   = lua_tostring(L, -2);
+            bool        known = false;
+
+            for (r = 0; r < count && !known; r++) {
+                known = strcmp(rows[r].name, key) == 0;
+            }
+            if (!known) {
+                scnWarn(rep, "scenario: %s: callbacks names %s, which is no "
+                             "callback the engine calls; dropped", path, key);
+            }
+        } else {
+            scnWarn(rep, "scenario: %s: callbacks holds an entry that is not "
+                         "callback = \"what it does\"; dropped", path);
+        }
+        lua_pop(L, 1); /* the value; the key stays for the next step */
+    }
+    lua_pop(L, 1); /* callbacks */
+}
+
 /* What a file that declared itself a mod may not have written down. The two
  * things here are the ones that are on the page rather than in a call: a
  * trigger whose action names one of the ops that decide the round, and a
@@ -1844,6 +2048,9 @@ bool scnReadManifest(lua_State *L, int envRef, ScenarioManifest *m,
     scnReadTags(L, tbl, m, rep);
     scnReadRegions(L, tbl, m, rep);
     scnReadTriggers(L, tbl, m, rep);
+    /* After the triggers, because a hook the file handles only through a
+       trigger is still one it uses. */
+    scnReadCallbacks(L, envRef, tbl, m, path, rep);
 
     lua_pop(L, 1);
 
@@ -2174,6 +2381,20 @@ void scnPushManifestGlobal(lua_State *L, int envRef,
     lua_setfield(L, t, "regions");
     scnPushTriggers(L, m);
     lua_setfield(L, t, "triggers");
+    /* The callbacks block as name = sentence. Left out when there is none,
+       which a reader sees the same as an empty block. */
+    if (m->numCallbacks > 0) {
+        int     cbt;
+        uint8_t i;
+
+        lua_newtable(L);
+        cbt = lua_gettop(L);
+        for (i = 0; i < m->numCallbacks && i < SCN_CALLBACKS_MAX; i++) {
+            lua_pushstring(L, m->callbacks[i].text);
+            lua_setfield(L, cbt, m->callbacks[i].name);
+        }
+        lua_setfield(L, t, "callbacks");
+    }
 
     scnEnvPush(L, envRef);
     lua_pushstring(L, "scenario");
@@ -5858,6 +6079,11 @@ typedef struct {
     char         dir[SCN_SCRIPT_PATH_MAX];
     SDL_Time     modified;
     ScnDirEntry *rows;
+    /* Each row's details, count of them like the rows. Kept here and not on
+       the rows, which go out on every listing: the details are asked for one
+       file at a time when a lobby's details dialog opens (scnDirDetailsCb),
+       and keeping them is what spares that ask a VM boot per file. */
+    ScnDirDetails *details;
     int          count;
 } ScnDirCache;
 
@@ -5869,7 +6095,9 @@ static ScnDirCache scnDirCache[SCN_DIR_CACHE_SLOTS];
 
 static void scnDirCacheDrop(ScnDirCache *c) {
     free(c->rows);
+    free(c->details);
     c->rows   = NULL;
+    c->details = NULL;
     c->count  = 0;
     c->valid  = false;
     c->dir[0] = '\0';
@@ -5893,11 +6121,16 @@ static ScnDirCache *scnDirCacheSlot(const char *dir) {
     return &scnDirCache[0];
 }
 
-/* scnDirList, with the last answer kept under the rule above. */
-static int scnDirListCached(const char *dir, ScnDirEntry *out, int max) {
-    SDL_PathInfo info;
-    ScnDirCache *c;
-    int          n;
+/* scnDirList, with the last answer kept under the rule above. details, when
+   not NULL, gets each row's details as well (max of them); the cache keeps
+   them either way, so a read made for a listing answers a details ask
+   after it. */
+static int scnDirListCached(const char *dir, ScnDirEntry *out,
+                            ScnDirDetails *details, int max) {
+    SDL_PathInfo   info;
+    ScnDirCache   *c;
+    ScnDirDetails *read;
+    int            n;
 
     /* Nothing to key a cache on, or nothing worth keying it to: the read still
        answers, including the refusals it makes for itself. */
@@ -5905,7 +6138,7 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out, int max) {
         out == NULL || max <= 0 || strlen(dir) >= sizeof(scnDirCache[0].dir) ||
         !SDL_GetPathInfo(dir, &info) ||
         info.type != SDL_PATHTYPE_DIRECTORY) {
-        return scnDirList(dir, out, max);
+        return scnDirListDetails(dir, out, details, max);
     }
 
     scnLockEnter(&scnDirCacheLock);
@@ -5915,20 +6148,34 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out, int max) {
         n = c->count;
         if (n > 0) {
             memcpy(out, c->rows, (size_t)n * sizeof(out[0]));
+            if (details != NULL) {
+                memcpy(details, c->details, (size_t)n * sizeof(details[0]));
+            }
         }
         scnLockLeave(&scnDirCacheLock);
         return n;
     }
 
-    n = scnDirList(dir, out, max);
+    /* The details are read whenever the rows are, into the caller's array
+       or one of this call's own, so what is kept always has both. */
+    read = details;
+    if (read == NULL) {
+        read = (ScnDirDetails *)calloc((size_t)max, sizeof(*read));
+    }
+    n = scnDirListDetails(dir, out, read, max);
     scnDirCacheDrop(c);
-    if (n >= 0 && n < max) {
+    if (n >= 0 && n < max && read != NULL) {
         bool kept = true;
         if (n > 0) {
             c->rows = (ScnDirEntry *)malloc((size_t)n * sizeof(out[0]));
-            kept = c->rows != NULL;
+            c->details =
+                (ScnDirDetails *)malloc((size_t)n * sizeof(read[0]));
+            kept = c->rows != NULL && c->details != NULL;
             if (kept) {
                 memcpy(c->rows, out, (size_t)n * sizeof(out[0]));
+                memcpy(c->details, read, (size_t)n * sizeof(read[0]));
+            } else {
+                scnDirCacheDrop(c);
             }
         }
         if (kept) {
@@ -5943,6 +6190,9 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out, int max) {
         }
     }
     scnLockLeave(&scnDirCacheLock);
+    if (read != details) {
+        free(read);
+    }
     return n;
 }
 
@@ -6119,11 +6369,11 @@ static int scnDirListCb(void *ctx, const char *dir, ScnDirEntry *out,
     (void)ctx;
 
     if (out == NULL || max <= 0) {
-        return scnDirListCached(dir, out, max);
+        return scnDirListCached(dir, out, NULL, max);
     }
     count = scnModDirs(dirs, dir);
     for (d = 0; d < count && n < max; d++) {
-        int extra = scnDirListCached(dirs[d], out + n, max - n);
+        int extra = scnDirListCached(dirs[d], out + n, NULL, max - n);
         int i;
 
         if (extra <= 0) {
@@ -6164,6 +6414,136 @@ static int scnDirListCb(void *ctx, const char *dir, ScnDirEntry *out,
     return n;
 }
 
+/* The most rows one directory's details are looked for among: the lobby
+   listing's own cap (LOBBY_SCENARIO_LIST_MAX), so the read made here is the
+   read a listing makes and the two share the cache's slot. */
+#define SCN_DIR_DETAILS_ROWS 128
+
+/* What scnDirDetailsOneCached found. */
+typedef enum {
+    SCN_DIR_ONE_UNKNOWN,   /* nothing kept for the directory, or kept from
+                              before it last changed: read it */
+    SCN_DIR_ONE_ABSENT,    /* the kept read has no file of that name */
+    SCN_DIR_ONE_FOUND      /* the kept read has it; *got says what was copied */
+} ScnDirOne;
+
+/* One file's details out of the kept read of dir, copying that one record
+   and nothing else. The same tests scnDirListCached makes before it answers
+   from the cache: the lock exists, the directory is still a directory, and
+   its time is the one the kept read was made at. Anything else answers
+   SCN_DIR_ONE_UNKNOWN and the caller reads the directory through
+   scnDirListCached, which also refills the cache.
+
+   On SCN_DIR_ONE_FOUND, *got is the length copied into out, or -1 when the
+   details do not fit in cap. */
+static ScnDirOne scnDirDetailsOneCached(const char *dir, const char *file,
+                                        int max, uint8_t *out, size_t cap,
+                                        int *got) {
+    SDL_PathInfo info;
+    ScnDirCache *c;
+    ScnDirOne    result = SCN_DIR_ONE_UNKNOWN;
+    int          i;
+
+    *got = -1;
+    if (scnDirCacheLock.m == NULL || dir == NULL || dir[0] == '\0' ||
+        strlen(dir) >= sizeof(scnDirCache[0].dir) ||
+        !SDL_GetPathInfo(dir, &info) ||
+        info.type != SDL_PATHTYPE_DIRECTORY) {
+        return SCN_DIR_ONE_UNKNOWN;
+    }
+
+    scnLockEnter(&scnDirCacheLock);
+    c = scnDirCacheSlot(dir);
+    if (c->valid && c->count <= max && c->modified == info.modify_time &&
+        strcmp(c->dir, dir) == 0) {
+        result = SCN_DIR_ONE_ABSENT;
+        for (i = 0; i < c->count; i++) {
+            if (strcmp(c->details[i].file, file) != 0) {
+                continue;
+            }
+            if (c->details[i].len <= cap) {
+                memcpy(out, c->details[i].bytes, c->details[i].len);
+                *got = (int)c->details[i].len;
+            }
+            result = SCN_DIR_ONE_FOUND;
+            break;
+        }
+    }
+    scnLockLeave(&scnDirCacheLock);
+    return result;
+}
+
+/* One file's details, in the shape serverSimSetScenarioDetailsReader takes.
+   The directories are asked in the order the listing merges them, and the
+   first that holds the file answers, so the details are those of the file a
+   host would pick under that name. The name is only ever compared with the
+   names a directory read found, never opened as a path, so a name off the
+   wire reaches no file the listing does not offer.
+
+   Read through the cache, so a dialog asking for a file the lobby has just
+   listed costs a copy of that one file's record and no VM boot. The arrays
+   for a whole directory are only allocated when a directory has to be read
+   again because nothing is kept for it or it changed since, which is what
+   the listing would do. */
+static int scnDirDetailsCb(void *ctx, const char *dir, const char *file,
+                           uint8_t *out, size_t cap) {
+    char           dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
+    ScnDirEntry   *rows    = NULL;
+    ScnDirDetails *details = NULL;
+    int            count;
+    int            d;
+    int            got = -1;
+    (void)ctx;
+
+    if (file == NULL || file[0] == '\0' || out == NULL) {
+        return -1;
+    }
+    count = scnModDirs(dirs, dir);
+    for (d = 0; d < count && got < 0; d++) {
+        ScnDirOne one;
+        int       n;
+        int       i;
+
+        one = scnDirDetailsOneCached(dirs[d], file, SCN_DIR_DETAILS_ROWS,
+                                     out, cap, &got);
+        if (one == SCN_DIR_ONE_FOUND) {
+            /* Found, fitting or not: the search stops here for the same
+               reason it stops on a match in a directory read below. */
+            break;
+        }
+        if (one == SCN_DIR_ONE_ABSENT) {
+            continue;
+        }
+        if (rows == NULL) {
+            rows    = (ScnDirEntry *)calloc(SCN_DIR_DETAILS_ROWS,
+                                            sizeof(*rows));
+            details = (ScnDirDetails *)calloc(SCN_DIR_DETAILS_ROWS,
+                                              sizeof(*details));
+            if (rows == NULL || details == NULL) {
+                break;
+            }
+        }
+        n = scnDirListCached(dirs[d], rows, details, SCN_DIR_DETAILS_ROWS);
+
+        for (i = 0; i < n; i++) {
+            if (strcmp(details[i].file, file) != 0) {
+                continue;
+            }
+            if (details[i].len <= cap) {
+                memcpy(out, details[i].bytes, details[i].len);
+                got = (int)details[i].len;
+            }
+            /* Found, fitting or not: a lower directory's copy of the name is
+               not the file the listing offers. */
+            d = count;
+            break;
+        }
+    }
+    free(rows);
+    free(details);
+    return got;
+}
+
 void scenarioHostRegisterScenarioLister(ServerSim *sim) {
     /* The one place the cache's lock is made. Registering happens once where a
        process decides whether it runs scripts at all, before any sim can be
@@ -6174,6 +6554,7 @@ void scenarioHostRegisterScenarioLister(ServerSim *sim) {
         (void)scnLockCreate(&scnDirCacheLock);
     }
     serverSimSetScenarioLister(sim, scnDirListCb, NULL);
+    serverSimSetScenarioDetailsReader(sim, scnDirDetailsCb, NULL);
 }
 
 /* ── Where the script comes from ──────────────────────────────────── */
@@ -7280,6 +7661,34 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
        which is not the running round's to keep. */
     scnHandLobbyOver(h->sim, composed, h->entry[base].source,
                      scnFileNameOf(h->entry[base].script));
+    /* And the map's own script's details, which the lobby's details dialog
+       reads and which were packed from the manifest the attach read. Without
+       this the dialog shows the rules and callbacks the file had before the
+       edit until the next map commit. They are packed from this reload's
+       manifest for the same entry scnPublishMapScript packed them from, and
+       they go over whatever the server is doing, like the template above:
+       they describe what the next round will play and not the running one.
+
+       Only the details bytes. The row itself (serverSimSetMapScript) is left
+       alone: it is also the host's list's copy of the row, its file name is
+       what the list and the details request name the script by, and
+       rewriting it here would change the lobby list outside the lobby-only
+       publish below. The row's name and description therefore stay as the
+       commit left them until the next map commit.
+
+       serverSimSetMapScriptDetails does nothing when no map script row is
+       published, so an entry with no row behind it changes nothing. */
+    for (i = 0; i < n; i++) {
+        if (h->entry[i].source == lobbyScenarioMap &&
+            reloaded[i].manifest != NULL) {
+            uint8_t details[SCN_DETAILS_MAX];
+            size_t  len = scnDirDetailsFromManifest(details, sizeof(details),
+                                                    reloaded[i].manifest);
+
+            serverSimSetMapScriptDetails(h->sim, details, len);
+            break;
+        }
+    }
     /* Seated only from the lobby. The template is data either way and goes
        over above whatever the server is doing, but building the seats and
        moving the game type onto a round already running would change a game
@@ -7335,6 +7744,16 @@ static void scnPublishMapScript(ServerSim *sim, const ScenarioHost *h,
     scnDirEntryFromManifest(&row, scnFileNameOf(h->entry[which].script),
                             h->entry[which].manifest);
     serverSimSetMapScript(sim, &row);
+    /* And its details, which the lobby's details dialog asks for by this
+       row's name. The map's script is in no directory, so this is the only
+       place they can come from. */
+    {
+        uint8_t details[SCN_DETAILS_MAX];
+        size_t  len = scnDirDetailsFromManifest(details, sizeof(details),
+                                                h->entry[which].manifest);
+
+        serverSimSetMapScriptDetails(sim, details, len);
+    }
 }
 
 /* Which scripts this lobby plays, decided in one place because more than one

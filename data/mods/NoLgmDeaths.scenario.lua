@@ -21,6 +21,11 @@ scenario = {
   api = 1,
   kind = "mod",
   bound = false,
+  -- What each callback below does, in a line a player reads: the lobby's
+  -- details dialog lists these under "What this mod implements:".
+  callbacks = {
+    can_die = "Builders cannot be killed. Nothing else affected.",
+  },
 }
 
 -- Asked before anything dies. Answering false for a builder leaves him

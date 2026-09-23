@@ -41,6 +41,7 @@
                                 * one, and the type is a typedef of an
                                 * unnamed struct, so it cannot be named
                                 * ahead of itself */
+#include "scenario_details.h" /* SCN_DETAILS_MAX — a file's details blob */
 
 /* The two extensions a scenario is offered as. */
 #define SCN_SCENARIO_PACKAGE_EXT ".scenario"
@@ -61,6 +62,30 @@
  *********************************************************/
 int scnDirList(const char *dir, ScnDirEntry *out, int max);
 
+/* One listed file's details (scenario_details.h), named by the file they
+ * belong to so they need not stay in step with the rows beside them: the
+ * listing sorts its rows and leaves these where they were read. */
+typedef struct {
+    char     file[SCN_DIR_FILE_LEN];
+    uint16_t len;                      /* 0 = the file declares nothing */
+    uint8_t  bytes[SCN_DETAILS_MAX];
+} ScnDirDetails;
+
+/*********************************************************
+ *NAME:          scnDirListDetails
+ *PURPOSE:
+ *  scnDirList, and each listed file's details as well, one
+ *  ScnDirDetails per row written into details, which holds
+ *  max of them. details NULL is scnDirList.
+ *
+ *  Kept off the rows on purpose. A row goes wherever the
+ *  listing goes (the UDP list response, the lobby script
+ *  list, the sim's own copy of the list) and the details
+ *  are read by one dialog, one file at a time.
+ *********************************************************/
+int scnDirListDetails(const char *dir, ScnDirEntry *out,
+                      ScnDirDetails *details, int max);
+
 /*********************************************************
  *NAME:          scnDirEntryFromManifest
  *PURPOSE:
@@ -78,5 +103,21 @@ int scnDirList(const char *dir, ScnDirEntry *out, int max);
  *********************************************************/
 void scnDirEntryFromManifest(ScnDirEntry *e, const char *file,
                              const ScenarioManifest *m);
+
+/*********************************************************
+ *NAME:          scnDirDetailsFromManifest
+ *PURPOSE:
+ *  One file's details (scenario_details.h), packed from a
+ *  manifest already in hand into out, which holds cap
+ *  bytes: the rules the manifest sets, as its author wrote
+ *  them, and its callbacks block with each row's type.
+ *  Answers the length, 0 for a file that sets no rule and
+ *  describes nothing.
+ *
+ *  The same two callers scnDirEntryFromManifest has: the
+ *  listing, and the committed map's own script.
+ *********************************************************/
+size_t scnDirDetailsFromManifest(uint8_t *out, size_t cap,
+                                 const ScenarioManifest *m);
 
 #endif /* SCENARIO_DIR_H */

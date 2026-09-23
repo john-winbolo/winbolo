@@ -395,6 +395,10 @@ void serverSimSetMapScript(ServerSim *sim, const ScnDirEntry *entry) {
 
     if (sim == NULL) return;
     at = scriptListMapOwnAt(sim);
+    /* The details belonged to the row this replaces. The caller sets the new
+       row's with serverSimSetMapScriptDetails after this, so a row never
+       answers with another script's details. */
+    sim->scenarioMapScriptDetailsLen = 0;
     if (entry == NULL || entry->file[0] == '\0') {
         memset(&sim->scenarioMapScript, 0, sizeof(sim->scenarioMapScript));
         /* And the place the host kept for it, which now names a script no
@@ -436,6 +440,18 @@ void serverSimSetMapScript(ServerSim *sim, const ScnDirEntry *entry) {
 const ScnDirEntry *serverSimGetMapScript(const ServerSim *sim) {
     if (sim == NULL || sim->scenarioMapScript.file[0] == '\0') return NULL;
     return &sim->scenarioMapScript;
+}
+
+void serverSimSetMapScriptDetails(ServerSim *sim, const uint8_t *details,
+                                  size_t len) {
+    if (sim == NULL) return;
+    sim->scenarioMapScriptDetailsLen = 0;
+    if (details == NULL || len == 0 || sim->scenarioMapScript.file[0] == '\0' ||
+        len > sizeof(sim->scenarioMapScriptDetails)) {
+        return;
+    }
+    memcpy(sim->scenarioMapScriptDetails, details, len);
+    sim->scenarioMapScriptDetailsLen = (uint16_t)len;
 }
 
 /* The two together, which is the list the lobby is told and a chooser draws:
@@ -1241,6 +1257,28 @@ int serverSimEnumerateScenarioDir(ServerSim *sim,
     }
     free(dirRows);
     return got;
+}
+
+int serverSimScenarioDetails(ServerSim *sim, const char *file, uint8_t *out,
+                             size_t cap) {
+    if (sim == NULL || file == NULL || file[0] == '\0' || out == NULL) {
+        return -1;
+    }
+    /* The map's own script first. It is not in the scenarios directory, so
+       the row the attach published is the only place that knows it, and the
+       name matched is the one that row gives it: the same name the lobby's
+       script list carries for it. */
+    if (sim->scenarioMapScript.file[0] != '\0' &&
+        strcmp(sim->scenarioMapScript.file, file) == 0) {
+        if (sim->scenarioMapScriptDetailsLen > cap) return -1;
+        memcpy(out, sim->scenarioMapScriptDetails,
+               sim->scenarioMapScriptDetailsLen);
+        return (int)sim->scenarioMapScriptDetailsLen;
+    }
+    if (sim->scenarioDetailsReader == NULL) return -1;
+    return sim->scenarioDetailsReader(sim->scenarioDetailsReaderCtx,
+                                      serverSimGetScenarioDir(sim), file, out,
+                                      cap);
 }
 
 static void searchDirRecursive(const char *fullRoot,

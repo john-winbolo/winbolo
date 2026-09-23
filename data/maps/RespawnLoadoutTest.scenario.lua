@@ -68,6 +68,15 @@ scenario = {
       { id = 2, bots = 2, max_bots = 2, fielded = false },
     },
   },
+
+  -- What each callback below does, in a line a player reads: the lobby's
+  -- details dialog lists these under "What this scenario implements:".
+  callbacks = {
+    allow_base_win = "Holding every base does not end the round; the test ends it.",
+    allow_extra_teams = "Keeps the round to the one team the test declares.",
+    on_start = "Finds the two held seats the test bots use.",
+    on_tick = "Spawns a control bot and an open-loadout probe, then passes only if the probe respawns five times with a full tank.",
+  },
 }
 
 -- Never let the engine's all-bases sweep end the round. The map has no

@@ -1671,6 +1671,68 @@ static void udpClientRoundLogTick(TransportUdpClientCtx *c) {
     }
 }
 
+/* ---- Script details for the lobby's details dialog (BULK_KIND_SCENARIO_DETAILS).
+ *
+ * The dialog marks the files it needs WANTED in the ClientSim slots; this tick
+ * asks for them one at a time with PACKET_LOBBY_SCENARIO_DETAILS_REQ and the
+ * answer comes back on CHANNEL_BULK. The request is a bare datagram and the
+ * server drops one it cannot start at once (its bulk sender busy), so an ASKED
+ * slot with no answer after LOBBY_SCN_DETAILS_TIMEOUT_TICKS is asked again, up
+ * to LOBBY_SCN_DETAILS_TRIES times. After that the slot reads as NONE: the
+ * dialog shows the file without details for this open and asks again the next
+ * time it opens. A slot whose answer has started arriving is never timed out;
+ * the bulk channel resends its own lost fragments. */
+
+/* Put one details request on the wire and stamp the slot ASKED. */
+static void udpClientSendScnDetailsReq(TransportUdpClientCtx *c, int slot) {
+    ClientSim *cs = c->clientSim;
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + 255];
+    size_t n = strlen(cs->lobbyScnDetails[slot].file);
+    if (n == 0 || n > 255) {
+        cs->lobbyScnDetails[slot].state = LOBBY_SCN_DETAILS_NONE;
+        return;
+    }
+    packHeader(buf, PACKET_LOBBY_SCENARIO_DETAILS_REQ, c->outSequence++);
+    buf[PACKET_HEADER_SIZE] = (uint8_t)n;
+    memcpy(buf + PACKET_HEADER_SIZE + 1, cs->lobbyScnDetails[slot].file, n);
+    udpClientSendTo(c, buf, (int)(PACKET_HEADER_SIZE + 1 + n));
+    cs->lobbyScnDetails[slot].state = LOBBY_SCN_DETAILS_ASKED;
+    cs->lobbyScnDetails[slot].tries++;
+    cs->lobbyScnDetails[slot].sentTick = c->localTick;
+}
+
+/* Per-tick: at most one request out at a time, so the answers never queue
+ * behind each other in the server's one bulk sender for this client. */
+static void udpClientScnDetailsTick(TransportUdpClientCtx *c) {
+    ClientSim *cs = c->clientSim;
+    int i;
+    if (cs == NULL) return;
+    for (i = 0; i < LOBBY_SCN_DETAILS_SLOTS; i++) {
+        if (cs->lobbyScnDetails[i].state != LOBBY_SCN_DETAILS_ASKED) continue;
+        if (cs->lobbyScnDetailsRxSlot == i + 1) return;   /* arriving now */
+        if ((uint32_t)(c->localTick - cs->lobbyScnDetails[i].sentTick) <
+            LOBBY_SCN_DETAILS_TIMEOUT_TICKS) {
+            return;
+        }
+        if (cs->lobbyScnDetails[i].tries < LOBBY_SCN_DETAILS_TRIES) {
+            udpClientSendScnDetailsReq(c, i);
+        } else {
+            WB_LOG_WARN(WB_LOG_CAT_NET,
+                "no details for %s after %u requests",
+                cs->lobbyScnDetails[i].file,
+                (unsigned)cs->lobbyScnDetails[i].tries);
+            cs->lobbyScnDetails[i].state = LOBBY_SCN_DETAILS_NONE;
+        }
+        return;
+    }
+    for (i = 0; i < LOBBY_SCN_DETAILS_SLOTS; i++) {
+        if (cs->lobbyScnDetails[i].state == LOBBY_SCN_DETAILS_WANTED) {
+            udpClientSendScnDetailsReq(c, i);
+            return;
+        }
+    }
+}
+
 /* Bulk-receiver onBegin (CHANNEL_BULK): a full stream header parsed. Dispatch by
  * kind to the matching receive buffer; return NULL to reject (the body is then
  * consumed and discarded so the stream stays aligned). */
@@ -1786,6 +1848,25 @@ static uint8_t *clientBulkOnBegin(void *ctx, const BulkStreamHeader *h) {
         c->roundLogWatchdogBytes = 0;
         c->roundLogRetryAtTick   = 0;
         return c->roundLogBuf;
+
+    case BULK_KIND_SCENARIO_DETAILS: {
+        /* One script's details, answering a PACKET_LOBBY_SCENARIO_DETAILS_REQ.
+         * Only an answer for a file this client is waiting on is taken; a late
+         * answer for a slot that already gave up or was forgotten is dropped.
+         * totalSize is attacker-controlled: bound it by the receive buffer. */
+        int i;
+        if (h->totalSize < 1 || h->totalSize > sizeof(cs->lobbyScnDetailsRx)) {
+            return NULL;
+        }
+        for (i = 0; i < LOBBY_SCN_DETAILS_SLOTS; i++) {
+            if (cs->lobbyScnDetails[i].state == LOBBY_SCN_DETAILS_ASKED &&
+                strcmp(cs->lobbyScnDetails[i].file, h->path) == 0) {
+                cs->lobbyScnDetailsRxSlot = i + 1;
+                return cs->lobbyScnDetailsRx;
+            }
+        }
+        return NULL;
+    }
 
     default:
         return NULL;
@@ -1968,6 +2049,23 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         WB_LOG_INFO(WB_LOG_CAT_NET,
             "round log received (%u bytes)", (unsigned)h->totalSize);
         break;
+
+    case BULK_KIND_SCENARIO_DETAILS: {
+        /* The slot onBegin matched, unless the dialog forgot it meanwhile. A
+         * not-found answer, or a blob that does not parse, leaves the file
+         * with no details (NONE), which the dialog stops waiting on. */
+        int slot = cs->lobbyScnDetailsRxSlot - 1;
+        cs->lobbyScnDetailsRxSlot = 0;
+        if (slot < 0 || slot >= LOBBY_SCN_DETAILS_SLOTS) break;
+        if (cs->lobbyScnDetails[slot].state != LOBBY_SCN_DETAILS_ASKED ||
+            strcmp(cs->lobbyScnDetails[slot].file, h->path) != 0) {
+            break;
+        }
+        clientSimLobbyScenarioDetailsPut(
+            cs, h->path, buf[0] == BULK_SCN_DETAILS_FOUND, buf + 1,
+            (size_t)h->totalSize - 1);
+        break;
+    }
 
     default:
         break;
@@ -3665,6 +3763,7 @@ static bool udpClientTick(void *ctx) {
      * watchdog. A no-op unless a request is in flight. */
     if (c->joinState == UDP_CLIENT_CONNECTED) {
         udpClientRoundLogTick(c);
+        udpClientScnDetailsTick(c);
     }
 
     /* Control-event acks now ride the channel-frame trailer (the per-tick
