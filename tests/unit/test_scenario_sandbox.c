@@ -81,7 +81,8 @@
  *        bench: line; nothing is asserted about speed
  * run_scenario_sandbox_tick_stats_recorded
  *      — the instructions and time a scenario's tick cost reach the sim for
- *        the info to read, and a tick that ran out is counted as a trip
+ *        the info to read, and a tick that ran out is counted as a trip with
+ *        what its calls really spent
  */
 
 #include <stdint.h>
@@ -1395,10 +1396,11 @@ static int sbCheckCap(const char *const *oks, size_t nOk, const char *okTail,
  * which the cap does not cover.
  *
  * rep is refused a count far past the cap with an empty string, which comes
- * to no bytes but is a copy loop in C all the same. concat is asked for two
- * elements that only __index supplies: 5.4 reads through it and is refused
- * by the cap, LuaJIT reads raw and refuses the empty slot itself, and either
- * way it is one refusal line. */
+ * to no bytes but is a copy loop in C all the same, and a count of math.huge,
+ * which is refused by the count and not by a length of inf bytes. concat is
+ * asked for two elements that only __index supplies: 5.4 reads through it and
+ * is refused by the cap, LuaJIT reads raw and refuses the empty slot itself,
+ * and either way it is one refusal line. */
 int run_scenario_sandbox_string_cap_on_results(void) {
     static const char *const kMap = "scnsand_strres.map";
     static const char *const kOk[] = {
@@ -1414,6 +1416,7 @@ int run_scenario_sandbox_string_cap_on_results(void) {
         { "concat over",        "table.concat", true  },
         { "concat number over", "table.concat", true  },
         { "rep empty many",     "string.rep",   false },
+        { "rep huge",           "string.rep",   false },
 #ifdef WINBOLO_LUAJIT
         /* LuaJIT's concat reads raw, so it never sees what __index would
            answer and refuses the empty slot in its own words. */
@@ -1466,6 +1469,8 @@ int run_scenario_sandbox_string_cap_on_results(void) {
              "    { string.rep(\"x\", MAX - 3), 1234 }) end)\n"
              "  try(\"rep empty many\", function()\n"
              "    return string.rep(\"\", 1e18) end)\n"
+             "  try(\"rep huge\", function()\n"
+             "    return string.rep(\"x\", math.huge) end)\n"
              "  try(\"concat index over\", function()\n"
              "    local t = setmetatable({}, { __index = function()\n"
              "      return string.rep(\"x\", MAX) end })\n"
@@ -1483,6 +1488,9 @@ int run_scenario_sandbox_string_cap_on_results(void) {
         UT_ASSERT(sbCheckCap(kOk, sizeof(kOk) / sizeof(kOk[0]), okTail,
                              kNo, sizeof(kNo) / sizeof(kNo[0])) == 0);
     }
+    UT_ASSERT_MSG(sbLineHas("cap no rep huge: ", "copies"),
+                  "string.rep with a count of math.huge was not refused by "
+                  "its count. The console holds:\n%s", sbLines);
 
     scenarioHostDetach(h);
     serverSimDestroy(sim);
@@ -2234,8 +2242,8 @@ int run_scenario_sandbox_pattern_results(void) {
         "pat gsub limit = bbaa|2\n",
         "pat gsub anchor = baa|1\n",
         "pat gsub empty = -|1\n",
-        "pat bad replacement = false|invalid use of '%' in replacement "
-        "string\n",
+        ("pat bad replacement = false|invalid use of '%' in replacement "
+         "string\n"),
         "pat method = key|val\n",
         "pat fraction = false|true\n",
     };
@@ -2650,6 +2658,15 @@ int run_scenario_sandbox_tick_stats_recorded(void) {
     UT_ASSERT_MSG(sim->scenarioTickStats.trips >= 1,
                   "no tick was recorded as running out, though the drain "
                   "passes the tick's total. The console holds:\n%s", sbLines);
+    /* The peak rather than the last tick's count, because the drain runs in
+       one tick near the start and the ticks after it spend next to nothing. */
+    UT_ASSERT_MSG(sim->scenarioTickStats.peakInstr > SCN_BUDGET_TICK_INSTR,
+                  "the tripped tick was recorded as %u instructions, expected "
+                  "more than the tick's total of %u: the count after a trip "
+                  "must be what was really spent, not where the trip put the "
+                  "latch back",
+                  (unsigned)sim->scenarioTickStats.peakInstr,
+                  (unsigned)SCN_BUDGET_TICK_INSTR);
 
     scenarioHostDetach(h);
     serverSimDestroy(sim);

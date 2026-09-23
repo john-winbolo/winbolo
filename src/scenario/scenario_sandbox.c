@@ -77,6 +77,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -121,13 +122,16 @@
    window: the count alone would say it again on every line after the first,
    which is the flood the bound is there to stop.
 
-   tickInstr, tickOpen and tickStopped are the tick's and not a call's: what
-   every call the tick has made spent between them, whether a tick is running
-   at all, and the latch that says the tick's total is spent. The arm and the
-   disarm leave all three alone, since a nested call's instructions are the
-   tick's as much as the outer one's; only the tick reset and the tick close
-   put them back. Outside a tick the window is closed and nothing but the
-   per-call budget applies. */
+   tickInstr, tickCharged, tickOpen and tickStopped are the tick's and not a
+   call's. tickInstr is what the tick's total is checked against: what every
+   call the tick has made spent between them, until a trip puts it back to a
+   grace short of the total. tickCharged is what those calls really spent, and
+   a trip does not put it back; it is what scnSandboxTickInstr answers. tickOpen
+   says whether a tick is running at all, and tickStopped is the latch that says
+   the tick's total is spent. The arm and the disarm leave all four alone, since
+   a nested call's instructions are the tick's as much as the outer one's; only
+   the tick reset and the tick close put them back. Outside a tick the window is
+   closed and nothing but the per-call budget applies. */
 typedef struct {
     size_t   used;
     size_t   cap;
@@ -135,6 +139,7 @@ typedef struct {
     bool     stopped;
     uint32_t instr;
     uint32_t tickInstr;
+    uint32_t tickCharged;
     bool     tickOpen;
     bool     tickStopped;
     uint32_t printCall;
@@ -243,7 +248,8 @@ static void scnSandboxTickCheck(lua_State *L, ScnSandboxState *s) {
 static void scnSandboxSpend(lua_State *L, ScnSandboxState *s, uint32_t n) {
     s->instr += n;
     if (s->tickOpen) {
-        s->tickInstr += n;
+        s->tickInstr   += n;
+        s->tickCharged += n;
     }
     if (s->instr <= (uint32_t)SCN_BUDGET_CALL_INSTR) {
         scnSandboxTickCheck(L, s);
@@ -409,6 +415,7 @@ void scnSandboxTickReset(lua_State *L) {
     s->printTick     = 0;
     s->printTickSaid = false;
     s->tickInstr     = 0;
+    s->tickCharged   = 0;
     s->tickStopped   = false;
     s->tickOpen      = true;
 }
@@ -448,7 +455,7 @@ uint32_t scnSandboxTickInstr(lua_State *L) {
         return 0;
     }
     s = scnSandboxStateOf(L);
-    return s != NULL ? s->tickInstr : 0;
+    return s != NULL ? s->tickCharged : 0;
 }
 
 /* ── Making and closing one ───────────────────────────────────────── */
@@ -466,6 +473,7 @@ lua_State *scnSandboxNewState(void) {
     s->stopped       = false;
     s->instr         = 0;
     s->tickInstr     = 0;
+    s->tickCharged   = 0;
     s->tickOpen      = false;
     s->tickStopped   = false;
     s->printCall     = 0;
@@ -991,6 +999,9 @@ static bool scnSandboxStringLen(lua_State *L, int idx, size_t *len) {
  * built. A count of zero or less builds "", and a NaN is the original's to
  * answer, so both go straight through.
  *
+ * An infinite count is refused by the count and not by the length, because a
+ * length of inf bytes says nothing a count of inf copies does not say better.
+ *
  * A count over SCN_STRING_MAX is refused whatever the strings are, empty ones
  * included: 5.4 runs its copy loop once per copy even when there is nothing
  * to copy, and the hook cannot see that loop either. Where the strings have a
@@ -1017,7 +1028,7 @@ static int scnSandboxStringRep(lua_State *L) {
         return scnSandboxStringForward(L);
     }
     if (want > (lua_Number)SCN_STRING_MAX + 1.0) {
-        if (len > 0 || seplen > 0) {
+        if (!isinf(want) && (len > 0 || seplen > 0)) {
             return scnSandboxStringRefuse(
                 L, "would build a string of",
                 (double)want * (double)len +
@@ -1066,7 +1077,11 @@ static int scnSandboxStringRep(lua_State *L) {
  * addition is made against the room remaining, so the total never passes the
  * cap and nothing can overflow. An element that is neither a string nor a
  * number ends the walk and is left to the original, which refuses it in its
- * own words. */
+ * own words.
+ *
+ * Empty strings do not add to the total, so the cap alone does not end the
+ * walk over a long table of them. The walk is charged one instruction per
+ * element, so a long table costs the budget what it reads. */
 static int scnSandboxTableConcat(lua_State *L) {
     size_t   seplen = 0;
     size_t   len;
@@ -1097,6 +1112,7 @@ static int scnSandboxTableConcat(lua_State *L) {
         /* Stepped by hand rather than with k <= j, which never ends when j is
            the largest integer there is. */
         for (k = i;; k++) {
+            scnSandboxCharge(L, 1);
 #ifdef WINBOLO_LUAJIT
             lua_rawgeti(L, 1, k);
 #else

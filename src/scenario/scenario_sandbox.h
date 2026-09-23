@@ -142,7 +142,7 @@ void scnSandboxDisarmCall(lua_State *L, const ScnSandboxCall *saved);
  *  everything this tick calls go back to SCN_PRINT_PER_TICK.
  *
  *  A tick runs a script's hooks, the timers it set and the
- *  policies it answers, so the per-call bound alone would
+ *  policies those calls ask, so the per-call bound alone would
  *  multiply by however many of those a script arranges. This
  *  is the bound that holds whatever the shape of them.
  *
@@ -196,9 +196,8 @@ bool scnSandboxTickSpent(lua_State *L);
  *  whatever the pattern matcher charges, so a tick whose
  *  calls ran fewer instructions than one step can read 0.
  *
- *  After a trip the count sits a grace short of the tick's
- *  total, where the trip put it back, rather than at what the
- *  calls really spent.
+ *  A trip does not put this count back, so after one it is
+ *  what the calls really spent, past the tick's total.
  *********************************************************/
 uint32_t scnSandboxTickInstr(lua_State *L);
 
