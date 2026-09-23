@@ -357,8 +357,9 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
          * game/map event left in flight dedup-drops in the new game. The
          * baselines are this client's own channel state — the control encoder
          * stays recipient-agnostic, so the per-client value lives in the event,
-         * not the encoder. A full control window defers the disconnect off this
-         * path (mirrors the deliver-callback overflow). */
+         * not the encoder. A full control backlog (the queue behind the window)
+         * defers the disconnect off this path (mirrors the deliver-callback
+         * overflow). */
         if (udpServer.clients[i].connected) {
             uint32_t b0 = channelResetSend(&udpServer.channelMux[i], CHANNEL_GAME);
             uint32_t b1 = channelResetSend(&udpServer.channelMux[i], CHANNEL_MAP);

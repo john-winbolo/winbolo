@@ -732,7 +732,10 @@ bandwidth-delay-product
 window of stream segments (96 × 256 B). The best-effort game-effect channel is
 64 × 16 B — sized to one tick's burst of effect events plus margin, not to
 retransmit depth, since nothing is ever held for resend. The whole mux is a plain
-value type — the rings are embedded, no heap allocation.
+value type — the rings are embedded, no heap allocation. The largest part of it
+is the control channel's backlog (340 KiB, see below), which takes a mux from
+about 270 KiB to about 610 KiB, and the 48 on a server (16 players, 32
+spectators) from about 13 MiB to about 29 MiB.
 
 **One reliability core** serves both reliable flavors (message and stream):
 cumulative ack ("received everything below `ackedSeq`"), full-tail-resend on a
@@ -745,7 +748,13 @@ the in-order point is missing, so the sender rewinds and retransmits its unacked
 tail immediately (~1 RTT) — a NAK fast-retransmit — instead of waiting out the RTO,
 which stays as the backstop. A caught-up channel sends nothing — no steady-state
 storm. Window overflow without acks is a stuck or malicious peer and disconnects
-the slot; it is never a silent drop. This core drives only the reliable channels;
+the slot; it is never a silent drop. The control channel is the one exception to
+the window being the limit: a join's sync replay puts more control events on a
+joiner's channel in one tick than the 64-deep window holds, so a control send that
+finds the window full (or others already waiting) goes into a bounded backlog
+behind it (`CHANNEL_CONTROL_BACKLOG`, sized for the largest replay the caps
+allow) and moves into the window as acks free room. For that channel the
+disconnect comes when the backlog is full. This core drives only the reliable channels;
 the best-effort channel is never acked and has no retransmit or NAK.
 
 **How frames ride datagrams.** One shared channel-frame codec — an ack list (each

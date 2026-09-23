@@ -314,7 +314,8 @@ void udpClientDeliverControl(void *ctx, const ControlEvent *evt) {
      * immediate send is needed here.
      *
      * An event with no body encoder is dropped (it was never deliverable),
-     * matching the former send-time `enc == NULL` skip.  A full window means
+     * matching the former send-time `enc == NULL` skip.  A send that finds
+     * the window full waits in the channel's backlog; a full backlog means
      * the client has stopped acking control: defer its disconnect off this
      * publish path (mirrors the game/map channel overflow at the snapshot
      * drain), flag-guarded so a re-hit on the still-connected slot can't spam
