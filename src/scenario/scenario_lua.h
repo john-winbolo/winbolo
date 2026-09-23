@@ -764,31 +764,43 @@ void scenarioLuaTimersReset(ScnTimerSet *t);
 void scenarioLuaTimersDrop(lua_State *L, ScnTimerSet *t);
 
 /*********************************************************
- *NAME:          scenarioLuaTimersTakeDue
+ *NAME:          scenarioLuaTimersDue
  *PURPOSE:
- *  Takes every timer due at or before now out of the set and
- *  writes their functions' references into out, oldest first
- *  — the order they were set in, which is the order their
- *  ids run in.
+ *  Writes the ids of every timer due at or before now into
+ *  ids, oldest first — the order they were set in, which is
+ *  the order their ids run in. Nothing is taken out: the
+ *  caller takes each with scenarioLuaTimersTake as it comes
+ *  to run it.
  *
- *  The due set is read once, so a timer one of them sets
- *  while running waits for the next tick however short its
- *  delay: a run that feeds itself moves one call per tick
- *  and cannot spin inside one, which is the rule the event
- *  drain follows.
+ *  This is the read of the due set, and the caller makes it
+ *  once, before any of them runs. A timer one of them sets
+ *  while running gets an id that is not on the list, so it
+ *  waits for the next tick however short its delay: a run
+ *  that feeds itself moves one call per tick and cannot spin
+ *  inside one, which is the rule the event drain follows.
  *
- *  owners takes the table of the script that set each one,
- *  in the same order, so the caller can say which script is
- *  running across the call it is about to make. It may be
- *  NULL where the caller does not need that, and an entry
- *  of it is NULL where the timer was set outside any
- *  script's own code.
- *
- *  Returns how many were taken. The caller owns each
- *  reference and must release it.
+ *  Returns how many were written.
  *********************************************************/
-int scenarioLuaTimersTakeDue(ScnTimerSet *t, uint32_t now, int *out,
-                             const ScenarioManifest **owners, int outMax);
+int scenarioLuaTimersDue(const ScnTimerSet *t, uint32_t now, uint32_t *ids,
+                         int idsMax);
+
+/*********************************************************
+ *NAME:          scenarioLuaTimersTake
+ *PURPOSE:
+ *  Takes the timer with this id out of the set and hands
+ *  back its function's reference, which the caller then owns
+ *  and must release, and the table of the script that set
+ *  it, so the caller can say which script is running across
+ *  the call it is about to make. owner may be NULL where the
+ *  caller does not need it, and what it is set to is NULL
+ *  where the timer was set outside any script's own code.
+ *
+ *  False when no timer holds the id any more — one that ran
+ *  earlier in the same run cancelled it — and nothing is
+ *  written.
+ *********************************************************/
+bool scenarioLuaTimersTake(ScnTimerSet *t, uint32_t id, int *ref,
+                           const ScenarioManifest **owner);
 
 /* ── The words an event's payload reads as ──────────────────────────── */
 

@@ -145,11 +145,44 @@ void scnSandboxDisarmCall(lua_State *L, const ScnSandboxCall *saved);
  *  multiply by however many of those a script arranges. This
  *  is the bound that holds whatever the shape of them.
  *
+ *  It also opens the tick's window: from here until
+ *  scnSandboxTickClose every armed call's instructions are
+ *  counted against SCN_BUDGET_TICK_INSTR as well as against
+ *  the call's own budget, from zero and with the tick's latch
+ *  clear. The call that takes the total past that is stopped
+ *  with a Lua error, and the latch it sets is what
+ *  scnSandboxTickSpent answers and what pcall, xpcall and
+ *  coroutine.resume raise again for.
+ *
  *  Called once per tick, before the tick runs anything, by
  *  whoever drives the scenario's tick. NULL is a round with
  *  no state and nothing to reset.
  *********************************************************/
 void scnSandboxTickReset(lua_State *L);
+
+/*********************************************************
+ *NAME:          scnSandboxTickClose
+ *PURPOSE:
+ *  Closes the tick's window and clears its latch. Every call
+ *  made from here until the next reset is bounded by its own
+ *  call's budget alone and is never skipped for what the tick
+ *  spent: on_end, policies the engine asks between ticks, and
+ *  the lobby's asks from the GUI thread.
+ *
+ *  Called by whoever drives the tick, once the tick's own
+ *  calls are over. NULL is nothing to close.
+ *********************************************************/
+void scnSandboxTickClose(lua_State *L);
+
+/*********************************************************
+ *NAME:          scnSandboxTickSpent
+ *PURPOSE:
+ *  True while the tick's window is open and its total has
+ *  been spent, which is the host's answer to whether a call
+ *  the tick still has to make should be made at all. False
+ *  outside a tick, and for NULL.
+ *********************************************************/
+bool scnSandboxTickSpent(lua_State *L);
 
 /*********************************************************
  *NAME:          scnSandboxMemoryCapped

@@ -54,6 +54,17 @@
  * run_scenario_sandbox_string_cap_on_subjects
  *      — find, match, gmatch and gsub search a subject of exactly the cap
  *        and refuse one a byte longer
+ * run_scenario_sandbox_tick_budget_cuts_a_drain
+ *      — timers that together pass the tick's total stop at the one that
+ *        went over, and the rest run on a later tick
+ * run_scenario_sandbox_tick_budget_returns
+ *      — the tick after one that ran out has the whole total again
+ * run_scenario_sandbox_tick_budget_survives_a_pcall
+ *      — pcall and coroutine.resume raise the tick's error again
+ * run_scenario_sandbox_tick_budget_spares_on_end
+ *      — on_end runs in the tick that ran out, on its own budget
+ * run_scenario_sandbox_tick_budget_switches_off
+ *      — a script that runs out every tick is switched off at the limit
  */
 
 #include <stdint.h>
@@ -1517,6 +1528,442 @@ int run_scenario_sandbox_string_cap_on_subjects(void) {
                   "console holds:\n%s", sbLines);
     UT_ASSERT(sbCheckCap(kOk, sizeof(kOk) / sizeof(kOk[0]), "",
                          kNo, sizeof(kNo) / sizeof(kNo[0])) == 0);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+    return 0;
+}
+
+/* ── The tick's total, for the cases below ────────────────────────── */
+
+/* The loop the per-call cases are calibrated with: fifty thousand turns cost
+ * between a hundred and two hundred thousand instructions depending on the
+ * VM, so a turn is two to four.
+ *
+ * Two hundred thousand turns is then 400k to 800k instructions: under the
+ * per-call budget of a million on either VM, so no timer below is stopped for
+ * its own sake. Eight of them are 3.2M to 6.4M together, over the tick's two
+ * million on either VM. Two of them are at most 1.6M, under it, so the first
+ * two always finish; five of them are at least 2.0M, so the trip lands in the
+ * sixth at the latest and the seventh and eighth are always left over. */
+#define SB_TICK_TURNS  200000
+#define SB_TICK_TIMERS 8
+
+#define SB_SPIN_LUA                                                         \
+    "local function spin(n)\n"                                              \
+    "  local x = 0\n"                                                       \
+    "  for i = 1, n do x = x + 1 end\n"                                     \
+    "  return x\n"                                                          \
+    "end\n"
+
+/* Attach, start the round and run it for ticks ticks, watching the console
+   throughout. The sim and host are handed back for the case to read and put
+   away. */
+static int sbRunTicks(const char *map, const char *lua, int ticks,
+                      ServerSim **simOut, ScenarioHost **hOut) {
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          err[512];
+    int           i;
+
+    UT_ASSERT(sbPutText(map, lua));
+    sim = sbSim();
+    UT_ASSERT(sim != NULL);
+
+    sbWatchConsole(sim);
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, map, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    serverSimStartGame(sim);
+    for (i = 0; i < ticks; i++) {
+        serverSimTick(sim);
+    }
+    sbUnwatchConsole(sim);
+    *simOut = sim;
+    *hOut   = h;
+    return 0;
+}
+
+/* A drain of count timers, each printing "<tag> begun k" and "<tag> finished
+ * k", read back off the console against the one line the trip wrote.
+ *
+ * Which timer the trip lands in depends on the VM, so this finds it rather
+ * than naming it: the one timer that began and never finished. Every timer
+ * before it finished ahead of the trip's line, so it was the tick's; every
+ * timer after it began behind that line, so it waited for a later tick rather
+ * than running in this one or being lost, and it finished there. */
+static int sbCheckTrip(const char *tag, int count, int *tripped) {
+    const char *raised = strstr(sbLines, "a timer raised");
+    char        want[64];
+    const char *b;
+    const char *f;
+    int         n = 0;
+    int         k;
+
+    UT_ASSERT_MSG(raised != NULL,
+                  "no timer was stopped, so the tick's calls never passed "
+                  "the total. The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(sbCount(" raised: ") == 1,
+                  "%d calls were counted as errors, expected the one that "
+                  "went over. The console holds:\n%s", sbCount(" raised: "),
+                  sbLines);
+    UT_ASSERT_MSG(sbLineHas("a timer raised", "one tick may spend"),
+                  "the timer was stopped for something other than the tick's "
+                  "total. The console holds:\n%s", sbLines);
+    for (k = 1; k <= count; k++) {
+        snprintf(want, sizeof(want), "%s begun %d\n", tag, k);
+        b = strstr(sbLines, want);
+        snprintf(want, sizeof(want), "%s finished %d\n", tag, k);
+        f = strstr(sbLines, want);
+        UT_ASSERT_MSG(b != NULL,
+                      "timer %d never began, so it was lost rather than left "
+                      "for a later tick. The console holds:\n%s", k, sbLines);
+        if (f == NULL) {
+            UT_ASSERT_MSG(n == 0,
+                          "timers %d and %d both began without finishing; "
+                          "only the one that went over should. The console "
+                          "holds:\n%s", n, k, sbLines);
+            n = k;
+        }
+    }
+    UT_ASSERT_MSG(n >= 2 && n < count,
+                  "timer %d was the one stopped, expected one after the "
+                  "first and before the last. The console holds:\n%s", n,
+                  sbLines);
+    for (k = 1; k <= count; k++) {
+        snprintf(want, sizeof(want), "%s begun %d\n", tag, k);
+        b = strstr(sbLines, want);
+        snprintf(want, sizeof(want), "%s finished %d\n", tag, k);
+        f = strstr(sbLines, want);
+        if (k < n) {
+            UT_ASSERT_MSG(f < raised,
+                          "timer %d, ahead of the one stopped, did not finish "
+                          "in the tick. The console holds:\n%s", k, sbLines);
+        } else if (k == n) {
+            UT_ASSERT_MSG(b < raised,
+                          "the timer stopped began after its own error. The "
+                          "console holds:\n%s", sbLines);
+        } else {
+            UT_ASSERT_MSG(b > raised,
+                          "timer %d began in the tick that ran out, after the "
+                          "one that went over. The console holds:\n%s", k,
+                          sbLines);
+        }
+    }
+    *tripped = n;
+    return 0;
+}
+
+/* ── 18. The tick's calls share one total ─────────────────────────── */
+
+/* Eight timers due on the same tick, each well inside its own budget and
+ * together over the tick's, on either VM — see SB_TICK_TURNS. Each spins only
+ * on the tick on_start ran in, so the ones left over run light on the next
+ * tick and finish there: that is the timers not being lost, and the drain the
+ * trip cut short going on where it stopped. */
+int run_scenario_sandbox_tick_budget_cuts_a_drain(void) {
+    static const char *const kMap = "scnsand_tickdrain.map";
+    ServerSim    *sim = NULL;
+    ScenarioHost *h   = NULL;
+    char          lua[1024];
+    int           tripped = 0;
+
+    snprintf(lua, sizeof(lua),
+             "scenario = { name = \"Drain\", api = 1 }\n"
+             SB_SPIN_LUA
+             "local heavy = -1\n"
+             "function on_start()\n"
+             "  heavy = game.tick()\n"
+             "  for k = 1, %d do\n"
+             "    game.timer(0, function()\n"
+             "      print(\"drain begun \" .. k)\n"
+             "      if game.tick() == heavy then spin(%d) end\n"
+             "      print(\"drain finished \" .. k)\n"
+             "    end)\n"
+             "  end\n"
+             "end\n", SB_TICK_TIMERS, SB_TICK_TURNS);
+
+    UT_ASSERT(sbRunTicks(kMap, lua, 6, &sim, &h) == 0);
+    UT_ASSERT(sbCheckTrip("drain", SB_TICK_TIMERS, &tripped) == 0);
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "the round is in state %d, expected it to still be running",
+                  (int)serverSimGetState(sim));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+    return 0;
+}
+
+/* ── 19. And the next tick has all of it again ────────────────────── */
+
+/* The tick after one that ran out makes two calls of SB_TICK_TURNS each: a
+ * timer set to come due one tick on, and on_tick. Together they are 0.8M to
+ * 1.6M, inside the total on either VM, so both finish only if the count went
+ * back to zero and the latch was cleared: a count carried over would stop the
+ * first of them within its first steps, and a latch left set would skip both.
+ *
+ * The delay is a tick and a half in seconds, which the timer rounds down to
+ * one, so it cannot come due on the tick that ran out. */
+int run_scenario_sandbox_tick_budget_returns(void) {
+    static const char *const kMap = "scnsand_tickback.map";
+    ServerSim    *sim = NULL;
+    ScenarioHost *h   = NULL;
+    char          lua[1536];
+    const char   *raised;
+    const char   *timerLine;
+    const char   *tickLine;
+
+    snprintf(lua, sizeof(lua),
+             "scenario = { name = \"Back\", api = 1 }\n"
+             SB_SPIN_LUA
+             "local heavy = -1\n"
+             "local back  = false\n"
+             "function on_start()\n"
+             "  heavy = game.tick()\n"
+             "  for k = 1, %d do\n"
+             "    game.timer(0, function()\n"
+             "      if game.tick() == heavy then spin(%d) end\n"
+             "    end)\n"
+             "  end\n"
+             "  game.timer(1.5 / %d, function()\n"
+             "    spin(%d)\n"
+             "    print(\"back timer finished\")\n"
+             "  end)\n"
+             "end\n"
+             "function on_tick()\n"
+             "  if game.tick() == heavy or back then return end\n"
+             "  back = true\n"
+             "  spin(%d)\n"
+             "  print(\"back tick finished\")\n"
+             "end\n", SB_TICK_TIMERS, SB_TICK_TURNS, GAME_NUMTOTALTICKS_SEC,
+             SB_TICK_TURNS, SB_TICK_TURNS);
+
+    UT_ASSERT(sbRunTicks(kMap, lua, 6, &sim, &h) == 0);
+
+    raised    = strstr(sbLines, "a timer raised");
+    timerLine = strstr(sbLines, "back timer finished");
+    tickLine  = strstr(sbLines, "back tick finished");
+    UT_ASSERT_MSG(raised != NULL &&
+                  sbLineHas("a timer raised", "one tick may spend"),
+                  "the first tick never ran out, so there was nothing to come "
+                  "back from. The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(timerLine != NULL && timerLine > raised,
+                  "the timer due the tick after did not finish, so that tick "
+                  "did not have its whole total. The console holds:\n%s",
+                  sbLines);
+    UT_ASSERT_MSG(tickLine != NULL && tickLine > raised,
+                  "on_tick the tick after did not finish, so that tick did "
+                  "not have its whole total. The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(sbCount(" raised: ") == 1,
+                  "%d calls were counted as errors, expected only the one "
+                  "that went over. The console holds:\n%s",
+                  sbCount(" raised: "), sbLines);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+    return 0;
+}
+
+/* ── 20. A catcher does not give the tick its total back ──────────── */
+
+/* The drain of case 18, with each timer's spin inside a catcher. The timer
+ * that goes over is stopped inside the catcher, and the catcher raises the
+ * error again rather than answering false, so the timer is stopped outright
+ * and the rest of the tick is skipped as before. A catcher that kept the
+ * error would print "caught N false" and let the tick run on.
+ *
+ * Run twice, once through pcall and once through coroutine.resume, because
+ * which timer the trip lands in depends on the VM and one run could not be
+ * sure of stopping both. Each run has its own map. */
+static int sbTickCatch(const char *map, const char *tag, const char *open,
+                       const char *close) {
+    ServerSim    *sim = NULL;
+    ScenarioHost *h   = NULL;
+    char          lua[1536];
+    int           tripped = 0;
+
+    snprintf(lua, sizeof(lua),
+             "scenario = { name = \"Catch\", api = 1 }\n"
+             SB_SPIN_LUA
+             "local heavy = -1\n"
+             "function on_start()\n"
+             "  heavy = game.tick()\n"
+             "  for k = 1, %d do\n"
+             "    game.timer(0, function()\n"
+             "      print(\"%s begun \" .. k)\n"
+             "      local ok = %sfunction()\n"
+             "        if game.tick() == heavy then spin(%d) end\n"
+             "      end%s\n"
+             "      print(\"%s caught \" .. k .. \" \" .. tostring(ok))\n"
+             "      print(\"%s finished \" .. k)\n"
+             "    end)\n"
+             "  end\n"
+             "end\n", SB_TICK_TIMERS, tag, open, SB_TICK_TURNS, close, tag,
+             tag);
+
+    UT_ASSERT(sbRunTicks(map, lua, 6, &sim, &h) == 0);
+    UT_ASSERT(sbCheckTrip(tag, SB_TICK_TIMERS, &tripped) == 0);
+    UT_ASSERT_MSG(sbCount(" false\n") == 0,
+                  "a catcher answered false, so it kept the error the tick's "
+                  "total raised rather than raising it again. The console "
+                  "holds:\n%s", sbLines);
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "the round is in state %d, expected it to still be running",
+                  (int)serverSimGetState(sim));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(map);
+    return 0;
+}
+
+int run_scenario_sandbox_tick_budget_survives_a_pcall(void) {
+    UT_ASSERT(sbTickCatch("scnsand_tickpcall.map", "pcalled", "pcall(",
+                          ")") == 0);
+    UT_ASSERT(sbTickCatch("scnsand_tickcoro.map", "resumed",
+                          "coroutine.resume(coroutine.create(", "))") == 0);
+    return 0;
+}
+
+/* ── 21. on_end is not one of the calls a spent tick skips ────────── */
+
+/* The first timer ends the round and the ones after it spend the tick's
+ * total, so the round's end and the trip land in the same tick. on_end is
+ * owed in that tick, and it runs after the window has closed: it says which
+ * tick it ran in, spends SB_TICK_TURNS of its own, and finishes. Were it
+ * counted against the spent total it would be skipped, and were it counted
+ * against what was left it would be stopped part way. */
+int run_scenario_sandbox_tick_budget_spares_on_end(void) {
+    static const char *const kMap = "scnsand_tickend.map";
+    ServerSim    *sim = NULL;
+    ScenarioHost *h   = NULL;
+    char          lua[1536];
+    const char   *raised;
+    const char   *ended;
+
+    snprintf(lua, sizeof(lua),
+             "scenario = { name = \"Ender\", api = 1 }\n"
+             SB_SPIN_LUA
+             "local heavy = -1\n"
+             "function on_start()\n"
+             "  heavy = game.tick()\n"
+             "  game.timer(0, function()\n"
+             "    game.end_round(\"Ended from a timer\")\n"
+             "    print(\"ender asked\")\n"
+             "  end)\n"
+             "  for k = 1, %d do\n"
+             "    game.timer(0, function()\n"
+             "      if game.tick() == heavy then spin(%d) end\n"
+             "    end)\n"
+             "  end\n"
+             "end\n"
+             "function on_end()\n"
+             "  if game.tick() == heavy then print(\"on_end same tick\")\n"
+             "  else print(\"on_end later tick\") end\n"
+             "  spin(%d)\n"
+             "  print(\"on_end finished\")\n"
+             "end\n", SB_TICK_TIMERS, SB_TICK_TURNS, SB_TICK_TURNS);
+
+    UT_ASSERT(sbRunTicks(kMap, lua, 6, &sim, &h) == 0);
+
+    raised = strstr(sbLines, "a timer raised");
+    ended  = strstr(sbLines, "on_end same tick");
+    UT_ASSERT_MSG(strstr(sbLines, "ender asked") != NULL,
+                  "the timer that ends the round did not run to its end, so "
+                  "the round was not ended from the drain. The console "
+                  "holds:\n%s", sbLines);
+    UT_ASSERT_MSG(raised != NULL &&
+                  sbLineHas("a timer raised", "one tick may spend"),
+                  "the tick that ended the round did not run out, so on_end "
+                  "was never at risk. The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(ended != NULL && ended > raised,
+                  "on_end did not run in the tick that ran out. The console "
+                  "holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "on_end later tick") == NULL,
+                  "on_end ran in a later tick than the round ended in. The "
+                  "console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "on_end finished") != NULL,
+                  "on_end was stopped, so it was counted against the tick's "
+                  "spent total rather than its own budget. The console "
+                  "holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "on_end raised") == NULL,
+                  "on_end raised. The console holds:\n%s", sbLines);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+    return 0;
+}
+
+/* ── 22. And a script that always runs out is switched off ────────── */
+
+/* Eight timers that set themselves again before they spin, so every tick has
+ * eight due and every tick runs out — the one stopped has already set its
+ * next. The calls ahead of the trip return and would clear the count; a tick
+ * that runs out undoes that, so the count climbs by one a tick and the
+ * script is switched off on the SCN_ERROR_LIMIT-th tick and not before.
+ *
+ * The console is read after every tick, which is what says which tick the
+ * line arrived on. Once the script is off no timer runs, so the lines that
+ * say a timer was stopped number exactly the limit. */
+int run_scenario_sandbox_tick_budget_switches_off(void) {
+    static const char *const kMap = "scnsand_tickoff.map";
+    static const char *const kOff = "is off for the rest of the round";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    char          lua[1024];
+    char          err[512];
+    int           offAt = 0;
+    int           i;
+
+    snprintf(lua, sizeof(lua),
+             "scenario = { name = \"Runaway\", api = 1 }\n"
+             SB_SPIN_LUA
+             "local function body()\n"
+             "  game.timer(0, body)\n"
+             "  spin(%d)\n"
+             "end\n"
+             "function on_start()\n"
+             "  for k = 1, %d do game.timer(0, body) end\n"
+             "end\n", SB_TICK_TURNS, SB_TICK_TIMERS);
+
+    UT_ASSERT(sbPutText(kMap, lua));
+    sim = sbSim();
+    UT_ASSERT(sim != NULL);
+
+    sbWatchConsole(sim);
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+
+    serverSimStartGame(sim);
+    for (i = 1; i <= SCN_ERROR_LIMIT + 5; i++) {
+        serverSimTick(sim);
+        if (offAt == 0 && strstr(sbLines, kOff) != NULL) {
+            offAt = i;
+        }
+    }
+    sbUnwatchConsole(sim);
+
+    UT_ASSERT_MSG(offAt != 0,
+                  "the script ran out every tick for %d ticks and was never "
+                  "switched off. The console holds:\n%s",
+                  SCN_ERROR_LIMIT + 5, sbLines);
+    UT_ASSERT_MSG(offAt == SCN_ERROR_LIMIT,
+                  "the script was switched off on tick %d, expected tick %d. "
+                  "The console holds:\n%s", offAt, SCN_ERROR_LIMIT, sbLines);
+    UT_ASSERT_MSG(sbCount("a timer raised") == SCN_ERROR_LIMIT,
+                  "%d timers were stopped, expected one a tick for %d ticks "
+                  "and none after. The console holds:\n%s",
+                  sbCount("a timer raised"), SCN_ERROR_LIMIT, sbLines);
+    UT_ASSERT_MSG(sbCount("a timer raised") ==
+                  sbCount("one tick may spend"),
+                  "a timer was stopped for something other than the tick's "
+                  "total. The console holds:\n%s", sbLines);
 
     scenarioHostDetach(h);
     serverSimDestroy(sim);

@@ -146,6 +146,16 @@ call: `while true do` in a hook takes your scenario off the round and nothing
 else, but it does take it off. Work that cannot finish in one call belongs
 spread across `on_tick` calls, keeping its place in a local between them.
 
+**All of one tick's calls share two million instructions** — every hook, timer
+and policy answer the tick makes, added together. The call that passes the
+total fails with an error, and the rest of that tick's calls are skipped: a
+timer skipped this way runs next tick, but an event or a region change skipped
+this way is not delivered again. `on_end` is not part of the total and always
+runs. The tick costs your script one error however many calls it skipped, and
+`pcall` cannot catch it any more than it can catch the per-call budget, so a
+script that spends the whole total every tick is switched off after twenty
+ticks.
+
 A million is a great deal — an `on_tick` that reads a few dozen tanks and
 decides something spends a few thousand. If you are near it, you are looping
 over the map rather than over what changed.
@@ -906,6 +916,10 @@ delay: a run that feeds itself cannot spin inside a single frame.
 
 Ids are never reused, so a stale id is safe to cancel — it matches nothing
 rather than matching whatever has since taken its place.
+
+Timers due on the same frame run oldest first, and one of them may cancel
+another that has not run yet: the cancelled one does not run, and the cancel
+answers `true`.
 
 ```lua
 wave_timer = game.timer(3, wave_over)

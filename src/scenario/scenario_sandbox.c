@@ -18,11 +18,13 @@
  *  and raises there instead of taking the server's process
  *  with it, and it carries a count hook, so a script that
  *  loops without end is stopped at SCN_BUDGET_CALL_INSTR
- *  instructions and raises there too. Both land in the
+ *  instructions and raises there too, as does the call that
+ *  takes all of one tick's calls together past
+ *  SCN_BUDGET_TICK_INSTR. All of them land in the
  *  lua_pcall the host makes every call through — and the
- *  budget's error lands there whatever the script does with
- *  it, because pcall, xpcall and coroutine.resume are given
- *  to it wrapped in a closure that raises it again.
+ *  two budgets' errors land there whatever the script does
+ *  with them, because pcall, xpcall and coroutine.resume are
+ *  given to it wrapped in a closure that raises them again.
  *
  *  The count cannot see inside a C function, so a string.rep
  *  that builds a string of a gigabyte is one instruction to
@@ -106,13 +108,24 @@
 
    The two said flags are what keeps the notice a drop produces to one line a
    window: the count alone would say it again on every line after the first,
-   which is the flood the bound is there to stop. */
+   which is the flood the bound is there to stop.
+
+   tickInstr, tickOpen and tickStopped are the tick's and not a call's: what
+   every call the tick has made spent between them, whether a tick is running
+   at all, and the latch that says the tick's total is spent. The arm and the
+   disarm leave all three alone, since a nested call's instructions are the
+   tick's as much as the outer one's; only the tick reset and the tick close
+   put them back. Outside a tick the window is closed and nothing but the
+   per-call budget applies. */
 typedef struct {
     size_t   used;
     size_t   cap;
     bool     armed;
     bool     stopped;
     uint32_t instr;
+    uint32_t tickInstr;
+    bool     tickOpen;
+    bool     tickStopped;
     uint32_t printCall;
     uint32_t printTick;
     bool     printCallSaid;
@@ -182,6 +195,35 @@ static void *scnSandboxAlloc(void *ud, void *ptr, size_t osize, size_t nsize) {
 
 /* ── The instructions one call may spend ──────────────────────────── */
 
+/* The tick's own total, asked on every step the call's budget has not already
+ * stopped. It raises in whichever call is running when the tick's calls
+ * between them pass SCN_BUDGET_TICK_INSTR — which is the call that went over,
+ * not necessarily the one that spent the most.
+ *
+ * Latched and put back to a grace short of the total for the reasons the
+ * per-call latch is below: pcall, xpcall and coroutine.resume read the latch
+ * and raise the error again, and the grace lets an unwinding metamethod finish
+ * while a script that caught the error and carried on is stopped again soon
+ * after. The host reads the latch too, through scnSandboxTickSpent, and skips
+ * every call the tick had still to make.
+ *
+ * A trip reached inside a nested call — a hook's op asking a policy — counts
+ * two errors: one for the policy that was stopped, and one for the hook that
+ * issued the op when its own next step finds the latch spent past the grace.
+ * That is what the per-call latch does with a caught error too. */
+static void scnSandboxTickCheck(lua_State *L, ScnSandboxState *s) {
+    if (!s->tickOpen || s->tickInstr <= (uint32_t)SCN_BUDGET_TICK_INSTR) {
+        return;
+    }
+    s->tickStopped = true;
+    s->tickInstr   = (uint32_t)SCN_BUDGET_TICK_INSTR -
+                     (uint32_t)SCN_BUDGET_GRACE_INSTR;
+    luaL_error(L, "this tick's script calls together ran past the %d "
+                  "instructions one tick may spend between them; this call "
+                  "was stopped and the rest of this tick's calls are skipped",
+               (int)SCN_BUDGET_TICK_INSTR);
+}
+
 /* Called every SCN_BUDGET_STEP_INSTR instructions the state executes, and
  * counting only while a call into script code is running.
  *
@@ -203,8 +245,20 @@ static void scnSandboxCountHook(lua_State *L, lua_Debug *ar) {
         return;
     }
     s->instr += (uint32_t)SCN_BUDGET_STEP_INSTR;
+    if (s->tickOpen) {
+        s->tickInstr += (uint32_t)SCN_BUDGET_STEP_INSTR;
+    }
     if (s->instr <= (uint32_t)SCN_BUDGET_CALL_INSTR) {
+        scnSandboxTickCheck(L, s);
         return;
+    }
+    /* A step that finds both spent is the call's error, and the tick's latch
+       is set with it, so the rest of the tick is skipped rather than its next
+       call being stopped on its first step for a second error. */
+    if (s->tickOpen && s->tickInstr > (uint32_t)SCN_BUDGET_TICK_INSTR) {
+        s->tickStopped = true;
+        s->tickInstr   = (uint32_t)SCN_BUDGET_TICK_INSTR -
+                         (uint32_t)SCN_BUDGET_GRACE_INSTR;
     }
     /* Latched rather than disarmed. Leaving the count off for the rest of the
        call would hand a script that caught this error every instruction it
@@ -300,7 +354,12 @@ void scnSandboxDisarmCall(lua_State *L, const ScnSandboxCall *saved) {
  *
  * Nothing here is per call, so this leaves the call counters alone: a call
  * that is running while this is reached — there is none, since the tick resets
- * before it runs anything — keeps whatever it had spent. */
+ * before it runs anything — keeps whatever it had spent.
+ *
+ * It also opens the window the tick's instruction total is counted in, from
+ * zero and with the latch clear. The window stays open until the tick close,
+ * so every call the tick makes before then is counted against the one total
+ * whichever path it arrives by. */
 void scnSandboxTickReset(lua_State *L) {
     ScnSandboxState *s;
 
@@ -313,6 +372,37 @@ void scnSandboxTickReset(lua_State *L) {
     }
     s->printTick     = 0;
     s->printTickSaid = false;
+    s->tickInstr     = 0;
+    s->tickStopped   = false;
+    s->tickOpen      = true;
+}
+
+/* The window shut and the latch cleared, so what the host calls from here to
+ * the next reset — on_end, a policy the engine asks between ticks, the lobby's
+ * asks from the GUI thread — is bounded by its own call's budget alone and is
+ * never skipped for a total an earlier call spent. */
+void scnSandboxTickClose(lua_State *L) {
+    ScnSandboxState *s;
+
+    if (L == NULL) {
+        return;
+    }
+    s = scnSandboxStateOf(L);
+    if (s == NULL) {
+        return;
+    }
+    s->tickOpen    = false;
+    s->tickStopped = false;
+}
+
+bool scnSandboxTickSpent(lua_State *L) {
+    ScnSandboxState *s;
+
+    if (L == NULL) {
+        return false;
+    }
+    s = scnSandboxStateOf(L);
+    return s != NULL && s->tickOpen && s->tickStopped;
 }
 
 /* ── Making and closing one ───────────────────────────────────────── */
@@ -329,6 +419,9 @@ lua_State *scnSandboxNewState(void) {
     s->armed         = false;
     s->stopped       = false;
     s->instr         = 0;
+    s->tickInstr     = 0;
+    s->tickOpen      = false;
+    s->tickStopped   = false;
     s->printCall     = 0;
     s->printTick     = 0;
     s->printCallSaid = false;
@@ -1055,8 +1148,8 @@ static void scnSandboxStringField(lua_State *L, const char *table,
  * prevent that — a loop around a pcall would be cut off and catch it again
  * for as long as it liked.
  *
- * So each asks the latch once the call it protected is over, and raises again
- * where that call failed with the latch set. The inner error having been an
+ * So each asks the latches once the call it protected is over — the call's
+ * and the tick's — and raises again where that call failed with either set. The inner error having been an
  * ordinary one changes nothing: once the hook has latched, this call's budget
  * is spent whatever the protected code failed at.
  *
@@ -1082,6 +1175,17 @@ static int scnSandboxGuardCall(lua_State *L) {
                              "give the call its instructions back, so it is "
                              "raised again",
                           (int)SCN_BUDGET_CALL_INSTR);
+    }
+    /* And the tick's latch, for the same reason: a caught error does not
+       give the tick its instructions back either. */
+    if (s != NULL && s->tickStopped && lua_gettop(L) >= 1 &&
+        !lua_toboolean(L, 1)) {
+        return luaL_error(L, "this tick's script calls together ran past the "
+                             "%d instructions one tick may spend between "
+                             "them; catching that error does not give the "
+                             "tick its instructions back, so it is raised "
+                             "again",
+                          (int)SCN_BUDGET_TICK_INSTR);
     }
     return lua_gettop(L);
 }

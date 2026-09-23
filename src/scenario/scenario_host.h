@@ -182,6 +182,24 @@ typedef struct {
  * running on uncounted. */
 #define SCN_BUDGET_GRACE_INSTR 20000u
 
+/* The most VM instructions all of one tick's calls into scripts may run for
+ * between them: every hook, timer and policy answer the tick makes.
+ *
+ * The per-call budget alone does not bound a tick. A script may hold sixty-four
+ * timers and each of them gets a whole SCN_BUDGET_CALL_INSTR, so a tick of
+ * legal calls could run for tens of millions of instructions without any one
+ * of them being stopped.
+ *
+ * The call that passes this is stopped where it stands, as one past its own
+ * budget is, and the rest of that tick's calls are skipped: the tick costs one
+ * error however many calls were left. A timer skipped this way runs next tick;
+ * an event or region change is not delivered again. on_end is not counted
+ * against it and always runs.
+ *
+ * Twice the per-call budget, so one long call never trips it alone. A starting
+ * value; a measurement may want it somewhere else. */
+#define SCN_BUDGET_TICK_INSTR 2000000u
+
 /* The console lines one call into a script may print.
  *
  * print goes to the server console rather than to the host's stdout, which is

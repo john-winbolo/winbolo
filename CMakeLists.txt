@@ -5984,6 +5984,11 @@ set(_unit_test_names
     scenario_sandbox_print_allowance_returns
     scenario_sandbox_string_cap_on_results
     scenario_sandbox_string_cap_on_subjects
+    scenario_sandbox_tick_budget_cuts_a_drain
+    scenario_sandbox_tick_budget_returns
+    scenario_sandbox_tick_budget_survives_a_pcall
+    scenario_sandbox_tick_budget_spares_on_end
+    scenario_sandbox_tick_budget_switches_off
     scenario_events_queued_then_drained
     scenario_events_drain_reads_the_length_once
     scenario_events_queued_during_a_drain_waits
