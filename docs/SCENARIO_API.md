@@ -168,6 +168,14 @@ ordinary error, unlike the budget's — a `pcall` catches it and your script
 carries on. A longer string built with `..` is not refused here; the memory
 cap is what counts that.
 
+`string.find`, `string.match`, `string.gmatch` and `string.gsub` follow Lua
+5.4's pattern rules on every host, LuaJIT included: `%g`, `gmatch`'s third
+argument, 5.4's handling of empty matches, and the error for a `%` in a `gsub`
+replacement that is not `%0`–`%9` or `%%` are the same everywhere. A pattern
+that runs too long uses up the call's instruction budget like any loop and is
+stopped the same way, however short the string it runs over — and `pcall`
+cannot keep that error either.
+
 The count is taken by a Lua debug hook, and a state that carries one does not
 use LuaJIT's compiler, so **your script runs interpreted** on a LuaJIT host.
 That is worth knowing before you time anything: what you measure here is not

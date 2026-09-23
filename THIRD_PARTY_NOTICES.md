@@ -161,6 +161,19 @@ WinBolo uses the following third-party libraries and code.
 - https://www.rfc-editor.org/rfc/rfc1321
 - Used for the lobby map-upload MD5 handshake (integrity check only — not cryptographically safe)
 
+### Lua 5.4 pattern matcher
+- Location: src/scenario/scenario_pattern.c
+- Version: 5.4.7 (the PATTERN MATCHING section of lstrlib.c)
+- License: MIT
+- https://www.lua.org
+- Authors: R. Ierusalimschy, L. H. de Figueiredo, W. Celes (Lua.org, PUC-Rio)
+- Serves string.find, string.match, string.gmatch and string.gsub to
+  scenario scripts, with 5.4's behaviour on LuaJIT hosts as well
+- Modified for WinBolo: every matcher step is counted and charged to the
+  scenario instruction budgets, gmatch's iterator resets its recursion depth
+  on each call, and the few 5.4 API calls LuaJIT lacks are shimmed. Lua's
+  notice is kept at the top of the file. Re-apply on upgrade.
+
 ## Controller Glyphs
 
 ### Xelu's Free Controller & Key Prompts

@@ -243,6 +243,20 @@ typedef struct {
  * value; a measurement may want it somewhere else. */
 #define SCN_STRING_MAX 65536u
 
+/* How many steps the pattern matcher behind string.find, match, gmatch and
+ * gsub takes between charges to the running call. One matcher step is charged
+ * as one instruction, so a pattern that backtracks without end spends the
+ * call's SCN_BUDGET_CALL_INSTR and the tick's SCN_BUDGET_TICK_INSTR as a loop
+ * in Lua would, and is stopped the same way.
+ *
+ * A step is one entry into the matcher's recursive match, one turn of any of
+ * its loops over the subject or a set, or one byte a back-reference or a plain
+ * find compares. The count hook cannot see any of that, so the matcher keeps
+ * its own count and hands it over in lots of this size: the same lot the hook
+ * counts in, so a pattern is stopped within a thousandth of the budget as a
+ * loop is. What is left over when a call ends is charged then. */
+#define SCN_PATTERN_STEP_CHARGE 1000u
+
 /* How many events the host holds between one tick and the next, across
  * both of the server's channels. Each of the two subscriber callbacks
  * copies an event in and returns; the one drain at the end of the tick

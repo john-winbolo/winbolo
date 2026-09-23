@@ -65,6 +65,16 @@
  *      — on_end runs in the tick that ran out, on its own budget
  * run_scenario_sandbox_tick_budget_switches_off
  *      — a script that runs out every tick is switched off at the limit
+ * run_scenario_sandbox_pattern_bomb_stopped
+ *      — a pattern that backtracks without end over a subject under the cap
+ *        is stopped by the instruction budget, and the round goes on
+ * run_scenario_sandbox_pattern_bomb_behind_pcall
+ *      — and pcall and coroutine.resume raise that error again
+ * run_scenario_sandbox_pattern_results
+ *      — find, match, gmatch and gsub answer as Lua 5.4 does on either VM
+ * run_scenario_sandbox_pattern_charge_counts
+ *      — pattern work past the budget in one call is stopped, and the same
+ *        work spread over several ticks finishes
  */
 
 #include <stdint.h>
@@ -1964,6 +1974,351 @@ int run_scenario_sandbox_tick_budget_switches_off(void) {
                   sbCount("one tick may spend"),
                   "a timer was stopped for something other than the tick's "
                   "total. The console holds:\n%s", sbLines);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+    return 0;
+}
+
+/* ── 23. A pattern that backtracks without end ────────────────────── */
+
+/* ".-.-.-b" over sixty thousand a's tries every way of splitting the subject
+ * in three before giving up at each start, which is on the order of n⁴ steps:
+ * no VM's own matcher would come back from it inside the life of the test. The
+ * subject is under SCN_STRING_MAX, so the cap has nothing to say about it —
+ * what stops it is the matcher's steps charged to the call's budget.
+ *
+ * on_tick runs the bomb once, on the first tick it is called, and the case
+ * runs a handful of ticks, so a charge that has stopped working hangs here
+ * rather than failing: CTest's timeout is what reports that. */
+#define SB_BOMB_LUA                                                         \
+    "string.find(string.rep(\"a\", 60000), \".-.-.-b\")"
+
+int run_scenario_sandbox_pattern_bomb_stopped(void) {
+    static const char *const kMap = "scnsand_patbomb.map";
+    static const char *const kLua =
+        "scenario = { name = \"Bomb\", api = 1 }\n"
+        "local fired = false\n"
+        "function on_tick()\n"
+        "  if fired then return end\n"
+        "  fired = true\n"
+        "  print(\"bomb begun\")\n"
+        "  local r = " SB_BOMB_LUA "\n"
+        "  print(\"bomb finished \" .. tostring(r))\n"
+        "end\n";
+    ServerSim    *sim = NULL;
+    ScenarioHost *h   = NULL;
+
+    UT_ASSERT(sbRunTicks(kMap, kLua, 4, &sim, &h) == 0);
+
+    UT_ASSERT_MSG(strstr(sbLines, "bomb begun") != NULL,
+                  "the hook never ran, so nothing here was tested. The "
+                  "console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "bomb finished") == NULL,
+                  "the pattern ran to its end, so the call was never "
+                  "stopped. The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(sbLineHas("on_tick raised", "instruction budget"),
+                  "the hook was not stopped by the instruction budget. The "
+                  "console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(sbCount(" raised: ") == 1,
+                  "%d calls were counted as errors, expected the one that "
+                  "ran the pattern. The console holds:\n%s",
+                  sbCount(" raised: "), sbLines);
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "the round is in state %d, expected it to still be running "
+                  "after the call was cut off", (int)serverSimGetState(sim));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+    return 0;
+}
+
+/* ── 24. And the same bomb behind a catcher ───────────────────────── */
+
+/* The bomb inside pcall, and inside a coroutine resumed from the hook. The
+ * charge raises the budget's own error and sets its latch, so the catcher
+ * raises it again rather than answering false: "caught" is never printed and
+ * the hook is the call the host counts the error against. Each run has its
+ * own map. */
+static int sbPatternCatch(const char *map, const char *tag, const char *open,
+                          const char *close) {
+    ServerSim    *sim = NULL;
+    ScenarioHost *h   = NULL;
+    char          lua[1024];
+    char          want[64];
+
+    snprintf(lua, sizeof(lua),
+             "scenario = { name = \"Bomb catcher\", api = 1 }\n"
+             "local fired = false\n"
+             "function on_tick()\n"
+             "  if fired then return end\n"
+             "  fired = true\n"
+             "  print(\"%s begun\")\n"
+             "  local ok = %sfunction()\n"
+             "    return " SB_BOMB_LUA "\n"
+             "  end%s\n"
+             "  print(\"%s caught \" .. tostring(ok))\n"
+             "end\n", tag, open, close, tag);
+
+    UT_ASSERT(sbRunTicks(map, lua, 4, &sim, &h) == 0);
+
+    snprintf(want, sizeof(want), "%s begun", tag);
+    UT_ASSERT_MSG(strstr(sbLines, want) != NULL,
+                  "the hook never ran, so nothing here was tested. The "
+                  "console holds:\n%s", sbLines);
+    snprintf(want, sizeof(want), "%s caught", tag);
+    UT_ASSERT_MSG(strstr(sbLines, want) == NULL,
+                  "the catcher answered rather than raising the budget's "
+                  "error again, so a script can keep being stopped. The "
+                  "console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(sbLineHas("on_tick raised", "instruction budget"),
+                  "the hook was not stopped by the instruction budget. The "
+                  "console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(sbCount(" raised: ") == 1,
+                  "%d calls were counted as errors, expected the one that "
+                  "ran the pattern. The console holds:\n%s",
+                  sbCount(" raised: "), sbLines);
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "the round is in state %d, expected it to still be running",
+                  (int)serverSimGetState(sim));
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(map);
+    return 0;
+}
+
+int run_scenario_sandbox_pattern_bomb_behind_pcall(void) {
+    UT_ASSERT(sbPatternCatch("scnsand_patpcall.map", "pbomb", "pcall(",
+                             ")") == 0);
+    UT_ASSERT(sbPatternCatch("scnsand_patcoro.map", "cbomb",
+                             "coroutine.resume(coroutine.create(", "))") == 0);
+    return 0;
+}
+
+/* ── 25. What the four answer ─────────────────────────────────────── */
+
+/* Every answer below was worked out by hand from the Lua 5.4 manual, not taken
+ * from a run, and each is what 5.4 says on either VM. A few are where LuaJIT's
+ * own matcher answers differently, and are here for that reason: %g, gmatch's
+ * third argument, the empty match right after another in gmatch and gsub, a %
+ * in a replacement that is not one of the escapes, and an init with a
+ * fraction.
+ *
+ * Each line is "pat <label> = " and then everything the call returned joined
+ * with |, so a nil in the middle still shows. The script prints forty-three
+ * lines from one hook, under the sixty-four one call and one tick may print. */
+int run_scenario_sandbox_pattern_results(void) {
+    static const char *const kMap = "scnsand_patres.map";
+    static const char *const kLua =
+        "scenario = { name = \"Patterns\", api = 1 }\n"
+        "local function show(...)\n"
+        "  local t = {}\n"
+        "  for i = 1, select(\"#\", ...) do\n"
+        "    t[i] = tostring((select(i, ...)))\n"
+        "  end\n"
+        "  return table.concat(t, \"|\")\n"
+        "end\n"
+        "local function pat(label, ...)\n"
+        "  print(\"pat \" .. label .. \" = \" .. show(...))\n"
+        "end\n"
+        "local function each(it)\n"
+        "  local t = {}\n"
+        "  for a, b in it do\n"
+        "    t[#t + 1] = \"[\" .. a .. (b and (\":\" .. b) or \"\") .. \"]\"\n"
+        "  end\n"
+        "  return table.concat(t)\n"
+        "end\n"
+        "function on_start()\n"
+        "  pat(\"plain\", string.find(\"hello world\", \"o w\"))\n"
+        "  pat(\"init\", string.find(\"hello world\", \"o\", 6))\n"
+        "  pat(\"flag\", string.find(\"a.b.c\", \".\", 3, true))\n"
+        "  pat(\"negative\", string.find(\"abcabc\", \"b\", -3))\n"
+        "  pat(\"past end\", string.find(\"abc\", \"b\", 10))\n"
+        "  pat(\"empty at end\", string.find(\"abc\", \"\", 4))\n"
+        "  pat(\"anchor\", string.find(\"hello\", \"^h\"))\n"
+        "  pat(\"anchor miss\", string.find(\"hello\", \"^e\"))\n"
+        "  pat(\"dollar\", string.find(\"hello\", \"lo$\"))\n"
+        "  pat(\"alpha\", string.match(\"abc123 \", \"%a+\"))\n"
+        "  pat(\"digit\", string.match(\"abc123\", \"%d+\"))\n"
+        "  pat(\"space\", string.gsub(\"a \\n b\", \"%s\", \"\"))\n"
+        "  pat(\"alnum\", string.match(\"--ab12--\", \"%w+\"))\n"
+        "  pat(\"punct\", string.gsub(\"a,b.c!\", \"%p\", \"\"))\n"
+        "  pat(\"graph\", string.gsub(\"a b c\", \"%g\", \"x\"))\n"
+        "  pat(\"not graph\", string.gsub(\"a b\", \"%G\", \"_\"))\n"
+        "  pat(\"set\", string.match(\"xyz123abc\", \"[a-c]+\"))\n"
+        "  pat(\"negated set\", string.match(\"abc123\", \"[^%a]+\"))\n"
+        "  pat(\"escaped bracket\", string.match(\"a]b\", \"[%]]\"))\n"
+        "  pat(\"lazy\", string.match(\"<a><b>\", \"<(.-)>\"))\n"
+        "  pat(\"greedy\", string.match(\"<a><b>\", \"<(.*)>\"))\n"
+        "  pat(\"plus\", string.find(\"aaab\", \"a+\"))\n"
+        "  pat(\"optional\", string.gsub(\"color colour\", \"colou?r\", \"X\"))\n"
+        "  pat(\"captures\", string.find(\"hello world\", \"(o)(r)\"))\n"
+        "  pat(\"positions\", string.match(\"hello\", \"()ll()\"))\n"
+        "  pat(\"balanced\", string.match(\"f(a(b)c)d\", \"%b()\"))\n"
+        "  pat(\"frontier\", string.gsub(\"hello world\", \"%f[%w]%w+\", \"X\"))\n"
+        "  pat(\"frontier empty\", string.find(\"abc 123\", \"%f[%d]\"))\n"
+        "  pat(\"backref\", string.find(\"xabcabcy\", \"(abc)%1\"))\n"
+        "  pat(\"gmatch captures\",\n"
+        "      each(string.gmatch(\"a=1, b=2\", \"(%w+)=(%w+)\")))\n"
+        "  pat(\"gmatch init\", each(string.gmatch(\"one two three\", \"%a+\", 5)))\n"
+        "  pat(\"gmatch empty\", each(string.gmatch(\"abc\", \"%a*\")))\n"
+        "  pat(\"gsub capture\", string.gsub(\"hello world\", \"(o)\", \"[%1]\"))\n"
+        "  pat(\"gsub whole\", string.gsub(\"abc\", \"%w\", \"%0%0\"))\n"
+        "  pat(\"gsub percent\", string.gsub(\"50\", \"%d+\", \"%0%%\"))\n"
+        "  pat(\"gsub table\", string.gsub(\"$name is $age\", \"%$(%w+)\",\n"
+        "      { name = \"Bob\" }))\n"
+        "  pat(\"gsub function\", string.gsub(\"abc\", \"%w\", function(c)\n"
+        "      if c == \"b\" then return \"B\" end end))\n"
+        "  pat(\"gsub limit\", string.gsub(\"aaaa\", \"a\", \"b\", 2))\n"
+        "  pat(\"gsub anchor\", string.gsub(\"aaa\", \"^a\", \"b\"))\n"
+        "  pat(\"gsub empty\", string.gsub(\"abc\", \"%w*\", \"-\"))\n"
+        "  pat(\"bad replacement\", pcall(string.gsub, \"abc\", \"b\", \"%x\"))\n"
+        "  pat(\"method\", (\"key=val\"):match(\"(%w+)=(%w+)\"))\n"
+        "  local ok, e = pcall(string.find, \"abc\", \"b\", 1.5)\n"
+        "  pat(\"fraction\", ok, string.find(tostring(e),\n"
+        "      \"no integer representation\", 1, true) ~= nil)\n"
+        "end\n";
+    static const char *const kWant[] = {
+        "pat plain = 5|7\n",
+        "pat init = 8|8\n",
+        "pat flag = 4|4\n",
+        "pat negative = 5|5\n",
+        "pat past end = nil\n",
+        "pat empty at end = 4|3\n",
+        "pat anchor = 1|1\n",
+        "pat anchor miss = nil\n",
+        "pat dollar = 4|5\n",
+        "pat alpha = abc\n",
+        "pat digit = 123\n",
+        "pat space = ab|3\n",
+        "pat alnum = ab12\n",
+        "pat punct = abc|3\n",
+        "pat graph = x x x|3\n",
+        "pat not graph = a_b|1\n",
+        "pat set = abc\n",
+        "pat negated set = 123\n",
+        "pat escaped bracket = ]\n",
+        "pat lazy = a\n",
+        "pat greedy = a><b\n",
+        "pat plus = 1|3\n",
+        "pat optional = X X|2\n",
+        "pat captures = 8|9|o|r\n",
+        "pat positions = 3|5\n",
+        "pat balanced = (a(b)c)\n",
+        "pat frontier = X X|2\n",
+        "pat frontier empty = 5|4\n",
+        "pat backref = 2|7|abc\n",
+        "pat gmatch captures = [a:1][b:2]\n",
+        "pat gmatch init = [two][three]\n",
+        "pat gmatch empty = [abc]\n",
+        "pat gsub capture = hell[o] w[o]rld|2\n",
+        "pat gsub whole = aabbcc|3\n",
+        "pat gsub percent = 50%|1\n",
+        "pat gsub table = Bob is $age|2\n",
+        "pat gsub function = aBc|3\n",
+        "pat gsub limit = bbaa|2\n",
+        "pat gsub anchor = baa|1\n",
+        "pat gsub empty = -|1\n",
+        "pat bad replacement = false|invalid use of '%' in replacement "
+        "string\n",
+        "pat method = key|val\n",
+        "pat fraction = false|true\n",
+    };
+    const size_t  nWant = sizeof(kWant) / sizeof(kWant[0]);
+    ServerSim    *sim   = NULL;
+    ScenarioHost *h     = NULL;
+    size_t        i;
+
+    UT_ASSERT(sbRunCap(kMap, kLua, &sim, &h) == 0);
+
+    UT_ASSERT_MSG(sbCount("pat ") == (int)nWant,
+                  "%d answers were printed, expected %d. The console "
+                  "holds:\n%s", sbCount("pat "), (int)nWant, sbLines);
+    for (i = 0; i < nWant; i++) {
+        UT_ASSERT_MSG(sbCount(kWant[i]) == 1,
+                      "no line \"%.*s\". The console holds:\n%s",
+                      (int)strlen(kWant[i]) - 1, kWant[i], sbLines);
+    }
+    UT_ASSERT_MSG(strstr(sbLines, "raised") == NULL,
+                  "a pattern call raised where 5.4 answers. The console "
+                  "holds:\n%s", sbLines);
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+    return 0;
+}
+
+/* ── 26. The charge is what bounds pattern work ───────────────────── */
+
+/* One find of "[b]" over sixty thousand a's is a bounded piece of work: at
+ * each of the 60,001 places it tries, one pass through match, one item of the
+ * set read by classend and one by the compare — three steps, two at the end
+ * of the subject where nothing is compared — so 180,002 steps, charged as that
+ * many instructions.
+ *
+ * Twenty of them in one call is 3.6 million, past the call's million by more
+ * than three times, so that call is stopped part way through its sixth. The
+ * same twenty two to a call is 360,004 a call, well inside the call's budget
+ * and the tick's, and all ten calls finish. Nothing but the charge could stop
+ * the first: the subject is under the cap and the Lua around the finds is a
+ * few hundred instructions. */
+int run_scenario_sandbox_pattern_charge_counts(void) {
+    static const char *const kMap = "scnsand_patcharge.map";
+    static const char *const kLua =
+        "scenario = { name = \"Charge\", api = 1 }\n"
+        "local subject = string.rep(\"a\", 60000)\n"
+        "local heavy = false\n"
+        "local done = 0\n"
+        "function on_tick()\n"
+        "  if not heavy then\n"
+        "    heavy = true\n"
+        "    print(\"charge heavy begun\")\n"
+        "    for i = 1, 20 do string.find(subject, \"[b]\") end\n"
+        "    print(\"charge heavy finished\")\n"
+        "    return\n"
+        "  end\n"
+        "  if done < 20 then\n"
+        "    string.find(subject, \"[b]\")\n"
+        "    string.find(subject, \"[b]\")\n"
+        "    done = done + 2\n"
+        "    if done == 20 then print(\"charge split finished\") end\n"
+        "  end\n"
+        "end\n";
+    ServerSim    *sim = NULL;
+    ScenarioHost *h   = NULL;
+    const char   *raised;
+    const char   *split;
+
+    UT_ASSERT(sbRunTicks(kMap, kLua, 18, &sim, &h) == 0);
+
+    raised = strstr(sbLines, "on_tick raised");
+    split  = strstr(sbLines, "charge split finished");
+    UT_ASSERT_MSG(strstr(sbLines, "charge heavy begun") != NULL,
+                  "the hook never ran, so nothing here was tested. The "
+                  "console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(strstr(sbLines, "charge heavy finished") == NULL,
+                  "twenty finds in one call ran to their end, so the "
+                  "matcher's steps are not being charged. The console "
+                  "holds:\n%s", sbLines);
+    UT_ASSERT_MSG(raised != NULL &&
+                  sbLineHas("on_tick raised", "instruction budget"),
+                  "the heavy call was not stopped by the instruction budget. "
+                  "The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(sbCount(" raised: ") == 1,
+                  "%d calls were counted as errors, expected only the heavy "
+                  "one. The console holds:\n%s", sbCount(" raised: "),
+                  sbLines);
+    UT_ASSERT_MSG(split != NULL && split > raised,
+                  "the same work spread over ten calls did not finish, so "
+                  "something other than the call's budget is bounding it. "
+                  "The console holds:\n%s", sbLines);
+    UT_ASSERT_MSG(serverSimGetState(sim) == serverStateRunning,
+                  "the round is in state %d, expected it to still be running",
+                  (int)serverSimGetState(sim));
 
     scenarioHostDetach(h);
     serverSimDestroy(sim);

@@ -36,6 +36,13 @@
  *  over SCN_STRING_MAX with an ordinary error the script is
  *  free to catch.
  *
+ *  A short subject is no bound on a pattern, which can
+ *  backtrack for as long as it likes over one. So the four
+ *  pattern functions are not the VM's own: they run the
+ *  matcher in scenario_pattern.c, which charges its steps
+ *  to the budgets through scnSandboxCharge and is stopped
+ *  as a loop in Lua would be.
+ *
  *  Opening them one at a time is what takes io, package,
  *  debug and, under LuaJIT, ffi, jit and bit away: none of
  *  them is ever created, so there is nothing to strip. What
@@ -79,6 +86,7 @@
 #include "server_sim.h"            /* serverSimConsoleMessage */
 
 #include "scenario_host.h"         /* SCN_VM_MEMORY_MAX */
+#include "scenario_pattern.h"      /* scnPatternFind and the other three */
 #include "scenario_sandbox.h"
 
 /* One console line a script's print can produce. A line past this is cut
@@ -224,29 +232,15 @@ static void scnSandboxTickCheck(lua_State *L, ScnSandboxState *s) {
                (int)SCN_BUDGET_TICK_INSTR);
 }
 
-/* Called every SCN_BUDGET_STEP_INSTR instructions the state executes, and
- * counting only while a call into script code is running.
- *
- * The flag is what makes that true. Every piece of script code this host
- * runs is inside one of the calls that arm below, but the host also reads
- * the script's own table from C between them; a count left running could
- * then raise with no lua_pcall between it and the state, which is the one
- * error the host answers by ending the process. Armed-only puts that out of
- * reach.
- *
- * The hook cannot see inside C, so a call that spends its time in one C
- * function is not what this bounds — it bounds a script looping in Lua,
- * which is what a runaway scenario looks like. */
-static void scnSandboxCountHook(lua_State *L, lua_Debug *ar) {
-    ScnSandboxState *s = scnSandboxStateOf(L);
-
-    (void)ar;
-    if (s == NULL || !s->armed) {
-        return;
-    }
-    s->instr += (uint32_t)SCN_BUDGET_STEP_INSTR;
+/* n instructions spent by the call that is running, counted against its
+ * budget and the tick's, raising where either is passed. The hook spends
+ * through this, and so does scnSandboxCharge for the C work the hook cannot
+ * see, so the two are stopped and latched by the one path. Only reached while
+ * a call is armed. */
+static void scnSandboxSpend(lua_State *L, ScnSandboxState *s, uint32_t n) {
+    s->instr += n;
     if (s->tickOpen) {
-        s->tickInstr += (uint32_t)SCN_BUDGET_STEP_INSTR;
+        s->tickInstr += n;
     }
     if (s->instr <= (uint32_t)SCN_BUDGET_CALL_INSTR) {
         scnSandboxTickCheck(L, s);
@@ -281,6 +275,45 @@ static void scnSandboxCountHook(lua_State *L, lua_Debug *ar) {
                   "stopped; work that long belongs across several on_tick "
                   "calls rather than inside one of them",
                (int)SCN_BUDGET_CALL_INSTR);
+}
+
+/* Called every SCN_BUDGET_STEP_INSTR instructions the state executes, and
+ * counting only while a call into script code is running.
+ *
+ * The flag is what makes that true. Every piece of script code this host
+ * runs is inside one of the calls that arm below, but the host also reads
+ * the script's own table from C between them; a count left running could
+ * then raise with no lua_pcall between it and the state, which is the one
+ * error the host answers by ending the process. Armed-only puts that out of
+ * reach.
+ *
+ * The hook cannot see inside C, so a call that spends its time in one C
+ * function is not what this bounds — it bounds a script looping in Lua,
+ * which is what a runaway scenario looks like. The C functions that can run
+ * long for what a script hands them charge their own work through
+ * scnSandboxCharge. */
+static void scnSandboxCountHook(lua_State *L, lua_Debug *ar) {
+    ScnSandboxState *s = scnSandboxStateOf(L);
+
+    (void)ar;
+    if (s == NULL || !s->armed) {
+        return;
+    }
+    scnSandboxSpend(L, s, (uint32_t)SCN_BUDGET_STEP_INSTR);
+}
+
+/* C work the hook cannot see, charged here so the budgets see it: the pattern
+ * matcher counts its own steps and hands them over through this. It raises the
+ * budget's own error and sets the same latch the hook does, so pcall, xpcall
+ * and coroutine.resume raise it again rather than keeping it. Outside an armed
+ * call it does nothing, as the hook does. */
+void scnSandboxCharge(lua_State *L, uint32_t n) {
+    ScnSandboxState *s = scnSandboxStateOf(L);
+
+    if (s == NULL || !s->armed || n == 0) {
+        return;
+    }
+    scnSandboxSpend(L, s, n);
 }
 
 /* Saved and put back rather than set and cleared, because these nest: a
@@ -863,9 +896,11 @@ static int scnSandboxDate(lua_State *L) {
 
 /* ── The strings a C function may build ───────────────────────────── */
 
-/* Each of the seven below is a closure over the original, which is upvalue
- * 1 as collectgarbage's is, and over the name a script knows it by, which is
- * upvalue 2 and is what a refusal is worded with. */
+/* Each of the seven below is a closure over the function it runs, which is
+ * upvalue 1 — the original, as collectgarbage's is, for rep, format and
+ * concat, and the port for the four pattern functions — and over the name a
+ * script knows it by, which is upvalue 2 and is what a refusal is worded
+ * with. */
 static int scnSandboxStringForward(lua_State *L) {
     int n = lua_gettop(L);
 
@@ -1102,7 +1137,15 @@ static int scnSandboxStringFormat(lua_State *L) {
 
 /* find, match, gmatch and gsub, refused before the pattern runs. Only a
  * string subject is measured: a number's text is a couple of dozen bytes at
- * most, and anything else is the original's to refuse. */
+ * most, and anything else is the matcher's to refuse.
+ *
+ * These four are not closures over the originals. The VMs' own matchers count
+ * no steps, so a pattern that backtracks without end would hold the tick inside
+ * one of them however short the subject; the port in scenario_pattern.c counts
+ * its steps against the budgets instead. Upvalue 1 is the port's function,
+ * called here directly rather than through lua_call, so an argument error it
+ * raises names the function the script called. Upvalue 2 is the name, as for
+ * the three above. */
 static int scnSandboxStringSubject(lua_State *L) {
     size_t len = 0;
 
@@ -1113,7 +1156,7 @@ static int scnSandboxStringSubject(lua_State *L) {
                                           (double)len);
         }
     }
-    return scnSandboxStringForward(L);
+    return lua_tocfunction(L, lua_upvalueindex(1))(L);
 }
 
 /* One field of a library table replaced by one of the closures above, as
@@ -1134,6 +1177,24 @@ static void scnSandboxStringField(lua_State *L, const char *table,
     } else {
         lua_pop(L, 1);
     }
+    lua_pop(L, 1);
+}
+
+/* One of the four pattern functions put in place of the original, which is
+   dropped rather than closed over: nothing a script can reach refers to it
+   afterwards. The string metatable's __index is this same table, so a method
+   call such as s:find(p) reaches the port as well. */
+static void scnSandboxPatternField(lua_State *L, const char *key,
+                                   lua_CFunction port) {
+    lua_getglobal(L, LUA_STRLIBNAME);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        return;
+    }
+    lua_pushcfunction(L, port);
+    lua_pushfstring(L, "%s.%s", LUA_STRLIBNAME, key);
+    lua_pushcclosure(L, scnSandboxStringSubject, 2);
+    lua_setfield(L, -2, key);
     lua_pop(L, 1);
 }
 
@@ -1296,13 +1357,10 @@ void scnSandboxOpenLibs(lua_State *L) {
                           scnSandboxStringFormat);
     scnSandboxStringField(L, LUA_TABLIBNAME, "concat",
                           scnSandboxTableConcat);
-    scnSandboxStringField(L, LUA_STRLIBNAME, "find", scnSandboxStringSubject);
-    scnSandboxStringField(L, LUA_STRLIBNAME, "match",
-                          scnSandboxStringSubject);
-    scnSandboxStringField(L, LUA_STRLIBNAME, "gmatch",
-                          scnSandboxStringSubject);
-    scnSandboxStringField(L, LUA_STRLIBNAME, "gsub",
-                          scnSandboxStringSubject);
+    scnSandboxPatternField(L, "find", scnPatternFind);
+    scnSandboxPatternField(L, "match", scnPatternMatch);
+    scnSandboxPatternField(L, "gmatch", scnPatternGmatch);
+    scnSandboxPatternField(L, "gsub", scnPatternGsub);
 
     /* Last, so each of these closes over the function its own opener
        installed rather than over something replaced afterwards. coroutine is

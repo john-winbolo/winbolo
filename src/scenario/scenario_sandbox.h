@@ -185,6 +185,25 @@ void scnSandboxTickClose(lua_State *L);
 bool scnSandboxTickSpent(lua_State *L);
 
 /*********************************************************
+ *NAME:          scnSandboxCharge
+ *PURPOSE:
+ *  Charges n instructions to the call that is running, as
+ *  the count hook charges a step: to the call's budget, and
+ *  to the tick's while a tick is open.
+ *
+ *  C work the hook cannot see is charged here so the budgets
+ *  see it. Where the charge takes the call or the tick past
+ *  its budget this raises the budget's own error and sets
+ *  the same latch the hook does, so pcall, xpcall and
+ *  coroutine.resume raise it again rather than keeping it.
+ *  A caller must be able to unwind from that like any other
+ *  Lua error.
+ *
+ *  Does nothing while no call is armed, as the hook does.
+ *********************************************************/
+void scnSandboxCharge(lua_State *L, uint32_t n);
+
+/*********************************************************
  *NAME:          scnSandboxMemoryCapped
  *PURPOSE:
  *  Whether the states this process boots are counted. False
