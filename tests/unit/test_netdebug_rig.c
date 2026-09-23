@@ -8,8 +8,7 @@
  * (serverSimNetdebugGet*) to:
  *
  *   1. prove commanded == executed on a clean input stream,
- *   2. reproduce executed > commanded under scripted input loss
- *      (today's stall-repeat + late-apply double-execute), and
+ *   2. prove delayed inputs do not add extra turning steps, and
  *   3. pin a single commanded mine lay executing exactly once under
  *      the same loss shape.
  *
@@ -84,16 +83,10 @@ static void nd_send(ClientSim *cs, uint32_t tick, uint8_t buttons,
  * [startTick, endTick) is executed exactly once, so executed == commanded
  * (run_netdebug_commanded_vs_executed). Under a withhold window the count
  * is conserved per tick number — a starved number is executed either by a
- * substitute (then the late arrival drops stale) or by the late apply — but
- * stall-advance now waits STALL_ADVANCE_DRY_TICKS half-steps before
- * advancing, so the held button at those waiting half-steps executes AND
- * the late input later applies: a bounded handful of double-executed turns.
- * Overshoot is therefore >= 0 and capped at STALL_ADVANCE_DRY_TICKS
- * (run_netdebug_overshoot_under_loss), not exactly zero. With one button
- * held throughout, a substitute produces the same turn the real input
- * would have, so beyond that bound the count stays conserved regardless of
- * how the post-window re-fill gate batches a few applies behind
- * substitutes. */
+ * substitute (then the late arrival drops stale) or by the late apply.
+ * The initial STALL_ADVANCE_DRY_TICKS waiting half-steps do not advance
+ * the tank. With one button held throughout, a substitute produces the
+ * same turn the real input would have, so the count stays conserved. */
 static uint32_t nd_run_script(ClientSim *cs, uint32_t startTick,
                               const NdScript *s) {
     uint32_t commanded = 0;
@@ -246,14 +239,9 @@ int run_netdebug_overshoot_under_loss(void) {
     fprintf(stderr,
             "  netdebug overshoot: commanded=%u executed=%u delta=%d\n",
             commanded, executed, (int)executed - (int)commanded);
-    /* Stall-advance now waits STALL_ADVANCE_DRY_TICKS half-steps before
-     * advancing, so a withhold window reintroduces at most that many
-     * double-executed turns; beyond the threshold the late inputs drop
-     * stale. Overshoot is bounded, not zero. */
-    UT_ASSERT(executed >= commanded);
-    UT_ASSERT_MSG(executed - commanded <= STALL_ADVANCE_DRY_TICKS,
-                  "overshoot %u exceeds bound %u", executed - commanded,
-                  STALL_ADVANCE_DRY_TICKS);
+    UT_ASSERT_MSG(executed == commanded,
+                  "delayed stream: executed %u != commanded %u",
+                  executed, commanded);
 
     clientSimDestroy(cs);
     serverSimDestroy(sim);

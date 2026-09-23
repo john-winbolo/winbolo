@@ -3919,6 +3919,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_input_redundancy.c
     tests/unit/test_edge_send.c
     tests/unit/test_stall_advance.c
+    tests/unit/test_turn_release.c
     tests/unit/test_base_stock_visibility.c
     tests/unit/test_base_half_tick.c
     tests/unit/test_base_death_prediction.c
@@ -5225,6 +5226,9 @@ set(_unit_test_names
     map_colours_palette_key
     map_colours_team
     stall_advances_processed_tick
+    turn_release_no_overshoot
+    turn_gap_preserves_ramp
+    turn_long_gap_no_duplicate
     stall_mine_late_lays_once
     stall_mine_duplicate_not_relaid
     stall_fire_not_harvested
