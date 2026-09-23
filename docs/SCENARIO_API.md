@@ -157,8 +157,11 @@ call: `while true do` in a hook takes your scenario off the round and nothing
 else, but it does take it off. Work that cannot finish in one call belongs
 spread across `on_tick` calls, keeping its place in a local between them.
 
-**All of one tick's calls share two million instructions** — every hook, timer
-and policy answer the tick makes, added together. The call that passes the
+**All of one tick's calls share two million instructions** — every hook and
+timer the tick runs, and any policy asked from inside one of those calls (a
+hook's op that asks a policy), added together. A policy the engine asks while
+it steps the world, such as `damage_scale` on a hit, has only its own call's
+budget and is not part of the total. The call that passes the
 total fails with an error, and the rest of that tick's calls are skipped: a
 timer skipped this way runs next tick, but an event or a region change skipped
 this way is not delivered again. `on_end` is not part of the total and always

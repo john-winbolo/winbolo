@@ -183,7 +183,11 @@ typedef struct {
 #define SCN_BUDGET_GRACE_INSTR 20000u
 
 /* The most VM instructions all of one tick's calls into scripts may run for
- * between them: every hook, timer and policy answer the tick makes.
+ * between them: every hook and timer the tick runs, and any policy asked from
+ * inside one of those calls. A policy the engine asks while it steps the world
+ * (choose_start, spawn_loadout, can_respawn, damage_scale) runs before the
+ * tick's window opens, so it has only its own SCN_BUDGET_CALL_INSTR and is not
+ * counted here.
  *
  * The per-call budget alone does not bound a tick. A script may hold sixty-four
  * timers and each of them gets a whole SCN_BUDGET_CALL_INSTR, so a tick of
