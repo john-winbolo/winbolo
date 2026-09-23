@@ -1370,9 +1370,8 @@ void clientApplySnapshot(ClientSim *csPtr,
           csPtr->lastServerDestroyed = destroyed;
         }
 
-        /* Sync resources from server — but not reload/shells, which are
-         * already set correctly by the reconciliation replay (it accounts
-         * for unprocessed fire inputs that the server hasn't seen yet). */
+        /* Sync resources from server, then replay pending range and fire
+         * inputs below, whether or not the pose needed reconciliation. */
         tankSetShells(&csPtr->sim, &MY_TANK(csPtr), tanks[i].shells);
         tankSetMines(&csPtr->sim, &MY_TANK(csPtr), tanks[i].mines);
         tankSetTrees(&csPtr->sim, &MY_TANK(csPtr), tanks[i].trees);
@@ -1399,15 +1398,25 @@ void clientApplySnapshot(ClientSim *csPtr,
         tankSetOnBoat(&MY_TANK(csPtr),
                       (tanks[i].tankStatus & TANK_STATUS_ON_BOAT) != 0);
 
-        /* Correct shells/reload for any unprocessed fire inputs.
-         * The server snapshot reflects state before our fire was processed,
-         * so we must re-apply the fire effect to prevent double-firing. */
+        /* Restore pending range adjustments and fire effects on top of the
+         * acknowledged state. Range changes apply on both keys and game ticks;
+         * fire effects only apply on game ticks. */
         {
           uint32_t tick;
+          BYTE sightLen = tankGetGunsightLength(&MY_TANK(csPtr));
           for (tick = csPtr->clientState.oldestUnacked; tick <= csPtr->clientState.newestInput; tick++) {
             uint8_t idx = tick & (CLIENT_INPUT_HISTORY_SIZE - 1);
             InputPacket *histPkt = &csPtr->clientState.history[idx];
+            uint8_t gsAdj;
             if (histPkt->tick != tick) continue;
+            /* Replay only the range, not the auto-hide/UI side effects of
+             * tankGunsightIncrease/Decrease: those already ran locally. */
+            gsAdj = (histPkt->flags & INPUT_FLAG_GUNSIGHT_MASK) >> INPUT_FLAG_GUNSIGHT_SHIFT;
+            if (gsAdj == 1 && sightLen < csPtr->sim.rules.gunsight_max) {
+              sightLen++;
+            } else if (gsAdj == 2 && sightLen > csPtr->sim.rules.gunsight_min) {
+              sightLen--;
+            }
             if ((tick % 2) == 1) continue; /* keys tick — no fire */
             /* Decrement reload like tankUpdate would */
             if (tankGetReloadTime(&MY_TANK(csPtr)) > 0) {
@@ -1421,6 +1430,7 @@ void clientApplySnapshot(ClientSim *csPtr,
               tankSetShells(&csPtr->sim, &MY_TANK(csPtr), tankGetShells(&MY_TANK(csPtr)) - 1);
             }
           }
+          tankSetGunsightLength(&MY_TANK(csPtr), sightLen);
         }
       }
       /* Count down the base-unblock enlarged-clamp window once per local-tank

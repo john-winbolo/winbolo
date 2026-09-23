@@ -1341,6 +1341,11 @@ int run_base_death_prediction_replay_tick(void);
  * tick: kept while still ahead and one hit from dead, dropped once disproved,
  * and a landing that was waiting on an earlier hit's armour is armed. */
 int run_base_death_prediction_authority(void);
+/* Gunsight reconciliation (test_gunsight_reconciliation.c): unacknowledged
+ * range inputs replay on top of the server's snapshot value so the range does
+ * not snap back. Covers acknowledgement, both tick parities, clamping to the
+ * configured min and max, local-only visibility and a reused ring-buffer slot. */
+int run_gunsight_reconciliation(void);
 
 /* Tank destroyed state (test_tank_death_state.c): armour is a plain
  * 0..TANK_FULL_ARMOUR value that clamps at zero and the destroyed state is
