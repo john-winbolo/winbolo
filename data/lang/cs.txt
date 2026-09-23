@@ -2176,6 +2176,7 @@ STR_SCNPANEL_SETTINGS_TITLE=Panel scénáře
 STR_SCNPANEL_OPACITY_LBL=Neprůhlednost
 STR_SCNPANEL_OPACITY_LINE1=Ztlumí to, co panel vykresluje.
 STR_SCNPANEL_OPACITY_LINE2=Jeho prázdné části zůstávají čiré.
+STR_DLGLOBBY_SCENARIO_UNSAFE=Tento server spouští skripty scénářů s úplnou knihovnou Lua a bez omezení.
 STR_DLGLOBBY_SCENARIO_OFFERED=Tento server nabízí
 STR_DLGLOBBY_SCENARIO_ROUND=Toto kolo běží
 STR_DLGLOBBY_SCENARIO_ADD=Přidat do kola

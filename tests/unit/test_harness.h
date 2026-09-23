@@ -116,6 +116,9 @@ int run_lobby_settings_codec_and_apply(void);
 /* The scenario the settings event names, onto the ClientSim and back out
  * through the accessors — with a scenario and then without one. */
 int run_lobby_settings_scenario_apply(void);
+/* Whether the server runs its scripts without the sandbox, onto the
+ * ClientSim and back out through clientSimGetLobbyScenarioUnsafe. */
+int run_lobby_settings_scenario_unsafe_apply(void);
 int run_lobby_team_meta_codec_and_apply(void);
 int run_lobby_bot_config_codec_and_apply(void);
 int run_lobby_bot_brain_codec_and_apply(void);
@@ -3084,6 +3087,7 @@ int run_scenario_sandbox_interpreted_cost(void);
 int run_scenario_sandbox_unsafe_opens_full_library(void);
 int run_scenario_sandbox_unsafe_lifts_the_budgets(void);
 int run_scenario_sandbox_unsafe_loads_bytecode(void);
+int run_scenario_sandbox_unsafe_reaches_the_lobby(void);
 
 /* The bus events (test_scenario_events.c): the subscriber that only
  * queues, the bounded drain at the end of each tick, and what a full

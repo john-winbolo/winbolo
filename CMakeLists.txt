@@ -4615,6 +4615,7 @@ set(_unit_test_names
     join_running_phase_not_lobby
     lobby_settings_codec_and_apply
     lobby_settings_scenario_apply
+    lobby_settings_scenario_unsafe_apply
     lobby_team_meta_codec_and_apply
     lobby_bot_config_codec_and_apply
     lobby_bot_brain_codec_and_apply
@@ -6003,6 +6004,7 @@ set(_unit_test_names
     scenario_sandbox_unsafe_opens_full_library
     scenario_sandbox_unsafe_lifts_the_budgets
     scenario_sandbox_unsafe_loads_bytecode
+    scenario_sandbox_unsafe_reaches_the_lobby
     scenario_events_queued_then_drained
     scenario_events_drain_reads_the_length_once
     scenario_events_queued_during_a_drain_waits

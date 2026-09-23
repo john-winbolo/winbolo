@@ -361,6 +361,10 @@ void serverSimSetScenarioLobbyTemplate(ServerSim *sim,
  *                bound script off on its own: changing it means
  *                changing the map, which is what a chooser reads
  *                this to know.
+ *  unsafe      - True when this server runs every script with
+ *                the full Lua library and no limits
+ *                (-allow-unsafe-scripts). The sim cannot ask the
+ *                host, so the lobby learns it here.
  *********************************************************/
 void serverSimSetScenarioIdentity(ServerSim *sim,
                                   LobbyScenarioSource source,
@@ -369,7 +373,8 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
                                   const char *description,
                                   bool extraTeams,
                                   bool keepsWinCondition,
-                                  bool bound);
+                                  bool bound,
+                                  bool unsafe);
 
 /*********************************************************
  *NAME:          serverSimSetScenarioRules

@@ -490,6 +490,70 @@ int run_lobby_settings_scenario_apply(void) {
 }
 
 /* ================================================================
+ * CTRL_LOBBY_SETTINGS — whether the server runs its scenario scripts
+ * without the sandbox, from the event onto the ClientSim and out
+ * through clientSimGetLobbyScenarioUnsafe.
+ *
+ * True first, since false is what a fresh ClientSim already holds.
+ * Then a plain map, which carries no scenario tail and so no mode
+ * byte, has to take it back to false: a lobby that went on warning
+ * after the script left would be warning about nothing. And once
+ * through the codec, so the byte the encoder writes is the one the
+ * mirror ends up holding.
+ * ================================================================ */
+int run_lobby_settings_scenario_unsafe_apply(void) {
+    ControlEvent in;
+    ClientSim   *cs;
+
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_SETTINGS;
+    strncpy(in.u.lobbySettings.mapName, "ScriptedMap",
+            sizeof(in.u.lobbySettings.mapName) - 1);
+    in.u.lobbySettings.lobbyGameType  = gameScripted;
+    in.u.lobbySettings.scenarioSource = lobbyScenarioMap;
+    strncpy(in.u.lobbySettings.scenarioFileName, "wave.lua",
+            sizeof(in.u.lobbySettings.scenarioFileName) - 1);
+    in.u.lobbySettings.scenarioUnsafe = true;
+
+    cs = fresh_client_sim();
+    UT_ASSERT(cs != NULL);
+    UT_ASSERT_MSG(!clientSimGetLobbyScenarioUnsafe(cs),
+                  "setup: a fresh client already reads the server as unsafe");
+    clientSimApplyControl(cs, &in);
+    UT_ASSERT_MSG(clientSimGetLobbyScenarioUnsafe(cs),
+                  "the unsafe flag did not reach the client");
+
+    {
+        ControlEvent plain;
+        memset(&plain, 0, sizeof(plain));
+        plain.type = CTRL_LOBBY_SETTINGS;
+        strncpy(plain.u.lobbySettings.mapName, "PlainMap",
+                sizeof(plain.u.lobbySettings.mapName) - 1);
+        plain.u.lobbySettings.lobbyGameType = gameTournament;
+        clientSimApplyControl(cs, &plain);
+        UT_ASSERT_MSG(!clientSimGetLobbyScenarioUnsafe(cs),
+                      "a plain map left the unsafe flag set");
+    }
+
+    {
+        ControlEvent out;
+        ClientSim   *wireCs;
+        memset(&out, 0, sizeof(out));
+        UT_ASSERT_MSG(codec_roundtrip(CTRL_LOBBY_SETTINGS, &in, &out) == 0,
+                      "the unsafe settings event did not survive the codec");
+        wireCs = fresh_client_sim();
+        UT_ASSERT(wireCs != NULL);
+        clientSimApplyControl(wireCs, &out);
+        UT_ASSERT_MSG(clientSimGetLobbyScenarioUnsafe(wireCs),
+                      "the unsafe flag off the wire did not reach the client");
+        clientSimDestroy(wireCs);
+    }
+
+    clientSimDestroy(cs);
+    return 0;
+}
+
+/* ================================================================
  * CTRL_LOBBY_TEAM_META — `in_use` is not on the wire; the decoder
  * reconstructs it from (nameLen>0 || color!=0 || pool!=0 ||
  * startSide!=0). Sub-cases exercise both sides of that branch, plus

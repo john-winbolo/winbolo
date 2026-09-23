@@ -2572,6 +2572,7 @@ static const LangEntry langTable[] = {
     {2619, "Opacity"},
     {2620, "Fades what the panel draws."},
     {2621, "Empty parts of it stay clear."},
+    {2622, "This server runs scenario scripts with the full Lua library and no limits."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

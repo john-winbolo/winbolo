@@ -89,6 +89,7 @@
 #include <SDL3/SDL.h>
 
 #include "global.h"
+#include "control_event.h"         /* ControlEvent, for the lobby case */
 #include "server_sim.h"
 #include "server_sim_internal.h"   /* sim->sim.callbacks, for the console
                                     * the print case reads */
@@ -2873,4 +2874,65 @@ static int sbUnsafeLoadsBytecode(void) {
 
 int run_scenario_sandbox_unsafe_loads_bytecode(void) {
     return sbUnsafeRun(sbUnsafeLoadsBytecode);
+}
+
+/* What the lobby settings say about the switch, filled by the sim the way
+ * every publish is. The sim cannot ask the host, so this is the attach's
+ * word carried through serverSimSetScenarioIdentity and nothing else.
+ *
+ * On with the switch on; off again after a detach, since a lobby with no
+ * script says nothing about scripts; and off on a second attach of the same
+ * script with the switch off, which is what says the first answer was the
+ * switch's and not something every attach sets. */
+static int sbUnsafeReachesTheLobby(void) {
+    static const char *const kMap = "scnsand_unsafe_lobby.map";
+    static const char *const kLua =
+        "scenario = { name = \"Lobby\", api = 1 }\n";
+    ServerSim    *sim;
+    ScenarioHost *h;
+    ControlEvent  evt;
+    char          err[512];
+
+    UT_ASSERT(sbPutText(kMap, kLua));
+    sim = sbSim();
+    UT_ASSERT(sim != NULL);
+
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the script was refused: %s", err);
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbySettingsEvent(sim, &evt);
+    UT_ASSERT_MSG(evt.u.lobbySettings.scenarioSource != lobbyScenarioNone,
+                  "setup: the attach left the lobby with no scenario");
+    UT_ASSERT_MSG(evt.u.lobbySettings.scenarioUnsafe,
+                  "the switch was on and the lobby settings say the server "
+                  "sandboxes its scripts");
+
+    scenarioHostDetach(h);
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbySettingsEvent(sim, &evt);
+    UT_ASSERT_MSG(!evt.u.lobbySettings.scenarioUnsafe,
+                  "the detach left the lobby saying the server runs scripts "
+                  "without the sandbox");
+
+    scenarioHostSetUnsafeScripts(false);
+    err[0] = '\0';
+    h = scenarioHostAttach(sim, kMap, err, sizeof(err));
+    UT_ASSERT_MSG(h != NULL, "the second attach was refused: %s", err);
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbySettingsEvent(sim, &evt);
+    UT_ASSERT_MSG(evt.u.lobbySettings.scenarioSource != lobbyScenarioNone,
+                  "setup: the second attach left the lobby with no scenario");
+    UT_ASSERT_MSG(!evt.u.lobbySettings.scenarioUnsafe,
+                  "the switch was off and the lobby settings say the server "
+                  "runs scripts without the sandbox");
+
+    scenarioHostDetach(h);
+    serverSimDestroy(sim);
+    sbDrop(kMap);
+    return 0;
+}
+
+int run_scenario_sandbox_unsafe_reaches_the_lobby(void) {
+    return sbUnsafeRun(sbUnsafeReachesTheLobby);
 }

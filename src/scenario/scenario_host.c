@@ -6722,7 +6722,8 @@ static void scnHandLobbyOver(ServerSim *sim, const ScenarioManifest *m,
        over. */
     serverSimSetScenarioIdentity(sim, source, m->name, fileName,
                                  m->description, m->lobby.extraTeams,
-                                 scnManifestKeepsWinCondition(m), m->bound);
+                                 scnManifestKeepsWinCondition(m), m->bound,
+                                 scenarioHostUnsafeScripts());
     /* And which rules it sets, so the lobby can say what it changes without
        anybody opening the file. The manifest's own pairs, whatever the round
        later makes of them: the table an author wrote is the question the
@@ -7756,7 +7757,7 @@ void scenarioHostDetach(ScenarioHost *h) {
         /* And what it was called, so a lobby left without a scenario says
            it has none. */
         serverSimSetScenarioIdentity(h->sim, lobbyScenarioNone, NULL, NULL,
-                                     NULL, false, false, false);
+                                     NULL, false, false, false, false);
         /* And an empty rules set, which is how a client is told the set it
            was shown has gone. Reached only where a host existed, so a map
            that never had a scenario publishes nothing at all rather than an

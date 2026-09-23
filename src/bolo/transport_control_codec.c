@@ -534,18 +534,18 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  * been. source(1) + extraTeams(1), then the three strings, each a one-byte
  * length and that many bytes with no terminator — the same shape the team
  * name and the bot name use in this file — then the base game type(1) and
- * last what kind of script it is(1) and whether it is bound to one map(1),
- * each appended behind what was already there so none of the offsets ahead
- * of it move.
+ * last what kind of script it is(1), whether it is bound to one map(1) and
+ * whether this server runs scripts without the sandbox(1), each appended
+ * behind what was already there so none of the offsets ahead of it move.
  *
- * Worst case measured: 1 + 1 + 64 + 128 + 256 + 1 + 1 + 1 = 453, on top of
- * LOBBY_SETTINGS_WIRE_PAYLOAD's 80, so 533 bytes against a 1021-byte
+ * Worst case measured: 1 + 1 + 64 + 128 + 256 + 1 + 1 + 1 + 1 = 454, on top
+ * of LOBBY_SETTINGS_WIRE_PAYLOAD's 80, so 534 bytes against a 1021-byte
  * segment. The two asserts behind the encoder are what hold that. */
 #define LOBBY_SETTINGS_WIRE_SCENARIO_MAX                                   \
     (1 + 1 + (1 + (LOBBY_SCENARIO_NAME_LEN - 1))                           \
            + (1 + (LOBBY_SCENARIO_FILE_LEN - 1))                           \
            + (1 + (LOBBY_SCENARIO_DESC_LEN - 1))                           \
-           + 1 + 1 + 1)
+           + 1 + 1 + 1 + 1)
 
 /* recipient: safe — ignored. */
 static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
@@ -655,6 +655,11 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
            script is removable offers a button that fails, where one that
            believes a removable script is bound offers nothing at all. */
         buf[pos++] = evt->u.lobbySettings.scenarioBound ? 1 : 0;
+        /* And whether this server runs scripts with the full library and no
+           limits: 1 for -allow-unsafe-scripts, 0 for the sandbox. Zero is
+           the sandbox because every server that predates this byte ran
+           one. */
+        buf[pos++] = evt->u.lobbySettings.scenarioUnsafe ? 1 : 0;
     }
     *outLen = pos;
     return ENCODE_OK;
@@ -2606,6 +2611,11 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
        as unbound. */
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.scenarioBound = buf[pos++] ? true : false;
+    }
+    /* Absent means the sender predates this field too, and false reads as
+       sandboxed, which every such server was. */
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.scenarioUnsafe = buf[pos++] ? true : false;
     }
     return true;
 }

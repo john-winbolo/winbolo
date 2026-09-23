@@ -93,10 +93,10 @@
 #define LS_SCN_FILE_LEN 8
 #define LS_SCN_DESC_LEN 8
 /* source(1) + extraTeams(1), the three strings, and behind them the base
- * game type(1), the kind(1) and bound(1). */
+ * game type(1), the kind(1), bound(1) and unsafe(1). */
 #define LS_SCRIPTED_BODY_LEN                                                \
     (LS_PLAIN_BODY_LEN + 1 + 1 + (1 + LS_SCN_NAME_LEN)                      \
-     + (1 + LS_SCN_FILE_LEN) + (1 + LS_SCN_DESC_LEN) + 1 + 1 + 1)
+     + (1 + LS_SCN_FILE_LEN) + (1 + LS_SCN_DESC_LEN) + 1 + 1 + 1 + 1)
 
 /* Distinct values throughout, so a pair of fields swapped between the event
  * and the bytes shows up as two mismatches rather than cancelling out. The
@@ -255,6 +255,9 @@ int run_lobby_scenario_settings_scripted_bytes(void) {
              sizeof(in.u.lobbySettings.scenarioDescription), "%s", LS_SCN_DESC);
     in.u.lobbySettings.scenarioExtraTeams = true;
     in.u.lobbySettings.scenarioBaseGame   = (uint8_t)gameStrictTournament;
+    /* True, so its byte is a 1 among the zeros of the two flags before it
+       and a byte written in the wrong place shows. */
+    in.u.lobbySettings.scenarioUnsafe     = true;
 
     UT_ASSERT(benc(&in, NULL, got, sizeof(got), &gotLen) == ENCODE_OK);
     UT_ASSERT_MSG(gotLen == LS_SCRIPTED_BODY_LEN,
@@ -296,6 +299,12 @@ int run_lobby_scenario_settings_scripted_bytes(void) {
                   "the bound flag should be at offset 107, not %u",
                   (unsigned)pos);
     want[pos++] = 0;
+    /* And the script mode behind bound: 1, since the event above says this
+       server runs its scripts without the sandbox. */
+    UT_ASSERT_MSG(pos == 108,
+                  "the unsafe flag should be at offset 108, not %u",
+                  (unsigned)pos);
+    want[pos++] = 1;
     UT_ASSERT_MSG(pos == LS_SCRIPTED_BODY_LEN,
                   "the case's own expected bytes came to %u, not %d",
                   (unsigned)pos, LS_SCRIPTED_BODY_LEN);
@@ -332,6 +341,8 @@ int run_lobby_scenario_settings_roundtrip(void) {
        byte leaves behind: a byte nobody wrote reads as a scenario, and this
        case has to fail if the encoder stopped writing it. */
     in.u.lobbySettings.scenarioKeepsWinCondition = true;
+    /* True for the same reason: a byte nobody wrote reads as sandboxed. */
+    in.u.lobbySettings.scenarioUnsafe = true;
 
     UT_ASSERT(benc(&in, NULL, body, sizeof(body), &bodyLen) == ENCODE_OK);
     memset(&out, 0, sizeof(out));
@@ -360,6 +371,25 @@ int run_lobby_scenario_settings_roundtrip(void) {
     UT_ASSERT_MSG(out.u.lobbySettings.scenarioKeepsWinCondition,
                   "the scenario kind did not survive: the mod flag came back "
                   "false");
+    UT_ASSERT_MSG(out.u.lobbySettings.scenarioUnsafe,
+                  "the script mode did not survive: the unsafe flag came back "
+                  "false");
+
+    /* The same body one byte short, as a sender that predates the unsafe
+       byte writes it. Everything up to bound still decodes, and the mode
+       reads as sandboxed. */
+    {
+        ControlEvent shortOut;
+        memset(&shortOut, 0, sizeof(shortOut));
+        UT_ASSERT_MSG(bdec(body, bodyLen - 1, &shortOut),
+                      "a body without the unsafe byte did not decode");
+        UT_ASSERT_MSG(!shortOut.u.lobbySettings.scenarioUnsafe,
+                      "a body without the unsafe byte decoded as unsafe");
+        UT_ASSERT_MSG(shortOut.u.lobbySettings.scenarioKeepsWinCondition,
+                      "a body without the unsafe byte lost the scenario kind "
+                      "ahead of it");
+    }
+
     /* And the fields ahead of the tail are still themselves. */
     UT_ASSERT(out.u.lobbySettings.lobbyLineOfSight == 1);
     UT_ASSERT(out.u.lobbySettings.lobbySmartPingsOff == true);
@@ -405,7 +435,7 @@ static ServerSim *lsLobbySim(void) {
 static void lsAttachIdentity(ServerSim *sim) {
     serverSimSetScenarioIdentity(sim, lobbyScenarioMap, LS_SCN_NAME,
                                  LS_SCN_FILE, LS_SCN_DESC, true,
-                                 false, false);
+                                 false, false, false);
 }
 
 /* Commit a map. Which map does not matter here — what matters is that the
@@ -459,7 +489,7 @@ int run_lobby_scenario_commit_sets_type(void) {
     UT_ASSERT(serverSimGetGameType(sim) == gameScripted);
 
     serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
-                                 false, false, false);
+                                 false, false, false, false);
     UT_ASSERT_MSG(lsCommitMap(sim), "the plain commit was refused");
     UT_ASSERT_MSG(serverSimGetGameType(sim) == gameTournament,
                   "a plain map gave back game type %d, wanted the host's "
@@ -542,7 +572,7 @@ int run_lobby_scenario_reset_keeps_rules(void) {
     /* And what the reset remembered as displaced is the operator's own type,
        which is what a plain map committed from here gives back. */
     serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
-                                 false, false, false);
+                                 false, false, false, false);
     UT_ASSERT_MSG(lsCommitMap(sim), "the plain commit was refused");
     UT_ASSERT_MSG(serverSimGetGameType(sim) == gameTournament,
                   "a plain map after the reset gave back game type %d, wanted "
@@ -597,7 +627,7 @@ int run_lobby_scenario_refuses_ranked(void) {
 
     /* With the scenario gone it is the host's again. */
     serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
-                                 false, false, false);
+                                 false, false, false, false);
     UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_RANKED, &on, 1),
                   "ranked stayed refused after the scenario went");
     UT_ASSERT(serverSimGetRanked(sim));
@@ -726,7 +756,7 @@ int run_lobby_scenario_refuses_game_type(void) {
 
     /* With the scenario gone the type is the host's again. */
     serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
-                                 false, false, false);
+                                 false, false, false, false);
     UT_ASSERT_MSG(serverSimApplyLobbySetting(sim, LST_GAME_TYPE, &types[1], 1),
                   "the game type stayed refused after the scenario went");
     UT_ASSERT(serverSimGetGameType(sim) == gameTournament);
@@ -767,7 +797,7 @@ int run_lobby_scenario_boot_sets_type(void) {
 
     /* And the give-back works from here as it does after a commit. */
     serverSimSetScenarioIdentity(sim, lobbyScenarioNone, NULL, NULL, NULL,
-                                 false, false, false);
+                                 false, false, false, false);
     UT_ASSERT_MSG(lsCommitMap(sim), "the plain commit was refused");
     UT_ASSERT_MSG(serverSimGetGameType(sim) == gameTournament,
                   "a plain commit after a boot gave back game type %d, "
@@ -816,7 +846,7 @@ int run_lobby_scenario_identity_strips_controls(void) {
 
     serverSimSetScenarioIdentity(sim, lobbyScenarioMap, "Wave\tDefense",
                                  "wave\vdefense.lua", kDesc, true, false,
-                                 false);
+                                 false, false);
     memset(&evt, 0, sizeof(evt));
     serverSimFillLobbySettingsEvent(sim, &evt);
 

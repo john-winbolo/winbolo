@@ -1049,6 +1049,12 @@ struct ServerSim {
          * changing the map. False while source is lobbyScenarioNone, for the
          * reason the flag above it is. */
         bool                bound;
+        /* True when this server runs every script with the full Lua library
+         * and no limits (-allow-unsafe-scripts). The lobby carries it to
+         * every client so a player can see it before they play. False while
+         * source is lobbyScenarioNone, for the reason the flags above it
+         * are. */
+        bool                unsafe;
     } scenarioIdentity;
     /* The rules the attached scenario's own manifest sets, as its author
      * wrote them, so the lobby can say what a mod changes without opening

@@ -4360,7 +4360,8 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
                                   const char *description,
                                   bool extraTeams,
                                   bool keepsWinCondition,
-                                  bool bound) {
+                                  bool bound,
+                                  bool unsafe) {
     if (sim == NULL) return;
     memset(&sim->scenarioIdentity, 0, sizeof(sim->scenarioIdentity));
     if (source == lobbyScenarioNone) {
@@ -4382,6 +4383,7 @@ void serverSimSetScenarioIdentity(ServerSim *sim,
     sim->scenarioIdentity.extraTeams        = extraTeams;
     sim->scenarioIdentity.keepsWinCondition = keepsWinCondition;
     sim->scenarioIdentity.bound             = bound;
+    sim->scenarioIdentity.unsafe            = unsafe;
     scnCopyIdentityText(sim->scenarioIdentity.name,
                         sizeof(sim->scenarioIdentity.name), name);
     scnCopyIdentityText(sim->scenarioIdentity.fileName,

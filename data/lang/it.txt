@@ -2180,6 +2180,7 @@ STR_SCNPANEL_SETTINGS_TITLE=Pannello dello scenario
 STR_SCNPANEL_OPACITY_LBL=Opacità
 STR_SCNPANEL_OPACITY_LINE1=Sfuma ciò che il pannello disegna.
 STR_SCNPANEL_OPACITY_LINE2=Le sue parti vuote restano trasparenti.
+STR_DLGLOBBY_SCENARIO_UNSAFE=Questo server esegue gli script degli scenari con la libreria Lua completa e senza limiti.
 STR_DLGLOBBY_SCENARIO_OFFERED=Questo server offre
 STR_DLGLOBBY_SCENARIO_ROUND=Questo round esegue
 STR_DLGLOBBY_SCENARIO_ADD=Aggiungi a questo round
