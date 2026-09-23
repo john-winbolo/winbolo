@@ -775,6 +775,15 @@ int run_maprotate_gameover_is_not_terminal(void);
 int run_maprotate_boot_does_not_rotate_while_empty(void);
 int run_maprotate_vote_return_is_not_terminal(void);
 
+/* Auto-close on an empty server (test_autoclose_empty_server.c). -autoclose
+ * closes the server once everyone has left, so the latch behind it must read
+ * only real arrivals — neither the no-lobby boot's own round start nor a bot
+ * whose runner fails to build may leave it set on a server nobody joined. */
+int run_autoclose_boot_does_not_close_while_empty(void);
+int run_autoclose_closes_after_last_player_leaves(void);
+int run_autoclose_lobby_boot_waits_for_a_joiner(void);
+int run_autoclose_failed_bot_add_leaves_check_armed(void);
+
 /* Round transition off the tick thread (test_round_transition_tick.c). The
  * boundary queues server/quit, the round-log upload and server/register for
  * the WinBolo.net worker and returns; the rekey and the rotation window wait

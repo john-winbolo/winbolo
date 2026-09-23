@@ -1099,12 +1099,17 @@ void serverInstanceTick(ServerSim *sim) {
     transportUdpServerCheckTimeouts(sim);
   }
 
-  /* Auto-close / empty-rotation check — works in any state. The shared
-   * serverSimCheckAutoClose latches hadPlayersEver and fires once the server
-   * empties after having had players. In map-rotation mode an empty server
-   * rotates to a fresh round instead of shutting down; otherwise -autoclose
-   * forces a no-lobby shutdown (no players to return to a lobby for). */
-  if ((sim->autoCloseOnEmpty || serverSimIsMapRotateEnabled(sim)) &&
+  /* Auto-close / empty-rotation check — works in any state but game over.
+   * The shared serverSimCheckAutoClose latches hadPlayersEver and fires once
+   * the server empties after having had players. In map-rotation mode an empty
+   * server rotates to a fresh round instead of shutting down; otherwise
+   * -autoclose forces a no-lobby shutdown (no players to return to a lobby
+   * for). Skipped in game over because the shutdown this triggers is already
+   * under way: the console loop only notices serverSimIsTerminalGameOver on
+   * its next poll, and without the skip every tick until then re-enters
+   * serverSimEnterGameOver and repeats its message. */
+  if (sim->state != serverStateGameOver &&
+      (sim->autoCloseOnEmpty || serverSimIsMapRotateEnabled(sim)) &&
       serverSimCheckAutoClose(sim)) {
     if (serverSimIsMapRotateEnabled(sim)) {
       serverSimConsoleMessage("Server empty - rotating to a new round.");
