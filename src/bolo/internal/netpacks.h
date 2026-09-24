@@ -471,8 +471,17 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
 #define PACKET_LOBBY_SET_BOT_BRAIN  166  /* { slot 1, pathLen 1, path N } */
 #define PACKET_LOBBY_SET_MAP        167  /* { pathLen 1, path N } */
 #define PACKET_LOBBY_MAP_LIST_REQ   168  /* { pathLen 1, path N } */
-#define PACKET_LOBBY_MAP_UPLOAD_BEGIN  169  /* { totalLen 4, nameLen 1, name N }
-                                              * the map bytes then stream over
+#define PACKET_LOBBY_MAP_UPLOAD_BEGIN  169  /* { kind 1, totalLen 4, nameLen 1,
+                                              *   name N, [bulkStartSeq 4] }
+                                              * kind is UPLOAD_KIND_MAP or
+                                              * UPLOAD_KIND_SCRIPT
+                                              * (upload_policy.h) and picks
+                                              * the cap (LOBBY_MAP_UPLOAD_MAX_
+                                              * BYTES or LOBBY_PACKAGE_UPLOAD_
+                                              * MAX_BYTES) and the name rule
+                                              * (.map, or .scenario / .lua;
+                                              * uploadFilenameIsSafe). The
+                                              * bytes then stream over
                                               * CHANNEL_BULK behind a bulk-
                                               * transfer stream header; 170 (the
                                               * old CHUNK carrier) is retired. */
@@ -506,7 +515,17 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
 #define PACKET_LOBBY_BOT_BRAIN_CHG  182  /* { slot 1, pathLen 1, path N } */
 #define PACKET_LOBBY_MAP_LIST_RSP   183  /* server reply to MAP_LIST_REQ */
 #define PACKET_LOBBY_MAP_UPLOAD_ACK 184  /* { status 1 } */
-#define PACKET_LOBBY_MAP_UPLOAD_DONE 185 /* { status 1, pathLen 1, path N } */
+#define PACKET_LOBBY_MAP_UPLOAD_DONE 185 /* map: { status 1, pathLen 1, path N }
+                                          * script (the BEGIN said
+                                          * UPLOAD_KIND_SCRIPT): { status 1,
+                                          *   reason 1, a 2 BE, b 2 BE,
+                                          *   textLen 1, text N }
+                                          * reason is SCRIPT_REFUSE_*
+                                          * (upload_policy.h) with its two
+                                          * numbers, 0 when taken; text is
+                                          * the file's name when taken and
+                                          * the operator's line otherwise,
+                                          * never shown to a player. */
 #define PACKET_LOBBY_MAP_SEARCH_RSP 186  /* server reply to MAP_SEARCH_REQ */
 #define PACKET_LOBBY_SYNC_COMPLETE  180  /* server -> joiner: final event of the
                                           * join sync replay; marks the roster
@@ -783,7 +802,15 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                                 nameLen 1, name N,
                                                 descLen 1, desc D,
                                                 maxPlayers 1, bots 1,
-                                                bound 1 }
+                                                bound 1,
+                                                keepsWinCondition 1,
+                                                source 1,
+                                                workshopId 8 BE }
+                                              source is SCN_DIR_SOURCE_*
+                                              (0 server, 1 upload,
+                                              2 Workshop); workshopId is 0
+                                              for none. An entry cut short
+                                              is a malformed chunk.
                                               Entries are packed until the next
                                               will not fit in UDP_MAX_PAYLOAD;
                                               the last chunk sets final, and an
@@ -962,6 +989,8 @@ static inline bool lobbyBotNameAcceptable(
 #define LOBBY_REJECT_UPLOAD_DISABLED   5   /* host disabled map uploads */
 #define LOBBY_REJECT_UPLOAD_LIMIT_HIT  6   /* per-map storage cap reached */
 #define LOBBY_REJECT_COOLDOWN          7   /* per-client request cooldown active */
+#define LOBBY_REJECT_NAME_TAKEN        8   /* a script of that name is in a
+                                            * higher-precedence directory */
 
 /* Alliance update event types */
 #define ALLIANCE_EVENT_REQUEST  0

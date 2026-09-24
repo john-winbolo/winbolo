@@ -505,28 +505,30 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  *   [startCount 1] [mapSkipAvailable 1] [netStat 1] [hasLobby 1]
  *   [openHost 1] [autoLockOnGameStart 1] [serverLocks 4 BE]
  *   [ranked 1] [allowNewPlayers 1] [wbnAvailable 1] [uploadPolicy 1]
- *   [lobbyStartDelay 4 BE] [hostSlot 1]
+ *   [scriptUploadPolicy 1] [lobbyStartDelay 4 BE] [hostSlot 1]
  *   [pillView 1] [baseView 1] [allyView 1]
  *   [pillDecay 2 BE] [baseDecay 2 BE] [allyDecay 2 BE]
  *   [classicMode 1] [alliesInTrees 1] [voiceMode 1]
  *   [overviewWindow 1] [lineOfSight 1] [smartPingsOff 1] [modsOff 1]
  *
- * The trailing bytes are appended after the base layout so the
- * existing fields keep their offsets. The decoder reads each one
- * optionally and leaves zero-init defaults in place when the sender
- * omits them, which keeps old/new codec pairs interoperable.
+ * A new field goes where it belongs in the layout, and every field
+ * after it moves; the sender and the receiver are built from the same
+ * source. The decoder still reads each trailing field only when the
+ * body is long enough to hold it, and leaves one it does not reach at
+ * its default, so a short body is never read past its end.
  * serverLocks is packed big-endian with packU32, matching every other
  * multi-byte field in the codec. */
 #define LOBBY_SETTINGS_WIRE_PAYLOAD_BASE \
     (MAP_STR_SIZE + 1 + 1 + 1 + 4 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 4)
 /* Trailing optional tail: ranked(1) + allowNewPlayers(1) + wbnAvailable(1)
- * + uploadPolicy(1) + lobbyStartDelay(4) + hostSlot(1) + three view
+ * + uploadPolicy(1) + scriptUploadPolicy(1) + lobbyStartDelay(4)
+ * + hostSlot(1) + three view
  * policies(3) + three view decay seconds(6) + classicMode(1)
  * + alliesInTrees(1) + voiceMode(1) + overviewWindow(1) + lineOfSight(1)
  * + smartPingsOff(1) + modsOff(1). */
 #define LOBBY_SETTINGS_WIRE_PAYLOAD \
-    (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 4 + 1 + 3 + 6 + 1 + 1 + 1 + 1 + 1 \
-     + 1 + 1)
+    (LOBBY_SETTINGS_WIRE_PAYLOAD_BASE + 4 + 1 + 4 + 1 + 3 + 6 + 1 + 1 + 1 + 1 \
+     + 1 + 1 + 1)
 
 /* The scenario tail, written only when the lobby has one. A lobby with no
  * scenario writes exactly LOBBY_SETTINGS_WIRE_PAYLOAD bytes and nothing
@@ -539,7 +541,7 @@ static EncodeResult encodeSpectatorChatBody(const ControlEvent *evt,
  * behind what was already there so none of the offsets ahead of it move.
  *
  * Worst case measured: 1 + 1 + 64 + 128 + 256 + 1 + 1 + 1 + 1 = 454, on top
- * of LOBBY_SETTINGS_WIRE_PAYLOAD's 80, so 534 bytes against a 1021-byte
+ * of LOBBY_SETTINGS_WIRE_PAYLOAD's 81, so 535 bytes against a 1021-byte
  * segment. The two asserts behind the encoder are what hold that. */
 #define LOBBY_SETTINGS_WIRE_SCENARIO_MAX                                   \
     (1 + 1 + (1 + (LOBBY_SCENARIO_NAME_LEN - 1))                           \
@@ -595,6 +597,7 @@ static EncodeResult encodeLobbySettingsBody(const ControlEvent *evt,
     buf[pos++] = evt->u.lobbySettings.lobbyAllowNewPlayers ? 1 : 0;
     buf[pos++] = evt->u.lobbySettings.lobbyWbnAvailable ? 1 : 0;
     buf[pos++] = (uint8_t)evt->u.lobbySettings.uploadPolicy;
+    buf[pos++] = (uint8_t)evt->u.lobbySettings.scriptUploadPolicy;
     packU32(buf + pos, (uint32_t)evt->u.lobbySettings.lobbyStartDelay);
     pos += 4;
     buf[pos++] = evt->u.lobbySettings.hostSlot;
@@ -2495,6 +2498,11 @@ static bool decodeLobbySettingsBody(const uint8_t *buf, size_t len,
     if (len >= pos + 1) {
         outEvt->u.lobbySettings.uploadPolicy = (UploadPolicy)buf[pos++];
     }
+    outEvt->u.lobbySettings.scriptUploadPolicy = SCRIPT_UPLOAD_ALLOW;
+    if (len >= pos + 1) {
+        outEvt->u.lobbySettings.scriptUploadPolicy =
+            (ScriptUploadPolicy)buf[pos++];
+    }
     if (len >= pos + 4) {
         outEvt->u.lobbySettings.lobbyStartDelay = (int32_t)unpackU32(buf + pos);
         pos += 4;
@@ -3257,6 +3265,7 @@ static bool decodeScenarioRulesBody(const uint8_t *buf, size_t len,
 /* CTRL_LOBBY_SCRIPT_LIST body:
  *   [final 1] [count 1] then count entries, each
  *   [flags 1] [fileLen 1] [file N] [nameLen 1] [name M]
+ *   [source 1] [workshopId 8 BE]
  *
  * count is the entries in this chunk, never the whole list; final is 1 on
  * the last chunk of a list and 0 on every other. An empty list is one chunk
@@ -3274,17 +3283,18 @@ static bool decodeScenarioRulesBody(const uint8_t *buf, size_t len,
  * name the decoder cut short would name a different file to the one the
  * host picked, and the client would then ask the directory for it. */
 #define LOBBY_SCRIPT_LIST_HDR_LEN 2
-/* One entry at its widest: the flags byte, the two length bytes, and both
- * strings at one short of their buffers. 1 + 1 + 127 + 1 + 63 = 193. */
+/* One entry at its widest: the flags byte, the two length bytes, both
+ * strings at one short of their buffers, the source byte and the Workshop
+ * id. 1 + 1 + 127 + 1 + 63 + 1 + 8 = 202. */
 #define LOBBY_SCRIPT_ENTRY_MAX                                             \
     (1 + 1 + (LOBBY_SCENARIO_FILE_LEN - 1) + 1 +                           \
-     (LOBBY_SCENARIO_NAME_LEN - 1))
+     (LOBBY_SCENARIO_NAME_LEN - 1) + 1 + 8)
 
 /* Where LOBBY_SCRIPT_LIST_CHUNK is really held. control_event.h picks 5 by
  * this arithmetic and cannot see channel_mux.h to check it; this file can.
  * The segment is the ceiling delivery applies: a body past CONTROL_BODY_MAX
  * is logged and dropped in udp_server_control.c with nothing at all visible
- * to the client, so it is asserted first. 2 + 5 * 193 = 967 against 1021. */
+ * to the client, so it is asserted first. 2 + 5 * 202 = 1012 against 1021. */
 BOLO_STATIC_ASSERT(
     LOBBY_SCRIPT_LIST_HDR_LEN +
         LOBBY_SCRIPT_LIST_CHUNK * LOBBY_SCRIPT_ENTRY_MAX <= CONTROL_BODY_MAX,
@@ -3299,8 +3309,8 @@ BOLO_STATIC_ASSERT(
  * chosen against. Every byte the union grows is paid LOBBY_CHAT_BUFFER_MAX
  * times per ServerSim, so a variant wider than the widest one already there
  * is a cost that shows up in no profile. CTRL_ROUND_STATS is the widest;
- * five entries is 972 bytes against its 1108, so this variant is free. Six
- * would be 1166 and would start charging for it: the segment refuses six
+ * five entries is 1048 bytes against its 1108, so this variant is free. Six
+ * would be 1256 and would start charging for it: the segment refuses six
  * first, and this records what the second reason was. */
 BOLO_STATIC_ASSERT(
     sizeof(((ControlEvent *)0)->u.lobbyScriptList) <=
@@ -3310,6 +3320,17 @@ BOLO_STATIC_ASSERT(
 /* Bit 0 keeps the win condition, bit 1 is bound to a map. */
 #define LOBBY_SCRIPT_FLAG_KEEPS_WIN 0x01u
 #define LOBBY_SCRIPT_FLAG_BOUND     0x02u
+
+/* A Workshop id, most significant byte first, as two of the 32-bit halves
+   every other field in this file is written with. */
+static void packU64(uint8_t *buf, uint64_t value) {
+    packU32(buf, (uint32_t)(value >> 32));
+    packU32(buf + 4, (uint32_t)(value & 0xFFFFFFFFu));
+}
+
+static uint64_t unpackU64(const uint8_t *buf) {
+    return ((uint64_t)unpackU32(buf) << 32) | (uint64_t)unpackU32(buf + 4);
+}
 
 /* recipient: safe, ignored. The list a lobby is running is public. */
 static EncodeResult encodeLobbyScriptListBody(const ControlEvent *evt,
@@ -3337,7 +3358,7 @@ static EncodeResult encodeLobbyScriptListBody(const ControlEvent *evt,
         size_t  nameLen = strnlen(e->name, LOBBY_SCENARIO_NAME_LEN - 1);
         uint8_t flags   = 0;
 
-        if (bufCap < pos + 1 + 1 + fileLen + 1 + nameLen) {
+        if (bufCap < pos + 1 + 1 + fileLen + 1 + nameLen + 1 + 8) {
             return ENCODE_OVERFLOW;
         }
         if (e->keepsWinCondition) flags |= LOBBY_SCRIPT_FLAG_KEEPS_WIN;
@@ -3353,6 +3374,9 @@ static EncodeResult encodeLobbyScriptListBody(const ControlEvent *evt,
             memcpy(buf + pos, e->name, nameLen);
             pos += nameLen;
         }
+        buf[pos++] = e->source;
+        packU64(buf + pos, e->workshopId);
+        pos += 8;
     }
     *outLen = pos;
     return ENCODE_OK;
@@ -3403,6 +3427,11 @@ static bool decodeLobbyScriptListBody(const uint8_t *buf, size_t len,
         if (nameLen > 0) memcpy(e->name, buf + pos, nameLen);
         e->name[nameLen] = '\0';
         pos += nameLen;
+
+        if (len < pos + 1 + 8) return false;
+        e->source     = buf[pos++];
+        e->workshopId = unpackU64(buf + pos);
+        pos += 8;
     }
     /* Exactly the entries it said it had. Trailing bytes mean the sender and
        this reader disagree about the entry shape, and a list read off a body

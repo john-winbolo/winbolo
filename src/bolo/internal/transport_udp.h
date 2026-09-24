@@ -317,6 +317,16 @@ void transportUdpClientSendLobbyMapPreviewRequest(Transport *t,
                                                   const char *relPath);
 void transportUdpClientSendLobbyMapUploadBegin(Transport *t, uint32_t totalLen,
                                                const char *name);
+/* Writes the body of PACKET_LOBBY_MAP_UPLOAD_BEGIN (everything after the
+ * packet header): { kind 1, totalLen 4, nameLen 1, name N,
+ * bulkStartSeq 4 }. A name over 255 bytes is cut to 255. Returns the
+ * body length, or 0 if `cap` is too small. The client's BEGIN sender
+ * uses it; exposed so a unit test can hold the bytes to hand-written
+ * hex. */
+size_t transportUdpClientBuildUploadBeginBody(uint8_t *out, size_t cap,
+                                              uint8_t kind, uint32_t totalLen,
+                                              const char *name,
+                                              uint32_t bulkStartSeq);
 /* Pre-upload optimisation: try to skip the byte transfer if the server
  * already has an identical file at relPath (relative to data/maps/).
  * Server replies PACKET_LOBBY_MAP_UPLOAD_DONE on match, or
@@ -341,15 +351,23 @@ bool transportUdpClientStartLobbyMapUploadFromBytes(Transport *t,
                                                      const uint8_t *buf,
                                                      size_t len,
                                                      const char *mapName);
+/* The same for a .scenario or .lua (UPLOAD_KIND_SCRIPT). Returns false,
+ * sending nothing, when the file is missing, empty, over
+ * LOBBY_PACKAGE_UPLOAD_MAX_BYTES, or not named .scenario / .lua. No
+ * USE_LOCAL step: a script has no data/maps twin. The server applies
+ * the full name rule. */
+bool transportUdpClientStartLobbyScriptUpload(Transport *t,
+                                              const char *localFilePath);
 
 /* Current upload progress as 0..100 (bytesSent / fileLen * 100). */
 uint8_t transportUdpClientGetLobbyMapUploadProgressPercent(Transport *t);
 
 /* Server-side: validates a length-prefixed upload filename against the
- * reserved-name / control-char / suffix-cap rules. Exposed for unit
- * coverage of the validation matrix; production callers live inside
- * transport_udp_server.c. */
-bool uploadFilenameIsSafe(const char *name, size_t nameLen);
+ * reserved-name / control-char / suffix-cap rules for the upload's kind
+ * (UPLOAD_KIND_MAP: .map; UPLOAD_KIND_SCRIPT: .scenario or .lua).
+ * Exposed for unit coverage of the validation matrix; production
+ * callers live in the server transport. */
+bool uploadFilenameIsSafe(uint8_t kind, const char *name, size_t nameLen);
 
 /* Client-side: parsers for the chunked MAP_LIST_RSP / MAP_SEARCH_RSP
  * responses. The dispatcher in transport_udp_client.c calls these per

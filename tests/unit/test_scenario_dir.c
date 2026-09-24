@@ -41,8 +41,9 @@
  * run_scenario_dir_entry_roundtrip     — a list encoded into the RSP shape
  *                                        matches committed golden bytes and
  *                                        decodes back to the same entries,
- *                                        including one whose description fills
- *                                        its length byte
+ *                                        source and Workshop id included, and
+ *                                        one whose description fills its
+ *                                        length byte
  * run_scenario_dir_chunk_not_in_flight  — a final chunk delivered twice does
  *                                        not double the list, a chunk with
  *                                        nothing asked for is dropped, and a
@@ -677,19 +678,22 @@ int run_scenario_dir_merges_shipped_mods(void) {
 
 /* ── 7. The chunk, byte for byte and back ─────────────────────────── */
 
-/* The two entries the golden bytes below describe. */
+/* The two entries the golden bytes below describe. The first says a player
+ * uploaded it and names a Workshop item whose eight bytes all differ, so a
+ * byte written in the wrong place or order shows. */
 #define SD_E0_FILE "alpha.scenario"
 #define SD_E0_NAME "Alpha"
 #define SD_E0_DESC "First"
 #define SD_E1_FILE "beta.lua"
 #define SD_E1_NAME "Beta"
 #define SD_E1_DESC "Second"
+#define SD_E0_WORKSHOP_ID 0x0102030405060708ull
 
 /* What udpServerPackScenarioListChunk must write after the 8-byte packet
  * header for those two, in wire order:
  *   [final][count] then per entry
  *   [fileLen][file][nameLen][name][descLen][desc][maxPlayers][bots][bound]
- *   [keepsWinCondition]
+ *   [keepsWinCondition][source][workshopId 8, most significant first]
  *
  * Committed rather than computed: a round trip passes even when both halves
  * change together, and these bytes are what catches a wire change nobody
@@ -700,10 +704,14 @@ static const uint8_t kSdGolden[] = {
     0x05, 'A','l','p','h','a',
     0x05, 'F','i','r','s','t',
     0x08, 0x03, 0x00, 0x01,   /* maxPlayers, bots, bound, keepsWinCondition */
+    0x01,                                   /* source = upload           */
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,   /* workshopId      */
     0x08, 'b','e','t','a','.','l','u','a',
     0x04, 'B','e','t','a',
     0x06, 'S','e','c','o','n','d',
-    0x00, 0x00, 0x01, 0x00    /* maxPlayers, bots, bound, keepsWinCondition */
+    0x00, 0x00, 0x01, 0x00,   /* maxPlayers, bots, bound, keepsWinCondition */
+    0x00,                                   /* source = server           */
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00    /* workshopId = 0  */
 };
 
 static void sdFill(ScnDirEntry *e, const char *file, const char *name,
@@ -745,6 +753,8 @@ int run_scenario_dir_entry_roundtrip(void) {
     int         i;
 
     sdFill(&entries[0], SD_E0_FILE, SD_E0_NAME, SD_E0_DESC, 8, 3, false, true);
+    entries[0].source     = SCN_DIR_SOURCE_UPLOAD;
+    entries[0].workshopId = SD_E0_WORKSHOP_ID;
     sdFill(&entries[1], SD_E1_FILE, SD_E1_NAME, SD_E1_DESC, 0, 0, true, false);
 
     /* ── The golden bytes ─────────────────────────────────────────── */
@@ -795,6 +805,22 @@ int run_scenario_dir_entry_roundtrip(void) {
                   "entry 1 read as unbound, and the fixture says bound");
     UT_ASSERT_MSG(!cs->lobbyScenarioListKeepsWin[1],
                   "entry 1 read as a mod, and the fixture says a scenario");
+    UT_ASSERT_MSG(clientSimGetLobbyScenarioListSource(cs, 0) ==
+                      SCN_DIR_SOURCE_UPLOAD,
+                  "entry 0's source read as %u",
+                  (unsigned)clientSimGetLobbyScenarioListSource(cs, 0));
+    UT_ASSERT_MSG(clientSimGetLobbyScenarioListWorkshopId(cs, 0) ==
+                      SD_E0_WORKSHOP_ID,
+                  "entry 0's Workshop id read as 0x%016llX",
+                  (unsigned long long)
+                      clientSimGetLobbyScenarioListWorkshopId(cs, 0));
+    UT_ASSERT(clientSimGetLobbyScenarioListSource(cs, 1) ==
+              SCN_DIR_SOURCE_SERVER);
+    UT_ASSERT(clientSimGetLobbyScenarioListWorkshopId(cs, 1) == 0);
+    /* Out of range answers the server's own and no item. */
+    UT_ASSERT(clientSimGetLobbyScenarioListSource(cs, 2) ==
+              SCN_DIR_SOURCE_SERVER);
+    UT_ASSERT(clientSimGetLobbyScenarioListWorkshopId(cs, -1) == 0);
     /* Read back through the public accessors too, which is how a chooser will
        see it. */
     UT_ASSERT(strcmp(clientSimGetLobbyScenarioListFile(cs, 0),

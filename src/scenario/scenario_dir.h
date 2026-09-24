@@ -87,6 +87,22 @@ int scnDirListDetails(const char *dir, ScnDirEntry *out,
                       ScnDirDetails *details, int max);
 
 /*********************************************************
+ *NAME:          scnDirReadPackage
+ *PURPOSE:
+ *  The manifest of the .scenario package at path, read the
+ *  way the listing reads one: the manifest.json straight out
+ *  of the container, with no Lua run. False for a file that
+ *  cannot be read, is over the package cap, is not a
+ *  container, or carries a manifest that will not parse; the
+ *  reason goes to the console in one line.
+ *
+ *  The listing is one caller. The other is the check an
+ *  uploaded package passes before it lands, so what is taken
+ *  is what the listing would offer.
+ *********************************************************/
+bool scnDirReadPackage(const char *path, ScenarioManifest *out);
+
+/*********************************************************
  *NAME:          scnDirEntryFromManifest
  *PURPOSE:
  *  One row of the list, filled from a manifest already in

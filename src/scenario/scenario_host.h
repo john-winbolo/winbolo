@@ -438,6 +438,51 @@ void scenarioHostRegisterMapScripted(ServerSim *sim);
 void scenarioHostRegisterScenarioLister(ServerSim *sim);
 
 /*********************************************************
+ *NAME:          scenarioHostListLocalScripts
+ *PURPOSE:
+ *  The scripts on this computer: the player's own Mods
+ *  directory under SDL_GetPrefPath (WB_MOD_DIR_USER in the
+ *  tests). What the lobby's Mods chooser offers to send to
+ *  a server that does not have them.
+ *
+ *  Needs no sim, because a remote client has none, and reads
+ *  through the same modify-time cache a server's listing
+ *  does, so a loose script's VM boots once and not on every
+ *  call. Still a directory read: call it when the chooser
+ *  opens or a transfer ends, never per frame.
+ *
+ *  Every row says SERVER_SCENARIO_SOURCE_SERVER and
+ *  workshopId 0. File-name order, case-insensitive.
+ *
+ *ARGUMENTS:
+ *  out - Rows written here
+ *  max - How many out holds
+ *
+ *RETURNS:
+ *  How many rows were written; 0 for a directory that is
+ *  missing or empty.
+ *********************************************************/
+int scenarioHostListLocalScripts(ServerScenarioEntry *out, int max);
+
+/*********************************************************
+ *NAME:          scenarioHostLocalScriptPath
+ *PURPOSE:
+ *  The full path of a file scenarioHostListLocalScripts
+ *  listed, so the chooser can hand it to the upload.
+ *
+ *ARGUMENTS:
+ *  file   - A file name as a row gave it; a name with a
+ *           directory separator in it is refused
+ *  out    - The path is written here
+ *  outLen - The size of out
+ *
+ *RETURNS:
+ *  True when one of those directories holds the file and
+ *  its path fits out. False otherwise, with out "".
+ *********************************************************/
+bool scenarioHostLocalScriptPath(const char *file, char *out, size_t outLen);
+
+/*********************************************************
  *NAME:          scenarioHostAttach
  *PURPOSE:
  *  Finds the map's script, reads it, boots a VM, runs its

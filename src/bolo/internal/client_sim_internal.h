@@ -390,6 +390,7 @@ struct ClientSim {
     uint8_t          lobbyBaseCount;
     uint8_t          lobbyStartCount;
     UploadPolicy     uploadPolicy;      /* server map-upload policy; ALLOW until first event */
+    ScriptUploadPolicy scriptUploadPolicy; /* server script-upload policy; ALLOW until first event */
     /* Server visibility rules, indexed by ViewCategory. Raw mirror of the
      * lobby-settings event; until one lands these hold the same three a
      * server starts with (clientSimCreate), so what the overview draws
@@ -678,6 +679,10 @@ struct ClientSim {
        unbound scenario are both unbound, and a chooser that sorts the two
        into different columns needs the kind as well. */
     bool     lobbyScenarioListKeepsWin[LOBBY_SCENARIO_LIST_MAX];
+    /* Where the server got the file (SERVER_SCENARIO_SOURCE_*), and the
+       Workshop item it came from, 0 for none. */
+    uint8_t  lobbyScenarioListSource[LOBBY_SCENARIO_LIST_MAX];
+    uint64_t lobbyScenarioListWorkshopId[LOBBY_SCENARIO_LIST_MAX];
     bool     lobbyScenarioListReady;    /* true once a response arrives */
     bool     lobbyScenarioListInFlight; /* true after send, false on response */
     /* False until the first chunk of the response in flight lands, which is
@@ -783,7 +788,18 @@ struct ClientSim {
      * 4=rejected. */
     uint8_t  lobbyMapUploadStatus;
     uint8_t  lobbyMapUploadRejectCode; /* server's reject byte, if any */
-    char     lobbyMapUploadFinalPath[256]; /* server-relative path */
+    char     lobbyMapUploadFinalPath[256]; /* server-relative path, or the
+                                            * server's reason on a refused
+                                            * script */
+    /* UPLOAD_KIND_MAP / _SCRIPT: which upload the three fields above
+     * describe. Set when an upload starts; zero (MAP) before any. */
+    uint8_t  lobbyUploadKind;
+    /* Why the server refused a script (SCRIPT_REFUSE_*) and the two numbers
+     * that reason carries, off the DONE reply. NONE and zeros while an
+     * upload runs, after one the server took, and for a map. */
+    uint8_t  lobbyScriptRefuseReason;
+    int32_t  lobbyScriptRefuseA;
+    int32_t  lobbyScriptRefuseB;
     /* Set by the PACKET_LOBBY_MAP_USE_LOCAL_NACK handler when the
      * server can't fulfil the MD5-skip-upload shortcut. The Upload
      * tab's pump loop notices this on the next frame and falls back
@@ -866,6 +882,8 @@ struct ClientSim {
     char     lobbyScriptNames[LOBBY_SCRIPT_LIST_MAX][LOBBY_SCENARIO_NAME_LEN];
     bool     lobbyScriptKeepsWin[LOBBY_SCRIPT_LIST_MAX];
     bool     lobbyScriptBound[LOBBY_SCRIPT_LIST_MAX];
+    uint8_t  lobbyScriptSource[LOBBY_SCRIPT_LIST_MAX];
+    uint64_t lobbyScriptWorkshopId[LOBBY_SCRIPT_LIST_MAX];
     int      lobbyScriptPendingCount;
     LobbyScriptEntry lobbyScriptPending[LOBBY_SCRIPT_LIST_MAX];
     /* Set when a run of chunks is thrown away for overrunning the cap, and

@@ -2770,6 +2770,7 @@ double clientSimGetScenarioRuleValue(const ClientSim *cs, int idx) {
 bool     clientSimGetLobbyWbnAvailable(const ClientSim *cs)          { return cs ? cs->lobbyWbnAvailable : false; }
 uint32_t clientSimGetLobbyServerLocks(const ClientSim *cs)           { return cs->lobbyServerLocks; }
 UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs)           { return cs ? cs->uploadPolicy : UPLOAD_POLICY_ALLOW; }
+ScriptUploadPolicy clientSimGetScriptUploadPolicy(const ClientSim *cs) { return cs ? cs->scriptUploadPolicy : SCRIPT_UPLOAD_ALLOW; }
 
 /* The NULL-cs answers here and in the two getters below are meaning B in
  * view_policy.h — what a reader assumes when nothing named a policy —
@@ -2950,6 +2951,17 @@ bool clientSimGetLobbyScenarioListKeepsWinCondition(const ClientSim *cs,
   if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return false;
   return cs->lobbyScenarioListKeepsWin[idx];
 }
+uint8_t clientSimGetLobbyScenarioListSource(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) {
+    return SERVER_SCENARIO_SOURCE_SERVER;
+  }
+  return cs->lobbyScenarioListSource[idx];
+}
+uint64_t clientSimGetLobbyScenarioListWorkshopId(const ClientSim *cs,
+                                                 int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return 0;
+  return cs->lobbyScenarioListWorkshopId[idx];
+}
 /* The lobby's ordered script list: what the host has picked, in the order
  * the round will load it. Entry 0 is the script the round is decided by and
  * is the same file the attached-scenario accessors describe; the entries
@@ -2974,6 +2986,16 @@ bool clientSimGetLobbyScriptKeepsWinCondition(const ClientSim *cs, int i) {
 bool clientSimGetLobbyScriptBound(const ClientSim *cs, int i) {
   if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) return false;
   return cs->lobbyScriptBound[i];
+}
+uint8_t clientSimGetLobbyScriptSource(const ClientSim *cs, int i) {
+  if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) {
+    return SERVER_SCENARIO_SOURCE_SERVER;
+  }
+  return cs->lobbyScriptSource[i];
+}
+uint64_t clientSimGetLobbyScriptWorkshopId(const ClientSim *cs, int i) {
+  if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) return 0;
+  return cs->lobbyScriptWorkshopId[i];
 }
 uint32_t clientSimGetLobbyScriptSeq(const ClientSim *cs) {
   return cs ? cs->lobbyScriptSeq : 0;
@@ -3414,6 +3436,21 @@ bool specSeedDecodeInfo(const uint8_t *seed, size_t seedLen, SpecSeedInfo *out) 
 uint8_t  clientSimGetLobbyMapUploadStatus(const ClientSim *cs)     { return cs->lobbyMapUploadStatus; }
 uint8_t  clientSimGetLobbyMapUploadRejectCode(const ClientSim *cs) { return cs->lobbyMapUploadRejectCode; }
 const char *clientSimGetLobbyMapUploadFinalPath(const ClientSim *cs){ return cs->lobbyMapUploadFinalPath; }
+
+uint8_t clientSimGetLobbyUploadKind(const ClientSim *cs) {
+  if (cs == NULL) return UPLOAD_KIND_MAP;
+  return cs->lobbyUploadKind;
+}
+
+uint8_t clientSimGetLobbyScriptRefuseReason(const ClientSim *cs) {
+  if (cs == NULL) return SCRIPT_REFUSE_NONE;
+  return cs->lobbyScriptRefuseReason;
+}
+
+int32_t clientSimGetLobbyScriptRefuseNumber(const ClientSim *cs, int which) {
+  if (cs == NULL) return 0;
+  return which == 0 ? cs->lobbyScriptRefuseA : cs->lobbyScriptRefuseB;
+}
 
 bool clientSimConsumeUseLocalFallback(ClientSim *cs) {
   if (!cs || !cs->lobbyMapUseLocalNeedsFallback) return false;

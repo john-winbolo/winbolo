@@ -55,6 +55,7 @@ add_library(bolo_static STATIC
     labels.c
     lgm.c
     lobby_bot_pools.c
+    lobby_script_rows.c
     log.c
     mapgen.c
     mapgen_maze.c

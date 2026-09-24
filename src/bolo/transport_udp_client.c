@@ -45,6 +45,7 @@
 #include "wbn_key_codec.h"
 #include "bolo_map_validate.h"
 #include "wire_limits.h"
+#include "upload_policy.h"             /* UPLOAD_KIND_MAP / _SCRIPT */
 #include "../common/md5.h"
 #include "../gui/lang.h"
 #include "../gui/winbolo.h"
@@ -336,6 +337,7 @@ typedef struct {
     uint32_t  uploadOffset;               /* blob bytes handed to the channel,
                                            * for the progress-percent getter   */
     char      uploadName[128];            /* wire-side filename announced to server */
+    uint8_t   uploadKind;                 /* UPLOAD_KIND_MAP / _SCRIPT, sent in BEGIN */
     BulkSender uploadSend;                /* feeds the map bytes onto CHANNEL_BULK */
     bool      uploadBulkStarted;          /* bulkSenderBegin issued post-ACK */
     bool      uploadFedDone;              /* whole blob handed to the channel */
@@ -933,6 +935,7 @@ static bool udpClientReadLenStr(const uint8_t *buf, int len, int *pos,
  *   [header 8] [final 1] [count 1]
  *   per entry: [fileLen 1][file M][nameLen 1][name N][descLen 1][desc D]
  *              [maxPlayers 1][bots 1][bound 1][keepsWinCondition 1]
+ *              [source 1][workshopId 8 BE]
  *
  * No path, unlike the map list: the scenarios directory is flat, so there is
  * nothing to ask about and nothing to recognise a stale response by. The
@@ -1004,12 +1007,12 @@ void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
             !udpClientReadLenStr(buf, len, &pos, desc, sizeof(desc))) {
             break;
         }
-        if (pos + 4 > len) break;
+        if (pos + 4 + 9 > len) break;
         /* Read into locals first, so a chunk that arrives past the cap is
            still walked to its end rather than leaving the position stranded
            mid-entry. */
         if (cs->lobbyScenarioListCount >= LOBBY_SCENARIO_LIST_MAX) {
-            pos += 4;
+            pos += 4 + 9;
             continue;
         }
         idx = cs->lobbyScenarioListCount++;
@@ -1023,6 +1026,11 @@ void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
         cs->lobbyScenarioListBots[idx]       = buf[pos++];
         cs->lobbyScenarioListBound[idx]      = buf[pos++] ? true : false;
         cs->lobbyScenarioListKeepsWin[idx]   = buf[pos++] ? true : false;
+        cs->lobbyScenarioListSource[idx]     = buf[pos++];
+        cs->lobbyScenarioListWorkshopId[idx] =
+            ((uint64_t)unpackU32(buf + pos) << 32) |
+            (uint64_t)unpackU32(buf + pos + 4);
+        pos += 8;
     }
 
     if (finalFlag) {
@@ -3476,12 +3484,25 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     }
 
     case PACKET_LOBBY_MAP_UPLOAD_DONE: {
-        /* [header 8] [status 1] [pathLen 1] [path N] */
+        /* [header 8] [status 1] [pathLen 1] [path N] for a map. A script's
+         * reply carries [reason 1] [a 2 BE] [b 2 BE] between the status and
+         * the length: why it was refused, for the frontend to say in the
+         * player's language, and the numbers the line needs. */
         if (!c->clientSim || len < PACKET_HEADER_SIZE + 2) break;
         if (c->clientSim->lobbyMapUploadStatus != 1 &&
             c->clientSim->lobbyMapUploadStatus != 2) break;
         int pos = PACKET_HEADER_SIZE;
         uint8_t status = buf[pos++];
+        if (c->clientSim->lobbyUploadKind == UPLOAD_KIND_SCRIPT) {
+            if (len < pos + 5 + 1) break;
+            c->clientSim->lobbyScriptRefuseReason = buf[pos++];
+            c->clientSim->lobbyScriptRefuseA =
+                (int32_t)(((uint16_t)buf[pos] << 8) | buf[pos + 1]);
+            pos += 2;
+            c->clientSim->lobbyScriptRefuseB =
+                (int32_t)(((uint16_t)buf[pos] << 8) | buf[pos + 1]);
+            pos += 2;
+        }
         if (status == 0) {
             if (!wireTakeU8Field(buf, len, &pos,
                                  c->clientSim->lobbyMapUploadFinalPath,
@@ -3496,6 +3517,13 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             c->clientSim->lobbyMapListReady = false;
             c->clientSim->lobbyMapListSeq++;
         } else {
+            /* A refused script carries the operator's line where the path
+             * would be; kept for the log, never shown. */
+            if (c->clientSim->lobbyUploadKind == UPLOAD_KIND_SCRIPT) {
+                (void)wireTakeU8Field(buf, len, &pos,
+                                      c->clientSim->lobbyMapUploadFinalPath,
+                                      sizeof(c->clientSim->lobbyMapUploadFinalPath));
+            }
             c->clientSim->lobbyMapUploadStatus = 4;
             c->clientSim->lobbyMapUploadRejectCode = status;
         }
@@ -5119,30 +5147,47 @@ void transportUdpClientSendLobbyMapSearchRequest(Transport *t,
  * so both the public Transport*-flavoured entry points and the
  * transport-internal pump can drive the same packet layout. */
 
+size_t transportUdpClientBuildUploadBeginBody(uint8_t *out, size_t cap,
+                                              uint8_t kind, uint32_t totalLen,
+                                              const char *name,
+                                              uint32_t bulkStartSeq) {
+    size_t nameLen, pos;
+
+    if (out == NULL) return 0;
+    if (name == NULL) name = "";
+    nameLen = strlen(name);
+    if (nameLen > 255) nameLen = 255;
+    if (cap < 1 + 4 + 1 + nameLen + 4) return 0;
+
+    pos = 0;
+    out[pos++] = kind;
+    out[pos++] = (uint8_t)((totalLen >> 24) & 0xFF);
+    out[pos++] = (uint8_t)((totalLen >> 16) & 0xFF);
+    out[pos++] = (uint8_t)((totalLen >>  8) & 0xFF);
+    out[pos++] = (uint8_t)( totalLen        & 0xFF);
+    out[pos++] = (uint8_t)nameLen;
+    if (nameLen > 0) { memcpy(out + pos, name, nameLen); pos += nameLen; }
+    packU32(out + pos, bulkStartSeq);
+    pos += 4;
+    return pos;
+}
+
 static void udpClientUploadSendBegin(TransportUdpClientCtx *c,
+                                      uint8_t kind,
                                       uint32_t totalLen,
                                       const char *name) {
-    uint8_t buf[PACKET_HEADER_SIZE + 4 + 1 + 255 + 4];
-    int nameLen, len;
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + 4 + 1 + 255 + 4];
+    size_t bodyLen;
 
     if (c->joinState != UDP_CLIENT_CONNECTED) return;
-    if (name == NULL) name = "";
-    nameLen = (int)strlen(name);
-    if (nameLen > 255) nameLen = 255;
 
     packHeader(buf, PACKET_LOBBY_MAP_UPLOAD_BEGIN, c->outSequence++);
-    buf[PACKET_HEADER_SIZE + 0] = (uint8_t)((totalLen >> 24) & 0xFF);
-    buf[PACKET_HEADER_SIZE + 1] = (uint8_t)((totalLen >> 16) & 0xFF);
-    buf[PACKET_HEADER_SIZE + 2] = (uint8_t)((totalLen >>  8) & 0xFF);
-    buf[PACKET_HEADER_SIZE + 3] = (uint8_t)( totalLen        & 0xFF);
-    buf[PACKET_HEADER_SIZE + 4] = (uint8_t)nameLen;
-    if (nameLen > 0) memcpy(buf + PACKET_HEADER_SIZE + 5, name, nameLen);
-    len = PACKET_HEADER_SIZE + 5 + nameLen;
     /* Drop any abandoned upload tail without reusing its sequence numbers.
      * The receiver adopts this boundary before acknowledging BEGIN. */
-    packU32(buf + len, channelResetSend(&c->channelMux, CHANNEL_BULK));
-    len += 4;
-    udpClientSendTo(c, buf, len);
+    bodyLen = transportUdpClientBuildUploadBeginBody(
+        buf + PACKET_HEADER_SIZE, sizeof(buf) - PACKET_HEADER_SIZE, kind,
+        totalLen, name, channelResetSend(&c->channelMux, CHANNEL_BULK));
+    udpClientSendTo(c, buf, (int)(PACKET_HEADER_SIZE + bodyLen));
 
     if (c->clientSim) {
         c->clientSim->lobbyMapUploadStatus = 1;
@@ -5194,7 +5239,8 @@ static void udpClientUploadSendUseLocal(TransportUdpClientCtx *c,
 void transportUdpClientSendLobbyMapUploadBegin(Transport *t,
                                                 uint32_t totalLen,
                                                 const char *name) {
-    udpClientUploadSendBegin((TransportUdpClientCtx *)t->ctx, totalLen, name);
+    udpClientUploadSendBegin((TransportUdpClientCtx *)t->ctx, UPLOAD_KIND_MAP,
+                             totalLen, name);
 }
 
 void transportUdpClientSendLobbyMapUseLocal(Transport *t,
@@ -5230,6 +5276,7 @@ static void udpClientUploadCleanup(TransportUdpClientCtx *c) {
     c->uploadPrevStatus      = 0;
     c->uploadPrevProgressMs  = 0;
     c->uploadPrevAcked       = 0;
+    c->uploadKind            = UPLOAD_KIND_MAP;
 }
 
 /* Shared kick: stash the bytes on the transport, optionally try
@@ -5241,20 +5288,25 @@ static void udpClientUploadCleanup(TransportUdpClientCtx *c) {
  * terminator, so comparing whole files would NACK every packed map both
  * sides already have. len stays the whole file — that is what a fallback
  * upload sends, container and all. */
+/* kind (UPLOAD_KIND_MAP / _SCRIPT) picks the size cap and rides BEGIN. */
 static bool udpClientUploadStart(TransportUdpClientCtx *c,
+                                  uint8_t kind,
                                   const uint8_t *buf, size_t len,
                                   const char *name,
                                   const char *relPath, /* nullable */
                                   const char *md5Hex,  /* 32 hex chars + NUL, required iff relPath */
                                   size_t useLocalLen   /* bytes the pre-check names; 0 for len */) {
+    size_t maxLen = (kind == UPLOAD_KIND_SCRIPT) ? LOBBY_PACKAGE_UPLOAD_MAX_BYTES
+                                                 : LOBBY_MAP_UPLOAD_MAX_BYTES;
     if (c == NULL || buf == NULL || name == NULL || name[0] == '\0') {
         return false;
     }
-    if (len == 0 || len > LOBBY_MAP_UPLOAD_MAX_BYTES) return false;
+    if (len == 0 || len > maxLen) return false;
     if (c->joinState != UDP_CLIENT_CONNECTED) return false;
     if (c->uploadActive) return false;
 
     udpClientUploadCleanup(c);
+    c->uploadKind = kind;
 
     c->uploadBuf = (uint8_t *)malloc(len);
     if (c->uploadBuf == NULL) return false;
@@ -5275,6 +5327,10 @@ static bool udpClientUploadStart(TransportUdpClientCtx *c,
         c->clientSim->lobbyMapUploadRejectCode = 0;
         c->clientSim->lobbyMapUploadFinalPath[0] = '\0';
         c->clientSim->lobbyMapUseLocalNeedsFallback = false;
+        c->clientSim->lobbyUploadKind = kind;
+        c->clientSim->lobbyScriptRefuseReason = SCRIPT_REFUSE_NONE;
+        c->clientSim->lobbyScriptRefuseA = 0;
+        c->clientSim->lobbyScriptRefuseB = 0;
     }
 
     if (relPath != NULL && relPath[0] != '\0' && md5Hex != NULL) {
@@ -5286,7 +5342,8 @@ static bool udpClientUploadStart(TransportUdpClientCtx *c,
         c->uploadUseLocalPending = true;
         c->uploadBeginSent       = false;
     } else {
-        udpClientUploadSendBegin(c, c->uploadTotal, c->uploadName);
+        udpClientUploadSendBegin(c, c->uploadKind, c->uploadTotal,
+                                 c->uploadName);
         c->uploadUseLocalPending = false;
         c->uploadBeginSent       = true;
     }
@@ -5366,7 +5423,9 @@ static void udpClientUploadPump(TransportUdpClientCtx *c, uint64_t now) {
      * against the bytes already buffered. */
     if (c->uploadUseLocalPending &&
         clientSimConsumeUseLocalFallback(c->clientSim)) {
-        udpClientUploadSendBegin(c, c->uploadTotal, c->uploadName);
+        /* Only a map tries USE_LOCAL, so the fallback is always a map. */
+        udpClientUploadSendBegin(c, UPLOAD_KIND_MAP, c->uploadTotal,
+                                 c->uploadName);
         c->uploadUseLocalPending = false;
         c->uploadBeginSent       = true;
         return; /* wait one more tick for ACK */
@@ -5428,7 +5487,7 @@ bool transportUdpClientStartLobbyMapUploadFromBytes(Transport *t,
                                                      size_t len,
                                                      const char *mapName) {
     return udpClientUploadStart((TransportUdpClientCtx *)t->ctx,
-                                 buf, len, mapName,
+                                 UPLOAD_KIND_MAP, buf, len, mapName,
                                  /*relPath=*/NULL, /*md5=*/NULL,
                                  /*useLocalLen=*/0);
 }
@@ -5514,10 +5573,66 @@ bool transportUdpClientStartLobbyMapUploadFromPath(Transport *t,
         md5ToHex(md5, md5Hex);
     }
 
-    ok = udpClientUploadStart(c, (const uint8_t *)fileData, fileLen, nameBuf,
+    ok = udpClientUploadStart(c, UPLOAD_KIND_MAP,
+                               (const uint8_t *)fileData, fileLen, nameBuf,
                                haveRelPath ? relPath : NULL,
                                haveRelPath ? md5Hex  : NULL,
                                haveRelPath ? bodyLen : 0);
+    SDL_free(fileData);
+    return ok;
+}
+
+bool transportUdpClientStartLobbyScriptUpload(Transport *t,
+                                              const char *localFilePath) {
+    TransportUdpClientCtx *c;
+    SDL_PathInfo info;
+    size_t fileLen = 0;
+    void *fileData = NULL;
+    char nameBuf[128];
+    size_t nameLen;
+    bool ok;
+
+    if (t == NULL || localFilePath == NULL || localFilePath[0] == '\0') {
+        return false;
+    }
+    c = (TransportUdpClientCtx *)t->ctx;
+
+    /* Basename of the local path (drop directory components). The server
+     * holds the name to its full rule; here only the suffix is checked. */
+    {
+        const char *base = localFilePath;
+        const char *p;
+        for (p = localFilePath; *p; p++) {
+            if (*p == '/' || *p == '\\') base = p + 1;
+        }
+        SDL_strlcpy(nameBuf, base, sizeof(nameBuf));
+    }
+    nameLen = strlen(nameBuf);
+    if (!((nameLen > 9 &&
+           SDL_strcasecmp(nameBuf + nameLen - 9, ".scenario") == 0) ||
+          (nameLen > 4 &&
+           SDL_strcasecmp(nameBuf + nameLen - 4, ".lua") == 0))) {
+        return false;
+    }
+
+    /* Size before the read, so an over-cap file never enters memory. */
+    if (!SDL_GetPathInfo(localFilePath, &info) ||
+        info.type != SDL_PATHTYPE_FILE || info.size == 0 ||
+        info.size > (Uint64)LOBBY_PACKAGE_UPLOAD_MAX_BYTES) {
+        return false;
+    }
+    fileData = SDL_LoadFile(localFilePath, &fileLen);
+    if (fileData == NULL) return false;
+    if (fileLen == 0 || fileLen > LOBBY_PACKAGE_UPLOAD_MAX_BYTES) {
+        SDL_free(fileData);
+        return false;
+    }
+
+    /* No USE_LOCAL: a script has no data/maps twin to match. */
+    ok = udpClientUploadStart(c, UPLOAD_KIND_SCRIPT,
+                               (const uint8_t *)fileData, fileLen, nameBuf,
+                               /*relPath=*/NULL, /*md5=*/NULL,
+                               /*useLocalLen=*/0);
     SDL_free(fileData);
     return ok;
 }

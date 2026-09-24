@@ -655,6 +655,8 @@ static void lobbyUploadOnSelect(MapChooserState *state, void *ctx) {
                         "[MAPPICK] upload SP reload FAILED for '%s'", picked);
         }
     } else if (clientSimHasTransport(cs)) {
+        /* Either kind: a script the Mods chooser is sending holds the one
+           upload the transport runs at a time just as a map does. */
         uint8_t upStatus = clientSimGetLobbyMapUploadStatus(cs);
         bool inFlight = (upStatus == 1 || upStatus == 2);
         WB_LOG_INFO(WB_LOG_CAT_GUI,
@@ -840,7 +842,10 @@ static const char *lobbyGetActiveTabError(ClientSim *cs) {
     if (!cs) return NULL;
     switch (s_chooserTabs.activeTab) {
         case 1: /* Local upload */
+            /* The status is shared with a script sent from the Mods
+               chooser, whose refusal is that dialog's to show. */
             if (!clientSimIsSinglePlayer(cs) && clientSimHasTransport(cs) &&
+                clientSimGetLobbyUploadKind(cs) == UPLOAD_KIND_MAP &&
                 clientSimGetLobbyMapUploadStatus(cs) == 4) {
                 switch (clientSimGetLobbyMapUploadRejectCode(cs)) {
                     case 4: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT);
@@ -857,6 +862,7 @@ static const char *lobbyGetActiveTabError(ClientSim *cs) {
                 return (m && *m) ? m : langGetText(STR_DLGLOBBY_WBN_ERR_DOWNLOAD);
             }
             if (!clientSimIsSinglePlayer(cs) && clientSimHasTransport(cs) &&
+                clientSimGetLobbyUploadKind(cs) == UPLOAD_KIND_MAP &&
                 clientSimGetLobbyMapUploadStatus(cs) == 4) {
                 switch (clientSimGetLobbyMapUploadRejectCode(cs)) {
                     case 4: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT);

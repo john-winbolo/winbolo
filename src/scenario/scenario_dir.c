@@ -115,7 +115,7 @@ static bool scnDirReadFile(const char *path, uint8_t **out, size_t *outLen) {
  * straight out of it. scnPackageOpen takes a buffer that starts at the magic,
  * which a package file does — the trailer hunt is only for maps. No Lua runs
  * here, so a container lists on a server that would refuse to run its script. */
-static bool scnDirReadPackage(const char *path, ScenarioManifest *out) {
+bool scnDirReadPackage(const char *path, ScenarioManifest *out) {
     uint8_t        *file     = NULL;
     size_t          fileLen  = 0;
     uint8_t        *json     = NULL;
@@ -236,6 +236,10 @@ void scnDirEntryFromManifest(ScnDirEntry *e, const char *file,
        loaded. The lobby script list carries this per entry: it is how a
        chooser knows which rows may sit together. */
     e->keepsWinCondition = scnManifestKeepsWinCondition(m);
+    /* The manifest has no Workshop field yet, so no file names an item. The
+       source is left to the caller: a directory read does not know which of
+       the server's directories it is reading. */
+    e->workshopId = 0;
 }
 
 /* File-name order. Two scenarios may share a manifest name and two files in

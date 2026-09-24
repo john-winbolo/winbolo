@@ -32,17 +32,25 @@
 
 #define SERVER_TICK_LENGTH (GAME_TICK_LENGTH * 2)
 
-/* Override the operator-controlled upload policy and per-map storage caps.
+/* Override the operator-controlled upload policies and storage caps.
  * Called once at startup after transportUdpServerCreate. A maxFiles or
  * maxStorageBytes value of 0 leaves that cap at the create-time default
  * (64 files / 8 MiB) — lets the GUI host-and-play path use ServerInstanceConfig
  * zero-init without explicit values. policy is always applied (0 = ALLOW).
  * persistDir is the absolute directory PERSIST-policy uploads are written to;
- * NULL or "" leaves it unset (writes fall back to "<mapDirRoot>/Uploads"). */
+ * NULL or "" leaves it unset (writes fall back to "<mapDirRoot>/Uploads").
+ * The script* arguments are the same for player scripts: scriptPolicy is
+ * always applied (0 = ALLOW), a scriptMaxFiles or scriptMaxStorageBytes of 0
+ * keeps the create-time default (32 files / 64 MiB), and a NULL or ""
+ * scriptDir clears the script persist directory. */
 void transportUdpServerSetUploadConfig(UploadPolicy policy,
                                        uint8_t maxFiles,
                                        uint32_t maxStorageBytes,
-                                       const char *persistDir);
+                                       const char *persistDir,
+                                       ScriptUploadPolicy scriptPolicy,
+                                       uint8_t scriptMaxFiles,
+                                       uint32_t scriptMaxStorageBytes,
+                                       const char *scriptDir);
 
 typedef struct {
   unsigned short udpPort;
@@ -104,6 +112,23 @@ typedef struct {
    * built-in "<mapDirRoot>/Uploads". A GUI host points this under the
    * prefs path since its maps root is a read-only bundle. */
   const char    *uploadPersistDir;
+
+  /* Operator-controlled handling for player-uploaded scripts.
+   * Zero-init = ALLOW + transport defaults (32 files / 64 MiB). */
+  ScriptUploadPolicy scriptUploadPolicy;
+  uint8_t        scriptUploadMaxFiles;        /* 0 = leave transport default (32) */
+  uint32_t       scriptUploadMaxStorageBytes; /* 0 = leave transport default (64 MiB) */
+
+  /* Absolute directory for PERSIST-policy uploaded scripts. NULL = the
+   * built-in "<mapDirRoot>/Uploads/Scripts". */
+  const char    *scriptUploadDir;
+
+  /* Directory ALLOW-policy uploaded scripts land in for the session, emptied
+   * at startup, at shutdown and when the lobby resets. NULL = the built-in
+   * "<mapDirRoot>/Uploads/Session-<udpPort>", one per server on a shared map
+   * root. A GUI host points this under the prefs path, as it does
+   * uploadPersistDir. */
+  const char    *scriptSessionDir;
 
   /* Initial state + lobby/per-sim toggles applied by serverInstanceStartup.
    * Zero-init means "don't touch what serverSimCreate* set" for the lobby

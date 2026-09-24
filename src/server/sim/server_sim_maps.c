@@ -1227,6 +1227,12 @@ BOLO_STATIC_ASSERT(SERVER_SCENARIO_NAME_LEN == SCN_DIR_NAME_LEN,
                    server_scenario_name_matches_the_directory_entry);
 BOLO_STATIC_ASSERT(SERVER_SCENARIO_DESC_LEN == SCN_DIR_DESC_LEN,
                    server_scenario_description_matches_the_directory_entry);
+BOLO_STATIC_ASSERT(SERVER_SCENARIO_SOURCE_SERVER == SCN_DIR_SOURCE_SERVER,
+                   server_scenario_source_server_matches_the_directory_entry);
+BOLO_STATIC_ASSERT(SERVER_SCENARIO_SOURCE_UPLOAD == SCN_DIR_SOURCE_UPLOAD,
+                   server_scenario_source_upload_matches_the_directory_entry);
+BOLO_STATIC_ASSERT(SERVER_SCENARIO_SOURCE_WORKSHOP == SCN_DIR_SOURCE_WORKSHOP,
+                   server_scenario_source_workshop_matches_the_directory_entry);
 
 int serverSimEnumerateScenarioDir(ServerSim *sim,
                                   ServerScenarioEntry *entries,
@@ -1254,6 +1260,8 @@ int serverSimEnumerateScenarioDir(ServerSim *sim,
         e->bots       = dirRows[i].bots;
         e->bound      = dirRows[i].bound;
         e->keepsWinCondition = dirRows[i].keepsWinCondition;
+        e->source     = dirRows[i].source;
+        e->workshopId = dirRows[i].workshopId;
     }
     free(dirRows);
     return got;

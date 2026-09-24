@@ -56,7 +56,8 @@
 #include "netpacks.h"        /* the PACKET_* ids the type switch reads,
                               * LOBBY_REJECT_*, ROUND_LOG_ERR_*,
                               * MAP_DOWNLOAD_MAX_SIZE */
-#include "wire_limits.h"     /* LOBBY_MAP_UPLOAD_MAX_BYTES, LOBBY_LOCK_MAP */
+#include "wire_limits.h"     /* LOBBY_MAP_UPLOAD_MAX_BYTES,
+                              * LOBBY_PACKAGE_UPLOAD_MAX_BYTES, LOBBY_LOCK_MAP */
 #include "global.h"          /* BYTE, MAX_TANKS, MAP_STR_SIZE, TRUE */
 #include "bolo_map.h"        /* map, mapCreate, mapDestroy, mapGetPos,
                               * mapCalcChecksum, mapLoadCompressedMap,
@@ -71,7 +72,8 @@
 #include "bulk_transfer.h"   /* BulkStreamHeader, bulkSenderBusy, bulkSenderBegin,
                               * bulkReceiverInit, BULK_KIND_PREVIEW,
                               * BULK_KIND_ROUND_LOG, BULK_PATH_MAX */
-#include "upload_policy.h"   /* UPLOAD_POLICY_OFF, UPLOAD_POLICY_PERSIST */
+#include "upload_policy.h"   /* UPLOAD_POLICY_OFF, UPLOAD_POLICY_PERSIST,
+                              * SCRIPT_UPLOAD_OFF, UPLOAD_KIND_MAP / _SCRIPT */
 #include "game_sim.h"        /* GameSim — serverSimGetGameSim(sim)->mp / ->pb / ->bs */
 #include "server_sim.h"      /* ServerSim, ServerState, ServerMapEntry, and the sim
                               * accessors the handlers read and write */
@@ -81,7 +83,8 @@
 #include "../sim/server_sim_shared.h" /* serverSimResolveMapPath */
 #include "server_sim_scenario.h"  /* serverSimScenarioListDir, ScnDirEntry —
                                    * the scenarios this server offers, read
-                                   * through the lister registered on the sim */
+                                   * through the lister registered on the sim;
+                                   * serverSimHasScriptUploadAccept */
 #include "scenario_details.h"     /* SCN_DETAILS_MAX — the largest details
                                    * blob a DETAILS_REQ answers with */
 #include "client_sim_internal.h"  /* LOBBY_MAP_LIST_MAX cap shared with the wire */
@@ -664,7 +667,7 @@ int udpServerPackScenarioListChunk(uint8_t *buf, int bufLen,
         if (fileLen > 255) fileLen = 255;
         if (nameLen > 255) nameLen = 255;
         if (descLen > 255) descLen = 255;
-        need = 1 + (int)fileLen + 1 + (int)nameLen + 1 + (int)descLen + 4;
+        need = 1 + (int)fileLen + 1 + (int)nameLen + 1 + (int)descLen + 4 + 9;
         if (pos + need > bufLen) break;
 
         pos = scnListPackStr(buf, pos, e->file);
@@ -678,6 +681,12 @@ int udpServerPackScenarioListChunk(uint8_t *buf, int bufLen,
            both are false for the two of them. Set means the script keeps the
            round's win condition, which is what a mod does. */
         buf[pos++] = e->keepsWinCondition ? 1 : 0;
+        /* Where the server got the file, and its Workshop item (0 for none),
+           most significant byte first. */
+        buf[pos++] = e->source;
+        packU32(buf + pos, (uint32_t)(e->workshopId >> 32));
+        packU32(buf + pos + 4, (uint32_t)(e->workshopId & 0xFFFFFFFFu));
+        pos += 8;
         written++;
     }
 
@@ -705,7 +714,7 @@ static void handleLobbyScenarioListReq(ServerSim *sim, uint8_t *buf, int len,
     {
         /* Cap matches LOBBY_SCENARIO_LIST_MAX on the client so a directory's
          * full content survives end-to-end. Stack-resident; each ScnDirEntry
-         * is ~451 bytes → ~58 KB, in line with the map list's ~76 KB. */
+         * is ~464 bytes → ~58 KB, in line with the map list's ~76 KB. */
         ScnDirEntry entries[LOBBY_SCENARIO_LIST_MAX];
         uint8_t     rsp[UDP_MAX_PAYLOAD];
         int         got = serverSimScenarioListDir(sim, entries,
@@ -721,7 +730,7 @@ static void handleLobbyScenarioListReq(ServerSim *sim, uint8_t *buf, int len,
             if (rlen <= 0) break;
             srvSendTo(rsp, rlen, fromAddr);
             /* An entry that fits in no chunk would spin this loop. One cannot
-               — the widest is 451 bytes against UDP_MAX_PAYLOAD — so this is
+               — the widest is 461 bytes against UDP_MAX_PAYLOAD — so this is
                the check that says so rather than a case that happens. */
             if (nextIdx == i) break;
             i = nextIdx;
@@ -878,16 +887,53 @@ static void handleLobbyMapUseLocal(ServerSim *sim, uint8_t *buf, int len,
     #undef SEND_USE_LOCAL_NACK
 }
 
+/* Whether a script upload's name belongs to a script another directory
+ * already offers: the merged listing holds it and the landing directory does
+ * not. A name the landing directory holds is the uploader's own earlier file,
+ * and sending it again replaces it. The listing merges names without regard
+ * to case, so the match here does the same, and the landing directory is
+ * asked for the listing's spelling rather than the wire's, so a file sent
+ * again in another case is still the uploader's own. The host's accept
+ * callback asks again, directory by directory, when the bytes are in. */
+static bool lobbyScriptNameTaken(ServerSim *sim, const char *name) {
+    ScnDirEntry *rows;
+    char         path[FILENAME_MAX];
+    char         listed[SCN_DIR_FILE_LEN];
+    SDL_PathInfo info;
+    int          got;
+    int          i;
+
+    rows = (ScnDirEntry *)calloc(LOBBY_SCENARIO_LIST_MAX, sizeof(*rows));
+    if (rows == NULL) return false;
+    got = serverSimScenarioListDir(sim, rows, LOBBY_SCENARIO_LIST_MAX);
+    listed[0] = '\0';
+    for (i = 0; i < got; i++) {
+        if (SDL_strcasecmp(rows[i].file, name) == 0) {
+            SDL_strlcpy(listed, rows[i].file, sizeof(listed));
+            break;
+        }
+    }
+    free(rows);
+    if (listed[0] == '\0') return false;
+    SDL_snprintf(path, sizeof(path), "%s/%s",
+                 serverSimGetScriptUploadDir(sim), listed);
+    return !(SDL_GetPathInfo(path, &info) && info.type == SDL_PATHTYPE_FILE);
+}
+
 static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
                                       struct sockaddr_in *fromAddr) {
-    /* [header 8] [totalLen 4] [nameLen 1] [name N] [bulkStartSeq 4, optional]
+    /* [header 8] [kind 1] [totalLen 4] [nameLen 1] [name N]
+     * [bulkStartSeq 4, optional]
      * Only host
      * / admin / openHost may push files. Per-client wire-only
-     * ACK (handshake/reliability). */
+     * ACK (handshake/reliability). kind is UPLOAD_KIND_MAP or
+     * UPLOAD_KIND_SCRIPT; it picks the lock, the policy, the cap, the
+     * name rule and where the bytes land. */
     int clientIdx = serverFindClient(fromAddr);
     if (clientIdx < 0 || !serverSimIsLobbyEnabled(sim) ||
         serverSimGetState(sim) != serverStateLobby ||
-        len < PACKET_HEADER_SIZE + 5) return;
+        len < PACKET_HEADER_SIZE + 6) return;
+    uint8_t kind = buf[PACKET_HEADER_SIZE + 0];
     /* Cooldown gate — silent break used to leave the client at
      * upload-status=1 (BEGIN sent, awaiting ACK) indefinitely,
      * jamming further picks. Reply with COOLDOWN so the client's
@@ -907,14 +953,24 @@ static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
         srvSendTo(ack, sizeof(ack), fromAddr);
         return;
     }
-    if (serverSimGetServerLocks(sim) & LOBBY_LOCK_MAP) {
+    /* The map lock is about the map; a script upload does not change it. */
+    if (kind == UPLOAD_KIND_MAP &&
+        (serverSimGetServerLocks(sim) & LOBBY_LOCK_MAP)) {
         uint8_t ack[PACKET_HEADER_SIZE + 1];
         packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
         ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_LOCKED;
         srvSendTo(ack, sizeof(ack), fromAddr);
         return;
     }
-    if (udpServer.uploadPolicy == UPLOAD_POLICY_OFF) {
+    /* A script needs its own policy on, somewhere to land, and something
+     * registered to take it; without any of them the bytes are never asked
+     * for. */
+    if ((kind == UPLOAD_KIND_MAP &&
+         udpServer.uploadPolicy == UPLOAD_POLICY_OFF) ||
+        (kind == UPLOAD_KIND_SCRIPT &&
+         (udpServer.scriptUploadPolicy == SCRIPT_UPLOAD_OFF ||
+          serverSimGetScriptUploadDir(sim)[0] == '\0' ||
+          !serverSimHasScriptUploadAccept(sim)))) {
         uint8_t ack[PACKET_HEADER_SIZE + 1];
         packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
         ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_UPLOAD_DISABLED;
@@ -936,14 +992,18 @@ static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
         return;
     }
     uint32_t totalLen =
-        ((uint32_t)buf[PACKET_HEADER_SIZE + 0] << 24) |
-        ((uint32_t)buf[PACKET_HEADER_SIZE + 1] << 16) |
-        ((uint32_t)buf[PACKET_HEADER_SIZE + 2] <<  8) |
-        ((uint32_t)buf[PACKET_HEADER_SIZE + 3]);
-    uint8_t nameLen = buf[PACKET_HEADER_SIZE + 4];
-    if (nameLen == 0 || nameLen > 127 ||
-        len < PACKET_HEADER_SIZE + 5 + nameLen ||
-        totalLen == 0 || totalLen > LOBBY_MAP_UPLOAD_MAX_BYTES) {
+        ((uint32_t)buf[PACKET_HEADER_SIZE + 1] << 24) |
+        ((uint32_t)buf[PACKET_HEADER_SIZE + 2] << 16) |
+        ((uint32_t)buf[PACKET_HEADER_SIZE + 3] <<  8) |
+        ((uint32_t)buf[PACKET_HEADER_SIZE + 4]);
+    uint8_t nameLen = buf[PACKET_HEADER_SIZE + 5];
+    uint32_t maxLen = (kind == UPLOAD_KIND_SCRIPT)
+                      ? LOBBY_PACKAGE_UPLOAD_MAX_BYTES
+                      : LOBBY_MAP_UPLOAD_MAX_BYTES;
+    if ((kind != UPLOAD_KIND_MAP && kind != UPLOAD_KIND_SCRIPT) ||
+        nameLen == 0 || nameLen > 127 ||
+        len < PACKET_HEADER_SIZE + 6 + nameLen ||
+        totalLen == 0 || totalLen > maxLen) {
         uint8_t ack[PACKET_HEADER_SIZE + 1];
         packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
         ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_INVALID;
@@ -952,9 +1012,9 @@ static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
     }
     char nameBuf[128];
     memset(nameBuf, 0, sizeof(nameBuf));
-    memcpy(nameBuf, buf + PACKET_HEADER_SIZE + 5, nameLen);
+    memcpy(nameBuf, buf + PACKET_HEADER_SIZE + 6, nameLen);
 
-    if (!uploadFilenameIsSafe(nameBuf, nameLen)) {
+    if (!uploadFilenameIsSafe(kind, nameBuf, nameLen)) {
         uint8_t ack[PACKET_HEADER_SIZE + 1];
         packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
         ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_INVALID;
@@ -962,7 +1022,31 @@ static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
         return;
     }
 
-    if (udpServer.uploadPolicy == UPLOAD_POLICY_PERSIST) {
+    /* A script whose name a higher directory holds would never be the file
+     * a pick of that name loads, so it is refused before the bytes come. */
+    if (kind == UPLOAD_KIND_SCRIPT && lobbyScriptNameTaken(sim, nameBuf)) {
+        uint8_t ack[PACKET_HEADER_SIZE + 1];
+        packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
+        ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_NAME_TAKEN;
+        srvSendTo(ack, sizeof(ack), fromAddr);
+        return;
+    }
+
+    /* PERSIST keeps scripts for good, so its directory has caps; the session
+     * directory is emptied instead. */
+    if (kind == UPLOAD_KIND_SCRIPT &&
+        udpServer.scriptUploadPolicy == SCRIPT_UPLOAD_PERSIST &&
+        !udpServerScriptUploadFitsCaps(serverSimGetScriptUploadDir(sim),
+                                       nameBuf, totalLen)) {
+        uint8_t ack[PACKET_HEADER_SIZE + 1];
+        packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
+        ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_UPLOAD_LIMIT_HIT;
+        srvSendTo(ack, sizeof(ack), fromAddr);
+        return;
+    }
+
+    if (kind == UPLOAD_KIND_MAP &&
+        udpServer.uploadPolicy == UPLOAD_POLICY_PERSIST) {
         ServerMapEntry entries[256];
         int got = serverSimEnumerateMapDir(sim, "Uploads",
                                             entries,
@@ -987,6 +1071,27 @@ static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
         }
     }
 
+    /* A script lands in a buffer sized for it here rather than a fixed slot:
+     * at LOBBY_PACKAGE_UPLOAD_MAX_BYTES a slot per client is too much to keep
+     * static. A retry from the same client lets go of the old one first. */
+    if (udpServer.bulkRecvUp[clientIdx].dst ==
+            udpServer.clientScriptUploadBuf[clientIdx]) {
+        udpServer.bulkRecvUp[clientIdx].dst = NULL;
+    }
+    free(udpServer.clientScriptUploadBuf[clientIdx]);
+    udpServer.clientScriptUploadBuf[clientIdx] = NULL;
+    if (kind == UPLOAD_KIND_SCRIPT) {
+        udpServer.clientScriptUploadBuf[clientIdx] = (uint8_t *)malloc(totalLen);
+        if (udpServer.clientScriptUploadBuf[clientIdx] == NULL) {
+            uint8_t ack[PACKET_HEADER_SIZE + 1];
+            packHeader(ack, PACKET_LOBBY_MAP_UPLOAD_ACK, 0);
+            ack[PACKET_HEADER_SIZE] = LOBBY_REJECT_INVALID;
+            srvSendTo(ack, sizeof(ack), fromAddr);
+            return;
+        }
+    }
+
+    udpServer.clientUploadKind[clientIdx]   = kind;
     udpServer.clientUploadActive[clientIdx] = true;
     udpServer.clientUploadTotal[clientIdx]  = totalLen;
     udpServer.upload_last_progress_ms[clientIdx] = SDL_GetTicks();
@@ -998,9 +1103,9 @@ static void handleLobbyMapUploadBegin(ServerSim *sim, uint8_t *buf, int len,
     /* New senders append their bulk sequence boundary. An aborted upload
      * may have left gaps in this direction; skip its tail before accepting
      * the next stream. Older BEGIN packets retain the original layout. */
-    if (len >= PACKET_HEADER_SIZE + 5 + nameLen + 4) {
+    if (len >= PACKET_HEADER_SIZE + 6 + nameLen + 4) {
         channelResetExpected(&udpServer.channelMux[clientIdx], CHANNEL_BULK,
-            unpackU32(buf + PACKET_HEADER_SIZE + 5 + nameLen));
+            unpackU32(buf + PACKET_HEADER_SIZE + 6 + nameLen));
     }
 
     uint8_t ack[PACKET_HEADER_SIZE + 1];

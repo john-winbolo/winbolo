@@ -292,6 +292,7 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.lobbyWbnAvailable        = winbolonetIsRunning();
     evt->u.lobbySettings.lobbyServerLocks         = sim->serverLocks;
     evt->u.lobbySettings.uploadPolicy             = sim->uploadPolicy;
+    evt->u.lobbySettings.scriptUploadPolicy       = sim->scriptUploadPolicy;
     for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
         evt->u.lobbySettings.viewPolicy[vc]    = sim->viewPolicy[vc];
         evt->u.lobbySettings.viewDecaySecs[vc] = sim->viewDecaySecs[vc];
@@ -378,6 +379,8 @@ void serverSimFillScriptListEvent(const ServerSim *sim, uint8_t chunk,
         snprintf(dst->name, sizeof(dst->name), "%s", src->name);
         dst->keepsWinCondition = src->keepsWinCondition;
         dst->bound             = src->bound;
+        dst->source            = src->source;
+        dst->workshopId        = src->workshopId;
     }
 }
 

@@ -33,7 +33,7 @@
 #include "transport_udp_internal.h" /* ClientEventQueue, UDP_MAX_PAYLOAD */
 #include "channel_mux.h"    /* ChannelMux */
 #include "bulk_transfer.h"  /* BulkSender, BulkReceiver */
-#include "upload_policy.h"  /* UploadPolicy */
+#include "upload_policy.h"  /* UploadPolicy, ScriptUploadPolicy */
 #include "net_impair.h"     /* NetImpair */
 #include "../../winbolonet/winbolonet_core.h" /* WINBOLONET_KEY_LEN */
 
@@ -349,11 +349,19 @@ typedef struct UdpServerState {
      * PACKET_LOBBY_MAP_UPLOAD_BEGIN and the final write-out at
      * MAP_UPLOAD_DONE. clientUploadTotal is the approved byte count the
      * incoming bulk transfer must match. clientUploadBuf is a fixed slot of
-     * UPLOAD_MAX_BYTES the bulk receiver reassembles into. */
+     * UPLOAD_MAX_BYTES the bulk receiver reassembles a map into. */
     bool     clientUploadActive[MAX_TANKS];
     uint32_t clientUploadTotal[MAX_TANKS];
     uint64_t upload_last_progress_ms[MAX_TANKS];
     uint8_t  clientUploadBuf[MAX_TANKS][UPLOAD_MAX_BYTES];
+    /* What the slot's upload carries: UPLOAD_KIND_MAP or UPLOAD_KIND_SCRIPT,
+     * from BEGIN's first byte. Back to MAP whenever the slot clears. */
+    uint8_t  clientUploadKind[MAX_TANKS];
+    /* A script upload's receive buffer, malloc'd at BEGIN for totalLen (up to
+     * LOBBY_PACKAGE_UPLOAD_MAX_BYTES, too big for a static slot per client).
+     * NULL when none. Freed at completion, idle expiry, clear/disconnect and
+     * transport destroy, always after bulkRecvUp[i].dst stops pointing at it. */
+    uint8_t *clientScriptUploadBuf[MAX_TANKS];
     char     clientUploadName[MAX_TANKS][128];
     uint8_t  clientReqCooldownTicks[MAX_TANKS];
 
@@ -365,6 +373,15 @@ typedef struct UdpServerState {
      * writes fall back to "<mapDirRoot>/Uploads". Kept in lock-step with the
      * sim's copy (both set from cfg->uploadPersistDir in serverInstanceStartup). */
     char         uploadPersistDir[FILENAME_MAX];
+    /* The same for player-uploaded scripts. Zero-init = ALLOW; the caps
+     * default to 32 files / 64 MiB. Empty scriptUploadDir = unset. It is the
+     * operator's setting as given; where a script lands is the directory the
+     * sim resolved (serverSimGetScriptUploadDir), which is what the caps
+     * count and the accept callback writes to. */
+    ScriptUploadPolicy scriptUploadPolicy;
+    uint8_t      scriptUploadMaxFiles;
+    uint32_t     scriptUploadMaxStorageBytes;
+    char         scriptUploadDir[FILENAME_MAX];
 
     /* LRU token buckets for the per-source-IP JOIN rate limit. A zeroed
      * table reads as all-empty (srcAddr 0), so the existing
@@ -608,7 +625,15 @@ void serverRebaseBulkAndRearmDownload(int i);
 void serverServiceMapTransfer(struct ServerSim *sim, int slot);
 void udpServerClearClientUploadState(int idx);
 void udpServerExpireUploads(uint64_t now_ms);
+void udpServerFreeScriptUploadBufs(void);
 void udpServerResetMapReaskLimit(int idx);
+/* Whether one more script upload, name at len bytes, fits the persist caps
+ * (scriptUploadMaxFiles, scriptUploadMaxStorageBytes) counted over the
+ * .scenario and .lua files directly in dir. A file already there under name
+ * counts by its change in size, not as one more file. Asked at BEGIN and
+ * again when the bytes are in. */
+bool udpServerScriptUploadFitsCaps(const char *dir, const char *name,
+                                   uint32_t len);
 
 /* One PACKET_LOBBY_SCENARIO_LIST_RSP chunk, written into the caller's buffer.
  * Owned by src/server/udp/udp_server_dispatch.c, where the request handler

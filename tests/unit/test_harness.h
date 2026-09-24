@@ -380,6 +380,7 @@ int run_upload_timeout_releases_other_player(void);
 int run_upload_lost_done_retry(void);
 int run_upload_partial_timeout_retry(void);
 int run_upload_filename_safe(void);
+int run_upload_filename_safe_script(void);
 int run_lobby_time_minutes_valid(void);
 int run_lobby_bot_name_rejects_reserved_prefix(void);
 int run_lobby_bot_name_rejects_disallowed_char(void);
@@ -2000,6 +2001,54 @@ int run_loopback_map_preview(void);
 /* Client->server map upload over CHANNEL_BULK (test_loopback_upload.c): a map
  * uploaded under loss completes and the server decodes the reassembled bytes. */
 int run_loopback_map_upload(void);
+/* Script upload (test_script_upload.c): the BEGIN body for both kinds against
+ * hand-written bytes; the server's BEGIN refusals for a script, and the map
+ * ones the kind byte must leave alone; a 4 MiB package arriving whole at the
+ * accept callback; a refused script's reason reaching the client; and the
+ * client refusing a file before sending anything. */
+int run_upload_begin_golden(void);
+int run_script_upload_begin_refusals(void);
+int run_loopback_script_upload_at_cap(void);
+int run_loopback_script_upload_refused(void);
+int run_script_upload_client_refusals(void);
+/* Script upload landing (test_script_upload.c), with the host's own accept
+ * callback: a mod and a package land and are listed; a bound package and a
+ * .lua that will not load are refused, the second with its line; a name a
+ * higher directory holds is refused at BEGIN; the persist caps; the accept
+ * callback's own refusals; the session directory emptied and the persist one
+ * kept; the lobby reset dropping the session's picks; and an uploaded mod
+ * composing in the next decision. */
+int run_loopback_script_upload_lands_listed(void);
+int run_loopback_script_upload_package_listed(void);
+int run_loopback_script_upload_bound_refused(void);
+int run_loopback_script_upload_syntax_line(void);
+int run_script_upload_name_taken(void);
+int run_script_upload_persist_caps(void);
+int run_script_upload_accept_refusals(void);
+int run_script_upload_session_emptied(void);
+/* A file the server removed is not listed even when the directory's stamp
+ * is put back to the one the listing was kept at (POSIX only). */
+int run_script_upload_listing_sees_own_removal(void);
+int run_script_upload_reset_drops_session_picks(void);
+int run_loopback_script_upload_plays_next_round(void);
+int run_script_upload_list_source(void);
+int run_loopback_script_upload_source_on_wire(void);
+/* A list request sent as DONE lands is answered, not dropped by the request
+ * cooldown the upload's BEGIN started. */
+int run_loopback_script_upload_list_after_done(void);
+/* The Mods chooser's rows from the server and from this computer
+ * (test_lobby_script_rows.c): which of the two holds each file, by Workshop
+ * id or by name ignoring case, in the server's order then the local order,
+ * none of this computer's alone in process, and the cap; and the listing of
+ * the player's own Mods directory with no sim. */
+int run_lobby_script_rows_states_by_name(void);
+int run_lobby_script_rows_case_only_match(void);
+int run_lobby_script_rows_workshop_id_matches(void);
+int run_lobby_script_rows_workshop_id_differs(void);
+int run_lobby_script_rows_in_process(void);
+int run_lobby_script_rows_order(void);
+int run_lobby_script_rows_truncated(void);
+int run_scenario_local_scripts_listed(void);
 /* Map join-download + live resync over CHANNEL_BULK (test_loopback_download.c):
  * a lobby join download completes under loss; a mid-game joiner downloads while
  * the server is Running (the bulk-carrier deadlock case); and a reported
@@ -2685,6 +2734,15 @@ int run_lobby_scenario_boot_sets_type(void);
 int run_lobby_scenario_identity_strips_controls(void);
 int run_lobby_scenario_nolobby_boot_seats_template(void);
 
+/* The policy a server holds for scripts players send it
+ * (test_script_upload_policy.c): the word it is set from and the legacy flag
+ * that stands for off, the spelling a preference is written in, its byte on
+ * the lobby-settings event, and the copies the sim and the client keep. */
+int run_script_upload_policy_resolve(void);
+int run_script_upload_policy_word(void);
+int run_script_upload_policy_codec(void);
+int run_script_upload_policy_event(void);
+
 /* The lobby template (test_lobby_template.c): the engine seating a
  * scenario's teams where a lobby is built or rebuilt, reconciling one that
  * comes back from a round against what the host did to it, and leaving a
@@ -3272,6 +3330,7 @@ int run_scenario_packed_map_script_omits_table(void);
 int run_scenario_packed_map_table_disagrees(void);
 int run_scenario_packed_map_round_start_keeps_it(void);
 int run_scenario_packed_map_upload_switch(void);
+int run_scenario_packed_map_script_upload_policy(void);
 int run_scenario_packed_map_team_init(void);
 
 /* Writing a map's scenario into the map (test_scenario_pack.c): the container

@@ -287,8 +287,18 @@ bool clientSimNetSendLobbyMapUploadBytes(ClientSim *cs,
                                          const uint8_t *buf, size_t len,
                                          const char *mapName);
 
+/* Script upload: send a .scenario or .lua of up to
+ * LOBBY_PACKAGE_UPLOAD_MAX_BYTES to the server, which hands it to its
+ * script accept callback. Returns false, sending nothing, on a missing,
+ * empty or over-cap file, a name without either suffix, a spectator, an
+ * upload already in flight, or a transport that is not UDP (an
+ * in-process host never sends). Progress and the outcome come back
+ * through the same clientSimGetLobbyMapUpload* accessors as a map, and
+ * clientSimGetLobbyUploadKind says it is a script. */
+bool clientSimNetSendLobbyScriptUpload(ClientSim *cs, const char *localFilePath);
+
 /* Upload progress as 0..100 driven by bytesSent / fileLen. Returns 0
- * when no upload is in flight. */
+ * when no upload is in flight. Serves a map or a script upload. */
 uint8_t clientSimGetLobbyMapUploadProgressPercent(const ClientSim *cs);
 
 /* Pre-upload optimisation: if the server already has the same file

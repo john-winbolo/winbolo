@@ -43,7 +43,7 @@ extern "C" {
 #include "../../gamefront.h"
 #include "global.h"
 #include "client_enums.h"  /* labelLen */
-#include "upload_policy.h"  /* UploadPolicy — map-upload combo */
+#include "upload_policy.h"  /* UploadPolicy, ScriptUploadPolicy — upload combos */
 #include "view_policy.h"  /* ViewPolicy — hosting visibility rows */
 #include "server_voice_mode.h"  /* ServerVoiceMode — hosting voice combo */
 #include "playername_validate.h"
@@ -1990,6 +1990,22 @@ static void SDLCALL hostingScenarioDirDialogCallback(void *userdata,
     }
 }
 
+/* And for the Script Upload Directory field, on statics of its own for the
+ * same reason. */
+static char s_hostingScriptPickedDir[FILENAME_MAX];
+static bool s_hostingScriptDirPicked = false;
+
+static void SDLCALL hostingScriptUploadDirDialogCallback(void *userdata,
+                                                         const char *const *filelist,
+                                                         int filter) {
+    (void)userdata;
+    (void)filter;
+    if (filelist && filelist[0]) {
+        SDL_strlcpy(s_hostingScriptPickedDir, filelist[0], FILENAME_MAX);
+        s_hostingScriptDirPicked = true;
+    }
+}
+
 static void SDLCALL hostingLogDirDialogCallback(void *userdata,
                                                 const char *const *filelist,
                                                 int filter) {
@@ -2092,16 +2108,92 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
                             &runScripts)) {
             gameFrontSetHostingScripts(runScripts);
         }
-        /* The narrower switch under it: a map a player uploaded here may
-         * carry a scenario inside the .map file, and this is what decides
-         * whether it runs. Greyed while scripts are off altogether, which
-         * already turns it down; the value is kept so switching scripts back
-         * on restores what the host chose. */
+        /* The narrower choice under it: what this host does with scripts
+         * players send it. Off refuses them, and a map a player uploaded
+         * here plays plainly even when it carries a scenario inside the .map
+         * file; Allow keeps them for the session; Allow and keep saves them
+         * to the directory below. Greyed while scripts are off altogether,
+         * which already turns them down; the value is kept so switching
+         * scripts back on restores what the host chose. */
         ImGui::BeginDisabled(!runScripts);
-        bool uploadScripts = gameFrontHostingUploadScripts;
-        if (ImGui::Checkbox(langGetText(STR_DLGSETTINGS_HOSTING_UPLOADSCRIPTS),
-                            &uploadScripts)) {
-            gameFrontSetHostingUploadScripts(uploadScripts);
+        {
+            /* Combo display order is Off / Allow / Persist, but the enum
+             * values are not in that order (ALLOW=0, OFF=1, PERSIST=2) — map
+             * explicitly. */
+            static const int kScriptPolicyByIndex[3] = {
+                SCRIPT_UPLOAD_OFF, SCRIPT_UPLOAD_ALLOW, SCRIPT_UPLOAD_PERSIST
+            };
+            const char *scriptPolicyItems[3] = {
+                langGetText(STR_DLGSETTINGS_HOSTING_UPLOAD_OFF),
+                langGetText(STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_SESSION),
+                langGetText(STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP)
+            };
+            int scriptIdx = 1;  /* default Allow */
+            for (int i = 0; i < 3; ++i) {
+                if (kScriptPolicyByIndex[i] == gameFrontHostingScriptUploadPolicy) {
+                    scriptIdx = i;
+                    break;
+                }
+            }
+            hostingLabel(STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADS);
+            if (ImGui::Combo("##hostingscriptuploads", &scriptIdx,
+                             scriptPolicyItems, 3)) {
+                gameFrontSetHostingScriptUploadPolicy(
+                    kScriptPolicyByIndex[scriptIdx]);
+            }
+
+            /* Directory and caps only bite on Persist (Off/Allow never keep
+             * a script past the session). */
+            if (gameFrontHostingScriptUploadPolicy == SCRIPT_UPLOAD_PERSIST) {
+                static char scriptDirBuf[FILENAME_MAX];
+                static bool scriptDirEditing = false;
+                if (s_hostingScriptDirPicked) {
+                    gameFrontSetHostingScriptUploadDir(s_hostingScriptPickedDir);
+                    s_hostingScriptDirPicked = false;
+                }
+                if (!scriptDirEditing) {
+                    SDL_strlcpy(scriptDirBuf, gameFrontHostingScriptUploadDir,
+                                sizeof(scriptDirBuf));
+                }
+                hostingLabel(STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADDIR);
+                bool scriptCommit = ImGui::InputText(
+                    "##hostingscriptuploaddirfield",
+                    scriptDirBuf, sizeof(scriptDirBuf),
+                    ImGuiInputTextFlags_EnterReturnsTrue);
+                scriptDirEditing = ImGui::IsItemActive();
+                if (scriptCommit || ImGui::IsItemDeactivatedAfterEdit()) {
+                    gameFrontSetHostingScriptUploadDir(scriptDirBuf);
+                }
+                /* Distinct ID from the other Browse buttons, which share the
+                 * same label and can be on screen at the same time. */
+                ImGui::PushID("hostingscriptuploaddir");
+                if (ImGui::Button(langGetText(STR_MAPEDIT_BROWSE))) {
+                    SDL_Window *win = sdl3DrawGetWindow();
+                    const char *loc = gameFrontHostingScriptUploadDir[0]
+                                          ? gameFrontHostingScriptUploadDir
+                                          : NULL;
+                    SDL_ShowOpenFolderDialog(hostingScriptUploadDirDialogCallback,
+                                             NULL, win, loc, false);
+                }
+                ImGui::PopID();
+
+                int scriptMaxFiles = gameFrontHostingScriptUploadMaxFiles;
+                hostingLabel(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXFILES);
+                if (ImGui::InputInt("##hostingscriptuploadmaxfiles",
+                                    &scriptMaxFiles)) {
+                    if (scriptMaxFiles < 1)   scriptMaxFiles = 1;
+                    if (scriptMaxFiles > 255) scriptMaxFiles = 255;
+                    gameFrontSetHostingScriptUploadMaxFiles(scriptMaxFiles);
+                }
+                int scriptMaxStorage = gameFrontHostingScriptUploadMaxStorage;
+                hostingLabel(STR_DLGSETTINGS_HOSTING_UPLOAD_MAXSTORAGE);
+                if (ImGui::InputInt("##hostingscriptuploadmaxstorage",
+                                    &scriptMaxStorage)) {
+                    if (scriptMaxStorage < 1)    scriptMaxStorage = 1;
+                    if (scriptMaxStorage > 4095) scriptMaxStorage = 4095;
+                    gameFrontSetHostingScriptUploadMaxStorage(scriptMaxStorage);
+                }
+            }
         }
         ImGui::EndDisabled();
 
