@@ -1285,6 +1285,47 @@ local function release_held(state, info, why, quiet, cancelled)
 end
 M.release_held = release_held
 
+-- A DECOY HOLD THAT ENDS ENDS FOR THIS BOT ONLY (ORDER_GOTO_DECOY).  A repeat
+-- ping can put two bots on one decoy square.  Its end -- the tank died, a
+-- caution on it, the pills went down, the clock ran out -- used to go out as
+-- obx, and obx makes every bot drop the order, so one decoy's death stopped
+-- its partner on the same tick.  With another bot still holding the order
+-- (o.gclaims), this bot now lets go of its own share only: an obr, which
+-- takes it out of every bot's holder set, and under ORDER_NO_HAND_BACK
+-- nobody re-bids it.  Without that knob an obr would hand the square to the
+-- next bot, so the old cancel stays.  The partner keeps its hold until its
+-- own end comes.  The LAST holder out still cancels (obx), exactly as a solo
+-- decoy always did, so the order is forgotten everywhere once nobody holds
+-- it.  decoy_left marks the order on this bot so the steal pass does not
+-- take it back: standing on the square, this bot would be the cheapest.
+-- `line` is what release_held says (nil = in silence).
+-- Does another bot still hold the order this bot holds?  Only asked with
+-- ORDER_NO_HAND_BACK on; without it the answer is always no (the old cancel).
+function M.decoy_partner(state)
+  local o = state and state.orders
+  local h = o and o.held
+  if not (h and C.ORDER_NO_HAND_BACK) then return false end
+  for pn in pairs(o.gclaims[h.oid] or {}) do
+    if pn ~= state.player_number then return true end
+  end
+  return false
+end
+
+function M.decoy_release(state, info, line)
+  local o = S(state)
+  local h = o.held
+  if not h then return end
+  if not M.decoy_partner(state) then
+    release_held(state, info, line, line == nil, true)
+    return
+  end
+  local k = o.known[h.oid]
+  if k then k.decoy_left = true end
+  print2(string.format("ORDER_DECOY_LEAVE t=%d oid=%d -- a partner still holds it",
+         state.tick or 0, h.oid or 0))
+  release_held(state, info, line, line == nil)
+end
+
 -- A DEAD BOT HANDS ITS ORDER BACK.  init.lua's dead-tick block returns before
 -- ORD.update ever runs, so nothing cleared the slot: a bot killed while
 -- holding a go-there order came back with h.hold still set, parked on its
@@ -1292,8 +1333,9 @@ M.release_held = release_held
 -- (Andrew's peer review, Sep 16).  This is a RELEASE, not a cancel: the obr
 -- goes out, and under ORDER_NO_HAND_BACK (the default) nobody re-bids, so
 -- the job ends with this bot; with it off (keel) the next cheapest bot takes
--- it.  A decoy's order is cancelled instead (below).  Quiet: a death is not a
--- line the team needs.  Safe to call on every dead tick; it does nothing
+-- it.  A decoy's order is cancelled instead (below), unless a partner decoy
+-- still holds it (M.decoy_release).  Quiet: a death is not a line the team
+-- needs.  Safe to call on every dead tick; it does nothing
 -- without a slot.
 function M.on_death(state, info)
   -- A dead tank's suicide run is over: that is one of its two endings.
@@ -1305,13 +1347,18 @@ function M.on_death(state, info)
   end
   -- A DECOY that dies has done its job (Andrew's end (d)): the order is
   -- CANCELLED, not handed back, or the next cheapest bot drives to the same
-  -- square and dies the same way.
+  -- square and dies the same way.  With a partner decoy still on the order
+  -- this bot only lets go of its own share (M.decoy_release).
   local decoy = o.held.decoy and o.held.hold
   print2(string.format("ORDER_DEATH t=%d oid=%d kind=%s -- %s",
          state.tick or 0, o.held.oid or 0, tostring(o.held.kind),
          decoy and "decoy over"
          or (C.ORDER_NO_HAND_BACK and "dropped" or "handed back")))
-  release_held(state, info, nil, true, decoy and true or nil)
+  if decoy then
+    M.decoy_release(state, info, nil)
+  else
+    release_held(state, info, nil, true, nil)
+  end
   o.sel = nil
   return true
 end
@@ -1613,14 +1660,16 @@ end
 M.decoy_held = decoy_held
 
 -- End the decoy.  `line` nil = in silence.  A decoy that ends is a job that
--- is over, so it is CANCELLED (obx), never handed back to another bot.
+-- is over, so it is never handed back to another bot: CANCELLED (obx) when
+-- this bot is the only holder, and this bot's share let go when a partner
+-- still holds it (M.decoy_release).
 local function decoy_end(state, info, why, line)
   local h = decoy_held(state)
   if not h then return false end
   print2(string.format("ORDER_DECOY_END t=%d oid=%d why=%s held=%d",
          state.tick or 0, h.oid or 0, tostring(why),
          (state.tick or 0) - (h.arrived or state.tick or 0)))
-  release_held(state, info, line, line == nil, true)
+  M.decoy_release(state, info, line)
   return true
 end
 M.decoy_end = decoy_end
@@ -3164,11 +3213,21 @@ local function ping_caution(state, world, info, sender, mx, my, now)
       -- of them may be holding the order) must forget it too, and the old obr
       -- would have sent the next cheapest one to do the very job a person
       -- just called off.
-      if o.held and o.held.oid == oid then
-        release_held(state, info, "Released", false, true)
+      -- A DECOY WITH A PARTNER stands on the target square, so this 3x3
+      -- would call off every decoy on it at once.  Its caution is the one on
+      -- its own tank (above): one caution, one decoy.  It keeps its hold and
+      -- the order.
+      if o.held and o.held.oid == oid and decoy_held(state)
+         and M.decoy_partner(state) then
+        print2(string.format("PING_CAUTION t=%d decoy keeps oid=%d (a partner's caution)",
+               now, oid))
+      else
+        if o.held and o.held.oid == oid then
+          release_held(state, info, "Released", false, true)
+        end
+        forget_order(o, oid)
+        print2(string.format("PING_CAUTION t=%d cancel oid=%d", now, oid))
       end
-      forget_order(o, oid)
-      print2(string.format("PING_CAUTION t=%d cancel oid=%d", now, oid))
     end
   end
 end
@@ -3534,7 +3593,8 @@ function M.update(state, world, info, now)
       for _, oid in ipairs(sorted_keys(o.claims)) do
         local cl = o.claims[oid]
         local k  = o.known[oid]
-        if cl and k and cl.pn ~= me and (now - cl.tick) >= (C.ORDER_STEAL_HOLD_TICKS or 100)
+        if cl and k and cl.pn ~= me and not k.decoy_left
+           and (now - cl.tick) >= (C.ORDER_STEAL_HOLD_TICKS or 100)
            and (now - k.tick) < (C.ORDER_FOCUS_TICKS or 3000) then
           local mine = M.travel_cost(state, world, info, k.spec)
           local margin = (C.ORDER_STEAL_MIN_TILES or 2) * (C.ORDER_TILE_COST or 4)
@@ -3735,8 +3795,13 @@ function M.update(state, world, info, now)
       -- is ours, the tank is gone, the clock ran out, the hold is served.  An
       -- obr here re-opened the auction on every other bot, and a second bot
       -- was sent to a go-there square the first had already finished holding
-      -- (Andrew's peer review, Sep 16).
-      release_held(state, info, nil, true, true)
+      -- (Andrew's peer review, Sep 16).  A decoy's clock or its pills end
+      -- the hold for this bot only (M.decoy_release).
+      if h.decoy and h.hold then
+        M.decoy_release(state, info, nil)
+      else
+        release_held(state, info, nil, true, true)
+      end
       h = nil
     end
   end

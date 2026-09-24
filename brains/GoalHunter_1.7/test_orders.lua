@@ -3291,6 +3291,116 @@ do
         oid ~= nil and holds(b, oid) and holds(c, oid), "?")
   C.ORDER_CLAIM_TIEBREAK = true
 end
+
+-- =========================================================================
+-- TWO DECOYS ON ONE SQUARE (ORDER_GOTO_DECOY, PR #389 review item 10).  A
+-- repeat ping puts a second bot on a decoy square.  When one decoy's hold
+-- ends (death, caution, clock) it lets go of its own share only; the
+-- partner keeps decoying until its own end.  The last one out cancels.
+-- =========================================================================
+print("orders.lua -- two decoys on one square")
+local DHOLD = C.ORDER_GOTO_HOLD_TICKS or 500
+local function decoy_pair()
+  local a, b = BOT(1, 22, 30), BOT(2, 22, 34)
+  local all = { a, b }
+  for _, x in ipairs(all) do gping(x, 100, 22, 24) end
+  pumpn(all, 100); upd(all, 101)
+  pumpn(all, 101); upd(all, 102)
+  for _, x in ipairs(all) do gping(x, 150, 22, 24) end
+  pumpn(all, 150); upd(all, 151)
+  pumpn(all, 151); upd(all, 152)
+  pumpn(all, 152); upd(all, 153)
+  -- A reaches the square at 210, B beside it at 220.
+  a.inf.tankx, a.inf.tanky = 22 * 256 + 128, 24 * 256 + 128
+  upd({ a }, 210)
+  b.inf.tankx, b.inf.tanky = 23 * 256 + 128, 24 * 256 + 128
+  upd({ b }, 220)
+  pumpn(all, 220)
+  for _, x in ipairs(all) do x.st.orders.out, x.st.orders.say = {}, {} end
+  return a, b, all
+end
+do
+  local a, b, all = decoy_pair()
+  local oid = a.st.orders.held and a.st.orders.held.oid
+  check("setup: both bots decoy on the one order",
+        oid ~= nil and ORD.decoy_held(a.st) ~= nil and ORD.decoy_held(b.st) ~= nil
+        and b.st.orders.held.oid == oid, "?")
+  ORD.on_death(a.st, a.inf)
+  check("a decoy death with a partner: a release, not a cancel",
+        a.st.orders.out[1] == "/info obr " .. tostring(oid), tostring(a.st.orders.out[1]))
+  pumpn(all, 300)
+  upd({ b }, 301)
+  check("the partner keeps decoying", ORD.decoy_held(b.st) ~= nil
+        and b.st.orders.held.oid == oid, "dropped")
+  check("the partner stops counting the dead decoy",
+        (b.st.orders.gclaims[oid] or {})[1] == nil, "counted")
+  -- A respawns next to the square: it must not steal the order back.
+  a.inf.tankx, a.inf.tanky = 22 * 256 + 128, 25 * 256 + 128
+  upd({ a }, 450)
+  check("the dead decoy does not steal the order back", a.st.orders.held == nil,
+        tostring(a.st.orders.held and a.st.orders.held.oid))
+  b.st.orders.out = {}
+  upd({ b }, 220 + DHOLD)
+  check("the partner's own clock ends it, as the last holder: a cancel",
+        b.st.orders.held == nil and b.st.orders.out[1] == "/info obx " .. tostring(oid),
+        tostring(b.st.orders.out[1]))
+end
+do
+  -- A caution beside A's tank only (B is two squares off it).
+  local a, b, all = decoy_pair()
+  local oid = a.st.orders.held.oid
+  for _, x in ipairs(all) do
+    x.inf.events = { ping(1, 0, 21, 24) }
+    ORD.on_events(x.st, x.w, x.inf, 300)
+    x.inf.events = {}
+  end
+  check("a caution on one decoy releases it", a.st.orders.held == nil
+        and a.st.orders.say[1] == "Released", tostring(a.st.orders.say[1]))
+  check("with a release, not a cancel",
+        a.st.orders.out[1] == "/info obr " .. oid, tostring(a.st.orders.out[1]))
+  pumpn(all, 300)
+  upd(all, 301)
+  check("the partner keeps decoying after the caution",
+        ORD.decoy_held(b.st) ~= nil, "dropped")
+end
+do
+  -- The clock: A arrived first, so its hold ends first.
+  local a, b, all = decoy_pair()
+  local oid = a.st.orders.held.oid
+  upd(all, 210 + DHOLD)
+  check("A's clock ends A's hold", a.st.orders.held == nil, "held")
+  check("with a release, not a cancel (clock)",
+        a.st.orders.out[1] == "/info obr " .. oid, tostring(a.st.orders.out[1]))
+  pumpn(all, 210 + DHOLD)
+  upd(all, 211 + DHOLD)
+  check("B holds on to the end of its own clock", ORD.decoy_held(b.st) ~= nil, "dropped")
+  check("A does not take the order back", a.st.orders.held == nil, "held")
+end
+do
+  -- A person's cancel still reaches both.
+  local a, b, all = decoy_pair()
+  for _, x in ipairs(all) do
+    ORD.on_chat(x.st, x.w, x.inf, 0, "cancel all", 300, true, false)
+  end
+  check("'cancel all' still ends both decoys",
+        a.st.orders.held == nil and b.st.orders.held == nil, "?")
+end
+do
+  -- Without ORDER_NO_HAND_BACK an obr would hand the square on, so the
+  -- decoy's end stays the old cancel.
+  C.ORDER_NO_HAND_BACK = false
+  local a, b, all = decoy_pair()
+  local oid = a.st.orders.held.oid
+  ORD.on_death(a.st, a.inf)
+  check("no NO_HAND_BACK: a decoy death still cancels (obx)",
+        a.st.orders.out[1] == "/info obx " .. oid, tostring(a.st.orders.out[1]))
+  pumpn(all, 300)
+  upd({ b }, 301)
+  check("no NO_HAND_BACK: and the partner drops too (the old behaviour)",
+        b.st.orders.held == nil, "held")
+  C.ORDER_NO_HAND_BACK = true
+end
+
 -- =========================================================================
 -- A NEW ORDER RETIRES EVERY OLDER ONE (ORDER_NEW_CLEARS_ALL, 2026-09-24).
 -- "I'm seeing bots go back to where I said 'go here' a while ago."
