@@ -376,7 +376,10 @@ void gameFrontSetPlayerName(char *pn);
 *CREATION DATE: 26/2/99
 *LAST MODIFIED: 26/2/99
 *PURPOSE:
-* Sets the AI type of the game. (From networking module)
+* Sets the AI type of the game being joined, on the client sim and
+* the brains menu. (From networking module.) It does not touch the
+* saved computer tanks pick that gameFrontRememberAiPolicy records:
+* a joined game's setting is not what the next hosted game opens on.
 *
 *ARGUMENTS:
 *

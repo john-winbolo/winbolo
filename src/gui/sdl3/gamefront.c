@@ -2322,12 +2322,17 @@ void gameFrontSetPlayerName(char *pn) {
   strcpy(gameFrontName, pn);
 }
 
+/* The AI type of the game being joined. It goes to the client sim and
+ * the brains menu only. compTanks is left alone: it holds the computer
+ * tanks pick the next game this machine hosts opens on, and a joined
+ * game's setting is not that pick. Writing it here made a single-player
+ * game started after joining a no-bots game open with no computer
+ * tanks and no enemy bot. */
 void gameFrontSetAIType(aiType ait) {
-  compTanks = ait;
   if (humanSim != NULL) {
-    clientSimSetAiType(humanSim, compTanks);
+    clientSimSetAiType(humanSim, ait);
   }
-  if (compTanks == aiNone) {
+  if (ait == aiNone) {
     brainsHandlerSet(FALSE);
   } else {
     brainsHandlerSet(TRUE);
