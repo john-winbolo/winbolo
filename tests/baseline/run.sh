@@ -1348,15 +1348,15 @@ dispatch_scenario() {
     # after it. The open shell run is also recorded; its .wbv is the
     # source of the committed tests/fixtures/wbv/road_spit_shell_open.wbv.
     road_spit_shell_open)
-      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/park_in_pill_range.lua" open 720 record ;;
+      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/park_in_pill_range.lua" open 1440 record ;;
     road_spit_shell_strict)
-      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/park_in_pill_range.lua" strict 720 "" ;;
+      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/park_in_pill_range.lua" strict 1440 "" ;;
     road_spit_shell_tournament)
-      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/park_in_pill_range.lua" tournament 720 "" ;;
+      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/park_in_pill_range.lua" tournament 1440 "" ;;
     road_spit_mine_open)
-      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/lay_mine_and_drive_over.lua" open 450 "" ;;
+      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/lay_mine_and_drive_over.lua" open 900 "" ;;
     road_spit_drown_open)
-      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/drive_into_deep_sea.lua" open 280 "" ;;
+      run_changes "$name" "$ROAD_SPIT_MAP" "$BRAINS/drive_into_deep_sea.lua" open 560 "" ;;
 
     # Getting out of a boat and back into one, on the purpose-built Boat
     # Bank. The exit rule the engine applies turns on the terrain the boat
@@ -1375,13 +1375,13 @@ dispatch_scenario() {
     # terrain hash covers the boat moving from one map square to another,
     # which the change log has no field for.
     boat_bank_road_slow)
-      run_changes "$name" "$BOAT_BANK_MAP" "$BRAINS/boat_exit_road_slow.lua" open 165 "" ;;
+      run_changes "$name" "$BOAT_BANK_MAP" "$BRAINS/boat_exit_road_slow.lua" open 330 "" ;;
     boat_bank_road_fast)
-      run_changes "$name" "$BOAT_BANK_MAP" "$BRAINS/boat_exit_road_fast.lua" open 130 record ;;
+      run_changes "$name" "$BOAT_BANK_MAP" "$BRAINS/boat_exit_road_fast.lua" open 260 record ;;
     boat_bank_grass_slow)
-      run_changes "$name" "$BOAT_BANK_MAP" "$BRAINS/boat_exit_grass_slow.lua" open 120 "" ;;
+      run_changes "$name" "$BOAT_BANK_MAP" "$BRAINS/boat_exit_grass_slow.lua" open 240 "" ;;
     boat_bank_grass_fast)
-      run_changes "$name" "$BOAT_BANK_MAP" "$BRAINS/boat_exit_grass_fast.lua" open 130 "" ;;
+      run_changes "$name" "$BOAT_BANK_MAP" "$BRAINS/boat_exit_grass_fast.lua" open 260 "" ;;
 
     # The builder at work on the purpose-built Builder Yard. Each run comes
     # ashore, stops on road square 122 and sends the man out to the work
@@ -1403,17 +1403,17 @@ dispatch_scenario() {
     # tests/fixtures/wbv/builder_yard_pill_place.wbv: its summary carries
     # the moved pillbox and the terrain the run left behind.
     builder_yard_farm)
-      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/farm_two_forest_squares.lua" strict 175 "" terrain ;;
+      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/farm_two_forest_squares.lua" strict 350 "" terrain ;;
     builder_yard_road)
-      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/build_road_on_grass_and_swamp.lua" open 145 "" terrain ;;
+      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/build_road_on_grass_and_swamp.lua" open 290 "" terrain ;;
     builder_yard_building)
-      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/build_wall_then_repair_wall.lua" open 160 "" terrain ;;
+      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/build_wall_then_repair_wall.lua" open 320 "" terrain ;;
     builder_yard_mine)
-      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/lay_mine_beside_road.lua" open 110 "" terrain ;;
+      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/lay_mine_beside_road.lua" open 220 "" terrain ;;
     builder_yard_pill_place)
-      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/place_carried_pillbox.lua" open 145 record terrain ;;
+      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/place_carried_pillbox.lua" open 290 record terrain ;;
     builder_yard_pill_repair)
-      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/repair_own_pillbox.lua" open 175 "" terrain ;;
+      run_changes "$name" "$BUILDER_YARD_MAP" "$BRAINS/repair_own_pillbox.lua" open 350 "" terrain ;;
 
     # Bases on the purpose-built Base Yard, where three of them stand on one
     # road. What a base is worth to the tank that takes it turns on who held
@@ -1443,11 +1443,11 @@ dispatch_scenario() {
     # it; the capture run's covers a refuel interval on the base with nothing
     # to hand over.
     base_yard_capture)
-      run_changes "$name" "$BASE_YARD_MAP" "$BRAINS/drive_onto_neutral_base.lua" open 125 "" ;;
+      run_changes "$name" "$BASE_YARD_MAP" "$BRAINS/drive_onto_neutral_base.lua" open 250 "" ;;
     base_yard_refuel)
-      run_changes "$name" "$BASE_YARD_MAP" "$BRAINS/refuel_on_neutral_base.lua" strict 245 "" terrain ;;
+      run_changes "$name" "$BASE_YARD_MAP" "$BRAINS/refuel_on_neutral_base.lua" strict 490 "" terrain ;;
     base_yard_steal)
-      run_changes "$name" "$BASE_YARD_MAP" "$BRAINS/shell_and_take_enemy_base.lua" open 215 "" terrain ;;
+      run_changes "$name" "$BASE_YARD_MAP" "$BRAINS/shell_and_take_enemy_base.lua" open 430 "" terrain ;;
 
     # Pillboxes on the purpose-built Pill Yard. The capture run flattens the
     # neutral pill standing in the road and drives over it, which is how a
@@ -1461,9 +1461,9 @@ dispatch_scenario() {
     # step at a time, PILLBOX_COOLDOWN_TIME apart. Its budget covers three of
     # those steps, which is where the cadence is established.
     pill_yard_capture)
-      run_changes "$name" "$PILL_YARD_MAP" "$BRAINS/shell_and_take_neutral_pillbox.lua" open 200 "" ;;
+      run_changes "$name" "$PILL_YARD_MAP" "$BRAINS/shell_and_take_neutral_pillbox.lua" open 400 "" ;;
     pill_yard_anger)
-      run_changes "$name" "$PILL_YARD_MAP" "$BRAINS/shell_own_pillbox_four_times.lua" open 210 "" ;;
+      run_changes "$name" "$PILL_YARD_MAP" "$BRAINS/shell_own_pillbox_four_times.lua" open 420 "" ;;
 
     # Tree growth on the purpose-built Grass Flat, where a tank idles offshore
     # and the only thing that moves in the whole run is one square of the
@@ -1477,7 +1477,7 @@ dispatch_scenario() {
     # legible: a grown tree is a map square and nothing else, and the forest
     # count beside it only says how many there are.
     grass_flat_growth)
-      run_changes "$name" "$GRASS_FLAT_MAP" "$BRAINS/idle.lua" open 1520 "" terrain ;;
+      run_changes "$name" "$GRASS_FLAT_MAP" "$BRAINS/idle.lua" open 3040 "" terrain ;;
 
     # The scenario beside Wave Defense.map, played to the end it writes for
     # itself. The lobby holds six seats for the raiders, the command stream

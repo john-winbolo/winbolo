@@ -29,11 +29,11 @@ function brain.think(info)
   was_in_boat = info.inboat
 
   if phase == "turn" then
-    -- Facing east is heading 64; turn left towards 0 (north). Letting the
-    -- key go takes a few steps to land, so stop pressing a quarter of the
-    -- way out and let the turn coast in; heading is quantised to sixteen
-    -- directions for movement, so anything that close counts as due north.
-    if info.direction <= 16 or info.direction >= 128 then
+    -- Facing east is heading 64; turn left towards 0 (north). Heading is
+    -- quantised to sixteen directions for movement, sixteen apart, so
+    -- anything within half of one (7 or less) moves due north. Keep turning
+    -- until then; one think per frame leaves almost no coast after release.
+    if info.direction <= 7 or info.direction >= 128 then
       phase = "run"
     else
       out.holdkeys = KEY_TURNLEFT
