@@ -679,6 +679,10 @@ struct ClientSim {
        unbound scenario are both unbound, and a chooser that sorts the two
        into different columns needs the kind as well. */
     bool     lobbyScenarioListKeepsWin[LOBBY_SCENARIO_LIST_MAX];
+    /* Where the server got the file (SERVER_SCENARIO_SOURCE_*), and the
+       Workshop item it came from, 0 for none. */
+    uint8_t  lobbyScenarioListSource[LOBBY_SCENARIO_LIST_MAX];
+    uint64_t lobbyScenarioListWorkshopId[LOBBY_SCENARIO_LIST_MAX];
     bool     lobbyScenarioListReady;    /* true once a response arrives */
     bool     lobbyScenarioListInFlight; /* true after send, false on response */
     /* False until the first chunk of the response in flight lands, which is
@@ -872,6 +876,8 @@ struct ClientSim {
     char     lobbyScriptNames[LOBBY_SCRIPT_LIST_MAX][LOBBY_SCENARIO_NAME_LEN];
     bool     lobbyScriptKeepsWin[LOBBY_SCRIPT_LIST_MAX];
     bool     lobbyScriptBound[LOBBY_SCRIPT_LIST_MAX];
+    uint8_t  lobbyScriptSource[LOBBY_SCRIPT_LIST_MAX];
+    uint64_t lobbyScriptWorkshopId[LOBBY_SCRIPT_LIST_MAX];
     int      lobbyScriptPendingCount;
     LobbyScriptEntry lobbyScriptPending[LOBBY_SCRIPT_LIST_MAX];
     /* Set when a run of chunks is thrown away for overrunning the cap, and

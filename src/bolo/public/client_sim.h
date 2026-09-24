@@ -1115,6 +1115,11 @@ const char *clientSimGetLobbyScriptFile(const ClientSim *cs, int i);
 const char *clientSimGetLobbyScriptName(const ClientSim *cs, int i);
 bool        clientSimGetLobbyScriptKeepsWinCondition(const ClientSim *cs, int i);
 bool        clientSimGetLobbyScriptBound(const ClientSim *cs, int i);
+/* Where the server got the file, one of SERVER_SCENARIO_SOURCE_*
+ * (server_sim.h), and the Workshop item it came from, 0 for none. The map's
+ * own script reads SERVER. SERVER and 0 out of range. */
+uint8_t     clientSimGetLobbyScriptSource(const ClientSim *cs, int i);
+uint64_t    clientSimGetLobbyScriptWorkshopId(const ClientSim *cs, int i);
 uint32_t    clientSimGetLobbyScriptSeq(const ClientSim *cs);
 
 /* The rules that scenario's own manifest sets, mirrored via
@@ -1277,6 +1282,13 @@ bool        clientSimGetLobbyScenarioListBound(const ClientSim *cs, int idx);
  * and a chooser listing the two separately reads this one. */
 bool        clientSimGetLobbyScenarioListKeepsWinCondition(const ClientSim *cs,
                                                            int idx);
+/* Where the server got the file, one of SERVER_SCENARIO_SOURCE_*
+ * (server_sim.h): its own directories, a player's upload, or the Workshop.
+ * And the Workshop item it came from, 0 for none. SERVER and 0 out of
+ * range. */
+uint8_t     clientSimGetLobbyScenarioListSource(const ClientSim *cs, int idx);
+uint64_t    clientSimGetLobbyScenarioListWorkshopId(const ClientSim *cs,
+                                                    int idx);
 bool        clientSimGetLobbyScenarioListReady(const ClientSim *cs);
 bool        clientSimGetLobbyScenarioListInFlight(const ClientSim *cs);
 /* Ticked on each completed response, so a caller holding its own last-seen

@@ -935,6 +935,7 @@ static bool udpClientReadLenStr(const uint8_t *buf, int len, int *pos,
  *   [header 8] [final 1] [count 1]
  *   per entry: [fileLen 1][file M][nameLen 1][name N][descLen 1][desc D]
  *              [maxPlayers 1][bots 1][bound 1][keepsWinCondition 1]
+ *              [source 1][workshopId 8 BE]
  *
  * No path, unlike the map list: the scenarios directory is flat, so there is
  * nothing to ask about and nothing to recognise a stale response by. The
@@ -1006,12 +1007,12 @@ void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
             !udpClientReadLenStr(buf, len, &pos, desc, sizeof(desc))) {
             break;
         }
-        if (pos + 4 > len) break;
+        if (pos + 4 + 9 > len) break;
         /* Read into locals first, so a chunk that arrives past the cap is
            still walked to its end rather than leaving the position stranded
            mid-entry. */
         if (cs->lobbyScenarioListCount >= LOBBY_SCENARIO_LIST_MAX) {
-            pos += 4;
+            pos += 4 + 9;
             continue;
         }
         idx = cs->lobbyScenarioListCount++;
@@ -1025,6 +1026,11 @@ void udpClientHandleLobbyScenarioListRsp(ClientSim *cs,
         cs->lobbyScenarioListBots[idx]       = buf[pos++];
         cs->lobbyScenarioListBound[idx]      = buf[pos++] ? true : false;
         cs->lobbyScenarioListKeepsWin[idx]   = buf[pos++] ? true : false;
+        cs->lobbyScenarioListSource[idx]     = buf[pos++];
+        cs->lobbyScenarioListWorkshopId[idx] =
+            ((uint64_t)unpackU32(buf + pos) << 32) |
+            (uint64_t)unpackU32(buf + pos + 4);
+        pos += 8;
     }
 
     if (finalFlag) {

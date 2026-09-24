@@ -6621,24 +6621,41 @@ static int scnDirMergedCmp(const void *a, const void *b) {
 
    A directory that cannot be read answers -1, which is read here as no rows
    rather than as a failure: a host with no mod directory of its own is the
-   ordinary case, and the rest of the list still comes through. */
+   ordinary case, and the rest of the list still comes through.
+
+   Every row a directory read makes says SCN_DIR_SOURCE_SERVER. The rows read
+   from the uploads directory are marked SCN_DIR_SOURCE_UPLOAD here, after the
+   read, so the cache holds what the directory says and nothing about where
+   it sits in the list. */
 static int scnDirListCb(void *ctx, const char *dir, ScnDirEntry *out,
                         int max) {
-    char dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
-    int  count;
-    int  n = 0;
-    int  d;
+    char        dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
+    const char *uploads = scnModDirUploads(ctx);
+    int         count;
+    int         above;
+    int         n = 0;
+    int         d;
 
     if (out == NULL || max <= 0) {
         return scnDirListCached(dir, out, NULL, max);
     }
-    count = scnModDirs(dirs, dir, scnModDirUploads(ctx));
+    /* The list without the uploads directory, then with it: scnModDirs adds
+       it last, and leaves it out when a directory above is the same one. In
+       that case it has no entry of its own and its files are that
+       directory's, so nothing is marked. */
+    above = scnModDirs(dirs, dir, NULL);
+    count = scnModDirs(dirs, dir, uploads);
     for (d = 0; d < count && n < max; d++) {
         int extra = scnDirListCached(dirs[d], out + n, NULL, max - n);
         int i;
 
         if (extra <= 0) {
             continue;
+        }
+        if (d >= above && uploads != NULL && strcmp(dirs[d], uploads) == 0) {
+            for (i = 0; i < extra; i++) {
+                out[n + i].source = SCN_DIR_SOURCE_UPLOAD;
+            }
         }
         /* The rows kept so far are out[0..n) and this directory's are
            out[n..n+extra). Anything in the second half whose file name is

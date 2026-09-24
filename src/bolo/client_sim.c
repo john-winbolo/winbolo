@@ -2951,6 +2951,17 @@ bool clientSimGetLobbyScenarioListKeepsWinCondition(const ClientSim *cs,
   if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return false;
   return cs->lobbyScenarioListKeepsWin[idx];
 }
+uint8_t clientSimGetLobbyScenarioListSource(const ClientSim *cs, int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) {
+    return SERVER_SCENARIO_SOURCE_SERVER;
+  }
+  return cs->lobbyScenarioListSource[idx];
+}
+uint64_t clientSimGetLobbyScenarioListWorkshopId(const ClientSim *cs,
+                                                 int idx) {
+  if (cs == NULL || idx < 0 || idx >= cs->lobbyScenarioListCount) return 0;
+  return cs->lobbyScenarioListWorkshopId[idx];
+}
 /* The lobby's ordered script list: what the host has picked, in the order
  * the round will load it. Entry 0 is the script the round is decided by and
  * is the same file the attached-scenario accessors describe; the entries
@@ -2975,6 +2986,16 @@ bool clientSimGetLobbyScriptKeepsWinCondition(const ClientSim *cs, int i) {
 bool clientSimGetLobbyScriptBound(const ClientSim *cs, int i) {
   if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) return false;
   return cs->lobbyScriptBound[i];
+}
+uint8_t clientSimGetLobbyScriptSource(const ClientSim *cs, int i) {
+  if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) {
+    return SERVER_SCENARIO_SOURCE_SERVER;
+  }
+  return cs->lobbyScriptSource[i];
+}
+uint64_t clientSimGetLobbyScriptWorkshopId(const ClientSim *cs, int i) {
+  if (cs == NULL || i < 0 || i >= cs->lobbyScriptCount) return 0;
+  return cs->lobbyScriptWorkshopId[i];
 }
 uint32_t clientSimGetLobbyScriptSeq(const ClientSim *cs) {
   return cs ? cs->lobbyScriptSeq : 0;

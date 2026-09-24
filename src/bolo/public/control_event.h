@@ -264,13 +264,13 @@ typedef enum {
      *
      * Its own event rather than more of the CTRL_LOBBY_SETTINGS tail, and
      * that is a measurement rather than a preference. A whole list at the
-     * cap is 1 + 10 * 192 = 1921 body bytes, which is past the 1021 a
+     * cap is 2 + 10 * 202 = 2022 body bytes, which is past the 1021 a
      * control segment carries, so it has to be chunked whichever event it
      * rides. Chunking the settings tail would put a fragment number on every
      * lobby change, and the settings variant would have to hold the widest
      * fragment by value: at LOBBY_CHAT_BUFFER_MAX ControlEvents per sim,
      * growing that union member is paid two hundred times over on every sim.
-     * This variant is 967 bytes, under the 1108 the round-stats member
+     * This variant is 1048 bytes, under the 1108 the round-stats member
      * already spends, so the union does not grow at all and the settings
      * event is left the size it was.
      *
@@ -417,15 +417,15 @@ typedef enum {
  * measured rather than chosen.
  *
  * One entry is at worst [flags 1][fileLen 1][file 127][nameLen 1][name 63]
- * = 193 bytes, and a body spends 2 more on final and count. The flags byte
- * is a byte and not a bool, so the two flags an entry carries — keeps the
- * win condition, bound to a map — are bits in it and the entry does not
- * widen when a third one arrives. A control event
- * is one channel segment, which is CHANNEL_CONTROL_SEG (1024) less the
- * channel frame's type(1) and bodyLen(2) — 1021 bytes. So:
+ * [source 1][workshopId 8] = 193 + 9 = 202 bytes, and a body spends 2 more
+ * on final and count. The flags byte is a byte and not a bool, so the two
+ * flags an entry carries — keeps the win condition, bound to a map — are
+ * bits in it and the entry does not widen when a third one arrives. A
+ * control event is one channel segment, which is CHANNEL_CONTROL_SEG (1024)
+ * less the channel frame's type(1) and bodyLen(2) — 1021 bytes. So:
  *
- *   5 entries: 2 + 5 * 193 =  967   fits, 54 bytes spare
- *   6 entries: 2 + 6 * 193 = 1160   139 over, and a body past the segment is
+ *   5 entries: 2 + 5 * 202 = 1012   fits, 9 bytes spare
+ *   6 entries: 2 + 6 * 202 = 1214   193 over, and a body past the segment is
  *                                   logged and dropped with nothing visible
  *                                   to the client
  *
@@ -437,7 +437,7 @@ typedef enum {
 /* One script on the list, as CTRL_LOBBY_SCRIPT_LIST carries it and as a
  * client holds it afterwards.
  *
- * No description. One would be 257 bytes on top of the 193 here and would
+ * No description. One would be 257 bytes on top of the 202 here and would
  * cut a chunk to two entries, and a client already has every description it
  * needs: PACKET_LOBBY_SCENARIO_LIST_RSP carries them for the whole
  * directory and the chooser already fetches it, keyed by this same file
@@ -460,6 +460,12 @@ typedef struct LobbyScriptEntry {
      * name a file the listing no longer holds, and a row that cannot say
      * whether it is removable is worse than one row of wire. */
     bool bound;
+    /* Where the server got the file: SCN_DIR_SOURCE_SERVER, _UPLOAD or
+     * _WORKSHOP (scenario_defs.h; SERVER_SCENARIO_SOURCE_* in server_sim.h
+     * for a gui reader). The map's own script reads SERVER. */
+    uint8_t  source;
+    /* The Workshop item the file came from, 0 for none. */
+    uint64_t workshopId;
 } LobbyScriptEntry;
 
 /* Which rules CTRL_SIM_RULES carries, and how wide each one goes.

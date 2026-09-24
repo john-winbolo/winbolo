@@ -68,6 +68,18 @@
  *   loopback_script_upload_plays_next_round
  *                                an uploaded mod on the pick list is read by
  *                                the next decision and composes.
+ *   script_upload_list_source    a row read from the landing directory says
+ *                                SCN_DIR_SOURCE_UPLOAD through the listing,
+ *                                the frontend enumeration, the pick list and
+ *                                the script-list event; a shipped row and a
+ *                                name both directories hold say SERVER; and
+ *                                a landing directory that is also a higher
+ *                                one marks nothing.
+ *   loopback_script_upload_source_on_wire
+ *                                a remote client reads the uploaded row as
+ *                                UPLOAD off the scenario-list packet, and
+ *                                again off the script-list event once the
+ *                                host has put it on the list.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -1394,4 +1406,204 @@ static int body_plays_next_round(LoopbackHarness *h, int slot,
 int run_loopback_script_upload_plays_next_round(void) {
     return up_run_loopback("PlaysNextRound", SCRIPT_UPLOAD_ALLOW,
                            body_plays_next_round);
+}
+
+/* ── where each row came from ────────────────────────────────────────── */
+
+/* The listing's row for file, copied into *out; false when it is not
+ * listed. */
+static bool up_row(ServerSim *sim, const char *file, ScnDirEntry *out) {
+    ScnDirEntry *rows;
+    int          n;
+    int          i;
+    bool         found = false;
+
+    memset(out, 0, sizeof(*out));
+    rows = (ScnDirEntry *)calloc(64, sizeof(*rows));
+    if (rows == NULL) return false;
+    n = serverSimScenarioListDir(sim, rows, 64);
+    for (i = 0; i < n; i++) {
+        if (strcmp(rows[i].file, file) == 0) {
+            *out  = rows[i];
+            found = true;
+            break;
+        }
+    }
+    free(rows);
+    return found;
+}
+
+static int body_list_source(ServerSim *sim, const UpDirs *d) {
+    ScnDirEntry          row;
+    ServerScenarioEntry *pub;
+    ControlEvent         evt;
+    const ScnDirEntry   *lobby;
+    int                  n;
+    int                  i;
+    bool                 pubFound = false;
+
+    UT_ASSERT(SDL_CreateDirectory(d->landing));
+    UT_ASSERT(up_write_mod(d->landing, "up.lua", "Uploaded"));
+    UT_ASSERT(up_write_mod(d->shipped, "ship.lua", "Shipped"));
+    /* The same name in both: the shipped directory is above the landing
+       one, so its copy is the row, and that row is the server's. */
+    UT_ASSERT(up_write_mod(d->shipped, "both.lua", "Both Shipped"));
+    UT_ASSERT(up_write_mod(d->landing, "both.lua", "Both Uploaded"));
+
+    UT_ASSERT_MSG(up_row(sim, "up.lua", &row), "the uploaded mod is not listed");
+    UT_ASSERT_MSG(row.source == SCN_DIR_SOURCE_UPLOAD,
+                  "a row from the landing directory says source %u",
+                  (unsigned)row.source);
+    UT_ASSERT(row.workshopId == 0);
+
+    UT_ASSERT_MSG(up_row(sim, "ship.lua", &row), "the shipped mod is not listed");
+    UT_ASSERT_MSG(row.source == SCN_DIR_SOURCE_SERVER,
+                  "a shipped row says source %u", (unsigned)row.source);
+    UT_ASSERT(row.workshopId == 0);
+
+    UT_ASSERT(up_row(sim, "both.lua", &row));
+    UT_ASSERT_MSG(strcmp(row.name, "Both Shipped") == 0,
+                  "a name both directories hold listed the copy named '%s'",
+                  row.name);
+    UT_ASSERT_MSG(row.source == SCN_DIR_SOURCE_SERVER,
+                  "the higher directory's copy says source %u",
+                  (unsigned)row.source);
+
+    /* The shape a frontend reads carries the same byte. */
+    pub = (ServerScenarioEntry *)calloc(64, sizeof(*pub));
+    UT_ASSERT(pub != NULL);
+    n = serverSimEnumerateScenarioDir(sim, pub, 64);
+    for (i = 0; i < n; i++) {
+        if (strcmp(pub[i].file, "up.lua") == 0) {
+            pubFound = true;
+            UT_ASSERT_MSG(pub[i].source == SERVER_SCENARIO_SOURCE_UPLOAD,
+                          "the enumeration says source %u",
+                          (unsigned)pub[i].source);
+            UT_ASSERT(pub[i].workshopId == 0);
+        } else if (strcmp(pub[i].file, "ship.lua") == 0) {
+            UT_ASSERT(pub[i].source == SERVER_SCENARIO_SOURCE_SERVER);
+        }
+    }
+    free(pub);
+    UT_ASSERT_MSG(pubFound, "the enumeration left out the uploaded mod");
+
+    /* Picked, the row is kept whole, and the event the lobby is sent says
+       the same. */
+    UT_ASSERT(up_row(sim, "up.lua", &row));
+    serverSimSetScriptList(sim, &row, 1);
+    lobby = serverSimGetLobbyScript(sim, 0);
+    UT_ASSERT(lobby != NULL);
+    UT_ASSERT_MSG(lobby->source == SCN_DIR_SOURCE_UPLOAD,
+                  "the pick list says source %u", (unsigned)lobby->source);
+    serverSimFillScriptListEvent(sim, 0, &evt);
+    UT_ASSERT(evt.u.lobbyScriptList.count == 1);
+    UT_ASSERT_MSG(evt.u.lobbyScriptList.entries[0].source ==
+                      SCN_DIR_SOURCE_UPLOAD,
+                  "the script-list event says source %u",
+                  (unsigned)evt.u.lobbyScriptList.entries[0].source);
+    UT_ASSERT(evt.u.lobbyScriptList.entries[0].workshopId == 0);
+
+    /* A landing directory that is also one above it is not listed twice,
+       so it has no rows of its own: what it holds is that directory's, and
+       says SERVER. */
+    serverSimSetScriptUploadDir(sim, d->shipped);
+    UT_ASSERT(up_row(sim, "ship.lua", &row));
+    UT_ASSERT_MSG(row.source == SCN_DIR_SOURCE_SERVER,
+                  "a landing directory equal to the shipped one marked its "
+                  "rows %u", (unsigned)row.source);
+    return 0;
+}
+
+int run_script_upload_list_source(void) {
+    return up_run_sim("Session", body_list_source);
+}
+
+/* ── a remote client reads which rows were uploaded ──────────────────── */
+
+static bool pred_scenario_list_ready(LoopbackHarness *h, void *user) {
+    (void)user;
+    return clientSimGetLobbyScenarioListReady(h->cs) &&
+           !clientSimGetLobbyScenarioListInFlight(h->cs);
+}
+
+/* Where the client's script list holds file, or -1. */
+static int up_script_at(const ClientSim *cs, const char *file) {
+    int n = clientSimGetLobbyScriptCount(cs);
+    int i;
+
+    for (i = 0; i < n; i++) {
+        if (strcmp(clientSimGetLobbyScriptFile(cs, i), file) == 0) return i;
+    }
+    return -1;
+}
+
+static bool pred_script_listed(LoopbackHarness *h, void *user) {
+    return up_script_at(h->cs, (const char *)user) >= 0;
+}
+
+static int body_source_on_wire(LoopbackHarness *h, int slot, const UpDirs *d) {
+    char        path[1200];
+    char        dir[1024];
+    char        fastName[] = "fast.lua";
+    const char *files[1]   = { fastName };
+    UpResult    r;
+    int         upAt   = -1;
+    int         shipAt = -1;
+    int         n;
+    int         i;
+    int         at;
+
+    UT_ASSERT(up_write_mod(d->shipped, "ship.lua", "Shipped"));
+    UT_ASSERT(utScratchPath(dir, sizeof(dir), NULL));
+    UT_ASSERT(up_write_mod(dir, "fast.lua", "Upload Mod"));
+    UT_ASSERT(up_client_file(path, sizeof(path), "fast.lua"));
+    up_send(h, path, &r);
+    UT_ASSERT_MSG(r.status == 3, "status %d reject %d path '%s'",
+                  (int)r.status, (int)r.reject, r.finalPath);
+
+    /* The list packet, asked for the way the chooser asks. */
+    threadsWaitForMutex();
+    udpServer.clientReqCooldownTicks[slot] = 0;
+    threadsReleaseMutex();
+    clientSimNetSendLobbyScenarioListRequest(h->cs);
+    UT_ASSERT_MSG(loopbackHarnessPumpUntil(h, ACK_MAX,
+                                           pred_scenario_list_ready,
+                                           NULL) >= 0,
+                  "the scenario list never arrived");
+    n = clientSimGetLobbyScenarioListCount(h->cs);
+    for (i = 0; i < n; i++) {
+        const char *f = clientSimGetLobbyScenarioListFile(h->cs, i);
+        if (strcmp(f, "fast.lua") == 0) upAt = i;
+        if (strcmp(f, "ship.lua") == 0) shipAt = i;
+    }
+    UT_ASSERT_MSG(upAt >= 0, "the uploaded mod is not in the client's list");
+    UT_ASSERT_MSG(shipAt >= 0, "the shipped mod is not in the client's list");
+    UT_ASSERT_MSG(clientSimGetLobbyScenarioListSource(h->cs, upAt) ==
+                      SERVER_SCENARIO_SOURCE_UPLOAD,
+                  "the client reads the uploaded row as source %u",
+                  (unsigned)clientSimGetLobbyScenarioListSource(h->cs, upAt));
+    UT_ASSERT(clientSimGetLobbyScenarioListWorkshopId(h->cs, upAt) == 0);
+    UT_ASSERT_MSG(clientSimGetLobbyScenarioListSource(h->cs, shipAt) ==
+                      SERVER_SCENARIO_SOURCE_SERVER,
+                  "the client reads the shipped row as source %u",
+                  (unsigned)clientSimGetLobbyScenarioListSource(h->cs, shipAt));
+
+    /* The host puts it on the list, through the command a chooser sends. */
+    clientSimNetSendSetScriptList(h->cs, files, 1);
+    UT_ASSERT_MSG(loopbackHarnessPumpUntil(h, ACK_MAX, pred_script_listed,
+                                           fastName) >= 0,
+                  "the script list never named the uploaded mod");
+    at = up_script_at(h->cs, "fast.lua");
+    UT_ASSERT(at >= 0);
+    UT_ASSERT_MSG(clientSimGetLobbyScriptSource(h->cs, at) ==
+                      SERVER_SCENARIO_SOURCE_UPLOAD,
+                  "the script list reads the uploaded row as source %u",
+                  (unsigned)clientSimGetLobbyScriptSource(h->cs, at));
+    UT_ASSERT(clientSimGetLobbyScriptWorkshopId(h->cs, at) == 0);
+    return 0;
+}
+
+int run_loopback_script_upload_source_on_wire(void) {
+    return up_run_loopback("SourceOnWire", SCRIPT_UPLOAD_ALLOW,
+                           body_source_on_wire);
 }

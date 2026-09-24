@@ -11,7 +11,9 @@
  *
  *   script_list_control_codec  — one chunk encoded from a filled event and
  *       compared against bytes written out by hand, then decoded from those
- *       same hand-written bytes and checked field by field. The same case
+ *       same hand-written bytes and checked field by field, and encoded and
+ *       decoded again with every field compared, the two entries carrying
+ *       different sources and Workshop ids. The same case
  *       refuses a count past the chunk cap, a fileLen or nameLen past the
  *       field it is copied into, a body that stops inside an entry, and a
  *       body with a byte left over; checks that the decode zeroes the
@@ -80,11 +82,20 @@
 /* ── 1. One chunk, byte for byte and back ─────────────────────────── */
 
 /* Two entries: a scenario that is bound to its map, and a mod that is not.
- * Bit 0 of the flags byte keeps the win condition, bit 1 is bound. */
+ * Bit 0 of the flags byte keeps the win condition, bit 1 is bound. After the
+ * name, the source byte and the Workshop id, most significant byte first:
+ * the first says a player uploaded it, the second that it is a Workshop
+ * item, and every byte of both ids differs so one out of place shows. */
+#define SL_E0_WORKSHOP_ID 0x0102030405060708ull
+#define SL_E1_WORKSHOP_ID 0x1122334455667788ull
 static const uint8_t kSlBody[] = {
     0x01, 0x02,                                     /* final, two entries */
     0x02, 0x04, 'w', 'a', 'v', 'e', 0x04, 'W', 'a', 'v', 'e',
-    0x01, 0x07, 'f', 'a', 's', 't', '.', 'l', 'u', 0x04, 'F', 'a', 's', 't'
+    0x01,                                           /* source = upload */
+    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, /* workshopId */
+    0x01, 0x07, 'f', 'a', 's', 't', '.', 'l', 'u', 0x04, 'F', 'a', 's', 't',
+    0x02,                                           /* source = Workshop */
+    0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88  /* workshopId */
 };
 
 static bool slDecodeBody(const uint8_t *body, size_t len, ControlEvent *out) {
@@ -115,12 +126,16 @@ int run_script_list_control_codec(void) {
              sizeof(evt.u.lobbyScriptList.entries[0].name), "%s", "Wave");
     evt.u.lobbyScriptList.entries[0].keepsWinCondition = false;
     evt.u.lobbyScriptList.entries[0].bound             = true;
+    evt.u.lobbyScriptList.entries[0].source     = SCN_DIR_SOURCE_UPLOAD;
+    evt.u.lobbyScriptList.entries[0].workshopId = SL_E0_WORKSHOP_ID;
     snprintf(evt.u.lobbyScriptList.entries[1].file,
              sizeof(evt.u.lobbyScriptList.entries[1].file), "%s", "fast.lu");
     snprintf(evt.u.lobbyScriptList.entries[1].name,
              sizeof(evt.u.lobbyScriptList.entries[1].name), "%s", "Fast");
     evt.u.lobbyScriptList.entries[1].keepsWinCondition = true;
     evt.u.lobbyScriptList.entries[1].bound             = false;
+    evt.u.lobbyScriptList.entries[1].source     = SCN_DIR_SOURCE_WORKSHOP;
+    evt.u.lobbyScriptList.entries[1].workshopId = SL_E1_WORKSHOP_ID;
 
     UT_ASSERT(enc(&evt, NULL, buf, sizeof(buf), &len) == ENCODE_OK);
     UT_ASSERT_MSG(len == sizeof(kSlBody),
@@ -147,11 +162,59 @@ int run_script_list_control_codec(void) {
     UT_ASSERT(strcmp(back.u.lobbyScriptList.entries[1].name, "Fast") == 0);
     UT_ASSERT(back.u.lobbyScriptList.entries[1].keepsWinCondition);
     UT_ASSERT(!back.u.lobbyScriptList.entries[1].bound);
+    UT_ASSERT(back.u.lobbyScriptList.entries[0].source ==
+              SCN_DIR_SOURCE_UPLOAD);
+    UT_ASSERT_MSG(back.u.lobbyScriptList.entries[0].workshopId ==
+                      SL_E0_WORKSHOP_ID,
+                  "entry 0's Workshop id decoded as 0x%016llX",
+                  (unsigned long long)
+                      back.u.lobbyScriptList.entries[0].workshopId);
+    UT_ASSERT(back.u.lobbyScriptList.entries[1].source ==
+              SCN_DIR_SOURCE_WORKSHOP);
+    UT_ASSERT_MSG(back.u.lobbyScriptList.entries[1].workshopId ==
+                      SL_E1_WORKSHOP_ID,
+                  "entry 1's Workshop id decoded as 0x%016llX",
+                  (unsigned long long)
+                      back.u.lobbyScriptList.entries[1].workshopId);
     /* The entries above the count are the decode's to clear, or a shorter
        chunk would leave a row of the last one behind it. */
     for (i = 2; i < LOBBY_SCRIPT_LIST_CHUNK; i++) {
         UT_ASSERT_MSG(back.u.lobbyScriptList.entries[i].file[0] == '\0',
                       "entry %d survived a two-entry chunk", (int)i);
+    }
+
+    /* Both ways through the codec, every field compared: what the encoder
+       writes is what the decoder builds. */
+    {
+        size_t rtLen = 0;
+        UT_ASSERT(enc(&evt, NULL, buf, sizeof(buf), &rtLen) == ENCODE_OK);
+        memset(&back, 0, sizeof(back));
+        UT_ASSERT(slDecodeBody(buf, rtLen, &back));
+        UT_ASSERT(back.u.lobbyScriptList.final ==
+                  evt.u.lobbyScriptList.final);
+        UT_ASSERT(back.u.lobbyScriptList.count ==
+                  evt.u.lobbyScriptList.count);
+        for (i = 0; i < 2; i++) {
+            const LobbyScriptEntry *want = &evt.u.lobbyScriptList.entries[i];
+            const LobbyScriptEntry *got  = &back.u.lobbyScriptList.entries[i];
+            UT_ASSERT_MSG(strcmp(got->file, want->file) == 0,
+                          "entry %d's file came back as \"%s\"", (int)i,
+                          got->file);
+            UT_ASSERT_MSG(strcmp(got->name, want->name) == 0,
+                          "entry %d's name came back as \"%s\"", (int)i,
+                          got->name);
+            UT_ASSERT(got->keepsWinCondition == want->keepsWinCondition);
+            UT_ASSERT(got->bound == want->bound);
+            UT_ASSERT_MSG(got->source == want->source,
+                          "entry %d's source came back as %u, sent %u",
+                          (int)i, (unsigned)got->source,
+                          (unsigned)want->source);
+            UT_ASSERT_MSG(got->workshopId == want->workshopId,
+                          "entry %d's Workshop id came back as 0x%016llX",
+                          (int)i, (unsigned long long)got->workshopId);
+        }
+        UT_ASSERT(back.u.lobbyScriptList.entries[0].source !=
+                  back.u.lobbyScriptList.entries[1].source);
     }
 
     /* An empty list is a chunk and not silence: count 0, final 1. */
@@ -179,7 +242,7 @@ int run_script_list_control_codec(void) {
        say they do, so the refusal is the bound talking and not a short read
        or a byte left over. */
     {
-        uint8_t over[2 + 1 + 1 + LOBBY_SCENARIO_FILE_LEN + 1 + 4];
+        uint8_t over[2 + 1 + 1 + LOBBY_SCENARIO_FILE_LEN + 1 + 4 + 1 + 8];
         size_t  p = 0;
         over[p++] = 0x01;                              /* final */
         over[p++] = 0x01;                              /* one entry */
@@ -190,6 +253,8 @@ int run_script_list_control_codec(void) {
         over[p++] = 0x04;
         memcpy(over + p, "Name", 4);
         p += 4;
+        memset(over + p, 0, 1 + 8);                    /* source, workshopId */
+        p += 1 + 8;
         UT_ASSERT(p == sizeof(over));
         memset(&back, 0, sizeof(back));
         UT_ASSERT_MSG(!slDecodeBody(over, p, &back),
@@ -201,7 +266,7 @@ int run_script_list_control_codec(void) {
                       "the refused entry's file was copied anyway");
     }
     {
-        uint8_t over[2 + 1 + 1 + 4 + 1 + LOBBY_SCENARIO_NAME_LEN];
+        uint8_t over[2 + 1 + 1 + 4 + 1 + LOBBY_SCENARIO_NAME_LEN + 1 + 8];
         size_t  p = 0;
         over[p++] = 0x01;                              /* final */
         over[p++] = 0x01;                              /* one entry */
@@ -212,6 +277,8 @@ int run_script_list_control_codec(void) {
         over[p++] = (uint8_t)LOBBY_SCENARIO_NAME_LEN;  /* one too long */
         memset(over + p, 'n', LOBBY_SCENARIO_NAME_LEN);
         p += LOBBY_SCENARIO_NAME_LEN;
+        memset(over + p, 0, 1 + 8);                    /* source, workshopId */
+        p += 1 + 8;
         UT_ASSERT(p == sizeof(over));
         memset(&back, 0, sizeof(back));
         UT_ASSERT_MSG(!slDecodeBody(over, p, &back),
@@ -250,10 +317,10 @@ int run_script_list_control_codec(void) {
                    LOBBY_SCENARIO_NAME_LEN - 1);
         }
         UT_ASSERT(enc(&evt, NULL, buf, sizeof(buf), &widest) == ENCODE_OK);
-        UT_ASSERT_MSG(widest == 2 + (size_t)LOBBY_SCRIPT_LIST_CHUNK * 193,
+        UT_ASSERT_MSG(widest == 2 + (size_t)LOBBY_SCRIPT_LIST_CHUNK * 202,
                       "a full chunk measured %d bytes, the sizing in "
                       "control_event.h says %d", (int)widest,
-                      (int)(2 + LOBBY_SCRIPT_LIST_CHUNK * 193));
+                      (int)(2 + LOBBY_SCRIPT_LIST_CHUNK * 202));
         UT_ASSERT_MSG(widest <= (size_t)SL_BODY_CAP,
                       "a full chunk is %d bytes and a control segment carries "
                       "%d: it would be dropped at delivery", (int)widest,

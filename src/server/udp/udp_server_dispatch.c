@@ -667,7 +667,7 @@ int udpServerPackScenarioListChunk(uint8_t *buf, int bufLen,
         if (fileLen > 255) fileLen = 255;
         if (nameLen > 255) nameLen = 255;
         if (descLen > 255) descLen = 255;
-        need = 1 + (int)fileLen + 1 + (int)nameLen + 1 + (int)descLen + 4;
+        need = 1 + (int)fileLen + 1 + (int)nameLen + 1 + (int)descLen + 4 + 9;
         if (pos + need > bufLen) break;
 
         pos = scnListPackStr(buf, pos, e->file);
@@ -681,6 +681,12 @@ int udpServerPackScenarioListChunk(uint8_t *buf, int bufLen,
            both are false for the two of them. Set means the script keeps the
            round's win condition, which is what a mod does. */
         buf[pos++] = e->keepsWinCondition ? 1 : 0;
+        /* Where the server got the file, and its Workshop item (0 for none),
+           most significant byte first. */
+        buf[pos++] = e->source;
+        packU32(buf + pos, (uint32_t)(e->workshopId >> 32));
+        packU32(buf + pos + 4, (uint32_t)(e->workshopId & 0xFFFFFFFFu));
+        pos += 8;
         written++;
     }
 
@@ -708,7 +714,7 @@ static void handleLobbyScenarioListReq(ServerSim *sim, uint8_t *buf, int len,
     {
         /* Cap matches LOBBY_SCENARIO_LIST_MAX on the client so a directory's
          * full content survives end-to-end. Stack-resident; each ScnDirEntry
-         * is ~451 bytes → ~58 KB, in line with the map list's ~76 KB. */
+         * is ~464 bytes → ~58 KB, in line with the map list's ~76 KB. */
         ScnDirEntry entries[LOBBY_SCENARIO_LIST_MAX];
         uint8_t     rsp[UDP_MAX_PAYLOAD];
         int         got = serverSimScenarioListDir(sim, entries,
@@ -724,7 +730,7 @@ static void handleLobbyScenarioListReq(ServerSim *sim, uint8_t *buf, int len,
             if (rlen <= 0) break;
             srvSendTo(rsp, rlen, fromAddr);
             /* An entry that fits in no chunk would spin this loop. One cannot
-               — the widest is 451 bytes against UDP_MAX_PAYLOAD — so this is
+               — the widest is 461 bytes against UDP_MAX_PAYLOAD — so this is
                the check that says so rather than a case that happens. */
             if (nextIdx == i) break;
             i = nextIdx;

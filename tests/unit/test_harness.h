@@ -2031,6 +2031,8 @@ int run_script_upload_session_emptied(void);
 int run_script_upload_listing_sees_own_removal(void);
 int run_script_upload_reset_drops_session_picks(void);
 int run_loopback_script_upload_plays_next_round(void);
+int run_script_upload_list_source(void);
+int run_loopback_script_upload_source_on_wire(void);
 /* Map join-download + live resync over CHANNEL_BULK (test_loopback_download.c):
  * a lobby join download completes under loss; a mid-game joiner downloads while
  * the server is Running (the bulk-carrier deadlock case); and a reported

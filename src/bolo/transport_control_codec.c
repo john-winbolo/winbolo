@@ -3265,6 +3265,7 @@ static bool decodeScenarioRulesBody(const uint8_t *buf, size_t len,
 /* CTRL_LOBBY_SCRIPT_LIST body:
  *   [final 1] [count 1] then count entries, each
  *   [flags 1] [fileLen 1] [file N] [nameLen 1] [name M]
+ *   [source 1] [workshopId 8 BE]
  *
  * count is the entries in this chunk, never the whole list; final is 1 on
  * the last chunk of a list and 0 on every other. An empty list is one chunk
@@ -3282,17 +3283,18 @@ static bool decodeScenarioRulesBody(const uint8_t *buf, size_t len,
  * name the decoder cut short would name a different file to the one the
  * host picked, and the client would then ask the directory for it. */
 #define LOBBY_SCRIPT_LIST_HDR_LEN 2
-/* One entry at its widest: the flags byte, the two length bytes, and both
- * strings at one short of their buffers. 1 + 1 + 127 + 1 + 63 = 193. */
+/* One entry at its widest: the flags byte, the two length bytes, both
+ * strings at one short of their buffers, the source byte and the Workshop
+ * id. 1 + 1 + 127 + 1 + 63 + 1 + 8 = 202. */
 #define LOBBY_SCRIPT_ENTRY_MAX                                             \
     (1 + 1 + (LOBBY_SCENARIO_FILE_LEN - 1) + 1 +                           \
-     (LOBBY_SCENARIO_NAME_LEN - 1))
+     (LOBBY_SCENARIO_NAME_LEN - 1) + 1 + 8)
 
 /* Where LOBBY_SCRIPT_LIST_CHUNK is really held. control_event.h picks 5 by
  * this arithmetic and cannot see channel_mux.h to check it; this file can.
  * The segment is the ceiling delivery applies: a body past CONTROL_BODY_MAX
  * is logged and dropped in udp_server_control.c with nothing at all visible
- * to the client, so it is asserted first. 2 + 5 * 193 = 967 against 1021. */
+ * to the client, so it is asserted first. 2 + 5 * 202 = 1012 against 1021. */
 BOLO_STATIC_ASSERT(
     LOBBY_SCRIPT_LIST_HDR_LEN +
         LOBBY_SCRIPT_LIST_CHUNK * LOBBY_SCRIPT_ENTRY_MAX <= CONTROL_BODY_MAX,
@@ -3307,8 +3309,8 @@ BOLO_STATIC_ASSERT(
  * chosen against. Every byte the union grows is paid LOBBY_CHAT_BUFFER_MAX
  * times per ServerSim, so a variant wider than the widest one already there
  * is a cost that shows up in no profile. CTRL_ROUND_STATS is the widest;
- * five entries is 972 bytes against its 1108, so this variant is free. Six
- * would be 1166 and would start charging for it: the segment refuses six
+ * five entries is 1048 bytes against its 1108, so this variant is free. Six
+ * would be 1256 and would start charging for it: the segment refuses six
  * first, and this records what the second reason was. */
 BOLO_STATIC_ASSERT(
     sizeof(((ControlEvent *)0)->u.lobbyScriptList) <=
@@ -3318,6 +3320,17 @@ BOLO_STATIC_ASSERT(
 /* Bit 0 keeps the win condition, bit 1 is bound to a map. */
 #define LOBBY_SCRIPT_FLAG_KEEPS_WIN 0x01u
 #define LOBBY_SCRIPT_FLAG_BOUND     0x02u
+
+/* A Workshop id, most significant byte first, as two of the 32-bit halves
+   every other field in this file is written with. */
+static void packU64(uint8_t *buf, uint64_t value) {
+    packU32(buf, (uint32_t)(value >> 32));
+    packU32(buf + 4, (uint32_t)(value & 0xFFFFFFFFu));
+}
+
+static uint64_t unpackU64(const uint8_t *buf) {
+    return ((uint64_t)unpackU32(buf) << 32) | (uint64_t)unpackU32(buf + 4);
+}
 
 /* recipient: safe, ignored. The list a lobby is running is public. */
 static EncodeResult encodeLobbyScriptListBody(const ControlEvent *evt,
@@ -3345,7 +3358,7 @@ static EncodeResult encodeLobbyScriptListBody(const ControlEvent *evt,
         size_t  nameLen = strnlen(e->name, LOBBY_SCENARIO_NAME_LEN - 1);
         uint8_t flags   = 0;
 
-        if (bufCap < pos + 1 + 1 + fileLen + 1 + nameLen) {
+        if (bufCap < pos + 1 + 1 + fileLen + 1 + nameLen + 1 + 8) {
             return ENCODE_OVERFLOW;
         }
         if (e->keepsWinCondition) flags |= LOBBY_SCRIPT_FLAG_KEEPS_WIN;
@@ -3361,6 +3374,9 @@ static EncodeResult encodeLobbyScriptListBody(const ControlEvent *evt,
             memcpy(buf + pos, e->name, nameLen);
             pos += nameLen;
         }
+        buf[pos++] = e->source;
+        packU64(buf + pos, e->workshopId);
+        pos += 8;
     }
     *outLen = pos;
     return ENCODE_OK;
@@ -3411,6 +3427,11 @@ static bool decodeLobbyScriptListBody(const uint8_t *buf, size_t len,
         if (nameLen > 0) memcpy(e->name, buf + pos, nameLen);
         e->name[nameLen] = '\0';
         pos += nameLen;
+
+        if (len < pos + 1 + 8) return false;
+        e->source     = buf[pos++];
+        e->workshopId = unpackU64(buf + pos);
+        pos += 8;
     }
     /* Exactly the entries it said it had. Trailing bytes mean the sender and
        this reader disagree about the entry shape, and a list read off a body

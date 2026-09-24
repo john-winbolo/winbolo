@@ -5339,6 +5339,8 @@ set(_unit_test_names
     script_upload_listing_sees_own_removal
     script_upload_reset_drops_session_picks
     loopback_script_upload_plays_next_round
+    script_upload_list_source
+    loopback_script_upload_source_on_wire
     loopback_download_join
     loopback_download_midgame
     loopback_resync

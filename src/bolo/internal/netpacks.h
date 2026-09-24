@@ -792,7 +792,15 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                                 nameLen 1, name N,
                                                 descLen 1, desc D,
                                                 maxPlayers 1, bots 1,
-                                                bound 1 }
+                                                bound 1,
+                                                keepsWinCondition 1,
+                                                source 1,
+                                                workshopId 8 BE }
+                                              source is SCN_DIR_SOURCE_*
+                                              (0 server, 1 upload,
+                                              2 Workshop); workshopId is 0
+                                              for none. An entry cut short
+                                              is a malformed chunk.
                                               Entries are packed until the next
                                               will not fit in UDP_MAX_PAYLOAD;
                                               the last chunk sets final, and an

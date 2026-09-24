@@ -379,6 +379,8 @@ void serverSimFillScriptListEvent(const ServerSim *sim, uint8_t chunk,
         snprintf(dst->name, sizeof(dst->name), "%s", src->name);
         dst->keepsWinCondition = src->keepsWinCondition;
         dst->bound             = src->bound;
+        dst->source            = src->source;
+        dst->workshopId        = src->workshopId;
     }
 }
 

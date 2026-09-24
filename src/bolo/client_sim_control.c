@@ -817,6 +817,9 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
                 cs->lobbyScriptKeepsWin[i] =
                     cs->lobbyScriptPending[i].keepsWinCondition;
                 cs->lobbyScriptBound[i] = cs->lobbyScriptPending[i].bound;
+                cs->lobbyScriptSource[i] = cs->lobbyScriptPending[i].source;
+                cs->lobbyScriptWorkshopId[i] =
+                    cs->lobbyScriptPending[i].workshopId;
             }
             cs->lobbyScriptPendingCount = 0;
             cs->lobbyScriptSeq++;

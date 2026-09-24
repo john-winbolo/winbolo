@@ -2113,18 +2113,27 @@ bool serverSimReadMapFile(ServerSim *sim, const char *relPath,
 #define SERVER_SCENARIO_FILE_LEN 128
 #define SERVER_SCENARIO_NAME_LEN 64
 #define SERVER_SCENARIO_DESC_LEN 256
+/* Where a row came from: ServerScenarioEntry.source, and the source byte
+ * the scenario-list packet and the script-list event carry. The same
+ * values as SCN_DIR_SOURCE_* in scenario_defs.h, mirrored and held
+ * against them for the reason the lengths are. */
+#define SERVER_SCENARIO_SOURCE_SERVER   0 /* the server's own directories */
+#define SERVER_SCENARIO_SOURCE_UPLOAD   1 /* a player uploaded it */
+#define SERVER_SCENARIO_SOURCE_WORKSHOP 2 /* a Steam Workshop item */
 typedef struct {
-    char    file[SERVER_SCENARIO_FILE_LEN];  /* the name in the scenarios
-                                                directory */
-    char    name[SERVER_SCENARIO_NAME_LEN];  /* the manifest's, or "" */
-    char    description[SERVER_SCENARIO_DESC_LEN];
-    uint8_t maxPlayers;  /* 0 = the server's own cap */
-    uint8_t bots;        /* seats the template asks for */
-    bool    bound;       /* belongs to one map; not selectable as a mod */
-    bool    keepsWinCondition;  /* keeps the round's win condition, which is
-                                   what a mod does and a scenario does not.
-                                   Not the same question as bound: a mod and
-                                   an unbound scenario are both unbound. */
+    char     file[SERVER_SCENARIO_FILE_LEN];  /* the name in the scenarios
+                                                 directory */
+    char     name[SERVER_SCENARIO_NAME_LEN];  /* the manifest's, or "" */
+    char     description[SERVER_SCENARIO_DESC_LEN];
+    uint8_t  maxPlayers;  /* 0 = the server's own cap */
+    uint8_t  bots;        /* seats the template asks for */
+    bool     bound;       /* belongs to one map; not selectable as a mod */
+    bool     keepsWinCondition;  /* keeps the round's win condition, which is
+                                    what a mod does and a scenario does not.
+                                    Not the same question as bound: a mod and
+                                    an unbound scenario are both unbound. */
+    uint8_t  source;      /* SERVER_SCENARIO_SOURCE_* */
+    uint64_t workshopId;  /* the Workshop item, 0 for none */
 } ServerScenarioEntry;
 
 int serverSimEnumerateScenarioDir(ServerSim *sim,
