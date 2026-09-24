@@ -775,7 +775,17 @@ local function S(state)
           -- marker on that target.  Stops a re-planned goal re-marking the
           -- same pill on every replan.
           atk_ping = {},
+          -- botcmd[sender] = { tid, tick, oid }: the last BOT COMMAND ping
+          -- that sender put on an enemy live pill.  An ATTACK ping on the same
+          -- pill inside C.PING_SUICIDE_WINDOW_TICKS turns it into a suicide
+          -- run (see PING SUICIDE RUN below).
+          botcmd = {},
           banner = nil, latch_tx = 0, anchors = {},
+          -- early[oid][pn] = { cost, tick }: a bid that came in before this
+          -- bot opened its own auction on that order (ORDER_CLAIM_TIEBREAK).
+          -- ack_due = { oid, due, line, mx, my }: a solo ack waiting out the
+          -- claim window.
+          early = {}, ack_due = nil,
           -- The three scenario hints that outlive one order (orders.lua's
           -- hint section). A patrol is its route and which point is next,
           -- an escort is the seat being followed and how far it may drift,
@@ -1205,10 +1215,13 @@ M.forget_order = forget_order
 
 -- LETTING AN ORDER GO IS TWO DIFFERENT THINGS, and it used to be one.
 --
---   RELEASED  (cancelled = false)  the job still stands, this bot cannot do
---             it: it died, it got stuck, a newer order took its place.  It
---             broadcasts obr, and the bot with the next cheapest route picks
---             the job up.  That is the design.
+--   RELEASED  (cancelled = false)  this bot cannot do the job any more: it
+--             died, it got stuck, a newer order took its place, it lost a
+--             claim tiebreak.  It broadcasts obr.  Under ORDER_NO_HAND_BACK
+--             (the default) no bot re-bids on an obr, so the job ends here;
+--             with it off (keel) the bot with the next cheapest route picks
+--             the job up.  Either way obr takes this bot out of every other
+--             bot's list of holders.
 --
 --   CANCELLED (cancelled = true)   the job is OVER: a person cancelled it, a
 --             caution ping called it off, a retreat replaced it, or it is
@@ -1225,6 +1238,19 @@ M.forget_order = forget_order
 -- auction settle excludes, and nothing ever took a bot out of it, so a bot
 -- that let an order go could never win it back and "ping again to add a bot"
 -- stopped adding (the same review, item 6).
+-- A DECOY HOLD THAT IS OVER takes its hold goal with it (see GO-THERE DECOY
+-- HARD HOLD below), so the next goal selection starts from "none" (an
+-- urgent replan) instead of the bot standing on a goto_tile nobody holds.
+-- A fight goal is left alone: it is a real goal and normal play may carry
+-- on with it.  Every way a decoy slot is emptied comes through here.
+local function decoy_drop_goal(state, h)
+  if not (h and h.decoy) then return end
+  local g = state.goal
+  if g and g.kind == "goto_tile" and g.mx == h.mx and g.my == h.my then
+    require("attack").clear_attack_goal(state, "decoy hold over")
+  end
+end
+
 local function release_held(state, info, why, quiet, cancelled)
   local o = S(state)
   local h = o.held
@@ -1232,6 +1258,7 @@ local function release_held(state, info, why, quiet, cancelled)
   o.held = nil
   state._order = nil
   goto_lock(state)                      -- the hard lock goes with the order
+  decoy_drop_goal(state, h)
   if o.gclaims[h.oid] then o.gclaims[h.oid][state.player_number] = nil end
   if cancelled then
     tx(state, string.format("/info obx %d", h.oid))
@@ -1249,19 +1276,181 @@ M.release_held = release_held
 -- ORD.update ever runs, so nothing cleared the slot: a bot killed while
 -- holding a go-there order came back with h.hold still set, parked on its
 -- respawn square, and stood there for the rest of the hold doing nothing
--- (Andrew's peer review, Sep 16).  The job still stands -- somebody else
--- should do it -- so this is a RELEASE, not a cancel: the obr goes out and
--- the next cheapest bot takes it.  Quiet: a death is not a line the team
--- needs.  Safe to call on every dead tick; it does nothing without a slot.
+-- (Andrew's peer review, Sep 16).  This is a RELEASE, not a cancel: the obr
+-- goes out, and under ORDER_NO_HAND_BACK (the default) nobody re-bids, so
+-- the job ends with this bot; with it off (keel) the next cheapest bot takes
+-- it.  A decoy's order is cancelled instead (below).  Quiet: a death is not a
+-- line the team needs.  Safe to call on every dead tick; it does nothing
+-- without a slot.
 function M.on_death(state, info)
+  -- A dead tank's suicide run is over: that is one of its two endings.
+  if state and state._suicide then M.suicide_end(state, "tank died") end
   local o = state and state.orders
   if not (o and o.held) then
     if state then state._order = nil end
     return false
   end
-  release_held(state, info, nil, true)
+  -- A DECOY that dies has done its job (Andrew's end (d)): the order is
+  -- CANCELLED, not handed back, or the next cheapest bot drives to the same
+  -- square and dies the same way.
+  local decoy = o.held.decoy and o.held.hold
+  release_held(state, info, nil, true, decoy and true or nil)
   o.sel = nil
   return true
+end
+
+-- =========================================================================
+-- PING SUICIDE RUN (Andrew, 2026-09-24)
+--
+-- THE GESTURE: a person puts a BOT COMMAND ping on an enemy live pill, then
+-- an ATTACK ping on the SAME pill within C.PING_SUICIDE_WINDOW_TICKS (50
+-- brain ticks = 1 s; the brain thinks every second engine tick).  Same
+-- sender for both.  Bot command first, attack second: the other order is
+-- NOT a trigger, so an attack marker a person puts down for the team and a
+-- bot command a moment later stay two ordinary pings.
+--
+-- WHO GOES: every allied bot whose goal is attack_pill on that pill when
+-- the attack ping lands -- the bots the bot command sent (they hold its
+-- order) and any bot that was already attacking the pill on its own.  The
+-- order spec is marked too, so a bot that wins the bot-command auction
+-- AFTER the attack ping (the auction was still open) also goes, and so does
+-- a bot added later by a repeat bot-command ping on the same pill.
+--
+-- WHAT IT DOES: state._suicide holds the run.  pick_goal answers it before
+-- anything else (goals.lua), init.lua re-installs it right before the
+-- attack substate machine and steering every think (M.suicide_lock), and
+-- attack.lua runs it as kill_hardline with every abort taken out.  So no
+-- refuel, no flee, no take_cover, no critical-armour pause, no shell gate,
+-- no LGM rescue and no stuck-flee can take the tank off the pill.  With no
+-- shells left it still drives onto the pill.
+--
+-- HOW IT ENDS: the tank dies (M.on_death), or the pill is dead -- armour 0,
+-- ours, in a tank, or gone (M.suicide_lock).  The ONE escape hatch is a
+-- person calling it off: any cancel line that reaches this bot, or a
+-- caution ping on the bot or on the pill.  An order lapsing does not end it.
+-- =========================================================================
+
+-- Why the run on this pill is over, or nil while it still stands.
+local function suicide_over(p)
+  if not p then return "pill gone" end
+  if p.in_tank then return "pill carried" end
+  if p.owner == "friendly" then return "pill ours" end
+  if (p.health or 0) <= 0 then return "pill dead" end
+  return nil
+end
+M.suicide_over = suicide_over
+
+-- The goal the run drives.  A NEW table every call: clear_attack_goal wipes
+-- the live goal in place, so a shared template would be wiped with it.
+function M.suicide_goal(r)
+  return { kind = "attack_pill", mx = r.mx, my = r.my,
+           wx = U.m2w(r.mx), wy = U.m2w(r.my), target_id = r.tid,
+           substate = "kill_hardline", _ping_suicide = true, _ordered = true }
+end
+
+-- Start the run on pill `tid` (idempotent: a second trigger on the same
+-- pill says nothing).  One chat line per bot, a goal confirmation like the
+-- order acks, so "bot chat off" silences it.
+function M.suicide_start(state, world, tid, sender, now, why)
+  if not C.PING_SUICIDE_ENABLED then return false end
+  local p = world and world.pills and world.pills[tid]
+  if not p or suicide_over(p) then return false end
+  local r = state._suicide
+  if r and r.tid == tid then return false end
+  state._suicide = { tid = tid, mx = p.mx, my = p.my, sender = sender,
+                     since = now }
+  sayg(state, string.format("Suicide run on pill #%s", tostring(tid)))
+  return true
+end
+
+-- A HUMAN TEAM-MATE CLOSE BY STARTS THE SAME RUN.  An attack_pill goal the
+-- bot was ORDERED to do (o.held is an attack_pill order on the same pill),
+-- with a visible human ally within ORDER_HUMAN_NEAR_SUICIDE_TILES of the bot,
+-- becomes a full suicide run on that pill, as if the human had pinged it.
+-- An attack_pill goal the bot chose for itself does not.  The human is the run's sender,
+-- so a bare "cancel" from them ends it.  init.lua calls this every think,
+-- so a human who drives up mid-approach counts too.  A run the human
+-- cancelled (cancel, caution) does not restart on the same pill until the
+-- bot has had some other goal.
+function M.human_near_suicide(state, world, info, now)
+  if state._suicide or not C.ORDER_HUMAN_NEAR_SUICIDE_RUN then return false end
+  local tiles = C.ORDER_HUMAN_NEAR_SUICIDE_TILES or 0
+  if tiles <= 0 then return false end
+  local g = state.goal
+  if not (g and g.kind == "attack_pill" and g.target_id) then
+    state._suicide_waived = nil
+    return false
+  end
+  if state._suicide_waived == g.target_id then return false end
+  state._suicide_waived = nil
+  local h = state.orders and state.orders.held
+  if not (h and h.kind == "attack_pill" and h.tid == g.target_id) then
+    return false
+  end
+  local d, pn = U.human_ally_near(info, bit.rshift(info.tankx or 0, 8),
+                                  bit.rshift(info.tanky or 0, 8), tiles)
+  if not d then return false end
+  return M.suicide_start(state, world, g.target_id, pn, now,
+                         string.format("human_ally_%d_away", d))
+end
+
+-- End the run.  Quiet unless the caller passes a line.
+function M.suicide_end(state, why, line)
+  local r = state._suicide
+  if not r then return false end
+  state._suicide = nil
+  -- A person called it off: the human-near rule must not start it again.
+  if why == "cancel" or why == "caution ping" then state._suicide_waived = r.tid end
+  if line then say(state, line) end
+  return true
+end
+
+-- THE LOCK.  init.lua calls this every think right before the attack
+-- substate machine and steering, so whatever else the think did to the goal
+-- (a flee, a refuel, an escape, a stuck handler, a budget drop) is undone
+-- before the tank moves.  Ends the run when the pill is dead and hands the
+-- goal back to normal play.  Returns true while the run stands.
+function M.suicide_lock(state, world, info, now)
+  local r = state._suicide
+  if not r then return false end
+  local p = world.pills and world.pills[r.tid]
+  local why = suicide_over(p)
+  if why then
+    M.suicide_end(state, why)
+    local g = state.goal
+    if g and g._ping_suicide then
+      require("attack").clear_attack_goal(state, "suicide run over: " .. why)
+    end
+    return false
+  end
+  local g = state.goal
+  if not (g and g._ping_suicide and g.kind == "attack_pill"
+          and g.target_id == r.tid) then
+    local was = g and g.kind or "nil"
+    state.goal = M.suicide_goal(r)
+    state.goal_set_tick = now
+    state.command_goal = nil
+    if state.pf then state.pf.status = "idle" end
+  end
+  return true
+end
+
+-- The trigger itself: every bot on this pill goes.  Called by the ATTACK
+-- ping once the window test has passed.
+local function suicide_trigger(state, world, info, sender, tid, oid, now)
+  local o = S(state)
+  -- Mark the order: a bot that takes it after this (the auction was still
+  -- open, or a repeat bot-command ping adds a bot) goes on the run too.
+  local k = oid and o.known[oid]
+  if k and k.spec then k.spec.suicide = true end
+  local h = o.held
+  local g = state.goal
+  local holds  = h and h.kind == "attack_pill" and h.tid == tid
+  local on_it  = g and g.kind == "attack_pill" and g.target_id == tid
+  if holds or on_it then
+    M.suicide_start(state, world, tid, sender, now,
+                    holds and "holds the order" or "attacking it")
+  end
 end
 
 -- THE HOLD PARK, with the distance test it never had.  steering.lua takes the
@@ -1281,6 +1470,176 @@ function M.hold_parked(state, info)
   if dx < 0 then dx = -dx end
   if dy < 0 then dy = -dy end
   return dx <= 1 and dy <= 1
+end
+
+-- =========================================================================
+-- GO-THERE DECOY HARD HOLD (Andrew, 2026-09-24)
+--
+-- THE GESTURE: a person puts a BOT COMMAND ping on open ground.  That was
+-- always "go there and hold" (goto_tile), and on arrival the bot stood on
+-- the square for ORDER_GOTO_HOLD_TICKS in a SOFT hold: goal selection ran
+-- again, and any ORDER_REACTIVE_KINDS row -- take_cover, refuel, a flee, a
+-- water escape -- drove it straight off the square.  Andrew pings a square
+-- beside an enemy pill to put a bot there as a DECOY, so the pill shoots the
+-- bot and not him, and the soft hold threw that away the first time the
+-- pill fired: the bot took cover.
+--
+-- THE RULE, with C.ORDER_GOTO_DECOY on, decided ONCE at the arrival moment
+-- (the same one-square test that starts today's hold):
+--   * NO enemy pill can shoot the ordered square: the order is over, there
+--     and then, in silence.  There is nothing to be a decoy for, and "stand
+--     there for ten seconds" was never the point.
+--   * One or more can: a HARD hold.  The bot says "decoying 10s", parks on
+--     the square and never drives: no refuel, no cover, no flee, no water
+--     escape, no stuck handler.  It may still turn and shoot an enemy TANK
+--     (attack_tank) or an enemy BUILDER (kill_lgm) inside gun range, from
+--     the spot.  It never shoots a pill -- that is not what it was sent for.
+--
+-- "CAN SHOOT THE SQUARE" is the brain's own pill-threat rule (perception
+-- pill_threats): a pill that is not ours (owner not "friendly") and not in a
+-- team-mate's tank (owner "allied"), not carried (in_tank) and alive (health
+-- > 0).  NEUTRAL pills count: perception treats "hostile AND neutral fire at
+-- the tank" the same.  The distance is util.edist, the straight-line tile
+-- distance util.lua says every physical reach must use, against the real
+-- firing range C.PILL_FIRE_RANGE (8) -- not the 9-tile danger stamp.
+--
+-- HOW IT ENDS -- any one of these:
+--   a) no counted pill is left: the set is re-read EVERY think, so a pill
+--      that comes into range later counts too (M.update and M.decoy_lock);
+--   b) ORDER_GOTO_HOLD_TICKS after arrival, in silence, like today's hold;
+--   c) a CAUTION ping within ORDER_PING_RING of the bot's TANK from any
+--      human ally -- "Released", and no retreat on the same ping;
+--   d) any cancel line, by the rules every order already follows;
+--   e) the tank dies (M.on_death);
+--   f) a new order from a person: take_order's "latest order wins".  The
+--      decoy is NOT busy (M.busy), so the new order is always taken.
+--
+-- PING ONLY.  A chat "!goto" and a scenario hint keep today's soft hold:
+-- only a person's ping chooses the exact square a decoy needs.  The chat
+-- verb `decoy` is a different, unbuilt thing and is left alone.
+-- =========================================================================
+
+-- The goals a decoy may fight with.  Every other kind is undone by the lock.
+local DECOY_FIGHT_KINDS = { attack_tank = true, kill_lgm = true }
+
+-- How many pills can shoot square (mx,my).  See the rule above.
+local function decoy_pills(world, mx, my)
+  local n = 0
+  local r = C.PILL_FIRE_RANGE or 8
+  for _, p in pairs((world and world.pills) or {}) do
+    if p.owner ~= "friendly" and p.owner ~= "allied" and not p.in_tank
+       and (p.health or 0) > 0 and p.mx and p.my
+       and U.edist(mx, my, p.mx, p.my) <= r then
+      n = n + 1
+    end
+  end
+  return n
+end
+M.decoy_pills = decoy_pills
+
+-- The hold goal: the same goto_tile pick_goal hands back in a hold, marked
+-- so the end of the decoy can tell it from any other goto_tile.  A NEW
+-- table every call: clear_attack_goal wipes the live goal in place.
+function M.decoy_goal(h)
+  return { kind = "goto_tile", mx = h.mx, my = h.my,
+           wx = U.m2w(h.mx), wy = U.m2w(h.my), target_id = -1,
+           _ordered = true, _order_hold = true, _decoy = true }
+end
+
+-- Is this goal allowed while the decoy stands?  attack_tank on an ENEMY
+-- tank (a "kill me" attack_tank aims at an ALLY: km_ally_pn) or kill_lgm,
+-- with the target inside gun range of the tank -- C.TANK_COMBAT_ENGAGE_RANGE,
+-- the brain's "start shooting at this distance (~max shell range)".  The
+-- target's live tile comes from perception when it is in sight; the goal's
+-- own tile otherwise.  Out of range is not allowed: a parked tank cannot
+-- chase, so the goal would only point the gun at nothing.
+function M.decoy_allows(state, info, g)
+  if not (g and DECOY_FIGHT_KINDS[g.kind]) then return false end
+  if g.km_ally_pn then return false end
+  if not (info and info.tankx and info.tanky) then return false end
+  local tx, ty = g.mx, g.my
+  local perc = state and state.perc
+  if perc then
+    local list, key = nil, nil
+    if g.kind == "attack_tank" then list, key = perc.enemy_tanks, "id"
+    else list, key = perc.enemy_lgms, "idnum" end
+    for _, e in ipairs(list or {}) do
+      if e[key] == g.target_id and e.mx and e.my then
+        tx, ty = e.mx, e.my
+        break
+      end
+    end
+  end
+  if not (tx and ty) then return false end
+  local d = U.edist(bit.rshift(info.tankx, 8), bit.rshift(info.tanky, 8), tx, ty)
+  return d <= (C.TANK_COMBAT_ENGAGE_RANGE or 7)
+end
+
+-- The slot, when it is a standing decoy hold.
+local function decoy_held(state)
+  local h = state and state.orders and state.orders.held
+  if h and h.decoy and h.hold and h.kind == "goto_tile" and h.mx and h.my then
+    return h
+  end
+  return nil
+end
+M.decoy_held = decoy_held
+
+-- End the decoy.  `line` nil = in silence.  A decoy that ends is a job that
+-- is over, so it is CANCELLED (obx), never handed back to another bot.
+local function decoy_end(state, info, why, line)
+  local h = decoy_held(state)
+  if not h then return false end
+  release_held(state, info, line, line == nil, true)
+  return true
+end
+M.decoy_end = decoy_end
+
+-- THE LOCK.  init.lua calls this every think right before the suicide-run
+-- lock, the attack substate machine and steering, so whatever the think did
+-- to the goal (a refuel, take_cover, a flee, a water escape, a stuck handler,
+-- a PF-failed flee, a budget drop, an attack_pill) is undone before the tank
+-- moves.  An attack_tank or kill_lgm in gun range stays.  Off the square
+-- (pushed, or the one-square radius left) the hold goal drives it back, and
+-- only then: steering parks it the moment it is on the square again.
+-- Ends the decoy instead when no pill can shoot the square any more.
+-- Returns true while the decoy stands.
+function M.decoy_lock(state, world, info, now)
+  local h = decoy_held(state)
+  if not h then return false end
+  -- A suicide run is its own lock and a newer order than this one.
+  if state._suicide then return false end
+  if decoy_pills(world, h.mx, h.my) == 0 then
+    decoy_end(state, info, "pills down")
+    return false
+  end
+  local g = state.goal
+  if g and g.kind == "goto_tile" and g.mx == h.mx and g.my == h.my then
+    return true
+  end
+  if M.hold_parked(state, info) and M.decoy_allows(state, info, g) then
+    return true
+  end
+  local was = g and g.kind or "nil"
+  state.goal = M.decoy_goal(h)
+  state.goal_set_tick = now
+  state.command_goal = nil
+  if state.pf then state.pf.status = "idle" end
+  state.stuck_for = 0
+  return true
+end
+
+-- NO THROTTLE, EVER, on the square.  steering.lua already takes KEY_FASTER
+-- away for the park kinds, but init.lua's kill_lgm crosshair search runs
+-- AFTER steering and picks throttle as one of its 27 moves.  The soft hold
+-- lets that through; a decoy does not.  Called on the final keys.
+function M.decoy_keys(state, info, keys, taps)
+  local KF = _G.KEY_FASTER
+  if KF and decoy_held(state) and M.hold_parked(state, info) then
+    if keys then keys = bit.band(keys, bit.bnot(KF)) end
+    if taps then taps = bit.band(taps, bit.bnot(KF)) end
+  end
+  return keys, taps
 end
 
 -- group = true when several bots take the SAME order (all / nearby / a
@@ -1304,6 +1663,9 @@ local function take_order(state, world, info, spec, cost, now, group, stolen)
     mx = spec.mx, my = spec.my,
     sender = spec.sender, sender_name = spec.sender_name,
     needs_shells = spec.needs_shells, verb = spec.verb,
+    -- ping = it came from a bot-command ping.  Only a ping order on open
+    -- ground can become a decoy hold (see GO-THERE DECOY HARD HOLD).
+    ping = spec.ping,
     -- group = two or more bots on ONE order. squad.lua reads it so an ordered
     -- pair on the same live pill runs the blitz instead of arriving one at a
     -- time.
@@ -1314,12 +1676,36 @@ local function take_order(state, world, info, spec, cost, now, group, stolen)
   state._order = o.held
   -- A place order takes hold on the tick it is taken, not on the next think.
   goto_lock(state)
+  -- THE PING REPAIR BONUS (Andrew, 2026-09-24).  A bot that takes a human's
+  -- bot-command ping on one of our LIVE pills (a defend order) weights that
+  -- pill's builder-pool repair row x BUILDER_POOL_PING_PILL_BONUS
+  -- (builder_pool.goal_weight).  Only the bots that take the order get it.
+  -- M.update ends it on the clock, a dead / full / lost pill; a ping on
+  -- another of our pills ends it in ping_bot_command.
+  if spec.kind == "defend_pill" and spec.ping and spec.tid then
+    local p = world and world.pills and world.pills[spec.tid]
+    if p and p.owner == "friendly" and (p.health or 0) > 0 then
+      state._repair_ping = { tid = spec.tid, sender = spec.sender,
+                             until_tick = now + (C.BUILDER_POOL_PING_PILL_TICKS or 500) }
+    end
+  end
   local ic = math.floor(math.min(cost or 0, 999999))
+  -- The cost as the wire carries it: a rival claim is compared against this
+  -- number, and the rival compares against the same one.
+  o.held.claim_cost = ic
   tx(state, string.format("/info obc %d %d", spec.oid, ic))
   o.gclaims[spec.oid] = o.gclaims[spec.oid] or {}
   o.gclaims[spec.oid][state.player_number] = ic
   if group then
     o.announce[spec.oid] = { due = now + (C.ORDER_AUCTION_TICKS or 10), spec = spec }
+  elseif C.ORDER_CLAIM_TIEBREAK then
+    -- ONE PING, ONE BOT: the line and the marker wait out the claim window,
+    -- and go only if this bot still holds the order then (M.update).
+    local pmx, pmy = M.target_tile(world, state, spec)
+    o.ack_due = { oid = spec.oid, due = now + (C.ORDER_AUCTION_TICKS or 10),
+                  line = string.format("%s %s", M.ack_for(my_name(state, info)),
+                                       goal_label(spec.kind, spec.tid)),
+                  mx = pmx, my = pmy }
   else
     sayg(state, string.format("%s %s", M.ack_for(my_name(state, info)),
         goal_label(spec.kind, spec.tid)))
@@ -1329,11 +1715,17 @@ local function take_order(state, world, info, spec, cost, now, group, stolen)
   -- who just gave an order, so it is always sent, and on a GROUP order every
   -- taker sends its own, which is what shows the human how many are coming.
   -- The chat ack is unchanged and still carries the words.
-  do
+  if group or not C.ORDER_CLAIM_TIEBREAK then
     local pmx, pmy = M.target_tile(world, state, spec)
     if pmx and pmy then
       M.ping(state, _G.PING_KIND_ON_MY_WAY or 4, pmx, pmy)
     end
+  end
+  -- A bot-command order the attack ping already turned into a suicide run
+  -- (the auction was still open, or this is a bot a repeat ping added).
+  local ks = o.known[spec.oid] and o.known[spec.oid].spec
+  if spec.kind == "attack_pill" and (spec.suicide or (ks and ks.suicide)) then
+    M.suicide_start(state, world, spec.tid, spec.sender, now, "took a suicide order")
   end
 end
 
@@ -1661,6 +2053,61 @@ end
 -- for; it grows by one on each repeat ping, and the bots that already hold
 -- the order keep it -- the auction only fills the slots still open.
 -- =========================================================================
+-- A NEW ORDER FROM A PERSON RETIRES EVERY OLDER ONE (Andrew, 2026-09-24).
+-- "I'm seeing bots go back to where I said 'go here' a while ago": the bot
+-- that took a newer order RELEASED the old one (obr), and another bot picked
+-- it up and drove to a square nobody wanted any more.  Now every bot, on
+-- hearing a new order (chat line or bot-command ping), forgets every older
+-- order it knows about, whoever gave it.  Nothing is cancelled on the wire:
+-- a bot the new order is NOT for keeps the order it holds (Andrew: addressed
+-- bots only), and so do its group partners.  But once the order is out of
+-- everyone else's o.known, an obr for it re-opens no auction anywhere (the
+-- "release" rx needs o.known), so a replaced, dead or stuck holder's job is
+-- simply over.  Kept in o.known: the new order itself (keep_oid, so a repeat
+-- line or a repeat ping is still a repeat), the order this bot holds, and
+-- scenario hints (HINT_SENDER), which a script re-sends on its own clock.
+-- Also kept: an order whose auction is still open.  Nobody has taken it
+-- yet, so a second ping inside ORDER_AUCTION_TICKS would otherwise delete
+-- the first order before any bot could take it.
+-- ORDER_NEW_CLEARS_ALL = false (keel) keeps the old hand-back behaviour.
+local function clear_older_orders(state, info, keep_oid, now)
+  if not C.ORDER_NEW_CLEARS_ALL then return end
+  local o = S(state)
+  local hint = M.HINT_SENDER or 255
+  local held = o.held and o.held.oid
+  local drop = {}
+  for oid, k in pairs(o.known) do
+    if oid ~= keep_oid and oid ~= held and not o.auctions[oid]
+       and not (k.spec and k.spec.sender == hint) then
+      drop[#drop + 1] = oid
+    end
+  end
+  for _, oid in ipairs(drop) do forget_order(o, oid) end
+  if #drop > 0 then
+  end
+end
+M.clear_older_orders = clear_older_orders
+
+-- A BID THAT CAME EARLY (ORDER_CLAIM_TIEBREAK).  Bots hear a ping on their
+-- own thinks, so an ally can bid on an order before this bot has opened its
+-- auction on it.  That bid used to be thrown away, the auction then waited
+-- out its window without it, and two bots could each see themselves as the
+-- cheapest.  M.update keeps such bids in o.early; a new auction takes the
+-- ones younger than two auction windows.
+function M.merge_early_bids(o, oid, now)
+  local e = o.early and o.early[oid]
+  local a = o.auctions[oid]
+  if not (e and a) then return end
+  local win = 2 * (C.ORDER_AUCTION_TICKS or 10)
+  for pn, b in pairs(e) do
+    if (now - b.tick) <= win and not a.answered[pn] then
+      a.bids[pn] = (b.cost >= 0) and b.cost or nil
+      a.answered[pn] = true
+    end
+  end
+  o.early[oid] = nil
+end
+
 local function start_order(state, world, info, spec, who, now, want)
   local o  = S(state)
   local me = state.player_number
@@ -1722,6 +2169,7 @@ local function start_order(state, world, info, spec, who, now, want)
   o.auctions[spec.oid] = {
     spec = spec, open = now, bids = {}, answered = {}, want = want or 1,
   }
+  M.merge_early_bids(o, spec.oid, now)
   o.auctions[spec.oid].bids[me] = cost
   o.auctions[spec.oid].answered[me] = true
   tx(state, string.format("/info obd %d %d", spec.oid,
@@ -1854,6 +2302,25 @@ function M.on_chat(state, world, info, sender, text, now, from_ally, sender_is_b
   -- and did the job a person had just called off.
   if cmd.verb == "cancel" then
     local t = cmd.target
+    -- ── the SUICIDE RUN's escape hatch ─────────────────────────────────
+    -- Every cancel that reaches this bot ends its run, by the same rules
+    -- the order cancels below use: `cancel all` -- everyone; `cancel <bot>`
+    -- -- that bot; `last cancel` -- the bots of the last order; a bare
+    -- `cancel` -- the runs that sender started.  A bot that holds an order
+    -- says "released" below; one without an order says it here.
+    if state._suicide then
+      local r, hit = state._suicide, false
+      if t and t.kind == "all" then hit = true
+      elseif t and t.kind == "tank" then hit = (t.pn == me)
+      elseif last_pns then
+        for _, pn in ipairs(last_pns) do if pn == me then hit = true end end
+      else hit = (r.sender == sender) end
+      if hit then
+        local line = nil
+        if not o.held then line = "released" end
+        M.suicide_end(state, "cancel", line)
+      end
+    end
     if t and t.kind == "all" then
       if o.held then release_held(state, info, "released", false, true) end
       o.known = {}
@@ -1936,6 +2403,7 @@ function M.on_chat(state, world, info, sender, text, now, from_ally, sender_is_b
     mx = cmd.target and cmd.target.mx, my = cmd.target and cmd.target.my,
     needs_shells = needs_shells, who = who,
   }
+  clear_older_orders(state, info, spec.oid, now)
   o.known[spec.oid] = { spec = spec, tick = now }
   note_last(o, sender, spec.oid)
 
@@ -2301,8 +2769,18 @@ end
 -- =========================================================================
 function M.busy(state, info)
   local g = state.goal or {}
-  if (info.man_status or 0) ~= C.LGM_INTANK then return true, "man_out" end
-  if g.kind == "capture_pill" and state._lgm_dispatch then return true, "capturing" end
+  -- A SUICIDE RUN TAKES NO OTHER ORDER.  It ends on death, on the pill's
+  -- death, or on a cancel -- a new order is not one of those, so the bot
+  -- answers "Busy (suicide run)" and keeps going.
+  if state._suicide then return true, "suicide run" end
+  -- THE MAN BEING OUT DOES NOT MAKE A BOT BUSY (Andrew, 2026-09-24:
+  -- ORDER_MAN_OUT_TAKES).  The tank drives off on the order and the builder
+  -- walks back to it as he always does -- a man sent to pick a pill up
+  -- finishes the pickup first.  false = "Busy (man_out)" / "Busy (capturing)".
+  if not C.ORDER_MAN_OUT_TAKES then
+    if (info.man_status or 0) ~= C.LGM_INTANK then return true, "man_out" end
+    if g.kind == "capture_pill" and state._lgm_dispatch then return true, "capturing" end
+  end
   if state._repo_approved_pid ~= nil and state._repo_approved_pid == g.target_id then
     return true, "repositioning"
   end
@@ -2317,6 +2795,10 @@ function M.busy(state, info)
      or (state.stuck_for or 0) >= (C.ORDER_STUCK_BUSY_TICKS or 150) then
     return true, "escaping"
   end
+  -- A DECOY HOLD IS NOT BUSY, on purpose: a new order from a person is one
+  -- of its endings (take_order, "latest order wins").  Nothing above can
+  -- fire for it either -- the decoy lock keeps escape_water out, and the
+  -- stuck detector reads the park as deliberate so stuck_for stays at 0.
   return false, nil
 end
 
@@ -2366,6 +2848,16 @@ local function ping_bot_command(state, world, info, sender, mx, my, now)
     return
   end
 
+  -- ── a ping on ANOTHER of our pills ends the repair bonus ──────────────
+  -- The bonus itself belongs only to the bot(s) that TAKE a defend ping
+  -- order (take_order).  Every bot hears this ping, so every bot drops a
+  -- bonus it holds for a different pill here; a repeat ping on the same pill
+  -- leaves it alone (it only adds a bot).
+  if kind == "defend_pill" and state._repair_ping
+     and state._repair_ping.tid ~= tid then
+    state._repair_ping = nil
+  end
+
   -- The ANCHOR is the resolved TARGET's tile (the ping tile when the ping hit
   -- open ground), so a second ping anywhere in the target's 3x3 matches.
   local axm = (hit and hit.mx) or mx
@@ -2377,6 +2869,11 @@ local function ping_bot_command(state, world, info, sender, mx, my, now)
     local k = o.known[prev]
     local a = o.anchors[prev]
     k.tick, a.tick = now, now
+    -- The suicide-run window opens on EVERY bot-command ping on a live
+    -- enemy pill, the repeat one included (see PING SUICIDE RUN).
+    if kind == "attack_pill" then
+      o.botcmd[sender] = { tid = tid, tick = now, oid = prev }
+    end
     a.want = (a.want or 1) + 1
     if o.held and o.held.oid == prev then
       o.held.expiry = now + (C.ORDER_FOCUS_TICKS or 3000)   -- focus reset
@@ -2408,10 +2905,37 @@ local function ping_bot_command(state, world, info, sender, mx, my, now)
     sender = sender, sender_name = player_name(info, sender),
     needs_shells = needs_shells, who = who, ping = true,
   }
+  clear_older_orders(state, info, spec.oid, now)
   o.known[spec.oid]   = { spec = spec, tick = now }
   note_last(o, sender, spec.oid)
   o.anchors[spec.oid] = { sender = sender, mx = axm, my = aym, tick = now, want = 1 }
+  if kind == "attack_pill" then
+    o.botcmd[sender] = { tid = tid, tick = now, oid = spec.oid }
+  end
   start_order(state, world, info, spec, who, now, 1)
+end
+
+-- An ATTACK ping (PING_KIND_ATTACK, 3).  On its own it is a marker for the
+-- team and orders nothing.  Right after a bot-command ping from the SAME
+-- sender on the SAME live enemy pill it is the suicide-run trigger (see PING
+-- SUICIDE RUN).  The pill is resolved exactly the way a bot-command ping
+-- resolves it (M.resolve_ping: the exact tile, no ring for pills).
+local function ping_attack(state, world, info, sender, mx, my, now)
+  if not C.PING_SUICIDE_ENABLED then return end
+  local o   = S(state)
+  local rec = o.botcmd[sender]
+  if not rec then return end
+  local hit = M.resolve_ping(state, world, info, mx, my)
+  if not (hit and hit.class == "pill" and hit.id == rec.tid) then return end
+  local gap = now - (rec.tick or -1e9)
+  local win = C.PING_SUICIDE_WINDOW_TICKS or 50
+  if gap < 0 or gap > win then
+    return
+  end
+  -- One bot command, one trigger: a second attack ping inside the window is
+  -- not a second run.
+  o.botcmd[sender] = nil
+  suicide_trigger(state, world, info, sender, rec.tid, rec.oid, now)
 end
 
 -- A CAUTION ping (PING_KIND_CAUTION, 1).
@@ -2419,6 +2943,61 @@ local function ping_caution(state, world, info, sender, mx, my, now)
   local o   = S(state)
   local me  = state.player_number
   local hit = M.resolve_ping(state, world, info, mx, my)
+
+  -- ── a caution is the SUICIDE RUN's escape hatch ───────────────────────
+  -- On the running bot itself, or in the 3x3 of the pill it is running at:
+  -- the run is called off.  The order code below then does what a caution
+  -- always does (cancel the held order; a second caution on the bot
+  -- retreats it).
+  do
+    local r = state._suicide
+    local ring = C.ORDER_PING_RING or 1
+    local tmx  = (hit and hit.mx) or mx
+    local tmy  = (hit and hit.my) or my
+    if r and ((hit and hit.class == "allybot" and hit.pn == me)
+              or (math.abs(r.mx - tmx) <= ring and math.abs(r.my - tmy) <= ring)) then
+      -- A bot that holds an order says "Released" when the code below lets
+      -- it go; one running on its own choice has no order, so it says it here.
+      -- With no order the caution was the cancel and nothing more: stop
+      -- here, or the retreat branch below reads "no order" as a second
+      -- caution and sends the tank off to take cover.
+      if not o.held then
+        M.suicide_end(state, "caution ping", "Released")
+        return
+      end
+      M.suicide_end(state, "caution ping")
+      -- A caution on the PILL cancels the run's order here.  The loop below
+      -- finds it through o.known, but a run keeps its order past the 60 s
+      -- focus and the prune drops it from o.known by then: the bot would
+      -- go on attacking and say "order lapsed" a second later.  A caution
+      -- on the bot itself is left to the retreat branch below.
+      local h = o.held
+      if not (hit and hit.class == "allybot" and hit.pn == me)
+         and h.tkind == "pill" and h.tid == r.tid then
+        release_held(state, info, "Released", false, true)
+      end
+    end
+  end
+
+  -- ── a caution is the DECOY HOLD's release too ─────────────────────────
+  -- Within ORDER_PING_RING of the decoy's own TANK, from any human ally --
+  -- not only the one who sent it (on_events has already dropped bot and
+  -- enemy pings).  Measured on the raw ping square, so a caution beside the
+  -- tank counts even when the ring resolves it to something else (a pill, an
+  -- enemy tank).  "Released", and that is the whole event: the retreat
+  -- branch below must not read the empty slot as a second caution and send
+  -- the tank off to take cover on the same ping.
+  do
+    local dh = decoy_held(state)
+    if dh and info.tankx and info.tanky then
+      local ring = C.ORDER_PING_RING or 1
+      if math.abs(tile_of(info.tankx) - mx) <= ring
+         and math.abs(tile_of(info.tanky) - my) <= ring then
+        decoy_end(state, info, "caution ping", "Released")
+        return
+      end
+    end
+  end
 
   -- ── on an ally BOT's tank, or its 3x3: the RETREAT gesture ────────────
   -- Holding an order: the FIRST caution cancels it. With no order (which is
@@ -2484,6 +3063,7 @@ function M.on_events(state, world, info, now)
   local EV     = _G.EVENT_PING
   local K_BOT  = _G.PING_KIND_BOT_COMMAND
   local K_CAUT = _G.PING_KIND_CAUTION
+  local K_ATK  = _G.PING_KIND_ATTACK
   if not EV then return end
   local me     = state.player_number
   local allies = info.allies or 0
@@ -2513,6 +3093,8 @@ function M.on_events(state, world, info, now)
           ping_bot_command(state, world, info, sender, mx, my, now)
         elseif kind == K_CAUT then
           ping_caution(state, world, info, sender, mx, my, now)
+        elseif kind == K_ATK and K_ATK ~= nil then
+          ping_attack(state, world, info, sender, mx, my, now)
         end
       end
     end
@@ -2530,6 +3112,22 @@ function M.update(state, world, info, now)
   local o = S(state)
   local me = state.player_number
 
+  -- The ping repair bonus (see ping_bot_command) ends on the clock, or when
+  -- its pill is gone, dead, fully repaired or no longer ours.
+  local rp = state._repair_ping
+  if rp then
+    local p = world.pills and world.pills[rp.tid]
+    local why = nil
+    if now >= (rp.until_tick or 0) then why = "timer"
+    elseif not p then why = "pill gone"
+    elseif p.owner ~= "friendly" or p.in_tank then why = "not ours"
+    elseif (p.health or 0) <= 0 then why = "pill dead"
+    elseif (p.health or 0) >= (C.PILLS_MAX_HEALTH or 15) then why = "repaired" end
+    if why then
+      state._repair_ping = nil
+    end
+  end
+
   -- 0. Remember where the allied tanks are, so "attack closest" has a tile
   --    to measure from even when the person who typed it has just driven out
   --    of sight.  One short pass; see M.note_seen.
@@ -2542,18 +3140,58 @@ function M.update(state, world, info, now)
       if a then
         a.bids[r.from] = (r.cost >= 0) and r.cost or nil
         a.answered[r.from] = true
+      elseif C.ORDER_CLAIM_TIEBREAK and r.from ~= me then
+        -- This bot has not opened its auction on that order yet (it heard
+        -- the ping a think later than the bidder).  Keep the bid for it.
+        o.early = o.early or {}
+        o.early[r.oid] = o.early[r.oid] or {}
+        o.early[r.oid][r.from] = { cost = r.cost, tick = now }
       end
     elseif r.kind == "claim" then
       o.claims[r.oid] = { pn = r.from, cost = r.cost, tick = r.tick }
       o.gclaims[r.oid] = o.gclaims[r.oid] or {}
       o.gclaims[r.oid][r.from] = r.cost
       o.auctions[r.oid] = nil
-      -- Someone else claimed what we hold (a steal): go quiet and let them.
-      -- A GROUP order is shared, so a fellow taker's claim is not a steal.
+      -- Someone else claimed what we hold.  With ORDER_CLAIM_TIEBREAK the
+      -- two claims are ranked below and only the loser lets go; without it
+      -- (keel) this bot goes quiet and lets them have it.  A GROUP order is
+      -- shared, so a fellow taker's claim is not a rival claim.
+      -- A REPEAT PING makes a group too (anchor want > 1): the bot it added
+      -- claims the same order, and that is a fellow taker, not a rival.
+      -- Without this the first holder dropped the order the moment a repeat
+      -- ping put a second bot on it (ORDER_CLAIM_TIEBREAK; keel drops).
+      local anc = o.anchors[r.oid]
+      local grp = o.announce[r.oid]
+                  or (C.ORDER_CLAIM_TIEBREAK and o.held and o.held.oid == r.oid
+                      and (o.held.group or (anc and (anc.want or 1) > 1)))
       if o.held and o.held.oid == r.oid and r.from ~= me
-         and not o.announce[r.oid] then
-        o.held = nil
-        state._order = nil
+         and not grp then
+        -- ONE PING, ONE BOT (ORDER_CLAIM_TIEBREAK).  Two bots took the same
+        -- solo order.  Both see both claims, and both rank them the same
+        -- way -- cost, then player number -- so exactly one keeps it.
+        local mine = o.held.claim_cost or math.floor(o.held.cost or 0)
+        if C.ORDER_CLAIM_TIEBREAK
+           and (mine < r.cost or (mine == r.cost and me < r.from)) then
+          o.claims[r.oid] = { pn = me, cost = mine, tick = now }
+          if o.gclaims[r.oid] then o.gclaims[r.oid][r.from] = nil end
+        elseif C.ORDER_CLAIM_TIEBREAK then
+          -- The losing side hands it over with a quiet release, so every
+          -- other bot stops counting this bot as a holder too.  The release
+          -- re-opens nothing: the winner still holds it (see "release").
+          local lost = o.held
+          release_held(state, info, nil, true)
+          if o.ack_due and o.ack_due.oid == r.oid then o.ack_due = nil end
+          -- A suicide run on the pill of the order it just lost goes too:
+          -- the winner holds the order and runs it.
+          local run = state._suicide
+          if run and lost.kind == "attack_pill" and run.tid == lost.tid then
+            M.suicide_end(state, "order lost")
+          end
+        else
+          decoy_drop_goal(state, o.held)
+          o.held = nil
+          state._order = nil
+        end
       end
     elseif r.kind == "focus" then
       -- A late joiner (or a respawned bot) latching the team's setting.
@@ -2570,6 +3208,7 @@ function M.update(state, world, info, now)
       -- go too.  Quiet and with no obx of our own -- the cancel is already on
       -- the wire and a second one would bounce around the team.
       if o.held and o.held.oid == r.oid then
+        decoy_drop_goal(state, o.held)
         o.held = nil
         state._order = nil
         goto_lock(state)
@@ -2580,15 +3219,39 @@ function M.update(state, world, info, now)
       -- The releaser is not a holder any more, so the settle below must stop
       -- counting it as one -- otherwise it can never win its own order back.
       if o.gclaims[r.oid] then o.gclaims[r.oid][r.from] = nil end
+      -- o.claims keeps only the LAST claim heard.  After crossed claims
+      -- (ORDER_CLAIM_TIEBREAK) that can be the loser's, and the loser's
+      -- release just cleared it while the winner still holds the order.
+      -- Name the cheapest remaining holder again, or the steal pass (it
+      -- walks o.claims only) could never take this order over.  The steal
+      -- hold time counts from now: the real claim tick is not kept.
+      if C.ORDER_CLAIM_TIEBREAK and not o.claims[r.oid] and o.gclaims[r.oid] then
+        local bpn, bc = nil, nil
+        for pn, c in pairs(o.gclaims[r.oid]) do
+          if not bpn or c < bc or (c == bc and pn < bpn) then bpn, bc = pn, c end
+        end
+        if bpn then o.claims[r.oid] = { pn = bpn, cost = bc, tick = now } end
+      end
       -- Re-bid it: the holder dropped it and the job is still standing.
       local k = o.known[r.oid]
-      if k and not o.held and not o.auctions[r.oid]
+      -- Somebody else still holds it (the loser of a claim tiebreak is the
+      -- releaser): the job is not standing open, so nothing is re-bid.
+      local still = false
+      if C.ORDER_CLAIM_TIEBREAK then
+        for pn in pairs(o.gclaims[r.oid] or {}) do
+          if pn ~= r.from then still = true end
+        end
+      end
+      -- "Don't pass the order back" (ORDER_NO_HAND_BACK): nobody re-bids.
+      if C.ORDER_NO_HAND_BACK then k = nil end
+      if k and not still and not o.held and not o.auctions[r.oid]
          and (now - k.tick) < (C.ORDER_FOCUS_TICKS or 3000) then
         local busy = M.busy(state, info)
         local cost = (not busy) and M.travel_cost(state, world, info, k.spec) or nil
         if cost and cost >= 1e29 then cost = nil end
         o.auctions[r.oid] = { spec = k.spec, open = now, bids = { [me] = cost },
                               answered = { [me] = true } }
+        M.merge_early_bids(o, r.oid, now)
         tx(state, string.format("/info obd %d %d", r.oid,
            cost and math.floor(math.min(cost, 999999)) or -1))
       end
@@ -2607,7 +3270,8 @@ function M.update(state, world, info, now)
         if a.answered[apn] then n_ans = n_ans + 1 end
       end
     end
-    if n_ans >= n_allies or (now - a.open) >= (C.ORDER_AUCTION_TICKS or 10) then
+    local timed_out = (now - a.open) >= (C.ORDER_AUCTION_TICKS or 10)
+    if n_ans >= n_allies or timed_out then
       -- The `want` cheapest bids take the order (1 for a chat order, N after
       -- N ping bursts). Bots that ALREADY hold it keep it, so a repeat ping
       -- only fills the slot it just added. Ties break on player number, and
@@ -2640,6 +3304,13 @@ function M.update(state, world, info, now)
       -- holders answer it the way a repeated chat line is answered.
       if a.repeated and #won == 0 then repeat_ack(state, info, oid, now) end
       o.auctions[oid] = nil
+      local bl = {}
+      for pn = 0, 15 do
+        if a.answered[pn] then
+          bl[#bl + 1] = string.format("p%d=%s", pn,
+            a.bids[pn] and string.format("%.0f", a.bids[pn]) or "no")
+        end
+      end
     end
   end
 
@@ -2663,6 +3334,30 @@ function M.update(state, world, info, now)
         end
       end
       o.announce[oid] = nil
+    end
+  end
+
+  -- 2c. ONE PING, ONE BOT: the solo ack, once the claim window is over, and
+  --     only from the bot that still holds the order (ORDER_CLAIM_TIEBREAK).
+  local ad = o.ack_due
+  if ad and now >= ad.due then
+    o.ack_due = nil
+    if o.held and o.held.oid == ad.oid then
+      sayg(state, ad.line)
+      if ad.mx and ad.my then
+        M.ping(state, _G.PING_KIND_ON_MY_WAY or 4, ad.mx, ad.my)
+      end
+    end
+  end
+  -- Early bids nobody opened an auction for.
+  if o.early and next(o.early) then
+    local win = 2 * (C.ORDER_AUCTION_TICKS or 10)
+    for _, oid in ipairs(sorted_keys(o.early)) do
+      local e = o.early[oid]
+      for pn, b in pairs(e) do
+        if (now - b.tick) > win then e[pn] = nil end
+      end
+      if next(e) == nil then o.early[oid] = nil end
     end
   end
 
@@ -2702,6 +3397,15 @@ function M.update(state, world, info, now)
   -- no new line of its own: the slot clears and goal selection picks up again
   -- on the next tick.
   local h = o.held
+  -- A SUICIDE RUN KEEPS ITS ORDER ALIVE.  The run sticks until the tank or
+  -- the pill dies, so the 60 s focus must not lapse under it and say "order
+  -- lapsed" while the bot is still driving at the pill.  The pill's death
+  -- still ends the order through the tests below.
+  local sr = state._suicide
+  if h and sr and h.tkind == "pill" and h.tid == sr.tid
+     and (h.expiry or 0) < now + 50 then
+    h.expiry = now + 50
+  end
   if h then
     -- ARRIVAL STARTS THE HOLD.  A go-there order used to run on the 60 s
     -- focus whether the bot got there in two seconds or fifty, which made
@@ -2711,6 +3415,12 @@ function M.update(state, world, info, now)
     -- the first think the tank is within one square of the target swaps the
     -- clock for ORDER_GOTO_HOLD_TICKS.  One line is said, with the number in
     -- it, so the human knows how long the bot will be standing there.
+    --
+    -- A PING order with C.ORDER_GOTO_DECOY on decides here, once, between
+    -- the two decoy outcomes (see GO-THERE DECOY HARD HOLD): no pill can
+    -- shoot the square -> the order is over in silence (decoy_none); one or
+    -- more can -> the hard hold, "decoying 10s".
+    local decoy_none = false
     if h.kind == "goto_tile" and h.mx and h.my and not h.arrived
        and info.tankx and info.tanky then
       local dx = tile_of(info.tankx) - h.mx
@@ -2719,22 +3429,54 @@ function M.update(state, world, info, now)
       if dy < 0 then dy = -dy end
       if dx <= 1 and dy <= 1 then
         local hold = C.ORDER_GOTO_HOLD_TICKS or 500
-        h.arrived = now
-        h.hold    = true
-        h.expiry  = now + hold
-        sayg(state, string.format("holding %ds", math.floor(hold / 50)))
-        -- The hard lock goes the moment the hold starts, so goal selection is
-        -- free to answer an enemy tank from this same tick.
-        goto_lock(state)
+        local npills = (C.ORDER_GOTO_DECOY and h.ping)
+                       and decoy_pills(world, h.mx, h.my) or nil
+        if npills == 0 then
+          decoy_none = true
+          h.arrived  = now
+        else
+          h.arrived = now
+          h.hold    = true
+          h.expiry  = now + hold
+          if npills then
+            h.decoy = true
+            sayg(state, string.format("decoying %ds", math.floor(hold / 50)))
+          else
+            sayg(state, string.format("holding %ds", math.floor(hold / 50)))
+          end
+          -- The hard lock goes the moment the hold starts, so goal selection is
+          -- free to answer an enemy tank from this same tick.
+          goto_lock(state)
+          if npills then
+          else
+          end
+        end
       end
     end
     local done, why = false, nil
-    if now >= h.expiry then
+    if decoy_none then
+      -- Nothing to be a decoy for.  No "holding", no "order lapsed": the
+      -- order simply ends and goal selection takes over.  The travel goal
+      -- goes with it (an urgent replan), so the tank does not roll the last
+      -- square onto a spot that no longer means anything.
+      done, why = true, nil
+      local g = state.goal
+      if g and g.kind == "goto_tile" and g.mx == h.mx and g.my == h.my then
+        require("attack").clear_attack_goal(state, "decoy: no pill in range")
+      end
+    elseif now >= h.expiry then
       done, why = true, "order lapsed"
       -- A go-there order that ARRIVED ends in silence.  The bot already said
       -- "holding 10s" and that number was the whole promise; saying "order
       -- lapsed" ten seconds later is the same fact twice.
       if h.kind == "goto_tile" and h.arrived then why = nil end
+      if h.decoy then
+      end
+    elseif h.decoy and h.hold and decoy_pills(world, h.mx, h.my) == 0 then
+      -- END (a): every pill that could shoot the square is dead, carried,
+      -- ours, or gone.  Re-read every think, so a pill that came into range
+      -- after arrival had to go down too.  In silence, like the timer.
+      done, why = true, nil
     elseif h.tkind == "pill" and h.tid then
       local p = world.pills[h.tid]
       if not p then
@@ -2823,7 +3565,8 @@ function M.update(state, world, info, now)
     end
   end
 
-  if h and h.needs_shells then
+  -- A suicide run never tops up, so it never says it is going to.
+  if h and h.needs_shells and not state._suicide then
     -- A pause, not an exit: the timer keeps running while the tank tops up.
     local low = (info.shells or 0) < (C.SHELLS_LOW or 20)
     if low and not h.refuel_said then
@@ -2887,6 +3630,12 @@ end
 -- One line for the goal panel / debug_info.
 function M.panel_line(state, info)
   local h = state.orders and state.orders.held
+  local sr = state._suicide
+  if sr then
+    return string.format(" SUICIDE RUN pill#%s from p%s, %d s in",
+      tostring(sr.tid), tostring(sr.sender),
+      math.floor(((state.tick or 0) - (sr.since or 0)) / 50))
+  end
   if not h then return "" end
   local left = math.max(0, (h.expiry or 0) - (state.tick or 0))
   -- A PLACE ORDER IS A HARD LOCK, and the panel has to say so.  It runs as a
@@ -2896,10 +3645,12 @@ function M.panel_line(state, info)
   -- reason is on screen, next to the square and the time left.
   -- Once it has arrived the lock is off and the pools are live again (only
   -- the reactive rows can win), so the word changes with the phase.
+  -- A DECOY hold (a ping order with pills on the square) is a hard hold with
+  -- its own lock, so it gets its own word.
   if h.kind == "goto_tile" then
     return string.format(" ORDER goto (%d,%d) from %s, %d s left, %s",
       h.mx or -1, h.my or -1, h.sender_name or "?", math.floor(left / 50),
-      h.hold and "holding" or "hard")
+      h.decoy and "decoy" or (h.hold and "holding" or "hard"))
   end
   return string.format(" ORDER %s#%s from %s %ds left",
     h.kind, tostring(h.tid or "-"), h.sender_name or "?", math.floor(left / 50))

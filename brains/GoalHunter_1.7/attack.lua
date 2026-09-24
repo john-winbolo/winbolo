@@ -3993,6 +3993,30 @@ function M.update_attack_substate(goal, state, world, info)
 
   if not goal.substate then goal.substate = "plan_position" end
 
+  -- PING SUICIDE RUN (orders.lua). The goal rides kill_hardline, the straight
+  -- rush: path to a tile beside the pill with the pill's own danger taken off
+  -- the costs, fire whenever aligned. None of the blitz, LGM-near or
+  -- plan_position hold code below runs. The run ends only on pill death
+  -- (here) or tank death (orders.on_death). When no tile beside the pill is
+  -- reachable, kill_hardline sets _hardline_abort; wipe the bad-tile memory
+  -- every PING_SUICIDE_RETRY_TICKS and try again instead of giving up.
+  if goal._ping_suicide then
+    goal.substate = "kill_hardline"
+    local pill = world.pills[goal.target_id]
+    if not pill or (pill.health or 0) <= 0 or pill.in_tank
+       or pill.owner == "friendly" then
+      clear_attack_goal(state, "suicide run: pill dead")
+      return
+    end
+    if goal._hardline_abort
+       and now - (goal._suicide_wipe or -1e9) >= (C.PING_SUICIDE_RETRY_TICKS or 50) then
+      goal._suicide_wipe = now
+      goal._hardline_bad, goal._hardline_abort = nil, nil
+      goal._hardline_mx, goal._hardline_my = nil, nil
+    end
+    return
+  end
+
   -- CONTESTED TAKE, re-checked. The GO-time check only sees the enemies that
   -- were near the pill at GO; a defender that rolls up mid-charge should flip
   -- the party just the same. Commander only, only once GO has actually gone out

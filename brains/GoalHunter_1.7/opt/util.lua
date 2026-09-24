@@ -466,7 +466,8 @@ end
 --
 -- Distance is CHEBYSHEV (the larger of the two axes), the way a screen is
 -- measured and the way every other "within N tiles of me" rule in this brain
--- reads. Returns the distance to the NEAREST such human, or nil for none.
+-- reads. Returns the distance to the NEAREST such human, or nil for none,
+-- and that human's player number as a second value.
 -- `tiles` is a cap: a human further off than that is not reported at all.
 function M.human_ally_near(info, mx, my, tiles)
   if not info or not mx or not tiles or tiles <= 0 then return nil end
@@ -475,7 +476,7 @@ function M.human_ally_near(info, mx, my, tiles)
   local me     = info.player_number
   local OT     = _G.OBJECT_TANK
   local OH     = _G.OBJECT_HOSTILE or 0
-  local best
+  local best, best_pn
   for _, ob in ipairs(info.objects or {}) do
     local pn = ob.idnum or -1
     if ob.type == OT and pn >= 0 and pn ~= me
@@ -485,10 +486,10 @@ function M.human_ally_near(info, mx, my, tiles)
       local dx = math.abs(bit.rshift(ob.x or 0, 8) - mx)
       local dy = math.abs(bit.rshift(ob.y or 0, 8) - my)
       local d  = (dx > dy) and dx or dy
-      if d <= tiles and (not best or d < best) then best = d end
+      if d <= tiles and (not best or d < best) then best, best_pn = d, pn end
     end
   end
-  return best
+  return best, best_pn
 end
 
 -- ── DIFFICULTY (Stage 3 Pass B) — deterministic aim/fire handicaps ─────────

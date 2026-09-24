@@ -2389,10 +2389,12 @@ function Brain.think(info)
     -- reached, so nothing cleared the order slot on a death: a bot killed
     -- while holding a "go there and hold" came back with the hold flag still
     -- set and stood parked on its RESPAWN square for the rest of the hold,
-    -- doing nothing at all (Andrew's peer review, Sep 16). The job itself
-    -- still stands, so this is a release and not a cancel -- the obr goes out
-    -- with the first message slot after we respawn and the next cheapest bot
-    -- takes it. It also drops the goto lock, so the command goal cannot
+    -- doing nothing at all (Andrew's peer review, Sep 16). ORD.on_death also
+    -- ends a suicide run, and releases the order: the obr goes out with the
+    -- first message slot after we respawn. Under ORDER_NO_HAND_BACK (the
+    -- default) nobody re-bids on it, so the job ends with this bot; with it
+    -- off (keel) the next cheapest bot takes it. A decoy's order is cancelled
+    -- instead. It also drops the goto lock, so the command goal cannot
     -- survive the death either.
     if C.BOT_COMMANDS_ENABLED then ORD.on_death(state, info) end
     -- Wipe EVERY blitz/squad coordination field (negotiation, offers, rejects,
@@ -4819,6 +4821,11 @@ function Brain.think(info)
     or (C.BOT_COMMANDS_ENABLED and state._order and state._order.hold
         and state._order.kind == "goto_tile"
         and (C.ORDER_HOLD_PARK_KINDS or {})[state.goal.kind] ~= nil)
+    -- A DECOY hold (orders.lua) parks on the square whatever goal the think
+    -- is holding this moment -- the decoy lock puts the hold goal back before
+    -- steering -- so standing still there is never a wedge: no stuck flee,
+    -- no give-up, no stuck_for to make M.busy say "escaping".
+    or (state._order and state._order.decoy and ORD.hold_parked(state, info))
   local attack_at_standoff = intentionally_stationary
 
   -- Long-term desperation: track total ticks at the same tile.
@@ -7195,6 +7202,22 @@ function Brain.think(info)
 
   -- Per-tick attack substate machine (runs every tick, not just on replan)
   local t_as0 = BRAIN_PROFILE and clock_us() or 0
+  -- PING SUICIDE RUN lock (orders.lua): whatever replaced the run's goal
+  -- this tick (stuck flee, water escape, PF-failed flee, pill drop, a clear),
+  -- put the suicide goal back before the substate machine and steering see
+  -- it. Ends the run instead when the pill is dead.
+  -- A human ally within ORDER_HUMAN_NEAR_SUICIDE_TILES turns an ORDERED
+  -- attack_pill goal (the bot holds an attack_pill order on that pill) into
+  -- the same run.
+  -- The GO-THERE DECOY lock (orders.lua) runs first, on the same terms:
+  -- whatever replaced the hold goal this tick (refuel, take_cover, a flee,
+  -- a water escape, a stuck handler, an attack_pill) goes back to the hold
+  -- goal; only attack_tank / kill_lgm in gun range stay.  First, so an
+  -- attack_pill it undoes cannot turn into a human-near suicide run below.
+  -- Called through ORD: think() is at the 60-upvalue cap.
+  ORD.decoy_lock(state, world, info, now)
+  if not state._suicide then ORD.human_near_suicide(state, world, info, now) end
+  if state._suicide then ORD.suicide_lock(state, world, info, now) end
   attack.update_attack_substate(state.goal, state, world, info)
   local t_as1 = BRAIN_PROFILE and clock_us() or 0
   if BRAIN_PROFILE then
@@ -11042,6 +11065,10 @@ function Brain.think(info)
   -- writes ping_kind / ping_x / ping_y into this table; the engine turns it
   -- into a CMD_PING from this bot's own player slot. It is written as a call
   -- around the table so think needs no extra local and no extra upvalue.
+  -- ORD.decoy_keys takes the throttle off a DECOY hold standing on its
+  -- square, after everything that could have put it back (the kill_lgm
+  -- crosshair search picks KEY_FASTER as one of its moves).
+  keys, taps = ORD.decoy_keys(state, info, keys, taps)
   return ORD.out_ping(state, {
     holdkeys    = keys,
     tapkeys     = taps,
