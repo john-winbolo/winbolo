@@ -4273,6 +4273,16 @@ M.DECOY_GETAWAY_WALL_DAMAGED = 0.5    -- keel 0.5 (moot)
 -- tiles to the nearest counted pill.  It never makes an open square usable.
 -- 0 = safety alone.
 M.DECOY_GETAWAY_PROX_WEIGHT  = 0.5    -- keel 0
+-- 2026-09-24: THE BLOCKER STEP (Andrew: "move to the next tile when there's
+-- only one blocker (wall or friendly pill) between the pill and the tank.
+-- For more than one hostile pill, for this particular check, consider ONLY
+-- the CLOSEST hostile pill").  Parked on a chain square (never the decoy
+-- square), the closest counted pill's shell line to the tank is walked and
+-- its walls (full or damaged) and our live pills are counted; a count <=
+-- DECOY_GETAWAY_BLOCKER_MIN moves the tank on without waiting for a hit.
+-- A hit still moves it.  false = hits only (as before).
+M.DECOY_GETAWAY_BLOCKER_STEP = true   -- keel false
+M.DECOY_GETAWAY_BLOCKER_MIN  = 1      -- keel 1 (not used: the step is off)
 -- Auction window.  The design said 6 ticks; a brain thinks every 2 game
 -- ticks and a bid is seen on the ally's NEXT think, so 6 is tight -- 10
 -- gives every ally one full round trip.  The auction still ends EARLY the
@@ -4716,6 +4726,8 @@ M.PRESETS = {
     DECOY_GETAWAY_WALL_FULL       = 1.0,
     DECOY_GETAWAY_WALL_DAMAGED    = 0.5,
     DECOY_GETAWAY_PROX_WEIGHT     = 0,
+    DECOY_GETAWAY_BLOCKER_STEP    = false,
+    DECOY_GETAWAY_BLOCKER_MIN     = 1,
     ORDER_NEW_CLEARS_ALL          = false,
     ORDER_CLAIM_TIEBREAK          = false,
     ORDER_NO_HAND_BACK            = false,

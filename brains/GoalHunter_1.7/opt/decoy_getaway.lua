@@ -62,7 +62,7 @@
 -- fixed (ring order, C.DIRS8), so every run gives the same chain.
 --
 -- WHAT THE BOT DOES (M.update, from orders.decoy_lock every think).  ONE HIT,
--- ONE STEP:
+-- ONE STEP (or THE BLOCKER STEP, below):
 --   wait   parked (on the decoy square, then on each chain square it
 --          reached), turned to face the next square of the chain (M.keys).
 --          It shoots what the hold lets it shoot.  The armour on arrival is
@@ -77,6 +77,20 @@
 --          the square after it.  If the square can no longer be driven on:
 --          a fresh scan from where the tank is with the steps that are left
 --          (and on to its first square), or park where it is.
+--          THE BLOCKER STEP (Andrew, Sep 24: "move to the next tile when
+--          there's only one blocker (wall or friendly pill) between the
+--          pill and the tank"): parked on a chain square (never the decoy
+--          square: the first step still waits for a hit), every think takes
+--          the CLOSEST counted pill to the tank's square (edist, ties to the
+--          lower id; the other pills are ignored for this check only, the
+--          scan does not change) and counts the blockers on its shell line
+--          to the tank's square: a full or damaged wall counts 1, a live
+--          pill of ours or an ally's counts 1 (a tree is not a blocker).
+--          The line is cpf.simulate_shot, the scan's own trace, walked to
+--          the tank's square without stopping.  A count <=
+--          DECOY_GETAWAY_BLOCKER_MIN moves it on at once.  A hit still
+--          moves it too.  A shell that runs out before the tank's square:
+--          no count, no step.  DECOY_GETAWAY_BLOCKER_STEP false: hits only.
 --   done   parked on the last square.  The hold goes on and ends the way it
 --          always does (clock, pills down, caution, cancel, new order, death).
 --
@@ -412,6 +426,49 @@ function M.driving(h)
   return (C.DECOY_GETAWAY and h and h.ga and h.ga.phase == "move") and true or false
 end
 
+-- THE BLOCKER STEP's pill: the closest counted pill to (mx,my), by edist,
+-- ties to the lower id.  Returns the id, the pill and the distance.
+function M.closest_pill(world, mx, my)
+  local bid, bp, bd = nil, nil, nil
+  for _, pid in ipairs(counted_ids(world, mx, my)) do
+    local p = world.pills[pid]
+    local d = U.edist(mx, my, p.mx, p.my)
+    if not bd or d < bd - EPS then bid, bp, bd = pid, p, d end
+  end
+  return bid, bp, bd
+end
+
+-- THE BLOCKER COUNT on pill p's shell line to (mx,my): the tiles that
+-- cpf.simulate_shot crosses (the trace G.sea_shot_reaches walks) between the
+-- pill's square and (mx,my), walked to the end without stopping.  A full or
+-- damaged wall counts 1; a live pill of ours or an ally's counts 1.  Returns
+-- the count and the list of blockers ({ mx, my, kind }), or nil and the list
+-- when the shell runs out before (mx,my).
+function M.blockers(world, p, mx, my)
+  local list = {}
+  local ok, tiles = pcall(cpf.simulate_shot, U.m2w(p.mx), U.m2w(p.my),
+                          U.m2w(mx), U.m2w(my), cpf.SHOT_PILL, 0)
+  if not ok or not tiles then return nil, list end
+  for i = 1, #tiles do
+    local st = tiles[i]
+    if st.mx == mx and st.my == my then return #list, list end
+    if st.mx ~= p.mx or st.my ~= p.my then
+      local tt = U.ttype(st.mx, st.my)
+      if tt == C.T_BUILDING then
+        list[#list + 1] = { mx = st.mx, my = st.my, kind = "wall" }
+      elseif tt == C.T_HALFBUILD then
+        list[#list + 1] = { mx = st.mx, my = st.my, kind = "wall_damaged" }
+      else
+        local q = live_pill_at(world, st.mx, st.my)
+        if q and (q.owner == "friendly" or q.owner == "allied") then
+          list[#list + 1] = { mx = st.mx, my = st.my, kind = "pill" }
+        end
+      end
+    end
+  end
+  return nil, list
+end
+
 -- Parked on (mx,my): a new armour baseline, no hits yet.
 local function park_on(ga, mx, my, arm)
   ga.park_mx, ga.park_my = mx, my
@@ -429,7 +486,7 @@ function M.update(state, world, info, h, now)
   local ga = h.ga
   local max_steps = C.DECOY_GETAWAY_MAX_STEPS or 5
   if not ga then
-    ga = { phase = "wait", hits = 0, arm = arm, used = 0, idx = 1 }
+    ga = { phase = "wait", hits = 0, arm = arm, used = 0, idx = 1, trigs = {} }
     h.ga = ga
     M.rescan(world, info, h, tx, ty, max_steps, now, "arrival")
   end
@@ -442,6 +499,9 @@ function M.update(state, world, info, h, now)
     end
   end
   ga.arm = arm
+  -- The blocker count is only made while parked (wait); the overlay must
+  -- not show an old one while it moves or once it is done.
+  if ga.phase ~= "wait" then ga.blk = nil end
   if ga.phase == "wait" then
     -- The scan starts from the square it parked on; before the first step,
     -- from the tank's square (the decoy park allows one square of slack).
@@ -453,9 +513,31 @@ function M.update(state, world, info, h, now)
         M.rescan(world, info, h, fx, fy, max_steps - ga.used, now, "changed")
       end
     end
-    if ga.path and ga.path[ga.idx] and ga.hits >= (C.DECOY_GETAWAY_HITS or 1) then
+    -- THE BLOCKER STEP: on a chain square only (ga.used > 0), with a next
+    -- square to go to.  ga.blk is what the overlay shows.
+    ga.blk = nil
+    if C.DECOY_GETAWAY_BLOCKER_STEP and ga.used > 0 and ga.path and ga.path[ga.idx] then
+      local pid, p = M.closest_pill(world, tx, ty)
+      if p then
+        local n, list = M.blockers(world, p, tx, ty)
+        ga.blk = { id = pid, mx = p.mx, my = p.my, n = n, list = list,
+                   tx = tx, ty = ty }
+      end
+    end
+    local by_hit = ga.hits >= (C.DECOY_GETAWAY_HITS or 1)
+    local by_blk = (ga.blk and ga.blk.n
+                    and ga.blk.n <= (C.DECOY_GETAWAY_BLOCKER_MIN or 1)) and true or false
+    if ga.path and ga.path[ga.idx] and (by_hit or by_blk) then
       ga.phase = "move"
+      local trig = by_hit and "hit" or "blk"
+      ga.trigs = ga.trigs or {}
+      ga.trigs[#ga.trigs + 1] = trig
       local t = ga.path[ga.idx]
+      local bs = "-"
+      if ga.blk then
+        bs = string.format("p%s(%d,%d):%s", tostring(ga.blk.id), ga.blk.mx,
+                           ga.blk.my, ga.blk.n and tostring(ga.blk.n) or "short")
+      end
     end
   end
   if ga.phase == "move" then
@@ -614,9 +696,17 @@ function M.draw(viz, state)
       end
     end
   end
-  -- Three header lines, not one: an overlay text is cut at OVERLAY_TEXT_MAX
-  -- (128) bytes, in the game, in BrainTest and in a recording alike.
-  local hdr, hdr2, hdr3
+  -- THE BLOCKER STEP: the closest pill's shell line to the tank (magenta),
+  -- and a magenta box on each blocker it counted.
+  local bk = ga.blk
+  if bk then
+    for _, b in ipairs(bk.list or {}) do
+    end
+  end
+  -- Up to four header lines, not one: an overlay text is cut at
+  -- OVERLAY_TEXT_MAX (128) bytes, in the game, in BrainTest and in a
+  -- recording alike.
+  local hdr, hdr2, hdr3, hdr4
   if v.path then
     local need = C.DECOY_GETAWAY_HITS or 1
     local doing
@@ -636,10 +726,32 @@ function M.draw(viz, state)
     hdr = string.format("GETAWAY none (P=%d tiles=%d) -- the hold stays put",
                         np, #(v.cells or {}))
   end
-  local ty = v.sy - 0.7 - (hdr3 and 1.0 or 0)
+  -- The blocker step line: the closest pill, its count, and the trigger of
+  -- every step so far ("hit" or "blk").
+  if C.DECOY_GETAWAY_BLOCKER_STEP then
+    local tl = "-"
+    if ga.trigs and #ga.trigs > 0 then tl = table.concat(ga.trigs, " ") end
+    local min = C.DECOY_GETAWAY_BLOCKER_MIN or 1
+    local what
+    if bk and bk.n then
+      what = string.format("closest p%s (%d,%d) blockers=%d, step at <=%d",
+                           tostring(bk.id), bk.mx, bk.my, bk.n, min)
+    elseif bk then
+      what = string.format("closest p%s (%d,%d) shell short: no count",
+                           tostring(bk.id), bk.mx, bk.my)
+    elseif ga.phase == "wait" and (ga.used or 0) == 0 then
+      what = "blocker step: off on the decoy square"
+    else
+      what = "blocker step: not counting"
+    end
+    hdr4 = string.format("%s | steps by: %s", what, tl)
+  end
+  local ty = v.sy - 0.7 - (hdr3 and 1.0 or 0) - (hdr4 and 0.5 or 0)
   if hdr2 then
   end
   if hdr3 then
+  end
+  if hdr4 then
   end
 end
 

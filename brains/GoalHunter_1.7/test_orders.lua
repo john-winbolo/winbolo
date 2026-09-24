@@ -3895,8 +3895,11 @@ do
 
   -- 7. THE HOLD, ONE HIT ONE STEP.  dbot's decoy square is (22,24) beside
   -- pill 5 (20,20).  A chain of three 1.0 squares runs south: (22,25)
-  -- (22,26) (22,27).  Closeness is off here so the scores stay whole.
+  -- (22,26) (22,27).  Closeness is off here so the scores stay whole.  The
+  -- blocker step is off through section 11 (open grass: it would step on
+  -- every square); section 12 tests it.
   C.DECOY_GETAWAY_PROX_WEIGHT = 0
+  C.DECOY_GETAWAY_BLOCKER_STEP = false
   _G.KEY_TURNLEFT, _G.KEY_TURNRIGHT, _G.KEY_FASTER = 0x04, 0x08, 0x10
   S({ { 22, 25, 1.0 }, { 22, 26, 1.0 }, { 22, 27, 1.0 } })
   local d = dbot(); arrive(d, 200)
@@ -4158,6 +4161,140 @@ do
         ORD.decoy_keys(d.st, d.inf, 0x11, 0) == 0x01, "?")
   C.DECOY_GETAWAY = true
   C.DECOY_GETAWAY_PROX_WEIGHT = 0.5
+  C.DECOY_GETAWAY_BLOCKER_STEP = true
+
+  ;(function() -- own function: the main chunk is at its 200-local limit
+  -- 12. THE BLOCKER STEP (Andrew, Sep 24).  dbot's chain (22,25) (22,26)
+  -- (22,27), pill 5 at (20,20).  Parked on a chain square, the closest
+  -- counted pill's shell line to the tank's square is walked and its walls
+  -- and our live pills counted; a count <= DECOY_GETAWAY_BLOCKER_MIN (1)
+  -- moves the tank on without a hit.  The line tiles are the mock trace's
+  -- own, so the walls below sit on the line the code walks.
+  check("blocker step knobs: on live, off in keel, step at <= 1",
+        C.DECOY_GETAWAY_BLOCKER_STEP == true and C.PRESETS.keel.DECOY_GETAWAY_BLOCKER_STEP == false
+        and C.DECOY_GETAWAY_BLOCKER_MIN == 1 and C.PRESETS.keel.DECOY_GETAWAY_BLOCKER_MIN == 1, "?")
+  C.DECOY_GETAWAY_PROX_WEIGHT = 0
+  S({ { 22, 25, 1.0 }, { 22, 26, 1.0 }, { 22, 27, 1.0 } })
+  -- The line tiles from pill 5 to (22,25), without the pill's and the tank's
+  -- squares; only rows 21..23 are used (the decoy square (22,24) stays
+  -- clear).
+  local line = {}
+  local UT = require("util")
+  for _, st in ipairs(cpf.simulate_shot(UT.m2w(20), UT.m2w(20), UT.m2w(22), UT.m2w(25))) do
+    if st.my >= 21 and st.my <= 23 then line[#line + 1] = st end
+  end
+  check("blocker rig: the line from pill 5 to (22,25) has >= 3 tiles in rows 21..23",
+        #line >= 3, tostring(#line))
+  local W1, W2, W3 = line[1], line[2], line[3]
+  local function on_sq1(t0)
+    local b = dbot(); arrive(b, t0); lock(b, t0 + 1)
+    b.inf.armour = b.inf.armour - 5; lock(b, t0 + 2)           -- hit 1: the first step
+    b.inf.tanky = 25 * 256 + 128; lock(b, t0 + 4)              -- arrives on square 1
+    return b
+  end
+  -- TWO BLOCKERS: it holds.  The walls go up after the scan (they would
+  -- shield the decoy square too, and the scan's P would be empty).
+  local b = on_sq1(200)
+  local hb = b.st.orders.held
+  TMAP[W1.my * 256 + W1.mx] = C.T_BUILDING
+  TMAP[W2.my * 256 + W2.mx] = C.T_HALFBUILD
+  check("blocker rig: parked on square 1 after the hit",
+        hb.ga.phase == "wait" and hb.ga.used == 1 and hb.ga.trigs[1] == "hit", tostring(hb.ga.phase))
+  lock(b, 205); lock(b, 206)
+  check("count 2 (a full wall + a damaged wall): it holds on square 1",
+        hb.ga.phase == "wait" and hb.ga.used == 1 and hb.ga.blk and hb.ga.blk.n == 2
+        and hb.ga.blk.id == 5 and #hb.ga.blk.list == 2
+        and hb.ga.blk.list[1].kind == "wall" and hb.ga.blk.list[2].kind == "wall_damaged",
+        tostring(hb.ga.blk and hb.ga.blk.n))
+  if drawn then
+    local rb = { text = {} }
+    ORD.draw_getaway({ is_on = function() return true end, rect = function() end,
+                       line = function() end, circle = function() end,
+                       text = function(id, x, y, t) rb.text[#rb.text + 1] = t end,
+                       detail = function() end }, b.st)
+    local lng = 0
+    for _, t in ipairs(rb.text) do if #t > lng then lng = #t end end
+    check("overlay: the blocker line names the closest pill, its count and the triggers",
+          has(rb.text, "closest p5 (20,20) blockers=2, step at <=1 | steps by: hit") and lng <= 127,
+          table.concat(rb.text, " | "))
+  end
+  -- A FRIENDLY PILL counts 1 like a wall: wall + our pill = 2, it holds.
+  TMAP[W2.my * 256 + W2.mx] = nil
+  b.w.pills[8] = { mx = W3.mx, my = W3.my, owner = "friendly", health = 15 }
+  b.w.pill_at = { [W3.my * 256 + W3.mx] = { { pill = b.w.pills[8] } } }
+  lock(b, 207)
+  check("count 2 (a wall + our live pill): it holds",
+        hb.ga.phase == "wait" and hb.ga.blk.n == 2 and hb.ga.blk.list[2].kind == "pill",
+        tostring(hb.ga.blk.n))
+  -- A dead friendly pill does not count: count 1, it steps.
+  b.w.pills[8].health = 0
+  lock(b, 208)
+  check("count 1 (one wall; our dead pill is no blocker): it moves to square 2 without a hit",
+        hb.ga.phase == "move" and b.st.goal.my == 26 and hb.ga.hits == 0
+        and hb.ga.trigs[2] == "blk", tostring(hb.ga.phase))
+  lock(b, 209)
+  check("moving: no blocker count is kept (the overlay shows none)", hb.ga.blk == nil, "?")
+  b.inf.tanky = 26 * 256 + 128; lock(b, 212)
+  check("the blocker step keeps the arrival rule: parked on square 2 first",
+        hb.ga.phase == "wait" and hb.ga.used == 2, tostring(hb.ga.phase))
+  b.w.pills[8], b.w.pill_at = nil, nil
+  TMAP[W1.my * 256 + W1.mx] = nil
+  -- A FOREST is no blocker: count 0, it steps.
+  TMAP[W1.my * 256 + W1.mx] = C.T_FOREST
+  b = on_sq1(300); hb = b.st.orders.held
+  lock(b, 305)
+  check("count 0 (a forest only): it moves on without a hit",
+        hb.ga.phase == "move" and b.st.goal.my == 26 and hb.ga.blk.n == 0
+        and hb.ga.trigs[2] == "blk", tostring(hb.ga.phase))
+  TMAP[W1.my * 256 + W1.mx] = nil
+  -- THE CLOSEST PILL ONLY.  Two walls on pill 5's line (d = 5.39); pill 6
+  -- at (22,32) (d = 7, in range) has an open line.  Only pill 5 counts: it
+  -- holds.  With pill 6 moved to (22,29) (d = 4, now the closest) it steps.
+  b = on_sq1(400); hb = b.st.orders.held
+  TMAP[W1.my * 256 + W1.mx] = C.T_BUILDING
+  TMAP[W2.my * 256 + W2.mx] = C.T_BUILDING
+  b.w.pills[6] = { mx = 22, my = 32, owner = "hostile", health = 5 }
+  lock(b, 405)
+  check("two pills: the far pill's open line is ignored, the closest (p5, 2 walls) holds it",
+        hb.ga.phase == "wait" and hb.ga.blk.id == 5 and hb.ga.blk.n == 2,
+        tostring(hb.ga.blk.id) .. " " .. tostring(hb.ga.blk.n))
+  b.w.pills[6].my = 29
+  lock(b, 406)
+  check("two pills: pill 6 is now the closest, its line is open (0): it steps",
+        hb.ga.phase == "move" and hb.ga.blk.id == 6 and hb.ga.blk.n == 0
+        and hb.ga.trigs[2] == "blk", tostring(hb.ga.blk.id))
+  TMAP[W1.my * 256 + W1.mx] = nil
+  TMAP[W2.my * 256 + W2.mx] = nil
+  -- THE DECOY SQUARE: no blocker step there.  Count 0, no hit: it stays.
+  b = dbot(); arrive(b, 500); lock(b, 501)
+  hb = b.st.orders.held
+  lock(b, 502); lock(b, 520); lock(b, 540)
+  check("on the decoy square a count of 0 does not move it (the first step waits for a hit)",
+        hb.ga.phase == "wait" and hb.ga.used == 0 and hb.ga.blk == nil
+        and b.st.goal.my == 24, tostring(hb.ga.phase))
+  b.inf.armour = b.inf.armour - 5; lock(b, 541)
+  check("and the first hit still moves it, trigger hit",
+        hb.ga.phase == "move" and hb.ga.trigs[1] == "hit", tostring(hb.ga.phase))
+  -- A SHELL THAT RUNS OUT before the tank's square: no count, no step.
+  local sim = cpf.simulate_shot
+  b = on_sq1(600); hb = b.st.orders.held
+  cpf.simulate_shot = function() return { { mx = 20, my = 20 }, { mx = 20, my = 21 } } end
+  lock(b, 605)
+  cpf.simulate_shot = sim
+  check("shell short: no count, it holds", hb.ga.phase == "wait" and hb.ga.blk ~= nil
+        and hb.ga.blk.n == nil, tostring(hb.ga.phase))
+  -- KNOB OFF (keel): count 0 on square 1, no hit: it holds (hits only).
+  C.DECOY_GETAWAY_BLOCKER_STEP = false
+  b = on_sq1(700); hb = b.st.orders.held
+  lock(b, 705); lock(b, 730)
+  check("DECOY_GETAWAY_BLOCKER_STEP=false: count 0 does not move it",
+        hb.ga.phase == "wait" and hb.ga.used == 1 and hb.ga.blk == nil, tostring(hb.ga.phase))
+  b.inf.armour = b.inf.armour - 5; lock(b, 731)
+  check("DECOY_GETAWAY_BLOCKER_STEP=false: a hit moves it",
+        hb.ga.phase == "move" and hb.ga.trigs[2] == "hit", tostring(hb.ga.phase))
+  C.DECOY_GETAWAY_BLOCKER_STEP = true
+  C.DECOY_GETAWAY_PROX_WEIGHT = 0.5
+  end)()
 
   GA.block = saved.block
   cpf.simulate_shot = saved.sim
