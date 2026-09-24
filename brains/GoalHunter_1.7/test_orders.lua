@@ -2469,6 +2469,29 @@ b = sbot(); settle(b, 101, 115); attack_ping(b, 125)
 b.inf.events = { ping(1, 0, 20, 20) }
 ORD.on_events(b.st, b.w, b.inf, 130)
 check("caution on the pill ends the run", b.st._suicide == nil, "?")
+-- The same caution after the run has kept its order past the 60 s focus:
+-- the prune has dropped the order from o.known by then, and the caution
+-- must still cancel it, not leave the bot attacking until "order lapsed".
+do
+  b = sbot(); settle(b, 101, 115); attack_ping(b, 125)
+  local oid = b.st.orders.held and b.st.orders.held.oid
+  settle(b, 3300, 3300)
+  check("setup: a 64 s run still holds its order, pruned from o.known",
+        b.st._suicide ~= nil and b.st.orders.held ~= nil
+        and b.st.orders.held.oid == oid and b.st.orders.known[oid] == nil, "?")
+  b.st.orders.say, b.st.orders.out = {}, {}
+  b.inf.events = { ping(1, 0, 20, 20) }
+  ORD.on_events(b.st, b.w, b.inf, 3301)
+  b.inf.events = {}
+  check("a late caution on the pill ends the run AND cancels the order",
+        b.st._suicide == nil and b.st.orders.held == nil,
+        tostring(b.st.orders.held and b.st.orders.held.kind))
+  check("it says Released", said(b, "^Released$"),
+        table.concat(b.st.orders.say or {}, " | "))
+  check("and the cancel goes out as obx",
+        (b.st.orders.out[1] or ""):match("^/info obx ") ~= nil,
+        tostring(b.st.orders.out[1]))
+end
 -- A bot running on its own choice (no order): the caution ends the run and
 -- does NOT go on to retreat it.
 do
@@ -3024,6 +3047,40 @@ do
   local g = c.st.orders.gclaims[b.st.orders.held.oid] or {}
   check("and counts only B as its holder", g[2] ~= nil and g[1] == nil,
         tostring(g[1]) .. " " .. tostring(g[2]))
+end
+do
+  -- The third bot hears the LOSER's claim last, so its o.claims names A.
+  -- A's release must leave it naming B, the bot that still holds the
+  -- order, or the steal pass has nothing to steal from.
+  local a, b = double_take()
+  local c = BOT(4, 90, 90)
+  gping(c, 100, 35, 35)
+  c.st.orders.out = {}
+  upd({ c }, 101)
+  local oid = a.st.orders.held.oid
+  pumpn({ b, a, c }, 101)                        -- c hears B, then A
+  upd({ a, b, c }, 103)
+  check("setup: the third bot's o.claims names the loser",
+        c.st.orders.claims[oid] ~= nil and c.st.orders.claims[oid].pn == 1,
+        tostring(c.st.orders.claims[oid] and c.st.orders.claims[oid].pn))
+  pumpn({ a, b, c }, 103)
+  upd({ a, b, c }, 104)
+  local cl = c.st.orders.claims[oid]
+  check("after the loser's release o.claims names the holder (B)",
+        cl ~= nil and cl.pn == 2 and cl.cost == c.st.orders.gclaims[oid][2],
+        tostring(cl and cl.pn))
+  -- Keel: no tiebreak, so the release clears it as before.
+  C.ORDER_CLAIM_TIEBREAK = false
+  local cs = { claims = { [77] = { pn = 1, cost = 9, tick = 1 } },
+               gclaims = { [77] = { [1] = 9, [2] = 5 } } }
+  local s = { player_number = 4, tick = 200, goal = {}, stuck_for = 0 }
+  ORD.update(s, W(), I({ allies = 0x17 }), 200)   -- builds s.orders
+  s.orders.claims, s.orders.gclaims = cs.claims, cs.gclaims
+  ORD.rx(1, "/info obr 77", 200, s)
+  ORD.update(s, W(), I({ allies = 0x17 }), 201)
+  check("keel: the release just clears o.claims", s.orders.claims[77] == nil,
+        tostring(s.orders.claims[77] and s.orders.claims[77].pn))
+  C.ORDER_CLAIM_TIEBREAK = true
 end
 do
   -- AN EARLY BID.  A hears the ping first and bids; the bid reaches B before

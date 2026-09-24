@@ -3026,6 +3026,16 @@ local function ping_caution(state, world, info, sender, mx, my, now)
         return
       end
       M.suicide_end(state, "caution ping")
+      -- A caution on the PILL cancels the run's order here.  The loop below
+      -- finds it through o.known, but a run keeps its order past the 60 s
+      -- focus and the prune drops it from o.known by then: the bot would
+      -- go on attacking and say "order lapsed" a second later.  A caution
+      -- on the bot itself is left to the retreat branch below.
+      local h = o.held
+      if not (hit and hit.class == "allybot" and hit.pn == me)
+         and h.tkind == "pill" and h.tid == r.tid then
+        release_held(state, info, "Released", false, true)
+      end
     end
   end
 
@@ -3273,6 +3283,19 @@ function M.update(state, world, info, now)
       -- The releaser is not a holder any more, so the settle below must stop
       -- counting it as one -- otherwise it can never win its own order back.
       if o.gclaims[r.oid] then o.gclaims[r.oid][r.from] = nil end
+      -- o.claims keeps only the LAST claim heard.  After crossed claims
+      -- (ORDER_CLAIM_TIEBREAK) that can be the loser's, and the loser's
+      -- release just cleared it while the winner still holds the order.
+      -- Name the cheapest remaining holder again, or the steal pass (it
+      -- walks o.claims only) could never take this order over.  The steal
+      -- hold time counts from now: the real claim tick is not kept.
+      if C.ORDER_CLAIM_TIEBREAK and not o.claims[r.oid] and o.gclaims[r.oid] then
+        local bpn, bc = nil, nil
+        for pn, c in pairs(o.gclaims[r.oid]) do
+          if not bpn or c < bc or (c == bc and pn < bpn) then bpn, bc = pn, c end
+        end
+        if bpn then o.claims[r.oid] = { pn = bpn, cost = bc, tick = now } end
+      end
       -- Re-bid it: the holder dropped it and the job is still standing.
       local k = o.known[r.oid]
       -- Somebody else still holds it (the loser of a claim tiebreak is the
