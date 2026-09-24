@@ -335,7 +335,7 @@ end
 function M.nav_turn_speed(corr, speed, max_speed, min_speed)
   local keys, taps = 0, 0
   local abs_corr = math.abs(corr)
-  max_speed = max_speed or 48
+  max_speed = max_speed or C.NAV_CRUISE_SPEED   -- 48 classic
   min_speed = min_speed or 4
 
   -- Turning: 3-tier hold/tap/none
@@ -540,5 +540,9 @@ function M.fire_hold_block(state, hold_ticks)
   state._last_fire_tick = now
   return false
 end
+
+-- Live game rules -> physics constants (see live_physics.lua). Reached
+-- through U so Brain.think needs no new upvalue.
+M.live_physics = require("live_physics")
 
 return M

@@ -249,6 +249,28 @@ M.LGM_BUILD_TIME = 20 -- ticks the LGM spends building at destination
 M.TANK_FULL_ARMOUR = 40
 M.TANK_FULL_SHELLS = 40
 
+-- Live game rules (live_physics.lua). Many constants here encode a classic
+-- physics number: full armour 40, 5 armour per hit, reload 13, pill armour
+-- 15, road speed 16. With LIVE_PHYSICS on, each think rescales them from
+-- info.rules and the tank's own modifiers (info.mods). Under classic rules
+-- every value stays exactly as written here. PRESETS.keel = false.
+-- 2026-09-24.
+M.LIVE_PHYSICS        = true
+M.LIVE_PHYSICS_ARMOUR = true  -- armour lines: danger in hits taken, readiness as a fraction of full
+M.LIVE_PHYSICS_SHELLS = true  -- shell lines: fraction of full shells, or tank / pill kills
+M.LIVE_PHYSICS_RELOAD = true  -- TTK_TICKS_PER_HIT, FIRE_HOLD_TICKS follow our reload ticks
+M.LIVE_PHYSICS_PILL   = true  -- pill armour, repair, range, anger; the world sim's pill rules
+M.LIVE_PHYSICS_BASE   = true  -- base armour, capture line, steal line, regen staleness
+M.LIVE_PHYSICS_LGM    = true  -- builder costs, build time, man speed, helicopter return
+M.LIVE_PHYSICS_SPEED  = true  -- terrain speed caps / route costs (Lua and the C pathfinder + world sim)
+M.LIVE_PHYSICS_TURN   = true  -- turn-time sizing (swerve turn, blitz ready timeout)
+M.LIVE_PHYSICS_SHELL  = true  -- shell speed, gunsight max
+-- Top-speed caps in info.speed units (engine speed x4): 64 = road top speed,
+-- 48 = the navigation cruise cap. Live rules scale them with the road speed
+-- rule and our speed modifier.
+M.NAV_TOP_SPEED    = 64
+M.NAV_CRUISE_SPEED = 48
+
 -- Goal selection thresholds
 M.ARMOUR_CRITICAL  = 5    -- flee immediately
 M.ARMOUR_LOW       = 15   -- seek resupply
@@ -4425,6 +4447,10 @@ M.ORDER_HINT_ESCORT_TILES = 3
 -- not match the constant it replaces.
 M.PRESETS = {
   keel = {
+    -- 2026-09-24: live game rules. The bot rescales its physics constants
+    -- from info.rules and its own modifiers (a no-op under classic rules).
+    -- KEEL reads the classic numbers whatever the scenario sets.
+    LIVE_PHYSICS                  = false,
     -- 2026-09-08: while on capture_pill the bot now sweeps the target tile for
     -- an enemy builder rebuilding the corpse -- the kill_lgm aim solution takes
     -- the TURN keys whenever it points within CAPTURE_LGM_HUNT_TOL_BRADS of

@@ -878,6 +878,9 @@ function Brain.open(info)
   PF.reset()
   cpf.configure()
   wsim.configure()
+  -- configure() just sent the classic tables; start live scaling afresh.
+  U.live_physics.reset()
+  U.live_physics.apply(info)
   danger.reset()
   threat.reset()
   hearing.reset()
@@ -1491,6 +1494,9 @@ function Brain.think(info)
   local _think_t0 = BRAIN_DEBUG_MODE and os.clock() or 0
   state.tick = state.tick + 1
   state._last_info = info
+  -- Live rules -> physics constants, before anything reads C this think.
+  -- Classic rules (or C.LIVE_PHYSICS false) change nothing.
+  U.live_physics.apply(info)
   local now  = state.tick
   -- Ticks since THIS brain instance opened. `now` is seeded from the engine
   -- clock (see Brain.open), so it is NOT the age of the bot: a Survival wave
