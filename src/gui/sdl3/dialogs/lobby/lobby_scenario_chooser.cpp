@@ -76,6 +76,7 @@ extern "C" {
 #include "../../../../scenario/scenario_host.h"
 #endif
 #include "scenario_details.h"           /* the rules and callbacks blob the dialog reads */
+#include "scenario_settings.h"          /* ScnSetting and the settings blob the dialog reads */
 #include "sim_rules_names.h"            /* simRulesRuleName / simRulesClassicValue */
 #include "../../../sim_rules_phrase.h"  /* simRulesPhrase — the one wording */
 #include "../../../ui_mode.h"           /* uiShouldUseControllerMode — a controller has no hover */
@@ -984,11 +985,24 @@ static ClientScnDetailsState lobbyScenarioDetailsOfFile(ClientSim *cs,
         uint8_t blob[SCN_DETAILS_MAX];
         int     got;
 
+        uint8_t settings[SCN_SETTINGS_BLOB_MAX];
+        int     sGot = -1;
+
         threadsWaitForMutex();
         got = serverSimScenarioDetails(sim, file, blob, sizeof(blob));
+        if (got >= 0) {
+            sGot = serverSimScenarioSettingsDecl(sim, file, settings,
+                                                 sizeof(settings));
+        }
         threadsReleaseMutex();
         clientSimLobbyScenarioDetailsPut(cs, file, got >= 0, blob,
                                          got > 0 ? (size_t)got : 0);
+        /* Put after the details, which clear it. The same block a remote
+           server sends beside them. */
+        if (got >= 0) {
+            clientSimLobbyScenarioSettingsPut(cs, file, settings,
+                                              sGot > 0 ? (size_t)sGot : 0);
+        }
     } else {
         clientSimLobbyScenarioDetailsWant(cs, file);
     }
@@ -1310,6 +1324,125 @@ static void lobbyScenarioDetailsCallbacks(ClientSim *cs) {
     ImGui::EndTable();
 }
 
+/* The script's own settings (scenario_settings.h): one row per setting the
+ * file declares, its label and its value. The host gets a dropdown of every
+ * value the declaration allows, and a pick is sent to the server at once;
+ * the value shown is always the one the server last reported, so a pick the
+ * server corrected shows as corrected. Everyone else sees the values as
+ * text. A value the server has not reported is the declared default.
+ *
+ * Nothing is drawn for a file that declares no setting, or while the
+ * server's answer has not come. A server too old to send the declarations
+ * sends none, so its scripts show no section. A server that sends them but
+ * has never reported a value cannot take a change, and the host is told so
+ * rather than given dropdowns that do nothing. */
+static void lobbyScenarioDetailsSettings(ClientSim *cs) {
+    ScnSetting     rows[SCN_SETTINGS_MAX];
+    const uint8_t *blob = NULL;
+    size_t         len  = 0;
+    bool           host;
+    bool           live;
+    float          labelW = 0.0f;
+    int            n;
+    int            i;
+
+    if (!clientSimGetLobbyScenarioSettings(cs, s_detailsFile, &blob, &len)) {
+        return;
+    }
+    n = scnSettingsBlobRead(blob, len, rows, SCN_SETTINGS_MAX);
+    if (n > SCN_SETTINGS_MAX) n = SCN_SETTINGS_MAX;
+    if (n <= 0) return;
+    host = lobbyScenarioMayChoose(cs);
+    live = clientSimLobbyScriptSettingsSupported(cs);
+
+    for (i = 0; i < n; i++) {
+        labelW = SDL_max(labelW, ImGui::CalcTextSize(rows[i].label[0] != '\0'
+                                                         ? rows[i].label
+                                                         : rows[i].id).x);
+    }
+
+    ImGui::Spacing();
+    ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_DETAILS_SETTINGS));
+    if (!ImGui::BeginTable("##detailSettings", 2,
+                           ImGuiTableFlags_RowBg |
+                               ImGuiTableFlags_BordersInnerH)) {
+        return;
+    }
+    ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthFixed,
+                            labelW);
+    ImGui::TableSetupColumn("##value", ImGuiTableColumnFlags_WidthStretch);
+    for (i = 0; i < n; i++) {
+        const ScnSetting *st = &rows[i];
+        int32_t           chosen;
+        bool              held;
+        int32_t           value;
+        char              shown[64];
+
+        held  = clientSimGetLobbyScriptSetting(cs, s_detailsFile, st->id,
+                                               &chosen);
+        value = scnSettingResolve(st, held, held ? (int64_t)chosen : 0);
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(st->label[0] != '\0' ? st->label : st->id);
+        ImGui::TableSetColumnIndex(1);
+        {
+            MessageArgs args = {};
+
+            args.number = value;
+            if (value == st->def) {
+                SDL_snprintf(shown, sizeof(shown), "%s",
+                             langGetTextFmt(
+                                 STR_DLGLOBBY_DETAILS_SETTING_DEFAULT, &args));
+            } else {
+                SDL_snprintf(shown, sizeof(shown), "%ld", (long)value);
+            }
+        }
+        if (!(host && live)) {
+            ImGui::TextUnformatted(shown);
+            continue;
+        }
+        ImGui::PushID(i);
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (ImGui::BeginCombo("##setting", shown)) {
+            int     choices = (int)scnSettingChoices(st);
+            int     c;
+
+            for (c = 0; c < choices; c++) {
+                int32_t     v = (int32_t)((int64_t)st->min +
+                                          (int64_t)c * st->step);
+                char        item[64];
+                MessageArgs args = {};
+
+                args.number = v;
+                if (v == st->def) {
+                    SDL_snprintf(item, sizeof(item), "%s",
+                                 langGetTextFmt(
+                                     STR_DLGLOBBY_DETAILS_SETTING_DEFAULT,
+                                     &args));
+                } else {
+                    SDL_snprintf(item, sizeof(item), "%ld", (long)v);
+                }
+                if (ImGui::Selectable(item, v == value) && v != value) {
+                    clientSimNetSendSetScriptSetting(cs, s_detailsFile,
+                                                     st->id, v);
+                }
+                if (v == value) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndTable();
+
+    if (host && !live) {
+        lobbyScenarioRowNote(langGetText(STR_DLGLOBBY_DETAILS_SETTINGS_OLD));
+    } else if (!host) {
+        lobbyScenarioRowNote(langGetText(STR_DLGLOBBY_DETAILS_SETTINGS_HOST));
+    }
+}
+
 /* One scenario or mod, described in full.
  *
  * Rendered from the lobby's own frame and not from any of the three places
@@ -1426,13 +1559,15 @@ void lobbyScenarioDetailsRenderModal(ClientSim *cs, float s) {
            dialog opened. Nothing is drawn for a table whose answer has not
            come. */
         lobbyScenarioCatalogueEnsure(cs);
+        lobbyScenarioDetailsSettings(cs);
         lobbyScenarioDetailsRules(cs);
         lobbyScenarioDetailsCallbacks(cs);
     }
     ImGui::EndChild();
 
-    /* [Close] only — nothing here is edited, so there is nothing to
-       confirm and nothing to back out of. */
+    /* [Close] only. The one thing a host edits here, a script's settings,
+       is sent the moment it is picked, so there is nothing to confirm and
+       nothing to back out of. */
     if (WBUI::DialogFooter(/*cancelLabel*/ nullptr,
                            /*confirmLabel*/ langGetText(STR_CLOSE))
             != WBUI::FOOTER_NONE ||

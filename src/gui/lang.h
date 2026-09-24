@@ -3114,6 +3114,17 @@
 #define STR_DLGLOBBY_SCRIPT_ERR_KIND             2650
 #define STR_DLGLOBBY_SCRIPT_ERR_BOUND            2651
 
+/* The details dialog's Settings section, for a script that declares
+ * settings in its scenario table (scenario_settings.h): the heading, the
+ * line a player who is not the host sees under it, the line a host sees
+ * on a server too old to take a change, and a dropdown entry for the
+ * declared default ({number} = the value). The settings' own labels are
+ * the script's text, not strings here. */
+#define STR_DLGLOBBY_DETAILS_SETTINGS            2652
+#define STR_DLGLOBBY_DETAILS_SETTINGS_HOST       2653
+#define STR_DLGLOBBY_DETAILS_SETTINGS_OLD        2654
+#define STR_DLGLOBBY_DETAILS_SETTING_DEFAULT     2655
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

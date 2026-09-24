@@ -2602,6 +2602,10 @@ static const LangEntry langTable[] = {
     {2649, "It asks for api {number} and this server runs api {number2}."},
     {2650, "It declares a kind this server does not know."},
     {2651, "It is bound to a map. Send the map instead."},
+    {2652, "Settings:"},
+    {2653, "Only the host can change these."},
+    {2654, "This server cannot change script settings, so the defaults apply."},
+    {2655, "{number} (default)"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))
