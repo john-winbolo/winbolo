@@ -775,11 +775,21 @@ struct ClientSim {
         uint32_t sentTick;  /* transport localTick of the last request */
         uint16_t len;       /* bytes of details once found */
         uint8_t  bytes[SCN_DETAILS_MAX];
+        /* The file's settings block (scenario_settings.h), which only a
+           server that knows settings sends. settingsKnown false is a
+           server that did not say, which the dialog reads as no settings
+           it can draw. */
+        bool     settingsKnown;
+        uint16_t settingsLen;
+        uint8_t  settings[SCN_SETTINGS_BLOB_MAX];
     } lobbyScnDetails[LOBBY_SCN_DETAILS_SLOTS];
-    /* The bulk receiver's landing buffer for one answer: the status byte and
-     * the details. rxSlot is one more than the slot it is filling, and 0
-     * for none, so a zeroed ClientSim starts with none. */
-    uint8_t  lobbyScnDetailsRx[1 + SCN_DETAILS_MAX];
+    /* The bulk receiver's landing buffer for one answer: the status byte,
+     * then the details, or for BULK_SCN_DETAILS_FOUND_V2 a details length,
+     * the details and the settings block. rxSlot is one more than the slot
+     * it is filling, and 0 for none, so a zeroed ClientSim starts with
+     * none. */
+    uint8_t  lobbyScnDetailsRx[1 + 2 + SCN_DETAILS_MAX +
+                               SCN_SETTINGS_BLOB_MAX];
     int      lobbyScnDetailsRxSlot;
 
     /* Upload progress — driven by the Upload tab and the
@@ -886,6 +896,19 @@ struct ClientSim {
     uint64_t lobbyScriptWorkshopId[LOBBY_SCRIPT_LIST_MAX];
     int      lobbyScriptPendingCount;
     LobbyScriptEntry lobbyScriptPending[LOBBY_SCRIPT_LIST_MAX];
+    /* The values the host chose for scripts' settings, from
+     * CTRL_LOBBY_SCRIPT_SETTING, keyed like the server's store. Supported
+     * is set by the first such event, which only a server that takes
+     * CMD_SET_SCRIPT_SETTING sends; the dialog lets the host change a
+     * value only once it is set. Seq ticks on every change. */
+    bool     lobbyScriptSettingsSupported;
+    int      lobbyScriptSettingCount;
+    struct {
+        char    file[LOBBY_SCENARIO_FILE_LEN];
+        char    id[SCN_SETTING_ID_LEN];
+        int32_t value;
+    }        lobbyScriptSettings[LOBBY_SCRIPT_SETTING_VALUES_MAX];
+    uint32_t lobbyScriptSettingSeq;
     /* Set when a run of chunks is thrown away for overrunning the cap, and
      * held until that run's last chunk. Zeroing the pending count is not
      * enough on its own: zero is exactly where a fresh list starts, so the

@@ -872,6 +872,17 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               costs is the client's
                                               re-ask. */
 
+#define PACKET_SET_SCRIPT_SETTING      228  /* client -> server
+                                              { fileLen 1, file N,
+                                                idLen 1, id M, value 4 BE }
+                                              the host's value for one of a
+                                              script's own settings
+                                              (scenario_settings.h). Sent
+                                              only to a server that has sent
+                                              a CTRL_LOBBY_SCRIPT_SETTING,
+                                              because an older one cannot
+                                              decode it. */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2

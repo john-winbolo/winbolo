@@ -38,6 +38,7 @@
 #include "input_packet.h"   /* PING_SPAM_MAX_5S / PING_SPAM_MAX_30S — ping anti-spam caps */
 #include "scenario_defs.h"  /* ScenarioPolicy — the vtable pointer below */
 #include "scenario_details.h" /* SCN_DETAILS_MAX — the map script's details */
+#include "scenario_settings.h" /* SCN_SETTINGS_BLOB_MAX — its settings */
 
 /* PlayerRoundStats, NotableType, NotableEvent and NOTABLE_EVENTS_MAX are the
  * shared accumulator/timeline types, defined in round_stats.h (included above)
@@ -888,6 +889,23 @@ struct ServerSim {
        by serverSimSetMapScript. */
     uint8_t      scenarioMapScriptDetails[SCN_DETAILS_MAX];
     uint16_t     scenarioMapScriptDetailsLen;
+    /* And its settings block (scenario_settings.h), for the same reason and
+       on the same terms: written by serverSimSetMapScriptSettings and
+       forgotten by serverSimSetMapScript. */
+    uint8_t      scenarioMapScriptSettings[SCN_SETTINGS_BLOB_MAX];
+    uint16_t     scenarioMapScriptSettingsLen;
+    /* The values the host chose for scripts' settings this session, keyed by
+       the script's file name and the setting's id. A value equal to the
+       declared default is not kept: a missing value is the default. Kept
+       across rounds and map changes, never saved. Written only by
+       serverSimSetScriptSetting, which checks each value against the
+       declaration first. */
+    struct {
+        char    file[LOBBY_SCENARIO_FILE_LEN];
+        char    id[SCN_SETTING_ID_LEN];
+        int32_t value;
+    }            scriptSettingValues[SERVER_SCRIPT_SETTING_VALUES_MAX];
+    int          scriptSettingValueCount;
 
     /* Random map generation (for -randommap mode) */
     bool         randomMapEnabled;       /* true when using -randommap */
@@ -1002,6 +1020,13 @@ struct ServerSim {
                                                   const char *file,
                                                   uint8_t *out, size_t cap);
     void                  *scenarioDetailsReaderCtx;
+    /* Reads one directory file's settings block for
+       serverSimScenarioSettingsDecl. NULL means nothing registered and only
+       the map's own script declares any. */
+    int                  (*scenarioSettingsReader)(void *ctx, const char *dir,
+                                                   const char *file,
+                                                   uint8_t *out, size_t cap);
+    void                  *scenarioSettingsReaderCtx;
     /* What a lobby host's reload request runs. NULL means no scenario is
        attached and a request answers so. */
     bool                 (*scenarioReload)(void *ctx, char *err, size_t errLen);

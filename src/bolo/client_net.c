@@ -665,6 +665,27 @@ void clientSimNetSendSetScriptList(ClientSim *cs,
   clientSimSubmitCommand(cs, &cmd);
 }
 
+void clientSimNetSendSetScriptSetting(ClientSim *cs, const char *file,
+                                      const char *id, int32_t value) {
+  size_t fl;
+  size_t il;
+  if (cs == NULL || !cs->hasTransport) return;
+  if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */
+  /* An older server cannot decode the command, and one it cannot decode
+     stalls this client's whole command stream behind it. */
+  if (!clientSimLobbyScriptSettingsSupported(cs)) return;
+  if (file == NULL || id == NULL) return;
+  fl = strlen(file);
+  il = strlen(id);
+  if (fl == 0 || fl >= CMD_SCRIPT_LIST_FILE_LEN) return;
+  if (il == 0 || il >= CMD_SCRIPT_SETTING_ID_LEN) return;
+  ClientCommand cmd = { .type = CMD_SET_SCRIPT_SETTING };
+  memcpy(cmd.u.setScriptSetting.file, file, fl + 1);
+  memcpy(cmd.u.setScriptSetting.id, id, il + 1);
+  cmd.u.setScriptSetting.value = value;
+  clientSimSubmitCommand(cs, &cmd);
+}
+
 void clientSimNetSendLobbyPreviewCancel(ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport) return;
   if (clientSimIsSpectator(cs)) return;  /* viewer is read-only */

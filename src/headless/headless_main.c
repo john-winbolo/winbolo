@@ -365,6 +365,7 @@ static const char *logEventsTypeName(int type) {
     case CTRL_SCN_MARKER:            return "CTRL_SCN_MARKER";
     case CTRL_SCENARIO_RULES:        return "CTRL_SCENARIO_RULES";
     case CTRL_LOBBY_SCRIPT_LIST:     return "CTRL_LOBBY_SCRIPT_LIST";
+    case CTRL_LOBBY_SCRIPT_SETTING:  return "CTRL_LOBBY_SCRIPT_SETTING";
     default:                         return NULL;
   }
 }
@@ -747,6 +748,20 @@ static void logEventsDeliverCb(void *ctx, const ControlEvent *evt) {
                 e->bound ? "true" : "false");
       }
       fputc(']', f);
+      break;
+    }
+
+    case CTRL_LOBBY_SCRIPT_SETTING: {
+      /* One value the host chose for a script's setting, or the CLEAR a
+         sync starts with. */
+      fprintf(f, ",\"op\":%u,\"file\":",
+              (unsigned)evt->u.lobbyScriptSetting.op);
+      logEventsJsonStr(f, evt->u.lobbyScriptSetting.file,
+                       sizeof(evt->u.lobbyScriptSetting.file));
+      fputs(",\"id\":", f);
+      logEventsJsonStr(f, evt->u.lobbyScriptSetting.id,
+                       sizeof(evt->u.lobbyScriptSetting.id));
+      fprintf(f, ",\"value\":%ld", (long)evt->u.lobbyScriptSetting.value);
       break;
     }
 

@@ -399,6 +399,7 @@ void serverSimSetMapScript(ServerSim *sim, const ScnDirEntry *entry) {
        row's with serverSimSetMapScriptDetails after this, so a row never
        answers with another script's details. */
     sim->scenarioMapScriptDetailsLen = 0;
+    sim->scenarioMapScriptSettingsLen = 0;
     if (entry == NULL || entry->file[0] == '\0') {
         memset(&sim->scenarioMapScript, 0, sizeof(sim->scenarioMapScript));
         /* And the place the host kept for it, which now names a script no
@@ -452,6 +453,19 @@ void serverSimSetMapScriptDetails(ServerSim *sim, const uint8_t *details,
     }
     memcpy(sim->scenarioMapScriptDetails, details, len);
     sim->scenarioMapScriptDetailsLen = (uint16_t)len;
+}
+
+void serverSimSetMapScriptSettings(ServerSim *sim, const uint8_t *settings,
+                                   size_t len) {
+    if (sim == NULL) return;
+    sim->scenarioMapScriptSettingsLen = 0;
+    if (settings == NULL || len == 0 ||
+        sim->scenarioMapScript.file[0] == '\0' ||
+        len > sizeof(sim->scenarioMapScriptSettings)) {
+        return;
+    }
+    memcpy(sim->scenarioMapScriptSettings, settings, len);
+    sim->scenarioMapScriptSettingsLen = (uint16_t)len;
 }
 
 /* The two together, which is the list the lobby is told and a chooser draws:
@@ -1287,6 +1301,140 @@ int serverSimScenarioDetails(ServerSim *sim, const char *file, uint8_t *out,
     return sim->scenarioDetailsReader(sim->scenarioDetailsReaderCtx,
                                       serverSimGetScenarioDir(sim), file, out,
                                       cap);
+}
+
+int serverSimScenarioSettingsDecl(ServerSim *sim, const char *file,
+                                  uint8_t *out, size_t cap) {
+    if (sim == NULL || file == NULL || file[0] == '\0' || out == NULL) {
+        return -1;
+    }
+    /* The map's own script first, for the reason serverSimScenarioDetails
+       looks there first. */
+    if (sim->scenarioMapScript.file[0] != '\0' &&
+        strcmp(sim->scenarioMapScript.file, file) == 0) {
+        if (sim->scenarioMapScriptSettingsLen > cap) return -1;
+        memcpy(out, sim->scenarioMapScriptSettings,
+               sim->scenarioMapScriptSettingsLen);
+        return (int)sim->scenarioMapScriptSettingsLen;
+    }
+    if (sim->scenarioSettingsReader == NULL) return -1;
+    return sim->scenarioSettingsReader(sim->scenarioSettingsReaderCtx,
+                                       serverSimGetScenarioDir(sim), file,
+                                       out, cap);
+}
+
+/* Where file's value for id is kept, or -1. */
+static int scriptSettingAt(const ServerSim *sim, const char *file,
+                           const char *id) {
+    int i;
+
+    for (i = 0; i < sim->scriptSettingValueCount; i++) {
+        if (strcmp(sim->scriptSettingValues[i].file, file) == 0 &&
+            strcmp(sim->scriptSettingValues[i].id, id) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+bool serverSimGetScriptSetting(const ServerSim *sim, const char *file,
+                               const char *id, int32_t *out) {
+    int at;
+
+    if (sim == NULL || file == NULL || id == NULL) return false;
+    at = scriptSettingAt(sim, file, id);
+    if (at < 0) return false;
+    if (out != NULL) *out = sim->scriptSettingValues[at].value;
+    return true;
+}
+
+bool serverSimSetScriptSetting(ServerSim *sim, const char *file,
+                               const char *id, int32_t value,
+                               int32_t *resolved) {
+    uint8_t           blob[SCN_SETTINGS_BLOB_MAX];
+    ScnSetting        rows[SCN_SETTINGS_MAX];
+    const ScnSetting *decl;
+    ControlEvent      evt;
+    int               len;
+    int               n;
+    int               at;
+    int32_t           v;
+
+    if (sim == NULL || file == NULL || id == NULL || file[0] == '\0' ||
+        strlen(file) >= LOBBY_SCENARIO_FILE_LEN || !scnSettingIdOk(id)) {
+        return false;
+    }
+    /* The declaration is read again for every change rather than trusted
+       from the client, so a value is only ever held against the file the
+       server would run. */
+    len = serverSimScenarioSettingsDecl(sim, file, blob, sizeof(blob));
+    if (len <= 0) return false;
+    n = scnSettingsBlobRead(blob, (size_t)len, rows, SCN_SETTINGS_MAX);
+    if (n <= 0) return false;
+    decl = scnSettingFind(rows, n, id);
+    if (decl == NULL) return false;
+
+    v  = scnSettingClamp(decl, value);
+    at = scriptSettingAt(sim, file, id);
+    if (v == decl->def) {
+        /* The default is what a missing value means, so it is not kept. */
+        if (at >= 0) {
+            sim->scriptSettingValues[at] =
+                sim->scriptSettingValues[sim->scriptSettingValueCount - 1];
+            sim->scriptSettingValueCount--;
+        }
+    } else {
+        if (at < 0) {
+            if (sim->scriptSettingValueCount >=
+                SERVER_SCRIPT_SETTING_VALUES_MAX) {
+                return false;
+            }
+            at = sim->scriptSettingValueCount++;
+            SDL_strlcpy(sim->scriptSettingValues[at].file, file,
+                        sizeof(sim->scriptSettingValues[at].file));
+            SDL_strlcpy(sim->scriptSettingValues[at].id, id,
+                        sizeof(sim->scriptSettingValues[at].id));
+        }
+        sim->scriptSettingValues[at].value = v;
+    }
+    if (resolved != NULL) *resolved = v;
+
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_LOBBY_SCRIPT_SETTING;
+    evt.u.lobbyScriptSetting.op = LOBBY_SCRIPT_SETTING_SET;
+    SDL_strlcpy(evt.u.lobbyScriptSetting.file, file,
+                sizeof(evt.u.lobbyScriptSetting.file));
+    SDL_strlcpy(evt.u.lobbyScriptSetting.id, id,
+                sizeof(evt.u.lobbyScriptSetting.id));
+    evt.u.lobbyScriptSetting.value = v;
+    serverSimPublishControl(sim, &evt);
+    return true;
+}
+
+void serverSimReplayScriptSettings(
+    const ServerSim *sim, void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx) {
+    ControlEvent evt;
+    int          i;
+
+    if (sim == NULL || deliver == NULL) return;
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_LOBBY_SCRIPT_SETTING;
+    evt.u.lobbyScriptSetting.op = LOBBY_SCRIPT_SETTING_CLEAR;
+    deliver(ctx, &evt);
+    for (i = 0; i < sim->scriptSettingValueCount; i++) {
+        memset(&evt, 0, sizeof(evt));
+        evt.type = CTRL_LOBBY_SCRIPT_SETTING;
+        evt.u.lobbyScriptSetting.op = LOBBY_SCRIPT_SETTING_SET;
+        SDL_strlcpy(evt.u.lobbyScriptSetting.file,
+                    sim->scriptSettingValues[i].file,
+                    sizeof(evt.u.lobbyScriptSetting.file));
+        SDL_strlcpy(evt.u.lobbyScriptSetting.id,
+                    sim->scriptSettingValues[i].id,
+                    sizeof(evt.u.lobbyScriptSetting.id));
+        evt.u.lobbyScriptSetting.value = sim->scriptSettingValues[i].value;
+        deliver(ctx, &evt);
+    }
 }
 
 static void searchDirRecursive(const char *fullRoot,

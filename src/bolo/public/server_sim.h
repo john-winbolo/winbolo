@@ -2156,6 +2156,50 @@ int serverSimEnumerateScenarioDir(ServerSim *sim,
 int serverSimScenarioDetails(ServerSim *sim, const char *file, uint8_t *out,
                              size_t cap);
 
+/* One script file's settings block (scenario_settings.h): the settings its
+ * manifest lets the host choose, packed into out, which holds cap bytes.
+ * Looked up the way serverSimScenarioDetails looks up the details: the
+ * committed map's own script first, then the scenarios directory.
+ *
+ * Returns the blob's length, which is 0 for a file that declares no
+ * setting, or -1 for a file neither place holds (and for a blob that does
+ * not fit cap). */
+int serverSimScenarioSettingsDecl(ServerSim *sim, const char *file,
+                                  uint8_t *out, size_t cap);
+
+/* How many values the server keeps for scripts' settings at once. A value
+ * equal to its default is not kept, so this is values a host moved off the
+ * default, across every script the session has seen. */
+#define SERVER_SCRIPT_SETTING_VALUES_MAX 48
+
+/* The value the host chose for file's setting id, in *out. False when none
+ * is kept, which means the declared default. The value is the one
+ * serverSimSetScriptSetting checked; a caller holding the declaration
+ * resolves it again with scnSettingResolve all the same, because the file
+ * may have been edited since. */
+bool serverSimGetScriptSetting(const ServerSim *sim, const char *file,
+                               const char *id, int32_t *out);
+
+/* Sets file's setting id to value, checked against the declaration
+ * serverSimScenarioSettingsDecl reads for file. A value below the range is
+ * clamped to the lowest entry and one above it to the highest; one inside
+ * the range but off the step falls back to the default
+ * (scnSettingClamp). The default is also what clears a kept value. Publishes the result as
+ * a CTRL_LOBBY_SCRIPT_SETTING SET.
+ *
+ * Returns the value now in effect, in *resolved when it is not NULL.
+ * False, and nothing changed or published, for a file with no declaration,
+ * an id it does not declare, or a store that is full. */
+bool serverSimSetScriptSetting(ServerSim *sim, const char *file,
+                               const char *id, int32_t value,
+                               int32_t *resolved);
+
+/* Every kept value, as one CTRL_LOBBY_SCRIPT_SETTING CLEAR and then one SET
+ * per value, into deliver. The join sync is the caller. */
+void serverSimReplayScriptSettings(
+    const ServerSim *sim, void (*deliver)(void *, const struct ControlEvent *),
+    void *ctx);
+
 /* autoLockOnGameStart — when true, sets allowNewPlayers=false the
  * moment the lobby transitions out of serverStateLobby. */
 bool        serverSimGetAutoLockOnGameStart(const ServerSim *sim);

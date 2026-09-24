@@ -163,6 +163,13 @@ typedef struct {
     const char             *runningFile;
     ScnTimerSet            *timers;
     bool                    checkOnly;
+    /* The registry reference of the globals a file's top level is running
+     * in, set across the chunk and 0 at every other moment. game.setting
+     * reads it where running is NULL: the chunk runs before the table is
+     * read out of those globals, so a top level that asks for a setting is
+     * answered from the settings block its own scenario table has just
+     * declared. 0 is no reference, which is what a zeroed context holds. */
+    int                     runningEnv;
 } ScnLuaCtx;
 
 /* What one parameter holds, beside the name the author writes it under. A
@@ -753,6 +760,37 @@ bool scenarioLuaRegionHolds(const ScnManifestRegion *r, int mx, int my);
  *********************************************************/
 uint8_t scenarioLuaRegionBit(const ScenarioManifest *m, const char *path,
                              const char *name);
+
+/* ── Settings ───────────────────────────────────────────────────────── */
+
+/* One line about a settings block, and the dotted key it is about
+ * ("settings[2].max"). A reader that has nowhere to say it passes NULL. */
+typedef void (*ScnSettingsReportFn)(void *ud, const char *key,
+                                    const char *line);
+
+/*********************************************************
+ *NAME:          scenarioLuaReadSettings
+ *PURPOSE:
+ *  The settings block of the scenario table at stack index
+ *  tbl, into out, which holds max rows. Answers how many
+ *  rows it kept.
+ *
+ *  Each row that is not a usable declaration is reported
+ *  and dropped, and the rest are kept in the order the file
+ *  wrote them: a row that is not a table, a missing id or
+ *  label, a type this build does not know, a number that is
+ *  not a whole number in the 32-bit range, a row that fails
+ *  scnSettingProblem (scenario_settings.h), an id the block
+ *  already holds, and every row past max.
+ *
+ *  The manifest read is one caller and game.setting at a
+ *  file's top level is the other, so a setting a script
+ *  reads before its table is read is held to the same rules
+ *  the table is. Raw reads throughout: no metatable runs.
+ *********************************************************/
+int scenarioLuaReadSettings(lua_State *L, int tbl, ScnSetting *out, int max,
+                            const char *path, ScnSettingsReportFn report,
+                            void *ud);
 
 /* ── Timers ─────────────────────────────────────────────────────────── */
 

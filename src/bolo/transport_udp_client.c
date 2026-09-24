@@ -1230,6 +1230,7 @@ static const char *mpDiagCtrlName(int type) {
     case CTRL_SCN_MARKER:       return "SCN_MARKER";
     case CTRL_SCENARIO_RULES:   return "SCENARIO_RULES";
     case CTRL_LOBBY_SCRIPT_LIST: return "LOBBY_SCRIPT_LIST";
+    case CTRL_LOBBY_SCRIPT_SETTING: return "LOBBY_SCRIPT_SETTING";
     default:                    return "<unknown>";
     }
 }
@@ -1694,7 +1695,7 @@ static void udpClientRoundLogTick(TransportUdpClientCtx *c) {
 /* Put one details request on the wire and stamp the slot ASKED. */
 static void udpClientSendScnDetailsReq(TransportUdpClientCtx *c, int slot) {
     ClientSim *cs = c->clientSim;
-    uint8_t buf[PACKET_HEADER_SIZE + 1 + 255];
+    uint8_t buf[PACKET_HEADER_SIZE + 1 + 255 + 1];
     size_t n = strlen(cs->lobbyScnDetails[slot].file);
     if (n == 0 || n > 255) {
         cs->lobbyScnDetails[slot].state = LOBBY_SCN_DETAILS_NONE;
@@ -1703,7 +1704,11 @@ static void udpClientSendScnDetailsReq(TransportUdpClientCtx *c, int slot) {
     packHeader(buf, PACKET_LOBBY_SCENARIO_DETAILS_REQ, c->outSequence++);
     buf[PACKET_HEADER_SIZE] = (uint8_t)n;
     memcpy(buf + PACKET_HEADER_SIZE + 1, cs->lobbyScnDetails[slot].file, n);
-    udpClientSendTo(c, buf, (int)(PACKET_HEADER_SIZE + 1 + n));
+    /* The flags byte after the name asks for the settings block as well. An
+       older server reads the name by its length and never looks here, so it
+       answers as it always has. */
+    buf[PACKET_HEADER_SIZE + 1 + n] = BULK_SCN_DETAILS_WANT_SETTINGS;
+    udpClientSendTo(c, buf, (int)(PACKET_HEADER_SIZE + 1 + n + 1));
     cs->lobbyScnDetails[slot].state = LOBBY_SCN_DETAILS_ASKED;
     cs->lobbyScnDetails[slot].tries++;
     cs->lobbyScnDetails[slot].sentTick = c->localTick;
@@ -2067,6 +2072,22 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         if (slot < 0 || slot >= LOBBY_SCN_DETAILS_SLOTS) break;
         if (cs->lobbyScnDetails[slot].state != LOBBY_SCN_DETAILS_ASKED ||
             strcmp(cs->lobbyScnDetails[slot].file, h->path) != 0) {
+            break;
+        }
+        if (buf[0] == BULK_SCN_DETAILS_FOUND_V2) {
+            /* [status][detailsLen 2][details][settings]. A length past the
+               blob makes the whole answer not-found. */
+            size_t total = (size_t)h->totalSize;
+            size_t dLen  = (total >= 3) ? (((size_t)buf[1] << 8) | buf[2])
+                                        : (size_t)-1;
+            if (total < 3 || 3 + dLen > total) {
+                clientSimLobbyScenarioDetailsPut(cs, h->path, false, NULL, 0);
+                break;
+            }
+            clientSimLobbyScenarioDetailsPut(cs, h->path, true, buf + 3,
+                                             dLen);
+            clientSimLobbyScenarioSettingsPut(cs, h->path, buf + 3 + dLen,
+                                              total - 3 - dLen);
             break;
         }
         clientSimLobbyScenarioDetailsPut(
