@@ -3414,6 +3414,16 @@ int run_script_fetch_sink_bound(void);
 int run_script_fetch_stall_fails(void);
 int run_script_fetch_round_start_abort(void);
 
+/* The copy a player saves to their own Mods directory
+ * (test_script_save_local.c): a .lua and a .scenario written whole through
+ * a temporary file, a name already there in either case refused, a name
+ * that is not a bare script file name refused, and a Mods directory made
+ * when it is missing. */
+int run_script_save_local_ok(void);
+int run_script_save_local_exists(void);
+int run_script_save_local_bad_name(void);
+int run_script_save_local_creates_dir(void);
+
 /* The three directories a mod can come from (test_scenario_mod_dirs.c): the
  * one the host was given, the player's own under SDL_GetPrefPath and the
  * mods that ship beside the executable, merged into one listing with the

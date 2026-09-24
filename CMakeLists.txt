@@ -3580,6 +3580,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # A copy of one of the server's scripts, fetched by name over the
     # loopback transport, and each answer the server gives.
     tests/unit/test_script_fetch.c
+    # A copy of a server's script saved to the player's own Mods
+    # directory: the name check, the refusal to replace, and the write.
+    tests/unit/test_script_save_local.c
     tests/unit/test_scenario_mod_dirs.c
     # Which scenario plays when a map and a mod both have a claim, and the
     # points the template is applied at.
@@ -6219,6 +6222,10 @@ set(_unit_test_names
     script_fetch_sink_bound
     script_fetch_stall_fails
     script_fetch_round_start_abort
+    script_save_local_ok
+    script_save_local_exists
+    script_save_local_bad_name
+    script_save_local_creates_dir
     scenario_mod_dirs_user_dir_offered
     scenario_mod_dirs_shipped_offered
     scenario_mod_dirs_configured_wins

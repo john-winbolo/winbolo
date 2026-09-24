@@ -25,6 +25,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "server_sim.h" /* ServerSim, and MAX_TANKS / MAX_PILLS / MAX_BASES /
                          * MAX_STARTS through global.h and types.h */
@@ -481,6 +482,47 @@ int scenarioHostListLocalScripts(ServerScenarioEntry *out, int max);
  *  its path fits out. False otherwise, with out "".
  *********************************************************/
 bool scenarioHostLocalScriptPath(const char *file, char *out, size_t outLen);
+
+/* What scenarioHostSaveLocalScript made of one file. */
+typedef enum {
+    SCENARIO_LOCAL_SAVE_OK = 0,
+    SCENARIO_LOCAL_SAVE_BAD_NAME,   /* not a bare .lua / .scenario file name */
+    SCENARIO_LOCAL_SAVE_EXISTS,     /* this computer already has that name  */
+    SCENARIO_LOCAL_SAVE_WRITE       /* the directory or the file could not be written */
+} ScenarioLocalSaveResult;
+
+/*********************************************************
+ *NAME:          scenarioHostSaveLocalScript
+ *PURPOSE:
+ *  Puts a copy of a server's script in the player's own
+ *  Mods directory, the first of the directories
+ *  scenarioHostListLocalScripts reads, making it if it is
+ *  not there yet.
+ *
+ *  The name came from a server, so it is held to a bare
+ *  file name ending in .lua or .scenario before anything is
+ *  written. A name any of those directories already holds,
+ *  in whatever case, is refused: a copy never replaces a
+ *  file of the player's own.
+ *
+ *  The bytes go to a dot file in the directory and are
+ *  renamed onto the name, so a failed write leaves nothing
+ *  behind. A saved file is listed on the next call to
+ *  scenarioHostListLocalScripts.
+ *
+ *ARGUMENTS:
+ *  file  - The bare file name, as the server gave it
+ *  bytes - The file's contents; may be NULL only when len
+ *          is 0
+ *  len   - How many bytes; 0 writes an empty file
+ *
+ *RETURNS:
+ *  SCENARIO_LOCAL_SAVE_OK once the file is in place, or
+ *  the reason it is not.
+ *********************************************************/
+ScenarioLocalSaveResult scenarioHostSaveLocalScript(const char *file,
+                                                    const uint8_t *bytes,
+                                                    size_t len);
 
 /*********************************************************
  *NAME:          scenarioHostAttach

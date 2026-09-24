@@ -2604,6 +2604,15 @@ static const LangEntry langTable[] = {
     {2651, "It is bound to a map. Send the map instead."},
     {2652, "Let players copy this server's scripts"},
     {2653, "Players can save a copy of this server's mods and scenarios to their own Mods folder."},
+    {2654, "Save a copy to your Mods folder"},
+    {2655, "Spectators can't copy scripts."},
+    {2656, "This server doesn't share its scripts."},
+    {2657, "A copy is already on its way."},
+    {2658, "Your Mods folder already has a file with this name."},
+    {2659, "The server no longer has this file."},
+    {2660, "This file is too large to copy."},
+    {2661, "The server didn't answer. Try again."},
+    {2662, "The copy could not be saved to your Mods folder."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

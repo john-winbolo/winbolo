@@ -88,6 +88,7 @@
 
 #include "platform_types.h"        /* BOLO_STATIC_ASSERT */
 #include "bolo_rand.h"             /* BoloRandState, bolo_rand_save */
+#include "../common/wb_log.h"      /* WB_LOG_INFO — the line a saved copy logs */
 #include "brain_list.h"            /* brainListResolve — the brain a team
                                     * names, against this server's own
                                     * brains directory */
@@ -7324,6 +7325,130 @@ bool scenarioHostLocalScriptPath(const char *file, char *out, size_t outLen) {
         return true;
     }
     return false;
+}
+
+/* What a copy is written through before it takes its own name, beside the
+   upload's own prefix and dotted for the same reason: no listing shows it
+   while it is there. */
+#define SCN_LOCAL_SAVE_TEMP_PREFIX ".copy-"
+
+/* Whether a name a server sent is one this computer may write under: a bare
+   file name ending in .lua or .scenario, short enough for a listing row, with
+   no separator, no drive or stream colon, no control byte and no leading dot,
+   and not a name Windows keeps for a device. The server's own upload rule,
+   uploadFilenameIsSafe, asks the same of the names players send it; it lives
+   in the server transport, which this library does not reach. A device name
+   is matched on what comes before the first dot, because Windows opens the
+   device for CON.lua and CON.x.lua alike. */
+static bool scnLocalSaveNameOk(const char *file) {
+    static const char *const reserved[] = {
+        "CON",  "PRN",  "AUX",  "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5",
+        "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5",
+        "LPT6", "LPT7", "LPT8", "LPT9",
+    };
+    const char *dot;
+    size_t      n;
+    size_t      stem;
+    size_t      i;
+
+    if (file == NULL || file[0] == '\0' || file[0] == '.') return false;
+    n = strlen(file);
+    if (n >= SCN_DIR_FILE_LEN) return false;
+    for (i = 0; i < n; i++) {
+        unsigned char ch = (unsigned char)file[i];
+
+        if (ch == '/' || ch == '\\' || ch == ':' || ch < 0x20 || ch == 0x7f) {
+            return false;
+        }
+    }
+    if (!scnHasExt(file, SCN_SCENARIO_SCRIPT_EXT) &&
+        !scnHasExt(file, SCN_SCENARIO_PACKAGE_EXT)) {
+        return false;
+    }
+    dot  = strchr(file, '.');
+    stem = (dot != NULL) ? (size_t)(dot - file) : n;
+    for (i = 0; i < sizeof(reserved) / sizeof(reserved[0]); i++) {
+        if (stem == strlen(reserved[i]) &&
+            SDL_strncasecmp(file, reserved[i], stem) == 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* Whether dir holds file under any spelling of it. Globbed with "*" as
+   scnUploadDestName globs: a NULL pattern would walk the subdirectories too.
+   A directory that cannot be read holds nothing. */
+static bool scnLocalDirHolds(const char *dir, const char *file) {
+    char **names;
+    int    count = 0;
+    bool   found = false;
+    int    i;
+
+    names = SDL_GlobDirectory(dir, "*", 0, &count);
+    if (names == NULL) return false;
+    for (i = 0; i < count; i++) {
+        if (names[i] != NULL && strchr(names[i], '/') == NULL &&
+            strchr(names[i], '\\') == NULL &&
+            SDL_strcasecmp(names[i], file) == 0) {
+            found = true;
+            break;
+        }
+    }
+    SDL_free(names);
+    return found;
+}
+
+ScenarioLocalSaveResult scenarioHostSaveLocalScript(const char *file,
+                                                    const uint8_t *bytes,
+                                                    size_t len) {
+    char  dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
+    char  tmp[SCN_SCRIPT_PATH_MAX];
+    char  dest[SCN_SCRIPT_PATH_MAX];
+    bool  ok;
+    FILE *f;
+    int   count;
+    int   d;
+
+    if (!scnLocalSaveNameOk(file)) return SCENARIO_LOCAL_SAVE_BAD_NAME;
+
+    /* A file of that name in any of this computer's directories is the
+       player's own, and a copy never replaces it. */
+    count = scnLocalDirs(dirs);
+    for (d = 0; d < count; d++) {
+        if (scnLocalDirHolds(dirs[d], file)) return SCENARIO_LOCAL_SAVE_EXISTS;
+    }
+
+    if (count == 0 || (bytes == NULL && len > 0)) {
+        return SCENARIO_LOCAL_SAVE_WRITE;
+    }
+    if (!SDL_CreateDirectory(dirs[0])) return SCENARIO_LOCAL_SAVE_WRITE;
+    if ((size_t)snprintf(tmp, sizeof(tmp),
+                         "%s/" SCN_LOCAL_SAVE_TEMP_PREFIX "%s", dirs[0],
+                         file) >= sizeof(tmp) ||
+        (size_t)snprintf(dest, sizeof(dest), "%s/%s", dirs[0], file) >=
+            sizeof(dest)) {
+        return SCENARIO_LOCAL_SAVE_WRITE;
+    }
+
+    f = fopen(tmp, "wb");
+    if (f == NULL) return SCENARIO_LOCAL_SAVE_WRITE;
+    ok = (len == 0) || fwrite(bytes, 1, len, f) == len;
+    if (fclose(f) != 0) ok = false;
+    if (!ok || !SDL_RenamePath(tmp, dest)) {
+        SDL_RemovePath(tmp);
+        return SCENARIO_LOCAL_SAVE_WRITE;
+    }
+
+    /* The directory's stamp may not move for a file landed this soon after
+       the last listing, so the listing is told another way, as an upload
+       tells it. */
+    serverSimNoteScriptDirsChanged();
+    WB_LOG_INFO(WB_LOG_CAT_CLIENT, "scenario: saved a copy of %s (%lu bytes) "
+                "in %s", file, (unsigned long)len, dirs[0]);
+    return SCENARIO_LOCAL_SAVE_OK;
 }
 
 /* ── Where the script comes from ──────────────────────────────────── */
