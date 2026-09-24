@@ -41,7 +41,7 @@ typedef struct {
     int      viewDecay[3];       /* seconds, meaningful only for decay */
     bool     classicMode;
     bool     alliesInTrees;
-    int      gameType;           /* 1 open, 2 tournament, 3 strict */
+    int      gameType;           /* 1 open, 2 tournament, 3 strict, 4 scripted */
     int      aiType;             /* 0 none .. 3 full */
     unsigned flags;              /* the byte at offset 9, verbatim */
     int      timeMinutes;        /* meaningless when the time-limit bit is clear */

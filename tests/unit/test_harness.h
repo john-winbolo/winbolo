@@ -3414,6 +3414,11 @@ int run_scenario_announce_remaining(void);
  * (test_lv_sim_rules_names.c): a rule's name from its index and back, and
  * a hand-written two-primitive list through scnPanelParse. */
 int run_lv_rule_names_and_panel_parse(void);
+/* The scripted game type in the log viewer (test_lv_scripted_game_type.c):
+ * a recorded round set to gameScripted decodes with header game type 4, and
+ * a hand-written settings payload with byte 7 = 4 decodes to the same. */
+int run_lv_scripted_game_type_header(void);
+int run_lv_scripted_game_type_settings(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or

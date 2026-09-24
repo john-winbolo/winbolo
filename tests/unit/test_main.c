@@ -1884,6 +1884,8 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_panel_timer_text",                       run_scenario_panel_timer_text                       },
     { "scenario_announce_remaining",                     run_scenario_announce_remaining                     },
     { "lv_rule_names_and_panel_parse",                   run_lv_rule_names_and_panel_parse                   },
+    { "lv_scripted_game_type_header",                    run_lv_scripted_game_type_header                    },
+    { "lv_scripted_game_type_settings",                  run_lv_scripted_game_type_settings                  },
     { "scn_presentation_codec_bodies",                   run_scn_presentation_codec_bodies                   },
     { "scn_presentation_codec_refuses_short",            run_scn_presentation_codec_refuses_short            },
     { "scn_presentation_decoder_sets_broadcast",         run_scn_presentation_decoder_sets_broadcast         },

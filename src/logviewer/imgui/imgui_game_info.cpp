@@ -52,7 +52,8 @@ static bool s_time_limit_is_live = false;
 enum {
     gameOpen = 1,
     gameTournament,
-    gameStrictTournament
+    gameStrictTournament,
+    gameScripted
 };
 
 /* AI type enum */
@@ -161,6 +162,7 @@ void lv_imgui_game_info_set(int clear, unsigned char versionMajor, unsigned char
             case gameOpen:             id = STR_DLGGAMEINFO_OPEN;   break;
             case gameTournament:       id = STR_DLGGAMEINFO_TOURN;  break;
             case gameStrictTournament: id = STR_DLGGAMEINFO_STRICT; break;
+            case gameScripted:         id = STR_DLGGAMEINFO_SCRIPTED; break;
             default:                   id = STR_UNKNOWN;            break;
         }
         snprintf(s_game_type, sizeof(s_game_type), "%s", langGetText(id));
@@ -264,6 +266,7 @@ void lv_imgui_game_info_set_settings(const unsigned char *payload, int len) {
             case gameOpen:             id = STR_DLGGAMEINFO_OPEN;   break;
             case gameTournament:       id = STR_DLGGAMEINFO_TOURN;  break;
             case gameStrictTournament: id = STR_DLGGAMEINFO_STRICT; break;
+            case gameScripted:         id = STR_DLGGAMEINFO_SCRIPTED; break;
             default:                   id = STR_UNKNOWN;            break;
         }
         snprintf(s_ev_game_type, sizeof(s_ev_game_type), "%s", langGetText(id));

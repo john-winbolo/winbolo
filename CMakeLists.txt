@@ -4389,6 +4389,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # compile in: a rule's name from its index and back, and a two-primitive
     # list through scnPanelParse.
     tests/unit/test_lv_sim_rules_names.c
+    # The scripted game type through the viewer: the .wbv header byte of a
+    # recorded round, and byte 7 of a hand-written settings payload.
+    tests/unit/test_lv_scripted_game_type.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).
@@ -6222,6 +6225,8 @@ set(_unit_test_names
     scenario_panel_timer_text
     scenario_announce_remaining
     lv_rule_names_and_panel_parse
+    lv_scripted_game_type_header
+    lv_scripted_game_type_settings
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast

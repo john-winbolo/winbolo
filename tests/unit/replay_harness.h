@@ -222,6 +222,7 @@ typedef struct {
     char     mapName[REPLAY_MAP_NAME_LEN];  /* from the log header */
     int      ticks;         /* playback ticks to end-of-log */
     uint32_t totalTimeMs;   /* what the load's byte walk made of the file */
+    int      gameType;      /* the log header's game type byte */
 } ReplayFileInfo;
 
 /* totalTimeMs is the other reader in the viewer: the walk the load runs over

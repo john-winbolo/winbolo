@@ -34,7 +34,7 @@ by the first `LOG_EVENT_SNAPSHOT` record.
 | Magic | 8 | Literal `WBOLOMOV`                                              |
 | Version | 1 | `0`, `1`, `2`, or `3` (current)                                 |
 | Map name | 1 + N | Length byte + UTF-8 name                                        |
-| Game type | 1 | From `gameTypeGet()`                                            |
+| Game type | 1 | From `gameTypeGet()` — 1 open, 2 tournament, 3 strict, 4 scripted |
 | Allow hidden mines | 1 | Boolean                                                         |
 | AI type | 1 | `aiType` — whether brains are allowed, not a bot difficulty     |
 | Password | 1 | Boolean (game is password-protected)                            |
@@ -121,7 +121,7 @@ is the value each later field had before it was recorded.
 | 1–2 | Pill view decay | Big-endian seconds; meaningful only when the pill policy is `decay` |
 | 3–4 | Base view decay | Big-endian seconds; same condition |
 | 5–6 | Ally view decay | Big-endian seconds; same condition |
-| 7 | Game type | `gameType` — 1 open, 2 tournament, 3 strict |
+| 7 | Game type | `gameType` — 1 open, 2 tournament, 3 strict, 4 scripted |
 | 8 | AI policy | `aiType` — 0 `aiNone`, 1 `aiYes`, 2 `aiYesAdvantage`, 3 `aiFull` |
 | 9 | Flags | bit0 hidden mines, bit1 time limit on, bit2 auto-lock on game start, bit3 ranked, bit4 password set, bit5 allow new players, bit6 overview window is classic, bit7 line of sight is not off |
 | 10–11 | Time minutes | Big-endian; meaningless when the time-limit bit is clear |

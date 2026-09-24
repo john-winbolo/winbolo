@@ -260,6 +260,7 @@ bool replayHarnessDecodeFile(const char *path, ReplayWorld *w,
         lv_screenGetMapName(info->mapName);
         /* Computed by the load's byte walk, before any playback. */
         info->totalTimeMs = lv_screenGetState()->totalTimeMs;
+        info->gameType = lv_screenGetState()->gt;
     }
 
     /* The load decodes the header and the opening snapshot only; the event
