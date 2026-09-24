@@ -87,6 +87,8 @@
 #define SLR_BUILT_ARMOUR 15
 #define SLR_TERRAIN_ROAD ROAD       /* global.h: 4 */
 #define SLR_GRACE_TICKS  1000       /* GRACE_S = 10, at the 100-a-second tick */
+#define SLR_WAVE_TICKS   24000      /* WAVE_LIMIT_S = 240 in Survival.scenario.lua,
+                                       at the 100-a-second tick */
 #define SLR_MAX_BOTS     5
 #define SLR_HORDE_SEATS  10   /* scenario.lobby team 2: ten seats HELD */
 
@@ -541,7 +543,7 @@ static int slrRound(int bots, bool inPlace) {
 
             /* Past the wave limit, the mute lead and ten one-second
                departures: nobody of the horde is on the field. */
-            while (sim->tick < graceFrom + SLR_GRACE_TICKS + 30000 + 200 +
+            while (sim->tick < graceFrom + SLR_GRACE_TICKS + SLR_WAVE_TICKS + 200 +
                                  10 * 100 + 500) {
                 serverSimTick(sim);
             }
@@ -559,7 +561,7 @@ static int slrRound(int bots, bool inPlace) {
                30 s breather, with room to spare. */
             seen.waveTick = SLR_NO_TICK;
             while (seen.waveTick == SLR_NO_TICK &&
-                   sim->tick < graceFrom + SLR_GRACE_TICKS + 40000) {
+                   sim->tick < graceFrom + SLR_GRACE_TICKS + SLR_WAVE_TICKS + 10000) {
                 serverSimTick(sim);
             }
             UT_ASSERT_MSG(seen.waveTick != SLR_NO_TICK,
@@ -732,7 +734,7 @@ static int slrRound(int bots, bool inPlace) {
                because it runs the round out past wave 2's departures. */
         if (seen.waveTick != SLR_NO_TICK) {
             int fielded = 0;
-            while (sim->tick < seen.waveTick + 30000 + 200 + 10 * 100 + 500) {
+            while (sim->tick < seen.waveTick + SLR_WAVE_TICKS + 200 + 10 * 100 + 500) {
                 serverSimTick(sim);
             }
             for (i = 0; i < MAX_TANKS; i++) {
@@ -746,12 +748,12 @@ static int slrRound(int bots, bool inPlace) {
 
         /* (m) The whole round: waves 3, 4 and 5 land and clear the same
                way, and after the fifth's departures the script ends the
-               round with the defenders' win. Five waves of five minutes
-               plus their breathers is about 28 minutes of game, a few
+               round with the defenders' win. Five waves of four minutes
+               plus their breathers is about 23 minutes of game, a few
                seconds here. */
         {
             uint32_t cap = graceFrom + SLR_GRACE_TICKS +
-                           5u * (30000u + 200u + 10u * 100u + 3000u) + 5000u;
+                           5u * (SLR_WAVE_TICKS + 200u + 10u * 100u + 3000u) + 5000u;
             while (sim->tick < cap &&
                    serverSimGetState(sim) == serverStateRunning) {
                 serverSimTick(sim);
@@ -775,7 +777,7 @@ static int slrRound(int bots, bool inPlace) {
             /* And it ended when the fifth wave's departures were done, not
                before: five waves, four breathers. */
             UT_ASSERT_MSG(sim->tick >= graceFrom + SLR_GRACE_TICKS +
-                                       5u * 30000u + 4u * 3000u,
+                                       5u * SLR_WAVE_TICKS + 4u * 3000u,
                           "the round ended early, at tick %u",
                           (unsigned)sim->tick);
         }
