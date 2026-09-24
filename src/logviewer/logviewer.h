@@ -34,7 +34,10 @@
 #include "lv_bolo_map.h"
 #include "lv_bases.h"
 #include "lv_starts.h"
-#include "sim_rules_names.h"   /* SIM_RULE_COUNT — LvScripts' rules */
+/* LvScripts, LvRuleChange and their accessors. Included here rather than
+ * next to LvRules because it brings in <stdbool.h>, and every bool below this
+ * line has been _Bool since sim_rules_names.h was included at this spot. */
+#include "lv_scripts.h"
 
 /* Forward declarations for SDL types */
 struct SDL_Window;
@@ -103,70 +106,6 @@ typedef struct {
      never 0, since the pill picture divides by it. */
   int  pillMaxArmour;
 } LvRules;
-
-/* One log_RuleSet the recording holds: the absolute log time it lands at,
-   the rule's index in sim_rules_names.h and the value it set. */
-typedef struct LvRuleChange {
-  uint32_t ms;
-  int      index;
-  double   value;
-} LvRuleChange;
-
-/* Most rule changes the viewer keeps for one recording. The load walk stops
-   collecting at this many and says so in ruleChangesTruncated. */
-#define LV_RULE_CHANGES_MAX 256
-
-/* What a recording's scripts.json says the round ran (docs/replay-format.md,
-   "scripts.json"), read once when the recording is opened. Every count is
-   clamped to its array and every string is cut to its buffer and terminated,
-   because the member is a file anyone could have written. All zero, with
-   present false, for a recording without the member, one over the cap, one
-   that is not the JSON the writer produces and one of another version. */
-#define LV_SCRIPTS_MAX              10
-#define LV_SCRIPTS_REGIONS_MAX      64
-#define LV_SCRIPTS_FILE_LEN         128
-#define LV_SCRIPTS_WORD_LEN         16   /* source and kind */
-#define LV_SCRIPTS_NAME_LEN         64
-#define LV_SCRIPTS_DESC_LEN         256
-#define LV_SCRIPTS_REGION_NAME_LEN  32
-#define LV_SCRIPTS_MAP_LEN          128
-
-/* One script the round ran, in load order. name and description are its
-   manifest's. */
-typedef struct {
-  char file[LV_SCRIPTS_FILE_LEN];
-  char source[LV_SCRIPTS_WORD_LEN];
-  char kind[LV_SCRIPTS_WORD_LEN];
-  char name[LV_SCRIPTS_NAME_LEN];
-  char description[LV_SCRIPTS_DESC_LEN];
-} LvScriptRow;
-
-/* One rule of the composed table: its index in sim_rules_names.h and the
-   value the round opened on. */
-typedef struct {
-  int    index;
-  double value;
-} LvScriptRule;
-
-/* One composed region, with the file of the script that declared it. */
-typedef struct {
-  char    name[LV_SCRIPTS_REGION_NAME_LEN];
-  uint8_t x, y;
-  uint8_t w, h;
-  char    file[LV_SCRIPTS_FILE_LEN];
-} LvScriptRegion;
-
-typedef struct LvScripts {
-  bool           present;      /* the member was there and parsed */
-  char           map[LV_SCRIPTS_MAP_LEN];
-  bool           modsEnabled;
-  int            count;
-  LvScriptRow    scripts[LV_SCRIPTS_MAX];
-  int            ruleCount;
-  LvScriptRule   rules[SIM_RULE_COUNT];
-  int            regionCount;
-  LvScriptRegion regions[LV_SCRIPTS_REGIONS_MAX];
-} LvScripts;
 
 typedef struct LogViewerState {
   /* The rules this recording is drawn against. */
@@ -374,20 +313,6 @@ void lv_decoderDestroy(LogViewerState *lv);
 /* State accessors used by screen.c and other modules */
 void lv_screenSetState(LogViewerState *lv);
 LogViewerState *lv_screenGetState(void);
-
-/* Rules at the playhead, for the game info panel. Declared here rather than
- * in backend.h because they speak in this header's types, and backend.h is
- * included above them.
- *
- * lv_screenRuleValueAt answers rule index's value at absolute log time ms:
- * the last change at or before ms, else the value the round opened on in
- * scripts.json, else the classic value. lv_screenGetRuleChanges points *out
- * at the recording's changes and returns how many there are.
- * lv_screenGetScripts returns the recording's scripts.json holder, or NULL
- * while no log is loaded. */
-double lv_screenRuleValueAt(int index, uint32_t ms);
-int lv_screenGetRuleChanges(const LvRuleChange **out);
-const LvScripts *lv_screenGetScripts(void);
 
 /* Accessor functions for sounddist.c (replaces extern globals) */
 BYTE lv_screenGetXOffset(void);

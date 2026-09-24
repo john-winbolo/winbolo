@@ -16,6 +16,9 @@
 #include "../../gui/lang.h"
 /* Plain C, no bolo headers — see the note at the top of that header. */
 #include "../game_settings_blob.h"
+/* The same for the scripts and rule changes a recording carries. */
+#include "../lv_scripts.h"
+#include "../../gui/sim_rules_phrase.h"
 
 #include <cstdio>
 #include <cstring>
@@ -66,7 +69,8 @@ enum {
 
 /* View policy, as the settings payload packs it. Matches ViewPolicy in
  * src/bolo/public/view_policy.h; spelled out here because this panel
- * deliberately includes no bolo headers. */
+ * deliberately includes no bolo headers, bar sim_rules_names.h for the
+ * rule names. */
 enum {
     viewPolicyAlways = 0,
     viewPolicyKey = 1,
@@ -348,6 +352,181 @@ void imgui_game_info_update(void) {
     }
 }
 
+/* A rule's value as the lobby's rules popup writes it: whole numbers without
+ * a decimal point, anything else to two places with the trailing zeros
+ * trimmed, so it agrees with the multiple simRulesPhrase prints beside it. */
+static void game_info_rule_number(double value, char *buf, size_t bufLen) {
+    size_t len;
+
+    snprintf(buf, bufLen, "%.2f", value);
+    if (strchr(buf, '.') == NULL) return;
+    len = strlen(buf);
+    while (len > 0 && buf[len - 1] == '0') buf[--len] = '\0';
+    if (len > 0 && buf[len - 1] == '.') buf[--len] = '\0';
+}
+
+/* What the recording's scripts.json says the round ran: the scenario and mod
+ * count, the scripts, the rules at the playhead and each rule change the
+ * playhead has passed. Draws nothing for a plain recording or a closed log. */
+static void game_info_draw_scripts(void) {
+    const LvScripts *sc = lv_screenGetScripts();
+    if (sc == NULL || !sc->present) {
+        return;
+    }
+
+    int count = sc->count;
+    if (count < 0) count = 0;
+    if (count > LV_SCRIPTS_MAX) count = LV_SCRIPTS_MAX;
+
+    /* The scenario line. The first scenario row names it; a round that ran
+     * only mods is named after its map. */
+    {
+        const char *scenario = sc->map;
+        int mods = 0;
+        bool found = false;
+        for (int i = 0; i < count; i++) {
+            const LvScriptRow *row = &sc->scripts[i];
+            if (strcmp(row->kind, "mod") == 0) {
+                mods++;
+            } else if (!found && strcmp(row->kind, "scenario") == 0) {
+                scenario = row->name[0] != '\0' ? row->name : row->file;
+                found = true;
+            }
+        }
+        if (mods == 0) {
+            ImGui::TextUnformatted(scenario);
+        } else {
+            MessageArgs args = {};
+            strncpy(args.string1, scenario, sizeof(args.string1) - 1);
+            args.number = mods;
+            ImGui::TextUnformatted(langGetTextFmt(
+                mods == 1 ? STR_LV_INFO_SCENARIO_MODS_1 : STR_LV_INFO_SCENARIO_MODS_N,
+                &args));
+        }
+    }
+
+    /* The scripts, in load order: file, kind and where it came from. */
+    if (count > 0) {
+        ImGui::SeparatorText(langGetText(STR_LV_INFO_SCRIPTS));
+        for (int i = 0; i < count; i++) {
+            const LvScriptRow *row = &sc->scripts[i];
+            const char *kind = row->kind;
+            const char *source = row->source;
+            if (strcmp(kind, "scenario") == 0) {
+                kind = langGetText(STR_DLGLOBBY_SCENARIO_TAG_SCENARIO);
+            } else if (strcmp(kind, "mod") == 0) {
+                kind = langGetText(STR_DLGLOBBY_SCENARIO_TAG_MOD);
+            }
+            if (strcmp(source, "map") == 0) {
+                source = langGetText(STR_LV_INFO_SCRIPT_SOURCE_MAP);
+            } else if (strcmp(source, "server") == 0) {
+                source = langGetText(STR_LV_INFO_SCRIPT_SOURCE_SERVER);
+            }
+            ImGui::BeginGroup();
+            ImGui::TextUnformatted(row->file);
+            ImGui::SameLine();
+            ImGui::TextDisabled("[%s]", kind);
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", source);
+            ImGui::EndGroup();
+            if (row->description[0] != '\0' && ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", row->description);
+            }
+        }
+    }
+
+    /* Every rule the round opened on or changed later, once each, in index
+     * order. */
+    const LvRuleChange *changes = NULL;
+    int changeCount = lv_screenGetRuleChanges(&changes);
+    if (changes == NULL || changeCount < 0) changeCount = 0;
+
+    bool listed[SIM_RULE_COUNT] = {};
+    bool any = false;
+    {
+        int ruleCount = sc->ruleCount;
+        if (ruleCount < 0) ruleCount = 0;
+        if (ruleCount > SIM_RULE_COUNT) ruleCount = SIM_RULE_COUNT;
+        for (int i = 0; i < ruleCount; i++) {
+            int index = sc->rules[i].index;
+            if (index >= 0 && index < SIM_RULE_COUNT) {
+                listed[index] = true;
+                any = true;
+            }
+        }
+        for (int i = 0; i < changeCount; i++) {
+            int index = changes[i].index;
+            if (index >= 0 && index < SIM_RULE_COUNT) {
+                listed[index] = true;
+                any = true;
+            }
+        }
+    }
+    if (!any) {
+        return;
+    }
+
+    uint32_t playhead = lv_screenGetTimeRunning();
+
+    ImGui::SeparatorText(langGetText(STR_DLGLOBBY_SCENARIO_RULES));
+    if (ImGui::BeginTable("##gi_rules", 4,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
+        ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_RULES_COL_RULE),
+                                ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_RULES_COL_CLASSIC),
+                                ImGuiTableColumnFlags_WidthFixed,
+                                ImGui::CalcTextSize("00000").x);
+        ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_RULES_COL_SCENARIO),
+                                ImGuiTableColumnFlags_WidthFixed,
+                                ImGui::CalcTextSize("00000").x);
+        ImGui::TableSetupColumn(langGetText(STR_DLGLOBBY_RULES_COL_CHANGE),
+                                ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableHeadersRow();
+
+        for (int rule = 0; rule < SIM_RULE_COUNT; rule++) {
+            if (!listed[rule]) continue;
+
+            double value = lv_screenRuleValueAt(rule, playhead);
+            char   classicText[32];
+            char   valueText[32];
+            char   phrase[96];
+            game_info_rule_number(simRulesClassicValue(rule),
+                                  classicText, sizeof(classicText));
+            game_info_rule_number(value, valueText, sizeof(valueText));
+            simRulesPhrase(rule, value, phrase, sizeof(phrase));
+
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(simRulesRuleName(rule));
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(classicText);
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextUnformatted(valueText);
+            ImGui::TableSetColumnIndex(3);
+            ImGui::TextUnformatted(phrase);
+        }
+        ImGui::EndTable();
+    }
+
+    /* The changes the playhead has passed, in the order the recording holds
+     * them, each at the round's tick: 20 ms apiece from the game start. */
+    uint32_t gameStart = lv_screenGameStartMs();
+    for (int i = 0; i < changeCount; i++) {
+        const LvRuleChange *ch = &changes[i];
+        if (ch->ms > playhead) continue;
+        if (ch->index < 0 || ch->index >= SIM_RULE_COUNT) continue;
+
+        char phrase[96];
+        simRulesPhrase(ch->index, ch->value, phrase, sizeof(phrase));
+
+        MessageArgs args = {};
+        args.number = ch->ms >= gameStart ? (int)((ch->ms - gameStart) / 20) : 0;
+        strncpy(args.string1, simRulesRuleName(ch->index), sizeof(args.string1) - 1);
+        strncpy(args.string2, phrase, sizeof(args.string2) - 1);
+        ImGui::TextUnformatted(langGetTextFmt(STR_LV_INFO_RULE_CHANGE, &args));
+    }
+}
+
 void lv_imgui_game_info_window(void) {
     if (!lv_g_show_game_info_window) {
         return;
@@ -470,6 +649,8 @@ void lv_imgui_game_info_window(void) {
             strncpy(args.string1, s_start_time, sizeof(args.string1) - 1);
             ImGui::TextUnformatted(langGetTextFmt(STR_LV_INFO_START_TIME, &args));
         }
+
+        game_info_draw_scripts();
 
         /* Server visibility rules and the two mode flags, from the settings
          * event. The row labels come from the lobby form and carry no
