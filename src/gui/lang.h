@@ -3084,6 +3084,23 @@
 #define STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP 2636
 #define STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADDIR  2637
 
+/* The Mods chooser's rows from the player's own computer. The three words
+ * under a row say where it is: on the server, sent there by a player, on
+ * this computer. The button sends a file only this computer holds, and its
+ * greyed reason for a player who may not change the round. The other
+ * greyed reasons are STR_DLGLOBBY_SCRIPT_ERR_DISABLED below and the map
+ * upload's STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT. */
+#define STR_DLGLOBBY_SCENARIO_SRC_SERVER         2638
+#define STR_DLGLOBBY_SCENARIO_SRC_UPLOADED       2639
+#define STR_DLGLOBBY_SCENARIO_SRC_LOCAL          2640
+#define STR_DLGLOBBY_SCENARIO_SEND               2641
+#define STR_DLGLOBBY_SCENARIO_SEND_NOT_HOST      2642
+
+/* Why a server refused a script, where no map upload reason says it: the
+ * server takes no scripts, or holds one of that name already. */
+#define STR_DLGLOBBY_SCRIPT_ERR_DISABLED         2643
+#define STR_DLGLOBBY_SCRIPT_ERR_NAME_TAKEN       2644
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

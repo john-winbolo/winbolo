@@ -37,6 +37,13 @@
  *                row shape and there is one render path
  *                below them.
  *
+ *                A remote server's column also holds the
+ *                scripts in the player's own Mods
+ *                directory, each row saying whether it is
+ *                on the server, on this computer or both,
+ *                and a file only this computer holds can
+ *                be sent to the server from its row.
+ *
  *                The right column has two sources as well,
  *                for a different reason — see
  *                lobbyRoundLive.
@@ -54,13 +61,20 @@
 #include <SDL3/SDL.h>
 
 #include "imgui.h"
+#include "imgui_internal.h" /* ImGui::RenderCheckMark — the tick on a row this computer holds too */
 #include "lobby_internal.h"
 #include "dialog_footer.h"  /* WBUI::DialogFooter — the Close row and its Esc binding */
 extern "C" {
 #include "client_sim.h"     /* the lobby scenario list accessors */
-#include "client_net.h"     /* clientSimNetSendLobbyScenarioListRequest / SetScriptList */
+#include "client_net.h"     /* clientSimNetSendLobbyScenarioListRequest / SetScriptList / ScriptUpload */
 #include "client_command.h" /* CMD_SCRIPT_LIST_MAX — how many names one list may carry */
 #include "server_sim.h"     /* ServerScenarioEntry / serverSimEnumerateScenarioDir — the in-process read */
+#include "lobby_script_rows.h" /* lobbyScriptRowsClassify — server, both or this computer */
+#ifndef __EMSCRIPTEN__
+/* scenarioHostListLocalScripts / LocalScriptPath. The browser build links no
+   scenario library and has no Mods directory of its own, so it lists none. */
+#include "../../../../scenario/scenario_host.h"
+#endif
 #include "scenario_details.h"           /* the rules and callbacks blob the dialog reads */
 #include "sim_rules_names.h"            /* simRulesRuleName / simRulesClassicValue */
 #include "../../../sim_rules_phrase.h"  /* simRulesPhrase — the one wording */
@@ -68,6 +82,7 @@ extern "C" {
 #include "../../../lang.h"
 #include "../../../gamefront.h"  /* gameFrontGetServerSim — whether the server is in this process */
 #include "../../../../server/threads.h"  /* threadsWaitForMutex / Release — the in-process read runs on the render thread */
+#include "../../../../common/wb_log.h"   /* WB_LOG_WARN / WB_LOG_CAT_GUI — a script send that did not start */
 }
 
 /* The window's ID. The caption before ### is translated and the ID after it
@@ -96,24 +111,70 @@ static bool s_asked       = false;
 static bool s_focusedOnce = false;
 
 /* This opening's listing, for a server in this process. Held here because the
- * read is ours and nothing else keeps it — a remote client's listing lives on
- * the ClientSim and is not copied here. */
+ * read is ours and nothing else keeps it. */
+static ServerScenarioEntry s_hostRows[LOBBY_SCENARIO_CHOOSER_MAX];
+static int                 s_hostCount = 0;
+
+/* A remote server's listing, copied off the ClientSim when its sequence moves.
+ * Copied because the row classifier reads the entry shape, and only when the
+ * sequence moves because a finished response is the only time it changes.
+ * s_remoteTaken false copies it on the next frame whatever the sequence. */
+static ServerScenarioEntry s_remoteRows[LOBBY_SCENARIO_CHOOSER_MAX];
+static int                 s_remoteCount = 0;
+static uint32_t            s_remoteSeq   = 0;
+static bool                s_remoteTaken = false;
+
+/* The scripts in this computer's own Mods directory. Read when the dialog
+ * opens and when a send finishes, which is what s_localRead false asks for,
+ * and never per frame: a directory read may boot a VM per loose script. */
 static ServerScenarioEntry s_localRows[LOBBY_SCENARIO_CHOOSER_MAX];
 static int                 s_localCount = 0;
+static bool                s_localRead  = false;
+
+/* The merged column: every server row and every local row no server row
+ * matches. */
+#define LOBBY_SCENARIO_CHOOSER_ROWS (LOBBY_SCENARIO_CHOOSER_MAX * 2)
 
 /* One row, whichever source filled it. The strings point into the listing
- * being drawn — the ClientSim's buffers or the array above, both of which
- * outlive the frame — so the two sources meet here and the drawing below
- * reads one shape. */
+ * being drawn — one of the arrays above, all of which outlive the frame — so
+ * the sources meet here and the drawing below reads one shape.
+ *
+ * state says where the file is. source is the server's SERVER_SCENARIO_SOURCE_*
+ * for a row the server holds, and file is the local file's name for a row it
+ * does not. */
 struct LobbyScenarioRow {
-    const char *file;
-    const char *name;
-    const char *description;
-    int         maxPlayers;
-    int         bots;
-    bool        bound;
-    bool        keepsWinCondition;
+    const char         *file;
+    const char         *name;
+    const char         *description;
+    int                 maxPlayers;
+    int                 bots;
+    bool                bound;
+    bool                keepsWinCondition;
+    LobbyScriptRowState state;
+    uint8_t             source;
 };
+
+/* The one script this dialog has sent, and what became of it. s_sending is
+ * set when the send is handed to the transport and cleared when the shared
+ * upload status reads done or refused; only the row whose file is s_sendFile
+ * draws the progress.
+ *
+ * s_awaitFile is a sent file the server took, waiting for the list the dialog
+ * asked for after it: s_awaitSeq is the list's sequence when that ask went,
+ * and the first list after it is the one that holds the file.
+ *
+ * s_rejectFile is the row that shows why the server refused it, until
+ * s_rejectUntil. The code and the server's reason are kept rather than the
+ * text, so the line is always in the language on screen. */
+#define LOBBY_SCENARIO_REJECT_MS 5000
+static bool     s_sending = false;
+static char     s_sendFile[SERVER_SCENARIO_FILE_LEN]   = "";
+static char     s_awaitFile[SERVER_SCENARIO_FILE_LEN]  = "";
+static uint32_t s_awaitSeq = 0;
+static char     s_rejectFile[SERVER_SCENARIO_FILE_LEN] = "";
+static uint8_t  s_rejectCode = 0;
+static char     s_rejectReason[256] = "";
+static Uint64   s_rejectUntil = 0;
 
 /* Whether a catalogue row is a mod. A mod keeps the round's win condition;
  * a scenario may end the round and say who won, and that is the whole of the
@@ -519,7 +580,15 @@ void lobbyScenarioChooserReset(void) {
     s_open        = false;
     s_asked       = false;
     s_focusedOnce = false;
+    s_hostCount   = 0;
+    s_remoteCount = 0;
+    s_remoteTaken = false;
     s_localCount  = 0;
+    s_localRead   = false;
+    s_sending     = false;
+    s_sendFile[0] = '\0';
+    s_awaitFile[0]  = '\0';
+    s_rejectFile[0] = '\0';
     s_filter[0]   = '\0';
     s_kindFilter  = 0;
     s_roundTaken  = false;
@@ -536,7 +605,12 @@ void lobbyScenarioChooserOpen(void) {
     s_open        = true;
     s_asked       = false;
     s_focusedOnce = false;
-    s_localCount  = 0;
+    s_hostCount   = 0;
+    s_remoteTaken = false;
+    /* This computer's scripts are read again, on the first frame. A send
+       still running is left alone: it carries on whether the dialog is open
+       or not, and the row picks its progress up again. */
+    s_localRead   = false;
     s_filter[0]   = '\0';
     s_kindFilter  = 0;
     /* The draft is not taken here. It is taken on the first frame the window
@@ -550,8 +624,9 @@ void lobbyScenarioChooserOpen(void) {
 /* The numbers under a row: the human cap the scenario asks for and the seats
  * its lobby holds for bots. Each is drawn only where the manifest gave one —
  * 0 means it said nothing rather than none — so a scenario that named neither
- * gets no line instead of a line of zeroes. */
-static void lobbyScenarioRowCaps(int maxPlayers, int bots) {
+ * gets no line instead of a line of zeroes. True when it drew either, so a
+ * caller adding to the line knows whether to go on beside it. */
+static bool lobbyScenarioRowCaps(int maxPlayers, int bots) {
     MessageArgs args = {};
     bool        drew = false;
 
@@ -567,7 +642,9 @@ static void lobbyScenarioRowCaps(int maxPlayers, int bots) {
         if (drew) ImGui::SameLine(0.0f, 16.0f);
         ImGui::TextDisabled("%s",
             langGetTextFmt(STR_DLGLOBBY_SCENARIO_BOTS, &botArgs));
+        drew = true;
     }
+    return drew;
 }
 
 /* The map a bound script belongs to, read off the script's file name: the
@@ -768,8 +845,8 @@ static void lobbyScenarioCatalogueEnsure(ClientSim *cs) {
     sim = gameFrontGetServerSim();
     if (sim != NULL) {
         threadsWaitForMutex();
-        s_localCount = serverSimEnumerateScenarioDir(
-            sim, s_localRows, LOBBY_SCENARIO_CHOOSER_MAX);
+        s_hostCount = serverSimEnumerateScenarioDir(
+            sim, s_hostRows, LOBBY_SCENARIO_CHOOSER_MAX);
         threadsReleaseMutex();
     } else {
         clientSimNetSendLobbyScenarioListRequest(cs);
@@ -789,9 +866,9 @@ static const char *lobbyScenarioDescOfFile(ClientSim *cs, const char *file) {
     int i, n;
 
     if (file == NULL || file[0] == '\0') return "";
-    for (i = 0; i < s_localCount; i++) {
-        if (SDL_strcmp(s_localRows[i].file, file) == 0) {
-            return s_localRows[i].description;
+    for (i = 0; i < s_hostCount; i++) {
+        if (SDL_strcmp(s_hostRows[i].file, file) == 0) {
+            return s_hostRows[i].description;
         }
     }
     if (cs == NULL) return "";
@@ -1413,6 +1490,260 @@ static void lobbyRoundOpenDetails(ClientSim *cs, const LobbyRoundRow *r,
     }
 }
 
+/* ── This computer's scripts, and sending one ─────────────────────
+ * A server in this process reads the same directories this computer does, so
+ * every file here is already one of its rows and there is nothing to read. */
+static void lobbyScenarioLocalRead(bool inProcess) {
+#ifndef __EMSCRIPTEN__
+    s_localCount = inProcess ? 0
+                             : scenarioHostListLocalScripts(
+                                   s_localRows, LOBBY_SCENARIO_CHOOSER_MAX);
+#else
+    (void)inProcess;
+    s_localCount = 0;
+#endif
+}
+
+/* The remote listing into s_remoteRows, when a response has finished since the
+ * last copy. */
+static void lobbyScenarioRemoteTake(ClientSim *cs) {
+    uint32_t seq = clientSimGetLobbyScenarioListSeq(cs);
+    int      n;
+    int      i;
+
+    if (s_remoteTaken && seq == s_remoteSeq) return;
+    n = clientSimGetLobbyScenarioListCount(cs);
+    if (n > LOBBY_SCENARIO_CHOOSER_MAX) n = LOBBY_SCENARIO_CHOOSER_MAX;
+    for (i = 0; i < n; i++) {
+        ServerScenarioEntry *e = &s_remoteRows[i];
+
+        SDL_strlcpy(e->file, clientSimGetLobbyScenarioListFile(cs, i),
+                    sizeof(e->file));
+        SDL_strlcpy(e->name, clientSimGetLobbyScenarioListName(cs, i),
+                    sizeof(e->name));
+        SDL_strlcpy(e->description,
+                    clientSimGetLobbyScenarioListDescription(cs, i),
+                    sizeof(e->description));
+        e->maxPlayers = (uint8_t)clientSimGetLobbyScenarioListMaxPlayers(cs, i);
+        e->bots       = (uint8_t)clientSimGetLobbyScenarioListBots(cs, i);
+        e->bound      = clientSimGetLobbyScenarioListBound(cs, i);
+        e->keepsWinCondition =
+            clientSimGetLobbyScenarioListKeepsWinCondition(cs, i);
+        e->source     = clientSimGetLobbyScenarioListSource(cs, i);
+        e->workshopId = clientSimGetLobbyScenarioListWorkshopId(cs, i);
+    }
+    s_remoteCount = n;
+    s_remoteSeq   = seq;
+    s_remoteTaken = true;
+}
+
+/* Why the server refused the file this dialog sent. The codes are
+ * LOBBY_REJECT_* in netpacks.h, which a gui translation unit cannot reach,
+ * so they are numbered here the way the map chooser's Upload tab numbers
+ * them. 3 is the one refusal that carries the server's own words. */
+static const char *lobbyScenarioSendRefusal(void) {
+    switch (s_rejectCode) {
+        case 3:
+            return s_rejectReason[0] != '\0'
+                       ? s_rejectReason
+                       : langGetText(STR_DLGLOBBY_UPLOAD_ERR_REJECTED);
+        case 4: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT);
+        case 5: return langGetText(STR_DLGLOBBY_SCRIPT_ERR_DISABLED);
+        case 6: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_FULL);
+        case 7: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_COOLDOWN);
+        case 8: return langGetText(STR_DLGLOBBY_SCRIPT_ERR_NAME_TAKEN);
+        default: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_REJECTED);
+    }
+}
+
+/* Why the Send button is greyed, as the lang id that says so, or 0 when it is
+ * not. The button is drawn for a player who may not change the round as well,
+ * greyed, so they can see the file is theirs and not the server's; a send
+ * that landed would only be added to the round for a player who may. An
+ * upload of either kind in flight holds the transport's one upload slot. */
+static int lobbyScenarioWhyNotSend(ClientSim *cs, bool mayEdit) {
+    uint8_t status = clientSimGetLobbyMapUploadStatus(cs);
+
+    if (!mayEdit) return STR_DLGLOBBY_SCENARIO_SEND_NOT_HOST;
+    if (clientSimGetScriptUploadPolicy(cs) == SCRIPT_UPLOAD_OFF) {
+        return STR_DLGLOBBY_SCRIPT_ERR_DISABLED;
+    }
+    if (s_sending || status == 1 || status == 2) {
+        return STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT;
+    }
+    return 0;
+}
+
+/* A file only this computer holds, handed to the transport. A send the
+ * transport will not start — the file went, or grew past the cap, since the
+ * directory was read — starts nothing, and the directory is read again on the
+ * next frame so a file that went stops being offered. */
+static void lobbyScenarioSend(ClientSim *cs, const LobbyScenarioRow *row) {
+#ifndef __EMSCRIPTEN__
+    char path[SCN_SCRIPT_PATH_MAX];
+
+    if (!scenarioHostLocalScriptPath(row->file, path, sizeof(path)) ||
+        !clientSimNetSendLobbyScriptUpload(cs, path)) {
+        WB_LOG_WARN(WB_LOG_CAT_GUI, "[SCRIPTSEND] '%s' was not sent",
+                    row->file);
+        s_localRead = false;
+        return;
+    }
+    s_sending = true;
+    SDL_strlcpy(s_sendFile, row->file, sizeof(s_sendFile));
+    s_rejectFile[0] = '\0';
+#else
+    (void)cs;
+    (void)row;
+#endif
+}
+
+/* What became of the send, read once a frame off the shared upload status.
+ * The status is a map upload's as well, so it is read only while it says it
+ * is a script's; a map upload replacing it ends this one's watch.
+ *
+ * Done asks the server for its list again and reads this computer's again,
+ * and the row becomes one the server holds when that list lands. The file is
+ * then added to the draft the way the add arrow adds a row, once, for a
+ * player who may change the round; it goes to the server with the rest of the
+ * draft when they press OK. Refused shows the reason on the row for five
+ * seconds. */
+static void lobbyScenarioSendFollow(ClientSim *cs, LobbyScenarioRow *rows,
+                                    int count, bool mayEdit) {
+    int i;
+
+    if (s_sending) {
+        uint8_t status = clientSimGetLobbyMapUploadStatus(cs);
+
+        if (clientSimGetLobbyUploadKind(cs) != UPLOAD_KIND_SCRIPT) {
+            s_sending = false;
+        } else if (status == 3) {
+            s_sending = false;
+            SDL_strlcpy(s_awaitFile, s_sendFile, sizeof(s_awaitFile));
+            s_awaitSeq = clientSimGetLobbyScenarioListSeq(cs);
+            clientSimNetSendLobbyScenarioListRequest(cs);
+            s_localRead = false;
+        } else if (status == 4) {
+            s_sending    = false;
+            s_rejectCode = clientSimGetLobbyMapUploadRejectCode(cs);
+            SDL_strlcpy(s_rejectReason, clientSimGetLobbyMapUploadFinalPath(cs),
+                        sizeof(s_rejectReason));
+            SDL_strlcpy(s_rejectFile, s_sendFile, sizeof(s_rejectFile));
+            s_rejectUntil = SDL_GetTicks() + LOBBY_SCENARIO_REJECT_MS;
+        }
+    }
+
+    if (s_awaitFile[0] != '\0' &&
+        clientSimGetLobbyScenarioListSeq(cs) != s_awaitSeq) {
+        if (mayEdit) {
+            for (i = 0; i < count; i++) {
+                if (rows[i].state != LOBBY_SCRIPT_ROW_LOCAL_ONLY &&
+                    SDL_strcasecmp(rows[i].file, s_awaitFile) == 0) {
+                    lobbyRoundAdd(&rows[i]);
+                    break;
+                }
+            }
+        }
+        s_awaitFile[0] = '\0';
+    }
+
+    if (s_rejectFile[0] != '\0' && SDL_GetTicks() >= s_rejectUntil) {
+        s_rejectFile[0] = '\0';
+    }
+}
+
+/* A tick the height of a line of text, for a row the server and this computer
+ * both hold. Drawn rather than typed, because the font may have no glyph for
+ * one. */
+static void lobbyScenarioRowTick(void) {
+    ImVec2 at = ImGui::GetCursorScreenPos();
+    float  sz = ImGui::GetTextLineHeight();
+
+    ImGui::Dummy(ImVec2(sz, sz));
+    ImGui::RenderCheckMark(ImGui::GetWindowDrawList(),
+                           ImVec2(at.x + sz * 0.1f, at.y + sz * 0.1f),
+                           ImGui::GetColorU32(ImGuiCol_CheckMark), sz * 0.8f);
+}
+
+/* Where a row is, in the grey of the caps line and on the end of it when that
+ * drew anything. A player's upload says so on either kind of server row, so a
+ * player can tell a file somebody sent from one the server keeps. */
+static void lobbyScenarioRowWhere(const LobbyScenarioRow *row, bool afterCaps) {
+    if (afterCaps) ImGui::SameLine(0.0f, 16.0f);
+    switch (row->state) {
+        case LOBBY_SCRIPT_ROW_SERVER_ONLY:
+            ImGui::TextDisabled("%s",
+                                langGetText(STR_DLGLOBBY_SCENARIO_SRC_SERVER));
+            break;
+        case LOBBY_SCRIPT_ROW_BOTH:
+            lobbyScenarioRowTick();
+            ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+            ImGui::TextDisabled("%s",
+                                langGetText(STR_DLGLOBBY_SCENARIO_SRC_LOCAL));
+            break;
+        case LOBBY_SCRIPT_ROW_LOCAL_ONLY:
+            ImGui::TextDisabled("%s",
+                                langGetText(STR_DLGLOBBY_SCENARIO_SRC_LOCAL));
+            return;
+    }
+    if (row->source == SERVER_SCENARIO_SOURCE_UPLOAD) {
+        ImGui::SameLine(0.0f, 16.0f);
+        ImGui::TextDisabled("%s",
+                            langGetText(STR_DLGLOBBY_SCENARIO_SRC_UPLOADED));
+    }
+}
+
+/* A row only this computer holds: its name, its kind, and the button that
+ * sends it where the add arrow would be. Its name is not a link, because the
+ * details are the server's answer about a file and the server has none for
+ * this one yet. Under it, while it is being sent, the progress, drawn the way
+ * the join download draws its own; and for five seconds after the server
+ * refused it, why. */
+static void lobbyScenarioLocalRow(ClientSim *cs, const LobbyScenarioRow *row,
+                                  bool mayEdit, float s, bool *focused) {
+    char  nameBuf[SERVER_SCENARIO_FILE_LEN + 4];
+    float inner = ImGui::GetStyle().ItemInnerSpacing.x;
+    float minW  = (ImGui::GetTextLineHeight() + inner) * 2.0f;
+    float sendW = ImGui::GetFrameHeight() + inner;
+    float tagW  = lobbyScenarioKindTagWidth(lobbyScenarioRowIsMod(row), s);
+    float nameW = ImGui::GetContentRegionAvail().x - sendW - tagW;
+    int   why   = lobbyScenarioWhyNotSend(cs, mayEdit);
+    bool  mine  = SDL_strcmp(row->file, s_sendFile) == 0;
+
+    if (nameW < minW) nameW = 0.0f;
+    lobbyTruncateName(row->name, nameW, nameBuf, sizeof(nameBuf));
+    ImGui::TextUnformatted(nameBuf);
+    lobbyScenarioKindTag(lobbyScenarioRowIsMod(row), s);
+
+    ImGui::SameLine(0.0f, inner);
+    if (lobbyScenarioArrow("##send", ImGuiDir_Up, why == 0,
+                           langGetText(why != 0 ? why
+                                                : STR_DLGLOBBY_SCENARIO_SEND))) {
+        lobbyScenarioSend(cs, row);
+    }
+    if (!*focused && why == 0) {
+        ImGui::SetItemDefaultFocus();
+        *focused = true;
+    }
+
+    ImGui::Indent();
+    if (mine && s_sending &&
+        clientSimGetLobbyUploadKind(cs) == UPLOAD_KIND_SCRIPT) {
+        uint8_t status = clientSimGetLobbyMapUploadStatus(cs);
+
+        if (status == 1 || status == 2) {
+            ImGui::ProgressBar(
+                (float)clientSimGetLobbyMapUploadProgressPercent(cs) / 100.0f,
+                ImVec2(-1.0f, 0.0f));
+        }
+    }
+    lobbyScenarioRowWhere(row, false);
+    if (s_rejectFile[0] != '\0' && SDL_strcmp(row->file, s_rejectFile) == 0) {
+        lobbyScenarioRowNote(lobbyScenarioSendRefusal());
+    }
+    ImGui::Unindent();
+}
+
 /* ── The left column: what this server offers ─────────────────────
  * Every row of the catalogue that a host may put in a list, which is every
  * row that is not bound.
@@ -1427,12 +1758,17 @@ static void lobbyRoundOpenDetails(ClientSim *cs, const LobbyRoundRow *r,
  * throws out.
  *
  * Kind still decides what happens when a row is taken, which is why the
- * column reads both answers. */
-static void lobbyScenarioChooserCatalogue(LobbyScenarioRow *rows, int count,
+ * column reads both answers.
+ *
+ * The rows only this computer holds are held to the same test and the same
+ * two filters, and are drawn by lobbyScenarioLocalRow. */
+static void lobbyScenarioChooserCatalogue(ClientSim *cs,
+                                          LobbyScenarioRow *rows, int count,
                                           bool ready, bool inFlight,
                                           bool mayEdit, float s) {
-    int shown = 0;
-    int i;
+    int  shown   = 0;
+    bool focused = false;
+    int  i;
 
     ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_SCENARIO_OFFERED));
 
@@ -1515,6 +1851,13 @@ static void lobbyScenarioChooserCatalogue(LobbyScenarioRow *rows, int count,
         if (!lobbyScenarioRowMatches(&rows[i], s_filter)) continue;
         shown++;
 
+        if (rows[i].state == LOBBY_SCRIPT_ROW_LOCAL_ONLY) {
+            ImGui::PushID(i);
+            lobbyScenarioLocalRow(cs, &rows[i], mayEdit, s, &focused);
+            ImGui::PopID();
+            continue;
+        }
+
         why = lobbyRoundWhyNotAdd(&rows[i]);
         can = mayEdit && why == 0;
 
@@ -1557,10 +1900,11 @@ static void lobbyScenarioChooserCatalogue(LobbyScenarioRow *rows, int count,
         imguiHandOnHover();
         /* Read off the name before the tag draws, because both of these ask
            about the last item and the tag would become it. */
-        if (shown == 1) {
+        if (!focused) {
             /* Where a controller's focus starts, so the D-pad has somewhere
                to step from on the frame the dialog appears. */
             ImGui::SetItemDefaultFocus();
+            focused = true;
         }
         lobbyScenarioKindTag(lobbyScenarioRowIsMod(&rows[i]), s);
 
@@ -1582,9 +1926,10 @@ static void lobbyScenarioChooserCatalogue(LobbyScenarioRow *rows, int count,
 
            The caps stay: two short numbers that say whether a row fits the
            game being set up, which is the question the list itself is being
-           read to answer. */
+           read to answer. Where the row is goes on the end of them. */
         ImGui::Indent();
-        lobbyScenarioRowCaps(rows[i].maxPlayers, rows[i].bots);
+        lobbyScenarioRowWhere(&rows[i], lobbyScenarioRowCaps(rows[i].maxPlayers,
+                                                             rows[i].bots));
         ImGui::Unindent();
         ImGui::PopID();
     }
@@ -1768,6 +2113,12 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
        packet and a lobby hosted here has no UDP transport to send it on, so
        asking would leave the list empty. A remote server is asked. */
     lobbyScenarioCatalogueEnsure(cs);
+    /* This computer's own scripts beside it, once per opening and again when
+       a send finishes. */
+    if (!s_localRead) {
+        lobbyScenarioLocalRead(sim != NULL);
+        s_localRead = true;
+    }
 
     char title[128];
     SDL_snprintf(title, sizeof(title), "%s" LOBBY_SCENARIO_WINDOW_ID,
@@ -1832,12 +2183,21 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
     if (ImGui::Begin(title, &stay,
                      ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoCollapse)) {
-        /* Both sources into the one shape, before anything is drawn. A
+        /* Every source into the one shape, before anything is drawn. A
            directory read is finished by the time its rows are shown, so an
            in-process listing is ready and never in flight — the waiting line
-           in the left column belongs to a remote client alone. */
-        LobbyScenarioRow rows[LOBBY_SCENARIO_CHOOSER_MAX];
-        int  count    = 0;
+           in the left column belongs to a remote client alone.
+
+           The server's rows and this computer's are merged by
+           lobbyScriptRowsClassify: the server's first, in its order, then the
+           files only this computer holds. In process the local list is empty
+           and the classifier ignores it besides, so every row is the
+           server's. */
+        LobbyScenarioRow rows[LOBBY_SCENARIO_CHOOSER_ROWS];
+        LobbyScriptRow   merged[LOBBY_SCENARIO_CHOOSER_ROWS];
+        const ServerScenarioEntry *server;
+        int  serverCount;
+        int  count;
         bool ready    = true;
         bool inFlight = false;
         LobbyRoundRow live[LOBBY_ROUND_MAX];
@@ -1845,39 +2205,35 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
         bool mayEdit  = lobbyScenarioMayChoose(cs);
 
         if (sim != NULL) {
-            count = s_localCount;
-            if (count > LOBBY_SCENARIO_CHOOSER_MAX) {
-                count = LOBBY_SCENARIO_CHOOSER_MAX;
-            }
-            for (int i = 0; i < count; i++) {
-                rows[i].file        = s_localRows[i].file;
-                rows[i].name        = s_localRows[i].name;
-                rows[i].description = s_localRows[i].description;
-                rows[i].maxPlayers  = s_localRows[i].maxPlayers;
-                rows[i].bots        = s_localRows[i].bots;
-                rows[i].bound       = s_localRows[i].bound;
-                rows[i].keepsWinCondition =
-                    s_localRows[i].keepsWinCondition;
-            }
+            server      = s_hostRows;
+            serverCount = s_hostCount;
         } else {
             ready    = clientSimGetLobbyScenarioListReady(cs);
             inFlight = clientSimGetLobbyScenarioListInFlight(cs);
-            count    = clientSimGetLobbyScenarioListCount(cs);
-            if (count > LOBBY_SCENARIO_CHOOSER_MAX) {
-                count = LOBBY_SCENARIO_CHOOSER_MAX;
-            }
-            for (int i = 0; i < count; i++) {
-                rows[i].file = clientSimGetLobbyScenarioListFile(cs, i);
-                rows[i].name = clientSimGetLobbyScenarioListName(cs, i);
-                rows[i].description =
-                    clientSimGetLobbyScenarioListDescription(cs, i);
-                rows[i].maxPlayers =
-                    clientSimGetLobbyScenarioListMaxPlayers(cs, i);
-                rows[i].bots  = clientSimGetLobbyScenarioListBots(cs, i);
-                rows[i].bound = clientSimGetLobbyScenarioListBound(cs, i);
-                rows[i].keepsWinCondition =
-                    clientSimGetLobbyScenarioListKeepsWinCondition(cs, i);
-            }
+            lobbyScenarioRemoteTake(cs);
+            server      = s_remoteRows;
+            serverCount = s_remoteCount;
+        }
+        if (serverCount > LOBBY_SCENARIO_CHOOSER_MAX) {
+            serverCount = LOBBY_SCENARIO_CHOOSER_MAX;
+        }
+        count = lobbyScriptRowsClassify(server, serverCount, s_localRows,
+                                        s_localCount, sim != NULL, merged,
+                                        LOBBY_SCENARIO_CHOOSER_ROWS);
+        for (int i = 0; i < count; i++) {
+            const ServerScenarioEntry *e =
+                merged[i].serverIdx >= 0 ? &server[merged[i].serverIdx]
+                                         : &s_localRows[merged[i].localIdx];
+
+            rows[i].file              = e->file;
+            rows[i].name              = e->name;
+            rows[i].description       = e->description;
+            rows[i].maxPlayers        = e->maxPlayers;
+            rows[i].bots              = e->bots;
+            rows[i].bound             = e->bound;
+            rows[i].keepsWinCondition = e->keepsWinCondition;
+            rows[i].state             = merged[i].state;
+            rows[i].source            = e->source;
         }
         /* A manifest that named nothing still came from a file. Done here
            rather than where a name is drawn, so the filter, the details
@@ -1904,6 +2260,9 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
             s_roundTaken = true;
         }
 
+        /* After the draft, which a script the server took is added to. */
+        if (sim == NULL) lobbyScenarioSendFollow(cs, rows, count, mayEdit);
+
         /* The two columns, side by side, each scrolling on its own. The
            footer's height is reserved at the window level, the way the map
            chooser reserves its own action bar, so a server with a full
@@ -1926,8 +2285,8 @@ void lobbyScenarioChooserRenderWindow(ClientSim *cs, float s,
         ImGui::BeginChild("##scnOffered", ImVec2(colW, -btnBarH),
                           ImGuiChildFlags_Borders |
                               ImGuiChildFlags_NavFlattened);
-        lobbyScenarioChooserCatalogue(rows, count, ready, inFlight, mayEdit,
-                                      s);
+        lobbyScenarioChooserCatalogue(cs, rows, count, ready, inFlight,
+                                      mayEdit, s);
         ImGui::EndChild();
 
         ImGui::SameLine();

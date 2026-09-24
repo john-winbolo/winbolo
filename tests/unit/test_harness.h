@@ -2033,6 +2033,19 @@ int run_script_upload_reset_drops_session_picks(void);
 int run_loopback_script_upload_plays_next_round(void);
 int run_script_upload_list_source(void);
 int run_loopback_script_upload_source_on_wire(void);
+/* The Mods chooser's rows from the server and from this computer
+ * (test_lobby_script_rows.c): which of the two holds each file, by Workshop
+ * id or by name ignoring case, in the server's order then the local order,
+ * none of this computer's alone in process, and the cap; and the listing of
+ * the player's own Mods directory with no sim. */
+int run_lobby_script_rows_states_by_name(void);
+int run_lobby_script_rows_case_only_match(void);
+int run_lobby_script_rows_workshop_id_matches(void);
+int run_lobby_script_rows_workshop_id_differs(void);
+int run_lobby_script_rows_in_process(void);
+int run_lobby_script_rows_order(void);
+int run_lobby_script_rows_truncated(void);
+int run_scenario_local_scripts_listed(void);
 /* Map join-download + live resync over CHANNEL_BULK (test_loopback_download.c):
  * a lobby join download completes under loss; a mid-game joiner downloads while
  * the server is Running (the bulk-carrier deadlock case); and a reported

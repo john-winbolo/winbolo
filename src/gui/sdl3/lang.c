@@ -2588,6 +2588,13 @@ static const LangEntry langTable[] = {
     {2635, "Allow this session"},
     {2636, "Allow and keep"},
     {2637, "Script Upload Directory"},
+    {2638, "server"},
+    {2639, "uploaded"},
+    {2640, "on this computer"},
+    {2641, "Send to server"},
+    {2642, "Only the host or an admin can send scripts."},
+    {2643, "This server doesn't take scripts."},
+    {2644, "The server already has a script with this name."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

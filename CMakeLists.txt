@@ -4061,6 +4061,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_view_ally_loopback.c
     tests/unit/test_loopback_upload.c
     tests/unit/test_script_upload.c
+    tests/unit/test_lobby_script_rows.c
     tests/unit/test_gate1_integration.c
     tests/unit/test_interp_jitter_e2e.c
     tests/unit/test_join_version_gate.c
@@ -5341,6 +5342,14 @@ set(_unit_test_names
     loopback_script_upload_plays_next_round
     script_upload_list_source
     loopback_script_upload_source_on_wire
+    lobby_script_rows_states_by_name
+    lobby_script_rows_case_only_match
+    lobby_script_rows_workshop_id_matches
+    lobby_script_rows_workshop_id_differs
+    lobby_script_rows_in_process
+    lobby_script_rows_order
+    lobby_script_rows_truncated
+    scenario_local_scripts_listed
     loopback_download_join
     loopback_download_midgame
     loopback_resync

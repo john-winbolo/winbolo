@@ -142,6 +142,8 @@ static void lobbySpWbnConsume(ClientSim *cs, SDL_Renderer *renderer) {
      * SP host: the wrapper's local-transport branch installs the
      * bytes synchronously onto spServerSim (no chunked transfer). */
     if (!clientSimIsSinglePlayer(cs)) {
+        /* Either kind: a script the Mods chooser is sending holds the one
+           upload the transport runs at a time just as a map does. */
         uint8_t upStatus = clientSimGetLobbyMapUploadStatus(cs);
         if (upStatus == 1 || upStatus == 2) {
             WB_LOG_INFO(WB_LOG_CAT_GUI,

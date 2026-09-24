@@ -7023,6 +7023,124 @@ void scenarioHostRegisterScenarioLister(ServerSim *sim) {
     serverSimSetScriptUploadAccept(sim, scnUploadAccept, sim);
 }
 
+/* ── The scripts on this computer ─────────────────────────────────── */
+
+/* Where this computer's own scripts are read from, in the order a name
+   clash resolves between them: the player's own Mods directory. The
+   Workshop directory goes after it here once Workshop items are synced to
+   one. */
+static int scnLocalDirs(char dirs[][SCN_SCRIPT_PATH_MAX]) {
+    char one[SCN_SCRIPT_PATH_MAX];
+    int  count = 0;
+
+    if (scnModDirUser(one, sizeof(one))) scnModDirAdd(dirs, &count, one);
+    return count;
+}
+
+static int scnLocalRowCmp(const void *a, const void *b) {
+    const ServerScenarioEntry *ea = (const ServerScenarioEntry *)a;
+    const ServerScenarioEntry *eb = (const ServerScenarioEntry *)b;
+
+    return SDL_strcasecmp(ea->file, eb->file);
+}
+
+int scenarioHostListLocalScripts(ServerScenarioEntry *out, int max) {
+    char         dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
+    ScnDirEntry *rows;
+    int          count;
+    int          n = 0;
+    int          d;
+
+    if (out == NULL || max <= 0) return 0;
+
+    /* A remote client never registers a lister, which is where the cache's
+       lock is otherwise made, and without the lock scnDirListCached reads
+       the directory afresh every time. Made here the same way, so this
+       listing is cached as well. */
+    if (scnDirCacheLock.m == NULL) {
+        (void)scnLockCreate(&scnDirCacheLock);
+    }
+
+    /* On the heap for the reason serverSimEnumerateScenarioDir gives: a full
+       listing runs to tens of kilobytes and this runs on the UI thread. */
+    rows = (ScnDirEntry *)calloc((size_t)max, sizeof(*rows));
+    if (rows == NULL) return 0;
+
+    count = scnLocalDirs(dirs);
+    for (d = 0; d < count && n < max; d++) {
+        int got = scnDirListCached(dirs[d], rows, NULL, max);
+        int i;
+
+        for (i = 0; i < got && n < max; i++) {
+            ServerScenarioEntry *e   = &out[n];
+            bool                 dup = false;
+            int                  j;
+
+            /* A name a directory above already gave is that directory's. */
+            for (j = 0; j < n; j++) {
+                if (SDL_strcasecmp(out[j].file, rows[i].file) == 0) {
+                    dup = true;
+                    break;
+                }
+            }
+            if (dup) continue;
+
+            SDL_strlcpy(e->file, rows[i].file, sizeof(e->file));
+            SDL_strlcpy(e->name, rows[i].name, sizeof(e->name));
+            SDL_strlcpy(e->description, rows[i].description,
+                        sizeof(e->description));
+            e->maxPlayers        = rows[i].maxPlayers;
+            e->bots              = rows[i].bots;
+            e->bound             = rows[i].bound;
+            e->keepsWinCondition = rows[i].keepsWinCondition;
+            e->source            = SERVER_SCENARIO_SOURCE_SERVER;
+            e->workshopId        = 0;
+            n++;
+        }
+    }
+    free(rows);
+
+    if (n > 1) {
+        qsort(out, (size_t)n, sizeof(out[0]), scnLocalRowCmp);
+    }
+    return n;
+}
+
+bool scenarioHostLocalScriptPath(const char *file, char *out, size_t outLen) {
+    char dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
+    int  count;
+    int  d;
+
+    if (out == NULL || outLen == 0) return false;
+    out[0] = '\0';
+    /* A file name and nothing else, so what is sent is always a file one of
+       these directories holds and never somewhere a name walked out to. */
+    if (file == NULL || file[0] == '\0' || strchr(file, '/') != NULL ||
+        strchr(file, '\\') != NULL) {
+        return false;
+    }
+
+    count = scnLocalDirs(dirs);
+    for (d = 0; d < count; d++) {
+        char         path[SCN_SCRIPT_PATH_MAX];
+        SDL_PathInfo info;
+
+        if ((size_t)snprintf(path, sizeof(path), "%s/%s", dirs[d], file) >=
+            sizeof(path)) {
+            continue;
+        }
+        if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE) {
+            continue;
+        }
+        if ((size_t)snprintf(out, outLen, "%s", path) >= outLen) {
+            out[0] = '\0';
+            return false;
+        }
+        return true;
+    }
+    return false;
+}
+
 /* ── Where the script comes from ──────────────────────────────────── */
 
 /* A script and where it was found. The bytes are the caller's to free;
