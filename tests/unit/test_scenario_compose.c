@@ -68,7 +68,9 @@
  *       — two scripts halving a blow leave a quarter of it.
  *   scenario_compose_policy_base_win
  *       — allow_base_win is the base's alone: a mod's is not asked, and the
- *       base's own false still takes the sweep out of the round.
+ *       base's own false still takes the sweep out of the round. A mod
+ *       playing alone is told once that its allow_base_win is not read, and
+ *       only when it wrote one.
  *   scenario_compose_policy_first_answer
  *       — two scripts handing a spawning tank different stores: the one
  *       earlier on the list wins, and flipping the list flips the answer.
@@ -353,9 +355,17 @@ static const char kScOtherScenario[] =
 static char   scNote[8192];
 static size_t scNoteLen;
 
+/* The host's own line about a mod's allow_base_win, which carries no mark:
+   counted rather than kept, because what a case reads is how many times it
+   was said. */
+#define SC_BASE_WIN_SKIPPED "allow_base_win is not read"
+
+static int scBaseWinSkipped;
+
 static void scNoteReset(void) {
     scNote[0] = '\0';
     scNoteLen = 0;
+    scBaseWinSkipped = 0;
 }
 
 /* One console line, kept if a script wrote it. A record past the buffer is
@@ -385,6 +395,9 @@ static void (*scConsolePrev)(void *ctx, char *msg) = NULL;
 static void scConsoleCb(void *ctx, char *msg) {
     if (scConsolePrev != NULL) {
         scConsolePrev(ctx, msg);
+    }
+    if (msg != NULL && strstr(msg, SC_BASE_WIN_SKIPPED) != NULL) {
+        scBaseWinSkipped++;
     }
     scNoteLine(msg);
 }
@@ -1338,6 +1351,7 @@ int run_scenario_compose_policy_damage_scale(void) {
 int run_scenario_compose_policy_base_win(void) {
     ServerSim  *sim;
     const char *picks[1] = { "sweepmod.lua" };
+    const char *noSweep[1] = { "halftwo.lua" };
     char        said[8192];
 
     UT_ASSERT(scMakeDir("policy_base_win"));
@@ -1374,7 +1388,40 @@ int run_scenario_compose_policy_base_win(void) {
                   "nothing: %s", said);
     scDestroy(sim);
 
+    /* With no map script the one picked mod is the base, and the host says
+       once that its allow_base_win is skipped — but only when it wrote one.
+       A mod that never did is not told about a function it does not have. */
     scDropMapScript();
+    UT_ASSERT(scWrite("halftwo.lua", kScHalfTwo));
+    sim = scRunningSim(noSweep, 1);
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(scenarioHostScriptCount(scSlot) == 1,
+                  "the round composed %d scripts, wanted the mod alone",
+                  scenarioHostScriptCount(scSlot));
+    scNoteReset();
+    (void)serverSimCheckGameWin(sim, false);
+    (void)serverSimCheckGameWin(sim, false);
+    UT_ASSERT_MSG(scBaseWinSkipped == 0,
+                  "a mod with no allow_base_win was told %d times that its "
+                  "allow_base_win is not read", scBaseWinSkipped);
+    scDestroy(sim);
+
+    sim = scRunningSim(picks, 1);
+    UT_ASSERT(sim != NULL);
+    UT_ASSERT_MSG(scenarioHostScriptCount(scSlot) == 1,
+                  "the round composed %d scripts, wanted the mod alone",
+                  scenarioHostScriptCount(scSlot));
+    scNoteReset();
+    (void)serverSimCheckGameWin(sim, false);
+    (void)serverSimCheckGameWin(sim, false);
+    scReadNote(said, sizeof(said));
+    UT_ASSERT_MSG(scBaseWinSkipped == 1,
+                  "a mod that wrote allow_base_win was told %d times that it "
+                  "is not read, wanted once", scBaseWinSkipped);
+    UT_ASSERT_MSG(strstr(said, "mod_asked;") == NULL,
+                  "a mod answered allow_base_win with no base: %s", said);
+    scDestroy(sim);
+
     scDropDir();
     return 0;
 }

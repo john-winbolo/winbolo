@@ -5208,6 +5208,22 @@ static bool scnAllowExtraTeams(void *ctx) {
     return allow;
 }
 
+/* Does this script's own environment hold a function of this name? A look
+ * and nothing more: the function is not called, and a tick that has spent
+ * its instructions answers the same as any other, which scnPolicyBegin does
+ * not. The caller holds the VM lock. */
+static bool scnScriptDefines(ScenarioHost *h, int script, const char *name) {
+    bool defined;
+
+    if (h->disabled || h->L == NULL || !scnScriptLive(h, script)) {
+        return false;
+    }
+    scnRawGlobal(h->L, h->entry[script].envRef, name);
+    defined = lua_isfunction(h->L, -1);
+    lua_pop(h->L, 1);
+    return defined;
+}
+
 /* May the round end on one side owning every base? False takes the sweep out
  * of the round's endings and leaves every other one alone.
  *
@@ -5216,7 +5232,8 @@ static bool scnAllowExtraTeams(void *ctx) {
  * the script did not call anything here, the sim called the script, and a
  * raise would be counted against a file whose only fault is having written
  * a function this round will not ask. It is said once so the author knows
- * the function is being skipped rather than never reached. */
+ * the function is being skipped rather than never reached, and only when the
+ * mod wrote one: a mod that never did has nothing being skipped. */
 static bool scnAllowBaseWin(void *ctx) {
     ScenarioHost *h     = (ScenarioHost *)ctx;
     bool          allow = true;
@@ -5233,7 +5250,9 @@ static bool scnAllowBaseWin(void *ctx) {
        one entry this policy is read from, so the base is the one asked
        about. */
     if (scnManifestKeepsWinCondition(h->entry[scnPolicyScript(h)].manifest)) {
-        if (!h->saidBaseWinIgnored) {
+        if (!h->saidBaseWinIgnored &&
+            scnScriptDefines(h, scnPolicyScript(h),
+                             kScnPolicyNames[SCN_POLICY_ALLOW_BASE_WIN])) {
             h->saidBaseWinIgnored = true;
             scnSay(NULL, 0,
                    "scenario: %.32s is a mod, so its allow_base_win is not "
