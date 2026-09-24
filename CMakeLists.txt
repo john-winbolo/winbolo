@@ -2426,8 +2426,12 @@ add_executable(LogViewer
     # spectates, so these resolve the seam symbols here.
     src/logviewer/spectator_input_stub.c
     src/gui/sdl3/lang.c
-    # Not sim_rules_phrase.c beside it: the phrase calls
-    # simRulesDescribeChange in bolo_static, which this target does not link.
+    src/gui/sdl3/sim_rules_phrase.c
+    # The viewer names a rule, phrases a change and parses a scenario panel.
+    # The standalone links no bolo_static, so the rule tables and the panel
+    # parser compile in directly. Both call nothing but libc.
+    src/bolo/sim_rules.c
+    src/bolo/scenario_panel.c
     src/gui/sdl3/gamefront_stubs.c
     # The replay draws the same smart-ping glyphs the game does, out of the
     # same loose files.
@@ -2497,6 +2501,10 @@ target_include_directories(LogViewer PRIVATE
     ${cjson_SOURCE_DIR}
 )
 bolo_apply_include_rules(LogViewer runtime_only)
+# sim_rules.c spells the classic values in the sim's own constants, which
+# live in internal/ headers.
+bolo_grant_internal_source_access(LogViewer
+    src/bolo/sim_rules.c)
 
 target_link_libraries(LogViewer PRIVATE
     winbolonet_core
@@ -4377,6 +4385,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # arrays, an entity removal past the array, a server line to a slot past
     # the roster, a modifiers blob of the wrong length.
     tests/unit/test_lv_hostile_records.c
+    # The rule names and the panel parser the standalone and wasm viewers
+    # compile in: a rule's name from its index and back, and a two-primitive
+    # list through scnPanelParse.
+    tests/unit/test_lv_sim_rules_names.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).
@@ -6209,6 +6221,7 @@ set(_unit_test_names
     scenario_panel_roundtrip
     scenario_panel_timer_text
     scenario_announce_remaining
+    lv_rule_names_and_panel_parse
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast

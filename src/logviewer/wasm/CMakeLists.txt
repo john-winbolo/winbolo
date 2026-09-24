@@ -55,7 +55,21 @@ FetchContent_Declare(zlib
     GIT_REPOSITORY https://github.com/madler/zlib.git
     GIT_TAG        v1.3.1
 )
-FetchContent_MakeAvailable(sdl3 sdl3_ttf imgui zlib)
+FetchContent_Declare(cjson
+    GIT_REPOSITORY https://github.com/DaveGamble/cJSON.git
+    GIT_TAG        v1.7.18
+    GIT_SHALLOW    TRUE
+    SYSTEM
+    EXCLUDE_FROM_ALL
+)
+
+# cJSON as a static library, with its tests and install rules off.
+set(CJSON_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(ENABLE_CJSON_TEST OFF CACHE BOOL "" FORCE)
+set(ENABLE_CJSON_INSTALL OFF CACHE BOOL "" FORCE)
+set(ENABLE_CJSON_UNINSTALL OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(sdl3 sdl3_ttf imgui zlib cjson)
 
 ###
 # minizip (from zlib contrib)
@@ -111,11 +125,13 @@ file(GLOB LV_SOURCES
 # Exclude files we're replacing with WASM versions
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*main\\.c$")
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*logviewer\\.c$")
-# lv_embed.c is the embed host, split out of logviewer.c. This target excludes
-# logviewer.c and supplies its own host in main_wasm.c, so the embed has no
-# caller here — keep it out of the standalone viewer's payload.
-list(FILTER LV_SOURCES EXCLUDE REGEX ".*lv_embed\\.c$")
+# lv_embed.c stays in: main_wasm.c replaces logviewer.c, and lv_embed.c holds
+# the half of the host every build shares -- g_lv, lvHostSetupCore and the
+# replay driver.
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*clientmutex\\.c$")
+# The game view is the desktop viewer's; main_wasm.c has no key to enter it.
+# game_view_stubs.c answers draw.c's calls, as it does in the wasm client.
+list(FILTER LV_SOURCES EXCLUDE REGEX ".*logviewer/game_view\\.c$")
 list(FILTER LV_SOURCES EXCLUDE REGEX ".*dns\\.c$")
 
 # Exclude files not needed in LogViewer
@@ -146,6 +162,7 @@ set(LV_WASM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/dns_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform_config_wasm.c
     ${CMAKE_CURRENT_SOURCE_DIR}/platform_dialogs_wasm.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/wbn_stubs_wasm.c
 )
 
 ###
@@ -170,6 +187,21 @@ add_executable(logviewer
     ${SRC_ROOT}/gui/sdl3/map_colours.c
     ${SRC_ROOT}/gui/sdl3/map_markers.c
     ${SRC_ROOT}/gui/sdl3/ring_band.c
+    # The tablet / Steam Deck mode the ImGui panels lay out by, the game-front
+    # calls it and the panels make, and the keyboard-nav outline
+    # imgui_context.cpp draws. The standalone viewer builds the same three.
+    ${SRC_ROOT}/gui/ui_mode.c
+    ${SRC_ROOT}/gui/sdl3/gamefront_stubs.c
+    ${SRC_ROOT}/gui/sdl3/dialogs/imgui_nav_outline.cpp
+    # langGetText / langGetTextFmt, which imgui_game_info.cpp and
+    # sim_rules_phrase.c call. Plain SDL and libc.
+    ${SRC_ROOT}/gui/sdl3/lang.c
+    ${SRC_ROOT}/gui/sdl3/sim_rules_phrase.c
+    # The viewer names a rule, phrases a change and parses a scenario panel.
+    # This target links no bolo_static, so the rule tables and the panel
+    # parser compile in directly. Both call nothing but libc.
+    ${SRC_ROOT}/bolo/sim_rules.c
+    ${SRC_ROOT}/bolo/scenario_panel.c
 )
 
 target_include_directories(logviewer PRIVATE
@@ -177,8 +209,20 @@ target_include_directories(logviewer PRIVATE
     ${LV_ROOT}
     ${LV_ROOT}/imgui
     ${LV_ROOT}/platform
+    ${cjson_SOURCE_DIR}
 )
 bolo_apply_include_rules(logviewer runtime_only)
+# sim_rules.c spells the classic values in the sim's own constants, which
+# live in internal/ headers.
+bolo_grant_internal_source_access(logviewer
+    ${SRC_ROOT}/bolo/sim_rules.c)
+# sim_rules.c reaches brain.h through control_event.h, and brain.h uses
+# u_char / u_short, which Emscripten's sys/types.h declares only under
+# _GNU_SOURCE. The wasm game client sets it for its whole target; here only
+# this file needs it.
+set_source_files_properties(${SRC_ROOT}/bolo/sim_rules.c
+    TARGET_DIRECTORY logviewer
+    PROPERTIES COMPILE_DEFINITIONS _GNU_SOURCE)
 
 # Version constants, from the same cmake/bolo_version.cmake the root project
 # and the wasm game client use, so all three report one version. screen.c's
@@ -202,6 +246,7 @@ target_link_libraries(logviewer PRIVATE
     imgui_backends
     nanosvg
     stb_image
+    cjson
 )
 
 ###

@@ -2508,6 +2508,15 @@ lobby mutations through the local transport doesn't apply.
   not via the sim's `viewPlayer` field, so they don't need privileged
   access.
 
+**Sim leaf file in a binary without `bolo_static`.** A sim TU with no
+calls into the rest of the sim, compiled from source into a binary
+that links no `bolo_static`:
+
+- `src/bolo/sim_rules.c` in the standalone `LogViewer` and the wasm
+  log viewer — the viewers name rules and phrase changes from its
+  tables. It calls nothing but libc; its internal includes are there
+  for the classic constants.
+
 This is not a third tier of privileged exception. The grants are a
 CMake-level workaround for archive packaging, not an architectural
 relaxation: the files are sim co-owner code that happens to be

@@ -106,6 +106,10 @@ A base bust have one armour unit or more to resist a shell --
 #ifdef _WIN32
 typedef unsigned char  u_char;
 typedef unsigned short u_short;
+#else
+/* u_char / u_short. glibc's socket headers pull this in; Emscripten's do
+ * not, and its libc declares them only under _GNU_SOURCE or _BSD_SOURCE. */
+#include <sys/types.h>
 #endif
 typedef u_char  NIBBLE; /* to be interpreted as four bits */
 #ifndef _GAMEID_DEFINED

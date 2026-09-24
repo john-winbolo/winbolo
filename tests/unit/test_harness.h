@@ -3410,6 +3410,10 @@ int run_scenario_panel_timer_text(void);
  * long — the other piece of the presentation's arithmetic with no renderer
  * in it. */
 int run_scenario_announce_remaining(void);
+/* The names and the panel parser the log viewer compiles in
+ * (test_lv_sim_rules_names.c): a rule's name from its index and back, and
+ * a hand-written two-primitive list through scnPanelParse. */
+int run_lv_rule_names_and_panel_parse(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or

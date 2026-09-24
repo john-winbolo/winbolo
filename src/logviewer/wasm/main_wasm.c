@@ -8,10 +8,11 @@
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
  *
- * This is an alternate main() for the WASM build. It replaces the
- * blocking while-loop in main.c with emscripten_set_main_loop(),
- * and replaces SDL_AddTimer with frame-based tick counting.
- * The original main.c is NOT modified.
+ * The browser build's host, in place of logviewer.c. It replaces the
+ * blocking loop in logViewerRun with emscripten_set_main_loop. The state
+ * lives in g_lv, and the half of the host every build shares -- bring-up,
+ * teardown and the replay driver with its SDL timer pair -- comes from
+ * lv_embed.c, as it does on the desktop.
  */
 
 #include <string.h>
@@ -27,6 +28,8 @@
 #include "dns.h"
 #include "positions.h"
 #include "tiles.h"
+#include "logviewer.h"
+#include "lv_host.h"
 
 #include <SDL3/SDL.h>
 #include <emscripten.h>
@@ -49,24 +52,6 @@
 /* Version string referenced by imgui_dialogs.cpp */
 const char *lv_g_version_string = "1.01-wasm";
 
-/* Team Colours array */
-BYTE tc[17]; /* MAX_PLAYERS + 1 */
-
-/* Playback state */
-bool playIsPlaying = FALSE;
-bool isLoaded      = FALSE;
-bool isSoundsPlaying;
-bool useTeamColours = FALSE;
-bool wantScreenUpdate = FALSE;
-bool doubleSpeed = FALSE;
-BYTE speed;
-int  timerSleep;
-
-/* Frame-based tick accumulator (replaces SDL timers) */
-static double tickAccumulator = 0.0;
-static double lastFrameTime   = 0.0;
-static const double FRAME_INTERVAL_MS = 50.0; /* ~20 FPS for screen updates */
-
 /* --------------------------------------------------------------------------
  * Helper: default team colour value for index
  *
@@ -81,38 +66,16 @@ static void getDef(char *dest, int index) {
 }
 
 /* --------------------------------------------------------------------------
- * lv_updateSpeed – sets timerSleep for the given speed value.
- * -------------------------------------------------------------------------- */
-void lv_updateSpeed(BYTE spd, int updateSlider) {
-    (void)updateSlider;
-    switch (spd) {
-    case 2: timerSleep = 18; break;
-    case 3: timerSleep = 16; break;
-    case 4: timerSleep = 14; break;
-    case 5: timerSleep = 12; break;
-    case 6: timerSleep = 10; break;
-    case 7: timerSleep =  8; break;
-    case 8: timerSleep =  6; break;
-    case 9: timerSleep =  1; break;
-    default:
-        timerSleep = 20;
-        spd = 1;
-        break;
-    }
-    speed = spd;
-}
-
-/* --------------------------------------------------------------------------
  * Sound
  * -------------------------------------------------------------------------- */
 void lv_frontEndPlaySound(sndEffects value) {
-    if (isSoundsPlaying == TRUE) {
+    if (g_lv->isSoundsPlaying == TRUE) {
         lv_soundPlayEffect(value);
     }
 }
 
 void lv_windowDisableSound(void) {
-    isSoundsPlaying = FALSE;
+    g_lv->isSoundsPlaying = FALSE;
 }
 
 /* --------------------------------------------------------------------------
@@ -159,7 +122,7 @@ void lv_windowRemoveEvents(void) {
 }
 
 /* --------------------------------------------------------------------------
- * Control state – no-ops (ImGui reads globals directly)
+ * Control state – no-ops (ImGui reads the state directly)
  * -------------------------------------------------------------------------- */
 void lv_controlEnable(int id, bool state, unsigned int menuId) {
     (void)id; (void)state; (void)menuId;
@@ -170,66 +133,41 @@ void lv_controlsEnable(int state) {
 }
 
 /* --------------------------------------------------------------------------
- * Screen update / redraw
+ * Playback control. Play, pause and stop come from lv_embed.c.
  * -------------------------------------------------------------------------- */
-void lv_windowNeedRedraw(void) {
-    wantScreenUpdate = TRUE;
-}
-
-/* --------------------------------------------------------------------------
- * Playback drawing
- * -------------------------------------------------------------------------- */
-void lv_frontEndDrawMainScreen(screen *value, screenMines *mineView, screenTanks *tks,
-                            screenGunsight *gs, screenBullets *sBullet, screenLgm *lgms,
-                            int32_t srtDelay, bool isPillView, int edgeX, int edgeY) {
-    lv_drawMainScreen(value, mineView, tks, gs, sBullet, lgms,
-                   FALSE, FALSE, srtDelay, isPillView, edgeX, edgeY, FALSE, 0, 0);
-}
-
-/* --------------------------------------------------------------------------
- * Playback control — no SDL timers, just set flags.
- * The main loop handles ticking based on playIsPlaying + timerSleep.
- * -------------------------------------------------------------------------- */
-void lv_windowPlay(void) {
-    playIsPlaying = TRUE;
-    tickAccumulator = 0.0;
-    lastFrameTime = emscripten_get_now();
-}
-
-void lv_windowPause(void) {
-    playIsPlaying = FALSE;
-}
-
-void lv_windowStop(int corruptLog) {
-    if (corruptLog == TRUE) {
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, DIALOG_BOX_TITLE,
-                                 "Error: Corrupt Log File", NULL);
+/* Jump the scrubber to a highlight moment and centre the view on its cell.
+ * Playback stops across the seek, as it does on the desktop. */
+void lv_windowSeekToHighlight(uint32_t ms, int mapX, int mapY) {
+    bool wasPlaying = g_lv->playIsPlaying;
+    if (wasPlaying) {
+        lv_windowPause();
     }
-    lv_windowPause();
-    /* No SDL_Delay in WASM — just proceed */
-    lv_frontEndSetGameInformation(TRUE, 0, 0, 0, NULL, 0, 0, 0, 0, 0, NULL, 0);
-    lv_updateItem(0, 0, 0, 0, 0, 0, 0, 0, FALSE);
-    lv_screenCloseLog();
-    isLoaded = FALSE;
-    lv_imgui_events_clear();
+    lv_drawDirtyScreen();
+    lv_screenSeekToTimeMs(ms);
+    lv_screenCentreOnCell(mapX, mapY);
+    lv_drawDirtyScreen();
     lv_windowNeedRedraw();
+    if (wasPlaying) {
+        lv_windowPlay();
+    }
+}
+
+/* File > Quit. A browser tab has no application to end. */
+void logViewerRequestAppQuit(void) {
 }
 
 void lv_windowFastForward(void) {
     lv_drawDirtyScreen();
     lv_screenFastForward();
     lv_drawDirtyScreen();
-    lv_screenUpdate(redraw);
+    g_lv->wantScreenUpdate = TRUE;
 }
 
 void lv_windowRewind(void) {
     lv_drawDirtyScreen();
     lv_screenRewind();
     lv_drawDirtyScreen();
-    lv_screenUpdate(redraw);
-    if (playIsPlaying == FALSE) {
-        wantScreenUpdate = TRUE;
-    }
+    g_lv->wantScreenUpdate = TRUE;
 }
 
 void lv_windowResize(void) {
@@ -237,12 +175,8 @@ void lv_windowResize(void) {
 }
 
 /* --------------------------------------------------------------------------
- * End-of-log / start-of-log callbacks from backend
+ * Start-of-log callback from backend
  * -------------------------------------------------------------------------- */
-void lv_finished(void) {
-    playIsPlaying = FALSE;
-}
-
 void lv_startOfLog(void) {
     /* ImGui controls panel reads isLoaded each frame */
 }
@@ -272,9 +206,9 @@ void lv_windowOpenFile(char *cmdLine) {
     if (dlgResult == PLATFORM_DIALOG_OK) {
         if (lv_screenLoadMap(fileName, 4) == FALSE) {
             lv_platform_dialog_error(DIALOG_BOX_TITLE, "Could not open log file");
-            isLoaded = FALSE;
+            g_lv->isLoaded = FALSE;
         } else {
-            isLoaded = TRUE;
+            g_lv->isLoaded = TRUE;
             lv_imgui_events_clear();
             lv_windowNeedRedraw();
         }
@@ -309,13 +243,13 @@ static void mainLoadPreferences(void) {
 
     /* Sound Effects */
     lv_platform_config_get_string("LOGVIEWER", "Sounds", "Yes", line, sizeof(line));
-    isSoundsPlaying = (tolower((unsigned char)line[0]) == 'y') ? TRUE : FALSE;
+    g_lv->isSoundsPlaying = (tolower((unsigned char)line[0]) == 'y') ? TRUE : FALSE;
 
     /* DNS — disabled in WASM */
 
     /* Use Team Colours */
     lv_platform_config_get_string("LOGVIEWER", "Use Team Colours", "Yes", line, sizeof(line));
-    useTeamColours = (line[0] == '\0' || tolower((unsigned char)line[0]) == 'y') ? TRUE : FALSE;
+    g_lv->useTeamColours = (line[0] == '\0' || tolower((unsigned char)line[0]) == 'y') ? TRUE : FALSE;
 
     /* Team colours */
     count = 0;
@@ -323,19 +257,21 @@ static void mainLoadPreferences(void) {
         snprintf(line, sizeof(line), "Team Colour %d", count + 1);
         getDef(def, count);
         lv_platform_config_get_string("LOGVIEWER", line, def, val, sizeof(val));
-        tc[count] = (BYTE)atoi(val);
-        if (tc[count] > 16) tc[count] = count;
+        g_lv->tc[count] = (BYTE)atoi(val);
+        if (g_lv->tc[count] > 16) g_lv->tc[count] = count;
         count++;
     }
     lv_platform_config_get_string("LOGVIEWER", "Neutral Colour", "10", val, sizeof(val));
-    tc[16] = (BYTE)atoi(val);
-    if (tc[16] > 16) tc[16] = 16;
+    g_lv->tc[16] = (BYTE)atoi(val);
+    if (g_lv->tc[16] > 16) g_lv->tc[16] = 16;
 
     /* Playback Speed */
     lv_platform_config_get_string("LOGVIEWER", "Playback Speed", "1", val, sizeof(val));
-    speed = (BYTE)atoi(val);
-    if (speed < 1 || speed > 9) speed = 1;
-    lv_updateSpeed(speed, 0);
+    {
+        BYTE spd = (BYTE)atoi(val);
+        if (spd < 1 || spd > 9) spd = 1;
+        lv_updateSpeed(spd, 0);
+    }
 }
 
 static void mainSavePreferences(void) {
@@ -346,8 +282,8 @@ static void mainSavePreferences(void) {
     lv_imgui_main_menu_save();
     lv_imgui_dialogs_save();
 
-    lv_platform_config_set_string("LOGVIEWER", "Sounds", isSoundsPlaying ? "Yes" : "No");
-    lv_platform_config_set_string("LOGVIEWER", "Use Team Colours", useTeamColours ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Sounds", g_lv->isSoundsPlaying ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Use Team Colours", g_lv->useTeamColours ? "Yes" : "No");
 
     snprintf(line, sizeof(line), "%d", lv_screenGetSizeX());
     lv_platform_config_set_string("LOGVIEWER", "ScreenSizeX", line);
@@ -357,14 +293,14 @@ static void mainSavePreferences(void) {
     count = 0;
     while (count < MAX_TANKS) {
         snprintf(line, sizeof(line), "Team Colour %d", count + 1);
-        snprintf(val, sizeof(val), "%d", tc[count]);
+        snprintf(val, sizeof(val), "%d", g_lv->tc[count]);
         lv_platform_config_set_string("LOGVIEWER", line, val);
         count++;
     }
-    snprintf(val, sizeof(val), "%d", tc[16]);
+    snprintf(val, sizeof(val), "%d", g_lv->tc[16]);
     lv_platform_config_set_string("LOGVIEWER", "Neutral Colour", val);
 
-    snprintf(val, sizeof(val), "%d", speed);
+    snprintf(val, sizeof(val), "%d", g_lv->speed);
     lv_platform_config_set_string("LOGVIEWER", "Playback Speed", val);
 
     lv_platform_config_set_string("LOGVIEWER", "PreferencesSaved", "Yes");
@@ -372,7 +308,9 @@ static void mainSavePreferences(void) {
 }
 
 /* --------------------------------------------------------------------------
- * Main loop body — called by emscripten_set_main_loop
+ * Main loop body — called by emscripten_set_main_loop. The decoder is
+ * ticked by lv_embed.c's SDL timers, which SDL runs on the browser's own
+ * event loop under Emscripten.
  * -------------------------------------------------------------------------- */
 static int frameCount = 0;
 
@@ -395,7 +333,7 @@ static void main_loop_iteration(void) {
         if (sdlEvent.type == SDL_EVENT_WINDOW_EXPOSED ||
             sdlEvent.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
             lv_drawDirtyScreen();
-            wantScreenUpdate = TRUE;
+            g_lv->wantScreenUpdate = TRUE;
         }
         if (sdlEvent.type == SDL_EVENT_WINDOW_RESIZED) {
             int w = sdlEvent.window.data1;
@@ -409,13 +347,13 @@ static void main_loop_iteration(void) {
             if (tileW > 255 * TILE_SIZE_X) tileW = 255 * TILE_SIZE_X;
             if (tileH > 255 * TILE_SIZE_Y) tileH = 255 * TILE_SIZE_Y;
 
-            SDL_SetWindowSize(lv_drawGetSDLWindow(), tileW, tileH + menuH);
+            SDL_SetWindowSize(g_lv->window, tileW, tileH + menuH);
             {
                 BYTE newTilesX = (BYTE)(tileW / TILE_SIZE_X);
                 BYTE newTilesY = (BYTE)(tileH / TILE_SIZE_Y);
                 lv_screenSetSizeX(newTilesX);
                 lv_screenSetSizeY(newTilesY);
-                if (isLoaded) {
+                if (g_lv->isLoaded) {
                     BYTE ox, oy;
                     lv_screenGetOffsets(&ox, &oy);
                     if ((int)ox + newTilesX > 255) ox = (BYTE)(255 - newTilesX);
@@ -425,43 +363,22 @@ static void main_loop_iteration(void) {
             }
             lv_drawResizeRenderTarget();
             lv_drawDirtyScreen();
-            wantScreenUpdate = TRUE;
+            g_lv->wantScreenUpdate = TRUE;
         }
         /* Note: SDL_EVENT_QUIT is not meaningful in browser */
     }
 
-    /* --- Game logic ticks (replaces SDL_AddTimer) --- */
-    if (playIsPlaying && isLoaded) {
-        double now = emscripten_get_now();
-        double elapsed = now - lastFrameTime;
-        lastFrameTime = now;
-        tickAccumulator += elapsed;
-
-        double tickInterval = (double)timerSleep;
-        if (tickInterval < 1.0) tickInterval = 1.0;
-
-        while (tickAccumulator >= tickInterval) {
-            tickAccumulator -= tickInterval;
-            lv_screenLogTick();
-            if (doubleSpeed == TRUE) {
-                lv_screenLogTick();
-                lv_screenLogTick();
-            }
-        }
-        wantScreenUpdate = TRUE;
-    }
-
     /* --- Render --- */
-    SDL_SetRenderDrawColor(lv_drawGetSDLRenderer(), 0, 0, 0, 255);
-    SDL_RenderClear(lv_drawGetSDLRenderer());
+    SDL_SetRenderDrawColor(g_lv->renderer, 0, 0, 0, 255);
+    SDL_RenderClear(g_lv->renderer);
 
-    if (isLoaded == FALSE) {
+    if (g_lv->isLoaded == FALSE) {
         lv_drawSplashForImGui();
     } else {
-        if (wantScreenUpdate == TRUE) {
+        if (g_lv->wantScreenUpdate == TRUE) {
             lv_drawDirtyScreen();
             lv_screenUpdate(redraw);
-            wantScreenUpdate = FALSE;
+            g_lv->wantScreenUpdate = FALSE;
         } else {
             lv_drawBlitGameTexture();
         }
@@ -481,49 +398,29 @@ static void main_loop_iteration(void) {
 
     lv_imgui_game_viewport_process_input();
 
-    SDL_RenderPresent(lv_drawGetSDLRenderer());
+    SDL_RenderPresent(g_lv->renderer);
 }
 
 /* --------------------------------------------------------------------------
  * main — Emscripten entry point
  * -------------------------------------------------------------------------- */
 int main(int argc, char *argv[]) {
-    char line[256];
-    int  sizeX, sizeY;
-
     (void)argc;
     (void)argv;
-
-    /* Platform abstraction init */
-    lv_platform_config_init("WinBolo");
-    lv_platform_dialogs_init();
-
-    isLoaded        = FALSE;
-    isSoundsPlaying = TRUE;
-
-    lv_clientMutexCreate();
-
-    /* Load screen size before creating window */
-    lv_platform_config_get_string("LOGVIEWER", "ScreenSizeX", "50", line, sizeof(line));
-    sizeX = atoi(line);
-    if (sizeX < 5 || sizeX > 99) sizeX = 50;
-
-    lv_platform_config_get_string("LOGVIEWER", "ScreenSizeY", "38", line, sizeof(line));
-    sizeY = atoi(line);
-    if (sizeY < 5 || sizeY > 99) sizeY = 38;
-
-    lv_screenSetSizeX((BYTE)sizeX);
-    lv_screenSetSizeY((BYTE)sizeY);
 
     /* Tell SDL3 which canvas element to use */
     SDL_SetHint(SDL_HINT_EMSCRIPTEN_CANVAS_SELECTOR, "#canvas");
 
-    printf("[WASM] Starting lv_drawSetup...\n");
-    if (lv_drawSetup() == FALSE) {
-        printf("[WASM] lv_drawSetup FAILED\n");
+    /* The decoder state, platform layer, mutex, screen size and draw module.
+     * A NULL window makes it create its own, as the standalone viewer does. */
+    printf("[WASM] Starting lvHostSetupCore...\n");
+    if (lvHostSetupCore(NULL, NULL, FALSE) == FALSE) {
+        printf("[WASM] lvHostSetupCore FAILED\n");
         return 1;
     }
-    printf("[WASM] lv_drawSetup OK\n");
+    printf("[WASM] lvHostSetupCore OK\n");
+
+    g_lv->isSoundsPlaying = TRUE;
 
     /* SDL3's Emscripten backend sets the canvas element size to 1x1 during
      * probing, then relies on CSS for display size when external_size=true.
@@ -534,37 +431,34 @@ int main(int argc, char *argv[]) {
         int h = lv_screenGetSizeY() * TILE_SIZE_Y + 25; /* +25 for menu bar */
         printf("[WASM] Forcing canvas to: %d x %d\n", w, h);
         emscripten_set_canvas_element_size("#canvas", w, h);
-        SDL_SetWindowSize(lv_drawGetSDLWindow(), w, h);
+        SDL_SetWindowSize(g_lv->window, w, h);
     }
 
-    lv_platform_dialogs_set_window(lv_drawGetSDLWindow());
-
     printf("[WASM] Starting lv_imgui_context_init...\n");
-    if (lv_imgui_context_init(lv_drawGetSDLWindow(), lv_drawGetSDLRenderer()) == 0) {
+    if (lv_imgui_context_init(g_lv->window, g_lv->renderer) == 0) {
         printf("[WASM] lv_imgui_context_init FAILED\n");
-        lv_drawCleanup();
+        lvHostTeardownCommon(false);
+        free(g_lv);
+        g_lv = NULL;
         return 1;
     }
     printf("[WASM] lv_imgui_context_init OK\n");
 
-    lv_imgui_main_menu_init();
-    lv_imgui_controls_init();
+    lv_imgui_main_menu_init(g_lv);
+    lv_imgui_controls_init(g_lv);
     lv_imgui_game_info_init();
     lv_imgui_events_init();
     lv_imgui_item_info_init();
-    lv_imgui_dialogs_init();
-    lv_imgui_game_viewport_init();
+    lv_imgui_dialogs_init(g_lv);
+    lv_imgui_game_viewport_init(g_lv);
 
     /* Sound (non-fatal if it fails) */
     if (lv_soundSetup() == FALSE) {
-        isSoundsPlaying = FALSE;
+        g_lv->isSoundsPlaying = FALSE;
     }
 
     /* Load preferences */
     mainLoadPreferences();
-
-    /* Initialize frame timing */
-    lastFrameTime = emscripten_get_now();
 
     printf("[WASM] Starting main loop\n");
 
@@ -576,14 +470,9 @@ int main(int argc, char *argv[]) {
     /* This code is never reached when simulate_infinite_loop=1,
      * but if we ever switch to 0, cleanup goes here. */
     mainSavePreferences();
-    lv_windowStop(FALSE);
-    lv_imgui_context_shutdown();
-    lv_drawCleanupSplash();
-    lv_soundCleanup();
-    lv_drawCleanup();
+    lvHostTeardownCommon(true);
+    free(g_lv);
+    g_lv = NULL;
     SDL_Quit();
-    lv_clientMutexDestroy();
-    lv_platform_config_shutdown();
-    lv_platform_dialogs_shutdown();
     return 0;
 }
