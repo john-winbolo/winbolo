@@ -1,8 +1,9 @@
 -- =========================================================================
 -- Survival — a scripted round on Survival.map.
 --
--- Up to 6 human defenders hold the centre of a circular island against 5
--- waves of 10 AI tanks. Humans play under tournament rules (scenario.game
+-- Up to 6 human defenders hold the centre of a circular island against
+-- waves of 10 AI tanks: 5 waves of 4 minutes unless the host sets other
+-- numbers in the lobby (scenario.settings below). Humans play under tournament rules (scenario.game
 -- forces it whatever the lobby says); wave bots always come in on the full
 -- open loadout.
 --
@@ -36,8 +37,9 @@
 --     a tick, two ops an attacker, so the whole wave is ashore inside half a
 --     second. They leave one a second, because a departure still tears a
 --     brain down where an arrival only resumes one.
---   * Wave bots respawn like ordinary play. A wave is 4 minutes of
---     constant pressure, ended only by the clock. Survive all 5 and the
+--   * Wave bots respawn like ordinary play. A wave is WAVE_LIMIT_S of
+--     constant pressure (4 minutes unless the lobby says otherwise), ended
+--     only by the clock. Survive the last of the WAVES waves and the
 --     defenders win — that is the only win, because allow_base_win turns
 --     the engine's all-bases sweep off. The only loss is the instant
 --     all-6-inner-bases check in on_tick.
@@ -73,9 +75,10 @@
 
 scenario = {
   name = "Survival",
-  description = "Co-op survival: hold the island's centre through 5 waves "
-    .. "of AI attackers storming in from the outer ring. Hold your bases, "
-    .. "grab the dead pillboxes, fort up in the forest.",
+  description = "Co-op survival: hold the island's centre through waves "
+    .. "of AI attackers storming in from the outer ring, as many waves and "
+    .. "as long as the host sets in the lobby. Hold your bases, grab the "
+    .. "dead pillboxes, fort up in the forest.",
   api  = 1,
   -- This file ends its own round, from on_tick, when the last wave is beaten
   -- or the defenders are wiped out, so it is a scenario rather than a mod.
@@ -107,17 +110,27 @@ scenario = {
     },
   },
 
+  -- What the host sets in the lobby's details dialog; read below with
+  -- game.setting. The defaults are the round as it always played: 5 waves
+  -- of 4 minutes.
+  settings = {
+    { id = "round_minutes", label = "Round length (minutes)", type = "int",
+      min = 1, max = 10, step = 1, default = 4 },
+    { id = "rounds", label = "Rounds", type = "int",
+      min = 1, max = 5, step = 1, default = 5 },
+  },
+
   -- What each callback below does, in a line a player reads: the lobby's
   -- details dialog lists these under "What this scenario implements:".
   callbacks = {
     spawn_loadout = "Attackers always spawn fully stocked; defenders get the normal tournament loadout.",
-    allow_base_win = "Holding every base does not win; the only win is surviving all 5 waves.",
+    allow_base_win = "Holding every base does not win; the only win is surviving every wave set in the lobby.",
     allow_extra_teams = "Keeps the round to two teams: the defenders and the horde.",
     announce = "Silences the newswire for a few seconds while each wave arrives and leaves.",
     on_choose_start = "Defenders start in the centre puddle; each attacker starts out at sea on its own spoke.",
     on_setup = "Gives the defenders the centre bases and pillboxes, builds the island's shallow rim and tree ring, and digs in defender bots.",
     on_start = "Posts the opening \"dig in\" message and notes which seats the horde will use.",
-    on_tick = "Sends 5 waves of 10 attackers, 4 minutes each with 30 s breaks; lose all 6 centre bases and you lose, outlast wave 5 and you win.",
+    on_tick = "Sends N waves of 10 attackers, M minutes each with 30 s breaks, N and M set in the lobby; lose all 6 centre bases and you lose, outlast the last wave to win.",
   },
 }
 
@@ -130,13 +143,17 @@ scenario = {
 local TICKS_PER_SECOND = 100
 local function secs(s) return math.floor(s * TICKS_PER_SECOND) end
 
-local WAVES     = 5
+-- The number of waves, and each wave's length, are the host's lobby
+-- choices (scenario.settings). "Rounds" there is waves here.
+local WAVES     = game.setting("rounds")
 local WAVE_TEAM = 2        -- the horde is team 2
 local DEF_TEAM  = 1        -- the defenders are team 1
 
 local GRACE_S      = 10    -- prep before wave 1
 local BREATHER_S   = 30    -- prep between waves
-local WAVE_LIMIT_S = 240   -- 4 min: leftover attackers vanish at this mark
+-- The lobby's round length: leftover attackers vanish at this mark. The
+-- default 4 minutes is 240 s.
+local WAVE_LIMIT_S = game.setting("round_minutes") * 60
 
 -- How often the status panel is redrawn. Once a second is enough: the only
 -- thing on it that moves faster is the countdown, and the client counts that
@@ -148,7 +165,7 @@ local PANEL_PERIOD_S = 1
 
 -- How long a flavour line stays up after the state it belongs to began. The
 -- line says the same thing for as long as the state lasts, and a wave runs
--- four minutes: past the first few seconds it is a throbbing red line the
+-- minutes: past the first few seconds it is a throbbing red line the
 -- player has already read, sitting over the map. It says its piece and goes,
 -- leaving the headline and the countdown, which do change.
 local PANEL_LINE_S = 5
