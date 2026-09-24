@@ -747,7 +747,7 @@ void printArgs() {
   fprintf(stderr, "                -uploadpolicy persist (default <map root>/Uploads).\n");
   fprintf(stderr, "-uploadmaxfiles <N> - Max stored upload files in persist mode (1-255,\n");
   fprintf(stderr, "                default 64).\n");
-  fprintf(stderr, "-uploadmaxstorage <MB> - Max upload storage in persist mode (1-4096 MB,\n");
+  fprintf(stderr, "-uploadmaxstorage <MB> - Max upload storage in persist mode (1-4095 MB,\n");
   fprintf(stderr, "                default 8).\n");
 
   fprintf(stderr, "\nScript uploads (scripts players send in the lobby):\n");
@@ -2461,15 +2461,17 @@ int main(int argc, char **argv) {
       }
     }
     {
+      /* 4095, not 4096: the cap is held as bytes in a uint32_t, and 4096 MB
+         is 2^32, which wraps to 0 and would read as "keep the default". */
       int storageArg = findArg(argc, argv, "uploadmaxstorage");
       if (storageArg != ARG_NOT_FOUND) {
         int v = atoi((char *)argv[storageArg]);
         if (v < 1) {
           fprintf(stderr, "-uploadmaxstorage %d out of range; clamping to 1\n", v);
           v = 1;
-        } else if (v > 4096) {
-          fprintf(stderr, "-uploadmaxstorage %d out of range; clamping to 4096\n", v);
-          v = 4096;
+        } else if (v > 4095) {
+          fprintf(stderr, "-uploadmaxstorage %d out of range; clamping to 4095\n", v);
+          v = 4095;
         }
         uploadMaxStorageBytes = (uint32_t)v * 1024u * 1024u;
       }
