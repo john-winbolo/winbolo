@@ -3624,5 +3624,367 @@ do
   C.ORDER_MAN_OUT_TAKES = true
 end
 
+-- =========================================================================
+-- DECOY GETAWAY (Andrew, 2026-09-24).  A decoy hold scores the squares
+-- around it for a way out: a chain of up to DECOY_GETAWAY_MAX_STEPS
+-- neighbouring squares, each shielded from the counted pills by a wall or
+-- one of our pills, or out of their range.  It turns to face the chain's
+-- first square, drives the chain after the first hit, and parks at its end.
+-- The terrain and the shell trace are C calls, so they are stubbed here:
+-- get_terrain reads a table (grass by default) and cpf.simulate_shot walks
+-- a straight line in 16 wu steps out to 2100 wu, one entry per tile.
+-- =========================================================================
+print("decoy_getaway.lua -- the decoy getaway")
+do
+  local GA = require("decoy_getaway")
+  local saved = { gt = _G.get_terrain, tm = _G.TERRAIN_MASK, mf = _G.TERRAIN_MINE_FLAG,
+                  kl = _G.KEY_TURNLEFT, kr = _G.KEY_TURNRIGHT, kf = _G.KEY_FASTER,
+                  sim = cpf.simulate_shot, block = GA.block }
+  local TMAP = {}
+  _G.TERRAIN_MASK = 0x0F
+  _G.TERRAIN_MINE_FLAG = 0x40
+  _G.EVENT_PING, _G.PING_KIND_CAUTION, _G.PING_KIND_BOT_COMMAND = 13, 1, 5
+  -- The turn uses U.aim_at_f, which needs init.lua's two-argument math.atan
+  -- (LuaJIT's own takes one); init.lua is not loaded here.
+  local atan1 = math.atan
+  if math.atan2 then
+    math.atan = function(y, x) if x == nil then return atan1(y) end return math.atan2(y, x) end
+  end
+  _G.get_terrain = function(mx, my) return TMAP[my * 256 + mx] or C.T_GRASS end
+  cpf.simulate_shot = function(ox, oy, tx, ty)
+    local dx, dy = tx - ox, ty - oy
+    local d = math.sqrt(dx * dx + dy * dy)
+    local out, seen = {}, {}
+    if d == 0 then return out end
+    for st = 0, 2100, 16 do
+      local mx = math.floor((ox + dx / d * st) / 256)
+      local my = math.floor((oy + dy / d * st) / 256)
+      local k = my * 256 + mx
+      if not seen[k] then seen[k] = true; out[#out + 1] = { mx = mx, my = my } end
+    end
+    return out
+  end
+  local function near(a, b) return a and b and math.abs(a - b) < 1e-9 end
+  local function pstr(path)
+    local t = {}
+    for i, c in ipairs(path or {}) do t[i] = c.mx .. "," .. c.my end
+    return table.concat(t, " ")
+  end
+
+  check("getaway knob is on live, off in keel",
+        C.DECOY_GETAWAY == true and C.PRESETS.keel.DECOY_GETAWAY == false, "?")
+  check("getaway knobs: 5 steps, 1 hit, last x2, 50 ticks, wall 1.0 / 0.5",
+        C.DECOY_GETAWAY_MAX_STEPS == 5 and C.DECOY_GETAWAY_HITS == 1
+        and C.DECOY_GETAWAY_LAST_WEIGHT == 2.0 and C.DECOY_GETAWAY_RESCAN_TICKS == 50
+        and C.DECOY_GETAWAY_WALL_FULL == 1.0 and C.DECOY_GETAWAY_WALL_DAMAGED == 0.5, "?")
+
+  -- 1. THE REAL BLOCK TEST.  Spot S = (30,30).  Pill A (30,24) is north,
+  -- pill B (37,30) is east.  T = (31,30) is S's east neighbour.  A wall at
+  -- (31,29) is on A's line to T (A's line to S stays in column 30); B's line
+  -- to T is open.  So block(A,T) = 1.0 (wall), block(B,T) = 0, safety 0.5.
+  local wa = { pills = {
+    [1] = { mx = 30, my = 24, owner = "hostile", health = 15 },
+    [2] = { mx = 37, my = 30, owner = "hostile", health = 15 },
+  } }
+  TMAP[29 * 256 + 31] = C.T_BUILDING
+  local P = GA.pill_set(wa, 30, 30)
+  check("both pills reach the decoy square: P = {1,2}",
+        #P == 2 and P[1].id == 1 and P[2].id == 2, tostring(#P))
+  local b1, w1, sx1, sy1 = GA.block(wa, wa.pills[1], 31, 30)
+  local b2, w2 = GA.block(wa, wa.pills[2], 31, 30)
+  check("the wall stops pill A's shell: block 1.0, wall at (31,29)",
+        b1 == 1.0 and w1 == "wall" and sx1 == 31 and sy1 == 29,
+        tostring(b1) .. " " .. tostring(w1))
+  check("pill B's shell arrives: block 0, open", b2 == 0 and w2 == "open", tostring(w2))
+  local path, score, ctx = GA.search(wa, P, 30, 30, 5, false)
+  local cT = ctx.cells[30 * 256 + 31]
+  check("the wall-shielded neighbour is a getaway square with safety 0.5",
+        cT and cT.ok == true and near(cT.s, 0.5), tostring(cT and cT.s))
+  check("the overlay text for it is the same sum",
+        GA.safety_txt(cT, 2) == "s = (1.000 + 0.000) / 2 = 0.500", GA.safety_txt(cT, 2))
+  check("the overlay names the wall per pill",
+        GA.term_txt(cT.terms[1]) == "p1 wall full @(31,29) = 1.000", GA.term_txt(cT.terms[1]))
+  TMAP[29 * 256 + 31] = C.T_HALFBUILD
+  check("a damaged wall blocks 0.5 (DECOY_GETAWAY_WALL_DAMAGED)",
+        (GA.block(wa, wa.pills[1], 31, 30)) == 0.5, "?")
+  TMAP[29 * 256 + 31] = C.T_FOREST
+  check("a tree is not cover: the shell flies over it (open)",
+        (select(2, GA.block(wa, wa.pills[1], 31, 30))) == "open", "?")
+  TMAP[29 * 256 + 31] = nil
+  local ours = { mx = 31, my = 29, owner = "friendly", health = 12 }
+  wa.pills[3] = ours
+  wa.pill_at = { [29 * 256 + 31] = { { pill = ours } } }
+  local b3, w3, _, _, hp3 = GA.block(wa, wa.pills[1], 31, 30)
+  check("our pill in the way blocks health / PILLS_MAX_HEALTH (12/15 = 0.8)",
+        near(b3, 12 / C.PILLS_MAX_HEALTH) and w3 == "pill" and hp3 == 12, tostring(b3))
+  ours.owner = "hostile"
+  check("an enemy pill in the way is not a blocker (0)",
+        (GA.block(wa, wa.pills[1], 31, 30)) == 0, "?")
+  wa.pills[3], wa.pill_at = nil, nil
+  check("out of range is 1.0 with no blocker needed",
+        (GA.block(wa, wa.pills[1], 30, 33)) == 1.0
+        and select(2, GA.block(wa, wa.pills[1], 30, 33)) == "range", "?")
+
+  -- 2. NO BLOCKER ANYWHERE: a pill right beside the square, open grass, so
+  -- every square within 5 steps is in range and open.
+  local wn = { pills = { [1] = { mx = 30, my = 29, owner = "hostile", health = 15 } } }
+  local pn = GA.search(wn, GA.pill_set(wn, 30, 30), 30, 30, 5, false)
+  check("no blocker anywhere: no chain", pn == nil, pstr(pn))
+  check("no counted pill: no P, no chain",
+        #GA.pill_set({ pills = {} }, 30, 30) == 0, "?")
+
+  -- 3. THE CHAIN SCORE (C2) on made-up safety values: GA.block is replaced
+  -- by a table of square -> block, and P has one pill, so safety = block.
+  local SAFE = {}
+  GA.block = function(world, p, mx, my)
+    local v = SAFE[my * 256 + mx]
+    if v then return v, "wall", mx, my - 1 end
+    return 0, "open"
+  end
+  local P1 = { { id = 1, pill = { mx = 0, my = 0 } } }
+  local wg = { pills = {} }
+  local function S(list) SAFE = {}; for _, e in ipairs(list) do SAFE[e[2] * 256 + e[1]] = e[3] end end
+  -- a longer chain beats a shorter weaker one: east 3 x 0.5 = 0.5+0.5+2x0.5
+  -- = 2.0 against west 1 x 0.5 = 2x0.5 = 1.0.
+  S({ { 49, 50, 0.5 }, { 51, 50, 0.5 }, { 52, 50, 0.5 }, { 53, 50, 0.5 } })
+  local p3, s3 = GA.search(wg, P1, 50, 50, 5, false)
+  check("a longer chain beats a shorter weaker one (2.0 vs 1.0)",
+        pstr(p3) == "51,50 52,50 53,50" and near(s3, 2.0), pstr(p3) .. " " .. tostring(s3))
+  -- one fully safe square west (2x1.0 = 2.0) against five 0.4 squares east
+  -- (4x0.4 + 2x0.4 = 2.4): the long one wins ...
+  S({ { 49, 50, 1.0 }, { 51, 50, 0.4 }, { 52, 50, 0.4 }, { 53, 50, 0.4 },
+      { 54, 50, 0.4 }, { 55, 50, 0.4 } })
+  local p4, s4 = GA.search(wg, P1, 50, 50, 5, false)
+  check("C2: five 0.4 squares (2.4) beat one safe square (2.0)",
+        pstr(p4) == "51,50 52,50 53,50 54,50 55,50" and near(s4, 2.4),
+        pstr(p4) .. " " .. tostring(s4))
+  check("the score written out is the one the code adds up",
+        GA.score_terms(p4) == "0.400 + 0.400 + 0.400 + 0.400 + 2x0.400", GA.score_terms(p4))
+  -- ... and five 0.3 squares (4x0.3 + 2x0.3 = 1.8) lose to it.
+  S({ { 49, 50, 1.0 }, { 51, 50, 0.3 }, { 52, 50, 0.3 }, { 53, 50, 0.3 },
+      { 54, 50, 0.3 }, { 55, 50, 0.3 } })
+  local p5, s5 = GA.search(wg, P1, 50, 50, 5, false)
+  check("C2: one safe square (2.0) beats five 0.3 squares (1.8)",
+        pstr(p5) == "49,50" and near(s5, 2.0), pstr(p5) .. " " .. tostring(s5))
+  -- The last square counts twice, so a weak last square is left off:
+  -- 1.0 + 2x1.0 = 3.0 beats 1.0 + 1.0 + 2x0.1 = 2.2.
+  S({ { 51, 50, 1.0 }, { 52, 50, 1.0 }, { 53, 50, 0.1 } })
+  local p6, s6 = GA.search(wg, P1, 50, 50, 5, false)
+  check("a weak last square is left off (3.0 beats 2.2)",
+        pstr(p6) == "51,50 52,50" and near(s6, 3.0), pstr(p6) .. " " .. tostring(s6))
+  -- 4. THE CAP: eight safe squares in a line north, the chain stops at 5.
+  S({ { 50, 49, 1 }, { 50, 48, 1 }, { 50, 47, 1 }, { 50, 46, 1 },
+      { 50, 45, 1 }, { 50, 44, 1 }, { 50, 43, 1 }, { 50, 42, 1 } })
+  local p7, s7 = GA.search(wg, P1, 50, 50, 5, false)
+  check("the chain is capped at 5 squares (1+1+1+1+2x1 = 6)",
+        #p7 == 5 and pstr(p7) == "50,49 50,48 50,47 50,46 50,45" and near(s7, 6.0),
+        pstr(p7))
+  -- 5. NO CORNER CUT: the only getaway square is diagonal (51,49); a wall
+  -- on either square beside the step refuses it.
+  S({ { 51, 49, 1.0 } })
+  TMAP[49 * 256 + 50] = C.T_BUILDING
+  check("a diagonal step past a wall corner is refused",
+        GA.search(wg, P1, 50, 50, 5, false) == nil, "?")
+  TMAP[49 * 256 + 50] = nil
+  TMAP[50 * 256 + 51] = C.T_HALFBUILD
+  check("... on either side", GA.search(wg, P1, 50, 50, 5, false) == nil, "?")
+  TMAP[50 * 256 + 51] = nil
+  check("with both sides drivable the diagonal step is fine",
+        pstr((GA.search(wg, P1, 50, 50, 5, false))) == "51,49", "?")
+  -- Not drivable: a mine, deep sea without a boat.
+  TMAP[49 * 256 + 51] = C.T_GRASS + 0x40
+  check("a known mine is not drivable", GA.search(wg, P1, 50, 50, 5, false) == nil, "?")
+  TMAP[49 * 256 + 51] = C.T_DEEPSEA
+  check("deep sea is not drivable without a boat",
+        GA.search(wg, P1, 50, 50, 5, false) == nil, "?")
+  check("... and is in a boat", GA.search(wg, P1, 50, 50, 5, true) ~= nil, "?")
+  TMAP[49 * 256 + 51] = nil
+  -- 6. THE SAME RESULT EVERY TIME, and a tie goes to the lower first key:
+  -- one 1.0 square north (50,49) and one south (50,51), two apart, so no
+  -- chain joins them; north has the lower key.
+  S({ { 50, 49, 1.0 }, { 50, 51, 1.0 } })
+  local a1 = pstr((GA.search(wg, P1, 50, 50, 5, false)))
+  local a2 = pstr((GA.search(wg, P1, 50, 50, 5, false)))
+  check("a tie goes to the lower first-square key, the same twice",
+        a1 == "50,49" and a2 == a1, a1 .. " / " .. a2)
+  -- A tie in score goes to the SHORTER chain: 2x1.0 = 2.0 south against
+  -- 0.5 + 0.5 + 2x0.5 = 2.0 north.  South (50,51) has the higher key, so
+  -- only the length rule picks it.
+  S({ { 50, 51, 1.0 }, { 50, 49, 0.5 }, { 50, 48, 0.5 }, { 50, 47, 0.5 } })
+  local pt = GA.search(wg, P1, 50, 50, 5, false)
+  check("a tie in score goes to the shorter chain", pstr(pt) == "50,51", pstr(pt))
+
+  -- 7. THE HOLD.  dbot's decoy square is (22,24) beside pill 5 (20,20).  A
+  -- chain of three 1.0 squares runs south: (22,25) (22,26) (22,27).
+  _G.KEY_TURNLEFT, _G.KEY_TURNRIGHT, _G.KEY_FASTER = 0x04, 0x08, 0x10
+  S({ { 22, 25, 1.0 }, { 22, 26, 1.0 }, { 22, 27, 1.0 } })
+  local d = dbot(); arrive(d, 200)
+  d.inf.direction = 64                         -- facing east
+  lock(d, 201)
+  local h = d.st.orders.held
+  check("the scan runs as the decoy starts: chain of 3, score 1+1+2x1 = 4",
+        h.ga and pstr(h.ga.path) == "22,25 22,26 22,27" and near(h.ga.score, 4.0)
+        and h.ga.phase == "wait", h.ga and pstr(h.ga.path))
+  check("before the hit the hold goal stays on the decoy square",
+        d.st.goal.kind == "goto_tile" and d.st.goal.mx == 22 and d.st.goal.my == 24
+        and ORD.hold_parked(d.st, d.inf) == true, tostring(d.st.goal.mx))
+  local k1, t1 = ORD.decoy_keys(d.st, d.inf, 0x11, 0x04)
+  check("it turns to face the first square (south, from east: turn right), no throttle",
+        k1 == 0x01 + 0x08 and t1 == 0, string.format("%x %x", k1, t1))
+  d.inf.direction = 128
+  local k2 = ORD.decoy_keys(d.st, d.inf, 0x05, 0)
+  check("facing it: no turn key (and the other turn keys are cleared)", k2 == 0x01,
+        string.format("%x", k2))
+  d.st.goal = { kind = "attack_tank", target_id = 7, mx = 25, my = 26 }
+  lock(d, 202)
+  check("a fight in range still wins before the hit", d.st.goal.kind == "attack_tank", "?")
+  check("and a fight aims on its own: no getaway turn",
+        ORD.decoy_keys(d.st, d.inf, 0x05, 0) == 0x05, "?")
+  d.st.goal = ORD.decoy_goal(h)
+  -- THE HIT.
+  d.inf.armour = 35
+  lock(d, 204)
+  check("one armour loss: the drive starts, the goal is the first square",
+        h.ga.phase == "drive" and d.st.goal.mx == 22 and d.st.goal.my == 25
+        and d.st.goal._getaway == true, tostring(h.ga.phase))
+  check("driving is not parked: the throttle is left alone",
+        ORD.hold_parked(d.st, d.inf) == false and ORD.decoy_keys(d.st, d.inf, 0x11, 0) == 0x11, "?")
+  d.st.goal = { kind = "attack_tank", target_id = 7, mx = 23, my = 24 }
+  lock(d, 205)
+  check("driving: it never leaves the chain to fight",
+        d.st.goal.kind == "goto_tile" and d.st.goal.my == 25, tostring(d.st.goal.kind))
+  d.inf.tankx, d.inf.tanky = 22 * 256 + 128, 25 * 256 + 128
+  d.inf.armour = 30
+  lock(d, 210)
+  check("on square 1 (and hit again): on to square 2",
+        h.ga.phase == "drive" and d.st.goal.my == 26, tostring(d.st.goal.my))
+  d.inf.tanky = 26 * 256 + 128; lock(d, 216)
+  d.inf.tanky = 27 * 256 + 128; lock(d, 222)
+  check("at the end of the chain: done, parked on the last square",
+        h.ga.phase == "done" and d.st.goal.mx == 22 and d.st.goal.my == 27
+        and ORD.hold_parked(d.st, d.inf) == true, tostring(h.ga.phase))
+  check("parked at the end: no throttle", ORD.decoy_keys(d.st, d.inf, 0x11, 0) == 0x01, "?")
+  d.st.goal = { kind = "attack_tank", target_id = 7, mx = 23, my = 30 }
+  check("parked at the end: a fight in range of the tank is allowed again",
+        lock(d, 223) and d.st.goal.kind == "attack_tank", tostring(d.st.goal.kind))
+  d.inf.tanky = 30 * 256 + 128
+  d.st.goal = { kind = "take_cover", mx = 3, my = 3 }
+  lock(d, 224)
+  check("pushed off the last square: the hold goal drives back to it",
+        d.st.goal.kind == "goto_tile" and d.st.goal.my == 27, tostring(d.st.goal.my))
+  d.inf.tanky = 27 * 256 + 128
+  -- The hold's endings at the end of the chain.
+  ORD.update(d.st, d.w, d.inf, 200 + HOLD - 1)
+  check("the hold stands at the chain's end until the clock", d.st.orders.held ~= nil, "ended")
+  ORD.update(d.st, d.w, d.inf, 200 + HOLD)
+  check("the 10 s clock ends it at the chain's end", d.st.orders.held == nil, "held")
+  local function at_end()
+    local b = dbot(); arrive(b, 200); b.inf.direction = 128
+    lock(b, 201); b.inf.armour = 35; lock(b, 202)
+    for _, y in ipairs({ 25, 26, 27 }) do
+      b.inf.tanky = y * 256 + 128; lock(b, 203 + y)
+    end
+    return b
+  end
+  local e = at_end()
+  check("at_end rig is parked at the end", e.st.orders.held.ga.phase == "done", "?")
+  e.inf.events = { ping(1, 0, 23, 27) }
+  ORD.on_events(e.st, e.w, e.inf, 300)
+  e.inf.events = {}
+  check("a caution beside the tank at the chain's end releases it",
+        e.st.orders.held == nil, "held")
+  e = at_end()
+  e.w.pills[5].health = 0
+  check("pills down ends it at the chain's end",
+        lock(e, 300) == false and e.st.orders.held == nil, "held")
+  e = at_end()
+  ORD.on_chat(e.st, e.w, e.inf, 0, "cancel", 300, true, false)
+  check("cancel ends it at the chain's end", e.st.orders.held == nil, "held")
+  e = at_end()
+  ORD.on_death(e.st, e.inf)
+  check("death ends it at the chain's end", e.st.orders.held == nil, "held")
+
+  -- 8. THE NEXT SQUARE STOPS BEING DRIVABLE: a fresh scan from where the
+  -- tank is with the steps that are left; no chain = park there.
+  d = dbot(); arrive(d, 200); lock(d, 201)
+  d.inf.armour = 35; lock(d, 202)
+  d.inf.tanky = 25 * 256 + 128; lock(d, 203)
+  TMAP[26 * 256 + 22] = C.T_BUILDING
+  lock(d, 204)
+  h = d.st.orders.held
+  check("next square walled: fresh scan finds nothing, parks where it is",
+        h.ga.phase == "done" and h.ga.park_mx == 22 and h.ga.park_my == 25
+        and d.st.goal.my == 25, tostring(h.ga.phase))
+  TMAP[26 * 256 + 22] = nil
+
+  -- 9. NO CHAIN: today's hold, and a hit changes nothing.
+  S({})
+  d = dbot(); arrive(d, 200); d.inf.direction = 64; lock(d, 201)
+  h = d.st.orders.held
+  check("no chain: the scan says so", h.ga and h.ga.path == nil, "?")
+  d.inf.armour = 30; lock(d, 202)
+  check("no chain: a hit changes nothing (parked on the decoy square)",
+        h.ga.phase == "wait" and d.st.goal.mx == 22 and d.st.goal.my == 24
+        and ORD.hold_parked(d.st, d.inf) == true, tostring(h.ga.phase))
+  check("no chain: the keys are today's (no turn, no throttle)",
+        ORD.decoy_keys(d.st, d.inf, 0x11, 0) == 0x01, "?")
+
+  -- 10. A RESCAN AFTER A PILL DIES.  Two pills: 5 (20,20) and 6 (26,24).
+  -- North (22,23) is shielded from pill 5 only, south (22,25) from pill 6
+  -- only: 0.5 each, a tie, north wins on the lower key.  Pill 5 dies: north
+  -- is open to pill 6 (0) and south is 1.0, so the rescan picks south --
+  -- but not before DECOY_GETAWAY_RESCAN_TICKS.
+  GA.block = function(world, p, mx, my)
+    if p.mx == 20 and mx == 22 and my == 23 then return 1.0, "wall", 22, 22 end
+    if p.mx == 26 and mx == 22 and my == 25 then return 1.0, "wall", 23, 25 end
+    return 0, "open"
+  end
+  d = dbot()
+  d.w.pills[6] = { mx = 26, my = 24, owner = "hostile", health = 5 }
+  arrive(d, 200); lock(d, 201)
+  h = d.st.orders.held
+  check("two pills: north and south tie at 0.5, north wins",
+        pstr(h.ga.path) == "22,23" and near(h.ga.score, 1.0), pstr(h.ga.path))
+  local first_scan = h.ga.scan_tick
+  lock(d, 251)
+  check("nothing changed: no rescan at the next check", h.ga.scan_tick == first_scan, "?")
+  d.w.pills[5].health = 0
+  lock(d, 261)
+  check("pill 5 dies: no rescan before the check interval",
+        pstr(h.ga.path) == "22,23", pstr(h.ga.path))
+  lock(d, 301)
+  check("pill 5 dies: the rescan picks south (shielded from pill 6)",
+        pstr(h.ga.path) == "22,25" and near(h.ga.score, 2.0) and h.ga.scan_tick == 301,
+        pstr(h.ga.path))
+  d.inf.direction = 64
+  check("and the turn follows the new first square",
+        ORD.decoy_keys(d.st, d.inf, 0, 0) == 0x08, "?")
+
+  -- 11. KNOB OFF (keel): today's hold exactly.
+  S({ { 22, 25, 1.0 }, { 22, 26, 1.0 }, { 22, 27, 1.0 } })
+  GA.block = function(world, p, mx, my)
+    local v = SAFE[my * 256 + mx]
+    if v then return v, "wall", mx, my - 1 end
+    return 0, "open"
+  end
+  C.DECOY_GETAWAY = false
+  d = dbot(); arrive(d, 200); d.inf.direction = 64; lock(d, 201)
+  h = d.st.orders.held
+  check("DECOY_GETAWAY=false: no scan", h.ga == nil, "?")
+  d.inf.armour = 30; lock(d, 202)
+  check("DECOY_GETAWAY=false: a hit changes nothing",
+        d.st.goal.mx == 22 and d.st.goal.my == 24 and ORD.hold_parked(d.st, d.inf) == true, "?")
+  check("DECOY_GETAWAY=false: keys are today's (throttle off, no turn)",
+        ORD.decoy_keys(d.st, d.inf, 0x11, 0) == 0x01, "?")
+  C.DECOY_GETAWAY = true
+
+  GA.block = saved.block
+  cpf.simulate_shot = saved.sim
+  _G.get_terrain, _G.TERRAIN_MASK, _G.TERRAIN_MINE_FLAG = saved.gt, saved.tm, saved.mf
+  _G.KEY_TURNLEFT, _G.KEY_TURNRIGHT, _G.KEY_FASTER = saved.kl, saved.kr, saved.kf
+  _G.EVENT_PING, _G.PING_KIND_CAUTION, _G.PING_KIND_BOT_COMMAND = nil, nil, nil
+  math.atan = atan1
+end
+
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
