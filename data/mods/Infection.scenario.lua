@@ -963,7 +963,10 @@ function on_player_join(p, scripted)
     return
   end
   side[p]   = INFECTED
-  turned[p] = turned[p] or 0
+  -- A new player in a seat starts from nothing, not from the last one's count
+  -- or the square the last one died on.
+  turned[p] = 0
+  fell[p]   = nil
   game.set_team(p, INFECTED)
   game.message("You have arrived infected. Hunt them down.", p)
   tune(p)
@@ -981,7 +984,8 @@ end
 function on_player_leave(p, scripted)
   local was = side[p]
   side[p]    = nil
-  marked[p]  = nil
+  -- The engine does not clear a marker when its seat empties.
+  unshow(p)
   chasing[p] = nil
   told_at[p]  = nil
   told[p]     = nil

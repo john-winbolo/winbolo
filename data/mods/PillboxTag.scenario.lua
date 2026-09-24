@@ -938,7 +938,8 @@ end
 -- A builder sent to a pillbox repairs it, which would turn the prize back into
 -- a gun. It goes to nothing again as soon as the work is done.
 function on_built(p, action, x, y, scripted)
-  if over or pill == nil or action ~= "pill" then
+  -- A pillbox repair arrives as "repair" (a build order says "pill").
+  if over or pill == nil or action ~= "repair" then
     return
   end
   local pb = game.pill(pill)
@@ -983,7 +984,8 @@ function on_player_join(p, scripted)
   if not running or over then
     return
   end
-  seconds[p] = seconds[p] or 0
+  -- A new player in a seat starts from nothing, not from the last one's time.
+  seconds[p] = 0
   for q = 0, game.max_tanks() - 1 do
     if seconds[q] ~= nil and game.lobby_slot(q) ~= nil then
       game.score(q, seconds[q], SCORE_LABEL)
