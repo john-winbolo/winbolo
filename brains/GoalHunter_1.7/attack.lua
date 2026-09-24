@@ -7184,7 +7184,9 @@ function M.update_attack_substate(goal, state, world, info)
       -- reason finetune's first tick is: the previous substate may have
       -- been holding a turn key, so the engine's firstLeft/firstRight
       -- ramp counter is unknown. One blank tick guarantees the next
-      -- emitted tap starts at /8 instead of full speed.
+      -- emitted tap starts at /8 instead of full speed (its first
+      -- engine tick is the visible-nudge multiple of /8, see
+      -- steering.lua's 3-tier turn note).
       goal._shoot_first_steer = true
       print(string.format(TAG ..
         " ATTACK: finetune verified (angle %.2f, %d taps) — opening fire",

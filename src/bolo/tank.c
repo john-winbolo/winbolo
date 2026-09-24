@@ -1178,10 +1178,14 @@ void tankGetGunsight(GameSim *sim, tank *value, BYTE *xMap, BYTE *yMap, BYTE *xP
 *PURPOSE:
 *  Like tankGetGunsight, but computes the crosshair from the
 *  supplied pose (world position + angle) instead of the
-*  tank's own. RENDER ONLY (render-error smoothing): lets the
-*  gunsight track the smoothed pose without touching sim
-*  state. The gunsight range (sightLen) and alive/dead test
-*  still come from the tank.
+*  tank's own. Two callers: the renderer, which passes the
+*  smoothed pose so the gunsight tracks it without touching
+*  sim state, and tankVisibleTurn below, which asks where the
+*  crosshair would land after a candidate first-tick turn.
+*  That second caller runs on the server, in prediction and
+*  in reconcile replay, so this must stay a pure function of
+*  its arguments and the sim rules. The gunsight range
+*  (sightLen) and alive/dead test still come from the tank.
 *
 *ARGUMENTS:
 *  sim    - The game whose shell rules the flight comes from

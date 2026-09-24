@@ -634,8 +634,15 @@ tankButton inputGetKeys(ClientSim *cs, keyItems *setKeys, bool isMenu) {
 
   tb = TNONE;
 
-  bool turnLeft = turnTapRead(&leftTurnTap, KEY_DOWN(setKeys->kiLeft));
-  bool turnRight = turnTapRead(&rightTurnTap, KEY_DOWN(setKeys->kiRight));
+  /* Keyboard turns come through the tap queues, so a press and release that
+     both arrived since the last sample still turn once. Gamepad turning
+     below is the analog stick read live each sample, with no press and
+     release pair to queue, so a stick flick shorter than a frame is not
+     preserved this way; the sim's visible first tick still applies to it. */
+  bool turnLeft, turnRight;
+  turnTapReadPair(&leftTurnTap, KEY_DOWN(setKeys->kiLeft),
+                  &rightTurnTap, KEY_DOWN(setKeys->kiRight),
+                  &turnLeft, &turnRight);
   if (KEY_DOWN(setKeys->kiForward) && turnRight) {
     tb = TRIGHTACCEL;
   } else if (KEY_DOWN(setKeys->kiForward) && turnLeft) {

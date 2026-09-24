@@ -6727,7 +6727,11 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                        the main window does at its own site further down. The
                        release always goes through, so the tracked physical
                        state cannot stick down when a press made in the main
-                       window is let go over the overview. */
+                       window is let go over the overview. Every key goes
+                       through, not only the turn keys: inputButtonInput also
+                       tracks the mine key by event, so this is what lets a
+                       mine be laid while the overview has focus and stops a
+                       mine key released over the overview staying down. */
                     if (pw == &s_popMapOverview &&
                         (ev.type == SDL_EVENT_KEY_DOWN ||
                          ev.type == SDL_EVENT_KEY_UP)) {
