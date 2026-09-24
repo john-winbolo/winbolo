@@ -69,6 +69,25 @@ static const char kLvsfScenario[] =
     "  regions = { keep = { x = 10, y = 12, w = 6, h = 4 } },\n"
     "}\n";
 
+/* The map's own scenario for the rule-change round: two rules in its table,
+ * and a script that raises the pillbox cap a few frames into the round.
+ * pill_repair_amount comes up first because the cap may not pass what a
+ * builder's load of repair adds up to. */
+static const char kLvsfRuleScenario[] =
+    "scenario = {\n"
+    "  name = \"" LVSF_SCENARIO_NAME "\",\n"
+    "  api = 1,\n"
+    "  rules = { tank_full_shells = " LVSF_STR(LVSF_RULE_SHELLS) ","
+    " pill_repair_amount = 8 },\n"
+    "}\n"
+    "local frames = 0\n"
+    "function on_tick(tick)\n"
+    "  frames = frames + 1\n"
+    "  if frames == " LVSF_STR(LVSF_RULE_SET_FRAME) " then\n"
+    "    game.set_rule(\"pill_max_armour\", " LVSF_STR(LVSF_PILL_CAP) ")\n"
+    "  end\n"
+    "end\n";
+
 /* A mod behind it, from the scenarios directory. */
 static const char kLvsfMod[] =
     "scenario = {\n"
@@ -98,7 +117,10 @@ static CmdResult lvsfPick(ServerSim *sim, const char *file) {
     return r;
 }
 
-bool lvScriptsRecordScriptedRound(const char *tag, char *path, size_t pathLen) {
+/* Record a round whose map scenario is scenarioText, with the mod behind it,
+ * for simTicks sim ticks after the recording opens. */
+static bool lvsfRecordRound(const char *tag, const char *scenarioText,
+                            int simTicks, char *path, size_t pathLen) {
     BYTE          emap[6000] = E_MAP;
     char          leaf[128];
     char          mapPath[512];
@@ -114,7 +136,7 @@ bool lvScriptsRecordScriptedRound(const char *tag, char *path, size_t pathLen) {
     (void)SDL_RemovePath(lvsfDir);
     if (!SDL_CreateDirectory(lvsfDir)) return false;
     if (!lvsfPutFile(LVSF_MOD_FILE, kLvsfMod) ||
-        !lvsfPutFile(LVSF_MAP_SCRIPT, kLvsfScenario)) {
+        !lvsfPutFile(LVSF_MAP_SCRIPT, scenarioText)) {
         lvsfDropDir();
         return false;
     }
@@ -151,7 +173,7 @@ bool lvScriptsRecordScriptedRound(const char *tag, char *path, size_t pathLen) {
             remove(h.path);
             h.sim = sim;
             if (replayHarnessBeginRecording(&h)) {
-                replayHarnessTick(&h, 6);
+                replayHarnessTick(&h, simTicks);
                 ok = replayHarnessStopRecording(&h);
             }
             snprintf(path, pathLen, "%s", h.path);
@@ -169,4 +191,13 @@ bool lvScriptsRecordScriptedRound(const char *tag, char *path, size_t pathLen) {
     serverSimDestroy(sim);
     lvsfDropDir();
     return ok;
+}
+
+bool lvScriptsRecordScriptedRound(const char *tag, char *path, size_t pathLen) {
+    return lvsfRecordRound(tag, kLvsfScenario, 6, path, pathLen);
+}
+
+bool lvScriptsRecordRuleRound(const char *tag, char *path, size_t pathLen) {
+    return lvsfRecordRound(tag, kLvsfRuleScenario, LVSF_RULE_ROUND_TICKS,
+                           path, pathLen);
 }

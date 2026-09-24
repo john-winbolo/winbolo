@@ -3440,6 +3440,17 @@ int run_lv_scripts_json_malformed(void);
 int run_lv_scripts_json_wrong_version(void);
 int run_lv_scripts_json_hostile_values(void);
 int run_lv_scripts_json_over_cap(void);
+/* The log viewer's rules at the playhead (test_lv_rule_changes.c, with the
+ * rule-change round recorded by lv_scripts_fixture.c): a mid-round change
+ * collected at load, LvRules right after seeking either way, a plain round
+ * on the classic values, hostile log_RuleSet records consumed and ignored in
+ * a file and on a live feed, and the pill picture scaled to the cap. */
+int run_lv_rule_changes_collected(void);
+int run_lv_rule_changes_seek(void);
+int run_lv_rule_changes_plain_round(void);
+int run_lv_rule_changes_hostile(void);
+int run_lv_rule_changes_live_feed(void);
+int run_lv_rule_changes_armour_levels(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or

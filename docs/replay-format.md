@@ -344,9 +344,13 @@ was refused writes no record at all, because a refused change leaves the
 table exactly as it was.
 
 Written by the scenario funnel's set-rule arm
-(`src/server/sim/server_sim_scenario.c`). The viewer consumes the record to
-keep its place in the stream and does not yet show it; showing a rule needs
-the recording's rules manifest, which states the table a round opened with.
+(`src/server/sim/server_sim_scenario.c`). The viewer collects every change
+when it loads the recording, with the time playback reaches it, and shows each
+rule's value at the playhead: the last change at or before it, else the value
+`scripts.json` says the round opened on, else the classic value. A record
+whose length is not 8, whose rule index names no rule or whose value is not
+finite is consumed and ignored. A live feed has no file to walk, so there the
+changes are collected as playback reaches them.
 
 ### `log_ScnPanel` payload
 

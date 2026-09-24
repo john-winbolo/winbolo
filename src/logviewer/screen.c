@@ -26,7 +26,9 @@
 *********************************************************/
 
 /* Includes */
+#include <math.h>     /* isfinite — a log_RuleSet value */
 #include <stdio.h>
+#include <string.h>
 #ifdef _WIN32
 #  include <winsock2.h>
 #else
@@ -119,6 +121,147 @@ BYTE lv_screenGetXOffset(void) { return g_lv->xOffset; }
 BYTE lv_screenGetYOffset(void) { return g_lv->yOffset; }
 bool lv_screenGetFastForwarding(void) { return g_lv->fastForwarding; }
 uint32_t lv_screenGetTimeRunning(void) { return g_lv->timeRunning; }
+
+/* Decode a log_RuleSet payload from its two index bytes, its blob's length
+ * byte and the blob. TRUE, with *index and *value set, only for a length of
+ * eight, an index this build has a rule for and a finite value: the record
+ * comes from a file anyone could have written, and nothing else in one is a
+ * rule change. The value is an IEEE-754 double, most significant byte first. */
+static bool lv_ruleSetDecode(BYTE idxHi, BYTE idxLo, BYTE len, const BYTE *blob,
+                             int *index, double *value) {
+  int      rule = ((int)idxHi << 8) | (int)idxLo;
+  uint64_t bits = 0;
+  double   v;
+  int      i;
+
+  if (len != 8 || rule >= SIM_RULE_COUNT) {
+    return FALSE;
+  }
+  for (i = 0; i < 8; i++) {
+    bits = (bits << 8) | (uint64_t)blob[i];
+  }
+  memcpy(&v, &bits, sizeof(v));
+  if (!isfinite(v)) {
+    return FALSE;
+  }
+  *index = rule;
+  *value = v;
+  return TRUE;
+}
+
+/* Add a change to the recording's list. unlessPresent skips it when the list
+ * already holds a change to the same rule at the same time, which is what
+ * playback passes: on a loaded file the load walk collected it first, and on
+ * a live feed a seek back replays changes already added. A full list keeps
+ * what it has and sets the truncated flag. */
+static void lv_ruleChangeAppend(uint32_t ms, int index, double value,
+                                bool unlessPresent) {
+  int i;
+
+  if (unlessPresent) {
+    for (i = 0; i < g_lv->ruleChangeCount; i++) {
+      if (g_lv->ruleChanges[i].ms == ms && g_lv->ruleChanges[i].index == index) {
+        return;
+      }
+    }
+  }
+  if (g_lv->ruleChangeCount >= LV_RULE_CHANGES_MAX) {
+    g_lv->ruleChangesTruncated = TRUE;
+    return;
+  }
+  g_lv->ruleChanges[g_lv->ruleChangeCount].ms    = ms;
+  g_lv->ruleChanges[g_lv->ruleChangeCount].index = index;
+  g_lv->ruleChanges[g_lv->ruleChangeCount].value = value;
+  g_lv->ruleChangeCount++;
+}
+
+static void lv_ruleChangesClear(void) {
+  g_lv->ruleChangeCount      = 0;
+  g_lv->ruleChangesTruncated = FALSE;
+}
+
+double lv_screenRuleValueAt(int index, uint32_t ms) {
+  const LvRuleChange *c;
+  bool                found  = FALSE;
+  uint32_t            bestMs = 0;
+  double              best   = 0.0;
+  int                 i;
+
+  if (index < 0 || index >= SIM_RULE_COUNT || g_lv == NULL) {
+    return simRulesClassicValue(index);
+  }
+  /* The last change at or before ms. Two changes to one rule at the same
+     time are one tick's, and the later in the file is the value the tick
+     ended on. */
+  for (i = 0; i < g_lv->ruleChangeCount; i++) {
+    c = &g_lv->ruleChanges[i];
+    if (c->index == index && c->ms <= ms && (found == FALSE || c->ms >= bestMs)) {
+      found  = TRUE;
+      bestMs = c->ms;
+      best   = c->value;
+    }
+  }
+  if (found == TRUE) {
+    return best;
+  }
+  for (i = 0; i < g_lv->scripts.ruleCount && i < SIM_RULE_COUNT; i++) {
+    if (g_lv->scripts.rules[i].index == index) {
+      return g_lv->scripts.rules[i].value;
+    }
+  }
+  return simRulesClassicValue(index);
+}
+
+/* A rule's value as a whole number in [lo, hi]. The comparison is written so
+ * a NaN lands on lo. */
+static int lv_rulesClampInt(double v, int lo, int hi) {
+  if (!(v >= (double)lo)) {
+    return lo;
+  }
+  if (v > (double)hi) {
+    return hi;
+  }
+  return (int)v;
+}
+
+/* Fill g_lv->rules with every rule's value at the playhead. Run wherever the
+ * playhead moves without passing each record in between: at the end of a
+ * load, after a snapshot restore and at the end of a seek. Playback passing
+ * a log_RuleSet runs it from that record's case. */
+static void lv_rulesRefresh(void) {
+  uint32_t t = g_lv->timeRunning;
+
+  g_lv->rules.tankFullShells = (BYTE)lv_rulesClampInt(
+      lv_screenRuleValueAt(SIM_RULE_tank_full_shells, t), 0, 255);
+  g_lv->rules.tankFullMines  = (BYTE)lv_rulesClampInt(
+      lv_screenRuleValueAt(SIM_RULE_tank_full_mines, t), 0, 255);
+  g_lv->rules.tankFullArmour = (BYTE)lv_rulesClampInt(
+      lv_screenRuleValueAt(SIM_RULE_tank_full_armour, t), 0, 255);
+  g_lv->rules.tankFullTrees  = (BYTE)lv_rulesClampInt(
+      lv_screenRuleValueAt(SIM_RULE_tank_full_trees, t), 0, 255);
+  g_lv->rules.baseFullShells = (BYTE)lv_rulesClampInt(
+      lv_screenRuleValueAt(SIM_RULE_base_full_shells, t), 0, 255);
+  g_lv->rules.baseFullMines  = (BYTE)lv_rulesClampInt(
+      lv_screenRuleValueAt(SIM_RULE_base_full_mines, t), 0, 255);
+  g_lv->rules.baseFullArmour = (BYTE)lv_rulesClampInt(
+      lv_screenRuleValueAt(SIM_RULE_base_full_armour, t), 0, 255);
+  g_lv->rules.pillMaxArmour  = lv_rulesClampInt(
+      lv_screenRuleValueAt(SIM_RULE_pill_max_armour, t), 1, 255);
+}
+
+int lv_screenGetRuleChanges(const LvRuleChange **out) {
+  if (out != NULL) {
+    *out = (g_lv != NULL) ? g_lv->ruleChanges : NULL;
+  }
+  return (g_lv != NULL) ? g_lv->ruleChangeCount : 0;
+}
+
+const LvScripts *lv_screenGetScripts(void) {
+  if (g_lv == NULL || g_lv->logLoaded == FALSE) {
+    return NULL;
+  }
+  return &g_lv->scripts;
+}
 
 /* --- Smart pings ----------------------------------------------------
  * Every log_Ping the playback has walked past that is still inside its
@@ -263,7 +406,8 @@ int a = (scrY*(lv_screenGetSizeX()+1))+scrX ;
   *((*g_lv->mineView).mineItem+a) = FALSE;
   /* Set up Items */
   if ((lv_pillsExistPos(&g_lv->pb,xValue,yValue)) == TRUE) {
-    returnValue = lv_pillsGetScreenHealth(&g_lv->pb, xValue, yValue);
+    returnValue = lv_pillsGetScreenHealth(&g_lv->pb, xValue, yValue,
+                                          g_lv->rules.pillMaxArmour);
   } else if ((lv_basesExistPos(&g_lv->bs,xValue,yValue)) == TRUE) {
      ba = lv_basesGetAlliancePos(&g_lv->bs, xValue, yValue);
     switch (ba) {
@@ -983,15 +1127,25 @@ void lv_screenProcessLog(unsigned short numEvents) {
       break;
     case log_RuleSet:
       /* One simulation rule a scenario changed: the rule's index as a
-         big-endian u16, then the value the field ended up holding as an
-         eight-byte blob. Read and dropped. The viewer has nowhere to show a
-         rule yet — that belongs with the recording's rules manifest — and
-         what it has to do here is consume the record so everything after it
-         is still read from the right byte. */
+         big-endian u16, then the value the field ended up holding as a
+         pascal blob of eight bytes. A loaded file's changes were all
+         collected by the load walk, so the append finds this one there and
+         adds nothing; a live feed has no walk, and this is how its changes
+         arrive. Either way the rules are then read again at the playhead.
+         A record that does not decode is consumed and changes nothing. */
       logReadBytes(&opt1, 1);
       logReadBytes(&opt2, 1);
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
+      {
+        int    ruleIndex;
+        double ruleValue;
+        if (lv_ruleSetDecode(opt1, opt2, (BYTE)mem[0], (const BYTE *)(mem+1),
+                             &ruleIndex, &ruleValue)) {
+          lv_ruleChangeAppend(g_lv->timeRunning, ruleIndex, ruleValue, TRUE);
+          lv_rulesRefresh();
+        }
+      }
       break;
     case log_ScnPanel:
       /* One scenario panel's display list: the panel id, the two destination
@@ -2543,6 +2697,129 @@ static void lv_walkCollectSlotNames(void) {
   s_gameSettingsWalked = TRUE;
 }
 
+/* Read a log_RuleSet payload and add it to the change list at ms when it
+ * decodes. Entered with the reader just past the event's code byte — and, on
+ * v2, past the framed length — and consumes exactly the bytes the matching
+ * walkSkipEventBody case would, whether or not the record decodes. Returns
+ * FALSE on a short read. */
+static bool walkReadRuleSet(uint32_t ms) {
+  BYTE   idx[2];
+  BYTE   len;
+  BYTE   blob[256];
+  int    index;
+  double value;
+
+  if (logReadBytes(idx, 2) != 2) return FALSE;
+  if (logReadBytes(&len, 1) != 1) return FALSE;
+  if (len > 0 && logReadBytes(blob, len) != len) return FALSE;
+  if (lv_ruleSetDecode(idx[0], idx[1], len, blob, &index, &value)) {
+    lv_ruleChangeAppend(ms, index, value, FALSE);
+  }
+  return TRUE;
+}
+
+/* Like walkScanNames, but reads the rule changes in one event packet, all of
+ * which land at ms; every other event is skipped by the shared helper. */
+static bool walkScanRuleSets(unsigned short numEvents, uint32_t ms) {
+  unsigned short i;
+  BYTE code;
+  bool isV2 = (g_lv->loadedLogVersion >= LOG_VERSION_V2);
+  for (i = 0; i < numEvents; i++) {
+    if (logReadBytes(&code, 1) != 1) return FALSE;
+    if (isV2) {
+      BYTE lenBytes[2];
+      unsigned short evLen;
+      size_t payloadPos;
+      if (logReadBytes(lenBytes, 2) != 2) return FALSE;
+      evLen = (unsigned short)((lenBytes[0] << 8) | lenBytes[1]);
+      payloadPos = lv_logGetCurrentPosition();
+      if (code == log_RuleSet && !walkReadRuleSet(ms)) return FALSE;
+      lv_logSetPosition(payloadPos + evLen);
+    } else {
+      if (code == log_RuleSet) {
+        if (!walkReadRuleSet(ms)) return FALSE;
+      } else if (walkSkipEventBody(code) < 0) {
+        return FALSE;
+      }
+      lv_blocksSetKey(code);
+    }
+  }
+  return TRUE;
+}
+
+/* Walk the log from the event-stream start to LOG_QUIT/EOF, collecting every
+ * log_RuleSet into g_lv->ruleChanges at the playback time the decoder will
+ * reach it. The viewer's snapshots carry no rules, so a seek back could not
+ * otherwise put an earlier value back. The tick accounting mirrors
+ * lv_walkComputeTotalTimeMs: an event packet read on the tick that takes
+ * playback to (ticks + 1) * 20 ms is applied at that time. Must be entered at
+ * load, while the reader's XOR key still matches the stream start. Saves and
+ * restores logPosition + XOR key. */
+static void lv_walkCollectRuleChanges(void) {
+  size_t   savedPos = lv_logGetCurrentPosition();
+  BYTE     savedKey = lv_blocksGetKey();
+  uint64_t ticks    = 0;
+  bool     done     = FALSE;
+  BYTE     code, b1, b2;
+  unsigned short waitLen, numEvents;
+  uint16_t us;
+
+  lv_ruleChangesClear();
+  lv_logSetPosition(s_walkStartPos);
+
+  while (!done && !lv_blocksIsEOF()) {
+    if (logReadBytes(&code, 1) != 1) break;
+    switch (code) {
+      case LOG_QUIT:
+        done = TRUE;
+        break;
+      case LOG_SNAPSHOT:
+        if (!walkSkipSnapshot()) { done = TRUE; break; }
+        ticks++;
+        break;
+      case LOG_NOEVENTS:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        waitLen = b1 == 0 ? 1 : b1;
+        ticks += 1 + (uint64_t)waitLen;
+        break;
+      case LOG_NOEVENTS_LONG:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
+        us = (uint16_t)((b1 << 8) | b2);
+        waitLen = ntohs(us);
+        if (waitLen == 0) waitLen = 1;
+        ticks += 1 + (uint64_t)waitLen;
+        break;
+      case LOG_EVENT:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        numEvents = b1;
+        if (!walkScanRuleSets(numEvents, (uint32_t)((ticks + 1) * 20))) {
+          done = TRUE;
+          break;
+        }
+        ticks++;
+        break;
+      case LOG_EVENT_LONG:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
+        us = (uint16_t)((b1 << 8) | b2);
+        numEvents = ntohs(us);
+        if (!walkScanRuleSets(numEvents, (uint32_t)((ticks + 1) * 20))) {
+          done = TRUE;
+          break;
+        }
+        ticks++;
+        break;
+      default:
+        done = TRUE;
+        break;
+    }
+  }
+
+  lv_logSetPosition(savedPos);
+  lv_blocksSetKey(savedKey);
+}
+
 /* Log time (ms) at which the round started (the lobby's world rewrite); 0 if
  * no lobby. */
 uint32_t lv_screenGameStartMs(void) { return s_gameStartMs; }
@@ -2869,6 +3146,7 @@ bool lv_logLoad(char *fileName, int memoryBufferSize) {
   g_lv->snap = lv_snapshotCreate();
   s_firstWorldSnapKnown = FALSE;
   g_lv->timeRunning = 0;
+  lv_ruleChangesClear();
   memset(g_lv->kills,        0, sizeof(g_lv->kills));
   memset(g_lv->deaths,       0, sizeof(g_lv->deaths));
   memset(g_lv->gameViewHud,  0, sizeof(g_lv->gameViewHud));
@@ -2985,12 +3263,17 @@ bool lv_screenLoadMap(char *fileName, int memoryBufferSize) {
     g_lv->totalTimeMs = lv_walkComputeTotalTimeMs();
     s_gameStartMs = lv_walkComputeGameStartMs();
     lv_walkCollectSlotNames();
+    lv_walkCollectRuleChanges();
     /* Set the game information up */
     lv_frontEndSetGameInformation(FALSE, g_lv->versionMajor, g_lv->versionMinor, g_lv->versionRevision, g_lv->mapName, g_lv->gt, g_lv->allowHiddenMines, g_lv->ai, g_lv->gmeStartDelay, g_lv->gmeLength, g_lv->wbnKey, g_lv->gmeCreateTime);
     g_lv->isPlaying = TRUE;
     lv_screenUpdateView(redraw);
     g_lv->state = lv_lr_start;
+    lv_rulesRefresh();
     lv_screenParkAtWindowStart();
+  } else {
+    /* The last log's rules must not outlive it. */
+    lv_rulesRefresh();
   }
   return returnValue;
 }
@@ -3019,6 +3302,7 @@ static bool lv_logLoadCommon(void) {
   g_lv->snap = lv_snapshotCreate();
   s_firstWorldSnapKnown = FALSE;
   g_lv->timeRunning = 0;
+  lv_ruleChangesClear();
   memset(g_lv->kills,        0, sizeof(g_lv->kills));
   memset(g_lv->deaths,       0, sizeof(g_lv->deaths));
   memset(g_lv->gameViewHud,  0, sizeof(g_lv->gameViewHud));
@@ -3110,6 +3394,7 @@ static bool lv_logLoadFromMemory(uint8_t *zipData, size_t zipLen) {
   bool created = lv_blocksCreateFromMemory(zipData, zipLen);
 
   lv_scriptsLoadFromBlocks();
+  lv_ruleChangesClear();
   if (created != TRUE) {
     g_lv->logLoaded = FALSE;
     return FALSE;
@@ -3133,11 +3418,16 @@ bool lv_screenLoadMapFromMemory(uint8_t *zipData, size_t zipLen) {
     g_lv->totalTimeMs = lv_walkComputeTotalTimeMs();
     s_gameStartMs = lv_walkComputeGameStartMs();
     lv_walkCollectSlotNames();
+    lv_walkCollectRuleChanges();
     lv_frontEndSetGameInformation(FALSE, g_lv->versionMajor, g_lv->versionMinor, g_lv->versionRevision, g_lv->mapName, g_lv->gt, g_lv->allowHiddenMines, g_lv->ai, g_lv->gmeStartDelay, g_lv->gmeLength, g_lv->wbnKey, g_lv->gmeCreateTime);
     g_lv->isPlaying = TRUE;
     lv_screenUpdateView(redraw);
     g_lv->state = lv_lr_start;
+    lv_rulesRefresh();
     lv_screenParkAtWindowStart();
+  } else {
+    /* The last log's rules must not outlive it. */
+    lv_rulesRefresh();
   }
   return returnValue;
 }
@@ -3161,8 +3451,10 @@ bool lv_screenLoadFromStream(const uint8_t *bytes, size_t len) {
   lv_blocksBeginStream();
   /* A stream has no zip and so no scripts.json: this clears the holder. */
   lv_scriptsLoadFromBlocks();
+  lv_ruleChangesClear();
   if (lv_blocksAppendBytes(bytes, len) != TRUE) {
     g_lv->logLoaded = FALSE;
+    lv_rulesRefresh();
     return FALSE;
   }
   ok = lv_logLoadCommon();
@@ -3184,6 +3476,9 @@ bool lv_screenLoadFromStream(const uint8_t *bytes, size_t len) {
     lv_screenUpdateView(redraw);
     g_lv->state = lv_lr_start;
   }
+  /* A feed has no walk: its rules start from scripts.json (none on a stream)
+     and the classic values, and its changes arrive as playback meets them. */
+  lv_rulesRefresh();
   return ok;
 }
 
@@ -3264,6 +3559,7 @@ LogViewerState *lv_decoderCreate(bool fromMainMenu) {
   lv->rules.baseFullShells = 90;
   lv->rules.baseFullMines  = 90;
   lv->rules.baseFullArmour = 90;
+  lv->rules.pillMaxArmour  = 15;
 
   lv->fromMainMenu = fromMainMenu;
   lv->screenSizeX = MAIN_SCREEN_SIZE_X + 15; /* default 30 */
@@ -3283,6 +3579,9 @@ LogViewerState *lv_decoderCreate(bool fromMainMenu) {
   memset(lv->tankInv, 0, sizeof(lv->tankInv));
 
   lv_screenSetState(lv);
+  /* The same numbers again, from the rules table this time: with no log
+     there are no changes and no scripts.json, so every rule is classic. */
+  lv_rulesRefresh();
   return lv;
 }
 
@@ -3302,6 +3601,7 @@ void lv_decoderDestroy(LogViewerState *lv) {
 bool lv_screenCloseLog() {
   g_lv->isPlaying = FALSE;
   g_lv->logLoaded = FALSE;
+  lv_ruleChangesClear();
   lv_screenStoreGameSettings(NULL, 0);
   s_gameSettingsWalked = FALSE;
 
@@ -3814,6 +4114,8 @@ void lv_screenRewind() {
     lv_blocksSetKey(key);
     lv_playersSetTeams(pTeams);
     lv_processSnapshot();
+    /* The snapshot carries no rules: read them again at its time. */
+    lv_rulesRefresh();
     lv_windowRemoveEventsAfter(g_lv->timeRunning);
     g_lv->isPlaying = TRUE;
     g_lv->state = lv_lr_start;
@@ -3882,6 +4184,7 @@ static void lv_screenSeekToAbsoluteMs(uint32_t targetTime) {
     /* Same reason as the restore path: drain what the fast-forward queued so
        the newswire is not still scrolling out pre-seek text afterwards. */
     lv_messageDrainQueue();
+    lv_rulesRefresh();
     return;
   }
 
@@ -3894,6 +4197,9 @@ static void lv_screenSeekToAbsoluteMs(uint32_t targetTime) {
        overwritten with NO_TEAM_SET from the pre-snapshot pTeams. */
     lv_playersSetTeams(pTeams);
     lv_processSnapshot();
+    /* The snapshot carries no rules: read them again at its time, so the
+       fast-forward below starts from the values in force there. */
+    lv_rulesRefresh();
     lv_windowRemoveEventsAfter(snapTime);
     g_lv->isPlaying = TRUE;
     g_lv->state = lv_lr_start;
@@ -3925,6 +4231,7 @@ static void lv_screenSeekToAbsoluteMs(uint32_t targetTime) {
      * the most recent message(s) at the seek point — and the queue is
      * empty so the next live message starts scrolling in normally. */
     lv_messageDrainQueue();
+    lv_rulesRefresh();
   }
 }
 

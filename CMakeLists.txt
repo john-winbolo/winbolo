@@ -4400,6 +4400,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # two-world split replay_harness.h describes.
     tests/unit/test_lv_scripts_json.c
     tests/unit/lv_scripts_fixture.c
+    # The viewer's rules at the playhead: rule changes collected at load,
+    # LvRules after a seek, hostile records and the pill picture's cap.
+    tests/unit/test_lv_rule_changes.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).
@@ -6247,6 +6250,12 @@ set(_unit_test_names
     lv_scripts_json_wrong_version
     lv_scripts_json_hostile_values
     lv_scripts_json_over_cap
+    lv_rule_changes_collected
+    lv_rule_changes_seek
+    lv_rule_changes_plain_round
+    lv_rule_changes_hostile
+    lv_rule_changes_live_feed
+    lv_rule_changes_armour_levels
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast

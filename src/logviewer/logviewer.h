@@ -88,10 +88,9 @@ typedef struct {
  *********************************************************/
 /* The gameplay numbers the viewer draws against. The viewer has no sim —
    it rebuilds its world from the .wbv stream — so it keeps its own holder
-   rather than reading one. Seeded with the classic values at create; a
-   later change fills it from a manifest in the recording header, and until
-   then the point is that the numbers come from one place instead of five
-   #defines. */
+   rather than reading one. Seeded with the classic values at create, then
+   filled with each rule's value at the playhead (lv_screenRuleValueAt) on
+   every load, every log_RuleSet the playhead passes and every seek. */
 typedef struct {
   BYTE tankFullShells;
   BYTE tankFullMines;
@@ -100,7 +99,22 @@ typedef struct {
   BYTE baseFullShells;
   BYTE baseFullMines;
   BYTE baseFullArmour;
+  /* pill_max_armour: the armour a pillbox draws as intact against. 1 to 255,
+     never 0, since the pill picture divides by it. */
+  int  pillMaxArmour;
 } LvRules;
+
+/* One log_RuleSet the recording holds: the absolute log time it lands at,
+   the rule's index in sim_rules_names.h and the value it set. */
+typedef struct LvRuleChange {
+  uint32_t ms;
+  int      index;
+  double   value;
+} LvRuleChange;
+
+/* Most rule changes the viewer keeps for one recording. The load walk stops
+   collecting at this many and says so in ruleChangesTruncated. */
+#define LV_RULE_CHANGES_MAX 256
 
 /* What a recording's scripts.json says the round ran (docs/replay-format.md,
    "scripts.json"), read once when the recording is opened. Every count is
@@ -159,6 +173,12 @@ typedef struct LogViewerState {
   LvRules      rules;
   /* The scripts the recording says the round ran; empty for a plain round. */
   LvScripts    scripts;
+  /* Every log_RuleSet the recording holds, in file order: collected by a walk
+     over the whole file when it loads, and appended as the playhead meets
+     them on a live feed, which has no file to walk. */
+  LvRuleChange ruleChanges[LV_RULE_CHANGES_MAX];
+  int          ruleChangeCount;
+  bool         ruleChangesTruncated;   /* the file held more than the array */
 
   /* --- FROM screen.c globals --- */
   screen       view;
@@ -354,6 +374,20 @@ void lv_decoderDestroy(LogViewerState *lv);
 /* State accessors used by screen.c and other modules */
 void lv_screenSetState(LogViewerState *lv);
 LogViewerState *lv_screenGetState(void);
+
+/* Rules at the playhead, for the game info panel. Declared here rather than
+ * in backend.h because they speak in this header's types, and backend.h is
+ * included above them.
+ *
+ * lv_screenRuleValueAt answers rule index's value at absolute log time ms:
+ * the last change at or before ms, else the value the round opened on in
+ * scripts.json, else the classic value. lv_screenGetRuleChanges points *out
+ * at the recording's changes and returns how many there are.
+ * lv_screenGetScripts returns the recording's scripts.json holder, or NULL
+ * while no log is loaded. */
+double lv_screenRuleValueAt(int index, uint32_t ms);
+int lv_screenGetRuleChanges(const LvRuleChange **out);
+const LvScripts *lv_screenGetScripts(void);
 
 /* Accessor functions for sounddist.c (replaces extern globals) */
 BYTE lv_screenGetXOffset(void);

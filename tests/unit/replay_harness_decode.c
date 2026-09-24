@@ -302,6 +302,32 @@ bool replayHarnessDecodeFileScripts(const char *path, ReplayWorld *w,
     return replayDecodeFileInto(path, w, info, scripts);
 }
 
+bool replayHarnessDecodeFileThen(const char *path, ReplayDecodedFn fn,
+                                 void *ctx) {
+    LogViewerState *lv;
+    int steps;
+    bool reachedEnd;
+
+    if (path == NULL || path[0] == '\0') {
+        return false;
+    }
+    lv = replayDecoderOpen(path);
+    if (lv == NULL) {
+        return false;
+    }
+    steps = 0;
+    while (lv_screenIsPlaying() == TRUE && steps < REPLAY_DECODE_TICK_CAP) {
+        lv_screenLogTick();
+        steps++;
+    }
+    reachedEnd = lv_screenIsPlaying() != TRUE;
+    if (reachedEnd && fn != NULL) {
+        fn(ctx);
+    }
+    lv_decoderDestroy(lv);
+    return reachedEnd;
+}
+
 bool replayHarnessDecode(ReplayHarness *h) {
     if (h == NULL || h->path[0] == '\0') {
         return false;
