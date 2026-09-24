@@ -2826,19 +2826,29 @@ M.PILL_SUICIDER_MAPS = { ["Survival"] = true }
 -- standing next to the bot is watching it do nothing for half a minute. Close
 -- to a person the bot goes straight in.
 --
--- WHAT IT ACTUALLY DOES is exactly what state.is_pill_suicider already does
--- to a take: it forces _is_ppt off, so the shield scan, the gather_trees
--- pre-flight and the build_walls substate are all skipped and the take runs
--- down the plain standoff/charge path. It does NOT make the bot a suicider
--- anywhere else -- no goal-cost surcharge, no armour gate waiver, no swerve
--- change -- because the promise is about blockers, not about the bot's life.
+-- WHAT THE DISTANCE DOES ON ITS OWN is exactly what state.is_pill_suicider
+-- already does to a take: it forces _is_ppt off, so the shield scan, the
+-- gather_trees pre-flight and the build_walls substate are all skipped and
+-- the take runs down the plain standoff/charge path. On its own it does NOT
+-- make the bot a suicider anywhere else -- no goal-cost surcharge, no armour
+-- check waived, no swerve change -- because the promise is about blockers,
+-- not about the bot's life.
 --
--- It applies to an ORDERED attack and one the bot chose itself, because the
--- decision point is shared (attack.update_attack_substate).
+-- That wall skip applies to an ORDERED attack and one the bot chose itself,
+-- because the decision point is shared (attack.update_attack_substate).
 --
 -- Chebyshev tiles from the BOT's own tank, measured against allied tanks the
--- bot can SEE (util.human_ally_near). 0 turns the rule off.
+-- bot can SEE (util.human_ally_near). 0 turns off the wall skip and the run
+-- below.
 M.ORDER_HUMAN_NEAR_SUICIDE_TILES = 7   -- keel 0 (off)
+-- 2026-09-24: for an ORDERED attack only, the human-near rule also starts the
+-- FULL ping suicide run (orders.human_near_suicide): no refuel, no shell or
+-- armour checks, stay on the pill until the tank or the pill dies.  "Ordered"
+-- means the bot holds an attack_pill order (o.held) on that same pill; an
+-- attack_pill goal the bot chose for itself gets only the wall skip above.
+-- Needs PING_SUICIDE_ENABLED and ORDER_HUMAN_NEAR_SUICIDE_TILES > 0.  The
+-- human is the run's sender, so a bare "cancel" from them ends it.
+M.ORDER_HUMAN_NEAR_SUICIDE_RUN = true   -- keel false
 -- Suicider goal-cost surcharge. User's spec, verbatim: "instead of doing
 -- attack_pill 0.33, do everything but refuel 3x cost" ??? plus the addendum
 -- "defend_pill specifically is x6, not x3". Applied at ONE choke point
@@ -3768,6 +3778,14 @@ M.BUILDER_POOL_SEEDED_COMPETES = true   -- false = seeded sorts first, mode gate
                                         -- closes the pool behind it (pre-2026-09-06)
 M.BUILDER_POOL_GOAL_PILL_BONUS = 1.2    -- x score for the tank goal's own pill;
                                         -- 1.0 = no bonus (the chip is not printed)
+-- A HUMAN'S BOT-COMMAND PING ON ONE OF OUR LIVE PILLS (Andrew, 2026-09-24):
+-- the bot(s) that TAKE that defend order multiply the pill's builder-pool
+-- repair row by this, whatever their goal is afterwards.  It lasts BUILDER_POOL_PING_PILL_TICKS, or until the pill
+-- is dead, fully repaired (PILLS_MAX_HEALTH), no longer ours, or a bot-command
+-- ping lands on another of our pills (which takes over).  Where the goal-pill
+-- bonus above also applies, the larger of the two is used, never both.
+M.BUILDER_POOL_PING_PILL_BONUS = 2.0    -- keel 1.0 (KEEL had no ping bonus)
+M.BUILDER_POOL_PING_PILL_TICKS = 500    -- keel 500 (10 s; moot with the bonus at 1.0)
 
 -- ── Eligibility ──────────────────────────────────────────────────────────
 -- Under-fire: NOT a single-tick test. perc.under_fire is "the danger field at
@@ -3936,7 +3954,8 @@ M.BUILDER_POOL_CLAIM_TYPES = { rebuild = 1, topup = 2, farm = 3 }
 --             replaced wholesale by set_info, so "latest" is all there is.
 --   SILENCE   the ally stopped talking altogether (killed, kicked, removed).
 --             The block then expires TTL ticks after its last advert of ANY
---             kind. BRAIN ticks: 25 = 1 s (measured 2026-09-05: 1000 engine ticks = 500 thinks), so 175 = 7 s.
+--             kind. BRAIN ticks: 50 = 1 s (the brain thinks every second
+--             100-a-second engine tick), so 350 = 7 s.
 --
 -- The age is measured against slot.last_tick (the ally's last message of any
 -- kind), NOT slot.state_tick (its last full /info state). /info state is
@@ -4179,6 +4198,49 @@ M.ORDER_GOTO_HOLD_TICKS = 500    -- keel 500 (moot; master off)
 M.ORDER_HOLD_PARK_KINDS = {
   goto_tile = true, attack_tank = true, kill_lgm = true, none = true,
 }
+-- GO-THERE DECOY HARD HOLD (Andrew, 2026-09-24).  A bot-command PING on open
+-- ground is "go there and hold"; with this on, the arrival decides what the
+-- hold is.  No enemy (or neutral) pill within PILL_FIRE_RANGE of the pinged
+-- square: the order ends on arrival, in silence.  One or more: a HARD hold,
+-- "decoying 10s" -- the tank parks on the square and never drives, shoots
+-- only enemy tanks and builders in gun range, and nothing it would decide
+-- for itself (refuel, take_cover, a flee, a water escape, a stuck handler)
+-- takes it off.  It ends when those pills are down, after
+-- ORDER_GOTO_HOLD_TICKS, on a caution ping beside the tank, a cancel, the
+-- tank's death, or a new order.  Chat "!goto" and scenario hints keep the
+-- soft hold.  false = every ping hold is the soft hold above, as before.
+-- See orders.lua (GO-THERE DECOY HARD HOLD) for the whole rule.
+-- 2026-09-24: a new order from a person (chat or bot-command ping) makes
+-- every bot forget every older order it does not hold, so a replaced, dead
+-- or stuck holder's old job is never handed back and re-taken
+-- (orders.clear_older_orders).  Bots the new order is not for keep what they
+-- hold.  Scenario hints are kept.  false = the old hand-back behaviour.
+M.ORDER_NEW_CLEARS_ALL = true   -- keel false
+-- 2026-09-24: ONE PING, ONE BOT.  Andrew pinged "go here" once and two bots
+-- both said "on my way" (the Sep 24 single-player replay: p1 and p2 acked
+-- the same solo order in the same frame).  When two bots both take a solo
+-- order their claims cross, and each dropped the order on the other's claim,
+-- so often NOBODY went.  With this on: the cheaper claim keeps the order
+-- (ties to the lower player number) and only the other one drops it; the
+-- solo ack and ON_MY_WAY marker wait ORDER_AUCTION_TICKS for that, so the
+-- bot that drops it never says it was coming; and a bid that arrives before
+-- this bot's own auction on that order is open is kept, not thrown away.
+-- false = both drop, the ack is at once, an early bid is lost (as before).
+M.ORDER_CLAIM_TIEBREAK = true  -- keel false
+-- 2026-09-24: "Don't pass the order back" (Andrew).  A bot that lets an
+-- order go without finishing it -- it died, or a newer order replaced it --
+-- still says so on the wire (obr), so every bot stops counting it as a
+-- holder, but no bot re-bids the order and nobody else is sent.  Group
+-- partners keep their share.  false = the next cheapest bot takes it over.
+M.ORDER_NO_HAND_BACK = true    -- keel false
+-- 2026-09-24: a bot whose man is out of the tank is NOT busy for an order
+-- (Andrew: "the man is out of the tank should not stop the interrupt").
+-- It takes the order and drives off; the builder walks back to the tank.
+-- A capture_pill with the man sent to the pill is not busy either.
+-- false = the bot answers "Busy (man_out)" / "Busy (capturing)" and keeps
+-- its goal.
+M.ORDER_MAN_OUT_TAKES = true   -- keel false
+M.ORDER_GOTO_DECOY = true        -- keel false (2026-09-24: KEEL had the soft hold only)
 -- Auction window.  The design said 6 ticks; a brain thinks every 2 game
 -- ticks and a bid is seen on the ally's NEXT think, so 6 is tight -- 10
 -- gives every ally one full round trip.  The auction still ends EARLY the
@@ -4306,6 +4368,23 @@ M.BOT_CHAT_DEFAULT       = true   -- keel true (moot; master off)
 -- target.  A bot re-plans the same goal often, and without this every replan
 -- would put another marker on the same pill.  1500 ticks is 30 s.
 M.ORDER_PING_REPEAT_TICKS = 1500  -- keel 1500 (moot; master off) 30 s
+
+-- PING SUICIDE RUN (Andrew, 2026-09-24).  A person puts a BOT COMMAND ping
+-- on an enemy pill and then, within PING_SUICIDE_WINDOW_TICKS, an ATTACK ping
+-- on the SAME pill.  Every allied bot whose goal is attack_pill on that pill
+-- (the bots the bot command sent, and any bot that was already attacking it)
+-- goes on a SUICIDE RUN: straight at the pill, firing, with nothing allowed
+-- to stop it -- no refuel, no flee, no take_cover, no shell or armour gate,
+-- no LGM rescue.  It holds until the tank dies or the pill is dead (armour 0,
+-- ours, carried, or gone).  A "cancel" line or a caution ping is the one
+-- escape hatch.  See orders.lua (PING SUICIDE RUN) for the whole rule.
+-- The window is in BRAIN ticks: the brain thinks every second engine tick,
+-- so 50 brain ticks = 1 s.  The order is bot command FIRST, attack SECOND.
+M.PING_SUICIDE_ENABLED      = true   -- keel false (2026-09-24: KEEL had no suicide run)
+M.PING_SUICIDE_WINDOW_TICKS = 50     -- keel 50 (moot; PING_SUICIDE_ENABLED off)
+-- When no square beside the pill can be reached, the run does not end: it
+-- forgets which squares failed and tries them all again after this long.
+M.PING_SUICIDE_RETRY_TICKS  = 50     -- keel 50 (moot; PING_SUICIDE_ENABLED off)
 
 -- How far the seat a bot is escorting may drift from where the bot was last
 -- sent before the escort re-aims.  A hint may name its own `distance`; this
@@ -4521,6 +4600,10 @@ M.PRESETS = {
     -- KEEL has no such bonus -- under KEEL that pill was first by seeding
     -- instead, so 1.0 is the value that reproduces it.
     BUILDER_POOL_GOAL_PILL_BONUS = 1.0,
+    -- 2026-09-24: a human's bot-command ping on one of our pills doubles that
+    -- pill's builder-pool repair row for 10 s.  KEEL had no such bonus.
+    BUILDER_POOL_PING_PILL_BONUS = 1.0,
+    BUILDER_POOL_PING_PILL_TICKS = 500,
     -- 2026-09-08: the "loaded, builder-less" state (>= 3 pills aboard and the
     -- man dead or more than 20 s of walking away).  Six knobs, one per thing
     -- that changes inside it; every one of these values is what the brain did
@@ -4579,7 +4662,22 @@ M.PRESETS = {
     --   promise it). KEEL never looked at where the humans were: 0 = off, so
     --   only a designated pill_suicider skips the blockers, as before.
     ORDER_HUMAN_NEAR_SUICIDE_TILES = 0,
+    ORDER_HUMAN_NEAR_SUICIDE_RUN   = false,
     ORDER_PING_REPEAT_TICKS       = 1500,
+    --   2026-09-24: bot command ping + attack ping on the same pill within
+    --   1 s sends every bot on that pill on a suicide run. KEEL had no such
+    --   gesture: off, and the two tuning knobs pinned at their defaults.
+    PING_SUICIDE_ENABLED          = false,
+    PING_SUICIDE_WINDOW_TICKS     = 50,
+    PING_SUICIDE_RETRY_TICKS      = 50,
+    --   2026-09-24: a ping "go there" next to an enemy pill is a HARD decoy
+    --   hold, and one with no pill in range ends on arrival. KEEL had only
+    --   the soft 10 s hold that any reactive goal could drive away from.
+    ORDER_GOTO_DECOY              = false,
+    ORDER_NEW_CLEARS_ALL          = false,
+    ORDER_CLAIM_TIEBREAK          = false,
+    ORDER_NO_HAND_BACK            = false,
+    ORDER_MAN_OUT_TAKES           = false,
     --   FOCUS_OTHER_COST_MULT is the one stage-2 knob that is NOT covered by
     --   the master switch: the focus multiplier sits inside the cost
     --   competition, so its keel value has to be the identity, 1.0, for the

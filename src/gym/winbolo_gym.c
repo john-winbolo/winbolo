@@ -1665,15 +1665,19 @@ WBGYM_API void winbolo_step(WinBoloGym *game, const WinBoloAction *action, WinBo
     game->simTickCounter++;
     game->gameTickCount++;
 
-    /* Keys tick — replay held buttons */
+    /* Keys tick — replay held buttons. Queue the input without pumping the
+     * transport: the local transport runs serverSimTick inside tick(), and
+     * one server frame runs both half-steps, so pumping here as well would
+     * run two frames per step against two inputs. The server then went dry
+     * on half its half-steps and held the tank still through them. The
+     * next step's game tick pumps once and takes this input with it, the
+     * same as client_frontend_tick.c. */
     InputPacket keysPkt = {0};
     keysPkt.tick = game->simTickCounter;
     keysPkt.playerNum = 0;
     keysPkt.buttons = pkt.buttons;
 
     clientSimNetRecordInput(game->clientSim, &keysPkt);
-    clientSimNetTick(game->clientSim);
-    gymBufferServerEvents(game);
     game->simTickCounter++;
 
     gymBuildObs(game, obs_out);

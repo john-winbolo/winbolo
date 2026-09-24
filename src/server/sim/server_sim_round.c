@@ -1237,6 +1237,18 @@ void serverSimReapplyTeamAlliances(ServerSim *sim) {
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_ALLIANCE_RESET;
 
+    /* Clear before re-accepting, the way the client applies this event.
+     * playersAcceptAlliance merges the two players' whole ally lists, so
+     * without the clear a player moved by set_team keeps every ally from
+     * the team he left and brings them into the new one: after one move
+     * in a scenario that starts everyone on one team, the server had
+     * every player allied with every other, and no player's pillbox would
+     * fire at anyone. Clients showed the right matrix the whole time.
+     * playersClearAlliance takes the bits only; ownership stays put. */
+    for (i = 0; i < MAX_TANKS; i++) {
+        playersClearAlliance(&sim->sim, &sim->sim.plyrs, NEUTRAL, i, TRUE);
+    }
+
     for (i = 0; i < MAX_TANKS; i++) {
         if (!sim->playerConnected[i]) continue;
         /* Self-bit set for every connected slot — the matrix is then a

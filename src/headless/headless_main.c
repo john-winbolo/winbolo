@@ -1441,11 +1441,11 @@ static void logChangesClose(void) {
 
 /* Game events the server produced since the last record was built. The
  * sim keeps one frame's events in a buffer it clears at the top of every
- * serverSimTick, and the fast loop runs a server frame on its keys pass
- * as well as its game pass, so the buffer is copied out after each pass;
- * reading it at record time alone would miss the keys pass's frame. Two
- * frames' worth is the most one record can span. */
-#define LOG_CHANGES_MAX_EVENTS (2 * MAX_SNAPSHOT_EVENTS)
+ * serverSimTick. The fast loop runs one server frame per game tick, on its
+ * game pass, and copies the buffer out straight after it. The keys pass
+ * runs no frame, so it must not copy the buffer: that would add the game
+ * pass's events a second time. */
+#define LOG_CHANGES_MAX_EVENTS MAX_SNAPSHOT_EVENTS
 static GameEvent logChangesEvents[LOG_CHANGES_MAX_EVENTS];
 static int       logChangesEventCount = 0;
 
@@ -2703,9 +2703,13 @@ static int runFastMode(void) {
         clientBuildInputPacket(humanSim, &pkt, 0, FALSE, FALSE, brainRunning, FALSE, playerNum, simTickCounter);
       }
       clientSimKeysTick(humanSim, &pkt);
-      clientSimNetSendInput(humanSim, &pkt);
-      clientSimNetTick(humanSim);  /* localTick pulls + applies the snapshot */
-      logChangesCollectEvents();
+      /* Queue the keys input without pumping the transport. The local
+       * transport runs serverSimTick inside tick(), and one server frame
+       * runs both half-steps, so pumping here as well would run two frames
+       * per game tick against two inputs. The server then went dry on half
+       * its half-steps and held the tank still through them. The game pass
+       * below pumps once, the same as client_frontend_tick.c. */
+      clientSimNetRecordInput(humanSim, &pkt);
       simTickCounter++;
       justKeys = FALSE;
     } else {

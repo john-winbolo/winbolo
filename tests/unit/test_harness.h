@@ -1070,6 +1070,7 @@ int run_alliance_reset_bots_synced_after_countdown_start(void);
  * hands on a departure, which arrives as CTRL_PLAYER_LEAVE. */
 int run_alliance_reset_apply_keeps_owners(void);
 int run_alliance_reset_changed_matrix_keeps_owners(void);
+int run_alliance_reset_set_team_leaves_old_team(void);
 
 /* Log replay round-trip (test_log_roundtrip.c). */
 int run_log_roundtrip_basic(void);
