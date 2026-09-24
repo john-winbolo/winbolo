@@ -2631,3 +2631,5 @@ STR_DLGLOBBY_SCRIPT_ERR_NO_TABLE=Betik hiçbir scenario tablosu bildirmiyor.
 STR_DLGLOBBY_SCRIPT_ERR_API=api {number} istiyor, bu sunucu ise api {number2} çalıştırıyor.
 STR_DLGLOBBY_SCRIPT_ERR_KIND=Bu sunucunun bilmediği bir tür bildiriyor.
 STR_DLGLOBBY_SCRIPT_ERR_BOUND=Bir haritaya bağlı. Onun yerine haritayı gönderin.
+STR_DLGSETTINGS_HOSTING_SHARESCRIPTS=Oyuncuların bu sunucunun betiklerini kopyalamasına izin ver
+STR_DLGSETTINGS_HOSTING_SHARESCRIPTS_TIP=Oyuncular bu sunucunun modlarının ve senaryolarının bir kopyasını kendi Mods klasörlerine kaydedebilir.

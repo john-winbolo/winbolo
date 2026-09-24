@@ -293,6 +293,7 @@ void serverSimFillLobbySettingsEvent(ServerSim *sim, ControlEvent *evt) {
     evt->u.lobbySettings.lobbyServerLocks         = sim->serverLocks;
     evt->u.lobbySettings.uploadPolicy             = sim->uploadPolicy;
     evt->u.lobbySettings.scriptUploadPolicy       = sim->scriptUploadPolicy;
+    evt->u.lobbySettings.scriptSharing            = !sim->scriptSharingOff;
     for (int vc = 0; vc < VIEW_CATEGORY_COUNT; vc++) {
         evt->u.lobbySettings.viewPolicy[vc]    = sim->viewPolicy[vc];
         evt->u.lobbySettings.viewDecaySecs[vc] = sim->viewDecaySecs[vc];

@@ -2629,3 +2629,5 @@ STR_DLGLOBBY_SCRIPT_ERR_NO_TABLE=Скрипт не объявляет табли
 STR_DLGLOBBY_SCRIPT_ERR_API=Ему нужен api {number}, а на этом сервере api {number2}.
 STR_DLGLOBBY_SCRIPT_ERR_KIND=Он объявляет вид, который этот сервер не знает.
 STR_DLGLOBBY_SCRIPT_ERR_BOUND=Он привязан к карте. Отправьте вместо него карту.
+STR_DLGSETTINGS_HOSTING_SHARESCRIPTS=Разрешить игрокам копировать скрипты этого сервера
+STR_DLGSETTINGS_HOSTING_SHARESCRIPTS_TIP=Игроки могут сохранить копию модов и сценариев этого сервера в свою папку Mods.

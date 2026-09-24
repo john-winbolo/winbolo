@@ -2602,6 +2602,8 @@ static const LangEntry langTable[] = {
     {2649, "It asks for api {number} and this server runs api {number2}."},
     {2650, "It declares a kind this server does not know."},
     {2651, "It is bound to a map. Send the map instead."},
+    {2652, "Let players copy this server's scripts"},
+    {2653, "Players can save a copy of this server's mods and scenarios to their own Mods folder."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

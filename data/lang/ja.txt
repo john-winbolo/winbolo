@@ -2631,3 +2631,5 @@ STR_DLGLOBBY_SCRIPT_ERR_NO_TABLE=スクリプトに scenario テーブルがあ�
 STR_DLGLOBBY_SCRIPT_ERR_API=api {number} を要求していますが、このサーバーは api {number2} です。
 STR_DLGLOBBY_SCRIPT_ERR_KIND=このサーバーが知らない種類を宣言しています。
 STR_DLGLOBBY_SCRIPT_ERR_BOUND=マップに結び付いています。代わりにマップを送ってください。
+STR_DLGSETTINGS_HOSTING_SHARESCRIPTS=このサーバーのスクリプトのコピーをプレイヤーに許可
+STR_DLGSETTINGS_HOSTING_SHARESCRIPTS_TIP=プレイヤーはこのサーバーのMODとシナリオのコピーを自分のModsフォルダーに保存できます。

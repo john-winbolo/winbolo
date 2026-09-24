@@ -2629,3 +2629,5 @@ STR_DLGLOBBY_SCRIPT_ERR_NO_TABLE=Skript nedeklaruje žádnou tabulku scenario.
 STR_DLGLOBBY_SCRIPT_ERR_API=Vyžaduje api {number}, tento server má api {number2}.
 STR_DLGLOBBY_SCRIPT_ERR_KIND=Deklaruje druh, který tento server nezná.
 STR_DLGLOBBY_SCRIPT_ERR_BOUND=Je vázán na mapu. Pošlete místo něj mapu.
+STR_DLGSETTINGS_HOSTING_SHARESCRIPTS=Povolit hráčům kopírovat skripty tohoto serveru
+STR_DLGSETTINGS_HOSTING_SHARESCRIPTS_TIP=Hráči si mohou uložit kopii modů a scénářů tohoto serveru do vlastní složky Mods.

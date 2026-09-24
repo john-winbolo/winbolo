@@ -1099,6 +1099,10 @@ extern int            gameFrontHostingScriptUploadPolicy; /* default ALLOW (0) *
                                * Persist keeps them in the directory below.
                                * Set on the scenario library beside the
                                * switch above as "not Off". */
+extern bool           gameFrontHostingShareScripts;    /* default Yes   */
+                              /* Let players save a copy of this host's mods
+                               * and scenarios. Reaches the server as
+                               * ServerInstanceConfig.noScriptSharing. */
 extern char           gameFrontHostingScriptUploadDir[FILENAME_MAX];
                               /* Persist target dir for scripts; default
                                * <prefs path>uploads/Scripts */
@@ -1137,6 +1141,7 @@ void gameFrontSetHostingUploadMaxFiles(int maxFiles);
 void gameFrontSetHostingUploadMaxStorage(int maxStorageMb);
 void gameFrontSetHostingUploadDir(const char *dir);
 void gameFrontSetHostingScriptUploadPolicy(int policy);
+void gameFrontSetHostingShareScripts(bool on);
 void gameFrontSetHostingScriptUploadMaxFiles(int maxFiles);
 void gameFrontSetHostingScriptUploadMaxStorage(int maxStorageMb);
 void gameFrontSetHostingScriptUploadDir(const char *dir);

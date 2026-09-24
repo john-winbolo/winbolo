@@ -3114,6 +3114,11 @@
 #define STR_DLGLOBBY_SCRIPT_ERR_KIND             2650
 #define STR_DLGLOBBY_SCRIPT_ERR_BOUND            2651
 
+/* The hosting setting that lets players save a copy of this server's mods
+ * and scenarios, and its tooltip. */
+#define STR_DLGSETTINGS_HOSTING_SHARESCRIPTS     2652
+#define STR_DLGSETTINGS_HOSTING_SHARESCRIPTS_TIP 2653
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

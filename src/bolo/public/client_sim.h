@@ -1144,6 +1144,13 @@ UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs);
  * NULL cs. */
 ScriptUploadPolicy clientSimGetScriptUploadPolicy(const ClientSim *cs);
 
+/* Whether the server lets players save a copy of its mods and scenarios.
+ * Positive on purpose: the client stores it in the negative sense (see
+ * lobbyScriptSharingOff) so a zeroed client reads as sharing, and this
+ * accessor is where that flips back. Answers true for a NULL cs and until
+ * the first lobby-settings event lands. */
+bool clientSimGetScriptSharing(const ClientSim *cs);
+
 /* Server visibility rules (pillboxes / bases / allied tanks) as last
  * broadcast in the lobby-settings event. Raw mirror. Until the first event
  * arrives the policies read back the set an unconfigured server starts on

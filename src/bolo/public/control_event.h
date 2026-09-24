@@ -667,6 +667,8 @@ typedef struct ControlEvent {
             uint32_t lobbyServerLocks;
             UploadPolicy uploadPolicy;
             ScriptUploadPolicy scriptUploadPolicy;
+            bool     scriptSharing;  /* 1 = players may save a copy of this
+                                      * server's mods and scenarios */
             uint8_t  hostSlot;   /* current lobby host's player slot */
             /* Visibility rules, indexed by ViewCategory. */
             ViewPolicy viewPolicy[VIEW_CATEGORY_COUNT];

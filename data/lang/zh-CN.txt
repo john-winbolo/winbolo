@@ -2629,3 +2629,5 @@ STR_DLGLOBBY_SCRIPT_ERR_NO_TABLE=脚本未声明 scenario 表。
 STR_DLGLOBBY_SCRIPT_ERR_API=它需要 api {number}，而此服务器运行的是 api {number2}。
 STR_DLGLOBBY_SCRIPT_ERR_KIND=它声明了此服务器不认识的类型。
 STR_DLGLOBBY_SCRIPT_ERR_BOUND=它绑定到一张地图。请改为发送该地图。
+STR_DLGSETTINGS_HOSTING_SHARESCRIPTS=允许玩家复制此服务器的脚本
+STR_DLGSETTINGS_HOSTING_SHARESCRIPTS_TIP=玩家可以将此服务器的 MOD 和场景的副本保存到自己的 Mods 文件夹。

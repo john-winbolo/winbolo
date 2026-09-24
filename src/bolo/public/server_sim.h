@@ -2295,6 +2295,14 @@ ServerVoiceMode serverSimGetVoiceMode(const ServerSim *sim);
 void               serverSimSetScriptUploadPolicy(ServerSim *sim, ScriptUploadPolicy p);
 ScriptUploadPolicy serverSimGetScriptUploadPolicy(const ServerSim *sim);
 
+/* Script sharing — whether players may save a copy of this server's mods
+ * and scenarios. Set once from ServerInstanceConfig.noScriptSharing at
+ * startup and carried to clients on the lobby-settings event. A new sim
+ * shares. The setter ignores a NULL sim, and the getter returns true for
+ * one. */
+void serverSimSetScriptSharing(ServerSim *sim, bool on);
+bool serverSimGetScriptSharing(const ServerSim *sim);
+
 /* The directory a script a player uploads lands in: the persist directory
  * under PERSIST, the session directory under ALLOW, "" under OFF. Resolved
  * once by serverInstanceStartup. The transport writes there, and the

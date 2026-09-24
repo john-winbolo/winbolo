@@ -2194,6 +2194,20 @@ extern "C" void imguiSettingsRenderHostingTab(SettingsRenderCtx *ctx) {
                     gameFrontSetHostingScriptUploadMaxStorage(scriptMaxStorage);
                 }
             }
+
+            /* Whether players may save a copy of this host's mods and
+             * scenarios. Greyed with the rest, since a host that runs no
+             * scripts has none to share. */
+            bool shareScripts = gameFrontHostingShareScripts;
+            if (ImGui::Checkbox(
+                    langGetText(STR_DLGSETTINGS_HOSTING_SHARESCRIPTS),
+                    &shareScripts)) {
+                gameFrontSetHostingShareScripts(shareScripts);
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip(
+                    "%s", langGetText(STR_DLGSETTINGS_HOSTING_SHARESCRIPTS_TIP));
+            }
         }
         ImGui::EndDisabled();
 

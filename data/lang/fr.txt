@@ -2631,3 +2631,5 @@ STR_DLGLOBBY_SCRIPT_ERR_NO_TABLE=Le script ne déclare aucune table scenario.
 STR_DLGLOBBY_SCRIPT_ERR_API=Il demande l'api {number} et ce serveur utilise l'api {number2}.
 STR_DLGLOBBY_SCRIPT_ERR_KIND=Il déclare un genre que ce serveur ne connaît pas.
 STR_DLGLOBBY_SCRIPT_ERR_BOUND=Il est lié à une carte. Envoyez la carte à la place.
+STR_DLGSETTINGS_HOSTING_SHARESCRIPTS=Autoriser les joueurs à copier les scripts de ce serveur
+STR_DLGSETTINGS_HOSTING_SHARESCRIPTS_TIP=Les joueurs peuvent enregistrer une copie des mods et scénarios de ce serveur dans leur propre dossier Mods.

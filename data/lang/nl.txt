@@ -2631,3 +2631,5 @@ STR_DLGLOBBY_SCRIPT_ERR_NO_TABLE=Het script declareert geen scenario-tabel.
 STR_DLGLOBBY_SCRIPT_ERR_API=Het vraagt om api {number} en deze server draait api {number2}.
 STR_DLGLOBBY_SCRIPT_ERR_KIND=Het declareert een soort die deze server niet kent.
 STR_DLGLOBBY_SCRIPT_ERR_BOUND=Het hoort bij een kaart. Stuur in plaats daarvan de kaart.
+STR_DLGSETTINGS_HOSTING_SHARESCRIPTS=Spelers de scripts van deze server laten kopiëren
+STR_DLGSETTINGS_HOSTING_SHARESCRIPTS_TIP=Spelers kunnen een kopie van de mods en scenario's van deze server in hun eigen Mods-map opslaan.

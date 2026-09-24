@@ -5799,6 +5799,9 @@ set(_unit_test_names
     script_upload_policy_word
     script_upload_policy_codec
     script_upload_policy_event
+    script_sharing_codec
+    script_sharing_sim
+    script_sharing_client
     unfielded_seat_counts
     unfielded_seat_is_empty
     unfielded_seat_all_ready

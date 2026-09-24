@@ -763,6 +763,8 @@ void printArgs() {
   fprintf(stderr, "                (1-255, default 32).\n");
   fprintf(stderr, "-scriptuploadmaxstorage <MB> - Max script storage in persist mode\n");
   fprintf(stderr, "                (1-4095 MB, default 64).\n");
+  fprintf(stderr, "-noscriptsharing - Refuse players' requests for a copy of this server's\n");
+  fprintf(stderr, "                mods and scenarios. Sharing is on by default.\n");
 
   fprintf(stderr, "\nBots & AI:\n");
   fprintf(stderr, "-bots <N>     - Number of AI bot players to add (default: 0)\n");
@@ -2543,6 +2545,8 @@ int main(int argc, char **argv) {
     instCfg.scriptUploadMaxFiles        = scriptUploadMaxFiles;
     instCfg.scriptUploadMaxStorageBytes = scriptUploadMaxStorageBytes;
     instCfg.scriptUploadDir             = scriptUploadDir;
+    instCfg.noScriptSharing             =
+        (argExist(argc, argv, "noscriptsharing") == TRUE);
     instCfg.skipLobby           = skipLobby;
     instCfg.emptyResetEnabled   = emptyResetEnabled;
     instCfg.hasPassword         = (pass[0] != '\0');

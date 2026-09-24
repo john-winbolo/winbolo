@@ -371,6 +371,8 @@ struct ServerSim {
     char     mapMd5Hex[33];        /* mapMd5 as 32 lowercase hex chars + NUL; "" when invalid */
     UploadPolicy uploadPolicy;     /* mirrored from server-startup config */
     ScriptUploadPolicy scriptUploadPolicy;  /* mirrored from server-startup config */
+    bool               scriptSharingOff;    /* refuse copies of this server's scripts;
+                                             * negative so a zeroed sim shares */
     /* Where a script a player uploads lands under the policy in force, and
      * the lowest directory of the merged script listing. "" under OFF.
      * Resolved once by serverInstanceStartup. */

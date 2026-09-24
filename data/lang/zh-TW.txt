@@ -2629,3 +2629,5 @@ STR_DLGLOBBY_SCRIPT_ERR_NO_TABLE=指令碼未宣告 scenario 表。
 STR_DLGLOBBY_SCRIPT_ERR_API=它需要 api {number}，而此伺服器執行的是 api {number2}。
 STR_DLGLOBBY_SCRIPT_ERR_KIND=它宣告了此伺服器不認識的類型。
 STR_DLGLOBBY_SCRIPT_ERR_BOUND=它綁定到一張地圖。請改為傳送該地圖。
+STR_DLGSETTINGS_HOSTING_SHARESCRIPTS=允許玩家複製此伺服器的腳本
+STR_DLGSETTINGS_HOSTING_SHARESCRIPTS_TIP=玩家可以將此伺服器的模組和場景副本儲存到自己的 Mods 資料夾。

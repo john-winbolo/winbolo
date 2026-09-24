@@ -2742,6 +2742,11 @@ int run_script_upload_policy_resolve(void);
 int run_script_upload_policy_word(void);
 int run_script_upload_policy_codec(void);
 int run_script_upload_policy_event(void);
+/* Whether players may copy the server's scripts (same file): its byte on the
+ * lobby-settings event, the sim's setting, and the client's copy. */
+int run_script_sharing_codec(void);
+int run_script_sharing_sim(void);
+int run_script_sharing_client(void);
 
 /* The lobby template (test_lobby_template.c): the engine seating a
  * scenario's teams where a lobby is built or rebuilt, reconciling one that
