@@ -945,6 +945,7 @@ static const UnitTestEntry s_tests[] = {
     { "loopback_script_upload_plays_next_round", run_loopback_script_upload_plays_next_round },
     { "script_upload_list_source", run_script_upload_list_source },
     { "loopback_script_upload_source_on_wire", run_loopback_script_upload_source_on_wire },
+    { "loopback_script_upload_list_after_done", run_loopback_script_upload_list_after_done },
     { "lobby_script_rows_states_by_name", run_lobby_script_rows_states_by_name },
     { "lobby_script_rows_case_only_match", run_lobby_script_rows_case_only_match },
     { "lobby_script_rows_workshop_id_matches", run_lobby_script_rows_workshop_id_matches },

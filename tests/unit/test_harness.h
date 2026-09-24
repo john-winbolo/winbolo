@@ -2033,6 +2033,9 @@ int run_script_upload_reset_drops_session_picks(void);
 int run_loopback_script_upload_plays_next_round(void);
 int run_script_upload_list_source(void);
 int run_loopback_script_upload_source_on_wire(void);
+/* A list request sent as DONE lands is answered, not dropped by the request
+ * cooldown the upload's BEGIN started. */
+int run_loopback_script_upload_list_after_done(void);
 /* The Mods chooser's rows from the server and from this computer
  * (test_lobby_script_rows.c): which of the two holds each file, by Workshop
  * id or by name ignoring case, in the server's order then the local order,

@@ -432,6 +432,9 @@ static void serverFinishScriptUpload(ServerSim *sim, int clientIdx) {
     udpServer.clientUploadKind[clientIdx]   = UPLOAD_KIND_MAP;
     udpServer.clientUploadActive[clientIdx] = false;
     udpServer.clientUploadTotal[clientIdx]  = 0;
+    /* The finished upload is what the client's next list request follows, so
+       it must not be held up by the cooldown the upload's own BEGIN started. */
+    udpServer.clientReqCooldownTicks[clientIdx] = 0;
 
     {
         int relLen = (int)SDL_strlen(reply);

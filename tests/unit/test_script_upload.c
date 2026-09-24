@@ -80,6 +80,11 @@
  *                                UPLOAD off the scenario-list packet, and
  *                                again off the script-list event once the
  *                                host has put it on the list.
+ *   loopback_script_upload_list_after_done
+ *                                a list request sent on the pump DONE lands
+ *                                is answered within a few pumps, though the
+ *                                upload's BEGIN started the request cooldown,
+ *                                and holds the file as UPLOAD.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -1606,4 +1611,68 @@ static int body_source_on_wire(LoopbackHarness *h, int slot, const UpDirs *d) {
 int run_loopback_script_upload_source_on_wire(void) {
     return up_run_loopback("SourceOnWire", SCRIPT_UPLOAD_ALLOW,
                            body_source_on_wire);
+}
+
+/* ── the list asked for on DONE is answered at once ──────────────────── */
+
+/* How many pumps the list may take after DONE: the request out, the server's
+ * answer, and the client reading it, with room to spare. */
+#define UP_LIST_AFTER_DONE_PUMPS 8
+
+static bool pred_list_seq_moved(LoopbackHarness *h, void *user) {
+    return clientSimGetLobbyScenarioListSeq(h->cs) != *(const uint32_t *)user;
+}
+
+static int body_list_after_done(LoopbackHarness *h, int slot, const UpDirs *d) {
+    char     path[1200];
+    char     dir[1024];
+    UpResult r;
+    uint32_t seq;
+    int      at;
+    int      upAt = -1;
+    int      n;
+    int      i;
+    (void)slot;
+    (void)d;
+
+    UT_ASSERT(utScratchPath(dir, sizeof(dir), NULL));
+    UT_ASSERT(up_write_mod(dir, "quick.lua", "Quick Mod"));
+    UT_ASSERT(up_client_file(path, sizeof(path), "quick.lua"));
+    up_send(h, path, &r);
+    UT_ASSERT_MSG(r.status == 3, "status %d reject %d path '%s'",
+                  (int)r.status, (int)r.reject, r.finalPath);
+    /* The case only means something while the cooldown the upload's BEGIN
+       started would still cover the list request and its answer. */
+    UT_ASSERT_MSG(r.settledAt >= 0 &&
+                      r.settledAt + UP_LIST_AFTER_DONE_PUMPS <
+                          LOBBY_REQ_COOLDOWN_TICKS,
+                  "the upload took %d pumps, too long to be inside the "
+                  "request cooldown", r.settledAt);
+
+    /* Asked on the pump the client first reads DONE, as the chooser asks. */
+    seq = clientSimGetLobbyScenarioListSeq(h->cs);
+    clientSimNetSendLobbyScenarioListRequest(h->cs);
+    at = loopbackHarnessPumpUntil(h, UP_LIST_AFTER_DONE_PUMPS,
+                                  pred_list_seq_moved, &seq);
+    UT_ASSERT_MSG(at >= 0, "the list asked for on DONE was not answered "
+                           "within %d pumps", UP_LIST_AFTER_DONE_PUMPS);
+
+    n = clientSimGetLobbyScenarioListCount(h->cs);
+    for (i = 0; i < n; i++) {
+        if (strcmp(clientSimGetLobbyScenarioListFile(h->cs, i),
+                   "quick.lua") == 0) {
+            upAt = i;
+        }
+    }
+    UT_ASSERT_MSG(upAt >= 0, "the uploaded mod is not in the list");
+    UT_ASSERT_MSG(clientSimGetLobbyScenarioListSource(h->cs, upAt) ==
+                      SERVER_SCENARIO_SOURCE_UPLOAD,
+                  "the uploaded row reads source %u",
+                  (unsigned)clientSimGetLobbyScenarioListSource(h->cs, upAt));
+    return 0;
+}
+
+int run_loopback_script_upload_list_after_done(void) {
+    return up_run_loopback("ListAfterDone", SCRIPT_UPLOAD_ALLOW,
+                           body_list_after_done);
 }

@@ -161,7 +161,9 @@ struct LobbyScenarioRow {
  *
  * s_awaitFile is a sent file the server took, waiting for the list the dialog
  * asked for after it: s_awaitSeq is the list's sequence when that ask went,
- * and the first list after it is the one that holds the file.
+ * and the first list after it is the one that holds the file. s_awaitAsks is
+ * how many times that list has been asked for; an ask the transport gave up
+ * on is made once more, and after a second the dialog stops waiting.
  *
  * s_rejectFile is the row that shows why the server refused it, until
  * s_rejectUntil. The code and the server's reason are kept rather than the
@@ -171,6 +173,8 @@ static bool     s_sending = false;
 static char     s_sendFile[SERVER_SCENARIO_FILE_LEN]   = "";
 static char     s_awaitFile[SERVER_SCENARIO_FILE_LEN]  = "";
 static uint32_t s_awaitSeq = 0;
+static int      s_awaitAsks = 0;
+#define LOBBY_SCENARIO_AWAIT_ASKS 2
 static char     s_rejectFile[SERVER_SCENARIO_FILE_LEN] = "";
 static uint8_t  s_rejectCode = 0;
 static char     s_rejectReason[256] = "";
@@ -1620,7 +1624,8 @@ static void lobbyScenarioSendFollow(ClientSim *cs, LobbyScenarioRow *rows,
         } else if (status == 3) {
             s_sending = false;
             SDL_strlcpy(s_awaitFile, s_sendFile, sizeof(s_awaitFile));
-            s_awaitSeq = clientSimGetLobbyScenarioListSeq(cs);
+            s_awaitSeq  = clientSimGetLobbyScenarioListSeq(cs);
+            s_awaitAsks = 1;
             clientSimNetSendLobbyScenarioListRequest(cs);
             s_localRead = false;
         } else if (status == 4) {
@@ -1630,6 +1635,22 @@ static void lobbyScenarioSendFollow(ClientSim *cs, LobbyScenarioRow *rows,
                         sizeof(s_rejectReason));
             SDL_strlcpy(s_rejectFile, s_sendFile, sizeof(s_rejectFile));
             s_rejectUntil = SDL_GetTicks() + LOBBY_SCENARIO_REJECT_MS;
+        }
+    }
+
+    /* Neither ready nor in flight is an ask the transport stopped waiting on
+       with no answer, the same two flags the column reads for its waiting
+       line. The list is asked for once more, and a second ask that goes the
+       same way ends the wait rather than asking for ever. */
+    if (s_awaitFile[0] != '\0' &&
+        clientSimGetLobbyScenarioListSeq(cs) == s_awaitSeq &&
+        !clientSimGetLobbyScenarioListReady(cs) &&
+        !clientSimGetLobbyScenarioListInFlight(cs)) {
+        if (s_awaitAsks < LOBBY_SCENARIO_AWAIT_ASKS) {
+            s_awaitAsks++;
+            clientSimNetSendLobbyScenarioListRequest(cs);
+        } else {
+            s_awaitFile[0] = '\0';
         }
     }
 

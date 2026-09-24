@@ -5342,6 +5342,7 @@ set(_unit_test_names
     loopback_script_upload_plays_next_round
     script_upload_list_source
     loopback_script_upload_source_on_wire
+    loopback_script_upload_list_after_done
     lobby_script_rows_states_by_name
     lobby_script_rows_case_only_match
     lobby_script_rows_workshop_id_matches
