@@ -4164,15 +4164,22 @@ do
   C.DECOY_GETAWAY_BLOCKER_STEP = true
 
   ;(function() -- own function: the main chunk is at its 200-local limit
-  -- 12. THE BLOCKER STEP (Andrew, Sep 24).  dbot's chain (22,25) (22,26)
-  -- (22,27), pill 5 at (20,20).  Parked on a chain square, the closest
-  -- counted pill's shell line to the tank's square is walked and its walls
-  -- and our live pills counted; a count <= DECOY_GETAWAY_BLOCKER_MIN (1)
-  -- moves the tank on without a hit.  The line tiles are the mock trace's
-  -- own, so the walls below sit on the line the code walks.
-  check("blocker step knobs: on live, off in keel, step at <= 1",
+  -- 12. THE BLOCKER STEP (Andrew, Sep 24: "2 or less shots left").  dbot's
+  -- chain (22,25) (22,26) (22,27), pill 5 at (20,20).  Parked on a chain
+  -- square, the closest counted pill's shell line to the tank's square is
+  -- walked; each blocker is worth the shells it still stops (full wall
+  -- WALL_LIFE + 1 = 5, damaged wall 1, our pill ceil(armour / damage)), and
+  -- shots left <= DECOY_GETAWAY_BLOCKER_SHOTS (2) moves the tank on without
+  -- a hit.  The line tiles are the mock trace's own, so the blockers below
+  -- sit on the line the code walks.
+  check("blocker step knobs: on live, off in keel, step at <= 2 shots, wall life 4, pill damage 1",
         C.DECOY_GETAWAY_BLOCKER_STEP == true and C.PRESETS.keel.DECOY_GETAWAY_BLOCKER_STEP == false
-        and C.DECOY_GETAWAY_BLOCKER_MIN == 1 and C.PRESETS.keel.DECOY_GETAWAY_BLOCKER_MIN == 1, "?")
+        and C.DECOY_GETAWAY_BLOCKER_SHOTS == 2 and C.PRESETS.keel.DECOY_GETAWAY_BLOCKER_SHOTS == 2
+        and C.DECOY_GETAWAY_WALL_LIFE == 4 and C.DECOY_GETAWAY_PILL_SHELL_DAMAGE == 1
+        and C.DECOY_GETAWAY_BLOCKER_MIN == nil, "?")
+  check("shots left: full wall 5, damaged wall 1 (hidden life: the smallest), pill = its armour",
+        GA.shots_left("wall") == 5 and GA.shots_left("wall_damaged") == 1
+        and GA.shots_left("pill", { health = 15 }) == 15 and GA.shots_left("pill", { health = 2 }) == 2, "?")
   C.DECOY_GETAWAY_PROX_WEIGHT = 0
   S({ { 22, 25, 1.0 }, { 22, 26, 1.0 }, { 22, 27, 1.0 } })
   -- The line tiles from pill 5 to (22,25), without the pill's and the tank's
@@ -4186,26 +4193,31 @@ do
   check("blocker rig: the line from pill 5 to (22,25) has >= 3 tiles in rows 21..23",
         #line >= 3, tostring(#line))
   local W1, W2, W3 = line[1], line[2], line[3]
+  local function K(w) return w.my * 256 + w.mx end
+  local function clear() TMAP[K(W1)], TMAP[K(W2)], TMAP[K(W3)] = nil, nil, nil end
+  -- Parked on square 1 after the first hit.  The blockers go up after the
+  -- scan (they would shield the decoy square too, and the scan's P would be
+  -- empty).
   local function on_sq1(t0)
+    clear()
     local b = dbot(); arrive(b, t0); lock(b, t0 + 1)
     b.inf.armour = b.inf.armour - 5; lock(b, t0 + 2)           -- hit 1: the first step
     b.inf.tanky = 25 * 256 + 128; lock(b, t0 + 4)              -- arrives on square 1
-    return b
+    return b, b.st.orders.held
   end
-  -- TWO BLOCKERS: it holds.  The walls go up after the scan (they would
-  -- shield the decoy square too, and the scan's P would be empty).
-  local b = on_sq1(200)
-  local hb = b.st.orders.held
-  TMAP[W1.my * 256 + W1.mx] = C.T_BUILDING
-  TMAP[W2.my * 256 + W2.mx] = C.T_HALFBUILD
-  check("blocker rig: parked on square 1 after the hit",
-        hb.ga.phase == "wait" and hb.ga.used == 1 and hb.ga.trigs[1] == "hit", tostring(hb.ga.phase))
+  local function moved(hb, b) return hb.ga.phase == "move" and b.st.goal.my == 26 and hb.ga.hits == 0 end
+  local function held(hb) return hb.ga.phase == "wait" and hb.ga.used == 1 end
+
+  -- A FULL WALL: 5 shots left, it holds.
+  local b, hb = on_sq1(200)
+  check("blocker rig: parked on square 1 after the hit, trigger hit",
+        held(hb) and hb.ga.trigs[1] == "hit", tostring(hb.ga.phase))
+  TMAP[K(W1)] = C.T_BUILDING
   lock(b, 205); lock(b, 206)
-  check("count 2 (a full wall + a damaged wall): it holds on square 1",
-        hb.ga.phase == "wait" and hb.ga.used == 1 and hb.ga.blk and hb.ga.blk.n == 2
-        and hb.ga.blk.id == 5 and #hb.ga.blk.list == 2
-        and hb.ga.blk.list[1].kind == "wall" and hb.ga.blk.list[2].kind == "wall_damaged",
-        tostring(hb.ga.blk and hb.ga.blk.n))
+  check("a full wall: 5 shots left > 2, it holds",
+        held(hb) and hb.ga.blk and hb.ga.blk.shots == 5 and hb.ga.blk.id == 5
+        and #hb.ga.blk.list == 1 and hb.ga.blk.list[1].kind == "wall" and hb.ga.blk.list[1].shots == 5,
+        tostring(hb.ga.blk and hb.ga.blk.shots))
   if drawn then
     local rb = { text = {} }
     ORD.draw_getaway({ is_on = function() return true end, rect = function() end,
@@ -4214,82 +4226,125 @@ do
                        detail = function() end }, b.st)
     local lng = 0
     for _, t in ipairs(rb.text) do if #t > lng then lng = #t end end
-    check("overlay: the blocker line names the closest pill, its count and the triggers",
-          has(rb.text, "closest p5 (20,20) blockers=2, step at <=1 | steps by: hit") and lng <= 127,
+    check("overlay: the closest pill, its shots left, the triggers, and each blocker's shots",
+          has(rb.text, "closest p5 (20,20) shots left=5, step at <=2 | steps by: hit")
+          and has(rb.text, "5 shots") and lng <= 127,
           table.concat(rb.text, " | "))
   end
-  -- A FRIENDLY PILL counts 1 like a wall: wall + our pill = 2, it holds.
-  TMAP[W2.my * 256 + W2.mx] = nil
-  b.w.pills[8] = { mx = W3.mx, my = W3.my, owner = "friendly", health = 15 }
-  b.w.pill_at = { [W3.my * 256 + W3.mx] = { { pill = b.w.pills[8] } } }
+  -- The pill hits it: now a damaged wall, 1 shot left.  It moves.
+  TMAP[K(W1)] = C.T_HALFBUILD
   lock(b, 207)
-  check("count 2 (a wall + our live pill): it holds",
-        hb.ga.phase == "wait" and hb.ga.blk.n == 2 and hb.ga.blk.list[2].kind == "pill",
-        tostring(hb.ga.blk.n))
-  -- A dead friendly pill does not count: count 1, it steps.
-  b.w.pills[8].health = 0
+  check("the wall is damaged: 1 shot left <= 2, it moves to square 2 without a hit",
+        moved(hb, b) and hb.ga.trigs[2] == "blk", tostring(hb.ga.phase))
   lock(b, 208)
-  check("count 1 (one wall; our dead pill is no blocker): it moves to square 2 without a hit",
-        hb.ga.phase == "move" and b.st.goal.my == 26 and hb.ga.hits == 0
-        and hb.ga.trigs[2] == "blk", tostring(hb.ga.phase))
-  lock(b, 209)
   check("moving: no blocker count is kept (the overlay shows none)", hb.ga.blk == nil, "?")
   b.inf.tanky = 26 * 256 + 128; lock(b, 212)
   check("the blocker step keeps the arrival rule: parked on square 2 first",
         hb.ga.phase == "wait" and hb.ga.used == 2, tostring(hb.ga.phase))
-  b.w.pills[8], b.w.pill_at = nil, nil
-  TMAP[W1.my * 256 + W1.mx] = nil
-  -- A FOREST is no blocker: count 0, it steps.
-  TMAP[W1.my * 256 + W1.mx] = C.T_FOREST
-  b = on_sq1(300); hb = b.st.orders.held
+
+  -- TWO DAMAGED WALLS: 1 + 1 = 2, it moves.  THREE: 3, it holds.  A FULL
+  -- AND A DAMAGED WALL: 5 + 1 = 6, it holds.
+  b, hb = on_sq1(300)
+  TMAP[K(W1)], TMAP[K(W2)], TMAP[K(W3)] = C.T_HALFBUILD, C.T_HALFBUILD, C.T_HALFBUILD
   lock(b, 305)
-  check("count 0 (a forest only): it moves on without a hit",
-        hb.ga.phase == "move" and b.st.goal.my == 26 and hb.ga.blk.n == 0
-        and hb.ga.trigs[2] == "blk", tostring(hb.ga.phase))
-  TMAP[W1.my * 256 + W1.mx] = nil
-  -- THE CLOSEST PILL ONLY.  Two walls on pill 5's line (d = 5.39); pill 6
-  -- at (22,32) (d = 7, in range) has an open line.  Only pill 5 counts: it
-  -- holds.  With pill 6 moved to (22,29) (d = 4, now the closest) it steps.
-  b = on_sq1(400); hb = b.st.orders.held
-  TMAP[W1.my * 256 + W1.mx] = C.T_BUILDING
-  TMAP[W2.my * 256 + W2.mx] = C.T_BUILDING
-  b.w.pills[6] = { mx = 22, my = 32, owner = "hostile", health = 5 }
+  check("three damaged walls: 3 shots left, it holds", held(hb) and hb.ga.blk.shots == 3,
+        tostring(hb.ga.blk.shots))
+  TMAP[K(W2)] = C.T_BUILDING
+  lock(b, 306)
+  check("a full wall and two damaged walls: 7 shots left, it holds", held(hb) and hb.ga.blk.shots == 7,
+        tostring(hb.ga.blk.shots))
+  TMAP[K(W2)], TMAP[K(W3)] = C.T_BUILDING, nil
+  lock(b, 307)
+  check("a full wall and a damaged wall: 6 shots left, it holds", held(hb) and hb.ga.blk.shots == 6,
+        tostring(hb.ga.blk.shots))
+  TMAP[K(W2)] = C.T_HALFBUILD
+  lock(b, 308)
+  check("two damaged walls: 2 shots left, it moves", moved(hb, b) and hb.ga.blk.shots == 2
+        and hb.ga.trigs[2] == "blk", tostring(hb.ga.blk.shots))
+
+  -- NO BLOCKER (a forest only): 0 shots left, it moves.
+  b, hb = on_sq1(400)
+  TMAP[K(W1)] = C.T_FOREST
   lock(b, 405)
-  check("two pills: the far pill's open line is ignored, the closest (p5, 2 walls) holds it",
-        hb.ga.phase == "wait" and hb.ga.blk.id == 5 and hb.ga.blk.n == 2,
-        tostring(hb.ga.blk.id) .. " " .. tostring(hb.ga.blk.n))
+  check("no blocker (a forest only): 0 shots left, it moves",
+        moved(hb, b) and hb.ga.blk.shots == 0 and #hb.ga.blk.list == 0, tostring(hb.ga.phase))
+
+  -- OUR PILL on the line: its armour is its shots left.
+  b, hb = on_sq1(500)
+  b.w.pills[8] = { mx = W3.mx, my = W3.my, owner = "friendly", health = 15 }
+  b.w.pill_at = { [K(W3)] = { { pill = b.w.pills[8] } } }
+  lock(b, 505)
+  check("our pill with armour 15: 15 shots left, it holds",
+        held(hb) and hb.ga.blk.shots == 15 and hb.ga.blk.list[1].kind == "pill", tostring(hb.ga.blk.shots))
+  b.w.pills[8].health = 3; lock(b, 506)
+  check("our pill with armour 3: 3 shots left, it holds", held(hb) and hb.ga.blk.shots == 3,
+        tostring(hb.ga.blk.shots))
+  C.DECOY_GETAWAY_PILL_SHELL_DAMAGE = 2; lock(b, 507)
+  check("PILL_SHELL_DAMAGE 2: armour 3 is ceil(3/2) = 2 shots, it moves",
+        moved(hb, b) and hb.ga.blk.shots == 2, tostring(hb.ga.blk.shots))
+  C.DECOY_GETAWAY_PILL_SHELL_DAMAGE = 1
+  b, hb = on_sq1(520)
+  b.w.pills[8] = { mx = W3.mx, my = W3.my, owner = "allied", health = 2 }
+  b.w.pill_at = { [K(W3)] = { { pill = b.w.pills[8] } } }
+  lock(b, 525)
+  check("an ally's pill with armour 2: 2 shots left, it moves",
+        moved(hb, b) and hb.ga.blk.shots == 2, tostring(hb.ga.blk.shots))
+  b.w.pills[8], b.w.pill_at = nil, nil
+
+  -- WALL_LIFE: a building_life of 1 makes a full wall 2 shots.
+  C.DECOY_GETAWAY_WALL_LIFE = 1
+  b, hb = on_sq1(540)
+  TMAP[K(W1)] = C.T_BUILDING
+  lock(b, 545)
+  check("WALL_LIFE 1: a full wall is 2 shots, it moves", moved(hb, b) and hb.ga.blk.shots == 2,
+        tostring(hb.ga.blk.shots))
+  C.DECOY_GETAWAY_WALL_LIFE = 4
+
+  -- THE CLOSEST PILL ONLY.  A full wall on pill 5's line (d = 5.39, 5
+  -- shots); pill 6 at (22,32) (d = 7, in range) has an open line.  Only pill
+  -- 5 counts: it holds.  With pill 6 at (22,29) (d = 4, now the closest) it
+  -- moves.
+  b, hb = on_sq1(600)
+  TMAP[K(W1)] = C.T_BUILDING
+  b.w.pills[6] = { mx = 22, my = 32, owner = "hostile", health = 5 }
+  lock(b, 605)
+  check("two pills: the far pill's open line is ignored, the closest (p5, 5 shots) holds it",
+        held(hb) and hb.ga.blk.id == 5 and hb.ga.blk.shots == 5,
+        tostring(hb.ga.blk.id) .. " " .. tostring(hb.ga.blk.shots))
   b.w.pills[6].my = 29
-  lock(b, 406)
-  check("two pills: pill 6 is now the closest, its line is open (0): it steps",
-        hb.ga.phase == "move" and hb.ga.blk.id == 6 and hb.ga.blk.n == 0
+  lock(b, 606)
+  check("two pills: pill 6 is now the closest, its line is open (0 shots): it moves",
+        moved(hb, b) and hb.ga.blk.id == 6 and hb.ga.blk.shots == 0
         and hb.ga.trigs[2] == "blk", tostring(hb.ga.blk.id))
-  TMAP[W1.my * 256 + W1.mx] = nil
-  TMAP[W2.my * 256 + W2.mx] = nil
-  -- THE DECOY SQUARE: no blocker step there.  Count 0, no hit: it stays.
-  b = dbot(); arrive(b, 500); lock(b, 501)
+  clear()
+
+  -- THE DECOY SQUARE: no blocker step there.  0 shots, no hit: it stays.
+  b = dbot(); arrive(b, 700); lock(b, 701)
   hb = b.st.orders.held
-  lock(b, 502); lock(b, 520); lock(b, 540)
-  check("on the decoy square a count of 0 does not move it (the first step waits for a hit)",
+  lock(b, 702); lock(b, 720); lock(b, 740)
+  check("on the decoy square 0 shots left does not move it (the first step waits for a hit)",
         hb.ga.phase == "wait" and hb.ga.used == 0 and hb.ga.blk == nil
         and b.st.goal.my == 24, tostring(hb.ga.phase))
-  b.inf.armour = b.inf.armour - 5; lock(b, 541)
+  b.inf.armour = b.inf.armour - 5; lock(b, 741)
   check("and the first hit still moves it, trigger hit",
         hb.ga.phase == "move" and hb.ga.trigs[1] == "hit", tostring(hb.ga.phase))
+
   -- A SHELL THAT RUNS OUT before the tank's square: no count, no step.
   local sim = cpf.simulate_shot
-  b = on_sq1(600); hb = b.st.orders.held
+  b, hb = on_sq1(800)
   cpf.simulate_shot = function() return { { mx = 20, my = 20 }, { mx = 20, my = 21 } } end
-  lock(b, 605)
+  lock(b, 805)
   cpf.simulate_shot = sim
-  check("shell short: no count, it holds", hb.ga.phase == "wait" and hb.ga.blk ~= nil
-        and hb.ga.blk.n == nil, tostring(hb.ga.phase))
-  -- KNOB OFF (keel): count 0 on square 1, no hit: it holds (hits only).
+  check("shell short: no count, it holds", held(hb) and hb.ga.blk ~= nil
+        and hb.ga.blk.shots == nil, tostring(hb.ga.phase))
+
+  -- KNOB OFF (keel): 0 shots left on square 1, no hit: it holds (hits only).
   C.DECOY_GETAWAY_BLOCKER_STEP = false
-  b = on_sq1(700); hb = b.st.orders.held
-  lock(b, 705); lock(b, 730)
-  check("DECOY_GETAWAY_BLOCKER_STEP=false: count 0 does not move it",
-        hb.ga.phase == "wait" and hb.ga.used == 1 and hb.ga.blk == nil, tostring(hb.ga.phase))
-  b.inf.armour = b.inf.armour - 5; lock(b, 731)
+  b, hb = on_sq1(900)
+  lock(b, 905); lock(b, 930)
+  check("DECOY_GETAWAY_BLOCKER_STEP=false: 0 shots left does not move it",
+        held(hb) and hb.ga.blk == nil, tostring(hb.ga.phase))
+  b.inf.armour = b.inf.armour - 5; lock(b, 931)
   check("DECOY_GETAWAY_BLOCKER_STEP=false: a hit moves it",
         hb.ga.phase == "move" and hb.ga.trigs[2] == "hit", tostring(hb.ga.phase))
   C.DECOY_GETAWAY_BLOCKER_STEP = true

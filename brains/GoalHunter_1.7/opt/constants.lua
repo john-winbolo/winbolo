@@ -4273,16 +4273,23 @@ M.DECOY_GETAWAY_WALL_DAMAGED = 0.5    -- keel 0.5 (moot)
 -- tiles to the nearest counted pill.  It never makes an open square usable.
 -- 0 = safety alone.
 M.DECOY_GETAWAY_PROX_WEIGHT  = 0.5    -- keel 0
--- 2026-09-24: THE BLOCKER STEP (Andrew: "move to the next tile when there's
--- only one blocker (wall or friendly pill) between the pill and the tank.
--- For more than one hostile pill, for this particular check, consider ONLY
--- the CLOSEST hostile pill").  Parked on a chain square (never the decoy
--- square), the closest counted pill's shell line to the tank is walked and
--- its walls (full or damaged) and our live pills are counted; a count <=
--- DECOY_GETAWAY_BLOCKER_MIN moves the tank on without waiting for a hit.
--- A hit still moves it.  false = hits only (as before).
-M.DECOY_GETAWAY_BLOCKER_STEP = true   -- keel false
-M.DECOY_GETAWAY_BLOCKER_MIN  = 1      -- keel 1 (not used: the step is off)
+-- 2026-09-24: THE BLOCKER STEP (Andrew: consider ONLY the CLOSEST hostile
+-- pill; move on when the blocker has "2 or less shots left").  Parked on a
+-- chain square (never the decoy square), the closest counted pill's shell
+-- line to the tank is walked; each wall (full or damaged) and live pill of
+-- ours on it is worth the pill shells it still stops, and the sum is the
+-- shots left.  Shots left <= DECOY_GETAWAY_BLOCKER_SHOTS moves the tank on
+-- without waiting for a hit.  A hit still moves it.  false = hits only.
+M.DECOY_GETAWAY_BLOCKER_STEP  = true  -- keel false
+M.DECOY_GETAWAY_BLOCKER_SHOTS = 2     -- keel 2 (not used: the step is off)
+-- The engine rules the shots left are worked out from.  The brain cannot
+-- read them, so these are the engine defaults: building_life
+-- (BUILDING_LIFE, src/bolo/internal/building.h) and pill_shell_damage
+-- (PILLBOX_SHELL_DAMAGE, src/bolo/internal/pillbox.h).  A full wall stops
+-- WALL_LIFE + 1 shells; a damaged wall's life left is hidden, so it counts
+-- 1; a pill stops ceil(armour / PILL_SHELL_DAMAGE).
+M.DECOY_GETAWAY_WALL_LIFE     = 4     -- keel 4
+M.DECOY_GETAWAY_PILL_SHELL_DAMAGE = 1 -- keel 1
 -- Auction window.  The design said 6 ticks; a brain thinks every 2 game
 -- ticks and a bid is seen on the ally's NEXT think, so 6 is tight -- 10
 -- gives every ally one full round trip.  The auction still ends EARLY the
@@ -4727,7 +4734,9 @@ M.PRESETS = {
     DECOY_GETAWAY_WALL_DAMAGED    = 0.5,
     DECOY_GETAWAY_PROX_WEIGHT     = 0,
     DECOY_GETAWAY_BLOCKER_STEP    = false,
-    DECOY_GETAWAY_BLOCKER_MIN     = 1,
+    DECOY_GETAWAY_BLOCKER_SHOTS   = 2,
+    DECOY_GETAWAY_WALL_LIFE       = 4,
+    DECOY_GETAWAY_PILL_SHELL_DAMAGE = 1,
     ORDER_NEW_CLEARS_ALL          = false,
     ORDER_CLAIM_TIEBREAK          = false,
     ORDER_NO_HAND_BACK            = false,

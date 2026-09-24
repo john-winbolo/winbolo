@@ -10,17 +10,16 @@
 -- of the chain.  Every hit it takes while parked moves it ONE square along
 -- the chain, and then it waits for the next hit.  Hits on the way do not
 -- count.  THE BLOCKER STEP (Andrew, Sep 24): parked on a chain square (not
--- the decoy square), it also moves on with no hit when the closest pill's
--- shell line to it crosses DECOY_GETAWAY_BLOCKER_MIN (1) blockers or fewer
--- (walls, full or damaged, and our pills).  On this map every chain square
--- is behind the one row of walls, so every step after the first one is a
--- blocker step unless a hit comes first.
+-- the decoy square), it also moves on with no hit when the blockers on the
+-- closest pill's shell line to it have DECOY_GETAWAY_BLOCKER_SHOTS (2)
+-- shots left or fewer.  A full wall stops building_life + 1 = 5 shells; a
+-- damaged wall counts 1 (its life left is hidden from the brain).  So the
+-- decoy holds behind a full wall and moves on once the pill has hit it.
 --
 -- The round runs the two jobs at the same time.  The ATTACKER is ordered
 -- onto the pill first, and it is shooting the pill by the time the decoy
--- has its first hit.  The walls fall to the pill's shells (building_life
--- = 1: two hits), so the wall the decoy stepped behind opens up, the next
--- hit lands, and it steps again.
+-- has its first hit.  The walls keep the engine's building_life (4), which
+-- is the value the brain works its shots left out from.
 --
 -- What this round reads, from outside:
 --
@@ -30,13 +29,14 @@
 --      "decoying" -- the hold, not the plain goto hold.
 --   2. NO MOVE WITHOUT A TRIGGER.  The tank's square changes only within
 --      MOVE_BY ticks of a hit, or after the first step from a square with
---      BLOCKER_MIN blockers or fewer (the round's own count, below).
+--      BLOCKER_SHOTS shots left or fewer (the round's own count, below).
 --   3. ONE TRIGGER, ONE STEP.  A STEP is the tank reaching a square one
 --      ring further out from the decoy square than it has been before.  The
 --      first step needs a hit.  Every later step needs a hit since the step
---      before it, or a blocker count <= BLOCKER_MIN on the square it left.
+--      before it, or shots left <= BLOCKER_SHOTS on the square it left.
 --      The log names each step's trigger ("hit" or "blk").  There are at
---      least two steps, and at least one of them is a blocker step.  The first square it stays still on is FIRST_STEP, the
+--      least two steps, and at least one of them is a blocker step.  The
+--      first square it stays still on is FIRST_STEP, the
 --      first square of the chain DECOY_GETAWAY_SCAN logs for this map.  A
 --      blocker step can leave FIRST_STEP before it counts as still; then
 --      the square that made ring 1 must be FIRST_STEP.
@@ -46,6 +46,8 @@
 --      starting no later than ATTACK_SLACK after the decoy's first hit.  The
 --      scenario puts the pill's armour back when it runs low, because a dead
 --      pill ends the hold.
+--   The log lists every hit on the decoy (tick, square) and the armour it
+--   lost in the watch.
 --
 -- Under an angry pill, a hit knocks the tank back while it turns for the
 -- next square, and the next shell often comes before it gets there.  So a
@@ -107,9 +109,12 @@ local AIM_SLACK  = 24      -- of 256
 local ATTACK_SLACK = 400   -- the attacker's first hit, at most this after the decoy's
 local ARMOUR_LOW = 25      -- refill below this, so no flee rule can fire
 local SETTLE     = 30      -- ticks still on one square before it counts as stopped
-local BUILDING_LIFE = 1    -- shell hits a damaged wall takes before it falls
+-- Shell hits a damaged wall takes before it falls.  The keel round keeps
+-- the old 1; the getaway round keeps the engine's 4 (BUILDING_LIFE), the
+-- value the brain's DECOY_GETAWAY_WALL_LIFE assumes.
+local BUILDING_LIFE = KEEL and 1 or 4
 local PILL_LOW   = 5       -- the pill's armour is put back to 15 below this
-local BLOCKER_MIN = 1      -- DECOY_GETAWAY_BLOCKER_MIN
+local BLOCKER_SHOTS = 2    -- DECOY_GETAWAY_BLOCKER_SHOTS
 
 local now       = 0
 local done      = false
@@ -121,6 +126,8 @@ local hold_text = nil
 -- The watch.
 local parked_at = nil      -- when the hold began
 local last_arm  = nil
+local arm_lost  = 0        -- armour the decoy lost in the watch
+local hit_list  = {}       -- "tick@x,y" for every hit
 local hits      = 0        -- hits on the decoy in the watch
 local first_hit_at = nil
 local last_hit_at = nil
@@ -166,12 +173,13 @@ local function bearing(x0, y0, x1, y1)
   return a % 256
 end
 
--- THE ROUND'S OWN BLOCKER COUNT on the shell line from the pill to square
+-- THE ROUND'S OWN SHOTS LEFT on the shell line from the pill to square
 -- (x,y): a straight line from centre to centre in 1/16-square steps (the
 -- shell's own step), each square once, the pill's square and (x,y) left
--- out.  A full or damaged wall counts 1.  There is one pill and no pill of
--- the decoy's team on this map, so the closest pill is the pill and no pill
--- is a blocker.
+-- out.  A full wall is BUILDING_LIFE + 1 shots, a damaged wall 1 (the
+-- brain's rule: the smallest life it can have).  There is one pill and no
+-- pill of the decoy's team on this map, so the closest pill is the pill
+-- and no pill is a blocker.
 local function blockers(x, y)
   local x0, y0 = PX + 0.5, PY + 0.5
   local dx, dy = x + 0.5 - x0, y + 0.5 - y0
@@ -184,7 +192,8 @@ local function blockers(x, y)
     if not seen[k] and not (mx == PX and my == PY) and not (mx == x and my == y) then
       seen[k] = true
       local t = game.map_tile(mx, my)
-      if t == game.TERRAIN.building or t == game.TERRAIN.half_building then n = n + 1 end
+      if t == game.TERRAIN.building then n = n + BUILDING_LIFE + 1 end
+      if t == game.TERRAIN.half_building then n = n + 1 end
     end
   end
   return n
@@ -270,6 +279,8 @@ local function watch(tk)
   end
   local arm = tk.armour
   if last_arm and arm < last_arm then
+    arm_lost = arm_lost + (last_arm - arm)
+    hit_list[#hit_list + 1] = string.format("%d@%d,%d", now, tk.mx, tk.my)
     hits = hits + 1
     hits_since = hits_since + 1
     last_hit_at = now
@@ -286,10 +297,10 @@ local function watch(tk)
     -- The blocker count on the square it left.  The blocker step never runs
     -- on the decoy square (ring 0) nor with the getaway off (KEEL).
     local nb = blockers(sq_x, sq_y)
-    local blk_ok = not KEEL and max_ring >= 1 and nb <= BLOCKER_MIN
+    local blk_ok = not KEEL and max_ring >= 1 and nb <= BLOCKER_SHOTS
     -- 2. NO MOVE WITHOUT A TRIGGER.
     if (not last_hit_at or now - last_hit_at > MOVE_BY) and not blk_ok then
-      return fail("left (%d,%d) (%d blockers) for (%d,%d) at %d with no hit in %d ticks",
+      return fail("left (%d,%d) (%d shots left) for (%d,%d) at %d with no hit in %d ticks",
                   sq_x, sq_y, nb, tk.mx, tk.my, now, MOVE_BY)
     end
     local from_x, from_y = sq_x, sq_y
@@ -301,10 +312,10 @@ local function watch(tk)
       if hits_since > 0 then
         trig = string.format("hit (%d since ring %d)", hits_since, max_ring)
       elseif blk_ok then
-        trig = string.format("blk (%d blocker(s) on (%d,%d))", nb, from_x, from_y)
+        trig = string.format("blk (%d shots left on (%d,%d))", nb, from_x, from_y)
         blk_steps = blk_steps + 1
       else
-        return fail("ring %d at (%d,%d) at %d with no hit since ring %d and %d blockers on (%d,%d)",
+        return fail("ring %d at (%d,%d) at %d with no hit since ring %d and %d shots left on (%d,%d)",
                     r, sq_x, sq_y, now, max_ring, nb, from_x, from_y)
       end
       if r == 1 then ring1_x, ring1_y = sq_x, sq_y end
@@ -451,6 +462,12 @@ function on_tick(t)
                 pill_hit_at, pill_hit_at - first_hit_at)
   end
 
+  -- The hits, a few to a log line (a line that is too long is dropped).
+  for i = 1, #hit_list, 8 do
+    game.log(string.format("%s: hits %s", NAME,
+                           table.concat(hit_list, " ", i, math.min(i + 7, #hit_list))))
+  end
+  game.log(string.format("%s: %d hits, %d armour lost in the watch", NAME, hits, arm_lost))
   if KEEL then
     if hits < 2 then
       return fail("only %d hits on the decoy", hits)
@@ -467,8 +484,8 @@ function on_tick(t)
   if not first_still then
     return fail("it never stopped on a square off the decoy square")
   end
-  -- Every chain square here is behind the one row of walls (one blocker),
-  -- so at least one step must come with no hit.
+  -- The pill's first shell on a full wall leaves a damaged wall (1 shot
+  -- left), so at least one step must come with no hit.
   if blk_steps < 1 then
     return fail("no blocker step in %d steps on %d hits", max_ring, hits)
   end

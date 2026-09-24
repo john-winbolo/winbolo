@@ -77,20 +77,21 @@
 --          the square after it.  If the square can no longer be driven on:
 --          a fresh scan from where the tank is with the steps that are left
 --          (and on to its first square), or park where it is.
---          THE BLOCKER STEP (Andrew, Sep 24: "move to the next tile when
---          there's only one blocker (wall or friendly pill) between the
---          pill and the tank"): parked on a chain square (never the decoy
---          square: the first step still waits for a hit), every think takes
---          the CLOSEST counted pill to the tank's square (edist, ties to the
---          lower id; the other pills are ignored for this check only, the
---          scan does not change) and counts the blockers on its shell line
---          to the tank's square: a full or damaged wall counts 1, a live
---          pill of ours or an ally's counts 1 (a tree is not a blocker).
---          The line is cpf.simulate_shot, the scan's own trace, walked to
---          the tank's square without stopping.  A count <=
---          DECOY_GETAWAY_BLOCKER_MIN moves it on at once.  A hit still
---          moves it too.  A shell that runs out before the tank's square:
---          no count, no step.  DECOY_GETAWAY_BLOCKER_STEP false: hits only.
+--          THE BLOCKER STEP (Andrew, Sep 24: move on when the blocker has
+--          "2 or less shots left"): parked on a chain square (never the
+--          decoy square: the first step still waits for a hit), every think
+--          takes the CLOSEST counted pill to the tank's square (edist, ties
+--          to the lower id; the other pills are ignored for this check
+--          only, the scan does not change) and walks its shell line to the
+--          tank's square (cpf.simulate_shot, the scan's own trace, walked
+--          without stopping).  Each blocker on it is worth the pill shells
+--          it still stops (M.shots_left): a full wall, a damaged wall, a
+--          live pill of ours or an ally's (a tree is not a blocker).  The
+--          sum is the SHOTS LEFT before the tank is open.  Shots left <=
+--          DECOY_GETAWAY_BLOCKER_SHOTS (0 = no blocker left) moves it on at
+--          once.  A hit still moves it too.  A shell that runs out before
+--          the tank's square: no count, no step.  DECOY_GETAWAY_BLOCKER_STEP
+--          false: hits only.
 --   done   parked on the last square.  The hold goes on and ends the way it
 --          always does (clock, pills down, caution, cancel, new order, death).
 --
@@ -445,31 +446,61 @@ function M.closest_pill(world, mx, my)
   return bid, bp, bd
 end
 
--- THE BLOCKER COUNT on pill p's shell line to (mx,my): the tiles that
+-- SHOTS LEFT in one blocker: the pill shells it still stops, the last one
+-- included (the shell that knocks a wall down or kills a pill is stopped
+-- too; the next one goes through).  The engine's numbers
+-- (src/bolo/building.c buildingAddItem, src/bolo/shells.c, src/bolo/pillbox.c
+-- pillsDamagePos):
+--   wall (full)    the first shell makes it a damaged wall and gives it a
+--                  life of building_life; each shell after takes one life,
+--                  and at 0 it is rubble.  building_life + 1 shells.
+--   wall_damaged   its life left: 1 .. building_life, or building_life + 1
+--                  for a damaged wall that no shell has touched yet.  The
+--                  life is the engine's own list and the brain cannot see
+--                  it, so the SMALLEST value is used: 1 (move sooner).
+--   pill           its armour, pill_shell_damage (1) off per shell:
+--                  ceil(armour / pill_shell_damage).
+-- building_life and pill_shell_damage are rules the brain cannot read, so
+-- they are the engine defaults: DECOY_GETAWAY_WALL_LIFE (BUILDING_LIFE 4)
+-- and DECOY_GETAWAY_PILL_SHELL_DAMAGE (PILLBOX_SHELL_DAMAGE 1).
+function M.shots_left(kind, pill)
+  if kind == "wall" then return (C.DECOY_GETAWAY_WALL_LIFE or 4) + 1 end
+  if kind == "wall_damaged" then return 1 end
+  local d = C.DECOY_GETAWAY_PILL_SHELL_DAMAGE or 1
+  return math.ceil((pill and pill.health or 0) / d)
+end
+
+-- THE BLOCKERS on pill p's shell line to (mx,my): the tiles that
 -- cpf.simulate_shot crosses (the trace G.sea_shot_reaches walks) between the
 -- pill's square and (mx,my), walked to the end without stopping.  A full or
--- damaged wall counts 1; a live pill of ours or an ally's counts 1.  Returns
--- the count and the list of blockers ({ mx, my, kind }), or nil and the list
--- when the shell runs out before (mx,my).
+-- damaged wall and a live pill of ours or an ally's are blockers, each with
+-- its shots left.  Returns the shots left in all of them, the list of
+-- blockers ({ mx, my, kind, shots }), or nil and the list when the shell
+-- runs out before (mx,my).
 function M.blockers(world, p, mx, my)
   local list = {}
   local ok, tiles = pcall(cpf.simulate_shot, U.m2w(p.mx), U.m2w(p.my),
                           U.m2w(mx), U.m2w(my), cpf.SHOT_PILL, 0)
   if not ok or not tiles then return nil, list end
+  local sum = 0
   for i = 1, #tiles do
     local st = tiles[i]
-    if st.mx == mx and st.my == my then return #list, list end
+    if st.mx == mx and st.my == my then return sum, list end
     if st.mx ~= p.mx or st.my ~= p.my then
       local tt = U.ttype(st.mx, st.my)
+      local kind, q = nil, nil
       if tt == C.T_BUILDING then
-        list[#list + 1] = { mx = st.mx, my = st.my, kind = "wall" }
+        kind = "wall"
       elseif tt == C.T_HALFBUILD then
-        list[#list + 1] = { mx = st.mx, my = st.my, kind = "wall_damaged" }
+        kind = "wall_damaged"
       else
-        local q = live_pill_at(world, st.mx, st.my)
-        if q and (q.owner == "friendly" or q.owner == "allied") then
-          list[#list + 1] = { mx = st.mx, my = st.my, kind = "pill" }
-        end
+        q = live_pill_at(world, st.mx, st.my)
+        if q and (q.owner == "friendly" or q.owner == "allied") then kind = "pill" end
+      end
+      if kind then
+        local n = M.shots_left(kind, q)
+        list[#list + 1] = { mx = st.mx, my = st.my, kind = kind, shots = n }
+        sum = sum + n
       end
     end
   end
@@ -527,13 +558,13 @@ function M.update(state, world, info, h, now)
       local pid, p = M.closest_pill(world, tx, ty)
       if p then
         local n, list = M.blockers(world, p, tx, ty)
-        ga.blk = { id = pid, mx = p.mx, my = p.my, n = n, list = list,
+        ga.blk = { id = pid, mx = p.mx, my = p.my, shots = n, list = list,
                    tx = tx, ty = ty }
       end
     end
     local by_hit = ga.hits >= (C.DECOY_GETAWAY_HITS or 1)
-    local by_blk = (ga.blk and ga.blk.n
-                    and ga.blk.n <= (C.DECOY_GETAWAY_BLOCKER_MIN or 1)) and true or false
+    local by_blk = (ga.blk and ga.blk.shots
+                    and ga.blk.shots <= (C.DECOY_GETAWAY_BLOCKER_SHOTS or 2)) and true or false
     if ga.path and ga.path[ga.idx] and (by_hit or by_blk) then
       ga.phase = "move"
       local trig = by_hit and "hit" or "blk"
@@ -543,7 +574,7 @@ function M.update(state, world, info, h, now)
       local bs = "-"
       if ga.blk then
         bs = string.format("p%s(%d,%d):%s", tostring(ga.blk.id), ga.blk.mx,
-                           ga.blk.my, ga.blk.n and tostring(ga.blk.n) or "short")
+                           ga.blk.my, ga.blk.shots and (tostring(ga.blk.shots) .. "shots") or "short")
       end
       print2(string.format("DECOY_GETAWAY_GO t=%d oid=%d step=%d/%d to=(%d,%d) trigger=%s blk=%s hit_t=%d armour=%d->%d hits=%d path=%s",
              now or -1, h.oid or 0, ga.used + 1, ga.used + #ga.path - ga.idx + 1,
@@ -740,13 +771,15 @@ function M.draw(viz, state)
                string.format("GETAWAY #%d (%d,%d)", base + i, c.mx, c.my), lines)
   end
   -- THE BLOCKER STEP: the closest pill's shell line to the tank (magenta),
-  -- and a magenta box on each blocker it counted.
+  -- and a magenta box on each blocker it counted, with its shots left.
   local bk = ga.blk
   if bk then
     viz.line(ID, bk.mx + 0.5, bk.my + 0.5, bk.tx + 0.5, bk.ty + 0.5, 255, 80, 255, 200)
     for _, b in ipairs(bk.list or {}) do
       viz.rect(ID, b.mx + 0.15, b.my + 0.15, b.mx + 0.85, b.my + 0.85,
                255, 80, 255, 230, false)
+      viz.text(ID, b.mx + 0.5, b.my + 0.6, string.format("%d shots", b.shots or 0),
+               "center", 255, 150, 255, 255)
     end
   end
   -- Up to four header lines, not one: an overlay text is cut at
@@ -777,11 +810,11 @@ function M.draw(viz, state)
   if C.DECOY_GETAWAY_BLOCKER_STEP then
     local tl = "-"
     if ga.trigs and #ga.trigs > 0 then tl = table.concat(ga.trigs, " ") end
-    local min = C.DECOY_GETAWAY_BLOCKER_MIN or 1
+    local lim = C.DECOY_GETAWAY_BLOCKER_SHOTS or 2
     local what
-    if bk and bk.n then
-      what = string.format("closest p%s (%d,%d) blockers=%d, step at <=%d",
-                           tostring(bk.id), bk.mx, bk.my, bk.n, min)
+    if bk and bk.shots then
+      what = string.format("closest p%s (%d,%d) shots left=%d, step at <=%d",
+                           tostring(bk.id), bk.mx, bk.my, bk.shots, lim)
     elseif bk then
       what = string.format("closest p%s (%d,%d) shell short: no count",
                            tostring(bk.id), bk.mx, bk.my)
