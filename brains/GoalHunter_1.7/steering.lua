@@ -2069,7 +2069,7 @@ local function attack_pill_steer(state, world, info, goal)
     if nx then
       local move_dir = U.aim_at(info.tankx, info.tanky, U.m2w(nx), U.m2w(ny))
       local corr = U.adiff(info.direction, move_dir)
-      local k, t = nav_turn_speed(corr, info.speed, 64)
+      local k, t = nav_turn_speed(corr, info.speed, C.NAV_TOP_SPEED)
       keys = bit.bor(keys, k)
       taps = bit.bor(taps, t)
     else
@@ -2672,7 +2672,7 @@ local function attack_pill_steer(state, world, info, goal)
     elseif nx and nx >= 0 and tn < 2 then lookx, looky = nx, ny end
     local move_dir = U.aim_at(info.tankx, info.tanky, U.m2w(lookx), U.m2w(looky))
     local mcorr = U.adiff(info.direction, move_dir)
-    local k, t = nav_turn_speed(mcorr, info.speed, 48, 4)
+    local k, t = nav_turn_speed(mcorr, info.speed, C.NAV_CRUISE_SPEED, 4)
     keys = bit.bor(keys, k)
     taps = bit.bor(taps, t)
 
@@ -4611,7 +4611,7 @@ local function steer_core(state, world, info, goal)
       if offset_dist > 128 then
         local corr = U.adiff(info.direction, offset_dir)
         -- Retreat: high max speed, low min speed — escape ASAP
-        local k, t = nav_turn_speed(corr, info.speed, 64, 2)
+        local k, t = nav_turn_speed(corr, info.speed, C.NAV_TOP_SPEED, 2)
         keys = bit.bor(keys, k)
         taps = bit.bor(taps, t)
       else
@@ -5144,9 +5144,9 @@ local function steer_core(state, world, info, goal)
     local plow_ease     = (dist_t >= 4) and 1.0 or 0.0  -- legacy var name kept for viz
     if abs_corr > ramp_start and dist_t < 4 then
       if plow_through then
-        turn_base_cap = (under_fire or race_mode) and 128 or 96
+        turn_base_cap = (under_fire or race_mode) and C.NAV_TOP_SPEED * 2 or C.NAV_CRUISE_SPEED * 2
       else
-        turn_base_cap = (under_fire or race_mode) and  64 or 48
+        turn_base_cap = (under_fire or race_mode) and C.NAV_TOP_SPEED or C.NAV_CRUISE_SPEED
       end
       turn_factor    = 1.0 - math.min((abs_corr - ramp_start) / 70.0, 1.0)
       -- The floor keeps a hard-turning tank creeping forward rather than
