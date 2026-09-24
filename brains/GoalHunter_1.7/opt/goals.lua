@@ -8162,7 +8162,11 @@ end
 -- the dead sea pills at all.
 -- Returns reached (bool), stop_mx, stop_my (the tile that ate it, or nil when
 -- the shell simply ran out of range).
-local function sea_shot_reaches(world, owx, owy, tmx, tmy, shooter)
+-- `stoppers` (optional) replaces SEA_SHOT_STOPPERS as the set of terrain
+-- types that eat the shell.  The decoy getaway (decoy_getaway.lua) passes
+-- walls only: a tree or a boat is shot away, so it is not cover.  Pills and
+-- bases still stop the shell whatever the set is.
+local function sea_shot_reaches(world, owx, owy, tmx, tmy, shooter, stoppers)
   if owx == U.m2w(tmx) and owy == U.m2w(tmy) then return true, tmx, tmy end
   local ok, tiles = pcall(cpf.simulate_shot, owx, owy, U.m2w(tmx), U.m2w(tmy),
                           shooter or cpf.SHOT_PILL, 0)
@@ -8174,7 +8178,7 @@ local function sea_shot_reaches(world, owx, owy, tmx, tmy, shooter)
     if st.mx == tmx and st.my == tmy then return true, tmx, tmy end
     if st.mx ~= omx or st.my ~= omy then
       local tt = U.ttype(st.mx, st.my)
-      if SEA_SHOT_STOPPERS[tt] then return false, st.mx, st.my end
+      if (stoppers or SEA_SHOT_STOPPERS)[tt] then return false, st.mx, st.my end
       local plist = world.pill_at and world.pill_at[st.my * 256 + st.mx]
       if plist then
         for _, pe in ipairs(plist) do
