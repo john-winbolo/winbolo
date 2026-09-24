@@ -40,6 +40,7 @@
 #include "server_sim_lifecycle.h"  /* serverSimSetTeam, lobbyAutoUnreadyOnChange, serverSimEnterGameOver */
 #include "server_sim_join.h"       /* serverSimFindFreeSlot — the first free seat */
 #include "netpacks.h"      /* lobbyBotNameAcceptable — the lobby's own name check */
+#include "wire_limits.h"   /* LOBBY_PACKAGE_UPLOAD_MAX_BYTES — the most a script copy reads */
 #include "brain_list.h"    /* BrainModes, brainListLoadModesForPath — the seat loops' one read per brain */
 #include "bot_manager.h"   /* botManagerScenarioHint — the hint arm's delivery */
 #include "../../common/wb_log.h"   /* the line a dropped roster change leaves */
@@ -4320,6 +4321,39 @@ void serverSimSetScenarioDetailsReader(ServerSim *sim,
     if (sim == NULL) return;
     sim->scenarioDetailsReader = read;
     sim->scenarioDetailsReaderCtx = ctx;
+}
+
+void serverSimSetScriptFileReader(ServerSim *sim,
+                                  ServerScriptReadResult (*read)(
+                                      void *ctx, const char *dir,
+                                      const char *file, uint8_t **outBytes,
+                                      uint32_t *outLen, uint32_t cap),
+                                  void *ctx) {
+    if (sim == NULL) return;
+    sim->scriptFileReader = read;
+    sim->scriptFileReaderCtx = ctx;
+}
+
+ServerScriptReadResult serverSimScriptFileRead(ServerSim *sim,
+                                               const char *file,
+                                               uint8_t **outBytes,
+                                               uint32_t *outLen) {
+    if (outBytes != NULL) *outBytes = NULL;
+    if (outLen != NULL) *outLen = 0;
+    if (sim == NULL || file == NULL || file[0] == '\0' || outBytes == NULL ||
+        outLen == NULL) {
+        return SERVER_SCRIPT_READ_NOT_FOUND;
+    }
+    /* The map's own script is not served: its file is the map. */
+    if (strcmp(sim->scenarioMapScript.file, file) == 0) {
+        return SERVER_SCRIPT_READ_NOT_FOUND;
+    }
+    if (sim->scriptFileReader == NULL) {
+        return SERVER_SCRIPT_READ_NOT_FOUND;
+    }
+    return sim->scriptFileReader(sim->scriptFileReaderCtx,
+                                 serverSimGetScenarioDir(sim), file, outBytes,
+                                 outLen, LOBBY_PACKAGE_UPLOAD_MAX_BYTES);
 }
 
 int serverSimScenarioListDir(const ServerSim *sim, ScnDirEntry *out, int max) {

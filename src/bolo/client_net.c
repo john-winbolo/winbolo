@@ -23,6 +23,7 @@
 #include "frontend.h"                      /* frontEndApplyLocalTankPrefs */
 #include "transport.h"
 #include "transport_udp.h"
+#include "bulk_transfer.h"                 /* BULK_SCRIPT_* — the public status values mirror them */
 #include "client_snapshot.h"                /* clientSnapshotRenderInterp */
 #include "interpolation.h"                  /* interpRenderControl */
 #include "netpacks.h"                      /* MAP_DOWNLOAD_MAX_SIZE, lobbyBotNameAcceptable */
@@ -796,6 +797,60 @@ uint8_t *clientSimTakeRoundLog(ClientSim *cs, size_t *outLen) {
   if (outLen != NULL) *outLen = 0;
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return NULL;
   return transportUdpClientTakeRoundLog(&cs->transport, outLen);
+}
+
+/* === A copy of one of the server's scripts === */
+
+/* client_net.h states the status values as plain numbers, because the client
+ * frontends cannot see bulk_transfer.h. This translation unit sees both, so a
+ * wire value that moves without its public name fails to compile here. */
+BOLO_STATIC_ASSERT(CLIENT_SCRIPT_FETCH_STATUS_FOUND == BULK_SCRIPT_FOUND,
+                   script_fetch_status_found_drift);
+BOLO_STATIC_ASSERT(CLIENT_SCRIPT_FETCH_STATUS_NOT_FOUND == BULK_SCRIPT_NOT_FOUND,
+                   script_fetch_status_not_found_drift);
+BOLO_STATIC_ASSERT(CLIENT_SCRIPT_FETCH_STATUS_DISABLED == BULK_SCRIPT_DISABLED,
+                   script_fetch_status_disabled_drift);
+BOLO_STATIC_ASSERT(CLIENT_SCRIPT_FETCH_STATUS_TOO_LARGE == BULK_SCRIPT_TOO_LARGE,
+                   script_fetch_status_too_large_drift);
+BOLO_STATIC_ASSERT(CLIENT_SCRIPT_FETCH_STATUS_BUSY == BULK_SCRIPT_BUSY,
+                   script_fetch_status_busy_drift);
+
+bool clientSimNetSendLobbyScriptFetch(ClientSim *cs, const char *file) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return false;
+  return transportUdpClientSendScriptFetch(&cs->transport, file);
+}
+
+int clientSimGetScriptFetchState(const ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) {
+    return CLIENT_SCRIPT_FETCH_IDLE;
+  }
+  return transportUdpClientGetScriptFetchState((Transport *)&cs->transport);
+}
+
+uint8_t clientSimGetScriptFetchPercent(const ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return 0;
+  return transportUdpClientGetScriptFetchPercent((Transport *)&cs->transport);
+}
+
+int clientSimGetScriptFetchStatus(const ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) {
+    return CLIENT_SCRIPT_FETCH_NO_ANSWER;
+  }
+  return transportUdpClientGetScriptFetchStatus((Transport *)&cs->transport);
+}
+
+bool clientSimTakeScriptFetch(ClientSim *cs, uint8_t **outBytes,
+                              size_t *outLen, char *nameOut, size_t nameCap) {
+  if (outBytes != NULL) *outBytes = NULL;
+  if (outLen != NULL) *outLen = 0;
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return false;
+  return transportUdpClientTakeScriptFetch(&cs->transport, outBytes, outLen,
+                                           nameOut, nameCap);
+}
+
+void clientSimClearScriptFetch(ClientSim *cs) {
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return;
+  transportUdpClientClearScriptFetch(&cs->transport);
 }
 
 void clientSimNetSendLobbyMapUseLocal(ClientSim *cs,

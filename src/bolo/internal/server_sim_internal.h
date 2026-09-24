@@ -1004,6 +1004,14 @@ struct ServerSim {
                                                   const char *file,
                                                   uint8_t *out, size_t cap);
     void                  *scenarioDetailsReaderCtx;
+    /* Reads one directory file's raw bytes for serverSimScriptFileRead.
+       NULL means nothing registered and no file is served. */
+    ServerScriptReadResult (*scriptFileReader)(void *ctx, const char *dir,
+                                               const char *file,
+                                               uint8_t **outBytes,
+                                               uint32_t *outLen,
+                                               uint32_t cap);
+    void                  *scriptFileReaderCtx;
     /* What a lobby host's reload request runs. NULL means no scenario is
        attached and a request answers so. */
     bool                 (*scenarioReload)(void *ctx, char *err, size_t errLen);

@@ -3395,6 +3395,25 @@ int run_scenario_details_fetch_give_up(void);
 int run_scenario_details_override_order(void);
 int run_scenario_details_reload_map_script(void);
 
+/* A copy of one of the server's scripts (test_script_fetch.c): the request
+ * body against committed hex, a .lua, a .scenario and a shipped mod fetched
+ * whole over the loopback transport, each refusal the server answers, a
+ * BUSY answer asked again, a server that never answers, the client's bulk
+ * sink refusing a header that is not its answer, a copy that stops arriving,
+ * and a round started while a copy is arriving. */
+int run_script_fetch_req_golden(void);
+int run_script_fetch_found_lua(void);
+int run_script_fetch_found_package(void);
+int run_script_fetch_found_shipped(void);
+int run_script_fetch_not_found(void);
+int run_script_fetch_disabled(void);
+int run_script_fetch_too_large(void);
+int run_script_fetch_busy_retry(void);
+int run_script_fetch_give_up(void);
+int run_script_fetch_sink_bound(void);
+int run_script_fetch_stall_fails(void);
+int run_script_fetch_round_start_abort(void);
+
 /* The three directories a mod can come from (test_scenario_mod_dirs.c): the
  * one the host was given, the player's own under SDL_GetPrefPath and the
  * mods that ship beside the executable, merged into one listing with the

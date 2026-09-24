@@ -6841,6 +6841,130 @@ static int scnDirDetailsCb(void *ctx, const char *dir, const char *file,
     return got;
 }
 
+/* One file's raw bytes, in the shape serverSimSetScriptFileReader takes: the
+   copy of a script a player asked for. The directories are asked in the order
+   the listing merges them, through the same kept reads scnDirDetailsCb uses,
+   and the first one holding the name (ignoring case, the way the listing
+   drops a lower directory's copy of a name) is the only one looked in. The
+   name is compared with the rows a directory read found and never opened as
+   a path: the path read is built from the matched directory and the matched
+   row's own file name.
+
+   A bound row belongs to one map and is not served. The size is checked
+   against cap before anything is allocated, and again against what was read,
+   since the file can change between the two. */
+static ServerScriptReadResult scnDirReadCb(void *ctx, const char *dir,
+                                           const char *file,
+                                           uint8_t **outBytes,
+                                           uint32_t *outLen, uint32_t cap) {
+    char         dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
+    char         path[SCN_SCRIPT_PATH_MAX + SCN_DIR_FILE_LEN + 1];
+    ScnDirEntry *rows;
+    SDL_PathInfo info;
+    FILE        *f;
+    uint8_t     *buf;
+    size_t       have = 0;
+    size_t       room;
+    bool         found = false;
+    bool         failed;
+    int          count;
+    int          d;
+
+    if (outBytes == NULL || outLen == NULL) {
+        return SERVER_SCRIPT_READ_NOT_FOUND;
+    }
+    *outBytes = NULL;
+    *outLen   = 0;
+    if (!scnEnabled) {
+        return SERVER_SCRIPT_READ_DISABLED;
+    }
+    if (file == NULL || file[0] == '\0') {
+        return SERVER_SCRIPT_READ_NOT_FOUND;
+    }
+
+    rows = (ScnDirEntry *)calloc(SCN_DIR_DETAILS_ROWS, sizeof(*rows));
+    if (rows == NULL) {
+        return SERVER_SCRIPT_READ_NOT_FOUND;
+    }
+    count = scnModDirs(dirs, dir, scnModDirUploads(ctx));
+    for (d = 0; d < count; d++) {
+        int n = scnDirListCached(dirs[d], rows, NULL, SCN_DIR_DETAILS_ROWS);
+        int i;
+
+        for (i = 0; i < n; i++) {
+            if (SDL_strcasecmp(rows[i].file, file) != 0) {
+                continue;
+            }
+            /* This directory holds the name the listing offers. Anything but
+               the exact name, or a map's own script, is not served. */
+            if (strcmp(rows[i].file, file) == 0 && !rows[i].bound &&
+                (size_t)snprintf(path, sizeof(path), "%s/%s", dirs[d],
+                                 rows[i].file) < sizeof(path)) {
+                found = true;
+            }
+            d = count;
+            break;
+        }
+    }
+    free(rows);
+    if (!found) {
+        return SERVER_SCRIPT_READ_NOT_FOUND;
+    }
+
+    if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE) {
+        return SERVER_SCRIPT_READ_NOT_FOUND;
+    }
+    if (info.size > (Uint64)cap) {
+        return SERVER_SCRIPT_READ_TOO_LARGE;
+    }
+
+    f = fopen(path, "rb");
+    if (f == NULL) {
+        return SERVER_SCRIPT_READ_NOT_FOUND;
+    }
+    /* One byte past the size stat gave, so a file that grew since is seen to
+       have and the rest is read too, up to one byte past cap. */
+    room = (size_t)info.size + 1;
+    buf  = (uint8_t *)malloc(room);
+    for (;;) {
+        uint8_t *more;
+        size_t   next;
+
+        if (buf == NULL) {
+            break;
+        }
+        have += fread(buf + have, 1, room - have, f);
+        if (have < room || have > (size_t)cap) {
+            break;
+        }
+        next = room * 2;
+        if (next > (size_t)cap + 1) {
+            next = (size_t)cap + 1;
+        }
+        more = (uint8_t *)realloc(buf, next);
+        if (more == NULL) {
+            free(buf);
+            buf = NULL;
+            break;
+        }
+        buf  = more;
+        room = next;
+    }
+    failed = (buf == NULL) || ferror(f);
+    fclose(f);
+    if (failed) {
+        free(buf);
+        return SERVER_SCRIPT_READ_NOT_FOUND;
+    }
+    if (have > (size_t)cap) {
+        free(buf);
+        return SERVER_SCRIPT_READ_TOO_LARGE;
+    }
+    *outBytes = buf;
+    *outLen   = (uint32_t)have;
+    return SERVER_SCRIPT_READ_FOUND;
+}
+
 /* ── Scripts players upload ───────────────────────────────────────── */
 
 /* What an upload is written through before it takes its own name. The
@@ -7080,6 +7204,7 @@ void scenarioHostRegisterScenarioLister(ServerSim *sim) {
     }
     serverSimSetScenarioLister(sim, scnDirListCb, sim);
     serverSimSetScenarioDetailsReader(sim, scnDirDetailsCb, sim);
+    serverSimSetScriptFileReader(sim, scnDirReadCb, sim);
     serverSimSetScriptUploadAccept(sim, scnUploadAccept, sim);
 }
 

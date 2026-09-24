@@ -425,6 +425,27 @@ typedef struct {
                                        * a witness for the no-progress timer,
                                        * never the source of the percentage   */
 
+    /* A copy of one of the server's scripts (BULK_KIND_SCRIPT_PACKAGE), pulled
+     * with PACKET_LOBBY_SCRIPT_FETCH_REQ. onBegin mallocs scriptFetchBuf sized
+     * to the stream header, status byte included, and onComplete parks it;
+     * it stays owned by this context until transportUdpClientTakeScriptFetch
+     * hands out the bytes after the status byte. */
+    uint8_t *scriptFetchBuf;
+    size_t   scriptFetchLen;          /* scriptFetchBuf's size (0 when none)  */
+    int      scriptFetchState;        /* ClientScriptFetchState (client_net.h) */
+    int      scriptFetchStatus;       /* BULK_SCRIPT_* of the last answer, or
+                                       * CLIENT_SCRIPT_FETCH_NO_ANSWER        */
+    char     scriptFetchFile[BULK_PATH_MAX + 1];  /* the name asked for    */
+    uint32_t scriptFetchReqSeq;       /* reqSeq of the outstanding request    */
+    uint32_t scriptFetchSeqCounter;   /* monotonic source for fresh reqSeqs   */
+    uint32_t scriptFetchSentTick;     /* localTick the request last went out  */
+    uint32_t scriptFetchSends;        /* requests sent since the last answer  */
+    uint32_t scriptFetchBusyRetries;  /* re-requests after a BUSY answer      */
+    uint32_t scriptFetchRetryAtTick;  /* earliest localTick to re-ask after
+                                       * BUSY (0 = none parked)              */
+    uint32_t scriptFetchProgressTick; /* localTick body bytes last advanced   */
+    uint32_t scriptFetchWatchdogBytes;/* bodyReceived at the last stall check */
+
 #if WB_ENABLE_NETIMPAIR
     uint8_t test_drop_upload_packet;
 #endif
@@ -1246,6 +1267,7 @@ static const char *mpDiagCtrlName(int type) {
  * no sim semantics and must never reach clientSimApplyControl. */
 static void udpClientFreeResyncBuf(TransportUdpClientCtx *c);     /* defined below */
 static void udpClientFreeRoundLogBuf(TransportUdpClientCtx *c);   /* defined below */
+static void udpClientFreeScriptFetchBuf(TransportUdpClientCtx *c); /* defined below */
 static void clientApplyChannelReset(TransportUdpClientCtx *c,
                                     const ControlEvent *evt) {
     static const struct { uint8_t ch; const char *name; } kChans[3] = {
@@ -1300,6 +1322,18 @@ static void clientApplyChannelReset(TransportUdpClientCtx *c,
                 c->roundLogRetries = 0;
                 c->roundLogTransientRetries = 0;
                 c->roundLogRetryAtTick = 0;
+            }
+            /* A script copy still being filled is abandoned with it, and one
+             * still waiting fails too: its answer, queued behind the old
+             * stream, is lost with it. Either ends as no answer, which the
+             * lobby reports, rather than going quiet. A copy that already
+             * completed is left alone, for the reason the round log's is. */
+            if (c->scriptFetchState == CLIENT_SCRIPT_FETCH_WAITING ||
+                c->scriptFetchState == CLIENT_SCRIPT_FETCH_RECEIVING) {
+                udpClientFreeScriptFetchBuf(c);
+                c->scriptFetchState       = CLIENT_SCRIPT_FETCH_FAILED;
+                c->scriptFetchStatus      = CLIENT_SCRIPT_FETCH_NO_ANSWER;
+                c->scriptFetchRetryAtTick = 0;
             }
             bulkReceiverInit(&c->bulkRecv);
             if (c->mapResyncBuf != NULL) {
@@ -1741,6 +1775,92 @@ static void udpClientScnDetailsTick(TransportUdpClientCtx *c) {
     }
 }
 
+/* ---- A copy of one of the server's scripts (BULK_KIND_SCRIPT_PACKAGE).
+ *
+ * The request is a bare datagram and the server drops one it cannot start at
+ * once (this client's bulk stream busy), so a request with no answer after
+ * SCRIPT_FETCH_TIMEOUT_TICKS is sent again under the same reqSeq, up to
+ * SCRIPT_FETCH_SENDS sends in all. A BUSY answer means the server's request
+ * cooldown refused it: the request goes again SCRIPT_FETCH_BUSY_RETRY_TICKS
+ * later, up to SCRIPT_FETCH_BUSY_RETRIES times. Once the answer has started
+ * arriving it is not held to elapsed time, since the bulk channel resends its
+ * own lost fragments and a 4 MiB file on a slow link makes progress the whole
+ * way; it is abandoned only after SCRIPT_FETCH_NO_PROGRESS_TICKS with no
+ * further byte received. */
+
+/* Drop the fetch buffer this context owns, the way udpClientFreeRoundLogBuf
+ * drops the round log: clear the receiver's dst first so the rest of a body
+ * still arriving is consumed and discarded. */
+static void udpClientFreeScriptFetchBuf(TransportUdpClientCtx *c) {
+    if (c->scriptFetchBuf != NULL) {
+        if (c->bulkRecv.dst == c->scriptFetchBuf) {
+            c->bulkRecv.dst = NULL;
+        }
+        free(c->scriptFetchBuf);
+        c->scriptFetchBuf = NULL;
+    }
+    c->scriptFetchLen = 0;
+}
+
+/* Put the outstanding request on the wire again, under its own reqSeq. */
+static void udpClientSendScriptFetchReq(TransportUdpClientCtx *c) {
+    uint8_t buf[PACKET_HEADER_SIZE + 4 + 1 + BULK_PATH_MAX];
+    size_t  n;
+
+    n = transportUdpClientBuildScriptFetchReqBody(
+        buf + PACKET_HEADER_SIZE, sizeof(buf) - PACKET_HEADER_SIZE,
+        c->scriptFetchReqSeq, c->scriptFetchFile);
+    if (n == 0) return;
+    packHeader(buf, PACKET_LOBBY_SCRIPT_FETCH_REQ, c->outSequence++);
+    udpClientSendTo(c, buf, (int)(PACKET_HEADER_SIZE + n));
+    c->scriptFetchSends++;
+    c->scriptFetchSentTick = c->localTick;
+}
+
+/* Per-tick deadlines for an outstanding fetch. */
+static void udpClientScriptFetchTick(TransportUdpClientCtx *c) {
+    if (c->scriptFetchState == CLIENT_SCRIPT_FETCH_RECEIVING) {
+        uint32_t have = (c->scriptFetchBuf != NULL &&
+                         c->bulkRecv.dst == c->scriptFetchBuf)
+                            ? c->bulkRecv.bodyReceived : 0u;
+        if (have != c->scriptFetchWatchdogBytes) {
+            c->scriptFetchWatchdogBytes = have;
+            c->scriptFetchProgressTick  = c->localTick;
+            return;
+        }
+        if ((uint32_t)(c->localTick - c->scriptFetchProgressTick) >=
+            SCRIPT_FETCH_NO_PROGRESS_TICKS) {
+            WB_LOG_WARN(WB_LOG_CAT_NET,
+                "copy of %s stalled at %u bytes -> abandon",
+                c->scriptFetchFile, (unsigned)have);
+            udpClientFreeScriptFetchBuf(c);
+            c->scriptFetchState  = CLIENT_SCRIPT_FETCH_FAILED;
+            c->scriptFetchStatus = CLIENT_SCRIPT_FETCH_NO_ANSWER;
+        }
+        return;
+    }
+    if (c->scriptFetchState != CLIENT_SCRIPT_FETCH_WAITING) return;
+    if (c->scriptFetchRetryAtTick != 0) {
+        if (c->localTick >= c->scriptFetchRetryAtTick) {
+            c->scriptFetchRetryAtTick = 0;
+            udpClientSendScriptFetchReq(c);
+        }
+        return;
+    }
+    if ((uint32_t)(c->localTick - c->scriptFetchSentTick) <
+        SCRIPT_FETCH_TIMEOUT_TICKS) {
+        return;
+    }
+    if (c->scriptFetchSends < SCRIPT_FETCH_SENDS) {
+        udpClientSendScriptFetchReq(c);
+        return;
+    }
+    WB_LOG_WARN(WB_LOG_CAT_NET, "no copy of %s after %u requests",
+                c->scriptFetchFile, (unsigned)c->scriptFetchSends);
+    c->scriptFetchState  = CLIENT_SCRIPT_FETCH_FAILED;
+    c->scriptFetchStatus = CLIENT_SCRIPT_FETCH_NO_ANSWER;
+}
+
 /* Bulk-receiver onBegin (CHANNEL_BULK): a full stream header parsed. Dispatch by
  * kind to the matching receive buffer; return NULL to reject (the body is then
  * consumed and discarded so the stream stays aligned). */
@@ -1875,6 +1995,29 @@ static uint8_t *clientBulkOnBegin(void *ctx, const BulkStreamHeader *h) {
         }
         return NULL;
     }
+
+    case BULK_KIND_SCRIPT_PACKAGE:
+        /* A copy of a script, answering this client's
+         * PACKET_LOBBY_SCRIPT_FETCH_REQ. Taken only while that request is
+         * outstanding, for its reqSeq and the name it asked for. totalSize is
+         * attacker-controlled: bound it by the package cap before allocating.
+         * h->path is a label only; nothing here opens it. */
+        if (c->scriptFetchState != CLIENT_SCRIPT_FETCH_WAITING) return NULL;
+        if (h->gen != c->scriptFetchReqSeq) return NULL;
+        if (strcmp(h->path, c->scriptFetchFile) != 0) return NULL;
+        if (h->totalSize < 1 ||
+            h->totalSize > 1u + LOBBY_PACKAGE_UPLOAD_MAX_BYTES) {
+            return NULL;
+        }
+        udpClientFreeScriptFetchBuf(c);
+        c->scriptFetchBuf = (uint8_t *)malloc(h->totalSize);
+        if (c->scriptFetchBuf == NULL) return NULL;
+        c->scriptFetchLen           = (size_t)h->totalSize;
+        c->scriptFetchState         = CLIENT_SCRIPT_FETCH_RECEIVING;
+        c->scriptFetchRetryAtTick   = 0;
+        c->scriptFetchProgressTick  = c->localTick;
+        c->scriptFetchWatchdogBytes = 0;
+        return c->scriptFetchBuf;
 
     default:
         return NULL;
@@ -2072,6 +2215,41 @@ static void clientBulkOnComplete(void *ctx, const BulkStreamHeader *h,
         clientSimLobbyScenarioDetailsPut(
             cs, h->path, buf[0] == BULK_SCN_DETAILS_FOUND, buf + 1,
             (size_t)h->totalSize - 1);
+        break;
+    }
+
+    case BULK_KIND_SCRIPT_PACKAGE: {
+        /* The status byte says what came. FOUND holds the bytes behind it,
+         * which may be none; BUSY asks again a little later, up to its own
+         * count; anything else, a status this build does not know included,
+         * ends the fetch with that status for the lobby to word. */
+        uint8_t status;
+        if (c->scriptFetchState != CLIENT_SCRIPT_FETCH_RECEIVING ||
+            buf == NULL || buf != c->scriptFetchBuf) {
+            break;
+        }
+        status = buf[0];
+        c->scriptFetchStatus = status;
+        if (status == BULK_SCRIPT_FOUND) {
+            c->scriptFetchLen   = (size_t)h->totalSize;
+            c->scriptFetchState = CLIENT_SCRIPT_FETCH_DONE;
+            WB_LOG_INFO(WB_LOG_CAT_NET, "copy of %s received (%u bytes)",
+                        c->scriptFetchFile, (unsigned)(h->totalSize - 1));
+            break;
+        }
+        udpClientFreeScriptFetchBuf(c);
+        if (status == BULK_SCRIPT_BUSY &&
+            c->scriptFetchBusyRetries < SCRIPT_FETCH_BUSY_RETRIES) {
+            c->scriptFetchBusyRetries++;
+            c->scriptFetchSends       = 0;
+            c->scriptFetchState       = CLIENT_SCRIPT_FETCH_WAITING;
+            c->scriptFetchRetryAtTick =
+                c->localTick + SCRIPT_FETCH_BUSY_RETRY_TICKS;
+            break;
+        }
+        WB_LOG_INFO(WB_LOG_CAT_NET, "copy of %s refused (status %u)",
+                    c->scriptFetchFile, (unsigned)status);
+        c->scriptFetchState = CLIENT_SCRIPT_FETCH_FAILED;
         break;
     }
 
@@ -3792,6 +3970,7 @@ static bool udpClientTick(void *ctx) {
     if (c->joinState == UDP_CLIENT_CONNECTED) {
         udpClientRoundLogTick(c);
         udpClientScnDetailsTick(c);
+        udpClientScriptFetchTick(c);
     }
 
     /* Control-event acks now ride the channel-frame trailer (the per-tick
@@ -4259,6 +4438,7 @@ Transport transportUdpClientCreate(ClientSim *clientSim,
     c = (TransportUdpClientCtx *)malloc(sizeof(TransportUdpClientCtx));
     memset(c, 0, sizeof(TransportUdpClientCtx));
     c->clientSim = clientSim;
+    c->scriptFetchStatus = CLIENT_SCRIPT_FETCH_NO_ANSWER;
     c->outCmdNextSeq = 1;
     c->outHeadSeq = 1;
     c->outTailSeq = 1;
@@ -4468,6 +4648,9 @@ void transportUdpClientDestroy(Transport *t) {
     }
     if (c->roundLogBuf != NULL) {
         free(c->roundLogBuf);   /* round log nobody took, or a partial one */
+    }
+    if (c->scriptFetchBuf != NULL) {
+        free(c->scriptFetchBuf);   /* script copy nobody took, or a partial one */
     }
     bulkSenderReset(&c->uploadSend);
     free(c);
@@ -4921,6 +5104,125 @@ uint8_t *transportUdpClientTakeRoundLog(Transport *t, size_t *outLen) {
     c->roundLogRetryAtTick      = 0;
     c->roundLogWatchdogBytes    = 0;
     return blob;
+}
+
+size_t transportUdpClientBuildScriptFetchReqBody(uint8_t *out, size_t cap,
+                                                 uint32_t reqSeq,
+                                                 const char *file) {
+    size_t n;
+
+    if (out == NULL || file == NULL) return 0;
+    n = strlen(file);
+    if (n == 0 || n > BULK_PATH_MAX) return 0;
+    if (cap < 4 + 1 + n) return 0;
+    packU32(out, reqSeq);
+    out[4] = (uint8_t)n;
+    memcpy(out + 5, file, n);
+    return 4 + 1 + n;
+}
+
+bool transportUdpClientSendScriptFetch(Transport *t, const char *file) {
+    TransportUdpClientCtx *c;
+    size_t n;
+    if (t == NULL || t->ctx == NULL || file == NULL) return false;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (c->joinState != UDP_CLIENT_CONNECTED) return false;
+    if (c->scriptFetchState == CLIENT_SCRIPT_FETCH_WAITING ||
+        c->scriptFetchState == CLIENT_SCRIPT_FETCH_RECEIVING) {
+        return false;
+    }
+    n = strlen(file);
+    if (n == 0 || n > BULK_PATH_MAX) return false;
+    /* A finished or failed fetch nobody cleared is dropped for the new one. */
+    udpClientFreeScriptFetchBuf(c);
+    memcpy(c->scriptFetchFile, file, n + 1);
+    c->scriptFetchSeqCounter++;
+    if (c->scriptFetchSeqCounter == 0) c->scriptFetchSeqCounter = 1;
+    c->scriptFetchReqSeq      = c->scriptFetchSeqCounter;
+    c->scriptFetchState       = CLIENT_SCRIPT_FETCH_WAITING;
+    c->scriptFetchStatus      = CLIENT_SCRIPT_FETCH_NO_ANSWER;
+    c->scriptFetchSends       = 0;
+    c->scriptFetchBusyRetries = 0;
+    c->scriptFetchRetryAtTick = 0;
+    udpClientSendScriptFetchReq(c);
+    return true;
+}
+
+int transportUdpClientGetScriptFetchState(Transport *t) {
+    if (t == NULL || t->ctx == NULL) return CLIENT_SCRIPT_FETCH_IDLE;
+    return ((TransportUdpClientCtx *)t->ctx)->scriptFetchState;
+}
+
+int transportUdpClientGetScriptFetchStatus(Transport *t) {
+    if (t == NULL || t->ctx == NULL) return CLIENT_SCRIPT_FETCH_NO_ANSWER;
+    return ((TransportUdpClientCtx *)t->ctx)->scriptFetchStatus;
+}
+
+uint8_t transportUdpClientGetScriptFetchPercent(Transport *t) {
+    TransportUdpClientCtx *c;
+    uint32_t total, pct;
+    if (t == NULL || t->ctx == NULL) return 0;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (c->scriptFetchState != CLIENT_SCRIPT_FETCH_RECEIVING) return 0;
+    /* Live from the receiver, as the round-log percent reads it. */
+    if (c->scriptFetchBuf == NULL || c->bulkRecv.dst != c->scriptFetchBuf) {
+        return 0;
+    }
+    total = c->bulkRecv.hdr.totalSize;
+    if (total == 0) return 0;
+    pct = (uint32_t)(((uint64_t)c->bulkRecv.bodyReceived * 100u) / total);
+    return pct > 100 ? 100 : (uint8_t)pct;
+}
+
+bool transportUdpClientTakeScriptFetch(Transport *t, uint8_t **outBytes,
+                                       size_t *outLen, char *nameOut,
+                                       size_t nameCap) {
+    TransportUdpClientCtx *c;
+    size_t len;
+    if (outBytes != NULL) *outBytes = NULL;
+    if (outLen != NULL) *outLen = 0;
+    if (t == NULL || t->ctx == NULL || outBytes == NULL || outLen == NULL) {
+        return false;
+    }
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (c->scriptFetchState != CLIENT_SCRIPT_FETCH_DONE ||
+        c->scriptFetchBuf == NULL || c->scriptFetchLen < 1) {
+        return false;
+    }
+    /* A name cut short would be the wrong name to save under. */
+    if (nameOut != NULL &&
+        (nameCap == 0 || strlen(c->scriptFetchFile) >= nameCap)) {
+        return false;
+    }
+    if (nameOut != NULL) {
+        memcpy(nameOut, c->scriptFetchFile, strlen(c->scriptFetchFile) + 1);
+    }
+    /* The file's bytes sit behind the status byte; move them to the front so
+     * the buffer handed out is the file and nothing else. */
+    len = c->scriptFetchLen - 1;
+    memmove(c->scriptFetchBuf, c->scriptFetchBuf + 1, len);
+    *outBytes = c->scriptFetchBuf;
+    *outLen   = len;
+    c->scriptFetchBuf         = NULL;
+    c->scriptFetchLen         = 0;
+    c->scriptFetchState       = CLIENT_SCRIPT_FETCH_IDLE;
+    c->scriptFetchReqSeq      = 0;
+    c->scriptFetchRetryAtTick = 0;
+    return true;
+}
+
+void transportUdpClientClearScriptFetch(Transport *t) {
+    TransportUdpClientCtx *c;
+    if (t == NULL || t->ctx == NULL) return;
+    c = (TransportUdpClientCtx *)t->ctx;
+    if (c->scriptFetchState != CLIENT_SCRIPT_FETCH_DONE &&
+        c->scriptFetchState != CLIENT_SCRIPT_FETCH_FAILED) {
+        return;
+    }
+    udpClientFreeScriptFetchBuf(c);
+    c->scriptFetchState       = CLIENT_SCRIPT_FETCH_IDLE;
+    c->scriptFetchReqSeq      = 0;
+    c->scriptFetchRetryAtTick = 0;
 }
 
 void transportUdpClientSendWbnReauth(Transport *t) {
