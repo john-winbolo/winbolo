@@ -1,5 +1,5 @@
 -- ROOST: a decoy on a ping square steps out of the pill's line, one square
--- per hit.
+-- per hit, while a team-mate shoots the pill.
 --
 -- The decoy hold (orders.lua, GO-THERE DECOY HARD HOLD) parks a bot on a
 -- square a pillbox can shoot, so the pill spends its shells on the decoy
@@ -11,35 +11,50 @@
 -- the chain, and then it waits for the next hit.  Hits on the way do not
 -- count.
 --
+-- The round runs the two jobs at the same time.  The ATTACKER is ordered
+-- onto the pill first, and it is shooting the pill by the time the decoy
+-- has its first hit.  The walls fall to the pill's shells (building_life
+-- = 1: two hits), so the wall the decoy stepped behind opens up, the next
+-- hit lands, and it steps again.
+--
 -- What this round reads, from outside:
 --
 --   1. THE HOLD.  A goto hint with ping = "1" (the scenario's stand-in for a
 --      bot-command ping, which no scenario op can place) sends the decoy to
 --      a square six south of the pill, beside a row of walls.  It says
 --      "decoying" -- the hold, not the plain goto hold.
---   2. NO MOVE WITHOUT A HIT.  While parked, the tank's square does not
---      change until its armour drops.
---   3. ONE HIT, ONE STEP.  After a hit it moves to a square next to the one
---      it was on, one ring further out from the decoy square, and then it
---      stops there.  Where the hit came late enough for the turn to be done
---      (TURN_TIME after it parked), the gun was already pointing at the
---      square it then drove to.  The first step goes to FIRST_STEP, which is
---      the first square of the chain DECOY_GETAWAY_SCAN logs for this map.
---   4. THE ATTACKER.  After the hold window, the other bot on our team is
---      ordered "!attack <pill>" and the pill's armour has to go down.
+--   2. NO MOVE WITHOUT A HIT.  The tank's square changes only within
+--      MOVE_BY ticks of a hit.
+--   3. ONE HIT, ONE STEP.  A STEP is the tank reaching a square one ring
+--      further out from the decoy square than it has been before.  Every
+--      step needs a hit since the step before it, and there are at least
+--      two steps.  The first square it stays still on is FIRST_STEP, the
+--      first square of the chain DECOY_GETAWAY_SCAN logs for this map.
+--      Where the first hit came late enough for the turn to be done
+--      (TURN_TIME after it parked), the gun was already pointing there.
+--   4. THE ATTACKER.  The pill's armour goes down while the decoy holds,
+--      starting no later than ATTACK_SLACK after the decoy's first hit.  The
+--      scenario puts the pill's armour back when it runs low, because a dead
+--      pill ends the hold.
+--
+-- Under an angry pill, a hit knocks the tank back while it turns for the
+-- next square, and the next shell often comes before it gets there.  So a
+-- step can take a few hundred ticks and cross squares that are not on the
+-- chain.  That is why the watch counts rings after the first step, not
+-- squares.
 --
 -- The decoy_getaway_keel round is this script with KEEL = true: the decoy is
 -- given cfg=DECOY_GETAWAY=false before the ping, and it must take hits and
--- never step away.  A hit can knock it one square over, where the old hold
--- leaves it (one square of slack counts as on the square); that square must
--- not be the chain's first square, and it must never be further out.
+-- never step away.  The pill is due north, so a hit knocks the tank straight
+-- south, and under an angry pill the old hold is knocked a few squares down
+-- that column (it does not drive back while the shells keep coming).  A
+-- step goes sideways, behind the walls.  So KEEL fails if the tank ever
+-- stops on a square off the decoy square's column.
 --
 -- Three seats, `-teams 2,1`: the DECOY and the ATTACKER on team 1, one
 -- enemy on team 2 that owns the pill (so the pill shoots at team 1) and is
--- kept in a far corner with no shells.  The attacker is kept twelve squares
--- north of the pill, out of its range, until its order: a free bot beside a
--- hostile pill goes for it on its own, and the decoy phase is about the
--- decoy alone.
+-- kept in a far corner with no shells.  The attacker is a suicider: it does
+-- not build a wall shield first, which takes longer than the hold lasts.
 --
 -- The map is the order_* island (flat grass from (96,96) to (159,159)).
 
@@ -47,8 +62,8 @@ local KEEL = false
 
 scenario = {
   name        = KEEL and "ROOST decoy_getaway_keel" or "ROOST decoy_getaway",
-  description = KEEL and "A decoy with the getaway off takes hits and never moves."
-                or "A decoy steps out of the pill's line one square per hit, then the attacker shoots the pill.",
+  description = KEEL and "A decoy with the getaway off takes hits and never moves, while the attacker shoots the pill."
+                or "A decoy steps out of the pill's line one square per hit while the attacker shoots the pill.",
   api         = 1,
 }
 
@@ -71,16 +86,19 @@ local FX, FY   = 152, 152   -- the enemy's corner
 local FIRST_STEP = { 129, 126 }
 
 local SETUP_AT   = 150
+local ORDER_AT   = 160     -- the attacker's order
 local HINT_AT    = 300
 local PLACE_EARLY = 40     -- ticks on the decoy square before the hint
 local HOLD_BY    = 200     -- ticks after the hint to hear "decoying" in
-local WATCH_FOR  = 900     -- ticks of the hold that are watched (it runs 1000)
-local MOVE_BY    = 250     -- ticks after a hit to have left the square in
+local WATCH_FOR  = 960     -- ticks of the hold that are watched (it runs 1000)
+local MOVE_BY    = 400     -- a square change must come this soon after a hit
 local TURN_TIME  = 60      -- ticks parked before the facing is checked
 local AIM_SLACK  = 24      -- of 256
-local ATTACK_BY  = 1500    -- ticks after the order for the pill to lose armour
+local ATTACK_SLACK = 400   -- the attacker's first hit, at most this after the decoy's
 local ARMOUR_LOW = 25      -- refill below this, so no flee rule can fire
-local SETTLE     = 30      -- ticks on one square before it counts as the square
+local SETTLE     = 30      -- ticks still on one square before it counts as stopped
+local BUILDING_LIFE = 1    -- shell hits a damaged wall takes before it falls
+local PILL_LOW   = 5       -- the pill's armour is put back to 15 below this
 
 local now       = 0
 local done      = false
@@ -90,24 +108,27 @@ local hold_at   = nil
 local hold_text = nil
 
 -- The watch.
-local mode      = "wait"   -- "wait" parked, "move" hit and not yet on a new square
-local tile_x, tile_y = nil, nil
-local parked_at = nil
+local parked_at = nil      -- when the hold began
 local last_arm  = nil
-local hit_at    = nil
-local hit_dir   = nil
-local hit_late  = false
-local hits      = 0        -- hits taken while parked
-local steps     = 0
-local aimed     = 0        -- steps whose facing was checked and was right
-local first_to  = nil
-local knocks    = 0        -- times a hit knocked it over an edge and it came back
-local raw_x, raw_y, raw_for = nil, nil, 0
+local hits      = 0        -- hits on the decoy in the watch
+local first_hit_at = nil
+local last_hit_at = nil
+local hits_since = 0       -- hits since the last step
+local first_dir = nil      -- facing at the first hit
+local first_late = false   -- the first hit came TURN_TIME after it parked
+local sq_x, sq_y = nil, nil  -- the square it is on
+local sq_dir    = nil
+local still     = 0        -- ticks on that square, facing one way
+local first_still = nil    -- the first square off D it stayed still on
+local aimed     = false
+local max_ring  = 0        -- steps: the furthest ring it has reached
+local step_log  = {}
 local slack_x, slack_y = nil, nil  -- KEEL: the square a knock left it on, if any
-local stopped   = false    -- a hit that did not move it: the chain is over
 
-local order_at  = nil
-local pill_arm0 = nil
+-- The attacker.
+local pill_last = nil
+local pill_hits = 0        -- times the pill's armour went down
+local pill_hit_at = nil    -- the first of them
 
 local function finish(text)
   if done then return end
@@ -147,6 +168,23 @@ local function keep_enemy()
   game.set_stocks(ENEMY, { shells = 0 })
 end
 
+-- The shortest prefix of the attacker's name, three letters at the least,
+-- that no other seat's name begins with (order_by_name does the same).
+local function attacker_prefix()
+  local mine = game.lobby_slot(ATTACKER)
+  if not mine or not mine.name then return nil end
+  local me = mine.name:lower()
+  for k = 3, #me do
+    local head, clash = me:sub(1, k), false
+    for q = 0, game.max_tanks() - 1 do
+      local o = q ~= ATTACKER and game.lobby_slot(q)
+      if o and o.name and o.name:lower():sub(1, k) == head then clash = true end
+    end
+    if not clash then return head end
+  end
+  return nil
+end
+
 function on_chat(p, text, scripted)
   if scripted or done or p ~= DECOY or hold_at then return end
   if text:find("decoying", 1, true) then
@@ -168,6 +206,12 @@ local function setup()
     game.builder_recall(p)
     game.set_stocks(p, { shells = 40, armour = 40, trees = 0 })
   end
+  local sok, serr = game.bot_init(ATTACKER, { suicider = "1" })
+  if not sok then return fail("bot_init attacker refused: %s", tostring(serr)) end
+  -- One hit turns a wall into a half wall and the next one knocks it down,
+  -- so the pill opens the cover of the square the decoy stepped to.
+  local rok, rerr = game.set_rule("building_life", BUILDING_LIFE)
+  if not rok then return fail("set_rule building_life refused: %s", tostring(rerr)) end
   for x = WALL_X0, WALL_X1 do
     local ok, err = game.set_tile(x, WALL_Y, game.TERRAIN.building)
     if not ok then return fail("set_tile (%d,%d) refused: %s", x, WALL_Y, tostring(err)) end
@@ -183,108 +227,77 @@ local function setup()
 end
 
 -- The decoy's square, armour and facing, one tick of the watch.
---
--- A SQUARE is where the tank has SETTLED: on one square for SETTLE ticks in
--- a row.  A shell that hits a tank knocks it back, and a knock can carry it
--- over a square's edge for a moment; the hold drives it straight back.  That
--- is not a step, so the watch only reads a square the tank stays on.
 local function watch(tk)
   if tk.armour < ARMOUR_LOW then
     game.set_stocks(DECOY, { armour = 40 })
   end
   local arm = tk.armour
-  local hit = last_arm and arm < last_arm
-  last_arm = arm
-  if tk.armour < ARMOUR_LOW then last_arm = 40 end
+  if last_arm and arm < last_arm then
+    hits = hits + 1
+    hits_since = hits_since + 1
+    last_hit_at = now
+    first_hit_at = first_hit_at or now
+    if not first_dir then
+      first_dir, first_late = tk.dir, (now - parked_at) >= TURN_TIME
+    end
+    game.log(string.format("%s: hit %d on (%d,%d) at %d, facing %d",
+                           NAME, hits, tk.mx, tk.my, now, tk.dir))
+  end
+  last_arm = (arm < ARMOUR_LOW) and 40 or arm
 
-  if tk.mx ~= raw_x or tk.my ~= raw_y then
-    if raw_x and (raw_x ~= tile_x or raw_y ~= tile_y) and raw_for < SETTLE then
-      knocks = knocks + 1
+  if tk.mx ~= sq_x or tk.my ~= sq_y then
+    -- 2. NO MOVE WITHOUT A HIT.
+    if not last_hit_at or now - last_hit_at > MOVE_BY then
+      return fail("left (%d,%d) for (%d,%d) at %d with no hit in %d ticks",
+                  sq_x, sq_y, tk.mx, tk.my, now, MOVE_BY)
     end
-    raw_x, raw_y, raw_for = tk.mx, tk.my, 0
+    sq_x, sq_y, sq_dir, still = tk.mx, tk.my, tk.dir, 0
+    -- 3. ONE HIT, ONE STEP.
+    local r = ring(sq_x, sq_y)
+    if r > max_ring then
+      if hits_since == 0 then
+        return fail("ring %d at (%d,%d) at %d with no hit since ring %d",
+                    r, sq_x, sq_y, now, max_ring)
+      end
+      max_ring, hits_since = r, 0
+      step_log[#step_log + 1] = string.format("%d,%d", sq_x, sq_y)
+      game.log(string.format("%s: ring %d at (%d,%d) at %d, %d after the last hit",
+                             NAME, r, sq_x, sq_y, now, now - last_hit_at))
+    end
   end
-  raw_for = raw_for + 1
-  local moved = (raw_x ~= tile_x or raw_y ~= tile_y) and raw_for >= SETTLE
+  if tk.dir ~= sq_dir then sq_dir, still = tk.dir, 0 end
+  still = still + 1
 
-  if mode == "wait" then
-    if hit then
-      hits = hits + 1
-      if not KEEL then
-        mode, hit_at, hit_dir = "move", now, tk.dir
-        hit_late = (now - parked_at) >= TURN_TIME
-        game.log(string.format("%s: hit %d on (%d,%d) at %d, facing %d, parked %d",
-                               NAME, hits, tile_x, tile_y, now, tk.dir, now - parked_at))
-        return
+  if still == SETTLE and (sq_x ~= DX or sq_y ~= DY) then
+    local on_first = FIRST_STEP and sq_x == FIRST_STEP[1] and sq_y == FIRST_STEP[2]
+    -- KEEL: the pill is due north, so a knock pushes the tank straight
+    -- south, down the decoy square's column.  A step goes sideways, behind
+    -- the walls.  So it never stops off that column.
+    if KEEL then
+      if on_first or sq_x ~= DX then
+        return fail("with the getaway off it stopped on (%d,%d) at %d (%d hits)",
+                    sq_x, sq_y, now, hits)
       end
+      slack_x, slack_y = sq_x, sq_y
+      return
     end
-    if moved then
-      -- With the getaway off, a hit can leave the tank on the next square
-      -- over: the old hold counts one square of slack as "on it" and does
-      -- not drive back.  That is the knock, not a step, so KEEL only fails
-      -- on a square further out, or on the chain's first square.
-      if KEEL then
-        local d = math.max(math.abs(raw_x - DX), math.abs(raw_y - DY))
-        local first = FIRST_STEP and raw_x == FIRST_STEP[1] and raw_y == FIRST_STEP[2]
-        if d > 1 or first then
-          return fail("with the getaway off it went to (%d,%d) at %d (%d hits)",
-                      raw_x, raw_y, now, hits)
-        end
-        slack_x, slack_y = raw_x, raw_y
-        return
+    if first_still then return end
+    first_still = { sq_x, sq_y }
+    game.log(string.format("%s: first stop off the decoy square: (%d,%d) at %d",
+                           NAME, sq_x, sq_y, now))
+    if FIRST_STEP and not on_first then
+      return fail("first stop is (%d,%d), the chain says (%d,%d)",
+                  sq_x, sq_y, FIRST_STEP[1], FIRST_STEP[2])
+    end
+    if first_late then
+      local want = bearing(DX, DY, sq_x, sq_y)
+      if turn_gap(first_dir, want) > AIM_SLACK then
+        return fail("parked facing %d, then went to (%d,%d) at bearing %d",
+                    first_dir, sq_x, sq_y, math.floor(want))
       end
-      return fail("left (%d,%d) for (%d,%d) at %d with no hit (%d steps)",
-                  tile_x, tile_y, raw_x, raw_y, now, steps)
+      aimed = true
     end
-    return
   end
-
-  -- mode == "move": hits on the way do not count.
-  if not moved then
-    if now - hit_at >= MOVE_BY then
-      if steps == 0 then
-        return fail("hit at %d on the decoy square and still there %d later",
-                    hit_at, MOVE_BY)
-      end
-      -- The chain is over: a hit on its last square moves nothing.
-      stopped = true
-      mode, parked_at = "wait", now
-      game.log(string.format("%s: no move after the hit at %d: end of the chain",
-                             NAME, hit_at))
-    end
-    return
-  end
-  local nx, ny = raw_x, raw_y
-  local cheb = math.max(math.abs(nx - tile_x), math.abs(ny - tile_y))
-  if cheb ~= 1 then
-    return fail("one hit took it from (%d,%d) to (%d,%d)", tile_x, tile_y, nx, ny)
-  end
-  if ring(nx, ny) ~= ring(tile_x, tile_y) + 1 then
-    return fail("step (%d,%d)->(%d,%d) is not one ring further out",
-                tile_x, tile_y, nx, ny)
-  end
-  if stopped then
-    return fail("moved again after the chain had ended, to (%d,%d)", nx, ny)
-  end
-  if steps == 0 and FIRST_STEP and (nx ~= FIRST_STEP[1] or ny ~= FIRST_STEP[2]) then
-    return fail("first step went to (%d,%d), the chain says (%d,%d)",
-                nx, ny, FIRST_STEP[1], FIRST_STEP[2])
-  end
-  if hit_late then
-    local want = bearing(tile_x, tile_y, nx, ny)
-    local gap = turn_gap(hit_dir, want)
-    if gap > AIM_SLACK then
-      return fail("parked facing %d, then went to (%d,%d) at bearing %d",
-                  hit_dir, nx, ny, math.floor(want))
-    end
-    aimed = aimed + 1
-  end
-  steps = steps + 1
-  if steps == 1 then first_to = { nx, ny } end
-  game.log(string.format("%s: step %d (%d,%d)->(%d,%d), settled at %d, %d after the hit%s",
-                         NAME, steps, tile_x, tile_y, nx, ny, now, now - hit_at,
-                         hit_late and "" or " (hit before the turn: facing not checked)"))
-  tile_x, tile_y = nx, ny
-  mode, parked_at = "wait", now
 end
 
 function on_tick(t)
@@ -295,7 +308,25 @@ function on_tick(t)
   if t < SETUP_AT then return end
 
   keep_enemy()
-  if not order_at then park(ATTACKER, AX, AY, 128) end
+  -- THE ATTACKER goes first.  It is held out of the pill's range until
+  -- ORDER_AT and then ordered onto the pill.  Its drive in takes about as
+  -- long as the decoy's wait, so it is shooting the pill by the time the
+  -- decoy has its first hit.  The decoy's seat says the order, with the
+  -- attacker's name in front: a named order goes to that bot alone, and a
+  -- sender never receives its own line.
+  if t < ORDER_AT then park(ATTACKER, AX, AY, 128) end
+  if t == ORDER_AT then
+    local prefix = attacker_prefix()
+    if not prefix then return fail("no prefix of the attacker's name is its own") end
+    if not game.say(DECOY, "!" .. prefix .. " attack " .. (pill_n - 1), "all") then
+      return fail("game.say was refused")
+    end
+    game.log(string.format("%s: attacker ordered at %d", NAME, t))
+  end
+  local at = game.tank(ATTACKER)
+  if at and not at.dead and at.armour < ARMOUR_LOW then
+    game.set_stocks(ATTACKER, { armour = 40 })
+  end
 
   -- The decoy goes onto its square PLACE_EARLY ticks before the hint: a
   -- jump that long reads to the brain as a respawn, and a respawn ends any
@@ -328,50 +359,62 @@ function on_tick(t)
     return
   end
 
-  -- 2 and 3. THE WATCH.
+  -- The pill's armour, every tick: the attacker's shells.  The pill is kept
+  -- alive through the watch, because a dead pill ends the hold.
+  local pl = game.pill(pill_n)
+  local parm = pl and pl.armour or 0
+  if pill_last and parm < pill_last then
+    pill_hits = pill_hits + 1
+    if not pill_hit_at then
+      pill_hit_at = t
+      game.log(string.format("%s: the attacker hit the pill at %d (armour %d->%d)",
+                             NAME, t, pill_last, parm))
+    end
+  end
+  if parm > 0 and parm < PILL_LOW and t - hold_at < WATCH_FOR then
+    game.set_pill_armour(pill_n, 15)
+    parm = 15
+  end
+  pill_last = parm
+
+  -- 2 and 3. THE WATCH, for the hold window.
   if t - hold_at < WATCH_FOR then
-    if not tile_x then
-      tile_x, tile_y, parked_at, last_arm = tk.mx, tk.my, t, tk.armour
-      if tile_x ~= DX or tile_y ~= DY then
-        return fail("the hold began on (%d,%d), not (%d,%d)", tile_x, tile_y, DX, DY)
+    if not parked_at then
+      parked_at, last_arm = t, tk.armour
+      sq_x, sq_y, sq_dir = tk.mx, tk.my, tk.dir
+      if sq_x ~= DX or sq_y ~= DY then
+        return fail("the hold began on (%d,%d), not (%d,%d)", sq_x, sq_y, DX, DY)
       end
     end
     return watch(tk)
   end
 
+  -- 4. THE ATTACKER, at the same time as the decoy.
+  if not pill_hit_at then
+    return fail("the attacker never hit the pill (%d decoy hits)", hits)
+  end
+  if first_hit_at and pill_hit_at > first_hit_at + ATTACK_SLACK then
+    return fail("the attacker's first hit at %d is %d after the decoy's",
+                pill_hit_at, pill_hit_at - first_hit_at)
+  end
+
   if KEEL then
     if hits < 2 then
-      return fail("only %d hits on the decoy square in %d ticks", hits, WATCH_FOR)
+      return fail("only %d hits on the decoy", hits)
     end
-    return finish(string.format("PASS %s: %q, %d hits on (%d,%d), no step (%d knocks, left on %s)",
-                                NAME, hold_text, hits, DX, DY, knocks,
-                                slack_x and string.format("%d,%d", slack_x, slack_y) or "the square"))
+    return finish(string.format("PASS %s: %d hits, no step (knocked to ring %d, last stop %s); pill hit %d times",
+                                NAME, hits, max_ring,
+                                slack_x and string.format("%d,%d", slack_x, slack_y) or "D",
+                                pill_hits))
   end
 
-  if steps == 0 then
-    return fail("%d hits and no step in %d ticks", hits, WATCH_FOR)
+  if max_ring < 2 then
+    return fail("%d step(s) on %d hits; want 2 or more", max_ring, hits)
   end
-
-  -- 4. THE ATTACKER.
-  if not order_at then
-    local p = game.pill(pill_n)
-    pill_arm0 = p and p.armour or 0
-    local ok = game.say(DECOY, "!attack " .. (pill_n - 1), "all")
-    if not ok then return fail("game.say was refused") end
-    order_at = t
-    game.log(string.format("%s: attacker ordered at %d, pill armour %d",
-                           NAME, t, pill_arm0))
-    return
+  if not first_still then
+    return fail("it never stopped on a square off the decoy square")
   end
-  local p = game.pill(pill_n)
-  local arm = p and p.armour or 0
-  if arm < pill_arm0 then
-    return finish(string.format(
-      "PASS %s: %d steps (first %d,%d; %d aimed) on %d hits; pill %d->%d at +%d",
-      NAME, steps, first_to[1], first_to[2], aimed, hits, pill_arm0, arm, t - order_at))
-  end
-  if t - order_at >= ATTACK_BY then
-    return fail("the pill is still at armour %d %d ticks after the order",
-                arm, ATTACK_BY)
-  end
+  return finish(string.format("PASS %s: %d steps (%s) on %d hits%s; pill hit %d times",
+                              NAME, max_ring, table.concat(step_log, " "), hits,
+                              aimed and ", aimed" or "", pill_hits))
 end
