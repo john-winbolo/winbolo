@@ -66,6 +66,8 @@ local goto_at     = {}          -- seat -> the square a goto order sent it to
 local tuned       = {}          -- seat -> the init table it was last handed, as text
 local touched     = {}          -- seat -> every knob and flag word it has been handed
 local hide_at     = 3           -- squares off a tank in forest stops being seen
+local board       = {}          -- the leaderboard, rebuilt once a second
+local drawn       = {}          -- seat -> what its panel last showed, as a short key
 
 local function whole(n)
   return math.floor(n + 0.5)
@@ -176,7 +178,37 @@ end
 -- the prize, normalised to the rose's radius, so no angle is ever worked out
 -- and nothing here needs a two-argument arctangent — which LuaJIT and PUC-Lua
 -- spell differently and this file would rather not choose between.
-local function compass(p, tx, ty, what, colour, carrier, rows)
+--
+-- me is that player's tank, which refresh has already read. rows_key is the
+-- scores as one line of text. The panel is only sent when the needle's tip,
+-- the status line, the holder or the scores differ from what this seat was
+-- last sent.
+local function compass(p, me, tx, ty, what, colour, carrier, rows, rows_key)
+  local status, status_colour = "NO PRIZE", "grey"
+  local ux, uy, tipx, tipy = nil, nil, nil, nil
+  if carrier == p then
+    status, status_colour = "YOURS - RUN", "yellow"
+  elseif tx ~= nil then
+    local dx = tx - (me.wx / 256)
+    local dy = ty - (me.wy / 256)
+    local len = math.sqrt(dx * dx + dy * dy)
+    status_colour = colour
+    status = string.format("%s %d", what, math.floor(len + 0.5))
+    if len >= 0.5 then
+      ux, uy = dx / len, dy / len
+      tipx, tipy = CX + RADIUS * ux, CY + RADIUS * uy
+    end
+  end
+
+  local key = string.format("%s %s %s %s %s %s", tostring(carrier),
+                            tipx and whole(tipx) or "-",
+                            tipy and whole(tipy) or "-", status_colour, status,
+                            rows_key)
+  if drawn[p] == key then
+    return
+  end
+  drawn[p] = key
+
   local list = { { "timer", CX, 1, "yellow", "normal", "centre", "down",
                    ends_at } }
   local n = #list
@@ -187,37 +219,21 @@ local function compass(p, tx, ty, what, colour, carrier, rows)
   n = n + 1
   list[n] = { "text", CX, NORTH_Y, "grey", "small", "centre", "N" }
 
-  local status, status_colour = "NO PRIZE", "grey"
   if carrier == p then
-    status, status_colour = "YOURS - RUN", "yellow"
     n = n + 1
     list[n] = { "rect", CX - 6, CY - 6, 12, 12, "yellow", true }
-  elseif tx ~= nil then
-    local me = game.tank(p)
-    if me == nil then
-      status, status_colour = what, colour
-    else
-      local dx = tx - (me.wx / 256)
-      local dy = ty - (me.wy / 256)
-      local len = math.sqrt(dx * dx + dy * dy)
-      status_colour = colour
-      status = string.format("%s %d", what, math.floor(len + 0.5))
-      if len >= 0.5 then
-        local ux, uy = dx / len, dy / len
-        local tipx, tipy = CX + RADIUS * ux, CY + RADIUS * uy
-        local backx, backy = tipx - 8 * ux, tipy - 8 * uy
-        -- The head, off a perpendicular of the same unit vector.
-        local px, py = -uy * 4, ux * 4
-        n = n + 1
-        list[n] = { "line", CX, CY, whole(tipx), whole(tipy), colour }
-        n = n + 1
-        list[n] = { "line", whole(tipx), whole(tipy), whole(backx + px),
-                    whole(backy + py), colour }
-        n = n + 1
-        list[n] = { "line", whole(tipx), whole(tipy), whole(backx - px),
-                    whole(backy - py), colour }
-      end
-    end
+  elseif tipx ~= nil then
+    local backx, backy = tipx - 8 * ux, tipy - 8 * uy
+    -- The head, off a perpendicular of the same unit vector.
+    local px, py = -uy * 4, ux * 4
+    n = n + 1
+    list[n] = { "line", CX, CY, whole(tipx), whole(tipy), colour }
+    n = n + 1
+    list[n] = { "line", whole(tipx), whole(tipy), whole(backx + px),
+                whole(backy + py), colour }
+    n = n + 1
+    list[n] = { "line", whole(tipx), whole(tipy), whole(backx - px),
+                whole(backy - py), colour }
   end
   n = n + 1
   list[n] = { "text", CX, STATUS_Y, status_colour, "small", "centre", status }
@@ -244,19 +260,35 @@ local function compass(p, tx, ty, what, colour, carrier, rows)
   game.panel(0, list, p)
 end
 
+-- The scores as one line of text, for the key compass compares.
+local function board_key(rows)
+  local parts = {}
+  for i = 1, BOARD_ROWS do
+    local row = rows[i]
+    if row == nil then
+      break
+    end
+    parts[i] = row.slot .. ":" .. row.score
+  end
+  return table.concat(parts, ",")
+end
+
 -- Five times a second, one panel each. Every player's is different, and the
 -- panel's own rule is one update per audience per tick, so sixteen of them in
--- the one call is fine.
+-- the one call is fine. The scores only change once a second, so the board
+-- each_second built is the one used here, and a seat whose compass looks the
+-- same as last time is not sent it again.
 local function refresh()
   if over then
     return
   end
   local tx, ty, what, colour, carrier = prize()
-  local rows = leaderboard()
+  local rows = board
+  local rows_key = board_key(rows)
   for p = 0, game.max_tanks() - 1 do
     local t = game.tank(p)
     if t ~= nil then
-      compass(p, tx, ty, what, colour, carrier, rows)
+      compass(p, t, tx, ty, what, colour, carrier, rows, rows_key)
       -- A seat that somehow kept the holder's legs without the pillbox gets
       -- them back here. The hooks below are what normally clears them; this
       -- is the net under those.
@@ -738,6 +770,7 @@ local function each_second()
     seconds[holder] = (seconds[holder] or 0) + 1
     game.score(holder, seconds[holder], SCORE_LABEL)
   end
+  board = leaderboard()
 
   -- Every second, because a bot that has only just joined may not take its
   -- table on the first try, and a chase goes stale in seconds. Neither says
@@ -750,8 +783,12 @@ local function each_second()
     local t = game.tank(p)
     if t ~= nil and not t.dead then
       -- The holder is the one tank that is not restocked: an empty gun is
-      -- what stops it shooting, and handing it a shell would undo that.
+      -- what stops it shooting, and handing it a shell would undo that. A
+      -- shell it came by some other way is taken off it here.
       if p == holder then
+        if t.shells > 0 then
+          game.set_stocks(p, { shells = 0 })
+        end
         if mines then
           game.add_stocks(p, { mines = 1 })
         end
@@ -782,8 +819,11 @@ finish = function()
   if best == nil or best.score == 0 then
     line = "Nobody held the pillbox."
   else
+    -- A dead tank has no table, so the lobby's name for the seat is next.
     local t = game.tank(best.slot)
-    local who = (t ~= nil and t.name ~= "" and t.name) or "Somebody"
+    local slot = game.lobby_slot(best.slot)
+    local who = (t ~= nil and t.name ~= "" and t.name) or
+                (slot ~= nil and slot.name ~= "" and slot.name) or "Somebody"
     local tied = 0
     for _, row in ipairs(rows) do
       if row.score == best.score then
@@ -801,7 +841,8 @@ finish = function()
   game.end_round(line)
 end
 
--- A base that has been used goes back on the map neutral and full. It is only
+-- A base that has been used goes back on the map neutral, with full armour and
+-- no shells or mines. It is only
 -- put back on an empty square: a tank parked where it stood would capture it
 -- again the instant it landed, which is a pit stop nobody had to drive to.
 local restore_base
@@ -830,8 +871,8 @@ restore_base = function(x, y, tries)
 end
 
 -- Before the round. The map's pillboxes come off, one is kept back as the
--- prize, and every base is made neutral and full so the first tank over it
--- gets a pit stop.
+-- prize, and every base is made neutral with full armour and no shells or
+-- mines, so the first tank over it gets a pit stop.
 function on_setup()
   half_armour = math.floor(game.rule("tank_full_armour") / 2)
   base_armour = game.rule("base_full_armour")
@@ -885,6 +926,7 @@ function on_start()
   hide_at = math.floor(game.rule("tree_hide_distance") / 256)
   tune_everybody()
 
+  board = leaderboard()
   game.timer(1, each_second)
   refresh()
 end
@@ -949,17 +991,19 @@ function on_built(p, action, x, y, scripted)
   end
 end
 
--- The empty gun. The holder is stopped from shooting by having nothing to
--- shoot, and a refuelling base is the one thing that can still hand one over
--- between seconds, so the count is put back to zero on the frame it changes.
-function on_tick(tick)
-  if holder == nil then
-    return
+-- And the repair is refused before it starts where it can be. A pill order
+-- on the square the prize is lying on is a repair of it. n is the pillbox the
+-- tank would put down, not the one on the square, so the square is what is
+-- compared.
+function can_build(p, action, x, y, n)
+  if over or pill == nil or action ~= "pill" then
+    return nil
   end
-  local t = game.tank(holder)
-  if t ~= nil and not t.dead and t.shells > 0 then
-    game.set_stocks(holder, { shells = 0 })
+  local pb = game.pill(pill)
+  if pb ~= nil and not pb.in_tank and pb.x == x and pb.y == y then
+    return false
   end
+  return nil
 end
 
 -- A base is a pit stop: half a tank of armour, and then the base is off the
@@ -974,6 +1018,10 @@ function on_base_captured(n, old, new, scripted)
   end
   local x, y = b.x, b.y
   game.add_stocks(new, { armour = half_armour })
+  -- The empty gun: a base is the one thing that can hand the holder a shell.
+  if new == holder then
+    game.set_stocks(new, { shells = 0 })
+  end
   game.remove_base(n)
   game.timer(BASE_DOWN_SECONDS, function() restore_base(x, y, 0) end)
 end
@@ -984,8 +1032,10 @@ function on_player_join(p, scripted)
   if not running or over then
     return
   end
-  -- A new player in a seat starts from nothing, not from the last one's time.
+  -- A new player in a seat starts from nothing, not from the last one's time,
+  -- and is sent a whole panel of their own.
   seconds[p] = 0
+  drawn[p]   = nil
   for q = 0, game.max_tanks() - 1 do
     if seconds[q] ~= nil and game.lobby_slot(q) ~= nil then
       game.score(q, seconds[q], SCORE_LABEL)
@@ -998,6 +1048,10 @@ end
 -- it was told and what it was tuned to are forgotten, so a bot that takes
 -- the seat starts from the brain's own numbers.
 function on_player_leave(p, scripted)
+  if holder == p then
+    holder = nil
+  end
+  drawn[p]    = nil
   told_at[p]  = nil
   told[p]     = nil
   told_for[p] = nil
@@ -1054,7 +1108,6 @@ scenario = {
   callbacks = {
     on_setup = "Keeps one dead pillbox as the prize; bases start neutral.",
     on_start = "Starts the 10-minute clock and the compass panel.",
-    on_tick = "Keeps the holder's gun empty.",
     on_end = "Logs how long the round ran.",
     on_player_join = "A joiner starts on 0 points.",
     on_player_leave = "Forgets the seat's bot orders.",
@@ -1062,6 +1115,7 @@ scenario = {
     on_pill_placed = "The prize is put down and loses its armour.",
     on_pill_picked_up = "The holder scores a point a second, slower and unarmed.",
     on_built = "A repaired prize goes back to no armour.",
+    can_build = "Nobody can repair the prize.",
     allow_base_win = "Holding every base does not win.",
     announce = "Base captures are not announced.",
     spawn_loadout = "Tanks spawn with full shells and no mines.",
