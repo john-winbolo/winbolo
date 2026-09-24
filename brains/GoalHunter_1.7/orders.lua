@@ -1135,6 +1135,18 @@ function M.rx(sender, text, tick, state)
     print2(string.format("ORDER_RX obr from p%s oid=%s t=%d", tostring(sender), oid, tick))
     return true
   end
+  -- OFFER (ORDER_NEW_CLEARS_ALL): a release of an order this bot took and
+  -- left at once for the other order of a close pair (see clear_older_orders).
+  -- It is an obr that ORDER_NO_HAND_BACK does not stop: two pings are two
+  -- bots, so another bot has to take the order this one left.
+  oid = text:match("^/info obo (%d+)$")
+  if oid then
+    local o = S(state)
+    o.rx[#o.rx + 1] = { kind = "release", offer = true, oid = tonumber(oid),
+                        from = sender, tick = tick }
+    print2(string.format("ORDER_RX obo from p%s oid=%s t=%d", tostring(sender), oid, tick))
+    return true
+  end
   -- CANCEL, the other half of obr: this order is OVER and nobody may take it
   -- up.  obr means "I am handing it back, somebody go"; obx means "forget it".
   -- Without the two verbs every cancel came back one think later, because the
@@ -1221,6 +1233,12 @@ local function forget_order(o, oid)
   o.gclaims[oid]  = nil
   o.announce[oid] = nil
   o.anchors[oid]  = nil
+  if o.sibs and o.sibs[oid] then
+    for other in pairs(o.sibs[oid]) do
+      if o.sibs[other] then o.sibs[other][oid] = nil end
+    end
+    o.sibs[oid] = nil
+  end
 end
 M.forget_order = forget_order
 
@@ -1262,7 +1280,8 @@ local function decoy_drop_goal(state, h)
   end
 end
 
-local function release_held(state, info, why, quiet, cancelled)
+-- offer = true sends obo instead of obr (see the obo verb in M.rx).
+local function release_held(state, info, why, quiet, cancelled, offer)
   local o = S(state)
   local h = o.held
   if not h then return end
@@ -1274,6 +1293,8 @@ local function release_held(state, info, why, quiet, cancelled)
   if cancelled then
     tx(state, string.format("/info obx %d", h.oid))
     forget_order(o, h.oid)
+  elseif offer then
+    tx(state, string.format("/info obo %d", h.oid))
   else
     tx(state, string.format("/info obr %d", h.oid))
   end
@@ -1761,7 +1782,11 @@ local function take_order(state, world, info, spec, cost, now, group, stolen)
     local old = o.held
     sayg(state, string.format("Leaving %s for %s",
         goal_label(old.kind, old.tid), goal_label(spec.kind, spec.tid)))
-    release_held(state, info, nil, true)
+    -- Two orders given close together are two jobs (see clear_older_orders):
+    -- the one this bot leaves is offered to the others (obo).
+    local pair = C.ORDER_NEW_CLEARS_ALL and o.sibs and o.sibs[old.oid]
+                 and o.sibs[old.oid][spec.oid]
+    release_held(state, info, nil, true, nil, pair and true or nil)
   end
   o.held = {
     oid = spec.oid, kind = spec.kind, tkind = spec.tkind, tid = spec.tid,
@@ -2196,16 +2221,34 @@ end
 -- yet, so a second ping inside ORDER_AUCTION_TICKS would otherwise delete
 -- the first order before any bot could take it.
 -- ORDER_NEW_CLEARS_ALL = false (keel) keeps the old hand-back behaviour.
+--
+-- TWO PINGS ARE TWO BOTS, HOWEVER CLOSE (Andrew, PR #389 review item 8).
+-- Kept as well: an order heard no more than ORDER_AUCTION_TICKS ago, even if
+-- its auction has settled here (a bot that heard every bid settles early).
+-- Its winner may still win the new order too, and the other bots must still
+-- know the old one then.  Each such order and the new one are marked as a
+-- CLOSE PAIR (o.sibs, both ways).  A bot that wins both takes the new one;
+-- take_order then offers the one it leaves (obo), and the other bots re-bid
+-- it, so each order ends with its own bot.
 local function clear_older_orders(state, info, keep_oid, now)
   if not C.ORDER_NEW_CLEARS_ALL then return end
   local o = S(state)
   local hint = M.HINT_SENDER or 255
   local held = o.held and o.held.oid
+  local win = C.ORDER_AUCTION_TICKS or 10
   local drop = {}
   for oid, k in pairs(o.known) do
-    if oid ~= keep_oid and oid ~= held and not o.auctions[oid]
-       and not (k.spec and k.spec.sender == hint) then
-      drop[#drop + 1] = oid
+    if oid ~= keep_oid and not (k.spec and k.spec.sender == hint) then
+      -- An open auction is kept (above); so is an order still in its window.
+      if o.auctions[oid] or (now and k.tick and (now - k.tick) <= win) then
+        o.sibs = o.sibs or {}
+        o.sibs[oid] = o.sibs[oid] or {}
+        o.sibs[keep_oid] = o.sibs[keep_oid] or {}
+        o.sibs[oid][keep_oid] = true
+        o.sibs[keep_oid][oid] = true
+      elseif oid ~= held then
+        drop[#drop + 1] = oid
+      end
     end
   end
   for _, oid in ipairs(drop) do forget_order(o, oid) end
@@ -2472,6 +2515,7 @@ function M.on_chat(state, world, info, sender, text, now, from_ally, sender_is_b
       o.announce = {}
       o.anchors = {}
       o.last_by = {}
+      o.sibs = nil
     elseif t and t.kind == "tank" then
       if o.held and t.pn == me then release_held(state, info, "released", false, true) end
     elseif last_pns then
@@ -3429,7 +3473,9 @@ function M.update(state, world, info, now)
         end
       end
       -- "Don't pass the order back" (ORDER_NO_HAND_BACK): nobody re-bids.
-      if C.ORDER_NO_HAND_BACK then k = nil end
+      -- An OFFER (obo) is the exception: the order was left for the other
+      -- order of a close pair and still needs a bot of its own.
+      if C.ORDER_NO_HAND_BACK and not r.offer then k = nil end
       if k and not still and not o.held and not o.auctions[r.oid]
          and (now - k.tick) < (C.ORDER_FOCUS_TICKS or 3000) then
         local busy = M.busy(state, info)

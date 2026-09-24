@@ -3461,12 +3461,12 @@ do
   local o = a.st.orders
   o.known[424242] = { spec = { oid = 424242, sender = ORD.HINT_SENDER }, tick = 100 }
   o.known[515151] = { spec = { oid = 515151, sender = 0 }, tick = 100 }
-  ORD.clear_older_orders(a.st, a.inf, 999, 101)
+  ORD.clear_older_orders(a.st, a.inf, 999, 200)
   check("a hint order is kept", o.known[424242] ~= nil, "forgot")
   check("an older person's order is forgotten", o.known[515151] == nil, "kept")
   C.ORDER_NEW_CLEARS_ALL = false
   o.known[515151] = { spec = { oid = 515151, sender = 0 }, tick = 100 }
-  ORD.clear_older_orders(a.st, a.inf, 999, 101)
+  ORD.clear_older_orders(a.st, a.inf, 999, 200)
   check("keel: nothing is forgotten", o.known[515151] ~= nil, "forgot")
   C.ORDER_NEW_CLEARS_ALL = true
   check("keel does not clear", C.PRESETS.keel.ORDER_NEW_CLEARS_ALL == false, "?")
@@ -3489,6 +3489,107 @@ do
         x ~= nil and (ha == x or hb == x), tostring(ha) .. " " .. tostring(hb))
   check("and so is the second", ha ~= nil and hb ~= nil and ha ~= hb,
         tostring(ha) .. " " .. tostring(hb))
+end
+
+-- =========================================================================
+-- TWO PINGS ARE TWO BOTS, HOWEVER CLOSE (ORDER_NEW_CLEARS_ALL, PR #389
+-- review item 8).  A second ping inside the first one's auction window must
+-- not retire the first order.  W (p1) is the nearest bot to both squares, so
+-- it wins both auctions; it keeps one and offers the other (obo), and
+-- another bot takes that one.
+-- =========================================================================
+print("orders.lua -- two pings close together are two bots")
+local function close_pings(gap, nbots)
+  local w, x, y = BOT(1, 31, 31), BOT(2, 60, 60), BOT(4, 70, 70)
+  local all = { w, x }
+  if nbots == 3 then all[3] = y end
+  for _, b in ipairs(all) do gping(b, 100, 35, 35) end
+  pumpn(all, 100)
+  local t = 100
+  while t < 100 + gap - 1 do
+    t = t + 1
+    upd(all, t); pumpn(all, t)
+  end
+  for _, b in ipairs(all) do gping(b, 100 + gap, 38, 38) end
+  pumpn(all, 100 + gap)
+  for t2 = 101 + gap, 130 + gap do upd(all, t2); pumpn(all, t2) end
+  return all
+end
+local function holders_of(all)
+  local by = {}
+  for _, b in ipairs(all) do
+    local h = b.st.orders.held
+    if h then
+      by[h.oid] = by[h.oid] or {}
+      by[h.oid][#by[h.oid] + 1] = b.pn
+    end
+  end
+  local n, list = 0, {}
+  for oid, pns in pairs(by) do
+    n = n + 1
+    list[#list + 1] = string.format("%d:%s", oid, table.concat(pns, ","))
+  end
+  return by, n, table.concat(list, " ")
+end
+for _, case in ipairs({ { 1, 2 }, { 5, 2 }, { 1, 3 }, { 5, 3 } }) do
+  local gap, nb = case[1], case[2]
+  local all = close_pings(gap, nb)
+  local by, n, desc = holders_of(all)
+  local one_each = n == 2
+  for _, pns in pairs(by) do if #pns ~= 1 then one_each = false end end
+  check(string.format("pings %d tick(s) apart, %d bots: two orders, one bot each",
+        gap, nb), one_each, desc)
+  local w = all[1]
+  check(string.format("pings %d tick(s) apart, %d bots: W holds one of them", gap, nb),
+        w.st.orders.held ~= nil, "none")
+end
+do
+  -- W took both, and let the first one go as an OFFER, not a plain release.
+  local w, x = BOT(1, 31, 31), BOT(2, 60, 60)
+  local all = { w, x }
+  for _, b in ipairs(all) do gping(b, 100, 35, 35) end
+  pumpn(all, 100)
+  for _, b in ipairs(all) do gping(b, 101, 38, 38) end
+  pumpn(all, 101)
+  upd(all, 102)
+  local offered = false
+  for _, m in ipairs(w.st.orders.out) do
+    if m:match("^/info obo %d+$") then offered = true end
+  end
+  check("the bot that won both offers the one it left (obo)", offered,
+        table.concat(w.st.orders.out, " | "))
+end
+do
+  -- Far apart (outside the auction window) the old rule stands: the new
+  -- order retires the old one.
+  local w, x = BOT(1, 31, 31), BOT(2, 60, 60)
+  local all = { w, x }
+  for _, b in ipairs(all) do gping(b, 100, 35, 35) end
+  pumpn(all, 100)
+  for t = 101, 140 do upd(all, t); pumpn(all, t) end
+  for _, b in ipairs(all) do gping(b, 141, 38, 38) end
+  pumpn(all, 141)
+  for t = 142, 170 do upd(all, t); pumpn(all, t) end
+  local _, n, desc = holders_of(all)
+  check("pings far apart: the new order still retires the old one", n == 1, desc)
+end
+do
+  -- Knob off: no close pair is marked and nothing is offered.
+  C.ORDER_NEW_CLEARS_ALL = false
+  local w, x = BOT(1, 31, 31), BOT(2, 60, 60)
+  local all = { w, x }
+  for _, b in ipairs(all) do gping(b, 100, 35, 35) end
+  pumpn(all, 100)
+  for _, b in ipairs(all) do gping(b, 101, 38, 38) end
+  pumpn(all, 101)
+  upd(all, 102)
+  local offered = false
+  for _, m in ipairs(w.st.orders.out) do
+    if m:match("^/info obo ") then offered = true end
+  end
+  check("NEW_CLEARS_ALL off: no close pair, no offer",
+        w.st.orders.sibs == nil and not offered, "offered")
+  C.ORDER_NEW_CLEARS_ALL = true
 end
 _G.EVENT_PING = nil
 _G.PING_KIND_BOT_COMMAND = nil
