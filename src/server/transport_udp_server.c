@@ -117,6 +117,9 @@ bool transportUdpServerCreate(unsigned short port,
     (void)sim; /* Used later during tick */
 
     bolo_net_init();
+    /* The memset below would lose any script buffer a server that was never
+     * destroyed still holds. */
+    udpServerFreeScriptUploadBufs();
     memset(&udpServer, 0, sizeof(udpServer));
     memset(punchQueue, 0, sizeof(punchQueue));
 
@@ -297,6 +300,7 @@ void transportUdpServerDestroy(void) {
             serverCleanupMapDownload(i);
         }
     }
+    udpServerFreeScriptUploadBufs();
     udpServer.running = false;
     /* Drop any verify still waiting on a result. The slots it names are gone
      * with this transport, and a later server on this process starts its

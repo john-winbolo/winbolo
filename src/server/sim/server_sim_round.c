@@ -40,16 +40,70 @@
 #include "../../common/md5.h"       /* the BMAPBOLO map hash WinBolo.net matches against */
 #include "../../common/wb_log.h"    /* WB_LOG_INFO — the lobby-reset trace */
 
+/* The picks whose file is in the session directory, taken off the list with
+ * the rest closing up behind them in order, and then the directory emptied.
+ * The group that brought those files is the session, and it has gone; a pick
+ * left behind would name a file the next decision cannot read. The map's own
+ * row is never one of them: it is read off the map, not out of a directory.
+ * Answers how many rows went. */
+static int serverSimDropSessionScripts(ServerSim *sim) {
+    const char *dir = sim->scriptSessionDir;
+    int         kept    = 0;
+    int         dropped = 0;
+    int         i;
+
+    if (dir[0] == '\0') return 0;
+    for (i = 0; i < sim->scenarioScriptCount; i++) {
+        const ScnDirEntry *row = &sim->scenarioScripts[i];
+        bool               inSession = false;
+
+        if (!row->bound && row->file[0] != '\0') {
+            char         path[FILENAME_MAX];
+            SDL_PathInfo info;
+
+            SDL_snprintf(path, sizeof(path), "%s/%s", dir, row->file);
+            inSession = SDL_GetPathInfo(path, &info) &&
+                        info.type == SDL_PATHTYPE_FILE;
+        }
+        if (inSession) {
+            dropped++;
+            continue;
+        }
+        if (kept != i) {
+            sim->scenarioScripts[kept] = sim->scenarioScripts[i];
+        }
+        kept++;
+    }
+    for (i = kept; i < sim->scenarioScriptCount; i++) {
+        memset(&sim->scenarioScripts[i], 0, sizeof(sim->scenarioScripts[i]));
+    }
+    sim->scenarioScriptCount = kept;
+    serverSimEmptyScriptSessionDir(sim);
+    return dropped;
+}
+
 /* Return an emptied lobby to the operator's startup configuration. Called
  * from serverSimRemovePlayer when the last human leaves while in the lobby:
  * remove every bot, restore the captured settings snapshot, reset team and
- * bot-slot metadata to creation defaults, and unlock the lobby to joiners. */
+ * bot-slot metadata to creation defaults, and unlock the lobby to joiners.
+ * The session's uploaded scripts go too, and the picks that named them. */
 void serverSimResetLobbyToDefaults(ServerSim *sim) {
     BYTE i;
+    int  droppedScripts;
     if (sim == NULL) return;
 
     WB_LOG_INFO(WB_LOG_CAT_SERVER,
         "Lobby empty — resetting to startup defaults");
+
+    droppedScripts = serverSimDropSessionScripts(sim);
+    if (droppedScripts > 0) {
+        char msg[128];
+        SDL_snprintf(msg, sizeof(msg),
+                     "Lobby reset: %d uploaded script%s dropped from the "
+                     "round's list", droppedScripts,
+                     droppedScripts == 1 ? "" : "s");
+        serverSimConsoleMessage(msg);
+    }
 
     /* Drop any bots the previous occupants added, seats held for a bot that
        was never fielded included — those have no bot manager entry, so the
@@ -138,8 +192,16 @@ void serverSimResetLobbyToDefaults(ServerSim *sim) {
     /* The reset above emptied the lobby, seats a scenario put there
        included. Seat them again at the end of it, so the next joiner opens
        the map's own lobby rather than a bare one — the scenario is still
-       attached, only its lobby was swept. */
-    serverSimScenarioSeatLobby(sim);
+       attached, only its lobby was swept.
+
+       A list that lost uploaded picks above is decided again first, the way
+       a pick is: what is attached still holds those scripts, and their files
+       are gone. The decision seats the lobby itself. */
+    if (droppedScripts > 0) {
+        serverSimScenarioOnMapChanged(sim, sim->mapFilePath);
+    } else {
+        serverSimScenarioSeatLobby(sim);
+    }
 
     /* And the settings the scenario asks for, in the order a map commit does
        the two. The restore above put the operator's game type, ranked flag

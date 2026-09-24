@@ -759,6 +759,14 @@ bool clientSimNetSendLobbyMapUploadBytes(ClientSim *cs,
   return ok;
 }
 
+bool clientSimNetSendLobbyScriptUpload(ClientSim *cs, const char *localFilePath) {
+  /* UDP only: an in-process host has the file already and never sends. */
+  if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return false;
+  if (clientSimIsSpectator(cs)) return false;  /* viewer is read-only */
+  return transportUdpClientStartLobbyScriptUpload(&cs->transport,
+                                                  localFilePath);
+}
+
 uint8_t clientSimGetLobbyMapUploadProgressPercent(const ClientSim *cs) {
   if (cs == NULL || !cs->hasTransport || !cs->isUdpTransport) return 0;
   return transportUdpClientGetLobbyMapUploadProgressPercent(

@@ -380,6 +380,7 @@ int run_upload_timeout_releases_other_player(void);
 int run_upload_lost_done_retry(void);
 int run_upload_partial_timeout_retry(void);
 int run_upload_filename_safe(void);
+int run_upload_filename_safe_script(void);
 int run_lobby_time_minutes_valid(void);
 int run_lobby_bot_name_rejects_reserved_prefix(void);
 int run_lobby_bot_name_rejects_disallowed_char(void);
@@ -1999,6 +2000,36 @@ int run_loopback_map_preview(void);
 /* Client->server map upload over CHANNEL_BULK (test_loopback_upload.c): a map
  * uploaded under loss completes and the server decodes the reassembled bytes. */
 int run_loopback_map_upload(void);
+/* Script upload (test_script_upload.c): the BEGIN body for both kinds against
+ * hand-written bytes; the server's BEGIN refusals for a script, and the map
+ * ones the kind byte must leave alone; a 4 MiB package arriving whole at the
+ * accept callback; a refused script's reason reaching the client; and the
+ * client refusing a file before sending anything. */
+int run_upload_begin_golden(void);
+int run_script_upload_begin_refusals(void);
+int run_loopback_script_upload_at_cap(void);
+int run_loopback_script_upload_refused(void);
+int run_script_upload_client_refusals(void);
+/* Script upload landing (test_script_upload.c), with the host's own accept
+ * callback: a mod and a package land and are listed; a bound package and a
+ * .lua that will not load are refused, the second with its line; a name a
+ * higher directory holds is refused at BEGIN; the persist caps; the accept
+ * callback's own refusals; the session directory emptied and the persist one
+ * kept; the lobby reset dropping the session's picks; and an uploaded mod
+ * composing in the next decision. */
+int run_loopback_script_upload_lands_listed(void);
+int run_loopback_script_upload_package_listed(void);
+int run_loopback_script_upload_bound_refused(void);
+int run_loopback_script_upload_syntax_line(void);
+int run_script_upload_name_taken(void);
+int run_script_upload_persist_caps(void);
+int run_script_upload_accept_refusals(void);
+int run_script_upload_session_emptied(void);
+/* A file the server removed is not listed even when the directory's stamp
+ * is put back to the one the listing was kept at (POSIX only). */
+int run_script_upload_listing_sees_own_removal(void);
+int run_script_upload_reset_drops_session_picks(void);
+int run_loopback_script_upload_plays_next_round(void);
 /* Map join-download + live resync over CHANNEL_BULK (test_loopback_download.c):
  * a lobby join download completes under loss; a mid-game joiner downloads while
  * the server is Running (the bulk-carrier deadlock case); and a reported

@@ -119,9 +119,15 @@ typedef struct {
   uint8_t        scriptUploadMaxFiles;        /* 0 = leave transport default (32) */
   uint32_t       scriptUploadMaxStorageBytes; /* 0 = leave transport default (64 MiB) */
 
-  /* Absolute directory for PERSIST-policy uploaded scripts. NULL = not
-   * set here; the default is resolved elsewhere. */
+  /* Absolute directory for PERSIST-policy uploaded scripts. NULL = the
+   * built-in "<mapDirRoot>/Uploads/Scripts". */
   const char    *scriptUploadDir;
+
+  /* Directory ALLOW-policy uploaded scripts land in for the session, emptied
+   * at startup, at shutdown and when the lobby resets. NULL = the built-in
+   * "<mapDirRoot>/Uploads/Session". A GUI host points this under the prefs
+   * path, as it does uploadPersistDir. */
+  const char    *scriptSessionDir;
 
   /* Initial state + lobby/per-sim toggles applied by serverInstanceStartup.
    * Zero-init means "don't touch what serverSimCreate* set" for the lobby

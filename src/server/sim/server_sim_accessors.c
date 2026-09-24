@@ -941,6 +941,79 @@ ScriptUploadPolicy serverSimGetScriptUploadPolicy(const ServerSim *sim) {
     return sim ? sim->scriptUploadPolicy : SCRIPT_UPLOAD_ALLOW;
 }
 
+void serverSimSetScriptUploadDir(ServerSim *sim, const char *dir) {
+    if (sim == NULL) return;
+    SDL_strlcpy(sim->scriptUploadDir, dir != NULL ? dir : "",
+                sizeof(sim->scriptUploadDir));
+}
+
+const char *serverSimGetScriptUploadDir(const ServerSim *sim) {
+    return sim ? sim->scriptUploadDir : "";
+}
+
+void serverSimSetScriptSessionDir(ServerSim *sim, const char *dir) {
+    if (sim == NULL) return;
+    SDL_strlcpy(sim->scriptSessionDir, dir != NULL ? dir : "",
+                sizeof(sim->scriptSessionDir));
+}
+
+const char *serverSimGetScriptSessionDir(const ServerSim *sim) {
+    return sim ? sim->scriptSessionDir : "";
+}
+
+/* Process-wide rather than on a sim, because the listing cache it keeps
+   honest is process-wide: one cache serves every sim in the process. Atomic
+   because the tick thread bumps it and a client hosting in process lists from
+   the UI thread through serverSimEnumerateScenarioDir. */
+static SDL_AtomicInt scriptDirsGen;
+
+void serverSimNoteScriptDirsChanged(void) {
+    (void)SDL_AddAtomicInt(&scriptDirsGen, 1);
+}
+
+uint32_t serverSimScriptDirsGen(void) {
+    return (uint32_t)SDL_GetAtomicInt(&scriptDirsGen);
+}
+
+int serverSimEmptyScriptSessionDir(ServerSim *sim) {
+    char **names;
+    int    count   = 0;
+    int    removed = 0;
+    int    i;
+
+    if (sim == NULL || sim->scriptSessionDir[0] == '\0') return 0;
+    /* "*" rather than NULL: a NULL pattern walks into subdirectories, and
+       only the files the uploads put here are this call's to take. */
+    names = SDL_GlobDirectory(sim->scriptSessionDir, "*", 0, &count);
+    if (names == NULL) return 0;
+    for (i = 0; i < count; i++) {
+        const char  *name = names[i];
+        char         path[FILENAME_MAX];
+        SDL_PathInfo info;
+
+        if (name == NULL || name[0] == '\0' ||
+            SDL_strchr(name, '/') != NULL || SDL_strchr(name, '\\') != NULL) {
+            continue;
+        }
+        SDL_snprintf(path, sizeof(path), "%s/%s", sim->scriptSessionDir, name);
+        if (!SDL_GetPathInfo(path, &info) ||
+            info.type != SDL_PATHTYPE_FILE) {
+            continue;
+        }
+        if (SDL_RemovePath(path)) {
+            removed++;
+        } else {
+            fprintf(stderr, "Warning: could not remove session script '%s': "
+                            "%s\n", path, SDL_GetError());
+        }
+    }
+    SDL_free(names);
+    if (removed > 0) {
+        serverSimNoteScriptDirsChanged();
+    }
+    return removed;
+}
+
 ScriptUploadPolicy scriptUploadPolicyResolve(const char *word, bool legacyOff) {
     if (word == NULL || word[0] == '\0') {
         return legacyOff ? SCRIPT_UPLOAD_OFF : SCRIPT_UPLOAD_ALLOW;

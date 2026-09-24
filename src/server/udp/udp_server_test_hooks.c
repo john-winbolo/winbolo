@@ -428,6 +428,7 @@ void transportUdpServerFuzzInit(ServerSim *sim) {
      * here so the seam can take it around each serverProcessPacket call, the
      * way serverInstanceTick holds it in production. Idempotent. */
     threadsCreate(true);
+    udpServerFreeScriptUploadBufs();  /* the memset would lose them */
     memset(&udpServer, 0, sizeof(udpServer));
     memset(punchQueue, 0, sizeof(punchQueue));
     udpServer.sock = INVALID_SOCKET;

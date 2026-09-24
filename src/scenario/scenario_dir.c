@@ -115,7 +115,7 @@ static bool scnDirReadFile(const char *path, uint8_t **out, size_t *outLen) {
  * straight out of it. scnPackageOpen takes a buffer that starts at the magic,
  * which a package file does — the trailer hunt is only for maps. No Lua runs
  * here, so a container lists on a server that would refuse to run its script. */
-static bool scnDirReadPackage(const char *path, ScenarioManifest *out) {
+bool scnDirReadPackage(const char *path, ScenarioManifest *out) {
     uint8_t        *file     = NULL;
     size_t          fileLen  = 0;
     uint8_t        *json     = NULL;

@@ -4342,6 +4342,31 @@ int serverSimScenarioListDir(const ServerSim *sim, ScnDirEntry *out, int max) {
     }
 }
 
+void serverSimSetScriptUploadAccept(ServerSim *sim, ScriptUploadAcceptFn fn,
+                                    void *ctx) {
+    if (sim == NULL) return;
+    sim->scriptUploadAccept = fn;
+    sim->scriptUploadAcceptCtx = ctx;
+}
+
+bool serverSimHasScriptUploadAccept(const ServerSim *sim) {
+    return sim != NULL && sim->scriptUploadAccept != NULL;
+}
+
+bool serverSimScriptUploadAccept(const ServerSim *sim, const char *dir,
+                                 const char *name, const uint8_t *bytes,
+                                 uint32_t len, char *err, size_t errLen) {
+    if (err != NULL && errLen > 0) err[0] = '\0';
+    if (sim == NULL || sim->scriptUploadAccept == NULL) {
+        if (err != NULL && errLen > 0) {
+            SDL_strlcpy(err, "this server cannot take scripts", errLen);
+        }
+        return false;
+    }
+    return sim->scriptUploadAccept(sim->scriptUploadAcceptCtx, dir, name,
+                                   bytes, len, err, errLen);
+}
+
 void serverSimSetScenarioMapChanged(ServerSim *sim,
                                     void (*mapChanged)(void *ctx,
                                                        ServerSim *sim,

@@ -45,4 +45,8 @@ typedef enum {
     SCRIPT_UPLOAD_PERSIST = 2   /* accept uploads and keep them for good */
 } ScriptUploadPolicy;
 
+/* What an upload carries: the first byte of PACKET_LOBBY_MAP_UPLOAD_BEGIN. */
+#define UPLOAD_KIND_MAP    0
+#define UPLOAD_KIND_SCRIPT 1
+
 #endif /* UPLOAD_POLICY_H */

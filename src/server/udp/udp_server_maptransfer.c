@@ -19,7 +19,9 @@
  *      download when the old stream has to be abandoned.
  *    - Receiving a lobby map upload back from a client:
  *      the filename check, the bulk reassembly sink, and
- *      the in-memory reload plus optional persist.
+ *      the in-memory reload plus optional persist; and a
+ *      script upload, handed whole to the sim's registered
+ *      accept callback.
  *********************************************************/
 
 #include <stdio.h>   /* fprintf, stderr, fopen, fwrite, fclose, FILENAME_MAX */
@@ -33,7 +35,8 @@
 #include "transport_udp_server_internal.h" /* udpServer, ClientMapDownload,
                                             * MAP_XFER_*, srvSendTo */
 #include "netpacks.h"        /* PACKET_LOBBY_MAP_UPLOAD_DONE, LOBBY_REJECT_INVALID */
-#include "wire_limits.h"     /* LOBBY_MAP_UPLOAD_MAX_BYTES */
+#include "wire_limits.h"     /* LOBBY_MAP_UPLOAD_MAX_BYTES,
+                              * LOBBY_PACKAGE_UPLOAD_MAX_BYTES */
 #include "global.h"          /* BYTE, MAX_TANKS, MAP_STR_SIZE, TRUE, FALSE */
 #include "players.h"         /* playersGetClientFlags, PLAYER_FLAG_ADMIN */
 #include "game_sim.h"        /* GameSim — serverSimGetGameSim(sim)->plyrs */
@@ -42,7 +45,9 @@
                               * serverSimGetGameSim, serverSimFillEntitySyncEvent */
 #include "server_sim_lifecycle.h" /* serverSimReloadCompressedInMemory,
                                    * serverSimGetMapDirRoot */
-#include "upload_policy.h"   /* UPLOAD_POLICY_PERSIST */
+#include "upload_policy.h"   /* UPLOAD_POLICY_PERSIST, SCRIPT_UPLOAD_PERSIST,
+                              * UPLOAD_KIND_MAP / _SCRIPT */
+#include "server_sim_scenario.h" /* serverSimScriptUploadAccept */
 #include "control_event.h"   /* ControlEvent, CTRL_CHANNEL_RESET,
                               * CTRL_ENTITY_SYNC */
 #include "transport_control_codec.h" /* ControlEncodeBodyFn, ENCODE_OK,
@@ -85,7 +90,27 @@ void udpServerClearClientUploadState(int idx) {
     udpServer.upload_last_progress_ms[idx] = 0;
     udpServer.clientUploadName[idx][0]  = '\0';
     udpServer.clientReqCooldownTicks[idx] = 0;
+    /* The receiver lets go of the buffer before the buffer goes. */
     bulkReceiverInit(&udpServer.bulkRecvUp[idx]);
+    free(udpServer.clientScriptUploadBuf[idx]);
+    udpServer.clientScriptUploadBuf[idx] = NULL;
+    udpServer.clientUploadKind[idx] = UPLOAD_KIND_MAP;
+}
+
+/* Free every slot's script receive buffer, for the paths that wipe the whole
+ * transport state (destroy, and the resets that memset udpServer). Each
+ * receiver drops its pointer first. */
+void udpServerFreeScriptUploadBufs(void) {
+    int i;
+    for (i = 0; i < MAX_TANKS; i++) {
+        if (udpServer.clientScriptUploadBuf[i] == NULL) continue;
+        if (udpServer.bulkRecvUp[i].dst == udpServer.clientScriptUploadBuf[i]) {
+            udpServer.bulkRecvUp[i].dst = NULL;
+        }
+        free(udpServer.clientScriptUploadBuf[i]);
+        udpServer.clientScriptUploadBuf[i] = NULL;
+        udpServer.clientUploadKind[i] = UPLOAD_KIND_MAP;
+    }
 }
 
 /* Upload activity is independent of connection liveness: pings must not keep
@@ -101,6 +126,9 @@ void udpServerExpireUploads(uint64_t now_ms) {
         udpServer.clientUploadName[i][0] = '\0';
         udpServer.upload_last_progress_ms[i] = 0;
         udpServer.bulkRecvUp[i].dst = NULL;
+        free(udpServer.clientScriptUploadBuf[i]);
+        udpServer.clientScriptUploadBuf[i] = NULL;
+        udpServer.clientUploadKind[i] = UPLOAD_KIND_MAP;
         WB_LOG_WARN(WB_LOG_CAT_NET, "upload timed out: slot=%d", i);
     }
 }
@@ -293,11 +321,142 @@ void serverCleanupMapDownload(int slot) {
     dl->readySeen = false;
 }
 
+static size_t uploadNameSuffixLen(const char *name, size_t nameLen,
+                                  const char *suffix);
+
+/* Whether one more script, name at len bytes, fits the persist caps. Only
+ * dir is counted, and in it only the .scenario and .lua files directly there:
+ * a dot file is an upload still being written, and nothing below dir is
+ * listed. A file already there under name is replaced rather than joined, so
+ * it counts by the change in size and not as one more file. */
+bool udpServerScriptUploadFitsCaps(const char *dir, const char *name,
+                                   uint32_t len) {
+    char       **names;
+    int          count     = 0;
+    int          files     = 0;
+    uint64_t     bytes     = 0;
+    bool         replacing = false;
+    char         path[FILENAME_MAX];
+    SDL_PathInfo info;
+    int          i;
+
+    if (dir == NULL || dir[0] == '\0' || name == NULL) return false;
+    /* "*" rather than NULL, which would walk into subdirectories. A directory
+     * that is not there yet holds nothing. */
+    names = SDL_GlobDirectory(dir, "*", 0, &count);
+    for (i = 0; names != NULL && i < count; i++) {
+        const char *n = names[i];
+        size_t      nlen;
+
+        if (n == NULL || n[0] == '\0' || n[0] == '.' ||
+            SDL_strchr(n, '/') != NULL || SDL_strchr(n, '\\') != NULL) {
+            continue;
+        }
+        nlen = SDL_strlen(n);
+        if (uploadNameSuffixLen(n, nlen, ".scenario") == 0 &&
+            uploadNameSuffixLen(n, nlen, ".lua") == 0) {
+            continue;
+        }
+        SDL_snprintf(path, sizeof(path), "%s/%s", dir, n);
+        if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE) {
+            continue;
+        }
+        files++;
+        bytes += (uint64_t)info.size;
+    }
+    SDL_free(names);
+
+    /* The name itself, asked of the file system rather than matched against
+     * the listing, so a replacement is found the way the rename will find
+     * it on this platform. */
+    SDL_snprintf(path, sizeof(path), "%s/%s", dir, name);
+    if (SDL_GetPathInfo(path, &info) && info.type == SDL_PATHTYPE_FILE) {
+        replacing = true;
+        bytes = (bytes >= (uint64_t)info.size) ? bytes - (uint64_t)info.size
+                                               : 0;
+    }
+    if (!replacing) {
+        files++;
+    }
+    bytes += len;
+    return files <= (int)udpServer.scriptUploadMaxFiles &&
+           bytes <= (uint64_t)udpServer.scriptUploadMaxStorageBytes;
+}
+
+/* A finished script upload: re-check the persist caps, since another upload
+ * may have landed since this one's BEGIN, then hand the bytes to the
+ * registered accept callback with the directory the sim resolved for the
+ * policy, free the receive buffer, clear the slot, and reply MAP_UPLOAD_DONE —
+ * status 0 and the Uploads/ path it landed at, or a reject code and the
+ * reason: LOBBY_REJECT_UPLOAD_LIMIT_HIT for the caps,
+ * LOBBY_REJECT_UPLOAD_DISABLED for a sim with nowhere to put it, and
+ * LOBBY_REJECT_INVALID with the callback's reason. */
+static void serverFinishScriptUpload(ServerSim *sim, int clientIdx) {
+    uint32_t total = udpServer.clientUploadTotal[clientIdx];
+    const char *name = udpServer.clientUploadName[clientIdx];
+    uint8_t *bytes = udpServer.clientScriptUploadBuf[clientIdx];
+    bool persist = (udpServer.scriptUploadPolicy == SCRIPT_UPLOAD_PERSIST);
+    const char *dir = serverSimGetScriptUploadDir(sim);
+    char err[256];
+    char reply[256];
+    bool accepted = false;
+    uint8_t status;
+
+    err[0] = '\0';
+    if (dir[0] == '\0') {
+        status = LOBBY_REJECT_UPLOAD_DISABLED;
+        SDL_strlcpy(err, "this server takes no scripts", sizeof(err));
+    } else if (persist && !udpServerScriptUploadFitsCaps(dir, name, total)) {
+        status = LOBBY_REJECT_UPLOAD_LIMIT_HIT;
+        SDL_strlcpy(err, "the server's script uploads are full", sizeof(err));
+    } else {
+        accepted = (bytes != NULL) &&
+                   serverSimScriptUploadAccept(sim, dir, name, bytes, total,
+                                               err, sizeof(err));
+        status = accepted ? 0 : LOBBY_REJECT_INVALID;
+    }
+    if (accepted) {
+        SDL_snprintf(reply, sizeof(reply), "Uploads/%s/%s",
+                     persist ? "Scripts" : "Session", name);
+    } else {
+        SDL_strlcpy(reply, err, sizeof(reply));
+    }
+
+    /* The receiver sets its own pointer to NULL only after this returns, so
+     * drop it here before the free. */
+    if (udpServer.bulkRecvUp[clientIdx].dst == bytes) {
+        udpServer.bulkRecvUp[clientIdx].dst = NULL;
+    }
+    free(udpServer.clientScriptUploadBuf[clientIdx]);
+    udpServer.clientScriptUploadBuf[clientIdx] = NULL;
+    udpServer.clientUploadKind[clientIdx]   = UPLOAD_KIND_MAP;
+    udpServer.clientUploadActive[clientIdx] = false;
+    udpServer.clientUploadTotal[clientIdx]  = 0;
+
+    {
+        int relLen = (int)SDL_strlen(reply);
+        uint8_t done[PACKET_HEADER_SIZE + 2 + 256];
+        int dpos = PACKET_HEADER_SIZE;
+        if (relLen > 255) relLen = 255;
+        packHeader(done, PACKET_LOBBY_MAP_UPLOAD_DONE, 0);
+        done[dpos++] = status;
+        done[dpos++] = (uint8_t)relLen;
+        memcpy(done + dpos, reply, relLen);
+        dpos += relLen;
+        srvSendTo(done, dpos, &udpServer.clients[clientIdx].addr);
+    }
+}
+
 /* Reassembled-upload completion: hand the bytes to the sim (in-memory reload,
  * plus a persist stage under PERSIST policy), clear the per-client upload slot,
  * and reply MAP_UPLOAD_DONE. The bytes already sit in clientUploadBuf because
- * the bulk receiver's onBegin pointed it there. */
+ * the bulk receiver's onBegin pointed it there. A script goes to
+ * serverFinishScriptUpload instead. */
 static void serverFinishUpload(ServerSim *sim, int clientIdx) {
+    if (udpServer.clientUploadKind[clientIdx] == UPLOAD_KIND_SCRIPT) {
+        serverFinishScriptUpload(sim, clientIdx);
+        return;
+    }
     uint32_t total = udpServer.clientUploadTotal[clientIdx];
     const char *origName = udpServer.clientUploadName[clientIdx];
 
@@ -390,6 +549,12 @@ static uint8_t *serverBulkUploadOnBegin(void *vctx, const BulkStreamHeader *h) {
     if (h->kind != BULK_KIND_UPLOAD) return NULL;
     if (!udpServer.clientUploadActive[idx]) return NULL;        /* no approved BEGIN */
     if (h->totalSize != udpServer.clientUploadTotal[idx]) return NULL; /* size mismatch */
+    if (udpServer.clientUploadKind[idx] == UPLOAD_KIND_SCRIPT) {
+        if (h->totalSize == 0 || h->totalSize > LOBBY_PACKAGE_UPLOAD_MAX_BYTES) {
+            return NULL;
+        }
+        return udpServer.clientScriptUploadBuf[idx];  /* NULL if none */
+    }
     if (h->totalSize == 0 || h->totalSize > LOBBY_MAP_UPLOAD_MAX_BYTES) return NULL;
     return udpServer.clientUploadBuf[idx];
 }
@@ -424,11 +589,32 @@ void serverDrainBulk(ServerSim *sim, int clientIdx) {
     }
 }
 
+/* The length of name's suffix if it ends in `suffix` (case-insensitive) with
+ * at least one byte before it, else 0. */
+static size_t uploadNameSuffixLen(const char *name, size_t nameLen,
+                                  const char *suffix) {
+    size_t sLen = SDL_strlen(suffix);
+    if (nameLen <= sLen) return 0;
+    if (SDL_strncasecmp(name + nameLen - sLen, suffix, sLen) != 0) return 0;
+    return sLen;
+}
+
 /* Validate an upload filename payload. The wire delivers a length-prefixed
  * name that may not be NUL-terminated, so iterate by index over nameLen.
  * Declared in transport_udp.h so the unit tests can exercise the matrix
- * directly; production callers stay inside this translation unit. */
-bool uploadFilenameIsSafe(const char *name, size_t nameLen) {
+ * directly; production callers stay inside the server transport.
+ *
+ * A map (UPLOAD_KIND_MAP) ends in .map and its basename fits the display-name
+ * slot. A script (UPLOAD_KIND_SCRIPT) ends in .scenario or .lua and the whole
+ * name fits ScnDirEntry.file (127 bytes and its NUL). Both refuse a leading
+ * dot, a path separator or drive colon, NUL and control bytes, a dot or space
+ * just before the suffix, and a Windows reserved basename.
+ *
+ * Those refusals cover everything lobbyScenarioNameShapeOk (the scenario list
+ * command's check) refuses: an absolute path, a drive letter and a ".."
+ * segment all need a '/', '\\', ':' or a leading '.', so a script name that
+ * passes here is one the list command will take. */
+bool uploadFilenameIsSafe(uint8_t kind, const char *name, size_t nameLen) {
     static const char *kReservedBasenames[] = {
         "CON", "PRN", "AUX", "NUL",
         "COM1", "COM2", "COM3", "COM4", "COM5",
@@ -436,12 +622,19 @@ bool uploadFilenameIsSafe(const char *name, size_t nameLen) {
         "LPT1", "LPT2", "LPT3", "LPT4", "LPT5",
         "LPT6", "LPT7", "LPT8", "LPT9",
     };
+    size_t suffixLen;
 
     if (!name || nameLen == 0) return false;
-    /* At least one basename byte plus the 4-byte ".map" suffix. */
-    if (nameLen < 5) return false;
-    /* Basename must fit the display-name slot (MAP_STR_SIZE - 1). */
-    if (nameLen > (size_t)(MAP_STR_SIZE - 1) + 4) return false;
+    if (kind == UPLOAD_KIND_MAP) {
+        /* At least one basename byte plus the 4-byte ".map" suffix. */
+        if (nameLen < 5) return false;
+        /* Basename must fit the display-name slot (MAP_STR_SIZE - 1). */
+        if (nameLen > (size_t)(MAP_STR_SIZE - 1) + 4) return false;
+    } else if (kind == UPLOAD_KIND_SCRIPT) {
+        if (nameLen > 127) return false;
+    } else {
+        return false;
+    }
     if (name[0] == '.') return false;
     for (size_t i = 0; i < nameLen; i++) {
         unsigned char ch = (unsigned char)name[i];
@@ -449,12 +642,20 @@ bool uploadFilenameIsSafe(const char *name, size_t nameLen) {
         if (ch == '\0') return false;
         if (ch < 0x20) return false;
     }
-    if (SDL_strncasecmp(name + nameLen - 4, ".map", 4) != 0) return false;
+    if (kind == UPLOAD_KIND_MAP) {
+        suffixLen = uploadNameSuffixLen(name, nameLen, ".map");
+    } else {
+        suffixLen = uploadNameSuffixLen(name, nameLen, ".scenario");
+        if (suffixLen == 0) {
+            suffixLen = uploadNameSuffixLen(name, nameLen, ".lua");
+        }
+    }
+    if (suffixLen == 0) return false;
     /* Trailing dot or space on the basename — Windows strips these on
      * file creation, which would bypass collision avoidance. */
-    char preDot = name[nameLen - 5];
+    char preDot = name[nameLen - suffixLen - 1];
     if (preDot == '.' || preDot == ' ') return false;
-    size_t baseLen = nameLen - 4;
+    size_t baseLen = nameLen - suffixLen;
     for (size_t i = 0;
          i < sizeof(kReservedBasenames) / sizeof(kReservedBasenames[0]);
          i++) {

@@ -1013,6 +1013,21 @@ void gameFrontEnd(keyItems *keys, bool gamePlayed, bool isQuiting) {
   clientMutexRelease();
 }
 
+/* Where scripts players upload under Allow land for the session:
+ * <prefs path>uploads/Session, beside the Upload Dir default and for the same
+ * reason — the prefs path is writable and the app's own maps directory is
+ * inside the read-only bundle. SDL_GetPrefPath returns a trailing separator.
+ * Both paths that start a server set it. */
+static void gameFrontScriptSessionDir(char *out, size_t outLen) {
+  const char *prefDir = SDL_GetPrefPath("WinBolo", "WinBolo");
+  if (prefDir) {
+    snprintf(out, outLen, "%suploads/Session", prefDir);
+    SDL_free((void *)prefDir);
+  } else {
+    snprintf(out, outLen, "%s", "uploads/Session");
+  }
+}
+
 /* The visibility rules a game this machine hosts starts on, taken from the
  * [GAME OPTIONS] prefs and pushed onto the sim after create. They do not
  * travel in ServerInstanceConfig, which has no field for them.
@@ -1962,6 +1977,13 @@ bool gameFrontSetDlgState(openingStates newState) {
           }
           cfg.botBrainPath = (spBrainPath[0] != '\0') ? spBrainPath : NULL;
           cfg.botAiType    = (BYTE)spAiPolicy;
+          /* No player can upload here, but the uploads directory is the last
+           * one the script list reads, and it belongs under the prefs path
+           * rather than inside the bundle. */
+          char spScriptSessionDir[FILENAME_MAX];
+          gameFrontScriptSessionDir(spScriptSessionDir,
+                                    sizeof(spScriptSessionDir));
+          cfg.scriptSessionDir = spScriptSessionDir;
 
           /* Build the ClientSim first — clientSimConnectLocalPassive
            * runs the full join+install body against an alive ClientSim. */
@@ -3447,6 +3469,7 @@ BOLO_STATIC_ASSERT(serverVoiceOn == 0, server_voice_default_is_on);
 
 bool gameFrontSetupServer(void) {
   ServerInstanceConfig cfg;
+  char scriptSessionDir[FILENAME_MAX];
 
   /* Idempotently clear any prior host session. Backing out of the
    * lobby to the LAN/Internet game finder doesn't fire shutdown on
@@ -3563,6 +3586,10 @@ bool gameFrontSetupServer(void) {
   if (gameFrontHostingScriptUploadPolicy == SCRIPT_UPLOAD_PERSIST) {
     cfg.scriptUploadDir   = gameFrontHostingScriptUploadDir;
   }
+  /* Allow keeps them for the session, under the prefs path. Set whatever the
+   * policy, since the server only reads it under Allow. */
+  gameFrontScriptSessionDir(scriptSessionDir, sizeof(scriptSessionDir));
+  cfg.scriptSessionDir    = scriptSessionDir;
   /* Round logging writes .wbv files into the chosen directory. Create it on
    * use and refuse to host if that fails — no silent fallback. Done here,
    * before the server starts, so the failure unwind is the simple pre-start

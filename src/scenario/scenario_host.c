@@ -6285,11 +6285,16 @@ void scenarioHostRegisterMapScripted(ServerSim *sim) {
  * once, and read again when something asks.
  *
  * The stamp is as fine as the kernel writes it, which is a few milliseconds on
- * an ordinary Linux filesystem rather than a nanosecond. A file that lands
- * inside the same tick as the read that kept the listing therefore leaves the
- * stamp alone and is not seen until the next change — an operator dropping a
- * scenario in cannot be that close to a read they did not make, and the file
- * after it, or the next thing to touch the directory, puts it right.
+ * an ordinary Linux filesystem rather than a nanosecond, so a change inside the
+ * same tick as the read that kept the listing leaves the stamp alone. The
+ * server now changes these directories itself — an upload put in place, the
+ * session directory emptied — and lists them straight after, so each slot also
+ * keeps the change count serverSimScriptDirsGen answered when it was read, and
+ * a slot whose count is not the current one is read again. Only a change made
+ * by someone else within one stamp can still be missed until the next change
+ * — an operator dropping a scenario in cannot be that close to a read they did
+ * not make, and the file after it, or the next thing to touch the directory,
+ * puts it right.
  *
  * A read that filled the caller's array is not kept. It may have stopped short
  * of the directory, and part of a directory is no answer to hand the next
@@ -6297,22 +6302,24 @@ void scenarioHostRegisterMapScripted(ServerSim *sim) {
  *
  * One cache per directory rather than one for the process, because a listing
  * merges the mod directories: the one this host was given, the player's own
- * under SDL_GetPrefPath, and the mods shipped beside the executable. A slot
- * each and one spare, so every directory of a listing finds its own slot
- * once they are filled and nothing evicts. It is held under a lock because
- * the read is not the tick thread's
+ * under SDL_GetPrefPath, the mods shipped beside the executable, and the
+ * directory players' uploads land in. A slot each and one spare, so every
+ * directory of a listing finds its own slot once they are filled and nothing
+ * evicts. It is held under a lock because the read is not the tick thread's
  * alone — a client hosting in process reads it from the UI thread through
  * serverSimEnumerateScenarioDir. The lock and the rows live as long as the
  * process; there is nothing to free them at, and nothing that would grow
- * them past two directories' worth. */
-/* How many directories a listing merges. The three scnModDirs builds:
-   the one this host was given, the player's own, and the shipped one. */
-#define SCN_MOD_DIRS_MAX 3
+ * them past that many directories' worth. */
+/* How many directories a listing merges. The four scnModDirs builds:
+   the one this host was given, the player's own, the shipped one, and the
+   uploads directory. */
+#define SCN_MOD_DIRS_MAX 4
 
 typedef struct {
     bool         valid;
     char         dir[SCN_SCRIPT_PATH_MAX];
     SDL_Time     modified;
+    uint32_t     gen;       /* serverSimScriptDirsGen when this was read */
     ScnDirEntry *rows;
     /* Each row's details, count of them like the rows. Kept here and not on
        the rows, which go out on every listing: the details are asked for one
@@ -6366,6 +6373,10 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out,
     ScnDirCache   *c;
     ScnDirDetails *read;
     int            n;
+    /* Taken before the read for the reason the modify time is: a change this
+       process makes while the read runs leaves the count newer than this, so
+       the next call reads again. */
+    uint32_t       gen = serverSimScriptDirsGen();
 
     /* Nothing to key a cache on, or nothing worth keying it to: the read still
        answers, including the refusals it makes for itself. */
@@ -6379,7 +6390,7 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out,
     scnLockEnter(&scnDirCacheLock);
     c = scnDirCacheSlot(dir);
     if (c->valid && c->count <= max && c->modified == info.modify_time &&
-        strcmp(c->dir, dir) == 0) {
+        c->gen == gen && strcmp(c->dir, dir) == 0) {
         n = c->count;
         if (n > 0) {
             memcpy(out, c->rows, (size_t)n * sizeof(out[0]));
@@ -6420,6 +6431,7 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out,
                newer than this, so the next call reads again rather than
                keeping an answer that missed it. */
             c->modified = info.modify_time;
+            c->gen      = gen;
             c->count    = n;
             c->valid    = true;
         }
@@ -6433,20 +6445,23 @@ static int scnDirListCached(const char *dir, ScnDirEntry *out,
 
 /* ── Where mods are read from ─────────────────────────────────────── */
 
-/* Three directories, in the order a name clash resolves between them:
-   the one this host was given, the player's own, and the mods that ship
-   with the build. The same shape brainListParents gives brains, and for the
-   same reason — a player who drops a file in their own directory is offered
-   it, and one who does nothing is still offered what the build came with.
+/* Four directories, in the order a name clash resolves between them:
+   the one this host was given, the player's own, the mods that ship with
+   the build, and the directory scripts players upload land in. The first
+   three are the same shape brainListParents gives brains, and for the same
+   reason — a player who drops a file in their own directory is offered it,
+   and one who does nothing is still offered what the build came with.
 
    The order is the precedence. A file name in two directories resolves to
    the one further up this list and the others are left out, so replacing a
    shipped mod means putting a file of that name in a directory above it.
    That is the way round a player can act on; there is nothing they could do
-   about it if it went the other way.
+   about it if it went the other way. The uploads directory is last so an
+   upload can never stand in for a file the server offers of its own, and an
+   upload whose name a directory above holds is refused.
 
    A directory that is not there says nothing, which is the ordinary case
-   for all three of them. */
+   for every one of them. */
 
 /* SDL_GetPrefPath allocates and creates the directory on every call, and a
    listing asks for it once per directory it merges, so the prefix it answers
@@ -6463,7 +6478,7 @@ static bool scnModUserDirKnown;
    place brain_list.c reads Brains from, and named the same way.
 
    False when SDL cannot name it, which is not an error: it means a machine
-   with no place of its own for mods, and the other two directories are the
+   with no place of its own for mods, and the other directories are the
    whole of the answer. */
 static bool scnModDirUser(char *out, size_t outLen) {
     const char *env;
@@ -6560,15 +6575,26 @@ static void scnModDirAdd(char dirs[][SCN_SCRIPT_PATH_MAX], int *count,
 
 /* The whole list, highest precedence first. `configured` is what this host
    was given: the -moddir argument on a dedicated server, the "Mod Dir"
-   preference on a desktop host. */
-static int scnModDirs(char dirs[][SCN_SCRIPT_PATH_MAX], const char *configured) {
+   preference on a desktop host. `uploads` is where the sim puts scripts
+   players upload (serverSimGetScriptUploadDir), and NULL or "" where there
+   is no sim or no uploads. */
+static int scnModDirs(char dirs[][SCN_SCRIPT_PATH_MAX], const char *configured,
+                      const char *uploads) {
     char one[SCN_SCRIPT_PATH_MAX];
     int  count = 0;
 
     scnModDirAdd(dirs, &count, configured);
     if (scnModDirUser(one, sizeof(one)))    scnModDirAdd(dirs, &count, one);
     if (scnModDirShipped(one, sizeof(one))) scnModDirAdd(dirs, &count, one);
+    scnModDirAdd(dirs, &count, uploads);
     return count;
+}
+
+/* The uploads directory of the sim a lister or reader was registered with,
+   or NULL for one registered with none. */
+static const char *scnModDirUploads(const void *ctx) {
+    return (ctx != NULL) ? serverSimGetScriptUploadDir((const ServerSim *)ctx)
+                         : NULL;
 }
 
 /* File-name order over the merged list, which is the order each directory
@@ -6582,15 +6608,16 @@ static int scnDirMergedCmp(const void *a, const void *b) {
     return SDL_strcasecmp(ea->file, eb->file);
 }
 
-/* The directory read, in the shape the sim's setter takes. No context, for
-   the same reason the map question carries none: what is in a directory is a
-   fact about that directory and about nothing else.
+/* The directory read, in the shape the sim's setter takes. The context is the
+   sim it was registered with, and all it is asked for is where that sim puts
+   uploaded scripts: what is in a directory is a fact about that directory and
+   about nothing else.
 
    `dir` is what this host was given and the head of the list scnModDirs
-   builds; the player's own directory and the shipped one come behind it.
-   Each is read in turn and a file name already taken by a directory above is
-   left out, so the rows are the union of the directories with the higher
-   precedence copy of a clashing name.
+   builds; the player's own directory, the shipped one and the uploads
+   directory come behind it. Each is read in turn and a file name already
+   taken by a directory above is left out, so the rows are the union of the
+   directories with the higher precedence copy of a clashing name.
 
    A directory that cannot be read answers -1, which is read here as no rows
    rather than as a failure: a host with no mod directory of its own is the
@@ -6601,12 +6628,11 @@ static int scnDirListCb(void *ctx, const char *dir, ScnDirEntry *out,
     int  count;
     int  n = 0;
     int  d;
-    (void)ctx;
 
     if (out == NULL || max <= 0) {
         return scnDirListCached(dir, out, NULL, max);
     }
-    count = scnModDirs(dirs, dir);
+    count = scnModDirs(dirs, dir, scnModDirUploads(ctx));
     for (d = 0; d < count && n < max; d++) {
         int extra = scnDirListCached(dirs[d], out + n, NULL, max - n);
         int i;
@@ -6665,9 +6691,9 @@ typedef enum {
 /* One file's details out of the kept read of dir, copying that one record
    and nothing else. The same tests scnDirListCached makes before it answers
    from the cache: the lock exists, the directory is still a directory, and
-   its time is the one the kept read was made at. Anything else answers
-   SCN_DIR_ONE_UNKNOWN and the caller reads the directory through
-   scnDirListCached, which also refills the cache.
+   its time and this process's change count are the ones the kept read was
+   made at. Anything else answers SCN_DIR_ONE_UNKNOWN and the caller reads
+   the directory through scnDirListCached, which also refills the cache.
 
    On SCN_DIR_ONE_FOUND, *got is the length copied into out, or -1 when the
    details do not fit in cap. */
@@ -6678,6 +6704,7 @@ static ScnDirOne scnDirDetailsOneCached(const char *dir, const char *file,
     ScnDirCache *c;
     ScnDirOne    result = SCN_DIR_ONE_UNKNOWN;
     int          i;
+    uint32_t     gen = serverSimScriptDirsGen();
 
     *got = -1;
     if (scnDirCacheLock.m == NULL || dir == NULL || dir[0] == '\0' ||
@@ -6690,7 +6717,7 @@ static ScnDirOne scnDirDetailsOneCached(const char *dir, const char *file,
     scnLockEnter(&scnDirCacheLock);
     c = scnDirCacheSlot(dir);
     if (c->valid && c->count <= max && c->modified == info.modify_time &&
-        strcmp(c->dir, dir) == 0) {
+        c->gen == gen && strcmp(c->dir, dir) == 0) {
         result = SCN_DIR_ONE_ABSENT;
         for (i = 0; i < c->count; i++) {
             if (strcmp(c->details[i].file, file) != 0) {
@@ -6728,12 +6755,11 @@ static int scnDirDetailsCb(void *ctx, const char *dir, const char *file,
     int            count;
     int            d;
     int            got = -1;
-    (void)ctx;
 
     if (file == NULL || file[0] == '\0' || out == NULL) {
         return -1;
     }
-    count = scnModDirs(dirs, dir);
+    count = scnModDirs(dirs, dir, scnModDirUploads(ctx));
     for (d = 0; d < count && got < 0; d++) {
         ScnDirOne one;
         int       n;
@@ -6779,17 +6805,205 @@ static int scnDirDetailsCb(void *ctx, const char *dir, const char *file,
     return got;
 }
 
+/* ── Scripts players upload ───────────────────────────────────────── */
+
+/* What an upload is written through before it takes its own name. The
+   leading dot keeps it out of every listing while it is there. */
+#define SCN_UPLOAD_TEMP_PREFIX ".upload-"
+
+static bool scnHasExt(const char *name, const char *ext);
+
+/* One refusal: the reason in err for the sender, and the same line to the
+   operator with the file named. */
+static void scnUploadRefuse(char *err, size_t errLen, const char *name,
+                            const char *fmt, ...) {
+    char    why[SCN_ERR_LEN];
+    va_list ap;
+
+    va_start(ap, fmt);
+    vsnprintf(why, sizeof(why), fmt, ap);
+    va_end(ap);
+    scnFmt(err, errLen, "%s", why);
+    scnSay(NULL, 0, "scenario: upload %s refused: %s", name, why);
+}
+
+/* The accept callback serverSimSetScriptUploadAccept takes, with the sim as
+   its context. dir is the sim's landing directory and name has passed the
+   transport's name rule, so it is a bare file name ending in .scenario or
+   .lua.
+
+   The manifest is read out of the written file the way the listing reads
+   one, so what is accepted is exactly what the listing will offer: a
+   package's manifest.json, and a loose script's table through the stub VM.
+   That boot runs on the tick thread, once per upload, behind the upload's
+   own cooldown. A file with problems the validator would report is still
+   taken, as the listing still lists it; what is refused is a file the
+   listing could not offer or the server could not run.
+
+   The bytes go to a dot file in dir and are renamed over <dir>/<name> only
+   once they have passed, so a refusal or a failed write leaves nothing, and
+   a file already there under name is replaced in one step. */
+static bool scnUploadAccept(void *ctx, const char *dir, const char *name,
+                            const uint8_t *bytes, uint32_t len,
+                            char *err, size_t errLen) {
+    const ServerSim   *sim = (const ServerSim *)ctx;
+    char               dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
+    char               tmp[SCN_SCRIPT_PATH_MAX];
+    char               dest[SCN_SCRIPT_PATH_MAX];
+    ScnValidateResult *check;
+    const ScenarioManifest *m;
+    bool               isPackage;
+    bool               ok;
+    FILE              *f;
+    int                count;
+    int                d;
+
+    if (err != NULL && errLen > 0) {
+        err[0] = '\0';
+    }
+    if (dir == NULL || dir[0] == '\0' || name == NULL || name[0] == '\0' ||
+        bytes == NULL || len == 0) {
+        scnFmt(err, errLen, "the upload is empty");
+        return false;
+    }
+    if (!scnEnabled) {
+        scnUploadRefuse(err, errLen, name, "scripts are off on this server");
+        return false;
+    }
+    isPackage = scnHasExt(name, SCN_SCENARIO_PACKAGE_EXT);
+    if (!isPackage && !scnHasExt(name, SCN_SCENARIO_SCRIPT_EXT)) {
+        scnUploadRefuse(err, errLen, name, "not a .scenario or .lua file");
+        return false;
+    }
+
+    /* A name a directory above the landing one holds. The transport asked
+       the listing at BEGIN; this asks each directory again, because a file
+       of that name may have been put in one of them since. */
+    count = scnModDirs(dirs, serverSimGetScenarioDir(sim), dir);
+    for (d = 0; d < count && strcmp(dirs[d], dir) != 0; d++) {
+        char one[SCN_SCRIPT_PATH_MAX];
+
+        snprintf(one, sizeof(one), "%s/%s", dirs[d], name);
+        if (scnScriptExists(one)) {
+            scnUploadRefuse(err, errLen, name,
+                            "this server already offers a script named %s",
+                            name);
+            return false;
+        }
+    }
+
+    if ((size_t)snprintf(tmp, sizeof(tmp), "%s/" SCN_UPLOAD_TEMP_PREFIX "%s",
+                         dir, name) >= sizeof(tmp) ||
+        (size_t)snprintf(dest, sizeof(dest), "%s/%s", dir, name) >=
+            sizeof(dest)) {
+        scnUploadRefuse(err, errLen, name,
+                        "the uploads directory's path is too long");
+        return false;
+    }
+    if (!SDL_CreateDirectory(dir)) {
+        scnUploadRefuse(err, errLen, name,
+                        "the uploads directory could not be made");
+        return false;
+    }
+    f = fopen(tmp, "wb");
+    if (f == NULL) {
+        scnUploadRefuse(err, errLen, name, "the file could not be written");
+        return false;
+    }
+    ok = fwrite(bytes, 1, len, f) == (size_t)len;
+    if (fclose(f) != 0) {
+        ok = false;
+    }
+    if (!ok) {
+        SDL_RemovePath(tmp);
+        scnUploadRefuse(err, errLen, name, "the file could not be written");
+        return false;
+    }
+
+    /* A result carries the whole manifest and the issue list, which is more
+       than the tick thread's stack should hold. */
+    check = (ScnValidateResult *)calloc(1, sizeof(*check));
+    if (check == NULL) {
+        SDL_RemovePath(tmp);
+        scnUploadRefuse(err, errLen, name, "no memory to read it");
+        return false;
+    }
+    if (isPackage) {
+        ok = scnDirReadPackage(tmp, &check->manifest);
+        if (!ok) {
+            scnUploadRefuse(err, errLen, name,
+                            "the package's manifest will not parse");
+        }
+    } else {
+        (void)scenarioValidateScript(NULL, tmp, check);
+        ok = check->haveManifest;
+        if (!ok) {
+            int line = (check->count > 0) ? check->issues[0].line : 0;
+            if (line > 0) {
+                scnUploadRefuse(err, errLen, name,
+                                "the script will not load: error on line %d",
+                                line);
+            } else {
+                scnUploadRefuse(err, errLen, name,
+                                "the script declares no scenario table");
+            }
+        }
+    }
+    m = &check->manifest;
+    if (ok && m->api > SCENARIO_API_VERSION) {
+        scnUploadRefuse(err, errLen, name,
+                        "it asks for api %d and this server runs api %d",
+                        m->api, SCENARIO_API_VERSION);
+        ok = false;
+    } else if (ok && (int)m->kind >= (int)scnKindUnknown) {
+        scnUploadRefuse(err, errLen, name,
+                        "it declares a kind this server does not know");
+        ok = false;
+    } else if (ok && m->bound) {
+        scnUploadRefuse(err, errLen, name,
+                        "it is bound to a map; a bound scenario is sent as "
+                        "its map");
+        ok = false;
+    }
+    free(check);
+    if (!ok) {
+        SDL_RemovePath(tmp);
+        return false;
+    }
+
+    /* SDL_RenamePath replaces the destination in one step on every platform,
+       so a file already there under name is swapped rather than removed and
+       written again; scenario_chunk.c's pack write says why that matters. */
+    if (!SDL_RenamePath(tmp, dest)) {
+        scnUploadRefuse(err, errLen, name, "the file could not be put in "
+                        "place: %s", SDL_GetError());
+        SDL_RemovePath(tmp);
+        return false;
+    }
+    /* The directory's stamp may not move for a file landed this soon after
+       a listing, so the listing is told another way. */
+    serverSimNoteScriptDirsChanged();
+    scnSay(NULL, 0, "scenario: upload %s landed in %s", name, dir);
+    return true;
+}
+
 void scenarioHostRegisterScenarioLister(ServerSim *sim) {
     /* The one place the cache's lock is made. Registering happens once where a
        process decides whether it runs scripts at all, before any sim can be
        asked for a listing, so a lister call always finds the lock built. A
        second registration finds it built too. A build where the mutex cannot
-       be made lists without the cache rather than not at all. */
+       be made lists without the cache rather than not at all.
+
+       The sim is the context of all three: the lister and the reader ask it
+       for the uploads directory they merge last, and the accept callback for
+       the directories above the one it writes to. A process that registers
+       a lister takes uploads; one that does not refuses them at BEGIN. */
     if (scnDirCacheLock.m == NULL) {
         (void)scnLockCreate(&scnDirCacheLock);
     }
-    serverSimSetScenarioLister(sim, scnDirListCb, NULL);
-    serverSimSetScenarioDetailsReader(sim, scnDirDetailsCb, NULL);
+    serverSimSetScenarioLister(sim, scnDirListCb, sim);
+    serverSimSetScenarioDetailsReader(sim, scnDirDetailsCb, sim);
+    serverSimSetScriptUploadAccept(sim, scnUploadAccept, sim);
 }
 
 /* ── Where the script comes from ──────────────────────────────────── */
@@ -7559,9 +7773,11 @@ static bool scnMapSource(ServerSim *sim, const char *mapPath,
 
 /* The same for one of the scenarios the server offers, named by the host.
  * Unlike a map's own, a file that is not there is a fault, so every false
- * from here leaves a reason in err. */
-static bool scnModSource(const char *dir, const char *file,
-                         ScnScriptSource *out, char *err, size_t errLen) {
+ * from here leaves a reason in err. uploads is the sim's uploads directory,
+ * read last as the listing reads it. */
+static bool scnModSource(const char *dir, const char *uploads,
+                         const char *file, ScnScriptSource *out, char *err,
+                         size_t errLen) {
     char path[SCN_SCRIPT_PATH_MAX];
 
     if (dir == NULL || file == NULL || file[0] == '\0' || out == NULL) {
@@ -7581,7 +7797,7 @@ static bool scnModSource(const char *dir, const char *file,
        otherwise report the player's path in its error. */
     {
         char dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
-        int  count = scnModDirs(dirs, dir);
+        int  count = scnModDirs(dirs, dir, uploads);
         int  d;
 
         path[0] = '\0';
@@ -7628,7 +7844,8 @@ ScenarioHost *scenarioHostAttachMod(ServerSim *sim, const char *dir,
     if (sim == NULL) {
         return NULL;
     }
-    if (!scnModSource(dir, file, &from, err, errLen)) {
+    if (!scnModSource(dir, serverSimGetScriptUploadDir(sim), file, &from,
+                      err, errLen)) {
         return NULL;
     }
     /* No map path: this scenario was not found for any map and plays on
@@ -8166,8 +8383,9 @@ static void scnDecideScenario(ServerSim *sim, ScenarioHost **slot,
             n++;
             continue;
         }
-        if (!scnModSource(serverSimGetScenarioDir(sim), row->file, &src[n],
-                          err, sizeof(err))) {
+        if (!scnModSource(serverSimGetScenarioDir(sim),
+                          serverSimGetScriptUploadDir(sim), row->file,
+                          &src[n], err, sizeof(err))) {
             /* The whole list or none of it, and that holds for the reading
                as well as the loading: the sources already in hand are given
                back rather than played without the one that would not read. */

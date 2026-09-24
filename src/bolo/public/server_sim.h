@@ -2286,6 +2286,35 @@ ServerVoiceMode serverSimGetVoiceMode(const ServerSim *sim);
 void               serverSimSetScriptUploadPolicy(ServerSim *sim, ScriptUploadPolicy p);
 ScriptUploadPolicy serverSimGetScriptUploadPolicy(const ServerSim *sim);
 
+/* The directory a script a player uploads lands in: the persist directory
+ * under PERSIST, the session directory under ALLOW, "" under OFF. Resolved
+ * once by serverInstanceStartup. The transport writes there, and the
+ * scenario host reads it as the lowest-precedence directory of the merged
+ * script listing. NULL sets "". The getter never returns NULL. */
+void        serverSimSetScriptUploadDir(ServerSim *sim, const char *dir);
+const char *serverSimGetScriptUploadDir(const ServerSim *sim);
+
+/* The session directory: the landing directory under ALLOW on a host that
+ * takes remote clients, "" otherwise. Only this one is ever emptied. NULL
+ * sets "". The getter never returns NULL. */
+void        serverSimSetScriptSessionDir(ServerSim *sim, const char *dir);
+const char *serverSimGetScriptSessionDir(const ServerSim *sim);
+
+/* Removes every regular file directly in the session directory, and nothing
+ * in a directory below it. A no-op when the session directory is "" or not
+ * there. Answers how many files went. Called at startup, at shutdown and by
+ * the lobby reset. */
+int         serverSimEmptyScriptSessionDir(ServerSim *sim);
+
+/* A count of the changes this process has made to a scripts directory: a
+ * file an upload put in place, or files the session emptying removed. The
+ * scenario library's directory listing keeps what it read against this as
+ * well as against the directory's modify time, which the kernel stamps too
+ * coarsely to see a change made straight after a read. Process-wide because
+ * that listing cache is process-wide. Safe from any thread. */
+void        serverSimNoteScriptDirsChanged(void);
+uint32_t    serverSimScriptDirsGen(void);
+
 /* Resolve the script upload policy from its command-line or preference
  * word. A non-empty word is matched against off / allow / persist
  * ignoring case and always wins over legacyOff; an unknown word logs a

@@ -471,8 +471,17 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
 #define PACKET_LOBBY_SET_BOT_BRAIN  166  /* { slot 1, pathLen 1, path N } */
 #define PACKET_LOBBY_SET_MAP        167  /* { pathLen 1, path N } */
 #define PACKET_LOBBY_MAP_LIST_REQ   168  /* { pathLen 1, path N } */
-#define PACKET_LOBBY_MAP_UPLOAD_BEGIN  169  /* { totalLen 4, nameLen 1, name N }
-                                              * the map bytes then stream over
+#define PACKET_LOBBY_MAP_UPLOAD_BEGIN  169  /* { kind 1, totalLen 4, nameLen 1,
+                                              *   name N, [bulkStartSeq 4] }
+                                              * kind is UPLOAD_KIND_MAP or
+                                              * UPLOAD_KIND_SCRIPT
+                                              * (upload_policy.h) and picks
+                                              * the cap (LOBBY_MAP_UPLOAD_MAX_
+                                              * BYTES or LOBBY_PACKAGE_UPLOAD_
+                                              * MAX_BYTES) and the name rule
+                                              * (.map, or .scenario / .lua;
+                                              * uploadFilenameIsSafe). The
+                                              * bytes then stream over
                                               * CHANNEL_BULK behind a bulk-
                                               * transfer stream header; 170 (the
                                               * old CHUNK carrier) is retired. */
@@ -962,6 +971,8 @@ static inline bool lobbyBotNameAcceptable(
 #define LOBBY_REJECT_UPLOAD_DISABLED   5   /* host disabled map uploads */
 #define LOBBY_REJECT_UPLOAD_LIMIT_HIT  6   /* per-map storage cap reached */
 #define LOBBY_REJECT_COOLDOWN          7   /* per-client request cooldown active */
+#define LOBBY_REJECT_NAME_TAKEN        8   /* a script of that name is in a
+                                            * higher-precedence directory */
 
 /* Alliance update event types */
 #define ALLIANCE_EVENT_REQUEST  0

@@ -3416,6 +3416,11 @@ uint8_t  clientSimGetLobbyMapUploadStatus(const ClientSim *cs)     { return cs->
 uint8_t  clientSimGetLobbyMapUploadRejectCode(const ClientSim *cs) { return cs->lobbyMapUploadRejectCode; }
 const char *clientSimGetLobbyMapUploadFinalPath(const ClientSim *cs){ return cs->lobbyMapUploadFinalPath; }
 
+uint8_t clientSimGetLobbyUploadKind(const ClientSim *cs) {
+  if (cs == NULL) return UPLOAD_KIND_MAP;
+  return cs->lobbyUploadKind;
+}
+
 bool clientSimConsumeUseLocalFallback(ClientSim *cs) {
   if (!cs || !cs->lobbyMapUseLocalNeedsFallback) return false;
   cs->lobbyMapUseLocalNeedsFallback = false;

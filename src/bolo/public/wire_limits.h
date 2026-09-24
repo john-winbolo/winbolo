@@ -57,11 +57,13 @@
  * 4 MiB, the same as ROUND_LOG_MAX_BYTES. The heaviest brain in this tree
  * is GoalHunter, 5.8 MB of Lua on disk and about 1 MB deflated, so a map
  * shipping one comes to roughly a megabyte and this leaves room for
- * several. Nothing sends a package yet, so nothing on the wire enforces
- * this; what reads against it today is the scenario host, which reads a
- * map file from the operator's own disk looking for a container in it.
- * One number for both, so a package an operator can play on their own
- * server is one they will be able to upload. */
+ * several. On the wire, PACKET_LOBBY_MAP_UPLOAD_BEGIN holds a script
+ * upload (UPLOAD_KIND_SCRIPT) to it, and so does the server's bulk sink
+ * when the bytes arrive. The disk readers read against it too: the
+ * scenario directory lister, and the scenario host, which reads a map
+ * file from the operator's own disk looking for a container in it. One
+ * number for all of them, so a package an operator can play on their
+ * own server is one they can upload. */
 #define LOBBY_PACKAGE_UPLOAD_MAX_BYTES (4u * 1024u * 1024u)
 
 /* Maximum bytes the server will serve for the last completed round's

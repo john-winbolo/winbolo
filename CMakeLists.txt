@@ -4060,6 +4060,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_sound_delivery_wire.c
     tests/unit/test_view_ally_loopback.c
     tests/unit/test_loopback_upload.c
+    tests/unit/test_script_upload.c
     tests/unit/test_gate1_integration.c
     tests/unit/test_interp_jitter_e2e.c
     tests/unit/test_join_version_gate.c
@@ -4827,6 +4828,7 @@ set(_unit_test_names
     upload_lost_done_retry
     upload_partial_timeout_retry
     upload_filename_safe
+    upload_filename_safe_script
     lobby_bot_name_rejects_reserved_prefix
     lobby_bot_name_rejects_disallowed_char
     lobby_bot_name_rejects_collision
@@ -5320,6 +5322,22 @@ set(_unit_test_names
     lock_channel
     loopback_map_preview
     loopback_map_upload
+    upload_begin_golden
+    script_upload_begin_refusals
+    loopback_script_upload_at_cap
+    loopback_script_upload_refused
+    script_upload_client_refusals
+    loopback_script_upload_lands_listed
+    loopback_script_upload_package_listed
+    loopback_script_upload_bound_refused
+    loopback_script_upload_syntax_line
+    script_upload_name_taken
+    script_upload_persist_caps
+    script_upload_accept_refusals
+    script_upload_session_emptied
+    script_upload_listing_sees_own_removal
+    script_upload_reset_drops_session_picks
+    loopback_script_upload_plays_next_round
     loopback_download_join
     loopback_download_midgame
     loopback_resync
@@ -6289,6 +6307,9 @@ foreach(_name IN LISTS _unit_test_names)
                          TIMEOUT 60
                          FIXTURES_REQUIRED warm_binaries)
 endforeach()
+# A 4 MiB package over the loopback bulk channel is a few thousand pumps of
+# at least a millisecond each; give it room on a loaded machine.
+set_tests_properties(unit.loopback_script_upload_at_cap PROPERTIES TIMEOUT 180)
 
 # ---------------------------------------------------------------------------
 # WinBoloWbnTests -- the WinBolo.net HTTP layer against a local TCP listener.

@@ -1403,6 +1403,11 @@ bool     clientSimSpectatorIsLiveLobby(const ClientSim *cs);
 uint8_t     clientSimGetLobbyMapUploadStatus(const ClientSim *cs);
 uint8_t     clientSimGetLobbyMapUploadRejectCode(const ClientSim *cs);
 const char *clientSimGetLobbyMapUploadFinalPath(const ClientSim *cs);
+/* Which kind of upload the status, reject-code, final-path and
+ * progress-percent accessors above describe: UPLOAD_KIND_MAP or
+ * UPLOAD_KIND_SCRIPT (upload_policy.h), set when an upload starts.
+ * UPLOAD_KIND_MAP for NULL and before any upload. */
+uint8_t     clientSimGetLobbyUploadKind(const ClientSim *cs);
 /* True (and clears the flag) if the server NACK'd a USE_LOCAL request
  * since the last call — drives the BEGIN/CHUNK fallback inside the
  * UDP transport's upload pump. No frontend caller. */

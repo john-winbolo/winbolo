@@ -330,6 +330,57 @@ void serverSimSetScenarioLister(ServerSim *sim,
 int serverSimScenarioListDir(const ServerSim *sim, ScnDirEntry *out, int max);
 
 /*********************************************************
+ *NAME:          serverSimSetScriptUploadAccept
+ *PURPOSE:
+ *  Registers what takes a script a player uploaded: a
+ *  .scenario or .lua that arrived whole over
+ *  PACKET_LOBBY_MAP_UPLOAD_BEGIN with UPLOAD_KIND_SCRIPT.
+ *  The callback checks the bytes and writes them under
+ *  dir/name, answering true. Otherwise it answers false and
+ *  puts a one-line reason in err, which goes back to the
+ *  sender in the DONE reply.
+ *
+ *  A callback rather than a call, for the reason the lister
+ *  above is one: reading a package and running a script are
+ *  the scenario library's to do, and src/server/ cannot call
+ *  src/scenario/.
+ *
+ *  NULL clears it. With nothing registered the server
+ *  refuses a script upload at BEGIN, before any bytes are
+ *  sent, and serverSimScriptUploadAccept answers false with
+ *  "this server cannot take scripts".
+ *
+ *  dir is where the upload lands, chosen by the server's
+ *  script upload policy; the callback creates it if it is
+ *  not there.
+ *********************************************************/
+typedef bool (*ScriptUploadAcceptFn)(void *ctx, const char *dir,
+                                     const char *name,
+                                     const uint8_t *bytes, uint32_t len,
+                                     char *err, size_t errLen);
+void serverSimSetScriptUploadAccept(ServerSim *sim, ScriptUploadAcceptFn fn,
+                                    void *ctx);
+
+/*********************************************************
+ *NAME:          serverSimHasScriptUploadAccept
+ *PURPOSE:
+ *  Whether a script upload callback is registered, which is
+ *  whether a script upload can be taken at all.
+ *********************************************************/
+bool serverSimHasScriptUploadAccept(const ServerSim *sim);
+
+/*********************************************************
+ *NAME:          serverSimScriptUploadAccept
+ *PURPOSE:
+ *  Hands an uploaded script to the registered callback and
+ *  answers what it answers. With nothing registered, answers
+ *  false with "this server cannot take scripts" in err.
+ *********************************************************/
+bool serverSimScriptUploadAccept(const ServerSim *sim, const char *dir,
+                                 const char *name, const uint8_t *bytes,
+                                 uint32_t len, char *err, size_t errLen);
+
+/*********************************************************
  *NAME:          serverSimSetScenarioDetailsReader
  *PURPOSE:
  *  Registers the read of one directory file's details

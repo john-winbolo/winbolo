@@ -784,7 +784,12 @@ struct ClientSim {
      * 4=rejected. */
     uint8_t  lobbyMapUploadStatus;
     uint8_t  lobbyMapUploadRejectCode; /* server's reject byte, if any */
-    char     lobbyMapUploadFinalPath[256]; /* server-relative path */
+    char     lobbyMapUploadFinalPath[256]; /* server-relative path, or the
+                                            * server's reason on a refused
+                                            * script */
+    /* UPLOAD_KIND_MAP / _SCRIPT: which upload the three fields above
+     * describe. Set when an upload starts; zero (MAP) before any. */
+    uint8_t  lobbyUploadKind;
     /* Set by the PACKET_LOBBY_MAP_USE_LOCAL_NACK handler when the
      * server can't fulfil the MD5-skip-upload shortcut. The Upload
      * tab's pump loop notices this on the next frame and falls back

@@ -371,6 +371,14 @@ struct ServerSim {
     char     mapMd5Hex[33];        /* mapMd5 as 32 lowercase hex chars + NUL; "" when invalid */
     UploadPolicy uploadPolicy;     /* mirrored from server-startup config */
     ScriptUploadPolicy scriptUploadPolicy;  /* mirrored from server-startup config */
+    /* Where a script a player uploads lands under the policy in force, and
+     * the lowest directory of the merged script listing. "" under OFF.
+     * Resolved once by serverInstanceStartup. */
+    char     scriptUploadDir[FILENAME_MAX];
+    /* The session directory ALLOW lands in, on a host that takes remote
+     * clients; "" otherwise. Emptied at startup, at shutdown and by
+     * serverSimResetLobbyToDefaults. */
+    char     scriptSessionDir[FILENAME_MAX];
     /* Per-category visibility rules, indexed by ViewCategory. Set from
      * the CLI / hosting prefs at startup and from the lobby via
      * LST_PILL_VIEW / LST_BASE_VIEW / LST_ALLY_VIEW; broadcast in the
@@ -980,6 +988,14 @@ struct ServerSim {
     int                  (*scenarioLister)(void *ctx, const char *dir,
                                            ScnDirEntry *out, int max);
     void                  *scenarioListerCtx;
+    /* Takes a script a player uploaded (serverSimSetScriptUploadAccept).
+       NULL means nothing registered and script uploads are refused. */
+    bool                 (*scriptUploadAccept)(void *ctx, const char *dir,
+                                               const char *name,
+                                               const uint8_t *bytes,
+                                               uint32_t len,
+                                               char *err, size_t errLen);
+    void                  *scriptUploadAcceptCtx;
     /* Reads one directory file's details for serverSimScenarioDetails.
        NULL means nothing registered and only the map's own script has any. */
     int                  (*scenarioDetailsReader)(void *ctx, const char *dir,
