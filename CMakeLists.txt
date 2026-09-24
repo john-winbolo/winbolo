@@ -3806,6 +3806,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     # reload helper, the damage helper, the boat-exit speed and the brain's
     # stop predictor.
     tests/unit/test_tank_modifier_sites.c
+    tests/unit/test_visible_turn_taps.c
     tests/unit/test_md5.c
     tests/unit/test_rand_save_restore.c
     tests/unit/test_net_opt_wire.c
@@ -5589,6 +5590,9 @@ set(_unit_test_names
     tank_mod_accel_doubles_ticks_to_brake
     tank_mod_accel_halves_autoslow
     tank_mod_turn_halves_circle_ticks
+    visible_turn_tap
+    visible_turn_held_and_reset
+    turn_tap_input_edges
     tank_mod_reload_fires_twice_as_often
     tank_mod_dealt_kills_in_half_the_hits
     tank_mod_taken_takes_more_hits

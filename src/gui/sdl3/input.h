@@ -154,8 +154,11 @@ void inputSwallowKeyUntilRelease(int scancode);
 *  setKeys  - Structure that holds the key bindings
 *  scancode - SDL_Scancode of the key
 *  newState - true if pressed, false if released
+*  repeat   - true for an OS auto-repeat of a held key
+*  allowTurn - true while a running game can accept turn taps
 *********************************************************/
-void inputButtonInput(keyItems *setKeys, SDL_Scancode scancode, bool newState);
+void inputButtonInput(keyItems *setKeys, SDL_Scancode scancode, bool newState,
+                      bool repeat, bool allowTurn);
 
 /*********************************************************
 *NAME:          inputConsumeGunsightAdj

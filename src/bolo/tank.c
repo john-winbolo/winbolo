@@ -1178,10 +1178,14 @@ void tankGetGunsight(GameSim *sim, tank *value, BYTE *xMap, BYTE *yMap, BYTE *xP
 *PURPOSE:
 *  Like tankGetGunsight, but computes the crosshair from the
 *  supplied pose (world position + angle) instead of the
-*  tank's own. RENDER ONLY (render-error smoothing): lets the
-*  gunsight track the smoothed pose without touching sim
-*  state. The gunsight range (sightLen) and alive/dead test
-*  still come from the tank.
+*  tank's own. Two callers: the renderer, which passes the
+*  smoothed pose so the gunsight tracks it without touching
+*  sim state, and tankVisibleTurn below, which asks where the
+*  crosshair would land after a candidate first-tick turn.
+*  That second caller runs on the server, in prediction and
+*  in reconcile replay, so this must stay a pure function of
+*  its arguments and the sim rules. The gunsight range
+*  (sightLen) and alive/dead test still come from the tank.
 *
 *ARGUMENTS:
 *  sim    - The game whose shell rules the flight comes from
@@ -2210,6 +2214,36 @@ static void tankMoveUnified(GameSim *sim, tank *value, BYTE bmx, BYTE bmy,
   tankNearMines(sim, bmx, bmy, ang);
 }
 
+/* A new press must cross a gunsight pixel boundary. Search in the normal
+ * fine-turn increments, so we add only the smallest nudge that is visible
+ * at this range and heading. This runs in shared simulation code: server,
+ * prediction and replay must choose the same angle.
+ * Keep unusual scenario rules bounded; a zero-rate or destroyed tank
+ * must not acquire the ability to turn from this helper. */
+static TURNTYPE tankVisibleTurn(GameSim *sim, tank *value, TURNTYPE step,
+                                bool left) {
+  BYTE mx, my, px, py;
+  int i;
+  if (step <= 0 || (*value)->destroyed) return step;
+  tankGetGunsightAt(sim, value, (*value)->x, (*value)->y, (*value)->angle,
+                   &mx, &my, &px, &py);
+  for (i = 1; i <= 128; i++) {
+    BYTE nextMX, nextMY, nextPX, nextPY;
+    TURNTYPE amount = step * i;
+    TURNTYPE angle;
+    if (amount > 16) break;
+    angle = (*value)->angle + (left ? -amount : amount);
+    if (angle < 0) angle += BRADIANS_MAX;
+    if (angle > BRADIANS_MAX) angle -= BRADIANS_MAX;
+    tankGetGunsightAt(sim, value, (*value)->x, (*value)->y, angle,
+                     &nextMX, &nextMY, &nextPX, &nextPY);
+    if (nextMX != mx || nextMY != my || nextPX != px || nextPY != py) {
+      return amount;
+    }
+  }
+  return step;
+}
+
 /*********************************************************
 *NAME:          tankTurn
 *AUTHOR:        John Morrison
@@ -2242,6 +2276,9 @@ void tankTurn(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb) {
     if ((*value)->firstLeft < 6) {
       (*value)->firstLeft++;
       turnAmount /= 8;
+      if ((*value)->firstLeft == 1) {
+        turnAmount = tankVisibleTurn(sim, value, turnAmount, TRUE);
+      }
     }
     (*value)->angle -= turnAmount;
     if ((*value)->angle < 0) {
@@ -2256,6 +2293,9 @@ void tankTurn(GameSim *sim, tank *value, BYTE bmx, BYTE bmy, tankButton tb) {
     if ((*value)->firstRight < 6) {
       (*value)->firstRight++;
       turnAmount /= 8;
+      if ((*value)->firstRight == 1) {
+        turnAmount = tankVisibleTurn(sim, value, turnAmount, FALSE);
+      }
     }
     (*value)->angle += turnAmount;
     if ((*value)->angle > BRADIANS_MAX) {

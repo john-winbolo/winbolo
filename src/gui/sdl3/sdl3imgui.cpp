@@ -6536,6 +6536,18 @@ static bool eventBelongsToMainWindow(const SDL_Event *ev) {
     }
 }
 
+/* True while the tick core samples the keys (client_frontend_tick.c): a
+   running game with no brain driving, past the lobby and countdown, which
+   return before inputGetKeys. A tap queued outside this would replay as a
+   nudge once sampling resumed. */
+static bool turnTapsAccepted(ClientSim *cs) {
+    if (cs == nullptr || !clientSimIsRunning(cs) || luaBrainIsRunning()) {
+        return false;
+    }
+    netStatus ns = clientSimGetNetStatus(cs);
+    return ns != netLobby && ns != netLobbyCountdown;
+}
+
 void sdl3ImguiProcessEvents(ClientSim *cs) {
     if (!s_window) return;
 #ifdef __APPLE__
@@ -6707,6 +6719,29 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
                         ev.type == SDL_EVENT_KEY_DOWN && !ev.key.repeat &&
                         !popWantsKeys && !imguiKeySetupIsCapturingInGameKey()) {
                         windowKeyPressed(cs, (int)ev.key.scancode);
+                    }
+
+                    /* The same goes for the event-driven key state: a press
+                       and release that both land here between two samples is
+                       invisible to the poll, so the overview forwards them as
+                       the main window does at its own site further down. The
+                       release always goes through, so the tracked physical
+                       state cannot stick down when a press made in the main
+                       window is let go over the overview. Every key goes
+                       through, not only the turn keys: inputButtonInput also
+                       tracks the mine key by event, so this is what lets a
+                       mine be laid while the overview has focus and stops a
+                       mine key released over the overview staying down. */
+                    if (pw == &s_popMapOverview &&
+                        (ev.type == SDL_EVENT_KEY_DOWN ||
+                         ev.type == SDL_EVENT_KEY_UP)) {
+                        keyItems ki;
+                        windowGetKeys(&ki);
+                        inputButtonInput(&ki, ev.key.scancode,
+                                         ev.type == SDL_EVENT_KEY_DOWN,
+                                         ev.key.repeat,
+                                         turnTapsAccepted(cs) && !popWantsKeys &&
+                                             !imguiKeySetupIsCapturingInGameKey());
                     }
 
                     /* Track the current size of a resizable pop-out. The main
@@ -7031,12 +7066,16 @@ void sdl3ImguiProcessEvents(ClientSim *cs) {
             continue;
         }
 
-        /* Forward key events to input system for event-driven mine key tracking.
-         * Must happen before the ImGui swallow so key-up events are never lost. */
+        /* Forward key events for mine tracking and short turn-tap capture.
+         * Must happen before the ImGui swallow so key-up events are never lost.
+         * A tap is only accepted while the tick core samples the keys: in the
+         * lobby and countdown it returns before inputGetKeys, so a tap queued
+         * there would replay as a nudge once the game started. */
         if (ev.type == SDL_EVENT_KEY_DOWN || ev.type == SDL_EVENT_KEY_UP) {
             keyItems ki;
             windowGetKeys(&ki);
-            inputButtonInput(&ki, ev.key.scancode, (ev.type == SDL_EVENT_KEY_DOWN));
+            inputButtonInput(&ki, ev.key.scancode, (ev.type == SDL_EVENT_KEY_DOWN),
+                             ev.key.repeat, turnTapsAccepted(cs));
         }
 
         /* Gamepad capture for the Key Setup modal — intercept button-down
