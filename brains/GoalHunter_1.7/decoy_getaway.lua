@@ -92,8 +92,22 @@ local bit    = require("bitcompat")
 
 local M = {}
 
--- goals.lua is big and loads orders.lua lazily; ask for it when it is needed.
-local function goals() return require("goals") end
+-- SPEED.  A scan runs once when the hold starts and again only when the
+-- picture changes, so every scan is a cold one.  LuaJIT spends most of a
+-- cold scan recording and compiling traces for code that then never runs
+-- again (measured: about 900 us with the JIT, about 350 us without it; a
+-- warm repeat is about 80 us with it, 170 us without it).  So this file runs
+-- in the interpreter.  The shell traces it calls (goals.lua, cpathfinder)
+-- keep the JIT.
+if jit and jit.off then jit.off(true, true) end
+
+-- goals.lua is big and loads orders.lua lazily; ask for it when it is
+-- needed, once.
+local goals_mod = nil
+local function goals()
+  if not goals_mod then goals_mod = require("goals") end
+  return goals_mod
+end
 
 -- The terrain that eats a pill's shell for the getaway: walls only.
 local WALL_STOP = { [C.T_BUILDING] = true, [C.T_HALFBUILD] = true }
