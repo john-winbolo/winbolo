@@ -147,6 +147,8 @@ cannot make a seat ping a square. Every ping path in `orders.lua` — the verb
 table by tile, select-by-ping, the repeat ping that adds a bot, the caution
 ping — is therefore untested here, and will stay that way until the API grows
 a ping op. The chat forms of the same orders are what these rounds cover.
+The one exception is the decoy hold: GoalHunter 1.7 reads `ping = "1"` on a
+`goto` hint as a ping order, and `decoy_getaway` uses that.
 
 ## The arena the order tests share
 
@@ -179,3 +181,5 @@ uses `-teams 2,1` in its `.args` to seat two bots on team 1 and one on team 2.
 | `order_attack_closest` | `closest` is measured from the SENDER, not from the bot. Two pills: #0 two squares from the speaker and twelve from the bots, #1 four squares from the bots. A bot resolving `closest` against its own tank takes #1; against the sender it takes #0. The ack carries the pill number, so it says outright which rule ran, and the bot then drives past the near pill to the far one's standoff ring. |
 | `order_bot_chat_off` | `bot chat off` stops the bots TALKING, not the bots WORKING. Half A is the control: with chat on, `!attack 0` is acked — which proves the seats, the pill and the message channel all work, so silence in half B is the latch and not a starved slot. Half B cancels, says `!bot chat off` and orders a DIFFERENT pill: not one line comes back, and a bot is at that pill's standoff ring anyway. |
 | `order_enemy_stop_ignored` | An operator command from the other team is not a command. An ally's `!stop` freezes seat 0 (the baseline), the enemy's `!start` has to leave it frozen, and the ally's `!start` has to start it again (without which the round proves nothing). **This one passes on both sides of the Lua fix**: the engine already keeps an enemy's chat out of a bot's inbox — the same seat saying the same word freezes this bot under `-allybots 1` and does not under `-teams 2,1` — so the round guards both layers rather than reproducing the bug. The Lua half is covered by `commands.lua -- only an ally may give an operator command` in `test_orders.lua`, which does fail before the fix. |
+| `decoy_getaway` | A decoy steps out of a pill's line ONE square per hit. A `goto` hint with `ping = "1"` puts the decoy on a square six south of a pill it can see, beside a row of walls. It must say "decoying", must not leave the square before a hit, and after the hit must settle on (129,126) — the first square of the chain `DECOY_GETAWAY_SCAN` logs — facing it when hit, and then stop. Then the attacker is told `!attack` and the pill's armour must drop. A square only counts once the tank has sat on it for 30 ticks: a hit knocks a tank back, sometimes over an edge. |
+| `decoy_getaway_keel` | The same round with `cfg=DECOY_GETAWAY=false` handed to the decoy by `bot_init`: it takes hits and never steps. A knock can leave it one square over, where the old hold leaves it; that square must not be the chain's first square. |
