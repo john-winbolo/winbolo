@@ -3166,6 +3166,132 @@ do
 end
 
 -- =========================================================================
+-- ONE SLOT, ONE BOT (ORDER_CLAIM_TIEBREAK, PR #389 review item 9).  A repeat
+-- ping adds one slot (want 2).  When its auction times out, two bots can
+-- both take that slot: three holders on a 2-bot order.  The dearest holder
+-- lets go in silence, and every bot agrees on which one it is.
+-- =========================================================================
+print("orders.lua -- a repeat-ping slot taken twice")
+local function slot_rig()
+  -- A (p1) is nearest and takes the first ping.  B (p2) is nearer than C (p4).
+  local a, b, c = BOT(1, 31, 31), BOT(2, 40, 40), BOT(4, 46, 46)
+  local all = { a, b, c }
+  for _, x in ipairs(all) do gping(x, 100, 35, 35) end
+  pumpn(all, 100); upd(all, 101)
+  pumpn(all, 101); upd(all, 102)
+  pumpn(all, 102); upd(all, 103)
+  -- The repeat ping.  Its bids are lost, so B and C each settle alone.
+  for _, x in ipairs(all) do gping(x, 200, 35, 35) end
+  for _, x in ipairs(all) do
+    x.st.orders.out, x.st.orders.pings, x.st.orders.say = {}, {}, {}
+  end
+  upd(all, 201)
+  return a, b, c, all
+end
+local function holds(x, oid)
+  return x.st.orders.held ~= nil and x.st.orders.held.oid == oid
+end
+do
+  local a, b, c, all = slot_rig()
+  local oid = a.st.orders.held and a.st.orders.held.oid
+  check("setup: the repeat ping made a 2-slot order",
+        oid ~= nil and a.st.orders.anchors[oid].want == 2, "?")
+  check("setup: A, B and C all hold it (3 holders, 2 slots)",
+        holds(a, oid) and holds(b, oid) and holds(c, oid), "?")
+  check("the new takers put no marker down before the claim window",
+        #b.st.orders.pings == 0 and #c.st.orders.pings == 0,
+        tostring(#b.st.orders.pings) .. " " .. tostring(#c.st.orders.pings))
+  pumpn(all, 201)
+  upd(all, 203)
+  check("the dearest holder (C) lets go", not holds(c, oid), "held")
+  check("A and B keep the order", holds(a, oid) and holds(b, oid), "?")
+  check("C lets go with a release, not a cancel",
+        (c.st.orders.out[1] or ""):match("^/info obr " .. oid .. "$") ~= nil,
+        tostring(c.st.orders.out[1]))
+  check("C's marker is not due any more", c.st.orders.ack_due == nil, "due")
+  pumpn(all, 203)
+  upd(all, 204)
+  local ga, gb = a.st.orders.gclaims[oid] or {}, b.st.orders.gclaims[oid] or {}
+  check("A and B both count exactly A and B as holders",
+        ga[1] and ga[2] and not ga[4] and gb[1] and gb[2] and not gb[4], "?")
+  check("C's release re-opens nothing", next(a.st.orders.auctions) == nil
+        and next(b.st.orders.auctions) == nil and next(c.st.orders.auctions) == nil, "?")
+  upd(all, 212)
+  check("after the window B puts its marker down, C none",
+        #b.st.orders.pings == 1 and #c.st.orders.pings == 0,
+        tostring(#b.st.orders.pings) .. " " .. tostring(#c.st.orders.pings))
+  check("C says nothing", #c.st.orders.say == 0, tostring(c.st.orders.say[1]))
+  upd(all, 400)
+  check("C does not take the order back", not holds(c, oid), "held")
+end
+do
+  -- The claims reach the bots in the other order: the same answer.
+  local a, b, c = slot_rig()
+  local oid = a.st.orders.held.oid
+  pumpn({ c, b, a }, 201)
+  upd({ c, b, a }, 203)
+  check("reversed claim order: still C lets go, A and B keep",
+        holds(a, oid) and holds(b, oid) and not holds(c, oid), "?")
+end
+do
+  -- A holder trimmed off an attack_pill order ends its suicide run on that
+  -- pill, as the solo tiebreak's loser does.  The kept holder's run stands.
+  local a, b, c, all = slot_rig()
+  local oid = a.st.orders.held.oid
+  for _, x in ipairs(all) do
+    x.st.orders.held.kind, x.st.orders.held.tid = "attack_pill", 5
+    x.st._suicide = { tid = 5, since = 200 }
+  end
+  pumpn(all, 201)
+  upd(all, 203)
+  check("the trimmed holder's suicide run ends",
+        not holds(c, oid) and c.st._suicide == nil,
+        tostring(c.st._suicide and c.st._suicide.tid))
+  check("the kept holders' suicide runs stand",
+        a.st._suicide ~= nil and b.st._suicide ~= nil, "?")
+end
+do
+  -- A cost tie between the two new takers goes to the lower player number.
+  local a, b, c, all = slot_rig()
+  local oid = a.st.orders.held.oid
+  for _, x in ipairs({ b, c }) do
+    x.st.orders.held.claim_cost = 999
+    x.st.orders.gclaims[oid][x.pn] = 999
+    x.st.orders.out = { "/info obc " .. oid .. " 999" }
+  end
+  pumpn(all, 201)
+  upd(all, 203)
+  check("a tie on the slot keeps the lower player number (B, p2)",
+        holds(a, oid) and holds(b, oid) and not holds(c, oid), "?")
+end
+do
+  local o = { anchors = { [5] = { want = 1, names = true } },
+              gclaims = { [5] = { [1] = 3, [2] = 4 } } }
+  check("a selection order is not trimmed", ORD.slot_keepers(o, 5) == nil, "trimmed")
+  o.anchors[5].names = nil
+  local keep, n = ORD.slot_keepers(o, 5)
+  check("a ping order keeps the cheapest `want`",
+        keep ~= nil and #keep == 1 and keep[1] == 1 and n == 2, "?")
+  C.ORDER_CLAIM_TIEBREAK = false
+  check("keel: nothing is ranked", ORD.slot_keepers(o, 5) == nil, "ranked")
+  C.ORDER_CLAIM_TIEBREAK = true
+end
+do
+  -- Keel: the old behaviour exactly.  The markers go on the take, and the
+  -- two new takers both keep the added slot.
+  C.ORDER_CLAIM_TIEBREAK = false
+  local a, b, c, all = slot_rig()
+  local oid = b.st.orders.held and b.st.orders.held.oid
+  check("keel: the new takers mark at once",
+        #b.st.orders.pings == 1 and #c.st.orders.pings == 1,
+        tostring(#b.st.orders.pings) .. " " .. tostring(#c.st.orders.pings))
+  pumpn(all, 201)
+  upd(all, 203)
+  check("keel: B and C both keep the added slot",
+        oid ~= nil and holds(b, oid) and holds(c, oid), "?")
+  C.ORDER_CLAIM_TIEBREAK = true
+end
+-- =========================================================================
 -- A NEW ORDER RETIRES EVERY OLDER ONE (ORDER_NEW_CLEARS_ALL, 2026-09-24).
 -- "I'm seeing bots go back to where I said 'go here' a while ago."
 -- =========================================================================

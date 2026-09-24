@@ -1674,6 +1674,32 @@ function M.decoy_keys(state, info, keys, taps)
   return keys, taps
 end
 
+-- ONE SLOT, ONE BOT (ORDER_CLAIM_TIEBREAK).  A repeat ping adds one slot to a
+-- ping order (anchor want + 1), and when the auction for it times out two
+-- bots can both see themselves as the cheapest and both take it: a 2-bot
+-- order with 3 holders.  The claims (o.gclaims, the same numbers on every
+-- bot: each holder's wire cost) are ranked the way the solo tiebreak ranks
+-- two claims -- lowest cost first, a tie to the lower player number -- and
+-- the first `want` keep the order.  Returns the kept holders in that order
+-- and the number of holders, or nil when there is nothing to rank: the knob
+-- is off, the order is not a ping order, or it went to a selection (every
+-- selected bot holds it with no auction, so `want` does not count them).
+function M.slot_keepers(o, oid)
+  if not C.ORDER_CLAIM_TIEBREAK then return nil end
+  local anc = o.anchors[oid]
+  local gc  = o.gclaims[oid]
+  if not (anc and gc) or anc.names then return nil end
+  local rank = {}
+  for pn, c in pairs(gc) do rank[#rank + 1] = { pn = pn, c = c } end
+  table.sort(rank, function(x, y)
+    if x.c ~= y.c then return x.c < y.c end
+    return x.pn < y.pn
+  end)
+  local keep = {}
+  for i = 1, math.min(anc.want or 1, #rank) do keep[i] = rank[i].pn end
+  return keep, #rank
+end
+
 -- group = true when several bots take the SAME order (all / nearby / a
 -- selection).  Then nobody acks straight away: each taker broadcasts its obc
 -- claim, and ORDER_AUCTION_TICKS later the lowest player number among the
@@ -1731,8 +1757,19 @@ local function take_order(state, world, info, spec, cost, now, group, stolen)
   tx(state, string.format("/info obc %d %d", spec.oid, ic))
   o.gclaims[spec.oid] = o.gclaims[spec.oid] or {}
   o.gclaims[spec.oid][state.player_number] = ic
+  -- A slot a repeat ping added (a ping order, not a selection) can be taken
+  -- twice, and the dearer taker lets it go again (M.slot_keepers).  Its "on
+  -- my way" marker waits out the claim window the way a solo ack does, so a
+  -- bot that loses the slot never shows the human a marker for it.
+  local anc = o.anchors[spec.oid]
+  local slot_wait = group and C.ORDER_CLAIM_TIEBREAK and anc and not anc.names
   if group then
     o.announce[spec.oid] = { due = now + (C.ORDER_AUCTION_TICKS or 10), spec = spec }
+    if slot_wait then
+      local pmx, pmy = M.target_tile(world, state, spec)
+      o.ack_due = { oid = spec.oid, due = now + (C.ORDER_AUCTION_TICKS or 10),
+                    line = nil, mx = pmx, my = pmy }
+    end
   elseif C.ORDER_CLAIM_TIEBREAK then
     -- ONE PING, ONE BOT: the line and the marker wait out the claim window,
     -- and go only if this bot still holds the order then (M.update).
@@ -1750,7 +1787,7 @@ local function take_order(state, world, info, spec, cost, now, group, stolen)
   -- who just gave an order, so it is always sent, and on a GROUP order every
   -- taker sends its own, which is what shows the human how many are coming.
   -- The chat ack is unchanged and still carries the words.
-  if group or not C.ORDER_CLAIM_TIEBREAK then
+  if (group and not slot_wait) or not C.ORDER_CLAIM_TIEBREAK then
     local pmx, pmy = M.target_tile(world, state, spec)
     if pmx and pmy then
       M.ping(state, _G.PING_KIND_ON_MY_WAY or 4, pmx, pmy)
@@ -2976,7 +3013,11 @@ local function ping_bot_command(state, world, info, sender, mx, my, now)
   clear_older_orders(state, info, spec.oid, now)
   o.known[spec.oid]   = { spec = spec, tick = now }
   note_last(o, sender, spec.oid)
-  o.anchors[spec.oid] = { sender = sender, mx = axm, my = aym, tick = now, want = 1 }
+  -- names = the order went to a SELECTION, which puts every selected bot on
+  -- it with no auction, so its holders are not counted against `want` (see
+  -- M.slot_keepers).
+  o.anchors[spec.oid] = { sender = sender, mx = axm, my = aym, tick = now, want = 1,
+                          names = (who.mode == "names") or nil }
   if kind == "attack_pill" then
     o.botcmd[sender] = { tid = tid, tick = now, oid = spec.oid }
   end
@@ -3345,6 +3386,32 @@ function M.update(state, world, info, now)
   end
   o.rx = {}
 
+  -- 1b. ONE SLOT, ONE BOT (ORDER_CLAIM_TIEBREAK; see M.slot_keepers).  More
+  --     holders than the order has slots: the dearest let go, quietly (obr,
+  --     no line, no ack, no marker), the same way the solo tiebreak's loser
+  --     does.  Every holder ranks the same claims, so they agree on who goes.
+  if o.held then
+    local oid = o.held.oid
+    local keep, n = M.slot_keepers(o, oid)
+    if keep and n > #keep and o.gclaims[oid][me] ~= nil then
+      local kept = false
+      for _, pn in ipairs(keep) do if pn == me then kept = true end end
+      if not kept then
+        print2(string.format("ORDER_SLOT_LOST t=%d oid=%d want=%d holders=%d",
+               now, oid, #keep, n))
+        local lost = o.held
+        release_held(state, info, nil, true)
+        if o.ack_due and o.ack_due.oid == oid then o.ack_due = nil end
+        -- As with the solo tiebreak's loser: a suicide run on this order's
+        -- pill goes too, since the bots that kept the order run it.
+        local run = state._suicide
+        if run and lost.kind == "attack_pill" and run.tid == lost.tid then
+          M.suicide_end(state, "order lost")
+        end
+      end
+    end
+  end
+
   -- 2. Settle auctions.  Closed once every active ally has answered, or
   --    after ORDER_AUCTION_TICKS — whichever comes first.
   for _, oid in ipairs(sorted_keys(o.auctions)) do
@@ -3409,7 +3476,15 @@ function M.update(state, world, info, now)
     local an = o.announce[oid]
     if an and now >= an.due then
       local low, n = nil, 0
-      for pn in pairs(o.gclaims[oid] or {}) do
+      -- A slot taken twice: only the holders that keep it are counted, so the
+      -- line does not name a bot whose release has not arrived yet.
+      local keep = M.slot_keepers(o, oid)
+      local set = o.gclaims[oid] or {}
+      if keep then
+        set = {}
+        for _, pn in ipairs(keep) do set[pn] = true end
+      end
+      for pn in pairs(set) do
         n = n + 1
         if not low or pn < low then low = pn end
       end
@@ -3432,7 +3507,7 @@ function M.update(state, world, info, now)
   if ad and now >= ad.due then
     o.ack_due = nil
     if o.held and o.held.oid == ad.oid then
-      sayg(state, ad.line)
+      if ad.line then sayg(state, ad.line) end
       if ad.mx and ad.my then
         M.ping(state, _G.PING_KIND_ON_MY_WAY or 4, ad.mx, ad.my)
       end
