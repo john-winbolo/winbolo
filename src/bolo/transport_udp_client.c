@@ -3484,12 +3484,25 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
     }
 
     case PACKET_LOBBY_MAP_UPLOAD_DONE: {
-        /* [header 8] [status 1] [pathLen 1] [path N] */
+        /* [header 8] [status 1] [pathLen 1] [path N] for a map. A script's
+         * reply carries [reason 1] [a 2 BE] [b 2 BE] between the status and
+         * the length: why it was refused, for the frontend to say in the
+         * player's language, and the numbers the line needs. */
         if (!c->clientSim || len < PACKET_HEADER_SIZE + 2) break;
         if (c->clientSim->lobbyMapUploadStatus != 1 &&
             c->clientSim->lobbyMapUploadStatus != 2) break;
         int pos = PACKET_HEADER_SIZE;
         uint8_t status = buf[pos++];
+        if (c->clientSim->lobbyUploadKind == UPLOAD_KIND_SCRIPT) {
+            if (len < pos + 5 + 1) break;
+            c->clientSim->lobbyScriptRefuseReason = buf[pos++];
+            c->clientSim->lobbyScriptRefuseA =
+                (int32_t)(((uint16_t)buf[pos] << 8) | buf[pos + 1]);
+            pos += 2;
+            c->clientSim->lobbyScriptRefuseB =
+                (int32_t)(((uint16_t)buf[pos] << 8) | buf[pos + 1]);
+            pos += 2;
+        }
         if (status == 0) {
             if (!wireTakeU8Field(buf, len, &pos,
                                  c->clientSim->lobbyMapUploadFinalPath,
@@ -3504,8 +3517,8 @@ static void udpClientProcessPacket(TransportUdpClientCtx *c,
             c->clientSim->lobbyMapListReady = false;
             c->clientSim->lobbyMapListSeq++;
         } else {
-            /* A refused script carries the server's reason where the path
-             * would be; keep it for the frontend to show. */
+            /* A refused script carries the operator's line where the path
+             * would be; kept for the log, never shown. */
             if (c->clientSim->lobbyUploadKind == UPLOAD_KIND_SCRIPT) {
                 (void)wireTakeU8Field(buf, len, &pos,
                                       c->clientSim->lobbyMapUploadFinalPath,
@@ -5315,6 +5328,9 @@ static bool udpClientUploadStart(TransportUdpClientCtx *c,
         c->clientSim->lobbyMapUploadFinalPath[0] = '\0';
         c->clientSim->lobbyMapUseLocalNeedsFallback = false;
         c->clientSim->lobbyUploadKind = kind;
+        c->clientSim->lobbyScriptRefuseReason = SCRIPT_REFUSE_NONE;
+        c->clientSim->lobbyScriptRefuseA = 0;
+        c->clientSim->lobbyScriptRefuseB = 0;
     }
 
     if (relPath != NULL && relPath[0] != '\0' && md5Hex != NULL) {

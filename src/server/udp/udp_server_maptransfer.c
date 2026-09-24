@@ -327,8 +327,9 @@ static size_t uploadNameSuffixLen(const char *name, size_t nameLen,
 /* Whether one more script, name at len bytes, fits the persist caps. Only
  * dir is counted, and in it only the .scenario and .lua files directly there:
  * a dot file is an upload still being written, and nothing below dir is
- * listed. A file already there under name is replaced rather than joined, so
- * it counts by the change in size and not as one more file. */
+ * listed. A file already there under name, in whatever case, is replaced
+ * rather than joined — the accept callback renames onto the spelling it
+ * finds — so it counts by the change in size and not as one more file. */
 bool udpServerScriptUploadFitsCaps(const char *dir, const char *name,
                                    uint32_t len) {
     char       **names;
@@ -361,23 +362,17 @@ bool udpServerScriptUploadFitsCaps(const char *dir, const char *name,
         if (!SDL_GetPathInfo(path, &info) || info.type != SDL_PATHTYPE_FILE) {
             continue;
         }
+        /* The one this upload replaces is left out of the count. */
+        if (!replacing && SDL_strcasecmp(n, name) == 0) {
+            replacing = true;
+            continue;
+        }
         files++;
         bytes += (uint64_t)info.size;
     }
     SDL_free(names);
 
-    /* The name itself, asked of the file system rather than matched against
-     * the listing, so a replacement is found the way the rename will find
-     * it on this platform. */
-    SDL_snprintf(path, sizeof(path), "%s/%s", dir, name);
-    if (SDL_GetPathInfo(path, &info) && info.type == SDL_PATHTYPE_FILE) {
-        replacing = true;
-        bytes = (bytes >= (uint64_t)info.size) ? bytes - (uint64_t)info.size
-                                               : 0;
-    }
-    if (!replacing) {
-        files++;
-    }
+    files++;
     bytes += len;
     return files <= (int)udpServer.scriptUploadMaxFiles &&
            bytes <= (uint64_t)udpServer.scriptUploadMaxStorageBytes;
@@ -386,40 +381,46 @@ bool udpServerScriptUploadFitsCaps(const char *dir, const char *name,
 /* A finished script upload: re-check the persist caps, since another upload
  * may have landed since this one's BEGIN, then hand the bytes to the
  * registered accept callback with the directory the sim resolved for the
- * policy, free the receive buffer, clear the slot, and reply MAP_UPLOAD_DONE —
- * status 0 and the Uploads/ path it landed at, or a reject code and the
- * reason: LOBBY_REJECT_UPLOAD_LIMIT_HIT for the caps,
- * LOBBY_REJECT_UPLOAD_DISABLED for a sim with nowhere to put it, and
- * LOBBY_REJECT_INVALID with the callback's reason. */
+ * policy, free the receive buffer, clear the slot, and reply MAP_UPLOAD_DONE
+ * in its script shape: [status 1][reason 1][a 2 BE][b 2 BE][len 1][text N].
+ * status is 0 and text the file's name as the listing will show it, or a
+ * reject code — LOBBY_REJECT_UPLOAD_LIMIT_HIT for the caps,
+ * LOBBY_REJECT_UPLOAD_DISABLED for a sim with nowhere to put it,
+ * LOBBY_REJECT_INVALID for the callback's refusal — with the SCRIPT_REFUSE_*
+ * reason and its two numbers, which the client says in its own language,
+ * and the operator's line as text. The name and not a path: where the
+ * server keeps its files is its own business. */
 static void serverFinishScriptUpload(ServerSim *sim, int clientIdx) {
     uint32_t total = udpServer.clientUploadTotal[clientIdx];
     const char *name = udpServer.clientUploadName[clientIdx];
     uint8_t *bytes = udpServer.clientScriptUploadBuf[clientIdx];
     bool persist = (udpServer.scriptUploadPolicy == SCRIPT_UPLOAD_PERSIST);
     const char *dir = serverSimGetScriptUploadDir(sim);
-    char err[256];
+    ScriptUploadRefusal why;
     char reply[256];
     bool accepted = false;
     uint8_t status;
 
-    err[0] = '\0';
+    memset(&why, 0, sizeof(why));
     if (dir[0] == '\0') {
         status = LOBBY_REJECT_UPLOAD_DISABLED;
-        SDL_strlcpy(err, "this server takes no scripts", sizeof(err));
+        why.reason = SCRIPT_REFUSE_SCRIPTS_OFF;
+        SDL_strlcpy(why.text, "this server takes no scripts",
+                    sizeof(why.text));
     } else if (persist && !udpServerScriptUploadFitsCaps(dir, name, total)) {
         status = LOBBY_REJECT_UPLOAD_LIMIT_HIT;
-        SDL_strlcpy(err, "the server's script uploads are full", sizeof(err));
+        SDL_strlcpy(why.text, "the server's script uploads are full",
+                    sizeof(why.text));
     } else {
         accepted = (bytes != NULL) &&
                    serverSimScriptUploadAccept(sim, dir, name, bytes, total,
-                                               err, sizeof(err));
+                                               &why);
         status = accepted ? 0 : LOBBY_REJECT_INVALID;
     }
     if (accepted) {
-        SDL_snprintf(reply, sizeof(reply), "Uploads/%s/%s",
-                     persist ? "Scripts" : "Session", name);
+        SDL_strlcpy(reply, name, sizeof(reply));
     } else {
-        SDL_strlcpy(reply, err, sizeof(reply));
+        SDL_strlcpy(reply, why.text, sizeof(reply));
     }
 
     /* The receiver sets its own pointer to NULL only after this returns, so
@@ -438,11 +439,22 @@ static void serverFinishScriptUpload(ServerSim *sim, int clientIdx) {
 
     {
         int relLen = (int)SDL_strlen(reply);
-        uint8_t done[PACKET_HEADER_SIZE + 2 + 256];
+        uint8_t done[PACKET_HEADER_SIZE + 1 + 1 + 2 + 2 + 1 + 256];
         int dpos = PACKET_HEADER_SIZE;
+        /* The two numbers are a line and two api versions; 16 bits hold
+         * any of them, and one past that reads as the top. */
+        uint16_t a = (why.a < 0) ? 0 : (why.a > 0xFFFF) ? 0xFFFF
+                                                        : (uint16_t)why.a;
+        uint16_t b = (why.b < 0) ? 0 : (why.b > 0xFFFF) ? 0xFFFF
+                                                        : (uint16_t)why.b;
         if (relLen > 255) relLen = 255;
         packHeader(done, PACKET_LOBBY_MAP_UPLOAD_DONE, 0);
         done[dpos++] = status;
+        done[dpos++] = why.reason;
+        done[dpos++] = (uint8_t)(a >> 8);
+        done[dpos++] = (uint8_t)(a & 0xFF);
+        done[dpos++] = (uint8_t)(b >> 8);
+        done[dpos++] = (uint8_t)(b & 0xFF);
         done[dpos++] = (uint8_t)relLen;
         memcpy(done + dpos, reply, relLen);
         dpos += relLen;

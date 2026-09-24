@@ -794,6 +794,12 @@ struct ClientSim {
     /* UPLOAD_KIND_MAP / _SCRIPT: which upload the three fields above
      * describe. Set when an upload starts; zero (MAP) before any. */
     uint8_t  lobbyUploadKind;
+    /* Why the server refused a script (SCRIPT_REFUSE_*) and the two numbers
+     * that reason carries, off the DONE reply. NONE and zeros while an
+     * upload runs, after one the server took, and for a map. */
+    uint8_t  lobbyScriptRefuseReason;
+    int32_t  lobbyScriptRefuseA;
+    int32_t  lobbyScriptRefuseB;
     /* Set by the PACKET_LOBBY_MAP_USE_LOCAL_NACK handler when the
      * server can't fulfil the MD5-skip-upload shortcut. The Upload
      * tab's pump loop notices this on the next frame and falls back

@@ -6849,18 +6849,48 @@ static int scnDirDetailsCb(void *ctx, const char *dir, const char *file,
 
 static bool scnHasExt(const char *name, const char *ext);
 
-/* One refusal: the reason in err for the sender, and the same line to the
-   operator with the file named. */
-static void scnUploadRefuse(char *err, size_t errLen, const char *name,
+/* One refusal: the code and its numbers for the sender, who says it in their
+   own language, and the line to the operator with the file named. The line
+   goes on the wire too, for the log a client keeps, and never on a screen. */
+static void scnUploadRefuse(ScriptUploadRefusal *why, const char *name,
+                            uint8_t reason, int a, int b,
                             const char *fmt, ...) {
-    char    why[SCN_ERR_LEN];
     va_list ap;
 
+    why->reason = reason;
+    why->a      = a;
+    why->b      = b;
     va_start(ap, fmt);
-    vsnprintf(why, sizeof(why), fmt, ap);
+    vsnprintf(why->text, sizeof(why->text), fmt, ap);
     va_end(ap);
-    scnFmt(err, errLen, "%s", why);
-    scnSay(NULL, 0, "scenario: upload %s refused: %s", name, why);
+    scnSay(NULL, 0, "scenario: upload %s refused: %s", name, why->text);
+}
+
+/* The spelling the landing directory already holds for name, ignoring case,
+   or name itself when it holds none. The listing folds two spellings of one
+   name together, so an upload that differs from its earlier self only in
+   case replaces it rather than landing beside it as a second file the
+   listing would hide; and on a file system that folds case the rename is
+   then onto the name it will find. A directory that cannot be read answers
+   name, and the write after it reports the directory on its own. */
+static void scnUploadDestName(const char *dir, const char *name, char *out,
+                              size_t outLen) {
+    char **names;
+    int    count = 0;
+    int    i;
+
+    scnFmt(out, outLen, "%s", name);
+    names = SDL_GlobDirectory(dir, "*", 0, &count);
+    if (names == NULL) return;
+    for (i = 0; i < count; i++) {
+        if (names[i] != NULL && strchr(names[i], '/') == NULL &&
+            strchr(names[i], '\\') == NULL &&
+            SDL_strcasecmp(names[i], name) == 0) {
+            scnFmt(out, outLen, "%s", names[i]);
+            break;
+        }
+    }
+    SDL_free(names);
 }
 
 /* The accept callback serverSimSetScriptUploadAccept takes, with the sim as
@@ -6878,14 +6908,16 @@ static void scnUploadRefuse(char *err, size_t errLen, const char *name,
 
    The bytes go to a dot file in dir and are renamed over <dir>/<name> only
    once they have passed, so a refusal or a failed write leaves nothing, and
-   a file already there under name is replaced in one step. */
+   a file already there under name, in whatever case, is replaced in one
+   step. */
 static bool scnUploadAccept(void *ctx, const char *dir, const char *name,
                             const uint8_t *bytes, uint32_t len,
-                            char *err, size_t errLen) {
+                            ScriptUploadRefusal *why) {
     const ServerSim   *sim = (const ServerSim *)ctx;
     char               dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
     char               tmp[SCN_SCRIPT_PATH_MAX];
     char               dest[SCN_SCRIPT_PATH_MAX];
+    char               destName[SCN_DIR_FILE_LEN];
     ScnValidateResult *check;
     const ScenarioManifest *m;
     bool               isPackage;
@@ -6894,21 +6926,21 @@ static bool scnUploadAccept(void *ctx, const char *dir, const char *name,
     int                count;
     int                d;
 
-    if (err != NULL && errLen > 0) {
-        err[0] = '\0';
-    }
+    memset(why, 0, sizeof(*why));
     if (dir == NULL || dir[0] == '\0' || name == NULL || name[0] == '\0' ||
         bytes == NULL || len == 0) {
-        scnFmt(err, errLen, "the upload is empty");
+        scnFmt(why->text, sizeof(why->text), "the upload is empty");
         return false;
     }
     if (!scnEnabled) {
-        scnUploadRefuse(err, errLen, name, "scripts are off on this server");
+        scnUploadRefuse(why, name, SCRIPT_REFUSE_SCRIPTS_OFF, 0, 0,
+                        "scripts are off on this server");
         return false;
     }
     isPackage = scnHasExt(name, SCN_SCENARIO_PACKAGE_EXT);
     if (!isPackage && !scnHasExt(name, SCN_SCENARIO_SCRIPT_EXT)) {
-        scnUploadRefuse(err, errLen, name, "not a .scenario or .lua file");
+        scnUploadRefuse(why, name, SCRIPT_REFUSE_NONE, 0, 0,
+                        "not a .scenario or .lua file");
         return false;
     }
 
@@ -6921,29 +6953,31 @@ static bool scnUploadAccept(void *ctx, const char *dir, const char *name,
 
         snprintf(one, sizeof(one), "%s/%s", dirs[d], name);
         if (scnScriptExists(one)) {
-            scnUploadRefuse(err, errLen, name,
+            scnUploadRefuse(why, name, SCRIPT_REFUSE_NAME_TAKEN, 0, 0,
                             "this server already offers a script named %s",
                             name);
             return false;
         }
     }
 
-    if ((size_t)snprintf(tmp, sizeof(tmp), "%s/" SCN_UPLOAD_TEMP_PREFIX "%s",
-                         dir, name) >= sizeof(tmp) ||
-        (size_t)snprintf(dest, sizeof(dest), "%s/%s", dir, name) >=
-            sizeof(dest)) {
-        scnUploadRefuse(err, errLen, name,
-                        "the uploads directory's path is too long");
+    if (!SDL_CreateDirectory(dir)) {
+        scnUploadRefuse(why, name, SCRIPT_REFUSE_WRITE, 0, 0,
+                        "the uploads directory could not be made");
         return false;
     }
-    if (!SDL_CreateDirectory(dir)) {
-        scnUploadRefuse(err, errLen, name,
-                        "the uploads directory could not be made");
+    scnUploadDestName(dir, name, destName, sizeof(destName));
+    if ((size_t)snprintf(tmp, sizeof(tmp), "%s/" SCN_UPLOAD_TEMP_PREFIX "%s",
+                         dir, name) >= sizeof(tmp) ||
+        (size_t)snprintf(dest, sizeof(dest), "%s/%s", dir, destName) >=
+            sizeof(dest)) {
+        scnUploadRefuse(why, name, SCRIPT_REFUSE_WRITE, 0, 0,
+                        "the uploads directory's path is too long");
         return false;
     }
     f = fopen(tmp, "wb");
     if (f == NULL) {
-        scnUploadRefuse(err, errLen, name, "the file could not be written");
+        scnUploadRefuse(why, name, SCRIPT_REFUSE_WRITE, 0, 0,
+                        "the file could not be written");
         return false;
     }
     ok = fwrite(bytes, 1, len, f) == (size_t)len;
@@ -6952,7 +6986,8 @@ static bool scnUploadAccept(void *ctx, const char *dir, const char *name,
     }
     if (!ok) {
         SDL_RemovePath(tmp);
-        scnUploadRefuse(err, errLen, name, "the file could not be written");
+        scnUploadRefuse(why, name, SCRIPT_REFUSE_WRITE, 0, 0,
+                        "the file could not be written");
         return false;
     }
 
@@ -6961,13 +6996,14 @@ static bool scnUploadAccept(void *ctx, const char *dir, const char *name,
     check = (ScnValidateResult *)calloc(1, sizeof(*check));
     if (check == NULL) {
         SDL_RemovePath(tmp);
-        scnUploadRefuse(err, errLen, name, "no memory to read it");
+        scnUploadRefuse(why, name, SCRIPT_REFUSE_WRITE, 0, 0,
+                        "no memory to read it");
         return false;
     }
     if (isPackage) {
         ok = scnDirReadPackage(tmp, &check->manifest);
         if (!ok) {
-            scnUploadRefuse(err, errLen, name,
+            scnUploadRefuse(why, name, SCRIPT_REFUSE_MANIFEST, 0, 0,
                             "the package's manifest will not parse");
         }
     } else {
@@ -6976,27 +7012,28 @@ static bool scnUploadAccept(void *ctx, const char *dir, const char *name,
         if (!ok) {
             int line = (check->count > 0) ? check->issues[0].line : 0;
             if (line > 0) {
-                scnUploadRefuse(err, errLen, name,
+                scnUploadRefuse(why, name, SCRIPT_REFUSE_SYNTAX, line, 0,
                                 "the script will not load: error on line %d",
                                 line);
             } else {
-                scnUploadRefuse(err, errLen, name,
+                scnUploadRefuse(why, name, SCRIPT_REFUSE_NO_TABLE, 0, 0,
                                 "the script declares no scenario table");
             }
         }
     }
     m = &check->manifest;
     if (ok && m->api > SCENARIO_API_VERSION) {
-        scnUploadRefuse(err, errLen, name,
+        scnUploadRefuse(why, name, SCRIPT_REFUSE_API, m->api,
+                        SCENARIO_API_VERSION,
                         "it asks for api %d and this server runs api %d",
                         m->api, SCENARIO_API_VERSION);
         ok = false;
     } else if (ok && (int)m->kind >= (int)scnKindUnknown) {
-        scnUploadRefuse(err, errLen, name,
+        scnUploadRefuse(why, name, SCRIPT_REFUSE_KIND, 0, 0,
                         "it declares a kind this server does not know");
         ok = false;
     } else if (ok && m->bound) {
-        scnUploadRefuse(err, errLen, name,
+        scnUploadRefuse(why, name, SCRIPT_REFUSE_BOUND, 0, 0,
                         "it is bound to a map; a bound scenario is sent as "
                         "its map");
         ok = false;
@@ -7009,10 +7046,14 @@ static bool scnUploadAccept(void *ctx, const char *dir, const char *name,
 
     /* SDL_RenamePath replaces the destination in one step on every platform,
        so a file already there under name is swapped rather than removed and
-       written again; scenario_chunk.c's pack write says why that matters. */
+       written again; scenario_chunk.c's pack write says why that matters.
+       SDL's own error line names the server's paths, so it goes to the
+       console alone and not to the sender. */
     if (!SDL_RenamePath(tmp, dest)) {
-        scnUploadRefuse(err, errLen, name, "the file could not be put in "
-                        "place: %s", SDL_GetError());
+        scnSay(NULL, 0, "scenario: upload %s: rename to %s failed: %s", name,
+               dest, SDL_GetError());
+        scnUploadRefuse(why, name, SCRIPT_REFUSE_WRITE, 0, 0,
+                        "the file could not be put in place");
         SDL_RemovePath(tmp);
         return false;
     }

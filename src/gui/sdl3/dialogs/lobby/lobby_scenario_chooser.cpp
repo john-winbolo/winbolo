@@ -166,8 +166,8 @@ struct LobbyScenarioRow {
  * on is made once more, and after a second the dialog stops waiting.
  *
  * s_rejectFile is the row that shows why the server refused it, until
- * s_rejectUntil. The code and the server's reason are kept rather than the
- * text, so the line is always in the language on screen. */
+ * s_rejectUntil. The code, the server's reason and its numbers are kept
+ * rather than any text, so the line is always in the language on screen. */
 #define LOBBY_SCENARIO_REJECT_MS 5000
 static bool     s_sending = false;
 static char     s_sendFile[SERVER_SCENARIO_FILE_LEN]   = "";
@@ -177,7 +177,9 @@ static int      s_awaitAsks = 0;
 #define LOBBY_SCENARIO_AWAIT_ASKS 2
 static char     s_rejectFile[SERVER_SCENARIO_FILE_LEN] = "";
 static uint8_t  s_rejectCode = 0;
-static char     s_rejectReason[256] = "";
+static uint8_t  s_rejectReason = 0;
+static int32_t  s_rejectNumberA = 0;
+static int32_t  s_rejectNumberB = 0;
 static Uint64   s_rejectUntil = 0;
 
 /* Whether a catalogue row is a mod. A mod keeps the round's win condition;
@@ -1544,13 +1546,38 @@ static void lobbyScenarioRemoteTake(ClientSim *cs) {
 /* Why the server refused the file this dialog sent. The codes are
  * LOBBY_REJECT_* in netpacks.h, which a gui translation unit cannot reach,
  * so they are numbered here the way the map chooser's Upload tab numbers
- * them. 3 is the one refusal that carries the server's own words. */
+ * them. 3 is the refusal the server's accept callback made, and that one
+ * comes with a SCRIPT_REFUSE_* reason and the numbers its line needs, so it
+ * is said in the language on screen like the rest. */
 static const char *lobbyScenarioSendRefusal(void) {
     switch (s_rejectCode) {
-        case 3:
-            return s_rejectReason[0] != '\0'
-                       ? s_rejectReason
-                       : langGetText(STR_DLGLOBBY_UPLOAD_ERR_REJECTED);
+        case 3: {
+            MessageArgs args = {};
+            args.number  = (int)s_rejectNumberA;
+            args.number2 = (int)s_rejectNumberB;
+            switch (s_rejectReason) {
+                case SCRIPT_REFUSE_SCRIPTS_OFF:
+                    return langGetText(STR_DLGLOBBY_SCRIPT_ERR_DISABLED);
+                case SCRIPT_REFUSE_NAME_TAKEN:
+                    return langGetText(STR_DLGLOBBY_SCRIPT_ERR_NAME_TAKEN);
+                case SCRIPT_REFUSE_WRITE:
+                    return langGetText(STR_DLGLOBBY_SCRIPT_ERR_WRITE);
+                case SCRIPT_REFUSE_MANIFEST:
+                    return langGetText(STR_DLGLOBBY_SCRIPT_ERR_MANIFEST);
+                case SCRIPT_REFUSE_SYNTAX:
+                    return langGetTextFmt(STR_DLGLOBBY_SCRIPT_ERR_SYNTAX, &args);
+                case SCRIPT_REFUSE_NO_TABLE:
+                    return langGetText(STR_DLGLOBBY_SCRIPT_ERR_NO_TABLE);
+                case SCRIPT_REFUSE_API:
+                    return langGetTextFmt(STR_DLGLOBBY_SCRIPT_ERR_API, &args);
+                case SCRIPT_REFUSE_KIND:
+                    return langGetText(STR_DLGLOBBY_SCRIPT_ERR_KIND);
+                case SCRIPT_REFUSE_BOUND:
+                    return langGetText(STR_DLGLOBBY_SCRIPT_ERR_BOUND);
+                default:
+                    return langGetText(STR_DLGLOBBY_UPLOAD_ERR_REJECTED);
+            }
+        }
         case 4: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_INFLIGHT);
         case 5: return langGetText(STR_DLGLOBBY_SCRIPT_ERR_DISABLED);
         case 6: return langGetText(STR_DLGLOBBY_UPLOAD_ERR_FULL);
@@ -1629,10 +1656,11 @@ static void lobbyScenarioSendFollow(ClientSim *cs, LobbyScenarioRow *rows,
             clientSimNetSendLobbyScenarioListRequest(cs);
             s_localRead = false;
         } else if (status == 4) {
-            s_sending    = false;
-            s_rejectCode = clientSimGetLobbyMapUploadRejectCode(cs);
-            SDL_strlcpy(s_rejectReason, clientSimGetLobbyMapUploadFinalPath(cs),
-                        sizeof(s_rejectReason));
+            s_sending       = false;
+            s_rejectCode    = clientSimGetLobbyMapUploadRejectCode(cs);
+            s_rejectReason  = clientSimGetLobbyScriptRefuseReason(cs);
+            s_rejectNumberA = clientSimGetLobbyScriptRefuseNumber(cs, 0);
+            s_rejectNumberB = clientSimGetLobbyScriptRefuseNumber(cs, 1);
             SDL_strlcpy(s_rejectFile, s_sendFile, sizeof(s_rejectFile));
             s_rejectUntil = SDL_GetTicks() + LOBBY_SCENARIO_REJECT_MS;
         }

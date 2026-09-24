@@ -4355,16 +4355,19 @@ bool serverSimHasScriptUploadAccept(const ServerSim *sim) {
 
 bool serverSimScriptUploadAccept(const ServerSim *sim, const char *dir,
                                  const char *name, const uint8_t *bytes,
-                                 uint32_t len, char *err, size_t errLen) {
-    if (err != NULL && errLen > 0) err[0] = '\0';
+                                 uint32_t len, ScriptUploadRefusal *why) {
+    ScriptUploadRefusal unasked;  /* for a caller that wants no reason */
+
+    if (why == NULL) why = &unasked;
+    memset(why, 0, sizeof(*why));
     if (sim == NULL || sim->scriptUploadAccept == NULL) {
-        if (err != NULL && errLen > 0) {
-            SDL_strlcpy(err, "this server cannot take scripts", errLen);
-        }
+        why->reason = SCRIPT_REFUSE_SCRIPTS_OFF;
+        SDL_strlcpy(why->text, "this server cannot take scripts",
+                    sizeof(why->text));
         return false;
     }
     return sim->scriptUploadAccept(sim->scriptUploadAcceptCtx, dir, name,
-                                   bytes, len, err, errLen);
+                                   bytes, len, why);
 }
 
 void serverSimSetScenarioMapChanged(ServerSim *sim,

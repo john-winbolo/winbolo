@@ -667,7 +667,9 @@ void printArgs() {
   fprintf(stderr, "-allow-unsafe-scripts - Run scenario scripts with the full Lua standard\n");
   fprintf(stderr, "                library, no memory cap, no time limits and precompiled chunks\n");
   fprintf(stderr, "                accepted. Reaches uploaded maps' scripts and -validate too;\n");
-  fprintf(stderr, "                -scriptuploads off still refuses uploads. Only for trusted content.\n");
+  fprintf(stderr, "                -scriptuploads off still refuses uploads. A script a player\n");
+  fprintf(stderr, "                sends runs its top level the moment it lands, before any host\n");
+  fprintf(stderr, "                picks it. Only for trusted content.\n");
   fprintf(stderr, "-validate <File> - Check the scenario script beside a map and exit without\n");
   fprintf(stderr, "                starting a server. Each problem is printed as\n");
   fprintf(stderr, "                file:line: key: message. Exits 0 when the map is\n");

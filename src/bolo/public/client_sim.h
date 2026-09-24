@@ -1420,6 +1420,13 @@ const char *clientSimGetLobbyMapUploadFinalPath(const ClientSim *cs);
  * UPLOAD_KIND_SCRIPT (upload_policy.h), set when an upload starts.
  * UPLOAD_KIND_MAP for NULL and before any upload. */
 uint8_t     clientSimGetLobbyUploadKind(const ClientSim *cs);
+/* Why the server refused a script upload, one of SCRIPT_REFUSE_*
+ * (upload_policy.h), and the two numbers the reason carries: which 0 is the
+ * first (a line, or the api the script asks for) and 1 the second (the api
+ * the server runs). SCRIPT_REFUSE_NONE and 0 for NULL, for a map, while an
+ * upload runs and after one the server took. */
+uint8_t     clientSimGetLobbyScriptRefuseReason(const ClientSim *cs);
+int32_t     clientSimGetLobbyScriptRefuseNumber(const ClientSim *cs, int which);
 /* True (and clears the flag) if the server NACK'd a USE_LOCAL request
  * since the last call — drives the BEGIN/CHUNK fallback inside the
  * UDP transport's upload pump. No frontend caller. */

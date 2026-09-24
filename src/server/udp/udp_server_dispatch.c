@@ -891,29 +891,32 @@ static void handleLobbyMapUseLocal(ServerSim *sim, uint8_t *buf, int len,
  * already offers: the merged listing holds it and the landing directory does
  * not. A name the landing directory holds is the uploader's own earlier file,
  * and sending it again replaces it. The listing merges names without regard
- * to case, so the match here does the same. The host's accept callback asks
- * again, directory by directory, when the bytes are in. */
+ * to case, so the match here does the same, and the landing directory is
+ * asked for the listing's spelling rather than the wire's, so a file sent
+ * again in another case is still the uploader's own. The host's accept
+ * callback asks again, directory by directory, when the bytes are in. */
 static bool lobbyScriptNameTaken(ServerSim *sim, const char *name) {
     ScnDirEntry *rows;
     char         path[FILENAME_MAX];
+    char         listed[SCN_DIR_FILE_LEN];
     SDL_PathInfo info;
     int          got;
     int          i;
-    bool         listed = false;
 
     rows = (ScnDirEntry *)calloc(LOBBY_SCENARIO_LIST_MAX, sizeof(*rows));
     if (rows == NULL) return false;
     got = serverSimScenarioListDir(sim, rows, LOBBY_SCENARIO_LIST_MAX);
+    listed[0] = '\0';
     for (i = 0; i < got; i++) {
         if (SDL_strcasecmp(rows[i].file, name) == 0) {
-            listed = true;
+            SDL_strlcpy(listed, rows[i].file, sizeof(listed));
             break;
         }
     }
     free(rows);
-    if (!listed) return false;
+    if (listed[0] == '\0') return false;
     SDL_snprintf(path, sizeof(path), "%s/%s",
-                 serverSimGetScriptUploadDir(sim), name);
+                 serverSimGetScriptUploadDir(sim), listed);
     return !(SDL_GetPathInfo(path, &info) && info.type == SDL_PATHTYPE_FILE);
 }
 

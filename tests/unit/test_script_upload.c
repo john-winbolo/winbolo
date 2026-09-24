@@ -224,7 +224,7 @@ typedef struct {
 
 static bool test_accept(void *ctx, const char *dir, const char *name,
                         const uint8_t *bytes, uint32_t len,
-                        char *err, size_t errLen) {
+                        ScriptUploadRefusal *why) {
     AcceptLog *log = (AcceptLog *)ctx;
     log->calls++;
     SDL_strlcpy(log->dir, dir != NULL ? dir : "", sizeof(log->dir));
@@ -234,7 +234,9 @@ static bool test_accept(void *ctx, const char *dir, const char *name,
     if (log->bytes != NULL && len > 0) memcpy(log->bytes, bytes, len);
     log->len = len;
     if (!log->answer) {
-        SDL_strlcpy(err, "bad manifest: line 3", errLen);
+        why->reason = SCRIPT_REFUSE_SYNTAX;
+        why->a      = 3;
+        SDL_strlcpy(why->text, "bad manifest: line 3", sizeof(why->text));
         return false;
     }
     return true;
@@ -527,14 +529,17 @@ int run_loopback_script_upload_at_cap(void) {
     UT_ASSERT(reject == 0);
     UT_ASSERT(kind == UPLOAD_KIND_SCRIPT);
     UT_ASSERT(bufFreed);
-    UT_ASSERT_MSG(strcmp(finalPath, "Uploads/Session/big.scenario") == 0,
+    /* The name as the listing will show it, and not where the server keeps
+     * it. */
+    UT_ASSERT_MSG(strcmp(finalPath, "big.scenario") == 0,
                   "final path '%s'", finalPath);
 
     UT_ASSERT_MSG(log.calls == 1, "accept called %d times", log.calls);
     UT_ASSERT_MSG(strcmp(log.name, "big.scenario") == 0, "name '%s'", log.name);
+    /* The session directory under the map root, named for the server's
+     * port so two servers on one root do not empty each other's. */
     dirLen = strlen(log.dir);
-    UT_ASSERT_MSG(dirLen >= 16 &&
-                  strcmp(log.dir + dirLen - 16, "/Uploads/Session") == 0,
+    UT_ASSERT_MSG(dirLen > 0 && strstr(log.dir, "/Uploads/Session-") != NULL,
                   "dir '%s'", log.dir);
     UT_ASSERT_MSG(log.len == size, "callback got %u bytes, expected %u",
                   (unsigned)log.len, (unsigned)size);
@@ -825,11 +830,16 @@ static bool up_listed(ServerSim *sim, const char *file, char *nameOut,
     return found;
 }
 
-/* One scratch file sent through the client, pumped until DONE. */
+/* One scratch file sent through the client, pumped until DONE. reason and
+ * its two numbers are the DONE reply's SCRIPT_REFUSE_* bytes as the client
+ * read them. */
 typedef struct {
     int     settledAt;
     uint8_t status;
     uint8_t reject;
+    uint8_t reason;
+    int32_t a;
+    int32_t b;
     char    finalPath[256];
 } UpResult;
 
@@ -841,6 +851,9 @@ static void up_send(LoopbackHarness *h, const char *path, UpResult *r) {
                                             pred_upload_settled, NULL);
     r->status = clientSimGetLobbyMapUploadStatus(h->cs);
     r->reject = clientSimGetLobbyMapUploadRejectCode(h->cs);
+    r->reason = clientSimGetLobbyScriptRefuseReason(h->cs);
+    r->a      = clientSimGetLobbyScriptRefuseNumber(h->cs, 0);
+    r->b      = clientSimGetLobbyScriptRefuseNumber(h->cs, 1);
     SDL_strlcpy(r->finalPath, clientSimGetLobbyMapUploadFinalPath(h->cs),
                 sizeof(r->finalPath));
 }
@@ -945,8 +958,9 @@ static int body_lands_listed(LoopbackHarness *h, int slot, const UpDirs *d) {
     UT_ASSERT_MSG(r.settledAt >= 0, "upload never settled");
     UT_ASSERT_MSG(r.status == 3, "status %d reject %d path '%s'",
                   (int)r.status, (int)r.reject, r.finalPath);
-    UT_ASSERT_MSG(strcmp(r.finalPath, "Uploads/Session/fast.lua") == 0,
+    UT_ASSERT_MSG(strcmp(r.finalPath, "fast.lua") == 0,
                   "final path '%s'", r.finalPath);
+    UT_ASSERT_MSG(r.reason == SCRIPT_REFUSE_NONE, "reason %d", (int)r.reason);
     UT_ASSERT(up_file_exists(d->landing, "fast.lua"));
     /* The file and nothing else: the temporary it was written through went
      * with the rename. */
@@ -984,7 +998,7 @@ static int body_package_listed(LoopbackHarness *h, int slot,
     UT_ASSERT_MSG(r.settledAt >= 0, "upload never settled");
     UT_ASSERT_MSG(r.status == 3, "status %d reject %d path '%s'",
                   (int)r.status, (int)r.reject, r.finalPath);
-    UT_ASSERT_MSG(strcmp(r.finalPath, "Uploads/Session/raid.scenario") == 0,
+    UT_ASSERT_MSG(strcmp(r.finalPath, "raid.scenario") == 0,
                   "final path '%s'", r.finalPath);
     UT_ASSERT(up_file_exists(d->landing, "raid.scenario"));
     UT_ASSERT_MSG(listed, "the uploaded package is not listed");
@@ -1015,8 +1029,9 @@ static int body_bound_refused(LoopbackHarness *h, int slot,
     UT_ASSERT_MSG(r.status == 4, "status %d", (int)r.status);
     UT_ASSERT_MSG(r.reject == LOBBY_REJECT_INVALID, "reject %d",
                   (int)r.reject);
+    UT_ASSERT_MSG(r.reason == SCRIPT_REFUSE_BOUND, "reason %d", (int)r.reason);
     UT_ASSERT_MSG(strstr(r.finalPath, "bound") != NULL,
-                  "the reason does not say bound: '%s'", r.finalPath);
+                  "the operator's line does not say bound: '%s'", r.finalPath);
     /* Nothing landed, and nothing was left on the way. */
     UT_ASSERT_MSG(up_entries(d->landing) == 0, "the landing directory holds "
                   "%d entries", up_entries(d->landing));
@@ -1048,8 +1063,13 @@ static int body_syntax_line(LoopbackHarness *h, int slot, const UpDirs *d) {
     UT_ASSERT_MSG(r.status == 4, "status %d", (int)r.status);
     UT_ASSERT_MSG(r.reject == LOBBY_REJECT_INVALID, "reject %d",
                   (int)r.reject);
+    /* The line rides the reply as a number, for the client to put into its
+     * own line; the operator's text carries it too. */
+    UT_ASSERT_MSG(r.reason == SCRIPT_REFUSE_SYNTAX, "reason %d", (int)r.reason);
+    UT_ASSERT_MSG(r.a == 3, "line %d", (int)r.a);
     UT_ASSERT_MSG(strstr(r.finalPath, "line 3") != NULL,
-                  "the reason does not give line 3: '%s'", r.finalPath);
+                  "the operator's line does not give line 3: '%s'",
+                  r.finalPath);
     UT_ASSERT_MSG(up_entries(d->landing) == 0, "the landing directory holds "
                   "%d entries", up_entries(d->landing));
     return 0;
@@ -1079,6 +1099,11 @@ static int body_name_taken(LoopbackHarness *h, int slot, const UpDirs *d) {
     code = send_begin(h, slot, UPLOAD_KIND_SCRIPT, 100, "mine.lua");
     UT_ASSERT_MSG(code == 0, "the landing directory's own name: code %d",
                   code);
+    /* In another case as well: the listing folds the two spellings, so the
+     * landing directory is asked for the one it holds. */
+    code = send_begin(h, slot, UPLOAD_KIND_SCRIPT, 100, "MINE.lua");
+    UT_ASSERT_MSG(code == 0, "the landing directory's own name in another "
+                  "case: code %d", code);
     return 0;
 }
 
@@ -1146,32 +1171,37 @@ static int body_accept_refusals(ServerSim *sim, const UpDirs *d) {
         "  kind = \"mod\",\n"
         "  bound = false,\n"
         "}\n";
-    char err[256];
+    ScriptUploadRefusal why;
     bool ok;
 
     /* Scripts off on this host. Put back before anything is asserted. */
     scenarioHostSetEnabled(false);
     ok = serverSimScriptUploadAccept(sim, d->landing, "off.lua",
                                      (const uint8_t *)kMod, sizeof(kMod) - 1,
-                                     err, sizeof(err));
+                                     &why);
     scenarioHostSetEnabled(true);
     UT_ASSERT_MSG(!ok, "taken with scripts off");
-    UT_ASSERT_MSG(strstr(err, "off") != NULL, "reason '%s'", err);
+    UT_ASSERT_MSG(why.reason == SCRIPT_REFUSE_SCRIPTS_OFF, "reason %d '%s'",
+                  (int)why.reason, why.text);
 
     /* A name the player's own directory holds, above the landing one. */
     UT_ASSERT(up_write_mod(d->user, "clash.lua", "Clash"));
     ok = serverSimScriptUploadAccept(sim, d->landing, "clash.lua",
                                      (const uint8_t *)kMod, sizeof(kMod) - 1,
-                                     err, sizeof(err));
+                                     &why);
     UT_ASSERT_MSG(!ok, "a name a higher directory holds was taken");
-    UT_ASSERT_MSG(strstr(err, "already") != NULL, "reason '%s'", err);
+    UT_ASSERT_MSG(why.reason == SCRIPT_REFUSE_NAME_TAKEN, "reason %d '%s'",
+                  (int)why.reason, why.text);
 
     /* An api above the server's. */
     ok = serverSimScriptUploadAccept(sim, d->landing, "future.lua",
                                      (const uint8_t *)kFuture,
-                                     sizeof(kFuture) - 1, err, sizeof(err));
+                                     sizeof(kFuture) - 1, &why);
     UT_ASSERT_MSG(!ok, "an api above the server's was taken");
-    UT_ASSERT_MSG(strstr(err, "api 99") != NULL, "reason '%s'", err);
+    UT_ASSERT_MSG(why.reason == SCRIPT_REFUSE_API && why.a == 99 &&
+                  why.b == SCENARIO_API_VERSION,
+                  "reason %d (%d, %d) '%s'", (int)why.reason, (int)why.a,
+                  (int)why.b, why.text);
 
     /* None of the three left anything behind. */
     UT_ASSERT_MSG(up_entries(d->landing) == 0, "the landing directory holds "
@@ -1180,10 +1210,22 @@ static int body_accept_refusals(ServerSim *sim, const UpDirs *d) {
     /* And a good one lands. */
     ok = serverSimScriptUploadAccept(sim, d->landing, "good.lua",
                                      (const uint8_t *)kMod, sizeof(kMod) - 1,
-                                     err, sizeof(err));
-    UT_ASSERT_MSG(ok, "a good mod was refused: %s", err);
+                                     &why);
+    UT_ASSERT_MSG(ok, "a good mod was refused: %s", why.text);
     UT_ASSERT(up_file_exists(d->landing, "good.lua"));
     UT_ASSERT(up_entries(d->landing) == 1);
+
+    /* The same name in another case replaces it rather than landing beside
+     * it as a second file the listing would fold away: one entry, under the
+     * spelling that was there. */
+    ok = serverSimScriptUploadAccept(sim, d->landing, "GOOD.lua",
+                                     (const uint8_t *)kMod, sizeof(kMod) - 1,
+                                     &why);
+    UT_ASSERT_MSG(ok, "the same name in another case was refused: %s",
+                  why.text);
+    UT_ASSERT(up_file_exists(d->landing, "good.lua"));
+    UT_ASSERT_MSG(up_entries(d->landing) == 1, "the landing directory holds "
+                  "%d entries", up_entries(d->landing));
     return 0;
 }
 
@@ -1203,7 +1245,7 @@ static int body_session_emptied(ServerSim *sim, const UpDirs *d) {
         "}\n";
     char persistDir[1024];
     char sub[1200];
-    char err[256];
+    ScriptUploadRefusal why;
     bool ok, listedBefore, listedAfter, deepKept;
     int  removed;
 
@@ -1211,8 +1253,8 @@ static int body_session_emptied(ServerSim *sim, const UpDirs *d) {
     serverSimSetScriptSessionDir(sim, d->landing);
     ok = serverSimScriptUploadAccept(sim, d->landing, "sess.lua",
                                      (const uint8_t *)kMod, sizeof(kMod) - 1,
-                                     err, sizeof(err));
-    UT_ASSERT_MSG(ok, "the session upload was refused: %s", err);
+                                     &why);
+    UT_ASSERT_MSG(ok, "the session upload was refused: %s", why.text);
     /* A directory below it is not the emptying's to touch. Made before the
        listing, so the one change between the two listings is the emptying:
        the second listing is right because the emptying told the cache, not
@@ -1238,8 +1280,8 @@ static int body_session_emptied(ServerSim *sim, const UpDirs *d) {
     serverSimSetScriptSessionDir(sim, "");
     ok = serverSimScriptUploadAccept(sim, persistDir, "kept.lua",
                                      (const uint8_t *)kMod, sizeof(kMod) - 1,
-                                     err, sizeof(err));
-    UT_ASSERT_MSG(ok, "the persist upload was refused: %s", err);
+                                     &why);
+    UT_ASSERT_MSG(ok, "the persist upload was refused: %s", why.text);
     removed = serverSimEmptyScriptSessionDir(sim);
     UT_ASSERT_MSG(removed == 0, "removed %d files under PERSIST", removed);
     UT_ASSERT(up_file_exists(persistDir, "kept.lua"));
@@ -1269,15 +1311,15 @@ static int body_listing_sees_own_removal(ServerSim *sim, const UpDirs *d) {
     SDL_PathInfo    before;
     SDL_PathInfo    after;
     struct timespec times[2];
-    char            err[256];
+    ScriptUploadRefusal why;
     bool            ok, listedBefore, listedAfter;
     int             removed;
 
     serverSimSetScriptSessionDir(sim, d->landing);
     ok = serverSimScriptUploadAccept(sim, d->landing, "gone.lua",
                                      (const uint8_t *)kMod, sizeof(kMod) - 1,
-                                     err, sizeof(err));
-    UT_ASSERT_MSG(ok, "the session upload was refused: %s", err);
+                                     &why);
+    UT_ASSERT_MSG(ok, "the session upload was refused: %s", why.text);
     listedBefore = up_listed(sim, "gone.lua", NULL, 0);
     UT_ASSERT(listedBefore);
     UT_ASSERT(SDL_GetPathInfo(d->landing, &before));
@@ -1326,7 +1368,7 @@ static int body_reset_drops(ServerSim *sim, const UpDirs *d) {
         "}\n";
     ScnDirEntry        rows[2];
     const ScnDirEntry *row0;
-    char               err[256];
+    ScriptUploadRefusal why;
     char               keptFile[SCN_DIR_FILE_LEN];
     bool               ok;
     int                count;
@@ -1334,8 +1376,8 @@ static int body_reset_drops(ServerSim *sim, const UpDirs *d) {
     serverSimSetScriptSessionDir(sim, d->landing);
     ok = serverSimScriptUploadAccept(sim, d->landing, "sess.lua",
                                      (const uint8_t *)kMod, sizeof(kMod) - 1,
-                                     err, sizeof(err));
-    UT_ASSERT_MSG(ok, "the session upload was refused: %s", err);
+                                     &why);
+    UT_ASSERT_MSG(ok, "the session upload was refused: %s", why.text);
     UT_ASSERT(up_write_mod(d->shipped, "keep.lua", "Keep"));
 
     memset(rows, 0, sizeof(rows));

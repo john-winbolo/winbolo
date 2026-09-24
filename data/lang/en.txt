@@ -2626,4 +2626,11 @@ STR_DLGLOBBY_SCENARIO_SEND=Send to server
 STR_DLGLOBBY_SCENARIO_SEND_NOT_HOST=Only the host or an admin can send scripts.
 STR_DLGLOBBY_SCRIPT_ERR_DISABLED=This server doesn't take scripts.
 STR_DLGLOBBY_SCRIPT_ERR_NAME_TAKEN=The server already has a script with this name.
+STR_DLGLOBBY_SCRIPT_ERR_WRITE=The server could not save the file.
+STR_DLGLOBBY_SCRIPT_ERR_MANIFEST=The package's manifest will not parse.
+STR_DLGLOBBY_SCRIPT_ERR_SYNTAX=The script will not load: error on line {number}.
+STR_DLGLOBBY_SCRIPT_ERR_NO_TABLE=The script declares no scenario table.
+STR_DLGLOBBY_SCRIPT_ERR_API=It asks for api {number} and this server runs api {number2}.
+STR_DLGLOBBY_SCRIPT_ERR_KIND=It declares a kind this server does not know.
+STR_DLGLOBBY_SCRIPT_ERR_BOUND=It is bound to a map. Send the map instead.
 

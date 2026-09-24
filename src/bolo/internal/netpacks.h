@@ -515,7 +515,17 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
 #define PACKET_LOBBY_BOT_BRAIN_CHG  182  /* { slot 1, pathLen 1, path N } */
 #define PACKET_LOBBY_MAP_LIST_RSP   183  /* server reply to MAP_LIST_REQ */
 #define PACKET_LOBBY_MAP_UPLOAD_ACK 184  /* { status 1 } */
-#define PACKET_LOBBY_MAP_UPLOAD_DONE 185 /* { status 1, pathLen 1, path N } */
+#define PACKET_LOBBY_MAP_UPLOAD_DONE 185 /* map: { status 1, pathLen 1, path N }
+                                          * script (the BEGIN said
+                                          * UPLOAD_KIND_SCRIPT): { status 1,
+                                          *   reason 1, a 2 BE, b 2 BE,
+                                          *   textLen 1, text N }
+                                          * reason is SCRIPT_REFUSE_*
+                                          * (upload_policy.h) with its two
+                                          * numbers, 0 when taken; text is
+                                          * the file's name when taken and
+                                          * the operator's line otherwise,
+                                          * never shown to a player. */
 #define PACKET_LOBBY_MAP_SEARCH_RSP 186  /* server reply to MAP_SEARCH_REQ */
 #define PACKET_LOBBY_SYNC_COMPLETE  180  /* server -> joiner: final event of the
                                           * join sync replay; marks the roster

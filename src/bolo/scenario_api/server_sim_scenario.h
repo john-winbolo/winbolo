@@ -27,6 +27,7 @@
 #include "server_sim.h"
 #include "scenario_defs.h"
 #include "control_event.h"  /* LobbyScenarioSource — the identity setter's source */
+#include "upload_policy.h"  /* ScriptUploadRefusal — the accept callback's answer */
 
 /*********************************************************
  *NAME:          serverSimApplyScenarioOp
@@ -337,8 +338,10 @@ int serverSimScenarioListDir(const ServerSim *sim, ScnDirEntry *out, int max);
  *  PACKET_LOBBY_MAP_UPLOAD_BEGIN with UPLOAD_KIND_SCRIPT.
  *  The callback checks the bytes and writes them under
  *  dir/name, answering true. Otherwise it answers false and
- *  puts a one-line reason in err, which goes back to the
- *  sender in the DONE reply.
+ *  fills why: a SCRIPT_REFUSE_* code and its numbers, which
+ *  go back to the sender in the DONE reply for the client to
+ *  say in its own language, and one line of text for the
+ *  operator's console.
  *
  *  A callback rather than a call, for the reason the lister
  *  above is one: reading a package and running a script are
@@ -348,7 +351,7 @@ int serverSimScenarioListDir(const ServerSim *sim, ScnDirEntry *out, int max);
  *  NULL clears it. With nothing registered the server
  *  refuses a script upload at BEGIN, before any bytes are
  *  sent, and serverSimScriptUploadAccept answers false with
- *  "this server cannot take scripts".
+ *  SCRIPT_REFUSE_SCRIPTS_OFF.
  *
  *  dir is where the upload lands, chosen by the server's
  *  script upload policy; the callback creates it if it is
@@ -357,7 +360,7 @@ int serverSimScenarioListDir(const ServerSim *sim, ScnDirEntry *out, int max);
 typedef bool (*ScriptUploadAcceptFn)(void *ctx, const char *dir,
                                      const char *name,
                                      const uint8_t *bytes, uint32_t len,
-                                     char *err, size_t errLen);
+                                     ScriptUploadRefusal *why);
 void serverSimSetScriptUploadAccept(ServerSim *sim, ScriptUploadAcceptFn fn,
                                     void *ctx);
 
@@ -374,11 +377,12 @@ bool serverSimHasScriptUploadAccept(const ServerSim *sim);
  *PURPOSE:
  *  Hands an uploaded script to the registered callback and
  *  answers what it answers. With nothing registered, answers
- *  false with "this server cannot take scripts" in err.
+ *  false with SCRIPT_REFUSE_SCRIPTS_OFF in why. why is
+ *  cleared first either way and may be NULL.
  *********************************************************/
 bool serverSimScriptUploadAccept(const ServerSim *sim, const char *dir,
                                  const char *name, const uint8_t *bytes,
-                                 uint32_t len, char *err, size_t errLen);
+                                 uint32_t len, ScriptUploadRefusal *why);
 
 /*********************************************************
  *NAME:          serverSimSetScenarioDetailsReader

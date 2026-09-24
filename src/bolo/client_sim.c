@@ -3442,6 +3442,16 @@ uint8_t clientSimGetLobbyUploadKind(const ClientSim *cs) {
   return cs->lobbyUploadKind;
 }
 
+uint8_t clientSimGetLobbyScriptRefuseReason(const ClientSim *cs) {
+  if (cs == NULL) return SCRIPT_REFUSE_NONE;
+  return cs->lobbyScriptRefuseReason;
+}
+
+int32_t clientSimGetLobbyScriptRefuseNumber(const ClientSim *cs, int which) {
+  if (cs == NULL) return 0;
+  return which == 0 ? cs->lobbyScriptRefuseA : cs->lobbyScriptRefuseB;
+}
+
 bool clientSimConsumeUseLocalFallback(ClientSim *cs) {
   if (!cs || !cs->lobbyMapUseLocalNeedsFallback) return false;
   cs->lobbyMapUseLocalNeedsFallback = false;

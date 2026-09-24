@@ -475,8 +475,13 @@ SpectatorRing *serverInstanceGetSpectatorRing(void) {
  * and the scenario host read the same directory: none under OFF, the persist
  * directory under PERSIST (the configured one, else <map root>/Uploads/Scripts)
  * and the session directory under ALLOW (the configured one, else
- * <map root>/Uploads/Session). The map root is already known: the map
- * directory is installed on the sim before startup.
+ * <map root>/Uploads/Session-<port>). The map root is already known: the map
+ * directory is installed on the sim before startup. The port is in the
+ * session directory's name because the session directory is emptied, at
+ * startup and whenever the lobby empties: two dedicated servers on one map
+ * root would otherwise each throw away the other's session. Two servers on
+ * one machine have two ports, and a desktop host names its own directory
+ * under its prefs path.
  *
  * The session directory is recorded, and emptied, only on a host that takes
  * remote clients. The welcome-screen sim runs startup too, and on a desktop
@@ -497,7 +502,8 @@ static void serverInstanceResolveScriptDirs(ServerSim *sim,
     if (cfg->scriptSessionDir != NULL && cfg->scriptSessionDir[0] != '\0') {
       SDL_strlcpy(dir, cfg->scriptSessionDir, sizeof(dir));
     } else {
-      SDL_snprintf(dir, sizeof(dir), "%s/Uploads/Session", root);
+      SDL_snprintf(dir, sizeof(dir), "%s/Uploads/Session-%u", root,
+                   (unsigned)cfg->udpPort);
     }
   }
   serverSimSetScriptUploadDir(sim, dir);

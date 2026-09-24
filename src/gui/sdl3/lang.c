@@ -2595,6 +2595,13 @@ static const LangEntry langTable[] = {
     {2642, "Only the host or an admin can send scripts."},
     {2643, "This server doesn't take scripts."},
     {2644, "The server already has a script with this name."},
+    {2645, "The server could not save the file."},
+    {2646, "The package's manifest will not parse."},
+    {2647, "The script will not load: error on line {number}."},
+    {2648, "The script declares no scenario table."},
+    {2649, "It asks for api {number} and this server runs api {number2}."},
+    {2650, "It declares a kind this server does not know."},
+    {2651, "It is bound to a map. Send the map instead."},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

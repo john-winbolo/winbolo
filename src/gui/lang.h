@@ -3100,6 +3100,19 @@
  * server takes no scripts, or holds one of that name already. */
 #define STR_DLGLOBBY_SCRIPT_ERR_DISABLED         2643
 #define STR_DLGLOBBY_SCRIPT_ERR_NAME_TAKEN       2644
+/* And the reasons its accept callback gives, one per SCRIPT_REFUSE_* code
+ * on the DONE reply: it could not save the file, the package's manifest will
+ * not parse, the script will not load ({number} is the line), it declares no
+ * scenario table, it asks for a newer api ({number} asked, {number2} the
+ * server's), it declares a kind the server does not know, or it is bound to
+ * a map. */
+#define STR_DLGLOBBY_SCRIPT_ERR_WRITE            2645
+#define STR_DLGLOBBY_SCRIPT_ERR_MANIFEST         2646
+#define STR_DLGLOBBY_SCRIPT_ERR_SYNTAX           2647
+#define STR_DLGLOBBY_SCRIPT_ERR_NO_TABLE         2648
+#define STR_DLGLOBBY_SCRIPT_ERR_API              2649
+#define STR_DLGLOBBY_SCRIPT_ERR_KIND             2650
+#define STR_DLGLOBBY_SCRIPT_ERR_BOUND            2651
 
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler

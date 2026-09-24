@@ -994,7 +994,7 @@ struct ServerSim {
                                                const char *name,
                                                const uint8_t *bytes,
                                                uint32_t len,
-                                               char *err, size_t errLen);
+                                               ScriptUploadRefusal *why);
     void                  *scriptUploadAcceptCtx;
     /* Reads one directory file's details for serverSimScenarioDetails.
        NULL means nothing registered and only the map's own script has any. */

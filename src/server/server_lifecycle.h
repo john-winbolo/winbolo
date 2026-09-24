@@ -125,8 +125,9 @@ typedef struct {
 
   /* Directory ALLOW-policy uploaded scripts land in for the session, emptied
    * at startup, at shutdown and when the lobby resets. NULL = the built-in
-   * "<mapDirRoot>/Uploads/Session". A GUI host points this under the prefs
-   * path, as it does uploadPersistDir. */
+   * "<mapDirRoot>/Uploads/Session-<udpPort>", one per server on a shared map
+   * root. A GUI host points this under the prefs path, as it does
+   * uploadPersistDir. */
   const char    *scriptSessionDir;
 
   /* Initial state + lobby/per-sim toggles applied by serverInstanceStartup.
