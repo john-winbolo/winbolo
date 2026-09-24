@@ -2244,8 +2244,14 @@ local function attack_pill_steer(state, world, info, goal)
       -- 3-tier turn (hold for big corrections, tap for fine):
       -- holds give continuous engine rotation; taps stay at /8 ramp
       -- speed PROVIDED the engine's firstLeft/firstRight counter
-      -- doesn't saturate (tank.c:1751 — first 6 turn ticks at /8,
-      -- then full speed). The brain runs at half the engine's rate,
+      -- doesn't saturate (tankTurn in tank.c: first 6 turn ticks at
+      -- /8, then full speed). The very first tick of a turn is the
+      -- exception: tankVisibleTurn rounds it up to the smallest
+      -- multiple of /8 that moves the gunsight crosshair a pixel,
+      -- which at the max range we hold is 0.125 to about 0.5 brad,
+      -- still inside the 1-brad lock tolerance. A brain that
+      -- fine-aims at short range would see up to 3.4 brad and could
+      -- oscillate. The brain runs at half the engine's rate,
       -- so 1 brain tick of held key = 2 engine ticks. That makes
       -- the safe burst max 3 brain ticks (= 6 engine ticks at /8).
       -- A 4-brain-tick burst overshoots: the last 2 engine ticks

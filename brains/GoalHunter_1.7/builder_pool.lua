@@ -962,19 +962,39 @@ end
 --
 -- The multiply is deliberate on negative rows too: 1.2 x "not worth the walk"
 -- is further from the bar, not closer to it.
+--
+-- A HUMAN'S PING (BUILDER_POOL_PING_PILL_BONUS, 2.0): a bot that took a
+-- human's defend ping order on one of our pills (state._repair_ping, set and
+-- ended in orders.lua) weights that pill the same way, whatever its goal is.  When
+-- both apply the LARGER one is used, never the product.  The second return
+-- value names which one it was ("goal" / "ping") for the goal_w segment.
 function M.goal_weight(state, row)
-  local w = C.BUILDER_POOL_GOAL_PILL_BONUS or 1.0
-  if w == 1.0 or row.type == "farm" then return 1.0 end
+  if row.type == "farm" then return 1.0, nil end
+  local w, src = 1.0, nil
+  local gb = C.BUILDER_POOL_GOAL_PILL_BONUS or 1.0
   local g = state.goal
-  if not g or not g.target_id then return 1.0 end
-  if g.kind ~= "defend_pill" and g.kind ~= "repair_pill" then return 1.0 end
-  if row.id ~= g.target_id then return 1.0 end
-  return w
+  if gb ~= 1.0 and g and g.target_id
+     and (g.kind == "defend_pill" or g.kind == "repair_pill")
+     and row.id == g.target_id then
+    w, src = gb, "goal"
+  end
+  local pb = C.BUILDER_POOL_PING_PILL_BONUS or 1.0
+  local rp = state._repair_ping
+  if pb ~= 1.0 and rp and rp.tid == row.id and pb > w then
+    w, src = pb, "ping"
+  end
+  return w, src
 end
 
 local function apply_goal_weight(state, row)
-  local w = M.goal_weight(state, row)
+  local w, src = M.goal_weight(state, row)
   row.goal_w = w
+  row.goal_src = src
+  -- The ping's sender and end tick, for the goal_w segment (row_formula has
+  -- no state to read them from).
+  local rp = (src == "ping") and state._repair_ping or nil
+  row.ping_by    = rp and rp.sender or nil
+  row.ping_until = rp and rp.until_tick or nil
   -- Never on the no-route sentinel: -1e9 is an ordering device, not a score,
   -- and scaling it would print arithmetic nobody can check.
   if w ~= 1.0 and row.trip then
@@ -1441,14 +1461,26 @@ function M.row_formula(row)
       "bp_raw:the score BEFORE the goal-pill bonus -- value(%.0f) minus the"
       .. " costs above = %.0f. bp_raw x goal_w is the bp_score at the head of"
       .. " the line.", row.value or 0, row.raw_score or 0)
-    segs[#segs + 1] = string.format(
-      "goal_w:BUILDER_POOL_GOAL_PILL_BONUS(%.2f) -- this row's pill (#%s) IS"
-      .. " the tank goal's own target (%s target_id=%s), so its whole score is"
-      .. " multiplied by it: %.0f x %.2f = %s. The chip is absent on every"
-      .. " other row, and on every row when the bonus is 1.0 (preset=keel).",
-      gw, tostring(row.id or "?"),
-      tostring(row.goal_kind or "goal"), tostring(row.id or "?"),
-      row.raw_score or 0, gw, score_str)
+    if row.goal_src == "ping" then
+      segs[#segs + 1] = string.format(
+        "goal_w:BUILDER_POOL_PING_PILL_BONUS(%.2f) -- a human (p%s) bot-command"
+        .. " pinged this row's pill (#%s) and this bot took the order, so its whole score is multiplied by"
+        .. " it until t=%s, the pill is dead or fully repaired, or another of"
+        .. " our pills is pinged: %.0f x %.2f = %s. It replaces the goal-pill"
+        .. " bonus (the larger one is used, never both).",
+        gw, tostring(row.ping_by or "?"), tostring(row.id or "?"),
+        tostring(row.ping_until or "?"),
+        row.raw_score or 0, gw, score_str)
+    else
+      segs[#segs + 1] = string.format(
+        "goal_w:BUILDER_POOL_GOAL_PILL_BONUS(%.2f) -- this row's pill (#%s) IS"
+        .. " the tank goal's own target (%s target_id=%s), so its whole score is"
+        .. " multiplied by it: %.0f x %.2f = %s. The chip is absent on every"
+        .. " other row, and on every row when the bonus is 1.0 (preset=keel).",
+        gw, tostring(row.id or "?"),
+        tostring(row.goal_kind or "goal"), tostring(row.id or "?"),
+        row.raw_score or 0, gw, score_str)
+    end
   end
   if wedge_seg then segs[#segs + 1] = wedge_seg end
   return short .. "||" .. table.concat(segs, "|")

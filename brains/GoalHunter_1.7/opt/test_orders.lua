@@ -641,6 +641,8 @@ ORD.on_chat(st, w, inf, 0, "bot chat on", 310, true, false)
 check("bot chat on latches again", ORD.bot_chat_on(st) == true, tostring(ORD.bot_chat_on(st)))
 local n2 = #st.orders.say
 ORD.on_chat(st, w, inf, 0, "socrates attack 5", 320, true, false)
+-- The solo ack waits out the claim window (ORDER_CLAIM_TIEBREAK).
+ORD.update(st, w, inf, 331)
 check("the ack is said again once chat is back on",
       #st.orders.say > n2, tostring(#st.orders.say) .. " vs " .. tostring(n2))
 -- A late joiner latches it off the wire, exactly like focus and bot pings.
@@ -1288,6 +1290,8 @@ check("group_label: everything else names the target class",
 
 st, w, inf = ST(), W(), I({ allies = 0x17 })
 ORD.on_chat(st, w, inf, 0, "socrates retreat", 100, true, false)
+-- The solo ack waits out the claim window (ORDER_CLAIM_TIEBREAK).
+ORD.update(st, w, inf, 111)
 check("a retreat acks with the bare word",
       st.orders.say[1] ~= nil
       and st.orders.say[1]:sub(-#" take_cover") == " take_cover"
@@ -1299,6 +1303,8 @@ check("a retreat acks with the bare word",
 st, w, inf = ST(), W(), I({ allies = 0 })
 ORD.on_chat(st, w, inf, 0, "!goto 15 15", 100, true, false)
 ORD.update(st, w, inf, 101)
+-- The solo ack waits out the claim window (ORDER_CLAIM_TIEBREAK).
+ORD.update(st, w, inf, 111)
 check("setup: the go-there order is held",
       (st.orders.held or {}).kind == "goto_tile",
       tostring((st.orders.held or {}).kind))
@@ -1376,6 +1382,8 @@ check("travel: the panel says hard",
          return ORD.panel_line(st, inf):sub(-4) == "hard" end)(),
       ORD.panel_line(st, inf))
 
+-- The solo ack waits out the claim window (ORDER_CLAIM_TIEBREAK).
+ORD.update(st, w, inf, 111)
 -- ARRIVAL.  The tank is now on the square; the next think is the first one
 -- that sees it.
 inf.tankx, inf.tanky = 15 * 256 + 128, 15 * 256 + 128
@@ -1417,6 +1425,7 @@ check("and it ends in silence", #st.orders.say == 0,
 st, w, inf = ST(), W(), I({ allies = 0 })
 ORD.on_chat(st, w, inf, 0, "!goto 15 15", 100, true, false)
 ORD.update(st, w, inf, 101)
+ORD.update(st, w, inf, 111)
 st.orders.say = {}
 ORD.update(st, w, inf, 101 + (C.ORDER_FOCUS_TICKS or 3000))
 check("a go-there that never arrives lapses on the focus",
@@ -1434,6 +1443,8 @@ print("orders.lua -- a defend order ends when the pill is lost")
 
 st, w, inf = ST(), W(), I({ allies = 0x17 })
 ORD.on_chat(st, w, inf, 0, "socrates defend 9", 100, true, false)
+-- The solo ack waits out the claim window (ORDER_CLAIM_TIEBREAK).
+ORD.update(st, w, inf, 111)
 check("setup: a defend order is held",
       (st.orders.held or {}).kind == "defend_pill"
       and st.orders.held.tid == 9,
@@ -1450,6 +1461,7 @@ check("and the bot says which pill it lost",
 -- defend either, and the bot's own goals decide whether to go and sweep it.
 st, w, inf = ST(), W(), I({ allies = 0x17 })
 ORD.on_chat(st, w, inf, 0, "socrates defend 9", 100, true, false)
+ORD.update(st, w, inf, 111)
 st.orders.say = {}
 w.pills[9].health = 0
 ORD.update(st, w, inf, 200)
@@ -1528,6 +1540,7 @@ end)(), "?")
 st, w, inf = ST(), W(), I({ allies = 0 })
 ORD.on_chat(st, w, inf, 0, "!goto 15 15", 100, true, false)
 ORD.update(st, w, inf, 101)
+ORD.update(st, w, inf, 111)
 check("setup: a go-there order is held",
       (st.orders.held or {}).kind == "goto_tile",
       tostring((st.orders.held or {}).kind))
@@ -1847,7 +1860,8 @@ check("a finished hold sends nobody else to the square",
 
 -- A RELEASE IS STILL A HAND-BACK.  The other half of the same rule: a bot
 -- that got busy or died drops the order with obr, and the next cheapest bot
--- has to go and do it.
+-- has to go and do it.  (keel: ORDER_NO_HAND_BACK off.)
+C.ORDER_NO_HAND_BACK = false
 pa, pb = ordered_pair()
 local rel_oid = pa.st.orders.held.oid
 ORD.release_held(pa.st, pa.inf, nil, true)     -- no `cancelled`: a hand-back
@@ -1866,6 +1880,25 @@ end)(), table.concat(pb.st.orders.out, " | "))
 check("and B ends up holding it",
       (pb.st.orders.held or {}).oid == rel_oid,
       tostring((pb.st.orders.held or {}).oid))
+C.ORDER_NO_HAND_BACK = true
+-- "DON'T PASS THE ORDER BACK" (ORDER_NO_HAND_BACK, the default): the obr
+-- still goes out, but nobody re-bids and nobody else is sent.
+pa, pb = ordered_pair()
+rel_oid = pa.st.orders.held.oid
+ORD.release_held(pa.st, pa.inf, nil, true)
+check("no hand-back: obr is still on the wire",
+      pa.st.orders.out[#pa.st.orders.out] == "/info obr " .. rel_oid,
+      tostring(pa.st.orders.out[#pa.st.orders.out]))
+pb.st.orders.out = {}
+pump(pa, pb, 300)
+ORD.update(pb.st, pb.w, pb.inf, 301)
+ORD.update(pb.st, pb.w, pb.inf, 320)
+check("no hand-back: B does not bid", #pb.st.orders.out == 0
+      and next(pb.st.orders.auctions) == nil,
+      table.concat(pb.st.orders.out, " | "))
+check("no hand-back: B does not take it", pb.st.orders.held == nil,
+      tostring((pb.st.orders.held or {}).oid))
+check("keel hands orders back", C.PRESETS.keel.ORDER_NO_HAND_BACK == false, "?")
 
 -- 6. gclaims IS CLEARED, so a bot that let an order go can win it back.
 -- It never was, and the settle excludes anybody gclaims still lists as a
@@ -1926,6 +1959,45 @@ ORD.update(qb.st, qb.w, qb.inf, 151)
 check("ping again adds the next closest bot",
       qb.st.orders.held ~= nil and qb.st.orders.held.oid == qa.st.orders.held.oid,
       tostring(qb.st.orders.held and qb.st.orders.held.oid))
+-- The first holder keeps it when the added bot's claim arrives: a repeat
+-- ping makes a group, and a fellow taker's claim is not a rival's.
+pump(qa, qb, 151)
+ORD.update(qa.st, qa.w, qa.inf, 152)
+ORD.update(qb.st, qb.w, qb.inf, 152)
+check("and the first holder keeps it once the new claim arrives",
+      qa.st.orders.held ~= nil and qb.st.orders.held ~= nil
+      and qa.st.orders.held.oid == qb.st.orders.held.oid,
+      tostring(qa.st.orders.held and qa.st.orders.held.oid) .. " "
+      .. tostring(qb.st.orders.held and qb.st.orders.held.oid))
+-- The same when the added bot is CHEAPER than the holder was: still a group.
+do
+  local ha, hb = BOT(1, 10, 10), BOT(2, 50, 50)
+  ha.inf.events, hb.inf.events = { bping(0, 20, 20) }, { bping(0, 20, 20) }
+  ORD.on_events(ha.st, ha.w, ha.inf, 100)
+  ORD.on_events(hb.st, hb.w, hb.inf, 100)
+  ha.inf.events, hb.inf.events = {}, {}
+  pump(ha, hb, 100)
+  ORD.update(ha.st, ha.w, ha.inf, 101)
+  ORD.update(hb.st, hb.w, hb.inf, 101)
+  pump(ha, hb, 101)
+  ORD.update(hb.st, hb.w, hb.inf, 102)
+  hb.inf.tankx, hb.inf.tanky = 23 * 256 + 128, 23 * 256 + 128
+  ha.inf.events, hb.inf.events = { bping(0, 21, 20) }, { bping(0, 21, 20) }
+  ORD.on_events(ha.st, ha.w, ha.inf, 150)
+  ORD.on_events(hb.st, hb.w, hb.inf, 150)
+  ha.inf.events, hb.inf.events = {}, {}
+  pump(ha, hb, 150)
+  ORD.update(ha.st, ha.w, ha.inf, 151)
+  ORD.update(hb.st, hb.w, hb.inf, 151)
+  pump(ha, hb, 151)
+  ORD.update(ha.st, ha.w, ha.inf, 152)
+  ORD.update(hb.st, hb.w, hb.inf, 152)
+  check("a cheaper added bot does not knock the first holder off",
+        ha.st.orders.held ~= nil and hb.st.orders.held ~= nil
+        and ha.st.orders.held.oid == hb.st.orders.held.oid,
+        tostring(ha.st.orders.held and ha.st.orders.held.oid) .. " "
+        .. tostring(hb.st.orders.held and hb.st.orders.held.oid))
+end
 _G.EVENT_PING = nil
 _G.PING_KIND_BOT_COMMAND = nil
 _G.PING_KIND_CAUTION = nil
@@ -2161,6 +2233,935 @@ check("keel ships it off",
 check("the live value is the 7 the docs promise",
       C.ORDER_HUMAN_NEAR_SUICIDE_TILES == 7,
       tostring(C.ORDER_HUMAN_NEAR_SUICIDE_TILES))
+
+-- =========================================================================
+-- PING SUICIDE RUN.  A bot-command ping on an enemy pill, then an ATTACK
+-- ping from the same person on the same pill inside
+-- PING_SUICIDE_WINDOW_TICKS (50 thinks = 1 s), sends every bot on that pill
+-- at it until the tank or the pill dies.  One bot, p1 at (10,10); pill 5 at
+-- (20,20).  Think ticks: 50 a second.
+-- =========================================================================
+print("orders.lua -- ping suicide run")
+_G.EVENT_PING = 13
+_G.PING_KIND_CAUTION = 1
+_G.PING_KIND_BOT_COMMAND = 5
+_G.PING_KIND_ATTACK = 3
+local GOALS  = require("goals")
+local ATTACK = require("attack")
+
+-- A lone bot takes a bot-command order on pill 5 at t=100.  The auction has
+-- nobody else to hear from, so a few updates settle it.
+local function sbot()
+  local b = BOT(1, 10, 10)
+  b.inf.events = { ping(5, 0, 20, 20) }
+  ORD.on_events(b.st, b.w, b.inf, 100)
+  b.inf.events = {}
+  return b
+end
+local function settle(b, from, to)
+  for t = from, to do b.st.tick = t; ORD.update(b.st, b.w, b.inf, t) end
+end
+local function attack_ping(b, t, mx, my, sender)
+  b.inf.events = { ping(3, sender or 0, mx or 20, my or 20) }
+  b.st.tick = t
+  ORD.on_events(b.st, b.w, b.inf, t)
+  b.inf.events = {}
+end
+local function said(b, pat)
+  for _, l in ipairs((b.st.orders or {}).say or {}) do
+    if l:match(pat) then return true end
+  end
+  return false
+end
+
+-- 1. INSIDE THE WINDOW: attack ping 25 thinks (0.5 s) after the bot command.
+local b = sbot()
+settle(b, 101, 115)
+check("suicide setup: the bot holds the attack_pill order",
+      b.st.orders.held ~= nil and b.st.orders.held.kind == "attack_pill"
+      and b.st.orders.held.tid == 5,
+      tostring(b.st.orders.held and b.st.orders.held.kind))
+attack_ping(b, 125)
+check("attack ping 0.5 s after the bot command starts the run",
+      b.st._suicide ~= nil and b.st._suicide.tid == 5 and b.st._suicide.sender == 0,
+      tostring(b.st._suicide and b.st._suicide.tid))
+check("the bot says one team-chat line for it",
+      said(b, "^Suicide run on pill #5$"), table.concat(b.st.orders.say or {}, " | "))
+check("a suicide bot is busy for new orders",
+      select(2, ORD.busy(b.st, b.inf)) == "suicide run",
+      tostring(select(2, ORD.busy(b.st, b.inf))))
+check("the panel shows the run",
+      ORD.panel_line(b.st, b.inf):match("SUICIDE RUN pill#5") ~= nil,
+      ORD.panel_line(b.st, b.inf))
+-- A second attack ping is not a second run and not a second chat line.
+local nsay = #b.st.orders.say
+attack_ping(b, 130)
+check("a second attack ping inside the window says nothing more",
+      #b.st.orders.say == nsay, tostring(#b.st.orders.say))
+
+-- Exactly on the window edge (50 thinks = 1.0 s) still counts.
+b = sbot(); settle(b, 101, 115)
+attack_ping(b, 150)
+check("attack ping at exactly 1.0 s still starts the run",
+      b.st._suicide ~= nil, "nil")
+
+-- 2. OUTSIDE THE WINDOW: 75 thinks = 1.5 s.
+b = sbot(); settle(b, 101, 115)
+attack_ping(b, 175)
+check("attack ping 1.5 s after the bot command does NOT start the run",
+      b.st._suicide == nil, tostring(b.st._suicide and b.st._suicide.tid))
+check("and the bot keeps its ordinary order",
+      b.st.orders.held ~= nil and b.st.orders.held.tid == 5, "?")
+-- 51 thinks: one past the edge.
+b = sbot(); settle(b, 101, 115)
+attack_ping(b, 151)
+check("attack ping at 1.02 s does NOT start the run", b.st._suicide == nil, "?")
+
+-- The pair must match: same sender, same pill, bot command FIRST.
+b = sbot(); settle(b, 101, 115)
+attack_ping(b, 120, 20, 20, 2)          -- p2 sent the attack ping, p0 the command
+check("another player's attack ping does not trigger", b.st._suicide == nil, "?")
+b = sbot(); settle(b, 101, 115)
+b.w.pills[6] = { mx = 25, my = 25, owner = "hostile", health = 10 }
+attack_ping(b, 120, 25, 25)
+check("an attack ping on a different pill does not trigger", b.st._suicide == nil, "?")
+do
+  local r = BOT(1, 10, 10)
+  attack_ping(r, 100)
+  r.inf.events = { ping(5, 0, 20, 20) }
+  ORD.on_events(r.st, r.w, r.inf, 110)
+  r.inf.events = {}
+  settle(r, 111, 125)
+  check("attack THEN bot command does not trigger (order matters)",
+        r.st._suicide == nil, "?")
+end
+-- An attack ping on its own orders nothing.
+do
+  local r = BOT(1, 10, 10)
+  attack_ping(r, 100)
+  check("a lone attack ping orders nothing",
+        r.st._suicide == nil and (r.st.orders == nil or r.st.orders.held == nil), "?")
+end
+
+-- The knob off (the keel value) turns the trigger off.
+C.PING_SUICIDE_ENABLED = false
+b = sbot(); settle(b, 101, 115)
+attack_ping(b, 125)
+check("PING_SUICIDE_ENABLED=false: no run", b.st._suicide == nil, "?")
+C.PING_SUICIDE_ENABLED = true
+check("keel turns the suicide run off",
+      C.PRESETS.keel.PING_SUICIDE_ENABLED == false,
+      tostring(C.PRESETS.keel.PING_SUICIDE_ENABLED))
+check("the window is 50 thinks (1 s) live and in keel",
+      C.PING_SUICIDE_WINDOW_TICKS == 50 and C.PRESETS.keel.PING_SUICIDE_WINDOW_TICKS == 50,
+      tostring(C.PING_SUICIDE_WINDOW_TICKS))
+
+-- The attack ping lands while the auction is still open: the bot that wins
+-- it afterwards goes too.
+b = sbot()
+attack_ping(b, 104)
+check("attack ping during the auction: no run yet (nobody holds it)",
+      b.st._suicide == nil, "?")
+settle(b, 105, 120)
+check("the bot that wins the auction afterwards starts the run",
+      b.st._suicide ~= nil and b.st._suicide.tid == 5,
+      tostring(b.st._suicide and b.st._suicide.tid))
+
+-- A bot already attacking pill 5 on its own choice (no order) goes too.
+-- The man is out of the tank, so the bot is busy and takes no order.
+do
+  local r = BOT(1, 10, 10)
+  r.st.goal = { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }
+  r.inf.man_status = 99
+  r.inf.events = { ping(5, 0, 20, 20) }
+  ORD.on_events(r.st, r.w, r.inf, 100)
+  r.inf.events = {}
+  attack_ping(r, 110)
+  check("a bot already attacking the pill with no order joins the run",
+        r.st._suicide ~= nil and r.st._suicide.tid == 5
+        and r.st.orders.held == nil,
+        tostring(r.st._suicide and r.st._suicide.tid))
+end
+
+-- 3. DURING THE RUN: no refuel, no flee, no armour or shell gate.
+b = sbot(); settle(b, 101, 115); attack_ping(b, 125)
+b.inf.armour, b.inf.shells = 2, 0
+local g = GOALS.pick_goal(b.st, b.w, b.inf, true)
+check("pick_goal at armour 2, 0 shells: the suicide goal, nothing else",
+      g and g.kind == "attack_pill" and g.target_id == 5 and g._ping_suicide == true
+      and g.substate == "kill_hardline",
+      tostring(g and g.kind))
+b.st.orders.say = {}
+settle(b, 126, 200)
+check("no refuel line while on the run at 0 shells",
+      not said(b, "Refuelling"), table.concat(b.st.orders.say or {}, " | "))
+-- The lock undoes whatever else replaced the goal this think.
+for _, kind in ipairs({ "flee_pill", "refuel_at_base", "take_cover", "escape_water",
+                        "rescue_lgm" }) do
+  b.st.goal = { kind = kind, mx = 3, my = 3 }
+  local on = ORD.suicide_lock(b.st, b.w, b.inf, 201)
+  check("the lock replaces a " .. kind .. " goal with the run",
+        on and b.st.goal.kind == "attack_pill" and b.st.goal._ping_suicide
+        and b.st.goal.target_id == 5,
+        tostring(b.st.goal.kind))
+end
+-- The substate machine keeps it in kill_hardline and retries a dead end.
+b.st.goal.substate = "plan_position"
+b.st.goal._hardline_abort = "no navigable tile beside pill"
+b.st.goal._hardline_bad = { [1] = true }
+ATTACK.update_attack_substate(b.st.goal, b.st, b.w, b.inf)
+check("the substate machine holds kill_hardline",
+      b.st.goal.kind == "attack_pill" and b.st.goal.substate == "kill_hardline",
+      tostring(b.st.goal.substate))
+check("a kill_hardline dead end is retried, not given up",
+      b.st.goal._hardline_abort == nil and b.st.goal._hardline_bad == nil
+      and b.st._suicide ~= nil, tostring(b.st.goal._hardline_abort))
+check("the order does not lapse under the run",
+      b.st.orders.held ~= nil and (b.st.orders.held.expiry or 0) >= 200,
+      tostring(b.st.orders.held and b.st.orders.held.expiry))
+b.st.orders.held.expiry = 150
+settle(b, 201, 205)
+check("an expired order focus is kept alive while the run stands",
+      b.st.orders.held ~= nil and b.st._suicide ~= nil, "?")
+
+-- 4. HOW IT ENDS.
+-- Pill dead (armour 0): the lock ends the run and clears the goal.
+b = sbot(); settle(b, 101, 115); attack_ping(b, 125)
+ORD.suicide_lock(b.st, b.w, b.inf, 126)
+b.w.pills[5].health = 0
+local on = ORD.suicide_lock(b.st, b.w, b.inf, 127)
+check("pill dead: the run ends", not on and b.st._suicide == nil, "?")
+check("pill dead: the suicide goal is cleared",
+      not (b.st.goal and b.st.goal._ping_suicide), tostring(b.st.goal and b.st.goal.kind))
+-- Pill captured by us, pill in a tank, pill gone.
+for _, case in ipairs({ { "ours",    function(p) p.owner = "friendly" end },
+                        { "carried", function(p) p.in_tank = true end },
+                        { "gone",    function(p, w) w.pills[5] = nil end } }) do
+  b = sbot(); settle(b, 101, 115); attack_ping(b, 125)
+  case[2](b.w.pills[5], b.w)
+  ORD.suicide_lock(b.st, b.w, b.inf, 126)
+  check("pill " .. case[1] .. ": the run ends", b.st._suicide == nil, "?")
+end
+-- The substate machine ends it too when the pill dies between locks.
+b = sbot(); settle(b, 101, 115); attack_ping(b, 125)
+ORD.suicide_lock(b.st, b.w, b.inf, 126)
+b.w.pills[5].health = 0
+ATTACK.update_attack_substate(b.st.goal, b.st, b.w, b.inf)
+check("substate machine: pill dead clears the suicide goal",
+      not (b.st.goal and b.st.goal._ping_suicide), tostring(b.st.goal and b.st.goal.kind))
+-- Tank died.
+b = sbot(); settle(b, 101, 115); attack_ping(b, 125)
+ORD.on_death(b.st, b.inf)
+check("tank died: the run ends", b.st._suicide == nil, "?")
+-- The escape hatch: cancel.
+b = sbot(); settle(b, 101, 115); attack_ping(b, 125)
+ORD.on_chat(b.st, b.w, b.inf, 0, "cancel", 130, true, false)
+check("a bare cancel from the sender ends the run", b.st._suicide == nil, "?")
+b = sbot(); settle(b, 101, 115); attack_ping(b, 125)
+ORD.on_chat(b.st, b.w, b.inf, 0, "cancel all", 130, true, false)
+check("cancel all ends the run", b.st._suicide == nil, "?")
+-- The escape hatch: caution on the bot, or on the pill.
+b = sbot(); settle(b, 101, 115); attack_ping(b, 125)
+b.inf.events = { ping(1, 0, 10, 10) }
+ORD.on_events(b.st, b.w, b.inf, 130)
+check("caution on the bot ends the run", b.st._suicide == nil, "?")
+b = sbot(); settle(b, 101, 115); attack_ping(b, 125)
+b.inf.events = { ping(1, 0, 20, 20) }
+ORD.on_events(b.st, b.w, b.inf, 130)
+check("caution on the pill ends the run", b.st._suicide == nil, "?")
+-- A bot running on its own choice (no order): the caution ends the run and
+-- does NOT go on to retreat it.
+do
+  local r = BOT(1, 10, 10)
+  r.st.goal = { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }
+  r.inf.man_status = 99
+  r.inf.events = { ping(5, 0, 20, 20) }
+  ORD.on_events(r.st, r.w, r.inf, 100)
+  attack_ping(r, 110)
+  r.inf.man_status = 0
+  r.inf.events = { ping(1, 0, 10, 10) }
+  ORD.on_events(r.st, r.w, r.inf, 120)
+  check("caution on an order-less runner ends the run, no retreat",
+        r.st._suicide == nil and r.st.orders.held == nil,
+        tostring(r.st.orders.held and r.st.orders.held.kind))
+end
+
+-- A HUMAN TEAM-MATE CLOSE BY starts the same run.  p0 is the human, p1 the
+-- bot at (10,10) with an attack_pill goal on pill 5.  No ping at all.
+local function hbot(hx, hy)
+  local r = BOT(1, 10, 10)
+  r.st.goal = { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }
+  r.inf.player_bots = 0x02
+  r.inf.objects = { { type = 1, idnum = 0, x = hx * 256, y = hy * 256, info = 0 } }
+  return r
+end
+do
+  local r = hbot(15, 10)
+  ORD.human_near_suicide(r.st, r.w, r.inf, 100)
+  check("human 5 away: the attack_pill goal becomes a suicide run",
+        r.st._suicide ~= nil and r.st._suicide.tid == 5 and r.st._suicide.sender == 0,
+        tostring(r.st._suicide and r.st._suicide.tid))
+  ORD.suicide_lock(r.st, r.w, r.inf, 101)
+  check("human-near run: the lock puts the suicide goal in",
+        r.st.goal._ping_suicide == true and r.st.goal.target_id == 5, "?")
+  r.inf.objects = {}
+  ORD.human_near_suicide(r.st, r.w, r.inf, 102)
+  ORD.suicide_lock(r.st, r.w, r.inf, 102)
+  check("the human drives off: the run stands", r.st._suicide ~= nil, "?")
+  ORD.on_chat(r.st, r.w, r.inf, 0, "cancel", 110, true, false)
+  check("a bare cancel from that human ends the run", r.st._suicide == nil, "?")
+  r.inf.objects = { { type = 1, idnum = 0, x = 15 * 256, y = 10 * 256, info = 0 } }
+  r.st.goal = { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }
+  ORD.human_near_suicide(r.st, r.w, r.inf, 111)
+  check("after the cancel it does not restart on the same pill", r.st._suicide == nil, "?")
+  r.st.goal = { kind = "refuel" }
+  ORD.human_near_suicide(r.st, r.w, r.inf, 112)
+  r.st.goal = { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }
+  ORD.human_near_suicide(r.st, r.w, r.inf, 113)
+  check("after some other goal the rule arms again", r.st._suicide ~= nil, "?")
+end
+do
+  local r = hbot(18, 10)
+  ORD.human_near_suicide(r.st, r.w, r.inf, 100)
+  check("human 8 away: no run", r.st._suicide == nil, "?")
+  r = hbot(11, 10)
+  r.inf.player_bots = 0x03
+  ORD.human_near_suicide(r.st, r.w, r.inf, 100)
+  check("an ally BOT close by: no run", r.st._suicide == nil, "?")
+  r = hbot(11, 10)
+  r.st.goal = { kind = "defend_pill", target_id = 5, mx = 20, my = 20 }
+  ORD.human_near_suicide(r.st, r.w, r.inf, 100)
+  check("a human close by and a non-attack goal: no run", r.st._suicide == nil, "?")
+  C.ORDER_HUMAN_NEAR_SUICIDE_RUN = false
+  r = hbot(11, 10)
+  ORD.human_near_suicide(r.st, r.w, r.inf, 100)
+  check("ORDER_HUMAN_NEAR_SUICIDE_RUN=false: no run", r.st._suicide == nil, "?")
+  C.ORDER_HUMAN_NEAR_SUICIDE_RUN = true
+  check("keel turns the human-near run off",
+        C.PRESETS.keel.ORDER_HUMAN_NEAR_SUICIDE_RUN == false, "?")
+end
+
+-- =========================================================================
+-- GO-THERE DECOY HARD HOLD (Andrew, 2026-09-24).  A bot-command ping on open
+-- ground next to an enemy pill: on arrival the bot parks there as a decoy
+-- and nothing it would choose for itself takes it off.  With no pill in
+-- range the order ends on arrival.  One bot, p1 at (10,10).  Pill 5 (enemy,
+-- alive) at (20,20).  The decoy square is (22,24): 4.5 tiles from the pill,
+-- clear of every tank's ping ring.  (100,100) is open ground with no pill.
+-- =========================================================================
+print("orders.lua -- go-there decoy hard hold")
+
+local function dbot(mx, my)
+  local b = BOT(1, 10, 10)
+  b.inf.events = { ping(5, 0, mx or 22, my or 24) }
+  ORD.on_events(b.st, b.w, b.inf, 100)
+  b.inf.events = {}
+  settle(b, 101, 115)
+  return b
+end
+local function arrive(b, t, mx, my)
+  b.inf.tankx, b.inf.tanky = (mx or 22) * 256 + 128, (my or 24) * 256 + 128
+  b.st.orders.say = {}
+  b.st.tick = t
+  ORD.update(b.st, b.w, b.inf, t)
+end
+local function lock(b, t)
+  b.st.tick = t
+  return ORD.decoy_lock(b.st, b.w, b.inf, t)
+end
+local HOLD = C.ORDER_GOTO_HOLD_TICKS or 500
+
+check("decoy knob is on live", C.ORDER_GOTO_DECOY == true, tostring(C.ORDER_GOTO_DECOY))
+check("keel turns the decoy hold off",
+      C.PRESETS.keel.ORDER_GOTO_DECOY == false,
+      tostring(C.PRESETS.keel.ORDER_GOTO_DECOY))
+check("pill range is edist <= 8, neutral counts, ours/carried/dead do not",
+      (function()
+         local w = { pills = {
+           [1] = { mx = 8,  my = 0, owner = "neutral",  health = 5 },   -- 8.0: in
+           [2] = { mx = 6,  my = 6, owner = "hostile",  health = 5 },   -- 8.49: out
+           [3] = { mx = 1,  my = 1, owner = "friendly", health = 5 },
+           [4] = { mx = 1,  my = 1, owner = "hostile",  health = 5, in_tank = true },
+           [5] = { mx = 1,  my = 1, owner = "hostile",  health = 0 },
+           [6] = { mx = 1,  my = 1, owner = "allied",   health = 5 },
+         } }
+         return ORD.decoy_pills(w, 0, 0) == 1
+       end)(), tostring(ORD.decoy_pills({ pills = {} }, 0, 0)))
+
+-- 1. ARRIVAL WITH A PILL IN RANGE -> DECOY.
+local d = dbot()
+check("decoy setup: the ping order is a go-there, marked as a ping",
+      d.st.orders.held ~= nil and d.st.orders.held.kind == "goto_tile"
+      and d.st.orders.held.ping == true,
+      tostring(d.st.orders.held and d.st.orders.held.kind))
+arrive(d, 200)
+check("arrival next to an enemy pill: decoy hold",
+      d.st.orders.held ~= nil and d.st.orders.held.decoy == true
+      and d.st.orders.held.hold == true, "?")
+check("the decoy says the number, once",
+      #d.st.orders.say == 1 and d.st.orders.say[1] == "decoying 10s",
+      table.concat(d.st.orders.say, " | "))
+check("the decoy clock is the hold knob",
+      d.st.orders.held.expiry == 200 + HOLD, tostring(d.st.orders.held.expiry))
+check("the decoy is parked on its square", ORD.hold_parked(d.st, d.inf) == true, "?")
+check("the panel says decoy",
+      ORD.panel_line(d.st, d.inf):sub(-5) == "decoy", ORD.panel_line(d.st, d.inf))
+check("a decoy is NOT busy", ORD.busy(d.st, d.inf) == false,
+      tostring(select(2, ORD.busy(d.st, d.inf))))
+
+-- 2. ARRIVAL WITH NO PILL IN RANGE -> THE ORDER ENDS, IN SILENCE.
+d = dbot(100, 100)
+d.st.goal = { kind = "goto_tile", mx = 100, my = 100 }
+d.st.orders.out = {}
+arrive(d, 200, 100, 100)
+check("no pill in range: the order ends on arrival", d.st.orders.held == nil, "held")
+check("and says nothing (no holding, no order lapsed)", #d.st.orders.say == 0,
+      table.concat(d.st.orders.say, " | "))
+check("and it is a cancel (obx), not a hand-back",
+      (function()
+         for _, l in ipairs(d.st.orders.out) do
+           if l:match("^/info obx ") then return true end
+           if l:match("^/info obr ") then return false end
+         end
+         return false
+       end)(), table.concat(d.st.orders.out, " | "))
+check("and the travel goal is dropped for normal play",
+      d.st.goal.kind == "none", tostring(d.st.goal.kind))
+
+-- 3. THE LOCK UNDOES EVERYTHING THE BOT WOULD CHOOSE FOR ITSELF.
+d = dbot(); arrive(d, 200)
+for _, kind in ipairs({ "take_cover", "refuel_at_base", "escape_water", "flee_pill",
+                        "flee_to_base", "rescue_lgm", "mine_crater", "kill_me_wait",
+                        "attack_pill", "capture_pill", "explore", "none" }) do
+  d.st.goal = { kind = kind, mx = 3, my = 3, target_id = 5 }
+  local on = lock(d, 210)
+  check("the decoy lock replaces a " .. kind .. " goal with the hold goal",
+        on and d.st.goal.kind == "goto_tile" and d.st.goal._decoy == true
+        and d.st.goal.mx == 22 and d.st.goal.my == 24,
+        tostring(d.st.goal.kind))
+end
+-- attack_tank and kill_lgm in gun range stay; out of range, on an ally, or
+-- with the tank off the square they do not.
+d.st.goal = { kind = "attack_tank", target_id = 7, mx = 25, my = 26 }
+check("attack_tank on an enemy in gun range is allowed",
+      lock(d, 211) and d.st.goal.kind == "attack_tank", tostring(d.st.goal.kind))
+d.st.goal = { kind = "kill_lgm", target_id = 3, mx = 23, my = 24 }
+check("kill_lgm in gun range is allowed",
+      lock(d, 212) and d.st.goal.kind == "kill_lgm", tostring(d.st.goal.kind))
+d.st.goal = { kind = "attack_tank", target_id = 7, mx = 40, my = 40 }
+check("attack_tank out of gun range is not (no chase)",
+      lock(d, 213) and d.st.goal.kind == "goto_tile", tostring(d.st.goal.kind))
+d.st.goal = { kind = "kill_lgm", target_id = 3, mx = 22, my = 34 }
+check("kill_lgm out of gun range is not",
+      lock(d, 214) and d.st.goal.kind == "goto_tile", tostring(d.st.goal.kind))
+d.st.goal = { kind = "attack_tank", target_id = 2, mx = 23, my = 24, km_ally_pn = 2 }
+check("a kill-me attack_tank on an ALLY is not",
+      lock(d, 215) and d.st.goal.kind == "goto_tile", tostring(d.st.goal.kind))
+d.st.perc = { enemy_tanks = { { id = 7, mx = 50, my = 50 } } }
+d.st.goal = { kind = "attack_tank", target_id = 7, mx = 23, my = 24 }
+check("the enemy tank's LIVE tile from perception decides the range",
+      lock(d, 216) and d.st.goal.kind == "goto_tile", tostring(d.st.goal.kind))
+d.st.perc = nil
+d.inf.tankx, d.inf.tanky = 30 * 256 + 128, 30 * 256 + 128
+d.st.goal = { kind = "attack_tank", target_id = 7, mx = 31, my = 31 }
+check("off the square: the hold goal drives it back, no fight",
+      lock(d, 217) and d.st.goal.kind == "goto_tile" and d.st.goal.mx == 22, "?")
+d.inf.tankx, d.inf.tanky = 22 * 256 + 128, 24 * 256 + 128
+-- No throttle on the square.  KEY_FASTER is a host global; fake it here.
+_G.KEY_FASTER = 0x10
+local k, tp = ORD.decoy_keys(d.st, d.inf, 0x11, 0x10)
+check("decoy_keys takes KEY_FASTER off keys and taps", k == 0x01 and tp == 0, tostring(k))
+local soft = BOT(1, 10, 10)
+check("decoy_keys leaves a bot with no decoy alone",
+      ORD.decoy_keys(soft.st, soft.inf, 0x11, 0) == 0x11, "?")
+_G.KEY_FASTER = nil
+
+-- 4a. THE PILLS GO DOWN -> THE DECOY ENDS, IN SILENCE.
+d = dbot(); arrive(d, 200)
+d.st.goal = ORD.decoy_goal(d.st.orders.held)
+d.w.pills[5].health = 0
+d.st.orders.say = {}
+ORD.update(d.st, d.w, d.inf, 300)
+check("pill dead: the decoy ends", d.st.orders.held == nil, "held")
+check("pill dead: in silence", #d.st.orders.say == 0, table.concat(d.st.orders.say, " | "))
+check("pill dead: the hold goal is dropped for normal play",
+      d.st.goal.kind == "none", tostring(d.st.goal.kind))
+for _, case in ipairs({ { "ours",    function(p) p.owner = "friendly" end },
+                        { "carried", function(p) p.in_tank = true end },
+                        { "gone",    function(p, w) w.pills[5] = nil end } }) do
+  d = dbot(); arrive(d, 200)
+  case[2](d.w.pills[5], d.w)
+  local on = lock(d, 201)
+  check("pill " .. case[1] .. ": the lock ends the decoy",
+        not on and d.st.orders.held == nil, "held")
+end
+-- A pill that comes into range after arrival counts too.
+d = dbot(); arrive(d, 200)
+d.w.pills[6] = { mx = 27, my = 24, owner = "hostile", health = 5 }
+d.w.pills[5].health = 0
+ORD.update(d.st, d.w, d.inf, 250)
+check("a new pill in range keeps the decoy up after the first dies",
+      d.st.orders.held ~= nil and d.st.orders.held.decoy == true, "ended")
+check("and the lock still stands", lock(d, 251) == true, "off")
+d.w.pills[6].health = 0
+ORD.update(d.st, d.w, d.inf, 260)
+check("when the new pill dies too, the decoy ends", d.st.orders.held == nil, "held")
+
+-- 4b. TEN SECONDS -> ENDS, IN SILENCE.
+d = dbot(); arrive(d, 200)
+ORD.update(d.st, d.w, d.inf, 200 + HOLD - 1)
+check("the decoy stands one tick before the clock", d.st.orders.held ~= nil, "ended")
+d.st.orders.say = {}
+ORD.update(d.st, d.w, d.inf, 200 + HOLD)
+check("ten seconds: the decoy ends", d.st.orders.held == nil, "held")
+check("ten seconds: in silence", #d.st.orders.say == 0, table.concat(d.st.orders.say, " | "))
+check("and the lock is off", lock(d, 200 + HOLD + 1) == false, "on")
+
+-- 4c. A CAUTION PING BESIDE THE TANK, FROM ANY HUMAN ALLY.
+d = dbot(); arrive(d, 200)
+d.inf.events = { ping(1, 0, 23, 24) }
+ORD.on_events(d.st, d.w, d.inf, 300)
+d.inf.events = {}
+check("caution beside the tank from the sender: released",
+      d.st.orders.held == nil and d.st.orders.say[#d.st.orders.say] == "Released",
+      table.concat(d.st.orders.say, " | "))
+check("and no retreat on the same ping", d.st.orders.held == nil, "retreat")
+d = dbot(); arrive(d, 200)
+d.inf.allies = 0x1F                       -- p3 is a HUMAN ally (not in player_bots)
+d.inf.events = { ping(1, 3, 21, 23) }
+ORD.on_events(d.st, d.w, d.inf, 300)
+d.inf.events = {}
+check("caution beside the tank from a DIFFERENT human ally: released",
+      d.st.orders.held == nil, "held")
+d = dbot(); arrive(d, 200)
+d.inf.events = { ping(1, 0, 22, 24) }
+ORD.on_events(d.st, d.w, d.inf, 300)
+d.inf.events = {}
+check("caution ON the tank: released, no retreat", d.st.orders.held == nil, "held")
+d = dbot(); arrive(d, 200)
+d.inf.events = { ping(1, 0, 25, 24) }
+ORD.on_events(d.st, d.w, d.inf, 300)
+d.inf.events = {}
+check("caution 3 tiles away does not end the decoy",
+      d.st.orders.held ~= nil and d.st.orders.held.decoy == true, "ended")
+d.inf.player_bots = 0x17                   -- p0 is now a bot: its pings are news
+d.inf.events = { ping(1, 0, 23, 24) }
+ORD.on_events(d.st, d.w, d.inf, 310)
+d.inf.events = {}
+check("a BOT's caution beside the tank does not end it",
+      d.st.orders.held ~= nil, "ended")
+
+-- 4d. CANCEL.
+for _, line in ipairs({ "cancel", "cancel all" }) do
+  d = dbot(); arrive(d, 200)
+  ORD.on_chat(d.st, d.w, d.inf, 0, line, 300, true, false)
+  check("'" .. line .. "' ends the decoy", d.st.orders.held == nil
+        and lock(d, 301) == false, "held")
+end
+
+-- 4e. DEATH.
+d = dbot(); arrive(d, 200)
+local dead_oid = d.st.orders.held.oid
+d.st.orders.out = {}
+ORD.on_death(d.st, d.inf)
+check("death ends the decoy", d.st.orders.held == nil and ORD.decoy_held(d.st) == nil, "held")
+check("a decoy death CANCELS the order (obx), no hand-back to another bot",
+      d.st.orders.out[1] == "/info obx " .. dead_oid, tostring(d.st.orders.out[1]))
+check("and nothing parks after the respawn",
+      ORD.hold_parked(d.st, d.inf) == false and lock(d, 301) == false, "parked")
+
+-- 4f. A NEW ORDER FROM A PERSON TAKES PRIORITY.
+d = dbot(); arrive(d, 200)
+local old_oid = d.st.orders.held.oid
+d.inf.events = { ping(5, 0, 100, 100) }
+ORD.on_events(d.st, d.w, d.inf, 300)
+d.inf.events = {}
+settle(d, 301, 315)
+check("a new ping order replaces the decoy",
+      d.st.orders.held ~= nil and d.st.orders.held.oid ~= old_oid
+      and d.st.orders.held.decoy == nil and d.st.orders.held.mx == 100,
+      tostring(d.st.orders.held and d.st.orders.held.oid))
+d = dbot(); arrive(d, 200)
+ORD.on_chat(d.st, d.w, d.inf, 0, "attack 5", 300, true, false)
+settle(d, 301, 315)
+check("a new chat order replaces the decoy",
+      d.st.orders.held ~= nil and d.st.orders.held.kind == "attack_pill",
+      tostring(d.st.orders.held and d.st.orders.held.kind))
+
+-- 5. KNOB OFF (keel) AND CHAT ORDERS: today's soft hold, unchanged.
+C.ORDER_GOTO_DECOY = false
+d = dbot(); arrive(d, 200)
+check("ORDER_GOTO_DECOY=false: the soft hold, 'holding 10s'",
+      d.st.orders.held ~= nil and d.st.orders.held.decoy == nil
+      and d.st.orders.say[1] == "holding 10s",
+      table.concat(d.st.orders.say, " | "))
+check("ORDER_GOTO_DECOY=false: the lock does nothing",
+      (function() d.st.goal = { kind = "take_cover", mx = 3, my = 3 }
+         return lock(d, 201) == false and d.st.goal.kind == "take_cover" end)(), "?")
+check("ORDER_GOTO_DECOY=false: the panel says holding",
+      ORD.panel_line(d.st, d.inf):sub(-7) == "holding", ORD.panel_line(d.st, d.inf))
+d = dbot(100, 100); arrive(d, 200, 100, 100)
+check("ORDER_GOTO_DECOY=false: no pill in range still holds",
+      d.st.orders.held ~= nil and d.st.orders.held.hold == true
+      and d.st.orders.say[1] == "holding 10s", table.concat(d.st.orders.say, " | "))
+C.ORDER_GOTO_DECOY = true
+do
+  -- A "!goto x y" reaches the bots within ORDER_NEARBY_TILES of the square.
+  local r = BOT(1, 18, 26)
+  ORD.on_chat(r.st, r.w, r.inf, 0, "!goto 22 24", 100, true, false)
+  settle(r, 101, 115)
+  check("chat go-there setup: the bot holds it",
+        r.st.orders.held ~= nil and r.st.orders.held.kind == "goto_tile",
+        tostring(r.st.orders.held and r.st.orders.held.kind))
+  arrive(r, 200)
+  check("a chat go-there next to a pill keeps the soft hold",
+        r.st.orders.held ~= nil and r.st.orders.held.decoy == nil
+        and r.st.orders.say[1] == "holding 10s", table.concat(r.st.orders.say, " | "))
+end
+
+-- =========================================================================
+-- PING REPAIR BONUS.  A bot-command ping on one of OUR pills weights that
+-- pill's builder-pool repair row x BUILDER_POOL_PING_PILL_BONUS (2.0) for
+-- BUILDER_POOL_PING_PILL_TICKS (500), in every bot's pool, until the pill is
+-- dead, full, not ours, or another of our pills is pinged.
+-- =========================================================================
+print("orders.lua / builder_pool.lua -- ping repair bonus")
+local BP = require("builder_pool")
+local function rping(b, t, mx, my)
+  b.inf.events = { ping(5, 0, mx or 60, my or 60) }
+  b.st.tick = t
+  ORD.on_events(b.st, b.w, b.inf, t)
+  b.inf.events = {}
+end
+-- Ping, then let the lone bot's auction settle so it TAKES the order.
+local function rtake(b, t, mx, my)
+  rping(b, t, mx, my)
+  settle(b, t + 1, t + 15)
+end
+do
+  local r = BOT(1, 10, 10)
+  rping(r, 100)
+  check("hearing the ping alone gives no bonus (only the taker gets it)",
+        r.st._repair_ping == nil, "set")
+  settle(r, 101, 115)
+  local rp = r.st._repair_ping
+  check("the bot that takes the defend order on our pill #9 gets the bonus",
+        rp ~= nil and rp.tid == 9 and rp.sender == 0
+        and r.st.orders.held ~= nil and r.st.orders.held.kind == "defend_pill",
+        tostring(rp and rp.tid))
+  local took = rp and (rp.until_tick - 500) or 0
+  local w9, src = BP.goal_weight(r.st, { type = "repair", id = 9 })
+  check("pill #9's repair row is weighted 2.0 by the ping", w9 == 2.0 and src == "ping",
+        tostring(w9) .. " " .. tostring(src))
+  check("another pill's row is not", BP.goal_weight(r.st, { type = "repair", id = 5 }) == 1.0, "?")
+  check("a farm row is never", BP.goal_weight(r.st, { type = "farm", id = 9 }) == 1.0, "?")
+  local g0 = r.st.goal
+  r.st.goal = { kind = "defend_pill", target_id = 9 }
+  local wb = BP.goal_weight(r.st, { type = "repair", id = 9 })
+  check("goal bonus and ping on one pill: the larger (2.0), not 2.4", wb == 2.0, tostring(wb))
+  r.st.goal = g0
+  ORD.update(r.st, r.w, r.inf, took + 499)
+  check("the bonus stands just before 10 s", r.st._repair_ping ~= nil, "ended")
+  ORD.update(r.st, r.w, r.inf, took + 500)
+  check("the bonus ends at 10 s", r.st._repair_ping == nil, "?")
+end
+do
+  local r = BOT(1, 10, 10)
+  rtake(r, 100)
+  r.w.pills[9].health = 15
+  ORD.update(r.st, r.w, r.inf, 120)
+  check("the bonus ends when the pill is fully repaired", r.st._repair_ping == nil, "?")
+  r = BOT(1, 10, 10)
+  rtake(r, 100)
+  r.w.pills[9].health = 0
+  ORD.update(r.st, r.w, r.inf, 120)
+  check("the bonus ends when the pill is dead", r.st._repair_ping == nil, "?")
+  r = BOT(1, 10, 10)
+  rtake(r, 100)
+  r.w.pills[9].owner = "hostile"
+  ORD.update(r.st, r.w, r.inf, 120)
+  check("the bonus ends when the pill is no longer ours", r.st._repair_ping == nil, "?")
+  -- A ping on another of our pills ends it, even for a bot that does not
+  -- go on to take the new order.
+  r = BOT(1, 10, 10)
+  r.w.pills[11] = { mx = 70, my = 70, owner = "friendly", health = 5 }
+  rtake(r, 100)
+  check("setup: the bonus is on pill #9",
+        r.st._repair_ping ~= nil and r.st._repair_ping.tid == 9, "?")
+  rping(r, 200, 70, 70)
+  check("a ping on another of our pills ends the old bonus at once",
+        r.st._repair_ping == nil, tostring(r.st._repair_ping and r.st._repair_ping.tid))
+  settle(r, 201, 215)
+  check("and the bot that takes the new order gets it on the new pill",
+        r.st._repair_ping ~= nil and r.st._repair_ping.tid == 11,
+        tostring(r.st._repair_ping and r.st._repair_ping.tid))
+  r = BOT(1, 10, 10)
+  rtake(r, 100, 20, 20)
+  check("an attack ping order on an ENEMY pill gives no bonus", r.st._repair_ping == nil, "?")
+  check("keel has no ping bonus", C.PRESETS.keel.BUILDER_POOL_PING_PILL_BONUS == 1.0, "?")
+  C.BUILDER_POOL_PING_PILL_BONUS = 1.0
+  r = BOT(1, 10, 10)
+  rtake(r, 100)
+  check("bonus 1.0: the row is not weighted",
+        BP.goal_weight(r.st, { type = "repair", id = 9 }) == 1.0, "?")
+  C.BUILDER_POOL_PING_PILL_BONUS = 2.0
+end
+
+_G.EVENT_PING = nil
+_G.PING_KIND_CAUTION = nil
+_G.PING_KIND_BOT_COMMAND = nil
+_G.PING_KIND_ATTACK = nil
+
+-- =========================================================================
+-- ONE PING, ONE BOT (ORDER_CLAIM_TIEBREAK, 2026-09-24).  Andrew pinged "go
+-- here" once and two bots both said they were coming.  Two bots that both
+-- take one solo order now settle it on the crossed claims: the cheaper keeps
+-- it, the other hands it over in silence and never says the ack.
+-- =========================================================================
+print("orders.lua -- one ping, one bot")
+_G.EVENT_PING = 13
+_G.PING_KIND_BOT_COMMAND = 5
+_G.PING_KIND_CAUTION = 1
+local function gping(b, t, mx, my)
+  b.inf.events = { ping(5, 0, mx, my) }
+  ORD.on_events(b.st, b.w, b.inf, t)
+  b.inf.events = {}
+end
+-- Every bot's queued traffic reaches every other bot.
+local function pumpn(bots, tick)
+  local q = {}
+  for i, b in ipairs(bots) do
+    q[i] = {}
+    for j, v in ipairs((b.st.orders or {}).out or {}) do q[i][j] = v end
+    if b.st.orders then b.st.orders.out = {} end
+  end
+  for i, b in ipairs(bots) do
+    for k, c in ipairs(bots) do
+      if k ~= i then
+        for _, m in ipairs(q[i]) do ORD.rx(b.pn, m, tick, c.st) end
+      end
+    end
+  end
+end
+local function upd(bots, t)
+  for _, b in ipairs(bots) do b.st.tick = t; ORD.update(b.st, b.w, b.inf, t) end
+end
+local function acks(b)
+  local n = 0
+  for _, l in ipairs(b.st.orders.say or {}) do
+    if l:sub(-#" goto") == " goto" then n = n + 1 end
+  end
+  return n
+end
+-- A double take, made on purpose: neither bot hears the other's bid (the
+-- harness has no ally slots, so each settles alone on its first update).
+local function double_take()
+  local a, b = BOT(1, 30, 30), BOT(2, 38, 38)     -- B is nearer (35,35)
+  gping(a, 100, 35, 35); gping(b, 100, 35, 35)
+  a.st.orders.out, b.st.orders.out = {}, {}      -- the bids are lost
+  upd({ a, b }, 101)
+  return a, b
+end
+do
+  local a, b = double_take()
+  check("setup: both bots took the one ping order",
+        a.st.orders.held ~= nil and b.st.orders.held ~= nil
+        and a.st.orders.held.oid == b.st.orders.held.oid, "?")
+  check("setup: neither has said anything yet", acks(a) == 0 and acks(b) == 0,
+        tostring(acks(a)) .. " " .. tostring(acks(b)))
+  pumpn({ a, b }, 101)                           -- the claims cross
+  upd({ a, b }, 103)
+  check("the cheaper claim (B) keeps the order", b.st.orders.held ~= nil, "dropped")
+  check("the dearer one (A) hands it over", a.st.orders.held == nil, "held")
+  check("A lets go with a release, not a cancel",
+        (a.st.orders.out[1] or ""):match("^/info obr ") ~= nil,
+        tostring(a.st.orders.out[1]))
+  check("A's hard lock goes with it",
+        a.st.command_goal == nil or a.st.command_goal.kind ~= "goto_tile",
+        tostring(a.st.command_goal and a.st.command_goal.kind))
+  pumpn({ a, b }, 103)
+  upd({ a, b }, 104)
+  check("A's release re-opens nothing on B", b.st.orders.held ~= nil
+        and next(b.st.orders.auctions) == nil, "?")
+  a.st.orders.pings, b.st.orders.pings = {}, {}
+  upd({ a, b }, 111)
+  check("after the claim window only B says it is coming",
+        acks(b) == 1 and acks(a) == 0,
+        tostring(acks(a)) .. " " .. tostring(acks(b)))
+  check("and only B puts the ON MY WAY marker down",
+        #b.st.orders.pings == 1 and #a.st.orders.pings == 0,
+        tostring(#a.st.orders.pings) .. " " .. tostring(#b.st.orders.pings))
+  upd({ a, b }, 130)
+  check("the ack is said once", acks(b) == 1, tostring(acks(b)))
+end
+do
+  -- A cost tie goes to the lower player number, the same on both sides.
+  local a, b = double_take()
+  a.st.orders.held.claim_cost, b.st.orders.held.claim_cost = 7, 7
+  a.st.orders.out = { "/info obc " .. a.st.orders.held.oid .. " 7" }
+  b.st.orders.out = { "/info obc " .. b.st.orders.held.oid .. " 7" }
+  pumpn({ a, b }, 101)
+  upd({ a, b }, 103)
+  check("a tie keeps the lower player number (p1)",
+        a.st.orders.held ~= nil and b.st.orders.held == nil, "?")
+end
+do
+  -- A THIRD bot sees both claims and the loser's release.  It must not
+  -- re-open the order: the winner still holds it.
+  local a, b = double_take()
+  local c = BOT(4, 90, 90)
+  gping(c, 100, 35, 35)
+  c.st.orders.out = {}
+  upd({ c }, 101)
+  pumpn({ a, b, c }, 101)
+  upd({ a, b, c }, 103)
+  check("setup: only B holds it", b.st.orders.held ~= nil and a.st.orders.held == nil
+        and c.st.orders.held == nil, "?")
+  pumpn({ a, b, c }, 103)
+  upd({ a, b, c }, 104)
+  check("the third bot does not re-bid the order B still holds",
+        next(c.st.orders.auctions) == nil and c.st.orders.held == nil, "?")
+  local g = c.st.orders.gclaims[b.st.orders.held.oid] or {}
+  check("and counts only B as its holder", g[2] ~= nil and g[1] == nil,
+        tostring(g[1]) .. " " .. tostring(g[2]))
+end
+do
+  -- AN EARLY BID.  A hears the ping first and bids; the bid reaches B before
+  -- B has heard the ping.  B keeps it for its own auction.
+  local a, b = BOT(1, 30, 30), BOT(2, 38, 38)
+  gping(a, 100, 35, 35)
+  local oid = next(a.st.orders.auctions)
+  pumpn({ a, b }, 100)
+  upd({ b }, 100)                                -- no auction on B yet
+  gping(b, 102, 35, 35)
+  local au = oid and b.st.orders.auctions[oid]
+  check("an early bid is kept and joins the auction",
+        au ~= nil and au.answered[1] == true and au.bids[1] ~= nil, "?")
+  C.ORDER_CLAIM_TIEBREAK = false
+  local a2, b2 = BOT(1, 30, 30), BOT(2, 38, 38)
+  gping(a2, 100, 35, 35)
+  pumpn({ a2, b2 }, 100)
+  upd({ b2 }, 100)
+  gping(b2, 102, 35, 35)
+  local au2 = oid and b2.st.orders.auctions[oid]
+  check("keel: an early bid is lost", au2 ~= nil and au2.answered[1] == nil, "?")
+  C.ORDER_CLAIM_TIEBREAK = true
+end
+do
+  C.ORDER_CLAIM_TIEBREAK = false
+  local a, b = double_take()
+  check("keel: the ack is said on the take",
+        acks(a) == 1 and acks(b) == 1, tostring(acks(a)) .. " " .. tostring(acks(b)))
+  pumpn({ a, b }, 101)
+  upd({ a, b }, 103)
+  check("keel: both bots drop the order on the crossed claims",
+        a.st.orders.held == nil and b.st.orders.held == nil, "?")
+  C.ORDER_CLAIM_TIEBREAK = true
+  check("keel has no tiebreak", C.PRESETS.keel.ORDER_CLAIM_TIEBREAK == false, "?")
+end
+
+-- =========================================================================
+-- A NEW ORDER RETIRES EVERY OLDER ONE (ORDER_NEW_CLEARS_ALL, 2026-09-24).
+-- "I'm seeing bots go back to where I said 'go here' a while ago."
+-- =========================================================================
+print("orders.lua -- a new order retires the older ones")
+local function settle2(a, b, t)
+  pumpn({ a, b }, t); upd({ a, b }, t + 1)
+  pumpn({ a, b }, t + 1); upd({ a, b }, t + 2)
+  pumpn({ a, b }, t + 2); upd({ a, b }, t + 3)
+end
+do
+  -- A takes "go here" X, then a second ping Y, which A takes too.  A lets
+  -- X go (obr).  B must not pick X up.
+  local a, b = BOT(1, 32, 32), BOT(2, 90, 90)
+  gping(a, 100, 35, 35); gping(b, 100, 35, 35)
+  settle2(a, b, 100)
+  local x = a.st.orders.held and a.st.orders.held.oid
+  check("setup: A holds the first go-there", x ~= nil and b.st.orders.held == nil, "?")
+  gping(a, 200, 38, 38); gping(b, 200, 38, 38)
+  settle2(a, b, 200)
+  check("setup: A took the new order", a.st.orders.held ~= nil
+        and a.st.orders.held.oid ~= x, "?")
+  settle2(a, b, 210)
+  check("B does not go back to the old square", b.st.orders.held == nil,
+        tostring(b.st.orders.held and b.st.orders.held.oid))
+  check("and B has forgotten the old order", b.st.orders.known[x] == nil, "known")
+  C.ORDER_NEW_CLEARS_ALL = false
+  C.ORDER_NO_HAND_BACK = false
+  local a2, b2 = BOT(1, 32, 32), BOT(2, 90, 90)
+  gping(a2, 100, 35, 35); gping(b2, 100, 35, 35)
+  settle2(a2, b2, 100)
+  gping(a2, 200, 38, 38); gping(b2, 200, 38, 38)
+  settle2(a2, b2, 200)
+  settle2(a2, b2, 210)
+  check("keel: B picks the released old order up",
+        b2.st.orders.held ~= nil and b2.st.orders.held.oid == x,
+        tostring(b2.st.orders.held and b2.st.orders.held.oid))
+  C.ORDER_NEW_CLEARS_ALL = true
+  C.ORDER_NO_HAND_BACK = true
+end
+do
+  -- An order for somebody else leaves what this bot holds alone.
+  local a, b = BOT(1, 32, 32), BOT(2, 90, 90)
+  gping(a, 100, 35, 35); gping(b, 100, 35, 35)
+  settle2(a, b, 100)
+  local x = a.st.orders.held and a.st.orders.held.oid
+  gping(a, 200, 86, 86); gping(b, 200, 86, 86)
+  settle2(a, b, 200)
+  check("setup: B took the new order", b.st.orders.held ~= nil, "?")
+  check("A keeps the order it holds", a.st.orders.held ~= nil
+        and a.st.orders.held.oid == x, tostring(a.st.orders.held and a.st.orders.held.oid))
+  check("and still knows it", a.st.orders.known[x] ~= nil, "forgot")
+end
+do
+  -- Scenario hints stay: a script re-sends them on its own clock.
+  local a = BOT(1, 32, 32)
+  gping(a, 100, 35, 35)
+  local o = a.st.orders
+  o.known[424242] = { spec = { oid = 424242, sender = ORD.HINT_SENDER }, tick = 100 }
+  o.known[515151] = { spec = { oid = 515151, sender = 0 }, tick = 100 }
+  ORD.clear_older_orders(a.st, a.inf, 999, 101)
+  check("a hint order is kept", o.known[424242] ~= nil, "forgot")
+  check("an older person's order is forgotten", o.known[515151] == nil, "kept")
+  C.ORDER_NEW_CLEARS_ALL = false
+  o.known[515151] = { spec = { oid = 515151, sender = 0 }, tick = 100 }
+  ORD.clear_older_orders(a.st, a.inf, 999, 101)
+  check("keel: nothing is forgotten", o.known[515151] ~= nil, "forgot")
+  C.ORDER_NEW_CLEARS_ALL = true
+  check("keel does not clear", C.PRESETS.keel.ORDER_NEW_CLEARS_ALL == false, "?")
+end
+_G.EVENT_PING = nil
+_G.PING_KIND_BOT_COMMAND = nil
+_G.PING_KIND_CAUTION = nil
+
+-- THE MAN BEING OUT DOES NOT MAKE A BOT BUSY (ORDER_MAN_OUT_TAKES).
+print("orders.lua -- a bot with its man out still takes an order")
+do
+  local st2, inf2 = ST(), I({ allies = 0x17 })
+  inf2.man_status = C.LGM_MOVING
+  local busy = ORD.busy(st2, inf2)
+  check("man out: not busy", busy == false, tostring(busy))
+  ORD.on_chat(st2, W(), inf2, 0, "socrates attack 5", 100, true, false)
+  check("man out: a named order is taken",
+        st2.orders.held ~= nil and st2.orders.held.tid == 5,
+        tostring(st2.orders.held and st2.orders.held.tid))
+  C.ORDER_MAN_OUT_TAKES = false
+  local b2, why = ORD.busy(ST(), inf2)
+  check("keel: man out is busy", b2 == true and why == "man_out", tostring(why))
+  C.ORDER_MAN_OUT_TAKES = true
+  check("keel keeps man_out busy", C.PRESETS.keel.ORDER_MAN_OUT_TAKES == false, "?")
+  local st3, inf3 = ST(), I({ allies = 0x17 })
+  inf3.man_status = C.LGM_MOVING
+  st3.goal = { kind = "capture_pill", target_id = 7 }
+  st3._lgm_dispatch = { x = 40, y = 40, tick = 90 }
+  local b3 = ORD.busy(st3, inf3)
+  check("capturing with the man sent out: not busy", b3 == false, tostring(b3))
+  C.ORDER_MAN_OUT_TAKES = false
+  inf3.man_status = C.LGM_INTANK
+  local b4, why4 = ORD.busy(st3, inf3)
+  check("keel: capturing is busy", b4 == true and why4 == "capturing", tostring(why4))
+  C.ORDER_MAN_OUT_TAKES = true
+end
 
 print(string.format("\n%d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

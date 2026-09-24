@@ -17659,6 +17659,13 @@ function M.pick_goal(state, world, info, quiet)
     player_names = info.player_names,
     armour = info.armour, shells = info.shells,
   }
+  -- PING SUICIDE RUN (orders.lua). A human's bot-command + attack ping pair
+  -- sent this tank at one pill until it or the pill dies. Nothing else is
+  -- scored: no refuel, no flee, no shell or armour gate. The run's own end
+  -- tests live in orders.suicide_lock; a finished run clears state._suicide.
+  if state._suicide then
+    return require("orders").suicide_goal(state._suicide)
+  end
   -- SEA-PILL HARVEST, collect phase. Afloat, on purpose, with cluster pills
   -- still in the water and the water still safe: this OWNS the goal. Anything
   -- else winning the pool here means going ashore, and going ashore costs
@@ -17796,11 +17803,22 @@ function M.pick_goal(state, world, info, quiet)
     local ord = state._order
     local rk  = C.ORDER_REACTIVE_KINDS or {}
     local g   = goal_selection(state, world, info, quiet)
-    if g and g.kind and g.kind ~= "none" and g.kind ~= "goto_tile" and rk[g.kind] then
+    -- A DECOY hold (orders.lua, GO-THERE DECOY HARD HOLD) fights with
+    -- attack_tank / kill_lgm in gun range ONLY: the survival rows -- refuel,
+    -- take_cover, the flees, the water escape -- would drive it off the
+    -- square it was put on to draw the pill's fire.  orders.decoy_lock
+    -- undoes them every think anyway; turning them down here keeps the
+    -- goal from flickering between a replan and the lock.
+    local ok = g and g.kind and g.kind ~= "none" and g.kind ~= "goto_tile" and rk[g.kind]
+    if ok and ord.decoy then
+      ok = require("orders").decoy_allows(state, info, g)
+    end
+    if ok then
       if not quiet and BRAIN_DEBUG_MODE then
       end
       return g
     end
+    if ord.decoy then return require("orders").decoy_goal(ord) end
     return { kind = "goto_tile", mx = ord.mx, my = ord.my,
              wx = U.m2w(ord.mx), wy = U.m2w(ord.my), target_id = -1,
              _ordered = true, _order_hold = true }
