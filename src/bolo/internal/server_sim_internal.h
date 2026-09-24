@@ -969,6 +969,12 @@ struct ServerSim {
     void                  *scenarioRoundBootCtx;
     void                 (*scenarioRoundStart)(void *ctx);
     void                  *scenarioRoundStartCtx;
+    /* The scripts.json text for this round's recording, which the host
+       builds at round boot and logStop writes into the .wbv. NULL with a
+       length of zero for a round that ran no script. malloc'd; the setter
+       frees the one it replaces and serverSimDestroy frees the last. */
+    char                  *scenarioRecordText;
+    size_t                 scenarioRecordTextLen;
     /* Asked of each map the lister finds, so an entry can say whether it is
        scripted. NULL means nothing registered and every map reads plain. */
     bool                 (*scenarioMapScripted)(void *ctx, const char *mapPath);

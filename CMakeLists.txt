@@ -4392,6 +4392,9 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The scripted game type through the viewer: the .wbv header byte of a
     # recorded round, and byte 7 of a hand-written settings payload.
     tests/unit/test_lv_scripted_game_type.c
+    # The scripts.json member a scripted round's recording carries, read
+    # back with minizip, and the writer that builds it.
+    tests/unit/test_scripts_record.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).
@@ -6227,6 +6230,11 @@ set(_unit_test_names
     lv_rule_names_and_panel_parse
     lv_scripted_game_type_header
     lv_scripted_game_type_settings
+    scripts_record_scripted_round
+    scripts_record_plain_round
+    scripts_record_scripted_then_plain
+    scripts_record_setter_cap
+    scripts_record_json_write
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast

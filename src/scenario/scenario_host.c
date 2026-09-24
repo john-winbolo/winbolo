@@ -110,6 +110,8 @@
 #include "scenario_lua.h"
 #include "scenario_manifest_json.h" /* a package's manifest, read and held
                                      * against the table its script declares */
+#include "scenario_record_json.h"  /* scnRecordJsonWrite — the recording's
+                                    * scripts.json */
 #include "scenario_package.h"      /* scnPackageFindInMap — the second way a
                                     * map can carry a script */
 #include "scenario_sandbox.h"      /* the libraries a scenario state gets */
@@ -132,6 +134,11 @@ BOLO_STATIC_ASSERT(SCN_MANIFEST_RULES_MAX >= (int)SCN_RULE_COUNT,
  * and the lobby could not say, which nothing at runtime would report. */
 BOLO_STATIC_ASSERT(SCN_SCRIPTS_MAX == LOBBY_SCRIPT_LIST_MAX,
                    host_composes_exactly_what_the_wire_can_name);
+
+/* And against how many rows the recording's description holds, which
+ * scenario_io sizes without seeing this header. */
+BOLO_STATIC_ASSERT(SCN_SCRIPTS_MAX == SCN_RECORD_SCRIPTS_MAX,
+                   record_describes_every_script_a_round_composes);
 
 /* A team's brain becomes the path a spawn carries, and the manifest sizes the
  * name without seeing the op. Held against the op's own length here, because
@@ -5618,6 +5625,111 @@ static int scnDamageScale(void *ctx, BYTE attacker, BYTE victim, BYTE cause) {
     return pct;
 }
 
+/* The scripts.json text this round's recording carries, built from the list
+ * the boot has just loaded and handed to the sim, which logStop writes into
+ * the .wbv. Built here, at the boot, because each entry's table is this
+ * round's and goes when the round does.
+ *
+ * Each script's manifest object is rebuilt from its struct — the package's
+ * own for a script that came out of one, the table the file declared for a
+ * loose script — so a key in a package's manifest.json this build does not
+ * know is not in the record.
+ *
+ * Anything that will not build leaves the round with no text and says so
+ * once. The recording is not worth a round. */
+static void scnRecordTextSet(ScenarioHost *h, int n) {
+    ScnRecordDesc *d;
+    char          *manifests[SCN_SCRIPTS_MAX];
+    char           err[SCN_ERR_LEN];
+    char          *text = NULL;
+    const char    *map;
+    int            i;
+
+    memset(manifests, 0, sizeof(manifests));
+    err[0] = '\0';
+    serverSimSetScenarioRecordText(h->sim, NULL, 0);
+
+    /* On the heap: the rule and region rows put it past what a callback
+       inside the round start should hold on its stack. */
+    d = (ScnRecordDesc *)calloc(1, sizeof(*d));
+    if (d == NULL) {
+        scnSay(NULL, 0, "scenario: no memory for the recording's scripts.json");
+        return;
+    }
+
+    /* The committed map's file, which is what the scripts' own rows name
+       too; the sim's display name for a host with no map path behind it. */
+    map = scnFileNameOf(h->mapPath);
+    d->map         = (map[0] != '\0') ? map : serverSimGetMapName(h->sim);
+    d->modsEnabled = !serverSimGetModsOff(h->sim);
+
+    /* The composite's table as the round opens on it. */
+    for (i = 0; i < (int)h->manifest.numRules &&
+                d->numRules < SCN_MANIFEST_RULES_MAX; i++) {
+        d->rules[d->numRules].name  = simRulesRuleName(h->manifest.rules[i].rule);
+        d->rules[d->numRules].value = h->manifest.rules[i].value;
+        d->numRules++;
+    }
+
+    /* The union, each with the file of the script that named it. owner is
+       that script's position plus one. */
+    for (i = 0; i < (int)h->manifest.numRegions && i < SCN_REGIONS_MAX; i++) {
+        const ScnManifestRegion *r = &h->manifest.regions[i];
+        int                      e = (int)r->owner - 1;
+
+        d->regions[i].name = r->name;
+        d->regions[i].x    = r->x;
+        d->regions[i].y    = r->y;
+        d->regions[i].w    = r->w;
+        d->regions[i].h    = r->h;
+        d->regions[i].file = (e >= 0 && e < n)
+                                 ? scnFileNameOf(h->entry[e].script) : "";
+        d->numRegions++;
+    }
+
+    for (i = 0; i < n && i < SCN_SCRIPTS_MAX; i++) {
+        const ScnScriptEntry   *e = &h->entry[i];
+        const ScenarioManifest *m = (e->pkgManifest != NULL) ? e->pkgManifest
+                                                             : e->manifest;
+        ScnManifestDoc         *doc;
+
+        if (m == NULL) {
+            scnFmt(err, sizeof(err), "%s has no table",
+                   scnFileNameOf(e->script));
+            goto fail;
+        }
+        doc = scnManifestFromValues(m, err, sizeof(err));
+        if (doc == NULL) goto fail;
+        manifests[i] = scnManifestWrite(doc, err, sizeof(err));
+        scnManifestFree(doc);
+        if (manifests[i] == NULL) goto fail;
+
+        d->scripts[i].file   = scnFileNameOf(e->script);
+        d->scripts[i].source = (e->source == lobbyScenarioMap) ? "map"
+                                                                : "server";
+        d->scripts[i].kind   = (e->manifest != NULL &&
+                                e->manifest->kind == scnKindKeepsWinCondition)
+                                   ? "mod" : "scenario";
+        d->scripts[i].manifestJson = manifests[i];
+        d->numScripts++;
+    }
+
+    text = scnRecordJsonWrite(d, err, sizeof(err));
+    if (text == NULL) goto fail;
+    serverSimSetScenarioRecordText(h->sim, text, strlen(text));
+    goto done;
+
+fail:
+    scnSay(NULL, 0, "scenario: the recording carries no scripts.json: %s",
+           err[0] != '\0' ? err : "it could not be built");
+done:
+    free(text);
+    for (i = 0; i < SCN_SCRIPTS_MAX; i++) {
+        free(manifests[i]);
+    }
+    free(d);
+}
+
 /* A round the scenario takes no part in: no hooks, no policy answers, and
  * nothing owed to the first running tick. The operator has already been
  * told why.
@@ -5646,6 +5758,9 @@ static void scnRoundWithoutScenario(ScenarioHost *h) {
        above put count back to zero, so every walk stops before reading it;
        this is so nothing has to know that to be safe. */
     h->base = 0;
+    /* And the recording's description of the last round's scripts, which
+       this round did not run. */
+    serverSimSetScenarioRecordText(h->sim, NULL, 0);
 }
 
 /* The teams the roster is on right now. Called wherever the host starts
@@ -5843,6 +5958,10 @@ static void scnRoundBootLocked(ScenarioHost *h) {
     if (h->manifest.fillToCaps) {
         serverSimScenarioFillWorldToRules(h->sim);
     }
+
+    /* And what the recording says the round ran: the list that loaded, and
+       the table it composed to. */
+    scnRecordTextSet(h, n);
 }
 
 /* on_setup, with the VM lock already held.
@@ -8262,6 +8381,9 @@ void scenarioHostDetach(ScenarioHost *h) {
            that never had a scenario publishes nothing at all rather than an
            empty set saying one has just left. */
         serverSimSetScenarioRules(h->sim, NULL, 0);
+        /* And the recording's description of the scripts, so a round the
+           next map plays without a host records none. */
+        serverSimSetScenarioRecordText(h->sim, NULL, 0);
         /* Both channels go with the slot, and an invalid handle is a
            no-op, so this needs no test of its own. */
         serverSimUnregisterSubscriber(h->sim, h->sub);

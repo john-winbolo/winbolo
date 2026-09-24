@@ -42,6 +42,7 @@
 #include "server_sim.h"
 #include "control_event.h"  /* ControlEvent — serverSimFillEntitySyncEvent's out-parameter */
 #include "attribution_track.h"
+#include "scripts_record.h"
 #include "log_internal.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "../common/wb_log.h"
@@ -439,6 +440,22 @@ void logStop() {
         WB_LOG_INFO(WB_LOG_CAT_SERVER,
                     "attribution track: recordCount=%u bytes=%zu truncated=%d",
                     trec, (size_t)(sizeof hdr + tlen), (int)ttrunc);
+      }
+      /* Third member: the scripts the round ran, as the scenario host
+       * described them at round boot. Only a round that ran scripts has
+       * any text, so a plain round's archive stays log.dat and the track. */
+      size_t slen = 0;
+      const char *stext = serverSimGetScenarioRecordText(logSsim, &slen);
+      if (stext != NULL && slen > 0) {
+        zip_fileinfo si;
+        memset(&si, 0, sizeof si);
+        if (zipOpenNewFileInZip(logFile, SCRIPTS_RECORD_MEMBER, &si,
+                                NULL, 0, NULL, 0, "",
+                                Z_DEFLATED, Z_DEFAULT_COMPRESSION) == Z_OK) {
+          zipWriteInFileInZip(logFile, stext, (unsigned)slen);
+          zipCloseFileInZip(logFile);
+          WB_LOG_INFO(WB_LOG_CAT_SERVER, "scripts record: bytes=%zu", slen);
+        }
       }
     }
     zipClose(logFile, "WinBolo Log File");

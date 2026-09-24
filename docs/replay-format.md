@@ -11,9 +11,14 @@ the simulation.
 
 ## Container
 
-A `.wbv` file is a standard **ZIP archive** (DEFLATE) containing a single member
+A `.wbv` file is a standard **ZIP archive** (DEFLATE) whose main member is
 named `log.dat`. Because it is ordinary ZIP, the payload can be extracted with
 any unzip tool.
+
+A logged round also carries `attribution.trk`
+(`src/bolo/public/attribution_track.h`), and a round that ran scripts
+carries `scripts.json`, described below. Both are written by `logStop`
+after `log.dat` is closed.
 
 Files are named `<timestamp>_<mapname>.wbv`, e.g.
 `20260609t015459_DH-Oil_Rig.wbv`.
@@ -23,6 +28,47 @@ Files are named `<timestamp>_<mapname>.wbv`, e.g.
 | Writing | `src/bolo/log.c` (`logStart`, `logWriteSnapshot`, `logAddEvent`, `logWriteTick`) |
 | Reading | `src/logviewer/blocks.c` (ZIP open + decompress), `src/logviewer/screen.c` (`lv_logLoad`, `lv_screenProcessLog`) |
 | Constants | `src/bolo/public/log.h`, `src/logviewer/lv_log.h` |
+
+### `scripts.json`
+
+What the scripts of a scripted round were. The scenario host builds the
+text at the end of a round boot that loaded its scripts and hands it to
+the sim (`serverSimSetScenarioRecordText`); `logStop` writes it as this
+member. A round that ran no script has no text, so a plain round's
+archive has no `scripts.json` — including a plain round that follows a
+scripted one on the same server, and a lobby-only log. Text over
+`SCN_RECORD_TEXT_MAX` (256 KiB, `src/bolo/public/scripts_record.h`) is
+not stored and so not written.
+
+```json
+{
+  "version": 1,
+  "map": "Survival.map",
+  "mods_enabled": true,
+  "rules": { "tank_reload_ticks": 8 },
+  "regions": [ { "name": "keep", "x": 100, "y": 100, "w": 12, "h": 12,
+                 "file": "Survival.map" } ],
+  "scripts": [
+    { "file": "Survival.map", "source": "map", "kind": "scenario",
+      "manifest": { "...": "..." } },
+    { "file": "NoLgmDeaths.scenario.lua", "source": "server", "kind": "mod",
+      "manifest": { "...": "..." } }
+  ]
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `version` | `1` |
+| `map` | The committed map's file name |
+| `mods_enabled` | Whether the lobby's mods switch was on |
+| `rules` | The composed rules table the round opened on, keyed by rule name; a whole-number value is written as an integer |
+| `regions` | The composed regions, each with `file`, the name of the script that declared it |
+| `scripts` | One row per script in load order. Mods switched off did not run and are not listed |
+| `scripts[].file` | The script's file name, not its path. A script packed into a map has the map's name |
+| `scripts[].source` | `map` for the committed map's own script, `server` for a script from the server's scenarios directory |
+| `scripts[].kind` | `mod` for a script whose manifest says `kind = "mod"`, otherwise `scenario` |
+| `scripts[].manifest` | That script's own manifest as `manifest.json` writes it, rebuilt from the table the round loaded, so its `rules` are what that one file set |
 
 ## Header
 

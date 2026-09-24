@@ -3419,6 +3419,15 @@ int run_lv_rule_names_and_panel_parse(void);
  * a hand-written settings payload with byte 7 = 4 decodes to the same. */
 int run_lv_scripted_game_type_header(void);
 int run_lv_scripted_game_type_settings(void);
+/* The scripts.json member a scripted round's recording carries
+ * (test_scripts_record.c): written for a scenario and a mod in load order,
+ * absent for a plain round and for a plain round after a scripted one, the
+ * sim's cap on the text, and the writer on a hand-built description. */
+int run_scripts_record_scripted_round(void);
+int run_scripts_record_plain_round(void);
+int run_scripts_record_scripted_then_plain(void);
+int run_scripts_record_setter_cap(void);
+int run_scripts_record_json_write(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or

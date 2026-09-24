@@ -30,6 +30,7 @@
 
 #include <assert.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <SDL3/SDL.h>
@@ -55,6 +56,7 @@
 #include "sim_rules.h"     /* the table the rule arm writes, and its check */
 #include "log.h"           /* logAddEvent — the arm's record */
 #include "client_command.h" /* CMD_CHAT and the team destination the say arm builds */
+#include "scripts_record.h" /* SCN_RECORD_TEXT_MAX — the recording text's cap */
 
 /* SCN_PANEL_MAX is written as a literal on the scenario surface, which
  * cannot see the channel sizes. This is where the two meet: one panel
@@ -4251,6 +4253,44 @@ void serverSimSetScenarioTickStats(ServerSim *sim, uint32_t instr,
 void serverSimScenarioResetTickStats(ServerSim *sim) {
     if (sim == NULL) return;
     memset(&sim->scenarioTickStats, 0, sizeof(sim->scenarioTickStats));
+}
+
+void serverSimSetScenarioRecordText(ServerSim *sim, const char *text,
+                                    size_t len) {
+    char *copy;
+
+    if (sim == NULL) return;
+    free(sim->scenarioRecordText);
+    sim->scenarioRecordText    = NULL;
+    sim->scenarioRecordTextLen = 0;
+    if (text == NULL || len == 0) {
+        return;
+    }
+    if (len > SCN_RECORD_TEXT_MAX) {
+        WB_LOG_WARN(WB_LOG_CAT_SIM,
+                    "scripts.json is %zu bytes, over the %u-byte cap, and is "
+                    "not recorded", len, (unsigned)SCN_RECORD_TEXT_MAX);
+        return;
+    }
+    copy = (char *)malloc(len);
+    if (copy == NULL) {
+        WB_LOG_WARN(WB_LOG_CAT_SIM,
+                    "no memory for %zu bytes of scripts.json, not recorded",
+                    len);
+        return;
+    }
+    memcpy(copy, text, len);
+    sim->scenarioRecordText    = copy;
+    sim->scenarioRecordTextLen = len;
+}
+
+const char *serverSimGetScenarioRecordText(const ServerSim *sim, size_t *len) {
+    if (sim == NULL || sim->scenarioRecordText == NULL) {
+        if (len != NULL) *len = 0;
+        return NULL;
+    }
+    if (len != NULL) *len = sim->scenarioRecordTextLen;
+    return sim->scenarioRecordText;
 }
 
 void serverSimSetScenarioRoundBoot(ServerSim *sim, void (*roundBoot)(void *ctx),
