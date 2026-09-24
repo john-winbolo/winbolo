@@ -40,6 +40,12 @@ scripted one on the same server, and a lobby-only log. Text over
 `SCN_RECORD_TEXT_MAX` (256 KiB, `src/bolo/public/scripts_record.h`) is
 not stored and so not written.
 
+The log viewer reads the member when it opens the recording, alongside
+`attribution.trk` (`src/logviewer/blocks.c`), into `LvScripts` on its state
+(`src/logviewer/logviewer.h`). A member that is absent, over the cap, not
+JSON or of another version leaves the viewer without one, and the recording
+plays as it would have without it.
+
 ```json
 {
   "version": 1,

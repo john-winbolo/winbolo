@@ -34,6 +34,7 @@
 #include "lv_bolo_map.h"
 #include "lv_bases.h"
 #include "lv_starts.h"
+#include "sim_rules_names.h"   /* SIM_RULE_COUNT — LvScripts' rules */
 
 /* Forward declarations for SDL types */
 struct SDL_Window;
@@ -101,9 +102,63 @@ typedef struct {
   BYTE baseFullArmour;
 } LvRules;
 
+/* What a recording's scripts.json says the round ran (docs/replay-format.md,
+   "scripts.json"), read once when the recording is opened. Every count is
+   clamped to its array and every string is cut to its buffer and terminated,
+   because the member is a file anyone could have written. All zero, with
+   present false, for a recording without the member, one over the cap, one
+   that is not the JSON the writer produces and one of another version. */
+#define LV_SCRIPTS_MAX              10
+#define LV_SCRIPTS_REGIONS_MAX      64
+#define LV_SCRIPTS_FILE_LEN         128
+#define LV_SCRIPTS_WORD_LEN         16   /* source and kind */
+#define LV_SCRIPTS_NAME_LEN         64
+#define LV_SCRIPTS_DESC_LEN         256
+#define LV_SCRIPTS_REGION_NAME_LEN  32
+#define LV_SCRIPTS_MAP_LEN          128
+
+/* One script the round ran, in load order. name and description are its
+   manifest's. */
+typedef struct {
+  char file[LV_SCRIPTS_FILE_LEN];
+  char source[LV_SCRIPTS_WORD_LEN];
+  char kind[LV_SCRIPTS_WORD_LEN];
+  char name[LV_SCRIPTS_NAME_LEN];
+  char description[LV_SCRIPTS_DESC_LEN];
+} LvScriptRow;
+
+/* One rule of the composed table: its index in sim_rules_names.h and the
+   value the round opened on. */
+typedef struct {
+  int    index;
+  double value;
+} LvScriptRule;
+
+/* One composed region, with the file of the script that declared it. */
+typedef struct {
+  char    name[LV_SCRIPTS_REGION_NAME_LEN];
+  uint8_t x, y;
+  uint8_t w, h;
+  char    file[LV_SCRIPTS_FILE_LEN];
+} LvScriptRegion;
+
+typedef struct LvScripts {
+  bool           present;      /* the member was there and parsed */
+  char           map[LV_SCRIPTS_MAP_LEN];
+  bool           modsEnabled;
+  int            count;
+  LvScriptRow    scripts[LV_SCRIPTS_MAX];
+  int            ruleCount;
+  LvScriptRule   rules[SIM_RULE_COUNT];
+  int            regionCount;
+  LvScriptRegion regions[LV_SCRIPTS_REGIONS_MAX];
+} LvScripts;
+
 typedef struct LogViewerState {
   /* The rules this recording is drawn against. */
   LvRules      rules;
+  /* The scripts the recording says the round ran; empty for a plain round. */
+  LvScripts    scripts;
 
   /* --- FROM screen.c globals --- */
   screen       view;

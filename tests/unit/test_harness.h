@@ -3428,6 +3428,18 @@ int run_scripts_record_plain_round(void);
 int run_scripts_record_scripted_then_plain(void);
 int run_scripts_record_setter_cap(void);
 int run_scripts_record_json_write(void);
+/* The log viewer reading scripts.json into its LvScripts holder
+ * (test_lv_scripts_json.c, with the scripted round recorded by
+ * lv_scripts_fixture.c): a scripted round read in load order, a plain round
+ * and an old recording read as none, and a malformed, wrong-version,
+ * over-long or over-cap member held to what the holder takes. */
+int run_lv_scripts_json_scripted_round(void);
+int run_lv_scripts_json_plain_round(void);
+int run_lv_scripts_json_old_recording(void);
+int run_lv_scripts_json_malformed(void);
+int run_lv_scripts_json_wrong_version(void);
+int run_lv_scripts_json_hostile_values(void);
+int run_lv_scripts_json_over_cap(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or

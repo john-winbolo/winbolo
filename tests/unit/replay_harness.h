@@ -239,6 +239,17 @@ typedef struct {
 bool replayHarnessDecodeFile(const char *path, ReplayWorld *w,
                              ReplayFileInfo *info);
 
+/* The same decode, and the viewer's scripts.json holder (LvScripts in
+ * src/logviewer/logviewer.h) copied into *scripts when that is not NULL.
+ * Named rather than included so the sim side of the harness still sees no
+ * viewer header; a caller that reads the holder includes logviewer.h.
+ * *scripts is written only when the file opened, which is also when the
+ * return value can be true. Defined in replay_harness_decode.c. */
+struct LvScripts;
+bool replayHarnessDecodeFileScripts(const char *path, ReplayWorld *w,
+                                    ReplayFileInfo *info,
+                                    struct LvScripts *scripts);
+
 /* Decode a .wbv from its last mid-round snapshot rather than from the start:
  * the file is opened, the read cursor jumps to that snapshot, and playback
  * runs from there to end-of-log. Every record before the snapshot goes

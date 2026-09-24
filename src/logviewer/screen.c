@@ -54,6 +54,8 @@
 #include "lv_messages.h"
 #include "../gui/lang.h"
 #include "../gui/ping_kinds.h"   /* PING_DISPLAY_MS, pingKindMessageId */
+#include "cJSON.h"               /* scripts.json, read into g_lv->scripts */
+#include "sim_rules_names.h"     /* simRulesRuleIndex — a rule's name to its index */
 
 /* File-scope pointer to the central LogViewerState */
 static LogViewerState *g_lv = NULL;
@@ -2722,6 +2724,138 @@ bool lv_walkFindBaseOwnerTimes(uint8_t xE, uint8_t yE, uint8_t ownerE, int ordE,
   return FALSE;
 }
 
+/* A string field copied into dst, cut to cap and terminated. Missing, or not
+ * a string, reads as "". */
+static void lv_scriptsCopyString(char *dst, size_t cap, const cJSON *obj,
+                                 const char *key) {
+  const cJSON *v = cJSON_GetObjectItemCaseSensitive(obj, key);
+
+  dst[0] = '\0';
+  if (cJSON_IsString(v) && v->valuestring != NULL) {
+    snprintf(dst, cap, "%s", v->valuestring);
+  }
+}
+
+/* A map square coordinate or size: a whole number from 0 to 255, and nothing
+ * else. FALSE for a missing key, another type, a fraction or a value out of
+ * range. */
+static bool lv_scriptsSquare(const cJSON *obj, const char *key, uint8_t *out) {
+  const cJSON *v = cJSON_GetObjectItemCaseSensitive(obj, key);
+  double       d;
+
+  if (!cJSON_IsNumber(v)) return FALSE;
+  d = v->valuedouble;
+  if (!(d >= 0.0 && d <= 255.0) || d != (double)(int)d) return FALSE;
+  *out = (uint8_t)d;
+  return TRUE;
+}
+
+/*********************************************************
+*NAME:          lv_scriptsParse
+*PURPOSE:
+*  Fills out from a recording's scripts.json text. The text
+*  is untrusted: it is parsed with its length, only version
+*  1 is read, every count stops at its array, every string
+*  is cut to its buffer, a rule this build cannot name or
+*  whose value is not a number is skipped, and a region
+*  whose rectangle is not four whole numbers from 0 to 255
+*  is skipped. Anything that is not a JSON object of
+*  version 1 leaves out all zero with present FALSE.
+*********************************************************/
+static void lv_scriptsParse(LvScripts *out, const char *text, size_t len) {
+  cJSON       *root;
+  const cJSON *v;
+  const cJSON *item;
+
+  memset(out, 0, sizeof(*out));
+  if (text == NULL || len == 0) return;
+
+  root = cJSON_ParseWithLength(text, len);
+  if (!cJSON_IsObject(root)) {
+    cJSON_Delete(root);
+    return;
+  }
+  v = cJSON_GetObjectItemCaseSensitive(root, "version");
+  if (!cJSON_IsNumber(v) || v->valuedouble != 1.0) {
+    cJSON_Delete(root);
+    return;
+  }
+
+  lv_scriptsCopyString(out->map, sizeof(out->map), root, "map");
+  out->modsEnabled =
+      cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root, "mods_enabled"))
+          ? TRUE : FALSE;
+
+  v = cJSON_GetObjectItemCaseSensitive(root, "rules");
+  if (cJSON_IsObject(v)) {
+    cJSON_ArrayForEach(item, v) {
+      int index;
+      if (out->ruleCount >= SIM_RULE_COUNT) break;
+      if (item->string == NULL || !cJSON_IsNumber(item)) continue;
+      index = simRulesRuleIndex(item->string);
+      if (index < 0) continue;
+      out->rules[out->ruleCount].index = index;
+      out->rules[out->ruleCount].value = item->valuedouble;
+      out->ruleCount++;
+    }
+  }
+
+  v = cJSON_GetObjectItemCaseSensitive(root, "regions");
+  if (cJSON_IsArray(v)) {
+    cJSON_ArrayForEach(item, v) {
+      LvScriptRegion *r;
+      uint8_t         x, y, w, h;
+      if (out->regionCount >= LV_SCRIPTS_REGIONS_MAX) break;
+      if (!cJSON_IsObject(item)) continue;
+      if (!lv_scriptsSquare(item, "x", &x) || !lv_scriptsSquare(item, "y", &y) ||
+          !lv_scriptsSquare(item, "w", &w) || !lv_scriptsSquare(item, "h", &h)) {
+        continue;
+      }
+      r = &out->regions[out->regionCount];
+      lv_scriptsCopyString(r->name, sizeof(r->name), item, "name");
+      lv_scriptsCopyString(r->file, sizeof(r->file), item, "file");
+      r->x = x;
+      r->y = y;
+      r->w = w;
+      r->h = h;
+      out->regionCount++;
+    }
+  }
+
+  v = cJSON_GetObjectItemCaseSensitive(root, "scripts");
+  if (cJSON_IsArray(v)) {
+    cJSON_ArrayForEach(item, v) {
+      LvScriptRow *s;
+      const cJSON *manifest;
+      if (out->count >= LV_SCRIPTS_MAX) break;
+      if (!cJSON_IsObject(item)) continue;
+      s = &out->scripts[out->count];
+      lv_scriptsCopyString(s->file, sizeof(s->file), item, "file");
+      lv_scriptsCopyString(s->source, sizeof(s->source), item, "source");
+      lv_scriptsCopyString(s->kind, sizeof(s->kind), item, "kind");
+      manifest = cJSON_GetObjectItemCaseSensitive(item, "manifest");
+      /* A manifest that is not an object leaves both "". */
+      lv_scriptsCopyString(s->name, sizeof(s->name), manifest, "name");
+      lv_scriptsCopyString(s->description, sizeof(s->description), manifest,
+                           "description");
+      out->count++;
+    }
+  }
+
+  out->present = TRUE;
+  cJSON_Delete(root);
+}
+
+/* The open source's scripts.json into g_lv->scripts, which it clears first.
+ * Called straight after the blocks source is set up, whether or not that
+ * worked, so a load never leaves the last recording's scripts behind. */
+static void lv_scriptsLoadFromBlocks(void) {
+  size_t      len  = 0;
+  const char *text = lv_blocksGetScriptsJson(&len);
+
+  lv_scriptsParse(&g_lv->scripts, text, len);
+}
+
 // Memory size in MB
 bool lv_logLoad(char *fileName, int memoryBufferSize) {
   char id[LENGTH_ID+1]; /* The map ID Should read "BMAPBOLO" */
@@ -2741,6 +2875,7 @@ bool lv_logLoad(char *fileName, int memoryBufferSize) {
   memset(g_lv->tankInv,      0, sizeof(g_lv->tankInv));
 
   returnValue = lv_blocksCreate(fileName, memoryBufferSize);
+  lv_scriptsLoadFromBlocks();
   if (returnValue == TRUE) {
     len = logReadBytes((BYTE *)id, LENGTH_ID);
     if (len != LENGTH_ID || strncmp(id,"WBOLOMOV", LENGTH_ID) != 0) {
@@ -2972,7 +3107,10 @@ static bool lv_logLoadCommon(void) {
 *  Takes ownership of zipData.
 *********************************************************/
 static bool lv_logLoadFromMemory(uint8_t *zipData, size_t zipLen) {
-  if (lv_blocksCreateFromMemory(zipData, zipLen) != TRUE) {
+  bool created = lv_blocksCreateFromMemory(zipData, zipLen);
+
+  lv_scriptsLoadFromBlocks();
+  if (created != TRUE) {
     g_lv->logLoaded = FALSE;
     return FALSE;
   }
@@ -3021,6 +3159,8 @@ bool lv_screenLoadFromStream(const uint8_t *bytes, size_t len) {
   lv_screenDestroy();
   lv_screenSetup();
   lv_blocksBeginStream();
+  /* A stream has no zip and so no scripts.json: this clears the holder. */
+  lv_scriptsLoadFromBlocks();
   if (lv_blocksAppendBytes(bytes, len) != TRUE) {
     g_lv->logLoaded = FALSE;
     return FALSE;

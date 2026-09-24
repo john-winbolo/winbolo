@@ -238,8 +238,12 @@ bool replayHarnessDecodeFromLastSnapshot(const char *path, ReplayWorld *w) {
     return true;
 }
 
-bool replayHarnessDecodeFile(const char *path, ReplayWorld *w,
-                             ReplayFileInfo *info) {
+/* replayHarnessDecodeFile, and the viewer's scripts.json holder copied into
+ * scripts when that is not NULL. The copy is taken as soon as the file is
+ * open, since the load is what reads the member, so a file that opens but
+ * does not play to its end still reports what it carried. */
+static bool replayDecodeFileInto(const char *path, ReplayWorld *w,
+                                 ReplayFileInfo *info, LvScripts *scripts) {
     LogViewerState *lv;
     int steps;
     bool reachedEnd;
@@ -251,6 +255,10 @@ bool replayHarnessDecodeFile(const char *path, ReplayWorld *w,
     lv = replayDecoderOpen(path);
     if (lv == NULL) {
         return false;
+    }
+
+    if (scripts != NULL) {
+        *scripts = lv->scripts;
     }
 
     if (info != NULL) {
@@ -281,6 +289,17 @@ bool replayHarnessDecodeFile(const char *path, ReplayWorld *w,
 
     lv_decoderDestroy(lv);   /* closes the log, freeing the zip buffer */
     return reachedEnd;
+}
+
+bool replayHarnessDecodeFile(const char *path, ReplayWorld *w,
+                             ReplayFileInfo *info) {
+    return replayDecodeFileInto(path, w, info, NULL);
+}
+
+bool replayHarnessDecodeFileScripts(const char *path, ReplayWorld *w,
+                                    ReplayFileInfo *info,
+                                    struct LvScripts *scripts) {
+    return replayDecodeFileInto(path, w, info, scripts);
 }
 
 bool replayHarnessDecode(ReplayHarness *h) {
