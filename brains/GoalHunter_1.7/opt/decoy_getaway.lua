@@ -85,9 +85,12 @@
 --          only, the scan does not change) and walks its shell line to the
 --          tank's square (cpf.simulate_shot, the scan's own trace, walked
 --          without stopping).  Each blocker on it is worth the pill shells
---          it still stops (M.shots_left): a full wall, a damaged wall, a
---          live pill of ours or an ally's (a tree is not a blocker).  The
---          sum is the SHOTS LEFT before the tank is open.  Shots left <=
+--          it still stops: a full wall, a damaged wall, a live pill of
+--          ours or an ally's (a tree is not a blocker).  Only the LAST
+--          blocker is counted: with 2 or more on the line it holds
+--          (M.blockers).  A wall's shells are COUNTED, not read (Andrew,
+--          Sep 24, "count hits"): see THE HIT LEDGER below M.blockers.  The
+--          count is the SHOTS LEFT before the tank is open.  Shots left <=
 --          DECOY_GETAWAY_BLOCKER_SHOTS (0 = no blocker left) moves it on at
 --          once.  A hit still moves it too.  A shell that runs out before
 --          the tank's square: no count, no step.  DECOY_GETAWAY_BLOCKER_STEP
@@ -439,11 +442,11 @@ function M.closest_pill(world, mx, my)
   return bid, bp, bd
 end
 
--- SHOTS LEFT in one blocker: the pill shells it still stops, the last one
--- included (the shell that knocks a wall down or kills a pill is stopped
--- too; the next one goes through).  The engine's numbers
--- (src/bolo/building.c buildingAddItem, src/bolo/shells.c, src/bolo/pillbox.c
--- pillsDamagePos):
+-- SHOTS LEFT in one blocker AS FIRST SEEN on a parked square: the pill
+-- shells it still stops, the last one included (the shell that knocks a
+-- wall down or kills a pill is stopped too; the next one goes through).
+-- The engine's numbers (src/bolo/building.c buildingAddItem,
+-- src/bolo/shells.c, src/bolo/pillbox.c pillsDamagePos):
 --   wall (full)    the first shell makes it a damaged wall and gives it a
 --                  life of building_life; each shell after takes one life,
 --                  and at 0 it is rubble.  building_life + 1 shells.
@@ -455,7 +458,8 @@ end
 --                  ceil(armour / pill_shell_damage).
 -- building_life and pill_shell_damage are rules the brain cannot read, so
 -- they are the engine defaults: DECOY_GETAWAY_WALL_LIFE (BUILDING_LIFE 4)
--- and DECOY_GETAWAY_PILL_SHELL_DAMAGE (PILLBOX_SHELL_DAMAGE 1).
+-- and DECOY_GETAWAY_PILL_SHELL_DAMAGE (PILLBOX_SHELL_DAMAGE 1).  A wall's
+-- count after that is THE HIT LEDGER's (below M.blockers).
 function M.shots_left(kind, pill)
   if kind == "wall" then return (C.DECOY_GETAWAY_WALL_LIFE or 4) + 1 end
   if kind == "wall_damaged" then return 1 end
@@ -466,19 +470,37 @@ end
 -- THE BLOCKERS on pill p's shell line to (mx,my): the tiles that
 -- cpf.simulate_shot crosses (the trace G.sea_shot_reaches walks) between the
 -- pill's square and (mx,my), walked to the end without stopping.  A full or
--- damaged wall and a live pill of ours or an ally's are blockers, each with
--- its shots left.  Returns the shots left in all of them, the list of
--- blockers ({ mx, my, kind, shots }), or nil and the list when the shell
--- runs out before (mx,my).
-function M.blockers(world, p, mx, my)
+-- damaged wall and a live pill of ours or an ally's are blockers.
+-- THE LAST BLOCKER ONLY (Andrew, Sep 24: "we don't need to count until
+-- it's the last blocker between pill & us"): the blockers nearer the pill
+-- take its shells first, so with 2 or more on the line nothing is counted
+-- and the tank holds.  Returns shots, list, why:
+--   0 blockers      0, {}, "open"          (it moves)
+--   1 blocker       its shots left, { b }, "last"
+--   2 or more       nil, list, "wait"      (b.shots not set)
+--   shell short     nil, list, "short"     (runs out before (mx,my))
+-- b = { mx, my, kind, shots }.  With a hit ledger (led) the last wall's
+-- shots come from it (M.wall_shots), and b gets start / hits / park too.
+-- A pill of ours or an ally's uses its live armour (M.shots_left).
+function M.blockers(world, p, mx, my, led)
   local list = {}
   local ok, tiles = pcall(cpf.simulate_shot, U.m2w(p.mx), U.m2w(p.my),
                           U.m2w(mx), U.m2w(my), cpf.SHOT_PILL, 0)
-  if not ok or not tiles then return nil, list end
-  local sum = 0
+  if not ok or not tiles then return nil, list, "short" end
   for i = 1, #tiles do
     local st = tiles[i]
-    if st.mx == mx and st.my == my then return sum, list end
+    if st.mx == mx and st.my == my then
+      if #list == 0 then return 0, list, "open" end
+      if #list >= 2 then return nil, list, "wait" end
+      local b = list[1]
+      if led and b.kind ~= "pill" then
+        M.wall_shots(led, b)
+      else
+        b.shots = M.shots_left(b.kind, b.q)
+      end
+      b.q = nil
+      return b.shots, list, "last"
+    end
     if st.mx ~= p.mx or st.my ~= p.my then
       local tt = U.ttype(st.mx, st.my)
       local kind, q = nil, nil
@@ -491,13 +513,86 @@ function M.blockers(world, p, mx, my)
         if q and (q.owner == "friendly" or q.owner == "allied") then kind = "pill" end
       end
       if kind then
-        local n = M.shots_left(kind, q)
-        list[#list + 1] = { mx = st.mx, my = st.my, kind = kind, shots = n }
-        sum = sum + n
+        list[#list + 1] = { mx = st.mx, my = st.my, kind = kind, q = q }
       end
     end
   end
-  return nil, list
+  for _, b in ipairs(list) do b.q = nil end
+  return nil, list, "short"
+end
+
+-- THE HIT LEDGER (Andrew, Sep 24, "count hits"): the brain cannot read a
+-- wall's life, so it counts the shells that stop on the LAST wall while
+-- the tank is parked, from what a player can see and hear.  One ledger per
+-- parked square (ga.led, new in park_on), keyed by the wall's square:
+--   first seen    the first think a wall is the LAST blocker on the
+--                 closest pill's shell line while parked (the count starts
+--                 then).  A full wall starts at WALL_LIFE + 1 (5): it moves
+--                 at 5 - hits <= 2, after 3 hits.  A wall that is ALREADY
+--                 damaged then has a life the brain cannot know (the
+--                 engine's building list), so it keeps 1, the worst case,
+--                 and no hit is taken off it.
+--   a hit         each wall-hit sound on the wall's square (M.hear) is one
+--                 shell stopped on it.  A full wall first seen full and
+--                 now damaged with no sound heard counts that change as 1
+--                 hit (the sound can be lost, see M.hear).  A wall still
+--                 standing always stops at least 1 more shell: never
+--                 below 1.
+--   gone          a wall that is rubble or grass now is not on the line:
+--                 it counts 0.
+-- A pill of ours or an ally's is not in the ledger: it uses its live
+-- armour, as before.  With no blocker left it moves (M.blockers "open").
+-- b gets start, hits, park ("wall" or "wall_damaged", the state first
+-- seen) and shots.
+function M.wall_shots(led, b)
+  local k = b.my * 256 + b.mx
+  local e = led[k]
+  if e and b.kind == "wall" and e.dmg_seen then e = nil end  -- rebuilt
+  if not e then
+    e = { mx = b.mx, my = b.my, park = b.kind, start = M.shots_left(b.kind),
+          hits = 0, ticks = {} }
+    led[k] = e
+  end
+  if b.kind == "wall_damaged" then
+    e.dmg_seen = true
+    if e.park == "wall" and e.hits == 0 then e.hits = 1 end
+  end
+  b.start, b.hits, b.park = e.start, e.hits, e.park
+  if e.park == "wall" then
+    b.shots = math.max(1, e.start - e.hits)
+  else
+    b.shots = 1
+  end
+  return b.shots
+end
+
+-- HEARING THE HITS: a shell that stops on a wall plays shotBuildingNear on
+-- the wall's square (src/bolo/shells.c, the BUILDING and HALFBUILDING
+-- cases).  The server sends it as EVENT_SOUND [soundId, mx, my, player]
+-- (server_sim_callbacks.c serverSimCbSoundDist), and a bot keeps the
+-- square (input_packet.h, sound payloads; server_sim_snapshot.c
+-- serverSimRecipientKeepsSoundSquares).  info.events has it
+-- (brain_data.c, the EVENT_SOUND case).  Each such sound on a wall in the
+-- ledger is one hit.  Note: the server sends only the CLOSEST sound of each
+-- id per snapshot (soundPickOffer), so two walls hit in the same snapshot
+-- give one sound; the damaged-change check in M.wall_shots covers the
+-- first hit only.  Returns the number of hits counted.
+function M.hear(led, events, now)
+  if not (led and events) then return 0 end
+  local n = 0
+  local near, far = SND_SHOT_BUILDING_NEAR, SND_SHOT_BUILDING_FAR
+  for _, ev in ipairs(events) do
+    local d = ev.data
+    if ev.type == EVENT_SOUND and d and (d[1] == near or d[1] == far) then
+      local e = led[(d[3] or -1) * 256 + (d[2] or -1)]
+      if e then
+        e.hits = e.hits + 1
+        e.ticks[#e.ticks + 1] = now
+        n = n + 1
+      end
+    end
+  end
+  return n
 end
 
 -- Parked on (mx,my): a new armour baseline, no hits yet.
@@ -505,6 +600,31 @@ local function park_on(ga, mx, my, arm)
   ga.park_mx, ga.park_my = mx, my
   ga.hits, ga.arm = 0, arm
   ga.hit_tick = nil
+  ga.led = {}   -- THE HIT LEDGER of this square
+end
+
+-- The last blocker's count as text: a wall first seen full "5-3=2", one
+-- first seen damaged "dmg=1", a pill of ours "pill=N".
+function M.blk_one(b)
+  if b.park == "wall" then
+    return string.format("%d-%d=%d", b.start or 0, b.hits or 0, b.shots or 0)
+  elseif b.park == "wall_damaged" or b.kind == "wall_damaged" then
+    return string.format("dmg=%d", b.shots or 0)
+  elseif b.kind == "pill" then
+    return string.format("pill=%d", b.shots or 0)
+  end
+  return tostring(b.shots or 0)
+end
+-- The whole count as text, for the GO log: "last(129,125)5-3=2",
+-- "open", "2 blockers, waiting" or "short".
+function M.blk_txt(bk)
+  if bk.why == "last" and bk.list[1] then
+    local b = bk.list[1]
+    return string.format("last(%d,%d)%s", b.mx, b.my, M.blk_one(b))
+  elseif bk.why == "wait" then
+    return string.format("%d blockers, waiting", #bk.list)
+  end
+  return tostring(bk.why)
 end
 
 -- Every think of a standing decoy hold (orders.decoy_lock, after the
@@ -548,11 +668,18 @@ function M.update(state, world, info, h, now)
     -- square to go to.  ga.blk is what the overlay shows.
     ga.blk = nil
     if C.DECOY_GETAWAY_BLOCKER_STEP and ga.used > 0 and ga.path and ga.path[ga.idx] then
+      ga.led = ga.led or {}
+      if M.hear(ga.led, info.events, now) > 0 then
+        for _, e in pairs(ga.led) do
+          if e.ticks[#e.ticks] == now then
+          end
+        end
+      end
       local pid, p = M.closest_pill(world, tx, ty)
       if p then
-        local n, list = M.blockers(world, p, tx, ty)
+        local n, list, why = M.blockers(world, p, tx, ty, ga.led)
         ga.blk = { id = pid, mx = p.mx, my = p.my, shots = n, list = list,
-                   tx = tx, ty = ty }
+                   why = why, tx = tx, ty = ty }
       end
     end
     local by_hit = ga.hits >= (C.DECOY_GETAWAY_HITS or 1)
@@ -567,7 +694,7 @@ function M.update(state, world, info, h, now)
       local bs = "-"
       if ga.blk then
         bs = string.format("p%s(%d,%d):%s", tostring(ga.blk.id), ga.blk.mx,
-                           ga.blk.my, ga.blk.shots and (tostring(ga.blk.shots) .. "shots") or "short")
+                           ga.blk.my, M.blk_txt(ga.blk))
       end
     end
   end
@@ -728,10 +855,13 @@ function M.draw(viz, state)
     end
   end
   -- THE BLOCKER STEP: the closest pill's shell line to the tank (magenta),
-  -- and a magenta box on each blocker it counted, with its shots left.
+  -- and a magenta box on each blocker on it.  The last blocker's box shows
+  -- its count ("5-3=2 shots": start - hits counted = shots left).
   local bk = ga.blk
   if bk then
     for _, b in ipairs(bk.list or {}) do
+      if bk.why == "last" then
+      end
     end
   end
   -- Up to four header lines, not one: an overlay text is cut at
@@ -764,9 +894,15 @@ function M.draw(viz, state)
     if ga.trigs and #ga.trigs > 0 then tl = table.concat(ga.trigs, " ") end
     local lim = C.DECOY_GETAWAY_BLOCKER_SHOTS or 2
     local what
-    if bk and bk.shots then
-      what = string.format("closest p%s (%d,%d) shots left=%d, step at <=%d",
-                           tostring(bk.id), bk.mx, bk.my, bk.shots, lim)
+    if bk and bk.why == "last" then
+      what = string.format("closest p%s (%d,%d) last blocker %s shots, step at <=%d",
+                           tostring(bk.id), bk.mx, bk.my, M.blk_one(bk.list[1]), lim)
+    elseif bk and bk.why == "open" then
+      what = string.format("closest p%s (%d,%d) no blocker left, step",
+                           tostring(bk.id), bk.mx, bk.my)
+    elseif bk and bk.why == "wait" then
+      what = string.format("closest p%s (%d,%d) %d blockers, waiting",
+                           tostring(bk.id), bk.mx, bk.my, #bk.list)
     elseif bk then
       what = string.format("closest p%s (%d,%d) shell short: no count",
                            tostring(bk.id), bk.mx, bk.my)

@@ -10,11 +10,12 @@
 -- of the chain.  Every hit it takes while parked moves it ONE square along
 -- the chain, and then it waits for the next hit.  Hits on the way do not
 -- count.  THE BLOCKER STEP (Andrew, Sep 24): parked on a chain square (not
--- the decoy square), it also moves on with no hit when the blockers on the
--- closest pill's shell line to it have DECOY_GETAWAY_BLOCKER_SHOTS (2)
--- shots left or fewer.  A full wall stops building_life + 1 = 5 shells; a
--- damaged wall counts 1 (its life left is hidden from the brain).  So the
--- decoy holds behind a full wall and moves on once the pill has hit it.
+-- the decoy square), it also moves on with no hit when the LAST blocker on
+-- the closest pill's shell line to it has DECOY_GETAWAY_BLOCKER_SHOTS (2)
+-- shots left or fewer.  With 2 or more blockers it holds.  A full wall
+-- stops building_life + 1 = 5 shells, and the brain COUNTS the shells that
+-- stop on it (it hears each wall hit; the full-to-damaged change is hit 1).
+-- So the decoy holds behind a full wall for 3 hits and then moves on.
 --
 -- The round runs the two jobs at the same time.  The ATTACKER is ordered
 -- onto the pill first, and it is shooting the pill by the time the decoy
@@ -28,12 +29,22 @@
 --      a square six south of the pill, beside a row of walls.  It says
 --      "decoying" -- the hold, not the plain goto hold.
 --   2. NO MOVE WITHOUT A TRIGGER.  The tank's square changes only within
---      MOVE_BY ticks of a hit, or after the first step from a square with
---      BLOCKER_SHOTS shots left or fewer (the round's own count, below).
+--      MOVE_BY ticks of a hit, or after the first step from a square whose
+--      shell line has no blocker, or one blocker that is not a full wall
+--      (the round's own look, below: it cannot count the hits on a damaged
+--      wall, so a damaged last wall passes).
+--   2b. THE WALL IS HIT 3 TIMES.  The round logs every wall change with its
+--      tick: full to damaged is hit 1, damaged to gone is hit 5 (the hits
+--      in between change no tile, so the round cannot see them; the brain's
+--      DECOY_GETAWAY_WALLHIT lines in a -brain-debug recording list them).
+--      A blocker step from a square whose last wall was full when the tank
+--      parked there must come while that wall still stands (fewer than 5
+--      hits) and at least MIN_GAP ticks after it turned damaged: two more
+--      pill shells need 2 x pill_attack_min_ticks (6) at the least.
 --   3. ONE TRIGGER, ONE STEP.  A STEP is the tank reaching a square one
 --      ring further out from the decoy square than it has been before.  The
 --      first step needs a hit.  Every later step needs a hit since the step
---      before it, or shots left <= BLOCKER_SHOTS on the square it left.
+--      before it, or a blocker step (2, 2b) from the square it left.
 --      The log names each step's trigger ("hit" or "blk").  There are at
 --      least two steps, and at least one of them is a blocker step.  The
 --      first square it stays still on is FIRST_STEP, the
@@ -114,7 +125,7 @@ local SETTLE     = 30      -- ticks still on one square before it counts as stop
 -- value the brain's DECOY_GETAWAY_WALL_LIFE assumes.
 local BUILDING_LIFE = KEEL and 1 or 4
 local PILL_LOW   = 5       -- the pill's armour is put back to 15 below this
-local BLOCKER_SHOTS = 2    -- DECOY_GETAWAY_BLOCKER_SHOTS
+local MIN_GAP    = 12      -- 2 more shells at the fastest pill fire rate (6)
 
 local now       = 0
 local done      = false
@@ -144,6 +155,22 @@ local max_ring  = 0        -- steps: the furthest ring it has reached
 local step_log  = {}
 local blk_steps = 0        -- steps with no hit since the step before
 local slack_x, slack_y = nil, nil  -- KEEL: the square a knock left it on, if any
+local wall_seen = {}       -- x -> the wall row's tile at x, last tick
+local wall_dmg_at = {}     -- x -> the tick it turned damaged
+local wall_log  = {}       -- "(x,y) state@tick"
+local park_last = nil      -- { x, y, full } the one wall on the line at park
+local park_at   = nil      -- when it came onto this square
+local gap_log   = {}       -- "(x,y)+gap" for each blocker step from a full wall
+-- THE DEPARTURE.  A square takes the tank 80 to 100 ticks to cross, and a
+-- shell can hit it on the way out, so a step's trigger is judged when the
+-- tank STARTS to move (its world position changes after a tick still), not
+-- when it crosses into the next square.
+local prev_wx, prev_wy = nil, nil
+local was_moving = false
+local run_at   = nil       -- the tick the current move began
+local run_hits = 0         -- hits since the last step, at run_at
+local run_nb, run_last = nil, nil  -- the walls on the line, at run_at
+local stop_n   = 0         -- ticks still in a row
 
 -- The attacker.
 local pill_last = nil
@@ -173,18 +200,17 @@ local function bearing(x0, y0, x1, y1)
   return a % 256
 end
 
--- THE ROUND'S OWN SHOTS LEFT on the shell line from the pill to square
--- (x,y): a straight line from centre to centre in 1/16-square steps (the
--- shell's own step), each square once, the pill's square and (x,y) left
--- out.  A full wall is BUILDING_LIFE + 1 shots, a damaged wall 1 (the
--- brain's rule: the smallest life it can have).  There is one pill and no
--- pill of the decoy's team on this map, so the closest pill is the pill
--- and no pill is a blocker.
+-- THE ROUND'S OWN LOOK at the shell line from the pill to square (x,y): a
+-- straight line from centre to centre in 1/16-square steps (the shell's
+-- own step), each square once, the pill's square and (x,y) left out.
+-- Returns the number of walls on it and the last one (nearest (x,y)):
+-- { x, y, full }.  There is one pill and no pill of the decoy's team on
+-- this map, so the closest pill is the pill and no pill is a blocker.
 local function blockers(x, y)
   local x0, y0 = PX + 0.5, PY + 0.5
   local dx, dy = x + 0.5 - x0, y + 0.5 - y0
   local d = math.sqrt(dx * dx + dy * dy)
-  local n, seen = 0, {}
+  local n, seen, last = 0, {}, nil
   for i = 0, math.floor(d * 16) do
     local mx = math.floor(x0 + dx / d * i / 16)
     local my = math.floor(y0 + dy / d * i / 16)
@@ -192,11 +218,34 @@ local function blockers(x, y)
     if not seen[k] and not (mx == PX and my == PY) and not (mx == x and my == y) then
       seen[k] = true
       local t = game.map_tile(mx, my)
-      if t == game.TERRAIN.building then n = n + BUILDING_LIFE + 1 end
-      if t == game.TERRAIN.half_building then n = n + 1 end
+      if t == game.TERRAIN.building or t == game.TERRAIN.half_building then
+        n = n + 1
+        last = { x = mx, y = my, full = (t == game.TERRAIN.building) }
+      end
     end
   end
-  return n
+  return n, last
+end
+
+-- 2b. The wall row, every watched tick: log each change with its tick.
+local function watch_walls()
+  for x = WALL_X0, WALL_X1 do
+    local t = game.map_tile(x, WALL_Y)
+    local was = wall_seen[x]
+    if was and t ~= was then
+      local what, short
+      if was == game.TERRAIN.building and t == game.TERRAIN.half_building then
+        what, short, wall_dmg_at[x] = "damaged (hit 1)", "dmg", now
+      elseif t == game.TERRAIN.building then
+        what, short = "full again", "full"
+      else
+        what, short = string.format("gone (hit %d)", BUILDING_LIFE + 1), "gone"
+      end
+      wall_log[#wall_log + 1] = string.format("(%d,%d)%s@%d", x, WALL_Y, short, now)
+      game.log(string.format("%s: wall (%d,%d) %s at %d", NAME, x, WALL_Y, what, now))
+    end
+    wall_seen[x] = t
+  end
 end
 
 local function turn_gap(a, b)
@@ -293,29 +342,69 @@ local function watch(tk)
   end
   last_arm = (arm < ARMOUR_LOW) and 40 or arm
 
+  -- THE DEPARTURE: a move begins.  A hit's knock-back begins one too, on
+  -- the hit's own tick, so it is judged a hit.
+  local moving = prev_wx ~= nil and (tk.wx ~= prev_wx or tk.wy ~= prev_wy)
+  if moving and not was_moving and run_nb == nil then
+    run_at, run_hits = now, hits_since
+    run_nb, run_last = blockers(sq_x, sq_y)
+  end
+  -- A tank still for 10 ticks has not left: the next move is a new one.
+  if moving then stop_n = 0 else stop_n = stop_n + 1 end
+  if stop_n >= 10 then run_nb, run_last = nil, nil end
+  was_moving, prev_wx, prev_wy = moving, tk.wx, tk.wy
+
   if tk.mx ~= sq_x or tk.my ~= sq_y then
-    -- The blocker count on the square it left.  The blocker step never runs
-    -- on the decoy square (ring 0) nor with the getaway off (KEEL).
-    local nb = blockers(sq_x, sq_y)
-    local blk_ok = not KEEL and max_ring >= 1 and nb <= BLOCKER_SHOTS
-    -- 2. NO MOVE WITHOUT A TRIGGER.
-    if (not last_hit_at or now - last_hit_at > MOVE_BY) and not blk_ok then
-      return fail("left (%d,%d) (%d shots left) for (%d,%d) at %d with no hit in %d ticks",
-                  sq_x, sq_y, nb, tk.mx, tk.my, now, MOVE_BY)
+    -- The walls on the square it left, when it began to leave.  The blocker
+    -- step never runs on the decoy square (ring 0) nor with the getaway off
+    -- (KEEL).
+    local nb, last, left_at, h_at = run_nb, run_last, run_at, run_hits
+    if nb == nil then
+      nb, last = blockers(sq_x, sq_y)
+      left_at, h_at = now, hits_since
     end
+    local lw = last and (last.full and "full" or "damaged") or "-"
+    local blk_ok = not KEEL and max_ring >= 1
+                   and (nb == 0 or (nb == 1 and not last.full))
+    -- 2. NO MOVE WITHOUT A TRIGGER.
+    local by_hit = h_at > 0 and last_hit_at and left_at - last_hit_at <= MOVE_BY
+    if not by_hit and not blk_ok then
+      return fail("left (%d,%d) (%d walls, last %s) at %d for (%d,%d) at %d with no hit in %d ticks",
+                  sq_x, sq_y, nb, lw, left_at, tk.mx, tk.my, now, MOVE_BY)
+    end
+    -- 2b. A blocker step from a square whose one wall was full at park: the
+    -- wall still stands, and turned damaged at least MIN_GAP ago.
+    if not by_hit and blk_ok and park_last and park_last.full then
+      local dmg = wall_dmg_at[park_last.x]
+      if park_last.y ~= WALL_Y or not dmg or nb ~= 1 then
+        return fail("left (%d,%d) at %d: its wall (%d,%d) was full at park and was %s",
+                    sq_x, sq_y, left_at, park_last.x, park_last.y, nb == 0 and "gone" or lw)
+      end
+      if left_at - dmg < MIN_GAP then
+        return fail("left (%d,%d) at %d, %d ticks after its wall (%d,%d) turned damaged; 3 hits need %d",
+                    sq_x, sq_y, left_at, left_at - dmg, park_last.x, park_last.y, MIN_GAP)
+      end
+      gap_log[#gap_log + 1] = string.format("(%d,%d)+%d", park_last.x, park_last.y, left_at - dmg)
+      game.log(string.format("%s: left (%d,%d) at %d (parked %d); wall (%d,%d) full at park, damaged %d (+%d), standing",
+                             NAME, sq_x, sq_y, left_at, park_at or -1, park_last.x, park_last.y, dmg, left_at - dmg))
+    end
+    run_nb, run_last = nil, nil
     local from_x, from_y = sq_x, sq_y
     sq_x, sq_y, sq_dir, still = tk.mx, tk.my, tk.dir, 0
+    local pn, pl = blockers(sq_x, sq_y)
+    park_last = (pn == 1) and pl or nil
+    park_at = now
     -- 3. ONE TRIGGER, ONE STEP.
     local r = ring(sq_x, sq_y)
     if r > max_ring then
       local trig
-      if hits_since > 0 then
-        trig = string.format("hit (%d since ring %d)", hits_since, max_ring)
+      if by_hit then
+        trig = string.format("hit (%d since ring %d)", h_at, max_ring)
       elseif blk_ok then
-        trig = string.format("blk (%d shots left on (%d,%d))", nb, from_x, from_y)
+        trig = string.format("blk (%d walls on (%d,%d), last %s)", nb, from_x, from_y, lw)
         blk_steps = blk_steps + 1
       else
-        return fail("ring %d at (%d,%d) at %d with no hit since ring %d and %d shots left on (%d,%d)",
+        return fail("ring %d at (%d,%d) at %d with no hit since ring %d and %d walls on (%d,%d)",
                     r, sq_x, sq_y, now, max_ring, nb, from_x, from_y)
       end
       if r == 1 then ring1_x, ring1_y = sq_x, sq_y end
@@ -450,6 +539,7 @@ function on_tick(t)
         return fail("the hold began on (%d,%d), not (%d,%d)", sq_x, sq_y, DX, DY)
       end
     end
+    watch_walls()
     return watch(tk)
   end
 
@@ -468,6 +558,14 @@ function on_tick(t)
                            table.concat(hit_list, " ", i, math.min(i + 7, #hit_list))))
   end
   game.log(string.format("%s: %d hits, %d armour lost in the watch", NAME, hits, arm_lost))
+  for i = 1, #wall_log, 6 do
+    game.log(string.format("%s: walls %s", NAME,
+                           table.concat(wall_log, " ", i, math.min(i + 5, #wall_log))))
+  end
+  if #gap_log > 0 then
+    game.log(string.format("%s: blocker steps from a full wall, ticks after hit 1: %s",
+                           NAME, table.concat(gap_log, " ")))
+  end
   if KEEL then
     if hits < 2 then
       return fail("only %d hits on the decoy", hits)
@@ -484,8 +582,8 @@ function on_tick(t)
   if not first_still then
     return fail("it never stopped on a square off the decoy square")
   end
-  -- The pill's first shell on a full wall leaves a damaged wall (1 shot
-  -- left), so at least one step must come with no hit.
+  -- Three pill shells on a full wall leave it with 2 shots (the brain's
+  -- count), so at least one step must come with no hit.
   if blk_steps < 1 then
     return fail("no blocker step in %d steps on %d hits", max_ring, hits)
   end

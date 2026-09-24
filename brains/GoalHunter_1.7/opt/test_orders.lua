@@ -4164,13 +4164,15 @@ do
   C.DECOY_GETAWAY_BLOCKER_STEP = true
 
   ;(function() -- own function: the main chunk is at its 200-local limit
-  -- 12. THE BLOCKER STEP (Andrew, Sep 24: "2 or less shots left").  dbot's
+  -- 12. THE BLOCKER STEP (Andrew, Sep 24: "2 or less shots left", "count
+  -- hits", "we don't need to count until it's the last blocker").  dbot's
   -- chain (22,25) (22,26) (22,27), pill 5 at (20,20).  Parked on a chain
   -- square, the closest counted pill's shell line to the tank's square is
-  -- walked; each blocker is worth the shells it still stops (full wall
-  -- WALL_LIFE + 1 = 5, damaged wall 1, our pill ceil(armour / damage)), and
-  -- shots left <= DECOY_GETAWAY_BLOCKER_SHOTS (2) moves the tank on without
-  -- a hit.  The line tiles are the mock trace's own, so the blockers below
+  -- walked.  2 or more blockers: it holds, no count.  One (the last): a
+  -- wall first seen full is 5 less the hits counted on it, one first seen
+  -- damaged is 1, our pill is ceil(armour / damage); shots left <=
+  -- DECOY_GETAWAY_BLOCKER_SHOTS (2) moves the tank on without a hit.  None:
+  -- it moves.  The line tiles are the mock trace's own, so the blockers below
   -- sit on the line the code walks.
   check("blocker step knobs: on live, off in keel, step at <= 2 shots, wall life 4, pill damage 1",
         C.DECOY_GETAWAY_BLOCKER_STEP == true and C.PRESETS.keel.DECOY_GETAWAY_BLOCKER_STEP == false
@@ -4208,15 +4210,27 @@ do
   local function moved(hb, b) return hb.ga.phase == "move" and b.st.goal.my == 26 and hb.ga.hits == 0 end
   local function held(hb) return hb.ga.phase == "wait" and hb.ga.used == 1 end
 
-  -- A FULL WALL: 5 shots left, it holds.
+  -- THE HIT LEDGER: a wall-hit sound on a wall's square is one shell
+  -- stopped on it (M.hear).  The test sets the two globals braincore.c
+  -- gives a live brain.
+  EVENT_SOUND = EVENT_SOUND or 8
+  SND_SHOT_BUILDING_NEAR = SND_SHOT_BUILDING_NEAR or 4
+  local function hit(b, w, t)
+    b.inf.events = { { type = EVENT_SOUND, data = { SND_SHOT_BUILDING_NEAR, w.mx, w.my, 0xFF } } }
+    lock(b, t)
+    b.inf.events = nil
+  end
+  local function lastb(hb) return hb.ga.blk and hb.ga.blk.list and hb.ga.blk.list[1] end
+
+  -- A FULL WALL, the last blocker: 5 - 0 = 5 shots, it holds.
   local b, hb = on_sq1(200)
   check("blocker rig: parked on square 1 after the hit, trigger hit",
         held(hb) and hb.ga.trigs[1] == "hit", tostring(hb.ga.phase))
   TMAP[K(W1)] = C.T_BUILDING
   lock(b, 205); lock(b, 206)
-  check("a full wall: 5 shots left > 2, it holds",
-        held(hb) and hb.ga.blk and hb.ga.blk.shots == 5 and hb.ga.blk.id == 5
-        and #hb.ga.blk.list == 1 and hb.ga.blk.list[1].kind == "wall" and hb.ga.blk.list[1].shots == 5,
+  check("a full wall: 5 - 0 = 5 shots > 2, it holds",
+        held(hb) and hb.ga.blk and hb.ga.blk.shots == 5 and hb.ga.blk.id == 5 and hb.ga.blk.why == "last"
+        and #hb.ga.blk.list == 1 and lastb(hb).kind == "wall" and lastb(hb).start == 5 and lastb(hb).hits == 0,
         tostring(hb.ga.blk and hb.ga.blk.shots))
   if drawn then
     local rb = { text = {} }
@@ -4226,41 +4240,108 @@ do
                        detail = function() end }, b.st)
     local lng = 0
     for _, t in ipairs(rb.text) do if #t > lng then lng = #t end end
-    check("overlay: the closest pill, its shots left, the triggers, and each blocker's shots",
-          has(rb.text, "closest p5 (20,20) shots left=5, step at <=2 | steps by: hit")
-          and has(rb.text, "5 shots") and lng <= 127,
+    check("overlay: the closest pill, the last blocker's count, the triggers, and its box",
+          has(rb.text, "closest p5 (20,20) last blocker 5-0=5 shots, step at <=2 | steps by: hit")
+          and has(rb.text, "5-0=5 shots") and lng <= 127,
           table.concat(rb.text, " | "))
   end
-  -- The pill hits it: now a damaged wall, 1 shot left.  It moves.
+  -- The first shell makes it a damaged wall.  No sound reached the brain
+  -- here: the full-to-damaged change is hit 1 on its own.
   TMAP[K(W1)] = C.T_HALFBUILD
   lock(b, 207)
-  check("the wall is damaged: 1 shot left <= 2, it moves to square 2 without a hit",
-        moved(hb, b) and hb.ga.trigs[2] == "blk", tostring(hb.ga.phase))
-  lock(b, 208)
+  check("a full wall with 1 hit counted (the damaged change): 5 - 1 = 4 shots, it holds",
+        held(hb) and hb.ga.blk.shots == 4 and lastb(hb).hits == 1, tostring(hb.ga.blk.shots))
+  hit(b, W1, 208)
+  check("hit 2 (a wall-hit sound on its square): 5 - 2 = 3 shots, it holds",
+        held(hb) and hb.ga.blk.shots == 3 and lastb(hb).hits == 2, tostring(hb.ga.blk.shots))
+  hit(b, { mx = W1.mx + 5, my = W1.my }, 209)
+  check("a wall-hit sound on another square is not counted",
+        held(hb) and hb.ga.blk.shots == 3, tostring(hb.ga.blk.shots))
+  hit(b, W1, 210)
+  check("a full wall with 3 hits counted: 5 - 3 = 2 shots <= 2, it moves without a hit",
+        moved(hb, b) and hb.ga.blk.shots == 2 and hb.ga.trigs[2] == "blk"
+        and GA.blk_txt(hb.ga.blk) == string.format("last(%d,%d)5-3=2", W1.mx, W1.my),
+        tostring(hb.ga.phase) .. " " .. tostring(hb.ga.blk and hb.ga.blk.shots))
+  lock(b, 211)
   check("moving: no blocker count is kept (the overlay shows none)", hb.ga.blk == nil, "?")
   b.inf.tanky = 26 * 256 + 128; lock(b, 212)
-  check("the blocker step keeps the arrival rule: parked on square 2 first",
-        hb.ga.phase == "wait" and hb.ga.used == 2, tostring(hb.ga.phase))
+  check("the blocker step keeps the arrival rule: parked on square 2 first, a new ledger",
+        hb.ga.phase == "wait" and hb.ga.used == 2 and next(hb.ga.led) == nil, tostring(hb.ga.phase))
 
-  -- TWO DAMAGED WALLS: 1 + 1 = 2, it moves.  THREE: 3, it holds.  A FULL
-  -- AND A DAMAGED WALL: 5 + 1 = 6, it holds.
+  -- THE SOUND AND THE DAMAGED CHANGE IN ONE THINK: one hit, not two.
+  b, hb = on_sq1(250)
+  TMAP[K(W1)] = C.T_BUILDING
+  lock(b, 255)
+  TMAP[K(W1)] = C.T_HALFBUILD
+  hit(b, W1, 256)
+  check("the first shell's sound and its damaged change are 1 hit: 4 shots",
+        held(hb) and hb.ga.blk.shots == 4 and lastb(hb).hits == 1, tostring(hb.ga.blk.shots))
+
+  -- A WALL ALREADY DAMAGED when the count starts: its life is unknown, so it
+  -- keeps 1 (the worst case).  It moves at once.
   b, hb = on_sq1(300)
-  TMAP[K(W1)], TMAP[K(W2)], TMAP[K(W3)] = C.T_HALFBUILD, C.T_HALFBUILD, C.T_HALFBUILD
+  TMAP[K(W1)] = C.T_HALFBUILD
   lock(b, 305)
-  check("three damaged walls: 3 shots left, it holds", held(hb) and hb.ga.blk.shots == 3,
+  check("a wall already damaged when the count starts counts 1: it moves",
+        moved(hb, b) and hb.ga.blk.shots == 1 and lastb(hb).park == "wall_damaged"
+        and GA.blk_txt(hb.ga.blk) == string.format("last(%d,%d)dmg=1", W1.mx, W1.my),
         tostring(hb.ga.blk.shots))
-  TMAP[K(W2)] = C.T_BUILDING
-  lock(b, 306)
-  check("a full wall and two damaged walls: 7 shots left, it holds", held(hb) and hb.ga.blk.shots == 7,
-        tostring(hb.ga.blk.shots))
-  TMAP[K(W2)], TMAP[K(W3)] = C.T_BUILDING, nil
-  lock(b, 307)
-  check("a full wall and a damaged wall: 6 shots left, it holds", held(hb) and hb.ga.blk.shots == 6,
-        tostring(hb.ga.blk.shots))
+
+  -- A WALL THAT IS GONE (rubble or grass) counts 0: no blocker left, it moves.
+  b, hb = on_sq1(320)
+  TMAP[K(W1)] = C.T_BUILDING
+  lock(b, 325)
+  TMAP[K(W1)] = C.T_RUBBLE
+  lock(b, 326)
+  check("a wall that is gone counts 0: no blocker left, it moves",
+        moved(hb, b) and hb.ga.blk.shots == 0 and hb.ga.blk.why == "open", tostring(hb.ga.blk.shots))
+
+  -- TWO WALLS: only the LAST one is counted (the one nearer the pill takes
+  -- the shells first).  While both stand it holds with no count; hits on the
+  -- first wall are not the last wall's.
+  b, hb = on_sq1(340)
+  TMAP[K(W1)], TMAP[K(W2)] = C.T_BUILDING, C.T_BUILDING
+  lock(b, 345)
+  check("two walls: 2 blockers, waiting, no count, it holds",
+        held(hb) and hb.ga.blk.shots == nil and hb.ga.blk.why == "wait" and #hb.ga.blk.list == 2
+        and GA.blk_txt(hb.ga.blk) == "2 blockers, waiting", tostring(hb.ga.blk.why))
+  TMAP[K(W1)] = C.T_HALFBUILD
+  hit(b, W1, 346); hit(b, W1, 347); hit(b, W1, 348); hit(b, W1, 349)
+  check("two walls: 4 hits on the first wall, still waiting, nothing in the ledger",
+        held(hb) and hb.ga.blk.why == "wait" and next(hb.ga.led) == nil, tostring(hb.ga.blk.why))
+  TMAP[K(W1)] = C.T_RUBBLE
+  lock(b, 350)
+  check("two walls: the first is gone, the last wall is full: 5 - 0 = 5, it holds",
+        held(hb) and hb.ga.blk.why == "last" and hb.ga.blk.shots == 5
+        and lastb(hb).mx == W2.mx and lastb(hb).my == W2.my, tostring(hb.ga.blk.shots))
   TMAP[K(W2)] = C.T_HALFBUILD
-  lock(b, 308)
-  check("two damaged walls: 2 shots left, it moves", moved(hb, b) and hb.ga.blk.shots == 2
-        and hb.ga.trigs[2] == "blk", tostring(hb.ga.blk.shots))
+  hit(b, W2, 351)
+  hit(b, W2, 352)
+  check("two walls: the last wall has 2 hits (the change + a sound, then a sound): 5 - 2 = 3, it holds",
+        held(hb) and hb.ga.blk.shots == 3, tostring(hb.ga.blk.shots))
+  hit(b, W2, 353)
+  check("two walls: the last wall has 3 hits: 5 - 3 = 2, it moves",
+        moved(hb, b) and hb.ga.blk.shots == 2 and hb.ga.trigs[2] == "blk", tostring(hb.ga.blk.shots))
+  -- A full wall and a damaged wall behind it: when the full one goes, the
+  -- damaged one is the last and counts 1.  It moves.
+  b, hb = on_sq1(360)
+  TMAP[K(W1)], TMAP[K(W2)] = C.T_BUILDING, C.T_HALFBUILD
+  lock(b, 365)
+  check("a full wall and a damaged wall: waiting, it holds", held(hb) and hb.ga.blk.why == "wait",
+        tostring(hb.ga.blk.why))
+  TMAP[K(W1)] = nil
+  lock(b, 366)
+  check("the full wall is gone: the last wall was damaged when the count started, 1, it moves",
+        moved(hb, b) and hb.ga.blk.shots == 1, tostring(hb.ga.blk.shots))
+  -- A wall and our pill: 2 blockers, waiting.
+  b, hb = on_sq1(380)
+  TMAP[K(W1)] = C.T_BUILDING
+  b.w.pills[8] = { mx = W3.mx, my = W3.my, owner = "friendly", health = 1 }
+  b.w.pill_at = { [K(W3)] = { { pill = b.w.pills[8] } } }
+  lock(b, 385)
+  check("a wall and our pill (armour 1): 2 blockers, waiting, it holds",
+        held(hb) and hb.ga.blk.why == "wait", tostring(hb.ga.blk.why))
+  b.w.pills[8], b.w.pill_at = nil, nil
 
   -- NO BLOCKER (a forest only): 0 shots left, it moves.
   b, hb = on_sq1(400)
