@@ -177,6 +177,10 @@ BYTE clientMapPreviewGetStartCount(const MapPreview *mp) {
   return startsGetNumStarts(&((MapPreview *)mp)->ss);
 }
 
+BYTE clientMapPreviewGetLiveStartCount(const MapPreview *mp) {
+  return startsGetNumActive(&((MapPreview *)mp)->ss);
+}
+
 bool clientMapPreviewGetPill(const MapPreview *mp, BYTE i,
                              BYTE *x, BYTE *y, BYTE *owner, BYTE *armour) {
   pillbox p;
@@ -207,6 +211,7 @@ bool clientMapPreviewGetStart(const MapPreview *mp, BYTE i,
   start s;
   BYTE n = startsGetNumStarts(&((MapPreview *)mp)->ss);
   if (i == 0 || i > n) return false;
+  if (!startsIsActive(&((MapPreview *)mp)->ss, i)) return false;
   startsGetStartStruct(&((MapPreview *)mp)->ss, &s, i);
   if (x)   *x   = s.x;
   if (y)   *y   = s.y;

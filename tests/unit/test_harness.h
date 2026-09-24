@@ -974,6 +974,12 @@ int run_starts_batch_team_anchor_jitter_varies(void);
 int run_starts_open_ideal_friendly_pill_eligible(void);
 int run_starts_open_ideal_removed_pill_ignored(void);
 int run_starts_open_removed_start_never_chosen(void);
+/* Starts in the mined border come off the map at load (test_starts_border.c). */
+int run_starts_border_start_dropped(void);
+int run_starts_border_all_border_kept(void);
+int run_starts_border_compressed_load_agrees(void);
+int run_starts_border_named_inactive_safe(void);
+int run_starts_border_harvard_yard(void);
 
 /* Start side classification (test_start_sides.c). The integer sector test
  * in start_sides.h that puts a start on N/E/S/W (two bits for a diagonal,

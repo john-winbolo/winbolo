@@ -3910,6 +3910,7 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_starts_pick_incremental.c
     tests/unit/test_starts_assign_batch.c
     tests/unit/test_starts_open_ideal.c
+    tests/unit/test_starts_border.c
     tests/unit/test_start_sides.c
     tests/unit/test_lobby_side_axis.c
     tests/unit/test_lobby_start_shared.c
@@ -5072,6 +5073,11 @@ set(_unit_test_names
     starts_open_ideal_friendly_pill_eligible
     starts_open_ideal_removed_pill_ignored
     starts_open_removed_start_never_chosen
+    starts_border_start_dropped
+    starts_border_all_border_kept
+    starts_border_compressed_load_agrees
+    starts_border_named_inactive_safe
+    starts_border_harvard_yard
     start_side_mask_sectors
     start_side_mask_degenerate_bbox
     start_side_eligible_closed_mask

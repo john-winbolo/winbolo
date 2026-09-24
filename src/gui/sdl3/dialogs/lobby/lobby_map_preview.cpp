@@ -107,6 +107,7 @@ void lobbyRebuildStartCompassCache(const BYTE *data, int len) {
     memset(s_mapPreview.startMapX, 0, sizeof(s_mapPreview.startMapX));
     memset(s_mapPreview.startMapY, 0, sizeof(s_mapPreview.startMapY));
     s_mapPreview.startCount = 0;
+    s_mapPreview.startLiveCount = 0;
     s_mapPreview.startBboxMinX = s_mapPreview.startBboxMinY = 0;
     s_mapPreview.startBboxMaxX = s_mapPreview.startBboxMaxY = 0;
     MapPreview *mp = clientMapPreviewLoadFromBuffer(data, len);
@@ -136,6 +137,7 @@ void lobbyRebuildStartCompassCache(const BYTE *data, int len) {
         s_mapPreview.startMapY[i] = y;
         s_mapPreview.startCompassId[i] =
             lobbyStartCompassStr(x, y, minX, minY, maxX, maxY);
+        s_mapPreview.startLiveCount++;
     }
     s_mapPreview.startCount    = n;
     s_mapPreview.startBboxMinX = minX;
@@ -153,6 +155,16 @@ BYTE lobbyStartSideMask(int k) {
     return startSideMaskFor(s_mapPreview.startMapX[k], s_mapPreview.startMapY[k],
                             s_mapPreview.startBboxMinX, s_mapPreview.startBboxMinY,
                             s_mapPreview.startBboxMaxX, s_mapPreview.startBboxMaxY);
+}
+
+int lobbyLiveStartCount(ClientSim *cs) {
+    int n = (int)clientSimGetLobbyStartCount(cs);
+    /* The same slot count is the check that the cache is this map's, not the
+     * last one's while the new map's bytes are still arriving. */
+    if (s_mapPreview.startCount > 0 && (int)s_mapPreview.startCount == n) {
+        return (int)s_mapPreview.startLiveCount;
+    }
+    return n;
 }
 
 /* Caption + bar fraction for the map-transfer line the preview panel shows
@@ -226,6 +238,7 @@ static int lobbyPreviewStartAtScreen(ImVec2 imgMin, float previewSize,
     float bestD2 = 0.0f;
     float r2 = radiusPx * radiusPx;
     for (int i = 1; i <= (int)s_mapPreview.startCount; i++) {
+        if (s_mapPreview.startCompassId[i] == 0) continue;  /* not on the map */
         float fx = imgMin.x + (((float)s_mapPreview.startMapX[i] + 0.5f - bx0) / spanX) * previewSize;
         float fy = imgMin.y + (((float)s_mapPreview.startMapY[i] + 0.5f - by0) / spanY) * previewSize;
         float ex = fx - pt.x, ey = fy - pt.y, d2 = ex * ex + ey * ey;
@@ -473,6 +486,7 @@ void lobbyDrawPreviewStartOverlay(ClientSim *cs, int myPlayerNum,
     float tilePx   = (spanX > 0.0f) ? (previewSize / spanX) : 1.0f;
 
     for (int i = 1; i <= (int)s_mapPreview.startCount; i++) {
+        if (s_mapPreview.startCompassId[i] == 0) continue;  /* not on the map */
         /* Start map-square centre -> displayed image pixel. */
         float fx = imgMin.x + (((float)s_mapPreview.startMapX[i] + 0.5f - bx0) / spanX) * previewSize;
         float fy = imgMin.y + (((float)s_mapPreview.startMapY[i] + 0.5f - by0) / spanY) * previewSize;

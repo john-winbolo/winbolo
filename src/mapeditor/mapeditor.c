@@ -2449,6 +2449,16 @@ static void meLoadPackedScenario(MapEditorState *ed, const char *path) {
     free(packed);
 }
 
+/* The map loader takes a start in the mined border off the map, so the game
+ * never places a tank there. The editor shows the file as it is: every start
+ * goes back on, so the validator can flag the bad one and a save keeps it. */
+static void meKeepFileStarts(starts *ss) {
+    BYTE i;
+    for (i = 1; i <= startsGetNumStarts(ss); i++) {
+        startsSetActive(ss, i, TRUE);
+    }
+}
+
 /* -------------------------------------------------------
  * Load a map from path. Returns true on success.
  * ------------------------------------------------------- */
@@ -2473,6 +2483,7 @@ static bool meLoadFromPath(MapEditorState *ed, const char *path) {
         meRemoveRecentFile(ed, path);
         return false;
     }
+    meKeepFileStarts(&newSs);
 
     /* Replace current map data */
     meFreeMapData(ed);
@@ -2534,6 +2545,7 @@ static bool meLoadFromMemory(MapEditorState *ed, const unsigned char *bytes,
                  "Failed to read map from WinBolo.net:\n%s", displayName);
         return false;
     }
+    meKeepFileStarts(&newSs);
 
     /* Replace current map data */
     meFreeMapData(ed);
@@ -3706,6 +3718,7 @@ void mapEditorRun(SDL_Window *window, SDL_Renderer *renderer, const char *mapPat
             startsDestroy(&ed->ss);
             meCreateBlankMap(ed);
         } else {
+            meKeepFileStarts(&ed->ss);
             SDL_strlcpy(ed->currentFilePath, mapPath, ME_PATH_MAX);
             meAddRecentFile(ed, mapPath);
         }

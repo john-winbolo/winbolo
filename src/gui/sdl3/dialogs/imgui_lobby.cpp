@@ -1311,7 +1311,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                         ImGui::TextUnformatted(langGetText(STR_DLGLOBBY_MAP_UNAVAILABLE));
                     }
                     ImGui::Spacing();
-                    ImGui::Text("%s - %dP %dB %dS", clientSimGetMapName(cs), clientSimGetLobbyPillCount(cs), clientSimGetLobbyBaseCount(cs), clientSimGetLobbyStartCount(cs));
+                    ImGui::Text("%s - %dP %dB %dS", clientSimGetMapName(cs), clientSimGetLobbyPillCount(cs), clientSimGetLobbyBaseCount(cs), lobbyLiveStartCount(cs));
 
                     /* What is playing, under what is loaded, for everyone —
                      * host included. These are the read-only lines and not
@@ -2227,7 +2227,7 @@ extern "C" LobbyFrameStatus imguiLobbyRenderFrame(ClientSim *cs) {
                 }
                 ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_PILLBOXES), clientSimGetLobbyPillCount(cs));
                 ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_BASES), clientSimGetLobbyBaseCount(cs));
-                ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_STARTS), clientSimGetLobbyStartCount(cs));
+                ImGui::Text("%s %d", langGetText(STR_DLGLOBBY_STARTS), lobbyLiveStartCount(cs));
                 /* Same as the Map tab above, and directly under the start
                  * count for the same reason: the scenario and the mods are
                  * the last of what is loaded, and everyone reads them here

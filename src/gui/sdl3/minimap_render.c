@@ -308,7 +308,7 @@ SDL_Texture *minimapFromCompressed(SDL_Renderer *renderer,
 
     if (outPills)  *outPills  = clientMapPreviewGetPillCount(mp);
     if (outBases)  *outBases  = clientMapPreviewGetBaseCount(mp);
-    if (outStarts) *outStarts = clientMapPreviewGetStartCount(mp);
+    if (outStarts) *outStarts = clientMapPreviewGetLiveStartCount(mp);
 
     tex = minimapCreateTexture(renderer, mp, bounds, 0);
 
@@ -364,7 +364,7 @@ SDL_Texture *minimapFromFile(SDL_Renderer *renderer, const char *mapPath,
 
     if (outPills)  *outPills  = clientMapPreviewGetPillCount(mp);
     if (outBases)  *outBases  = clientMapPreviewGetBaseCount(mp);
-    if (outStarts) *outStarts = clientMapPreviewGetStartCount(mp);
+    if (outStarts) *outStarts = clientMapPreviewGetLiveStartCount(mp);
 
     tex = minimapCreateTexture(renderer, mp, bounds, 0);
 
