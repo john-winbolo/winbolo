@@ -444,6 +444,19 @@ int run_script_list_control_codec(void);
 int run_script_list_command_codec(void);
 int run_script_list_dispatch(void);
 int run_script_list_lists_once(void);
+
+/* test_scenario_settings.c: a script's own lobby settings, from the
+ * declaration through the wire to game.setting and Survival. */
+int run_scenario_settings_blob(void);
+int run_scenario_settings_manifest_lua(void);
+int run_scenario_settings_manifest_json(void);
+int run_scenario_settings_server_clamp(void);
+int run_scenario_settings_codec(void);
+int run_scenario_settings_client_apply(void);
+int run_scenario_settings_game_setting(void);
+int run_scenario_settings_wire(void);
+int run_scenario_settings_survival_decl(void);
+int run_scenario_settings_survival_short(void);
 int run_script_list_client_apply(void);
 int run_lobby_map_search_chunked(void);
 int run_wbn_bearer_state(void);
