@@ -642,11 +642,12 @@ end
 -- The nearest survivor, measured from where the bot is or, while it waits to
 -- come back, from where it fell. The one it is already chasing is kept unless
 -- another is SWITCH_MARGIN squares nearer: picking the nearest afresh every
--- pass would swing a bot between two men a square apart.
-local function pick_target(p, from)
+-- pass would swing a bot between two men a square apart. survivors is
+-- roll(SURVIVORS), built once by the caller for the whole pass.
+local function pick_target(p, from, survivors)
   local cur = chasing[p]
   local best, best_d, cur_d = nil, nil, nil
-  for _, q in ipairs(roll(SURVIVORS)) do
+  for _, q in ipairs(survivors) do
     local s = game.tank(q)
     if s ~= nil and not s.dead then
       local d = chebyshev(from.x, from.y, s.mx, s.my)
@@ -664,7 +665,9 @@ local function pick_target(p, from)
   return best
 end
 
-local function point_one(p)
+-- survivors may be left out, and is then read here: a pass over the whole
+-- horde builds it once and hands it to every bot.
+local function point_one(p, survivors)
   local slot = game.lobby_slot(p)
   if slot == nil or not slot.bot or side[p] ~= INFECTED then
     return
@@ -677,7 +680,7 @@ local function point_one(p)
   if from == nil then
     return
   end
-  local q = pick_target(p, from)
+  local q = pick_target(p, from, survivors or roll(SURVIVORS))
   if q == nil then
     return
   end
@@ -689,8 +692,9 @@ local function point_one(p)
 end
 
 local function point_the_horde()
+  local survivors = roll(SURVIVORS)
   for _, p in ipairs(roll(INFECTED)) do
-    point_one(p)
+    point_one(p, survivors)
   end
 end
 
