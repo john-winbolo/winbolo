@@ -892,7 +892,7 @@ bool gameFrontStart(const char *cmdLine, keyItems *keys, bool isLoaded, ClientSi
     return FALSE;
   }
 
-  clientSimSetAiType(humanSim, compTanks);
+  clientSimSetAiType(humanSim, isTutorial ? aiNone : compTanks);
 
   if (isTutorial == FALSE) {
     clientMutexWaitFor();
@@ -1258,11 +1258,11 @@ static bool gameFrontDialogs(void) {
        * the same way as a normal single-player game. */
       strncpy(fileName, "data/maps/Inbuilt Tutorial.map", FILENAME_MAX - 1);
       fileName[FILENAME_MAX - 1] = '\0';
-      gametype = gameStrictTournament;
-      hiddenMines = FALSE;
-      startDelay = 0;
-      timeLen = UNLIMITED_GAME_TIME;
-      compTanks = aiNone;
+      /* The tutorial's own type, mines, timing and AI are chosen where the
+       * single-player path builds the server, off isTutorial. They are not
+       * written into the globals here: those are saved on exit as what the
+       * next hosted game opens on, and a tutorial would replace the
+       * player's picks with its own. */
       gameFrontBotSetupData.count = 0;
       /* Raise the client UI flag before setup runs so the very first
        * tick (which may already place the tank on a trigger row) is
@@ -1815,17 +1815,21 @@ bool gameFrontSetDlgState(openingStates newState) {
      * Create the server sim, then load the map on the client side
      * using the same compressed data the UDP path uses. */
     {
-        /* Single-player opens the lobby at sensible defaults the host can
-         * still change inline before Start: Open game, Full Advantage AI,
-         * and one enemy bot. Held in SP-local values so the host-game path
-         * (gameFrontSetupServer) keeps its own settings. The tutorial forces
-         * a solo strict-tournament game with no AI, ignoring any SP-lobby
-         * settings left over from earlier in the session. */
-        gameType spGameType = isTutorial ? gameStrictTournament : gameOpen;
-        aiType   spAiPolicy = isTutorial ? aiNone : aiFull;
+        /* Single-player opens the lobby on the game type, computer tanks and
+         * hidden mines the player last picked in a lobby they hosted, the
+         * same saved values Internet New and LAN New open on. A player who
+         * has never picked gets an Open game with Full Advantage AI. The
+         * tutorial forces a solo strict-tournament game with no AI and no
+         * time limit, ignoring every saved value. */
+        gameType spGameType    = isTutorial ? gameStrictTournament : gametype;
+        aiType   spAiPolicy    = isTutorial ? aiNone : compTanks;
+        bool     spHiddenMines = isTutorial ? FALSE : hiddenMines;
+        int32_t  spStartDelay  = isTutorial ? 0 : startDelay;
+        int32_t  spTimeLen     = isTutorial ? UNLIMITED_GAME_TIME : timeLen;
         /* Seed one enemy bot when the launch carried no bot setup: human
          * on team 1, the bot on team 2 so they oppose each other. A setup
-         * the user already configured (count > 0) is left untouched. */
+         * the user already configured (count > 0) is left untouched. With
+         * the saved AI policy on none, the bot loop below makes nothing. */
         if (!isTutorial && gameFrontBotSetupData.count == 0) {
           memset(&gameFrontBotSetupData, 0, sizeof(gameFrontBotSetupData));
           gameFrontBotSetupData.count              = 1;
@@ -1842,12 +1846,12 @@ bool gameFrontSetDlgState(openingStates newState) {
           }
           cfg.x1 = MAP_MINE_EDGE_LEFT + 1; cfg.y1 = MAP_MINE_EDGE_TOP + 1;
           cfg.x2 = MAP_MINE_EDGE_RIGHT - 1; cfg.y2 = MAP_MINE_EDGE_BOTTOM - 1;
-          spServerSim = serverSimCreateRandomMap(&cfg, spGameType, hiddenMines, startDelay, timeLen);
+          spServerSim = serverSimCreateRandomMap(&cfg, spGameType, spHiddenMines, spStartDelay, spTimeLen);
         } else if (strcmp(fileName, "") != 0) {
-          spServerSim = serverSimCreate(fileName, spGameType, hiddenMines, startDelay, timeLen);
+          spServerSim = serverSimCreate(fileName, spGameType, spHiddenMines, spStartDelay, spTimeLen);
         } else {
           BYTE emap[6000] = E_MAP;
-          spServerSim = serverSimCreateCompressed(emap, 5097, "Everard Island", spGameType, hiddenMines, startDelay, timeLen);
+          spServerSim = serverSimCreateCompressed(emap, 5097, "Everard Island", spGameType, spHiddenMines, spStartDelay, spTimeLen);
         }
         if (spServerSim != NULL) {
           /* Embedded server: silence its console messages (Thread Manager
@@ -1941,7 +1945,7 @@ bool gameFrontSetDlgState(openingStates newState) {
           cfg.maxPlayers          = MAX_TANKS;
           cfg.acceptRemoteClients = false;
           cfg.useWbn              = false;
-          cfg.compTanks           = (BYTE)compTanks;
+          cfg.compTanks           = (BYTE)spAiPolicy;
           cfg.useTracker          = false;
           cfg.trackerAddr         = gameFrontTrackerAddr;
           cfg.trackerPort         = gameFrontTrackerPort;
@@ -2140,7 +2144,7 @@ bool gameFrontSetDlgState(openingStates newState) {
                  * placed by the alliance pass below, and their config comes
                  * from the slot config set just above. */
                 serverSimCreateBot(spServerSim, slot, botBrain, botName, spAiPolicy,
-                                   spGameType, hiddenMines, 0, NULL);
+                                   spGameType, spHiddenMines, 0, NULL);
                 /* serverSimCreateBot loads the brain from the path but leaves
                  * the lobby brain-INDEX at the 0xFF "default" sentinel, so the
                  * lobby Bot Code dropdown renders "(none)". Resolve the index
@@ -2318,12 +2322,17 @@ void gameFrontSetPlayerName(char *pn) {
   strcpy(gameFrontName, pn);
 }
 
+/* The AI type of the game being joined. It goes to the client sim and
+ * the brains menu only. compTanks is left alone: it holds the computer
+ * tanks pick the next game this machine hosts opens on, and a joined
+ * game's setting is not that pick. Writing it here made a single-player
+ * game started after joining a no-bots game open with no computer
+ * tanks and no enemy bot. */
 void gameFrontSetAIType(aiType ait) {
-  compTanks = ait;
   if (humanSim != NULL) {
-    clientSimSetAiType(humanSim, compTanks);
+    clientSimSetAiType(humanSim, ait);
   }
-  if (compTanks == aiNone) {
+  if (ait == aiNone) {
     brainsHandlerSet(FALSE);
   } else {
     brainsHandlerSet(TRUE);
@@ -2693,6 +2702,30 @@ void gameFrontRememberVisibility(const VisibilitySettings *v, bool saveCustom) {
        !visibilitySettingsEqual(v, &gameFrontVisibilityCustom))) {
     gameFrontSetVisibilityCustom(v);
   }
+}
+
+void gameFrontRememberGameType(gameType gt) {
+  char buff[16];
+
+  if ((int)gt < (int)gameOpen || (int)gt > (int)gameStrictTournament) return;
+  gametype = gt;
+  intToStr(gametype, buff, sizeof(buff));
+  prefsSetString("GAME OPTIONS", "New Game Type", buff);
+}
+
+void gameFrontRememberAiPolicy(aiType ai) {
+  char buff[16];
+
+  if ((int)ai < (int)aiNone || (int)ai > (int)aiFull) return;
+  compTanks = ai;
+  intToStr(compTanks, buff, sizeof(buff));
+  prefsSetString("GAME OPTIONS", "New Game Computer Tanks", buff);
+}
+
+void gameFrontRememberHiddenMines(bool hm) {
+  hiddenMines = hm;
+  prefsSetString("GAME OPTIONS", "New Game Hidden Mines",
+                 TRUEFALSE_TO_STR(hiddenMines));
 }
 
 void gameFrontGetLanguageCode(char *out, int outSize) {
@@ -4167,13 +4200,29 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
                           gameFrontLanguageCode,
                           (DWORD)sizeof(gameFrontLanguageCode));
 
-  /* Game Options */
-  prefsGetString("GAME OPTIONS", "Hidden Mines", "No", buff, FILENAME_MAX);
+  /* Game Options. The type, computer tanks and hidden mines a hosted game
+   * opens on are the ones last picked in a lobby this machine ran, under
+   * keys of their own. The older "Game Type", "Allow Computer Tanks" and
+   * "Hidden Mines" keys were written on every exit although nothing let a
+   * player set them, so they cannot tell a pick from the stock value and
+   * are no longer read. A player who has not picked gets an Open game
+   * with Full Advantage computer tanks. Clamped on read so a hand-edited
+   * value cannot open a lobby on a type or policy it does not offer. */
+  prefsGetString("GAME OPTIONS", "New Game Hidden Mines", "No", buff, FILENAME_MAX);
   hiddenMines = YESNO_TO_TRUEFALSE(buff[0]);
-  prefsGetString("GAME OPTIONS", "Allow Computer Tanks", "0", buff, FILENAME_MAX);
-  compTanks = atoi(buff);
-  prefsGetString("GAME OPTIONS", "Game Type", "1", buff, FILENAME_MAX);
-  gametype = atoi(buff);
+  intToStr(aiFull, def, sizeof(def));
+  prefsGetString("GAME OPTIONS", "New Game Computer Tanks", def, buff, FILENAME_MAX);
+  {
+    int ai = atoi(buff);
+    compTanks = (ai < (int)aiNone || ai > (int)aiFull) ? aiFull : (aiType)ai;
+  }
+  intToStr(gameOpen, def, sizeof(def));
+  prefsGetString("GAME OPTIONS", "New Game Type", def, buff, FILENAME_MAX);
+  {
+    int gt = atoi(buff);
+    gametype = (gt < (int)gameOpen || gt > (int)gameStrictTournament)
+                 ? gameOpen : (gameType)gt;
+  }
   prefsGetString("GAME OPTIONS", "Start Delay", "0", buff, FILENAME_MAX);
   startDelay = atoi(buff);
   longToStr(UNLIMITED_GAME_TIME, def, sizeof(def));
@@ -4815,12 +4864,10 @@ void gameFrontPutPrefs(keyItems *keys) {
   /* Remember */
   prefsSetString("SETTINGS", "Remember Player Name", TRUEFALSE_TO_STR(gameFrontRemeber));
 
-  /* Options */
-  prefsSetString("GAME OPTIONS", "Hidden Mines", TRUEFALSE_TO_STR(hiddenMines));
-  intToStr(compTanks, buff, sizeof(buff));
-  prefsSetString("GAME OPTIONS", "Allow Computer Tanks", buff);
-  intToStr(gametype, buff, sizeof(buff));
-  prefsSetString("GAME OPTIONS", "Game Type", buff);
+  /* Options. The game type, computer tanks and hidden mines are not
+   * written here: gameFrontRememberGameType and its two siblings write
+   * them when the host picks one, so a player who never picked keeps no
+   * key and goes on getting the current stock value. */
   intToStr(startDelay, buff, sizeof(buff));
   prefsSetString("GAME OPTIONS", "Start Delay", buff);
   intToStr(timeLen, buff, sizeof(buff));

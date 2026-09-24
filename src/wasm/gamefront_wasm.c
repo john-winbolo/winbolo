@@ -1057,6 +1057,12 @@ void gameFrontSetVisibilityCustom(const VisibilitySettings *v) {
   gameFrontVisibilityCustomSaved = TRUE;
 }
 
+/* The browser build never hosts (gameFrontHasLocalServer is FALSE), so
+ * the lobby never records a pick here. */
+void gameFrontRememberGameType(gameType gt)     { (void)gt; }
+void gameFrontRememberAiPolicy(aiType ai)       { (void)ai; }
+void gameFrontRememberHiddenMines(bool hm)      { (void)hm; }
+
 void gameFrontRememberVisibility(const VisibilitySettings *v,
                                  bool                      saveCustom) {
   VisibilityPreset p;
