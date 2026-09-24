@@ -29,26 +29,54 @@
 -- wall (TERRAIN_COST_LAND 9999), no known mine, no live pill on it, and no
 -- deep sea unless the tank is in a boat.
 --
--- THE CHAIN.  From the tank's square, every chain of 1..MAX_STEPS
--- neighbouring getaway squares (8 neighbours in C.DIRS8 order, no square
--- twice, and a diagonal step only when both squares beside it can be driven
--- on -- the pathfinder's on-foot corner rule).  Its score is the sum of the
--- safety of its squares with the LAST one counted DECOY_GETAWAY_LAST_WEIGHT
--- times.  The best score wins; a tie goes to the shorter chain, then to the
--- lower key (my * 256 + mx) of the first square, then to the chain found
--- first.  The search order is fixed, so every run gives the same chain.
+-- CLOSENESS (Andrew: "Decoying is easier when the decoyer is close to the
+-- pillbox").  d(t) = the straight-line distance in tiles from t's centre to
+-- the centre of the NEAREST pill in P.  prox(t) = max(0, 1 - d(t) /
+-- PILL_FIRE_RANGE).  The TILE VALUE is
+--   tile(t) = safety(t) + DECOY_GETAWAY_PROX_WEIGHT * prox(t).
+-- Closeness never makes an open square a getaway square: that still needs a
+-- block above 0.
 --
--- WHAT THE BOT DOES (M.update, from orders.decoy_lock every think):
---   wait   parked on the decoy square, turned to face the first square of
---          the chain (M.keys).  It shoots what the hold lets it shoot.  A
---          fresh scan at most every DECOY_GETAWAY_RESCAN_TICKS, and only
---          when something changed: the tank's square, the counted pills,
---          or a shield on the chain.
---   drive  after DECOY_GETAWAY_HITS armour losses since the hold started:
---          the hold goal moves to the next square of the chain, one square
---          at a time.  More hits change nothing.  It never leaves the chain
---          to fight.  A square that can no longer be driven on = a fresh
---          scan from where the tank is, with the steps that are left.
+-- THE CHAIN.  From the start square, a chain of 1..MAX_STEPS getaway
+-- squares where EVERY step goes one ring further out: square i is at
+-- Chebyshev distance i from the start (Andrew: "There's no use doubling back
+-- on a path because the wall blockers would be destroyed already").  A step
+-- is one of the 8 neighbour moves (C.DIRS8 order) that lands on the next
+-- ring, and a diagonal step only when both squares beside it can be driven
+-- on (the pathfinder's on-foot corner rule).  No square can come twice.
+-- Its score is the sum of the tile values of its squares with the LAST one
+-- counted DECOY_GETAWAY_LAST_WEIGHT times.  The best score wins; a tie goes
+-- to the shorter chain, then to the lower key (my * 256 + mx) of the first
+-- square, then to the chain found first.
+--
+-- THE SEARCH is a DP ring by ring (M.search).  Ring 0 is the start with the
+-- value 0.  For a getaway square t on ring k:
+--   best(t) = tile(t) + max over the ring k-1 squares u that step to t of
+--             best(u)
+-- with a tie in best(u) going to the lower first-square key.  Every chain to
+-- a ring k square has k squares, so the length tie-break is between rings.
+-- Every square is a candidate end: end(t) = best(u*) + LAST_WEIGHT *
+-- tile(t) = best(t) + (LAST_WEIGHT - 1) * tile(t).  A square is worked
+-- out only when a reached square on the ring inside it steps to it, so an
+-- open field with no blocker costs the 8 squares of ring 1.  The order is
+-- fixed (ring order, C.DIRS8), so every run gives the same chain.
+--
+-- WHAT THE BOT DOES (M.update, from orders.decoy_lock every think).  ONE HIT,
+-- ONE STEP:
+--   wait   parked (on the decoy square, then on each chain square it
+--          reached), turned to face the next square of the chain (M.keys).
+--          It shoots what the hold lets it shoot.  The armour on arrival is
+--          the baseline; DECOY_GETAWAY_HITS armour losses from then on move
+--          it one square.  A fresh scan from the square it is on, with the
+--          steps that are left, at most every DECOY_GETAWAY_RESCAN_TICKS and
+--          only when something changed: the start square, the counted
+--          pills, or a shield on the chain.
+--   move   driving to the next square.  Hits on the way do not count.  It
+--          never leaves the chain to fight.  On that square (the tank's
+--          square is it) it parks: wait again, with a new baseline, facing
+--          the square after it.  If the square can no longer be driven on:
+--          a fresh scan from where the tank is with the steps that are left
+--          (and on to its first square), or park where it is.
 --   done   parked on the last square.  The hold goes on and ends the way it
 --          always does (clock, pills down, caution, cancel, new order, death).
 --
@@ -167,13 +195,15 @@ local function cell_at(ctx, mx, my)
   local k = my * 256 + mx
   local c = ctx.cells[k]
   if c then return c end
-  c = { mx = mx, my = my, key = k, s = 0 }
+  c = { mx = mx, my = my, key = k, s = 0, v = 0 }
   if not M.passable(ctx.world, mx, my, ctx.in_boat) then
     c.ok, c.why = false, "no_drive"
   else
     local sum, any, terms = 0, false, {}
     for i, tp in ipairs(ctx.P) do
       local b, why, sx, sy, hp = M.block(ctx.world, tp.pill, mx, my)
+      -- M.block checks the range first and traces the shell only in range.
+      if why ~= "range" then ctx.traces = ctx.traces + 1 end
       terms[i] = { id = tp.id, b = b, why = why, sx = sx, sy = sy, hp = hp }
       sum = sum + b
       if b > 0 then any = true end
@@ -183,6 +213,19 @@ local function cell_at(ctx, mx, my)
     c.s     = sum / #ctx.P
     c.ok    = any
     if not any then c.why = "open" end
+    -- CLOSENESS: d to the nearest pill in P, prox, and the tile value.
+    local d = nil
+    for _, tp in ipairs(ctx.P) do
+      local ddx, ddy = tp.pill.mx - mx, tp.pill.my - my
+      local dd = math.sqrt(ddx * ddx + ddy * ddy)
+      if not d or dd < d then d = dd end
+    end
+    local R = C.PILL_FIRE_RANGE or 8
+    local prox = d and (1 - d / R) or 0
+    if prox < 0 then prox = 0 end
+    c.d, c.prox = d, prox
+    c.pw = (C.DECOY_GETAWAY_PROX_WEIGHT or 0) * prox
+    c.v  = c.s + c.pw
   end
   ctx.cells[k] = c
   ctx.list[#ctx.list + 1] = c
@@ -202,59 +245,68 @@ local function pass_at(ctx, mx, my)
   return v
 end
 
--- The chain search.  Depth-first in C.DIRS8 order with a bound: a branch is
--- cut only when even all-1.0 squares for the rest of the steps could not
--- beat (or win a tie with) the best chain so far, so the cut never changes
--- the answer.  DECOY_GETAWAY_NODE_CAP bounds the work.
+-- The chain search: the outward DP described at the top.  Returns the best
+-- chain (a list of cells, nil = none), its score, the scan context (cells
+-- for the overlay) and the number of steps it tried.
 function M.search(world, P, sx, sy, steps, in_boat)
   local ctx = { world = world, P = P, in_boat = in_boat,
-                cells = {}, list = {}, pass = {} }
+                cells = {}, list = {}, pass = {}, traces = 0 }
   local LW   = C.DECOY_GETAWAY_LAST_WEIGHT or 2.0
-  local cap  = C.DECOY_GETAWAY_NODE_CAP or 20000
   local DIRS = C.DIRS8
-  local best, blen, bfirst, bpath = -1, 0, 0, nil
-  local visited = { [sy * 256 + sx] = true }
-  local path = {}
-  local nodes, capped = 0, false
-  local function dfs(x, y, depth, sum)
-    for d = 1, 8 do
-      if nodes >= cap then capped = true; return end
-      local dx, dy = DIRS[d][1], DIRS[d][2]
-      local nx, ny = x + dx, y + dy
-      local k = ny * 256 + nx
-      if not visited[k] and U.in_map(nx, ny) then
-        local c = cell_at(ctx, nx, ny)
-        if c.ok and (dx == 0 or dy == 0
-                     or (pass_at(ctx, x + dx, y) and pass_at(ctx, x, y + dy))) then
-          nodes = nodes + 1
-          local n = depth + 1
-          path[n] = c
-          local first = path[1].key
-          local score = sum + LW * c.s
-          if score > best + EPS
-             or (score >= best - EPS
-                 and (n < blen or (n == blen and first < bfirst))) then
-            best, blen, bfirst = score, n, first
-            bpath = {}
-            for i = 1, n do bpath[i] = path[i] end
-          end
-          if n < steps then
-            local bound = sum + c.s + (steps - n - 1 + LW)
-            if bound > best + EPS
-               or (bound >= best - EPS
-                   and (n + 1 < blen or (n + 1 <= blen and first < bfirst))) then
-              visited[k] = true
-              dfs(nx, ny, n, sum + c.s)
-              visited[k] = false
+  local best, blen, bfirst, bend = -1, 0, 0, nil
+  local edges = 0
+  -- Ring 0: the start.  An entry: the cell, best, the first-square key and
+  -- the entry it came from.
+  local ring = { { x = sx, y = sy, best = 0, first = nil, prev = nil } }
+  for k = 1, steps do
+    local nxt, at = {}, {}
+    for _, u in ipairs(ring) do
+      for d = 1, 8 do
+        local dx, dy = DIRS[d][1], DIRS[d][2]
+        local nx, ny = u.x + dx, u.y + dy
+        local ax, ay = nx - sx, ny - sy
+        if ax < 0 then ax = -ax end
+        if ay < 0 then ay = -ay end
+        -- OUTWARD ONLY: the step must land on ring k.
+        if (ax > ay and ax or ay) == k and U.in_map(nx, ny) then
+          local c = cell_at(ctx, nx, ny)
+          if c.ok and (dx == 0 or dy == 0
+                       or (pass_at(ctx, u.x + dx, u.y) and pass_at(ctx, u.x, u.y + dy))) then
+            edges = edges + 1
+            local v = u.best + c.v
+            local first = u.first or c.key
+            local e = at[c.key]
+            if not e then
+              e = { x = nx, y = ny, c = c, best = v, first = first, prev = u }
+              at[c.key] = e
+              nxt[#nxt + 1] = e
+            elseif v > e.best + EPS
+                   or (v >= e.best - EPS and first < e.first) then
+              e.best, e.first, e.prev = v, first, u
             end
           end
-          path[n] = nil
         end
       end
     end
+    -- Every reached square is a candidate end.
+    for _, e in ipairs(nxt) do
+      local score = e.best + (LW - 1) * e.c.v
+      if score > best + EPS
+         or (score >= best - EPS
+             and (k < blen or (k == blen and e.first < bfirst))) then
+        best, blen, bfirst, bend = score, k, e.first, e
+      end
+    end
+    if #nxt == 0 then break end
+    ring = nxt
   end
-  dfs(sx, sy, 0, 0)
-  return bpath, (bpath and best or nil), ctx, nodes, capped
+  local bpath = nil
+  if bend then
+    bpath = {}
+    local e = bend
+    for i = blen, 1, -1 do bpath[i] = e.c; e = e.prev end
+  end
+  return bpath, (bpath and best or nil), ctx, edges
 end
 
 -- The score of a chain written out, the way the overlay and the log say it.
@@ -262,8 +314,8 @@ local function score_terms(path)
   local LW = C.DECOY_GETAWAY_LAST_WEIGHT or 2.0
   local t = {}
   for i, c in ipairs(path) do
-    if i == #path then t[i] = string.format("%gx%.3f", LW, c.s)
-    else t[i] = string.format("%.3f", c.s) end
+    if i == #path then t[i] = string.format("%gx%.3f", LW, c.v)
+    else t[i] = string.format("%.3f", c.v) end
   end
   return table.concat(t, " + ")
 end
@@ -272,7 +324,9 @@ M.score_terms = score_terms
 local function path_str(path)
   local t = {}
   for i, c in ipairs(path or {}) do
-    t[i] = string.format("(%d,%d)%.3f", c.mx, c.my, c.s)
+    t[i] = string.format("(%d,%d)s=%.3f+[d=%.2f prox=%.3f x%g=%.3f]=%.3f",
+                         c.mx, c.my, c.s, c.d or -1, c.prox or 0,
+                         C.DECOY_GETAWAY_PROX_WEIGHT or 0, c.pw or 0, c.v)
   end
   return table.concat(t, " ")
 end
@@ -304,9 +358,12 @@ function M.rescan(world, info, h, sx, sy, steps, now, why)
   local ga = h.ga
   local t0 = clock_us and clock_us() or nil
   local P = M.pill_set(world, h.mx, h.my)
-  local path, score, ctx, nodes, capped = nil, nil, nil, 0, false
+  -- Shell traces this scan: one per counted pill for P, then one per
+  -- (pill in P, worked-out square) in range.
+  local ptr = #counted_ids(world, h.mx, h.my)
+  local path, score, ctx, edges = nil, nil, nil, 0
   if #P > 0 and steps > 0 then
-    path, score, ctx, nodes, capped =
+    path, score, ctx, edges =
       M.search(world, P, sx, sy, steps, info and info.inboat)
   end
   local us = t0 and (clock_us() - t0) or -1
@@ -317,12 +374,13 @@ function M.rescan(world, info, h, sx, sy, steps, now, why)
   local pids = {}
   for i, tp in ipairs(P) do pids[i] = tostring(tp.id) end
   ga.viz = { tick = now, sx = sx, sy = sy, P = P, path = path, score = score,
-             cells = ctx and ctx.list or {}, nodes = nodes, capped = capped,
-             us = us, why = why }
-  print2(string.format("DECOY_GETAWAY_SCAN t=%d oid=%d why=%s from=(%d,%d) steps=%d P=[%s] tiles=%d nodes=%d%s best=%s path=%s score=%s us=%d",
+             cells = ctx and ctx.list or {}, edges = edges, us = us, why = why,
+             traces = ptr + (ctx and ctx.traces or 0),
+             step0 = ga.used or 0, steps = steps }
+  print2(string.format("DECOY_GETAWAY_SCAN t=%d oid=%d why=%s from=(%d,%d) steps=%d P=[%s] tiles=%d edges=%d traces=%d best=%s path=%s score=%s us=%d",
          now or -1, h.oid or 0, tostring(why), sx, sy, steps,
-         table.concat(pids, ","), ctx and #ctx.list or 0, nodes,
-         capped and " CAPPED" or "",
+         table.concat(pids, ","), ctx and #ctx.list or 0, edges,
+         ptr + (ctx and ctx.traces or 0),
          score and string.format("%.3f", score) or "none",
          path and path_str(path) or "-",
          path and score_terms(path) or "-", us))
@@ -330,20 +388,28 @@ function M.rescan(world, info, h, sx, sy, steps, now, why)
 end
 
 -- The square the hold goal points at: the next square of the chain while it
--- drives, the square it parked on once it is done, the decoy square before.
+-- moves, the chain square it parked on after that, the decoy square before
+-- the first step.
 function M.park_tile(h)
   local ga = C.DECOY_GETAWAY and h and h.ga
   if ga then
-    if ga.phase == "drive" and ga.path and ga.path[ga.idx] then
+    if ga.phase == "move" and ga.path and ga.path[ga.idx] then
       return ga.path[ga.idx].mx, ga.path[ga.idx].my
     end
-    if ga.phase == "done" and ga.park_mx then return ga.park_mx, ga.park_my end
+    if ga.park_mx then return ga.park_mx, ga.park_my end
   end
   return h.mx, h.my
 end
 
 function M.driving(h)
-  return (C.DECOY_GETAWAY and h and h.ga and h.ga.phase == "drive") and true or false
+  return (C.DECOY_GETAWAY and h and h.ga and h.ga.phase == "move") and true or false
+end
+
+-- Parked on (mx,my): a new armour baseline, no hits yet.
+local function park_on(ga, mx, my, arm)
+  ga.park_mx, ga.park_my = mx, my
+  ga.hits, ga.arm = 0, arm
+  ga.hit_tick = nil
 end
 
 -- Every think of a standing decoy hold (orders.decoy_lock, after the
@@ -356,13 +422,13 @@ function M.update(state, world, info, h, now)
   local ga = h.ga
   local max_steps = C.DECOY_GETAWAY_MAX_STEPS or 5
   if not ga then
-    ga = { phase = "wait", hits = 0, arm = arm, used = 0 }
+    ga = { phase = "wait", hits = 0, arm = arm, used = 0, idx = 1 }
     h.ga = ga
     M.rescan(world, info, h, tx, ty, max_steps, now, "arrival")
   end
-  -- ARMOUR LOSS since the last think.  Counted in every phase; only the
-  -- wait phase acts on it.
-  if arm < ga.arm then
+  -- ARMOUR LOSS since the last think.  Counted only while parked (wait):
+  -- the baseline is the armour on arrival at the square.
+  if ga.phase == "wait" and arm < ga.arm then
     ga.hits = ga.hits + 1
     if not ga.hit_tick then
       ga.hit_tick, ga.hit_before, ga.hit_after = now, ga.arm, arm
@@ -370,43 +436,51 @@ function M.update(state, world, info, h, now)
   end
   ga.arm = arm
   if ga.phase == "wait" then
+    -- The scan starts from the square it parked on; before the first step,
+    -- from the tank's square (the decoy park allows one square of slack).
+    local fx, fy = tx, ty
+    if ga.used > 0 then fx, fy = ga.park_mx, ga.park_my end
     if now - (ga.check or now) >= (C.DECOY_GETAWAY_RESCAN_TICKS or 50) then
       ga.check = now
-      if M.signature(world, h, ga, tx, ty) ~= ga.sig then
-        M.rescan(world, info, h, tx, ty, max_steps, now, "changed")
+      if M.signature(world, h, ga, fx, fy) ~= ga.sig then
+        M.rescan(world, info, h, fx, fy, max_steps - ga.used, now, "changed")
       end
     end
-    if ga.path and ga.hits >= (C.DECOY_GETAWAY_HITS or 1) then
-      ga.phase, ga.idx = "drive", 1
-      print2(string.format("DECOY_GETAWAY_GO t=%d oid=%d hit_t=%d armour=%d->%d hits=%d path=%s",
-             now or -1, h.oid or 0, ga.hit_tick or -1, ga.hit_before or -1,
+    if ga.path and ga.path[ga.idx] and ga.hits >= (C.DECOY_GETAWAY_HITS or 1) then
+      ga.phase = "move"
+      local t = ga.path[ga.idx]
+      print2(string.format("DECOY_GETAWAY_GO t=%d oid=%d step=%d/%d to=(%d,%d) hit_t=%d armour=%d->%d hits=%d path=%s",
+             now or -1, h.oid or 0, ga.used + 1, ga.used + #ga.path - ga.idx + 1,
+             t.mx, t.my, ga.hit_tick or -1, ga.hit_before or -1,
              ga.hit_after or -1, ga.hits, path_str(ga.path)))
     end
   end
-  if ga.phase == "drive" then
+  if ga.phase == "move" then
     local path = ga.path
-    -- On a square of the chain (the next one, or one further on if the
-    -- tank rolled past): the square after it is next.
-    for j = #path, ga.idx, -1 do
-      if path[j].mx == tx and path[j].my == ty then
-        ga.used = ga.used + (j - ga.idx + 1)
-        ga.idx = j + 1
-        break
+    local t = path[ga.idx]
+    if t.mx == tx and t.my == ty then
+      -- ARRIVED: park here with a new baseline, facing the square after it.
+      ga.used = ga.used + 1
+      ga.idx = ga.idx + 1
+      park_on(ga, t.mx, t.my, arm)
+      if ga.idx > #path or ga.used >= max_steps then
+        ga.phase = "done"
+        print2(string.format("DECOY_GETAWAY_PARK t=%d oid=%d tile=(%d,%d) steps=%d -- end of the chain",
+               now or -1, h.oid or 0, t.mx, t.my, ga.used))
+      else
+        ga.phase = "wait"
+        local n = path[ga.idx]
+        print2(string.format("DECOY_GETAWAY_STEP t=%d oid=%d tile=(%d,%d) steps=%d next=(%d,%d) armour=%d -- waiting for a hit",
+               now or -1, h.oid or 0, t.mx, t.my, ga.used, n.mx, n.my, arm))
       end
-    end
-    if ga.idx > #path then
-      ga.phase = "done"
-      ga.park_mx, ga.park_my = path[#path].mx, path[#path].my
-      print2(string.format("DECOY_GETAWAY_PARK t=%d oid=%d tile=(%d,%d) steps=%d",
-             now or -1, h.oid or 0, ga.park_mx, ga.park_my, ga.used))
-    elseif not M.passable(world, path[ga.idx].mx, path[ga.idx].my,
-                          info.inboat) then
+    elseif not M.passable(world, t.mx, t.my, info.inboat) then
       -- The next square is no longer drivable: a fresh chain from here with
-      -- the steps that are left, or park where the tank is.
+      -- the steps that are left (and on to its first square: the hit that
+      -- started this step is spent), or park where the tank is.
       local left = max_steps - ga.used
       if not M.rescan(world, info, h, tx, ty, left, now, "next_blocked") then
         ga.phase = "done"
-        ga.park_mx, ga.park_my = tx, ty
+        park_on(ga, tx, ty, arm)
         print2(string.format("DECOY_GETAWAY_PARK t=%d oid=%d tile=(%d,%d) steps=%d -- no chain left",
                now or -1, h.oid or 0, tx, ty, ga.used))
       end
@@ -416,11 +490,11 @@ end
 
 -- TURN TO FACE THE WAY OUT.  Parked in the wait phase with a chain and the
 -- hold goal (not a fight: attack_tank / kill_lgm aim on their own), the
--- turn keys point the tank at the centre of the first square.  Called by
+-- turn keys point the tank at the centre of the next square.  Called by
 -- orders.decoy_keys on the final keys.
 function M.keys(state, info, h, keys, taps)
   local ga = C.DECOY_GETAWAY and h and h.ga
-  if not (ga and ga.phase == "wait" and ga.path and ga.path[1]) then
+  if not (ga and ga.phase == "wait" and ga.path and ga.path[ga.idx]) then
     return keys, taps
   end
   -- The hold goal is a goto_tile on the park square: decoy_goal's, or the
@@ -432,7 +506,7 @@ function M.keys(state, info, h, keys, taps)
   end
   local KL, KR = _G.KEY_TURNLEFT, _G.KEY_TURNRIGHT
   if not (KL and KR and info and info.direction) then return keys, taps end
-  local t = ga.path[1]
+  local t = ga.path[ga.idx]
   local aim = U.aim_at_f(info.tankx / 256.0, info.tanky / 256.0,
                          t.mx + 0.5, t.my + 0.5)
   local hb, tb = U.aim_turn_bits(U.adiff(info.direction, aim), 6, 1)
@@ -452,8 +526,10 @@ end
 -- line per pill: its block and why (wall full, wall damaged, pill h/15, out
 -- of range, shell short, open, enemy pill, base).  An orange box on every
 -- shield square, a line from each pill to each chain square (red = open,
--- grey = blocked).  The header on the tank's square: the phase, the score
--- written out (last square x LAST_WEIGHT) and the scan cost.
+-- grey = blocked).  The header on the scan's start square: the step it is
+-- on ("waiting for hit N" or "moving to square i"), the score written out
+-- (last square x LAST_WEIGHT) and the scan cost.  Chain squares are
+-- numbered from the decoy square (steps already taken + i).
 -- ---------------------------------------------------------------------------
 local WHY_TXT = {
   range = "out of range", short = "shell short", open = "open",
@@ -477,6 +553,20 @@ local function safety_txt(c, np)
 end
 M.safety_txt = safety_txt
 
+-- The closeness term and the tile value, written out.
+local function prox_txt(c)
+  local W = C.DECOY_GETAWAY_PROX_WEIGHT or 0
+  local R = C.PILL_FIRE_RANGE or 8
+  return string.format("prox: d=%.2f, max(0, 1 - %.2f/%d) = %.3f, x%g = %.3f",
+                       c.d or -1, c.d or -1, R, c.prox or 0, W, c.pw or 0)
+end
+M.prox_txt = prox_txt
+
+local function tile_txt(c)
+  return string.format("tile = %.3f + %.3f = %.3f", c.s, c.pw or 0, c.v or c.s)
+end
+M.tile_txt = tile_txt
+
 function M.draw(viz, state)
   if not viz or not viz.is_on or not viz.is_on("decoy_getaway_viz") then return end
   local h = state and state.orders and state.orders.held
@@ -488,7 +578,7 @@ function M.draw(viz, state)
   for _, c in ipairs(v.cells or {}) do
     if c.ok then
       viz.rect(ID, c.mx, c.my, c.mx + 1, c.my + 1, 230, 210, 60, 60, true)
-      viz.text(ID, c.mx + 0.5, c.my + 0.8, string.format("%.2f", c.s),
+      viz.text(ID, c.mx + 0.5, c.my + 0.8, string.format("%.2f+%.2f", c.s, c.pw or 0),
                "center", 240, 230, 150, 200)
     else
       viz.rect(ID, c.mx, c.my, c.mx + 1, c.my + 1, 110, 110, 110, 50, true)
@@ -496,17 +586,30 @@ function M.draw(viz, state)
                "center", 170, 170, 170, 180)
     end
   end
+  -- The search bound: ring `steps` around the scan's start square.
+  local R = v.steps or 0
+  if R > 0 then
+    viz.rect(ID, v.sx - R, v.sy - R, v.sx + R + 1, v.sy + R + 1, 90, 160, 255, 140, false)
+  end
+  -- The pills in P.
+  for _, tp in ipairs(v.P or {}) do
+    viz.circle(ID, tp.pill.mx + 0.5, tp.pill.my + 0.5, 0.6, 255, 60, 60, 230, false, false)
+    viz.text(ID, tp.pill.mx + 0.5, tp.pill.my - 0.5, "P p" .. tostring(tp.id),
+             "center", 255, 120, 120, 255)
+  end
   local LW = C.DECOY_GETAWAY_LAST_WEIGHT or 2.0
   local px, py = v.sx, v.sy
+  local base = v.step0 or 0
   for i, c in ipairs(v.path or {}) do
-    local drove = ga.phase ~= "wait" and i < (ga.idx or 1)
+    local drove = i < (ga.idx or 1)
     viz.rect(ID, c.mx, c.my, c.mx + 1, c.my + 1, 60, 230, 90, drove and 60 or 120, true)
     viz.line(ID, px + 0.5, py + 0.5, c.mx + 0.5, c.my + 0.5, 60, 255, 90, 230)
     px, py = c.mx, c.my
-    local head = string.format("#%d %s%s", i, safety_txt(c, np),
+    local head = string.format("#%d %s%s", base + i, safety_txt(c, np),
                                i == #v.path and string.format(" x%g (last)", LW) or "")
     viz.text(ID, c.mx + 0.5, c.my + 0.15, head, "center", 150, 255, 170, 255)
     local lines = { head }
+    local nt = #(c.terms or {})
     for j, tm in ipairs(c.terms or {}) do
       local tt = term_txt(tm)
       lines[#lines + 1] = tt
@@ -516,6 +619,12 @@ function M.draw(viz, state)
         viz.rect(ID, tm.sx + 0.3, tm.sy + 0.3, tm.sx + 0.7, tm.sy + 0.7,
                  255, 150, 40, 220, false)
       end
+    end
+    -- The closeness term and the tile value the chain score adds up.
+    for j, tx in ipairs({ prox_txt(c), tile_txt(c) }) do
+      lines[#lines + 1] = tx
+      viz.text(ID, c.mx + 0.5, c.my + 0.15 + 0.3 * (nt + j), tx, "center",
+               200, 220, 255, 230)
     end
     for _, tp in ipairs(v.P or {}) do
       local open = false
@@ -532,14 +641,24 @@ function M.draw(viz, state)
     end
     viz.detail(string.format("decoy_getaway_%d_%d", c.mx, c.my), "rect",
                { c.mx, c.my, c.mx + 1, c.my + 1 },
-               string.format("GETAWAY #%d (%d,%d)", i, c.mx, c.my), lines)
+               string.format("GETAWAY #%d (%d,%d)", base + i, c.mx, c.my), lines)
   end
   local hdr
   if v.path then
-    hdr = string.format("GETAWAY %s hits=%d: score = %s = %.3f  (P=%d tiles=%d nodes=%d%s %dus)",
-                        tostring(ga.phase), ga.hits or 0, score_terms(v.path),
-                        v.score or 0, np, #(v.cells or {}), v.nodes or 0,
-                        v.capped and " CAPPED" or "", v.us or -1)
+    local need = C.DECOY_GETAWAY_HITS or 1
+    local doing
+    if ga.phase == "move" then
+      doing = string.format("moving to square #%d", ga.used + 1)
+    elseif ga.phase == "done" then
+      doing = string.format("done: parked on square #%d", ga.used)
+    else
+      doing = string.format("on square #%d, waiting for hit %d of %d",
+                            ga.used, (ga.hits or 0) + 1, need)
+    end
+    hdr = string.format("GETAWAY step %d/%d %s: score = %s = %.3f  (P=%d tiles=%d edges=%d traces=%d %dus)",
+                        ga.used, base + #v.path, doing, score_terms(v.path),
+                        v.score or 0, np, #(v.cells or {}), v.edges or 0,
+                        v.traces or 0, v.us or -1)
   else
     hdr = string.format("GETAWAY none (P=%d tiles=%d) -- the hold stays put",
                         np, #(v.cells or {}))

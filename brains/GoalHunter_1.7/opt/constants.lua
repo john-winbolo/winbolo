@@ -4243,18 +4243,22 @@ M.ORDER_MAN_OUT_TAKES = true   -- keel false
 M.ORDER_GOTO_DECOY = true        -- keel false (2026-09-24: KEEL had the soft hold only)
 -- DECOY GETAWAY (Andrew, 2026-09-24).  A decoy hold (ORDER_GOTO_DECOY) looks
 -- for a way out the moment it starts: a chain of up to
--- DECOY_GETAWAY_MAX_STEPS neighbouring squares, each one shielded from the
--- counted pills by a wall or one of our own pills, or out of their range.
+-- DECOY_GETAWAY_MAX_STEPS squares, each one ring further out from the start
+-- square than the one before (never sideways or back: the walls behind are
+-- shot away by then), each one shielded from the counted pills by a wall or
+-- one of our own pills, or out of their range.
 -- A square's SAFETY is the mean over those pills of how well it is shielded
 -- from each one: a full wall DECOY_GETAWAY_WALL_FULL, a damaged wall
 -- DECOY_GETAWAY_WALL_DAMAGED, our pill health / PILLS_MAX_HEALTH, out of
 -- range 1.0, open 0.  A tree or a boat is not cover.  A chain scores the sum
 -- of its squares' safety with the LAST square counted
--- DECOY_GETAWAY_LAST_WEIGHT times.  The bot turns to face the first square
--- and, after DECOY_GETAWAY_HITS armour losses, drives the chain and parks at
--- its end; the hold then ends the way it always does.  It looks again at
--- most every DECOY_GETAWAY_RESCAN_TICKS, and only when a pill or a shield
--- changed.  See decoy_getaway.lua.  false = the hold never moves (as before).
+-- DECOY_GETAWAY_LAST_WEIGHT times.  The bot parks facing the next square of
+-- the chain; DECOY_GETAWAY_HITS armour losses taken while parked (counted
+-- from its arrival on that square) move it ONE square.  Hits on the way do
+-- not count.  At the last square it parks and the hold ends the way it
+-- always does.  It looks again at most every DECOY_GETAWAY_RESCAN_TICKS, and
+-- only when a pill or a shield changed.  See decoy_getaway.lua.  false = the
+-- hold never moves (as before).
 M.DECOY_GETAWAY              = true   -- keel false
 M.DECOY_GETAWAY_MAX_STEPS    = 5      -- keel 5 (moot; master off)
 M.DECOY_GETAWAY_HITS         = 1      -- keel 1 (moot)
@@ -4262,10 +4266,13 @@ M.DECOY_GETAWAY_LAST_WEIGHT  = 2.0    -- keel 2.0 (moot)
 M.DECOY_GETAWAY_RESCAN_TICKS = 50     -- keel 50 (moot)
 M.DECOY_GETAWAY_WALL_FULL    = 1.0    -- keel 1.0 (moot)
 M.DECOY_GETAWAY_WALL_DAMAGED = 0.5    -- keel 0.5 (moot)
--- Not a behaviour knob: a cap on the squares the chain search may look at in
--- one scan, so a wide field of cover cannot make a slow think.  The same cap
--- on every run, so the result is the same on every run.
-M.DECOY_GETAWAY_NODE_CAP     = 20000
+-- CLOSENESS (Andrew: "we should favor tiles that are closer to the pillbox.
+-- Decoying is easier when the decoyer is close to the pillbox").  A square's
+-- value in the chain score is safety + DECOY_GETAWAY_PROX_WEIGHT * prox,
+-- prox = max(0, 1 - d / PILL_FIRE_RANGE), d = the straight-line distance in
+-- tiles to the nearest counted pill.  It never makes an open square usable.
+-- 0 = safety alone.
+M.DECOY_GETAWAY_PROX_WEIGHT  = 0.5    -- keel 0
 -- Auction window.  The design said 6 ticks; a brain thinks every 2 game
 -- ticks and a bid is seen on the ally's NEXT think, so 6 is tight -- 10
 -- gives every ally one full round trip.  The auction still ends EARLY the
@@ -4708,6 +4715,7 @@ M.PRESETS = {
     DECOY_GETAWAY_RESCAN_TICKS    = 50,
     DECOY_GETAWAY_WALL_FULL       = 1.0,
     DECOY_GETAWAY_WALL_DAMAGED    = 0.5,
+    DECOY_GETAWAY_PROX_WEIGHT     = 0,
     ORDER_NEW_CLEARS_ALL          = false,
     ORDER_CLAIM_TIEBREAK          = false,
     ORDER_NO_HAND_BACK            = false,
