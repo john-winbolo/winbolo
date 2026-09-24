@@ -3951,14 +3951,22 @@ do
         tostring(h.ga.arm))
   -- The overlay, drawn into a recorder: the header says the step, and each
   -- chain square's panel carries the pill terms, the closeness and the tile.
-  local function draw_rec()
-    local r = { text = {}, detail = {}, circle = 0 }
+  -- draw_rec(only): only = one overlay id (nil = all six on).  Every call
+  -- is recorded with the overlay id it was drawn under.
+  local function draw_rec(only)
+    local r = { text = {}, detail = {}, circle = 0, line = 0, rect = 0, ids = {}, lines = {} }
+    local function seen(id) r.ids[id] = (r.ids[id] or 0) + 1 end
     local V = {
-      is_on  = function(id) return id == "decoy_getaway_viz" end,
-      rect   = function() end,
-      line   = function() end,
-      circle = function() r.circle = r.circle + 1 end,
-      text   = function(id, x, y, t) r.text[#r.text + 1] = t end,
+      is_on  = function(id)
+        if only then return id == only end
+        for _, x in ipairs(GA.VIZ_IDS) do if x == id then return true end end
+        return false
+      end,
+      rect   = function(id) seen(id); r.rect = r.rect + 1 end,
+      line   = function(id, x1, y1, x2, y2) seen(id); r.line = r.line + 1
+                 r.lines[#r.lines + 1] = { x1, y1, x2, y2 } end,
+      circle = function(id) seen(id); r.circle = r.circle + 1 end,
+      text   = function(id, x, y, t) seen(id); r.text[#r.text + 1] = t end,
       detail = function(did, kind, g, label, lines) r.detail[#r.detail + 1] = { label, lines } end,
     }
     ORD.draw_getaway(V, d.st)
@@ -3994,6 +4002,56 @@ do
         and r1.detail[2][2][4] == "tile = 1.000 + 0.000 = 1.000",
         table.concat(r1.detail[2][2], " | "))
   check("overlay: the pill in P is marked", r1.circle == 1 and has(r1.text, "P p5"), tostring(r1.circle))
+  -- SIX OVERLAYS (category Decoy): each one draws only under its own id,
+  -- and the six together draw exactly the sum of the six alone.
+  ;(function()  -- own function: main is at the 200-local cap
+  -- The blocker step is off in this rig; on here so its line is drawn.
+  local keep_blk = C.DECOY_GETAWAY_BLOCKER_STEP
+  C.DECOY_GETAWAY_BLOCKER_STEP = true
+  local r1 = draw_rec()
+  check("overlay: six decoy ids", #GA.VIZ_IDS == 6, tostring(#GA.VIZ_IDS))
+  local sum_t, sum_l, sum_r, sum_c, sum_d = 0, 0, 0, 0, 0
+  local alone = {}
+  for _, id in ipairs(GA.VIZ_IDS) do
+    local ra = draw_rec(id)
+    alone[id] = ra
+    local only_own = true
+    for k in pairs(ra.ids) do if k ~= id then only_own = false end end
+    check("overlay " .. id .. " alone: draws something, only under its own id",
+          only_own and (ra.ids[id] or 0) > 0, tostring(ra.ids[id]))
+    sum_t, sum_l, sum_r = sum_t + #ra.text, sum_l + ra.line, sum_r + ra.rect
+    sum_c, sum_d = sum_c + ra.circle, sum_d + #ra.detail
+  end
+  check("overlay: all six on = the sum of the six alone",
+        #r1.text == sum_t and r1.line == sum_l and r1.rect == sum_r
+        and r1.circle == sum_c and #r1.detail == sum_d,
+        string.format("%d/%d %d/%d %d/%d", #r1.text, sum_t, r1.line, sum_l, r1.rect, sum_r))
+  local ch = alone.decoy_chain
+  check("Decoy: chain: numbered squares, the park square, 'scan from', no score",
+        has(ch.text, "#1 hit park") and has(ch.text, "#2") and has(ch.text, "scan from")
+        and not has(ch.text, "score =") and not has(ch.text, "GETAWAY step"),
+        table.concat(ch.text, " | "))
+  local tm = alone.decoy_score_terms
+  check("Decoy: score terms: the score line and one panel per chain square",
+        has(tm.text, "score = 1.000 + 1.000 + 2x1.000 = 4.000") and #tm.detail == 3
+        and has(tm.text, "tile = 1.000 + 0.000 = 1.000") and has(tm.text, "prox: d=")
+        and has(tm.text, "x2 (last)"), table.concat(tm.text, " | "))
+  local pl = alone.decoy_pill_lines
+  check("Decoy: pill lines: the pill and one line per chain square",
+        pl.circle == 1 and has(pl.text, "P p5") and pl.line == 3, tostring(pl.line))
+  local st = alone.decoy_status
+  check("Decoy: status header: the order, the step, the scan cost",
+        has(st.text, "ORDER decoy (") and has(st.text, "GETAWAY step 1/3 on square #1")
+        and has(st.text, "P=1 tiles=") and #st.text == 3, table.concat(st.text, " | "))
+  local bl = alone.decoy_blocker_count
+  check("Decoy: blocker count: the count's state line",
+        has(bl.text, "| steps by: hit"), table.concat(bl.text, " | "))
+  local cl = alone.decoy_scan_cells
+  check("Decoy: scan cells: one text per worked-out square",
+        #cl.text == #d.st.orders.held.ga.viz.cells and not has(cl.text, "score ="),
+        tostring(#cl.text))
+  C.DECOY_GETAWAY_BLOCKER_STEP = keep_blk
+  end)()
   end
   d.inf.direction = 64
   check("parked on square 1 it turns to face square 2 (south)",
@@ -4010,6 +4068,14 @@ do
   if drawn then
     check("overlay header while moving: moving to square #2",
           has(draw_rec().text, "moving to square #2"), "?")
+    ;(function()
+    local mv = draw_rec("decoy_chain")
+    local tl = mv.lines[#mv.lines]
+    check("Decoy: chain while moving: 'MOVING to (22,26)' and a line from the tank to it",
+          has(mv.text, "MOVING to (22,26)") and not has(mv.text, "park")
+          and tl and tl[1] == d.inf.tankx / 256 and tl[2] == d.inf.tanky / 256
+          and tl[3] == 22.5 and tl[4] == 26.5, table.concat(mv.text, " | "))
+    end)()
   end
   d.inf.tanky = 26 * 256 + 128; lock(d, 238)
   check("on square 2: parked, waiting", h.ga.phase == "wait" and h.ga.used == 2
@@ -4512,6 +4578,51 @@ do
   check("DECOY_GETAWAY_BLOCKER_STEP=false: a hit moves it",
         hb.ga.phase == "move" and hb.ga.trigs[2] == "hit", tostring(hb.ga.phase))
   C.DECOY_GETAWAY_BLOCKER_STEP = true
+
+  -- THE DIAGONAL STEP (DECOY_GETAWAY_DIAGONAL): while a getaway moves, a
+  -- diagonal next square is driven straight at (steering.cpf_path_to asks
+  -- orders.getaway_diagonal); only then, and only past drivable sides.
+  ;(function()  -- own function: main is at the 200-local cap
+  check("DECOY_GETAWAY_DIAGONAL: live on, keel off",
+        C.DECOY_GETAWAY_DIAGONAL == true and C.PRESETS.keel.DECOY_GETAWAY_DIAGONAL == false, "?")
+  local hm = { mx = 20, my = 25, decoy = true,
+               ga = { phase = "move", idx = 1, path = { { mx = 21, my = 24 } } } }
+  local gm = ORD.decoy_goal(hm)
+  local nx, ny = ORD.getaway_diagonal(gm, 20, 25, false)
+  check("diagonal: a moving getaway goes straight to the diagonal square",
+        gm._getaway == true and nx == 21 and ny == 24, tostring(nx) .. "," .. tostring(ny))
+  check("diagonal: from an orthogonal neighbour or two away, no change",
+        ORD.getaway_diagonal(gm, 21, 25, false) == nil
+        and ORD.getaway_diagonal(gm, 19, 26, false) == nil, "?")
+  check("diagonal: not in a boat", ORD.getaway_diagonal(gm, 20, 25, true) == nil, "?")
+  TMAP[24 * 256 + 20] = C.T_BUILDING
+  check("diagonal: a wall on a side square still blocks it (corner)",
+        ORD.getaway_diagonal(gm, 20, 25, false) == nil, "?")
+  TMAP[24 * 256 + 20] = nil
+  TMAP[25 * 256 + 21] = C.T_HALFBUILD
+  check("diagonal: a half wall on the other side square blocks it",
+        ORD.getaway_diagonal(gm, 20, 25, false) == nil, "?")
+  TMAP[25 * 256 + 21] = C.T_DEEPSEA
+  check("diagonal: deep sea on a side square blocks it",
+        ORD.getaway_diagonal(gm, 20, 25, false) == nil, "?")
+  TMAP[25 * 256 + 21] = C.T_FOREST
+  check("diagonal: a tree on a side square does not block it",
+        ORD.getaway_diagonal(gm, 20, 25, false) == 21, "?")
+  TMAP[25 * 256 + 21] = nil
+  local hw = { mx = 20, my = 25, decoy = true,
+               ga = { phase = "wait", idx = 1, park_mx = 20, park_my = 25,
+                      path = { { mx = 21, my = 24 } } } }
+  check("diagonal: a parked getaway (wait) is not changed",
+        ORD.getaway_diagonal(ORD.decoy_goal(hw), 20, 25, false) == nil, "?")
+  check("diagonal: any other goal is not changed",
+        ORD.getaway_diagonal({ kind = "goto_tile", mx = 21, my = 24 }, 20, 25, false) == nil
+        and ORD.getaway_diagonal({ kind = "attack_pill", mx = 21, my = 24, _decoy = true },
+                                 20, 25, false) == nil, "?")
+  C.DECOY_GETAWAY_DIAGONAL = false
+  check("DECOY_GETAWAY_DIAGONAL=false (keel): the old route (no change)",
+        ORD.getaway_diagonal(gm, 20, 25, false) == nil, "?")
+  C.DECOY_GETAWAY_DIAGONAL = true
+  end)()
   C.DECOY_GETAWAY_PROX_WEIGHT = 0.5
   end)()
 

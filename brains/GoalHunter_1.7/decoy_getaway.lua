@@ -444,6 +444,28 @@ function M.driving(h)
   return (C.DECOY_GETAWAY and h and h.ga and h.ga.phase == "move") and true or false
 end
 
+-- THE DIAGONAL STEP (C.DECOY_GETAWAY_DIAGONAL).  goal is the hold goal
+-- (orders.decoy_goal); it carries _getaway only while the chain moves.
+-- Returns the goal square when it is diagonal to the tank's square
+-- (tmx,tmy) and the tank can drive straight to it, else nil.  The side
+-- squares follow the pathfinder's own corner rule: no speed-0 square
+-- (wall, half wall, pill) and no deep sea on either side.  Not in a boat.
+local function drivable(mx, my)
+  local t = U.ttype(mx, my)
+  return t ~= C.T_DEEPSEA and (C.MAP_SPEED[t] or 12) > 0
+end
+function M.diagonal_next(goal, tmx, tmy, in_boat)
+  if not (C.DECOY_GETAWAY and C.DECOY_GETAWAY_DIAGONAL) then return nil end
+  if not (goal and goal._getaway and goal.mx) or in_boat then return nil end
+  local dx, dy = goal.mx - tmx, goal.my - tmy
+  if (dx ~= 1 and dx ~= -1) or (dy ~= 1 and dy ~= -1) then return nil end
+  if not (drivable(goal.mx, goal.my) and drivable(goal.mx, tmy)
+          and drivable(tmx, goal.my)) then
+    return nil
+  end
+  return goal.mx, goal.my
+end
+
 -- THE BLOCKER STEP's pill: the closest counted pill to (mx,my), by edist,
 -- ties to the lower id.  Returns the id, the pill and the distance.
 function M.closest_pill(world, mx, my)
@@ -660,6 +682,8 @@ function M.update(state, world, info, h, now)
     h.ga = ga
     M.rescan(world, info, h, tx, ty, max_steps, now, "arrival")
   end
+  -- For the overlays only: where the tank is, and the tick (time left).
+  ga.tank_wx, ga.tank_wy, ga.now = info.tankx, info.tanky, now
   -- ARMOUR LOSS since the last think.  Counted only while parked (wait):
   -- the baseline is the armour on arrival at the square.
   if ga.phase == "wait" and arm < ga.arm then
@@ -795,19 +819,12 @@ function M.keys(state, info, h, keys, taps)
 end
 
 -- ---------------------------------------------------------------------------
--- OVERLAY (viz id "decoy_getaway_viz").  The numbers are the scan's own
--- cells, so the panel is what the code computed.  Every scanned square:
--- yellow with its safety (a getaway square) or grey with why not ("open" =
--- no pill is blocked, "no_drive" = the tank cannot drive on it).  The chain:
--- green squares joined by a line from the tank's square, each one labelled
--- with its number and "s = (b1 + b2 ...) / #P = safety", and under it one
--- line per pill: its block and why (wall full, wall damaged, pill h/15, out
--- of range, shell short, open, enemy pill, base).  An orange box on every
--- shield square, a line from each pill to each chain square (red = open,
--- grey = blocked).  The header on the scan's start square: the step it is
--- on ("waiting for hit N" or "moving to square i"), the score written out
--- (last square x LAST_WEIGHT) and the scan cost.  Chain squares are
--- numbered from the decoy square (steps already taken + i).
+-- OVERLAYS (viz ids decoy_chain, decoy_scan_cells, decoy_score_terms,
+-- decoy_pill_lines, decoy_blocker_count, decoy_status; BrainTest category
+-- "Decoy").  The numbers are the scan's own cells, so each panel is what
+-- the code computed.  What each one draws is written above its draw
+-- function below.  Chain squares are numbered from the decoy square
+-- (steps already taken + i).
 -- ---------------------------------------------------------------------------
 local WHY_TXT = {
   range = "out of range", short = "shell short", open = "open",
@@ -845,14 +862,25 @@ local function tile_txt(c)
 end
 M.tile_txt = tile_txt
 
-function M.draw(viz, state)
-  if not viz or not viz.is_on or not viz.is_on("decoy_getaway_viz") then return end
-  local h = state and state.orders and state.orders.held
-  local ga = h and h.decoy and h.ga
-  local v = ga and ga.viz
-  if not v then return end
-  local ID = "decoy_getaway_viz"
-  local np = #(v.P or {})
+-- The six overlays (viz.lua, BrainTest category "Decoy").  Each one draws
+-- only its own part; together they are the whole getaway.  Text places, so
+-- that all six can be on at once: the search box is the ring `steps`
+-- around the scan's start square.  Status lines sit above the box, the
+-- blocker line below it, the score panel to the right of it.  Inside a
+-- square: the chain label at the top (+0.25), the scan-from label at the
+-- bottom (+0.75, the start square is never a scan cell), a scan cell's
+-- value at +0.8.
+local VIZ_CHAIN   = "decoy_chain"
+local VIZ_CELLS   = "decoy_scan_cells"
+local VIZ_TERMS   = "decoy_score_terms"
+local VIZ_LINES   = "decoy_pill_lines"
+local VIZ_BLOCKER = "decoy_blocker_count"
+local VIZ_STATUS  = "decoy_status"
+M.VIZ_IDS = { VIZ_CHAIN, VIZ_CELLS, VIZ_TERMS, VIZ_LINES, VIZ_BLOCKER, VIZ_STATUS }
+
+-- Decoy: scan cells.  Every square the search worked out, and the box.
+local function draw_cells(viz, v)
+  local ID = VIZ_CELLS
   for _, c in ipairs(v.cells or {}) do
     if c.ok then
       viz.rect(ID, c.mx, c.my, c.mx + 1, c.my + 1, 230, 210, 60, 60, true)
@@ -864,45 +892,75 @@ function M.draw(viz, state)
                "center", 170, 170, 170, 180)
     end
   end
-  -- The search bound: ring `steps` around the scan's start square.
   local R = v.steps or 0
   if R > 0 then
     viz.rect(ID, v.sx - R, v.sy - R, v.sx + R + 1, v.sy + R + 1, 90, 160, 255, 140, false)
   end
-  -- The pills in P.
-  for _, tp in ipairs(v.P or {}) do
-    viz.circle(ID, tp.pill.mx + 0.5, tp.pill.my + 0.5, 0.6, 255, 60, 60, 230, false, false)
-    viz.text(ID, tp.pill.mx + 0.5, tp.pill.my - 0.5, "P p" .. tostring(tp.id),
-             "center", 255, 120, 120, 255)
-  end
-  local LW = C.DECOY_GETAWAY_LAST_WEIGHT or 2.0
-  local px, py = v.sx, v.sy
+end
+
+-- Decoy: chain.  The scan's start square (blue, "scan from"), the chain
+-- squares in order (green) with their number, the trigger that sent the
+-- tank there and "park" on the square it is parked on; in a move the
+-- target square (cyan), a line from the tank to it and "MOVING to (x,y)".
+local function draw_chain(viz, h, ga, v)
+  local ID = VIZ_CHAIN
+  viz.rect(ID, v.sx, v.sy, v.sx + 1, v.sy + 1, 90, 160, 255, 110, true)
+  viz.text(ID, v.sx + 0.5, v.sy + 0.75, "scan from", "center", 150, 200, 255, 255)
+  local pmx, pmy = ga.park_mx or h.mx, ga.park_my or h.my
+  if ga.phase == "move" then pmx, pmy = nil, nil end
   local base = v.step0 or 0
+  local px, py = v.sx, v.sy
+  local park_on_chain = false
   for i, c in ipairs(v.path or {}) do
     local drove = i < (ga.idx or 1)
     viz.rect(ID, c.mx, c.my, c.mx + 1, c.my + 1, 60, 230, 90, drove and 60 or 120, true)
     viz.line(ID, px + 0.5, py + 0.5, c.mx + 0.5, c.my + 0.5, 60, 255, 90, 230)
     px, py = c.mx, c.my
-    local head = string.format("#%d %s%s", base + i, safety_txt(c, np),
-                               i == #v.path and string.format(" x%g (last)", LW) or "")
-    viz.text(ID, c.mx + 0.5, c.my + 0.15, head, "center", 150, 255, 170, 255)
-    local lines = { head }
-    local nt = #(c.terms or {})
-    for j, tm in ipairs(c.terms or {}) do
-      local tt = term_txt(tm)
-      lines[#lines + 1] = tt
-      viz.text(ID, c.mx + 0.5, c.my + 0.15 + 0.3 * j, tt, "center",
-               220, 220, 220, 230)
+    local k = base + i
+    local lab = "#" .. k
+    local trig = ga.trigs and ga.trigs[k]
+    if trig then lab = lab .. " " .. trig end
+    if pmx == c.mx and pmy == c.my then
+      lab = lab .. " park"
+      park_on_chain = true
+    end
+    viz.text(ID, c.mx + 0.5, c.my + 0.25, lab, "center", 150, 255, 170, 255)
+  end
+  if pmx then
+    viz.rect(ID, pmx + 0.05, pmy + 0.05, pmx + 0.95, pmy + 0.95, 255, 255, 255, 200, false)
+    if not park_on_chain then
+      viz.text(ID, pmx + 0.5, pmy + 0.25, "park", "center", 255, 255, 255, 255)
+    end
+  end
+  local t = ga.phase == "move" and ga.path and ga.path[ga.idx]
+  if t then
+    viz.rect(ID, t.mx, t.my, t.mx + 1, t.my + 1, 40, 230, 255, 110, true)
+    if ga.tank_wx then
+      local rx, ry = ga.tank_wx / 256, ga.tank_wy / 256
+      local cx, cy = t.mx + 0.5, t.my + 0.5
+      viz.line(ID, rx, ry, cx, cy, 40, 230, 255, 255)
+      viz.text(ID, (rx + cx) / 2, (ry + cy) / 2 - 0.35,
+               string.format("MOVING to (%d,%d)", t.mx, t.my), "center", 40, 230, 255, 255)
+    end
+  end
+end
+
+-- Decoy: pill lines.  The counted pills (P), a line from each to each
+-- chain square (red = its shell reaches the square, grey = blocked) and an
+-- orange box on each shield square.
+local function draw_lines(viz, v)
+  local ID = VIZ_LINES
+  for _, tp in ipairs(v.P or {}) do
+    viz.circle(ID, tp.pill.mx + 0.5, tp.pill.my + 0.5, 0.6, 255, 60, 60, 230, false, false)
+    viz.text(ID, tp.pill.mx + 0.5, tp.pill.my - 0.5, "P p" .. tostring(tp.id),
+             "center", 255, 120, 120, 255)
+  end
+  for _, c in ipairs(v.path or {}) do
+    for _, tm in ipairs(c.terms or {}) do
       if tm.sx then
         viz.rect(ID, tm.sx + 0.3, tm.sy + 0.3, tm.sx + 0.7, tm.sy + 0.7,
                  255, 150, 40, 220, false)
       end
-    end
-    -- The closeness term and the tile value the chain score adds up.
-    for j, tx in ipairs({ prox_txt(c), tile_txt(c) }) do
-      lines[#lines + 1] = tx
-      viz.text(ID, c.mx + 0.5, c.my + 0.15 + 0.3 * (nt + j), tx, "center",
-               200, 220, 255, 230)
     end
     for _, tp in ipairs(v.P or {}) do
       local open = false
@@ -917,16 +975,60 @@ function M.draw(viz, state)
                  150, 150, 150, 90)
       end
     end
+  end
+end
+
+-- Decoy: score terms.  A panel to the right of the search box: the chain
+-- score, then for each chain square its safety sum, one line per counted
+-- pill, the closeness term and the tile value.  Every number of the chain
+-- score is on it.  The same lines go in each square's hover panel.
+local function draw_terms(viz, v)
+  local ID = VIZ_TERMS
+  local np = #(v.P or {})
+  local LW = C.DECOY_GETAWAY_LAST_WEIGHT or 2.0
+  local R = v.steps or 0
+  local x = v.sx + R + 1.4
+  local y = v.sy - R
+  local DY = 0.35
+  if v.path then
+    viz.text(ID, x, y, string.format("score = %s = %.3f", score_terms(v.path), v.score or 0),
+             "topleft", 150, 200, 255, 255)
+    y = y + DY
+  end
+  local base = v.step0 or 0
+  for i, c in ipairs(v.path or {}) do
+    local head = string.format("#%d %s%s", base + i, safety_txt(c, np),
+                               i == #v.path and string.format(" x%g (last)", LW) or "")
+    local lines = { head }
+    viz.text(ID, x, y, head, "topleft", 150, 255, 170, 255)
+    y = y + DY
+    for _, tm in ipairs(c.terms or {}) do
+      local tt = term_txt(tm)
+      lines[#lines + 1] = tt
+      viz.text(ID, x + 0.3, y, tt, "topleft", 220, 220, 220, 230)
+      y = y + DY
+    end
+    for _, tx in ipairs({ prox_txt(c), tile_txt(c) }) do
+      lines[#lines + 1] = tx
+      viz.text(ID, x + 0.3, y, tx, "topleft", 200, 220, 255, 230)
+      y = y + DY
+    end
     viz.detail(string.format("decoy_getaway_%d_%d", c.mx, c.my), "rect",
                { c.mx, c.my, c.mx + 1, c.my + 1 },
                string.format("GETAWAY #%d (%d,%d)", base + i, c.mx, c.my), lines)
   end
-  -- THE BLOCKER STEP: the closest pill's shell line to the PARK square
-  -- (magenta; the count is made on it), and a magenta box on each blocker
-  -- on it.  The last blocker's box shows its count ("5-3=2 shots": start -
-  -- hits counted = shots left).  A tank knocked off the park square gets a
-  -- thin line from the pill to where it really is, with its offset from
-  -- the park square's centre: that line is NOT counted.
+end
+
+-- Decoy: blocker count (THE BLOCKER STEP).  The closest pill's shell line
+-- to the PARK square (magenta; the count is made on it) and a magenta box
+-- on each blocker on it; the last blocker's box shows its count ("5-3=2
+-- shots": start - hits counted = shots left).  The ledger's heard wall
+-- hits on each wall, with their ticks.  A tank knocked off the park square
+-- gets a thin line from the pill to where it really is, with its offset
+-- from the park square's centre: that line is NOT counted.  Under the
+-- search box: the state of the count and the trigger of every step so far.
+local function draw_blocker(viz, ga, v)
+  local ID = VIZ_BLOCKER
   local bk = ga.blk
   if bk then
     viz.line(ID, bk.mx + 0.5, bk.my + 0.5, bk.tx + 0.5, bk.ty + 0.5, 255, 80, 255, 200)
@@ -946,10 +1048,60 @@ function M.draw(viz, state)
       end
     end
   end
-  -- Up to four header lines, not one: an overlay text is cut at
-  -- OVERLAY_TEXT_MAX (128) bytes, in the game, in BrainTest and in a
-  -- recording alike.
-  local hdr, hdr2, hdr3, hdr4
+  -- The ledger is the count's own record, so it shows while the count is
+  -- made (parked, the wait phase).
+  if ga.phase == "wait" and ga.led then
+    for _, e in pairs(ga.led) do
+      local n = #(e.ticks or {})
+      if n > 0 then
+        local tk = {}
+        for i = math.max(1, n - 3), n do tk[#tk + 1] = tostring(e.ticks[i]) end
+        viz.text(ID, e.mx + 0.5, e.my + 0.3,
+                 string.format("heard %d: t%s", n, table.concat(tk, ",")),
+                 "center", 255, 200, 255, 255)
+      end
+    end
+  end
+  if not C.DECOY_GETAWAY_BLOCKER_STEP then return end
+  local tl = "-"
+  if ga.trigs and #ga.trigs > 0 then tl = table.concat(ga.trigs, " ") end
+  local lim = C.DECOY_GETAWAY_BLOCKER_SHOTS or 2
+  local what
+  if bk and bk.why == "last" then
+    what = string.format("closest p%s (%d,%d) last blocker %s shots, step at <=%d",
+                         tostring(bk.id), bk.mx, bk.my, M.blk_one(bk.list[1]), lim)
+  elseif bk and bk.why == "open" then
+    what = string.format("closest p%s (%d,%d) no blocker left, step",
+                         tostring(bk.id), bk.mx, bk.my)
+  elseif bk and bk.why == "wait" then
+    what = string.format("closest p%s (%d,%d) %d blockers, waiting",
+                         tostring(bk.id), bk.mx, bk.my, #bk.list)
+  elseif bk then
+    what = string.format("closest p%s (%d,%d) shell short: no count",
+                         tostring(bk.id), bk.mx, bk.my)
+  elseif ga.phase == "wait" and (ga.used or 0) == 0 then
+    what = "blocker step: off on the decoy square"
+  else
+    what = "blocker step: not counting"
+  end
+  local R = v.steps or 0
+  viz.text(ID, v.sx + 0.5, v.sy + R + 1.3, string.format("%s | steps by: %s", what, tl),
+           "center", 255, 150, 255, 255)
+end
+
+-- Decoy: status header.  Above the search box: the hold (ORDER decoy, its
+-- square, the time left), the step and phase, and the scan cost.  Up to
+-- three lines, not one: an overlay text is cut at OVERLAY_TEXT_MAX (128)
+-- bytes, in the game, in BrainTest and in a recording alike.
+local function draw_status(viz, h, ga, v)
+  local ID = VIZ_STATUS
+  local np = #(v.P or {})
+  local base = v.step0 or 0
+  local lines = {}
+  local left = (h.expiry and ga.now) and math.max(0, h.expiry - ga.now) or nil
+  lines[1] = string.format("ORDER decoy (%d,%d) %s s left, %d pills counted (P)",
+                           h.mx or -1, h.my or -1,
+                           left and tostring(math.floor(left / 50)) or "?", np)
   if v.path then
     local need = C.DECOY_GETAWAY_HITS or 1
     local doing
@@ -961,53 +1113,38 @@ function M.draw(viz, state)
       doing = string.format("on square #%d, waiting for hit %d of %d",
                             ga.used, (ga.hits or 0) + 1, need)
     end
-    hdr = string.format("GETAWAY step %d/%d %s", ga.used, base + #v.path, doing)
-    hdr2 = string.format("score = %s = %.3f", score_terms(v.path), v.score or 0)
-    hdr3 = string.format("P=%d tiles=%d edges=%d traces=%d %dus",
-                         np, #(v.cells or {}), v.edges or 0, v.traces or 0, v.us or -1)
+    lines[2] = string.format("GETAWAY step %d/%d %s", ga.used, base + #v.path, doing)
+    lines[3] = string.format("P=%d tiles=%d edges=%d traces=%d %dus",
+                             np, #(v.cells or {}), v.edges or 0, v.traces or 0, v.us or -1)
   else
-    hdr = string.format("GETAWAY none (P=%d tiles=%d) -- the hold stays put",
-                        np, #(v.cells or {}))
+    lines[2] = string.format("GETAWAY none (P=%d tiles=%d) -- the hold stays put",
+                             np, #(v.cells or {}))
   end
-  -- The blocker step line: the closest pill, its count, and the trigger of
-  -- every step so far ("hit" or "blk").
-  if C.DECOY_GETAWAY_BLOCKER_STEP then
-    local tl = "-"
-    if ga.trigs and #ga.trigs > 0 then tl = table.concat(ga.trigs, " ") end
-    local lim = C.DECOY_GETAWAY_BLOCKER_SHOTS or 2
-    local what
-    if bk and bk.why == "last" then
-      what = string.format("closest p%s (%d,%d) last blocker %s shots, step at <=%d",
-                           tostring(bk.id), bk.mx, bk.my, M.blk_one(bk.list[1]), lim)
-    elseif bk and bk.why == "open" then
-      what = string.format("closest p%s (%d,%d) no blocker left, step",
-                           tostring(bk.id), bk.mx, bk.my)
-    elseif bk and bk.why == "wait" then
-      what = string.format("closest p%s (%d,%d) %d blockers, waiting",
-                           tostring(bk.id), bk.mx, bk.my, #bk.list)
-    elseif bk then
-      what = string.format("closest p%s (%d,%d) shell short: no count",
-                           tostring(bk.id), bk.mx, bk.my)
-    elseif ga.phase == "wait" and (ga.used or 0) == 0 then
-      what = "blocker step: off on the decoy square"
-    else
-      what = "blocker step: not counting"
-    end
-    hdr4 = string.format("%s | steps by: %s", what, tl)
+  local R = v.steps or 0
+  local y = v.sy - R - 0.4 - 0.45 * (#lines - 1)
+  for i, s in ipairs(lines) do
+    viz.text(ID, v.sx + 0.5, y + 0.45 * (i - 1), s, "center", 150, 200, 255, 255)
   end
-  viz.rect(ID, v.sx, v.sy, v.sx + 1, v.sy + 1, 90, 160, 255, 110, true)
-  local ty = v.sy - 0.7 - (hdr3 and 1.0 or 0) - (hdr4 and 0.5 or 0)
-  viz.text(ID, v.sx + 0.5, ty, hdr, "center", 150, 200, 255, 255)
-  if hdr2 then
-    viz.text(ID, v.sx + 0.5, ty + 0.5, hdr2, "center", 150, 200, 255, 255)
+end
+
+function M.draw(viz, state)
+  if not viz or not viz.is_on then return end
+  local on_chain, on_cells = viz.is_on(VIZ_CHAIN), viz.is_on(VIZ_CELLS)
+  local on_terms, on_lines = viz.is_on(VIZ_TERMS), viz.is_on(VIZ_LINES)
+  local on_blk, on_status  = viz.is_on(VIZ_BLOCKER), viz.is_on(VIZ_STATUS)
+  if not (on_chain or on_cells or on_terms or on_lines or on_blk or on_status) then
+    return
   end
-  if hdr3 then
-    viz.text(ID, v.sx + 0.5, ty + 1.0, hdr3, "center", 150, 200, 255, 255)
-  end
-  if hdr4 then
-    viz.text(ID, v.sx + 0.5, ty + (hdr3 and 1.5 or 0.5), hdr4, "center",
-             255, 150, 255, 255)
-  end
+  local h = state and state.orders and state.orders.held
+  local ga = h and h.decoy and h.ga
+  local v = ga and ga.viz
+  if not v then return end
+  if on_cells  then draw_cells(viz, v) end
+  if on_lines  then draw_lines(viz, v) end
+  if on_chain  then draw_chain(viz, h, ga, v) end
+  if on_terms  then draw_terms(viz, v) end
+  if on_blk    then draw_blocker(viz, ga, v) end
+  if on_status then draw_status(viz, h, ga, v) end
 end
 
 return M

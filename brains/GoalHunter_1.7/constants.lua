@@ -4290,6 +4290,16 @@ M.DECOY_GETAWAY_BLOCKER_SHOTS = 2     -- keel 2 (not used: the step is off)
 -- 1; a pill stops ceil(armour / PILL_SHELL_DAMAGE).
 M.DECOY_GETAWAY_WALL_LIFE     = 4     -- keel 4
 M.DECOY_GETAWAY_PILL_SHELL_DAMAGE = 1 -- keel 1
+-- 2026-09-24 (Andrew): the diagonal step.  When the next chain square is
+-- diagonal to the tank's square, the nav Dijkstra often goes round by a
+-- side square: a diagonal edge costs DMUL8 1.41 x the WHOLE step cost,
+-- danger included (brain_pathfinder.c, slate expand, new_g = g + tc *
+-- DMUL8[d]), so a side square with less pill danger is cheaper.  Under
+-- fire that is two slow turns.  true = while a getaway MOVES, drive
+-- straight at a diagonal next square when both side squares and the
+-- square itself are drivable (no wall, pill or deep sea: the same corner
+-- rule the pathfinder uses).  Other goals are not changed.
+M.DECOY_GETAWAY_DIAGONAL      = true  -- keel false
 -- Auction window.  The design said 6 ticks; a brain thinks every 2 game
 -- ticks and a bid is seen on the ally's NEXT think, so 6 is tight -- 10
 -- gives every ally one full round trip.  The auction still ends EARLY the
@@ -4737,7 +4747,8 @@ M.PRESETS = {
     DECOY_GETAWAY_BLOCKER_SHOTS   = 2,
     DECOY_GETAWAY_WALL_LIFE       = 4,
     DECOY_GETAWAY_PILL_SHELL_DAMAGE = 1,
-    ORDER_NEW_CLEARS_ALL          = false,
+    DECOY_GETAWAY_DIAGONAL        = false,
+    ORDER_NEW_CLEARS_ALL         = false,
     ORDER_CLAIM_TIEBREAK          = false,
     ORDER_NO_HAND_BACK            = false,
     ORDER_MAN_OUT_TAKES           = false,

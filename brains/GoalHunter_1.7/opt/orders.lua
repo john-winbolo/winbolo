@@ -1736,6 +1736,8 @@ end
 -- The getaway overlay, for init.lua (think() is at its upvalue cap, so it
 -- is reached through ORD).
 M.draw_getaway = GA.draw
+-- The getaway's diagonal step, for steering.lua (cpf_path_to).
+M.getaway_diagonal = GA.diagonal_next
 
 -- ONE SLOT, ONE BOT (ORDER_CLAIM_TIEBREAK).  A repeat ping adds one slot to a
 -- ping order (anchor want + 1), and when the auction for it times out two

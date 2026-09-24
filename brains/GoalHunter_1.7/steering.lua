@@ -711,6 +711,19 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
     pf.next_my = -1
   end
 
+  -- DECOY GETAWAY diagonal step (C.DECOY_GETAWAY_DIAGONAL): while the chain
+  -- moves, a diagonal next square is driven straight at, not round by a side
+  -- square (decoy_getaway.diagonal_next says why the Dijkstra goes round).
+  local g_ga = state.goal
+  if g_ga and g_ga._getaway and g_ga.mx == dest_mx and g_ga.my == dest_my then
+    local gx, gy = orders_mod().getaway_diagonal(g_ga, tmx, tmy, info.inboat)
+    if gx then
+      pf.status  = "done"
+      pf.next_mx, pf.next_my = gx, gy
+      pf.path_chain = { tmx, tmy, gx, gy }
+    end
+  end
+
   -- Boat-mode near deep water: when the tank sits on a tile bordering deep sea
   -- (any of the 8 neighbours), keep the nav destination within ONE tile of the
   -- tank. Stops steering from aiming a long diagonal that clips a deep-water
