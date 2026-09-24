@@ -4397,6 +4397,89 @@ do
   check("two pills: pill 6 is now the closest, its line is open (0 shots): it moves",
         moved(hb, b) and hb.ga.blk.id == 6 and hb.ga.blk.shots == 0
         and hb.ga.trigs[2] == "blk", tostring(hb.ga.blk.id))
+  b.w.pills[6] = nil
+  clear()
+
+  -- KNOCKED OFF THE PARK SQUARE (Andrew, Sep 24: "It should stay counting
+  -- even if it got pushed off and head to the next spot").  The line, the
+  -- last blocker and the ledger stay the PARK square's (blk.tx/ty, and the
+  -- same wall and ledger table), not the knock square's.
+  b, hb = on_sq1(650)
+  TMAP[K(W3)] = C.T_BUILDING
+  lock(b, 655)
+  -- (21,25): its own line from pill 5 misses W3, so the old rule (the
+  -- count from the tank's square) would see no blocker and move at once.
+  local kx, ky = 21, 25
+  local _, _, kwhy = GA.blockers(b.w, b.w.pills[5], kx, ky, {})
+  check("knock rig: the knock square's own line is open (the old rule would move)",
+        kwhy == "open", tostring(kwhy))
+  local led0 = hb.ga.led
+  b.inf.tankx, b.inf.tanky = kx * 256 + 100, ky * 256 + 140
+  lock(b, 656)
+  check("knocked off square 1: the count stays on square 1's line (full wall, 5 - 0 = 5), it holds",
+        held(hb) and hb.ga.blk.why == "last" and hb.ga.blk.shots == 5
+        and hb.ga.blk.tx == 22 and hb.ga.blk.ty == 25 and hb.ga.blk.off == true
+        and lastb(hb).mx == W3.mx and lastb(hb).my == W3.my and hb.ga.led == led0
+        and b.st.goal.mx == 22 and b.st.goal.my == 25,
+        tostring(hb.ga.blk.why) .. " " .. tostring(hb.ga.blk.shots))
+  TMAP[K(W3)] = C.T_HALFBUILD
+  lock(b, 657)
+  hit(b, W3, 658)
+  check("knocked off: hits on square 1's wall still count (the change, then a sound = 2): 3 shots, it holds",
+        held(hb) and hb.ga.blk.shots == 3 and lastb(hb).hits == 2, tostring(hb.ga.blk.shots))
+  if drawn then
+    local rb = { text = {}, lines = 0 }
+    ORD.draw_getaway({ is_on = function() return true end, rect = function() end,
+                       line = function() rb.lines = rb.lines + 1 end, circle = function() end,
+                       text = function(id, x, y, t) rb.text[#rb.text + 1] = t end,
+                       detail = function() end }, b.st)
+    local dx, dy = kx * 256 + 100 - (22 * 256 + 128), ky * 256 + 140 - (25 * 256 + 128)
+    check("overlay knocked off: the count is square 1's, plus the tank-off-park label",
+          has(rb.text, "closest p5 (20,20) last blocker 5-2=3 shots, step at <=2 | steps by: hit")
+          and has(rb.text, string.format("tank off park (%d,%d wu)", dx, dy)),
+          table.concat(rb.text, " | "))
+  end
+  hit(b, W3, 659)
+  check("knocked off: hit 3 on square 1's wall: 5 - 3 = 2, it moves to square 2 from where it is",
+        moved(hb, b) and hb.ga.trigs[2] == "blk" and hb.ga.blk.shots == 2
+        and hb.ga.blk.tx == 22 and hb.ga.blk.ty == 25, tostring(hb.ga.phase))
+  lock(b, 660)
+  check("moving from the knock square: the goal is square 2, not square 1",
+        hb.ga.phase == "move" and b.st.goal.mx == 22 and b.st.goal.my == 26, tostring(b.st.goal.my))
+  b.inf.tankx, b.inf.tanky = 22 * 256 + 128, 26 * 256 + 128
+  lock(b, 661)
+  check("knocked off, then on square 2: parked there, a new ledger",
+        hb.ga.phase == "wait" and hb.ga.used == 2 and next(hb.ga.led) == nil, tostring(hb.ga.phase))
+
+  -- Knocked off with no count left to fire: it holds, and the hold goal is
+  -- still square 1 (it drives back).  A hit while off still moves it.
+  b, hb = on_sq1(670)
+  TMAP[K(W3)] = C.T_BUILDING
+  lock(b, 675)
+  b.inf.tankx, b.inf.tanky = kx * 256 + 128, ky * 256 + 128
+  lock(b, 676); lock(b, 677)
+  check("knocked off, full wall: holds, goal square 1",
+        held(hb) and hb.ga.blk.shots == 5 and b.st.goal.mx == 22 and b.st.goal.my == 25,
+        tostring(hb.ga.phase))
+  b.inf.tankx, b.inf.tanky = 22 * 256 + 128, 25 * 256 + 128
+  lock(b, 678)
+  check("back on square 1: the count and the ledger go on, off = false",
+        held(hb) and hb.ga.blk.shots == 5 and hb.ga.blk.off == false, tostring(hb.ga.phase))
+  b.inf.tankx, b.inf.tanky = kx * 256 + 128, ky * 256 + 128
+  lock(b, 679)
+  b.inf.armour = b.inf.armour - 5; lock(b, 680)
+  check("knocked off: a hit still moves it, trigger hit, goal square 2",
+        hb.ga.phase == "move" and hb.ga.trigs[2] == "hit" and b.st.goal.my == 26, tostring(hb.ga.phase))
+  -- Knocked onto the NEXT square with no trigger: not an arrival (it only
+  -- counts in the move phase), still parked on square 1.
+  b, hb = on_sq1(690)
+  TMAP[K(W3)] = C.T_BUILDING
+  lock(b, 692)
+  b.inf.tankx, b.inf.tanky = 22 * 256 + 128, 26 * 256 + 128
+  lock(b, 693); lock(b, 694)
+  check("knocked onto square 2 with no trigger: still parked on square 1, goal square 1",
+        held(hb) and hb.ga.park_my == 25 and b.st.goal.my == 25 and hb.ga.blk.ty == 25,
+        tostring(hb.ga.phase))
   clear()
 
   -- THE DECOY SQUARE: no blocker step there.  0 shots, no hit: it stays.

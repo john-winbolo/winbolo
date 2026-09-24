@@ -80,11 +80,18 @@
 --          THE BLOCKER STEP (Andrew, Sep 24: move on when the blocker has
 --          "2 or less shots left"): parked on a chain square (never the
 --          decoy square: the first step still waits for a hit), every think
---          takes the CLOSEST counted pill to the tank's square (edist, ties
+--          takes the CLOSEST counted pill to the PARK square (edist, ties
 --          to the lower id; the other pills are ignored for this check
 --          only, the scan does not change) and walks its shell line to the
---          tank's square (cpf.simulate_shot, the scan's own trace, walked
---          without stopping).  Each blocker on it is worth the pill shells
+--          park square (cpf.simulate_shot, the scan's own trace, walked
+--          without stopping).  THE PARK SQUARE, not the tank's square
+--          (Andrew, Sep 24: "It should stay counting even if it got pushed
+--          off and head to the next spot"): a knock off the park square
+--          changes neither the line, nor the last blocker, nor its hit
+--          ledger.  The hold goal still points at the park square, and when
+--          the count fires the move drives to the next square from wherever
+--          the tank is (the goto_tile path starts at the tank; the arrival
+--          test is the tank's square only).  Each blocker on it is worth the pill shells
 --          it still stops: a full wall, a damaged wall, a live pill of
 --          ours or an ally's (a tree is not a blocker).  Only the LAST
 --          blocker is counted: with 2 or more on the line it holds
@@ -93,7 +100,7 @@
 --          count is the SHOTS LEFT before the tank is open.  Shots left <=
 --          DECOY_GETAWAY_BLOCKER_SHOTS (0 = no blocker left) moves it on at
 --          once.  A hit still moves it too.  A shell that runs out before
---          the tank's square: no count, no step.  DECOY_GETAWAY_BLOCKER_STEP
+--          the park square: no count, no step.  DECOY_GETAWAY_BLOCKER_STEP
 --          false: hits only.
 --   done   parked on the last square.  The hold goes on and ends the way it
 --          always does (clock, pills down, caution, cancel, new order, death).
@@ -622,6 +629,11 @@ function M.blk_one(b)
   end
   return tostring(b.shots or 0)
 end
+-- How far the tank is from the park square's centre, in world units
+-- (256 to a square), from a ga.blk.
+function M.off_park(bk)
+  return (bk.twx or 0) - (bk.tx * 256 + 128), (bk.twy or 0) - (bk.ty * 256 + 128)
+end
 -- The whole count as text, for the GO log: "last(129,125)5-3=2",
 -- "open", "2 blockers, waiting" or "short".
 function M.blk_txt(bk)
@@ -684,11 +696,17 @@ function M.update(state, world, info, h, now)
           end
         end
       end
-      local pid, p = M.closest_pill(world, tx, ty)
+      -- From the PARK square: a knock off it keeps the line, the last
+      -- blocker and the ledger (see THE BLOCKER STEP above).  tx/ty on
+      -- ga.blk is the park square (the end of the line); twx/twy is where
+      -- the tank really is, for the overlay.
+      local kx, ky = ga.park_mx, ga.park_my
+      local pid, p = M.closest_pill(world, kx, ky)
       if p then
-        local n, list, why = M.blockers(world, p, tx, ty, ga.led)
+        local n, list, why = M.blockers(world, p, kx, ky, ga.led)
         ga.blk = { id = pid, mx = p.mx, my = p.my, shots = n, list = list,
-                   why = why, tx = tx, ty = ty }
+                   why = why, tx = kx, ty = ky,
+                   twx = info.tankx, twy = info.tanky, off = (tx ~= kx or ty ~= ky) }
       end
     end
     local by_hit = ga.hits >= (C.DECOY_GETAWAY_HITS or 1)
@@ -704,6 +722,10 @@ function M.update(state, world, info, h, now)
       if ga.blk then
         bs = string.format("p%s(%d,%d):%s", tostring(ga.blk.id), ga.blk.mx,
                            ga.blk.my, M.blk_txt(ga.blk))
+        if ga.blk.off then
+          local dx, dy = M.off_park(ga.blk)
+          bs = bs .. string.format(",tank_off_park(%d,%d_wu)", dx, dy)
+        end
       end
       print2(string.format("DECOY_GETAWAY_GO t=%d oid=%d step=%d/%d to=(%d,%d) trigger=%s blk=%s hit_t=%d armour=%d->%d hits=%d path=%s",
              now or -1, h.oid or 0, ga.used + 1, ga.used + #ga.path - ga.idx + 1,
@@ -899,12 +921,22 @@ function M.draw(viz, state)
                { c.mx, c.my, c.mx + 1, c.my + 1 },
                string.format("GETAWAY #%d (%d,%d)", base + i, c.mx, c.my), lines)
   end
-  -- THE BLOCKER STEP: the closest pill's shell line to the tank (magenta),
-  -- and a magenta box on each blocker on it.  The last blocker's box shows
-  -- its count ("5-3=2 shots": start - hits counted = shots left).
+  -- THE BLOCKER STEP: the closest pill's shell line to the PARK square
+  -- (magenta; the count is made on it), and a magenta box on each blocker
+  -- on it.  The last blocker's box shows its count ("5-3=2 shots": start -
+  -- hits counted = shots left).  A tank knocked off the park square gets a
+  -- thin line from the pill to where it really is, with its offset from
+  -- the park square's centre: that line is NOT counted.
   local bk = ga.blk
   if bk then
     viz.line(ID, bk.mx + 0.5, bk.my + 0.5, bk.tx + 0.5, bk.ty + 0.5, 255, 80, 255, 200)
+    if bk.off and bk.twx then
+      local rx, ry = bk.twx / 256, bk.twy / 256
+      local dx, dy = M.off_park(bk)
+      viz.line(ID, bk.mx + 0.5, bk.my + 0.5, rx, ry, 255, 180, 255, 110)
+      viz.text(ID, rx, ry + 0.45, string.format("tank off park (%d,%d wu)", dx, dy),
+               "center", 255, 180, 255, 230)
+    end
     for _, b in ipairs(bk.list or {}) do
       viz.rect(ID, b.mx + 0.15, b.my + 0.15, b.mx + 0.85, b.my + 0.85,
                255, 80, 255, 230, false)

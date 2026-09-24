@@ -12,7 +12,8 @@
 -- count.  THE BLOCKER STEP (Andrew, Sep 24): parked on a chain square (not
 -- the decoy square), it also moves on with no hit when the LAST blocker on
 -- the closest pill's shell line to it has DECOY_GETAWAY_BLOCKER_SHOTS (2)
--- shots left or fewer.  With 2 or more blockers it holds.  A full wall
+-- shots left or fewer.  With 2 or more blockers it holds.  The line runs
+-- to the square it PARKED on, so a knock off that square keeps the count.  A full wall
 -- stops building_life + 1 = 5 shells, and the brain COUNTS the shells that
 -- stop on it (it hears each wall hit; the full-to-damaged change is hit 1).
 -- So the decoy holds behind a full wall for 3 hits and then moves on.
