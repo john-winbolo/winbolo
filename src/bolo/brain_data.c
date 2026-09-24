@@ -317,6 +317,53 @@ void brainDataMakeInfo(ClientSim *csPtr, BrainInfo *value, bool first, aiType ai
   value->rules.base_full_armour      = gs->rules.base_full_armour;
   value->rules.base_full_shells      = gs->rules.base_full_shells;
   value->rules.base_full_mines       = gs->rules.base_full_mines;
+  value->rules.shell_damage          = gs->rules.shell_damage;
+  value->rules.shell_life            = gs->rules.shell_life;
+  value->rules.shell_speed           = gs->rules.shell_speed;
+  value->rules.gunsight_max          = gs->rules.gunsight_max;
+  value->rules.tree_hide_distance    = gs->rules.tree_hide_distance;
+  value->rules.pill_cooldown_ticks   = gs->rules.pill_cooldown_ticks;
+  value->rules.pill_repair_amount    = gs->rules.pill_repair_amount;
+  value->rules.pill_range            = gs->rules.pill_range;
+  value->rules.pill_shell_damage     = gs->rules.pill_shell_damage;
+  value->rules.pill_angry_divisor    = gs->rules.pill_angry_divisor;
+  value->rules.base_capture_armour   = gs->rules.base_capture_armour;
+  value->rules.base_hit_armour       = gs->rules.base_hit_armour;
+  value->rules.base_regen_ticks      = gs->rules.base_regen_ticks;
+  value->rules.lgm_build_ticks       = gs->rules.lgm_build_ticks;
+  value->rules.lgm_cost_road         = gs->rules.lgm_cost_road;
+  value->rules.lgm_cost_building     = gs->rules.lgm_cost_building;
+  value->rules.lgm_cost_pill_repair  = gs->rules.lgm_cost_pill_repair;
+  value->rules.lgm_cost_boat         = gs->rules.lgm_cost_boat;
+  value->rules.lgm_cost_pill_new     = gs->rules.lgm_cost_pill_new;
+  value->rules.lgm_cost_mine         = gs->rules.lgm_cost_mine;
+  value->rules.lgm_gather_trees      = gs->rules.lgm_gather_trees;
+  value->rules.lgm_helicopter_speed  = gs->rules.lgm_helicopter_speed;
+  value->rules.man_speed_road        = gs->rules.man_speed_road;
+  value->rules.man_speed_grass       = gs->rules.man_speed_grass;
+  value->rules.man_speed_forest      = gs->rules.man_speed_forest;
+  value->rules.man_speed_river       = gs->rules.man_speed_river;
+  value->rules.man_speed_swamp       = gs->rules.man_speed_swamp;
+  value->rules.man_speed_crater      = gs->rules.man_speed_crater;
+  value->rules.man_speed_rubble      = gs->rules.man_speed_rubble;
+  value->rules.man_speed_boat        = gs->rules.man_speed_boat;
+  value->rules.man_speed_deep_sea    = gs->rules.man_speed_deep_sea;
+  value->rules.man_speed_refuel_base = gs->rules.man_speed_refuel_base;
+
+  /* This tank's own modifiers, 0 ("classic") resolved to 100, and the
+     reload interval the engine gives it. The owning client receives its
+     own modifiers in the snapshot, so the client sim holds the live set. */
+  {
+    TankModifiers mods;
+    tankGetModifiers(MY_TANK(csPtr), &mods);
+    value->mods.speed  = (u_short) tankModPct(mods.speed);
+    value->mods.accel  = (u_short) tankModPct(mods.accel);
+    value->mods.turn   = (u_short) tankModPct(mods.turn);
+    value->mods.reload = (u_short) tankModPct(mods.reload);
+    value->mods.dealt  = (u_short) tankModPct(mods.dealt);
+    value->mods.taken  = (u_short) tankModPct(mods.taken);
+    value->reload_ticks = tankReloadTicks(gs, MY_TANK(csPtr));
+  }
 
 
   /* Count carried pills from pillbox state (server syncs inTank via snapshots/events) */

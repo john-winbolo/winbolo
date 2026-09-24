@@ -111,6 +111,16 @@ static int wsim_line_hits_pill(BrainWorldSim *sim, int ax, int ay,
 }
 
 /* Anger escalation: halve fire interval, start cooldown chain */
+/* One shell hits a pill. pill_hit_damage is 1 under classic rules, which
+   makes this the old health-- exactly. */
+static void wsim_hit_pill(const BrainWorldSim *sim, WSimPill *pill) {
+  if (pill->health > sim->pill_hit_damage) {
+    pill->health = (uint8_t)(pill->health - sim->pill_hit_damage);
+  } else {
+    pill->health = 0;
+  }
+}
+
 static void wsim_anger_pill(const BrainWorldSim *sim, WSimPill *pill) {
   if (pill->speed > sim->pill_attack_min_ticks) {
     pill->speed = (uint8_t)(pill->speed / 2);
@@ -175,6 +185,9 @@ BrainWorldSim *brainWorldSimCreate(void) {
   wsim_init_tables();
   sim->attack_target = -1;
   sim->tank_shoot_interval = 8;
+  sim->tank_shoot_interval_base = 8;
+  sim->pill_hit_damage = 1;
+  sim->forest_range = WSIM_PILL_FOREST_RANGE;
   sim->dwell_ticks = 0;
 
   /* The shell damage, the four pill numbers and the ten terrain speeds a rule
@@ -229,7 +242,7 @@ void brainWorldSimClear(BrainWorldSim *sim) {
   sim->our_tank_idx = -1;
   sim->num_path = 0;
   sim->attack_target = -1;
-  sim->tank_shoot_interval = 8;
+  sim->tank_shoot_interval = sim->tank_shoot_interval_base;
   sim->shell_damage = saved_shell_damage;
   sim->pill_range = saved_pill_range;
   sim->pill_attack_ticks = saved_pill_attack_ticks;
@@ -256,6 +269,24 @@ void brainWorldSimSetTerrainSpeed(BrainWorldSim *sim, int type, float speed) {
   if (type >= 0 && type < 16) {
     sim->terrain_speed[type] = speed;
   }
+}
+
+void brainWorldSimSetRules(BrainWorldSim *sim, int shell_damage, int pill_range,
+                           int pill_attack_ticks, int pill_attack_min_ticks,
+                           int pill_cooldown_ticks, int pill_hit_damage,
+                           int shoot_interval, int forest_range) {
+  if (!sim) return;
+  if (shell_damage > 0)          sim->shell_damage = shell_damage;
+  if (pill_range > 0)            sim->pill_range = pill_range;
+  if (pill_attack_ticks > 0)     sim->pill_attack_ticks = pill_attack_ticks;
+  if (pill_attack_min_ticks > 0) sim->pill_attack_min_ticks = pill_attack_min_ticks;
+  if (pill_cooldown_ticks > 0)   sim->pill_cooldown_ticks = pill_cooldown_ticks;
+  if (pill_hit_damage > 0)       sim->pill_hit_damage = pill_hit_damage;
+  if (shoot_interval > 0) {
+    sim->tank_shoot_interval_base = shoot_interval;
+    sim->tank_shoot_interval = shoot_interval;
+  }
+  if (forest_range > 0)          sim->forest_range = forest_range;
 }
 
 void brainWorldSimAddPill(BrainWorldSim *sim, int mx, int my,
@@ -586,7 +617,7 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
         if (dsq < best_dist_sq) {
           /* Tree cover: target in forest and >= 3 tiles away → hidden */
           if (wsim_is_forest(sim->map, t->wx, t->wy) &&
-              dsq > WSIM_PILL_FOREST_RANGE * WSIM_PILL_FOREST_RANGE) {
+              dsq > sim->forest_range * sim->forest_range) {
             continue;
           }
           best_dist_sq = dsq;
@@ -612,7 +643,7 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
                                sim->lgm.wx, sim->lgm.wy);
         if (dsq < best_dist_sq) {
           if (!wsim_is_forest(sim->map, sim->lgm.wx, sim->lgm.wy) ||
-              dsq <= WSIM_PILL_FOREST_RANGE * WSIM_PILL_FOREST_RANGE) {
+              dsq <= sim->forest_range * sim->forest_range) {
             best_dist_sq = dsq;
             best_target = 100; /* sentinel: LGM */
           }
@@ -652,7 +683,7 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
             /* Shell hits another pill instead */
             WSimPill *hit_pill = &sim->pills[intercepted];
             if (hit_pill->health > 0) {
-              hit_pill->health--;
+              wsim_hit_pill(sim, hit_pill);
               wsim_anger_pill(sim, hit_pill);
             }
           } else if (is_lgm_target) {
@@ -745,13 +776,13 @@ WSimResult brainWorldSimRun(BrainWorldSim *sim, int max_ticks) {
             /* Hit a different pill */
             WSimPill *hit_pill = &sim->pills[intercepted];
             if (hit_pill->health > 0) {
-              hit_pill->health--;
+              wsim_hit_pill(sim, hit_pill);
               wsim_anger_pill(sim, hit_pill);
             }
           } else {
             /* Hit the target pill */
             if (target->health > 0) {
-              target->health--;
+              wsim_hit_pill(sim, target);
               wsim_anger_pill(sim, target);
             }
           }

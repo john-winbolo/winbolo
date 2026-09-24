@@ -631,18 +631,36 @@ void brainPathfinderSetShellRules(BrainPathfinder *pf, int32_t shellLife,
 
 void brainPathfinderSetTerrainCost(BrainPathfinder *pf, int type, float cost) {
   if (pf && type >= 0 && type < 16) {
+    /* A changed value makes the edge cache stale. Setting the same value
+       again (the classic configure) leaves the cache alone. */
+    if (pf->terrain_cost_table[type] != cost) {
+      pf->edge_cost_valid = 0;
+      pf->cache_dirty = 1;
+    }
     pf->terrain_cost_table[type] = cost;
   }
 }
 
 void brainPathfinderSetBoatCost(BrainPathfinder *pf, int type, float cost) {
   if (pf && type >= 0 && type < 16) {
+    /* A changed value makes the edge cache stale. Setting the same value
+       again (the classic configure) leaves the cache alone. */
+    if (pf->terrain_cost_boat_table[type] != cost) {
+      pf->edge_cost_valid = 0;
+      pf->cache_dirty = 1;
+    }
     pf->terrain_cost_boat_table[type] = cost;
   }
 }
 
 void brainPathfinderSetTerrainSpeed(BrainPathfinder *pf, int type, float speed) {
   if (pf && type >= 0 && type < 16) {
+    /* A changed value makes the edge cache stale. Setting the same value
+       again (the classic configure) leaves the cache alone. */
+    if (pf->terrain_speed_table[type] != speed) {
+      pf->edge_cost_valid = 0;
+      pf->cache_dirty = 1;
+    }
     pf->terrain_speed_table[type] = speed;
   }
 }
