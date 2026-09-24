@@ -2100,10 +2100,12 @@ function Brain.think(info)
     -- reached, so nothing cleared the order slot on a death: a bot killed
     -- while holding a "go there and hold" came back with the hold flag still
     -- set and stood parked on its RESPAWN square for the rest of the hold,
-    -- doing nothing at all (Andrew's peer review, Sep 16). The job itself
-    -- still stands, so this is a release and not a cancel -- the obr goes out
-    -- with the first message slot after we respawn and the next cheapest bot
-    -- takes it. It also drops the goto lock, so the command goal cannot
+    -- doing nothing at all (Andrew's peer review, Sep 16). ORD.on_death also
+    -- ends a suicide run, and releases the order: the obr goes out with the
+    -- first message slot after we respawn. Under ORDER_NO_HAND_BACK (the
+    -- default) nobody re-bids on it, so the job ends with this bot; with it
+    -- off (keel) the next cheapest bot takes it. A decoy's order is cancelled
+    -- instead. It also drops the goto lock, so the command goal cannot
     -- survive the death either.
     if C.BOT_COMMANDS_ENABLED then ORD.on_death(state, info) end
     -- Wipe EVERY blitz/squad coordination field (negotiation, offers, rejects,
@@ -6050,8 +6052,9 @@ function Brain.think(info)
   -- this tick (stuck flee, water escape, PF-failed flee, pill drop, a clear),
   -- put the suicide goal back before the substate machine and steering see
   -- it. Ends the run instead when the pill is dead.
-  -- A human ally within ORDER_HUMAN_NEAR_SUICIDE_TILES turns an attack_pill
-  -- goal into the same run.
+  -- A human ally within ORDER_HUMAN_NEAR_SUICIDE_TILES turns an ORDERED
+  -- attack_pill goal (the bot holds an attack_pill order on that pill) into
+  -- the same run.
   -- The GO-THERE DECOY lock (orders.lua) runs first, on the same terms:
   -- whatever replaced the hold goal this tick (refuel, take_cover, a flee,
   -- a water escape, a stuck handler, an attack_pill) goes back to the hold

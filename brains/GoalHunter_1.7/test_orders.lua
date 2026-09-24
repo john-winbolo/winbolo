@@ -2510,12 +2510,19 @@ do
 end
 
 -- A HUMAN TEAM-MATE CLOSE BY starts the same run.  p0 is the human, p1 the
--- bot at (10,10) with an attack_pill goal on pill 5.  No ping at all.
+-- bot at (10,10) holding an attack_pill ORDER on pill 5, with the goal that
+-- order gives it.  No ping at all.
+local function hold_attack(r, tid)
+  ORD.update(r.st, r.w, r.inf, 99)               -- builds r.st.orders
+  r.st.orders.held = { oid = 4242, kind = "attack_pill", tid = tid or 5,
+                       expiry = 1e9 }
+end
 local function hbot(hx, hy)
   local r = BOT(1, 10, 10)
   r.st.goal = { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }
   r.inf.player_bots = 0x02
   r.inf.objects = { { type = 1, idnum = 0, x = hx * 256, y = hy * 256, info = 0 } }
+  hold_attack(r)
   return r
 end
 do
@@ -2535,6 +2542,7 @@ do
   check("a bare cancel from that human ends the run", r.st._suicide == nil, "?")
   r.inf.objects = { { type = 1, idnum = 0, x = 15 * 256, y = 10 * 256, info = 0 } }
   r.st.goal = { kind = "attack_pill", target_id = 5, mx = 20, my = 20 }
+  hold_attack(r)
   ORD.human_near_suicide(r.st, r.w, r.inf, 111)
   check("after the cancel it does not restart on the same pill", r.st._suicide == nil, "?")
   r.st.goal = { kind = "refuel" }
@@ -2555,6 +2563,16 @@ do
   r.st.goal = { kind = "defend_pill", target_id = 5, mx = 20, my = 20 }
   ORD.human_near_suicide(r.st, r.w, r.inf, 100)
   check("a human close by and a non-attack goal: no run", r.st._suicide == nil, "?")
+  r = hbot(11, 10)
+  r.st.orders.held = nil
+  ORD.human_near_suicide(r.st, r.w, r.inf, 100)
+  check("a human close by and a self-chosen attack_pill goal: no run",
+        r.st._suicide == nil, "?")
+  r = hbot(11, 10)
+  hold_attack(r, 9)
+  ORD.human_near_suicide(r.st, r.w, r.inf, 100)
+  check("a human close by and an order on a different pill: no run",
+        r.st._suicide == nil, "?")
   C.ORDER_HUMAN_NEAR_SUICIDE_RUN = false
   r = hbot(11, 10)
   ORD.human_near_suicide(r.st, r.w, r.inf, 100)
@@ -2845,8 +2863,9 @@ end
 -- =========================================================================
 -- PING REPAIR BONUS.  A bot-command ping on one of OUR pills weights that
 -- pill's builder-pool repair row x BUILDER_POOL_PING_PILL_BONUS (2.0) for
--- BUILDER_POOL_PING_PILL_TICKS (500), in every bot's pool, until the pill is
--- dead, full, not ours, or another of our pills is pinged.
+-- BUILDER_POOL_PING_PILL_TICKS (500), in the pool of the bot that takes the
+-- order only, until the pill is dead, full, not ours, or another of our
+-- pills is pinged.
 -- =========================================================================
 print("orders.lua / builder_pool.lua -- ping repair bonus")
 local BP = require("builder_pool")
@@ -3116,6 +3135,35 @@ do
   C.ORDER_CLAIM_TIEBREAK = true
   check("keel has no tiebreak", C.PRESETS.keel.ORDER_CLAIM_TIEBREAK == false, "?")
 end
+do
+  -- Both bots take one attack_pill ping order on pill 5 and both start the
+  -- suicide run on it.  The claims cross: the loser lets the order go, and
+  -- its suicide run on that pill ends with it.  The winner keeps both.
+  _G.PING_KIND_ATTACK = 3
+  local a, b = BOT(1, 10, 10), BOT(2, 12, 12)
+  for _, x in ipairs({ a, b }) do
+    x.inf.events = { ping(5, 0, 20, 20) }
+    ORD.on_events(x.st, x.w, x.inf, 100)
+    x.inf.events = {}
+    x.st.orders.out = {}                         -- the bids are lost
+  end
+  upd({ a, b }, 101)
+  attack_ping(a, 105); attack_ping(b, 105)
+  check("setup: both bots hold the order and run at pill 5",
+        a.st.orders.held ~= nil and b.st.orders.held ~= nil
+        and a.st._suicide ~= nil and b.st._suicide ~= nil
+        and a.st._suicide.tid == 5 and b.st._suicide.tid == 5, "?")
+  pumpn({ a, b }, 106)                           -- the claims cross
+  upd({ a, b }, 107)
+  local keep, lose = a, b
+  if a.st.orders.held == nil then keep, lose = b, a end
+  check("setup: exactly one bot keeps the order",
+        keep.st.orders.held ~= nil and lose.st.orders.held == nil, "?")
+  check("the tiebreak loser's suicide run ends", lose.st._suicide == nil,
+        tostring(lose.st._suicide and lose.st._suicide.tid))
+  check("the winner's suicide run stands", keep.st._suicide ~= nil, "?")
+  _G.PING_KIND_ATTACK = nil
+end
 
 -- =========================================================================
 -- A NEW ORDER RETIRES EVERY OLDER ONE (ORDER_NEW_CLEARS_ALL, 2026-09-24).
@@ -3186,6 +3234,25 @@ do
   check("keel: nothing is forgotten", o.known[515151] ~= nil, "forgot")
   C.ORDER_NEW_CLEARS_ALL = true
   check("keel does not clear", C.PRESETS.keel.ORDER_NEW_CLEARS_ALL == false, "?")
+end
+do
+  -- Two pings inside one auction window: X near A, then Y near B before
+  -- either auction has settled.  Y must not forget X while X's auction is
+  -- still open, so X is still taken.
+  local a, b = BOT(1, 32, 32), BOT(2, 90, 90)
+  gping(a, 100, 35, 35); gping(b, 100, 35, 35)
+  local x = next(a.st.orders.auctions)
+  gping(a, 103, 86, 86); gping(b, 103, 86, 86)
+  check("an order with an open auction is not forgotten",
+        x ~= nil and a.st.orders.known[x] ~= nil and a.st.orders.auctions[x] ~= nil,
+        "forgot")
+  settle2(a, b, 103)
+  local ha = a.st.orders.held and a.st.orders.held.oid
+  local hb = b.st.orders.held and b.st.orders.held.oid
+  check("the first of two quick orders is still taken",
+        x ~= nil and (ha == x or hb == x), tostring(ha) .. " " .. tostring(hb))
+  check("and so is the second", ha ~= nil and hb ~= nil and ha ~= hb,
+        tostring(ha) .. " " .. tostring(hb))
 end
 _G.EVENT_PING = nil
 _G.PING_KIND_BOT_COMMAND = nil

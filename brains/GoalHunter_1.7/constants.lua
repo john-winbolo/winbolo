@@ -2826,24 +2826,28 @@ M.PILL_SUICIDER_MAPS = { ["Survival"] = true }
 -- standing next to the bot is watching it do nothing for half a minute. Close
 -- to a person the bot goes straight in.
 --
--- WHAT IT ACTUALLY DOES is exactly what state.is_pill_suicider already does
--- to a take: it forces _is_ppt off, so the shield scan, the gather_trees
--- pre-flight and the build_walls substate are all skipped and the take runs
--- down the plain standoff/charge path. It does NOT make the bot a suicider
--- anywhere else -- no goal-cost surcharge, no armour gate waiver, no swerve
--- change -- because the promise is about blockers, not about the bot's life.
+-- WHAT THE DISTANCE DOES ON ITS OWN is exactly what state.is_pill_suicider
+-- already does to a take: it forces _is_ppt off, so the shield scan, the
+-- gather_trees pre-flight and the build_walls substate are all skipped and
+-- the take runs down the plain standoff/charge path. On its own it does NOT
+-- make the bot a suicider anywhere else -- no goal-cost surcharge, no armour
+-- check waived, no swerve change -- because the promise is about blockers,
+-- not about the bot's life.
 --
--- It applies to an ORDERED attack and one the bot chose itself, because the
--- decision point is shared (attack.update_attack_substate).
+-- That wall skip applies to an ORDERED attack and one the bot chose itself,
+-- because the decision point is shared (attack.update_attack_substate).
 --
 -- Chebyshev tiles from the BOT's own tank, measured against allied tanks the
--- bot can SEE (util.human_ally_near). 0 turns the rule off.
+-- bot can SEE (util.human_ally_near). 0 turns off the wall skip and the run
+-- below.
 M.ORDER_HUMAN_NEAR_SUICIDE_TILES = 7   -- keel 0 (off)
--- 2026-09-24: the human-near rule now starts the FULL ping suicide run
--- (orders.human_near_suicide): no refuel, no shell or armour checks, stay on
--- the pill until the tank or the pill dies.  Needs PING_SUICIDE_ENABLED and
--- ORDER_HUMAN_NEAR_SUICIDE_TILES > 0.  The human is the run's sender, so a
--- bare "cancel" from them ends it.
+-- 2026-09-24: for an ORDERED attack only, the human-near rule also starts the
+-- FULL ping suicide run (orders.human_near_suicide): no refuel, no shell or
+-- armour checks, stay on the pill until the tank or the pill dies.  "Ordered"
+-- means the bot holds an attack_pill order (o.held) on that same pill; an
+-- attack_pill goal the bot chose for itself gets only the wall skip above.
+-- Needs PING_SUICIDE_ENABLED and ORDER_HUMAN_NEAR_SUICIDE_TILES > 0.  The
+-- human is the run's sender, so a bare "cancel" from them ends it.
 M.ORDER_HUMAN_NEAR_SUICIDE_RUN = true   -- keel false
 -- Suicider goal-cost surcharge. User's spec, verbatim: "instead of doing
 -- attack_pill 0.33, do everything but refuel 3x cost" ??? plus the addendum
@@ -3950,7 +3954,8 @@ M.BUILDER_POOL_CLAIM_TYPES = { rebuild = 1, topup = 2, farm = 3 }
 --             replaced wholesale by set_info, so "latest" is all there is.
 --   SILENCE   the ally stopped talking altogether (killed, kicked, removed).
 --             The block then expires TTL ticks after its last advert of ANY
---             kind. BRAIN ticks: 25 = 1 s (measured 2026-09-05: 1000 engine ticks = 500 thinks), so 175 = 7 s.
+--             kind. BRAIN ticks: 50 = 1 s (the brain thinks every second
+--             100-a-second engine tick), so 350 = 7 s.
 --
 -- The age is measured against slot.last_tick (the ally's last message of any
 -- kind), NOT slot.state_tick (its last full /info state). /info state is
