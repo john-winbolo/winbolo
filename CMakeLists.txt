@@ -3701,6 +3701,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # without one, the scripted game type a commit sets and gives back, and
     # the ranked and AI-policy settings a scenario does not go with.
     tests/unit/test_lobby_scenario_settings.c
+    # The policy a server holds for scripts players send it: the word it is
+    # set from, its byte on the lobby-settings event, and the sim's and the
+    # client's copies.
+    tests/unit/test_script_upload_policy.c
     tests/unit/test_unfielded_seat.c
     # What a wave costs: the brain, the ClientSim and the control subscription
     # behind a held seat, destroyed when the seat comes off the field and built
@@ -5760,6 +5764,10 @@ set(_unit_test_names
     lobby_scenario_boot_sets_type
     lobby_scenario_identity_strips_controls
     lobby_scenario_nolobby_boot_seats_template
+    script_upload_policy_resolve
+    script_upload_policy_word
+    script_upload_policy_codec
+    script_upload_policy_event
     unfielded_seat_counts
     unfielded_seat_is_empty
     unfielded_seat_all_ready
@@ -6129,6 +6137,7 @@ set(_unit_test_names
     scenario_packed_map_table_disagrees
     scenario_packed_map_round_start_keeps_it
     scenario_packed_map_upload_switch
+    scenario_packed_map_script_upload_policy
     scenario_packed_map_team_init
     scenario_pack_writes_container
     scenario_pack_manifest_agrees

@@ -507,6 +507,7 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         cs->sim.scenarioBaseGame =
             (gameType)evt->u.lobbySettings.scenarioBaseGame;
         cs->uploadPolicy             = evt->u.lobbySettings.uploadPolicy;
+        cs->scriptUploadPolicy       = evt->u.lobbySettings.scriptUploadPolicy;
         /* The policy byte is stored raw, with no range check. This mirror
          * drives nothing the server does not enforce for itself, so a value
          * outside the enum can only make the local display wrong, never more

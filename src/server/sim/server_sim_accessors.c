@@ -24,6 +24,7 @@
  *  or drives the sim.
  *********************************************************/
 
+#include <stdio.h>
 #include <string.h>
 #include <SDL3/SDL.h>
 
@@ -929,6 +930,35 @@ void serverSimSetVoiceMode(ServerSim *sim, ServerVoiceMode mode) {
 
 ServerVoiceMode serverSimGetVoiceMode(const ServerSim *sim) {
     return sim ? sim->voiceMode : serverVoiceOn;
+}
+
+void serverSimSetScriptUploadPolicy(ServerSim *sim, ScriptUploadPolicy p) {
+    if (sim == NULL) return;
+    sim->scriptUploadPolicy = p;
+}
+
+ScriptUploadPolicy serverSimGetScriptUploadPolicy(const ServerSim *sim) {
+    return sim ? sim->scriptUploadPolicy : SCRIPT_UPLOAD_ALLOW;
+}
+
+ScriptUploadPolicy scriptUploadPolicyResolve(const char *word, bool legacyOff) {
+    if (word == NULL || word[0] == '\0') {
+        return legacyOff ? SCRIPT_UPLOAD_OFF : SCRIPT_UPLOAD_ALLOW;
+    }
+    if (SDL_strcasecmp(word, "off") == 0)     return SCRIPT_UPLOAD_OFF;
+    if (SDL_strcasecmp(word, "allow") == 0)   return SCRIPT_UPLOAD_ALLOW;
+    if (SDL_strcasecmp(word, "persist") == 0) return SCRIPT_UPLOAD_PERSIST;
+    fprintf(stderr, "Warning: unknown script upload policy '%s', using allow\n",
+            word);
+    return SCRIPT_UPLOAD_ALLOW;
+}
+
+const char *scriptUploadPolicyWord(ScriptUploadPolicy p) {
+    switch (p) {
+        case SCRIPT_UPLOAD_OFF:     return "Off";
+        case SCRIPT_UPLOAD_PERSIST: return "Persist";
+        default:                    return "Allow";
+    }
 }
 
 uint16_t serverSimGetViewDecaySecs(const ServerSim *sim, ViewCategory cat) {

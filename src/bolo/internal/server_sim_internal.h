@@ -370,6 +370,7 @@ struct ServerSim {
     bool     mapMd5Valid;          /* mapMd5 holds a usable hash */
     char     mapMd5Hex[33];        /* mapMd5 as 32 lowercase hex chars + NUL; "" when invalid */
     UploadPolicy uploadPolicy;     /* mirrored from server-startup config */
+    ScriptUploadPolicy scriptUploadPolicy;  /* mirrored from server-startup config */
     /* Per-category visibility rules, indexed by ViewCategory. Set from
      * the CLI / hosting prefs at startup and from the lobby via
      * LST_PILL_VIEW / LST_BASE_VIEW / LST_ALLY_VIEW; broadcast in the

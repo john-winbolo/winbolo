@@ -2684,6 +2684,15 @@ int run_lobby_scenario_boot_sets_type(void);
 int run_lobby_scenario_identity_strips_controls(void);
 int run_lobby_scenario_nolobby_boot_seats_template(void);
 
+/* The policy a server holds for scripts players send it
+ * (test_script_upload_policy.c): the word it is set from and the legacy flag
+ * that stands for off, the spelling a preference is written in, its byte on
+ * the lobby-settings event, and the copies the sim and the client keep. */
+int run_script_upload_policy_resolve(void);
+int run_script_upload_policy_word(void);
+int run_script_upload_policy_codec(void);
+int run_script_upload_policy_event(void);
+
 /* The lobby template (test_lobby_template.c): the engine seating a
  * scenario's teams where a lobby is built or rebuilt, reconciling one that
  * comes back from a round against what the host did to it, and leaving a
@@ -3271,6 +3280,7 @@ int run_scenario_packed_map_script_omits_table(void);
 int run_scenario_packed_map_table_disagrees(void);
 int run_scenario_packed_map_round_start_keeps_it(void);
 int run_scenario_packed_map_upload_switch(void);
+int run_scenario_packed_map_script_upload_policy(void);
 int run_scenario_packed_map_team_init(void);
 
 /* Writing a map's scenario into the map (test_scenario_pack.c): the container

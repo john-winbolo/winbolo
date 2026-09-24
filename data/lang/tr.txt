@@ -2613,3 +2613,7 @@ STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — oyunun nasıl oynandığını değiştirir
 STR_MAPEDIT_SCENARIO_KIND_NOTE=Bir mod oyun türünü belirleyemez, saati değiştiremez, kendi skorunu tutamaz veya turu bitiremez, bu yüzden bu dosya Mod dediği sürece bunlar sunulmaz. Bu, aşağıdaki Bu harita için yapılmış sorusundan farklıdır; o soru, dosyanın hangi harita için yazıldığıyla ilgilidir.
 STR_MAPEDIT_SCENARIO_GAME_MOD=Bir mod, oyun türünü sunucuya bırakır
 STR_MAPEDIT_SCENARIO_FN_MOD=Bu dosya Mod dediği sürece {string1} sunulmaz: bu, bir bitişe karar veren tek yanıttır ve bir mod kazanma koşulunu olduğu gibi bırakır.
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADS=Oyunculardan Gelen Betikler
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_SESSION=Bu oturum için izin ver
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP=İzin ver ve sakla
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADDIR=Betik Yükleme Dizini

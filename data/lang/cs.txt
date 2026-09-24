@@ -2611,3 +2611,7 @@ STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — mění průběh hry a vítězství necháv
 STR_MAPEDIT_SCENARIO_KIND_NOTE=Mod nesmí nastavit typ hry, posouvat čas, vést vlastní skóre ani ukončit kolo, takže tyto možnosti nejsou nabízeny, dokud je zde zvoleno Mod. Jde o jinou otázku než Vytvořeno pro tuto mapu níže, která se týká toho, pro jakou mapu byl soubor napsán.
 STR_MAPEDIT_SCENARIO_GAME_MOD=Mod ponechává typ hry na serveru
 STR_MAPEDIT_SCENARIO_FN_MOD={string1} není nabízeno, dokud tento soubor říká Mod: je to jediná odpověď, která rozhoduje o konci, a mod nechává podmínku výhry beze změny.
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADS=Skripty od hráčů
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_SESSION=Povolit na toto sezení
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP=Povolit a ponechat
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADDIR=Adresář pro nahrané skripty

@@ -2611,3 +2611,7 @@ STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — 게임 진행 방식만 바꾸고 승패�
 STR_MAPEDIT_SCENARIO_KIND_NOTE=Mod는 게임 타입을 정하거나, 시계를 움직이거나, 자체 점수를 유지하거나, 라운드를 끝낼 수 없기 때문에 이 항목이 Mod로 되어 있는 동안에는 해당 항목들이 제공되지 않아요. 이는 아래의 "이 맵 전용"과는 다른 질문으로, 그쪽은 이 파일이 어느 맵을 위해 작성되었는지를 다뤄요.
 STR_MAPEDIT_SCENARIO_GAME_MOD=Mod는 게임 타입을 서버에 맡겨요
 STR_MAPEDIT_SCENARIO_FN_MOD=이 파일이 Mod로 되어 있는 동안에는 {string1} 항목이 제공되지 않아요. 이는 결말을 정하는 유일한 답이고, Mod는 승리 조건에 관여하지 않기 때문이에요.
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADS=플레이어의 스크립트
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_SESSION=이번 세션만 허용
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP=허용하고 보관
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADDIR=스크립트 업로드 폴더

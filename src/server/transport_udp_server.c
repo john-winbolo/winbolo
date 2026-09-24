@@ -178,6 +178,8 @@ bool transportUdpServerCreate(unsigned short port,
     udpServer.tickCount = 0;
     udpServer.uploadMaxFiles        = 64;
     udpServer.uploadMaxStorageBytes = 8u * 1024u * 1024u;
+    udpServer.scriptUploadMaxFiles        = 32;
+    udpServer.scriptUploadMaxStorageBytes = 64u * 1024u * 1024u;
     serverSimSetServerPort(sim, port);
     WB_LOG_INFO(WB_LOG_CAT_NET,
         "server created: port=%u bindAddr=%s maxPlayers=%u password=%s",
@@ -218,7 +220,11 @@ bool transportUdpServerCreate(unsigned short port,
 void transportUdpServerSetUploadConfig(UploadPolicy policy,
                                        uint8_t maxFiles,
                                        uint32_t maxStorageBytes,
-                                       const char *persistDir) {
+                                       const char *persistDir,
+                                       ScriptUploadPolicy scriptPolicy,
+                                       uint8_t scriptMaxFiles,
+                                       uint32_t scriptMaxStorageBytes,
+                                       const char *scriptDir) {
     udpServer.uploadPolicy = policy;
     if (maxFiles != 0) {
         udpServer.uploadMaxFiles = maxFiles;
@@ -231,6 +237,19 @@ void transportUdpServerSetUploadConfig(UploadPolicy policy,
                     sizeof(udpServer.uploadPersistDir));
     } else {
         udpServer.uploadPersistDir[0] = '\0';
+    }
+    udpServer.scriptUploadPolicy = scriptPolicy;
+    if (scriptMaxFiles != 0) {
+        udpServer.scriptUploadMaxFiles = scriptMaxFiles;
+    }
+    if (scriptMaxStorageBytes != 0) {
+        udpServer.scriptUploadMaxStorageBytes = scriptMaxStorageBytes;
+    }
+    if (scriptDir != NULL) {
+        SDL_strlcpy(udpServer.scriptUploadDir, scriptDir,
+                    sizeof(udpServer.scriptUploadDir));
+    } else {
+        udpServer.scriptUploadDir[0] = '\0';
     }
 }
 

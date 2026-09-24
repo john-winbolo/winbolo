@@ -33,7 +33,7 @@
 #include "transport_udp_internal.h" /* ClientEventQueue, UDP_MAX_PAYLOAD */
 #include "channel_mux.h"    /* ChannelMux */
 #include "bulk_transfer.h"  /* BulkSender, BulkReceiver */
-#include "upload_policy.h"  /* UploadPolicy */
+#include "upload_policy.h"  /* UploadPolicy, ScriptUploadPolicy */
 #include "net_impair.h"     /* NetImpair */
 #include "../../winbolonet/winbolonet_core.h" /* WINBOLONET_KEY_LEN */
 
@@ -365,6 +365,12 @@ typedef struct UdpServerState {
      * writes fall back to "<mapDirRoot>/Uploads". Kept in lock-step with the
      * sim's copy (both set from cfg->uploadPersistDir in serverInstanceStartup). */
     char         uploadPersistDir[FILENAME_MAX];
+    /* The same for player-uploaded scripts. Zero-init = ALLOW; the caps
+     * default to 32 files / 64 MiB. Empty scriptUploadDir = unset. */
+    ScriptUploadPolicy scriptUploadPolicy;
+    uint8_t      scriptUploadMaxFiles;
+    uint32_t     scriptUploadMaxStorageBytes;
+    char         scriptUploadDir[FILENAME_MAX];
 
     /* LRU token buckets for the per-source-IP JOIN rate limit. A zeroed
      * table reads as all-empty (srcAddr 0), so the existing

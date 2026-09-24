@@ -3076,6 +3076,14 @@
  * written into the line. */
 #define STR_MAPEDIT_SCENARIO_FN_MOD          2584
 
+/* The hosting settings' combo for scripts players send this host: off, keep
+ * for the session, or keep for good, and the directory kept ones go to.
+ * "Off" is the map uploads' STR_DLGSETTINGS_HOSTING_UPLOAD_OFF. */
+#define STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADS    2634
+#define STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_SESSION 2635
+#define STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP 2636
+#define STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADDIR  2637
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

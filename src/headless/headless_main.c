@@ -143,8 +143,12 @@ static char optMap[512] = "";
 static bool optStdin = FALSE;
 /* Run the map plainly, whatever script sits beside it. */
 static bool optNoScenarios = false;
-/* Run a map that came from an upload plainly, whatever it carries. */
+/* Run a map that came from an upload plainly, whatever it carries. The old
+   spelling of --scriptuploads off, used when no word is given. */
 static bool optNoUploadScripts = false;
+/* The --scriptuploads word as typed, and the policy it resolves to. */
+static char optScriptUploads[16] = "";
+static ScriptUploadPolicy optScriptUploadPolicy = SCRIPT_UPLOAD_ALLOW;
 /* Run every scenario script with the full Lua library and no limits. */
 static bool optUnsafeScripts = false;
 static bool optLogBinary = FALSE;
@@ -2093,15 +2097,19 @@ static void printUsage(const char *prog) {
     "  --noscenarios     Do not load the scenario script beside the map. Every\n"
     "                    map, including one committed later, plays plainly. A map\n"
     "                    that has a script says which one was not loaded\n"
-    "  --nouploadscripts Do not run a script carried by a map a client uploaded.\n"
-    "                    Maps in the uploads directory play plainly, whether the\n"
-    "                    script is packed into the file or sits beside it; every\n"
-    "                    other map is unaffected\n"
+    "  --scriptuploads P Player script handling: off refuses script uploads and\n"
+    "                    does not run a script carried by a map a client\n"
+    "                    uploaded (those maps play plainly, whether the script\n"
+    "                    is packed into the file or sits beside it; every other\n"
+    "                    map is unaffected), allow keeps them for the session\n"
+    "                    (default), persist keeps them for good\n"
+    "  --nouploadscripts The old spelling of --scriptuploads off; --scriptuploads\n"
+    "                    wins when both are given\n"
     "  --allow-unsafe-scripts\n"
     "                    Run scenario scripts with the full Lua standard\n"
     "                    library, no memory cap, no time limits and precompiled\n"
     "                    chunks accepted, uploaded maps' scripts included;\n"
-    "                    --nouploadscripts still refuses uploads. Only for\n"
+    "                    --scriptuploads off still refuses uploads. Only for\n"
     "                    trusted content\n"
     "\n"
     "Visibility options (apply to the fast-mode server sim):\n"
@@ -2256,6 +2264,8 @@ static bool parseArgs(int argc, char **argv) {
       optNoScenarios = true;
     } else if (strcmp(argv[i], "--nouploadscripts") == 0) {
       optNoUploadScripts = true;
+    } else if (strcmp(argv[i], "--scriptuploads") == 0 && i + 1 < argc) {
+      strncpy(optScriptUploads, argv[++i], sizeof(optScriptUploads) - 1);
     } else if (strcmp(argv[i], "--allow-unsafe-scripts") == 0 ||
                strcmp(argv[i], "-allow-unsafe-scripts") == 0) {
       optUnsafeScripts = true;
@@ -2415,6 +2425,7 @@ static bool fastModeSetupGame(bool withBotBrain) {
     ServerInstanceConfig cfg;
     memset(&cfg, 0, sizeof(cfg));
     cfg.acceptRemoteClients = false;
+    cfg.scriptUploadPolicy  = optScriptUploadPolicy;
     if (skipLobby) {
       cfg.skipLobby    = true;
     } else {
@@ -2560,11 +2571,12 @@ static int runFastMode(void) {
   if (optNoScenarios) {
     scenarioHostSetEnabled(false);
   }
-  /* --nouploadscripts: the narrower one. A map a client sent plays plainly
-     whatever it carries, and the operator's own maps are untouched. */
-  if (optNoUploadScripts) {
-    scenarioHostSetUploadScriptsEnabled(false);
-  }
+  /* --scriptuploads: the narrower one. Under off a map a client sent plays
+     plainly whatever it carries, and the operator's own maps are untouched.
+     The policy also goes into the instance config fastModeSetupGame builds. */
+  optScriptUploadPolicy =
+      scriptUploadPolicyResolve(optScriptUploads, optNoUploadScripts);
+  scenarioHostSetUploadScriptsEnabled(optScriptUploadPolicy != SCRIPT_UPLOAD_OFF);
   /* --allow-unsafe-scripts: the other way. Every script runs with the full
      Lua library and no limits, uploaded ones included, and it is said
      loudly. Set before the first attach for the same reason. */

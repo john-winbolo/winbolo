@@ -33,7 +33,7 @@
 #include "client_sim.h"   /* ClientLobbySlot */
 #include "brain_list.h"   /* BrainList for CTRL_LOBBY_BRAIN_LIST */
 #include "round_stats.h"  /* RoundStatsSummary for CTRL_ROUND_STATS */
-#include "upload_policy.h" /* UploadPolicy in lobbySettings */
+#include "upload_policy.h" /* UploadPolicy, ScriptUploadPolicy in lobbySettings */
 #include "view_policy.h"   /* ViewPolicy / VIEW_CATEGORY_COUNT in lobbySettings */
 #include "server_voice_mode.h" /* ServerVoiceMode in lobbySettings */
 #include "scenario_panel.h" /* SCN_PANEL_MAX for the panel event's byte list */
@@ -660,6 +660,7 @@ typedef struct ControlEvent {
                                           * from WBN) on remote clients */
             uint32_t lobbyServerLocks;
             UploadPolicy uploadPolicy;
+            ScriptUploadPolicy scriptUploadPolicy;
             uint8_t  hostSlot;   /* current lobby host's player slot */
             /* Visibility rules, indexed by ViewCategory. */
             ViewPolicy viewPolicy[VIEW_CATEGORY_COUNT];

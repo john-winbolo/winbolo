@@ -17,10 +17,11 @@
  *Filename:      upload_policy.h
  *Author:        John Morrison
  *Purpose:
- *  Operator-chosen handling for client-pushed map uploads.
- *  Set once at server startup and broadcast to remote
- *  clients via the lobby-settings control event so the
- *  lobby UI can reflect the policy.
+ *  Operator-chosen handling for client-pushed map uploads
+ *  (UploadPolicy) and for client-pushed scripts
+ *  (ScriptUploadPolicy). Both are set once at server startup
+ *  and broadcast to remote clients via the lobby-settings
+ *  control event so the lobby UI can reflect them.
  *********************************************************/
 
 #ifndef UPLOAD_POLICY_H
@@ -34,5 +35,14 @@ typedef enum {
     UPLOAD_POLICY_OFF     = 1,  /* refuse MAP_UPLOAD_BEGIN */
     UPLOAD_POLICY_PERSIST = 2   /* accept and write to data/maps/Uploads/ */
 } UploadPolicy;
+
+/* Player scripts have their own policy, separate from the map one.
+ * Zero is ALLOW so a zeroed server behaves as it did before the
+ * policy existed (upload scripts enabled). */
+typedef enum {
+    SCRIPT_UPLOAD_ALLOW   = 0,  /* default; accept uploads, keep for the session */
+    SCRIPT_UPLOAD_OFF     = 1,  /* refuse script uploads; don't run an uploaded map's script */
+    SCRIPT_UPLOAD_PERSIST = 2   /* accept uploads and keep them for good */
+} ScriptUploadPolicy;
 
 #endif /* UPLOAD_POLICY_H */

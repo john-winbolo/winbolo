@@ -37,6 +37,7 @@
 #include "attribution_track.h" /* AttrSlotIdentity — track accessors below */
 #include "view_policy.h"       /* ViewPolicy / ViewCategory — view-policy accessors below */
 #include "server_voice_mode.h" /* ServerVoiceMode — voice-mode accessors below */
+#include "upload_policy.h"     /* ScriptUploadPolicy — script-upload accessors below */
 
 /* MapGenConfig is defined in src/bolo/public/mapgen.h.
  * Forward-declared here so the public server_sim header doesn't
@@ -2275,6 +2276,28 @@ bool        serverSimGetModsOff(const ServerSim *sim);
  * and the getter returns serverVoiceOn for a NULL sim. */
 void            serverSimSetVoiceMode(ServerSim *sim, ServerVoiceMode mode);
 ServerVoiceMode serverSimGetVoiceMode(const ServerSim *sim);
+
+/* Script upload policy — how the server treats scripts players send it:
+ * OFF refuses them and does not run a script an uploaded map carries,
+ * ALLOW keeps them for the session, PERSIST keeps them for good. Set once
+ * from ServerInstanceConfig.scriptUploadPolicy at startup and carried to
+ * clients on the lobby-settings event. The getter returns
+ * SCRIPT_UPLOAD_ALLOW for a NULL sim. */
+void               serverSimSetScriptUploadPolicy(ServerSim *sim, ScriptUploadPolicy p);
+ScriptUploadPolicy serverSimGetScriptUploadPolicy(const ServerSim *sim);
+
+/* Resolve the script upload policy from its command-line or preference
+ * word. A non-empty word is matched against off / allow / persist
+ * ignoring case and always wins over legacyOff; an unknown word logs a
+ * warning naming it and resolves to SCRIPT_UPLOAD_ALLOW. With no word
+ * (NULL or empty), legacyOff — the old -nouploadscripts flag or
+ * "Run Upload Scripts" preference set to No — gives SCRIPT_UPLOAD_OFF,
+ * else SCRIPT_UPLOAD_ALLOW. */
+ScriptUploadPolicy scriptUploadPolicyResolve(const char *word, bool legacyOff);
+
+/* The preference spelling of a policy: "Off", "Allow" or "Persist".
+ * Anything out of range reads as "Allow". */
+const char        *scriptUploadPolicyWord(ScriptUploadPolicy p);
 
 /* openHost — when true, any connected player has host-level edit
  * authority on lobby state (see lobbyClientMayEdit). */

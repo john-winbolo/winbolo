@@ -1078,7 +1078,8 @@ extern bool gameFrontUseNatTraversal;
  * gameFrontGetPrefs, applied to the server config in gameFrontSetupServer,
  * and persisted immediately by the per-setting write-through setters below
  * so both settings shells save identically without a close-time flush.
- * gameFrontHostingUploadPolicy holds an UploadPolicy value. */
+ * gameFrontHostingUploadPolicy holds an UploadPolicy value, and
+ * gameFrontHostingScriptUploadPolicy a ScriptUploadPolicy value. */
 extern unsigned short gameFrontHostingPort;            /* default 27500 */
 extern bool           gameFrontHostingAllowSpec;       /* default Yes   */
 extern bool           gameFrontHostingScripts;          /* default Yes   */
@@ -1087,12 +1088,19 @@ extern bool           gameFrontHostingScripts;          /* default Yes   */
                                * map pack can decline its script without
                                * deleting the file. Set on the scenario
                                * library before either attach site runs. */
-extern bool           gameFrontHostingUploadScripts;    /* default Yes   */
-                              /* Run a script carried by a map a player
-                               * uploaded to this host. Off plays those maps
-                               * plainly and leaves every other map alone.
+extern int            gameFrontHostingScriptUploadPolicy; /* default ALLOW (0) */
+                              /* What this host does with scripts players
+                               * send it. Off refuses them and plays a map a
+                               * player uploaded plainly, leaving every other
+                               * map alone; Allow keeps them for the session;
+                               * Persist keeps them in the directory below.
                                * Set on the scenario library beside the
-                               * switch above. */
+                               * switch above as "not Off". */
+extern char           gameFrontHostingScriptUploadDir[FILENAME_MAX];
+                              /* Persist target dir for scripts; default
+                               * <prefs path>uploads/Scripts */
+extern int            gameFrontHostingScriptUploadMaxFiles;   /* 1-255, default 32 */
+extern int            gameFrontHostingScriptUploadMaxStorage; /* MB, 1-4095, default 64 */
 extern int            gameFrontHostingMaxSpec;         /* 1-32,  default 16 */
 extern int            gameFrontHostingUploadPolicy;    /* default ALLOW (0) */
 extern int            gameFrontHostingUploadMaxFiles;  /* 1-255, default 64 */
@@ -1120,12 +1128,15 @@ extern int            gameFrontHostingVoiceMode;       /* default ON (0) */
 void gameFrontSetHostingPort(unsigned short port);
 void gameFrontSetHostingAllowSpec(bool allow);
 void gameFrontSetHostingScripts(bool allow);
-void gameFrontSetHostingUploadScripts(bool allow);
 void gameFrontSetHostingMaxSpec(int maxSpec);
 void gameFrontSetHostingUploadPolicy(int policy);
 void gameFrontSetHostingUploadMaxFiles(int maxFiles);
 void gameFrontSetHostingUploadMaxStorage(int maxStorageMb);
 void gameFrontSetHostingUploadDir(const char *dir);
+void gameFrontSetHostingScriptUploadPolicy(int policy);
+void gameFrontSetHostingScriptUploadMaxFiles(int maxFiles);
+void gameFrontSetHostingScriptUploadMaxStorage(int maxStorageMb);
+void gameFrontSetHostingScriptUploadDir(const char *dir);
 void gameFrontSetHostingLogging(bool logging);
 void gameFrontSetHostingLogDir(const char *dir);
 void gameFrontSetHostingScenarioDir(const char *dir);

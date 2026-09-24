@@ -2584,6 +2584,10 @@ static const LangEntry langTable[] = {
     {2619, "Opacity"},
     {2620, "Fades what the panel draws."},
     {2621, "Empty parts of it stay clear."},
+    {2634, "Scripts from Players"},
+    {2635, "Allow this session"},
+    {2636, "Allow and keep"},
+    {2637, "Script Upload Directory"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

@@ -40,7 +40,7 @@
 #include "brain.h"  /* For BuildInfo, ObjectInfo */
 #include "brain_list.h"   /* BrainList — value type used by clientSimGetLobbyBrainList */
 #include "round_stats.h"  /* RoundStatsSummary — clientSimGetLastRoundStats return */
-#include "upload_policy.h" /* UploadPolicy — clientSimGetUploadPolicy return */
+#include "upload_policy.h" /* UploadPolicy, ScriptUploadPolicy — upload-policy getters */
 #include "view_policy.h"   /* ViewPolicy / ViewCategory — clientSimGetViewPolicy */
 #include "ping_display.h" /* PingBand — clientSimGetPlayerPingBand return */
 #include "server_voice_mode.h" /* ServerVoiceMode — clientSimGetServerVoiceMode return */
@@ -1133,6 +1133,11 @@ double      clientSimGetScenarioRuleValue(const ClientSim *cs, int idx);
 /* Server map-upload policy as last broadcast in the lobby-settings event.
  * Defaults to UPLOAD_POLICY_ALLOW until the first event arrives. */
 UploadPolicy clientSimGetUploadPolicy(const ClientSim *cs);
+
+/* Server script-upload policy as last broadcast in the lobby-settings event.
+ * Defaults to SCRIPT_UPLOAD_ALLOW until the first event arrives, and for a
+ * NULL cs. */
+ScriptUploadPolicy clientSimGetScriptUploadPolicy(const ClientSim *cs);
 
 /* Server visibility rules (pillboxes / bases / allied tanks) as last
  * broadcast in the lobby-settings event. Raw mirror. Until the first event

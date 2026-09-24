@@ -2611,3 +2611,7 @@ STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — muda como a partida é jogada e não inter
 STR_MAPEDIT_SCENARIO_KIND_NOTE=Um mod não pode definir o tipo de partida, mover o relógio, manter uma pontuação própria nem terminar a rodada, então essas opções não são oferecidas enquanto isto disser Mod. É uma pergunta diferente de "Criado para este mapa", mais abaixo, que trata de para qual mapa o arquivo foi escrito.
 STR_MAPEDIT_SCENARIO_GAME_MOD=Um mod deixa o tipo de partida para o servidor
 STR_MAPEDIT_SCENARIO_FN_MOD={string1} não é oferecido enquanto este arquivo disser Mod: é a única resposta que decide um final, e um mod não interfere na condição de vitória.
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADS=Scripts dos jogadores
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_SESSION=Permitir nesta sessão
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP=Permitir e manter
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADDIR=Diretório de scripts enviados

@@ -2607,3 +2607,7 @@ STR_MAPEDIT_SCENARIO_KIND_MOD=Mod — zmienia przebieg gry i nie ingeruje w zwyc
 STR_MAPEDIT_SCENARIO_KIND_NOTE=Mod nie może ustawiać typu gry, przesuwać zegara, prowadzić własnego wyniku ani kończyć rundy, więc te opcje nie są dostępne, dopóki tu wybrano Mod. To inne pytanie niż Zbudowany dla tej mapy poniżej, które dotyczy tego, dla jakiej mapy napisano ten plik.
 STR_MAPEDIT_SCENARIO_GAME_MOD=Mod pozostawia typ gry serwerowi
 STR_MAPEDIT_SCENARIO_FN_MOD={string1} nie jest oferowane, dopóki ten plik mówi Mod: to jedyna odpowiedź, która decyduje o zakończeniu, a mod nie ingeruje w warunek zwycięstwa.
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADS=Skrypty od graczy
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_SESSION=Zezwól na tę sesję
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOAD_KEEP=Zezwól i zachowaj
+STR_DLGSETTINGS_HOSTING_SCRIPTUPLOADDIR=Katalog wysłanych skryptów
