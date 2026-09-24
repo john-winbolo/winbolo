@@ -103,6 +103,7 @@ local elapsed = 0
 local running = false
 local over    = false
 local beacon  = false
+local loose   = false         -- the first one has turned
 local ends_at = 0             -- the tick the round ends on, for the panel clock
 local zero    = nil           -- the first to turn, once one has been picked
 local alone   = nil           -- the last survivor, once there is one
@@ -259,8 +260,10 @@ end
 
 -- Called every time the roll could have changed. The round ends here or on the
 -- clock, and nowhere else: owning every base is taken out of the round below.
+-- Before the first one turns there is no horde, so nothing here can end the
+-- round and nobody is the last survivor yet.
 local function check_the_end()
-  if over or not running then
+  if over or not running or not loose then
     return
   end
   local left = roll(SURVIVORS)
@@ -775,6 +778,7 @@ local function turn_zero()
     return
   end
   zero = p
+  loose = true
   game.announce("The infection is loose", 3)
   infect(p, nil)
 end
@@ -838,6 +842,13 @@ local function each_second()
     return
   end
   elapsed = elapsed + 1
+
+  -- A survivor can leave the field without a leave event, so the roll is
+  -- checked every second as well as on every join, leave and death.
+  check_the_end()
+  if over then
+    return
+  end
 
   for _, p in ipairs(roll(SURVIVORS)) do
     lived[p] = (lived[p] or 0) + 1
@@ -955,20 +966,29 @@ function on_tank_spawned(p, mx, my, respawn, scripted)
   end
 end
 
--- Anybody who walks in mid-round walks in infected. Joining the side that is
--- winning is the only seat there is: the survivors are a closed set from the
--- first tick, and letting a latecomer join them would hand them a life.
+-- Anybody who walks in after the first one has turned walks in infected.
+-- Joining the side that is winning is the only seat there is: the survivors
+-- are a closed set from then on, and letting a latecomer join them would hand
+-- them a life. Before that there is no horde to join, so a joiner is one more
+-- survivor, and may be the one who turns.
 function on_player_join(p, scripted)
   if not running or over then
     return
   end
-  side[p]   = INFECTED
   -- A new player in a seat starts from nothing, not from the last one's count
   -- or the square the last one died on.
   turned[p] = 0
+  lived[p]  = 0
   fell[p]   = nil
-  game.set_team(p, INFECTED)
-  game.message("You have arrived infected. Hunt them down.", p)
+  if loose then
+    side[p] = INFECTED
+    game.set_team(p, INFECTED)
+    game.message("You have arrived infected. Hunt them down.", p)
+  else
+    side[p] = SURVIVORS
+    game.set_team(p, SURVIVORS)
+    game.message("You are a survivor. One of you turns soon.", p)
+  end
   tune(p)
   point_one(p)
   -- A joiner is given the panels the round is holding, but not the scores, so
@@ -1094,7 +1114,8 @@ end
 
 -- The horde comes back at the start nearest to where it fell, so a fight that
 -- was won is a fight that is about to happen again in the same place. Survivors
--- are left to the engine: they only ever spawn once.
+-- are left to the engine, including one who respawns after a death to a
+-- neutral pillbox or a map mine.
 function on_choose_start(p)
   if side[p] ~= INFECTED then
     return nil
@@ -1135,7 +1156,7 @@ scenario = {
   callbacks = {
     on_start = "Puts everyone on the survivors; one turns after 20 s.",
     on_end = "Logs how long the round ran.",
-    on_player_join = "A late joiner arrives infected.",
+    on_player_join = "A joiner after the first turn arrives infected.",
     on_player_leave = "Ends the round if no survivor is left.",
     on_team_changed = "Players cannot change side.",
     on_tank_spawned = "Keeps the infected quick and weak.",
@@ -1160,9 +1181,9 @@ scenario = {
   },
 
   rules = {
-    -- Three seconds rather than five. A survivor never respawns as a survivor,
-    -- so this is the horde's number alone: it is what decides how much a fight
-    -- bought the man who won it.
+    -- Three seconds rather than five. Mostly the horde's number: a survivor
+    -- only respawns as one after a neutral pillbox or a map mine kills him. It
+    -- is what decides how much a fight bought the man who won it.
     tank_death_ticks = 150,
 
     -- A base is the survivors' only resupply and they are usually standing on
