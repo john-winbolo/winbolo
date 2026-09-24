@@ -742,7 +742,9 @@ void printArgs() {
   fprintf(stderr, "-uploadpolicy <P> - Client map-upload handling: \"off\" refuses uploads,\n");
   fprintf(stderr, "                \"allow\" plays the upload in memory and drops it on the next\n");
   fprintf(stderr, "                map change (default), \"persist\" also saves it to\n");
-  fprintf(stderr, "                data/maps/Uploads/.\n");
+  fprintf(stderr, "                <map root>/Uploads/, or the -uploaddir directory.\n");
+  fprintf(stderr, "-uploaddir <Dir> - Directory persisted maps are written to, used with\n");
+  fprintf(stderr, "                -uploadpolicy persist (default <map root>/Uploads).\n");
   fprintf(stderr, "-uploadmaxfiles <N> - Max stored upload files in persist mode (1-255,\n");
   fprintf(stderr, "                default 64).\n");
   fprintf(stderr, "-uploadmaxstorage <MB> - Max upload storage in persist mode (1-4096 MB,\n");
@@ -2420,7 +2422,8 @@ int main(int argc, char **argv) {
     UploadPolicy uploadPolicy = UPLOAD_POLICY_ALLOW;
     uint8_t      uploadMaxFiles = 0;        /* 0 = leave transport default */
     uint32_t     uploadMaxStorageBytes = 0; /* 0 = leave transport default */
-    uint8_t      scriptUploadMaxFiles = 0;        /* 0 = leave transport default */
+    const char  *uploadDir = NULL;          /* NULL = <map root>/Uploads */
+    uint8_t     scriptUploadMaxFiles = 0;        /* 0 = leave transport default */
     uint32_t     scriptUploadMaxStorageBytes = 0; /* 0 = leave transport default */
     const char  *scriptUploadDir = NULL;
 
@@ -2469,6 +2472,12 @@ int main(int argc, char **argv) {
           v = 4096;
         }
         uploadMaxStorageBytes = (uint32_t)v * 1024u * 1024u;
+      }
+    }
+    {
+      int dirArg = findArg(argc, argv, "uploaddir");
+      if (dirArg != ARG_NOT_FOUND) {
+        uploadDir = (const char *)argv[dirArg];
       }
     }
     {
@@ -2525,6 +2534,7 @@ int main(int argc, char **argv) {
     instCfg.uploadPolicy          = uploadPolicy;
     instCfg.uploadMaxFiles        = uploadMaxFiles;
     instCfg.uploadMaxStorageBytes = uploadMaxStorageBytes;
+    instCfg.uploadPersistDir      = uploadDir;
     instCfg.scriptUploadPolicy          = scriptUploadPolicy;
     instCfg.scriptUploadMaxFiles        = scriptUploadMaxFiles;
     instCfg.scriptUploadMaxStorageBytes = scriptUploadMaxStorageBytes;
