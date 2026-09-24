@@ -1201,4 +1201,14 @@ void gameFrontGetVisibilitySettings(VisibilitySettings *out);
  * the points where the player edited or picked something. */
 void gameFrontRememberVisibility(const VisibilitySettings *v, bool saveCustom);
 
+/* Records a lobby pick as what the next game this machine hosts opens on:
+ * single player, Internet New and LAN New alike. Each writes the global
+ * and the [GAME OPTIONS] key straight away, so the pick survives a crash
+ * as well as a clean quit. The lobby calls these only where the host
+ * picked something on the machine running the server, and not in a
+ * scenario lobby, whose type and bots are the scenario's. */
+void gameFrontRememberGameType(gameType gt);
+void gameFrontRememberAiPolicy(aiType ai);
+void gameFrontRememberHiddenMines(bool hm);
+
 #endif

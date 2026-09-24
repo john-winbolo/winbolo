@@ -349,6 +349,10 @@ void lobbyVisibilityDetailsLine(const VisibilitySettings *v, char *out,
  * The prefs setters only touch the INI when a value moves, so a frame
  * where nothing changed costs a compare. */
 static void lobbyVisibilityRemember(ClientSim *cs, int myPlayerNum) {
+    /* Host of the lobby is not enough: a player made host of a game on
+     * somebody else's server would otherwise take that server's settings
+     * home as their own. */
+    if (!gameFrontHasLocalServer()) return;
     if (!lobbyIsHost(cs, myPlayerNum)) return;
 
     VisibilitySettings live;
@@ -1540,6 +1544,19 @@ static void lobbySettingsShareColumns(float s) {
     for (int i = 0; i < 3; i++) ImGui::SetColumnWidth(i, give[i] + pad);
 }
 
+/* Whether a pick in the form is written down as what the next game this
+ * machine hosts opens on. Only where this machine runs the server and is
+ * its host: an admin or open-host player in somebody else's lobby is not
+ * choosing their own defaults. And not in a scenario lobby, whose game
+ * type and bots are the scenario's and are picked again every time. A
+ * lobby running mods alone is an ordinary game and does write. */
+static bool lobbyRemembersNewGameOptions(ClientSim *cs, int myPlayerNum) {
+    if (!gameFrontHasLocalServer()) return false;
+    if (!lobbyIsHost(cs, myPlayerNum)) return false;
+    return clientSimGetLobbyScenarioSource(cs) == 0 ||
+           clientSimGetLobbyScenarioKeepsWinCondition(cs);
+}
+
 /* The game-settings form proper: four columns, game type / AI policy /
  * odds and ends / server settings. Split out of
  * lobbyRenderGameSettingsPanel so the controller Settings tab can render
@@ -1647,6 +1664,9 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             if (ImGui::RadioButton(rid, checked) && !checked) {
                 uint8_t v = (uint8_t)enumVal;
                 lobbySendSetting(cs, LST_GAME_TYPE, &v, 1);
+                if (lobbyRemembersNewGameOptions(cs, myPlayerNum)) {
+                    gameFrontRememberGameType((gameType)enumVal);
+                }
             }
             if (optDisabled) ImGui::EndDisabled();
             /* The scenario's own name beside the row that says the round is
@@ -1724,6 +1744,9 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
             if (ImGui::RadioButton(rid, checked) && !checked) {
                 uint8_t v = (uint8_t)i;
                 lobbySendSetting(cs, LST_AI_POLICY, &v, 1);
+                if (lobbyRemembersNewGameOptions(cs, myPlayerNum)) {
+                    gameFrontRememberAiPolicy((aiType)i);
+                }
             }
             if (rowDisabled) ImGui::EndDisabled();
         }
@@ -1742,6 +1765,9 @@ void lobbyRenderGameSettingsBody(ClientSim *cs, int myPlayerNum, float s) {
         if (ImGui::Checkbox(langGetText(STR_DLGGAMESETUP_HIDDENMINES), &minesV)) {
             uint8_t v = minesV ? 1 : 0;
             lobbySendSetting(cs, LST_HIDDEN_MINES, &v, 1);
+            if (lobbyRemembersNewGameOptions(cs, myPlayerNum)) {
+                gameFrontRememberHiddenMines(minesV);
+            }
         }
         if (minesDisabled) ImGui::EndDisabled();
         if (minesLocked) lobbyRenderLockBadge();
