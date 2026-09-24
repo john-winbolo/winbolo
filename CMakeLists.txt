@@ -4403,6 +4403,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The viewer's rules at the playhead: rule changes collected at load,
     # LvRules after a seek, hostile records and the pill picture's cap.
     tests/unit/test_lv_rule_changes.c
+    # The viewer's scenario panels, scores, announcement and markers at the
+    # playhead: a hand-written log seeked both ways, hostile records, a
+    # recorded scripted round and a plain one.
+    tests/unit/test_lv_presentation.c
     # Stream-load decode path: feeds the v2 fixture's plaintext log.dat through
     # lv_screenLoadFromStream and asserts it decodes the same content the zip
     # reader does (reuses extractLogDat from test_log_roundtrip.c).
@@ -6256,6 +6260,11 @@ set(_unit_test_names
     lv_rule_changes_hostile
     lv_rule_changes_live_feed
     lv_rule_changes_armour_levels
+    lv_presentation_seek
+    lv_presentation_hostile
+    lv_presentation_scripted_round
+    lv_presentation_rebuild_many
+    lv_presentation_plain_round
     scn_presentation_codec_bodies
     scn_presentation_codec_refuses_short
     scn_presentation_decoder_sets_broadcast

@@ -38,6 +38,9 @@
  * next to LvRules because it brings in <stdbool.h>, and every bool below this
  * line has been _Bool since sim_rules_names.h was included at this spot. */
 #include "lv_scripts.h"
+/* LvPresentation and its accessors: the scenario panels, scores,
+ * announcement and markers at the playhead. */
+#include "lv_presentation.h"
 
 /* Forward declarations for SDL types */
 struct SDL_Window;
@@ -118,6 +121,10 @@ typedef struct LogViewerState {
   LvRuleChange ruleChanges[LV_RULE_CHANGES_MAX];
   int          ruleChangeCount;
   bool         ruleChangesTruncated;   /* the file held more than the array */
+  /* The scenario panels, scores, announcement and markers at the playhead:
+     filled as playback passes each record, and rebuilt from the load walk's
+     index wherever the playhead jumps. */
+  LvPresentation pres;
 
   /* --- FROM screen.c globals --- */
   screen       view;

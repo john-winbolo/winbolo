@@ -47,6 +47,19 @@
 #define LVSF_RULE_SET_FRAME    10
 #define LVSF_RULE_ROUND_TICKS  40
 
+/* The presentation round: the same map scenario name and mod, and an on_tick
+ * that on the LVSF_PRES_FRAME'th frame draws a one-rectangle panel for
+ * everyone, gives team LVSF_PRES_TEAM a score of LVSF_PRES_SCORE labelled
+ * LVSF_PRES_LABEL and puts LVSF_PRES_LINE across the screen for five
+ * seconds. The round runs LVSF_PRES_ROUND_TICKS sim ticks after the recording
+ * opens. */
+#define LVSF_PRES_FRAME        10
+#define LVSF_PRES_TEAM         1
+#define LVSF_PRES_SCORE        7
+#define LVSF_PRES_LABEL        "pts"
+#define LVSF_PRES_LINE         "Hold the keep"
+#define LVSF_PRES_ROUND_TICKS  40
+
 #define LVSF_STR_(x) #x
 #define LVSF_STR(x)  LVSF_STR_(x)
 
@@ -58,5 +71,9 @@ bool lvScriptsRecordScriptedRound(const char *tag, char *path, size_t pathLen);
 
 /* The same for the rule-change round. */
 bool lvScriptsRecordRuleRound(const char *tag, char *path, size_t pathLen);
+
+/* The same for the presentation round. */
+bool lvScriptsRecordPresentationRound(const char *tag, char *path,
+                                      size_t pathLen);
 
 #endif /* WINBOLO_TEST_LV_SCRIPTS_FIXTURE_H */

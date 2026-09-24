@@ -88,6 +88,24 @@ static const char kLvsfRuleScenario[] =
     "  end\n"
     "end\n";
 
+/* The map's own scenario for the presentation round: a few frames in, it
+ * draws a panel for everyone, gives team 1 a score and puts a line up. */
+static const char kLvsfPresScenario[] =
+    "scenario = {\n"
+    "  name = \"" LVSF_SCENARIO_NAME "\",\n"
+    "  api = 1,\n"
+    "}\n"
+    "local frames = 0\n"
+    "function on_tick(tick)\n"
+    "  frames = frames + 1\n"
+    "  if frames == " LVSF_STR(LVSF_PRES_FRAME) " then\n"
+    "    game.panel(0, { { \"rect\", 1, 2, 3, 4, 5, 1 } })\n"
+    "    game.score({ team = " LVSF_STR(LVSF_PRES_TEAM) " }, "
+    LVSF_STR(LVSF_PRES_SCORE) ", \"" LVSF_PRES_LABEL "\")\n"
+    "    game.announce(\"" LVSF_PRES_LINE "\", 5)\n"
+    "  end\n"
+    "end\n";
+
 /* A mod behind it, from the scenarios directory. */
 static const char kLvsfMod[] =
     "scenario = {\n"
@@ -199,5 +217,11 @@ bool lvScriptsRecordScriptedRound(const char *tag, char *path, size_t pathLen) {
 
 bool lvScriptsRecordRuleRound(const char *tag, char *path, size_t pathLen) {
     return lvsfRecordRound(tag, kLvsfRuleScenario, LVSF_RULE_ROUND_TICKS,
+                           path, pathLen);
+}
+
+bool lvScriptsRecordPresentationRound(const char *tag, char *path,
+                                      size_t pathLen) {
+    return lvsfRecordRound(tag, kLvsfPresScenario, LVSF_PRES_ROUND_TICKS,
                            path, pathLen);
 }

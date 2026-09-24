@@ -381,8 +381,11 @@ list is refused identically wherever it arrives.
 
 Written by the scenario funnel's panel arm
 (`src/server/sim/server_sim_scenario.c`), which parses a list before it
-publishes one, so a list in a recording is one that parses. The viewer
-consumes the record to keep its place in the stream and does not yet draw it.
+publishes one, so a list in a recording is one that parses. The viewer keeps
+the list for its destination, checking it with `scnPanelParse` first, and
+rebuilds every panel at the playhead after a seek. A record with a panel id
+other than 0, a destination out of range, a length past `SCN_PANEL_MAX` or a
+list that does not parse is consumed and ignored.
 
 ### `log_ScnScore` payload
 
@@ -405,8 +408,10 @@ The record is broadcast in the same sense the control event is — the target
 says whose score it is, not who was meant to see it — so there is no
 destination pair here.
 
-Written by the scenario funnel's score arm. The viewer consumes the record and
-does not yet show it.
+Written by the scenario funnel's score arm. The viewer keeps the score for its
+slot or team and rebuilds the scores at the playhead after a seek. A record
+with another kind, a target out of range or a label past 15 bytes is consumed
+and ignored.
 
 ### `log_ScnAnnounce` payload
 
@@ -426,8 +431,10 @@ ticks alongside it were not read. A line with something in it is never
 recorded with a tick count of 0 — the arm refuses that rather than putting a
 line up for no time.
 
-Written by the scenario funnel's announce arm. The viewer consumes the record
-and does not yet show it.
+Written by the scenario funnel's announce arm. The viewer keeps the last line,
+with the time it landed, until a clear replaces it, and rebuilds it at the
+playhead after a seek. A record with a destination out of range or a text
+past 128 bytes is consumed and ignored.
 
 ### `log_ScnMarker` payload
 
@@ -449,8 +456,11 @@ a Pascal form: a 1-byte length followed by that many binary bytes:
 The clear kind reads none of the four placement bytes; they are written
 whatever the kind so that every marker record is the same length.
 
-Written by the scenario funnel's marker arm. The viewer consumes the record
-and does not yet draw it.
+Written by the scenario funnel's marker arm. The viewer keeps each marker by
+id until a clear removes it — the record has no expiry — and rebuilds the
+markers at the playhead after a seek. A record with an id past 15, a kind past
+2, a destination out of range, a placement that is not four bytes, a colour
+past 15 or a follow slot past the last slot is consumed and ignored.
 
 ### `log_ScnHint` payload
 

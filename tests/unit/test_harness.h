@@ -3451,6 +3451,17 @@ int run_lv_rule_changes_plain_round(void);
 int run_lv_rule_changes_hostile(void);
 int run_lv_rule_changes_live_feed(void);
 int run_lv_rule_changes_armour_levels(void);
+/* The log viewer's scenario panels, scores, announcement and markers at the
+ * playhead (test_lv_presentation.c, with the presentation round recorded by
+ * lv_scripts_fixture.c): a hand-written log played through and seeked both
+ * ways, hostile records consumed and ignored, a recorded scripted round, a
+ * rebuild over thousands of records and a plain round with every store
+ * empty. */
+int run_lv_presentation_seek(void);
+int run_lv_presentation_hostile(void);
+int run_lv_presentation_scripted_round(void);
+int run_lv_presentation_rebuild_many(void);
+int run_lv_presentation_plain_round(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or
