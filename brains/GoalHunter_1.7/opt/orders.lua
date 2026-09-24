@@ -2716,7 +2716,7 @@ local function hint_start(state, world, info, cmd, now)
     tkind = cmd.target and cmd.target.kind or nil,
     tid = tid, sender = HINT_SENDER, sender_name = "scenario",
     mx = cmd.target and cmd.target.mx, my = cmd.target and cmd.target.my,
-    needs_shells = needs_shells, who = cmd.who,
+    needs_shells = needs_shells, who = cmd.who, ping = cmd.ping,
   }
   o.known[spec.oid] = { spec = spec, tick = now }
   note_last(o, HINT_SENDER, spec.oid)
@@ -2741,7 +2741,13 @@ local function hint_command(state, world, info, t)
   if v == "goto" then
     local mx, my = hint_rect_middle(t)
     if not mx then return nil end
-    return hint_goto(state, mx, my)
+    local cmd = hint_goto(state, mx, my)
+    -- ping = "1": the order is filed as if a bot-command ping had given it,
+    -- so arriving on a square a pill can shoot starts the decoy hold (see
+    -- GO-THERE DECOY HARD HOLD).  A scenario has no call that places a ping;
+    -- this key is how a ROOST round reaches the decoy hold.
+    if t.ping == "1" or t.ping == 1 or t.ping == true then cmd.ping = true end
+    return cmd
   end
 
   if v == "hold" then

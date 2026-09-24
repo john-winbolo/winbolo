@@ -3974,9 +3974,15 @@ do
   if not drawn then print("  skip overlay checks: stripped copy (" .. gsrc .. ")") end
   local r1 = drawn and draw_rec()
   if drawn then
-  check("overlay header: on square #1, waiting for hit 1",
-        has(r1.text, "GETAWAY step 1/3 on square #1, waiting for hit 1 of 1: score = 1.000 + 1.000 + 2x1.000 = 4.000"),
-        r1.text[#r1.text])
+  check("overlay header: on square #1, waiting for hit 1, then the score line",
+        has(r1.text, "GETAWAY step 1/3 on square #1, waiting for hit 1 of 1")
+        and has(r1.text, "score = 1.000 + 1.000 + 2x1.000 = 4.000")
+        and has(r1.text, "P=1 tiles="),
+        table.concat(r1.text, " | "))
+  -- An overlay text is cut at OVERLAY_TEXT_MAX (128) bytes by the host.
+  local longest = 0
+  for _, t in ipairs(r1.text) do if #t > longest then longest = #t end end
+  check("overlay: every text fits in 127 bytes", longest <= 127, tostring(longest))
   check("overlay: one panel per chain square, numbered from the decoy square",
         #r1.detail == 3 and r1.detail[2][1] == "GETAWAY #2 (22,26)", tostring(#r1.detail))
   check("overlay panel: pill term, closeness term and tile value",

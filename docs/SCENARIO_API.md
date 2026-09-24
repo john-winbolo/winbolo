@@ -1301,6 +1301,11 @@ says afterwards. A player can call a scripted order off with `cancel all` or
 by naming the bot — a bare `cancel` cannot, because that one releases only
 the speaker's own order and a hint's sender is the scenario.
 
+GoalHunter 1.7 also reads `ping = "1"` on a `goto`: the order is filed as if
+a bot-command ping had given it, so a square a hostile pillbox can shoot turns
+the hold into the decoy hold. No scenario op places a ping, so this key is how
+a script reaches the decoy hold (the `decoy_getaway` ROOST test uses it).
+
 Three of the seven are as near as the brain's existing goals get. `defend` on
 a **base** stands on the base, because there is no defend-a-base goal — a base
 is not held the way a pillbox is. `avoid` is remembered rather than fed to the

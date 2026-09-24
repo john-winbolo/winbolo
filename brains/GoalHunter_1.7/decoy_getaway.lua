@@ -643,7 +643,9 @@ function M.draw(viz, state)
                { c.mx, c.my, c.mx + 1, c.my + 1 },
                string.format("GETAWAY #%d (%d,%d)", base + i, c.mx, c.my), lines)
   end
-  local hdr
+  -- Three header lines, not one: an overlay text is cut at OVERLAY_TEXT_MAX
+  -- (128) bytes, in the game, in BrainTest and in a recording alike.
+  local hdr, hdr2, hdr3
   if v.path then
     local need = C.DECOY_GETAWAY_HITS or 1
     local doing
@@ -655,16 +657,23 @@ function M.draw(viz, state)
       doing = string.format("on square #%d, waiting for hit %d of %d",
                             ga.used, (ga.hits or 0) + 1, need)
     end
-    hdr = string.format("GETAWAY step %d/%d %s: score = %s = %.3f  (P=%d tiles=%d edges=%d traces=%d %dus)",
-                        ga.used, base + #v.path, doing, score_terms(v.path),
-                        v.score or 0, np, #(v.cells or {}), v.edges or 0,
-                        v.traces or 0, v.us or -1)
+    hdr = string.format("GETAWAY step %d/%d %s", ga.used, base + #v.path, doing)
+    hdr2 = string.format("score = %s = %.3f", score_terms(v.path), v.score or 0)
+    hdr3 = string.format("P=%d tiles=%d edges=%d traces=%d %dus",
+                         np, #(v.cells or {}), v.edges or 0, v.traces or 0, v.us or -1)
   else
     hdr = string.format("GETAWAY none (P=%d tiles=%d) -- the hold stays put",
                         np, #(v.cells or {}))
   end
   viz.rect(ID, v.sx, v.sy, v.sx + 1, v.sy + 1, 90, 160, 255, 110, true)
-  viz.text(ID, v.sx + 0.5, v.sy - 0.7, hdr, "center", 150, 200, 255, 255)
+  local ty = v.sy - 0.7 - (hdr3 and 1.0 or 0)
+  viz.text(ID, v.sx + 0.5, ty, hdr, "center", 150, 200, 255, 255)
+  if hdr2 then
+    viz.text(ID, v.sx + 0.5, ty + 0.5, hdr2, "center", 150, 200, 255, 255)
+  end
+  if hdr3 then
+    viz.text(ID, v.sx + 0.5, ty + 1.0, hdr3, "center", 150, 200, 255, 255)
+  end
 end
 
 return M
