@@ -1123,11 +1123,31 @@ scenario = {
                 "The survivors hold the map; the horde is quicker, weaker, " ..
                 "and back in three seconds.",
   api         = 1,
+  kind        = "scenario",
   game        = "open",
 
   -- Nothing here names a square, a pill number or a base number, so this one
   -- plays over whatever map the host has committed.
   bound       = false,
+
+  -- What each callback below does, in a line a player reads: the lobby's
+  -- details dialog lists these under "What this scenario implements:".
+  callbacks = {
+    on_start = "Puts everyone on the survivors; one turns after 20 s.",
+    on_end = "Logs how long the round ran.",
+    on_player_join = "A late joiner arrives infected.",
+    on_player_leave = "Ends the round if no survivor is left.",
+    on_team_changed = "Players cannot change side.",
+    on_tank_spawned = "Keeps the infected quick and weak.",
+    on_tank_killed = "A survivor killed by the infected turns.",
+    allow_extra_teams = "Only the two sides.",
+    allow_base_win = "Holding every base does not win.",
+    can_build = "The infected cannot build.",
+    can_capture = "The infected cannot take bases or pillboxes.",
+    on_choose_start = "The infected respawn near where they fell.",
+    spawn_loadout = "The infected respawn with half armour and 8 shells.",
+    damage_scale = "No friendly fire.",
+  },
 
   -- Both sides are named so the lobby has them, but nobody picks one: every
   -- seat is put on the survivors at the first tick and the sides are decided by

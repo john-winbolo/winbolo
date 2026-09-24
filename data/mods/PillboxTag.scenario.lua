@@ -1042,11 +1042,30 @@ scenario = {
                 "second, costs you three tenths of your speed, and empties " ..
                 "your gun.",
   api         = 1,
+  kind        = "scenario",
   game        = "open",
 
   -- Nothing here names a square, a pill number or a base number, so this one
   -- plays over whatever map the host has committed.
   bound       = false,
+
+  -- What each callback below does, in a line a player reads: the lobby's
+  -- details dialog lists these under "What this scenario implements:".
+  callbacks = {
+    on_setup = "Keeps one dead pillbox as the prize; bases start neutral.",
+    on_start = "Starts the 10-minute clock and the compass panel.",
+    on_tick = "Keeps the holder's gun empty.",
+    on_end = "Logs how long the round ran.",
+    on_player_join = "A joiner starts on 0 points.",
+    on_player_leave = "Forgets the seat's bot orders.",
+    on_base_captured = "A base gives half armour, then is gone for 30 s.",
+    on_pill_placed = "The prize is put down and loses its armour.",
+    on_pill_picked_up = "The holder scores a point a second, slower and unarmed.",
+    on_built = "A repaired prize goes back to no armour.",
+    allow_base_win = "Holding every base does not win.",
+    announce = "Base captures are not announced.",
+    spawn_loadout = "Tanks spawn with full shells and no mines.",
+  },
 
   rules = {
     -- Putting the pillbox down is free, so the holder can drop it anywhere
