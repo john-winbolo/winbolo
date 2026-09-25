@@ -1571,12 +1571,16 @@ end
 -- A HUMAN holding exactly one is not on the list at all. That single dead
 -- pill is the one they scoop and place themselves, and the pre-build must
 -- never take it.
-local function take_rank(p, o, holds)
+--
+-- A human's spare is counted in DEAD pills only: a pill built for an empty
+-- start (prebuild_empty_starts) is not one they can scoop and place.
+local function take_rank(p, o, holds, dead)
   if o == p then return 1 end
   if o == nil then return 2 end
-  if (holds[o] or 0) > 1 then return 3 end
   local ol = game.lobby_slot(o)
-  if ol ~= nil and ol.bot then return 4 end
+  local bot = ol ~= nil and ol.bot
+  if (bot and holds[o] or dead[o] or 0) > 1 then return 3 end
+  if bot then return 4 end
   return nil
 end
 
@@ -1596,10 +1600,12 @@ end
 -- last seconds — and the pass that ran at the setup would otherwise be
 -- the only one there ever was.
 local dug_in = {}       -- seat -> true once this round has served it
+local empty_built = {}  -- pill -> true when prebuild_empty_starts built it
 
 local function prebuild_bot_pills()
   local pills = {}
   local holds = {}      -- seat -> how many of the six it holds
+  local dead  = {}      -- seat -> how many of those are dead
   local built = {}      -- seat -> true once one of them stands
   local owed  = {}
 
@@ -1608,7 +1614,8 @@ local function prebuild_bot_pills()
     pills[n] = pi
     if pi ~= nil and pi.owner ~= nil then
       holds[pi.owner] = (holds[pi.owner] or 0) + 1
-      if pi.armour > 0 then built[pi.owner] = true end
+      if pi.armour > 0 then built[pi.owner] = true
+      else dead[pi.owner] = (dead[pi.owner] or 0) + 1 end
     end
   end
 
@@ -1633,7 +1640,7 @@ local function prebuild_bot_pills()
       for n = 1, CENTER_PILLS do
         local pi = pills[n]
         if pi ~= nil and not pi.in_tank and pi.armour == 0 then
-          local r = take_rank(p, pi.owner, holds)
+          local r = take_rank(p, pi.owner, holds, dead)
           if r ~= nil then
             local ddx, ddy = pi.x - si.x, pi.y - si.y
             local d = ddx * ddx + ddy * ddy
@@ -1641,6 +1648,27 @@ local function prebuild_bot_pills()
               best, bestr, bestd = n, r, d
             end
           end
+        end
+      end
+      -- No dead pill to take: a pill built for an empty start stands where
+      -- a late seat's station is, so the seat takes that one over as it is.
+      if best == nil then
+        for n = 1, CENTER_PILLS do
+          local pi = pills[n]
+          if empty_built[n] and pi ~= nil and not pi.in_tank
+             and pi.armour > 0 then
+            local ddx, ddy = pi.x - si.x, pi.y - si.y
+            local d = ddx * ddx + ddy * ddy
+            if bestd == nil or d < bestd then best, bestd = n, d end
+          end
+        end
+        if best ~= nil then
+          empty_built[best] = nil
+          game.set_pill_owner(best, p)
+          pills[best].owner = p
+          built[p] = true
+          dug_in[p] = true
+          best = nil
         end
       end
       if best ~= nil then
@@ -1651,13 +1679,88 @@ local function prebuild_bot_pills()
         -- same pill and a seat robbed of a spare is not robbed of it twice.
         pills[best] = { x = rx, y = ry, owner = p,
                         armour = BUILT_PILL_ARMOUR, in_tank = false }
-        if prev ~= nil then holds[prev] = (holds[prev] or 1) - 1 end
+        if prev ~= nil then
+          holds[prev] = (holds[prev] or 1) - 1
+          dead[prev]  = (dead[prev] or 1) - 1
+        end
         holds[p] = (holds[p] or 0) + 1
         built[p] = true
         dug_in[p] = true
       end
     end
   end
+end
+
+-- A short-handed keep: with fewer than six defenders on the field, the
+-- puddle starts nobody stands on get their pill already built. For each
+-- empty start, the dead pill nearest it is dug in (moved to the ring road,
+-- built, paved back to its base) and flies defender colours.
+--
+-- Runs once, after the deal and the bot pre-build, so every bot has already
+-- taken the pill at its own start. The same rule as take_rank keeps a human's
+-- pill on the ground: a pill whose human owner holds only that one is never
+-- taken, so everyone still has a dead pill to scoop and place themselves.
+-- A defender bot that reaches the field later takes one of these over
+-- (prebuild_bot_pills) when no dead pill is left for it.
+local function prebuild_empty_starts()
+  local defenders = fielded_defenders()
+  if #defenders == 0 or #defenders >= CENTER_PILLS then return end
+
+  -- The starts in use: the same rule on_choose_start places a defender by.
+  local used = {}
+  for _, p in ipairs(defenders) do
+    used[1 + ((seat_rank(p) or p) % 6)] = true
+  end
+
+  local pills = {}
+  local holds = {}
+  for n = 1, CENTER_PILLS do
+    local pi = game.pill(n)
+    pills[n] = pi
+    if pi ~= nil and pi.owner ~= nil then
+      holds[pi.owner] = (holds[pi.owner] or 0) + 1
+    end
+  end
+
+  local built = 0
+  for s = 1, CENTER_PILLS do
+    local si = game.start(s)
+    if not used[s] and si ~= nil then
+      local best, bestd
+      for n = 1, CENTER_PILLS do
+        local pi = pills[n]
+        if pi ~= nil and not pi.in_tank and pi.armour == 0 then
+          local o = pi.owner
+          local ok = o == nil or (holds[o] or 0) > 1
+          if not ok then
+            local ol = game.lobby_slot(o)
+            ok = ol ~= nil and ol.bot   -- a bot's spare; its own is built
+          end
+          if ok then
+            local ddx, ddy = pi.x - si.x, pi.y - si.y
+            local d = ddx * ddx + ddy * ddy
+            if bestd == nil or d < bestd then best, bestd = n, d end
+          end
+        end
+      end
+      if best ~= nil then
+        local pi    = pills[best]
+        local prev  = pi.owner
+        local owner = prev
+        if owner == nil or not is_defender(owner) then owner = defenders[1] end
+        local rx, ry = dig_in(owner, best, pi)
+        pills[best] = { x = rx, y = ry, owner = owner,
+                        armour = BUILT_PILL_ARMOUR, in_tank = false }
+        empty_built[best] = true
+        -- Built now, so it no longer counts as a dead pill its owner holds.
+        if prev ~= nil then holds[prev] = (holds[prev] or 1) - 1 end
+        built = built + 1
+      end
+    end
+  end
+  game.log(string.format(
+    "Survival: [pills] %d defender(s), %d empty start pill(s) built",
+    #defenders, built))
 end
 
 -- How long the arrangement waits for the whole defending side to reach the
@@ -1699,6 +1802,7 @@ local function arrange_defence()
   end
   if not deal_center() then return false end
   prebuild_bot_pills()
+  prebuild_empty_starts()
   return true
 end
 
