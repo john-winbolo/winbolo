@@ -622,8 +622,28 @@ M.DEST_LEAD_SCALE   = DEST_LEAD_SCALE
 --   * the tile is solid for the builder death test either way (pillsExistPos
 --     has no armour check, lgm.c:1504): the blast kills him only if he is ON
 --     the pill tile.
---   * he stands on it for LGM_BUILD_TIME (20) game ticks after arriving
---     (lgm.c:843), then walks home.  The walk off the tile is not counted.
+--   * he stands on it for LGM_BUILD_TIME (20) game ticks after arriving:
+--     the arrival tick sets waitTime = 20 (lgm.c:843), the next 20 ticks
+--     only count it down (lgm.c:174-176), and the tick after that is his
+--     first lgmReturn step (lgm.c:180-182).  So after arriving at step
+--     s_arrive he is still at the arrival point through s_arrive + 20.
+--   * then he walks home: lgmReturn heads for his tank's position every
+--     tick (utilCalcAngle to tankGetWorld, lgm.c:910-916) at
+--     man_speed_refuel_base (16, the same as the walk in) while he is on the
+--     build tile (blessX/Y stays set after the build until he leaves it,
+--     lgm.c:932-933, 967-971).  He is still ON the pill tile until he
+--     crosses its edge, and the pill is live by then (repaired on arrival),
+--     so a shell in the tile goes off at the centre and kills him.
+--     s_exit = the walk-off steps after which he is still on the tile
+--     (dest_exit_steps: steps from the centre toward his tank's last known
+--     position, until his tile is no longer the pill tile, minus the step
+--     that takes him off).  No known tank position: s_exit = s_arrive -
+--     s_enter (the walk in, mirrored).
+--   * on-tile window, both ends inclusive: [s_enter, s_arrive + 20 + s_exit].
+--     Notes: the sim puts him at the centre on arrival; the engine leaves him
+--     where the arrive test passed (within 16 wu), so the real walk-off can
+--     be one step shorter or longer.  A tank that is dead when he is due to
+--     leave keeps him waiting on the tile (lgm.c:183-185): not counted.
 -- Time units: flight ticks x DEST_LEAD_SCALE = man sim steps, the same
 -- conversion predict_aim uses for the lead.
 -- --------------------------------------------------------------------------
@@ -680,11 +700,57 @@ function M.dest_pill_timeline(lgm_wx, lgm_wy, pill, max_steps)
   return s_enter, nil, false
 end
 
+-- The walk off the pill tile after the build.  Steps the man from the pill
+-- centre toward (home_wx, home_wy) with the same engine-faithful stepper as
+-- the walk in (pill tile blessed: MAN_SPEED_BLESSED on it, like lgmReturn's
+-- man_speed_refuel_base).  Returns
+--   s_exit  = the steps after which he is still on the pill tile (the step
+--             that takes him off it is not counted)
+--   stalled = true when the sim stopped him on the tile (wall on the way,
+--             or EXIT_CAP steps without leaving): s_exit is what he reached
+local EXIT_CAP = 64   -- loop guard only: a half tile at 16 wu/step is <= 12
+function M.dest_exit_steps(pill, home_wx, home_wy)
+  local wx, wy = pill.cx + 0.0, pill.cy + 0.0
+  for k = 1, EXIT_CAP do
+    local nx, ny = M.sim_forward_to_dest(wx, wy, home_wx, home_wy, 1, pill.mx, pill.my)
+    if nx == wx and ny == wy then return k - 1, true end
+    wx, wy = nx, ny
+    if bit.rshift(math.floor(wx), 8) ~= pill.mx or bit.rshift(math.floor(wy), 8) ~= pill.my then
+      return k - 1, false
+    end
+  end
+  return EXIT_CAP, true
+end
+
+-- Per tick, from perception: keep his tank's last known position on h for
+-- the walk-off (the man walks to his tank, lgm.c:910-916).  His tank = the
+-- enemy tank perception tied him to on first sighting (near_tank_idnum).
+--   h.owner_src = "tank"      his tank is visible this tick
+--               = "tank_last" not visible: the position we last saw it at
+--   h.owner_wx/wy stay nil until his tank has been seen once.
+function M.note_owner_pos(h, lgm, tanks)
+  if not h then return end
+  local id = lgm and lgm.near_tank_idnum
+  if id ~= nil and h.owner_id ~= id then
+    h.owner_id, h.owner_wx, h.owner_wy, h.owner_src = id, nil, nil, nil
+  end
+  if id ~= nil and tanks then
+    for _, t in ipairs(tanks) do
+      if t.id == id and t.wx and t.wy then
+        h.owner_wx, h.owner_wy, h.owner_src = t.wx, t.wy, "tank"
+        return
+      end
+    end
+  end
+  if h.owner_wx then h.owner_src = "tank_last" end
+end
+
 -- predict_aim's LGM_DEST_HOLD_FIRE branch.  Aims at the pill centre (the gun
 -- is ready when the timing comes right) and says whether that shot kills:
 --   tier "dest_pill"      -> the blast goes off while he is on the tile: fire
 --   tier "dest_pill_hold" -> it does not ("early": he is not on the tile yet;
---                            "late": he has left): hold the trigger
+--                            "late": he has built and walked off it): hold
+--                            the trigger
 -- Writes the whole timeline to h.dest_timing (overlay, logs).  Returns nil
 -- when the sim cannot walk him to the tile (stalled): predict_aim then uses
 -- the old predictor with no hold.
@@ -717,10 +783,21 @@ function M.predict_dest_hold(tank_wx, tank_wy, lgm, h, pill)
   else
     T_x, s_x, how = T_full, s_full, "dead: flies over, ends at range"
   end
+  -- The walk off the tile after the build (only needed once he arrives in
+  -- the look-ahead: no arrival = no "late").
+  local s_exit, exit_src, exit_stalled
+  if s_arrive then
+    if h and h.owner_wx then
+      s_exit, exit_stalled = M.dest_exit_steps(pill, h.owner_wx, h.owner_wy)
+      exit_src = h.owner_src or "tank_last"
+    else
+      s_exit, exit_src, exit_stalled = s_arrive - (s_enter or s_arrive), "mirror", false
+    end
+  end
   local verdict
   if s_enter == nil or s_x < s_enter then
     verdict = "early"
-  elseif s_arrive and s_x > s_arrive + DWELL_STEPS then
+  elseif s_arrive and s_x > s_arrive + DWELL_STEPS + s_exit then
     verdict = "late"
   else
     verdict = "fire"
@@ -730,7 +807,8 @@ function M.predict_dest_hold(tank_wx, tank_wy, lgm, h, pill)
                       T_full = T_full, T_entry = T_entry, T_x = T_x,
                       s_full = s_full, s_entry = s_entry, s_x = s_x,
                       s_enter = s_enter, s_arrive = s_arrive,
-                      dwell = DWELL_STEPS, sl = sl, D = D }
+                      dwell = DWELL_STEPS, s_exit = s_exit, exit_src = exit_src,
+                      exit_stalled = exit_stalled, sl = sl, D = D }
   end
   return pill.cx + 0.0, pill.cy + 0.0, sl, T_x, D,
          (verdict == "fire") and "dest_pill" or "dest_pill_hold"

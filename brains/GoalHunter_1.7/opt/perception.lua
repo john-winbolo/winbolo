@@ -722,6 +722,9 @@ function M.update(state, world, info)
             if h.dest_log_key ~= log_key then
               h.dest_log_key = log_key
             end
+            -- LGM_DEST_HOLD_FIRE: his tank's last known position, for the
+            -- walk off the pill tile after the build (predict_dest_hold).
+            if C.LGM_DEST_HOLD_FIRE then kill_lgm.note_owner_pos(h, _ent, enemy_tanks) end
           end
         end
         local aim_wx, aim_wy, sl, ft, d_wu, tier = kill_lgm.predict_aim(

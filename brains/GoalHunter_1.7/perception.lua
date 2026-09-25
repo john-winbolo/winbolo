@@ -727,6 +727,9 @@ function M.update(state, world, info)
               h.dest_log_key = log_key
               if BRAIN_DEBUG_MODE then print2(string.format("LGM_DEST_AIM t=%d lgm=%s pos=(%d,%d) %s", now, tostring(_ent.idnum), _ent.wx, _ent.wy, dp and string.format("LOCK pill#%s tile=(%d,%d) along=%.0f perp=%.0f/%.0f speed=%.1f", tostring(dp.id), dp.mx, dp.my, dp.along, dp.perp, dp.tol, ray.speed) or string.format("fallback=%s%s", why, ray and string.format(" heading=(%.2f,%.2f) speed=%.1f", ray.ux, ray.uy, ray.speed) or ""))) end
             end
+            -- LGM_DEST_HOLD_FIRE: his tank's last known position, for the
+            -- walk off the pill tile after the build (predict_dest_hold).
+            if C.LGM_DEST_HOLD_FIRE then kill_lgm.note_owner_pos(h, _ent, enemy_tanks) end
           end
         end
         local aim_wx, aim_wy, sl, ft, d_wu, tier = kill_lgm.predict_aim(
@@ -749,7 +752,7 @@ function M.update(state, world, info)
           local hold_key = dt and (dt.verdict .. "#" .. tostring(h.dest_pill and h.dest_pill.id)) or nil
           if h.dest_hold_log_key ~= hold_key then
             h.dest_hold_log_key = hold_key
-            if dt then print2(string.format("LGM_DEST_HOLD t=%d lgm=%s pill#%s %s %s shell_off=%d steps (T=%d) on_tile=[%s,%s+%d] %s", now, tostring(_ent.idnum), tostring(h.dest_pill and h.dest_pill.id), dt.live and "live" or "dead", dt.verdict == "fire" and "FIRE" or ("holding fire (" .. dt.verdict .. ")"), dt.s_x, dt.T_x, tostring(dt.s_enter), tostring(dt.s_arrive), dt.dwell, dt.how)) end
+            if dt then print2(string.format("LGM_DEST_HOLD t=%d lgm=%s pill#%s %s %s shell_off=%d steps (T=%d) on_tile=[%s,%s+%d+%s] exit=%s%s %s", now, tostring(_ent.idnum), tostring(h.dest_pill and h.dest_pill.id), dt.live and "live" or "dead", dt.verdict == "fire" and "FIRE" or ("holding fire (" .. dt.verdict .. ")"), dt.s_x, dt.T_x, tostring(dt.s_enter), tostring(dt.s_arrive), dt.dwell, tostring(dt.s_exit), tostring(dt.exit_src), dt.exit_stalled and "(stalled)" or "", dt.how)) end
           end
         end
         n_lgm = n_lgm + 1

@@ -9314,9 +9314,24 @@ function Brain.think(info)
             tostring(dt.s_enter), tostring(dt.s_arrive)))
           viz.detail_text(did, string.format(
             "  shell goes off at s_x=%d (T=%d): %s", dt.s_x, dt.T_x, dt.how))
-          viz.detail_text(did, string.format(
-            "  fire iff s_enter <= s_x <= s_arrive + %d (LGM_BUILD_TIME)  -> %s",
-            dt.dwell, dt.verdict == "fire" and "FIRE" or ("HOLDING FIRE (" .. dt.verdict .. ")")))
+          if dt.s_arrive then
+            viz.detail_text(did, string.format(
+              "  walk-off: still on the tile %d steps after the build (%s)%s",
+              dt.s_exit, dt.exit_src == "mirror" and "mirror: s_arrive - s_enter, no tank position"
+                         or dt.exit_src == "tank" and "sim from centre toward his tank"
+                         or "sim from centre toward his tank's last seen position",
+              dt.exit_stalled and " STALLED on the tile" or ""))
+            viz.detail_text(did, string.format(
+              "  fire iff s_enter=%s <= s_x=%d <= s_arrive %d + %d (LGM_BUILD_TIME) + s_exit %d = %d  -> %s",
+              tostring(dt.s_enter), dt.s_x, dt.s_arrive, dt.dwell, dt.s_exit,
+              dt.s_arrive + dt.dwell + dt.s_exit,
+              dt.verdict == "fire" and "FIRE" or ("HOLDING FIRE (" .. dt.verdict .. ")")))
+          else
+            viz.detail_text(did, string.format(
+              "  fire iff s_enter=%s <= s_x=%d (no arrival in look-ahead: no late end)  -> %s",
+              tostring(dt.s_enter), dt.s_x,
+              dt.verdict == "fire" and "FIRE" or ("HOLDING FIRE (" .. dt.verdict .. ")")))
+          end
         else
           viz.detail_text(did, string.format(
             "  T = flight_ticks(sightlen_for(D=%.0fwu)) = %d; sim_T = round(T * %.2f) = %d",
@@ -9502,6 +9517,13 @@ function Brain.think(info)
         else
           what = "old aim (" .. tostring(tier) .. ")"
         end
+        -- The hold verdict's numbers: shell-off step and his on-tile window
+        -- [s_enter, s_arrive + LGM_BUILD_TIME + s_exit].
+        if dt and (tier == "dest_pill_hold" or tier == "dest_pill") then
+          what = what .. string.format(" off=%d on=[%s,%s]", dt.s_x, tostring(dt.s_enter),
+                                       dt.s_arrive and string.format("%d+%d+%d%s", dt.s_arrive, dt.dwell,
+                                         dt.s_exit, dt.exit_src == "mirror" and "m" or "") or "?")
+        end
         local hp = (dp.health or 0) > 0 and ("hp " .. tostring(dp.health)) or "dead"
         local gate = gate_by_id[elm.idnum]
         viz.text(VID, pcx, pcy - 1.2,
@@ -9632,14 +9654,18 @@ function Brain.think(info)
                    string.format("DEST pill#%s perp=%.0f/%.0f", tostring(dp.id), dp.perp, dp.tol),
                    "center", 255, 80, 255, 230)
           -- LGM_DEST_HOLD_FIRE verdict: the shell-off step against his
-          -- on-tile window [s_enter, s_arrive + LGM_BUILD_TIME].
+          -- on-tile window [s_enter, s_arrive + LGM_BUILD_TIME + s_exit]
+          -- (s_exit = walk-off steps still on the tile; exit source tank /
+          -- tank_last / mirror).
           local dt = elm.dest_timing
           if dt then
             local hold = dt.verdict ~= "fire"
             viz.text("kill_lgm_dest_pill", dp.cx / 256, dp.cy / 256 + 0.85,
-                     string.format("%s  off=%d on=[%s,%s+%d]",
+                     string.format("%s  off=%d on=[%s,%s+%d+%s] exit=%s%s",
                                    hold and ("holding fire (" .. dt.verdict .. ")") or "FIRE window",
-                                   dt.s_x, tostring(dt.s_enter), tostring(dt.s_arrive), dt.dwell),
+                                   dt.s_x, tostring(dt.s_enter), tostring(dt.s_arrive), dt.dwell,
+                                   tostring(dt.s_exit), tostring(dt.exit_src),
+                                   dt.exit_stalled and " stalled" or ""),
                      "center", hold and 150 or 255, hold and 150 or 80, 255, 230)
           end
         elseif elm.dest_why then
