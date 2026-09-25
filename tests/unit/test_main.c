@@ -1860,6 +1860,8 @@ static const UnitTestEntry s_tests[] = {
     { "scenario_pack_manifest_agrees",                   run_scenario_pack_manifest_agrees                   },
     { "scenario_pack_replaces_trailer",                  run_scenario_pack_replaces_trailer                  },
     { "scenario_pack_refuses_unscripted",                run_scenario_pack_refuses_unscripted                },
+    { "scenario_pack_script_mod",                        run_scenario_pack_script_mod                        },
+    { "scenario_pack_script_refusals",                   run_scenario_pack_script_refusals                   },
     { "scenario_brain_name_resolves",                    run_scenario_brain_name_resolves                    },
     { "scenario_brain_name_missing",                     run_scenario_brain_name_missing                     },
     { "scenario_brain_name_rejects_path",                run_scenario_brain_name_rejects_path                },

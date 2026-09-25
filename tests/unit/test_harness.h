@@ -3371,6 +3371,8 @@ int run_scenario_pack_writes_container(void);
 int run_scenario_pack_manifest_agrees(void);
 int run_scenario_pack_replaces_trailer(void);
 int run_scenario_pack_refuses_unscripted(void);
+int run_scenario_pack_script_mod(void);
+int run_scenario_pack_script_refusals(void);
 
 /* The brain a scenario names (test_scenario_brain_name.c): the name a team
  * writes reaching the seat as that brain's init.lua, the name this server has

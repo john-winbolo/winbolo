@@ -1612,6 +1612,10 @@ set(CLIENT_SOURCES
     # winbolo.c, imgui_steam_nav.cpp and imgui_settings.cpp call it, and the
     # mobile and wasm builds leave those calls out rather than link it.
     src/gui/sdl3/workshop_sync.c
+    # The Workshop publish window the skin picker opens. Desktop only for the
+    # same reason: imgui_settings.cpp is also compiled for iOS, Android and
+    # wasm, and leaves its calls into this out there.
+    src/gui/sdl3/dialogs/workshop_publish_modal.cpp
     # Smart-ping pie menu and the markers for pings that have arrived.
     src/gui/sdl3/ping_overlay.cpp
     src/gui/sdl3/ping_icons.c
@@ -6214,6 +6218,8 @@ set(_unit_test_names
     scenario_pack_manifest_agrees
     scenario_pack_replaces_trailer
     scenario_pack_refuses_unscripted
+    scenario_pack_script_mod
+    scenario_pack_script_refusals
     scenario_brain_name_resolves
     scenario_brain_name_missing
     scenario_brain_name_rejects_path
