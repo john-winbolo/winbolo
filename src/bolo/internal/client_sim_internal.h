@@ -391,6 +391,7 @@ struct ClientSim {
     uint8_t          lobbyStartCount;
     UploadPolicy     uploadPolicy;      /* server map-upload policy; ALLOW until first event */
     ScriptUploadPolicy scriptUploadPolicy; /* server script-upload policy; ALLOW until first event */
+    bool lobbyScriptSharingOff; /* server refuses script copies; false (sharing) until first event */
     /* Server visibility rules, indexed by ViewCategory. Raw mirror of the
      * lobby-settings event; until one lands these hold the same three a
      * server starts with (clientSimCreate), so what the overview draws

@@ -941,6 +941,15 @@ ScriptUploadPolicy serverSimGetScriptUploadPolicy(const ServerSim *sim) {
     return sim ? sim->scriptUploadPolicy : SCRIPT_UPLOAD_ALLOW;
 }
 
+void serverSimSetScriptSharing(ServerSim *sim, bool on) {
+    if (sim == NULL) return;
+    sim->scriptSharingOff = !on;
+}
+
+bool serverSimGetScriptSharing(const ServerSim *sim) {
+    return sim ? !sim->scriptSharingOff : true;
+}
+
 void serverSimSetScriptUploadDir(ServerSim *sim, const char *dir) {
     if (sim == NULL) return;
     SDL_strlcpy(sim->scriptUploadDir, dir != NULL ? dir : "",

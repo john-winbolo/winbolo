@@ -80,12 +80,27 @@ enum {
      * nothing more for BULK_SCN_DETAILS_NOT_FOUND. So totalSize is 1 to
      * 1 + SCN_DETAILS_MAX, and a file the server does not know still gets an
      * answer the client can stop waiting on. */
-    BULK_KIND_SCENARIO_DETAILS = 9
+    BULK_KIND_SCENARIO_DETAILS = 9,
+    /* Server->client, sent in answer to PACKET_LOBBY_SCRIPT_FETCH_REQ: a copy
+     * of one of the server's script files. The header's gen echoes the
+     * request's reqSeq and its path is the file the request named. The blob
+     * is [status 1] then, for BULK_SCRIPT_FOUND, the file's raw bytes (a
+     * .scenario as its ZIP bytes, a .lua as its source), and nothing more
+     * for any other status. So totalSize is 1 to
+     * 1 + LOBBY_PACKAGE_UPLOAD_MAX_BYTES. */
+    BULK_KIND_SCRIPT_PACKAGE = 10
 };
 
 /* The status byte that opens a BULK_KIND_SCENARIO_DETAILS blob. */
 #define BULK_SCN_DETAILS_FOUND     0
 #define BULK_SCN_DETAILS_NOT_FOUND 1
+
+/* The status byte that opens a BULK_KIND_SCRIPT_PACKAGE blob. */
+#define BULK_SCRIPT_FOUND     0   /* the file's bytes follow               */
+#define BULK_SCRIPT_NOT_FOUND 1   /* no such file, or the map's own script */
+#define BULK_SCRIPT_DISABLED  2   /* the server does not share its scripts */
+#define BULK_SCRIPT_TOO_LARGE 3   /* over LOBBY_PACKAGE_UPLOAD_MAX_BYTES    */
+#define BULK_SCRIPT_BUSY      4   /* asked too soon after the last request */
 
 /* App-level stream header that precedes a blob on CHANNEL_BULK. Big-endian on
  * the wire: kind(1) gen(4) totalSize(4) pathLen(1) path[pathLen]. */

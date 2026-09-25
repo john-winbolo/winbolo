@@ -872,6 +872,22 @@ static inline ServerVoiceMode infoPacketReadVoiceMode(BYTE flags) {
                                               costs is the client's
                                               re-ask. */
 
+#define PACKET_LOBBY_SCRIPT_FETCH_REQ 228    /* client -> server
+                                              { reqSeq 4 BE, fileLen 1,
+                                                file N }
+                                              a copy of one of the server's
+                                              scripts, asked for from the
+                                              lobby. file is a name from the
+                                              scenario listing. The answer
+                                              streams back over CHANNEL_BULK
+                                              as a BULK_KIND_SCRIPT_PACKAGE
+                                              transfer whose gen echoes
+                                              reqSeq and whose path is the
+                                              file. A request that finds the
+                                              client's bulk stream busy is
+                                              dropped, and the client asks
+                                              again. */
+
 #ifndef GAME_VOTE_KIND_BACK_TO_LOBBY
 #define GAME_VOTE_KIND_BACK_TO_LOBBY  1
 #define GAME_VOTE_KIND_SURRENDER      2

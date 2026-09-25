@@ -21,6 +21,14 @@
  *                                      the byte reading as allow
  * run_script_upload_policy_event     — the sim's policy on the event it
  *                                      publishes, and the client's copy of it
+ * run_script_sharing_codec           — the sharing byte behind the policy,
+ *                                      both values back out, the start delay
+ *                                      behind it, and a short body reading as
+ *                                      sharing
+ * run_script_sharing_sim             — a new sim shares, a NULL one answers
+ *                                      yes, and the event carries off
+ * run_script_sharing_client          — the client reads sharing before any
+ *                                      event, and what each event says after
  *
  * Whether an uploaded map's script runs under each policy is in
  * test_scenario_packed_map.c, beside the fixtures that case needs.
@@ -52,6 +60,10 @@
  */
 #define SUP_UPLOAD_POLICY_OFFSET        58
 #define SUP_SCRIPT_UPLOAD_POLICY_OFFSET 59
+/* + scriptUploadPolicy 1                                         = 60 */
+#define SUP_SCRIPT_SHARING_OFFSET       60
+/* + scriptSharing 1, then lobbyStartDelay 4 big-endian           = 61 */
+#define SUP_START_DELAY_OFFSET          61
 
 /* ── 1. The word ──────────────────────────────────────────────────── */
 
@@ -217,5 +229,148 @@ int run_script_upload_policy_event(void) {
 
     clientSimDestroy(cs);
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* ── 4. Whether players may copy the server's scripts ─────────────── */
+
+int run_script_sharing_codec(void) {
+    ControlEncodeBodyFn benc =
+        transportControlCodecBodyEncoder(CTRL_LOBBY_SETTINGS);
+    ControlDecodeBodyFn bdec =
+        transportControlCodecBodyDecoder(CTRL_LOBBY_SETTINGS);
+    ControlEvent in;
+    ControlEvent out;
+    uint8_t      body[MAX_CONTROL_PACKET];
+    size_t       len = 0;
+    int          on;
+
+    UT_ASSERT(benc != NULL && bdec != NULL);
+
+    /* Both values, each with a start delay whose four bytes all differ, so a
+       byte left out or written twice ahead of it shows as a wrong delay. */
+    for (on = 0; on <= 1; on++) {
+        memset(&in, 0, sizeof(in));
+        in.type = CTRL_LOBBY_SETTINGS;
+        in.u.lobbySettings.scriptUploadPolicy = SCRIPT_UPLOAD_PERSIST;
+        in.u.lobbySettings.scriptSharing      = on ? true : false;
+        in.u.lobbySettings.lobbyStartDelay    = 0x0A0B0C0D;
+        UT_ASSERT(benc(&in, NULL, body, sizeof(body), &len) == ENCODE_OK);
+        UT_ASSERT(len > SUP_START_DELAY_OFFSET + 3);
+
+        UT_ASSERT_MSG(body[SUP_SCRIPT_UPLOAD_POLICY_OFFSET] == 0x02,
+                      "byte %d (the script upload policy) is 0x%02X, "
+                      "expected 0x02",
+                      SUP_SCRIPT_UPLOAD_POLICY_OFFSET,
+                      (unsigned)body[SUP_SCRIPT_UPLOAD_POLICY_OFFSET]);
+        UT_ASSERT_MSG(body[SUP_SCRIPT_SHARING_OFFSET] == (uint8_t)on,
+                      "byte %d (script sharing) is 0x%02X, expected 0x%02X",
+                      SUP_SCRIPT_SHARING_OFFSET,
+                      (unsigned)body[SUP_SCRIPT_SHARING_OFFSET], (unsigned)on);
+        UT_ASSERT_MSG(body[SUP_START_DELAY_OFFSET]     == 0x0A &&
+                      body[SUP_START_DELAY_OFFSET + 1] == 0x0B &&
+                      body[SUP_START_DELAY_OFFSET + 2] == 0x0C &&
+                      body[SUP_START_DELAY_OFFSET + 3] == 0x0D,
+                      "the start delay is not at byte %d behind the sharing "
+                      "byte", SUP_START_DELAY_OFFSET);
+
+        memset(&out, 0, sizeof(out));
+        UT_ASSERT(bdec(body, len, &out));
+        UT_ASSERT_MSG(out.u.lobbySettings.scriptSharing == (on ? true : false),
+                      "script sharing %d came back as %d", on,
+                      (int)out.u.lobbySettings.scriptSharing);
+        UT_ASSERT_MSG(out.u.lobbySettings.scriptUploadPolicy ==
+                          SCRIPT_UPLOAD_PERSIST,
+                      "the script upload policy ahead of it came back as %d",
+                      (int)out.u.lobbySettings.scriptUploadPolicy);
+        UT_ASSERT_MSG(out.u.lobbySettings.lobbyStartDelay == 0x0A0B0C0D,
+                      "the start delay behind it came back as 0x%08X",
+                      (unsigned)out.u.lobbySettings.lobbyStartDelay);
+    }
+
+    /* A body cut off right before the byte decodes, keeps the policy ahead
+       of it, and reads as sharing. The last body encoded carries sharing on,
+       so encode one with it off first: a decoder that read past the cut
+       would then show off. */
+    memset(&in, 0, sizeof(in));
+    in.type = CTRL_LOBBY_SETTINGS;
+    in.u.lobbySettings.scriptUploadPolicy = SCRIPT_UPLOAD_PERSIST;
+    in.u.lobbySettings.scriptSharing      = false;
+    UT_ASSERT(benc(&in, NULL, body, sizeof(body), &len) == ENCODE_OK);
+    memset(&out, 0, sizeof(out));
+    UT_ASSERT_MSG(bdec(body, SUP_SCRIPT_SHARING_OFFSET, &out),
+                  "a body that stops before the sharing byte did not decode");
+    UT_ASSERT_MSG(out.u.lobbySettings.scriptUploadPolicy ==
+                      SCRIPT_UPLOAD_PERSIST,
+                  "a short body lost the script upload policy ahead of the cut");
+    UT_ASSERT_MSG(out.u.lobbySettings.scriptSharing == true,
+                  "a body with no sharing byte read as not sharing");
+    return 0;
+}
+
+int run_script_sharing_sim(void) {
+    BYTE         emap[6000] = E_MAP;
+    ServerSim   *sim;
+    ControlEvent evt;
+
+    sim = serverSimCreateCompressed(emap, 5097, "Everard Island",
+                                    gameOpen, false, 0, -1);
+    UT_ASSERT(sim != NULL);
+    serverSimSetLobbyEnabled(sim, true);
+
+    /* A new sim shares, and a NULL one answers yes. */
+    UT_ASSERT_MSG(serverSimGetScriptSharing(sim) == true,
+                  "a new sim does not share its scripts");
+    UT_ASSERT(serverSimGetScriptSharing(NULL) == true);
+    serverSimSetScriptSharing(NULL, false);  /* NULL-safe */
+
+    memset(&evt, 0, sizeof(evt));
+    serverSimFillLobbySettingsEvent(sim, &evt);
+    UT_ASSERT_MSG(evt.u.lobbySettings.scriptSharing == true,
+                  "a new sim's settings do not carry sharing");
+
+    serverSimSetScriptSharing(sim, false);
+    UT_ASSERT(serverSimGetScriptSharing(sim) == false);
+    memset(&evt, 0, sizeof(evt));
+    evt.u.lobbySettings.scriptSharing = true;
+    serverSimFillLobbySettingsEvent(sim, &evt);
+    UT_ASSERT_MSG(evt.u.lobbySettings.scriptSharing == false,
+                  "the published settings carry sharing after it was "
+                  "turned off");
+
+    serverSimSetScriptSharing(sim, true);
+    UT_ASSERT(serverSimGetScriptSharing(sim) == true);
+
+    serverSimDestroy(sim);
+    return 0;
+}
+
+int run_script_sharing_client(void) {
+    ClientSim   *cs;
+    ControlEvent evt;
+
+    /* Sharing before any event, as for a NULL client. */
+    cs = clientSimAlloc();
+    UT_ASSERT(cs != NULL);
+    clientSimCreate(cs);
+    UT_ASSERT_MSG(clientSimGetScriptSharing(cs) == true,
+                  "a client with no settings event reads not sharing");
+    UT_ASSERT(clientSimGetScriptSharing(NULL) == true);
+
+    /* A zeroed event carrying only the flag, as the policy case above
+       sends. */
+    memset(&evt, 0, sizeof(evt));
+    evt.type = CTRL_LOBBY_SETTINGS;
+    evt.u.lobbySettings.scriptSharing = false;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT_MSG(clientSimGetScriptSharing(cs) == false,
+                  "the client did not follow the server's sharing off");
+
+    evt.u.lobbySettings.scriptSharing = true;
+    clientSimApplyControl(cs, &evt);
+    UT_ASSERT_MSG(clientSimGetScriptSharing(cs) == true,
+                  "the client did not follow the server's sharing on");
+
+    clientSimDestroy(cs);
     return 0;
 }

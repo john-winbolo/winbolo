@@ -3114,6 +3114,27 @@
 #define STR_DLGLOBBY_SCRIPT_ERR_KIND             2650
 #define STR_DLGLOBBY_SCRIPT_ERR_BOUND            2651
 
+/* The hosting setting that lets players save a copy of this server's mods
+ * and scenarios, and its tooltip. */
+#define STR_DLGSETTINGS_HOSTING_SHARESCRIPTS     2652
+#define STR_DLGSETTINGS_HOSTING_SHARESCRIPTS_TIP 2653
+
+/* The Mods chooser's Save a copy arrow on a row only the server holds: its
+ * tooltip, the three reasons it is greyed (a spectator, a server that does
+ * not share its scripts, a copy already on its way), and the notes a row
+ * shows for five seconds after a press that saved nothing: the file is
+ * already here, the server no longer has it, it is too large, the server
+ * did not answer, or it could not be written to the Mods folder. */
+#define STR_DLGLOBBY_SCENARIO_SAVE               2654
+#define STR_DLGLOBBY_SCENARIO_SAVE_SPECTATOR     2655
+#define STR_DLGLOBBY_SCENARIO_SAVE_SHARING_OFF   2656
+#define STR_DLGLOBBY_SCENARIO_SAVE_INFLIGHT      2657
+#define STR_DLGLOBBY_SCENARIO_SAVE_HAVE          2658
+#define STR_DLGLOBBY_SCENARIO_SAVE_NOT_FOUND     2659
+#define STR_DLGLOBBY_SCENARIO_SAVE_TOO_LARGE     2660
+#define STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER     2661
+#define STR_DLGLOBBY_SCENARIO_SAVE_WRITE         2662
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

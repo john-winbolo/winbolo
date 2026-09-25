@@ -122,6 +122,7 @@ typedef struct {
   /* Absolute directory for PERSIST-policy uploaded scripts. NULL = the
    * built-in "<mapDirRoot>/Uploads/Scripts". */
   const char    *scriptUploadDir;
+  bool           noScriptSharing; /* refuse players' requests for script copies; zero-init shares */
 
   /* Directory ALLOW-policy uploaded scripts land in for the session, emptied
    * at startup, at shutdown and when the lobby resets. NULL = the built-in
