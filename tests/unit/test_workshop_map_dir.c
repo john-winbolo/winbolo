@@ -19,6 +19,7 @@
 #include "global.h"
 #include "server_sim.h"
 #include "server/sim/server_sim_shared.h" /* serverSimResolveMapPath */
+#include "transport_udp.h" /* transportUdpClientUseLocalRelPath */
 #include "test_harness.h"
 
 /* Room for everything these cases put in a directory, and one over. */
@@ -210,5 +211,72 @@ int run_workshop_map_dir_absent(void) {
     UT_ASSERT(isFolder);
 
     serverSimDestroy(sim);
+    return 0;
+}
+
+/* The client's half: the path a map upload's USE_LOCAL pre-check names. A
+   map under data/maps is named relative to it, and one in this computer's
+   Workshop directory as "Workshop/<name>", which the server resolves into its
+   own Workshop directory. Only strings are compared; no file is read. */
+int run_workshop_use_local_rel_path(void) {
+    char ws[FILENAME_MAX];
+    char wsBack[FILENAME_MAX];
+    char wsSlash[FILENAME_MAX];
+    char path[FILENAME_MAX];
+    char rel[256];
+    char *p;
+
+    UT_ASSERT(utScratchPath(ws, sizeof(ws), "workshop"));
+    SDL_strlcpy(wsBack, ws, sizeof(wsBack));
+    for (p = wsBack; *p; p++) {
+        if (*p == '/') *p = '\\';
+    }
+    SDL_snprintf(wsSlash, sizeof(wsSlash), "%s/", ws);
+
+    /* A map under data/maps, as before. */
+    UT_ASSERT(transportUdpClientUseLocalRelPath("data/maps/A/b.map", ws,
+                                                rel, sizeof(rel)));
+    UT_ASSERT_MSG(strcmp(rel, "A/b.map") == 0, "data/maps gave '%s'", rel);
+
+    /* A map in the Workshop directory. */
+    SDL_snprintf(path, sizeof(path), "%s/b.map", ws);
+    UT_ASSERT(transportUdpClientUseLocalRelPath(path, ws, rel, sizeof(rel)));
+    UT_ASSERT_MSG(strcmp(rel, "Workshop/b.map") == 0,
+                  "'%s' gave '%s'", path, rel);
+
+    /* The same with Windows separators throughout, in the path and in the
+       directory, and with the directory's trailing separator. */
+    SDL_snprintf(path, sizeof(path), "%s\\b.map", wsBack);
+    UT_ASSERT(transportUdpClientUseLocalRelPath(path, wsBack, rel, sizeof(rel)));
+    UT_ASSERT_MSG(strcmp(rel, "Workshop/b.map") == 0,
+                  "'%s' gave '%s'", path, rel);
+    UT_ASSERT(transportUdpClientUseLocalRelPath(path, wsSlash, rel, sizeof(rel)));
+    UT_ASSERT_MSG(strcmp(rel, "Workshop/b.map") == 0,
+                  "'%s' against '%s' gave '%s'", path, wsSlash, rel);
+
+    /* An absolute path somewhere else is under neither. */
+    UT_ASSERT(!transportUdpClientUseLocalRelPath("/somewhere/else/b.map", ws,
+                                                 rel, sizeof(rel)));
+    UT_ASSERT_MSG(rel[0] == '\0', "an unrelated path gave '%s'", rel);
+
+    /* A directory that only starts with the Workshop directory's name. */
+    SDL_snprintf(path, sizeof(path), "%ss/b.map", ws);
+    UT_ASSERT(!transportUdpClientUseLocalRelPath(path, ws, rel, sizeof(rel)));
+    UT_ASSERT_MSG(rel[0] == '\0', "'%s' gave '%s'", path, rel);
+
+    /* With no Workshop directory, a Workshop path is not offered. */
+    SDL_snprintf(path, sizeof(path), "%s/b.map", ws);
+    UT_ASSERT(!transportUdpClientUseLocalRelPath(path, NULL, rel, sizeof(rel)));
+    UT_ASSERT(rel[0] == '\0');
+    UT_ASSERT(!transportUdpClientUseLocalRelPath(path, "", rel, sizeof(rel)));
+    UT_ASSERT(rel[0] == '\0');
+
+    /* The directory itself, and the directory with only a separator after
+       it, name no file. */
+    UT_ASSERT(!transportUdpClientUseLocalRelPath(ws, ws, rel, sizeof(rel)));
+    UT_ASSERT(rel[0] == '\0');
+    UT_ASSERT(!transportUdpClientUseLocalRelPath(wsSlash, ws, rel, sizeof(rel)));
+    UT_ASSERT(rel[0] == '\0');
+
     return 0;
 }

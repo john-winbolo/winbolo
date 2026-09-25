@@ -2016,6 +2016,8 @@ static const UnitTestEntry s_tests[] = {
     { "workshop_map_dir_offered_at_root",        run_workshop_map_dir_offered_at_root        },
     { "workshop_map_dir_resolve",                run_workshop_map_dir_resolve                },
     { "workshop_map_dir_absent",                 run_workshop_map_dir_absent                 },
+    { "workshop_use_local_rel_path",             run_workshop_use_local_rel_path             },
+    { "workshop_use_local",                      run_workshop_use_local                      },
 #ifdef WB_NETDEBUG
     { "netdebug_commanded_vs_executed",          run_netdebug_commanded_vs_executed          },
     { "netdebug_overshoot_under_loss",           run_netdebug_overshoot_under_loss           },

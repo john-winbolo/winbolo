@@ -5815,6 +5815,55 @@ bool transportUdpClientStartLobbyMapUploadFromBytes(Transport *t,
                                  /*useLocalLen=*/0);
 }
 
+/* The path the USE_LOCAL pre-check names, which is where the server would
+ * find its own copy of the file. Both prefixes are accepted:
+ *   - "data/maps/Foo/Bar.map" gives "Foo/Bar.map", the scheme
+ *     PACKET_LOBBY_MAP_PREVIEW_REQ uses;
+ *   - "<workshopDir>/Bar.map" gives "Workshop/Bar.map", which the server
+ *     resolves into its own Workshop directory.
+ * The local FS provider hands us either; on Windows the separators may be
+ * backslashes. A path under neither gets no relPath, and the upload skips
+ * USE_LOCAL and goes straight to BEGIN. */
+bool transportUdpClientUseLocalRelPath(const char *localFilePath,
+                                       const char *workshopDir,
+                                       char *out, size_t outLen) {
+    char normalized[FILENAME_MAX];
+    char *p;
+    const char *kPrefix = "data/maps/";
+    const size_t kPrefixLen = 10;
+
+    if (out == NULL || outLen == 0) return false;
+    out[0] = '\0';
+    if (localFilePath == NULL) return false;
+
+    SDL_strlcpy(normalized, localFilePath, sizeof(normalized));
+    for (p = normalized; *p; p++) {
+        if (*p == '\\') *p = '/';
+    }
+    if (strncmp(normalized, kPrefix, kPrefixLen) == 0) {
+        SDL_strlcpy(out, normalized + kPrefixLen, outLen);
+    } else if (workshopDir != NULL && workshopDir[0] != '\0') {
+        char   ws[FILENAME_MAX];
+        size_t wsLen;
+        SDL_strlcpy(ws, workshopDir, sizeof(ws));
+        for (p = ws; *p; p++) {
+            if (*p == '\\') *p = '/';
+        }
+        wsLen = strlen(ws);
+        while (wsLen > 0 && ws[wsLen - 1] == '/') ws[--wsLen] = '\0';
+        if (wsLen > 0 && strncmp(normalized, ws, wsLen) == 0 &&
+            normalized[wsLen] == '/' && normalized[wsLen + 1] != '\0') {
+            /* A name too long for out is not offered at all: a cut one
+             * would name some other file. */
+            if ((size_t)SDL_snprintf(out, outLen, "Workshop/%s",
+                                     normalized + wsLen + 1) >= outLen) {
+                out[0] = '\0';
+            }
+        }
+    }
+    return out[0] != '\0';
+}
+
 bool transportUdpClientStartLobbyMapUploadFromPath(Transport *t,
                                                     const char *localFilePath) {
     TransportUdpClientCtx *c;
@@ -5856,27 +5905,15 @@ bool transportUdpClientStartLobbyMapUploadFromPath(Transport *t,
         SDL_strlcpy(nameBuf, base, sizeof(nameBuf));
     }
 
-    /* Derive a data/maps-relative path for the USE_LOCAL pre-check.
-     * Local FS provider hands us paths like "data/maps/Foo/Bar.map";
-     * on Windows the separators may be backslashes. Strip the prefix
-     * to get a path like "Foo/Bar.map" — same scheme
-     * PACKET_LOBBY_MAP_PREVIEW_REQ uses. If the path doesn't sit
-     * under data/maps/, skip USE_LOCAL and go straight to BEGIN. */
-    relPath[0] = '\0';
-    {
-        char normalized[FILENAME_MAX];
-        char *p;
-        const char *kPrefix = "data/maps/";
-        const size_t kPrefixLen = 10;
-        SDL_strlcpy(normalized, localFilePath, sizeof(normalized));
-        for (p = normalized; *p; p++) {
-            if (*p == '\\') *p = '/';
-        }
-        if (strncmp(normalized, kPrefix, kPrefixLen) == 0) {
-            SDL_strlcpy(relPath, normalized + kPrefixLen, sizeof(relPath));
-        }
+    haveRelPath = transportUdpClientUseLocalRelPath(
+        localFilePath,
+        c->clientSim != NULL ? c->clientSim->workshopMapDir : NULL,
+        relPath, sizeof(relPath));
+    if (haveRelPath) {
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+                    "map upload: offering '%s' as USE_LOCAL '%s' before "
+                    "sending it", nameBuf, relPath);
     }
-    haveRelPath = (relPath[0] != '\0');
     /* What the pre-check asks about is the map, not the file. A packed map
        carries a scenario container after its terminator, and the server
        answers from serverSimReadMapFile, which trims there — so a whole-file

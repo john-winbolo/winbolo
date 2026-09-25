@@ -1689,6 +1689,17 @@ bool gameFrontSetDlgState(openingStates newState) {
       bool joined = FALSE;
       humanSim = clientSimAlloc(); clientSimCreate(humanSim);
       clientSimSetIsLanOnly(humanSim, s_isLanOnly);
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__) && !defined(__EMSCRIPTEN__)
+      /* A map picked from the Workshop directory is offered to the server
+         as "Workshop/<name>" first, so a server holding the same file loads
+         its own copy rather than taking an upload. Mobile has no Workshop. */
+      {
+        char workshopDir[FILENAME_MAX];
+        if (scenarioHostWorkshopDir(workshopDir, sizeof(workshopDir))) {
+          clientSimSetWorkshopMapDir(humanSim, workshopDir);
+        }
+      }
+#endif
       frontEndSetActiveClientSim(humanSim);
       if (gameFrontRemeber) clientSimSetMyLastPlayerName(humanSim, gameFrontName);
       fprintf(stderr, "[gameFront] openUdpJoin: addr=%s port=%u myPort=%u\n",
@@ -2005,6 +2016,15 @@ bool gameFrontSetDlgState(openingStates newState) {
           humanSim = clientSimAlloc();
           clientSimCreate(humanSim);
           clientSimSetIsLanOnly(humanSim, s_isLanOnly);
+#if !defined(__ANDROID__) && !defined(__IPHONEOS__) && !defined(__EMSCRIPTEN__)
+          /* The Workshop directory, as on the join path. */
+          {
+            char workshopDir[FILENAME_MAX];
+            if (scenarioHostWorkshopDir(workshopDir, sizeof(workshopDir))) {
+              clientSimSetWorkshopMapDir(humanSim, workshopDir);
+            }
+          }
+#endif
           frontEndSetActiveClientSim(humanSim);
 
           /* A game that skips the lobby starts its round inside the startup

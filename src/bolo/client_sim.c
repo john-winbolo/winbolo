@@ -3497,6 +3497,15 @@ uint8_t  clientSimGetLobbyMapUploadStatus(const ClientSim *cs)     { return cs->
 uint8_t  clientSimGetLobbyMapUploadRejectCode(const ClientSim *cs) { return cs->lobbyMapUploadRejectCode; }
 const char *clientSimGetLobbyMapUploadFinalPath(const ClientSim *cs){ return cs->lobbyMapUploadFinalPath; }
 
+void clientSimSetWorkshopMapDir(ClientSim *cs, const char *dir) {
+  if (cs == NULL) return;
+  if (dir != NULL && dir[0] != '\0') {
+    SDL_strlcpy(cs->workshopMapDir, dir, sizeof(cs->workshopMapDir));
+  } else {
+    cs->workshopMapDir[0] = '\0';
+  }
+}
+
 uint8_t clientSimGetLobbyUploadKind(const ClientSim *cs) {
   if (cs == NULL) return UPLOAD_KIND_MAP;
   return cs->lobbyUploadKind;

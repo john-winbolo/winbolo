@@ -3732,6 +3732,14 @@ int run_editor_pack_survives_map_save(void);
 int run_workshop_map_dir_offered_at_root(void);
 int run_workshop_map_dir_resolve(void);
 int run_workshop_map_dir_absent(void);
+/* The client's side of it (test_workshop_map_dir.c): a map upload's USE_LOCAL
+ * pre-check names a map in the Workshop directory "Workshop/<name>", and one
+ * under data/maps relative to data/maps, with either separator. */
+int run_workshop_use_local_rel_path(void);
+/* And end to end (test_loopback_upload.c): with the server and the client
+ * sharing a Workshop directory, uploading a map from it finishes through
+ * USE_LOCAL with nothing sent on the bulk channel. */
+int run_workshop_use_local(void);
 
 /* The last status tile frontEndStatusTank was handed by the stub in
  * test_stubs.c: the 1-based player number, and the tankAlliance as an int so

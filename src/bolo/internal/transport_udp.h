@@ -355,6 +355,15 @@ void transportUdpClientSendLobbyMapUseLocal(Transport *t, uint32_t totalLen,
  * progress via the lobbyMapUpload* status fields on ClientSim. */
 bool transportUdpClientStartLobbyMapUploadFromPath(Transport *t,
                                                     const char *localFilePath);
+/* The path the map upload's USE_LOCAL pre-check names for localFilePath:
+ * "data/maps/<rest>" gives "<rest>", and "<workshopDir>/<rest>" gives
+ * "Workshop/<rest>". Either separator is accepted in both arguments, and
+ * workshopDir may be NULL or "". Returns false with out "" for a path under
+ * neither, or one that does not fit. Exposed so a unit test can hold the
+ * derivation to its cases without a connected transport. */
+bool transportUdpClientUseLocalRelPath(const char *localFilePath,
+                                       const char *workshopDir,
+                                       char *out, size_t outLen);
 bool transportUdpClientStartLobbyMapUploadFromBytes(Transport *t,
                                                      const uint8_t *buf,
                                                      size_t len,

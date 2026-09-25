@@ -6370,6 +6370,8 @@ set(_unit_test_names
     workshop_map_dir_offered_at_root
     workshop_map_dir_resolve
     workshop_map_dir_absent
+    workshop_use_local_rel_path
+    workshop_use_local
 )
 # wire_corpus_capture is intentionally omitted: it runs a loopback session to
 # regenerate fixtures and is invoked on demand via
