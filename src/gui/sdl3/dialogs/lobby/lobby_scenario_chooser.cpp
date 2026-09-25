@@ -1765,10 +1765,13 @@ static void lobbyScenarioSave(ClientSim *cs, const LobbyScenarioRow *row) {
         lobbyScenarioSaveNote(row->file, STR_DLGLOBBY_SCENARIO_SAVE_HAVE);
         return;
     }
+    /* The transport refuses a send only while another copy is on its way,
+       which is the one reason the arrow can be pressed and nothing sent:
+       the row says that, not that the server did not answer. */
     if (!clientSimNetSendLobbyScriptFetch(cs, row->file)) {
         WB_LOG_WARN(WB_LOG_CAT_GUI, "[SCRIPTSAVE] '%s' was not asked for",
                     row->file);
-        lobbyScenarioSaveNote(row->file, STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER);
+        lobbyScenarioSaveNote(row->file, STR_DLGLOBBY_SCENARIO_SAVE_INFLIGHT);
         return;
     }
     s_saving = true;
