@@ -95,6 +95,9 @@ bool lv_g_show_game_info_window = true;
 bool lv_g_show_events_window = true;
 bool lv_g_show_item_info_window = true;
 bool lv_g_show_comments_window = false;  /* Opt-in: WBN comments are noisy if you don't want them */
+/* The scenario panel only draws while a recording has a list for it, so a
+   plain recording never shows it whatever this says. */
+bool lv_g_show_scenario_panel_window = true;
 bool lv_g_reset_window_positions = false;
 
 /* Options state */
@@ -138,6 +141,9 @@ void lv_imgui_main_menu_init(struct LogViewerState *lv) {
 
     lv_platform_config_get_string("LOGVIEWER", "Window.Comments.Visible", "No", val, sizeof(val));
     lv_g_show_comments_window = (val[0] == 'Y' || val[0] == 'y');
+
+    lv_platform_config_get_string("LOGVIEWER", "Window.ScenarioPanel.Visible", "Yes", val, sizeof(val));
+    lv_g_show_scenario_panel_window = (val[0] == 'Y' || val[0] == 'y');
 }
 
 void lv_imgui_main_menu_save(void) {
@@ -151,6 +157,7 @@ void lv_imgui_main_menu_save(void) {
     lv_platform_config_set_string("LOGVIEWER", "Window.GameInformation.Visible", lv_g_show_game_info_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.ItemInformation.Visible", lv_g_show_item_info_window ? "Yes" : "No");
     lv_platform_config_set_string("LOGVIEWER", "Window.Comments.Visible", lv_g_show_comments_window ? "Yes" : "No");
+    lv_platform_config_set_string("LOGVIEWER", "Window.ScenarioPanel.Visible", lv_g_show_scenario_panel_window ? "Yes" : "No");
 }
 
 static void zoom_at_center(int stepIndex) {
@@ -446,6 +453,10 @@ int lv_imgui_main_menu_bar(void) {
             }
             if (ImGui::MenuItem(langGetText(STR_LV_WIN_COMMENTS), "Ctrl+5", lv_g_show_comments_window)) {
                 lv_g_show_comments_window = !lv_g_show_comments_window;
+                clicked = 1;
+            }
+            if (ImGui::MenuItem(langGetText(STR_SCNPANEL_SETTINGS_TITLE), NULL, lv_g_show_scenario_panel_window)) {
+                lv_g_show_scenario_panel_window = !lv_g_show_scenario_panel_window;
                 clicked = 1;
             }
             ImGui::Separator();

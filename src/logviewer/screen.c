@@ -799,6 +799,16 @@ void lv_windowAddEvent(int eventType, char *msg);
  * so what a store holds at a time is what the last record for its key up to
  * that time left there.
  *
+ * Each slot's lobby team rides the same index, from log_TeamSet, because a
+ * team panel is drawn for the players on that team and the snapshots do not
+ * carry the team either. Only the store is shared: the newswire line a
+ * log_TeamSet posts stays in playback's own case, so a rebuild posts none.
+ * The walk indexes framed files only, so a v1 log's log_TeamSet records are
+ * never indexed and its teams are lost at the first seek; a v1 log carries no
+ * panels for a team to pick between. A team given before the recording
+ * starts (a log with no lobby, or a spectator's seed) is not known until the
+ * next log_TeamSet for that slot.
+ *
  * Playback applies each record as it passes it. The snapshots carry none of
  * this, so a jump of the playhead cannot be followed by playback alone. The
  * load walk checks every one of these records once and indexes the ones that
@@ -810,14 +820,15 @@ void lv_windowAddEvent(int eventType, char *msg);
  * fails a check is consumed and changes nothing. */
 
 /* The keys, one per store a record can fill: the panel rows, the slot
-   scores, the team scores for teams 1 to 15, the announcement and the
-   markers. */
+   scores, the team scores for teams 1 to 15, the announcement, the markers
+   and each slot's team. */
 #define LV_PRES_KEY_PANEL         0
 #define LV_PRES_KEY_PLAYER_SCORE  (LV_PRES_KEY_PANEL + LV_PRES_PANEL_ROWS)
 #define LV_PRES_KEY_TEAM_SCORE    (LV_PRES_KEY_PLAYER_SCORE + MAX_TANKS)
 #define LV_PRES_KEY_ANNOUNCE      (LV_PRES_KEY_TEAM_SCORE + LV_PRES_TEAMS - 1)
 #define LV_PRES_KEY_MARKER        (LV_PRES_KEY_ANNOUNCE + 1)
-#define LV_PRES_KEYS              (LV_PRES_KEY_MARKER + SCN_MARKERS_MAX)
+#define LV_PRES_KEY_SLOT_TEAM     (LV_PRES_KEY_MARKER + SCN_MARKERS_MAX)
+#define LV_PRES_KEYS              (LV_PRES_KEY_SLOT_TEAM + MAX_TANKS)
 
 /* A key rides in a byte. */
 BOLO_STATIC_ASSERT(LV_PRES_KEYS <= 256, lv_pres_key_fits_a_byte);
@@ -902,7 +913,8 @@ static int lv_presPanelRow(BYTE destTeam, BYTE destPlayer) {
   return destTeam;
 }
 
-/* Read one of the four records' payloads from the reader's position into *p.
+/* Read one of the four records' payloads, or a log_TeamSet's, from the
+ * reader's position into *p.
  * Entered just past the event's code byte and its framed length; consumes
  * what the record's own lengths say, whatever they say, so the stream stays
  * aligned whatever the record held. The layouts are
@@ -950,6 +962,10 @@ static void lv_presReadPayload(BYTE code, LvPresPayload *p) {
        x, y, slot and colour. */
     p->whole = logReadBytes(p->hdr, 4) == 4;
     break;
+  case log_TeamSet:
+    /* slot, then the team: two bytes and nothing after them. */
+    p->whole = logReadBytes(p->hdr, 2) == 2;
+    return;
   default:
     return;
   }
@@ -1011,6 +1027,12 @@ static int lv_presCheck(const LvPresPayload *p) {
       return -1;
     }
     return LV_PRES_KEY_MARKER + h[0];
+  case log_TeamSet:
+    /* A slot, and a team from 0 (none) to 15. */
+    if (h[0] >= MAX_TANKS || h[1] >= LV_PRES_TEAMS) {
+      return -1;
+    }
+    return LV_PRES_KEY_SLOT_TEAM + h[0];
   default:
     return -1;
   }
@@ -1025,6 +1047,9 @@ static void lv_presApply(const LvPresPayload *p, int key, uint32_t ms) {
   switch (p->code) {
   case log_ScnPanel: {
     LvPresPanelRow *row = &g_lv->pres.panels[key - LV_PRES_KEY_PANEL];
+    /* A clear is a write too: it replaces whatever an older row showed. */
+    row->written = TRUE;
+    row->ms      = ms;
     if (p->len == 0) {
       row->set = FALSE;
       row->len = 0;
@@ -1077,6 +1102,12 @@ static void lv_presApply(const LvPresPayload *p, int key, uint32_t ms) {
     m->colour     = p->data[3];
     return;
   }
+  case log_TeamSet: {
+    BYTE slot = (BYTE)(key - LV_PRES_KEY_SLOT_TEAM);
+    g_lv->pres.team[slot]      = h[1];
+    g_lv->pres.teamKnown[slot] = TRUE;
+    return;
+  }
   default:
     return;
   }
@@ -1092,6 +1123,86 @@ static void lv_presReadRecord(BYTE code, uint32_t ms) {
   if (key >= 0) {
     lv_presApply(&s_presPayload, key, ms);
   }
+}
+
+/* Store the team a log_TeamSet playback has already read, as at time ms, if
+ * it passes the checks the walk makes. The record's bytes are read and its
+ * newswire line posted by playback's own case; this is the store step only,
+ * the same one a rebuild takes. */
+static void lv_presStoreTeam(BYTE slot, BYTE team, uint32_t ms) {
+  int key;
+
+  memset(s_presPayload.hdr, 0, sizeof(s_presPayload.hdr));
+  s_presPayload.code   = log_TeamSet;
+  s_presPayload.whole  = TRUE;
+  s_presPayload.len    = 0;
+  s_presPayload.hdr[0] = slot;
+  s_presPayload.hdr[1] = team;
+  key = lv_presCheck(&s_presPayload);
+  if (key >= 0) {
+    lv_presApply(&s_presPayload, key, ms);
+  }
+}
+
+bool lv_screenGetSlotTeam(BYTE slot, BYTE *team) {
+  if (g_lv == NULL || slot >= MAX_TANKS || !g_lv->pres.teamKnown[slot]) {
+    return FALSE;
+  }
+  if (team != NULL) {
+    *team = g_lv->pres.team[slot];
+  }
+  return TRUE;
+}
+
+BYTE lv_screenFollowedSlot(void) {
+  if (g_lv == NULL) {
+    return NEUTRAL;
+  }
+  return g_lv->gameView ? g_lv->cameraSlot : lv_playersGetSelf();
+}
+
+const LvPresPanelRow *lv_screenChoosePanelRow(const LvPresPanelRow *everyone,
+                                              const LvPresPanelRow *team,
+                                              const LvPresPanelRow *slot) {
+  /* In the order a tie goes: a later candidate wins only on a greater ms. */
+  const LvPresPanelRow *order[3];
+  const LvPresPanelRow *best = NULL;
+  int                   i;
+
+  order[0] = slot;
+  order[1] = team;
+  order[2] = everyone;
+  for (i = 0; i < 3; i++) {
+    const LvPresPanelRow *row = order[i];
+    if (row == NULL || !row->written) {
+      continue;
+    }
+    if (best == NULL || row->ms > best->ms) {
+      best = row;
+    }
+  }
+  return (best != NULL && best->set) ? best : NULL;
+}
+
+const LvPresPanelRow *lv_screenFollowedPanelRow(void) {
+  const LvPresPanelRow *teamRow = NULL;
+  const LvPresPanelRow *slotRow = NULL;
+  BYTE                  slot;
+  BYTE                  team;
+
+  if (g_lv == NULL) {
+    return NULL;
+  }
+  slot = lv_screenFollowedSlot();
+  if (slot < MAX_TANKS) {
+    slotRow = lv_screenGetPanelRow(0, slot);
+    /* Team 0 is no team, whose row is the everyone row. */
+    if (lv_screenGetSlotTeam(slot, &team) && team != 0) {
+      teamRow = lv_screenGetPanelRow(team, 0xFF);
+    }
+  }
+  return lv_screenChoosePanelRow(lv_screenGetPanelRow(0, 0xFF), teamRow,
+                                 slotRow);
 }
 
 const LvPresPanelRow *lv_screenGetPanelRow(BYTE destTeam, BYTE destPlayer) {
@@ -2171,6 +2282,9 @@ void lv_screenProcessLog(unsigned short numEvents) {
           lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_PLAYER_JOINED_TEAM, &args);
         }
       }
+      /* The slot's team, for the team panels. The line above is playback's
+         alone; a rebuild sets the team without it. */
+      lv_presStoreTeam(opt1, opt2, g_lv->timeRunning);
       break;
     case log_CountdownStart:
       lv_messageAdd(networkStatus, MESSAGE_NETSERVER, STR_LV_COUNTDOWN_START, NULL);
@@ -3570,8 +3684,8 @@ static void lv_presIndexByKey(void) {
   }
 }
 
-/* Like walkScanRuleSets, but reads each panel, score, announcement and
- * marker record, puts it through the checks playback makes and indexes the
+/* Like walkScanRuleSets, but reads each panel, score, announcement, marker
+ * and team record, puts it through the checks playback makes and indexes the
  * ones that pass, all at ms. Framed files only. */
 static bool walkScanPresentation(unsigned short numEvents, uint32_t ms) {
   unsigned short i;
@@ -3585,7 +3699,8 @@ static bool walkScanPresentation(unsigned short numEvents, uint32_t ms) {
     evLen = (unsigned short)((lenBytes[0] << 8) | lenBytes[1]);
     payloadPos = lv_logGetCurrentPosition();
     if (code == log_ScnPanel || code == log_ScnScore ||
-        code == log_ScnAnnounce || code == log_ScnMarker) {
+        code == log_ScnAnnounce || code == log_ScnMarker ||
+        code == log_TeamSet) {
       int key;
       lv_presReadPayload(code, &s_presPayload);
       key = lv_presCheck(&s_presPayload);
@@ -3599,11 +3714,13 @@ static bool walkScanPresentation(unsigned short numEvents, uint32_t ms) {
 }
 
 /* Walk the log from the event-stream start to LOG_QUIT/EOF, indexing every
- * log_ScnPanel, log_ScnScore, log_ScnAnnounce and log_ScnMarker that passes
- * its checks, at the playback time the decoder will reach it, stamped the
- * way lv_walkCollectRuleChanges stamps a rule change. Only a framed file can
- * carry these records, so an older file is left with an empty index. Must be
- * entered at load. Saves and restores logPosition + XOR key. */
+ * log_ScnPanel, log_ScnScore, log_ScnAnnounce, log_ScnMarker and log_TeamSet
+ * that passes its checks, at the playback time the decoder will reach it,
+ * stamped the way lv_walkCollectRuleChanges stamps a rule change. Only a
+ * framed file can carry the scenario records, so an older file is left with
+ * an empty index; a v1 log's log_TeamSet records go unindexed with them,
+ * which costs nothing because such a log has no panels. Must be entered at
+ * load. Saves and restores logPosition + XOR key. */
 static void lv_walkCollectPresentation(void) {
   size_t   savedPos = lv_logGetCurrentPosition();
   BYTE     savedKey = lv_blocksGetKey();

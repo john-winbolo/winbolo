@@ -44,6 +44,7 @@
 #include "imgui/imgui_item_info.h"
 #include "imgui/imgui_dialogs.h"
 #include "imgui/imgui_game_viewport.h"
+#include "imgui/imgui_scenario_panel.h"
 
 /* Platform abstraction */
 #include "platform/platform_config.h"
@@ -392,6 +393,7 @@ static void main_loop_iteration(void) {
     lv_imgui_game_info_window();
     lv_imgui_events_window();
     lv_imgui_item_info_window();
+    lv_imgui_scenario_panel_window(g_lv->isLoaded ? true : false);
     lv_g_reset_window_positions = false;
     lv_imgui_dialogs_render();
     lv_imgui_context_render();

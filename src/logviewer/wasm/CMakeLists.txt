@@ -153,6 +153,7 @@ set(LV_IMGUI_SOURCES
     ${LV_ROOT}/imgui/imgui_item_info.cpp
     ${LV_ROOT}/imgui/imgui_dialogs.cpp
     ${LV_ROOT}/imgui/imgui_game_viewport.cpp
+    ${LV_ROOT}/imgui/imgui_scenario_panel.cpp
 )
 
 # WASM replacement files
@@ -202,6 +203,9 @@ add_executable(logviewer
     # parser compile in directly. Both call nothing but libc.
     ${SRC_ROOT}/bolo/sim_rules.c
     ${SRC_ROOT}/bolo/scenario_panel.c
+    # The panel square's drawer, the game's own. It needs ImGui, the public
+    # scenario_panel.h and sprite_positions.c above, and nothing else.
+    ${SRC_ROOT}/gui/sdl3/scenario_panel_draw.cpp
 )
 
 target_include_directories(logviewer PRIVATE

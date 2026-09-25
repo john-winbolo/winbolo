@@ -18,6 +18,8 @@
 #include "../game_settings_blob.h"
 /* The same for the scripts and rule changes a recording carries. */
 #include "../lv_scripts.h"
+/* And for the scenario's scores and the server's tick. */
+#include "../lv_presentation.h"
 #include "../../gui/sim_rules_phrase.h"
 
 #include <cstdio>
@@ -32,6 +34,8 @@ extern "C" {
     void lv_screenGetMapName(char *buffer);
     void lv_screenGetPlayerName(char *buffer, unsigned char player, size_t destSize);
     int lv_screenGetGameSettings(unsigned char *out, int maxLen);
+    bool lv_playersIsInUse(unsigned char playerNumber);
+    bool lv_screenGetLoggedPlayerName(unsigned char slot, char *dest, size_t destSize);
 }
 
 /* Game info state */
@@ -509,8 +513,7 @@ static void game_info_draw_scripts(void) {
     }
 
     /* The changes the playhead has passed, in the order the recording holds
-     * them, each at the round's tick: 20 ms apiece from the game start. */
-    uint32_t gameStart = lv_screenGameStartMs();
+     * them, each at the server's game tick, the clock a script counts in. */
     for (int i = 0; i < changeCount; i++) {
         const LvRuleChange *ch = &changes[i];
         if (ch->ms > playhead) continue;
@@ -520,11 +523,83 @@ static void game_info_draw_scripts(void) {
         simRulesPhrase(ch->index, ch->value, phrase, sizeof(phrase));
 
         MessageArgs args = {};
-        args.number = ch->ms >= gameStart ? (int)((ch->ms - gameStart) / 20) : 0;
+        args.number = (int)lv_screenServerTickAt(ch->ms);
         strncpy(args.string1, simRulesRuleName(ch->index), sizeof(args.string1) - 1);
         strncpy(args.string2, phrase, sizeof(args.string2) - 1);
         ImGui::TextUnformatted(langGetTextFmt(STR_LV_INFO_RULE_CHANGE, &args));
     }
+}
+
+/* A scenario's scores at the playhead: every slot with a valid score, then
+ * every team. Draws nothing when no score is valid, which is every plain
+ * recording. */
+static void game_info_draw_scores(void) {
+    bool any = false;
+
+    for (int i = 0; i < MAX_TANKS && !any; i++) {
+        const LvPresScore *s = lv_screenGetScore(SCN_SCORE_KIND_PLAYER, (BYTE)i);
+        any = (s != NULL && s->valid);
+    }
+    for (int t = 1; t < LV_PRES_TEAMS && !any; t++) {
+        const LvPresScore *s = lv_screenGetScore(SCN_SCORE_KIND_TEAM, (BYTE)t);
+        any = (s != NULL && s->valid);
+    }
+    if (!any) {
+        return;
+    }
+
+    ImGui::SeparatorText(langGetText(STR_LV_INFO_SCORES));
+    if (!ImGui::BeginTable("##gi_scores", 3,
+                           ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
+        return;
+    }
+    ImGui::TableSetupColumn("##who", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn("##label", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn("##score", ImGuiTableColumnFlags_WidthFixed,
+                            ImGui::CalcTextSize("-00000000").x);
+
+    for (int i = 0; i < MAX_TANKS; i++) {
+        const LvPresScore *s = lv_screenGetScore(SCN_SCORE_KIND_PLAYER, (BYTE)i);
+        if (s == NULL || !s->valid) continue;
+
+        /* The name the slot plays under now, else the one the recording gave
+         * it, else its number. */
+        char name[64] = "";
+        if (lv_playersIsInUse((unsigned char)i)) {
+            lv_screenGetPlayerName(name, (unsigned char)i, sizeof(name));
+        } else {
+            lv_screenGetLoggedPlayerName((unsigned char)i, name, sizeof(name));
+        }
+        if (name[0] == '\0') {
+            MessageArgs args = {};
+            args.number = i;
+            snprintf(name, sizeof(name), "%s",
+                     langGetTextFmt(STR_LV_INFO_SCORE_SLOT, &args));
+        }
+
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted(name);
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextUnformatted(s->label);
+        ImGui::TableSetColumnIndex(2);
+        ImGui::Text("%d", (int)s->score);
+    }
+    for (int t = 1; t < LV_PRES_TEAMS; t++) {
+        const LvPresScore *s = lv_screenGetScore(SCN_SCORE_KIND_TEAM, (BYTE)t);
+        if (s == NULL || !s->valid) continue;
+
+        MessageArgs args = {};
+        args.number = t;
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextUnformatted(langGetTextFmt(STR_DLGLOBBY_TEAM_HEADER, &args));
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextUnformatted(s->label);
+        ImGui::TableSetColumnIndex(2);
+        ImGui::Text("%d", (int)s->score);
+    }
+    ImGui::EndTable();
 }
 
 void lv_imgui_game_info_window(void) {
@@ -651,6 +726,7 @@ void lv_imgui_game_info_window(void) {
         }
 
         game_info_draw_scripts();
+        game_info_draw_scores();
 
         /* Server visibility rules and the two mode flags, from the settings
          * event. The row labels come from the lobby form and carry no

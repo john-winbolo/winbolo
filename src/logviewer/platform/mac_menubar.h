@@ -36,7 +36,8 @@ struct LvMenuState {
     bool showGameInfo;
     bool showItemInfo;
     bool showComments;
-    int  zoomStepIndex;        /* current zoom step */
+    bool showScenarioPanel;
+    int  zoomStepIndex;       /* current zoom step */
     int  zoomStepCount;        /* total zoom steps; >0 */
     bool fromMainMenu;         /* embedded — affects File menu's last item */
 };

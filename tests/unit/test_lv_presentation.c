@@ -857,3 +857,206 @@ int run_lv_presentation_plain_round(void) {
                   "%d stores hold something in a plain round", plain.filled);
     return 0;
 }
+
+/* ── 6. Which row the panel draws ──────────────────────────────────── */
+
+/* Set a row as a record would have left it at ms: a list when set is TRUE,
+ * a clear when it is FALSE. */
+static void lvpWriteRow(LvPresPanelRow *row, bool set, uint32_t ms) {
+    memset(row, 0, sizeof(*row));
+    row->written = TRUE;
+    row->set     = set;
+    row->ms      = ms;
+    if (set) {
+        row->len = (uint16_t)sizeof(kLvpListA);
+        memcpy(row->bytes, kLvpListA, sizeof(kLvpListA));
+    }
+}
+
+int run_lv_presentation_panel_choice(void) {
+    static LvPresPanelRow e, t, s;
+
+    /* Nothing written: nothing to draw. */
+    memset(&e, 0, sizeof(e));
+    memset(&t, 0, sizeof(t));
+    memset(&s, 0, sizeof(s));
+    UT_ASSERT_MSG(lv_screenChoosePanelRow(&e, &t, &s) == NULL,
+                  "three unwritten rows drew something");
+    UT_ASSERT_MSG(lv_screenChoosePanelRow(NULL, NULL, NULL) == NULL,
+                  "no candidates drew something");
+
+    /* The newest wins, whichever row it is. */
+    lvpWriteRow(&e, TRUE, 10);
+    UT_ASSERT_MSG(lv_screenChoosePanelRow(&e, &t, &s) == &e,
+                  "the only written row was not drawn");
+    lvpWriteRow(&s, TRUE, 30);
+    UT_ASSERT_MSG(lv_screenChoosePanelRow(&e, &t, &s) == &s,
+                  "a newer slot row lost to an older everyone row");
+    lvpWriteRow(&t, TRUE, 40);
+    UT_ASSERT_MSG(lv_screenChoosePanelRow(&e, &t, &s) == &t,
+                  "a newer team row lost to an older slot row");
+    lvpWriteRow(&e, TRUE, 50);
+    UT_ASSERT_MSG(lv_screenChoosePanelRow(&e, &t, &s) == &e,
+                  "a newer everyone row lost to an older team row");
+
+    /* A newer clear draws nothing, even over an older list. */
+    lvpWriteRow(&s, FALSE, 60);
+    UT_ASSERT_MSG(lv_screenChoosePanelRow(&e, &t, &s) == NULL,
+                  "a newer clear on the slot row still drew a list");
+
+    /* Equal ms: slot, then team, then everyone. */
+    lvpWriteRow(&e, TRUE, 70);
+    lvpWriteRow(&t, TRUE, 70);
+    lvpWriteRow(&s, TRUE, 70);
+    UT_ASSERT_MSG(lv_screenChoosePanelRow(&e, &t, &s) == &s,
+                  "on a tie the slot row did not win");
+    UT_ASSERT_MSG(lv_screenChoosePanelRow(&e, &t, NULL) == &t,
+                  "on a tie the team row did not beat the everyone row");
+    lvpWriteRow(&s, FALSE, 70);
+    UT_ASSERT_MSG(lv_screenChoosePanelRow(&e, &t, &s) == NULL,
+                  "a clear on the slot row at the same ms did not win");
+
+    /* A row no record has written is ignored, whatever else it holds. */
+    lvpWriteRow(&e, TRUE, 0);
+    memset(&s, 0, sizeof(s));
+    s.ms  = 100;
+    s.set = TRUE;
+    memset(&t, 0, sizeof(t));
+    UT_ASSERT_MSG(lv_screenChoosePanelRow(&e, &t, &s) == &e,
+                  "an unwritten row beat a written one");
+
+    /* A team that is not known is passed as no candidate: the newest team
+       list is not drawn, and the everyone and slot rows compete alone. */
+    lvpWriteRow(&e, TRUE, 10);
+    lvpWriteRow(&t, TRUE, 90);
+    lvpWriteRow(&s, TRUE, 20);
+    UT_ASSERT_MSG(lv_screenChoosePanelRow(&e, NULL, &s) == &s,
+                  "with no team candidate the slot row was not drawn");
+    return 0;
+}
+
+/* ── 7. A slot's team from log_TeamSet ─────────────────────────────── */
+
+/* Every line lv_messageAdd posts, counted by test_logviewer_stubs.c. */
+extern int g_lvStubEventsAdded;
+
+/* After the opening:
+ *   tick 0   team 2's panel, list C                              20 ms
+ *   tick 1   log_TeamSet: slot 1 onto team 2                     40 ms
+ *   ticks 2-5 NOEVENTS 3
+ *   tick 6   LOG_QUIT                                           140 ms */
+static const uint8_t kLvpTeamStream[] = {
+    0x03, 0x01, 0x3E, 0x00, 0x0C,
+        0x00, 0x02, 0xFF, 0x00, 0x07,
+        0x01, 0x0A, 0x0A, 0x14, 0x14, 0x06, 0x01,
+    0x03, 0x01, 0x29, 0x00, 0x02,
+        0x01, 0x02,
+    0x01, 0x03,
+    0x00,
+};
+
+/* Inside the NOEVENTS run: past the log_TeamSet, before LOG_QUIT. */
+#define LVP_TEAM_MID_MS 100u
+
+/* Slot 1's team, or -1 while it is not known. */
+static int lvpSlot1Team(void) {
+    BYTE team = 0xEE;
+    return lv_screenGetSlotTeam(1, &team) ? (int)team : -1;
+}
+
+/* The row the panel draws for slot 1, following it as the overview does. */
+static const LvPresPanelRow *lvpFollowSlot1(void) {
+    lv_playersSetSelf(1);
+    return lv_screenFollowedPanelRow();
+}
+
+int run_lv_presentation_slot_team(void) {
+    const char     *path = "lv_presentation_team.wbv";
+    static LvpLog   b;
+    LogViewerState *lv;
+    int             linesPlayed, linesBack, linesForward;
+    int             teamEnd, teamAt20, teamAt0, teamForward, teamOther;
+    bool            drawnEnd, drawnAt20, drawnAt0;
+    bool            rowAt20;
+    int             before;
+
+    UT_ASSERT(log_TeamSet == 0x29 && log_ScnPanel == 0x3E);
+
+    lvpPutOpening(&b);
+    lvpPut(&b, kLvpTeamStream, sizeof(kLvpTeamStream));
+    lv = lvpOpen(&b, path);
+    if (lv == NULL) {
+        remove(path);
+        UT_FAIL("the hand-built log could not be loaded");
+    }
+
+    /* Played past the log_TeamSet, short of LOG_QUIT, which posts a line of
+       its own: the team's line is the only one. Then on to the end. */
+    before = g_lvStubEventsAdded;
+    {
+        int steps = 0;
+        while (lv_screenIsPlaying() == TRUE &&
+               lv_screenGetTimeRunning() < LVP_TEAM_MID_MS && steps < 64) {
+            lv_screenLogTick();
+            steps++;
+        }
+    }
+    linesPlayed = g_lvStubEventsAdded - before;
+    if (!lvpPlayToEnd()) {
+        lv_decoderDestroy(lv);
+        remove(path);
+        UT_FAIL("playback did not reach end-of-log");
+    }
+    teamEnd     = lvpSlot1Team();
+    teamOther   = lv_screenGetSlotTeam(0, NULL) ? 1 : 0;
+    drawnEnd    = lvpRowHolds(lvpFollowSlot1(), kLvpListC, sizeof(kLvpListC));
+
+    /* Back to the panel's tick, before the log_TeamSet: the team-2 row is
+       there, but slot 1 is on no team anyone knows of, so it is not drawn. */
+    before    = g_lvStubEventsAdded;
+    lv_screenSeekToTimeMs(20);
+    linesBack = g_lvStubEventsAdded - before;
+    teamAt20  = lvpSlot1Team();
+    rowAt20   = lvpRowHolds(lv_screenGetPanelRow(2, 0xFF), kLvpListC,
+                            sizeof(kLvpListC));
+    drawnAt20 = lvpFollowSlot1() != NULL;
+
+    /* Forward past it again: playback passes the log_TeamSet and posts its
+       line once; the rebuild after it posts none. */
+    before       = g_lvStubEventsAdded;
+    lv_screenSeekToTimeMs(LVP_TEAM_MID_MS);
+    linesForward = g_lvStubEventsAdded - before;
+    teamForward  = lvpSlot1Team();
+
+    /* Back to the start: nothing known, nothing drawn. */
+    lv_screenSeekToTimeMs(0);
+    teamAt0  = lvpSlot1Team();
+    drawnAt0 = lvpFollowSlot1() != NULL;
+
+    lv_decoderDestroy(lv);
+    remove(path);
+
+    UT_ASSERT_MSG(linesPlayed == 1, "playback posted %d lines (want the "
+                  "log_TeamSet's one)", linesPlayed);
+    UT_ASSERT_MSG(teamEnd == 2, "at end-of-log slot 1's team is %d (want 2)",
+                  teamEnd);
+    UT_ASSERT_MSG(teamOther == 0, "slot 0's team is known with no record "
+                  "naming it");
+    UT_ASSERT_MSG(drawnEnd, "at end-of-log slot 1 is not drawn team 2's "
+                  "panel");
+    UT_ASSERT_MSG(linesBack == 0, "the seek back to 20 ms posted %d lines",
+                  linesBack);
+    UT_ASSERT_MSG(teamAt20 == -1, "before the log_TeamSet slot 1's team is "
+                  "%d (want unknown)", teamAt20);
+    UT_ASSERT_MSG(rowAt20, "at 20 ms team 2's panel is not list C");
+    UT_ASSERT_MSG(!drawnAt20, "slot 1 was drawn team 2's panel before it "
+                  "joined the team");
+    UT_ASSERT_MSG(linesForward == 1, "the seek forward posted %d lines (want "
+                  "playback's one; the rebuild posts none)", linesForward);
+    UT_ASSERT_MSG(teamForward == 2, "after the seek forward slot 1's team is "
+                  "%d (want 2)", teamForward);
+    UT_ASSERT_MSG(teamAt0 == -1, "at the start slot 1's team is %d (want "
+                  "unknown)", teamAt0);
+    UT_ASSERT_MSG(!drawnAt0, "a panel is drawn before any record");
+    return 0;
+}

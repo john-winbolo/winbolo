@@ -7,7 +7,7 @@
  *
  * What the recording's log_ScnPanel, log_ScnScore, log_ScnAnnounce and
  * log_ScnMarker records say at the playhead (layouts in
- * docs/replay-format.md), and the accessors the viewer's drawing code reads
+ * docs/replay-format.md), the slot teams log_TeamSet gives, and the accessors the viewer's drawing code reads
  * them through, with the server's game tick those records count in.
  *
  * Plain C with nothing but the public scenario_panel.h behind it, so a draw
@@ -43,9 +43,14 @@ extern "C" {
 /* One panel's display list for one audience, as the record carried it. The
    bytes have been through scnPanelParse once already; a draw parses them
    again into its own ScnPanelList. set is false for a row no record has
-   filled and for one a record cleared. */
+   filled and for one a record cleared. written is true once any record has
+   landed on the row, a clear included, and ms is the log time the last one
+   landed at: the client keeps one list and the newest record addressed to
+   the player replaces it, so the draw picks between rows by ms. */
 typedef struct {
   bool     set;
+  bool     written;
+  uint32_t ms;
   uint16_t len;
   uint8_t  bytes[SCN_PANEL_MAX];
 } LvPresPanelRow;
@@ -85,6 +90,12 @@ typedef struct LvPresentation {
   LvPresScore    teamScores[LV_PRES_TEAMS];   /* [0] is never valid */
   LvPresAnnounce announce;
   LvPresMarker   markers[SCN_MARKERS_MAX];
+  /* Each slot's lobby team as log_TeamSet last set it, 0 for no team. A
+     slot no record has named is not known, and the team panels are then
+     never drawn for it. This is the team a scenario addresses, which is not
+     the alliance group lv_playersGetTeamId answers. */
+  BYTE           team[MAX_TANKS];
+  bool           teamKnown[MAX_TANKS];
 } LvPresentation;
 
 /* The stores at the playhead. Each answers NULL for a key out of range and
@@ -99,6 +110,29 @@ const LvPresPanelRow *lv_screenGetPanelRow(BYTE destTeam, BYTE destPlayer);
 const LvPresScore    *lv_screenGetScore(BYTE kind, BYTE target);
 const LvPresAnnounce *lv_screenGetAnnounce(void);
 const LvPresMarker   *lv_screenGetMarker(BYTE id);
+
+/* A slot's lobby team at the playhead, 0 for no team. False, with *team
+ * left alone, for a slot out of range or one no log_TeamSet has named. */
+bool lv_screenGetSlotTeam(BYTE slot, BYTE *team);
+
+/* The player the viewer is following: the game view's camera tank, or the
+ * player the overview takes its view from. A value of MAX_TANKS or more is
+ * nobody. */
+BYTE lv_screenFollowedSlot(void);
+
+/* The panel row to draw, of the everyone row, the followed player's team row
+ * and their slot row; a row that is not a candidate is passed as NULL. Of
+ * the rows a record has written, the one with the greatest ms wins, and on
+ * equal ms the slot row beats the team row, which beats the everyone row.
+ * NULL when no candidate has been written or when the winner is a clear.
+ * Reads nothing but its arguments. */
+const LvPresPanelRow *lv_screenChoosePanelRow(const LvPresPanelRow *everyone,
+                                              const LvPresPanelRow *team,
+                                              const LvPresPanelRow *slot);
+
+/* lv_screenChoosePanelRow over the followed player's three rows at the
+ * playhead. NULL when there is nothing to draw. */
+const LvPresPanelRow *lv_screenFollowedPanelRow(void);
 
 /* The server's game tick at playback time ms: the clock a scenario's timer
  * target and an announcement's arrival are counted in, a hundred a second and

@@ -1704,6 +1704,7 @@ set(LOGVIEWER_LIB_SOURCES
     src/logviewer/imgui/imgui_item_info.cpp
     src/logviewer/imgui/imgui_dialogs.cpp
     src/logviewer/imgui/imgui_game_viewport.cpp
+    src/logviewer/imgui/imgui_scenario_panel.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
@@ -2361,6 +2362,7 @@ set(LOGVIEWER_IMGUI_SOURCES
     src/logviewer/imgui/imgui_item_info.cpp
     src/logviewer/imgui/imgui_dialogs.cpp
     src/logviewer/imgui/imgui_game_viewport.cpp
+    src/logviewer/imgui/imgui_scenario_panel.cpp
     src/logviewer/imgui/imgui_game_view.cpp
     src/logviewer/imgui/imgui_comments.cpp
     src/logviewer/imgui/imgui_logviewer_menu.cpp
@@ -2432,6 +2434,9 @@ add_executable(LogViewer
     # parser compile in directly. Both call nothing but libc.
     src/bolo/sim_rules.c
     src/bolo/scenario_panel.c
+    # The panel square's drawer, the game's own. It needs ImGui, the public
+    # scenario_panel.h and sprite_positions.c below, and nothing else.
+    src/gui/sdl3/scenario_panel_draw.cpp
     src/gui/sdl3/gamefront_stubs.c
     # The replay draws the same smart-ping glyphs the game does, out of the
     # same loose files.
@@ -4405,7 +4410,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     tests/unit/test_lv_rule_changes.c
     # The viewer's scenario panels, scores, announcement and markers at the
     # playhead: a hand-written log seeked both ways, hostile records, a
-    # recorded scripted round and a plain one.
+    # recorded scripted round and a plain one, the panel row a followed
+    # player sees and each slot's team from log_TeamSet.
     tests/unit/test_lv_presentation.c
     # The server's game tick at the playhead: anchors from log_ServerTick and
     # the writer ticks counted between them, hostile records, an old
@@ -6269,6 +6275,8 @@ set(_unit_test_names
     lv_presentation_scripted_round
     lv_presentation_rebuild_many
     lv_presentation_plain_round
+    lv_presentation_panel_choice
+    lv_presentation_slot_team
     lv_server_tick_recorded
     lv_server_tick_anchors
     lv_server_tick_hostile

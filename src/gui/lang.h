@@ -2851,6 +2851,9 @@
  * {number} = the round's tick, {string1} = the rule as scripts spell it,
  * {string2} = what the new value does to it in words. */
 #define STR_LV_INFO_RULE_CHANGE                  2639
+/* Game Information's Scores heading, and a slot's row with no name ({number} = the slot). */
+#define STR_LV_INFO_SCORES                       2640
+#define STR_LV_INFO_SCORE_SLOT                   2641
 
 /* Rule descriptions */
 

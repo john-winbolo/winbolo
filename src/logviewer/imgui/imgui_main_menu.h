@@ -25,6 +25,7 @@ extern bool lv_g_show_game_info_window;
 extern bool lv_g_show_events_window;
 extern bool lv_g_show_item_info_window;
 extern bool lv_g_show_comments_window;
+extern bool lv_g_show_scenario_panel_window;
 extern bool lv_g_reset_window_positions;
 
 /* Render the main menu bar
