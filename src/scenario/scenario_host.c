@@ -113,6 +113,10 @@
                                      * against the table its script declares */
 #include "scenario_package.h"      /* scnPackageFindInMap — the second way a
                                     * map can carry a script */
+#include "scenario_chunk.h"        /* scnIoSetWorkshopId — an id carried
+                                    * across a repack for publishing */
+#include "scenario_pack.h"         /* scnPackScript — a loose script packed
+                                    * for publishing */
 #include "scenario_sandbox.h"      /* the libraries a scenario state gets */
 #include "scenario_validate.h"     /* ScnParseReport, and the parse this file
                                     * shares with the validator */
@@ -7466,6 +7470,7 @@ int scenarioHostListLocalScripts(ServerScenarioEntry *out, int max) {
                                        ? SERVER_SCENARIO_SOURCE_WORKSHOP
                                        : SERVER_SCENARIO_SOURCE_SERVER;
             e->workshopId        = rows[i].workshopId;
+            e->workshopAuthor    = rows[i].workshopAuthor;
             n++;
         }
     }
@@ -7878,6 +7883,185 @@ static bool scnPackagedScript(const char *mapPath, ScnScriptSource *out,
     scnPackageClose(p);
     free(file);
     return ok;
+}
+
+/* ── A file's package, read for publishing ────────────────────────── */
+
+/* The manifest of a container already in memory, whichever file it came
+ * from: the chunk on the end of a map, or a .scenario file, which is nothing
+ * else. Only manifest.json is read; the script and any brains are not. */
+static bool scnManifestOfContainer(const uint8_t *bytes, size_t len,
+                                   ScenarioManifest *out) {
+    ScnPackage     *p       = NULL;
+    uint8_t        *json    = NULL;
+    size_t          jsonLen = 0;
+    ScnManifestDoc *doc     = NULL;
+    const ScenarioManifest *values;
+    char            err[SCN_ERR_LEN];
+    bool            ok = false;
+
+    err[0] = '\0';
+    p = scnPackageOpen(bytes, len, err, sizeof(err));
+    if (p == NULL) {
+        return false;
+    }
+    if (scnPackageReadEntry(p, SCN_PACKAGE_MANIFEST_ENTRY,
+                            SCN_PACKAGE_MANIFEST_MAX_BYTES, &json, &jsonLen,
+                            err, sizeof(err))) {
+        doc    = scnManifestParse(json, jsonLen, NULL, err, sizeof(err));
+        values = scnManifestValues(doc);
+        if (values != NULL) {
+            *out = *values;
+            ok   = true;
+        }
+    }
+    scnManifestFree(doc);
+    free(json);
+    scnPackageClose(p);
+    return ok;
+}
+
+/* The last part of a path, after either separator. */
+static const char *scnPathLeaf(const char *path) {
+    const char *slash = strrchr(path, '/');
+    const char *back  = strrchr(path, '\\');
+
+    if (back != NULL && (slash == NULL || back > slash)) slash = back;
+    return (slash != NULL) ? slash + 1 : path;
+}
+
+bool scenarioHostMapPackageInfo(const char *mapPath, ServerScenarioEntry *out) {
+    uint8_t          *file     = NULL;
+    size_t            fileLen  = 0;
+    const uint8_t    *chunk    = NULL;
+    size_t            chunkLen = 0;
+    ScenarioManifest *m;
+    char              err[SCN_ERR_LEN];
+    bool              ok = false;
+
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    if (mapPath == NULL || mapPath[0] == '\0') return false;
+
+    /* The same read the attach makes, under the same cap. */
+    err[0] = '\0';
+    if (!scnReadMapBytes(mapPath, &file, &fileLen, err, sizeof(err))) {
+        return false;
+    }
+    /* On the heap: a manifest carries its whole trigger table. */
+    m = (ScenarioManifest *)malloc(sizeof(*m));
+    if (m != NULL && scnPackageFindInMap(file, fileLen, &chunk, &chunkLen) &&
+        scnManifestOfContainer(chunk, chunkLen, m)) {
+        SDL_strlcpy(out->file, scnPathLeaf(mapPath), sizeof(out->file));
+        SDL_strlcpy(out->name, m->name, sizeof(out->name));
+        SDL_strlcpy(out->description, m->description,
+                    sizeof(out->description));
+        out->bound             = m->bound;
+        out->keepsWinCondition = scnManifestKeepsWinCondition(m);
+        out->source            = SERVER_SCENARIO_SOURCE_SERVER;
+        out->workshopId        = m->workshopId;
+        out->workshopAuthor    = m->workshopAuthor;
+        ok = true;
+    }
+    free(m);
+    free(file);
+    return ok;
+}
+
+/* Where a loose script is moved once it has been packed, beside the package
+   in the Mods directory. The mod lister globs "*" and skips anything that is
+   not a file, so nothing in here is listed. */
+#define SCN_PACK_SOURCES_DIR "Sources"
+
+bool scenarioHostPackLooseScript(const char *luaPath, char *outScenarioPath,
+                                 size_t outLen, char *err, size_t errLen) {
+    char              dir[SCN_SCRIPT_PATH_MAX];
+    char              stem[SCN_SCRIPT_PATH_MAX];
+    char              packed[SCN_SCRIPT_PATH_MAX];
+    char              sources[SCN_SCRIPT_PATH_MAX];
+    char              moved[SCN_SCRIPT_PATH_MAX];
+    const char       *leaf;
+    uint8_t          *old      = NULL;
+    size_t            oldLen   = 0;
+    ScenarioManifest *m;
+    uint64_t          keptId     = 0;
+    uint64_t          keptAuthor = 0;
+    size_t            dirLen;
+    size_t            stemLen;
+
+    if (err != NULL && errLen > 0) err[0] = '\0';
+    if (outScenarioPath != NULL && outLen > 0) outScenarioPath[0] = '\0';
+    if (luaPath == NULL || !scnHasExt(luaPath, SCN_SCENARIO_SCRIPT_EXT) ||
+        outScenarioPath == NULL || outLen == 0) {
+        scnFmt(err, errLen, "scenario: there is no loose script to pack");
+        return false;
+    }
+
+    /* Mods/<stem>.lua gives Mods, <stem>, Mods/<stem>.scenario and
+       Mods/Sources/<stem>.lua. */
+    leaf    = scnPathLeaf(luaPath);
+    dirLen  = (size_t)(leaf - luaPath);
+    stemLen = strlen(leaf) - strlen(SCN_SCENARIO_SCRIPT_EXT);
+    if (dirLen == 0 || dirLen > sizeof(dir) || stemLen == 0 ||
+        stemLen >= sizeof(stem)) {
+        scnFmt(err, errLen, "scenario: %s is not a script in a directory",
+               luaPath);
+        return false;
+    }
+    /* The directory without its trailing separator. */
+    memcpy(dir, luaPath, dirLen - 1);
+    dir[dirLen - 1] = '\0';
+    memcpy(stem, leaf, stemLen);
+    stem[stemLen] = '\0';
+    if ((size_t)snprintf(packed, sizeof(packed), "%s/%s%s", dir, stem,
+                         SCN_SCENARIO_PACKAGE_EXT) >= sizeof(packed) ||
+        (size_t)snprintf(sources, sizeof(sources), "%s/%s", dir,
+                         SCN_PACK_SOURCES_DIR) >= sizeof(sources) ||
+        (size_t)snprintf(moved, sizeof(moved), "%s/%s", sources, leaf) >=
+            sizeof(moved) ||
+        strlen(packed) >= outLen) {
+        scnFmt(err, errLen, "scenario: %s gives a path too long to pack to",
+               luaPath);
+        return false;
+    }
+
+    /* A package already there that carries a Workshop item keeps it: the
+       repack writes a manifest from the script's table, which names no item,
+       so the pair is read now and written back after. */
+    if (scnReadMapBytes(packed, &old, &oldLen, NULL, 0)) {
+        m = (ScenarioManifest *)malloc(sizeof(*m));
+        if (m != NULL && scnManifestOfContainer(old, oldLen, m)) {
+            keptId     = m->workshopId;
+            keptAuthor = m->workshopAuthor;
+        }
+        free(m);
+        free(old);
+    }
+
+    if (!scnPackScript(luaPath, packed, err, errLen)) {
+        return false;
+    }
+    serverSimNoteScriptDirsChanged();
+
+    if (keptId != 0 &&
+        !scnIoSetWorkshopId(packed, keptId, keptAuthor, err, errLen)) {
+        /* The package is packed and names no item; the script stays where it
+           was, so the next attempt packs it again and tries once more. */
+        return false;
+    }
+    SDL_strlcpy(outScenarioPath, packed, outLen);
+
+    /* The script out of the listed directory, so the mod list shows the
+       package and not the two. An older copy in Sources is replaced. A move
+       that fails leaves both listed, which is untidy and not wrong: the
+       package is what was asked for. */
+    if (!SDL_CreateDirectory(sources) || !SDL_RenamePath(luaPath, moved)) {
+        WB_LOG_WARN(WB_LOG_CAT_CLIENT, "scenario: packed %s but could not move "
+                    "it into %s: %s", luaPath, sources, SDL_GetError());
+    } else {
+        serverSimNoteScriptDirsChanged();
+    }
+    return true;
 }
 
 /* What script this map has, and where it came from. The attach and the

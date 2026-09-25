@@ -1616,6 +1616,9 @@ set(CLIENT_SOURCES
     # same reason: imgui_settings.cpp is also compiled for iOS, Android and
     # wasm, and leaves its calls into this out there.
     src/gui/sdl3/dialogs/workshop_publish_modal.cpp
+    # The Workshop section of the Settings dialog, which opens that window
+    # for mods, scenarios and scenario maps. Desktop only, the same way.
+    src/gui/sdl3/dialogs/imgui_settings_workshop.cpp
     # Smart-ping pie menu and the markers for pings that have arrived.
     src/gui/sdl3/ping_overlay.cpp
     src/gui/sdl3/ping_icons.c
@@ -4309,6 +4312,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # replaced by a source table, and the stub wrapper links the rest.
     tests/unit/test_workshop_sync.c
     src/gui/sdl3/workshop_sync.c
+    # What the Settings dialog's Workshop section reads and writes: a map's
+    # packed scenario, a loose script packed for publishing, the sync's index
+    # in id order, and the author on a local listing row.
+    tests/unit/test_workshop_publish.c
     # The Bolo pascal-string reader in both places it is implemented —
     # src/bolo/util.c and the log viewer's own copy.
     tests/unit/test_pascal_string.c
@@ -6281,6 +6288,10 @@ set(_unit_test_names
     workshop_sync_name_clash
     workshop_sync_renamed_content
     workshop_sync_bumps_script_dirs_gen
+    workshop_map_package_info
+    workshop_pack_loose_script
+    workshop_sync_index_rows
+    local_rows_carry_author
     scenario_precedence_mod_over_map
     scenario_precedence_none_restores_map
     scenario_precedence_plain_map_keeps_mod

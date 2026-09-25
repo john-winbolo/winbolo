@@ -2618,6 +2618,18 @@ static const LangEntry langTable[] = {
     {2665, "This server cannot change script settings, so the defaults apply."},
     {2666, "{number} (default)"},
     {2667, "Workshop item #{string1}, published by {string2}"},
+    {2668, "Steam Workshop"},
+    {2669, "Subscribed"},
+    {2670, "Publish"},
+    {2671, "Installed"},
+    {2672, "Open in Workshop"},
+    {2673, "Update"},
+    {2674, "Map"},
+    {2675, "Item #{string1}"},
+    {2676, "You are not subscribed to any mods, scenarios or maps."},
+    {2677, "Nothing to publish yet. Put a mod or scenario in your Mods folder, or pack a scenario into a map."},
+    {2678, "Publish this mod or scenario to the Steam Workshop"},
+    {2679, "Update the item this file came from"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

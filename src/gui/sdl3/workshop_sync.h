@@ -85,4 +85,16 @@ void workshopSyncPoll(void);
    used to consume the edge keeps the last value it saw and compares. */
 uint32_t workshopSyncGeneration(void);
 
+/* One row of the index: an item and the file the sync copied out of it. */
+typedef struct {
+    uint64_t id;
+    char     file[WORKSHOP_SYNC_FILE_MAX];
+} WorkshopSyncRow;
+
+/* The rows workshop.json holds in scenarioHostWorkshopDir(), in id order,
+   at most max of them. An item still downloading has no row: the sync
+   copies only what is installed. A file read, so a caller builds its list
+   with it when the list is asked for, never per frame. */
+int workshopSyncIndexRows(WorkshopSyncRow *out, int max);
+
 #endif /* WORKSHOP_SYNC_H */

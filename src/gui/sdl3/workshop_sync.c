@@ -727,3 +727,35 @@ void workshopSyncPoll(void) {
 uint32_t workshopSyncGeneration(void) {
     return s_wsGeneration;
 }
+
+/* ── The index, for a list ────────────────────────────────────────── */
+
+static int wsRowIdCmp(const void *a, const void *b) {
+    uint64_t ia = ((const WsRow *)a)->id;
+    uint64_t ib = ((const WsRow *)b)->id;
+
+    return (ia > ib) - (ia < ib);
+}
+
+int workshopSyncIndexRows(WorkshopSyncRow *out, int max) {
+    char    dir[WS_FOLDER_MAX];
+    WsIndex ix;
+    int     n = 0;
+    int     i;
+
+    if (out == NULL || max <= 0) return 0;
+    if (!scenarioHostWorkshopDir(dir, sizeof(dir))) return 0;
+
+    memset(&ix, 0, sizeof(ix));
+    wsIndexLoad(dir, &ix);
+    if (ix.count > 1) {
+        qsort(ix.rows, (size_t)ix.count, sizeof(ix.rows[0]), wsRowIdCmp);
+    }
+    for (i = 0; i < ix.count && n < max; i++) {
+        out[n].id = ix.rows[i].id;
+        SDL_strlcpy(out[n].file, ix.rows[i].file, sizeof(out[n].file));
+        n++;
+    }
+    free(ix.rows);
+    return n;
+}

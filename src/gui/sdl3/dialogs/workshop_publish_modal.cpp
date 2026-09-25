@@ -51,8 +51,11 @@ static bool     s_pubFailed     = false;   /* the begin or the poll said no */
 static bool     s_pubInFlight   = false;   /* the last poll said in progress:
                                               Steam is still reading the
                                               upload folder */
-static bool     s_pubPopupOpen  = false;   /* the window drew last frame, so a
-                                              frame without it is an exit */
+/* The popup id of the window that drew last frame, "" for none.  A frame
+   without it is an exit, but only for the caller whose popup it is: every
+   caller draws every frame, and the ones whose popup is closed must not take
+   another caller's open window for their own exit. */
+static char     s_pubOpenId[64];
 
 /* <prefpath>workshop_upload is the folder handed to Steam as the item's
    content; the preview PNG goes beside it, not in it, or it would be uploaded
@@ -181,7 +184,7 @@ void workshopPublishDraw(const WorkshopPublishSpec *spec) {
     if (ImGui::BeginPopupModal(spec->popupId, nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         const float fieldW = ImGui::GetFontSize() * 20.0f;
-        s_pubPopupOpen = true;
+        SDL_strlcpy(s_pubOpenId, spec->popupId, sizeof(s_pubOpenId));
 
         ImGui::TextUnformatted(langGetText((langid)spec->headingStr));
         ImGui::Separator();
@@ -293,12 +296,13 @@ void workshopPublishDraw(const WorkshopPublishSpec *spec) {
         }
         imguiHandOnHover();
         ImGui::EndPopup();
-    } else if (s_pubPopupOpen) {
-        /* The window is gone.  Usually the frame after the Close button ran,
-           where the scratch is already dealt with, but the dialog it sits in
-           can also be closed out from under it — same rule, so no exit
-           deletes files Steam is still reading. */
-        s_pubPopupOpen = false;
+    } else if (s_pubOpenId[0] != '\0' &&
+               strcmp(s_pubOpenId, spec->popupId) == 0) {
+        /* This caller's window is gone.  Usually the frame after the Close
+           button ran, where the scratch is already dealt with, but the dialog
+           it sits in can also be closed out from under it — same rule, so no
+           exit deletes files Steam is still reading. */
+        s_pubOpenId[0] = '\0';
         if (!s_pubInFlight) publishCleanup();
     }
 }

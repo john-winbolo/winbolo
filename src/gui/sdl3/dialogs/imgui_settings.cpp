@@ -35,6 +35,7 @@
 #include "dialog_footer.h"
 #include "workshop_publish_modal.h"  /* declarations only; the calls are
                                         desktop-only, like the module */
+#include "imgui_settings_workshop.h" /* the same */
 #include "nanosvg.h"
 #include "nanosvgrast.h"
 #include "../imgui_steam_nav.h"
@@ -1288,6 +1289,11 @@ extern "C" void imguiSettingsRenderDisplayTab(SettingsRenderCtx *ctx) {
             }
 
             workshopPublishDraw(&s_skinPublishSpec);
+
+            /* The mods, scenarios and maps the player is subscribed to or can
+               publish, under the skin's own Workshop buttons; the Browse
+               Workshop button above serves both. */
+            imguiSettingsWorkshopSection();
 #endif  /* !BOLO_MOBILE && !__EMSCRIPTEN__ */
         }
 

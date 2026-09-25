@@ -253,6 +253,9 @@ void scnDirEntryFromManifest(ScnDirEntry *e, const char *file,
        the caller: a directory read does not know which of the server's
        directories it is reading. */
     e->workshopId = m->workshopId;
+    /* The account that published it, for this computer's own listings; the
+       wire carries the id alone. */
+    e->workshopAuthor = m->workshopAuthor;
 }
 
 /* File-name order. Two scenarios may share a manifest name and two files in

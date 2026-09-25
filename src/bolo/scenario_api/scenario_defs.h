@@ -143,7 +143,11 @@ typedef struct {
  * of the SCN_DIR_SOURCE_* values below. A directory read leaves it
  * SCN_DIR_SOURCE_SERVER; the merged lister sets it for the rows it takes
  * from the uploads directory. workshopId is the Steam Workshop item the file
- * came from, 0 for none. */
+ * came from, 0 for none, and workshopAuthor the SteamID64 of the account that
+ * published it, 0 for none. The author is for this computer's own listings
+ * (the Settings dialog's Workshop section asks it to offer Update rather than
+ * Publish) and is never sent: the scenario-list packet and the script-list
+ * event carry the id and not the author. */
 typedef struct {
     char     file[SCN_DIR_FILE_LEN];  /* the name in the directory */
     char     name[SCN_DIR_NAME_LEN];  /* the manifest's */
@@ -154,6 +158,7 @@ typedef struct {
     bool     keepsWinCondition;
     uint8_t  source;
     uint64_t workshopId;
+    uint64_t workshopAuthor;
 } ScnDirEntry;
 
 /* ScnDirEntry.source. One byte on the wire, in the scenario-list packet and

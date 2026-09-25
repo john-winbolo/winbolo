@@ -457,7 +457,9 @@ void scenarioHostRegisterScenarioLister(ServerSim *sim);
  *  A row read from the Workshop directory says
  *  SERVER_SCENARIO_SOURCE_WORKSHOP and every other row
  *  SERVER_SCENARIO_SOURCE_SERVER. Its workshopId is the
- *  Workshop item the file's manifest names, 0 for none.
+ *  Workshop item the file's manifest names, 0 for none, and
+ *  workshopAuthor the account the manifest says published
+ *  it, 0 for none.
  *  File-name order, case-insensitive.
  *
  *ARGUMENTS:
@@ -506,6 +508,55 @@ bool scenarioHostLocalScriptPath(const char *file, char *out, size_t outLen);
  *  it or it does not fit, with out "".
  *********************************************************/
 bool scenarioHostWorkshopDir(char *out, size_t outLen);
+
+/*********************************************************
+ *NAME:          scenarioHostMapPackageInfo
+ *PURPOSE:
+ *  The scenario packed into a map file: fills out's name,
+ *  description, keepsWinCondition, bound, workshopId and
+ *  workshopAuthor from the chunk's manifest, and file with
+ *  the map's file name. Only the manifest is read; no
+ *  script runs. The file is read under the cap the attach
+ *  reads it under. A directory read per call: build a list
+ *  with it when the list is asked for, never per frame.
+ *
+ *ARGUMENTS:
+ *  mapPath - The map file
+ *  out     - Filled on true, cleared otherwise
+ *
+ *RETURNS:
+ *  False for a map with no chunk or one that does not read.
+ *********************************************************/
+bool scenarioHostMapPackageInfo(const char *mapPath, ServerScenarioEntry *out);
+
+/*********************************************************
+ *NAME:          scenarioHostPackLooseScript
+ *PURPOSE:
+ *  Pack Mods/<stem>.lua into Mods/<stem>.scenario for
+ *  publishing, then move the .lua into Mods/Sources/ so the
+ *  mod list shows one row. A <stem>.scenario already there
+ *  that carries a Workshop id keeps it: the id and author
+ *  are read before the pack and written back after it
+ *  (scnIoSetWorkshopId). A <stem>.lua already in Sources is
+ *  replaced. The listings are told after the pack and after
+ *  the move.
+ *
+ *  A move that fails is logged and still answers true: the
+ *  package is in place, and the script is left listed
+ *  beside it.
+ *
+ *ARGUMENTS:
+ *  luaPath         - The loose script
+ *  outScenarioPath - The package's path, on true
+ *  outLen          - The size of outScenarioPath
+ *  err, errLen     - The reason, on false
+ *
+ *RETURNS:
+ *  False with err set, and the .lua left where it was, when
+ *  the pack fails or the kept id cannot be written back.
+ *********************************************************/
+bool scenarioHostPackLooseScript(const char *luaPath, char *outScenarioPath,
+                                 size_t outLen, char *err, size_t errLen);
 
 /* What scenarioHostSaveLocalScript made of one file. */
 typedef enum {

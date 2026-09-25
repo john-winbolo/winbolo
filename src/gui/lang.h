@@ -3152,6 +3152,28 @@
  * when the manifest names an item. */
 #define STR_MAPEDIT_SCENARIO_WORKSHOP            2667
 
+/* The Workshop section of Settings */
+/* Its heading; the two buttons that switch its views; a subscribed item's
+ * state and the button to its Workshop page; the Update button on a row the
+ * player published before; the chip on a plain map; a subscribed item still
+ * downloading, whose name is not known yet ({string1} = the item id); the
+ * line each view shows when it has no rows; and the publish window's heading
+ * and "update" radio for a mod, scenario or map. Refresh, Downloading...,
+ * Publish, and the Mod and Scenario chips reuse the strings that already say
+ * them. */
+#define STR_DLGSETTINGS_WORKSHOP_HEADING         2668
+#define STR_DLGSETTINGS_WORKSHOP_SUBSCRIBED      2669
+#define STR_DLGSETTINGS_WORKSHOP_PUBLISH         2670
+#define STR_DLGSETTINGS_WORKSHOP_INSTALLED       2671
+#define STR_DLGSETTINGS_WORKSHOP_OPEN            2672
+#define STR_DLGSETTINGS_WORKSHOP_UPDATE          2673
+#define STR_DLGSETTINGS_WORKSHOP_TAG_MAP         2674
+#define STR_DLGSETTINGS_WORKSHOP_ITEM            2675
+#define STR_DLGSETTINGS_WORKSHOP_NONE_SUBSCRIBED 2676
+#define STR_DLGSETTINGS_WORKSHOP_NONE_PUBLISH    2677
+#define STR_DLGSETTINGS_WORKSHOP_PUB_HEADING     2678
+#define STR_DLGSETTINGS_WORKSHOP_PUB_UPDATE      2679
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

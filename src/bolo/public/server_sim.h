@@ -2161,6 +2161,9 @@ typedef struct {
                                     an unbound scenario are both unbound. */
     uint8_t  source;      /* SERVER_SCENARIO_SOURCE_* */
     uint64_t workshopId;  /* the Workshop item, 0 for none */
+    uint64_t workshopAuthor;  /* the SteamID64 that published it, 0 for none.
+                                 Filled by this computer's own listings and
+                                 never by what a server sends. */
 } ServerScenarioEntry;
 
 int serverSimEnumerateScenarioDir(ServerSim *sim,

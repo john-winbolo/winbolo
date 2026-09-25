@@ -1331,6 +1331,7 @@ int serverSimEnumerateScenarioDir(ServerSim *sim,
         e->keepsWinCondition = dirRows[i].keepsWinCondition;
         e->source     = dirRows[i].source;
         e->workshopId = dirRows[i].workshopId;
+        e->workshopAuthor = dirRows[i].workshopAuthor;
     }
     free(dirRows);
     return got;
