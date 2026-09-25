@@ -980,6 +980,13 @@ int run_starts_border_all_border_kept(void);
 int run_starts_border_compressed_load_agrees(void);
 int run_starts_border_named_inactive_safe(void);
 int run_starts_border_harvard_yard(void);
+/* Pillboxes and bases in the mined border, the same rule per kind. */
+int run_pills_border_pill_dropped(void);
+int run_bases_border_base_dropped(void);
+int run_items_border_all_border_kept(void);
+int run_items_border_compressed_load_agrees(void);
+int run_items_border_game_ignores(void);
+int run_pills_border_old_tutorial(void);
 
 /* Start side classification (test_start_sides.c). The integer sector test
  * in start_sides.h that puts a start on N/E/S/W (two bits for a diagonal,

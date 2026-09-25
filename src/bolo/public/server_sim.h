@@ -2502,6 +2502,10 @@ BYTE         serverSimGetPillCount(const ServerSim *sim);
 BYTE         serverSimGetBaseCount(const ServerSim *sim);
 BYTE         serverSimGetStartCount(const ServerSim *sim);
 
+/* The counts above are slot counts. The pill and base readers below return
+ * false for a number out of range and for a slot whose item is not on the
+ * map (taken off by a scenario, or by the loader for one in the mined
+ * border); the *Info readers report that as their active field instead. */
 bool         serverSimGetPill(ServerSim *sim, BYTE i,
                               BYTE *x, BYTE *y, BYTE *owner, BYTE *armour,
                               bool *inTank);

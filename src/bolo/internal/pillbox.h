@@ -1050,6 +1050,11 @@ void pillsSetPillCompressData(pillboxes *value, BYTE *buff, int dataLen);
 /* Clamps the pillbox fields a map cannot be trusted on whatever the rules
    say — the count and each owner. See basesValidate. */
 void pillsValidate(pillboxes *value);
+
+/* Takes off the map every pillbox on the ground in the mined border, unless
+ * no pillbox on the ground is inside it. Returns how many were taken off.
+ * See pillbox.c. */
+BYTE pillsRemoveBorderPills(pillboxes *value);
 /* Clamps every pillbox against the sim's gameplay caps. Called by
    mapClampToRules once a sim owns the records; see bolo_map.h. */
 void pillsClampToRules(struct GameSim *sim, pillboxes *value);

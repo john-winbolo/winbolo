@@ -38,6 +38,7 @@
 #include "log.h"
 #include "../winbolonet/winbolonet_core.h"
 #include "bases.h"
+#include "bolo_map.h"
 #include "game_sim.h"
 #include "client_sim.h"
 #include "client_sim_internal.h"
@@ -2426,4 +2427,46 @@ BYTE basesGetNumActive(bases *value) {
     }
   }
   return live;
+}
+
+/*********************************************************
+*NAME:          basesRemoveBorderBases
+*PURPOSE:
+*  Takes off the map every live base that sits in the mined
+*  border round the edge, the same rule as
+*  startsRemoveBorderStarts. No tank can reach a base out
+*  there, so it could never be captured or used, yet it was
+*  counted, drawn and handed to the bots. Nothing is changed
+*  when no live base is inside the border, so such a map
+*  still plays as it does today. Slot numbers do not change.
+*  Returns how many bases were taken off.
+*
+*ARGUMENTS:
+*  value - Pointer to the bases structure
+*********************************************************/
+BYTE basesRemoveBorderBases(bases *value) {
+  BYTE count;
+  BYTE inside = 0;
+  BYTE removed = 0;
+
+  if (value == NULL || *value == NULL) {
+    return 0;
+  }
+  for (count = 0; count < (*value)->numBases && count < MAX_BASES; count++) {
+    if ((*value)->active[count] != FALSE &&
+        mapPosInBounds((*value)->item[count].x, (*value)->item[count].y)) {
+      inside++;
+    }
+  }
+  if (inside == 0) {
+    return 0;
+  }
+  for (count = 0; count < (*value)->numBases && count < MAX_BASES; count++) {
+    if ((*value)->active[count] != FALSE &&
+        !mapPosInBounds((*value)->item[count].x, (*value)->item[count].y)) {
+      (*value)->active[count] = FALSE;
+      removed++;
+    }
+  }
+  return removed;
 }

@@ -108,12 +108,18 @@ void lobbyRebuildStartCompassCache(const BYTE *data, int len) {
     memset(s_mapPreview.startMapY, 0, sizeof(s_mapPreview.startMapY));
     s_mapPreview.startCount = 0;
     s_mapPreview.startLiveCount = 0;
+    s_mapPreview.pillCount = s_mapPreview.pillLiveCount = 0;
+    s_mapPreview.baseCount = s_mapPreview.baseLiveCount = 0;
     s_mapPreview.startBboxMinX = s_mapPreview.startBboxMinY = 0;
     s_mapPreview.startBboxMaxX = s_mapPreview.startBboxMaxY = 0;
     MapPreview *mp = clientMapPreviewLoadFromBuffer(data, len);
     if (!mp) {
         return;
     }
+    s_mapPreview.pillCount     = clientMapPreviewGetPillCount(mp);
+    s_mapPreview.pillLiveCount = clientMapPreviewGetLivePillCount(mp);
+    s_mapPreview.baseCount     = clientMapPreviewGetBaseCount(mp);
+    s_mapPreview.baseLiveCount = clientMapPreviewGetLiveBaseCount(mp);
     BYTE n = clientMapPreviewGetStartCount(mp);
     if (n == 0) {
         clientMapPreviewDestroy(mp);
@@ -163,6 +169,22 @@ int lobbyLiveStartCount(ClientSim *cs) {
      * last one's while the new map's bytes are still arriving. */
     if (s_mapPreview.startCount > 0 && (int)s_mapPreview.startCount == n) {
         return (int)s_mapPreview.startLiveCount;
+    }
+    return n;
+}
+
+int lobbyLivePillCount(ClientSim *cs) {
+    int n = (int)clientSimGetLobbyPillCount(cs);
+    if (s_mapPreview.pillCount > 0 && (int)s_mapPreview.pillCount == n) {
+        return (int)s_mapPreview.pillLiveCount;
+    }
+    return n;
+}
+
+int lobbyLiveBaseCount(ClientSim *cs) {
+    int n = (int)clientSimGetLobbyBaseCount(cs);
+    if (s_mapPreview.baseCount > 0 && (int)s_mapPreview.baseCount == n) {
+        return (int)s_mapPreview.baseLiveCount;
     }
     return n;
 }

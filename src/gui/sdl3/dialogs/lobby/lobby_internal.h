@@ -242,6 +242,13 @@ typedef struct LobbyMapPreviewState {
     /* How many of those starts are on the map. A start the map loader took
      * off (one in the mined border) keeps its slot with a compass id of 0. */
     BYTE        startLiveCount = 0;
+    /* Slot and live counts of the pillboxes and bases on the same map, for
+     * the "P / B" counts the lobby shows. The loader takes one in the mined
+     * border off the map, the same as a start. */
+    BYTE        pillCount = 0;
+    BYTE        pillLiveCount = 0;
+    BYTE        baseCount = 0;
+    BYTE        baseLiveCount = 0;
 
     /* 1-based start currently hovered in a start dropdown (the combo in the
      * player list), so the inline preview can outline it. Set while a dropdown
@@ -564,6 +571,9 @@ BYTE lobbyStartSideMask(int k);
 /* Starts on the lobby map, for the start counts the lobby shows: the cache's
  * live count once it holds this map, otherwise the server's slot count. */
 int lobbyLiveStartCount(ClientSim *cs);
+/* The same for pillboxes and bases. */
+int lobbyLivePillCount(ClientSim *cs);
+int lobbyLiveBaseCount(ClientSim *cs);
 const char *lobbyMapTransferLine(ClientSim *cs, float *outProgress);
 int lobbyComputeStartOwners(ClientSim *cs, int myPlayerNum,
                             uint8_t *owners, int maxN, uint32_t *outSig);

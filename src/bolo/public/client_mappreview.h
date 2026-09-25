@@ -113,13 +113,16 @@ bool         clientMapPreviewIsStart(const MapPreview *mp, BYTE x, BYTE y);
 BYTE         clientMapPreviewGetPillCount(const MapPreview *mp);
 BYTE         clientMapPreviewGetBaseCount(const MapPreview *mp);
 BYTE         clientMapPreviewGetStartCount(const MapPreview *mp);
-/* Starts on the map, leaving out any taken off it (a start in the mined
- * border). GetStartCount is the slot count the per-index loops run to. */
+/* Items on the map, leaving out any taken off it (one in the mined
+ * border). The Get*Count calls above are the slot counts the per-index
+ * loops run to. */
 BYTE         clientMapPreviewGetLiveStartCount(const MapPreview *mp);
+BYTE         clientMapPreviewGetLivePillCount(const MapPreview *mp);
+BYTE         clientMapPreviewGetLiveBaseCount(const MapPreview *mp);
 
 /* --- Per-index getters (un-bundled out-params) -------- */
-/* Each returns false if i is out of range. GetStart also returns false for
- * a start that is not on the map. */
+/* Each returns false if i is out of range, or if the item at i is not on
+ * the map. */
 bool clientMapPreviewGetPill(const MapPreview *mp, BYTE i,
                              BYTE *x, BYTE *y, BYTE *owner, BYTE *armour);
 bool clientMapPreviewGetBase(const MapPreview *mp, BYTE i,

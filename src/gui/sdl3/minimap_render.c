@@ -198,10 +198,13 @@ void minimapDrawObjects(uint8_t *pixels,
            centre) says so in the preview, and a plain map, whose pills are
            all neutral, is drawn as before. */
         static const uint8_t ownedCol[3] = {255, 0, 255}; /* magenta */
-        for (i = 0; i < pb->numPills; i++) {
+        for (i = 0; i < pb->numPills && i < MAX_PILLS; i++) {
             int px = pb->item[i].x;
             int py = pb->item[i].y;
             const uint8_t *col = (pb->item[i].owner != NEUTRAL) ? ownedCol : pillColor;
+            /* Not on the map: the loader took it off (one in the mined
+               border). The map editor puts every item back on. */
+            if (pb->active[i] == FALSE) continue;
             for (dy = -1; dy <= 1; dy++) {
                 for (dx = -1; dx <= 1; dx++) {
                     int nx = px + dx, ny = py + dy;
@@ -218,9 +221,10 @@ void minimapDrawObjects(uint8_t *pixels,
     }
 
     if (baseColor && bs) {
-        for (i = 0; i < bs->numBases; i++) {
+        for (i = 0; i < bs->numBases && i < MAX_BASES; i++) {
             int bx = bs->item[i].x;
             int by = bs->item[i].y;
+            if (bs->active[i] == FALSE) continue;
             for (dy = -1; dy <= 1; dy++) {
                 for (dx = -1; dx <= 1; dx++) {
                     int nx = bx + dx, ny = by + dy;
@@ -237,9 +241,10 @@ void minimapDrawObjects(uint8_t *pixels,
     }
 
     if (startColor && ss) {
-        for (i = 0; i < ss->numStarts; i++) {
+        for (i = 0; i < ss->numStarts && i < MAX_STARTS; i++) {
             int sx = ss->item[i].x;
             int sy = ss->item[i].y;
+            if (ss->active[i] == FALSE) continue;
             /* Colour by ownership when an override is in effect, else the
              * caller's default (yellow). The off-side bit rides on top of
              * the code and dims the dot rather than changing its colour. */
@@ -306,8 +311,8 @@ SDL_Texture *minimapFromCompressed(SDL_Renderer *renderer,
     MapPreview *mp = clientMapPreviewLoadFromBuffer(compressedData, dataLen);
     if (!mp) return NULL;
 
-    if (outPills)  *outPills  = clientMapPreviewGetPillCount(mp);
-    if (outBases)  *outBases  = clientMapPreviewGetBaseCount(mp);
+    if (outPills)  *outPills  = clientMapPreviewGetLivePillCount(mp);
+    if (outBases)  *outBases  = clientMapPreviewGetLiveBaseCount(mp);
     if (outStarts) *outStarts = clientMapPreviewGetLiveStartCount(mp);
 
     tex = minimapCreateTexture(renderer, mp, bounds, 0);
@@ -362,8 +367,8 @@ SDL_Texture *minimapFromFile(SDL_Renderer *renderer, const char *mapPath,
 
     if (!mp) return NULL;
 
-    if (outPills)  *outPills  = clientMapPreviewGetPillCount(mp);
-    if (outBases)  *outBases  = clientMapPreviewGetBaseCount(mp);
+    if (outPills)  *outPills  = clientMapPreviewGetLivePillCount(mp);
+    if (outBases)  *outBases  = clientMapPreviewGetLiveBaseCount(mp);
     if (outStarts) *outStarts = clientMapPreviewGetLiveStartCount(mp);
 
     tex = minimapCreateTexture(renderer, mp, bounds, 0);

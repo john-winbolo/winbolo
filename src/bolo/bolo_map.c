@@ -582,7 +582,10 @@ static bool mapReadStream(MapReader *r, map *value, pillboxes *pb, bases *bs, st
     mapCenter(value, pb, bs, ss);
     /* After the shift, so the test is against the border the game plays
      * with. mapLoadCompressedMap repeats it, so a client reading this map
-     * from the wire keeps the same list the server has. */
+     * from the wire keeps the same list the server has. Before the terrain
+     * fixes below, which skip an item that is off the map. */
+    pillsRemoveBorderPills(pb);
+    basesRemoveBorderBases(bs);
     startsRemoveBorderStarts(ss);
   }
 
@@ -1678,9 +1681,11 @@ bool mapLoadCompressedMap(map *value, pillboxes *pb, bases *bs, starts *ss, BYTE
   basesValidate(bs);
   pillsValidate(pb);
   startsValidate(ss);
-  /* The blob carries no live flags, so the setter above has put every start
-   * back on the map. A start in the mined border comes off again here, the
-   * same as mapReadStream takes it off a map file. */
+  /* The blob carries no live flags, so the setters above have put every
+   * pillbox, base and start back on the map. One in the mined border comes
+   * off again here, the same as mapReadStream takes it off a map file. */
+  pillsRemoveBorderPills(pb);
+  basesRemoveBorderBases(bs);
   startsRemoveBorderStarts(ss);
 
   /* Map */

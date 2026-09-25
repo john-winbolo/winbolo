@@ -1218,11 +1218,15 @@ static void logStateVerbose(int tickNum) {
   fprintf(f, ",\"pillboxes\":[");
   if (fastServerSim != NULL) {
     BYTE np = serverSimGetPillCount(fastServerSim);
+    int firstPill = 1;
     for (BYTE pi = 1; pi <= np; pi++) {
       BYTE px, py, powner, parmour;
       bool pinTank;
+      /* A slot whose pill is not on the map is skipped, so the comma goes by
+         what has been written rather than by the slot number. */
       if (!serverSimGetPill(fastServerSim, pi, &px, &py, &powner, &parmour, &pinTank)) continue;
-      if (pi > 1) fprintf(f, ",");
+      if (!firstPill) fprintf(f, ",");
+      firstPill = 0;
       fprintf(f, "{\"tx\":%u,\"ty\":%u,\"owner\":\"%s\",\"armor\":%u,\"in_tank\":%s}",
         (unsigned)px, (unsigned)py,
         verboseOwnerStr(powner, selfPlayer, alliesBits),
@@ -1236,12 +1240,14 @@ static void logStateVerbose(int tickNum) {
   fprintf(f, ",\"bases\":[");
   if (fastServerSim != NULL) {
     BYTE nb = serverSimGetBaseCount(fastServerSim);
+    int firstBase = 1;
     for (BYTE bsi = 1; bsi <= nb; bsi++) {
       BYTE bx, by, bowner;
       BYTE bshells, bmines, barmour;
       if (!serverSimGetBase(fastServerSim, bsi, &bx, &by, &bowner)) continue;
       serverSimGetBaseStats(fastServerSim, bsi, &bshells, &bmines, &barmour);
-      if (bsi > 1) fprintf(f, ",");
+      if (!firstBase) fprintf(f, ",");
+      firstBase = 0;
       fprintf(f, "{\"tx\":%u,\"ty\":%u,\"owner\":\"%s\",\"armor\":%u,\"shells\":%u,\"mines\":%u}",
         (unsigned)bx, (unsigned)by,
         verboseOwnerStr(bowner, selfPlayer, alliesBits),
