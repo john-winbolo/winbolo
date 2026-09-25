@@ -2648,4 +2648,5 @@ STR_DLGLOBBY_DETAILS_SETTINGS=Settings:
 STR_DLGLOBBY_DETAILS_SETTINGS_HOST=Only the host can change these.
 STR_DLGLOBBY_DETAILS_SETTINGS_OLD=This server cannot change script settings, so the defaults apply.
 STR_DLGLOBBY_DETAILS_SETTING_DEFAULT={number} (default)
+STR_MAPEDIT_SCENARIO_WORKSHOP=Workshop item #{string1}, published by {string2}
 

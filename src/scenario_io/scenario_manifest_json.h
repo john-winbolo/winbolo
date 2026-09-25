@@ -88,6 +88,17 @@ const char *scnManifestBrainName(const ScnManifestDoc *d, int i);
    frees the returned string. */
 char *scnManifestWrite(const ScnManifestDoc *d, char *err, size_t errLen);
 
+/* Set the Workshop item and author on a parsed doc. Every other key,
+   known or not, is written back as it was. */
+void scnManifestSetWorkshop(ScnManifestDoc *d, uint64_t id, uint64_t author);
+
+/* A Workshop item id or a SteamID64 as the manifest and a script's table
+   both write it: a non-empty string of ASCII digits that fits 64 bits. True
+   with the value in *out; false with *out 0 for NULL and for anything else.
+   Both readers take workshop_id and workshop_author through here, so a
+   value one of them refuses the other refuses too. */
+bool scnManifestParseId(const char *s, uint64_t *out);
+
 /* Do a package's manifest and the table its script declared agree? True
    when they do. On a conflict, false with the disagreeing key written to
    key (for example "lobby.teams[0].brain" or "rules.tank_reload_ticks")

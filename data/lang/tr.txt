@@ -2642,3 +2642,4 @@ STR_DLGLOBBY_SCENARIO_SAVE_NOT_FOUND=Sunucuda artık bu dosya yok.
 STR_DLGLOBBY_SCENARIO_SAVE_TOO_LARGE=Bu dosya kopyalanamayacak kadar büyük.
 STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER=Sunucu yanıt vermedi. Tekrar deneyin.
 STR_DLGLOBBY_SCENARIO_SAVE_WRITE=Kopya Mods klasörünüze kaydedilemedi.
+STR_MAPEDIT_SCENARIO_WORKSHOP=Atölye öğesi #{string1}, yayımlayan {string2}

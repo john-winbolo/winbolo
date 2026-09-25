@@ -1264,6 +1264,29 @@ static ScnManifestKind scnReadKind(lua_State *L, int tbl,
     return kind;
 }
 
+/* scenario.workshop_id or scenario.workshop_author: the twin of mjDecodeId in
+ * scenario_manifest_json.c, through the same scnManifestParseId. Absent is 0
+ * without a word. A string of digits that fits 64 bits is the value; anything
+ * else, a Lua number included, is reported under its key and read as 0,
+ * because a number has already been made a double and lost the low digits of
+ * a real id. */
+static uint64_t scnReadWorkshopId(lua_State *L, int tbl, const char *key,
+                                  ScnParseReport *rep) {
+    uint64_t v = 0;
+
+    scnRawField(L, tbl, key);
+    if (!lua_isnil(L, -1) &&
+        (lua_type(L, -1) != LUA_TSTRING ||
+         !scnManifestParseId(lua_tostring(L, -1), &v))) {
+        scnReport(rep, key,
+                  "scenario: %s is not a string of digits naming a Steam id; "
+                  "0 used", key);
+        v = 0;
+    }
+    lua_pop(L, 1);
+    return v;
+}
+
 static void scnReadLobby(lua_State *L, int tbl, ScnManifestLobby *lob) {
     int lt;
 
@@ -2155,6 +2178,8 @@ bool scnReadManifest(lua_State *L, int envRef, ScenarioManifest *m,
     m->api        = scnReadInt(L, tbl, "api", 1);
     m->bound      = scnReadBool(L, tbl, "bound", true);
     m->fillToCaps = scnReadBool(L, tbl, "fill_to_caps", false);
+    m->workshopId     = scnReadWorkshopId(L, tbl, "workshop_id", rep);
+    m->workshopAuthor = scnReadWorkshopId(L, tbl, "workshop_author", rep);
 
     scnReadLobby(L, tbl, &m->lobby);
     scnReadRules(L, tbl, m, rep);
@@ -2484,6 +2509,26 @@ void scnPushManifestGlobal(lua_State *L, int envRef,
     lua_setfield(L, t, "bound");
     lua_pushboolean(L, m->fillToCaps ? 1 : 0);
     lua_setfield(L, t, "fill_to_caps");
+    /* The Workshop item and author as the digit strings the file writes
+       them as, and left out for 0, which a reader sees the same as absent.
+       A packaged script that assigns nothing then reads the package's own
+       id back. */
+    if (m->workshopId != 0) {
+        char digits[24];
+
+        snprintf(digits, sizeof(digits), "%llu",
+                 (unsigned long long)m->workshopId);
+        lua_pushstring(L, digits);
+        lua_setfield(L, t, "workshop_id");
+    }
+    if (m->workshopAuthor != 0) {
+        char digits[24];
+
+        snprintf(digits, sizeof(digits), "%llu",
+                 (unsigned long long)m->workshopAuthor);
+        lua_pushstring(L, digits);
+        lua_setfield(L, t, "workshop_author");
+    }
 
     scnPushLobby(L, &m->lobby);
     lua_setfield(L, t, "lobby");
@@ -7354,7 +7399,7 @@ int scenarioHostListLocalScripts(ServerScenarioEntry *out, int max) {
             e->bound             = rows[i].bound;
             e->keepsWinCondition = rows[i].keepsWinCondition;
             e->source            = SERVER_SCENARIO_SOURCE_SERVER;
-            e->workshopId        = 0;
+            e->workshopId        = rows[i].workshopId;
             n++;
         }
     }

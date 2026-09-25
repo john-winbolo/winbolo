@@ -3553,6 +3553,10 @@ set(WINBOLO_UNITTESTS_SOURCES
     # read still in it, and the comparison that holds a package's manifest
     # against the table its script declared.
     tests/unit/test_scenario_manifest_json.c
+    # The Workshop item stamped into a .scenario package or a packed map
+    # that already exists, with every other entry and unknown manifest key
+    # kept, and a loose script and a plain map refused.
+    tests/unit/test_scenario_workshop_id.c
     # Where a map file's map data ends: the measure over synthetic BMAPs, the
     # container found after one, the scripted tag a packed map gets, and the
     # lobby preview that stops at the end of the map.
@@ -5994,6 +5998,7 @@ set(_unit_test_names
     scenario_host_hook_via_global_metatable
     scenario_host_script_env_is_its_own
     scenario_host_manifest_read_from_its_own_env
+    scenario_host_manifest_reads_workshop
     scenario_host_errors_counted_per_script
     scenario_host_many_rules_all_applied
     scenario_host_disabled_refuses_script
@@ -6176,6 +6181,9 @@ set(_unit_test_names
     scenario_manifest_json_trigger_action_no_op
     scenario_manifest_json_trigger_where_no_field
     scenario_manifest_json_trigger_text_cut
+    scenario_manifest_workshop_keys
+    scenario_manifest_agrees_workshop
+    scenario_io_set_workshop_id
     scenario_map_body_length
     scenario_map_find_container
     scenario_map_has_script_chunk

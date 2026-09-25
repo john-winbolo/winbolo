@@ -2640,3 +2640,4 @@ STR_DLGLOBBY_SCENARIO_SAVE_NOT_FOUND=Server už tento soubor nemá.
 STR_DLGLOBBY_SCENARIO_SAVE_TOO_LARGE=Tento soubor je na zkopírování příliš velký.
 STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER=Server neodpověděl. Zkuste to znovu.
 STR_DLGLOBBY_SCENARIO_SAVE_WRITE=Kopii se nepodařilo uložit do složky Mods.
+STR_MAPEDIT_SCENARIO_WORKSHOP=Položka Workshopu č. {string1}, zveřejnil {string2}

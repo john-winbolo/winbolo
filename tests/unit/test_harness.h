@@ -3077,6 +3077,7 @@ int run_scenario_host_metatable_not_read(void);
 int run_scenario_host_hook_via_global_metatable(void);
 int run_scenario_host_script_env_is_its_own(void);
 int run_scenario_host_manifest_read_from_its_own_env(void);
+int run_scenario_host_manifest_reads_workshop(void);
 int run_scenario_host_errors_counted_per_script(void);
 int run_scenario_host_many_rules_all_applied(void);
 
@@ -3325,6 +3326,17 @@ int run_scenario_manifest_json_trigger_no_when(void);
 int run_scenario_manifest_json_trigger_action_no_op(void);
 int run_scenario_manifest_json_trigger_where_no_field(void);
 int run_scenario_manifest_json_trigger_text_cut(void);
+/* The Workshop item and its author: read as digit strings and written back
+ * as them, and the comparison that lets a table stating none agree with a
+ * manifest that names one. */
+int run_scenario_manifest_workshop_keys(void);
+int run_scenario_manifest_agrees_workshop(void);
+
+/* The Workshop item stamped into a scenario file that already exists
+ * (test_scenario_workshop_id.c): a .scenario package and a packed map, with
+ * everything but the manifest kept, and a loose script and a plain map
+ * refused. */
+int run_scenario_io_set_workshop_id(void);
 
 /* Where a map file's map data ends (test_scenario_map_body.c): the measure
  * itself, the container found after it, the scripted tag it gives the

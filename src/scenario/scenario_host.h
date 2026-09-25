@@ -452,8 +452,9 @@ void scenarioHostRegisterScenarioLister(ServerSim *sim);
  *  call. Still a directory read: call it when the chooser
  *  opens or a transfer ends, never per frame.
  *
- *  Every row says SERVER_SCENARIO_SOURCE_SERVER and
- *  workshopId 0. File-name order, case-insensitive.
+ *  Every row says SERVER_SCENARIO_SOURCE_SERVER, and its
+ *  workshopId is the Workshop item the file's manifest
+ *  names, 0 for none. File-name order, case-insensitive.
  *
  *ARGUMENTS:
  *  out - Rows written here

@@ -2640,3 +2640,4 @@ STR_DLGLOBBY_SCENARIO_SAVE_NOT_FOUND=서버에 더 이상 이 파일이 없습�
 STR_DLGLOBBY_SCENARIO_SAVE_TOO_LARGE=이 파일은 너무 커서 복사할 수 없습니다.
 STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER=서버가 응답하지 않았습니다. 다시 시도하세요.
 STR_DLGLOBBY_SCENARIO_SAVE_WRITE=사본을 Mods 폴더에 저장할 수 없습니다.
+STR_MAPEDIT_SCENARIO_WORKSHOP=창작마당 아이템 #{string1}, 게시자 {string2}

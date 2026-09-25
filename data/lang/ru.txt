@@ -2640,3 +2640,4 @@ STR_DLGLOBBY_SCENARIO_SAVE_NOT_FOUND=На сервере больше нет э�
 STR_DLGLOBBY_SCENARIO_SAVE_TOO_LARGE=Этот файл слишком большой для копирования.
 STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER=Сервер не ответил. Попробуйте ещё раз.
 STR_DLGLOBBY_SCENARIO_SAVE_WRITE=Не удалось сохранить копию в папку Mods.
+STR_MAPEDIT_SCENARIO_WORKSHOP=Предмет Мастерской №{string1}, опубликовал {string2}

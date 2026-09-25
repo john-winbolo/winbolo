@@ -2617,6 +2617,7 @@ static const LangEntry langTable[] = {
     {2664, "Only the host can change these."},
     {2665, "This server cannot change script settings, so the defaults apply."},
     {2666, "{number} (default)"},
+    {2667, "Workshop item #{string1}, published by {string2}"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

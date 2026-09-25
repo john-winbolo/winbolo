@@ -3838,6 +3838,101 @@ int run_scenario_host_manifest_read_from_its_own_env(void) {
     return 0;
 }
 
+/* ── 29a. The Workshop item a script's table names ────────────────── */
+
+/* workshop_id and workshop_author read out of a script's own table as digit
+ * strings, past 2^53 without losing a digit, the way the JSON reader reads
+ * them out of manifest.json. A Lua number there is reported and read as 0,
+ * since it is a double by the time the read sees it. And a package's ids
+ * pushed as the scenario global come back out of a script that assigns no
+ * table of its own. */
+int run_scenario_host_manifest_reads_workshop(void) {
+    static const char *const kStrings =
+        "scenario = { name = \"Published\", api = 1,\n"
+        "  workshop_id = \"76561198000000001\",\n"
+        "  workshop_author = \"76561198000000123\" }\n";
+    static const char *const kNumber =
+        "scenario = { name = \"Published\", api = 1,\n"
+        "  workshop_id = 76561198000000001 }\n";
+    static const char *const kNothing = "local unused = 1\n";
+    lua_State        *L;
+    ScenarioManifest *m;
+    ScenarioManifest *pushed;
+    ScnParseReport    rep;
+    char              err[512];
+    char              soft[512];
+    int               a;
+    int               b;
+    int               c;
+
+    m      = (ScenarioManifest *)calloc(1, sizeof(*m));
+    pushed = (ScenarioManifest *)calloc(1, sizeof(*pushed));
+    UT_ASSERT(m != NULL && pushed != NULL);
+
+    L = scnNewVm();
+    UT_ASSERT(L != NULL);
+    a = scnEnvNew(L);
+    b = scnEnvNew(L);
+    c = scnEnvNew(L);
+    UT_ASSERT(a != LUA_NOREF && b != LUA_NOREF && c != LUA_NOREF);
+
+    soft[0]     = '\0';
+    rep.soft    = soft;
+    rep.softLen = sizeof(soft);
+    rep.sink    = NULL;
+
+    err[0] = '\0';
+    UT_ASSERT_MSG(scnRunChunk(L, a, kStrings, strlen(kStrings), "@a.lua", err,
+                              sizeof(err)),
+                  "the script would not load: %s", err);
+    UT_ASSERT_MSG(scnReadManifest(L, a, m, "a.lua", err, sizeof(err), &rep),
+                  "the table would not read: %s", err);
+    UT_ASSERT_MSG(m->workshopId == 76561198000000001ULL,
+                  "workshop_id read as %llu",
+                  (unsigned long long)m->workshopId);
+    UT_ASSERT_MSG(m->workshopAuthor == 76561198000000123ULL,
+                  "workshop_author read as %llu",
+                  (unsigned long long)m->workshopAuthor);
+    UT_ASSERT_MSG(soft[0] == '\0', "the strings were reported: %s", soft);
+
+    err[0] = '\0';
+    UT_ASSERT_MSG(scnRunChunk(L, b, kNumber, strlen(kNumber), "@b.lua", err,
+                              sizeof(err)),
+                  "the script would not load: %s", err);
+    UT_ASSERT_MSG(scnReadManifest(L, b, m, "b.lua", err, sizeof(err), &rep),
+                  "the table would not read: %s", err);
+    UT_ASSERT_MSG(m->workshopId == 0, "a Lua number read as %llu",
+                  (unsigned long long)m->workshopId);
+    UT_ASSERT_MSG(strstr(soft, "workshop_id") != NULL,
+                  "a Lua number was not reported: '%s'", soft);
+
+    pushed->api            = 1;
+    pushed->bound          = true;
+    pushed->workshopId     = 76561198000000001ULL;
+    pushed->workshopAuthor = 76561198000000123ULL;
+    snprintf(pushed->name, sizeof(pushed->name), "Published");
+    scnPushManifestGlobal(L, c, pushed);
+    err[0] = '\0';
+    UT_ASSERT_MSG(scnRunChunk(L, c, kNothing, strlen(kNothing), "@c.lua", err,
+                              sizeof(err)),
+                  "the script would not load: %s", err);
+    UT_ASSERT_MSG(scnReadManifest(L, c, m, "c.lua", err, sizeof(err), &rep),
+                  "the pushed table would not read: %s", err);
+    UT_ASSERT_MSG(m->workshopId == pushed->workshopId &&
+                      m->workshopAuthor == pushed->workshopAuthor,
+                  "the pushed ids came back as %llu / %llu",
+                  (unsigned long long)m->workshopId,
+                  (unsigned long long)m->workshopAuthor);
+
+    luaL_unref(L, LUA_REGISTRYINDEX, a);
+    luaL_unref(L, LUA_REGISTRYINDEX, b);
+    luaL_unref(L, LUA_REGISTRYINDEX, c);
+    scnCloseVm(L);
+    free(m);
+    free(pushed);
+    return 0;
+}
+
 /* ── 30. The error count belongs to the script ────────────────────── */
 
 /* Errors in a row are counted against the script that raised them rather

@@ -46,6 +46,16 @@
  *        is not an array and an entry that is not an object are reported
  *        rather than refused; and each of the four caps drops what is past
  *        it and says which row went
+ * run_scenario_manifest_workshop_keys
+ *      — workshop_id and workshop_author read as digit strings, past 2^53
+ *        without losing a digit, and written back as strings; absent and "0"
+ *        read as no item without a report; a string that is not digits, one
+ *        past 64 bits, and a JSON number read as 0 and are reported under
+ *        their key; and a manifest naming no item writes no key for one
+ * run_scenario_manifest_agrees_workshop
+ *      — a script's table that states no Workshop item or author agrees
+ *        with a manifest that names one, one that restates it agrees, and
+ *        one that states a different one is refused under its key
  */
 
 #include <stdint.h>
@@ -1996,5 +2006,267 @@ int run_scenario_manifest_json_kind(void) {
                       "kind %d went out and came back as %d", (int)in.kind,
                       (int)got);
     }
+    return 0;
+}
+
+/* ── The Workshop item ─────────────────────────────────────────────── */
+
+/* Both past 2^53, so a value that went through a double on the way would
+   come back with its last digits changed. */
+#define MJ_WS_ID     76561198000000001ULL
+#define MJ_WS_AUTHOR 76561198000000123ULL
+
+int run_scenario_manifest_workshop_keys(void) {
+    /* The smallest package that parses, with the two keys written in by the
+       case. */
+    static const char *const kFmt =
+        "{ \"manifest\": 1, \"api\": 1, \"name\": \"Published\"%s }\n";
+    static const struct {
+        const char *line;      /* what goes where the keys would */
+        uint64_t    id;        /* what the read has to make of it */
+        uint64_t    author;
+        const char *reported;  /* the key a report is filed under, or NULL
+                                * for a case that is not reported */
+    } kCases[] = {
+        { ", \"workshop_id\": \"76561198000000001\","
+          " \"workshop_author\": \"76561198000000123\"",
+          MJ_WS_ID, MJ_WS_AUTHOR, NULL },
+        { "", 0, 0, NULL },
+        { ", \"workshop_id\": \"0\", \"workshop_author\": \"0\"", 0, 0, NULL },
+        { ", \"workshop_id\": \"7656x\"", 0, 0, "workshop_id" },
+        { ", \"workshop_id\": \"\"", 0, 0, "workshop_id" },
+        { ", \"workshop_id\": \"-1\"", 0, 0, "workshop_id" },
+        { ", \"workshop_id\": \"18446744073709551616\"", 0, 0, "workshop_id" },
+        { ", \"workshop_id\": 76561198000000001", 0, 0, "workshop_id" },
+        { ", \"workshop_author\": 5", 0, 0, "workshop_author" },
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(kCases) / sizeof(kCases[0]); i++) {
+        char               text[512];
+        char               err[256];
+        char               soft[256];
+        ScnParseReport     rep;
+        ScnValidateResult *sink;
+        ScnManifestDoc    *d;
+        uint64_t           id;
+        uint64_t           author;
+        bool               said;
+        bool               anyWorkshop;
+
+        sink = (ScnValidateResult *)malloc(sizeof(*sink));
+        UT_ASSERT(sink != NULL);
+        memset(sink, 0, sizeof(*sink));
+        soft[0]     = '\0';
+        rep.soft    = soft;
+        rep.softLen = sizeof(soft);
+        rep.sink    = sink;
+
+        snprintf(text, sizeof(text), kFmt, kCases[i].line);
+        err[0] = '\0';
+        d      = parseText(text, &rep, err, sizeof(err));
+        if (d == NULL) {
+            free(sink);
+            UT_FAIL("case %d was refused outright: %s", (int)i, err);
+        }
+        id          = scnManifestValues(d)->workshopId;
+        author      = scnManifestValues(d)->workshopAuthor;
+        anyWorkshop = sawIssue(sink, "workshop_id") ||
+                      sawIssue(sink, "workshop_author");
+        said        = (kCases[i].reported == NULL)
+                          ? !anyWorkshop
+                          : sawIssue(sink, kCases[i].reported);
+        scnManifestFree(d);
+        free(sink);
+
+        UT_ASSERT_MSG(id == kCases[i].id && author == kCases[i].author,
+                      "case %d ('%s') read as %llu / %llu", (int)i,
+                      kCases[i].line, (unsigned long long)id,
+                      (unsigned long long)author);
+        UT_ASSERT_MSG(said,
+                      "case %d ('%s') was %s", (int)i, kCases[i].line,
+                      (kCases[i].reported == NULL)
+                          ? "reported against"
+                          : "not reported under its key");
+    }
+
+    /* Out to text and back with both set: the digits survive, as a string. */
+    {
+        ScenarioManifest *in;
+        char              err[256];
+        char             *text;
+        ScnManifestDoc   *made;
+        ScnManifestDoc   *back;
+        bool              asString;
+        uint64_t          id;
+        uint64_t          author;
+
+        in = (ScenarioManifest *)calloc(1, sizeof(*in));
+        UT_ASSERT(in != NULL);
+        in->api            = 1;
+        in->workshopId     = MJ_WS_ID;
+        in->workshopAuthor = MJ_WS_AUTHOR;
+        snprintf(in->name, sizeof(in->name), "Published");
+
+        made = scnManifestFromValues(in, err, sizeof(err));
+        free(in);
+        UT_ASSERT_MSG(made != NULL, "a doc could not be built: %s", err);
+        text = scnManifestWrite(made, err, sizeof(err));
+        scnManifestFree(made);
+        UT_ASSERT_MSG(text != NULL, "the manifest could not be written: %s",
+                      err);
+
+        asString = strstr(text, "\"76561198000000001\"") != NULL &&
+                   strstr(text, "\"76561198000000123\"") != NULL;
+        back = parseText(text, NULL, err, sizeof(err));
+        free(text);
+        UT_ASSERT_MSG(asString, "the ids were not written as digit strings");
+        UT_ASSERT_MSG(back != NULL, "what was written would not parse: %s",
+                      err);
+        id     = scnManifestValues(back)->workshopId;
+        author = scnManifestValues(back)->workshopAuthor;
+        scnManifestFree(back);
+        UT_ASSERT_MSG(id == MJ_WS_ID && author == MJ_WS_AUTHOR,
+                      "the ids came back as %llu / %llu",
+                      (unsigned long long)id, (unsigned long long)author);
+    }
+
+    /* A manifest that names no item writes no key for one, whether it never
+       had one, stated "0", or had one set back to 0. */
+    {
+        static const char *const kWithId =
+            "{ \"manifest\": 1, \"name\": \"Published\","
+            " \"workshop_id\": \"76561198000000001\","
+            " \"workshop_author\": \"76561198000000123\","
+            " \"editor_notes\": \"kept\" }\n";
+        static const char *const kZero =
+            "{ \"manifest\": 1, \"name\": \"Published\","
+            " \"workshop_id\": \"0\" }\n";
+        ScenarioManifest *in;
+        ScnManifestDoc   *docs[3];
+        char              err[256];
+        const char       *fault = NULL;
+        int               bad   = -1;
+        int               k;
+
+        in = (ScenarioManifest *)calloc(1, sizeof(*in));
+        UT_ASSERT(in != NULL);
+        in->api = 1;
+        snprintf(in->name, sizeof(in->name), "Published");
+        err[0]  = '\0';
+        docs[0] = scnManifestFromValues(in, err, sizeof(err));
+        free(in);
+        docs[1] = parseText(kZero, NULL, err, sizeof(err));
+        docs[2] = parseText(kWithId, NULL, err, sizeof(err));
+        scnManifestSetWorkshop(docs[2], 0, 0);
+
+        for (k = 0; k < 3 && fault == NULL; k++) {
+            char *text;
+
+            if (docs[k] == NULL) {
+                fault = "could not be made";
+            } else if ((text = scnManifestWrite(docs[k], err,
+                                                sizeof(err))) == NULL) {
+                fault = "could not be written";
+            } else {
+                if (strstr(text, "workshop_") != NULL) {
+                    fault = "wrote a workshop_ key for no item";
+                } else if (k == 2 && strstr(text, "editor_notes") == NULL) {
+                    fault = "lost a key it does not read";
+                }
+                free(text);
+            }
+            if (fault != NULL) {
+                bad = k;
+            }
+        }
+        for (k = 0; k < 3; k++) {
+            scnManifestFree(docs[k]);
+        }
+        UT_ASSERT_MSG(fault == NULL, "doc %d %s (%s)", bad,
+                      fault != NULL ? fault : "", err);
+    }
+    return 0;
+}
+
+int run_scenario_manifest_agrees_workshop(void) {
+    ScenarioManifest *fromJson;
+    ScenarioManifest *fromLua;
+    char              key[SCN_VALIDATE_KEY_LEN];
+    char              err[256];
+    bool              same;
+
+    fromJson = (ScenarioManifest *)calloc(1, sizeof(*fromJson));
+    fromLua  = (ScenarioManifest *)calloc(1, sizeof(*fromLua));
+    if (fromJson == NULL || fromLua == NULL) {
+        free(fromJson);
+        free(fromLua);
+        UT_FAIL("no memory for two manifests");
+    }
+    fillBase(fromJson);
+    fillBase(fromLua);
+    fromJson->workshopId     = MJ_WS_ID;
+    fromJson->workshopAuthor = MJ_WS_AUTHOR;
+
+    /* A table that states neither: the ids were written into the manifest
+       after publishing, and the script was never rewritten. */
+    same = scnManifestAgrees(fromJson, fromLua, key, sizeof(key), err,
+                             sizeof(err));
+    if (!same) {
+        free(fromJson);
+        free(fromLua);
+        UT_FAIL("a table stating no id was refused at %s: %s", key, err);
+    }
+
+    /* A table that restates both. */
+    fromLua->workshopId     = MJ_WS_ID;
+    fromLua->workshopAuthor = MJ_WS_AUTHOR;
+    same = scnManifestAgrees(fromJson, fromLua, key, sizeof(key), err,
+                             sizeof(err));
+    if (!same) {
+        free(fromJson);
+        free(fromLua);
+        UT_FAIL("a table restating the ids was refused at %s: %s", key, err);
+    }
+
+    /* A table that states a different item. */
+    fromLua->workshopId = MJ_WS_ID + 1;
+    same = scnManifestAgrees(fromJson, fromLua, key, sizeof(key), err,
+                             sizeof(err));
+    if (same || strcmp(key, "workshop_id") != 0) {
+        free(fromJson);
+        free(fromLua);
+        UT_FAIL("a different item %s (key '%s')",
+                same ? "was agreed with" : "was refused under the wrong key",
+                key);
+    }
+
+    /* And the author, the same three ways. */
+    fromLua->workshopId     = 0;
+    fromLua->workshopAuthor = 0;
+    same = scnManifestAgrees(fromJson, fromLua, key, sizeof(key), err,
+                             sizeof(err));
+    if (!same) {
+        free(fromJson);
+        free(fromLua);
+        UT_FAIL("a table stating no author was refused at %s: %s", key, err);
+    }
+    fromLua->workshopAuthor = MJ_WS_AUTHOR;
+    same = scnManifestAgrees(fromJson, fromLua, key, sizeof(key), err,
+                             sizeof(err));
+    if (!same) {
+        free(fromJson);
+        free(fromLua);
+        UT_FAIL("a table restating the author was refused at %s: %s", key,
+                err);
+    }
+    fromLua->workshopAuthor = MJ_WS_AUTHOR + 1;
+    same = scnManifestAgrees(fromJson, fromLua, key, sizeof(key), err,
+                             sizeof(err));
+    free(fromJson);
+    free(fromLua);
+    UT_ASSERT_MSG(!same, "a different author was agreed with");
+    UT_ASSERT_MSG(strcmp(key, "workshop_author") == 0,
+                  "a different author was refused under '%s'", key);
     return 0;
 }

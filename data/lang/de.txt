@@ -2642,3 +2642,4 @@ STR_DLGLOBBY_SCENARIO_SAVE_NOT_FOUND=Der Server hat diese Datei nicht mehr.
 STR_DLGLOBBY_SCENARIO_SAVE_TOO_LARGE=Diese Datei ist zu groß zum Kopieren.
 STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER=Der Server hat nicht geantwortet. Versuche es erneut.
 STR_DLGLOBBY_SCENARIO_SAVE_WRITE=Die Kopie konnte nicht in deinem Mods-Ordner gespeichert werden.
+STR_MAPEDIT_SCENARIO_WORKSHOP=Workshop-Objekt #{string1}, veröffentlicht von {string2}

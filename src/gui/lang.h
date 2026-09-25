@@ -3146,6 +3146,12 @@
 #define STR_DLGLOBBY_DETAILS_SETTINGS_OLD        2665
 #define STR_DLGLOBBY_DETAILS_SETTING_DEFAULT     2666
 
+/* The map editor's metadata form: the read-only line naming the Steam
+ * Workshop item a scenario was published as ({string1} = the item id) and
+ * the account that published it ({string2} = its SteamID64). Shown only
+ * when the manifest names an item. */
+#define STR_MAPEDIT_SCENARIO_WORKSHOP            2667
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

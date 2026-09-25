@@ -2636,3 +2636,4 @@ STR_DLGLOBBY_SCENARIO_SAVE_NOT_FOUND=Serwer nie ma już tego pliku.
 STR_DLGLOBBY_SCENARIO_SAVE_TOO_LARGE=Ten plik jest za duży, aby go skopiować.
 STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER=Serwer nie odpowiedział. Spróbuj ponownie.
 STR_DLGLOBBY_SCENARIO_SAVE_WRITE=Nie udało się zapisać kopii w folderze Mods.
+STR_MAPEDIT_SCENARIO_WORKSHOP=Element Warsztatu nr {string1}, opublikowany przez {string2}
