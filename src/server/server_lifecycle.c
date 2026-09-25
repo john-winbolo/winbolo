@@ -552,6 +552,7 @@ bool serverInstanceStartup(ServerSim *sim, const ServerInstanceConfig *cfg) {
                                       cfg->scriptUploadDir);
     sim->uploadPolicy = cfg->uploadPolicy;
     serverSimSetScriptUploadPolicy(sim, cfg->scriptUploadPolicy);
+    serverSimSetScriptSharing(sim, !cfg->noScriptSharing);
     /* Same source (cfg->uploadPersistDir) as the transport copy above, so the
      * write target and the "Uploads/" resolver redirect never diverge. */
     serverSimSetUploadPersistDir(sim, cfg->uploadPersistDir);

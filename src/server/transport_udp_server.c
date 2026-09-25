@@ -418,17 +418,19 @@ void transportUdpServerOnGameStart(ServerSim *sim) {
         udpServerResetRoundLogLimits(i);
         udpServerResetMapReaskLimit(i);
 
-        /* A round-log transfer is a lobby/game-over affair and must not bleed
-         * into the round starting now: CHANNEL_BULK is deliberately not
-         * re-based above, so an unfinished one would keep streaming into the
-         * new game's map downloads. Abort it with the same triple the map
-         * change uses — drop the staged blob, collapse the send window, and
-         * carry the new bulk baseline so the client abandons its partial.
-         * Gating on the sender's kind is what leaves every other in-flight
-         * transfer (a join download, a resync) undisturbed. */
+        /* A round-log transfer and a script copy are lobby/game-over affairs
+         * and must not bleed into the round starting now: CHANNEL_BULK is
+         * deliberately not re-based above, so an unfinished one (either can
+         * be several MiB) would keep streaming into the new game's map
+         * downloads. Abort it with the same triple the map change uses —
+         * drop the staged blob, collapse the send window, and carry the new
+         * bulk baseline so the client abandons its partial. Checking the
+         * sender's kind is what leaves every other in-flight transfer (a
+         * join download, a resync) undisturbed. */
         if (udpServer.clients[i].connected &&
             bulkSenderBusy(&udpServer.bulkSend[i]) &&
-            udpServer.bulkSend[i].kind == BULK_KIND_ROUND_LOG) {
+            (udpServer.bulkSend[i].kind == BULK_KIND_ROUND_LOG ||
+             udpServer.bulkSend[i].kind == BULK_KIND_SCRIPT_PACKAGE)) {
             uint32_t b3;
             ControlEvent resetEvt;
             ControlEncodeBodyFn enc =

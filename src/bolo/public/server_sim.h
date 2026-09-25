@@ -2156,6 +2156,30 @@ int serverSimEnumerateScenarioDir(ServerSim *sim,
 int serverSimScenarioDetails(ServerSim *sim, const char *file, uint8_t *out,
                              size_t cap);
 
+/* What serverSimScriptFileRead found. */
+typedef enum {
+    SERVER_SCRIPT_READ_FOUND = 0,
+    SERVER_SCRIPT_READ_NOT_FOUND,
+    SERVER_SCRIPT_READ_DISABLED,
+    SERVER_SCRIPT_READ_TOO_LARGE
+} ServerScriptReadResult;
+
+/* One of the server's script files, whole and as it sits on disk, for a
+ * player who asked for a copy with PACKET_LOBBY_SCRIPT_FETCH_REQ: a
+ * .scenario as its ZIP bytes, a .lua as its source. file is a name from the
+ * scenario listing, and is only ever compared with the names a directory
+ * read found, never opened as a path.
+ *
+ * The committed map's own script is not served (its file is the map), and
+ * answers NOT_FOUND, as does a name no directory holds. DISABLED means the
+ * process runs no scripts, TOO_LARGE a file over
+ * LOBBY_PACKAGE_UPLOAD_MAX_BYTES. On FOUND, *outBytes is malloc'd and the
+ * caller frees it; otherwise *outBytes is NULL and *outLen is 0. */
+ServerScriptReadResult serverSimScriptFileRead(ServerSim *sim,
+                                               const char *file,
+                                               uint8_t **outBytes,
+                                               uint32_t *outLen);
+
 /* One script file's settings block (scenario_settings.h): the settings its
  * manifest lets the host choose, packed into out, which holds cap bytes.
  * Looked up the way serverSimScenarioDetails looks up the details: the
@@ -2338,6 +2362,14 @@ ServerVoiceMode serverSimGetVoiceMode(const ServerSim *sim);
  * SCRIPT_UPLOAD_ALLOW for a NULL sim. */
 void               serverSimSetScriptUploadPolicy(ServerSim *sim, ScriptUploadPolicy p);
 ScriptUploadPolicy serverSimGetScriptUploadPolicy(const ServerSim *sim);
+
+/* Script sharing — whether players may save a copy of this server's mods
+ * and scenarios. Set once from ServerInstanceConfig.noScriptSharing at
+ * startup and carried to clients on the lobby-settings event. A new sim
+ * shares. The setter ignores a NULL sim, and the getter returns true for
+ * one. */
+void serverSimSetScriptSharing(ServerSim *sim, bool on);
+bool serverSimGetScriptSharing(const ServerSim *sim);
 
 /* The directory a script a player uploads lands in: the persist directory
  * under PERSIST, the session directory under ALLOW, "" under OFF. Resolved

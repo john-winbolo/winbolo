@@ -372,6 +372,8 @@ struct ServerSim {
     char     mapMd5Hex[33];        /* mapMd5 as 32 lowercase hex chars + NUL; "" when invalid */
     UploadPolicy uploadPolicy;     /* mirrored from server-startup config */
     ScriptUploadPolicy scriptUploadPolicy;  /* mirrored from server-startup config */
+    bool               scriptSharingOff;    /* refuse copies of this server's scripts;
+                                             * negative so a zeroed sim shares */
     /* Where a script a player uploads lands under the policy in force, and
      * the lowest directory of the merged script listing. "" under OFF.
      * Resolved once by serverInstanceStartup. */
@@ -1020,6 +1022,14 @@ struct ServerSim {
                                                   const char *file,
                                                   uint8_t *out, size_t cap);
     void                  *scenarioDetailsReaderCtx;
+    /* Reads one directory file's raw bytes for serverSimScriptFileRead.
+       NULL means nothing registered and no file is served. */
+    ServerScriptReadResult (*scriptFileReader)(void *ctx, const char *dir,
+                                               const char *file,
+                                               uint8_t **outBytes,
+                                               uint32_t *outLen,
+                                               uint32_t cap);
+    void                  *scriptFileReaderCtx;
     /* Reads one directory file's settings block for
        serverSimScenarioSettingsDecl. NULL means nothing registered and only
        the map's own script declares any. */

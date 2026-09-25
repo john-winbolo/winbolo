@@ -3577,6 +3577,12 @@ set(WINBOLO_UNITTESTS_SOURCES
     # against committed golden bytes and decoded back.
     tests/unit/test_scenario_dir.c
     tests/unit/test_scenario_callbacks.c
+    # A copy of one of the server's scripts, fetched by name over the
+    # loopback transport, and each answer the server gives.
+    tests/unit/test_script_fetch.c
+    # A copy of a server's script saved to the player's own Mods
+    # directory: the name check, the refusal to replace, and the write.
+    tests/unit/test_script_save_local.c
     tests/unit/test_scenario_mod_dirs.c
     # Which scenario plays when a map and a mod both have a claim, and the
     # points the template is applied at.
@@ -5811,6 +5817,9 @@ set(_unit_test_names
     script_upload_policy_word
     script_upload_policy_codec
     script_upload_policy_event
+    script_sharing_codec
+    script_sharing_sim
+    script_sharing_client
     unfielded_seat_counts
     unfielded_seat_is_empty
     unfielded_seat_all_ready
@@ -6213,6 +6222,22 @@ set(_unit_test_names
     scenario_details_fetch_give_up
     scenario_details_override_order
     scenario_details_reload_map_script
+    script_fetch_req_golden
+    script_fetch_found_lua
+    script_fetch_found_package
+    script_fetch_found_shipped
+    script_fetch_not_found
+    script_fetch_disabled
+    script_fetch_too_large
+    script_fetch_busy_retry
+    script_fetch_give_up
+    script_fetch_sink_bound
+    script_fetch_stall_fails
+    script_fetch_round_start_abort
+    script_save_local_ok
+    script_save_local_exists
+    script_save_local_bad_name
+    script_save_local_creates_dir
     scenario_mod_dirs_user_dir_offered
     scenario_mod_dirs_shipped_offered
     scenario_mod_dirs_configured_wins

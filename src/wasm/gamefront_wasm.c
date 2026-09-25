@@ -224,6 +224,7 @@ int            gameFrontHostingUploadMaxFiles   = 64;
 int            gameFrontHostingUploadMaxStorage = 8;
 char           gameFrontHostingUploadDir[FILENAME_MAX] = "";
 int            gameFrontHostingScriptUploadPolicy     = SCRIPT_UPLOAD_ALLOW;
+bool           gameFrontHostingShareScripts           = TRUE;
 int            gameFrontHostingScriptUploadMaxFiles   = 32;
 int            gameFrontHostingScriptUploadMaxStorage = 64;
 char           gameFrontHostingScriptUploadDir[FILENAME_MAX] = "";
@@ -1031,6 +1032,10 @@ void gameFrontSetHostingUploadDir(const char *dir) {
 
 void gameFrontSetHostingScriptUploadPolicy(int policy) {
   gameFrontHostingScriptUploadPolicy = policy;
+}
+
+void gameFrontSetHostingShareScripts(bool on) {
+  gameFrontHostingShareScripts = on;
 }
 
 void gameFrontSetHostingScriptUploadMaxFiles(int maxFiles) {

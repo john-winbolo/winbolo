@@ -405,6 +405,29 @@ void serverSimSetScenarioDetailsReader(ServerSim *sim,
                                        void *ctx);
 
 /*********************************************************
+ *NAME:          serverSimSetScriptFileReader
+ *PURPOSE:
+ *  Registers the read of one directory file's raw bytes
+ *  for serverSimScriptFileRead, which a player's request
+ *  for a copy of a script is answered from. A callback for
+ *  the reason the lister above is one, and registered
+ *  beside it. The reader finds the file among the names
+ *  its listing holds, refuses one over cap before reading
+ *  it, and on SERVER_SCRIPT_READ_FOUND hands back a
+ *  malloc'd buffer the caller frees. dir is the sim's,
+ *  handed over per call as the lister's is.
+ *
+ *  NULL clears it, and with nothing registered every name
+ *  answers SERVER_SCRIPT_READ_NOT_FOUND.
+ *********************************************************/
+void serverSimSetScriptFileReader(ServerSim *sim,
+                                  ServerScriptReadResult (*read)(
+                                      void *ctx, const char *dir,
+                                      const char *file, uint8_t **outBytes,
+                                      uint32_t *outLen, uint32_t cap),
+                                  void *ctx);
+
+/*********************************************************
  *NAME:          serverSimSetScenarioSettingsReader
  *PURPOSE:
  *  Registers the read of one directory file's settings

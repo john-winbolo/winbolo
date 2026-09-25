@@ -1352,6 +1352,133 @@ static void handleLobbyScenarioDetailsReq(ServerSim *sim, uint8_t *buf,
     free(blob);   /* bulkSenderBegin copied it into its own buffer */
 }
 
+/* Answer a PACKET_LOBBY_SCRIPT_FETCH_REQ on this client's CHANNEL_BULK as a
+ * BULK_KIND_SCRIPT_PACKAGE blob: [status 1] then bytes, which only a
+ * BULK_SCRIPT_FOUND answer carries. gen echoes the request's reqSeq and the
+ * path is the name it asked for. */
+static void serverSendScriptPackage(int clientIdx, uint32_t reqSeq,
+                                    const char *file, int fileLen,
+                                    uint8_t status, const uint8_t *bytes,
+                                    uint32_t len) {
+    BulkStreamHeader sh;
+    uint8_t         *blob;
+
+    blob = (uint8_t *)malloc((size_t)len + 1);
+    if (blob == NULL) return;
+    blob[0] = status;
+    if (len > 0) memcpy(blob + 1, bytes, len);
+
+    memset(&sh, 0, sizeof(sh));
+    sh.kind      = BULK_KIND_SCRIPT_PACKAGE;
+    sh.gen       = reqSeq;
+    sh.totalSize = len + 1;
+    sh.pathLen   = (uint8_t)fileLen;
+    memcpy(sh.path, file, (size_t)fileLen + 1);
+    (void)bulkSenderBegin(&udpServer.bulkSend[clientIdx], &sh, blob,
+                          sh.totalSize);
+    free(blob);   /* bulkSenderBegin copied it into its own buffer */
+}
+
+static void handleLobbyScriptFetchReq(ServerSim *sim, uint8_t *buf, int len,
+                                      struct sockaddr_in *fromAddr) {
+    /* [header 8] [reqSeq 4 BE] [fileLen 1] [file N]. A copy of one of the
+     * server's script files, for a player to keep, streamed back over
+     * CHANNEL_BULK behind a BULK_KIND_SCRIPT_PACKAGE stream header. Every
+     * refusal past the drops below is answered with a status byte, so the
+     * client has something to stop waiting on.
+     *
+     * Players only. A spectator's bulk sender carries the delayed feed it
+     * connected for, and an address that is neither has no session to
+     * answer. A request that finds this client's bulk stream busy is dropped
+     * rather than answered, since the answer would queue behind the same
+     * busy sender; the client asks again when no answer comes. */
+    int                    clientIdx = serverFindClient(fromAddr);
+    int                    rpos      = PACKET_HEADER_SIZE;
+    uint32_t               reqSeq;
+    int                    fileLen;
+    char                   file[BULK_PATH_MAX + 1];
+    uint8_t               *bytes    = NULL;
+    uint32_t               bytesLen = 0;
+    ServerScriptReadResult rr;
+    uint8_t                status;
+
+    if (clientIdx < 0) return;
+    if (len < PACKET_HEADER_SIZE + 4 + 1) return;
+    reqSeq  = unpackU32(buf + rpos);
+    rpos   += 4;
+    fileLen = buf[rpos++];
+    if (fileLen == 0 || fileLen > BULK_PATH_MAX || rpos + fileLen > len) {
+        return;
+    }
+    memcpy(file, buf + rpos, (size_t)fileLen);
+    file[fileLen] = '\0';
+    /* A name with a NUL inside it is not a name any listing could hold. */
+    if (strlen(file) != (size_t)fileLen) return;
+    if (!serverSimIsLobbyEnabled(sim) ||
+        serverSimGetState(sim) != serverStateLobby) {
+        return;
+    }
+    if (bulkSenderBusy(&udpServer.bulkSend[clientIdx])) return;
+
+    /* A request inside the cooldown is answered, unlike the list requests
+     * the cooldown drops, and does not restart it. */
+    if (udpServer.clientReqCooldownTicks[clientIdx] > 0) {
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "script copy of %s for client %d refused: asked too soon",
+            file, clientIdx);
+        serverSendScriptPackage(clientIdx, reqSeq, file, fileLen,
+                                BULK_SCRIPT_BUSY, NULL, 0);
+        return;
+    }
+    udpServer.clientReqCooldownTicks[clientIdx] = LOBBY_REQ_COOLDOWN_TICKS;
+
+    if (!serverSimGetScriptSharing(sim)) {
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "script copy of %s for client %d refused: sharing is off",
+            file, clientIdx);
+        serverSendScriptPackage(clientIdx, reqSeq, file, fileLen,
+                                BULK_SCRIPT_DISABLED, NULL, 0);
+        return;
+    }
+
+    rr = serverSimScriptFileRead(sim, file, &bytes, &bytesLen);
+    switch (rr) {
+    case SERVER_SCRIPT_READ_FOUND:
+        status = BULK_SCRIPT_FOUND;
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "script copy of %s for client %d: %u bytes", file, clientIdx,
+            (unsigned)bytesLen);
+        break;
+    case SERVER_SCRIPT_READ_DISABLED:
+        status = BULK_SCRIPT_DISABLED;
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "script copy of %s for client %d refused: scripts are off",
+            file, clientIdx);
+        break;
+    case SERVER_SCRIPT_READ_TOO_LARGE:
+        status = BULK_SCRIPT_TOO_LARGE;
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "script copy of %s for client %d refused: too large",
+            file, clientIdx);
+        break;
+    case SERVER_SCRIPT_READ_NOT_FOUND:
+    default:
+        status = BULK_SCRIPT_NOT_FOUND;
+        WB_LOG_INFO(WB_LOG_CAT_NET,
+            "script copy of %s for client %d refused: not found",
+            file, clientIdx);
+        break;
+    }
+    if (status != BULK_SCRIPT_FOUND) {
+        free(bytes);
+        bytes    = NULL;
+        bytesLen = 0;
+    }
+    serverSendScriptPackage(clientIdx, reqSeq, file, fileLen, status, bytes,
+                            bytesLen);
+    free(bytes);
+}
+
 static void handleRoundLogReq(ServerSim *sim, uint8_t *buf, int len,
                               struct sockaddr_in *fromAddr) {
     /* [header 8] [reqSeq 4 BE]. Hands back the last completed round's
@@ -1582,6 +1709,9 @@ void serverProcessPacket(ServerSim *sim, uint8_t *buf, int len,
             break;
         case PACKET_LOBBY_SCENARIO_DETAILS_REQ:
             handleLobbyScenarioDetailsReq(sim, buf, len, fromAddr);
+            break;
+        case PACKET_LOBBY_SCRIPT_FETCH_REQ:
+            handleLobbyScriptFetchReq(sim, buf, len, fromAddr);
             break;
         case PACKET_ROUND_LOG_REQ:
             handleRoundLogReq(sim, buf, len, fromAddr);

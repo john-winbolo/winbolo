@@ -2755,6 +2755,11 @@ int run_script_upload_policy_resolve(void);
 int run_script_upload_policy_word(void);
 int run_script_upload_policy_codec(void);
 int run_script_upload_policy_event(void);
+/* Whether players may copy the server's scripts (same file): its byte on the
+ * lobby-settings event, the sim's setting, and the client's copy. */
+int run_script_sharing_codec(void);
+int run_script_sharing_sim(void);
+int run_script_sharing_client(void);
 
 /* The lobby template (test_lobby_template.c): the engine seating a
  * scenario's teams where a lobby is built or rebuilt, reconciling one that
@@ -3402,6 +3407,35 @@ int run_scenario_details_fetch_retry(void);
 int run_scenario_details_fetch_give_up(void);
 int run_scenario_details_override_order(void);
 int run_scenario_details_reload_map_script(void);
+
+/* A copy of one of the server's scripts (test_script_fetch.c): the request
+ * body against committed hex, a .lua, a .scenario and a shipped mod fetched
+ * whole over the loopback transport, each refusal the server answers, a
+ * BUSY answer asked again, a server that never answers, the client's bulk
+ * sink refusing a header that is not its answer, a copy that stops arriving,
+ * and a round started while a copy is arriving. */
+int run_script_fetch_req_golden(void);
+int run_script_fetch_found_lua(void);
+int run_script_fetch_found_package(void);
+int run_script_fetch_found_shipped(void);
+int run_script_fetch_not_found(void);
+int run_script_fetch_disabled(void);
+int run_script_fetch_too_large(void);
+int run_script_fetch_busy_retry(void);
+int run_script_fetch_give_up(void);
+int run_script_fetch_sink_bound(void);
+int run_script_fetch_stall_fails(void);
+int run_script_fetch_round_start_abort(void);
+
+/* The copy a player saves to their own Mods directory
+ * (test_script_save_local.c): a .lua and a .scenario written whole through
+ * a temporary file, a name already there in either case refused, a name
+ * that is not a bare script file name refused, and a Mods directory made
+ * when it is missing. */
+int run_script_save_local_ok(void);
+int run_script_save_local_exists(void);
+int run_script_save_local_bad_name(void);
+int run_script_save_local_creates_dir(void);
 
 /* The three directories a mod can come from (test_scenario_mod_dirs.c): the
  * one the host was given, the player's own under SDL_GetPrefPath and the

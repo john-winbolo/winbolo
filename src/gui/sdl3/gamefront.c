@@ -263,6 +263,7 @@ int            gameFrontHostingUploadMaxStorage = 8;
  * (<prefs path>uploads) or the user picks one. */
 char           gameFrontHostingUploadDir[FILENAME_MAX] = "";
 int            gameFrontHostingScriptUploadPolicy     = SCRIPT_UPLOAD_ALLOW;
+bool           gameFrontHostingShareScripts           = TRUE;
 int            gameFrontHostingScriptUploadMaxFiles   = 32;
 int            gameFrontHostingScriptUploadMaxStorage = 64;
 /* Persist script dir. Empty until gameFrontGetPrefs seeds the default
@@ -2466,6 +2467,11 @@ void gameFrontSetHostingScriptUploadPolicy(int policy) {
   scenarioHostSetUploadScriptsEnabled(policy != SCRIPT_UPLOAD_OFF);
 }
 
+void gameFrontSetHostingShareScripts(bool on) {
+  gameFrontHostingShareScripts = on;
+  prefsSetString("HOSTING", "Share Scripts", TRUEFALSE_TO_STR(on));
+}
+
 void gameFrontSetHostingScriptUploadMaxFiles(int maxFiles) {
   gameFrontHostingScriptUploadMaxFiles = maxFiles;
   char buf[16];
@@ -3611,6 +3617,7 @@ bool gameFrontSetupServer(void) {
   }
   cfg.scriptUploadPolicy  =
       (ScriptUploadPolicy)gameFrontHostingScriptUploadPolicy;
+  cfg.noScriptSharing     = !gameFrontHostingShareScripts;
   cfg.scriptUploadMaxFiles = (uint8_t)gameFrontHostingScriptUploadMaxFiles;
   cfg.scriptUploadMaxStorageBytes =
       (uint32_t)gameFrontHostingScriptUploadMaxStorage * 1024u * 1024u;
@@ -3814,6 +3821,8 @@ bool gameFrontGetPrefs(keyItems *keys, bool *pUseAutoslow, bool *pUseAutohide) {
     gameFrontHostingScriptUploadPolicy =
         scriptUploadPolicyResolve(NULL, !YESNO_TO_TRUEFALSE(buff[0]));
   }
+  prefsGetString("HOSTING", "Share Scripts", "Yes", buff, FILENAME_MAX);
+  gameFrontHostingShareScripts = YESNO_TO_TRUEFALSE(buff[0]);
   prefsGetString("HOSTING", "Max Spectators", "16", buff, FILENAME_MAX);
   {
     int m = atoi(buff);
@@ -4796,6 +4805,8 @@ void gameFrontPutPrefs(keyItems *keys) {
   prefsSetString("HOSTING", "Script Upload Policy",
                  scriptUploadPolicyWord(
                      (ScriptUploadPolicy)gameFrontHostingScriptUploadPolicy));
+  prefsSetString("HOSTING", "Share Scripts",
+                            TRUEFALSE_TO_STR(gameFrontHostingShareScripts));
   prefsSetString("HOSTING", "Script Upload Dir",
                  gameFrontHostingScriptUploadDir);
   intToStr(gameFrontHostingScriptUploadMaxFiles, buff, sizeof(buff));
