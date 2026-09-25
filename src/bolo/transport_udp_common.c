@@ -300,30 +300,32 @@ int spliceGameEventsBeforeTail(GameEvent *events, int tailStart, int tailCount,
  *   Windows that means SO_EXCLUSIVEADDRUSE and skipping SO_REUSEADDR;
  *   SO_REUSEADDR there is permissive enough that two binds to the same
  *   port both succeed and the OS dispatches packets to one of them.
- * exclusive=false: ephemeral / client socket — set SO_REUSEADDR so a
- *   rebind after an unclean exit doesn't fail with EADDRINUSE. */
+ * exclusive=false: ephemeral / client socket — no options. The kernel
+ *   picks the port on the first send, so there is no fixed port to
+ *   rebind. SO_REUSEADDR and SO_REUSEPORT used to be set here, and they
+ *   let the kernel give the client a port number another process's
+ *   server already held on 127.0.0.1. Datagrams to 127.0.0.1:port then
+ *   went to that server, the more specific bind, and the client never
+ *   heard its own server's replies. */
 SOCKET createUdpSocket(bool exclusive) {
     SOCKET sock;
     unsigned long nonBlock = 1;
+#ifdef _WIN32
     int reuse = 1;
+#endif
 
     sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock == INVALID_SOCKET) {
         return INVALID_SOCKET;
     }
-    if (exclusive) {
 #ifdef _WIN32
+    if (exclusive) {
         setsockopt(sock, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
                    (const char *)&reuse, sizeof(reuse));
-#endif
-    } else {
-        setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
-                   (const char *)&reuse, sizeof(reuse));
-#ifdef SO_REUSEPORT
-        setsockopt(sock, SOL_SOCKET, SO_REUSEPORT,
-                   (const char *)&reuse, sizeof(reuse));
-#endif
     }
+#else
+    (void)exclusive;
+#endif
     ioctlsocket(sock, FIONBIO, &nonBlock);
     return sock;
 }

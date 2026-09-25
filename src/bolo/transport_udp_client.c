@@ -532,7 +532,7 @@ static void udpClientSendTo(TransportUdpClientCtx *c, const uint8_t *buf, int le
         locLen = (socklen_t)sizeof(localAddr);
         if (getsockname(c->sock, (struct sockaddr *)&localAddr, &locLen) == 0
             && localAddr.sin_port != 0) {
-            mpDiagLog("[cli] local socket bound at %s:%u (kernel-assigned ephemeral; SO_REUSEADDR=on) -> server %s:%u",
+            mpDiagLog("[cli] local socket bound at %s:%u (kernel-assigned ephemeral) -> server %s:%u",
                       inet_ntoa(localAddr.sin_addr),
                       (unsigned)ntohs(localAddr.sin_port),
                       inet_ntoa(c->serverAddr.sin_addr),
