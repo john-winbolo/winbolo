@@ -5215,6 +5215,24 @@ static void appRender(BrainTestApp *app) {
                 gs->bs->item[i].shells = pf_->snapBases[i].shells;
                 gs->bs->item[i].mines  = pf_->snapBases[i].mines;
             }
+            /* A scenario can CREATE pills mid-round (game.add_pill: Survival's
+             * horde pills are indices 6..15 on a 6-pill map), so the frame can
+             * carry more pills than the map this sim loaded. Grow the count to
+             * the frame's for this render (savedPills restores it after), or
+             * the loop below drops every added pill and the view shows grass.
+             * New records start zeroed and active: the frame fills x/y/owner/
+             * armour/inTank, and the draw paths skip an inactive slot. Grow
+             * only — an old recording with an empty pill block must not hide
+             * the map's pills. */
+            {
+                int np = pf_->pillCount < MAX_PILLS ? pf_->pillCount : MAX_PILLS;
+                for (int k = gs->pb->numPills; k < np; k++) {
+                    memset(&gs->pb->item[k], 0, sizeof gs->pb->item[k]);
+                    gs->pb->posStale[k] = 0;
+                    gs->pb->active[k]   = TRUE;
+                }
+                if (np > gs->pb->numPills) gs->pb->numPills = (BYTE)np;
+            }
             for (int i = 0; i < pf_->pillCount && i < gs->pb->numPills; i++) {
                 gs->pb->item[i].x      = pf_->snapPills[i].x;
                 gs->pb->item[i].y      = pf_->snapPills[i].y;
