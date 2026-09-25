@@ -2036,8 +2036,11 @@ local function settle_oids(first_low)
   end
   ORD.update(s, ww, ii, 200)
   local seen = {}
+  -- The first settle takes its order (obc).  The second one finds the bot
+  -- on that job (ORDER_HOLDER_KEEPS_JOB) and offers it back (obo); with the
+  -- knob off it takes that one too.  Either line marks a settle.
   for _, line in ipairs(s.orders.out) do
-    local id = line:match("^/info obc (%d+) ")
+    local id = line:match("^/info obc (%d+) ") or line:match("^/info obo (%d+)$")
     if id then seen[#seen + 1] = tonumber(id) end
   end
   return table.concat(seen, ",")
@@ -2811,23 +2814,54 @@ check("a decoy death CANCELS the order (obx), no hand-back to another bot",
 check("and nothing parks after the respawn",
       ORD.hold_parked(d.st, d.inf) == false and lock(d, 301) == false, "parked")
 
--- 4f. A NEW ORDER FROM A PERSON TAKES PRIORITY.
+-- 4f. A NEW PING OR CHAT AUCTION ELSEWHERE DOES NOT END THE DECOY
+-- (ORDER_HOLDER_KEEPS_JOB).  The decoy runs to its own end; a free bot
+-- would take the new order.  This bot is alone, so nobody goes, and it says
+-- "All bots busy".  An order that NAMES the bot still ends the decoy.
 d = dbot(); arrive(d, 200)
 local old_oid = d.st.orders.held.oid
+d.st.orders.say = {}
 d.inf.events = { ping(5, 0, 100, 100) }
 ORD.on_events(d.st, d.w, d.inf, 300)
 d.inf.events = {}
 settle(d, 301, 315)
-check("a new ping order replaces the decoy",
+check("a new ping elsewhere does not end the decoy",
+      d.st.orders.held ~= nil and d.st.orders.held.oid == old_oid
+      and ORD.decoy_held(d.st) ~= nil,
+      tostring(d.st.orders.held and d.st.orders.held.oid))
+check("and the lone decoy says all bots are busy",
+      said(d, "^All bots busy$"), table.concat(d.st.orders.say, " | "))
+d = dbot(); arrive(d, 200)
+ORD.on_chat(d.st, d.w, d.inf, 0, "attack 5", 300, true, false)
+settle(d, 301, 315)
+check("a new chat order (no name) does not end the decoy",
+      d.st.orders.held ~= nil and d.st.orders.held.oid == old_oid
+      and ORD.decoy_held(d.st) ~= nil,
+      tostring(d.st.orders.held and d.st.orders.held.kind))
+d = dbot(); arrive(d, 200)
+ORD.on_chat(d.st, d.w, d.inf, 0, "socrates attack 5", 300, true, false)
+settle(d, 301, 315)
+check("an order that NAMES the decoy bot replaces the decoy",
+      d.st.orders.held ~= nil and d.st.orders.held.kind == "attack_pill",
+      tostring(d.st.orders.held and d.st.orders.held.kind))
+-- Keel: the auction winner leaves its decoy for the new order, as before.
+C.ORDER_HOLDER_KEEPS_JOB = false
+d = dbot(); arrive(d, 200)
+d.inf.events = { ping(5, 0, 100, 100) }
+ORD.on_events(d.st, d.w, d.inf, 300)
+d.inf.events = {}
+settle(d, 301, 315)
+check("HOLDER_KEEPS_JOB off: a new ping order replaces the decoy",
       d.st.orders.held ~= nil and d.st.orders.held.oid ~= old_oid
       and d.st.orders.held.decoy == nil and d.st.orders.held.mx == 100,
       tostring(d.st.orders.held and d.st.orders.held.oid))
 d = dbot(); arrive(d, 200)
 ORD.on_chat(d.st, d.w, d.inf, 0, "attack 5", 300, true, false)
 settle(d, 301, 315)
-check("a new chat order replaces the decoy",
+check("HOLDER_KEEPS_JOB off: a new chat order replaces the decoy",
       d.st.orders.held ~= nil and d.st.orders.held.kind == "attack_pill",
       tostring(d.st.orders.held and d.st.orders.held.kind))
+C.ORDER_HOLDER_KEEPS_JOB = true
 
 -- 5. KNOB OFF (keel) AND CHAT ORDERS: today's soft hold, unchanged.
 C.ORDER_GOTO_DECOY = false
@@ -2934,9 +2968,35 @@ do
   check("a ping on another of our pills ends the old bonus at once",
         r.st._repair_ping == nil, tostring(r.st._repair_ping and r.st._repair_ping.tid))
   settle(r, 201, 215)
-  check("and the bot that takes the new order gets it on the new pill",
+  -- ORDER_NO_FREE_TAKES_LOWEST: the lone bot is the only one, so no free bot
+  -- exists and it switches to #11 and takes the bonus there.
+  check("no free bot: the lone defender switches to the new pill and its bonus",
+        r.st.orders.held ~= nil and r.st.orders.held.tid == 11
+        and r.st._repair_ping ~= nil and r.st._repair_ping.tid == 11,
+        tostring(r.st.orders.held and r.st.orders.held.tid))
+  -- Knob off: ORDER_HOLDER_KEEPS_JOB alone.  This bot keeps its defend order
+  -- on #9, so it does not take the new one and gets no bonus on #11 either.
+  C.ORDER_NO_FREE_TAKES_LOWEST = false
+  r = BOT(1, 10, 10)
+  r.w.pills[11] = { mx = 70, my = 70, owner = "friendly", health = 5 }
+  rtake(r, 100)
+  rping(r, 200, 70, 70)
+  settle(r, 201, 215)
+  check("a bot on a defend order keeps it on a ping on another of our pills",
+        r.st.orders.held ~= nil and r.st.orders.held.tid == 9
+        and r.st._repair_ping == nil,
+        tostring(r.st.orders.held and r.st.orders.held.tid))
+  C.ORDER_NO_FREE_TAKES_LOWEST = true
+  C.ORDER_HOLDER_KEEPS_JOB = false
+  r = BOT(1, 10, 10)
+  r.w.pills[11] = { mx = 70, my = 70, owner = "friendly", health = 5 }
+  rtake(r, 100)
+  rping(r, 200, 70, 70)
+  settle(r, 201, 215)
+  check("HOLDER_KEEPS_JOB off: the bot takes the new order and its bonus",
         r.st._repair_ping ~= nil and r.st._repair_ping.tid == 11,
         tostring(r.st._repair_ping and r.st._repair_ping.tid))
+  C.ORDER_HOLDER_KEEPS_JOB = true
   r = BOT(1, 10, 10)
   rtake(r, 100, 20, 20)
   check("an attack ping order on an ENEMY pill gives no bonus", r.st._repair_ping == nil, "?")
@@ -3171,6 +3231,9 @@ end
 -- both take that slot: three holders on a 2-bot order.  The dearest holder
 -- lets go in silence, and every bot agrees on which one it is.
 -- =========================================================================
+-- These rigs repeat-ping a GROUND square to add a slot, which only the
+-- keel ORDER_LAND_REPEAT_ADDS does (a pill ping adds a slot the same way).
+C.ORDER_LAND_REPEAT_ADDS = true
 print("orders.lua -- a repeat-ping slot taken twice")
 local function slot_rig()
   -- A (p1) is nearest and takes the first ping.  B (p2) is nearer than C (p4).
@@ -3400,6 +3463,7 @@ do
         b.st.orders.held == nil, "held")
   C.ORDER_NO_HAND_BACK = true
 end
+C.ORDER_LAND_REPEAT_ADDS = false
 
 -- =========================================================================
 -- A NEW ORDER RETIRES EVERY OLDER ONE (ORDER_NEW_CLEARS_ALL, 2026-09-24).
@@ -3413,7 +3477,9 @@ local function settle2(a, b, t)
 end
 do
   -- A takes "go here" X, then a second ping Y, which A takes too.  A lets
-  -- X go (obr).  B must not pick X up.
+  -- X go (obr).  B must not pick X up.  A switching orders is the keel
+  -- ORDER_HOLDER_KEEPS_JOB; with it on A keeps X (see the tests below).
+  C.ORDER_HOLDER_KEEPS_JOB = false
   local a, b = BOT(1, 32, 32), BOT(2, 90, 90)
   gping(a, 100, 35, 35); gping(b, 100, 35, 35)
   settle2(a, b, 100)
@@ -3440,6 +3506,7 @@ do
         tostring(b2.st.orders.held and b2.st.orders.held.oid))
   C.ORDER_NEW_CLEARS_ALL = true
   C.ORDER_NO_HAND_BACK = true
+  C.ORDER_HOLDER_KEEPS_JOB = true
 end
 do
   -- An order for somebody else leaves what this bot holds alone.
@@ -3492,29 +3559,23 @@ do
 end
 
 -- =========================================================================
--- TWO PINGS ARE TWO BOTS, HOWEVER CLOSE (ORDER_NEW_CLEARS_ALL, PR #389
--- review item 8).  A second ping inside the first one's auction window must
--- not retire the first order.  W (p1) is the nearest bot to both squares, so
--- it wins both auctions; it keeps one and offers the other (obo), and
--- another bot takes that one.
+-- A BOT KEEPS THE JOB A PERSON GAVE IT (ORDER_HOLDER_KEEPS_JOB, PR #393).
+-- Ping one square, then another -- a tick later or a minute later -- and
+-- the bot on the first stays there; a FREE bot takes the second.  With
+-- nobody free, nobody goes and one bot says "All bots busy"; the order
+-- waits for a bot to come free.  An order that names a bot still switches
+-- it.  A repeat ping on plain ground refreshes the order and adds no bot
+-- (ORDER_LAND_REPEAT_ADDS false); on a pill, base or tank it adds one.
 -- =========================================================================
-print("orders.lua -- two pings close together are two bots")
-local function close_pings(gap, nbots)
-  local w, x, y = BOT(1, 31, 31), BOT(2, 60, 60), BOT(4, 70, 70)
-  local all = { w, x }
-  if nbots == 3 then all[3] = y end
-  for _, b in ipairs(all) do gping(b, 100, 35, 35) end
-  pumpn(all, 100)
-  local t = 100
-  while t < 100 + gap - 1 do
-    t = t + 1
-    upd(all, t); pumpn(all, t)
-  end
-  for _, b in ipairs(all) do gping(b, 100 + gap, 38, 38) end
-  pumpn(all, 100 + gap)
-  for t2 = 101 + gap, 130 + gap do upd(all, t2); pumpn(all, t2) end
-  return all
-end
+print("orders.lua -- a bot keeps the job a person gave it")
+check("holder knob is on live", C.ORDER_HOLDER_KEEPS_JOB == true,
+      tostring(C.ORDER_HOLDER_KEEPS_JOB))
+check("keel: the auction winner switches",
+      C.PRESETS.keel.ORDER_HOLDER_KEEPS_JOB == false, "?")
+check("land-repeat knob is off live", C.ORDER_LAND_REPEAT_ADDS == false,
+      tostring(C.ORDER_LAND_REPEAT_ADDS))
+check("keel: a repeat ping on ground adds a bot",
+      C.PRESETS.keel.ORDER_LAND_REPEAT_ADDS == true, "?")
 local function holders_of(all)
   local by = {}
   for _, b in ipairs(all) do
@@ -3531,51 +3592,91 @@ local function holders_of(all)
   end
   return by, n, table.concat(list, " ")
 end
-for _, case in ipairs({ { 1, 2 }, { 5, 2 }, { 1, 3 }, { 5, 3 } }) do
+local function said_n(all, pat)
+  local n = 0
+  for _, b in ipairs(all) do
+    for _, l in ipairs(b.st.orders.say or {}) do
+      if l:match(pat) then n = n + 1 end
+    end
+  end
+  return n
+end
+-- Two pings `gap` ticks apart.  W (p1) is the nearest bot to both squares.
+-- Answers the bots and the first order's id.
+local function two_pings(gap, nbots)
+  local w, x, y = BOT(1, 31, 31), BOT(2, 60, 60), BOT(4, 70, 70)
+  local all = { w, x }
+  if nbots == 3 then all[3] = y end
+  for _, b in ipairs(all) do gping(b, 100, 35, 35) end
+  local first = next(w.st.orders.auctions)
+  pumpn(all, 100)
+  local t = 100
+  while t < 100 + gap - 1 do
+    t = t + 1
+    upd(all, t); pumpn(all, t)
+  end
+  for _, b in ipairs(all) do gping(b, 100 + gap, 38, 38) end
+  pumpn(all, 100 + gap)
+  for t2 = 101 + gap, 130 + gap do upd(all, t2); pumpn(all, t2) end
+  return all, first
+end
+for _, case in ipairs({ { 1, 2 }, { 5, 2 }, { 1, 3 }, { 5, 3 },
+                        { 40, 2 }, { 250, 2 }, { 250, 3 } }) do
   local gap, nb = case[1], case[2]
-  local all = close_pings(gap, nb)
+  local all, first = two_pings(gap, nb)
   local by, n, desc = holders_of(all)
   local one_each = n == 2
   for _, pns in pairs(by) do if #pns ~= 1 then one_each = false end end
   check(string.format("pings %d tick(s) apart, %d bots: two orders, one bot each",
         gap, nb), one_each, desc)
   local w = all[1]
-  check(string.format("pings %d tick(s) apart, %d bots: W holds one of them", gap, nb),
-        w.st.orders.held ~= nil, "none")
-end
-do
-  -- W took both, and let the first one go as an OFFER, not a plain release.
-  local w, x = BOT(1, 31, 31), BOT(2, 60, 60)
-  local all = { w, x }
-  for _, b in ipairs(all) do gping(b, 100, 35, 35) end
-  pumpn(all, 100)
-  for _, b in ipairs(all) do gping(b, 101, 38, 38) end
-  pumpn(all, 101)
-  upd(all, 102)
-  local offered = false
-  for _, m in ipairs(w.st.orders.out) do
-    if m:match("^/info obo %d+$") then offered = true end
+  if gap >= 5 then
+    -- W took the first order before the second came: it stays on it.
+    check(string.format("pings %d ticks apart, %d bots: W stays on the first order",
+          gap, nb), w.st.orders.held ~= nil and w.st.orders.held.oid == first, desc)
+  else
+    check(string.format("pings %d tick apart, %d bots: W holds one of them", gap, nb),
+          w.st.orders.held ~= nil, "none")
   end
-  check("the bot that won both offers the one it left (obo)", offered,
-        table.concat(w.st.orders.out, " | "))
+  check(string.format("pings %d tick(s) apart, %d bots: nobody says it is leaving",
+        gap, nb), said_n(all, "^Leaving") == 0, "left")
 end
 do
-  -- Far apart (outside the auction window) the old rule stands: the new
-  -- order retires the old one.
+  -- A bot on a person's job answers the next auction "no".
   local w, x = BOT(1, 31, 31), BOT(2, 60, 60)
   local all = { w, x }
   for _, b in ipairs(all) do gping(b, 100, 35, 35) end
-  pumpn(all, 100)
-  for t = 101, 140 do upd(all, t); pumpn(all, t) end
-  for _, b in ipairs(all) do gping(b, 141, 38, 38) end
-  pumpn(all, 141)
-  for t = 142, 170 do upd(all, t); pumpn(all, t) end
-  local _, n, desc = holders_of(all)
-  check("pings far apart: the new order still retires the old one", n == 1, desc)
+  pumpn(all, 100); upd(all, 101); pumpn(all, 101); upd(all, 102)
+  check("setup: W holds the first order", w.st.orders.held ~= nil, "none")
+  w.st.orders.out = {}
+  gping(w, 200, 38, 38)
+  local second = next(w.st.orders.auctions)
+  local no = false
+  for _, m in ipairs(w.st.orders.out) do
+    local v = second and m:match("^/info obd " .. second .. " (%-%d+)$")
+    if v and tonumber(v) <= ORD.BID_HOLD then no = true end
+  end
+  check("W, on a person's job, bids no with its switch cost on a new order", no,
+        table.concat(w.st.orders.out, " | "))
+  -- Knob off: the plain busy "no".
+  C.ORDER_NO_FREE_TAKES_LOWEST = false
+  w.st.orders.out = {}
+  gping(w, 300, 40, 40)
+  local third = nil
+  for oid in pairs(w.st.orders.auctions) do
+    if oid ~= second then third = oid end
+  end
+  no = false
+  for _, m in ipairs(w.st.orders.out) do
+    if third and m == "/info obd " .. third .. " -2" then no = true end
+  end
+  check("NO_FREE_TAKES_LOWEST off: W bids a plain -2", no,
+        table.concat(w.st.orders.out, " | "))
+  C.ORDER_NO_FREE_TAKES_LOWEST = true
 end
 do
-  -- Knob off: no close pair is marked and nothing is offered.
-  C.ORDER_NEW_CLEARS_ALL = false
+  -- Two pings in one auction window: W bid on both before it held either,
+  -- and wins both.  It takes one and offers the other (obo, then its "no").
   local w, x = BOT(1, 31, 31), BOT(2, 60, 60)
   local all = { w, x }
   for _, b in ipairs(all) do gping(b, 100, 35, 35) end
@@ -3583,13 +3684,502 @@ do
   for _, b in ipairs(all) do gping(b, 101, 38, 38) end
   pumpn(all, 101)
   upd(all, 102)
-  local offered = false
+  local took, offer, no = 0, nil, nil
   for _, m in ipairs(w.st.orders.out) do
+    if m:match("^/info obc ") then took = took + 1 end
+    offer = offer or m:match("^/info obo (%d+)$")
+    no = no or m:match("^/info obd (%d+) %-2$")
+  end
+  check("W won both: it takes one and offers the other (obo)",
+        took == 1 and offer ~= nil and no == offer,
+        table.concat(w.st.orders.out, " | "))
+  pumpn(all, 102); upd(all, 103); pumpn(all, 103); upd(all, 104)
+  check("X takes the offered order",
+        x.st.orders.held ~= nil and tostring(x.st.orders.held.oid) == offer,
+        tostring(x.st.orders.held and x.st.orders.held.oid))
+  -- Keel: W takes both in turn and leaves the first; nothing is offered.
+  C.ORDER_HOLDER_KEEPS_JOB = false
+  local w2, x2 = BOT(1, 31, 31), BOT(2, 60, 60)
+  local all2 = { w2, x2 }
+  for _, b in ipairs(all2) do gping(b, 100, 35, 35) end
+  pumpn(all2, 100)
+  for _, b in ipairs(all2) do gping(b, 101, 38, 38) end
+  pumpn(all2, 101)
+  upd(all2, 102)
+  local offered = false
+  for _, m in ipairs(w2.st.orders.out) do
     if m:match("^/info obo ") then offered = true end
   end
-  check("NEW_CLEARS_ALL off: no close pair, no offer",
-        w.st.orders.sibs == nil and not offered, "offered")
-  C.ORDER_NEW_CLEARS_ALL = true
+  check("HOLDER_KEEPS_JOB off: no offer, W leaves one order for the other",
+        not offered and said(w2, "^Leaving"), table.concat(w2.st.orders.out, " | "))
+  C.ORDER_HOLDER_KEEPS_JOB = true
+end
+do
+  -- Far apart, with the knob off: the winner still switches (keel).
+  C.ORDER_HOLDER_KEEPS_JOB = false
+  local all = two_pings(40, 2)
+  local _, n, desc = holders_of(all)
+  check("HOLDER_KEEPS_JOB off: pings far apart, W switches, one order held",
+        n == 1 and all[1].st.orders.held ~= nil, desc)
+  C.ORDER_HOLDER_KEEPS_JOB = true
+end
+
+-- NOBODY FREE, ORDER_NO_FREE_TAKES_LOWEST OFF (keel of that knob): nobody
+-- goes.  A holds a job, B holds a job, C is dead (it hears nothing).  The
+-- knob-on rule is tested further down (NO FREE BOT, THE CHEAPEST SWITCHES).
+C.ORDER_NO_FREE_TAKES_LOWEST = false
+local function busy_pair()
+  local a, b = BOT(1, 32, 32), BOT(2, 90, 90)
+  local all = { a, b }
+  for _, x in ipairs(all) do gping(x, 100, 35, 35) end
+  pumpn(all, 100); upd(all, 101); pumpn(all, 101); upd(all, 102); pumpn(all, 102)
+  for _, x in ipairs(all) do gping(x, 200, 86, 86) end
+  pumpn(all, 200); upd(all, 201); pumpn(all, 201); upd(all, 202); pumpn(all, 202)
+  for _, x in ipairs(all) do x.st.orders.say = {} end
+  return a, b, all
+end
+local function third_ping(all)
+  for _, x in ipairs(all) do gping(x, 300, 70, 70) end
+  local z = next(all[1].st.orders.auctions)
+  pumpn(all, 300); upd(all, 301); pumpn(all, 301); upd(all, 302); pumpn(all, 302)
+  return z
+end
+do
+  local a, b, all = busy_pair()
+  local x = a.st.orders.held and a.st.orders.held.oid
+  local y = b.st.orders.held and b.st.orders.held.oid
+  check("setup: A holds the first order, B the second",
+        x ~= nil and y ~= nil and x ~= y, tostring(x) .. " " .. tostring(y))
+  local z = third_ping(all)
+  check("nobody free: nobody goes, A and B keep their jobs",
+        z ~= nil and a.st.orders.held.oid == x and b.st.orders.held.oid == y,
+        tostring(a.st.orders.held.oid) .. " " .. tostring(b.st.orders.held.oid))
+  check("one bot says all bots are busy",
+        said_n(all, "^All bots busy$") == 1 and said(a, "^All bots busy$"),
+        table.concat(a.st.orders.say, " | ") .. " / " .. table.concat(b.st.orders.say, " | "))
+  check("the order stays known",
+        a.st.orders.known[z] ~= nil and b.st.orders.known[z] ~= nil, "forgot")
+  -- A's job ends: A is free and takes the waiting order.
+  ORD.release_held(a.st, a.inf, nil, true, true)
+  upd(all, 400)
+  check("a bot that comes free takes the waiting order",
+        a.st.orders.held ~= nil and a.st.orders.held.oid == z,
+        tostring(a.st.orders.held and a.st.orders.held.oid))
+  pumpn(all, 400); upd(all, 401)
+  check("B keeps its job and counts A on the waiting order",
+        b.st.orders.held.oid == y and (b.st.orders.gclaims[z] or {})[1] ~= nil, "?")
+  upd(all, 500)
+  check("B does not take the waiting order too", b.st.orders.held.oid == y, "took")
+end
+do
+  -- The wait is ORDER_FOCUS_TICKS long.
+  local a, b, all = busy_pair()
+  local z = third_ping(all)
+  ORD.release_held(a.st, a.inf, nil, true, true)
+  upd({ a }, 300 + (C.ORDER_FOCUS_TICKS or 3000))
+  check("after ORDER_FOCUS_TICKS a freed bot does not take the waiting order",
+        a.st.orders.held == nil, tostring(a.st.orders.held and a.st.orders.held.oid))
+  upd({ a }, 301 + (C.ORDER_FOCUS_TICKS or 3000))
+  check("and the order is forgotten", a.st.orders.known[z] == nil, "known")
+end
+do
+  -- A chat auction gets the same answer when nobody is free.
+  local a = BOT(1, 32, 32)
+  gping(a, 100, 35, 35)
+  upd({ a }, 101)
+  a.st.orders.say = {}
+  ORD.on_chat(a.st, a.w, a.inf, 0, "attack 5", 200, true, false)
+  upd({ a }, 201)
+  check("a lone bot on a job answers a chat order: all bots busy",
+        said(a, "^All bots busy$"), table.concat(a.st.orders.say, " | "))
+end
+do
+  -- "No" because nobody can get there is not "busy".  Two free bots, and
+  -- the target is out of reach for both (travel cost nil): nobody goes and
+  -- nobody says all bots are busy.
+  local real = ORD.travel_cost
+  ORD.travel_cost = function() return nil end
+  local a, b = BOT(1, 32, 32), BOT(2, 90, 90)
+  local all = { a, b }
+  local z = third_ping(all)
+  ORD.travel_cost = real
+  check("unreachable: both bots bid -1, not busy",
+        z ~= nil and a.st.orders.held == nil and b.st.orders.held == nil,
+        tostring(a.st.orders.held and a.st.orders.held.oid))
+  check("unreachable: nobody says all bots are busy",
+        said_n(all, "^All bots busy$") == 0,
+        table.concat(a.st.orders.say, " | ") .. " / " .. table.concat(b.st.orders.say, " | "))
+end
+do
+  -- One bot cannot get there (p1), the other holds a job (p2): the busy one
+  -- says it, although p1 has the lower player number.
+  local u, h = BOT(1, 32, 32), BOT(2, 90, 90)
+  local all = { u, h }
+  for _, x in ipairs(all) do gping(x, 100, 86, 86) end
+  pumpn(all, 100); upd(all, 101); pumpn(all, 101); upd(all, 102); pumpn(all, 102)
+  local y = h.st.orders.held and h.st.orders.held.oid
+  check("setup: p2 holds a job, p1 is free", y ~= nil and u.st.orders.held == nil,
+        tostring(u.st.orders.held and u.st.orders.held.oid))
+  for _, x in ipairs(all) do x.st.orders.say = {} end
+  local real = ORD.travel_cost
+  ORD.travel_cost = function(st, ...)
+    if st == u.st then return nil end
+    return real(st, ...)
+  end
+  local z = third_ping(all)
+  ORD.travel_cost = real
+  check("one unreachable, one busy: nobody goes",
+        z ~= nil and u.st.orders.held == nil and h.st.orders.held.oid == y, "went")
+  check("one unreachable, one busy: the busy bot says all bots are busy",
+        said_n(all, "^All bots busy$") == 1 and said(h, "^All bots busy$"),
+        table.concat(u.st.orders.say, " | ") .. " / " .. table.concat(h.st.orders.say, " | "))
+end
+do
+  -- Keel: the cheaper bot leaves its job for the new order.
+  C.ORDER_HOLDER_KEEPS_JOB = false
+  local a, b, all = busy_pair()
+  local y = b.st.orders.held and b.st.orders.held.oid
+  local z = third_ping(all)
+  check("HOLDER_KEEPS_JOB off: the winner leaves its job for the new order",
+        b.st.orders.held ~= nil and b.st.orders.held.oid == z and z ~= y,
+        tostring(b.st.orders.held and b.st.orders.held.oid))
+  check("HOLDER_KEEPS_JOB off: nobody says all bots are busy",
+        said_n(all, "^All bots busy$") == 0, "said")
+  C.ORDER_HOLDER_KEEPS_JOB = true
+end
+C.ORDER_NO_FREE_TAKES_LOWEST = true
+
+-- CHAT ORDERS.  An auction ("attack 5", a count) goes to a free bot.  An
+-- order that names a bot switches it, and so do `all` and `nearby`, which
+-- name every bot (or every bot near): unchanged.
+local function chat_pair()
+  local a, b = BOT(1, 32, 32), BOT(2, 90, 90)      -- A is nearer pill 5
+  local all = { a, b }
+  for _, x in ipairs(all) do gping(x, 100, 35, 35) end
+  pumpn(all, 100); upd(all, 101); pumpn(all, 101); upd(all, 102); pumpn(all, 102)
+  return a, b, all
+end
+local function chat_all(all, line, t)
+  for _, x in ipairs(all) do ORD.on_chat(x.st, x.w, x.inf, 0, line, t, true, false) end
+  pumpn(all, t); upd(all, t + 1); pumpn(all, t + 1); upd(all, t + 2)
+end
+do
+  local a, b, all = chat_pair()
+  local x = a.st.orders.held and a.st.orders.held.oid
+  chat_all(all, "attack 5", 200)
+  check("chat auction: the free bot takes it, A keeps its job",
+        a.st.orders.held.oid == x and b.st.orders.held ~= nil
+        and b.st.orders.held.kind == "attack_pill",
+        tostring(b.st.orders.held and b.st.orders.held.kind))
+  a, b, all = chat_pair()
+  chat_all(all, "socrates attack 5", 200)
+  check("an order that names A switches A",
+        a.st.orders.held ~= nil and a.st.orders.held.kind == "attack_pill"
+        and b.st.orders.held == nil, tostring(a.st.orders.held and a.st.orders.held.kind))
+  a, b, all = chat_pair()
+  chat_all(all, "all attack 5", 200)
+  check("'all' still switches A (it names every bot)",
+        a.st.orders.held ~= nil and a.st.orders.held.kind == "attack_pill"
+        and b.st.orders.held ~= nil and b.st.orders.held.kind == "attack_pill", "?")
+end
+
+-- A REPEAT PING ON PLAIN GROUND REFRESHES, ON A PILL IT ADDS A BOT.
+local function repeat_pair(mx, my)
+  local a, b = BOT(1, 32, 32), BOT(2, 45, 45)
+  local all = { a, b }
+  for _, x in ipairs(all) do gping(x, 100, mx, my) end
+  pumpn(all, 100); upd(all, 101); pumpn(all, 101); upd(all, 102); pumpn(all, 102)
+  for _, x in ipairs(all) do x.st.orders.say, x.st.orders.out = {}, {} end
+  return a, b, all
+end
+do
+  local a, b, all = repeat_pair(35, 35)
+  local x = a.st.orders.held and a.st.orders.held.oid
+  check("setup: A holds the ground order, B nothing",
+        x ~= nil and b.st.orders.held == nil, "?")
+  for _, q in ipairs(all) do gping(q, 200, 35, 35) end
+  check("a repeat ping on ground opens no auction",
+        next(a.st.orders.auctions) == nil and next(b.st.orders.auctions) == nil, "opened")
+  check("and the order stays a one-bot order", a.st.orders.anchors[x].want == 1,
+        tostring(a.st.orders.anchors[x].want))
+  check("the holder's order is refreshed",
+        a.st.orders.held.expiry == 200 + (C.ORDER_FOCUS_TICKS or 3000),
+        tostring(a.st.orders.held.expiry))
+  check("the holder answers 'Still on it'", said(a, "^Still on it"),
+        table.concat(a.st.orders.say, " | "))
+  pumpn(all, 200); upd(all, 201); pumpn(all, 201); upd(all, 202)
+  check("and no second bot goes", b.st.orders.held == nil,
+        tostring(b.st.orders.held and b.st.orders.held.oid))
+  -- Keel: the repeat adds a slot and B takes it.
+  C.ORDER_LAND_REPEAT_ADDS = true
+  a, b, all = repeat_pair(35, 35)
+  x = a.st.orders.held and a.st.orders.held.oid
+  for _, q in ipairs(all) do gping(q, 200, 35, 35) end
+  pumpn(all, 200); upd(all, 201); pumpn(all, 201); upd(all, 202)
+  check("LAND_REPEAT_ADDS on: a ground repeat adds B",
+        b.st.orders.held ~= nil and b.st.orders.held.oid == x,
+        tostring(b.st.orders.held and b.st.orders.held.oid))
+  C.ORDER_LAND_REPEAT_ADDS = false
+end
+do
+  -- On a pill the repeat still adds one bot.
+  local a, b, all = repeat_pair(20, 20)
+  local x = a.st.orders.held and a.st.orders.held.oid
+  check("setup: A holds the pill order", x ~= nil and b.st.orders.held == nil, "?")
+  for _, q in ipairs(all) do gping(q, 200, 20, 20) end
+  pumpn(all, 200); upd(all, 201); pumpn(all, 201); upd(all, 202)
+  check("a repeat ping on a pill adds B to the same order",
+        b.st.orders.held ~= nil and b.st.orders.held.oid == x
+        and a.st.orders.held.oid == x, tostring(b.st.orders.held and b.st.orders.held.oid))
+  check("and the pill order is a two-bot order now", a.st.orders.anchors[x].want == 2,
+        tostring(a.st.orders.anchors[x].want))
+end
+do
+  -- A decoy that is holding: a repeat ping on its square restarts the hold
+  -- clock, not the 60 s travel focus.  The tank stands one square east of
+  -- the square and the ping lands one square west, so it does not select
+  -- the tank.
+  local d2 = dbot(); arrive(d2, 200, 23, 24)
+  d2.inf.events = { ping(5, 0, 21, 24) }
+  ORD.on_events(d2.st, d2.w, d2.inf, 300)
+  d2.inf.events = {}
+  check("a repeat ping on a holding decoy restarts its hold clock",
+        ORD.decoy_held(d2.st) ~= nil and d2.st.orders.held.expiry == 300 + HOLD,
+        tostring(d2.st.orders.held and d2.st.orders.held.expiry))
+  check("and opens no auction", next(d2.st.orders.auctions) == nil, "opened")
+end
+do
+-- =========================================================================
+-- NO FREE BOT, THE CHEAPEST BUSY ONE SWITCHES (ORDER_NO_FREE_TAKES_LOWEST,
+-- Andrew, PR #393).  When no free bot can take a ping, the bot on a person's
+-- job with the lowest cost to the new target drops its job and goes.  A tie
+-- goes to the lower player number.  A decoy never goes.  A repeat ping's
+-- extra slot goes to a bot NOT already on that order.
+-- =========================================================================
+print("orders.lua -- no free bot: the cheapest busy bot switches")
+check("no-free knob is on live", C.ORDER_NO_FREE_TAKES_LOWEST == true,
+      tostring(C.ORDER_NO_FREE_TAKES_LOWEST))
+check("keel: nobody switches", C.PRESETS.keel.ORDER_NO_FREE_TAKES_LOWEST == false, "?")
+do
+  -- The wire: BID_HOLD - cost, and note_bid reads it back.
+  local a = { bids = {}, answered = {} }
+  ORD.note_bid(a, 3, ORD.BID_HOLD - 160)
+  ORD.note_bid(a, 4, ORD.BID_BUSY)
+  ORD.note_bid(a, 5, -1)
+  check("switch bid: kept in a.hold with its cost, not in a.bids",
+        a.hold[3] == 160 and a.bids[3] == nil and a.answered[3], tostring(a.hold[3]))
+  check("switch bid: counts as busy for 'All bots busy'", a.busy[3] == true, "?")
+  check("plain -2: busy, no switch cost", a.busy[4] == true and a.hold[4] == nil, "?")
+  check("-1: neither busy nor a switch cost",
+        (a.busy[5] == nil) and a.hold[5] == nil and a.answered[5], "?")
+  check("switch bid still matches the receiver's pattern",
+        ORD.rx(3, "/info obd 7 " .. (ORD.BID_HOLD - 160), 1, BOT(1, 1, 1).st) == true, "?")
+end
+-- Give one bot its own ping order, alone (nobody else hears it).
+local function own_job(b, t, mx, my)
+  gping(b, t, mx, my)
+  settle(b, t + 1, t + 15)
+  b.st.orders.out, b.st.orders.say = {}, {}
+  return b.st.orders.held and b.st.orders.held.oid
+end
+-- Ping every bot at (mx,my) at t, carry the traffic and settle.
+local function ping_all(all, t, mx, my)
+  for _, x in ipairs(all) do gping(x, t, mx, my) end
+  local z = nil
+  for _, x in ipairs(all) do
+    for oid in pairs(x.st.orders.auctions) do z = oid end
+  end
+  pumpn(all, t); upd(all, t + 1); pumpn(all, t + 1); upd(all, t + 2); pumpn(all, t + 2)
+  return z
+end
+local function sayings(all)
+  local s = {}
+  for _, x in ipairs(all) do
+    s[#s + 1] = "p" .. x.pn .. ": " .. table.concat(x.st.orders.say or {}, " | ")
+  end
+  return table.concat(s, " / ")
+end
+do
+  -- (a) One bot on a job (A), the other busy escaping (B): A switches.
+  local a, b = BOT(1, 32, 32), BOT(2, 90, 90)
+  local x = own_job(a, 100, 35, 35)
+  b.st.stuck_for = 10000
+  local all = { a, b }
+  local z = ping_all(all, 300, 70, 70)
+  check("(a) one holder, no free bot: the holder takes the new ping",
+        a.st.orders.held ~= nil and a.st.orders.held.oid == z and z ~= x,
+        tostring(a.st.orders.held and a.st.orders.held.oid))
+  check("(a) and says it left its job because no bot was free",
+        said(a, "^No free bot%. Leaving goto for goto$"), sayings(all))
+  check("(a) its old order is dropped (cancelled everywhere, not handed back)",
+        a.st.orders.known[x] == nil and b.st.orders.known[x] == nil,
+        tostring(a.st.orders.known[x]))
+  check("(a) the busy bot does not go, nobody says all bots are busy",
+        b.st.orders.held == nil and said_n(all, "^All bots busy$") == 0, sayings(all))
+  check("(a) no order is left waiting", not (a.st.orders.known[z] or {}).unfilled
+        and not (b.st.orders.known[z] or {}).unfilled, "unfilled")
+end
+do
+  -- (b) + (f) Two holders: the cheaper one switches, and both bots name it.
+  local a, b = BOT(1, 32, 32), BOT(2, 90, 90)
+  local all = { a, b }
+  local x = own_job(a, 100, 35, 35)
+  local y = own_job(b, 100, 88, 88)
+  local z = ping_all(all, 300, 70, 70)
+  check("(b) two holders: the cheaper (B, 20+20 tiles) switches",
+        b.st.orders.held ~= nil and b.st.orders.held.oid == z and z ~= y,
+        tostring(b.st.orders.held and b.st.orders.held.oid))
+  check("(b) the dearer (A) keeps its job", a.st.orders.held ~= nil
+        and a.st.orders.held.oid == x, tostring(a.st.orders.held and a.st.orders.held.oid))
+  check("(f) A names B as the holder of the new order",
+        a.st.orders.claims[z] ~= nil and a.st.orders.claims[z].pn == 2,
+        tostring(a.st.orders.claims[z] and a.st.orders.claims[z].pn))
+  check("(b) only B says it is leaving", said(b, "^No free bot%. Leaving")
+        and said_n(all, "^No free bot") == 1, sayings(all))
+  -- Tie: A at (50,52) and B at (90,88) are both 38 tiles from (70,70).
+  a, b = BOT(1, 50, 52), BOT(2, 90, 88)
+  all = { a, b }
+  x = own_job(a, 100, 48, 48)
+  y = own_job(b, 100, 92, 92)
+  check("setup: A and B price (70,70) the same",
+        ORD.travel_cost(a.st, a.w, a.inf, { tkind = "here", mx = 70, my = 70 })
+        == ORD.travel_cost(b.st, b.w, b.inf, { tkind = "here", mx = 70, my = 70 }), "?")
+  z = ping_all(all, 300, 70, 70)
+  check("(b) a tie goes to the lower player number (A)",
+        a.st.orders.held ~= nil and a.st.orders.held.oid == z
+        and b.st.orders.held ~= nil and b.st.orders.held.oid == y,
+        tostring(a.st.orders.held and a.st.orders.held.oid))
+  check("(f) on a tie B names A too",
+        b.st.orders.claims[z] ~= nil and b.st.orders.claims[z].pn == 1,
+        tostring(b.st.orders.claims[z] and b.st.orders.claims[z].pn))
+end
+do
+  -- A free bot still wins over every holder, even a much cheaper holder.
+  local a, b = BOT(1, 68, 68), BOT(2, 10, 10)
+  local all = { a, b }
+  local x = own_job(a, 100, 66, 66)
+  local z = ping_all(all, 300, 70, 70)
+  check("a free bot far away beats a holder next door",
+        b.st.orders.held ~= nil and b.st.orders.held.oid == z
+        and a.st.orders.held.oid == x, tostring(b.st.orders.held and b.st.orders.held.oid))
+  check("and nobody says it is leaving", said_n(all, "^No free bot") == 0, sayings(all))
+end
+do
+  -- (c) A decoy is never taken.  The decoy (p1) bids a plain -2.
+  local d = dbot(); arrive(d, 200)
+  local dx = d.st.orders.held.oid
+  d.st.orders.out = {}
+  local h = BOT(2, 90, 90)
+  local all = { d, h }
+  h.st.stuck_for = 10000              -- the other bot is busy escaping
+  for _, q in ipairs(all) do gping(q, 300, 100, 100) end
+  local z = next(d.st.orders.auctions)
+  local plain = false
+  for _, m in ipairs(d.st.orders.out) do
+    if m == "/info obd " .. tostring(z) .. " -2" then plain = true end
+  end
+  check("(c) a decoy bids a plain -2 (no switch cost)", plain,
+        table.concat(d.st.orders.out, " | "))
+  pumpn(all, 300); upd(all, 301); pumpn(all, 301); upd(all, 302)
+  check("(c) decoy + busy bot: nobody goes, the decoy stays",
+        d.st.orders.held ~= nil and d.st.orders.held.oid == dx
+        and ORD.decoy_held(d.st) ~= nil and h.st.orders.held == nil, "went")
+  check("(c) one bot says all bots are busy",
+        said_n(all, "^All bots busy$") == 1, sayings(all))
+  check("(c) and the order waits for a free bot",
+        (d.st.orders.known[z] or {}).unfilled == true, "not waiting")
+  -- A decoy and a holder: the holder switches, the decoy stays.
+  d = dbot(); arrive(d, 200)
+  dx = d.st.orders.held.oid
+  h = BOT(2, 90, 90)
+  local y = own_job(h, 100, 88, 88)
+  all = { d, h }
+  z = ping_all(all, 300, 100, 100)
+  check("decoy + holder: the holder switches although the decoy is nearer",
+        h.st.orders.held ~= nil and h.st.orders.held.oid == z and z ~= y,
+        tostring(h.st.orders.held and h.st.orders.held.oid))
+  check("decoy + holder: the decoy stays", d.st.orders.held ~= nil
+        and d.st.orders.held.oid == dx and ORD.decoy_held(d.st) ~= nil, "left")
+end
+do
+  -- (d) A repeat ping on a pill with no free bot: a DIFFERENT holder joins.
+  -- A (p1) holds pill 5.  B (p2, far) and Cc (p4, nearer) hold other jobs.
+  local a, b, c = BOT(1, 18, 18), BOT(2, 90, 90), BOT(4, 70, 70)
+  local all = { a, b, c }
+  local p = ping_all(all, 100, 20, 20)
+  check("setup: A holds the pill order",
+        a.st.orders.held ~= nil and a.st.orders.held.oid == p, "?")
+  -- B and Cc take other jobs only they hear.
+  local y = own_job(b, 150, 92, 92)
+  local w = own_job(c, 150, 72, 72)
+  check("setup: B and Cc hold other jobs", y ~= nil and w ~= nil and y ~= p and w ~= p, "?")
+  for _, q in ipairs(all) do q.st.orders.out, q.st.orders.say = {}, {} end
+  ping_all(all, 200, 20, 20)
+  check("(d) the repeat puts the cheaper other holder (Cc) on the pill",
+        c.st.orders.held ~= nil and c.st.orders.held.oid == p,
+        tostring(c.st.orders.held and c.st.orders.held.oid))
+  check("(d) A stays on the pill and B keeps its job",
+        a.st.orders.held.oid == p and b.st.orders.held ~= nil and b.st.orders.held.oid == y,
+        tostring(b.st.orders.held and b.st.orders.held.oid))
+  check("(d) A never says it is leaving", not said(a, "^No free bot")
+        and not said(a, "^Leaving"), sayings(all))
+  -- B and Cc forgot the pill order when their own pings came (a newer ping
+  -- retires the orders a bot does not hold: clear_older_orders), so only A
+  -- still counts itself.  What every bot must agree on is the joiner: Cc.
+  check("(f) A counts A and Cc on the pill order, B counts Cc",
+        (a.st.orders.gclaims[p] or {})[1] ~= nil and (a.st.orders.gclaims[p] or {})[4] ~= nil
+        and (b.st.orders.gclaims[p] or {})[4] ~= nil
+        and (b.st.orders.gclaims[p] or {})[2] == nil,
+        (function()
+           local t = {}
+           for _, q in ipairs(all) do
+             local l = {}
+             for pn in pairs(q.st.orders.gclaims[p] or {}) do l[#l + 1] = pn end
+             table.sort(l)
+             t[#t + 1] = "p" .. q.pn .. "={" .. table.concat(l, ",") .. "}"
+           end
+           return table.concat(t, " ")
+         end)())
+  -- With only A on a job and the other bot busy, a repeat adds nobody.
+  local a2, b2 = BOT(1, 18, 18), BOT(2, 90, 90)
+  local all2 = { a2, b2 }
+  local p2 = ping_all(all2, 100, 20, 20)
+  b2.st.stuck_for = 10000
+  for _, q in ipairs(all2) do q.st.orders.say = {} end
+  ping_all(all2, 200, 20, 20)
+  check("(d) only the holder itself could go: nobody is added, A holds on",
+        a2.st.orders.held.oid == p2 and b2.st.orders.held == nil
+        and not said(a2, "^No free bot"), sayings(all2))
+end
+do
+  -- (e) Knob off: the two holders both keep their jobs, one says busy.
+  C.ORDER_NO_FREE_TAKES_LOWEST = false
+  local a, b = BOT(1, 32, 32), BOT(2, 90, 90)
+  local all = { a, b }
+  local x = own_job(a, 100, 35, 35)
+  local y = own_job(b, 100, 88, 88)
+  local z = ping_all(all, 300, 70, 70)
+  check("(e) NO_FREE_TAKES_LOWEST off: nobody switches",
+        a.st.orders.held.oid == x and b.st.orders.held.oid == y, "switched")
+  check("(e) NO_FREE_TAKES_LOWEST off: one bot says all bots are busy",
+        said_n(all, "^All bots busy$") == 1 and said_n(all, "^No free bot") == 0,
+        sayings(all))
+  check("(e) NO_FREE_TAKES_LOWEST off: the order waits",
+        (a.st.orders.known[z] or {}).unfilled == true, "?")
+  C.ORDER_NO_FREE_TAKES_LOWEST = true
+  -- HOLDER_KEEPS_JOB off: the knob does nothing; the plain auction winner
+  -- (the cheaper bot) switches with the old "Leaving" line.
+  C.ORDER_HOLDER_KEEPS_JOB = false
+  a, b = BOT(1, 32, 32), BOT(2, 90, 90)
+  all = { a, b }
+  x = own_job(a, 100, 35, 35)
+  y = own_job(b, 100, 88, 88)
+  z = ping_all(all, 300, 70, 70)
+  check("(e) HOLDER_KEEPS_JOB off: plain switch, no 'No free bot' line",
+        b.st.orders.held.oid == z and said(b, "^Leaving") and said_n(all, "^No free bot") == 0,
+        sayings(all))
+  C.ORDER_HOLDER_KEEPS_JOB = true
+end
 end
 _G.EVENT_PING = nil
 _G.PING_KIND_BOT_COMMAND = nil
