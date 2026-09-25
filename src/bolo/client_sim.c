@@ -3150,6 +3150,10 @@ void clientSimLobbyScenarioDetailsPut(ClientSim *cs, const char *file,
       found ? LOBBY_SCN_DETAILS_FOUND : LOBBY_SCN_DETAILS_NONE;
   cs->lobbyScnDetails[i].len = found ? (uint16_t)len : 0;
   if (found && len > 0) memcpy(cs->lobbyScnDetails[i].bytes, bytes, len);
+  /* The settings block, if any, is put after this, so an answer without
+     one reads as a server that did not say. */
+  cs->lobbyScnDetails[i].settingsKnown = false;
+  cs->lobbyScnDetails[i].settingsLen   = 0;
 }
 
 void clientSimLobbyScenarioDetailsForget(ClientSim *cs) {
@@ -3158,6 +3162,61 @@ void clientSimLobbyScenarioDetailsForget(ClientSim *cs) {
   /* An answer still arriving belongs to a slot that is gone; the bulk
      receiver finishes filling the buffer and the completion drops it. */
   cs->lobbyScnDetailsRxSlot = 0;
+}
+
+void clientSimLobbyScenarioSettingsPut(ClientSim *cs, const char *file,
+                                       const uint8_t *bytes, size_t len) {
+  int i;
+  if (cs == NULL || !clientSimScnDetailsNameOk(file)) return;
+  i = clientSimScnDetailsFind(cs, file);
+  if (i < 0 || cs->lobbyScnDetails[i].state != LOBBY_SCN_DETAILS_FOUND) {
+    return;
+  }
+  /* A block that does not read is kept as no settings, so the dialog draws
+     nothing rather than a half-read row. */
+  if (len > SCN_SETTINGS_BLOB_MAX || (len > 0 && bytes == NULL) ||
+      scnSettingsBlobRead(bytes, len, NULL, 0) < 0) {
+    len = 0;
+  }
+  cs->lobbyScnDetails[i].settingsKnown = true;
+  cs->lobbyScnDetails[i].settingsLen   = (uint16_t)len;
+  if (len > 0) memcpy(cs->lobbyScnDetails[i].settings, bytes, len);
+}
+
+bool clientSimGetLobbyScenarioSettings(const ClientSim *cs, const char *file,
+                                       const uint8_t **bytes, size_t *len) {
+  int i;
+  if (bytes != NULL) *bytes = NULL;
+  if (len != NULL) *len = 0;
+  if (cs == NULL || file == NULL || file[0] == '\0') return false;
+  i = clientSimScnDetailsFind(cs, file);
+  if (i < 0 || cs->lobbyScnDetails[i].state != LOBBY_SCN_DETAILS_FOUND ||
+      !cs->lobbyScnDetails[i].settingsKnown) {
+    return false;
+  }
+  if (len != NULL) *len = cs->lobbyScnDetails[i].settingsLen;
+  if (bytes != NULL && cs->lobbyScnDetails[i].settingsLen > 0) {
+    *bytes = cs->lobbyScnDetails[i].settings;
+  }
+  return true;
+}
+
+bool clientSimGetLobbyScriptSetting(const ClientSim *cs, const char *file,
+                                    const char *id, int32_t *out) {
+  int i;
+  if (cs == NULL || file == NULL || id == NULL) return false;
+  for (i = 0; i < cs->lobbyScriptSettingCount; i++) {
+    if (strcmp(cs->lobbyScriptSettings[i].file, file) == 0 &&
+        strcmp(cs->lobbyScriptSettings[i].id, id) == 0) {
+      if (out != NULL) *out = cs->lobbyScriptSettings[i].value;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool clientSimLobbyScriptSettingsSupported(const ClientSim *cs) {
+  return cs != NULL && cs->lobbyScriptSettingsSupported;
 }
 
 ClientScnDetailsState clientSimGetLobbyScenarioDetails(const ClientSim *cs,

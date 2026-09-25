@@ -2110,6 +2110,23 @@ static bool scnModHoldsBack(const ScenarioManifest *m, const char *path,
     return true;
 }
 
+/* The report callback scenarioLuaReadSettings is given: a bad settings row
+ * is an issue, the same as a bad rule or tag, because the host would offer
+ * a dropdown that does not do what the author meant. */
+static void scnSettingsReport(void *ud, const char *key, const char *line) {
+    scnReport((ScnParseReport *)ud, key, "%s", line);
+}
+
+/* The settings block into the struct. The rules are in
+ * scenarioLuaReadSettings, because game.setting reads the same block from a
+ * file's top level before this runs and must see the same rows. */
+static void scnReadSettings(lua_State *L, int tbl, ScenarioManifest *m,
+                            const char *path, ScnParseReport *rep) {
+    int n = scenarioLuaReadSettings(L, tbl, m->settings, SCN_SETTINGS_MAX,
+                                    path, scnSettingsReport, rep);
+    m->numSettings = (uint8_t)(n < 0 ? 0 : n);
+}
+
 /* The whole table into the struct. A file with no scenario table at all is
  * refused: it ran, but it is not a scenario.
  *
@@ -2147,6 +2164,7 @@ bool scnReadManifest(lua_State *L, int envRef, ScenarioManifest *m,
     /* After the triggers, because a hook the file handles only through a
        trigger is still one it uses. */
     scnReadCallbacks(L, envRef, tbl, m, path, rep);
+    scnReadSettings(L, tbl, m, path, rep);
 
     lua_pop(L, 1);
 
@@ -2490,6 +2508,36 @@ void scnPushManifestGlobal(lua_State *L, int envRef,
             lua_setfield(L, cbt, m->callbacks[i].name);
         }
         lua_setfield(L, t, "callbacks");
+    }
+    /* The settings block as the file writes it. Left out when there is
+       none, which a reader sees the same as an empty block. */
+    if (m->numSettings > 0) {
+        int     st;
+        uint8_t i;
+
+        lua_newtable(L);
+        st = lua_gettop(L);
+        for (i = 0; i < m->numSettings && i < SCN_SETTINGS_MAX; i++) {
+            const ScnSetting *d = &m->settings[i];
+
+            lua_newtable(L);
+            lua_pushstring(L, d->id);
+            lua_setfield(L, -2, "id");
+            lua_pushstring(L, d->label);
+            lua_setfield(L, -2, "label");
+            lua_pushstring(L, "int");
+            lua_setfield(L, -2, "type");
+            lua_pushinteger(L, (lua_Integer)d->min);
+            lua_setfield(L, -2, "min");
+            lua_pushinteger(L, (lua_Integer)d->max);
+            lua_setfield(L, -2, "max");
+            lua_pushinteger(L, (lua_Integer)d->step);
+            lua_setfield(L, -2, "step");
+            lua_pushinteger(L, (lua_Integer)d->def);
+            lua_setfield(L, -2, "default");
+            lua_rawseti(L, st, (int)i + 1);
+        }
+        lua_setfield(L, t, "settings");
     }
 
     scnEnvPush(L, envRef);
@@ -3555,10 +3603,14 @@ static bool scnScriptLoad(lua_State *L, ScnScriptEntry *e,
        it are nobody's. */
     in->ctx->runningOwner = SCN_OWNER_OF_ENTRY(in->entry);
     in->ctx->runningFile  = in->path;
+    /* And whose globals, so game.setting at a top level can read the
+       settings block the chunk's own scenario table declares. */
+    in->ctx->runningEnv   = e->envRef;
     ran = scnRunChunk(L, e->envRef, in->src, in->srcLen, in->chunkName, err,
                       errLen);
     in->ctx->runningOwner = SCN_OWNER_NONE;
     in->ctx->runningFile  = NULL;
+    in->ctx->runningEnv   = 0;
     if (!ran ||
         !scnReadManifest(L, e->envRef, e->manifest, in->path, err, errLen,
                          rep) ||
@@ -6733,10 +6785,25 @@ typedef enum {
    the directory through scnDirListCached, which also refills the cache.
 
    On SCN_DIR_ONE_FOUND, *got is the length copied into out, or -1 when the
-   details do not fit in cap. */
+   details do not fit in cap.
+
+   settings picks which of the record's two blobs is copied: the details, or
+   the settings block. */
+static int scnDirRecordCopy(const ScnDirDetails *d, bool settings,
+                            uint8_t *out, size_t cap) {
+    const uint8_t *bytes = settings ? d->settings : d->bytes;
+    size_t         len   = settings ? d->settingsLen : d->len;
+
+    if (len > cap) {
+        return -1;
+    }
+    memcpy(out, bytes, len);
+    return (int)len;
+}
+
 static ScnDirOne scnDirDetailsOneCached(const char *dir, const char *file,
-                                        int max, uint8_t *out, size_t cap,
-                                        int *got) {
+                                        int max, bool settings, uint8_t *out,
+                                        size_t cap, int *got) {
     SDL_PathInfo info;
     ScnDirCache *c;
     ScnDirOne    result = SCN_DIR_ONE_UNKNOWN;
@@ -6760,10 +6827,7 @@ static ScnDirOne scnDirDetailsOneCached(const char *dir, const char *file,
             if (strcmp(c->details[i].file, file) != 0) {
                 continue;
             }
-            if (c->details[i].len <= cap) {
-                memcpy(out, c->details[i].bytes, c->details[i].len);
-                *got = (int)c->details[i].len;
-            }
+            *got   = scnDirRecordCopy(&c->details[i], settings, out, cap);
             result = SCN_DIR_ONE_FOUND;
             break;
         }
@@ -6784,8 +6848,8 @@ static ScnDirOne scnDirDetailsOneCached(const char *dir, const char *file,
    for a whole directory are only allocated when a directory has to be read
    again because nothing is kept for it or it changed since, which is what
    the listing would do. */
-static int scnDirDetailsCb(void *ctx, const char *dir, const char *file,
-                           uint8_t *out, size_t cap) {
+static int scnDirRecordRead(void *ctx, const char *dir, const char *file,
+                            bool settings, uint8_t *out, size_t cap) {
     char           dirs[SCN_MOD_DIRS_MAX][SCN_SCRIPT_PATH_MAX];
     ScnDirEntry   *rows    = NULL;
     ScnDirDetails *details = NULL;
@@ -6803,7 +6867,7 @@ static int scnDirDetailsCb(void *ctx, const char *dir, const char *file,
         int       i;
 
         one = scnDirDetailsOneCached(dirs[d], file, SCN_DIR_DETAILS_ROWS,
-                                     out, cap, &got);
+                                     settings, out, cap, &got);
         if (one == SCN_DIR_ONE_FOUND) {
             /* Found, fitting or not: the search stops here for the same
                reason it stops on a match in a directory read below. */
@@ -6827,10 +6891,7 @@ static int scnDirDetailsCb(void *ctx, const char *dir, const char *file,
             if (strcmp(details[i].file, file) != 0) {
                 continue;
             }
-            if (details[i].len <= cap) {
-                memcpy(out, details[i].bytes, details[i].len);
-                got = (int)details[i].len;
-            }
+            got = scnDirRecordCopy(&details[i], settings, out, cap);
             /* Found, fitting or not: a lower directory's copy of the name is
                not the file the listing offers. */
             d = count;
@@ -6840,6 +6901,18 @@ static int scnDirDetailsCb(void *ctx, const char *dir, const char *file,
     free(rows);
     free(details);
     return got;
+}
+
+static int scnDirDetailsCb(void *ctx, const char *dir, const char *file,
+                           uint8_t *out, size_t cap) {
+    return scnDirRecordRead(ctx, dir, file, false, out, cap);
+}
+
+/* One file's settings block, in the shape serverSimSetScenarioSettingsReader
+   takes, found exactly as scnDirDetailsCb finds the details. */
+static int scnDirSettingsCb(void *ctx, const char *dir, const char *file,
+                            uint8_t *out, size_t cap) {
+    return scnDirRecordRead(ctx, dir, file, true, out, cap);
 }
 
 /* One file's raw bytes, in the shape serverSimSetScriptFileReader takes: the
@@ -7206,6 +7279,7 @@ void scenarioHostRegisterScenarioLister(ServerSim *sim) {
     serverSimSetScenarioLister(sim, scnDirListCb, sim);
     serverSimSetScenarioDetailsReader(sim, scnDirDetailsCb, sim);
     serverSimSetScriptFileReader(sim, scnDirReadCb, sim);
+    serverSimSetScenarioSettingsReader(sim, scnDirSettingsCb, sim);
     serverSimSetScriptUploadAccept(sim, scnUploadAccept, sim);
 }
 
@@ -7950,6 +8024,7 @@ static ScenarioHost *scnAttachFrom(ServerSim *sim, ScnScriptSource *from,
        because the kind has not been read out of the table yet. */
     h->lua.runningOwner = SCN_OWNER_NONE;
     h->lua.runningFile  = NULL;
+    h->lua.runningEnv   = 0;
     h->lua.timers    = &h->timers;
     /* Every state this host boots runs the scenario rather than checking it;
        the reload is the one that checks. */
@@ -8423,6 +8498,7 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
     check.running      = NULL;
     check.runningOwner = SCN_OWNER_NONE;
     check.runningFile  = NULL;
+    check.runningEnv   = 0;
     check.timers    = NULL;
     check.checkOnly = true;
     L = scnBootVmWith(&check);
@@ -8584,6 +8660,13 @@ bool scenarioHostReload(ScenarioHost *h, char *err, size_t errLen) {
                                                     reloaded[i].manifest);
 
             serverSimSetMapScriptDetails(h->sim, details, len);
+            {
+                uint8_t settings[SCN_SETTINGS_BLOB_MAX];
+                size_t  sLen = scnDirSettingsFromManifest(
+                    settings, sizeof(settings), reloaded[i].manifest);
+
+                serverSimSetMapScriptSettings(h->sim, settings, sLen);
+            }
             break;
         }
     }
@@ -8651,6 +8734,13 @@ static void scnPublishMapScript(ServerSim *sim, const ScenarioHost *h,
                                                 h->entry[which].manifest);
 
         serverSimSetMapScriptDetails(sim, details, len);
+    }
+    {
+        uint8_t settings[SCN_SETTINGS_BLOB_MAX];
+        size_t  len = scnDirSettingsFromManifest(settings, sizeof(settings),
+                                                 h->entry[which].manifest);
+
+        serverSimSetMapScriptSettings(sim, settings, len);
     }
 }
 

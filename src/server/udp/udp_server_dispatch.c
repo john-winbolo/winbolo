@@ -1298,6 +1298,7 @@ static void handleLobbyScenarioDetailsReq(ServerSim *sim, uint8_t *buf,
     char        file[BULK_PATH_MAX + 1];
     uint8_t    *blob;
     int         got;
+    bool        wantSettings;
     BulkStreamHeader sh;
     static uint32_t s_detailsSeq = 0;
 
@@ -1309,14 +1310,36 @@ static void handleLobbyScenarioDetailsReq(ServerSim *sim, uint8_t *buf,
     file[fileLen] = '\0';
     /* A name with a NUL inside it is not a name either list could hold. */
     if (strlen(file) != fileLen) return;
+    /* A newer client ends the request with a flags byte; an older one
+       stops at the name, and is answered in the shape it can read. */
+    wantSettings = (rpos + fileLen < len) &&
+                   (buf[rpos + fileLen] & BULK_SCN_DETAILS_WANT_SETTINGS);
     if (bulkSenderBusy(&udpServer.bulkSend[clientIdx])) return;
 
-    blob = (uint8_t *)malloc(1 + SCN_DETAILS_MAX);
+    blob = (uint8_t *)malloc(BULK_SCN_DETAILS_BLOB_MAX);
     if (blob == NULL) return;
-    got = serverSimScenarioDetails(sim, file, blob + 1, SCN_DETAILS_MAX);
-    blob[0] = (got >= 0) ? BULK_SCN_DETAILS_FOUND
-                         : BULK_SCN_DETAILS_NOT_FOUND;
-    if (got < 0) got = 0;
+    if (wantSettings) {
+        int sGot;
+
+        got = serverSimScenarioDetails(sim, file, blob + 3, SCN_DETAILS_MAX);
+        if (got >= 0) {
+            sGot = serverSimScenarioSettingsDecl(
+                sim, file, blob + 3 + got, SCN_SETTINGS_BLOB_MAX);
+            if (sGot < 0) sGot = 0;
+            blob[0] = BULK_SCN_DETAILS_FOUND_V2;
+            blob[1] = (uint8_t)((unsigned)got >> 8);
+            blob[2] = (uint8_t)((unsigned)got & 0xFFu);
+            got     = 2 + got + sGot;
+        } else {
+            blob[0] = BULK_SCN_DETAILS_NOT_FOUND;
+            got     = 0;
+        }
+    } else {
+        got = serverSimScenarioDetails(sim, file, blob + 1, SCN_DETAILS_MAX);
+        blob[0] = (got >= 0) ? BULK_SCN_DETAILS_FOUND
+                             : BULK_SCN_DETAILS_NOT_FOUND;
+        if (got < 0) got = 0;
+    }
 
     memset(&sh, 0, sizeof(sh));
     sh.kind      = BULK_KIND_SCENARIO_DETAILS;

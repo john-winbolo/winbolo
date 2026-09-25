@@ -2613,6 +2613,10 @@ static const LangEntry langTable[] = {
     {2660, "This file is too large to copy."},
     {2661, "The server didn't answer. Try again."},
     {2662, "The copy could not be saved to your Mods folder."},
+    {2663, "Settings:"},
+    {2664, "Only the host can change these."},
+    {2665, "This server cannot change script settings, so the defaults apply."},
+    {2666, "{number} (default)"},
 };
 
 #define LANG_TABLE_SIZE ((int)(sizeof(langTable) / sizeof(langTable[0])))

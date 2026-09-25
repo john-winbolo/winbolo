@@ -1377,6 +1377,28 @@ ClientScnDetailsState clientSimGetLobbyScenarioDetails(const ClientSim *cs,
                                                        const uint8_t **bytes,
                                                        size_t *len);
 
+/* One file's settings block (scenario_settings.h), beside its details.
+ * Put stores it on the slot the details were put on, so it goes after
+ * clientSimLobbyScenarioDetailsPut with found true; a blob that does not
+ * read is stored as no settings. Get answers false while no block is known
+ * for file (no answer yet, or a server that does not send settings), and
+ * true with *bytes and *len otherwise, which is 0 bytes for a file that
+ * declares none. The bytes stay good until the next Want, Put or Forget. */
+void clientSimLobbyScenarioSettingsPut(ClientSim *cs, const char *file,
+                                       const uint8_t *bytes, size_t len);
+bool clientSimGetLobbyScenarioSettings(const ClientSim *cs, const char *file,
+                                       const uint8_t **bytes, size_t *len);
+
+/* The values the host chose for scripts' settings, from
+ * CTRL_LOBBY_SCRIPT_SETTING. Get answers false when none is held for
+ * file's setting id, which means the declared default. Supported is true
+ * once the server has sent one such event, which is how a client knows
+ * the server takes clientSimNetSendSetScriptSetting. */
+#define LOBBY_SCRIPT_SETTING_VALUES_MAX 48
+bool     clientSimGetLobbyScriptSetting(const ClientSim *cs, const char *file,
+                                        const char *id, int32_t *out);
+bool     clientSimLobbyScriptSettingsSupported(const ClientSim *cs);
+
 /* Spectator feed drain — the session uses these to pull the captured seed and
  * the ordered forward records the bulk sink reassembled while connected as a
  * tankless spectator. The raw bytes are translated/fed to the decoder in a

@@ -81,7 +81,8 @@ typedef enum {
     CMD_PING,
     CMD_PLAYER_PING_MUTE,
     CMD_LOBBY_RELOAD_SCENARIO,
-    CMD_SET_SCRIPT_LIST
+    CMD_SET_SCRIPT_LIST,
+    CMD_SET_SCRIPT_SETTING
 } ClientCommandType;
 
 /* Reject codes returned by serverSimApplyCommand. The dispatcher
@@ -334,6 +335,26 @@ typedef struct {
     char    files[CMD_SCRIPT_LIST_MAX][CMD_SCRIPT_LIST_FILE_LEN];
 } CmdSetScriptList;
 
+/* How long a setting's id may be, with its terminator. This header's own
+ * copy of SCN_SETTING_ID_LEN (scenario_settings.h), held against it in
+ * server_command_dispatch.c for the reason CMD_SCRIPT_LIST_FILE_LEN is. */
+#define CMD_SCRIPT_SETTING_ID_LEN 32
+
+/* CMD_SET_SCRIPT_SETTING — the host choosing a value for one of a script's
+ * own settings. file is the script's file name as the lobby's lists carry
+ * it, id is the setting's id. The server checks the value against the
+ * declaration it reads for file, falls back to the default for a value the
+ * declaration does not allow, and answers with a CTRL_LOBBY_SCRIPT_SETTING.
+ *
+ * A client sends this only to a server that has sent it a
+ * CTRL_LOBBY_SCRIPT_SETTING: an older server cannot decode it, and an
+ * undecodable command stalls the sender's command stream. */
+typedef struct {
+    char    file[CMD_SCRIPT_LIST_FILE_LEN];
+    char    id[CMD_SCRIPT_SETTING_ID_LEN];
+    int32_t value;
+} CmdSetScriptSetting;
+
 typedef struct {
     uint8_t _unused;
 } CmdLobbyPreviewCancel;
@@ -544,6 +565,7 @@ typedef struct ClientCommand {
         CmdPing                ping;
         CmdPlayerPingMute      playerPingMute;
         CmdSetScriptList       setScriptList;
+        CmdSetScriptSetting    setScriptSetting;
     } u;
 } ClientCommand;
 

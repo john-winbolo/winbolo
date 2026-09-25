@@ -3852,6 +3852,8 @@ set(WINBOLO_UNITTESTS_SOURCES
     # The lobby's ordered script list: the chunked control event, the
     # whole-list command, the dispatcher's gates and the client's reassembly.
     tests/unit/test_lobby_script_list.c
+    # A script's own lobby settings: declaration, wire, game.setting, Survival.
+    tests/unit/test_scenario_settings.c
     tests/unit/test_wbn_bearer_state.c
     tests/unit/test_wbn_rekey_codec.c
     tests/unit/test_wbn_news_parse.cpp
@@ -4862,6 +4864,16 @@ set(_unit_test_names
     script_list_command_codec
     script_list_dispatch
     script_list_lists_once
+    scenario_settings_blob
+    scenario_settings_manifest_lua
+    scenario_settings_manifest_json
+    scenario_settings_server_clamp
+    scenario_settings_codec
+    scenario_settings_client_apply
+    scenario_settings_game_setting
+    scenario_settings_wire
+    scenario_settings_survival_decl
+    scenario_settings_survival_short
     script_list_client_apply
     lobby_map_search_chunked
     wbn_bearer_state

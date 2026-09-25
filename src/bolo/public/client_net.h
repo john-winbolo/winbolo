@@ -220,6 +220,15 @@ void clientSimNetSendLobbySetScenario(ClientSim *cs, const char *relPath);
 void clientSimNetSendSetScriptList(ClientSim *cs,
                                    const char *const *files, int count);
 
+/* The host's value for one of a script's own settings
+ * (scenario_settings.h). Does nothing on a server that has not shown it
+ * takes the command (clientSimLobbyScriptSettingsSupported), for a
+ * spectator, and for a file or id too long for the command to carry. The
+ * server checks the value and answers with a CTRL_LOBBY_SCRIPT_SETTING,
+ * which is what clientSimGetLobbyScriptSetting then reads. */
+void clientSimNetSendSetScriptSetting(ClientSim *cs, const char *file,
+                                      const char *id, int32_t value);
+
 /* Lobby preview cycle. SET_MAP and a completed upload auto-stash
  * the previous committed map; these two close the loop:
  *   - Cancel: roll back to the stashed map (server re-broadcasts).

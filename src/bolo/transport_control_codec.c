@@ -3447,6 +3447,78 @@ static bool decodeLobbyScriptListBody(const uint8_t *buf, size_t len,
     return true;
 }
 
+/* CTRL_LOBBY_SCRIPT_SETTING body:
+ *   [op 1] [fileLen 1] [file N] [idLen 1] [id M] [value 4 BE]
+ *
+ * A CLEAR carries empty strings and a zero value, so every body has one
+ * shape. A length past its field is refused, as the script list's are: a
+ * name cut short would name another file's setting. */
+#define LOBBY_SCRIPT_SETTING_BODY_MAX \
+    (1 + 1 + (LOBBY_SCENARIO_FILE_LEN - 1) + 1 + (SCN_SETTING_ID_LEN - 1) + 4)
+
+BOLO_STATIC_ASSERT(LOBBY_SCRIPT_SETTING_BODY_MAX <= CONTROL_BODY_MAX,
+                   lobby_script_setting_fits_one_control_segment);
+
+BOLO_STATIC_ASSERT(
+    sizeof(((ControlEvent *)0)->u.lobbyScriptSetting) <=
+        sizeof(((ControlEvent *)0)->u.roundStats),
+    lobby_script_setting_does_not_widen_the_control_event_union);
+
+/* recipient: safe, ignored. What the host chose is as public as the list it
+   chose it for. */
+static EncodeResult encodeLobbyScriptSettingBody(
+    const ControlEvent *evt, const struct UdpServerClient *recipient,
+    uint8_t *buf, size_t bufCap, size_t *outLen) {
+    size_t fileLen;
+    size_t idLen;
+    size_t pos = 0;
+    (void)recipient;
+
+    fileLen = strnlen(evt->u.lobbyScriptSetting.file,
+                      LOBBY_SCENARIO_FILE_LEN - 1);
+    idLen   = strnlen(evt->u.lobbyScriptSetting.id, SCN_SETTING_ID_LEN - 1);
+    if (bufCap < 1 + 1 + fileLen + 1 + idLen + 4) return ENCODE_OVERFLOW;
+    buf[pos++] = evt->u.lobbyScriptSetting.op;
+    buf[pos++] = (uint8_t)fileLen;
+    memcpy(buf + pos, evt->u.lobbyScriptSetting.file, fileLen);
+    pos += fileLen;
+    buf[pos++] = (uint8_t)idLen;
+    memcpy(buf + pos, evt->u.lobbyScriptSetting.id, idLen);
+    pos += idLen;
+    packU32(buf + pos, (uint32_t)evt->u.lobbyScriptSetting.value);
+    pos += 4;
+    *outLen = pos;
+    return ENCODE_OK;
+}
+
+static bool decodeLobbyScriptSettingBody(const uint8_t *buf, size_t len,
+                                         ControlEvent *outEvt) {
+    size_t  pos = 0;
+    uint8_t fileLen;
+    uint8_t idLen;
+
+    if (buf == NULL || outEvt == NULL || len < 1 + 1 + 1 + 4) return false;
+    memset(outEvt, 0, sizeof(*outEvt));
+    outEvt->type = CTRL_LOBBY_SCRIPT_SETTING;
+    outEvt->u.lobbyScriptSetting.op = buf[pos++];
+    fileLen = buf[pos++];
+    if (fileLen > LOBBY_SCENARIO_FILE_LEN - 1 || len < pos + fileLen + 1) {
+        return false;
+    }
+    memcpy(outEvt->u.lobbyScriptSetting.file, buf + pos, fileLen);
+    outEvt->u.lobbyScriptSetting.file[fileLen] = '\0';
+    pos += fileLen;
+    idLen = buf[pos++];
+    if (idLen > SCN_SETTING_ID_LEN - 1 || len != pos + idLen + 4) {
+        return false;
+    }
+    memcpy(outEvt->u.lobbyScriptSetting.id, buf + pos, idLen);
+    outEvt->u.lobbyScriptSetting.id[idLen] = '\0';
+    pos += idLen;
+    outEvt->u.lobbyScriptSetting.value = (int32_t)unpackU32(buf + pos);
+    return true;
+}
+
 /* ================================================================
  * Encoder lookup — indexed by ControlEventType. Variants without
  * a wire form leave NULL slots (CTRL_MAP_DOWNLOAD_COMPLETE is
@@ -3547,6 +3619,7 @@ static const ControlEncodeBodyFn s_bodyEncoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SCN_MARKER]            = encodeScnMarkerBody,
     [CTRL_SCENARIO_RULES]        = encodeScenarioRulesBody,
     [CTRL_LOBBY_SCRIPT_LIST]     = encodeLobbyScriptListBody,
+    [CTRL_LOBBY_SCRIPT_SETTING]  = encodeLobbyScriptSettingBody,
 };
 
 static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
@@ -3599,6 +3672,7 @@ static const ControlDecodeBodyFn s_bodyDecoders[CTRL_EVENT_TYPE_COUNT] = {
     [CTRL_SCN_MARKER]            = decodeScnMarkerBody,
     [CTRL_SCENARIO_RULES]        = decodeScenarioRulesBody,
     [CTRL_LOBBY_SCRIPT_LIST]     = decodeLobbyScriptListBody,
+    [CTRL_LOBBY_SCRIPT_SETTING]  = decodeLobbyScriptSettingBody,
 };
 
 ControlEncodeFn transportControlCodecEncoder(ControlEventType type) {

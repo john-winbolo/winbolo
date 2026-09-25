@@ -787,6 +787,285 @@ static int scnLuaRule(lua_State *L) {
     return 1;
 }
 
+/* ── Settings ─────────────────────────────────────────────────────── */
+
+/* One line about a settings block, through the caller's reporter. */
+static void scnSettingsSay(ScnSettingsReportFn report, void *ud,
+                           const char *key, const char *fmt, ...) {
+    char    line[256];
+    va_list ap;
+
+    if (report == NULL) {
+        return;
+    }
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    report(ud, key, line);
+}
+
+/* A field of the row at index row as a whole number that fits an int32.
+ * Absent answers true with *had false and leaves *out alone. Anything else
+ * that is not such a number answers false. */
+static bool scnSettingsInt(lua_State *L, int row, const char *field,
+                           int32_t *out, bool *had) {
+    lua_Number v;
+    bool       ok = true;
+
+    *had = false;
+    lua_pushstring(L, field);
+    lua_rawget(L, row);
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        return true;
+    }
+    if (lua_type(L, -1) != LUA_TNUMBER) {
+        ok = false;
+    } else {
+        v = lua_tonumber(L, -1);
+        if (v != v || v < -2147483648.0 || v > 2147483647.0 ||
+            v != (lua_Number)(int64_t)v) {
+            ok = false;
+        } else {
+            *out = (int32_t)(int64_t)v;
+            *had = true;
+        }
+    }
+    lua_pop(L, 1);
+    return ok;
+}
+
+/* A string field of the row into dst. False for a value that is there but is
+ * not a string, or does not fit. Absent answers true and leaves dst "". */
+static bool scnSettingsStr(lua_State *L, int row, const char *field,
+                           char *dst, size_t dstLen) {
+    bool ok = true;
+
+    dst[0] = '\0';
+    lua_pushstring(L, field);
+    lua_rawget(L, row);
+    if (lua_type(L, -1) == LUA_TSTRING) {
+        size_t      n;
+        const char *str = lua_tolstring(L, -1, &n);
+        if (n >= dstLen || strlen(str) != n) {
+            ok = false;
+        } else {
+            memcpy(dst, str, n + 1);
+        }
+    } else if (!lua_isnil(L, -1)) {
+        ok = false;
+    }
+    lua_pop(L, 1);
+    return ok;
+}
+
+int scenarioLuaReadSettings(lua_State *L, int tbl, ScnSetting *out, int max,
+                            const char *path, ScnSettingsReportFn report,
+                            void *ud) {
+    int  list;
+    int  n = 0;
+    int  total;
+    int  i;
+    char key[48];
+
+    if (L == NULL || out == NULL || max <= 0) {
+        return 0;
+    }
+    if (path == NULL) {
+        path = "script";
+    }
+    if (tbl < 0) {
+        tbl = lua_gettop(L) + tbl + 1;
+    }
+    lua_pushstring(L, "settings");
+    lua_rawget(L, tbl);
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        return 0;
+    }
+    if (!lua_istable(L, -1)) {
+        scnSettingsSay(report, ud, "settings",
+                       "scenario: %s: settings is not a list of settings",
+                       path);
+        lua_pop(L, 1);
+        return 0;
+    }
+    list  = lua_gettop(L);
+    total = (int)lua_rawlen(L, list);
+    for (i = 1; i <= total; i++) {
+        ScnSetting  s;
+        char        type[16];
+        bool        hadStep;
+        bool        hadMin;
+        bool        hadMax;
+        bool        hadDef;
+        const char *why;
+        int         row;
+
+        snprintf(key, sizeof(key), "settings[%d]", i);
+        lua_rawgeti(L, list, i);
+        if (!lua_istable(L, -1)) {
+            scnSettingsSay(report, ud, key,
+                           "scenario: %s: %s is not a table; dropped", path,
+                           key);
+            lua_pop(L, 1);
+            continue;
+        }
+        row = lua_gettop(L);
+        memset(&s, 0, sizeof(s));
+        s.step = 1;
+        if (!scnSettingsStr(L, row, "id", s.id, sizeof(s.id)) ||
+            s.id[0] == '\0') {
+            scnSettingsSay(report, ud, key,
+                           "scenario: %s: %s has no id of up to %d "
+                           "characters; dropped", path, key,
+                           SCN_SETTING_ID_LEN - 1);
+            lua_pop(L, 1);
+            continue;
+        }
+        snprintf(key, sizeof(key), "settings.%s", s.id);
+        if (!scnSettingsStr(L, row, "label", s.label, sizeof(s.label)) ||
+            s.label[0] == '\0') {
+            scnSettingsSay(report, ud, key,
+                           "scenario: %s: %s has no label of up to %d "
+                           "characters; dropped", path, key,
+                           SCN_SETTING_LABEL_LEN - 1);
+            lua_pop(L, 1);
+            continue;
+        }
+        if (!scnSettingsStr(L, row, "type", type, sizeof(type))) {
+            type[0] = '?';
+            type[1] = '\0';
+        }
+        if (type[0] == '\0' || strcmp(type, "int") == 0) {
+            s.type = SCN_SETTING_TYPE_INT;
+        } else {
+            scnSettingsSay(report, ud, key,
+                           "scenario: %s: %s has type '%s'; only \"int\" is "
+                           "supported; dropped", path, key, type);
+            lua_pop(L, 1);
+            continue;
+        }
+        if (!scnSettingsInt(L, row, "min", &s.min, &hadMin) ||
+            !scnSettingsInt(L, row, "max", &s.max, &hadMax) ||
+            !scnSettingsInt(L, row, "step", &s.step, &hadStep) ||
+            !scnSettingsInt(L, row, "default", &s.def, &hadDef) ||
+            !hadMin || !hadMax || !hadDef) {
+            scnSettingsSay(report, ud, key,
+                           "scenario: %s: %s needs whole numbers for min, "
+                           "max and default (and step, if given); dropped",
+                           path, key);
+            lua_pop(L, 1);
+            continue;
+        }
+        why = scnSettingProblem(&s);
+        if (why != NULL) {
+            scnSettingsSay(report, ud, key, "scenario: %s: %s: %s; dropped",
+                           path, key, why);
+            lua_pop(L, 1);
+            continue;
+        }
+        if (scnSettingFind(out, n, s.id) != NULL) {
+            scnSettingsSay(report, ud, key,
+                           "scenario: %s: %s is declared twice; the second "
+                           "is dropped", path, key);
+            lua_pop(L, 1);
+            continue;
+        }
+        if (n >= max) {
+            scnSettingsSay(report, ud, key,
+                           "scenario: %s: more than %d settings; %s dropped",
+                           path, max, key);
+            lua_pop(L, 1);
+            continue;
+        }
+        out[n++] = s;
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1); /* settings */
+    return n;
+}
+
+/* The declared settings of the script that is calling, into rows. While a
+ * hook or a policy runs, that is the table the host read. At the file's top
+ * level the host has not read the table yet, so it is read from the file's
+ * own globals. -1 when no script is running. */
+static int scnLuaSettingsOfCaller(lua_State *L, const ScnLuaCtx *c,
+                                  ScnSetting *rows) {
+    int n;
+
+    if (c->running != NULL) {
+        n = (int)c->running->numSettings;
+        if (n > SCN_SETTINGS_MAX) {
+            n = SCN_SETTINGS_MAX;
+        }
+        memcpy(rows, c->running->settings, (size_t)n * sizeof(rows[0]));
+        return n;
+    }
+    if (c->runningEnv <= 0) {
+        return -1;
+    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, c->runningEnv);
+    lua_pushstring(L, "scenario");
+    lua_rawget(L, -2);
+    n = 0;
+    if (lua_istable(L, -1)) {
+        /* Quiet: the manifest read after the chunk reports the block once. */
+        n = scenarioLuaReadSettings(L, -1, rows, SCN_SETTINGS_MAX, NULL,
+                                    NULL, NULL);
+    }
+    lua_pop(L, 2);
+    return n;
+}
+
+/* The file name at the end of a path: the key the server keeps the host's
+ * choices under, the same on every machine. */
+static const char *scnLuaSettingFile(const char *path) {
+    const char *last = path;
+    const char *p;
+
+    if (path == NULL) {
+        return "";
+    }
+    for (p = path; *p != '\0'; p++) {
+        if (*p == '/' || *p == '\\') {
+            last = p + 1;
+        }
+    }
+    return last;
+}
+
+/* game.setting(id): what the host chose for one of this script's own
+ * settings, or its declared default when the host chose nothing or chose a
+ * value the declaration does not allow. An id the script never declared
+ * raises, as a rule name that spells no rule does: it is a misspelling, and
+ * a nil would carry it on into arithmetic. */
+static int scnLuaSetting(lua_State *L) {
+    const ScnLuaCtx  *c  = scnCtx(L);
+    const char       *id = scnArgStr(L, 1, "id");
+    ScnSetting        rows[SCN_SETTINGS_MAX];
+    const ScnSetting *s;
+    int               n;
+    int32_t           v      = 0;
+    bool              chosen = false;
+
+    n = scnLuaSettingsOfCaller(L, c, rows);
+    if (n < 0) {
+        return luaL_error(L, "setting('%s') has no script to answer for",
+                          id);
+    }
+    s = scnSettingFind(rows, n, id);
+    if (s == NULL) {
+        return luaL_error(L, "no setting is named '%s'", id);
+    }
+    if (c->sim != NULL && c->runningFile != NULL) {
+        chosen = serverSimGetScriptSetting(
+            c->sim, scnLuaSettingFile(c->runningFile), id, &v);
+    }
+    lua_pushinteger(L, (lua_Integer)scnSettingResolve(s, chosen, v));
+    return 1;
+}
+
 /* ── The manifest: tags and regions ───────────────────────────────── */
 
 /* The kinds a tag can sit on, in the order the rows walk them. */
@@ -4432,6 +4711,11 @@ static const ScnLuaOpParam kScnOpArgs_lobby_slot[] = {
 static const ScnLuaOpParam kScnOpArgs_rule[] = {
     { "name", SCN_PARAM_WORD, false }, SCN_OP_ARG_END
 };
+/* An id is matched against the calling script's own settings block and an
+   id that names none raises, so it is a word out of a fixed set. */
+static const ScnLuaOpParam kScnOpArgs_setting[] = {
+    { "id", SCN_PARAM_WORD, false }, SCN_OP_ARG_END
+};
 static const ScnLuaOpParam kScnOpArgs_tags[] = {
     { "kind", SCN_PARAM_WORD, false }, { "n", SCN_PARAM_ITEM, false },
     SCN_OP_ARG_END
@@ -4772,6 +5056,11 @@ static const ScnLuaRow kScnLuaRows[] = {
       "rule(name) — what a gameplay rule is set to; a name that spells no "
       "rule raises.",
       SCN_OP_PARAMS(rule), SCN_OP_READS },
+    { "setting", scnLuaSetting,
+      "setting(id) — the value the host chose in the lobby for one of "
+      "this script's own settings, or its declared default; an id the "
+      "script never declared raises.",
+      SCN_OP_PARAMS(setting), SCN_OP_READS },
     { "tags", scnLuaTags,
       "tags(kind, n) — the tags the scenario put on a \"pill\", \"base\" or "
       "\"start\", as an array of strings.",

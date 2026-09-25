@@ -33,6 +33,8 @@
 #include "client_sim.h"   /* ClientLobbySlot */
 #include "brain_list.h"   /* BrainList for CTRL_LOBBY_BRAIN_LIST */
 #include "round_stats.h"  /* RoundStatsSummary for CTRL_ROUND_STATS */
+#include "scenario_settings.h" /* SCN_SETTING_ID_LEN for
+                                  CTRL_LOBBY_SCRIPT_SETTING */
 #include "upload_policy.h" /* UploadPolicy, ScriptUploadPolicy in lobbySettings */
 #include "view_policy.h"   /* ViewPolicy / VIEW_CATEGORY_COUNT in lobbySettings */
 #include "server_voice_mode.h" /* ServerVoiceMode in lobbySettings */
@@ -289,6 +291,30 @@ typedef enum {
      * Appended at the END, like every type above it: the tables in
      * transport_control_codec.c are indexed by this enum. */
     CTRL_LOBBY_SCRIPT_LIST,
+    /* CTRL_LOBBY_SCRIPT_SETTING — one value the host chose for one of a
+     * script's own settings (scenario_settings.h), or the order to forget
+     * every value held.
+     *
+     * op LOBBY_SCRIPT_SETTING_CLEAR comes first in every join sync, even
+     * when no value is held, and is followed by one
+     * LOBBY_SCRIPT_SETTING_SET per value. A live change is one SET. A
+     * client reads any event of this type as proof that the server takes
+     * CMD_SET_SCRIPT_SETTING: an older server never sends one, and a client
+     * that sent it that command anyway would stall its command stream on a
+     * command the server cannot decode.
+     *
+     * The value is the one the server resolved against the declaration, so
+     * what a client shows is what game.setting will answer. A value equal to
+     * the default is still sent, so the dialog of every client moves when
+     * the host picks the default back.
+     *
+     * Broadcast and body-only on CHANNEL_CONTROL, as CTRL_LOBBY_SCRIPT_LIST
+     * is. An older client does not know the type and skips it, so it plays
+     * with the values and cannot see them.
+     *
+     * Appended at the END, like every type above it: the tables in
+     * transport_control_codec.c are indexed by this enum. */
+    CTRL_LOBBY_SCRIPT_SETTING,
     CTRL_EVENT_TYPE_COUNT   /* sentinel — must stay last */
 } ControlEventType;
 
@@ -433,6 +459,10 @@ typedef enum {
  * it can see and this public header cannot. A whole list at
  * LOBBY_SCRIPT_LIST_MAX is therefore two chunks. */
 #define LOBBY_SCRIPT_LIST_CHUNK 5
+
+/* What a CTRL_LOBBY_SCRIPT_SETTING says. */
+#define LOBBY_SCRIPT_SETTING_CLEAR 0 /* forget every value held */
+#define LOBBY_SCRIPT_SETTING_SET   1 /* file's setting id is now value */
 
 /* One script on the list, as CTRL_LOBBY_SCRIPT_LIST carries it and as a
  * client holds it afterwards.
@@ -1161,6 +1191,15 @@ typedef struct ControlEvent {
             uint8_t          count;  /* entries in THIS chunk */
             LobbyScriptEntry entries[LOBBY_SCRIPT_LIST_CHUNK];
         } lobbyScriptList;
+
+        /* CTRL_LOBBY_SCRIPT_SETTING — see the enum. file and id are empty
+         * on a CLEAR. */
+        struct {
+            uint8_t op;                            /* LOBBY_SCRIPT_SETTING_* */
+            char    file[LOBBY_SCENARIO_FILE_LEN]; /* the script's file name */
+            char    id[SCN_SETTING_ID_LEN];        /* the setting's id */
+            int32_t value;
+        } lobbyScriptSetting;
     } u;
 } ControlEvent;
 

@@ -979,6 +979,145 @@ static void mjDecodeCallbacks(const cJSON *root, ScenarioManifest *m) {
     }
 }
 
+/* A field of one settings row as a whole number inside an int32. False for
+ * a field that is there and is not one; absent answers true with *had false. */
+static bool mjSettingInt(const cJSON *row, const char *field, int32_t *out,
+                         bool *had) {
+    const cJSON *it = cJSON_GetObjectItemCaseSensitive(row, field);
+    double       v;
+
+    *had = false;
+    if (it == NULL) {
+        return true;
+    }
+    if (!cJSON_IsNumber(it)) {
+        return false;
+    }
+    v = it->valuedouble;
+    if (v != v || v < -2147483648.0 || v > 2147483647.0 ||
+        v != (double)(int64_t)v) {
+        return false;
+    }
+    *out = (int32_t)(int64_t)v;
+    *had = true;
+    return true;
+}
+
+/* A string field of one settings row into dst. False for a field that is
+ * there and is not a string, or does not fit. */
+static bool mjSettingStr(const cJSON *row, const char *field, char *dst,
+                         size_t dstLen) {
+    const cJSON *it = cJSON_GetObjectItemCaseSensitive(row, field);
+    size_t       n;
+
+    dst[0] = '\0';
+    if (it == NULL) {
+        return true;
+    }
+    if (!cJSON_IsString(it) || it->valuestring == NULL) {
+        return false;
+    }
+    n = strlen(it->valuestring);
+    if (n >= dstLen) {
+        return false;
+    }
+    memcpy(dst, it->valuestring, n + 1);
+    return true;
+}
+
+/* The settings array into the struct, on the terms scenarioLuaReadSettings
+ * reads the Lua table on: the same fields, the same defaults (type "int",
+ * step 1), the same scnSettingProblem check, duplicates and rows past
+ * SCN_SETTINGS_MAX dropped. A dropped row is an issue, because the host
+ * would otherwise be offered a dropdown the author did not mean. */
+static void mjDecodeSettings(const cJSON *root, ScenarioManifest *m,
+                             ScnParseReport *rep) {
+    const cJSON *arr = cJSON_GetObjectItemCaseSensitive(root, "settings");
+    const cJSON *row;
+    int          at = 0;
+
+    if (arr == NULL) {
+        return;
+    }
+    if (!cJSON_IsArray(arr)) {
+        mjReport(rep, "settings",
+                 "scenario: settings is not a list of settings");
+        return;
+    }
+    cJSON_ArrayForEach(row, arr) {
+        ScnSetting  st;
+        char        key[48];
+        char        type[16];
+        bool        hadMin;
+        bool        hadMax;
+        bool        hadStep;
+        bool        hadDef;
+        const char *why;
+
+        at++;
+        snprintf(key, sizeof(key), "settings[%d]", at);
+        if (!cJSON_IsObject(row)) {
+            mjReport(rep, key, "scenario: %s is not an object; dropped", key);
+            continue;
+        }
+        memset(&st, 0, sizeof(st));
+        st.step = 1;
+        if (!mjSettingStr(row, "id", st.id, sizeof(st.id)) ||
+            st.id[0] == '\0') {
+            mjReport(rep, key,
+                     "scenario: %s has no id of up to %d characters; "
+                     "dropped", key, SCN_SETTING_ID_LEN - 1);
+            continue;
+        }
+        snprintf(key, sizeof(key), "settings.%s", st.id);
+        if (!mjSettingStr(row, "label", st.label, sizeof(st.label)) ||
+            st.label[0] == '\0') {
+            mjReport(rep, key,
+                     "scenario: %s has no label of up to %d characters; "
+                     "dropped", key, SCN_SETTING_LABEL_LEN - 1);
+            continue;
+        }
+        if (!mjSettingStr(row, "type", type, sizeof(type))) {
+            snprintf(type, sizeof(type), "?");
+        }
+        if (type[0] != '\0' && strcmp(type, "int") != 0) {
+            mjReport(rep, key,
+                     "scenario: %s has type '%s'; only \"int\" is "
+                     "supported; dropped", key, type);
+            continue;
+        }
+        st.type = SCN_SETTING_TYPE_INT;
+        if (!mjSettingInt(row, "min", &st.min, &hadMin) ||
+            !mjSettingInt(row, "max", &st.max, &hadMax) ||
+            !mjSettingInt(row, "step", &st.step, &hadStep) ||
+            !mjSettingInt(row, "default", &st.def, &hadDef) ||
+            !hadMin || !hadMax || !hadDef) {
+            mjReport(rep, key,
+                     "scenario: %s needs whole numbers for min, max and "
+                     "default (and step, if given); dropped", key);
+            continue;
+        }
+        why = scnSettingProblem(&st);
+        if (why != NULL) {
+            mjReport(rep, key, "scenario: %s: %s; dropped", key, why);
+            continue;
+        }
+        if (scnSettingFind(m->settings, (int)m->numSettings, st.id) != NULL) {
+            mjReport(rep, key,
+                     "scenario: %s is declared twice; the second is "
+                     "dropped", key);
+            continue;
+        }
+        if (m->numSettings >= SCN_SETTINGS_MAX) {
+            mjReport(rep, key,
+                     "scenario: more than %d settings; %s dropped",
+                     SCN_SETTINGS_MAX, key);
+            continue;
+        }
+        m->settings[m->numSettings++] = st;
+    }
+}
+
 /* Everything the schema names, out of the tree and into the struct.
  *
  * triggers is read here and written back from the struct, so a key inside a
@@ -1013,6 +1152,7 @@ static bool mjDecode(ScnManifestDoc *d, ScnParseReport *rep,
     mjDecodeRegions(d->root, m, rep);
     mjDecodeTriggers(d->root, m, rep);
     mjDecodeCallbacks(d->root, m);
+    mjDecodeSettings(d->root, m, rep);
     mjDecodeBrains(d->root, d, rep);
     return true;
 }
@@ -1463,6 +1603,32 @@ static void mjEmit(cJSON *root, const ScnManifestDoc *d) {
         }
     }
 
+    /* Written fresh from the struct like the callbacks, and left out when
+       the script declares none. */
+    cJSON_DeleteItemFromObjectCaseSensitive(root, "settings");
+    if (m->numSettings > 0) {
+        cJSON *arr = cJSON_AddArrayToObject(root, "settings");
+
+        for (i = 0; arr != NULL && i < (int)m->numSettings &&
+                    i < SCN_SETTINGS_MAX;
+             i++) {
+            const ScnSetting *st  = &m->settings[i];
+            cJSON            *row = cJSON_CreateObject();
+
+            if (row == NULL) {
+                break;
+            }
+            mjPutString(row, "id", st->id);
+            mjPutString(row, "label", st->label);
+            mjPutString(row, "type", "int");
+            mjPutNumber(row, "min", (double)st->min);
+            mjPutNumber(row, "max", (double)st->max);
+            mjPutNumber(row, "step", (double)st->step);
+            mjPutNumber(row, "default", (double)st->def);
+            cJSON_AddItemToArray(arr, row);
+        }
+    }
+
     mjPutString(root, "script", d->script);
 
     brains = cJSON_CreateArray();
@@ -1705,6 +1871,30 @@ bool scnManifestAgrees(const ScenarioManifest *fromJson,
                         "script's table says %s",
                         fromJson->fillToCaps ? "true" : "false",
                         fromLua->fillToCaps ? "true" : "false");
+    }
+    /* The settings are held to agreeing, unlike the callbacks: they are
+       what the host is offered and what game.setting answers, so a package
+       whose two forms disagreed would offer one dropdown and play another. */
+    if (fromJson->numSettings != fromLua->numSettings) {
+        return mjDiffer(key, keyLen, err, errLen, "settings",
+                        "scenario: the manifest declares %d settings and "
+                        "the script's table declares %d",
+                        (int)fromJson->numSettings,
+                        (int)fromLua->numSettings);
+    }
+    for (i = 0; i < (int)fromJson->numSettings && i < SCN_SETTINGS_MAX;
+         i++) {
+        const ScnSetting *a = &fromJson->settings[i];
+        const ScnSetting *b = &fromLua->settings[i];
+
+        if (strcmp(a->id, b->id) != 0 || strcmp(a->label, b->label) != 0 ||
+            a->type != b->type || a->min != b->min || a->max != b->max ||
+            a->step != b->step || a->def != b->def) {
+            snprintf(where, sizeof(where), "settings[%d]", i + 1);
+            return mjDiffer(key, keyLen, err, errLen, where,
+                            "scenario: the manifest and the script's table "
+                            "declare setting %d differently", i + 1);
+        }
     }
 
     if (fromJson->lobby.maxPlayers != fromLua->lobby.maxPlayers) {

@@ -2644,4 +2644,8 @@ STR_DLGLOBBY_SCENARIO_SAVE_NOT_FOUND=The server no longer has this file.
 STR_DLGLOBBY_SCENARIO_SAVE_TOO_LARGE=This file is too large to copy.
 STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER=The server didn't answer. Try again.
 STR_DLGLOBBY_SCENARIO_SAVE_WRITE=The copy could not be saved to your Mods folder.
+STR_DLGLOBBY_DETAILS_SETTINGS=Settings:
+STR_DLGLOBBY_DETAILS_SETTINGS_HOST=Only the host can change these.
+STR_DLGLOBBY_DETAILS_SETTINGS_OLD=This server cannot change script settings, so the defaults apply.
+STR_DLGLOBBY_DETAILS_SETTING_DEFAULT={number} (default)
 

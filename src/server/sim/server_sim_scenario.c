@@ -4356,6 +4356,17 @@ ServerScriptReadResult serverSimScriptFileRead(ServerSim *sim,
                                  outLen, LOBBY_PACKAGE_UPLOAD_MAX_BYTES);
 }
 
+void serverSimSetScenarioSettingsReader(ServerSim *sim,
+                                        int (*read)(void *ctx,
+                                                    const char *dir,
+                                                    const char *file,
+                                                    uint8_t *out, size_t cap),
+                                        void *ctx) {
+    if (sim == NULL) return;
+    sim->scenarioSettingsReader    = read;
+    sim->scenarioSettingsReaderCtx = ctx;
+}
+
 int serverSimScenarioListDir(const ServerSim *sim, ScnDirEntry *out, int max) {
     if (sim == NULL || out == NULL || max <= 0) {
         return 0;

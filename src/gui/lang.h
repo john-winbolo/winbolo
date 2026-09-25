@@ -3135,6 +3135,17 @@
 #define STR_DLGLOBBY_SCENARIO_SAVE_NO_ANSWER     2661
 #define STR_DLGLOBBY_SCENARIO_SAVE_WRITE         2662
 
+/* The details dialog's Settings section, for a script that declares
+ * settings in its scenario table (scenario_settings.h): the heading, the
+ * line a player who is not the host sees under it, the line a host sees
+ * on a server too old to take a change, and a dropdown entry for the
+ * declared default ({number} = the value). The settings' own labels are
+ * the script's text, not strings here. */
+#define STR_DLGLOBBY_DETAILS_SETTINGS            2663
+#define STR_DLGLOBBY_DETAILS_SETTINGS_HOST       2664
+#define STR_DLGLOBBY_DETAILS_SETTINGS_OLD        2665
+#define STR_DLGLOBBY_DETAILS_SETTING_DEFAULT     2666
+
 /* -------------------------------------------------------
  * C declarations — not processed by the RC compiler
  * ------------------------------------------------------- */

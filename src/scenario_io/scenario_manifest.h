@@ -49,6 +49,7 @@
 #include "types.h"          /* MAX_PILLS / MAX_BASES / MAX_STARTS */
 #include "scenario_table.h" /* ScnTable — a team's init block below */
 #include "scenario_callbacks.h" /* SCN_CALLBACK_NAME_LEN / _TEXT_LEN */
+#include "scenario_settings.h"  /* ScnSetting / SCN_SETTINGS_MAX */
 
 /* Tags and regions, at the sizes the scenario table is specified with. A
  * tag names a pill, base or start; a region names a rectangle of map
@@ -422,6 +423,14 @@ typedef struct {
     /* What each callback does, in the catalogue's order. See above. */
     uint8_t             numCallbacks;
     ScnManifestCallback callbacks[SCN_CALLBACKS_MAX];
+
+    /* What the host may choose for this script in the lobby, in the order
+     * the file declares them (scenario_settings.h). Every row here passed
+     * scnSettingProblem and no two share an id: both readers drop a row
+     * that does not, with a report, and keep the rest. A script reads the
+     * host's choice with game.setting(id). */
+    uint8_t    numSettings;
+    ScnSetting settings[SCN_SETTINGS_MAX];
 } ScenarioManifest;
 
 /* Does this file leave the win condition alone? True only for one that

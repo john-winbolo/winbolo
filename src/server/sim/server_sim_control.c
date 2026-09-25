@@ -948,6 +948,15 @@ static void serverSimSyncSubscriber(
         }
     }
 
+    /* The values the host chose for scripts' settings, as a CLEAR and one
+     * SET each. Sent even when none is held, because the CLEAR is also how
+     * a client learns this server takes CMD_SET_SCRIPT_SETTING. Only to a
+     * real joiner: the ring's snapshot reaches spectators, who hold no
+     * lobby dialog. */
+    if (fullReplay) {
+        serverSimReplayScriptSettings(sim, deliver, ctx);
+    }
+
     /* The gameplay numbers this sim is running on. A joiner's own table
      * starts classic, and the round it is joining may not be on the classic
      * one — a scenario can have changed a rule before it arrived. Replayed
