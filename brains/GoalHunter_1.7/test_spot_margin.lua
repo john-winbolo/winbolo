@@ -156,9 +156,19 @@ do
   local idx3 = SM.clear_aim_margin(math.floor(126.5 * 256), math.floor(144.5 * 256), 123, 137, nil, MARGIN,
     { ctx = ctx1, site = "test", tick = 6699 })
   check("5d example-1 spot rejected on all 5 aims", idx3 == nil and n_sims == 0)
-  check("5e one BLITZ_SPOT_MARGIN_REJECT line with every factor",
-        #printed == 1 and printed[1]:find("BLITZ_SPOT_MARGIN_REJECT", 1, true)
-        and printed[1]:find("blocker=(126,142)", 1, true) and printed[1]:find("need=", 1, true) ~= nil)
+  -- The opt/ (production) copy has every print2 call stripped, so it prints
+  -- nothing; the reject-line check runs on the source copy only.
+  local src = debug.getinfo(SM.clear_aim_margin, "S").source:gsub("^@", "")
+  local sf = io.open(src, "rb")
+  local prints = sf and sf:read("*a"):find("BLITZ_SPOT_MARGIN_REJECT t=", 1, true) ~= nil
+  if sf then sf:close() end
+  if prints then
+    check("5e one BLITZ_SPOT_MARGIN_REJECT line with every factor",
+          #printed == 1 and printed[1]:find("BLITZ_SPOT_MARGIN_REJECT", 1, true)
+          and printed[1]:find("blocker=(126,142)", 1, true) and printed[1]:find("need=", 1, true) ~= nil)
+  else
+    print("  skip 5e: stripped copy, no print2 (" .. src .. ")")
+  end
 end
 
 print(string.format("\n%d passed, %d failed", passes, fails))

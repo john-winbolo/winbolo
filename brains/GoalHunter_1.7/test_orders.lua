@@ -3724,6 +3724,31 @@ do
   check("out of range is 1.0 with no blocker needed",
         (GA.block(wa, wa.pills[1], 30, 33)) == 1.0
         and select(2, GA.block(wa, wa.pills[1], 30, 33)) == "range", "?")
+  -- A FAILED TRACE (the C call raises, or gives nothing) is not a short
+  -- shell: block 0, "error" (no cover).  goals.sea_shot_reaches says so in a
+  -- 4th value; a shell that really runs out still gives nil there.
+  ;(function()
+  local sim0 = cpf.simulate_shot
+  local G, UT0 = require("goals"), require("util")
+  cpf.simulate_shot = function() error("simulate_shot failed") end
+  local be, we = GA.block(wa, wa.pills[1], 31, 30)
+  local r4 = select(4, G.sea_shot_reaches(wa, UT0.m2w(30), UT0.m2w(24), 31, 30))
+  cpf.simulate_shot = function() return nil end
+  local bn, wn0 = GA.block(wa, wa.pills[1], 31, 30)
+  cpf.simulate_shot = function() return { { mx = 30, my = 24 }, { mx = 30, my = 25 } } end
+  local bs, ws = GA.block(wa, wa.pills[1], 31, 30)
+  local s4 = select(4, G.sea_shot_reaches(wa, UT0.m2w(30), UT0.m2w(24), 31, 30))
+  cpf.simulate_shot = sim0
+  check("a trace that raises: block 0, error (not 1.0 short); sea_shot_reaches 4th value true",
+        be == 0 and we == "error" and r4 == true, tostring(be) .. " " .. tostring(we))
+  check("a trace that gives nothing: block 0, error", bn == 0 and wn0 == "error",
+        tostring(bn) .. " " .. tostring(wn0))
+  check("a shell that really runs out is still 1.0 short, 4th value nil",
+        bs == 1.0 and ws == "short" and s4 == nil, tostring(bs) .. " " .. tostring(ws))
+  check("the error term reads 'trace error'",
+        GA.term_txt({ id = 1, b = 0, why = "error" }) == "p1 trace error = 0.000",
+        GA.term_txt({ id = 1, b = 0, why = "error" }))
+  end)()
 
   -- 2. NO BLOCKER ANYWHERE: a pill right beside the square, open grass, so
   -- every square within 5 steps is in range and open.
@@ -4177,6 +4202,22 @@ do
         and ORD.hold_parked(d.st, d.inf) == true, tostring(h.ga.phase))
   check("no chain: the keys are today's (no turn, no throttle)",
         ORD.decoy_keys(d.st, d.inf, 0x11, 0) == 0x01, "?")
+  -- NO CHAIN, THEN A CHAIN: the hit taken with no way out is spent.  A
+  -- chain south appears and a new pill counts (the change); the rescan at
+  -- the check interval finds the chain.  It does not move on the old hit:
+  -- a new baseline, and the next hit moves it.
+  S({ { 22, 25, 1.0 }, { 22, 26, 1.0 }, { 22, 27, 1.0 } })
+  d.w.pills[6] = { mx = 26, my = 24, owner = "hostile", health = 5 }
+  lock(d, 252)
+  check("no chain -> a chain: the old hit is spent, it stays (new baseline, 0 hits)",
+        pstr(h.ga.path) == "22,25 22,26 22,27" and h.ga.phase == "wait"
+        and h.ga.hits == 0 and h.ga.arm == 30 and d.st.goal.my == 24,
+        pstr(h.ga.path) .. " " .. tostring(h.ga.phase) .. " " .. tostring(h.ga.hits))
+  d.inf.armour = 25; lock(d, 253)
+  check("no chain -> a chain: a fresh hit moves it to square 1",
+        h.ga.phase == "move" and d.st.goal.my == 25, tostring(h.ga.phase))
+  d.w.pills[6] = nil
+  S({})
 
   -- 10. A RESCAN AFTER A PILL DIES.  Two pills: 5 (20,20) and 6 (26,24).
   -- North (22,23) is shielded from pill 5 only, south (22,25) from pill 6
@@ -4342,6 +4383,15 @@ do
   hit(b, W1, 256)
   check("the first shell's sound and its damaged change are 1 hit: 4 shots",
         held(hb) and hb.ga.blk.shots == 4 and lastb(hb).hits == 1, tostring(hb.ga.blk.shots))
+
+  -- A HIT IN THE THINK THE WALL BECOMES THE LAST BLOCKER: the ledger entry
+  -- is made before the sounds are heard, so the hit counts: 5 - 1 = 4.
+  b, hb = on_sq1(270)
+  TMAP[K(W1)] = C.T_BUILDING
+  hit(b, W1, 275)
+  check("a hit in the first think of the last wall counts: 5 - 1 = 4 shots",
+        held(hb) and hb.ga.blk.shots == 4 and lastb(hb).hits == 1
+        and hb.ga.led[K(W1)] and #hb.ga.led[K(W1)].ticks == 1, tostring(hb.ga.blk.shots))
 
   -- A WALL ALREADY DAMAGED when the count starts: its life is unknown, so it
   -- keeps 1 (the worst case).  It moves at once.
@@ -4609,6 +4659,20 @@ do
   check("diagonal: a tree on a side square does not block it",
         ORD.getaway_diagonal(gm, 20, 25, false) == 21, "?")
   TMAP[25 * 256 + 21] = nil
+  -- The side squares also pass the chain search's own test (M.passable):
+  -- a known mine or a live pill on one blocks the straight drive.
+  TMAP[24 * 256 + 20] = C.T_GRASS + _G.TERRAIN_MINE_FLAG
+  check("diagonal: a known mine on a side square blocks it",
+        ORD.getaway_diagonal(gm, 20, 25, false, { pills = {} }) == nil
+        and ORD.getaway_diagonal(gm, 20, 25, false) == nil, "?")
+  TMAP[24 * 256 + 20] = nil
+  local wp = { pills = { [9] = { mx = 21, my = 25, owner = "friendly", health = 5 } } }
+  wp.pill_at = { [25 * 256 + 21] = { { pill = wp.pills[9] } } }
+  check("diagonal: a live pill on a side square blocks it (world given)",
+        ORD.getaway_diagonal(gm, 20, 25, false, wp) == nil, "?")
+  wp.pills[9].health = 0
+  check("diagonal: a dead pill there does not",
+        ORD.getaway_diagonal(gm, 20, 25, false, wp) == 21, "?")
   local hw = { mx = 20, my = 25, decoy = true,
                ga = { phase = "wait", idx = 1, park_mx = 20, park_my = 25,
                       path = { { mx = 21, my = 24 } } } }

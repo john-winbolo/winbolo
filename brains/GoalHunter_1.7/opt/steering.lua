@@ -668,7 +668,7 @@ local function cpf_path_to(state, info, dest_mx, dest_my)
   -- square (decoy_getaway.diagonal_next says why the Dijkstra goes round).
   local g_ga = state.goal
   if g_ga and g_ga._getaway and g_ga.mx == dest_mx and g_ga.my == dest_my then
-    local gx, gy = orders_mod().getaway_diagonal(g_ga, tmx, tmy, info.inboat)
+    local gx, gy = orders_mod().getaway_diagonal(g_ga, tmx, tmy, info.inboat, state.world)
     if gx then
       pf.status  = "done"
       pf.next_mx, pf.next_my = gx, gy

@@ -20,6 +20,7 @@
 --   * the shell stops on a damaged wall (T_HALFBUILD)   -> DECOY_GETAWAY_WALL_DAMAGED
 --   * the shell stops on OUR (or an ally's) live pill   -> health / PILLS_MAX_HEALTH
 --   * the shell stops on an enemy pill or on a base     -> 0
+--   * the shell trace fails (the C call errors)         -> 0   "error"
 -- The shell is the real one: goals.sea_shot_reaches, with WALLS ONLY as the
 -- terrain that eats it.  A tree or a boat is shot away, so it is not cover:
 -- the trace flies over it.
@@ -190,9 +191,11 @@ function M.block(world, p, mx, my)
   local dwy = U.m2w(p.my) - U.m2w(my)
   local d = math.sqrt(dwx * dwx + dwy * dwy)
   if d > G.sea_cover_limit(p) then return 1.0, "range" end
-  local reached, sx, sy = G.sea_shot_reaches(world, U.m2w(p.mx), U.m2w(p.my),
-                                             mx, my, cpf.SHOT_PILL, WALL_STOP)
+  local reached, sx, sy, err = G.sea_shot_reaches(world, U.m2w(p.mx), U.m2w(p.my),
+                                                  mx, my, cpf.SHOT_PILL, WALL_STOP)
   if reached then return 0, "open" end
+  -- A failed trace is not a short shell: no cover (the safe side).
+  if err then return 0, "error" end
   if not sx then return 1.0, "short" end
   local tt = U.ttype(sx, sy)
   if tt == C.T_BUILDING then
@@ -406,6 +409,13 @@ function M.rescan(world, info, h, sx, sy, steps, now, why)
       M.search(world, P, sx, sy, steps, info and info.inboat)
   end
   local us = t0 and (clock_us() - t0) or -1
+  -- No chain before, a chain now: the hits taken while there was no way
+  -- out are spent.  A new armour baseline, so the first step waits for a
+  -- fresh hit.
+  if path and not ga.path then
+    ga.hits, ga.hit_tick = 0, nil
+    ga.arm = (info and info.armour) or ga.arm
+  end
   ga.path, ga.score, ga.idx = path, score, 1
   ga.scan_tick = now
   ga.check = now
@@ -449,18 +459,23 @@ end
 -- Returns the goal square when it is diagonal to the tank's square
 -- (tmx,tmy) and the tank can drive straight to it, else nil.  The side
 -- squares follow the pathfinder's own corner rule: no speed-0 square
--- (wall, half wall, pill) and no deep sea on either side.  Not in a boat.
+-- (wall, half wall, pill) and no deep sea on either side.  They must also
+-- pass the chain search's own test (M.passable: no known mine, no live
+-- pill on them; world = the brain's world, nil = terrain only).  Not in a
+-- boat.
 local function drivable(mx, my)
   local t = U.ttype(mx, my)
   return t ~= C.T_DEEPSEA and (C.MAP_SPEED[t] or 12) > 0
 end
-function M.diagonal_next(goal, tmx, tmy, in_boat)
+function M.diagonal_next(goal, tmx, tmy, in_boat, world)
   if not (C.DECOY_GETAWAY and C.DECOY_GETAWAY_DIAGONAL) then return nil end
   if not (goal and goal._getaway and goal.mx) or in_boat then return nil end
   local dx, dy = goal.mx - tmx, goal.my - tmy
   if (dx ~= 1 and dx ~= -1) or (dy ~= 1 and dy ~= -1) then return nil end
-  if not (drivable(goal.mx, goal.my) and drivable(goal.mx, tmy)
-          and drivable(tmx, goal.my)) then
+  local w = world or {}
+  if not (drivable(goal.mx, goal.my)
+          and drivable(goal.mx, tmy) and M.passable(w, goal.mx, tmy, false)
+          and drivable(tmx, goal.my) and M.passable(w, tmx, goal.my, false)) then
     return nil
   end
   return goal.mx, goal.my
@@ -580,7 +595,11 @@ end
 -- armour, as before.  With no blocker left it moves (M.blockers "open").
 -- b gets start, hits, park ("wall" or "wall_damaged", the state first
 -- seen) and shots.
-function M.wall_shots(led, b)
+-- The ledger entry of wall b: made the first time it is seen (and again
+-- for a wall rebuilt full after it was seen damaged).  M.update makes it
+-- BEFORE it hears the sounds of the think, so a hit in the same think the
+-- wall became the last blocker is counted.
+function M.led_entry(led, b)
   local k = b.my * 256 + b.mx
   local e = led[k]
   if e and b.kind == "wall" and e.dmg_seen then e = nil end  -- rebuilt
@@ -589,6 +608,11 @@ function M.wall_shots(led, b)
           hits = 0, ticks = {} }
     led[k] = e
   end
+  return e
+end
+
+function M.wall_shots(led, b)
+  local e = M.led_entry(led, b)
   if b.kind == "wall_damaged" then
     e.dmg_seen = true
     if e.park == "wall" and e.hits == 0 then e.hits = 1 end
@@ -612,7 +636,13 @@ end
 -- ledger is one hit.  Note: the server sends only the CLOSEST sound of each
 -- id per snapshot (soundPickOffer), so two walls hit in the same snapshot
 -- give one sound; the damaged-change check in M.wall_shots covers the
--- first hit only.  Returns the number of hits counted.
+-- first hit only.  Every shell counts, whoever fired it (a pill, an enemy
+-- tank, this tank, an ally): the engine takes one life off the wall for
+-- each shell that stops on it (shells.c, buildingAddItem in the BUILDING
+-- and HALFBUILDING cases, with no owner test).  So a shell of ours or an
+-- ally's that hits the wall uses up its cover exactly as a pill shell
+-- does, and the ledger counts the wall's life, not the pill's shells.
+-- Returns the number of hits counted.
 function M.hear(led, events, now)
   if not (led and events) then return 0 end
   local n = 0
@@ -712,6 +742,20 @@ function M.update(state, world, info, h, now)
     ga.blk = nil
     if C.DECOY_GETAWAY_BLOCKER_STEP and ga.used > 0 and ga.path and ga.path[ga.idx] then
       ga.led = ga.led or {}
+      -- From the PARK square: a knock off it keeps the line, the last
+      -- blocker and the ledger (see THE BLOCKER STEP above).  tx/ty on
+      -- ga.blk is the park square (the end of the line); twx/twy is where
+      -- the tank really is, for the overlay.
+      local kx, ky = ga.park_mx, ga.park_my
+      local pid, p = M.closest_pill(world, kx, ky)
+      -- The last blocker first (no ledger yet), then its ledger entry, then
+      -- the sounds of this think, then its count: a hit in the think the
+      -- wall became the last blocker is not lost.
+      local n, list, why
+      if p then
+        n, list, why = M.blockers(world, p, kx, ky, nil)
+        if why == "last" and list[1].kind ~= "pill" then M.led_entry(ga.led, list[1]) end
+      end
       if M.hear(ga.led, info.events, now) > 0 then
         for _, e in pairs(ga.led) do
           if e.ticks[#e.ticks] == now then
@@ -720,14 +764,8 @@ function M.update(state, world, info, h, now)
           end
         end
       end
-      -- From the PARK square: a knock off it keeps the line, the last
-      -- blocker and the ledger (see THE BLOCKER STEP above).  tx/ty on
-      -- ga.blk is the park square (the end of the line); twx/twy is where
-      -- the tank really is, for the overlay.
-      local kx, ky = ga.park_mx, ga.park_my
-      local pid, p = M.closest_pill(world, kx, ky)
       if p then
-        local n, list, why = M.blockers(world, p, kx, ky, ga.led)
+        if why == "last" and list[1].kind ~= "pill" then n = M.wall_shots(ga.led, list[1]) end
         ga.blk = { id = pid, mx = p.mx, my = p.my, shots = n, list = list,
                    why = why, tx = kx, ty = ky,
                    twx = info.tankx, twy = info.tanky, off = (tx ~= kx or ty ~= ky) }
@@ -829,7 +867,7 @@ end
 local WHY_TXT = {
   range = "out of range", short = "shell short", open = "open",
   wall = "wall full", wall_damaged = "wall damaged",
-  enemy_pill = "enemy pill", base = "base",
+  enemy_pill = "enemy pill", base = "base", error = "trace error",
 }
 local function term_txt(tm)
   local w = WHY_TXT[tm.why] or tostring(tm.why)

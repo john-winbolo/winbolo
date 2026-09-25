@@ -8529,7 +8529,9 @@ end
 -- (it is rubble the shell flies over), which is what lets us test a line onto
 -- the dead sea pills at all.
 -- Returns reached (bool), stop_mx, stop_my (the tile that ate it, or nil when
--- the shell simply ran out of range).
+-- the shell simply ran out of range).  A 4th value, true, says the trace
+-- itself failed (cpf.simulate_shot raised or gave nothing): the nil stop
+-- square then does NOT mean the shell ran out.
 -- `stoppers` (optional) replaces SEA_SHOT_STOPPERS as the set of terrain
 -- types that eat the shell.  The decoy getaway (decoy_getaway.lua) passes
 -- walls only: a tree or a boat is shot away, so it is not cover.  Pills and
@@ -8538,7 +8540,7 @@ local function sea_shot_reaches(world, owx, owy, tmx, tmy, shooter, stoppers)
   if owx == U.m2w(tmx) and owy == U.m2w(tmy) then return true, tmx, tmy end
   local ok, tiles = pcall(cpf.simulate_shot, owx, owy, U.m2w(tmx), U.m2w(tmy),
                           shooter or cpf.SHOT_PILL, 0)
-  if not ok or not tiles then return false, nil, nil end
+  if not ok or not tiles then return false, nil, nil, true end
   local omx = bit.rshift(owx, 8)
   local omy = bit.rshift(owy, 8)
   for i = 1, #tiles do
