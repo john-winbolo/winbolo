@@ -118,8 +118,8 @@ end
 -- with the `tok == "..."` tests further down; a word missing here arrives as
 -- "word=1" and is ignored there.
 local _INIT_FLAG_WORDS = {
-  ammoless = true, noammo = true, noblitz = true, noclaimdead = true, normal = true,
-  nosuicider = true, suicider = true,
+  ammoless = true, blitzonly = true, noammo = true, noblitz = true, noclaimdead = true,
+  normal = true, nosuicider = true, suicider = true,
 }
 
 local function _flatten_init_table(t)
@@ -1291,6 +1291,10 @@ function Brain.apply_init_tokens(state, a)
       elseif tok == "noblitz" then
         -- Solo bot: no calls opened, none joined, bsu designations ignored.
         state.blitz_disabled = true
+      elseif tok == "blitzonly" then
+        -- Pills only inside a blitz: no solo pill attack (see
+        -- C.BLITZ_ONLY_PILL_ATTACKS, the same gate as a constant).
+        state.blitz_only = true
       elseif tok == "noclaimdead" then
         -- Sweeping wave: allies' claims on DEAD pills are ignored (pool 4),
         -- so several bots race the same body and draw fire on the way in.
@@ -1404,7 +1408,7 @@ function Brain.on_init(t)
   -- applied, so the table is the WHOLE statement of what this bot is now.
   --
   -- A bare flag only ever sets: apply_init_tokens has no "off" word for
-  -- noblitz or noclaimdead, because at a VM's first breath there is nothing
+  -- noblitz, blitzonly or noclaimdead, because at a VM's first breath there is nothing
   -- to turn off. A RESUMED runner breaks that assumption — its state table
   -- survives the park, so the last life's flags are still standing when the
   -- next one is told its orders. Survival is the case: wave 3 is the noblitz
@@ -1416,6 +1420,7 @@ function Brain.on_init(t)
   -- first think), so clearing it on every bot_init would quietly overrule a
   -- roll the arena runs read; and nothing sends ammoless at runtime anyway.
   state.blitz_disabled      = false
+  state.blitz_only          = false
   state.ally_claim_dead_off = false
   state.force_pill_suicider = false
 
@@ -1682,6 +1687,15 @@ function Brain.think(info)
   --                          "bsu" suicider designations. It still fights and
   --                          takes pills SOLO, exactly as if no ally were in
   --                          range. No constant — blitzing is on by default.
+  --   "blitzonly"         -> this bot attacks a LIVE pill only inside a blitz:
+  --                          as a commander whose party met the blitz MIN and
+  --                          went GO, or as a soldier of one. A pool-6 row it
+  --                          can neither join nor lead is REJECTED blitz_only; a
+  --                          take about to fire without a GO is dropped
+  --                          (BLITZ_ONLY_ABORT); no "finish it solo" shortcuts.
+  --                          capture_pill (dead pills) is unchanged. Same gate
+  --                          as C.BLITZ_ONLY_PILL_ATTACKS; either one on = on.
+  --                          "noblitz" with it means no pill attacks at all.
   --   "noclaimdead"       -> ignore allies' CLAIMS on DEAD pills: pool 4
   --                          (capture_pill) rows never take an ally_claimed
   --                          REJECT, so several bots race to scoop the same
@@ -1955,6 +1969,10 @@ function Brain.think(info)
   -- (opt.set_tick already fired at the top of think; just emit the
   -- BEGIN marker here.)
   opt("BEGIN tick=", now, " goal=", state.goal.kind, " sub=", tostring(state.goal.substate))
+  -- Last tick's squad.update budget-killed half way? Put back its per-tick
+  -- fields (squad_cmdr, squad_blitz_target, ...) before any goal logic reads
+  -- them. See the guard above M.update in squad.lua.
+  squad.recover_killed_update(state, now)
 
   -- NOTE ON PLACEMENT: this sits AFTER print2.set_tick (which clears the
   -- per-tick buffer) on purpose. It used to live beside cautious_mode, ~330
@@ -3769,6 +3787,9 @@ function Brain.think(info)
     state.squad_blitz_target      = nil
     state.squad_blitz_engage_mx   = nil
     state.squad_blitz_engage_my   = nil
+    state.squad_blitz_engage_fx   = nil
+    state.squad_blitz_engage_fy   = nil
+    state.squad_blitz_engage_deg  = nil
     state.squad_blitz_bd          = nil
     state.squad_blitz_repos       = nil
     state.squad_blitz_in_position = nil
@@ -7935,8 +7956,11 @@ function Brain.think(info)
       -- /fy), falling back to the tile center.
       if state.squad_blitz_engage_mx and state.squad_blitz_engage_my
          and ((g and g._blitz) or state.squad_negotiate_cmdr) then
+        -- Fix A (C.BLITZ_SPOT_EXACT_ORIGIN): the scan's validated float point
+        -- when one is stored, so the commander's arbiter tests the same line.
         bsi.bes = string.format("%.4f,%.4f",
-                    state.squad_blitz_engage_mx + 0.5, state.squad_blitz_engage_my + 0.5)
+                    state.squad_blitz_engage_fx or (state.squad_blitz_engage_mx + 0.5),
+                    state.squad_blitz_engage_fy or (state.squad_blitz_engage_my + 0.5))
         if g and g._blitz and g.substate == "blitz_wait" and state.squad_blitz_aimed then bsi.rdy = "1" end
       elseif state.squad_role == "c" and g and g.kind == "attack_pill"
              and (g.standoff_fx or g.standoff_mx) then

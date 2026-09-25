@@ -1012,6 +1012,27 @@ M.DEFEND_ATTACK_BUILD_COMMITMENT = 40  -- moderate commitment defend_pill pays t
 M.ATTACK_BASE_COMMITMENT_BONUS  = 250  -- extra commitment when mid-attack on a base ??? applied while we still have >=1 shell. Once you start a base, follow through; the ONLY non-urgent reason to break off is literally running out of shells (0). Critical-armour flee still preempts via the urgent goal-override path.
 M.CAPTURE_BASE_COMMITMENT_BONUS = 250  -- extra commitment when mid-CAPTURE of a base (driving onto a neutral/ground-down base). Comparable to ATTACK_BASE: if you did the work to grind a base down, follow through and actually take it ??? don't let a normal-cost goal (another base/pill, non-critical refuel) steal it. No shell gate (capturing needs no ammo). Critical-armour flee still preempts via the urgent goal-override path.
 M.BLITZ_STANDOFF_SCORE_BUCKET   = 50   -- soldier blitz-standoff pick: ellipse spots are bucketed into score bands this wide; all spots in the best spot's band are the "best pool", and the soldier offers the one CLOSEST to its tank (least travel for ~equal shield quality) instead of the globally-top-scored far spot.
+-- Blitz spot line-of-sight margin (tiles), 2026-09-24. A blitz spot's shot line
+-- fails when a wall, live pill (any owner) or base comes closer to it than
+-- MARGIN * d / L (d = distance from the aim point along the line, L = line
+-- length; distance measured to the blocker's tile square). A tank that stops
+-- off its spot swings the line about the aim point, so the margin tapers to 0
+-- at the pill. Used by the soldier's spot pick, the soldier's replan, the
+-- commander's arbiter and the blitz GO gate (spot_margin.lua). Solo takes never
+-- read it. 0 = check off. KEEL 0.
+M.BLITZ_SPOT_LOS_MARGIN         = 0.5
+-- Blitz spot exact origin (fix A), 2026-09-24. true => the soldier keeps the
+-- scan's validated FLOAT point and angle for its spot (standoff_fx/fy, bes,
+-- goal._chosen_deg), so the commit, arbiter, GO gate and steering all use the
+-- line the scan tested, a blocked replan can ban the angle, and a replanned
+-- soldier re-broadcasts its new spot and avoids the commander's. false = the
+-- tile centre and no angle, as before. KEEL false.
+M.BLITZ_SPOT_EXACT_ORIGIN       = true
+-- Blitz GO gate from the standoff (fix C), 2026-09-24. true => a blitz SOLDIER
+-- waiting at its SETUP point runs the GO-time shot check from its planned
+-- standoff float point (where the charge fires from), not from where it waits,
+-- 2.25 tiles further out. false = the live tank position. KEEL false.
+M.BLITZ_GO_GATE_FROM_STANDOFF   = true
 M.EARLY_CAPTURE_BASE_HYST_EXEMPT = true -- opening phase: capture_base skips ALL hysteresis (switch + commit + history), same as capture_pill
 M.REFUEL_URGENCY_MIN       = 0.37  -- minimum urgency multiplier for refuel cost
 -- Critical-armour need floor, expressed in the "need" convention used across
@@ -2926,7 +2947,30 @@ M.BLITZ_ENABLED   = true   -- false => this bot never OPENS or JOINS a blitz (so
                            -- takes only). Reuses the tested state.blitz_disabled
                            -- "noblitz" path at every gate; the noblitz token still
                            -- wins. Easy = false.
-M.AHEAD_PILL_FRAC = 0      -- team is "ahead" when state.strength (pill lead ratio)
+M.BLITZ_ONLY_PILL_ATTACKS = false -- true => this bot attacks a LIVE pill ONLY
+                           -- inside a blitz: as a commander whose party met the
+                           -- blitz MIN and went GO, or as a soldier of one. No
+                           -- solo pill attack at all: the pool-6 row of a pill it
+                           -- can neither join nor lead is REJECTED "blitz_only";
+                           -- a take that would start firing without a GO is
+                           -- dropped (BLITZ_ONLY_ABORT); a pill under
+                           -- HARD_TAKE_MIN_HP is still blitzed (no "finish it
+                           -- solo" shortcut) and a commander with nobody joined
+                           -- waits out READY_TIMEOUT and gives the take up
+                           -- instead of going GO alone. Dead-pill grabs
+                           -- (capture_pill, pool 4) are NOT pill attacks and are
+                           -- unchanged. The "blitzonly" init flag
+                           -- (state.blitz_only) turns the same gate on per bot
+                           -- and is what a scenario uses; either one on = on.
+                           -- Read through squad.blitz_only(state). KEEL false.
+M.SQUAD_KILL_RECOVER = true -- true => squad.update snapshots its per-tick
+                           -- outputs (squad_cmdr, squad_blitz_target, ...) and,
+                           -- when a budget kill cut it short, the next tick
+                           -- puts them back before any goal logic reads them
+                           -- (SQUAD_UPDATE_KILLED in print2). false = no
+                           -- snapshot, no restore (a killed update leaves them
+                           -- nil). KEEL false.
+M.AHEAD_PILL_FRAC = 0     -- team is "ahead" when state.strength (pill lead ratio)
                            -- >= this. 0 => always ahead => no downstream change.
 M.AHEAD_BASE_FRAC = 0      -- ...OR state.base_strength (base lead ratio) >= this.
 M.BEHIND_ATTACK_MULT = 1.0 -- when NOT state.team_ahead, multiply attack_pill /
@@ -4551,6 +4595,24 @@ M.PRESETS = {
     -- pinned at its default so it's neutral even if the boolean were flipped on.
     BLITZ_SWERVE_ONLY_WHEN_HIT    = false,
     BLITZ_ONLY_WHEN_HIT_MIN       = 3,
+    -- 2026-09-24: blitz-only pill attacks (no solo takes). Default is already
+    -- off; pinned so a later default flip cannot leak into the baseline.
+    BLITZ_ONLY_PILL_ATTACKS       = false,
+    -- 2026-09-24: a budget-killed squad.update no longer leaves squad_cmdr /
+    -- squad_blitz_target nil for the next tick's goal logic. KEEL had no
+    -- snapshot or restore.
+    SQUAD_KILL_RECOVER            = false,
+    -- 2026-09-24: blitz spots (soldier pick + replan, commander arbiter, GO
+    -- gate) must keep a tapering distance (0.5 * d / L) from walls, pills and
+    -- bases on the shot line. KEEL had no margin: shell test only.
+    BLITZ_SPOT_LOS_MARGIN         = 0,
+    -- 2026-09-24: the soldier keeps the scan's float spot point + angle (bes,
+    -- standoff, _chosen_deg) and re-broadcasts after a replan. KEEL used the
+    -- tile centre and set no angle.
+    BLITZ_SPOT_EXACT_ORIGIN       = false,
+    -- 2026-09-24: the blitz soldier's GO gate tests from its standoff. KEEL
+    -- tested from the live tank at its SETUP point.
+    BLITZ_GO_GATE_FROM_STANDOFF   = false,
     -- 2026-09-05 (evening): BLITZ_CONTESTED_ALL_SUICIDERS had an entry here and
     -- no longer needs one -- the bench sent it back and its DEFAULT is now
     -- false, which is already the KEEL value. A knob whose default equals its

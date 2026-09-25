@@ -11230,6 +11230,12 @@ local function get_formula_inner(e)
         e._armour_at_reject or 0, C.ATTACK_PILL_UNSAFE_ARMOUR_FLOOR,
         e._pillhp_at_reject or 0, C.ATTACK_PILL_UNSAFE_HP_THRESHOLD))
   end
+  if e._reject == "blitz_only" then
+    return reject_with_breakdown(e,
+      string.format("REJECT blitz_only @(%d,%d)", e._mx or 0, e._my or 0),
+      string.format("reject:blitz_only — pills only inside a blitz (%s); this pill is not our blitz, has no open call to join, and we cannot lead one: %s",
+        tostring(e._blitz_only_src), tostring(e._blitz_only_why)))
+  end
   if e._reject == "ally_pill_take_priority" then
     local rem = e._reject_remaining or 0
     local by  = e._priority_by
@@ -12050,6 +12056,7 @@ local function get_formula(e)
   if e._reject == "ally_claimed"
      or e._reject == "order"
      or e._reject == "armour_too_low"
+     or e._reject == "blitz_only"
      or e._reject == "ally_pill_take_priority" then
     return f
   end
@@ -14891,6 +14898,72 @@ local function apply_blitz_capture_defer(state, info)
   end
 end
 
+-- Blitz-only pill attacks ("blitzonly" flag / C.BLITZ_ONLY_PILL_ATTACKS, read
+-- through squad.blitz_only). A pool-6 (attack_pill) row stays a live
+-- candidate only when this pill can be taken INSIDE a blitz:
+--   1. it is our blitz already (squad_blitz_target: a committed soldier's
+--      commander pill, or the pill we command),
+--   2. we are negotiating to join a blitz on it (squad_negotiate_pill),
+--   3. an ally has an OPEN blitz call on it we could join (blitz_calls), or
+--   4. we could LEAD a fresh blitz on it (squad.can_lead_blitz: the same gates
+--      the commander election applies).
+-- Anything else is a SOLO attack and the row is REJECTED "blitz_only", with
+-- the failing lead gate kept on the entry for the breakdown and printed once
+-- per change. This only decides what may be PICKED; attack.lua's
+-- BLITZ_ONLY_ABORT is what stops a picked take from firing without a GO.
+-- Runs after the blitz target / join discount passes (they clear other
+-- rejects on blitz rows) and before rederive_pool_partial_best. An existing
+-- reject of another kind is left as it is. When the flag goes off (a runtime
+-- bot_init without it) the leftover rejects are cleared once.
+local function apply_blitz_only_gate(state, info, world)
+  local on = info and squad.blitz_only(state)
+  if not on and not state._blitz_only_marked then return end
+  local cache = state.cost_cache
+  if not cache then return end
+  local now = state.tick or 0
+  local open = nil
+  if on and state.blitz_calls then
+    for _, c in pairs(state.blitz_calls) do
+      if c.pill then open = open or {}; open[c.pill] = true end
+    end
+  end
+  local marked = false
+  for _, e in pairs(cache) do
+    if e._p == 6 and e._id then
+      local why = nil
+      if on then
+        local pid = e._id
+        if state.squad_blitz_target ~= pid and state.squad_negotiate_pill ~= pid
+           and not (open and open[pid]) then
+          local pill = world and world.pills and world.pills[pid]
+          local hp = (pill and pill.health) or e._hpv or 0
+          local ok, w = squad.can_lead_blitz(state, info, hp)
+          if not ok then why = w end
+        end
+      end
+      if why then
+        marked = true
+        if not e._reject or (e._reject == "blitz_only" and e._blitz_only_why ~= why) then
+          e._reject           = "blitz_only"
+          e._reject_remaining = 0
+          e._blitz_only_why   = why
+          e._blitz_only_src   = squad.blitz_only_label(state)
+          e.formula           = nil
+          print2(string.format("BLITZ_ONLY_REJECT t=%d pill#%d@(%d,%d) cost=%.0f -- no blitz of ours, no open call, cannot lead: %s [%s]", now, e._id, e._mx or 0, e._my or 0, e.cost or -1, why, e._blitz_only_src))
+        end
+      elseif e._reject == "blitz_only" then
+        e._reject           = nil
+        e._reject_remaining = 0
+        e._blitz_only_why   = nil
+        e._blitz_only_src   = nil
+        e.formula           = nil
+        print2(string.format("BLITZ_ONLY_CLEAR t=%d pill#%d@(%d,%d) -- %s", now, e._id, e._mx or 0, e._my or 0, on and "blitz possible now" or "blitz-only is off"))
+      end
+    end
+  end
+  state._blitz_only_marked = marked
+end
+
 function M.finalize_pools(state, world, info)
   -- ── Ally-claimed REJECT sync (runs before partial → pool_cache) ──
   local _tpre = clock_us()
@@ -14901,6 +14974,7 @@ function M.finalize_pools(state, world, info)
   apply_blitz_target(state, info)
   apply_blitz_join_discount(state, info, world)
   apply_blitz_capture_defer(state, info)
+  apply_blitz_only_gate(state, info, world)
   rederive_pool_partial_best(state)
   local _t_apply = clock_us()
   if BRAIN_PROFILE then

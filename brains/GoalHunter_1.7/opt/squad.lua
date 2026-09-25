@@ -18,6 +18,7 @@ local U          = require("util")
 local viz        = require("viz")
 local orders     = require("orders")
 local print2     = require("print2")
+local SM         = require("spot_margin")  -- blitz spot LOS margin (2026-09-24)
 
 local M = {}
 
@@ -123,6 +124,62 @@ function M.set_blitz_min_suiciders(n, source)
 end
 function M.blitz_suiciders_label()
   return string.format("blitzsuiciders min=%d (%s)", BLITZ_MIN_SUICIDERS, M.blitz_suiciders_source)
+end
+
+-- ── Blitz-only pill attacks (2026-09-24) ──────────────────────────────────
+-- On when the "blitzonly" init flag (state.blitz_only) OR the constant
+-- C.BLITZ_ONLY_PILL_ATTACKS is set. Then a LIVE pill is attacked only inside
+-- a blitz. Three gates read this:
+--   goals.lua  apply_blitz_only_gate -- pool-6 row REJECT "blitz_only" when the
+--              pill has no blitz of ours, no open call, and M.can_lead_blitz
+--              says we could not lead one.
+--   attack.lua update_attack_substate -- BLITZ_ONLY_ABORT when a take is about
+--              to leave the pre-GO substates (BLITZ_CALL_OPEN_SUB) without a
+--              committed GO; and the "finish it solo" shortcuts (pill under
+--              HARD_TAKE_MIN_HP, nobody joined) are skipped.
+--   squad.lua  the DYNAMIC_COMMANDERS election -- any LIVE pill may be led, not
+--              only one at or over HARD_TAKE_MIN_HP, because a soft pill has no
+--              other way to be taken.
+function M.blitz_only(state)
+  return (state and state.blitz_only) or C.BLITZ_ONLY_PILL_ATTACKS or false
+end
+function M.blitz_only_label(state)
+  if state and state.blitz_only then return "blitzonly flag" end
+  if C.BLITZ_ONLY_PILL_ATTACKS then return "cfg BLITZ_ONLY_PILL_ATTACKS" end
+  return "off"
+end
+
+-- Could this bot OPEN (lead) a fresh blitz on a pill with `pill_hp` HP right
+-- now? Answers ok, why -- `why` is the first gate that fails, for the reject
+-- line. MIRRORS the fresh-command gates of the DYNAMIC_COMMANDERS election in
+-- M.update (following another commander, armour, ammo_deprived, shells vs pill
+-- HP, AHEAD_BLITZ_ONLY) plus the noblitz / BLITZ_ENABLED switch; keep the two in
+-- step. Without DYNAMIC_COMMANDERS the role is the deterministic one, so the
+-- last tick's squad_role answers. Only read while blitz_only is on.
+function M.can_lead_blitz(state, info, pill_hp)
+  if state.blitz_disabled then return false, "noblitz" end
+  if not C.BLITZ_ENABLED then return false, "BLITZ_ENABLED=false" end
+  if state.squad_cmdr then
+    return false, string.format("soldier of C%s", tostring(state.squad_cmdr))
+  end
+  if not C.DYNAMIC_COMMANDERS then
+    if state.squad_role ~= M.ROLE_COMMANDER then
+      return false, string.format("role %s (not a commander)", tostring(state.squad_role))
+    end
+    return true, "commander role"
+  end
+  local arm = (info and info.armour) or 0
+  local need = C.SQUAD_COMMANDER_MIN_ARMOUR or 30
+  if arm < need then return false, string.format("armour %d < %d", arm, need) end
+  if state.ammo_deprived then return false, "ammo_deprived" end
+  local sh = (info and info.shells) or 0
+  if sh <= (pill_hp or 0) then
+    return false, string.format("shells %d <= pill hp %d", sh, pill_hp or 0)
+  end
+  if C.AHEAD_BLITZ_ONLY and not state.team_ahead then
+    return false, "AHEAD_BLITZ_ONLY and team behind"
+  end
+  return true, "can lead"
 end
 
 -- Every soldier COMMITTED to our blitz on `our_pid`, as an array of
@@ -377,6 +434,9 @@ function M.reset_blitz_state(state)
   state.squad_negotiate_pill    = nil
   state.squad_blitz_engage_mx   = nil
   state.squad_blitz_engage_my   = nil
+  state.squad_blitz_engage_fx   = nil
+  state.squad_blitz_engage_fy   = nil
+  state.squad_blitz_engage_deg  = nil
   state.squad_blitz_bd          = nil
   state.squad_blitz_in_position = nil
   state.squad_blitz_aimed       = nil
@@ -641,9 +701,21 @@ end
 -- same set attack.blitz_clear_aim uses so commander and soldier agree.
 local _ARB_AIM_X = { 128, 1, 254, 1, 254 }
 local _ARB_AIM_Y = { 128, 1, 1, 254, 254 }
-local function blitz_spot_shot_blocked(world, sfx, sfy, pmx, pmy)
+--
+-- C.BLITZ_SPOT_LOS_MARGIN > 0 (2026-09-24): use the SHARED spot test instead
+-- (spot_margin.clear_aim_margin — the same function the soldier's pick runs):
+-- aim set shield.AIM_OFFSETS_TILE_FIRE, shell test aim_line_trees, plus the
+-- tapering line margin. Blocked unless one aim point passes both. 0 (KEEL) =
+-- this function's own copy below, unchanged.
+local function blitz_spot_shot_blocked(world, sfx, sfy, pmx, pmy, now, pn)
   local ox = math.floor(sfx * 256 + 0.5)
   local oy = math.floor(sfy * 256 + 0.5)
+  local margin = C.BLITZ_SPOT_LOS_MARGIN or 0
+  if margin > 0 then
+    local idx = SM.clear_aim_margin(ox, oy, pmx, pmy, world, margin,
+      { site = "arb_p" .. tostring(pn), tick = now, spot_fx = sfx, spot_fy = sfy })
+    return idx == nil
+  end
   -- Clear if ANY aim point (pill center or a corner) has an unobstructed shell
   -- path — so the arbiter doesn't reject a spot the soldier validated via a corner
   -- aim that dodges our shield walls. Blocked only if EVERY aim point is obstructed.
@@ -684,8 +756,8 @@ function M.blitz_arbitrate(state, info, now, self_pn)
   if state.squad_blitz_engage_mx then
     have_self_spot = true
     parts[#parts + 1] = { pn = self_pn,
-                          fx = state.squad_blitz_engage_mx + 0.5,
-                          fy = state.squad_blitz_engage_my + 0.5,
+                          fx = state.squad_blitz_engage_fx or (state.squad_blitz_engage_mx + 0.5),
+                          fy = state.squad_blitz_engage_fy or (state.squad_blitz_engage_my + 0.5),
                           bd = state.squad_blitz_bd or 0, me = true }
   elseif state.goal and (state.goal.standoff_fx or state.goal.standoff_mx) then
     have_self_spot = true
@@ -771,7 +843,7 @@ function M.blitz_arbitrate(state, info, now, self_pn)
   if gmx then
     for _, p in ipairs(parts) do
       if p.fx and p.pn ~= self_pn and not reject[p.pn]
-         and blitz_spot_shot_blocked(state.world, p.fx, p.fy, gmx, gmy) then
+         and blitz_spot_shot_blocked(state.world, p.fx, p.fy, gmx, gmy, now, p.pn) then
         reject[p.pn] = true
       end
     end
@@ -834,8 +906,10 @@ local function read_cmdr_brj(state, self_pn)
   if not state.squad_cmdr then return end
   local brj = ally_state.get_key(state.squad_cmdr, "brj")
   if not brj then return end
-  local cur_fx = state.squad_blitz_engage_mx and (state.squad_blitz_engage_mx + 0.5) or nil
-  local cur_fy = state.squad_blitz_engage_my and (state.squad_blitz_engage_my + 0.5) or nil
+  -- The spot we actually broadcast as bes: the fix-A float point when one is
+  -- stored (C.BLITZ_SPOT_EXACT_ORIGIN), else the tile centre.
+  local cur_fx = state.squad_blitz_engage_mx and (state.squad_blitz_engage_fx or (state.squad_blitz_engage_mx + 0.5)) or nil
+  local cur_fy = state.squad_blitz_engage_my and (state.squad_blitz_engage_fy or (state.squad_blitz_engage_my + 0.5)) or nil
   for entry in string.gmatch(brj, "[^;]+") do
     local pn, fx, fy = entry:match("^(%d+):%[(%-?[%d.]+),(%-?[%d.]+)%]$")
     if pn then
@@ -857,7 +931,58 @@ local function read_cmdr_brj(state, self_pn)
   end
 end
 
+-- ── Budget-killed squad.update guard ──────────────────────────────────────
+-- update_body (below) clears its per-tick outputs (squad_cmdr,
+-- squad_blitz_target, ...) part-way through and re-derives them further down.
+-- The host can kill a think at its budget ANYWHERE, so a kill between the clear
+-- and the re-derive leaves them nil. squad.update runs near the END of think,
+-- but the goal logic that reads these fields runs EARLIER in the next tick, so
+-- that next tick sees "no commander". 20260924_211112_1__2v2_decoy bot5:
+-- killed tick t=2892, then at t=2893 its blitz_wait soldier branch read
+-- squad_cmdr == nil and dropped a live blitz ("blitz_wait: commander
+-- gone/retargeted/dead") while C6 was still waiting on it; squad.update at
+-- the end of t=2893 re-set squad_cmdr = 6 (BLITZ_COMMITTED), too late.
+-- M.update snapshots these fields on entry and marks the update open; a normal
+-- return closes it. M.recover_killed_update (called at the top of think, before
+-- any reader) finds an update still open, which can only mean the last one was
+-- killed, and puts the snapshot back: the values the last COMPLETE update left.
+-- Knob C.SQUAD_KILL_RECOVER (KEEL false): off = no snapshot, no restore.
+local _TICK_FIELDS = {
+  "squad_cmdr", "squad_help_target", "squad_blitz_target", "squad_status",
+  "squad_negotiate_cmdr", "squad_negotiate_pill", "squad_role",
+  "_blitz_call_rejected", "_blitz_switch_to",
+}
+local _N_TICK_FIELDS = #_TICK_FIELDS
+local update_body
+
 function M.update(state, info, now, world)
+  if not C.SQUAD_KILL_RECOVER then return update_body(state, info, now, world) end
+  local snap = state._squad_upd_snap
+  if not snap then snap = {}; state._squad_upd_snap = snap end
+  for i = 1, _N_TICK_FIELDS do
+    local k = _TICK_FIELDS[i]
+    snap[k] = state[k]
+  end
+  snap.tick = now
+  state._squad_upd_open = true
+  local r = update_body(state, info, now, world)
+  state._squad_upd_open = nil
+  return r
+end
+
+function M.recover_killed_update(state, now)
+  if not C.SQUAD_KILL_RECOVER then return end
+  if not state._squad_upd_open then return end
+  state._squad_upd_open = nil
+  local snap = state._squad_upd_snap
+  if not snap then return end
+  for i = 1, _N_TICK_FIELDS do
+    local k = _TICK_FIELDS[i]
+    state[k] = snap[k]
+  end
+end
+
+update_body = function(state, info, now, world)
   local pns, self_pn = protocol_pns(state, info, now)
   state.squad_pns  = pns
 
@@ -1054,6 +1179,9 @@ function M.update(state, info, now, world)
         if p then
           pill_hp = p.health or 0
           if pill_hp >= (C.HARD_TAKE_MIN_HP or 12) then is_hard_take = true end
+          -- Blitz-only: a soft pill (under HARD_TAKE_MIN_HP) can only be taken
+          -- by a blitz too, so any LIVE pill makes us its commander.
+          if pill_hp > 0 and M.blitz_only(state) then is_hard_take = true end
         end
       end
       -- An established leader stays commander even after the pill's HP falls
@@ -1893,7 +2021,8 @@ function M.draw_blitz(state, info, now)
 
   -- ── Our own engage spot + setup point + line to pill ───────────────────
   if g and g._blitz and state.squad_blitz_engage_mx then
-    local ex, ey = state.squad_blitz_engage_mx + 0.5, state.squad_blitz_engage_my + 0.5
+    local ex = state.squad_blitz_engage_fx or (state.squad_blitz_engage_mx + 0.5)
+    local ey = state.squad_blitz_engage_fy or (state.squad_blitz_engage_my + 0.5)
     local col = committed and { 80, 220, 255 }
                 or (state.squad_blitz_in_position and { 120, 255, 120 }
                 or { 255, 0, 255 })
@@ -2056,7 +2185,7 @@ function M.draw_blitz_call(state, info, now)
   end
   y = y + dy
   local so = state.squad_blitz_engage_mx
-             and string.format("standoff (%.4f,%.4f)", state.squad_blitz_engage_mx + 0.5, state.squad_blitz_engage_my + 0.5)
+             and string.format("standoff (%.4f,%.4f)", state.squad_blitz_engage_fx or (state.squad_blitz_engage_mx + 0.5), state.squad_blitz_engage_fy or (state.squad_blitz_engage_my + 0.5))
              or "standoff -"
   y = y + dy
   local repos = state.squad_blitz_repos or (g and g._blitz_repos) or 0
@@ -2193,7 +2322,7 @@ function M.draw_blitz_roster(state, info, now)
       gtgt  = state.goal and state.goal.target_id
       gsub  = state.goal and state.goal.substate
       if state.squad_blitz_engage_mx then
-        bes = string.format("%.1f,%.1f", state.squad_blitz_engage_mx + 0.5, state.squad_blitz_engage_my + 0.5)
+        bes = string.format("%.1f,%.1f", state.squad_blitz_engage_fx or (state.squad_blitz_engage_mx + 0.5), state.squad_blitz_engage_fy or (state.squad_blitz_engage_my + 0.5))
       elseif state.goal and (state.goal.standoff_fx or state.goal.standoff_mx) then
         bes = string.format("%.1f,%.1f", state.goal.standoff_fx or (state.goal.standoff_mx + 0.5),
                             state.goal.standoff_fy or (state.goal.standoff_my + 0.5))
