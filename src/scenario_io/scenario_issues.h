@@ -30,12 +30,13 @@
 
 #define SCN_VALIDATE_ISSUES_MAX 64
 #define SCN_VALIDATE_KEY_LEN    64
-#define SCN_VALIDATE_MSG_LEN    192
+#define SCN_VALIDATE_MSG_LEN    512
 
 /* One problem the validator found. key is the dotted path of the thing at
  * fault ("api", "lobby.teams[2].bots", "rules.tank_reload_ticks",
  * "regions.keep"), "" where no key applies. line is 1-based and 0 when the
- * key could not be found in the source. */
+ * key could not be found in the source. Messages start with the script's
+ * full path, so message is sized for a long path plus the reason. */
 typedef struct {
     char key[SCN_VALIDATE_KEY_LEN];
     int  line;

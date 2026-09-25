@@ -240,6 +240,11 @@ bool scnPackScript(const char *luaPath, const char *outPath,
         if (result->count == 0) {
             packErr(err, errLen, "%s: no such script, so there is nothing to "
                     "pack", luaPath);
+        } else if (strstr(result->issues[0].message, luaPath) != NULL) {
+            /* The message names the script already, as the reader's do; a
+               second copy of the path in front could push the reason itself
+               off the end of the caller's buffer. */
+            packErr(err, errLen, "%s", result->issues[0].message);
         } else {
             packErr(err, errLen, "%s: %s", luaPath, result->issues[0].message);
         }
