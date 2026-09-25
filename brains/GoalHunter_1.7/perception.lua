@@ -722,10 +722,13 @@ function M.update(state, world, info)
             local dp, ray, why = kill_lgm.find_dest_pill(h, _ent, world.pills, enemy_tanks, now)
             h.dest_pill = dp
             _ent.dest_pill, _ent.dest_ray, _ent.dest_why = dp, ray, why
+            -- LGM_DEST_PASS_THROUGH: the pill he just walked through (not his job).
+            _ent.dest_passed = h.dest_passed
+            local passed_now = h.dest_pass_tick == now and h.dest_pass_id or nil
             local log_key = dp and ("lock#" .. tostring(dp.id)) or why
-            if h.dest_log_key ~= log_key then
+            if h.dest_log_key ~= log_key or passed_now then
               h.dest_log_key = log_key
-              if BRAIN_DEBUG_MODE then print2(string.format("LGM_DEST_AIM t=%d lgm=%s pos=(%d,%d) %s", now, tostring(_ent.idnum), _ent.wx, _ent.wy, dp and string.format("LOCK pill#%s tile=(%d,%d) along=%.0f perp=%.0f/%.0f speed=%.1f", tostring(dp.id), dp.mx, dp.my, dp.along, dp.perp, dp.tol, ray.speed) or string.format("fallback=%s%s", why, ray and string.format(" heading=(%.2f,%.2f) speed=%.1f", ray.ux, ray.uy, ray.speed) or ""))) end
+              if BRAIN_DEBUG_MODE then print2(string.format("LGM_DEST_AIM t=%d lgm=%s pos=(%d,%d) %s%s", now, tostring(_ent.idnum), _ent.wx, _ent.wy, dp and string.format("LOCK pill#%s tile=(%d,%d) along=%.0f perp=%.0f/%.0f speed=%.1f", tostring(dp.id), dp.mx, dp.my, dp.along, dp.perp, dp.tol, ray.speed) or string.format("fallback=%s%s", why, ray and string.format(" heading=(%.2f,%.2f) speed=%.1f", ray.ux, ray.uy, ray.speed) or ""), passed_now and string.format(" | PASSED pill#%s: walked on >16 wu past its centre, not his job%s", tostring(passed_now), dp and " -> next pill on his line" or " -> no pill further on, plain lead") or "")) end
             end
             -- LGM_DEST_HOLD_FIRE: his tank's last known position, for the
             -- walk off the pill tile after the build (predict_dest_hold).
@@ -747,12 +750,16 @@ function M.update(state, world, info)
         -- flag is false with the knob (or LGM_DEST_AIM) off.
         _ent.dest_hold   = (tier == "dest_pill_hold")
         _ent.dest_timing = h and h.dest_timing or nil
+        _ent.dest_intercept = h and h.dest_intercept or nil   -- LGM_DEST_INTERCEPT
         if BRAIN_DEBUG_MODE and C.LGM_DEST_HOLD_FIRE and h then
           local dt = h.dest_timing
-          local hold_key = dt and (dt.verdict .. "#" .. tostring(h.dest_pill and h.dest_pill.id)) or nil
+          local di = h.dest_intercept
+          local hold_key = (di and ("intercept#" .. tostring(h.dest_pill and h.dest_pill.id)))
+                           or (dt and (dt.verdict .. "#" .. tostring(h.dest_pill and h.dest_pill.id))) or nil
           if h.dest_hold_log_key ~= hold_key then
             h.dest_hold_log_key = hold_key
-            if dt then print2(string.format("LGM_DEST_HOLD t=%d lgm=%s pill#%s %s %s shell_off=%d steps (T=%d) on_tile=[%s,%s+%d+%s] exit=%s%s %s", now, tostring(_ent.idnum), tostring(h.dest_pill and h.dest_pill.id), dt.live and "live" or "dead", dt.verdict == "fire" and "FIRE" or ("holding fire (" .. dt.verdict .. ")"), dt.s_x, dt.T_x, tostring(dt.s_enter), tostring(dt.s_arrive), dt.dwell, tostring(dt.s_exit), tostring(dt.exit_src), dt.exit_stalled and "(stalled)" or "", dt.how)) end
+            if di then print2(string.format("LGM_DEST_HOLD t=%d lgm=%s pill#%s INTERCEPT on his walk in: shell meets him at step %d (T=%d), before the pill tile (on it at step %s) aim=(%.0f,%.0f) D=%.0f sl=%d", now, tostring(_ent.idnum), tostring(h.dest_pill and h.dest_pill.id), di.s_hit, di.T, tostring(di.s_enter), di.aim_wx, di.aim_wy, di.D, di.sl))
+            elseif dt then print2(string.format("LGM_DEST_HOLD t=%d lgm=%s pill#%s %s %s shell_off=%d steps (T=%d) on_tile=[%s,%s+%d+%s] exit=%s%s %s", now, tostring(_ent.idnum), tostring(h.dest_pill and h.dest_pill.id), dt.live and "live" or "dead", dt.verdict == "fire" and "FIRE" or ("holding fire (" .. dt.verdict .. ")"), dt.s_x, dt.T_x, tostring(dt.s_enter), tostring(dt.s_arrive), dt.dwell, tostring(dt.s_exit), tostring(dt.exit_src), dt.exit_stalled and "(stalled)" or "", dt.how)) end
           end
         end
         n_lgm = n_lgm + 1

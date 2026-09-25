@@ -718,8 +718,11 @@ function M.update(state, world, info)
             local dp, ray, why = kill_lgm.find_dest_pill(h, _ent, world.pills, enemy_tanks, now)
             h.dest_pill = dp
             _ent.dest_pill, _ent.dest_ray, _ent.dest_why = dp, ray, why
+            -- LGM_DEST_PASS_THROUGH: the pill he just walked through (not his job).
+            _ent.dest_passed = h.dest_passed
+            local passed_now = h.dest_pass_tick == now and h.dest_pass_id or nil
             local log_key = dp and ("lock#" .. tostring(dp.id)) or why
-            if h.dest_log_key ~= log_key then
+            if h.dest_log_key ~= log_key or passed_now then
               h.dest_log_key = log_key
             end
             -- LGM_DEST_HOLD_FIRE: his tank's last known position, for the
@@ -742,6 +745,7 @@ function M.update(state, world, info)
         -- flag is false with the knob (or LGM_DEST_AIM) off.
         _ent.dest_hold   = (tier == "dest_pill_hold")
         _ent.dest_timing = h and h.dest_timing or nil
+        _ent.dest_intercept = h and h.dest_intercept or nil   -- LGM_DEST_INTERCEPT
         n_lgm = n_lgm + 1
         enemy_lgms[n_lgm] = _ent
       end

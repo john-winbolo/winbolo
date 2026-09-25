@@ -205,7 +205,30 @@ local RECENT_TICKS   = 4     -- "still moving right now" check span
 local RETURN_PERP_WU = 256   -- his tank this close to the ray, ahead = returning
 local AMBIG_ALONG_WU = 128   -- two candidates this close in depth = ambiguous
 
+-- LGM_DEST_PASS_THROUGH (wrong guess): the pill we locked last tick is not
+-- his job if he walks on past its centre.  The engine stops him once he is
+-- within LGM_ARRIVE_WU of his destination on both axes (lgm.c:838), so a man
+-- still walking the same line more than LGM_ARRIVE_WU past the centre did not
+-- stop there.  That pill goes into h.dest_passed (never locked again while he
+-- keeps this heading) and the search goes on along the ray: the next pill on
+-- the line, or no_pill (plain lead: he builds / does something further on).
+-- While he is within LGM_ARRIVE_WU past the centre the old lock stays a
+-- candidate (he may be arriving: the engine lets him stop up to 16 wu past).
+-- h.dest_passed is cleared when his heading is lost (he stopped, turned,
+-- zig-zagged, slid on a wall, walks home, or the history is warming): a new
+-- walk is a new guess, and he may come back to a pill he walked through.
+local HEADING_LOST = { warming = true, stopped = true, zigzag = true, turned_back = true,
+                       sliding = true, returning = true, no_history = true }
+
+local find_dest_pill_core
+
 function M.find_dest_pill(h, lgm, pills, tanks, now)
+  local dp, ray, why = find_dest_pill_core(h, lgm, pills, tanks, now)
+  if h and HEADING_LOST[why] then h.dest_passed = nil end
+  return dp, ray, why
+end
+
+find_dest_pill_core = function(h, lgm, pills, tanks, now)
   local samples = h and h.samples
   if not samples or #samples == 0 then return nil, nil, "no_history" end
   local first
@@ -281,6 +304,23 @@ function M.find_dest_pill(h, lgm, pills, tanks, now)
     end
   end
 
+  -- LGM_DEST_PASS_THROUGH: did he walk on past last tick's lock?
+  local prev_id, passed
+  if C.LGM_DEST_PASS_THROUGH and h then
+    local prev = h.dest_pill
+    if prev and prev.cx and prev.cy then
+      local along = (prev.cx - b.wx) * ux + (prev.cy - b.wy) * uy
+      if along < -LGM_ARRIVE_WU then
+        h.dest_passed = h.dest_passed or {}
+        h.dest_passed[prev.id] = { mx = prev.mx, my = prev.my, tick = now }
+        h.dest_pass_id, h.dest_pass_tick = prev.id, now   -- perception logs it
+      else
+        prev_id = prev.id
+      end
+    end
+    passed = h.dest_passed
+  end
+
   local best, second
   for id, p in pairs(pills or {}) do
     -- Dead (armour 0), or with LGM_DEST_LIVE_PILLS live but below full
@@ -289,11 +329,16 @@ function M.find_dest_pill(h, lgm, pills, tanks, now)
     local hp = p.health or 1
     if (hp == 0 or (C.LGM_DEST_LIVE_PILLS and hp > 0 and hp < C.PILLS_MAX_HEALTH))
        and p.owner == "hostile"
-       and not (p.in_tank or p.carrier or p._synth_carry) then
+       and not (p.in_tank or p.carrier or p._synth_carry)
+       and not (passed and passed[id]) then
       local cx, cy = p.mx * 256 + 128, p.my * 256 + 128
       local rx, ry = cx - b.wx, cy - b.wy
       local along = rx * ux + ry * uy
-      if along > 0 and along <= ray.len then
+      -- LGM_DEST_PASS_THROUGH: last tick's lock stays a candidate up to
+      -- LGM_ARRIVE_WU past its centre (he may be arriving there).
+      local ahead
+      if id == prev_id then ahead = along >= -LGM_ARRIVE_WU else ahead = along > 0 end
+      if ahead and along <= ray.len then
         local perp = math.abs(rx * uy - ry * ux)
         local tol = math.max(ray.perp_wu, along * ray.perp_tan)
         if perp <= tol then
@@ -558,10 +603,13 @@ end
 -- --------------------------------------------------------------------------
 -- M.sightlen_for(distance_wu) / M.flight_ticks(sightLen)
 -- --------------------------------------------------------------------------
+local MAX_SIGHTLEN = 14   -- longest gunsight (half tiles): a shell never flies past 14*128 wu
+M.MAX_SIGHTLEN = MAX_SIGHTLEN
+
 function M.sightlen_for(distance_wu)
   local s = math.floor(distance_wu / 128 + 0.5)
   if s < 2  then return 2  end
-  if s > 14 then return 14 end
+  if s > MAX_SIGHTLEN then return MAX_SIGHTLEN end
   return s
 end
 
@@ -814,46 +862,12 @@ function M.predict_dest_hold(tank_wx, tank_wy, lgm, h, pill)
          (verdict == "fire") and "dest_pill" or "dest_pill_hold"
 end
 
-function M.predict_aim(tank_wx, tank_wy, lgm, h)
-  -- All math here is float-precision (Lua / always produces floats;
-  -- integer operands get promoted on first float op).  No floor/round
-  -- in the predictor path so partial-tile positions stay exact.
-  local lgm_wx = lgm.wx + 0.0   -- explicit float promotion
-  local lgm_wy = lgm.wy + 0.0
-  local vx = (h and h.v_ema_x) or lgm.v_ema_x or 0.0
-  local vy = (h and h.v_ema_y) or lgm.v_ema_y or 0.0
-  local tier = "linear"
-  local dest_wx, dest_wy
-  -- LGM_DEST_AIM: a dead pill on his straight-line heading (find_dest_pill,
-  -- run by perception) is his destination.  The sim walks him to the pill
-  -- centre and holds him there; bless_mx/my lets it step onto the pill tile.
-  local pill = C.LGM_DEST_AIM and h and h.dest_pill or nil
-  if h and h.dest_timing then h.dest_timing = nil end
-  -- LGM_DEST_HOLD_FIRE: aim at the pill, fire only for a blast while he is
-  -- on its tile.  nil = the sim cannot walk him there: no pill, old aim.
-  if pill and C.LGM_DEST_HOLD_FIRE then
-    local a_wx, a_wy, a_sl, a_ft, a_d, a_tier = M.predict_dest_hold(tank_wx, tank_wy, lgm, h, pill)
-    if a_wx then return a_wx, a_wy, a_sl, a_ft, a_d, a_tier end
-    pill = nil
-  end
-  local bless_mx, bless_my
-  if pill then
-    dest_wx, dest_wy = pill.cx, pill.cy
-    bless_mx, bless_my = pill.mx, pill.my
-    tier = "dest_pill_lead"
-  elseif h and h.dest_locked and h.dest_wx and h.dest_wy then
-    dest_wx, dest_wy = h.dest_wx, h.dest_wy
-    tier = "dest_lock"
-  end
-
-  -- Linear tier predicts with whatever velocity we have — even on the
-  -- very first frame after a fresh sighting (perception stamps a
-  -- 1-tick delta as lgm.vx/vy until update_velocity has 2+ samples,
-  -- then update_velocity returns (cur − oldest_in_window) / dt over
-  -- however many ticks DO exist, not waiting for the full 10-tick
-  -- window).  So we always have some velocity to project with from
-  -- the moment we acquire the LGM.
-
+-- The lead point: where he is when a shell fired now lands (two-pass
+-- flight-time refit).  dest_wx/dy set = the engine-faithful sim toward it
+-- (bless_mx/my: the pill tile he may step onto, the sim holds him at its
+-- centre -- he is never led THROUGH the pill); nil = linear v*T.
+local function lead_point(tank_wx, tank_wy, lgm_wx, lgm_wy, vx, vy,
+                          dest_wx, dest_wy, bless_mx, bless_my)
   local dx = tank_wx - lgm_wx
   local dy = tank_wy - lgm_wy
   local D  = math.sqrt(dx * dx + dy * dy)
@@ -892,6 +906,111 @@ function M.predict_aim(tank_wx, tank_wy, lgm, h)
       aim_wy = pos1_wy + vy * extra * LINEAR_LEAD_SCALE
     end
   end
+  return aim_wx, aim_wy
+end
+
+-- --------------------------------------------------------------------------
+-- LGM_DEST_INTERCEPT: before the pill-tile window, try to kill him on his
+-- walk in.  The lead point comes from the same sim the dest_pill_lead tier
+-- uses (it walks him to the pill centre and holds him there, so the lead
+-- never goes through the pill).  The walk-in shot is taken when all hold:
+--   * the lead point is NOT on the pill tile: the shell meets him before he
+--     steps onto it (on the tile only a blast in the tile kills him, and that
+--     is the hold-fire window's job);
+--   * the lead point is in reach: at most MAX_SIGHTLEN * 128 wu from the
+--     tank (a shell never flies further);
+--   * a LIVE pill is not on the shell's line before the lead point (it would
+--     stop the shell: shellsCalcCollision -> pillsIsPillHit).  A dead pill
+--     does not stop it.
+-- Otherwise nil: predict_dest_hold (aim at the pill, fire in his on-tile
+-- window).  Writes h.dest_intercept (logs, overlay): the lead point, its
+-- range, the flight in man steps (s_hit) and the step he would step onto the
+-- pill tile (s_enter, from the same sim; nil = not within s_hit + 1 steps).
+-- --------------------------------------------------------------------------
+function M.predict_dest_intercept(tank_wx, tank_wy, lgm, h, pill)
+  local lgm_wx, lgm_wy = lgm.wx + 0.0, lgm.wy + 0.0
+  local aim_wx, aim_wy = lead_point(tank_wx, tank_wy, lgm_wx, lgm_wy, 0.0, 0.0,
+                                    pill.cx, pill.cy, pill.mx, pill.my)
+  if bit.rshift(math.floor(aim_wx), 8) == pill.mx
+     and bit.rshift(math.floor(aim_wy), 8) == pill.my then
+    return nil   -- he is on the pill tile when the shell lands: the window's job
+  end
+  local fdx, fdy = aim_wx - tank_wx, aim_wy - tank_wy
+  local fD = math.sqrt(fdx * fdx + fdy * fdy)
+  if fD > MAX_SIGHTLEN * 128 then return nil end   -- out of reach
+  local sl = M.sightlen_for(fD)
+  local T  = M.flight_ticks(sl)
+  if pill.live and fD >= 1 then
+    -- The shell's positions tank + 32*(t+5) wu along the line (the clock
+    -- shell_tile_entry_ticks uses), up to the lead point.
+    local ux, uy = fdx / fD, fdy / fD
+    for t = 1, T do
+      local d = SHELL_WU_TICK * (t + SHELL_START_TICK)
+      if d > fD then break end
+      if bit.rshift(math.floor(tank_wx + ux * d), 8) == pill.mx
+         and bit.rshift(math.floor(tank_wy + uy * d), 8) == pill.my then
+        return nil   -- the live pill stops the shell first
+      end
+    end
+  end
+  local s_hit = math.floor(T * DEST_LEAD_SCALE + 0.5)
+  if s_hit < 1 then s_hit = 1 end
+  if h then
+    local s_enter = M.dest_pill_timeline(lgm_wx, lgm_wy, pill, s_hit + 1)
+    h.dest_intercept = { aim_wx = aim_wx, aim_wy = aim_wy, D = fD, sl = sl, T = T,
+                         s_hit = s_hit, s_enter = s_enter }
+  end
+  return aim_wx, aim_wy, sl, T, fD
+end
+
+function M.predict_aim(tank_wx, tank_wy, lgm, h)
+  -- All math here is float-precision (Lua / always produces floats;
+  -- integer operands get promoted on first float op).  No floor/round
+  -- in the predictor path so partial-tile positions stay exact.
+  local lgm_wx = lgm.wx + 0.0   -- explicit float promotion
+  local lgm_wy = lgm.wy + 0.0
+  local vx = (h and h.v_ema_x) or lgm.v_ema_x or 0.0
+  local vy = (h and h.v_ema_y) or lgm.v_ema_y or 0.0
+  local tier = "linear"
+  local dest_wx, dest_wy
+  -- LGM_DEST_AIM: a dead pill on his straight-line heading (find_dest_pill,
+  -- run by perception) is his destination.  The sim walks him to the pill
+  -- centre and holds him there; bless_mx/my lets it step onto the pill tile.
+  local pill = C.LGM_DEST_AIM and h and h.dest_pill or nil
+  if h and h.dest_timing then h.dest_timing = nil end
+  if h and h.dest_intercept then h.dest_intercept = nil end
+  -- LGM_DEST_HOLD_FIRE: aim at the pill, fire only for a blast while he is
+  -- on its tile.  nil = the sim cannot walk him there: no pill, old aim.
+  if pill and C.LGM_DEST_HOLD_FIRE then
+    -- LGM_DEST_INTERCEPT first: a shell that meets him on the walk in,
+    -- before the pill tile, stops the repair before it starts.
+    if C.LGM_DEST_INTERCEPT then
+      local i_wx, i_wy, i_sl, i_ft, i_d = M.predict_dest_intercept(tank_wx, tank_wy, lgm, h, pill)
+      if i_wx then return i_wx, i_wy, i_sl, i_ft, i_d, "dest_pill_lead" end
+    end
+    local a_wx, a_wy, a_sl, a_ft, a_d, a_tier = M.predict_dest_hold(tank_wx, tank_wy, lgm, h, pill)
+    if a_wx then return a_wx, a_wy, a_sl, a_ft, a_d, a_tier end
+    pill = nil
+  end
+  local bless_mx, bless_my
+  if pill then
+    dest_wx, dest_wy = pill.cx, pill.cy
+    bless_mx, bless_my = pill.mx, pill.my
+    tier = "dest_pill_lead"
+  elseif h and h.dest_locked and h.dest_wx and h.dest_wy then
+    dest_wx, dest_wy = h.dest_wx, h.dest_wy
+    tier = "dest_lock"
+  end
+
+  -- Linear tier predicts with whatever velocity we have — even on the
+  -- very first frame after a fresh sighting (perception stamps a
+  -- 1-tick delta as lgm.vx/vy until update_velocity has 2+ samples,
+  -- then update_velocity returns (cur − oldest_in_window) / dt over
+  -- however many ticks DO exist, not waiting for the full 10-tick
+  -- window).  So we always have some velocity to project with from
+  -- the moment we acquire the LGM.
+  local aim_wx, aim_wy = lead_point(tank_wx, tank_wy, lgm_wx, lgm_wy, vx, vy,
+                                    dest_wx, dest_wy, bless_mx, bless_my)
 
   -- LGM_DEST_AIM: he is on the pill tile when the shell lands -> aim at the
   -- tile CENTRE.  The dead pill does not stop the shell (pillsIsPillHit needs

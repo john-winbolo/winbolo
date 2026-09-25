@@ -68,6 +68,10 @@ C.LGM_DEST_AIM = true
 C.LGM_DEST_LIVE_PILLS = true
 -- Tests 1-18 cover the aim without the trigger hold; 19+ turn it on.
 C.LGM_DEST_HOLD_FIRE = false
+-- Tests 19-31 cover the pill-tile window alone; 32+ turn the walk-in
+-- intercept and the pass-through memory on.
+C.LGM_DEST_INTERCEPT = false
+C.LGM_DEST_PASS_THROUGH = false
 
 print("kill_lgm.lua — LGM_DEST_AIM find_dest_pill")
 
@@ -468,7 +472,8 @@ print("\nconstants.lua — LGM destination aim is Hard only")
 --     Like _cfg_set, a bundle key must name an existing constant of the same
 --     type (else init.lua refuses it and the level would not switch it off).
 do
-  local KNOBS = { "LGM_DEST_AIM", "LGM_DEST_LIVE_PILLS", "LGM_DEST_HOLD_FIRE" }
+  local KNOBS = { "LGM_DEST_AIM", "LGM_DEST_LIVE_PILLS", "LGM_DEST_HOLD_FIRE",
+                  "LGM_DEST_INTERCEPT", "LGM_DEST_PASS_THROUGH" }
   local function resolve(mode, diff, preset)
     local M = dofile("constants.lua")
     local bad
@@ -493,16 +498,16 @@ do
         D.DIFFICULTY == "hard" and all(D, true), D.DIFFICULTY)
   for _, mode in ipairs({ "default", "survival" }) do
     local M, bad = resolve(mode, "hard")
-    check(mode .. "/hard -> AIM, LIVE_PILLS, HOLD_FIRE on", all(M, true) and not bad, bad)
+    check(mode .. "/hard -> AIM, LIVE_PILLS, HOLD_FIRE, INTERCEPT, PASS_THROUGH on", all(M, true) and not bad, bad)
     for _, diff in ipairs({ "medium", "easy" }) do
       local Md, badd = resolve(mode, diff)
       local ok, which = all(Md, false)
-      check(mode .. "/" .. diff .. " -> all three off", ok and not badd, which or badd)
+      check(mode .. "/" .. diff .. " -> all five off", ok and not badd, which or badd)
     end
   end
   for _, diff in ipairs({ "hard", "medium", "easy" }) do
     local M = resolve("default", diff, "keel")
-    check("default/" .. diff .. " + preset=keel -> all three off", (all(M, false)), diff)
+    check("default/" .. diff .. " + preset=keel -> all five off", (all(M, false)), diff)
   end
   -- Behaviour at Medium: the real knobs set from the medium bundle, a man
   -- walking into a dead pill that find_dest_pill locks -> predict_aim gives
@@ -655,6 +660,240 @@ do
   local h0 = {}
   K.note_owner_pos(h0, {}, { { id = 4, wx = 5000, wy = 6000 } })
   check("no owner id -> nothing recorded", h0.owner_wx == nil, h0.owner_wx)
+end
+
+-- =========================================================================
+-- LGM_DEST_INTERCEPT + LGM_DEST_PASS_THROUGH (Andrew, 2026-09-25, bot1
+-- t=2350 in 20260925_155638_1__2v2_combined).  Priority:
+--   1. a shell can meet him on his walk in, before the pill tile -> lead him
+--      there (fire allowed);
+--   2. else aim at the pill tile and fire in his on-tile window (hold);
+--   3. he walks on past the pill -> not his job: the next pill on his line,
+--      or the plain lead when there is none.
+-- =========================================================================
+print("\nkill_lgm.lua - walk-in intercept + pass-through")
+
+C.LGM_DEST_INTERCEPT = true
+C.LGM_DEST_PASS_THROUGH = true
+
+local MAX_REACH = K.MAX_SIGHTLEN * 128
+
+-- 32. Reachable on the walk in: tank 3 tiles south of his line, well before
+--     the pill -> lead point on his line, off the pill tile, fire allowed.
+do
+  local pmx = 110
+  local _, pcy = centre(pmx, 100)
+  local tx, ty = 100 * 256 + 128, 103 * 256 + 128
+  local tier, h, ax, ay, sl, ft, lgm = walk_and_predict(24, pmx, 0, tx, ty)
+  local di = h.dest_intercept
+  check("walk-in reachable -> tier dest_pill_lead (fire allowed)", tier == "dest_pill_lead", tier)
+  check("intercept recorded, no hold timing", di ~= nil and h.dest_timing == nil, di)
+  check("lead point ahead of him on his line, off the pill tile",
+        ax > lgm.wx and ax < pmx * 256 and math.abs(ay - pcy) < 32,
+        string.format("(%.0f,%.0f)", ax, ay))
+  check("lead point in shell reach, sightLen for it",
+        di and di.D <= MAX_REACH and sl == K.sightlen_for(di.D) and ft == K.flight_ticks(sl),
+        di and di.D)
+  check("shell meets him before he is on the pill tile",
+        di and (di.s_enter == nil or di.s_hit < di.s_enter),
+        di and string.format("hit=%d enter=%s", di.s_hit, tostring(di.s_enter)))
+  -- Same situation with the knob off: the old hold (early).
+  C.LGM_DEST_INTERCEPT = false
+  local tier0, h0 = walk_and_predict(24, pmx, 0, tx, ty)
+  C.LGM_DEST_INTERCEPT = true
+  check("LGM_DEST_INTERCEPT off -> old hold (early), no intercept record",
+        tier0 == "dest_pill_hold" and h0.dest_timing and h0.dest_timing.verdict == "early"
+        and h0.dest_intercept == nil, tier0)
+end
+
+-- 33. Not in time: he is 1 tile short of the pill, tank 5 tiles south of it
+--     -> he is on the pill tile when the shell lands -> the pill window.
+do
+  local pmx = 108
+  local pcx, pcy = centre(pmx, 100)
+  local n = math.floor((pcx - 256 - (96 * 256 + 128)) / 16) + 1
+  local tier, h, ax, ay = walk_and_predict(n, pmx, 0, pcx, pcy + 5 * 256)
+  check("on the pill tile at impact -> window (hold/fire), no intercept",
+        (tier == "dest_pill_hold" or tier == "dest_pill") and h.dest_intercept == nil
+        and h.dest_timing ~= nil, tier)
+  check("window aim = pill centre", ax == pcx and ay == pcy, string.format("(%.0f,%.0f)", ax, ay))
+end
+
+-- 34. Out of reach: his whole walk in is more than 14*128 wu from the tank
+--     (tank 8 tiles south of his line) -> no intercept.
+do
+  local tier, h = walk_and_predict(24, 110, 0, 100 * 256 + 128, 108 * 256 + 128)
+  check("walk in out of reach -> no intercept, not the walk-in tier",
+        h.dest_intercept == nil and tier ~= "dest_pill_lead", tier)
+end
+
+-- 35. Never a lead point past the pill: sweep his walk and many tank spots.
+--     Every aim is at or before the pill centre along his line; every
+--     intercept aim is off the pill tile, before it, and in reach.
+do
+  local pmx = 108
+  local pcx = centre(pmx, 100)
+  local bad, n_int, n_win = nil, 0, 0
+  for n = 8, 190, 6 do
+    for dx = -8, 4, 2 do
+      for dy = -7, 7 do
+        if dy ~= 0 then
+          local tx, ty = (pmx + dx) * 256 + 128, (100 + dy) * 256 + 128
+          local tier, h, ax = walk_and_predict(n, pmx, 0, tx, ty)
+          if ax > pcx then bad = string.format("past pill n=%d dx=%d dy=%d ax=%.0f", n, dx, dy, ax) end
+          if h.dest_intercept then
+            n_int = n_int + 1
+            if tier ~= "dest_pill_lead" or ax >= pmx * 256 or h.dest_intercept.D > MAX_REACH then
+              bad = string.format("intercept n=%d dx=%d dy=%d", n, dx, dy)
+            end
+          elseif h.dest_timing then
+            n_win = n_win + 1
+          end
+        end
+      end
+    end
+  end
+  check("sweep: no aim past the pill centre; intercepts off-tile and in reach",
+        not bad and n_int > 0 and n_win > 0,
+        string.format("%s int=%d win=%d", tostring(bad), n_int, n_win))
+end
+
+-- 36. A LIVE pill between the tank and the walk-in point stops the shell ->
+--     no intercept (window).  The same spot with a DEAD pill -> intercept.
+do
+  local pmx = 101
+  local tx, ty = 103 * 256 + 128, 100 * 256 + 160   -- east of the pill, on his line
+  local tier_l, h_l = walk_and_predict(8, pmx, 6, tx, ty)
+  local tier_d, h_d = walk_and_predict(8, pmx, 0, tx, ty)
+  check("live pill on the shell line -> no intercept (window)",
+        h_l.dest_pill ~= nil and h_l.dest_intercept == nil and h_l.dest_timing ~= nil, tier_l)
+  check("dead pill on the shell line does not stop it -> intercept",
+        h_d.dest_intercept ~= nil and tier_d == "dest_pill_lead", tier_d)
+  -- Live pill off the shell line (tank south-west of the walk in) -> intercept.
+  local tier_s, h_s = walk_and_predict(8, pmx, 6, 97 * 256 + 128, 103 * 256 + 128)
+  check("live pill off the shell line -> intercept",
+        h_s.dest_intercept ~= nil and tier_s == "dest_pill_lead", tier_s)
+end
+
+-- Walk east along row 100 from tile 96 until x_end (last sample within 16
+-- wu short of x_end), still walking.  Returns h, lgm, now.
+local function walk_to(x_end)
+  local sx = 96 * 256 + 128
+  local n = math.floor((x_end - sx) / 16) + 1
+  return feed(straight(sx, 100 * 256 + 128, x_end + 4096, 100 * 256 + 128, 16, n))
+end
+
+local function lock_on(mx, my, id)
+  local cx, cy = centre(mx, my)
+  return { id = id, mx = mx, my = my, cx = cx, cy = cy }
+end
+
+-- 37. Pass-through: last tick's lock was pill A (104,100); he is now 48 wu
+--     past its centre and still walking -> A is not his job, the next pill
+--     on his line (B at 110) is locked, A is remembered as passed.
+do
+  local h, lgm, now = walk_to(centre(104, 100) + 48)
+  local pills = { [1] = pill(104, 100), [2] = pill(110, 100) }
+  h.dest_pill = lock_on(104, 100, 1)
+  local dp, _, why = K.find_dest_pill(h, lgm, pills, {}, now)
+  check("walked 48 wu past pill A -> next pill B locked", dp and dp.id == 2, dp and dp.id or why)
+  check("A remembered as passed (logged this tick)",
+        h.dest_passed and h.dest_passed[1] and h.dest_pass_id == 1 and h.dest_pass_tick == now,
+        h.dest_pass_id)
+  -- Next tick: A stays excluded, B stays locked.
+  h.dest_pill = dp
+  local dp2 = K.find_dest_pill(h, lgm, pills, {}, now)
+  check("passed pill stays excluded next tick",
+        dp2 and dp2.id == 2 and h.dest_passed[1] ~= nil, dp2 and dp2.id)
+  -- Then priority 1/2 run on B.
+  h.dest_pill = dp2
+  local _, _, _, _, _, tier = K.predict_aim(107 * 256 + 128, 102 * 256 + 128, lgm, h)
+  check("after the pass, B gets the walk-in intercept",
+        tier == "dest_pill_lead" and h.dest_intercept ~= nil, tier)
+end
+
+-- 38. Within the engine's arrive tolerance (16 wu past the centre) he may be
+--     arriving: the lock on A holds, nothing is marked passed.
+do
+  local h, lgm, now = walk_to(centre(104, 100) + 16)
+  h.dest_pill = lock_on(104, 100, 1)
+  local dp = K.find_dest_pill(h, lgm, { [1] = pill(104, 100), [2] = pill(110, 100) }, {}, now)
+  check("16 wu past A (arrive tolerance) -> A still locked, not passed",
+        dp and dp.id == 1 and h.dest_passed == nil, dp and dp.id)
+end
+
+-- 39. Pass-through with no pill further on -> no_pill, plain lead (no dest
+--     tier, no hold, no intercept).
+do
+  local h, lgm, now = walk_to(centre(104, 100) + 48)
+  h.dest_pill = lock_on(104, 100, 1)
+  local dp, _, why = K.find_dest_pill(h, lgm, { [1] = pill(104, 100) }, {}, now)
+  check("passed A, nothing further -> no_pill",
+        dp == nil and why == "no_pill" and h.dest_passed and h.dest_passed[1] ~= nil, why)
+  h.dest_pill = dp
+  local _, _, _, _, _, tier = K.predict_aim(106 * 256 + 128, 103 * 256 + 128, lgm, h)
+  check("... plain lead: no dest tier, no hold, no intercept",
+        tier ~= "dest_pill" and tier ~= "dest_pill_hold" and tier ~= "dest_pill_lead"
+        and h.dest_timing == nil and h.dest_intercept == nil, tier)
+end
+
+-- 40. Heading lost (he stops) -> the passed memory is dropped (a new walk is
+--     a new guess; he may come back to A).
+do
+  local sx = 96 * 256 + 128
+  local x_end = centre(104, 100) + 48
+  local walk = straight(sx, 100 * 256 + 128, x_end + 4096, 100 * 256 + 128, 16,
+                        math.floor((x_end - sx) / 16) + 1)
+  local h, lgm, now = feed(walk)
+  h.dest_pill = lock_on(104, 100, 1)
+  K.find_dest_pill(h, lgm, { [1] = pill(104, 100) }, {}, now)
+  local had = h.dest_passed and h.dest_passed[1] ~= nil
+  local last = walk[#walk]
+  for _ = 1, 8 do walk[#walk + 1] = { last[1], last[2] } end
+  local h2, lgm2, now2 = feed(walk)
+  h2.dest_passed = h.dest_passed
+  local _, _, why = K.find_dest_pill(h2, lgm2, { [1] = pill(104, 100) }, {}, now2)
+  check("stopped after the pass -> passed memory cleared",
+        had and why == "stopped" and h2.dest_passed == nil, why)
+end
+
+-- 41. LGM_DEST_PASS_THROUGH off = the old find_dest_pill: 16 wu past A
+--     drops A at once (old along > 0 rule), nothing is remembered.
+do
+  C.LGM_DEST_PASS_THROUGH = false
+  local h, lgm, now = walk_to(centre(104, 100) + 16)
+  h.dest_pill = lock_on(104, 100, 1)
+  local dp = K.find_dest_pill(h, lgm, { [1] = pill(104, 100), [2] = pill(110, 100) }, {}, now)
+  C.LGM_DEST_PASS_THROUGH = true
+  check("pass-through knob off -> old rule (B locked at once), no memory",
+        dp and dp.id == 2 and h.dest_passed == nil and h.dest_pass_id == nil, dp and dp.id)
+  check("PRESETS.keel pins LGM_DEST_INTERCEPT / PASS_THROUGH off",
+        C.PRESETS.keel.LGM_DEST_INTERCEPT == false and C.PRESETS.keel.LGM_DEST_PASS_THROUGH == false,
+        tostring(C.PRESETS.keel.LGM_DEST_INTERCEPT))
+end
+
+-- 42. Recorded geometry, bot1 t=2345 (session 20260925_155638_1__2v2_combined):
+--     man at (33584,33984) walking to dead pill#1 (133,137) at ~15 wu/tick,
+--     bot1's tank on tile (131,144).  His whole walk in is out of reach
+--     (the pill centre is ~7.3 tiles away): the window, held early -- what
+--     the bot did.  From tile (131,139) the walk in is in reach -> intercept.
+do
+  local pcx, pcy = centre(133, 137)
+  local ex, ey = 33584, 33984
+  local dx, dy = pcx - ex, pcy - ey
+  local d = math.sqrt(dx * dx + dy * dy)
+  local ux, uy = dx / d, dy / d
+  local walk = straight(ex - ux * 15 * 19, ey - uy * 15 * 19, pcx, pcy, 15, 20)
+  local h, lgm, now = feed(walk)
+  h.dest_pill = K.find_dest_pill(h, lgm, { [1] = pill(133, 137) }, {}, now)
+  check("t=2345 geometry locks pill#1", h.dest_pill and h.dest_pill.id == 1, h.dest_pill)
+  local _, _, _, _, _, tier = K.predict_aim(131 * 256 + 128, 144 * 256 + 128, lgm, h)
+  check("t=2345 from (131,144): walk in out of reach -> window held (early)",
+        tier == "dest_pill_hold" and h.dest_intercept == nil
+        and h.dest_timing and h.dest_timing.verdict == "early", tier)
+  local _, _, _, _, _, tier2 = K.predict_aim(131 * 256 + 128, 139 * 256 + 128, lgm, h)
+  check("same walk from (131,139): intercept on the walk in",
+        tier2 == "dest_pill_lead" and h.dest_intercept ~= nil, tier2)
 end
 
 print(string.format("\n%d passed, %d failed", pass, fail))

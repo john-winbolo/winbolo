@@ -9339,8 +9339,22 @@ function Brain.think(info)
           viz.detail_text(did, "  sim walks him to the pill centre (pill tile passable at")
           viz.detail_text(did, "  MAN_SPEED_BLESSED) and holds him there once within 16 wu")
         end
+        local di = elm.dest_intercept
         if dt then
           -- the hold verdict is the last line above
+        elseif di then
+          -- LGM_DEST_INTERCEPT: every term of the walk-in shot.
+          viz.detail_text(did, string.format(
+            "  INTERCEPT on his walk in: lead point (%.0f,%.0f) is off the pill tile (%d,%d)",
+            di.aim_wx, di.aim_wy, dp.mx, dp.my))
+          viz.detail_text(did, string.format(
+            "  reach: D=%.0fwu <= MAX_SIGHTLEN %d * 128 = %d; sl=%d T=4*sl-5=%d",
+            di.D, kill_lgm.MAX_SIGHTLEN, kill_lgm.MAX_SIGHTLEN * 128, di.sl, di.T))
+          viz.detail_text(did, string.format(
+            "  shell meets him at step round(T * %.2f) = %d; on the pill tile at step %s",
+            DS, di.s_hit, tostring(di.s_enter)))
+          viz.detail_text(did, dp.live and "  live pill not on the shell line before the lead point"
+                                       or "  dead pill: does not stop the shell")
         elseif tier == "dest_pill" then
           viz.detail_text(did, "  impact on the pill tile -> aim = pill tile centre")
         else
@@ -9512,6 +9526,10 @@ function Brain.think(info)
           what = "HOLD FIRE (" .. tostring(dt and dt.verdict or "?") .. ")"
         elseif tier == "dest_pill" then
           what = dt and "FIRE WINDOW" or "AIM CENTRE"
+        elseif tier == "dest_pill_lead" and elm.dest_intercept then
+          -- LGM_DEST_INTERCEPT: shell meets him before the pill tile.
+          what = string.format("INTERCEPT walk-in hit=%d on-tile=%s", elm.dest_intercept.s_hit,
+                               tostring(elm.dest_intercept.s_enter))
         elseif tier == "dest_pill_lead" then
           what = "LEAD (walking in)"
         else
@@ -9645,6 +9663,15 @@ function Brain.think(info)
             end
           end
         end
+        -- LGM_DEST_PASS_THROUGH: pills he walked through (not his job), gray.
+        if elm.dest_passed then
+          for pid, pp in pairs(elm.dest_passed) do
+            viz.rect("kill_lgm_dest_pill", pp.mx, pp.my, pp.mx + 1, pp.my + 1,
+                     160, 160, 160, 200, false)
+            viz.text("kill_lgm_dest_pill", pp.mx + 0.5, pp.my + 0.5,
+                     string.format("PASSED pill#%s", tostring(pid)), "center", 160, 160, 160, 220)
+          end
+        end
         local dp = elm.dest_pill
         if dp then
           viz.rect("kill_lgm_dest_pill", dp.mx, dp.my, dp.mx + 1, dp.my + 1,
@@ -9667,6 +9694,13 @@ function Brain.think(info)
                                    tostring(dt.s_exit), tostring(dt.exit_src),
                                    dt.exit_stalled and " stalled" or ""),
                      "center", hold and 150 or 255, hold and 150 or 80, 255, 230)
+          elseif elm.dest_intercept then
+            -- LGM_DEST_INTERCEPT: the walk-in shot, before the pill tile.
+            local di = elm.dest_intercept
+            viz.text("kill_lgm_dest_pill", dp.cx / 256, dp.cy / 256 + 0.85,
+                     string.format("INTERCEPT walk-in  hit step=%d  on-tile step=%s  D=%.0f",
+                                   di.s_hit, tostring(di.s_enter), di.D),
+                     "center", 255, 80, 255, 230)
           end
         elseif elm.dest_why then
           viz.text("kill_lgm_dest_pill", (elm.wx or 0) / 256, (elm.wy or 0) / 256 + 0.8,
