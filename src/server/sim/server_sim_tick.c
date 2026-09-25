@@ -173,6 +173,22 @@ static void serverSimLogTick(ServerSim *sim) {
         sim->roundLogStartTick = sim->tick;
     }
 
+    /* The tick this entry is written at, so a viewer can turn playback time
+     * into the clock a scenario's timer counts in. Queued after the snapshot
+     * above and before logWriteTick, so it lands in this tick's own entry:
+     * logWriteSnapshot has already flushed what came before it. Written at
+     * the round's first entry, and again at every entry a snapshot was
+     * written for, which is where a viewer can start playing from. */
+    if (sim->state == serverStateRunning &&
+        (sim->roundLogStartTick == sim->tick ||
+         logSnapshotWrittenThisTick())) {
+        logAddEvent(log_ServerTick,
+                    (BYTE)((sim->tick >> 24) & 0xFF),
+                    (BYTE)((sim->tick >> 16) & 0xFF),
+                    (BYTE)((sim->tick >> 8) & 0xFF),
+                    (BYTE)(sim->tick & 0xFF), 0, NULL);
+    }
+
     logWriteTick();
 }
 

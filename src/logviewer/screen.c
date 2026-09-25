@@ -1128,6 +1128,360 @@ const LvPresMarker *lv_screenGetMarker(BYTE id) {
   return &g_lv->pres.markers[id];
 }
 
+/* --- Server tick ------------------------------------------------------
+ * A scenario counts time in the server's game tick, a hundred a second and
+ * reset each round. The recording states that tick in log_ServerTick records,
+ * one at the round's first entry and one at every entry that carries a
+ * snapshot. Each is kept as an anchor: the playback time it landed at, the
+ * writer ticks counted up to it and the server tick it carries.
+ * lv_screenServerTickAt answers any other time from the last anchor at or
+ * before it.
+ *
+ * Playback time is not a count of the server's log entries, so the answer
+ * cannot come from the ms alone. The server writes one entry every other game
+ * tick — one writer tick — and the decoder spends 20 ms on every record it
+ * reads, so a LOG_NOEVENTS run, a snapshot and the entity-mask block each
+ * cost playback 20 ms more than the writer ticks behind them. What is counted
+ * instead is writer ticks, kept as spans: from span.ms the count is span.wt,
+ * rising by one every 20 ms for span.run steps. The server tick at ms is the
+ * anchor's tick + 2 × (writer ticks at ms − writer ticks at the anchor).
+ *
+ * How a loaded file's records count, by what log.c writes:
+ *   LOG_NOEVENTS n / _LONG   n, one on each of the n waiting steps
+ *   LOG_EVENT / _LONG        1, the block logWriteTick wrote for its tick
+ *   LOG_SNAPSHOT             0
+ *   the entity-mask block    0: an event block holding log_EntityMasks,
+ *                            which only logWriteEntityMasks writes, straight
+ *                            after a snapshot
+ *   the snapshot's flush     0: logWriteSnapshot writes the events its tick
+ *                            has queued so far as a block of their own ahead
+ *                            of the snapshot, and the tick itself is counted
+ *                            later, by logWriteTick
+ *
+ * The flush is the one block the bytes cannot name. It is the block straight
+ * before a snapshot, but so is the previous tick's own block when the
+ * snapshot's tick had queued nothing, and the two are written alike. It is
+ * counted as a flush, the usual case in a round where anything moves, and the
+ * anchor after the snapshot settles it: two anchors say how many writer ticks
+ * passed between them, and a count one short means the block was the previous
+ * tick's own, so the tick is put back from that block on. A block holding
+ * log_ServerTick is never a flush, since the record is queued after its
+ * tick's snapshot.
+ *
+ * A live feed has no walk. Its records come from the spectator ring, one per
+ * writer tick — an event block, a LOG_NOEVENTS 1 or a keyframe snapshot — so
+ * each counts one, and playback adds them the first time it reads them. A
+ * seek back replays records the spans already cover and adds nothing, and
+ * every snapshot a seek can restore from was read on the way in, so the spans
+ * cover everything behind the playhead and stay exact.
+ *
+ * Every field comes from a file anyone could have written: a record of the
+ * wrong length is consumed and ignored. */
+
+/* Playback time per record the decoder reads. */
+#define LV_WT_STEP_MS               20u
+
+/* Most anchors kept. One per written snapshot, which is every 250 game ticks
+   or 2.5 s, so this is over five and a half hours of round. */
+#define LV_SERVER_TICK_ANCHORS_MAX  8192
+
+/* Most spans kept. A round where something moves every tick needs about
+   three per snapshot; the most a file can ask for is one per LOG_NOEVENTS,
+   which with events and empty ticks alternating is one per two writer ticks,
+   so this is nearly three hours of round at worst. Twelve bytes each. */
+#define LV_WRITER_TICK_SPANS_MAX    262144
+
+typedef struct {
+  uint32_t ms;    /* playback time the span starts at */
+  uint32_t wt;    /* writer ticks counted at ms */
+  uint32_t run;   /* steps of one per 20 ms after ms */
+} LvWtSpan;
+
+typedef struct {
+  uint32_t ms;    /* playback time the record landed at */
+  uint32_t wt;    /* writer ticks counted at ms */
+  uint32_t tick;  /* the server tick it carries */
+} LvTickAnchor;
+
+static LvWtSpan     *s_wtSpans            = NULL;
+static int           s_wtSpanCount        = 0;
+static int           s_wtSpanCap          = 0;
+static bool          s_wtTruncated        = FALSE;
+/* Whether any record has been counted, and the time of the last one. Playback
+   on a live feed counts only past it. */
+static bool          s_wtAny              = FALSE;
+static uint32_t      s_wtLastMs           = 0;
+/* Set once the load walk has filled the spans and anchors, so playback adds
+   nothing to either. A live feed has no walk. */
+static bool          s_wtWalked           = FALSE;
+/* The last record was an event block that a snapshot straight after it would
+   make a flush: the spans as they stood before it, to put back. */
+static bool          s_wtUndoValid        = FALSE;
+static int           s_wtUndoCount        = 0;
+static LvWtSpan      s_wtUndoLast;
+static uint32_t      s_wtUndoMs           = 0;
+/* The flushes counted since the last anchor, and the span of the first. */
+static int           s_wtFlushCount       = 0;
+static int           s_wtFlushSpan        = -1;
+
+static LvTickAnchor *s_tickAnchors        = NULL;
+static int           s_tickAnchorCount    = 0;
+static int           s_tickAnchorCap      = 0;
+static bool          s_tickAnchorsTruncated = FALSE;
+
+/* Drop the spans and the anchors, as every load and close does. */
+static void lv_serverTickReset(void) {
+  free(s_wtSpans);
+  s_wtSpans              = NULL;
+  s_wtSpanCount          = 0;
+  s_wtSpanCap            = 0;
+  s_wtTruncated          = FALSE;
+  s_wtAny                = FALSE;
+  s_wtLastMs             = 0;
+  s_wtWalked             = FALSE;
+  s_wtUndoValid          = FALSE;
+  s_wtUndoCount          = 0;
+  s_wtUndoMs             = 0;
+  s_wtFlushCount         = 0;
+  s_wtFlushSpan          = -1;
+  free(s_tickAnchors);
+  s_tickAnchors          = NULL;
+  s_tickAnchorCount      = 0;
+  s_tickAnchorCap        = 0;
+  s_tickAnchorsTruncated = FALSE;
+}
+
+/* Writer ticks at ms by one span. */
+static uint32_t lv_wtSpanAt(const LvWtSpan *s, uint32_t ms) {
+  uint32_t steps;
+
+  if (ms <= s->ms) {
+    return s->wt;
+  }
+  steps = (ms - s->ms) / LV_WT_STEP_MS;
+  if (steps > s->run) {
+    steps = s->run;
+  }
+  return s->wt + steps;
+}
+
+/* Writer ticks counted by playback time ms: 0 before the first span. Past the
+   end of a list that ran out of room, the count goes on at one per 20 ms, the
+   rate playback time alone would give. */
+static uint32_t lv_wtAt(uint32_t ms) {
+  int             lo    = 0;
+  int             hi    = s_wtSpanCount - 1;
+  int             found = -1;
+  const LvWtSpan *s;
+
+  while (lo <= hi) {
+    int mid = lo + (hi - lo) / 2;
+    if (s_wtSpans[mid].ms <= ms) {
+      found = mid;
+      lo    = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  if (found < 0) {
+    return 0;
+  }
+  s = &s_wtSpans[found];
+  if (s_wtTruncated && found == s_wtSpanCount - 1) {
+    uint32_t end = s->ms + s->run * LV_WT_STEP_MS;
+    if (ms > end) {
+      return s->wt + s->run + (ms - end) / LV_WT_STEP_MS;
+    }
+  }
+  return lv_wtSpanAt(s, ms);
+}
+
+/* Add a span, growing the list as needed. A full list, or one that cannot
+   grow, keeps what it has and sets the truncated flag. */
+static bool lv_wtPush(uint32_t ms, uint32_t wt, uint32_t run) {
+  if (s_wtTruncated) {
+    return FALSE;
+  }
+  if (s_wtSpanCount >= s_wtSpanCap) {
+    int       cap = (s_wtSpanCap == 0) ? 256 : s_wtSpanCap * 2;
+    LvWtSpan *grown;
+
+    if (cap > LV_WRITER_TICK_SPANS_MAX) {
+      cap = LV_WRITER_TICK_SPANS_MAX;
+    }
+    if (cap <= s_wtSpanCount) {
+      s_wtTruncated = TRUE;
+      return FALSE;
+    }
+    grown = (LvWtSpan *)realloc(s_wtSpans, (size_t)cap * sizeof(*grown));
+    if (grown == NULL) {
+      s_wtTruncated = TRUE;
+      return FALSE;
+    }
+    s_wtSpans   = grown;
+    s_wtSpanCap = cap;
+  }
+  s_wtSpans[s_wtSpanCount].ms  = ms;
+  s_wtSpans[s_wtSpanCount].wt  = wt;
+  s_wtSpans[s_wtSpanCount].run = run;
+  s_wtSpanCount++;
+  return TRUE;
+}
+
+/* A LOG_NOEVENTS run of n read at ms: no tick on the reading step, then one
+   on each of the n waiting steps. */
+static void lv_wtCountWait(uint32_t ms, uint32_t n) {
+  s_wtUndoValid = FALSE;
+  lv_wtPush(ms, lv_wtAt(ms), n);
+  s_wtAny    = TRUE;
+  s_wtLastMs = ms;
+}
+
+/* One writer tick at ms. mayBeFlush keeps what is needed to take it back if
+   a snapshot is the next record. A tick 20 ms after the end of the last span
+   carries that span on. */
+static void lv_wtCountTick(uint32_t ms, bool mayBeFlush) {
+  LvWtSpan *last = (s_wtSpanCount > 0) ? &s_wtSpans[s_wtSpanCount - 1] : NULL;
+  uint32_t  before = lv_wtAt(ms);
+
+  s_wtUndoValid = mayBeFlush;
+  if (mayBeFlush) {
+    s_wtUndoCount = s_wtSpanCount;
+    if (last != NULL) {
+      s_wtUndoLast = *last;
+    }
+    s_wtUndoMs = ms;
+  }
+  if (last != NULL && ms == last->ms + (last->run + 1u) * LV_WT_STEP_MS) {
+    last->run++;
+  } else {
+    lv_wtPush(ms, before + 1u, 0);
+  }
+  s_wtAny    = TRUE;
+  s_wtLastMs = ms;
+}
+
+/* A snapshot in a loaded file. It counts nothing, and the event block
+   straight before it, if there was one that could be, becomes the
+   snapshot's flush: its tick is taken back and a flat span marks where it
+   stood, for the next anchor to put the tick back from if it was not. */
+static void lv_wtCountFileSnapshot(void) {
+  if (s_wtUndoValid) {
+    s_wtSpanCount = s_wtUndoCount;
+    if (s_wtSpanCount > 0) {
+      s_wtSpans[s_wtSpanCount - 1] = s_wtUndoLast;
+    }
+    if (lv_wtPush(s_wtUndoMs, lv_wtAt(s_wtUndoMs), 0)) {
+      if (s_wtFlushCount == 0) {
+        s_wtFlushSpan = s_wtSpanCount - 1;
+      }
+      s_wtFlushCount++;
+    }
+  }
+  s_wtUndoValid = FALSE;
+}
+
+/* Add an anchor at ms. One per time: a second record at a time already held,
+   or one at or before the last anchor, which is what a seek back on a live
+   feed replays, adds nothing. settleFlush lets the loaded file's walk put a
+   flush's tick back, as the section comment above describes. A full list
+   keeps what it has and sets the truncated flag. */
+static void lv_tickAnchorAdd(uint32_t ms, uint32_t tick, bool settleFlush) {
+  LvTickAnchor *prev = (s_tickAnchorCount > 0)
+                           ? &s_tickAnchors[s_tickAnchorCount - 1] : NULL;
+  uint32_t      wt;
+
+  if (prev != NULL && prev->ms >= ms) {
+    return;
+  }
+  wt = lv_wtAt(ms);
+  /* Only within one round's run of ticks, and only when there is exactly one
+     flush to blame: the writer puts an anchor after every snapshot, so a
+     well-formed file never has two between anchors. */
+  if (settleFlush && prev != NULL && tick >= prev->tick && wt >= prev->wt &&
+      s_wtFlushCount == 1 && s_wtFlushSpan >= 0 &&
+      s_wtFlushSpan < s_wtSpanCount &&
+      (wt - prev->wt) + 1u == (tick - prev->tick) / 2u) {
+    int i;
+    for (i = s_wtFlushSpan; i < s_wtSpanCount; i++) {
+      s_wtSpans[i].wt++;
+    }
+    wt++;
+  }
+  s_wtFlushCount = 0;
+  s_wtFlushSpan  = -1;
+
+  if (s_tickAnchorCount >= s_tickAnchorCap) {
+    int           cap = (s_tickAnchorCap == 0) ? 64 : s_tickAnchorCap * 2;
+    LvTickAnchor *grown;
+
+    if (cap > LV_SERVER_TICK_ANCHORS_MAX) {
+      cap = LV_SERVER_TICK_ANCHORS_MAX;
+    }
+    if (cap <= s_tickAnchorCount) {
+      s_tickAnchorsTruncated = TRUE;
+      return;
+    }
+    grown = (LvTickAnchor *)realloc(s_tickAnchors,
+                                    (size_t)cap * sizeof(*grown));
+    if (grown == NULL) {
+      s_tickAnchorsTruncated = TRUE;
+      return;
+    }
+    s_tickAnchors   = grown;
+    s_tickAnchorCap = cap;
+  }
+  s_tickAnchors[s_tickAnchorCount].ms   = ms;
+  s_tickAnchors[s_tickAnchorCount].wt   = wt;
+  s_tickAnchors[s_tickAnchorCount].tick = tick;
+  s_tickAnchorCount++;
+}
+
+/* Whether playback on a live feed should count the record it has just read:
+   no walk ran, and the record lies past everything counted so far. */
+static bool lv_wtLiveCounts(void) {
+  return !s_wtWalked && (!s_wtAny || g_lv->timeRunning > s_wtLastMs);
+}
+
+uint32_t lv_screenServerTickAt(uint32_t ms) {
+  int                 lo    = 0;
+  int                 hi    = s_tickAnchorCount - 1;
+  int                 found = -1;
+  const LvTickAnchor *a;
+  uint32_t            wt;
+  uint32_t            back;
+
+  if (s_tickAnchorCount == 0) {
+    /* No anchors: a recording made before log_ServerTick existed, or a live
+       feed that has not reached its first one. Two ticks per 20 ms of
+       playback, which is the server's clock only as far as playback time
+       and the log's entries agree. */
+    return ms / 10u;
+  }
+  while (lo <= hi) {
+    int mid = lo + (hi - lo) / 2;
+    if (s_tickAnchors[mid].ms <= ms) {
+      found = mid;
+      lo    = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  wt = lv_wtAt(ms);
+  if (found >= 0) {
+    a = &s_tickAnchors[found];
+    return (wt >= a->wt) ? a->tick + 2u * (wt - a->wt) : a->tick;
+  }
+  /* Before the first anchor: count back from it, and not below 0. */
+  a    = &s_tickAnchors[0];
+  back = (a->wt > wt) ? 2u * (a->wt - wt) : 0u;
+  return (a->tick > back) ? a->tick - back : 0u;
+}
+
+bool lv_screenHasServerTick(void) {
+  return s_tickAnchorCount > 0;
+}
+
 
 void lv_screenProcessLog(unsigned short numEvents) {
   unsigned short count = 0;
@@ -1505,6 +1859,29 @@ void lv_screenProcessLog(unsigned short numEvents) {
       logReadBytes(&opt1, 1);
       logReadBytes((BYTE *)mem, 1);
       logReadBytes((BYTE *)(mem+1), (unsigned char)mem[0]);
+      break;
+    case log_ServerTick:
+      /* The server's game tick at this entry, as a big-endian u32. A loaded
+         file's anchors were all collected by the load walk; a live feed has
+         no walk, and this is how its anchors arrive. The record is consumed
+         by its framed length whatever that says, and read as a tick only
+         when the length is four. */
+      if (isV2) {
+        size_t payloadPos = lv_logGetCurrentPosition();
+        BYTE   t[4];
+        if (evLen == 4 && logReadBytes(t, 4) == 4 && !s_wtWalked) {
+          lv_tickAnchorAdd(g_lv->timeRunning,
+                           ((uint32_t)t[0] << 24) | ((uint32_t)t[1] << 16) |
+                           ((uint32_t)t[2] << 8)  | (uint32_t)t[3],
+                           FALSE);
+        }
+        lv_logSetPosition(payloadPos + evLen);
+      } else {
+        /* Never written to an unframed file. Four bytes, as the byte walker
+           sizes it. */
+        BYTE t[4];
+        logReadBytes(t, 4);
+      }
       break;
     case log_BaseSetOwner:
       logReadBytes(&opt1, 1);
@@ -2003,6 +2380,11 @@ bool lv_screenLogTick() {
         returnValue = TRUE;
         break;
       case LOG_SNAPSHOT:
+        /* On a live feed a snapshot is a ring keyframe, which stands in for
+           its writer tick. */
+        if (lv_wtLiveCounts()) {
+          lv_wtCountTick(g_lv->timeRunning, FALSE);
+        }
         lv_processSnapshot();
         returnValue = TRUE;
         break;
@@ -2011,6 +2393,9 @@ bool lv_screenLogTick() {
         g_lv->state = lv_lr_shortwait;
         if (g_lv->waitLen == 0) {
           g_lv->waitLen = 1;
+        }
+        if (lv_wtLiveCounts()) {
+          lv_wtCountWait(g_lv->timeRunning, (uint32_t)g_lv->waitLen);
         }
         break;
       case LOG_NOEVENTS_LONG:
@@ -2023,6 +2408,9 @@ bool lv_screenLogTick() {
         g_lv->state = lv_lr_longwait;
         if (g_lv->waitLen == 0) {
           g_lv->waitLen = 1;
+        }
+        if (lv_wtLiveCounts()) {
+          lv_wtCountWait(g_lv->timeRunning, (uint32_t)g_lv->waitLen);
         }
         break;
       case LOG_EVENT:
@@ -2038,6 +2426,11 @@ bool lv_screenLogTick() {
         len = ntohs(us);
         process = TRUE;
         break;
+      }
+      /* Counted before the block is read, so a log_ServerTick in it anchors
+         on a count that includes its own tick. */
+      if (process == TRUE && lv_wtLiveCounts()) {
+        lv_wtCountTick(g_lv->timeRunning, FALSE);
       }
       break;
     case lv_lr_longwait:
@@ -2455,6 +2848,10 @@ static int walkSkipEventBody(BYTE code) {
     case log_LgmLocation:
     case log_Shell:
     case log_GameTimeSet:
+    case log_ServerTick:
+      /* log_ServerTick's four bytes are the server tick as a big-endian u32.
+         Only a v2 log can carry one; the v1 walker is given the case anyway,
+         for the reason it is given one for log_Ping. */
       { BYTE b[4]; if (logReadBytes(b, 4) != 4) return -1; }
       return 4;
     case log_PlayerLocation:
@@ -3278,6 +3675,125 @@ static void lv_walkCollectPresentation(void) {
   lv_blocksSetKey(savedKey);
 }
 
+/* Read one event block for what the server-tick count needs: whether it holds
+ * log_EntityMasks, and the first log_ServerTick in it whose length is four.
+ * Every event is skipped by its framed length. Framed files only. */
+static bool walkScanServerTicks(unsigned short numEvents, bool *masks,
+                                bool *haveTick, uint32_t *tick) {
+  unsigned short i;
+  BYTE code;
+  for (i = 0; i < numEvents; i++) {
+    BYTE           lenBytes[2];
+    unsigned short evLen;
+    size_t         payloadPos;
+    if (logReadBytes(&code, 1) != 1) return FALSE;
+    if (logReadBytes(lenBytes, 2) != 2) return FALSE;
+    evLen = (unsigned short)((lenBytes[0] << 8) | lenBytes[1]);
+    payloadPos = lv_logGetCurrentPosition();
+    if (code == log_EntityMasks) {
+      *masks = TRUE;
+    } else if (code == log_ServerTick && evLen == 4 && !*haveTick) {
+      BYTE t[4];
+      if (logReadBytes(t, 4) != 4) return FALSE;
+      *tick = ((uint32_t)t[0] << 24) | ((uint32_t)t[1] << 16) |
+              ((uint32_t)t[2] << 8)  | (uint32_t)t[3];
+      *haveTick = TRUE;
+    }
+    lv_logSetPosition(payloadPos + evLen);
+  }
+  return TRUE;
+}
+
+/* Walk the log from the event-stream start to LOG_QUIT/EOF, counting writer
+ * ticks and collecting every log_ServerTick as an anchor, at the playback
+ * time the decoder reaches each record, stamped the way
+ * lv_walkCollectRuleChanges stamps a rule change. The counting rules are the
+ * server-tick section's, above lv_screenProcessLog. Only a framed file can
+ * carry the record, so an older file is left with no anchors. Must be entered
+ * at load. Saves and restores logPosition + XOR key. */
+static void lv_walkCollectServerTicks(void) {
+  size_t   savedPos = lv_logGetCurrentPosition();
+  BYTE     savedKey = lv_blocksGetKey();
+  uint64_t ticks    = 0;
+  bool     done     = FALSE;
+  BYTE     code, b1, b2;
+  unsigned short waitLen, numEvents;
+  uint16_t us;
+
+  lv_serverTickReset();
+  s_wtWalked = TRUE;
+  if (g_lv->loadedLogVersion < LOG_VERSION_V2) {
+    return;
+  }
+  lv_logSetPosition(s_walkStartPos);
+  lv_blocksSetKey(0);   /* framed files are plaintext */
+
+  while (!done && !lv_blocksIsEOF()) {
+    uint32_t ms = (uint32_t)((ticks + 1) * LV_WT_STEP_MS);
+    if (logReadBytes(&code, 1) != 1) break;
+    switch (code) {
+      case LOG_QUIT:
+        done = TRUE;
+        break;
+      case LOG_SNAPSHOT:
+        if (!walkSkipSnapshot()) { done = TRUE; break; }
+        lv_wtCountFileSnapshot();
+        ticks++;
+        break;
+      case LOG_NOEVENTS:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        waitLen = b1 == 0 ? 1 : b1;
+        lv_wtCountWait(ms, waitLen);
+        ticks += 1 + (uint64_t)waitLen;
+        break;
+      case LOG_NOEVENTS_LONG:
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
+        us = (uint16_t)((b1 << 8) | b2);
+        waitLen = ntohs(us);
+        if (waitLen == 0) waitLen = 1;
+        lv_wtCountWait(ms, waitLen);
+        ticks += 1 + (uint64_t)waitLen;
+        break;
+      case LOG_EVENT:
+      case LOG_EVENT_LONG: {
+        bool     masks    = FALSE;
+        bool     haveTick = FALSE;
+        uint32_t tick     = 0;
+        if (logReadBytes(&b1, 1) != 1) { done = TRUE; break; }
+        if (code == LOG_EVENT_LONG) {
+          if (logReadBytes(&b2, 1) != 1) { done = TRUE; break; }
+          us = (uint16_t)((b1 << 8) | b2);
+          numEvents = ntohs(us);
+        } else {
+          numEvents = b1;
+        }
+        if (!walkScanServerTicks(numEvents, &masks, &haveTick, &tick)) {
+          done = TRUE;
+          break;
+        }
+        if (masks && !haveTick) {
+          /* The entity-mask block: no tick of its own. */
+          s_wtUndoValid = FALSE;
+        } else {
+          lv_wtCountTick(ms, !haveTick);
+        }
+        if (haveTick) {
+          lv_tickAnchorAdd(ms, tick, TRUE);
+        }
+        ticks++;
+        break;
+      }
+      default:
+        done = TRUE;
+        break;
+    }
+  }
+
+  lv_logSetPosition(savedPos);
+  lv_blocksSetKey(savedKey);
+}
+
 /* Put the stores back to what the records up to t left there: clear them,
  * then for each key apply the last of its indexed records at or before t,
  * read from its own payload and stored with the time the index gives it,
@@ -3655,6 +4171,7 @@ bool lv_logLoad(char *fileName, int memoryBufferSize) {
   s_firstWorldSnapKnown = FALSE;
   g_lv->timeRunning = 0;
   lv_ruleChangesClear();
+  lv_serverTickReset();
   lv_presReset();
   memset(g_lv->kills,        0, sizeof(g_lv->kills));
   memset(g_lv->deaths,       0, sizeof(g_lv->deaths));
@@ -3774,6 +4291,7 @@ bool lv_screenLoadMap(char *fileName, int memoryBufferSize) {
     lv_walkCollectSlotNames();
     lv_walkCollectRuleChanges();
     lv_walkCollectPresentation();
+    lv_walkCollectServerTicks();
     /* Set the game information up */
     lv_frontEndSetGameInformation(FALSE, g_lv->versionMajor, g_lv->versionMinor, g_lv->versionRevision, g_lv->mapName, g_lv->gt, g_lv->allowHiddenMines, g_lv->ai, g_lv->gmeStartDelay, g_lv->gmeLength, g_lv->wbnKey, g_lv->gmeCreateTime);
     g_lv->isPlaying = TRUE;
@@ -3815,6 +4333,7 @@ static bool lv_logLoadCommon(void) {
   s_firstWorldSnapKnown = FALSE;
   g_lv->timeRunning = 0;
   lv_ruleChangesClear();
+  lv_serverTickReset();
   lv_presReset();
   memset(g_lv->kills,        0, sizeof(g_lv->kills));
   memset(g_lv->deaths,       0, sizeof(g_lv->deaths));
@@ -3908,6 +4427,7 @@ static bool lv_logLoadFromMemory(uint8_t *zipData, size_t zipLen) {
 
   lv_scriptsLoadFromBlocks();
   lv_ruleChangesClear();
+  lv_serverTickReset();
   lv_presReset();
   if (created != TRUE) {
     g_lv->logLoaded = FALSE;
@@ -3934,6 +4454,7 @@ bool lv_screenLoadMapFromMemory(uint8_t *zipData, size_t zipLen) {
     lv_walkCollectSlotNames();
     lv_walkCollectRuleChanges();
     lv_walkCollectPresentation();
+    lv_walkCollectServerTicks();
     lv_frontEndSetGameInformation(FALSE, g_lv->versionMajor, g_lv->versionMinor, g_lv->versionRevision, g_lv->mapName, g_lv->gt, g_lv->allowHiddenMines, g_lv->ai, g_lv->gmeStartDelay, g_lv->gmeLength, g_lv->wbnKey, g_lv->gmeCreateTime);
     g_lv->isPlaying = TRUE;
     lv_screenUpdateView(redraw);
@@ -3969,6 +4490,7 @@ bool lv_screenLoadFromStream(const uint8_t *bytes, size_t len) {
   /* A stream has no zip and so no scripts.json: this clears the holder. */
   lv_scriptsLoadFromBlocks();
   lv_ruleChangesClear();
+  lv_serverTickReset();
   lv_presReset();
   if (lv_blocksAppendBytes(bytes, len) != TRUE) {
     g_lv->logLoaded = FALSE;
@@ -4123,6 +4645,7 @@ bool lv_screenCloseLog() {
   g_lv->isPlaying = FALSE;
   g_lv->logLoaded = FALSE;
   lv_ruleChangesClear();
+  lv_serverTickReset();
   lv_presReset();
   lv_screenStoreGameSettings(NULL, 0);
   s_gameSettingsWalked = FALSE;

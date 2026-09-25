@@ -8,7 +8,7 @@
  * What the recording's log_ScnPanel, log_ScnScore, log_ScnAnnounce and
  * log_ScnMarker records say at the playhead (layouts in
  * docs/replay-format.md), and the accessors the viewer's drawing code reads
- * them through.
+ * them through, with the server's game tick those records count in.
  *
  * Plain C with nothing but the public scenario_panel.h behind it, so a draw
  * can read these without backend.h, as lv_scripts.h does for the scripts.
@@ -99,6 +99,18 @@ const LvPresPanelRow *lv_screenGetPanelRow(BYTE destTeam, BYTE destPlayer);
 const LvPresScore    *lv_screenGetScore(BYTE kind, BYTE target);
 const LvPresAnnounce *lv_screenGetAnnounce(void);
 const LvPresMarker   *lv_screenGetMarker(BYTE id);
+
+/* The server's game tick at playback time ms: the clock a scenario's timer
+ * target and an announcement's arrival are counted in, a hundred a second and
+ * reset each round. Worked out from the recording's log_ServerTick records
+ * and the writer ticks between them (screen.c's server-tick section). A
+ * recording with none of those records answers ms / 10, which is right only
+ * as far as playback time and the server's clock agree.
+ *
+ * lv_screenHasServerTick answers whether the recording has given at least one
+ * such record, so a caller can tell the recorded clock from that estimate. */
+uint32_t lv_screenServerTickAt(uint32_t ms);
+bool     lv_screenHasServerTick(void);
 
 #ifdef __cplusplus
 }  /* extern "C" */

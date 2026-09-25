@@ -56,6 +56,9 @@ unsigned short logMemSize;   /* How much memory are we using */
 BYTE logKey; /* Current log encryption key */
 BYTE logOldKey; /* Old key needed for writing state */
 bool logLastEmpty; /* Was the last log empty? */
+/* Set when logWriteSnapshot writes a snapshot, cleared at the end of every
+   logWriteTick: whether this tick's entry follows a snapshot. */
+static bool logSnapshotWritten = FALSE;
 
 logTanks logCheckTanks;
 
@@ -357,6 +360,11 @@ void logWriteTick() {
     }
     logOldKey = logKey;
   }
+  logSnapshotWritten = FALSE;
+}
+
+bool logSnapshotWrittenThisTick(void) {
+  return logSnapshotWritten;
 }
 
 /*********************************************************
@@ -948,6 +956,18 @@ static int logSerializeEvent(logitem itemNum, BYTE opt1, BYTE opt2, BYTE opt3, B
     memcpy(out + off, words, wordsLen);
     off += wordsLen;
     break;
+  case log_ServerTick:
+    /* The server's game tick for the entry this record sits in, as a
+       big-endian u32 across the four opt bytes, the way log_GameTimeSet
+       carries its int32. A viewer counts playback in entries and a scenario
+       counts in these ticks, and nothing else in the recording ties the two
+       together. */
+    out[off++] = log_ServerTick;
+    out[off++] = opt1;
+    out[off++] = opt2;
+    out[off++] = opt3;
+    out[off++] = opt4;
+    break;
   default:
     return 0;
   }
@@ -1317,6 +1337,8 @@ bool logWriteSnapshot(ServerSim *ssim, bool check) {
   ret = writeData(data, 1, logOldKey);
   if (ret != Z_OK) {
     returnValue = FALSE;
+  } else {
+    logSnapshotWritten = TRUE;
   }
 
   /* Serialize the snapshot body as plaintext, then emit it with a single

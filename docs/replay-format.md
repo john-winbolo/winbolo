@@ -157,6 +157,7 @@ Selected event types (see the `logitem` enum for the complete list):
 | 64 | `log_ScnAnnounce` | A centre-screen line a scenario put up (below) |
 | 65 | `log_ScnMarker` | A scenario map marker (below) |
 | 66 | `log_ScnHint` | An order a scenario gave one bot (below) |
+| 67 | `log_ServerTick` | The server's game tick at this entry (below) |
 
 ### `log_GameSettings` payload
 
@@ -480,6 +481,62 @@ order, and that is what goes down.
 
 Written by the scenario funnel's hint arm. The viewer consumes the record and
 shows nothing for it.
+
+### `log_ServerTick` payload
+
+The server's game tick — `sim->tick`, a hundred a second and reset to 0 at
+each round's start — for the entry the record sits in:
+
+| Bytes | Field | Notes |
+|---|---|---|
+| 0–3 | Tick | Big-endian `u32` |
+
+A scenario counts in this tick: a panel's timer target and an announcement's
+arrival are both stated in it. Playback time is not, so without this record a
+reader cannot tell what a timer read at a given moment.
+
+Written by the server's per-tick log pass (`serverSimLogTick`,
+`src/server/sim/server_sim_tick.c`) in a running round, queued just before
+the tick's `logWriteTick`, so it lands in that tick's own `LOG_EVENT` block. It
+is written at the round's first entry and at every entry where a snapshot was
+written (`logSnapshotWrittenThisTick`). A snapshot skipped because nothing was
+recorded since the last one writes no record.
+
+The server writes one entry every other game tick, and the decoder spends
+20 ms on every record it reads, so playback time and entries drift apart: a
+`LOG_NOEVENTS` run, a snapshot and the entity-mask block each cost playback
+20 ms with no entry behind them. The viewer therefore counts entries rather
+than milliseconds. At load it walks the file and counts, record by record:
+
+| Record | Entries |
+|---|---|
+| `LOG_NOEVENTS` / `_LONG` of n | n, one on each waiting step |
+| `LOG_EVENT` / `_LONG` | 1 |
+| `LOG_EVENT_SNAPSHOT` | 0 |
+| The block holding `log_EntityMasks` after a snapshot | 0 |
+| The block of events a snapshot flushes ahead of itself | 0 |
+
+The last row is the block `logWriteSnapshot` writes when its tick had queued
+events before the snapshot; the tick itself is counted later, by
+`logWriteTick`. It is the block straight before a snapshot, but so is the
+previous tick's own block when the snapshot's tick had queued nothing, and the
+two are written alike. The viewer counts it as a flush and lets the next
+record settle it: two records say how many entries passed between them, and a
+count one short means the block was the previous tick's. A block holding
+`log_ServerTick` is never a flush.
+
+Each record becomes an anchor, and the tick at any playback time is the last
+anchor's tick plus two for every entry counted since it. Before the first
+anchor the viewer counts back from it, and not below 0. A later record with a
+lower tick starts a new round's run and is kept like any other. A record whose
+length is not 4 is consumed and ignored.
+
+A live feed has no file to walk. Its records come from the spectator ring,
+one per entry, so each counts one — a keyframe snapshot included — and the
+viewer counts them and collects the anchors as playback first reads them.
+
+A recording made before this record existed has no anchors, and the viewer
+falls back to playback time: `ms / 10`.
 
 ## Snapshot body
 

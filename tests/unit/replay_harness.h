@@ -206,6 +206,10 @@ void replayHarnessTick(ReplayHarness *h, int simTicks);
  * than assume it. */
 void replayHarnessSnapshot(ReplayHarness *h);
 
+/* The sim's game tick now (serverSimGetTick), for a case on the viewer side
+ * that cannot include the sim's headers. 0 for a harness with no sim. */
+uint32_t replayHarnessServerTick(const ReplayHarness *h);
+
 /* Capture the sim's world, then close the .wbv. Returns false if the
  * harness is not recording or the capture could not be allocated. */
 bool replayHarnessStopRecording(ReplayHarness *h);

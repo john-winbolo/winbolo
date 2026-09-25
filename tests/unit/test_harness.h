@@ -3462,6 +3462,16 @@ int run_lv_presentation_hostile(void);
 int run_lv_presentation_scripted_round(void);
 int run_lv_presentation_rebuild_many(void);
 int run_lv_presentation_plain_round(void);
+/* The server's game tick at the playhead (test_lv_server_tick.c): a recorded
+ * round's tick at end-of-log, hand-written anchors either side of a snapshot
+ * and across a new round's run, records of the wrong length, a recording from
+ * before the record, events and empty ticks alternating, and a live feed. */
+int run_lv_server_tick_recorded(void);
+int run_lv_server_tick_anchors(void);
+int run_lv_server_tick_hostile(void);
+int run_lv_server_tick_old_recording(void);
+int run_lv_server_tick_alternating(void);
+int run_lv_server_tick_live_feed(void);
 
 /* The four presentation control events (test_scenario_presentation_codec.c):
  * their body codecs against hand-written bytes, the refusals a short or
