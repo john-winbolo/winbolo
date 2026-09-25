@@ -43,6 +43,8 @@
 #include <stdint.h>
 
 #include "channel_mux.h"   /* ChannelMux, CHANNEL_BULK, CHANNEL_STREAM_BUF */
+#include "scenario_details.h"  /* SCN_DETAILS_MAX */
+#include "scenario_settings.h" /* SCN_SETTINGS_BLOB_MAX */
 
 /* Transfer kinds carried in the stream header's first byte: a map preview
  * (server->client, lobby chooser), an upload (client->server), a join map

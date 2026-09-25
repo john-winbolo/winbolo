@@ -901,7 +901,7 @@ struct ClientSim {
      * CTRL_LOBBY_SCRIPT_SETTING, keyed like the server's store. Supported
      * is set by the first such event, which only a server that takes
      * CMD_SET_SCRIPT_SETTING sends; the dialog lets the host change a
-     * value only once it is set. Seq ticks on every change. */
+     * value only once it is set. */
     bool     lobbyScriptSettingsSupported;
     int      lobbyScriptSettingCount;
     struct {
@@ -909,7 +909,6 @@ struct ClientSim {
         char    id[SCN_SETTING_ID_LEN];
         int32_t value;
     }        lobbyScriptSettings[LOBBY_SCRIPT_SETTING_VALUES_MAX];
-    uint32_t lobbyScriptSettingSeq;
     /* Set when a run of chunks is thrown away for overrunning the cap, and
      * held until that run's last chunk. Zeroing the pending count is not
      * enough on its own: zero is exactly where a fresh list starts, so the

@@ -771,7 +771,6 @@ void clientSimApplyControl(ClientSim *cs, const ControlEvent *evt) {
         int     at = -1;
 
         cs->lobbyScriptSettingsSupported = true;
-        cs->lobbyScriptSettingSeq++;
         if (evt->u.lobbyScriptSetting.op == LOBBY_SCRIPT_SETTING_CLEAR) {
             cs->lobbyScriptSettingCount = 0;
             break;

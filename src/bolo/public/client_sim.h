@@ -1393,13 +1393,11 @@ bool clientSimGetLobbyScenarioSettings(const ClientSim *cs, const char *file,
  * CTRL_LOBBY_SCRIPT_SETTING. Get answers false when none is held for
  * file's setting id, which means the declared default. Supported is true
  * once the server has sent one such event, which is how a client knows
- * the server takes clientSimNetSendSetScriptSetting. Seq ticks on every
- * change. */
+ * the server takes clientSimNetSendSetScriptSetting. */
 #define LOBBY_SCRIPT_SETTING_VALUES_MAX 48
 bool     clientSimGetLobbyScriptSetting(const ClientSim *cs, const char *file,
                                         const char *id, int32_t *out);
 bool     clientSimLobbyScriptSettingsSupported(const ClientSim *cs);
-uint32_t clientSimGetLobbyScriptSettingSeq(const ClientSim *cs);
 
 /* Spectator feed drain — the session uses these to pull the captured seed and
  * the ordered forward records the bulk sink reassembled while connected as a

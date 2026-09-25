@@ -3219,10 +3219,6 @@ bool clientSimLobbyScriptSettingsSupported(const ClientSim *cs) {
   return cs != NULL && cs->lobbyScriptSettingsSupported;
 }
 
-uint32_t clientSimGetLobbyScriptSettingSeq(const ClientSim *cs) {
-  return cs ? cs->lobbyScriptSettingSeq : 0;
-}
-
 ClientScnDetailsState clientSimGetLobbyScenarioDetails(const ClientSim *cs,
                                                        const char *file,
                                                        const uint8_t **bytes,

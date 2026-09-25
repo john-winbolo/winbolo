@@ -651,7 +651,6 @@ int run_scenario_settings_client_apply(void) {
     size_t         blen  = 0;
     size_t         got   = 0;
     int32_t        v     = 0;
-    uint32_t       seq;
     ScnSetting     a = ssRow("armour", "Base armour", 100, 200, 10, 120);
 
     UT_ASSERT(cs != NULL);
@@ -659,14 +658,12 @@ int run_scenario_settings_client_apply(void) {
 
     UT_ASSERT_MSG(!clientSimLobbyScriptSettingsSupported(cs),
                   "a fresh client thinks the server takes settings");
-    seq = clientSimGetLobbyScriptSettingSeq(cs);
 
     memset(&evt, 0, sizeof(evt));
     evt.type = CTRL_LOBBY_SCRIPT_SETTING;
     evt.u.lobbyScriptSetting.op = LOBBY_SCRIPT_SETTING_CLEAR;
     clientSimApplyControl(cs, &evt);
     UT_ASSERT(clientSimLobbyScriptSettingsSupported(cs));
-    UT_ASSERT(clientSimGetLobbyScriptSettingSeq(cs) != seq);
 
     evt.u.lobbyScriptSetting.op = LOBBY_SCRIPT_SETTING_SET;
     SDL_strlcpy(evt.u.lobbyScriptSetting.file, "knobs.lua",
